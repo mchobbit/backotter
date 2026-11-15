@@ -10,7 +10,10 @@
 //! transactional-update made, and their SELinux labels whole.  It checks
 //! that the restored GRUB configs (or BLS entries) lead to kernels and
 //! subvolumes that exist and name only filesystems load made with their
-//! UUIDs; rewrites health-checker's LAST_WORKING_BTRFS_ID from
+//! UUIDs (on BLS, Aeon's: an entry boots the default slot, each kernel on
+//! the ESP has its modules in its slot; the plan says what systemd-boot's
+//! boot counting, LoaderEntryDefault and a LUKS2 TPM2 token come back as);
+//! rewrites health-checker's LAST_WORKING_BTRFS_ID from
 //! LAST_WORKING_SNAPSHOT's path, since a restore can give that subvolume
 //! another ID; makes the UEFI entries; writes its log with /var/log's
 //! SELinux label; and ends as every Linux boot stage does, the read-only
@@ -109,6 +112,50 @@ echo "transactional: {mode}: $n snapshot entries lead to restored kernels and su
     )
 }
 
+/// BLS, after check_script: in the restored tree at T (its btrfs's top
+/// level at TOP), some loader entry boots DEFAULT (the source's default
+/// slot, a path from the top level), told by its rootflags=subvol= so
+/// whatever boot counter systemd-boot left in its name (`ID+LEFT-DONE.conf`
+/// is the entry `ID`); and an entry whose linux is sdbootutil's
+/// `/DIR/KVER/linux-HASH` has KVER's modules in the slot it boots
+/// (usr/lib/modules/KVER), so the ESP's kernel is that slot's.  No entry
+/// for BOOTED (when it isn't DEFAULT) is said, not a mismatch: the restored
+/// machine boots DEFAULT.  `root=/dev/mapper/NAME` beside `root=UUID=` (as
+/// sdbootutil writes on Aeon) is fine.  Mismatches fail the stage, the
+/// errors last with a count, as check_script's.
+pub fn bls_slots_script(t: &str, top: &str, default: &str, booted: &str) -> String {
+    format!(
+        r#"t=$(readlink -f {t}) || exit 1; top={top}; def={default}; boot={booted}; errs=; nbad=0; has_def=; has_boot=
+err() {{ errs="${{errs}}transactional: $*
+"; nbad=$((nbad + 1)); }}
+for f in "$t"/boot/efi/loader/entries/*.conf; do
+  [ -f "$f" ] || continue
+  b=${{f##*/}}
+  id=$(printf %s "$b" | sed -e 's/[.]conf$//' -e 's/+[0-9][0-9]*\(-[0-9][0-9]*\)\{{0,1\}}$//')
+  kvs=$(awk '$1 == "linux" {{ m = split($2, c, "/"); if (m == 4 && c[1] == "" && c[4] ~ /^linux-/) print c[3] }}' "$f")
+  for s in $(awk '$1 == "options" {{ for (i = 2; i <= NF; i++) if ($i ~ /^rootflags=/) {{ r = $i; sub(/^rootflags=/, "", r); m = split(r, o, ","); for (j = 1; j <= m; j++) if (o[j] ~ /^subvol=/) {{ v = o[j]; sub(/^subvol=/, "", v); print v }} }} }}' "$f"); do
+    s=${{s#/}}; s=${{s%/}}
+    [ "$s" != "$def" ] || has_def="$has_def $id"
+    [ "$s" != "$boot" ] || has_boot="$has_boot $id"
+    for kv in $kvs; do
+      [ -d "$top/$s/usr/lib/modules/$kv" ] || err "$b: its kernel is $kv (linux /.../$kv/linux-*), and $s has no usr/lib/modules/$kv: the ESP's kernel isn't that slot's"
+    done
+  done
+done
+if [ -n "$def" ]; then
+  if [ -n "$has_def" ]; then echo "transactional: bls: the default slot $def is booted by$has_def"; else err "no BLS entry on the restored ESP boots the default slot $def (no rootflags=subvol= names it): nothing is regenerated, so the restored machine couldn't boot it"; fi
+fi
+if [ -n "$boot" ] && [ "$boot" != "$def" ] && [ -z "$has_boot" ]; then echo "transactional: bls: no BLS entry on the restored ESP boots $boot, the slot the source had booted; the restored machine boots the default, $def" >&2; fi
+[ -z "$errs" ] || {{ printf %s "$errs" >&2; echo "transactional: $nbad mismatches between the restored BLS entries and slots: nothing is regenerated, so the entries must boot the default slot, each with its own kernel's modules" >&2; exit 1; }}
+echo "transactional: bls: each entry's kernel has its modules in the slot it boots"
+"#,
+        t = shell_quote(t),
+        top = shell_quote(top),
+        default = shell_quote(default.trim_matches('/')),
+        booted = shell_quote(booted.trim_matches('/')),
+    )
+}
+
 /// health-checker's state in the restored tree at T (its btrfs's top level
 /// at TOP), as a shell script: LAST_WORKING_BTRFS_ID set to the ID that
 /// LAST_WORKING_SNAPSHOT's path has here, read back with `btrfs subvolume
@@ -175,6 +222,102 @@ print(f"transactional: {n} of the booted slot's mount points labelled")
 
 fn s(v: &Value, k: &str) -> Option<String> {
     v.get(k).and_then(Value::as_str).map(str::to_string)
+}
+
+/// A BLS entry file's name split as systemd-boot's boot counting has it:
+/// `ID+LEFT-DONE.conf` (or `ID+LEFT.conf`) is the entry `ID` with LEFT
+/// tries left and DONE done; `ID.conf` has no counter.
+pub fn bls_counter(file: &str) -> (String, Option<(u64, u64)>) {
+    let stem = file.strip_suffix(".conf").unwrap_or(file);
+    let parsed = stem.rsplit_once('+').and_then(|(id, c)| {
+        let (left, done) = c.split_once('-').unwrap_or((c, "0"));
+        let n = |x: &str| (!x.is_empty() && x.bytes().all(|b| b.is_ascii_digit())).then(|| x.parse::<u64>().ok()).flatten();
+        Some((id.to_string(), (n(left)?, n(done)?)))
+    });
+    match parsed {
+        Some((id, c)) if !id.is_empty() => (id, Some(c)),
+        _ => (stem.to_string(), None),
+    }
+}
+
+/// The slot a BLS entry's options boot: the last `rootflags=`'s `subvol=`,
+/// as a path from the top level.
+pub fn entry_slot(options: &str) -> Option<String> {
+    options
+        .split_whitespace()
+        .filter_map(|w| w.strip_prefix("rootflags="))
+        .filter_map(|r| r.split(',').rev().find_map(|o| o.strip_prefix("subvol=")))
+        .next_back()
+        .map(|v| v.trim_matches('/').to_string())
+}
+
+/// Version strings compared as systemd-boot does, nearly
+/// (strverscmp_improved): runs of digits as numbers, everything else byte
+/// by byte, `~` before anything.
+pub fn vercmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering::*;
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    let (mut i, mut j) = (0, 0);
+    loop {
+        match (a.get(i), b.get(j)) {
+            (None, None) => return Equal,
+            (Some(b'~'), Some(b'~')) => {
+                i += 1;
+                j += 1;
+            }
+            (Some(b'~'), _) => return Less,
+            (_, Some(b'~')) => return Greater,
+            (None, _) => return Less,
+            (_, None) => return Greater,
+            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
+                let run = |s: &[u8], k: usize| s[k..].iter().take_while(|c| c.is_ascii_digit()).count();
+                let (ni, nj) = (run(a, i), run(b, j));
+                let (da, db) = (&a[i..i + ni], &b[j..j + nj]);
+                let (ta, tb) = (std::str::from_utf8(da).unwrap_or("0").trim_start_matches('0'), std::str::from_utf8(db).unwrap_or("0").trim_start_matches('0'));
+                let o = ta.len().cmp(&tb.len()).then_with(|| ta.cmp(tb));
+                if o != Equal {
+                    return o;
+                }
+                i += ni;
+                j += nj;
+            }
+            (Some(x), Some(y)) if x.is_ascii_digit() != y.is_ascii_digit() => return if x.is_ascii_digit() { Greater } else { Less },
+            (Some(x), Some(y)) => {
+                if x != y {
+                    return x.cmp(y);
+                }
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+}
+
+/// BLS entries (boot.systemd_boot.entries) in systemd-boot's menu order
+/// (boot_entry_compare): no tries left last; those with a sort-key before
+/// those without, by sort-key, machine-id and version, newest first; then
+/// by ID, highest first; then by tries left and done.  Without
+/// LoaderEntryDefault or loader.conf's `default`, it boots the first.
+pub fn bls_sorted(entries: &[Value]) -> Vec<&Value> {
+    let key = |e: &Value| {
+        let (id, c) = bls_counter(&s(e, "file").unwrap_or_default());
+        (id, c, s(e, "sort-key"), s(e, "machine-id").unwrap_or_default(), s(e, "version").unwrap_or_default())
+    };
+    let mut v: Vec<&Value> = entries.iter().collect();
+    v.sort_by(|a, b| {
+        let (ia, ca, sa, ma, va) = key(a);
+        let (ib, cb, sb, mb, vb) = key(b);
+        let bad = |c: &Option<(u64, u64)>| c.is_some_and(|(l, _)| l == 0);
+        let mut o = bad(&ca).cmp(&bad(&cb)).then_with(|| sa.is_none().cmp(&sb.is_none()));
+        if let (Some(x), Some(y)) = (&sa, &sb) {
+            o = o.then_with(|| x.cmp(y)).then_with(|| ma.cmp(&mb)).then_with(|| vercmp(&vb, &va));
+        }
+        o.then_with(|| vercmp(&ib, &ia)).then_with(|| match (ca, cb) {
+            (Some((la, da)), Some((lb, db))) => lb.cmp(&la).then(da.cmp(&db)),
+            _ => std::cmp::Ordering::Equal,
+        })
+    });
+    v
 }
 
 impl Builder<'_> {
@@ -274,7 +417,16 @@ impl Builder<'_> {
             }
         } else if mode == "grub" {
             self.notes.push(format!("health-checker: the source has no {}, so there is no subvolume ID to rewrite", crate::transactional::HC_STATE));
+        } else if mode == "bls" {
+            self.notes.push(format!(
+                "health-checker: on the BLS path (systemd-boot with sdbootutil) the source has no {} and keeps no subvolume IDs: its verdicts are systemd-bless-boot's boot counters in the entries' names and sdbootutil's default entry, which come back as they were; nothing to rewrite",
+                crate::transactional::HC_STATE
+            ));
         }
+        if mode == "bls" {
+            self.bls_problems(x, &uuid);
+        }
+        self.fde_notes(x);
         let mut written = vec!["/var/log/bko-holt (this restore's log)".to_string()];
         if x.get("health_check_state").is_some_and(|v| !v.is_null()) {
             written.insert(0, format!("{} (its ID, if it changed)", crate::transactional::HC_STATE));
@@ -283,6 +435,169 @@ impl Builder<'_> {
             "transactional-update: what the boot stage writes into the restored root: {}, both in @/var; nothing in a snapshot or its /etc, whose fstab is the restored one (the target's layout is the source's)",
             written.join(" and ")
         ));
+    }
+
+    /// BLS (systemd-boot with sdbootutil's per-snapshot entries, Aeon's),
+    /// from the dump's entries and ESP files: nothing is regenerated, so the
+    /// default slot must have an entry, and every entry's kernel and initrd
+    /// must be on the ESP and its slot in the layout (problems); the booted
+    /// slot without one, boot counters and the default systemd-boot picks on
+    /// a new machine (notes).
+    fn bls_problems(&mut self, x: &Value, uuid: &str) {
+        let entries = self.layout.arr(&["boot", "systemd_boot", "entries"]).to_vec();
+        let slot = |k: &str| x.at(&[k, "path"]).and_then(Value::as_str).map(|p| p.trim_matches('/').to_string());
+        let num = |p: &str| crate::load::shared::snapper_slot(p).map_or_else(|| "?".to_string(), |(_, n)| n.to_string());
+        let (def, booted) = (slot("default"), slot("booted"));
+        if entries.is_empty() {
+            self.problems.push("transactional-update (BLS): the dump has no loader entry (boot.systemd_boot.entries): nothing is regenerated (no sdbootutil), so the restored machine would have nothing to boot".into());
+            return;
+        }
+        let esp: Vec<String> = self
+            .layout
+            .arr(&["boot", "esps"])
+            .iter()
+            .flat_map(|e| e.at(&["contents", "files"]).and_then(Value::as_array).cloned().unwrap_or_default())
+            .filter_map(|f| s(&f, "path").map(|p| p.to_ascii_lowercase()))
+            .collect();
+        let mut counted = Vec::new();
+        for e in &entries {
+            let file = s(e, "file").unwrap_or_default();
+            if s(e, "linux").is_none() {
+                self.problems.push(format!("transactional-update (BLS): {file} has no linux line, which the boot stage's check refuses"));
+            }
+            for k in ["linux", "initrd"] {
+                // (The dump keeps one initrd an entry: its last line's.)
+                if let Some(p) = s(e, k).filter(|p| !esp.contains(&p.trim_start_matches('/').to_ascii_lowercase())) {
+                    self.problems.push(format!("transactional-update (BLS): {file}'s {k} {p} isn't on the source's ESP (boot.esps' files): nothing is regenerated, so the restored entry would boot nothing"));
+                }
+            }
+            match entry_slot(&s(e, "options").unwrap_or_default()) {
+                Some(p) if self.planned_id(uuid, &p).is_none() => self.problems.push(format!("transactional-update (BLS): {file} boots rootflags=subvol={p}, which isn't a subvolume in the layout")),
+                Some(_) => {}
+                None => self.problems.push(format!("transactional-update (BLS): {file} has no rootflags=subvol= to tell its slot by")),
+            }
+            if let (_, Some((l, d))) = bls_counter(&file) {
+                counted.push(format!("{file} ({l} tries left, {d} done)"));
+            }
+        }
+        let of = |p: &Option<String>| -> Vec<String> { entries.iter().filter(|e| entry_slot(&s(e, "options").unwrap_or_default()) == *p).filter_map(|e| s(e, "file")).collect() };
+        let (def_entries, booted_entries) = (of(&def), of(&booted));
+        if let Some(d) = &def {
+            if def_entries.is_empty() {
+                self.problems.push(format!("transactional-update (BLS): no loader entry boots the default slot, snapshot {} ({d}; no rootflags=subvol= names it): nothing is regenerated (no sdbootutil), so the restored machine couldn't boot it", num(d)));
+            }
+        }
+        if let Some(b) = booted.as_ref().filter(|b| Some(*b) != def.as_ref()) {
+            if booted_entries.is_empty() {
+                self.notes.push(format!("transactional-update (BLS): no loader entry boots snapshot {} ({b}), the slot the source had booted, so it isn't in the restored machine's boot menu either; the restored machine boots the default", num(b)));
+            }
+        }
+        if !counted.is_empty() {
+            self.notes.push(format!(
+                "systemd-boot's boot counting: {} come back as restored, the counters in their names: systemd-boot counts a try down at each boot of one on the restored machine, and systemd-bless-boot renames it without the counter once a boot of it is good (an entry with +0 tries left is tried last, as bad)",
+                counted.join(", ")
+            ));
+        }
+        if let Some(bad) = def_entries.iter().find(|f| bls_counter(f).1.is_some_and(|(l, _)| l == 0)) {
+            self.notes.push(format!("systemd-boot: the default slot's entry {bad} has no tries left (systemd-boot found its boots bad on the source): it sorts it last and boots another first, as the source would have"));
+        }
+        if !self.layout.uefi() {
+            return;
+        }
+        // The default systemd-boot boots: LoaderEntryDefault (an EFI
+        // variable, which sdbootutil set-default-snapshot sets), else
+        // loader.conf's default, else the first in its order.
+        let led = self.layout.str_at(&["boot", "efi", "loader_interface", "loader_entry_default"]).map(str::to_string);
+        let conf = self.layout.str_at(&["boot", "systemd_boot", "loader_conf", "default"]).map(str::to_string);
+        let first = bls_sorted(&entries).first().map(|e| (s(e, "file").unwrap_or_default(), entry_slot(&s(e, "options").unwrap_or_default())));
+        let source = match &led {
+            Some(l) => format!("the source's is {l}"),
+            None => "the source had none set".into(),
+        };
+        let fallback = match (&conf, &first) {
+            (Some(c), _) => format!("loader.conf's `default {c}` (restored) picks the entry"),
+            (None, Some((f, Some(p)))) if Some(p) == def.as_ref() => format!("it boots the entry it sorts first, {f}, which boots the default slot (snapshot {}), as on the source", num(p)),
+            (None, Some((f, p))) => {
+                let p = p.clone().unwrap_or_default();
+                let fix = def.as_deref().map(|d| format!(": `sdbootutil set-default-snapshot {}` on the restored machine puts it right", num(d))).unwrap_or_default();
+                format!("it boots the entry it sorts first, {f}, which boots snapshot {} ({p}), not the default slot{fix}", num(&p))
+            }
+            (None, None) => "it boots the entry it sorts first".into(),
+        };
+        self.notes.push(format!(
+            "systemd-boot (sdbootutil): its default entry is the EFI variable LoaderEntryDefault ({source}), which `sdbootutil set-default-snapshot` sets and load doesn't restore; the same machine's firmware keeps it, but on a new machine (or any whose NVRAM lacks it; --no-nvram writes none either) {fallback}"
+        ));
+    }
+
+    /// Aeon's LUKS2 (docs/design/aeon.md, Decision 4): a container with
+    /// systemd-cryptenroll's TPM2 or recovery-key token.  What comes back
+    /// depends on whether the dump kept its header (crate::luksheader,
+    /// `dump --keep-luks-header DEV`): notes only, nothing written.
+    fn fde_notes(&mut self, x: &Value) {
+        let pcrs = match x.get("fde_seal_pcr_list").and_then(Value::as_str) {
+            Some(p) => format!("PCRs {p}, FDE_SEAL_PCR_LIST in {}", crate::transactional::FDE_TOOLS),
+            None => format!("the PCRs {} names", crate::transactional::FDE_TOOLS),
+        };
+        let mut any = false;
+        for sect in ["disks", "md_arrays", "dm_devices"] {
+            for d in self.layout.arr(&["storage", sect]).to_vec() {
+                let mut all = vec![d.clone()];
+                all.extend(d.get("partitions").and_then(Value::as_array).cloned().unwrap_or_default());
+                for p in all.iter().filter(|p| p.at(&["content", "type"]).and_then(Value::as_str) == Some("crypto_LUKS")) {
+                    let types: Vec<String> = p.at(&["content", "tokens"]).and_then(Value::as_array).into_iter().flatten().filter_map(|t| s(t, "type")).collect();
+                    let (tpm, rec) = (types.iter().any(|t| t == "systemd-tpm2"), types.iter().any(|t| t == "systemd-recovery"));
+                    if !tpm && !rec {
+                        continue;
+                    }
+                    any = true;
+                    let dev = s(p, "name").unwrap_or_default();
+                    let label = p.at(&["content", "label"]).and_then(Value::as_str).map(|l| format!(" ({l})")).unwrap_or_default();
+                    let has = match (tpm, rec) {
+                        (true, true) => "a systemd-tpm2 token and a systemd-recovery one",
+                        (true, false) => "a systemd-tpm2 token",
+                        _ => "a systemd-recovery token",
+                    };
+                    let open_as = self
+                        .layout
+                        .arr(&["storage", "dm_devices"])
+                        .iter()
+                        .find(|m| m.get("slaves").and_then(Value::as_array).is_some_and(|sl| sl.iter().any(|x| x.as_str() == Some(dev.as_str()))))
+                        .and_then(|m| m.at(&["dm", "dm_name"]).and_then(Value::as_str))
+                        .map(str::to_string)
+                        .unwrap_or_else(|| dev.clone());
+                    if crate::luksheader::kept(&self.layout.v, &dev).is_some() {
+                        let tpm_part = if tpm {
+                            format!(" The TPM2 token is sealed to the source machine's TPM (systemd-pcrlock; {pcrs}): on a new machine, or after a change in the measured boot chain (PCR 5 measures the partition table), it doesn't unseal, and the restored system asks for the recovery key (or a passphrase slot's) until it is enrolled again: `sdbootutil unenroll --method=tpm2`, then `sdbootutil enroll --method=tpm2`.")
+                        } else {
+                            String::new()
+                        };
+                        self.notes.push(format!(
+                            "LUKS2 on {dev}{label} has {has}, and the dump kept its header: the restored disk has the source's LUKS2 header, its volume key, recovery keyslot and tokens.{tpm_part} load's --key-file {open_as}=FILE opens it with a key it already has: the recovery key as typed (its dashes too), without a newline"
+                        ));
+                    } else {
+                        let lost = match (tpm, rec) {
+                            (true, true) => "TPM2 unlocking and the recovery key are",
+                            (true, false) => "TPM2 unlocking is",
+                            _ => "the recovery key is",
+                        };
+                        let enroll = match (tpm, rec) {
+                            (true, true) => "`sdbootutil enroll --method=tpm2` (and `--method=recovery-key`) is",
+                            (true, false) => "`sdbootutil enroll --method=tpm2` is",
+                            _ => "`sdbootutil enroll --method=recovery-key` is",
+                        };
+                        self.notes.push(format!(
+                            "LUKS2 on {dev}{label} has {has}, and the dump didn't keep its header (dump's default): load makes a new one (the same UUID, label and cipher), so {lost} not restored, and the passphrase load gives it (--key-file {open_as}=FILE, or typed) is its only key until {enroll} run on the restored system; to keep them, dump with --keep-luks-header {dev}"
+                        ));
+                    }
+                }
+            }
+        }
+        if any {
+            self.notes.push(format!(
+                "fde-tools and sdbootutil: {} and /etc/kernel/cmdline, entry-token and tries come back as they were, in the slots' /etc, and nothing rewrites them: a re-enrolment takes the source's choices",
+                crate::transactional::FDE_TOOLS
+            ));
+        }
     }
 
     /// The boot stage on a transactional-update system (docs/design/aeon.md,
@@ -308,6 +623,10 @@ impl Builder<'_> {
             "the ESP's stub, the booted slot's grub.cfg and each grub-snapshot.cfg lead to restored kernels and subvolumes, and every filesystem UUID they name is one load made"
         };
         out.push(Cmd::new(&["sh", "-c", &check_script(&t, &top, &mode, &kept)]).why(why).warns());
+        if mode == "bls" {
+            let (def, booted) = (x.at(&["default", "path"]).and_then(Value::as_str).unwrap_or(""), x.at(&["booted", "path"]).and_then(Value::as_str).unwrap_or(""));
+            out.push(Cmd::new(&["sh", "-c", &bls_slots_script(&t, &top, def, booted)]).why("an entry boots the default slot (whatever its boot counter), and each entry's kernel has its modules in the slot it boots").warns());
+        }
         if x.get("health_check_state").is_some_and(|v| !v.is_null()) {
             out.push(Cmd::new(&["sh", "-c", &hc_script(&t, &top)]).why("health-checker's LAST_WORKING_BTRFS_ID, from LAST_WORKING_SNAPSHOT's path: the ID its rollback sets as the default"));
         }
@@ -738,27 +1057,57 @@ mod tests {
         }
     }
 
+    /// The BLS check on a restored tree as Aeon's: sdbootutil's entries
+    /// (slot 1 blessed, slot 2 still counting: `+3`), the kernels on the ESP
+    /// in /DIR/KVER/, each slot with its modules.
     #[test]
     fn bls_check_runs() {
         let t = crate::testutil::Tree::new("tu-bls");
         let lu = "c0000000-1111-2222-3333-444444444444";
-        let e = |n: u32| format!("title openSUSE Aeon\nversion {n}@7.3.3-1-default\nsort-key opensuse-aeon\noptions root=UUID={RU} rd.luks.uuid=luks-{lu} rootflags=subvol=@/.snapshots/{n}/snapshot quiet\nlinux /opensuse-aeon/7.3.3-1-default/linux-abc\ninitrd /opensuse-aeon/7.3.3-1-default/initrd-{n}\n");
-        t.file("/t/boot/efi/loader/entries/system-7.3.3-1-default-1.conf", e(1)).file("/t/boot/efi/loader/entries/system-7.3.3-1-default-2+3.conf", e(2));
-        t.file("/t/boot/efi/opensuse-aeon/7.3.3-1-default/linux-abc", "k").file("/t/boot/efi/opensuse-aeon/7.3.3-1-default/initrd-1", "i").file("/t/boot/efi/opensuse-aeon/7.3.3-1-default/initrd-2", "i");
+        let e = |n: u32| format!("title Aeon 20261111\nversion {n}_7.3.3-1-default\nsort-key aeon\noptions root=/dev/mapper/aeon_root root=UUID={RU} rd.luks.uuid=luks-{lu} rootflags=subvol=@/.snapshots/{n}/snapshot quiet\nlinux /aeon/7.3.3-1-default/linux-abc\ninitrd /aeon/7.3.3-1-default/initrd-{n}\n");
+        t.file("/t/boot/efi/loader/entries/aeon-7.3.3-1-default-1.conf", e(1)).file("/t/boot/efi/loader/entries/aeon-7.3.3-1-default-2+3.conf", e(2));
+        t.file("/t/boot/efi/aeon/7.3.3-1-default/linux-abc", "k").file("/t/boot/efi/aeon/7.3.3-1-default/initrd-1", "i").file("/t/boot/efi/aeon/7.3.3-1-default/initrd-2", "i");
         t.file("/top/@/.snapshots/1/snapshot/.subvol", "258").file("/top/@/.snapshots/2/snapshot/.subvol", "269");
+        for n in [1, 2] {
+            std::fs::create_dir_all(t.p(&format!("/top/@/.snapshots/{n}/snapshot/usr/lib/modules/7.3.3-1-default"))).unwrap();
+        }
         let path = fake_btrfs(&t);
         let (tt, top) = (t.p("/t").display().to_string(), t.p("/top").display().to_string());
+        let (s1, s2) = ("@/.snapshots/1/snapshot", "@/.snapshots/2/snapshot");
         let (ok, out, err) = sh(&check_script(&tt, &top, "bls", &[RU.into(), lu.into()]), &path);
         assert!(ok && out.contains("transactional: bls: 2 snapshot entries") && err.is_empty(), "{out}{err}");
+        let slots = |d: &str, b: &str| sh(&bls_slots_script(&tt, &top, d, b), &path);
+        let (ok, out, err) = slots(s1, s1);
+        assert!(ok && out.contains("the default slot @/.snapshots/1/snapshot is booted by aeon-7.3.3-1-default-1\n") && out.contains("each entry's kernel has its modules") && err.is_empty(), "{out}{err}");
+        // The default (and booted) slot's entry still counting: matched with
+        // its counter stripped.
+        let (ok, out, err) = slots(&format!("/{s2}"), s2);
+        assert!(ok && out.contains("the default slot @/.snapshots/2/snapshot is booted by aeon-7.3.3-1-default-2\n") && err.is_empty(), "{out}{err}");
+        // No entry boots the default slot: a mismatch; none for the booted
+        // one only said.
+        let (ok, _, err) = slots("@/.snapshots/3/snapshot", "@/.snapshots/4/snapshot");
+        assert!(!ok && err.contains("transactional: no BLS entry on the restored ESP boots the default slot @/.snapshots/3/snapshot") && err.contains("transactional: 1 mismatches between the restored BLS entries and slots"), "{err}");
+        assert!(err.contains("transactional: bls: no BLS entry on the restored ESP boots @/.snapshots/4/snapshot, the slot the source had booted"), "{err}");
+        let (ok, _, err) = slots(s1, "@/.snapshots/4/snapshot");
+        assert!(ok && err.contains("no BLS entry on the restored ESP boots @/.snapshots/4/snapshot"), "{err}");
+        // Slot 2 without its kernel's modules (the ESP's kernel isn't its).
+        std::fs::remove_dir(t.p("/top/@/.snapshots/2/snapshot/usr/lib/modules/7.3.3-1-default")).unwrap();
+        let (ok, _, err) = slots(s1, s1);
+        assert!(!ok && err.contains("aeon-7.3.3-1-default-2+3.conf: its kernel is 7.3.3-1-default (linux /.../7.3.3-1-default/linux-*), and @/.snapshots/2/snapshot has no usr/lib/modules/7.3.3-1-default") && err.contains("transactional: 1 mismatches"), "{err}");
+        // A kernel outside sdbootutil's /DIR/KVER/ (no KVER to tell): not checked.
+        t.file("/t/boot/efi/loader/entries/aeon-7.3.3-1-default-2+3.conf", e(2).replace("linux /aeon/7.3.3-1-default/linux-abc", "linux /vmlinuz-7.3.3-1-default"));
+        assert!(slots(s1, s1).0);
+        t.file("/t/boot/efi/loader/entries/aeon-7.3.3-1-default-2+3.conf", e(2));
+        std::fs::create_dir_all(t.p("/top/@/.snapshots/2/snapshot/usr/lib/modules/7.3.3-1-default")).unwrap();
         // An initrd gone, a slot gone, the LUKS UUID not kept.
-        std::fs::remove_file(t.p("/t/boot/efi/opensuse-aeon/7.3.3-1-default/initrd-2")).unwrap();
+        std::fs::remove_file(t.p("/t/boot/efi/aeon/7.3.3-1-default/initrd-2")).unwrap();
         std::fs::remove_file(t.p("/top/@/.snapshots/1/snapshot/.subvol")).unwrap();
         let (ok, _, err) = sh(&check_script(&tt, &top, "bls", &[RU.into()]), &path);
         assert!(!ok, "{err}");
         for want in [
-            "system-7.3.3-1-default-2+3.conf: /opensuse-aeon/7.3.3-1-default/initrd-2 isn't on the restored ESP",
-            "system-7.3.3-1-default-1.conf: rootflags=subvol=@/.snapshots/1/snapshot isn't a subvolume of the restored filesystem",
-            &format!("boot/efi/loader/entries/system-7.3.3-1-default-1.conf names the filesystem {lu}, which load doesn't make"),
+            "aeon-7.3.3-1-default-2+3.conf: /aeon/7.3.3-1-default/initrd-2 isn't on the restored ESP",
+            "aeon-7.3.3-1-default-1.conf: rootflags=subvol=@/.snapshots/1/snapshot isn't a subvolume of the restored filesystem",
+            &format!("boot/efi/loader/entries/aeon-7.3.3-1-default-1.conf names the filesystem {lu}, which load doesn't make"),
             "transactional: 4 mismatches",
         ] {
             assert!(err.contains(want), "{want}: {err}");
@@ -767,6 +1116,8 @@ mod tests {
         let empty = crate::testutil::Tree::new("tu-bls-none");
         let (ok, _, err) = sh(&check_script(&empty.p("/").display().to_string(), &top, "bls", &[]), &path);
         assert!(!ok && err.contains("boot/efi/loader/entries isn't on the restored ESP") && err.contains("no BLS entry"), "{err}");
+        let (ok, _, err) = sh(&bls_slots_script(&empty.p("/").display().to_string(), &top, s1, s1), &path);
+        assert!(!ok && err.contains("boots the default slot @/.snapshots/1/snapshot"), "{err}");
     }
 
     /// The ID rewritten from the path, the rest of the file byte for byte
@@ -799,5 +1150,263 @@ mod tests {
         std::fs::remove_file(&file).unwrap();
         let (ok, _, err) = sh(&script, &path);
         assert!(!ok && err.contains("health-check.state isn't in the restored /var"), "{err}");
+    }
+
+    /// The aeon guest's layout, SYNTHETIC: tests/fixtures/aeon-synthetic.json
+    /// was written by hand (from microos-fresh.json's schema) after the facts
+    /// read off the guest's disk by `vm-mount --ro` on chopin, 2026-11-15,
+    /// and its build logs (docs/design/aeon.md, "Guests / aeon"); no bko-holt
+    /// dump of it exists yet.  Replace it with a real dump of the guest (and
+    /// the corpus's golden plan) after its HoltTest1 PASS.  It models: GPT,
+    /// ESP vda1 (sdbootutil's systemd-boot behind shim, the kernel and initrd
+    /// in /aeon/KVER/), vda2 LUKS2 (systemd-recovery and systemd-tpm2 tokens
+    /// on keyslots 1 and 2, no passphrase slot), opened as aeon_root, its
+    /// btrfs with MicroOS's subvolumes, slot 1 booted and the default; one
+    /// blessed entry; no health-check.state; fde-tools' PCRs 4,5,7,9.  Its
+    /// UUIDs are pseudonyms; it has no key, salt or digest.
+    pub(crate) fn aeon() -> Value {
+        crate::json::parse(include_str!("../../tests/fixtures/aeon-synthetic.json")).unwrap()
+    }
+
+    const AEON_FS: &str = "bc000000-0000-4000-8000-000000000005";
+
+    fn has(notes: &[String], n: &str) -> bool {
+        notes.iter().any(|x| x.contains(n))
+    }
+
+    /// Aeon (the synthetic layout): the transactional arm, not the via-shim
+    /// systemd-boot one; nothing regenerated; the BLS checks; the BLS
+    /// health-checker note; LUKS2 made anew (dump's default: the header not
+    /// kept), its PBKDF not the token slots' minimal one, and the note that
+    /// TPM2 and the recovery key don't come back.
+    #[test]
+    fn aeon_plan() {
+        let v = aeon();
+        assert_eq!(booted_root(&v).as_deref(), Some("@/.snapshots/1/snapshot"));
+        let b = plan(&v, &["--repo", "/srv/repo", "--key-file", "aeon_root=/run/pw"]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let n = &b.notes;
+        assert!(has(n, "transactional-update: nothing is regenerated in a snapshot"), "{n:?}");
+        assert!(!has(n, "systemd-boot through shim") && !has(n, "an update was pending"), "{n:?}");
+        assert!(has(n, "health-checker: on the BLS path (systemd-boot with sdbootutil) the source has no /var/lib/misc/health-check.state and keeps no subvolume IDs"), "{n:?}");
+        assert!(has(n, "what the boot stage writes into the restored root: /var/log/bko-holt (this restore's log), both in @/var"), "{n:?}");
+        assert!(!has(n, "boot counting"), "{n:?}");
+        assert!(has(n, "systemd-boot (sdbootutil): its default entry is the EFI variable LoaderEntryDefault (the source had none set), which `sdbootutil set-default-snapshot` sets and load doesn't restore; the same machine's firmware keeps it, but on a new machine (or any whose NVRAM lacks it; --no-nvram writes none either) it boots the entry it sorts first, aeon-7.3.3-1-default-1.conf, which boots the default slot (snapshot 1), as on the source"), "{n:?}");
+        assert!(has(n, "LUKS2 on vda2 (luks-root-x86-64) has a systemd-tpm2 token and a systemd-recovery one, and the dump didn't keep its header (dump's default): load makes a new one (the same UUID, label and cipher), so TPM2 unlocking and the recovery key are not restored, and the passphrase load gives it (--key-file aeon_root=FILE, or typed) is its only key until `sdbootutil enroll --method=tpm2` (and `--method=recovery-key`) is run on the restored system; to keep them, dump with --keep-luks-header vda2"), "{n:?}");
+        assert!(has(n, "fde-tools and sdbootutil: /etc/sysconfig/fde-tools and /etc/kernel/cmdline, entry-token and tries come back as they were"), "{n:?}");
+        assert!(has(n, "LUKS2 on /dev/vdb2: every keyslot of the source is a token's"), "{n:?}");
+        // LUKS2 anew: the source's UUID, label and cipher; the passphrase's
+        // keyslot not with the token slots' PBKDF2 at 1000 iterations.
+        let asm = text(b.stage(Stage::Assemble));
+        let fmt = asm.lines().find(|l| l.starts_with("cryptsetup luksFormat")).unwrap_or_else(|| panic!("{asm}"));
+        for want in ["--type=luks2", "--cipher=aes-xts-plain64", "--key-size=512", "--offset=32768", "--label=luks-root-x86-64", "--uuid=bc000000-0000-4000-8000-000000000004", "--key-file=/run/pw", "/dev/vdb2"] {
+            assert!(fmt.contains(want), "{want}: {fmt}");
+        }
+        for no in ["--pbkdf", "1000", "sha512"] {
+            assert!(!fmt.contains(no), "{no}: {fmt}");
+        }
+        assert!(asm.contains("cryptsetup open --key-file=/run/pw /dev/vdb2 aeon_root\n"), "{asm}");
+        assert!(!asm.contains("luksHeaderRestore"), "{asm}");
+        // / is slot 1, named, on the opened container; ro=vfs left out.
+        let m = text(b.stage(Stage::Mount));
+        assert!(m.contains("mount -t btrfs -o compress=zstd:1,subvol=@/.snapshots/1/snapshot /dev/mapper/aeon_root /mnt/bko-target\n"), "{m}");
+        assert!(!m.contains("ro=vfs"), "{m}");
+        // Boot: nothing regenerated or chrooted; the BLS check with the
+        // default and booted slot; the NVRAM entry for shim; no BIOS GRUB,
+        // no health-check.state.
+        let bt = text(b.stage(Stage::Boot));
+        let run: String = bt.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n");
+        for no in ["chroot", "dracut", "mkinitrd", "grub2-mkconfig", "grub2-install", "grub-install", "shim-install", "sdbootutil", "bootctl", "setfiles", "restorecon", "--rbind", "grub-bios-setup", "health-check.state", "luksAddKey", "cryptenroll"] {
+            assert!(!run.contains(no), "{no}: {bt}");
+        }
+        let t = format!("{RUN_DIR}/btrfs/{AEON_FS}");
+        let mount = pos(&bt, &format!("mount -t btrfs -o subvolid=5,noatime /dev/mapper/aeon_root {t}\n"));
+        let check = pos(&bt, "if [ bls = bls ]; then");
+        let slots = pos(&bt, "def=@/.snapshots/1/snapshot; boot=@/.snapshots/1/snapshot;");
+        assert!(check < slots && bt[slots..].contains("usr/lib/modules/$kv"), "{bt}");
+        assert!(bt.contains(&format!("kept='\\'' bc00-0001 bc000000-0000-4000-8000-000000000004 {AEON_FS} '\\''")), "{bt}");
+        let efi = pos(&bt, "--label 'Aeon Boot Manager' --loader '\\EFI\\systemd\\shim.efi'");
+        let ro = pos(&bt, &format!("btrfs property set -ts {t}/@/.snapshots/1/snapshot ro true\n"));
+        assert!(mount < check && slots < efi && efi < ro, "{bt}");
+        // --no-nvram: no entry made, the same note.
+        let b = plan(&v, &["--repo", "/srv/repo", "--key-file", "aeon_root=/run/pw", "--no-nvram"]);
+        assert!(!text(b.stage(Stage::Boot)).contains("efibootmgr") && has(&b.notes, "--no-nvram writes none either"), "{:?}", b.notes);
+        // A health-check.state on the BLS path after all: rewritten as on GRUB.
+        let mut v2 = v.clone();
+        set_at(&mut v2, &["boot", "transactional", "health_check_state"], j(r#"{"last_working_btrfs_id": 258, "last_working_btrfs_id_raw": "258", "last_working_snapshot": "@/.snapshots/1/snapshot"}"#));
+        let b2 = plan(&v2, &["--repo", "/srv/repo", "--key-file", "aeon_root=/run/pw"]);
+        assert!(!has(&b2.notes, "health-checker: on the BLS path") && has(&b2.notes, "LAST_WORKING_BTRFS_ID=258 names @/.snapshots/1/snapshot"), "{:?}", b2.notes);
+        assert!(text(b2.stage(Stage::Boot)).contains("f=/mnt/bko-target/var/lib/misc/health-check.state"));
+    }
+
+    /// The same layout, not transactional (boot.transactional gone, / in
+    /// fstab writable: a Tumbleweed with sdbootutil's systemd-boot): the
+    /// via-shim systemd-boot arm, which the transactional one goes before.
+    #[test]
+    fn aeon_before_the_via_shim_arm() {
+        let mut v = aeon();
+        set_at(&mut v, &["boot", "transactional"], Value::Null);
+        set_at(&mut v, &["storage", "fstab", "0", "options"], Value::from("compress=zstd:1"));
+        let b = plan(&v, &["--repo", "/srv/repo", "--key-file", "aeon_root=/run/pw"]);
+        assert!(has(&b.notes, "systemd-boot through shim"), "{:?}", b.notes);
+        assert!(!has(&b.notes, "transactional-update") && !has(&b.notes, "LoaderEntryDefault"), "{:?}", b.notes);
+        assert!(!text(b.stage(Stage::Boot)).contains("if [ bls = bls ]"));
+    }
+
+    /// dump --keep-luks-header vda2: the header written back and opened with
+    /// the recovery key's file, no luksFormat; the note says what the TPM2
+    /// token needs on a new machine.  Without --key-file: a problem.
+    #[test]
+    fn aeon_kept_header() {
+        let t = crate::testutil::Tree::new("tu-aeon-hdr");
+        let hdr = b"LUKS\xba\xbe\x00\x02 the header, not a real one".to_vec();
+        let file = "luks2-header-bc000000-0000-4000-8000-000000000004.img";
+        t.file(&format!("/hdr/{file}"), &hdr);
+        let hdir = t.p("/hdr").display().to_string();
+        let mut v = aeon();
+        set_at(
+            &mut v,
+            &["storage", "luks_headers"],
+            j(&format!(
+                r#"[{{"device": "vda2", "luks_uuid": "bc000000-0000-4000-8000-000000000004", "label": "luks-root-x86-64", "file": "{file}", "written_to": "/run/bko-holt/luks-headers/{file}", "bytes": {}, "sha256": "{}"}}]"#,
+                hdr.len(),
+                crate::bytes::sha256_hex(&hdr)
+            )),
+        );
+        let b = plan(&v, &["--repo", "/srv/repo", "--luks-header-dir", &hdir, "--key-file", "aeon_root=/run/recovery-key"]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        assert!(has(&b.notes, "LUKS2 on vda2 (luks-root-x86-64) has a systemd-tpm2 token and a systemd-recovery one, and the dump kept its header: the restored disk has the source's LUKS2 header, its volume key, recovery keyslot and tokens. The TPM2 token is sealed to the source machine's TPM (systemd-pcrlock; PCRs 4,5,7,9, FDE_SEAL_PCR_LIST in /etc/sysconfig/fde-tools): on a new machine, or after a change in the measured boot chain (PCR 5 measures the partition table), it doesn't unseal"), "{:?}", b.notes);
+        assert!(has(&b.notes, "`sdbootutil unenroll --method=tpm2`, then `sdbootutil enroll --method=tpm2`. load's --key-file aeon_root=FILE opens it with a key it already has: the recovery key as typed (its dashes too), without a newline"), "{:?}", b.notes);
+        assert!(!has(&b.notes, "didn't keep its header") && !has(&b.notes, "every keyslot of the source is a token's"), "{:?}", b.notes);
+        let asm = text(b.stage(Stage::Assemble));
+        assert!(asm.contains(&format!("cryptsetup luksHeaderRestore --batch-mode /dev/vdb2 --header-backup-file {hdir}/{file}\n")), "{asm}");
+        assert!(asm.contains("cryptsetup open --key-file=/run/recovery-key /dev/vdb2 aeon_root\n"), "{asm}");
+        let cmds: String = asm.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n");
+        assert!(!cmds.contains("luksFormat") && !cmds.contains("luksAddKey"), "{asm}");
+        // Its label names it too.
+        assert!(plan(&v, &["--repo", "/srv/repo", "--luks-header-dir", &hdir, "--key-file", "luks-root-x86-64=/run/rk"]).problems.is_empty());
+        let p = plan(&v, &["--repo", "/srv/repo", "--luks-header-dir", &hdir]).problems;
+        assert!(p.iter().any(|x| x.contains("vda2: its LUKS2 header is kept, so it opens only with a key it already has: give --key-file luks-root-x86-64=FILE")), "{p:?}");
+    }
+
+    /// More slots, as transactional-update and sdbootutil leave them: 2 (a
+    /// kernel update whose boots failed: `+0-3`) and 3 (pending: `+3`, made
+    /// the default), 1 booted.
+    fn aeon_slots(default: u64) -> Value {
+        let mut v = aeon();
+        let (u1, u1e) = (uuid_of(&v, "@/.snapshots/1/snapshot"), uuid_of(&v, "@/.snapshots/1/snapshot/etc"));
+        let mut subs = Vec::new();
+        for (n, id) in [(2u64, 270u64), (3, 272)] {
+            subs.push(format!(r#"{{"id": {id}, "gen": 300, "parent": 257, "top_level": 257, "parent_uuid": "{u1}", "uuid": "bc000000-0000-4000-8000-0000000000f{n}", "path": "<FS_TREE>/@/.snapshots/{n}/snapshot", "readonly": true, "properties": {{"ro": "true"}}}}"#));
+            subs.push(format!(r#"{{"id": {}, "gen": 301, "parent": {id}, "top_level": {id}, "parent_uuid": "{u1e}", "uuid": "bc000000-0000-4000-8000-0000000000e{n}", "path": "<FS_TREE>/@/.snapshots/{n}/snapshot/etc", "readonly": false, "properties": {{"ro": "false"}}}}"#, id + 1));
+        }
+        with_subvolumes(&mut v, &subs.iter().map(String::as_str).collect::<Vec<_>>());
+        let did = if default == 3 { 272 } else if default == 2 { 270 } else { 258 };
+        set_at(&mut v, &["storage", "btrfs", "0", "default_subvolume"], j(&format!(r#"{{"id": {did}, "gen": 302, "top_level": 257, "path": "@/.snapshots/{default}/snapshot"}}"#)));
+        set_at(&mut v, &["boot", "transactional", "default"], j(&format!(r#"{{"path": "@/.snapshots/{default}/snapshot", "id": {did}, "snapshot": {default}}}"#)));
+        set_at(&mut v, &["boot", "transactional", "pending_update"], Value::Bool(default != 1));
+        let mut entries = v.at(&["boot", "systemd_boot", "entries"]).and_then(Value::as_array).cloned().unwrap();
+        let mut files = v.at(&["boot", "esps", "0", "contents", "files"]).and_then(Value::as_array).cloned().unwrap();
+        for (n, k, ctr) in [(2, "7.4.0-1-default", "+0-3"), (3, "7.4.1-1-default", "+3")] {
+            entries.push(j(&format!(r#"{{"file": "aeon-{k}-{n}{ctr}.conf", "title": "Aeon 20261120 (Snapshot Update of #{})", "version": "{n}_{k}", "sort-key": "aeon", "options": "console=tty0 root=/dev/mapper/aeon_root root=UUID={AEON_FS} rootflags=subvol=@/.snapshots/{n}/snapshot", "linux": "/aeon/{k}/linux-{n}", "initrd": "/aeon/{k}/initrd-{n}"}}"#, n - 1)));
+            files.push(j(&format!(r#"{{"path": "aeon/{k}/linux-{n}", "size": 1}}"#)));
+            files.push(j(&format!(r#"{{"path": "aeon/{k}/initrd-{n}", "size": 1}}"#)));
+        }
+        set_at(&mut v, &["boot", "systemd_boot", "entries"], Value::Arr(entries));
+        set_at(&mut v, &["boot", "esps", "0", "contents", "files"], Value::Arr(files));
+        v
+    }
+
+    #[test]
+    fn aeon_counted_entries() {
+        let key = ["--repo", "/srv/repo", "--key-file", "aeon_root=/run/pw"];
+        // Pending update: 3 the default, its entry sorted first.
+        let b = plan(&aeon_slots(3), &key);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let n = &b.notes;
+        assert!(has(n, "transactional-update: an update was pending on the source: its default is snapshot 3 (@/.snapshots/3/snapshot), not the booted 1"), "{n:?}");
+        assert!(has(n, "systemd-boot's boot counting: aeon-7.4.0-1-default-2+0-3.conf (0 tries left, 3 done), aeon-7.4.1-1-default-3+3.conf (3 tries left, 0 done) come back as restored"), "{n:?}");
+        assert!(has(n, "it boots the entry it sorts first, aeon-7.4.1-1-default-3+3.conf, which boots the default slot (snapshot 3), as on the source"), "{n:?}");
+        assert!(!has(n, "has no tries left") && !has(n, "the slot the source had booted"), "{n:?}");
+        let bt = text(b.stage(Stage::Boot));
+        assert!(bt.contains("def=@/.snapshots/3/snapshot; boot=@/.snapshots/1/snapshot;"), "{bt}");
+        // 2 the default, its entry out of tries: sorted last, so a new
+        // machine boots 3's; the note says how to put it right.
+        let b = plan(&aeon_slots(2), &key);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let n = &b.notes;
+        assert!(has(n, "systemd-boot: the default slot's entry aeon-7.4.0-1-default-2+0-3.conf has no tries left"), "{n:?}");
+        assert!(has(n, "it boots the entry it sorts first, aeon-7.4.1-1-default-3+3.conf, which boots snapshot 3 (@/.snapshots/3/snapshot), not the default slot: `sdbootutil set-default-snapshot 2` on the restored machine puts it right"), "{n:?}");
+        // 1 the default (a rollback: sdbootutil set LoaderEntryDefault),
+        // 3's entry sorted first.
+        let mut v = aeon_slots(1);
+        set_at(&mut v, &["boot", "efi", "loader_interface", "loader_entry_default"], Value::from("aeon-7.3.3-1-default-1.conf"));
+        let b = plan(&v, &key);
+        assert!(has(&b.notes, "LoaderEntryDefault (the source's is aeon-7.3.3-1-default-1.conf)") && has(&b.notes, "which boots snapshot 3 (@/.snapshots/3/snapshot), not the default slot: `sdbootutil set-default-snapshot 1`"), "{:?}", b.notes);
+        // loader.conf's default instead of the order.
+        set_at(&mut v, &["boot", "systemd_boot", "loader_conf"], j(r#"{"default": "aeon-*"}"#));
+        assert!(has(&plan(&v, &key).notes, "loader.conf's `default aeon-*` (restored) picks the entry"));
+    }
+
+    /// What load can't restore without regenerating: the default slot with
+    /// no entry, an entry whose kernel isn't on the ESP or whose slot isn't
+    /// in the layout; the booted slot without one is a note.
+    #[test]
+    fn aeon_problems() {
+        let key = ["--repo", "/srv/repo", "--key-file", "aeon_root=/run/pw"];
+        let mut v = aeon_slots(3);
+        let mut entries = v.at(&["boot", "systemd_boot", "entries"]).and_then(Value::as_array).cloned().unwrap();
+        entries.retain(|e| !e.get("file").and_then(Value::as_str).unwrap().contains("-3+3"));
+        set_at(&mut v, &["boot", "systemd_boot", "entries"], Value::Arr(entries.clone()));
+        let p = plan(&v, &key).problems;
+        assert!(p.iter().any(|x| x == "transactional-update (BLS): no loader entry boots the default slot, snapshot 3 (@/.snapshots/3/snapshot; no rootflags=subvol= names it): nothing is regenerated (no sdbootutil), so the restored machine couldn't boot it"), "{p:?}");
+        // Booted 1 without its entry: a note (the restored machine boots
+        // the default), not a problem.
+        let mut w = aeon_slots(3);
+        let mut e2 = w.at(&["boot", "systemd_boot", "entries"]).and_then(Value::as_array).cloned().unwrap();
+        e2.remove(0);
+        set_at(&mut w, &["boot", "systemd_boot", "entries"], Value::Arr(e2));
+        let b = plan(&w, &key);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        assert!(has(&b.notes, "transactional-update (BLS): no loader entry boots snapshot 1 (@/.snapshots/1/snapshot), the slot the source had booted"), "{:?}", b.notes);
+        // A kernel not on the ESP, a slot not in the layout.
+        let mut v = aeon();
+        set_at(&mut v, &["boot", "systemd_boot", "entries", "0", "linux"], Value::from("/aeon/7.3.3-1-default/linux-gone"));
+        let p = plan(&v, &key).problems;
+        assert!(p.iter().any(|x| x == "transactional-update (BLS): aeon-7.3.3-1-default-1.conf's linux /aeon/7.3.3-1-default/linux-gone isn't on the source's ESP (boot.esps' files): nothing is regenerated, so the restored entry would boot nothing"), "{p:?}");
+        let mut v = aeon();
+        let o = v.at(&["boot", "systemd_boot", "entries", "0", "options"]).and_then(Value::as_str).unwrap().replace("rootflags=subvol=@/.snapshots/1/snapshot", "rootflags=subvol=@/.snapshots/9/snapshot");
+        set_at(&mut v, &["boot", "systemd_boot", "entries", "0", "options"], Value::from(o));
+        let p = plan(&v, &key).problems;
+        assert!(p.iter().any(|x| x == "transactional-update (BLS): aeon-7.3.3-1-default-1.conf boots rootflags=subvol=@/.snapshots/9/snapshot, which isn't a subvolume in the layout"), "{p:?}");
+        assert!(p.iter().any(|x| x.starts_with("transactional-update (BLS): no loader entry boots the default slot, snapshot 1")), "{p:?}");
+        set_at(&mut v, &["boot", "systemd_boot", "entries"], j("[]"));
+        assert!(plan(&v, &key).problems.iter().any(|x| x.starts_with("transactional-update (BLS): the dump has no loader entry")));
+    }
+
+    #[test]
+    fn bls_helpers() {
+        assert_eq!(bls_counter("aeon-7.3.3-1-default-1.conf"), ("aeon-7.3.3-1-default-1".into(), None));
+        assert_eq!(bls_counter("aeon-7.3.3-1-default-1+3.conf"), ("aeon-7.3.3-1-default-1".into(), Some((3, 0))));
+        assert_eq!(bls_counter("aeon-7.3.3-1-default-1+0-3.conf"), ("aeon-7.3.3-1-default-1".into(), Some((0, 3))));
+        assert_eq!(bls_counter("x+y.conf"), ("x+y".into(), None));
+        assert_eq!(bls_counter("+3.conf"), ("+3".into(), None));
+        assert_eq!(entry_slot("root=UUID=x rootflags=subvol=/@/.snapshots/2/snapshot/ quiet").as_deref(), Some("@/.snapshots/2/snapshot"));
+        assert_eq!(entry_slot("rootflags=compress=zstd,subvol=@/a rootflags=subvol=@/b").as_deref(), Some("@/b"));
+        assert_eq!(entry_slot("rootflags=compress=zstd root=UUID=x"), None);
+        use std::cmp::Ordering::*;
+        for (a, b, o) in [("10_7.3.3-1-default", "9_7.3.3-1-default", Greater), ("1_7.3.3", "1_7.3.10", Less), ("1_7.3.3", "1_7.3.3", Equal), ("1.0~rc1", "1.0", Less), ("007", "7", Equal), ("1a", "1", Greater)] {
+            assert_eq!(vercmp(a, b), o, "{a} {b}");
+        }
+        let e = |f: &str, v: &str, k: Option<&str>| {
+            let mut o = crate::json::Obj::new().set("file", f).set("version", v);
+            if let Some(k) = k {
+                o.put("sort-key", k);
+            }
+            o.build()
+        };
+        let list = vec![e("a-1.conf", "1_7", Some("aeon")), e("a-3+0-3.conf", "3_7", Some("aeon")), e("a-2+3.conf", "2_7", Some("aeon")), e("old.conf", "9", None), e("a-10.conf", "10_7", Some("aeon"))];
+        let order: Vec<&str> = bls_sorted(&list).iter().filter_map(|x| x.get("file").and_then(Value::as_str)).collect();
+        assert_eq!(order, vec!["a-10.conf", "a-2+3.conf", "a-1.conf", "old.conf", "a-3+0-3.conf"]);
     }
 }

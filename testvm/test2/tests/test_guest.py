@@ -54,8 +54,8 @@ class Spec(unittest.TestCase):
     def setUp(self):
         self.sf = rows_guest.load_spec(REPO)
 
-    def test_seventy_two_guests_and_the_exclusion(self):
-        self.assertEqual(len(self.sf.names()), 72)
+    def test_seventy_seven_guests_and_the_exclusion(self):
+        self.assertEqual(len(self.sf.names()), 77)
         self.assertNotIn("freebsd15-builder", self.sf.names())
         self.assertEqual(self.sf.data["excluded"], {"freebsd15-builder": "a build helper"})
 
@@ -78,7 +78,7 @@ class Spec(unittest.TestCase):
                                       "freebsd15-mirror", "omnios58-mirror", "ubuntu26-luks", "chimera", "kinoite44",
                                       "chimera-uefi", "chimera-zfs", "gentoo", "gentoo-systemd", "cachyos-zfs", "anduinos2", "neon24", "garuda", "biglinux", "vanilla3",
                                       "oi2610", "oi2610-bios", "pikaos4", "pikaos4-luks", "proxmox9", "proxmox9-mirror",
-                                      "microos", "ubuntu24-uefi", "ubuntu24-luks"]))
+                                      "microos", "aeon", "ubuntu24-uefi", "ubuntu24-luks", "elementary8", "elementary8-luks"]))
         for n in new:
             self.assertIn("testvm/test2/guest/new-guest.sh", self.sf.entry(n)["harness"], n)
 
@@ -88,7 +88,8 @@ class Spec(unittest.TestCase):
         self.assertEqual(self.sf.entry("redox")["kind"], "redox")
         self.assertIs(self.sf.entry("redox")["update"], False)
         self.assertEqual(self.sf.entry("sculpt2610")["kind"], "sculpt")
-        self.assertIs(self.sf.entry("sculpt2610")["update"], False)
+        self.assertIs(self.sf.entry("sculpt2610").get("update", True), True)   # sculpt-update, in any round
+        self.assertIn("testvm/test2/guest/update-sculpt.sh", self.sf.entry("sculpt2610")["harness"])
         d = self.sf.entry("dragonfly6")
         self.assertEqual((d["cpus"], d["memory"], d["timeout_s"]), (4, 6144, 7200))
         self.assertEqual(self.sf.entry("manjaro")["checks"]["kernels_max"], 3)
@@ -466,6 +467,8 @@ class Pool(unittest.TestCase):
         self.assertEqual(guest.mode_of({"kind": "redox"}), "console")
         self.assertEqual(guest.mode_of({"kind": "sculpt"}), "console")
         self.assertEqual(guest.mode_of({"kind": "ssh"}, update=True), "update")
+        self.assertEqual(guest.mode_of({"kind": "probe"}, update=True), "update")
+        self.assertEqual(guest.mode_of({"kind": "sculpt"}, update=True), "console-update")
 
 
 class Reruns(unittest.TestCase):
@@ -539,6 +542,23 @@ class Reruns(unittest.TestCase):
         self.assertEqual(len(jobs.calls), 1)
         self.assertIn(" update debian12 ", jobs.calls[0]["cmd"])
         self.assertEqual(jobs.calls[0]["env"]["VM_UPDATE_ROUND"], rs.run)
+
+    def test_sculpt_updates_by_sculpt_update_in_a_round(self):
+        io, jobs = FakeIO(), FakeJobs()
+        io.summ["sculpt2610"] = summary(merged=True, steps=["sculpt-update: pc image 2026-10-30 -> 2026-11-20"],
+                                        generation_before="g1", generation_after="g2")
+        r, rs, ctx, _ = make(["sculpt2610"], io, jobs, word=Word(update=True), fleet=mock.Mock(take=lambda: True))
+        with mock.patch.object(guest.Runner, "tree_matches", lambda *a: None), mock.patch.object(guest.Runner, "reproject_if_needed", lambda *a: None):
+            r.run()
+        self.assertEqual(len(jobs.calls), 1)
+        self.assertIn(" console-update sculpt2610 ", jobs.calls[0]["cmd"])
+        self.assertEqual(jobs.calls[0]["env"]["VM_UPDATE_ROUND"], rs.run)
+        self.assertNotIn("VM_UPDATE_RAM", jobs.calls[0]["env"])
+        self.assertEqual(jobs.calls[0]["host"], "chopin")       # the fleet host
+        io.script = mock.Mock(side_effect=AssertionError("no package lists for Sculpt"))
+        t = r.update_block()
+        self.assertIn("sculpt2610: merged; steps: sculpt-update: pc image 2026-10-30 -> 2026-11-20; no fingerprint\n", t + "\n")
+        io.script.assert_not_called()
 
     def test_a_job_that_left_no_row_gets_a_harness_row(self):
         jobs = FakeJobs()
@@ -1259,6 +1279,65 @@ class Rows(unittest.TestCase):
         r = rows_guest.build(["--guest", "redox", "--run", "t2v-x", "--out", self.out, "--mode", "console", "--rc", "0", "--cells", self.cells], HC(self.work, self.hroot))
         self.assertEqual(r["needs"]["new:probe"], "PASS")
         self.assertEqual(r["needs"]["try"], "SKIP")
+        self.assertNotIn("image:current", r["needs"])   # sculpt-update --check is Sculpt's alone
+
+    def sculpt(self, probe, mode="console", rc=0, **res):
+        for n in ("before", "after"):
+            os.remove(os.path.join(self.out, f"hook-{n}.out"))
+        if probe is not None:
+            self.log("hook-probe.out", probe)
+        if res.pop("result", True):   # (result=False: no result.json)
+            self.result(guest="sculpt2610", mode=mode, rc=rc, hooks={}, **res)
+        return rows_guest.build(["--guest", "sculpt2610", "--run", "t2v-x", "--out", self.out, "--mode", mode, "--rc", str(rc),
+                                 "--cells", self.cells], HC(self.work, self.hroot))
+
+    def test_sculpt_console_check_current(self):
+        r = self.sculpt("=== cmd probe\nok\n=== cmd update-check\nexit 0\nsculpt-update: CURRENT: 2026-10-30\n=== end\n")
+        self.assertEqual((r["needs"]["new:probe"], r["needs"]["image:current"], r["verdict"]), ("PASS", "PASS", "PASS"))
+        self.assertNotIn("image:current", r["extra"]["notes"])
+
+    def test_sculpt_console_check_stale_is_a_note(self):
+        for rc, said in ((10, "stale: a newer pc image"), (11, "a newer Sculpt release is out")):
+            r = self.sculpt(f"=== cmd probe\nok\n=== cmd update-check\nexit {rc}\nsculpt-update: UPDATE AVAILABLE: x\n=== end\n")
+            self.assertEqual((r["needs"]["image:current"], r["verdict"]), ("PASS", "PASS"), rc)
+            self.assertIn(said, r["extra"]["notes"]["image:current"])
+            self.setUp()
+
+    def test_sculpt_console_check_that_failed_is_a_skip(self):
+        r = self.sculpt("=== cmd probe\nok\n=== cmd update-check\nexit 1\nsculpt-update: curl failed (exit 6)\n=== end\n")
+        self.assertEqual((r["needs"]["image:current"], r["verdict"]), ("SKIP", "PASS"))
+        self.assertIn("exit 1: curl failed", r["extra"]["skips"]["image:current"])
+        self.setUp()
+        r = self.sculpt("=== cmd probe\nok\n=== end\n")       # an older probe: no check section
+        self.assertEqual(r["needs"]["image:current"], "SKIP")
+
+    def test_sculpt_update_merged(self):
+        r = self.sculpt(None, mode="console-update", merged=True, generation_before="g0", generation_after="g1",
+                        merge={"decided": "merged", "why": None, "steps": ["sculpt-update: pc image 2026-10-30 -> 2026-11-20"]})
+        self.assertEqual((r["needs"]["try"], r["verdict"]), ("PASS", "PASS"))
+        self.assertTrue(r["extra"]["merged"])
+        self.assertFalse(r["extra"]["try_ran"])
+        self.assertEqual((r["extra"]["generation_before"], r["extra"]["generation_after"]), ("g0", "g1"))
+        self.assertEqual(r["extra"]["steps"], ["sculpt-update: pc image 2026-10-30 -> 2026-11-20"])
+        self.assertEqual(r["needs"]["after:fstab"], "SKIP")
+
+    def test_sculpt_update_nothing_newer(self):
+        r = self.sculpt(None, mode="console-update", merge={"decided": "nothing", "why": "sculpt-update: nothing newer to install", "steps": []})
+        self.assertEqual((r["needs"]["try"], r["verdict"]), ("PASS", "PASS"))
+        self.assertFalse(r["extra"]["merged"])
+        self.assertEqual(r["extra"]["merge_why"], "sculpt-update: nothing newer to install")
+
+    def test_sculpt_update_failed_and_stopped(self):
+        r = self.sculpt(None, mode="console-update", rc=1, merge={"decided": "failed", "why": "sculpt-update exit 1: the fleet lock is held", "steps": []})
+        self.assertEqual((r["needs"]["try"], r["verdict"]), ("FAIL", "FAIL"))
+        self.assertIn("try: sculpt-update exit 1: the fleet lock is held", r["fails"])
+        self.setUp()
+        self.log(".stopped", "")
+        r = self.sculpt(None, mode="console-update", rc=1)
+        self.assertEqual(r["verdict"], "HARNESS")
+        self.setUp()
+        r = self.sculpt(None, mode="console-update", rc=2, result=False)
+        self.assertEqual(r["verdict"], "HARNESS")
 
 
 # --- the host tools --------------------------------------------------------------------------------
@@ -2104,7 +2183,7 @@ class RunnerBlocks(unittest.TestCase):
         with mock.patch.object(copies, "tree_hashes", lambda c, p: asked.setdefault("paths", list(p)) and {}):
             r.tree_matches("chopin")
         for p in ("testvm/vm-update", "testvm/update", "testvm/test2/guest", "testvm/test2/t2-host", "testvm/test2/t2lib",
-                  "testvm/test2/classes.json"):
+                  "testvm/test2/classes.json", "testvm/sculpt-update", "testvm/sculpt-check.sh"):
             self.assertIn(p, asked["paths"])
             self.assertIn(p, asked["cmd"])
         # and a real tree's hashes do hold the judge's files

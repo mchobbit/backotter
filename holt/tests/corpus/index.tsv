@@ -20,6 +20,8 @@ debian13-stack	cinqcent	r4all	PASS	2026-11-08T02:30:36Z	2026-11-08T02:27:52Z	0.2
 debian13-zfs	cinqcent	r4all	PASS	2026-11-08T02:36:52Z	2026-11-08T02:34:17Z	0.2.4	9c180ee07447c14d9878b8821c864e577746238c8787812d84d20566f3cbd823	changed	10	ok:10:111	0	0	0	same	ok:10	-
 devuan6	chopin	r4all	PASS	2026-11-08T02:40:03Z	2026-11-08T02:37:51Z	0.2.4	38ad968a09162abcad3ae83ce7a3aadd395425f64ecfaece9d81f2b16f6a3c88	changed	8	ok:8:88	0	0	0	same	ok:8	-
 dragonfly6	cinqcent	r4all	PASS	2026-11-08T02:55:47Z	2026-11-08T02:42:45Z	0.2.4	c49b7388dc01e18ddb975bd40b4efa7d90478cbaf33877baab1eb9ae54e71cf5	changed	7	ok:7:77	1	1	440	same	ok:7	storage.disks.0.boot_code.code_b64=440/1ec39679
+elementary8	chopin	e4	dump	-	2026-11-15T03:04:56Z	0.2.6	-	same	18	ok:18:171	8	0	0	same	ok:18	-
+elementary8-luks	chopin	e4	dump	-	2026-11-15T03:06:38Z	0.2.6	-	same	22	ok:22:185	8	0	0	same	ok:22	-
 endeavouros	chopin	eosmj3	PASS	2026-11-09T13:50:06Z	2026-11-09T13:45:25Z	0.2.4	-	same	12	ok:12:81	0	0	0	same	ok:12	-
 endeavouros-grub	chopin	eosmj5	PASS	2026-11-09T14:10:15Z	2026-11-09T14:05:08Z	0.2.4	-	same	13	ok:13:85	0	0	0	same	ok:13	-
 fedora44	chopin	r4all	PASS	2026-11-08T02:26:07Z	2026-11-08T02:22:33Z	0.2.4	a0b9aef33b46c75ef7bfb0f5678553a9adf687af4c206bfca0379c70582fefdf	changed	13	ok:13:95	0	0	0	same	ok:13	-
@@ -38,6 +40,7 @@ guix15	chopin	gx3	dump	-	2026-11-14T06:32:55Z	0.2.6	-	same	14	ok:14:118	0	0	0	sa
 guix15-bios	chopin	gx3	dump	-	2026-11-14T06:32:58Z	0.2.6	-	same	13	ok:13:121	0	0	0	same	ok:13	-
 haiku6	chopin	r4all	PASS	2026-11-08T02:40:14Z	2026-11-08T02:36:25Z	0.2.4	bc28f52db6818f232180e9f62384ce3a1b346eae229ad4497004add0d31c99a2	changed	1	ok:1:39	0	1	440	same	ok:1	storage.disks.0.boot_code.code_b64=440/14ed669c
 hardenedbsd15	cinqcent	r4all	PASS	2026-11-08T02:42:17Z	2026-11-08T02:37:19Z	0.2.4	abe8ce85847f09c92649c293290d38091568eb75b139c3325ac86f1e18071445	same	6	ok:6:37	0	2	62392	same	ok:6	storage.disks.0.partitions.1.boot_code.image_b64=61952/225ac46d storage.disks.0.boot_code.code_b64=440/0d5e38c2
+hardenedbsd15-zfs	chopin	hz1	dump	-	2026-11-15T02:42:48Z	0.2.6	-	same	7	ok:7:66	0	2	178104	same	ok:7	storage.disks.0.partitions.0.boot_code.image_b64=177664/91405ead storage.disks.0.boot_code.code_b64=440/0d5e38c2
 kali	cinqcent	k3	dump	-	2026-11-14T05:45:51Z	0.2.6	-	same	14	ok:14:107	0	0	0	same	ok:14	-
 kinoite44	chopin	bzb6a	PASS	2026-11-11T14:15:47Z	2026-11-11T14:06:13Z	0.2.4	-	same	20	ok:20:129	0	0	0	same	ok:20	-
 leap16	chopin	l3	dump	-	2026-11-14T17:21:35Z	0.2.6	-	same	25	ok:25:164	0	0	0	same	ok:25	-
@@ -73,6 +76,8 @@ ubuntu26-raid	cinqcent	r4all	PASS	2026-11-08T02:35:06Z	2026-11-08T02:30:34Z	0.2.
 ubuntu26-uefi	cinqcent	r4all	PASS	2026-11-08T02:22:58Z	2026-11-08T02:17:53Z	0.2.4	6029a9cda55062a4de867a17eb976e082f5f599aeebd6974b4ed103e7e012ee7	changed	12	ok:12:83	0	0	0	same	ok:12	-
 ubuntu26-zfs	chopin	r4all	PASS	2026-11-08T02:17:44Z	2026-11-08T02:11:02Z	0.2.4	72639edb713c7f55acf72e72728289791570fef2c2e9ab404bbe26da37157254	changed	19	ok:19:138	0	0	0	same	ok:19	-
 ubuntu26-zfsmirror	chopin	r4all	PASS	2026-11-08T02:24:19Z	2026-11-08T02:19:34Z	0.2.4	e64791228fdb5271eab326a1c573556084b1914690caa062345deba7deaaeb4e	changed	21	ok:21:139	0	0	0	same	ok:21	-
+uc24	copland	u3	dump	-	2026-11-14T19:41:36Z	0.2.6	-	same	20	ok:20:142	0	2	440	same	ok:20	boot.snapcore.boot_areas.mbr_code_b64=440/5dd505bf boot.snapcore.boot_areas.bios_boot.image_b64=0/00000000
+uc24-fde	copland	u3	dump	-	2026-11-14T19:42:14Z	0.2.6	-	same	24	ok:24:149	0	2	440	same	ok:24	boot.snapcore.boot_areas.mbr_code_b64=440/5dd505bf boot.snapcore.boot_areas.bios_boot.image_b64=0/00000000
 vanilla3	chopin	v7-1	PASS	2026-11-14T08:05:37Z	2026-11-14T07:26:40Z	0.2.6	-	same	36	ok:36:276	0	0	0	same	ok:36	-
 void-musl	chopin	r4all	PASS	2026-11-08T02:28:37Z	2026-11-08T02:26:35Z	0.2.4	2aaa1c9e3ba07ccd1d9e973b1766015f0f4b67e07ef8356cf2f95cc734b5cd81	changed	8	ok:8:85	0	0	0	same	ok:8	-
 void-zbm	chopin	z4	dump	-	2026-11-14T16:58:15Z	0.2.6	-	same	12	ok:12:122	0	0	0	same	ok:12	-

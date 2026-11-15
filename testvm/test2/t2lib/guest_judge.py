@@ -26,7 +26,8 @@ AFTER_NEEDS = ("after:boot-state", "after:failed-units", "after:fstab", "after:s
 NEW_NEEDS = ("new:firmware", "new:ssh", "new:restic", "new:rustic", "new:smoke")
 KERNELS_MAX = {"K-deb": 3, "K-fed": 5, "K-ostree": 2, "K-pac": 2, "K-apk": 3, "K-void": 2, "K-moss": 3, "K-nix": 3, "K-fbsd": 3,
                "K-nbsd": 3, "K-obsd": 4, "K-dfly": 3, "K-ill": 4, "K-haiku": 2, "K-alpbsd": 3,
-               "K-gentoo": 3, "K-anduinos": 3, "K-pve": 3, "K-pika": 3, "K-cbm": 3}
+               "K-gentoo": 3, "K-anduinos": 3, "K-pve": 3, "K-pika": 3, "K-cbm": 3,
+               "K-slackware": 2}
 NO_RULE = "no rule for it"
 # K-pve (Proxmox VE, proxmox.md): Debian's /boot/vmlinuz-K, every one Proxmox's own (K-pve).
 NOT_PVE = "a kernel that isn't Proxmox's (vmlinuz-K-pve)"
@@ -50,6 +51,26 @@ NO_BOOSTER = "a kernel without its booster image /boot/booster.img-K"
 CBM_KERNEL = re.compile(r"com\.solus-project\.([^.]+)\.(.+)\Z")
 CBM_NO_INITRD = "a kernel without its initrd /usr/lib64/kernel/initrd-com.solus-project.K"
 CBM_NOT_INSTALLED = "the running kernel isn't in /usr/lib64/kernel"
+# K-snapcore (Ubuntu Core, ubuntu-core.md U4): the kernels are modeenv's current_kernels
+# (pc-kernel_REV.snap), each extracted to ubuntu-boot's EFI/ubuntu/K/kernel.efi, and the run GRUB
+# boots EFI/ubuntu/kernel.efi, a link to one of them.  check-image.sh lists "kernel K" (or "kernel
+# K no-kernel-efi") and "link K" ("link none"); check-after.sh "installed K" for each current
+# kernel, "link K", "booted K" (the kernel snap's current revision) and "status S" (the run
+# grubenv's kernel_status, "-" when empty).  One current kernel, two while a new one is on trial.
+SNAPCORE_KERNELS_MAX = 2
+SNAPCORE_NO_EFI = "a current kernel without its kernel.efi on ubuntu-boot"
+SNAPCORE_LINK = "ubuntu-boot's EFI/ubuntu/kernel.efi isn't a link to a current kernel's"
+SNAPCORE_NOT_CURRENT = "the booted kernel snap isn't one of modeenv's current_kernels"
+SNAPCORE_TRYING = "a kernel refresh hasn't settled: two current kernels, or the run grubenv's kernel_status set"
+# K-slackware (Slackware, slackware.md): /boot/vmlinuz-TYPE-VERSION (huge or generic: upgradepkg
+# replaces a kernel package in place, so one of each at most), and the one the loader boots must
+# be the newest: LILO's /boot/map written after it (the map holds the kernel's sectors), or
+# ELILO's EFI/Slackware copy byte-identical to it.
+SLACK_KERNEL = re.compile(r"vmlinuz-(?:huge|generic)-(.+)\Z")
+SLACK_MAP_STALE = "LILO's /boot/map is older than the newest kernel: lilo wasn't run after it"
+SLACK_ESP_STALE = "ELILO's EFI/Slackware kernel isn't the newest /boot kernel"
+SLACK_ESP_MISSING = "an image= of EFI/Slackware/elilo.conf isn't on the ESP"
+SLACK_NO_LOADER = "neither LILO's /boot/map nor an ELILO kernel on the ESP"
 U0 = "not updated yet (u0): frozen by its builder"
 
 
@@ -465,10 +486,40 @@ def s_eopkg(sec):
     return [] if any(r[1] for r in polaris) else [EOPKG_POLARIS_OFF]
 
 
+# S-slackpkg (Slackware, slackware.md): slackpkg takes the one uncommented line of
+# /etc/slackpkg/mirrors, which must be this release's tree (slackware64-VERSION_ID/, never
+# -current's), with slackpkg.conf's signature and checksum checks left on.
+SLACKPKG_NO_MIRROR = "slackpkg has no mirror in /etc/slackpkg/mirrors"
+SLACKPKG_MIRRORS = "slackpkg has more than one mirror in /etc/slackpkg/mirrors"
+SLACKPKG_NOT_RELEASE = "the slackpkg mirror isn't this release's tree (slackware64-VERSION/)"
+SLACKPKG_NO_GPG = "slackpkg.conf turns CHECKGPG off"
+SLACKPKG_NO_MD5 = "slackpkg.conf turns CHECKMD5 off"
+
+
+def s_slackpkg(sec):
+    mirrors = _active(sec.cmd("slackpkg-mirrors"))
+    if not mirrors:
+        return [SLACKPKG_NO_MIRROR]
+    out = [SLACKPKG_MIRRORS] if len(mirrors) > 1 else []
+    ver = _os_release(sec).get("VERSION_ID")
+    if not ver or not all(re.search(r"/slackware(?:64)?-" + re.escape(ver) + r"/?\Z", m) for m in mirrors):
+        out.append(SLACKPKG_NOT_RELEASE)
+    conf = {}
+    for x in _active(sec.cmd("slackpkg-conf")):
+        k, eq, v = x.partition("=")
+        if eq:
+            conf[k.strip()] = v.strip().strip("'\"").lower()
+    if conf.get("CHECKGPG", "on") != "on":
+        out.append(SLACKPKG_NO_GPG)
+    if conf.get("CHECKMD5", "on") != "on":
+        out.append(SLACKPKG_NO_MD5)
+    return out
+
+
 SOURCE_RULES = {"S-apt": s_apt, "S-dnf": s_dnf, "S-pac": s_pac, "S-zyp": s_zyp, "S-moss": s_moss, "S-apk": s_apk,
                 "S-xbps": s_xbps, "S-nix": s_nix, "S-fbsd": s_fbsd, "S-gbsd": s_gbsd, "S-hbsd": s_hbsd,
                 "S-nbsd": s_nbsd, "S-obsd": s_obsd, "S-dfly": s_dfly, "S-ips": s_ips, "S-haiku": s_haiku,
-                "S-portage": s_portage, "S-eopkg": s_eopkg}
+                "S-portage": s_portage, "S-eopkg": s_eopkg, "S-slackpkg": s_slackpkg}
 
 
 # --- L-*: the loader's default entry (#18) -------------------------------------------------------
@@ -782,9 +833,128 @@ def l_cbm(sec):
     return out
 
 
+# L-lilo (Slackware, BIOS; slackware.md): lilo.conf names the boot= disk, whose first sector is
+# LILO's, and images that are there; lilo has written /boot/map; root= is fstab's / device (both
+# name devices: the kernel finds / by that name, with no initrd).
+LILO_NO_CONF = "no /etc/lilo.conf"
+LILO_NO_BOOT = "lilo.conf names no boot= device"
+LILO_NO_MBR = "the boot= device's first sector isn't LILO's"
+LILO_NO_MAP = "no /boot/map: lilo hasn't run"
+LILO_NO_IMAGE = "lilo.conf names no image="
+LILO_IMAGE_MISSING = "a lilo.conf image= file is missing"
+SLACK_ROOT = "the loader's root= isn't fstab's / device"
+# L-elilo (Slackware, UEFI; slackware.md): eliloconfig's EFI/Slackware (elilo.efi, elilo.conf and
+# the image= and initrd= files it names) and its fallback copy EFI/BOOT (elilo.efi as BOOTX64.EFI,
+# the rest by name), byte-equal, on the ESP at /boot/efi; append's root= is fstab's / device.
+ELILO_NO_ESP = "nothing is mounted at /boot/efi"
+ELILO_NO_EFI = "no EFI/Slackware/elilo.efi on the ESP"
+ELILO_NO_CONF = "no EFI/Slackware/elilo.conf on the ESP"
+ELILO_NO_IMAGE = "elilo.conf names no image="
+ELILO_FILE_MISSING = "an image= or initrd= of elilo.conf isn't in EFI/Slackware"
+ELILO_NO_FALLBACK = "the fallback EFI/BOOT/BOOTX64.EFI isn't EFI/Slackware/elilo.efi"
+ELILO_FALLBACK_DIFFERS = "a file of EFI/Slackware differs from (or is missing in) the fallback EFI/BOOT"
+
+
+def _slack_conf(lines):
+    """[(key, value)] of a lilo.conf or elilo.conf (key = value, quotes stripped, comments out)."""
+    out = []
+    for x in lines or ():
+        x = x.split("#", 1)[0].strip()
+        k, eq, v = x.partition("=")
+        if eq:
+            out.append((k.strip().lower(), v.strip().strip('"')))
+        elif x:
+            out.append((x.lower(), ""))
+    return out
+
+
+def _cmdline_root(append):
+    """root=DEV in a kernel command line (the last one wins, as the kernel takes it)."""
+    roots = [w[5:] for w in (append or "").split() if w.startswith("root=")]
+    return roots[-1] if roots else None
+
+
+def _kv_lines(lines):
+    return [x.split(None, 1) for x in lines or () if len(x.split(None, 1)) == 2]
+
+
+def l_lilo(sec):
+    conf = sec.file("/etc/lilo.conf")
+    if conf is None:
+        return [LILO_NO_CONF]
+    kv = _slack_conf(conf)
+    st = _kv_lines(sec.cmd("lilo-state"))
+    out = []
+    if not any(k == "boot" and v for k, v in kv):
+        out.append(LILO_NO_BOOT)
+    elif ["mbr", "lilo"] not in st:
+        out.append(LILO_NO_MBR)
+    if ["map", "yes"] not in st:
+        out.append(LILO_NO_MAP)
+    images = [f[1].split() for f in st if f[0] == "image"]
+    if not images:
+        out.append(LILO_NO_IMAGE)
+    elif any(len(i) != 2 or i[1] != "yes" for i in images):
+        out.append(LILO_IMAGE_MISSING)
+    # root= per image= stanza, else the global one; append's root= over either, as the kernel reads it
+    fstab = next((f[1].strip() for f in st if f[0] == "fstab-root"), None)
+    roots, glob, cur = [], {}, None
+    for k, v in kv:
+        if k in ("image", "other"):
+            cur = {"kind": k}
+            roots.append(cur)
+        elif k in ("root", "append"):
+            (cur if cur is not None else glob)[k] = v
+    for r in roots:
+        if r["kind"] != "image":
+            continue
+        root = _cmdline_root(r.get("append", glob.get("append"))) or r.get("root") or glob.get("root")
+        if fstab and root != fstab:
+            out.append(SLACK_ROOT)
+            break
+    return out
+
+
+def l_elilo(sec):
+    lines = sec.cmd("elilo-esp") or ()
+    if any(x.strip() == "esp unmounted" for x in lines):
+        return [ELILO_NO_ESP]
+    sha, conf, fstab = {}, [], None
+    for x in lines:
+        f = x.split(None, 1)
+        if len(f) == 2 and f[0] == "sha256" and len(f[1].split(None, 1)) == 2:
+            h, p = f[1].split(None, 1)
+            sha[p.strip().lower()] = h
+        elif f and f[0] == "conf":
+            conf.append(x[5:] if len(x) > 5 else "")
+        elif len(f) == 2 and f[0] == "fstab-root":
+            fstab = f[1].strip()
+    out = []
+    if "efi/slackware/elilo.efi" not in sha:
+        out.append(ELILO_NO_EFI)
+    if "efi/slackware/elilo.conf" not in sha:
+        return out + [ELILO_NO_CONF]
+    kv = _slack_conf(conf)
+    images = [v for k, v in kv if k == "image" and v]
+    if not images:
+        out.append(ELILO_NO_IMAGE)
+    named = images + [v for k, v in kv if k == "initrd" and v]
+    if any("efi/slackware/" + n.lstrip("/").lower() not in sha for n in named):
+        out.append(ELILO_FILE_MISSING)
+    if "efi/slackware/elilo.efi" in sha and sha.get("efi/boot/bootx64.efi") != sha["efi/slackware/elilo.efi"]:
+        out.append(ELILO_NO_FALLBACK)
+    mine = [p for p in sha if p.startswith("efi/slackware/") and p != "efi/slackware/elilo.efi"]
+    if any(sha.get("efi/boot/" + p[len("efi/slackware/"):]) != sha[p] for p in mine):
+        out.append(ELILO_FALLBACK_DIFFERS)
+    appends = [v for k, v in kv if k == "append"]
+    if fstab and appends and any(_cmdline_root(a) not in (None, fstab) for a in appends):
+        out.append(SLACK_ROOT)
+    return out
+
+
 LOADER_RULES = {"L-grub": l_grub, "L-bls": l_bls, "L-sd": l_sd, "L-limine": l_limine, "L-fbsd": l_fbsd,
                 "L-nbsd": l_nbsd, "L-obsd": l_obsd, "L-dfly": l_dfly, "L-ill": l_ill, "L-pve": l_pve,
-                "L-cbm": l_cbm}
+                "L-cbm": l_cbm, "L-lilo": l_lilo, "L-elilo": l_elilo}
 
 
 # --- the other image checks --------------------------------------------------------------------
@@ -855,6 +1025,8 @@ def judge_kernels(sec, checks):
         return Need("FAIL", None, ["no kernel found"])
     if rule == "K-abroot":
         return _abroot_kernels(ks, (checks or {}).get("kernels_max") or ABROOT_KERNELS_PER_ROOT)
+    if rule == "K-snapcore":
+        return _snapcore_kernels(ks, (checks or {}).get("kernels_max") or SNAPCORE_KERNELS_MAX)
     if limit and len(ks) > int(limit):
         return Need("FAIL", None, ["more kernels than the updater keeps"])
     if rule == "K-pve" and any(not x.endswith("-pve") for x in ks):
@@ -865,7 +1037,41 @@ def judge_kernels(sec, checks):
         return Need("FAIL", None, [NO_BOOSTER])
     if rule == "K-cbm" and any(x.endswith(" " + NO_INITRD_MARK) for x in ks):
         return Need("FAIL", None, [CBM_NO_INITRD])
+    if rule == "K-slackware":
+        lines = slackware_boot_lines(sec.cmd("slackware-boot"))
+        if lines:
+            return Need("FAIL", None, lines)
     return Need("PASS", f"{len(ks)} kernel{'s' if len(ks) != 1 else ''}")
+
+
+def slackware_boot_lines(lines):
+    """K-slackware: the loader boots the newest /boot/vmlinuz-TYPE-VERSION (check-image.sh's
+    slackware-boot: kernel NAME MTIME SHA256, map MTIME, esp-image NAME SHA256|missing)."""
+    kernels, mapt, esp = [], None, []
+    for x in lines or ():
+        f = x.split()
+        if len(f) == 4 and f[0] == "kernel" and f[2].isdigit():
+            m = SLACK_KERNEL.match(f[1])
+            if m:
+                kernels.append((m.group(1), int(f[2]), f[3]))
+        elif len(f) == 2 and f[0] == "map" and f[1].isdigit():
+            mapt = int(f[1])
+        elif len(f) == 3 and f[0] == "esp-image":
+            esp.append(f[2])
+    if not kernels:
+        return ["kernel unverified: no /boot/vmlinuz-TYPE-VERSION listed"]
+    top = version_key(newest([k[0] for k in kernels]))
+    new = [k for k in kernels if version_key(k[0]) == top]
+    out = []
+    if mapt is not None and mapt < max(k[1] for k in new):
+        out.append(SLACK_MAP_STALE)
+    if any(e == "missing" for e in esp):
+        out.append(SLACK_ESP_MISSING)
+    elif esp and any(e not in {k[2] for k in new} for e in esp):
+        out.append(SLACK_ESP_STALE)
+    if mapt is None and not esp:
+        out.append(SLACK_NO_LOADER)
+    return out
 
 
 def _abroot_kernels(ks, per_root):
@@ -882,6 +1088,26 @@ def _abroot_kernels(ks, per_root):
         lines.append("more kernels than the updater keeps")
     n = sum(len(k) for k in roots.values())
     return Need("FAIL", None, lines) if lines else Need("PASS", f"{n} kernels in {len(roots)} roots")
+
+
+def _snapcore_kernels(ks, limit):
+    """K-snapcore's image check: check-image.sh's "kernel K [no-kernel-efi]" and "link K" lines."""
+    kernels, missing, link = [], False, None
+    for x in ks:
+        f = x.split()
+        if f[0] == "kernel" and len(f) in (2, 3):
+            kernels.append(f[1])
+            missing |= len(f) == 3
+        elif f[0] == "link" and len(f) == 2:
+            link = f[1]
+    if not kernels:
+        return Need("FAIL", None, ["no kernel found"])
+    lines = [SNAPCORE_NO_EFI] if missing else []
+    if link not in kernels:
+        lines.append(SNAPCORE_LINK)
+    if len(kernels) > int(limit):
+        lines.append("more kernels than the updater keeps")
+    return verdict_lines(lines, f"{len(kernels)} kernel{'s' if len(kernels) != 1 else ''}")
 
 
 def judge_zfs_cache(sec):
@@ -1073,7 +1299,10 @@ def newest_kernel_lines(lines, rule, sec=None, steps=None):
         return [f"kernel unverified: {kv['unverified']}"]
     if rule == "K-cbm":
         return _cbm_kernel_lines(kv.get("running"), installed)
-    if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree", "K-gentoo", "K-anduinos", "K-abroot", "K-pve", "K-pika"):
+    if rule == "K-snapcore":
+        return _snapcore_kernel_lines(kv, installed)
+    if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree", "K-gentoo", "K-anduinos", "K-abroot", "K-pve", "K-pika",
+                "K-slackware"):
         run = kv.get("running")
         if not run or not installed:
             return ["kernel unverified: no running or installed kernel listed"]
@@ -1118,6 +1347,21 @@ def _cbm_kernel_lines(run, installed):
     typ = run.rsplit(".", 1)[-1]
     same = [u for u in names if u.rsplit(".", 1)[-1] == typ]
     return [] if version_key(run) == version_key(newest(same)) else [NOT_NEWEST]
+
+
+def _snapcore_kernel_lines(kv, installed):
+    """K-snapcore after the update: the kernel snap booted is modeenv's one current kernel, the
+    run GRUB's kernel.efi links to it, and no trial is left (kernel_status empty).  The newest is
+    snapd's choice, made by the refresh: what boots after it is the check."""
+    booted = kv.get("booted")
+    if not installed or not booted:
+        return ["kernel unverified: no current or booted kernel snap listed"]
+    out = [] if booted in installed else [SNAPCORE_NOT_CURRENT]
+    if kv.get("link") not in installed:
+        out.append(SNAPCORE_LINK)
+    if len(installed) > 1 or kv.get("status", "-") != "-":
+        out.append(SNAPCORE_TRYING)
+    return out
 
 
 SKIP_WHY = {"boot-state": "this OS's service state is one list: after:boot-state", "haiku": "no stacked mounts on Haiku"}
@@ -1203,6 +1447,29 @@ def probe_need(sec):
     if any(x == "ok" for x in p):
         return Need("PASS")
     return Need("FAIL", None, [x for x in p if x != "ok"] or ["the probe said nothing"])
+
+
+UPDATE_CHECK_EXIT = re.compile(r"exit (\d+)\Z")
+
+
+def update_check_need(sec):
+    """image:current of Sculpt (probe-sculpt.sh's `sculpt-update --check`, read only): a finding,
+    never a FAIL.  PASS: the newest pc image of its release is installed; PASS with a note: exit 10,
+    a newer one of its release is out (GuestTest2 update installs it), or exit 11, a newer Sculpt
+    release is out (a new guest's job); SKIP: the check didn't run or failed (the index unreachable)."""
+    lines = [x.strip() for x in sec.cmd("update-check") or () if x.strip()]
+    if not lines:
+        return skip("no sculpt-update --check ran")
+    m = UPDATE_CHECK_EXIT.match(lines[0])
+    rc = int(m.group(1)) if m else None
+    said = re.sub(r"^sculpt-update: ", "", lines[-1]) if len(lines) > 1 else ""
+    if rc == 0:
+        return Need("PASS")
+    if rc == 10:
+        return Need("PASS", f"stale: a newer pc image of its release is out; GuestTest2 update installs it ({said})"[:200])
+    if rc == 11:
+        return Need("PASS", f"a newer Sculpt release is out, a new guest's job ({said})"[:200])
+    return skip(f"sculpt-update --check {lines[0] if m else 'said nothing'}" + (f": {said}" if said else ""))
 
 
 # --- step 5: the log sweep --------------------------------------------------------------------------

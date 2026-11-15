@@ -934,7 +934,7 @@ class Derived(unittest.TestCase):
             return [r for r in run.derived_rows(p, "t2s-20261108T0500-abcd", wd, ctx, res, self.r_stic + rows)
                     if r["kind"] == "class"]
         got = classes([good], [good["id"]])
-        self.assertEqual(sorted(r["cell"] for r in got), ["stic:freebsd15-geli", "stic:ghostbsd26-zfs"])
+        self.assertEqual(sorted(r["cell"] for r in got), ["stic:freebsd15-geli", "stic:ghostbsd26-zfs", "stic:hardenedbsd15-zfs"])
         self.assertTrue(all(r["via"] == good["id"] and r["key"] == p.cell(r["cell"]).key for r in got))
         self.assertEqual(classes([bad], [bad["id"]]), [])            # an invalid PASS
         self.assertEqual(classes([other], [other["id"]]), [])        # not at the planned key

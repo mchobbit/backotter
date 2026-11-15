@@ -804,7 +804,7 @@ fn thin_lvm() {
     let text = v.compact().replacen("\"device_id\":2", "\"device_id\":2,\"origin\":\"root-a\"", 1);
     let w = crate::json::parse(&text).unwrap();
     assert_ne!(w.compact(), v.compact());
-    assert_eq!(plan(w).problems, vec!["volume group vos-root: thin LV vos-root/root-b is a thin snapshot of root-a; version 1 doesn't make thin snapshots"]);
+    assert_eq!(plan(w).problems, vec!["thin snapshot vos-root/root-b (of root-a) holds btrfs, which the dump didn't take as a raw volume (it was mounted, or the dump is older than raw volumes): bko-holt load gives a thin snapshot its content only from a raw image"]);
 
     // A pool without zeroing, full-error on, its data striped; root-b
     // read-only, tagged, with ACTIVATION_SKIP: the flags go on at close,
@@ -3493,6 +3493,225 @@ fn kali_fallback_boot() {
     assert!(!bt.contains("grub-mkconfig"), "{bt}");
 }
 
+/// KDE neon's running kernel, and the one before it (linux-generic-hwe-24.04).
+const NEON_KV: &str = "7.0.0-43-generic";
+const NEON_KV_OLD: &str = "7.0.0-38-generic";
+/// The ESP's PARTUUID, its vfat volume ID, and the root's UUID (ext::sample's).
+const NEON_ESP: &str = "bc000000-0000-4000-8000-000000000002";
+const NEON_ESP_ID: &str = "BC00-0001";
+const NEON_ROOT: &str = "10111213-1415-1617-1819-1a1b1c1d1e1f";
+/// KDE neon User Edition's /etc/os-release (neon's base-files).
+const NEON_OS_RELEASE: &str = "PRETTY_NAME=\"KDE neon User Edition\"\nNAME=\"KDE neon\"\nVERSION_ID=\"24.04\"\nVERSION=\"User Edition\"\nVERSION_CODENAME=noble\nID=neon\nID_LIKE=\"ubuntu debian\"\nUBUNTU_CODENAME=noble\nLOGO=start-here-kde-neon\n";
+
+/// KDE neon 24.04 User Edition as Calamares lays out "Erase disk" on UEFI
+/// (the neon24 guest, docs/design/kde-neon.md; its dump is
+/// tests/corpus/neon24), in small (the ESP is 300 MiB there): GPT with a
+/// vfat ESP "EFI" at /boot/efi and an ext4 root, swap a 512 MiB /swapfile
+/// that fstab names; initramfs-tools' /boot/initrd.img-K for two kernels;
+/// Ubuntu's shim and signed GRUB in EFI/neon (with Ubuntu's stub grub.cfg,
+/// and a copy of it in EFI/ubuntu), shim and fbx64.efi at the fallback
+/// path.  Booted from NVRAM's "KDE neon User Edition" entry with Secure
+/// Boot on and shim's MOK variables set, as a real PC is.
+fn neon() -> Tree {
+    use crate::efi::{GLOBAL, SHIM};
+    let t = Tree::new("scn-neon");
+    let (k, old) = (NEON_KV, NEON_KV_OLD);
+    let root = NEON_ROOT;
+    let mut img = vec![0u8; 100 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "bc000000-0000-4000-8000-000000000001",
+            parts: vec![(ESP, NEON_ESP, 2048, 73727, 0, ""), (LINUX, "bc000000-0000-4000-8000-000000000003", 73728, 204766, 0, "")],
+        },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(71680, 0xbc00_0001, "EFI"));
+    put(&mut img, 73728, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    let (shim, grub, mm) = (vec![1u8; 300], vec![2u8; 400], vec![3u8; 200]);
+    let stub = format!("search.fs_uuid {root} root \nset prefix=($root)'/boot/grub'\nconfigfile $prefix/grub.cfg\n");
+    let entry = |kv: &str| format!("\tlinux\t/boot/vmlinuz-{kv} root=UUID={root} ro quiet splash\n\tinitrd\t/boot/initrd.img-{kv}\n");
+    let grub_cfg = format!(
+        "insmod part_gpt\ninsmod ext2\nsearch --no-floppy --fs-uuid --set=root {root}\nmenuentry 'KDE neon User Edition GNU/Linux' {{\n{}}}\nsubmenu 'Advanced options for KDE neon User Edition GNU/Linux' {{\n\tmenuentry 'KDE neon User Edition GNU/Linux, with Linux {k}' {{\n{}\t}}\n\tmenuentry 'KDE neon User Edition GNU/Linux, with Linux {old}' {{\n{}\t}}\n}}\n",
+        entry(k),
+        entry(k),
+        entry(old)
+    );
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 131039, &img)
+        .file("/sys/block/vda/device/model", "")
+        .symlink(&format!("/dev/disk/by-partuuid/{NEON_ESP}"), "../../vda1")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&var("Boot0006"), efi_load_option("KDE neon User Edition", 1, 2048, 71680, NEON_ESP, "\\EFI\\neon\\shimx64.efi"))
+        .file(&var("BootOrder"), [7u8, 0, 0, 0, 6, 0])
+        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 6, 0])
+        .file(&var("SecureBoot"), [6u8, 0, 0, 0, 1])
+        .file(&format!("/sys/firmware/efi/efivars/MokListRT-{SHIM}"), [0u8; 8])
+        .file("/proc/self/mountinfo", "26 1 254:2 / / rw,relatime shared:1 - ext4 /dev/vda2 rw\n27 26 254:1 / /boot/efi rw,relatime shared:2 - vfat /dev/vda1 rw,fmask=0022,dmask=0022,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro\n")
+        .file("/proc/swaps", "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/swapfile                               file\t\t524284\t\t0\t\t-2\n")
+        .file("/etc/fstab", format!("UUID={root} / ext4 defaults 0 1\nUUID={NEON_ESP_ID} /boot/efi vfat defaults 0 2\n/swapfile swap swap defaults 0 0\n"))
+        .file("/usr/lib/os-release", NEON_OS_RELEASE)
+        .symlink("/etc/os-release", "../usr/lib/os-release")
+        .file("/etc/debian_version", "trixie/sid\n")
+        .symlink("/lib", "usr/lib")
+        .symlink("/boot/vmlinuz", &format!("vmlinuz-{k}"))
+        .symlink("/boot/initrd.img", &format!("initrd.img-{k}"))
+        .file("/boot/grub/grub.cfg", &grub_cfg)
+        .file("/boot/grub/x86_64-efi/normal.mod", "x")
+        .file("/etc/default/grub", "GRUB_DEFAULT=0\nGRUB_TIMEOUT_STYLE=hidden\nGRUB_TIMEOUT=0\nGRUB_DISTRIBUTOR=\"KDE neon User Edition\"\nGRUB_CMDLINE_LINUX_DEFAULT=\"quiet splash\"\nGRUB_CMDLINE_LINUX=\"\"\nGRUB_THEME=\"/boot/grub/themes/breeze/theme.txt\"\n")
+        .file("/etc/initramfs-tools/initramfs.conf", "MODULES=most\nCOMPRESS=zstd\n")
+        .file("/boot/efi/EFI/neon/shimx64.efi", &shim)
+        .file("/boot/efi/EFI/neon/grubx64.efi", &grub)
+        .file("/boot/efi/EFI/neon/mmx64.efi", &mm)
+        .file("/boot/efi/EFI/neon/BOOTX64.CSV", "shimx64.efi,neon,,This is the boot entry for neon\n")
+        .file("/boot/efi/EFI/neon/grub.cfg", &stub)
+        .file("/boot/efi/EFI/ubuntu/grub.cfg", &stub)
+        .file("/boot/efi/EFI/BOOT/BOOTX64.EFI", &shim)
+        .file("/boot/efi/EFI/BOOT/fbx64.efi", vec![4u8; 100])
+        .file("/boot/efi/EFI/BOOT/mmx64.efi", &mm)
+        .file("/proc/sys/kernel/osrelease", format!("{k}\n"))
+        .file("/proc/sys/kernel/hostname", "neon\n")
+        .file("/proc/cmdline", format!("BOOT_IMAGE=/boot/vmlinuz-{k} root=UUID={root} ro quiet splash\n"));
+    for kv in [k, old] {
+        t.file(&format!("/boot/vmlinuz-{kv}"), "k")
+            .file(&format!("/boot/initrd.img-{kv}"), "initramfs-tools")
+            .file(&format!("/boot/config-{kv}"), "")
+            .file(&format!("/boot/System.map-{kv}"), "")
+            .dir(&format!("/usr/lib/modules/{kv}/kernel"));
+    }
+    let pkgs = [
+        ("shim-signed", "1.58+15.8-0ubuntu1"),
+        ("grub-efi-amd64-signed", "1.202.5+2.12-1ubuntu7.3"),
+        ("grub-efi-amd64-bin", "2.12-1ubuntu7.3"),
+        ("grub-pc", "2.12-1ubuntu7.3"),
+        ("grub-pc-bin", "2.12-1ubuntu7.3"),
+        ("grub-common", "2.12-1ubuntu7.3"),
+        ("grub2-common", "2.12-1ubuntu7.3"),
+        ("mokutil", "0.6.0-2build3"),
+        ("linux-generic-hwe-24.04", "7.0.0-43.43~24.04.1"),
+        ("linux-image-7.0.0-43-generic", "7.0.0-43.43~24.04.1"),
+        ("linux-image-7.0.0-38-generic", "7.0.0-38.38~24.04.1"),
+        ("initramfs-tools", "0.142ubuntu25.8"),
+        ("efibootmgr", "18-1build2"),
+        ("os-prober", "1.81ubuntu4"),
+        ("e2fsprogs", "1.47.0-2.4~exp1ubuntu4.1"),
+        ("dosfstools", "4.2-1.1build1"),
+    ];
+    let status: String = pkgs.iter().map(|(n, v)| format!("Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n")).collect();
+    t.file("/var/lib/dpkg/status", status);
+    t
+}
+
+/// KDE neon read back and planned (docs/design/kde-neon.md): supported by
+/// its ID; GRUB through shim in EFI/neon from BootCurrent, the fallback
+/// shim beside it; the swap file, not a partition; initramfs-tools as the
+/// generator.  load runs update-initramfs, Ubuntu's grub-install into
+/// EFI/neon with no NVRAM write, update-grub (not grub-mkconfig) with
+/// os-prober off, and makes the shim entry again: the boot stage
+/// tests/corpus/neon24/plan.txt has.
+#[test]
+fn neon_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let (v, b) = kali_plan(&neon());
+    assert_eq!(s(&v, &["os", "id"]), "neon");
+    assert_eq!(s(&v, &["os", "version_id"]), "24.04");
+    assert_eq!(s(&v, &["os", "version_codename"]), "noble");
+    assert_eq!(s(&v, &["os", "pretty_name"]), "KDE neon User Edition");
+    assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
+    assert_eq!(v.at(&["firmware", "secure_boot"]), Some(&Value::Bool(true)));
+    let l = v.at(&["boot", "loader"]).unwrap();
+    assert_eq!(s(l, &["name"]), "grub");
+    assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
+    assert_eq!(s(l, &["package"]), "grub-efi-amd64-signed");
+    assert_eq!(s(l, &["shim_package"]), "shim-signed");
+    for (p, ver) in [("grub-efi-amd64-signed", "1.202.5+2.12-1ubuntu7.3"), ("shim-signed", "1.58+15.8-0ubuntu1"), ("initramfs-tools", "0.142ubuntu25.8")] {
+        assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
+    }
+    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "initramfs-tools");
+    let kernels: Vec<&str> = arr(&v, &["boot", "kernels", "installed"]).iter().map(|x| s(x, &["version"])).collect();
+    assert_eq!(kernels, vec![NEON_KV_OLD, NEON_KV], "{}", v.at(&["boot", "kernels"]).unwrap().compact());
+    assert_eq!(arr(&v, &["boot", "grub", "installed_platforms"])[0].as_str(), Some("x86_64-efi"));
+    let esp = v.at(&["boot", "esps", "0"]).unwrap();
+    assert_eq!(s(esp, &["device"]), "vda1");
+    assert_eq!(s(esp, &["mounted_at"]), "/boot/efi");
+    let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"]).iter().map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str))).collect();
+    assert!(files.contains(&("EFI/BOOT/BOOTX64.EFI", Some("EFI/neon/shimx64.efi"))), "{files:?}");
+    for f in ["EFI/neon/shimx64.efi", "EFI/neon/grubx64.efi", "EFI/neon/mmx64.efi", "EFI/neon/BOOTX64.CSV", "EFI/neon/grub.cfg", "EFI/ubuntu/grub.cfg", "EFI/BOOT/fbx64.efi", "EFI/BOOT/mmx64.efi"] {
+        assert!(files.iter().any(|(p, _)| *p == f), "{f}: {files:?}");
+    }
+    assert_eq!(files.len(), 9, "{files:?}");
+    let disk = v.at(&["storage", "disks", "0"]).unwrap();
+    assert_eq!(s(disk, &["partition_table", "type"]), "gpt");
+    assert_eq!(arr(disk, &["partitions"]).len(), 2);
+    assert_eq!(s(disk, &["partitions", "0", "type_name"]), "EFI System");
+    assert_eq!(s(disk, &["partitions", "0", "content", "type"]), "vfat");
+    assert_eq!(s(disk, &["partitions", "0", "content", "uuid"]), NEON_ESP_ID);
+    assert_eq!(s(disk, &["partitions", "1", "content", "type"]), "ext4");
+    let swaps = arr(&v, &["storage", "swaps"]);
+    assert_eq!(swaps.len(), 1, "{swaps:?}");
+    assert_eq!(s(&swaps[0], &["file"]), "/swapfile");
+    assert_eq!(s(&swaps[0], &["type"]), "file");
+    let fstab = arr(&v, &["storage", "fstab"]);
+    assert_eq!(s(&fstab[0], &["resolves_to"]), "vda2");
+    assert_eq!(s(&fstab[1], &["resolves_to"]), "vda1");
+    assert_eq!(s(&fstab[2], &["spec"]), "/swapfile");
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
+    assert!(f.contains("mke2fs ") && f.contains("mkfs.fat ") && !f.contains("mkswap "), "{f}");
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    // The corpus plan's boot lines, in its order (/dev/sdq there, /dev/vdb here).
+    let lines = [
+        "chroot /mnt/bko-target update-initramfs -u -k all\n",
+        "chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=neon --no-nvram\n",
+        "[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober",
+        "chroot /mnt/bko-target env LANG=C update-grub\n",
+        // (bko-holt by its own path: the test binary's here)
+        " efi-dedupe /dev/vdb 1 '\\EFI\\neon\\shimx64.efi'\n",
+        "efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'KDE neon User Edition' --loader '\\EFI\\neon\\shimx64.efi'\n",
+    ];
+    let mut at = 0;
+    for l in lines {
+        let i = bt[at..].find(l).unwrap_or_else(|| panic!("{l} not after {at}: {bt}")) + at;
+        at = i + l.len();
+    }
+    assert_eq!(bt.matches("grub-install").count(), 1, "{bt}");
+    assert_eq!(bt.matches("efibootmgr --quiet --create").count(), 1, "{bt}");
+    assert!(!bt.contains("grub-mkconfig") && !bt.contains("--removable") && !bt.contains("i386-pc") && !bt.contains("dracut"), "{bt}");
+}
+
+/// KDE neon under vm-run, as the neon24 dump has it: OVMF booted the disk
+/// from "UEFI Misc Device" (a PciRoot path, no file) while NVRAM still
+/// lists the installer's entry first in BootOrder.  Still EFI/neon (from
+/// BootOrder), and only the installer's entry, the one with a file, made
+/// again.
+#[test]
+fn neon_fallback_boot() {
+    use crate::efi::real::unhex;
+    use crate::efi::GLOBAL;
+    use crate::load::{commands::Cmd, Stage};
+    let t = neon();
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    // Boot0001 of the neon24 dump, its load_option_hex.
+    t.file(&var("Boot0001"), unhex("07000000 010000001600550045004600490020004d006900730063002000440065007600690063006500000002010c00d041030a000000000101060000037fff04004eac0881119f594d850ee21a522c59b2"))
+        .file(&var("BootOrder"), [7u8, 0, 0, 0, 6, 0, 1, 0])
+        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 1, 0]);
+    let (v, b) = kali_plan(&t);
+    assert_eq!(s(&v, &["boot", "efi", "boot_current"]), "0001");
+    let l = v.at(&["boot", "loader"]).unwrap();
+    assert_eq!(s(l, &["name"]), "grub");
+    assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=neon --no-nvram\n") && bt.contains("env LANG=C update-grub\n"), "{bt}");
+    assert!(bt.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'KDE neon User Edition' --loader '\\EFI\\neon\\shimx64.efi'\n"), "{bt}");
+    assert_eq!(bt.matches("efibootmgr --quiet --create").count(), 1, "{bt}");
+    assert!(!bt.contains("UEFI Misc Device") && !bt.contains("grub-mkconfig"), "{bt}");
+}
+
 const ELEMENTARY_KV: &str = "6.14.0-37-generic";
 /// The ESP's PARTUUID, and its vfat volume ID.
 const ELEMENTARY_ESP: &str = "e1e0e1e0-0000-4000-8000-000000000001";
@@ -4849,6 +5068,7 @@ pub fn dumps() -> Vec<(&'static str, Value)> {
         ("biglinux", run(&biglinux(), true, biglinux_runner())),
         ("anduinos", run(&anduinos(), true, anduinos_runner())),
         ("kali", run(&kali(), true, FakeRunner::default())),
+        ("neon", run(&neon(), true, FakeRunner::default())),
         ("elementary", run(&elementary(false), true, FakeRunner::default())),
         ("elementary_luks", run(&elementary(true), true, FakeRunner::default())),
         ("slackware15", run(&slackware15(), true, FakeRunner::default())),
@@ -4861,6 +5081,7 @@ pub fn dumps() -> Vec<(&'static str, Value)> {
         ("truenas_mirror", { let (t, r) = truenas(true); run(&t, true, r) }),
         ("zfsbootmenu", { let (t, r) = zfsbootmenu(false); run(&t, true, r) }),
         ("zfsbootmenu_enc", { let (t, r) = zfsbootmenu(true); run(&t, true, r) }),
+        ("qubes", { let (t, r) = qubes_tree(); run(&t, true, r) }),
     ]
 }
 
@@ -6818,4 +7039,409 @@ fn snapcore_refusals() {
     let v = crate::json::parse(&format!("{}\"size_bytes\":{}{}", &c[..from], 40u64 << 20, &c[from + "\"size_bytes\":37748736".len()..])).unwrap();
     let p = snapcore_plan(&v, &[]).problems;
     assert!(p.iter().any(|x| x.starts_with("Ubuntu Core: ubuntu-seed (vda2) would be 40 MiB instead of the gadget's 36 MiB")), "{p:?}");
+}
+
+// ---- Qubes OS 4.3 -----------------------------------------------------------
+
+const QUBES_LUKS: &str = "9b0e5c11-0000-4000-8000-000000000003";
+const QUBES_ESP: &str = "9b0e5c11-0000-4000-8000-000000000001";
+const QUBES_ROOT_UUID: &str = "9b0e5c11-0000-4000-8000-0000000000aa";
+const QUBES_KV: &str = "6.18.51-1.qubes.fc41.x86_64";
+const QUBES_VG: &str = "Qub3s0d0m0AbCdEfGhIjKlMnOpQrStUv";
+
+/// One thin LV of the qubes43 guest's vm-pool: its name, its origin, its
+/// virtual size in GiB, what it holds ("gpt" a template's disk image,
+/// "ext4:N" a private's ext4 with UUID byte N, "zero" nothing) and whether
+/// it has activation skip.
+struct QLv {
+    name: &'static str,
+    origin: Option<&'static str>,
+    gib: u64,
+    holds: &'static str,
+    skip: bool,
+}
+
+/// The 26 thin LVs of vm-pool after Q1's revisions.sh (docs/design/qubes.md,
+/// "What Q1 found"), with chains of three, a 10 GiB template-root revision
+/// beside 20 GiB roots, one revision with activation skip (Qubes's own are
+/// -kn; LVM's default -ky), a volatile volume and a leftover -snap.
+fn qubes_lvs() -> Vec<QLv> {
+    let q = |name, origin, gib, holds| QLv { name, origin, gib, holds, skip: false };
+    vec![
+        q("vm-fedora-44-xfce-root-1794670030-back", None, 10, "gpt"),
+        q("vm-fedora-44-xfce-root-1794670062-back", Some("vm-fedora-44-xfce-root-1794670030-back"), 20, "gpt"),
+        q("vm-fedora-44-xfce-root", Some("vm-fedora-44-xfce-root-1794670062-back"), 20, "gpt"),
+        q("vm-fedora-44-xfce-private-1794670063-back", None, 2, "ext4:1"),
+        q("vm-fedora-44-xfce-private", Some("vm-fedora-44-xfce-private-1794670063-back"), 2, "ext4:1"),
+        q("vm-debian-13-xfce-root-1794670100-back", None, 20, "gpt"),
+        q("vm-debian-13-xfce-root-1794670200-back", Some("vm-debian-13-xfce-root-1794670100-back"), 20, "gpt"),
+        q("vm-debian-13-xfce-root", Some("vm-debian-13-xfce-root-1794670200-back"), 20, "gpt"),
+        q("vm-debian-13-xfce-private-1794670101-back", None, 2, "ext4:2"),
+        q("vm-debian-13-xfce-private-1794670201-back", Some("vm-debian-13-xfce-private-1794670101-back"), 2, "ext4:2"),
+        q("vm-debian-13-xfce-private", Some("vm-debian-13-xfce-private-1794670201-back"), 2, "ext4:2"),
+        q("vm-work-private-1794670226-back", None, 2, "ext4:3"),
+        QLv { name: "vm-work-private-1794670270-back", origin: Some("vm-work-private-1794670226-back"), gib: 2, holds: "ext4:3", skip: true },
+        q("vm-work-private", Some("vm-work-private-1794670270-back"), 2, "ext4:3"),
+        q("vm-work-volatile", None, 10, "zero"),
+        q("vm-personal-private-1794670230-back", None, 2, "ext4:4"),
+        q("vm-personal-private-1794670280-back", Some("vm-personal-private-1794670230-back"), 2, "ext4:4"),
+        q("vm-personal-private", Some("vm-personal-private-1794670280-back"), 2, "ext4:4"),
+        q("vm-sys-net-private-1794670300-back", None, 2, "ext4:5"),
+        q("vm-sys-net-private", Some("vm-sys-net-private-1794670300-back"), 2, "ext4:5"),
+        q("vm-sys-net-root-snap", Some("vm-fedora-44-xfce-root"), 20, "gpt"),
+        q("vm-sys-firewall-private", None, 2, "ext4:6"),
+        q("vm-default-dvm-private", None, 2, "ext4:7"),
+        q("vm-default-mgmt-dvm-private", None, 2, "ext4:8"),
+        q("vm-untrusted-private", None, 2, "ext4:9"),
+        // Vault's private has dom0's root's filesystem UUID, as a cloned
+        // image would: fstab's UUID= still finds the mounted one.
+        q("vm-vault-private", None, 2, "ext4:root"),
+    ]
+}
+
+/// qubes_dom0's metadata: swap (linear), root-pool with dom0's `root`,
+/// vm-pool with qubes_lvs(), their _tdata/_tmeta and the spare.
+fn qubes_vg_text() -> String {
+    let id = |n: usize| format!("qv{n:04}-aaaa-bbbb-cccc-dddd-eeee-ffffff");
+    let striped = |n: usize, name: &str, extents: u64, at: u64, visible: bool| {
+        let st = if visible { r#"["READ", "WRITE", "VISIBLE"]"# } else { r#"["READ", "WRITE"]"# };
+        format!("{name} {{\nid = \"{}\"\nstatus = {st}\nflags = []\ncreation_time = 1794660000\ncreation_host = \"dom0\"\nsegment_count = 1\n\nsegment1 {{\nstart_extent = 0\nextent_count = {extents}\n\ntype = \"striped\"\nstripe_count = 1\n\nstripes = [\n\"pv0\", {at}\n]\n}}\n}}\n", id(n))
+    };
+    let pool = |n: usize, name: &str, extents: u64| {
+        format!("{name} {{\nid = \"{}\"\nstatus = [\"READ\", \"WRITE\", \"VISIBLE\"]\nflags = []\ncreation_time = 1794660000\ncreation_host = \"dom0\"\nsegment_count = 1\n\nsegment1 {{\nstart_extent = 0\nextent_count = {extents}\n\ntype = \"thin-pool\"\nmetadata = \"{name}_tmeta\"\npool = \"{name}_tdata\"\ntransaction_id = 40\nchunk_size = 128\ndiscards = \"passdown\"\nzero_new_blocks = 1\n}}\n}}\n", id(n))
+    };
+    let thin = |n: usize, name: &str, pool: &str, gib: u64, dev: usize, origin: Option<&str>, skip: bool| {
+        let o = origin.map(|o| format!("origin = \"{o}\"\n")).unwrap_or_default();
+        let flags = if skip { r#"["ACTIVATION_SKIP"]"# } else { "[]" };
+        format!("{name} {{\nid = \"{}\"\nstatus = [\"READ\", \"WRITE\", \"VISIBLE\"]\nflags = {flags}\ncreation_time = 1794660000\ncreation_host = \"dom0\"\nsegment_count = 1\n\nsegment1 {{\nstart_extent = 0\nextent_count = {}\n\ntype = \"thin\"\nthin_pool = \"{pool}\"\ntransaction_id = {dev}\ndevice_id = {dev}\n{o}}}\n}}\n", id(n), gib * 256)
+    };
+    // 4 MiB extents: swap 1006, root-pool 5120 + 10 meta, vm-pool 8827 + 9 meta, spare 10.
+    let mut lvs = String::new();
+    lvs += &striped(1, "swap", 1006, 0, true);
+    lvs += &pool(2, "root-pool", 5120);
+    lvs += &thin(3, "root", "root-pool", 20, 1, None, false);
+    lvs += &striped(4, "root-pool_tdata", 5120, 1006, false);
+    lvs += &striped(5, "root-pool_tmeta", 10, 6126, false);
+    lvs += &striped(6, "lvol0_pmspare", 10, 6136, false);
+    lvs += &pool(7, "vm-pool", 8827);
+    lvs += &striped(8, "vm-pool_tdata", 8827, 6146, false);
+    lvs += &striped(9, "vm-pool_tmeta", 9, 14973, false);
+    for (i, l) in qubes_lvs().iter().enumerate() {
+        lvs += &thin(10 + i, l.name, "vm-pool", l.gib, i + 1, l.origin, l.skip);
+    }
+    format!(
+        "qubes_dom0 {{\nid = \"Qub3s0-d0m0-AbCd-EfGh-IjKl-MnOp-QrStUv\"\nseqno = 120\nformat = \"lvm2\"\nstatus = [\"RESIZEABLE\", \"READ\", \"WRITE\"]\nflags = []\nextent_size = 8192\nmax_lv = 0\nmax_pv = 0\nmetadata_copies = 0\n\nphysical_volumes {{\n\npv0 {{\nid = \"Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff\"\ndevice = \"/dev/mapper/luks-{QUBES_LUKS}\"\n\nstatus = [\"ALLOCATABLE\"]\nflags = []\ndev_size = 125798400\npe_start = 2048\npe_count = 15355\n}}\n}}\n\nlogical_volumes {{\n\n{lvs}}}\n}}\n# Generated by LVM2 version 2.03.23(2) (2023-11-21)\n\ncontents = \"Text Format Volume Group\"\nversion = 1\n\ndescription = \"\"\n\ncreation_host = \"dom0\"\ncreation_time = 1794670300\n"
+    )
+}
+
+/// qubes.xml for the guest's qubes: the templates' root, private and
+/// volatile in vm-pool, the AppVMs' private and volatile (their root a
+/// snapshot of their template's, made at start).
+fn qubes_xml() -> String {
+    let dom = |class: &str, name: &str, template: bool| {
+        let root = if template {
+            format!("<volume name=\"root\" pool=\"vm-pool\" vid=\"qubes_dom0/vm-{name}-root\" revisions_to_keep=\"2\" rw=\"True\" save_on_stop=\"True\" size=\"21474836480\" snap_on_start=\"False\"/>")
+        } else {
+            format!("<volume name=\"root\" pool=\"vm-pool\" vid=\"qubes_dom0/vm-{name}-root\" rw=\"False\" snap_on_start=\"True\" source=\"qubes_dom0/vm-fedora-44-xfce-root\"/>")
+        };
+        format!(
+            "<domain id=\"domain-{name}\" class=\"{class}\"><properties><property name=\"name\">{name}</property></properties><volume-config>{root}<volume name=\"private\" pool=\"vm-pool\" vid=\"qubes_dom0/vm-{name}-private\" revisions_to_keep=\"2\" rw=\"True\" save_on_stop=\"True\" size=\"2147483648\"/><volume name=\"volatile\" pool=\"vm-pool\" vid=\"qubes_dom0/vm-{name}-volatile\" rw=\"True\" size=\"10737418240\"/><volume name=\"kernel\" pool=\"linux-kernel\" vid=\"6.18.51-1.qubes.fc41\" rw=\"False\"/></volume-config></domain>\n"
+        )
+    };
+    let mut d = String::new();
+    d += &dom("TemplateVM", "fedora-44-xfce", true);
+    d += &dom("TemplateVM", "debian-13-xfce", true);
+    for (c, n) in [("AppVM", "work"), ("AppVM", "personal"), ("AppVM", "untrusted"), ("AppVM", "vault"), ("AppVM", "default-dvm"), ("AppVM", "default-mgmt-dvm"), ("AppVM", "sys-net"), ("DispVM", "sys-firewall")] {
+        d += &dom(c, n, false);
+    }
+    format!(
+        "<?xml version='1.0' encoding='utf-8'?>\n<qubes version=\"3.0\"><properties><property name=\"default_template\">fedora-44-xfce</property></properties><pools><pool dir_path=\"/var/lib/qubes\" driver=\"file\" name=\"varlibqubes\"/><pool dir_path=\"/var/lib/qubes/vm-kernels\" driver=\"linux-kernel\" name=\"linux-kernel\"/><pool driver=\"lvm_thin\" name=\"vm-pool\" thin_pool=\"vm-pool\" volume_group=\"qubes_dom0\" revisions_to_keep=\"2\"/></pools><domains>\n{d}<domain id=\"domain-0\" class=\"AdminVM\"><properties><property name=\"name\">dom0</property></properties></domain></domains></qubes>\n"
+    )
+}
+
+/// The qubes43 guest (docs/design/qubes.md, "What Q0 found" and "What Q1
+/// found") as dump reads it from dom0's root: GPT with the ESP (Qubes's
+/// GRUB in EFI/qubes, its copy at EFI/BOOT), /boot ext4 and LUKS2 holding
+/// VG qubes_dom0: swap, root-pool with dom0's root (ext4, /), vm-pool with
+/// qubes_lvs(); Xen 4.19.5 in /boot and 20_linux_xen's menu; NVRAM's
+/// "Qubes OS" entry; qubes.xml.
+fn qubes_tree() -> (Tree, FakeRunner) {
+    use crate::efi::GLOBAL;
+    let t = Tree::new("scn-qubes43");
+    let mut img = vec![0u8; 64 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "9b0e5c11-0000-4000-8000-00000000d15c",
+            parts: vec![(ESP, QUBES_ESP, 2048, 34815, 0, "EFI System Partition"), (LINUX, "9b0e5c11-0000-4000-8000-000000000002", 34816, 51199, 0, ""), (LINUX, "9b0e5c11-0000-4000-8000-000000000004", 51200, 131038, 0, "")],
+        },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(32768, 0x9b0e_0001, ""));
+    put(&mut img, 34816, &ext4_with("", "9b0e5c11-0000-4000-8000-0000000000b0"));
+    put(&mut img, 51200, &luks::sample::luks2(QUBES_LUKS, ""));
+    let pv = lvm::sample::pv_with(512, 1 << 20, &qubes_vg_text());
+    let luks_dm = format!("luks-{QUBES_LUKS}");
+    let lvid = |n: usize| format!("qv{n:04}aaaabbbbccccddddeeeeffffff");
+    let lv_uuid = |n: usize| format!("LVM-{QUBES_VG}{}", lvid(n));
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    let grub = vec![2u8; 400];
+    t.file("/etc/os-release", "NAME=Qubes\nVERSION=\"4.3.2 (R4.3)\"\nID=qubes\nVERSION_ID=4.3\nPRETTY_NAME=\"Qubes OS 4.3.2 (R4.3)\"\nANSI_COLOR=\"0;31\"\n")
+        .disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 32768, &img)
+        .partition("vda", "vda2", "254:2", 2, 34816, 16384, &img)
+        .partition("vda", "vda3", "254:3", 3, 51200, 79839, &img)
+        .file("/sys/block/vda/device/model", "")
+        .file("/sys/block/vda/vda3/holders/dm-0", "")
+        .symlink(&format!("/dev/disk/by-partuuid/{QUBES_ESP}"), "../../vda1")
+        .disk("dm-0", "253:0", &pv, 512)
+        .file("/sys/block/dm-0/dm/name", format!("{luks_dm}\n"))
+        .file("/sys/block/dm-0/dm/uuid", format!("CRYPT-LUKS2-{}-{luks_dm}\n", QUBES_LUKS.replace('-', "")))
+        .file("/sys/block/dm-0/slaves/vda3", "")
+        .symlink(&format!("/dev/mapper/{luks_dm}"), "../dm-0");
+    // The LVs' device-mapper devices: swap and the pools' layers on dm-0,
+    // the thin LVs on their pool's -tpool.
+    let gpt_img = {
+        let mut g = vec![0u8; 512 * 512];
+        write_gpt(&mut g, 512, &GptSpec { disk_guid: "9b0e5c11-0000-4000-8000-0000000000c0", parts: vec![(BIOS_BOOT, "9b0e5c11-0000-4000-8000-0000000000c1", 40, 79, 0, ""), (LINUX, "9b0e5c11-0000-4000-8000-0000000000c2", 80, 470, 0, "Root filesystem")] });
+        g
+    };
+    let mut devs: Vec<(String, String, Vec<u8>, Vec<String>)> = vec![
+        ("qubes_dom0-swap".into(), lv_uuid(1), misc::sample::swap(16, ""), vec!["dm-0".into()]),
+        ("qubes_dom0-root--pool_tmeta".into(), lv_uuid(5) + "-tmeta", vec![0u8; 65536], vec!["dm-0".into()]),
+        ("qubes_dom0-root--pool_tdata".into(), lv_uuid(4) + "-tdata", vec![0u8; 65536], vec!["dm-0".into()]),
+        ("qubes_dom0-root--pool-tpool".into(), lv_uuid(2) + "-tpool", vec![0u8; 65536], vec!["dm-2".into(), "dm-3".into()]),
+        ("qubes_dom0-root".into(), lv_uuid(3), ext4_with("", QUBES_ROOT_UUID), vec!["dm-4".into()]),
+        ("qubes_dom0-vm--pool_tmeta".into(), lv_uuid(9) + "-tmeta", vec![0u8; 65536], vec!["dm-0".into()]),
+        ("qubes_dom0-vm--pool_tdata".into(), lv_uuid(8) + "-tdata", vec![0u8; 65536], vec!["dm-0".into()]),
+        ("qubes_dom0-vm--pool-tpool".into(), lv_uuid(7) + "-tpool", vec![0u8; 65536], vec!["dm-6".into(), "dm-7".into()]),
+    ];
+    for (i, l) in qubes_lvs().iter().enumerate() {
+        let image = match l.holds {
+            "gpt" => gpt_img.clone(),
+            "zero" => vec![0u8; 65536],
+            "ext4:root" => ext4_with("", QUBES_ROOT_UUID),
+            e => ext4_with("", &format!("9b0e5c11-0000-4000-8000-0000000001{:02}", e.trim_start_matches("ext4:").parse::<u32>().unwrap())),
+        };
+        devs.push((format!("qubes_dom0-{}", l.name.replace('-', "--")), lv_uuid(10 + i), image, vec!["dm-8".into()]));
+    }
+    for (i, (name, uuid, image, slaves)) in devs.iter().enumerate() {
+        let dm = format!("dm-{}", i + 1);
+        t.disk(&dm, &format!("253:{}", i + 1), image, 512).file(&format!("/sys/block/{dm}/dm/name"), format!("{name}\n")).file(&format!("/sys/block/{dm}/dm/uuid"), format!("{uuid}\n")).symlink(&format!("/dev/mapper/{name}"), &format!("../{dm}"));
+        for s in slaves {
+            t.file(&format!("/sys/block/{dm}/slaves/{s}"), "").file(&format!("/sys/block/{s}/holders/{dm}"), "");
+        }
+    }
+    let root_dm = devs.iter().position(|d| d.0 == "qubes_dom0-root").unwrap() + 1;
+    t.file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&var("Boot0004"), efi_load_option("Qubes OS", 1, 2048, 32768, QUBES_ESP, "\\EFI\\qubes\\grubx64.efi"))
+        .file(&var("BootOrder"), [7u8, 0, 0, 0, 4, 0])
+        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 4, 0])
+        .file(&var("SecureBoot"), [6u8, 0, 0, 0, 0])
+        .file("/proc/self/mountinfo", format!("26 1 253:{root_dm} / / rw,relatime shared:1 - ext4 /dev/mapper/qubes_dom0-root rw,discard\n27 26 254:2 / /boot rw,relatime shared:2 - ext4 /dev/vda2 rw\n28 27 254:1 / /boot/efi rw,relatime shared:3 - vfat /dev/vda1 rw,fmask=0077,dmask=0077\n"))
+        .file("/etc/fstab", format!("UUID={QUBES_ROOT_UUID} / ext4 defaults,discard,x-systemd.device-timeout=0 1 1\nUUID=9b0e5c11-0000-4000-8000-0000000000b0 /boot ext4 defaults,discard 1 2\nUUID=9B0E-0001 /boot/efi vfat umask=0077,shortname=winnt 0 2\n/dev/mapper/qubes_dom0-swap none swap defaults,x-systemd.device-timeout=0 0 0\n"))
+        .file("/etc/crypttab", format!("{luks_dm} UUID={QUBES_LUKS} none discard\n"))
+        .file("/var/lib/qubes/qubes.xml", qubes_xml())
+        .file("/etc/default/grub", crate::qubes::sample::DEFAULT_GRUB.replace("bc000000-0000-4000-8000-000000000003", QUBES_LUKS))
+        .file("/boot/grub2/grub.cfg", crate::qubes::sample::GRUB_CFG.replace("bc000000-0000-4000-8000-000000000003", QUBES_LUKS))
+        .file("/etc/grub.d/20_linux_xen", "#! /bin/sh\n")
+        .file("/boot/xen-4.19.5.gz", "xen")
+        .file(&format!("/boot/vmlinuz-{QUBES_KV}"), "k")
+        .file(&format!("/boot/initramfs-{QUBES_KV}.img"), "dracut")
+        .file(&format!("/boot/config-{QUBES_KV}"), "")
+        .dir(&format!("/usr/lib/modules/{QUBES_KV}/kernel"))
+        .file("/boot/efi/EFI/qubes/grubx64.efi", &grub)
+        .file("/boot/efi/EFI/BOOT/BOOTX64.EFI", &grub)
+        .dir("/var/lib/rpm")
+        .file("/proc/sys/kernel/osrelease", format!("{QUBES_KV}\n"))
+        .file("/proc/sys/kernel/hostname", "dom0\n")
+        .file("/proc/cmdline", format!("placeholder root=/dev/mapper/qubes_dom0-root ro rd.luks.uuid=luks-{QUBES_LUKS} rd.lvm.lv=qubes_dom0/root\n"));
+    let rpms: String = [
+        ("grub2-efi-x64", "2.12-30.fc41"),
+        ("grub2-tools", "2.12-30.fc41"),
+        ("dracut", "105-1.fc41"),
+        ("lvm2", "2.03.23-1.fc41"),
+        ("cryptsetup", "2.7.5-1.fc41"),
+        ("efibootmgr", "18-6.fc41"),
+        ("e2fsprogs", "1.47.1-3.fc41"),
+        ("dosfstools", "4.2-12.fc41"),
+        ("xen", "4.19.5-1.fc41"),
+        ("xen-hypervisor", "4.19.5-1.fc41"),
+        ("kernel", "6.18.51-1.qubes.fc41"),
+        ("qubes-core-dom0", "4.3.29-1.fc41"),
+        ("qubes-release", "4.3-3"),
+    ]
+    .iter()
+    .map(|(n, v)| format!("{n}\t{v}\tx86_64\n"))
+    .collect();
+    let skip = "qubes_dom0/vm-work-private-1794670270-back";
+    let cfg = format!("activation {{ read_only_volume_list = [ \"{skip}\" ] }}");
+    let runner = FakeRunner::default()
+        .with("rpm -qa --qf %{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n", &rpms)
+        .with("lvs --noheadings --separator | -o vg_name,lv_name,lv_attr", "  qubes_dom0|root|Vwi-aotz--\n  qubes_dom0|vm-work-private-1794670270-back|Vwi---tz-k\n  qubes_dom0|vm-work-private|Vwi-a-tz--\n")
+        .with(&format!("lvchange --activate y --ignoreactivationskip --config {cfg} {skip}"), "")
+        .with(&format!("lvchange --activate n {skip}"), "")
+        .with("dmsetup status qubes_dom0-root--pool-tpool", "0 41943040 thin-pool 40 2304/2560 89000/327680 - rw discard_passdown queue_if_no_space - 1024\n")
+        .with("dmsetup status qubes_dom0-vm--pool-tpool", "0 72302592 thin-pool 40 4100/2304 190000/564928 - rw discard_passdown queue_if_no_space - 1024\n")
+        .with("dmsetup status qubes_dom0-vm--work--private", "0 4194304 thin 524288 4194303\n");
+    (t, runner)
+}
+
+fn qubes_plan(v: &Value) -> crate::load::commands::Built {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let l = Layout::from_json(v.clone()).unwrap();
+    let a: Vec<String> = ["l.json", "--repo", "/srv/bko-repo"].iter().map(|s| s.to_string()).collect();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
+    commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() })
+}
+
+/// Qubes OS 4.3 (docs/design/qubes.md, Q2-Q4): dump records qubes.xml, Xen,
+/// the pools' use and the raw volumes; load makes both pools and their
+/// thin LVs without an origin in assemble, leaves the raw volumes
+/// unformatted, and in the restore stage writes each base image, then
+/// makes each snapshot from its origin (with its own size, activation skip
+/// as the source had it) and writes its changed chunks; the boot stage
+/// remakes Xen's GRUB menu and checks it.
+#[test]
+fn qubes_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let (t, r) = qubes_tree();
+    let v = run(&t, true, r);
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+    assert_eq!(s(&v, &["os", "product"]), "Qubes OS 4.3");
+    let x = v.at(&["boot", "xen"]).unwrap();
+    assert_eq!(s(x, &["version"]), "4.19.5");
+    assert!(s(x, &["cmdline_xen_default"]).starts_with("console=com1 "));
+    assert_eq!(arr(x, &["entries"]).len(), 1);
+    assert_eq!(s(&v, &["boot", "loader", "name"]), "grub");
+    assert_eq!(v.at(&["boot", "loader", "via_shim"]), Some(&Value::Bool(false)));
+    // qubes.xml: 10 qubes, 3 volumes each in vm-pool (kernel in its own).
+    let vols = arr(&v, &["storage", "qubes", "volumes"]);
+    assert_eq!(vols.iter().filter(|x| x.get("pool").and_then(Value::as_str) == Some("vm-pool")).count(), 30);
+    // Thin usage from dmsetup status: 64 KiB chunks, 4 KiB metadata blocks.
+    let lvs = arr(&v, &["storage", "lvm", "volume_groups", "0", "logical_volumes"]);
+    let lv = |n: &str| lvs.iter().find(|l| l.get("name").and_then(Value::as_str) == Some(n)).unwrap();
+    assert_eq!(u(lv("vm-pool"), &["data_used_bytes"]), 190000 * 65536);
+    assert_eq!(u(lv("vm-pool"), &["metadata_used_bytes"]), 4100 * 4096);
+    assert_eq!(u(lv("vm-work-private"), &["mapped_bytes"]), 524288 * 512);
+    // The raw volumes: every vm-* LV but the volatile one; backup sources
+    // with fstype raw at their image paths.
+    let dms = arr(&v, &["storage", "dm_devices"]);
+    let raw: Vec<&Value> = dms.iter().filter(|d| d.get("raw_volume").is_some()).collect();
+    assert_eq!(raw.len(), 25);
+    assert!(dms.iter().any(|d| d.at(&["dm", "lv"]).and_then(Value::as_str) == Some("vm-work-volatile") && d.get("raw_volume").is_none()));
+    assert!(dms.iter().all(|d| d.at(&["dm", "lv"]).and_then(Value::as_str) != Some("root") || d.get("raw_volume").is_none()));
+    let w = raw.iter().find(|d| d.at(&["dm", "lv"]).and_then(Value::as_str) == Some("vm-work-private")).unwrap();
+    assert_eq!(s(w, &["raw_volume", "image"]), "/.bko-holt/raw/qubes_dom0/vm-work-private.img");
+    assert_eq!(s(w, &["raw_volume", "qube"]), "work");
+    let srcs = arr(&v, &["storage", "backup_sources"]);
+    assert_eq!(srcs.iter().filter(|b| b.get("fstype").and_then(Value::as_str) == Some("raw")).count(), 25);
+    assert_eq!(s(&srcs[0], &["path"]), "/");
+    assert!(srcs.iter().any(|b| s(b, &["path"]) == "/.bko-holt/raw/qubes_dom0/vm-work-private-1794670270-back.img" && s(b, &["note"]).contains("`lvchange -ay -K` it first")));
+    // fstab's UUID= finds the mounted root, not vault's private with the same UUID.
+    let root_dm = dms.iter().find(|d| d.at(&["dm", "lv"]).and_then(Value::as_str) == Some("root")).and_then(|d| d.get("name")).and_then(Value::as_str).unwrap();
+    assert_eq!(s(&v, &["storage", "fstab", "0", "resolves_to"]), root_dm);
+
+    let b = qubes_plan(&v);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let asm: String = b.stage(Stage::Assemble).iter().map(Cmd::shell).collect();
+    for p in ["root-pool", "vm-pool"] {
+        assert!(asm.contains(&format!("--type thin-pool -n {p} ")), "{asm}");
+    }
+    let roots = 1 + qubes_lvs().iter().filter(|l| l.origin.is_none()).count();
+    assert_eq!(asm.lines().filter(|l| l.contains("--type thin ")).count(), roots, "{asm}");
+    assert!(!asm.contains("--snapshot"), "{asm}");
+    assert!(asm.contains("# thin pool qubes_dom0/vm-pool: made with 34.5 GiB of data and 36 MiB of metadata; the source used 11.6 GiB of its data and 16 MiB of its metadata; its 26 thin LVs (13 of them snapshots) add up to 176 GiB virtual"), "{asm}");
+    let fmt: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
+    assert!(fmt.contains("/dev/mapper/qubes_dom0-root\n") && !fmt.contains("vm--"), "{fmt}");
+    // The restore's commands as their words (the scripts unquoted).
+    let rs: String = b.stage(Stage::Restore).iter().map(|c| format!("{}\n", c.argv.join(" "))).collect();
+    assert!(b.stage(Stage::Restore).iter().any(|c| c.stdin.as_deref().is_some_and(|g| g.contains("!/.bko-holt/raw/**\n"))), "{rs}");
+    assert_eq!(rs.matches("raw-write --size").count(), 25, "{rs}");
+    assert_eq!(rs.matches(&format!("lvcreate --devicesfile '' --devices /dev/mapper/luks-{QUBES_LUKS} --snapshot qubes_dom0/")).count(), 13, "{rs}");
+    // Each snapshot after its origin's image is written, and before its own.
+    let at = |needle: &str| rs.find(needle).unwrap_or_else(|| panic!("{needle}: {rs}"));
+    for l in qubes_lvs().iter().filter(|l| l.origin.is_some()) {
+        let o = l.origin.unwrap();
+        let snap = at(&format!("--snapshot qubes_dom0/{o} -n {} --setactivationskip {}", l.name, if l.skip { "y" } else { "n" }));
+        let mapper = |n: &str| format!("/dev/mapper/qubes_dom0-{};", n.replace('-', "--"));
+        assert!(at(&format!("--chunk 65536 {}", mapper(o))) < snap && snap < at(&format!("--chunk 65536 {}", mapper(l.name))), "{}: {rs}", l.name);
+    }
+    // The 20 GiB revision of a 10 GiB one gets its own size; activation
+    // skip on, then activated to be written.
+    assert!(rs.contains("--yes --fs ignore -L 20480m qubes_dom0/vm-fedora-44-xfce-root-1794670062-back"), "{rs}");
+    assert_eq!(rs.matches("lvresize").count(), 1, "{rs}");
+    assert!(rs.contains("--ignoreactivationskip qubes_dom0/vm-work-private-1794670270-back"), "{rs}");
+    assert!(rs.contains("rustic-bko --repository /srv/bko-repo --no-progress dump latest:/.bko-holt/raw/qubes_dom0/vm-work-private.img"), "{rs}");
+    assert!(b.stage(Stage::Restore).iter().any(|c| c.why.as_deref().is_some_and(|w| w.starts_with("thin snapshot qubes_dom0/vm-sys-net-root-snap: lvcreate -s of qubes_dom0/vm-fedora-44-xfce-root") && w.contains("a leftover -snap"))), "{rs}");
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    let d = bt.find("dracut --force").expect(&bt);
+    let mk = bt.find("chroot /mnt/bko-target env LANG=C grub2-mkconfig -o /boot/grub2/grub.cfg\n").expect(&bt);
+    let chk = bt.find("multiboot2").expect(&bt);
+    let nv = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'Qubes OS' --loader '\\EFI\\qubes\\grubx64.efi'\n").expect(&bt);
+    assert!(d < mk && mk < chk && chk < nv, "{bt}");
+    assert_eq!(bt.matches("efibootmgr --quiet --create").count(), 1, "{bt}");
+    assert!(!bt.contains("grub2-install") && !bt.contains("grub-install"), "{bt}");
+    for n in ["Qubes: 25 volumes of 10 qubes come back as raw images", "qubes_dom0/vm-work-volatile: Qubes's volatile volume, made empty", "Qubes OS: GRUB 2 without shim (Secure Boot off)"] {
+        assert!(b.notes.iter().any(|x| x.starts_with(n)), "{n}: {:?}", b.notes);
+    }
+}
+
+/// What load refuses on a Qubes dump: a thin LV with an external origin;
+/// a pool whose source used more data than it is made with; a snapshot
+/// whose origin isn't in the dump; Qubes's btrfs layout; Qubes 4.2.
+#[test]
+fn qubes_refusals() {
+    let (t, r) = qubes_tree();
+    let v = run(&t, true, r);
+    let lvs = || arr(&v, &["storage", "lvm", "volume_groups", "0", "logical_volumes"]).clone();
+    let idx = |n: &str| lvs().iter().position(|l| l.get("name").and_then(Value::as_str) == Some(n)).unwrap().to_string();
+    let check = |w: Value, want: &str| {
+        let p = qubes_plan(&w).problems;
+        assert!(p.iter().any(|x| x.contains(want)), "{want}: {p:?}");
+    };
+    let mut w = v.clone();
+    let i = idx("vm-vault-private");
+    set_in(&mut w, &["storage", "lvm", "volume_groups", "0", "logical_volumes", &i, "segments", "0", "external_origin"], Value::from("ext"));
+    check(w, "has the external origin ext");
+    let mut w = v.clone();
+    set_in(&mut w, &["storage", "lvm", "volume_groups", "0", "logical_volumes", &idx("vm-pool"), "data_used_bytes"], Value::from(40u64 << 30));
+    check(w, "thin pool qubes_dom0/vm-pool: the source had 40 GiB of data in use, more than the 34.5 GiB");
+    let mut w = v.clone();
+    let mut all = lvs();
+    all.retain(|l| l.get("name").and_then(Value::as_str) != Some("vm-fedora-44-xfce-root-1794670030-back"));
+    set_in(&mut w, &["storage", "lvm", "volume_groups", "0", "logical_volumes"], Value::Arr(all));
+    check(w, "is a thin snapshot of vm-fedora-44-xfce-root-1794670030-back, which isn't a thin LV of pool vm-pool in the dump");
+    let mut w = v.clone();
+    set_in(&mut w, &["storage", "fstab", "0", "type"], Value::from("btrfs"));
+    check(w, "Qubes OS on btrfs");
+    let mut w = v.clone();
+    set_at(&mut w, &["os", "version_id"], Value::from("4.2"));
+    check(w, "restores Qubes OS 4.3 and later only");
+}
+
+/// `x` at `path` (object keys and array indexes), in place.
+fn set_in(v: &mut Value, path: &[&str], x: Value) {
+    let Some((last, rest)) = path.split_first().map(|(f, r)| (f, r)) else { return };
+    match v {
+        Value::Arr(a) => {
+            let i: usize = last.parse().unwrap();
+            if rest.is_empty() {
+                a[i] = x;
+            } else {
+                set_in(&mut a[i], rest, x);
+            }
+        }
+        Value::Obj(o) => {
+            if rest.is_empty() {
+                match o.iter_mut().find(|(k, _)| k == last) {
+                    Some(slot) => slot.1 = x,
+                    None => o.push((last.to_string(), x)),
+                }
+            } else {
+                set_in(&mut o.iter_mut().find(|(k, _)| k == last).unwrap_or_else(|| panic!("no {last}")).1, rest, x);
+            }
+        }
+        _ => panic!("no object or array at {last}"),
+    }
 }

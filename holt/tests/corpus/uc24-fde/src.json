@@ -1,0 +1,2638 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.6"
+  },
+  "generated": "2026-11-14T19:42:14Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host-1",
+    "machine_id": "bd000000000040008000000000000001",
+    "dmi": {
+      "sys_vendor": "QEMU",
+      "product_name": "Standard PC (Q35 + ICH9, 2009)",
+      "product_version": "pc-q35-11.1",
+      "board_vendor": null,
+      "board_name": null,
+      "bios_vendor": "Debian distribution of EDK II",
+      "bios_version": "2025.02-8+deb13u1",
+      "bios_date": "11/08/2025",
+      "product_uuid": null,
+      "chassis_type": "1"
+    },
+    "virtualization": "kvm"
+  },
+  "os": {
+    "id": "ubuntu-core",
+    "version_id": "24",
+    "version_codename": null,
+    "pretty_name": "Ubuntu Core 24",
+    "debian_version": null,
+    "kernel_release": "6.8.0-149-generic",
+    "kernel_version": "#149-Ubuntu SMP PREEMPT_DYNAMIC Fri Oct 23 13:21:10 UTC 2026",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "uefi",
+    "platform_size": 64,
+    "secure_boot": true,
+    "setup_mode": false,
+    "efivars_readable": true
+  },
+  "storage": {
+    "topology": {
+      "loop0 (loop, 1.7 MiB)": {},
+      "loop1 (loop, 66.8 MiB)": {},
+      "loop2 (loop, 318 MiB)": {},
+      "loop3 (loop, 10.8 MiB)": {},
+      "loop4 (loop, 11.8 MiB)": {},
+      "loop5 (loop, 105 MiB)": {},
+      "loop6 (loop, 63.8 MiB)": {},
+      "loop7 (loop, 66.2 MiB)": {},
+      "loop8 (loop, 64 KiB)": {},
+      "loop9 (loop, 104 KiB)": {},
+      "loop10 (loop, 1.6 MiB)": {},
+      "loop11 (loop, 329 MiB)": {},
+      "loop12 (loop, 32.5 MiB)": {},
+      "loop13 (loop, 38.8 MiB)": {},
+      "vda (disk, 8 GiB, gpt)": {
+        "vda1 (partition, 1 MiB)": {},
+        "vda2 (partition, 1.2 GiB) vfat \"ubuntu-seed\" on /run/mnt/ubuntu-seed, /boot/efi, /var/lib/snapd/seed": {},
+        "vda3 (partition, 750 MiB) ext4 \"ubuntu-boot\" on /run/mnt/ubuntu-boot, /boot/grub": {},
+        "vda4 (partition, 32 MiB) crypto_LUKS \"ubuntu-save-enc\"": {
+          "dm-1 (dm, 25 MiB, ubuntu-save-bc000000-0000-4000-8000-000000000001) ext4 \"ubuntu-save\" on /run/mnt/ubuntu-save, /var/lib/snapd/save": {}
+        },
+        "vda5 (partition, 6.1 GiB) crypto_LUKS \"ubuntu-data-enc\"": {
+          "dm-0 (dm, 6.1 GiB, ubuntu-data-bc000000-0000-4000-8000-000000000002) ext4 \"ubuntu-data\" on /run/mnt/data, /writable, /etc/writable, /etc/dbus-1, /etc/hosts, /etc/iproute2, /etc/modprobe.d, /etc/modules-load.d, /etc/netplan, /etc/network/if-up.d, /etc/ssh, /etc/sudoers.d, /etc/systemd, /etc/udev/rules.d, /etc/cloud, /etc/sysctl.d, /etc/default/swapfile, /etc/environment, /etc/machine-id, /etc/motd.d, /etc/update-motd.d, /etc/security/pwquality.conf, /etc/polkit-1/actions, /etc/polkit-1/rules.d, /snap, /var/lib/snapd, /var/snap, /usr/lib/firmware, /usr/lib/modules, /home, /root, /var/cache/apparmor, /var/cache/snapd, /var/lib/cloud, /var/lib/dbus, /var/lib/console-conf, /var/lib/dhcpcd, /var/lib/extrausers, /var/lib/misc, /var/lib/private/systemd, /var/lib/waagent, /var/log, /var/tmp, /var/lib/systemd": {}
+        }
+      }
+    },
+    "disks": [
+      {
+        "name": "vda",
+        "path": "/dev/vda",
+        "kind": "disk",
+        "devno": "253:0",
+        "size_bytes": 8589934592,
+        "size": "8 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/9",
+          "/dev/disk/by-path/pci-0000:00:03.0",
+          "/dev/disk/by-path/virtio-pci-0000:00:03.0",
+          "/dev/disk/snapd/disk"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "bc000000-0000-4000-8000-000000000003",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 34,
+          "last_usable_lba": 16777182,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 16777215,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 16777215,
+                "start_bytes": 512,
+                "size_bytes": 8589934080,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vda1",
+            "path": "/dev/vda1",
+            "devno": "253:1",
+            "number": 1,
+            "start_lba": 2048,
+            "end_lba": 4095,
+            "sectors": 2048,
+            "start_bytes": 1048576,
+            "size_bytes": 1048576,
+            "type": "21686148-6449-6e6f-744e-656564454649",
+            "type_name": "BIOS boot",
+            "uuid": "bc000000-0000-4000-8000-000000000004",
+            "partlabel": "BIOS Boot",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part1",
+              "/dev/disk/by-partlabel/BIOS\\x20Boot",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000004",
+              "/dev/disk/by-path/pci-0000:00:03.0-part1",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part1"
+            ],
+            "holders": [],
+            "content": null,
+            "mounted_at": []
+          },
+          {
+            "name": "vda2",
+            "path": "/dev/vda2",
+            "devno": "253:2",
+            "number": 2,
+            "start_lba": 4096,
+            "end_lba": 2461695,
+            "sectors": 2457600,
+            "start_bytes": 2097152,
+            "size_bytes": 1258291200,
+            "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "type_name": "EFI System",
+            "uuid": "bc000000-0000-4000-8000-000000000005",
+            "partlabel": "ubuntu-seed",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part2",
+              "/dev/disk/by-label/ubuntu-seed",
+              "/dev/disk/by-partlabel/ubuntu-seed",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000005",
+              "/dev/disk/by-path/pci-0000:00:03.0-part2",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part2",
+              "/dev/disk/by-uuid/BC00-0001",
+              "/dev/disk/snapd/ubuntu-seed"
+            ],
+            "holders": [],
+            "content": {
+              "type": "vfat",
+              "usage": "filesystem",
+              "uuid": "BC00-0001",
+              "label": "ubuntu-seed",
+              "version": "FAT32",
+              "fat_bits": 32,
+              "bytes_per_sector": 512,
+              "sectors_per_cluster": 1,
+              "cluster_size": 512,
+              "reserved_sectors": 32,
+              "fats": 2,
+              "fat_sectors": 18905,
+              "total_sectors": 2457567,
+              "size_bytes": 1258274304,
+              "clusters": 2419725,
+              "hidden_sectors": 0,
+              "media": "0xf8",
+              "oem_name": "mkfs.fat",
+              "root_cluster": 2,
+              "fsinfo_sector": 1,
+              "backup_boot_sector": 6,
+              "boot_sector_label": "ubuntu-seed"
+            },
+            "mounted_at": ["/boot/efi", "/run/mnt/ubuntu-seed", "/var/lib/snapd/seed"]
+          },
+          {
+            "name": "vda3",
+            "path": "/dev/vda3",
+            "devno": "253:3",
+            "number": 3,
+            "start_lba": 2461696,
+            "end_lba": 3997695,
+            "sectors": 1536000,
+            "start_bytes": 1260388352,
+            "size_bytes": 786432000,
+            "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+            "type_name": "Linux filesystem",
+            "uuid": "bc000000-0000-4000-8000-000000000006",
+            "partlabel": "ubuntu-boot",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part3",
+              "/dev/disk/by-label/ubuntu-boot",
+              "/dev/disk/by-partlabel/ubuntu-boot",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000006",
+              "/dev/disk/by-path/pci-0000:00:03.0-part3",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part3",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000007",
+              "/dev/disk/snapd/ubuntu-boot"
+            ],
+            "holders": [],
+            "content": {
+              "type": "ext4",
+              "usage": "filesystem",
+              "uuid": "bc000000-0000-4000-8000-000000000007",
+              "label": "ubuntu-boot",
+              "version": "1.0",
+              "block_size": 4096,
+              "blocks": 192000,
+              "size_bytes": 786432000,
+              "free_blocks": 153482,
+              "reserved_blocks": 9600,
+              "inodes": 48000,
+              "free_inodes": 47974,
+              "inode_size": 256,
+              "inodes_per_group": 8000,
+              "blocks_per_group": 32768,
+              "first_data_block": 0,
+              "revision": 1,
+              "features": [
+                "has_journal",
+                "ext_attr",
+                "resize_inode",
+                "dir_index",
+                "filetype",
+                "needs_recovery",
+                "extent",
+                "64bit",
+                "flex_bg",
+                "sparse_super",
+                "large_file",
+                "huge_file",
+                "dir_nlink",
+                "extra_isize",
+                "metadata_csum"
+              ],
+              "state": "clean",
+              "has_errors": false,
+              "errors_behavior": "continue",
+              "creator_os": "Linux",
+              "reserved_gdt_blocks": 93,
+              "default_hash": "half_md4",
+              "hash_seed": "bc000000-0000-4000-8000-000000000008",
+              "mkfs_time": 1794659756,
+              "last_mounted_on": "/run/mnt/ubuntu-boot",
+              "flex_bg_size": 16,
+              "descriptor_size": 64,
+              "min_extra_isize": 32,
+              "want_extra_isize": 32,
+              "journal_inode": 8
+            },
+            "mounted_at": ["/boot/grub", "/run/mnt/ubuntu-boot"]
+          },
+          {
+            "name": "vda4",
+            "path": "/dev/vda4",
+            "devno": "253:4",
+            "number": 4,
+            "start_lba": 3997696,
+            "end_lba": 4063231,
+            "sectors": 65536,
+            "start_bytes": 2046820352,
+            "size_bytes": 33554432,
+            "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+            "type_name": "Linux filesystem",
+            "uuid": "bc000000-0000-4000-8000-000000000009",
+            "partlabel": "ubuntu-save",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part4",
+              "/dev/disk/by-label/ubuntu-save-enc",
+              "/dev/disk/by-partlabel/ubuntu-save",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000009",
+              "/dev/disk/by-path/pci-0000:00:03.0-part4",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part4",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-00000000000a",
+              "/dev/disk/snapd/ubuntu-save-luks"
+            ],
+            "holders": ["dm-1"],
+            "content": {
+              "type": "crypto_LUKS",
+              "usage": "crypto",
+              "uuid": "bc000000-0000-4000-8000-00000000000a",
+              "label": "ubuntu-save-enc",
+              "version": "2",
+              "header_size": 2097152,
+              "sequence_id": 6,
+              "checksum_algorithm": "sha256",
+              "segments": [
+                {
+                  "id": "0",
+                  "type": "crypt",
+                  "offset": "7340032",
+                  "size": "dynamic",
+                  "encryption": "aes-xts-plain64",
+                  "sector_size": 512,
+                  "integrity": null,
+                  "flags": []
+                }
+              ],
+              "keyslots": [
+                {
+                  "id": "0",
+                  "type": "luks2",
+                  "key_bits": 512,
+                  "priority": 2,
+                  "cipher": "aes-xts-plain64",
+                  "kdf": "argon2i",
+                  "kdf_hash": null,
+                  "kdf_time": 4,
+                  "kdf_memory": 32,
+                  "kdf_cpus": 4,
+                  "kdf_iterations": null
+                },
+                {
+                  "id": "1",
+                  "type": "luks2",
+                  "key_bits": 512,
+                  "priority": null,
+                  "cipher": "aes-xts-plain64",
+                  "kdf": "argon2i",
+                  "kdf_hash": null,
+                  "kdf_time": 4,
+                  "kdf_memory": 791438,
+                  "kdf_cpus": 4,
+                  "kdf_iterations": null
+                }
+              ],
+              "tokens": [],
+              "digest_hashes": ["sha256"],
+              "json_size": "2093056",
+              "keyslots_size": "2621440",
+              "config_flags": [],
+              "config_requirements": null,
+              "secondary_header": true
+            },
+            "mounted_at": []
+          },
+          {
+            "name": "vda5",
+            "path": "/dev/vda5",
+            "devno": "253:5",
+            "number": 5,
+            "start_lba": 4063232,
+            "end_lba": 16777182,
+            "sectors": 12713951,
+            "start_bytes": 2080374784,
+            "size_bytes": 6509542912,
+            "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+            "type_name": "Linux filesystem",
+            "uuid": "bc000000-0000-4000-8000-00000000000b",
+            "partlabel": "ubuntu-data",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part5",
+              "/dev/disk/by-label/ubuntu-data-enc",
+              "/dev/disk/by-partlabel/ubuntu-data",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-00000000000b",
+              "/dev/disk/by-path/pci-0000:00:03.0-part5",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part5",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-00000000000c",
+              "/dev/disk/snapd/ubuntu-data-luks"
+            ],
+            "holders": ["dm-0"],
+            "content": {
+              "type": "crypto_LUKS",
+              "usage": "crypto",
+              "uuid": "bc000000-0000-4000-8000-00000000000c",
+              "label": "ubuntu-data-enc",
+              "version": "2",
+              "header_size": 2097152,
+              "sequence_id": 6,
+              "checksum_algorithm": "sha256",
+              "segments": [
+                {
+                  "id": "0",
+                  "type": "crypt",
+                  "offset": "7340032",
+                  "size": "dynamic",
+                  "encryption": "aes-xts-plain64",
+                  "sector_size": 512,
+                  "integrity": null,
+                  "flags": []
+                }
+              ],
+              "keyslots": [
+                {
+                  "id": "0",
+                  "type": "luks2",
+                  "key_bits": 512,
+                  "priority": 2,
+                  "cipher": "aes-xts-plain64",
+                  "kdf": "argon2i",
+                  "kdf_hash": null,
+                  "kdf_time": 4,
+                  "kdf_memory": 32,
+                  "kdf_cpus": 4,
+                  "kdf_iterations": null
+                },
+                {
+                  "id": "1",
+                  "type": "luks2",
+                  "key_bits": 512,
+                  "priority": null,
+                  "cipher": "aes-xts-plain64",
+                  "kdf": "argon2i",
+                  "kdf_hash": null,
+                  "kdf_time": 4,
+                  "kdf_memory": 791438,
+                  "kdf_cpus": 4,
+                  "kdf_iterations": null
+                }
+              ],
+              "tokens": [],
+              "digest_hashes": ["sha256"],
+              "json_size": "2093056",
+              "keyslots_size": "2621440",
+              "config_flags": [],
+              "config_requirements": null,
+              "secondary_header": true
+            },
+            "mounted_at": []
+          }
+        ],
+        "boot_code": {
+          "kind": "unknown",
+          "first_bytes": "ea057c0000fa31c08ed08ed8bc007cfb",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 3
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [
+      {
+        "name": "dm-0",
+        "path": "/dev/dm-0",
+        "kind": "dm",
+        "devno": "252:0",
+        "size_bytes": 6502202880,
+        "size": "6.1 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": false,
+        "links": [
+          "/dev/disk/by-id/dm-name-ubuntu-data-bc000000-0000-4000-8000-000000000002",
+          "/dev/disk/by-id/dm-uuid-CRYPT-LUKS2-bc00000000004000800000000000000c-ubuntu-data-bc000000-0000-4000-8000-000000000002",
+          "/dev/disk/by-label/ubuntu-data",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-00000000000d",
+          "/dev/disk/snapd/ubuntu-data",
+          "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002"
+        ],
+        "holders": [],
+        "slaves": ["vda5"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "ext4",
+          "usage": "filesystem",
+          "uuid": "bc000000-0000-4000-8000-00000000000d",
+          "label": "ubuntu-data",
+          "version": "1.0",
+          "block_size": 4096,
+          "blocks": 1587451,
+          "size_bytes": 6502199296,
+          "free_blocks": 1265409,
+          "reserved_blocks": 79372,
+          "inodes": 397488,
+          "free_inodes": 396119,
+          "inode_size": 256,
+          "inodes_per_group": 8112,
+          "blocks_per_group": 32768,
+          "first_data_block": 0,
+          "revision": 1,
+          "features": [
+            "has_journal",
+            "ext_attr",
+            "resize_inode",
+            "dir_index",
+            "filetype",
+            "needs_recovery",
+            "extent",
+            "64bit",
+            "flex_bg",
+            "sparse_super",
+            "large_file",
+            "huge_file",
+            "dir_nlink",
+            "extra_isize",
+            "metadata_csum"
+          ],
+          "state": "clean",
+          "has_errors": false,
+          "errors_behavior": "continue",
+          "creator_os": "Linux",
+          "reserved_gdt_blocks": 775,
+          "default_hash": "half_md4",
+          "hash_seed": "bc000000-0000-4000-8000-00000000000e",
+          "mkfs_time": 1794659756,
+          "last_mounted_on": "/run/mnt/data",
+          "flex_bg_size": 16,
+          "descriptor_size": 64,
+          "min_extra_isize": 32,
+          "want_extra_isize": 32,
+          "journal_inode": 8
+        },
+        "mounted_at": [
+          "/etc/cloud",
+          "/etc/dbus-1",
+          "/etc/default/swapfile",
+          "/etc/environment",
+          "/etc/hosts",
+          "/etc/iproute2",
+          "/etc/machine-id",
+          "/etc/modprobe.d",
+          "/etc/modules-load.d",
+          "/etc/motd.d",
+          "/etc/netplan",
+          "/etc/network/if-up.d",
+          "/etc/polkit-1/actions",
+          "/etc/polkit-1/rules.d",
+          "/etc/security/pwquality.conf",
+          "/etc/ssh",
+          "/etc/sudoers.d",
+          "/etc/sysctl.d",
+          "/etc/systemd",
+          "/etc/udev/rules.d",
+          "/etc/update-motd.d",
+          "/etc/writable",
+          "/home",
+          "/root",
+          "/run/mnt/data",
+          "/snap",
+          "/usr/lib/firmware",
+          "/usr/lib/modules",
+          "/var/cache/apparmor",
+          "/var/cache/snapd",
+          "/var/lib/cloud",
+          "/var/lib/console-conf",
+          "/var/lib/dbus",
+          "/var/lib/dhcpcd",
+          "/var/lib/extrausers",
+          "/var/lib/misc",
+          "/var/lib/private/systemd",
+          "/var/lib/snapd",
+          "/var/lib/systemd",
+          "/var/lib/waagent",
+          "/var/log",
+          "/var/snap",
+          "/var/tmp",
+          "/writable"
+        ],
+        "dm": {
+          "dm_name": "ubuntu-data-bc000000-0000-4000-8000-000000000002",
+          "dm_uuid": "CRYPT-LUKS2-bc00000000004000800000000000000c-ubuntu-data-bc000000-0000-4000-8000-000000000002",
+          "mapper_path": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+          "target": "crypt",
+          "crypt_type": "LUKS2",
+          "luks_uuid": "bc000000-0000-4000-8000-00000000000c"
+        }
+      },
+      {
+        "name": "dm-1",
+        "path": "/dev/dm-1",
+        "kind": "dm",
+        "devno": "252:1",
+        "size_bytes": 26214400,
+        "size": "25 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": false,
+        "links": [
+          "/dev/disk/by-id/dm-name-ubuntu-save-bc000000-0000-4000-8000-000000000001",
+          "/dev/disk/by-id/dm-uuid-CRYPT-LUKS2-bc00000000004000800000000000000a-ubuntu-save-bc000000-0000-4000-8000-000000000001",
+          "/dev/disk/by-label/ubuntu-save",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-00000000000f",
+          "/dev/disk/snapd/ubuntu-save",
+          "/dev/mapper/ubuntu-save-bc000000-0000-4000-8000-000000000001"
+        ],
+        "holders": [],
+        "slaves": ["vda4"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "ext4",
+          "usage": "filesystem",
+          "uuid": "bc000000-0000-4000-8000-00000000000f",
+          "label": "ubuntu-save",
+          "version": "1.0",
+          "block_size": 1024,
+          "blocks": 25600,
+          "size_bytes": 26214400,
+          "free_blocks": 22306,
+          "reserved_blocks": 1280,
+          "inodes": 6400,
+          "free_inodes": 6355,
+          "inode_size": 256,
+          "inodes_per_group": 1600,
+          "blocks_per_group": 8192,
+          "first_data_block": 1,
+          "revision": 1,
+          "features": [
+            "has_journal",
+            "ext_attr",
+            "resize_inode",
+            "dir_index",
+            "filetype",
+            "needs_recovery",
+            "extent",
+            "64bit",
+            "flex_bg",
+            "sparse_super",
+            "large_file",
+            "huge_file",
+            "dir_nlink",
+            "extra_isize",
+            "metadata_csum"
+          ],
+          "state": "clean",
+          "has_errors": false,
+          "errors_behavior": "continue",
+          "creator_os": "Linux",
+          "reserved_gdt_blocks": 199,
+          "default_hash": "half_md4",
+          "hash_seed": "bc000000-0000-4000-8000-000000000010",
+          "mkfs_time": 1794659756,
+          "last_mounted_on": "/run/mnt/ubuntu-save",
+          "flex_bg_size": 16,
+          "descriptor_size": 64,
+          "min_extra_isize": 32,
+          "want_extra_isize": 32,
+          "journal_inode": 8
+        },
+        "mounted_at": ["/run/mnt/ubuntu-save", "/var/lib/snapd/save"],
+        "dm": {
+          "dm_name": "ubuntu-save-bc000000-0000-4000-8000-000000000001",
+          "dm_uuid": "CRYPT-LUKS2-bc00000000004000800000000000000a-ubuntu-save-bc000000-0000-4000-8000-000000000001",
+          "mapper_path": "/dev/mapper/ubuntu-save-bc000000-0000-4000-8000-000000000001",
+          "target": "crypt",
+          "crypt_type": "LUKS2",
+          "luks_uuid": "bc000000-0000-4000-8000-00000000000a"
+        }
+      }
+    ],
+    "loop_devices": [
+      {
+        "name": "loop0",
+        "path": "/dev/loop0",
+        "kind": "loop",
+        "devno": "7:0",
+        "size_bytes": 1802240,
+        "size": "1.7 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/14",
+          "/dev/disk/by-loop-inode/252:0-130653",
+          "/dev/disk/by-loop-ref/\\x2frun\\x2fmnt\\x2fdata\\x2fsystem-data\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fpc_196.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/run/mnt/data/system-data/var/lib/snapd/snaps/pc_196.snap"
+      },
+      {
+        "name": "loop1",
+        "path": "/dev/loop1",
+        "kind": "loop",
+        "devno": "7:1",
+        "size_bytes": 70086656,
+        "size": "66.8 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/15",
+          "/dev/disk/by-loop-inode/252:0-130976",
+          "/dev/disk/by-loop-ref/\\x2frun\\x2fmnt\\x2fdata\\x2fsystem-data\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fcore24_2307.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/run/mnt/data/system-data/var/lib/snapd/snaps/core24_2307.snap"
+      },
+      {
+        "name": "loop2",
+        "path": "/dev/loop2",
+        "kind": "loop",
+        "devno": "7:2",
+        "size_bytes": 333541376,
+        "size": "318 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": ["/dev/disk/by-diskseq/16", "/dev/disk/by-loop-inode/252:0-130586"],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/run/mnt/data/system-data/var/lib/snapd/snaps/pc-kernel_3908.snap"
+      },
+      {
+        "name": "loop3",
+        "path": "/dev/loop3",
+        "kind": "loop",
+        "devno": "7:3",
+        "size_bytes": 11304960,
+        "size": "10.8 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/17",
+          "/dev/disk/by-loop-inode/252:0-130602",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fconsole-conf_40.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/console-conf_40.snap"
+      },
+      {
+        "name": "loop4",
+        "path": "/dev/loop4",
+        "kind": "loop",
+        "devno": "7:4",
+        "size_bytes": 12378112,
+        "size": "11.8 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/18",
+          "/dev/disk/by-loop-inode/252:0-130324",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fconsole-conf_79.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/console-conf_79.snap"
+      },
+      {
+        "name": "loop5",
+        "path": "/dev/loop5",
+        "kind": "loop",
+        "devno": "7:5",
+        "size_bytes": 110305280,
+        "size": "105 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/19",
+          "/dev/disk/by-loop-inode/252:0-130375",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fcore_17292.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/core_17292.snap"
+      },
+      {
+        "name": "loop6",
+        "path": "/dev/loop6",
+        "kind": "loop",
+        "devno": "7:6",
+        "size_bytes": 66895872,
+        "size": "63.8 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/20",
+          "/dev/disk/by-loop-inode/252:0-130340",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fcore20_3015.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/core20_3015.snap"
+      },
+      {
+        "name": "loop7",
+        "path": "/dev/loop7",
+        "kind": "loop",
+        "devno": "7:7",
+        "size_bytes": 69386240,
+        "size": "66.2 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/21",
+          "/dev/disk/by-loop-inode/252:0-129814",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fcore24_423.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/core24_423.snap"
+      },
+      {
+        "name": "loop8",
+        "path": "/dev/loop8",
+        "kind": "loop",
+        "devno": "7:8",
+        "size_bytes": 65536,
+        "size": "64 KiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/23",
+          "/dev/disk/by-loop-inode/252:0-130426",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fhello_29.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/hello_29.snap"
+      },
+      {
+        "name": "loop9",
+        "path": "/dev/loop9",
+        "kind": "loop",
+        "devno": "7:9",
+        "size_bytes": 106496,
+        "size": "104 KiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/27",
+          "/dev/disk/by-loop-inode/252:0-130355",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fhello_42.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/hello_42.snap"
+      },
+      {
+        "name": "loop10",
+        "path": "/dev/loop10",
+        "kind": "loop",
+        "devno": "7:10",
+        "size_bytes": 1728512,
+        "size": "1.6 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/26",
+          "/dev/disk/by-loop-inode/252:0-129816",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fpc_178.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/pc_178.snap"
+      },
+      {
+        "name": "loop11",
+        "path": "/dev/loop11",
+        "kind": "loop",
+        "devno": "7:11",
+        "size_bytes": 345116672,
+        "size": "329 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/29",
+          "/dev/disk/by-loop-inode/252:0-129815",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fpc-kernel_1803.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/pc-kernel_1803.snap"
+      },
+      {
+        "name": "loop12",
+        "path": "/dev/loop12",
+        "kind": "loop",
+        "devno": "7:12",
+        "size_bytes": 34091008,
+        "size": "32.5 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/33",
+          "/dev/disk/by-loop-inode/252:0-130593",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fsnapd_28332.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/snapd_28332.snap"
+      },
+      {
+        "name": "loop13",
+        "path": "/dev/loop13",
+        "kind": "loop",
+        "devno": "7:13",
+        "size_bytes": 40714240,
+        "size": "38.8 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/32",
+          "/dev/disk/by-loop-inode/252:0-130247",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fsnapd_21759.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/snapd_21759.snap"
+      }
+    ],
+    "other_devices": [
+      {
+        "name": "sr0",
+        "path": "/dev/sr0",
+        "kind": "rom",
+        "devno": "11:0",
+        "size_bytes": 1073741312,
+        "size": "1024 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": false,
+        "links": [
+          "/dev/cdrom",
+          "/dev/disk/by-diskseq/11",
+          "/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1",
+          "/dev/disk/by-path/pci-0000:00:1f.2-ata-3",
+          "/dev/disk/by-path/pci-0000:00:1f.2-ata-3.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "lvm": {
+      "volume_groups": []
+    },
+    "zfs": {
+      "pools_from_labels": [],
+      "zpool_cache": null,
+      "tools": null
+    },
+    "btrfs": [],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/run/mnt/ubuntu-boot",
+        "source": "/dev/vda3",
+        "fstype": "ext4",
+        "devno": "253:3",
+        "device": "vda3",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw",
+        "size_bytes": 755761152,
+        "used_bytes": 127098880,
+        "available_bytes": 573612032
+      },
+      {
+        "target": "/run/mnt/ubuntu-seed",
+        "source": "/dev/vda2",
+        "fstype": "vfat",
+        "devno": "253:2",
+        "device": "vda2",
+        "root": "/",
+        "options": "rw,nosuid,nodev,noexec,relatime",
+        "super_options": "rw,fmask=0022,dmask=0022,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro",
+        "size_bytes": 1238899200,
+        "used_bytes": 925152256,
+        "available_bytes": 313746944
+      },
+      {
+        "target": "/run/mnt/data",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448
+      },
+      {
+        "target": "/run/mnt/ubuntu-save",
+        "source": "/dev/mapper/ubuntu-save-bc000000-0000-4000-8000-000000000001",
+        "fstype": "ext4",
+        "devno": "252:1",
+        "device": "dm-1",
+        "root": "/",
+        "options": "rw,nosuid,nodev,noexec,relatime",
+        "super_options": "rw",
+        "size_bytes": 22900736,
+        "used_bytes": 59392,
+        "available_bytes": 21006336
+      },
+      {
+        "target": "/writable",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448
+      },
+      {
+        "target": "/etc/writable",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/writable",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/dbus-1",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/dbus-1",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/hosts",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/hosts",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/iproute2",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/iproute2",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/modprobe.d",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/modprobe.d",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/modules-load.d",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/modules-load.d",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/netplan",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/netplan",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/network/if-up.d",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/network/if-up.d",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/ssh",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/ssh",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/sudoers.d",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/sudoers.d",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/systemd",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/systemd",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/udev/rules.d",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/udev/rules.d",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/cloud",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/cloud",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/sysctl.d",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/sysctl.d",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/default/swapfile",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/default/swapfile",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/environment",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/environment",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/machine-id",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/machine-id",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/motd.d",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/motd.d",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/update-motd.d",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/update-motd.d",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/security/pwquality.conf",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/security/pwquality.conf",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/polkit-1/actions",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/polkit-1/actions",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/etc/polkit-1/rules.d",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/etc/polkit-1/rules.d",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/snap",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/snap",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/lib/snapd",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/lib/snapd",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/snap",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/snap",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/usr/lib/firmware",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/lib/snapd/kernel/pc-kernel/3908/lib/firmware",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/var/lib/snapd"
+      },
+      {
+        "target": "/usr/lib/modules",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/lib/snapd/kernel/pc-kernel/3908/lib/modules",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/var/lib/snapd"
+      },
+      {
+        "target": "/boot/efi",
+        "source": "/dev/vda2",
+        "fstype": "vfat",
+        "devno": "253:2",
+        "device": "vda2",
+        "root": "/",
+        "options": "rw,nosuid,nodev,noexec,relatime",
+        "super_options": "rw,fmask=0022,dmask=0022,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro",
+        "size_bytes": 1238899200,
+        "used_bytes": 925152256,
+        "available_bytes": 313746944
+      },
+      {
+        "target": "/boot/grub",
+        "source": "/dev/vda3",
+        "fstype": "ext4",
+        "devno": "253:3",
+        "device": "vda3",
+        "root": "/EFI/ubuntu",
+        "options": "rw,relatime",
+        "super_options": "rw",
+        "size_bytes": 755761152,
+        "used_bytes": 127098880,
+        "available_bytes": 573612032,
+        "alias_of": "/run/mnt/ubuntu-boot"
+      },
+      {
+        "target": "/home",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/user-data",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/root",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/root",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/cache/apparmor",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/cache/apparmor",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/cache/snapd",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/cache/snapd",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/lib/cloud",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/lib/cloud",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/lib/dbus",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/lib/dbus",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/lib/console-conf",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/lib/console-conf",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/lib/dhcpcd",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/lib/dhcpcd",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/lib/extrausers",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/lib/extrausers",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/lib/misc",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/lib/misc",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/lib/private/systemd",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/lib/private/systemd",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/lib/snapd/save",
+        "source": "/dev/mapper/ubuntu-save-bc000000-0000-4000-8000-000000000001",
+        "fstype": "ext4",
+        "devno": "252:1",
+        "device": "dm-1",
+        "root": "/",
+        "options": "rw,nosuid,nodev,noexec,relatime",
+        "super_options": "rw",
+        "size_bytes": 22900736,
+        "used_bytes": 59392,
+        "available_bytes": 21006336
+      },
+      {
+        "target": "/var/lib/snapd/seed",
+        "source": "/dev/vda2",
+        "fstype": "vfat",
+        "devno": "253:2",
+        "device": "vda2",
+        "root": "/",
+        "options": "ro,relatime",
+        "super_options": "rw,fmask=0022,dmask=0022,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro",
+        "size_bytes": 1238899200,
+        "used_bytes": 925152256,
+        "available_bytes": 313746944
+      },
+      {
+        "target": "/var/lib/waagent",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/lib/waagent",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/log",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/log",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/tmp",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/tmp",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      },
+      {
+        "target": "/var/lib/systemd",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/system-data/var/lib/systemd",
+        "options": "rw,nosuid,relatime",
+        "super_options": "rw",
+        "size_bytes": 6307471360,
+        "used_bytes": 1129385984,
+        "available_bytes": 4836200448,
+        "alias_of": "/run/mnt/data"
+      }
+    ],
+    "physical_root": null,
+    "backup_sources": [
+      {
+        "path": "/run/mnt/ubuntu-seed",
+        "from": "/run/mnt/ubuntu-seed",
+        "device": "vda2",
+        "fstype": "vfat",
+        "source": "/dev/vda2",
+        "subvol": null,
+        "mount": {
+          "device": "/dev/disk/by-uuid/BC00-0001",
+          "fstype": "vfat",
+          "options": "ro,nodev,nosuid,noexec"
+        },
+        "note": "Ubuntu Core: snap-bootstrap's run-mode mount point, the backup tree's path; back up one file system (the snaps loop-mounted inside ubuntu-data are its .snap files). Offline, mount it read-only here as `mount` says"
+      },
+      {
+        "path": "/run/mnt/ubuntu-boot",
+        "from": "/run/mnt/ubuntu-boot",
+        "device": "vda3",
+        "fstype": "ext4",
+        "source": "/dev/vda3",
+        "subvol": null,
+        "mount": {
+          "device": "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000007",
+          "fstype": "ext4",
+          "options": "ro,noload,nodev,nosuid,noexec"
+        },
+        "note": "Ubuntu Core: snap-bootstrap's run-mode mount point, the backup tree's path; back up one file system (the snaps loop-mounted inside ubuntu-data are its .snap files). Offline, mount it read-only here as `mount` says"
+      },
+      {
+        "path": "/run/mnt/ubuntu-save",
+        "from": "/run/mnt/ubuntu-save",
+        "device": "dm-1",
+        "fstype": "ext4",
+        "source": "/dev/mapper/ubuntu-save-bc000000-0000-4000-8000-000000000001",
+        "subvol": null,
+        "mount": {
+          "device": "/dev/disk/by-uuid/bc000000-0000-4000-8000-00000000000f",
+          "fstype": "ext4",
+          "options": "ro,noload,nodev,nosuid,noexec"
+        },
+        "note": "Ubuntu Core: snap-bootstrap's run-mode mount point, the backup tree's path; back up one file system (the snaps loop-mounted inside ubuntu-data are its .snap files). Offline, mount it read-only here as `mount` says (its LUKS2 volume first: `bko-holt recovery-key-file` makes the recovery key's key file for `cryptsetup open --key-file`)"
+      },
+      {
+        "path": "/run/mnt/data",
+        "from": "/run/mnt/data",
+        "device": "dm-0",
+        "fstype": "ext4",
+        "source": "/dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002",
+        "subvol": null,
+        "mount": {
+          "device": "/dev/disk/by-uuid/bc000000-0000-4000-8000-00000000000d",
+          "fstype": "ext4",
+          "options": "ro,noload,nodev,nosuid,noexec"
+        },
+        "note": "Ubuntu Core: snap-bootstrap's run-mode mount point, the backup tree's path; back up one file system (the snaps loop-mounted inside ubuntu-data are its .snap files). Offline, mount it read-only here as `mount` says (its LUKS2 volume first: `bko-holt recovery-key-file` makes the recovery key's key file for `cryptsetup open --key-file`)"
+      }
+    ],
+    "swaps": [],
+    "fstab": [
+      {
+        "spec": "/dev/root",
+        "file": "/",
+        "type": "rootfs",
+        "options": "defaults,ro",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/user-data",
+        "file": "/home",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/snap",
+        "file": "/snap",
+        "type": "none",
+        "options": "bind,x-initrd.mount",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/lib/snapd",
+        "file": "/var/lib/snapd",
+        "type": "none",
+        "options": "bind,x-initrd.mount",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/cache/snapd",
+        "file": "/var/cache/snapd",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/snap",
+        "file": "/var/snap",
+        "type": "none",
+        "options": "bind,x-initrd.mount",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "tmpfs",
+        "file": "/media",
+        "type": "tmpfs",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "tmpfs",
+        "file": "/mnt",
+        "type": "tmpfs",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/root",
+        "file": "/root",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "tmpfs",
+        "file": "/tmp",
+        "type": "tmpfs",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/tmp",
+        "file": "/var/tmp",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/lib/systemd",
+        "file": "/var/lib/systemd",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/lib/private/systemd",
+        "file": "/var/lib/private/systemd",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/lib/extrausers",
+        "file": "/var/lib/extrausers",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/lib/misc",
+        "file": "/var/lib/misc",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "tmpfs",
+        "file": "/var/lib/sudo",
+        "type": "tmpfs",
+        "options": "defaults,mode=0700",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/log",
+        "file": "/var/log",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/lib/console-conf",
+        "file": "/var/lib/console-conf",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/cache/apparmor",
+        "file": "/var/cache/apparmor",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/lib/dbus",
+        "file": "/var/lib/dbus",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/lib/dhcpcd",
+        "file": "/var/lib/dhcpcd",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/lib/cloud",
+        "file": "/var/lib/cloud",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/writable/system-data/var/lib/waagent",
+        "file": "/var/lib/waagent",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/run/mnt/ubuntu-seed",
+        "file": "/var/lib/snapd/seed",
+        "type": "none",
+        "options": "bind,ro",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/run/mnt/host",
+        "file": "/host",
+        "type": "none",
+        "options": "rbind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/run/mnt/ubuntu-boot/EFI/ubuntu",
+        "file": "/boot/grub",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/run/mnt/ubuntu-seed/",
+        "file": "/boot/efi",
+        "type": "none",
+        "options": "bind",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "/run/mnt/data",
+        "file": "/writable",
+        "type": "none",
+        "options": "bind,x-initrd.mount",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      }
+    ],
+    "crypttab": [],
+    "mdadm_conf": null,
+    "luks_headers": [
+      {
+        "device": "vda4",
+        "luks_uuid": "bc000000-0000-4000-8000-00000000000a",
+        "label": "ubuntu-save-enc",
+        "file": "luks2-header-bc000000-0000-4000-8000-00000000000a.img",
+        "written_to": "/run/bko-holt/luks-headers/luks2-header-bc000000-0000-4000-8000-00000000000a.img",
+        "bytes": 6815744,
+        "sha256": "2cd6d151a3572b66ce827be185677e084cdff420189ddfcaa104bcaa11413ced"
+      },
+      {
+        "device": "vda5",
+        "luks_uuid": "bc000000-0000-4000-8000-00000000000c",
+        "label": "ubuntu-data-enc",
+        "file": "luks2-header-bc000000-0000-4000-8000-00000000000c.img",
+        "written_to": "/run/bko-holt/luks-headers/luks2-header-bc000000-0000-4000-8000-00000000000c.img",
+        "bytes": 6815744,
+        "sha256": "8162b2f4005ad8646d51aea9c7d7ea23862be5919d0c8e8f0c56c402015cff23"
+      }
+    ]
+  },
+  "boot": {
+    "loader": {
+      "name": "grub",
+      "firmware": "uefi",
+      "via_shim": true,
+      "package": null,
+      "evidence": ["firmware booted \\EFI\\ubuntu\\shimx64.efi", "shim's MOK variables are set"]
+    },
+    "efi": {
+      "boot_current": "0007",
+      "boot_next": null,
+      "boot_order": ["0007", "0000", "0001", "0003", "0004", "0005", "0006"],
+      "timeout_seconds": 0,
+      "entries": [
+        {
+          "number": "0000",
+          "load_option_hex": "090100002c0055006900410070007000000004071400000000bc00000040800000000000001104061400000000bc0000004080000000000000127fff0400",
+          "description": "UiApp",
+          "active": true,
+          "hidden": true,
+          "category": "app",
+          "in_boot_order": 1,
+          "device_path": ["Fv(bc000000-0000-4000-8000-000000000011)/FvFile(bc000000-0000-4000-8000-000000000012)"],
+          "file": null,
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0001",
+          "load_option_hex": "010000001600550045004600490020004d006900730063002000440065007600690063006500000002010c00d041030a000000000101060000037fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI Misc Device",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 2,
+          "device_path": ["PciRoot(0x0)/Pci(0x3,0x0)"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0003",
+          "load_option_hex": "0100000056005500450046004900200050005800450076003400200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030c1b0000000000000000000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv4 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 3,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0004",
+          "load_option_hex": "0100000077005500450046004900200050005800450076003600200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030d3c0000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv6 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 4,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0005",
+          "load_option_hex": "010000005a0055004500460049002000480054005400500076003400200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030c1b000000000000000000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv4 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 5,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0006",
+          "load_option_hex": "010000007b0055004500460049002000480054005400500076003600200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030d3c000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv6 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 6,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0007",
+          "load_option_hex": "0100000062007500620075006e0074007500000004012a000200000000100000000000000080250000000000000000bc0000004080000000000000050202040434005c004500460049005c007500620075006e00740075005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "ubuntu",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 0,
+          "device_path": [
+            "HD(2,GPT,bc000000-0000-4000-8000-000000000005,0x1000,0x258000)/File(\\EFI\\ubuntu\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 2,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000005",
+            "start_lba": 4096,
+            "sectors": 2457600,
+            "device": "vda2"
+          },
+          "file": "\\EFI\\ubuntu\\shimx64.efi",
+          "optional_data_bytes": 0
+        }
+      ],
+      "loader_interface": {
+        "loader_info": null,
+        "loader_device_partuuid": "bc000000-0000-4000-8000-000000000006",
+        "loader_image_identifier": "\\EFI\\ubuntu/kernel.efi",
+        "loader_entry_selected": null,
+        "loader_entry_default": null,
+        "stub_info": "systemd-stub 255.4-1ubuntu8.18"
+      },
+      "shim_variables": ["MokListRT", "MokListTrustedRT", "MokListXRT", "SbatLevelRT"]
+    },
+    "esps": [
+      {
+        "device": "vda2",
+        "mounted_at": "/run/mnt/ubuntu-seed",
+        "contents": {
+          "files": [
+            {
+              "path": "EFI/boot/bootx64.efi",
+              "size": 968592,
+              "same_as": "EFI/ubuntu/shimx64.efi"
+            },
+            {
+              "path": "EFI/boot/fbx64.efi",
+              "size": 88344
+            },
+            {
+              "path": "EFI/ubuntu/bootx64.csv",
+              "size": 108
+            },
+            {
+              "path": "EFI/ubuntu/grub.cfg",
+              "size": 2887
+            },
+            {
+              "path": "EFI/ubuntu/grubenv",
+              "size": 1024
+            },
+            {
+              "path": "EFI/ubuntu/grubx64.efi",
+              "size": 2656136
+            },
+            {
+              "path": "EFI/ubuntu/shimx64.efi",
+              "size": 968592,
+              "same_as": "EFI/boot/bootx64.efi"
+            }
+          ],
+          "debian_grub_stub": null
+        }
+      },
+      {
+        "device": "vda2",
+        "mounted_at": "/boot/efi",
+        "contents": {
+          "files": [
+            {
+              "path": "EFI/boot/bootx64.efi",
+              "size": 968592,
+              "same_as": "EFI/ubuntu/shimx64.efi"
+            },
+            {
+              "path": "EFI/boot/fbx64.efi",
+              "size": 88344
+            },
+            {
+              "path": "EFI/ubuntu/bootx64.csv",
+              "size": 108
+            },
+            {
+              "path": "EFI/ubuntu/grub.cfg",
+              "size": 2887
+            },
+            {
+              "path": "EFI/ubuntu/grubenv",
+              "size": 1024
+            },
+            {
+              "path": "EFI/ubuntu/grubx64.efi",
+              "size": 2656136
+            },
+            {
+              "path": "EFI/ubuntu/shimx64.efi",
+              "size": 968592,
+              "same_as": "EFI/boot/bootx64.efi"
+            }
+          ],
+          "debian_grub_stub": null
+        }
+      },
+      {
+        "device": "vda2",
+        "mounted_at": "/var/lib/snapd/seed",
+        "contents": {
+          "files": [
+            {
+              "path": "EFI/boot/bootx64.efi",
+              "size": 968592,
+              "same_as": "EFI/ubuntu/shimx64.efi"
+            },
+            {
+              "path": "EFI/boot/fbx64.efi",
+              "size": 88344
+            },
+            {
+              "path": "EFI/ubuntu/bootx64.csv",
+              "size": 108
+            },
+            {
+              "path": "EFI/ubuntu/grub.cfg",
+              "size": 2887
+            },
+            {
+              "path": "EFI/ubuntu/grubenv",
+              "size": 1024
+            },
+            {
+              "path": "EFI/ubuntu/grubx64.efi",
+              "size": 2656136
+            },
+            {
+              "path": "EFI/ubuntu/shimx64.efi",
+              "size": 968592,
+              "same_as": "EFI/boot/bootx64.efi"
+            }
+          ],
+          "debian_grub_stub": null
+        }
+      }
+    ],
+    "grub": {
+      "dir": "/boot/grub",
+      "installed_platforms": [],
+      "grub_cfg": {
+        "entries": ["Run Ubuntu Core", "Fallback on failed update"],
+        "search_uuids": [],
+        "modules": [],
+        "default_linux": null,
+        "default_initrd": null,
+        "lang": null
+      },
+      "grubenv": {
+        "kernel_status": "",
+        "snapd_extra_cmdline_args": "",
+        "snapd_full_cmdline_args": "console=ttyS0,115200n8 console=tty1 panic=-1"
+      },
+      "default_grub": {},
+      "debconf": null
+    },
+    "systemd_boot": null,
+    "kernels": {
+      "installed": [],
+      "symlinks": {}
+    },
+    "cmdline": {
+      "raw": "snapd_recovery_mode=run console=ttyS0,115200n8 console=tty1 panic=-1",
+      "words": ["snapd_recovery_mode=run", "console=ttyS0,115200n8", "console=tty1", "panic=-1\n"],
+      "storage": {}
+    },
+    "kernel_cmdline_file": null,
+    "initramfs": {
+      "generator": null,
+      "modules": null,
+      "compress": null,
+      "resume": null,
+      "crypttab_in_initramfs": true
+    },
+    "packages": {},
+    "snapcore": {
+      "encrypted": true,
+      "disk": "vda",
+      "partitions": [
+        {
+          "role": "seed",
+          "device": "vda2",
+          "disk": "vda",
+          "number": 2,
+          "partlabel": "ubuntu-seed",
+          "partuuid": "bc000000-0000-4000-8000-000000000005",
+          "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+          "attributes": "0x0000000000000000",
+          "start_bytes": 2097152,
+          "size_bytes": 1258291200,
+          "encrypted": false,
+          "luks": null,
+          "fstype": "vfat",
+          "fs_label": "ubuntu-seed",
+          "fs_uuid": "BC00-0001",
+          "at": "/run/mnt/ubuntu-seed",
+          "mounted_there": true
+        },
+        {
+          "role": "boot",
+          "device": "vda3",
+          "disk": "vda",
+          "number": 3,
+          "partlabel": "ubuntu-boot",
+          "partuuid": "bc000000-0000-4000-8000-000000000006",
+          "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+          "attributes": "0x0000000000000000",
+          "start_bytes": 1260388352,
+          "size_bytes": 786432000,
+          "encrypted": false,
+          "luks": null,
+          "fstype": "ext4",
+          "fs_label": "ubuntu-boot",
+          "fs_uuid": "bc000000-0000-4000-8000-000000000007",
+          "at": "/run/mnt/ubuntu-boot",
+          "mounted_there": true
+        },
+        {
+          "role": "save",
+          "device": "vda4",
+          "disk": "vda",
+          "number": 4,
+          "partlabel": "ubuntu-save",
+          "partuuid": "bc000000-0000-4000-8000-000000000009",
+          "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+          "attributes": "0x0000000000000000",
+          "start_bytes": 2046820352,
+          "size_bytes": 33554432,
+          "encrypted": true,
+          "luks": {
+            "uuid": "bc000000-0000-4000-8000-00000000000a",
+            "label": "ubuntu-save-enc",
+            "version": "2",
+            "opened_as": "ubuntu-save-bc000000-0000-4000-8000-000000000001",
+            "dm_device": "dm-1"
+          },
+          "fstype": "ext4",
+          "fs_label": "ubuntu-save",
+          "fs_uuid": "bc000000-0000-4000-8000-00000000000f",
+          "at": "/run/mnt/ubuntu-save",
+          "mounted_there": true
+        },
+        {
+          "role": "data",
+          "device": "vda5",
+          "disk": "vda",
+          "number": 5,
+          "partlabel": "ubuntu-data",
+          "partuuid": "bc000000-0000-4000-8000-00000000000b",
+          "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+          "attributes": "0x0000000000000000",
+          "start_bytes": 2080374784,
+          "size_bytes": 6509542912,
+          "encrypted": true,
+          "luks": {
+            "uuid": "bc000000-0000-4000-8000-00000000000c",
+            "label": "ubuntu-data-enc",
+            "version": "2",
+            "opened_as": "ubuntu-data-bc000000-0000-4000-8000-000000000002",
+            "dm_device": "dm-0"
+          },
+          "fstype": "ext4",
+          "fs_label": "ubuntu-data",
+          "fs_uuid": "bc000000-0000-4000-8000-00000000000d",
+          "at": "/run/mnt/data",
+          "mounted_there": true
+        }
+      ],
+      "modeenv": {
+        "mode": "run",
+        "recovery_system": null,
+        "current_recovery_systems": ["20240603", "label-1"],
+        "good_recovery_systems": ["20240603", "label-1"],
+        "base": "core24_2307.snap",
+        "gadget": "pc_196.snap",
+        "current_kernels": ["pc-kernel_3908.snap"],
+        "model": "canonical/ubuntu-core-24-amd64",
+        "grade": "signed",
+        "model_sign_key_id": "9tydnLa6MTJ-jaQTFUXEwHl1yRx7ZS4K5cyFDhYDcPzhS7uyEkDxdUjg9g08BtNn",
+        "current_kernel_command_lines": "[\"snapd_recovery_mode=run console=ttyS0,115200n8 console=tty1 panic=-1\"]"
+      },
+      "model": {
+        "brand_id": "canonical",
+        "model": "ubuntu-core-24-amd64",
+        "grade": "signed",
+        "storage_safety": null,
+        "base": "core24",
+        "architecture": "amd64",
+        "gadget": "pc",
+        "kernel": "pc-kernel"
+      },
+      "os_release": {
+        "source": "base snap /run/mnt/data/system-data/var/lib/snapd/snaps/core24_2307.snap",
+        "id": "ubuntu-core",
+        "version_id": "24",
+        "pretty_name": "Ubuntu Core 24"
+      },
+      "boot": {
+        "kernel_status": null,
+        "snap_kernel": null,
+        "snap_try_kernel": null,
+        "run_kernel": "pc-kernel_3908.snap/kernel.efi",
+        "try_kernel": null,
+        "kernels": ["pc-kernel_1803.snap", "pc-kernel_3908.snap"],
+        "fde_files": ["ubuntu-data.sealed-key"]
+      },
+      "seed": {
+        "snapd_recovery_mode": "run",
+        "snapd_recovery_system": null,
+        "snapd_good_recovery_systems": ["20240603", "label-1"],
+        "try_recovery_system": null,
+        "recovery_system_status": null,
+        "systems": [
+          {
+            "label": "20240603",
+            "model": true,
+            "grade": "signed",
+            "kernel": "/snaps/pc-kernel_1803.snap",
+            "extra_cmdline_args": "",
+            "full_cmdline_args": "console=ttyS0 console=tty1 panic=-1"
+          },
+          {
+            "label": "label-1",
+            "model": true,
+            "grade": "signed",
+            "kernel": "/snaps/pc-kernel_3908.snap",
+            "extra_cmdline_args": "",
+            "full_cmdline_args": "console=ttyS0 console=tty1 panic=-1"
+          }
+        ],
+        "snaps": [
+          "console-conf_40.snap",
+          "console-conf_79.snap",
+          "core24_423.snap",
+          "core24_2307.snap",
+          "pc-kernel_1803.snap",
+          "pc-kernel_3908.snap",
+          "pc_178.snap",
+          "pc_196.snap",
+          "snapd_21759.snap",
+          "snapd_28332.snap"
+        ],
+        "efi": {
+          "boot": ["bootx64.efi", "fbx64.efi"],
+          "ubuntu": ["bootx64.csv", "grub.cfg", "grubenv", "grubx64.efi", "shimx64.efi"]
+        },
+        "fde_files": ["ubuntu-data.recovery.sealed-key", "ubuntu-save.recovery.sealed-key"]
+      },
+      "save": {
+        "fde_files": ["marker", "tpm-lockout-auth", "tpm-policy-auth-key"]
+      },
+      "snaps": [
+        {
+          "name": "console-conf",
+          "current": "79",
+          "revisions": ["40", "79"],
+          "files": ["40", "79"]
+        },
+        {
+          "name": "core",
+          "current": "17292",
+          "revisions": ["17292"],
+          "files": ["17292"]
+        },
+        {
+          "name": "core20",
+          "current": "3015",
+          "revisions": ["3015"],
+          "files": ["3015"]
+        },
+        {
+          "name": "core24",
+          "current": "2307",
+          "revisions": ["423", "2307"],
+          "files": ["423", "2307"]
+        },
+        {
+          "name": "hello",
+          "current": "29",
+          "revisions": ["42", "29"],
+          "files": ["29", "42"]
+        },
+        {
+          "name": "pc",
+          "current": "196",
+          "revisions": ["178", "196"],
+          "files": ["178", "196"]
+        },
+        {
+          "name": "pc-kernel",
+          "current": "3908",
+          "revisions": ["1803", "3908"],
+          "files": ["1803", "3908"]
+        },
+        {
+          "name": "snapd",
+          "current": "28332",
+          "revisions": ["21759", "28332"],
+          "files": ["21759", "28332"]
+        }
+      ],
+      "changes_in_progress": 0,
+      "boot_areas": {
+        "disk": "vda",
+        "mbr_code_kind": "unknown",
+        "mbr_code_sha256": "d455c131bfb174eee9b0e6afc46349a60c94a0c64be7312f9d78d4cd15881cff",
+        "mbr_code_b64": "YmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGU=",
+        "bios_boot": {
+          "partition": "vda1",
+          "number": 1,
+          "start_bytes": 1048576,
+          "size_bytes": 1048576,
+          "image_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "image_b64": ""
+        }
+      },
+      "refusals": []
+    }
+  },
+  "warnings": []
+}

@@ -1,0 +1,2185 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.6"
+  },
+  "generated": "2026-11-15T03:04:56Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host1",
+    "machine_id": "bd000000000040008000000000000001",
+    "dmi": {
+      "sys_vendor": "QEMU",
+      "product_name": "Standard PC (Q35 + ICH9, 2009)",
+      "product_version": "pc-q35-11.1",
+      "board_vendor": null,
+      "board_name": null,
+      "bios_vendor": "Debian distribution of EDK II",
+      "bios_version": "2025.02-8+deb13u1",
+      "bios_date": "11/08/2025",
+      "product_uuid": null,
+      "chassis_type": "1"
+    },
+    "virtualization": "kvm"
+  },
+  "os": {
+    "id": "elementary",
+    "version_id": "8",
+    "version_codename": "circe",
+    "pretty_name": "elementary OS 8",
+    "debian_version": "trixie/sid",
+    "kernel_release": "6.17.0-14-generic",
+    "kernel_version": "#14~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Thu Jan 15 15:52:10 UTC 2",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "uefi",
+    "platform_size": 64,
+    "secure_boot": true,
+    "setup_mode": false,
+    "efivars_readable": true
+  },
+  "storage": {
+    "topology": {
+      "vda (disk, 16 GiB, gpt)": {
+        "vda1 (partition, 278 MiB) vfat \"EFI\" on /boot/efi": {},
+        "vda2 (partition, 15.7 GiB) LVM2_member": {
+          "dm-0 (dm, 11.7 GiB, data-root) ext4 on /": {},
+          "dm-1 (dm, 4 GiB, data-swap) swap": {}
+        }
+      }
+    },
+    "disks": [
+      {
+        "name": "vda",
+        "path": "/dev/vda",
+        "kind": "disk",
+        "devno": "253:0",
+        "size_bytes": 17179869184,
+        "size": "16 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/9",
+          "/dev/disk/by-path/pci-0000:00:03.0",
+          "/dev/disk/by-path/virtio-pci-0000:00:03.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "bc000000-0000-4000-8000-000000000001",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 2048,
+          "last_usable_lba": 33554398,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 33554431,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 33554431,
+                "start_bytes": 512,
+                "size_bytes": 17179868672,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vda1",
+            "path": "/dev/vda1",
+            "devno": "253:1",
+            "number": 1,
+            "start_lba": 2048,
+            "end_lba": 571391,
+            "sectors": 569344,
+            "start_bytes": 1048576,
+            "size_bytes": 291504128,
+            "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "type_name": "EFI System",
+            "uuid": "bc000000-0000-4000-8000-000000000002",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part1",
+              "/dev/disk/by-label/EFI",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000002",
+              "/dev/disk/by-path/pci-0000:00:03.0-part1",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part1",
+              "/dev/disk/by-uuid/BC00-0001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "vfat",
+              "usage": "filesystem",
+              "uuid": "BC00-0001",
+              "label": "EFI",
+              "version": "FAT32",
+              "fat_bits": 32,
+              "bytes_per_sector": 512,
+              "sectors_per_cluster": 8,
+              "cluster_size": 4096,
+              "reserved_sectors": 32,
+              "fats": 2,
+              "fat_sectors": 560,
+              "total_sectors": 569331,
+              "size_bytes": 291497472,
+              "clusters": 71022,
+              "hidden_sectors": 2048,
+              "media": "0xf8",
+              "oem_name": "mkfs.fat",
+              "root_cluster": 2,
+              "fsinfo_sector": 1,
+              "backup_boot_sector": 6,
+              "boot_sector_label": "EFI"
+            },
+            "mounted_at": ["/boot/efi"]
+          },
+          {
+            "name": "vda2",
+            "path": "/dev/vda2",
+            "devno": "253:2",
+            "number": 2,
+            "start_lba": 571392,
+            "end_lba": 33552383,
+            "sectors": 32980992,
+            "start_bytes": 292552704,
+            "size_bytes": 16886267904,
+            "type": "e6d6d379-f507-44c2-a23c-238f2a3df928",
+            "type_name": "Linux LVM",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part2",
+              "/dev/disk/by-id/lvm-pv-uuid-bkoLVM-0000-0000-0000-0000-0000-000001",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:00:03.0-part2",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part2"
+            ],
+            "holders": ["dm-0", "dm-1"],
+            "content": {
+              "type": "LVM2_member",
+              "usage": "raid",
+              "uuid": "bkoLVM-0000-0000-0000-0000-0000-000001",
+              "label": null,
+              "version": "LVM2 001",
+              "label_sector": 1,
+              "device_size": 16886267904,
+              "data_area_offset": 1048576,
+              "metadata_areas": [
+                {
+                  "offset": 4096,
+                  "size": 1044480
+                }
+              ],
+              "vg_name": "data",
+              "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000002"
+            },
+            "mounted_at": []
+          }
+        ],
+        "boot_code": {
+          "kind": "none",
+          "first_bytes": "00000000000000000000000000000000",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 2
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [
+      {
+        "name": "dm-0",
+        "path": "/dev/dm-0",
+        "kind": "dm",
+        "devno": "252:0",
+        "size_bytes": 12587106304,
+        "size": "11.7 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/data/root",
+          "/dev/disk/by-id/dm-name-data-root",
+          "/dev/disk/by-id/dm-uuid-LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000003",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000004",
+          "/dev/mapper/data-root"
+        ],
+        "holders": [],
+        "slaves": ["vda2"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "ext4",
+          "usage": "filesystem",
+          "uuid": "bc000000-0000-4000-8000-000000000004",
+          "label": null,
+          "version": "1.0",
+          "block_size": 4096,
+          "blocks": 3073024,
+          "size_bytes": 12587106304,
+          "free_blocks": 975613,
+          "reserved_blocks": 153651,
+          "inodes": 768544,
+          "free_inodes": 536574,
+          "inode_size": 256,
+          "inodes_per_group": 8176,
+          "blocks_per_group": 32768,
+          "first_data_block": 0,
+          "revision": 1,
+          "features": [
+            "has_journal",
+            "ext_attr",
+            "resize_inode",
+            "dir_index",
+            "orphan_file",
+            "filetype",
+            "needs_recovery",
+            "extent",
+            "64bit",
+            "flex_bg",
+            "metadata_csum_seed",
+            "sparse_super",
+            "large_file",
+            "huge_file",
+            "dir_nlink",
+            "extra_isize",
+            "metadata_csum",
+            "orphan_present"
+          ],
+          "state": "clean",
+          "has_errors": false,
+          "errors_behavior": "continue",
+          "creator_os": "Linux",
+          "reserved_gdt_blocks": 1024,
+          "default_hash": "half_md4",
+          "hash_seed": "bc000000-0000-4000-8000-000000000005",
+          "mkfs_time": 1794686083,
+          "last_mounted_on": "/",
+          "flex_bg_size": 16,
+          "descriptor_size": 64,
+          "min_extra_isize": 32,
+          "want_extra_isize": 32,
+          "journal_inode": 8
+        },
+        "mounted_at": ["/"],
+        "dm": {
+          "dm_name": "data-root",
+          "dm_uuid": "LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000003",
+          "mapper_path": "/dev/mapper/data-root",
+          "target": "lvm",
+          "vg": "data",
+          "lv": "root",
+          "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000002",
+          "lv_uuid": "bkoLVM-0000-0000-0000-0000-0000-000003"
+        }
+      },
+      {
+        "name": "dm-1",
+        "path": "/dev/dm-1",
+        "kind": "dm",
+        "devno": "252:1",
+        "size_bytes": 4294967296,
+        "size": "4 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/data/swap",
+          "/dev/disk/by-id/dm-name-data-swap",
+          "/dev/disk/by-id/dm-uuid-LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000004",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000006",
+          "/dev/mapper/data-swap"
+        ],
+        "holders": [],
+        "slaves": ["vda2"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "swap",
+          "usage": "other",
+          "uuid": "bc000000-0000-4000-8000-000000000006",
+          "label": null,
+          "version": "1",
+          "page_size": 4096,
+          "last_page": 1048575,
+          "size_bytes": 4294967296,
+          "bad_pages": 0
+        },
+        "mounted_at": [],
+        "dm": {
+          "dm_name": "data-swap",
+          "dm_uuid": "LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000004",
+          "mapper_path": "/dev/mapper/data-swap",
+          "target": "lvm",
+          "vg": "data",
+          "lv": "swap",
+          "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000002",
+          "lv_uuid": "bkoLVM-0000-0000-0000-0000-0000-000004"
+        }
+      }
+    ],
+    "loop_devices": [],
+    "other_devices": [
+      {
+        "name": "sr0",
+        "path": "/dev/sr0",
+        "kind": "rom",
+        "devno": "11:0",
+        "size_bytes": 1073741312,
+        "size": "1024 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": false,
+        "links": [
+          "/dev/cdrom",
+          "/dev/disk/by-diskseq/13",
+          "/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1",
+          "/dev/disk/by-path/pci-0000:00:1f.2-ata-3",
+          "/dev/disk/by-path/pci-0000:00:1f.2-ata-3.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "lvm": {
+      "volume_groups": [
+        {
+          "name": "data",
+          "id": "bkoLVM-0000-0000-0000-0000-0000-000002",
+          "seqno": 3,
+          "format": "lvm2",
+          "status": ["RESIZEABLE", "READ", "WRITE"],
+          "flags": [],
+          "extent_size_bytes": 4194304,
+          "max_lv": 0,
+          "max_pv": 0,
+          "metadata_copies": 0,
+          "physical_volumes": [
+            {
+              "name": "pv0",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000001",
+              "device_hint": "/dev/loop0p2",
+              "dev_size_bytes": 16886267904,
+              "pe_start_bytes": 1048576,
+              "pe_count": 4025,
+              "status": ["ALLOCATABLE"],
+              "device": "vda2"
+            }
+          ],
+          "logical_volumes": [
+            {
+              "name": "root",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000003",
+              "status": ["READ", "WRITE", "VISIBLE"],
+              "flags": [],
+              "size_bytes": 12587106304,
+              "creation_host": "host2",
+              "creation_time": 1794686083,
+              "segments": [
+                {
+                  "start_extent": 0,
+                  "extent_count": 3001,
+                  "type": "striped",
+                  "stripe_count": 1,
+                  "stripes": ["pv0", 0]
+                }
+              ],
+              "active_device": "dm-0"
+            },
+            {
+              "name": "swap",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000004",
+              "status": ["READ", "WRITE", "VISIBLE"],
+              "flags": [],
+              "size_bytes": 4294967296,
+              "creation_host": "host2",
+              "creation_time": 1794686083,
+              "segments": [
+                {
+                  "start_extent": 0,
+                  "extent_count": 1024,
+                  "type": "striped",
+                  "stripe_count": 1,
+                  "stripes": ["pv0", 3001]
+                }
+              ],
+              "active_device": "dm-1"
+            }
+          ],
+          "creation_host": "host2",
+          "creation_time": 1794686083
+        }
+      ]
+    },
+    "zfs": {
+      "pools_from_labels": [],
+      "zpool_cache": null,
+      "tools": null
+    },
+    "btrfs": [],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "/dev/mapper/data-root",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw",
+        "size_bytes": 12280414208,
+        "used_bytes": 8299892736,
+        "available_bytes": 3334389760
+      },
+      {
+        "target": "/boot/efi",
+        "source": "/dev/vda1",
+        "fstype": "vfat",
+        "devno": "253:1",
+        "device": "vda1",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,fmask=0077,dmask=0077,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro",
+        "size_bytes": 290906112,
+        "used_bytes": 18132992,
+        "available_bytes": 272773120
+      }
+    ],
+    "physical_root": "/",
+    "backup_sources": [
+      {
+        "path": "/",
+        "from": "/",
+        "device": "dm-0",
+        "fstype": "ext4",
+        "source": "/dev/mapper/data-root",
+        "subvol": null
+      },
+      {
+        "path": "/boot/efi",
+        "from": "/boot/efi",
+        "device": "vda1",
+        "fstype": "vfat",
+        "source": "/dev/vda1",
+        "subvol": null
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/dm-1",
+        "type": "partition",
+        "size_bytes": 4294963200,
+        "used_bytes": 0,
+        "priority": -2,
+        "device": "dm-1"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "/dev/mapper/data-root",
+        "file": "/",
+        "type": "ext4",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 1,
+        "resolves_to": "dm-0"
+      },
+      {
+        "spec": "UUID=BC00-0001",
+        "file": "/boot/efi",
+        "type": "vfat",
+        "options": "umask=0077",
+        "freq": 0,
+        "passno": 2,
+        "resolves_to": "vda1"
+      },
+      {
+        "spec": "/dev/mapper/data-swap",
+        "file": "none",
+        "type": "swap",
+        "options": "sw",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "dm-1"
+      }
+    ],
+    "crypttab": [],
+    "mdadm_conf": null
+  },
+  "boot": {
+    "loader": {
+      "name": "grub",
+      "firmware": "uefi",
+      "via_shim": true,
+      "package": "grub-efi-amd64-signed",
+      "shim_package": "shim-signed",
+      "evidence": [
+        "shim's MOK variables are set",
+        "an ESP holds grubx64.efi",
+        "package grub-efi-amd64-signed is installed"
+      ]
+    },
+    "efi": {
+      "boot_current": "0001",
+      "boot_next": null,
+      "boot_order": ["0006", "0000", "0001", "0002", "0003", "0004", "0005"],
+      "timeout_seconds": 0,
+      "entries": [
+        {
+          "number": "0000",
+          "load_option_hex": "090100002c0055006900410070007000000004071400000000bc00000040800000000000000704061400000000bc0000004080000000000000087fff0400",
+          "description": "UiApp",
+          "active": true,
+          "hidden": true,
+          "category": "app",
+          "in_boot_order": 1,
+          "device_path": ["Fv(bc000000-0000-4000-8000-000000000007)/FvFile(bc000000-0000-4000-8000-000000000008)"],
+          "file": null,
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0001",
+          "load_option_hex": "010000001600550045004600490020004d006900730063002000440065007600690063006500000002010c00d041030a000000000101060000037fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI Misc Device",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 2,
+          "device_path": ["PciRoot(0x0)/Pci(0x3,0x0)"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0002",
+          "load_option_hex": "0100000056005500450046004900200050005800450076003400200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030c1b0000000000000000000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv4 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 3,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0003",
+          "load_option_hex": "0100000077005500450046004900200050005800450076003600200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030d3c0000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv6 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 4,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0004",
+          "load_option_hex": "010000005a0055004500460049002000480054005400500076003400200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030c1b000000000000000000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv4 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 5,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0005",
+          "load_option_hex": "010000007b0055004500460049002000480054005400500076003600200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030d3c000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv6 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 6,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0006",
+          "load_option_hex": "01000000620065006c0065006d0065006e00740061007200790020004f00530020003800000004012a0001000000000800000000000000b0080000000000000000bc0000004080000000000000020202040434005c004500460049005c007500620075006e00740075005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "elementary OS 8",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 0,
+          "device_path": [
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000002,0x800,0x8b000)/File(\\EFI\\ubuntu\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000002",
+            "start_lba": 2048,
+            "sectors": 569344,
+            "device": "vda1"
+          },
+          "file": "\\EFI\\ubuntu\\shimx64.efi",
+          "optional_data_bytes": 0
+        }
+      ],
+      "loader_interface": {
+        "loader_info": null,
+        "loader_device_partuuid": null,
+        "loader_image_identifier": null,
+        "loader_entry_selected": null,
+        "loader_entry_default": null,
+        "stub_info": null
+      },
+      "shim_variables": ["MokListRT", "MokListTrustedRT", "MokListXRT", "SbatLevelRT"]
+    },
+    "esps": [
+      {
+        "device": "vda1",
+        "mounted_at": "/boot/efi",
+        "contents": {
+          "files": [
+            {
+              "path": "EFI/BOOT/BOOTX64.EFI",
+              "size": 966664,
+              "same_as": "EFI/ubuntu/shimx64.efi"
+            },
+            {
+              "path": "EFI/BOOT/fbx64.efi",
+              "size": 88344
+            },
+            {
+              "path": "EFI/BOOT/mmx64.efi",
+              "size": 856280,
+              "same_as": "EFI/ubuntu/mmx64.efi"
+            },
+            {
+              "path": "EFI/ubuntu/BOOTX64.CSV",
+              "size": 144
+            },
+            {
+              "path": "EFI/ubuntu/grub/fonts/unicode.pf2",
+              "size": 2411806
+            },
+            {
+              "path": "EFI/ubuntu/grub/grub.cfg",
+              "size": 8053
+            },
+            {
+              "path": "EFI/ubuntu/grub/grubenv",
+              "size": 1024
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/ast.mo",
+              "size": 119242
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/bg.mo",
+              "size": 18355
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/ca.mo",
+              "size": 120087
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/builder-at-redacted",
+              "size": 93654
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/cs.mo",
+              "size": 13660
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/da.mo",
+              "size": 111758
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/de.mo",
+              "size": 145549
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/builder-at-redacted",
+              "size": 212344
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/de_CH.mo",
+              "size": 141119
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/builder-at-redacted",
+              "size": 175960
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/builder-at-redacted",
+              "size": 166040
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/builder-at-redacted",
+              "size": 166037
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/builder-at-redacted",
+              "size": 190500
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/builder-at-redacted",
+              "size": 147016
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/builder-at-redacted",
+              "size": 129824
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/en_AU.mo",
+              "size": 1012
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/en_CA.mo",
+              "size": 1701
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/en_GB.mo",
+              "size": 3343
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/eo.mo",
+              "size": 42309
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/es.mo",
+              "size": 127972
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/fi.mo",
+              "size": 122963
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/fr.mo",
+              "size": 149714
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/gl.mo",
+              "size": 96475
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/he.mo",
+              "size": 83723
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/hr.mo",
+              "size": 120913
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/hu.mo",
+              "size": 127949
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/id.mo",
+              "size": 28210
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/it.mo",
+              "size": 143659
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/ja.mo",
+              "size": 46369
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/ka.mo",
+              "size": 150445
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/ko.mo",
+              "size": 147528
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/lg.mo",
+              "size": 7733
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/lt.mo",
+              "size": 94844
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/nb.mo",
+              "size": 121731
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/nl.mo",
+              "size": 123727
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/pa.mo",
+              "size": 57713
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/pl.mo",
+              "size": 145375
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/pt.mo",
+              "size": 122523
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/pt_BR.mo",
+              "size": 105475
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/ro.mo",
+              "size": 148318
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/ru.mo",
+              "size": 186114
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/sl.mo",
+              "size": 87794
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/sr.mo",
+              "size": 178532
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/sv.mo",
+              "size": 140148
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/th.mo",
+              "size": 9127
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/tr.mo",
+              "size": 79675
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/uk.mo",
+              "size": 193293
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/vi.mo",
+              "size": 152447
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/zh_CN.mo",
+              "size": 130242
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/zh_HK.mo",
+              "size": 1682
+            },
+            {
+              "path": "EFI/ubuntu/grub/locale/zh_TW.mo",
+              "size": 38506
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/acpi.mod",
+              "size": 16080
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/adler32.mod",
+              "size": 1952
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/affs.mod",
+              "size": 8448
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/afs.mod",
+              "size": 8864
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/afsplitter.mod",
+              "size": 2208
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/ahci.mod",
+              "size": 22192
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/all_video.mod",
+              "size": 824
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/aout.mod",
+              "size": 1496
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/appleldr.mod",
+              "size": 5128
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/archelp.mod",
+              "size": 4792
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/at_keyboard.mod",
+              "size": 6896
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/ata.mod",
+              "size": 8856
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/backtrace.mod",
+              "size": 2552
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/bfs.mod",
+              "size": 10056
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/bitmap.mod",
+              "size": 3240
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/bitmap_scale.mod",
+              "size": 5376
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/bli.mod",
+              "size": 3640
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/blocklist.mod",
+              "size": 3080
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/boot.mod",
+              "size": 3872
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/bsd.mod",
+              "size": 50360
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/bswap_test.mod",
+              "size": 3280
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/btrfs.mod",
+              "size": 28656
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/bufio.mod",
+              "size": 3024
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/cat.mod",
+              "size": 4528
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/cbfs.mod",
+              "size": 6064
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/cbls.mod",
+              "size": 5736
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/cbmemc.mod",
+              "size": 3936
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/cbtable.mod",
+              "size": 1656
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/cbtime.mod",
+              "size": 4536
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/chain.mod",
+              "size": 8280
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/cmdline_cat_test.mod",
+              "size": 4648
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/cmp.mod",
+              "size": 3448
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/cmp_test.mod",
+              "size": 6792
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/command.lst",
+              "size": 3707
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/configfile.mod",
+              "size": 3296
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/core.efi",
+              "size": 151552
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/cpio.mod",
+              "size": 4768
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/cpio_be.mod",
+              "size": 4768
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/cpuid.mod",
+              "size": 2600
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/crc64.mod",
+              "size": 2216
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/crypto.lst",
+              "size": 936
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/crypto.mod",
+              "size": 7184
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/cryptodisk.mod",
+              "size": 23056
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/cs5536.mod",
+              "size": 3984
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/ctz_test.mod",
+              "size": 2672
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/date.mod",
+              "size": 3248
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/datehook.mod",
+              "size": 3064
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/datetime.mod",
+              "size": 2936
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/disk.mod",
+              "size": 3152
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/diskfilter.mod",
+              "size": 13424
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/div.mod",
+              "size": 1376
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/div_test.mod",
+              "size": 8192
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/dm_nv.mod",
+              "size": 2832
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/echo.mod",
+              "size": 3064
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/efi_gop.mod",
+              "size": 12832
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/efi_uga.mod",
+              "size": 7040
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/efifwsetup.mod",
+              "size": 2728
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/efinet.mod",
+              "size": 11088
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/efitextmode.mod",
+              "size": 3792
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/ehci.mod",
+              "size": 25904
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/elf.mod",
+              "size": 8976
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/eval.mod",
+              "size": 2232
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/exfat.mod",
+              "size": 8704
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/exfctest.mod",
+              "size": 2184
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/ext2.mod",
+              "size": 9000
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/extcmd.mod",
+              "size": 7720
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/f2fs.mod",
+              "size": 10480
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/fat.mod",
+              "size": 8824
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/file.mod",
+              "size": 26856
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/fixvideo.mod",
+              "size": 2920
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/font.mod",
+              "size": 19608
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/fs.lst",
+              "size": 219
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/fshelp.mod",
+              "size": 4512
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/functional_test.mod",
+              "size": 46864
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_arcfour.mod",
+              "size": 2464
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_blowfish.mod",
+              "size": 9192
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_camellia.mod",
+              "size": 27880
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_cast5.mod",
+              "size": 14832
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_crc.mod",
+              "size": 11928
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_des.mod",
+              "size": 16984
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_dsa.mod",
+              "size": 3472
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_idea.mod",
+              "size": 4080
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_md4.mod",
+              "size": 4160
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_md5.mod",
+              "size": 4616
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_rfc2268.mod",
+              "size": 3152
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_rijndael.mod",
+              "size": 20552
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_rmd160.mod",
+              "size": 7912
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_rsa.mod",
+              "size": 3368
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_seed.mod",
+              "size": 15160
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_serpent.mod",
+              "size": 16336
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_sha1.mod",
+              "size": 8312
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_sha256.mod",
+              "size": 5592
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_sha512.mod",
+              "size": 6384
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_tiger.mod",
+              "size": 13392
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_twofish.mod",
+              "size": 33432
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gcry_whirlpool.mod",
+              "size": 22968
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/geli.mod",
+              "size": 8840
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gettext.mod",
+              "size": 8664
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gfxmenu.mod",
+              "size": 60776
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gfxterm.mod",
+              "size": 17112
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gfxterm_background.mod",
+              "size": 4456
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gfxterm_menu.mod",
+              "size": 7768
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gptsync.mod",
+              "size": 5424
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/grub.efi",
+              "size": 151552
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/gzio.mod",
+              "size": 13032
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/halt.mod",
+              "size": 7632
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/hashsum.mod",
+              "size": 8464
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/hdparm.mod",
+              "size": 10616
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/hello.mod",
+              "size": 1888
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/help.mod",
+              "size": 4096
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/hexdump.mod",
+              "size": 4704
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/hfs.mod",
+              "size": 10440
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/hfsplus.mod",
+              "size": 11616
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/hfspluscomp.mod",
+              "size": 4352
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/http.mod",
+              "size": 9720
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/iorw.mod",
+              "size": 4392
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/iso9660.mod",
+              "size": 13672
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/jfs.mod",
+              "size": 9728
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/jpeg.mod",
+              "size": 11272
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/json.mod",
+              "size": 5912
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/keylayouts.mod",
+              "size": 6456
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/keystatus.mod",
+              "size": 2992
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/ldm.mod",
+              "size": 8360
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/legacy_password_test.mod",
+              "size": 15968
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/legacycfg.mod",
+              "size": 45704
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/linux.mod",
+              "size": 28328
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/linux16.mod",
+              "size": 8688
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/load.cfg",
+              "size": 68
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/loadbios.mod",
+              "size": 4632
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/loadenv.mod",
+              "size": 9248
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/loopback.mod",
+              "size": 5416
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/ls.mod",
+              "size": 6552
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/lsacpi.mod",
+              "size": 7256
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/lsefi.mod",
+              "size": 5152
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/lsefimmap.mod",
+              "size": 3712
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/lsefisystab.mod",
+              "size": 4608
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/lsmmap.mod",
+              "size": 2984
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/lspci.mod",
+              "size": 7272
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/lssal.mod",
+              "size": 3768
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/luks.mod",
+              "size": 6032
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/luks2.mod",
+              "size": 21176
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/lvm.mod",
+              "size": 12624
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/lzopio.mod",
+              "size": 6904
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/macbless.mod",
+              "size": 4968
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/macho.mod",
+              "size": 10912
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/mdraid1x.mod",
+              "size": 2712
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/mdraid09.mod",
+              "size": 2800
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/mdraid09_be.mod",
+              "size": 2832
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/memdisk.mod",
+              "size": 3392
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/memrw.mod",
+              "size": 4360
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/minicmd.mod",
+              "size": 6240
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/minix.mod",
+              "size": 5984
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/minix2.mod",
+              "size": 6104
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/minix2_be.mod",
+              "size": 6176
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/minix3.mod",
+              "size": 6136
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/minix3_be.mod",
+              "size": 6208
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/minix_be.mod",
+              "size": 6080
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/mmap.mod",
+              "size": 9344
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/moddep.lst",
+              "size": 5318
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/modinfo.sh",
+              "size": 2591
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/morse.mod",
+              "size": 3304
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/mpi.mod",
+              "size": 44576
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/msdospart.mod",
+              "size": 3744
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/mul_test.mod",
+              "size": 2488
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/multiboot.mod",
+              "size": 22344
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/multiboot2.mod",
+              "size": 25232
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/nativedisk.mod",
+              "size": 6776
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/net.mod",
+              "size": 137568
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/newc.mod",
+              "size": 4920
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/nilfs2.mod",
+              "size": 10384
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/normal.mod",
+              "size": 178592
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/ntfs.mod",
+              "size": 16424
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/ntfscomp.mod",
+              "size": 5848
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/odc.mod",
+              "size": 4736
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/offsetio.mod",
+              "size": 2320
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/ohci.mod",
+              "size": 15800
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/part_acorn.mod",
+              "size": 2328
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/part_amiga.mod",
+              "size": 2728
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/part_apple.mod",
+              "size": 3104
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/part_bsd.mod",
+              "size": 4280
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/part_dfly.mod",
+              "size": 2720
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/part_dvh.mod",
+              "size": 2248
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/part_gpt.mod",
+              "size": 3336
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/part_msdos.mod",
+              "size": 3064
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/part_plan.mod",
+              "size": 2536
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/part_sun.mod",
+              "size": 2280
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/part_sunpc.mod",
+              "size": 2536
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/partmap.lst",
+              "size": 111
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/parttool.lst",
+              "size": 17
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/parttool.mod",
+              "size": 7536
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/password.mod",
+              "size": 2992
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/password_pbkdf2.mod",
+              "size": 4544
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/pata.mod",
+              "size": 7568
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/pbkdf2.mod",
+              "size": 2016
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/pbkdf2_test.mod",
+              "size": 3472
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/pcidump.mod",
+              "size": 3576
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/peimage.mod",
+              "size": 9672
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/pgp.mod",
+              "size": 19560
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/plainmount.mod",
+              "size": 11352
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/play.mod",
+              "size": 3976
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/png.mod",
+              "size": 11208
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/priority_queue.mod",
+              "size": 2328
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/probe.mod",
+              "size": 5720
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/procfs.mod",
+              "size": 3896
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/progress.mod",
+              "size": 3216
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/raid5rec.mod",
+              "size": 2000
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/raid6rec.mod",
+              "size": 3312
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/random.mod",
+              "size": 3720
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/rdmsr.mod",
+              "size": 3128
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/read.mod",
+              "size": 2960
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/reboot.mod",
+              "size": 1648
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/regexp.mod",
+              "size": 79584
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/reiserfs.mod",
+              "size": 14280
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/relocator.mod",
+              "size": 26728
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/romfs.mod",
+              "size": 5968
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/scsi.mod",
+              "size": 7232
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/search.mod",
+              "size": 5584
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/search_fs_file.mod",
+              "size": 4976
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/search_fs_uuid.mod",
+              "size": 5048
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/search_label.mod",
+              "size": 5000
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/serial.mod",
+              "size": 17400
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/setjmp.mod",
+              "size": 912
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/setjmp_test.mod",
+              "size": 2664
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/setpci.mod",
+              "size": 8304
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/sfs.mod",
+              "size": 8096
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/shift_test.mod",
+              "size": 3280
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/signature_test.mod",
+              "size": 8384
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/sleep.mod",
+              "size": 3424
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/sleep_test.mod",
+              "size": 3128
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/smbios.mod",
+              "size": 8344
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/spkmodem.mod",
+              "size": 3120
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/squash4.mod",
+              "size": 10464
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/strtoull_test.mod",
+              "size": 3304
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/syslinuxcfg.mod",
+              "size": 29976
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/tar.mod",
+              "size": 5320
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/terminal.lst",
+              "size": 162
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/terminal.mod",
+              "size": 6704
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/terminfo.mod",
+              "size": 19520
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/test.mod",
+              "size": 7776
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/test_blockarg.mod",
+              "size": 2088
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/testload.mod",
+              "size": 3936
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/testspeed.mod",
+              "size": 3568
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/tftp.mod",
+              "size": 8752
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/tga.mod",
+              "size": 6968
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/time.mod",
+              "size": 2416
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/tpm.mod",
+              "size": 8288
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/tr.mod",
+              "size": 3720
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/trig.mod",
+              "size": 2056
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/true.mod",
+              "size": 1928
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/udf.mod",
+              "size": 12976
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/ufs1.mod",
+              "size": 8168
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/ufs1_be.mod",
+              "size": 8328
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/ufs2.mod",
+              "size": 8168
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/uhci.mod",
+              "size": 10176
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/usb.mod",
+              "size": 15920
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/usb_keyboard.mod",
+              "size": 5864
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/usbms.mod",
+              "size": 11120
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/usbserial_common.mod",
+              "size": 2912
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/usbserial_ftdi.mod",
+              "size": 3480
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/usbserial_pl2303.mod",
+              "size": 3840
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/usbserial_usbdebug.mod",
+              "size": 2392
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/usbtest.mod",
+              "size": 5688
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/video.lst",
+              "size": 41
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/video.mod",
+              "size": 9016
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/video_bochs.mod",
+              "size": 8472
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/video_cirrus.mod",
+              "size": 9024
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/video_colors.mod",
+              "size": 10072
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/video_fb.mod",
+              "size": 30016
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/videoinfo.mod",
+              "size": 5536
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/videotest.mod",
+              "size": 5528
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/videotest_checksum.mod",
+              "size": 3712
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/wrmsr.mod",
+              "size": 2448
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/xfs.mod",
+              "size": 11720
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/xnu.mod",
+              "size": 42656
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/xnu_uuid.mod",
+              "size": 3312
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/xnu_uuid_test.mod",
+              "size": 3160
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/xzio.mod",
+              "size": 20096
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/zfs.mod",
+              "size": 59192
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/zfscrypt.mod",
+              "size": 8584
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/zfsinfo.mod",
+              "size": 10576
+            },
+            {
+              "path": "EFI/ubuntu/grub/x86_64-efi/zstd.mod",
+              "size": 81736
+            },
+            {
+              "path": "EFI/ubuntu/grub.cfg",
+              "size": 96
+            },
+            {
+              "path": "EFI/ubuntu/grubx64.efi",
+              "size": 2660232
+            },
+            {
+              "path": "EFI/ubuntu/mmx64.efi",
+              "size": 856280,
+              "same_as": "EFI/BOOT/mmx64.efi"
+            },
+            {
+              "path": "EFI/ubuntu/shimx64.efi",
+              "size": 966664,
+              "same_as": "EFI/BOOT/BOOTX64.EFI"
+            }
+          ],
+          "debian_grub_stub": null
+        }
+      }
+    ],
+    "grub": {
+      "dir": "/boot/grub",
+      "installed_platforms": ["x86_64-efi"],
+      "grub_cfg": {
+        "entries": [
+          "elementary OS 8",
+          "Advanced options for elementary OS 8>elementary OS 8, with Linux 6.17.0-14-generic",
+          "Advanced options for elementary OS 8>elementary OS 8, with Linux 6.17.0-14-generic (recovery mode)",
+          "UEFI Firmware Settings"
+        ],
+        "search_uuids": ["bc000000-0000-4000-8000-000000000004"],
+        "modules": [
+          "all_video",
+          "efi_gop",
+          "efi_uga",
+          "ieee1275_fb",
+          "vbe",
+          "vga",
+          "video_bochs",
+          "video_cirrus",
+          "part_gpt",
+          "lvm",
+          "ext2",
+          "gfxterm",
+          "gettext",
+          "gzio",
+          "bli"
+        ],
+        "default_linux": "/boot/vmlinuz-6.17.0-14-generic root=/dev/mapper/data-root ro console=tty0 console=ttyS0,115200n8",
+        "default_initrd": "/boot/initrd.img-6.17.0-14-generic",
+        "lang": "en_US"
+      },
+      "grubenv": {},
+      "default_grub": {
+        "GRUB_DEFAULT": "0",
+        "GRUB_TIMEOUT_STYLE": "hidden",
+        "GRUB_TIMEOUT": "0",
+        "GRUB_RECORDFAIL_TIMEOUT": "0",
+        "GRUB_DISTRIBUTOR": "`lsb_release -d -s 2> /dev/null || echo Debian`",
+        "GRUB_CMDLINE_LINUX_DEFAULT": "console=tty0 console=ttyS0,115200n8",
+        "GRUB_CMDLINE_LINUX": "",
+        "GRUB_ENABLE_CRYPTODISK": "y"
+      },
+      "debconf": {
+        "grub-pc/install_devices": "",
+        "grub2/enable_os_prober": "false",
+        "grub2/linux_cmdline": "",
+        "grub2/linux_cmdline_default": "quiet splash",
+        "grub2/update_nvram": "true"
+      }
+    },
+    "systemd_boot": null,
+    "kernels": {
+      "installed": [
+        {
+          "version": "6.17.0-14-generic",
+          "vmlinuz_bytes": 16738376,
+          "initrd_bytes": 81405147,
+          "config": true,
+          "running": true,
+          "modules_installed": true
+        }
+      ],
+      "symlinks": {
+        "/boot/vmlinuz": "vmlinuz-6.17.0-14-generic",
+        "/boot/initrd.img": "initrd.img-6.17.0-14-generic"
+      }
+    },
+    "cmdline": {
+      "raw": "BOOT_IMAGE=/boot/vmlinuz-6.17.0-14-generic root=/dev/mapper/data-root ro console=tty0 console=ttyS0,115200n8",
+      "words": [
+        "BOOT_IMAGE=/boot/vmlinuz-6.17.0-14-generic",
+        "root=/dev/mapper/data-root",
+        "ro",
+        "console=tty0",
+        "console=ttyS0,115200n8\n"
+      ],
+      "storage": {
+        "BOOT_IMAGE": "/boot/vmlinuz-6.17.0-14-generic",
+        "root": "/dev/mapper/data-root",
+        "ro": ""
+      }
+    },
+    "kernel_cmdline_file": null,
+    "initramfs": {
+      "generator": "initramfs-tools",
+      "modules": "most",
+      "compress": "zstd",
+      "resume": null,
+      "crypttab_in_initramfs": true
+    },
+    "packages": {
+      "grub-pc-bin": "2.12-1ubuntu7.3+elementary13~ubuntu8.1",
+      "grub-efi-amd64": "2.12-1ubuntu7.3",
+      "grub-efi-amd64-bin": "2.12-1ubuntu7.3",
+      "grub-efi-amd64-signed": "1.202.5+2.12-1ubuntu7.3",
+      "grub2-common": "2.12-1ubuntu7.3+elementary13~ubuntu8.1",
+      "grub-common": "2.12-1ubuntu7.3+elementary13~ubuntu8.1",
+      "shim-signed": "1.58+15.8-0ubuntu1",
+      "mokutil": "0.6.0-2build3",
+      "efibootmgr": "18-1build2",
+      "os-prober": "1.81ubuntu4",
+      "initramfs-tools": "0.142ubuntu25.8",
+      "lvm2": "2.03.16-3ubuntu3.2",
+      "thin-provisioning-tools": "0.9.0-2ubuntu5.1",
+      "cryptsetup": "2:2.7.0-1ubuntu4.2",
+      "cryptsetup-initramfs": "2:2.7.0-1ubuntu4.2",
+      "cryptsetup-bin": "2:2.7.0-1ubuntu4.2",
+      "e2fsprogs": "1.47.0-2.4~exp1ubuntu4.1",
+      "dosfstools": "4.2-1.1build1",
+      "exfatprogs": "1.2.2-1build1",
+      "ntfs-3g": "1:2022.10.3-1.2ubuntu3",
+      "jfsutils": "1.1.15-5build4",
+      "linux-base": "4.5ubuntu9+24.04.1"
+    }
+  },
+  "warnings": []
+}

@@ -142,7 +142,7 @@ class TestInGuest(unittest.TestCase):
     TEXT = (TESTVM / "update" / "in-guest.sh").read_text()
     NAMES = {"prologue", "NixOS", "Guix", "Linux.portage", "Linux.slackpkg", "Linux.abroot", "Linux.common", "Linux.apt", "Linux.ostree",
              "Linux.dnf", "Linux.pacman",
-             "Linux.tukit", "Linux.zypper",
+             "Linux.tukit", "Linux.zypper", "Linux.snapcore",
              "Linux.xbps", "Linux.apk", "Linux.eopkg", "Linux.moss", "FreeBSD", "DragonFly", "OpenBSD", "NetBSD", "SunOS",
              "Haiku", "Redox"}
 
@@ -268,6 +268,95 @@ class TestInGuest(unittest.TestCase):
         r = subprocess.run(["sh", "-n", str(TESTVM / "update" / "in-guest.sh")], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_snapcore_before_the_others(self):
+        """Ubuntu Core (ubuntu-core.md U4): its base snap may hold dpkg's files, but snapd is its
+        package manager: its branch comes before Linux.common's, needs root's snap and
+        os-release's ID, holds the auto-refreshes again, and stops at a pending restart."""
+        t, sec = self.TEXT, self.sections()["Linux.snapcore"]
+        self.assertLess(t.index("# t2-section: Linux.snapcore"), t.index("# t2-section: Linux.common"))
+        for needle in ("/var/lib/snapd/modeenv", "^ID=ubuntu-core$", "snap refresh --no-wait", "snap refresh --hold",
+                       "All snaps up to date", "/run/systemd/shutdown/scheduled", 'say "updated"'):
+            self.assertIn(needle, sec)
+        code = "\n".join(l for l in sec.splitlines() if not l.lstrip().startswith("#"))
+        self.assertNotIn("apt", code)
+        self.assertNotIn("--unhold", code)
+
+    def run_snapcore(self, changes, up_to_date=False, scheduled_at=None):
+        """The Linux.snapcore section under a stub snap: CHANGES, the line `snap changes` gives
+        at each call (none: no change), the last repeated; SCHEDULED_AT, the call from which a
+        shutdown is scheduled.  (exit status, output, the snap calls)"""
+        d = Path(tempfile.mkdtemp(prefix="t2-snapcore-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        (d / "bin").mkdir()
+        (d / "modeenv").write_text("mode=run\nbase=core24_2307.snap\n")
+        (d / "os-release").write_text('NAME="Ubuntu Core"\nID=ubuntu-core\nVERSION_ID="24"\n')
+        (d / "changes").write_text("\n".join(changes) + "\n")
+        (d / "list").write_text("All snaps up to date.\n" if up_to_date else
+                                "Name       Version   Rev   Size  Publisher    Notes\npc-kernel  6.8.0-150 4001  333MB canonical**  kernel\n")
+        sched = d / "scheduled"
+        stubs = {
+            "uname": "echo Linux", "sleep": "true",
+            "snap": f"""d={d}
+echo "$*" >>$d/calls
+case "$1 $2" in
+"changes "*)
+    n=$(cat $d/n 2>/dev/null || echo 0); n=$((n + 1)); echo $n >$d/n
+    {f'[ $n -lt {scheduled_at} ] || : >{sched}' if scheduled_at else ':'}
+    echo "ID   Status  Spawn               Ready  Summary"
+    line=$(sed -n "${{n}}p" $d/changes); [ -n "$line" ] || line=$(tail -n 1 $d/changes)
+    [ "$line" = none ] || echo "$line" ;;
+"refresh --list") cat $d/list ;;
+"refresh --no-wait") echo 7 ;;
+"refresh --hold") echo held ;;
+"tasks "*) echo "Status  Spawn  Ready  Summary" ;;
+esac""",
+        }
+        for name, body in stubs.items():
+            (d / "bin" / name).write_text("#!/bin/sh\n" + body + "\n")
+            (d / "bin" / name).chmod(0o755)
+        sec = self.sections()["Linux.snapcore"]
+        for path, to in (("/var/lib/snapd/modeenv", d / "modeenv"), ("/etc/os-release", d / "os-release"),
+                         ("/run/systemd/shutdown/scheduled", sched)):
+            sec = sec.replace(path, str(to))
+        code = ('has() { command -v "$1" >/dev/null 2>&1; }\nsay() { echo "in-guest: $*"; }\n'
+                'step() { echo "in-guest: step: $*"; }\n' + sec + "\necho fell-through\n")
+        env = dict(os.environ, PATH=f"{d / 'bin'}:{os.environ['PATH']}")
+        r = subprocess.run(["sh", "-c", code], capture_output=True, text=True, env=env)
+        calls = (d / "calls").read_text().splitlines() if (d / "calls").exists() else []
+        return r.returncode, r.stdout, calls
+
+    def test_snapcore_restart_pending(self):
+        rc, out, calls = self.run_snapcore(["none", "7  Doing  today at 12:00 UTC  -  Refresh snaps",
+                                            "7  Wait   today at 12:00 UTC  -  Refresh snaps"])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("in-guest: snapcore: refresh change 7", out)
+        self.assertEqual(VU.SNAP_PENDING.search(out)[1], "7")
+        self.assertIn("refresh --hold", calls)
+        self.assertNotIn("fell-through", out)
+        # a shutdown snapd scheduled says the same
+        rc, out, _ = self.run_snapcore(["none", "7  Doing  today at 12:00 UTC  -  Refresh snaps"], scheduled_at=2)
+        self.assertEqual((rc, VU.SNAP_PENDING.search(out)[1]), (0, "7"), out)
+
+    def test_snapcore_done_and_nothing_to_do(self):
+        rc, out, calls = self.run_snapcore(["none", "7  Doing  today  -  Refresh", "7  Done  today  today  Refresh"])
+        self.assertEqual(rc, 0, out)
+        self.assertIn('in-guest: updated', out)
+        self.assertIsNone(VU.SNAP_PENDING.search(out))
+        self.assertEqual(calls[-1], "refresh --hold")
+        rc, out, calls = self.run_snapcore(["none"], up_to_date=True)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("nothing changed", out)
+        self.assertNotIn("refresh --no-wait", calls)
+
+    def test_snapcore_failures(self):
+        rc, out, _ = self.run_snapcore(["none", "7  Error  today  today  Refresh"])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("ended Error", out)
+        # a change already waiting for its restart: that one is pending, no new refresh
+        rc, out, calls = self.run_snapcore(["5  Wait  today  -  Refresh"])
+        self.assertEqual((rc, VU.SNAP_PENDING.search(out)[1]), (0, "5"), out)
+        self.assertNotIn("refresh --no-wait", calls)
+
 
 # --- pkgset.sh under stub commands --------------------------------------------------------------
 
@@ -293,7 +382,8 @@ class TestPkgset(TempDir):
         script = (TESTVM / "update" / "pkgset.sh").read_text()
         script = re.sub(r"^PATH=.*$", "", script, count=1, flags=re.M)
         for p in ("/etc/NIXOS", "/etc/gentoo-release", "/etc/slackware-version", "/var/db/", "/var/lib/pkgtools/",
-                  "/boot/system/packages", "/usr/share/abroot/", "/var/lib/dpkg/", "/var/lib/eopkg/", "/abimage.abr"):
+                  "/boot/system/packages", "/usr/share/abroot/", "/var/lib/dpkg/", "/var/lib/eopkg/", "/abimage.abr",
+                  "/var/lib/snapd/", "/etc/os-release"):
             script = script.replace(p, str(root) + p)
         tools = self.tmp / "tools"                      # only these: a host's own apt-get would be found first
         tools.mkdir(exist_ok=True)
@@ -327,6 +417,50 @@ class TestPkgset(TempDir):
     def test_xbps(self):
         out = self.run_script("Linux", {"xbps-install": "true", "xbps-query": "echo 'ii xbps-triggers-0.128_1 Triggers'"})
         self.check(out, ["base pm xbps", "pkg xbps-triggers 0.128_1"])
+
+    # uc24's snap list --all after its build (refresh.log, 2026-11-14), LC_ALL=C's publisher marks.
+    SNAPS = textwrap.dedent("""\
+        Name          Version                          Rev    Tracking       Publisher    Notes
+        core24        20240528                         423    latest/stable  canonical**  base,disabled
+        core24        20261022                         2307   latest/stable  canonical**  base
+        pc            24-0.1                           178    24/stable      canonical**  gadget,disabled
+        pc            24-0.1                           196    24/stable      canonical**  gadget
+        pc-kernel     6.8.0-149.149                    3908   24/stable      canonical**  kernel,components[7]
+        snapd         2.78                             28332  latest/stable  canonical**  snapd
+        """)
+    MODEENV = ("mode=run\nrecovery_system=20240603\ncurrent_recovery_systems=20240603,bko-20261114\n"
+               "base=core24_2307.snap\ngadget=pc_196.snap\ncurrent_kernels=pc-kernel_3908.snap\nmodel=canonical/ubuntu-core-24-amd64\n")
+
+    def snapcore(self, snaps=None, modeenv=None, apt=False):
+        real = {t: shutil.which(t) for t in ("grep", "head")}
+        stubs = {"snap": f"cat <<'EOF'\n{self.SNAPS if snaps is None else snaps}EOF",
+                 **{t: f'exec {p} "$@"' for t, p in real.items()}}
+        if apt:
+            stubs.update({"apt-get": "true", "dpkg": "true", "dpkg-query": "echo 'ii  wrong 1 amd64'"})
+        return self.run_script("Linux", stubs, files=[("/var/lib/snapd/modeenv", self.MODEENV if modeenv is None else modeenv),
+                                                      ("/etc/os-release", 'NAME="Ubuntu Core"\nID=ubuntu-core\n')])
+
+    def test_snapcore(self):
+        """Ubuntu Core (ubuntu-core.md U4): every revision kept, as VERSION+rREV with its
+        tracking and notes (pc is 24-0.1 at both), then modeenv's picks; before dpkg."""
+        out = self.snapcore(apt=True)
+        self.check(out, ["base pm snapcore", "pkg core24 20240528+r423 latest/stable base,disabled",
+                         "pkg pc 24-0.1+r178 24/stable gadget,disabled", "pkg pc 24-0.1+r196 24/stable gadget",
+                         "pkg pc-kernel 6.8.0-149.149+r3908 24/stable kernel,components[7]",
+                         "base snapcore-base core24_2307.snap", "base snapcore-gadget pc_196.snap",
+                         "base snapcore-current_kernels pc-kernel_3908.snap",
+                         "base snapcore-current_recovery_systems 20240603,bko-20261114"])
+        self.assertNotIn("wrong", out)
+        ls = FP.parse_pkgset(out)
+        self.assertEqual((ls.kind, ls.unknown, ls.version(["pc"])), ("snapcore", None, "24-0.1+r178,24-0.1+r196"))
+
+    def test_snapcore_not_whole(self):
+        self.assertEqual(self.snapcore(snaps="error: cannot list snaps\n").strip().splitlines()[-1],
+                         "unknown snap list --all printed: error: cannot list snaps")
+        self.assertEqual(self.snapcore(modeenv="mode=run\nbase=core24_2307.snap\n").strip(),
+                         "unknown no gadget in " + str(self.tmp / "root") + "/var/lib/snapd/modeenv")
+        self.assertEqual(self.snapcore(snaps=self.SNAPS.splitlines()[0] + "\n").strip(),
+                         "unknown snap list --all listed nothing")
 
     def portage(self, *pkgs, gentoo=True):
         """A Gentoo root: /var/db/pkg/CATEGORY/PF with a CHOST file each, and /etc/gentoo-release."""
@@ -824,6 +958,55 @@ class TestFingerprint(unittest.TestCase):
             r = subprocess.run([sys.executable, "-B", str(TESTVM / "update" / "fingerprint.py"), d, p], capture_output=True, text=True)
             self.assertEqual(r.returncode, 3)
             self.assertIn("no fingerprint", r.stderr)
+
+
+class TestSnapcoreFacts(unittest.TestCase):
+    """Ubuntu Core (ubuntu-core.md U4): fingerprint.py's snapcore kind, from pkgset.sh's snap and
+    modeenv lines: no package of PACKAGES' at all."""
+
+    LISTING = textwrap.dedent("""\
+        base pm snapcore
+        pkg console-conf 24.04.1+r79 24/stable -
+        pkg core24 20240528+r423 latest/stable base,disabled
+        pkg core24 20261022+r2307 latest/stable base
+        pkg core20 20240911+r2434 latest/stable base
+        pkg pc 24-0.1+r178 24/stable gadget,disabled
+        pkg pc 24-0.1+r196 24/stable gadget
+        pkg pc-kernel 6.8.0-149.149+r3908 24/stable kernel,components[7]
+        pkg snapd 2.78+r28332 latest/stable snapd
+        base snapcore-base core24_2307.snap
+        base snapcore-gadget pc_196.snap
+        base snapcore-current_kernels pc-kernel_3908.snap
+        base snapcore-current_recovery_systems 20240603,bko-20261114
+        """)
+    DUMP = {"os": {"kernel_release": "6.8.0-149-generic", "kernel_version": "#149-Ubuntu SMP"}}
+
+    def facts(self, text):
+        return FP.read_facts(self.DUMP, FP.parse_pkgset(text))
+
+    def test_boot_and_fixture(self):
+        self.assertIn("snapcore", FP.LINUX_KINDS)
+        f = self.facts(self.LISTING)
+        self.assertEqual((f["kernel"], f["kernel_line"]), ("6.8.0-149-generic", "6.8"))
+        self.assertEqual(f["boot"], {"modeenv:base": "core24_2307.snap", "modeenv:gadget": "pc_196.snap",
+                                     "modeenv:current_kernels": "pc-kernel_3908.snap",
+                                     "modeenv:current_recovery_systems": "20240603,bko-20261114",
+                                     "core24": "20240528+r423,20261022+r2307", "pc": "24-0.1+r178,24-0.1+r196",
+                                     "pc-kernel": "6.8.0-149.149+r3908", "snapd": "2.78+r28332"})
+        # the base snap modeenv names, not hello's core20
+        self.assertEqual(f["fixture"], {"base": "20240528+r423,20261022+r2307"})
+        self.assertEqual(FP.stic_view(f)["fixture"], {"base": "20240528,20261022"})
+        # a refreshed gadget at the same version moves the holt facts, not stic's
+        g = self.facts(self.LISTING.replace("+r196", "+r201").replace("pc_196", "pc_201"))
+        self.assertNotEqual(g["boot"], f["boot"])
+        self.assertEqual(FP.stic_view(g), FP.stic_view(f))
+
+    def test_a_missing_line_gives_none(self):
+        for gone in ("base snapcore-gadget pc_196.snap\n", "pkg snapd 2.78+r28332 latest/stable snapd\n",
+                     "base snapcore-current_recovery_systems 20240603,bko-20261114\n"):
+            with self.assertRaises(FP.NoFingerprint, msg=gone):
+                self.facts(self.LISTING.replace(gone, ""))
+        self.assertEqual((FP.snap_name("pc-kernel_3908.snap"), FP.snap_name("x")), ("pc-kernel", None))
 
 
 class TestOpenSuseNames(unittest.TestCase):
@@ -1661,6 +1844,72 @@ class TestSshChecked(unittest.TestCase):
         with mock.patch.object(VU.stopping, "wait", lambda t: True):
             with self.assertRaisesRegex(VU.Failed, "stopped"):
                 self.vm(255, 0).ssh_checked("x", 5)
+
+
+class TestSnapcoreSettle(unittest.TestCase):
+    """Ubuntu Core (ubuntu-core.md U4): after in-guest.sh's "restart pending", vm-update's reboot
+    completes snapd's change; snapcore_settle reboots while one waits for a restart, waits out
+    snapd's own, and wants the change Done and the auto-refreshes held again."""
+
+    class Stop:
+        def is_set(self):
+            return False
+
+        def wait(self, _=None):
+            return False
+
+    class VM:
+        def __init__(self, answers):
+            self.answers, self.calls, self.boots = list(answers), [], []
+
+        def ssh(self, script, timeout, log=True):
+            if "snap changes" in script:
+                self.calls.append("state")
+                a = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+                return subprocess.CompletedProcess([], 255 if a is None else 0, a or "", "")
+            self.calls.append("reboot" if script == VU.REBOOT else script.split("\n")[-1])
+            return subprocess.CompletedProcess([], 0, "", "")
+
+        def type_passphrase(self):
+            pass
+
+        def wait_ssh(self, rebooting=False):
+            self.boots.append(rebooting)
+
+    def settle(self, answers):
+        vm = self.VM(answers)
+        g = types.SimpleNamespace(note=lambda m: None, log=types.SimpleNamespace(name="update.log"))
+        res = {}
+        with mock.patch.object(VU, "stopping", self.Stop()):
+            VU.snapcore_settle(vm, g, "7", res)
+        return vm, res
+
+    def test_the_state_script(self):
+        s = VU.SNAP_STATE.replace("CHANGE", "7")
+        self.assertIn('$1 == "7"', s)
+        self.assertNotIn("CHANGE", s)
+        r = subprocess.run(["sh", "-n"], input=s, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(VU.SNAP_PENDING.search("x\nin-guest: snapcore: restart pending 7\n")[1], "7")
+
+    def test_a_restart_more_then_settled(self):
+        vm, res = self.settle(["busy 7:Doing\nchange Doing", "restart 7:Wait\nchange Wait",
+                               None, "busy 7:Doing\nchange Doing", "settled\nchange Done", "settled\nchange Done"])
+        self.assertEqual(res["snapcore"], {"change": "7", "status": "Done", "reboots_more": 1})
+        self.assertEqual(vm.calls.count("reboot"), 1)
+        self.assertEqual(vm.boots, [True, False])        # its reboot, then one of snapd's own
+        self.assertEqual(vm.calls[-1], "snap refresh --hold")
+
+    def test_settled_needs_two_and_done(self):
+        vm, res = self.settle(["settled\nchange Done", "busy 9:Doing\nchange Done", "settled\nchange Done",
+                               "settled\nchange Done"])
+        self.assertEqual(vm.calls.count("state"), 4)
+        with self.assertRaises(VU.Failed) as e:
+            self.settle(["settled\nchange Error"])
+        self.assertIn("ended Error", str(e.exception))
+        with self.assertRaises(VU.Failed) as e:
+            self.settle(["restart 7:Wait\nchange Wait"])
+        self.assertIn("reboots more", str(e.exception))
 
 
 class TestGate(unittest.TestCase):

@@ -28,7 +28,11 @@ GUEST, vm-update
      copies after a kernel upgrade), abroot upgrade on Vanilla OS (into
      the other root, which the reboot below boots), transactional-update
      dup on MicroOS (into a new snapshot, which the reboot below must
-     boot), nixos-rebuild, pkg, syspatch and pkg_add, pkg on
+     boot), snap refresh on Ubuntu Core (every snap, the kernel, base,
+     gadget and snapd too; when the change waits for a restart, the reboot
+     below makes it, and vm-update waits across the reboots more it takes
+     until snapd has nothing in progress, then holds the auto-refreshes
+     again), nixos-rebuild, pkg, syspatch and pkg_add, pkg on
      OmniOS, pkgman on Haiku, hbsd-update on HardenedBSD), unattended, after
      pointing a guest that its builder froze at its distribution's live
      repositories; as root, or as the user named in vms/GUEST/ssh-user
@@ -1662,7 +1666,80 @@ def reproject(g: Guest, hosts: list[str | None]) -> str:
 STEP = re.compile(r"^in-guest: step: (.*)$", re.M)
 # in-guest.sh's Linux.tukit: the snapshot transactional-update left the default.
 TU_DEFAULT = re.compile(r"^in-guest: tukit: default (\S+)$", re.M)
+# in-guest.sh's Linux.snapcore: snapd's refresh change CHANGE waits for a restart (Ubuntu Core).
+SNAP_PENDING = re.compile(r"^in-guest: snapcore: restart pending (\d+)$", re.M)
+# What snapd is at, on its first line: "restart ..." (a shutdown scheduled, or a change that
+# waits for a restart), "busy ID:STATUS..." (a change in progress) or "settled"; then
+# "change STATUS", the refresh change CHANGE's own.
+SNAP_STATE = SBIN + (
+    "c=$(snap changes 2>/dev/null)\n"
+    "b=$(printf '%s\\n' \"$c\" | awk 'NR > 1 && $2 ~ /^(Do|Doing|Undo|Undoing|Wait|Hold)$/ { printf \" %s:%s\", $1, $2 }')\n"
+    "if [ -e /run/systemd/shutdown/scheduled ]; then echo \"restart$b\"\n"
+    "else case $b in *:Wait*) echo \"restart$b\" ;; '') echo settled ;; *) echo \"busy$b\" ;; esac; fi\n"
+    "printf '%s\\n' \"$c\" | awk '$1 == \"CHANGE\" { print \"change\", $2 }'\n")
+SNAP_SETTLE_TIMEOUT = 3600
+SNAP_REBOOTS_MORE = 4
 LISTING_TYPES = ("pkg", "base", "nix-pkg", "nix-system", "syspatch")
+
+
+def snapcore_settle(vm, g, change: str, res: dict) -> None:
+    """Ubuntu Core (docs/design/ubuntu-core.md): in-guest.sh stopped where snapd's refresh
+    change CHANGE waited for a restart, which the reboot before this made.  snapd completes the
+    change once booted, now and then after a restart more (snapd first, then the kernel or base
+    in the same change): reboot again while it waits for one, and wait out a reboot of snapd's
+    own, until it has no change in progress, twice 20 s apart (make-ubuntu-core.sh's settle).
+    Then CHANGE must be Done, and the auto-refreshes are held again (snap refresh --hold: a
+    refresh's own hold may not outlive it).  RES["snapcore"] says how it went."""
+    deadline = time.monotonic() + SNAP_SETTLE_TIMEOUT
+    script = SNAP_STATE.replace("CHANGE", change)
+    settled = reboots = 0
+    status, state = None, []
+    while True:
+        if stopping.is_set():
+            raise Failed("stopped")
+        r = vm.ssh(script, timeout=60, log=False)
+        lines = r.stdout.splitlines() if r.returncode == 0 else []
+        state = lines[0].split() if lines and lines[0].strip() else []
+        status = next((x.split()[1] for x in lines if x.startswith("change ") and len(x.split()) == 2), status)
+        if not state:
+            # No answer: snapd's own reboot (its shutdown -r), most likely.
+            settled = 0
+            vm.type_passphrase()
+            vm.wait_ssh()
+        elif state[0] == "settled":
+            settled += 1
+            if settled >= 2:
+                break
+        elif state[0] == "restart":
+            settled = 0
+            if reboots >= SNAP_REBOOTS_MORE:
+                raise Failed(f"snapd still waits for a restart after {reboots} reboots more: {' '.join(state[1:])}")
+            reboots += 1
+            g.note(f"snapd: a change waits for a restart ({' '.join(state[1:]) or 'a shutdown scheduled'});"
+                   f" rebooting, {reboots} more")
+            for _ in range(5):
+                if vm.ssh(REBOOT, timeout=30).returncode == 0:
+                    break
+                if stopping.wait(10):
+                    raise Failed("stopped")
+            else:
+                raise Failed(f"the reboot command failed; see {g.log.name}")
+            vm.type_passphrase()
+            vm.wait_ssh(rebooting=True)
+            continue
+        else:
+            settled = 0
+        if time.monotonic() >= deadline:
+            raise Failed(f"snapd hasn't settled {SNAP_SETTLE_TIMEOUT} s after the reboot: {' '.join(state) or 'no SSH'}")
+        if stopping.wait(20):
+            raise Failed("stopped")
+    res["snapcore"] = {"change": change, "status": status, "reboots_more": reboots}
+    g.note(f"snapd settled: change {change} {status}, {reboots} reboot(s) more")
+    if status != "Done":
+        vm.ssh(SBIN + f"snap tasks {change} 2>&1 | tail -n 30", timeout=60)
+        raise Failed(f"snapd's refresh (change {change}) ended {status or 'unlisted'}; its tasks are in {g.log.name}")
+    if vm.ssh(SBIN + "snap refresh --hold", timeout=120).returncode != 0:
+        raise Failed(f"snap refresh --hold failed after the refresh; see {g.log.name}")
 
 
 def parse_steps(stdout: str) -> list[str]:
@@ -2145,9 +2222,10 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
         raise Failed(f"no SSH to update it over: {no_ssh.read_text().strip()}")
     # A guest whose package manager is off by design (TrueNAS: a new boot
     # environment per update, made by its rebuild; docs/design/truenas.md)
-    # says how it is updated instead.
+    # says how it is updated instead.  --probe updates nothing (GuestTest2's
+    # probe cells of these guests: boot, the hooks, uname), so it goes on.
     no_update = g.dir / "no-vm-update"
-    if no_update.exists():
+    if no_update.exists() and not args.probe:
         raise Failed(f"not updated by vm-update: {no_update.read_text().strip()}")
     # A guest that boots on its own TPM (vm-run-options' --guest-tpm: Aeon's
     # LUKS2 by systemd-pcrlock) has its disk's key policy in the TPM, which
@@ -2155,7 +2233,12 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
     # run's TPM is a copy, thrown away: merging the disks alone would leave
     # the master's TPM sealed to the old boot chain, and the guest asking for
     # its recovery key.  Until a merge carries the TPM too, --try and --probe
-    # only (docs/design/aeon.md, "What A1 found").
+    # only (docs/design/aeon.md, "What A1 found").  Ubuntu Core's uc24-fde
+    # likewise: snapd reseals its keys for a refreshed kernel, base or gadget
+    # and advances the TPM's policy counter, so the merged disk on the
+    # master's TPM would loop in run mode (docs/design/ubuntu-core.md); a
+    # --try still checks that the refreshed guest boots unattended, its
+    # reboots on the run's one copy of the TPM.
     if "--guest-tpm" in g.options and not (args.try_ or args.probe):
         raise Failed("boots on its own TPM (--guest-tpm), which vm-update can't merge yet: --try or --probe only")
     states = None
@@ -2234,6 +2317,11 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
             g.note("no ps -o etime here: the reboot is taken from SSH going down and up")
         elif up_after >= (ran_on := up_before + (time.monotonic() - t_before)) - min(30, ran_on / 2):
             raise Failed(f"the guest didn't reboot (init has run {up_after} s)")
+        if m := SNAP_PENDING.search(r.stdout):
+            # Ubuntu Core: snapd completes its refresh now, across reboots more if it takes them.
+            say(name, f"waiting for snapd's refresh (change {m[1]}) to settle")
+            res["phase"] = "snapd"
+            snapcore_settle(vm, g, m[1], res)
         res["uname"] = uname = vm.ssh_checked("uname -sr", 30).stdout.strip()
         say(name, f"booted again ({uname})")
         if m := tu_default:

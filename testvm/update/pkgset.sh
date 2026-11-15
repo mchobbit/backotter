@@ -4,7 +4,8 @@
 # installed, one typed line each.
 #
 #   pkg NAME VERSION [ARCH]    a package of its package manager (Portage:
-#                              the CHOST for ARCH)
+#                              the CHOST for ARCH; Ubuntu Core: a snap's
+#                              revision, VERSION+rREV TRACKING NOTES)
 #   nix-pkg NAME VERSION       a store path in NixOS's (or Guix System's)
 #                              system closure
 #   nix-system PATH            NixOS's (or Guix System's) system profile
@@ -108,6 +109,27 @@ pkg_query() {
     x=$(pkg query '%n %v') || fail "pkg query failed"
     lines "$x" | sed 's/^/pkg /'
 }
+# Ubuntu Core (docs/design/ubuntu-core.md): snaps, not packages.  Every
+# revision snapd keeps (snap list --all: the current one and the disabled,
+# which snap revert brings back), as "pkg NAME VERSION+rREV TRACKING NOTES":
+# a refresh moves the revision, not always the version (pc's 24-0.1 is
+# revision 178 and 196).  Then modeenv's base, gadget, current kernels and
+# recovery systems, as "base snapcore-KEY VALUE": what boots, which a
+# refresh or a new recovery system moves.
+pkg_snapcore() {
+    x=$(snap list --all 2>&1) || fail "snap list --all failed"
+    y=$(lines "$x" | awk 'NR == 1 { if ($1 != "Name" || $3 != "Rev" || $6 != "Notes") { bad = 1; print "unknown snap list --all printed:", substr($0, 1, 60); exit 1 }; next }
+                         NF != 6 { bad = 1; print "unknown snap list --all printed:", substr($0, 1, 60); exit 1 }
+                         { print "pkg", $1, $2 "+r" $3, $4, $6; n++ }
+                         END { if (!bad && !n) { print "unknown snap list --all listed nothing"; exit 1 } }') ||
+        { lines "$y" | sed -n '$p'; exit 1; }
+    lines "$y"
+    for k in base gadget current_kernels current_recovery_systems; do
+        v=$(sed -n "s/^$k=//p" /var/lib/snapd/modeenv | head -n 1)
+        [ -n "$v" ] || fail "no $k in /var/lib/snapd/modeenv"
+        echo "base snapcore-$k $v"
+    done
+}
 
 listing() {
     if [ -e /etc/NIXOS ]; then
@@ -131,6 +153,12 @@ listing() {
         # /gnu/store/HASH-NAME-VERSION[-OUTPUT]
         lines "$x" | awk '{ s = $0; sub(/^\/gnu\/store\/[^-]*-/, "", s); i = match(s, /-[0-9]/)
                             if (i) { v = substr(s, i + 1); sub(/-.*/, "", v); print "nix-pkg", substr(s, 1, i - 1), v } }' | sort -u
+        return
+    fi
+    # Ubuntu Core: snapd is its package manager, whatever else its base snap holds.
+    if [ "$(uname)" = Linux ] && [ -f /var/lib/snapd/modeenv ] && grep -qs '^ID=ubuntu-core$' /etc/os-release && has snap; then
+        echo "base pm snapcore"
+        pkg_snapcore
         return
     fi
     case $(uname) in

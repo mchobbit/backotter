@@ -20,15 +20,22 @@ Check `t2 batch status` before starting heavy work: a running batch holds whole 
 | `SticTest2All [ROUND]` | all 47 checks, fresh (SticTest1's scope) | runs them all anyway |
 | `HoltTest2 [GUEST[+VARIANT]...] [stale] [+bigger] [+oneshot] [+degraded] [+img]` | the due HoltTest cells | one line |
 | `HoltTest2X [X...]`, X in D A M U Z F C V BSD H I G Obscure | that family's guests, fresh (HoltTest1's letters) | runs them anyway |
-| `HoltTest2All` | all 71 sources and their 9 variant cells, fresh (no `+img` cells) | runs them all anyway |
+| `HoltTest2All` | all 77 sources and their 9 variant cells, fresh (no `+img` cells) | runs them all anyway |
 | `HoltTest2 G+img`, `HoltTest2 +img` | those cells fresh, a real rescue image as rescuer; `+img` alone: all 14 | runs them anyway |
 | `GuestTest2 [GUEST...] [stale]` | the due guests, or those guests fresh: identity, image checks, a `--try` in RAM, the checks after it, the log sweep | the guests whose last `--try` is over 7 days old; else one line |
-| `GuestTest2All` | the graded audit: all 72 guests fresh, sha256 identity | runs them all anyway |
-| `GuestTest2 update [GUEST...]` | the real update round (merges); never with `stale` or All | a bare round needs a `--try` PASS within 7 days |
+| `GuestTest2All` | the graded audit: all 77 guests fresh, sha256 identity | runs them all anyway |
+| `GuestTest2 update [GUEST...]` | the real update round (merges; sculpt2610 by `testvm/sculpt-update`); never with `stale` or All | a bare round needs a `--try` PASS within 7 days (not sculpt2610, which has no `--try`) |
 | `ImgTest2 [PLAT...] [release] [stale]` | images built since their PASS and owed panels, or those platforms fresh; `release` requires the panel | one line |
 | `ImgTest2All [release]` | every current image, its panel included | runs them all anyway |
 | `BkoTest2 [ROUND] [stale]` | every family's due cells in one queue; names and All are refused | one line per family (GuestTest2's 7-day `--try`s aside) |
 | `SweepTest2 [ROUND]` | every All form but ImgTest2's, fresh; names, `stale` and All are refused | runs them all anyway |
+
+A guest registered before its first run is in a family's All only where its
+cells don't need a run's output: `aeon` (docs/design/aeon.md, A3) is a SticTest2
+check and a GuestTest2 guest (`--try` only: vm-update can't merge a guest that
+boots on its own TPM yet), but no HoltTest2 source until a HoltTest1 PASS dump
+gives it its golden plan (a source with no corpus dump is a golden_plans
+failure).
 
 `WORD All` is the same as `WORDAll`, and `HoltTest2 D` or `HoltTest2 2D` the same as
 `HoltTest2D`; `HoltTest2 --holt-bin DIR` tests a ready bko-holt set (DIR/bko-holt,
@@ -156,7 +163,7 @@ change is carried; a change only to `holt.plan_visible` (commands.rs) runs the
 guests whose golden plan changed, their variants when the diff touches partition,
 assemble or close, and the degraded cells, and carries the rest (`carry:plan-diff`);
 before the plan diff is known (no blessed plan change, no gate:holt row at the
-current holt key) all 71 run (`holt:code`), as for any other code change (the stand-in
+current holt key) all 77 run (`holt:code`), as for any other code change (the stand-in
 for M1's module map).  A rustic-bko-only change runs that platform's rustic panel and
 carries the rest; a rescuer change runs its rescuer panel; a guest's new generation
 runs it and its variants; a driver change runs that driver's guests; a judge change
@@ -290,7 +297,7 @@ with every cell, fixture forks for BKO_GIT, both hosts' facts and seeded rows).
 ## Stand-ins until later pieces
 
 Until M1 affected.sh v1 serves the carry rule and any holt code change outside
-`plan_visible` reaches all 71 sources; until G2 a judge change makes cells due
+`plan_visible` reaches all 77 sources; until G2 a judge change makes cells due
 (`policy.judge_change`); until H3 `+close` is refused, variants run as runs of their
 own and `+img` runs as its own job.  G3, H4, C1, S1 and R1 are later still.
 
@@ -300,7 +307,10 @@ A guest's row with `extra.to_class_only` (a FAIL whose only causes are new log l
 standing LIMITs nobody has classed) makes the cell `to-class`: reported, exit 1, never
 due and never rerun, until `t2 guest-lines --accept` or a `guest/limits.json` entry
 classes it.  A `--try` cell whose last `--try` is over 7 days old is due
-(`guest:7day`).  A guest's merged update isn't a PASS: the merged image hasn't booted.
+(`guest:7day`).  A guest's merged update isn't a PASS: the merged image hasn't booted.  In an update round
+sculpt2610 runs `guest/update-sculpt.sh` (`testvm/sculpt-update` under the round's shared fleet lock, no
+`--publish`: run `vm-store publish sculpt2610` on Chopin after the round); its console probe also runs
+`sculpt-update --check`, whose "newer image" or "newer release" is a note of `image:current`, never a FAIL.
 Stic and holt cells key a guest's fingerprint (`vms/G/image-fingerprint.json`) when it
 speaks for the current generation, else the generation; a new generation at the same
 fingerprint is soft-stale and runs no canary, and the first plan after a fingerprint

@@ -62,6 +62,9 @@ def __getattr__(name):
 
 
 KIND_MODE = {"ssh": "try", "probe": "probe", "redox": "console", "sculpt": "console"}
+# An update round's job: vm-update's real form, but for Sculpt (no SSH) testvm/sculpt-update
+# (guest/update-sculpt.sh), which boots its update before it merges.
+KIND_UPDATE_MODE = {"sculpt": "console-update"}
 
 
 def run_policy(classes):
@@ -71,7 +74,7 @@ def run_policy(classes):
 
 def mode_of(entry, update=False):
     if update:
-        return "update"
+        return KIND_UPDATE_MODE.get(entry.get("kind"), "update")
     return KIND_MODE.get(entry.get("kind"), "try")
 
 
@@ -615,7 +618,8 @@ def preflight(ctx, out=print, io=None):
 # What an update round runs from the synced tree, and so must be this checkout's (contract 2.1 step 1);
 # testvm/hosts.json: vm-update's fleet.
 TREE_PATHS = ("testvm/vm-update", "testvm/update", "testvm/test2/guest",
-              "testvm/test2/t2-host", "testvm/test2/t2lib", "testvm/test2/classes.json", "testvm/hosts.json")
+              "testvm/test2/t2-host", "testvm/test2/t2lib", "testvm/test2/classes.json", "testvm/hosts.json",
+              "testvm/sculpt-update", "testvm/sculpt-check.sh")
 
 
 class FleetLock:
@@ -845,7 +849,7 @@ class Runner:
         for k in ("VM_UPDATE_REMOTE_VMS", "VM_UPDATE_HOLT_BIN"):
             if os.environ.get(k):
                 e[k] = os.environ[k]
-        if mode != "console":
+        if mode not in ("console", "console-update"):
             e["VM_UPDATE_RAM"] = f"{it.d:g}"
         if self.update:
             e["VM_UPDATE_ROUND"] = self.rs.run
@@ -1205,6 +1209,8 @@ class Runner:
         a, b = c.get("generation_before"), c.get("generation_after")
         if not c.get("merged") or not a or not b or a == b:
             return ""
+        if mode_of(self.sf.entry(guest_name), True) != "update":   # sculpt-update: no package lists; its steps say which image
+            return ""
         try:
             rc, text = remote_tool(self.io, c.get("host"), ["pkgdiff", guest_name, a, b], timeout=60)
         except Exception as e:   # noqa: BLE001 - the report only loses a detail
@@ -1224,7 +1230,7 @@ class Runner:
             for n, why in sorted((c.get("skips") or {}).items()):
                 by[f"{n} SKIP: {why}"].append(g)
             for n, why in sorted((c.get("need_notes") or {}).items()):
-                if n in ("image:free", "logs"):   # (the others only say which version)
+                if n in ("image:free", "logs", "image:current"):   # (the others only say which version)
                     by[f"{n}: {why}"].append(g)
         if not by:
             return None

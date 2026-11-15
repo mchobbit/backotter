@@ -28,10 +28,11 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
 `VERSION_ID`, or uname's where there's no os-release) is:
 
 - Linux: Debian 12 and 13 (Proxmox VE 9 on it, ZFS root; TrueNAS CE 25.10 on 12, its boot environments), Devuan 6, Ubuntu 24.04 and 26.04, Linux Mint 22,
-  Pop!_OS 24.04, Vanilla OS 3, Zorin OS 18, KDE neon 24.04, AnduinOS 2, Arch Linux, CachyOS, Artix Linux, Omarchy,
+  Pop!_OS 24.04, Vanilla OS 3, Zorin OS 18, KDE neon 24.04, AnduinOS 2, elementary OS 8, Arch Linux, CachyOS, Artix Linux, Omarchy,
   EndeavourOS, Manjaro, Garuda Linux, BigLinux, Alpine Linux 3, AerynOS, Solus 4, Void Linux, Chimera Linux,
   Gentoo Linux, PikaOS 4, Kali Linux, Fedora 44, Bazzite 44, Rocky Linux 10, openSUSE
-  Tumbleweed, NixOS 26.05 and Guix System (no VERSION_ID; its store GRUB-less, docs/design/guix.md);
+  Tumbleweed, openSUSE Leap 16, openSUSE MicroOS and Aeon (transactional-update, any snapshot: their own boot arm,
+  docs/design/aeon.md), NixOS 26.05 and Guix System (no VERSION_ID; its store GRUB-less, docs/design/guix.md);
 - ostree (image-mode) systems among them: Bazzite 44, and Fedora's atomic
   desktops (Silverblue and Kinoite 44, which say `fedora 44`), told apart
   by ostree's own markers (`src/ostree.rs`).  `load` version 1 refuses
@@ -61,6 +62,14 @@ root on ZFS; Gentoo's are `gentoo`, the Thinkpad's OpenRC install in small,
 and `gentoo-systemd`, LVM on LUKS, in HoltTest1G, and BackShot1 is its test
 on the Thinkpad itself; Solus's is `solus49` in HoltTest1Obscure, ext4 under Secure Boot with its ESP at /boot and out of fstab: `dump` refuses until the ESP is mounted (`clr-boot-manager mount-boot`), `load` keeps clr-boot-manager's shim, systemd-boot, kernels and entries from the restored ESP and makes only the NVRAM entry; AnduinOS's is `anduinos2` in HoltTest1U, Btrfs
 under Secure Boot, whose MOK-signed GRUB `load` keeps from the restored ESP;
+KDE neon's is `neon24` in HoltTest1U, ext4 under Secure Boot through shim in
+`EFI/neon`: `load` runs `grub-install --bootloader-id=neon` and `update-grub`
+(BackShot1 passed on the Thinkpad, installed by `neon-bootstrap.sh`);
+elementary OS's are `elementary8`, distinst's layout (ext4 / on LVM, VG
+`data`) under Secure Boot through shim in `EFI/ubuntu`, and
+`elementary8-luks`, the same LVM on LUKS2 with an ext4 /boot, in HoltTest1U:
+`load` runs `grub-install --bootloader-id=ubuntu` and `update-grub`
+(registered, not yet run to a PASS; docs/design/elementary.md);
 PikaOS's are `pikaos4`, XFS with rEFInd's NVRAM entry, and `pikaos4-luks`,
 Btrfs on LUKS2 booted from the fallback path, in HoltTest1Obscure: `load`
 rebuilds booster's initramfs and keeps rEFInd's files; Kali's is `kali` in HoltTest1Obscure, UEFI GRUB with no shim on ext4, which `load` reinstalls as Debian's; Proxmox VE's are `proxmox9`, ZFS root on one disk, and `proxmox9-mirror`, a mirror with an ESP on each disk, in HoltTest1D: `dump` reads proxmox-boot-tool's unmounted ESPs, `load` formats them with their volume IDs and has `proxmox-boot-tool init` and `refresh` rebuild them; TrueNAS CE's are `truenas25`, UEFI with three boot environments, and `truenas25-mirror`, BIOS on a mirrored `boot-pool` beside a data pool `load` leaves alone, in HoltTest1D: `dump` backs up the inactive boot environments too, `load` recreates every one read-only as it was and reinstalls TrueNAS's GRUB on each disk and ESP; Garuda's is `garuda`,
@@ -72,7 +81,11 @@ snapshots at the top level are outside the backup and not made, and whose
 /boot `load` leaves uncompressed, as BigLinux's installer does; Vanilla
 OS's is `vanilla3` in HoltTest1Obscure, ABRoot on a thin pool under Secure
 Boot, whose restored disk boots root B by default and A from GRUB's
-"Previous State (A)", each as the source did).  Build it static
+"Previous State (A)", each as the source did; openSUSE Leap 16's is
+`leap16` in HoltTest1Obscure beside `tumbleweed`, Btrfs with snapper's
+snapshots and SELinux enforcing, under Secure Boot through SUSE's shim in
+`EFI/opensuse`: `load` keeps the restored ESP's shim and signed GRUB, runs
+dracut and `grub2-mkconfig` and makes the NVRAM entry).  Build it static
 (`RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target
 x86_64-unknown-linux-gnu`) to run it on musl systems such as Alpine and Void
 too; on the other systems, build it there

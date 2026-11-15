@@ -4,6 +4,7 @@
 # Usage: vm-run [--uefi [--no-secure-boot] [--uefi-vars FILE | --guest-vars FILE] [--mok CERT]... | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]]
 #               [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--disk-ports LIST] [--nic MODEL]
 #               [--legacy-virtio-net] [--mac ADDR] [--tpm DIR | --guest-tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga]
+#               [--qemu-options FILE]
 #               IMAGE [-- QEMU_ARGS...]
 #
 # The VM gets 2 CPUs, 2 GB RAM (MEMORY=MB overrides), KVM, and QEMU's
@@ -151,9 +152,40 @@
 #                 directory, else beside IMAGE (as named), else beside the
 #                 first image of IMAGE's backing chain that has one.  --tpm
 #                 wins over it, wherever either comes
+#   --qemu-options FILE
+#                 more QEMU options, FILE's words (on any lines), for
+#                 vm-run-options to name when the guest needs options vm-run
+#                 has no word for (qubes43: Xen nested, "-machine
+#                 q35,accel=kvm,kernel-irqchip=split -device amd-iommu,intremap=on
+#                 -global ICH9-LPC.disable_s3=1 -nic none", make-qubes.sh's).
+#                 They come before every device of vm-run's own (an IOMMU
+#                 must); a -machine word merges with vm-run's -machine (QEMU
+#                 merges them); "-nic none" leaves out vm-run's network
+#                 card.  FILE is found as --guest-vars' is: in the working
+#                 directory, else beside IMAGE (as named), else beside the
+#                 first image of IMAGE's backing chain that has one
 #
 # The defaults (virtio disk, virtio-net-pci) are what every builder installs
 # on; changing them changes the guest's PCI layout too.
+#
+# A guest that carries its own firmware variables and TPM, to which its disk's
+# key is sealed (aeon: systemd-pcrlock; uc24-fde: Ubuntu Core's snapd, whose
+# PCR 7 takes in the variables' dbx too), boots on both through ONE
+# convention: its vm-run-options names them, relative to its folder,
+# "--guest-vars uefi-vars.fd --guest-tpm tpm" (aeon's: aeon.tpm), and every
+# test boot is --ram or --snapshot (vm-update, compare.py's and
+# rebuild-one.sh's boots, run-guest-rt.sh, HoltTest1's), so vm-run boots on
+# fresh copies of the two in this run's temporary directory, made from the
+# guest's own each time and gone with QEMU: the guest's own are never
+# written (vm-store objects are 0400), and a boot that reseals (a refresh's,
+# which advances the TPM's policy counter) can't leave them out of step with
+# a disk that is thrown away.  The copies are the same machine (the TPM
+# unseals, unattended); a fresh store or a new --tpm DIR is a new one.  A
+# restored disk boots on them by naming them itself (--guest-vars and
+# --guest-tpm with the guest's paths: HoltTest1's same-machine cells), or on
+# a copy it keeps (--uefi-vars and --tpm, which win).  Only a boot of the
+# guest's own disk in place (no --ram, no --snapshot) writes them in place,
+# together with that disk.
 #
 # QEMU locks IMAGE while it runs, so vm-mount can't attach it meanwhile.
 # A vm-store object (testvm/vm-store) is never written: it boots only with
@@ -212,7 +244,7 @@ in_store() {
 
 uefi_vars="" guest_vars="" moks=() cdrom="" uefi=no q35=no bios=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic) vga=()
 bus=virtio extra=() serials=() slots=() ports=() nic=virtio-net-pci nic_global=() mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
-guest_tpm=""
+guest_tpm="" qemu_options=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --cdrom) cdrom=$(realpath "$2"); shift 2 ;;
@@ -239,6 +271,7 @@ while [[ $# -gt 0 ]]; do
         --mac) mac=,mac=$2; shift 2 ;;
         --tpm) tpm=$(realpath -m "$2"); shift 2 ;;
         --guest-tpm) guest_tpm=$2; shift 2 ;;
+        --qemu-options) qemu_options=$2; shift 2 ;;
         --cpus) cpus=$2; shift 2 ;;
         --memory) memory=$2; shift 2 ;;
         -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -255,7 +288,7 @@ if [[ $aarch64 == yes ]]; then
 else
     [[ $bios == no ]] || die "unknown option --bios"
 fi
-[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] [--uefi-vars FILE | --guest-vars FILE] [--mok CERT]... | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--disk-ports LIST] [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga] IMAGE [-- QEMU_ARGS...]"
+[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] [--uefi-vars FILE | --guest-vars FILE] [--mok CERT]... | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--disk-ports LIST] [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga] [--qemu-options FILE] IMAGE [-- QEMU_ARGS...]"
 image_arg=$1 image=$(realpath "$1")
 shift
 [[ ${1:-} == -- ]] && shift
@@ -413,8 +446,27 @@ if [[ $aarch64 == yes ]]; then
 else
     nic_args=(-nic "user,ipv6=off,model=$nic$mac,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22")
 fi
+# --qemu-options: FILE's words, before vm-run's devices (an IOMMU comes first).
+qopts=()
+if [[ -n $qemu_options ]]; then
+    qo=$qemu_options
+    if [[ $qo != /* && ! -f $qo ]]; then
+        # Beside IMAGE as named, then beside each image of its backing chain.
+        mapfile -t qdirs < <(qemu-img info -U --backing-chain --output=json "$image" 2>/dev/null |
+            python3 -c 'import json, os, sys; [print(os.path.dirname(i["filename"])) for i in json.load(sys.stdin)]' 2>/dev/null)
+        for d in "$(dirname -- "$image_arg")" "${qdirs[@]}"; do
+            [[ -f $d/$qo ]] && { qo=$d/$qo; break; }
+        done
+    fi
+    [[ -f $qo ]] || die "--qemu-options: no $qemu_options here, beside $image_arg or its backing images"
+    while read -ra ws || [[ ${#ws[@]} -gt 0 ]]; do qopts+=(${ws[@]+"${ws[@]}"}); ws=(); done <"$qo"
+    for i in "${!qopts[@]}"; do
+        if [[ ${qopts[$i]} == -nic && ${qopts[$((i + 1))]:-} == none ]]; then nic_args=(); fi
+    done
+fi
 args=(
     -enable-kvm -cpu host -smp "$cpus" -m "$memory"
+    ${qopts[@]+"${qopts[@]}"}
     "${disk_args[@]}"
     # IPv4 only: the hosts have no IPv6 route out (a ULA prefix alone), so
     # the IPv6 address QEMU's user network would hand out leads nowhere, and

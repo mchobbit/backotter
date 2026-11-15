@@ -54,9 +54,19 @@
 #                        two boots as a test boots the guest: an overlay on
 #                        FLAVOR.qcow2 and copies of uefi-vars.fd and tpm/,
 #                        each to SSH in run mode with no recovery-key prompt
-#   vm-run-options       "--uefi --memory 2048": how vm-run boots it, less
-#                        --uefi-vars and --tpm, which take copies of the
-#                        guest's own (above)
+#   vm-run-options       how vm-run boots it: "--uefi --memory 2048" (uc24:
+#                        fresh variables, a new machine's, no TPM), and for
+#                        uc24-fde "--guest-vars uefi-vars.fd --guest-tpm tpm"
+#                        besides: under --ram or --snapshot, as every test
+#                        boot is, vm-run boots on fresh copies of the two,
+#                        the guest's own never written (the same machine:
+#                        the TPM unseals, unattended)
+#   recovery-key         uc24-fde: a symbolic link to --recovery-key-file's
+#                        FILE, the key file vm-mount --key opens the LUKS2
+#                        volumes with (vm-update, compare.py, HoltTest1 find
+#                        it by this name).  A link, so the key stays in one
+#                        place, and vm-store, which skips links, never
+#                        stores it
 #
 # The guests, host name FLAVOR: UEFI + GPT from the pc gadget (BIOS Boot,
 # ubuntu-seed vfat ESP, ubuntu-boot, ubuntu-save, ubuntu-data ext4, the last
@@ -344,7 +354,12 @@ for n in 1 2; do
     note "check boot $n: run mode over SSH, no recovery-key prompt, the marks, both recovery systems, both hello revisions"
 done
 
-echo "--uefi --memory $MEMORY" >vm-run-options
+if [[ $FDE == yes ]]; then
+    echo "--uefi --memory $MEMORY --guest-vars uefi-vars.fd --guest-tpm tpm" >vm-run-options
+    ln -sfn "$recovery_out" recovery-key
+else
+    echo "--uefi --memory $MEMORY" >vm-run-options
+fi
 t_end=$(date +%s)
 { echo "=== build: $((t_end - t_start)) s (install to SSH $((t_install - t_start)) s, refresh and setup $((t_build - t_install)) s, check boots $((t_end - t_build)) s)"
   echo "=== $DISK: $(du -h "$DISK" | cut -f1) on disk, $(qemu-img info --output=json "$DISK" | python3 -c 'import json, sys; print(json.load(sys.stdin)["virtual-size"])') bytes virtual"; } | tee -a build.txt >>first-boot.txt

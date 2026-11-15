@@ -32,6 +32,8 @@ EXPECTED = {
     "debian13-stack": ("linux", ["initramfs-tools"]),
     "debian13-zfs": ("linux", ["initramfs-tools"]),
     "devuan6": ("linux", ["initramfs-tools"]),
+    "elementary8": ("linux", ["initramfs-tools"]),
+    "elementary8-luks": ("linux", ["initramfs-tools"]),
     "endeavouros": ("linux", ["dracut", "systemd-boot"]),
     "endeavouros-grub": ("linux", ["dracut", "grub_upstream"]),
     "fedora44": ("linux", ["dracut", "systemd-boot"]),
@@ -56,7 +58,9 @@ EXPECTED = {
     "rocky10": ("linux", ["dracut", "systemd-boot"]),
     "rocky10-lvm": ("linux", ["dracut", "systemd-boot"]),
     "rocky10-raid5": ("linux", ["dracut", "systemd-boot"]),
-    "tumbleweed": ("linux", ["dracut", "snapper"]),
+    # clr-boot-manager's systemd-boot entries; its initrds are prebuilt (no generator trait).
+    "solus49": ("linux", ["systemd-boot"]),
+    "tumbleweed":("linux", ["dracut", "snapper"]),
     "ubuntu24": ("linux", ["initramfs-tools"]),
     "ubuntu26-luks": ("linux", ["dracut"]),
     "ubuntu26-raid": ("linux", ["dracut"]),
@@ -72,6 +76,7 @@ EXPECTED = {
 PLANNED_GUESTS = {
     "alpinebsd": "A4", "dragonfly6": "A4", "freebsd14": "A4", "freebsd15": "A4", "freebsd15-geli": "A4",
     "freebsd15-mirror": "A4", "ghostbsd26": "A4", "ghostbsd26-zfs": "A4", "hardenedbsd15": "A4",
+    "hardenedbsd15-zfs": "A4",
     "netbsd11": "A4", "openbsd8": "A4", "omnios58": "A5", "omnios58-mirror": "A5",
     "haiku6": "A6", "redox": "A6", "sculpt2610": "A6",
 }

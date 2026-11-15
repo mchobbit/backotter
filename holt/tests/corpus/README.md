@@ -1,6 +1,6 @@
 # H1: the dump corpus and its golden plans
 
-One redacted `bko-holt dump` of each of HoltTest2's 61 sources, and the plan
+One redacted `bko-holt dump` of each of HoltTest2's 77 sources, and the plan
 `bko-holt load` makes of each (docs/design/test2.md, "Shared pieces to
 build", H1).  `holt/tests/golden_plans.rs` plans every dump again and fails
 when a plan changes or breaks an invariant, so a change to load shows here
@@ -399,6 +399,82 @@ then the entry for `\EFI\debian\shimaa64.efi`; and `bootctl install
 --no-variables`, then the entry for `\EFI\systemd\systemd-bootaa64.efi`.
 Load plans them only as an ARM64 rescue system: common/mod.rs gives the
 fake rescue system each dump's own architecture, as check_plan does.
+uc24 and uc24-fde (`make-ubuntu-core.sh`: Ubuntu Core 24 from Canonical's
+signed `ubuntu-core-24-amd64.img.xz` with a NoCloud CIDATA drive, the pc
+gadget's GPT of BIOS Boot, ubuntu-seed (vfat, the ESP type), ubuntu-boot,
+ubuntu-save and ubuntu-data, then `snap refresh` and a second recovery
+system; uc24 installed with no TPM, so unencrypted; uc24-fde with swtpm and
+Secure Boot, so ubuntu-save and ubuntu-data are LUKS2 volumes whose keys
+are sealed to the TPM; docs/design/ubuntu-core.md), built on 2026-11-14,
+were added on 2026-11-15 from U2's dumps of the live guests on copland (run
+`u3`, the static bko-holt 0.2.6 built from this tree with U2's Ubuntu Core
+code, `b0bcc7acabb7...`, as root in run mode, where snap-bootstrap has
+opened both volumes, so no recovery key was needed; each guest on a qcow2
+overlay and copies of its UEFI variables and, for uc24-fde, its swtpm
+state, so through shim's NVRAM entry and an unattended unlock; the image
+never written; their provenance.tsv written by hand).  Their dumps are the
+first with `boot.snapcore` (the four partitions by GPT name, modeenv, the
+model, os-release from the base snap, the seed's two recovery systems,
+every snap revision, the MBR code and BIOS Boot's bytes) and, on uc24-fde,
+`storage.luks_headers` (each LUKS2 header kept as a file by `cryptsetup
+luksHeaderBackup`: its name, size and SHA-256, never the header).  Their
+golden plans make the gadget's table exact, `mkfs.fat -i` the seed, and
+mount the four roots at `/mnt/bko-target/run/mnt` (no `/`: Ubuntu Core's
+root is the base snap); uc24-fde's put both headers back with
+`luksHeaderRestore` and open them with `--key-file` (no luksFormat, no
+luksAddKey).  At boot they regenerate nothing: the check of modeenv against
+the restored trees, `bko-holt snapcore-boot-areas`, the log and the atimes;
+no grub-install, update-grub, chroot or NVRAM entry.  The kept headers' key
+files and header files are the golden plans' own (common/mod.rs, "The
+golden plans" below).  The plans are the same from a825828's load (U3) as
+from this tree's.
+elementary8 (`make-from-live.sh elementary`: elementary OS 8.1 from its
+live ISO, its squashfs copied and the boot loader installed as distinst
+does, in distinst's layout; UEFI with Secure Boot, GPT with a 278 MiB ESP
+at /boot/efi and one LVM PV, the VG `data` with `root` (ext4 /) and `swap`;
+shim and signed GRUB in EFI/ubuntu, with distinst's grub.cfg on the ESP;
+docs/design/elementary.md) and elementary8-luks (`--luks`: the same with an
+ext4 /boot of 1 GiB and the PV inside LUKS2 `cryptdata`, crypttab
+`cryptdata UUID=... none luks`, on a 20G disk), built on 2026-11-14 and
+2026-11-15, were added on 2026-11-15 from dumps of the live guests on
+chopin (run `e4`, the static bko-holt 0.2.6 built with E2's elementary
+row, `8f5e153b...`; their own vm-run-options, so under Secure Boot through
+shim's fallback on a fresh variable store, the disks under `vm-run
+--snapshot`, elementary8-luks booted through console-boot.py, which typed
+its console-passphrase at cryptsetup-initramfs's prompt; the images'
+sha256 the same before and after; their provenance.tsv written by hand,
+generation `-`: the guests have no image-state yet).  Their golden plans
+make the VG `data` again with `pvcreate --uuid` and `vgcfgrestore` (on
+elementary8-luks inside `cryptsetup luksFormat --type=luks2 ... --uuid`
+and `cryptsetup open ... cryptdata`, an ext4 /boot mounted beside), and at
+boot run `update-initramfs -u -k all`, `grub-install --target=x86_64-efi
+--bootloader-id=ubuntu --no-nvram` and `update-grub` with os-prober off,
+then make the `elementary OS 8` NVRAM entry for `\EFI\ubuntu\shimx64.efi`.
+Their `scrubbed` 8 is step 3's e-mail scrub of the ESP's GRUB locale
+files named NAME@VARIANT.mo (`sr@latin.mo` and the like) in
+`EFI/ubuntu/grub/locale`: each becomes the path
+`EFI/ubuntu/grub/locale/builder-at-redacted`, so the ESP's file list has
+eight files at that one path, their sizes kept (load only looks names up
+there, and BackShot2's ESP usage only sums the sizes).  They are in the
+corpus before either has had a HoltTest1 PASS (elementary8's
+`elem6c2`/`elem6q2` FAILed only on os-prober's grub.cfg entries, fixed in
+1677865; elementary8-luks has had no run).
+hardenedbsd15-zfs (`make-hardenedbsd.sh 15 23 zfs`: HardenedBSD
+15.1-STABLE-HBSD from 15-STABLE's installer build 23, hardenedbsd15's twin
+on a ZFS root as ghostbsd26-zfs is ghostbsd26's; BIOS + GPT with
+freebsd-boot on p1, 2 GB of swap on p2 and the pool `zroot` on p3 with
+bsdinstall's boot environments and datasets, the base system only, not even
+pkg), built on 2026-11-15, was added the same day from a dump of the live
+guest on chopin (run `hz1`, the promoted static bko-holt 0.2.6 from
+holt-bin, `763b88c4...`, checked against its SHA256SUMS; the disk under
+`vm-run --snapshot`, the image's sha256 the same before and after; its
+provenance.tsv written by hand, generation `-`: the guest has no
+image-state yet).  It is in the corpus before it has had a HoltTest run.
+Its golden plan writes the source's table and boot code with `bko-holt
+write-table`, makes `zroot` with the source's feature flags, ashift 12 and
+its GUID, the datasets with their properties (`zroot/usr/src` too, which
+ghostbsd26-zfs hasn't), sets `bootfs`, and at boot points the restored
+zpool.cache at the new pool; nothing else is regenerated.
 The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
@@ -429,7 +505,9 @@ raw dumps are), for each dump:
 3. Every e-mail-shaped token in a string value becomes
    `builder-at-redacted`: redact.rs has no kind for them, and two dumps
    carry a kernel build signature (alpinebsd's and netbsd11's
-   `os.kernel_version`, NetBSD's build address).  A word of
+   `os.kernel_version`, NetBSD's build address), as are the eight GRUB
+   locale names, NAME@VARIANT.mo, on elementary8's and elementary8-luks's
+   ESPs.  A word of
    `os.kernel_version` or `os.kernel_release` (which redact.rs leaves as
    they are) that is a hostname redact.rs replaced becomes that hostname's
    pseudonym (dragonfly6's build signature, debian13's release tag).
@@ -438,7 +516,9 @@ raw dumps are), for each dump:
    Sculpt's ESP images, MBR boot code) is replaced by a fixed filler of the
    same length (the bytes `bko-holt corpus: boot code left out, see
    holt/tests/corpus/README.md\n`, ending in a newline, repeated): every `esp_image[].b64`,
-   `boot_code.image_b64`, `boot_code.code_b64` and `boot_code.gap_b64`.
+   `boot_code.image_b64`, `boot_code.code_b64` and `boot_code.gap_b64`,
+   and Ubuntu Core's `boot.snapcore.boot_areas.mbr_code_b64` (the pc
+   gadget's 440 bytes) and `bios_boot.image_b64` (since uc24's).
    index.tsv's `filled` lists each as `PATH=BYTES/CRC32`, the length and
    CRC-32 of its redacted bytes; `blobs` and `blob_bytes` sum them (139
    blobs, 7.7 MB decoded, in 15 dumps).  EFI load options (`load_option_hex`) and
@@ -589,7 +669,28 @@ on chopin (/bkoscratch, its warm holt build at /bkoscratch/holt-warm/solus):
 chopin with 101 of its 106 strings and the raw dump's identifiers, cinqcent
 with 106 of its 112, the Mac with the git e-mail, 0 findings (its plan
 scanned too), the same sha256 from both builds (src.json `89c50dd1...`,
-the row `9022931f...`).
+the row `9022931f...`).  So did uc24 and uc24-fde (2026-11-15), built from a
+private directory on chopin (/bkoscratch, its warm holt build at
+/bkoscratch/holt-warm/uc-u7) from a host-to-host copy of the raw dumps from
+copland: chopin with 107 of its 112 strings and the raw dumps' identifiers,
+cinqcent with 110 of its 116, copland with 86 of its 91, the Mac with the
+git e-mail, 0 findings (their plans scanned too), and a check on chopin of
+the src.json files, the rows and the plans for uc24-fde's recovery key (as
+typed, as its 40 digits, each 5-digit group, and its 16 key bytes raw, in
+hex and in base64; as is and as UTF-16LE) and for any recovery-key-shaped
+string (eight dashed groups of five digits): none; the same sha256 from
+both builds (src.json `f6654a89...` and `0f0883f7...`).  So did elementary8 and elementary8-luks (2026-11-15), built
+from a private directory on chopin (/bkoscratch/elem-holt, its warm holt
+build at /bkoscratch/holt-warm/elementary): chopin with 109 of its 114
+strings (elementary8-luks's console-passphrase among them) and the raw
+dumps' identifiers, cinqcent with 110 of its 116, the Mac with the git
+e-mail, 0 findings (their plans scanned too), the same sha256 from both
+builds (src.json `44ab47f9...` and `1b38135b...`, the rows `ccfea5b7...`).
+So did hardenedbsd15-zfs (2026-11-15), built from a private directory on
+chopin (its warm holt build at /bkoscratch/holt-warm/hbsdzfs): chopin with
+its 110 strings and the raw dump's identifiers, cinqcent with its 116, the
+Mac with the git e-mail, 0 findings (its plan scanned too), the same sha256
+from both builds (src.json `8aab1604...`, and index.tsv).
 
 ## The golden plans
 
@@ -601,11 +702,23 @@ BackOtter's, every tool the plan asks for installed.  Unlike check_plan it
 maps no RAM disk or ZFS volume (alpine324's 16 RAM disks would each be a
 Problem), installs load's own binary where it runs from, and names it
 `bko-holt` in the plan, which would otherwise hold the test binary's path.
+A ZFS encryption root with a passphrase gets `--key-file NAME=/srv/bko-keys/NAME`,
+and each LUKS2 header the dump kept (`storage.luks_headers`, uc24-fde's two)
+`--key-file LABEL=/srv/bko-keys/LABEL` by its LUKS label, where a real load
+gives the recovery key's bytes (`bko-holt recovery-key-file`): fixed test
+paths, never a real key.  Load
+restores a kept header from the file dump wrote and checks it by its
+SHA-256, and the corpus holds no header, so the fake rescue system has a
+test file for each (a line naming it), given with `--luks-header-dir` and
+named `/srv/bko-luks-headers` in the plan, and the dump planned has their
+SHA-256 in place of the real headers' (in memory only: src.json keeps the
+dump's).
 All 64 plans exit 0, without Problems.  They are Linux's plans (load's
 run directory is /run/bko-holt there, /var/run/bko-holt elsewhere): run
 golden_plans.rs on a Linux host.
 
-Each plan must keep five invariants: / mounted; every fstab mount on a
+Each plan must keep five invariants: / mounted (on Ubuntu Core, which has
+none, its four run-mode roots at /mnt/bko-target/run/mnt); every fstab mount on a
 dumped device or filesystem planned (or named in a Note); the archiver
 found; the disks of every ZFS pool, md array, LVM volume group and
 multi-device btrfs named by the command making it; the disk IDs

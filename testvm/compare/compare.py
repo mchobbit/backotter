@@ -81,6 +81,23 @@ boots on (a copy of) the guest's own when vm-run-options names one with
 --guest-vars, as void-zbm's (ZFSBootMenu: no EFI/BOOT fallback), so a
 restore that needs its NVRAM entries can't borrow the source's.
 
+Ubuntu Core (uc24, uc24-fde; docs/design/ubuntu-core.md) has no root
+filesystem: its tree is vm-mount's snapcore mode, a tmpfs holding the pc
+gadget's four partitions at run/mnt/ubuntu-seed, ubuntu-boot, ubuntu-save
+and data, and the restore's tree is the same (a tmpfs at the top, the four
+filesystems made by the host's mkfs with the source's features, since there
+is no root of the guest's to run its own from).  torture.sh writes into
+ubuntu-data.  The GPT, BIOS Boot and MBR come over with the first MiB as
+for any guest.  Its LUKS2 volumes keep their headers, as bko-holt load's
+keep_header does (luksHeaderBackup of the source's, luksHeaderRestore onto
+the restored partition), so the volume key, the keyslots and the keys
+sealed to the TPM still open them; vm-mount and the restore open them with
+vms/GUEST/recovery-key (the recovery key's file: a link to it), nothing
+typed at boot.  So uc24-fde's restores boot as on the same machine, on
+copies of the guest's own variables and TPM (--guest-vars, --guest-tpm), as
+the original does: on a new machine's it would loop in run mode, which is
+Ubuntu Core's own limit, not an archiver's.  uc24's boot as new machines.
+
 COMPARE_SLOT=N (0-9, default 0) gives a run its own mount points, pool
 name and SSH port (2230 + N), so that runs on different guests can go at
 once on one host.  Runs of several sessions on one host, even of the same
@@ -261,10 +278,13 @@ class GuestConfig:
                 self.options.append(o)
         # In holttest1d/ht1.sh's and vm-update's order, should there be more
         # than one.  A luks-keyfile (make-bootstrap.sh's LUKS guests) has no
-        # newline.
+        # newline.  A recovery-key (uc24-fde's, a link to the host's copy;
+        # aeon's) is vm-mount's alone: its TPM unlocks the disk at boot, so
+        # nothing is typed.
         self.key = self.key_kind = None
         for name, kind in (("console-passphrase", "console"), ("zfs-passphrase", "zfs"),
-                           ("luks-passphrase", "luks"), ("luks-keyfile", "keyfile")):
+                           ("luks-passphrase", "luks"), ("luks-keyfile", "keyfile"),
+                           ("recovery-key", "recovery")):
             if (guest_dir / name).exists():
                 self.key, self.key_kind = guest_dir / name, kind
                 break
@@ -493,6 +513,79 @@ def abroot_upper(root: Path) -> Path | None:
     label = blkid(src).get("LABEL") if src else None
     up = root / "var/lib/abroot/etc" / label if label else None
     return up if up and up.is_dir() else None
+
+
+# Ubuntu Core (docs/design/ubuntu-core.md): snap-bootstrap's mount points, as vm-mount's
+# snapcore mode has them under its tmpfs, and the file that tells.
+SNAPCORE_DIRS = ("run/mnt/ubuntu-seed", "run/mnt/ubuntu-boot", "run/mnt/ubuntu-save", "run/mnt/data")
+SNAPCORE_MODEENV = "run/mnt/data/system-data/var/lib/snapd/modeenv"
+
+
+def snapcore(root: Path) -> bool:
+    """Whether vm-mount mounted Ubuntu Core at root: no root filesystem (no etc/), the four
+    partitions under run/mnt on a tmpfs."""
+    return not (root / "etc").exists() and (root / SNAPCORE_MODEENV).is_file()
+
+
+def snapcore_key(cfg: GuestConfig) -> bytes:
+    """The recovery key in cfg.key as its LUKS2 keyslot holds it, 16 bytes
+    (ubuntu-core/recovery-key-bytes.py's convert()), or a file of the 16 bytes as it is.
+    Never printed."""
+    import importlib.util
+    if cfg.key is None:
+        raise SystemExit(f"{cfg.dir.name} is Ubuntu Core with LUKS2 volumes, and has no recovery-key file")
+    data = cfg.key.read_bytes()
+    if len(data) == 16:
+        return data
+    spec = importlib.util.spec_from_file_location("recovery_key_bytes", TESTVM / "ubuntu-core/recovery-key-bytes.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    try:
+        return m.convert(data.decode("ascii"))
+    except (UnicodeDecodeError, ValueError) as e:
+        raise SystemExit(f"{cfg.key} is not an Ubuntu Core recovery key ({e})")
+
+
+def snapcore_luks(luks: dict, dev: str, name: str, cfg: GuestConfig) -> None:
+    """Ubuntu Core's LUKS2 volume on dev as bko-holt load's keep_header makes it: the source's own
+    header (luksHeaderBackup, luksHeaderRestore: its UUID, label, volume key, both keyslots), so
+    the keys sealed to the TPM open it as before, and opened as name with the recovery key.  The
+    header goes through a file in /run (RAM), gone at once."""
+    import tempfile
+    d = Path(tempfile.mkdtemp(prefix="compare-luks-header.", dir="/run"))
+    hdr = d / "header"
+    try:
+        run(["cryptsetup", "luksHeaderBackup", luks["on"], "--header-backup-file", str(hdr)])
+        run(["cryptsetup", "luksHeaderRestore", "--batch-mode", dev, "--header-backup-file", str(hdr)])
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print(f"  $ cryptsetup open --key-file - {dev} {name}  (the recovery key's 16 bytes)", flush=True)
+    r = subprocess.run(["cryptsetup", "open", "--key-file", "-", dev, name], input=snapcore_key(cfg),
+                       capture_output=True)
+    if r.returncode:
+        raise SystemExit(f"cryptsetup open {dev} with the recovery key failed ({r.returncode}): "
+                         f"{r.stderr.decode(errors='replace').strip()[-500:]}")
+
+
+def snapcore_mkfs_cmd(src: str, f: dict[str, str], dev: str) -> list[str] | None:
+    """The host's mkfs for one of Ubuntu Core's filesystems (there is no root of the guest's to
+    run its own from): ext4 with src's UUID, label, block and inode size and exactly its
+    features (-O none,...: none of the host's defaults that core24's kernel or GRUB may lack),
+    vfat (ubuntu-seed) with its volume ID, label and FAT size.  None for anything else."""
+    fs = f.get("TYPE")
+    if fs == "ext4":
+        h = out(["dumpe2fs", "-h", src])
+        get = lambda k: next((l.split(":", 1)[1].strip() for l in h.splitlines() if l.startswith(k + ":")), "")
+        feats = [x for x in get("Filesystem features").split() if x not in ("needs_recovery", "orphan_present")]
+        if not feats or not get("Block size") or not get("Inode size"):
+            raise SystemExit(f"dumpe2fs -h {src} gave no features, block or inode size")
+        return (["mkfs.ext4", "-q", "-F", "-U", f["UUID"]] + (["-L", f["LABEL"]] if f.get("LABEL") else [])
+                + ["-b", get("Block size"), "-I", get("Inode size"), "-O", "none," + ",".join(feats), dev])
+    if fs == "vfat":
+        bits = {"FAT12": "12", "FAT16": "16", "FAT32": "32"}.get(f.get("VERSION", ""))
+        return (["mkfs.vfat", "-i", f["UUID"].replace("-", "")] + (["-F", bits] if bits else [])
+                + (["-n", f["LABEL"]] if f.get("LABEL") else []) + [dev])
+    return None
 
 
 def fstab_options(root: Path) -> dict[str, list[str]]:
@@ -784,17 +877,19 @@ def in_src(cmd: list[str], root: Path = SRC_MP) -> None:
 
 class src_api:
     """The host's /dev, /proc and /sys bound into the (read-only) src tree,
-    or the tree at root, so that tools run there with in_src() see the disks."""
+    or the tree at root, so that tools run there with in_src() see the disks.
+    Nothing on Ubuntu Core, which has no root to run tools in (snapcore_mkfs_cmd)."""
 
     def __init__(self, root: Path = SRC_MP):
         self.root = tools_root(root)
+        self.none = snapcore(self.root)
 
     def __enter__(self):
-        for d in ("dev", "proc", "sys"):
+        for d in () if self.none else ("dev", "proc", "sys"):
             run(["mount", "--bind", f"/{d}", str(self.root / d)], quiet=True)
 
     def __exit__(self, *exc):
-        for d in ("sys", "proc", "dev"):
+        for d in () if self.none else ("sys", "proc", "dev"):
             run(["umount", str(self.root / d)], check=False, quiet=True)
 
 
@@ -948,10 +1043,14 @@ def recreate(layout: Layout, dst: Dst, cfg: GuestConfig) -> None:
         kdev = f"/dev/{holders[0].name}"
         dst.md.append(kdev)
         dst.dev[src] = kdev
+    sc = snapcore(SRC_MP)       # Ubuntu Core: kept LUKS2 headers, the host's mkfs, a tmpfs at /
     for n, (src, luks) in enumerate(layout.luks.items()):
         name = f"{DST_NAME}-luks{n}"
-        luks_format(luks, dst.dev[luks["on"]], cfg.passphrase())
-        run(["cryptsetup", "open", "--key-file", "-", dst.dev[luks["on"]], name], input=cfg.passphrase().decode())
+        if sc:
+            snapcore_luks(luks, dst.dev[luks["on"]], name, cfg)
+        else:
+            luks_format(luks, dst.dev[luks["on"]], cfg.passphrase())
+            run(["cryptsetup", "open", "--key-file", "-", dst.dev[luks["on"]], name], input=cfg.passphrase().decode())
         dst.luks.append(name)
         dst.dev[src] = f"/dev/mapper/{name}"
     run(["udevadm", "settle"], quiet=True)
@@ -995,6 +1094,8 @@ def recreate(layout: Layout, dst: Dst, cfg: GuestConfig) -> None:
             elif fs == "jfs":
                 mkfs(["mkfs.jfs", "-q"] + (["-L", f["LABEL"]] if f.get("LABEL") else []) + [dev])
                 mkfs(["jfs_tune", "-U", f["UUID"], dev])
+            elif sc and (cmd := snapcore_mkfs_cmd(src, f, dev)):
+                run(cmd)
             elif cmd := mkfs_cmd(f, dev):
                 mkfs(cmd)
             else:
@@ -1020,6 +1121,14 @@ def recreate(layout: Layout, dst: Dst, cfg: GuestConfig) -> None:
     for m in layout.mounts:
         target = DST_MP / os.path.relpath(m["TARGET"], SRC_MP)
         if m["FSTYPE"] == "zfs":
+            continue
+        if sc and m["FSTYPE"] == "tmpfs" and Path(m["TARGET"]) == SRC_MP:
+            # Ubuntu Core: vm-mount's tmpfs at the top, a tmpfs here too, with the mount points
+            # (the restore gives them src's metadata).
+            DST_MP.mkdir(parents=True, exist_ok=True)
+            run(["mount", "-t", "tmpfs", "-o", "mode=0755,size=1m", f"{DST_NAME}-snapcore", str(DST_MP)])
+            for d in SNAPCORE_DIRS:
+                (DST_MP / d).mkdir(parents=True)
             continue
         dev = dst.dev[os.path.realpath(m["SOURCE"].split("[")[0])]
         if m["FSTYPE"] == "btrfs" and subvols:
@@ -1484,6 +1593,15 @@ def boot_state(text: str) -> dict:
     return st
 
 
+def restore_hardware(cfg: GuestConfig, hardware: list[str], results: dict) -> list[str]:
+    """HARDWARE for a restore's boot: a new machine's, but Ubuntu Core's with LUKS2 volumes
+    (uc24-fde), whose kept headers boot only on the same machine (its own variables and TPM,
+    copies of them): on a new one run mode loops, by design (docs/design/ubuntu-core.md)."""
+    if (results.get("snapcore") or {}).get("same_machine"):
+        return cfg.source_hardware(hardware)
+    return hardware
+
+
 def boot(images: list[Path], cfg: GuestConfig, hardware: list[str], log: Path) -> dict:
     """Boot images (writes in RAM) and say how they came up: whether SSH
     answered, boot-state.sh's report, and the firmware.  Without SSH, a
@@ -1632,7 +1750,8 @@ def compare_guest(guest: str, tools: list[str]) -> dict:
         guest_features = t["zfs_features"]
     else:
         try:
-            r = run([str(HERE / "torture.sh"), str(SRC_MP)])
+            # (Ubuntu Core: into ubuntu-data, the top being vm-mount's read-only tmpfs.)
+            r = run([str(HERE / "torture.sh"), str(SRC_MP / "run/mnt/data" if snapcore(SRC_MP) else SRC_MP)])
             results["torture_skipped"] = [l for l in r.stderr.splitlines() if "skipped" in l]
         finally:
             vm_umount(SRC_MP)
@@ -1649,6 +1768,9 @@ def compare_guest(guest: str, tools: list[str]) -> dict:
                              "mounted for its own mkfs, and the kernel mounts no two bcachefs with "
                              "one UUID; bko-holt's HoltTest covers it")
         results["layout"] = {p: f.get("TYPE") for p, f in layout.fields.items()}
+        if snapcore(SRC_MP):
+            # Ubuntu Core; with LUKS2 volumes (kept headers), its restores boot as the same machine.
+            results["snapcore"] = {"same_machine": bool(layout.luks)}
         if layout.aliases:
             results["not_backed_up"] = [os.path.relpath(a, SRC_MP) for a in layout.aliases]
         if layout.zfs and guest_features:
@@ -1714,7 +1836,7 @@ def compare_guest(guest: str, tools: list[str]) -> dict:
             if DISCARD:
                 shutil.rmtree(work / tool, ignore_errors=True)
             print(f"== {guest}: booting the {tool} restore", flush=True)
-            res["boot"] = boot(dsts, cfg, hardware, work / f"boot-{tool}.log")
+            res["boot"] = boot(dsts, cfg, restore_hardware(cfg, hardware, results), work / f"boot-{tool}.log")
             res["boot"]["new_failures"] = new_failures(res["boot"], results["original_boot"])
             print(f"   {res['boot']}", flush=True)
             if DISCARD:
@@ -1767,8 +1889,8 @@ def boot_only(guest: str, tools: list[str]) -> dict:
         if tool not in r["tools"]:
             raise SystemExit(f"the earlier run of {guest} restored no {tool}")
         print(f"== {guest}: booting the {tool} restore", flush=True)
-        b = r["tools"][tool]["boot"] = boot(disk_images(restored_stem(work, tool), n), cfg, hardware,
-                                             work / f"boot-{tool}.log")
+        b = r["tools"][tool]["boot"] = boot(disk_images(restored_stem(work, tool), n), cfg,
+                                             restore_hardware(cfg, hardware, r), work / f"boot-{tool}.log")
         b["new_failures"] = new_failures(b, r["original_boot"])
         print(f"   {b}", flush=True)
     (work / "results.json").write_text(json.dumps(r, indent=1))

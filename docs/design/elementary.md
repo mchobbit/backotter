@@ -14,6 +14,27 @@ and pop-os/distinst sources on GitHub (`main`/`master`, read 2026-11-14:
 release facts from elementary.io and its install docs. Code references are
 to local `main` at 6a78448.
 
+## State (2026-11-15)
+
+- **Done:** both guests built (E1, E3), `elementary8` rebuilt with
+  1677865's os-prober fix; bko-holt supports elementary OS 8 (E2, bdef1ff);
+  SticTest1 entries for both (E5, 1677865).
+- **Tested:** `cargo test` with the elementary scenarios (E2); SticTest1 at
+  0 FAIL on Chopin and Cinqcent with both archivers (run `elem5b`, on the
+  guests as first built); `elementary8`'s first HoltTest1U runs (`elem6c2`
+  Chopin, `elem6q2` Cinqcent), which passed every load stage, fsmeta, the
+  lone boot and health and FAILed only on the os-prober entries since fixed.
+- **Registered, not run:** HoltTest1U and HoltTest1All (the README's 1U
+  row, `ram-sizes.tsv`: `elementary8` D 14 from the `elem6*` peaks,
+  `elementary8-luks` est. D 16), BackShot2's family table
+  (`test_families.py`), Test2 and the corpus (E4). The runs are left to the
+  user's batch script.
+- **Not yet:** a clean HoltTest1 PASS of either guest; any whole-machine
+  run of `elementary8-luks` (rebuilt at 20G with 1677865's disk and
+  os-prober fix on 2026-11-15, 03:52 on Chopin, the image of run `e4`'s
+  dump; Cinqcent's copy has the same SHA-256, 8f4faa96…);
+  BackShot1 (E8, later); a BIOS guest (out of scope).
+
 ## Summary
 
 - elementary OS 8 (8.1.1 "Circe", Ubuntu 24.04.3 base) becomes a supported
@@ -270,13 +291,13 @@ Settled on `elementary8` (built 2026-11-14 on Chopin, 180 s) and
 
 | # | Piece | Effort |
 |---|---|---|
-| E1 | The ISO into rebuild-inputs on Chopin (checked); `make-from-live.sh elementary --layout distinst` and `elementary8` built on Chopin (WORK_DIR in /mnt/bko-ram, `cmp-run.sh --reserve 20 4`). Settle every *check*: os-release, the remove list and boot packages, the EFI id and NVRAM label, the fstab and crypttab forms, `generate_unique_id()`'s names, Secure Boot under OVMF, the PPAs. Done when it boots alone, `vm-update --try` is ok, and Cinqcent's copy has the same SHA-256 | 0.75 d |
-| E2 | bko-holt: the `SUPPORTED` row and its tests, `update_grub()`'s id, the redaction words, a `bootloader_id()` test with E1's entry; a fake elementary tree in `holt/src/scenarios.rs` (LVM VG `data` on GPT with a /boot/efi ESP). Done when `cargo test` passes and the scenario's plan has `update-grub`, the shim-path `grub-install` and the `data` VG | 0.35 d |
-| E3 | `elementary8-luks` (`--luks`): the build, console-boot harness, `rebuild-one.sh`. Done as E1, plus a boot that unlocks by the typed passphrase | 0.5 d |
-| E4 | Golden plans (`holt/tests/corpus/elementary8{,-luks}/`, `index.tsv`, corpus README) from `bko-holt dump` of each guest; Test2 registrations (`classes.json` `U` and `uefi`, `holt/spec.json` with the LUKS guest's harness, `guest/spec.json`, `estimates.tsv`, `t2lib/plan.py`'s counts, `p2/world.py`, re-blessed goldens). Done when two corpus builds match, leak scans are 0, no other plan changes, Test2's tests pass | 0.4 d |
-| E5 | SticTest1 entries and runs for both guests and both archivers; manifests, limits, the count. Done at 0 FAIL on Chopin and Cinqcent | 0.3 d |
-| E6 | HoltTest1U runs of both on both hosts (any `judge.py` rule E1's chroot shows missing, with a judge-test case); `ram-sizes.tsv` measured. Done when every stage passes, the guest boots alone (the LUKS one by passphrase), 0 fsmeta differences, and the restored `data` VG's UUID equals the source's | 0.35 d |
-| E7 | Docs: holt/README.md's list, `osrel.rs`'s comment, HoltTest1's 1U row and HoltTest1All, SticTest1's and Test2's READMEs, this spec's "What E1 found", memory (holttest1d.md's 1U line) | 0.1 d |
+| E1 | The ISO into rebuild-inputs on Chopin (checked); `make-from-live.sh elementary --layout distinst` and `elementary8` built on Chopin (WORK_DIR in /mnt/bko-ram, `cmp-run.sh --reserve 20 4`). Settle every *check*: os-release, the remove list and boot packages, the EFI id and NVRAM label, the fstab and crypttab forms, `generate_unique_id()`'s names, Secure Boot under OVMF, the PPAs. Done when it boots alone, `vm-update --try` is ok, and Cinqcent's copy has the same SHA-256. **Done** 2026-11-14 ("What E1 found"). | 0.75 d |
+| E2 | bko-holt: the `SUPPORTED` row and its tests, `update_grub()`'s id, the redaction words, a `bootloader_id()` test with E1's entry; a fake elementary tree in `holt/src/scenarios.rs` (LVM VG `data` on GPT with a /boot/efi ESP). Done when `cargo test` passes and the scenario's plan has `update-grub`, the shim-path `grub-install` and the `data` VG. **Done** (bdef1ff). | 0.35 d |
+| E3 | `elementary8-luks` (`--luks`): the build, console-boot harness, `rebuild-one.sh`. Done as E1, plus a boot that unlocks by the typed passphrase. **Done** 2026-11-14: built and unlocked by the typed passphrase; 1677865 makes `--luks` a 20G disk; rebuilt at 20G on 2026-11-15 (Chopin and Cinqcent, SHA-256 8f4faa96…). | 0.5 d |
+| E4 | Golden plans (`holt/tests/corpus/elementary8{,-luks}/`, `index.tsv`, corpus README) from `bko-holt dump` of each guest; Test2 registrations (`classes.json` `U` and `uefi`, `holt/spec.json` with the LUKS guest's harness, `guest/spec.json`, `estimates.tsv`, `t2lib/plan.py`'s counts, `p2/world.py`, re-blessed goldens). Done when two corpus builds match, leak scans are 0, no other plan changes, Test2's tests pass. **In progress** 2026-11-15 (corpus and Test2 registrations; their own runs are the batch script's). | 0.4 d |
+| E5 | SticTest1 entries and runs for both guests and both archivers; manifests, limits, the count. Done at 0 FAIL on Chopin and Cinqcent. **Done** (1677865): 0 FAIL on both hosts, both archivers, run `elem5b`. | 0.3 d |
+| E6 | HoltTest1U runs of both on both hosts (any `judge.py` rule E1's chroot shows missing, with a judge-test case); `ram-sizes.tsv` measured. Done when every stage passes, the guest boots alone (the LUKS one by passphrase), 0 fsmeta differences, and the restored `data` VG's UUID equals the source's. **Registered** 2026-11-15, not passed: the 1U row and HoltTest1All, `ram-sizes.tsv` rows (`elementary8` D 14 from `elem6c2`/`elem6q2`'s 12.2 GiB peaks; `elementary8-luks` est. D 16). `elementary8`'s `elem6c2`/`elem6q2` FAILed only on os-prober's leaked grub.cfg entries (fixed, 1677865); no `judge.py` rule was needed: its ESP size and `boot/efi*/EFI` rules already excuse the rewritten stub and distinst's stale copy. The runs are left to the user's batch script. | 0.35 d |
+| E7 | Docs: holt/README.md's list, `osrel.rs`'s comment, HoltTest1's 1U row and HoltTest1All, SticTest1's and Test2's READMEs, this spec's "What E1 found", memory (holttest1d.md's 1U line). **Done** 2026-11-15 but memory: holt/README.md, HoltTest1's README, SticTest1's (already listed both), this spec's "State"; Test2's README with E4. | 0.1 d |
 | E8 | *Optional, later:* BackShot1. `bs1-qemu.py --virtio` on `elementary8-luks` on both hosts, then the user installs elementary on the Thinkpad (encrypted, the installer's defaults) and runs BackShot1 with the key-file unlock. Done when phase1, plan, phase2 and verify PASS with 0 unexpected and it boots `elementary` from NVRAM | 0.5 d + ~30 min of the user's (the install) |
 | | *≈ 2.75 d, 3.25 d with E8* | |
 

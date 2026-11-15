@@ -138,6 +138,42 @@ ANDUINOS_SOURCE = "boot/efi/EFI/AnduinOS/shimx64.efi"
 ANDUINOS_KEPT = ["boot/efi/EFI/AnduinOS/shimx64.efi", "boot/efi/EFI/AnduinOS/grubx64.efi", "boot/efi/EFI/AnduinOS/mmx64.efi",
                  "boot/efi/EFI/BOOT/BOOTX64.EFI", "boot/efi/EFI/BOOT/grubx64.efi", "boot/efi/EFI/BOOT/mmx64.efi"]
 
+# Solus 4.9's ESP is /boot itself, out of fstab (docs/design/solus.md), and
+# load's boot stage makes only its NVRAM entry: no bootctl, no
+# clr-boot-manager, no initramfs.  So the whole ESP must come back byte for
+# byte, as HoltTest1's judge.py holds it (SOLUS_KEPT there): shim
+# (EFI/com.solus-project/bootloaderx64.efi and the EFI/BOOT fallback),
+# systemd-boot (grubx64.efi), MokManager, clr-boot-manager's kernels and
+# initrds, loader/ and Solus's MOK certificate.  EXPECTED's boot/EFI/*,
+# boot/loader/* and boot/initrd-* don't excuse them.  A Solus baseline is one
+# with CBM's shim on the ESP or a Solus kernel in /usr/lib64/kernel; it must
+# hold SOLUS_REQUIRED and a kernel, an initrd and an entry on the ESP
+# (SOLUS_GLOBS), or the backup missed the ESP (/boot wasn't mounted).
+SOLUS_SOURCE = ["boot/EFI/com.solus-project/bootloaderx64.efi", "usr/lib64/kernel/com.solus-project.*"]
+SOLUS_KEPT = ["boot/EFI", "boot/EFI/*", "boot/loader", "boot/loader/*", "boot/solus-enroll-me.cer"]
+SOLUS_REQUIRED = ["boot/EFI/com.solus-project/bootloaderx64.efi", "boot/EFI/com.solus-project/grubx64.efi",
+                  "boot/EFI/com.solus-project/mmx64.efi", "boot/EFI/BOOT/BOOTX64.EFI", "boot/loader/loader.conf",
+                  "boot/solus-enroll-me.cer"]
+SOLUS_GLOBS = ["boot/EFI/com.solus-project/kernel-com.solus-project.*", "boot/EFI/com.solus-project/initrd-com.solus-project.*",
+               "boot/loader/entries/Solus-*.conf"]
+# Held for presence and type only: systemd-boot refreshes its random seed at
+# every boot, and BackShot1 compares after the restored system's first boot
+# (HoltTest1 compares the tree before any boot, so judge.py holds its bytes).
+# It must still be there, a regular file; its content, size and mtime may move.
+SOLUS_PRESENT = ["boot/loader/random-seed"]
+
+
+def present_same(a, b):
+    """A SOLUS_PRESENT path's rows, before and after: both regular files."""
+    return stat.S_ISREG(int(a[0], 8)) and stat.S_ISREG(int(b[0], 8))
+
+
+def solus_lacks(rows):
+    """What a Solus baseline's rows lack of SOLUS_REQUIRED and SOLUS_GLOBS,
+    as regular files."""
+    files = {rel for rel, r in rows.items() if stat.S_ISREG(int(r[0], 8))}
+    return [p for p in SOLUS_REQUIRED if p not in files] + [g for g in SOLUS_GLOBS if not fnmatch.filter(files, g)]
+
 
 def kept(rel, extra=()):
     return any(fnmatch.fnmatch(rel, pat) for pat in (*KEPT, *extra))
@@ -543,6 +579,13 @@ def compare(old_path, new_path, reformatted=False):
         missing_held = [p for p in held if p not in old]
         if missing_held:
             print(f"AnduinOS: the baseline lacks {' '.join(missing_held)}")
+    solus = any(fnmatch.fnmatch(p, pat) for pat in SOLUS_SOURCE for p in old)
+    lacks = solus_lacks(old) if solus else []
+    present = SOLUS_PRESENT if solus else []
+    if solus:
+        held = held + SOLUS_KEPT
+        n = sum(1 for p in old if any(fnmatch.fnmatch(p, pat) for pat in SOLUS_KEPT))
+        print(f"Solus: its ESP at /boot held to the baseline's bytes: {n} paths of EFI/com.solus-project, EFI/BOOT, loader/ and solus-enroll-me.cer")
     if apre:
         held = held + ABROOT_KEPT
         n = sum(1 for p in old if any(fnmatch.fnmatch(p, pat) for pat in ABROOT_KEPT))
@@ -552,9 +595,10 @@ def compare(old_path, new_path, reformatted=False):
     relabeled = sorted(p for p in both if old[p][6] != new[p][6])
     if not both:
         print("xattrs: this baseline has none, so they weren't compared")
-    bad = []
+    bad = [f"Solus: the baseline lacks {p} (was its ESP mounted at /boot?)" for p in lacks]
     for label, paths in (("missing", missing), ("added", added), ("changed", changed), ("xattrs", relabeled)):
-        unexpected = [p for p in paths if kept(p, held) and (label != "changed" or not kept_same(old[p], new[p]))]
+        unexpected = [p for p in paths if kept(p, held) and (label != "changed" or not (kept_same(old[p], new[p])
+                                                                                     or (p in present and present_same(old[p], new[p]))))]
         unexpected += [p for p in paths if not kept(p, held) and not expected(p, store, mapping[label], label == "added", amapping[label]) and p not in snapper
                        and not (reformatted and any(fnmatch.fnmatch(p, pat) for pat in REFORMAT_EXPECTED))
                        and not (label == "xattrs" and relabeled_boot(p, old[p], new[p]))]

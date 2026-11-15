@@ -619,6 +619,13 @@ class RealLogLines(unittest.TestCase):
         "freebsd": ["[ 7/120] Extracting FreeBSD-acct-15.1p1: .......... done", "[3/9] Upgrading curl-8.15.0...", "Fetching meta.conf: . done", "/rescue/zdb"],
         "dragonfly": ["[1/3] Deinstalling bind-tools-9.20.1...", "in-guest: base system: make buildworld (12:01:02)"],
         "moss": ["Installed systemd-libs", "ngtcp2 1.15.0-1 -> 1.16.0-1"],
+        # solus49's (S1's install and vm-update --try, docs/design/solus.md)
+        "eopkg": ["\x1b[32mUpdating repository: Solus\x1b[0m", "Downloaded eopkg-index.xml.xz.sha1sum", "Solus repository information is up-to-date.",
+                  "No packages to upgrade.", "Cleaning package cache /var/cache/eopkg/packages...", "Removing cache file /var/cache/eopkg/installdb.cache...",
+                  "\x1b[33mInstalling 1 / 633\x1b[0m", "\x1b[01;32mInstalling libgcc, version 15.2.0, release 95", "Package libgcc found in repository Solus",
+                  "\x1b[0m\x1b[36mUpgraded libgcc", "\x1b[36mExtracting the files of openssh-server\x1b[0m (100%) [complete]",
+                  "pcre2-10.49-18-1-x86_64.eopkg  (509.2 KB)  3%      0.00 --/- [--:--:--]", "nghttp2-1.70.0-20-1-x86_64.eopkg [cached]",
+                  "\x1b[33mTotal size of package(s): 2.57 GB\x1b[0m", "\x1b[33mDownloading 2 package resources (0 cached)\x1b[0m"],
         # gentoo's (G1's vm-update --try, docs/design/gentoo.md)
         "portage": [">>> Emerging binary (2 of 9) net-misc/curl-8.17.0-r1::gentoo", ">>> Installing (2 of 9) net-misc/curl-8.17.0-r1::gentoo",
                     ">>> Jobs: 2 of 9 complete, 1 running                Load avg: 3.05, 2.10, 1.08",
@@ -684,6 +691,9 @@ class RealLogLines(unittest.TestCase):
                     ">>> Jobs: 1 of 9 complete, 1 failed                Load avg: 3.05, 2.10, 1.08",
                     " * IMPORTANT: config file '/etc/default/grub' needs updating."],
         "zypper": ["Retrieving: foo-1.0.rpm [Error: not found]"],
+        "eopkg": ["Failed to record path /lib32", "Failed handler 'system-presets', please consult the log file: /var/log/usysconf.log",
+                  "File conflicts:", "Not removing conflicted file : /usr/bin/envsubst", "System error. Program terminated.",
+                  "Installed file /usr/lib64/libheif does not exist on system [Probably you manually deleted]"],
         "rpm-ostree": ["error: Creating importer: failed to invoke method OpenImage: reading manifest 44 in quay.io/fedora/fedora-kinoite: manifest unknown",
                        "[3/56] Fetching ostree chunk 7ef9932682b330f4496 (70.1 MB)...failed",
                        "in-guest: step: ostree: deployment 7afcf66486b5600eac1bb112d6c054f57b4972189465e60d026c15f6551a4b71 staged, "
@@ -833,6 +843,120 @@ class NewestKernel(unittest.TestCase):
         a = J.newest_kernel_lines("running 6.1.0-9\ninstalled 6.1.0-54\ninstalled 6.1.0-9".splitlines(), "K-deb")
         b = J.newest_kernel_lines("running 6.1.0-54\ninstalled 6.1.0-55\ninstalled 6.1.0-54".splitlines(), "K-deb")
         self.assertEqual(a, b)   # standing is by line
+
+
+class SnapCore(unittest.TestCase):
+    """Ubuntu Core (ubuntu-core.md U4): K-snapcore.  The kernels are modeenv's current_kernels,
+    each with its kernel.efi on ubuntu-boot, which EFI/ubuntu/kernel.efi links to (UC24's run
+    grubenv has no snap_kernel: U2/U3).  The shell blocks run on a fake tree."""
+
+    K = "pc-kernel_3908.snap"
+
+    def img(self, listing, **kw):
+        c = checks(kernel="K-snapcore")
+        c.update(kw)
+        return J.judge_image(sec(("cmd kernels", listing)), c, POLICY, 1)["image:kernels"]
+
+    def test_image_kernels(self):
+        ok = self.img(f"kernel {self.K}\nlink {self.K}")
+        self.assertEqual((ok.v, ok.why), ("PASS", "1 kernel"))
+        trial = self.img(f"kernel pc-kernel_1803.snap\nkernel {self.K}\nlink pc-kernel_1803.snap")
+        self.assertEqual(trial.v, "PASS")
+        bad = self.img(f"kernel {self.K} no-kernel-efi\nlink none")
+        self.assertEqual((bad.v, bad.lines), ("FAIL", [J.SNAPCORE_NO_EFI, J.SNAPCORE_LINK]))
+        other = self.img(f"kernel {self.K}\nlink pc-kernel_1803.snap")
+        self.assertEqual(other.lines, [J.SNAPCORE_LINK])
+        three = "\n".join(f"kernel pc-kernel_{i}.snap" for i in range(3)) + "\nlink pc-kernel_0.snap"
+        self.assertEqual(self.img(three).lines, ["more kernels than the updater keeps"])
+        self.assertEqual(self.img(three, kernels_max=3).v, "PASS")
+        self.assertEqual(self.img("link none").lines, ["no kernel found"])
+        self.assertEqual(self.img("").v, "FAIL")
+        # (its limit is its own: K-snapcore isn't one of KERNELS_MAX's, whose test feeds bare names)
+        self.assertNotIn("K-snapcore", J.KERNELS_MAX)
+
+    def after(self, body):
+        return J.newest_kernel_lines(body.splitlines(), "K-snapcore")
+
+    def test_after_the_booted_kernel_is_the_current_one(self):
+        body = f"running 6.8.0-149-generic\ninstalled {self.K}\nbooted {self.K}\nlink {self.K}\nstatus -"
+        self.assertEqual(self.after(body), [])
+        self.assertEqual(self.after(body.replace(f"booted {self.K}", "booted pc-kernel_1803.snap")),
+                         [J.SNAPCORE_NOT_CURRENT])
+        self.assertEqual(self.after(body.replace(f"link {self.K}", "link pc-kernel_1803.snap")), [J.SNAPCORE_LINK])
+        self.assertEqual(self.after(body.replace("status -", "status try")), [J.SNAPCORE_TRYING])
+        self.assertEqual(self.after(body.replace(f"installed {self.K}", f"installed pc-kernel_1803.snap\ninstalled {self.K}")),
+                         [J.SNAPCORE_TRYING])
+        self.assertEqual(self.after(body.replace(f"\nbooted {self.K}", "")),
+                         ["kernel unverified: no current or booted kernel snap listed"])
+        # judged through after_lines, as GuestTest2 does
+        c = checks(kernel="K-snapcore")
+        self.assertEqual(J.after_lines(sec(("cmd kernel", body)), c)["after:newest-kernel"], [])
+
+    # --- the shell blocks, on a fake tree: ubuntu-boot, modeenv, /snap -------------------------
+
+    def tree(self, kernels=("pc-kernel_3908.snap",), efi=True, link="pc-kernel_3908.snap/kernel.efi",
+             status="", current="3908"):
+        import tempfile
+        d = tempfile.mkdtemp(prefix="t2-snapcore-")
+        self.addCleanup(__import__("shutil").rmtree, d, True)
+        b = os.path.join(d, "boot/EFI/ubuntu")
+        os.makedirs(b)
+        for k in kernels:
+            os.makedirs(os.path.join(b, k))
+            if efi:
+                open(os.path.join(b, k, "kernel.efi"), "w").close()
+        if link:
+            os.symlink(link, os.path.join(b, "kernel.efi"))
+        with open(os.path.join(b, "grubenv"), "w") as f:
+            f.write(f"# GRUB Environment Block\nkernel_status={status}\n" + "#" * 900)
+        with open(os.path.join(d, "modeenv"), "w") as f:
+            f.write(f"mode=run\nbase=core24_2307.snap\ncurrent_kernels={','.join(kernels)}\n")
+        os.makedirs(os.path.join(d, "snap/pc-kernel"))
+        if current:
+            os.symlink(current, os.path.join(d, "snap/pc-kernel/current"))
+        return d
+
+    def run_block(self, script, start, end, d):
+        """The block of SCRIPT from START (an if or elif line) up to END, as an if ... fi of its own,
+        its paths moved into D."""
+        import subprocess
+        with open(os.path.join(REPO, "testvm/test2/guest", script), encoding="utf-8") as f:
+            text = f.read()
+        block = text[text.index(start):]
+        block = block[:block.index(end, len(start))]
+        block = (block.replace("/run/mnt/ubuntu-boot", f"{d}/boot").replace("/var/lib/snapd/modeenv", f"{d}/modeenv")
+                 .replace('"/snap/', f'"{d}/snap/'))
+        self.assertNotIn("/run/mnt", block)
+        code = "has_rule() { return 0; }\nr=6.8.0-149-generic\n" + block.lstrip().removeprefix("el") + "\nfi\n"
+        return subprocess.run(["sh", "-c", code], capture_output=True, text=True, check=True).stdout.splitlines()
+
+    def image_block(self, d):
+        return self.run_block("check-image.sh", "    if has_rule K-snapcore; then", "\n    fi\n", d)
+
+    def after_block(self, d):
+        return self.run_block("check-after.sh", "    elif has_rule K-snapcore; then", "\n    elif ", d)
+
+    def test_check_image_block(self):
+        self.assertEqual(self.image_block(self.tree()), [f"kernel {self.K}", f"link {self.K}"])
+        two = self.tree(kernels=("pc-kernel_1803.snap", self.K), link="pc-kernel_1803.snap/kernel.efi")
+        self.assertEqual(self.image_block(two), ["kernel pc-kernel_1803.snap", f"kernel {self.K}", "link pc-kernel_1803.snap"])
+        self.assertEqual(self.image_block(self.tree(efi=False, link=None)), [f"kernel {self.K} no-kernel-efi", "link none"])
+        # an absolute link reads the same
+        absl = self.tree(link="/run/mnt/ubuntu-boot/EFI/ubuntu/pc-kernel_3908.snap/kernel.efi")
+        self.assertEqual(self.image_block(absl)[-1], f"link {self.K}")
+        lines = self.image_block(self.tree())
+        self.assertEqual(self.img("\n".join(lines)).v, "PASS")
+
+    def test_check_after_block(self):
+        out = self.after_block(self.tree())
+        self.assertEqual(out, ["running 6.8.0-149-generic", f"installed {self.K}", f"booted {self.K}",
+                               f"link {self.K}", "status -"])
+        self.assertEqual(self.after("\n".join(out)), [])
+        trying = self.after_block(self.tree(status="try", current="1803"))
+        self.assertIn("status try", trying)
+        self.assertIn("booted pc-kernel_1803.snap", trying)
+        self.assertEqual(self.after("\n".join(trying)), [J.SNAPCORE_NOT_CURRENT, J.SNAPCORE_TRYING])
+        self.assertEqual(self.after("\n".join(self.after_block(self.tree(link=None)))), [J.SNAPCORE_LINK])
 
 
 class Solus(unittest.TestCase):
@@ -1035,6 +1159,21 @@ class NewGuest(unittest.TestCase):
     def test_probe(self):
         self.assertEqual(J.probe_need(sec(("cmd probe", "ok"))).v, "PASS")
         self.assertEqual(J.probe_need(sec(("cmd probe", "no root login on the console"))).lines, ["no root login on the console"])
+
+    def test_sculpt_update_check(self):
+        """image:current: sculpt-update --check's 10 and 11 are a PASS's note, its 1 a SKIP, never a FAIL."""
+        chk = lambda body: J.update_check_need(sec(("cmd probe", "ok"), ("cmd update-check", body)))
+        self.assertEqual((chk("exit 0\nsculpt-update: CURRENT: 2026-10-30").v, chk("exit 0").why), ("PASS", None))
+        n = chk("exit 10\nsculpt-update: UPDATE AVAILABLE: 2026-11-20 (26.10.1)")
+        self.assertEqual(n.v, "PASS")
+        self.assertIn("stale", n.why)
+        self.assertIn("UPDATE AVAILABLE: 2026-11-20", n.why)
+        self.assertNotIn("sculpt-update: ", n.why)
+        self.assertIn("newer Sculpt release", chk("exit 11\nsculpt-update: CURRENT for 26.10, but release 27.04 is out").why)
+        self.assertEqual(chk("exit 1\nsculpt-update: curl failed").v, "SKIP")
+        self.assertEqual(chk("").v, "SKIP")
+        self.assertEqual(chk("garbled").v, "SKIP")
+        self.assertEqual(J.update_check_need(sec(("cmd probe", "ok"))).v, "SKIP")
 
 
 class Normalizer(unittest.TestCase):

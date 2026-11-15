@@ -112,7 +112,9 @@ if ! has_rule K-none && ! has_rule K-haiku; then
     cmd kernel
     r=$(uname -r)
     if has_rule K-deb || has_rule K-fed || has_rule K-void || has_rule K-moss || has_rule K-gentoo || has_rule K-anduinos ||
-        has_rule K-pve || has_rule K-pika; then
+        has_rule K-pve || has_rule K-pika || has_rule K-slackware; then
+        # (Slackware: uname -r is the version alone, 5.15.19, for huge and generic alike, and
+        # /lib/modules/VERSION is kernel-modules'.)
         echo "running $r"
         for d in /lib/modules/*/ /usr/lib/modules/*/; do
             [ -e "${d}kernel" ] || [ -e "${d}vmlinuz" ] || [ -e "${d}modules.dep" ] || continue
@@ -124,6 +126,21 @@ if ! has_rule K-none && ! has_rule K-haiku; then
         # (com.solus-project.TYPE.VER-REL, which uname -r gives as VER-REL.TYPE).
         echo "running $r"
         for k in /usr/lib64/kernel/com.solus-project.*; do [ -e "$k" ] && echo "installed ${k##*/}"; done
+    elif has_rule K-snapcore; then
+        # Ubuntu Core (ubuntu-core.md): modeenv's current_kernels (NAME_REV.snap), the kernel
+        # snap's revision booted (/snap/NAME/current), as NAME_REV.snap too, what the run GRUB's
+        # EFI/ubuntu/kernel.efi links to, and its grubenv's kernel_status ("-": none).
+        echo "running $r"
+        b=/run/mnt/ubuntu-boot/EFI/ubuntu
+        ks=$(sed -n 's/^current_kernels=//p' /var/lib/snapd/modeenv 2>/dev/null | head -n 1 | tr ',' ' ')
+        for k in $ks; do echo "installed $k"; done
+        k=${ks%% *} n=${k%_*.snap}
+        v=$([ -n "$k" ] && readlink "/snap/$n/current" 2>/dev/null)
+        [ -z "$v" ] || echo "booted ${n}_$v.snap"
+        l=$(readlink "$b/kernel.efi" 2>/dev/null) l=${l%/kernel.efi}
+        [ -z "$l" ] || echo "link ${l##*/}"
+        s=$(sed -n 's/^kernel_status=//p' "$b/grubenv" 2>/dev/null | head -n 1)
+        echo "status ${s:--}"
     elif has_rule K-ostree; then
         # ostree: /usr/lib/modules is the booted deployment's alone, so what tells is which
         # deployment booted.  booted and default as CHECKSUM.SERIAL (the default is the first

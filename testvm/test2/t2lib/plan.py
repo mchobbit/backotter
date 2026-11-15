@@ -1619,10 +1619,14 @@ class Planner:
                                     + (f" ({when[:10]})" if when else " (none on record)"))
 
     def guest_update_pass(self, views):
-        """A bare GuestTest2 update: every guest needs a --try PASS within try_days."""
+        """A bare GuestTest2 update: every guest needs a --try PASS within try_days, but one that
+        sculpt-update updates (it boots the update before it merges, and Sculpt has no --try)."""
         if not (self.w.update and self.w.form == "bare"):
             return
+        from . import guest as guestmod
         for v in views:
+            if guestmod.mode_of(self.guest_entry(v.name), True) != "update":
+                continue
             if v.pc.status == "due" and self.older_than_days(self.last_try(v, passed=True)):
                 v.pc.status, v.pc.rule, v.pc.refused = "not-runnable", None, True
                 v.pc.reasons = [f"no --try PASS within {self.try_days():g} days: run t2 GuestTest2 {v.name} first"]
@@ -1915,7 +1919,7 @@ class Planner:
         pc.reasons += soft[:2]
 
     def holt_code_rule(self, v):
-        """bko-holt's code changed: version-only (carried), plan-visible (R15) or all 71 (holt:code)."""
+        """bko-holt's code changed: version-only (carried), plan-visible (R15) or all 77 (holt:code)."""
         P = v.P
         # R14: rows of a build that isn't CODE's (HoltTest1 runs, --holt-bin sets) count only
         # where equal, whatever the tree's diff says; so does any row when the set is a --holt-bin one.
@@ -2390,7 +2394,7 @@ def known_names(ctx):
 
 def check_classes(ctx, holt_names=None, notes=None):
     """The class table's check (contract 1.8): every name exists (stic: a check directory; holt:
-    a guest in the facts, else in holt/spec.json, else HOLT_NAMES for VM-less tests); the 71
+    a guest in the facts, else in holt/spec.json, else HOLT_NAMES for VM-less tests); the 77
     sources are exactly the families plus devuan6; every variant's guest is a source; the
     canaries, pins, panels and classes name sources or checks; the guest and img tables name
     what their specs have (a spec that isn't there yet is skipped, with a line in NOTES).
@@ -2418,8 +2422,8 @@ def check_classes(ctx, holt_names=None, notes=None):
     src = set(fam) | set(h.get("no_family", []))
     if len(fam) != len(set(fam)):
         errs.append("holt: a guest in two families")
-    if len(src) != 71:
-        errs.append(f"holt: {len(src)} sources, not 71")
+    if len(src) != 77:
+        errs.append(f"holt: {len(src)} sources, not 77")
     known = set(holt_names or ())
     if not known:
         for f in ctx.facts.values():

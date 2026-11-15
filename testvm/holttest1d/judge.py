@@ -9,6 +9,8 @@ Usage: judge.py [--expect] [--new-uuids] [--removable] [--nvram-kept] [--reforma
        judge.py esp DIR
        judge.py bes SRC.json DST.json
        judge.py zbm SRC.json DST.json SRC-META.json DST-META.json
+       judge.py qubes SRC.json DST.json SRC-RAW.txt DST-RAW.txt
+       judge.py qubes-check SRC-CHECK.log DST-CHECK.log
        judge.py --fit-plan BYTES [--fit-pct PCT] LAYOUT.json
 
 The fs form judges fsmeta.py's records of the source and the restored disk:
@@ -16,7 +18,11 @@ every path must match but what load's boot stage writes by design (BOOT_STAGE).
 The esp form judges a Proxmox source's ESPs, which proxmox-boot-tool rebuilds
 (judge_esp).  The bes form judges a TrueNAS source's boot-pool (judge_bes), the
 zbm form a ZFSBootMenu source's boot environments, images and pool
-properties, from both dumps and both fsmeta records (judge_zbm).
+properties, from both dumps and both fsmeta records (judge_zbm).  The qubes
+form judges a Qubes OS source's thin snapshots, pools and raw volumes
+(judge_qubes), the qubes-check form the restored disk's bko-qubes-check.service
+lines against the source's (judge_qubes_check): ht1-offline.sh's, Q7 of
+docs/design/qubes.md.
 
 --grow BYTES is for a restore onto disks BYTES bigger than the source's: a
 disk's size, GPT's last usable LBA and backup header, and the protective MBR's
@@ -130,6 +136,7 @@ IGNORED = [
     (r"^boot\.kernels\.installed\.\d+\.initrd_bytes$", "load's boot stage rebuilds every initramfs (update-initramfs -k all)"),
     (r"^boot\.truenas\.bes\.\d+\.(origin|clones)(\.|$)", "TrueNAS: a boot environment's clones come back as plain datasets, their origin snapshots not being backed up (the spec's Decision 4; judge.py bes holds the rest)"),
     (r"^boot\.zfsbootmenu\.bes\.\d+\.origin$", "ZFSBootMenu: a clone boot environment comes back as a plain dataset, its origin snapshot not being backed up (docs/design/zfsbootmenu.md, Decision 3a; judge.py zbm holds the rest)"),
+    (r"^storage\.luks_headers(\.|$)", "the LUKS2 headers the source's dump was asked to keep (--keep-luks-header: aeon's, for load to restore); the restored system's dump isn't asked: the containers themselves (UUID, keyslots, tokens) are compared"),
 ]
 
 # With --expect (BackShot2): what a drifted layout can't predict.
@@ -232,6 +239,9 @@ BOOT_STAGE = [
     # AnduinOS (a5-1, a5-2): the source's own dracut run left the module's
     # mktemp file behind; the boot stage's run makes the directory afresh.
     (r"^var/lib/dracut/console-setup-dir/etc/console-setup/tmpkbd\.[A-Za-z0-9]+$", {"missing", "extra"}, "dracut's console-setup module leaves its temporary tmpkbd.XXXXXX behind, and its run in the boot stage remakes the directory"),
+    # openSUSE (Leap 16): the ESP's grub.cfg stub may change as
+    # /boot/grub2/grub.cfg does; OPENSUSE_KEPT holds the rest of the ESP.
+    (r"^boot/efi/EFI/opensuse/grub\.cfg$", _WRITTEN, "openSUSE's grub.cfg stub on the ESP, which only finds /boot/grub2's grub.cfg, may change with it (grub2-mkconfig)"),
     (r"^boot/efi[^/]*/EFI(/|$)", _WRITTEN, "grub-install writes the ESPs' loaders (a second ESP by the distribution's hook)"),
     (r"^(boot/)?efi/EFI(/(BOOT|Boot|systemd|Linux)(/.*)?)?$", _WRITTEN, "bootctl install rewrites systemd-boot and makes EFI/Linux in an ESP at /efi (AerynOS)"),
     (r"^(boot/)?efi/loader(/(random-seed|keys))?$", _WRITTEN, "bootctl install writes a new random seed and makes loader/keys"),
@@ -259,6 +269,9 @@ BOOT_STAGE = [
     (r"^usr/lib/modules/[^/]+(/modules\.[^/]+)?$", _WRITTEN, "depmod, run by the initramfs rebuild (Pop!_OS), rewrites modules.*"),
     (r"^boot(/EFI/Linux(/[^/]+\.efi)?|/limine\.conf(\.old)?)$", _WRITTEN, "Omarchy's mkinitcpio hook rebuilds the unified kernel image and Limine's entries"),
     (r"^boot(/|$)", {"selinux"}, "the boot stage relabels /boot (setfiles): the policy's labels, where the source's can be stale (tumbleweed's update left its new kernel's files modules_object_t)"),
+    # Qubes OS (ht1-offline.sh's backup): the raw volumes' images go in the
+    # backup under /.bko-holt/raw, which load writes into their LVs instead.
+    (r"^\.bko-holt(/raw)?$", {"missing", "extra", "mtime (dirs)", "atime (dirs)"}, "the backup's raw-volume directory (/.bko-holt/raw: Qubes's vm-* images, docs/design/qubes.md), which load restores into the LVs, not as files"),
 ]
 # A rEFInd source (PikaOS: EFI/refind, or "BOOTX64 mode"'s EFI/BOOT alone),
 # and what load must leave as the restore made it there.
@@ -308,13 +321,15 @@ SOLUS_GLOBS = ((r"^boot/EFI/com\.solus-project/kernel-com\.solus-project\.[^/]+$
 # (Leap 16: docs/design/leap16.md, L5): load's /boot/grub2 UEFI arm (the
 # Fedora arm: no grub2-install, no shim-install) keeps the restored ESP and
 # remakes only /boot/grub2/grub.cfg, then the NVRAM entry.  So every file in
-# EFI/opensuse (SUSE's signed shim, GRUB and MokManager, the grub.cfg stub,
-# boot.csv) and in the fallback EFI/boot must be byte for byte the source's:
-# no ESP rule excuses them.  EFI/opensuse's shim, GRUB and MokManager and
-# EFI/boot/bootx64.efi must be in the source's record.  (A transactional
-# source, MicroOS, has its own rules: TU_STAGE excuses nothing there.)
+# EFI/opensuse (SUSE's signed shim, GRUB and MokManager, boot.csv) and in
+# the fallback EFI/boot must be byte for byte the source's: no ESP rule
+# excuses them.  The grub.cfg stub there is the one exception: like
+# /boot/grub2/grub.cfg it may change (BOOT_STAGE's rule for it).
+# EFI/opensuse's shim, GRUB and MokManager and EFI/boot/bootx64.efi must be
+# in the source's record.  (A transactional source, MicroOS, has its own
+# rules: TU_STAGE excuses nothing there.)
 OPENSUSE_SOURCE = r"^boot/efi/EFI/opensuse/shim\.efi$"
-OPENSUSE_KEPT = r"^boot/efi/EFI/(opensuse|boot)/[^/]+$"
+OPENSUSE_KEPT = r"^boot/efi/EFI/(opensuse/(?!grub\.cfg$)|boot/)[^/]+$"
 OPENSUSE_REQUIRED = ("boot/efi/EFI/opensuse/shim.efi", "boot/efi/EFI/opensuse/grub.efi", "boot/efi/EFI/opensuse/MokManager.efi",
                      "boot/efi/EFI/boot/bootx64.efi")
 # A ZFSBootMenu source (void-zbm: docs/design/zfsbootmenu.md): load installs
@@ -326,6 +341,65 @@ OPENSUSE_REQUIRED = ("boot/efi/EFI/opensuse/shim.efi", "boot/efi/EFI/opensuse/gr
 # kernels and initramfs files are there.)
 ZBM_SOURCE = r"(?i)^(boot/efi|efi|boot)/EFI/(zbm|zfsbootmenu)/[^/]+\.efi$"
 ZBM_KEPT = r"(?i)^(boot/efi|efi|boot)/EFI/(zbm|zfsbootmenu)(/.*)?$"
+# LILO (slackware15: docs/design/slackware.md, S6): load writes a copy of
+# /etc/lilo.conf with root= by name at the end of append=
+# (lilo.conf.bko-holt: lilo stores root as the rescue kernel's device
+# number), runs lilo -C on it, and removes it.  lilo writes the map (the
+# restored kernels' sectors), and a backup of the MBR it replaces as
+# /boot/boot.MMmm, named by the disk's device number in the rescue system,
+# when there is none of that name (the source's is kept).  So /etc/lilo.conf
+# is the source's (no rule excuses it), and the copy must not be left
+# behind.  A source is one with /etc/lilo.conf and lilo's /boot/map.
+LILO_SOURCE = ("etc/lilo.conf", "boot/map")
+LILO_COPY = "etc/lilo.conf.bko-holt"
+LILO_STAGE = [
+    (r"^boot/map$", _WRITTEN - {"extra"}, "lilo writes its map: the restored kernels' sectors"),
+    (r"^boot/boot\.[0-9a-f]{4}$", {"extra"}, "lilo backs up the MBR it replaces as /boot/boot.MMmm, named by the disk's device number in the rescue system"),
+    (r"^etc$", {"mtime (dirs)", "atime (dirs)"}, "load writes etc/lilo.conf.bko-holt for lilo -C, then removes it"),
+]
+# mkinitrd (Slackware's generic kernel, slackware15-uefi): load runs the
+# source's mkinitrd command again (the command generator's, in the dump),
+# which remakes its tree in /boot/initrd-tree (-c clears it) and
+# /boot/initrd.gz.  A source is one with /etc/slackware-version.
+MKINITRD_STAGE = [
+    (r"^boot/initrd\.gz$", _WRITTEN - {"extra"}, "load runs the source's mkinitrd command again: /boot/initrd.gz"),
+    (r"^boot/initrd-tree(/.*)?$", _WRITTEN | {"missing"}, "mkinitrd remakes its tree, /boot/initrd-tree (its -c clears it first)"),
+]
+# ELILO (slackware15-uefi, S6): load installs nothing, so elilo.efi,
+# elilo.conf and the kernel in EFI/Slackware and the fallback EFI/BOOT
+# (BOOTX64.EFI) come back with the ESP and must be the source's bytes, which
+# grub-install's ESP rule may not excuse.  It copies the remade
+# /boot/initrd.gz over each ESP initrd.gz that was a copy of it on the source
+# (cp, touch -r): such a one must have the restored /boot/initrd.gz's bytes;
+# one that wasn't is held to the source's.  A source is one with an
+# elilo.efi or elilo.conf in an ESP directory at /boot/efi; EFI/Slackware's
+# four (and BOOTX64.EFI where EFI/BOOT has an elilo.conf) must be in its
+# record.
+ELILO_SOURCE = r"(?i)^boot/efi/EFI/[^/]+/elilo\.(efi|conf)$"
+ELILO_KEPT = r"(?i)^boot/efi/EFI(/(Slackware|BOOT)(/[^/]+)?)?$"
+ELILO_INITRD = r"(?i)^boot/efi/EFI/(Slackware|BOOT)/initrd\.gz$"
+ELILO_REQUIRED = ("boot/efi/EFI/Slackware/elilo.efi", "boot/efi/EFI/Slackware/elilo.conf", "boot/efi/EFI/Slackware/vmlinuz",
+                  "boot/efi/EFI/Slackware/initrd.gz")
+
+
+def elilo_missing(before):
+    """What an ELILO source's record lacks of ELILO_REQUIRED, and of
+    EFI/BOOT/BOOTX64.EFI beside an EFI/BOOT/elilo.conf (vfat: by any case)."""
+    files = {p.lower() for p, m in before.items() if m.get("type") == "file"}
+    want = list(ELILO_REQUIRED)
+    if "boot/efi/efi/boot/elilo.conf" in files:
+        want.append("boot/efi/EFI/BOOT/BOOTX64.EFI")
+    return [p for p in want if p.lower() not in files]
+
+
+def elilo_initrd_copies(before):
+    """The ESP initrd.gz files that were byte copies of /boot/initrd.gz on
+    the source: the ones load copies the remade image over."""
+    b = before.get("boot/initrd.gz") or {}
+    if b.get("type") != "file":
+        return set()
+    return {p for p, m in before.items() if re.search(ELILO_INITRD, p) and m.get("type") == "file"
+            and (m.get("size"), m.get("sha256")) == (b.get("size"), b.get("sha256"))}
 
 
 # A transactional-update source (openSUSE MicroOS; docs/design/aeon.md, the
@@ -367,6 +441,44 @@ def solus_missing(before):
     return out
 
 
+# systemd-boot's boot counting (BLS, Aeon's sdbootutil entries): an entry
+# `ID+LEFT-DONE.conf` is ID.conf with tries left; systemd-boot renames it at
+# each boot of it and systemd-bless-boot drops the counter once a boot of it
+# is good.  The restored machine's first boot boots the source's pending
+# slot, whose entry (`+3` on the source) is then counted and blessed: the
+# same entry.  So on a BLS source the ESP's entry names are compared with
+# their counters taken off (the files' bytes as restored are judge.py fs's).
+BLS_COUNTER = re.compile(r"\+\d+(-\d+)?(?=\.conf$)")
+
+
+def bls_uncount(d):
+    """Take the boot counters off D's BLS entry names (boot.esps' files and
+    boot.systemd_boot.entries), each list re-sorted by name; -> how many."""
+    n = 0
+    boot = d.get("boot") or {}
+    for e in boot.get("esps") or []:
+        fs = (e.get("contents") or {}).get("files")
+        if not isinstance(fs, list):
+            continue
+        for f in fs:
+            for k in ("path", "same_as"):
+                v = f.get(k)
+                if isinstance(v, str) and v.startswith("loader/entries/") and BLS_COUNTER.search(v):
+                    f[k] = BLS_COUNTER.sub("", v)
+                    n += 1
+        fs.sort(key=lambda f: str(f.get("path") or ""))
+    sb = boot.get("systemd_boot") or {}
+    ents = sb.get("entries") if isinstance(sb, dict) else None
+    if isinstance(ents, list):
+        for x in ents:
+            v = x.get("file")
+            if isinstance(v, str) and BLS_COUNTER.search(v):
+                x["file"] = BLS_COUNTER.sub("", v)
+                n += 1
+        ents.sort(key=lambda x: str(x.get("file") or ""))
+    return n
+
+
 def transactional_judge(src, dst):
     """A transactional-update source (docs/design/aeon.md): boot.transactional
     taken off both dumps and judged here.  The restored machine must boot
@@ -384,7 +496,11 @@ def transactional_judge(src, dst):
     if td is None:
         return ["the source is transactional (boot.transactional), the restored system isn't"], []
     bad, notes = [], []
-    for k in ("filesystem", "fstab_root_options", "tools", "etc", "loader_mode"):
+    if ts.get("loader_mode") == "bls":
+        ns, nd = bls_uncount(src), bls_uncount(dst)
+        if ns or nd:
+            notes.append(f"transactional-update: BLS entries compared without their boot counters ({ns} on the source, {nd} restored): systemd-boot counts a boot of an entry, and systemd-bless-boot drops the counter once one is good")
+    for k in ("filesystem", "fstab_root_options", "tools", "etc", "loader_mode", "fde_seal_pcr_list"):
         if ts.get(k) != td.get(k):
             bad.append(f"{k}: {json.dumps(ts.get(k))} -> {json.dumps(td.get(k))}")
     path = lambda t, k: ((t.get(k) or {}).get("path"))
@@ -743,7 +859,23 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     tu = any(re.search(TU_SOURCE, p) for p in before)
     opensuse = not tu and any(re.search(OPENSUSE_SOURCE, p) for p in before)
     zbm = any(re.search(ZBM_SOURCE, p) for p in before)
+    # Slackware's loaders (S6): LILO's own rules, mkinitrd's, ELILO kept.
+    lilo = all(before.get(p, {}).get("type") == "file" for p in LILO_SOURCE)
+    slack = before.get("etc/slackware-version", {}).get("type") == "file"
+    elilo = any(re.search(ELILO_SOURCE, p) for p in before)
+    copies = elilo_initrd_copies(before) if elilo else set()
+    own_stage = (LILO_STAGE if lilo else []) + (MKINITRD_STAGE if slack else [])
     real, allowed = {}, {}
+    if lilo and LILO_COPY in after:
+        real.setdefault("left behind by load (lilo's copy of lilo.conf)", []).append(LILO_COPY)
+    if elilo:
+        for p in elilo_missing(before):
+            real.setdefault("not in the source's record (ELILO's files on the ESP)", []).append(p)
+        bi = after.get("boot/initrd.gz") or {}
+        for p in sorted(copies):
+            a = after.get(p) or {}
+            if a.get("type") == "file" and (a.get("size"), a.get("sha256")) != (bi.get("size"), bi.get("sha256")):
+                real.setdefault("not the restored boot/initrd.gz's bytes (ELILO's initrd on the ESP, a copy of it on the source)", []).append(p)
     # A transactional source's slot at / (the booted one) is in the backup
     # through / only, where @/var and the other subvolumes fstab mounts hide
     # its own directories under them (transactional-update writes into a new
@@ -775,9 +907,17 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     for kind, paths in diff.items():
         for p in paths:
             kept = (refind and re.search(REFIND_KEPT, p)) or (anduin and re.search(ANDUINOS_KEPT, p)) or (abroot and re.search(ABROOT_KEPT, p)) \
-                or (solus and re.search(SOLUS_KEPT, p)) or (opensuse and re.search(OPENSUSE_KEPT, p)) or (zbm and re.search(ZBM_KEPT, p))
+                or (solus and re.search(SOLUS_KEPT, p)) or (opensuse and re.search(OPENSUSE_KEPT, p)) or (zbm and re.search(ZBM_KEPT, p)) \
+                or (elilo and re.search(ELILO_KEPT, p) and p not in copies)
+            if lilo and p == LILO_COPY:
+                continue   # (counted above)
             why = None if kept else \
-                next((w for r, kinds, w in (TU_STAGE if tu else BOOT_STAGE) if kind in kinds and re.search(r, p)), None)
+                next((w for r, kinds, w in own_stage if kind in kinds and re.search(r, p)), None)
+            if not why and p in copies:
+                # Load's cp and touch -r of the remade initrd; its bytes are judged above.
+                why = "load copies the remade /boot/initrd.gz over the ESP's (as eliloconfig does)" if kind in ("content", "mtime", "atime") else None
+            elif not why and not kept:
+                why = next((w for r, kinds, w in (TU_STAGE if tu else BOOT_STAGE) if kind in kinds and re.search(r, p)), None)
             if not why and kind == "missing" and before.get(p, {}).get("type") == "socket":
                 why = "a socket is made by whatever listens on it; no archiver restores one"
             if not why and new_uuids and any(re.search(r, p) for r in NEW_UUIDS_FILES) and kind in _WRITTEN:
@@ -828,6 +968,12 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     if zbm:
         held = sorted(p for p in before if re.search(ZBM_SOURCE, p))
         print(f"ZFSBootMenu's images kept: {len(held)} held to the source's bytes: {', '.join(held)}")
+    if lilo:
+        print(f"LILO: etc/lilo.conf held to the source's bytes, no {LILO_COPY} left behind; lilo's map and MBR backup the boot stage's")
+    if elilo:
+        held = sorted(p for p in before if re.search(ELILO_KEPT, p) and p not in copies)
+        print(f"ELILO kept: {len(held)} paths of EFI/Slackware and EFI/BOOT held to the source's bytes; "
+              f"{len(copies)} ESP initrd.gz (copies of /boot/initrd.gz on the source) held to the restored /boot/initrd.gz's")
     if tu:
         held = [p for p in before if re.search(TU_HELD, p)]
         print(f"transactional-update: no boot-stage excuse but load's log and health-check.state: {len(held)} paths of the ESP and every slot's /boot and /usr held to the source's")
@@ -1879,6 +2025,187 @@ def judge_zbm(src_path, dst_path, smeta_path, dmeta_path):
     sys.exit(1 if bad else 0)
 
 
+# Qubes OS (docs/design/qubes.md, "Tests": HoltTest1 1Obscure, Q7).  The
+# dump fields are bko-holt's Q2-Q4 (thin snapshots, raw volumes, boot.xen),
+# by the names that work gave (2026-11-15, before it was built): a thin LV's
+# segments[0].origin, ACTIVATION_SKIP in an LV's flags, a thin pool's
+# data_used_bytes and metadata_used_bytes, a thin LV's mapped_bytes, a
+# dm device's raw_volume, storage.qubes, boot.xen.  If Q2-Q4 change a name,
+# change it here too.
+QUBES_POOL_PCT = 5      # a pool's used data, restored, within this much of the source's (sharing kept)
+
+
+def thin_lvs(d):
+    """{(VG, LV): (lv, its first segment)} of the dump's LVs."""
+    out = {}
+    for vg in ((d.get("storage") or {}).get("lvm") or {}).get("volume_groups") or []:
+        for lv in vg.get("logical_volumes") or []:
+            out[(vg.get("name"), lv.get("name"))] = (lv, ((lv.get("segments") or [{}])[0]) or {})
+    return out
+
+
+def thin_snapshot_pools(d):
+    """{(VG, POOL)} of the thin pools that hold a thin snapshot (an LV with an origin)."""
+    return {(vg, seg.get("thin_pool")) for (vg, _), (_, seg) in thin_lvs(d).items() if seg.get("type") == "thin" and seg.get("origin")}
+
+
+def qubes_thin_why(k, va, vb, a, snap_pools):
+    """main's excuse for K, a field of an LV in a VG with thin snapshots
+    (Qubes's vm-pool), or None.  Load makes a snapshot with lvcreate -s after
+    its origin's content is restored (Q2), so in such a pool the thin device
+    ids and the transaction ids are load's order; a pool's used data and
+    metadata may move a little (judge.py qubes holds them within
+    QUBES_POOL_PCT), and a thin LV's own mapping more (a zero run the source
+    had provisioned stays unprovisioned)."""
+    m = re.match(r"^(storage\.lvm\.volume_groups\.\d+)\.logical_volumes\.(\d+)\.(.+)$", k)
+    if not m or not snap_pools:
+        return None
+    vg, lvk = a.get(m.group(1) + ".name"), f"{m.group(1)}.logical_volumes.{m.group(2)}"
+    seg_type, pool = a.get(lvk + ".segments.0.type"), a.get(lvk + ".segments.0.thin_pool")
+    field = m.group(3)
+    if seg_type == "thin-pool" and (vg, a.get(lvk + ".name")) in snap_pools:
+        if re.fullmatch(r"(segments\.\d+\.)?transaction_id", field):
+            return "a thin pool with snapshots counts load's own lvcreates (Qubes: snapshots made after their origins' restore)"
+        if re.fullmatch(r"(segments\.\d+\.)?(data|metadata)_used_bytes", field) and isinstance(va, int) and isinstance(vb, int):
+            return f"a thin pool's used data and metadata, within {QUBES_POOL_PCT} % of the source's or not (judge.py qubes holds them)"
+    if seg_type == "thin" and (vg, pool) in snap_pools:
+        if re.fullmatch(r"segments\.\d+\.(device_id|transaction_id)", field):
+            return "a thin LV's device id in a pool with snapshots is load's order of lvcreates (Qubes: snapshots made after their origins' restore)"
+        if re.fullmatch(r"(segments\.\d+\.)?mapped_bytes", field):
+            return "a thin LV's mapped blocks: a zero run the source had provisioned stays unprovisioned (the pool's total is held by judge.py qubes)"
+    return None
+
+
+def read_sums(path):
+    """{VG/LV: sha256} of ht1-offline.sh's raw-volume list ("VG/LV SHA256" lines)."""
+    out = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                w = line.split()
+                if len(w) == 2:
+                    out[w[0]] = w[1]
+    except OSError:
+        pass
+    return out
+
+
+def judge_qubes(src_path, dst_path, sraw_path, draw_path):
+    """A Qubes OS source's LVM thin layout and raw volumes, against the
+    restored disk's (docs/design/qubes.md, Tests): each thin snapshot (an LV
+    with an origin) has a new LV UUID (made by lvcreate -s, not vgcfgrestore)
+    and its origin by name; every LV's activation-skip flag is the source's;
+    each thin pool's used data and metadata are within QUBES_POOL_PCT % of
+    the source's (the snapshots share their origins' blocks again); each raw
+    volume's SHA-256 (ht1-offline.sh's, read from the LVs) is the source's;
+    the raw volumes, storage.qubes and boot.xen are the source's."""
+    src, dst = load_json(src_path), load_json(dst_path)
+    sl, dl = thin_lvs(src), thin_lvs(dst)
+    bad, out = [], []
+    snaps = [(w, lv, seg) for w, (lv, seg) in sl.items() if seg.get("type") == "thin" and seg.get("origin")]
+    if not snaps:
+        bad.append("the source's dump has no thin snapshot (no LV with an origin: bko-holt's Q2, or not a Qubes OS dump)")
+    for (vg, name), lv, seg in snaps:
+        got = dl.get((vg, name))
+        if not got:
+            bad.append(f"{vg}/{name}: not in the restored dump")
+            continue
+        if got[1].get("origin") != seg.get("origin"):
+            bad.append(f"{vg}/{name}: origin {seg.get('origin')!r} -> {got[1].get('origin')!r}")
+        if lv.get("id") and got[0].get("id") == lv.get("id"):
+            bad.append(f"{vg}/{name}: the source's LV UUID: a snapshot is made anew by lvcreate -s")
+    for w, (lv, _) in sl.items():
+        got = dl.get(w)
+        if got and ("ACTIVATION_SKIP" in (lv.get("flags") or [])) != ("ACTIVATION_SKIP" in (got[0].get("flags") or [])):
+            bad.append(f"{w[0]}/{w[1]}: activation skip {'set' if 'ACTIVATION_SKIP' in (lv.get('flags') or []) else 'unset'} on the source, not on the restored disk")
+    out.append(f"{len(snaps)} thin snapshots made anew, their origins as the source's")
+    pools = [(w, lv, seg) for w, (lv, seg) in sl.items() if seg.get("type") == "thin-pool"]
+    for (vg, name), lv, seg in pools:
+        got = dl.get((vg, name))
+        if not got:
+            bad.append(f"pool {vg}/{name}: not in the restored dump")
+            continue
+        for f in ("data_used_bytes", "metadata_used_bytes"):
+            va = lv.get(f, seg.get(f))
+            vb = got[0].get(f, got[1].get(f))
+            if not isinstance(va, int) or not isinstance(vb, int):
+                bad.append(f"pool {vg}/{name}: no {f} in {'the source' if not isinstance(va, int) else 'the restored'} dump (bko-holt's Q2)")
+            elif abs(vb - va) > va * QUBES_POOL_PCT / 100:
+                bad.append(f"pool {vg}/{name}: {f} {va} -> {vb}, more than {QUBES_POOL_PCT} % apart (sharing lost?)")
+            else:
+                out.append(f"pool {vg}/{name} {f} {va} -> {vb}")
+    sraw, draw = read_sums(sraw_path), read_sums(draw_path)
+    if not sraw:
+        bad.append(f"no raw volumes' checksums in {sraw_path}")
+    for lv, h in sorted(sraw.items()):
+        if draw.get(lv) != h:
+            bad.append(f"raw volume {lv}: sha256 {h[:16]}... -> {(draw.get(lv) or 'missing')[:16]}")
+    for lv in sorted(set(draw) - set(sraw)):
+        bad.append(f"raw volume {lv}: only on the restored disk")
+    out.append(f"{len(sraw)} raw volumes' checksums as the source's")
+
+    def raws(d):
+        return {x.get("dm", {}).get("dm_name") or x.get("name"): x.get("raw_volume") for x in (d.get("storage") or {}).get("dm_devices") or [] if x.get("raw_volume")}
+    rs, rd = raws(src), raws(dst)
+    if rs != rd:
+        bad.append(f"raw_volume records: {sorted(rs)} -> {sorted(rd)}")
+    for path, what in ((("storage", "qubes"), "storage.qubes"), (("boot", "xen"), "boot.xen")):
+        vs, vd = (src.get(path[0]) or {}).get(path[1]), (dst.get(path[0]) or {}).get(path[1])
+        if vs is None:
+            bad.append(f"no {what} in the source's dump (bko-holt's Q4)")
+        elif vs != vd:
+            bad.append(f"{what}: {json.dumps(vs)[:160]} -> {json.dumps(vd)[:160]}")
+    for b in bad:
+        print(f"DIFF {b}")
+    for o in out:
+        if o.startswith("pool "):
+            print(o)
+    print(f"{len(bad)} differences; " + "; ".join(x for x in out if not x.startswith("pool ")))
+    sys.exit(1 if bad else 0)
+
+
+QUBES_CHECK = re.compile(r"^BKO-QUBES-CHECK (\S+) (PASS|FAIL)(?: (.*))?$")
+
+
+def judge_qubes_check(src_path, dst_path):
+    """bko-qubes-check.service's lines from the restored disk's boot against
+    the source's (ht1-offline.sh's logs/*-check.log): DONE PASS; every item
+    the source passed passes, none fails; what the qubes print (run-*: each
+    qube's hostname and its seeded file's hash) and the lvm item (thin LV
+    and origin counts, work's chain) are the source's.  Times (start-*,
+    shutdown, qubesd) may differ."""
+    def items(path):
+        out = {}
+        with open(path, errors="replace") as f:
+            for line in f:
+                m = QUBES_CHECK.match(line.strip())
+                if m:
+                    out[m.group(1)] = (m.group(2), m.group(3) or "")
+        return out
+    s, d = items(src_path), items(dst_path)
+    bad = []
+    if d.get("DONE", ("",))[0] != "PASS":
+        bad.append(f"the restored boot's DONE is {d.get('DONE', ('missing',))[0]}")
+    for k, (r, rest) in sorted(s.items()):
+        if k == "DONE":
+            continue
+        got = d.get(k)
+        if not got:
+            bad.append(f"{k}: missing on the restored boot")
+        elif got[0] != "PASS" and r == "PASS":
+            bad.append(f"{k}: {got[0]} {got[1]}")
+        elif (k.startswith("run-") or k == "lvm" or k == "qvm-ls") and got[1] != rest:
+            bad.append(f"{k}: {rest!r} -> {got[1]!r}")
+    for k, (r, rest) in sorted(d.items()):
+        if r == "FAIL" and k not in s:
+            bad.append(f"{k}: FAIL {rest} (not on the source)")
+    for b in bad:
+        print(f"DIFF {b}")
+    print(f"{len(bad)} differences; {sum(1 for v in d.values() if v[0] == 'PASS')} items PASS, "
+          + ", ".join(f"{k} {v[1]}" for k, v in sorted(d.items()) if k == "lvm"))
+    sys.exit(1 if bad else 0)
+
+
 def main():
     if sys.argv[1] == "esp":
         judge_esp(sys.argv[2])
@@ -1886,6 +2213,10 @@ def main():
         judge_bes(sys.argv[2], sys.argv[3])
     if sys.argv[1] == "zbm":
         judge_zbm(*sys.argv[2:6])
+    if sys.argv[1] == "qubes":
+        judge_qubes(*sys.argv[2:6])
+    if sys.argv[1] == "qubes-check":
+        judge_qubes_check(*sys.argv[2:4])
     if sys.argv[1] == "fs":
         judge_fs(*sys.argv[2:5], no_atime="--no-atime" in sys.argv[5:], new_uuids="--new-uuids" in sys.argv[5:],
                  reforms=reformat_args(sys.argv[5:]))
@@ -1927,6 +2258,7 @@ def main():
     rf_bad, rf_notes = reformat_expect(src, dst, reforms) if reforms else ([], [])
     made_src, made_uuid_src = lvcreate_made(src)
     made_dst, made_uuid_dst = lvcreate_made(dst)
+    snap_pools = thin_snapshot_pools(src)
     timeshift = timeshift_left_out(src)
     for d in (src, dst):
         if "--removable" in flags:
@@ -2022,6 +2354,8 @@ def main():
                     why = "a thin pool, its data and metadata LVs, the pool metadata spare and the thin LVs are made anew by lvcreate: new LV UUIDs, the rescuer's host and time"
                 elif re.fullmatch(r"segments\.\d+\.stripes\.\d+", m.group(3)) and isinstance(va, int) and isinstance(vb, int):
                     why = "where lvcreate puts a thin pool's data, metadata and spare LVs on the PV is its own"
+        if not why:
+            why = qubes_thin_why(k, va, vb, a, snap_pools)
         m = re.match(r"^(storage\.dm_devices\.\d+)\.(dm\.dm_uuid|dm\.lv_uuid|links\.\d+)$", k)
         if not why and m and a.get(m.group(1) + ".dm.lv_uuid") in made_uuid_src and b.get(m.group(1) + ".dm.lv_uuid") in made_uuid_dst \
                 and (not m.group(2).startswith("links") or all(isinstance(v, str) and v.startswith("/dev/disk/by-id/dm-uuid-LVM-") for v in (va, vb))):

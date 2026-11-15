@@ -286,6 +286,34 @@ shim, MokManager and GRUB as the ESP brings them back (`KEPT`), runs
 again.  The manager's scheduler is held through phase 1 and `verify`.
 Passed 2026-11-14, run `anduinos-2.0.5-20261114-153639`.
 
+## KDE neon: Calamares's layout, from the stick
+
+KDE neon 24.04 User Edition (docs/design/kde-neon.md) installs with
+Calamares, a GUI.  `neon-bootstrap.sh` does what neon's Calamares does,
+from the stick and without the GUI:
+
+    sudo bash /mnt/bs1-backup/backshot1/neon/neon-bootstrap.sh SERIAL \
+        /mnt/bs1-backup/backshot1/neon/neon-user-desk-20261025-1825.iso /mnt/bs1-backup/backshot1/keys thinkpad
+
+(`testvm/realworld/neon-bootstrap.sh`, copied to the drive's
+`backshot1/neon/` beside the ISO, whose sha256 the script pins).  It erases the
+disk with that serial (never a USB disk) and lays it out as Calamares does:
+GPT, a 300 MiB ESP at /boot/efi, ext4 / and a 512 MiB /swapfile.  It copies
+the live image, removes the live session's packages, installs the kernel,
+openssh-server and shim, and runs `grub-install --bootloader-id=neon
+--uefi-secure-boot`, which makes the NVRAM entry.  It also copies grub.cfg to
+`EFI/ubuntu`, adds the controller's key and the fixed host key, and keeps
+os-prober off with a grub.d drop-in, so the stick and mybig512 stay out of
+grub.cfg.  About 5 minutes.  The restore runs `update-initramfs`,
+`grub-install --bootloader-id=neon --no-nvram` and `update-grub`, then makes
+the entry for `\EFI\neon\shimx64.efi`.  `bs1-adopt` needs nothing new.
+Passed 2026-11-14, run `neon-24.04-20261114-141609`, with Secure Boot off in
+the firmware.
+`testvm/realworld/neon-bootstrap-qemu.sh TEST_IMG ISO WORK_DIR` rehearses the
+bootstrap in QEMU under Secure Boot: a blank NVMe, the ISO on a USB drive,
+then the disk alone by the NVRAM entry, with grub.cfg checked for other
+disks' systems.  Written 2026-11-15, not yet run.
+
 ## BigLinux: Timeshift's snapshots and systemd-swap
 
 BigLinux (Manjaro stable underneath; docs/design/biglinux.md) installs with
@@ -302,6 +330,36 @@ Rehearsed 2026-11-14 with `bs1-qemu.py --virtio` on `biglinux`, PASS on
 Chopin and Cinqcent.  The Thinkpad run isn't done yet: its install and
 staging steps are in docs/design/biglinux.md ("What BL6's rehearsals
 found", "For the real run on the Thinkpad").
+
+## Solus: clr-boot-manager's ESP at /boot, out of fstab
+
+Solus 4.9 (docs/design/solus.md) boots shim and systemd-boot under
+non-standard names in `EFI/com.solus-project`, all of them, with the
+kernels and initrds, put on the ESP by clr-boot-manager.  The ESP is
+`/boot` itself and isn't in fstab: clr-boot-manager mounts it only while it
+updates, and `bko-holt dump` refuses while it isn't mounted.  So
+`bs1-backup` (the preflight and phase 1) and `verify` first run
+`clr-boot-manager mount-boot`, the step a Solus user takes, and stop if
+`/boot` isn't then on the internal disk.  The restore makes only the NVRAM
+entry ("Solus Linux Bootloader"): no bootctl, no clr-boot-manager, no
+initramfs.  So `verify` holds the whole ESP to the baseline's bytes
+(`bs1-manifest`'s `SOLUS_KEPT`, as HoltTest1's judge.py does), all but
+`loader/random-seed`, which systemd-boot refreshes at every boot: it only has
+to be there, a regular file (`SOLUS_PRESENT`).  It fails if
+the baseline lacks the ESP's loaders, a kernel, an initrd or an entry.  The
+package list is eopkg's database, `/var/lib/eopkg/package/NAME-VER-REL`.
+It goes on the Thinkpad from Solus's own GUI installer (ext4, no LUKS:
+`bs1-luks` has no arm for Solus's prebuilt initrd, which nothing on the
+machine rebuilds).
+`bs1-adopt` installs `openssh-server` and `avahi` with `eopkg it` (after
+`eopkg ur` and a whole-system `eopkg up` if that fails: Solus takes no
+partial update), and first writes `/etc/systemd/system-preset/50-backshot1.preset`
+enabling sshd and avahi-daemon, since Solus's presets end with `disable *`
+and usysconf applies them again after every eopkg transaction.  Plumbed
+2026-11-15; neither the `bs1-qemu.py --virtio` rehearsal on `solus49` nor
+the Thinkpad run has been done.  The rehearsal's firmware has no Secure
+Boot (OVMF_CODE_4M), so `solus49`'s `--mok` isn't used there: the restored
+ESP's boot under Secure Boot is HoltTest1's check (S5).
 
 ## ABRoot: Vanilla OS's two roots
 
@@ -502,7 +560,8 @@ Some of the ESP is held to its bytes although the rest of it may change
 (`KEPT`): on AnduinOS (a baseline with `EFI/AnduinOS/shimx64.efi`) shim,
 MokManager and the GRUB signed with the machine's own MOK, in
 `EFI/AnduinOS` and `EFI/BOOT`, which the restore keeps and never
-reinstalls.  A snapshot that only one side has is expected, snapper's or
+reinstalls; on Solus (a baseline with clr-boot-manager's shim or a Solus
+kernel) the whole ESP at `/boot`.  A snapshot that only one side has is expected, snapper's or
 AnduinOS's Disk Snapshots Manager's (its scheduler runs 2 min after every
 boot), and with the manager's, its records' changes too; phase 1 and
 `verify` hold both schedulers for their boot.

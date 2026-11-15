@@ -69,8 +69,10 @@
 #   revisions.txt         what the first boot's session did (BKO-QUBES-SETUP
 #                         lines: times, the LVs with their origins)
 #   check.txt             the check boot's BKO-QUBES-CHECK and -INFO lines
-#   vm-run-options        "--uefi --no-secure-boot --cpus 4 --memory 10240"
-#   qemu-options          the QEMU options it needs that vm-run has no word for:
+#   vm-run-options        "--uefi --no-secure-boot --cpus 4 --memory 10240
+#                         --qemu-options qemu-options"
+#   qemu-options          the QEMU options it needs that vm-run has no word for
+#                         (vm-run --qemu-options reads them):
 #                         q35 with kernel-irqchip=split, amd-iommu,
 #                         ICH9-LPC.disable_s3=1 (else OVMF's ACPI NVS at 8-9 MiB
 #                         clashes with the PV dom0 kernel), no NIC
@@ -298,6 +300,6 @@ check_boot
 sed -i -e "s/$passphrase/<console-passphrase>/g" -e "s/$password/<root-password>/g" check-boot-serial.log check.txt
 
 qemu-img snapshot -c fresh-install "$DISK"
-echo "--uefi --no-secure-boot --cpus $CPUS --memory $MEMORY" >vm-run-options
+echo "--uefi --no-secure-boot --cpus $CPUS --memory $MEMORY --qemu-options qemu-options" >vm-run-options
 echo "$QEMU_OPTIONS" >qemu-options
 echo "Done: $DISK in $PWD ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""

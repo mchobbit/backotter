@@ -1,5 +1,5 @@
 """initramfs-tools, as the initramfs generator: Debian, Ubuntu 24.04, Mint,
-MX, KDE neon, Pop!_OS, Zorin, Devuan, Chimera.
+MX, KDE neon, elementary OS, Pop!_OS, Zorin, Devuan, Chimera.
 
 - Quirk initramfs-tools-layers: load runs `update-initramfs -u -k all` in
   the chroot.  MODULES=most (boot.initramfs.modules, on every corpus

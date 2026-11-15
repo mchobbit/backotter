@@ -156,6 +156,32 @@
   "^Installed \\S+$",
   "^\\S+ N\\S* -> N\\S*$"
  ],
+ "eopkg": [
+  "^Updating repositor(ies|y: \\S+)$",
+  "^\\S+ repository information is up-to-date\\.$",
+  "^Package database updated\\.$",
+  "^No packages to upgrade\\.$",
+  "^Downloaded \\S+$",
+  "^\\S+ \\(N(\\.N)? [KMG]?B\\) ?N% +N(\\.N)? (--/-|[KMG]?B/s) \\[(--:--:--|TIME)\\]( \\[complete\\])?$",
+  "^\\S+\\.eopkg \\[cached\\]$",
+  "^Disabling keyboard interrupts for file operations\\.$",
+  "^The following packages will be (upgraded|installed):$",
+  "^Safety switch forces the (installation|upgrade) of following packages:$",
+  "^Total size of package\\(s\\): N(\\.N)? [KMG]?B$",
+  "^There are extra packages due to dependencies\\.$",
+  "^Downloading N package resources \\(N cached\\)$",
+  "^Finished downloading (packages|package upgrades)\\.$",
+  "^(Downloading|Installing) N / N$",
+  "^Package \\S+ found in repository \\S+$",
+  "^Installing \\S+, version \\S+, release N$",
+  "^Extracting the files of \\S+( \\(N%\\)( \\[complete\\])?)?$",
+  "^Upgrading to new distribution release$",
+  "^(Upgraded|Installed|Removed) \\S+$",
+  "^Removing package \\S+$",
+  "^Cleaning (package cache|source archive cache|temporary directory) /\\S+\\.\\.\\.$",
+  "^Removing cache file /var/cache/eopkg/\\S+\\.\\.\\.$",
+  "^Created symlink '/etc/systemd/\\S+' → '\\S+'\\.$"
+ ],
  "nix": [
   "^(?!.*\\b([Ee]rror|[Ff]ailed|[Cc]annot)\\b).*/nix/store/",
   "^(?!.*\\b([Ee]rror|[Ff]ailed|[Cc]annot)\\b)(building|copying|unpacking|evaluating|activating|restarting|these N )"

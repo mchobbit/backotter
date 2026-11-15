@@ -210,6 +210,69 @@ if [ "$(uname)" = Linux ] && { [ -f /usr/share/abroot/abroot.json ] || has abroo
     exit 0
 fi
 
+# t2-section: Linux.snapcore
+# Ubuntu Core (uc24, uc24-fde; docs/design/ubuntu-core.md): everything is a
+# snap, the kernel (pc-kernel), the base that is / (core24), the gadget (pc)
+# and snapd included, and `snap refresh` takes them all in one change.  A
+# kernel, base, gadget or snapd refresh needs a reboot: snapd schedules one a
+# few minutes out (a shutdown -r +N; under FDE it first reseals the TPM's
+# keys for the new boot chain), and completes the change once booted, now
+# and then after a second reboot.  So: refresh with --no-wait (it prints the
+# change's ID) and wait here while the change runs.  Once it waits for that
+# restart (its status Wait, or a shutdown scheduled), say "in-guest:
+# snapcore: restart pending ID" and stop: vm-update reboots the guest
+# itself, waits across whatever reboots more the change takes until snapd
+# has no change in progress, and holds the auto-refreshes again
+# (snapcore_settle there).  The auto-refreshes stay held all along
+# (make-ubuntu-core.sh held them: one of snapd's own would race this one,
+# or change a guest between updates); `snap refresh --hold` with no names
+# holds them all for good, and a refresh asked for still runs.  Root's:
+# snapd 2.78 lets only root refresh and list changes.
+if [ "$(uname)" = Linux ] && [ -f /var/lib/snapd/modeenv ] && grep -qs '^ID=ubuntu-core$' /etc/os-release && has snap; then
+    busy() { snap changes 2>/dev/null | awk 'NR > 1 && $2 ~ /^(Do|Doing|Undo|Undoing|Wait|Hold)$/ { printf "%s:%s ", $1, $2 }'; }
+    restart_due() { [ -e /run/systemd/shutdown/scheduled ]; }
+    pending() {  # CHANGE: stop here, for vm-update's reboot
+        snap refresh --hold >/dev/null 2>&1 || true
+        say "snapcore: restart pending $1"
+        exit 0
+    }
+    # A change already under way (an earlier boot's): wait for it first.
+    t0=$(date +%s)
+    while b=$(busy) && [ -n "$b" ]; do
+        case $b in *:Wait*) pending "${b%%:*}" ;; esac
+        if restart_due; then pending "${b%%:*}"; fi
+        [ $(($(date +%s) - t0)) -lt 1800 ] || { say "snapd still has changes in progress after 30 min: $b"; exit 1; }
+        sleep 10
+    done
+    out=$(snap refresh --list 2>&1); rc=$?
+    printf '%s\n' "$out"
+    if printf '%s\n' "$out" | grep -q 'All snaps up to date'; then
+        say "snapd: all snaps up to date, nothing changed"
+        exit 0
+    fi
+    [ $rc -eq 0 ] || { say "snap refresh --list failed ($rc)"; exit 1; }
+    id=$(snap refresh --no-wait 2>&1) || { printf '%s\n' "$id"; say "snap refresh --no-wait failed"; exit 1; }
+    case $id in
+    '' | *[!0-9]*) printf '%s\n' "$id"; say "snap refresh --no-wait printed no change ID"; exit 1 ;;
+    esac
+    say "snapcore: refresh change $id"
+    t0=$(date +%s)
+    while :; do
+        st=$(snap changes 2>/dev/null | awk -v id="$id" '$1 == id { print $2 }')
+        case $st in
+        Done) break ;;
+        Error | Undone | Abort) snap tasks "$id" 2>&1 | tail -n 20; say "the refresh (change $id) ended $st"; exit 1 ;;
+        Wait) pending "$id" ;;
+        esac
+        if restart_due; then pending "$id"; fi
+        [ $(($(date +%s) - t0)) -lt 7200 ] || { snap tasks "$id" 2>&1 | tail -n 20; say "the refresh (change $id) is still ${st:-unlisted} after 2 h"; exit 1; }
+        sleep 10
+    done
+    snap refresh --hold >/dev/null || { say "snap refresh --hold failed"; exit 1; }
+    say "updated"
+    exit 0
+fi
+
 # t2-section: Linux.common
 # --- Unfreeze -----------------------------------------------------------------------
 # Each pin is recognized by its own mark, so an unfrozen guest is left alone.

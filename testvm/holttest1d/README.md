@@ -31,7 +31,7 @@ guests.  A guest passes only when every check passes.  Status is as of
 |---|---|---|---|
 | 1D | Debian 13, Proxmox VE 9, TrueNAS 25.10 | `debian13`, `debian13-zfs`, `debian13-stack`, `proxmox9`, `proxmox9-mirror`, `truenas25`, `truenas25-mirror` | passes (the Proxmox guests on Chopin and Cinqcent only, 2026-11-14: `proxmox9` runs `pve6-10` Chopin and `pve6-12` Cinqcent, `proxmox9-mirror` `pve6-11` Chopin and `pve6-13` Cinqcent, the mirror's disks also booted alone; the ESPs judged by content, `judge.py esp`; docs/design/proxmox.md; the TrueNAS guests on Chopin and Cinqcent only, 2026-11-14: `truenas25` runs `tn6-8` Chopin and `tn6-7` Cinqcent, `truenas25-mirror` `tn6-6` Chopin and `tn6-5` Cinqcent: every boot environment by tree (the inactive ones at `run/bko-be/V`, as dump's backup sources), `judge.py bes`, the ESPs by content, grub.cfg's menu, the config databases, the oldest BE activated and booted; the mirror with `HT_POOLS=boot-pool`, its data pool's disk kept, each boot disk booted alone; docs/design/truenas.md) |
 | 1M | Linux Mint | `mint22` | passes |
-| 1U | Ubuntu, KDE neon, AnduinOS | `ubuntu24`, `ubuntu24-uefi`, `ubuntu24-luks`, `ubuntu26-uefi`, `ubuntu26-zfsmirror`, `ubuntu26-raid` (and `degraded`), `ubuntu26-luks`, `neon24`, `anduinos2` | passes (`neon24`: run `ht1u` on both hosts, 2026-11-14; `anduinos2`: runs `a5-3` Chopin and `a5-4` Cinqcent, 2026-11-14, under Secure Boot with its MOK-signed GRUB kept) |
+| 1U | Ubuntu, KDE neon, AnduinOS, elementary OS | `ubuntu24`, `ubuntu24-uefi`, `ubuntu24-luks`, `ubuntu26-uefi`, `ubuntu26-zfsmirror`, `ubuntu26-raid` (and `degraded`), `ubuntu26-luks`, `neon24`, `anduinos2`, `elementary8`, `elementary8-luks` | passes (`neon24`: run `ht1u` on both hosts, 2026-11-14; `anduinos2`: runs `a5-3` Chopin and `a5-4` Cinqcent, 2026-11-14, under Secure Boot with its MOK-signed GRUB kept), but for the elementary OS guests (docs/design/elementary.md, "The elementary OS guests" below): both registered, neither yet run to a PASS. `elementary8`'s first runs, `elem6c2` Chopin and `elem6q2` Cinqcent (2026-11-14), passed every load stage, fsmeta, the lone boot and health, and FAILed "the dumps differ" only on grub.cfg entries os-prober had leaked from the build host into the guest, fixed in make-from-live.sh (1677865); `elementary8-luks` has had no run |
 | 1Z | Zorin OS | `zorin18` | passes |
 | 1F | Fedora, Rocky Linux, Fedora Kinoite (ostree, Bazzite's base) | `fedora44`, `fedora44-uefi`, `fedora44-raid`, `rocky10`, `rocky10-lvm`, `rocky10-raid5`, `kinoite44` | passes (`fedora44-raid` and `rocky10-raid5`: run `raid022`; `kinoite44`: run `bzb6a`; both below) |
 | 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | passes |
@@ -39,10 +39,10 @@ guests.  A guest passes only when every check passes.  Status is as of
 | (1All only) | EndeavourOS, Manjaro, Garuda Linux, BigLinux | `endeavouros`, `endeavouros-grub`, `manjaro`, `garuda`, `biglinux` (`make-arch.sh --live`: each one's own live ISO, with its installer's defaults) | passes on both hosts (runs `eosmj1` to `eosmj5`; `garuda`: `ga4-4` Chopin and `ga4-5` Cinqcent, 2026-11-14, with snap-pac's 4 snapshots restored as shared ones; it needs rustic-bko 0.11.4+backotter.11 or later, since rel6's .9 restores the first shared snapshot wrong (`HT_ROUND=t2r-58a6955-3bb01f1-99b9b56` for those runs); the shipped set has it since rel8 (.13); `biglinux`: `bl4-2` Chopin and `bl4-3` Cinqcent, 2026-11-14, with `HT_SOURCE_PREP=prep/biglinux-timeshift.sh`'s 3 Timeshift snapshots left out) |
 | 1V | Void Linux (musl) | `void-musl` | passes |
 | 1G | Gentoo Linux | `gentoo`, `gentoo-systemd` | passes on both hosts (2026-11-12, bko-holt 7760c9e7c497 and rel6's rustic-bko: `gentoo` runs `g5-3` Cinqcent and `g5-4` Chopin, with GRUB's embedded lvmid that of the restored vg0/root; `gentoo-systemd` `g5-2` Cinqcent and `g5-5` Chopin) |
-| 1Obscure | Pop!_OS, NixOS, Guix System, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, openSUSE MicroOS, Debian 12, Chimera Linux, PikaOS, Kali Linux, Vanilla OS, Solus | `pop24`, `nixos2605`, `guix15`, `guix15-bios`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `microos`, `debian12`, `chimera`, `chimera-uefi`, `chimera-zfs`, `pikaos4`, `pikaos4-luks`, `kali`, `vanilla3`, `solus49` | passes (`solus49` on both hosts, 2026-11-14: runs `s5-3` Cinqcent and `s5-4` Chopin, under Secure Boot with Solus's MOK, the ESP at /boot out of fstab held byte for byte, booted alone through shim and systemd-boot, docs/design/solus.md; the Chimera guests on both hosts, 2026-11-12: `chimera` runs `c5-1` Cinqcent and `c5-2` Chopin, `chimera-uefi` `c5-3` Cinqcent and `c5-4` Chopin, `chimera-zfs` `c5-5` Chopin and `c5-6` Cinqcent; the PikaOS guests on both hosts, 2026-11-14: `pikaos4` runs `p6-4` Chopin and `p6-5` Cinqcent, `pikaos4-luks` `p6-6` Chopin and `p6-7` Cinqcent, booted alone from the EFI/BOOT fallback, `pikaos4-luks` with its passphrase typed by `console-boot.py`; rEFInd's ESP files and `refind_linux.conf` byte-identical, docs/design/pikaos.md; `kali` on both hosts, 2026-11-14: runs `k5-1` Chopin and `k5-2` Cinqcent, booted alone from the EFI/BOOT fallback with fresh OVMF variables, docs/design/kali.md; `vanilla3` on both hosts, 2026-11-14: runs `v7-1` Chopin and `v7-2` Cinqcent, on /bkoscratch ("The ABRoot guest" below), both roots booted alone, the other picked on GRUB's serial menu by `console-keys.py`, docs/design/vanillaos.md; the Guix guests on both hosts, 2026-11-14: `guix15` runs `gx6-2` Chopin and `gx6-4` Cinqcent (UEFI, booted alone through Guix's NVRAM entry, read from efivarfs by `nvboot-efivars.sh`: Guix has no efibootmgr; `gx6-3` Cinqcent FAILed once on one 4 KiB hole rustic-bko didn't keep in a hard-linked store file, not seen again), `guix15-bios` `gx6-5` Chopin and `gx6-6` Cinqcent (BIOS, GRUB written by `grub-bios-setup` from the source's own images); with the previous generation booted too, picked on GRUB's serial menu ("GNU system, old configurations...") on the source and on the restored disk alone: `guix15` `gx6-14` Chopin and `gx6-16` Cinqcent, `guix15-bios` `gx6-15` Chopin and `gx6-17` Cinqcent, docs/design/guix.md; `microos` on both hosts, 2026-11-14: runs `aeon2c` Cinqcent (a whole run) and `aeon1` Chopin (verify rerun after the fixes; a whole run there still to do), "The transactional-update guest" below, docs/design/aeon.md) |
+| 1Obscure | Pop!_OS, NixOS, Guix System, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, openSUSE MicroOS, openSUSE Aeon, openSUSE Leap 16, Debian 12, Chimera Linux, PikaOS, Kali Linux, Vanilla OS, Solus, Slackware, Qubes OS | `pop24`, `nixos2605`, `guix15`, `guix15-bios`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `microos`, `aeon`, `leap16`, `debian12`, `chimera`, `chimera-uefi`, `chimera-zfs`, `pikaos4`, `pikaos4-luks`, `kali`, `vanilla3`, `solus49`, `slackware15`, `slackware15-uefi`, `qubes43` | passes, but for `aeon` (wired 2026-11-15, not run yet: systemd-boot BLS, LUKS2 sealed to its own TPM; docs/design/aeon.md, A4; "The transactional-update guest" below) and for `qubes43` (plumbing only, 2026-11-15: `ht1-offline.sh`'s Qubes path, below; not run: it waits for bko-holt's Q2-Q4, docs/design/qubes.md) and for `slackware15` and `slackware15-uefi` (BIOS with LILO, UEFI with ELILO; docs/design/slackware.md, S6), wired 2026-11-15 and not run yet, and `leap16` (UEFI with Secure Boot through SUSE's shim, btrfs with snapper, SELinux enforcing; docs/design/leap16.md), wired 2026-11-15 and not run yet: `prep/tumbleweed-snapper.sh` is its default prep, and its restored disk must boot under Secure Boot, Enforcing, with no AVC denial beyond ht1.sh's `SELINUX_KNOWN` (`solus49` on both hosts, 2026-11-14: runs `s5-3` Cinqcent and `s5-4` Chopin, under Secure Boot with Solus's MOK, the ESP at /boot out of fstab held byte for byte, booted alone through shim and systemd-boot, docs/design/solus.md; the Chimera guests on both hosts, 2026-11-12: `chimera` runs `c5-1` Cinqcent and `c5-2` Chopin, `chimera-uefi` `c5-3` Cinqcent and `c5-4` Chopin, `chimera-zfs` `c5-5` Chopin and `c5-6` Cinqcent; the PikaOS guests on both hosts, 2026-11-14: `pikaos4` runs `p6-4` Chopin and `p6-5` Cinqcent, `pikaos4-luks` `p6-6` Chopin and `p6-7` Cinqcent, booted alone from the EFI/BOOT fallback, `pikaos4-luks` with its passphrase typed by `console-boot.py`; rEFInd's ESP files and `refind_linux.conf` byte-identical, docs/design/pikaos.md; `kali` on both hosts, 2026-11-14: runs `k5-1` Chopin and `k5-2` Cinqcent, booted alone from the EFI/BOOT fallback with fresh OVMF variables, docs/design/kali.md; `vanilla3` on both hosts, 2026-11-14: runs `v7-1` Chopin and `v7-2` Cinqcent, on /bkoscratch ("The ABRoot guest" below), both roots booted alone, the other picked on GRUB's serial menu by `console-keys.py`, docs/design/vanillaos.md; the Guix guests on both hosts, 2026-11-14: `guix15` runs `gx6-2` Chopin and `gx6-4` Cinqcent (UEFI, booted alone through Guix's NVRAM entry, read from efivarfs by `nvboot-efivars.sh`: Guix has no efibootmgr; `gx6-3` Cinqcent FAILed once on one 4 KiB hole rustic-bko didn't keep in a hard-linked store file, not seen again), `guix15-bios` `gx6-5` Chopin and `gx6-6` Cinqcent (BIOS, GRUB written by `grub-bios-setup` from the source's own images); with the previous generation booted too, picked on GRUB's serial menu ("GNU system, old configurations...") on the source and on the restored disk alone: `guix15` `gx6-14` Chopin and `gx6-16` Cinqcent, `guix15-bios` `gx6-15` Chopin and `gx6-17` Cinqcent, docs/design/guix.md; `microos` on both hosts, 2026-11-14: runs `aeon2c` Cinqcent (a whole run) and `aeon1` Chopin (verify rerun after the fixes; a whole run there still to do), "The transactional-update guest" below, docs/design/aeon.md) |
 | 1H | Haiku | `haiku6` | passes (run `haiku024`, rustic-bko 0.11.4+backotter.7, which restores the volume root's metadata: Tracker's empty `trash` had made a new BFS volume look used) |
 | 1I | illumos | `omnios58`, `omnios58-mirror`, `oi2610`, `oi2610-bios` | all pass (`omnios58-mirror`: run `raid6`, the restored `rpool` ONLINE on both disks; OpenIndiana's two: runs `o5d` on chopin, `o5e`/`o5f` on cinqcent, docs/design/openindiana.md) |
-| 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `freebsd15-mirror`, `freebsd15-geli`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6`, `alpinebsd` | passes; `freebsd15-geli` (root pool on GELI, docs/design/geli.md) not run yet: it waits for bko-holt's GELI support (G2, G3) |
+| 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `freebsd15-mirror`, `freebsd15-geli`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `hardenedbsd15-zfs`, `dragonfly6`, `alpinebsd` | passes; `freebsd15-geli` (root pool on GELI, docs/design/geli.md) not run yet: it waits for bko-holt's GELI support (G2, G3); `hardenedbsd15-zfs` (ZFS root, `hardenedbsd15`'s twin, 2026-11-15) not run yet |
 
 **Cinqcent's old runs.** On 2026-11-13 every run dir and run log in
 Cinqcent's `/bkoscratch/holttest1d` moved to
@@ -109,6 +109,29 @@ installer's default, GPT with an ESP and one ext4 /, under Secure Boot;
 `ubuntu26-luks`, on 24.04's initramfs-tools (the prompt "Please unlock disk
 dm_crypt-0:", which console-boot.py answers).  Both pass on the 6.8 GA
 kernel.  `ubuntu24` stays the ZFS-root guest.
+
+**The elementary OS guests** (registered 2026-11-15, not yet run to a PASS;
+docs/design/elementary.md): `elementary8` (`make-from-live.sh elementary`,
+elementary OS 8.1 with distinst's layout) is UEFI under Secure Boot, shim and
+Ubuntu's signed GRUB in `EFI/ubuntu` with distinst's grub.cfg on the ESP;
+GPT with a 278 MiB ESP at /boot/efi and one LVM PV, VG `data` with LV `root`
+(ext4 /) and a 4 GiB LV `swap`.  `elementary8-luks` (`--luks`, a 20G disk)
+adds an ext4 /boot of 1 GiB and puts the PV in LUKS2 as `cryptdata`; its
+initramfs asks "Please unlock disk cryptdata:" and console-boot.py types
+`console-passphrase`, which also reaches vm-mount's `--key` and load's
+`--key-file` as for every console-passphrase guest (nothing in ht1.sh is
+theirs).  load's grub-install rewrites the ESP's stub `EFI/ubuntu/grub.cfg`
+to point at /boot/grub, which update-grub remakes, and leaves distinst's
+`EFI/ubuntu/grub/` copy stale: `judge.py fs`'s `boot/efi*/EFI` rule and
+the dump judge's ESP size rule cover both (`elem6c2`: 0 fsmeta differences,
+the ESP's two changed sizes ignored), so neither has a rule of its own.  Both
+guests' group is `data`, distinst's name for every install: like the
+`ubuntu-vg` guests they may share a host, by vm-mount's own LV names, but
+that is untried, and the spec runs them one after the other first.
+`elementary8` was rebuilt with 1677865's os-prober fix, and `elementary8-luks`
+at 1677865's 20G disk (2026-11-15, the same SHA-256 on Chopin and
+Cinqcent; corpus run `e4` dumped it), so neither needs a rebuild before its
+first run.
 
 **The ostree guest** (2026-11-11, run `bzb6a` on both hosts, in RAM,
 B6's static bko-holt from main, `HT_HOLT`): `kinoite44`
@@ -274,9 +297,33 @@ with the transactional arm (`HT_HOLT`, until holt-bin is promoted again):
   (the restored machine booted it), lets the pending slot's
   `etc/etc.syncpoint` go (its first boot's `/etc` sync deletes it), and
   compares subvolumes in a slot by path, as the slots themselves.
-- **BLS (aeon, A4):** the prep's BLS steps are written to health-checker's
-  BLS path but untested; `ht1-tu.sh`'s older-slot boots and rollback check
-  stop with a FAIL naming A4 (`tu_boot_slot_bls`, `bootctl set-oneshot`).
+- **BLS and the TPM (`aeon`, A4, wired 2026-11-15, not run yet):** `aeon`
+  (`make-opensuse.sh aeon`, docs/design/aeon.md "What A1 found") is
+  openSUSE Aeon: systemd-boot through shim with sdbootutil's entry per
+  slot (`/aeon/KVER/` kernels on the ESP, boot counting), and its root in
+  LUKS2 sealed to the guest's own TPM (vm-run-options' `--guest-tpm
+  aeon.tpm`, systemd-pcrlock) with a recovery key and no passphrase.
+  ht1.sh takes `--guest-tpm` out of the firmware options (`GTPM`): every
+  source boot is on `R/source.tpm`, a copy of the guest's, and every
+  restored boot on `R/restored.tpm`, a new machine's (`gvars`, vm-run
+  `--tpm`, which wins).  The guest's `recovery-key` is its key for vm-mount,
+  load (`--key-file aeon_root=`) and the console.  The dump keeps the
+  LUKS2 headers (`--keep-luks-header` for each LUKS device, copied from
+  `/run/bko-holt/luks-headers` beside the layout), so load restores them and
+  the recovery key still opens the disk.  The restored first boot is the
+  front-loaded passphrase boot: its TPM2 token can't unseal on the new TPM,
+  so it must ask, and `console-boot.py` types the recovery key; then
+  `tu_reseal` re-enrols over SSH (`sdbootutil unenroll`/`enroll
+  --method=tpm2`, the key in sdbootutil's keyring from stdin), reboots, and
+  that boot must unlock by the TPM with no prompt.  The older slots boot by
+  `bootctl set-oneshot` (`tu_boot_slot_bls`, the entry by its
+  `rootflags=subvol=` without its boot counter) and the rollback check is
+  BLS's (`tu_rollback_bls`: a failing slot marked bad, the slot before it
+  booted again); there is no health-check.state on either side.
+  `judge.py` takes the entries' boot counters off on a BLS source
+  (`bls_uncount`), lets the source dump's `storage.luks_headers` go, and
+  holds `fde_seal_pcr_list` to the source's.  `ram-sizes.tsv`'s row is an
+  estimate.
 
 **HoltTest1All** (the user's definition, 2026-11-05): "like HoltTest1D
 except that HoltTest1All targets every single guest OS we have": every guest
@@ -286,10 +333,12 @@ guests no other test names yet: `devuan6`, `ubuntu26-zfs` and `freebsd14`.
 A guest added since joins it with its group: among them 1G's `gentoo` and
 `gentoo-systemd` (2026-11-12, docs/design/gentoo.md), 1Obscure's three
 Chimera guests, 1F's `kinoite44`, 1C's `cachyos-zfs` and 1U's `neon24` and
-`anduinos2` (docs/design/anduinos.md), and 1Obscure's `pikaos4` and
+`anduinos2` (docs/design/anduinos.md) and `elementary8` and
+`elementary8-luks` (2026-11-15, docs/design/elementary.md: registered, not
+yet run to a PASS), and 1Obscure's `pikaos4` and
 `pikaos4-luks` (2026-11-14, docs/design/pikaos.md), 1D's `proxmox9` and `proxmox9-mirror` (2026-11-14, docs/design/proxmox.md) and `truenas25` and `truenas25-mirror` (2026-11-14, docs/design/truenas.md) and `kali` (2026-11-14, docs/design/kali.md) and `vanilla3` (2026-11-14, docs/design/vanillaos.md; on /bkoscratch: a queue needs `DISK_OVER=1`), and 1Obscure's `guix15` and `guix15-bios` (2026-11-14, docs/design/guix.md), and `garuda` and
 `biglinux` beside EndeavourOS and Manjaro (2026-11-14, docs/design/garuda.md
-and docs/design/biglinux.md), and 1Obscure's `microos` beside `tumbleweed` (2026-11-14, docs/design/aeon.md; "The transactional-update guest" below), and 1Obscure's `solus49` (2026-11-14, docs/design/solus.md).
+and docs/design/biglinux.md), and 1Obscure's `microos` beside `tumbleweed` (2026-11-14, docs/design/aeon.md; "The transactional-update guest" below), and 1Obscure's `solus49` (2026-11-14, docs/design/solus.md), and 1Obscure's `slackware15` and `slackware15-uefi` (2026-11-15, docs/design/slackware.md; not run yet), and 1Obscure's `leap16` beside `tumbleweed` (2026-11-15, docs/design/leap16.md), and 1BSD's `hardenedbsd15-zfs` (2026-11-15: HardenedBSD 15-STABLE build 23 on a ZFS root, `hardenedbsd15`'s twin as `ghostbsd26-zfs` is `ghostbsd26`'s), and 1Obscure's `aeon` beside `microos` (2026-11-15, docs/design/aeon.md, A4; not run yet: Chopin only until it is copied to a second host), and 1Obscure's `qubes43` (2026-11-15, docs/design/qubes.md; `ht1-offline.sh`, on /bkoscratch: a queue needs `DISK_OVER=1`, and a host with nested KVM and 12 GiB of memory to reserve: Chopin or Cinqcent).
 Run `r1all` (2026-11-05): 16 pass, the 15 above plus `mx25` (MX 25 reports
 `ID=debian`, `VERSION_ID=13`).  The rest fail where expected: dump's OS gate
 (cachyos, devuan6, void-musl, nixos2605, tumbleweed, rocky10, rocky10-lvm,
@@ -412,6 +461,29 @@ Sculpt.  The rebuild is `ht1.sh`'s, in the Linux rescuer.  It takes
 `HT_VARIANT=refuse` as well as `bigger` and `oneshot`: see "The fitting
 variants".
 
+**Qubes OS** (`qubes43`, docs/design/qubes.md Q7) goes to `ht1-offline.sh`
+too: dom0 has no network, so no SSH.  Its dumps are bko-holt's Linux dump
+chrooted into dom0's root in the UEFI rescuer, after the rescuer opened LUKS
+with the guest's `console-passphrase` and activated `qubes_dom0`; the backup
+mounts a throwaway overlay of the source with `vm-mount --key` (one Qubes
+disk at a time per host: LVM activates `qubes_dom0` under its own name),
+copies each raw volume the dump lists (`storage.backup_sources` of fstype
+`raw`, the qubes' `vm-*` LVs) sparse into a scratch dir bind-mounted at
+`/.bko-holt/raw`, and backs it all up in one snapshot; load gets
+`--key-file` and `--no-nvram`; a boot (source and restored, each on a copy
+of `uefi-vars.fd`, with `vm-run --qemu-options` for Xen nested) is judged by
+`bko-qubes-check.service`'s serial lines through `qubes/qubes-drive.py
+check`, the restored one's against the source's (`judge.py qubes-check`);
+the dumps by `judge.py` and `judge.py qubes` (thin snapshots made anew with
+their origins, activation skip, pools' used data within 5 %, each raw
+volume's SHA-256).  The dump fields are those bko-holt's Q2-Q4 gave before
+they were built, so a run needs `HT_HOLT` or `HT_HOLT_BIN` naming a build
+with them.  By hand, on Chopin or Cinqcent (`ram-sizes.tsv`'s row is an
+estimate, D over the RAM disk: on /bkoscratch):
+
+    cd ~/backotter-work && WEAR_TAG=ht1:RUN:qubes43 HT_PORT=2690 HT_RAM=0 setsid -f ./cmp-run.sh --reserve 0 12 \
+      sudo -E testvm/holttest1d/ht1.sh qubes43 RUN >/bkoscratch/holttest1d/RUN-qubes43.log 2>&1 </dev/null
+
 Other tools these runs need:
 
 - `make-bcachefs-tools.sh` builds bcachefs-tools 1.13 (NixOS's root) for
@@ -512,6 +584,17 @@ reboots by itself is waited through), and runs it again, at most 10
 rounds; the prep keeps its own place (on a writable file system).
 `prep/microos-tu.sh` is one, and the default for `microos*` and `aeon*`
 (`HT_SOURCE_PREP=` runs none): "The transactional-update guest" below.
+`prep/tumbleweed-snapper.sh` is the default for `leap16*` (openSUSE Leap 16,
+docs/design/leap16.md, L5), whose round trip so covers snapper's chain, the
+old root and a rolled-back default too.
+
+**SELinux on the restored boot** (ht1.sh's `selinux_check`): `leap16*` must
+come up Enforcing, with no relabel pending and no kind of AVC denial since
+boot beyond `SELINUX_KNOWN` (empty until a run shows one to class), or it
+FAILs; `tumbleweed*`, `fedora*` and `rocky*` get the same line as a note
+until each has passed with it once.  The source's state is in
+`logs/source-selinux.txt`, the restored disk's in `logs/restored-selinux.txt`.
+`leap16*`'s restored boot must also be under Secure Boot (`sb_check`, mokutil).
 
 `HT_REFORMAT="MOUNT=TYPE ..."` restores onto another filesystem type: every
 load call from the dry run on gets `--reformat MOUNT=TYPE` for each
@@ -609,6 +692,30 @@ Each run also checks, as the plan asks:
   initrd and an entry in the source's record.  The restored guest's
   LoaderInfo (or `bootctl status`) must say systemd-boot
   (`logs/restored-loader.txt`, the source's beside it).
+- Slackware 15.0 (`slackware15`, `slackware15-uefi`, docs/design/slackware.md,
+  S6): sysvinit, so the boot state is `slackware-rc runlevel N` and a
+  `down rc.X` line per executable rc script whose daemon isn't running.
+  fstab names devices (`/dev/vda2`), which vm-mount resolves to the image's
+  partitions; the ESP is in fstab, so the dumps need nothing mounted by hand.
+  `slackware15` (BIOS, LILO in the MBR, the huge kernel, no initrd): load
+  runs lilo on `lilo.conf.bko-holt`, a copy with root= by name in append=,
+  and removes it.  The restored disk's sector 0, read on the host with
+  `qemu-img dd`, must hold LILO's first stage ("LILO" at offset 6;
+  `logs/restored-mbr.txt`), and the restored boot's / must be the source's
+  device, filesystem and mode (by its major:minor in /sys;
+  `logs/restored-root.txt`, `source-root.txt` beside it).  `judge.py fs`
+  lets lilo rewrite `/boot/map`, add an MBR backup `/boot/boot.MMmm` and
+  touch `/etc`'s times; `/etc/lilo.conf` must be the source's, and the copy
+  must be gone.  `slackware15-uefi` (ELILO, the generic kernel and
+  mkinitrd's `/boot/initrd.gz`, booted from the EFI/BOOT fallback on a fresh
+  NVRAM): the restored ESP's `EFI/Slackware` (`elilo.efi`) and `EFI/BOOT`
+  (`BOOTX64.EFI`) must each hold `elilo.conf`, a kernel with the bytes of
+  one of the restored `/boot/vmlinuz-*`, and an initrd with those of the
+  restored `/boot/initrd.gz` (`logs/restored-elilo.txt`).  `judge.py fs`
+  holds ELILO, the `elilo.conf` files and the ESP kernels to the source's
+  bytes (no ESP rule excuses them), lets mkinitrd remake `/boot/initrd.gz`
+  and `/boot/initrd-tree/`, and wants each ESP `initrd.gz` that was a copy
+  of `/boot/initrd.gz` on the source to have the restored one's bytes.
 - btrfs read-only snapshots (AnduinOS's baselines, snapper's): each of the
   source's (`btrfs subvolume list -r`, reached through a mount) must come
   back read-only, its `btrfs filesystem du` exclusive bytes at most twice

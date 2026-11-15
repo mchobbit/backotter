@@ -43,6 +43,22 @@
 # The roots are thin LVs, so vos-root is activated by LVM: refused while a
 # group of that name is active here (another Vanilla OS disk's).
 #
+# Ubuntu Core (docs/design/ubuntu-core.md: uc24, uc24-fde), found by the pc
+# gadget's GPT names ubuntu-seed, ubuntu-boot, ubuntu-save and ubuntu-data:
+# there is no root filesystem (the root is the base snap's squashfs, which
+# snap-bootstrap loop-mounts), so MOUNTPOINT gets a read-only tmpfs (dated
+# 1970) with the four partitions at run/mnt/ubuntu-seed, run/mnt/ubuntu-boot,
+# run/mnt/ubuntu-save and run/mnt/data beneath it: snap-bootstrap's run-mode
+# mount points, the four roots bko-holt dump's backup_sources list
+# (mount_snapcore below).  With full-disk encryption, ubuntu-save and
+# ubuntu-data are LUKS2 volumes (ubuntu-save-enc, ubuntu-data-enc) whose
+# keyslot for the recovery key holds that key's 16 bytes, not its text: --key
+# is then the recovery key's file, `snap recovery --show-keys`' eight groups
+# of five digits (converted here by ubuntu-core/recovery-key-bytes.py, on a
+# pipe to cryptsetup: never on disk, never printed), or the 16 bytes
+# themselves (bko-holt recovery-key-file's).  Without --key an encrypted
+# Ubuntu Core is refused.  vm-chroot refuses it: there is no root to enter.
+#
 # / may be a partition, a logical volume, a btrfs subvolume, or a ZFS dataset.  A ZFS pool is
 # imported from the image's partition only, under a temporary name (so it
 # can't clash with a pool of the host's, and the guest's own name is kept),
@@ -268,18 +284,59 @@ for u in "${!raids[@]}"; do
     udevadm settle
 done
 
+# Ubuntu Core (above): the pc gadget's four GPT names, each once, on this
+# image's partitions (blkid -p: the partition table's entry itself).
+snapcore=""
+declare -A snapcore_part=()
+for p in "${parts[@]}"; do
+    n=$(blkid -p -s PART_ENTRY_NAME -o value "$p" 2>/dev/null || true)
+    case $n in
+        ubuntu-seed|ubuntu-boot|ubuntu-save|ubuntu-data)
+            [[ -z ${snapcore_part[$n]:-} ]] || { undo; die "Ubuntu Core: two partitions named $n (${snapcore_part[$n]}, $p): one Ubuntu Core disk at a time"; }
+            snapcore_part[$n]=$p ;;
+    esac
+done
+[[ ${#snapcore_part[@]} -eq 4 ]] && snapcore=yes
+# snapcore_key: the recovery key in $key as the 16 bytes its LUKS2 keyslot
+# holds, on stdout (a pipe to cryptsetup): converted from the dashed digits
+# by recovery-key-bytes.py's convert(), or a file of 16 bytes as it is.
+# Never echoed: the errors name the file only.
+snapcore_key() {
+    python3 -I - "$(dirname "$(realpath "$0")")/ubuntu-core/recovery-key-bytes.py" "$key" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("recovery_key_bytes", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+data = open(sys.argv[2], "rb").read()
+if len(data) == 16:
+    key = data
+else:
+    try:
+        key = m.convert(data.decode("ascii"))
+    except (UnicodeDecodeError, ValueError) as e:
+        sys.exit(f"vm-mount: {sys.argv[2]} is not an Ubuntu Core recovery key ({e})")
+sys.stdout.buffer.write(key)
+PY
+}
+
 # LUKS partitions, opened with --key; the opened devices count as partitions.
 # open_luks FROM: those from parts[FROM] on.  Called again after LVM below,
 # for LUKS on a logical volume (ABRoot's encrypted /var, on vos-var/var).
+# On Ubuntu Core, with the recovery key's 16 bytes (snapcore_key).
 open_luks() {
     local p name
     for p in "${parts[@]:$1}"; do
         [[ $(blkid -s TYPE -o value "$p" || true) == crypto_LUKS ]] || continue
         [[ -n $key ]] || { echo "vm-mount: $p is LUKS-encrypted; skipped (no --key)" >&2; continue; }
         name=vm-mount-$$-${p##*/}
+        if [[ -n $snapcore ]]; then
+            snapcore_key | cryptsetup open $([[ $ro == yes ]] && echo --readonly) --key-file - "$p" "$name" ||
+                { undo; die "could not unlock $p with the recovery key in $key"; }
+        else
         # The passphrase without the file's final newline, as typed at boot.
         tr -d '\n' <"$key" | cryptsetup open $([[ $ro == yes ]] && echo --readonly) --key-file - "$p" "$name" ||
             { undo; die "could not unlock $p with $key"; }
+        fi
         echo "luks $name" >>"$state"
         udevadm settle || true
         parts+=("/dev/mapper/$name")
@@ -441,9 +498,18 @@ open_luks "$before_lvm"
 # Resolve fstab's device names against this image's partitions only, never
 # the host's disks (a cloned image may share UUIDs with something else).
 resolve() {
-    local spec=$1 p
+    local spec=$1 p k
     # A logical volume by one of the guest's own names for it (above).
     [[ -n ${lvdev[$spec]:-} ]] && { echo "${lvdev[$spec]}"; return; }
+    # A virtio kernel name, /dev/vdXN (Slackware's setup writes fstab by
+    # device names): partition N of the guest's disk X, vda being IMAGE and
+    # vdb on the --disk images in order, as vm-run attaches them.
+    if [[ $spec =~ ^/dev/vd([a-z])([1-9][0-9]*)$ ]]; then
+        k=$(($(printf '%d' "'${BASH_REMATCH[1]}") - 97))
+        p=${devs[k]:-}${devs[k]:+p${BASH_REMATCH[2]}}
+        [[ -n $p && -b $p ]] && { echo "$p"; return; }
+        return 1
+    fi
     for p in "${parts[@]}"; do
         # Both spellings: UUID=... and /dev/disk/by-uuid/... (Ubuntu's installer).
         case $spec in
@@ -936,7 +1002,38 @@ mount_zfs_root() {
     mount_renamed "$name" "$orig"
 }
 
+# Ubuntu Core (above): a read-only tmpfs at MP, dated 1970 so that two
+# mounts of one tree record the same, holding snap-bootstrap's mount points,
+# and each of the gadget's partitions there (ubuntu-save and ubuntu-data
+# through the LUKS2 volumes open_luks opened, when encrypted), each with the
+# filesystem the gadget gives it.  No fstab: the running system's is the
+# base snap's binds and tmpfs, none of them these.
+mount_snapcore() {
+    local r n at p dev t
+    mount -t tmpfs -o mode=0755,size=1m vm-mount-snapcore "$mp" || { undo; die "Ubuntu Core: could not mount a tmpfs at $mp"; }
+    mkdir -p "$mp"/run/mnt/{ubuntu-seed,ubuntu-boot,ubuntu-save,data}
+    touch -d @0 "$mp" "$mp/run" "$mp/run/mnt" "$mp"/run/mnt/*
+    mount -o remount,ro "$mp"
+    for r in ubuntu-seed:ubuntu-seed:vfat ubuntu-boot:ubuntu-boot:ext4 ubuntu-save:ubuntu-save:ext4 ubuntu-data:data:ext4; do
+        IFS=: read -r n at t <<<"$r"
+        p=${snapcore_part[$n]} dev=${snapcore_part[$n]}
+        if [[ $(blkid -s TYPE -o value "$p" 2>/dev/null || true) == crypto_LUKS ]]; then
+            dev=/dev/mapper/vm-mount-$$-${p##*/}
+            [[ -b $dev ]] || { undo; die "Ubuntu Core: $n ($p) is LUKS2-encrypted: give --key, the file of its recovery key (snap recovery --show-keys' digits, or bko-holt recovery-key-file's 16 bytes)"; }
+        fi
+        [[ $(blkid -s TYPE -o value "$dev" 2>/dev/null || true) == "$t" ]] ||
+            { undo; die "Ubuntu Core: $n ($dev) holds $(blkid -s TYPE -o value "$dev" 2>/dev/null || echo nothing), not the gadget's $t"; }
+        mount_fs "$dev" "$mp/run/mnt/$at" "" || { undo; die "Ubuntu Core: could not mount $n ($dev) at /run/mnt/$at"; }
+    done
+    [[ -f $mp/run/mnt/data/system-data/var/lib/snapd/modeenv ]] ||
+        { undo; die "Ubuntu Core: ubuntu-data holds no system-data/var/lib/snapd/modeenv"; }
+}
+
 root=""
+if [[ -n $snapcore ]]; then
+    mount_snapcore
+    root=${snapcore_part[ubuntu-data]}
+fi
 # (Not under the ERR trap: mount_abroot fails by itself, through undo and die.)
 mount_abroot && root=$abroot_root
 for p in "${parts[@]}"; do
@@ -1034,8 +1131,9 @@ if command -v zpool >/dev/null; then
 fi
 
 # The guest's other filesystems, parents before children.
-[[ -n $ostree_dep || -n $abroot_present ]] || fstab_file=${fstab_copy:-$(guest_file "$mp" /etc/fstab)}
+[[ -n $ostree_dep || -n $abroot_present || -n $snapcore ]] || fstab_file=${fstab_copy:-$(guest_file "$mp" /etc/fstab)}
 [[ -z $abroot_present ]] || fstab_file=/dev/null     # mount_abroot mounted the tree
+[[ -z $snapcore ]] || fstab_file=/dev/null           # mount_snapcore did: Ubuntu Core has no fstab of them
 while read -r spec target type options; do
     [[ $target == / || $type == swap || $target != /* || ,$options, == *,noauto,* ]] && continue
     if [[ -n $legacy_root && $type == zfs ]]; then
@@ -1168,3 +1266,4 @@ echo "Mounted $image ($dev, $how) at $mp:"
 findmnt -R -n -o TARGET,SOURCE,FSTYPE "$mp" | sed 's/^/  /'
 [[ -z $ostree_dep ]] || echo "ostree: the default deployment is $ostree_dep (its etc/fstab mounted the rest)"
 [[ -z $abroot_present ]] || echo "ABRoot: the present root (the master grub.cfg's default) is $abroot_present, at /; the future root $abroot_future is at /part-future"
+[[ -z $snapcore ]] || echo "Ubuntu Core: no root filesystem; the gadget's four partitions at /run/mnt/{ubuntu-seed,ubuntu-boot,ubuntu-save,data} on a read-only tmpfs"

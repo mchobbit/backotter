@@ -43,7 +43,8 @@
 # enough), every variant, as Test2's placement keeps them off it; a
 # Linux line (ht1.sh's, not +img) without the rescuer (HT_RESCUER_IMG's, else
 # /bkoscratch/holttest1d/rescuer/rescuer.qcow2) or bin/'s f2fs-tools and
-# jfsutils debs, a Redox or Sculpt one without the rescuer, and a BSD,
+# jfsutils debs, a Redox or Sculpt one without the rescuer (a Qubes OS one
+# without the UEFI rescuer, or on a host without nested KVM), and a BSD,
 # illumos or Haiku guest whose rescuer guest (ht1-bsd.sh's RG: freebsd15-ufs,
 # netbsd11, ...) has no image here.  A line taken
 # that turns out so anyway (the todo changed, or cmp-run.sh refused its
@@ -298,7 +299,7 @@ cant_why() {  # NM GUEST VARIANT D M [OVER]
     local g=$2 v=$3 drv=linux rg="" ri
     case $g in
     freebsd*|hardenedbsd*|ghostbsd*|netbsd*|alpinebsd*|openbsd*|dragonfly*|omnios*|oi*|haiku*) drv=bsd ;;   # ht1.sh's drivers
-    redox|sculpt*) drv=offline ;;
+    redox|sculpt*|qubes*) drv=offline ;;
     esac
     # ht1-bsd.sh's rescuer guest (its RG), booted from the same vms/ (+img's backup and verify too)
     case $g in
@@ -310,6 +311,7 @@ cant_why() {  # NM GUEST VARIANT D M [OVER]
     haiku*) rg=haiku6 ;;
     esac
     ri=${HT_RESCUER_IMG:-$L/rescuer/rescuer.qcow2}   # ht1.sh's and ht1-offline.sh's rescuer
+    [[ $g != qubes* || -n ${HT_RESCUER_IMG:-} ]] || ri=$L/rescuer/rescuer-uefi.qcow2   # Qubes's: UEFI (ht1-offline.sh)
     WHYNOT=""
     if [[ $(guest_arch "$g") != "$HOSTARCH" ]]; then WHYNOT="an $(guest_arch "$g") guest, and this host is $HOSTARCH"
     elif ! has_image "$g"; then WHYNOT="no $W/vms/$g/*.qcow2 here"
@@ -319,6 +321,8 @@ cant_why() {  # NM GUEST VARIANT D M [OVER]
     elif [[ $drv == linux && $v != img ]] && ! has_debs; then WHYNOT="no f2fs-tools and jfsutils debs in $L/bin here"
     elif ((HOSTZFS == 0)) && needs_zfs "$g"; then
         WHYNOT="needs OpenZFS here (NEEDS_ZFS), and this host has no zpool"
+    elif [[ $g == qubes* ]] && ! grep -qs '[1Y]' /sys/module/kvm_amd/parameters/nested /sys/module/kvm_intel/parameters/nested; then
+        WHYNOT="runs Xen nested (Qubes OS), and this host has no kvm_amd/kvm_intel nested=1"
     elif if [[ -n ${6:-} ]]; then ((${6})); else over_ceil "$4" "$5"; fi; then
         WHYNOT="--reserve $4 $5 over this host's ceiling $CEIL"
     fi

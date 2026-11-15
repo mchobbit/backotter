@@ -17,14 +17,18 @@ Discuss and the KDE Linux alpha announcement, all read 2026-11-14. Code
 references are to local `main` at 6a78448. The user approved this spec on
 2026-11-14 with every recommended decision (the last section).
 Status 2026-11-14: all done. N1-N7 in 1edb4b5; N8, BackShot1 on the
-Thinkpad, PASS first try ("What N8 found").
+Thinkpad, PASS first try ("What N8 found"). 2026-11-15: N9, the SticTest1
+entry the user asked for (decision 5): `testvm/stictest1/neon24/` written
+and checked statically, not run; its README row and Test2 registration
+wait for other sessions' edits to those files to land.
 
 ## Summary
 
 - KDE neon User Edition becomes a supported system for bko-holt and both
   archivers, with one QEMU guest, `neon24` (UEFI, Secure Boot, GPT, ESP at
   /boot/efi, ext4 root, a swap file, GRUB through shim), in HoltTest1U and
-  Test2's U family. No SticTest1 entry (decision 5).
+  Test2's U family, and since 2026-11-15 in SticTest1 (decision 5, changed
+  by the user).
 - Nearly everything is already built for Ubuntu: initramfs-tools
   (`update-initramfs`), Ubuntu's signed GRUB and shim, `update-grub`, apt.
 - What's new is small: the os-release ID `neon`; `update-grub` chosen by
@@ -198,9 +202,11 @@ hasn't shipped by mid-2027.
 
 **Tests**
 
-- *SticTest1/SticTest2*: no entry (decision 5). The archivers see Ubuntu
-  24.04's kernel, ext4 and vfat, which `ubuntu24` and `ubuntu26-uefi`
-  already check; EndeavourOS and Manjaro set the precedent.
+- *SticTest1/SticTest2*: at first no entry (decision 5: the archivers
+  see Ubuntu 24.04's kernel, ext4 and vfat, which `ubuntu24` and
+  `ubuntu26-uefi` already check). The user added one on 2026-11-15 (N9):
+  `testvm/stictest1/neon24/`, with its rows in `stic/limits.json` and
+  `stic/manifests.json`.
 - *HoltTest1*: `neon24` in 1U (decision 4), on Chopin and Cinqcent
   (split rule), RAM-first under `cmp-run.sh --reserve` with a size from
   `ram-size.sh`, and its row in `ram-sizes.tsv`.
@@ -386,6 +392,14 @@ decision 3.
   `holt/README.md`, the "What N1/N3/N5 found" sections here, memory note.
 - **N8** (optional, later; 2 h plus the user's install). BackShot1 on the
   Thinkpad with neon, as above.
+- **N9** (added 2026-11-15, decision 5 changed by the user). A SticTest1
+  entry, `testvm/stictest1/neon24/`: kali's check (scratch disk laid out
+  from the guest's GPT, the ESP inside the backed-up tree, FAT attributes)
+  with elementary8's `gptcopy.py`, neon's ESP (`EFI/neon`, `EFI/ubuntu`)
+  and a swap file made like `/swapfile`, swapon'd from each restore; its
+  README row (Cinqcent) and estimate (ubuntu24-uefi's, 374 s), and its
+  Test2 registration (`stic/limits.json`, `stic/manifests.json`, goldens
+  regenerated). Then SticTest1 `neon24` on one host, later, by the user.
 
 Total est. 11 h of work (N1-N7), about 1.5 days with farm waits; N8 apart.
 
@@ -434,7 +448,9 @@ Total est. 11 h of work (N1-N7), about 1.5 days with farm waits; N8 apart.
 5. **SticTest1 entry?** Recommend **none** (Ubuntu's kernel and file
    systems, already checked; keeps SticTest2's cost flat), as for
    EndeavourOS and Manjaro. Alternative: a light entry copied from
-   `ubuntu26-uefi`.
+   `ubuntu26-uefi`. **Changed: the user added a SticTest1 entry on
+   2026-11-15** (step N9), modelled on the Ubuntu UEFI checks (kali's
+   frame, as `elementary8`'s), registered in SticTest2 like the others.
 6. **update-grub for derivatives?** Recommend **the ID list**: add `neon`
    (with `elementary` and `anduinos` if their specs are approved), one
    session making the edit for all of them. No dump or corpus change, and

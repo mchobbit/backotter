@@ -62,7 +62,7 @@ given the key as the guest asks for it:
 
 | File | Guests | At boot |
 |---|---|---|
-| `console-passphrase` | debian13-stack, ubuntu26-luks | typed at the initramfs's prompt on the serial console |
+| `console-passphrase` | debian13-stack, ubuntu26-luks, elementary8-luks | typed at the initramfs's prompt on the serial console |
 | `zfs-passphrase` | ubuntu26-zfsmirror | typed on the serial console, for the LUKS keystore that holds the pool's key |
 | `luks-passphrase` | omarchy | typed at Plymouth's prompt on the keyboard, through QEMU's monitor (`omarchy/type-luks-passphrase.py`) |
 | `luks-keyfile` | alpine324-luks, chimera-uefi, gentoo-systemd (`make-bootstrap.sh`) | nothing typed: the restored initramfs unlocks / with its own copy of the key (`/crypto_keyfile.bin`, `/etc/cryptsetup-keys.d/cryptroot.key`) |

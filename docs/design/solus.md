@@ -458,7 +458,34 @@ run. Fixes, est.:
 
 A `bs1-qemu.py --virtio` rehearsal on `solus49` on both hosts comes first.
 
-## Shared lines (with the other distro sessions)
+**S7's plumbing** (2026-11-15, not run: no rehearsal, no Thinkpad step):
+- `bs1-adopt`: a SOLUS package column, `eopkg it -y` (on failure `eopkg ur`,
+  a whole-system `eopkg up -y`, then again: Solus takes no partial update),
+  for openssh-server, avahi, and python3, util-linux and efibootmgr only if
+  missing, as for the other systems. Before anything is installed it writes
+  `/etc/systemd/system-preset/50-backshot1.preset` (enable sshd.service,
+  avahi-daemon.service, avahi-daemon.socket), so usysconf's preset run keeps
+  them on. No mokutil: BackShot1 never calls it.
+- `bs1-common`: `mount_cbm_esp`, `clr-boot-manager mount-boot` when /boot
+  isn't mounted, then /boot must be on the internal disk. `bs1-backup` runs it
+  in the preflight and phase 1 before the coverage check and the dump, and
+  `bs1-verify` as a check before its dump and file tree. `package_list` reads
+  `/var/lib/eopkg/package`'s NAME-VER-REL directories, as bko-holt's
+  `eopkg_packages` does, instead of `eopkg li -i`: each line then carries
+  the version and release, and no tool's output format is involved.
+- `bs1-manifest`: `SOLUS_KEPT`, HoltTest1's set (`boot/EFI/**`,
+  `boot/loader/**`, `boot/solus-enroll-me.cer`) held by content, size and
+  type, on a baseline with CBM's shim or a Solus kernel; such a baseline must
+  hold SOLUS_REQUIRED and a kernel, an initrd and an entry on the ESP.
+  `boot/loader/random-seed` is held for presence and type only
+  (`SOLUS_PRESENT`): systemd-boot refreshes it at every boot, and BackShot1
+  compares after the restored system's first boot. It must exist as a regular
+  file, but its content, size and mtime may move. HoltTest1 compares the
+  offline tree before any boot, so judge.py keeps holding its bytes.
+- `bs1-qemu.py`: no change. It has no guest list, and its firmware has no
+  Secure Boot, so `solus49`'s `--mok` goes unused. The guest's store isn't
+  copied (no `--no-secure-boot`), and shim's fbx64.efi makes the entry.
+- README: a Solus section. (with the other distro sessions)
 
 Per the notes folder's `elementary-shared-lines.md` and `biglinux-files.md`:
 
@@ -480,7 +507,7 @@ each shared edit.
 |---|---|---|
 | S1 | Fetch the Xfce ISO, `.sha256sum`, `.sha256sum.sign` and Solus's releng key into rebuild-inputs on Chopin (3.8 GB, Decision 5), and verify them. Read the ISO offline: os-release, the live boot (label, kernel, `root=live:`), Calamares's `settings.conf` and modules, the default swap choice, the ESP label, the eopkg DB layout, CBM's and shim's package names. Then write `make-solus.sh` and `solus/install.sh` by Decision 1's path and build `solus49` in /mnt/bko-ram under `cmp-run.sh --reserve 10 4` (WEAR_TAG `build:solus49`). Enroll the MOK, add the `rebuild-one.sh` line, copy to Cinqcent with the same SHA-256, write vm-update's `Linux.eopkg` and the vm-mount ESP rule, and run `vm-update --try`. Settle every *check* and write "What S1 found" here. Done when the guest boots alone under Secure Boot on both hosts and `--try` is ok | 1.0 d |
 | S2 | bko-holt (High-effort subagent): <br>• the `SUPPORTED` row and its tests;<br>• `eopkg_packages()` and its test;<br>• `PACKAGES` and fingerprint.py;<br>• dump's CBM ESP finding and the refusal while `/boot` isn't mounted, with `in_fstab: false`;<br>• `detect_loader` for shim by content or CBM's names, and `boot.loader.manager`;<br>• `prebuilt` for `initrd-com.solus-project.*`;<br>• `bootloader_id`;<br>• load's Solus arm (no bootctl, only `efi_entries`, the notes) and the BIOS refusal;<br>• Solus fake trees in `scenarios.rs` (mounted, unmounted, the fallback-only BootCurrent).<br>Done when `cargo test` passes, and the scenario's plan has no `bootctl` and no dracut, but has the entry and the notes | 0.75 d |
-| S3 | The golden plan from a live dump (after `mount-boot`), and the Test2 registrations: classes, specs, estimates, counts, `S-eopkg`/`L-cbm`/`K-cbm`, p2 goldens, in the batched pass | 0.4 d |
+| S3 | The golden plan from a live dump (after `mount-boot`), and the Test2 registrations: classes, specs, estimates, counts, `S-eopkg`/`L-cbm`/`K-cbm`, p2 goldens, in the batched pass. **Test2 registered 2026-11-15** (uncommitted, solus49 alone, ahead of the batched pass): classes.json (holt.families.Obscure, holt.uefi), holt/spec.json (UEFI, nvboot-efivars.sh), guest/spec.json (pm `eopkg`, S-eopkg, L-cbm, K-cbm, B-lin, M-lin, uefi-sb, harness make-solus.sh, solus/**, in-guest.sh#Linux.eopkg, boot-state.sh, new-guest.sh), known-lines.json's `eopkg` section (S1's install log and the `--try`'s update.log), estimates.tsv (stic 410 s from S4, holt as aerynos's with S5's 14.1 GiB RAM-disk peak as gb_disk, guest 2.0 gm), plan.py's and the README's counts (+1 source, +1 guest), world.py, the tests' counts, the p2 goldens re-blessed (only solus49's lines) | 0.4 d |
 | S4 | SticTest1 entry and runs: both archivers, both hosts, 0 FAIL | 0.35 d |
 | S5 | HoltTest1 1Obscure runs on both hosts with `SOLUS_KEPT`, the signature check, the boot alone under Secure Boot, RAM peaks in `ram-sizes.tsv`, one `vm-update --try` on the restored copy (CBM's first run after a restore), and the GuestTest1 grade | 0.4 d |
 | S6 | Docs: holt/README.md's supported list (and the "ESP out of fstab" step for Solus users), `osrel.rs`'s comment, HoltTest1's 1Obscure row and HoltTest1All, SticTest1's and Test2's READMEs, `layload.md`'s boot stage (the CBM arm), memory (the holttest1d index, a solus-support note) | 0.1 d |

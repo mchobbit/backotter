@@ -51,6 +51,13 @@ if [[ ! -e $mp/etc/fstab && ! -L $mp/etc/fstab && -d $mp/ostree/deploy ]]; then
     ostree=$(python3 "$here/ostree_paths.py" default "$mp") || die "$mp holds ostree deployments, but no default one"
     root=$mp/$ostree
 fi
+# Ubuntu Core (vm-mount's snapcore mode: a tmpfs with the gadget's four
+# partitions under run/mnt): no root filesystem to enter.  The root is the
+# base snap, a squashfs file in ubuntu-data, whose / snap-bootstrap puts
+# together at boot from binds of ubuntu-data's system-data.
+if [[ ! -e $mp/etc && -f $mp/run/mnt/data/system-data/var/lib/snapd/modeenv ]]; then
+    die "$mp is Ubuntu Core's four partitions (run/mnt/ubuntu-seed, ubuntu-boot, ubuntu-save, data), with no root filesystem to chroot into: its / is the base snap (run/mnt/data/system-data/var/lib/snapd/snaps/core*.snap, a squashfs) with ubuntu-data's binds, which only its boot puts together; read the partitions where they are, or boot the guest"
+fi
 [[ -e $root/etc/fstab || -L $root/etc/fstab ]] || die "$mp does not look like a mounted guest (run vm-mount first)"
 abroot=""
 if [[ -z $ostree && -f $mp/usr/share/abroot/abroot.json ]]; then

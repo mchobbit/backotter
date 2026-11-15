@@ -1,7 +1,7 @@
-GuestTest2 plan: base BASE, ledger 72 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 1 of 72 guests, est. 1.0 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+GuestTest2 plan: base BASE, ledger 73 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
+due: 1 of 73 guests, est. 1.0 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   guest:arch  any      guest:7day  its last --try is older than 7 days (2026-10-30)  1.0 gm  history:1
-current: 71
-note: not in any spec: elementary8, elementary8-luks, guix15, guix15-bios, kali, leap16, openbsd8-crypt, solus49, truenas25
+current: 72
+note: not in any spec: elementary8, elementary8-luks, guix15, guix15-bios, kali, leap16, openbsd8-crypt, truenas25
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written

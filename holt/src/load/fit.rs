@@ -857,6 +857,14 @@ impl One<'_> {
         // it is, since the fit never adds free extents to a shrinking disk.
         if new >= old {
             self.put(&pv, &pp, "pe_count", new_count);
+            // A thin pool takes the new room (docs/design/qubes.md, Gate 2
+            // point 4): lvcreate makes it anew, at the fitted size.
+            if new_count > old_count {
+                if let Some(note) = self.grow_pool(&vg, &vp, new_count - old_count, extent) {
+                    self.notes.push(note);
+                    return Ok(format!("LVM ({name})"));
+                }
+            }
             self.notes.push(if new_count > old_count {
                 format!(
                     "the volume group {name} grows by {} ({} extents), which stay free in it: no logical volume changes",
@@ -899,6 +907,7 @@ impl One<'_> {
             if need >= lvs[big].extents {
                 return Err(format!("--fit-largest: {name}/{} is only {}, and {} has to go", lvs[big].name, human(lvs[big].extents * extent), human(need * extent)));
             }
+            self.pool_shrink_ok(&name, &lvs[big].name, lvs[big].extents, need, extent)?;
             shrunk = Some((big, need));
         }
         // The extents to drop: every free one, or the highest free ones.
@@ -942,6 +951,11 @@ impl One<'_> {
             let mut linear = true;
             for (j, seg) in lv.get("segments").and_then(Value::as_array).cloned().unwrap_or_default().iter().enumerate() {
                 let ty = s(seg, "type").unwrap_or_default();
+                // A thin pool and its thin LVs hold no extents of their own
+                // (the pool's data and metadata LVs do).
+                if ty == "thin" || ty == "thin-pool" {
+                    continue;
+                }
                 if ty != "striped" {
                     return Err(format!("--fit-largest: the logical volume {name} has a {ty} segment, and version 1 fits linear ones"));
                 }
@@ -974,7 +988,9 @@ impl One<'_> {
     /// The one logical volume to shrink: the largest, linear, with a
     /// filesystem the fit can resize.
     fn largest_lv(&self, lvs: &[Lv], vg: &str) -> Result<usize, String> {
-        let mut by_size: Vec<&Lv> = lvs.iter().collect();
+        // A pool's metadata and spare never shrink; its data LV stands for
+        // the pool (pool_shrink checks it against the data in use).
+        let mut by_size: Vec<&Lv> = lvs.iter().filter(|l| l.extents > 0 && !l.name.ends_with("_tmeta") && !l.name.ends_with("_pmspare")).collect();
         by_size.sort_by(|a, b| b.extents.cmp(&a.extents).then(a.name.cmp(&b.name)));
         let Some(big) = by_size.first() else {
             return Err(format!("--fit-largest: the volume group {vg} has no logical volume to shrink"));
@@ -985,6 +1001,9 @@ impl One<'_> {
         }
         if !big.linear {
             return Err(format!("--fit-largest: {vg}/{} is striped, and version 1 shrinks a linear one", big.name));
+        }
+        if self.pool_of_data(vg, &big.name).is_some() {
+            return Ok(big.i);
         }
         let Some((_, c)) = self.lv_device(vg, &big.name) else {
             return Err(format!("--fit-largest: the dump doesn't say what's on {vg}/{}", big.name));
@@ -1005,6 +1024,65 @@ impl One<'_> {
         let all = self.v.at(&["storage", "dm_devices"]).and_then(Value::as_array)?;
         let i = all.iter().position(|d| d.at(&["dm", "vg"]).and_then(Value::as_str) == Some(vg) && d.at(&["dm", "lv"]).and_then(Value::as_str) == Some(lv))?;
         Some((i, all[i].get("content").cloned().unwrap_or(Value::Null)))
+    }
+
+    /// The index (in its group's logical_volumes) of the thin pool whose
+    /// data LV is DATA, if it is one.
+    fn pool_of_data(&self, vg: &str, data: &str) -> Option<usize> {
+        let g = self.v.at(&["storage", "lvm", "volume_groups"]).and_then(Value::as_array)?.iter().find(|g| s(g, "name").as_deref() == Some(vg))?;
+        g.get("logical_volumes").and_then(Value::as_array)?.iter().position(|l| {
+            l.at(&["segments", "0", "type"]).and_then(Value::as_str) == Some("thin-pool") && l.at(&["segments", "0", "pool"]).and_then(Value::as_str) == Some(data)
+        })
+    }
+
+    /// A thin pool may give up NEED of its data LV's EXTENTS only down to
+    /// the data its source had in use (the dump's data_used_bytes), never
+    /// below; a dump that doesn't say is refused.
+    fn pool_shrink_ok(&self, vg: &str, data: &str, extents: u64, need: u64, extent: u64) -> Result<(), String> {
+        let Some(pi) = self.pool_of_data(vg, data) else { return Ok(()) };
+        let pool = self.v.at(&["storage", "lvm", "volume_groups"]).and_then(Value::as_array).and_then(|a| a.iter().find(|g| s(g, "name").as_deref() == Some(vg))).and_then(|g| g.at(&["logical_volumes", &pi.to_string()])).cloned().unwrap_or(Value::Null);
+        let pn = s(&pool, "name").unwrap_or_default();
+        let Some(used) = u(&pool, "data_used_bytes") else {
+            return Err(format!("--fit-largest: thin pool {vg}/{pn} would have to shrink, and the dump doesn't say how much of its data was in use (no data_used_bytes), so it can't tell whether it fits"));
+        };
+        let left = (extents - need) * extent;
+        if left < used {
+            return Err(format!("--fit-largest: thin pool {vg}/{pn} would shrink to {}, below the {} of data its source had in use", human(left), human(used)));
+        }
+        Ok(())
+    }
+
+    /// The VG grew by GAIN extents: its largest thin pool (by data) takes
+    /// them, its data LV's last segment and the pool both GAIN longer.
+    /// None when the group has no thin pool.
+    fn grow_pool(&mut self, vg: &Value, vp: &[String], gain: u64, extent: u64) -> Option<String> {
+        let name = s(vg, "name").unwrap_or_default();
+        let lvs = vg.get("logical_volumes").and_then(Value::as_array).cloned().unwrap_or_default();
+        let (pi, pool) = lvs
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.at(&["segments", "0", "type"]).and_then(Value::as_str) == Some("thin-pool"))
+            .max_by_key(|(_, l)| (u(l, "size_bytes").unwrap_or(0), std::cmp::Reverse(s(l, "name").unwrap_or_default())))?;
+        let data = pool.at(&["segments", "0", "pool"]).and_then(Value::as_str)?.to_string();
+        let di = lvs.iter().position(|l| s(l, "name").as_deref() == Some(data.as_str()))?;
+        let dsegs = lvs[di].get("segments").and_then(Value::as_array).cloned().unwrap_or_default();
+        let last = dsegs.len().checked_sub(1)?;
+        let dp = under(vp, &["logical_volumes", &di.to_string()]);
+        let pp = under(vp, &["logical_volumes", &pi.to_string()]);
+        let n = u(&dsegs[last], "extent_count").unwrap_or(0);
+        self.put(&dsegs[last], &under(&dp, &["segments", &last.to_string()]), "extent_count", n + gain);
+        let total = u(&lvs[di], "size_bytes").unwrap_or(0) + gain * extent;
+        self.put(&lvs[di], &dp, "size_bytes", total);
+        let pseg = pool.at(&["segments", "0"]).cloned().unwrap_or(Value::Null);
+        let pn = u(&pseg, "extent_count").unwrap_or(0);
+        self.put(&pseg, &under(&pp, &["segments", "0"]), "extent_count", pn + gain);
+        self.put(pool, &pp, "size_bytes", total);
+        Some(format!(
+            "the volume group {name} grows by {} ({gain} extents), all of it to thin pool {name}/{}, whose data is made {} (its metadata as on the source)",
+            human(gain * extent),
+            s(pool, "name").unwrap_or_default(),
+            human(total)
+        ))
     }
 
     /// Every logical volume's segments once GONE's extents are dropped and
@@ -1063,6 +1141,15 @@ impl One<'_> {
             }
             // The volume that shrank: its device and its filesystem too.
             self.put(&all[lv.i], &lp, "size_bytes", extents * extent);
+            // A thin pool's data LV: the pool shrinks with it, and nothing
+            // on it is a filesystem (load makes the pool anew).
+            if let Some(pi) = self.pool_of_data(&name, &lv.name) {
+                let pp = under(vp, &["logical_volumes", &pi.to_string()]);
+                self.put(&all[pi], &pp, "size_bytes", extents * extent);
+                let seg = all[pi].at(&["segments", "0"]).cloned().unwrap_or(Value::Null);
+                self.put(&seg, &under(&pp, &["segments", "0"]), "extent_count", extents);
+                continue;
+            }
             let Some((di, c)) = self.lv_device(&name, &lv.name) else { continue };
             let dp = path(&["storage", "dm_devices", &di.to_string()]);
             let d = self.v.at(&["storage", "dm_devices", &di.to_string()]).cloned().unwrap_or(Value::Null);
@@ -1910,9 +1997,11 @@ mod tests {
         ))
         .unwrap();
         assert!(refused(&two, smaller, 50).contains("has 2 physical volumes"));
-        // A thin pool, which vgcfgrestore's own metadata can't be rebuilt from.
+        // Thin pools and thin LVs hold no extents of their own: with
+        // nothing else in the group, nothing can give any up.
         let thin = crate::json::parse(&lvm_disk(0).build().compact().replace(r#""type":"striped""#, r#""type":"thin-pool""#)).unwrap();
-        assert!(refused(&thin, smaller, 50).contains("has a thin-pool segment"));
+        let e = refused(&thin, smaller, 50);
+        assert!(e.contains("--fit-largest: ") && !e.contains("has a thin-pool segment"), "{e}");
     }
 
     #[test]

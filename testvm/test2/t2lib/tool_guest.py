@@ -335,14 +335,14 @@ def sweep(work, hroot, keep_days=KEEP_DAYS_DEFAULT, ram="/mnt/bko-ram", now=None
         finally:
             if lock is not None and lock >= 0:
                 os.close(lock)
-    # a console probe's RAM folder, its owner dead (a TERM cleans up after itself; a KILL can't)
+    # a console probe's RAM folder (or update-sculpt.sh's), its owner dead (a TERM cleans up after itself; a KILL can't)
     real_work = os.path.realpath(work)
     for d in sorted(glob.glob(os.path.join(ram, "t2-guest-probe.*"))):
         owner = _json(os.path.join(d, "owner.json"))
         if not owner or os.path.realpath(str(owner.get("work"))) != real_work:
             continue   # another world's, or not ours to judge
-        if "probe-" in (pid_cmdline(owner.get("pid")) or ""):
-            out["kept"].append(f"{d}: its probe runs")
+        if any(x in (pid_cmdline(owner.get("pid")) or "") for x in ("probe-", "update-sculpt")):
+            out["kept"].append(f"{d}: its probe or update runs")
             continue
         if any(qemu_holds(os.path.join(root, f)) for root, _d, fs in os.walk(d) for f in fs if f.endswith(".qcow2")):
             out["kept"].append(f"{d}: a QEMU holds it")

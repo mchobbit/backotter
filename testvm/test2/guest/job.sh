@@ -2,7 +2,8 @@
 # GuestTest2's job on a host (contract 2.1): guest/job.sh MODE GUEST RUN ATTEMPT OUT, under
 # cmp-run.sh --reserve, from the run's private copy (update: from the synced tree).
 #   MODE    try (vm-update --try), probe (--probe), update (the real form, with --merge-gate)
-#           or console (redox and sculpt2610: no SSH)
+#           or console (redox and sculpt2610: no SSH); console-update (sculpt2610 in an update round:
+#           update-sculpt.sh, testvm/sculpt-update in vm-update's place)
 #   OUT     this attempt's records: HOST_ROOT/runs/RUN[-rA]/guest/GUEST
 # It composes the hook files, runs vm-update, keeps a failed run's state, and writes the row
 # with t2-host row guest (row.id: its id; row-summary.json: what the Mac reads).
@@ -107,20 +108,28 @@ console)
         trap on_term TERM INT HUP
         run_child "$probe" "$G" "$OUT"
     fi ;;
+console-update)
+    case $G in
+    sculpt*)
+        trap on_term TERM INT HUP     # to update-sculpt.sh alone, which passes it on to sculpt-update once
+        run_child "$here/update-sculpt.sh" "$G" "$OUT" ;;
+    *) echo "job.sh: no console update for $G" >&2; rc=1 ;;
+    esac ;;
 *)
     echo "job.sh: unknown mode $MODE" >&2; exit 2 ;;
 esac
 
 trap '' TERM INT HUP   # the failed state and the row get written, inside this reservation (timeout's own child still dies on time)
 t2host=(python3 -B "$T2/t2-host")
-if [[ $rc -ne 0 && $MODE != update && $MODE != console ]]; then
+case $MODE in try|probe) keeps=1 ;; *) keeps=0 ;; esac   # a failed run's state: vm-update's --try and --probe
+if [[ $rc -ne 0 && $keeps -eq 1 ]]; then
     "${t2host[@]}" tool guest failed-state --guest "$G" --run "$RUN" --attempt "$A" --out "$OUT" ||
         echo "job.sh: failed-state didn't finish" >&2
 fi
 timeout -k 5 300 "${t2host[@]}" row guest --guest "$G" --run "$RUN" --attempt "$A" --out "$OUT" --mode "$MODE" --rc "$rc" \
     ${CELLS:+--cells "$CELLS"} > "$OUT/row.id"
 wrc=$?
-if [[ $MODE != update && $MODE != console ]]; then
+if [[ $keeps -eq 1 ]]; then
     "${t2host[@]}" tool guest failed-state --guest "$G" --run "$RUN" --attempt "$A" --out "$OUT" --after-row ||
         echo "job.sh: failed-state didn't finish" >&2
 fi

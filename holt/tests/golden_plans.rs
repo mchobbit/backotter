@@ -666,6 +666,14 @@ fn golden_invariant_root_mounted() {
     // A mkdir of the target isn't a mount.
     let mk = Planned { out: format!("# ---- mount ----\nmkdir -p {TARGET}\n"), ..zfs(false) };
     assert!(sec(&mk).is_some());
+    // Ubuntu Core: no /, its four run-mode roots under run/mnt; three of
+    // them aren't enough, and nor are the four without boot.snapcore.
+    let uc = json::parse(r#"{"boot": {"snapcore": {"encrypted": false}}}"#).unwrap();
+    let four = |roots: &[&str]| Planned { out: format!("# ---- mount ----\n{}", roots.iter().map(|r| format!("mount -t ext4 -o defaults /dev/sdq3 {TARGET}/run/mnt/{r}\n")).collect::<String>()), ..zfs(false) };
+    let all = four(&["data", "ubuntu-boot", "ubuntu-save", "ubuntu-seed"]);
+    assert_eq!(root_mounted_by(&uc, &Sections::of(&all.out)), Ok("snapcore"));
+    assert!(root_mounted(&uc, &Sections::of(&four(&["data", "ubuntu-boot", "ubuntu-seed"]).out)).is_some());
+    assert!(root_mounted(&dump, &Sections::of(&all.out)).is_some());
 }
 
 /// P with NOTE added to its header's Notes.
@@ -720,6 +728,13 @@ fn golden_invariant_every_fstab_mount_planned() {
     assert!(c.skipped.iter().any(|s| s.contains("/x ") && s.contains("bind")), "{:?}", c.skipped);
     assert!(has(&c, "every fstab mount planned: fstab's /data"), "{:?}", c);
     assert_eq!(unescape("/srv/my\\040disk"), "/srv/my disk");
+    // Ubuntu Core's / is the base snap: skipped there, and only there.
+    let root = r#"{"spec": "/dev/root", "file": "/", "type": "rootfs", "options": "defaults", "resolves_to": null}"#;
+    let uc = json::parse(&format!(r#"{{"boot": {{"snapcore": {{}}}}, "storage": {{"fstab": [{root}]}}}}"#)).unwrap();
+    let (bad, skipped, n) = fstab_planned_n(&uc, &Sections::of(""));
+    assert!(bad.is_empty() && n == 0 && skipped[0].contains("Ubuntu Core's /"), "{bad:?} {skipped:?}");
+    let other = json::parse(&format!(r#"{{"storage": {{"fstab": [{root}]}}}}"#)).unwrap();
+    assert_eq!(fstab_planned_n(&other, &Sections::of("")).0.len(), 1);
 }
 
 #[test]
@@ -1161,4 +1176,13 @@ fn golden_corpus_holds_together() {
     assert_eq!(expected_from(&dir.path().join("none.json")).unwrap(), None);
     std::fs::write(dir.path().join("bad.json"), r#"{"holt": {}}"#).unwrap();
     assert!(expected_from(&dir.path().join("bad.json")).unwrap_err().contains("no holt.families"));
+}
+
+/// common::sha256_hex (the kept LUKS2 headers' test files): FIPS 180-4's
+/// vectors, and one of two blocks.
+#[test]
+fn golden_sha256_vectors() {
+    assert_eq!(common::sha256_hex(b""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    assert_eq!(common::sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    assert_eq!(common::sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"), "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
 }

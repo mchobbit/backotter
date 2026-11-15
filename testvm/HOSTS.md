@@ -134,7 +134,10 @@ vm-update's format, so the new generation reaches the cache hosts the same
 way: `vm-store publish sculpt2610` on Chopin (`sculpt-update --publish`
 does it), which then runs `vm-store link sculpt2610` on each cache host.
 `sculpt-update --check vms/sculpt2610` says, on any host, whether a newer
-image or release is out.
+image or release is out. `t2 GuestTest2 update` updates it too, by
+sculpt-update on Chopin as a job of the round (testvm/test2/README.md), but
+doesn't publish: `vm-store publish sculpt2610` on Chopin after the round.
+Every cache host links it (`vms/sculpt2610` on Cinqcent, Copland and Cage).
 
 **Small hosts** (Copland, Cage, and Czerny later): 27 GiB of memory and a 10G
 RAM disk. Their ceiling is 9.0 11.2 (9.0 9.2 before their `base_gib` became 4), and
@@ -197,8 +200,8 @@ plan says so. A cell is kept off a host for any of these reasons:
 - **The guest is missing.** A host without the fleet role lacks a guest the
   cell boots. A fleet host is assumed to hold every guest.
 - **No host ZFS.** The cell's source is in `classes.json` `holt.needs_host_zfs`:
-  cachyos-zfs, chimera-zfs, debian13-zfs, proxmox9, proxmox9-mirror, ubuntu24,
-  ubuntu26-zfs, ubuntu26-zfsmirror. This
+  cachyos-zfs, chimera-zfs, debian13-zfs, proxmox9, proxmox9-mirror, truenas25,
+  truenas25-mirror, ubuntu24, ubuntu26-zfs, ubuntu26-zfsmirror. This
   applies to every variant, `+img` included.
 - **No rescuer or debs.** A holt cell needs HoltTest's rescuer, its debs, or
   both, and the host lacks one it needs. A Linux source needs both, unless it

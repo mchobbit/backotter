@@ -315,6 +315,12 @@ efivarfs bound in):
      /boot on btrfs, `btrfs filesystem defragment --nocomp -r` of /boot
      and /usr/share/grub follows, as its installer's `btrfs-fix` does, so
      GRUB reads its files uncompressed.
+     GRUB 2 through shim with `/boot/grub2` (Fedora, Rocky, openSUSE
+     Tumbleweed and Leap 16, docs/design/leap16.md) runs no
+     `grub2-install` or `shim-install`: the restored ESP already holds
+     shim, the signed GRUB and MokManager (openSUSE's `EFI/opensuse` and
+     the fallback `EFI/boot`), which either would rewrite, so only
+     `grub2-mkconfig -o /boot/grub2/grub.cfg` and the boot entries run.
      On AnduinOS (`boot.loader.mok` recorded, or shim and `anduinos-grub`) it runs no
      `--target=x86_64-efi` install: the restored ESP already holds shim and
      the GRUB signed by the machine's own MOK, which a fresh `grub-install`
@@ -401,6 +407,28 @@ plan refuses an ABRoot dump with `operation.lock` (an upgrade was
 running), BIOS boot, ABRoot v1's `/.system` or a layout without thin
 provisioning and two roots, no grub.cfg default, a default leading to an
 empty root, and `--new-uuids`.
+
+A transactional-update system (openSUSE MicroOS and Aeon; dump's
+`boot.transactional`: `/` read-only in fstab, a read-only snapper slot at
+`/`, tukit installed; docs/design/aeon.md, "The transactional arm") takes
+its own arm before the Fedora and via-shim systemd-boot ones, and likewise
+regenerates nothing in a snapshot: no chroot, initramfs, `grub2-mkconfig`,
+`grub2-install`, `shim-install`, `sdbootutil` or relabel of the root.  It
+checks instead that the restored boot files lead to restored kernels and
+subvolumes and name only the filesystems and LUKS containers load made:
+GRUB (MicroOS) the ESP's stub, the booted slot's `grub.cfg` and each
+`grub-snapshot.cfg`; BLS (Aeon) each entry's kernel and initrd on the ESP
+and its `rootflags=subvol=`, an entry for the default slot (its boot
+counter, `+LEFT-DONE`, taken off), and the slot's `usr/lib/modules/KVER`
+for each `/DIR/KVER/linux-*` kernel.  A mismatch stops the stage.  It
+rewrites health-checker's `LAST_WORKING_BTRFS_ID` (GRUB's path; BLS keeps
+none) to the restored ID of `LAST_WORKING_SNAPSHOT`, labels the booted
+slot's mount points the backup couldn't see, writes the source's BIOS GRUB
+back where the disk has one, then the UEFI entries, the log in
+/var/log/bko-holt (in `@/var`) and the tail.  A pending update stays
+pending, and the plan says which slot the restored machine boots; on BLS
+it also says that sdbootutil's default (`LoaderEntryDefault`) is NVRAM's,
+not restored, and what a TPM2-sealed LUKS2 root needs after the restore.
 
 ### UEFI boot entries
 

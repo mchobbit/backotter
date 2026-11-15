@@ -51,6 +51,10 @@ disk=$(internal_disk) || die "no single disk has serial $INTERNAL_SERIAL"
 on_disk "$(root_source)" "$disk" || die "$(root_mount) isn't on $disk"
 # An ESP on an automount appears only when something looks at it.
 ls /boot/efi /efi /boot >/dev/null 2>&1
+# Solus's ESP, out of fstab, at /boot by clr-boot-manager mount-boot, for the
+# coverage check, the dump and the tree (bs1-common).
+esp=$(mount_cbm_esp "$disk") || die "Solus's ESP: $esp"
+[[ -z $esp ]] || say "$esp"
 # ABRoot's other root and init LV are mounted by nothing: checked once the
 # dump has named them (its backup_sources' mount hints), below.
 is_abroot || check_coverage "$disk"

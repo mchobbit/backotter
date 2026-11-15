@@ -48,7 +48,7 @@ def _args(argv):
     p.add_argument("--run")
     p.add_argument("--attempt", type=int, default=1)
     p.add_argument("--out", required=True)
-    p.add_argument("--mode", default="try", choices=("try", "probe", "update", "console"))
+    p.add_argument("--mode", default="try", choices=("try", "probe", "update", "console", "console-update"))
     p.add_argument("--rc", type=int, default=0)
     p.add_argument("--cells")
     p.add_argument("--by-hand", action="store_true")
@@ -210,7 +210,22 @@ def judge_job(guest, mode, result, out, entry, policy, classed, updates, rc, sto
             harness_why = f"the console probe's output: {why}"
             fail_needs(["new:probe"], f"hook probe: {why}")
         else:
-            add({"new:probe": J.probe_need(J.parse_sections(t))})
+            secs = J.parse_sections(t)
+            add({"new:probe": J.probe_need(secs)})
+            if entry.get("kind") == "sculpt":   # sculpt-update --check: a stale image or a new release is a note
+                add({"image:current": J.update_check_need(secs)})
+        return needs, details, harness_why, hook_failed
+
+    if mode == "console-update":   # update-sculpt.sh: sculpt-update, which boots its update before it merges
+        for n in J.IMAGE_NEEDS[:2] + J.IMAGE_NEEDS[3:] + J.AFTER_NEEDS:
+            needs[n], details[n] = "SKIP", J.skip("no SSH: sculpt-update's boot of the update (sculpt-check.sh) is its check")
+        if not result:
+            return needs, details, f"no result.json in {out} (exit {rc})", hook_failed
+        if rc != 0 and stopped_mark:
+            return needs, details, "stopped from outside", hook_failed
+        why = (result.get("merge") or {}).get("why")
+        needs["try"] = "PASS" if rc == 0 else "FAIL"
+        details["try"] = J.Need(needs["try"], None, [] if rc == 0 else [why or f"sculpt-update exit {rc}"])
         return needs, details, harness_why, hook_failed
 
     if not result:

@@ -226,9 +226,21 @@ impl Ctx<'_> {
     fn resolve(&self, sys: &Sys, spec: &str) -> Option<String> {
         let (key, val) = spec.split_once('=').unwrap_or(("", spec));
         let val = val.trim_matches('"');
+        // Two devices can hold one filesystem UUID or label (a thin
+        // snapshot of an LV, docs/design/qubes.md): the one mounted wins.
+        // (Only over an unmounted LV found first: elsewhere the first, as
+        // before.)
+        let mounted = |d: &&Dev| self.mounts.iter().any(|m| m.devno == d.b.devno);
+        let pick = |want: &dyn Fn(&Dev) -> bool| {
+            let first = self.devs.iter().find(|d| want(d));
+            match first {
+                Some(f) if f.b.dm_uuid.as_deref().is_some_and(|u| u.starts_with("LVM-")) && !mounted(&f) => self.devs.iter().filter(|d| want(d)).find(mounted).or(first),
+                _ => first,
+            }
+        };
         let found = match key {
-            "UUID" => self.devs.iter().find(|d| d.fs_uuid().is_some_and(|u| u.eq_ignore_ascii_case(val))),
-            "LABEL" => self.devs.iter().find(|d| d.fs_label().as_deref() == Some(val)),
+            "UUID" => pick(&|d: &Dev| d.fs_uuid().is_some_and(|u| u.eq_ignore_ascii_case(val))),
+            "LABEL" => pick(&|d: &Dev| d.fs_label().as_deref() == Some(val)),
             "PARTUUID" => self.devs.iter().find(|d| self.partition_uuid(d).is_some_and(|u| u.eq_ignore_ascii_case(val))),
             "PARTLABEL" => self.devs.iter().find(|d| self.partition_label(d).as_deref() == Some(val)),
             "" if val.starts_with("/dev/") => {
@@ -1353,6 +1365,9 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     if !sys.privileged {
         sys.warn("not running as root: partition tables, superblocks and LVM/ZFS labels were not read; device contents come from udev's database");
     }
+    // LVs that vgchange -ay skips (activation skip), active read-only while
+    // the dump reads them (crate::qubes).
+    let activated = crate::qubes::activate_skipped(sys);
     let mut scanned = blockdev::scan(sys);
     if !only.is_empty() {
         let left_out: Vec<String> = scanned.iter().filter(|b| is_whole_disk(b) && !only.contains(&b.name)).map(|b| b.name.clone()).collect();
@@ -1377,7 +1392,12 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     };
     let disks = section(&[Kind::Disk, Kind::Nbd, Kind::Ram], &|_| None);
     let md = section(&[Kind::Md], &|d| Some(("md", md_json(sys, d))));
-    let dm = section(&[Kind::Dm], &|d| Some(("dm", dm_json(d))));
+    let mut dm = section(&[Kind::Dm], &|d| Some(("dm", dm_json(d))));
+    // Thin usage, Qubes's volumes and the raw volumes (crate::qubes).
+    let mut lvm = lvm_json(&ctx);
+    crate::qubes::thin_usage(sys, &mut lvm, &dm);
+    let qubes = crate::qubes::read(sys, os.and_then(|o| o.get("ID")));
+    let raw_sources = crate::qubes::raw_volumes(&mut dm, &lvm, qubes.as_ref());
     let loops = section(&[Kind::Loop], &|d| Some(("backing_file", Value::from(d.b.loop_backing_file.clone()))));
     let other = section(&[Kind::Zram, Kind::Rom, Kind::Floppy], &|_| None);
 
@@ -1534,18 +1554,28 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         .set("dm_devices", dm)
         .set("loop_devices", loops)
         .set("other_devices", other)
-        .set("lvm", lvm_json(&ctx))
+        .set("lvm", lvm)
         .set("zfs", zfs)
         .set("btrfs", btrfs)
         .set("xfs_external_logs", xfs_external_logs(sys, &ctx))
         .set("mounts", mounts_json)
         .set("physical_root", physical_root.clone())
-        .set("backup_sources", sources.iter().map(BackupSource::to_json).collect::<Vec<_>>())
+        .set("backup_sources", {
+            let mut all: Vec<Value> = sources.iter().map(BackupSource::to_json).collect();
+            // (Ubuntu Core's are in the gadget's order: left as they are
+            // where there's no raw volume.)
+            if !raw_sources.is_empty() {
+                all.extend(raw_sources);
+                all.sort_by(|a, b| a.get("path").and_then(Value::as_str).cmp(&b.get("path").and_then(Value::as_str)));
+            }
+            all
+        })
         .set("swaps", swaps)
         .set("fstab", fstab)
         .set("crypttab", crypttab)
         .set("mdadm_conf", mdadm_conf)
-        .set_some("luks_headers", (!luks_headers.is_empty()).then_some(luks_headers));
+        .set_some("luks_headers", (!luks_headers.is_empty()).then_some(luks_headers))
+        .set_some("qubes", qubes);
     let ostree_json = ostree.then(|| crate::ostree::json(sys, physical_root.as_deref().unwrap_or(crate::ostree::SYSROOT)));
     let proxmox = crate::boot::proxmox_boot_json(sys, &packages, &|spec: &str| ctx.resolve(sys, spec), &esps);
     // TrueNAS (crate::truenas): its BEs and the ESPs of its boot-pool
@@ -1569,10 +1599,15 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         o.retain(|(k, _)| k != "product");
         o.push(("product".into(), Value::from(p)));
     }
+    if let (Some(p), Value::Obj(o)) = (crate::qubes::product(os.and_then(|o| o.get("ID")), os.and_then(|o| o.get("VERSION_ID"))), &mut os_json) {
+        o.retain(|(k, _)| k != "product");
+        o.push(("product".into(), Value::from(p)));
+    }
     let boot = crate::abroot::add_to_boot(boot, abroot.as_ref());
     let boot = crate::truenas::add_to_boot(boot, truenas.as_ref());
     let boot = crate::transactional::add_to_boot(boot, transactional);
     let boot = crate::snapcore::add_to_boot(boot, snapcore.as_ref());
+    let boot = crate::qubes::add_to_boot(boot, crate::qubes::xen_json(sys));
     let boot = cbm_esps(boot, &ctx, sys, &packages, &fstab_resolved);
 
     let mut out = Obj::new()
@@ -1586,6 +1621,7 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         .set("firmware", crate::efi::firmware_json(sys))
         .set("storage", storage)
         .set("boot", boot);
+    crate::qubes::deactivate(sys, &activated);
     out.put("warnings", sys.warnings());
     out.build()
 }

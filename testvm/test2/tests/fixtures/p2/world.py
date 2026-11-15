@@ -1,8 +1,8 @@
 """A synthetic world for P2's tests (U2.2-U2.6): a fixture checkout (git), BKO_GIT's three
 forks, both hosts' facts and a seeded ledger.  Nothing here touches a host or a default root.
 
-    w = World(tmpdir)            the checkout: 47 SticTest checks, 71 HoltTest sources and 9
-                                 variants, 13 gate cells, 72 guests, 7 images, with the real classes.json,
+    w = World(tmpdir)            the checkout: 47 SticTest checks, 75 HoltTest sources and 9
+                                 variants, 13 gate cells, 77 guests, 7 images, with the real classes.json,
                                  estimates.tsv, drive.py, affected.sh and ram-sizes.tsv
     w.facts()                    {host: facts}, as facts_host.py gives them
     w.ctx(rows, facts=..., **options)   a plan.Ctx
@@ -30,40 +30,40 @@ from t2lib import ledger, plan, words   # noqa: E402
 HOSTS = ("chopin", "cinqcent")
 OSES = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "omnios", "illumos", "haiku")
 STIC_OS = {"freebsd15": "freebsd", "freebsd15-ufs": "freebsd", "hardenedbsd15": "freebsd", "ghostbsd26": "freebsd",
-           "ghostbsd26-zfs": "freebsd", "freebsd14": "freebsd", "freebsd15-geli": "freebsd", "netbsd11": "netbsd",
+           "ghostbsd26-zfs": "freebsd", "hardenedbsd15-zfs": "freebsd", "freebsd14": "freebsd", "freebsd15-geli": "freebsd", "netbsd11": "netbsd",
            "alpinebsd": "netbsd", "openbsd8": "openbsd", "dragonfly6": "dragonfly", "omnios58": "omnios",
            "oi2610": "omnios", "haiku6": "haiku"}
 GUESTS = ("aerynos alpine324 alpinebsd arch artix-dinit artix-s6 cachyos debian12 debian13 debian13-stack debian13-zfs "
           "devuan6 dragonfly6 fedora44 fedora44-raid fedora44-uefi freebsd14 freebsd15 freebsd15-builder "
-          "freebsd15-geli freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs haiku6 hardenedbsd15 mint22 mx25 "
+          "freebsd15-geli freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs haiku6 hardenedbsd15 hardenedbsd15-zfs mint22 mx25 "
           "netbsd11 nixos2605 omarchy omnios58 omnios58-mirror openbsd8 pop24 redox rocky10 rocky10-lvm "
           "rocky10-raid5 sculpt2610 tumbleweed ubuntu24 ubuntu26-raid ubuntu26-uefi ubuntu26-zfs ubuntu26-zfsmirror "
           "void-musl zorin18 endeavouros endeavouros-grub manjaro ubuntu26-luks chimera kinoite44 chimera-uefi "
-          "chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 oi2610-bios pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos ubuntu24-uefi ubuntu24-luks").split()
+          "chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 oi2610-bios pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos aeon ubuntu24-uefi ubuntu24-luks solus49 elementary8 elementary8-luks").split()
 UEFI = set("aerynos alpinebsd debian13-stack fedora44-raid fedora44-uefi freebsd15-geli omarchy pop24 ubuntu26-raid "
            "ubuntu26-uefi ubuntu26-zfs endeavouros endeavouros-grub manjaro ubuntu26-luks kinoite44 chimera-uefi "
-           "chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos ubuntu24-uefi ubuntu24-luks".split())
+           "chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos aeon ubuntu24-uefi ubuntu24-luks solus49 elementary8 elementary8-luks".split())
 PLATS = words.PLATS
 NEW_GUESTS = set("endeavouros endeavouros-grub manjaro ubuntu26-luks chimera kinoite44 fedora44-raid ubuntu26-raid rocky10-raid5 freebsd15-mirror "
-                 "omnios58-mirror chimera-uefi chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 oi2610-bios pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos ubuntu24-uefi ubuntu24-luks".split())
+                 "omnios58-mirror chimera-uefi chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 oi2610-bios pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos aeon ubuntu24-uefi ubuntu24-luks solus49 elementary8 elementary8-luks hardenedbsd15-zfs".split())
 PM = {"apt": "debian12 debian13 debian13-stack debian13-zfs devuan6 mint22 mx25 pop24 ubuntu24 ubuntu26-raid ubuntu26-uefi "
-             "ubuntu26-zfs ubuntu26-zfsmirror zorin18 ubuntu26-luks anduinos2 neon24 pikaos4 pikaos4-luks proxmox9 proxmox9-mirror ubuntu24-uefi ubuntu24-luks",
+             "ubuntu26-zfs ubuntu26-zfsmirror zorin18 ubuntu26-luks anduinos2 neon24 pikaos4 pikaos4-luks proxmox9 proxmox9-mirror ubuntu24-uefi ubuntu24-luks elementary8 elementary8-luks",
       "dnf": "fedora44 fedora44-raid fedora44-uefi rocky10 rocky10-lvm rocky10-raid5", "rpm-ostree": "kinoite44",
       "pacman": "arch artix-dinit artix-s6 cachyos omarchy endeavouros endeavouros-grub manjaro cachyos-zfs garuda biglinux",
       "zypper": "tumbleweed", "xbps": "void-musl", "apk": "alpine324 chimera chimera-uefi chimera-zfs", "moss": "aerynos",
-      "NixOS": "nixos2605", "portage": "gentoo gentoo-systemd", "abroot": "vanilla3", "tukit": "microos",
-      "FreeBSD": "freebsd14 freebsd15 freebsd15-geli freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs hardenedbsd15",
+      "NixOS": "nixos2605", "portage": "gentoo gentoo-systemd", "abroot": "vanilla3", "tukit": "microos aeon", "eopkg": "solus49",
+      "FreeBSD": "freebsd14 freebsd15 freebsd15-geli freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs hardenedbsd15 hardenedbsd15-zfs",
       "NetBSD": "netbsd11 alpinebsd", "OpenBSD": "openbsd8", "DragonFly": "dragonfly6", "SunOS": "omnios58 omnios58-mirror oi2610 oi2610-bios",
       "Haiku": "haiku6", "Redox": "redox", "Sculpt": "sculpt2610"}
 PM_OF = {g: pm for pm, gs in PM.items() for g in gs.split()}
-LINUX_PMS = ("apt", "dnf", "pacman", "zypper", "xbps", "apk", "moss", "rpm-ostree", "portage", "abroot", "tukit")
+LINUX_PMS = ("apt", "dnf", "pacman", "zypper", "xbps", "apk", "moss", "rpm-ostree", "portage", "abroot", "tukit", "eopkg")
 SECTION = {"rpm-ostree": "ostree"}          # in-guest.sh's Linux.NAME, where it isn't the pm's
 BSD_PLAT = {"freebsd15": "freebsd", "freebsd15-mirror": "freebsd", "freebsd15-geli": "freebsd", "freebsd14": "freebsd", "ghostbsd26": "freebsd",
-            "ghostbsd26-zfs": "freebsd", "hardenedbsd15": "freebsd", "netbsd11": "netbsd", "alpinebsd": "netbsd",
+            "ghostbsd26-zfs": "freebsd", "hardenedbsd15": "freebsd", "hardenedbsd15-zfs": "freebsd", "netbsd11": "netbsd", "alpinebsd": "netbsd",
             "openbsd8": "openbsd", "dragonfly6": "dragonfly", "omnios58": "illumos", "omnios58-mirror": "illumos",
             "oi2610": "illumos", "oi2610-bios": "illumos", "haiku6": "haiku"}
 BSD_RESCUER = {"freebsd15": "freebsd15-ufs", "freebsd15-mirror": "freebsd15-ufs", "freebsd15-geli": "freebsd15-ufs", "freebsd14": "freebsd15-ufs",
-               "ghostbsd26": "freebsd15-ufs", "ghostbsd26-zfs": "freebsd15-ufs", "hardenedbsd15": "freebsd15-ufs",
+               "ghostbsd26": "freebsd15-ufs", "ghostbsd26-zfs": "freebsd15-ufs", "hardenedbsd15": "freebsd15-ufs", "hardenedbsd15-zfs": "freebsd15-ufs",
                "netbsd11": "netbsd11", "alpinebsd": "netbsd11", "openbsd8": "openbsd8-newduid.qcow2",
                "dragonfly6": "dragonfly6-newfsid.qcow2", "omnios58": "omnios58-reguid.qcow2",
                "omnios58-mirror": "omnios58-reguid.qcow2", "oi2610": "omnios58-reguid.qcow2",
@@ -197,7 +197,7 @@ class World:
             e = {"bins": [osd] + (["linux/restic-bko"] if g == "haiku6" else []),
                  "harness": [f"testvm/stictest1/{g}/**", "testvm/compare/fsmeta.py"],
                  "judge": ["testvm/compare/verdict.py", f"entry:testvm/test2/stic/limits.json#{g}"]}
-            if g in ("freebsd15-geli", "ghostbsd26-zfs"):
+            if g in ("freebsd15-geli", "ghostbsd26-zfs", "hardenedbsd15-zfs"):
                 e["harness"].append("testvm/stictest1/freebsd15/extra.sh")
             if g == "alpinebsd":
                 e["xguest"] = ["netbsd11"]
@@ -235,7 +235,7 @@ class World:
                            "judge": ["testvm/test2/t2lib/guest_judge.py"], "host": ["qemu", "ovmf"], "update": False},
                  "sculpt": {"harness": ["testvm/test2/guest/job.sh", "testvm/test2/guest/probe-sculpt.sh",
                                         "testvm/sculpt-check.sh"],
-                            "judge": ["testvm/test2/t2lib/guest_judge.py"], "host": ["qemu", "ovmf"], "update": False}}
+                            "judge": ["testvm/test2/t2lib/guest_judge.py"], "host": ["qemu", "ovmf"], "update": True}}   # sculpt-update
         entries = {}
         for g in GUESTS:
             if g == "freebsd15-builder":
@@ -291,7 +291,9 @@ class World:
                              "judge": ["testvm/holttest1d/judge.py"], "rescuer": ["rescuer.qcow2"]}}
         entries = {}
         for g in GUESTS:
-            if g in ("freebsd15-builder", "freebsd15-ufs"):
+            # (aeon: a SticTest check and a guest, no HoltTest2 source until its
+            # golden plan: docs/design/aeon.md, A3.)
+            if g in ("freebsd15-builder", "freebsd15-ufs", "aeon"):
                 continue
             k = holt_kind(g)
             e = {"kind": k}

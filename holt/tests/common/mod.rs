@@ -6,7 +6,8 @@
 //! dumped disk's size (GROW bytes more for the `+bigger` variant, as
 //! ht1.sh's bigger rebuilds onto disks 1 GiB bigger), `--map NAME=TARGET`,
 //! `--repo /srv/bko-repo`, `--key-file NAME=/srv/bko-keys/NAME` for each
-//! ZFS encryption root with a passphrase, a rustic-bko whose `--version` says it's
+//! ZFS encryption root with a passphrase and each LUKS2 header the dump kept
+//! (with `--luks-header-dir` and a test's header files), a rustic-bko whose `--version` says it's
 //! BackOtter's, and every tool the plan asks for installed.  Three things
 //! differ from check_plan, for plans that read the same on every build:
 //! RAM disks and ZFS volumes get no target (load leaves them out, and a
@@ -31,6 +32,9 @@ pub const RUSTIC_VERSION: &str = "rustic 0.11.4+backotter.4\n";
 pub const REPO: &str = "/srv/bko-repo";
 /// Where a golden plan's --key-file keys are (a ZFS passphrase root's).
 pub const KEYS: &str = "/srv/bko-keys";
+/// Where a golden plan's kept LUKS2 headers are (--luks-header-dir), as the
+/// plan names it.
+pub const HEADERS: &str = "/srv/bko-luks-headers";
 /// The layout's name in the plan's first line and its "To run it" line.
 pub const LAYOUT: &str = "layout.json";
 /// The +bigger variant's targets: this much bigger than the source's disks.
@@ -108,6 +112,39 @@ pub fn plan_onto(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, extra: &
             keys.push(f);
         }
     }
+    // A LUKS2 header the dump kept (storage.luks_headers: Ubuntu Core's
+    // FDE, docs/design/ubuntu-core.md) is restored from the file dump wrote
+    // and opened with a key it already has, from --key-file by its LUKS
+    // label: a fixed test path, KEYS/LABEL, as for ZFS above.  The header
+    // files are a test's: each one a line naming it, in HEADERS of the fake
+    // rescue system, given with --luks-header-dir and named HEADERS in the
+    // plan; the layout planned holds their SHA-256 in place of the real
+    // headers' (load checks a header file by it, and the corpus holds no
+    // header).  Never a real header or key.
+    let mut layout_text = layout_text.to_string();
+    let mut headers = Vec::new();
+    for h in v.at(&["storage", "luks_headers"]).and_then(Value::as_array).into_iter().flatten() {
+        let Some(file) = h.get("file").and_then(Value::as_str) else { continue };
+        let name = h.get("label").and_then(Value::as_str).or_else(|| h.get("device").and_then(Value::as_str)).unwrap_or(file);
+        let f = format!("{KEYS}/{}", name.replace('/', "_"));
+        if !keys.contains(&f) {
+            args.extend(["--key-file".to_string(), format!("{name}={f}")]);
+            keys.push(f);
+        }
+        let body = format!("golden-plan test LUKS2 header {file}\n");
+        if let Some(real) = h.get("sha256").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+            layout_text = layout_text.replace(real, &sha256_hex(body.as_bytes()));
+        }
+        headers.push((file.to_string(), body));
+    }
+    let header_dir = t.p(HEADERS).to_string_lossy().into_owned();
+    if !headers.is_empty() {
+        args.extend(["--luks-header-dir".to_string(), header_dir.clone()]);
+        for (file, body) in &headers {
+            t.file(&format!("{HEADERS}/{file}"), body.as_str());
+        }
+    }
+    let layout_text = layout_text.as_str();
     args.extend(extra.iter().cloned());
     let opts = match parse_args(&args) {
         Ok(Parsed::Run(o)) => o,
@@ -149,7 +186,10 @@ pub fn plan_onto(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, extra: &
         }
         res = run(&opts, layout_text, &sys());
     }
-    let named = |s: String| if exe.len() > 1 { s.replace(&exe, "bko-holt") } else { s };
+    let named = |s: String| {
+        let s = if headers.is_empty() { s } else { s.replace(&header_dir, HEADERS) };
+        if exe.len() > 1 { s.replace(&exe, "bko-holt") } else { s }
+    };
     let mut out = named(res.1);
     // What `status` looks for after each stage: load builds it with the
     // commands but never prints it, and a change to it moves no command.
@@ -175,6 +215,50 @@ pub fn plan_onto(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, extra: &
         }
     }
     Ok(Planned { code: res.0, out, err: named(res.2), maps })
+}
+
+/// SHA-256 of DATA in lower-case hex (FIPS 180-4).  Here, not holt's
+/// bytes::sha256_hex, which is newer than 3671e96 (the replay of #16).
+pub fn sha256_hex(data: &[u8]) -> String {
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+    ];
+    let mut h: [u32; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    let mut m = data.to_vec();
+    m.push(0x80);
+    while m.len() % 64 != 56 {
+        m.push(0);
+    }
+    m.extend_from_slice(&((data.len() as u64) * 8).to_be_bytes());
+    for block in m.chunks(64) {
+        let mut w = [0u32; 64];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([block[4 * i], block[4 * i + 1], block[4 * i + 2], block[4 * i + 3]]);
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+        }
+        let mut v = h;
+        for i in 0..64 {
+            let s1 = v[4].rotate_right(6) ^ v[4].rotate_right(11) ^ v[4].rotate_right(25);
+            let ch = (v[4] & v[5]) ^ (!v[4] & v[6]);
+            let t1 = v[7].wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+            let s0 = v[0].rotate_right(2) ^ v[0].rotate_right(13) ^ v[0].rotate_right(22);
+            let maj = (v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]);
+            let t2 = s0.wrapping_add(maj);
+            v = [t1.wrapping_add(t2), v[0], v[1], v[2], v[3].wrapping_add(t1), v[4], v[5], v[6]];
+        }
+        for (a, b) in h.iter_mut().zip(v) {
+            *a = a.wrapping_add(b);
+        }
+    }
+    h.iter().map(|x| format!("{x:08x}")).collect()
 }
 
 /// Writes TEXT to PATH whole or not at all: a `.NAME.part` beside it, then a

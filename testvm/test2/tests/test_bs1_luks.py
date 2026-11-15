@@ -350,7 +350,8 @@ class LayoutKeys(Tmp):
 
     def test_luks_corpus_unchanged(self):
         for name, want in [("ubuntu26-luks", "dm_crypt-0"), ("pikaos4-luks", "crypt_root"), ("chimera-uefi", "cryptroot"),
-                           ("debian13-stack", "md1_crypt"), ("gentoo-systemd", "cryptroot"), ("omarchy", "root")]:
+                           ("debian13-stack", "md1_crypt"), ("gentoo-systemd", "cryptroot"), ("omarchy", "root"),
+                           ("elementary8-luks", "cryptdata")]:
             with self.subTest(name):
                 self.assertEqual(self.keys(name), [f"{want}=FILE"])
 

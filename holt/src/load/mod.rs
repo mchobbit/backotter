@@ -20,6 +20,8 @@ pub mod fit;
 pub mod layout;
 pub mod ostree;
 pub mod plan;
+pub mod qubes;
+pub mod rawvol;
 pub mod readback;
 pub mod reformat;
 pub mod release;

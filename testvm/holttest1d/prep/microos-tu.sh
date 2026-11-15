@@ -33,7 +33,7 @@
 # Run as root in the guest's throwaway overlay.  Offline: nothing is
 # downloaded.  GRUB (MicroOS) or BLS (Aeon: /boot/efi/loader/entries, as
 # health-checker tells them apart); the BLS steps are written to
-# health-checker's BLS path but untested until the aeon guest (A4).
+# health-checker's BLS path, wired for the aeon guest (A4) but not run yet.
 set -eu
 S=/var/lib/bko-prep
 mkdir -p "$S"
@@ -159,7 +159,8 @@ case $stage in
     snapper --no-dbus list
     btrfs subvolume list -a -p -u -q /
     btrfs subvolume get-default /
-    cat /var/lib/misc/health-check.state
+    # (None on BLS, Aeon's: health-checker's BLS path keeps no state.)
+    cat /var/lib/misc/health-check.state 2>/dev/null || echo "no /var/lib/misc/health-check.state ($loader)"
     cat /var/lib/misc/transactional-update.state 2>/dev/null || true
     sync ;;
 done) die "already prepared (stage done): a fresh overlay of the guest starts at stage 0" ;;

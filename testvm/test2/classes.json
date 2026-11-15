@@ -3,13 +3,13 @@
   "about": "Test2's class table (contract 1.8, rulings R5, R15, R17, R27). plan.py reads it; `t2 self-test` checks it. Decision 1: every Linux SticTest guest keeps its own pass, so classes exist only for the non-Linux systems; HoltTest2 has no classes.",
   "stic": {
     "classes": {
-      "B2": ["freebsd15", "freebsd15-geli", "ghostbsd26-zfs"],
+      "B2": ["freebsd15", "freebsd15-geli", "ghostbsd26-zfs", "hardenedbsd15-zfs"],
       "B3": ["freebsd15-ufs", "hardenedbsd15", "ghostbsd26"],
       "B4": ["netbsd11", "alpinebsd"]
     },
     "alone": ["freebsd14", "openbsd8", "dragonfly6", "omnios58", "oi2610", "haiku6"],
     "linux": "every Linux guest and sculpt2610 run alone (decision 1): 33 checks plus sculpt2610",
-    "non_linux": ["freebsd15", "freebsd15-geli", "ghostbsd26-zfs", "freebsd15-ufs", "hardenedbsd15", "ghostbsd26",
+    "non_linux": ["freebsd15", "freebsd15-geli", "ghostbsd26-zfs", "hardenedbsd15-zfs", "freebsd15-ufs", "hardenedbsd15", "ghostbsd26",
                   "netbsd11", "alpinebsd", "freebsd14", "openbsd8", "dragonfly6", "omnios58", "oi2610", "haiku6"],
     "canaries": {
       "debian12": "RAM-disk overlay",
@@ -37,16 +37,17 @@
       "Z": ["zorin18"],
       "V": ["void-musl"],
       "H": ["haiku6"],
-      "U": ["ubuntu24", "ubuntu24-uefi", "ubuntu24-luks", "ubuntu26-uefi", "ubuntu26-zfsmirror", "ubuntu26-raid", "ubuntu26-zfs", "ubuntu26-luks", "anduinos2", "neon24"],
+      "U": ["ubuntu24", "ubuntu24-uefi", "ubuntu24-luks", "ubuntu26-uefi", "ubuntu26-zfsmirror", "ubuntu26-raid", "ubuntu26-zfs", "ubuntu26-luks", "anduinos2", "neon24", "elementary8", "elementary8-luks"],
       "F": ["fedora44", "fedora44-uefi", "fedora44-raid", "rocky10", "rocky10-lvm", "rocky10-raid5", "kinoite44"],
       "A": ["arch", "alpine324", "aerynos", "artix-dinit", "artix-s6", "endeavouros", "endeavouros-grub", "manjaro", "garuda", "biglinux"],
       "C": ["cachyos", "mx25", "cachyos-zfs"],
       "I": ["omnios58", "omnios58-mirror", "oi2610", "oi2610-bios"],
       "G": ["gentoo", "gentoo-systemd"],
       "Obscure": ["pop24", "nixos2605", "omarchy", "sculpt2610", "redox", "tumbleweed", "debian12", "chimera",
-                  "chimera-uefi", "chimera-zfs", "vanilla3", "pikaos4", "pikaos4-luks", "microos"],
+                  "chimera-uefi", "chimera-zfs", "vanilla3", "pikaos4", "pikaos4-luks", "microos",
+                  "solus49", "slackware15", "slackware15-uefi"],
       "BSD": ["freebsd15", "freebsd15-mirror", "freebsd15-geli", "freebsd14", "ghostbsd26", "ghostbsd26-zfs", "hardenedbsd15",
-              "netbsd11", "alpinebsd", "openbsd8", "dragonfly6"]
+              "hardenedbsd15-zfs", "netbsd11", "alpinebsd", "openbsd8", "dragonfly6"]
     },
     "no_family": ["devuan6"],
     "family_variants": {
@@ -61,8 +62,8 @@
     "variant_stages": ["partition", "assemble", "close"],
     "pins": {"openbsd8": "chopin", "dragonfly6": "cinqcent", "redox": "cinqcent"},
     "pins_why": "README Queues ONLY_ELSEWHERE: openbsd8's one-time rescuer is on Chopin, dragonfly6's on Cinqcent; redox's tools are on Cinqcent only (ht1-queue.sh:169)",
-    "uefi": ["aerynos", "anduinos2", "biglinux", "cachyos-zfs", "chimera-uefi", "chimera-zfs", "debian13-stack", "endeavouros", "endeavouros-grub", "fedora44-raid",
-             "fedora44-uefi", "garuda", "gentoo", "gentoo-systemd", "kinoite44", "manjaro", "microos", "neon24", "omarchy", "pikaos4", "pikaos4-luks", "pop24", "proxmox9", "proxmox9-mirror", "ubuntu24-luks", "ubuntu24-uefi", "ubuntu26-luks", "ubuntu26-raid",
+    "uefi": ["aerynos", "anduinos2", "biglinux", "cachyos-zfs", "chimera-uefi", "chimera-zfs", "debian13-stack", "elementary8", "elementary8-luks", "endeavouros", "endeavouros-grub", "fedora44-raid",
+             "fedora44-uefi", "garuda", "gentoo", "gentoo-systemd", "kinoite44", "manjaro", "microos", "neon24", "omarchy", "pikaos4", "pikaos4-luks", "pop24", "proxmox9", "proxmox9-mirror", "slackware15-uefi", "solus49", "ubuntu24-luks", "ubuntu24-uefi", "ubuntu26-luks", "ubuntu26-raid",
              "ubuntu26-uefi", "ubuntu26-zfs", "vanilla3"],
     "uefi_why": "the Linux sources with --uefi in vm-run-options (both hosts, 2026-11-08); ht1.sh rebuilds them from rescuer-uefi.qcow2 when the host has it (ht1.sh:138-139, R17). alpinebsd is UEFI too, but netbsd11 rescues it",
     "canaries": ["debian13", "ubuntu26-uefi", "freebsd15", "redox"],
@@ -74,7 +75,7 @@
       "packages": {"match": [".deb", "bcachefs"], "guests": ["debian12", "ubuntu24", "rocky10-raid5", "nixos2605",
                                                            "debian13-stack", "aerynos"]},
       "freebsd15-ufs": {"match": ["freebsd15-ufs"], "stalest_of": ["freebsd15", "freebsd15-mirror", "freebsd14", "ghostbsd26",
-                                                                   "ghostbsd26-zfs", "hardenedbsd15"],
+                                                                   "ghostbsd26-zfs", "hardenedbsd15", "hardenedbsd15-zfs"],
                         "plus": ["freebsd14"]},
       "netbsd11": {"match": ["netbsd11"], "stalest_of": ["netbsd11", "alpinebsd"]},
       "haiku6": {"match": ["haiku6"], "guests": ["haiku6"]},

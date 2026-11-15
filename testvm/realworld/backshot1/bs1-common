@@ -184,6 +184,23 @@ space_in_use() {
     echo $((kib * 1024))
 }
 
+# mount_cbm_esp DISK: Solus keeps its ESP out of fstab, and clr-boot-manager
+# mounts it at /boot only while it updates (docs/design/solus.md), so
+# check_coverage would stop at it and bko-holt dump refuses until it's
+# mounted.  So the user's own step first, as HoltTest1's ht1.sh takes it:
+# `clr-boot-manager mount-boot`, which leaves it mounted.  Then /boot must be
+# on DISK.  Says where, or why not and false.  Nothing without clr-boot-manager.
+mount_cbm_esp() {
+    local src
+    command -v clr-boot-manager >/dev/null || return 0
+    if ! findmnt -rn /boot >/dev/null; then
+        clr-boot-manager mount-boot >/dev/null 2>&1 || { echo "clr-boot-manager mount-boot failed"; return 1; }
+    fi
+    src=$(findmnt -nro SOURCE /boot) || { echo "clr-boot-manager mount-boot left nothing mounted at /boot"; return 1; }
+    on_disk "$src" "$1" || { echo "/boot is $src, which isn't on $1"; return 1; }
+    echo "the ESP at /boot, out of fstab: $src ($(findmnt -nro FSTYPE /boot))"
+}
+
 # Stops if DISK holds a filesystem the running system hasn't mounted: it would be
 # erased without being in the backup.  LAYOUT: one whose backup_sources' mount
 # hints (ABRoot's init LV and other root) count as mounted, since mount_hints
@@ -269,6 +286,9 @@ package_list() {
     # Gentoo first: Portage keeps no list but its database's directories, and
     # dpkg or rpm may be emerged there as tools.  CATEGORY/PF, one a line.
     if [[ -e /etc/gentoo-release ]]; then (cd /var/db/pkg && printf '%s\n' */*)
+    # Solus's eopkg: its database's directories, NAME-VERSION-RELEASE, one a
+    # line (docs/design/solus.md, What S1 found), as bko-holt reads them.
+    elif [[ -d /var/lib/eopkg/package ]]; then (cd /var/lib/eopkg/package && printf '%s\n' *)
     elif command -v dpkg-query >/dev/null; then dpkg-query -W -f '${Package}\t${Version}\n'
     elif command -v rpm >/dev/null; then rpm -qa
     elif command -v pacman >/dev/null; then pacman -Q

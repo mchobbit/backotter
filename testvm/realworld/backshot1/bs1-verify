@@ -171,6 +171,11 @@ step "the checks"
 disk=$(internal_disk) || { say "no single disk has serial $INTERNAL_SERIAL"; exit 1; }
 # Mounts an ESP that's on an automount.
 ls /boot/efi /efi /boot >/dev/null 2>&1
+# Solus's ESP, out of fstab: at /boot by clr-boot-manager mount-boot, as
+# before the backup, for the dump and the files' tree (bs1-common).
+if command -v clr-boot-manager >/dev/null; then
+    check "the ESP is at /boot, on $disk (clr-boot-manager mount-boot)" mount_cbm_esp "$disk"
+fi
 hold_snapshotters
 if is_ostree; then
     # First, so nothing stages a deployment while the rest is compared.

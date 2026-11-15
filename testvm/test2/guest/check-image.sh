@@ -37,6 +37,12 @@ if has_rule S-ips; then cmd pkg-publisher; pkg publisher -H 2>&1 | qt; fi
 if has_rule S-haiku; then cmd pkgman-repos; pkgman list-repos 2>&1 | qt; fi
 # Solus (solus.md): "NAME [active|inactive]", then the URL indented; -N: no colour codes.
 if has_rule S-eopkg; then cmd eopkg-lr; eopkg lr -N 2>&1 | qt; fi
+# Slackware (slackware.md): slackpkg's mirrors (it takes the one uncommented line) and its
+# CHECKGPG and CHECKMD5 settings.
+if has_rule S-slackpkg; then
+    cmd slackpkg-mirrors; grep -v '^[[:space:]]*#' /etc/slackpkg/mirrors 2>/dev/null | grep . | qt
+    cmd slackpkg-conf; grep -E '^[[:space:]]*(CHECKGPG|CHECKMD5)=' /etc/slackpkg/slackpkg.conf 2>/dev/null | qt
+fi
 # --- the loader's default entry
 if has_rule L-grub; then
     emit /boot/grub/grub.cfg /boot/grub2/grub.cfg /grub/grub.cfg /boot/grub/grubenv /boot/grub2/grubenv /etc/default/grub
@@ -131,6 +137,43 @@ if has_rule L-cbm; then
     fi
     if [ -n "$d" ]; then umount "$d" 2>/dev/null; rmdir "$d"; fi
 fi
+# Slackware's LILO (slackware.md): lilo.conf, then "map yes|no" (/boot/map, which lilo
+# writes), "mbr lilo|other|unreadable" (LILO's signature at offset 6 of the boot= device's
+# first sector), "image PATH yes|no" for each image=, and "fstab-root DEV", fstab's / device
+# (Slackware's fstab and lilo.conf name devices, not UUIDs).
+if has_rule L-lilo; then
+    emit /etc/lilo.conf
+    cmd lilo-state
+    if [ -e /boot/map ]; then echo "map yes"; else echo "map no"; fi
+    b=$(sed -n 's/^[[:space:]]*boot[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' /etc/lilo.conf 2>/dev/null | head -n 1)
+    if [ -n "$b" ] && [ -r "$b" ]; then
+        if [ "$(dd if="$b" bs=512 count=1 2>/dev/null | od -A n -t x1 -j 6 -N 4 | tr -d ' \n')" = 4c494c4f ]; then
+            echo "mbr lilo"
+        else echo "mbr other"; fi
+    else echo "mbr unreadable"; fi
+    for i in $(sed -n 's/^[[:space:]]*image[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' /etc/lilo.conf 2>/dev/null); do
+        if [ -e "$i" ]; then echo "image $i yes"; else echo "image $i no"; fi
+    done
+    awk '$1 !~ /^#/ && $2 == "/" { print "fstab-root " $1; exit }' /etc/fstab 2>/dev/null
+fi
+# Slackware's ELILO (slackware.md): the ESP at /boot/efi (fstab's), "sha256 HASH DIR/NAME" for
+# each file in EFI/Slackware (eliloconfig's) and EFI/BOOT (the fallback copy), "conf LINE" for
+# EFI/Slackware/elilo.conf, "fstab-root DEV"; "esp unmounted" when nothing is at /boot/efi.
+if has_rule L-elilo; then
+    cmd elilo-esp
+    awk '$1 !~ /^#/ && $2 == "/" { print "fstab-root " $1; exit }' /etc/fstab 2>/dev/null
+    m=$(findmnt -n -o TARGET /boot/efi 2>/dev/null)
+    if [ -z "$m" ]; then
+        echo "esp unmounted"
+    else
+        for d in EFI/Slackware EFI/BOOT; do
+            for f in "$m/$d"/*; do
+                [ -f "$f" ] && echo "sha256 $(sha256sum "$f" | awk '{ print $1 }') $d/${f##*/}"
+            done
+        done
+        [ -r "$m/EFI/Slackware/elilo.conf" ] && sed 's/^/conf /' "$m/EFI/Slackware/elilo.conf"
+    fi
+fi
 if has_rule L-fbsd; then
     emit /boot/loader.conf
     cmd zfs-boot
@@ -186,6 +229,22 @@ if ! has_rule K-none; then
             if [ -e "/usr/lib64/kernel/initrd-${k##*/}" ]; then echo "$k"; else echo "$k no-initrd"; fi
         done
     fi
+    # Ubuntu Core (ubuntu-core.md): modeenv's current_kernels (pc-kernel_REV.snap), each with the
+    # kernel.efi snapd extracted to ubuntu-boot's EFI/ubuntu/K/ ("kernel K [no-kernel-efi]"), and
+    # what the run GRUB's EFI/ubuntu/kernel.efi links to ("link K", "link none").
+    if has_rule K-snapcore; then
+        b=/run/mnt/ubuntu-boot/EFI/ubuntu
+        for k in $(sed -n 's/^current_kernels=//p' /var/lib/snapd/modeenv 2>/dev/null | head -n 1 | tr ',' ' '); do
+            if [ -f "$b/$k/kernel.efi" ]; then echo "kernel $k"; else echo "kernel $k no-kernel-efi"; fi
+        done
+        l=$(readlink "$b/kernel.efi" 2>/dev/null) l=${l%/kernel.efi}
+        echo "link ${l##*/}" | sed 's/^link $/link none/'
+    fi
+    # Slackware (slackware.md): each /boot/vmlinuz-TYPE-VERSION (the links vmlinuz and
+    # vmlinuz-TYPE aside).
+    if has_rule K-slackware; then
+        for k in /boot/vmlinuz-*; do [ -f "$k" ] && [ ! -L "$k" ] && echo "$k"; done
+    fi
     if has_rule K-fed || has_rule K-ostree; then ls -1 /boot/loader/entries/*.conf 2>/dev/null | grep -v rescue; fi
     # ABRoot (Vanilla OS): each root's kernels in the init LV (label vos-init), one directory a
     # root, which only ABRoot mounts: read through a read-only mount of it here (noload: no
@@ -219,4 +278,19 @@ if ! has_rule K-none; then
     if has_rule K-dfly; then ls -d /boot/kernel /boot/kernel.old 2>/dev/null; fi
     if has_rule K-ill; then beadm list -H 2>/dev/null | awk -F';' '{ print $1 }'; fi
     if has_rule K-haiku; then echo current; ls -d /boot/system/packages/administrative/state_* 2>/dev/null; fi
+fi
+# Slackware (slackware.md, K-slackware): what the loader boots against /boot's kernels.
+# "kernel NAME MTIME SHA256" for each /boot/vmlinuz-TYPE-VERSION, "map MTIME" for LILO's
+# /boot/map, "esp-image NAME SHA256|missing" for each image= of ELILO's EFI/Slackware/elilo.conf.
+if has_rule K-slackware; then
+    cmd slackware-boot
+    for k in /boot/vmlinuz-*; do
+        [ -f "$k" ] && [ ! -L "$k" ] || continue
+        echo "kernel ${k##*/} $(stat -c %Y "$k") $(sha256sum "$k" | awk '{ print $1 }')"
+    done
+    [ -e /boot/map ] && echo "map $(stat -c %Y /boot/map)"
+    d=/boot/efi/EFI/Slackware
+    for i in $(sed -n 's/^[[:space:]]*image[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$d/elilo.conf" 2>/dev/null); do
+        if [ -f "$d/$i" ]; then echo "esp-image $i $(sha256sum "$d/$i" | awk '{ print $1 }')"; else echo "esp-image $i missing"; fi
+    done
 fi

@@ -47,7 +47,7 @@ Rules:
 | A4: 7.2.14, ext4 | arch 2.3, artix-s6 6.1 | ~ once their need sets match. |
 | A5: JFS | artix-dinit 2.8, cachyos 4.9 | ≠ for now: kernels 7.2 and 7.3, different needs. |
 | A6: Fedora 44, SELinux | fedora44-uefi 4.5, fedora44 3.5 | ≠ (#5). fedora44 is sweep-only until its fixture gains -uefi's cases. |
-| B2: FreeBSD 15.1, ZFS | freebsd15 12.7, freebsd15-geli 12.4, ghostbsd26-zfs 12.5 | geli ≡ freebsd15 (GELI sits below the pool). ghostbsd26-zfs ~ (same 19 needs). |
+| B2: FreeBSD 15.1, ZFS | freebsd15 12.7, freebsd15-geli 12.4, ghostbsd26-zfs 12.5, hardenedbsd15-zfs 13.0 (est., added 2026-11-15) | geli ≡ freebsd15 (GELI sits below the pool). ghostbsd26-zfs ~ (same 19 needs); hardenedbsd15-zfs runs ghostbsd26-zfs's check, so ~ once its needs are recorded. |
 | B3: FreeBSD 15.1, UFS | freebsd15-ufs 6.5, hardenedbsd15 6.8, ghostbsd26 6.5 | ~ (same 21 needs). HBSD's kernel and ghostbsd26's unjournaled md keep them rotating. |
 | B4: NetBSD 11.1 | netbsd11 5.4, alpinebsd 6.7 | ~ since alpinebsd got the 11.1 kernel (11-07). |
 | ≠ look-alikes | ubuntu24 vs A2: same check and 52 needs, but kernel 6.8 and OpenZFS 2.2.2 (#6). mint22 vs zorin18: same kernel and template, but f2fs vs nilfs2 | separate singletons |
@@ -67,7 +67,7 @@ One representative per class means 28 runs instead of 41:
 | C3: Arch, ext4 | arch 146/2.4, artix-s6 134/1.5 | ~ (init differs) |
 | C4: Arch, JFS | artix-dinit 167/1.5, cachyos 152/2.5 | ~ (init differs) |
 | C5: Fedora boot, BIOS | fedora44 216/4.3, rocky10 254/2.8 | ~ for boot code. ≠ for probe and format (btrfs against XFS). |
-| C6: FreeBSD, ZFS | freebsd15 247, ghostbsd26-zfs 265 | ~ until plan signatures check glabels |
+| C6: FreeBSD, ZFS | freebsd15 247, ghostbsd26-zfs 265, hardenedbsd15-zfs (added 2026-11-15, no r3all yet) | ~ until plan signatures check glabels |
 | C7: UFS2 | ghostbsd26 239, hardenedbsd15 329 | ~ on the same condition |
 | ≠ despite holt.md's duplicate list | freebsd14 (boot-environment clone), omnios58-mirror (legacy bootfs, #16), freebsd15-mirror | singletons |
 | Singletons | debian13, devuan6, mint22 548/13.9, zorin18 373/11.6, alpine324, void-musl, nixos2605, tumbleweed, rocky10-lvm, rocky10-raid5, fedora44-raid, ubuntu26-raid, debian13-stack, ubuntu26-zfs, ubuntu26-zfsmirror 307/11.8, ubuntu26-uefi 338/8.5, fedora44-uefi, aerynos, pop24 550/16.3, omarchy 561/15.4, netbsd11, alpinebsd, openbsd8, openbsd8-crypt (its own: load makes the volume again), dragonfly6 923, omnios58, haiku6, redox, sculpt2610 | |

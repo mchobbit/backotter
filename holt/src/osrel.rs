@@ -141,7 +141,11 @@ pub fn openindiana_release(text: &str) -> Option<OsRelease> {
 /// partitions (crate::snapcore), restored as they were with every LUKS2
 /// header kept (crate::luksheader), and nothing regenerated
 /// (docs/design/ubuntu-core.md); its tests are `uc24` and `uc24-fde` in
-/// HoltTest1U.
+/// HoltTest1U.  Qubes OS 4.3's dom0 (Fedora 41 underneath, no ID_LIKE)
+/// boots Xen through GRUB 2 without shim, with dracut and grub2-mkconfig's
+/// 20_linux_xen; its qubes' volumes are thin LVs and their snapshots, taken
+/// as raw images (crate::qubes, docs/design/qubes.md); its test is `qubes43`
+/// in HoltTest1Obscure.
 pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("debian", "13", "Debian 13"),
     ("linuxmint", "22", "Linux Mint 22"),
@@ -182,15 +186,25 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     // Rolling: VERSION_ID is the snapshot's date.
     ("opensuse-tumbleweed", "*", "openSUSE Tumbleweed"),
     // Tumbleweed's packages on a read-only root that changes only through
-    // transactional-update (crate::transactional): VERSION_ID is the
-    // snapshot's date, as Tumbleweed's is (docs/design/aeon.md).
+    // transactional-update (crate::transactional): MicroOS (GRUB with
+    // grub2-snapper-plugin) and Aeon (its GNOME desktop: systemd-boot with
+    // sdbootutil's per-snapshot entries, LUKS2 unlocked by TPM2).  Both
+    // rolling, VERSION_ID the snapshot's date, as Tumbleweed's is
+    // (docs/design/aeon.md).  Aeon says ID=aeon (opensuse-microos and
+    // opensuse-aeon only in its ID_LIKE), so each by its own row.
     ("opensuse-microos", "*", "openSUSE MicroOS"),
+    ("aeon", "*", "Aeon"),
     // Leap 16 (Agama's installer): Tumbleweed's tools (zypper, dracut,
     // grub2, snapper on Btrfs, SELinux), released by point (16.0, 16.1), so
     // by the major; not 15.x, whose installer and tools differ
     // (docs/design/leap16.md, decision 2).
     ("opensuse-leap", "16", "openSUSE Leap 16"),
     ("rocky", "10", "Rocky Linux 10"),
+    // dom0 on Fedora 41 (ID=qubes, no ID_LIKE), booting Xen through GRUB 2
+    // without shim, its qubes' volumes thin LVs taken as raw images
+    // (crate::qubes).  VERSION_ID="4.3": by the major here, and 4.2 or older
+    // refused by its minor in check_supported (docs/design/qubes.md).
+    ("qubes", "4", "Qubes OS 4.3"),
     // Arch-based, rolling.
     ("omarchy", "*", "Omarchy"),
     // Arch-based, rolling; none has a VERSION_ID.  EndeavourOS boots by
@@ -288,6 +302,11 @@ pub fn check_supported(os: Option<&OsRelease>) -> Result<(), String> {
             os.get("VERSION_CODENAME").unwrap_or("")
         ));
     }
+    // Qubes OS: 4.3 and later (its row takes the major); 4.2's support
+    // ended 2026-06-21, and its volumes and boot differ.
+    if id == "qubes" && ver.split('.').nth(1).and_then(|m| m.parse::<u64>().ok()).is_some_and(|m| ver.starts_with("4.") && m < 3) {
+        return Err(format!("this is Qubes OS {ver} (ID=qubes, VERSION_ID={ver}), and bko-holt dump supports Qubes OS 4.3 and later only"));
+    }
     if supported(id, ver) {
         return Ok(());
     }
@@ -360,7 +379,7 @@ pub(crate) mod tests {
         assert!(check_supported(Some(&parse(neon))).is_ok());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Solus 4, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, openSUSE Leap 16, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Slackware 15, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox, Sculpt OS or Ubuntu Core 24"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Solus 4, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, Aeon, openSUSE Leap 16, Rocky Linux 10, Qubes OS 4.3, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Slackware 15, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox, Sculpt OS or Ubuntu Core 24"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -654,6 +673,31 @@ pub(crate) mod tests {
         }
     }
 
+    /// The aeon guest's /usr/lib/os-release (Aeon-Installer Snapshot20261111,
+    /// self-deployed by tik: docs/design/aeon.md, "What A1 found so far").
+    pub(crate) const AEON: &str = "NAME=\"Aeon\"\n# VERSION=\"20261111\"\nID=\"aeon\"\nID_LIKE=\"suse opensuse opensuse-tumbleweed opensuse-microos opensuse-aeon microos\"\nVERSION_ID=\"20261111\"\nPRETTY_NAME=\"Aeon\"\nANSI_COLOR=\"0;32\"\nCPE_NAME=\"cpe:/o:opensuse:aeon:20261111\"\nBUG_REPORT_URL=\"https://aeondesktop.org/reportbug\"\nSUPPORT_URL=\"https://aeondesktop.org/bugs\"\nHOME_URL=\"https://aeondesktop.org/\"\nDOCUMENTATION_URL=\"https://aeondesktop.org/docs\"\n";
+
+    #[test]
+    fn aeon() {
+        let o = parse(AEON);
+        assert_eq!((o.get("ID"), o.get("VERSION_ID"), o.get("VERSION")), (Some("aeon"), Some("20261111"), None));
+        assert!(check_supported(Some(&o)).is_ok());
+        // Rolling: any snapshot, later or earlier.
+        for v in ["20270301", "20260101"] {
+            assert!(check_supported(Some(&parse(&AEON.replace("20261111", v)))).is_ok(), "{v}");
+        }
+        assert!(supported_names().contains("openSUSE MicroOS, Aeon, "));
+        // By its own ID only: a system that names Aeon (or MicroOS) in its
+        // ID_LIKE isn't taken by either row, nor is Aeon by MicroOS's.
+        assert!(supported("aeon", "20261111") && !supported("opensuse-aeon", "20261111"));
+        for id in ["opensuse-aeon", "aeon-ish", "kalpa"] {
+            let e = check_supported(Some(&parse(&AEON.replace("ID=\"aeon\"", &format!("ID=\"{id}\""))))).unwrap_err();
+            assert!(e.contains(&format!("(ID={id}, VERSION_ID=20261111)")), "{e}");
+        }
+        assert!(check_supported(Some(&parse(&MICROOS.replace("ID=\"opensuse-microos\"", "ID=\"aeon\"")))).is_ok());
+        assert!(check_supported(Some(&parse("ID=\"opensuse-microos\"\nID_LIKE=\"aeon\"\nVERSION_ID=\"20261111\"\n"))).is_ok());
+    }
+
     /// Leap 16.1's /etc/os-release (the Leap-16.1 offline ISO, Build60.2:
     /// docs/design/leap16.md).
     const LEAP16: &str = "NAME=\"openSUSE Leap\"\nVERSION=\"16.1\"\nID=\"opensuse-leap\"\nID_LIKE=\"suse opensuse\"\nVERSION_ID=\"16.1\"\nPRETTY_NAME=\"openSUSE Leap 16.1\"\n";
@@ -666,7 +710,7 @@ pub(crate) mod tests {
         // Every 16.x point release, 16.0 too.
         assert!(check_supported(Some(&parse(&LEAP16.replace("16.1", "16.0")))).is_ok());
         assert!(supported("opensuse-leap", "16.2"));
-        assert!(supported_names().contains("openSUSE MicroOS, openSUSE Leap 16, Rocky Linux 10"));
+        assert!(supported_names().contains("openSUSE MicroOS, Aeon, openSUSE Leap 16, Rocky Linux 10"));
         // Not Leap 15.x (YaST, its older tools), nor a 17 until a guest shows it.
         for v in ["15.6", "17.0"] {
             let e = check_supported(Some(&parse(&LEAP16.replace("16.1", v)))).unwrap_err();
@@ -775,6 +819,18 @@ pub(crate) mod tests {
         }
         // Ubuntu's own row is another.
         assert!(check_supported(Some(&parse("ID=ubuntu\nVERSION_ID=\"24\"\n"))).is_ok());
+    }
+
+    /// Qubes OS 4.3.2's dom0 (docs/design/qubes.md, "What Q0 found").
+    #[test]
+    fn qubes() {
+        let q = "NAME=Qubes\nVERSION=\"4.3.2 (R4.3)\"\nID=qubes\nVERSION_ID=4.3\nPRETTY_NAME=\"Qubes OS 4.3.2 (R4.3)\"\n";
+        let o = parse(q);
+        assert_eq!((o.get("ID"), o.get("VERSION_ID")), (Some("qubes"), Some("4.3")));
+        assert!(check_supported(Some(&o)).is_ok());
+        let e = check_supported(Some(&parse(&q.replace("VERSION_ID=4.3", "VERSION_ID=4.2")))).unwrap_err();
+        assert!(e.contains("Qubes OS 4.3 and later only"), "{e}");
+        assert!(check_supported(Some(&parse(&q.replace("VERSION_ID=4.3", "VERSION_ID=3.2")))).is_err());
     }
 
     #[test]

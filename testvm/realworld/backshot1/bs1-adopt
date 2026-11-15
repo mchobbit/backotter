@@ -68,7 +68,7 @@ echo "== $distro, under $init"
 # Artix packages each service's init script apart, per init system.
 with_script() { if [[ $distro == artix ]]; then echo "$1 $1-$init"; else echo "$1"; fi; }
 
-pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS CHIMERA GENTOO, each one or more names
+pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS CHIMERA GENTOO SOLUS, each one or more names
     # An ostree system's /usr is its image's, read-only: nothing is installed
     # here.  Everything this installs is something BackShot1 needs, so it
     # stops and names it (Fedora's names: Bazzite, Silverblue and Kinoite
@@ -85,6 +85,7 @@ pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS CH
     # EMERGE_DEFAULT_OPTS --ask from waiting for an answer.
     # shellcheck disable=SC2086
     if [[ $distro == gentoo ]]; then emerge --ask=n --getbinpkg --noreplace $9
+    elif [[ $distro == solus ]]; then eopkg_add ${10}
     elif command -v apt-get >/dev/null; then
         export DEBIAN_FRONTEND=noninteractive
         apt-get install -y $1 || { apt-get update && apt-get install -y $1; }
@@ -108,6 +109,28 @@ xbps_add() {
     xbps-install -Sy "$@" && return 0
     echo "bs1-adopt: xbps refused a partial update; updating the whole system first" >&2
     xbps-install -Syu xbps && xbps-install -yu && xbps-install -y "$@"
+}
+
+# Solus is a curated rolling release, and takes no partial update either
+# (docs/design/solus.md, What S1 found): on an install older than its
+# repository, eopkg can find a package or a newer dependency gone.  Then the
+# repository's index, the whole system, and the packages.  eopkg runs
+# usysconf after each transaction, which applies the presets again
+# (solus_presets, below).
+eopkg_add() {
+    eopkg it -y "$@" && return 0
+    echo "bs1-adopt: eopkg couldn't install $*; updating the index and the whole system first" >&2
+    eopkg ur && eopkg up -y && eopkg it -y "$@"
+}
+
+# Solus's presets end with "disable *" (99-default.preset), and usysconf
+# applies them again after every eopkg transaction, which turns an enabled
+# sshd or avahi-daemon off again (S1's second build).  A preset of BackShot1's
+# own, written before anything is installed, keeps them on.
+solus_presets() {
+    mkdir -p /etc/systemd/system-preset
+    printf '%s\n' "# Written by BackShot1's bs1-adopt: usysconf's preset run keeps these on." \
+        "enable sshd.service" "enable avahi-daemon.service" "enable avahi-daemon.socket" >/etc/systemd/system-preset/50-backshot1.preset
 }
 
 start_runit() {     # start_runit NAME: a service just linked in takes runsvdir a few seconds to notice
@@ -202,26 +225,28 @@ set_hostname() {
 
 install_tools() {
     command -v sshd >/dev/null || [[ -x /usr/sbin/sshd ]] ||
-        pkg_install openssh-server openssh-server openssh "$(with_script openssh)" openssh openssh openssh-server openssh net-misc/openssh
+        pkg_install openssh-server openssh-server openssh "$(with_script openssh)" openssh openssh openssh-server openssh net-misc/openssh openssh-server
     # BusyBox's df, umount and blkid lack options the scripts use, and it has no
     # findmnt, lsblk or sfdisk.  Alpine's names; Chimera has no BusyBox, and
     # an apk on Gentoo is a tool, not its package manager.
     if [[ $distro != chimera && $distro != gentoo ]] && command -v apk >/dev/null; then apk_add coreutils findmnt lsblk blkid sfdisk mount umount util-linux-misc; fi
     # Chimera's python package gives the python3 command; it has no python3 package.
-    command -v python3 >/dev/null || pkg_install python3 python3 python3 python python3 python3 python python dev-lang/python
+    command -v python3 >/dev/null || pkg_install python3 python3 python3 python python3 python3 python python dev-lang/python python3
     if ! command -v findmnt >/dev/null || ! command -v lsblk >/dev/null; then
-        pkg_install util-linux util-linux util-linux util-linux util-linux-misc util-linux util-linux util-linux sys-apps/util-linux
+        pkg_install util-linux util-linux util-linux util-linux util-linux-misc util-linux util-linux util-linux sys-apps/util-linux util-linux
     fi
     # bs1-to-stick's BootNext needs it, and a Chimera install with systemd-boot
     # (bootctl) can lack it, as can a Gentoo one (it is no part of @system).
     # The other systems' rehearsals all had it; NixOS gets it from adopt_nixos.
     # PikaOS's installer leaves it (rEFInd's refind-mkdefault uses it), but
-    # it isn't held by anything there: apt's, if it was removed.
+    # it isn't held by anything there: apt's, if it was removed.  Solus's
+    # clr-boot-manager writes NVRAM through libefivar and needs none.
     if [[ -d /sys/firmware/efi ]] && ! command -v efibootmgr >/dev/null; then
         case $distro in
             chimera) apk_add efibootmgr ;;
             gentoo) emerge --ask=n --getbinpkg --noreplace sys-boot/efibootmgr ;;
             pika) DEBIAN_FRONTEND=noninteractive apt-get install -y efibootmgr ;;
+            solus) eopkg_add efibootmgr ;;
         esac
     fi
 }
@@ -245,7 +270,7 @@ allow_root_key_login() {
 
 start_mdns() {
     command -v avahi-daemon >/dev/null ||
-        pkg_install avahi-daemon avahi avahi "$(with_script avahi)" "avahi dbus" "avahi dbus" avahi avahi "net-dns/avahi sys-apps/dbus"
+        pkg_install avahi-daemon avahi avahi "$(with_script avahi)" "avahi dbus" "avahi dbus" avahi avahi "net-dns/avahi sys-apps/dbus" avahi
     if [[ $init == s6 ]]; then
         s6 repository sync
         s6 set enable dbus
@@ -365,6 +390,10 @@ if [[ $distro == guix ]]; then
 elif [[ ! -e /etc/NIXOS ]]; then
     echo "== hostname: $SOURCE_HOST"
     set_hostname
+    if [[ $distro == solus ]]; then
+        echo "== Solus: a preset that keeps sshd and avahi-daemon enabled"
+        solus_presets
+    fi
     echo "== what's missing"
     install_tools
 fi

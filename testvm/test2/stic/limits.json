@@ -1,4 +1,12 @@
 {
+ "aeon": {
+  "[btrfs] project IDs (and P inheritance)": "expected, as microos's (aeon not run yet, 2026-11-15): btrfs takes no project ID (chattr -p fails: btrfs has none): fixture: skipped: chattr -p 42 /mnt/btrfs-src/up1/up2/tree/projid-file",
+  "[btrfs] an inode without security.selinux (a new btrfs subvolume's root": "expected, as microos's (aeon not run yet, 2026-11-15): btrfs labels none): ['up1/up2/tree/subvol']: every restore labels it (the kernel labels each new inode under SELinux; removing security.selinux is refused, EACCES); judged under 'exit 0 without war...",
+  "[btrfs] birth times (statx btime on btrfs)": "expected, as microos's (aeon not run yet, 2026-11-15): Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "[vfat] the top ancestor's SELinux label on a FAT (/mnt, restored as a directory on vfat)": "expected, as microos's (aeon not run yet, 2026-11-15): the snapshot's /mnt (a tmpfs, labelled mnt_t) carries security.selinux; vfat takes no xattr, so each restore warns for that one directory, and for nothing else (as kinoite44's)",
+  "[vfat] the source FAT root's times (none, shown as 1970-01-01) restored as a directory on FAT (earliest 1980-01-01)": "expected, as microos's (aeon not run yet, 2026-11-15): FAT's root directory has no times; a FAT directory can't take 1970-01-01, so the restore gets FAT's earliest, 1980-01-01 00:00:00, in 4 directions (as kinoite44's)",
+  "[vfat] birth times (FAT creation times, statx btime on vfat)": "expected, as microos's (aeon not run yet, 2026-11-15): Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)"
+ },
  "aerynos": {
   "Birth times": "the guest's f2fs has no inode_crtime (superblock features 0), and Linux can't set a birth time (BACKOTTER.md)",
   "Project IDs": "the guest's f2fs has no project_quota (superblock features 0): chattr -p refused",
@@ -228,6 +236,10 @@
   "sujournal": "/.sujournal belongs to the file system (newfs -j); its flags are tested on a copy",
   "zfs-per-file-options": "no ZFS on hardenedbsd15 (UFS root; freebsd15 covers ZFS)"
  },
+ "hardenedbsd15-zfs": {
+  "Linux-only metadata (SELinux, capabilities, inode flags, POSIX ACL default on ZFS)": "not on FreeBSD/ZFS: NFSv4 ACLs instead, no security.* namespace (MAC labels off: security.mac.labeled=0)",
+  "Whole-disk needs (zpool.cache, boot)": "out of scope: whole-disk"
+ },
  "kali": {
   "Birth times": "ext4 and vfat keep them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
   "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
@@ -333,6 +345,14 @@
   "whole-disk needs (GPT, the BIOS boot partition, proxmox-boot-tool's unmounted ESPs, pmxcfs at /etc/pve, the pool's bootfs and host id)": "out of scope: whole-disk (HoltTest1 recreates the disks and the pool, has proxmox-boot-tool rebuild the ESPs, which aren't backup sources, and skips pmxcfs: its data is config.db, here among the real examples); here the scratch pools are made like the guest's and only its datasets' contents are restored",
   "zvols (VM disks in rpool/data)": "rpool/data/vm-100-disk-0: a block device, no files: neither tool backs it up (vzdump's or Proxmox Backup Server's); HoltTest1's load makes it empty with a note"
  },
+ "qubes43": {
+  "non-root backup and restore": "not applicable: the offline path runs as root on the rescue stick",
+  "restic-bko runs natively": "not run: dom0 has no network (docs/design/qubes.md Decision 4), so BackOtter backs a Qubes disk up offline, from the rescue stick (this check)",
+  "restore over existing immutable/append-only files": "not run in this offline check: the same Linux code paths the online ext4 checks run (debian13's and the others')",
+  "rustic-bko runs natively": "not run: dom0 has no network (docs/design/qubes.md Decision 4), so BackOtter backs a Qubes disk up offline, from the rescue stick (this check)",
+  "the qubes' volumes (vm-* LVs in vm-pool, with their revisions)": "out of scope: raw block images, not file systems (template roots are whole disk images): bko-holt's raw volumes, HoltTest1 1Obscure (docs/design/qubes.md Q3, Q7)",
+  "Whole-disk needs (GPT, LUKS2, LVM thin pools and snapshots, Xen's GRUB entries, Qubes's NVRAM entry)": "out of scope: whole-disk (HoltTest1 1Obscure recreates the disk, restores the raw volumes and boots Xen and dom0 alone); here only dom0's root's contents are restored"
+ },
  "rocky10": {
   "birth times (statx btime on XFS)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)"
  },
@@ -347,6 +367,18 @@
   "restic-bko runs natively": "not applicable: grub.cfg boots Genode base-hw (bender + image-hw.elf: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statica); Go has no GOOS for Genode, and Genode has no Linux/BSD binary ABI",
   "restore over existing immutable/append-only files": "not applicable: Genode's ext2 driver sets no inode flags (none on the guest's disk)",
   "rustic-bko runs natively": "not applicable: no Rust target for Genode (would need a custom target spec on Genode's libc + -Zbuild-std, and a Goa package)"
+ },
+ "slackware15": {
+  "Birth times": "ext4 keeps them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
+  "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
+  "SELinux labels": "not applicable; Slackware 15's kernels have no SELinux or AppArmor (config-huge and config-generic 5.15.19: CONFIG_SECURITY_SELINUX and CONFIG_SECURITY_APPARMOR not set): no labels on disk",
+  "Whole-disk needs (MBR, the swap's contents, LILO's boot sector and its map's sector list)": "out of scope: whole-disk (HoltTest1 1Obscure recreates the disk, reruns lilo and boots it alone); here the scratch disk is laid out like the guest's and only its file systems' contents are restored"
+ },
+ "slackware15-uefi": {
+  "Birth times": "XFS and vfat keep them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
+  "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
+  "SELinux labels": "not applicable; Slackware 15's kernels have no SELinux or AppArmor (config-huge and config-generic 5.15.19: CONFIG_SECURITY_SELINUX and CONFIG_SECURITY_APPARMOR not set): no labels on disk",
+  "Whole-disk needs (GPT, the swap's contents, ELILO's NVRAM entry)": "out of scope: whole-disk (HoltTest1 1Obscure recreates the disk and boots it alone); here the scratch disk is laid out like the guest's and only its file systems' contents are restored"
  },
  "solus49": {
   "Birth times": "ext4 and vfat keep them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
@@ -392,6 +424,12 @@
  "ubuntu26-zfsmirror": {
   "Fixture items the guest/fs can't set (ext4)": "setfattr -n btrfs.compression -v zstd /mnt/bko-fsrt/ext4/src/root/bko-torture/compress-zstd; setfattr -n btrfs.compression -v zstd /mnt/bko-fsrt/ext4/src/root/bko-torture/compress-dir; chattr +C /m...",
   "Fixture items the guest/fs can't set (zfs-ds)": "chattr +F /mnt/bko-fsrt/zfs-ds/src/root/bko-torture/casefold-dir; setfattr -n btrfs.compression -v zstd /mnt/bko-fsrt/zfs-ds/src/root/bko-torture/compress-zstd; setfattr -n btrfs.compression -v zst..."
+ },
+ "uc24": {
+  "backups on relatime (the guest's four roots) leave the source's atimes alone": "only symlinks' atimes move: readlink(2) has no O_NOATIME (both BACKOTTER.md)",
+  "birth times (statx btime on ext4 and vfat)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "project IDs (and P inheritance)": "the guest's ext4 (ubuntu-boot, ubuntu-save, ubuntu-data) have no project feature, and vfat has none: none is made",
+  "whole-disk needs (the GPT's PARTUUIDs, BIOS Boot and the MBR stub, the boot chain, the TPM-sealed keys, recover mode on a new machine)": "out of scope: whole-disk (HoltTest1 1U restores uc24 and uc24-fde with bko-holt and boots them: the same machine unattended, a new machine to recover mode, docs/design/ubuntu-core.md); here the gadget's layout is made on a scratch disk and only its four roots' contents are restored, into targets made as load makes them"
  },
  "vanilla3": {
   "backups on relatime (the guest's /, /var and ESP) leave the source's atimes alone": "only symlinks' atimes move: readlink(2) has no O_NOATIME (both BACKOTTER.md)",

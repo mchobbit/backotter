@@ -30,6 +30,10 @@ pub const HC_STATE: &str = "/var/lib/misc/health-check.state";
 /// sdbootutil's per-snapshot entries) over GRUB's.
 pub const BLS_ENTRIES: &str = "/boot/efi/loader/entries";
 pub const TOOLS: [&str; 2] = ["/usr/sbin/tukit", "/usr/sbin/transactional-update"];
+/// fde-tools' and sdbootutil's settings on an encrypted system (Aeon): the
+/// PCRs the TPM2 key is sealed to (FDE_SEAL_PCR_LIST), recorded as
+/// boot.transactional.fde_seal_pcr_list when the file is there.
+pub const FDE_TOOLS: &str = "/etc/sysconfig/fde-tools";
 
 /// fstab's options make the mount read-only: `ro`, or `ro=vfs` / `ro=fs`.
 pub fn ro_in_fstab(options: &str) -> bool {
@@ -111,26 +115,28 @@ pub fn read(sys: &Sys, fstab: &Value, btrfs: &Value) -> Option<Value> {
         let get = |k: &str| kv.iter().rev().find(|(x, _)| x == k).map(|(_, v)| v.clone());
         let id = get("LAST_WORKING_BTRFS_ID");
         Obj::new()
-            .set("last_working_btrfs_id", id.as_deref().and_then(|i| i.parse::<u64>().ok()))
-            .set("last_working_btrfs_id_raw", id)
-            .set("last_working_snapshot", get("LAST_WORKING_SNAPSHOT").map(|p| norm(&p)))
+        .set("last_working_btrfs_id", id.as_deref().and_then(|i| i.parse::<u64>().ok()))
+        .set("last_working_btrfs_id_raw", id)
+        .set("last_working_snapshot", get("LAST_WORKING_SNAPSHOT").map(|p| norm(&p)))
             .build()
     });
     let pending = default_path.as_deref().is_some_and(|d| d != booted);
-    Some(
-        Obj::new()
-            .set("filesystem", fs.get("uuid").cloned().unwrap_or(Value::Null))
-            .set("fstab_root_options", root_opts)
-            .set("tools", tools)
-            .set("booted", slot(&booted, booted_sub.get("id").and_then(Value::as_u64)))
-            .set("default", default_path.as_deref().map(|d| slot(d, default_id)))
-            .set("pending_update", pending)
-            .set("etc", etc)
-            .set("loader_mode", if sys.is_dir(BLS_ENTRIES) { "bls" } else { "grub" })
-            .set("transactional_update_state", tu)
-            .set("health_check_state", hc)
-            .build(),
-    )
+    // Only when fde-tools' file is there (Aeon's LUKS2 with TPM2): any other
+    // system's dump is as it was, without the key.
+    let pcrs = sys.read(FDE_TOOLS).and_then(|t| parse_state(&t).into_iter().rev().find(|(k, _)| k == "FDE_SEAL_PCR_LIST").map(|(_, v)| v));
+    let mut o = Obj::new()
+        .set("filesystem", fs.get("uuid").cloned().unwrap_or(Value::Null))
+        .set("fstab_root_options", root_opts)
+        .set("tools", tools)
+        .set("booted", slot(&booted, booted_sub.get("id").and_then(Value::as_u64)))
+        .set("default", default_path.as_deref().map(|d| slot(d, default_id)))
+        .set("pending_update", pending)
+        .set("etc", etc)
+        .set("loader_mode", if sys.is_dir(BLS_ENTRIES) { "bls" } else { "grub" })
+        .set("transactional_update_state", tu)
+        .set("health_check_state", hc);
+    o.put_some("fde_seal_pcr_list", pcrs);
+    Some(o.build())
 }
 
 /// BOOT (the dump's boot section) with boot.transactional in it.
@@ -274,6 +280,31 @@ pub(crate) mod tests {
             assert_eq!(got.get(k), want.get(k), "{k}");
         }
         assert_eq!(want.at(&["booted", "path"]).and_then(Value::as_str), Some("@/.snapshots/2/snapshot"));
+    }
+
+    /// Aeon's layout (the synthetic fixture: load/transactional.rs's
+    /// aeon(), from the guest's disk read by vm-mount, until a real dump
+    /// replaces it): its fstab (/ compress=zstd:1,ro=vfs on the LUKS2
+    /// container's btrfs) and btrfs (slot 1 booted and the default) read as
+    /// transactional, BLS (sdbootutil's entries on the ESP), no
+    /// health-check.state (the BLS path writes none), fde-tools' PCRs.
+    #[test]
+    fn aeon_is_transactional() {
+        let v = crate::json::parse(include_str!("../tests/fixtures/aeon-synthetic.json")).unwrap();
+        let t = Tree::new("transactional-aeon");
+        t.file("/usr/sbin/tukit", "").file("/usr/sbin/transactional-update", "").file(TU_STATE, "LAST_WORKING_SNAPSHOTS=\"1 \"\n");
+        t.file(&format!("{BLS_ENTRIES}/aeon-7.3.3-1-default-1.conf"), "title Aeon\n");
+        t.file(FDE_TOOLS, "# fde-tools\nFDE_SEAL_PCR_LIST=4,5,7,9\n");
+        let s = sys(&t);
+        let got = read(&s, v.at(&["storage", "fstab"]).unwrap(), v.at(&["storage", "btrfs"]).unwrap()).expect("transactional");
+        assert_eq!(&got, v.at(&["boot", "transactional"]).unwrap(), "{}", got.pretty());
+        assert_eq!(got.get("loader_mode").and_then(Value::as_str), Some("bls"));
+        assert!(got.get("health_check_state").is_some_and(Value::is_null));
+        assert_eq!(got.at(&["booted", "path"]), got.at(&["default", "path"]));
+        assert!(s.warnings().is_empty(), "{:?}", s.warnings());
+        // Without fde-tools' file (MicroOS's): no key at all.
+        std::fs::remove_file(t.p(FDE_TOOLS)).unwrap();
+        assert!(read(&s, v.at(&["storage", "fstab"]).unwrap(), v.at(&["storage", "btrfs"]).unwrap()).unwrap().get("fde_seal_pcr_list").is_none());
     }
 
     #[test]

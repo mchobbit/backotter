@@ -31,6 +31,25 @@
   ]
  },
  "entries": {
+  "aeon": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/aeon/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/aeon/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#aeon"
+   ]
+  },
   "aerynos": {
    "os": "linux",
    "bins": [
@@ -689,6 +708,28 @@
    ],
    "notes": "freebsd15-ufs/extras.sh in the extras VM"
   },
+  "hardenedbsd15-zfs": {
+   "os": "freebsd",
+   "bins": [
+    "freebsd/restic-bko",
+    "freebsd/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/hardenedbsd15-zfs/**",
+    "testvm/compare/freebsd/fsmeta.sh",
+    "testvm/compare/freebsd/roundtrip.sh",
+    "testvm/compare/freebsd/torture.sh",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/stictest1/freebsd15/extra.sh"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#hardenedbsd15-zfs"
+   ],
+   "notes": "freebsd15/extra.sh, freebsd15's checklist (ghostbsd26-zfs's check)"
+  },
   "kali": {
    "os": "linux",
    "bins": [
@@ -985,6 +1026,33 @@
     "entry:testvm/test2/stic/limits.json#proxmox9-mirror"
    ]
   },
+  "qubes43": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/qubes43/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/vm-mount",
+    "testvm/vm-umount"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#qubes43"
+   ],
+   "host": [
+    "kernel",
+    "pkg:cryptsetup-bin",
+    "pkg:e2fsprogs",
+    "pkg:lvm2",
+    "pkg:qemu-utils",
+    "pkg:thin-provisioning-tools",
+    "pkg:util-linux"
+   ],
+   "notes": "host-side: the whole check runs on the host as root (vm-mount --ro --key of the guest's disk: LUKS, qubes_dom0's thin pools from throwaway PV snapshots; mkfs.ext4, both tools); one Qubes disk at a time per host (LVM activates qubes_dom0 under its own name)"
+  },
   "rocky10": {
    "os": "linux",
    "bins": [
@@ -1044,6 +1112,45 @@
     "pkg:util-linux"
    ],
    "notes": "host-side: the whole check runs on the host as root (qemu-img convert, losetup, mkfs.ext2, both tools)"
+  },
+  "slackware15": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/slackware15/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/slackware15/judge.py",
+    "entry:testvm/test2/stic/limits.json#slackware15"
+   ],
+   "notes": "solus49's check for Slackware's BIOS layout (MBR: swap, ext4 /; LILO, the huge kernel, no initrd); inner.sh, judge.py, fatattr.py and nracl.py shared with slackware15-uefi (its check.sh is the same file)"
+  },
+  "slackware15-uefi": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/slackware15-uefi/**",
+    "testvm/stictest1/slackware15/inner.sh",
+    "testvm/stictest1/slackware15/fatattr.py",
+    "testvm/stictest1/slackware15/nracl.py",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/slackware15/judge.py",
+    "entry:testvm/test2/stic/limits.json#slackware15-uefi"
+   ],
+   "notes": "slackware15's inner.sh, judge.py, fatattr.py and nracl.py (its check.sh is the same file) for the UEFI layout: GPT, the ESP at /boot/efi (FAT32 made in the guest with the ESP's geometry), swap, XFS / made with the root's -m/-i options; ELILO, the generic kernel with mkinitrd"
   },
   "solus49": {
    "os": "linux",
@@ -1202,6 +1309,26 @@
    "judge": [
     "entry:testvm/test2/stic/limits.json#ubuntu26-zfsmirror"
    ]
+  },
+  "uc24": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/uc24/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/uc24/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#uc24"
+   ],
+   "notes": "the guest's own four roots (/run/mnt/ubuntu-seed, ubuntu-boot, ubuntu-save, data: its snaps up to 16/40 MiB, modeenv, hello's revisions) are copied into the fixture: a guest image change re-keys the cell through the guest's generation; uc24-fde's LUKS2 layout is made on the scratch disk (its own disk is never booted here)"
   },
   "vanilla3": {
    "os": "linux",

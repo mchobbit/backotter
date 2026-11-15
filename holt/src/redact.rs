@@ -134,7 +134,7 @@ const WELL_KNOWN: [&str; 7] = [
     "ffffffff-ffff-ffff-ffff-ffffffffffff",
 ];
 /// Hostnames installers give and live systems use: they identify no one.
-const GENERIC_HOSTS: [&str; 41] = [
+const GENERIC_HOSTS: [&str; 42] = [
     "", "(none)", "localhost", "localhost.localdomain", "localdomain", "<system>", "any", "debian", "ubuntu", "ubuntu-server", "fedora",
     "archlinux", "archiso", "alpine", "nixos", "freebsd", "openbsd", "netbsd", "dragonfly", "omnios", "openindiana", "haiku", "void",
     "voidlinux", "mint", "zorin", "pop-os", "rocky", "backotter", "rescue",
@@ -156,10 +156,12 @@ const GENERIC_HOSTS: [&str; 41] = [
     // Solus: its live system's hostname, and the solus49 guest's
     // (testvm/make-solus.sh names it after the guest).
     "solus", "solus49",
+    // Qubes OS: dom0's hostname on every install.
+    "dom0",
 ];
 /// Labels (lower case, trailing digits and '*' dropped) that installers
 /// and partitioners write: kept, because they help and identify no one.
-const GENERIC_LABELS: [&str; 85] = [
+const GENERIC_LABELS: [&str; 88] = [
     "", "efi", "esp", "efi system partition", "efi system", "efi-system", "efiboot", "bios", "biosboot", "bios boot partition",
     // Hybrid ISO images (xorriso: EFISYS, Gap1, Appended2...) and BackOtter's
     // and Haiku's own images.
@@ -184,7 +186,25 @@ const GENERIC_LABELS: [&str; 85] = [
     // Ubuntu Core's pc gadget: GPT names and file system labels, and the
     // LUKS2 labels of its encrypted ones (crate::snapcore).
     "ubuntu-seed", "ubuntu-boot", "ubuntu-save", "ubuntu-data", "ubuntu-save-enc", "ubuntu-data-enc",
+    // Qubes OS's installer: its VG and its two thin pools, the same on
+    // every install (docs/design/qubes.md).
+    "qubes_dom0", "root-pool", "vm-pool",
 ];
+/// The qubes Qubes OS 4.3 makes itself (its initial setup's system and
+/// default qubes, its templates, Whonix's): kept in qube names
+/// (storage.qubes) and the LV names made from them; a qube the user named
+/// is redacted like a hostname.
+const GENERIC_QUBES: [&str; 14] = [
+    "dom0", "sys-net", "sys-firewall", "sys-usb", "sys-whonix", "default-dvm", "default-mgmt-dvm", "personal", "work", "untrusted", "vault", "anon-whonix", "fedora-44-xfce", "debian-13-xfce",
+];
+
+/// A stock qube's name (GENERIC_QUBES, a template's fedora-N-* or
+/// debian-N-*, or Whonix's whonix-*).
+fn generic_qube(q: &str) -> bool {
+    let l = q.to_ascii_lowercase();
+    let template = |p: &str| l.strip_prefix(p).and_then(|r| r.split_once('-')).is_some_and(|(n, rest)| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()) && ["xfce", "minimal", "gnome", "kde"].iter().any(|f| rest == *f || rest.starts_with(&format!("{f}-"))));
+    GENERIC_QUBES.contains(&l.as_str()) || l.starts_with("whonix-") || template("fedora-") || template("debian-") || l.ends_with("-dm") && GENERIC_QUBES.contains(&l.trim_end_matches("-dm"))
+}
 /// Ubuntu names the datasets for /home and /root USERDATA/home_ID and
 /// USERDATA/root_ID.
 const GENERIC_USERS: [&str; 3] = ["root", "home", "lost+found"];
@@ -210,7 +230,7 @@ pub struct Collector {
 /// A release medium's volume label: a system's name, its version and an
 /// architecture ("Ubuntu-Server 26.04.1 LTS amd64", "Fedora-S-dvd-x86_64-44").
 fn release_label(low: &str) -> bool {
-    const SYSTEMS: [&str; 20] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos", "pikaos", "kali", "proxmox", "guix", "truenas", "elementary", "elementaryos", "solus"];
+    const SYSTEMS: [&str; 21] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos", "pikaos", "kali", "proxmox", "guix", "truenas", "elementary", "elementaryos", "solus", "qubes"];
     const ARCHES: [&str; 5] = ["amd64", "x86_64", "x86-64", "arm64", "aarch64"];
     let first = low.split(|c: char| !c.is_ascii_alphanumeric()).next().unwrap_or("");
     SYSTEMS.contains(&first) && ARCHES.iter().any(|a| low.contains(a)) && low.bytes().any(|c| c.is_ascii_digit())
@@ -439,6 +459,11 @@ impl Collector {
         // (V8, docs/design/vanillaos.md).
         if (key == "id" || key.ends_with("uuid")) && pattern_spans(t, &[6, 4, 4, 4, 4, 4, 6], b'-', is_alnum) == [(0, t.len())] {
             self.add(Ident::Lvm(t.replace('-', "")));
+        }
+        // A qube the user named (storage.qubes): redacted as a hostname is,
+        // in the LV names made from it too; the stock ones are kept.
+        if key == "qube" && parent != "raw_volume" && !t.is_empty() && !generic_qube(t) {
+            self.add(Ident::Name(Kind::Hostname, t.to_string()));
         }
         if HOST_KEYS.contains(&key) && !t.is_empty() {
             self.add(Ident::Name(Kind::Hostname, t.to_string()));
@@ -1970,5 +1995,21 @@ mod tests {
         for not in ["12345-00001-65535-00256-54321-00000-11111", "12345-0001-65535-00256-54321-00000-11111-22222", "12345 00001 65535 00256 54321 00000 11111 22222", "é"] {
             assert_eq!(scrub_recovery_keys(not), not);
         }
+    }
+
+    /// Qubes OS: dom0's hostname, the VG and pool names and the stock
+    /// qubes are kept; a qube the user named is redacted as a hostname,
+    /// in the LV names made from it too.
+    #[test]
+    fn qubes_names() {
+        let d = parse(r#"{"os": {"id": "qubes"}, "host": {"hostname": "dom0"}, "storage": {"lvm": {"volume_groups": [{"name": "qubes_dom0", "logical_volumes": [{"name": "vm-pool"}, {"name": "vm-work-private"}, {"name": "vm-fedora-44-xfce-root"}, {"name": "vm-whonix-gateway-18-private"}]}]}, "qubes": {"volumes": [{"qube": "work", "vid": "qubes_dom0/vm-work-private"}, {"qube": "fedora-44-xfce"}, {"qube": "whonix-gateway-18"}, {"qube": "sys-net"}]}}}"#).unwrap();
+        let (r, red) = redact(&d);
+        assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
+        let d = parse(r#"{"os": {"id": "qubes"}, "storage": {"lvm": {"volume_groups": [{"name": "qubes_dom0", "logical_volumes": [{"name": "vm-alicebank-private"}]}]}, "qubes": {"volumes": [{"qube": "alicebank", "vid": "qubes_dom0/vm-alicebank-private"}]}}}"#).unwrap();
+        let (r, _) = redact(&d);
+        let c = r.compact();
+        assert!(!c.contains("alicebank") && c.contains("qubes_dom0"), "{c}");
+        assert!(generic_qube("debian-13-xfce") && generic_qube("fedora-45-minimal") && generic_qube("sys-net-dm") && !generic_qube("fedora-work"));
+        assert!(release_label("qubes-r4-3-2-x86-64"));
     }
 }

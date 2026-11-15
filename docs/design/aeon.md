@@ -8,7 +8,11 @@ immutable-system precedents were (docs/design/bazzite.md for ostree,
 docs/design/vanillaos.md for ABRoot), borrowing Tumbleweed's and Leap 16's
 openSUSE notes (`testvm/make-opensuse.sh`, docs/design/leap16.md).
 **Status: approved 2026-11-14 by the user with every recommended decision
-(the last section).**
+(the last section).  MicroOS (M1-M5) done and committed 2026-11-14.  Aeon's
+plumbing (A1's guest, A2, A3's and A4's registrations and harness, M6's
+docs) done 2026-11-15 without runs, at the user's word ("skip the more
+intensive testing ... Do the plumbing though"): every run is owed ("Status
+of the pieces", after the table).**
 
 **Conventions.** est. marks an estimate. *Check* marks a fact the sources
 don't settle, to be settled on the first guest of its kind (M1, A1) before
@@ -578,7 +582,131 @@ snapper 0.13.1, zypper 1.14.102, health-checker 1.13):
   away. The rollback branch of the check is untested on the guest (M5's
   forced rollback will exercise it).
 
-## What A1 found so far (the installer, read offline)
+## What A1 found
+
+**The build** (`make-opensuse.sh aeon 20261111 vms/aeon` on Chopin,
+2026-11-14, under `cmp-run.sh` reservations in /mnt/bko-ram; logs in
+`/bkoscratch/a1/build-*.log`; the guest in `~/backotter-work/vms/aeon`).
+Builds 3 and 4 passed (243 s and 235 s from the image in rebuild-inputs);
+build 4's guest is the one kept. `aeon.qcow2`: 2.35 GiB on disk, 48 GiB
+virtual, snapshot `fresh-install`; beside it `aeon.tpm/` (swtpm's state),
+`uefi-vars.fd`, `recovery-key` (mode 600) and `vm-run-options` `--uefi
+--disk-serials aeon --guest-vars uefi-vars.fd --guest-tpm aeon.tpm`, which
+make-opensuse.sh writes and rebuild-one.sh's `aeon)` line reproduces.
+
+- **The installer boots under OVMF with Secure Boot on** (`SecureBoot
+  enabled`), from the stick on USB (xHCI, `bootindex=0`), with a new TPM 2.0
+  (`vm-run --tpm aeon.tpm`) that has PolicyAuthorizeNV, and combustion's
+  script by fw_cfg (`opt/org.opensuse.combustion/script`, as microos's): SSH,
+  root's key, the host name, `multi-user.target`, the updates off, and
+  `TIK_INSTALL_DEVICE` in `/etc/tik/config`. Combustion's snapshot is the
+  stick's #2. tik then runs over SSH, answered by `opensuse/drive-tik.py`
+  (cenity on its terminal: "Begin Installation?" Yes, the "Press any key"
+  infos Enter).
+- **tik's `pre/20-mig` hung on a virtio disk with no serial:** a disk with
+  no `/dev/disk/by-id` name makes tik warn in a dialog it shows inside a
+  `$(...)`, whose "Press any key" nobody sees, and it waited for ever. Fixed
+  by `vm-run --disk-serials aeon` (the disk is `virtio-aeon`), at the
+  install and at every boot after it (a by-id name the guest's own files
+  may come to use), and `TIK_INSTALL_DEVICE=/dev/disk/by-id/virtio-aeon`.
+- **repart self-deploy:** tik deploys the running stick (snapshot 2, with
+  combustion's settings) by systemd-repart's `CopyFiles=`, so the guest's
+  root is a copy of the installer's: its single slot is
+  `@/.snapshots/1/snapshot` (ID 258, `ro`, "first root filesystem"), its
+  `/etc` nested (259), the MicroOS subvolumes `@/home` ... `@/boot/grub2/*`
+  (260-268, the GRUB ones empty and unused). The target's GPT is p1 ESP
+  (4 GiB, vfat `ESP`, PARTLABEL `esp`) and p2 LUKS2 (`luks-root-x86-64`,
+  PARTLABEL `root-x86-64`, root type, attribute 59) holding btrfs
+  `root-x86-64` at `/dev/mapper/aeon_root`; no BIOS boot or ignition
+  partition. The root grew to the disk at once (47.2 GB of 51.5).
+- **machine-id and first boot:** the installer's boot was the first boot
+  (machine-id from the random generator); tik copied its `/etc`, so the
+  guest has the installer session's machine-id and its first boot is not a
+  first boot (`ConditionFirstBoot` unmet, no `preset-all`). Its journal
+  begins with the installer's boot. The presets of combustion-aeon.sh are
+  kept anyway, should a later rebuild differ.
+- **The TPM seal:** tik's post module enrols `systemd-cryptenroll`'s TPM2
+  through `sdbootutil enroll --method=tpm2` with **systemd-pcrlock** (the
+  policy in an NV index of the TPM: "NVIndex policy created"), on PCRs
+  4, 5, 7 and 9 (`/etc/sysconfig/fde-tools`: `FDE_SEAL_PCR_LIST=4,5,7,9`),
+  and wipes the key file's slot: the header has keyslot 1 (recovery, a
+  `systemd-recovery` token) and 2 (tpm2, a `systemd-tpm2` token), and **no
+  passphrase**. crypttab: `aeon_root UUID=... none
+  x-initrd.attach,tpm2-device=auto,tpm2-measure-pcr=yes`. Every boot of the
+  build unlocked with nothing typed ("Automatically discovered security TPM2
+  token unlocks volume", no prompt on the console), including after
+  aeon-setup.sh's new command line (sdbootutil updated the predictions for
+  PCR 9). `sdbootutil-update-predictions.service` ends `success`.
+- **The recovery key** is modhex, eight groups of eight, and shown once, as
+  text and a QR code, on tik's terminal. drive-tik.py writes it to
+  `WORK_DIR/recovery-key` (mode 600) and replaces it (and the QR code) in
+  `tik.log`. It is a passphrase to cryptsetup: vm-mount `--key recovery-key`
+  opens the disk read-only, which vm-update's host mount check now uses
+  (`key_file()`: recovery-key last).
+- **The loader:** systemd-boot through shim, installed by sdbootutil
+  (`EFI/systemd/{shim.efi, grub.efi (systemd-boot), MokManager.efi,
+  boot.csv, installed_by_sdbootutil, pcrlock.json,
+  measure-pcr-prediction}`, the fallback `EFI/BOOT/{BOOTX64.EFI (shim),
+  fallback.efi, MokManager.efi}`), and NVRAM's **"Aeon Boot Manager"**
+  (`HD(1,GPT,...)/File(\EFI\systemd\shim.efi)`, BootCurrent). Kernel and
+  initrd are on the ESP in `aeon/7.3.3-1-default/` (named by hash); one
+  entry per snapshot and kernel, `loader/entries/aeon-7.3.3-1-default-1.conf`
+  (`version 1_7.3.3-1-default`, `sort-key aeon`), with a boot counter
+  (`+3`) until its first good boot. `/etc/kernel/{cmdline, entry-token
+  (aeon), tries (3)}` are what sdbootutil makes entries from.
+- **The duplicate `root=`:** the stick's `/etc/kernel/cmdline`, copied to
+  the guest, names the stick's btrfs (`root=UUID=4d458a80...`) and then the
+  guest's (`root=UUID=7ab13a54...`, the btrfs in LUKS). sdbootutil writes the
+  entries with `root=/dev/mapper/aeon_root root=UUID=<the guest's btrfs>`,
+  so the kernel line has two `root=`, both the same filesystem; the stick's
+  UUID stays only in `/etc/kernel/cmdline`. Harmless; not changed by the
+  build (a user's install has it too).
+- **systemd-bless-boot:** the first boot's entry is counted and blessed
+  good (`bless-boot=good`), which drops its counter; every later boot of it
+  is `clean`. Build 2 failed on "systemd-bless-boot did not mark the boot
+  good" only because `systemd-bless-boot` isn't on PATH (it lives in
+  `/usr/lib/systemd/`) and the relabel boot is the entry's second; the check
+  calls it by its path, waits for it, and takes `good` or `clean` (builds 3
+  and 4).
+- **health-checker's BLS path:** it runs and passes ("Health check
+  passed") but writes **no `/var/lib/misc/health-check.state`**: the BLS
+  path keeps no subvolume IDs, as the design expected.
+- **sdbootutil and EFI variables:** sdbootutil keeps the default entry in
+  `LoaderEntryDefault` (none set on the fresh guest: `bootctl status` shows
+  no default; a rollback sets one), and a fresh variable store forgets it
+  and boots the entry systemd-boot sorts first (the newest snapshot's). So
+  the guest carries its own store, `uefi-vars.fd` (with "Aeon Boot
+  Manager"), and every boot of it is on a copy (`--guest-vars`), as its TPM
+  is (`--guest-tpm`). aeon-setup.sh clears the installer's default
+  (`bootctl set-default ''`), which named the stick's entry.
+- **No rebootmgr** on Aeon (`rebootmgr=not-found`); the timers that update
+  it are `transactional-update.timer` (which reboots by itself),
+  `update-system-flatpaks.timer` and the user unit
+  `update-user-flatpaks.timer`: all three disabled, by `systemctl disable`
+  and a preset of the build's.
+- **SELinux** enforcing, targeted; the relabel boot relabels nothing and
+  the check boot neither. `restorecon -n` names 4 files: the three empty
+  GRUB/writable subvolumes' roots (`unlabeled_t`) and `/etc/crypttab`
+  (`user_tmp_t`: tik writes it in /tmp and moves it). As the install leaves
+  them; not fixed by the build.
+- **vm-update --try** (build 8, after builds 5 and 7 failed): ok, the dup
+  made snapshot 2 (two packages), booted = default = `@/.snapshots/2/snapshot`
+  after the reboot, vm-mount reads the 12 file systems, overlay 151 MiB
+  thrown away; the master's disk, TPM, variables and key unchanged. Build 5
+  failed on vm-run's exit status 1 after the guest powered off (its
+  cleanup's swtpm kill as a last `[[ ]] && kill`, fixed in vm-run), build 7
+  on vm-mount without a key (the recovery key, fixed in vm-update).
+- **vm-update refuses a real merge** of a `--guest-tpm` guest (`--try` and
+  `--probe` only): an update that brings a new kernel or initrd has
+  sdbootutil rewrite the pcrlock policy in the run's TPM, a copy thrown
+  away, so merging the disk alone would leave the master's TPM sealed to the
+  old boot chain and the guest asking for its recovery key. Carrying the
+  TPM (and the variable store) through `ship_and_commit` is a later item.
+- **Not done:** the copy to a second host (the user's decision, 2026-11-15)
+  and the vm-store masters with the TPM state. Until then `aeon` runs on
+  Chopin only.
+
+**The installer, read offline** (before the build):
 
 `Aeon-Installer.x86_64-0.1.0-Snapshot20261111.raw.xz`, 2.1 GiB (7.1 GiB
 raw). Its `.sha256.asc` is signed by the openSUSE key (gpgv: good) and the
@@ -841,6 +969,41 @@ The corpus entry `holt/tests/corpus/microos` and its Test2 registrations
 | A4 | HoltTest1 runs of `aeon` on both hosts: the passphrase boot (front-loaded), the re-seal and unattended boot, the `bootctl set-oneshot` boots of older slots, the BLS health-checker rollback | 0.5 d |
 | M6 | Docs: holt/README.md's supported list, `osrel.rs`'s comment, HoltTest1's 1Obscure row and HoltTest1All, SticTest1's and Test2's READMEs, `layload.md`'s boot stage (the transactional arm), memory (holttest1d index, an aeon-support note) | 0.15 d |
 | | *≈ 7.2 d for both; ≈ 4.2 d for `microos` alone (M1-M6 without A1-A4)* | |
+
+**Status of the pieces (2026-11-15).** M1-M5 done (90cb7e6, 3f401e9).
+- **A1** done but for the copy to a second host and vm-store (the user's
+  decision): the guest on Chopin, "What A1 found".
+- **A2** done (uncommitted), tested by `cargo test` only: the `aeon` row,
+  the BLS checks (plan and boot stage), health-checker's BLS note, the TPM2
+  and recovery-key notes (kept header or new), `fde_seal_pcr_list` in the
+  dump, the ESP's kernel directories in the dump's inventory, a passphrase
+  slot's PBKDF not copied from a token's slot; unit tests on a synthetic
+  dump (`holt/tests/fixtures/aeon-synthetic.json`), to be replaced by the
+  real one.
+- **A3** registrations only: SticTest1 `testvm/stictest1/aeon` with its
+  manifest, limits (microos's, expected) and the README's estimate (300 s);
+  GuestTest2's `aeon` (pm tukit, L-sd, uefi-sb, not established) and the
+  estimates. **Not registered:** HoltTest2's source (classes.json, holt/spec.json)
+  and the corpus entry: with no source dump, a holt cell is a golden_plans
+  failure ("no corpus dump"), and holt/spec.json's UEFI sources must equal
+  classes.json's. Both wait for the golden plan from a HoltTest1 PASS dump.
+- **A4** wired, not run: ht1.sh's `--guest-tpm` (`GTPM`: the source on a
+  copy of the guest's TPM, every restored boot on a new machine's), the
+  kept LUKS2 headers (`dump --keep-luks-header`, Ubuntu Core's generic
+  option, which came after this spec) so that the recovery key opens the
+  restored disk, typed at the restored first boot's prompt (the front-loaded
+  boot), `tu_reseal` (`sdbootutil unenroll`/`enroll --method=tpm2`, then a
+  boot with nothing typed), `tu_boot_slot_bls` (`bootctl set-oneshot`),
+  `tu_rollback_bls`, judge.py's BLS counters, kept headers and PCR list,
+  `ram-sizes.tsv` (est.), the README. Decision 4(a)'s new header is still
+  what load does without `--keep-luks-header` (the plan's note says both).
+- **M6** docs done (holt/README.md, osrel.rs, layload.md, the READMEs);
+  memory is the parent session's.
+- **Owed to the user's runs:** SticTest1 aeon (both archivers), HoltTest1
+  aeon (front-loaded: its restored first boot types the recovery key), the
+  golden plan and HoltTest2 registration from that PASS dump, GuestTest2's
+  rules for tukit/L-sd on Aeon, the copy to a second host and vm-store's
+  masters with the TPM state, and vm-update's merge carrying the TPM.
 
 M1-M5 come before A1, since Aeon reuses the transactional arm, the prep and
 the judge rules. Each piece is committed on main when its tests pass and the

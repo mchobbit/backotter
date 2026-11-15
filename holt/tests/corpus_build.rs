@@ -16,7 +16,8 @@
 //!      NetBSD's) become `builder-at-redacted`, which redact.rs has no kind
 //!      for;
 //!   4. third-party boot code (`esp_image[].b64`, `boot_code.image_b64`,
-//!      `boot_code.code_b64`, `boot_code.gap_b64`) is replaced by a fixed
+//!      `boot_code.code_b64`, `boot_code.gap_b64`, and Ubuntu Core's
+//!      `boot_areas.mbr_code_b64` and `bios_boot.image_b64`) is replaced by a fixed
 //!      filler of the same length, its redacted bytes' length and CRC-32 kept
 //!      in index.tsv;
 //!   5. the result is planned against the redacted, unfilled dump (the same
@@ -162,9 +163,13 @@ fn filler(n: usize) -> Vec<u8> {
 
 /// Whether KEY, in an object under PARENT's key, is boot code the corpus
 /// leaves out: a disk's or partition's `boot_code` images, an unmounted
-/// ESP's chunks (other/mod.rs's esp_image).
+/// ESP's chunks (other/mod.rs's esp_image), Ubuntu Core's MBR code and BIOS
+/// Boot image (boot.snapcore.boot_areas, snapcore.rs's).
 fn is_boot_code(parent: &str, key: &str) -> bool {
-    (parent == "boot_code" && matches!(key, "image_b64" | "code_b64" | "gap_b64")) || (parent == "esp_image" && key == "b64")
+    (parent == "boot_code" && matches!(key, "image_b64" | "code_b64" | "gap_b64"))
+        || (parent == "esp_image" && key == "b64")
+        || (parent == "boot_areas" && key == "mbr_code_b64")
+        || (parent == "bios_boot" && key == "image_b64")
 }
 
 /// V with its boot code filled; PARENT is the key V sits under (an array's
@@ -502,7 +507,8 @@ fn boot_code_is_filled_to_its_length() {
     assert_eq!(paths, [".storage.disks.0.boot_code.code_b64", ".storage.disks.0.partitions.0.esp_image.0.b64", ".storage.disks.0.partitions.0.boot_code.image_b64"]);
     assert_eq!(f[1].bytes, 1500);
     assert_eq!(f[1].crc32, bko_holt::bytes::crc32(&vec![7u8; 1500]));
-    let back = |p: &[&str]| bko_holt::bytes::unbase64(o.at(p).and_then(Value::as_str).unwrap()).unwrap();
+    let back_in = |o: &Value, p: &[&str]| bko_holt::bytes::unbase64(o.at(p).and_then(Value::as_str).unwrap()).unwrap();
+    let back = |p: &[&str]| back_in(&o, p);
     assert_eq!(back(&["storage", "disks", "0", "partitions", "0", "esp_image", "0", "b64"]), filler(1500));
     assert_eq!(back(&["storage", "disks", "0", "boot_code", "code_b64"]).len(), 7);
     // Not boot code: kept.
@@ -510,6 +516,15 @@ fn boot_code_is_filled_to_its_length() {
     assert_eq!(o.at(&["boot", "efi", "entries", "0", "load_option_hex"]), v.at(&["boot", "efi", "entries", "0", "load_option_hex"]));
     assert_eq!(o.get("b64"), v.get("b64"));
     assert_eq!(o.at(&["storage", "disks", "0", "partitions", "0", "esp_image", "0", "offset"]).and_then(Value::as_u64), Some(0));
+    // Ubuntu Core's boot areas: the MBR code and BIOS Boot's image, not
+    // their SHA-256.
+    let sc = json::parse(&format!(r#"{{"boot": {{"snapcore": {{"boot_areas": {{"mbr_code_b64": "{code}", "mbr_code_sha256": "ab", "bios_boot": {{"image_b64": "{img}", "sha256": "cd"}}}}}}}}}}"#)).unwrap();
+    let (mut f, mut bad) = (Vec::new(), Vec::new());
+    let o = fill(&sc, "", "", &mut f, &mut bad);
+    assert!(bad.is_empty(), "{bad:?}");
+    assert_eq!(f.iter().map(|x| x.path.as_str()).collect::<Vec<_>>(), [".boot.snapcore.boot_areas.mbr_code_b64", ".boot.snapcore.boot_areas.bios_boot.image_b64"]);
+    assert_eq!(back_in(&o, &["boot", "snapcore", "boot_areas", "mbr_code_b64"]), filler(7));
+    assert_eq!(o.at(&["boot", "snapcore", "boot_areas", "mbr_code_sha256"]).and_then(Value::as_str), Some("ab"));
     // Boot code that isn't base64 is named, not emptied.
     let torn = json::parse(r#"{"storage": {"disks": [{"boot_code": {"code_b64": "not base64!"}}]}}"#).unwrap();
     let (mut f, mut bad) = (Vec::new(), Vec::new());

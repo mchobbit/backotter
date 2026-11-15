@@ -1406,7 +1406,11 @@ class FsOpensuseShim(unittest.TestCase):
     """judge.py fs over what load's boot stage does on openSUSE Leap 16 (L5,
     docs/design/leap16.md): dracut rebuilds /boot/initrd-K, grub2-mkconfig
     remakes /boot/grub2/grub.cfg, setfiles relabels /boot, and the ESP is
-    kept: every file of EFI/opensuse and EFI/boot must be the source's."""
+    kept: every file of EFI/opensuse and EFI/boot must be the source's but
+    EFI/opensuse/grub.cfg, the stub that finds /boot/grub2, which may change
+    as /boot/grub2/grub.cfg does."""
+
+    STUB = "boot/efi/EFI/opensuse/grub.cfg"
 
     K = "6.12.0-160100.9-default"
     LOADERS = ["boot/efi/EFI/opensuse/shim.efi", "boot/efi/EFI/opensuse/grub.efi", "boot/efi/EFI/opensuse/grubx64.efi",
@@ -1431,20 +1435,38 @@ class FsOpensuseShim(unittest.TestCase):
         rc, out = self.changed(self.SRC, {
             f"boot/initrd-{self.K}": {"sha256": "cd", "mtime": 2}, "boot": {"mtime": 2},
             "boot/grub2/grub.cfg": {"sha256": "cd", "mtime": 2}, "boot/grub2": {"mtime": 2},
-            "boot/grub2/grubenv": {"xattrs": {"security.selinux": "00"}}, "var/lib/dracut": {"mtime": 2}})
+            "boot/grub2/grubenv": {"xattrs": {"security.selinux": "00"}}, "var/lib/dracut": {"mtime": 2},
+            self.STUB: {"sha256": "cd", "mtime": 2}})
         self.assertEqual(rc, 0, out)
         self.assertNotIn("DIFF", out)
-        self.assertIn("openSUSE's shim and signed GRUB kept: 9 paths of EFI/opensuse and EFI/boot held to the source's bytes: "
+        self.assertIn(f"boot stage (openSUSE's grub.cfg stub on the ESP, which only finds /boot/grub2's grub.cfg, may change with it "
+                      f"(grub2-mkconfig)): 2: {self.STUB}, {self.STUB}", out)     # (content, mtime)
+        self.assertIn("openSUSE's shim and signed GRUB kept: 8 paths of EFI/opensuse and EFI/boot held to the source's bytes: "
                       "boot/MokManager.efi, boot/bootx64.efi, boot/fallback.efi, opensuse/MokManager.efi", out)
 
     def test_every_esp_file_must_be_the_sources(self):
         """grub2-install or shim-install (an unsigned or another GRUB, a
-        rewritten stub) on any of them: no ESP rule excuses it here."""
+        new MokManager or fallback) on any of them: no ESP rule excuses it
+        here."""
         for p in self.LOADERS:
+            if p == self.STUB:
+                continue
             rc, out = self.changed(self.SRC, {p: {"sha256": "cd", "mtime": 2}})
             self.assertEqual(rc, 1, f"{p}: {out}")
             self.assertIn(f"DIFF content: 1: {p}", out)
             self.assertIn(" 0 from the boot stage", out)
+
+    def test_the_stub_may_change_but_not_go(self):
+        """The stub's content and times may change; its mode still counts,
+        and a stub gone is a difference."""
+        rc, out = self.changed(self.SRC, {self.STUB: {"sha256": "cd", "mtime": 2, "mode": 0o600}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF mode: 1: {self.STUB}", out)
+        a = copy.deepcopy(self.SRC)
+        del a[self.STUB]
+        rc, out = self.judge(self.SRC, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF missing: 1: {self.STUB}", out)
 
     def test_a_missing_or_extra_esp_file_counts(self):
         a = copy.deepcopy(self.SRC)
@@ -1619,6 +1641,181 @@ class FsSolus(unittest.TestCase):
         rc, out = self.changed(src, {"boot/EFI/BOOT/BOOTX64.EFI": {"sha256": "cd", "mtime": 2}, "boot/loader/random-seed": {"sha256": "cd"}})
         self.assertEqual(rc, 0, out)
         self.assertNotIn("Solus", out)
+
+
+SLACK_K = "5.15.193"
+SLACK_ESP = "boot/efi/EFI"
+
+
+class FsSlackware(unittest.TestCase):
+    """judge.py fs over the Slackware 15.0 restores (S6, docs/design/slackware.md).
+    slackware15: load runs lilo -C on lilo.conf.bko-holt (root= by name) and
+    removes it, so /etc/lilo.conf stays the source's, the copy is gone, and
+    only lilo's map and an MBR backup under the rescue system's device number
+    may differ.  slackware15-uefi: ELILO is kept (EFI/Slackware and EFI/BOOT
+    held to the source's bytes), mkinitrd remakes /boot/initrd.gz and its
+    tree, and each ESP initrd.gz that was its copy must be the new one."""
+
+    judge = Fs.judge
+    LILO = {"etc": meta("dir"), "etc/slackware-version": meta("file"), "etc/lilo.conf": meta("file"),
+            "boot": meta("dir"), "boot/map": meta("file"), "boot/boot.fe00": meta("file"),
+            f"boot/vmlinuz-huge-{SLACK_K}": meta("file"), "boot/vmlinuz": meta("symlink", target=f"vmlinuz-huge-{SLACK_K}"),
+            "var/log": meta("dir")}
+    ESP = SLACK_ESP
+    UEFI = {"etc": meta("dir"), "etc/slackware-version": meta("file"),
+            "boot": meta("dir"), f"boot/vmlinuz-generic-{SLACK_K}": meta("file", sha256="k1", size=9),
+            "boot/initrd.gz": meta("file", sha256="i1", size=7), "boot/initrd-tree": meta("dir"),
+            "boot/initrd-tree/init": meta("file"), "boot/initrd-tree/rootdev": meta("file"),
+            "boot/efi": meta("dir"), SLACK_ESP: meta("dir"),
+            **{f"{SLACK_ESP}/{d}": meta("dir") for d in ("Slackware", "BOOT")},
+            **{f"{SLACK_ESP}/{d}/{f}": meta("file") for d, f in (("Slackware", "elilo.efi"), ("BOOT", "BOOTX64.EFI"))},
+            **{f"{SLACK_ESP}/{d}/elilo.conf": meta("file", sha256="c1") for d in ("Slackware", "BOOT")},
+            **{f"{SLACK_ESP}/{d}/vmlinuz": meta("file", sha256="k1", size=9) for d in ("Slackware", "BOOT")},
+            **{f"{SLACK_ESP}/{d}/initrd.gz": meta("file", sha256="i1", size=7) for d in ("Slackware", "BOOT")},
+            "var/log": meta("dir")}
+    INITRDS = [f"{SLACK_ESP}/BOOT/initrd.gz", f"{SLACK_ESP}/Slackware/initrd.gz"]
+
+    def remade(self, src=None):
+        """What load leaves on slackware15-uefi: /boot/initrd.gz and its tree
+        remade, and copied over both ESP initrd.gz (cp, touch -r)."""
+        a = copy.deepcopy(src or self.UEFI)
+        new = {"sha256": "i2", "size": 8, "mtime": 5}
+        a["boot/initrd.gz"].update(new)
+        a["boot/initrd-tree/rootdev"].update(sha256="cd", mtime=5)
+        del a["boot/initrd-tree/init"]
+        a["boot/initrd-tree"]["mtime"] = 5
+        a["boot"]["mtime"] = 5
+        for p in self.INITRDS:
+            a[p].update(new)
+        a["var/log/bko-holt"] = meta("dir")
+        a["var/log/bko-holt/load.log"] = meta("file")
+        a["var/log"]["mtime"] = 5
+        return a
+
+    def lilo_ran(self):
+        a = copy.deepcopy(self.LILO)
+        a["boot/map"].update(sha256="cd", mtime=5)
+        a["boot/boot.fd00"] = meta("file")
+        a["boot"]["mtime"] = 5
+        a["etc"]["mtime"] = 5
+        return a
+
+    def test_lilo_run_passes(self):
+        rc, out = self.judge(self.LILO, self.lilo_ran())
+        self.assertEqual(rc, 0, out)
+        self.assertIn("boot stage (lilo writes its map: the restored kernels' sectors): 2: boot/map, boot/map", out)   # (content, mtime)
+        self.assertIn("boot stage (lilo backs up the MBR it replaces as /boot/boot.MMmm, named by the disk's device number in the rescue system): 1: boot/boot.fd00", out)
+        self.assertIn("boot stage (load writes etc/lilo.conf.bko-holt for lilo -C, then removes it): 1: etc", out)
+        self.assertIn("LILO: etc/lilo.conf held to the source's bytes, no etc/lilo.conf.bko-holt left behind", out)
+
+    def test_lilo_copy_left_behind(self):
+        a = self.lilo_ran()
+        a["etc/lilo.conf.bko-holt"] = meta("file")
+        rc, out = self.judge(self.LILO, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF left behind by load (lilo's copy of lilo.conf): 1: etc/lilo.conf.bko-holt", out)
+        self.assertNotIn("DIFF extra", out)
+
+    def test_lilo_conf_and_kernel_held(self):
+        a = self.lilo_ran()
+        a["etc/lilo.conf"].update(sha256="cd")
+        a[f"boot/vmlinuz-huge-{SLACK_K}"].update(sha256="cd")
+        a["boot/boot.fe00"].update(sha256="cd")
+        rc, out = self.judge(self.LILO, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF content: 3: boot/boot.fe00, boot/vmlinuz-huge-{SLACK_K}, etc/lilo.conf", out)
+
+    def test_etc_mtime_without_lilo_counts(self):
+        src = {p: m for p, m in self.LILO.items() if p != "boot/map"}
+        a = copy.deepcopy(src)
+        a["etc"]["mtime"] = 5
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF mtime (dirs): 1: etc", out)
+        self.assertNotIn("LILO:", out)
+
+    def test_elilo_remade_initrd_passes(self):
+        rc, out = self.judge(self.UEFI, self.remade())
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn("boot stage (load runs the source's mkinitrd command again: /boot/initrd.gz): 2: boot/initrd.gz, boot/initrd.gz", out)
+        self.assertIn("boot stage (mkinitrd remakes its tree, /boot/initrd-tree (its -c clears it first)): 4: boot/initrd-tree/init, boot/initrd-tree, boot/initrd-tree/rootdev, boot/initrd-tree/rootdev", out)
+        self.assertIn(f"boot stage (load copies the remade /boot/initrd.gz over the ESP's (as eliloconfig does)): 4: {self.INITRDS[0]}", out)
+        self.assertIn("ELILO kept: 9 paths of EFI/Slackware and EFI/BOOT held to the source's bytes; 2 ESP initrd.gz", out)
+
+    def test_elilo_files_held(self):
+        """grub-install's ESP rule must not excuse ELILO, its elilo.conf or
+        the ESP's kernel; nor an EFI/BOOT the boot stage made up."""
+        for p in (f"{self.ESP}/Slackware/elilo.efi", f"{self.ESP}/BOOT/BOOTX64.EFI", f"{self.ESP}/BOOT/elilo.conf",
+                  f"{self.ESP}/Slackware/elilo.conf", f"{self.ESP}/Slackware/vmlinuz", f"{self.ESP}/BOOT/vmlinuz"):
+            a = self.remade()
+            a[p].update(sha256="cd", mtime=6)
+            rc, out = self.judge(self.UEFI, a)
+            self.assertEqual(rc, 1, f"{p}: {out}")
+            self.assertIn(f"DIFF content: 1: {p}", out)
+            self.assertIn(f"DIFF mtime: 1: {p}", out)
+        a = self.remade()
+        a[f"{self.ESP}/BOOT/grubx64.efi"] = meta("file")
+        rc, out = self.judge(self.UEFI, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF extra: 1: {self.ESP}/BOOT/grubx64.efi", out)
+
+    def test_esp_initrd_must_be_the_remade_one(self):
+        a = self.remade()
+        a[self.INITRDS[1]].update(sha256="i3")
+        rc, out = self.judge(self.UEFI, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF not the restored boot/initrd.gz's bytes (ELILO's initrd on the ESP, a copy of it on the source): 1: {self.INITRDS[1]}", out)
+
+    def test_esp_initrd_left_as_restored_counts(self):
+        """Load didn't copy the remade initrd: the ESP's is the source's, no
+        longer /boot/initrd.gz's."""
+        a = self.remade()
+        for p in self.INITRDS:
+            a[p] = copy.deepcopy(self.UEFI[p])
+        rc, out = self.judge(self.UEFI, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF not the restored boot/initrd.gz's bytes (ELILO's initrd on the ESP, a copy of it on the source): 2: {', '.join(self.INITRDS)}", out)
+
+    def test_esp_initrd_that_was_no_copy_is_held(self):
+        src = copy.deepcopy(self.UEFI)
+        src[self.INITRDS[0]].update(sha256="old")
+        a = self.remade(src)
+        a[self.INITRDS[0]] = copy.deepcopy(src[self.INITRDS[0]])
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1 ESP initrd.gz (copies of /boot/initrd.gz on the source)", out)
+        a[self.INITRDS[0]].update(sha256="i2", size=8, mtime=5)
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF content: 1: {self.INITRDS[0]}", out)
+
+    def test_esp_initrd_missing_counts(self):
+        a = self.remade()
+        del a[self.INITRDS[0]]
+        rc, out = self.judge(self.UEFI, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF missing: 1: {self.INITRDS[0]}", out)
+
+    def test_the_source_must_have_elilos_files(self):
+        src = {p: m for p, m in self.UEFI.items() if p not in (f"{self.ESP}/Slackware/vmlinuz", f"{self.ESP}/BOOT/BOOTX64.EFI")}
+        rc, out = self.judge(src, copy.deepcopy(src))
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF not in the source's record (ELILO's files on the ESP): 2: {self.ESP}/Slackware/vmlinuz, {self.ESP}/BOOT/BOOTX64.EFI", out)
+
+    def test_other_esps_keep_grub_installs_rule(self):
+        """No ELILO on the ESP (a GRUB machine's EFI/BOOT): grub-install's
+        rule still excuses it, and mkinitrd's rules need Slackware."""
+        src = {"boot": meta("dir"), "boot/efi": meta("dir"), "boot/efi/EFI": meta("dir"), "boot/efi/EFI/BOOT": meta("dir"),
+               "boot/efi/EFI/BOOT/BOOTX64.EFI": meta("file"), "boot/initrd.gz": meta("file")}
+        a = copy.deepcopy(src)
+        a["boot/efi/EFI/BOOT/BOOTX64.EFI"].update(sha256="cd")
+        a["boot/initrd.gz"].update(sha256="cd")
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF content: 1: boot/initrd.gz", out)
+        self.assertNotIn("ELILO", out)
+        self.assertIn("boot stage (grub-install writes the ESPs' loaders", out)
 
 
 VANILLA_K = "7.3.3+deb14-amd64"
@@ -2441,6 +2638,76 @@ class Transactional(unittest.TestCase):
         self.assertIn("booted = default = the source's default @/.snapshots/5/snapshot, health-checker's", out)
 
 
+class TransactionalBls(unittest.TestCase):
+    """judge.py's BLS side of boot.transactional (aeon, A4): no
+    health-check.state on either side (the BLS path keeps no IDs), the
+    entries' boot counters taken off (the pending slot's `+3` is counted
+    and blessed by the restored first boot), the kept LUKS2 headers of the
+    source's dump, and the PCR list (fde-tools) held to the source's."""
+
+    judge = Fit.judge
+
+    @staticmethod
+    def aeon(booted, default, entries, pcrs="4,5,7,9", headers=False):
+        d = Transactional.tu(booted, default)
+        t = d["boot"]["transactional"]
+        t["loader_mode"] = "bls"
+        if pcrs is not None:
+            t["fde_seal_pcr_list"] = pcrs
+        files = [{"path": "EFI/BOOT/BOOTX64.EFI", "size": 1042040}]
+        files += [{"path": f"loader/entries/{e}", "size": 509} for e in entries]
+        files += [{"path": "loader/loader.conf", "size": 31}]
+        d["boot"]["esps"] = [{"device": "vda1", "mounted_at": "/boot/efi", "contents": {"files": files}}]
+        d["boot"]["systemd_boot"] = {"entries": [{"file": e, "linux": "/aeon/7.3.3-1-default/linux-1fe2", "options": "rootflags=subvol=@/.snapshots/%s/snapshot" % e.split("-")[-1].split("+")[0].split(".")[0]} for e in entries]}
+        if headers:
+            d["storage"]["luks_headers"] = [{"device": "vda2", "file": "luks2-header-bc000000-0000-4000-8000-000000000007.img", "sha256": "ab" * 32, "written_to": "/run/bko-holt/luks-headers/luks2-header-bc000000-0000-4000-8000-000000000007.img"}]
+        return d
+
+    K = "aeon-7.3.3-1-default-"
+
+    def src(self):
+        # Booted 3 (rolled back), 7 pending and never booted (+3), 6 bad (+0-3).
+        return self.aeon((3, 273), (7, 284), [f"{self.K}{n}.conf" for n in (1, 2, 3, 4, 5)] + [f"{self.K}6+0-3.conf", f"{self.K}7+3.conf"], headers=True)
+
+    def test_counters_off_and_no_state(self):
+        dst = self.aeon((7, 290), (7, 290), [f"{self.K}{n}.conf" for n in (1, 2, 3, 4, 5)] + [f"{self.K}6+0-3.conf", f"{self.K}7.conf"])
+        out = Fit.good(self, self.src(), dst)
+        self.assertIn("BLS entries compared without their boot counters (4 on the source, 2 restored)", out)
+        self.assertIn("booted = default = the source's default @/.snapshots/7/snapshot (pending there", out)
+        self.assertNotIn("health-check.state", out)
+        # The kept headers are the source dump's own.
+        self.assertIn("the LUKS2 headers the source's dump was asked to keep", out)
+
+    def test_an_entry_gone_or_another_pcr_list(self):
+        dst = self.aeon((7, 290), (7, 290), [f"{self.K}{n}.conf" for n in (1, 2, 3, 4, 5)] + [f"{self.K}7.conf"])
+        out = Fit.bad(self, self.src(), dst)
+        self.assertIn("DIFF boot.esps.0.contents.files.", out)
+        dst = self.aeon((7, 290), (7, 290), [f"{self.K}{n}.conf" for n in (1, 2, 3, 4, 5)] + [f"{self.K}6+0-3.conf", f"{self.K}7.conf"], pcrs="7")
+        out = Fit.bad(self, self.src(), dst)
+        self.assertIn('DIFF transactional: fde_seal_pcr_list: "4,5,7,9" -> "7"', out)
+
+    def test_a_bls_rollback_on_the_first_boot(self):
+        """The pending slot failed health-checker on the restored first boot
+        and systemd-boot booted 3 again: a DIFF, whatever the counters."""
+        dst = self.aeon((3, 273), (3, 273), [f"{self.K}{n}.conf" for n in (1, 2, 3, 4, 5)] + [f"{self.K}6+0-3.conf", f"{self.K}7+0-3.conf"])
+        out = Fit.bad(self, self.src(), dst)
+        self.assertIn("DIFF transactional: booted @/.snapshots/3/snapshot, not the source's default @/.snapshots/7/snapshot", out)
+
+    def test_grub_names_untouched(self):
+        """bls_uncount itself; and a GRUB source gets no counter note."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("judge_under_test", JUDGE)
+        judge = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(judge)
+        src = Transactional.tu((5, 279), (5, 279), hc=(5, 279))
+        d = {"boot": {"esps": [{"contents": {"files": [{"path": "loader/entries/x+3.conf"}]}}]}}
+        self.assertEqual(judge.bls_uncount(d), 1)
+        self.assertEqual(d["boot"]["esps"][0]["contents"]["files"][0]["path"], "loader/entries/x.conf")
+        self.assertEqual(judge.BLS_COUNTER.sub("", "aeon-1+2-1.conf"), "aeon-1.conf")
+        out = Fit.good(self, src, Transactional.tu((5, 281), (5, 281), hc=(5, 281)))
+        self.assertNotIn("boot counters", out)
+
+
 class TrueNas(unittest.TestCase):
     """judge.py esp over TrueNAS's ESPs and judge.py bes over its boot-pool
     (docs/design/truenas.md, T6)."""
@@ -2704,6 +2971,127 @@ class ZfsBootMenu(unittest.TestCase):
             r = subprocess.run([sys.executable, "-I", JUDGE, a, b], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("ZFSBootMenu: a clone boot environment comes back as a plain dataset", r.stdout)
+
+
+class Qubes(unittest.TestCase):
+    """Qubes OS (docs/design/qubes.md, Q7): judge.py qubes holds a thin
+    snapshot's origin and new LV UUID, activation skip, a pool's used data
+    within 5 % and each raw volume's checksum; judge.py qubes-check the
+    restored boot's bko-qubes-check lines; main lets a pool with snapshots
+    renumber its thin devices.  The field names are bko-holt Q2-Q4's."""
+
+    @staticmethod
+    def layout(ids="s", origin="vm-work-private-2-back", used=12 * GIB, skip=False, dev=3, tid=40):
+        def thin(name, did, origin=None, flags=()):
+            seg = {"start_extent": 0, "extent_count": 512, "type": "thin", "thin_pool": "vm-pool", "transaction_id": tid, "device_id": did}
+            if origin:
+                seg["origin"] = origin
+            return {"name": name, "id": f"{ids}{name}", "flags": list(flags), "creation_host": "dom0" if ids == "s" else "rescuer",
+                    "segments": [seg], "mapped_bytes": 100 * MIB if ids == "s" else 90 * MIB}
+        lvs = [
+            {"name": "vm-pool", "id": f"{ids}pool", "flags": [], "data_used_bytes": used, "metadata_used_bytes": 9 * MIB,
+             "segments": [{"start_extent": 0, "extent_count": 8826, "type": "thin-pool", "metadata": "vm-pool_tmeta", "pool": "vm-pool_tdata",
+                           "transaction_id": tid, "chunk_size": 128}]},
+            thin("vm-work-private", dev, origin=origin),
+            thin("vm-work-private-2-back", 2, origin="vm-work-private-1-back", flags=("ACTIVATION_SKIP",) if skip else ()),
+            thin("vm-work-private-1-back", 1),
+        ]
+        lvm = {"volume_groups": [{"name": "qubes_dom0", "id": "vg1", "physical_volumes": [{"name": "pv0", "id": "pv1"}], "logical_volumes": lvs}]}
+        dms = [{"name": "dm-5", "dm": {"dm_name": "qubes_dom0-vm--work--private", "lv_uuid": f"{ids}vm-work-private", "dm_uuid": f"LVM-vg1{ids}vm-work-private"},
+                "raw_volume": {"image": "/.bko-holt/raw/qubes_dom0/vm-work-private.img", "why": "qubes.xml", "qube": "work", "volume": "private"}}]
+        d = dump([disk("vda", 64 * GIB, [])], lvm=lvm, dm_devices=dms,
+                 qubes={"pools": ["vm-pool"], "volumes": ["vm-work-private"]})
+        d["boot"] = {"xen": {"version": "4.19.5", "hypervisor": "/boot/xen-4.19.5.gz", "cmdline_xen_default": "console=com1"}}
+        return d
+
+    def run_judge(self, *args, src=None, dst=None, sraw="qubes_dom0/vm-work-private aa\n", draw="qubes_dom0/vm-work-private aa\n"):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for name, v in (("src.json", src), ("dst.json", dst)):
+                if v is not None:
+                    paths.append(os.path.join(tmp, name))
+                    with open(paths[-1], "w") as f:
+                        json.dump(v, f)
+            raws = []
+            if args and args[0] == "qubes":
+                for name, v in (("src-raw.txt", sraw), ("dst-raw.txt", draw)):
+                    raws.append(os.path.join(tmp, name))
+                    with open(raws[-1], "w") as f:
+                        f.write(v)
+            r = subprocess.run([sys.executable, "-I", JUDGE, *args, *paths, *raws], capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_main_lets_a_snapshot_pool_renumber(self):
+        rc, out = self.run_judge(src=self.layout(), dst=self.layout(ids="d", used=12 * GIB + 50 * MIB, dev=7, tid=4))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("a thin LV's device id in a pool with snapshots", out)
+        self.assertIn("a thin pool's used data and metadata", out)
+        self.assertIn("a thin LV's mapped blocks", out)
+
+    def test_main_still_holds_origins(self):
+        rc, out = self.run_judge(src=self.layout(), dst=self.layout(ids="d", origin="vm-work-private-1-back"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF storage.lvm.volume_groups.0.logical_volumes.1.segments.0.origin", out)
+
+    def test_qubes_passes(self):
+        rc, out = self.run_judge("qubes", src=self.layout(), dst=self.layout(ids="d", used=12 * GIB + 50 * MIB, dev=7))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("2 thin snapshots made anew", out)
+        self.assertIn("1 raw volumes' checksums as the source's", out)
+
+    def test_qubes_diffs(self):
+        cases = (
+            (dict(dst=self.layout(ids="d", origin="vm-work-private-1-back")), "origin"),
+            (dict(dst=self.layout(ids="s")), "the source's LV UUID"),
+            (dict(dst=self.layout(ids="d", used=14 * GIB)), "more than 5 % apart"),
+            (dict(dst=self.layout(ids="d", skip=True)), "activation skip"),
+            (dict(dst=self.layout(ids="d"), draw="qubes_dom0/vm-work-private bb\n"), "raw volume qubes_dom0/vm-work-private"),
+        )
+        for kw, want in cases:
+            rc, out = self.run_judge("qubes", src=self.layout(), **kw)
+            self.assertEqual(rc, 1, out)
+            self.assertIn(want, out)
+
+    def test_qubes_without_q2_fields(self):
+        src = self.layout()
+        del src["storage"]["lvm"]["volume_groups"][0]["logical_volumes"][0]["data_used_bytes"]
+        del src["boot"]["xen"]
+        rc, out = self.run_judge("qubes", src=src, dst=self.layout(ids="d"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("no data_used_bytes in the source dump", out)
+        self.assertIn("no boot.xen in the source's dump", out)
+
+    CHECK = """BKO-QUBES-CHECK BEGIN 2026-11-14T20:29:30Z boot x
+BKO-QUBES-CHECK qubesd PASS answered after 0 s
+BKO-QUBES-CHECK start-work PASS 13 s
+BKO-QUBES-CHECK run-work PASS hostname=work seed=23b32456e48391da
+BKO-QUBES-INFO lv vm-work-private|vm-pool|vm-work-private-1794688234-back|Vwi-a-tz--|2.00g
+BKO-QUBES-CHECK lvm PASS thin=26 with-origin=14 work-private-chain=3
+BKO-QUBES-CHECK DONE PASS
+"""
+
+    def check(self, dst):
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = os.path.join(tmp, "s.log"), os.path.join(tmp, "d.log")
+            for path, v in ((a, self.CHECK), (b, dst)):
+                with open(path, "w") as f:
+                    f.write(v)
+            r = subprocess.run([sys.executable, "-I", JUDGE, "qubes-check", a, b], capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_check_passes_with_other_times(self):
+        rc, out = self.check(self.CHECK.replace("13 s", "40 s").replace("1794688234", "1794699999"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("lvm thin=26 with-origin=14 work-private-chain=3", out)
+
+    def test_check_diffs(self):
+        for dst, want in ((self.CHECK.replace("seed=23b32456e48391da", "seed=ffff"), "run-work"),
+                          (self.CHECK.replace("DONE PASS", "DONE FAIL"), "DONE is FAIL"),
+                          (self.CHECK.replace("start-work PASS", "start-work FAIL"), "start-work: FAIL"),
+                          (self.CHECK.replace("with-origin=14", "with-origin=0"), "lvm:")):
+            rc, out = self.check(dst)
+            self.assertEqual(rc, 1, out)
+            self.assertIn(want, out)
 
 
 if __name__ == "__main__":

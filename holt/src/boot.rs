@@ -376,6 +376,11 @@ pub const PACKAGES: &[&str] = &[
     // each eopkg transaction (docs/design/solus.md).  systemd-boot is
     // systemd's own file there, and "systemd" every guest has.
     "clr-boot-manager", "linux-current", "usysconf",
+    // Qubes OS's dom0 ("grub2-efi-x64", "dracut", "lvm2" and the rest are
+    // above): the Xen hypervisor GRUB boots and its tools, dom0's newer
+    // kernel series, and Qubes's own core and release (docs/design/qubes.md;
+    // names no other guest has, so no fingerprint changes).
+    "xen", "xen-hypervisor", "xen-runtime", "kernel-latest", "qubes-core-dom0", "qubes-release",
 ];
 
 /// debconf answers from /var/cache/debconf/config.dat whose names start with
@@ -656,7 +661,12 @@ fn grub_json(sys: &Sys) -> Value {
 
 /// Files under an ESP's EFI/ and loader/ directories (relative paths, sizes),
 /// noting which ones are byte-identical copies (the removable-media fallback
-/// EFI/BOOT/BOOTX64.EFI usually is one).
+/// EFI/BOOT/BOOTX64.EFI usually is one); then the kernels and initrds its
+/// loader/entries name in other directories (sdbootutil's
+/// /aeon/KVER/linux-HASH, kernel-install's /MACHINE-ID/KVER/linux), which
+/// load's plan checks a read-only system's entries against
+/// (load/transactional.rs).  Not those at its top: a /boot that is the ESP
+/// keeps every kernel there, and boot.kernels lists them.
 pub fn esp_inventory(sys: &Sys, mount: &str) -> Value {
     let mut files: Vec<(String, u64)> = Vec::new();
     fn walk(sys: &Sys, base: &str, rel: &str, depth: usize, out: &mut Vec<(String, u64)>) {
@@ -677,6 +687,20 @@ pub fn esp_inventory(sys: &Sys, mount: &str) -> Value {
     for top in sys.list(mount) {
         if top.eq_ignore_ascii_case("EFI") || top.eq_ignore_ascii_case("loader") {
             walk(sys, mount, &top, 0, &mut files);
+        }
+    }
+    let entries = format!("{mount}/loader/entries");
+    for f in sys.list(&entries).into_iter().filter(|f| f.ends_with(".conf")) {
+        for l in sys.read(&format!("{entries}/{f}")).unwrap_or_default().lines() {
+            let mut w = l.split_whitespace();
+            let (Some("linux" | "initrd"), Some(p)) = (w.next(), w.next()) else { continue };
+            let r = p.trim_start_matches('/').to_string();
+            if !r.contains('/') || r.split('/').any(|c| c.is_empty() || c == "..") || files.iter().any(|(x, _)| x.eq_ignore_ascii_case(&r)) || files.len() >= 500 {
+                continue;
+            }
+            if let Some(sz) = sys.file_size(&format!("{mount}/{r}")) {
+                files.push((r, sz));
+            }
         }
     }
     let efi: Vec<&(String, u64)> = files.iter().filter(|(p, _)| p.to_ascii_lowercase().ends_with(".efi")).collect();
@@ -2425,6 +2449,18 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(sd.at(&["entries", "0", "options"]).and_then(Value::as_str), Some("root=UUID=x ro"));
         assert_eq!(sd.get("entries").and_then(Value::as_array).map(Vec::len), Some(1));
         assert!(systemd_boot_json(&s, "/nowhere").is_none());
+        // The kernel and initrd an entry names in another directory
+        // (sdbootutil's, on Aeon), once each, after the rest; nothing for
+        // a name that isn't there, one outside the ESP or at its top
+        // (debian-6.12.conf's /vmlinuz).
+        t.file("/boot/efi/aeon/7.3.3-1-default/linux-1fe2", vec![1u8; 30]).file("/boot/efi/aeon/7.3.3-1-default/initrd-7d97", vec![2u8; 20]).file("/boot/efi/aeon/other", "x").file("/boot/efi/vmlinuz", "k");
+        let e = "title Aeon\nlinux /aeon/7.3.3-1-default/linux-1fe2\ninitrd /aeon/7.3.3-1-default/initrd-7d97\ninitrd /aeon/gone\noptions x\n";
+        t.file("/boot/efi/loader/entries/aeon-7.3.3-1-default-1+3.conf", e).file("/boot/efi/loader/entries/aeon-7.3.3-1-default-2.conf", e.replace("linux /aeon", "linux /../aeon"));
+        let inv = esp_inventory(&s, "/boot/efi");
+        let files = inv.get("files").unwrap().as_array().unwrap();
+        let tail: Vec<(&str, u64)> = files.iter().skip(9).filter_map(|f| Some((f.get("path")?.as_str()?, f.get("size")?.as_u64()?))).collect();
+        assert_eq!(tail, vec![("aeon/7.3.3-1-default/linux-1fe2", 30), ("aeon/7.3.3-1-default/initrd-7d97", 20)], "{}", inv.pretty());
+        assert_eq!(files.len(), 11);
     }
 
     #[test]

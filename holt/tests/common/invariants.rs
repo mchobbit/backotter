@@ -255,6 +255,12 @@ pub fn root_mounted_by(dump: &Value, sec: &Sections) -> Result<&'static str, Str
     if mount.iter().any(|s| mounts_at(s, TARGET)) {
         return Ok("mount");
     }
+    // Ubuntu Core has no / of its own, its root being the base snap
+    // (docs/design/ubuntu-core.md): its four run-mode roots, each mounted
+    // at TARGET/run/mnt as snap-bootstrap mounts them.
+    if dump.at(&["boot", "snapcore"]).is_some() && ["ubuntu-seed", "ubuntu-boot", "ubuntu-save", "data"].iter().all(|r| mount.iter().any(|s| mounts_at(s, &format!("{TARGET}/run/mnt/{r}")))) {
+        return Ok("snapcore");
+    }
     // zfs mount of the / dataset, in a pool under -R TARGET.
     let ds = datasets(dump);
     let assemble = sec.steps("assemble");
@@ -316,6 +322,10 @@ pub fn fstab_planned_n(dump: &Value, sec: &Sections) -> (Vec<String>, Vec<String
             Some("a network filesystem")
         } else if opts.iter().any(|o| *o == "bind" || *o == "rbind") || ty.split(',').any(|t| BIND.contains(&t)) {
             Some("a bind mount")
+        } else if file == "/" && dump.at(&["boot", "snapcore"]).is_some() {
+            // snap-bootstrap's /dev/root: the base snap, a squashfs file on
+            // ubuntu-data (docs/design/ubuntu-core.md).
+            Some("Ubuntu Core's /, the base snap (a file on ubuntu-data)")
         } else {
             let device = ["UUID=", "LABEL=", "PARTUUID=", "PARTLABEL=", "NAME=", "/dev/"].iter().any(|p| spec.starts_with(p))
                 || ty == "zfs"

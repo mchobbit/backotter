@@ -73,7 +73,7 @@ due: 66 of 66 checks, est. 462.4 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   stic:rocky10             any      new       no PASS yet  1.8 gm  tsv
   stic:rocky10-lvm         any      new       no PASS yet  2.2 gm  tsv
   stic:sculpt2610          any      new       no PASS yet  0.8 gm  tsv
-  stic:solus49             any      new       no PASS yet  6.8 gm  README
+  stic:solus49             any      new       no PASS yet  6.8 gm  tsv
   stic:truenas25           any      new       no PASS yet  20.0 gm  README
   stic:tumbleweed          any      new       no PASS yet  3.1 gm  tsv
   stic:ubuntu24            any      new       no PASS yet  15.9 gm  tsv
@@ -88,7 +88,7 @@ current: 0
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written
 HoltTest2 plan: bko-holt code 5db6749 (not built), rustic-bko bko-bin, base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 80 of 80 cells, est. 406.2 gm, ~N wall, 28.9 GB (chopin 28.9, cinqcent 0.0)
+due: 81 of 81 cells, est. 412.2 gm, ~N wall, 28.9 GB (chopin 28.9, cinqcent 0.0)
   holt:aerynos                  any      holt:new  no PASS yet  6.0 gm  tsv
   holt:alpine324                any      holt:new  no PASS yet  1.9 gm  tsv
   holt:alpinebsd                any      holt:new  no PASS yet  3.7 gm  tsv
@@ -148,6 +148,7 @@ due: 80 of 80 cells, est. 406.2 gm, ~N wall, 28.9 GB (chopin 28.9, cinqcent 0.0)
   holt:rocky10-lvm              any      holt:new  no PASS yet  3.5 gm  tsv
   holt:rocky10-raid5            any      holt:new  no PASS yet  6.0 gm  tsv
   holt:sculpt2610               any      holt:new  no PASS yet  2.9 gm  tsv
+  holt:solus49                  any      holt:new  no PASS yet  6.0 gm  tsv
   holt:tumbleweed               any      holt:new  no PASS yet  3.2 gm  tsv
   holt:ubuntu24                 any      holt:new  no PASS yet  3.8 gm  tsv
   holt:ubuntu24-luks            any      holt:new  no PASS yet  4.4 gm  tsv
@@ -173,7 +174,7 @@ current: 0
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written
 GuestTest2 plan: base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 72 of 72 guests, est. 213.5 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+due: 73 of 73 guests, est. 215.5 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   guest:aerynos             any      new       no PASS yet  1.8 gm  tsv
   guest:alpine324           any      new       no PASS yet  1.8 gm  tsv
   guest:alpinebsd           any      new       no PASS yet  1.8 gm  tsv
@@ -234,6 +235,7 @@ due: 72 of 72 guests, est. 213.5 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   guest:rocky10-lvm         any      new       no PASS yet  1.8 gm  tsv
   guest:rocky10-raid5       any      new       no PASS yet  3.3 gm  tsv
   guest:sculpt2610          any      new       no PASS yet  1.8 gm  tsv
+  guest:solus49             any      new       no PASS yet  2.0 gm  tsv
   guest:tumbleweed          any      new       no PASS yet  1.8 gm  tsv
   guest:ubuntu24            any      new       no PASS yet  1.8 gm  tsv
   guest:ubuntu24-luks       any      new       no PASS yet  3.3 gm  tsv
@@ -247,7 +249,7 @@ due: 72 of 72 guests, est. 213.5 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   guest:void-musl           any      new       no PASS yet  1.8 gm  tsv
   guest:zorin18             any      new       no PASS yet  1.8 gm  tsv
 current: 0
-note: not in any spec: elementary8, elementary8-luks, guix15, guix15-bios, kali, leap16, openbsd8-crypt, solus49, truenas25
+note: not in any spec: elementary8, elementary8-luks, guix15, guix15-bios, kali, leap16, openbsd8-crypt, truenas25
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written
 ImgTest2: nothing due (7 not-runnable); base BASE
@@ -259,4 +261,4 @@ not runnable: img:dragonfly (dragonfly/bko-holt 29a491194633: no PASS at its dig
 not runnable: img:illumos (illumos/bko-holt 9f334a07f8e8: no PASS at its digest; run t2 HoltTest2 omnios58; illumos/restic-bko 0d82a9690d13: no PASS at its digest; run t2 SticTest2 ROUND omnios58; illumos/rustic-bko 5a87834d6355: no PASS at its digest; run t2 SticTest2 ROUND omnios58)
 not runnable: img:haiku (haiku/bko-holt bb9e1e37dcbe: no PASS at its digest; run t2 HoltTest2 haiku6; haiku/rustic-bko f0ca9138481d: no PASS at its digest; run t2 SticTest2 ROUND haiku6)
 sweep: SweepTest2 never ran, due now
-combined: 231 due, 1082.2 gm, 12097 s wall, 30.6 GB, ['gate:selftest'] left over
+combined: 233 due, 1090.1 gm, 12200 s wall, 30.6 GB, ['gate:selftest'] left over

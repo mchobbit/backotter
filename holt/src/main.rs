@@ -85,6 +85,7 @@ fn main() -> ExitCode {
         Some("snapcore-boot-areas") => ExitCode::from(bko_holt::load::snapcore::boot_areas_main(&args[1..])),
         Some("md-lbs") => ExitCode::from(bko_holt::mdsb::main(&args[1..])),
         Some("efi-dedupe") => ExitCode::from(bko_holt::load::efidedupe::main(&args[1..])),
+        Some("raw-write") => ExitCode::from(bko_holt::load::rawvol::main(&args[1..])),
         Some("write-table") => ExitCode::from(bko_holt::load::writetable::main(&args[1..])),
         Some("rewrite") => ExitCode::from(bko_holt::load::rewrite::main(&args[1..])),
         Some("-h" | "--help") => {

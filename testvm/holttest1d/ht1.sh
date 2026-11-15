@@ -70,7 +70,8 @@
 # HT_FAIL_AT=PHASE adds a FAIL line
 # after that phase (a test hook).  HT_SOURCE_PREP=FILE is a script run as
 # root in the source before its dump (its overlay only), rebooted after it
-# when its last line is REBOOT: prep/tumbleweed-snapper.sh; or, when its last
+# when its last line is REBOOT: prep/tumbleweed-snapper.sh (the default for
+# leap16*); or, when its last
 # line is AGAIN, rebooted, waited for until a boot settles (running or
 # degraded, and no reboot of its own), and run again, up to 10 rounds: a
 # prep of several boots, which keeps its own place (prep/microos-tu.sh,
@@ -121,7 +122,8 @@ case $G in
     freebsd*|hardenedbsd*|ghostbsd*|netbsd*|alpinebsd*|openbsd*|dragonfly*|omnios*|oi*|haiku*)
         exec "$(dirname "$(realpath "$0")")/ht1-bsd.sh" "$G" "$RUN" "$@" ;;
     # Systems that can't run bko-holt: read off their disks from Linux.
-    redox|sculpt*)
+    # (Qubes OS: dom0 has no network, so no SSH: docs/design/qubes.md.)
+    redox|sculpt*|qubes*)
         exec "$(dirname "$(realpath "$0")")/ht1-offline.sh" "$G" "$RUN" "$@" ;;
 esac
 PHASES=("$@")   # the default is the variant's (below): all four, or source and rebuild
@@ -245,14 +247,18 @@ gkey=$W/vms/$G/id_ed25519
 rkey=$W/vms/$RESCUER/id_ed25519
 # The guest's disks (vm-run-options' --disk, after its own image) and
 # firmware options (--uefi and the like, for the source and restored boots).
-# Its --guest-vars store (GVFROM) is the source's alone (gvars).
-imgs=("$W/vms/$G/$G.qcow2") fw=() GVFROM=""
+# Its --guest-vars store (GVFROM) is the source's alone (gvars).  Its
+# --guest-tpm state (GTPM: aeon's aeon.tpm, which its disk's key is sealed
+# to) too: the source boots on a copy of it, the restored disk on a new
+# machine's TPM (gvars; docs/design/aeon.md, A4).
+imgs=("$W/vms/$G/$G.qcow2") fw=() GVFROM="" GTPM=""
 if [[ -f $W/vms/$G/vm-run-options ]]; then
     read -ra o < "$W/vms/$G/vm-run-options"
     for ((i = 0; i < ${#o[@]}; i++)); do
         case ${o[i]} in
         --disk) d=${o[++i]}; [[ $d == /* ]] || d=$W/vms/$G/$d; imgs+=("$d") ;;
         --guest-vars) d=${o[++i]}; [[ $d == /* ]] || d=$W/vms/$G/$d; GVFROM=$d ;;
+        --guest-tpm) d=${o[++i]}; [[ $d == /* ]] || d=$W/vms/$G/$d; GTPM=$d ;;
         *) fw+=("${o[i]}") ;;
         esac
     done
@@ -300,10 +306,16 @@ GVARS=${GVFROM:-$W/vms/$G/uefi-vars.fd} GV_ENTRY=0
 # Without GVARS (BackShot2), the source alone boots on a copy of the store
 # vm-run-options names (--guest-vars: void-zbm, which has no EFI/BOOT
 # fallback), and a restored disk on the NVRAM its run gives it, never on that.
+# With GTPM, VFW also has the boot's TPM (vm-run --tpm, which wins over
+# --guest-tpm): every source boot R/source.tpm, a copy of the guest's made
+# by phase_source, so what the source's boots seal (sdbootutil's pcrlock
+# policy for a new slot's entry) carries over from one to the next; every
+# restored boot R/restored.tpm, a new machine's, made empty by phase_verify.
 gvars() {
     VFW=()
-    if [[ -z $GVARS ]]; then [[ $1 != source || -z $GVFROM ]] || VFW=(--guest-vars "$GVFROM"); return 0; fi
-    cp "$GVARS" "$R/$1-vars.fd" && VFW=(--uefi-vars "$R/$1-vars.fd")
+    if [[ -n $GTPM ]]; then if [[ $1 == source* ]]; then VFW=(--tpm "$R/source.tpm"); else VFW=(--tpm "$R/restored.tpm"); fi; fi
+    if [[ -z $GVARS ]]; then [[ $1 != source || -z $GVFROM ]] || VFW+=(--guest-vars "$GVFROM"); return 0; fi
+    cp "$GVARS" "$R/$1-vars.fd" && VFW+=(--uefi-vars "$R/$1-vars.fd")
 }
 # The entry the guest booted through: its efibootmgr -v line (HD(...): on a disk).
 # Without efibootmgr (Guix System), nvboot-efivars.sh reads it from efivarfs.
@@ -354,10 +366,14 @@ PY
 # --key-file for the volumes it makes).
 # A luks-keyfile (make-bootstrap.sh's alpine-luks) unlocks the guest at boot
 # from its initramfs: it serves vm-mount and load, with nothing to type (ckey).
-gpass=""; for f in console-passphrase zfs-passphrase luks-passphrase luks-keyfile; do [[ -f $W/vms/$G/$f ]] && gpass=$W/vms/$G/$f && break; done
+# A recovery-key (aeon: tik's, which its kept LUKS2 header still has) serves
+# vm-mount and load too, and is typed at the restored disk's prompts: its
+# TPM2 token doesn't unseal on a new machine's TPM (gvars).
+gpass=""; for f in console-passphrase zfs-passphrase luks-passphrase luks-keyfile recovery-key; do [[ -f $W/vms/$G/$f ]] && gpass=$W/vms/$G/$f && break; done
 ckey=$gpass; [[ $gpass != */luks-keyfile ]] || ckey=""
 # Where the run works and what a pass keeps (ht1-lib.sh; README "Where a run works, and what it keeps").
 HT_BULK=(share 'src-*.qcow2' 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 rustic-bko tmp img-key img-key.pub source-vars.fd restored-vars.fd 'restored-disk*-vars.fd')
+HT_BULK+=(source.tpm restored.tpm)   # (a --guest-tpm guest's: gvars)
 HT_BULK+=('source-zbm-*-vars.fd' 'restored-zbm-*-vars.fd')   # (ZFSBootMenu's menu boots: zbm_menu_boot)
 [[ $VARIANT != bs2 ]] || HT_BULK+=(rescuer-vars.fd)   # (a resumed UEFI rescuer's NVRAM)
 HT_ZIP=(src-meta.json dst-meta.json)
@@ -366,6 +382,9 @@ dbg=""; for v in HT_QUICK HT_THROUGH HT_KEEP HT_FAIL_AT HT_RESCUER HT_RESCUER_IM
 [[ -z $dbg ]] || ht_note "set for debugging or tests:$dbg"
 # A transactional-update guest's own history of slots (docs/design/aeon.md, M5).
 case $G in microos*|aeon*) [[ -n ${HT_SOURCE_PREP+set} ]] || HT_SOURCE_PREP=$HERE/prep/microos-tu.sh ;; esac
+# openSUSE Leap 16: snapper's chain, the old root and a rolled-back default
+# restored as on Tumbleweed (docs/design/leap16.md, L5).
+case $G in leap16*) [[ -n ${HT_SOURCE_PREP+set} ]] || HT_SOURCE_PREP=$HERE/prep/tumbleweed-snapper.sh ;; esac
 # shellcheck source=ht1-tu.sh
 . "$HERE/ht1-tu.sh"
 ht_require
@@ -610,7 +629,7 @@ selinux_check() {  # KEY: the restored guest's SELinux mode, relabel and denials
     mode=$(sed -n 's/^selinux //p' "$f")
     while read -r _ _ k; do
         known=""
-        for e in "${SELINUX_KNOWN[@]}"; do [[ $k =~ ${e%%$'\t'*} ]] && { known=${e#*$'\t'}; break; }; done
+        for e in ${SELINUX_KNOWN[@]+"${SELINUX_KNOWN[@]}"}; do [[ $k =~ ${e%%$'\t'*} ]] && { known=${e#*$'\t'}; break; }; done
         if [[ -n $known ]]; then why+=("$known"); else unk+=("$k"); fi
     done < <(grep '^avc ' "$f")
     n=$(awk '/^avc / {s += $2} END {print s + 0}' "$f")
@@ -681,6 +700,81 @@ solus_loader_check() {  # KEY: the restored guest booted through systemd-boot, u
         ok "solus: the restored disk booted through systemd-boot: $(tr '\n' ' ' < "$R/logs/restored-loader.txt")"
     else
         bad "solus: the restored disk's boot loader: $(tr '\n' ' ' < "$R/logs/restored-loader.txt") (the source's: $(tr '\n' ' ' < "$R/logs/source-loader.txt" 2>/dev/null))"
+    fi
+}
+# Slackware 15.0 (slackware15, slackware15-uefi; docs/design/slackware.md,
+# S6).  Its fstab names devices (/dev/vda2 /, the uefi guest's /dev/vda1 at
+# /boot/efi), which vm-mount resolves, and the ESP is mounted at boot, so the
+# dumps need nothing mounted by hand.  slackware15 boots LILO from the MBR:
+# load runs lilo on a copy of lilo.conf with root= by name in append=, since
+# lilo stores root as a device number and virtio_blk's major is the rescue
+# kernel's there.  slack_mbr_check reads the restored disk's sector 0 on the
+# host (LILO's first stage: "LILO" at offset 6, then its version), and
+# slack_root_check wants the restored boot's / on the source's device, as
+# the source has it (SLACK_ROOT: by the root's major:minor in /sys, as a
+# boot without an initrd shows / as /dev/root): a wrong numeric root panics
+# the kernel or mounts another.  slackware15-uefi boots ELILO from the
+# fallback path, on a fresh NVRAM (--uefi --no-secure-boot): elilo_check
+# wants ELILO in the restored ESP's EFI/Slackware (elilo.efi) and EFI/BOOT
+# (BOOTX64.EFI), each with its elilo.conf, a kernel with the bytes of one of
+# the restored /boot/vmlinuz-*, and an initrd with those of the restored
+# /boot/initrd.gz (load remakes it with the source's mkinitrd command and
+# copies it over the ESP's).  judge.py fs holds the rest (LILO_STAGE,
+# ELILO_KEPT).
+slack=0; case $G in slackware*) slack=1 ;; esac
+SLACK_ROOT='d=$(mountpoint -d /); n=$(basename "$(readlink -f "/sys/dev/block/$d")")
+echo "root $n $(findmnt -no FSTYPE --mountpoint / | tail -1) $(findmnt -no OPTIONS --mountpoint / | tail -1 | cut -d, -f1)"
+echo "cmdline $(cat /proc/cmdline)"'
+slack_root_check() {  # KEY: the restored boot's / as the source's
+    ((slack)) || return 0
+    sshk "$1" "$SLACK_ROOT" > "$R/logs/restored-root.txt" 2>&1
+    local want got
+    want=$(grep '^root ' "$R/logs/source-root.txt" 2>/dev/null) got=$(grep '^root ' "$R/logs/restored-root.txt")
+    if [[ -n $want && $got == "$want" ]]; then
+        ok "slackware: the restored boot's / is the source's: ${got#root } ($(sed -n 's/^cmdline //p' "$R/logs/restored-root.txt"))"
+    else
+        bad "slackware: the restored boot's /: ${got:-none} (the source's: ${want:-none}; logs/restored-root.txt)"
+    fi
+}
+slack_mbr_check() {  # the restored disk's MBR holds LILO's first stage (slackware15)
+    ((slack && !uefi)) || return 0
+    local f=$R/tmp/restored-mbr.bin sig
+    mkdir -p "$R/tmp"; rm -f "$f"
+    if ! qemu-img dd -f qcow2 -O raw bs=512 count=1 if="${dst[0]}" of="$f" > "$R/logs/restored-mbr.txt" 2>&1; then
+        bad "slackware: read the restored disk's MBR: $(tail -1 "$R/logs/restored-mbr.txt")"; return
+    fi
+    sig=$(dd if="$f" bs=1 skip=6 count=4 status=none)
+    od -A d -t x1z -N 16 "$f" >> "$R/logs/restored-mbr.txt"
+    if [[ $sig == LILO ]]; then
+        ok "slackware: the restored disk's MBR holds LILO's first stage (\"LILO\" at offset 6, version $(od -A n -t u1 -j 10 -N 2 "$f" | xargs | tr ' ' .))"
+    else
+        bad "slackware: the restored disk's MBR isn't LILO's: offset 6 holds \"$(printf '%s' "$sig" | tr -c '[:print:]' .)\" (logs/restored-mbr.txt)"
+    fi
+    rm -f "$f"
+}
+elilo_check() {  # MNT: the restored tree, mounted: ELILO in the ESP's EFI/Slackware and EFI/BOOT (slackware15-uefi)
+    ((slack && uefi)) || return 0
+    local m=$1 esp=$1/boot/efi d dir efi conf img ird k v bad_=() said=()
+    : > "$R/logs/restored-elilo.txt"
+    for d in Slackware:elilo.efi BOOT:BOOTX64.EFI; do
+        dir=$esp/EFI/${d%%:*} efi=${d#*:} conf=$esp/EFI/${d%%:*}/elilo.conf
+        if [[ ! -f $dir/$efi || ! -f $conf ]]; then bad_+=("EFI/${d%%:*}: no $efi or elilo.conf"); continue; fi
+        # elilo.conf's image= and initrd=: beside it, or from the ESP's root.
+        img=$(sed -n 's/^[[:space:]]*image[[:space:]]*=[[:space:]]*//p' "$conf" | head -1 | tr -d '"')
+        ird=$(sed -n 's/^[[:space:]]*initrd[[:space:]]*=[[:space:]]*//p' "$conf" | head -1 | tr -d '"')
+        [[ $img == /* ]] && img=$esp$img || img=$dir/${img:-vmlinuz}
+        [[ $ird == /* ]] && ird=$esp$ird || ird=$dir/${ird:-initrd.gz}
+        { echo "== EFI/${d%%:*}"; sha256sum "$dir/$efi" "$img" "$ird" "$m"/boot/vmlinuz-* "$m/boot/initrd.gz" 2>&1 | sed "s|$m/||"; } >> "$R/logs/restored-elilo.txt"
+        k=""
+        for v in "$m"/boot/vmlinuz-*; do [[ -f $v && ! -L $v ]] && cmp -s "$img" "$v" && { k=${v##*/}; break; }; done
+        [[ -n $k ]] || bad_+=("EFI/${d%%:*}/${img##*/}: no restored /boot/vmlinuz-* has its bytes")
+        cmp -s "$ird" "$m/boot/initrd.gz" || bad_+=("EFI/${d%%:*}/${ird##*/}: not the restored /boot/initrd.gz")
+        said+=("EFI/${d%%:*}: $efi, ${img##*/} = /boot/${k:-?}, ${ird##*/} = /boot/initrd.gz")
+    done
+    if ((${#bad_[@]})); then
+        bad "slackware: ELILO on the restored ESP: ${bad_[*]} (logs/restored-elilo.txt)"
+    else
+        ok "slackware: ELILO on the restored ESP: ${said[*]}"
     fi
 }
 # btrfs read-only snapshots (AnduinOS's baselines under @snapshots,
@@ -1452,6 +1546,10 @@ phase_source() {
     for ((i = 0; i < n; i++)); do
         rm -f "${src[i]}"; qemu-img create -q -f qcow2 -b "${imgs[i]}" -F qcow2 "${src[i]}"
     done
+    if [[ -n $GTPM ]]; then
+        rm -rf "$R/source.tpm"
+        cp -a "$GTPM" "$R/source.tpm" && chmod -R u+w "$R/source.tpm" || { bad "copy the guest's TPM ($GTPM) for the source's boots"; return; }
+    fi
     gvars source; local svfw=("${VFW[@]}")
     CONSOLE_KEY=$ckey vm_up "${src[0]}" "$R/logs/source-serial.log" "${fw[@]}" "${svfw[@]}" "${extra_src[@]}"
     vm_wait "$gkey" || { bad "source boots (no SSH)"; vm_down "$gkey"; return; }
@@ -1547,15 +1645,33 @@ phase_source() {
     ((mok || sbreq)) && sshk "$gkey" "$SBSTATE" > "$R/logs/source-sbstate.txt" 2>&1
     selinux_record source "$gkey"
     ((solus)) && sshk "$gkey" "$SOLUS_LOADER" > "$R/logs/source-loader.txt" 2>&1
+    ((slack)) && sshk "$gkey" "$SLACK_ROOT" > "$R/logs/source-root.txt" 2>&1
     TMO=1800 sshk "$gkey" "$SNAPS" > "$R/logs/source-snaps.txt" 2>&1
     snapmgr_record source "$gkey"
     sshk "$gkey" "$HEALTH" 2>&1 | grep -v 'bko-holt/load.log' > "$R/logs/source-health.txt"
     solus_mount_boot source "$gkey" || { vm_down "$gkey"; return; }
     scpk "$gkey" "$S/bko-holt" root@127.0.0.1:/root/bko-holt
-    if sshk "$gkey" /root/bko-holt dump > "$R/dumps/src.json" 2> "$R/logs/source-dump.err"; then
-        ok "dump on the live source"
+    # A guest whose disk's key is sealed to its own TPM (GTPM: aeon) keeps
+    # its LUKS2 headers (dump --keep-luks-header, in /run/bko-holt/luks-headers,
+    # RAM, never in the backup): load restores them, so the recovery key
+    # and the TPM2 token come back (docs/design/aeon.md, A2).  The files go
+    # beside the layout in the share, where load looks for them.
+    local dflags=()
+    if [[ -n $GTPM ]]; then
+        read -ra dflags <<<"$(sshk "$gkey" 'for d in $(blkid -t TYPE=crypto_LUKS -o device); do printf -- "--keep-luks-header %s " "$d"; done')"
+    fi
+    if sshk "$gkey" /root/bko-holt dump "${dflags[@]}" > "$R/dumps/src.json" 2> "$R/logs/source-dump.err"; then
+        ok "dump on the live source${dflags[*]:+ (${dflags[*]})}"
     else
         bad "dump on the live source: $(tail -1 "$R/logs/source-dump.err")"
+    fi
+    if ((${#dflags[@]})); then
+        rm -f "$S"/luks2-header-*.img
+        if scpk "$gkey" 'root@127.0.0.1:/run/bko-holt/luks-headers/*' "$S/" && compgen -G "$S/luks2-header-*.img" >/dev/null; then
+            ok "the source's kept LUKS2 headers copied beside the layout: $(cd "$S" && echo luks2-header-*.img)"
+        else
+            bad "copy the source's kept LUKS2 headers (/run/bko-holt/luks-headers) to the share"
+        fi
     fi
     sshk "$gkey" 'rm -f /root/bko-holt'
     if zbm_is "$R/dumps/src.json"; then zbm_source || { vm_down "$gkey"; return; }; fi
@@ -1917,6 +2033,7 @@ phase_verify() {
         esp_record "$DST_MP" dst >> "$R/logs/esp-record.log" 2>&1 || bad "record the restored ESPs that nothing mounts (logs/esp-record.log)"
         truenas_record "$DST_MP" dst
         mok_check "$DST_MP"
+        elilo_check "$DST_MP"
         tu_record_dst "$DST_MP"
         (trap '' TERM INT HUP; exec "$T/vm-umount" "$DST_MP") >> "$R/logs/verify-mount.log" 2>&1; HT_MOUNTED=
         python3 "$T/compare/fsmeta.py" compare "$R/src-meta.json" "$R/dst-meta.json" > "$R/logs/fsmeta-compare.txt" 2>&1
@@ -1937,6 +2054,9 @@ phase_verify() {
     else
         bad "mount the restored disk"
     fi
+    slack_mbr_check
+    # A --guest-tpm guest's restored disk boots on a new machine's TPM (gvars).
+    [[ -z $GTPM ]] || { rm -rf "$R/restored.tpm"; mkdir -m 700 "$R/restored.tpm"; }
     gvars restored; local dvfw=("${VFW[@]}")
     CONSOLE_KEY=$ckey vm_up "${dst[0]}" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${dvfw[@]}" "${BS2_VFW[@]}" "${extra_dst[@]}"
     if ! vm_wait "$gkey"; then bad "the restored disk boots by itself (no SSH; logs/restored-serial.log)"; vm_down "$gkey"; return; fi
@@ -1968,6 +2088,7 @@ phase_verify() {
     sb_check "$gkey"
     selinux_check "$gkey"
     solus_loader_check "$gkey"
+    slack_root_check "$gkey"
     snaps_check "$gkey"
     snapmgr_record restored "$gkey"
     [[ $VARIANT != bs2 ]] || bs2_restored_probe "$gkey"

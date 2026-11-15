@@ -24,7 +24,7 @@ fn settled(argv: &[&str]) -> Cmd {
 
 /// An LVM command that sees DEVICES only (comma-separated), and no devices
 /// file: `CMD --devicesfile "" --devices DEVICES REST...`.
-fn lvm_argv<'a>(cmd: &'a str, devices: &'a str, rest: &[&'a str]) -> Vec<&'a str> {
+pub(crate) fn lvm_argv<'a>(cmd: &'a str, devices: &'a str, rest: &[&'a str]) -> Vec<&'a str> {
     let mut v = vec![cmd, "--devicesfile", "", "--devices", devices];
     v.extend_from_slice(rest);
     v
@@ -288,6 +288,9 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
         b.problems.push("the dump couldn't tell UEFI from BIOS (its firmware mode is unknown; its warnings say why), so load can't choose the boot code to install: dump again once that tool works".into());
     }
     b.btrfs_plans();
+    b.qubes_note();
+    b.qubes_problems();
+    b.thin_problems();
     // --reformat's findings (reformat.rs), carried in the edited layout.
     for (k, list) in [("problems", &mut b.problems), ("notes", &mut b.notes)] {
         list.extend(layout.arr(&["load_reformat", k]).iter().filter_map(Value::as_str).map(str::to_string));
@@ -747,8 +750,14 @@ pub struct ThinPool {
     pub zero: bool,
     pub error_when_full: bool,
     pub attrs: LvAttrs,
-    /// Its thin LVs in the source's device_id order.
+    /// Its thin LVs: those without an origin in the source's device_id
+    /// order, then the snapshots, each after its origin.
     pub thins: Vec<ThinLv>,
+    /// How much of its data and metadata the source had in use (the dump's
+    /// data_used_bytes and metadata_used_bytes, from the pool's
+    /// `dmsetup status`), where the dump has them.
+    pub data_used: Option<u64>,
+    pub meta_used: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -758,6 +767,10 @@ pub struct ThinLv {
     pub bytes: u64,
     pub device_id: u64,
     pub attrs: LvAttrs,
+    /// The thin LV it is a snapshot of, in the same pool (docs/design/qubes.md,
+    /// Gate 2): made by `lvcreate -s` in the restore stage, once its origin's
+    /// content is there (load/rawvol.rs).
+    pub origin: Option<String>,
 }
 
 /// What of an LV's own lvcreate doesn't set from its sizes: its tags, its
@@ -798,8 +811,9 @@ fn lv_segments(lv: &Value) -> Vec<Value> {
     lv.get("segments").and_then(Value::as_array).cloned().unwrap_or_default()
 }
 
-/// The volume group's thin pools and thin LVs.  Refused in version 1: a
-/// thin LV that is a snapshot (origin, external_origin), a pool whose data
+/// The volume group's thin pools and thin LVs.  Refused: a thin LV with an
+/// external origin, a thin snapshot whose origin isn't a thin LV of the same
+/// pool in the dump, a pool whose data
 /// or metadata LV isn't linear or striped (RAID, cache), a striped metadata
 /// LV, data stripes that differ between segments, a pool LV on a PV that
 /// isn't allocatable, a pool or thin LV that isn't one segment, and a thin
@@ -876,6 +890,8 @@ pub fn thin_of(vg: &Value) -> Result<Thin, String> {
             error_when_full: [lv.get("status"), lv.get("flags")].into_iter().flatten().filter_map(Value::as_array).flatten().any(|x| x.as_str() == Some("ERROR_WHEN_FULL")),
             attrs: LvAttrs::of(lv),
             thins: vec![],
+            data_used: num(lv, "data_used_bytes"),
+            meta_used: num(lv, "metadata_used_bytes"),
         });
     }
     for lv in &lvs {
@@ -888,9 +904,6 @@ pub fn thin_of(vg: &Value) -> Result<Thin, String> {
             return Err(format!("thin LV {name}/{ln} has {} segments; version 1 makes a thin LV of one", segs.len()));
         }
         let seg = &segs[0];
-        if let Some(o) = s(seg, "origin") {
-            return Err(format!("thin LV {name}/{ln} is a thin snapshot of {o}; version 1 doesn't make thin snapshots"));
-        }
         if let Some(o) = s(seg, "external_origin") {
             return Err(format!("thin LV {name}/{ln} has the external origin {o}; version 1 doesn't make thin LVs with one"));
         }
@@ -898,11 +911,17 @@ pub fn thin_of(vg: &Value) -> Result<Thin, String> {
         let Some(p) = t.pools.iter_mut().find(|p| p.name == pool) else {
             return Err(format!("thin LV {name}/{ln}'s pool {pool} isn't a thin pool in the group"));
         };
-        p.thins.push(ThinLv { name: ln.clone(), bytes: num(seg, "extent_count").unwrap_or(0) * ext, device_id: num(seg, "device_id").unwrap_or(0), attrs: LvAttrs::of(lv) });
+        p.thins.push(ThinLv {
+            name: ln.clone(),
+            bytes: num(seg, "extent_count").unwrap_or(0) * ext,
+            device_id: num(seg, "device_id").unwrap_or(0),
+            attrs: LvAttrs::of(lv),
+            origin: s(seg, "origin"),
+        });
         t.dropped.push(ln);
     }
     for p in &mut t.pools {
-        p.thins.sort_by_key(|l| l.device_id);
+        p.thins = thin_forest(&name, &p.name, std::mem::take(&mut p.thins))?;
     }
     // The spare: lvcreate makes its own for a pool (with
     // --poolmetadataspare y), sized for the largest pool's metadata.  One
@@ -945,9 +964,42 @@ pub fn thin_of(vg: &Value) -> Result<Thin, String> {
     Ok(t)
 }
 
+/// A pool's thin LVs in the order load makes them: a forest from their
+/// origin links, the roots (no origin) in device_id order, then each
+/// snapshot after its origin, breadth first (a chain of revisions oldest
+/// first), siblings in device_id order.  A snapshot whose origin isn't a
+/// thin LV of this pool, or a loop of origins, is refused.
+pub fn thin_forest(vg: &str, pool: &str, mut thins: Vec<ThinLv>) -> Result<Vec<ThinLv>, String> {
+    thins.sort_by_key(|l| l.device_id);
+    for l in &thins {
+        if let Some(o) = &l.origin {
+            if !thins.iter().any(|x| &x.name == o) {
+                return Err(format!("thin LV {vg}/{} is a thin snapshot of {o}, which isn't a thin LV of pool {pool} in the dump: bko-holt load can't make it without its origin", l.name));
+            }
+        }
+    }
+    let mut out: Vec<ThinLv> = Vec::new();
+    let mut left = thins;
+    loop {
+        let before = out.len();
+        let ready: Vec<usize> = (0..left.len()).filter(|&i| left[i].origin.as_ref().is_none_or(|o| out.iter().any(|x| &x.name == o))).collect();
+        for i in ready.into_iter().rev() {
+            out.push(left.remove(i));
+        }
+        // (Each round's newly ready ones, in device_id order.)
+        out[before..].sort_by_key(|l| l.device_id);
+        if left.is_empty() {
+            return Ok(out);
+        }
+        if out.len() == before {
+            return Err(format!("thin LVs {} in {vg}/{pool} are snapshots of each other in a loop", left.iter().map(|l| l.name.as_str()).collect::<Vec<_>>().join(", ")));
+        }
+    }
+}
+
 /// A size for an LVM command, exact: MiB where it is a whole number of
 /// them, else KiB, else 512-byte sectors.
-fn lvm_size(bytes: u64) -> String {
+pub(crate) fn lvm_size(bytes: u64) -> String {
     if bytes % (1 << 20) == 0 {
         format!("{}m", bytes >> 20)
     } else if bytes % 1024 == 0 {
@@ -1207,11 +1259,20 @@ impl Builder<'_> {
             }
         } else {
             let seg = c.at(&["segments", "0"]).cloned().unwrap_or(Value::Null);
-            let ks = c.at(&["keyslots", "0"]).cloned().unwrap_or(Value::Null);
+            // The PBKDF the new passphrase's keyslot takes: the first source
+            // keyslot no token names.  A token's (systemd-cryptenroll's
+            // TPM2, FIDO2 or recovery key: Aeon's two) has its minimal PBKDF
+            // (PBKDF2, 1000 iterations), meant for a high-entropy key, which
+            // on a typed passphrase would cost an attacker nothing; with no
+            // other, cryptsetup's own (benchmarked) instead.
+            let ks = luks_passphrase_keyslot(&c);
+            if ks.is_null() && c.get("keyslots").and_then(Value::as_array).is_some_and(|k| !k.is_empty()) {
+                self.notes.push(format!("LUKS2 on {dev}: every keyslot of the source is a token's (systemd-tpm2, systemd-recovery and the like: high-entropy keys with systemd-cryptenroll's minimal PBKDF), so the new passphrase's keyslot gets cryptsetup's default PBKDF, benchmarked here, not their cost"));
+            }
             if let Some(e) = s(&seg, "encryption") {
                 a.push(format!("--cipher={e}"));
             }
-            if let Some(k) = num(&ks, "key_bits") {
+            if let Some(k) = num(&ks, "key_bits").or_else(|| c.at(&["keyslots", "0"]).and_then(|k| num(k, "key_bits"))) {
                 a.push(format!("--key-size={k}"));
             }
             if let Some(ss) = num(&seg, "sector_size") {
@@ -1434,7 +1495,13 @@ impl Builder<'_> {
                 let full = format!("{name}/{}", p.name);
                 out.push(Cmd::new(&lvm_argv("lvchange", &devices, &["--errorwhenfull", "y", &full])).why(format!("{full}: errors at once when its data space is full, as on the source")));
             }
+            out.extend(super::rawvol::pool_use_note(&name, p, &mut self.problems));
             for l in &p.thins {
+                // A thin snapshot waits for its origin's content: the restore
+                // stage makes it (load/rawvol.rs).
+                if l.origin.is_some() {
+                    continue;
+                }
                 let v = lvm_size(l.bytes);
                 let mut a: Vec<String> = ["--type", "thin", "-V", &v, "-n", &l.name, "--thinpool", &p.name].iter().map(|x| x.to_string()).collect();
                 attrs(&l.name, &l.attrs, &mut a, &mut later);
@@ -2140,6 +2207,11 @@ impl Builder<'_> {
         for (src, c) in self.leaves() {
             let ty = s(&c, "type").unwrap_or_default();
             if MADE_BY_ASSEMBLE.contains(&ty.as_str()) {
+                continue;
+            }
+            // A raw volume (load/rawvol.rs) gets its bytes in the restore
+            // stage, whatever they hold.
+            if self.is_raw_volume(&src) {
                 continue;
             }
             let Some(dev) = self.names.dev(&src) else {
@@ -2873,10 +2945,12 @@ impl Builder<'_> {
 
     fn restore(&mut self) -> Vec<Cmd> {
         let Some(repo) = &self.opts.repo else {
-            return vec![Cmd::note(format!(
+            let mut v = vec![Cmd::note(format!(
                 "no --repo: restore the backup into {} yourself, then run `bko-holt load ... --only boot`",
                 self.opts.target
             ))];
+            v.extend(self.thin_by_hand_note());
+            return v;
         };
         let mut a = vec![self.opts.archiver.clone(), "--repository".into(), repo.clone()];
         if let Some(p) = &self.opts.password_file {
@@ -2891,10 +2965,13 @@ impl Builder<'_> {
         let mut globs: Vec<String> = self.btrfs.values().flat_map(|p| p.globs()).collect();
         let pool_globs = self.left_out_pool_globs();
         let reformat_globs: Vec<String> = self.layout.arr(&["load_reformat", "restore_globs"]).iter().filter_map(Value::as_str).map(str::to_string).collect();
+        let raw_globs = self.raw_globs();
+        let only_raw = globs.is_empty() && pool_globs.is_empty() && reformat_globs.is_empty() && !raw_globs.is_empty();
         let only_pools = globs.is_empty() && !pool_globs.is_empty() && reformat_globs.is_empty();
         let only_reformat = globs.is_empty() && pool_globs.is_empty();
         globs.extend(pool_globs);
         globs.extend(reformat_globs);
+        globs.extend(raw_globs);
         let aliases = self.btrfs.values().any(|p| !p.aliases.is_empty());
         let mut pre = Vec::new();
         // What the archiver must have: --exact for shared snapshots,
@@ -2934,7 +3011,9 @@ impl Builder<'_> {
             if need.is_empty() {
                 pre.push(Cmd::new(&["mkdir", "-p", RUN_DIR]));
             }
-            let why = if only_pools {
+            let why = if only_raw {
+                "left out of the restore: the raw volumes' images, written to their LVs after it"
+            } else if only_pools {
                 "left out of the restore: the files of the pools --pools leaves untouched"
             } else if only_reformat {
                 "left out of the restore (--reformat): btrfs subvolumes mounted elsewhere, seen again (aliases), and btrfs snapshots, which the new type can't hold as snapshots"
@@ -2963,6 +3042,9 @@ impl Builder<'_> {
         let mut out = pre;
         out.push(Cmd { argv: a, why, env, ..Cmd::default() });
         self.shared_snapshots(&prefix, &mut out);
+        // Thin snapshots and raw volumes (load/rawvol.rs), once their
+        // origins' content is restored.
+        self.thin_restore(&prefix, &mut out);
         out.push(Cmd::new(&["sh", "-c", &self.atimes(&self.opts.target, "before")]).why("the atimes the restore set, for boot to put back after its reads"));
         out
     }
@@ -3392,6 +3474,11 @@ impl Builder<'_> {
                 }
                 self.remake_grub_cfg(&t, &mut out);
             }
+            // Qubes OS (load/qubes.rs): GRUB 2 without shim, Xen's menu.
+            ("grub", true) if self.is_qubes() => {
+                let cmds = self.qubes_boot_cmds(&t, via_shim);
+                out.extend(cmds);
+            }
             ("grub", true) if self.grub_dir() == "/boot/grub2" => {
                 // GRUB 2 through shim (Fedora, Rocky, openSUSE Tumbleweed
                 // and Leap): grub2-install refuses EFI on Fedora (it can't
@@ -3516,6 +3603,9 @@ impl Builder<'_> {
             }
             if solus {
                 out.extend(self.solus_entry());
+            }
+            if self.is_qubes() && loader == "grub" {
+                out.extend(self.qubes_entry());
             }
         }
         out.extend(self.rewrite_cmd(true));
@@ -4337,6 +4427,20 @@ pub(crate) enum OptionalData {
     /// UCS-2 text, as `efibootmgr --unicode` writes it (no final NUL).
     Text(String),
     Bytes(Vec<u8>),
+}
+
+/// The LUKS2 content C's first keyslot that no token names (a passphrase's
+/// or a key file's), or Null when every one is a token's.
+pub(crate) fn luks_passphrase_keyslot(c: &Value) -> Value {
+    let bound: Vec<String> = c
+        .get("tokens")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|t| t.get("keyslots").and_then(Value::as_array).cloned().unwrap_or_default())
+        .filter_map(|k| k.as_str().map(str::to_string).or_else(|| k.as_u64().map(|n| n.to_string())))
+        .collect();
+    c.get("keyslots").and_then(Value::as_array).into_iter().flatten().find(|k| s(k, "id").is_none_or(|id| !bound.contains(&id))).cloned().unwrap_or(Value::Null)
 }
 
 /// The dumped entry E's optional data, from the tail of its load option
@@ -6016,9 +6120,11 @@ mod tests {
                 error_when_full: false,
                 attrs: LvAttrs::default(),
                 thins: vec![
-                    ThinLv { name: "root-a".into(), bytes: 19 << 30, device_id: 1, attrs: LvAttrs::default() },
-                    ThinLv { name: "root-b".into(), bytes: 19 << 30, device_id: 2, attrs: LvAttrs::default() }
+                    ThinLv { name: "root-a".into(), bytes: 19 << 30, device_id: 1, attrs: LvAttrs::default(), origin: None },
+                    ThinLv { name: "root-b".into(), bytes: 19 << 30, device_id: 2, attrs: LvAttrs::default(), origin: None }
                 ],
+                data_used: None,
+                meta_used: None,
             }]
         );
         assert_eq!(th.spare_note, None);
@@ -6059,8 +6165,8 @@ mod tests {
         assert_eq!(lvm_size(1536), "3s");
     }
 
-    /// Refused in version 1, each by name: thin snapshots, external
-    /// origins, a pool on RAID or cached, a thin LV of no pool.
+    /// Refused, each by name: external origins, a snapshot of an LV not
+    /// in the pool, a pool on RAID or cached, a thin LV of no pool.
     #[test]
     fn thin_refusals() {
         let vg = crate::probe::lvm::sample::thin_vg().compact();
@@ -6069,10 +6175,22 @@ mod tests {
             assert_ne!(changed, vg, "{from}");
             vg_metadata(&crate::json::parse(&changed).unwrap()).unwrap_err()
         };
-        let snap = err("\"device_id\":2", "\"device_id\":2,\"origin\":\"root-a\"");
-        assert_eq!(snap, "thin LV vos-root/root-b is a thin snapshot of root-a; version 1 doesn't make thin snapshots");
+        // A thin snapshot is made (in the restore stage, load/rawvol.rs):
+        // after its origin, whatever their device ids; one of an LV not
+        // in the pool, or a loop, is refused.
+        let snap = vg.replacen("\"device_id\":1", "\"device_id\":1,\"origin\":\"root-b\"", 1);
+        let th = thin_of(&crate::json::parse(&snap).unwrap()).unwrap();
+        assert_eq!(th.pools[0].thins.iter().map(|l| (l.name.as_str(), l.origin.as_deref())).collect::<Vec<_>>(), vec![("root-b", None), ("root-a", Some("root-b"))]);
+        let gone = err("\"device_id\":2", "\"device_id\":2,\"origin\":\"root-x\"");
+        assert_eq!(gone, "thin LV vos-root/root-b is a thin snapshot of root-x, which isn't a thin LV of pool root in the dump: bko-holt load can't make it without its origin");
+        let looped = vg.replacen("\"device_id\":1", "\"device_id\":1,\"origin\":\"root-b\"", 1).replacen("\"device_id\":2", "\"device_id\":2,\"origin\":\"root-a\"", 1);
+        assert!(vg_metadata(&crate::json::parse(&looped).unwrap()).unwrap_err().contains("are snapshots of each other in a loop"));
         let ext = err("\"device_id\":2", "\"device_id\":2,\"external_origin\":\"init\"");
         assert_eq!(ext, "thin LV vos-root/root-b has the external origin init; version 1 doesn't make thin LVs with one");
+        // The pool's use, where the dump has it (crate::qubes::thin_usage).
+        let used = vg.replacen("\"zero_new_blocks\":1}]", "\"zero_new_blocks\":1}],\"data_used_bytes\":1048576,\"metadata_used_bytes\":4096", 1);
+        let p = &thin_of(&crate::json::parse(&used).unwrap()).unwrap().pools[0];
+        assert_eq!((p.data_used, p.meta_used), (Some(1 << 20), Some(4096)));
         // root_tdata as RAID1 (its one segment's type).
         let at = vg.find("\"name\":\"root_tdata\"").unwrap();
         let raid = format!("{}{}", &vg[..at], vg[at..].replacen("\"type\":\"striped\"", "\"type\":\"raid1\"", 1));

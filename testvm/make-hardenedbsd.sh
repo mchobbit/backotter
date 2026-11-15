@@ -7,6 +7,7 @@
 #
 # Usage: ./make-hardenedbsd.sh BRANCH BUILD ROOT_FS WORK_DIR
 #   e.g. ./make-hardenedbsd.sh 15 23 ufs vms/hardenedbsd15
+#        ./make-hardenedbsd.sh 15 23 zfs vms/hardenedbsd15-zfs
 #
 # BRANCH is a stable branch's major version (15 for 15-STABLE) and BUILD
 # the number of one of its installer builds, as listed in

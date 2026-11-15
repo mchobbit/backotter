@@ -77,6 +77,7 @@ PACKAGES = (
     "truenas", "middlewared",
     "zfsbootmenu", "linux-mainline",
     "clr-boot-manager", "linux-current", "usysconf",
+    "xen", "xen-hypervisor", "xen-runtime", "kernel-latest", "qubes-core-dom0", "qubes-release",
 )
 # Of those, what handles storage; the rest is boot.
 STORAGE = frozenset((
@@ -94,7 +95,13 @@ ZFS_NAMES = ("zfsutils-linux", "zfs-utils", "zfs", "zfs-user", "zfs-dkms")
 LSM_NAMES = ("selinux-policy-targeted", "selinux-policy", "apparmor")
 
 # abroot: Vanilla OS, the present root's dpkg database (pkgset.sh), and its image's digest.
-LINUX_KINDS = ("dpkg", "rpm", "pacman", "apk", "xbps", "eopkg", "moss", "portage", "pkgtools", "nixos", "guix", "abroot")
+# snapcore: Ubuntu Core, its snaps' revisions and modeenv's picks (pkgset.sh; snapcore_facts()).
+LINUX_KINDS = ("dpkg", "rpm", "pacman", "apk", "xbps", "eopkg", "moss", "portage", "pkgtools", "nixos", "guix", "abroot",
+               "snapcore")
+# Ubuntu Core's modeenv keys that pkgset.sh lists (base snapcore-KEY VALUE), and the snaps
+# besides the ones those name that are its boot: snapd, which makes the boot chain and seals.
+SNAPCORE_MODEENV = ("base", "gadget", "current_kernels", "current_recovery_systems")
+SNAPCORE_BOOT = ("snapd",)
 BASE_KINDS = ("freebsd", "hardenedbsd", "netbsd", "alpinebsd", "openbsd", "dragonfly", "illumos", "haiku")
 
 
@@ -227,12 +234,39 @@ def need(value, what):
     return value
 
 
+def snap_name(file_name):
+    """A snap's name from its file's, NAME_REV.snap (modeenv's base=, gadget=, current_kernels=)."""
+    return file_name.rsplit("_", 1)[0] if file_name.endswith(".snap") and "_" in file_name else None
+
+
+def snapcore_facts(f, release, ls):
+    """Ubuntu Core (docs/design/ubuntu-core.md): no package of PACKAGES' at all.  Its boot is the
+    kernel, gadget and base snaps modeenv names and snapd, each at every revision snapd keeps
+    (snap revert's), with modeenv's picks themselves; the fixture's tools come with the base snap,
+    so its revisions stand for them, as a BSD's release does."""
+    f["kernel"] = need(release, "the kernel (os.kernel_release)")
+    f["kernel_line"] = need(major_minor(release), "the kernel line")
+    names = set(SNAPCORE_BOOT)
+    for k in SNAPCORE_MODEENV:
+        v = need(ls.base.get(f"snapcore-{k}"), f"modeenv's {k}")
+        f["boot"][f"modeenv:{k}"] = v
+        if k != "current_recovery_systems":
+            names |= {n for n in (snap_name(x) for x in v.split(",")) if n}
+    for name in sorted(names):
+        f["boot"][name] = need(ls.version([name]), f"the {name} snap (snap list --all)")
+    base = snap_name(ls.base["snapcore-base"])
+    f["fixture"] = {"base": need(ls.version([base]) if base else None, "the base snap's revisions")}
+    return f
+
+
 def read_facts(dump, ls):
     """facts (less layout) of one guest: contract section 1.5's table."""
     kind = ls.kind
     os_ = dump.get("os") or {}
     release, version = os_.get("kernel_release"), os_.get("kernel_version")
     f = {"os_kind": kind, "bcachefs": None, "zfs": None, "lsm": {}, "fixture": {}, "boot": {}, "storage": {}}
+    if kind == "snapcore":
+        return snapcore_facts(f, release, ls)
     if kind in LINUX_KINDS:
         f["kernel"] = need(release, "the kernel (os.kernel_release)")
         f["kernel_line"] = need(major_minor(release), "the kernel line")

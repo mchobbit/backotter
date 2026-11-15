@@ -40,8 +40,10 @@ stic	stic:ghostbsd26	6.47	388	0.00	-	st1_marks.tsv: median of 3 exit-0 runs
 stic	stic:ghostbsd26-zfs	12.48	749	0.00	-	st1_marks.tsv: median of 3 exit-0 runs
 stic	stic:haiku6	0.86	52	0.00	-	st1_marks.tsv: median of 2 exit-0 runs
 stic	stic:hardenedbsd15	6.77	406	0.00	-	st1_marks.tsv: median of 3 exit-0 runs
+stic	stic:hardenedbsd15-zfs	13.00	780	0.00	-	est. (no run yet): stic:ghostbsd26-zfs (same check) x stic:hardenedbsd15 / stic:freebsd15-ufs (HBSD's WITNESS kernel)
 stic	stic:mint22	13.57	814	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
 stic	stic:microos	3.83	230	0.00	-	aeon.md M4: SticTest1 microos, 223 s on chopin (st1-m4a) and 233 s on cinqcent (st1-m4b), the reservation's wait not counted
+stic	stic:aeon	5.00	300	0.00	-	est. (no run yet): stic:microos (230 s, M4) and the larger ESP (4 GiB FAT, 72 MB of kernels) rounded up, as stictest1/README.md's estimate, until A3's first run (aeon.md)
 stic	stic:mx25	11.90	714	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:netbsd11	5.40	324	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:nixos2605	3.92	235	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
@@ -53,6 +55,7 @@ stic	stic:pop24	10.18	610	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
 stic	stic:rocky10	1.83	110	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:rocky10-lvm	2.23	134	0.00	-	st1_marks.tsv: median of 1 exit-0 runs
 stic	stic:sculpt2610	0.83	50	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:solus49	6.83	410	0.00	-	solus.md S4: SticTest1 solus49 PASS on both hosts (cinqcent s4solus-20261114-203739, chopin s4solusc-20261114-204727), stictest1/README.md's 410 s
 stic	stic:tumbleweed	3.13	188	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:ubuntu24	15.95	957	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
 stic	stic:ubuntu26-uefi	6.23	374	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
@@ -82,6 +85,7 @@ holt	holt:ghostbsd26	3.98	239	0.00	0.01	ht_rows.json r3all chopin PASS; r3all_fi
 holt	holt:ghostbsd26-zfs	4.42	265	0.00	0.01	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 0.01 GiB
 holt	holt:haiku6	3.35	201	0.00	0.01	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 0.01 GiB
 holt	holt:hardenedbsd15	5.48	329	0.00	0.01	ht_rows.json r3all chopin PASS; r3all_files.tsv left 0.01 GiB
+holt	holt:hardenedbsd15-zfs	6.08	365	0.00	0.01	est. (no run yet): holt:ghostbsd26-zfs x holt:hardenedbsd15 / holt:ghostbsd26 (ZFS root, HBSD kernel)
 holt	holt:mint22	9.13	548	0.00	17.65	ht_rows.json r3all chopin PASS; r3all_files.tsv left 13.93 GiB
 holt	holt:mx25	5.38	323	0.00	15.73	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 12.41 GiB
 holt	holt:netbsd11	4.18	251	0.00	0.01	ht_rows.json r3all chopin PASS; r3all_files.tsv left 0.01 GiB
@@ -121,10 +125,13 @@ holt	holt:cachyos-zfs	3.50	210	0.00	-	as holt:chimera-zfs (cinqcent chim3: UEFI,
 holt	holt:gentoo-systemd	4.00	240	0.00	-	gentoo.md G3: as holt:gentoo (chimera-uefi's chim4, UEFI, LVM on LUKS, rounded up), until G5's first run (est.)
 holt	holt:anduinos2	5.63	338	0.00	-	anduinos.md A3: as holt:ubuntu26-uefi (r3all chopin: UEFI, Secure Boot), until A5's first run (est.)
 holt	holt:neon24	6.32	379	0.00	-	chopin ht1u PASS 2026-11-14, 02:07:09Z to 02:13:28Z (ht1.sh, in RAM; cinqcent's ht1u PASS in 436 s)
+holt	holt:elementary8	9.03	542	0.00	-	chopin elem6c2 2026-11-14, 18:06:47Z to its ledger row at 18:15:49Z, all four phases (ht1.sh, in RAM; it FAILed only on the dumps' grub.cfg, os-prober's leak, since fixed: elementary.md E6), until a PASS (est.)
+holt	holt:elementary8-luks	9.03	542	0.00	-	as holt:elementary8, until measured (est.)
 holt	holt:vanilla3	27.13	1628	28.94	28.94	chopin v7-1 PASS 2026-11-14, its passing phases 1628 s (source 313, backup 169, rebuild 618, verify 528; cinqcent's v7-2 1276 s), ht1.sh on /bkoscratch only (HT_RAM=0, D 30 over every RAM-disk ceiling): gb and gb_disk its disk peak, 28,259,052 KiB (vanillaos.md V7)
 holt	holt:pikaos4	6.18	371	0.00	-	chopin p6-4 PASS 2026-11-14, its phases 371 s (source 53, backup 56, rebuild 165, verify 97; cinqcent's p6-5 390 s), ht1.sh in RAM (pikaos.md P6)
 holt	holt:pikaos4-luks	6.27	376	0.00	-	chopin p6-6 PASS 2026-11-14, its phases 376 s (source 47, backup 57, rebuild 177, verify 95; cinqcent's p6-7 341 s), ht1.sh in RAM (pikaos.md P6)
 holt	holt:microos	11.90	714	0.00	-	cinqcent aeon2c PASS 2026-11-14, a whole run from source 714 s (source 191 with the prep, backup 53, rebuild 142, verify 327), ht1.sh in RAM, RAM-disk peak 2.7 GiB (aeon.md M5)
+holt	holt:solus49	5.98	359	0.00	15.16	solus.md S3: as holt:aerynos (r3all chopin: UEFI), until measured (est.); S5's s5-3 cinqcent and s5-4 chopin PASS 2026-11-14 in RAM, RAM-disk peak 14.1 GiB (ram-sizes.tsv): gb_disk that peak, 15,164,915,712 bytes
 holt	holt:debian13-stack+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
 holt	holt:aerynos+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
 holt	holt:mint22+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
@@ -181,14 +188,18 @@ guest	guest:ghostbsd26	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for
 guest	guest:ghostbsd26-zfs	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:haiku6	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:hardenedbsd15	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:hardenedbsd15-zfs	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:kinoite44	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:manjaro	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:microos	4.48	269	0.00	-	aeon.md M1: vm-update --try 149 s on chopin (2.48) + 0.5 for checks + 1.5 for a new guest's smoke backup (est.)
+guest	guest:aeon	5.48	329	0.00	-	aeon.md A1: vm-update --try ok on chopin (build 8, a few minutes; not timed alone) as guest:microos (4.48) + 1 for the larger desktop image (est.)
 guest	guest:garuda	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:biglinux	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:mint22	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:mx25	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:neon24	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:elementary8	18.27	1096	0.00	-	elementary.md E1: vm-update --try 976 s on chopin (16.27, 543 packages) + 0.5 for checks + 1.5 for a new guest's smoke backup (est.)
+guest	guest:elementary8-luks	18.27	1096	0.00	-	as guest:elementary8 (the 16G build's --try ran out of room; the 20G rebuild unmeasured) (est.)
 guest	guest:netbsd11	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:nixos2605	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:omarchy	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
@@ -205,6 +216,7 @@ guest	guest:rocky10	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for ch
 guest	guest:rocky10-lvm	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:rocky10-raid5	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:sculpt2610	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:solus49	2.00	120	0.00	-	solus.md S1: vm-update --try 51 s on chopin (0.85, nothing to upgrade) + 0.5 for checks + ~0.65 toward a new guest's smoke backup, until measured (est.)
 guest	guest:tumbleweed	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ubuntu24	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ubuntu26-raid	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup

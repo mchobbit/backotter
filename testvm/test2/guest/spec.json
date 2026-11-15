@@ -1,7 +1,7 @@
 {
  "v": 1,
  "family": "guest",
- "about": "What a GuestTest2 cell's key covers (contract 1.4, 2.1). keys.py reads it: entries[GUEST] merges over kinds[its kind], lists adding up. A kind says how the guest is reached: ssh (vm-update --try), probe (no --try: vm-update --probe), redox and sculpt (no SSH: a console probe). checks is what the judge reads, and keyed as a judge input; the rest (ram_gib, cpus, memory, timeout_s, update) is the runner's. S-*, L-*, K-*, B-* and M-* are guest_judge.py's rule codes. Not in guest: keys: update/trim.sh, update/pkgset.sh, update/fingerprint.py, holttest1d/judge.py (contract D2). sculpt2610 has no SSH: its no-ssh file (written by make-sculpt.sh) makes vm-update refuse it, and testvm/sculpt-update updates it offline, recording image-state, so its generation keys its cells as any guest's does.",
+ "about": "What a GuestTest2 cell's key covers (contract 1.4, 2.1). keys.py reads it: entries[GUEST] merges over kinds[its kind], lists adding up. A kind says how the guest is reached: ssh (vm-update --try), probe (no --try: vm-update --probe), redox and sculpt (no SSH: a console probe). checks is what the judge reads, and keyed as a judge input; the rest (ram_gib, cpus, memory, timeout_s, update) is the runner's. S-*, L-*, K-*, B-* and M-* are guest_judge.py's rule codes. Not in guest: keys: update/trim.sh, update/pkgset.sh, update/fingerprint.py, holttest1d/judge.py (contract D2). sculpt2610 has no SSH: its no-ssh file (written by make-sculpt.sh) makes vm-update refuse it, and testvm/sculpt-update updates it offline, recording image-state, so its generation keys its cells as any guest's does; an update round runs sculpt-update for it (guest/update-sculpt.sh, mode console-update), which boots the update before it merges, so no --try PASS gates it in a bare round.",
  "plumbing": [
   "testvm/vm-run",
   "testvm/vm-lib.sh",
@@ -64,6 +64,33 @@
   }
  },
  "entries": {
+  "aeon": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-opensuse.sh",
+    "testvm/opensuse/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.tukit",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#tukit"
+   ],
+   "checks": {
+    "pm": "tukit",
+    "rules": {
+     "source": "S-zyp",
+     "loader": "L-sd",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": false
+   }
+  },
   "aerynos": {
    "kind": "ssh",
    "plat": "linux",
@@ -563,6 +590,58 @@
    "memory": 6144,
    "timeout_s": 7200
   },
+  "elementary8": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-from-live.sh",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": false
+   }
+  },
+  "elementary8-luks": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-from-live.sh",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": false
+   }
+  },
   "endeavouros": {
    "kind": "ssh",
    "plat": "linux",
@@ -991,6 +1070,31 @@
     },
     "fw": "bios",
     "established": true
+   }
+  },
+  "hardenedbsd15-zfs": {
+   "kind": "ssh",
+   "plat": "freebsd",
+   "harness": [
+    "testvm/make-hardenedbsd.sh",
+    "testvm/hardenedbsd/**",
+    "testvm/update/in-guest.sh#FreeBSD",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#hbsd"
+   ],
+   "checks": {
+    "pm": "hbsd",
+    "rules": {
+     "source": "S-hbsd",
+     "loader": "L-fbsd",
+     "kernel": "K-fbsd",
+     "boot": "B-bsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "bios",
+    "established": false
    }
   },
   "kinoite44": {
@@ -1597,6 +1701,7 @@
     "testvm/make-sculpt.sh",
     "testvm/sculpt-update",
     "testvm/test2/guest/probe-sculpt.sh",
+    "testvm/test2/guest/update-sculpt.sh",
     "testvm/sculpt-check.sh",
     "testvm/haiku/drive.py"
    ],
@@ -1614,8 +1719,34 @@
     },
     "fw": "q35",
     "established": true
-   },
-   "update": false
+   }
+  },
+  "solus49": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-solus.sh",
+    "testvm/solus/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.eopkg",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#eopkg"
+   ],
+   "checks": {
+    "pm": "eopkg",
+    "rules": {
+     "source": "S-eopkg",
+     "loader": "L-cbm",
+     "kernel": "K-cbm",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": false
+   }
   },
   "tumbleweed": {
    "kind": "ssh",

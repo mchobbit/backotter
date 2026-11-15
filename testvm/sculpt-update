@@ -73,7 +73,10 @@ is only read:
      with no image-state gets one there, generation and all, as vm-update
      starts one (so a no-op run on a state-less guest starts its state).  It
      holds vm-update's fleet lock (vms/.vm-update.fleet.lock) until it is
-     done, so no vm-store publish or vm-update round runs meanwhile;
+     done, so no vm-store publish or vm-update round runs meanwhile: alone,
+     or, as a job of a GuestTest2 update round (VM_UPDATE_ROUND=RUN), shared
+     with the round's other jobs, as vm-update's own jobs hold it, and only
+     while .vm-update.fleet.round names RUN;
   2. fetches the image index and checks its signature (gpgv with only the
      Genode Labs depot key, WORK_DIR/genodelabs.pub, fingerprint pinned
      below, as make-sculpt.sh checks the release's image), reads the
@@ -135,11 +138,15 @@ Options:
                  ~/.cache/sculpt-update).  The images are kept; the index is
                  fetched anew each run
   --offline      use only what the cache holds, the index too (tests)
-  --publish      after a merge or a start, run vm-store publish GUEST
+  --publish      after a merge or a start, run vm-store publish GUEST.  Not
+                 in a round's job (VM_UPDATE_ROUND): the round holds the fleet
+                 lock, which publish needs to itself; publish after the round
 
 Environment: BKO_WORK (the tree whose vms/ holds the guest; default the
 folder above WORK_DIR's vms/), SCULPT_UPDATE_SCRATCH (the scratch folder's
-parent; default /mnt/bko-ram if it is there, else TMPDIR), WEAR_TAG.  Run
+parent; default /mnt/bko-ram if it is there, else TMPDIR), WEAR_TAG,
+VM_UPDATE_ROUND (GuestTest2 update's job: the fleet lock shared, as above;
+testvm/test2/guest/update-sculpt.sh sets it).  Run
 heavy work under `cmp-run.sh --reserve 2 4 ...` (the raw copy and the boot
 check's VM: about 2 GiB of RAM disk and 4 GiB of memory).
 
@@ -875,6 +882,10 @@ def main() -> int:
         ap.error(f"--image takes YYYY-MM-DD, not {a.image!r}")
     if a.publish and (a.check or a.try_):
         ap.error("--publish goes with a real run")
+    round_run = os.environ.get("VM_UPDATE_ROUND") or None
+    if a.publish and round_run:
+        ap.error("--publish can't run in a round's job (VM_UPDATE_ROUND): vm-store publish needs the fleet lock "
+                 "the round holds; publish after the round")
 
     gdir = Path(os.path.abspath(a.work_dir))
     if not gdir.is_dir():
@@ -926,12 +937,7 @@ def main() -> int:
         # Step 1.
         states = None
         if real:
-            lock = vu.VMS / vu.FLEET_LOCK
-            fleet = open(lock, "a")
-            try:
-                fcntl.flock(fleet, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise Failed(f"the fleet lock ({lock}) is held: a vm-update round or update, or a vm-store publish")
+            fleet = take_fleet_lock(vu, round_run)
             states = vu.check_hosts(g, [None], start=True)
             if not (gdir / vu.STAT_FILE).exists():
                 vu.write_stat(None, g, states[None]["generation"])
@@ -1049,6 +1055,25 @@ def main() -> int:
             except Failed as e:
                 say(f"{e}; stop it by hand")
         shutil.rmtree(scratch, ignore_errors=True)
+
+
+def take_fleet_lock(vu, round_run: str | None):
+    """vms/.vm-update.fleet.lock, on this host (Chopin's, or a world's own):
+    exclusive for a run by hand; for ROUND_RUN's job shared, as vm-update's
+    take_fleet_lock holds it for a job of a held round, and only while the
+    round's holder (vm-update --hold-fleet-lock) still names it."""
+    lock, _ = vu.fleet_paths()
+    f = open(lock, "a")
+    try:
+        fcntl.flock(f, (fcntl.LOCK_SH if round_run else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+    except BlockingIOError:
+        f.close()
+        raise Failed(f"the fleet lock ({lock}) is held: a vm-update round or update, or a vm-store publish"
+                     f" ({vu.FLEET_ROUND} says {vu.round_name() or 'nothing'})")
+    if round_run and vu.round_name() != round_run:
+        f.close()
+        raise Failed(f"this job is of round {round_run}, but the round in progress is {vu.round_name() or 'none'}")
+    return f
 
 
 def publish(name: str) -> None:

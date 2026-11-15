@@ -65,10 +65,12 @@ vm_boot() {
         return 1
     fi
     if [[ -f $dir/vm-run-options ]]; then read -ra opts <"$dir/vm-run-options" || true; fi
-    # Its --disk images (and --guest-vars store) are named relative to the guest's directory.
+    # Its --disk images (and --guest-vars store, --guest-tpm state: uc24-fde's,
+    # booted on copies of them under --ram or --snapshot) are named relative to
+    # the guest's directory.
     local i
     for i in "${!opts[@]}"; do
-        [[ ${opts[$i]} == --disk || ${opts[$i]} == --guest-vars ]] &&
+        [[ ${opts[$i]} == --disk || ${opts[$i]} == --guest-vars || ${opts[$i]} == --guest-tpm ]] &&
             [[ -n ${opts[$((i + 1))]:-} && ${opts[$((i + 1))]} != /* ]] &&
             opts[$((i + 1))]=$dir/${opts[$((i + 1))]}
     done

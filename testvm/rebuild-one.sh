@@ -156,7 +156,9 @@ guix15|guix15-bios) cmd=(asm $T/make-guix.sh --iso-dir /bkoscratch/rebuild-input
 # /bkoscratch/rebuild-inputs/ubuntu-core24 (its SHA-256 pinned in the builder,
 # SHA256SUMS beside it), every snap refreshed from the store at the rebuild.
 # uc24-fde's recovery key goes beside W (W.recovery), never over the guest's own
-# in rebuild-inputs. Its boot check below has no TPM, so it can't unlock.
+# in rebuild-inputs. Its boot check below boots on copies of W's uefi-vars.fd
+# and tpm/ (vm-run-options' --guest-vars and --guest-tpm, under --ram), as
+# every test boot of it does: the same machine, so it unlocks unattended.
 uc24)       cmd=(asm $T/make-ubuntu-core.sh uc24 /bkoscratch/rebuild-inputs/ubuntu-core24/ubuntu-core-24-amd64.img.xz "$W") ;;
 uc24-fde)   cmd=(asm $T/make-ubuntu-core.sh --recovery-key-file "$W.recovery" uc24-fde /bkoscratch/rebuild-inputs/ubuntu-core24/ubuntu-core-24-amd64.img.xz "$W") ;;
 endeavouros) cmd=(asm $T/make-arch.sh --live endeavouros "$SRC/EndeavourOS_Titan-Nova-2026.08.15.iso" 2026.10.01 "$W") ;;
@@ -183,6 +185,7 @@ freebsd15-ufs) cmd=(asm $T/make-freebsd.sh 15.1 ufs "$W") ;;
 freebsd15-geli) cmd=(asm $T/make-freebsd.sh --uefi-geli 15.1 zfs "$W") ;;
 freebsd14)  cmd=(asm $T/make-freebsd.sh 14.5 zfs "$W") ;;
 hardenedbsd15) cmd=(asm $T/make-hardenedbsd.sh 15 23 ufs "$W") ;;
+hardenedbsd15-zfs) cmd=(asm $T/make-hardenedbsd.sh 15 23 zfs "$W") ;;
 # ghostbsd26: its install VM takes 8 GB (INSTALL_MEMORY): reserve ~9 GiB.
 ghostbsd26) cmd=(asm $T/make-ghostbsd.sh 26.2-R15.1p6 ufs "$W") ;;
 ghostbsd26-zfs) cmd=(asm $T/make-ghostbsd.sh 26.2-R15.1p6 zfs "$W") ;;
@@ -202,8 +205,9 @@ sculpt2610) cmd=(asm $T/make-sculpt.sh 26.10 "$W") ;;
 *) echo "no recipe for $G" >&2; exit 2 ;;
 esac
 # The image's name: make-freebsd.sh calls it freebsd$major.qcow2 whatever the
-# guest, make-ghostbsd.sh ghostbsd$major.qcow2.
-IMG=$G; case $G in freebsd15-ufs|freebsd15-geli) IMG=freebsd15 ;; ghostbsd26-zfs) IMG=ghostbsd26 ;; esac
+# guest, make-ghostbsd.sh ghostbsd$major.qcow2, make-hardenedbsd.sh
+# hardenedbsd$major.qcow2.
+IMG=$G; case $G in freebsd15-ufs|freebsd15-geli) IMG=freebsd15 ;; ghostbsd26-zfs) IMG=ghostbsd26 ;; hardenedbsd15-zfs) IMG=hardenedbsd15 ;; esac
 # Never two VMs on one port: compare.py's boot uses 2230 + COMPARE_SLOT.
 if ss -ltnH "sport = :$((2230 + SLOT))" | grep -q .; then echo "port $((2230 + SLOT)) is taken" >&2; exit 2; fi
 # The ISO: the recipe's .iso argument, wherever options put it.
@@ -311,6 +315,8 @@ try:
                 cfg.disks.append(w / opts.pop(0))
             elif o == "--guest-vars" and opts:
                 cfg.vars = w / opts.pop(0)
+            elif o == "--guest-tpm" and opts:
+                cfg.tpm = w / opts.pop(0)
             else:
                 cfg.options.append(o)
     b = c.boot([cfg.base] + cfg.disks, cfg, cfg.source_hardware(cfg.hardware({})), w / "rebuild-boot-console.log")

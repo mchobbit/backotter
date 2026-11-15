@@ -89,6 +89,7 @@ or later:
 | 12 | Gentoo (OpenRC, LVM, GRUB lvmid) | gentoo-2.18-20261112-185749 | none | none | lvmid check (built into verify) | 50 min |
 | 13 | Void (musl, runit, btrfs top level, GRUB) | none: B only, from the running restore of void-20261113-152153, which passed on 2026-11-13 with main's static musl bko-holt (d965dc5) | none (no auto-updater by default) | none | the GRUB entry void_grub is the one booted; runit services sshd and avahi-daemon up | 25 min |
 | 14 | PikaOS 4 (XFS root, ext4 XBOOTLDR /boot, rEFInd, booster) | pika-4-20261114-134728 | booster-reassert.timer (bs1-common SNAPSHOTTERS) | none | every file under `EFI/refind` back with its content (bs1-manifest KEPT) and `refind_linux.conf` unchanged; BootCurrent is rEFInd's NVRAM entry; for B, a fresh install by `pika-bootstrap.sh` from the stick (~5 min; docs/design/pikaos.md, What P8 found) | 40 min |
+| 15 | KDE neon 24.04 (ext4, /swapfile, GRUB through shim in EFI/neon) | neon-24.04-20261114-141609 | apt timers, packagekit (Discover) | none | BootCurrent is the entry for `\EFI\neon\shimx64.efi`; `EFI/ubuntu/grub.cfg` back; no `(on /dev/` menuentry in grub.cfg; for B, a fresh install by `neon-bootstrap.sh` from the stick (~5 min; docs/design/kde-neon.md, What N8 found) | 50 min |
 
 Each L is the newest run whose own restore passed. EndeavourOS is the
 exception: it uses the one after the firewalld fix (row 7).
@@ -106,7 +107,8 @@ and xattrs where the manifest has none.
 
 Total about 13.5 h of machine time (est.), not counting fixes. Void was added
 on 2026-11-13 after its first BackShot1 passed (the user's choice), PikaOS
-(row 14, est. +40 min) on 2026-11-15 after its own passed.
+(row 14, est. +40 min) on 2026-11-15 after its own passed, and KDE neon
+(row 15, est. +50 min) the same day.
 
 Pending, not in the table: Vanilla OS 3 (ABRoot's two roots). BackShot1's
 plumbing for it landed 2026-11-15 (docs/design/vanillaos.md, What V11

@@ -262,6 +262,25 @@ root's times and the top ancestor's label on FAT).  No tool bug.  Chopin's
 first run (`l4a`) failed one harness check, the subvolumes made in another
 order, fixed.
 
+**L5 plumbing (2026-11-15):** wired, not run (the user runs HoltTest1
+1Obscure's `leap16` on Chopin and Cinqcent later; the measured
+`ram-sizes.tsv` row comes with those runs, the estimate stays till then).
+`ht1.sh`: `prep/tumbleweed-snapper.sh` is `leap16*`'s default
+`HT_SOURCE_PREP` (beside microos's; read, not run: snapper 0.12's
+`--ambit classic rollback`, `--csvout` and the REBOOT line suit Leap's
+writable root as Tumbleweed's), `sb_check` wants `SecureBoot enabled` on
+the restored boot, and `selinux_check` FAILs `leap16*` unless it comes up
+Enforcing with no relabel pending and no AVC denial beyond `SELINUX_KNOWN`
+(empty; a note line only for `tumbleweed*`, `fedora*`, `rocky*`).
+`judge.py`: `EFI/opensuse`'s shim, GRUB, MokManager and boot.csv and all of
+`EFI/boot` held to the source's bytes (`OPENSUSE_KEPT`; shim, grub.efi,
+MokManager.efi and bootx64.efi required in the source's record); the ESP's
+`EFI/opensuse/grub.cfg` stub, `/boot/grub2/grub.cfg` and the dracut images
+may change; `judge-test.py`'s `FsOpensuseShim`.  Test2: `leap16` in
+`classes.json` (`H.Obscure`, `uefi`), `holt/spec.json`, `guest/spec.json`
+(tumbleweed's entry: zypper, uefi-sb, memory 4096), `estimates.tsv`, the
+counts and the p2 goldens.
+
 ## Tests
 
 **SticTest1** (`testvm/stictest1/leap16`): from `tumbleweed`'s (Btrfs
@@ -319,8 +338,8 @@ the backup (93978fd), `bs1-manifest` EXPECTED as above. A
 | L2 | bko-holt (High-effort subagent): the `SUPPORTED` row and tests (16.x accepted, 15.x refused, a Tumbleweed os-release still Tumbleweed); the GRUB-through-shim arm's note named for the system, and unit tests for Leap UEFI (no `grub2-install`, `grub2-mkconfig`, entries) and BIOS (Tumbleweed's arm); `detect_loader` for `\EFI\opensuse\shim.efi` if L1 shows it needs anything. Done when `cargo test` passes and no golden plan changes | 0.25 d |
 | L3 | The golden plan and Test2 registrations (as A3): the dump on the live guest under its own vm-run options, the corpus entry, two builds the same, leak scans, 1Obscure, `uefi`, the specs, estimates, counts, p2 goldens | 0.4 d |
 | L4 | SticTest1 entry and runs, both archivers, both hosts, 0 FAIL, under `cmp-run.sh` reservations in /mnt/bko-ram | 0.35 d |
-| L5 | HoltTest1 1Obscure runs of `leap16` on Chopin and Cinqcent with `tumbleweed-snapper.sh` as prep, the byte-identical ESP rule, the SELinux boot-state line, the boot alone under Secure Boot; RAM peaks in `ram-sizes.tsv`; finished guests moved off the RAM disk | 0.4 d |
-| L6 | Docs: holt/README.md's supported list, `osrel.rs`'s comment, HoltTest1's 1Obscure row and HoltTest1All, SticTest1's and Test2's READMEs, `layload.md`'s boot stage, `testvm/HOSTS.md` if needed, memory (holttest1d index, a leap16-support note) | 0.1 d |
+| L5 | HoltTest1 1Obscure runs of `leap16` on Chopin and Cinqcent with `tumbleweed-snapper.sh` as prep, the byte-identical ESP rule, the SELinux boot-state line, the boot alone under Secure Boot; RAM peaks in `ram-sizes.tsv`; finished guests moved off the RAM disk. **Plumbing done 2026-11-15** ("L5 plumbing" above); the runs and the measured `ram-sizes.tsv` row are owed (the user's) | 0.4 d |
+| L6 | Docs: holt/README.md's supported list, `osrel.rs`'s comment, HoltTest1's 1Obscure row and HoltTest1All, SticTest1's and Test2's READMEs, `layload.md`'s boot stage, `testvm/HOSTS.md` if needed, memory (holttest1d index, a leap16-support note). **Done 2026-11-15** but memory (holt/README.md, the HoltTest1 README, Test2's README counts, `layload.md`'s GRUB-through-shim paragraph; `osrel.rs` in L2, SticTest1's README in L4; HOSTS.md lists no guests) | 0.1 d |
 | L7 | *Optional, later:* BackShot1 on the Thinkpad | 0.5 d + ~1 h of the user's time |
 | | *≈ 2.75 d without L7, ≈ 3.25 d with it* | |
 

@@ -17,7 +17,7 @@ current: 0   not runnable: gate:loop:linux@copland (copland is not in --hosts); 
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written
 SticTest2 plan: round rel4 (~/backotter-work/roundrel4/bin), base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 66 of 66 checks, est. 462.2 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+due: 66 of 66 checks, est. 462.4 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   stic:aerynos             any      new       no PASS yet  2.2 gm  tsv
   stic:alpine324           any      new       no PASS yet  2.6 gm  tsv
   stic:alpinebsd           any      new       no PASS yet  6.7 gm  tsv
@@ -73,7 +73,7 @@ due: 66 of 66 checks, est. 462.2 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   stic:rocky10             any      new       no PASS yet  1.8 gm  tsv
   stic:rocky10-lvm         any      new       no PASS yet  2.2 gm  tsv
   stic:sculpt2610          any      new       no PASS yet  0.8 gm  tsv
-  stic:solus49             any      new       no PASS yet  6.7 gm  README
+  stic:solus49             any      new       no PASS yet  6.8 gm  README
   stic:truenas25           any      new       no PASS yet  20.0 gm  README
   stic:tumbleweed          any      new       no PASS yet  3.1 gm  tsv
   stic:ubuntu24            any      new       no PASS yet  15.9 gm  tsv
@@ -259,4 +259,4 @@ not runnable: img:dragonfly (dragonfly/bko-holt 29a491194633: no PASS at its dig
 not runnable: img:illumos (illumos/bko-holt 9f334a07f8e8: no PASS at its digest; run t2 HoltTest2 omnios58; illumos/restic-bko 0d82a9690d13: no PASS at its digest; run t2 SticTest2 ROUND omnios58; illumos/rustic-bko 5a87834d6355: no PASS at its digest; run t2 SticTest2 ROUND omnios58)
 not runnable: img:haiku (haiku/bko-holt bb9e1e37dcbe: no PASS at its digest; run t2 HoltTest2 haiku6; haiku/rustic-bko f0ca9138481d: no PASS at its digest; run t2 SticTest2 ROUND haiku6)
 sweep: SweepTest2 never ran, due now
-combined: 231 due, 1082.0 gm, 12093 s wall, 30.6 GB, ['gate:selftest'] left over
+combined: 231 due, 1082.2 gm, 12097 s wall, 30.6 GB, ['gate:selftest'] left over

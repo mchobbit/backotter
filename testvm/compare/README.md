@@ -146,7 +146,14 @@ image per guest, zig), then deals them longest first, each to the host whose
 estimated wall time ends up smallest, and never a check to the host that
 builds what it checks.  A host's class says how many it runs at once: a big
 host three, two of them native guest builds; a small host two and one.  The
-deal is printed before the builds start.  A host builds nothing from a copy
+deal is printed before the builds start.  Each host sizes its own build
+guests (the native four and Haiku), so no CPU count is given: its threads
+(`nproc`) over the units it runs at once (its guest lanes plus its cpu lanes,
+as many as it has units of each), at least 2; memory 8192 MB, or 1024 MB a
+CPU plus 2048 when more, within `cmp-run.sh --free`'s room, and no more CPUs
+than that memory feeds.  `CPUS` and `MEMORY` given to `build-round.sh` win;
+neither is a digest input, so the size never stops a reuse ("Guest size" in
+its header; the log and `--dry-run` print it).  A host builds nothing from a copy
 whose digests aren't the Mac's.  Every builder's files are then gathered to
 one collector (Chopin, else the first build host given), which makes the
 round's `SHA256SUMS`, and the distribution gives every build host the whole

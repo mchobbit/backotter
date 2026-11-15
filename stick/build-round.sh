@@ -138,6 +138,27 @@
 # openbsd, illumos, haiku (BKO_DFLY_PORT, BKO_GUEST_PORTS and BKO_HAIKU_PORT
 # name them instead).
 # illumos' binaries also go to bin/omnios (the harness takes either).
+#
+# Guest size.  The host part sizes every build guest it boots (the native
+# four and Haiku) itself, so nobody names CPUs: its threads (nproc) shared
+# over the units it runs at once, its guest lanes plus its cpu lanes, each as
+# many as it has units of that kind up to its class's lanes (restic's Go run
+# comes before them and doesn't count):
+#   CPUs   = nproc / (guest lanes + cpu lanes), at least 2, at most nproc
+#   memory = 8192 MB, or 1024 MB a CPU + 2048 when that is more, as far as
+#            the room goes: cmp-run.sh --free's memory (else MemAvailable less
+#            4 GiB) over the guest lanes; and then no more CPUs than that
+#            memory feeds at 1024 MB each (the old default's ratio: 6, 8192)
+# So a 12-thread big host building linux and netbsd gives netbsd 6 CPUs and
+# 8192 MB, a 16-thread small host with only openbsd 16 CPUs if its room is
+# 18 GiB, else fewer.  CPUS and MEMORY, given to the Mac part (or a host part),
+# win for every guest of the round (CPUS is kept even past the memory).
+# Neither is an input of a build's digest: how many CPUs compile it changes
+# no byte of the binary (the profile fixes the codegen units), so a reused
+# build stays reused whatever the size.  --dry-run prints each host's sizes
+# below the deal (guest_size run there, from the Mac's copy of this script,
+# in a read-only ssh); a host part logs its own ("guest size: ..." and each
+# guest build's line).
 # --dry-run prints the deal, syncs and checks the sources and says what would
 # be built or reused, but builds and boots nothing.
 #
@@ -210,7 +231,8 @@
 # BKO_GUEST_RANGE, DFLY_CACHE, BKO_WORK (~/backotter-work: vms/, as for the
 # build scripts), BKO_HAIKU_TIMEOUT (9000 s, build_haiku's backstop) and
 # haiku/build-rustic.sh's BKO_HAIKU_BUILD_TIMEOUT, BKO_HAIKU_POLL,
-# BKO_HAIKU_STALL, BKO_HAIKU_STALL_PCT.  On a host by hand: RESTIC_COMMIT, RUSTIC_COMMIT,
+# BKO_HAIKU_STALL, BKO_HAIKU_STALL_PCT, CPUS and MEMORY (every build guest's
+# size instead of "Guest size"'s).  On a host by hand: RESTIC_COMMIT, RUSTIC_COMMIT,
 # RUSTIC_CORE_COMMIT and RESTIC_DIGEST, RESTIC_TREE_DIGEST, RUSTIC_DIGEST,
 # RUSTIC_CORE_DIGEST as the Mac part gives them (BKO_UNVERIFIED=1 builds
 # without the digests, and the table says so); BKO_GO (go on PATH, else the
@@ -296,6 +318,87 @@ want_comp() { [[ -z $only || ",$only," == *",$1,"* ]]; }
 # The host-side Rust, for the builds and for the Mac's capability probe ("Rust"
 # above): rustup's, never the host's default.
 rust_tc=${BKO_RUST_TOOLCHAIN:-1.94.1}
+# host_lanes NAME: cpu_lanes and guest_lanes, how many rustic builds of each
+# kind the host runs at once: from its class unless the caller says otherwise
+# (BKO_CPU_LANES, BKO_GUEST_LANES).  Needs testvm/hosts.sh.
+host_lanes() {
+    case $(hosts_get "$1" class 2>/dev/null) in
+        big) cpu_lanes=3 guest_lanes=2 ;;
+        *) cpu_lanes=2 guest_lanes=1 ;;
+    esac
+    cpu_lanes=${BKO_CPU_LANES:-$cpu_lanes} guest_lanes=${BKO_GUEST_LANES:-$guest_lanes}
+    [[ $cpu_lanes -ge 1 && $guest_lanes -ge 1 ]] || die "BKO_CPU_LANES and BKO_GUEST_LANES: 1 or more"
+}
+# split_units UNIT...: cpu_units, the rustic builds that need no guest, and
+# guest_units, those that boot one (the Go units are neither).
+split_units() {
+    local u
+    cpu_units=() guest_units=()
+    for u in "$@"; do
+        case $u in
+            linux|linux-arm64|linux-arm64-check|dragonfly) cpu_units+=("$u") ;;
+            haiku|freebsd|netbsd|openbsd|illumos) guest_units+=("$u") ;;
+            *) ;;   # the Go units, done before them
+        esac
+    done
+}
+# guest_size: GUEST_CPUS and GUEST_MEMORY (MB), the size of every build guest
+# this part boots ("Guest size" in the header), and GUEST_SIZE_WHY, how they
+# were reached.  Needs cpu_units and guest_units (split_units) and the lanes
+# (host_lanes), and here: the host part runs it, and the Mac's --dry-run on
+# each host (over ssh, from this text) to print the sizes beside the deal.
+guest_size() {
+    local t ga ca c m want room fit why
+    t=$(nproc 2>/dev/null) && [[ $t =~ ^[1-9][0-9]*$ ]] || t=2
+    # The units this part runs at once, as run_lanes schedules them: a lane
+    # per unit up to the class's lanes, the cpu lanes beside the guest ones.
+    ga=$guest_lanes ca=$cpu_lanes
+    [[ $ga -le ${#guest_units[@]} ]] || ga=${#guest_units[@]}
+    [[ $ca -le ${#cpu_units[@]} ]] || ca=${#cpu_units[@]}
+    [[ $ga -ge 1 ]] || ga=1
+    # The memory a guest may have: cmp-run.sh --free's room for one more job
+    # (live MemAvailable, the RAM disk's room to grow, the ARC, the tests'
+    # reservations), else MemAvailable less 4 GiB; shared by the guest lanes.
+    room=$(bash "$here/../testvm/compare/cmp-run.sh" --free 2>/dev/null |
+        awk 'NR == 1 && $2 ~ /^[0-9.]+$/ { printf "%d", $2 * 1024 }')
+    why="cmp-run.sh --free"
+    if [[ ! $room =~ ^[0-9]+$ ]]; then
+        room=$(awk '$1 == "MemAvailable:" { printf "%d", $2 / 1024 - 4096 }' /proc/meminfo 2>/dev/null)
+        why="MemAvailable - 4 GiB"
+    fi
+    [[ $room =~ ^-?[0-9]+$ ]] || room=0
+    room=$((room / ga))
+    if [[ -n ${CPUS:-} ]]; then
+        [[ $CPUS =~ ^[1-9][0-9]*$ ]] || die "CPUS: a whole number, not $CPUS"
+        c=$CPUS
+    else
+        c=$((t / (ga + ca)))
+        [[ $c -ge 2 ]] || c=2
+        [[ $c -le $t ]] || c=$t
+    fi
+    # 1 GiB a CPU (a rustc job each) and 2 GiB for the system and the link,
+    # as the old default had it (6 CPUs, 8192 MB); never less than 8192 MB,
+    # and more only as far as the room goes.
+    if [[ -n ${MEMORY:-} ]]; then
+        [[ $MEMORY =~ ^[1-9][0-9]*$ ]] || die "MEMORY: a whole number of MB, not $MEMORY"
+        m=$MEMORY
+    else
+        want=$((1024 * c + 2048)) m=8192
+        [[ $want -le $m ]] || { m=$want; [[ $m -le $room ]] || m=$room; [[ $m -ge 8192 ]] || m=8192; }
+    fi
+    # Fewer CPUs when the memory can't feed them (an explicit CPUS stays).
+    if [[ -z ${CPUS:-} ]]; then
+        fit=$(((m - 2048) / 1024))
+        [[ $c -le $fit ]] || c=$fit
+        [[ $c -ge 2 ]] || c=2
+    fi
+    GUEST_CPUS=$c GUEST_MEMORY=$m
+    GUEST_SIZE_WHY="nproc $t over $ga guest + $ca cpu lanes at once"
+    [[ -z ${CPUS:-} ]] || GUEST_SIZE_WHY+=", CPUS given"
+    GUEST_SIZE_WHY+=", $room MB room a guest ($why)"
+    [[ -z ${MEMORY:-} ]] || GUEST_SIZE_WHY+=", MEMORY given"
+    return 0
+}
 
 # --- The Mac -------------------------------------------------------------------------
 if [[ $mode == mac ]]; then
@@ -504,7 +607,7 @@ if [[ $mode == mac ]]; then
         out+=" BKO_ROUNDS=$rrounds SRC=$rsrc"
         for v in BKO_BUILD_CACHE BKO_PROFILE BKO_GUEST_PROFILE BKO_REUSE BKO_RUST_TOOLCHAIN BKO_DFLY_PORT BKO_GUEST_PORTS BKO_HAIKU_PORT BKO_GUEST_LANES \
             BKO_CPU_LANES BKO_GUEST_MAX BKO_GUEST_RANGE DFLY_CACHE BKO_WORK BKO_HAIKU_TIMEOUT BKO_HAIKU_BUILD_TIMEOUT \
-            BKO_HAIKU_POLL BKO_HAIKU_STALL BKO_HAIKU_STALL_PCT; do
+            BKO_HAIKU_POLL BKO_HAIKU_STALL BKO_HAIKU_STALL_PCT CPUS MEMORY; do
             [[ -n ${!v:-} ]] && out+=" $v='${!v}'"
         done
         echo "$out"
@@ -579,6 +682,33 @@ echo "${out# }"
     for h in $hl; do [[ -n $(units_of "$h") ]] && hb+=" $h"; done
     hb=${hb# }
     [[ -n $hb ]] || die "the deal left every host of --hosts $hosts without a unit"
+    # --dry-run: each host's build guests' size ("Guest size"), worked out there
+    # by guest_size from this very text (its nproc, cmp-run.sh --free), in one
+    # read-only ssh each; the host part works it out again as it starts.  Not
+    # with BKO_CAPS, which stands in for the hosts.
+    if [[ $dry == yes && -z ${BKO_CAPS:-} ]]; then
+        echo
+        echo "Build guests' size on each host (CPUs, MB of memory):"
+        for h in $hb; do
+            # shellcheck disable=SC2046  # unit names: no spaces
+            split_units $(units_of "$h" | tr ',' ' ')
+            if [[ ${#guest_units[@]} -eq 0 ]]; then
+                printf '  %-9s no build guest\n' "$h"
+                continue
+            fi
+            host_lanes "$h"
+            # shellcheck disable=SC2029  # the values are meant to expand here
+            sz=$(ssh -o BatchMode=yes -o ConnectTimeout=20 "$(hostof "$h")" bash -s <<<"$(declare -f die guest_size)
+here=\$HOME/$rdir/stick cpu_lanes=$cpu_lanes guest_lanes=$guest_lanes
+cpu_units=(${cpu_units[*]:-}) guest_units=(${guest_units[*]})
+${CPUS:+CPUS=$CPUS} ${MEMORY:+MEMORY=$MEMORY}
+guest_size && echo \"\$GUEST_CPUS \$GUEST_MEMORY \$GUEST_SIZE_WHY\"") && [[ -n $sz ]] ||
+                sz="? ? can't ask $h"
+            read -r c m w <<<"$sz"
+            us=$(for u in "${guest_units[@]}"; do printf '%s %s CPUs %s MB, ' "$u" "$c" "$m"; done)
+            printf '  %-9s %s (%s)\n' "$h" "${us%, }" "$w"
+        done
+    fi
     # The arm64 host's rustic-bko is cross-checked against a build host's, and
     # its restic-bko comes from a build host: with neither, there is no round.
     # (--only restic doesn't ask for restic-bko linux-arm64 at all: then it is
@@ -832,12 +962,7 @@ done
 ul=${ul# }
 [[ -n $ul ]] || die "--units: at least one unit"
 has_unit() { [[ " $ul " == *" $1 "* ]]; }
-case $(hosts_get "$mode" class 2>/dev/null) in
-    big) cpu_lanes=3 guest_lanes=2 ;;
-    *) cpu_lanes=2 guest_lanes=1 ;;
-esac
-cpu_lanes=${BKO_CPU_LANES:-$cpu_lanes} guest_lanes=${BKO_GUEST_LANES:-$guest_lanes}
-[[ $cpu_lanes -ge 1 && $guest_lanes -ge 1 ]] || die "BKO_CPU_LANES and BKO_GUEST_LANES: 1 or more"
+host_lanes "$mode"
 # The guests' port range and ports: this host's own slot_range in
 # testvm/hosts.json, one port each above its first, in the unit table's order
 # (BKO_GUEST_RANGE, BKO_DFLY_PORT, BKO_GUEST_PORTS and BKO_HAIKU_PORT win).
@@ -1177,15 +1302,16 @@ build_haiku() {  # PORT: natively in a throwaway haiku6, on a guest slot
         [[ $dry == yes ]] || row rustic-bko haiku reused 0 "$d"
         return 0
     fi
-    if [[ $dry == yes ]]; then log "rustic-bko haiku: would build (haiku/build-rustic.sh $port, $gprofile)"; return 0; fi
+    if [[ $dry == yes ]]; then log "rustic-bko haiku: would build (haiku/build-rustic.sh $port, $gprofile, $GUEST_CPUS CPUs, $GUEST_MEMORY MB)"; return 0; fi
     slot_take "${BKO_GUEST_MAX:-3}" "$grange"
-    log "rustic-bko haiku: building (haiku/build-rustic.sh $port, $gprofile; guest slot $BKO_GUEST_SLOT)"
+    log "rustic-bko haiku: building (haiku/build-rustic.sh $port, $gprofile, $GUEST_CPUS CPUs, $GUEST_MEMORY MB; guest slot $BKO_GUEST_SLOT)"
     # The script has its own watchdog; this is the backstop, and it saves
     # its logs in $LOGS/haiku-build.  A guest kernel panic gets one rerun.
     local try
     for try in 1 2; do
         timeout --kill-after=120 "${BKO_HAIKU_TIMEOUT:-9000}" \
-            env BKO_LOG_DIR="$LOGS" SRC="$PREPPED" BKO_BIN="$BIN" BKO_WORK="$WORK" FAST=$fast "$here/haiku/build-rustic.sh" "$port" \
+            env BKO_LOG_DIR="$LOGS" SRC="$PREPPED" BKO_BIN="$BIN" BKO_WORK="$WORK" FAST=$fast \
+                CPUS="$GUEST_CPUS" MEMORY="$GUEST_MEMORY" "$here/haiku/build-rustic.sh" "$port" \
             >"$LOGS/build-rustic-haiku.log" 2>&1
         s=$?
         if [[ $s == 0 || $try == 2 ]] ||
@@ -1231,10 +1357,11 @@ build_native() {  # OS PORT
         [[ $dry == yes ]] || row rustic-bko "$os" reused 0 "$d"
         return 0
     fi
-    if [[ $dry == yes ]]; then log "rustic-bko $os: would build ($os/build-rustic.sh $port, $vm, $gprofile)"; return 0; fi
+    if [[ $dry == yes ]]; then log "rustic-bko $os: would build ($os/build-rustic.sh $port, $vm, $gprofile, $GUEST_CPUS CPUs, $GUEST_MEMORY MB)"; return 0; fi
     slot_take "${BKO_GUEST_MAX:-3}" "$grange"
-    log "rustic-bko $os: building ($os/build-rustic.sh $port, $vm, $gprofile; guest slot $BKO_GUEST_SLOT)"
-    env SRC="$PREPPED" BKO_BIN="$BIN" BKO_WORK="$WORK" FAST=$fast "$here/$os/build-rustic.sh" "$port" \
+    log "rustic-bko $os: building ($os/build-rustic.sh $port, $vm, $gprofile, $GUEST_CPUS CPUs, $GUEST_MEMORY MB; guest slot $BKO_GUEST_SLOT)"
+    env SRC="$PREPPED" BKO_BIN="$BIN" BKO_WORK="$WORK" FAST=$fast CPUS="$GUEST_CPUS" MEMORY="$GUEST_MEMORY" \
+        "$here/$os/build-rustic.sh" "$port" \
         >"$LOGS/build-rustic-$os.log" 2>&1
     s=$?
     slot_give
@@ -1295,19 +1422,16 @@ has_unit restic-arm64-check && ( BIN=$CHK; build_restic linux-arm64 )
 # Then every rustic-bko unit, in lanes: the ones that boot a guest take a
 # guest slot of their own (guest-slot.sh), so builds and the host's tests
 # together never run more than BKO_GUEST_MAX guests.
-cpu_units=() guest_units=()
-for u in $ul; do
-    case $u in
-        linux|linux-arm64|linux-arm64-check|dragonfly) cpu_units+=("$u") ;;
-        haiku|freebsd|netbsd|openbsd|illumos) guest_units+=("$u") ;;
-        *) ;;   # the Go units, done above
-    esac
-done
+# shellcheck disable=SC2086  # unit names: no spaces
+split_units $ul
 if [[ ${#cpu_units[@]} -gt 0 || ${#guest_units[@]} -gt 0 ]]; then
     prepare
     if [[ ${#guest_units[@]} -gt 0 ]]; then
         # shellcheck source=../testvm/compare/guest-slot.sh
         . "$here/../testvm/compare/guest-slot.sh" || die "no $here/../testvm/compare/guest-slot.sh"
+        guest_size
+        log "guest size: $(for u in "${guest_units[@]}"; do printf '%s ' "$u"; done | sed 's/ $//; s/ /, /g'):" \
+            "$GUEST_CPUS CPUs, $GUEST_MEMORY MB each ($GUEST_SIZE_WHY)"
     fi
     pids=""
     [[ ${#cpu_units[@]} -eq 0 ]] || { run_lanes "$cpu_lanes" "${cpu_units[@]}" & pids+=" $!"; }

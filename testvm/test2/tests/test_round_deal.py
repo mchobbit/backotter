@@ -410,6 +410,68 @@ class GuestSlots(unittest.TestCase):
         self.assertIn('grange=${BKO_GUEST_RANGE:-$(hosts_get "$mode" slot_range)}', body)
 
 
+class GuestSize(unittest.TestCase):
+    """build-round.sh's host part sizes its build guests itself (the header, "Guest size"):
+    nproc over the guest lanes plus the cpu lanes it runs at once, at least 2; memory 8192 MB or
+    1024 MB a CPU + 2048, within cmp-run.sh --free's room over the guest lanes, and no more CPUs
+    than that memory feeds; CPUS and MEMORY given win.  guest_size() runs alone here, with nproc
+    and cmp-run.sh stood in for."""
+
+    def size(self, nproc, room_gib, cpu_lanes, guest_lanes, cpu_units, guest_units, **env):
+        with open(BUILD_ROUND, encoding="utf-8") as f:
+            code = f.read()
+        fn = re.search(r"(?ms)^guest_size\(\) \{\n.*?^\}\n", code).group(0)
+        d = tempfile.mkdtemp(prefix="t2-gs-")
+        self.addCleanup(shutil.rmtree, d, True)
+        os.makedirs(os.path.join(d, "testvm", "compare"))
+        os.makedirs(os.path.join(d, "stick"))
+        with open(os.path.join(d, "testvm", "compare", "cmp-run.sh"), "w", encoding="utf-8") as f:
+            f.write(f'[ "$1" = --free ] && printf "9.0 {room_gib}\\nwaiting 0\\n"\n')
+        script = (f'die() {{ echo "die: $*"; exit 2; }}\nnproc() {{ echo {nproc}; }}\n'
+                  f'here={d}/stick cpu_lanes={cpu_lanes} guest_lanes={guest_lanes}\n'
+                  f'cpu_units=({" ".join(cpu_units)}) guest_units=({" ".join(guest_units)})\n'
+                  f'{fn}guest_size\necho "$GUEST_CPUS $GUEST_MEMORY"\n')
+        e = {k: v for k, v in os.environ.items() if k not in ("CPUS", "MEMORY")}
+        e.update(env)
+        r = subprocess.run(["bash", "-c", script], env=e, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return tuple(int(x) for x in r.stdout.split())
+
+    def test_threads_over_the_lanes_at_once(self):
+        # a big host (12 threads) with linux and netbsd: one cpu lane, one guest lane
+        self.assertEqual(self.size(12, 23.1, 3, 2, ["linux"], ["netbsd"]), (6, 8192))
+        # two guest lanes and two cpu lanes: a quarter each
+        self.assertEqual(self.size(12, 23.1, 3, 2, ["linux", "dragonfly"], ["freebsd", "openbsd", "haiku"]),
+                         (3, 8192))
+        # a guest build alone takes every thread, with the memory for them
+        self.assertEqual(self.size(12, 23.1, 3, 2, [], ["haiku"]), (12, 14336))
+
+    def test_the_memory_bounds_the_cpus(self):
+        # a small host (16 threads) with openbsd alone, 10 GiB of room: 8 CPUs, not 16
+        self.assertEqual(self.size(16, 10.0, 2, 1, [], ["openbsd"]), (8, 10240))
+        # the room shared by two guest lanes; never under 8192 MB, then 6 CPUs at most
+        self.assertEqual(self.size(16, 12.0, 3, 2, [], ["freebsd", "netbsd"]), (6, 8192))
+        # never fewer than 2
+        self.assertEqual(self.size(2, 23.0, 3, 2, ["linux", "dragonfly"], ["freebsd", "netbsd"]), (2, 8192))
+
+    def test_cpus_and_memory_given_win(self):
+        self.assertEqual(self.size(16, 10.0, 2, 1, [], ["openbsd"], CPUS="12"), (12, 10240))
+        self.assertEqual(self.size(16, 10.0, 2, 1, [], ["openbsd"], CPUS="4", MEMORY="6000"), (4, 6000))
+        self.assertEqual(self.size(16, 30.0, 2, 1, [], ["openbsd"], MEMORY="8192"), (6, 8192))
+
+    def test_the_guest_builds_get_the_size_and_no_digest_holds_it(self):
+        with open(BUILD_ROUND, encoding="utf-8") as f:
+            code = f.read()
+        for script in ("haiku/build-rustic.sh", "$os/build-rustic.sh"):
+            self.assertRegex(code, r'CPUS="\$GUEST_CPUS" MEMORY="\$GUEST_MEMORY"[ \\\n]*"\$here/'
+                             + re.escape(script))
+        inputs = re.findall(r'(?ms)^\s*\{ echo "rustic-bko .*?>"\$inputs"', code)
+        self.assertTrue(inputs)
+        for block in inputs:
+            self.assertNotIn("GUEST_", block)
+            self.assertNotIn("CPUS", block)
+
+
 # What a whole amd64 round holds, binary by binary: restic-bko for every OS but Haiku
 # (which has no restic), rustic-bko for all of them.  facts_host.py holds the same table;
 # a round short of any of it isn't complete, whoever its builders were.

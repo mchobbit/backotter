@@ -29,6 +29,10 @@
 #             for test rounds, and rustic-commit says so.  Without it, the
 #             fork's release profile (fat LTO, one codegen unit), which is
 #             what images ship.
+#   CPUS, MEMORY
+#             the guest's CPUs and MB of RAM (default 8 and 8192);
+#             build-round.sh sizes them from its host's threads and lanes
+#             (its header, "Guest size").
 #
 # HaikuPorts has one rolling repository, so the Rust and gcc it installs are
 # whatever is current, unlike the other platforms' pinned package sets.
@@ -179,7 +183,7 @@ tar -C "$work/build" -czf "$work/src.tgz" .
 echo "Booting a throwaway copy of haiku6 on port $port"
 # shellcheck disable=SC2046
 SSH_PORT=$port setsid -f "$here/../../testvm/vm-run" $(<"$vm/vm-run-options") --snapshot \
-    --memory 8192 --cpus 8 --serial-log "$work/serial.log" "$vm/haiku6.qcow2" \
+    --memory "${MEMORY:-8192}" --cpus "${CPUS:-8}" --serial-log "$work/serial.log" "$vm/haiku6.qcow2" \
     </dev/null >"$work/vm-run.log" 2>&1
 for _ in $(seq 30); do pgrep -f "^qemu-system.*:$port-:22" >/dev/null && break; sleep 1; done
 # Until the guest answers on SSH and $1 succeeds there.

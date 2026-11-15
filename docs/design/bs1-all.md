@@ -88,6 +88,7 @@ or later:
 | 11 | Chimera (ZFS root, dinit) | chimera-20261112-092235 | none | none | `zpool status -x`; the pool is named rpool, not rpool_bko | 45 min |
 | 12 | Gentoo (OpenRC, LVM, GRUB lvmid) | gentoo-2.18-20261112-185749 | none | none | lvmid check (built into verify) | 50 min |
 | 13 | Void (musl, runit, btrfs top level, GRUB) | none: B only, from the running restore of void-20261113-152153, which passed on 2026-11-13 with main's static musl bko-holt (d965dc5) | none (no auto-updater by default) | none | the GRUB entry void_grub is the one booted; runit services sshd and avahi-daemon up | 25 min |
+| 14 | PikaOS 4 (XFS root, ext4 XBOOTLDR /boot, rEFInd, booster) | pika-4-20261114-134728 | booster-reassert.timer (bs1-common SNAPSHOTTERS) | none | every file under `EFI/refind` back with its content (bs1-manifest KEPT) and `refind_linux.conf` unchanged; BootCurrent is rEFInd's NVRAM entry; for B, a fresh install by `pika-bootstrap.sh` from the stick (~5 min; docs/design/pikaos.md, What P8 found) | 40 min |
 
 Each L is the newest run whose own restore passed. EndeavourOS is the
 exception: it uses the one after the firewalld fix (row 7).
@@ -104,7 +105,8 @@ before Gentoo's L was made. verify skips lvmid where the baseline has none,
 and xattrs where the manifest has none.
 
 Total about 13.5 h of machine time (est.), not counting fixes. Void was added
-on 2026-11-13 after its first BackShot1 passed (the user's choice).
+on 2026-11-13 after its first BackShot1 passed (the user's choice), PikaOS
+(row 14, est. +40 min) on 2026-11-15 after its own passed.
 
 ## Order
 

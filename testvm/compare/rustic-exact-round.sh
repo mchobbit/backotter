@@ -4,12 +4,16 @@
 # ~/git/rustic (0.11.4+backotter.16 over c517a69) hold the fixes: restore
 # --delete leaves a case variant of a planned entry, a kept hard-link group's
 # later names are in the way, and restore_contents doesn't panic when a
-# planned file is gone.  Either uncommitted (rustic_core at ba93d6e, rustic at
-# c517a69) or committed over those (rustic_core ad51297, rustic 7625a3c, both
-# clean; rustic's Cargo.lock still pins ba93d6e).  This builds and tests the
-# trees as they are on the farm, collects the NetBSD trace of
-# test_restore_exact_twice_changes_nothing, commits what isn't committed (at
-# least rustic's Cargo.lock), and runs the round again from the commits.
+# planned file is gone (.14); on NetBSD an atime the restore's own reads
+# moved is put back alone (.15: restore/exact.rs, backend/osattrs.rs).
+# Either uncommitted (rustic_core at ba93d6e, rustic at c517a69) or
+# committed over those (rustic_core ad51297, rustic 7625a3c, both clean;
+# rustic's Cargo.lock still pins ba93d6e).  Now all committed: rustic_core
+# 3fd3921 and rustic 2c3b237, whose Cargo.lock pins it (step 3 finds that
+# done already).  This builds and tests the trees as they are on the farm,
+# collects the NetBSD trace of test_restore_exact_twice_changes_nothing,
+# commits what isn't committed (at least rustic's Cargo.lock), and runs the
+# round again from the commits.
 #
 # Run it on the Mac, from the checkout (never on a farm host):
 #
@@ -52,20 +56,23 @@
 #      write, rename, unlink, ...).  The same in freebsd15-ufs, its binaries
 #      built in freebsd14's build image.  The output lands in
 #      LOG_DIR/step2/OS/out/; the step's outcome is "diagnosis collected", never
-#      a PASS or FAIL of the known failing test.
+#      a PASS or FAIL of the test (it failed on NetBSD with rustic_core .13
+#      and .14; the trace found why, and .15 fixes it: it passes there now).
 #   3  Commit, only after step 1 passed (LOG_DIR/step1.pass with the same
 #      trees' digest; --force-commit skips that).  rustic_core, one of:
-#      (a) HEAD ba93d6e with exactly the six files changed (restore.rs,
-#      restore/files_writer.rs, tests/integration/restore.rs, BACKOTTER.md,
-#      Cargo.lock, crates/core/Cargo.toml): committed in two commits (the
-#      fixes and tests; then the version and BACKOTTER.md); a later run that
-#      finds those two commits goes on with rustic.  (b) A clean HEAD that
-#      descends from ba93d6e and whose diff from it touches only those six
-#      files (ad51297): no rustic_core commit.  rustic, one of: HEAD c517a69
-#      with exactly BACKOTTER.md, Cargo.toml and build-backotter.sh changed
-#      (those and Cargo.lock are committed), or a clean HEAD that descends
-#      from c517a69 and changes only those three (7625a3c: Cargo.lock alone is
-#      committed).  Anything else is refused.  Cargo.lock must take rustic_core's
+#      (a) HEAD ba93d6e with exactly the eight files changed (restore.rs,
+#      restore/files_writer.rs, restore/exact.rs, backend/osattrs.rs,
+#      tests/integration/restore.rs, BACKOTTER.md, Cargo.lock,
+#      crates/core/Cargo.toml): committed in two commits (the fixes and
+#      tests; then the version and BACKOTTER.md); a later run that finds
+#      those two commits goes on with rustic.  (b) A clean HEAD that
+#      descends from ba93d6e and whose diff from it touches only those eight
+#      files (ad51297, now 3fd3921): no rustic_core commit.  rustic, one
+#      of: HEAD c517a69 with exactly BACKOTTER.md, Cargo.toml and
+#      build-backotter.sh changed (those and Cargo.lock are committed), or
+#      a clean HEAD that descends from c517a69 and changes only those three
+#      (7625a3c: Cargo.lock alone is committed; now 2c3b237, its lock commits
+#      on top, "done already").  Anything else is refused.  Cargo.lock must take rustic_core's
 #      HEAD, which is on no remote: cargo runs on a farm host against a bare
 #      copy of the Mac's rustic_core (a git bundle), through git's
 #      url.insteadOf for the fork's URL (GIT_CONFIG_COUNT,
@@ -93,8 +100,10 @@
 #      nonroot), freebsd15-ufs, netbsd11, openbsd8, omnios58, dragonfly6;
 #      exact-rt.sh with each tool; compare.py debian13, the four directions.
 #      Each job's summary comes back to LOG_DIR/step4/JOB/, and one table ends
-#      the step (verdict.py summary for run-all.sh's).  NetBSD's unit test
-#      failure is known; its round trips must still pass.
+#      the step (verdict.py summary for run-all.sh's).  No unit tests run
+#      here: rustic_core's restore tests run by hand in netbsd11 and
+#      freebsd15-ufs guests (test_restore_exact_twice_changes_nothing passes
+#      on NetBSD since .15; step 2 runs it alone).
 #
 # Options:
 #   --steps LIST     comma-separated, of 1 2 3 4 (default all)
@@ -170,15 +179,20 @@ CORE=$GIT/rustic_core RUSTIC=$GIT/rustic RESTIC=$GIT/restic
 CORE_BASE=ba93d6e6cb2604f65bbc6106691698a078583306
 RUSTIC_BASE=c517a69c338144a6683045bb781b56957ced444d
 RESTIC_HEAD=12a275f6218210b9957e5dad809ab7dd321691d0
-# The versions the HEADs have now: rustic_core e21b85b (.15, NetBSD's
-# atimes put back alone) and rustic ea4ee26 (.16) over the .14/.15 commits.
+# The versions the HEADs have now: rustic_core 3fd3921 (.15, NetBSD's
+# atimes put back alone, in e21b85b; then BACKOTTER.md) and rustic 2c3b237
+# (.16, ea4ee26; then the lock taking 3fd3921) over the .14/.15 commits.
 CORE_VER_OLD=0.13.0+backotter.13 CORE_VER=0.13.0+backotter.15
 RUSTIC_VER_OLD=0.11.4+backotter.14 RUSTIC_VER=0.11.4+backotter.16
 RESTIC_VER=0.19.1+backotter.12
 CORE_URL=https://github.com/mchobbit/rustic_core.git
+# What the fixes since ba93d6e touch (.14's restore.rs and files_writer.rs,
+# .15's exact.rs and osattrs.rs for NetBSD's atimes), and the version files.
 CORE_CODE=(crates/core/src/commands/restore.rs crates/core/src/commands/restore/files_writer.rs
+    crates/core/src/commands/restore/exact.rs crates/core/src/backend/osattrs.rs
     crates/core/tests/integration/restore.rs)
 CORE_VERFILES=(BACKOTTER.md Cargo.lock crates/core/Cargo.toml)
+CORE_NF=$(( ${#CORE_CODE[@]} + ${#CORE_VERFILES[@]} ))   # how many: the messages say it
 RUSTIC_FILES=(BACKOTTER.md Cargo.toml build-backotter.sh)
 CORE_MSG1="backotter: restore --delete leaves a case variant of a planned entry; a kept group's later names in the way; no panic when a planned file is gone"
 CORE_MSG2="backotter: $CORE_VER; BACKOTTER.md on restore --delete's case variants, a kept group's later names and a planned file gone"
@@ -1008,11 +1022,11 @@ step3() {
     [[ $(git -C "$RUSTIC" branch --show-current) == backotter ]] || die "step 3: $RUSTIC is not on branch backotter"
     ch=$(git -C "$CORE" rev-parse HEAD) rh=$(git -C "$RUSTIC" rev-parse HEAD)
 
-    # rustic_core: commit = (a) ba93d6e with the six files changed, committed here;
+    # rustic_core: commit = (a) ba93d6e with the eight files changed, committed here;
     # mine = this step's own two commits, from an earlier run; held = (b) a clean
-    # descendant of ba93d6e that changes only the six files (ad51297): no commit.
+    # descendant of ba93d6e that changes only the eight files (ad51297, 3fd3921): no commit.
     if [[ $ch == "$CORE_BASE" ]]; then
-        porcelain_is "$CORE" "${CORE_CODE[@]}" "${CORE_VERFILES[@]}" || die "step 3: rustic_core has other changes than the six files: refusing"
+        porcelain_is "$CORE" "${CORE_CODE[@]}" "${CORE_VERFILES[@]}" || die "step 3: rustic_core has other changes than the $CORE_NF files: refusing"
         core_mode=commit
     elif ! is_clean "$CORE"; then
         git -C "$CORE" status --short | sed 's/^/      /'
@@ -1023,9 +1037,9 @@ step3() {
         say "rustic_core: this step's two commits are there already ($(git -C "$CORE" log -1 --format=%h)): on to rustic"
     elif only_files "$CORE" "$CORE_BASE" "$ch" "${CORE_CODE[@]}" "${CORE_VERFILES[@]}"; then
         core_mode=held
-        say "rustic_core: $(tree_line "$CORE"); its diff from ba93d6e touches only the six files: no rustic_core commit"
+        say "rustic_core: $(tree_line "$CORE"); its diff from ba93d6e touches only the $CORE_NF files: no rustic_core commit"
     else
-        die "step 3: rustic_core's HEAD ${ch:0:7} is neither ba93d6e with the six files changed nor a clean descendant of it that changes only them (above): refusing"
+        die "step 3: rustic_core's HEAD ${ch:0:7} is neither ba93d6e with the $CORE_NF files changed nor a clean descendant of it that changes only them (above): refusing"
     fi
     grep -q "^version = \"$CORE_VER\"\$" "$CORE/crates/core/Cargo.toml" || die "step 3: rustic_core's crates/core/Cargo.toml isn't version $CORE_VER"
 

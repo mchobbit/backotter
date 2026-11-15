@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # rustic-exact-round.sh: the paused rustic-bko round, driven from the Mac.
 # The Mac's ~/git/rustic_core (0.13.0+backotter.14 over ba93d6e) and
-# ~/git/rustic (0.11.4+backotter.15 over c517a69) hold uncommitted fixes:
-# restore --delete leaves a case variant of a planned entry, a kept hard-link
-# group's later names are in the way, and restore_contents doesn't panic when
-# a planned file is gone.  This builds and tests them on the farm, collects
-# the NetBSD trace of test_restore_exact_twice_changes_nothing, commits them,
-# and runs the round again from the commits.
+# ~/git/rustic (0.11.4+backotter.15 over c517a69) hold the fixes: restore
+# --delete leaves a case variant of a planned entry, a kept hard-link group's
+# later names are in the way, and restore_contents doesn't panic when a
+# planned file is gone.  Either uncommitted (rustic_core at ba93d6e, rustic at
+# c517a69) or committed over those (rustic_core ad51297, rustic 7625a3c, both
+# clean; rustic's Cargo.lock still pins ba93d6e).  This builds and tests the
+# trees as they are on the farm, collects the NetBSD trace of
+# test_restore_exact_twice_changes_nothing, commits what isn't committed (at
+# least rustic's Cargo.lock), and runs the round again from the commits.
 #
 # Run it on the Mac, from the checkout (never on a farm host):
 #
 #   cd ~/git/backotter
 #   testvm/compare/rustic-exact-round.sh --dry-run        # every step's commands, printed; nothing run
 #   testvm/compare/rustic-exact-round.sh                  # steps 1-4, stopping at the first that fails
-#   testvm/compare/rustic-exact-round.sh --steps 1        # build + test the working trees
+#   testvm/compare/rustic-exact-round.sh --steps 1        # build + test the trees (HEAD + any changes)
 #   testvm/compare/rustic-exact-round.sh --steps 2        # NetBSD (and FreeBSD) ktrace diagnosis
 #   testvm/compare/rustic-exact-round.sh --steps 3        # commit (takes the newest step 1 pass)
 #   testvm/compare/rustic-exact-round.sh --steps 4        # the farm round from the commits
@@ -23,8 +26,9 @@
 # Steps (--steps LIST, default 1,2,3,4; 1 and 2 run at once when both are
 # chosen, and are judged in order):
 #
-#   1  Build and test.  On a host testvm/pick-host chooses (--host), the two
-#      working trees (rsync, without target/ and .git) go to
+#   1  Build and test.  On a host testvm/pick-host chooses (--host), the Mac's
+#      two trees as they are, HEAD plus any uncommitted changes (rsync, without
+#      target/ and .git; the log says each HEAD and whether it is clean), go to
 #      ~/backotter-work/RUN/src; a copy is pointed at the local rustic_core by
 #      stick/prep-rustic-src.sh (as the SRC= builds are), and rustic's
 #      build-backotter.sh builds the Linux rustic-bko (rustup's 1.94.1 in
@@ -50,22 +54,33 @@
 #      LOG_DIR/step2/OS/out/; the step's outcome is "diagnosis collected", never
 #      a PASS or FAIL of the known failing test.
 #   3  Commit, only after step 1 passed (LOG_DIR/step1.pass with the same
-#      trees' digest; --force-commit skips that).  rustic_core: exactly the six
-#      files, in two commits (the fixes and tests; then the version and
-#      BACKOTTER.md), refused if any other file changed or HEAD moved from
-#      ba93d6e.  rustic: Cargo.lock must take the new commit, which is on no
-#      remote: cargo runs on a farm host against a bare copy of the Mac's
-#      rustic_core (a git bundle), through git's url.insteadOf for the fork's
-#      URL (GIT_CONFIG_COUNT, CARGO_NET_GIT_FETCH_WITH_CLI) and a private
-#      CARGO_HOME, so the lock records the github URL with the new commit, as
-#      c517a69's does for the unpushed ba93d6e.  The lock that comes back must
-#      differ from c517a69's in exactly the rustic-rs version, rustic_core's
-#      version and the two commit pins (rustic_core, walkdir), else nothing is
-#      committed; then rustic's four files are committed.  A run whose
-#      rustic_core commits are already there goes on with rustic.  Nothing
-#      is ever pushed.
+#      trees' digest; --force-commit skips that).  rustic_core, one of:
+#      (a) HEAD ba93d6e with exactly the six files changed (restore.rs,
+#      restore/files_writer.rs, tests/integration/restore.rs, BACKOTTER.md,
+#      Cargo.lock, crates/core/Cargo.toml): committed in two commits (the
+#      fixes and tests; then the version and BACKOTTER.md); a later run that
+#      finds those two commits goes on with rustic.  (b) A clean HEAD that
+#      descends from ba93d6e and whose diff from it touches only those six
+#      files (ad51297): no rustic_core commit.  rustic, one of: HEAD c517a69
+#      with exactly BACKOTTER.md, Cargo.toml and build-backotter.sh changed
+#      (those and Cargo.lock are committed), or a clean HEAD that descends
+#      from c517a69 and changes only those three (7625a3c: Cargo.lock alone is
+#      committed).  Anything else is refused.  Cargo.lock must take rustic_core's
+#      HEAD, which is on no remote: cargo runs on a farm host against a bare
+#      copy of the Mac's rustic_core (a git bundle), through git's
+#      url.insteadOf for the fork's URL (GIT_CONFIG_COUNT,
+#      CARGO_NET_GIT_FETCH_WITH_CLI) and a private CARGO_HOME, so the lock
+#      records the github URL with that commit, as c517a69's does for the
+#      unpushed ba93d6e.  The lock that comes back must differ from c517a69's
+#      in exactly the rustic-rs version, rustic_core's version and the two
+#      commit pins (rustic_core, walkdir), else nothing is committed in
+#      rustic.  A rustic HEAD that is already this step's lock commit, pinning
+#      rustic_core's HEAD, is "done already".  Nothing is ever pushed, and no
+#      commit is amended.
 #   4  The farm round.  stick/build-round.sh builds the round (ROUND, --round)
-#      from the committed HEADs, through clean clones of the three repositories
+#      from the committed HEADs as they are after step 3 (rustic_core: clean,
+#      over ba93d6e; rustic: clean, step 3's lock commit on top, its Cargo.lock
+#      pinning that rustic_core HEAD), through clean clones of the three repositories
 #      (git clone --shared at the commits: what build-round.sh syncs is those
 #      trees, not the working trees): restic-bko 0.19.1+backotter.12 from
 #      12a275f62, rustic-bko for Linux and DragonFly, and the native FreeBSD,
@@ -838,10 +853,25 @@ src_digest() {
         git -C "$r" ls-files --others --exclude-standard
     done | shasum -a 256 | cut -d' ' -f1
 }
-tree_desc() {  # REPO: "SHA" or "SHA with uncommitted changes (the Mac's working tree)"
+is_clean() { [[ -z $(git -C "$1" status --porcelain=v1 --untracked-files=all) ]]; }
+tree_state() { if is_clean "$1"; then echo clean; else echo "with uncommitted changes"; fi; }
+tree_desc() {  # REPO: "SHA, clean" or "SHA, with uncommitted changes (the Mac's working tree)"
     local c
     c=$(git -C "$1" rev-parse HEAD)
-    if [[ -n $(git -C "$1" status --porcelain) ]]; then echo "$c with uncommitted changes (the Mac's working tree)"; else echo "$c"; fi
+    if is_clean "$1"; then echo "$c, clean"; else echo "$c, with uncommitted changes (the Mac's working tree)"; fi
+}
+tree_line() {  # REPO: "HEAD SHORT (SUBJECT), clean" or "..., with uncommitted changes", for the log
+    echo "HEAD $(git -C "$1" log -1 --format='%h (%s)'), $(tree_state "$1")"
+}
+# only_files REPO FROM TO PATH...: TO descends from FROM (or is it) and git diff FROM TO touches only the PATHs.
+only_files() {
+    local r=$1 a=$2 b=$3 f bad=0; shift 3
+    git -C "$r" merge-base --is-ancestor "$a" "$b" 2>/dev/null || { say "$r: ${b:0:7} doesn't descend from ${a:0:7}"; return 1; }
+    while IFS= read -r f; do
+        [[ -n $f ]] || continue
+        [[ " $* " == *" $f "* ]] || { say "$r: $f changed between ${a:0:7} and ${b:0:7}"; bad=1; }
+    done < <(git -C "$r" diff --name-only "$a" "$b")
+    [[ $bad == 0 ]]
 }
 porcelain_is() {  # REPO PATH...: git status is exactly " M PATH" for each PATH
     local want got
@@ -856,14 +886,14 @@ FAILED=0
 
 # --- step 1 -----------------------------------------------------------------------------------
 step1_start() {
-    say "== step 1: build and test the working trees"
+    say "== step 1: build and test the trees as they are (HEAD plus any uncommitted changes)"
     local h=$HOST1
     [[ -n $h ]] || h=$(place 3 6 "" "")
     [[ -n $h ]] || die "step 1: pick-host found no host"
     ASSIGNED+=$'\n'"$h"
     S1_HOST=$h
     src_digest >"$LOGDIR/step1-src.digest"
-    say "step 1 on $h; rustic_core $(tree_desc "$CORE"); rustic $(tree_desc "$RUSTIC")"
+    say "step 1 on $h; rustic_core $(tree_line "$CORE"); rustic $(tree_line "$RUSTIC")"
     prep_host "$h"
     push_src "$h"
     hv RUSTIC_VER "$RUSTIC_VER"
@@ -970,33 +1000,62 @@ step2_judge() {
 # --- step 3 -----------------------------------------------------------------------------------
 step3() {
     say "== step 3: commit rustic_core $CORE_VER and rustic $RUSTIC_VER"
-    local S=$LOGDIR/step3 ch rh core_done=0 new lockhost m
+    local S=$LOGDIR/step3 ch rh core_mode rustic_mode new short lockhost m body tailtxt files=()
     mkdir -p "$S"
     [[ $(git -C "$CORE" branch --show-current) == backotter ]] || die "step 3: $CORE is not on branch backotter"
     [[ $(git -C "$RUSTIC" branch --show-current) == backotter ]] || die "step 3: $RUSTIC is not on branch backotter"
     ch=$(git -C "$CORE" rev-parse HEAD) rh=$(git -C "$RUSTIC" rev-parse HEAD)
-    if [[ $rh != "$RUSTIC_BASE" ]]; then
-        if [[ $(git -C "$RUSTIC" rev-parse HEAD~1) == "$RUSTIC_BASE" &&
-            $(git -C "$RUSTIC" log -1 --format=%s) == "$RUSTIC_MSG_PREFIX"* && -z $(git -C "$RUSTIC" status --porcelain) ]]; then
-            result 3 "done already: rustic $(git -C "$RUSTIC" log -1 --format='%h %s')"
-            return 0
-        fi
-        die "step 3: rustic's HEAD is $rh, not c517a69 (nor one commit of this round on it): refusing"
-    fi
+
+    # rustic_core: commit = (a) ba93d6e with the six files changed, committed here;
+    # mine = this step's own two commits, from an earlier run; held = (b) a clean
+    # descendant of ba93d6e that changes only the six files (ad51297): no commit.
     if [[ $ch == "$CORE_BASE" ]]; then
         porcelain_is "$CORE" "${CORE_CODE[@]}" "${CORE_VERFILES[@]}" || die "step 3: rustic_core has other changes than the six files: refusing"
-        grep -q "^version = \"$CORE_VER\"\$" "$CORE/crates/core/Cargo.toml" || die "step 3: crates/core/Cargo.toml isn't version $CORE_VER"
-    elif [[ $(git -C "$CORE" rev-parse HEAD~2) == "$CORE_BASE" && $(git -C "$CORE" log -1 --format=%s) == "$CORE_MSG2" &&
-        $(git -C "$CORE" log -1 --format=%s HEAD~1) == "$CORE_MSG1" && -z $(git -C "$CORE" status --porcelain) ]]; then
-        core_done=1
-        say "rustic_core's two commits are there already ($(git -C "$CORE" log -1 --format=%h)): on to rustic"
+        core_mode=commit
+    elif ! is_clean "$CORE"; then
+        git -C "$CORE" status --short | sed 's/^/      /'
+        die "step 3: rustic_core's HEAD is ${ch:0:7}, not ba93d6e, and its tree has uncommitted changes (above): refusing"
+    elif [[ $(git -C "$CORE" rev-parse HEAD~2 2>/dev/null) == "$CORE_BASE" && $(git -C "$CORE" log -1 --format=%s) == "$CORE_MSG2" &&
+        $(git -C "$CORE" log -1 --format=%s HEAD~1) == "$CORE_MSG1" ]]; then
+        core_mode=mine
+        say "rustic_core: this step's two commits are there already ($(git -C "$CORE" log -1 --format=%h)): on to rustic"
+    elif only_files "$CORE" "$CORE_BASE" "$ch" "${CORE_CODE[@]}" "${CORE_VERFILES[@]}"; then
+        core_mode=held
+        say "rustic_core: $(tree_line "$CORE"); its diff from ba93d6e touches only the six files: no rustic_core commit"
     else
-        die "step 3: rustic_core's HEAD moved from ba93d6e to $ch: refusing"
+        die "step 3: rustic_core's HEAD ${ch:0:7} is neither ba93d6e with the six files changed nor a clean descendant of it that changes only them (above): refusing"
     fi
-    porcelain_is "$RUSTIC" "${RUSTIC_FILES[@]}" || die "step 3: rustic has other changes than its three files: refusing"
+    grep -q "^version = \"$CORE_VER\"\$" "$CORE/crates/core/Cargo.toml" || die "step 3: rustic_core's crates/core/Cargo.toml isn't version $CORE_VER"
+
+    # rustic: done = this step's lock commit on top, pinning rustic_core's HEAD;
+    # commit = c517a69 with its three files changed (they and Cargo.lock are
+    # committed); held = a clean descendant of c517a69 that changes only those
+    # three (7625a3c: Cargo.lock alone is committed).  c517a69's own subject has
+    # the lock commit's prefix too, hence rh != c517a69.
+    if [[ $rh != "$RUSTIC_BASE" ]] && is_clean "$RUSTIC" && [[ $(git -C "$RUSTIC" log -1 --format=%s) == "$RUSTIC_MSG_PREFIX"* ]] &&
+        [[ $(grep -c "#$ch\"" "$RUSTIC/Cargo.lock") == 2 ]] && only_files "$RUSTIC" "$RUSTIC_BASE" "$rh" "${RUSTIC_FILES[@]}" Cargo.lock; then
+        result 3 "done already: rustic $(git -C "$RUSTIC" log -1 --format='%h %s')"
+        return 0
+    fi
+    if [[ $rh == "$RUSTIC_BASE" ]]; then
+        porcelain_is "$RUSTIC" "${RUSTIC_FILES[@]}" || die "step 3: rustic has other changes than its three files: refusing"
+        rustic_mode=commit files=("${RUSTIC_FILES[@]}" Cargo.lock)
+    elif ! is_clean "$RUSTIC"; then
+        git -C "$RUSTIC" status --short | sed 's/^/      /'
+        die "step 3: rustic's HEAD is ${rh:0:7}, not c517a69, and its tree has uncommitted changes (above): refusing"
+    elif only_files "$RUSTIC" "$RUSTIC_BASE" "$rh" "${RUSTIC_FILES[@]}"; then
+        rustic_mode=held files=(Cargo.lock)
+        say "rustic: $(tree_line "$RUSTIC"), over c517a69 touching only ${RUSTIC_FILES[*]}: only Cargo.lock is committed"
+    else
+        die "step 3: rustic's HEAD ${rh:0:7} is neither c517a69 with its three files changed nor a clean descendant of it that changes only them (above): refusing"
+    fi
     grep -q "^version = \"$RUSTIC_VER\"\$" "$RUSTIC/Cargo.toml" || die "step 3: rustic's Cargo.toml isn't version $RUSTIC_VER"
     grep -q "^bko_core=$CORE_VER\$" "$RUSTIC/build-backotter.sh" || die "step 3: rustic's build-backotter.sh doesn't want $CORE_VER"
-    if [[ $core_done == 0 && $FORCE == 0 ]]; then
+    [[ $(git -C "$RUSTIC" show "$RUSTIC_BASE:Cargo.lock" | grep -c "#$CORE_BASE\"") == 2 ]] ||
+        die "step 3: c517a69's Cargo.lock doesn't pin ba93d6e for rustic_core and walkdir"
+
+    # Step 1's pass on these very trees (not for "mine": those commits are this step's own, made after it checked).
+    if [[ $core_mode != mine && $FORCE == 0 ]]; then
         local pass=$LOGDIR/step1.pass
         if [[ ! -f $pass ]]; then
             pass=$(ls -t "$(dirname "$LOGDIR")"/bko-rustic-round-*/step1.pass 2>/dev/null | head -n 1 || true)
@@ -1004,15 +1063,16 @@ step3() {
         if [[ -z $pass || ! -f $pass ]]; then
             [[ $DRY == 1 ]] || die "step 3: no step 1 pass (LOG_DIR/step1.pass; --log-dir, or --force-commit)"
             say "dry run: no step 1 pass yet; a real run stops here"
+        elif [[ $(sed -n 's/^digest //p' "$pass") != "$(src_digest)" ]]; then
+            [[ $DRY == 1 ]] || die "step 3: the trees changed since step 1 passed ($pass): run step 1 again"
+            say "dry run: the trees changed since step 1 passed ($pass); a real run stops here"
         else
-            [[ $(sed -n 's/^digest //p' "$pass") == "$(src_digest)" ]] ||
-                die "step 3: the trees changed since step 1 passed ($pass): run step 1 again"
             say "step 1 passed on these trees: $pass"
         fi
     fi
 
-    # rustic_core: the fixes and tests, then the version and BACKOTTER.md.
-    if [[ $core_done == 0 ]]; then
+    # rustic_core (a): the fixes and tests, then the version and BACKOTTER.md.
+    if [[ $core_mode == commit ]]; then
         printf '%s\n\n%s\n\n%s\n\n%s\n\n%s\n' "$CORE_MSG1" \
 "In a case-insensitive directory a name the walk sees (SAME) can be the
 entry of a snapshot name it doesn't (same). 0.13.0+backotter.13's --delete
@@ -1047,17 +1107,47 @@ not yet traced." \
                 die "step 3: rustic_core isn't clean two commits over ba93d6e after committing"
         fi
     fi
-    if [[ $DRY == 1 && $core_done == 0 ]]; then new="<rustic_core HEAD after the commits>"
+    if [[ $DRY == 1 && $core_mode == commit ]]; then new="<rustic_core HEAD after the commits>"
     else new=$(git -C "$CORE" rev-parse HEAD); fi
+    short=${new:0:7}
     say "rustic_core is at $new"
+
+    # rustic's commit message: (a)'s as it was; (b)'s names the round's two fixes.
+    if [[ $rustic_mode == held ]]; then
+        tailtxt="Only the lock: version $RUSTIC_VER, BACKOTTER.md and build-backotter.sh's
+bko_core=$CORE_VER are in ${rh:0:7}."
+    else
+        tailtxt="Version $RUSTIC_VER; build-backotter.sh wants $CORE_VER."
+    fi
+    if [[ $core_mode == held ]]; then
+        local nc ncw=commits
+        nc=$(git -C "$CORE" rev-list --count "$CORE_BASE..$new")
+        [[ $nc != 1 ]] || ncw=commit
+        m="$RUSTIC_MSG_PREFIX $short ($CORE_VER): restore --delete's case variants and a kept group's later names"
+        body="rustic_core $short ($CORE_VER, $nc $ncw over ${CORE_BASE:0:7}): restore --delete
+leaves an entry that is a snapshot name's under another case in a
+case-insensitive directory, and the later names of a hard-link group
+--exact breaks are in the way too.
+
+$tailtxt"
+    else
+        m=$(printf '%s %s (%s): restore --delete leaves a case variant of a planned entry; a kept group'"'"'s later names in the way; no panic when a planned file is gone' \
+            "$RUSTIC_MSG_PREFIX" "$short" "$CORE_VER")
+        body="rustic_core $short ($CORE_VER, two commits over ${CORE_BASE:0:7}): restore --delete
+leaves an entry that is a snapshot name's under another case in a
+case-insensitive directory (it removed it, then panicked), the later
+names of a hard-link group --exact breaks are in the way too, and a
+planned file that can't be read is an error, not a panic. $tailtxt"
+    fi
+    printf '%s\n\n%s\n\n%s\n' "$m" "$body" "$COAUTHOR" >"$S/rustic-msg.txt"
 
     # rustic's Cargo.lock, by cargo on a farm host, against a bare copy of that commit.
     lockhost=$HOST1
     [[ -n $lockhost ]] || lockhost=$(sed -n 's/^host //p' "$LOGDIR/step1.pass" 2>/dev/null || true)
     [[ -n $lockhost ]] || lockhost=$(place 0 2 "" "")
     [[ -n $lockhost ]] || die "step 3: no host for cargo update"
-    say "Cargo.lock: cargo update on $lockhost"
-    x git -C "$CORE" bundle create "$S/core.bundle" HEAD refs/heads/backotter || die "step 3: git bundle failed (rustic_core committed, rustic not)"
+    say "Cargo.lock: cargo update on $lockhost, rustic_core and walkdir to $new"
+    x git -C "$CORE" bundle create "$S/core.bundle" HEAD refs/heads/backotter || die "step 3: git bundle failed (rustic not committed)"
     prep_host "$lockhost"
     hput "$lockhost" "$R/s3" "$S/core.bundle" "$RUSTIC"
     hv CORE_NEW "$new"
@@ -1067,18 +1157,19 @@ not yet traced." \
     hget "$lockhost" "$R/logs/s3-lock.out" "$S"
     if [[ $DRY == 1 ]]; then
         echo "    [dry-run] fetch $lockhost:~/$R/s3/rustic/Cargo.lock, check it against c517a69's with only the"
-        echo "              rustic-rs version, rustic_core's version and the two pins changed, then:"
+        echo "              rustic-rs version, rustic_core's version and the two pins (to $short) changed, then:"
         x cp "$S/Cargo.lock" "$RUSTIC/Cargo.lock"
-        x git -C "$RUSTIC" add -- "${RUSTIC_FILES[@]}" Cargo.lock
+        say "rustic: commit (${files[*]}), message $S/rustic-msg.txt: $m"
+        x git -C "$RUSTIC" add -- "${files[@]}"
         x git -C "$RUSTIC" commit -q -F "$S/rustic-msg.txt"
-        result 3 "dry run"
+        result 3 "dry run (rustic_core: $core_mode, rustic: $rustic_mode; rustic would commit ${files[*]})"
         return 0
     fi
-    [[ $(jrc s3-lock) == 0 ]] || die "step 3: cargo update failed on $lockhost: $S/s3-lock.out (rustic_core committed, rustic not)"
+    [[ $(jrc s3-lock) == 0 ]] || die "step 3: cargo update failed on $lockhost: $S/s3-lock.out (rustic not committed)"
     x rsync -e "$(sshv "$lockhost")" "$(dest "$lockhost"):$R/s3/rustic/Cargo.lock" "$S/Cargo.lock" ||
-        die "step 3: couldn't fetch Cargo.lock from $lockhost (rustic_core committed, rustic not)"
-    # What it must be: c517a69's lock with the three versions and two pins moved, nothing else.
-    git -C "$RUSTIC" show HEAD:Cargo.lock | awk -v old="$CORE_BASE" -v new="$new" -v rv0="$RUSTIC_VER_OLD" -v rv="$RUSTIC_VER" \
+        die "step 3: couldn't fetch Cargo.lock from $lockhost (rustic not committed)"
+    # What it must be: c517a69's lock with the two versions and two pins moved, nothing else.
+    git -C "$RUSTIC" show "$RUSTIC_BASE:Cargo.lock" | awk -v old="$CORE_BASE" -v new="$new" -v rv0="$RUSTIC_VER_OLD" -v rv="$RUSTIC_VER" \
         -v cv0="$CORE_VER_OLD" -v cv="$CORE_VER" '
         /^name = / { name = $3 }
         name == "\"rustic-rs\"" && $0 == "version = \"" rv0 "\"" { print "version = \"" rv "\""; next }
@@ -1089,24 +1180,14 @@ not yet traced." \
         die "step 3: cargo's Cargo.lock ($S/Cargo.lock) isn't c517a69's with only rustic-rs, rustic_core and walkdir moved: rustic not committed"
     fi
     [[ $(grep -c "#$new\"" "$S/Cargo.lock") == 2 ]] || die "step 3: $S/Cargo.lock doesn't pin $new for rustic_core and walkdir"
-    m=$(printf '%s %s (%s): restore --delete leaves a case variant of a planned entry; a kept group'"'"'s later names in the way; no panic when a planned file is gone' \
-        "$RUSTIC_MSG_PREFIX" "${new:0:7}" "$CORE_VER")
-    printf '%s\n\n%s\n\n%s\n' "$m" \
-"rustic_core ${new:0:7} ($CORE_VER, two commits over ${CORE_BASE:0:7}): restore --delete
-leaves an entry that is a snapshot name's under another case in a
-case-insensitive directory (it removed it, then panicked), the later
-names of a hard-link group --exact breaks are in the way too, and a
-planned file that can't be read is an error, not a panic. Version
-$RUSTIC_VER; build-backotter.sh wants $CORE_VER." \
-"$COAUTHOR" >"$S/rustic-msg.txt"
     cp "$S/Cargo.lock" "$RUSTIC/Cargo.lock" || die "step 3: couldn't copy the lock into $RUSTIC"
-    porcelain_is "$RUSTIC" "${RUSTIC_FILES[@]}" Cargo.lock || die "step 3: rustic's changes aren't its four files after the lock"
-    say "rustic: commit (${RUSTIC_FILES[*]} Cargo.lock): $m"
-    x git -C "$RUSTIC" add -- "${RUSTIC_FILES[@]}" Cargo.lock || die "step 3: git add in $RUSTIC failed"
-    x git -C "$RUSTIC" commit -q -F "$S/rustic-msg.txt" || die "step 3: rustic's commit failed: its four files are staged (git -C $RUSTIC reset -q undoes that)"
-    [[ -z $(git -C "$RUSTIC" status --porcelain) && $(git -C "$RUSTIC" rev-parse HEAD~1) == "$RUSTIC_BASE" ]] ||
-        die "step 3: rustic isn't clean one commit over c517a69 after committing"
-    result 3 "committed (not pushed): rustic_core $(git -C "$CORE" log -1 --format=%h), rustic $(git -C "$RUSTIC" log -1 --format=%h)"
+    porcelain_is "$RUSTIC" "${files[@]}" || die "step 3: rustic's changes aren't ${files[*]} after the lock"
+    say "rustic: commit (${files[*]}): $m"
+    x git -C "$RUSTIC" add -- "${files[@]}" || die "step 3: git add in $RUSTIC failed"
+    x git -C "$RUSTIC" commit -q -F "$S/rustic-msg.txt" || die "step 3: rustic's commit failed: ${files[*]} staged (git -C $RUSTIC reset -q undoes that)"
+    [[ -z $(git -C "$RUSTIC" status --porcelain) && $(git -C "$RUSTIC" rev-parse HEAD~1) == "$rh" ]] ||
+        die "step 3: rustic isn't clean one commit over ${rh:0:7} after committing"
+    result 3 "committed (not pushed): rustic_core $(git -C "$CORE" log -1 --format=%h) ($core_mode), rustic $(git -C "$RUSTIC" log -1 --format=%h) (${files[*]})"
 }
 
 # --- step 4 -----------------------------------------------------------------------------------
@@ -1140,15 +1221,23 @@ step4() {
     local S=$LOGDIR/step4 G ch rh eh old exp=() line h n spec i
     mkdir -p "$S"
     ch=$(git -C "$CORE" rev-parse HEAD) rh=$(git -C "$RUSTIC" rev-parse HEAD) eh=$(git -C "$RESTIC" rev-parse HEAD)
-    if [[ $(git -C "$CORE" rev-parse HEAD~2 2>/dev/null) == "$CORE_BASE" && $(git -C "$RUSTIC" rev-parse HEAD~1) == "$RUSTIC_BASE" &&
-        -z $(git -C "$CORE" status --porcelain) && -z $(git -C "$RUSTIC" status --porcelain) &&
-        $(grep -c "#$ch\"" "$RUSTIC/Cargo.lock") == 2 ]]; then
-        say "rustic_core $ch, rustic $rh (Cargo.lock pins that rustic_core)"
+    # The HEADs as they are now, after step 3 (never the ba93d6e/c517a69 constants):
+    # rustic_core clean over ba93d6e; rustic clean, step 3's lock commit on top, pinning it.
+    local core_ok=0 rustic_ok=0
+    if [[ $ch != "$CORE_BASE" ]] && is_clean "$CORE" && git -C "$CORE" merge-base --is-ancestor "$CORE_BASE" "$ch"; then core_ok=1; fi
+    if [[ $core_ok == 1 && $rh != "$RUSTIC_BASE" ]] && is_clean "$RUSTIC" && git -C "$RUSTIC" merge-base --is-ancestor "$RUSTIC_BASE" "$rh" &&
+        [[ $(git -C "$RUSTIC" log -1 --format=%s) == "$RUSTIC_MSG_PREFIX"* && $(grep -c "#$ch\"" "$RUSTIC/Cargo.lock") == 2 ]]; then
+        rustic_ok=1
+    fi
+    if [[ $rustic_ok == 1 ]]; then
+        say "rustic_core $(tree_line "$CORE"); rustic $(tree_line "$RUSTIC") (its Cargo.lock pins that rustic_core)"
     elif [[ $DRY == 1 ]]; then
-        say "dry run: step 3's commits aren't there yet; the commands below take what step 3 will commit"
-        ch="<rustic_core HEAD>" rh="<rustic HEAD>"
+        say "dry run: step 3's commits aren't all there yet; the commands below take what step 3 will commit"
+        if [[ $core_ok == 1 ]]; then say "rustic_core $(tree_line "$CORE") is the one step 3's lock will pin"
+        else ch="<rustic_core HEAD after step 3>"; fi
+        rh="<rustic HEAD after step 3's Cargo.lock commit>"
     else
-        die "step 4: rustic_core and rustic aren't step 3's clean commits (rustic_core $ch, rustic $rh): run step 3"
+        die "step 4: rustic_core and rustic aren't step 3's clean commits (rustic_core ${ch:0:7}, rustic ${rh:0:7}, whose Cargo.lock must pin it): run step 3"
     fi
     [[ $eh == "$RESTIC_HEAD" && -z $(git -C "$RESTIC" status --porcelain) ]] ||
         die "step 4: ~/git/restic isn't a clean 12a275f62 (it is $eh)"

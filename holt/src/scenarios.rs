@@ -2777,6 +2777,223 @@ fn biglinux_guest() {
     assert!(mk < install && install < cfg && cfg < d1 && d1 < d2 && d2 < nvram, "{bt}");
 }
 
+const GARUDA_ESP: &str = "9a2d0da0-0000-4000-8000-000000000001";
+/// The btrfs (btrfs::sample::image's UUID).
+const GARUDA_ROOT: &str = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
+/// Calamares's seven subvolumes, all in the top level, where fstab mounts
+/// them, and the garuda guest's IDs and generations for them
+/// (holt/tests/corpus/garuda/src.json).
+const GARUDA_SUBVOLS: [(&str, &str, u32, u32); 7] =
+    [("@", "/", 256, 167), ("@home", "/home", 257, 21), ("@root", "/root", 258, 164), ("@srv", "/srv", 259, 10), ("@cache", "/var/cache", 260, 164), ("@log", "/var/log", 261, 165), ("@tmp", "/var/tmp", 262, 165)];
+/// snap-pac's four read-only snapshots of @ in snapper's @/.snapshots (the
+/// keyrings' pre/post pair, then the upgrade's): number, ID, generation.
+const GARUDA_SNAPSHOTS: [(u32, u32, u32); 4] = [(1, 264, 42), (2, 265, 78), (3, 266, 91), (4, 267, 156)];
+
+/// Garuda Linux as its Calamares installs it (docs/design/garuda.md, the
+/// layout table and "What GA1 found"), in small: UEFI, GPT with a vfat ESP
+/// "EFI" at /boot/efi (umask=0077) and one btrfs "garuda" whose seven
+/// subvolumes are all in the top level, mounted defaults,noatime,
+/// compress=zstd; snapper's .snapshots a subvolume nested in @; GRUB as
+/// `--bootloader-id=Garuda` (EFI/Garuda/grubx64.efi, the same file at the
+/// fallback EFI/boot/bootx64.efi); dracut through garuda-dracut-support,
+/// /boot/initramfs-linux-garuda.img and -fallback.img; the chaotic-keyring.
+/// As on the guest, OVMF booted it by its own entry for the disk (no file
+/// in the device path), so NVRAM has no Garuda entry, and GRUB says so
+/// through LoaderInfo.
+fn garuda() -> Tree {
+    use crate::efi::{real::unhex, GLOBAL, LOADER};
+    let t = Tree::new("scn-garuda");
+    let mut img = vec![0u8; 96 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "9a2d0da0-0000-4000-8000-00000000d15c",
+            parts: vec![(ESP, GARUDA_ESP, 2048, 73727, 0, "EFI"), (LINUX, "9a2d0da0-0000-4000-8000-000000000002", 73728, 196574, 0, "garuda")],
+        },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(71680, 0x9a2d_0001, "EFI"));
+    put(&mut img, 73728, &btrfs::sample::image("", 0x1 | 0x10 | 0x20 | 0x40 | 0x100 | 0x200));
+    let root = GARUDA_ROOT;
+    let pkg = |n: &str, ver: &str| (format!("/var/lib/pacman/local/{n}-{ver}/desc"), format!("%NAME%\n{n}\n\n%VERSION%\n{ver}\n\n%ARCH%\nx86_64\n"));
+    let var = |n: &str, vendor: &str| format!("/sys/firmware/efi/efivars/{n}-{vendor}");
+    let utf16_var = |s: &str| -> Vec<u8> { [6u8, 0, 0, 0].into_iter().chain(s.encode_utf16().chain([0]).flat_map(u16::to_le_bytes)).collect() };
+    // The guest's Boot0001 as efivarfs shows it: OVMF's "UEFI Misc Device",
+    // PciRoot(0x0)/Pci(0x3,0x0) and its 16 bytes of optional data.
+    let misc = unhex("07000000 010000001600550045004600490020004d006900730063002000440065007600690063006500000002010c00d041030a000000000101060000037fff04004eac0881119f594d850ee21a522c59b2");
+    let opts = "rw,noatime,compress=zstd:3,space_cache=v2";
+    let mut mi = String::new();
+    for (i, (sv, at, id, _)) in GARUDA_SUBVOLS.iter().enumerate() {
+        let parent = if i == 0 { 1 } else { 26 };
+        mi.push_str(&format!("{} {parent} 0:25 /{sv} {at} rw,noatime shared:{} - btrfs /dev/vda2 {opts},subvolid={id},subvol=/{sv}\n", 26 + i, 1 + i));
+    }
+    mi.push_str("33 26 254:1 / /boot/efi rw,relatime shared:8 - vfat /dev/vda1 rw,fmask=0077,dmask=0077\n");
+    let mut fstab = String::new();
+    for (sv, at, _, _) in GARUDA_SUBVOLS {
+        fstab.push_str(&format!("UUID={root} {at} btrfs subvol=/{sv},defaults,noatime,compress=zstd 0 0\n"));
+    }
+    fstab.push_str("UUID=9A2D-0001 /boot/efi vfat umask=0077 0 2\n");
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 122847, &img)
+        .symlink(&format!("/dev/disk/by-partuuid/{GARUDA_ESP}"), "../../vda1")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&var("Boot0001", GLOBAL), misc)
+        .file(&var("BootOrder", GLOBAL), [7u8, 0, 0, 0, 1, 0])
+        .file(&var("BootCurrent", GLOBAL), [6u8, 0, 0, 0, 1, 0])
+        .file(&var("LoaderInfo", LOADER), utf16_var("GRUB 2.16"))
+        .file(&var("LoaderDevicePartUUID", LOADER), utf16_var(&GARUDA_ESP.to_uppercase()))
+        .file("/proc/self/mountinfo", mi)
+        .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n/dev/zram0 partition 1998844 0 100\n")
+        .file("/etc/fstab", fstab)
+        .file("/etc/os-release", "NAME=\"Garuda Linux\"\nPRETTY_NAME=\"Garuda Linux\"\nID=garuda\nID_LIKE=arch\nBUILD_ID=rolling\nANSI_COLOR=\"38;2;23;147;209\"\nHOME_URL=\"https://garudalinux.org/\"\nLOGO=garudalinux\n")
+        .file(
+            "/etc/default/grub",
+            "GRUB_DEFAULT=0\nGRUB_TIMEOUT=5\nGRUB_DISTRIBUTOR=\"Garuda\"\nGRUB_CMDLINE_LINUX_DEFAULT=\"loglevel=3 quiet\"\nGRUB_CMDLINE_LINUX=\"\"\nGRUB_THEME=\"/usr/share/grub/themes/garuda-dr460nized/theme.txt\"\nGRUB_DISABLE_OS_PROBER=false\n",
+        )
+        .file("/etc/snapper/configs/root", "SUBVOLUME=\"/\"\nFSTYPE=\"btrfs\"\nTIMELINE_CREATE=\"no\"\nNUMBER_LIMIT=\"10\"\n")
+        .file("/boot/vmlinuz-linux-garuda", "k")
+        .file("/boot/initramfs-linux-garuda.img", "i")
+        .file("/boot/initramfs-linux-garuda-fallback.img", "f")
+        .file("/boot/grub/x86_64-efi/normal.mod", "x")
+        .file(
+            "/boot/grub/grub.cfg",
+            format!("insmod part_gpt\ninsmod btrfs\nsearch --no-floppy --fs-uuid --set=root {root}\nmenuentry 'Garuda Linux' {{\n\tlinux\t/@/boot/vmlinuz-linux-garuda root=UUID={root} rw rootflags=subvol=@ loglevel=3 quiet\n\tinitrd\t/@/boot/initramfs-linux-garuda.img\n}}\n"),
+        )
+        .file("/boot/efi/EFI/Garuda/grubx64.efi", vec![2u8; 400])
+        .file("/boot/efi/EFI/boot/bootx64.efi", vec![2u8; 400])
+        .file("/usr/lib/modules/7.3.4-1-garuda/pkgbase", "linux-garuda\n")
+        .dir("/usr/lib/modules/7.3.4-1-garuda/kernel")
+        .file("/proc/sys/kernel/osrelease", "7.3.4-1-garuda\n")
+        .file("/proc/sys/kernel/hostname", "garuda\n")
+        .file("/proc/cmdline", format!("BOOT_IMAGE=/@/boot/vmlinuz-linux-garuda root=UUID={root} rw rootflags=subvol=@ loglevel=3 quiet\n"));
+    for (n, ver) in [
+        ("grub", "2:2.16-1"),
+        ("grub-btrfs", "4.14-1"),
+        ("dracut", "111-1.1"),
+        ("garuda-dracut-support", "1.6.1-1"),
+        ("linux-garuda", "7.3.4-1"),
+        ("snapper", "0.13.2-2"),
+        ("snap-pac", "3.0.1-3"),
+        ("snapper-support", "1.1.2-4"),
+        ("btrfs-progs", "7.3-1"),
+        ("dosfstools", "4.2-5"),
+        ("efibootmgr", "18-4"),
+        ("chaotic-keyring", "20240925-1"),
+    ] {
+        let (path, desc) = pkg(n, ver);
+        t.file(&path, desc);
+    }
+    t
+}
+
+/// What btrfs answers on Garuda: the seven top-level subvolumes, snapper's
+/// @/.snapshots nested in @, and snap-pac's four read-only snapshots of @
+/// in it, listed as the guest's btrfs-progs 7.3 lists them.
+fn garuda_runner() -> FakeRunner {
+    let u = |n: u32| format!("9a2d5b00-0000-4000-8000-000000000{n}");
+    let mut list = String::new();
+    for (sv, _, id, gen) in GARUDA_SUBVOLS {
+        list.push_str(&format!("ID {id} gen {gen} parent 5 top level 5 parent_uuid - uuid {} path <FS_TREE>/{sv}\n", u(id)));
+    }
+    list.push_str(&format!("ID 263 gen 156 parent 256 top level 256 parent_uuid - uuid {} path @/.snapshots\n", u(263)));
+    let mut ro = String::new();
+    for (n, id, gen) in GARUDA_SNAPSHOTS {
+        list.push_str(&format!("ID {id} gen {gen} parent 263 top level 263 parent_uuid {} uuid {} path <FS_TREE>/@/.snapshots/{n}/snapshot\n", u(256), u(id)));
+        ro.push_str(&format!("ID {id} gen {gen} top level 263 path <FS_TREE>/@/.snapshots/{n}/snapshot\n"));
+    }
+    let mut r = FakeRunner::default()
+        .with("btrfs subvolume list -a -p -u -q /", &list)
+        .with("btrfs subvolume get-default /", "ID 5 (FS_TREE)\n")
+        .with("btrfs subvolume list -a -r /", &ro);
+    for (n, _, _) in GARUDA_SNAPSHOTS {
+        let at = format!("/.snapshots/{n}/snapshot");
+        r = r.with(&format!("btrfs property get -t s {at}"), "ro=true\n").with(&format!("btrfs property get -t i {at}"), "");
+    }
+    for at in GARUDA_SUBVOLS.iter().map(|x| x.1).chain(["/.snapshots"]) {
+        r = r.with(&format!("btrfs property get -t s {at}"), "ro=false\n").with(&format!("btrfs property get -t i {at}"), "");
+    }
+    r
+}
+
+/// Garuda read back and planned (docs/design/garuda.md, "What GA2 found"
+/// and "What GA4 found"; holt/tests/corpus/garuda/plan.txt): supported by
+/// its ID; GRUB from LoaderInfo, dracut as the generator through
+/// garuda-dracut-support; the seven subvolumes and @/.snapshots made, and
+/// snap-pac's snapshots restored as shared ones, a chain from @.  The boot
+/// stage runs dracut-rebuild, grub-install as `Garuda` (the ESP
+/// directory's case kept) and grub-mkconfig, and makes no NVRAM entry: the
+/// source had none of its own.
+#[test]
+fn garuda_guest() {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    let v = run(&garuda(), true, garuda_runner());
+    assert_eq!(s(&v, &["os", "id"]), "garuda");
+    assert_eq!(s(&v, &["os", "pretty_name"]), "Garuda Linux");
+    assert!(v.at(&["os", "version_id"]).and_then(Value::as_str).is_none());
+    assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
+    let l = v.at(&["boot", "loader"]).unwrap();
+    assert_eq!(s(l, &["name"]), "grub");
+    assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)));
+    assert!(l.get("evidence").unwrap().compact().contains("LoaderInfo says \\\"GRUB 2.16\\\""), "{}", l.compact());
+    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "dracut");
+    for (n, ver) in [("garuda-dracut-support", "1.6.1-1"), ("linux-garuda", "7.3.4-1"), ("snap-pac", "3.0.1-3"), ("snapper-support", "1.1.2-4"), ("snapper", "0.13.2-2"), ("grub-btrfs", "4.14-1"), ("dracut", "111-1.1")] {
+        assert_eq!(s(&v, &["boot", "packages", n]), ver, "{n}");
+    }
+    // The keyring stays out, as in the guest's dump.
+    assert!(v.at(&["boot", "packages", "chaotic-keyring"]).is_none());
+    assert!(v.at(&["boot", "packages", "mkinitcpio"]).is_none());
+    let kernels = arr(&v, &["boot", "kernels", "installed"]);
+    assert_eq!(kernels.iter().map(|k| s(k, &["version"])).collect::<Vec<_>>(), vec!["linux-garuda"]);
+    let esp = v.at(&["boot", "esps", "0"]).unwrap();
+    assert_eq!(s(esp, &["mounted_at"]), "/boot/efi");
+    let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"]).iter().map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str))).collect();
+    assert_eq!(files, vec![("EFI/Garuda/grubx64.efi", Some("EFI/boot/bootx64.efi")), ("EFI/boot/bootx64.efi", Some("EFI/Garuda/grubx64.efi"))]);
+    let subs: Vec<(&str, bool)> = arr(&v, &["storage", "btrfs", "0", "subvolumes"]).iter().map(|x| (s(x, &["path"]), x.get("readonly") == Some(&Value::Bool(true)))).collect();
+    let mut want: Vec<(String, bool)> = GARUDA_SUBVOLS.iter().map(|x| (format!("<FS_TREE>/{}", x.0), false)).collect();
+    want.push(("@/.snapshots".into(), false));
+    want.extend(GARUDA_SNAPSHOTS.iter().map(|(n, _, _)| (format!("<FS_TREE>/@/.snapshots/{n}/snapshot"), true)));
+    assert_eq!(subs, want.iter().map(|(p, r)| (p.as_str(), *r)).collect::<Vec<_>>());
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+
+    let l = Layout::from_json(v).unwrap();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string(), "--repo".into(), "/srv/repo".into(), "--password-file".into(), "/run/pw".into()]) else { unreachable!() };
+    let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let top = format!("/run/bko-holt/btrfs/{GARUDA_ROOT}");
+    // The seven subvolumes in the top level, then .snapshots in @; the
+    // snapshots themselves wait for the restore.
+    let f: String = b.stage(Stage::Format).iter().map(commands::Cmd::shell).collect();
+    let made: String = GARUDA_SUBVOLS.iter().map(|x| format!("btrfs subvolume create {top}/{}\n", x.0)).collect();
+    assert!(f.contains(&format!("{made}mkdir -p {top}/@\nbtrfs subvolume create {top}/@/.snapshots\n")), "{f}");
+    assert!(!f.contains("/.snapshots/1"), "{f}");
+    let m: String = b.stage(Stage::Mount).iter().map(commands::Cmd::shell).collect();
+    assert!(m.contains("mount -t btrfs -o subvol=/@,noatime,compress=zstd /dev/vdb2 /mnt/bko-target\n"), "{m}");
+    assert!(m.contains("mount -t btrfs -o subvol=/@tmp,noatime,compress=zstd /dev/vdb2 /mnt/bko-target/var/tmp\n"), "{m}");
+    assert!(m.contains("mount -t vfat -o umask=0077 /dev/vdb1 /mnt/bko-target/boot/efi\n"), "{m}");
+    // snap-pac's snapshots: left out of the main restore, then each a
+    // snapshot of the one before (the first of @), made exact from the
+    // backup with its extents shared, then read-only again.
+    let r: String = b.stage(Stage::Restore).iter().map(commands::Cmd::shell).collect();
+    for (n, id, _) in GARUDA_SNAPSHOTS {
+        let path = format!("@/.snapshots/{n}/snapshot");
+        let from = if n == 1 { "@".to_string() } else { format!("@/.snapshots/{}/snapshot", n - 1) };
+        assert!(r.contains(&format!("!/.snapshots/{n}/snapshot/**\n")), "{n}: {r}");
+        assert!(r.contains(&format!("# {path}: a snapshot of {from}, then made exact from the backup's /.snapshots/{n}/snapshot (ID {id}, as on the source)\n")), "{n}: {r}");
+        assert!(r.contains(&format!("btrfs subvolume snapshot {top}/{from} \"$d\"")), "{n}: {r}");
+        assert!(r.contains(&format!("--exact --clone-from /={top}/@ latest:/.snapshots/{n}/snapshot {top}/{path}")), "{n}: {r}");
+        assert!(r.contains(&format!("btrfs property set -ts {top}/{path} ro true\n")), "{n}: {r}");
+    }
+    let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
+    let rebuild = bt.find("chroot /mnt/bko-target dracut-rebuild\n").expect(&bt);
+    let install = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Garuda --no-nvram\n").expect(&bt);
+    let off = bt.find("[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
+    let cfg = bt.find("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n").expect(&bt);
+    assert!(rebuild < install && install < off && off < cfg, "{bt}");
+    assert_eq!(bt.matches("grub-install").count(), 1, "{bt}");
+    assert!(!bt.contains("efibootmgr") && !bt.contains("mkinitcpio") && !bt.contains("dracut --force") && !bt.contains("defragment"), "{bt}");
+}
+
 const ANDUINOS_KV: &str = "7.0.0-38-generic";
 const ANDUINOS_ESP: &str = "a2d00105-0000-4000-8000-000000000001";
 /// The btrfs (btrfs::sample::image's UUID).

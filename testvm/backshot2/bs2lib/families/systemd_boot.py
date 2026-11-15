@@ -6,7 +6,9 @@ in the same place.
 - Rule 3 texts: every string of every entry (linux, initrd, options:
   root=UUID=, root=PARTUUID=, root=/dev/mapper/..., resume=, rd.*): load
   keeps the entries as restored, except Chimera's, which gen-systemd-boot
-  rewrites, and Fedora's, which grub2-mkconfig doesn't touch either.  (They
+  rewrites, and Proxmox VE's, which proxmox-boot-tool's refresh rewrites
+  from /etc/kernel/cmdline on ESPs it remade (proxmox_boot.py), and
+  Fedora's, which grub2-mkconfig doesn't touch either.  (They
   were in dumpx.config_texts before the family interface; the same texts,
   now the trait's.)  An entry's linux and initrd are paths on the ESP or
   XBOOTLDR, never a partition number.

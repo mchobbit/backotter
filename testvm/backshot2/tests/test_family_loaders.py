@@ -1,5 +1,5 @@
 """The loaders' traits: systemd_boot.py (BLS entries), limine.py, refind.py,
-ostree.py, grub_upstream.py, on their corpus dumps."""
+ostree.py, grub_upstream.py, proxmox_boot.py, on their corpus dumps."""
 
 import unittest
 
@@ -89,6 +89,55 @@ class TestOstree(unittest.TestCase):
         self.assertTrue(any("ostree=/ostree/boot.1/" in t for t in texts))
         x = with_text(d, ["boot", "ostree", "entries", 0, "options"], "root=/dev/vda3 rw")
         self.assertTrue(any("vda3" in w for w in named(x, "kinoite44", 3)))
+
+
+class TestProxmoxBoot(unittest.TestCase):
+    def test_matches(self):
+        for g, n in (("proxmox9", 1), ("proxmox9-mirror", 2)):
+            d = K.dump(g)
+            h = F.hooks(g, d)
+            self.assertIn("proxmox-boot", h.names, g)
+            self.assertIn("systemd-boot", h.names, g)
+            self.assertNotIn("grub_upstream", h.names, g)
+            self.assertEqual(len(d["boot"]["proxmox_boot"]["uuids"]), n, g)
+            self.assertIn(d["boot"]["proxmox_boot"]["cmdline"], dumpx.config_texts(d, h))
+            self.assertEqual(h.quirk_check(d, d, []), [], g)
+        for g in ("debian13-zfs", "ubuntu26-zfsmirror", "aerynos"):
+            self.assertNotIn("proxmox-boot", F.hooks(g, K.dump(g)).names, g)
+
+    def test_cmdline_is_rule3(self):
+        d = K.dump("proxmox9")
+        self.assertEqual(named(d, "proxmox9", 3), [])
+        x = with_text(d, ["boot", "proxmox_boot", "cmdline"], "root=/dev/vda3 boot=zfs")
+        self.assertTrue(any("vda3" in w for w in named(x, "proxmox9", 3)))
+
+    def test_esps_stay_put(self):
+        # Every ESP has a UEFI entry (both of the mirror's): never moved.
+        for g in ("proxmox9", "proxmox9-mirror"):
+            for c in K.cases(g):
+                for e in c["edits"]:
+                    moved = {e.get("from"), e.get("partition"), e.get("a"), e.get("b")}
+                    self.assertFalse(e["op"] in ("renumber", "swap_order", "gap_before", "align") and 2 in moved
+                                     and e.get("disk") in ("vda", "vdb"), (g, c["seed"], e))
+
+    def test_a_renumbered_esp_follows(self):
+        # Without the NVRAM entry, the mirror's second ESP may be renumbered:
+        # the dump's list follows it, and the quirk passes.
+        d = dumpx.clone(K.dump("proxmox9-mirror"))
+        d["boot"]["efi"]["entries"] = [e for e in d["boot"]["efi"]["entries"] if (e.get("partition") or {}).get("device") != "vdb2"]
+        e, dr = K.edited(d, "renumber", disk="vdb", **{"from": 2, "to": 5})
+        self.assertEqual([x["device"] for x in dr["boot"]["proxmox_boot"]["esps"]], ["vda2", "vdb5"])
+        self.assertEqual(rules.check(d, dr, [e]), [])
+
+    def test_quirk(self):
+        d = K.dump("proxmox9-mirror")
+        h = F.hooks("proxmox9-mirror", d)
+        x = dumpx.clone(d)
+        x["boot"]["proxmox_boot"]["esps"][1]["device"] = "vdb3"
+        self.assertTrue(any("BC00-0002" in w and "vdb3" in w for w in K.reasons(h.quirk_check(d, x, []), 3)))
+        x = dumpx.clone(d)
+        x["boot"]["proxmox_boot"]["uuids"] = x["boot"]["proxmox_boot"]["uuids"][:1]
+        self.assertTrue(any("became" in w for w in K.reasons(h.quirk_check(d, x, []), 3)))
 
 
 class TestGrubUpstream(unittest.TestCase):

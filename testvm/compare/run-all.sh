@@ -18,6 +18,7 @@
 #                           tmpfs jfs, zfs --onto ext4; nonroot-rt.sh linux
 #                sparse     sparse-rt.sh on ext4 xfs btrfs zfs zfs-nocomp
 #                zfsguests  zfs-guest-rt.sh ubuntu24, ubuntu26-zfsmirror
+#                           (ZFS_GUESTS)
 #                dragonfly  dragonfly6: run-guest-rt.sh, nonroot, sparse-rt.sh
 #                openbsd_illumos
 #                           openbsd8, omnios58: run-guest-rt.sh, nonroot;
@@ -69,6 +70,10 @@
 #                copland and cage: ext4 xfs btrfs); all: every one.
 #                ANY_HOST=1 makes both default to all (on copland and cage
 #                too, ZFS's steps then fail)
+#   ZFS_GUESTS   zfsguests' guests, one to three (ports PORT_BASE + 17-19;
+#                default ubuntu24 ubuntu26-zfsmirror); proxmox9 or
+#                proxmox9-mirror may be added (Proxmox VE's own ZFS 2.4 and
+#                kernel; README.md, "zfs-guest-rt.sh")
 #   HOST_JOBS    fs_roundtrip.py and nonroot-rt.sh linux runs at once (4);
 #                SPARSE_JOBS sparse-rt.sh runs on the host at once (2)
 #   JOBS_CAP     at most this many of each at once, whatever HOST_JOBS and
@@ -230,7 +235,7 @@ UNITS = [("linux", "bcachefs", 1, "big", "chopin", ())] + \
     [("sparse", n, 1, None, None, ()) for n in ("ext4", "xfs", "btrfs")] + \
     [("plats", "netbsd", 5, "big", "cinqcent", (15, 16)), ("plats", "freebsd", 6, None, None, (10, 11)),
      ("plats", "openbsd_illumos", 5, None, None, (12, 13)), ("plats", "dragonfly", 3, None, None, (10, 11)),
-     ("plats", "zfsguests", 2, None, None, (17, 18))]
+     ("plats", "zfsguests", 2, None, None, (17, 18, 19))]
 # Pinned ones first, then those only some hosts can run, the heavier first;
 # each to the host with the least of its kind so far (the table's order on a tie).
 first = sorted(range(len(UNITS)), key=lambda i: (UNITS[i][4] not in hs, UNITS[i][3] is None, -UNITS[i][2], i))
@@ -287,6 +292,8 @@ LINUX_FS=${LINUX_FS:-$lfs} SPARSE_FS=${SPARSE_FS:-$sfs}
 [[ $SPARSE_FS == all ]] && SPARSE_FS=$ALL_SFS
 for f in $LINUX_FS; do [[ " $ALL_LFS " == *" $f "* ]] || die "LINUX_FS: no such step: $f"; done
 for f in $SPARSE_FS; do [[ " $ALL_SFS " == *" $f "* ]] || die "SPARSE_FS: no such step: $f"; done
+read -ra zfs_guests <<<"${ZFS_GUESTS:-ubuntu24 ubuntu26-zfsmirror}"
+[[ ${#zfs_guests[@]} -ge 1 && ${#zfs_guests[@]} -le 3 ]] || die "ZFS_GUESTS: one to three guests (ports PORT_BASE + 17-19), not ${#zfs_guests[@]}"
 plats=${plats//,/ }
 [[ -z $pset || $plats == all ]] && plats=$all
 mine=""
@@ -502,7 +509,7 @@ for p in $plats; do
         done ;;
     zfsguests)
         i=17
-        for g in ubuntu24 ubuntu26-zfsmirror; do
+        for g in "${zfs_guests[@]}"; do
             noguest zfsguests "zfs-$g" "$g" && { i=$((i + 1)); continue; }
             step zfsguests "$g" "zfs-$g" zfsguest 1 - 21600 "" "$(q --results "$LOG/zfsguests/zfs-$g")${OLD:+ --identity}" \
                 "BKO_BIN=$(q "$BIN") ${OLD:+OLD_RESTIC=$(q "$OLD/linux/restic-bko") OLD_RUSTIC=$(q "$OLD/linux/rustic-bko")} \

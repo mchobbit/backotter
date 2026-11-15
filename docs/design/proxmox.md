@@ -49,8 +49,8 @@ Nothing has been downloaded or installed yet. Code references are to local
 - `/etc/pve` is a FUSE mount (pmxcfs) of `/var/lib/pve-cluster/config.db`:
   the database comes back with `/`; the mount must not be taken for a backup
   source.
-- ~3.9 d (est.), all on Chopin and Cinqcent (ZFS hosts), none of the user's
-  time but the OKs.
+- ~3.9 d (est.), all on Chopin and Cinqcent (the ZFS hosts then; all four
+  hosts since 2026-11-15, "Host ZFS"), none of the user's time but the OKs.
 
 ## Why
 
@@ -278,8 +278,15 @@ lines for Proxmox's sources and pmxcfs's mount.
 **Host ZFS:** HoltTest1 mounts source and copy on the host with `vm-mount
 --ro`, whose `mount_zfs_root` needs a host `zpool` that can import a 2.4
 pool read-only. `ubuntu26-zfsmirror` (2.4) passes on Chopin and Cinqcent, so
-it can (*check* on P1 with `vm-mount --ro proxmox9`). Only these two hosts:
-both guests go in `needs_host_zfs`; Cage and Copland never get their cells.
+it can (*check* on P1 with `vm-mount --ro proxmox9`). Both guests go in
+`needs_host_zfs`, which keeps their cells off any host without a `zpool`.
+At spec time that was Cage and Copland. **Revised 2026-11-15:** all four
+hosts run ZFS 2.4.4 from trixie-backports (testvm/BACKPORTS.md), and the
+farm spreads jobs over all four, so the Proxmox cells may go to Cage and
+Copland too; nothing names a host. What still decides it there: the guest
+must be in the host's vm-store cache (both published 2026-11-15), and the
+cell must fit the host's `cmp-run.sh --ceiling` (`proxmox9-mirror`'s D 13
+does not fit a small host's RAM disk, so its cells stay on the big hosts).
 
 ## Tests
 
@@ -325,7 +332,8 @@ Mac, no other plan changes, and Test2's own tests pass.
 **Done 2026-11-14**, registered on their own (no batched pass ran; Vanilla
 OS and PikaOS registered theirs alone too): both guests in `classes.json`'s
 D family, `uefi` and `needs_host_zfs` (so plan.place and ht1-queue.sh keep
-them off Cage and Copland; HOSTS.md's list names them), `holt/spec.json`
+them off hosts without a `zpool`, Cage and Copland then; since 2026-11-15
+none, see "Host ZFS"; HOSTS.md's list names them), `holt/spec.json`
 (UEFI; the mirror's two disks noted), `guest/spec.json` (`apt`, `S-apt
 L-pve K-pve B-lin M-zfs`, `uefi`, a new guest), `estimates.tsv` (holt from
 `pve6-10`/`pve6-11`: 5.82 and 7.13 gm; guest 3.30 gm), the counts (+2
@@ -355,6 +363,32 @@ one failure, ubuntu24-luks/-uefi without dumps, is as before.
 **BackShot1:** not proposed. The Thinkpad as a Proxmox host is plausible
 but has one disk, so it would only repeat `proxmox9`; later, through
 BackShot1All if the user wants it.
+
+**The other rigs (2026-11-15).** Where `debian13-zfs`,
+`ubuntu26-zfsmirror` and `cachyos-zfs` are listed, the two guests now are
+too, or aren't for a reason:
+- **BackShot2:** a `proxmox-boot` trait (`testvm/backshot2/bs2lib/
+  families/proxmox_boot.py`) beside `initramfs-tools` and `systemd-boot`:
+  rule 3 reads `proxmox_boot`'s cmdline, pin and manual kernels, and the
+  quirk `proxmox-boot-esps` keeps the UUID list and each listed ESP's vfat
+  where load looks for it (by construction today: no FAT is drawn, and
+  both mirror ESPs have a UEFI entry, so they stay put). Both guests in
+  `tests/golden/linux.json` (300 cases each, all valid) and the family
+  tests. Not run on a host (tier 0's dry runs, tiers 1 and 2: A2's).
+- **BackShot2All** (`docs/design/bs2-all.md`): in the ZFS row, A2 and A3's
+  lanes, with the run's added cases and their room (D 9 and 13, MEM 4).
+- **compare's `zfs-guest-rt.sh`:** takes either guest (it needs python3
+  and ZFS only); not run yet. `run-all.sh`'s zfsguests stays ubuntu24 and
+  ubuntu26-zfsmirror (OpenZFS 2.2 plain, 2.4 encrypted on a mirror), which
+  the host's own 2.4.4 runs alongside: Proxmox's unencrypted 2.4 adds no
+  pool feature, only its kernel build. `ZFS_GUESTS` (at most three, ports
+  +17-19) adds one to a round.
+- **Already in, nothing to add:** HoltTest1 1D, SticTest1, the holt
+  corpus, Test2 (holt, guest, GuestTest2's `L-pve`), `audit/guest-tools.sh`
+  (every guest in `vms/` by default).
+- **Left out:** BackShot1 and BackShot1All (`docs/design/bs1-all.md`), as
+  above: no Thinkpad run was approved. Test2's generated data and reports
+  (`docs/design/test2/data`, `design-classes.md`) are historical.
 
 ## Shared lines (with Guix, Leap 16, Vanilla OS, Slackware, Solus, OpenIndiana, Kali)
 
@@ -454,7 +488,13 @@ installed.
   to no other host": vm-update doesn't know Cinqcent holds them), so the
   updated folders were copied to Cinqcent by rsync. Since then: qcow2
   SHA-256 `proxmox9` `a4a48e98...`, `proxmox9-mirror` `81717f0e...`, `-b`
-  `70dcfe9c...`, on both hosts.
+  `70dcfe9c...`, on both hosts. The rsync also copied Chopin's
+  `image-stat.json`, whose inodes are Chopin's, so Cinqcent's run records
+  called the unchanged disks "changed during the run". Fixed 2026-11-15 by
+  `tool_guest.py identity proxmox9 proxmox9-mirror --backfill` on Cinqcent
+  (it rewrites the file only when the disks' SHA-256s match `image-state`;
+  both did). A hand copy of a guest needs that backfill after it; vm-store
+  skips the file and avoids this.
 - **Host ZFS:** `vm-mount --ro` imports both guests' 2.4 pools on Chopin's
   and Cinqcent's OpenZFS 2.3.9 (read-only), the mirror ONLINE. It mounts
   `/` (`ROOT/pve-1`) and `/var/lib/vz`, **not** `/rpool`, `/rpool/data`

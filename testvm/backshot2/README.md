@@ -190,16 +190,17 @@ one per source, the most specific match winning (`alpine`, `nixos`, and
 `linux` for the rest of Linux); a **trait** is something the dump records
 that sources share (`dracut`, `mkinitcpio`, `booster`, `initramfs-tools`,
 `systemd-boot` with BLS entries, `limine`, `refind`, `ostree`, `snapper`,
-`grub_upstream`).  Each module's docstring says what it refuses and why.
-`families.hooks(source, dump)` merges them, once per case: rule 2's tables
-and versions, the quirks run after the three rules, rule 3's texts and
-patterns, the content recipe (Alpine's alone until A7), the sweep, the
-steer around known findings (`fail-003` for Alpine and every upstream UEFI
-GRUB), and tier 0's mode (`chroot`; NixOS `plan`).  A source with no
-family (the BSDs, illumos, Haiku, Redox, Sculpt OS) is `families.skipped()`:
-`PLANNED` names the piece that builds it.  Alpine's cases are byte-identical
-to those drawn before the interface (`tests/golden/alpine.json`); each
-family's golden is rewritten only with a new `GENERATOR`.
+`grub_upstream`, `proxmox-boot`).  Each module's docstring says what it
+refuses and why.  `families.hooks(source, dump)` merges them, once per
+case: rule 2's tables and versions, the quirks run after the three rules,
+rule 3's texts and patterns, the content recipe (Alpine's alone until A7),
+the sweep, the steer around known findings (`fail-003` for Alpine and
+every upstream UEFI GRUB), and tier 0's mode (`chroot`; NixOS `plan`).  A
+source with no family (the BSDs, illumos, Haiku, Redox, Sculpt OS) is
+`families.skipped()`: `PLANNED` names the piece that builds it.  Alpine's
+cases are byte-identical to those drawn before the interface
+(`tests/golden/alpine.json`); each family's golden is rewritten only with
+a new `GENERATOR`.
 
 ## A case's life
 

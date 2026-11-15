@@ -14,7 +14,10 @@
 # restore by block.
 #
 # Usage: zfs-guest-rt.sh GUEST [PORT] [FSTYPE ...]
-#   GUEST    ubuntu24, ubuntu26-zfsmirror (any guest with python3 and ZFS)
+#   GUEST    ubuntu24, ubuntu26-zfsmirror (any guest with python3 and ZFS);
+#            proxmox9, proxmox9-mirror too (Proxmox VE 9's own ZFS 2.4 and
+#            -pve kernel, rpool plain or mirrored; not run yet, and not in
+#            run-all.sh's default round: its ZFS_GUESTS adds one)
 #   PORT     the guest's SSH port here (default 2713)
 #   FSTYPE   zfs     pools on files in the guest's /var/tmp
 #            zfs-ds  file systems in the guest's root pool (rpool: on

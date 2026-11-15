@@ -50,6 +50,8 @@ EXPECTED = {
     "pikaos4": ("linux", ["booster", "refind"]),
     "pikaos4-luks": ("linux", ["booster", "refind"]),
     "pop24": ("linux", ["initramfs-tools", "systemd-boot"]),
+    "proxmox9": ("linux", ["initramfs-tools", "proxmox-boot", "systemd-boot"]),
+    "proxmox9-mirror": ("linux", ["initramfs-tools", "proxmox-boot", "systemd-boot"]),
     "rocky10": ("linux", ["dracut", "systemd-boot"]),
     "rocky10-lvm": ("linux", ["dracut", "systemd-boot"]),
     "rocky10-raid5": ("linux", ["dracut", "systemd-boot"]),

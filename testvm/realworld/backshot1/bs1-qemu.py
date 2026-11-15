@@ -31,7 +31,12 @@ real access time.  An ostree guest (kinoite44: docs/design/bazzite.md) then
 boots its restored rollback and its default again, each checked by
 "bs1-verify --boot": GRUB is pointed at the rollback by a `default` in
 grubenv, since bootupd's grub.cfg never reads next_entry (grub2-reboot), and
-grubenv is put back as it was.
+grubenv is put back as it was.  An ABRoot guest (vanilla3:
+docs/design/vanillaos.md) boots its restored other root the same way, its
+master grub.cfg entry picked on GRUB's serial menu by console-keys.py (as
+ht1.sh's GRUB_PICK: that grub.cfg reads `set default=N` literally), then its
+default again; skipped when the baseline's other root is empty (a fresh
+install never upgraded).
 
 A LUKS guest's passphrase (the first of GUEST_DIR's luks-keyfile,
 console-passphrase and luks-passphrase, without a final newline) goes into
@@ -100,6 +105,27 @@ done
 grub2-editenv /boot/grub2/grubenv set default="$id" && echo "$id"'''
 SSH = rw1a.SSH + ["-o", "ServerAliveInterval=30"]
 CONSOLE_BOOT = os.path.join(HERE, "..", "..", "console-boot.py")
+# An ABRoot guest's other root (vanilla3: docs/design/vanillaos.md): its
+# master grub.cfg reads `set default=N` literally, so grub-reboot can't pick
+# the other entry; console-keys.py types it on GRUB's serial menu, as
+# ht1.sh's GRUB_PICK does.  ABROOT_MENU: the default, then each entry's title.
+CONSOLE_KEYS = os.path.join(HERE, "..", "..", "vanilla", "console-keys.py")
+ABROOT_MENU = r'''sed -n "s/^set default=//p" /boot/grub/grub.cfg | head -1; sed -n "s/^menuentry \"\([^\"]*\)\".*/\1/p" /boot/grub/grub.cfg'''
+
+
+def abroot_pick(menu):
+    """(title, pattern, keys) for the master grub.cfg's other entry, from
+    ABROOT_MENU's output, as ht1.sh's abroot_pick: its title as a regular
+    expression, the arrow toward it twice (two entries: the second press
+    stays there), then Enter.  None unless the default is 0 or 1 and there
+    are two entries."""
+    lines = [ln.strip() for ln in menu.strip().splitlines()]
+    if len(lines) != 3 or lines[0].strip("\"'") not in ("0", "1"):
+        return None
+    d = int(lines[0].strip("\"'"))
+    o = 1 - d
+    keys = r"\x1b[A|\x1b[A|\r" if o < d else r"\x1b[B|\x1b[B|\r"
+    return lines[1 + o], re.escape(lines[1 + o]), keys
 # The entry the firmware booted through, from efivarfs (no efibootmgr needed).
 NVBOOT = os.path.join(HERE, "..", "..", "holttest1d", "nvboot-efivars.sh")
 TYPE_LUKS = os.path.join(HERE, "..", "..", "omarchy", "type-luks-passphrase.py")
@@ -352,10 +378,15 @@ def main():
         sys.exit(f"{a.guest_dir} has no luks-keyfile, console-passphrase or luks-passphrase")
     mount_drive = f"mkdir -p /mnt/bs1-backup; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do mount LABEL={LABEL} /mnt/bs1-backup 2>/dev/null && break; sleep 2; done; mountpoint -q /mnt/bs1-backup"
 
-    def boot(name, disks, typed=False, delays=(25, 50, 80)):
+    def boot(name, disks, typed=False, delays=(25, 50, 80), pick=None):
         """A QEMU of the guest; typed: its LUKS prompt is answered, on the
-        serial console or (--luks-monitor) on the keyboard after DELAYS s."""
+        serial console or (--luks-monitor) on the keyboard after DELAYS s.
+        pick: (PATTERN, KEYS), typed on the serial console when PATTERN shows
+        (console-keys.py: an ABRoot guest's other GRUB entry)."""
         cmd, log = machine(name, disks), f"{w}/console-{name}.log"
+        if pick:
+            pw = ["--passphrase", passfile] if typed and passfile and not a.luks_monitor else []
+            return Vm([sys.executable, CONSOLE_KEYS, *pw, log, pick[0], pick[1], "--", *cmd], f"{w}/console-{name}.wrapper.log")
         if not typed:
             return Vm(cmd, log)
         print(f"  ({name}: the passphrase is typed when asked)", flush=True)
@@ -374,6 +405,45 @@ def main():
         vm.stop()
         print("FAILED: " + "; ".join(fails), flush=True)
         return 1
+
+    def abroot_boots(vm, disks, run, restores, typed):
+        """The restored ABRoot system's other root, its master grub.cfg
+        entry picked on GRUB's serial menu, then its default again, each
+        checked by bs1-verify --boot against the baseline's abroot.txt.
+        (The VM running at the end, whether it answered.)"""
+        rc, out = root.run(f"grep -c '^root .* empty=yes ' /mnt/bs1-backup/backshot1/runs/{run}/baseline/abroot.txt", 30)
+        if out.strip().splitlines()[-1:] != ["0"]:
+            print(f"  (the other root is empty or unrecorded ({out.strip()}): not booted)", flush=True)
+            return vm, True
+        _, menu = root.run(ABROOT_MENU, 30)
+        pick = abroot_pick(menu)
+        check(pick is not None, f"the restored master grub.cfg has a default of 0 or 1 and two entries: {' | '.join(menu.split(chr(10)))}")
+        if pick is None:
+            return vm, True
+        title = pick[0]
+        off(vm, root)
+        vm = boot("restored-other", disks, typed, pick=pick[1:])
+        up = root.up(vm.proc)
+        check(up, f"the restored \"{title}\" boots, picked on GRUB's serial menu, and answers")
+        if not up:
+            return vm, False
+        try:
+            with open(f"{w}/console-restored-other.log", errors="replace") as f:
+                typed_it = "console-keys.py: typed" in f.read()
+        except OSError:
+            typed_it = False
+        check(typed_it, f"GRUB's menu showed \"{title}\" on the serial console, and it was picked")
+        rc, out = root.show(f"{mount_drive} && bash /mnt/bs1-backup/backshot1/bs1-verify --boot {run}")
+        check(rc == 0 and "BOOT: other: PASS" in out, f"bs1-verify --boot: the restored \"{title}\" is the source's other root")
+        off(vm, root)
+        vm = boot("restored-default", disks, typed)
+        up = root.up(vm.proc)
+        check(up, "the restored default root boots again")
+        if not up:
+            return vm, False
+        rc, out = root.show(f"{mount_drive} && bash /mnt/bs1-backup/backshot1/bs1-verify --boot {run}; cat $(ls -d {restores}/*[0-9] | tail -n 1)/BOOTS")
+        check(rc == 0 and "BOOT: default: PASS" in out, "bs1-verify --boot: then the default root is the source's again")
+        return vm, True
 
     print("== source: the running guest", flush=True)
     vm = boot("source", [internal_disk(internal, True), usb_drive], a.luks_typed)
@@ -402,7 +472,7 @@ def main():
     with open(conf, "w") as f:
         f.write(f"SOURCE_HOST={host}\nINTERNAL_SERIAL={SERIAL}\nBACKUP_LABEL={LABEL}\n")
     scp = ["scp", "-q", *SSH, "-i", key, "-P", str(a.port)]
-    names = [os.path.join(HERE, f"bs1-{n}") for n in ("common", "backup", "restore", "verify", "manifest", "ostree", "adopt", "luks", "unlock-key", "list")]
+    names = [os.path.join(HERE, f"bs1-{n}") for n in ("common", "backup", "restore", "verify", "manifest", "ostree", "abroot", "adopt", "luks", "unlock-key", "list")]
     names.append(os.path.join(HERE, "..", "..", "ostree_paths.py"))      # bs1-manifest's and bs1-ostree's
     subprocess.run([*scp, *names, conf, f"root@127.0.0.1:/mnt/bs1-backup/backshot1/"], check=True)
     subprocess.run([*scp, f"{a.tools}/bko-holt", f"{a.tools}/rustic-bko", "root@127.0.0.1:/mnt/bs1-backup/backshot1/bin/"], check=True)
@@ -512,6 +582,8 @@ def main():
         root.run("mkdir -p /var/log/bko-holt; echo '==== stage boot done' >/var/log/bko-holt/load.log")
     _, ostree = root.run("test -e /run/ostree-booted && echo ostree-booted", 30)
     ostree = "ostree-booted" in ostree
+    _, abroot = root.run("test -e /usr/share/abroot/abroot.json && echo abroot-system", 30)
+    abroot = "abroot-system" in abroot
     # Not on a /var/tmp in RAM, which isn't in the backup.
     rc, _ = root.run(f"findmnt -no FSTYPE --target /var/tmp | grep -qvx tmpfs && echo probe >/{PROBE} && TZ=UTC touch -a -d '{PROBE_ATIME}' /{PROBE}", 30)
     probe = rc == 0
@@ -633,6 +705,8 @@ def main():
                 check(rc == 0 and "UNLOCK=drive" in out, "the restored system was unlocked by the drive's key, nothing typed: UNLOCK=drive")
             if rc == 0 and ostree and attempt == a.restores:
                 up = rollback_boots(root, vm, run, restores, host_key_is_pinned)
+            if rc == 0 and abroot and attempt == a.restores:
+                vm, up = abroot_boots(vm, [internal_disk(internal, a.bios or by_firmware), usb_drive], run, restores, typed_restore)
             if up and attempt == a.restores:
                 _, out = root.run(f"ls -d {restores}/*[0-9] | wc -l; cat {restores}/*[0-9]/RESULT | grep -c PASS")
                 check(out.split() == [str(a.restores), str(a.restores)], f"each of the {a.restores} restores kept its own PASS")

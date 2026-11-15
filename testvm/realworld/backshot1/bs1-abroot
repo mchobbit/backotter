@@ -1,0 +1,376 @@
+#!/usr/bin/env python3
+"""BackShot1's ABRoot records and checks (Vanilla OS: docs/design/vanillaos.md).
+As root, on the running ABRoot system.
+
+bs1-abroot preflight LAYOUT      no ABRoot operation running, the master
+                                 grub.cfg booting the running root next, the
+                                 two-root thin layout load restores, and every
+                                 filesystem of it in the layout's backup_sources;
+                                 prints each problem, exit 1 if any; exit 2
+                                 (and says why) if it couldn't tell
+bs1-abroot record LAYOUT TREE    abroot.txt: the two roots, the init LV, the
+                                 master grub.cfg, abroot.json, this boot's
+                                 command line (one "KEY VALUE" a line)
+bs1-abroot state                 the master grub.cfg's and grub.cfg.future's
+                                 sha256 and whether ABRoot's lock is there:
+                                 before and after the backup
+bs1-abroot boot-check BASELINE   which of the baseline's roots this boot
+                                 started, checked against its record; exit 1
+                                 if wrong
+
+LAYOUT is bko-holt dump's (its boot.abroot and storage.backup_sources).  TREE
+is BackShot1's tree (bs1-common's make_tree): the present root at /, raw (its
+image's /etc; each root's /etc changes are in var/lib/abroot/etc/LABEL), the
+other root at part-future, the init LV at boot/init.  BASELINE is a run's
+baseline/abroot.txt.  The record's keys:
+
+  present LABEL / future LABEL  the running root, and the other
+  default N LABEL               the master grub.cfg's `set default=`, and the
+                                root its entry leads to
+  entry N LABEL TITLE           each menu entry
+  root LABEL uuid=U fstype=T dm=D empty=yes|no abimage=DIGEST
+  init LABEL uuid=U fstype=T dm=D
+  abroot-cfg LABEL kernel=K initrd=I root=R search=S   its linux line's
+  init-file LABEL NAME SHA256   each file in the init LV's LABEL/
+  grub FILE SHA256              boot/grub/grub.cfg and grub.cfg.future (or -)
+  config KEY=JSON               abroot.json's merged keys
+  abroot-json LABEL image|etc SHA256   the root's /usr/share/abroot/abroot.json,
+                                and its /etc upper's abroot/abroot.json (or -)
+  kargs KARGS                   /etc/abroot/kargs, as dump read it
+  hostname LABEL H              the root's /etc/hostname, its upper's first
+  bko-root LABEL V              its /etc/bko-root (the test guest's mark), or -
+  cmdline CMDLINE               this boot's /proc/cmdline (the present root's)
+"""
+
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+
+UPPERS = "var/lib/abroot/etc"
+GRUB_FILES = ("boot/grub/grub.cfg", "boot/grub/grub.cfg.future")
+LOCK = "run/abroot/operation.lock"
+# Where the tree holds the init LV and the other root (ABRoot's own mount
+# points, and bko-holt's backup_sources paths).
+INIT_DIR, FUTURE_DIR = "boot/init", "part-future"
+
+
+class MissingTool(Exception):
+    """A tool the checks need isn't installed."""
+
+
+def out(cmd):
+    """CMD's output, or None if it fails; a CMD not installed raises MissingTool."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    except FileNotFoundError:
+        raise MissingTool(f"{cmd[0]} is not installed: bs1-abroot needs it ({' '.join(cmd)})")
+    except OSError:
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def sha256(path):
+    """PATH's sha256, or "-" if it isn't a readable file."""
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            while chunk := f.read(1 << 20):
+                h.update(chunk)
+    except OSError:
+        return "-"
+    return h.hexdigest()
+
+
+def text(path):
+    try:
+        with open(path, errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def abroot_of(layout):
+    """The dump's boot.abroot, or None."""
+    a = (layout.get("boot") or {}).get("abroot") if isinstance(layout, dict) else None
+    return a if isinstance(a, dict) else None
+
+
+def load(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def preflight(layout, root="/"):
+    """The reasons not to back up now, each a line.  ROOT: where the running
+    system's / is (for tests)."""
+    d = load(layout) if isinstance(layout, str) else layout
+    a = abroot_of(d)
+    if a is None:
+        return ["bko-holt dump found no ABRoot (no boot.abroot): this bko-holt can't back it up as ABRoot"]
+    problems = []
+    if a.get("operation_lock"):
+        problems.append("an ABRoot operation is running (/run/abroot/operation.lock): an upgrade may be under way; wait for it to finish")
+    elif a.get("mounts_skipped"):
+        problems.append("bko-holt dump didn't read the other root and the init LV (mounts_skipped)")
+    if a.get("v1_system"):
+        problems.append("this is ABRoot v1 (/.system), which bko-holt load doesn't restore")
+    if not a.get("thin_two_roots"):
+        problems.append("this isn't ABRoot's two roots on a thin pool (thinProvisioning, the init LV, both labelled roots), the layout bko-holt load restores")
+    present = a.get("present")
+    g = a.get("grub") or {}
+    dl = g.get("default_label")
+    if not present:
+        problems.append("bko-holt dump couldn't tell the present root")
+    if not dl:
+        problems.append("the master grub.cfg has no default entry leading to a root")
+    elif present and dl != present:
+        problems.append(f"the master grub.cfg boots {dl} next, not the running {present}: an upgrade waits for a reboot, "
+                        f"or this boot was its other entry picked by hand; reboot into the default first")
+    roots = [r for r in a.get("roots") or [] if isinstance(r, dict)]
+    if len(roots) != 2:
+        problems.append(f"bko-holt dump lists {len(roots)} roots, not 2")
+    for r in roots:
+        if r.get("read") is False:
+            problems.append(f"bko-holt dump couldn't read root {r.get('label')}")
+        if r.get("label") == dl and r.get("empty"):
+            problems.append(f"the master grub.cfg's default leads to {dl}, which is empty")
+    init = a.get("init") or {}
+    if init.get("read") is False:
+        problems.append(f"bko-holt dump couldn't read the init LV {init.get('label')}")
+    sources = (d.get("storage") or {}).get("backup_sources") or []
+    named = {s.get("source") for s in sources}
+    for what, x in [("init LV", init)] + [(f"root {r.get('label')}", r) for r in roots]:
+        dm = x.get("dm_name")
+        if dm and f"/dev/mapper/{dm}" not in named:
+            problems.append(f"the {what} (/dev/mapper/{dm}) isn't in the layout's storage.backup_sources, so it wouldn't be backed up")
+    for s in sources:
+        if s.get("from") is not None:
+            continue
+        m = s.get("mount")
+        if not isinstance(m, dict) or not m.get("device"):
+            problems.append(f"backup_sources' {s.get('path')} isn't mounted and has no mount hint")
+        elif not os.path.isdir(os.path.join(root, s["path"].lstrip("/"))):
+            problems.append(f"{s['path']} isn't a directory on this system, so {m['device']} can't be mounted there in the tree")
+    return problems
+
+
+def upper(tree, label):
+    return os.path.join(tree, UPPERS, label)
+
+
+def root_dir(tree, a, label):
+    """Where TREE holds LABEL's root: / for the present, part-future for the
+    other; None for neither."""
+    if label == a.get("present"):
+        return tree
+    if label == a.get("future"):
+        return os.path.join(tree, FUTURE_DIR)
+    return None
+
+
+def first_line(path):
+    t = text(path)
+    return t.strip().splitlines()[0].strip() if t and t.strip() else None
+
+
+def yn(v):
+    return "-" if v is None else "yes" if v else "no"
+
+
+def record(layout, tree, cmdline=None):
+    d = load(layout) if isinstance(layout, str) else layout
+    a = abroot_of(d)
+    if a is None:
+        raise ValueError("the layout has no boot.abroot")
+    if cmdline is None:
+        cmdline = (text("/proc/cmdline") or "").strip()
+    g = a.get("grub") or {}
+    lines = [f"present {a.get('present') or '-'}", f"future {a.get('future') or '-'}",
+             f"default {g.get('default') if g.get('default') is not None else '-'} {g.get('default_label') or '-'}"]
+    for i, e in enumerate(g.get("entries") or []):
+        lines.append(f"entry {i} {e.get('label') or '-'} {e.get('title') or '-'}")
+    roots = sorted((r for r in a.get("roots") or [] if isinstance(r, dict)), key=lambda r: r.get("label") or "")
+    for r in roots:
+        ab = r.get("abimage") or {}
+        lines.append(f"root {r.get('label')} uuid={r.get('uuid') or '-'} fstype={r.get('fstype') or '-'} dm={r.get('dm_name') or '-'} "
+                     f"empty={yn(r.get('empty'))} abimage={ab.get('digest') or '-'}")
+    i = a.get("init") or {}
+    lines.append(f"init {i.get('label') or '-'} uuid={i.get('uuid') or '-'} fstype={i.get('fstype') or '-'} dm={i.get('dm_name') or '-'}")
+    for r in roots:
+        c = (r.get("init") or {}).get("abroot_cfg") or {}
+        lines.append(f"abroot-cfg {r.get('label')} kernel={c.get('kernel') or '-'} initrd={c.get('initrd') or '-'} "
+                     f"root={c.get('root') or '-'} search={c.get('search_uuid') or '-'}")
+    for r in roots:
+        where = os.path.join(tree, INIT_DIR, r.get("label") or "-")
+        try:
+            names = sorted(n for n in os.listdir(where) if os.path.isfile(os.path.join(where, n)))
+        except OSError:
+            names = []
+        if not names:
+            lines.append(f"init-file {r.get('label')} - -")
+        for n in names:
+            lines.append(f"init-file {r.get('label')} {n} {sha256(os.path.join(where, n))}")
+    for rel in GRUB_FILES:
+        lines.append(f"grub {rel} {sha256(os.path.join(tree, rel))}")
+    for k, v in sorted(((a.get("config") or {}).items())):
+        if k != "files":
+            lines.append(f"config {k}={json.dumps(v, sort_keys=True)}")
+    for r in roots:
+        lab = r.get("label")
+        rd = root_dir(tree, a, lab)
+        lines.append(f"abroot-json {lab} image {sha256(os.path.join(rd, 'usr/share/abroot/abroot.json')) if rd else '-'}")
+        lines.append(f"abroot-json {lab} etc {sha256(os.path.join(upper(tree, lab), 'abroot/abroot.json'))}")
+    lines.append(f"kargs {a.get('kargs') or '-'}")
+    for r in roots:
+        lab = r.get("label")
+        rd = root_dir(tree, a, lab)
+        host = first_line(os.path.join(upper(tree, lab), "hostname")) or (first_line(os.path.join(rd, "etc/hostname")) if rd else None)
+        lines.append(f"hostname {lab} {host or '-'}")
+        lines.append(f"bko-root {lab} {first_line(os.path.join(upper(tree, lab), 'bko-root')) or (first_line(os.path.join(rd, 'etc/bko-root')) if rd else None) or '-'}")
+    lines.append(f"cmdline {cmdline}")
+    return lines
+
+
+def state(root="/"):
+    """What only an upgrade or a rollback changes, and the lock."""
+    lines = [f"grub {rel} {sha256(os.path.join(root, rel))}" for rel in GRUB_FILES]
+    lines.append(f"lock {'yes' if os.path.exists(os.path.join(root, LOCK)) else 'no'}")
+    return lines
+
+
+def parse(path):
+    keyed = {}
+    with open(path) as f:
+        for line in f:
+            k, _, v = line.rstrip("\n").partition(" ")
+            keyed.setdefault(k, []).append(v)
+    return keyed
+
+
+def fields(value):
+    """"LABEL a=1 b=2" as (LABEL, {a: 1, b: 2})."""
+    head, *rest = value.split(" ")
+    return head, dict(w.split("=", 1) for w in rest if "=" in w)
+
+
+def karg(cmdline, name):
+    for w in cmdline.split():
+        if w.startswith(name + "="):
+            return w[len(name) + 1:]
+    return None
+
+
+def observe(root="/"):
+    """This boot, as boot_check reads it."""
+    src = (out(["findmnt", "-vno", "SOURCE", "/"]) or "").strip()
+    label = (out(["lsblk", "-dno", "LABEL", src]) or "").strip() if src else ""
+    status = out(["abroot", "status", "--json"])
+    try:
+        present = json.loads(status).get("present") if status else None
+    except ValueError:
+        present = None
+    try:
+        with open(os.path.join(root, "abimage.abr")) as f:
+            abimage = json.load(f).get("digest")
+    except (OSError, ValueError, AttributeError):
+        abimage = None
+    return {
+        "label": label or None,
+        "status_present": present,
+        "cmdline": (text("/proc/cmdline") or "").strip(),
+        "hostname": (text("/proc/sys/kernel/hostname") or "").strip(),
+        "bko_root": first_line(os.path.join(root, "etc/bko-root")),
+        "abimage": abimage,
+        "grub": {rel: sha256(os.path.join(root, rel)) for rel in GRUB_FILES},
+        "root_fs": (out(["findmnt", "-no", "FSTYPE,OPTIONS", "/"]) or "").strip(),
+        "etc_fs": (out(["findmnt", "-no", "FSTYPE,OPTIONS", "/etc"]) or "").strip(),
+    }
+
+
+def boot_check(baseline, now=None):
+    """(kind, label, lines, ok): which of the baseline's roots this boot
+    started ("default", the master grub.cfg's, or "other"), and the checks of
+    it against the baseline's record of that root."""
+    base = parse(baseline)
+    now = now if now is not None else observe()
+    label = now.get("label") or "-"
+    roots = dict(fields(v) for v in base.get("root", []))
+    cfgs = dict(fields(v) for v in base.get("abroot-cfg", []))
+    default = ((base.get("default") or ["- -"])[0].split() + ["-"])[1]
+    kind = "default" if label == default else "other" if label in roots else "unknown"
+    res = []
+
+    def check(ok, what):
+        res.append(("  ok    " if ok else "  FAIL  ") + what)
+
+    def of(key):
+        return {v.split(" ", 1)[0]: (v.split(" ", 1) + [""])[1] for v in base.get(key, [])}
+
+    check(label in roots, f"the booted root {label} is one of the baseline's ({' '.join(sorted(roots)) or 'none'})")
+    check(now.get("status_present") == label, f"abroot status calls it present: {now.get('status_present') or 'nothing'}")
+    cmd = now.get("cmdline") or ""
+    cfg = cfgs.get(label, {})
+    image, rootarg = karg(cmd, "BOOT_IMAGE"), karg(cmd, "root")
+    check(image is not None and image == cfg.get("kernel"), f"the kernel is its abroot.cfg's from the baseline ({cfg.get('kernel', '-')}): {image or 'none'}")
+    check(rootarg is not None and rootarg == cfg.get("root"), f"root= is its abroot.cfg's from the baseline ({cfg.get('root', '-')}): {rootarg or 'none'}")
+    if kind == "default":
+        want = (base.get("cmdline") or ["-"])[0]
+        check(cmd == want, f"the kernel command line is the baseline's: {cmd}")
+    host = of("hostname").get(label, "-")
+    if host != "-":
+        check(now.get("hostname") == host, f"the hostname is its /etc's from the baseline ({host}): {now.get('hostname') or 'none'}")
+    mark = of("bko-root").get(label, "-")
+    if mark != "-":
+        check(now.get("bko_root") == mark, f"/etc/bko-root is its own from the baseline ({mark}): {now.get('bko_root') or 'none'}")
+    digest = roots.get(label, {}).get("abimage", "-")
+    check(now.get("abimage") == digest, f"/abimage.abr's digest is the baseline's for {label}: {now.get('abimage') or 'none'}")
+    grub = dict(v.split(" ", 1) for v in base.get("grub", []) if " " in v)
+    check(bool(grub) and all((now.get("grub") or {}).get(k) == v for k, v in grub.items()),
+          "the master grub.cfg and grub.cfg.future are the baseline's: no boot writes them")
+    rf = (now.get("root_fs") or "").split()
+    check(len(rf) == 2 and rf[0] == "btrfs" and "ro" in rf[1].split(","), f"/ is btrfs, read-only: {' '.join(rf) or 'nothing'}")
+    ef = (now.get("etc_fs") or "").split()
+    up = re.search(r"(?:^|,)upperdir=([^,]*)", ef[1]) if len(ef) == 2 else None
+    check(len(ef) == 2 and ef[0] == "overlay" and up is not None and up[1].rstrip("/").endswith(f"/{UPPERS}/{label}"),
+          f"/etc is ABRoot's overlay, its upper /{UPPERS}/{label}: {ef[0] if ef else 'nothing'}{' upperdir=' + up[1] if up else ''}")
+    return kind, label, res, all(r.startswith("  ok") for r in res)
+
+
+def main(argv):
+    if len(argv) == 2 and argv[0] == "preflight":
+        # A refusal skipped because something broke would let the backup
+        # through, so a crash is a failure of its own (exit 2).
+        try:
+            problems = preflight(argv[1])
+        except Exception as e:  # noqa: BLE001
+            print(f"bs1-abroot preflight couldn't tell: {type(e).__name__}: {e}")
+            return 2
+        for p in problems:
+            print(p)
+        return 1 if problems else 0
+    try:
+        if len(argv) == 3 and argv[0] == "record":
+            for line in record(argv[1], argv[2]):
+                print(line)
+            return 0
+        if len(argv) == 1 and argv[0] == "state":
+            for line in state():
+                print(line)
+            return 0
+        if len(argv) == 2 and argv[0] == "boot-check":
+            kind, label, lines, ok = boot_check(argv[1])
+            print(f"booted: the {kind} root {label}")
+            for line in lines:
+                print(line)
+            return 0 if ok else 1
+    except MissingTool as e:
+        print(f"bs1-abroot {argv[0]}: {e}", file=sys.stderr)
+        return 2
+    sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

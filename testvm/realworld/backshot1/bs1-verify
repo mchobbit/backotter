@@ -19,6 +19,17 @@
 # hostname and SELinux, and that the deployments haven't moved.  It writes
 # boot-STAMP.log and a line in BOOTS.
 #
+# On ABRoot (Vanilla OS: docs/design/vanillaos.md) it holds vanilla-updates
+# off the same way, compares the six-path tree's files (bs1-manifest: the
+# present root's /etc upper as /etc, the other root, its upper and the init
+# LV as they were, the master grub.cfg, grub.cfg.future, EFI/vanilla and
+# EFI/BOOT byte for byte), then both roots with the baseline's abroot.txt
+# (bs1-abroot): the present root, the master grub.cfg's default and entries,
+# each root's UUID, LV, ABImage digest, abroot.cfg and init files, abroot.json,
+# the kargs, hostnames and the command line, and this boot (bs1-abroot
+# boot-check).  --boot checks a boot of the other root (its GRUB entry picked
+# by hand), or of the default again, against the baseline's record of it.
+#
 # When the baseline's unlock.txt says drive, each LUKS volume it lists as
 # opened by the backup drive's key must have been opened that way at this
 # boot too, not typed (unlock_mode in bs1-common).  --unlock prints that
@@ -42,7 +53,7 @@ RUN=$RUNS/${1:?usage: bs1-verify [--boot] RUN}
 ATTEMPT=$(ls -d "$RUN"/restores/*[0-9] 2>/dev/null | tail -n 1)
 [[ -n $ATTEMPT && -f $ATTEMPT/RESTORED ]] || { echo "$RUN's newest restore (${ATTEMPT:-none}) didn't finish" >&2; exit 2; }
 if [[ $BOOT_CHECK == yes ]]; then
-    is_ostree || { echo "--boot is for an ostree system's deployments" >&2; exit 2; }
+    is_ostree || is_abroot || { echo "--boot is for an ostree system's deployments or an ABRoot system's roots" >&2; exit 2; }
     [[ -s $ATTEMPT/RESULT ]] || { echo "bs1-verify $1 hasn't checked this restore yet" >&2; exit 2; }
     LOG=$ATTEMPT/boot-$(date -u +%Y%m%d-%H%M%S).log
 else
@@ -83,6 +94,7 @@ updaters_quiet() {
     [[ -z $ran ]] || { echo "the journal since this boot:"; tail -n 20 <<<"$ran"; return 1; }
 }
 OSTREE_TOOL=$HERE/bs1-ostree
+ABROOT_TOOL=$HERE/bs1-abroot
 rpm_ostree_same() {
     diff <(grep '^rpm-ostree ' "$RUN/baseline/deployments.txt") <(python3 "$OSTREE_TOOL" rpm-ostree)
 }
@@ -134,12 +146,18 @@ if [[ $BOOT_CHECK == yes ]]; then
     disk=$(internal_disk) || { say "no single disk has serial $INTERNAL_SERIAL"; exit 1; }
     hold_updates
     check "no updater ran since this boot" updaters_quiet
-    check "/sysroot is on the restored $disk" on_disk "$(root_source)" "$disk"
-    python3 "$OSTREE_TOOL" boot-check "$RUN/baseline/deployments.txt" >"$LOG.check" 2>&1
+    check "$(root_mount) is on the restored $disk" on_disk "$(root_source)" "$disk"
+    if is_abroot; then
+        # Which root this boot started, the default or the other (its GRUB
+        # entry picked by hand), against the baseline's record of it.
+        python3 "$ABROOT_TOOL" boot-check "$RUN/baseline/abroot.txt" >"$LOG.check" 2>&1
+    else
+        python3 "$OSTREE_TOOL" boot-check "$RUN/baseline/deployments.txt" >"$LOG.check" 2>&1
+    fi
     rc=$?
     tee -a "$LOG" <"$LOG.check"
     [[ $rc -eq 0 ]] || fails=$((fails + 1))
-    which=$(sed -n '1s/^booted: the \([a-z]*\) deployment .*/\1/p' "$LOG.check")
+    which=$(sed -n '1s/^booted: the \([a-z]*\) .*/\1/p' "$LOG.check")
     rm -f "$LOG.check"
     if [[ $fails -eq 0 ]]; then r=PASS; else r="FAIL: $fails checks"; fi
     echo "$(basename "$LOG" .log) ${which:-unknown}: $r" >>"$ATTEMPT/BOOTS"
@@ -159,6 +177,11 @@ if is_ostree; then
     hold_updates
     check "no updater ran since this boot" updaters_quiet
     check "rpm-ostree's deployments are the baseline's: none staged or new" rpm_ostree_same
+elif is_abroot; then
+    # First, so no upgrade writes the other root while the rest is compared.
+    hold_updates
+    check "no updater ran since this boot" updaters_quiet
+    check "no ABRoot operation is running (/run/abroot/operation.lock)" test ! -e /run/abroot/operation.lock
 fi
 check "hostname is $SOURCE_HOST" test "$(this_host)" == "$SOURCE_HOST"
 check "$(root_mount) is on the restored $disk" on_disk "$(root_source)" "$disk"
@@ -246,6 +269,32 @@ if is_ostree; then
     check "bootupctl status says At latest version" at_latest
     check "bootupd-state.json is the baseline's" same bootupd-state
     check "grubenv has no boot_counter" no_boot_counter
+fi
+
+if is_abroot; then
+    step "the two roots, against the baseline's"
+    B=$RUN/baseline O=$ATTEMPT/abroot
+    mkdir -p "$O"
+    python3 "$ABROOT_TOOL" record "$tree_layout" "$TREE" >"$O/abroot.txt" 2>>"$LOG"
+    # asame 'KEY|KEY': those lines of the record, before and after.
+    asame() { [[ -s $B/abroot.txt ]] && diff <(grep -E "^($1) " "$B/abroot.txt") <(grep -E "^($1) " "$O/abroot.txt"); }
+    check "the baseline has its ABRoot record (abroot.txt)" test -s "$B/abroot.txt"
+    check "the present root is the baseline's: $(sed -n 's/^present //p' "$O/abroot.txt"), the other $(sed -n 's/^future //p' "$O/abroot.txt")" asame 'present|future'
+    check "the master grub.cfg's default and entries are the baseline's: $(sed -n 's/^default //p' "$O/abroot.txt")" asame 'default|entry'
+    check "both roots and the init LV are the baseline's filesystems: UUID, type, LV, ABImage digest" asame 'root|init'
+    check "each root's abroot.cfg leads to the baseline's kernel, initrd and root" asame 'abroot-cfg'
+    check "each root's kernels, initramfs and abroot.cfg in the init LV are the baseline's bytes" asame 'init-file'
+    check "the master grub.cfg and grub.cfg.future are the baseline's bytes" asame 'grub'
+    check "abroot.json, merged and each root's own, is the baseline's" asame 'config|abroot-json'
+    check "the kernel arguments (/etc/abroot/kargs) are the baseline's" asame 'kargs'
+    check "each root's hostname and /etc/bko-root are the baseline's" asame 'hostname|bko-root'
+    check "the kernel command line is the baseline's" asame 'cmdline'
+    python3 "$ABROOT_TOOL" boot-check "$B/abroot.txt" >"$O/boot-check.txt" 2>&1
+    rc=$?
+    cat "$O/boot-check.txt" >>"$LOG"
+    check "this boot is the baseline's default root, as bs1-abroot boot-check sees it (abroot/boot-check.txt)" \
+        test "$rc" = 0 -a "$(head -n 1 "$O/boot-check.txt")" = "booted: the default root $(sed -n 's/^default [^ ]* //p' "$B/abroot.txt" 2>/dev/null)"
+    check "abroot status works" sh -c 'abroot status >/dev/null'
 fi
 
 if [[ $fails -eq 0 ]]; then r=PASS; else r="FAIL: $fails checks"; fi

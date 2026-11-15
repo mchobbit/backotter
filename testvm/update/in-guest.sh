@@ -192,7 +192,10 @@ if [ "$(uname)" = Linux ] && { [ -f /usr/share/abroot/abroot.json ] || has abroo
     dflt() { sed -n 's/^set default=//p' /boot/grub/grub.cfg 2>/dev/null | head -n 1; }
     was=$(dflt)
     out=$(abroot upgrade </dev/null 2>&1); rc=$?
-    printf '%s\n' "$out" | sed 's/\x1b\[[0-9;]*m//g'
+    # Each progress bar's \r frames (~330,000 of them in an upgrade, one per
+    # file synced) down to its last: GuestTest2's sweep reads 20,000 lines,
+    # \r frames counted.  LC_ALL=C: a frame can cut a UTF-8 file name short.
+    printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*m//g; s/\r*$//; s/.*\r//'
     if [ $rc -ne 0 ]; then
         if printf '%s\n' "$out" | grep -q 'No update available'; then
             say "ABRoot: no newer image, nothing changed"

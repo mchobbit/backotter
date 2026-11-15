@@ -888,6 +888,95 @@ source dump (Chopin, warm build `/bkoscratch/holt-warm/vanilla`).
   holt/spec.json, guest/spec.json, estimates.tsv, plan.py's counts,
   world.py); done later the same day, on its own (the V8 row).
 
+## What V11 found
+
+2026-11-15, BackShot1's plumbing for ABRoot (lane bs1; no guest booted, no
+run): `testvm/realworld/backshot1/` (bs1-common, bs1-backup, bs1-verify,
+bs1-manifest, the new bs1-abroot, bs1-qemu.py, backshot1, README
+"ABRoot") and `testvm/test2/tests/test_bs1_abroot.py`.
+
+- **vanilla3's image has every tool bs1-adopt looks for** (sshd,
+  avahi-daemon, python3, efibootmgr, hostnamectl: V7's `src-meta` on
+  Chopin) **and no `apt-get`**, so bs1-adopt installs nothing there, and a
+  missing tool would stop it with "no package manager I know".
+- **What bs1-adopt writes splits between the roots:** `/root` links to
+  `var/root`, so the controller's `authorized_keys` reaches both roots,
+  but the host key, the sshd drop-in and the hostname go into the present
+  root's `/etc` upper only.  The other root's boot keeps its own host key
+  and hostname, so on the Thinkpad its `check-boot` needs the console (or
+  bs1-adopt again in that boot), as ostree's rollback does.
+- **The /etc uppers were never judged before:** bs1-manifest's
+  `var/lib/*` excused both roots' uppers whole.  On ABRoot the present
+  root's upper is now matched as `etc/` and the other's gets no
+  exceptions; mount-sys's `fstab` (and `fstab.old`) rewrite at every boot
+  must keep its content (`ABROOT_REMADE`).  Whether a real restored boot
+  writes anything else in the present upper is for the first rehearsal
+  (`bs1-qemu.py` on vanilla3) to show.
+
+GuestTest2's judge inputs (lane gt2; no guest booted, no run), read from
+the guest folder's `upgrade.log` and `first-boot.txt`, V5's two
+`vm-update --try` logs and V7's run dirs: `guest/known-lines.json#abroot`
+(which `guest/spec.json` already named), `guest/limits.json`'s `vanilla3`.
+
+- **systemd-networkd-wait-online.service fails at every boot, restored
+  ones too**, not only the source's as V7 said: `logs/bootstate-raw.txt`
+  in `v7-1` and `v7-2` has it, with `degraded`, at all six boots of each
+  run (two source, four restored); ht1.sh's `FLAKY_UNITS` hid it in the
+  restored boots' records too.  The build's boots were degraded the same
+  way.  So it is a standing line, not a flake: limits.json classes
+  `failed systemd-networkd-wait-online.service` and `state degraded`;
+  flakes.json (vm-update's failure tails only) has nothing to match.
+- **`abroot upgrade`'s output is ~330,000 lines** once the `\r` frames of
+  its progress bars are lines (`upgrade.log`, 75 MB: one "Syncing <name>
+  [n/total] bar N% | Ns" frame per file, nearly all on one `\n` line), and
+  GuestTest2's sweep (`splitlines()`, which splits on `\r`) reads only the
+  last 20,000 of them, after `_read` keeps the last 32 MiB.  Its cut note
+  counted only `\n`s, so that cut was silent: it lost the whole image pull
+  and podman build.  Fixed in the gt2 FIX pass: rows_guest.sweep notes a
+  cut as sweep_lines counts lines, and a log over 32 MiB; in-guest.sh's
+  ABRoot section keeps only each bar's last frame (`LC_ALL=C sed`: a frame
+  can cut a UTF-8 name short), which takes `upgrade.log` from 75 MB to
+  124 lines, 8 KB, all of it swept.  The
+  `abroot` section matches every line of both the upgrade and the `--try`
+  (podman build's STEP/COMMIT lines, netavark's INFO lines, grub-mkconfig's
+  os-prober warning and `umount: /var/lib/os-prober/mount/: not found`,
+  update-initramfs, the layer and sync bars, containers' storage-driver
+  warning); in-guest.sh's ABRoot step line and any ERROR stay.
+- vanilla3's `df` (`/` 32 %, `/boot` 974 MiB, ESP 511 MiB), live fstab
+  (`findmnt --verify` clean) and mount order (the corpus dump's: `/`,
+  `/var`, `/boot`, `/boot/efi`, then the storage's overlay mount; the
+  `/etc` overlay comes after `/var`, from mount-sys) give check-image.sh
+  and check-after.sh nothing else to class, as far as the records show:
+  the first GuestTest2 run's mountinfo is the first full look.
+
+BackShot2's plumbing (lane bs2; no guest booted, no run): the traits
+`testvm/backshot2/bs2lib/families/abroot.py` and `lvm_thin.py`, their
+tests, vanilla3's entry in `tests/golden/linux.json`, and
+docs/design/bs2-all.md's table, paragraph and A1/A2 rows.
+
+- **The generic generator drew drift of the thin pool's own LVs:**
+  `root_tdata` and `root_tmeta` have dm devices (dm-3, dm-2) and linear
+  segments, so `lv_resize` and `lv_split` took them (87 resizes and 4
+  splits in seeds 0-299), though load makes them with `lvcreate --type
+  thin-pool` from tdata's and tmeta's sizes and places them itself.  A
+  tdata shrink is one LVM never makes, a tdata grow left the pool LV's
+  size behind, a tmeta grow the spare's.  The `lvm-thin` trait's quirk
+  now refuses them; only `init` keeps both edits (52 resizes, 4 splits).
+- **No `--fit-largest` can shrink `vos-root`:** load refuses a thin group
+  past its free extents, and judge.py's fit plan, which the generator uses,
+  refuses it too (the pool, its data LV and both thin LVs tie for largest),
+  so the generator draws no such fit.  The 47 fits in seeds 0-299 are all
+  on `vos-var` (the largest partition): 9 grow it, 38 change nothing.
+- **Rule 3 finds nothing by number on ABRoot but /boot:** grub.cfg's
+  entries name `(lvm/vos--root-init)`, A's abroot.cfg the root by UUID,
+  B's by `/dev/mapper`.  The ESP's own grub.cfg (Debian's `search.fs_uuid`
+  with a partition hint) isn't in the dump, and the generic "GRUB has no
+  search UUIDs" rule refuses renumbering vda1, which covers it.
+- **BackShot2's tier 1 can't hold vanilla3 in RAM:** its cases run ht1.sh
+  in `/mnt/bko-ram/backshot2`, and HoltTest1's D is 30 GiB, over every RAM
+  disk.  A2 needs a `/bkoscratch` mode for it on Chopin and Cinqcent.
+  Tier 0's sfdisk dry run takes the host's (Vanilla has no sfdisk).
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Effort |

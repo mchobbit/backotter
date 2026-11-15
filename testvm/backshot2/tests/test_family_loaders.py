@@ -91,6 +91,35 @@ class TestOstree(unittest.TestCase):
         self.assertTrue(any("vda3" in w for w in named(x, "kinoite44", 3)))
 
 
+class TestAbroot(unittest.TestCase):
+    """abroot.py (vanilla3): the master grub.cfg's entries and each root's abroot.cfg are rule 3 texts."""
+
+    def test_texts(self):
+        d = K.dump("vanilla3")
+        h = F.hooks("vanilla3", d)
+        self.assertIn("abroot", h.names)
+        texts = dumpx.config_texts(d, h)
+        for r in d["boot"]["abroot"]["roots"]:
+            self.assertIn(r["init"]["abroot_cfg"]["linux"], texts)
+        self.assertIn("(lvm/vos--root-init)", texts)
+        self.assertIn(d["boot"]["abroot"]["kargs"], texts)
+        for g in ("kinoite44", "debian13", "pikaos4"):
+            self.assertNotIn("abroot", F.hooks(g, K.dump(g)).names, g)
+
+    def test_by_number(self):
+        d = K.dump("vanilla3")
+        # By LV name, fs UUID and dm name: the PVs' partitions aren't named.
+        self.assertEqual(named(d, "vanilla3", 3), [])
+        self.assertEqual(named(d, "vanilla3", 4), [])
+        # /boot's is, by the generic rule (the ESP's grub.cfg, not in the dump, holds its hint).
+        self.assertTrue(any("no search UUIDs" in w for w in named(d, "vanilla3", 1)))
+        x = with_text(d, ["boot", "abroot", "roots", 0, "init", "abroot_cfg", "linux"], "linux /vos-a/vmlinuz root=/dev/vda3 ro")
+        self.assertTrue(any("vda3" in w for w in named(x, "vanilla3", 3)))
+        x = with_text(d, ["boot", "abroot", "grub", "entries", 1, "root"], "(hd0,gpt3)")
+        self.assertTrue(named(x, "vanilla3", 3))
+        self.assertEqual(named(x, "vanilla3", 4), [])
+
+
 class TestProxmoxBoot(unittest.TestCase):
     def test_matches(self):
         for g, n in (("proxmox9", 1), ("proxmox9-mirror", 2)):

@@ -26,7 +26,7 @@ tier, the three rules, INVALID, the corpus) are used as defined there.
   unbuilt one as SKIPPED (unbuilt: A-piece named) in its plan and report. A
   run with any SKIPPED family is a partial All: it reports PARTIAL PASS, not
   PASS, and doesn't count as the full All in CarpetBeater's record.
-- **Size:** about 62 sources today. The QEMU tiers have ~1,250 cases, and a
+- **Size:** about 63 sources today. The QEMU tiers have ~1,250 cases, and a
   run is ~15-16 h on the four hosts (est.).
 - **Build:** 16 days of effort (est.), built in parallel lanes: about a week
   of calendar time (est.) to all families, with the first (Linux) run after
@@ -57,12 +57,12 @@ tier. Counts as of today, est.:
 | Family | Sources | Count |
 |---|---|---|
 | Alpine | `alpine324`, `-uefi`, `-lvm`, `-luks` (BackShot2Alpine's) | 4 |
-| Other Linux, one disk | aerynos, arch, artix-dinit, artix-s6, biglinux, cachyos, chimera, chimera-uefi, debian12, debian13, devuan6, endeavouros, endeavouros-grub, fedora44, fedora44-uefi, gentoo, gentoo-systemd, kinoite44, manjaro, mint22, mx25, nixos2605, omarchy, pop24, rocky10, rocky10-lvm, tumbleweed, ubuntu24, ubuntu26-luks, ubuntu26-uefi, void-musl, zorin18 | 32 |
+| Other Linux, one disk | aerynos, arch, artix-dinit, artix-s6, biglinux, cachyos, chimera, chimera-uefi, debian12, debian13, devuan6, endeavouros, endeavouros-grub, fedora44, fedora44-uefi, gentoo, gentoo-systemd, kinoite44, manjaro, mint22, mx25, nixos2605, omarchy, pop24, rocky10, rocky10-lvm, tumbleweed, ubuntu24, ubuntu26-luks, ubuntu26-uefi, vanilla3, void-musl, zorin18 | 33 |
 | Linux ZFS, md, multi-disk | cachyos-zfs, chimera-zfs, debian13-zfs, debian13-stack, fedora44-raid, proxmox9, proxmox9-mirror, rocky10-raid5, ubuntu26-raid, ubuntu26-zfs, ubuntu26-zfsmirror | 11 |
 | BSD | freebsd14, freebsd15, freebsd15-mirror, ghostbsd26, ghostbsd26-zfs, hardenedbsd15, dragonfly6, netbsd11, openbsd8, alpinebsd | 10 |
 | illumos | omnios58, omnios58-mirror | 2 |
 | Haiku, Redox, Sculpt OS | haiku6, redox, sculpt2610 | 3 |
-| | | **62** |
+| | | **63** |
 
 **Proxmox VE 9** (2026-11-15, docs/design/proxmox.md): `proxmox9` (ZFS raid0)
 and `proxmox9-mirror` (raid1, an ESP on each disk) join the ZFS row. (The
@@ -80,6 +80,26 @@ of wall clock over 8 slots (est.). Room per case as HoltTest1's
 (`holttest1d/ram-sizes.tsv`): D 9 and 13 GiB, MEM 4, so
 `proxmox9-mirror`'s cases stay on Chopin and Cinqcent (a small host's
 10 GiB RAM disk doesn't hold D 13), as `ubuntu26-zfsmirror`'s (D 15) do.
+
+**Vanilla OS 3** (2026-11-15, docs/design/vanillaos.md): `vanilla3` (ABRoot
+v2: two btrfs roots on thin LVs of `vos-root`, the init LV, an ext4 /boot
+and a btrfs /var on `vos-var`, one disk, UEFI with Secure Boot) joins the
+one-disk row. Its rules are built: the `abroot` trait
+(`bs2lib/families/abroot.py`: the master grub.cfg's entries, each root's
+abroot.cfg, ABRoot's kargs as rule 3 texts; load restores both roots, the
+init LV and /boot as they were) and the generic `lvm-thin` trait
+(`lvm_thin.py`: no `lv_split` or `lv_resize` of a thin pool's data,
+metadata or spare LV, which load's lvcreate sizes and places itself), with
+its golden in `tests/golden/linux.json`; the smoke draws 300 cases, all
+valid (tier 0's dry runs not run yet; Vanilla's root has no sfdisk, so the
+table's dry run takes the host's). Its tier 1 and 2 are A2's, and they
+can't run in RAM: HoltTest1's room for it is D 30 GiB
+(`holttest1d/ram-sizes.tsv`), over every RAM disk, so its cases need a
+`/bkoscratch` mode in `bs2-host` (as ht1-queue.sh's `DISK_OVER=1`) on Chopin
+and Cinqcent only. A run gains 1,000 tier 0 cases (~5 min), 20 tier 1 and 5
+tier 2 cases at ~20 min each (two restored boots, one per root, as
+HoltTest1's): ~8 slot-hours, ~4 h of wall clock on one disk slot per big
+host (est.), so it should start first.
 
 **Known findings are steered around, not waited for** (backshot2.md's
 `generate.KNOWN` rule). OpenBSD's rustic-bko restore OOM in the 3 GiB image is
@@ -143,8 +163,8 @@ as everywhere.
 | # | Piece | Effort |
 |---|---|---|
 | A0 | BackShot2Alpine run to phase 1's end (backshot2.md), measured with the reuse switches on and off | 0.5 d |
-| A1 | B11, grown: rule 2 tables and source quirks for the other Linux sources: dracut, mkinitcpio, booster, systemd-boot, shim, Limine, snapper, ostree (kinoite44), NixOS generations, Gentoo, Chimera. Plus rule 3's loader paths (Limine, systemd-boot entries, NixOS's generated GRUB) | 3 d |
-| A2 | B12: tier 1 and 2 for those sources: source map, `SECS` per source, which cases go to tier 2 | 1 d |
+| A1 | B11, grown: rule 2 tables and source quirks for the other Linux sources: dracut, mkinitcpio, booster, systemd-boot, shim, Limine, snapper, ostree (kinoite44), ABRoot and LVM thin pools (vanilla3: `abroot`, `lvm-thin`, built 2026-11-15), NixOS generations, Gentoo, Chimera. Plus rule 3's loader paths (Limine, systemd-boot entries, NixOS's generated GRUB) | 3 d |
+| A2 | B12: tier 1 and 2 for those sources: source map, `SECS` per source, which cases go to tier 2; a `/bkoscratch` mode for sources over the RAM disk (vanilla3, D 30 GiB) | 1 d |
 | A3 | ZFS, md and multi-disk drift, shared by Linux, BSD and illumos: ashift, vdev partitions placed and sized, md metadata version and offsets, per-disk targets, member placement. Rule 3 for pool and array names | 2 d |
 | A4 | BSD: rule 2 tables (gpart, newfs, bsdlabel and disklabel for OpenBSD and NetBSD, HAMMER2), tier 0 dry runs in a source guest, rule 3 (`/dev/ada0p2` in fstab, `vfs.root.mountfrom`, boot code) | 4 d |
 | A5 | illumos: EFI and VTOC labels, ZFS root, the loader and bootadm, rule 3 | 1.5 d |

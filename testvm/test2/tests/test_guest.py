@@ -116,12 +116,16 @@ class Spec(unittest.TestCase):
         from t2lib import guest_judge as J
         with open(os.path.join(REPO, "testvm/test2/guest/limits.json"), encoding="utf-8") as f:
             d = json.load(f)
-        self.assertEqual(sorted(d), ["kinoite44", "pikaos4", "pikaos4-luks"])
+        self.assertEqual(sorted(d), ["kinoite44", "pikaos4", "pikaos4-luks", "vanilla3"])
         self.assertEqual(sorted(d["kinoite44"]), ["after:boot-state", "after:failed-units", "after:fstab", "image:free"])
         # PikaOS (pikaos.md): its one apt suite, pika, is rolling (sid's), with no -security suite
         for g in ("pikaos4", "pikaos4-luks"):
             self.assertEqual(d[g]["image:sources"]["lines"], ["no -security suite in apt's sources"])
             self.assertEqual(sorted(d[g]), ["image:sources"])
+        # Vanilla OS (vanillaos.md, V1/V7/V11): networkd's wait-online fails at every boot, so degraded
+        self.assertEqual(d["vanilla3"]["after:failed-units"]["lines"], ["failed systemd-networkd-wait-online.service"])
+        self.assertEqual(d["vanilla3"]["after:boot-state"]["lines"], ["state degraded"])
+        self.assertEqual(sorted(d["vanilla3"]), ["after:boot-state", "after:failed-units"])
         for g in d:
             for n, e in d[g].items():
                 self.assertIn(n, J.IMAGE_NEEDS + J.AFTER_NEEDS)
@@ -1061,6 +1065,18 @@ class Rows(unittest.TestCase):
         r = self.build()
         self.assertEqual(r["needs"]["logs"], "PASS")
         self.assertIn("only the last", r["extra"]["notes"]["logs"])
+
+    def test_a_log_cut_in_its_progress_frames_says_so(self):
+        # vanillaos.md V11: abroot upgrade's bars are \r frames on one \n line; the sweep counts them as lines
+        self.result()
+        self.baseline([])
+        self.log("update.log", "pulling\n" + "Sync in progress [1/9] 50% | 1s\r" * (J.LINES_MAX + 5) + "\ndone\n")
+        self.assertIn("only the last", self.build()["extra"]["notes"]["logs"])
+        self.log("update.log", "Fetched 1 kB in 1s\n" * J.LINES_MAX)   # all of it read: no note
+        self.assertNotIn("logs", self.build()["extra"]["notes"])
+        with mock.patch.object(rows_guest, "SWEEP_READ_MAX", 64):    # a log cut by size before any line count
+            self.log("update.log", "Fetched 1 kB in 1s\n" * 10)
+            self.assertIn("MiB", self.build()["extra"]["notes"]["logs"])
 
     def test_the_builder_digest_is_only_the_builder(self):
         raw = {"harness": ["testvm/make-debian.sh", "testvm/debian/**", "testvm/compare/boot-state.sh", "testvm/console-boot.py", "testvm/haiku/drive.py",

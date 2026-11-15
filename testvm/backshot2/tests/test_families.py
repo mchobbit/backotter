@@ -63,6 +63,7 @@ EXPECTED = {
     "ubuntu26-uefi": ("linux", ["dracut"]),
     "ubuntu26-zfs": ("linux", ["dracut"]),
     "ubuntu26-zfsmirror": ("linux", ["dracut"]),
+    "vanilla3": ("linux", ["abroot", "initramfs-tools", "lvm-thin"]),
     "void-musl": ("linux", ["dracut"]),
     "zorin18": ("linux", ["initramfs-tools"]),
 }

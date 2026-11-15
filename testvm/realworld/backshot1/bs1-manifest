@@ -30,6 +30,13 @@ more columns, their link count and inode flags, so a repository object that
 came back unlinked from its deployments, or lost a flag, shows; a gained
 FS_NOCOMP_FL alone is btrfs's own, set as the restore writes data that won't
 compress (B5, B6).  A file with several links is read once.
+
+On ABRoot (ROOT is the present root with the other at part-future and the
+init LV at boot/init: docs/design/vanillaos.md), the first row names the
+present root ("/abroot-present"), and only its /etc upper
+(var/lib/abroot/etc/LABEL) is matched against the lists as etc/; the master
+grub.cfg, grub.cfg.future, EFI/vanilla and EFI/BOOT must come back byte for
+byte (ABROOT_KEPT and the comment above it).
 """
 
 import base64
@@ -142,6 +149,90 @@ def kept_same(a, b):
     ta, tb = stat.S_IFMT(int(a[0], 8)), stat.S_IFMT(int(b[0], 8))
     return ta == tb and (ta == stat.S_IFDIR or (a[3] == b[3] and a[5] == b[5]))
 
+# ABRoot (Vanilla OS: docs/design/vanillaos.md): the tree is the present
+# root, raw (its image's /etc), with the other root at part-future and the
+# init LV (both roots' kernels) at boot/init; each root's /etc changes are an
+# overlay upper, var/lib/abroot/etc/LABEL.  The manifest's first row names
+# the present root ("/abroot-present", the root the master grub.cfg's
+# default leads to: bs1-backup refuses a backup where that isn't the running
+# one), and only that root's upper is matched against the lists as etc/ (a
+# boot writes there: mount-sys rewrites its fstab, ABROOT_REMADE).  The other
+# root's upper and work dir get no exceptions (nothing boots that root), nor
+# do part-future and boot/init, which no list names.  The links Vanilla's /
+# has into var (home, root, mnt) are matched as their names.  load
+# regenerates nothing on ABRoot, so the master grub.cfg, grub.cfg.future,
+# EFI/vanilla and EFI/BOOT are held to the baseline's bytes, as HoltTest1's
+# judge.py ABROOT_KEPT holds them; grubenv, which GRUB writes at boot, isn't.
+ABROOT_SOURCE = "usr/share/abroot/abroot.json"
+ABROOT_PRESENT = "/abroot-present"
+ABROOT_UPPERS = "var/lib/abroot/etc/"
+ABROOT_KEPT = ["boot/grub/grub.cfg", "boot/grub/grub.cfg.future", "boot/efi/EFI/vanilla", "boot/efi/EFI/vanilla/*",
+               "boot/efi/EFI/BOOT", "boot/efi/EFI/BOOT/*"]
+ABROOT_REMADE = ["etc/fstab", "etc/fstab.old"]
+ABROOT_LINKS = (("var/home", "home"), ("var/root", "root"), ("var/mnt", "mnt"))
+# A prefix no list's pattern matches: the other root's upper and work dir.
+ABROOT_HELD = "//abroot-held/"
+
+
+def abroot_present(root):
+    """The label of the root ROOT's master grub.cfg boots by default (its
+    `set default=N` entry's configfile, /LABEL/abroot.cfg, as bko-holt's
+    abroot::parse_master reads it), "-" if it can't tell, None if ROOT isn't
+    ABRoot."""
+    if not os.path.isfile(os.path.join(root, ABROOT_SOURCE)):
+        return None
+    try:
+        with open(os.path.join(root, "boot", "grub", "grub.cfg"), errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return "-"
+    default, labels, inside = None, [], False
+    for line in lines:
+        s = line.strip()
+        if s.startswith("#"):
+            continue
+        if s.startswith("menuentry "):
+            labels.append(None)
+            inside = True
+            continue
+        if s.startswith("}"):
+            inside = False
+            continue
+        if not inside:
+            if default is None and s.startswith("set default="):
+                default = s[len("set default="):].strip().strip("\"'")
+            continue
+        if s.startswith("configfile "):
+            parts = [x for x in re.sub(r"^\([^)]*\)", "", s[len("configfile "):].strip().strip("\"'")).split("/") if x]
+            if len(parts) >= 2:
+                labels[-1] = parts[0]
+    try:
+        return labels[int(default)] or "-"
+    except (TypeError, ValueError, IndexError):
+        return "-"
+
+
+def abroot_logical(rel, present):
+    """REL as the lists name it on ABRoot, PRESENT the present root's label
+    (None: not ABRoot; "-": not known, so no upper is mapped or held)."""
+    if not present:
+        return rel
+    for src, dst in ABROOT_LINKS:
+        if rel == src or rel.startswith(src + "/"):
+            return dst + rel[len(src):]
+    if present == "-" or not rel.startswith(ABROOT_UPPERS):
+        return rel
+    label, sep, rest = rel[len(ABROOT_UPPERS):].partition("/")
+    if label == present:
+        return "etc/" + rest if sep else "etc"
+    if label == present + "-work":
+        return rel          # overlayfs's own, emptied at each mount: var/lib/*
+    return ABROOT_HELD + rel
+
+
+def logical(rel, ostree=None, abroot=None):
+    return abroot_logical(ostree_paths.logical(rel, ostree), abroot)
+
 # Expected only as added: BackShot1's own mountpoint.  The dispatcher's
 # DRIVE mounts the backup drive with "mkdir -p /mnt/bs1-backup" when nothing
 # has it mounted already, so a system with no /mnt at backup time (NixOS,
@@ -224,6 +315,9 @@ def write(root, out):
         ostree = ostree_paths.is_ostree(root)
         if ostree:
             f.write(f"{OSTREE_DEFAULT}\t{ostree_paths.default_deployment(root) or '-'}\n")
+        present = abroot_present(root)
+        if present:
+            f.write(f"{ABROOT_PRESENT}\t{present}\n")
         for d, dirs, files in os.walk(root):
             again = []
             for name in dirs + files:
@@ -268,6 +362,8 @@ def read(path):
             if rel == OSTREE_DEFAULT:
                 default = rest[0]
                 continue
+            if rel == ABROOT_PRESENT:
+                continue
             # A socket belongs to the process that made it, and isn't backed up.
             if not stat.S_ISSOCK(int(rest[0], 8)):
                 rows[rel] = rest
@@ -277,6 +373,16 @@ def read(path):
         dirs = {rel for rel, r in rows.items() if stat.S_ISDIR(int(r[0], 8))}
         default = ostree_paths.default_from_rows(links, dirs) or "-"
     return rows, default
+
+
+def read_present(path):
+    """The manifest's ABRoot present root (its first rows), or None."""
+    with open(path, encoding="utf-8", errors="surrogateescape") as f:
+        for _, line in zip(range(2), f):
+            rel, _, rest = line.rstrip("\n").partition("\t")
+            if rel == ABROOT_PRESENT:
+                return rest
+    return None
 
 
 def flags_same(a, b):
@@ -299,13 +405,13 @@ def links_same(a, b, flags=True):
     return a[7] == b[7] and (not flags or flags_same(a[8], b[8]))
 
 
-def same(rel, a, b, store, ostree=None):
+def same(rel, a, b, store, ostree=None, abroot=None):
     # A directory's size only says how big it has ever been, and its mtime
     # moves whenever something inside it does.
     if stat.S_ISDIR(int(a[0], 8)) and stat.S_ISDIR(int(b[0], 8)):
         return a[:3] == b[:3]
-    remade = REMADE + STORE_REMADE.get(store, []) + (ostree_paths.REMADE if ostree else [])
-    if any(fnmatch.fnmatch(ostree_paths.logical(rel, ostree), pat) for pat in remade):
+    remade = REMADE + STORE_REMADE.get(store, []) + (ostree_paths.REMADE if ostree else []) + (ABROOT_REMADE if abroot else [])
+    if any(fnmatch.fnmatch(logical(rel, ostree, abroot), pat) for pat in remade):
         # Written again by the running system, so its flags are its kernel's.
         return a[:4] + a[5:6] == b[:4] + b[5:6] and links_same(a, b, flags=False)
     return a[:6] == b[:6] and links_same(a, b)
@@ -327,16 +433,17 @@ def xattr_diff(a, b):
     return "; ".join(f"{k}: {show(x.get(k))} -> {show(y.get(k))}" for k in sorted(set(x) | set(y)) if x.get(k) != y.get(k))
 
 
-def expected(rel, store, ostree=None, added=False):
+def expected(rel, store, ostree=None, added=False, abroot=None):
     """Whether a difference at REL is one a boot or the restore makes.  STORE:
     "nixos" or "guix" for a store system, else None.  OSTREE:
     the default deployment (its etc is etc), or "-" (an ostree system's whose
     default couldn't be told: no mapping, but its lists).  ADDED: REL is
-    new, so the ADDED lists apply too."""
+    new, so the ADDED lists apply too.  ABROOT: the present root's label
+    (abroot_logical)."""
     pats = EXPECTED + STORE_EXPECTED.get(store, []) + (ostree_paths.EXPECTED if ostree else [])
     if added:
         pats = pats + ADDED + (ostree_paths.ADDED if ostree else [])
-    return any(fnmatch.fnmatch(ostree_paths.logical(rel, ostree), pat) for pat in pats)
+    return any(fnmatch.fnmatch(logical(rel, ostree, abroot), pat) for pat in pats)
 
 
 SNAPSHOT = re.compile(r"(.*?)\.snapshots/([0-9]+)(?:/|$)")
@@ -410,6 +517,13 @@ def compare(old_path, new_path, reformatted=False):
             print("ostree: the default deployment moved")
     # A path both sides have takes the baseline's mapping; one side's, its own.
     mapping = {"missing": odef, "added": ndef, "changed": odef, "xattrs": odef}
+    apre, apost = read_present(old_path), read_present(new_path)
+    if apre or apost:
+        print(f"ABRoot: present root {apre or '(none)'}, after {apost or '(none)'}; its /etc upper is matched as etc/, "
+              "the other root's upper, the other root and the init LV get no exceptions")
+        if apre != apost:
+            print("ABRoot: the present root moved")
+    amapping = {"missing": apre, "added": apost, "changed": apre, "xattrs": apre}
     missing = sorted(set(old) - set(new))
     added = sorted(set(new) - set(old))
     # A snapshot snapper or the Disk Snapshots Manager took after the backup,
@@ -429,7 +543,11 @@ def compare(old_path, new_path, reformatted=False):
         missing_held = [p for p in held if p not in old]
         if missing_held:
             print(f"AnduinOS: the baseline lacks {' '.join(missing_held)}")
-    changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], store, odef))
+    if apre:
+        held = held + ABROOT_KEPT
+        n = sum(1 for p in old if any(fnmatch.fnmatch(p, pat) for pat in ABROOT_KEPT))
+        print(f"ABRoot: {n} paths of the master grub.cfg, grub.cfg.future, EFI/vanilla and EFI/BOOT held to the baseline's bytes")
+    changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], store, odef, apre))
     both = [p for p in set(old) & set(new) if len(old[p]) > 6 and len(new[p]) > 6]
     relabeled = sorted(p for p in both if old[p][6] != new[p][6])
     if not both:
@@ -437,7 +555,7 @@ def compare(old_path, new_path, reformatted=False):
     bad = []
     for label, paths in (("missing", missing), ("added", added), ("changed", changed), ("xattrs", relabeled)):
         unexpected = [p for p in paths if kept(p, held) and (label != "changed" or not kept_same(old[p], new[p]))]
-        unexpected += [p for p in paths if not kept(p, held) and not expected(p, store, mapping[label], label == "added") and p not in snapper
+        unexpected += [p for p in paths if not kept(p, held) and not expected(p, store, mapping[label], label == "added", amapping[label]) and p not in snapper
                        and not (reformatted and any(fnmatch.fnmatch(p, pat) for pat in REFORMAT_EXPECTED))
                        and not (label == "xattrs" and relabeled_boot(p, old[p], new[p]))]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")

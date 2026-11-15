@@ -28,5 +28,15 @@
    "lines": ["no -security suite in apt's sources"],
    "why": "PikaOS is Debian sid rebuilt: its one apt source is ppa.pika-os.com's rolling suite pika (system.sources), which carries the security fixes too; there is no -security suite to point at (docs/design/pikaos.md, P1's --try)"
   }
+ },
+ "vanilla3": {
+  "after:boot-state": {
+   "lines": ["state degraded"],
+   "why": "systemd-networkd-wait-online.service fails at every boot of the guest (below), so the system is degraded (docs/design/vanillaos.md, What V1 found and What V11 found)"
+  },
+  "after:failed-units": {
+   "lines": ["failed systemd-networkd-wait-online.service"],
+   "why": "networkd's wait-online fails at every boot of vanilla3 under vm-run (QEMU's user network), source and restored alike: the build's boots, and all twelve boots of both HoltTest1 runs, whose raw boot states ht1.sh's FLAKY_UNITS hid (docs/design/vanillaos.md, What V1 found, What V7 found and What V11 found)"
+  }
  }
 }

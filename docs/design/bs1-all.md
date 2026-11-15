@@ -108,6 +108,12 @@ Total about 13.5 h of machine time (est.), not counting fixes. Void was added
 on 2026-11-13 after its first BackShot1 passed (the user's choice), PikaOS
 (row 14, est. +40 min) on 2026-11-15 after its own passed.
 
+Pending, not in the table: Vanilla OS 3 (ABRoot's two roots). BackShot1's
+plumbing for it landed 2026-11-15 (docs/design/vanillaos.md, What V11
+found; README "ABRoot"), but it hasn't passed: no `bs1-qemu.py` rehearsal on
+`vanilla3` yet, and no unattended Thinkpad install. It joins the table only
+after a Thinkpad run passes, and its other-root boot needs the console.
+
 ## Order
 
 The runs that need you at the laptop go first, right after a short canary,

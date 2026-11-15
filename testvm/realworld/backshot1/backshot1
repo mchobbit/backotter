@@ -19,7 +19,8 @@
 #   backshot1 reboot              on the stick: boot the restored system
 #   backshot1 wait-host           wait for the restored system to answer SSH
 #   backshot1 verify NAME         on the restored system: check it
-#   backshot1 check-boot NAME     ostree: check the deployment this boot started
+#   backshot1 check-boot NAME     ostree: check the deployment this boot started;
+#                                 ABRoot: the root this boot started
 #
 # Hands-free (README.md, "The hands-free cycle"):
 #
@@ -121,7 +122,7 @@ stage)
     old_login_if_new
     d=$(on_host "$DRIVE; echo \"\$d\"")
     on_host "mkdir -p '$d/backshot1/bin' '$d/backshot1/runs' '$d/backshot1/keys'; chmod 700 '$d/backshot1/keys'"
-    scp -q "${OPTS[@]}" "$here"/bs1-{common,backup,restore,verify,manifest,ostree,adopt,luks,unlock-key,list,to-stick} "root@$HOST:$d/backshot1/"
+    scp -q "${OPTS[@]}" "$here"/bs1-{common,backup,restore,verify,manifest,ostree,abroot,adopt,luks,unlock-key,list,to-stick} "root@$HOST:$d/backshot1/"
     scp -q "${OPTS[@]}" "$here/../../ostree_paths.py" "root@$HOST:$d/backshot1/"   # bs1-manifest's and bs1-ostree's
     scp -q "${OPTS[@]}" "$here/thinkpad.conf" "root@$HOST:$d/backshot1/bs1.conf"
     scp -q "${OPTS[@]}" "$tools/bko-holt" "$tools/rustic-bko" "root@$HOST:$d/backshot1/bin/"
@@ -248,6 +249,7 @@ $DRIVE
 r="\$d/backshot1/runs/$run"
 if [ -s "\$r/baseline/unlock.txt" ]; then echo "unlock \$(head -n 1 "\$r/baseline/unlock.txt" | cut -d: -f1)"; else echo "unlock missing"; fi
 if [ -e "\$r/baseline/deployments.txt" ]; then echo "ostree yes"; fi
+if [ -e "\$r/baseline/abroot.txt" ]; then echo "abroot yes"; fi
 python3 -c 'import json, sys; print("firmware", json.load(open(sys.argv[1])).get("firmware", {}).get("mode"))' "\$r/layout.json"
 EOF
     ) || die "can't read $run's baseline and layout"
@@ -257,6 +259,7 @@ EOF
         *) die "$run has no baseline/unlock.txt (a backup older than unlocking from the drive): restore it by hand, or take a new backup" ;;
     esac
     ! grep -q '^ostree yes' <<<"$info" || die "$run is an ostree system: its rollback visit needs the console; restore it by hand (README, ostree)"
+    ! grep -q '^abroot yes' <<<"$info" || die "$run is an ABRoot system: its other root's visit needs the console; restore it by hand (README, ABRoot)"
     [[ $(awk '$1 == "firmware" { print $2 }' <<<"$info") == uefi ]] ||
         die "$run is of a system not booted by UEFI: to-stick and the restore's BootNext need UEFI"
     for ((i = 1; i <= count; i++)); do
@@ -296,7 +299,7 @@ check-boot)
     on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-verify\" --boot '$run'"
     ;;
 *)
-    sed -n '2,31p' "$0"
+    sed -n '2,32p' "$0"
     exit 2
     ;;
 esac

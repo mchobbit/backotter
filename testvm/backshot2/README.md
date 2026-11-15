@@ -202,6 +202,14 @@ cases are byte-identical to those drawn before the interface
 (`tests/golden/alpine.json`); each family's golden is rewritten only with
 a new `GENERATOR`.
 
+Two more traits came with Vanilla OS (`vanilla3`): `abroot` (the master
+grub.cfg's entries and each root's abroot.cfg as rule 3 texts; load
+restores both roots, the init LV and /boot as they were) and `lvm-thin`
+(any thin pool: no `lv_split` or `lv_resize` of the data, metadata and
+spare LVs, which load's lvcreate sizes and places itself).  A guest new to
+the corpus joins its family's golden as one more entry under `guests` and
+`dumps`, drawn by the same `GENERATOR`, the others' left as they were.
+
 ## A case's life
 
 1. **Drawn** on a host, from the source's real dump (it holds identifiers, so

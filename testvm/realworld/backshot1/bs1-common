@@ -76,12 +76,24 @@ ESP_TYPE=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
 # overlay, and the physical root, fstab's /, is at /sysroot
 # (docs/design/bazzite.md).
 is_ostree() { [[ -e /run/ostree-booted ]]; }
+# An ABRoot system (Vanilla OS: docs/design/vanillaos.md), by ABRoot's own
+# marker as bko-holt dump finds it: two roots, / the present one, read-only,
+# with an overlay on /etc whose upper is in /var/lib/abroot/etc/LABEL; the
+# other root and the init LV (both roots' kernels) are mounted by nothing.
+is_abroot() { [[ -e /usr/share/abroot/abroot.json || -e /etc/abroot/abroot.json ]]; }
 root_mount() { if is_ostree; then echo /sysroot; else echo /; fi; }
 root_source() { findmnt -nro SOURCE "$(root_mount)"; }
 # The updaters an ostree system may have: uupd is Bazzite's (ublue's), the
-# others Fedora's own.  bs1-backup and bs1-verify hold them off for the boot
-# they run in; the person disables them for longer (README.md).
-UPDATERS="uupd rpm-ostreed-automatic bootc-fetch-apply-updates"
+# others Fedora's own; and an ABRoot one: Vanilla OS's vanilla-updates (vso
+# upgrade, then abroot upgrade, into the other root).  bs1-backup and
+# bs1-verify hold them off for the boot they run in; the person disables them
+# for longer (README.md).
+UPDATERS="uupd rpm-ostreed-automatic bootc-fetch-apply-updates vanilla-updates"
+# Where bs1-backup and bs1-verify mount, read-only, the filesystems an ABRoot
+# system mounts nowhere (backup_sources' "from": null), as each one's mount
+# hint says: RO_MOUNTS/boot/init and RO_MOUNTS/part-future.  The tree binds
+# them from there, as it does the running system's mounts.
+RO_MOUNTS=/run/bs1-ro
 
 # Snapper's timers make and delete snapshots, and on CachyOS each run also
 # has limine-snapper-sync rewrite /boot/limine.conf and copy kernels into
@@ -125,18 +137,24 @@ on_disk() {
 # are one path but on ostree, where LAYOUT (bko-holt dump's) is read: its
 # storage.backup_sources lays them out as fstab mounts them, / from /sysroot
 # and /home from /var/home, leaving out the /etc and stateroot var binds.
+# ABRoot's are read from the layout too: / (the present root, whose bind
+# shows the raw lower /etc), /boot, the ESP and /var as mounted, and the
+# init LV at /boot/init and the other root at /part-future from RO_MOUNTS,
+# where mount_hints mounts them.
 internal_mounts() {
     local disk=$1 layout=${2:-} target src fs root
-    if is_ostree; then
-        [[ -s $layout ]] || { echo "internal_mounts: on ostree the tree is read from a layout, and there is none" >&2; return 1; }
-        python3 - "$layout" <<'PY' | while IFS=$'\t' read -r target root fs src; do
+    if is_ostree || is_abroot; then
+        [[ -s $layout ]] || { echo "internal_mounts: on ostree and ABRoot the tree is read from a layout, and there is none" >&2; return 1; }
+        python3 - "$layout" "$RO_MOUNTS" <<'PY' | while IFS=$'\t' read -r target root fs src; do
 import json, sys
 for s in json.load(open(sys.argv[1]))["storage"].get("backup_sources") or []:
     # A source the running system doesn't mount (ABRoot's init LV and other
     # root) has no "from", only the read-only "mount" a backup makes there:
-    # BackShot1 doesn't make it yet.
+    # mount_hints makes it under RO_MOUNTS.
     if s.get("from") is None:
-        sys.exit(f"internal_mounts: backup_sources' {s['path']} isn't mounted (from null; its mount hint: {s.get('mount')}), which BackShot1 doesn't mount yet")
+        if not isinstance(s.get("mount"), dict) or not s["mount"].get("device"):
+            sys.exit(f"internal_mounts: backup_sources' {s['path']} isn't mounted (from null) and has no mount hint to mount it by")
+        s["from"] = sys.argv[2] + s["path"]
     print("\t".join([s["path"], s["from"], s["fstype"], s.get("source") or "-"]))
 PY
             [[ $fs =~ ^($REAL_FS)$ ]] || continue
@@ -167,21 +185,56 @@ space_in_use() {
 }
 
 # Stops if DISK holds a filesystem the running system hasn't mounted: it would be
-# erased without being in the backup.
+# erased without being in the backup.  LAYOUT: one whose backup_sources' mount
+# hints (ABRoot's init LV and other root) count as mounted, since mount_hints
+# mounts them for the tree.
 check_coverage() {
     local mounted name fs
     mounted=$(findmnt -rno SOURCE | sed 's/\[.*//')
+    if [[ -n ${2:-} ]]; then
+        mounted+=$'\n'$(python3 -c '
+import json, sys
+for s in json.load(open(sys.argv[1]))["storage"].get("backup_sources") or []:
+    if s.get("from") is None and isinstance(s.get("mount"), dict) and s["mount"].get("device"):
+        print(s["mount"]["device"])' "$2") || die "can't read the mount hints in $2"
+    fi
     while read -r name fs; do
         [[ ${fs:-} =~ ^($REAL_FS)$ ]] || continue
         grep -qxF "$name" <<<"$mounted" || die "$name ($fs) isn't mounted, so it wouldn't be backed up"
     done < <(lsblk -lnpo NAME,FSTYPE "/dev/$1")
 }
 
+# mount_hints DISK LAYOUT: each filesystem on DISK that LAYOUT's
+# backup_sources says nothing mounts ("from": null: ABRoot's init LV and other
+# root), mounted at RO_MOUNTS/PATH as its mount hint says (read-only, and
+# noload or rescue=nologreplay, so not even a journal is replayed), unless it
+# is there already.  drop_tree undoes it.
+mount_hints() {
+    local list path dev fs opts src
+    list=$(python3 -c '
+import json, sys
+for s in json.load(open(sys.argv[1]))["storage"].get("backup_sources") or []:
+    m = s.get("mount")
+    if s.get("from") is None and isinstance(m, dict) and m.get("device"):
+        print("\t".join([s["path"], m["device"], m.get("fstype") or s.get("fstype") or "-", m.get("options") or "ro", s.get("source") or m["device"]]))' "$2") ||
+        die "can't read the mount hints in $2"
+    while IFS=$'\t' read -r path dev fs opts src; do
+        [[ -n $path ]] || continue
+        [[ $fs =~ ^($REAL_FS)$ ]] || continue
+        on_disk "$src" "$1" || continue
+        findmnt -rn "$RO_MOUNTS$path" >/dev/null && continue
+        mkdir -p "$RO_MOUNTS$path" || die "can't make $RO_MOUNTS$path"
+        must mount -t "$fs" -o "$opts" "$dev" "$RO_MOUNTS$path"
+    done <<<"$list"
+}
+
 # The read-only tree of DISK's filesystems at $TREE.  Binds of each one alone, so
-# /proc, /sys, /run and the backup drive aren't in it.  LAYOUT: internal_mounts'.
+# /proc, /sys, /run and the backup drive aren't in it.  LAYOUT: internal_mounts';
+# on ABRoot, its mount hints are mounted first (mount_hints).
 make_tree() {
     local path from dst list
     findmnt -rn "$TREE" >/dev/null && die "$TREE is already mounted"
+    if is_abroot; then mount_hints "$@"; fi
     list=$(internal_mounts "$@") || die "can't tell which filesystems to back up"
     mkdir -p "$TREE"
     while IFS=$'\t' read -r path from _; do
@@ -194,7 +247,10 @@ make_tree() {
 }
 
 drop_tree() {
+    local m
     if findmnt -rn "$TREE" >/dev/null; then umount --recursive "$TREE"; fi
+    # mount_hints' read-only mounts, deepest first.
+    findmnt -rno TARGET | awk -v r="$RO_MOUNTS/" 'index($0, r) == 1' | LC_ALL=C sort -r | while read -r m; do umount "$m"; done
     sync
 }
 

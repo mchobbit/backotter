@@ -303,6 +303,93 @@ Chopin and Cinqcent.  The Thinkpad run isn't done yet: its install and
 staging steps are in docs/design/biglinux.md ("What BL6's rehearsals
 found", "For the real run on the Thinkpad").
 
+## ABRoot: Vanilla OS's two roots
+
+Vanilla OS 3 (docs/design/vanillaos.md) keeps two btrfs roots on LVM thin
+volumes (`vos-a`, `vos-b`), both roots' kernels in an `init` LV, and a static
+master `grub.cfg` on `/boot` whose literal `set default=N` picks the root.
+`/` is the present root, read-only, with an overlay on `/etc` whose upper is
+in `/var/lib/abroot/etc/LABEL`; the other root and the `init` LV are mounted
+by nothing.  BackShot1 knows it by `/usr/share/abroot/abroot.json`
+(`is_abroot` in bs1-common).  Plumbed on 2026-11-15 (V11), **not yet run**:
+no `bs1-qemu.py` rehearsal on `vanilla3` and no Thinkpad run.
+
+- **The tree is the layout's six paths** (`storage.backup_sources`): `/`
+  (a bind of the present root, so its raw `/etc`, the image's), `/boot`,
+  `/boot/efi`, `/var`, and `/boot/init` and `/part-future`, which phase 1
+  mounts read-only under `/run/bs1-ro` as their mount hints say (`ro,noload`
+  for the ext4 `init` LV, `ro,rescue=nologreplay` for the btrfs root: no
+  journal replayed) and binds in; `drop_tree` unmounts them.  The coverage
+  check counts those two as mounted.
+- **Preflight refuses** (and so does phase 1, `bs1-abroot preflight`) when an
+  ABRoot operation is running (`/run/abroot/operation.lock`), when the
+  master grub.cfg boots another root than the running one (an upgrade waits
+  for a reboot, or the other entry was picked by hand: reboot into the
+  default first), when the layout isn't the two-root thin one `bko-holt
+  load` restores, or when a root or the `init` LV is missing from
+  `backup_sources`.  Phase 1 and `verify` hold `vanilla-updates.timer` (vso
+  upgrade, then `abroot upgrade` into the other root) for their boot, as
+  ostree's updaters; disable it for the whole run (`systemctl disable --now
+  vanilla-updates.timer`) and turn it back on once `verify` has passed.
+  Phase 1 fails if the master grub.cfg, `grub.cfg.future` or the lock moved
+  while it ran.
+- **The baseline gains `abroot.txt`** (`bs1-abroot record`): the present
+  and other root, the master grub.cfg's default and entries, each root's
+  filesystem UUID, LV and ABImage digest, its `abroot.cfg`'s kernel, initrd
+  and `root=`, each file in `init/LABEL/` by sha256, the master grub.cfg
+  and `grub.cfg.future` by sha256, abroot.json (merged, and each root's
+  own), the kargs, each root's hostname and `/etc/bko-root` (the test
+  guest's mark, if any), and the command line.
+- **What verify adds:** the manifest maps only the present root's upper to
+  `/etc` (so a boot's `/etc` changes there are judged as anywhere else, and
+  mount-sys's rewrite of its `fstab` must keep the content); the other
+  root, its upper and work dir, and the `init` LV get no exceptions; the
+  master grub.cfg, `grub.cfg.future`, `EFI/vanilla` and `EFI/BOOT` must
+  come back byte for byte (`ABROOT_KEPT`: load regenerates nothing on
+  ABRoot), though grubenv may change; `/home`, `/root` and `/mnt`, links
+  into `/var`, are judged by those names.  Then every line of `abroot.txt`
+  against the baseline's, and `bs1-abroot boot-check`: this boot is the
+  default root, `abroot status` calls it present, its kernel and `root=` are
+  its `abroot.cfg`'s, its hostname, mark and `/abimage.abr` are its own, `/`
+  is btrfs read-only and `/etc` its overlay.
+- **The other root boots too.**  After `verify` passes, pick the master
+  grub.cfg's other entry ("Previous State (A)" after an upgrade into B) in
+  GRUB's menu at the laptop's console, then `backshot1 check-boot NAME`:
+  `bs1-abroot boot-check` against that root's record (`BOOT: other`).
+  Then reboot: GRUB starts the default again, and `check-boot` must say
+  `BOOT: default`.  `bs1-qemu.py` does both on a guest, the entry typed on
+  GRUB's serial menu by `testvm/vanilla/console-keys.py`.  A fresh install's
+  other root is empty until its first `abroot upgrade`: then there's no other
+  root to boot (`bs1-qemu.py` skips it).  `backshot1 cycle` refuses an
+  ABRoot run, as an ostree one: that visit needs the console.
+
+What a Thinkpad run still lacks (not built):
+
+- **An unattended install.**  Vanilla OS installs from its live ISO's GUI
+  (vanilla-installer handing a recipe to Albius); there's no
+  `vanilla-bootstrap.sh` like PikaOS's or neon's.  `testvm/make-vanilla.sh`
+  and `testvm/vanilla/install.sh` run Albius unattended in QEMU only (a
+  systemd unit given to the live system as an SMBIOS credential, the
+  installer's own recipe for `/dev/vda`); a Thinkpad version would run
+  Albius against the disk with the serial (`/dev/nvme0n1` in the recipe),
+  add the controller's key and the fixed host key, enable `ssh.service`, and
+  then run `abroot upgrade --force` and reboot once, so both roots are filled
+  (V1: the fresh install leaves B empty).  By hand in the GUI, then
+  `abroot upgrade` and a reboot, works too.
+- **bs1-adopt on the other root.**  It needs nothing installed on Vanilla
+  (sshd, avahi-daemon, Python and efibootmgr are in the image; there's no
+  `apt-get`, so a missing tool would stop it, to be layered with `abroot pkg
+  add` and `abroot pkg apply` and a reboot).  What it writes in `/etc` lands
+  in the present root's upper only, so the other root keeps its own
+  hostname and host key: as with ostree's rollback, the controller refuses
+  its host key, and `check-boot` for it is from the console, or after
+  bs1-adopt run once more in that root's boot.  `/root` is on `/var`, so the
+  controller's key is in both.
+- **LUKS `/var`** (the installer's encryption option): `abroot unlock-var`
+  asks through Plymouth from the init wrapper, not the initramfs, so none of
+  bs1-luks's unlock-from-drive families applies; such a run would be
+  attended, and is untested (no `vanilla3-luks` guest).
+
 ## Keeping a library of backups
 
 Each backup is a run of its own, named after the distro and the time:

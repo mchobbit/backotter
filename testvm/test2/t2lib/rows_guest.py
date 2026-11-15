@@ -290,19 +290,31 @@ def judge_job(guest, mode, result, out, entry, policy, classed, updates, rc, sto
     return needs, details, harness_why, hook_failed
 
 
+SWEEP_READ_MAX = 32 << 20   # the tail of update.log and serial.log the sweep reads
+
+
 def sweep(out, guest, entry, baseline, known, older):
     """(new-line records, logs value, why it's a SKIP or None, a note or None)."""
     pm = (entry.get("checks") or {}).get("pm")
-    sources = {}
+    sources, big = {}, set()
     for name, f in (("update", "update.log"), ("serial", "serial.log")):
-        t = _read(os.path.join(out, f), 32 << 20)
+        p = os.path.join(out, f)
+        t = _read(p, SWEEP_READ_MAX)
         if t:
             sources[name] = t
+            try:
+                if os.path.getsize(p) > SWEEP_READ_MAX:
+                    big.add(name)
+            except OSError:
+                pass
     if not sources:
         return [], "SKIP", "no log was read", None
     lines = J.sweep_lines(sources, J.known_filter(known, pm), baseline, older)
-    cut = sorted(n for n, t in sources.items() if t.count("\n") >= J.LINES_MAX)
-    note = f"only the last {J.LINES_MAX} lines of {' and '.join(cut)} were read" if cut else None
+    # Lines as sweep_lines counts them: splitlines() splits on \r too (progress bars' frames,
+    # vanillaos.md V11), and a log over SWEEP_READ_MAX was cut before that.
+    cut = sorted(n for n, t in sources.items() if n in big or len(t.splitlines()) > J.LINES_MAX)
+    note = (f"only the last {J.LINES_MAX} lines (\\r frames count; at most the last {SWEEP_READ_MAX >> 20} MiB) "
+            f"of {' and '.join(cut)} were read") if cut else None
     return lines, ("DIFF" if lines else "PASS"), None, note
 
 

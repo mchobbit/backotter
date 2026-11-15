@@ -2,7 +2,7 @@
 # auto-memory "BkoTest2All / BkoTest1All", docs/design/batch.md §3.4).  The
 # spread rehearsal of §11.4: stic1 and the ht1 queues share the hosts, and the
 # queues grow onto the holt pools stic1 frees.
-set round rel8
+# stic1 must name a round directory (drive.py): it stays pinned.
 set hosts chopin,cinqcent,copland,cage
 
 stic1   rel8                    why="SticTest1: every guest's check.sh"

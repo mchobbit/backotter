@@ -138,9 +138,10 @@ image or release is out.
 **Small hosts** (Copland, Cage, and Czerny later): 27 GiB of memory and a 10G
 RAM disk. Their ceiling is 9.0 11.2 (9.0 9.2 before their `base_gib` became 4), and
 9.0 10.2 while the ZFS module is loaded there, as it is on Cage (the module alone costs
-the ARC's GiB of headroom; neither host has the `zpool` binary, so neither has host ZFS
-for placement). Ask the host: `cmp-run.sh --ceiling`.
-They have no host ZFS. Their `vms/` is a set
+the ARC's GiB of headroom). Ask the host: `cmp-run.sh --ceiling`.
+Both have host ZFS since 2026-11-14 (`zpool`, 2.4.4 from trixie-backports;
+BACKPORTS.md), so `needs_host_zfs` no longer keeps cells off them; their
+ceiling still does. Their `vms/` is a set
 of links into the vm-store cache, which holds only the published guests (21
 guests are not published yet). They are default hosts since 2026-11-14: the big
 hosts queued for hours while these two idled, and what only a big host can run

@@ -1,11 +1,13 @@
 # H1: the dump corpus and its golden plans
 
-One redacted `bko-holt dump` of each of HoltTest2's 77 sources, and the plan
+One redacted `bko-holt dump` of each of the corpus's 83 guests, and the plan
 `bko-holt load` makes of each (docs/design/test2.md, "Shared pieces to
 build", H1).  `holt/tests/golden_plans.rs` plans every dump again and fails
 when a plan changes or breaks an invariant, so a change to load shows here
 first, as a diff of plans, and HoltTest2 runs the guests whose plans
-changed.
+changed.  Most of the 83 are HoltTest2's sources (testvm/test2/classes.json);
+some are not sources yet, and golden_plans.rs logs each source with no dump
+(`NO DUMP`).
 
 | File | What it is |
 |---|---|
@@ -713,7 +715,7 @@ test file for each (a line naming it), given with `--luks-header-dir` and
 named `/srv/bko-luks-headers` in the plan, and the dump planned has their
 SHA-256 in place of the real headers' (in memory only: src.json keeps the
 dump's).
-All 64 plans exit 0, without Problems.  They are Linux's plans (load's
+All 83 plans exit 0, without Problems.  They are Linux's plans (load's
 run directory is /run/bko-holt there, /var/run/bko-holt elsewhere): run
 golden_plans.rs on a Linux host.
 

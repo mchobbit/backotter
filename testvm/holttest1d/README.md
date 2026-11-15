@@ -630,7 +630,8 @@ runs on the guests whose arrays survive the loss of their last disk:
 `bigger`, and `debian13` with `oneshot` on each host, and since 2026-11-14
 `proxmox9` and `proxmox9-mirror` on each ZFS host, and `truenas25` and `truenas25-mirror` on Chopin and Cinqcent (fourteen in all).  Guests whose
 volume groups share a name (`ubuntu26-raid`, `ubuntu26-luks` and `ubuntu24-luks`, all
-`ubuntu-vg` as Ubuntu's installer names it) may run on one host at once:
+`ubuntu-vg` as Ubuntu's installer names it; `elementary8` and `elementary8-luks`,
+both `data` as distinst names it, untried side by side) may run on one host at once:
 `vm-mount` sets their logical volumes up under names of its own, not LVM's
 host-wide ones (run `vg2`, 2026-11-10: both PASS side by side).  Don't run
 one guest twice on a host under two RUN names: both

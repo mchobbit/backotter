@@ -60,7 +60,7 @@ EXPECTED = {
     "rocky10-raid5": ("linux", ["dracut", "systemd-boot"]),
     # clr-boot-manager's systemd-boot entries; its initrds are prebuilt (no generator trait).
     "solus49": ("linux", ["systemd-boot"]),
-    "tumbleweed":("linux", ["dracut", "snapper"]),
+    "tumbleweed": ("linux", ["dracut", "snapper"]),
     "ubuntu24": ("linux", ["initramfs-tools"]),
     "ubuntu26-luks": ("linux", ["dracut"]),
     "ubuntu26-raid": ("linux", ["dracut"]),

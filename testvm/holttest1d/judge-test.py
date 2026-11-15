@@ -2542,5 +2542,169 @@ class TrueNas(unittest.TestCase):
         self.assertIn("DIFF boot-pool/ROOT/25.10.7/data: missing", out)
 
 
+class ZfsBootMenu(unittest.TestCase):
+    """judge.py fs and zbm over a ZFSBootMenu restore (void-zbm, Z7 of
+    docs/design/zfsbootmenu.md): the ESP's images kept byte for byte, every
+    boot environment there, the inactive one's /boot untouched, the pool's
+    bootfs, compatibility and org.zfsbootmenu:* properties, and the
+    encryption root's key settings."""
+
+    IMG = "d4c2af93"
+    K = ("6.18.63_1", "7.2.15_1")
+
+    def rec(self, rebuilt=False, **change):
+        """fsmeta.py's record of the guest: the default BE void at /, its
+        clone void-6.18 at run/bko-be/void-6.18, the ESP at boot/efi.
+        REBUILT: the default BE's initramfs files rebuilt (the boot
+        stage's); CHANGE maps a path to its new sha256, or None to leave it
+        out."""
+        r = {"boot": meta("dir"), "boot/efi": meta("dir"), "boot/efi/EFI": meta("dir"), "boot/efi/EFI/ZBM": meta("dir"),
+             "boot/efi/EFI/ZBM/VMLINUZ.EFI": meta("file", sha256=self.IMG), "boot/efi/EFI/ZBM/VMLINUZ-BACKUP.EFI": meta("file", sha256=self.IMG),
+             "run": meta("dir"), "run/bko-be": meta("dir"), "run/bko-be/void-6.18": meta("dir"), "run/bko-be/void-6.18/boot": meta("dir"),
+             f"run/bko-be/void-6.18/boot/vmlinuz-{self.K[0]}": meta("file", sha256="k0"),
+             f"run/bko-be/void-6.18/boot/initramfs-{self.K[0]}.img": meta("file", sha256="i0")}
+        for k in self.K:
+            r[f"boot/vmlinuz-{k}"] = meta("file", sha256="k" + k[0])
+            r[f"boot/initramfs-{k}.img"] = meta("file", sha256=("r" if rebuilt else "i") + k[0], mtime=2 if rebuilt else 1)
+        for p, h in change.items():
+            if h is None:
+                r.pop(p, None)
+            else:
+                r[p] = meta("file", sha256=h)
+        return r
+
+    def fs(self, before, after):
+        return Fs.judge(self, before, after)
+
+    def test_fs_the_boot_stage_rebuilds_the_default_bes_initramfs_only(self):
+        rc, out = self.fs(self.rec(), self.rec(rebuilt=True))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("ZFSBootMenu's images kept: 2 held to the source's bytes: boot/efi/EFI/ZBM/VMLINUZ-BACKUP.EFI, boot/efi/EFI/ZBM/VMLINUZ.EFI", out)
+        rc, out = self.fs(self.rec(), self.rec(rebuilt=True, **{f"run/bko-be/void-6.18/boot/initramfs-{self.K[0]}.img": "r6"}))
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF content: 1: run/bko-be/void-6.18/boot/initramfs-{self.K[0]}.img", out)
+
+    def test_fs_no_esp_rule_excuses_the_images(self):
+        rc, out = self.fs(self.rec(), self.rec(**{"boot/efi/EFI/ZBM/VMLINUZ.EFI": "ff"}))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF content: 1: boot/efi/EFI/ZBM/VMLINUZ.EFI", out)
+        # Elsewhere the ESP rule stands (a GRUB source's EFI/ files).
+        src = {"boot/efi/EFI": meta("dir"), "boot/efi/EFI/void": meta("dir"), "boot/efi/EFI/void/grubx64.efi": meta("file")}
+        rc, out = self.fs(src, dict(src, **{"boot/efi/EFI/void/grubx64.efi": meta("file", sha256="cd")}))
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("ZFSBootMenu", out)
+
+    def dump(self, restored=False, enc=False, **change):
+        """The two dumps' fields judge.py zbm reads.  CHANGE: a field path
+        (dots) to a new value."""
+        def ds(name, mp, local, origin=None, **kw):
+            d = {"name": name, "type": "filesystem", "mountpoint": mp, "canmount": "noauto" if mp == "/" else "on", "origin": origin,
+                 "encryption": "aes-256-gcm" if enc else "off", "encryptionroot": "zroot" if enc else None,
+                 "keyformat": "passphrase" if enc else "none", "keylocation": "none",
+                 "properties": {k: {"value": v, "source": "local"} for k, v in local.items()}}
+            d.update(kw)
+            return d
+        top = {"mountpoint": "none"}
+        if enc:
+            top["org.zfsbootmenu:keysource"] = "zroot/ROOT/void"
+        dss = [ds("zroot", "none", top, keylocation="file:///etc/zfs/zroot.key" if enc else "none"),
+               ds("zroot/ROOT", "none", {"mountpoint": "none", "org.zfsbootmenu:commandline": "loglevel=4"}),
+               ds("zroot/ROOT/void", "/", {"mountpoint": "/", "canmount": "noauto"}),
+               ds("zroot/ROOT/void-6.18", "/", {"mountpoint": "/", "canmount": "noauto", "org.zfsbootmenu:commandline": "%{parent} bko.be=void-6.18"},
+                  origin=None if restored else "zroot/ROOT/void@pre-mainline"),
+               ds("zroot/home", "/home", {"mountpoint": "/home"})]
+        img = {"esp_mount": "/boot/efi", "path": "EFI/ZBM/VMLINUZ.EFI", "size": 64871424, "sha256": self.IMG, "kernel": "6.12.63_1", "cmdline": "quiet"}
+        bes = [{"name": "void", "dataset": "zroot/ROOT/void", "pool": "zroot", "bootfs": True, "mounted": True, "origin": None,
+                "commandline": "loglevel=4", "commandline_from": "zroot/ROOT", "locked": False, "read": True,
+                "kernels": [f"vmlinuz-{k}" for k in self.K], "initramfs": [f"initramfs-{k}.img" for k in self.K]},
+               {"name": "void-6.18", "dataset": "zroot/ROOT/void-6.18", "pool": "zroot", "bootfs": False, "mounted": False,
+                "origin": None if restored else "zroot/ROOT/void@pre-mainline", "commandline": "%{parent} bko.be=void-6.18",
+                "commandline_from": "zroot/ROOT/void-6.18", "locked": False, "read": True,
+                "kernels": [f"vmlinuz-{self.K[0]}"], "initramfs": [f"initramfs-{self.K[0]}.img"]}]
+        d = {"boot": {"loader": {"name": "zfsbootmenu"},
+                      "zfsbootmenu": {"images": [img, dict(img, path="EFI/ZBM/VMLINUZ-BACKUP.EFI")], "pools": [{"name": "zroot", "bootfs": "zroot/ROOT/void"}], "bes": bes}},
+             "storage": {"backup_sources": [{"path": "/run/bko-be/void-6.18", "from": None, "source": "zroot/ROOT/void-6.18"}],
+                         "zfs": {"tools": {"imported_pools": [{"name": "zroot", "properties": {"bootfs": "zroot/ROOT/void", "compatibility": "openzfs-2.3-linux"}}],
+                                           "datasets": dss}}}}
+        for path, v in change.items():
+            *head, last = path.split(".")
+            at = d
+            for h in head:
+                at = at[int(h)] if isinstance(at, list) else at[h]
+            if isinstance(at, list):
+                at[int(last)] = v
+            else:
+                at[last] = v
+        return d
+
+    def zbm(self, src, dst, smeta, dmeta):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for name, d in (("src.json", src), ("dst.json", dst), ("src-meta.json", smeta), ("dst-meta.json", dmeta)):
+                paths.append(os.path.join(tmp, name))
+                with open(paths[-1], "w") as f:
+                    json.dump(d, f)
+            r = subprocess.run([sys.executable, "-I", JUDGE, "zbm", *paths], capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_zbm_passes_with_the_clone_flattened(self):
+        for enc in (False, True):
+            rc, out = self.zbm(self.dump(enc=enc), self.dump(restored=True, enc=enc), self.rec(), self.rec(rebuilt=True))
+            self.assertEqual(rc, 0, out)
+            self.assertIn("2 images byte for byte (records and dumps): EFI/ZBM/VMLINUZ-BACKUP.EFI, EFI/ZBM/VMLINUZ.EFI", out)
+            self.assertIn("BE zroot/ROOT/void-6.18 (inactive; origin zroot/ROOT/void@pre-mainline -> -): newest kernel 6.18.63_1; 2 byte for byte under run/bko-be/void-6.18/boot", out)
+            self.assertIn("BE zroot/ROOT/void (booted, bootfs; origin - -> -): newest kernel 7.2.15_1; 2 byte for byte under boot, 2 initramfs rebuilt", out)
+            self.assertIn("pool zroot: bootfs zroot/ROOT/void, compatibility openzfs-2.3-linux", out)
+            self.assertIn("zroot/ROOT/void-6.18 commandline=%{parent} bko.be=void-6.18 (local)", out)
+            if enc:
+                self.assertIn("zroot keysource=zroot/ROOT/void (local)", out)
+                self.assertIn("encryption root zroot: aes-256-gcm, passphrase, keylocation file:///etc/zfs/zroot.key", out)
+
+    def test_zbm_inactive_be_must_be_in_both_records_byte_for_byte(self):
+        p = f"run/bko-be/void-6.18/boot/initramfs-{self.K[0]}.img"
+        rc, out = self.zbm(self.dump(), self.dump(restored=True), self.rec(), self.rec(rebuilt=True, **{p: "r6"}))
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF BE zroot/ROOT/void-6.18 (inactive): {p}: its bytes differ", out)
+        empty = {k: v for k, v in self.rec().items() if not k.startswith("run/bko-be/void-6.18/")}
+        rc, out = self.zbm(self.dump(), self.dump(restored=True), empty, self.rec())
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF BE zroot/ROOT/void-6.18: the source record has nothing under run/bko-be/void-6.18 (vm-mount didn't mount it there)", out)
+
+    def test_zbm_holds_images_bes_and_properties(self):
+        cases = [
+            ({"boot.zfsbootmenu.images.0.sha256": "ff"}, "DIFF image /boot/efi/EFI/ZBM/VMLINUZ.EFI: sha256 "),
+            ({"boot.loader": {"name": "grub"}}, "DIFF the restored dump's loader is 'grub', not zfsbootmenu"),
+            ({"boot.zfsbootmenu.bes.1.kernels": []}, "DIFF BE zroot/ROOT/void-6.18: kernels "),
+            ({"boot.zfsbootmenu.bes.1.origin": "zroot/ROOT/void@x"}, "DIFF BE zroot/ROOT/void-6.18: origin "),
+            ({"storage.zfs.tools.imported_pools.0.properties": {"bootfs": "zroot/ROOT/void-6.18", "compatibility": "openzfs-2.3-linux"}},
+             "DIFF pool zroot: bootfs zroot/ROOT/void -> zroot/ROOT/void-6.18"),
+            ({"storage.zfs.tools.imported_pools.0.properties": {"bootfs": "zroot/ROOT/void", "compatibility": "off"}},
+             "DIFF pool zroot: compatibility openzfs-2.3-linux -> off"),
+            ({"storage.zfs.tools.datasets.3.properties": {"mountpoint": {"value": "/", "source": "local"}}},
+             "DIFF zroot/ROOT/void-6.18: org.zfsbootmenu:commandline ('%{parent} bko.be=void-6.18', 'local') -> ('loglevel=4', 'inherited from zroot/ROOT')"),
+        ]
+        for change, want in cases:
+            rc, out = self.zbm(self.dump(), self.dump(restored=True, **change), self.rec(), self.rec(rebuilt=True))
+            self.assertEqual(rc, 1, f"{change}: {out}")
+            self.assertIn(want, out, change)
+
+    def test_zbm_holds_the_key_settings(self):
+        for change, want in (({"storage.zfs.tools.datasets.0.keylocation": "file:///mnt/share/passphrase"}, "DIFF zroot: keylocation file:///etc/zfs/zroot.key -> file:///mnt/share/passphrase"),
+                             ({"storage.zfs.tools.datasets.0.properties": {"mountpoint": {"value": "none", "source": "local"}}}, "DIFF zroot: org.zfsbootmenu:keysource")):
+            rc, out = self.zbm(self.dump(enc=True), self.dump(restored=True, enc=True, **change), self.rec(), self.rec(rebuilt=True))
+            self.assertEqual(rc, 1, f"{change}: {out}")
+            self.assertIn(want, out)
+
+    def test_the_dump_form_lets_the_clones_origin_go(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = os.path.join(tmp, "a.json"), os.path.join(tmp, "b.json")
+            for path, d in ((a, self.dump()), (b, self.dump(restored=True))):
+                with open(path, "w") as f:
+                    json.dump(d, f)
+            r = subprocess.run([sys.executable, "-I", JUDGE, a, b], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("ZFSBootMenu: a clone boot environment comes back as a plain dataset", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

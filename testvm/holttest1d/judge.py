@@ -7,12 +7,16 @@ Usage: judge.py [--expect] [--new-uuids] [--removable] [--nvram-kept] [--reforma
                 [--grow BYTES | --fit BYTES [--fit-pct PCT] | --degraded] SRC.json DST.json
        judge.py fs FSMETA.py SRC-META.json DST-META.json [--no-atime] [--new-uuids] [--reformat MOUNT=TYPE]...
        judge.py esp DIR
+       judge.py bes SRC.json DST.json
+       judge.py zbm SRC.json DST.json SRC-META.json DST-META.json
        judge.py --fit-plan BYTES [--fit-pct PCT] LAYOUT.json
 
 The fs form judges fsmeta.py's records of the source and the restored disk:
 every path must match but what load's boot stage writes by design (BOOT_STAGE).
 The esp form judges a Proxmox source's ESPs, which proxmox-boot-tool rebuilds
-(judge_esp).
+(judge_esp).  The bes form judges a TrueNAS source's boot-pool (judge_bes), the
+zbm form a ZFSBootMenu source's boot environments, images and pool
+properties, from both dumps and both fsmeta records (judge_zbm).
 
 --grow BYTES is for a restore onto disks BYTES bigger than the source's: a
 disk's size, GPT's last usable LBA and backup header, and the protective MBR's
@@ -125,6 +129,7 @@ IGNORED = [
     (r"^storage\.zfs\.zpool_cache\.[^.]+\.(hostid|hostname|txg|vdev_tree\..*\.(guid|path|metaslab_array))$", "the rescue system wrote zpool.cache: its host, its names for the vdevs, and their new GUIDs (ZFS finds vdevs by GUID)"),
     (r"^boot\.kernels\.installed\.\d+\.initrd_bytes$", "load's boot stage rebuilds every initramfs (update-initramfs -k all)"),
     (r"^boot\.truenas\.bes\.\d+\.(origin|clones)(\.|$)", "TrueNAS: a boot environment's clones come back as plain datasets, their origin snapshots not being backed up (the spec's Decision 4; judge.py bes holds the rest)"),
+    (r"^boot\.zfsbootmenu\.bes\.\d+\.origin$", "ZFSBootMenu: a clone boot environment comes back as a plain dataset, its origin snapshot not being backed up (docs/design/zfsbootmenu.md, Decision 3a; judge.py zbm holds the rest)"),
 ]
 
 # With --expect (BackShot2): what a drifted layout can't predict.
@@ -312,6 +317,15 @@ OPENSUSE_SOURCE = r"^boot/efi/EFI/opensuse/shim\.efi$"
 OPENSUSE_KEPT = r"^boot/efi/EFI/(opensuse|boot)/[^/]+$"
 OPENSUSE_REQUIRED = ("boot/efi/EFI/opensuse/shim.efi", "boot/efi/EFI/opensuse/grub.efi", "boot/efi/EFI/opensuse/MokManager.efi",
                      "boot/efi/EFI/boot/bootx64.efi")
+# A ZFSBootMenu source (void-zbm: docs/design/zfsbootmenu.md): load installs
+# no loader (its zfsbootmenu arm: the ESP's images come back with the
+# restore, and the NVRAM entries are made by label), so EFI/ZBM (zbm,
+# zfsbootmenu) and its images must be byte for byte the source's: no ESP
+# rule excuses them.  (The inactive boot environments' /boot, under
+# run/bko-be/NAME, no rule excuses anyway; judge.py zbm checks their
+# kernels and initramfs files are there.)
+ZBM_SOURCE = r"(?i)^(boot/efi|efi|boot)/EFI/(zbm|zfsbootmenu)/[^/]+\.efi$"
+ZBM_KEPT = r"(?i)^(boot/efi|efi|boot)/EFI/(zbm|zfsbootmenu)(/.*)?$"
 
 
 # A transactional-update source (openSUSE MicroOS; docs/design/aeon.md, the
@@ -728,6 +742,7 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     solus = any(re.search(SOLUS_SOURCE, p) for p in before)
     tu = any(re.search(TU_SOURCE, p) for p in before)
     opensuse = not tu and any(re.search(OPENSUSE_SOURCE, p) for p in before)
+    zbm = any(re.search(ZBM_SOURCE, p) for p in before)
     real, allowed = {}, {}
     # A transactional source's slot at / (the booted one) is in the backup
     # through / only, where @/var and the other subvolumes fstab mounts hide
@@ -760,7 +775,7 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     for kind, paths in diff.items():
         for p in paths:
             kept = (refind and re.search(REFIND_KEPT, p)) or (anduin and re.search(ANDUINOS_KEPT, p)) or (abroot and re.search(ABROOT_KEPT, p)) \
-                or (solus and re.search(SOLUS_KEPT, p)) or (opensuse and re.search(OPENSUSE_KEPT, p))
+                or (solus and re.search(SOLUS_KEPT, p)) or (opensuse and re.search(OPENSUSE_KEPT, p)) or (zbm and re.search(ZBM_KEPT, p))
             why = None if kept else \
                 next((w for r, kinds, w in (TU_STAGE if tu else BOOT_STAGE) if kind in kinds and re.search(r, p)), None)
             if not why and kind == "missing" and before.get(p, {}).get("type") == "socket":
@@ -810,6 +825,9 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     if opensuse:
         held = sorted(p for p in before if re.search(OPENSUSE_KEPT, p))
         print(f"openSUSE's shim and signed GRUB kept: {len(held)} paths of EFI/opensuse and EFI/boot held to the source's bytes: {', '.join(p.removeprefix('boot/efi/EFI/') for p in held)}")
+    if zbm:
+        held = sorted(p for p in before if re.search(ZBM_SOURCE, p))
+        print(f"ZFSBootMenu's images kept: {len(held)} held to the source's bytes: {', '.join(held)}")
     if tu:
         held = [p for p in before if re.search(TU_HELD, p)]
         print(f"transactional-update: no boot-stage excuse but load's log and health-check.state: {len(held)} paths of the ESP and every slot's /boot and /usr held to the source's")
@@ -1675,11 +1693,199 @@ def judge_bes(src_path, dst_path):
     sys.exit(1 if bad else 0)
 
 
+# ZFSBootMenu (docs/design/zfsbootmenu.md, "HoltTest1 1V"): what judge.py zbm
+# compares, besides the dump form's every field and the fs form's every path.
+ZBM_PREFIX = "org.zfsbootmenu:"
+
+
+def zbm_kver(name):
+    """A sort key for a kernel's version (vmlinuz-6.18.63_1: its numbers)."""
+    return [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", name)]
+
+
+def zbm_newest(be):
+    """The newest kernel version in a dump's BE record (its /boot's
+    vmlinuz-VERSION), the one ZFSBootMenu boots; None without one."""
+    ks = sorted((k.removeprefix("vmlinuz-") for k in be.get("kernels") or [] if k.startswith("vmlinuz-")), key=zbm_kver)
+    return ks[-1] if ks else None
+
+
+def zbm_be_path(d, be):
+    """Where a dump's backup sources have an inactive BE (its record's
+    path, without the leading /): /run/bko-be/NAME unless they say else."""
+    for s in (d.get("storage") or {}).get("backup_sources") or []:
+        if s.get("source") == be.get("dataset") and not s.get("from"):
+            return str(s.get("path") or "").lstrip("/")
+    return f"run/bko-be/{be.get('name')}"
+
+
+def zbm_props(d):
+    """{(dataset, property): (value, source)} for every org.zfsbootmenu:*
+    property, as set locally on the dataset or inherited from the nearest
+    ancestor that sets it ("inherited from DATASET"), over the dump's
+    datasets (it records the local ones)."""
+    ds = {x.get("name"): x for x in ((((d.get("storage") or {}).get("zfs") or {}).get("tools") or {}).get("datasets") or [])}
+    local = {(n, k): v.get("value") for n, x in ds.items() for k, v in (x.get("properties") or {}).items()
+             if k.startswith(ZBM_PREFIX) and isinstance(v, dict) and v.get("source") == "local"}
+    keys = sorted({k for _, k in local})
+    out = {}
+    for n in ds:
+        for k in keys:
+            a = n
+            while a and (a, k) not in local:
+                a = a.rpartition("/")[0]
+            if a:
+                out[(n, k)] = (local[(a, k)], "local" if a == n else f"inherited from {a}")
+    return out
+
+
+def judge_zbm(src_path, dst_path, smeta_path, dmeta_path):
+    """`judge.py zbm SRC DST SRC-META DST-META`: a ZFSBootMenu source's
+    restore, from its dump and the restored one's (each of a boot through
+    the source's NVRAM entries) and fsmeta.py's records of the source and
+    the restored disk (vm-mount mounts each inactive BE at run/bko-be/NAME,
+    where dump's backup sources have it):
+
+    - the restored dump names the loader zfsbootmenu, and has each of the
+      source's images (ESP path, size, SHA-256), which both records hold
+      with those bytes;
+    - every BE of the source's boot.zfsbootmenu.bes, with the same
+      dataset, bootfs, mounted, command line (and where it comes from),
+      kernels and initramfs files, and no other; a clone's origin may be
+      gone (Decision 3a);
+    - the booted BE's kernels byte for byte (its initramfs files are
+      rebuilt by the boot stage, but must be there); each inactive BE's
+      kernels and initramfs files in both records under its path, byte for
+      byte (the boot stage rebuilds nothing there, Decision 6);
+    - each pool's bootfs and compatibility, and every org.zfsbootmenu:*
+      property (keysource too) at the same dataset with the same value and
+      source (local, or inherited from the same dataset);
+    - each encryption root's encryption, keyformat and keylocation, and
+      every dataset's encryptionroot."""
+    src, dst = load_json(src_path), load_json(dst_path)
+    smeta, dmeta = load_json(smeta_path), load_json(dmeta_path)
+    sz, dz = (src.get("boot") or {}).get("zfsbootmenu"), (dst.get("boot") or {}).get("zfsbootmenu")
+    if not sz:
+        print("DIFF the source's dump has no boot.zfsbootmenu: nothing to judge")
+        sys.exit(1)
+    bad, out = [], []
+    if not dz:
+        print("DIFF the restored dump has no boot.zfsbootmenu")
+        sys.exit(1)
+    loader = ((dst.get("boot") or {}).get("loader") or {}).get("name")
+    if loader != "zfsbootmenu":
+        bad.append(f"the restored dump's loader is {loader!r}, not zfsbootmenu")
+
+    def rec(meta, p):
+        e = meta.get(p) or {}
+        return e.get("sha256") if e.get("type") == "file" else None
+
+    # The images.
+    dimg = {(i.get("esp_mount"), i.get("path")): i for i in dz.get("images") or []}
+    for i in sz.get("images") or []:
+        at = (i.get("esp_mount"), i.get("path"))
+        j = dimg.pop(at, None)
+        name = f"{str(at[0] or '').rstrip('/')}/{at[1]}"
+        if not j:
+            bad.append(f"image {name}: not in the restored dump")
+            continue
+        for k in ("size", "sha256", "cmdline", "kernel"):
+            if i.get(k) != j.get(k):
+                bad.append(f"image {name}: {k} {i.get(k)!r} -> {j.get(k)!r}")
+        p = name.lstrip("/")
+        hs, hd = rec(smeta, p), rec(dmeta, p)
+        if hs != i.get("sha256") or hd != i.get("sha256"):
+            bad.append(f"image {name}: the records' bytes: source {hs}, restored {hd}, the dump's {i.get('sha256')}")
+    for at in dimg:
+        bad.append(f"image {str(at[0] or '').rstrip('/')}/{at[1]}: only in the restored dump")
+    out.append(f"{len(sz.get('images') or [])} images byte for byte (records and dumps): "
+               + ", ".join(sorted(str(i.get("path")) for i in sz.get("images") or [])))
+
+    # The boot environments.
+    dbe = {b.get("dataset"): b for b in dz.get("bes") or []}
+    for b in sz.get("bes") or []:
+        ds = b.get("dataset")
+        c = dbe.pop(ds, None)
+        if not c:
+            bad.append(f"BE {ds}: not in the restored dump")
+            continue
+        for k in ("name", "pool", "bootfs", "mounted", "commandline", "commandline_from", "locked", "read", "kernels", "initramfs"):
+            if b.get(k) != c.get(k):
+                bad.append(f"BE {ds}: {k} {json.dumps(b.get(k))} -> {json.dumps(c.get(k))}")
+        if b.get("origin") != c.get("origin") and c.get("origin") is not None:
+            bad.append(f"BE {ds}: origin {b.get('origin')} -> {c.get('origin')}")
+        if b.get("mounted"):
+            base, what = "boot", "booted"
+        else:
+            root = zbm_be_path(src, b)
+            base, what = root + "/boot", "inactive"
+            for who, meta in (("source", smeta), ("restored", dmeta)):
+                if not any(p.startswith(root + "/") for p in meta):
+                    bad.append(f"BE {ds}: the {who} record has nothing under {root} (vm-mount didn't mount it there)")
+        held, rebuilt = [], []
+        for f in (b.get("kernels") or []) + (b.get("initramfs") or []):
+            p = f"{base}/{f}"
+            hs, hd = rec(smeta, p), rec(dmeta, p)
+            if hs is None or hd is None:
+                bad.append(f"BE {ds} ({what}): {p}: not a file in the {'source' if hs is None else 'restored'} record")
+            elif what == "booted" and f in (b.get("initramfs") or []):
+                rebuilt.append(f)
+            elif hs != hd:
+                bad.append(f"BE {ds} ({what}): {p}: its bytes differ ({'the boot stage rebuilds nothing in an inactive BE' if what == 'inactive' else 'a kernel'})")
+            else:
+                held.append(f)
+        out.append(f"BE {ds} ({what}{', bootfs' if b.get('bootfs') else ''}; origin {b.get('origin') or '-'} -> {c.get('origin') or '-'}): "
+                   f"newest kernel {zbm_newest(b)}; {len(held)} byte for byte under {base}" + (f", {len(rebuilt)} initramfs rebuilt" if rebuilt else ""))
+    for ds in dbe:
+        bad.append(f"BE {ds}: only in the restored dump")
+
+    # The pools and the properties.
+    def pools(d):
+        t = (((d.get("storage") or {}).get("zfs") or {}).get("tools") or {})
+        return {p.get("name"): p.get("properties") or {} for p in t.get("imported_pools") or []}, \
+               {x.get("name"): x for x in t.get("datasets") or []}
+    sp, sds = pools(src)
+    dp, dds = pools(dst)
+    for p in sz.get("pools") or []:
+        n = p.get("name")
+        for k in ("bootfs", "compatibility"):
+            a, b2 = (sp.get(n) or {}).get(k), (dp.get(n) or {}).get(k)
+            if a != b2:
+                bad.append(f"pool {n}: {k} {a} -> {b2}")
+        if (sp.get(n) or {}).get("bootfs") != p.get("bootfs"):
+            bad.append(f"pool {n}: bootfs {(sp.get(n) or {}).get('bootfs')}, boot.zfsbootmenu's {p.get('bootfs')}")
+        out.append(f"pool {n}: bootfs {(dp.get(n) or {}).get('bootfs')}, compatibility {(dp.get(n) or {}).get('compatibility')}")
+    spr, dpr = zbm_props(src), zbm_props(dst)
+    for k in sorted(set(spr) | set(dpr)):
+        if spr.get(k) != dpr.get(k):
+            bad.append(f"{k[0]}: {k[1]} {spr.get(k)} -> {dpr.get(k)}")
+    out.append(f"{len(spr)} {ZBM_PREFIX}* settings (local and inherited) as the source's: "
+               + "; ".join(f"{n} {k.removeprefix(ZBM_PREFIX)}={v} ({w})" for (n, k), (v, w) in sorted(spr.items()) if w == "local"))
+    roots = sorted(n for n, x in sds.items() if x.get("encryptionroot") == n)
+    for n in sorted(set(sds) & set(dds)):
+        if sds[n].get("encryptionroot") != dds[n].get("encryptionroot"):
+            bad.append(f"{n}: encryptionroot {sds[n].get('encryptionroot')} -> {dds[n].get('encryptionroot')}")
+    for n in roots:
+        for k in ("encryption", "keyformat", "keylocation"):
+            a, b2 = sds[n].get(k), (dds.get(n) or {}).get(k)
+            if a != b2:
+                bad.append(f"{n}: {k} {a} -> {b2}")
+        out.append(f"encryption root {n}: {sds[n].get('encryption')}, {sds[n].get('keyformat')}, keylocation {(dds.get(n) or {}).get('keylocation')}")
+    for x in out:
+        print(x)
+    for x in bad:
+        print(f"DIFF {x}")
+    print(f"{len(bad)} differences; {len(sz.get('bes') or [])} BEs, {len(sz.get('images') or [])} images")
+    sys.exit(1 if bad else 0)
+
+
 def main():
     if sys.argv[1] == "esp":
         judge_esp(sys.argv[2])
     if sys.argv[1] == "bes":
         judge_bes(sys.argv[2], sys.argv[3])
+    if sys.argv[1] == "zbm":
+        judge_zbm(*sys.argv[2:6])
     if sys.argv[1] == "fs":
         judge_fs(*sys.argv[2:5], no_atime="--no-atime" in sys.argv[5:], new_uuids="--new-uuids" in sys.argv[5:],
                  reforms=reformat_args(sys.argv[5:]))

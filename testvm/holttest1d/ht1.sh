@@ -47,7 +47,13 @@
 #            with one on each disk (proxmox9-mirror), each restored disk
 #            boots alone too, the others detached (the spec's
 #            --boot-each-disk: HT_BOOT_EACH_DISK=1 asks for it on any
-#            source of more than one disk, =0 never)
+#            source of more than one disk, =0 never).  A ZFSBootMenu source
+#            (its dump's boot.zfsbootmenu: void-zbm, void-zbm-enc) has each
+#            of its other boot environments booted too, picked from ZBM's
+#            serial menu, on the source after its dump and on the restored
+#            disk after its dump, each held to the source's (zbm_source,
+#            zbm_verify), and judge.py zbm holds its images, BEs and pool
+#            properties (docs/design/zfsbootmenu.md, "HoltTest1 1V")
 #
 # Where it works (ht1-lib.sh): with HT_RAM unset, in RAM when the run holds
 # a reservation of at least 1 GiB, else on /bkoscratch (a note: line says
@@ -352,6 +358,7 @@ gpass=""; for f in console-passphrase zfs-passphrase luks-passphrase luks-keyfil
 ckey=$gpass; [[ $gpass != */luks-keyfile ]] || ckey=""
 # Where the run works and what a pass keeps (ht1-lib.sh; README "Where a run works, and what it keeps").
 HT_BULK=(share 'src-*.qcow2' 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 rustic-bko tmp img-key img-key.pub source-vars.fd restored-vars.fd 'restored-disk*-vars.fd')
+HT_BULK+=('source-zbm-*-vars.fd' 'restored-zbm-*-vars.fd')   # (ZFSBootMenu's menu boots: zbm_menu_boot)
 [[ $VARIANT != bs2 ]] || HT_BULK+=(rescuer-vars.fd)   # (a resumed UEFI rescuer's NVRAM)
 HT_ZIP=(src-meta.json dst-meta.json)
 # Settings that change what a run checks, or its rescuer: its report names them.
@@ -402,9 +409,12 @@ vm_up() { # IMAGE LOG [vm-run options...] [-- QEMU_ARGS...]
         # A GRUB menu entry picked on the serial console (an ABRoot guest's
         # other root: its master grub.cfg reads `default` literally, so
         # grub-reboot can't): console-keys.py logs the console and types
-        # GRUB_KEYS once GRUB_PICK (a regular expression) shows.  It types
-        # no passphrase.
-        setsid -f python3 "$T/vanilla/console-keys.py" "$log" "$GRUB_PICK" "$GRUB_KEYS" -- \
+        # GRUB_KEYS once GRUB_PICK (a regular expression) shows.  With
+        # CONSOLE_KEY (a serial console's: luks-passphrase is above) it types
+        # that at each prompt too, before or after GRUB_PICK, and sends
+        # GRUB_KEYS' first chunk at GRUB_PICK, the rest once the menu is
+        # drawn (ZFSBootMenu asks for its passphrase after Escape: zbm_menu_boot).
+        setsid -f python3 "$T/vanilla/console-keys.py" ${CONSOLE_KEY:+--passphrase "$CONSOLE_KEY"} "$log" "$GRUB_PICK" "$GRUB_KEYS" -- \
             "$T/vm-run" "${opts[@]}" "$image" "${qargs[@]}" </dev/null 2>"$log.vm-run" {HT_FD1}>&- {HT_FD2}>&-
     elif [[ -n ${GRUB_MENU:-} ]]; then
         # GRUB's serial menu walked by grub-menu.py, its steps GRUB_MENU's
@@ -1284,6 +1294,157 @@ truenas_disk_check() { local i=$1 L=$R/logs
     fi
 }
 
+# ZFSBootMenu (docs/design/zfsbootmenu.md, "HoltTest1 1V"; void-zbm,
+# void-zbm-enc): keyed on the source dump's boot.zfsbootmenu.  ZBM picks a
+# boot environment (BE) at each boot, so each BE is booted: the booted one
+# by the boot every guest gets (alone, through the source's NVRAM entries:
+# GVARS, as proxmox9), each other one picked from ZBM's menu on the serial
+# console by console-keys.py (vm_up's GRUB_PICK), every boot under
+# --snapshot.  The source's boots are the baseline (after its dump); the
+# restored disk's must show what they did.  On an encrypted pool ZBM asks
+# for the passphrase after its countdown (or after Escape opens its menu:
+# z7a's logs): console-boot.py types it (the
+# plain boots), or console-keys.py --passphrase (the menu picks: the two
+# can't be nested); each boot must have had that one prompt, no second
+# (the BE's initramfs opens the pool with its key file).  judge.py zbm then
+# holds the images, every BE, the pool's properties and the key settings.
+# ZBM_STATE is what a boot shows: the guest's own /etc/bko-be (make-void-zfs.sh
+# writes the BE's name there), the kernel, / and the command line.
+ZBM_STATE='echo "bko-be $(cat /etc/bko-be 2>/dev/null || echo none)"
+echo "uname $(uname -r)"
+echo "root $(findmnt -no SOURCE /)"
+echo "cmdline $(cat /proc/cmdline)"'
+# The menu's keys (Z1, "ZBM over the serial console"): Escape during the
+# countdown, which shows "seconds" (plain text: ZBM's colour codes split
+# anything longer across reads), 3.5 s for fzf's menu to draw, Down once a
+# line, 1 s, Enter: console-keys.py's chunks are 0.5 s apart.  The menu
+# lists the BEs sorted by name with the cursor on the first (Z1: void, then
+# void-6.18; void is also the default, so which of the two the cursor starts
+# on isn't settled by these guests).
+ZBM_PICK_RE='seconds'
+zbm_pick_keys() { local i=$1 k='\x1b|||||||'; for ((; i > 0; i--)); do k+='\x1b[B|'; done; printf '%s' "$k|\\r"; }
+# Whether a dump (FILE) is a ZFSBootMenu source's.
+zbm_is() { python3 -I -c 'import json, sys
+sys.exit(0 if ((json.load(open(sys.argv[1])).get("boot") or {}).get("zfsbootmenu") or {}).get("bes") else 1)' "$1" 2>/dev/null; }
+# From the source's dump, logs/source-zbm.tsv: "prompts N" (1 when a BE's
+# pool has a passphrase encryption root: ZBM's prompt, else 0), then a line
+# a BE: be, its line in the menu (0 first, by dataset name), name, dataset,
+# bootfs and mounted (1/0), its newest kernel (the one ZBM boots), and the
+# words of its own commandline property (%{parent} left out).
+zbm_list() { python3 -I - "$R/dumps/src.json" <<'PY'
+import json, re, sys
+d = json.load(open(sys.argv[1]))
+bes = d["boot"]["zfsbootmenu"]["bes"]
+pools = {b.get("pool") for b in bes}
+dss = (((d.get("storage") or {}).get("zfs") or {}).get("tools") or {}).get("datasets") or []
+enc = any(x.get("encryptionroot") == x.get("name") and x.get("keyformat") == "passphrase" and str(x.get("name")).split("/")[0] in pools for x in dss)
+print(f"prompts {1 if enc else 0}")
+key = lambda v: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", v)]
+order = sorted(b["dataset"] for b in bes)
+for b in bes:
+    ks = sorted((k.removeprefix("vmlinuz-") for k in b.get("kernels") or [] if k.startswith("vmlinuz-")), key=key)
+    words = " ".join(w for w in str(b.get("commandline") or "").split() if w != "%{parent}")
+    print("\t".join(["be", str(order.index(b["dataset"])), b["name"], b["dataset"], str(int(bool(b.get("bootfs")))),
+                     str(int(bool(b.get("mounted")))), ks[-1] if ks else "-", words]))
+PY
+}
+# WHO NAME DATASET KVER WORDS LOG PROMPTS: WHO's boot of BE NAME (its
+# logs/WHO-zbm-NAME.txt, and its console LOG) against what the BE must
+# boot: /etc/bko-be NAME (or none), its newest kernel, root=zfs:DATASET and
+# the BE's own words on the command line, ZBM's line booting that kernel
+# for DATASET on the console, and PROMPTS passphrase prompts; the restored
+# disk's also the source's state.  Exit 1 if any isn't so.
+zbm_judge_boot() {
+    local who=$1 name=$2 ds=$3 kver=$4 words=$5 log=$6 want=$7 f=$R/logs/$1-zbm-$2.txt why=() w n con b
+    b=$(sed -n 's/^bko-be //p' "$f")
+    [[ $b == "$name" || $b == none ]] || why+=("/etc/bko-be ${b:-unread}")
+    [[ $(sed -n 's/^uname //p' "$f") == "$kver" ]] || why+=("uname -r $(sed -n 's/^uname //p' "$f"), not $kver")
+    for w in "root=zfs:$ds" $words; do
+        tr ' ' '\n' <<<"$(sed -n 's/^cmdline //p' "$f")" | grep -qxF -- "$w" || why+=("no $w on the command line")
+    done
+    con=$(sed 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[()][A-Za-z0-9]//g' "$log" 2>/dev/null | tr -d '\r')
+    grep -qF "vmlinuz-$kver for $ds" <<<"$con" || why+=("no \"Booting .../vmlinuz-$kver for $ds\" on the console")
+    n=$(grep -ci 'enter passphrase' <<<"$con")
+    [[ $n == "$want" ]] || why+=("$n passphrase prompts on the console, not $want$( ((want)) && echo " (ZFSBootMenu's; a second is the BE's initramfs not opening the pool with its key file)")")
+    if [[ $who == restored ]] && ! cmp -s "$R/logs/source-zbm-$name.txt" "$f"; then
+        why+=("not the source's boot: $(diff "$R/logs/source-zbm-$name.txt" "$f" | grep '^[<>]' | head -2 | tr '\n' ' ')")
+    fi
+    if ((${#why[@]})); then
+        bad "ZFSBootMenu: the $who boot of $name: $(printf '%s; ' "${why[@]}" | sed 's/; $//') (logs/${f##*/}, ${log##*/})"; return 1
+    fi
+    ok "ZFSBootMenu: the $who boot of $name: /etc/bko-be $b, $kver, root=zfs:$ds${words:+ and $words}, $n passphrase prompt(s)$([[ $who == restored ]] && echo ", as the source's")"
+}
+# WHO IMAGE INDEX NAME [vm-run options...]: boot BE NAME (the menu's line
+# INDEX) picked on ZBM's menu, under --snapshot; WHO's state recorded.
+# Exit 1 when it didn't come up (or the menu never showed).
+zbm_menu_boot() {
+    local who=$1 img=$2 idx=$3 name=$4 log; shift 4
+    log=$R/logs/$who-zbm-$name-serial.log
+    gvars "$who-zbm-$name"
+    GRUB_PICK=$ZBM_PICK_RE GRUB_KEYS=$(zbm_pick_keys "$idx") CONSOLE_KEY=$ckey vm_up "$img" "$log" --snapshot "${fw[@]}" "${VFW[@]}" "$@"
+    if ! vm_wait "$gkey"; then bad "ZFSBootMenu: the $who's $name, picked on ZBM's menu, boots (no SSH; logs/${log##*/})"; vm_down "$gkey"; return 1; fi
+    grep -q 'console-keys.py: typed' "$log" || { bad "ZFSBootMenu: ZBM's countdown (\"$ZBM_PICK_RE\") never showed on the $who's serial console (logs/${log##*/})"; vm_down "$gkey"; return 1; }
+    sshk "$gkey" "$ZBM_STATE" > "$R/logs/$who-zbm-$name.txt" 2>&1
+    [[ -z $GVARS ]] || sshk "$gkey" "$NVBOOT" > "$R/logs/$who-zbm-$name-nvram-boot.txt" 2>&1
+    bootstate "$gkey" > "$R/logs/$who-zbm-$name-bootstate.txt"
+    vm_down "$gkey"
+}
+# The source's baseline, after its dump (the source up in its booted BE):
+# that boot's state, then each other BE's boot.  Exit 1 when the run can go
+# no further.
+zbm_source() {
+    local L=$R/logs p b=() l idx name ds bfs mnt kver words
+    zbm_list > "$L/source-zbm.tsv" 2> "$L/source-zbm.err" || { bad "ZFSBootMenu: the source dump's boot.zfsbootmenu: $(tail -1 "$L/source-zbm.err")"; return 1; }
+    p=$(awk '$1 == "prompts" {print $2}' "$L/source-zbm.tsv")
+    mapfile -t b < <(awk -F'\t' '$1 == "be"' "$L/source-zbm.tsv")
+    grep -qP '^be\t\d+\t[^\t]+\t[^\t]+\t1\t1\t' "$L/source-zbm.tsv" || { bad "ZFSBootMenu: the source dump has no BE that is the bootfs and booted (logs/source-zbm.tsv)"; return 1; }
+    for l in "${b[@]}"; do
+        IFS=$'\t' read -r _ idx name ds bfs mnt kver words <<<"$l"
+        ((mnt)) || continue
+        sshk "$gkey" "$ZBM_STATE" > "$L/source-zbm-$name.txt" 2>&1
+        zbm_judge_boot source "$name" "$ds" "$kver" "$words" "$L/source-serial.log" "$p" || return 1
+    done
+    vm_down "$gkey"
+    for l in "${b[@]}"; do
+        IFS=$'\t' read -r _ idx name ds bfs mnt kver words <<<"$l"
+        ((!mnt)) || continue
+        zbm_menu_boot source "${src[0]}" "$idx" "$name" "${extra_src[@]}" || return 1
+        zbm_judge_boot source "$name" "$ds" "$kver" "$words" "$L/source-zbm-$name-serial.log" "$p" || return 1
+    done
+}
+# The restored disk (after its dump, up in its booted BE): that boot, then
+# each other BE's from the menu, alone through the source's NVRAM entries,
+# each held to the source's (its boot state may have no line the source's
+# boot of it lacked).
+zbm_verify() {
+    local L=$R/logs p b=() l idx name ds bfs mnt kver words
+    p=$(awk '$1 == "prompts" {print $2}' "$L/source-zbm.tsv")
+    mapfile -t b < <(awk -F'\t' '$1 == "be"' "$L/source-zbm.tsv")
+    for l in "${b[@]}"; do
+        IFS=$'\t' read -r _ idx name ds bfs mnt kver words <<<"$l"
+        ((mnt)) || continue
+        sshk "$gkey" "$ZBM_STATE" > "$L/restored-zbm-$name.txt" 2>&1
+        zbm_judge_boot restored "$name" "$ds" "$kver" "$words" "$L/restored-serial.log" "$p"
+    done
+    vm_down "$gkey"
+    for l in "${b[@]}"; do
+        IFS=$'\t' read -r _ idx name ds bfs mnt kver words <<<"$l"
+        ((!mnt)) || continue
+        zbm_menu_boot restored "${dst[0]}" "$idx" "$name" "${BS2_VFW[@]}" "${extra_dst[@]}" || continue
+        zbm_judge_boot restored "$name" "$ds" "$kver" "$words" "$L/restored-zbm-$name-serial.log" "$p"
+        if grep -qs 'HD(' "$L/source-nvram-boot.txt" && [[ -n $GVARS ]]; then
+            cmp -s "$L/source-nvram-boot.txt" "$L/restored-zbm-$name-nvram-boot.txt" ||
+                bad "ZFSBootMenu: the restored boot of $name came through $(head -1 "$L/restored-zbm-$name-nvram-boot.txt"), the source through $(head -1 "$L/source-nvram-boot.txt")"
+        fi
+        if diff -q <(head -1 "$L/source-zbm-$name-bootstate.txt") <(head -1 "$L/restored-zbm-$name-bootstate.txt") >/dev/null \
+            && [[ -z $(comm -13 <(tail -n +2 "$L/source-zbm-$name-bootstate.txt") <(tail -n +2 "$L/restored-zbm-$name-bootstate.txt")) ]]; then
+            ok "ZFSBootMenu: $name's boot state as the source's ($(head -1 "$L/restored-zbm-$name-bootstate.txt"))"
+        else
+            bad "ZFSBootMenu: $name's boot state: source $(tr '\n' ' ' < "$L/source-zbm-$name-bootstate.txt"), restored $(tr '\n' ' ' < "$L/restored-zbm-$name-bootstate.txt")"
+        fi
+    done
+}
+
 phase_source() {
     say "== source: $G"
     # (bs2: the source's preparation stands in for its boot when it can.)
@@ -1370,6 +1531,8 @@ phase_source() {
     rm -f "$R/logs/source-tu"*.txt "$R/logs/source-hcstate.txt"
     # And a TrueNAS source its middleware's view.
     rm -f "$R/logs/source-truenas.txt"
+    # And a ZFSBootMenu source each BE's boot, after its dump (zbm_source).
+    rm -f "$R/logs/source-zbm"*
     case $(sshk "$gkey" 'if [ -e /run/ostree-booted ]; then echo ostree; elif [ -f /usr/share/abroot/abroot.json ] && command -v abroot >/dev/null; then echo abroot; elif [ -d /var/guix/profiles ] && command -v guix >/dev/null; then echo guix; elif command -v tukit >/dev/null && findmnt -no OPTIONS / | tr , "\n" | grep -qx ro; then echo tu; elif [ -f /data/freenas-v1.db ] && command -v midclt >/dev/null; then echo truenas; else echo plain; fi') in
         ostree) ostree_source || { vm_down "$gkey"; return; } ;;
         abroot) abroot_source || { vm_down "$gkey"; return; } ;;
@@ -1395,6 +1558,7 @@ phase_source() {
         bad "dump on the live source: $(tail -1 "$R/logs/source-dump.err")"
     fi
     sshk "$gkey" 'rm -f /root/bko-holt'
+    if zbm_is "$R/dumps/src.json"; then zbm_source || { vm_down "$gkey"; return; }; fi
     vm_down "$gkey"
     cp "$R/dumps/src.json" "$S/layout.json"
     [[ $VARIANT != bs2 ]] || bs2_after_source
@@ -1830,6 +1994,8 @@ phase_verify() {
     [[ ! -f $R/logs/source-tu.txt ]] || tu_verify
     # And a TrueNAS source's middleware, and its oldest BE activated and booted.
     [[ ! -f $R/logs/source-truenas.txt ]] || truenas_verify
+    # And a ZFSBootMenu source's other BEs, picked from ZBM's menu.
+    [[ ! -f $R/logs/source-zbm.tsv ]] || zbm_verify
     if [[ $VARIANT == bs2 ]]; then bs2_restored_down; else vm_down "$gkey"; fi
     # Each disk alone (the spec's --boot-each-disk): a source with an ESP on each disk, or asked for.
     local nb=$((n - ${#KEEP[@]}))   # (HT_POOLS's kept disks aren't booted alone)
@@ -1850,6 +2016,15 @@ phase_verify() {
         ok "the dumps agree ($(tail -1 "$R/logs/judge.txt"))"
     else
         bad "the dumps differ: $(grep -c '^DIFF' "$R/logs/judge.txt") fields (logs/judge.txt)"
+    fi
+    # ZFSBootMenu: its images, every BE, the pool's properties and the key settings.
+    if [[ -f $R/logs/source-zbm.tsv ]]; then
+        if python3 "$HERE/judge.py" zbm "$jsrc" "$R/dumps/dst.json" "$R/src-meta.json" "$R/dst-meta.json" > "$R/logs/zbmjudge.txt" 2>&1; then
+            ok "ZFSBootMenu: images, boot environments, pool and ZBM properties as the source's ($(tail -1 "$R/logs/zbmjudge.txt"); logs/zbmjudge.txt)"
+        else
+            bad "ZFSBootMenu: $(grep '^DIFF' "$R/logs/zbmjudge.txt" | head -4 | tr '
+' ' ')(logs/zbmjudge.txt)"
+        fi
     fi
     # TrueNAS: its boot-pool's datasets, properties and bootfs on their own.
     if [[ -f $R/logs/source-truenas.txt ]]; then

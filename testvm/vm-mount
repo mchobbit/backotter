@@ -52,6 +52,9 @@
 # (Proxmox's rpool at /rpool, rpool/data at /rpool/data), is mounted at that
 # path under the guest's own pool name, not the temporary one; one whose
 # mount point directory isn't in its parent is skipped (nothing is made).
+# The pool's other boot environments (ZFSBootMenu's, TrueNAS's) are mounted
+# read-only at /run/bko-be/NAME, on a tmpfs at /run, where bko-holt dump's
+# backup sources have them.
 #
 # VM_MOUNT_NBD="nbd40 nbd41 ..." limits the nbd devices it may take to those
 # (compare.py's COMPARE_NBD sets it).
@@ -844,6 +847,8 @@ in_tmp_name() { printf '($3 == "%s" || index($3, "%s/") == 1)' "${2:-$mp}/$1" "$
 # A legacy root (TrueNAS's bootfs; mount_zfs_root), its pool's temporary
 # name, and the guest's pool names to the temporary ones (fstab's zfs lines).
 legacy_root="" legacy_pool=""
+# A / dataset that isn't legacy (mount_zfs_root's; ZFSBootMenu's BEs below).
+zfs_root=""
 declare -A tmpname=()
 # mount_be_children DATASET PREFIX: DATASET's descendant filesystems at
 # $mp/PREFIX plus their own mount points (a legacy one at its path below
@@ -924,6 +929,7 @@ mount_zfs_root() {
     # Ubuntu's root dataset is canmount=noauto, so mount it by name; then the
     # pool's datasets that mount by themselves.
     zfs mount "$rootds"
+    zfs_root=$rootds
     zfs list -H -o name,canmount,mountpoint -r "$name" |
         awk '$2 == "on" && $3 != "none" && $3 != "legacy" && !'"$(in_tmp_name "$name")"' { print $1 }' |
         while read -r ds; do zfs mount "$ds" 2>/dev/null || true; done
@@ -940,6 +946,7 @@ for p in "${parts[@]}"; do
     if [[ $type == zfs_member ]]; then
         mount_zfs_root "$p" || continue
         if [[ -f $mp/etc/fstab ]]; then root=$p; break; fi
+        zfs_root=""
         umount -R "$mp"
         zpool export "$(tail -n 1 "$state" | cut -d' ' -f2)"
         sed -i '$d' "$state"
@@ -1092,6 +1099,47 @@ if [[ -n $legacy_root ]]; then
                 mount -t zfs -o "zfsutil${tro[1]:+,ro}" "$be" "$at" || { echo "vm-mount: could not mount $be at ${at#"$mp"}" >&2; continue; }
             fi
             mount_be_children "$be" "${at#"$mp"}"
+        done
+    fi
+fi
+
+# ZFSBootMenu (docs/design/zfsbootmenu.md): with / a dataset that isn't
+# legacy (zfs_root), its pool's other boot environments as bko-holt dump
+# finds them (holt/src/zfs_be.rs's ZFSBootMenu rule): every filesystem whose
+# mount point is / (here $mp, the altroot) and canmount isn't off, unless
+# org.zfsbootmenu:active is off (inherited too), and a legacy one whose
+# org.zfsbootmenu:active is on; one inside another BE is that one's.  Each
+# is mounted read-only at /run/bko-be/NAME with its children, on a tmpfs at
+# /run dated 1970, as TrueNAS's above: where dump's backup sources have
+# them, so a backup holds them and fsmeta.py records them (void-zbm's clone).
+# (Two pools with a BE of one name, dump's /run/bko-be/POOL/NAME: not here.)
+if [[ -n $zfs_root && -z $legacy_root ]]; then
+    zbes=()
+    while IFS=$'\t' read -r be bmp bcan bact; do
+        [[ $be == "$zfs_root" ]] && continue
+        if [[ $bmp == "$mp" && $bcan != off && $bact != off ]] || [[ $bmp == legacy && $bact == on ]]; then
+            inside=no
+            for o in "$zfs_root" "${zbes[@]}"; do [[ $be == "$o"/* ]] && inside=yes; done
+            [[ $inside == yes ]] || zbes+=("$be")
+        fi
+    done < <(zfs list -H -o name,mountpoint,canmount,org.zfsbootmenu:active -t filesystem -r "${zfs_root%%/*}" 2>/dev/null | LC_ALL=C sort || true)
+    if [[ ${#zbes[@]} -gt 0 ]]; then
+        tro=(); [[ $ro == yes ]] && tro=(-o ro)
+        mountpoint -q "$mp/run" || mount -t tmpfs -o mode=0755,size=16m vm-mount-run "$mp/run"
+        for be in "${zbes[@]}"; do mkdir -p "$mp/run/bko-be/${be##*/}"; done
+        touch -d @0 "$mp/run/bko-be" "$mp/run/bko-be"/* "$mp/run"
+        for be in "${zbes[@]}"; do
+            at=$mp/run/bko-be/${be##*/}
+            if [[ $(zfs get -H -o value keystatus "$be") == unavailable ]]; then
+                echo "vm-mount: boot environment $be is locked: not mounted" >&2; continue
+            fi
+            if [[ $(zfs get -H -o value mountpoint "$be") == legacy ]]; then
+                mount -t zfs "${tro[@]}" "$be" "$at" || { echo "vm-mount: could not mount $be at ${at#"$mp"}" >&2; continue; }
+            else
+                mount -t zfs -o "zfsutil${tro[1]:+,ro}" "$be" "$at" || { echo "vm-mount: could not mount $be at ${at#"$mp"}" >&2; continue; }
+            fi
+            mount_be_children "$be" "${at#"$mp"}"
+            echo "vm-mount: boot environment $be (not the root) at ${at#"$mp"}"
         done
     fi
 fi

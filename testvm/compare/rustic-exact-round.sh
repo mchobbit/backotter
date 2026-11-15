@@ -220,7 +220,11 @@ RUN=rustic-round-$STAMP
 TAG6=$(date +%H%M%S)
 [[ -n $ROUND ]] || ROUND=rr15-$STAMP
 [[ $ROUND =~ ^[A-Za-z0-9._-]+$ ]] || { echo "--round: letters, digits, . _ -, not $ROUND" >&2; exit 2; }
-[[ -n $LOGDIR ]] || LOGDIR=$(cd "$REPO/.." && pwd)/bko-rustic-round-$STAMP$([[ $DRY == 1 ]] && echo -dry)
+# Never "X=...$([[ $DRY == 1 ]] && echo -dry)": on a real run that substitution's
+# status, 1, is the assignment's, and set -e ends the script there.
+sfx=""
+if [[ $DRY == 1 ]]; then sfx=-dry; fi
+[[ -n $LOGDIR ]] || LOGDIR=$(cd "$REPO/.." && pwd)/bko-rustic-round-$STAMP$sfx
 mkdir -p "$LOGDIR"
 LOGDIR=$(cd "$LOGDIR" && pwd)
 exec > >(trap '' INT TERM; tee -a "$LOGDIR/driver.log") 2>&1

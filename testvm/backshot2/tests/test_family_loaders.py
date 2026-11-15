@@ -142,14 +142,14 @@ class TestProxmoxBoot(unittest.TestCase):
 
 class TestGrubUpstream(unittest.TestCase):
     def test_matches(self):
-        want = {"chimera-zfs", "endeavouros-grub", "garuda", "gentoo", "gentoo-systemd", "manjaro"}
+        want = {"biglinux", "chimera-zfs", "endeavouros-grub", "garuda", "gentoo", "gentoo-systemd", "manjaro"}
         got = {g for g in K.linux_guests() if "grub_upstream" in F.hooks(g, K.dump(g)).names}
         self.assertEqual(got & set(want), want)
         for g in ("alpine324", "debian13-stack", "ubuntu26-uefi", "fedora44-uefi", "kinoite44", "anduinos2", "nixos2605"):
             self.assertNotIn("grub_upstream", F.hooks(g, K.dump(g)).names, g)
 
     def test_no_removable(self):
-        for g in ("gentoo", "manjaro", "garuda"):
+        for g in ("gentoo", "manjaro", "garuda", "biglinux"):
             self.assertFalse(any("--removable" in c["load_options"] for c in K.cases(g)), g)
         self.assertTrue(any("--removable" in c["load_options"] for c in K.cases("ubuntu26-uefi")))
 

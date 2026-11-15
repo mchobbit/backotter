@@ -21,6 +21,7 @@ EXPECTED = {
     "arch": ("linux", ["mkinitcpio"]),
     "artix-dinit": ("linux", ["mkinitcpio"]),
     "artix-s6": ("linux", ["mkinitcpio"]),
+    "biglinux": ("linux", ["grub_upstream", "mkinitcpio"]),
     "cachyos": ("linux", ["mkinitcpio"]),
     "cachyos-zfs": ("linux", ["limine", "mkinitcpio"]),
     "chimera": ("linux", ["initramfs-tools"]),

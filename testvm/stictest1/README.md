@@ -64,7 +64,7 @@ testvm/HOSTS.md has every host and what stays on the big ones):
 
 | Host | Guests |
 |---|---|
-| Chopin | anduinos2, nixos2605, chimera, garuda, gentoo, guix15, kali, microos, pikaos4, proxmox9, truenas25, dragonfly6, ghostbsd26, ghostbsd26-zfs, hardenedbsd15, kinoite44, ubuntu26-zfs, ubuntu26-uefi, ubuntu26-zfsmirror, ubuntu24, ubuntu24-uefi, debian12, devuan6, elementary8, zorin18, mint22, debian13, pop24, mx25, sculpt2610 |
+| Chopin | anduinos2, nixos2605, chimera, garuda, biglinux, gentoo, guix15, kali, microos, pikaos4, proxmox9, truenas25, dragonfly6, ghostbsd26, ghostbsd26-zfs, hardenedbsd15, kinoite44, ubuntu26-zfs, ubuntu26-uefi, ubuntu26-zfsmirror, ubuntu24, ubuntu24-uefi, debian12, devuan6, elementary8, zorin18, mint22, debian13, pop24, mx25, sculpt2610 |
 | Cinqcent | aerynos, alpine324, alpinebsd, freebsd14, freebsd15-geli, arch, artix-dinit, artix-s6, cachyos, chimera-uefi, chimera-zfs, debian13-stack, debian13-zfs, elementary8-luks, fedora44, fedora44-uefi, freebsd15, freebsd15-ufs, garuda, gentoo-systemd, haiku6, netbsd11, omarchy, omnios58, openbsd8, openbsd8-crypt, guix15-bios, leap16, pikaos4-luks, proxmox9-mirror, rocky10, rocky10-lvm, solus49, tumbleweed, vanilla3, void-musl |
 
 ## Running one
@@ -153,9 +153,9 @@ watched through their exit files every 15 s; the results land in
 
 The queue times guests by their newest passing run on the hosts, else by these.
 
-Estimates (seconds; round st2a's, GuestTest1's for the guests it added, Bazzite B5's for kinoite44, Chimera C4's for chimera, chimera-uefi and chimera-zfs, Gentoo G4's for gentoo and gentoo-systemd, AnduinOS A4's for anduinos2, PikaOS P5's for pikaos4 and pikaos4-luks, Kali K4's for kali, Guix GX5's for guix15 and guix15-bios, Proxmox P5's for proxmox9 and proxmox9-mirror, TrueNAS T5's for truenas25, Vanilla OS V6's for vanilla3, MicroOS M4's for microos, Leap 16 L4's for leap16, elementary E5's for elementary8 and elementary8-luks, an estimate for garuda until Garuda GA5's run, Solus S4's for solus49):
+Estimates (seconds; round st2a's, GuestTest1's for the guests it added, Bazzite B5's for kinoite44, Chimera C4's for chimera, chimera-uefi and chimera-zfs, Gentoo G4's for gentoo and gentoo-systemd, AnduinOS A4's for anduinos2, PikaOS P5's for pikaos4 and pikaos4-luks, Kali K4's for kali, Guix GX5's for guix15 and guix15-bios, Proxmox P5's for proxmox9 and proxmox9-mirror, TrueNAS T5's for truenas25, Vanilla OS V6's for vanilla3, MicroOS M4's for microos, Leap 16 L4's for leap16, elementary E5's for elementary8 and elementary8-luks, an estimate for garuda until Garuda GA5's run, an estimate for biglinux until BigLinux's first run, Solus S4's for solus49):
 aerynos 150, alpine324 153, alpinebsd 401, anduinos2 400, arch 137, artix-dinit 170,
-artix-s6 367, cachyos 300, chimera 215, chimera-uefi 200, chimera-zfs 290,
+artix-s6 367, biglinux 300, cachyos 300, chimera 215, chimera-uefi 200, chimera-zfs 290,
 debian12 117, debian13 477, debian13-stack 547, debian13-zfs 856,
 devuan6 310, dragonfly6 435, elementary8 411, elementary8-luks 458, fedora44 208, fedora44-uefi 268, freebsd14 751,
 freebsd15 751, freebsd15-geli 800, freebsd15-ufs 391, ghostbsd26 1211,

@@ -12,6 +12,9 @@ class TestSnapper(unittest.TestCase):
         for g in ("tumbleweed", "garuda", "omarchy"):
             self.assertIn("snapper", F.hooks(g, K.dump(g)).names, g)
         self.assertNotIn("snapper", F.hooks("fedora44", K.dump("fedora44")).names)
+        # Timeshift's btrfs snapshots (timeshift-btrfs/snapshots/*/@) are not snapper's.
+        self.assertNotIn("snapper", F.hooks("biglinux", K.dump("biglinux")).names)
+        self.assertEqual(snapper.orphaned(K.dump("biglinux")), {})
 
     def test_orphans(self):
         d = K.dump("tumbleweed")

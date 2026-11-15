@@ -286,6 +286,23 @@ shim, MokManager and GRUB as the ESP brings them back (`KEPT`), runs
 again.  The manager's scheduler is held through phase 1 and `verify`.
 Passed 2026-11-14, run `anduinos-2.0.5-20261114-153639`.
 
+## BigLinux: Timeshift's snapshots and systemd-swap
+
+BigLinux (Manjaro stable underneath; docs/design/biglinux.md) installs with
+Calamares's defaults: btrfs `@` and `@home` with `compress-force=zstd`,
+GRUB at `EFI/BigLinux` and the fallback loader, a busybox mkinitcpio, and
+no swap partition: systemd-swap makes a top-level `@swapfile` at
+`/swapfile`.  Timeshift keeps btrfs snapshots at the top of the file
+system (`timeshift-btrfs/snapshots`), outside every mount, so they are not
+in the backup: the restore leaves them out with a note, and Timeshift's
+hourly check takes a new one afterwards.  `bs1-manifest`'s `EXPECTED` has
+`swapfile/*`, systemd-swap's files, written anew at every boot.  `bs1-adopt`
+needs nothing new (BigLinux has sshd and avahi), and the run is unattended.
+Rehearsed 2026-11-14 with `bs1-qemu.py --virtio` on `biglinux`, PASS on
+Chopin and Cinqcent.  The Thinkpad run isn't done yet: its install and
+staging steps are in docs/design/biglinux.md ("What BL6's rehearsals
+found", "For the real run on the Thinkpad").
+
 ## Keeping a library of backups
 
 Each backup is a run of its own, named after the distro and the time:
@@ -447,7 +464,10 @@ Plymouth), `chimera-uefi` (D, Chimera's port of initramfs-tools) and
 own initramfs-tools has no LUKS guest yet.  On 2026-11-14, Garuda (`garuda`,
 GRUB on btrfs with snapper's 4 snapshots restored as shared ones, dracut
 through `dracut-rebuild`, the source booted by the firmware's own entry for
-its fallback loader; on both hosts).
+its fallback loader; on both hosts) and BigLinux (`biglinux`, `--virtio`,
+btrfs with Timeshift's snapshot left out and systemd-swap's `@swapfile`,
+booted by the `BigLinux` NVRAM entry a Calamares install leaves; on both
+hosts).
 
 Every rehearsal also runs the preflight, and checks that the snapshot is named
 `/mnt/bs1-src` and keeps a file's real access time.  On an ostree guest

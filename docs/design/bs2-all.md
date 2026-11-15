@@ -26,7 +26,7 @@ tier, the three rules, INVALID, the corpus) are used as defined there.
   unbuilt one as SKIPPED (unbuilt: A-piece named) in its plan and report. A
   run with any SKIPPED family is a partial All: it reports PARTIAL PASS, not
   PASS, and doesn't count as the full All in CarpetBeater's record.
-- **Size:** about 61 sources today. The QEMU tiers have ~1,250 cases, and a
+- **Size:** about 62 sources today. The QEMU tiers have ~1,250 cases, and a
   run is ~15-16 h on the four hosts (est.).
 - **Build:** 16 days of effort (est.), built in parallel lanes: about a week
   of calendar time (est.) to all families, with the first (Linux) run after
@@ -57,12 +57,12 @@ tier. Counts as of today, est.:
 | Family | Sources | Count |
 |---|---|---|
 | Alpine | `alpine324`, `-uefi`, `-lvm`, `-luks` (BackShot2Alpine's) | 4 |
-| Other Linux, one disk | aerynos, arch, artix-dinit, artix-s6, cachyos, chimera, chimera-uefi, debian12, debian13, devuan6, endeavouros, endeavouros-grub, fedora44, fedora44-uefi, gentoo, gentoo-systemd, kinoite44, manjaro, mint22, mx25, nixos2605, omarchy, pop24, rocky10, rocky10-lvm, tumbleweed, ubuntu24, ubuntu26-luks, ubuntu26-uefi, void-musl, zorin18 | 31 |
+| Other Linux, one disk | aerynos, arch, artix-dinit, artix-s6, biglinux, cachyos, chimera, chimera-uefi, debian12, debian13, devuan6, endeavouros, endeavouros-grub, fedora44, fedora44-uefi, gentoo, gentoo-systemd, kinoite44, manjaro, mint22, mx25, nixos2605, omarchy, pop24, rocky10, rocky10-lvm, tumbleweed, ubuntu24, ubuntu26-luks, ubuntu26-uefi, void-musl, zorin18 | 32 |
 | Linux ZFS, md, multi-disk | cachyos-zfs, chimera-zfs, debian13-zfs, debian13-stack, fedora44-raid, proxmox9, proxmox9-mirror, rocky10-raid5, ubuntu26-raid, ubuntu26-zfs, ubuntu26-zfsmirror | 11 |
 | BSD | freebsd14, freebsd15, freebsd15-mirror, ghostbsd26, ghostbsd26-zfs, hardenedbsd15, dragonfly6, netbsd11, openbsd8, alpinebsd | 10 |
 | illumos | omnios58, omnios58-mirror | 2 |
 | Haiku, Redox, Sculpt OS | haiku6, redox, sculpt2610 | 3 |
-| | | **61** |
+| | | **62** |
 
 **Proxmox VE 9** (2026-11-15, docs/design/proxmox.md): `proxmox9` (ZFS raid0)
 and `proxmox9-mirror` (raid1, an ESP on each disk) join the ZFS row. (The

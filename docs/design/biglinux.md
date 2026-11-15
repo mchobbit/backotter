@@ -156,7 +156,9 @@ EndeavourOS guests have no SticTest1 entry; Test2's report already says
 "stic: no check for manjaro". The recommendation is the same for
 `biglinux`: no SticTest1 entry for now (Decision 5), and a GuestTest1 grade
 of "not covered by SticTest1". SticTest2 needs nothing, because it runs
-the existing SticTest1 checks.
+the existing SticTest1 checks. (2026-11-15: at the user's request the entry
+was built after all, `testvm/stictest1/biglinux/` from garuda's, with a
+`compress-force=zstd` scratch volume; not yet run.)
 
 **BackShot1** (`testvm/realworld/backshot1`): `bs1-adopt` already handles
 pacman systems and an empty VERSION_ID (Manjaro, row 6 of `bs1-all.md`), so
@@ -553,6 +555,7 @@ user asks ([[work-on-main]]). Nothing is pushed until the user says so.
    and btrfs is covered by `tumbleweed` and `kinoite44`); or a `biglinux`
    entry built from `kinoite44`'s, with a `compress-force=zstd` scratch
    volume (est. +0.35 d).
+   2026-11-15: the user asked for the rig plumbing; entry built, not yet run.
 6. **GRUB id case:** keep the source's spelling, `BigLinux` (recommended:
    no other plan changes, and the plan says what the installer did); or
    leave the lowercasing, which works because FAT ignores case.

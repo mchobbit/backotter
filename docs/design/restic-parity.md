@@ -188,7 +188,7 @@ Low review items left as known limits (rustic_core BACKOTTER.md):
 - The flag tests pass without testing anything when not run as root.
 
 Open:
-- **NetBSD `--exact` ctime:** a second `--exact` run moves every regular file's ctime (nanoseconds only) on NetBSD FFS (`test_restore_exact_twice_changes_nothing`; FreeBSD passes). It is not atimes moved by reads. The main suspect is that NetBSD doesn't lower a birth time when an earlier mtime is set, so `same_birth_time` never matches. ktrace and stat evidence are in the Mac log dir `bko-rustic-round-20261115-054848/step2/`; not fixed.
+- **NetBSD `--exact` ctime: fixed, unpushed** (rustic_core e21b85b + 3fd3921 = 0.13.0+backotter.15, rustic ea4ee26 + 2c3b237 = 0.11.4+backotter.16). The cause was atimes after all: `--exact` verifies contents by reading them, which moves atimes on NetBSD FFS, so the metadata compare failed on the atime alone and everything was set again (ctime moved). Birth times were ruled out by probes. On NetBSD an entry that differs only in its atime now gets just its atime put back (an atime-only `utimensat`, which leaves the ctime). restic-bko still sets the times again there (its test compares inodes only). Unit tests pass on Linux and in netbsd11 and freebsd15-ufs guests; the farm round is the user's to run (`rustic-exact-round.sh --steps 4`). Limits are in rustic_core BACKOTTER.md: NetBSD mounted noatime keeps no atimes, and the test checks ctimes, not atime values. Evidence: Mac dir `bko-rustic-round-20261115-s2diag/step2/`.
 - **Script:** rustic-exact-round.sh step 3's `cargo update` re-resolved `windows-sys`/`getrandom` (probably a stale private index). The guard refused it, and the lock was edited by hand and checked with `cargo metadata --locked` instead.
 
 Not done:

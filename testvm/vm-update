@@ -56,8 +56,10 @@ GUEST, vm-update
      on-disk version, a zpool upgrade, a new ext4, xfs or btrfs feature, a
      LUKS or LVM change), the update fails and nothing merges.  A guest that
      isn't Linux (the BSDs, illumos, Haiku) is passed by: vm-mount reads none
-     of their disks; so is a ZFS guest on a host with no OpenZFS (cage,
-     copland), which the fleet's hosts check;
+     of their disks; so is a ZFS guest on a host with no OpenZFS (none
+     since 2026-11-14: all four run 2.4, testvm/BACKPORTS.md, so this check
+     no longer catches a pool moved to 2.4's features), which the fleet's
+     hosts check;
   5. copies the overlay (only the blocks the update wrote) to every other
      host, checks step 1 again on every host, and then merges the overlay
      into the image (qemu-img commit) on one host at a time, this one last,

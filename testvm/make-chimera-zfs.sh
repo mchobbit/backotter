@@ -2,12 +2,13 @@
 # Build a Chimera Linux test guest for BackOtter with its root on ZFS, from
 # the host: UEFI, GRUB (grub-x86_64-efi), a separate ext4 /boot, and the pool
 # laid out as Chimera's "Root on ZFS" page does it, with the prebuilt modules
-# of linux-lts-zfs-bin.  The pool is made by the host's own OpenZFS (2.3 on
-# the hosts), so that the hosts and the rescue image can import, read and
-# write it with every feature it has, while the guest runs Chimera's newer
-# OpenZFS on it (2.4: it imports an older pool, and never upgrades it by
-# itself).  ubuntu26-zfsmirror's pool, made by its own OpenZFS 2.4, has
-# features the hosts lack.
+# of linux-lts-zfs-bin.  The pool is made by the host's OpenZFS with
+# compatibility=openzfs-2.4-linux: the features of the guest's OpenZFS (2.4),
+# which the hosts (2.4 from trixie-backports since 2026-11-14,
+# testvm/BACKPORTS.md) and the Linux rescue image (2.4) also have, so they
+# can import, read and write it with every feature it has.  The pin keeps a
+# host on a newer OpenZFS from adding features the guest and the rescue
+# image lack.  Pools built before 2026-11-14 were made by the hosts' 2.3.
 #
 # Usage: sudo ./make-chimera-zfs.sh WORK_DIR [NAME]
 #   e.g. sudo ./make-chimera-zfs.sh vms/chimera-zfs        (NAME chimera-zfs)
@@ -70,7 +71,8 @@
 # (--uefi --no-secure-boot), install.log (apk's and the tools' output) and
 # firstboot-serial.log.
 #
-# Needs: root; OpenZFS (zpool, zfs); bsdtar (it keeps the tarball's file
+# Needs: root; OpenZFS 2.4 or newer (zpool, zfs; openzfs-2.4-linux in
+# /usr/share/zfs/compatibility.d); bsdtar (it keeps the tarball's file
 # capabilities, which GNU tar drops), minisign, wget, qemu-img, KVM and OVMF
 # (vm-run --uefi), losetup, sfdisk, mkfs.fat, mkfs.ext4, mkswap, openssl,
 # ssh-keygen, python3 (to pick a free port); network access.  SSH_PORT
@@ -164,8 +166,9 @@ mkfs.fat -F 32 -n EFI "${dev}p1" >/dev/null
 mkfs.ext4 -q -F "${dev}p2"
 mkswap -q "${dev}p3"
 mkdir -p "$root"
-# Chimera's guide's pool and datasets; every feature this OpenZFS has.
+# Chimera's guide's pool and datasets, with OpenZFS 2.4's features (the guest's).
 zpool create -t "$temp" -o ashift=12 -o cachefile=none \
+    -o compatibility=openzfs-2.4-linux \
     -O acltype=posixacl -O canmount=off -O dnodesize=auto -O relatime=on \
     -O xattr=sa -O mountpoint=/ -R "$root" "$POOL" "${dev}p4"
 imported=yes

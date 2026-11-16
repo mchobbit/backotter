@@ -2,10 +2,13 @@
 # Build a Debian test guest for BackOtter with its root on ZFS, from the
 # host: Debian 13 (trixie) laid out as OpenZFS's "Debian Trixie Root on ZFS"
 # guide does it (unencrypted, with /boot on ext4 instead of a boot pool), and
-# its pool made by the host's own OpenZFS 2.3, the same as trixie's
-# (contrib's zfs-dkms and zfsutils-linux), so that the hosts can import, read
-# and write it with every feature it has, and compare.py can recreate it
-# exactly.  (ubuntu26-zfsmirror's OpenZFS 2.4 pool has features they lack.)
+# its pool made by the host's OpenZFS with compatibility=openzfs-2.3-linux:
+# the features of trixie's own OpenZFS 2.3 (contrib's zfs-dkms and
+# zfsutils-linux, what the guest runs), and no more.  The hosts run 2.4 from
+# trixie-backports since 2026-11-14 (testvm/BACKPORTS.md); without the pin
+# the pool would get 2.4's features, which the guest's 2.3 can't import
+# read-write.  The hosts and the rescue image read and write it with every
+# feature it has, and compare.py recreates it exactly.
 #
 # Usage: sudo ./make-debian-zfs.sh WORK_DIR NAME
 #   e.g. sudo ./make-debian-zfs.sh vms/debian13-zfs debian13-zfs
@@ -53,7 +56,8 @@
 # Results, in WORK_DIR: NAME.qcow2 (16 GiB, sparse, snapshot
 # "fresh-install"), root-password, id_ed25519 and .pub, firstboot-serial.log.
 #
-# Needs: root; OpenZFS (zpool, zfs) with the same features as trixie's,
+# Needs: root; OpenZFS 2.3 or newer (zpool, zfs; openzfs-2.3-linux in
+# /usr/share/zfs/compatibility.d),
 # debootstrap, debian-archive-keyring, qemu-img, qemu-system-x86_64 with KVM,
 # losetup, sfdisk, mkfs.ext4, mkswap, openssl, ssh-keygen; network access.
 
@@ -116,8 +120,9 @@ for _ in 1 2 3 4 5; do [[ -e ${dev}p3 ]] && break; sleep 1; done
 mkfs.ext4 -q -F "${dev}p1"
 mkswap -q "${dev}p2"
 mkdir -p "$root"
-# The guide's pool: every feature this OpenZFS has (the same as trixie's).
+# The guide's pool, with trixie's OpenZFS 2.3 features only (the guest's).
 zpool create -t "$temp" -o ashift=12 -o autotrim=on -o cachefile=none \
+    -o compatibility=openzfs-2.3-linux \
     -O acltype=posixacl -O xattr=sa -O dnodesize=auto -O compression=lz4 \
     -O normalization=formD -O relatime=on -O canmount=off -O mountpoint=/ \
     -R "$root" "$POOL" "${dev}p3"

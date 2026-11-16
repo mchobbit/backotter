@@ -1,0 +1,1041 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.6"
+  },
+  "generated": "2026-11-16T06:25:58Z",
+  "privileged": true,
+  "host": {
+    "hostname": "void-zbm-enc",
+    "machine_id": null,
+    "dmi": {
+      "sys_vendor": "QEMU",
+      "product_name": "Standard PC (Q35 + ICH9, 2009)",
+      "product_version": "pc-q35-11.1",
+      "board_vendor": null,
+      "board_name": null,
+      "bios_vendor": "Debian distribution of EDK II",
+      "bios_version": "2025.02-8+deb13u1",
+      "bios_date": "11/08/2025",
+      "product_uuid": null,
+      "chassis_type": "1"
+    },
+    "virtualization": null
+  },
+  "os": {
+    "id": "void",
+    "version_id": null,
+    "version_codename": null,
+    "pretty_name": "Void Linux",
+    "debian_version": null,
+    "kernel_release": "7.2.15_1",
+    "kernel_version": "#1 SMP PREEMPT_DYNAMIC Mon Nov  2 01:23:23 UTC 2026",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "uefi",
+    "platform_size": 64,
+    "secure_boot": null,
+    "setup_mode": null,
+    "efivars_readable": true
+  },
+  "storage": {
+    "topology": {
+      "vda (disk, 16 GiB, gpt)": {
+        "vda1 (partition, 512 MiB) vfat on /boot/efi": {},
+        "vda2 (partition, 15.5 GiB) zfs_member \"zroot\"": {}
+      }
+    },
+    "disks": [
+      {
+        "name": "vda",
+        "path": "/dev/vda",
+        "kind": "disk",
+        "devno": "254:0",
+        "size_bytes": 17179869184,
+        "size": "16 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": ["/dev/disk/by-diskseq/1"],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "bc000000-0000-4000-8000-000000000001",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 34,
+          "last_usable_lba": 33554398,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 33554431,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 33554431,
+                "start_bytes": 512,
+                "size_bytes": 17179868672,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vda1",
+            "path": "/dev/vda1",
+            "devno": "254:1",
+            "number": 1,
+            "start_lba": 2048,
+            "end_lba": 1050623,
+            "sectors": 1048576,
+            "start_bytes": 1048576,
+            "size_bytes": 536870912,
+            "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "type_name": "EFI System",
+            "uuid": "bc000000-0000-4000-8000-000000000002",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000002",
+              "/dev/disk/by-uuid/BC00-0001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "vfat",
+              "usage": "filesystem",
+              "uuid": "BC00-0001",
+              "label": null,
+              "version": "FAT32",
+              "fat_bits": 32,
+              "bytes_per_sector": 512,
+              "sectors_per_cluster": 8,
+              "cluster_size": 4096,
+              "reserved_sectors": 32,
+              "fats": 2,
+              "fat_sectors": 1024,
+              "total_sectors": 1048572,
+              "size_bytes": 536868864,
+              "clusters": 130811,
+              "hidden_sectors": 2048,
+              "media": "0xf8",
+              "oem_name": "mkfs.fat",
+              "root_cluster": 2,
+              "fsinfo_sector": 1,
+              "backup_boot_sector": 6,
+              "boot_sector_label": null
+            },
+            "mounted_at": ["/boot/efi"]
+          },
+          {
+            "name": "vda2",
+            "path": "/dev/vda2",
+            "devno": "254:2",
+            "number": 2,
+            "start_lba": 1050624,
+            "end_lba": 33533918,
+            "sectors": 32483295,
+            "start_bytes": 537919488,
+            "size_bytes": 16631447040,
+            "type": "6a85cf4d-1dd2-11b2-99a6-080020736631",
+            "type_name": "Solaris root",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-label/zroot",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-uuid/1000000000000000001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "zfs_member",
+              "usage": "filesystem",
+              "uuid": "1000000000000000001",
+              "label": "zroot",
+              "version": "5000",
+              "labels_valid": 4,
+              "pool_name": "zroot",
+              "pool_guid": "1000000000000000001",
+              "vdev_guid": "10000000000000000002",
+              "top_guid": "10000000000000000002",
+              "pool_state": "active",
+              "txg": 219,
+              "spa_version": 5000,
+              "hostname": "(none)",
+              "hostid": 10000010
+            },
+            "mounted_at": []
+          }
+        ],
+        "boot_code": {
+          "kind": "none",
+          "first_bytes": "00000000000000000000000000000000",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 2
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [],
+    "loop_devices": [],
+    "other_devices": [
+      {
+        "name": "sr0",
+        "path": "/dev/sr0",
+        "kind": "rom",
+        "devno": "11:0",
+        "size_bytes": 1073741312,
+        "size": "1024 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": false,
+        "links": ["/dev/cdrom", "/dev/disk/by-diskseq/3", "/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1"],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "lvm": {
+      "volume_groups": []
+    },
+    "zfs": {
+      "pools_from_labels": [
+        {
+          "name": "zroot",
+          "pool_guid": "1000000000000000001",
+          "state": 0,
+          "txg": 219,
+          "version": 5000,
+          "hostname": "(none)",
+          "hostid": 10000010,
+          "vdev_children": 1,
+          "top_level_vdevs": [
+            {
+              "type": "disk",
+              "id": 0,
+              "guid": 10000000000000000002,
+              "path": "/dev/vda2",
+              "whole_disk": 0,
+              "metaslab_array": 66,
+              "metaslab_shift": 29,
+              "ashift": 12,
+              "asize": 16626483200,
+              "min_alloc": 4096,
+              "is_log": 0,
+              "create_txg": 4
+            }
+          ],
+          "features_for_read": {
+            "com.delphix:hole_birth": true,
+            "com.delphix:embedded_data": true,
+            "com.klarasystems:vdev_zaps_v2": true
+          },
+          "member_devices": ["vda2"]
+        }
+      ],
+      "zpool_cache": null,
+      "tools": {
+        "imported_pools": [
+          {
+            "name": "zroot",
+            "properties": {
+              "size": "16106127360",
+              "altroot": "-",
+              "health": "ONLINE",
+              "guid": "1000000000000000001",
+              "version": "-",
+              "bootfs": "zroot/ROOT/void",
+              "delegation": "on",
+              "autoreplace": "off",
+              "cachefile": "-",
+              "failmode": "wait",
+              "listsnapshots": "off",
+              "autoexpand": "off",
+              "readonly": "off",
+              "ashift": "12",
+              "comment": "-",
+              "multihost": "off",
+              "autotrim": "on",
+              "compatibility": "openzfs-2.3-linux",
+              "dedup_table_quota": "auto",
+              "last_scrubbed_txg": "0"
+            },
+            "local_properties": {
+              "bootfs": "zroot/ROOT/void",
+              "ashift": "12",
+              "autotrim": "on",
+              "compatibility": "openzfs-2.3-linux"
+            },
+            "features": {
+              "async_destroy": "enabled",
+              "empty_bpobj": "active",
+              "lz4_compress": "active",
+              "multi_vdev_crash_dump": "enabled",
+              "spacemap_histogram": "active",
+              "enabled_txg": "active",
+              "hole_birth": "active",
+              "extensible_dataset": "active",
+              "embedded_data": "active",
+              "bookmarks": "enabled",
+              "filesystem_limits": "enabled",
+              "large_blocks": "enabled",
+              "large_dnode": "enabled",
+              "sha512": "enabled",
+              "skein": "enabled",
+              "edonr": "enabled",
+              "userobj_accounting": "active",
+              "encryption": "active",
+              "project_quota": "active",
+              "device_removal": "enabled",
+              "obsolete_counts": "enabled",
+              "zpool_checkpoint": "enabled",
+              "spacemap_v2": "active",
+              "allocation_classes": "enabled",
+              "resilver_defer": "enabled",
+              "bookmark_v2": "enabled",
+              "redaction_bookmarks": "enabled",
+              "redacted_datasets": "enabled",
+              "bookmark_written": "enabled",
+              "log_spacemap": "active",
+              "livelist": "active",
+              "device_rebuild": "enabled",
+              "zstd_compress": "enabled",
+              "draid": "enabled",
+              "zilsaxattr": "active",
+              "head_errlog": "active",
+              "blake3": "enabled",
+              "block_cloning": "active",
+              "vdev_zaps_v2": "active",
+              "redaction_list_spill": "enabled",
+              "raidz_expansion": "enabled",
+              "fast_dedup": "enabled",
+              "longname": "enabled",
+              "large_microzap": "enabled",
+              "dynamic_gang_header": "disabled",
+              "block_cloning_endian": "disabled",
+              "physical_rewrite": "disabled"
+            },
+            "vdevs": {
+              "vdevs": {
+                "zroot": {
+                  "name": "zroot",
+                  "vdev_type": "root",
+                  "guid": 1000000000000000001,
+                  "class": "normal",
+                  "state": "ONLINE",
+                  "alloc_space": 2032390144,
+                  "total_space": 16106127360,
+                  "def_space": 16106127360,
+                  "read_errors": 0,
+                  "write_errors": 0,
+                  "checksum_errors": 0,
+                  "vdevs": {
+                    "/dev/vda2": {
+                      "name": "/dev/vda2",
+                      "vdev_type": "disk",
+                      "guid": 10000000000000000002,
+                      "path": "/dev/vda2",
+                      "class": "normal",
+                      "state": "ONLINE",
+                      "alloc_space": 2032390144,
+                      "total_space": 16106127360,
+                      "def_space": 16106127360,
+                      "rep_dev_size": 16110845952,
+                      "phys_space": 16631201792,
+                      "read_errors": 0,
+                      "write_errors": 0,
+                      "checksum_errors": 0,
+                      "slow_ios": 0
+                    }
+                  }
+                }
+              },
+              "logs": null,
+              "l2cache": null,
+              "spares": null,
+              "special": null,
+              "dedup": null
+            }
+          }
+        ],
+        "datasets": [
+          {
+            "name": "zroot",
+            "type": "filesystem",
+            "used": 2039410688,
+            "available": 13572341760,
+            "referenced": 196608,
+            "mountpoint": "none",
+            "canmount": "on",
+            "mounted": "no",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "zroot",
+            "keyformat": "passphrase",
+            "keylocation": "file:///etc/zfs/keyfile1.key",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "none",
+                "source": "local"
+              },
+              "compression": {
+                "value": "lz4",
+                "source": "local"
+              },
+              "xattr": {
+                "value": "sa",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "posix",
+                "source": "local"
+              },
+              "relatime": {
+                "value": "on",
+                "source": "local"
+              },
+              "keylocation": {
+                "value": "file:///etc/zfs/keyfile1.key",
+                "source": "local"
+              },
+              "org.zfsbootmenu:keysource": {
+                "value": "zroot/ROOT/void",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/ROOT",
+            "type": "filesystem",
+            "used": 2036842496,
+            "available": 13572341760,
+            "referenced": 196608,
+            "mountpoint": "none",
+            "canmount": "on",
+            "mounted": "no",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "zroot",
+            "keyformat": "passphrase",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "none",
+                "source": "local"
+              },
+              "org.zfsbootmenu:commandline": {
+                "value": "loglevel=4 console=tty0 console=ttyS0,115200n8",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/ROOT/void",
+            "type": "filesystem",
+            "used": 2036559872,
+            "available": 13572341760,
+            "referenced": 2032562176,
+            "mountpoint": "/",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "zroot",
+            "keyformat": "passphrase",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/ROOT/void-6.18",
+            "type": "filesystem",
+            "used": 86016,
+            "available": 13572341760,
+            "referenced": 1636519936,
+            "mountpoint": "/",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "zroot",
+            "keyformat": "passphrase",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": "zroot/ROOT/void@pre-mainline",
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "org.zfsbootmenu:commandline": {
+                "value": "%{parent} bko.be=void-6.18",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/home",
+            "type": "filesystem",
+            "used": 221184,
+            "available": 13572341760,
+            "referenced": 221184,
+            "mountpoint": "/home",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "zroot",
+            "keyformat": "passphrase",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/home",
+                "source": "local"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "btrfs": [],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "zroot/ROOT/void",
+        "fstype": "zfs",
+        "devno": "0:27",
+        "device": null,
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 15604908032,
+        "used_bytes": 2032664576,
+        "available_bytes": 13572243456
+      },
+      {
+        "target": "/home",
+        "source": "zroot/home",
+        "fstype": "zfs",
+        "devno": "0:32",
+        "device": null,
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 13572505600,
+        "used_bytes": 262144,
+        "available_bytes": 13572243456
+      },
+      {
+        "target": "/boot/efi",
+        "source": "/dev/vda1",
+        "fstype": "vfat",
+        "devno": "254:1",
+        "device": "vda1",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,fmask=0022,dmask=0022,codepage=437,iocharset=iso8859-1,shortname=mixed,utf8,errors=remount-ro",
+        "size_bytes": 535801856,
+        "used_bytes": 129757184,
+        "available_bytes": 406044672
+      }
+    ],
+    "physical_root": "/",
+    "backup_sources": [
+      {
+        "path": "/",
+        "from": "/",
+        "device": null,
+        "fstype": "zfs",
+        "source": "zroot/ROOT/void",
+        "subvol": null
+      },
+      {
+        "path": "/boot/efi",
+        "from": "/boot/efi",
+        "device": "vda1",
+        "fstype": "vfat",
+        "source": "/dev/vda1",
+        "subvol": null
+      },
+      {
+        "path": "/home",
+        "from": "/home",
+        "device": null,
+        "fstype": "zfs",
+        "source": "zroot/home",
+        "subvol": null
+      },
+      {
+        "path": "/run/bko-be/void-6.18",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "zroot/ROOT/void-6.18",
+        "subvol": null,
+        "mount": {
+          "device": "zroot/ROOT/void-6.18",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment void-6.18 (not booted): a backup mounts it read-only here"
+      }
+    ],
+    "swaps": [],
+    "fstab": [
+      {
+        "spec": "tmpfs",
+        "file": "/tmp",
+        "type": "tmpfs",
+        "options": "defaults,nosuid,nodev",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "UUID=BC00-0001",
+        "file": "/boot/efi",
+        "type": "vfat",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda1"
+      }
+    ],
+    "crypttab": [],
+    "mdadm_conf": null
+  },
+  "boot": {
+    "loader": {
+      "name": "zfsbootmenu",
+      "firmware": "uefi",
+      "via_shim": false,
+      "package": null,
+      "evidence": [
+        "firmware booted \\EFI\\ZBM\\VMLINUZ.EFI",
+        "that is a ZFSBootMenu image (EFI/ZBM/VMLINUZ.EFI)"
+      ]
+    },
+    "efi": {
+      "boot_current": "0008",
+      "boot_next": null,
+      "boot_order": ["0008", "0007", "0000", "0001", "0002", "0003", "0004", "0005", "0006"],
+      "timeout_seconds": 0,
+      "entries": [
+        {
+          "number": "0000",
+          "load_option_hex": "090100002c0055006900410070007000000004071400000000bc00000040800000000000000404061400000000bc0000004080000000000000057fff0400",
+          "description": "UiApp",
+          "active": true,
+          "hidden": true,
+          "category": "app",
+          "in_boot_order": 2,
+          "device_path": ["Fv(bc000000-0000-4000-8000-000000000004)/FvFile(bc000000-0000-4000-8000-000000000005)"],
+          "file": null,
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0001",
+          "load_option_hex": "010000001600550045004600490020004d006900730063002000440065007600690063006500000002010c00d041030a000000000101060000037fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI Misc Device",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 3,
+          "device_path": ["PciRoot(0x0)/Pci(0x3,0x0)"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0002",
+          "load_option_hex": "0100000056005500450046004900200050005800450076003400200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030c1b0000000000000000000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv4 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 4,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0003",
+          "load_option_hex": "0100000077005500450046004900200050005800450076003600200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030d3c0000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv6 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 5,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0004",
+          "load_option_hex": "010000005a0055004500460049002000480054005400500076003400200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030c1b000000000000000000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv4 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 6,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0005",
+          "load_option_hex": "010000007b0055004500460049002000480054005400500076003600200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030d3c000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv6 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 7,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0006",
+          "load_option_hex": "010000002c00450046004900200049006e007400650072006e0061006c0020005300680065006c006c00000004071400000000bc00000040800000000000000404061400000000bc0000004080000000000000067fff0400",
+          "description": "EFI Internal Shell",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 8,
+          "device_path": ["Fv(bc000000-0000-4000-8000-000000000004)/FvFile(bc000000-0000-4000-8000-000000000006)"],
+          "file": null,
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0007",
+          "load_option_hex": "010000006a005a004600530042006f006f0074004d0065006e007500200028004200610063006b00750070002900000004012a000100000000080000000000000000100000000000000000bc000000408000000000000002020204043c005c004500460049005c005a0042004d005c0056004d004c0049004e0055005a002d004200410043004b00550050002e0045004600490000007fff0400",
+          "description": "ZFSBootMenu (Backup)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 1,
+          "device_path": [
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000002,0x800,0x100000)/File(\\EFI\\ZBM\\VMLINUZ-BACKUP.EFI)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000002",
+            "start_lba": 2048,
+            "sectors": 1048576,
+            "device": "vda1"
+          },
+          "file": "\\EFI\\ZBM\\VMLINUZ-BACKUP.EFI",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0008",
+          "load_option_hex": "010000005c005a004600530042006f006f0074004d0065006e007500000004012a000100000000080000000000000000100000000000000000bc000000408000000000000002020204042e005c004500460049005c005a0042004d005c0056004d004c0049004e0055005a002e0045004600490000007fff0400",
+          "description": "ZFSBootMenu",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 0,
+          "device_path": [
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000002,0x800,0x100000)/File(\\EFI\\ZBM\\VMLINUZ.EFI)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000002",
+            "start_lba": 2048,
+            "sectors": 1048576,
+            "device": "vda1"
+          },
+          "file": "\\EFI\\ZBM\\VMLINUZ.EFI",
+          "optional_data_bytes": 0
+        }
+      ],
+      "loader_interface": {
+        "loader_info": null,
+        "loader_device_partuuid": "bc000000-0000-4000-8000-000000000002",
+        "loader_image_identifier": "\\EFI\\ZBM\\VMLINUZ.EFI",
+        "loader_entry_selected": null,
+        "loader_entry_default": null,
+        "stub_info": "systemd-stub 256.6"
+      },
+      "shim_variables": []
+    },
+    "esps": [
+      {
+        "device": "vda1",
+        "mounted_at": "/boot/efi",
+        "contents": {
+          "files": [
+            {
+              "path": "EFI/ZBM/VMLINUZ-BACKUP.EFI",
+              "size": 64871424,
+              "same_as": "EFI/ZBM/VMLINUZ.EFI"
+            },
+            {
+              "path": "EFI/ZBM/VMLINUZ.EFI",
+              "size": 64871424,
+              "same_as": "EFI/ZBM/VMLINUZ-BACKUP.EFI"
+            }
+          ],
+          "debian_grub_stub": null
+        }
+      }
+    ],
+    "grub": {
+      "dir": "/boot/grub",
+      "installed_platforms": [],
+      "grub_cfg": null,
+      "grubenv": null,
+      "default_grub": {},
+      "debconf": null
+    },
+    "systemd_boot": null,
+    "kernels": {
+      "installed": [
+        {
+          "version": "6.18.63_1",
+          "vmlinuz_bytes": 14815744,
+          "initrd_bytes": 66485684,
+          "config": true,
+          "running": false,
+          "modules_installed": true
+        },
+        {
+          "version": "7.2.15_1",
+          "vmlinuz_bytes": 15499776,
+          "initrd_bytes": 67824075,
+          "config": true,
+          "running": true,
+          "modules_installed": true
+        }
+      ],
+      "symlinks": {}
+    },
+    "cmdline": {
+      "raw": "root=zfs:zroot/ROOT/void loglevel=4 console=tty0 console=ttyS0,115200n8 spl.spl_hostid=0x0098968a",
+      "words": [
+        "root=zfs:zroot/ROOT/void",
+        "loglevel=4",
+        "console=tty0",
+        "console=ttyS0,115200n8",
+        "spl.spl_hostid=0x0098968a\n"
+      ],
+      "storage": {
+        "root": "zfs:zroot/ROOT/void"
+      }
+    },
+    "kernel_cmdline_file": null,
+    "initramfs": {
+      "generator": "dracut",
+      "modules": null,
+      "compress": null,
+      "resume": null,
+      "crypttab_in_initramfs": true
+    },
+    "packages": {
+      "efibootmgr": "18_1",
+      "dracut": "112_1",
+      "btrfs-progs": "6.11_1",
+      "xfsprogs": "6.19.0_1",
+      "e2fsprogs": "1.47.2_1",
+      "dosfstools": "4.2_1",
+      "f2fs-tools": "1.17.0_1",
+      "linux": "6.18_1",
+      "linux-base": "2026.03.23_1",
+      "zfs": "2.4.4_1"
+    },
+    "zfsbootmenu": {
+      "images": [
+        {
+          "esp_device": "vda1",
+          "esp_mount": "/boot/efi",
+          "path": "EFI/ZBM/VMLINUZ-BACKUP.EFI",
+          "size": 64871424,
+          "sha256": "d4c2af93db661730e74d923c712a699c3d9f05681329c4db4d3ca2bfb6cdf84b",
+          "version": null,
+          "osrel": "Void Linux",
+          "kernel": "6.12.63_1",
+          "stub": "systemd-stub 256.6",
+          "cmdline": "quiet loglevel=0 nomodeset console=ttyS0,115200n8 zbm.timeout=5",
+          "why": "it is in a zbm directory"
+        },
+        {
+          "esp_device": "vda1",
+          "esp_mount": "/boot/efi",
+          "path": "EFI/ZBM/VMLINUZ.EFI",
+          "size": 64871424,
+          "sha256": "d4c2af93db661730e74d923c712a699c3d9f05681329c4db4d3ca2bfb6cdf84b",
+          "version": null,
+          "osrel": "Void Linux",
+          "kernel": "6.12.63_1",
+          "stub": "systemd-stub 256.6",
+          "cmdline": "quiet loglevel=0 nomodeset console=ttyS0,115200n8 zbm.timeout=5",
+          "why": "it is in a zbm directory"
+        }
+      ],
+      "pools": [
+        {
+          "name": "zroot",
+          "bootfs": "zroot/ROOT/void"
+        }
+      ],
+      "bes": [
+        {
+          "name": "void",
+          "dataset": "zroot/ROOT/void",
+          "pool": "zroot",
+          "bootfs": true,
+          "mounted": true,
+          "origin": null,
+          "commandline": "loglevel=4 console=tty0 console=ttyS0,115200n8",
+          "commandline_from": "zroot/ROOT",
+          "locked": false,
+          "read": true,
+          "kernels": ["vmlinuz-6.18.63_1", "vmlinuz-7.2.15_1"],
+          "initramfs": ["initramfs-6.18.63_1.img", "initramfs-7.2.15_1.img"]
+        },
+        {
+          "name": "void-6.18",
+          "dataset": "zroot/ROOT/void-6.18",
+          "pool": "zroot",
+          "bootfs": false,
+          "mounted": false,
+          "origin": "zroot/ROOT/void@pre-mainline",
+          "commandline": "%{parent} bko.be=void-6.18",
+          "commandline_from": "zroot/ROOT/void-6.18",
+          "locked": false,
+          "read": true,
+          "kernels": ["vmlinuz-6.18.63_1"],
+          "initramfs": ["initramfs-6.18.63_1.img"]
+        }
+      ]
+    }
+  },
+  "warnings": []
+}

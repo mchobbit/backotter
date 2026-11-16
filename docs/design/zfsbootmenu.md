@@ -565,6 +565,50 @@ gave 0.2-1.7 MB/s). `repo-default` once failed to resolve: `xbps-install
 builder checks the sync for errors and retries each xbps command 3 times.
 `BKO_XBPS_CACHE` keeps the packages on the host between builds.
 
+## What Z5 found
+
+(2026-11-16, Chopin, under `cmp-run.sh --reserve`, in /mnt/bko-ram.)
+
+- **The dump.** The static bko-holt `c6f179fb…` (d23c9ab) dumped the
+  live `void-zbm-enc`, booted by its own vm-run-options under `--snapshot`
+  with `console-boot.py` typing `zfs-passphrase` at ZBM's prompt (SSH up
+  in about 16 s). The qcow2 (`b5b62a16…`) and `uefi-vars.fd`
+  (`5c43137b…`) have the same sha256 before and after. The dump has the
+  loader `zfsbootmenu`, `boot.zfsbootmenu` with both images (the same
+  `d4c2af93…` as `void-zbm`'s), both BEs (each read, none locked), the
+  hinted `/run/bko-be/void-6.18`, both NVRAM entries, `zpool_cache` null,
+  and `zroot`'s `encryption=aes-256-gcm`, `keyformat=passphrase`,
+  `keylocation=file:///etc/zfs/zroot.key`, `encryptionroot` and
+  `org.zfsbootmenu:keysource=zroot/ROOT/void`. No key material: no
+  `pbkdf2*` property, and the passphrase's bytes are in none of the raw
+  dump, src.json, plan.txt or the index row (as is, UTF-16LE, hex). No
+  warnings.
+- **The golden plan** (`holt/tests/corpus/void-zbm-enc`, 133 lines) is as
+  the Load section says: `zpool create` with `encryption`, `keyformat`,
+  `keylocation=file:///srv/bko-keys/zroot` (golden_plans.rs's
+  `--key-file`) and the `keysource`, `cachefile=none`; both BEs, the clone
+  as a full copy; after the restore, `cmp` of the key file against the
+  restored one, then `keylocation` set back; dracut in the default BE only;
+  no loader install; both NVRAM entries in the source's order. redact.rs
+  names the key file by a pseudonym, `/etc/zfs/keyfile1.key`, in both
+  the check and the `keylocation`.
+- Two corpus builds gave the same bytes (src.json `fff7adb5…`). Leak
+  scans: 0 findings on Chopin (134 of 139 strings, the passphrase among
+  them, and the raw dump's identifiers), Cinqcent (110 of 116) and the Mac.
+  Lib tests (600) and golden_plans pass from the Mac's tree; void-zbm-enc
+  is the only new plan. vanilla3's plan already differed by one note line
+  at HEAD before this (the thin pool's `data_used_bytes` note from Qubes's
+  Q2), not from Z5; its re-bless is left to its owner.
+- **vm-update --try --hosts '' void-zbm-enc** is ok with no change:
+  vm-update's prompt pattern takes ZBM's "Enter passphrase" and types
+  `zfs-passphrase`; it rebooted into 7.2.15_1 ("would merge: 2
+  package(s) changed"). **vm-mount --ro --key zfs-passphrase** mounts
+  `void`, `home`, the ESP and `void-6.18` at `/run/bko-be/void-6.18`, and
+  vm-umount exports the pool again. The sha256s are unchanged after both.
+- Not done here: the Test2 registrations (the batched pass). Cinqcent's
+  own-strings leak scan of `void-zbm`, owed since Z4, was done in Z7's
+  prep (116 strings, 0 findings).
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Effort |
@@ -572,7 +616,7 @@ builder checks the sync for errors and retries each xbps command 3 times.
 | Z1 | Fetch Void's glibc ROOTFS (20250202, its `sha256sum.txt` and `.sig`) and ZBM v3.1.0's release EFI, `sha256.txt`, `sha256.sig` and `zbm-kcl` into rebuild-inputs on Chopin (the user's OK first); pin their SHA-256 and settle how `sha256.sig` is checked. Write `testvm/make-void-zfs.sh`, build `void-zbm`, add the `rebuild-one.sh` line, copy to Cinqcent (same SHA-256), run `vm-update --try`, and add `vm-mount --ro` and `--be`. Settle every *check*: kernel series, DKMS for both kernels, ZBM's PE sections, ZBM over serial and its menu keys, `/proc/cmdline`'s root= form, NVRAM order, MEMORY. Write "What Z1 found" here. Done when it boots alone on both hosts into `void`, the menu boots `void-6.18` (Z1's name for the clone), SSH works and `vm-update --try` is ok | 1 d |
 | Z2 | bko-holt dump (High-effort subagent): `zfsbootmenu` in `detect_loader` (PE section reader), `boot.zfsbootmenu` (images, cmdline, BEs, each BE's `/boot` via a private ro mount), inactive BEs as hinted backup sources at `/run/bko-be/NAME`, `PACKAGES`, `fingerprint.py`, `redact.rs`; a ZBM fake tree (two BEs, with and without encryption) in `scenarios.rs`. Done when `cargo test` passes and the scenario's dump has both BEs, one hinted source, and the loader named | 0.6 d |
 | Z3 | bko-holt load (High-effort subagent): user properties through `zfs create -o` (checked), each inactive BE mounted under `TARGET/run/bko-be` and unmounted after, `run/bko-be` removed, the clone note, the `zfsbootmenu` arm (no loader, default BE's initramfs, `efi_entries` with `-u` if optional data), `--key-file` with `file://` keylocations and the key-file equality check, the refusals; `layload.md`'s boot stage. Done when `cargo test` passes and the scenario's plan mounts and restores both BEs, has no `grub-install`, and remakes both NVRAM entries | 0.8 d |
-| Z4 | `void-zbm`'s golden plan (`holt/tests/corpus/void-zbm`, `index.tsv` row); Test2 registrations to the batched pass. **Done 2026-11-14** (uncommitted): run `z4`, static bko-holt `8f5e153b…` dumped the live guest on Chopin (qcow2 and `uefi-vars.fd` unchanged); loader `zfsbootmenu`, both BEs, both images, the hinted `/run/bko-be/void-6.18` and both NVRAM entries in the dump. Two fixes: redact.rs's hostid pseudonym (0x00bab10c mapped back upper-case), and `openzfs-2.3-linux` in golden_plans' fake rescue. Two builds same sha256 (src.json `7c1de82a…`); leak scans 0 on Chopin and the Mac, **Cinqcent's owed**; lib tests and golden_plans as before. Test2 registrations still to the batched pass | 0.25 d |
+| Z4 | `void-zbm`'s golden plan (`holt/tests/corpus/void-zbm`, `index.tsv` row); Test2 registrations to the batched pass. **Done 2026-11-14** (uncommitted): run `z4`, static bko-holt `8f5e153b…` dumped the live guest on Chopin (qcow2 and `uefi-vars.fd` unchanged); loader `zfsbootmenu`, both BEs, both images, the hinted `/run/bko-be/void-6.18` and both NVRAM entries in the dump. Two fixes: redact.rs's hostid pseudonym (0x00bab10c mapped back upper-case), and `openzfs-2.3-linux` in golden_plans' fake rescue. Two builds same sha256 (src.json `7c1de82a…`); leak scans 0 on Chopin and the Mac, and on Cinqcent with its own strings (116, 0 findings) in Z7's prep, 2026-11-15; lib tests and golden_plans as before. Test2 registrations still to the batched pass | 0.25 d |
 | Z5 | `void-zbm-enc`: `--encrypt` in the builder, the passphrase per build, `console-boot.py` at ZBM's prompt (build boot, vm-update), copied to Cinqcent, its golden plan and `index.tsv` row | 0.5 d |
 | Z6 | SticTest1 `void-zbm`, both archivers, both hosts, 0 FAIL | 0.3 d |
 | Z7 | HoltTest1 1V on Chopin and Cinqcent: ht1.sh's per-BE judge and per-BE boot through `console-keys.py`, the passphrase on the enc guest, RAM peaks in `ram-sizes.tsv`. Done when all four cells PASS with 0 fsmeta and 0 dump differences and every BE booted. **Done 2026-11-15:** all four cells PASS (void-zbm z7a, void-zbm-enc z7b on Chopin and Cinqcent; void-musl z7a on all four hosts), 0 fsmeta and 0 dump differences, both BEs booted on source and copy, checked again by a skeptic pass; bko-holt c6f179fb from d23c9ab via HT_HOLT. z7a's enc FAIL was console-keys.py waiting for the prompt before the countdown (ZBM asks after it). Known weakness: the judge counts only ZBM's "enter passphrase", not the initramfs's own "Encrypted ZFS password" line, which is printed (and then answered by the key file) on every enc boot | 0.5 d |

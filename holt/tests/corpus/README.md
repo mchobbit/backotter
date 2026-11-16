@@ -1,11 +1,11 @@
 # H1: the dump corpus and its golden plans
 
-One redacted `bko-holt dump` of each of the corpus's 83 guests, and the plan
+One redacted `bko-holt dump` of each of the corpus's 84 guests, and the plan
 `bko-holt load` makes of each (docs/design/test2.md, "Shared pieces to
 build", H1).  `holt/tests/golden_plans.rs` plans every dump again and fails
 when a plan changes or breaks an invariant, so a change to load shows here
 first, as a diff of plans, and HoltTest2 runs the guests whose plans
-changed.  Most of the 83 are HoltTest2's sources (testvm/test2/classes.json);
+changed.  Most of the 84 are HoltTest2's sources (testvm/test2/classes.json);
 some are not sources yet, and golden_plans.rs logs each source with no dump
 (`NO DUMP`).
 
@@ -288,6 +288,27 @@ environment under `run/bko-be` for the one restore, then unmounts it and
 removes the directory; at boot it installs no loader (notes give both
 images' SHA-256), runs dracut for the booted boot environment's kernels
 only, and makes the two NVRAM entries again in the source's order.
+void-zbm-enc (`make-void-zfs.sh --encrypt`: void-zbm's layout, but `zroot`
+an encryption root, aes-256-gcm with a passphrase and
+`keylocation=file:///etc/zfs/zroot.key`, the key file in each boot
+environment's initramfs, and `org.zfsbootmenu:keysource=zroot/ROOT/void`
+on `zroot`; ZFSBootMenu asks for the passphrase on every boot), built on
+2026-11-14, was added on 2026-11-16 from a dump of the live guest on
+chopin (run `z5`, the static bko-holt 0.2.6 built from d23c9ab,
+`c6f179fb...`, the guest booted as void-zbm's was, its passphrase typed at
+ZFSBootMenu's prompt by `console-boot.py` from the guest's own
+`zfs-passphrase`; the image's and the variable store's sha256 the same
+before and after; its provenance.tsv written by hand, generation `-`).
+It is in the corpus before it is one of classes.json's HoltTest2 sources,
+so golden_plans.rs notes it until it is.  Its dump has the encryption
+root's properties (`encryption`, `keyformat`, `keylocation`,
+`encryptionroot`) and the `keysource`, and no key material: dump reads
+neither the key file nor the passphrase.  Its golden plan makes the pool
+an encryption root unlocked from `--key-file zroot=/srv/bko-keys/zroot`
+(`keylocation=file:///srv/bko-keys/zroot`) with the `keysource` on it;
+at boot, after the restore, it checks the restored key file (its name a
+pseudonym, `keyfile1.key`) against that file with `cmp` before setting
+`keylocation` back to the source's; the rest is void-zbm's plan.
 vanilla3 (`make-vanilla.sh`: Vanilla OS 3.0 by Albius from its live ISO
 with the installer's own recipe; UEFI with Secure Boot, a 1 GiB ext4
 `vos-boot` at /boot with the master grub.cfg, a 512 MiB ESP, the VG
@@ -649,8 +670,8 @@ from a private directory on chopin (/bkoscratch, its warm holt build at
 /bkoscratch/holt-warm/zbm): chopin with 101 of its 106 strings and the raw
 dump's identifiers, the Mac with the git e-mail, 0 findings (its plan
 scanned too), the same sha256 from both builds (src.json `7c1de82a...`).
-Cinqcent's scan with its own strings is owed: cinqcent was down for
-another session's work.  So did leap16
+Cinqcent's scan with its own strings came later (2026-11-15, from
+chopin with `--hosts cinqcent`): 116 strings, 0 findings.  So did leap16
 (2026-11-14), built from a private directory on chopin (/bkoscratch, its
 warm holt build at /bkoscratch/holt-warm/l16-opensuse): chopin with its
 101 strings and the raw dump's identifiers, cinqcent with its 106, the Mac
@@ -692,7 +713,14 @@ So did hardenedbsd15-zfs (2026-11-15), built from a private directory on
 chopin (its warm holt build at /bkoscratch/holt-warm/hbsdzfs): chopin with
 its 110 strings and the raw dump's identifiers, cinqcent with its 116, the
 Mac with the git e-mail, 0 findings (its plan scanned too), the same sha256
-from both builds (src.json `8aab1604...`, and index.tsv).
+from both builds (src.json `8aab1604...`, and index.tsv).  So did void-zbm-enc (2026-11-16), built
+from a private directory in chopin's RAM disk (its warm holt build at
+/bkoscratch/holt-warm/zbm): chopin with 134 of its 139 strings (its
+zfs-passphrase among them) and the raw dump's identifiers, cinqcent with
+110 of its 116, the Mac with the git e-mail, 0 findings (its plan scanned
+too), and a check on chopin of the src.json, the index row and the plan
+for the passphrase's bytes (as is, as UTF-16LE and in hex): none; the same
+sha256 from both builds (src.json `fff7adb5...`, the row `4389b276...`).
 
 ## The golden plans
 
@@ -715,7 +743,7 @@ test file for each (a line naming it), given with `--luks-header-dir` and
 named `/srv/bko-luks-headers` in the plan, and the dump planned has their
 SHA-256 in place of the real headers' (in memory only: src.json keeps the
 dump's).
-All 83 plans exit 0, without Problems.  They are Linux's plans (load's
+All 84 plans exit 0, without Problems.  They are Linux's plans (load's
 run directory is /run/bko-holt there, /var/run/bko-holt elsewhere): run
 golden_plans.rs on a Linux host.
 

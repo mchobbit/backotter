@@ -81,4 +81,5 @@ uc24-fde	copland	u3	dump	-	2026-11-14T19:42:14Z	0.2.6	-	same	24	ok:24:149	0	2	44
 vanilla3	chopin	v7-1	PASS	2026-11-14T08:05:37Z	2026-11-14T07:26:40Z	0.2.6	-	same	36	ok:36:276	0	0	0	same	ok:36	-
 void-musl	chopin	r4all	PASS	2026-11-08T02:28:37Z	2026-11-08T02:26:35Z	0.2.4	2aaa1c9e3ba07ccd1d9e973b1766015f0f4b67e07ef8356cf2f95cc734b5cd81	changed	8	ok:8:85	0	0	0	same	ok:8	-
 void-zbm	chopin	z4	dump	-	2026-11-14T16:58:15Z	0.2.6	-	same	12	ok:12:122	0	0	0	same	ok:12	-
+void-zbm-enc	chopin	z5	dump	-	2026-11-16T06:25:58Z	0.2.6	-	same	13	ok:13:125	0	0	0	same	ok:13	-
 zorin18	cinqcent	r4all	PASS	2026-11-08T02:29:30Z	2026-11-08T02:24:57Z	0.2.4	9c5063fb8a54a6b77bde6063dda36fe77ce1ee130f41bd4955d6f14b96fff127	changed	8	ok:8:87	0	0	0	same	ok:8	-

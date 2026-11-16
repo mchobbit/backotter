@@ -105,7 +105,7 @@ one unpushed commit on 2026-11-17.
 
 | # | Distro (stack) | L: library run for A | Repo | Held besides sleep | Extra checks | Est. A+B |
 |---|---|---|---|---|---|---|
-| 1 | NixOS 26.05 (Calamares: LUKS2 xfs root, LUKS2 swap, systemd-boot, systemd stage 1; family N) | nixos-26.05-20261116-210139; the laptop runs its restore now, so B only (Q1) | not recorded here; item 0 records it | nothing auto by default | before B, on the running restore (Q4): the generations listed by reading (`/nix/var/nix/profiles/system-*-link`, `bootctl list`), each one's closure whole in the store, and an older one booted by `systemctl reboot --boot-loader-entry=...`, `/run/booted-system` checked, then back to the default; B, in a boot the drive's key opened (Order 1): verify's unlock check (`UNLOCK=drive`), LUKS UUIDs the baseline's | 30 min (B about 23-25, generation 5) |
+| 1 | NixOS 26.05 (Calamares: LUKS2 xfs root, LUKS2 swap, systemd-boot, systemd stage 1; family N) | nixos-26.05-20261116-210139; the laptop runs its restore now, so B only (Q1) | not recorded here; item 0 records it | nothing auto by default | before B, on the running restore (Q4): the generations listed by reading (`/nix/var/nix/profiles/system-*-link`, `bootctl list`), each one's closure whole in the store, and an older one booted by `systemctl reboot --boot-loader-entry=...`, `/run/booted-system` checked, then back to the default; B, in a boot the drive's key opened (Order 1): verify's unlock check (`UNLOCK=drive`), LUKS UUIDs the baseline's | 41 min (A 11, B about 23-25, generation 5) |
 | 2 | Debian 13 (guided LVM-on-LUKS2: VG thinkpad-vg with xfs root, ext4 var and srv, swap; family D keyscript) | debian-13-20261116-151543 | 3.5G | apt-daily{,-upgrade}.timer, unattended-upgrades if installed | both halves: LUKS UUID (`cryptsetup luksUUID`) the baseline's, verify's unlock check (`UNLOCK=drive`); B: plan.txt shows the partition stage runs and nothing to release (the rescue opens no LUKS, so thinkpad-vg is never active) | 30 min |
 | 3 | CachyOS (ZFS root, Limine, no LUKS) | cachyos-20261116-163026 | 6.6G | none known (item 0 lists the active timers) | `zpool status -x`; the pool keeps the source's name (the baseline's), not rpool_bko; B: plan.txt shows no pool to export (the stick never imports one) | 30 min |
 | 4 | Fedora 44 Xfce (btrfs / and /home subvols, ext4 /boot, vfat ESP, no LUKS) | fedora-44-20261116-141133 | 3.1G | dnf-makecache.timer, any dnf-automatic timer, packagekit | SELinux labels, compared by the manifest when the baseline has xattrs | 25 min |
@@ -139,7 +139,7 @@ round also runs `plan`, one more `check --read-data` of the backup, about
 1 min at these sizes (est.; Q3). So a round of R min gives A about R+1 and
 B about 2R+3; the table rounds A+B up to 5 min.
 
-Total about 3 h of machine time (est.), not counting fixes.
+Total about 3 h 10 min of machine time (est.), not counting fixes.
 
 **Dropped rows: to return when reinstalled and BackShot1 passes again.**
 They have no backup on mybig512 since the 2026-11-16 wipe. Each joins the
@@ -393,36 +393,36 @@ succeed."
   boots, and DRIVE now loads xfs itself, so the restore of L shouldn't need
   it. If it does, that is a FAIL of the extra check, not a hand fix.
 
-## Open questions (my recommendation first)
+## Decisions (2026-11-17) and the one open question
 
-1. **NixOS:** B only, from the running system. Its A, the hands-free cycle
-   round of 2026-11-16, restored 210139 onto the laptop, most likely with
-   the staged binaries: item 0 confirms which binaries made it by
-   phase1.log's sha256, and the restore's bko-holt by its logged `--version`
-   only. B runs today's load on NixOS anyway. Or full A+B for uniformity
-   (+11 min, est.).
-2. **Let `bko-holt load --erase` do the wipe in B (`--load-wipes`):** yes, B
-   only, after item 1's review. This is the only way this test exercises
-   the matching-table case (b3af94d) on real hardware, on seven layouts.
-   Holder release isn't tested here (the rescue starts no holders on these
-   seven); the bs2 leftovers set covers it. A keeps the script's own wipe.
-3. **Reuse `backshot1 cycle` for A and B:** yes, one round each, with the
-   new `--hold` and `--load-wipes` (Tooling 6). It is the hands-free path
-   the seven passed on 2026-11-16, and the driver doesn't repeat its steps.
-   It costs one more `check --read-data` per restore (its `plan` step, about
-   1 min at these sizes, est.). Or the driver runs `to-stick`, `phase2`,
-   `reboot`, `wait-host` and `verify` itself with no `plan`, as the
-   2026-11-13 draft had it.
-4. **NixOS's older generation:** list the generations by reading and check
-   each one's closure, then boot the newest older one that has sshd, once,
-   before B, and type its passphrase (about +5 min, est.). Only the
-   generations made after family N unlock from the drive, and one from
-   before bs1-adopt has no sshd, so it is never booted; if a newer one than
-   the pre-family-N generation is there, no one types. Or the reading and
-   closure check only, which keeps the whole run hands-free.
-5. **What stays on the laptop:** Alpine, the last in the order. Or name
-   another, for one more A at the end (5-10 min, est.); NixOS, which runs
-   now, is the obvious one.
+The user answered Q1-Q5 on 2026-11-17. Where the text above says "if Q1 is
+yes" and the like, these govern.
+
+1. **NixOS: full A+B** (the user's choice). A restores 210139 with today's
+   tools like every other row; NixOS's row is about 41 min (est.), the total
+   about 3 h 10 min (est.).
+2. **`--load-wipes` in B:** yes, B only, after item 1's review (my
+   judgment, as recommended).
+3. **Reuse `backshot1 cycle` for A and B:** yes, with `--hold` and
+   `--load-wipes` (my judgment, as recommended).
+4. **NixOS's older generation: open.** The laptop has generations 1 (the
+   install, no sshd), 2 (after bs1-adopt, before family N: its initrd asks
+   for the passphrase) and 3 (family N, the default). Options:
+   - (a) boot generation 2 once and type the passphrase (+5 min, one
+     console visit);
+   - (b) read-only only: the generation list, each closure whole
+     (`nix-store --verify-path`), each entry's kernel and initrd on the ESP;
+     hands-free, but no older generation is booted;
+   - (c) recommended: in A's restored boot, before B's phase 1, make a
+     generation 4 with a harmless change (an /etc marker file), so B's
+     backup holds two family-N generations; after B's restore, boot
+     generation 3 by `systemctl reboot --boot-loader-entry=nixos-generation-3.conf`
+     (the drive's key opens it), check `/run/booted-system`, then back to
+     the default. Hands-free, and a real older-generation boot of a restored
+     system; costs one rebuild (about 2 min) and one extra boot (about 2
+     min, est.).
+5. **What stays on the laptop:** doesn't matter (the user); Alpine, the
+   last in the order.
 
 Settled or dropped from the 2026-11-13 draft:
 - the name (old 1): BackShot1All, as you call it;

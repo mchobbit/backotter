@@ -284,6 +284,17 @@ stays out of default runs until HostTest2 passes on it
   `~/backotter-work/tools`), and `build-holt.sh linux-arm64` builds
   bko-holt there. Its sets hold only arm64 directories: `bko-bin/linux-arm64`,
   `holt-bin/linux-arm64` and a round's `bin/linux-arm64`.
+- **A6's tests (docs/design/arm64.md, "What A6 built").** These are
+  SticTest1 of the five arm64 guests, HoltTest1 1ARM and its `+img`,
+  HostTest2 and the Test2 candidates. Run them all from the Mac with one
+  command, `testvm/arm64/a6-run.sh` (`--dry-run` first, then `--status`,
+  `--fetch` and `--stop`). The command:
+  - ships committed HEAD to `~/backotter-work/a6-run/STAMP`
+  - runs the stages there one at a time, in a transient service,
+    `bko-a6-STAMP.service`, in bko.slice
+
+  HostTest2 there is run-all.sh's arm64 profile: ZFS on files and tmpfs
+  only, since Bigfoot gets no loop device or package.
 
 ## Adding a host
 

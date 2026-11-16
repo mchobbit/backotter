@@ -171,7 +171,13 @@ class QueueCantWhy(unittest.TestCase):
         wr(os.path.join(self.w, "vms", "debian13-arm64", "debian13-arm64.qcow2"), "")
         self.assertEqual(self.why("debian13-arm64"), "an arm64 guest, and this host is amd64")
         self.assertEqual(self.why("debian13-arm64+img"), "an arm64 guest, and this host is amd64")
+        # (an arm64 guest's rescuer is rescuer-arm64.qcow2, make-rescuer.sh --arch arm64's, and it takes no debs: A6)
+        self.assertEqual(self.why("debian13-arm64", arch="arm64"),
+                         f"no rescuer {os.path.join(self.l, 'rescuer', 'rescuer-arm64.qcow2')} here")
+        wr(os.path.join(self.l, "rescuer", "rescuer-arm64.qcow2"), "")
+        self.debs(False)
         self.assertIsNone(self.why("debian13-arm64", arch="arm64"))
+        self.debs(True)
         self.assertEqual(self.why("debian13", arch="arm64"), "an amd64 guest, and this host is arm64")
         self.assertEqual(self.why("chimera", arch="arm64"), "an amd64 guest, and this host is arm64")   # no image either
         q = rd(QUEUE)
@@ -407,9 +413,11 @@ class Ht1Refuses(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.t, True)
         d = os.path.join(self.t, "testvm", "holttest1d")
         self.bin, self.resc = os.path.join(self.t, "bin"), os.path.join(self.t, "rescuer", "rescuer.qcow2")
+        self.resc_arm = os.path.join(self.t, "rescuer", "rescuer-arm64.qcow2")
         text = rd(os.path.join(HT, "ht1.sh"))
         for old, new in (("BIN=/bkoscratch/holttest1d/bin\n", f"BIN={self.bin}\n"),
-                         ("/bkoscratch/holttest1d/rescuer/rescuer.qcow2}", self.resc + "}")):
+                         ("/bkoscratch/holttest1d/rescuer/rescuer.qcow2}", self.resc + "}"),
+                         ("/bkoscratch/holttest1d/rescuer/rescuer-arm64.qcow2}", self.resc_arm + "}")):
             self.assertEqual(text.count(old), 1, old)
             text = text.replace(old, new)
         wr(os.path.join(d, "ht1.sh"), text, 0o755)
@@ -417,11 +425,29 @@ class Ht1Refuses(unittest.TestCase):
         wr(os.path.join(d, "ht1-lib.sh"), "ht_holt_pick() { HOLT=/fake/bko-holt; }\nht_paths() { echo PASSED; exit 0; }\n")
         self.ht1 = os.path.join(d, "ht1.sh")
 
-    def run_ht1(self, *phases, **env):
+    def run_ht1(self, *phases, guest="debian13", machine="x86_64", **env):
+        # (uname -m stubbed: ht1.sh runs a guest only on a host of its architecture, A6)
+        stub = os.path.join(self.t, "stub")
+        wr(os.path.join(stub, "uname"), f'#!/bin/sh\n[ "$1" = -m ] && echo {machine} || exec /usr/bin/env -i PATH=/usr/bin:/bin uname "$@"\n', 0o755)
         e = {k: v for k, v in os.environ.items() if not k.startswith("HT_")}
-        e.update(env)
-        return subprocess.run([BASH, self.ht1, "debian13", "r1"] + list(phases), capture_output=True, text=True,
+        e.update(env, PATH=stub + os.pathsep + os.environ.get("PATH", ""))
+        return subprocess.run([BASH, self.ht1, guest, "r1"] + list(phases), capture_output=True, text=True,
                               env=e, timeout=60)
+
+    def test_an_arm64_guest_takes_its_rescuer_and_no_debs(self):
+        p = self.run_ht1(guest="debian13-arm64", machine="aarch64")
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn(f"ht1: no rescuer {self.resc_arm} on ", p.stderr)
+        wr(self.resc_arm, "")
+        self.assertEqual(self.run_ht1(guest="debian13-arm64", machine="aarch64").stdout.strip(), "PASSED")   # no debs
+        p = self.run_ht1(guest="debian13-arm64", machine="x86_64")
+        self.assertEqual(p.returncode, 2)
+        self.assertIn("is an arm64 guest", p.stderr)
+        self.debs()
+        wr(self.resc, "")
+        p = self.run_ht1(machine="aarch64")
+        self.assertEqual(p.returncode, 2)
+        self.assertIn("is an amd64 guest", p.stderr)
 
     def debs(self):
         for n in ("f2fs-tools_1.16_amd64.deb", "jfsutils_1.1_amd64.deb"):

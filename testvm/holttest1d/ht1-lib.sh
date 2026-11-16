@@ -602,7 +602,7 @@ ht_manifest() {  # [FILE...]
     local f h holt=""
     [[ ! -f ${HOLT:-} ]] || holt=$(sha256sum "$HOLT" | cut -d' ' -f1)
     {
-        echo "host $(hostname -s) kernel $(uname -r) $(qemu-system-x86_64 --version 2>/dev/null | head -n 1)"
+        echo "host $(hostname -s) kernel $(uname -r) $(qemu-system-"$(uname -m)" --version 2>/dev/null | head -n 1)"
         echo "driver $(realpath "$0") mode $HT_MODE work $R records $K reserved $RESERVED${HT_RESERVE_ROW:+ (pid $HT_RESERVE_ROW)}${HT_SEEDED:+ seeded from $HT_SEEDED}"
         env | grep '^HT_' | LC_ALL=C sort | sed 's/^/env /'
         echo "$HT_RUSTIC_REC"

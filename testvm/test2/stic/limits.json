@@ -23,6 +23,13 @@
   "project-ids-ext4": "the guest's ext4 (/boot) has no project feature: chattr -p refused; project IDs are checked on XFS",
   "selinux-labels": "no SELinux on Alpine (LSMs landlock,lockdown,yama,loadpin,safesetid,integrity)"
  },
+ "alpine324-arm64": {
+  "birth-times": "XFS/ext4 keep birth times but Linux can't set them (BACKOTTER.md)",
+  "bsd-file-flags": "Linux guest: no BSD file flags",
+  "nfsv4-acls": "Linux XFS/ext4 have no NFSv4 ACLs",
+  "project-ids-ext4": "the guest's ext4 (/boot) has no project feature: chattr -p refused; project IDs are checked on XFS",
+  "selinux-labels": "no SELinux on Alpine (LSMs landlock,lockdown,yama,loadpin,safesetid,integrity)"
+ },
  "alpinebsd": {
   "linux/selinux/capabilities/zfs/btrfs/bcachefs attributes": "not on AlpineBSD (NetBSD kernel, FFS and tmpfs only; no MAC labels, no capabilities; secmodel securelevel -1)"
  },
@@ -104,6 +111,11 @@
   "Project IDs on btrfs": "btrfs has none (chattr -p fails); covered on ext4 -O project (data/feat)",
   "SELinux labels": "not applicable; the guest runs AppArmor (enforcing, 6 of 105 profiles; TOMOYO built in, no policy), which keep no labels on disk"
  },
+ "debian13-arm64": {
+  "Birth times": "ext4 keeps them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
+  "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
+  "SELinux labels": "not applicable; the guest runs AppArmor, which keeps no labels on disk"
+ },
  "debian13-stack": {
   "Birth times": "ext4 and XFS keep them (FAT its creation time), Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
   "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
@@ -111,6 +123,12 @@
   "Whole-disk layout (GPT, both ESPs, md RAID1 arrays, LUKS2 header and passphrase, LVM volume group, swap, GRUB and shim under Secure Boot)": "not in a file-level backup; recreating them is BackOtter's restore's job, covered by HoltTest1D (testvm/holttest1d/README.md), not here"
  },
  "debian13-zfs": {
+  "SELinux labels, NFSv4 ACLs, BSD file flags, system.* other than ACLs": "not on Debian 13 with ZFS acltype=posix (AppArmor, 3 profiles enforcing, keeps no labels on disk)",
+  "birth times": "ZFS crtime and ext4 btime can't be set on Linux (BACKOTTER.md)",
+  "real-examples non-UTF-8 names on the root pool": "rpool has utf8only=on, which refuses them; covered by fs_roundtrip zfs (pools on files) and ext4",
+  "whole-disk needs (boot, zpool.cache, bootloader)": "out of scope: whole-disk"
+ },
+ "debian13-zfs-arm64": {
   "SELinux labels, NFSv4 ACLs, BSD file flags, system.* other than ACLs": "not on Debian 13 with ZFS acltype=posix (AppArmor, 3 profiles enforcing, keeps no labels on disk)",
   "birth times": "ZFS crtime and ext4 btime can't be set on Linux (BACKOTTER.md)",
   "real-examples non-UTF-8 names on the root pool": "rpool has utf8only=on, which refuses them; covered by fs_roundtrip zfs (pools on files) and ext4",
@@ -143,6 +161,14 @@
   "[btrfs] project IDs (and P inheritance)": "btrfs here takes no project ID (chattr -p refused: btrfs has none); not applicable",
   "[ext4] birth times (statx btime on ext4)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
   "[ext4] project IDs (and P inheritance)": "ext4 here takes no project ID (chattr -p refused: no project feature, as /boot); not applicable"
+ },
+ "fedora44-arm64": {
+  "[btrfs] birth times (statx btime on btrfs)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "[btrfs] project IDs (and P inheritance)": "btrfs here takes no project ID (chattr -p refused: btrfs has none); not applicable",
+  "[vfat] birth times (statx btime on vfat)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime); FAT's creation time is Linux's ctime, which no one sets",
+  "[vfat] metadata of the directories above the backed-up path": "both tools' snapshots, 4 directions: up1, up1/up2 and /mnt/src restored exactly (owner 1234:5678, 0710/1755, label, xattrs, ACL, times); FAT's root directory (.) has no times (0): restored as a dir...",
+  "[vfat] security.selinux (the mount's label) on a FAT restore target": "not settable on FAT: warnings, exit 0, as documented: restic->restic 1 warnings (exit 0), rustic->rustic 1 warnings (exit 0), restic->rustic 1 warnings (exit 0), rustic->restic 1 warnings (exit 0)",
+  "[xfs] birth times (statx btime on xfs)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)"
  },
  "fedora44-uefi": {
   "[btrfs] birth times (statx btime on btrfs)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
@@ -410,6 +436,11 @@
   "Birth times": "ext4 keeps them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
   "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
   "SELinux labels": "not applicable; the guest runs AppArmor (186 profiles, 110 enforcing), which keeps no labels on disk"
+ },
+ "ubuntu26-arm64": {
+  "Birth times": "ext4 keeps them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
+  "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
+  "SELinux labels": "not applicable; the guest runs AppArmor, which keeps no labels on disk"
  },
  "ubuntu26-uefi": {
   "Birth times": "ext4 keeps them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",

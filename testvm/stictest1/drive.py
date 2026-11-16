@@ -1587,11 +1587,11 @@ def self_test():
     guests = all_guests()
     spec = load_specs(guests)
     for g in guests:
-        w = want_os.get(g, "linux")
+        w = arch_bin_os(g, want_os.get(g, "linux"))
         if spec[g].os != w:
             check(False, f"{g}: BIN_DIR bin/{spec[g].os}, want bin/{w}")
-    check(all(spec[g].os == want_os.get(g, "linux") for g in guests),
-          f"BIN_DIR of {len(guests)} guests as their usage says (Linux guests and sculpt2610: bin/linux)")
+    check(all(spec[g].os == arch_bin_os(g, want_os.get(g, "linux")) for g in guests),
+          f"BIN_DIR of {len(guests)} guests as their usage says (Linux guests and sculpt2610: bin/linux; the -arm64 ones bin/linux-arm64)")
     for g, d, m, n, sl in (("debian13-zfs", 13, 5, 1, 1), ("ubuntu26-zfsmirror", 23, 4.5, 1, 1),
                            ("freebsd15-ufs", 3, 6, 3, 3), ("sculpt2610", 2, 2, 1, 0), ("mint22", 2, 4, 1, 1)):
         if g in spec:
@@ -2082,6 +2082,10 @@ def main():
         if g not in known:
             ap.error(f"no guest {g} (no {g}/check.sh beside drive.py)")
     guests = [g for g in (a.guests or known) if g not in excl]
+    if not a.guests:
+        # A round that names no guests leaves out those of an architecture no host of --hosts
+        # has (the -arm64 guests without bigfoot: docs/design/arm64.md A6); named, one is refused.
+        guests = [g for g in guests if g not in no_arch_host([g], a.hosts)]
     if not guests:
         ap.error("no guests left")
     spec = load_specs(guests)

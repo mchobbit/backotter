@@ -79,6 +79,22 @@
     "entry:testvm/test2/stic/limits.json#alpine324"
    ]
   },
+  "alpine324-arm64": {
+   "os": "linux-arm64",
+   "bins": [
+    "linux-arm64/restic-bko",
+    "linux-arm64/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/alpine324-arm64/**",
+    "testvm/stictest1/alpine324/check-inner.sh",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#alpine324-arm64"
+   ]
+  },
   "alpinebsd": {
    "os": "netbsd",
    "bins": [
@@ -290,6 +306,25 @@
     "entry:testvm/test2/stic/limits.json#debian13"
    ]
   },
+  "debian13-arm64": {
+   "os": "linux-arm64",
+   "bins": [
+    "linux-arm64/restic-bko",
+    "linux-arm64/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/debian13-arm64/**",
+    "testvm/stictest1/ubuntu26-uefi/inner.sh",
+    "testvm/stictest1/ubuntu26-uefi/nracl.py",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/ubuntu26-uefi/judge.py",
+    "entry:testvm/test2/stic/limits.json#debian13-arm64"
+   ]
+  },
   "debian13-stack": {
    "os": "linux",
    "bins": [
@@ -327,6 +362,30 @@
     "testvm/compare/verdict.py",
     "testvm/compare/expected-coverage.json",
     "entry:testvm/test2/stic/limits.json#debian13-zfs"
+   ]
+  },
+  "debian13-zfs-arm64": {
+   "os": "linux-arm64",
+   "bins": [
+    "linux-arm64/restic-bko",
+    "linux-arm64/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/debian13-zfs-arm64/**",
+    "testvm/stictest1/debian13-zfs/real.sh",
+    "testvm/stictest1/debian13-zfs/inv.sh",
+    "testvm/compare/boot-state.sh",
+    "testvm/compare/compare.py",
+    "testvm/compare/fs_roundtrip.py",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#debian13-zfs-arm64"
    ]
   },
   "devuan6": {
@@ -426,6 +485,28 @@
     "testvm/compare/verdict.py",
     "testvm/compare/expected-coverage.json",
     "entry:testvm/test2/stic/limits.json#fedora44"
+   ]
+  },
+  "fedora44-arm64": {
+   "os": "linux-arm64",
+   "bins": [
+    "linux-arm64/restic-bko",
+    "linux-arm64/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/fedora44-arm64/**",
+    "testvm/stictest1/fedora44-uefi/fixture.sh",
+    "testvm/stictest1/fedora44-uefi/inner.sh",
+    "testvm/stictest1/fedora44-uefi/fatattr.py",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/fedora44-uefi/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#fedora44-arm64"
    ]
   },
   "fedora44-uefi": {
@@ -1245,6 +1326,25 @@
    "judge": [
     "testvm/stictest1/ubuntu24-uefi/judge.py",
     "entry:testvm/test2/stic/limits.json#ubuntu24-uefi"
+   ]
+  },
+  "ubuntu26-arm64": {
+   "os": "linux-arm64",
+   "bins": [
+    "linux-arm64/restic-bko",
+    "linux-arm64/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/ubuntu26-arm64/**",
+    "testvm/stictest1/ubuntu26-uefi/inner.sh",
+    "testvm/stictest1/ubuntu26-uefi/nracl.py",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/ubuntu26-uefi/judge.py",
+    "entry:testvm/test2/stic/limits.json#ubuntu26-arm64"
    ]
   },
   "ubuntu26-uefi": {

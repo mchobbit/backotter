@@ -178,6 +178,8 @@ holt_pick() {
     if [[ -n ${HT_HOLT:-} ]]; then HOLTP=$HT_HOLT
     elif [[ -n ${HT_HOLT_BIN:-} ]]; then
         HOLTP=$HT_HOLT_BIN/linux/bko-holt; [[ ! -f $HT_HOLT_BIN/bko-holt ]] || HOLTP=$HT_HOLT_BIN/bko-holt
+        # (an aarch64 host's Linux lines are arm64 guests': linux-arm64's, as ht1.sh takes it)
+        [[ $(uname -m) != aarch64 || -f $HT_HOLT_BIN/bko-holt ]] || HOLTP=$HT_HOLT_BIN/linux-arm64/bko-holt
     else
         HOLTP=$W/holt-bin/linux/bko-holt hsums=$W/holt-bin/SHA256SUMS
         [[ -f $HOLTP ]] || die "no $HOLTP (the promoted holt-bin: testvm/promote-bins.sh --sets holt-bin; or set HT_HOLT or HT_HOLT_BIN)"
@@ -312,13 +314,14 @@ cant_why() {  # NM GUEST VARIANT D M [OVER]
     esac
     ri=${HT_RESCUER_IMG:-$L/rescuer/rescuer.qcow2}   # ht1.sh's and ht1-offline.sh's rescuer
     [[ $g != qubes* || -n ${HT_RESCUER_IMG:-} ]] || ri=$L/rescuer/rescuer-uefi.qcow2   # Qubes's: UEFI (ht1-offline.sh)
+    [[ $g != *-arm64 || -n ${HT_RESCUER_IMG:-} ]] || ri=$L/rescuer/rescuer-arm64.qcow2   # an arm64 guest's (ht1.sh), with no debs
     WHYNOT=""
     if [[ $(guest_arch "$g") != "$HOSTARCH" ]]; then WHYNOT="an $(guest_arch "$g") guest, and this host is $HOSTARCH"
     elif ! has_image "$g"; then WHYNOT="no $W/vms/$g/*.qcow2 here"
     elif [[ -n $rg ]] && ! has_image "$rg"; then WHYNOT="no $W/vms/$rg/*.qcow2 here (rescuer of $g)"
     elif [[ $drv == offline || ($drv == linux && $v != img) ]] && [[ ! -f $ri ]]; then
         WHYNOT="no rescuer $ri here"
-    elif [[ $drv == linux && $v != img ]] && ! has_debs; then WHYNOT="no f2fs-tools and jfsutils debs in $L/bin here"
+    elif [[ $drv == linux && $v != img && $g != *-arm64 ]] && ! has_debs; then WHYNOT="no f2fs-tools and jfsutils debs in $L/bin here"
     elif ((HOSTZFS == 0)) && needs_zfs "$g"; then
         WHYNOT="needs OpenZFS here (NEEDS_ZFS), and this host has no zpool"
     elif [[ $g == qubes* ]] && ! grep -qs '[1Y]' /sys/module/kvm_amd/parameters/nested /sys/module/kvm_intel/parameters/nested; then

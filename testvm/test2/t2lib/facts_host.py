@@ -34,6 +34,7 @@ import glob
 import hashlib
 import json
 import os
+import platform
 import pwd
 import re
 import shutil
@@ -691,13 +692,18 @@ def caps():
     without one), zpool its path, zfs_module whether the module is loaded; holt_rescuer,
     HOLT_DIR/rescuer/rescuer.qcow2 is a file (ht1.sh falls back to the debian13 guest
     without it, ht1-offline.sh fails); holt_debs, HOLT_DIR/bin has a .deb (ht1.sh copies
-    them into the rescuer)."""
+    them into the rescuer).  On an aarch64 host only, holt_rescuer_arm64: HOLT_DIR/rescuer/
+    rescuer-arm64.qcow2 is a file (make-rescuer.sh --arch arm64: the arm64 sources' rescuer,
+    docs/design/arm64.md A6); an amd64 host's caps are as they were."""
     zp = next((p for p in ZPOOL if os.path.isfile(R(p)) and os.access(R(p), os.X_OK)), None)
     if zp is None and not ROOT:
         zp = shutil.which("zpool")
-    return {"zfs": zp is not None, "zpool": zp, "zfs_module": os.path.isdir(R("/sys/module/zfs")),
-            "holt_rescuer": os.path.isfile(R(HOLT_DIR + "/rescuer/rescuer.qcow2")),
-            "holt_debs": bool(glob.glob(os.path.join(R(HOLT_DIR + "/bin"), "*.deb")))}
+    out = {"zfs": zp is not None, "zpool": zp, "zfs_module": os.path.isdir(R("/sys/module/zfs")),
+           "holt_rescuer": os.path.isfile(R(HOLT_DIR + "/rescuer/rescuer.qcow2")),
+           "holt_debs": bool(glob.glob(os.path.join(R(HOLT_DIR + "/bin"), "*.deb")))}
+    if platform.machine() == "aarch64" and not ROOT:
+        out["holt_rescuer_arm64"] = os.path.isfile(R(HOLT_DIR + "/rescuer/rescuer-arm64.qcow2"))
+    return out
 
 
 def one_image(d, plat, host_root):

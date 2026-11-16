@@ -960,6 +960,357 @@ Left for later:
 - make-debian-zfs.sh still mounts its new system at `/mnt/bko-debian-zfs-PID`
   while it builds, outside `/home/m/bko-arm64`. The cleanup trap removes it.
 
+## What A6 built (2026-11-16)
+
+A6's heavy testing is one command on the Mac, `testvm/arm64/a6-run.sh`,
+which runs every stage on Bigfoot by itself. It needs the plumbing below,
+which is built and unit-tested. The heavy run itself is the user's to
+start.
+
+### How to run it
+
+From the checkout's top on the Mac:
+
+```
+testvm/arm64/a6-run.sh --dry-run        # the plan, from a scratch copy on Bigfoot; runs nothing
+testvm/arm64/a6-run.sh                  # start it all: 2.5 to 4 h est.
+testvm/arm64/a6-run.sh --status         # the latest run (the last started): state, stages so far, the log's tail
+testvm/arm64/a6-run.sh --fetch          # its logs and summary to ~/backotter-work/a6-run/STAMP/
+testvm/arm64/a6-run.sh --stop           # stop it: the stage cleans up, the rest is ABORTED
+```
+
+- **Flags.** `--only S[,S]` and `--skip S[,S]` take stage names and the
+  groups `stic`, `1ARM`, `img`, `hosttest2` and `t2`. Preflight and
+  final always run. A holt stage brings `rescuer` along, and an `+img`
+  stage brings `imgpin`, unless `--skip` names them.
+  - `--bins DIR` tests another set of binaries (absolute, `~/...`, or
+    relative to `~/backotter-work`).
+  - `--img FILE` uses another `--test` image.
+  - `--img-guests G,G` changes the `+img` panel.
+  - `--rebuild-rescuer` makes the rescuer again.
+  - `--stamp NAME` names the run (default `YYYYMMDD-HHMMSS`).
+  - `--tree DIR` ships DIR's files instead of HEAD, for testing the driver.
+  - `--host USER@HOST` (default the bigfoot row's `m@192.168.68.197`).
+  - `--no-batch-check`, `--list`, `--help`.
+  - A value-taking flag with no value is a usage error (exit 2).
+  - `--status`, `--fetch` and `--stop` without a STAMP take the run last
+    started (`~/backotter-work/a6-run/.latest`, written at each start),
+    else the newest run directory by mtime, never the last by name.
+- **What it ships.** A clean copy of committed HEAD (`git archive`), never
+  the working tree, to Bigfoot's `~/backotter-work/a6-run/STAMP/tree`, with
+  HEAD's commit in `tree/COMMIT`. Commit first: uncommitted A6 changes
+  aren't in the copy.
+- **Before it starts.** Bigfoot must answer and be aarch64, no `bko-a6-*`
+  unit may be active, and STAMP must be new. It prints `t2 batch status`
+  and refuses if a batch names bigfoot (none can: Bigfoot is no default
+  host).
+- **How it detaches.** It starts `testvm/arm64/a6-stages.sh` as a
+  transient system service, `bko-a6-STAMP.service`:
+  `sudo -n systemd-run --unit=bko-a6-STAMP --slice=bko.slice --collect --
+  setpriv --reuid=m --regid=m --init-groups --reset-env -- bash ...`.
+  - This is the same slice and setpriv as hosts.py's `job_prefix` scopes.
+  - It is a system service, not a `--user` unit, because Bigfoot's user
+    manager can't set the slice's AllowedCPUs or IOWeight (A0).
+  - The Mac's terminal can close and the laptop can sleep. The command
+    returns once the unit is running.
+  - vm-run finds itself in bko.slice and doesn't start again.
+    cmp-run.sh's scopes go in the same slice.
+
+### The stages
+
+They run in this order, one at a time. A failed stage doesn't stop the run,
+except preflight.
+
+| stage | what | est. |
+|---|---|---|
+| `preflight` | Checks Bigfoot: aarch64, `/dev/kvm`, `sudo -n`, the RAM disk, 80 GB free on /home, cmp-run.sh's ceiling, and no QEMU of ours running. Reads DantePool's health (`zpool list`, read only). Records the sha256 of the five guests, A4's `--test` image and the binaries in `out/inputs.txt`. Assembles `RUN/bins` (below). | 10 s |
+| `stic:GUEST` ×5 | SticTest1's `check.sh` of each guest: both archivers, all four directions, the restore over immutable files, the non-root run, node identity. `STC_LOGS=RUN/out/stic/GUEST`, `BKO_TESTVM=` the shipped tree, port 3290. | 3-15 min each, 35 min |
+| `rescuer` | `make-rescuer.sh --arch arm64`, run once; the image is kept after that. | 15-25 min, first time |
+| `holt:GUEST` ×5 (1ARM) | `ht1.sh GUEST a6-STAMP` under `cmp-run.sh --reserve D M`, with D and M from ram-size.sh. ubuntu26-arm64's D 10 is over the 9.0 ceiling, so it runs on /bkoscratch (`HT_RAM=0`, `--reserve 0 M`), as `holt_disk_mode` does. | 3-8 min each, 30 min |
+| `imgpin` | Pins A4's `--test` image in `RUN/t2/img-pin/linux-arm64`: a hard link (the image isn't written), its sha256, and its own three binaries, each checked against the image manifest's sha256. | 1 min |
+| `holt:GUEST+img` | 1ARM `+img`, debian13-arm64 and debian13-zfs-arm64 by default: the round trip with the image as rescuer (`HT_VARIANT=img`, `T2_HOST_ROOT=RUN/t2`), in the RAM disk only. | 10 min each |
+| `hosttest2:bin` | `gate/bincheck.sh static` on linux-arm64's archivers; `version --set RUN/bins --expect RUN/expect/expect.tsv`; `version --holt-version` (holt/Cargo.toml's) on bko-holt. Judged by `testvm/arm64/a6-bin.py judge` with t2lib/gate_judge.py's `bin_outcome` and `version_unchecked`: an unchecked binary or a SKIP FAILs, as in gate:bin:version. a6-run.sh makes `expect.tsv` on the Mac (`a6-bin.py expect`), as gate.py's `expected_versions` does: each fork's version line at the set's commits in BKO_GIT (default `~/git`); the judge checks they are the set's commits. With no expectations (a commit not in BKO_GIT) the stage FAILs. | 1 min |
+| `hosttest2:loop-linux`, `:loop-sparse` | `gate/loop.sh linux` and `sparse` under `--reserve 8.5 4` and `6 4` (the small class's `host_reserve`), through run-all.sh's new arm64 profile. Its sparse-rt.sh keeps its lock and `out/` in the loop's log (`SPARSE_DISK_WORK`, new, arm64 profile only), not `/var/tmp`. After the loop, its empty mount points (`/mnt/PREFIX-*`) go; anything left there or in `/var/tmp` FAILs the stage. | 20-30 min each |
+| `hosttest2:facts` | `t2-host facts` and `t2-host self-test`, with `T2_HOST_ROOT=RUN/t2`. | 1 min |
+| `t2:corpus` | For each 1ARM PASS, the Test2 golden bless (below). | 10 min |
+| `t2:limits` | Each check's LIMIT needs against `stic/limits.json` (`out/t2/limits-candidates.json`), and the passing stages' times as `estimates.tsv` rows (`estimates-candidates.tsv`). | seconds |
+| `final` | The guests' and the image's sha256 again, which must be unchanged. Checks that no QEMU, pool or mount of the run is left. | 10 s |
+
+**The binaries** (`RUN/bins`, laid out as a round: `linux-arm64/` with its
+own `SHA256SUMS`, and a top `SHA256SUMS` of `./linux-arm64/NAME` lines):
+
+- The archivers come from Bigfoot's `bko-bin/linux-arm64` (A2's
+  `b79fe55a...` and `bdfbda6d...`).
+- bko-holt is the newest native A3+ build: an AArch64 ELF holding A3's
+  refusal text. Today that is `a4-scratch/holt-bin/linux-arm64/bko-holt`,
+  `21d9cbfb...`, the same bytes as `a3-scratch/bf1/b1/out`. holt-bin's
+  `908ea6ea...` is A2's, from before A3, and isn't picked.
+- `--bins DIR` replaces the default.
+- Nothing is promoted.
+
+The SticTest1 checks take `RUN/bins/linux-arm64`, ht1.sh `HT_BKO_BIN` and
+`HT_HOLT_BIN=RUN/bins`, and the loops `--bin RUN/bins`.
+
+**Where it writes.** On Bigfoot, everything is in `RUN =
+~/backotter-work/a6-run/STAMP` (`/home/m/bko-arm64/work/a6-run/STAMP`):
+
+- `runner.log`
+- `summary.tsv` and `summary.txt`: a row per stage with PASS, FAIL, SKIP
+  or ABORTED, rc, times and a detail
+- `state` (running, done) and `exit` (0, or 1 when a stage failed)
+- `logs/STAGE.log`
+- `out/`: each check's logs, the 1ARM reports and logs (not their
+  dumps), HostTest2's results and the Test2 candidates
+- `bins/`
+- `t2/`: the pin, and the raw dumps (mode 0700)
+
+HoltTest1's own records are in `/bkoscratch/holttest1d/a6-STAMP/`. `--fetch`
+copies `runner.log`, `summary.*`, `state`, `exit`, `logs/` and `out/` to the
+Mac's `~/backotter-work/a6-run/STAMP/` (rsync, no `--delete`). That is beside
+SticTest1's and t2's Mac results, outside the repository. It never copies
+`t2/` (the raw dumps stay on Bigfoot, as collect-dumps.sh requires),
+`bins/` or `tree/`.
+
+**The rules it keeps.**
+
+- One heavy stage at a time. SticTest1 could take two slots there, but this
+  is the user's daily machine.
+- Every heavy command runs under `~/backotter-work/cmp-run.sh --reserve`,
+  the RAM disk's shared ledger, with `WEAR_TAG` `a6:STAMP:STAGE` (ht1.sh's
+  `ht1:a6-STAMP:GUEST`).
+- RAM work goes in `/mnt/bko-ram`. debian13-zfs-arm64's SticTest1 overlay
+  (about 12 GiB) and ubuntu26-arm64's 1ARM run are the exceptions: they go
+  on /bkoscratch.
+- Only `/home/m/bko-arm64` is written. `/bt`, BkoStore and DantePool are
+  never read or written: DantePool's health is only listed.
+  `holt:debian13-zfs-arm64` and the HostTest2 loops run only when
+  `zpool list` says ONLINE, or says plainly "no such pool". A `zpool list`
+  that hangs past 20 s (a suspended pool), any other health and any other
+  error SKIP them, and preflight says why.
+- No package, no system setting, and no loop device on the host. The
+  loops' file systems are ZFS on files and tmpfs; the checks' loop file
+  systems are inside the guests.
+- **Stopping and cleanup.** A stage runs in a session of its own.
+  `--stop` sends TERM to the runner (its `runner.pid`, checked to be
+  a6-stages.sh), and the runner sends it to the stage's process group and
+  nothing else. The tools in the group stop their own VMs, nbd devices,
+  mounts and pools by their own traps (vm-lib.sh's `vm_halt`, ht1.sh's
+  `ht_release`, run-all.sh's pool cleanup). make-rescuer.sh's arm64 VM is
+  setsid'd out of every stage's tree, so make-rescuer.sh `--arch arm64`
+  traps EXIT and TERM: however it ends (no SSH, a failed install, a stop),
+  it stops its QEMU by its pid file, the PID checked against its command
+  line (amd64's make-rescuer.sh is as before). On a stop during the
+  rescuer stage the runner also TERMs that QEMU if it is still up, and
+  `final` FAILs if it is.
+  After 120 s the group gets KILL. Then the runner TERMs, and after 60 s
+  KILLs, every process the stage started that is still running: the PIDs
+  it read from /proc's parent links at the stop, such as vm_boot's
+  setsid'd vm-run and QEMU. It also removes the run's own scratch,
+  `/mnt/bko-ram/PREFIX-*` and `/bkoscratch/st1-scratch/PREFIX-*`. `final`
+  still runs, read only, and names anything left behind.
+- No pkill or killall.
+- A lock (`~/backotter-work/a6-run/.lock`) keeps two runs apart.
+
+### The plumbing
+
+- **SticTest1: five checks**, `testvm/stictest1/GUEST/check.sh`. Each has
+  its in-guest part from the amd64 guest with the same layout:
+
+  | check | in-guest part |
+  |---|---|
+  | `debian13-arm64` | `../ubuntu26-uefi` (ext4 /, ext4 /boot, vfat ESP, ext4 project/casefold) |
+  | `ubuntu26-arm64` | `../ubuntu26-uefi` |
+  | `fedora44-arm64` | `../fedora44-uefi` (btrfs, XFS, vfat, a spare disk) |
+  | `alpine324-arm64` | `../alpine324/check-inner.sh` |
+  | `debian13-zfs-arm64` | debian13-zfs's, with `../debian13-zfs/real.sh` |
+
+  debian13's own check makes a btrfs, which is its root, not
+  debian13-arm64's. Each check:
+  - refuses a host that isn't aarch64
+  - FAILs if the guest doesn't say `aarch64`
+  - takes `roundN/bin/linux-arm64` (drive.py's `arch_bin_os`)
+  - stays within Bigfoot's 9.0 GiB ceiling
+
+  Per-guest details:
+  - **debian13-zfs-arm64** runs `--reserve 1 5`, with its overlay on
+    `/bkoscratch/st1-scratch` (`ST1_SCRATCH`).
+  - **debian13-arm64 and ubuntu26-arm64** install python3, dosfstools or
+    e2fsprogs from the distribution if the image lacks them.
+  - **alpine324-arm64** loads ext4 and loop before its fixture. The guest
+    has no ext4 of its own, and without the module busybox's mount of the
+    loop ext4 fails with EINVAL. The first smoke run caught this: the
+    fixture landed on the root XFS, and atime FAILed in all four
+    directions.
+
+  drive.py:
+  - A round that names no guests leaves out those of an architecture no
+    `--hosts` host has. Named, one is refused, as before.
+  - Its self-test expects `bin/linux-arm64` for `-arm64` guests.
+  - README.md has the five estimates (the siblings' until measured).
+- **HoltTest1 1ARM.**
+  - **ht1.sh** reads `GARCH` and `PLAT` from the guest's name: `linux-arm64`
+    for `*-arm64`, else `linux`.
+    - It refuses a guest of another architecture than the host's (exit 2).
+    - bko-holt and rustic-bko come from `PLAT/` of their sets, and the
+      `+img` pin from `img-pin/PLAT`.
+    - An arm64 guest's rescuer is `rescuer-arm64.qcow2` (ubuntu26-arm64,
+      `--uefi`). It needs no bin/ debs, which are amd64's, so they are
+      neither checked nor copied into the share.
+    - ht1-lib.sh's manifest line names `qemu-system-$(uname -m)`, which is
+      the same text on x86_64.
+  - **make-rescuer.sh `--arch arm64`** (on aarch64 only) makes
+    `rescuer-arm64.qcow2` from ubuntu26-arm64, with the UEFI branch's
+    packages. Its QEMU writes a pid file, and its shutdown stops that PID
+    alone. `BKO_TESTVM` picks the vm-run.
+  - **ht1-queue.sh**: an arm64 line needs `rescuer-arm64.qcow2` and no
+    debs, and `HT_HOLT_BIN`'s Linux bko-holt is `linux-arm64/`'s on an
+    aarch64 host.
+  - **ram-sizes.tsv** has estimate rows for the five on bigfoot: D 2, 3,
+    4, 6 and 10.
+  - **img-boot.d/linux-arm64.json** is linux.json's twin.
+  - **The word.** 1ARM is the five, run from a6-run.sh. As a HoltTest2
+    family it is `HoltTest2ARM`.
+- **HostTest2 on Bigfoot.**
+  - run-all.sh has an arm64 profile. On an arm64 host it runs the host
+    steps only:
+    - linux on `zfs` and `tmpfs`, sparse on `zfs` and `zfs-nocomp`. These
+      are the file systems made without a loop device or a package Bigfoot
+      lacks.
+    - one job of a kind at a time
+    - the binaries from `BIN/linux-arm64` (`LOS`)
+    - no guest platform; `ANY_HOST` is refused
+  - gate/loop.sh reads the commits from `bin/linux-arm64` on aarch64.
+  - Every amd64 profile's `--dry-run` output (chopin, cinqcent, copland,
+    cage; all platforms, and `linux,sparse`) is the same bytes as HEAD's:
+    8 of 8.
+- **Test2 registrations.**
+  - **classes.json's `arm64` block** holds the stic guests, the holt
+    family `ARM`, their `uefi` and `needs_host_zfs` (debian13-zfs-arm64).
+    - plan.py's `arch_classes` merges it into stic and holt only for a run
+      whose `--hosts` has an arm64 host. An `-arm64` cell is in a word's
+      universe and its known names only then (`Ctx.arch_ok`), so an amd64
+      run's cells, counts and plans are what they were.
+    - `check_classes` counts the 77 without the block.
+    - `HoltTest2ARM` without an arm64 host says so in a note.
+    - An arm64 holt source needs the `holt_rescuer_arm64` cap, which only
+      an aarch64 host's facts carry (facts_host.py). No amd64 host's facts
+      change.
+  - **holt/spec.json**: five entries, kind `linux`, `plat linux-arm64`,
+    `firmware uefi`, with the rescuer replaced by `rescuer-arm64.qcow2`.
+  - **stic/manifests.json**: entries with os `linux-arm64`, the
+    linux-arm64 bins, and the siblings' helpers in harness and judge.
+  - **stic/limits.json**: each check's own LIMIT needs and its in-guest
+    part's.
+  - **guest/spec.json**: entries with `plat linux-arm64`, `established
+    false` and new-guest.sh. fw is `uefi`, and `uefi-sb` for
+    ubuntu26-arm64.
+  - **estimates.tsv**: stic, holt and guest rows, the siblings' until
+    measured.
+  - check-manifests.py expands per-platform files for `linux-arm64` too.
+  - The `+img` cells aren't registered. They wait for an arm64 image in
+    `images/`, which ImgTest2 pins (A4's is a private build), as A4 said.
+  - The goldens themselves come from the run's `t2:corpus` stage. For each
+    1ARM PASS:
+    1. collect-dumps.sh takes the raw dumps on Bigfoot.
+    2. corpus_build.rs redacts them.
+    3. `BKO_HOLT_GOLDEN=bless` golden_plans.rs writes their plans.
+    4. collect-dumps.sh `--scan` runs leakscan.
+
+    The result is `out/t2/corpus-arm64.patch`: the redacted dumps, their
+    plan.txt and their index.tsv rows, to `git apply` after review. The
+    Test2 ledger rows come from a `t2 SticTest2 ... --hosts bigfoot` run
+    once that path is tried (below).
+
+### Tests
+
+- **`testvm/test2/tests/test_arm64_a6.py`** (28 tests, and one in test_runner_hosts):
+  - **The registrations.** No `-arm64` cell in an amd64 run's stic, holt
+    and guest universes. With bigfoot, exactly the five, and the amd64
+    cells unchanged. The merge, known names, `check_classes`,
+    `HoltTest2ARM`, the rescuer cap, every spec entry and the estimates.
+  - **The five checks.** drive.py's unnamed round, and the estimates.
+  - **ht1.sh.** Its PLAT, rescuer and debs. Its architecture refusal is
+    run with `uname` stubbed.
+  - **make-rescuer.sh's refusals**, the queue and the ram sizes.
+  - **run-all.sh's bigfoot and amd64 profiles** (bash 4).
+  - **a6-run.sh with a fake ssh.** It ships HEAD and not the working tree,
+    starts the service in bko.slice through setpriv, refuses a second
+    start under the same stamp, and removes the dry run's scratch copy.
+    Usage errors never reach the host.
+  - **a6-stages.sh's selection and refusals** (bash 4).
+- **Tests updated for the new data.** test_runner_hosts (arm64 queue
+  lines; ht1.sh's refusals with `uname` stubbed, plus an arm64 case),
+  test_holt, test_guest, test_stic, test_host_caps and test_host_table.
+  The p2 golden `gate-nothing-due.json` was re-blessed: only the
+  `gate:selftest` cell's key moved, because drive.py, classes.json and
+  estimates.tsv are its inputs. No cell, count or plan changed.
+- **Results.**
+  - **The Mac:** all of testvm/test2's suites, 2039+ tests, give the same
+    failures and errors as HEAD c64d1bb, and none of A6's. test_arm64_a6
+    passes, with 6 skipped (bash 3.2).
+  - **Bigfoot:** test_arm64_a6, test_arm64_guests, test_arm64_image,
+    test_arm64_builds, test_arch, test_runner_hosts, test_host_table and
+    test_holt_img give HEAD's failures there, and none new.
+  - **drive.py `--self-test` and check-manifests.py:** only HEAD's
+    failures (openbsd8-crypt's BIN_DIR, neon24's and openbsd8-crypt's
+    missing manifests, the README estimate count).
+
+### Checks on Bigfoot
+
+- **The dry run.** `a6-run.sh --dry-run` from the Mac shipped the private
+  tree, printed the plan and the inputs, and removed its copy, in about
+  4 s.
+- **The smoke runs.** Each went through the real service with `--only`,
+  preflight and final included. Each preflight took 9-10 s, and each
+  final found the guests and the image unchanged.
+
+  | run | stage | result | time | what it showed |
+  |---|---|---|---|---|
+  | a6smoke3 | stic:alpine324-arm64 | FAIL | 180 s | 25 PASS, 6 FAIL, 5 LIMIT. Every FAIL was ext4's atime: the guest had no ext4 module, so the fixture landed on the root XFS. Fixed: the check loads ext4 and loop. |
+  | a6smoke4, a6smoke5 | stic:alpine324-arm64 | PASS on 2 lines; FAIL | 290 s, 367 s | The guest kernel panicked both times: "Asynchronous SError Interrupt" in restic-bko at EL0, tainted M (MACHINE_CHECK). The guest rebooted, and the check's ssh died (exit 255). The host's kernel log has nothing. The check now FAILs a run cut short ("check ran"); before, it passed on the lines it had. |
+  | a6smoke6, a6smoke7 | stic:debian13-arm64 | FAIL | 332 s | 30 PASS, 1 FAIL: the guest's DVD install has no dosfstools and no network apt source, so the vfat ESP couldn't be made. Fixed: the check adds Debian's mirror in its throwaway overlay. |
+  | a6smoke8 | stic:debian13-arm64 | **PASS** | 447 s | 31 PASS, 0 FAIL, 3 LIMIT |
+  | a6stop1, a6stop2 | stic:fedora44-arm64, then `--stop` | ABORTED | 17 s, 28 s | a6stop1 left the guest's QEMU and its scratch: vm_boot's vm-run is setsid'd out of the stage's group. That one PID was TERMed by hand. The stop now TERMs every process the stage started that outlived its group, by the PIDs taken from /proc at the stop, then removes the run's own scratch. In a6stop2 nothing was left, and final PASSed. |
+
+- **After the review fixes** (the rescuer VM's cleanup, DantePool's check,
+  sparse-rt.sh's `/var/tmp`, hosttest2:bin's expectations, the latest
+  run's choice, the value-less flags, and t2lib/batchprof.py's stic1
+  estimate, which no longer counts the -arm64 guests of an unnamed round
+  on x86 hosts: bkotest1all's stic1 stays 75 jobs):
+
+  | run | stage | result | time | what it showed |
+  |---|---|---|---|---|
+  | a6fix1 | hosttest2:bin | PASS | 0 s | expect PASS (made for the set's commits), static, version (agree, both archivers), bko-holt 0.2.6 |
+  | a6fix2 | rescuer | PASS, final FAIL | 528 s | The first rescuer-arm64.qcow2. final caught its QEMU still up: the PID check matched `/bkoscratch/...`, and vm-run passes QEMU the resolved `/home/m/bko-arm64/scratch/...`. That VM was powered off by hand and the sha256 made again. Fixed: the copy's file name is matched. |
+  | a6fix3 | rescuer `--rebuild-rescuer` | PASS | 503 s | The VM powered off at the end, final PASS |
+  | a6fix4, a6fix5 | rescuer, `--stop` in the install | ABORTED | 110 s, 133 s | Nothing left, but the stop waited out the install's ssh (sudo runs make-rescuer.sh in a pty session of its own, so only the script got the TERM, and bash held its trap until that ssh ended); a6fix5 needed the group's KILL. Fixed: arm64's ssh runs in the background, waited for. |
+  | a6fix6 | rescuer, `--stop` in the install | ABORTED | 2 s | QEMU gone, the kept rescuer-arm64.qcow2 unchanged, final PASS |
+  | a6fix7 | rescuer `--rebuild-rescuer`, hosttest2:bin | PASS | 393 s | Clean poweroff, final PASS. Bigfoot's rescuer-arm64.qcow2 (2892a2d6) is this build: a run keeps it unless `--rebuild-rescuer`. |
+
+  The smoke run directories (a6smoke2-8, a6stop1-2, a6fix1-7) were moved
+  out of `~/backotter-work/a6-run` to `~/backotter-work/a6-scratch/old-runs/`.
+
+### Left for later
+
+- **The heavy run itself.** Commit A6, then run `testvm/arm64/a6-run.sh`.
+- **alpine324-arm64's guest SError panics** (above): 2 runs of 3. It may be
+  KVM on the CIX P1 (the A0 risk) or Alpine's 6.18 LTS kernel. Debian's
+  6.12 guest ran clean twice. Until it is understood, alpine324-arm64's
+  SticTest1 and 1ARM results can't be trusted.
+- **After it**, apply `out/t2/corpus-arm64.patch`. Then add
+  `out/t2/limits-candidates.json`'s new needs to `stic/limits.json`, and
+  `estimates-candidates.tsv`'s rows to `estimates.tsv`.
+- **GateTest2 on bigfoot.** t2's `GATE_ARCH` still keeps gate cells off an
+  arm64 host. The loops' cells key `linux/` binaries, so bigfoot's would
+  need `linux-arm64/` ones. a6-run.sh runs the same layers by hand.
+- **t2's SticTest2 and HoltTest2 runs from the Mac with `--hosts bigfoot`**
+  aren't tried. The plans have the cells, but a run needs a round's
+  `bin/linux-arm64` on Bigfoot and its private copy there.
+- **Joining the defaults.** Bigfoot stays `default: false` until HostTest2
+  and one representative per family pass (testvm/HOSTS.md, step 10). It
+  then needs the user's choice on what of HostTest2's loops it can't run
+  without loop devices or packages.
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Est. |

@@ -92,6 +92,10 @@
 #               run ends, and the rest dropped (the image only takes what
 #               is written in it; IMG_GB is lowered to what is free there
 #               less 4 GiB, with a note); RT_RAM=0 keeps it on disk
+#   SPARSE_DISK_WORK
+#               with the work in /mnt/bko-ram as above: where the lock and
+#               out/ go instead of /var/tmp/PREFIX/RUN (run-all.sh's arm64
+#               profile: Bigfoot keeps everything under its /home)
 #   IMG_GB      size of the image or tmpfs (default 16; files hold ~1.5 GiB)
 #   BIG         size of the big file in GiB (default 20; 0: none): 100
 #               extents of 2 MiB random data spread over it, the last one
@@ -124,6 +128,7 @@ if [ "$os" = Linux ]; then W=${SPARSE_WORK:-/var/tmp/$PFX/$RUN}; else W=${SPARSE
 DISK_W=$W
 if [ "$os" = Linux ] && [ -z "${SPARSE_WORK:-}" ] && [ "${RT_RAM:-1}" != 0 ] && mountpoint -q /mnt/bko-ram 2>/dev/null; then
     W=/mnt/bko-ram/$PFX-$RUN
+    [ -z "${SPARSE_DISK_WORK:-}" ] || DISK_W=$SPARSE_DISK_WORK
 fi
 if [ "$FS" = dir ]; then MP=${SPARSE_DIR:-/root/bko-sparse}; else MP=/mnt/$PFX/$RUN; fi
 POOL=${SPARSE_POOL:-$PFX-$RUN}

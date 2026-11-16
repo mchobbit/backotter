@@ -838,6 +838,39 @@ disk: `pop24` (3.0 GiB free), `omarchy` (3.8), `mint22` (4.2).
 `ram-size.sh` adds 4 GiB to `nearfull`'s D for it; give the queue line its
 own `=D` if that isn't enough.
 
+## The arm64 guests: 1ARM
+
+HoltTest1 **1ARM** is the round trip of the five arm64 guests on Bigfoot:
+`debian13-arm64`, `ubuntu26-arm64`, `fedora44-arm64`, `alpine324-arm64` and
+`debian13-zfs-arm64` (docs/design/arm64.md, A6). `1ARM +img` is the same
+with A4's arm64 image as rescuer: debian13-arm64 and debian13-zfs-arm64
+by default.
+
+- **ht1.sh** runs an `*-arm64` guest only on an aarch64 host, and any other
+  guest only on a host that isn't one.
+  - bko-holt and rustic-bko are `linux-arm64`'s (`HT_HOLT_BIN`,
+    `HT_BKO_BIN`, holt-bin's or bko-bin's `linux-arm64/`).
+  - The `+img` pin is `img-pin/linux-arm64`.
+  - The rescuer is `rescuer/rescuer-arm64.qcow2`, which
+    `make-rescuer.sh --arch arm64` makes from ubuntu26-arm64 (UEFI,
+    Ubuntu's OpenZFS 2.4, every mkfs). It takes no bin/ debs, which are
+    amd64's.
+- **ram-sizes.tsv** has Bigfoot rows for the five. ubuntu26-arm64's D 10
+  is over Bigfoot's 9.0 ceiling, so it runs on /bkoscratch.
+- **ht1-queue.sh** holds an arm64 line to the same rescuer and no debs.
+
+All of 1ARM from the Mac:
+
+    testvm/arm64/a6-run.sh --only 1ARM,img
+
+By hand, on Bigfoot (after the rescuer):
+
+    cd ~/backotter-work && WEAR_TAG=ht1:a6x:debian13-arm64 HT_PORT=2690 HT_RAM=1 \
+      HT_BKO_BIN=DIR HT_HOLT_BIN=DIR ./cmp-run.sh --reserve 3 4 sudo -E testvm/holttest1d/ht1.sh debian13-arm64 a6x
+
+Here DIR holds `linux-arm64/{rustic-bko,bko-holt}` and a `SHA256SUMS` of
+`./linux-arm64/NAME` lines. a6-run.sh's `RUN/bins` is one.
+
 ## The rescue image as rescuer: +img
 
 `HT_VARIANT=img` (built 2026-11-10, for Test2's ImgTest2) runs the rebuild

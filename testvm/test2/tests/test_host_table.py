@@ -354,10 +354,14 @@ class DerivedEqualsBefore(unittest.TestCase):
             r, _ = self.run_all(h)
             self.assertEqual(r.returncode, 2, h)
             self.assertIn(f"no such host: {h} (--host chopin, cinqcent, copland, cage or bigfoot)", r.stderr)
-        r, _ = self.run_all("bigfoot")   # known, but an arm64 host: its guests and binaries are amd64
+        # Bigfoot, an arm64 host: its profile (A6) runs the host steps only, on linux-arm64's binaries
+        r, head = self.run_all("bigfoot")
         self.assertEqual(r.returncode, 2)
-        self.assertIn("bigfoot is an arm64 host (testvm/hosts.json's arch): run-all.sh's guests and binaries are amd64",
-                      r.stderr)
+        self.assertIn("bin/linux-arm64/restic-bko", r.stderr)
+        self.assertNotIn("bin/linux/restic-bko", r.stderr)
+        r, _ = self.run_all("bigfoot", env={"ANY_HOST": "1"})
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("ANY_HOST on bigfoot, an arm64 host", r.stderr)
 
     def sync_hosts(self, env=None):
         with tempfile.TemporaryDirectory() as d:

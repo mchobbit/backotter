@@ -62,9 +62,12 @@ log=/mnt/bko-ram/$pfx-log
 [[ ! -e $log ]] || die "$log is there already: another run's"
 
 first() { head -n 1 "$1" 2>/dev/null | cut -d' ' -f1; }
-rc_commit=$(first "$bin/linux/restic-commit") ru_commit=$(first "$bin/linux/rustic-commit")
-core_commit=$(sed -n 's/^rustic_core \([0-9a-f]*\).*/\1/p' "$bin/linux/rustic-commit" 2>/dev/null | head -n 1)
-[[ -n $rc_commit && -n $ru_commit && -n $core_commit ]] || die "no commits in $bin/linux/restic-commit, rustic-commit"
+# The Linux binaries' directory: linux, or linux-arm64 on an aarch64 host
+# (Bigfoot: run-all.sh's arm64 profile, docs/design/arm64.md A6).
+los=linux; [[ $(uname -m) != aarch64 ]] || los=linux-arm64
+rc_commit=$(first "$bin/$los/restic-commit") ru_commit=$(first "$bin/$los/rustic-commit")
+core_commit=$(sed -n 's/^rustic_core \([0-9a-f]*\).*/\1/p' "$bin/$los/rustic-commit" 2>/dev/null | head -n 1)
+[[ -n $rc_commit && -n $ru_commit && -n $core_commit ]] || die "no commits in $bin/$los/restic-commit, rustic-commit"
 
 mkdir -p "$out" "$log" || die "can't make $out or $log"
 rm -f "$out/info.txt" "$out/run-all.out"

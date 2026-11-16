@@ -161,6 +161,11 @@
     "redox": {"kind": "offline", "harness": ["testvm/redox/console.py"],
               "host_inputs": [{"path": "~/backotter-work/tools/redox/bin", "group": "rescuer"}],
               "notes": "its tools are on Cinqcent only (classes.json holt.pins)"},
-    "sculpt2610": {"kind": "offline", "harness": ["testvm/sculpt-check.sh", "testvm/haiku/drive.py"]}
+    "sculpt2610": {"kind": "offline", "harness": ["testvm/sculpt-check.sh", "testvm/haiku/drive.py"]},
+    "debian13-arm64": {"kind": "linux", "plat": "linux-arm64", "firmware": "uefi", "replace": ["rescuer"], "rescuer": ["rescuer-arm64.qcow2"], "harness": ["testvm/holttest1d/nvboot-efivars.sh"], "notes": "docs/design/arm64.md A6: an arm64 source on an aarch64 host only; ht1.sh's rescuer is make-rescuer.sh --arch arm64's rescuer-arm64.qcow2 (ubuntu26-arm64), with no debs (bin/'s are amd64's)"},
+    "ubuntu26-arm64": {"kind": "linux", "plat": "linux-arm64", "firmware": "uefi", "replace": ["rescuer"], "rescuer": ["rescuer-arm64.qcow2"], "harness": ["testvm/holttest1d/nvboot-efivars.sh"], "notes": "docs/design/arm64.md A6: an arm64 source on an aarch64 host only; ht1.sh's rescuer is make-rescuer.sh --arch arm64's rescuer-arm64.qcow2 (ubuntu26-arm64), with no debs (bin/'s are amd64's)"},
+    "fedora44-arm64": {"kind": "linux", "plat": "linux-arm64", "firmware": "uefi", "replace": ["rescuer"], "rescuer": ["rescuer-arm64.qcow2"], "harness": ["testvm/holttest1d/nvboot-efivars.sh"], "notes": "docs/design/arm64.md A6: an arm64 source on an aarch64 host only; ht1.sh's rescuer is make-rescuer.sh --arch arm64's rescuer-arm64.qcow2 (ubuntu26-arm64), with no debs (bin/'s are amd64's)"},
+    "alpine324-arm64": {"kind": "linux", "plat": "linux-arm64", "firmware": "uefi", "replace": ["rescuer"], "rescuer": ["rescuer-arm64.qcow2"], "harness": ["testvm/holttest1d/nvboot-efivars.sh"], "notes": "docs/design/arm64.md A6: an arm64 source on an aarch64 host only; ht1.sh's rescuer is make-rescuer.sh --arch arm64's rescuer-arm64.qcow2 (ubuntu26-arm64), with no debs (bin/'s are amd64's)"},
+    "debian13-zfs-arm64": {"kind": "linux", "plat": "linux-arm64", "firmware": "uefi", "replace": ["rescuer"], "rescuer": ["rescuer-arm64.qcow2"], "harness": ["testvm/holttest1d/nvboot-efivars.sh"], "notes": "docs/design/arm64.md A6: an arm64 source on an aarch64 host only; ht1.sh's rescuer is make-rescuer.sh --arch arm64's rescuer-arm64.qcow2 (ubuntu26-arm64), with no debs (bin/'s are amd64's)"}
   }
 }

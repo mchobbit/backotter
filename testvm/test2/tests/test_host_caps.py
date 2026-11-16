@@ -258,7 +258,9 @@ class Placement(unittest.TestCase):
         """Every Linux holt source whose builder makes a ZFS pool is listed (ubuntu24's name doesn't say so)."""
         sf = plan.Ctx(REPO, hosts=[], options={}).specs.get("holt")
         linux = {g for g in sf.names() if sf.entry(g).get("kind") == "linux"}
-        listed = set(plan.Ctx(REPO, hosts=[], options={}).classes["holt"]["needs_host_zfs"])
+        # (with an arm64 host the class table has the arm64 block's too: debian13-zfs-arm64, A6)
+        listed = set(plan.Ctx(REPO, hosts=["chopin", "bigfoot"], options={}).classes["holt"]["needs_host_zfs"])
+        self.assertNotIn("debian13-zfs-arm64", plan.Ctx(REPO, hosts=["chopin"], options={}).classes["holt"]["needs_host_zfs"])
         self.assertLessEqual(listed, linux)
         self.assertLessEqual({g for g in linux if "zfs" in g}, listed)
 

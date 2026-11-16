@@ -153,17 +153,48 @@ watched through their exit files every 15 s; the results land in
 
 The queue times guests by their newest passing run on the hosts, else by these.
 
-Estimates (seconds; an estimate for aeon, ~300 s (microos's 230 s and its larger ESP, docs/design/aeon.md A3), until its first run; round st2a's, GuestTest1's for the guests it added, Bazzite B5's for kinoite44, Chimera C4's for chimera, chimera-uefi and chimera-zfs, Gentoo G4's for gentoo and gentoo-systemd, AnduinOS A4's for anduinos2, PikaOS P5's for pikaos4 and pikaos4-luks, Kali K4's for kali, Guix GX5's for guix15 and guix15-bios, Proxmox P5's for proxmox9 and proxmox9-mirror, TrueNAS T5's for truenas25, Vanilla OS V6's for vanilla3, MicroOS M4's for microos, Leap 16 L4's for leap16, elementary E5's for elementary8 and elementary8-luks, an estimate for garuda until Garuda GA5's run, an estimate for biglinux until BigLinux's first run, one for hardenedbsd15-zfs until its first run (ghostbsd26-zfs's check on HBSD's slower kernel), Solus S4's for solus49, unmeasured estimates for slackware15 (devuan6's ext4 check plus LILO's /boot and pkgtools' database) and slackware15-uefi (rocky10's XFS check plus the ESP, the initrd tree and the scratch disk's layout) until Slackware S5's runs, and an unmeasured one for uc24 (vanilla3's half: four roots with no LVM or overlays, plus the LUKS2 headers and the guest's snaps) until Ubuntu Core U5's runs, one for qubes43 until its first run (Qubes Q6: dom0's ~5.5 GiB root read offline, both tools, four restores), and ZFSBootMenu Z6's for void-zbm):
-aeon 300, aerynos 150, alpine324 153, alpinebsd 401, anduinos2 400, arch 137, artix-dinit 170,
+Estimates (seconds; an estimate for aeon, ~300 s (microos's 230 s and its larger ESP, docs/design/aeon.md A3), until its first run; round st2a's, GuestTest1's for the guests it added, Bazzite B5's for kinoite44, Chimera C4's for chimera, chimera-uefi and chimera-zfs, Gentoo G4's for gentoo and gentoo-systemd, AnduinOS A4's for anduinos2, PikaOS P5's for pikaos4 and pikaos4-luks, Kali K4's for kali, Guix GX5's for guix15 and guix15-bios, Proxmox P5's for proxmox9 and proxmox9-mirror, TrueNAS T5's for truenas25, Vanilla OS V6's for vanilla3, MicroOS M4's for microos, Leap 16 L4's for leap16, elementary E5's for elementary8 and elementary8-luks, an estimate for garuda until Garuda GA5's run, an estimate for biglinux until BigLinux's first run, one for hardenedbsd15-zfs until its first run (ghostbsd26-zfs's check on HBSD's slower kernel), Solus S4's for solus49, unmeasured estimates for slackware15 (devuan6's ext4 check plus LILO's /boot and pkgtools' database) and slackware15-uefi (rocky10's XFS check plus the ESP, the initrd tree and the scratch disk's layout) until Slackware S5's runs, and an unmeasured one for uc24 (vanilla3's half: four roots with no LVM or overlays, plus the LUKS2 headers and the guest's snaps) until Ubuntu Core U5's runs, one for qubes43 until its first run (Qubes Q6: dom0's ~5.5 GiB root read offline, both tools, four restores), and ZFSBootMenu Z6's for void-zbm; each arm64 guest's (docs/design/arm64.md A6) is its in-guest part's sibling's, alpine324's, ubuntu26-uefi's, fedora44-uefi's or debian13-zfs's, until its first run on Bigfoot):
+aeon 300, aerynos 150, alpine324 153, alpine324-arm64 153, alpinebsd 401, anduinos2 400, arch 137, artix-dinit 170,
 artix-s6 367, biglinux 300, cachyos 300, chimera 215, chimera-uefi 200, chimera-zfs 290,
-debian12 117, debian13 477, debian13-stack 547, debian13-zfs 856,
-devuan6 310, dragonfly6 435, elementary8 411, elementary8-luks 458, fedora44 208, fedora44-uefi 268, freebsd14 751,
+debian12 117, debian13 477, debian13-arm64 374, debian13-stack 547, debian13-zfs 856, debian13-zfs-arm64 856,
+devuan6 310, dragonfly6 435, elementary8 411, elementary8-luks 458, fedora44 208, fedora44-arm64 268, fedora44-uefi 268, freebsd14 751,
 freebsd15 751, freebsd15-geli 800, freebsd15-ufs 391, ghostbsd26 1211,
 garuda 300, gentoo 270, gentoo-systemd 230, ghostbsd26-zfs 751, guix15 470, guix15-bios 475, hardenedbsd15 519, hardenedbsd15-zfs 780, kali 330, kinoite44 404, leap16 250, microos 230, mint22 814, mx25 685, netbsd11 324,
 nixos2605 236, oi2610 490, omarchy 302, omnios58 370, openbsd8 338, pikaos4 300,
 pikaos4-luks 400, pop24 622, proxmox9 460, proxmox9-mirror 560, qubes43 900,
-rocky10 113, rocky10-lvm 151, sculpt2610 49, slackware15 330, slackware15-uefi 250, solus49 410, truenas25 1200, tumbleweed 186, ubuntu24 957, ubuntu26-uefi 374,
+rocky10 113, rocky10-lvm 151, sculpt2610 49, slackware15 330, slackware15-uefi 250, solus49 410, truenas25 1200, tumbleweed 186, ubuntu24 957, ubuntu26-arm64 374, ubuntu26-uefi 374,
 ubuntu26-zfs 957, ubuntu26-zfsmirror 623, uc24 700, vanilla3 1400, void-musl 115, void-zbm 310, zorin18 586.
+
+## The arm64 guests (Bigfoot)
+
+Five checks run only on an aarch64 host, Bigfoot (docs/design/arm64.md, A6):
+`debian13-arm64`, `ubuntu26-arm64`, `fedora44-arm64`, `alpine324-arm64` and
+`debian13-zfs-arm64`. Each check's own directory holds only its `check.sh`.
+Its in-guest part is the amd64 guest's with the same layout:
+
+| check | in-guest part |
+|---|---|
+| `debian13-arm64` | `../ubuntu26-uefi` |
+| `ubuntu26-arm64` | `../ubuntu26-uefi` |
+| `fedora44-arm64` | `../fedora44-uefi` |
+| `alpine324-arm64` | `../alpine324/check-inner.sh` |
+| `debian13-zfs-arm64` | `../debian13-zfs/real.sh` |
+
+- Each check takes `BIN_DIR` `roundN/bin/linux-arm64`, or bko-bin's
+  `linux-arm64`, and Bigfoot's ports 3280-3299.
+- Each refuses another host, and FAILs if the guest doesn't say aarch64.
+- debian13-zfs-arm64 keeps its overlay of about 12 GiB on
+  `/bkoscratch/st1-scratch` (`ST1_SCRATCH`), under `--reserve 1 5`.
+  Bigfoot's RAM disk is 10 GiB.
+
+By hand, on Bigfoot:
+
+    ~/backotter-work/testvm/stictest1/alpine324-arm64/check.sh ~/backotter-work/bko-bin/linux-arm64 3290 a6by
+
+Or all five from the Mac, with the rest of A6's tests:
+`testvm/arm64/a6-run.sh --only stic` (docs/design/arm64.md, "What A6
+built"). A drive.py round that names no guests leaves them out unless
+`--hosts` has bigfoot.
 
 ## BKO_TESTVM: checks from another testvm/
 

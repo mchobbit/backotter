@@ -143,6 +143,34 @@
     "established": true
    }
   },
+  "alpine324-arm64": {
+   "kind": "ssh",
+   "plat": "linux-arm64",
+   "harness": [
+    "testvm/make-bootstrap.sh",
+    "testvm/bootstrap/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apk",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apk"
+   ],
+   "checks": {
+    "pm": "apk",
+    "rules": {
+     "source": "S-apk",
+     "loader": "L-grub",
+     "kernel": "K-apk",
+     "boot": "B-lin",
+     "mounts": "M-alp"
+    },
+    "fw": "uefi",
+    "established": false
+   },
+   "notes": "docs/design/arm64.md A5/A6: an arm64 guest on Bigfoot, its builder's --arch arm64; established false until its first GuestTest2 run there"
+  },
   "alpinebsd": {
    "kind": "ssh",
    "plat": "netbsd",
@@ -485,6 +513,34 @@
     "established": true
    }
   },
+  "debian13-arm64": {
+   "kind": "ssh",
+   "plat": "linux-arm64",
+   "harness": [
+    "testvm/make-debian.sh",
+    "testvm/debian/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false
+   },
+   "notes": "docs/design/arm64.md A5/A6: an arm64 guest on Bigfoot, its builder's --arch arm64; established false until its first GuestTest2 run there"
+  },
   "debian13-stack": {
    "kind": "ssh",
    "plat": "linux",
@@ -536,6 +592,33 @@
     "fw": "bios",
     "established": true
    }
+  },
+  "debian13-zfs-arm64": {
+   "kind": "ssh",
+   "plat": "linux-arm64",
+   "harness": [
+    "testvm/make-debian-zfs.sh",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-zfs"
+    },
+    "fw": "uefi",
+    "established": false
+   },
+   "notes": "docs/design/arm64.md A5/A6: an arm64 guest on Bigfoot, its builder's --arch arm64; established false until its first GuestTest2 run there"
   },
   "devuan6": {
    "kind": "ssh",
@@ -721,6 +804,34 @@
     "fw": "bios",
     "established": true
    }
+  },
+  "fedora44-arm64": {
+   "kind": "ssh",
+   "plat": "linux-arm64",
+   "harness": [
+    "testvm/make-fedora.sh",
+    "testvm/fedora/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.dnf",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#dnf"
+   ],
+   "checks": {
+    "pm": "dnf",
+    "rules": {
+     "source": "S-dnf",
+     "loader": "L-bls",
+     "kernel": "K-fed",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false
+   },
+   "notes": "docs/design/arm64.md A5/A6: an arm64 guest on Bigfoot, its builder's --arch arm64; established false until its first GuestTest2 run there"
   },
   "fedora44-raid": {
    "kind": "ssh",
@@ -1853,6 +1964,34 @@
     "fw": "uefi-sb",
     "established": false
    }
+  },
+  "ubuntu26-arm64": {
+   "kind": "ssh",
+   "plat": "linux-arm64",
+   "harness": [
+    "testvm/make-ubuntu.sh",
+    "testvm/ubuntu/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": false
+   },
+   "notes": "docs/design/arm64.md A5/A6: an arm64 guest on Bigfoot, its builder's --arch arm64; established false until its first GuestTest2 run there"
   },
   "ubuntu26-luks": {
    "kind": "ssh",

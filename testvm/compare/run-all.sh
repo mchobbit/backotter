@@ -172,10 +172,18 @@ host=${host%%.*}
 . "$here/../hosts.sh"
 hclass=$(hosts_get "$host" class) && grange=$(hosts_get "$host" slot_range) ||
     die "no such host: $host (--host $(hosts_phrase))"
-# Its guests and binaries are amd64 ones: never on an arm64 host (Bigfoot).
-harch=$(hosts_arch "$host") && [[ $harch == amd64 ]] ||
+# Its guests and binaries are amd64 ones: never on an arm64 host (Bigfoot),
+# but for the host steps of the arm64 profile below.
+harch=$(hosts_arch "$host") && [[ $harch == amd64 || $harch == arm64 ]] ||
     die "$host is an ${harch:-unknown} host (testvm/hosts.json's arch): run-all.sh's guests and binaries are amd64"
 [[ $hclass == small ]] && prof=small || prof=$host
+[[ $harch != arm64 ]] || prof=arm64
+# LOS: the Linux binaries' directory in BIN_DIR (and OLD_BIN): linux, or
+# linux-arm64 on an arm64 host (docs/design/arm64.md A2).
+LOS=linux; [[ $harch != arm64 ]] || LOS=linux-arm64
+# SDW: the arm64 profile's sparse-rt.sh lock and out/ (SPARSE_DISK_WORK), in
+# LOG/sparse/RUN.work and not /var/tmp (Bigfoot keeps all under /home).
+SDW=""; [[ $harch != arm64 ]] || SDW=$LOG/sparse
 case $prof in
     chopin) all="linux sparse zfsguests dragonfly"
         lfs="zfs zfs-onto-ext4 bcachefs xfs btrfs nonroot" sfs="xfs btrfs"
@@ -191,8 +199,17 @@ case $prof in
     small) all="linux sparse"
         lfs="ext4 xfs btrfs f2fs tmpfs jfs" sfs="ext4 xfs btrfs"
         : "${MAX_GUESTS:=3}" "${COUNT_OTHERS:=1}" "${JOBS_CAP:=1}" ;;
+    # An arm64 host (Bigfoot, the user's own machine: docs/design/arm64.md
+    # A6's HostTest2): the host steps only, and only the file systems made
+    # without a loop device (none is used there) or a package it lacks:
+    # ZFS on files and tmpfs, one job of a kind at a time.  No guest
+    # platform: run-all.sh's guests are amd64 ones.
+    arm64) all="linux sparse"
+        lfs="zfs tmpfs" sfs="zfs zfs-nocomp"
+        : "${MAX_GUESTS:=0}" "${COUNT_OTHERS:=1}" "${JOBS_CAP:=1}" ;;
     *) die "no run-all.sh profile for $host, a $hclass host (a big host's is its own: chopin or cinqcent)" ;;
 esac
+[[ $prof != arm64 || -z ${ANY_HOST:-} ]] || die "ANY_HOST on $host, an arm64 host: run-all.sh's other platforms and file systems aren't for it"
 : "${PORT_BASE:=${grange%-*}}" "${GUEST_PORTS:=$grange}"
 ALL_LFS="zfs zfs-onto-ext4 bcachefs f2fs ext4 xfs btrfs tmpfs jfs nonroot" ALL_SFS="ext4 xfs btrfs zfs zfs-nocomp"
 # SPLIT: the round's steps dealt out over the hosts that share it, each one
@@ -343,7 +360,7 @@ noguest() {  # PLATFORM STEP GUEST: under SPLIT, a guest with no image here is t
 need_os=""
 for p in $plats; do
     case $p in
-        linux|sparse|zfsguests) need_os+=" linux" ;;
+        linux|sparse|zfsguests) need_os+=" $LOS" ;;
         dragonfly) need_os+=" dragonfly" ;;
         openbsd_illumos) need_os+=" openbsd illumos" ;;
         freebsd) need_os+=" freebsd" ;;
@@ -363,7 +380,7 @@ for os in $need_os; do
     for t in restic rustic; do
         f=$BIN/$os/$t-bko
         if [[ ! -s $f ]]; then bad+=("no $f"); continue; fi
-        if [[ $os == linux && $(uname -s) == Linux ]]; then
+        if [[ $os == "$LOS" && $(uname -s) == Linux ]]; then
             if [[ $t == restic ]]; then v=$("$f" version 2>&1 | head -n 1); else v=$("$f" --version 2>&1 | head -n 1); fi
         else
             v=$(grep -aoE "[0-9]+\.[0-9]+\.[0-9]+\+backotter\.[0-9]+" "$f" | sort -u | tr '\n' ' ')
@@ -481,8 +498,8 @@ for p in $plats; do
             step linux "$n" "$n" fsrt 0 host 14400 1 \
                 "$(q --results "$LOG/linux/$n" --target "$n" --allow-skip "${ALLOW_SKIP:-}")${OLD:+ --identity}" "
                 t=\$(mktemp); for i in 1 2 3 4 5; do
-                    $(rootenv) RESTIC_BKO=$(q "$BIN/linux/restic-bko") RUSTIC_BKO=$(q "$BIN/linux/rustic-bko") \
-                        ${OLD:+BKO_OLD_RESTIC=$(q "$OLD/linux/restic-bko")} BKO_FSRT_PREFIX=$PFX-fs \
+                    $(rootenv) RESTIC_BKO=$(q "$BIN/$LOS/restic-bko") RUSTIC_BKO=$(q "$BIN/$LOS/rustic-bko") \
+                        ${OLD:+BKO_OLD_RESTIC=$(q "$OLD/$LOS/restic-bko")} BKO_FSRT_PREFIX=$PFX-fs \
                         BKO_MKFS_BCACHEFS=\"\${BKO_MKFS_BCACHEFS:-}\" python3 $(q "$C/fs_roundtrip.py") $fs 2>&1 | tee \$t
                     rc=\${PIPESTATUS[0]}; grep -q 'failed (-6): malloc' \$t || break; echo \"== again (\$i): malloc abort\"
                 done; rm -f \$t
@@ -497,15 +514,15 @@ for p in $plats; do
             "$(q --targets "linux zfs,linux ext4" --full "$LOG/linux/nonroot/linux.log")$base" "
             $SUDO rm -f $(q "$LOG/linux/nonroot/linux.log")
             $(rootenv) NONROOT_POOL=$PFX-nr NONROOT_MNT=/mnt/$PFX-nr NONROOT_LOGS=$(q "$LOG/linux/nonroot") \
-                RESTIC=$(q "$BIN/linux/restic-bko") RUSTIC=$(q "$BIN/linux/rustic-bko") $(q "$C/nonroot-rt.sh") linux"
+                RESTIC=$(q "$BIN/$LOS/restic-bko") RUSTIC=$(q "$BIN/$LOS/rustic-bko") $(q "$C/nonroot-rt.sh") linux"
         ;;
     sparse)
         for run in $SPARSE_FS; do
             fs=${run%-nocomp} opts=""; [[ $run == zfs-nocomp ]] && opts="-O compression=off"
             step sparse "$run" "sparse-$run" sparse 0 sparse 10800 1 "${OLD:+--identity}" \
-                "$(rootenv) SPARSE_PREFIX=$PFX-sp SPARSE_FS=$fs SPARSE_RUN=$run SPARSE_ZFS_OPTS=$(q "$opts") BIG=${BIG:-20} ${IMG_GB:+IMG_GB=$(q "$IMG_GB")} \
-                    $(q "$C/sparse-rt.sh" "$BIN/linux/restic-bko" "$BIN/linux/rustic-bko") \
-                    ${OLD:+$(q "$OLD/linux/restic-bko" "$OLD/linux/rustic-bko")}"
+                "$(rootenv) SPARSE_PREFIX=$PFX-sp${SDW:+ SPARSE_DISK_WORK=$(q "$SDW/$run.work")} SPARSE_FS=$fs SPARSE_RUN=$run SPARSE_ZFS_OPTS=$(q "$opts") BIG=${BIG:-20} ${IMG_GB:+IMG_GB=$(q "$IMG_GB")} \
+                    $(q "$C/sparse-rt.sh" "$BIN/$LOS/restic-bko" "$BIN/$LOS/rustic-bko") \
+                    ${OLD:+$(q "$OLD/$LOS/restic-bko" "$OLD/$LOS/rustic-bko")}"
         done ;;
     zfsguests)
         i=17

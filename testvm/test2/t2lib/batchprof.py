@@ -282,6 +282,11 @@ def build(batch, hosts, cap, src):
                 if not guests and src.drive is not None:
                     try:
                         guests = list(src.drive.all_guests())
+                        # As drive.py's main(): a round that names no guests leaves out those
+                        # of an architecture no host of it has (the -arm64 ones without bigfoot).
+                        on = list(claim) if claim is not None else list(hosts)
+                        if hasattr(src.drive, "no_arch_host"):
+                            guests = [g for g in guests if not src.drive.no_arch_host([g], on)]
                     except Exception:   # noqa: BLE001
                         guests = []
                 if guests:

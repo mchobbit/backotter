@@ -826,7 +826,7 @@ def watch_report(files, spec_paths):
                 named.add(it)
     rx_named = [glob_rx(g.replace("{plat}", "*").replace("{guest}", "*").replace("PLAT", "*"))
                 for g in named_globs if "GUEST" not in g]
-    plats = "linux freebsd netbsd openbsd dragonfly illumos haiku".split()
+    plats = "linux freebsd netbsd openbsd dragonfly illumos haiku linux-arm64".split()   # (linux-arm64: holt/spec.json's arm64 entries, A6)
     for it in [x for x in named if "{plat}" in x or "/PLAT/" in x]:     # a kind's or variant's per-platform file
         for p in plats:
             named.add(it.replace("{plat}", p).replace("/PLAT/", f"/{p}/"))

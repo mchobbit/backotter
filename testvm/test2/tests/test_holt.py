@@ -109,6 +109,7 @@ def facts_for(guests, host="chopin", uefi_rescuer=True):
     images = {"rescuer.qcow2": {"sha256": RESCUER, "imgsum": None}}
     if uefi_rescuer:
         images["rescuer-uefi.qcow2"] = {"sha256": "1" * 64, "imgsum": None}
+    images["rescuer-arm64.qcow2"] = {"sha256": "4" * 64, "imgsum": None}   # (the arm64 sources': A6)
     for n in ("openbsd8-newduid.qcow2", "dragonfly6-newfsid.qcow2", "omnios58-reguid.qcow2"):
         images[n] = {"sha256": None, "imgsum": "img:" + "2" * 64}
     return {"host": host, "versions": {"kernel": "6.12.115+deb13.1-amd64", "zfs": "2.4.0-1", "qemu": "QEMU 10.0.13",
@@ -116,7 +117,7 @@ def facts_for(guests, host="chopin", uefi_rescuer=True):
             "guests": g, "rescuers": {"images": images, "bin": dict(DEBS)},
             "sets": {"bko-bin": {"sums": {f"{p}/rustic-bko": RUSTIC.get(p) or hashlib.sha256(p.encode()).hexdigest()
                                           for p in ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos",
-                                                    "haiku")}, "digests": {}}},
+                                                    "haiku", "linux-arm64")}, "digests": {}}},
             "plumbing": {"shared:cmp-run.sh": "a" * 64, "shared:testvm/compare/iolog.sh": "b" * 64},
             "host_inputs": {"~/backotter-work/tools/redox/bin": "dir:" + "3" * 64}}
 
@@ -636,7 +637,7 @@ class SpecJson(unittest.TestCase):
 
     def test_entries_and_kinds(self):
         names = self.sf.names()
-        self.assertEqual(len(names), 77)
+        self.assertEqual(len(names), 82)   # 77, and A6's five arm64 sources
         text = rd(os.path.join(WT, "testvm", "holttest1d", "ht1.sh"))
         m = re.search(r'case \$G in\n(.*?)\nesac', text, re.S)
         bsd = re.search(r"^\s*(\S+)\)\s*\n\s*exec .*ht1-bsd\.sh", m.group(1), re.M).group(1).split("|")
@@ -648,7 +649,8 @@ class SpecJson(unittest.TestCase):
                 fnmatch.fnmatch(n, p) for p in off) else "linux"
             self.assertEqual(e["kind"], want, n)
             self.assertTrue(e["driver"].endswith({"linux": "ht1.sh", "bsd": "ht1-bsd.sh", "offline": "ht1-offline.sh"}[want]))
-            self.assertIn(e.get("plat"), ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "haiku"), n)
+            self.assertIn(e.get("plat"), ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "haiku")
+                          if not n.endswith("-arm64") else ("linux-arm64",), n)
 
     def test_paths_exist(self):
         for n in self.sf.names():
@@ -666,11 +668,14 @@ class SpecJson(unittest.TestCase):
         if self.classes is None:
             self.skipTest("no classes.json")
         h = self.classes["holt"]
+        # (the arm64 guests are in classes.json's arm64 block, merged for a run with an arm64 host: A6)
+        a = (self.classes.get("arm64") or {}).get("holt") or {}
         fams = set(x for v in h["families"].values() for x in v) | set(h.get("no_family") or ())
+        fams |= set(x for v in (a.get("families") or {}).values() for x in v)
         self.assertEqual(fams, set(self.sf.names()))
         uefi = {n for n in self.sf.names() if self.sf.entry(n).get("firmware") == "uefi"
                 and self.sf.entry(n)["kind"] == "linux"}
-        self.assertEqual(uefi, set(h.get("uefi") or ()))
+        self.assertEqual(uefi, set(h.get("uefi") or ()) | set(a.get("uefi") or ()))
         for var, gs in h["variants"].items():
             for g in gs:
                 self.assertIn(var, self.sf.entry(g)["variants_run"], f"{g}+{var}")

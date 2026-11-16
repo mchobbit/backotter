@@ -528,6 +528,40 @@ class Profiles(Fixture):
         self.assertEqual(bs.wall_on(h1, ("cage",), self.cap), 4 * 1800)
         self.assertEqual(bs.wall_on(s1, ("cage",), self.cap), 600)
 
+    def test_stic1_defaulted_guests_drop_other_arch(self):
+        # A6: drive.py's all_guests() has the -arm64 guests, which a round naming no guests
+        # leaves out on x86 hosts (drive.py main()); the estimate must count the same jobs.
+        class Est:
+            def cell(self, c):
+                return {"wall_s": 600, "src": "tsv"}
+
+        class Drive:
+            calls = []
+
+            @staticmethod
+            def all_guests():
+                return ["debian13", "alpine324", "debian13-arm64", "alpine324-arm64"]
+
+            @classmethod
+            def no_arch_host(cls, guests, hosts):
+                cls.calls.append(tuple(hosts))
+                return {g: "arm64" for g in guests if g.endswith("-arm64")}
+
+        b, (s1,) = self.prof("stic1 rel9\n", bp.Sources(est=Est(), drive=Drive))
+        self.assertEqual([j.name for j in s1.jobs], ["stic:debian13", "stic:alpine324"])
+        self.assertEqual(set(Drive.calls), {tuple(HOSTS)})
+        b, (s2,) = self.prof("stic1 rel9 debian13-arm64\n", bp.Sources(est=Est(), drive=Drive))
+        self.assertEqual([j.name for j in s2.jobs], ["stic:debian13-arm64"])   # named: kept (drive.py refuses)
+
+    def test_stic1_bkotest1all_real_drive_no_arm64(self):
+        # The real drive.py on the four x86 hosts: no -arm64 job in bkotest1all's stic1.
+        drive = os.path.join(TESTVM, "stictest1", "drive.py")
+        mod = bp.load_path("t2_test_drive_a6", drive)
+        want = [g for g in mod.all_guests() if not g.endswith("-arm64")]
+        b, (s1,) = self.prof("stic1 rel9\n", bp.Sources(est=type("E", (), {"cell": lambda s, c: {"wall_s": 1, "src": "t"}})(),
+                                                        drive=mod))
+        self.assertEqual([j.name for j in s1.jobs], [f"stic:{g}" for g in want])
+
     def test_bs2_walls(self):
         mod = bp.load_path("t2_test_bs2", os.path.join(TESTVM, "backshot2", "bs2"))
         b, (p,) = self.prof("bs2 BackShot2Alpine 20\n", bp.Sources(bs2=mod))

@@ -49,6 +49,43 @@ def load_json(path):
         return json.load(f)
 
 
+def run_arches(hosts):
+    """The architectures of HOSTS (hosts.json's arch; amd64 for a host in no row)."""
+    return {hosts_table.host_arch(h) for h in hosts}
+
+
+def arch_classes(classes, hosts):
+    """CLASSES with its "arm64" block (docs/design/arm64.md A6: the arm64 guests' families,
+    uefi and needs_host_zfs lists) merged into its stic and holt parts when HOSTS has an arm64
+    host; else CLASSES itself, so that a run of amd64 hosts has every cell, count and plan it
+    had before the block.  Lists add up, dicts merge (a family list of the block's own name)."""
+    a = (classes or {}).get("arm64")
+    if not isinstance(a, dict) or "arm64" not in run_arches(hosts):
+        return classes
+    out = json.loads(json.dumps(classes))
+    for fam in ("stic", "holt"):
+        add = a.get(fam)
+        if not isinstance(add, dict):
+            continue
+        dst = out.setdefault(fam, {})
+        for k, v in add.items():
+            if isinstance(v, dict) and isinstance(dst.get(k, {}), dict):
+                dst[k] = dict(dst.get(k) or {}, **v)
+            elif isinstance(v, list) and isinstance(dst.get(k, []), list):
+                have = list(dst.get(k) or [])
+                dst[k] = have + [x for x in v if x not in have]
+    return out
+
+
+def arch_block_names(classes):
+    """The guests the "arm64" block registers (its holt families' and stic lists)."""
+    a = (classes or {}).get("arm64") or {}
+    out = set(((a.get("stic") or {}).get("guests") or ()))
+    for gs in ((a.get("holt") or {}).get("families") or {}).values():
+        out |= set(gs)
+    return out
+
+
 def load_drive(checkout):
     """testvm/stictest1/drive.py of the checkout, as a module (P4 keeps all_guests,
     load_specs, simulate and readme_estimates)."""
@@ -123,7 +160,18 @@ class Ctx:
     def classes(self):
         if self._classes is None:
             self._classes = load_json(os.path.join(self.checkout, "testvm", "test2", "classes.json"))
+        if not getattr(self, "_classes_arch", False):
+            # (once: the arm64 block merged for a run with an arm64 host, docs/design/arm64.md A6)
+            self._classes, self._classes_arch = arch_classes(self._classes, self.hosts), True
         return self._classes
+
+    def arch_ok(self, name):
+        """Whether a cell or guest NAME is in a word's universe here: an amd64 one always (a
+        run of arm64 hosts alone keeps it off them, as before: plan.fit_arch), one of another
+        architecture (hosts.guest_arch: an -arm64 guest's) only when a host of the run has it
+        (docs/design/arm64.md A6), so an amd64 run's cells are what they were."""
+        a = hosts_table.guest_arch(str(name).split(":", 1)[-1])
+        return a == hosts_table.DEFAULT_ARCH or a in run_arches(self.hosts)
 
     @property
     def src(self):
@@ -560,11 +608,11 @@ class Planner:
     def universe(self):
         u = self.ctx.options.get("universe")
         if self.fam == "stic":
-            cells = [f"stic:{g}" for g in self.ctx.drive.all_guests()]
+            cells = [f"stic:{g}" for g in self.ctx.drive.all_guests() if self.ctx.arch_ok(g)]
         elif self.fam == "holt":
             h = self.cls["holt"]
             src = [g for f in h["families"].values() for g in f] + list(h.get("no_family", []))
-            cells = [f"holt:{g}" for g in sorted(set(src))]
+            cells = [f"holt:{g}" for g in sorted(set(src)) if self.ctx.arch_ok(g)]
             for v, gs in h["variants"].items():
                 cells += [f"holt:{g}+{v}" for g in gs]
             if self.img_asked(u):
@@ -630,7 +678,7 @@ class Planner:
         excl = sf.data.get("excluded") or {}
         names = [n for n in sf.names() if n not in excl]
         have = {g for f in self.ctx.facts.values() for g in (f.get("guests") or {})}
-        missing = sorted(have - set(names) - set(excl))
+        missing = sorted(g for g in have - set(names) - set(excl) if self.ctx.arch_ok(g))
         if missing:
             self.notes.append("not in any spec: " + ", ".join(missing))
         if self.w.update and self.w.form == "bare":
@@ -638,7 +686,7 @@ class Planner:
             if left:
                 self.notes.append("not in a bare update round: " + ", ".join(left))
             names = [n for n in names if n not in left]
-        return [f"guest:{n}" for n in names]
+        return [f"guest:{n}" for n in names if self.ctx.arch_ok(n)]
 
     # --- per cell ---
 
@@ -763,7 +811,7 @@ class Planner:
             if v.variant == "img":
                 if not v.why_not:
                     self.place_img_panel(v)
-            elif self.holt_uefi(v.name) and v.hosts:
+            elif self.holt_uefi(v.name) and v.hosts and hosts_table.guest_arch(v.name) == "amd64":
                 with_u = [h for h in v.hosts if self.has_uefi_rescuer(h)]
                 if with_u:
                     if len(with_u) < len(v.hosts):
@@ -858,6 +906,9 @@ class Planner:
         except KeyError:
             kind = None
         out = []
+        if hosts_table.guest_arch(v.name) == "arm64":
+            # (an arm64 source: make-rescuer.sh --arch arm64's rescuer, and no debs: docs/design/arm64.md A6)
+            return [("holt_rescuer_arm64", "no /bkoscratch/holttest1d/rescuer/rescuer-arm64.qcow2")] if kind == "linux" else []
         if kind == "offline" or (kind == "linux" and not (self.holt_uefi(v.name) and self.has_uefi_rescuer(h))):
             out.append(("holt_rescuer", "no /bkoscratch/holttest1d/rescuer/rescuer.qcow2"))
         if kind == "linux":
@@ -2155,6 +2206,10 @@ class Planner:
         if self.fam == "holt":
             h = self.cls["holt"]
             for x in w.letters:
+                if x == "ARM" and "arm64" not in run_arches(self.ctx.hosts):
+                    note = "HoltTest2ARM: the arm64 guests' cells are only in a run whose --hosts has an arm64 host (--hosts bigfoot)"
+                    if note not in self.notes:
+                        self.notes.append(note)
                 for g in h["families"].get(x, ()):
                     c = f"holt:{g}"
                     if c in cs:
@@ -2377,7 +2432,7 @@ def known_names(ctx):
         else:
             gl.append(n)
     try:
-        stic = ctx.drive.all_guests()
+        stic = [g for g in ctx.drive.all_guests() if ctx.arch_ok(g)]
     except Exception:   # noqa: BLE001 - a missing drive.py only loses stic names
         stic = []
     variants = dict(h["variants"], img=[g for p in (h.get("img_panel") or {}).values() for g in p.get("guests", ())])
@@ -2387,7 +2442,7 @@ def known_names(ctx):
             "holt": {"sources": sorted({g for f in h["families"].values() for g in f} | set(h.get("no_family", []))),
                      "variants": variants, "families": h["families"], "refused": h.get("excluded", {})},
             "gate": gl,
-            "guest": [n for n in gs.names() if n not in excl] if gs is not None else [],
+            "guest": [n for n in gs.names() if n not in excl and ctx.arch_ok(n)] if gs is not None else [],
             "guest_refused": excl,
             "img": list(words.PLATS)}
 
@@ -2422,8 +2477,8 @@ def check_classes(ctx, holt_names=None, notes=None):
     src = set(fam) | set(h.get("no_family", []))
     if len(fam) != len(set(fam)):
         errs.append("holt: a guest in two families")
-    if len(src) != 77:
-        errs.append(f"holt: {len(src)} sources, not 77")
+    if len(src - arch_block_names(c)) != 77:
+        errs.append(f"holt: {len(src - arch_block_names(c))} sources, not 77 (and the arm64 block's)")
     known = set(holt_names or ())
     if not known:
         for f in ctx.facts.values():
@@ -2491,7 +2546,7 @@ def check_classes(ctx, holt_names=None, notes=None):
                 e = sf.entry(g)
             except KeyError:
                 continue
-            if e.get("firmware") == "uefi" and e.get("kind") in ("linux", "offline"):
+            if e.get("firmware") == "uefi" and e.get("kind") in ("linux", "offline") and ctx.arch_ok(g):
                 spec_uefi.add(g)
         if spec_uefi and spec_uefi != set(h.get("uefi", ())):
             errs.append(f"holt.uefi differs from holt/spec.json's UEFI Linux sources: "

@@ -259,3 +259,18 @@ holt	holt:garuda	4.00	240	0.00	-	contract: about one Linux source, 11-14
 holt	holt:biglinux	4.00	240	0.00	-	contract: about one Linux source, 11-14
 holt	holt:proxmox9	5.82	349	0.00	-	chopin pve6-10 PASS 2026-11-14, 08:39:14 to 08:45:03 (ht1.sh, in RAM; cinqcent pve6-12 314 s)
 holt	holt:proxmox9-mirror	7.13	428	0.00	-	chopin pve6-11 PASS 2026-11-14, 08:37:43 to 08:44:51 (ht1.sh, in RAM, both disks booted alone too; cinqcent pve6-13 368 s)
+stic	stic:alpine324-arm64	2.57	154	0.00	-	as stic:alpine324 (its in-guest part), until measured on bigfoot (docs/design/arm64.md A6)
+stic	stic:debian13-arm64	6.23	374	0.00	-	as stic:ubuntu26-uefi (its in-guest part), until measured on bigfoot (A6)
+stic	stic:debian13-zfs-arm64	14.28	857	12.00	-	as stic:debian13-zfs, until measured on bigfoot (A6); gb 12: its overlay is on /bkoscratch there (over the 10 GiB RAM disk)
+stic	stic:fedora44-arm64	4.47	268	0.00	-	as stic:fedora44-uefi (its in-guest part), until measured on bigfoot (A6)
+stic	stic:ubuntu26-arm64	6.23	374	0.00	-	as stic:ubuntu26-uefi (its in-guest part), until measured on bigfoot (A6)
+holt	holt:alpine324-arm64	1.90	114	0.00	0.66	as holt:alpine324, until measured on bigfoot (A6)
+holt	holt:debian13-arm64	3.00	180	0.00	2.20	as holt:debian13 (ext4 in place of btrfs), until measured on bigfoot (A6)
+holt	holt:debian13-zfs-arm64	2.80	168	0.00	2.36	as holt:debian13-zfs, until measured on bigfoot (A6)
+holt	holt:fedora44-arm64	5.18	311	0.00	5.38	as holt:fedora44-uefi, until measured on bigfoot (A6)
+holt	holt:ubuntu26-arm64	5.63	338	10.81	10.81	as holt:ubuntu26-uefi, until measured on bigfoot (A6); gb 10.81: D 10 is over bigfoot's 9.0 ceiling, so it runs on /bkoscratch
+guest	guest:alpine324-arm64	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:debian13-arm64	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:debian13-zfs-arm64	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:fedora44-arm64	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:ubuntu26-arm64	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks

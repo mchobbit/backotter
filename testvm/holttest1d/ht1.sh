@@ -137,7 +137,17 @@ T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, vm-mount, compare/)
 # set, else the promoted holt-bin's linux/bko-holt, vouched for by its
 # SHA256SUMS (ht_holt_pick); +img takes the pin's (below).
 BIN=/bkoscratch/holttest1d/bin
-HOLT=""; [[ ${HT_VARIANT:-} == img ]] || ht_holt_pick linux
+# GARCH: the guest's architecture (hosts.py's guest_arch: *-arm64 is arm64,
+# every other amd64), and PLAT its binaries' platform: linux-arm64's for an
+# arm64 guest (bko-holt and rustic-bko in PLAT/ of their sets, the +img pin in
+# img-pin/linux-arm64; docs/design/arm64.md A2, A6).  A guest runs only on a
+# host of its own architecture: an arm64 one on an aarch64 host (Bigfoot).
+GARCH=amd64 PLAT=linux
+[[ $G != *-arm64 ]] || GARCH=arm64 PLAT=linux-arm64
+if [[ $GARCH == arm64 && $(uname -m) != aarch64 || $GARCH == amd64 && $(uname -m) == aarch64 ]]; then
+    echo "ht1: $G is an $GARCH guest, and $(hostname -s) is $(uname -m): run it on a host of its architecture" >&2; exit 2
+fi
+HOLT=""; [[ ${HT_VARIANT:-} == img ]] || ht_holt_pick "$PLAT"
 # HT_VARIANT (README's HoltTest1D plan): "bigger" rebuilds onto disks 1 GiB
 # bigger than the source's (GPT's backup header must move to the new end);
 # "oneshot" runs the whole rebuild as one `--through close` command, as an
@@ -194,13 +204,13 @@ BS2_FLAGS=() BS2_VFW=() BS2_FSJUDGE=() BS2_FSMETA=()
 # rustic-bko, so the dumps and the load are one build.  Its sshd is started
 # over the serial console with a key made for this run (img-boot.py): R's
 # img-key, never in an image, deleted at the rebuild's end and in ht_release.
-IMG_PIN=${T2_HOST_ROOT:-/bkoscratch/test2}/img-pin/linux
+IMG_PIN=${T2_HOST_ROOT:-/bkoscratch/test2}/img-pin/$PLAT
 if [[ $VARIANT == img ]]; then
-    [[ -f $IMG_PIN/rescuer.img && -f $IMG_PIN/rustic-bko && -f $IMG_PIN/bko-holt ]] || { echo "ht1: +img: no pinned image in $IMG_PIN (t2-host tool img pin linux)" >&2; exit 2; }
+    [[ -f $IMG_PIN/rescuer.img && -f $IMG_PIN/rustic-bko && -f $IMG_PIN/bko-holt ]] || { echo "ht1: +img: no pinned image in $IMG_PIN (t2-host tool img pin $PLAT)" >&2; exit 2; }
     [[ ! -e $IMG_PIN/bins-stale ]] || { echo "ht1: +img: $IMG_PIN/bins-stale: the pin's binaries aren't the image's" >&2; exit 2; }
     [[ ${HT_KEEP:-} != 1 && ${HT_CLEAN:-1} != 0 ]] || { echo "ht1: +img: no HT_KEEP or HT_CLEAN=0 (the run's key goes at its end)" >&2; exit 2; }
     export HT_RUSTIC=$IMG_PIN/rustic-bko HT_HOLT=$IMG_PIN/bko-holt
-    HOLT=$HT_HOLT IMG_PLAT=linux
+    HOLT=$HT_HOLT IMG_PLAT=$PLAT
 fi
 # The pin as this run took it: the image's and the binaries' size, mtime and
 # inode, and rescuer.img.sha256's hash (what the row is keyed to).  A re-pin
@@ -222,6 +232,10 @@ RESCUER=${HT_RESCUER:-debian13}
 # a rebuild without bin/'s f2fs-tools and jfsutils debs (the share's, for a
 # rescuer that lacks them).  +img takes neither.
 RESCUER_IMG=${HT_RESCUER_IMG:-/bkoscratch/holttest1d/rescuer/rescuer.qcow2}
+# An arm64 guest's rescuer: make-rescuer.sh --arch arm64's copy of
+# ubuntu26-arm64 (UEFI, as every arm64 guest is; Ubuntu's OpenZFS 2.4 and
+# every mkfs installed in it), with no debs: bin/'s are amd64's.
+[[ $GARCH != arm64 ]] || RESCUER=${HT_RESCUER:-ubuntu26-arm64} RESCUER_IMG=${HT_RESCUER_IMG:-/bkoscratch/holttest1d/rescuer/rescuer-arm64.qcow2}
 if [[ $VARIANT == img ]]; then RESCUER=img-pin RESCUER_IMG=$IMG_PIN/rescuer.img
 else
     if [[ " ${PHASES[*]} " == *" rebuild "* && ! -f $RESCUER_IMG ]]; then
@@ -229,7 +243,7 @@ else
              "that has it, or make it (make-rescuer.sh); HT_RESCUER_IMG=$W/vms/$RESCUER/$RESCUER.qcow2 takes the plain guest" >&2
         exit 2
     fi
-    if [[ " ${PHASES[*]} " == *" backup "* || " ${PHASES[*]} " == *" rebuild "* ]]; then
+    if [[ $GARCH == amd64 ]] && [[ " ${PHASES[*]} " == *" backup "* || " ${PHASES[*]} " == *" rebuild "* ]]; then
         for p in f2fs-tools jfsutils; do
             compgen -G "$BIN/${p}_*.deb" >/dev/null ||
                 { echo "ht1: no $BIN/${p}_*.deb on $(hostname -s): copy bin/ from a host that has it" >&2; exit 2; }
@@ -285,6 +299,9 @@ if [[ $VARIANT == img ]]; then
     ((uefi)) && rfw=(--uefi)
     [[ " ${fw[*]} " == *" --no-secure-boot "* ]] && rfw+=(--no-secure-boot)
     rkey=$R/img-key
+elif [[ $GARCH == arm64 ]]; then
+    rfw=(--uefi)   # (on an aarch64 host UEFI is always on: --uefi is Secure Boot, as ubuntu26-arm64's own)
+    rkey=$W/vms/$RESCUER/id_ed25519
 elif ((uefi)) && [[ -z ${HT_RESCUER_IMG:-} && -f /bkoscratch/holttest1d/rescuer/rescuer-uefi.qcow2 ]]; then
     RESCUER=ubuntu26-uefi RESCUER_IMG=/bkoscratch/holttest1d/rescuer/rescuer-uefi.qcow2 rfw=(--uefi)
     rkey=$W/vms/$RESCUER/id_ed25519
@@ -397,7 +414,7 @@ case ${PHASES[0]} in
     verify)  ht_seed decoy.qcow2 rescuer.qcow2 tmp/ ;;
 esac
 ht_begin; mkdir -p "$S"
-ht_rustic_take linux
+ht_rustic_take "$PLAT"
 # bko-holt as the run starts (bin/'s may be replaced while it runs): the
 # dumps and the load are one build's.
 cp --remove-destination "$HOLT" "$S/bko-holt"
@@ -1715,7 +1732,7 @@ phase_backup() {
     esp_record "$SRC_MP" src >> "$R/logs/esp-record.log" 2>&1 || bad "record the source's ESPs that nothing mounts (logs/esp-record.log)"
     truenas_record "$SRC_MP" src
     (trap '' TERM INT HUP; exec "$T/vm-umount" "$SRC_MP") >> "$R/logs/backup-mount.log" 2>&1; HT_MOUNTED=
-    cp "$RUSTIC" "$S/rustic-bko"; cp "$BIN"/*.deb "$S/"   # (bko-holt is there from the run's start)
+    cp "$RUSTIC" "$S/rustic-bko"; [[ $GARCH != amd64 ]] || cp "$BIN"/*.deb "$S/"   # (bko-holt is there from the run's start; bin/'s debs are amd64's)
     [[ ! -f $BIN/bcachefs ]] || cp "$BIN/bcachefs" "$S/"   # make-bcachefs-tools.sh's
     # As typed: without the file's newline (cryptsetup keeps it in a key).
     [[ -n $gpass ]] && printf '%s' "$(cat "$gpass")" > "$S/passphrase"
@@ -1822,7 +1839,7 @@ phase_rebuild() {
     say "== rebuild"
     # A rescuer HT_KEEP left up from the last try.
     [[ -z $(ht_qemus "$R") ]] || vm_down "$rkey"
-    cp "$RUSTIC" "$S/rustic-bko"; cp "$BIN"/*.deb "$S/"   # this run's, when rerun after a fix (bko-holt: copied as the run started)
+    cp "$RUSTIC" "$S/rustic-bko"; [[ $GARCH != amd64 ]] || cp "$BIN"/*.deb "$S/"   # this run's, when rerun after a fix (bko-holt: copied as the run started)
     [[ ! -f $BIN/bcachefs ]] || cp "$BIN/bcachefs" "$S/"
     # load's --key-file needs it here too, in a run with no backup phase to
     # have written it (the refusal variants) as typed, without the newline.

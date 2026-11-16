@@ -208,7 +208,7 @@ class TestLint(unittest.TestCase):
             for fn in (os.listdir(os.path.join(base, g)) if os.path.isdir(os.path.join(base, g)) else []):
                 with open(os.path.join(base, g, fn), errors="replace") as f:
                     n += "${BKO_TESTVM:-" in f.read()
-        self.assertEqual(n, 77)
+        self.assertEqual(n, 82)   # (77, and the five arm64 checks of docs/design/arm64.md A6)
 
     def test_planted_references(self):
         lines = ['. "$WORK/testvm/vm-lib.sh"', "C=$W/testvm/compare", 'source ~/backotter-work/testvm/compare/x.sh',
@@ -249,7 +249,7 @@ class TestDriveSelfTest(unittest.TestCase):
 # --- U4.4: rows_stic over fixture log dirs ---------------------------------------------------------
 
 def fake_facts(guests, set_name, sums=None, host="chopin"):
-    oses = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "omnios", "haiku")
+    oses = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "omnios", "haiku", "linux-arm64")   # (linux-arm64: A6's checks)
     sums = sums or {f"{o}/{n}": H64("a") for o in oses for n in ("restic-bko", "rustic-bko")}
     return {"host": host, "versions": {"kernel": "6.12.57+deb13-amd64", "zfs": "2.3.4-1", "qemu": "QEMU emulator version 10.0.2",
                                        "ovmf": "2025.02-8", "pkgs": {"e2fsprogs": "1.47.2-3", "util-linux": "2.41-5"}},

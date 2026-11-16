@@ -44,7 +44,19 @@ if [[ ${1:-} == --inner ]]; then
         T=420 vm_ssh "cd /root/st1 && ./roundtrip.sh /root/st1/${d%-*}-bko /root/st1/${d#*-}-bko 2>&1" >$L/rt-$d.log 2>&1
     done
     vm_sh "$clean" >/dev/null 2>&1
-    T=420 vm_ssh 'sh /root/st1/extra.sh /root/st1 2>&1' >$L/extra.log 2>&1
+    # extra.sh once the guest answers SSH again, and once more if it gave
+    # no result: on Cage, right after the last roundtrip's clean-up (2 GiB
+    # freed on ZFS over GELI), the guest once took more than vm_ssh's
+    # 5 s ConnectTimeout to answer, and extra.sh never ran (an empty
+    # extra.log, every one of its checks "no result").
+    ssh_ready() { local i; for i in 1 2 3 4 5 6 7 8 9 10 11 12; do T=30 vm_ssh true && return 0; sleep 5; done; return 1; }
+    for try in 1 2; do
+        ssh_ready
+        T=420 vm_ssh 'sh /root/st1/extra.sh /root/st1 2>&1' >$L/extra.log 2>&1
+        grep -aq '^R ' $L/extra.log && break
+        cp $L/extra.log $L/extra-try$try.log
+    done
+    ssh_ready
     vm_sh 'zfs create -o mountpoint=/bkonr -o atime=off zroot/bkonr && pw groupadd bkonr -g 4321 &&
            pw useradd bkonr -u 4321 -g 4321 -s /bin/sh -d /nonexistent && chmod 755 /bkonr &&
            cp /root/st1/restic-bko /root/st1/rustic-bko /bkonr/ && cp /root/st1/rt-common.sh /root/rt-common.sh &&

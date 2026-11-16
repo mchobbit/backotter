@@ -124,6 +124,10 @@ Chopin's `vm-store publish` runs `vm-store link` on each cache host for the
 guests it moved, and `vm-store status --farm` on Chopin shows any host left
 behind. vm-update doesn't reach them, and link never replaces a full
 folder, so those lag Chopin's after an update until they are made links.
+Cinqcent's `vms/` and cache share the CN600 (`/bkoscratch/fast`); with it 98%
+full on 2026-11-16, four unpublished full folders (truenas25, truenas25-mirror,
+solus49, biglinux) moved to `/bkoscratch/vms-sata` on sda2, each `vms/G` a
+symlink there, so the paths are unchanged.
 
 vm-update updates every guest it can reach over SSH. Sculpt OS
 (`sculpt2610`) has no sshd: its `no-ssh` makes vm-update refuse it, and

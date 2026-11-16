@@ -60,11 +60,16 @@ unsigned DKMS modules load.
 
 - **Saved QEMU states.** BackShot2's rescuer-state key includes QEMU, OVMF and
   the host kernel, so each host saves one fresh state on its first case.
-- **Host-made ZFS pools now get 2.4 features.** `make-debian-zfs.sh` and
-  `make-chimera-zfs.sh` run `zpool create` on the host with every feature its
-  OpenZFS has. On a 2.4.4 host, a rebuilt guest pool may carry features a
-  guest's older ZFS (trixie's 2.3.9) can't import read-write.
-  `make-void-zfs.sh` pins `-o compatibility=openzfs-2.3-linux` and is safe.
+- **Host-made ZFS pools are pinned** (d83fecb, 2026-11-16). Each pool a
+  builder makes with `zpool create` on the host gets a compatibility
+  setting, so a 2.4.4 host gives it no feature its guest lacks:
+  - `make-debian-zfs.sh`: `openzfs-2.3-linux`, the guest's trixie 2.3.9.
+  - `make-void-zfs.sh`: `openzfs-2.3-linux`, as the guide does.
+  - `make-chimera-zfs.sh`: `openzfs-2.4-linux`, the guest's and the rescue
+    image's 2.4. Its corpus plan and goldens change on its next rebuild.
+
+  Keep any new builder's pin at or below the Linux rescue image's OpenZFS
+  (2.4.1), or bko-holt load refuses the pool.
 - **ARC.** Chopin and Cinqcent keep `zfs_arc_max` 2 GiB
   (`/etc/modprobe.d/zfs-arc.conf`).
 - **Logs.** The upgrade log is `/root/bko-backports-upgrade.log` on Chopin and

@@ -88,10 +88,24 @@ vm_put "$BIN/restic-bko" /root/restic-bko && vm_put "$RUSTIC_BIN" /root/rustic-b
     vm_put "$here/probe.sh" /root/probe.sh || { echo "copy failed"; exit 1; }
 T=60 vm_ssh '/root/restic-bko version; /root/rustic-bko --version; sysctl kern.securelevel; uname -a' 2>&1
 reset='PATH=/sbin:/usr/sbin:/bin:/usr/bin; cd /; for m in $(mount | awk "\$3 ~ /^\\/root\\/bko/ {print \$3}" | sort -r); do umount -f $m; done; for v in 0 1 2 3; do vndconfig -u vnd$v 2>/dev/null; done; chflags -R 0 /root/bko-* /tmp/bko-* 2>/dev/null; find /root/bko-* /tmp/bko-* -type l -exec chflags -h 0 {} + 2>/dev/null; rm -rf /root/bko-* /tmp/bko-*; true'
+# What roundtrip.sh kept of a restored file whose bytes differed from the
+# source's (/root/bko-rt-fx, its fx_capture and fx_recheck), into
+# $LOGS/fx-DIRECTION before the next reset removes it; within 32 MiB (else
+# its text alone).  Not part of any verdict.
+fx_fetch() {  # DIRECTION
+    T=120 vm_ssh 'd=/root/bko-rt-fx; [ -d $d ] || exit 0; [ "$(du -sk $d | cut -f 1)" -le 32768 ] || rm -f $d/*.bin $d/*.file; cd /root && tar -cf - bko-rt-fx' >"$LOGS/fx-$1.tar" 2>/dev/null
+    if [[ -s $LOGS/fx-$1.tar ]] && mkdir -p "$LOGS/fx-$1" && tar -C "$LOGS/fx-$1" --strip-components=1 -xf "$LOGS/fx-$1.tar"; then
+        rm -f "$LOGS/fx-$1.tar"
+        echo "== $1: a restored file's bytes differed; what roundtrip.sh kept: $LOGS/fx-$1 ($(du -sk "$LOGS/fx-$1" | cut -f 1) KB)"
+    elif [[ ! -s $LOGS/fx-$1.tar ]]; then
+        rm -f "$LOGS/fx-$1.tar"
+    fi
+}
 for dir in restic-restic rustic-rustic restic-rustic rustic-restic; do
     b=${dir%-*} r=${dir#*-}
     echo "== roundtrip $dir ($(date))"
-    T=600 vm_ssh "$reset; cd /root && ./roundtrip.sh /root/$b-bko /root/$r-bko 2>&1" 2>&1 | tee "$LOGS/rt-$dir.log" | sed "s/^roundtrip: /RT $dir roundtrip: /"
+    T=600 vm_ssh "$reset; cd /root && RT_SECONDS=600 ./roundtrip.sh /root/$b-bko /root/$r-bko 2>&1" 2>&1 | tee "$LOGS/rt-$dir.log" | sed "s/^roundtrip: /RT $dir roundtrip: /"
+    fx_fetch $dir
 done
 T=60 vm_ssh "$reset" 2>&1
 echo "== probe ($(date))"

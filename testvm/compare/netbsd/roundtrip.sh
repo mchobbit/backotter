@@ -67,6 +67,190 @@ bko_restore() {
     else $RR restore -q --sparse "$1" --target "$2"; fi
 }
 
+# --- When restored bytes differ from the source's -----------------------------
+# Not a check (the verdict is the same with or without it): a record of a
+# failing content comparison to look at later, after rel9's alpinebsd
+# restic->rustic run restored "sparse" with other bytes once in 61 runs and
+# nothing of it was kept.  Where compare_all's mtree check fails, before
+# the restore over the tree changes it, fx_capture: for each regular file
+# whose bytes differ from the source's (cmp; up to FX_MAXFILES) its size,
+# blocks and du, both SHA-256s, the first differing bytes (cmp -l: offset
+# from 1, source and restored in octal), and each 64 KiB region that
+# differs (up to FX_MAXREG): its offset, how many bytes differ, both
+# regions' SHA-256 ("zero" for 64 KiB of zeros), the two regions themselves
+# for the first FX_MAXBIN; a whole file of 1 MiB or less as it is; the
+# snapshot's node of the file (content ids); the repository's config (its
+# id) and the snapshot (its id).  After the verdict, while the caller's ssh
+# timeout (RT_SECONDS) leaves time, fx_recheck: the file from that snapshot
+# by its id through restic's and rustic's dump (what the repository holds),
+# the snapshot restored again with $RR and with the other tool into fresh
+# directories, each against the source's and the bad restore's SHA-256,
+# and restic check --read-data: wrong bytes stored at backup, or a restore
+# that went wrong, and whether it does again.  All of it in $FX (kept
+# files within FX_CAP_KB), which check.sh fetches into its logs before the
+# next direction's reset removes it, and in the output as "fx: " lines.
+FX=/root/bko-rt-fx
+FX_MAXFILES=${FX_MAXFILES:-8} FX_MAXREG=${FX_MAXREG:-64} FX_MAXBIN=${FX_MAXBIN:-8} FX_CAP_KB=${FX_CAP_KB:-16384}
+fx_until=$(($(date +%s) + ${RT_SECONDS:-420} - 60))
+rm -rf $FX
+fx_left() { [ $((fx_until - $(date +%s))) -ge "$1" ]; }  # SECONDS
+fx_say() { echo "fx: $*"; printf '%s\n' "$*" >>$FX/report.txt; }
+fx_sha() {  # SHA-256 of stdin
+    if command -v sha256 >/dev/null 2>&1; then sha256 | awk '{ print $1 }'
+    elif command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{ print $1 }'
+    elif command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{ print $1 }'
+    else cksum -a sha256 | awk '{ print $NF }'; fi
+}
+fx_rustic() {  # the rustic among $R $RR, else rustic-bko next to $R
+    for fx_x in $R $RR; do is_rustic $fx_x && { echo $fx_x; return; }; done
+    echo "$(dirname $R)/rustic-bko"
+}
+fx_stat() {  # FILE
+    echo "$(stat -f 'size %z, %b blocks (%k-byte I/O), flags %Sf, mtime %Fm' "$1"), du $(du -k "$1" | awk '{ print $1 }') KB"
+}
+fx_which() {  # SHA SOURCE-SHA BAD-SHA
+    if [ "$1" = "$2" ]; then echo "the source's bytes"
+    elif [ "$1" = "$3" ]; then echo "the bad restore's bytes"
+    else echo "neither the source's nor the bad restore's bytes ($1)"; fi
+}
+fx_init() {
+    [ -d $FX ] && return 0
+    mkdir -p $FX || return 1
+    fx_bud=$FX_CAP_KB
+    fx_rs=$(rt_restic $R $RR) fx_ru=$(fx_rustic)
+    fx_zero=$(dd if=/dev/zero bs=65536 count=1 2>/dev/null | fx_sha)
+    fx_say "roundtrip.sh $(basename $R) -> $(basename $RR), $(date), $(uname -srm)"
+    $fx_rs -r $RESTIC_REPOSITORY --no-cache --no-lock cat config </dev/null >$FX/repo-config.json 2>&1
+    $fx_rs -r $RESTIC_REPOSITORY --no-cache --no-lock snapshots --json </dev/null >$FX/snapshots.json 2>&1
+    fx_repo=$(tr ',{' '\n\n' <$FX/repo-config.json | sed -n 's/^"id":"\([0-9a-f]*\)".*/\1/p' | head -n 1)
+    fx_snap=$(tr ',{' '\n\n' <$FX/snapshots.json | sed -n 's/^"id":"\([0-9a-f]*\)".*/\1/p' | head -n 1)
+    fx_say "repository $RESTIC_REPOSITORY, id ${fx_repo:-unknown}; snapshot ${fx_snap:-unknown} (its only one: rt_snapshots's goes into -2); read with $fx_rs"
+}
+fx_file() {  # RELPATH: one regular file whose bytes differ, $SRC's and $DST's
+    fx_s=$SRC/${1#./} fx_d=$DST/${1#./}
+    fx_name=$fx_tag.$(printf '%s' "${1#./}" | tr -c 'A-Za-z0-9._-' '_')
+    fx_say "-- $1 (files $fx_name.*)"
+    fx_say "source:   $(fx_stat "$fx_s")"
+    fx_say "restored: $(fx_stat "$fx_d")"
+    fx_ss=$(fx_sha <"$fx_s") fx_ds=$(fx_sha <"$fx_d")
+    fx_say "SHA-256: source $fx_ss, restored $fx_ds"
+    printf '%s\t%s\t%s\t%s\n' "$fx_tag" "$1" "$fx_ss" "$fx_ds" >>$FX/paths
+    fx_say "first difference: $(cmp "$fx_s" "$fx_d" 2>&1 | head -n 2 | tr '\n' ' ')"
+    # The first 64 differing bytes as they are, then the 64 KiB regions
+    # they are in and how many differ in each ("+": more than counted);
+    # cmp -l stops when awk has read enough.
+    cmp -l "$fx_s" "$fx_d" 2>/dev/null | $rt_awk -v maxr=$FX_MAXREG -v maxl=4000000 -v hf=$FX/$fx_name.cmp-l '
+        NR <= 64 { print >hf }
+        { r = int(($1 - 1) / 65536)
+          if (!seen || r != cur) {
+              if (seen) print cur, n
+              if (++nreg > maxr) { stop = "regions"; seen = 0; exit }
+              cur = r; n = 0; seen = 1 }
+          n++
+          if (NR >= maxl) { stop = "bytes"; exit } }
+        END { if (seen) print cur, n (stop == "bytes" ? "+" : "")
+              if (stop != "") print "stop", stop }' >$FX/$fx_name.regions
+    fx_say "first differing bytes (offset from 1, source, restored; octal): $(head -n 8 $FX/$fx_name.cmp-l 2>/dev/null | awk '{ printf "%s%s %s %s", s, $1, $2, $3; s = "; " }')"
+    fx_i=0
+    while read -r fx_r fx_c; do
+        if [ "$fx_r" = stop ]; then
+            case $fx_c in
+                regions) fx_say "(more than $FX_MAXREG regions differ: the rest not listed)" ;;
+                *) fx_say "(more than 4000000 bytes differ: the rest not listed)" ;;
+            esac
+            continue
+        fi
+        fx_o=$((fx_r * 65536))
+        fx_h1=$(dd if="$fx_s" bs=65536 skip=$fx_r count=1 2>/dev/null | fx_sha)
+        fx_h2=$(dd if="$fx_d" bs=65536 skip=$fx_r count=1 2>/dev/null | fx_sha)
+        [ "$fx_h1" = "$fx_zero" ] && fx_h1=zero
+        [ "$fx_h2" = "$fx_zero" ] && fx_h2=zero
+        fx_kept=""
+        if [ $fx_i -lt $FX_MAXBIN ] && [ $fx_bud -ge 128 ]; then
+            dd if="$fx_s" of=$FX/$fx_name.r$fx_o.source.bin bs=65536 skip=$fx_r count=1 2>/dev/null
+            dd if="$fx_d" of=$FX/$fx_name.r$fx_o.restored.bin bs=65536 skip=$fx_r count=1 2>/dev/null
+            fx_bud=$((fx_bud - 128)) fx_i=$((fx_i + 1)) fx_kept=", kept: $fx_name.r$fx_o.{source,restored}.bin"
+        fi
+        fx_say "region at $fx_o (64 KiB #$fx_r): $fx_c bytes differ; source $fx_h1, restored $fx_h2$fx_kept"
+    done <$FX/$fx_name.regions
+    fx_z1=$(stat -f %z "$fx_s") fx_z2=$(stat -f %z "$fx_d")
+    if [ "$fx_z1" -le 1048576 ] && [ "$fx_z2" -le 1048576 ] && [ $fx_bud -ge $(((fx_z1 + fx_z2) / 1024 + 2)) ]; then
+        cp "$fx_s" $FX/$fx_name.source.file && cp "$fx_d" $FX/$fx_name.restored.file &&
+            fx_say "kept whole: $fx_name.source.file, $fx_name.restored.file"
+        fx_bud=$((fx_bud - (fx_z1 + fx_z2) / 1024 - 2))
+    fi
+    (RT_CONTENT=1; rt_path_nodes $fx_rs $RESTIC_REPOSITORY "$SRC/${1#./}" </dev/null 2>&1 | tail -n 1) >$FX/$fx_name.node
+    fx_say "its node in the snapshot, content ids too: $fx_name.node ($(wc -c <$FX/$fx_name.node | tr -d ' ') bytes)"
+}
+fx_capture() {  # X (compare_all's): after mtree's check failed
+    fx_tag=fresh; [ -n "$1" ] && fx_tag=over
+    fx_init || return 0
+    fx_say "== mtree's check failed$1: the regular files whose bytes differ from the source's"
+    (cd $SRC && find . -type f | sort) >$FX/$fx_tag.files
+    fx_n=0
+    while IFS= read -r fx_p; do
+        [ -f "$DST/$fx_p" ] || continue
+        cmp -s "$SRC/$fx_p" "$DST/$fx_p" && continue
+        fx_n=$((fx_n + 1))
+        if [ $fx_n -le "$FX_MAXFILES" ]; then fx_file "$fx_p" </dev/null
+        else fx_say "-- $fx_p: differs too (more than $FX_MAXFILES files: not looked at)"; fi
+    done <$FX/$fx_tag.files
+    [ $fx_n -gt 0 ] || fx_say "none: no regular file's bytes differ (mtree's failure is about something else)"
+}
+fx_restore() {  # TOOL SNAPSHOT:PATH TARGET: bko_restore's, by TOOL
+    if is_rustic $1; then $1 --no-progress --no-cache -r $RESTIC_REPOSITORY restore --numeric-id --sparse by-content "$2" "$3"
+    else $1 -r $RESTIC_REPOSITORY restore -q --sparse "$2" --target "$3"; fi
+}
+fx_recheck() {  # after the verdict: the bad files' paths in $FX/paths
+    [ -s $FX/paths ] || return 0
+    [ -n "$fx_snap" ] || { fx_say "== no snapshot id: nothing restored again"; return 0; }
+    fx_say "== the bad files again, from snapshot $fx_snap (${RT_SECONDS:-420} s in all for roundtrip.sh)"
+    fx_cut=$(cut -f 2 $FX/paths | sort -u)
+    for fx_w in restic:$fx_rs rustic:$fx_ru; do
+        fx_b=${fx_w#*:}
+        printf '%s\n' "$fx_cut" | while IFS= read -r fx_p; do
+            fx_left 30 || { fx_say "$fx_p through ${fx_w%%:*}'s dump: skipped, too little time left"; continue; }
+            [ -x "$fx_b" ] || { fx_say "$fx_p through ${fx_w%%:*}'s dump: no $fx_b"; continue; }
+            if is_rustic $fx_b; then
+                fx_h=$($fx_b --no-progress --no-cache -r $RESTIC_REPOSITORY dump "$fx_snap:$SRC/${fx_p#./}" </dev/null 2>$FX/dump.err | fx_sha)
+            else
+                fx_h=$($fx_b -r $RESTIC_REPOSITORY --no-cache --no-lock dump $fx_snap "$SRC/${fx_p#./}" </dev/null 2>$FX/dump.err | fx_sha)
+            fi
+            awk -F '\t' -v p="$fx_p" '$2 == p { print $1, $3, $4 }' $FX/paths | while read -r fx_tg fx_ss fx_ds; do
+                fx_say "$fx_p through ${fx_w%%:*}'s dump (what the repository holds), against the $fx_tg restore: $(fx_which $fx_h $fx_ss $fx_ds)"
+            done
+            [ -s $FX/dump.err ] && fx_say "  it said: $(grep -v '^\[INFO\]' $FX/dump.err | head -n 3 | tr '\n' ' ')"
+        done
+    done
+    if is_rustic $RR; then fx_other=$(rt_restic $RR); else fx_other=$fx_ru; fi
+    for fx_w in "same:$RR" "other:$fx_other"; do
+        fx_l=${fx_w%%:*} fx_b=${fx_w#*:} fx_t=/root/bko-rt-fx-$fx_l
+        fx_left 90 || { fx_say "restore again with $(basename $fx_b) ($fx_l tool): skipped, too little time left"; continue; }
+        [ -x "$fx_b" ] || { fx_say "restore again ($fx_l tool): no $fx_b"; continue; }
+        mkdir -p $fx_t
+        fx_restore $fx_b "$fx_snap:$SRC" $fx_t </dev/null >$FX/restore-$fx_l.msgs 2>&1; fx_st=$?
+        if [ "$(wc -c <$FX/restore-$fx_l.msgs)" -gt 65536 ]; then
+            head -c 65536 $FX/restore-$fx_l.msgs >$FX/restore-$fx_l.msgs.h && mv $FX/restore-$fx_l.msgs.h $FX/restore-$fx_l.msgs
+        fi
+        fx_say "restored again with $(basename $fx_b) (the $fx_l tool) into a fresh $fx_t: exit $fx_st (its messages: restore-$fx_l.msgs)"
+        while IFS='	' read -r fx_tg fx_p fx_ss fx_ds; do
+            if [ -f "$fx_t/$fx_p" ]; then
+                fx_say "  $fx_p, against the $fx_tg restore: $(fx_which "$(fx_sha <"$fx_t/$fx_p")" $fx_ss $fx_ds); $(fx_stat "$fx_t/$fx_p")"
+            else
+                fx_say "  $fx_p: not restored"
+            fi
+        done <$FX/paths
+        chflags -R 0 $fx_t 2>/dev/null; find $fx_t -type l -exec chflags -h 0 {} + 2>/dev/null; rm -rf $fx_t
+    done
+    if fx_left 45 && [ -x "$fx_rs" ]; then
+        $fx_rs -r $RESTIC_REPOSITORY --no-cache check --read-data </dev/null >$FX/check.txt 2>&1
+        fx_say "restic check --read-data: exit $? ($(grep -v '^ *$' $FX/check.txt | tail -n 1); all of it in check.txt)"
+    else
+        fx_say "restic check --read-data: skipped, too little time left or no restic"
+    fi
+    fx_say "kept in $FX: $(du -sk $FX | awk '{ print $1 }') KB"
+}
+
 # A file system on a vnd(4) image, mounted at DIR: FFSv2ea (UFS2 extended
 # attributes) with the ACL kind given, or another format of newfs -O.
 # vnd0-3 are the four GENERIC has.
@@ -306,7 +490,7 @@ compare_all() {  # X
     listings $DST $after
     t="mtree: type, owner, group, links, size, mtime, symlink target, SHA-256$x"
     echo "== $t"
-    (cd $DST && $cmp_mtree mtree -f /tmp/bko-rt.before.mtree -p .) && echo identical || failed="$failed; $t"
+    (cd $DST && $cmp_mtree mtree -f /tmp/bko-rt.before.mtree -p .) && echo identical || { failed="$failed; $t"; fx_capture "$x"; }
     check "modes (not symlinks)$x" modes
     t="socket: not restored, no message about it$x"
     echo "== $t"
@@ -485,3 +669,6 @@ vnd=3
 vnd_mount /root/bko-ffs2-plain 2
 noea /root/bko-ffs2-plain/posix1e "plain FFSv2"
 echo "roundtrip: $([ -z "$failed" ] && echo PASS || echo "FAIL: ${failed#; }")"
+# After the verdict, which it doesn't change: a bad file's bytes again
+# (fx_recheck, above).
+fx_recheck

@@ -101,7 +101,7 @@ class Main(Base):
         self.assertEqual((rc, out, errs), (0, "the run's own output\n", ""))
         (c,) = self.calls()
         self.assertEqual(c[:3], ["-T", "BackOtter", "-m"])
-        self.assertRegex(c[3], r"\ACommand-line test is complete\. Send logs to Claude\.\n"
+        self.assertRegex(c[3], r"\ACommand-line test is complete\. Send logs to Claude\. "
                                rf"SticTest2 run {RUN}: PASS: 3 PASS \(\d+s\)\Z")
         self.assertNotIn("T2_NOTIFIED_BY", os.environ)   # (the outermost t2 took its marker back)
 
@@ -195,11 +195,16 @@ class Main(Base):
 class Message(unittest.TestCase):
     def test_format(self):
         m = notify.message(RUN, "HoltTest2D", 1, detail="1 FAIL", secs=3725)
-        self.assertEqual(m, "Command-line test is complete. Send logs to Claude.\n"
+        self.assertEqual(m, "Command-line test is complete. Send logs to Claude. "
                             f"HoltTest2D run {RUN}: FAIL: 1 FAIL (1h 02m)")
         self.assertTrue(notify.message(RUN, "x", 0, secs=59).endswith(": PASS (59s)"))
         self.assertTrue(notify.message(RUN, "x", 0, secs=61).endswith(": PASS (1m 01s)"))
         self.assertTrue(notify.message(RUN, "x", 9).endswith(": exit 9 (0s)"))
+
+    def test_json_safe(self):   # pushover.sh embeds -m in JSON unescaped
+        m = notify.message(RUN, "x", None, exc=RuntimeError('a "b"\\c\nd\te'))
+        self.assertNotRegex(m, r'["\\\x00-\x1f]')
+        self.assertIn("a 'b'/c d e", m)
         self.assertLessEqual(len(notify.message(RUN, "x", 1, detail="y" * 2000)), notify.LIMIT)
         self.assertLessEqual(len(notify.message(RUN, "x", 3, exc=RuntimeError("z" * 2000))), notify.LIMIT)
 
@@ -236,7 +241,7 @@ class Batch(Base):
         r = self.t2(path, "--dirty-ok")
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         (c,) = self.calls()
-        self.assertRegex(c[3], r"\nt2 batch n\.batch run bt-\S+: FAIL: 1 FAIL, 2 PASS \(\d+s\)\Z")
+        self.assertRegex(c[3], r"Claude\. t2 batch n\.batch run bt-\S+: FAIL: 1 FAIL, 2 PASS \(\d+s\)\Z")
         with open(mark) as f:
             self.assertRegex(f.read().strip(), r"^\d+$")   # (the children see the outermost t2's marker)
 

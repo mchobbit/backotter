@@ -13,6 +13,7 @@ T2_NOTIFY=1 and T2_PUSHOVER names the client (a test's fake: a test never reache
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -76,7 +77,9 @@ def fmt_dur(s):
 
 
 def message(run, word, code, exc=None, detail=None, secs=0):
-    """MESSAGE, then one line: WORD run RUN: OUTCOME[: DETAIL] (DURATION).  At most LIMIT characters."""
+    """One line, MESSAGE then WORD run RUN: OUTCOME[: DETAIL] (DURATION), at most LIMIT characters.
+    pushover.sh pastes -m into its JSON unescaped, so a newline, '"' or '\\' would make the API refuse it
+    (HTTP 400, exit 3): control characters become spaces, '"' becomes "'" and '\\' becomes '/'."""
     if exc is not None:
         what = f"ERROR ({type(exc).__name__}" + (f": {exc}" if str(exc) else "") + ")"
         what = what if len(what) <= 200 else what[:196] + "...)"
@@ -84,7 +87,8 @@ def message(run, word, code, exc=None, detail=None, secs=0):
         what = OUTCOME.get(code, f"exit {code}")
     if detail:
         what += f": {detail}"
-    text = f"{MESSAGE}\n{word} run {run}: {what} ({fmt_dur(secs)})"
+    text = f"{MESSAGE} {word} run {run}: {what} ({fmt_dur(secs)})"
+    text = re.sub(r"[\x00-\x1f\x7f]", " ", text).replace('"', "'").replace("\\", "/")
     return text if len(text) <= LIMIT else text[:LIMIT - 3] + "..."
 
 

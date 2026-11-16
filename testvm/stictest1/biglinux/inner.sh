@@ -42,6 +42,12 @@ atimeopt() { findmnt -n -o OPTIONS "$1" | tr , '\n' | grep -E '^(relatime|noatim
 { echo "ROOTSV=$ROOTSV ESPN=$ESPN SUBS=$(echo $SUBS | tr ' ' ,) SWM=${SWM:--}"; uname -r; . /etc/os-release; echo "$PRETTY_NAME"
   pacman -Q btrfs-progs dosfstools e2fsprogs util-linux attr acl libcap timeshift systemd-swap 2>/dev/null | paste -sd' '; } >$L/env.txt
 python3 $B/btrfsx.py super "$rootdev" >$L/super-root
+# The guest's default subvolume, and whether one was ever set (DEFAULT_SUBVOL,
+# 0x2: set by any set-default, even back to 5, as this guest's is): mkset
+# does the same, so the scratch's superblock has the bit as the guest's has.
+btrfs subvolume get-default / >$L/default-root 2>&1
+GDEF=$(sed -n 's/^ID 5 .*/5/p; s/.* path //p' $L/default-root | sed 's|^<FS_TREE>/||' | head -1)
+GINC=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("incompat") or 0)' $L/super-root 2>/dev/null || echo 0)
 mopts / >$L/mopts-root; atimeopt / >$L/atime-root
 for s in $SUBS; do echo "${s%%:*} ${s#*:} $(mopts /${s%%:*})"; done >$L/mopts-subs-root
 # The guest's own Timeshift snapshots (its top-level volume, read-only):
@@ -100,6 +106,10 @@ mkset() {  # SET ROOT: the set's btrfs (@ and the guest's other subvolumes) with
     [[ $1 == src ]] && r=$P
     mk_btrfs $dev >>$L/mkfs.log 2>&1 && mkdir -p /mnt/top && mount -t btrfs $dev /mnt/top || return 1
     for s in $ROOTSV $(for s in $SUBS; do echo ${s#*:}; done); do btrfs -q subvolume create /mnt/top/$s >/dev/null || { umount /mnt/top; return 1; }; done
+    if (( GINC & 0x2 )); then
+        if [[ -n $GDEF && $GDEF != 5 && -d /mnt/top/$GDEF ]]; then btrfs subvolume set-default /mnt/top/$GDEF
+        else btrfs subvolume set-default 5 /mnt/top; fi >>$L/mkfs.log 2>&1 || { umount /mnt/top; return 1; }
+    fi
     umount /mnt/top
     mkdir -p $2 && mount -t btrfs -o "subvol=/$ROOTSV,$BOPTS" $dev $2 || return 1
     [[ $1 == nr ]] && return 0

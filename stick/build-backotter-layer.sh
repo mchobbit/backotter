@@ -402,7 +402,10 @@ log "  $holt_v"
 
 in_root dpkg-query -W -f '${binary:Package}\t${Version}\n' >"$OUT/$LAYER.manifest"
 rm -f "$root/usr/sbin/policy-rc.d"
-cleanup
+# With tries, as after the module build: the merged root, like the build
+# root's /dev, can be busy for a moment once the chroots are done, and a
+# merged root left mounted fails the rm of work/ at the end.
+unmount_from 0
 trap - EXIT
 [[ $had_cdrom_dir == yes ]] || rmdir "$upper/cdrom" 2>/dev/null || true
 # apt's caches, package lists and AppStream's catalog are just caches: drop

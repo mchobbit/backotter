@@ -29,7 +29,7 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
 
 - Linux: Debian 12 and 13 (Proxmox VE 9 on it, ZFS root; TrueNAS CE 25.10 on 12, its boot environments), Devuan 6, Ubuntu 24.04 and 26.04, Linux Mint 22,
   Pop!_OS 24.04, Vanilla OS 3, Zorin OS 18, KDE neon 24.04, AnduinOS 2, elementary OS 8, Arch Linux, CachyOS, Artix Linux, Omarchy,
-  EndeavourOS, Manjaro, Garuda Linux, BigLinux, Alpine Linux 3, AerynOS, Solus 4, Void Linux, Chimera Linux,
+  EndeavourOS, Manjaro, Garuda Linux, BigLinux, Alpine Linux 3, AerynOS, Solus 4, Void Linux (also on a ZFS root with ZFSBootMenu, its boot environments), Chimera Linux,
   Gentoo Linux, PikaOS 4, Kali Linux, Fedora 44, Bazzite 44, Rocky Linux 10, openSUSE
   Tumbleweed, openSUSE Leap 16, openSUSE MicroOS and Aeon (transactional-update, any snapshot: their own boot arm,
   docs/design/aeon.md), NixOS 26.05 and Guix System (no VERSION_ID; its store GRUB-less, docs/design/guix.md);
@@ -85,7 +85,14 @@ Boot, whose restored disk boots root B by default and A from GRUB's
 `leap16` in HoltTest1Obscure beside `tumbleweed`, Btrfs with snapper's
 snapshots and SELinux enforcing, under Secure Boot through SUSE's shim in
 `EFI/opensuse`: `load` keeps the restored ESP's shim and signed GRUB, runs
-dracut and `grub2-mkconfig` and makes the NVRAM entry).  Build it static
+dracut and `grub2-mkconfig` and makes the NVRAM entry; Void's are
+`void-musl` and, on a ZFS root booted by ZFSBootMenu with two boot
+environments, glibc's `void-zbm` and `void-zbm-enc`, the latter under
+native encryption with its key file in each initramfs, in HoltTest1V:
+`dump` backs up the inactive boot environment too, `load` recreates both
+(the clone as a full copy), takes the passphrase by `--key-file`, rebuilds
+the default one's initramfs, installs no loader and makes both NVRAM
+entries; docs/design/zfsbootmenu.md).  Build it static
 (`RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target
 x86_64-unknown-linux-gnu`) to run it on musl systems such as Alpine and Void
 too; on the other systems, build it there

@@ -2,11 +2,22 @@
 # Build a Debian (or Devuan, or Kali) test guest for BackOtter: an unattended
 # install from an official ISO into a qcow2 disk image, under QEMU with KVM.
 #
-# Usage: ./make-debian.sh [--devuan [--init sysvinit|openrc|runit] | --kali] VERSION ROOT_FS WORK_DIR
+# Usage: ./make-debian.sh [--arch amd64|arm64] [--devuan [--init sysvinit|openrc|runit] | --kali] VERSION ROOT_FS WORK_DIR
 #   e.g. ./make-debian.sh 12.0.0 ext4 vms/debian12
 #        ./make-debian.sh 13.0.0 btrfs vms/debian13
 #        ./make-debian.sh --devuan --init openrc 6.1.1 ext3 vms/devuan6
 #        ./make-debian.sh --kali 2026.3 ext4 vms/kali
+#        ./make-debian.sh --arch arm64 13.0.0 ext4 vms/debian13-arm64
+#
+# --arch arm64 (Debian only; docs/design/arm64.md A5) builds an ARM64 guest
+# on an aarch64 host (Bigfoot), from the arm64 DVD-1, installed through
+# vm-run (QEMU's virt machine, AAVMF without Secure Boot): NAME
+# debianN-arm64, host name debN-arm64.  Its disk is GPT: an EFI system
+# partition (512 MB), then /boot, swap and / as above; GRUB goes to
+# EFI/debian and to the fallback path EFI/BOOT/BOOTAA64.EFI too (vm-run
+# boots on a fresh variable store), and the consoles are on ttyAMA0 (virt's
+# PL011).  vm-run-options: "--uefi --no-secure-boot".  amd64 (the default)
+# is as described here.
 #
 # Debian: VERSION is a point release in https://cdimage.debian.org/cdimage/archive/,
 # installed from its DVD-1.  Devuan (Debian without systemd, the same
@@ -38,8 +49,9 @@
 # vm-run, and look inside it while it's off with vm-mount.
 #
 # Needs: qemu-system-x86_64 with KVM, qemu-img, xorriso, cpio, gpg, gpgv,
-# openssl, wget; OVMF (/usr/share/OVMF) for --kali.  Runs as an ordinary
-# user in the kvm group.
+# openssl, wget; OVMF (/usr/share/OVMF) for --kali; for --arch arm64
+# qemu-system-aarch64 and AAVMF (/usr/share/AAVMF) instead, through vm-run.
+# Runs as an ordinary user in the kvm group.
 
 set -euo pipefail
 
@@ -63,9 +75,10 @@ INSTALL_TIMEOUT=3600
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-debian: $*" >&2; exit 1; }
 
-distro=debian init=""
+distro=debian init="" arch=amd64
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --arch) arch=${2:-}; shift 2 || die "--arch takes amd64 or arm64" ;;
         --devuan|--kali)
             [[ $distro == debian ]] || die "--devuan and --kali exclude each other"
             distro=${1#--}; shift ;;
@@ -74,7 +87,14 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
-[[ $# -eq 3 ]] || die "usage: $0 [--devuan [--init sysvinit|openrc|runit] | --kali] VERSION ROOT_FS WORK_DIR"
+[[ $# -eq 3 ]] || die "usage: $0 [--arch amd64|arm64] [--devuan [--init sysvinit|openrc|runit] | --kali] VERSION ROOT_FS WORK_DIR"
+case $arch in
+    amd64) ;;
+    arm64)
+        [[ $distro == debian ]] || die "--arch arm64 is for Debian only (not --$distro)"
+        [[ $(uname -m) == aarch64 ]] || die "--arch arm64 builds on an aarch64 host (Bigfoot), not on $(uname -m)" ;;
+    *) die "--arch takes amd64 or arm64, not '$arch'" ;;
+esac
 version=$1 root_fs=$2
 [[ $version =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || die "VERSION looks like 13.0.0, 6.1.1 or 2026.3, not '$version'"
 case $root_fs in ext3|ext4|btrfs|xfs|jfs) ;; *) die "ROOT_FS must be ext3, ext4, btrfs, xfs or jfs" ;; esac
@@ -92,6 +112,12 @@ if [[ $distro == debian ]]; then
     key_fpr=$DEBIAN_CD_KEY keyserver=hkps://keyring.debian.org
     kernel=/install.amd/vmlinuz initrd=/install.amd/initrd.gz
     guest_name=deb$major DISK=debian$major.qcow2
+    if [[ $arch == arm64 ]]; then
+        ISO=debian-$version-arm64-DVD-1.iso
+        url=https://cdimage.debian.org/cdimage/archive/$version/arm64/iso-dvd
+        kernel=/install.a64/vmlinuz initrd=/install.a64/initrd.gz
+        guest_name=deb$major-arm64 DISK=debian$major-arm64.qcow2
+    fi
 elif [[ $distro == devuan ]]; then
     codename=${DEVUAN_CODENAMES[$major]:-}
     key_fpr=${DEVUAN_KEYS[$major]:-}
@@ -225,6 +251,53 @@ d-i preseed/late_command string \
 EOF
     template=$work/kali-preseed.cfg
 fi
+if [[ $arch == arm64 ]]; then
+    # The template less its MBR disk section (replaced below, with an ESP
+    # first) and with the arm64 kernel.
+    sed -e '/^# The disk: /,/^d-i partman-auto\/choose_recipe select backotter$/d' \
+        -e 's|^\(d-i base-installer/kernel/image string\) linux-image-amd64$|\1 linux-image-arm64|' \
+        "$template" >"$work/arm64-preseed.cfg"
+    if grep -qE 'expert_recipe|select backotter|linux-image-amd64' "$work/arm64-preseed.cfg" ||
+        ! grep -q '^d-i base-installer/kernel/image string linux-image-arm64$' "$work/arm64-preseed.cfg"; then
+        die "debian/preseed.cfg's disk or kernel lines changed; fix the arm64 arm's sed"
+    fi
+    cat >>"$work/arm64-preseed.cfg" <<'EOF'
+
+# --- arm64 (make-debian.sh --arch arm64) --------------------------------------
+# The disk: GPT, an EFI system partition (512 MB), /boot 1 GB ext4, swap
+# 2 GB, / (@ROOT_FS@) for the rest.
+d-i partman-auto/disk string /dev/vda
+d-i partman-auto/method string regular
+d-i partman-partitioning/default_label string gpt
+d-i partman-efi/non_efi_system boolean true
+d-i partman-auto/expert_recipe string \
+    backotter :: \
+        512 512 512 free \
+            $iflabel{ gpt } $reusemethod{ } \
+            method{ efi } format{ } \
+        . \
+        1024 1024 1024 ext4 \
+            method{ format } format{ } \
+            use_filesystem{ } filesystem{ ext4 } \
+            mountpoint{ /boot } \
+        . \
+        2048 2048 2048 linux-swap \
+            method{ swap } format{ } \
+        . \
+        4096 8192 -1 @ROOT_FS@ \
+            method{ format } format{ } \
+            use_filesystem{ } filesystem{ @ROOT_FS@ } \
+            mountpoint{ / } \
+        .
+d-i partman-auto/choose_recipe select backotter
+
+# vm-run boots every UEFI guest with a fresh AAVMF variable store, so no
+# NVRAM entry survives the install: GRUB goes to the removable path
+# EFI/BOOT/BOOTAA64.EFI too.
+d-i grub-installer/force-efi-extra-removable boolean true
+EOF
+    template=$work/arm64-preseed.cfg
+fi
 sed -e "s|@ROOT_PASSWORD_HASH@|$hash|" -e "s|@HOSTNAME@|$guest_name|g" -e "s|@ROOT_FS@|$root_fs|g" \
     "$template" >"$work/add/preseed.cfg"
 if [[ $distro == devuan ]]; then
@@ -272,6 +345,19 @@ if [[ $distro == kali ]]; then
 else
     firmware=(-machine pc)
 fi
+if [[ $arch == arm64 ]]; then
+    # Through vm-run, which has the aarch64 host's machine (virt, -cpu host,
+    # AAVMF without Secure Boot on a fresh variable store, the DVD as a SCSI
+    # CD), its pinning to one kind of core and its job_slice.  The consoles
+    # on virt's PL011.
+    console="console=ttyAMA0,115200n8"
+    port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    SSH_PORT=$port timeout "$INSTALL_TIMEOUT" "$here/vm-run" --uefi --no-secure-boot --memory "$MEMORY" \
+        --serial-log install-serial.log --cdrom "$ISO" "$DISK" -- \
+        -kernel "$work/vmlinuz" -initrd "$work/initrd.gz" \
+        -append "auto=true priority=critical DEBIAN_FRONTEND=text $console --- $console" -no-reboot ||
+        die "the install failed or timed out; see install-serial.log"
+else
 timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -enable-kvm -cpu host -smp 2 -m "$MEMORY" "${firmware[@]}" \
     -drive "file=$DISK,if=virtio,format=qcow2" \
@@ -281,6 +367,7 @@ timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -append "$installer_args --- console=tty0 console=ttyS0,115200n8" \
     -display none -serial file:install-serial.log -monitor none -no-reboot ||
     die "the install failed or timed out; see install-serial.log"
+fi
 # The installer only powers off at the very end (a failed step waits for an
 # answer instead, until the timeout), but check that a system was written.
 [[ $(qemu-img info --output=json "$DISK" | python3 -c 'import json, sys; print(json.load(sys.stdin)["actual-size"])') -gt 500000000 ]] ||
@@ -288,5 +375,5 @@ timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
 
 qemu-img snapshot -c fresh-install "$DISK"
 # How vm-run (and compare.py, ht1.sh, rebuild-one.sh) must boot it.
-if [[ $distro == kali ]]; then echo "--uefi --no-secure-boot" >vm-run-options; fi
+if [[ $distro == kali || $arch == arm64 ]]; then echo "--uefi --no-secure-boot" >vm-run-options; fi
 echo "Done: $3/$DISK ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""

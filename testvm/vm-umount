@@ -28,10 +28,14 @@ wait_detach() {
     pid=$(cat "/sys/block/${1#/dev/}/pid" 2>/dev/null || true)
     [[ -n $pid ]] && pid=$(awk '/^Tgid:/ { print $2 }' "/proc/$pid/status" 2>/dev/null || true)
     # The kernel keeps a btrfs device it scanned after the device is gone
-    # (vm-mount's mount_fs): forget this one's partitions first.
+    # (vm-mount's mount_fs): forget this one's partitions first.  A host
+    # without btrfs-progs (Bigfoot) has nothing to forget with, as vm-mount
+    # has nothing to scan with.
     local p
     for p in "$1"p*; do
-        [[ -b $p && $(blkid -s TYPE -o value "$p" 2>/dev/null) == btrfs ]] && btrfs device scan --forget "$p" >/dev/null 2>&1
+        if [[ -b $p && $(blkid -s TYPE -o value "$p" 2>/dev/null) == btrfs ]] && command -v btrfs >/dev/null; then
+            btrfs device scan --forget "$p" >/dev/null 2>&1
+        fi
     done
     qemu-nbd --disconnect "$1" >/dev/null
     [[ -n $pid ]] && while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done

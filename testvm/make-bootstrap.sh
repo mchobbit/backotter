@@ -5,8 +5,9 @@
 # install, run from an official Arch ISO's live system, into a qcow2 disk
 # image, under QEMU with KVM.
 #
-# Usage: ./make-bootstrap.sh DISTRO WORK_DIR
+# Usage: ./make-bootstrap.sh [--arch amd64|arm64] DISTRO WORK_DIR
 #   e.g. ./make-bootstrap.sh alpine vms/alpine324
+#        ./make-bootstrap.sh --arch arm64 alpine vms/alpine324-arm64
 #
 #   DISTRO        guest name      /          installed from
 #   alpine        alpine324       XFS        Alpine 3.24's minirootfs (musl, OpenRC)
@@ -86,7 +87,23 @@
 # bootstrap/common.sh partitions the disk; bootstrap/DISTRO.sh installs.
 # Run it with vm-run, and look inside it while it's off with vm-mount.
 #
-# Needs: qemu-system-x86_64 with KVM, qemu-img, xorriso, gpg, gpgv, minisign,
+# --arch arm64 (docs/design/arm64.md A5; DISTRO alpine only) builds
+# alpine324-arm64 on an aarch64 host (Bigfoot): alpine-uefi's disk (GPT, the
+# ESP at /boot/efi, swap, the rest /) with / on XFS as alpine324's, from
+# Alpine's aarch64 minirootfs.  Arch has no aarch64 ISO, so the live system
+# is Alpine's own alpine-virt aarch64 ISO (checked against Alpine's release
+# key), booted through vm-run (QEMU's virt machine, AAVMF without Secure
+# Boot) with an overlay (apkovl=, served like the install script) whose
+# local.d script adds the tools the install needs (bash, util-linux's,
+# xfsprogs, dosfstools) from Alpine's repositories, and an arch-chroot of its
+# own, and runs the install script, as archiso's script= does (genfstab is
+# Alpine's, alpine-conf's, which lists no swap: alpine.sh adds it).  GRUB is
+# arm64-efi's, in
+# EFI/alpine and at EFI/BOOT/BOOTAA64.EFI; the consoles are on ttyAMA0
+# (virt's PL011).  vm-run-options: "--uefi --no-secure-boot".
+#
+# Needs: qemu-system-x86_64 with KVM (--arch arm64: qemu-system-aarch64 and
+# AAVMF, through vm-run), qemu-img, xorriso, gpg, gpgv, minisign,
 # openssl, python3, wget, and network access.  Runs as an ordinary user in
 # the kvm group.
 
@@ -128,8 +145,17 @@ SLACKWARE_SERIES="a ap d l n"
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-bootstrap: $*" >&2; exit 1; }
 
-[[ $# -eq 2 ]] || die "usage: $0 alpine|alpine-uefi|alpine-lvm|alpine-luks|void|chimera|chimera-uefi|gentoo|gentoo-systemd|artix-dinit|artix-s6|nixos|slackware|slackware-uefi WORK_DIR"
+arch=amd64
+if [[ ${1:-} == --arch ]]; then arch=${2:-}; shift 2 || die "--arch takes amd64 or arm64"; fi
+[[ $# -eq 2 ]] || die "usage: $0 [--arch amd64|arm64] alpine|alpine-uefi|alpine-lvm|alpine-luks|void|chimera|chimera-uefi|gentoo|gentoo-systemd|artix-dinit|artix-s6|nixos|slackware|slackware-uefi WORK_DIR"
 distro=$1
+case $arch in
+    amd64) ;;
+    arm64)
+        [[ $distro == alpine ]] || die "--arch arm64 is for DISTRO alpine only, not $distro"
+        [[ $(uname -m) == aarch64 ]] || die "--arch arm64 builds on an aarch64 host (Bigfoot), not on $(uname -m)" ;;
+    *) die "--arch takes amd64 or arm64, not '$arch'" ;;
+esac
 iso_release=$ARCH_ISO_CURRENT
 script=$distro
 firmware=bios layout=classic           # the guest's firmware and disk (bootstrap/common.sh)
@@ -162,6 +188,8 @@ case $distro in
         extra=(KERNEL=generic) ;;
     *) die "unknown DISTRO $distro" ;;
 esac
+# arm64: alpine324's twin for UEFI, alpine-uefi's disk with / on XFS.
+[[ $arch == amd64 ]] || name=alpine324-arm64 firmware=uefi layout=uefi
 DISK=$name.qcow2
 mkdir -p "$2"
 cd "$2"
@@ -188,6 +216,16 @@ gpg_key() {
 }
 
 # --- Fetch and verify the Arch ISO, and the root file system ------------------------
+if [[ $arch == arm64 ]]; then
+    # The live system: Alpine's virt ISO for aarch64, signed as its minirootfs is.
+    ISO=alpine-virt-$ALPINE_VERSION-aarch64.iso
+    url=https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION%.*}/releases/aarch64
+    fetch "$url/$ISO.asc"
+    fetch "$url/$ISO"
+    gpg_key "$ALPINE_KEY" alpine-release-key.gpg
+    gpgv --keyring ./alpine-release-key.gpg "$ISO.asc" "$ISO" 2>/dev/null ||
+        die "$ISO is not signed by Alpine's release key"
+else
 ISO=archlinux-$iso_release-x86_64.iso
 url=https://archive.archlinux.org/iso/$iso_release
 fetch "$url/sha256sums.txt" "sha256sums-$iso_release.txt"
@@ -198,6 +236,7 @@ gpgv --keyring ./arch-release-key.gpg "$ISO.sig" "$ISO" 2>/dev/null ||
     die "$ISO is not signed by the Arch release key"
 grep " $ISO\$" "sha256sums-$iso_release.txt" | sha256sum -c --quiet - ||
     die "$ISO does not match sha256sums.txt"
+fi
 
 work=$(mktemp -d)
 server=""
@@ -207,8 +246,10 @@ trap cleanup EXIT
 mkdir "$work/www"
 case $script in
     alpine)
-        f=alpine-minirootfs-$ALPINE_VERSION-x86_64.tar.gz
-        url=https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION%.*}/releases/x86_64
+        amach=x86_64
+        [[ $arch == amd64 ]] || amach=aarch64
+        f=alpine-minirootfs-$ALPINE_VERSION-$amach.tar.gz
+        url=https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION%.*}/releases/$amach
         fetch "$url/$f.asc"
         fetch "$url/$f"
         gpg_key "$ALPINE_KEY" alpine-release-key.gpg
@@ -285,6 +326,18 @@ case $script in
 esac
 
 # --- The live system's kernel, initramfs and boot options ---------------------------
+if [[ $arch == arm64 ]]; then
+    # Alpine's: its GRUB menu's first entry.
+    xorriso -osirrox on -indev "$ISO" -extract /boot/grub/grub.cfg "$work/grub.cfg" 2>/dev/null ||
+        die "no /boot/grub/grub.cfg on $ISO"
+    kernel=$(awk '$1 == "linux" { print $2; exit }' "$work/grub.cfg")
+    initrd=$(awk '$1 == "initrd" { print $2; exit }' "$work/grub.cfg")
+    options=$(awk '$1 == "linux" { $1 = $2 = ""; sub(/^ +/, ""); print; exit }' "$work/grub.cfg")
+    [[ $kernel == /boot/vmlinuz-* && $initrd == /boot/initramfs-* && $options == *modules=* ]] ||
+        die "unexpected boot entry in $ISO's grub.cfg"
+    # The serial console is the install's own (SERIAL_TTY), named below.
+    options=$(sed -E 's/(^| )console=[^ ]*//g; s/^ +//' <<<"$options")
+else
 xorriso -osirrox on -indev "$ISO" -extract /loader/entries "$work/entries" 2>/dev/null ||
     die "no /loader/entries on $ISO"
 # The first entry is the ISO's default boot option.
@@ -294,6 +347,7 @@ initrd=$(awk '$1 == "initrd" && $2 ~ /initramfs/ { print $2 }' "$entry")
 options=$(sed -n 's/^options[[:space:]]*//p' "$entry")
 [[ -n $kernel && -n $initrd && $options == *archisobasedir* ]] ||
     die "unexpected boot entry $(basename "$entry")"
+fi
 xorriso -osirrox on -indev "$ISO" -extract "$kernel" "$work/vmlinuz" \
     -extract "$initrd" "$work/initramfs.img" 2>/dev/null
 chmod u+w "$work"/vmlinuz "$work"/initramfs.img
@@ -316,7 +370,10 @@ umask 022
 # Serve the install script and files to the guest only: QEMU's user-mode
 # network maps 10.0.2.2 in the guest to the host's 127.0.0.1.
 port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
-settings=(DISTRO="$distro" ROOT_FS="$root_fs" FIRMWARE="$firmware" LAYOUT="$layout" LUKS_KEY="$luks_key" HOSTNAME="$name"
+serial_tty=ttyS0
+[[ $arch == amd64 ]] || serial_tty=ttyAMA0     # virt's PL011
+settings=(DISTRO="$distro" ARCH="$arch" SERIAL_TTY="$serial_tty"
+    ROOT_FS="$root_fs" FIRMWARE="$firmware" LAYOUT="$layout" LUKS_KEY="$luks_key" HOSTNAME="$name"
     ROOT_PASSWORD="$password" ROOT_PASSWORD_HASH="$hash" AUTHORIZED_KEY="$(cat id_ed25519.pub)"
     SERVER="http://10.0.2.2:$port" "${extra[@]}")
 python3 - "$work/www/install.sh" "$here/bootstrap/common.sh" "$here/bootstrap/$script.sh" \
@@ -327,12 +384,81 @@ text = "".join(open(p).read() for p in parts)
 text = re.sub(r"@([A-Z_]+)@", lambda m: settings[m.group(1)], text)
 open(out, "w").write(text)
 EOF
+if [[ $arch == arm64 ]]; then
+    # Alpine's live system reads an overlay (apkovl=) over HTTP at boot: its
+    # default services, the network, and a local.d script that adds the
+    # install's tools and runs install.sh, its output on the serial console.
+    python3 - "$work/www/bko.apkovl.tar.gz" "http://10.0.2.2:$port" \
+        "https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION%.*}" <<'EOF'
+import io, sys, tarfile
+out, server, mirror = sys.argv[1:4]
+start = f"""#!/bin/sh
+# make-bootstrap.sh --arch arm64: the live system's part, as archiso's
+# script= is on amd64.  Then install.sh, whose output goes to the console.
+exec >/dev/ttyAMA0 2>&1
+fail() {{ echo "BACKOTTER-INSTALL-FAILED in the live system: $*"; sync; sleep 2; poweroff; exit 1; }}
+echo "BACKOTTER-LIVE: adding the install's tools"
+printf '%s\\n' {mirror}/main {mirror}/community >/etc/apk/repositories
+apk update -q || fail "apk update"
+apk add -q bash sfdisk wipefs blkid findmnt util-linux-misc mount umount \\
+    xfsprogs dosfstools e2fsprogs curl || fail "apk add"
+# mdev, not udev, runs here: udevadm settle is a pause.
+printf '#!/bin/sh\\nsleep 1\\n' >/usr/bin/udevadm && chmod 755 /usr/bin/udevadm || fail "udevadm"
+# arch-chroot: arch-install-scripts' can't be added (its genfstab conflicts
+# with alpine-conf's, which the install uses); this one mounts what it does.
+cat >/usr/bin/arch-chroot <<'AC' && chmod 755 /usr/bin/arch-chroot || fail "arch-chroot"
+#!/bin/sh
+r=$1; shift
+mount -t proc proc "$r/proc" && mount --bind /sys "$r/sys" && mount --bind /dev "$r/dev" &&
+    mount --bind /dev/pts "$r/dev/pts" && mount -t tmpfs -o mode=755 run "$r/run" || exit 1
+chroot "$r" "$@"; rc=$?
+umount "$r/run" "$r/dev/pts" "$r/dev" "$r/sys" "$r/proc"
+exit $rc
+AC
+wget -q -O /tmp/install.sh {server}/install.sh || fail "fetching install.sh"
+exec bash /tmp/install.sh >/dev/null 2>&1
+"""
+files = [
+    ("etc/.default_boot_services", "", 0o644),
+    ("etc/hostname", "bko-live\n", 0o644),
+    ("etc/apk/world", "alpine-base\n", 0o644),
+    ("etc/network/interfaces", "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n", 0o644),
+    ("etc/local.d/bko-install.start", start, 0o755),
+]
+links = [("etc/runlevels/default/networking", "/etc/init.d/networking"),
+         ("etc/runlevels/default/local", "/etc/init.d/local")]
+with tarfile.open(out, "w:gz", format=tarfile.USTAR_FORMAT) as t:
+    def entry(name, kind, mode=0o755):
+        i = tarfile.TarInfo(name); i.type = kind; i.mode = mode; i.uid = i.gid = 0; i.uname = i.gname = "root"
+        return i
+    for d in ("etc", "etc/apk", "etc/network", "etc/local.d", "etc/runlevels", "etc/runlevels/default"):
+        t.addfile(entry(d, tarfile.DIRTYPE))
+    for name, text, mode in files:
+        i = entry(name, tarfile.REGTYPE, mode); data = text.encode(); i.size = len(data)
+        t.addfile(i, io.BytesIO(data))
+    for name, target in links:
+        i = entry(name, tarfile.SYMTYPE, 0o777); i.linkname = target
+        t.addfile(i)
+EOF
+    options+=" ip=dhcp apkovl=http://10.0.2.2:$port/bko.apkovl.tar.gz"
+fi
 python3 -m http.server --bind 127.0.0.1 --directory "$work/www" "$port" >"$work/http.log" 2>&1 &
 server=$!
 
 # --- Install --------------------------------------------------------------------------
 qemu-img create -q -f qcow2 "$DISK" "$DISK_SIZE"
 echo "Installing $distro; the live system's console goes to $2/install-serial.log"
+if [[ $arch == arm64 ]]; then
+    # Through vm-run, with the aarch64 host's machine (virt, -cpu host, AAVMF
+    # without Secure Boot on a fresh variable store, the ISO a SCSI CD),
+    # pinning and job_slice.
+    ssh_port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    SSH_PORT=$ssh_port timeout "$INSTALL_TIMEOUT" "$here/vm-run" --uefi --no-secure-boot \
+        --cpus 4 --memory "$INSTALL_MEMORY" --serial-log install-serial.log --cdrom "$ISO" "$DISK" -- \
+        -kernel "$work/vmlinuz" -initrd "$work/initramfs.img" \
+        -append "$options console=tty0 console=$serial_tty,115200n8" -no-reboot ||
+        die "the install failed or timed out; see install-serial.log"
+else
 # cow_spacesize: the live system's writable layer, where downloads land.
 timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -enable-kvm -cpu host -smp 4 -m "$INSTALL_MEMORY" -machine pc \
@@ -343,6 +469,7 @@ timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -append "$options cow_spacesize=$((INSTALL_MEMORY / 2))M console=tty0 console=ttyS0,115200n8 script=http://10.0.2.2:$port/install.sh" \
     -display none -serial file:install-serial.log -monitor none -no-reboot ||
     die "the install failed or timed out; see install-serial.log"
+fi
 grep -q BACKOTTER-INSTALL-OK install-serial.log || {
     grep -a BACKOTTER-INSTALL-FAILED install-serial.log >&2 || true
     die "the install did not finish; see install-serial.log"

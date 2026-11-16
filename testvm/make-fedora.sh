@@ -3,11 +3,12 @@
 # install from an official Server DVD into a qcow2 disk image, under QEMU with
 # KVM.  / is btrfs, laid out the way Fedora's installer does it.
 #
-# Usage: ./make-fedora.sh [--uefi [--raid] | --ostree IMAGE] [--name NAME] RELEASE WORK_DIR
+# Usage: ./make-fedora.sh [--arch amd64|arm64] [--uefi [--raid] | --ostree IMAGE] [--name NAME] RELEASE WORK_DIR
 #   e.g. ./make-fedora.sh 44-1.7 vms/fedora44
 #        ./make-fedora.sh --uefi --name fedora44-uefi 44-1.7 vms/fedora44-uefi
 #        ./make-fedora.sh --uefi --raid --name fedora44-raid 44-1.7 vms/fedora44-raid
 #        ./make-fedora.sh --ostree quay.io/fedora/fedora-kinoite:44 --name kinoite44 44-1.7 vms/kinoite44
+#        ./make-fedora.sh --arch arm64 --uefi --name fedora44-arm64 44-1.7 vms/fedora44-arm64
 #
 # RELEASE is a Fedora release and compose number, as in the ISO's name
 # (Fedora-Server-dvd-x86_64-RELEASE.iso).  The ISO and its CHECKSUM file are
@@ -65,10 +66,23 @@
 # argument, bko.rollback=1; the second boots that one (serial 1, the
 # default; serial 0 is the rollback) and writes /etc/bko-deployment in it.
 #
+# --arch arm64 (docs/design/arm64.md A5) builds an ARM64 guest on an aarch64
+# host (Bigfoot), from Fedora-Server-dvd-aarch64-RELEASE.iso (checked the
+# same way), installed through vm-run (QEMU's virt machine, AAVMF without
+# Secure Boot, the DVD as a SCSI CD).  It is always --uefi's layout (--uefi
+# is implied; --raid and --ostree are refused for now); NAME is
+# fedoraN-arm64 by default and must end in -arm64 (the farm reads a guest's
+# architecture from its name).  The consoles are on ttyAMA0 (virt's PL011),
+# and mcelog, x86's, is not excluded (aarch64 has none).  vm-run-options:
+# "--uefi --no-secure-boot" (arm64.md Decision 10: Secure Boot on
+# ubuntu26-arm64 only); it boots through shim and GRUB from
+# EFI/BOOT/BOOTAA64.EFI.
+#
 # Run it with vm-run (and vm-run-options), and look inside it while it's off
 # with vm-mount.
 #
-# Needs: qemu-system-x86_64 with KVM, qemu-img, xorriso, gpg, gpgv, openssl,
+# Needs: qemu-system-x86_64 with KVM (--arch arm64: qemu-system-aarch64 and
+# AAVMF, through vm-run), qemu-img, xorriso, gpg, gpgv, openssl,
 # python3, wget, ssh.  Runs as an ordinary user in the kvm group.
 
 set -euo pipefail
@@ -85,9 +99,10 @@ BOOT_TIMEOUT=900
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-fedora: $*" >&2; exit 1; }
 
-firmware=bios name="" raid=no image=""
+firmware=bios name="" raid=no image="" arch=amd64
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --arch) arch=${2:-}; shift 2 || die "--arch takes amd64 or arm64" ;;
         --uefi) firmware=uefi; shift ;;
         --raid) raid=yes; shift ;;
         --ostree) image=$2; shift 2 ;;
@@ -96,7 +111,15 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
-[[ $# -eq 2 ]] || die "usage: $0 [--uefi [--raid] | --ostree IMAGE] [--name NAME] RELEASE WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 [--arch amd64|arm64] [--uefi [--raid] | --ostree IMAGE] [--name NAME] RELEASE WORK_DIR"
+case $arch in
+    amd64) ;;
+    arm64)
+        [[ $(uname -m) == aarch64 ]] || die "--arch arm64 builds on an aarch64 host (Bigfoot), not on $(uname -m)"
+        [[ $raid == no && -z $image ]] || die "--arch arm64 builds --uefi's layout only, for now (no --raid or --ostree)"
+        firmware=uefi ;;
+    *) die "--arch takes amd64 or arm64, not '$arch'" ;;
+esac
 [[ $raid == yes && $firmware != uefi ]] && die "--raid is for UEFI only (with --uefi)"
 if [[ -n $image ]]; then
     [[ $raid == no ]] || die "--ostree and --raid don't go together"
@@ -109,9 +132,15 @@ release=$1
 major=${BASH_REMATCH[1]}
 key_fpr=${RELEASE_KEYS[$major]:-}
 [[ -n $key_fpr ]] || die "no release key known for Fedora $major; add it to RELEASE_KEYS"
-ISO=Fedora-Server-dvd-x86_64-$release.iso
-SUMS=Fedora-Server-$major-${release#*-}-x86_64-CHECKSUM
+fedarch=x86_64
+[[ $arch == arm64 ]] && fedarch=aarch64
+ISO=Fedora-Server-dvd-$fedarch-$release.iso
+SUMS=Fedora-Server-$major-${release#*-}-$fedarch-CHECKSUM
 guest_name=${name:-fedora$major}
+if [[ $arch == arm64 ]]; then
+    guest_name=${name:-fedora$major-arm64}
+    [[ $guest_name == *-arm64 ]] || die "an arm64 guest's name ends in -arm64, not '$guest_name'"
+fi
 DISK=$guest_name.qcow2
 DISK_B=$guest_name-b.qcow2
 storage=$firmware
@@ -123,8 +152,8 @@ cd "$2"
 
 # --- Fetch and verify the ISO -------------------------------------------------------
 url=""
-for base in "https://dl.fedoraproject.org/pub/fedora/linux/releases/$major/Server/x86_64/iso" \
-            "https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/$major/Server/x86_64/iso"; do
+for base in "https://dl.fedoraproject.org/pub/fedora/linux/releases/$major/Server/$fedarch/iso" \
+            "https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/$major/Server/$fedarch/iso"; do
     if wget -q --spider "$base/$SUMS"; then url=$base; break; fi
 done
 [[ -n $url ]] || die "can't find $SUMS on Fedora's servers"
@@ -216,6 +245,12 @@ mkdir "$work/www"
 sed -e "s|@HOSTNAME@|$guest_name|" -e "s|@ROOT_PASSWORD_HASH@|$hash|" \
     -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" -e "s|@IMAGE_URL@|$image_url|" \
     -e "/^@STORAGE@\$/{r $here/fedora/storage-$storage.ks" -e "d}" "$here/fedora/$ks" >"$work/www/ks.cfg"
+if [[ $arch == arm64 ]]; then
+    # The serial console is virt's PL011; mcelog is x86's (no package to
+    # leave out on aarch64).
+    sed -i -e 's/console=ttyS0,115200n8/console=ttyAMA0,115200n8/g' -e '/^-mcelog$/d' "$work/www/ks.cfg"
+    ! grep -qE 'ttyS0|mcelog$' "$work/www/ks.cfg" || die "ks.cfg still names ttyS0 or mcelog; fix the arm64 arm's sed"
+fi
 if grep -n '@[A-Z_]\+@' "$work/www/ks.cfg"; then die "ks.cfg placeholders left unfilled"; fi
 
 # Serve ks.cfg to the guest only: QEMU's user-mode network maps 10.0.2.2 in
@@ -226,7 +261,7 @@ server=$!
 
 # --- Install --------------------------------------------------------------------------
 machine=(-machine pc)
-if [[ $firmware == uefi ]]; then
+if [[ $firmware == uefi && $arch == amd64 ]]; then
     # OVMF without Secure Boot, and a variable store thrown away afterwards.
     cp /usr/share/OVMF/OVMF_VARS_4M.fd "$work/vars.fd"
     machine=(-machine q35
@@ -242,6 +277,19 @@ if [[ $raid == yes ]]; then
         -drive "file=$DISK_B,if=virtio,format=qcow2,detect-zeroes=on")
 fi
 echo "Installing; the installer's console goes to $2/install-serial.log"
+if [[ $arch == arm64 ]]; then
+    # Through vm-run, with the aarch64 host's machine (virt, -cpu host, AAVMF
+    # without Secure Boot on a fresh variable store, the DVD a SCSI CD),
+    # pinning and job_slice, and its user network (10.0.2.2 is still this
+    # host's 127.0.0.1).
+    ssh_port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    SSH_PORT=$ssh_port timeout "$INSTALL_TIMEOUT" "$here/vm-run" --uefi --no-secure-boot --memory "$MEMORY" \
+        --serial-log install-serial.log --cdrom "$ISO" "$DISK" -- \
+        -kernel "$work/vmlinuz" -initrd "$work/initrd.img" \
+        -append "$stage2 inst.ks=http://10.0.2.2:$port/ks.cfg inst.text console=tty0 console=ttyAMA0,115200n8" \
+        -no-reboot ||
+        die "the install failed or timed out; see install-serial.log"
+else
 timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -enable-kvm -cpu host -smp 2 -m "$MEMORY" "${machine[@]}" \
     "${disks[@]}" \
@@ -251,10 +299,12 @@ timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -append "$stage2 inst.ks=http://10.0.2.2:$port/ks.cfg inst.text console=tty0 console=ttyS0,115200n8" \
     -display none -serial file:install-serial.log -monitor none -no-reboot ||
     die "the install failed or timed out; see install-serial.log"
+fi
 [[ $(qemu-img info --output=json "$DISK" | python3 -c 'import json, sys; print(json.load(sys.stdin)["actual-size"])') -gt 500000000 ]] ||
     die "the disk is nearly empty; see install-serial.log"
 
 [[ $firmware == uefi ]] && echo "--uefi" >vm-run-options
+[[ $arch == arm64 ]] && echo "--uefi --no-secure-boot" >vm-run-options
 [[ $raid == yes ]] && echo "--uefi --disk $DISK_B" >vm-run-options
 [[ -n $image ]] && echo "--uefi --no-secure-boot --memory $MEMORY" >vm-run-options
 

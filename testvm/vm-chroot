@@ -3,7 +3,10 @@
 #
 # Usage: sudo vm-chroot MOUNTPOINT [COMMAND [ARG...]]
 #
-# The guest is amd64 like the host, so its programs run directly.  This binds
+# The guest is of the host's architecture (an amd64 guest on an x86_64 host,
+# an arm64 one on Bigfoot: docs/design/arm64.md), so its programs run
+# directly; a guest whose /bin/sh is another machine's ELF is refused, as
+# its programs couldn't run here.  This binds
 # the host's /proc, /sys and /dev in, stops package scripts from starting
 # services (policy-rc.d) and needrestart from inspecting the host's processes,
 # and undoes all of that on exit.  It is still the host's kernel and devices:
@@ -59,6 +62,27 @@ if [[ ! -e $mp/etc && -f $mp/run/mnt/data/system-data/var/lib/snapd/modeenv ]]; 
     die "$mp is Ubuntu Core's four partitions (run/mnt/ubuntu-seed, ubuntu-boot, ubuntu-save, data), with no root filesystem to chroot into: its / is the base snap (run/mnt/data/system-data/var/lib/snapd/snaps/core*.snap, a squashfs) with ubuntu-data's binds, which only its boot puts together; read the partitions where they are, or boot the guest"
 fi
 [[ -e $root/etc/fstab || -L $root/etc/fstab ]] || die "$mp does not look like a mounted guest (run vm-mount first)"
+# The guest's machine, from its /bin/sh's ELF header (its links followed
+# inside the guest), against this host's: x86_64 62, aarch64 183.
+guest_machine=$(python3 -I -B -c '
+import os, struct, sys
+sys.path.insert(0, sys.argv[1])
+import ostree_paths
+rel = ostree_paths.resolve(sys.argv[2], "bin/sh")
+try:
+    with open(os.path.join(sys.argv[2], rel), "rb") as f:
+        head = f.read(20)
+except (OSError, TypeError):
+    sys.exit()
+if head[:4] == b"\x7fELF" and len(head) == 20:
+    print(struct.unpack("<H" if head[5] == 1 else ">H", head[18:20])[0])
+' "$here" "$root" 2>/dev/null || true)
+case $(uname -m) in x86_64) host_machine=62 ;; aarch64) host_machine=183 ;; *) host_machine="" ;; esac
+declare -A machine_names=([3]=i386 [40]=arm [62]=x86_64 [183]=aarch64 [243]=riscv64)
+if [[ -n $guest_machine && -n $host_machine && $guest_machine != "$host_machine" &&
+      ! ( $host_machine == 62 && $guest_machine == 3 ) ]]; then
+    die "$mp is a ${machine_names[$guest_machine]:-machine $guest_machine} guest (its /bin/sh), and this host is $(uname -m): its programs can't run here; chroot into it on a host of its architecture"
+fi
 abroot=""
 if [[ -z $ostree && -f $mp/usr/share/abroot/abroot.json ]]; then
     abroot=$(blkid -s LABEL -o value "$(findmnt -n -o SOURCE --mountpoint "$mp")" 2>/dev/null || true)

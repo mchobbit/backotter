@@ -718,6 +718,16 @@ DUMP_PLATS = {"Linux": "", "FreeBSD": "freebsd", "NetBSD": "netbsd", "OpenBSD": 
               "DragonFly": "dragonfly", "SunOS": "illumos", "Haiku": "haiku"}
 
 
+def dump_plat(system: str, guest: str) -> str | None:
+    """The folder of VM_UPDATE_HOLT_BIN whose bko-holt guest GUEST, of `uname -s` SYSTEM, runs;
+    None for none.  An arm64 guest's (hosts.guest_arch, by its name: docs/design/arm64.md) is
+    PLAT-arm64, as the bin sets lay ARM64's out beside the unchanged amd64 folders (linux-arm64/)."""
+    plat = DUMP_PLATS.get(system)
+    if plat is None or HOSTS_TABLE.guest_arch(guest) == HOSTS_TABLE.DEFAULT_ARCH:
+        return plat
+    return f"{plat or 'linux'}-{HOSTS_TABLE.guest_arch(guest)}"
+
+
 class VM:
     """The guest under vm-run --ram --keep, its serial console on a pipe and
     its overlays in a folder of its own, where overlay_dir() says.  (Not in /dev/shm: a big update's overlay
@@ -948,7 +958,7 @@ class VM:
         Only an ssh failure fails the run: without a dump there is simply no
         fingerprint, and the generation stands in."""
         system = uname.split()[0] if uname else ""
-        plat = DUMP_PLATS.get(system)
+        plat = dump_plat(system, self.g.name)
         if plat is None:
             return None, f"no bko-holt for {system or 'this system'}"
         binary = Path(os.environ.get("VM_UPDATE_HOLT_BIN") or DEFAULT_HOLT_BIN) / plat / "bko-holt"

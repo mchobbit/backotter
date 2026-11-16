@@ -5,7 +5,7 @@
 # under QEMU with KVM.  (Linux Mint 22 is built on Ubuntu 24.04, so a 24.04
 # guest covers what a Mint restore depends on, minus the desktop.)
 #
-# Usage: ./make-ubuntu.sh [--uefi] [--zfs-guided | --zfs-mirror | --raid | --luks] [--name NAME] VERSION WORK_DIR
+# Usage: ./make-ubuntu.sh [--arch amd64|arm64] [--uefi] [--zfs-guided | --zfs-mirror | --raid | --luks] [--name NAME] VERSION WORK_DIR
 #   e.g. ./make-ubuntu.sh 24.04 vms/ubuntu24
 #        ./make-ubuntu.sh --zfs-mirror --name ubuntu26-zfsmirror 26.04.1 vms/ubuntu26-zfsmirror
 #        ./make-ubuntu.sh --uefi --name ubuntu26-uefi 26.04.1 vms/ubuntu26-uefi
@@ -14,6 +14,7 @@
 #        ./make-ubuntu.sh --uefi --luks --name ubuntu26-luks 26.04.1 vms/ubuntu26-luks
 #        ./make-ubuntu.sh --uefi --name ubuntu24-uefi 24.04.5 vms/ubuntu24-uefi
 #        ./make-ubuntu.sh --uefi --luks --name ubuntu24-luks 24.04.5 vms/ubuntu24-luks
+#        ./make-ubuntu.sh --arch arm64 --uefi --name ubuntu26-arm64 26.04.1 vms/ubuntu26-arm64
 #
 # VERSION is an Ubuntu release or point release (24.04, 24.04.1, ...).
 # ubuntu-VERSION-live-server-amd64.iso with its SHA256SUMS and SHA256SUMS.gpg
@@ -78,10 +79,22 @@
 # compare.py and HoltTest1 type it.  The group's name, ubuntu-vg, is
 # ubuntu26-raid's too, which vm-mount's own names for LVs make no matter.
 #
+# --arch arm64 (docs/design/arm64.md A5) builds an ARM64 guest on an aarch64
+# host (Bigfoot), from ubuntu-VERSION-live-server-arm64.iso (from
+# cdimage.ubuntu.com, checked the same way), installed through vm-run (QEMU's
+# virt machine, AAVMF without Secure Boot for the install, the ISOs as SCSI
+# CDs, no network).  It is always UEFI (--uefi is implied), with --uefi's
+# direct layout (the other layouts are refused for now); NAME is
+# ubuntuN-arm64 by default and must end in -arm64 (the farm reads a guest's
+# architecture from its name).  The consoles are on ttyAMA0 (virt's PL011).  vm-run-options "--uefi" boots it on AAVMF's
+# Microsoft-keyed variables with Secure Boot on, through shim and GRUB
+# (arm64.md Decision 10), from EFI/BOOT/BOOTAA64.EFI.
+#
 # Run it with vm-run (and vm-run-options), and look inside it while it's off
 # with vm-mount.
 #
-# Needs: qemu-system-x86_64 with KVM, qemu-img, xorriso, gpg, gpgv, openssl,
+# Needs: qemu-system-x86_64 with KVM (--arch arm64: qemu-system-aarch64 and
+# AAVMF, through vm-run), qemu-img, xorriso, gpg, gpgv, openssl,
 # python3 with yaml, wget.  Runs as an ordinary user in the kvm group.
 
 set -euo pipefail
@@ -95,9 +108,10 @@ INSTALL_TIMEOUT=2400
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-ubuntu: $*" >&2; exit 1; }
 
-firmware=bios name="" mirror=no guided=no raid=no luks=no
+firmware=bios name="" mirror=no guided=no raid=no luks=no arch=amd64
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --arch) arch=${2:-}; shift 2 || die "--arch takes amd64 or arm64" ;;
         --uefi) firmware=uefi; shift ;;
         --zfs-mirror) mirror=yes; shift ;;
         --zfs-guided) guided=yes; shift ;;
@@ -108,7 +122,16 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
-[[ $# -eq 2 ]] || die "usage: $0 [--uefi] [--zfs-guided | --zfs-mirror | --raid | --luks] [--name NAME] VERSION WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 [--arch amd64|arm64] [--uefi] [--zfs-guided | --zfs-mirror | --raid | --luks] [--name NAME] VERSION WORK_DIR"
+case $arch in
+    amd64) ;;
+    arm64)
+        [[ $(uname -m) == aarch64 ]] || die "--arch arm64 builds on an aarch64 host (Bigfoot), not on $(uname -m)"
+        [[ $mirror == no ]] || die "--zfs-mirror is for BIOS only, and an arm64 guest is UEFI"
+        [[ $guided == no && $raid == no && $luks == no ]] || die "--arch arm64 builds the direct layout only, for now"
+        firmware=uefi ;;
+    *) die "--arch takes amd64 or arm64, not '$arch'" ;;
+esac
 [[ $raid == yes && $firmware != uefi ]] && die "--raid is for UEFI only (with --uefi)"
 [[ $raid == yes && ($mirror == yes || $guided == yes) ]] && die "--raid is a layout of its own"
 [[ $firmware == uefi && $mirror == yes ]] && die "--zfs-mirror is for BIOS only"
@@ -121,6 +144,11 @@ release=$(cut -d. -f1-2 <<<"$version")
 major=${version%%.*}
 ISO=ubuntu-$version-live-server-amd64.iso
 guest_name=${name:-ubuntu$major}
+if [[ $arch == arm64 ]]; then
+    ISO=ubuntu-$version-live-server-arm64.iso
+    guest_name=${name:-ubuntu$major-arm64}
+    [[ $guest_name == *-arm64 ]] || die "an arm64 guest's name ends in -arm64, not '$guest_name'"
+fi
 DISK=$guest_name.qcow2
 storage=zfs
 [[ $firmware == uefi ]] && storage=direct
@@ -140,10 +168,15 @@ cd "$2"
 # --- Fetch and verify the ISO -------------------------------------------------------
 # Superseded point releases move to old-releases.ubuntu.com.
 url=""
-for base in "https://releases.ubuntu.com/$release" "https://old-releases.ubuntu.com/releases/$release"; do
+bases=("https://releases.ubuntu.com/$release" "https://old-releases.ubuntu.com/releases/$release")
+# The arm64 ISOs are on cdimage.ubuntu.com only: a point release's own
+# folder, else the release's (which has only its newest point release).
+[[ $arch == arm64 ]] && bases=("https://cdimage.ubuntu.com/releases/$version/release"
+    "https://cdimage.ubuntu.com/releases/$release/release")
+for base in "${bases[@]}"; do
     if wget -q -O - "$base/SHA256SUMS" 2>/dev/null | grep -q " \*$ISO\$"; then url=$base; break; fi
 done
-[[ -n $url ]] || die "can't find $ISO on releases.ubuntu.com or old-releases.ubuntu.com"
+[[ -n $url ]] || die "can't find $ISO on ${bases[*]}"
 for f in SHA256SUMS SHA256SUMS.gpg "$ISO"; do
     [[ -f $f && ! -f $f.part ]] && continue
     echo "Downloading $url/$f"
@@ -197,6 +230,11 @@ sed -e "s|@HOSTNAME@|$guest_name|" -e "s|@PASSWORD_HASH@|$hash|g" \
     "$here/ubuntu/user-data" >"$work/cidata/user-data"
 # The storage files' own settings: sed's r inserts text after its edits.
 sed -i "s|@PASSPHRASE@|$passphrase|g" "$work/cidata/user-data"
+# arm64: the serial console is virt's PL011.
+if [[ $arch == arm64 ]]; then
+    sed -i 's/console=ttyS0,115200n8/console=ttyAMA0,115200n8/g' "$work/cidata/user-data"
+    ! grep -q ttyS0 "$work/cidata/user-data" || die "user-data still names ttyS0; fix the arm64 arm's sed"
+fi
 if grep -n '@[A-Z_]\+@' "$work/cidata/user-data"; then die "user-data placeholders left unfilled"; fi
 # cloud-init quietly ignores user-data it can't parse, and the installer then
 # waits for answers until the timeout; catch that here.
@@ -211,7 +249,7 @@ xorriso -as mkisofs -quiet -o "$work/cidata.iso" -V CIDATA -J -r "$work/cidata" 
 
 # --- Install, with no network: everything comes from the ISO -----------------------
 machine=(-machine pc)
-if [[ $firmware == uefi ]]; then
+if [[ $firmware == uefi && $arch == amd64 ]]; then
     # OVMF without Secure Boot, and a variable store thrown away afterwards.
     cp /usr/share/OVMF/OVMF_VARS_4M.fd "$work/vars.fd"
     machine=(-machine q35
@@ -228,6 +266,21 @@ for d in "${more[@]}"; do
     disks+=(-drive "file=$d,if=virtio,format=qcow2$zeros")
 done
 echo "Installing; the installer's console goes to $2/install-serial.log"
+if [[ $arch == arm64 ]]; then
+    # Through vm-run, with the aarch64 host's machine (virt, -cpu host, AAVMF
+    # without Secure Boot on a fresh variable store, the ISO a SCSI CD),
+    # pinning and job_slice; no network card at all (--qemu-options' -nic
+    # none), and the CIDATA disc a second SCSI CD on a controller of its own.
+    echo "-nic none" >"$work/qemu-options"
+    timeout "$INSTALL_TIMEOUT" "$here/vm-run" --uefi --no-secure-boot --memory "$MEMORY" \
+        --qemu-options "$work/qemu-options" --serial-log install-serial.log --cdrom "$ISO" \
+        "$DISK" -- \
+        -drive "if=none,id=cidata,file=$work/cidata.iso,media=cdrom,readonly=on" \
+        -device virtio-scsi-pci,id=cidatascsi -device scsi-cd,drive=cidata,bus=cidatascsi.0 \
+        -kernel "$work/vmlinuz" -initrd "$work/initrd" \
+        -append "autoinstall console=tty0 console=ttyAMA0,115200n8" -no-reboot ||
+        die "the install failed or timed out; see install-serial.log"
+else
 timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -enable-kvm -cpu host -smp 2 -m "$MEMORY" "${machine[@]}" \
     "${disks[@]}" \
@@ -238,6 +291,7 @@ timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -append "autoinstall console=tty0 console=ttyS0,115200n8" \
     -display none -serial file:install-serial.log -monitor none -no-reboot ||
     die "the install failed or timed out; see install-serial.log"
+fi
 # The installer only powers off at the very end (an error waits for an answer
 # instead, until the timeout), but check that a system was written.
 [[ $(qemu-img info --output=json "$DISK" | python3 -c 'import json, sys; print(json.load(sys.stdin)["actual-size"])') -gt 500000000 ]] ||

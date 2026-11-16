@@ -46,6 +46,12 @@ in_alpine apk add --no-progress alpine-base linux-lts linux-firmware-none mkinit
 check_root_module "$(echo /mnt/lib/modules/*)"
 
 genfstab -U /mnt | grep -v '^#' >/mnt/etc/fstab
+if [[ $ARCH != amd64 ]]; then
+    # Alpine's own genfstab (the arm64 live system's, alpine-conf's) leaves
+    # swap out, which Arch's lists.
+    echo "UUID=$(blkid -s UUID -o value "$SWAP_PART")	none	swap	defaults	0 0" >>/mnt/etc/fstab
+    grep -qE '^UUID=[^[:space:]]+[[:space:]]+/[[:space:]]' /mnt/etc/fstab
+fi
 echo "$GUEST_NAME" >/mnt/etc/hostname
 printf '127.0.0.1\t%s localhost\n::1\t\tlocalhost\n' "$GUEST_NAME" >/mnt/etc/hosts
 cat >/mnt/etc/network/interfaces <<'EOF'
@@ -56,9 +62,11 @@ auto eth0
 iface eth0 inet dhcp
 EOF
 ln -sf /usr/share/zoneinfo/UTC /mnt/etc/localtime 2>/dev/null || true
-# A login prompt on the serial console too.
-sed -i 's|^#ttyS0::respawn:.*|ttyS0::respawn:/sbin/getty -L 115200 ttyS0 vt100|' /mnt/etc/inittab
-grep -q '^ttyS0' /mnt/etc/securetty 2>/dev/null || echo ttyS0 >>/mnt/etc/securetty
+# A login prompt on the serial console too (arm64: ttyAMA0, in place of
+# inittab's commented-out ttyS0).
+sed -i "s|^#ttyS0::respawn:.*|$SERIAL_TTY::respawn:/sbin/getty -L 115200 $SERIAL_TTY vt100|" /mnt/etc/inittab
+[[ $ARCH == amd64 ]] || grep -q "^$SERIAL_TTY::respawn:" /mnt/etc/inittab
+grep -q "^$SERIAL_TTY" /mnt/etc/securetty 2>/dev/null || echo "$SERIAL_TTY" >>/mnt/etc/securetty
 install_ssh_key /mnt
 printf 'root:%s\n' "$ROOT_PASSWORD_HASH" | in_alpine chpasswd -e
 
@@ -82,11 +90,14 @@ EOF
 if [[ $FIRMWARE == bios ]]; then
     in_alpine grub-install --target=i386-pc "$DISK"
 else
-    # The install VM boots by BIOS: no EFI variables to write.  So GRUB
-    # under its own name, and again at the fallback path (EFI/BOOT/BOOTX64.EFI)
+    # The install VM boots by BIOS (arm64: on a variable store thrown away
+    # after it): no EFI variables to write.  So GRUB under its own name, and
+    # again at the fallback path (EFI/BOOT/BOOTX64.EFI, arm64 BOOTAA64.EFI)
     # that the firmware boots with no boot entries, as vm-run --uefi's does.
-    in_alpine grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=alpine --no-nvram
-    in_alpine grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable
+    efi_target=x86_64-efi
+    [[ $ARCH == amd64 ]] || efi_target=arm64-efi
+    in_alpine grub-install --target=$efi_target --efi-directory=/boot/efi --bootloader-id=alpine --no-nvram
+    in_alpine grub-install --target=$efi_target --efi-directory=/boot/efi --removable
 fi
 in_alpine grub-mkconfig -o /boot/grub/grub.cfg
 rm /mnt/etc/resolv.conf

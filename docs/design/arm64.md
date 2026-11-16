@@ -797,6 +797,169 @@ Left for later:
 - The image isn't published or promoted anywhere.
 - HoltTest1 1ARM's `+img` round trip is A6's.
 
+## What A5 built (2026-11-16)
+
+- **The builders.** Each takes `--arch amd64|arm64`, amd64 by default, and
+  amd64's path is what it was. On arm64 the builder:
+  - refuses to run on a host that isn't aarch64
+  - refuses a guest name without `-arm64`, since hosts.py reads a guest's
+    architecture from its name
+  - installs through **vm-run**, not its own `qemu-system-x86_64` line.
+    vm-run already has virt, AAVMF, the SCSI CD, the pinning and the
+    `job_slice` (A1).
+  - always installs with AAVMF's `no-secboot` code on a fresh variable
+    store
+  - puts every console on `ttyAMA0`, virt's PL011
+
+  | guest | builder | from | disk | vm-run-options |
+  |---|---|---|---|---|
+  | `debian13-arm64` | `make-debian.sh --arch arm64 13.0.0 ext4` | `debian-13.0.0-arm64-DVD-1.iso`, offline as amd64's | GPT: ESP 512 MB, `/boot` ext4, swap, `/` ext4; GRUB in `EFI/debian` and `EFI/BOOT/BOOTAA64.EFI` (`force-efi-extra-removable`) | `--uefi --no-secure-boot` |
+  | `ubuntu26-arm64` | `make-ubuntu.sh --arch arm64 --uefi --name ubuntu26-arm64 26.04.1` | `ubuntu-26.04.1-live-server-arm64.iso` (cdimage.ubuntu.com, A4's copy hard-linked in), no network | Subiquity's `direct`: ESP, ext4 `/`, swap file; shim + GRUB | `--uefi` (Secure Boot, AAVMF's `ms` pair: Decision 10) |
+  | `fedora44-arm64` | `make-fedora.sh --arch arm64 --uefi --name fedora44-arm64 44-1.7` | `Fedora-Server-dvd-aarch64-44-1.7.iso` | Anaconda's btrfs autopart (`storage-uefi.ks`): ESP, XFS `/boot`, btrfs `root`, BLS; shim + GRUB | `--uefi --no-secure-boot` |
+  | `alpine324-arm64` | `make-bootstrap.sh --arch arm64 alpine` | Alpine 3.24.3's aarch64 minirootfs | alpine-uefi's (ESP at `/boot/efi`, swap, `/`) with `/` on XFS, as alpine324's | `--uefi --no-secure-boot` |
+  | `debian13-zfs-arm64` | `sudo make-debian-zfs.sh --arch arm64` | debootstrap trixie, Bigfoot's OpenZFS pins `openzfs-2.3-linux` | GPT: ESP, `/boot` ext4, swap, `rpool` (vda4); `grub-efi-arm64` with `--force-extra-removable --no-nvram` | `--uefi --no-secure-boot` |
+
+  Per-builder notes:
+  - **Debian.** The preseed's MBR recipe is replaced with a GPT one that
+    puts an EFI partition first, and the kernel is `linux-image-arm64`.
+    Devuan and Kali are refused on arm64.
+  - **Ubuntu.** Only the `direct` layout; the other layouts are refused.
+    The CIDATA disc is a second SCSI CD on its own controller, and
+    `-nic none` comes through `--qemu-options`.
+    - 26.04's arm64 `ubuntu.sources` names archive.ubuntu.com, not
+      ports, so the snapshot freeze and vm-update's unfreeze work
+      unchanged. Checked in the ISO's squashfs, and the `--try` below
+      ran the unfreeze step.
+    - The ISO is fetched from `releases/VERSION/release` first, then
+      `releases/RELEASE/release`.
+  - **Fedora.** The kickstart's `ttyS0` becomes `ttyAMA0`, and `-mcelog` is
+    dropped, since aarch64 has no mcelog package. `--raid` and `--ostree`
+    are refused.
+  - **Alpine.** Arch has no aarch64 ISO, so the live system is Alpine's
+    own `alpine-virt-3.24.3-aarch64.iso`, checked against Alpine's key.
+    - It boots its kernel with `ip=dhcp apkovl=http://10.0.2.2:PORT/bko.apkovl.tar.gz`.
+      The overlay holds `.default_boot_services`, the network, and a
+      local.d script.
+    - The local.d script adds bash, util-linux's tools, xfsprogs and
+      dosfstools from dl-cdn, then runs the same `install.sh` the
+      amd64 path uses.
+    - `arch-install-scripts` can't be installed there: its `genfstab`
+      conflicts with alpine-conf's. So the script writes a small
+      `arch-chroot` of its own, and `genfstab -U` is Alpine's. Alpine's
+      lists no swap, so alpine.sh adds the swap line on arm64 and checks
+      that `/` is by UUID.
+    - `bootstrap/common.sh` gains `ARCH` and `SERIAL_TTY`. On amd64 they
+      are `amd64` and `ttyS0`, the same as before, and the pacman-init
+      wait runs only on amd64.
+    - `alpine.sh` takes GRUB's target (`arm64-efi`) and the getty's TTY
+      from these.
+  - **debian13-zfs.** It still runs as root on the host, in `bko.slice`.
+    - The chroot gets `/sys` by a plain bind, so Bigfoot's efivarfs isn't
+      in it. debconf sets `grub2/update_nvram false`, and grub-install
+      runs with `--no-nvram`. Bigfoot's NVRAM is never reachable.
+    - The first boot goes through vm-run.
+    - When the module build fails, its `make.log` is kept as
+      `dkms-make.log`.
+- **vm-run** needed no change.
+- **vm-update.** `dump_plat` names the bin folder a guest's dump takes its
+  bko-holt from. For a `*-arm64` guest that is `linux-arm64/`, beside
+  `linux`'s top. Everything else in vm-update already worked on arm64:
+  - boot, update and reboot go through vm-run
+  - the host mount goes through vm-mount
+  - `--hosts` already kept to the guest's architecture (A1)
+- **vm-chroot** refuses a guest whose `/bin/sh`, followed inside the
+  guest, is an ELF of another machine than the host's: an arm64 guest on
+  an x86_64 host, or the reverse. A guest with no `/bin/sh`, or one that
+  isn't ELF, isn't refused.
+- **vm-umount** had a bug that existed before A5 and only shows on Bigfoot,
+  which has no btrfs-progs. It ran `btrfs device scan --forget` on a btrfs
+  guest's partitions without checking the command exists. Under `set -e`
+  that exited 127 after the unmount and before the nbd detach, which left
+  `fedora44-arm64`'s nbd device and state file behind. It now skips the
+  forget when `btrfs` is missing, as vm-mount does for its scan.
+- **Where the guests are.** Bigfoot's `~/backotter-work/vms/GUEST`
+  (`/home/m/bko-arm64/work/vms`), with the ISOs beside them. They are not
+  in vm-store (Decision 9), and no `store.json` exists on Bigfoot.
+  rebuild-one.sh has no arm64 recipes: its boot check is compare.py's,
+  which is still x86-only (A1). The builder lines in the table are the
+  recipes.
+
+### Checks on Bigfoot
+
+Every guest was built by its builder, as `m` (debian13-zfs as root), in
+`bko.slice`, from a private tree in `~/backotter-work/a5-scratch/tree`.
+`check.sh` booted each once with its `vm-run-options` and `--snapshot`,
+then ran `vm-mount --ro`, `vm-chroot`, `vm-umount`. After that,
+`vm-update --try --hosts ''` ran from the same tree with
+`BKO_WORK=~/backotter-work`.
+
+| guest | built | first SSH | what the guest said | vm-mount `--ro` | vm-chroot | `vm-update --try` |
+|---|---|---|---|---|---|---|
+| `ubuntu26-arm64` | 3.9 GB | 18 s | 7.0.0-30-generic aarch64, "Secure boot enabled", kernel locked down | ext4 `/`, vfat `/boot/efi` | aarch64, `EFI/BOOT/BOOTAA64.EFI` + `mmaa64`/`fbaa64` | ok, 11 min: 181 packages and the unfreeze, rebooted on 7.0.0-43, mounts 2 file systems |
+| `debian13-arm64` | 1.2 GB | 25 s | 6.12.38+deb13-arm64, Secure Boot off | ext4 `/`, ext4 `/boot`, vfat `/boot/efi` | aarch64, `BOOTAA64.EFI` + `grubaa64` | ok, 6 min: 119 packages and the unfreeze, rebooted on 6.12.117, mounts 3 |
+| `fedora44-arm64` | 3.2 GB | 26 s | 6.19.10-300.fc44.aarch64, `rootflags=subvol=root` | btrfs `[/root]`, xfs `/boot`, vfat `/boot/efi` | aarch64, `BOOTAA64.EFI` + `fbaa64` | ok, 23 min: 348 packages and the unfreeze (updates repository on), rebooted on 7.3.3-200.fc44, mounts 3 |
+| `alpine324-arm64` | 0.3 GB | 12 s | 6.18.63-0-lts, XFS `/` by UUID | xfs `/`, vfat `/boot/efi` | aarch64, `BOOTAA64.EFI` | ok, 1 min: 4 packages, mounts 2 |
+| `debian13-zfs-arm64` | 1.8 GB | 26 s | 6.12.117+deb13-arm64, `root=ZFS=rpool/ROOT/debian`, rpool ONLINE, zfs 2.3.9 (userland and kmod) | rpool's 9 datasets under a temporary name, ext4 `/boot`, vfat `/boot/efi` | aarch64, `BOOTAA64.EFI` + `grubaa64` | ok, 2 min: 8 packages, mounts 11 |
+
+What the boots showed:
+- Each guest saw 2 vCPUs, all part 0xd81 (A720s), inside the slice.
+- Each disk's first SSH came with a fresh variable store, through the
+  fallback path.
+- No nbd device, mount, loop device or `bkodz` pool was left behind.
+- DantePool stayed `ONLINE` throughout.
+
+Two failures came up along the way, and both are fixed:
+- **alpine324-arm64, first try.** The live system's `apk add` refused
+  `arch-install-scripts`, because its genfstab conflicts with alpine-conf's.
+  The local.d script stopped with BACKOTTER-INSTALL-FAILED and powered off
+  at once. Its own arch-chroot (above) fixed it.
+- **debian13-zfs-arm64, first try.** zfs-dkms's module build failed
+  ("bad exit status: 2"). Four builds ran in the slice at once then. The
+  cleanup deleted the chroot and the module's `make.log` with it, so the
+  cause is unknown. The second try passed unchanged, alone but for one
+  `--try`. The builder now keeps `dkms-make.log`.
+
+Other things seen:
+- **debian13-zfs's folder was root's.** The root builder makes WORK_DIR as
+  root when it doesn't exist, which it always did, so `check.sh`'s boot as
+  `m` couldn't write its serial log there. It was chowned by hand.
+  rebuild-one.sh makes the folder as `m` first.
+- **Disk use on Bigfoot's `/home`:** 53 GB before A5, 70 GB after. That is
+  21 GB of guest folders (the ISOs included; Ubuntu's 3.1 GB ISO is a hard
+  link to A4's) and 19 MB of `a5-scratch`.
+
+### Tests
+
+`testvm/test2/tests/test_arm64_guests.py` (19 tests):
+- **The builders.** Each runs in a temporary tree with every outside
+  program stubbed: wget, gpg, xorriso, qemu-img, QEMU, vm-run and the rest.
+  - amd64's QEMU command lines for make-debian, make-ubuntu (BIOS and
+    `--uefi`), make-fedora and make-bootstrap are the ones HEAD's builders
+    give. That was checked by running the same tests against HEAD's
+    scripts.
+  - Each builder's arm64 vm-run line, downloads, preseed, user-data,
+    kickstart, install script and apkovl (`sh -n` on its local.d script),
+    and its vm-run-options.
+  - The refusals, including make-debian-zfs.sh's (it needs root, so only
+    those are tested).
+- **vm-update.** `dump_plat`, and which bko-holt `dump` copies.
+- **vm-chroot.** Same-architecture guests run, with `/bin` as a link or a
+  directory. Foreign ones are refused. No `/bin/sh` passes.
+
+Results:
+- **Bigfoot:** 19 run, 0 failures.
+- **Mac:** 2 run, 17 skipped (bash 3.2, no GNU timeout).
+- **test_vm_update, test_arch and test_vm_run on the Mac:** the same 3
+  failures and 1 error as main, none from A5.
+
+Left for later:
+- A6: SticTest1 entries, HoltTest1 1ARM and the Test2 registrations for the
+  five.
+- No `vm-update` real update (merge) was run. The guests are at their
+  builders' fresh-install snapshots.
+- make-debian-zfs.sh still mounts its new system at `/mnt/bko-debian-zfs-PID`
+  while it builds, outside `/home/m/bko-arm64`. The cleanup trap removes it.
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Est. |

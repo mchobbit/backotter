@@ -10,8 +10,9 @@
 # read-write.  The hosts and the rescue image read and write it with every
 # feature it has, and compare.py recreates it exactly.
 #
-# Usage: sudo ./make-debian-zfs.sh WORK_DIR NAME
+# Usage: sudo ./make-debian-zfs.sh [--arch amd64|arm64] WORK_DIR NAME
 #   e.g. sudo ./make-debian-zfs.sh vms/debian13-zfs debian13-zfs
+#        sudo ./make-debian-zfs.sh --arch arm64 vms/debian13-zfs-arm64 debian13-zfs-arm64
 #
 # Why from the host: Debian's installer has no ZFS root, and a live system
 # would bring its own OpenZFS.  So this does what the guide does from a live
@@ -56,9 +57,22 @@
 # Results, in WORK_DIR: NAME.qcow2 (16 GiB, sparse, snapshot
 # "fresh-install"), root-password, id_ed25519 and .pub, firstboot-serial.log.
 #
+# --arch arm64 (docs/design/arm64.md A5) builds an ARM64 guest on an aarch64
+# host (Bigfoot, whose OpenZFS makes the pool as above): NAME must end in
+# -arm64 (the farm reads a guest's architecture from its name).  UEFI and
+# GPT: an EFI system partition (512 MiB, FAT32, /boot/efi), then /boot, swap
+# and the pool (so its vdev is /dev/vda4); linux-image-arm64 and
+# grub-efi-arm64, in EFI/debian and at the fallback path
+# EFI/BOOT/BOOTAA64.EFI (no NVRAM entry: vm-run boots on a fresh variable
+# store), the consoles on ttyAMA0 (virt's PL011; GRUB's is the firmware's,
+# on the same port).  The first boot goes through vm-run (QEMU's virt
+# machine, AAVMF without Secure Boot), and vm-run-options says
+# "--uefi --no-secure-boot".
+#
 # Needs: root; OpenZFS 2.3 or newer (zpool, zfs; openzfs-2.3-linux in
 # /usr/share/zfs/compatibility.d),
-# debootstrap, debian-archive-keyring, qemu-img, qemu-system-x86_64 with KVM,
+# debootstrap, debian-archive-keyring, qemu-img, qemu-system-x86_64 with KVM
+# (--arch arm64: qemu-system-aarch64 and AAVMF, through vm-run; mkfs.fat),
 # losetup, sfdisk, mkfs.ext4, mkswap, openssl, ssh-keygen; network access.
 
 set -euo pipefail
@@ -74,13 +88,25 @@ KEYRING=/usr/share/keyrings/debian-archive-keyring.gpg
 POOL=rpool
 FIRST_BOOT_TIMEOUT=1200
 
+here=$(dirname "$(realpath "$0")")
 die() { echo "make-debian-zfs: $*" >&2; exit 1; }
 
-[[ $# -eq 2 ]] || die "usage: $0 WORK_DIR NAME"
+arch=amd64
+if [[ ${1:-} == --arch ]]; then arch=${2:-}; shift 2 || die "--arch takes amd64 or arm64"; fi
+[[ $# -eq 2 ]] || die "usage: $0 [--arch amd64|arm64] WORK_DIR NAME"
 name=$2
 [[ $name =~ ^[a-z][a-z0-9-]*$ ]] || die "NAME is a host name: lower-case letters, digits and -"
+tools=(zpool zfs debootstrap qemu-img qemu-system-x86_64 losetup sfdisk mkfs.ext4 mkswap openssl ssh-keygen)
+case $arch in
+    amd64) ;;
+    arm64)
+        [[ $(uname -m) == aarch64 ]] || die "--arch arm64 builds on an aarch64 host (Bigfoot), not on $(uname -m)"
+        [[ $name == *-arm64 ]] || die "an arm64 guest's name ends in -arm64, not '$name'"
+        tools=(zpool zfs debootstrap qemu-img qemu-system-aarch64 losetup sfdisk mkfs.ext4 mkfs.fat mkswap openssl ssh-keygen) ;;
+    *) die "--arch takes amd64 or arm64, not '$arch'" ;;
+esac
 [[ $EUID -eq 0 ]] || die "must run as root"
-for t in zpool zfs debootstrap qemu-img qemu-system-x86_64 losetup sfdisk mkfs.ext4 mkswap openssl ssh-keygen; do
+for t in "${tools[@]}"; do
     command -v "$t" >/dev/null || die "needs $t"
 done
 [[ -s $KEYRING ]] || die "no $KEYRING (debian-archive-keyring)"
@@ -109,23 +135,38 @@ trap cleanup EXIT
 
 truncate -s "$DISK_SIZE" "$raw"
 dev=$(losetup --find --show --partscan "$raw")
+if [[ $arch == arm64 ]]; then
+    # GPT, the ESP first; 6A898CC3-...: the Solaris /usr type OpenZFS's
+    # own partitioning (zpool create on a whole disk) gives a pool's vdev.
+    sfdisk -q "$dev" <<EOF
+label: gpt
+size=512MiB, type=uefi
+size=$BOOT_SIZE, type=linux
+size=$SWAP_SIZE, type=swap
+type=6A898CC3-1DD2-11B2-99A6-080020736631
+EOF
+    esp=${dev}p1 bootp=${dev}p2 swapp=${dev}p3 zfsp=${dev}p4
+else
 sfdisk -q "$dev" <<EOF
 label: dos
 size=$BOOT_SIZE, type=83, bootable
 size=$SWAP_SIZE, type=82
 type=bf
 EOF
+    esp="" bootp=${dev}p1 swapp=${dev}p2 zfsp=${dev}p3
+fi
 udevadm settle
-for _ in 1 2 3 4 5; do [[ -e ${dev}p3 ]] && break; sleep 1; done
-mkfs.ext4 -q -F "${dev}p1"
-mkswap -q "${dev}p2"
+for _ in 1 2 3 4 5; do [[ -e $zfsp ]] && break; sleep 1; done
+mkfs.ext4 -q -F "$bootp"
+mkswap -q "$swapp"
+[[ -z $esp ]] || mkfs.fat -F 32 -n EFI "$esp" >/dev/null
 mkdir -p "$root"
 # The guide's pool, with trixie's OpenZFS 2.3 features only (the guest's).
 zpool create -t "$temp" -o ashift=12 -o autotrim=on -o cachefile=none \
     -o compatibility=openzfs-2.3-linux \
     -O acltype=posixacl -O xattr=sa -O dnodesize=auto -O compression=lz4 \
     -O normalization=formD -O relatime=on -O canmount=off -O mountpoint=/ \
-    -R "$root" "$POOL" "${dev}p3"
+    -R "$root" "$POOL" "$zfsp"
 imported=yes
 zfs create -o canmount=off -o mountpoint=none "$temp/ROOT"
 zfs create -o canmount=noauto -o mountpoint=/ "$temp/ROOT/debian"
@@ -143,11 +184,17 @@ zfs create "$temp/srv"
 zfs create -o canmount=off "$temp/usr"
 zfs create "$temp/usr/local"
 mkdir "$root/boot"
-mount -t ext4 "${dev}p1" "$root/boot"
+mount -t ext4 "$bootp" "$root/boot"
+if [[ -n $esp ]]; then
+    mkdir "$root/boot/efi"
+    mount -t vfat "$esp" "$root/boot/efi"
+fi
 
 # --- Debian -------------------------------------------------------------------------
 echo "debootstrap $SUITE from $MIRROR"
-debootstrap --force-check-sig --keyring="$KEYRING" --components=main,contrib \
+darch=()
+[[ $arch == amd64 ]] || darch=(--arch=arm64)
+debootstrap --force-check-sig --keyring="$KEYRING" --components=main,contrib "${darch[@]}" \
     "$SUITE" "$root" "$MIRROR" >"$work_dir/debootstrap.log" 2>&1 ||
     die "debootstrap failed; see $work_dir/debootstrap.log"
 rm -f "$root/etc/apt/sources.list"
@@ -178,21 +225,34 @@ uuid() { blkid -s UUID -o value "$1"; }
 {
     echo "# Written by BackOtter's make-debian-zfs.sh.  / and the rest are ZFS"
     echo "# datasets in rpool, which mount themselves."
-    echo "UUID=$(uuid "${dev}p1") /boot ext4 defaults 0 2"
-    echo "UUID=$(uuid "${dev}p2") none swap sw 0 0"
+    echo "UUID=$(uuid "$bootp") /boot ext4 defaults 0 2"
+    [[ -z $esp ]] || echo "UUID=$(uuid "$esp") /boot/efi vfat umask=0077 0 1"
+    echo "UUID=$(uuid "$swapp") none swap sw 0 0"
 } >"$root/etc/fstab"
 # zfs-dkms's build at kernel updates needs room too, in 2 GB.
 echo "options zfs zfs_arc_max=536870912" >"$root/etc/modprobe.d/zfs.conf"
 
 echo "Installing the kernel, OpenZFS (zfs-dkms builds its module), GRUB, sshd"
 in_root apt-get -q update >/dev/null
+if [[ $arch == arm64 ]]; then
+    # GRUB's later upgrades (grub-install in the guest) keep the fallback
+    # path too, and write no NVRAM entry: vm-run's variable store is fresh.
+    printf '%s\n' "grub-efi-arm64 grub2/force_efi_extra_removable boolean true" \
+        "grub-efi-arm64 grub2/update_nvram boolean false" | in_root debconf-set-selections
+    kpkgs=(linux-image-arm64 linux-headers-arm64) grub_pkgs=(grub-efi-arm64 dosfstools)
+else
 # GRUB goes onto the loop device below; the guest's own disk afterwards.
 echo "grub-pc grub-pc/install_devices multiselect" | in_root debconf-set-selections
+    kpkgs=(linux-image-amd64 linux-headers-amd64) grub_pkgs=(grub-pc)
+fi
 # zstd: initramfs-tools compresses with it, and lsinitramfs reads it with it.
-in_root apt-get -y -q install zstd linux-image-amd64 linux-headers-amd64 >/dev/null
+in_root apt-get -y -q install zstd "${kpkgs[@]}" >/dev/null
 in_root apt-get -y -q install zfs-dkms zfsutils-linux zfs-zed zfs-initramfs \
-    grub-pc openssh-server dbus python3 os-prober- >"$work_dir/apt-zfs.log" 2>&1 ||
-    die "installing OpenZFS and GRUB failed; see $work_dir/apt-zfs.log"
+    "${grub_pkgs[@]}" openssh-server dbus python3 os-prober- >"$work_dir/apt-zfs.log" 2>&1 || {
+    # The module build's own log is in the chroot, which the cleanup deletes.
+    cat "$root"/var/lib/dkms/zfs/*/build/make.log >"$work_dir/dkms-make.log" 2>/dev/null || true
+    die "installing OpenZFS and GRUB failed; see $work_dir/apt-zfs.log (and dkms-make.log)"
+}
 kver=$(ls "$root/lib/modules" | sort -V | tail -n 1)
 compgen -G "$root/lib/modules/$kver/updates/dkms/zfs.ko*" >/dev/null ||
     die "zfs-dkms built no module for $kver; see $work_dir/apt-zfs.log"
@@ -258,9 +318,13 @@ WantedBy=multi-user.target
 EOF
 in_root systemctl enable bko-first-boot.service >/dev/null 2>&1
 
-# The bootloader, with a serial console.
-sed -i -e 's|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT="console=tty0 console=ttyS0,115200n8"|' \
+# The bootloader, with a serial console (arm64: the firmware's console is
+# the serial port already, so GRUB's own is).
+tty=ttyS0
+[[ $arch == amd64 ]] || tty=ttyAMA0
+sed -i -e "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"console=tty0 console=$tty,115200n8\"|" \
     -e "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"root=ZFS=$POOL/ROOT/debian\"|" "$root/etc/default/grub"
+[[ $arch == arm64 ]] ||
 printf '%s\n' 'GRUB_TERMINAL="console serial"' 'GRUB_SERIAL_COMMAND="serial --unit=0 --speed=115200"' \
     >>"$root/etc/default/grub"
 { in_root update-initramfs -u -k all || in_root update-initramfs -c -k all; } >"$work_dir/initramfs.log" 2>&1 ||
@@ -268,10 +332,18 @@ printf '%s\n' 'GRUB_TERMINAL="console serial"' 'GRUB_SERIAL_COMMAND="serial --un
 # grep reads it all: grep -q stops at the first match, and the SIGPIPE that
 # kills lsinitramfs's zstd fails the pipe under pipefail.
 in_root lsinitramfs "/boot/initrd.img-$kver" | grep '/zfs\.ko' >/dev/null || die "the initramfs has no zfs module"
+if [[ $arch == arm64 ]]; then
+    # Debian's --force-extra-removable: EFI/debian and EFI/BOOT/BOOTAA64.EFI.
+    in_root grub-install --target=arm64-efi --efi-directory=/boot/efi --bootloader-id=debian \
+        --no-nvram --force-extra-removable
+    [[ -f $root/boot/efi/EFI/BOOT/BOOTAA64.EFI ]] || die "grub-install left no EFI/BOOT/BOOTAA64.EFI"
+else
 in_root grub-install --target=i386-pc "$dev"
+fi
 in_root update-grub
 grep -q "root=ZFS=$POOL/ROOT/debian" "$root/boot/grub/grub.cfg" || die "grub.cfg doesn't boot root=ZFS=$POOL/ROOT/debian"
 # Later grub-pc upgrades, in the guest, install to its disk.
+[[ $arch == arm64 ]] ||
 echo "grub-pc grub-pc/install_devices multiselect /dev/vda" | in_root debconf-set-selections
 
 # systemd-resolved last: it makes /etc/resolv.conf its stub, which the
@@ -293,14 +365,25 @@ trap - EXIT
 
 # --- First boot -----------------------------------------------------------------------
 echo "First boot: the pool's cache file; the console goes to $work_dir/firstboot-serial.log"
+if [[ $arch == arm64 ]]; then
+    # Through vm-run (virt, AAVMF without Secure Boot, its pinning and
+    # job_slice), as the guest boots from now on.
+    echo "--uefi --no-secure-boot" >vm-run-options
+    port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    SSH_PORT=$port timeout "$FIRST_BOOT_TIMEOUT" "$here/vm-run" --uefi --no-secure-boot --memory "$MEMORY" \
+        --serial-log firstboot-serial.log "$disk" -- -no-reboot ||
+        die "the first boot failed or timed out; see firstboot-serial.log"
+else
 timeout "$FIRST_BOOT_TIMEOUT" qemu-system-x86_64 \
     -enable-kvm -cpu host -smp 2 -m "$MEMORY" -machine pc \
     -drive "file=$disk,if=virtio,format=qcow2" \
     -nic user,ipv6=off,model=virtio-net-pci \
     -display none -serial file:firstboot-serial.log -monitor none -no-reboot ||
     die "the first boot failed or timed out; see firstboot-serial.log"
+fi
 grep -q 'bko-first-boot: done' firstboot-serial.log || die "the first boot didn't finish; see firstboot-serial.log"
 
 qemu-img snapshot -c fresh-install "$disk"
 chown "$owner": "$disk" root-password id_ed25519 id_ed25519.pub debootstrap.log apt-zfs.log firstboot-serial.log
+[[ ! -e vm-run-options ]] || chown "$owner": vm-run-options
 echo "Done: $disk ($(du -h "$disk" | cut -f1) on disk), snapshot \"fresh-install\""

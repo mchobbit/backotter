@@ -73,7 +73,12 @@ EXPECTED = [
     "root/.bash_history", "root/.cache/*", "root/.lesshst", "root/.ssh/known_hosts",
     "root/.config/*", "root/.local/state/*", "root/.local/share/*",
     "tmp/*", "var/tmp/*", "var/cache/*", "var/crash/*", "var/log/*", "var/spool/*", "var/backups/*",
-    "var/lib/*", "var/db/dhcpcd/*", "var/snap/*", "swap.img", "swapfile", "swap/*", "mnt/bs1-backup",
+    "var/lib/*", "var/db/dhcpcd/*", "var/snap/*",
+    # Zorin OS 18 has a real /var/lock (no link to /run/lock), and alsactl
+    # writes its PID into asound.state.lock and card0.lock there at every
+    # boot (zorin-18-20261116-181641).
+    "var/lock/*",
+    "swap.img", "swapfile", "swap/*", "mnt/bs1-backup",
     # systemd-swap's swapFC files (BigLinux: its own @swapfile subvolume,
     # mounted at /swapfile), in use at backup time and written anew by
     # systemd-swap at every boot (docs/design/biglinux.md, BL6).

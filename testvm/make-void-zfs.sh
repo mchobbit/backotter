@@ -61,10 +61,12 @@
 # -O acltype=posixacl -O xattr=sa -O relatime=on -o autotrim=on
 # -o compatibility=openzfs-2.3-linux -m none zroot; zroot/ROOT
 # (mountpoint=none), zroot/ROOT/void (mountpoint=/, canmount=noauto),
-# zroot/home (/home), bootfs=zroot/ROOT/void, no zpool.cache.  A random
-# host ID per build (zgenhostid -o, never the host's own /etc/hostid), in
-# /etc/hostid.  Void's base-system with its default kernel (linux) and its
-# headers, zfs (DKMS), dracut with the guide's zol.conf, efibootmgr;
+# zroot/home (/home), bootfs=zroot/ROOT/void, no zpool.cache.  The guide's
+# fixed host ID, zgenhostid 0x00bab10c (never the host's own /etc/hostid),
+# in /etc/hostid: ZFSBootMenu's release image hands every BE
+# spl.spl_hostid=0x00bab10c, so the guest's hostid then says the same.
+# Void's base-system with its default kernel (linux) and its headers, zfs
+# (DKMS), dracut with the guide's zol.conf, efibootmgr;
 # rc.conf's keymap and clock, glibc's en_US.UTF-8 locale.
 # org.zfsbootmenu:commandline="loglevel=4 console=tty0 console=ttyS0,115200n8"
 # on zroot/ROOT, so every BE's kernel talks on the serial port.  ZBM's image
@@ -241,8 +243,10 @@ partprobe "$dev" 2>/dev/null || blockdev --rereadpt "$dev" 2>/dev/null || true
 udevadm settle
 for _ in 1 2 3 4 5; do [[ -e ${dev}p2 ]] && break; sleep 1; done
 [[ -b ${dev}p1 && -b ${dev}p2 ]] || die "no partitions on $dev"
-# The guest's own host ID, never this host's /etc/hostid.
-zgenhostid -o "$scratch/hostid"
+# The guide's host ID (zgenhostid -f 0x00bab10c), written to scratch, never
+# to this host's /etc/hostid.
+zgenhostid -o "$scratch/hostid" 0x00bab10c
+[[ $(od -An -tx1 "$scratch/hostid" | tr -d ' \n') == 0cb1ba00 ]] || die "zgenhostid didn't write 0x00bab10c"
 mkdir -p "$root"
 # --encrypt: the guide's encryption, with a new passphrase, its key loaded
 # from a copy in scratch while the pool is built (the guide's
@@ -576,6 +580,7 @@ kill "$qemu_pid" 2>/dev/null || true
 wait "$qemu_pid" 2>/dev/null || true
 fact() { awk -v h="+ $1" '$0 == h { f = 1; next } f && /^\+ / { exit } f' first-boot.txt; }   # CMD's output there
 [[ $(fact 'cat /etc/bko-be') == void ]] || die "the check boot isn't in BE void; see first-boot.txt"
+[[ $(fact hostid) == 00bab10c ]] || die "the check boot's hostid isn't 00bab10c; see first-boot.txt"
 [[ $(fact 'uname -r') == "$mkver" ]] || die "the check boot didn't run the newer kernel ($mkver); see first-boot.txt"
 grep -Eq "(^| )root=zfs:$POOL/ROOT/void( |$)" first-boot.txt || die "/proc/cmdline has no root=zfs:$POOL/ROOT/void"
 current=$(awk '$1 == "BootCurrent:" { print $2 }' first-boot.txt)

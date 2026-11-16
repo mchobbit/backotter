@@ -83,7 +83,7 @@ are to local `main` at d5e8686 plus the uncommitted tree.
 | Step | ZBM's Void UEFI guide | `void-zbm` |
 |---|---|---|
 | Live system | hrmpf, a Void-based rescue ISO | **the build host itself**, as `make-chimera-zfs.sh` does (Decision 1) |
-| Host ID | `zgenhostid -f 0x00bab10c`, copied to `/etc/hostid` | `zgenhostid` with a random ID per build; `/etc/hostid` copied in. (Z1: the guide's 0x00bab10c is not only a placeholder: ZBM's release image passes `spl.spl_hostid=0x00bab10c` to every BE. See "What Z1 found".) |
+| Host ID | `zgenhostid -f 0x00bab10c`, copied to `/etc/hostid` | **the guide's: `zgenhostid 0x00bab10c`** into `/etc/hostid` (the user's choice, 2026-11-16; Z1-Z8 ran with a random ID per build). ZBM's release image passes `spl.spl_hostid=0x00bab10c` to every BE, so `hostid` now agrees with the ZFS module. See "What Z1 found". |
 | Disk | GPT: p1 ESP `1m:+512m` type `ef00`; p2 pool `0:-10m` type `bf00` | the same on a 16G disk (`/dev/vda1`, `vda2`) |
 | Pool | `zpool create -f -o ashift=12 -O compression=lz4 -O acltype=posixacl -O xattr=sa -O relatime=on -o autotrim=on -o compatibility=openzfs-2.3-linux -m none zroot DEV` | **as written**. `openzfs-2.3-linux` matters here: the hosts' OpenZFS 2.3.9 can then import and write the pool (vm-mount, the build), the rescue's 2.4.1 too, and ZBM 3.1.0's 2.4.0 too |
 | Encrypted | adds `-O encryption=aes-256-gcm -O keylocation=file:///etc/zfs/zroot.key -O keyformat=passphrase`; `/etc/zfs/zroot.key` (mode 000) holds the passphrase; copied into the BE; dracut `install_items+=" /etc/zfs/zroot.key "`; `zfs set org.zfsbootmenu:keysource="zroot/ROOT/${ID}" zroot` | `void-zbm-enc`, as written; the passphrase random per build, in `vms/void-zbm-enc/zfs-passphrase` (mode 600, no newline), never in the repo |
@@ -532,8 +532,15 @@ that is honest, and expected. HoltTest1's restore still runs
   placeholder (as "What the guide does" says): it is the hostid ZBM's
   release image hands every BE. With a random `/etc/hostid`, the guest's
   ZFS module runs as 0x00bab10c while `hostid` says 0x1e3c938e. It boots
-  and imports. Whether the builder should use the guide's 0x00bab10c
-  instead is for the user; the builder keeps the random one, as approved.
+  and imports. On 2026-11-16 the user chose the guide's 0x00bab10c: the
+  builder now writes it (`zgenhostid 0x00bab10c`), and its check boot
+  fails unless `hostid` prints 00bab10c. Both guests were rebuilt with it
+  on Chopin and copied to Cinqcent (void-zbm qcow2 `d3437cd7…`,
+  void-zbm-enc `b6bf35c4…`, the same on both hosts): `hostid` 00bab10c,
+  `/etc/hostid` `0c b1 ba 00`. Run z9a (bko-holt c6f179fb, rel9
+  archivers): HoltTest1 PASS for both guests on both hosts, and SticTest1
+  void-zbm 29 PASS, 4 LIMIT, 0 FAIL on both, as in Z6. The golden plans
+  are unchanged: their hostids are redacted.
 
 **MEMORY** (*check* settled): **2048 is enough**. With 2048 MB it boots
 both BEs, and the forced DKMS build above leaves at least 1.0 GiB

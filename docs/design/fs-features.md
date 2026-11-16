@@ -1,6 +1,8 @@
 # File-system feature sets on restore: audit and plan (2026-11-14)
 
-Status: **approved 2026-11-14 as recommended (F1–F3; the read-back is printed in plans; rocky10-raid5+img before the fix).** Being built.
+Status: **approved 2026-11-14 as recommended (F1–F3; the read-back is printed in plans; rocky10-raid5+img before the fix).** Built in 8c0d005.  Proven from the
+image's real tools on four hosts (step 2 below: 22 runs PASS, two per guest, and
+one failure on a stale guest; 2026-11-16).
 
 The rule (memory `one-kernel-rescue`): the Linux rescue image keeps one newest
 kernel and OpenZFS, and restore makes each file system with the source's feature
@@ -134,6 +136,46 @@ bitten today's image.  `lts_6.18.conf` lists what `-c options=` turns on, not wh
 mkfs does by default.  F1 still lands, because xfsprogs' for-next carries "mkfs:
 enable new features by default" (parent pointers and exchange-range).  The next
 xfsprogs the image takes would then turn them on for every source without them.
+
+**Step 2 result (2026-11-14 and 2026-11-16): 22 runs PASS, two per guest on
+two hosts.  One more run failed on a stale guest, not on a file system.**  The images weren't rebuilt in
+time: the rebuild waits for a clean `holt/src`.  So the proof image is a
+private `make-img.sh --test` build, `dev.20261114.1b5c64e.dirty`, made from
+the shipped image's own casper files: the same base, kernel 7.0, mkfs tools
+and rustic-bko.  Its only change is `/usr/local/bin/bko-holt`, which is
+HoltTest2's 0.2.6 Linux build at 1edb4b5 (sha256 dbdb5ae8…, which contains
+8c0d005).  It is pinned at `/bkoscratch/fsf-t2/img-pin/linux` on each host,
+and its HoltTest1 `img` runs (fsf1, fsf2) write to that private
+`T2_HOST_ROOT`'s ledger, so no shipped image is credited with them.
+
+| Guest | Runs (host) | Formats read back |
+|---|---|---|
+| rocky10-raid5 | PASS (chopin), PASS (cinqcent) | XFS on md, XFS on LVM on md |
+| rocky10 | PASS (chopin), PASS (cage) | 2 XFS, swap |
+| alpine324 | PASS (chopin), PASS (copland) | ext4, XFS, swap |
+| debian12 | PASS (chopin), PASS (cinqcent) | ext4 ×2, swap |
+| debian13-stack | PASS (copland), PASS (cage) | ext4 ×2, FAT, XFS on LUKS+LVM+md, swap |
+| ubuntu24 | PASS (cinqcent), PASS (copland) | ext4, swap (ZFS pool: the dumps agree) |
+| nixos2605 | PASS (chopin), PASS (cage) | ext4, swap |
+| aerynos | PASS (copland), PASS (cage) | F2FS, FAT ×2, swap |
+| zorin18 | PASS (chopin), PASS (cinqcent) | NILFS2, ext4, swap |
+| cachyos | PASS (chopin), PASS (copland) | JFS, ext4, swap |
+| mx25 | PASS (chopin), PASS (cinqcent) | ext2, ext4, swap |
+
+Every format in every run was followed by a passing read-back.  The load
+logs show `DEV: read back as the source's` after each filesystem and swap
+area.  Each mkfs.xfs named the features that are off, as in rocky10's
+`metadir=0 … exchange=0,maxpct=25 … parent=0`.  The exception was
+alpine324 on Cinqcent: format and its read-back passed and the files agreed,
+but its health check found no `findmnt`.  Cinqcent's alpine324 guest is a
+stale copy (2026-11-08), while Chopin's was refreshed on 2026-11-14.  That
+is a guest refresh, not a file-system difference, so the second alpine324
+run went to Copland, which passed.
+
+Not covered: bcachefs, whose only panel guest (nixos2605) is ext4 here, and
+step 3.  The read-back's bcachefs branch is covered by its unit tests.
+Step 3 is the next HoltTest2 round, and the rescue-images session runs it
+before it promotes 0.2.6.
 
 ## Coordination and docs
 

@@ -432,8 +432,9 @@ Test2's cells are planned and ready: `t2 plan` lists `stic:oi2610`,
   bko-holt 0.2.6 at holt-bin 1628af3, rel9.
   - It was pinned under a private `T2_HOST_ROOT=/bkoscratch/oi-pin`, so
     Test2's own pin wasn't touched.
-  - `oi2610` passed as `o6img2`, the image's own bko-holt and rustic-bko
-    doing the load.
+  - `oi2610` passed as `o6img2` on Chopin, and as `o7img-oi` on
+    cinqcent once the image was there too. The image's own bko-holt and
+    rustic-bko did the load.
   - Its first run, `o6img`, failed only on boot state and on 21 mount
     fields, because the check came too early. ht1-bsd.sh's illumos
     `BOOTSTATE` waited only while a service was in transition (`*`), not

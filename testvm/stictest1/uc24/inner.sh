@@ -93,7 +93,9 @@ PY
 extfeat() { tune2fs -l "$1" | sed -n 's/^Filesystem features: *//p' | tr ' ' '\n' | grep -v -e '^needs_recovery$' -e '^orphan_present$' -e '^$' | sort | tr '\n' ' '; echo; }
 extgeo() { tune2fs -l "$1" | grep -E '^(Inode size|Block size|Default mount options|Flex block group size|Default directory hash|Filesystem flags):' | tr -s ' ' | paste -sd';'; }
 extid() { tune2fs -l "$1" | sed -n 's/^\(Filesystem UUID\|Directory Hash Seed\): *//p' | paste -sd' '; }   # DEV: "UUID HASHSEED"
-mopts() { findmnt -n -o OPTIONS "$1" | tr , '\n' | grep -vE '^(relatime|noatime|strictatime|atime|ro|rw)$' | paste -sd,; }
+# "(none)" where only rw and the atime option are left (ubuntu-boot's
+# rw,relatime): the judge reads an empty record as a probe that failed.
+mopts() { local o; o=$(findmnt -n -o OPTIONS "$1" | tr , '\n' | grep -vE '^(relatime|noatime|strictatime|atime|ro|rw)$' | paste -sd,); echo "${o:-(none)}"; }
 fullopts() { findmnt -n -o OPTIONS "$1" | tr , '\n' | grep -vE '^(rw|ro)$' | paste -sd,; }
 atimeopt() { findmnt -n -o OPTIONS "$1" | tr , '\n' | grep -E '^(relatime|noatime|strictatime)$' | head -1; }
 FATG=$(fatgeom "${GDEV[seed]}")

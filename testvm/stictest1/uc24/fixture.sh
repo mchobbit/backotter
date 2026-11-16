@@ -209,8 +209,13 @@ try setfattr -n user.binary -v 0x00ff10fe7f00 "$T/xattr-file"
 try setfattr -n user.empty -v "" "$T/xattr-file"
 try setfattr -n trusted.backotter -v root-only "$T/xattr-file"
 try setfattr -n security.bko -v sec-value "$T/xattr-file"
-for i in $(seq 1 40); do setfattr -n "user.many$i" -v "v$i" "$T/xattr-file" 2>/dev/null || skip "user.many$i"; done
-touch "$T/xattr-large"; try setfattr -n user.large -v "$(head -c 3000 /dev/zero | tr '\0' x)" "$T/xattr-large"
+# Sized to the file system: ext4 without ea_inode keeps a file's xattrs in
+# its inode and one block, so ubuntu-save's 1 KiB blocks hold some 30 of the
+# many (40 on 4 KiB) and no value over ~900 bytes (3000 on 4 KiB).
+XBS=$(stat -f -c %S "$T")
+if [[ $FS == ext4 && $XBS -lt 4096 ]]; then XMANY=20 XLARGE=$(( XBS - 128 )); else XMANY=40 XLARGE=3000; fi
+for i in $(seq 1 $XMANY); do setfattr -n "user.many$i" -v "v$i" "$T/xattr-file" 2>/dev/null || skip "user.many$i"; done
+touch "$T/xattr-large"; try setfattr -n user.large -v "$(head -c $XLARGE /dev/zero | tr '\0' x)" "$T/xattr-large"
 mkdir -p "$T/xattr-dir"; try setfattr -n user.dir -v d "$T/xattr-dir"; try setfattr -n trusted.dir -v t "$T/xattr-dir"
 ln -sfn xattr-file "$T/xattr-symlink"; try setfattr -h -n trusted.link -v l "$T/xattr-symlink"
 

@@ -426,6 +426,9 @@ elif [[ $distro == guix ]]; then
     herd start avahi-daemon
 else
     allow_root_key_login
+    # sshd -t, and sshd itself, stop without its privilege separation
+    # directory, which only the service's own start makes on Debian and Ubuntu.
+    mkdir -p /run/sshd
     "$(command -v sshd || echo /usr/sbin/sshd)" -t
     start_service ssh sshd
     echo "== mDNS, for $SOURCE_HOST.local"

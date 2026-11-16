@@ -303,13 +303,14 @@ class HostTest2(unittest.TestCase):
 
 FAKE_SSH = r'''#!/bin/bash
 # a fake ssh: the "remote" is this machine, its HOME the test's; the command is logged.
-while [[ $1 == -o ]]; do shift 2; done
+while [[ $1 == -o || $1 == -l ]]; do shift 2; done   # (GNU rsync passes USER@ as -l USER)
 host=$1; shift
 printf '%s\n' "$*" >>"$A6T/ssh.log"
 export HOME=$A6T/home PATH=$A6T/bin:$PATH
 case "$*" in
     *"a6-stages.sh --dry-run"*) echo "DRY-RUN-PLAN $*"; exit 0 ;;
 esac
+cd "$HOME" || exit 255   # (as ssh's: rsync's remote paths are the home's)
 exec bash -c "$*"
 '''
 STUBS = {
@@ -410,6 +411,38 @@ class Driver(unittest.TestCase):
             self.assertEqual(p.returncode, 2, bad)
             self.assertIn("needs a value", p.stderr, bad)
 
+    def test_fetch_takes_out_t2_and_never_the_runs_own_t2(self):
+        # (its excludes are anchored: an unanchored t2/ also dropped out/t2, the Test2 candidates)
+        t = rd(self.repo, "testvm", "arm64", "a6-run.sh")
+        self.assertIn("--exclude='/tree/' --exclude='/bins/' --exclude='/t2/'", t)
+        self.assertNotRegex(t, r"--exclude='(tree|bins|t2)/'")
+        if not shutil.which("rsync"):
+            self.skipTest("no rsync here")
+        run = os.path.join(self.t, "home", "backotter-work", "a6-run", "f1")
+        files = {"runner.log": "log\n", "summary.txt": "sum\n", "state": "done\n", "logs/preflight.log": "pf\n",
+                 "expect/expect.tsv": "e\n", "out/t2/corpus-arm64.patch": "patch\n", "out/t2/limits-candidates.json": "{}\n",
+                 "out/holt/debian13-arm64/report.txt": "RESULT: PASS\n",
+                 "t2/h1-raw/debian13-arm64/src.json": "raw\n", "t2/records/a6-f1/debian13-arm64/dumps/src.json": "raw\n",
+                 "t2/img-pin/linux-arm64/rescuer.img.sha256": "x\n", "bins/linux-arm64/rustic-bko": "bin\n",
+                 "tree/file.txt": "tree\n", "other.txt": "not listed\n"}
+        for rel, text in files.items():
+            os.makedirs(os.path.dirname(os.path.join(run, rel)), exist_ok=True)
+            with open(os.path.join(run, rel), "w") as f:
+                f.write(text)
+        os.chmod(os.path.join(run, "t2"), 0o700)
+        mac = os.path.join(self.t, "mac")
+        env = dict(os.environ, A6T=self.t, HOME=mac, PATH=os.path.join(self.t, "bin") + os.pathsep + os.environ["PATH"])
+        p = subprocess.run(["/bin/bash", os.path.join(self.repo, "testvm", "arm64", "a6-run.sh"), "--fetch", "f1"],
+                           capture_output=True, text=True, env=env, timeout=120, cwd=self.repo)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        got = os.path.join(mac, "backotter-work", "a6-run", "f1")
+        have = sorted(os.path.relpath(os.path.join(d, n), got) for d, _, ns in os.walk(got) for n in ns)
+        self.assertEqual(have, sorted(["runner.log", "summary.txt", "state", "logs/preflight.log", "expect/expect.tsv",
+                                       "out/t2/corpus-arm64.patch", "out/t2/limits-candidates.json",
+                                       "out/holt/debian13-arm64/report.txt"]))
+        for d in ("t2", "bins", "tree"):
+            self.assertFalse(os.path.exists(os.path.join(got, d)), d)
+
     def test_latest_is_the_last_started_not_the_last_by_name(self):
         base = os.path.join(self.t, "home", "backotter-work", "a6-run")
         for n, t in (("a6stop2", 1000), ("20261116-150000", 2000), ("dry-x", 3000)):
@@ -431,6 +464,21 @@ class Driver(unittest.TestCase):
         p = self.run_("--stamp", "zz9", "--no-batch-check", "--only", "stic:alpine324-arm64")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertEqual(rd(self.t, "home", "backotter-work", "a6-run", ".latest").strip(), "zz9")
+
+    def test_from_run_is_passed_on_for_a_run_with_its_results(self):
+        # (a rerun of failed stages: t2:corpus takes an earlier run's 1ARM results)
+        for bad in (["--from-run"], ["--from-run", "-x"], ["--from-run", "a/b"], ["--from-run", "s9", "--stamp", "s9"]):
+            p = self.run_(*bad)
+            self.assertEqual(p.returncode, 2, bad)
+        self.assertEqual(self.log("ssh.log"), "", "nothing reaches the host on a usage error")
+        p = self.run_("--stamp", "s2", "--no-batch-check", "--only", "t2:corpus", "--from-run", "r0")
+        self.assertEqual(p.returncode, 1, "no run r0 with out/holt on the host")
+        self.assertIn("--from-run r0", p.stderr)
+        self.assertEqual(self.log("sudo.log"), "")
+        os.makedirs(os.path.join(self.t, "home", "backotter-work", "a6-run", "r0", "out", "holt"))
+        p = self.run_("--stamp", "s3", "--no-batch-check", "--only", "t2:corpus", "--from-run", "r0")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("a6-stages.sh --run a6-run/s3 --only t2:corpus --from-run r0", self.log("sudo.log"))
 
 
 def fake_forks(git, versions=("0.19.1+backotter.7", "0.11.4+backotter.13", "0.13.0+backotter.12")):
@@ -671,9 +719,178 @@ class Stages(unittest.TestCase):
         for a in (["--skip", "preflight"], ["--skip", "final"], ["--only", "nosuch"], ["--img-guests", "debian13"], ["--bogus"]):
             self.assertEqual(self.sel(*a)[0], 2, a)
 
+    def test_from_run_takes_no_holt_stage(self):
+        rc, on, err = self.sel("--only", "t2:corpus", "--from-run", "20261116-161412")
+        self.assertEqual((rc, on), (0, ["preflight", "t2:corpus", "final"]), err)
+        for a in (["--from-run", "r0"], ["--only", "1ARM,t2", "--from-run", "r0"], ["--only", "t2", "--from-run", "a/b"],
+                  ["--only", "t2", "--from-run", "x1"]):
+            rc, _, err = self.sel(*a)
+            self.assertEqual(rc, 2, a)
+        self.assertEqual(self.sel("--only", "img,t2", "--from-run", "r0")[0], 0, "+img stages aren't 1ARM's")
+
+    def test_the_plan_names_rustups_cargo(self):
+        p = subprocess.run(["bash", os.path.join(TESTVM, "arm64", "a6-stages.sh"), "--dry-run", "--run", "/nonexistent/x1", "--only", "t2"],
+                           capture_output=True, text=True, timeout=120, env=dict(os.environ, HOME=tempfile.gettempdir()))
+        self.assertIn("~/.cargo/bin/cargo (rustup's)", p.stdout)
+        self.assertNotIn("cargo +", p.stdout)
+
+    def test_bins_relative_to_backotter_work(self):
+        # (as a6-run.sh's expectations read --bins: absolute, ~/..., or relative to ~/backotter-work)
+        home = tempfile.mkdtemp(prefix="a6-bins-")
+        self.addCleanup(shutil.rmtree, home, True)
+        for d in (os.path.join(home, "backotter-work", "rel", "linux-arm64"), os.path.join(home, "tilde", "linux-arm64")):
+            os.makedirs(d)
+            for n in ("rustic-bko", "restic-bko", "bko-holt"):
+                with open(os.path.join(d, n), "w") as f:
+                    f.write("x\n")
+        for given, want in (("rel", os.path.join(home, "backotter-work", "rel")), ("~/tilde", os.path.join(home, "tilde")),
+                            (os.path.join(home, "tilde"), os.path.join(home, "tilde"))):
+            p = subprocess.run(["bash", os.path.join(TESTVM, "arm64", "a6-stages.sh"), "--dry-run", "--run", "/nonexistent/x1",
+                                "--only", "stic:debian13-arm64", "--bins", given],
+                               capture_output=True, text=True, timeout=120, cwd="/", env=dict(os.environ, HOME=home))
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            self.assertIn(f"; bins {want};", p.stdout, given)
+            self.assertRegex(p.stdout, r"(?m)^   archivers +linux-arm64 $", given)
+
     def test_a_value_option_last_is_a_usage_error(self):
-        for o in ("--run", "--only", "--skip", "--bins", "--img", "--img-guests"):
+        for o in ("--run", "--only", "--skip", "--bins", "--img", "--img-guests", "--from-run"):
             p = subprocess.run(["bash", os.path.join(TESTVM, "arm64", "a6-stages.sh"), "--list", o],
                                capture_output=True, text=True, timeout=20)
             self.assertEqual(p.returncode, 2, o)
             self.assertIn("needs a value", p.stderr, o)
+
+
+# t2:corpus's body against stubs: collect-dumps.sh, hosts.sh's hosts_rust_env, rustup's cargo
+# and rustup in a fake ~/.cargo/bin (the real body runs PATH's /usr/bin first, where Debian's
+# cargo has no +toolchain: run 20261116-161412's failure).
+CORPUS_STUBS = {
+    "testvm/test2/h1/collect-dumps.sh": r'''#!/bin/bash
+printf '%s\n' "$*" >>"$A6T/collect.log"
+out="" src="" recs="" scan=""
+while [[ $# -gt 0 ]]; do case $1 in --out) out=$2;; --sources) src=$2;; --records) recs=$2;; --scan) scan=$2;; esac; shift 2; done
+if [[ -n $scan ]]; then (cd "$scan" && find . -type f | LC_ALL=C sort) >"$A6T/scanned.txt"; exit "${SCAN_RC:-0}"; fi
+ls -l "$recs" >"$A6T/records.txt"
+printf 'guest\thost\trun\n' >"$out/provenance.tsv"
+while read -r g; do
+    for r in "$recs"/*/; do
+        [[ -f $r/$g/dumps/src.json ]] || continue
+        mkdir -p "$out/$g"; cp "$r/$g/dumps/src.json" "$out/$g/src.json"; printf '%s\tbigfoot\t%s\n' "$g" "$(basename "$r")" >>"$out/provenance.tsv"
+    done
+done <"$src"
+''',
+    "testvm/hosts.sh": r'''hosts_rust_env() {
+    echo "$1" >"$A6T/rust-env.host"
+    [[ -n ${RUSTUP_HOME:-} ]] || export RUSTUP_HOME=/fake/rustup
+    [[ -n ${CARGO_HOME:-} ]] || export CARGO_HOME=/fake/cargo
+}
+''',
+    "home/.cargo/bin/rustup": '#!/bin/bash\nprintf "%s\\n" "$*" >>"$A6T/rustup.log"\n[[ "$*" == "run 1.94.1 rustc -V" ]] && echo "rustc 1.94.1"\n',
+    "home/.cargo/bin/cargo": r'''#!/bin/bash
+printf '%s | %s %s %s %s %s\n' "$*" "$RUSTUP_TOOLCHAIN" "$RUSTUP_HOME" "$CARGO_HOME" "${PATH%%:*}" "$PWD" >>"$A6T/cargo.log"
+case "$*" in
+    *"--test corpus_build"*)
+        printf 'guest\tcheck_plan_raw\n' >"$BKO_HOLT_CORPUS_OUT/index.tsv"
+        for d in "$BKO_HOLT_CORPUS_RAW"/*/; do
+            g=$(basename "$d"); [[ " ${CB_SKIP:-} " != *" $g "* ]] || continue   # (as check_plan failing on its raw dump)
+            mkdir -p "$BKO_HOLT_CORPUS_OUT/$g"
+            echo "redacted $g" >"$BKO_HOLT_CORPUS_OUT/$g/src.json"; printf '%s\tok:1\n' "$g" >>"$BKO_HOLT_CORPUS_OUT/index.tsv"
+        done ;;
+    *"--test golden_plans"*)
+        [[ $BKO_HOLT_GOLDEN == bless ]] || exit 9
+        for d in tests/corpus/*/; do echo "plan of $(basename "$d")" >"$d/plan.txt"; done
+        exit 101 ;;   # (as a bless whose other plans differ)
+esac
+''',
+}
+
+
+@unittest.skipUnless(BASH4, "a6-stages.sh needs bash 4 (run on Bigfoot)")
+class CorpusStage(unittest.TestCase):
+    def setUp(self):
+        self.t = tempfile.mkdtemp(prefix="a6-corpus-")
+        self.addCleanup(shutil.rmtree, self.t, True)
+        base = os.path.join(self.t, "home", "backotter-work", "a6-run")
+        self.tree = os.path.join(base, "s2", "tree")
+        os.makedirs(os.path.join(self.tree, "testvm", "arm64"))
+        shutil.copy(os.path.join(TESTVM, "arm64", "a6-stages.sh"), os.path.join(self.tree, "testvm", "arm64"))
+        for rel, text in CORPUS_STUBS.items():
+            p = os.path.join(self.tree, rel) if rel.startswith("testvm/") else os.path.join(self.t, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w") as f:
+                f.write(text)
+            os.chmod(p, 0o755)
+        c = os.path.join(self.tree, "holt", "tests", "corpus")
+        os.makedirs(os.path.join(c, "old-guest"))
+        for n, text in (("old-guest/src.json", "old\n"), ("old-guest/plan.txt", "plan of old-guest\n"), ("index.tsv", "guest\tcheck_plan_raw\nold-guest\tok:1\n")):
+            with open(os.path.join(c, n), "w") as f:
+                f.write(text)
+        # Two runs' 1ARM results: r0's (debian13-arm64 PASS, fedora44-arm64 FAIL) and a newer one's.
+        self.recs = os.path.join(self.t, "records")
+        for run, g, res in (("r0", "debian13-arm64", "PASS"), ("r0", "fedora44-arm64", "FAIL"), ("newer", "debian13-arm64", "PASS")):
+            os.makedirs(os.path.join(base, run, "out", "holt", g), exist_ok=True)
+            with open(os.path.join(base, run, "out", "holt", g, "report.txt"), "w") as f:
+                f.write(f"RESULT: {res}\n")
+            os.makedirs(os.path.join(self.recs, f"a6-{run}", g, "dumps"), exist_ok=True)
+            with open(os.path.join(self.recs, f"a6-{run}", g, "dumps", "src.json"), "w") as f:
+                f.write(f"raw {g} of {run}\n")
+        self.run_dir = os.path.join(base, "s2")
+
+    def body(self, *args, **env):
+        df = os.path.join(self.t, "detail")
+        e = dict(os.environ, HOME=os.path.join(self.t, "home"), A6T=self.t, A6_HT_RECORDS=self.recs, A6_BODY="t2:corpus", A6_DF=df, **env)
+        e.pop("RUSTUP_HOME", None)
+        e.pop("CARGO_HOME", None)
+        p = subprocess.run(["bash", os.path.join(self.tree, "testvm", "arm64", "a6-stages.sh"), "--run", self.run_dir, "--only", "t2:corpus"] + list(args),
+                           capture_output=True, text=True, timeout=120, env=e)
+        return p, rd(df) if os.path.exists(df) else ""
+
+    def test_from_run_blesses_its_passes_with_rustups_cargo(self):
+        p, detail = self.body("--from-run", "r0")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("1 of 1 passing guests'", detail)
+        self.assertIn("(run r0)", detail)
+        self.assertIn("leakscan clean", detail)
+        self.assertNotIn("not made", detail)
+        calls = rd(self.t, "cargo.log").splitlines()
+        self.assertEqual(len(calls), 2, calls)
+        home = os.path.join(self.t, "home")
+        for l in calls:
+            args, env = l.split(" | ")
+            self.assertNotIn("+1.94.1", args, "no +toolchain: RUSTUP_TOOLCHAIN picks it")
+            self.assertTrue(args.startswith("test --offline --test "), args)
+            self.assertEqual(env.split()[:4], ["1.94.1", "/fake/rustup", "/fake/cargo", os.path.join(home, ".cargo", "bin")])
+        self.assertIn("run 1.94.1 rustc -V", rd(self.t, "rustup.log"))
+        self.assertEqual(rd(self.t, "rust-env.host").strip(), subprocess.run(["hostname", "-s"], capture_output=True, text=True).stdout.strip())
+        # Only r0's records reach collect-dumps.sh: a link to them, in --records.
+        self.assertIn(f"a6-r0 -> {self.recs}/a6-r0", rd(self.t, "records.txt"))
+        self.assertNotIn("a6-newer", rd(self.t, "records.txt"))
+        self.assertIn("--records " + os.path.join(self.run_dir, "t2", "records"), rd(self.t, "collect.log"))
+        self.assertEqual(rd(self.run_dir, "t2", "h1-raw", "debian13-arm64", "src.json"), "raw debian13-arm64 of r0\n")
+        # The leakscan sees the new guest's dump and its blessed plan.
+        self.assertEqual(rd(self.t, "scanned.txt").split(), ["./debian13-arm64/plan.txt", "./debian13-arm64/src.json", "./index.tsv"])
+        patch = rd(self.run_dir, "out", "t2", "corpus-arm64.patch")
+        self.assertIn("+++ b/holt/tests/corpus/debian13-arm64/src.json", patch)
+        self.assertIn("+++ b/holt/tests/corpus/debian13-arm64/plan.txt", patch)
+        self.assertIn("+++ b/holt/tests/corpus/index.tsv", patch)
+        self.assertIn("+debian13-arm64\tok:1", patch)
+        self.assertNotIn("old-guest/plan.txt", patch, "other guests' plans aren't A6's")
+        self.assertNotIn(self.t, patch, "no host path in the patch")
+
+    def test_this_runs_results_by_default_and_findings_fail(self):
+        p, detail = self.body()
+        self.assertEqual(p.returncode, 3, "s2 has no 1ARM results of its own: SKIP")
+        self.assertIn("--from-run STAMP", detail)
+        p, detail = self.body("--from-run", "r0", SCAN_RC="1")
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("leakscan exit 1", detail)
+        # A guest corpus_build doesn't make (check_plan on its raw dump failed) is named, and FAILs.
+        with open(os.path.join(self.t, "home", "backotter-work", "a6-run", "r0", "out", "holt", "fedora44-arm64", "report.txt"), "w") as f:
+            f.write("RESULT: PASS\n")
+        p, detail = self.body("--from-run", "r0", CB_SKIP="fedora44-arm64")
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("1 of 2 passing guests'", detail)
+        self.assertIn("not made: fedora44-arm64", detail)
+        shutil.rmtree(os.path.join(self.recs, "a6-r0"))
+        p, detail = self.body("--from-run", "r0")
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("no HoltTest1 records", detail)

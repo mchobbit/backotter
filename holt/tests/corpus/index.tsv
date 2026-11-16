@@ -83,3 +83,8 @@ void-musl	chopin	r4all	PASS	2026-11-08T02:28:37Z	2026-11-08T02:26:35Z	0.2.4	2aaa
 void-zbm	chopin	z4	dump	-	2026-11-14T16:58:15Z	0.2.6	-	same	12	ok:12:122	0	0	0	same	ok:12	-
 void-zbm-enc	chopin	z5	dump	-	2026-11-16T06:25:58Z	0.2.6	-	same	13	ok:13:125	0	0	0	same	ok:13	-
 zorin18	cinqcent	r4all	PASS	2026-11-08T02:29:30Z	2026-11-08T02:24:57Z	0.2.4	9c5063fb8a54a6b77bde6063dda36fe77ce1ee130f41bd4955d6f14b96fff127	changed	8	ok:8:87	0	0	0	same	ok:8	-
+debian13-arm64	bigfoot	a6-20261116-203228	PASS	2026-11-16T19:35:18Z	2026-11-16T19:33:12Z	0.2.6	-	same	16	ok:16:122	0	0	0	same	ok:16	-
+ubuntu26-arm64	bigfoot	a6-20261116-161412	PASS	2026-11-16T16:07:25Z	2026-11-16T16:03:06Z	0.2.6	-	same	10	ok:10:102	0	0	0	same	ok:10	-
+fedora44-arm64	bigfoot	a6-20261116-161412	PASS	2026-11-16T16:11:05Z	2026-11-16T16:07:56Z	0.2.6	-	same	16	ok:16:119	0	0	0	same	ok:16	-
+alpine324-arm64	bigfoot	a6-20261116-161412	PASS	2026-11-16T16:12:38Z	2026-11-16T16:11:22Z	0.2.6	-	same	11	ok:11:120	0	0	0	same	ok:11	-
+debian13-zfs-arm64	bigfoot	a6-20261116-161412	PASS	2026-11-16T16:15:27Z	2026-11-16T16:13:01Z	0.2.6	-	same	17	ok:17:140	0	0	0	same	ok:17	-

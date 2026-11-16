@@ -12,7 +12,9 @@
 # --arch arm64 (Debian only; docs/design/arm64.md A5) builds an ARM64 guest
 # on an aarch64 host (Bigfoot), from the arm64 DVD-1, installed through
 # vm-run (QEMU's virt machine, AAVMF without Secure Boot): NAME
-# debianN-arm64, host name debN-arm64.  Its disk is GPT: an EFI system
+# debianN-arm64, host name debarmN (not debN-arm64: that is Debian's arm64
+# kernel flavour, in every uname and /boot path, and a host name the dump
+# holds there can't be redacted).  Its disk is GPT: an EFI system
 # partition (512 MB), then /boot, swap and / as above; GRUB goes to
 # EFI/debian and to the fallback path EFI/BOOT/BOOTAA64.EFI too (vm-run
 # boots on a fresh variable store), and the consoles are on ttyAMA0 (virt's
@@ -116,7 +118,7 @@ if [[ $distro == debian ]]; then
         ISO=debian-$version-arm64-DVD-1.iso
         url=https://cdimage.debian.org/cdimage/archive/$version/arm64/iso-dvd
         kernel=/install.a64/vmlinuz initrd=/install.a64/initrd.gz
-        guest_name=deb$major-arm64 DISK=debian$major-arm64.qcow2
+        guest_name=debarm$major DISK=debian$major-arm64.qcow2
     fi
 elif [[ $distro == devuan ]]; then
     codename=${DEVUAN_CODENAMES[$major]:-}

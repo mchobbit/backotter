@@ -822,7 +822,14 @@ Left for later:
   Per-builder notes:
   - **Debian.** The preseed's MBR recipe is replaced with a GPT one that
     puts an EFI partition first, and the kernel is `linux-image-arm64`.
-    Devuan and Kali are refused on arm64.
+    Devuan and Kali are refused on arm64. The host name is `debarmN`
+    (`debarm13`), not `debN-arm64`: that is Debian's arm64 kernel flavour
+    (`6.12.38+deb13-arm64`), in the dump's uname and `/boot` paths, so
+    bko-holt's redaction couldn't take the host name out
+    (`check_plan`: "left in the redacted dump: [hostname]"), and A6's
+    `t2:corpus` made no golden. Bigfoot's image, installed as
+    `deb13-arm64`, is renamed in place by
+    `testvm/arm64/rename-guest-host.sh` (A6, "Left for later").
   - **Ubuntu.** Only the `direct` layout; the other layouts are refused.
     The CIDATA disc is a second SCSI CD on its own controller, and
     `-nic none` comes through `--qemu-options`.
@@ -988,6 +995,11 @@ testvm/arm64/a6-run.sh --stop           # stop it: the stage cleans up, the rest
   - `--img FILE` uses another `--test` image.
   - `--img-guests G,G` changes the `+img` panel.
   - `--rebuild-rescuer` makes the rescuer again.
+  - `--from-run STAMP` gives `t2:corpus` run STAMP's 1ARM results (its
+    `out/holt` reports and `/bkoscratch/holttest1d/a6-STAMP`) instead of
+    this run's, for a rerun of failed stages with no holt stage in it
+    (`--only t2:corpus,...`; with one it is a usage error). STAMP must be
+    a run on Bigfoot with `out/holt`.
   - `--stamp NAME` names the run (default `YYYYMMDD-HHMMSS`).
   - `--tree DIR` ships DIR's files instead of HEAD, for testing the driver.
   - `--host USER@HOST` (default the bigfoot row's `m@192.168.68.197`).
@@ -1211,10 +1223,17 @@ SticTest1's and t2's Mac results, outside the repository. It never copies
     `images/`, which ImgTest2 pins (A4's is a private build), as A4 said.
   - The goldens themselves come from the run's `t2:corpus` stage. For each
     1ARM PASS:
-    1. collect-dumps.sh takes the raw dumps on Bigfoot.
+    1. collect-dumps.sh takes the raw dumps on Bigfoot, of that run only
+       (`--records RUN/t2/records`, a link to its `a6-STAMP` records).
     2. corpus_build.rs redacts them.
     3. `BKO_HOLT_GOLDEN=bless` golden_plans.rs writes their plans.
-    4. collect-dumps.sh `--scan` runs leakscan.
+    4. collect-dumps.sh `--scan` runs leakscan on the redacted dumps and
+       their plans.
+
+    The cargo is rustup's (`~/.cargo/bin`, `RUSTUP_TOOLCHAIN=1.94.1`,
+    hosts_rust_env's homes), as build-holt.sh takes it: PATH's
+    `/usr/bin/cargo` is Debian's, which has no `+toolchain` (run
+    20261116-161412's t2:corpus failed so).
 
     The result is `out/t2/corpus-arm64.patch`: the redacted dumps, their
     plan.txt and their index.tsv rows, to `git apply` after review. The
@@ -1292,6 +1311,13 @@ SticTest1's and t2's Mac results, outside the repository. It never copies
 
 ### Left for later
 
+- **debian13-arm64's host name, first.** Bigfoot's image still says
+  `deb13-arm64`. `sudo testvm/arm64/rename-guest-host.sh --dry-run`, then
+  without, makes it `debarm13` in `/etc` and `/root`: an overlay,
+  vm-mount, vm-update's COMMIT_SCRIPT, no boot. (A real vm-update would
+  need the fleet lock on Chopin, which Bigfoot can't reach.) Run
+  20261116-161412's dumps keep the old name, so its golden needs a new
+  `holt:debian13-arm64`, not `--from-run` that run.
 - **The heavy run itself.** Commit A6, then run `testvm/arm64/a6-run.sh`.
 - **alpine324-arm64's guest SError panics** (above): 2 runs of 3. It may be
   KVM on the CIX P1 (the A0 risk) or Alpine's 6.18 LTS kernel. Debian's

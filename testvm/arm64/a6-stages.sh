@@ -26,7 +26,7 @@
 #
 # Usage: a6-stages.sh --run DIR [--only S[,S]] [--skip S[,S]] [--bins DIR]
 #                     [--img FILE] [--img-guests G,G] [--rebuild-rescuer]
-#                     [--dry-run] [--list]
+#                     [--from-run STAMP] [--dry-run] [--list]
 #   --run DIR     the run's directory: DIR/tree (the shipped tree), and what
 #                 the run writes: runner.log, summary.tsv, summary.txt,
 #                 state, exit, logs/STAGE.log, out/ (what --fetch copies),
@@ -40,6 +40,11 @@
 #                 the newest native A3+ bko-holt on Bigfoot
 #   --img FILE    the --test image (default A4's, a4-scratch/images/out/test/)
 #   --img-guests  the +img panel (default debian13-arm64,debian13-zfs-arm64)
+#   --from-run STAMP  t2:corpus takes the 1ARM results of the earlier run
+#                 STAMP beside this one (its out/holt reports, HoltTest1's
+#                 records /bkoscratch/holttest1d/a6-STAMP) instead of this
+#                 run's: for a run of t2 alone (--only t2:corpus), which runs
+#                 no holt stage of its own (with one, it is a usage error)
 #   --dry-run     print each stage's command and check the inputs (read only)
 #   --list        the stage names, one a line
 #
@@ -73,14 +78,15 @@ RESCUER_PORT=3279   # make-rescuer.sh --arch arm64's default
 RESCUER_IMG=/bkoscratch/holttest1d/rescuer/rescuer-arm64.qcow2
 RESCUER_NEW=/bkoscratch/holttest1d/rescuer/rescuer-arm64.new.qcow2   # the copy make-rescuer.sh boots
 RESCUER_PIDF=/bkoscratch/holttest1d/rescuer/rescuer-arm64.qemu.pid   # its QEMU's pid file
+HT_RECORDS=${A6_HT_RECORDS:-/bkoscratch/holttest1d}   # HoltTest1's records (A6_HT_RECORDS: the unit tests')
 
 die() { echo "a6-stages: $*" >&2; exit 2; }
-usage() { sed -n '2,59p' "$ME" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
+usage() { sed -n '2,64p' "$ME" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 
-RUN="" ONLY="" SKIP="" BINS_FROM="" IMG="" DRY=0 LIST=0 REBUILD_RESCUER=0
+RUN="" ONLY="" SKIP="" BINS_FROM="" IMG="" FROM_RUN="" DRY=0 LIST=0 REBUILD_RESCUER=0
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --run|--only|--skip|--bins|--img|--img-guests) [[ $# -ge 2 && -n $2 ]] || die "$1 needs a value" ;;
+        --run|--only|--skip|--bins|--img|--img-guests|--from-run) [[ $# -ge 2 && -n $2 ]] || die "$1 needs a value" ;;
     esac
     case $1 in
         --run) RUN=$2; shift 2 ;;
@@ -89,6 +95,7 @@ while [[ $# -gt 0 ]]; do
         --bins) BINS_FROM=$2; shift 2 ;;
         --img) IMG=$2; shift 2 ;;
         --img-guests) IFS=, read -ra IMG_GUESTS <<<"$2"; shift 2 ;;
+        --from-run) FROM_RUN=$2; shift 2 ;;
         --rebuild-rescuer) REBUILD_RESCUER=1; shift ;;
         --dry-run) DRY=1; shift ;;
         --list) LIST=1; shift ;;
@@ -97,6 +104,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 IMG=${IMG:-$A4_IMG}
+# --bins DIR: absolute, ~/..., or relative to ~/backotter-work (as a6-run.sh's expectations read it)
+case $BINS_FROM in
+    ""|/*) ;;
+    "~"|"~/"*) BINS_FROM=$HOME${BINS_FROM#"~"} ;;
+    *) BINS_FROM=$W/$BINS_FROM ;;
+esac
 
 # --- the stages ------------------------------------------------------------
 STAGES=(preflight)
@@ -152,6 +165,12 @@ else
 fi
 [[ -z ${SKIP#,} ]] || pick "$SKIP" 0
 [[ ${WANT[preflight]} == 1 && ${WANT[final]} == 1 ]] || die "preflight and final always run (they record the inputs)"
+if [[ -n $FROM_RUN ]]; then
+    [[ $FROM_RUN =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || die "--from-run $FROM_RUN: a run's plain name (its STAMP)"
+    for s in "${STAGES[@]}"; do
+        [[ ${WANT[$s]} == 1 && $s == holt:* && $s != *+img ]] && die "--from-run takes run $FROM_RUN's 1ARM results, but $s would run here (--only t2:corpus)"
+    done
+fi
 
 [[ -n $RUN ]] || die "no --run DIR (--help)"
 if ((DRY)); then
@@ -162,6 +181,7 @@ else
 fi
 STAMP=${RUN##*/}
 [[ $STAMP =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || die "the run's directory name ($STAMP) must be a plain name"
+[[ $FROM_RUN != "$STAMP" ]] || die "--from-run $FROM_RUN is this run"
 HT_RUN=a6-$STAMP                     # HoltTest1's RUN: /bkoscratch/holttest1d/HT_RUN/GUEST
 PFX=a6${STAMP//[^0-9a-z]/}           # SticTest1's PREFIX and the loops' bko... prefix part
 PFX=${PFX:0:20}
@@ -547,37 +567,55 @@ PY
 }
 
 body_t2_corpus() {
-    local df=$1 raw=$RUN/t2/h1-raw new=$RUN/t2/corpus-new src=$RUN/t2/sources.txt c=$TREE/holt/tests/corpus g n=0 rc=0
-    local pass=()
+    local df=$1 raw=$RUN/t2/h1-raw new=$RUN/t2/corpus-new src=$RUN/t2/sources.txt c=$TREE/holt/tests/corpus g n=0 rc=0 leak=0
+    # The 1ARM results: this run's, or with --from-run STAMP an earlier run's beside it
+    # (its out/holt reports and HoltTest1's records of it, a6-STAMP).
+    local from=${FROM_RUN:-$STAMP} hout=$OUT recs=$RUN/t2/records
+    [[ -z $FROM_RUN ]] || hout=$(dirname "$RUN")/$FROM_RUN/out
+    local pass=() made=() miss=()
     for g in "${GUESTS[@]}"; do
-        grep -qx 'RESULT: PASS' "$OUT/holt/$g/report.txt" 2>/dev/null && pass+=("$g")
+        grep -qx 'RESULT: PASS' "$hout/holt/$g/report.txt" 2>/dev/null && pass+=("$g")
     done
-    ((${#pass[@]})) || { echo "no 1ARM PASS in this run: nothing to bless" | tee "$df"; return 3; }
+    ((${#pass[@]})) || { echo "no 1ARM PASS in $( [[ -n $FROM_RUN ]] && echo "run $FROM_RUN" || echo "this run (--from-run STAMP takes an earlier run's)"): nothing to bless" | tee "$df"; return 3; }
+    echo "1ARM PASS of run $from: ${pass[*]}"
+    [[ -d $HT_RECORDS/a6-$from ]] || { echo "no HoltTest1 records $HT_RECORDS/a6-$from" | tee "$df"; return 1; }
+    rm -rf "$raw" "$new" "$recs" "$RUN/t2/corpus-before"; mkdir -p "$raw" "$new" "$recs"; chmod 700 "$raw" "$RUN/t2"
     printf '%s\n' "${pass[@]}" >"$src"
-    rm -rf "$raw" "$new"; mkdir -p "$raw" "$new"; chmod 700 "$raw" "$RUN/t2"
-    "$TREE/testvm/test2/h1/collect-dumps.sh" --out "$raw" --hosts "$(hostname -s)" --sources "$src" || rc=1
-    # The row's toolchain homes (hosts.json: rustup_home, cargo_home), never ~/.rustup or ~/.cargo's registry.
-    local hp=$TREE/testvm/test2/t2lib/hosts.py
-    RUSTUP_HOME=$(python3 -I -B "$hp" get "$(hostname -s)" rustup_home 2>/dev/null) || RUSTUP_HOME=""
-    CARGO_HOME=$(python3 -I -B "$hp" get "$(hostname -s)" cargo_home 2>/dev/null) || CARGO_HOME=""
-    [[ $RUSTUP_HOME == /* && $CARGO_HOME == /* ]] || { echo "no rustup_home and cargo_home in hosts.json's row" | tee -a "$df"; return 1; }
-    export RUSTUP_HOME CARGO_HOME
+    # Only that run's dumps: collect-dumps.sh takes the newest PASS of each guest in --records.
+    ln -s "$HT_RECORDS/a6-$from" "$recs/a6-$from"
+    "$TREE/testvm/test2/h1/collect-dumps.sh" --out "$raw" --hosts "$(hostname -s)" --sources "$src" --records "$recs" || rc=1
+    # The row's toolchain homes (hosts.json: rustup_home, cargo_home; hosts_rust_env), never
+    # ~/.rustup or ~/.cargo's registry, and rustup's cargo as build-holt.sh takes it (~/.cargo/bin's
+    # proxy, RUSTUP_TOOLCHAIN): PATH's /usr/bin/cargo is Debian's, which has no +toolchain.
+    unset RUSTUP_HOME CARGO_HOME
+    # shellcheck source=../hosts.sh
+    . "$TREE/testvm/hosts.sh" && hosts_rust_env "$(hostname -s)" 2>/dev/null
+    [[ ${RUSTUP_HOME:-} == /* && ${CARGO_HOME:-} == /* ]] || { echo "no rustup_home and cargo_home in hosts.json's row" | tee -a "$df"; return 1; }
+    local tc=${HOLT_RUST_TOOLCHAIN:-1.94.1} cargo=$HOME/.cargo/bin/cargo rustup=$HOME/.cargo/bin/rustup
+    [[ -x $cargo && -x $rustup ]] || { echo "no rustup in ~/.cargo/bin for Rust $tc" | tee -a "$df"; return 1; }
+    export RUSTUP_TOOLCHAIN=$tc RUSTUP_AUTO_INSTALL=0 PATH=$HOME/.cargo/bin:$PATH
+    "$rustup" run "$tc" rustc -V || { echo "no Rust $tc in $RUSTUP_HOME (HOLT_RUST_TOOLCHAIN)" | tee -a "$df"; return 1; }
     export CARGO_TARGET_DIR=$RUN/t2/target TMPDIR=$RUN/t2/tmp; mkdir -p "$TMPDIR"
-    local tc=+${HOLT_RUST_TOOLCHAIN:-1.94.1}
     cp -a "$c" "$RUN/t2/corpus-before"
-    (cd "$TREE/holt" && BKO_HOLT_CORPUS_RAW=$raw BKO_HOLT_CORPUS_OUT=$new cargo "$tc" test --offline --test corpus_build -- --ignored --nocapture) || rc=1
+    (cd "$TREE/holt" && BKO_HOLT_CORPUS_RAW=$raw BKO_HOLT_CORPUS_OUT=$new "$cargo" test --offline --test corpus_build -- --ignored --nocapture) || rc=1
     for g in "${pass[@]}"; do
-        [[ -f $new/$g/src.json ]] || continue
-        rm -rf "${c:?}/$g"; cp -a "$new/$g" "$c/$g"; n=$((n + 1))
+        [[ -f $new/$g/src.json ]] || { echo "FAIL $g: corpus_build made no src.json"; miss+=("$g"); continue; }
+        rm -rf "${c:?}/$g"; cp -a "$new/$g" "$c/$g"; n=$((n + 1)); made+=("$g")
         grep -v "^$g"$'\t' "$c/index.tsv" >"$c/index.tsv.new"; grep "^$g"$'\t' "$new/index.tsv" >>"$c/index.tsv.new"; mv "$c/index.tsv.new" "$c/index.tsv"
     done
-    (cd "$TREE/holt" && BKO_HOLT_GOLDEN=bless cargo "$tc" test --offline --test golden_plans -- --nocapture) || echo "NOTE golden_plans bless: exit $? (its other plans' differences are the tree's, not A6's)"
-    "$TREE/testvm/test2/h1/collect-dumps.sh" --scan "$new" --out "$raw" --hosts "$(hostname -s)" || rc=1
+    (cd "$TREE/holt" && BKO_HOLT_GOLDEN=bless "$cargo" test --offline --test golden_plans -- --nocapture) || echo "NOTE golden_plans bless: exit $? (its other plans' differences are the tree's, not A6's)"
+    for g in "${made[@]}"; do
+        compgen -G "$c/$g/plan*.txt" >/dev/null || { echo "FAIL $g: golden_plans bless wrote no plan.txt"; rc=1; continue; }
+        cp -p "$c/$g"/plan*.txt "$new/$g/"   # (scanned with its dump below)
+    done
+    ((n == ${#pass[@]})) || rc=1
+    "$TREE/testvm/test2/h1/collect-dumps.sh" --scan "$new" --out "$raw" --hosts "$(hostname -s)"; leak=$?
+    ((leak == 0)) || rc=1
     mkdir -p "$OUT/t2"
-    { for g in "${pass[@]}"; do diff -ruN "$RUN/t2/corpus-before/$g" "$c/$g" | sed "s|$RUN/t2/corpus-before/|a/holt/tests/corpus/|; s|$c/|b/holt/tests/corpus/|"; done
+    { for g in "${made[@]}"; do diff -ruN "$RUN/t2/corpus-before/$g" "$c/$g" | sed "s|$RUN/t2/corpus-before/|a/holt/tests/corpus/|; s|$c/|b/holt/tests/corpus/|"; done
       diff -u "$RUN/t2/corpus-before/index.tsv" "$c/index.tsv" | sed "s|$RUN/t2/corpus-before/|a/holt/tests/corpus/|; s|$c/|b/holt/tests/corpus/|"
     } >"$OUT/t2/corpus-arm64.patch"
-    echo "$n of ${#pass[@]} passing guests' redacted dumps and golden plans in out/t2/corpus-arm64.patch (git apply it in the checkout, after review); leakscan $( [[ $rc == 0 ]] && echo clean || echo 'see the log')" >"$df"
+    echo "$n of ${#pass[@]} passing guests' redacted dumps and golden plans (run $from) in out/t2/corpus-arm64.patch (git apply it in the checkout, after review)${miss[*]:+; not made: ${miss[*]} (the log, corpus_build)}; leakscan $( ((leak == 0)) && echo clean || echo "exit $leak: see the log")" >"$df"
     return $rc
 }
 
@@ -672,8 +710,11 @@ plan() {
                     echo "   (run-all.sh's arm64 profile: $( [[ $k == linux ]] && echo "fs_roundtrip.py zfs, tmpfs" || echo "sparse-rt.sh zfs, zfs-nocomp, SPARSE_DISK_WORK in its log, not /var/tmp"); pools on files in /mnt/bko-ram, no loop device;"
                     echo "   then its empty mount points /mnt/bko${PFX//[^a-z0-9]/}${k:0:1}-* go)" ;;
             hosttest2:facts) echo "   T2_HOST_ROOT=$RUN/t2 t2-host facts > $OUT/hosttest2/facts.json; t2-host self-test" ;;
-            t2:corpus) echo "   for each 1ARM PASS: collect-dumps.sh --hosts bigfoot --out $RUN/t2/h1-raw (raw, 0700, never fetched);"
-                       echo "   cargo +1.94.1 test --offline --test corpus_build -- --ignored; BKO_HOLT_GOLDEN=bless ... --test golden_plans; collect-dumps.sh --scan;"
+            t2:corpus) if [[ -n $FROM_RUN ]]; then d=$(dirname "$RUN")/$FROM_RUN
+                           echo "   run $FROM_RUN's 1ARM results: $d/out/holt ($(ls -d "$d"/out/holt/*/ 2>/dev/null | wc -l) reports, $(grep -lx 'RESULT: PASS' "$d"/out/holt/*/report.txt 2>/dev/null | wc -l) PASS), $HT_RECORDS/a6-$FROM_RUN ($( [[ -d $HT_RECORDS/a6-$FROM_RUN ]] && echo there || echo MISSING))"
+                       fi
+                       echo "   for each 1ARM PASS: collect-dumps.sh --hosts bigfoot --records $RUN/t2/records (a6-${FROM_RUN:-$STAMP} only) --out $RUN/t2/h1-raw (raw, 0700, never fetched);"
+                       echo "   hosts_rust_env; RUSTUP_TOOLCHAIN=${HOLT_RUST_TOOLCHAIN:-1.94.1} ~/.cargo/bin/cargo (rustup's) test --offline --test corpus_build -- --ignored; BKO_HOLT_GOLDEN=bless ... --test golden_plans; collect-dumps.sh --scan;"
                        echo "   -> $OUT/t2/corpus-arm64.patch" ;;
             t2:limits) echo "   the checks' LIMIT lines against stic/limits.json -> $OUT/t2/limits-candidates.json; stage times -> estimates-candidates.tsv" ;;
             final) echo "   sha256 of the guests and the image again (must be unchanged); no QEMU, pool or mount of this run left" ;;
@@ -683,7 +724,7 @@ plan() {
 
 if ((DRY)); then
     echo "a6-stages.sh --dry-run: run $RUN (HoltTest1 RUN $HT_RUN, prefix $PFX), tree $TREE"
-    echo "   host $(hostname -s) $(uname -m); bins ${BINS_FROM:-default}; image $IMG; +img panel ${IMG_GUESTS[*]}"
+    echo "   host $(hostname -s) $(uname -m); bins ${BINS_FROM:-default}; image $IMG; +img panel ${IMG_GUESTS[*]}${FROM_RUN:+; 1ARM results of run $FROM_RUN}"
     plan
     echo "-- inputs (read only):"
     for g in "${GUESTS[@]}"; do printf '   %-20s %s\n' "$g" "$( [[ -f $W/vms/$g/$g.qcow2 ]] && echo "$(stat -c %s "$W/vms/$g/$g.qcow2") bytes, $(cat "$W/vms/$g/vm-run-options" 2>/dev/null)" || echo MISSING)"; done
@@ -716,7 +757,7 @@ for s in "${STAGES[@]}"; do
     [[ $s != final ]] || STOPPED=0   # (final, read only, says what a stop left behind)
     df=$RUN/logs/${s//[:+]/_}.detail
     stage "$s" "$df" -- env A6_BODY="$s" A6_DF="$df" BINS_FROM="$BINS_FROM" bash "$ME" --run "$RUN" ${ONLY:+--only "${ONLY#,}"} ${SKIP:+--skip "${SKIP#,}"} \
-        ${BINS_FROM:+--bins "$BINS_FROM"} --img "$IMG" --img-guests "$(IFS=,; echo "${IMG_GUESTS[*]}")" $( ((REBUILD_RESCUER)) && echo --rebuild-rescuer) || fails=$((fails + 1))
+        ${BINS_FROM:+--bins "$BINS_FROM"} ${FROM_RUN:+--from-run "$FROM_RUN"} --img "$IMG" --img-guests "$(IFS=,; echo "${IMG_GUESTS[*]}")" $( ((REBUILD_RESCUER)) && echo --rebuild-rescuer) || fails=$((fails + 1))
     # A failed preflight stops the run: the stages after it would run on inputs it didn't vouch for.
     if [[ $s == preflight ]] && ! grep -q $'^preflight\tPASS' "$SUMMARY"; then
         say "preflight failed: no other stage runs"; STOPPED=2

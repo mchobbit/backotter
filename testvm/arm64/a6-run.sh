@@ -8,6 +8,7 @@
 #   testvm/arm64/a6-run.sh [--only S[,S]] [--skip S[,S]] [--bins DIR] [--img FILE]
 #                          [--img-guests G,G] [--rebuild-rescuer] [--stamp NAME]
 #                          [--tree DIR] [--host USER@HOST] [--no-batch-check]
+#                          [--from-run STAMP]
 #   testvm/arm64/a6-run.sh --dry-run [the same]   the plan, from a scratch copy on Bigfoot
 #   testvm/arm64/a6-run.sh --status [STAMP]        the latest (or STAMP's) run: state, stages
 #   testvm/arm64/a6-run.sh --fetch [STAMP]         its logs and summary to ~/backotter-work/a6-run/STAMP
@@ -36,7 +37,11 @@
 #   holt:GUEST+img (debian13-arm64, debian13-zfs-arm64); hosttest2:bin,
 #   :loop-linux, :loop-sparse, :facts; t2:corpus; t2:limits; final.
 # --only and --skip take stage names and the groups stic, 1ARM, img,
-# hosttest2 and t2; preflight and final always run.
+# hosttest2 and t2; preflight and final always run.  --from-run STAMP: the
+# t2:corpus stage takes run STAMP's 1ARM results (its out/holt reports and
+# HoltTest1's records of it) instead of this run's, for a rerun of failed
+# stages that runs no holt stage (--only t2:corpus,...); STAMP must be a run
+# on Bigfoot with out/holt.
 #
 # On Bigfoot (RUN = ~/backotter-work/a6-run/STAMP = /home/m/bko-arm64/work/a6-run/STAMP):
 #   runner.log, summary.tsv and summary.txt (a row per stage: PASS, FAIL,
@@ -59,7 +64,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 die() { echo "a6-run: $*" >&2; exit 2; }
 refuse() { echo "a6-run: $*" >&2; exit 1; }
-usage() { sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
+usage() { sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 
 # The host: hosts.json's bigfoot row (its ssh user and ip: mDNS isn't reliable there).
 default_host() {
@@ -71,7 +76,7 @@ for r in json.load(open(sys.argv[1]))["hosts"]:
 PY
 }
 
-MODE=run STAMP="" TREE_DIR="" HOST="" BATCH_CHECK=1 BINS_OPT=""
+MODE=run STAMP="" TREE_DIR="" HOST="" BATCH_CHECK=1 BINS_OPT="" FROM_RUN=""
 PASS=()      # the options a6-stages.sh takes
 while [ $# -gt 0 ]; do
     case $1 in
@@ -81,6 +86,10 @@ while [ $# -gt 0 ]; do
             [ "$1" != --bins ] || BINS_OPT=$2
             PASS+=("$1" "$2"); shift 2 ;;
         --rebuild-rescuer) PASS+=("$1"); shift ;;
+        --from-run)
+            [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"
+            case $2 in [A-Za-z0-9]*) case $2 in *[!A-Za-z0-9_.-]*) die "--from-run $2: letters, digits, _ . - only" ;; esac ;; *) die "bad --from-run $2" ;; esac
+            FROM_RUN=$2; PASS+=("$1" "$2"); shift 2 ;;
         --stamp|--tree|--host)
             [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"
             case $1 in --stamp) STAMP=$2 ;; --tree) TREE_DIR=$2 ;; --host) HOST=$2 ;; esac
@@ -97,6 +106,7 @@ while [ $# -gt 0 ]; do
 done
 [ -z "$STAMP" ] || case $STAMP in [A-Za-z0-9]*) case $STAMP in *[!A-Za-z0-9_.-]*) die "--stamp/STAMP: letters, digits, _ . - only" ;; esac ;; *) die "bad STAMP $STAMP" ;; esac
 case $MODE in status|fetch|stop) ;; *) [ -n "$STAMP" ] || STAMP=$(date '+%Y%m%d-%H%M%S') ;; esac
+[ -z "$FROM_RUN" ] || [ "$FROM_RUN" != "$STAMP" ] || die "--from-run $FROM_RUN is this run's stamp"
 HOST=${HOST:-$(default_host)}
 [ -n "$HOST" ] || die "no bigfoot row in testvm/hosts.json (or give --host USER@HOST)"
 case $HOST in *[!A-Za-z0-9@._-]*) die "bad --host $HOST" ;; esac
@@ -139,8 +149,9 @@ status)
 fetch)
     which_run
     mkdir -p "$MAC_RESULTS/$STAMP" || die "can't make $MAC_RESULTS/$STAMP"
-    # (never t2/: the +img pin and the raw dumps stay on Bigfoot; never bins/ or tree/)
-    rsync -a -e "ssh -o BatchMode=yes -o ConnectTimeout=10" --exclude='tree/' --exclude='bins/' --exclude='t2/' \
+    # (never the run's own t2/: the +img pin and the raw dumps stay on Bigfoot; never bins/ or tree/.
+    # Anchored: out/t2/, the Test2 candidates, is fetched.)
+    rsync -a -e "ssh -o BatchMode=yes -o ConnectTimeout=10" --exclude='/tree/' --exclude='/bins/' --exclude='/t2/' \
         --include='runner.log' --include='summary.*' --include='state' --include='exit' --include='COMMIT' \
         --include='logs/***' --include='out/***' --include='expect/***' --exclude='*' \
         "$HOST:backotter-work/a6-run/$STAMP/" "$MAC_RESULTS/$STAMP/" || refuse "rsync from $HOST failed"
@@ -176,6 +187,9 @@ SUM=$(shasum -a 256 "$TMP/tree.tar" | cut -d' ' -f1)
 rsh true || refuse "$HOST doesn't answer (ssh)"
 [ "$(rsh 'uname -m')" = aarch64 ] || refuse "$HOST isn't an aarch64 host"
 
+if [ -n "$FROM_RUN" ]; then
+    rsh "test -d $BASE/$FROM_RUN/out/holt" || refuse "--from-run $FROM_RUN: no run with 1ARM results on $HOST ($BASE/$FROM_RUN/out/holt)"
+fi
 if [ "$MODE" = dry ]; then
     D="dry-$STAMP"
 else

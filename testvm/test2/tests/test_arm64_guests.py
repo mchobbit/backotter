@@ -241,6 +241,7 @@ class Builders(unittest.TestCase):
         self.assertIn("d-i base-installer/kernel/image string linux-image-amd64", p)
         self.assertIn("d-i partman-partitioning/default_label string msdos", p)
         self.assertNotIn("method{ efi }", p)
+        self.assertIn("d-i netcfg/get_hostname string deb13\n", p)
         self.assertIsNone(self.options("vms/debian13"))
 
     def test_debian_arm64(self):
@@ -267,7 +268,10 @@ class Builders(unittest.TestCase):
         self.assertEqual(p.count("partman-auto/expert_recipe"), 1)
         self.assertIn("filesystem{ ext4 } \\\n            mountpoint{ / }", p)
         self.assertNotIn("$primary{ }", p)
-        self.assertIn("d-i netcfg/get_hostname string deb13-arm64", p)
+        # (not deb13-arm64: Debian's arm64 kernel flavour, 6.12.38+deb13-arm64)
+        self.assertIn("d-i netcfg/get_hostname string debarm13", p)
+        self.assertIn("d-i netcfg/hostname string debarm13", p)
+        self.assertNotIn("deb13-arm64", p)
         self.assertNotRegex(p, r"@[A-Z_]+@")
         self.assertEqual(self.options("vms/debian13-arm64"), "--uefi --no-secure-boot\n")
 

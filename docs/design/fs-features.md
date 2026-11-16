@@ -172,6 +172,12 @@ stale copy (2026-11-08), while Chopin's was refreshed on 2026-11-14.  That
 is a guest refresh, not a file-system difference, so the second alpine324
 run went to Copland, which passed.
 
+**On the shipped image (2026-11-16, run fsf3):** generation
+20261116.352eac3 (bko-holt 0.2.6 from 1628af3, bko-bin rel9), pinned as
+usual, shared ledger.  Six runs PASS: rocky10-raid5, cachyos and zorin18 on
+Chopin, and debian13-stack, debian12 and aerynos on Cinqcent.  Every device
+read back as the source's.
+
 Not covered: bcachefs, whose only panel guest (nixos2605) is ext4 here, and
 step 3.  The read-back's bcachefs branch is covered by its unit tests.
 Step 3 is the next HoltTest2 round, and the rescue-images session runs it

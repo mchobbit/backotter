@@ -93,7 +93,8 @@ if is_ostree || is_abroot; then
 fi
 # unlock_check LAYOUT: unlock_mode's lines, after checking the drive's key
 # against every LUKS volume and the record's initramfs generator against
-# the dump's; false with the reason if one fails.
+# the dump's (not for family N: bko-holt's dump names no generator on
+# NixOS); false with the reason if one fails.
 unlock_check() {
     local key=$HERE/keys/disk-passphrase gen dumped
     if [[ -n $(luks_devices "$disk") ]]; then

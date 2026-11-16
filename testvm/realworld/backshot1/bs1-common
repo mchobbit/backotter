@@ -435,7 +435,7 @@ luks_names() {
 }
 
 # unlock_how NAME HOW: how this boot opened the volume the record names, HOW
-# being the record's S, D or E: drive (the backup drive's key), typed, or
+# being the record's S, D, E or N: drive (the backup drive's key), typed, or
 # fetched (E: the key was copied, but couldn't be tested).
 unlock_how() {
     local name=$1 j
@@ -454,6 +454,15 @@ unlock_how() {
             awk -v n="$name" '$1 == n { h = $2 } END { print (h == "" ? "typed" : h) }' "$UNLOCK_MARK"
         else
             echo typed
+        fi
+        ;;
+    N)
+        # NixOS: scripted stage 1's preOpenCommands leave the marker, as D
+        # and E do; systemd stage 1 is systemd-cryptsetup's key device, as S.
+        if [[ -r $UNLOCK_MARK ]] && awk -v n="$name" '$1 == n { f = 1 } END { exit !f }' "$UNLOCK_MARK"; then
+            unlock_how "$name" D
+        else
+            unlock_how "$name" S
         fi
         ;;
     *) echo unknown ;;

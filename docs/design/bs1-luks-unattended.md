@@ -18,7 +18,8 @@ as it always did, after a short wait.
 ## How
 
 The passphrase is already on the drive in plain text, at
-`backshot1/keys/disk-passphrase` (label `mybig512`, ext4). It has no final
+`backshot1/keys/disk-passphrase` (label `mybig512`; xfs, not ext4 as this
+said first: adopt takes the type from the drive). It has no final
 newline, so its bytes are the typed passphrase. `bs1-restore` already passes
 it to `bko-holt load --key-file` for every LUKS volume (`layout_keys` in
 bs1-common), so the restored volumes take the same bytes.
@@ -75,7 +76,7 @@ record's family with the dump's `boot.initramfs.generator`.
 | **S: systemd in the initramfs.** dracut with its systemd module (init is systemd), or mkinitcpio with `sd-encrypt` | Fedora, EndeavourOS, openSUSE, Gentoo systemd, Ubuntu 26.04+ (whose dracut is `ubuntu26-luks`'s generator), Arch or CachyOS if their HOOKS have `sd-encrypt` | crypttab key field `/backshot1/keys/disk-passphrase:LABEL=mybig512`, option `keyfile-timeout=30s` | systemd-cryptsetup asks for the password when the key device times out or the key fails | in this boot's journal, the key device's mount unit (`run-systemd-cryptsetup-keydev\x2dNAME.mount`) started, `systemd-cryptsetup@NAME.service` succeeded, and no fallback message (R1 pins the exact lines) |
 | **D: initramfs-tools** | Debian 12 (the Thinkpad's LUKS install), Debian 13, Mint, Pop, Zorin, MX, Devuan, Chimera's port | crypttab option `keyscript=/usr/local/lib/backshot1/unlock-key`, key field left as `none` | the script itself runs askpass | `/run/backshot1-unlock` says `NAME drive` (initramfs-tools moves /run into the root) |
 | **E: mkinitcpio busybox `encrypt`** | Arch, Manjaro, Omarchy, CachyOS if its HOOKS have `encrypt` | own hook `bs1key`, inserted before `encrypt`, writes `/crypto_keyfile.bin`, which `encrypt` uses when the file exists | `encrypt` prompts as usual ("Invalid keyfile. Reverting to passphrase.", or no file at all) | `/run/backshot1-unlock`, as D |
-| **N: NixOS** | none yet (the Thinkpad's NixOS is btrfs with no LUKS) | `backshot1.nix`: scripted stage 1 gets `preOpenCommands` to fetch the key, `keyFile`, `fallbackToPassword = true`, ext4 and the USB modules; systemd stage 1 gets `keyFile = "PATH:LABEL=..."` and `keyFileTimeout` | as the mechanism says | journal, as S |
+| **N: NixOS** (built 2026-11-16, "Built, family N" below) | the Thinkpad's NixOS 26.05 (Calamares: LUKS2 root on xfs and LUKS2 swap, systemd stage 1, systemd-boot) | `/etc/nixos/backshot1-luks.nix`, imported by `backshot1.nix` while it exists, for each typed `boot.initrd.luks.devices` volume: systemd stage 1 gets `keyFile = "PATH:LABEL=..."` and `keyFileTimeout`; scripted stage 1 gets `preOpenCommands` that copy the key into `/crypt-ramfs`, `keyFile` and `fallbackToPassword = true`; both get the USB modules and the drive's file system; then `nixos-rebuild switch` | systemd stage 1: systemd-cryptsetup asks; scripted: luksroot's prompt | systemd stage 1: journal, as S; scripted: `/run/backshot1-unlock`, as D |
 | **A: attended** | non-systemd dracut (Void, Gentoo OpenRC), Alpine's mkinitfs (`cryptkey` reads only from inside the initramfs), booster, ugrd, ZFS native encryption, ostree (load refuses LUKS there) | nothing | the prompt | none; the run is attended |
 
 **S, details.**
@@ -365,7 +366,8 @@ since a mistake there makes the system unbootable without a console.
    that change from real ones.
 2. **NixOS and family A:** build them when an install needs them. Until
    then adopt says "attended" and why. Or build N now, unrehearsed, since
-   no NixOS LUKS guest exists.
+   no NixOS LUKS guest exists. *Settled 2026-11-16: N built for the
+   Thinkpad's LUKS NixOS ("Built, family N").*
 3. **Build `debian13-luks`** (`make-debian.sh` with a preseeded `crypto`
    recipe: UEFI, single disk, LVM on LUKS2, typed), est. 1-2 h. It is the
    only rehearsal of Debian's own cryptroot, which is Debian 12's path. Or
@@ -437,3 +439,96 @@ passed:
   cryptroot (the Thinkpad's Debian 12) is covered by R3's port of it and
   by the Thinkpad's next Debian 12 run (L6), where a failure costs one
   typed boot.
+
+## Built, family N (2026-11-16)
+
+The Thinkpad's NixOS 26.05 is a Calamares LUKS install, so N was built for
+it, unrehearsed (no NixOS LUKS guest). Confirmed in its nixpkgs
+(26.05.13627.c56a87d8e41c, `nixos/modules/...`), read on the Thinkpad:
+
+- **systemd stage 1 is the default** (`system/boot/systemd/initrd.nix:195-196`),
+  and the Thinkpad has it. Its crypttab is luksroot's `stage1Crypttab`
+  (`system/boot/luksroot.nix:590-611`, put in by `:1221`), one line
+  `NAME DEVICE KEYFILE OPTIONS` a volume: `keyFile` goes in verbatim
+  (`:608`), so `PATH:LABEL=mybig512` reaches systemd-cryptsetup-generator,
+  which luksroot puts in the initrd (`:1232`); `keyFileTimeout` becomes
+  `keyfile-timeout=Ns` (`:605`). This boot's journal on the Thinkpad has the
+  initrd's own lines ("Running in initrd.", "Starting Cryptography Setup for
+  luks-..."), so family S's journal evidence works here as it is.
+- **What each stage 1 refuses,** which is why the module sets things under
+  `lib.mkIf config.boot.initrd.systemd.enable` and its negation: with
+  systemd, `fallbackToPassword` must stay false ("implied", `:1097-1099`)
+  and `preOpenCommands`/`postOpenCommands` empty (`:1114-1117`); without
+  it, `keyFileTimeout` must stay null (`:1091-1093`).
+  `reusePassphrases` set by hand fails under systemd (`:1108-1111`); the
+  Thinkpad's is the default (`:679-681`), and the module doesn't touch it.
+- **Scripted stage 1:** `preOpenCommands` runs after luksroot's wait for
+  the volume and before it opens it (`:544`), inside the batch that mounts
+  the `/crypt-ramfs` ramfs first and unmounts it after (`:125-126`,
+  `:149-150`), so the key copy lives there and is gone before stage 2.
+  stage 1 has busybox, util-linux's `mount` and `blkid`
+  (`system/boot/stage-1.nix:114-120`), udev's 60-persistent-storage rules
+  for `/dev/disk/by-label` (`:257`), the modprobe helper
+  (`system/boot/stage-1-init.sh:261`), udev settled before
+  `preLVMCommands` (`:281-286`), and `cryptsetup` (luksroot `:1160`). The
+  key file is waited for 10 s (`:262`, the default at `:39`), and a missing
+  or failing key falls back to the prompt with `fallbackToPassword`
+  (`:267-281`): a boot without the drive asks after WAIT + 10 s there.
+  `/run` is moved into the root (`stage-1-init.sh:674`), so the
+  `/run/backshot1-unlock` marker reaches the booted system, as D's does.
+- **Modules:** `boot.initrd.availableKernelModules` `usb_storage uas sd_mod
+  xhci_pci`, and `boot.initrd.supportedFilesystems = [ FSTYPE ]` (a list is
+  accepted, `tasks/filesystems.nix:385`, `attrNamesToTrue`; for xfs,
+  `tasks/filesystems/xfs.nix` adds `xfs crc32c` to the initrd).
+
+Where the code differs from the table, or adds to it:
+
+- **Volumes** come from the evaluated configuration, as nixos-rebuild
+  evaluates it (`import <nixpkgs/nixos> { }`, so `<nixos-config>`), not from
+  the `.nix` files. A LUKS volume on the internal disk that isn't open, or
+  isn't in `boot.initrd.luks.devices` (stage 1 doesn't open it), makes the
+  install family A. One with a `keyFile` not ours, FIDO2, a YubiKey, a GPG
+  card, clevis, or `tpm2-device=`/`fido2-device=`/`pkcs11-uri=` in
+  `crypttabExtraOpts` is `own`.
+- **The record:** `family=N generator=nixos`, each volume `NAME:UUID:N`.
+  `unlock_how` N reads `/run/backshot1-unlock` when it names the volume
+  (scripted), else the journal as S (systemd), so a later change of stage 1
+  needs no new record. bko-holt's dump has no `boot.initramfs.generator` on
+  NixOS (null in the library run `nixos-26.05-20261116-200906`), so phase 1's
+  generator comparison stays S, D and E only.
+- **The import:** `adopt_nixos`'s `backshot1.nix` has
+  `imports = builtins.filter builtins.pathExists [ ./backshot1-luks.nix ];`,
+  so the module is in while the file exists and `--luks-off` is the generic
+  one: remove the file (listed in `made`) and the record, rebuild. The
+  record goes even when an earlier one (the Thinkpad's family A) was there
+  first, since that one is in `made` too; with no record, `UNLOCK=` is
+  `attended`, as family A's would be.
+  Evaluated on the Thinkpad without the file, the system's initrd is the one
+  it runs now.
+- **Order:** `adopt_nixos` rebuilds first (as before), then the LUKS step
+  writes the record and the module and rebuilds again, so a first adopt
+  rebuilds twice; a run that changes nothing, with the running system's
+  initrd the one the configuration makes, rebuilds nothing.
+- **The check after the rebuild:** the running system's initrd is the
+  configuration's `system.build.initialRamdisk`, systemd-boot's
+  `EFI/nixos/HASH-initrd-linux-VER-initrd.efi` is on the ESP, and that
+  initrd's crypttab (systemd) or `stage-1-init.sh` (scripted) gives each
+  volume the drive's key. Otherwise everything is put back and rebuilt.
+- **Restore:** on NixOS by UEFI bko-holt's restore runs nothing in the
+  chroot (220c013); the restored system boots the backed-up ESP's initrd,
+  which has all of this, and LUKS UUIDs are kept, so the `by-uuid` devices
+  still hold.
+- **The drive is written at boot under systemd stage 1:** its key-device
+  mount is `ro`, and XFS still replays a dirty log on a read-only mount of a
+  writable device (crypttab can't add `norecovery`), as ext4 does under S.
+  Scripted stage 1 mounts with `norecovery` (xfs) or `noload` (ext2-4).
+
+Checked on the Thinkpad, read-only: the module as the code renders it for
+its two volumes parses, and with the real configuration (copied to /tmp,
+`NIXOS_CONFIG`) both stage-1 kinds evaluate to a system (assertions pass):
+systemd's crypttab gets `KEY keyfile-timeout=30s` on both lines, scripted's
+`preLVMCommands` passes `sh -n`; `luks_adopt` ran with every write sent to
+/tmp and the rebuild stubbed (N, the record, the module; the check's
+failure path put everything back). Not yet: a real `nixos-rebuild`, a boot
+with and without the drive, a wrong key, a restore, and scripted stage 1 at
+boot at all.

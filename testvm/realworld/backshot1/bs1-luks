@@ -23,8 +23,13 @@
 #      (bs1-unlock-key), the key field left as it was (none).
 #   E  mkinitcpio's busybox encrypt: the bs1key hook, before encrypt, writes
 #      /crypto_keyfile.bin (bs1-unlock-key --to).
-#   A  attended: anything else (non-systemd dracut, mkinitfs, ostree, NixOS
-#      for now).  Nothing changes; the record says why.
+#   N  NixOS: /etc/nixos/backshot1-luks.nix (backshot1.nix imports it while
+#      it exists), by boot.initrd.luks.devices: systemd stage 1 gets keyFile
+#      PATH:LABEL=LABEL and keyFileTimeout; scripted stage 1 preOpenCommands
+#      that copy the key off the drive, keyFile, fallbackToPassword.  Then
+#      nixos-rebuild switch.
+#   A  attended: anything else (non-systemd dracut, mkinitfs, ostree).
+#      Nothing changes; the record says why.
 # A volume that already unlocks with no one typing (a key file of its own,
 # TPM2, FIDO2) is left alone and recorded as own.
 #
@@ -81,6 +86,8 @@ lk_put() {
 # restore's boot stage) picks it.
 lk_generator() {
     if [[ -e /run/ostree-booted ]] || compgen -G '/usr/lib/kernel/*.initrd' >/dev/null; then echo prebuilt
+    # NixOS builds its initrd with the system (bko-holt's dump names none).
+    elif [[ -e /etc/NIXOS ]]; then echo nixos
     elif command -v mkinitcpio >/dev/null; then echo mkinitcpio
     elif command -v dracut >/dev/null; then echo dracut
     elif command -v update-initramfs >/dev/null; then echo initramfs-tools
@@ -116,6 +123,9 @@ lk_remake() {
         fi
         ;;
     initramfs-tools) update-initramfs -u -k all ;;
+    # As adopt_nixos in bs1-adopt.  (bko-holt's restore runs nothing on a
+    # NixOS UEFI system: it boots the initrd the backed-up ESP has.)
+    nixos) nixos-rebuild switch ;;
     *) return 1 ;;
     esac
 }
@@ -321,11 +331,14 @@ luks_adopt() {
         fi
     done <<<"$vols"
     lk_say "the drive's key opens every LUKS volume on $disk"
+    if [[ -e /etc/NIXOS && ! -e /run/ostree-booted ]]; then
+        lk_nixos "$vols" "$fstype"
+        return
+    fi
 
     gen=$(lk_generator)
     cmdline=$(cat /proc/cmdline)
     if [[ -e /run/ostree-booted ]]; then family=A reason="ostree (bko-holt load refuses LUKS there)"
-    elif [[ -e /etc/NIXOS ]]; then family=A reason="NixOS: its LUKS step (backshot1.nix) isn't built yet"
     else
         case $gen in
         mkinitcpio)
@@ -589,6 +602,237 @@ lk_check() {
         [[ $bad -eq 0 ]] && lk_say "  $img: ok"
     done <<<"$imgs"
     [[ $n -gt 0 ]] || { lk_err "couldn't list any remade initramfs"; return 1; }
+    [[ $bad -eq 0 ]]
+}
+
+# Family N, NixOS (docs/design/bs1-luks-unattended.md, "Built"): the volumes
+# are boot.initrd.luks.devices, read from the evaluated configuration as
+# nixos-rebuild evaluates it (<nixpkgs/nixos>, <nixos-config>), and the unlock
+# is a module of its own, which backshot1.nix (adopt_nixos) imports while it
+# exists, so --luks-off is removing it and rebuilding.
+LK_NIX_MODULE=/etc/nixos/backshot1-luks.nix
+LK_NIX_IMPORTER=/etc/nixos/backshot1.nix
+# Scripted stage 1's copy of the key: in luksroot.nix's ramfs, which it
+# unmounts once the volumes are open.
+LK_NIX_COPY=/crypt-ramfs/backshot1-key
+
+# lk_nix_eval FUNCTION: FUNCTION applied to this system's evaluated config,
+# as JSON.
+lk_nix_eval() {
+    nix-instantiate --eval --strict --json -E "let c = (import <nixpkgs/nixos> { }).config; in ($1) c"
+}
+
+# lk_nix_devices: "systemd yes|no", then "dev NAME DEVICE KEYFILE HW" for each
+# of boot.initrd.luks.devices, KEYFILE - for none, HW hw when a token opens it
+# (FIDO2, YubiKey, GPG card, clevis, TPM2 or PKCS#11 in crypttabExtraOpts).
+lk_nix_devices() {
+    lk_nix_eval 'c: {
+        systemd = c.boot.initrd.systemd.enable;
+        clevis = builtins.attrNames (c.boot.initrd.clevis.devices or { });
+        devices = builtins.mapAttrs (n: d: {
+            device = d.device;
+            keyFile = d.keyFile;
+            extra = d.crypttabExtraOpts or [ ];
+            fido2 = (d.fido2.credentials or [ ]) ++ (if (d.fido2.credential or null) == null then [ ] else [ d.fido2.credential ]);
+            yubikey = (d.yubikey or null) != null;
+            gpg = (d.gpgCard or null) != null;
+        }) c.boot.initrd.luks.devices;
+    }' | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print("systemd", "yes" if d["systemd"] else "no")
+for n, v in sorted(d["devices"].items()):
+    hw = v["fido2"] or v["yubikey"] or v["gpg"] or n in d["clevis"] or any(
+        o.split("=")[0] in ("tpm2-device", "fido2-device", "pkcs11-uri") for o in v["extra"])
+    print("dev", n, v["device"], v["keyFile"] or "-", "hw" if hw else "-")
+'
+}
+
+# lk_nix_module FSTYPE NAME:UUID...: the module's text.
+lk_nix_module() {
+    local fstype=$1 v opts vols='' t
+    shift
+    case $fstype in
+    xfs) opts=ro,norecovery ;;
+    ext2 | ext3 | ext4) opts=ro,noload ;;
+    *) opts=ro ;;
+    esac
+    for v in "$@"; do vols+="    \"${v%%:*}\" = \"${v#*:}\";"$'\n'; done
+    t=$(cat <<'NIX'
+# BackShot1 (bs1-adopt): the LUKS volumes below unlock with the key on the
+# backup drive, @PATH@ on LABEL=@LABEL@; without the drive, or
+# with a key that doesn't fit, the prompt follows after @WAIT@ s.  TESTBED ONLY:
+# whoever has the drive and the laptop can read the disk.  backshot1.nix
+# imports this file while it exists; bs1-adopt --luks-off removes it and
+# rebuilds.
+{ config, lib, ... }:
+let
+  # Mapping name = LUKS UUID; each was typed when bs1-adopt wrote this.
+  volumes = {
+@VOLUMES@  };
+  systemdStage1 = config.boot.initrd.systemd.enable;
+  # Scripted stage 1: wait up to @WAIT@ s for the drive, mount it read-only
+  # (@OPTS@: no log replayed onto it), copy the key into luksroot's ramfs,
+  # unmount; once per batch of volumes.  /run/backshot1-unlock (moved into
+  # the booted system's /run) says whether that key opens the volume (drive)
+  # or the prompt follows (typed).
+  fetch = name: uuid: ''
+    # BackShot1: the LUKS key from the backup drive.
+    if [ ! -e /crypt-ramfs/backshot1-tried ]; then
+        : > /crypt-ramfs/backshot1-tried
+        i=0
+        while [ ! -e /dev/disk/by-label/@LABEL@ ] && [ "$i" -lt @WAIT@ ]; do
+            if [ "$i" -eq 0 ]; then echo "BackShot1: waiting up to @WAIT@ s for the backup drive, LABEL=@LABEL@"; fi
+            sleep 1
+            i=$((i + 1))
+        done
+        if [ -e /dev/disk/by-label/@LABEL@ ]; then
+            mkdir -p /backshot1-drive
+            modprobe @FSTYPE@ 2>/dev/null
+            if mount -t @FSTYPE@ -o @OPTS@ /dev/disk/by-label/@LABEL@ /backshot1-drive; then
+                cp /backshot1-drive@PATH@ @COPY@
+                umount /backshot1-drive
+            fi
+        fi
+    fi
+    if [ -s @COPY@ ] && cryptsetup open --test-passphrase --key-file=@COPY@ /dev/disk/by-uuid/${uuid}; then
+        echo "${name} drive" >> /run/backshot1-unlock
+    else
+        echo "${name} typed" >> /run/backshot1-unlock
+    fi
+  '';
+in
+{
+  boot.initrd.availableKernelModules = [ "usb_storage" "uas" "sd_mod" "xhci_pci" ];
+  boot.initrd.supportedFilesystems = [ "@FSTYPE@" ];
+  boot.initrd.luks.devices = lib.mapAttrs (name: uuid: lib.mkMerge [
+    # systemd stage 1: systemd-cryptsetup-generator mounts the drive
+    # read-only and reads the file; the password prompt follows when the
+    # drive isn't there within keyFileTimeout or the key fails.
+    (lib.mkIf systemdStage1 {
+      keyFile = "@KEYSPEC@";
+      keyFileTimeout = @WAIT@;
+    })
+    (lib.mkIf (!systemdStage1) {
+      keyFile = "@COPY@";
+      fallbackToPassword = true;
+      preOpenCommands = fetch name uuid;
+    })
+  ]) volumes;
+}
+NIX
+)
+    t=${t//@VOLUMES@/"$vols"}
+    t=${t//@PATH@/"$LK_PATH"}
+    t=${t//@LABEL@/"$BACKUP_LABEL"}
+    t=${t//@WAIT@/"$LUKS_WAIT"}
+    t=${t//@OPTS@/"$opts"}
+    t=${t//@FSTYPE@/"$fstype"}
+    t=${t//@COPY@/"$LK_NIX_COPY"}
+    t=${t//@KEYSPEC@/"$LK_KEYSPEC"}
+    printf '%s' "$t"
+}
+
+# lk_nixos VOLS FSTYPE: luks_adopt's NixOS part, VOLS lk_luks_volumes's lines.
+lk_nixos() {
+    local vols=$1 fstype=$2 cfg sd dev uuid name line n d k hw found family=N reason='' want have
+    local vol_list=() own_list=() unhandled=()
+    [[ $LUKS_WAIT =~ ^[0-9]+$ ]] || { lk_err "BS1_LUKS_WAIT must be a number of seconds"; return 1; }
+    [[ $fstype =~ ^[a-z0-9]+$ ]] || { lk_err "the backup drive's file system type, $fstype, isn't one stage 1 can mount"; return 1; }
+    if ! cfg=$(lk_nix_devices); then
+        lk_err "can't evaluate this system's configuration (nix-instantiate <nixpkgs/nixos>)"
+        return 1
+    fi
+    sd=$(awk '$1 == "systemd" { print $2 }' <<<"$cfg")
+    while read -r dev uuid name; do
+        if [[ $name == - ]]; then unhandled+=("$dev isn't open, so it isn't in the backup"); continue; fi
+        found=
+        while read -r line n d k hw; do
+            [[ $line == dev ]] || continue
+            if [[ $n == "$name" || $(lk_resolve "$d") == "$(readlink -f "$dev")" ]]; then found=$n; break; fi
+        done <<<"$cfg"
+        if [[ -z $found ]]; then unhandled+=("$name isn't in boot.initrd.luks.devices (stage 1 doesn't open it)"); continue; fi
+        if [[ $found != "$name" ]]; then unhandled+=("$name is $found in boot.initrd.luks.devices"); continue; fi
+        # Own: a key file not ours, or a token.
+        if [[ $hw == hw || ($k != - && $k != "$LK_KEYSPEC" && $k != "$LK_NIX_COPY") ]]; then
+            own_list+=("$name:$uuid")
+            continue
+        fi
+        [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || { unhandled+=("$name has characters the module can't take"); continue; }
+        vol_list+=("$name:$uuid:N")
+    done <<<"$vols"
+    if [[ ${#unhandled[@]} -gt 0 ]]; then
+        family=A reason=$(printf '%s\n' "${unhandled[@]}" | awk '!seen[$0]++' | paste -s -d ';' - | sed 's/;/; /g')
+    elif [[ ${#vol_list[@]} -eq 0 ]]; then
+        family=own
+    fi
+
+    mkdir -p "$LUKS_DIR"
+    if [[ $family == A || $family == own ]]; then
+        [[ $family == own ]] && reason="every LUKS volume unlocks with no one typing"
+        lk_say "$family: $reason; nothing else changes"
+        lk_put "$LUKS_REC" 644 "$(lk_record "$family" nixos "$fstype" "" "${own_list[*]}" "$reason")" || return 1
+        return 0
+    fi
+    grep -qF 'backshot1-luks.nix' "$LK_NIX_IMPORTER" 2>/dev/null ||
+        { lk_err "$LK_NIX_IMPORTER doesn't import backshot1-luks.nix: run all of bs1-adopt, not its LUKS step alone"; return 1; }
+    lk_say "family N (NixOS, $([[ $sd == yes ]] && echo systemd || echo scripted) stage 1): ${vol_list[*]}${own_list:+; own: ${own_list[*]}}"
+    lk_put "$LUKS_REC" 644 "$(lk_record N nixos "$fstype" "${vol_list[*]}" "${own_list[*]}" "")" || return 1
+    local mods=() v before=$LK_CHANGED
+    for v in "${vol_list[@]}"; do mods+=("${v%:N}"); done
+    lk_put "$LK_NIX_MODULE" 644 "$(lk_nix_module "$fstype" "${mods[@]}")" || return 1
+
+    # Rebuilt when the module changed, or the running system's initrd isn't
+    # the one this configuration makes (an earlier rebuild that failed).
+    want=$(lk_nix_eval 'c: c.system.build.initialRamdisk.outPath' | tr -d '"') || want=
+    have=$(dirname "$(readlink -f /run/current-system/initrd)")
+    if [[ $LK_CHANGED -eq $before && -n $want && $want == "$have" ]]; then
+        lk_say "unchanged; nothing is rebuilt"
+        return 0
+    fi
+    lk_say "rebuilding this NixOS system (nixos-rebuild switch)"
+    if lk_remake nixos && lk_nix_check "$sd" "${mods[@]}"; then
+        lk_say "done: reboot once with the drive plugged in, nothing typed, before the next backup (preflight wants a boot the drive unlocked)"
+        return 0
+    fi
+    lk_err "the rebuild failed, or its initrd lacks what unlocking from the drive needs; putting everything back"
+    luks_off
+    return 1
+}
+
+# lk_nix_check SYSTEMD NAME:UUID...: the system just switched to runs the
+# initrd this configuration makes, systemd-boot's ESP has it, and that initrd
+# unlocks each volume from the drive: its crypttab gives the key and the
+# timeout (systemd stage 1), or its stage-1 script fetches the key and opens
+# with it (scripted).
+lk_nix_check() {
+    local sd=$1 info initrd crypttab stage1 have v n d bad=0
+    shift
+    info=$(lk_nix_eval 'c: {
+        initrd = c.system.build.initialRamdisk.outPath;
+        crypttab = if c.boot.initrd.systemd.enable then toString c.boot.initrd.systemd.contents."/etc/crypttab".source else "";
+        stage1 = if c.boot.initrd.systemd.enable then "" else c.system.build.bootStage1.outPath;
+    }' | python3 -c 'import json, sys; d = json.load(sys.stdin); print(d["initrd"]); print(d["crypttab"] or "-"); print(d["stage1"] or "-")') ||
+        { lk_err "can't evaluate the new configuration"; return 1; }
+    { read -r initrd; read -r crypttab; read -r stage1; } <<<"$info"
+    have=$(dirname "$(readlink -f /run/current-system/initrd)")
+    [[ $have == "$initrd" ]] || { lk_err "the running system's initrd is $have, not the configuration's $initrd"; bad=1; }
+    for d in /boot /efi /boot/efi; do
+        compgen -G "$d/EFI/nixos/*-initrd.efi" >/dev/null || continue
+        [[ -f $d/EFI/nixos/${initrd##*/}-initrd.efi ]] || { lk_err "$d/EFI/nixos has no ${initrd##*/}-initrd.efi: the boot loader doesn't have the new initrd"; bad=1; }
+        break
+    done
+    for v in "$@"; do
+        n=${v%%:*}
+        if [[ $sd == yes ]]; then
+            awk -v n="$n" -v k="$LK_KEYSPEC" -v t="keyfile-timeout=${LUKS_WAIT}s" '$1 == n && $3 == k && index("," $4 ",", "," t ",") { f = 1 } END { exit !f }' "$crypttab" 2>/dev/null ||
+                { lk_err "the initrd's crypttab ($crypttab) doesn't give $n the drive's key"; bad=1; }
+        else
+            awk -v n="$n" -v k="--key-file=$LK_NIX_COPY" 'index($0, "luksOpen ") && index($0, " " n " ") && index($0, k) { o = 1 } index($0, "echo \"" n " drive\"") { m = 1 } END { exit !(o && m) }' "$stage1" 2>/dev/null ||
+                { lk_err "the stage-1 script ($stage1) doesn't open $n with the drive's key"; bad=1; }
+        fi
+    done
+    [[ $bad -eq 0 ]] && lk_say "  $initrd: ok"
     [[ $bad -eq 0 ]]
 }
 

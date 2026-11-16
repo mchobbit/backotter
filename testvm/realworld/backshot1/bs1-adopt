@@ -311,6 +311,9 @@ open_firewall() {
 }
 
 # NixOS builds /etc from its configuration, so all of that goes in there.
+# On a LUKS install the LUKS step (bs1-luks, family N) then writes
+# backshot1-luks.nix, which this module imports while it exists, and
+# rebuilds again if that changed anything.
 adopt_nixos() {
     local conf=/etc/nixos/configuration.nix module=/etc/nixos/backshot1.nix line lines=
     if [[ -e /etc/nixos/flake.nix ]]; then
@@ -322,6 +325,9 @@ adopt_nixos() {
 # Written by BackShot1's bs1-adopt.
 { lib, pkgs, ... }:
 {
+  # bs1-luks's unlocking from the backup drive (family N), while bs1-adopt
+  # has it on: bs1-adopt --luks-off removes the file.
+  imports = builtins.filter builtins.pathExists [ ./backshot1-luks.nix ];
   networking.hostName = lib.mkForce "$SOURCE_HOST";
   services.openssh.enable = true;
   services.openssh.settings.PermitRootLogin = lib.mkForce "prohibit-password";

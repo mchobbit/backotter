@@ -50,7 +50,8 @@ caught at different moments; `bs1-manifest` tells those from real differences.
   systemd, OpenRC, sysvinit, runit, dinit or s6 (on Gentoo by `emerge
   --getbinpkg --noreplace`, from the binhost; an install like the
   Thinkpad's has them all, so nothing is emerged).  On NixOS it writes
-  `/etc/nixos/backshot1.nix`, imports it from `configuration.nix` and rebuilds;
+  `/etc/nixos/backshot1.nix`, imports it from `configuration.nix` and rebuilds
+  (on LUKS the LUKS step adds `backshot1-luks.nix` and rebuilds once more);
   a system built from a flake needs those settings added by hand.  On Guix
   System it writes `/etc/backshot1/system.scm`, which loads
   `/etc/config.scm` and adds BackShot1's settings, and reconfigures from it
@@ -471,7 +472,10 @@ that carries over from one restore to the next.
 (`bs1-luks`; docs/design/bs1-luks-unattended.md).  If the drive isn't there
 within 30 s, or the key doesn't fit, the usual prompt follows.  The settings
 are in the installed system, so in the backup: the restore's boot stage
-remakes the initramfs from them, and the restored system unlocks itself too.
+remakes the initramfs from them, and the restored system unlocks itself too
+(on NixOS by UEFI the restore remakes nothing: the restored system boots the
+initrd the backed-up ESP has, which already has them).  The drive may be
+ext4 or xfs (the Thinkpad's `mybig512` is xfs).
 How depends on what opens the volume:
 
 | Family | Who | How |
@@ -479,7 +483,8 @@ How depends on what opens the volume:
 | S | systemd in the initramfs: dracut (Fedora, EndeavourOS, openSUSE, Gentoo systemd, Ubuntu 26.04), mkinitcpio's `sd-encrypt`; and any volume the booted system opens under systemd | crypttab's key field `/backshot1/keys/disk-passphrase:LABEL=mybig512`, option `keyfile-timeout=30s`; `/etc/crypttab.initramfs` for `sd-encrypt`; a dracut or mkinitcpio drop-in adds the USB and ext4 modules |
 | D | initramfs-tools: Debian, Ubuntu up to 25.04, Mint, Chimera | crypttab option `keyscript=/usr/local/lib/backshot1/unlock-key` (`bs1-unlock-key`), the key field left `none`; it asks with askpass when the drive's key can't be read |
 | E | mkinitcpio's busybox `encrypt`: Arch, Manjaro, Omarchy | a `bs1key` hook, put right before `encrypt` by `/etc/mkinitcpio.conf.d/zz-backshot1.conf`, writes `/crypto_keyfile.bin` only if that key opens the volume |
-| A | non-systemd dracut, Alpine's mkinitfs, ostree, NixOS (for now) | nothing: the run is attended |
+| N | NixOS (systemd or scripted stage 1) | `/etc/nixos/backshot1-luks.nix`, imported by `backshot1.nix` while it exists, sets each typed `boot.initrd.luks.devices` volume's `keyFile`: systemd stage 1 the same `PATH:LABEL=` form and `keyFileTimeout = 30`; scripted stage 1 a copy its `preOpenCommands` take off the drive (mounted read-only, `norecovery` for xfs), with `fallbackToPassword`; then `nixos-rebuild switch` |
+| A | non-systemd dracut, Alpine's mkinitfs, ostree | nothing: the run is attended |
 
 A volume that already opens with no one typing (a key file of its own in the
 initramfs, TPM2, FIDO2) is left alone (`own`).  The kernel command line and
@@ -498,7 +503,8 @@ The preflight and phase 1 check the drive's key against every volume, and
 say how the system unlocks, `UNLOCK=`:
 
 - `drive`: the drive's key opened every typed volume at this boot (the
-  journal's key-device mount for S, `/run/backshot1-unlock` for D and E;
+  journal's key-device mount for S and NixOS's systemd stage 1,
+  `/run/backshot1-unlock` for D, E and NixOS's scripted stage 1;
   `backshot1 unlock` shows it);
 - `own`: every volume opens by itself;
 - `attended`: someone types at boot (family A, a system adopted before

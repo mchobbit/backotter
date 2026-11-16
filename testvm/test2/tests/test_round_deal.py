@@ -9,6 +9,7 @@ The shell runs against test_round_dist's fake hosts (ssh runs the command here, 
 that is the host's home), with BKO_CAPS instead of the read-only capability probe: no host
 needed, and nothing is built."""
 
+import hashlib
 import importlib.util
 import os
 import re
@@ -470,6 +471,150 @@ class GuestSize(unittest.TestCase):
         for block in inputs:
             self.assertNotIn("GUEST_", block)
             self.assertNotIn("CPUS", block)
+
+
+class ScriptDigest(unittest.TestCase):
+    """build-round.sh's digests read a build script as script_text gives it: without comment
+    lines (a first line's #! kept) and blank lines, a here-document's body as it is, and each
+    --cpus/--memory value left out (the guest's size), so that a comment or a guest size builds
+    nothing again while any other change to a line does.  inputs_digest splits an inputs file in
+    its two forms (the old: exact bytes), and reuse finds a build stored under the old form's
+    digest and files it under the new one (the transition aid of 2026-11-16)."""
+
+    FNS = ("digest_of", "inputs_digest", "reuse", "hash_files", "script_text")
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="t2-sd-")
+        self.addCleanup(shutil.rmtree, self.d, True)
+        with open(BUILD_ROUND, encoding="utf-8") as f:
+            code = f.read()
+        self.fns = ""
+        for n in self.FNS:
+            m = (re.search(rf"(?m)^{n}\(\) \{{ .*\}}\n", code) or
+                 re.search(rf"(?ms)^{n}\(\) \{{\n.*?^\}}\n", code))
+            self.assertIsNotNone(m, n)
+            self.fns += m.group(0)
+
+    def sh(self, script, **env):
+        # mv -T is GNU's; the Mac's mv does the same for a target that isn't there.
+        pre = ('mv() { [[ $1 == -T ]] && shift; command mv "$@"; }\n'
+               'log() { echo "log: $*"; }\n')
+        e = dict(os.environ, **env)
+        r = subprocess.run(["bash", "-c", pre + self.fns + script], env=e, capture_output=True,
+                           text=True, cwd=self.d)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r.stdout
+
+    def digest(self, text):
+        p = os.path.join(self.d, "s.sh")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+        return self.sh(f'script_text "{p}" | sha256sum | cut -d" " -f1')
+
+    BASE = ('#!/usr/bin/env bash\n# What it builds.\nset -e\n\nfast=${FAST:+1}\n'
+            'run --memory "${MEMORY:-8192}" --cpus "${CPUS:-8}" --snapshot img\n'
+            'cat >w <<EOF\n#!/bin/sh\n# the wrapper\nexec cc "$@"\nEOF\n'
+            'if [ -n "$fast" ]; then\n    cargo build --release --locked\nfi\n')
+
+    def test_comments_and_blank_lines_leave_it(self):
+        d = self.digest(self.BASE)
+        edited = self.BASE.replace("# What it builds.\n", "# What it builds, and why.\n# More.\n")
+        edited = edited.replace("set -e\n\n", "set -e\n\n\n   \t\n")
+        edited = edited.replace("    cargo build", "    # an indented comment\n\t#another\n    cargo build")
+        self.assertEqual(self.digest(edited), d)
+        self.assertEqual(self.digest(self.BASE.replace("# What it builds.\n", "")), d)
+
+    def test_the_shebang_and_real_lines_count(self):
+        d = self.digest(self.BASE)
+        self.assertNotEqual(self.digest(self.BASE.replace("#!/usr/bin/env bash", "#!/bin/sh")), d)
+        self.assertNotEqual(self.digest(self.BASE.replace("--locked", "--locked --offline")), d)
+        self.assertNotEqual(self.digest(self.BASE.replace("--snapshot img", "img")), d)
+        # a trailing comment is part of its line (a # after code isn't told from one in a string)
+        self.assertNotEqual(self.digest(self.BASE.replace("set -e\n", "set -e  # stop\n")), d)
+
+    def test_a_here_document_body_counts_whole(self):
+        d = self.digest(self.BASE)
+        self.assertNotEqual(self.digest(self.BASE.replace("# the wrapper\n", "# a wrapper\n")), d)
+        self.assertNotEqual(self.digest(self.BASE.replace("#!/bin/sh\n# the", "#!/bin/sh\n\n# the")), d)
+        # after its end, comments are comments again; <<< is no here-document
+        tail = "x=$(cat <<<\"$y\")\n# a comment\n\n"
+        self.assertEqual(self.digest(self.BASE + tail), self.digest(self.BASE + "x=$(cat <<<\"$y\")\n"))
+        quoted = "cat <<-'END'\n\t# kept\n\tEND\n# dropped\n"
+        self.assertNotEqual(self.digest(self.BASE + quoted),
+                            self.digest(self.BASE + quoted.replace("# kept", "# changed")))
+        self.assertEqual(self.digest(self.BASE + quoted),
+                         self.digest(self.BASE + quoted.replace("# dropped", "# other")))
+
+    def test_the_guest_size_leaves_it(self):
+        d = self.digest(self.BASE)
+        for a, b in (('--memory "${MEMORY:-8192}" --cpus "${CPUS:-8}"', "--memory 8192 --cpus 8"),
+                     ('--cpus "${CPUS:-8}"', "--cpus=12"), ('--memory "${MEMORY:-8192}"', "--memory $m")):
+            self.assertEqual(self.digest(self.BASE.replace(a, b)), d, b)
+
+    def inputs(self, text):
+        p = os.path.join(self.d, "s.sh")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+        out = self.sh(f'here={self.d} SRC=/nowhere\n'
+                      f'{{ echo "rustic-bko haiku"; hash_files "{p}"; echo "@old env X=1"; }} >in\n'
+                      'd=$(inputs_digest in); echo "$d $(digest_of in.old)"; cat in; echo --; cat in.old')
+        return out
+
+    def test_the_two_forms(self):
+        out = self.inputs(self.BASE)
+        new, old = out.split("\n", 1)[1].split("--\n")
+        exact = hashlib.sha256(self.BASE.encode()).hexdigest()
+        self.assertEqual(old, f"rustic-bko haiku\nfile s.sh {exact}\nenv X=1\n")
+        self.assertRegex(new, r"^rustic-bko haiku\nscript s\.sh [0-9a-f]{64}\n$")
+        self.assertNotIn("@", new + old)
+        self.assertEqual(self.inputs(self.BASE.replace("# What", "# Why")).split("\n")[2], new.split("\n")[1])
+
+    def store(self, old_digest):
+        """A store with one rustic-haiku build, under OLD_DIGEST."""
+        s = os.path.join(self.d, "store", "rustic-haiku", old_digest)
+        os.makedirs(s)
+        for n, t in (("bin", "the binary\n"), ("commit", "r1\ncore r2\nrustc\n"), ("inputs", "old inputs\n")):
+            with open(os.path.join(s, n), "w", encoding="utf-8") as f:
+                f.write(t)
+        return s
+
+    def reuse(self, dry, **env):
+        out = self.sh(f'STORE={self.d}/store BIN={self.d}/bin SRC=/src host=h dry={dry}\n'
+                      'printf "a\\n@new script x N\\n@old file x O\\n" >in\n'
+                      'd=$(inputs_digest in)\n'
+                      'if reuse rustic-haiku "$d" haiku rustic-bko in; then echo "reused $d"; else echo "built $d"; fi',
+                      **env)
+        return out
+
+    def test_reuse_takes_the_old_digest_once(self):
+        old = hashlib.sha256(b"a\nfile x O\n").hexdigest()
+        new = hashlib.sha256(b"a\nscript x N\n").hexdigest()
+        s = self.store(old)
+        out = self.reuse("yes")
+        self.assertIn(f"would reuse {s} (the old digest", out)
+        self.assertIn(f"reused {new}", out)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "store", "rustic-haiku", new)))
+        out = self.reuse("no")
+        self.assertIn(f"reused {new}", out)
+        n = os.path.join(self.d, "store", "rustic-haiku", new)
+        with open(os.path.join(n, "inputs"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), "a\nscript x N\n")
+        with open(os.path.join(n, "bin"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), "the binary\n")
+        with open(os.path.join(s, "inputs"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), "old inputs\n")   # the old entry as it was
+        with open(os.path.join(self.d, "bin", "haiku", "rustic-bko"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), "the binary\n")
+        # the next round finds the new digest's own (no "old digest" line), and none is built
+        shutil.rmtree(s)
+        out = self.reuse("no")
+        self.assertNotIn("old digest", out)
+        self.assertIn(f"reused {new}", out)
+        self.assertIn(f"built {new}", self.reuse("no", BKO_REUSE="0"))
+
+    def test_reuse_without_either_builds(self):
+        self.assertIn("built ", self.reuse("no"))
+        self.assertFalse(os.path.exists(os.path.join(self.d, "store", "rustic-haiku")))
 
 
 # What a whole amd64 round holds, binary by binary: restic-bko for every OS but Haiku

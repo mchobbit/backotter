@@ -153,7 +153,8 @@
 # 8192 MB, a 16-thread small host with only openbsd 16 CPUs if its room is
 # 18 GiB, else fewer.  CPUS and MEMORY, given to the Mac part (or a host part),
 # win for every guest of the round (CPUS is kept even past the memory).
-# Neither is an input of a build's digest: how many CPUs compile it changes
+# Neither is an input of a build's digest, nor a build script's --cpus and
+# --memory values (script_text): how many CPUs compile it changes
 # no byte of the binary (the profile fixes the codegen units), so a reused
 # build stays reused whatever the size.  --dry-run prints each host's sizes
 # below the deal (guest_size run there, from the Mac's copy of this script,
@@ -167,7 +168,10 @@
 # goes into it: the sources (rustic's after prep-rustic-src.sh, Cargo.lock
 # included; *.md left out while no .rs has an include_str!/include_bytes!),
 # toolchain versions, profile, cargo config and CARGO_*/RUSTFLAGS
-# environment, the build scripts, and for guest builds the image booted
+# environment (not what changes no byte of it: cargo_env_inputs), the build
+# scripts (without their comments, blank lines and guest sizes: script_text,
+# since 2026-11-16; reuse still finds a build of the exact bytes' digest and
+# files it under the new one), and for guest builds the image booted
 # (Haiku's Rust comes from HaikuPorts' rolling repository at build time, so
 # a newer one there doesn't count; BKO_REUSE=0 builds with it).  A
 # later round with the same digest copies it from there instead of building,
@@ -1030,11 +1034,38 @@ row() {
 }
 # digest_of INPUTS-FILE: the digest of a build, from the text of its inputs.
 digest_of() { sha256sum <"$1" | cut -d' ' -f1; }
-# reuse COMP DIGEST OS NAME: copy the stored build, if any, to BIN/OS/NAME,
-# with a commit file naming this round's commits.
+# inputs_digest INPUTS-FILE: its digest, once its text is split in its two
+# forms: INPUTS-FILE this one's, INPUTS-FILE.old the one before 2026-11-16's.
+# A line "@new LINE" is this form's alone, "@old LINE" the old's alone, every
+# other line both's (hash_files, cargo_env_inputs, build_restic's Go lines).
+# TRANSITION AID (2026-11-16): the old form only finds the store's builds of
+# before (reuse); once the hosts' stores have them under the new digests (the
+# first round after does it) the @old lines, .old and reuse's second lookup
+# can go.
+inputs_digest() {
+    sed -e '/^@new /d' -e 's/^@old //' "$1" >"$1.old" &&
+        sed -e '/^@old /d' -e 's/^@new //' "$1" >"$1.new" && mv -f "$1.new" "$1" && digest_of "$1"
+}
+# reuse COMP DIGEST OS NAME [INPUTS-FILE]: copy the stored build, if any, to
+# BIN/OS/NAME, with a commit file naming this round's commits.  None under
+# DIGEST: the one under INPUTS-FILE.old's digest (inputs_digest's transition
+# aid), filed under DIGEST too with INPUTS-FILE as its inputs (as keep does),
+# so that the next round finds it there.
 reuse() {
-    local s=$STORE/$1/$2 c=${4%-bko}-commit
-    [[ ${BKO_REUSE:-1} != 0 && -f $s/bin && -f $s/commit ]] || return 1
+    local s=$STORE/$1/$2 c=${4%-bko}-commit o
+    [[ ${BKO_REUSE:-1} != 0 ]] || return 1
+    if [[ ! -f $s/bin || ! -f $s/commit ]]; then
+        # TRANSITION AID (inputs_digest): the build of the old form's digest.
+        [[ -n ${5:-} && -f $5.old ]] || return 1
+        o=$STORE/$1/$(digest_of "$5.old")
+        [[ -f $o/bin && -f $o/commit ]] || return 1
+        [[ $dry == yes ]] && { log "$4 $3: would reuse $o (the old digest; filed under $2 too)"; return 0; }
+        { mkdir -p "$STORE/$1" && rm -rf "$s.part.$$" && mkdir "$s.part.$$" &&
+            cp -p "$o/bin" "$s.part.$$/bin" && cp -p "$o/commit" "$s.part.$$/commit" && cp "$5" "$s.part.$$/inputs" &&
+            mv -T "$s.part.$$" "$s" 2>/dev/null; } || rm -rf "$s.part.$$"
+        [[ -f $s/bin && -f $s/commit ]] || return 1
+        log "$4 $3: $o (the old digest) filed under $2 too"
+    fi
     [[ $dry == yes ]] && { log "$4 $3: would reuse $s"; return 0; }
     mkdir -p "$BIN/$3"
     cp "$s/bin" "$BIN/$3/$4.part" && chmod 755 "$BIN/$3/$4.part" && mv "$BIN/$3/$4.part" "$BIN/$3/$4" || return 1
@@ -1065,21 +1096,68 @@ keep() {
         mv -T "$s.part.$$" "$s" 2>/dev/null || rm -rf "$s.part.$$"
 }
 # The common inputs of every rustic build: the prepared sources, the profile.
+# Left out (since 2026-11-16, inputs_digest): a cargo config's directory
+# (CARGO_HOME's, which differs by host), and the variables that change no byte
+# of the binary: how many jobs, the terminal, the network, the log, tokens.
+# CARGO_TARGET_DIR stays (paths under it can reach the binary).
+nobin_cargo='CARGO_BUILD_JOBS|CARGO_TERM_[A-Z_]*|CARGO_HTTP_[A-Z_]*|CARGO_NET_[A-Z_]*|CARGO_LOG|CARGO_REGISTR[A-Z0-9_]*_TOKEN'
 cargo_env_inputs() {
-    local f
+    local f h
     for f in "${CARGO_HOME:-$HOME/.cargo}"/config "${CARGO_HOME:-$HOME/.cargo}"/config.toml; do
-        [[ -f $f ]] && echo "cargo-config $f $(sha256sum <"$f" | cut -d' ' -f1)"
+        [[ -f $f ]] || continue
+        h=$(sha256sum <"$f" | cut -d' ' -f1)
+        echo "@new cargo-config ${f##*/} $h"
+        echo "@old cargo-config $f $h"
     done
-    env | grep -E '^(CARGO_|RUSTFLAGS|RUSTC|CC|CXX|AR|CFLAGS|CXXFLAGS|LDFLAGS)' | grep -v '^CARGO_HOME=' | LC_ALL=C sort
+    env | grep -E '^(CARGO_|RUSTFLAGS|RUSTC|CC|CXX|AR|CFLAGS|CXXFLAGS|LDFLAGS)' | grep -v '^CARGO_HOME=' | LC_ALL=C sort |
+        sed -E "/^($nobin_cargo)=/s/^/@old /"
     true
 }
-# FILE...: their digests, by names that don't depend on where SRC or this script is.
+# The same for restic's Go environment: the go command's parallelism, temp and
+# install directories, telemetry, and module fetching (go.sum pins what it gets).
+nobin_go='GOMAXPROCS|GOGC|GOMEMLIMIT|GOTMPDIR|GOBIN|GOTELEMETRY|GOTELEMETRYDIR|GOPROXY|GONOPROXY|GOSUMDB|GONOSUMDB|GOPRIVATE|GOINSECURE|GOVCS|GOAUTH'
+# FILE...: their digests, by names that don't depend on where SRC or this
+# script is: each build script's as script_text reads it, and (the old form,
+# inputs_digest) its exact bytes.
 hash_files() {
     local f n
     for f in "$@"; do
         n=${f#"$here"/}; n=${n#"$SRC"/}
-        echo "file $n $(sha256sum <"$f" | cut -d' ' -f1)"
+        echo "@new script $n $(script_text "$f" | sha256sum | cut -d' ' -f1)"
+        echo "@old file $n $(sha256sum <"$f" | cut -d' ' -f1)"
     done
+}
+# script_text FILE: a build script (shell) as its digest reads it, without what
+# no build sees: its comment lines (but a first line's #!) and blank lines, and
+# each --cpus and --memory option's value (the guest's size: "Guest size"
+# above), so that a comment, or a guest size turned into CPUS and MEMORY,
+# builds nothing again.  Only whole lines: a # after code isn't told apart
+# from one in a string or ${#x}.  A here-document's body stays as it is, its
+# #-lines too (dragonfly/build-rustic.sh writes a script's #! with one).
+script_text() {
+    LC_ALL=C awk '
+        function next_doc() { if (qi < nq) { qi++; hd = q[qi]; hdash = qd[qi] } else { hd = ""; nq = qi = 0 } }
+        hd != "" { print; t = $0; if (hdash) sub(/^\t+/, "", t); if (t == hd) next_doc(); next }
+        NR == 1 && /^#!/ { print; next }
+        /^[ \t]*(#|$)/ { next }
+        {
+            l = $0
+            gsub(/--cpus[ =]+("[^"]*"|[^ \t")\\]+)/, "--cpus", l)
+            gsub(/--memory[ =]+("[^"]*"|[^ \t")\\]+)/, "--memory", l)
+            print l
+            # Here-documents begun on the line (<<< is a string, not one).
+            s = $0
+            while (match(s, /<<-?[ \t]*[\\"'\'']?[A-Za-z_][A-Za-z_0-9]*/)) {
+                w = substr(s, RSTART, RLENGTH)
+                if (RSTART == 1 || substr(s, RSTART - 1, 1) != "<") {
+                    qd[++nq] = (substr(w, 3, 1) == "-")
+                    sub(/^<<-?[ \t]*[\\"'\'']?/, "", w)
+                    q[nq] = w
+                }
+                s = substr(s, RSTART + RLENGTH)
+            }
+            if (hd == "" && qi < nq) next_doc()
+        }' "$1"
 }
 
 # prepare: SRC's rustic pointed at its rustic_core (prep-rustic-src.sh), in
@@ -1129,9 +1207,10 @@ build_restic() {
         inputs=$LOGS/restic-$os.inputs
         { echo "restic-bko $(go_target "$os")"; echo "sources $sd"; echo "tree $RESTIC_TREE"
           echo "$gov"; hash_files "$SRC/restic/build-backotter.sh"
-          env | grep -E '^(GO[A-Z0-9_]*|CGO_[A-Z_]*)=' | grep -vE '^(GOCACHE|GOMODCACHE|GOPATH|GOROOT)=' | LC_ALL=C sort; } >"$inputs"
-        d=$(digest_of "$inputs")
-        if reuse restic-$os "$d" $os restic-bko; then
+          env | grep -E '^(GO[A-Z0-9_]*|CGO_[A-Z_]*)=' | grep -vE '^(GOCACHE|GOMODCACHE|GOPATH|GOROOT)=' | LC_ALL=C sort |
+              sed -E "/^($nobin_go)=/s/^/@old /"; } >"$inputs"
+        d=$(inputs_digest "$inputs")
+        if reuse restic-$os "$d" $os restic-bko "$inputs"; then
             [[ $dry == yes ]] || row restic-bko $os reused 0 "$d"
         else
             todo+=" $os"
@@ -1210,8 +1289,8 @@ build_linux() {
           echo "sources $PREP_DIGEST"; echo "profile $profile $pe"
           rustc -vV; cargo -V; echo "$zv"; hash_files "$here/zigbuild/cargo" "$here/zig-tools.sh"; cargo_env_inputs; } >"$inputs"
     fi
-    d=$(digest_of "$inputs")
-    if reuse "rustic-$os" "$d" "$os" rustic-bko; then
+    d=$(inputs_digest "$inputs")
+    if reuse "rustic-$os" "$d" "$os" rustic-bko "$inputs"; then
         [[ $dry == yes ]] || row rustic-bko "$os" reused 0 "$d"
         return 0
     fi
@@ -1271,8 +1350,8 @@ build_dragonfly() {  # PORT
       echo "clang $(ls /usr/lib/llvm-[0-9]*/bin/clang /usr/lib/llvm-[0-9]*/bin/ld.lld 2>/dev/null | tr '\n' ' ')$(
           dpkg-query -W -f '${Package}=${Version} ' 'libllvm[0-9]*' 2>/dev/null)"
       hash_files "$here/dragonfly/build-rustic.sh" "$here/prep-rustic-src.sh"; cargo_env_inputs; } >"$inputs"
-    d=$(digest_of "$inputs")
-    if reuse rustic-dragonfly "$d" dragonfly rustic-bko; then
+    d=$(inputs_digest "$inputs")
+    if reuse rustic-dragonfly "$d" dragonfly rustic-bko "$inputs"; then
         [[ $dry == yes ]] || row rustic-bko dragonfly reused 0 "$d"
         return 0
     fi
@@ -1297,8 +1376,8 @@ build_haiku() {  # PORT: natively in a throwaway haiku6, on a guest slot
     { echo "rustic-bko haiku, native in haiku6"; echo "sources $PREP_DIGEST"; echo "profile $gprofile"
       echo "image ${img#"$WORK"/} $(stat -L -c '%s %Y' "$img")"
       hash_files "$here/haiku/build-rustic.sh" "$here/prep-rustic-src.sh"; } >"$inputs"
-    d=$(digest_of "$inputs")
-    if reuse rustic-haiku "$d" haiku rustic-bko; then
+    d=$(inputs_digest "$inputs")
+    if reuse rustic-haiku "$d" haiku rustic-bko "$inputs"; then
         [[ $dry == yes ]] || row rustic-bko haiku reused 0 "$d"
         return 0
     fi
@@ -1352,8 +1431,8 @@ build_native() {  # OS PORT
       done
       hash_files "$here/build-rustic-native.sh" "$here/$os/build-rustic.sh" "$here/prep-rustic-src.sh"
       [[ -f $here/$os/platform.conf ]] && hash_files "$here/$os/platform.conf"; true; } >"$inputs"
-    d=$(digest_of "$inputs")
-    if reuse "rustic-$os" "$d" "$os" rustic-bko; then
+    d=$(inputs_digest "$inputs")
+    if reuse "rustic-$os" "$d" "$os" rustic-bko "$inputs"; then
         [[ $dry == yes ]] || row rustic-bko "$os" reused 0 "$d"
         return 0
     fi

@@ -117,6 +117,20 @@ drop_dst() {  # NAME
     umount "$SCR/$1"; [[ -z $l ]] || losetup -d "$l"; rm -f "$SCR/$1.img"; rmdir "$SCR/$1"
 }
 python3 "$C/fsmeta.py" record "$S" "$SCR/before.json"
+# Both tools skip sockets (SPEC3 1), and dom0's root has two: the
+# qrexec policy daemon's /etc/qubes-rpc/policy.EvalSimple and policy.EvalGUI
+# (systemd's qubes-qrexec-policy-daemon socket units, left on the disk).
+# Left out of the comparison (a restored one would show as "extra"), and
+# checked apart: none in either snapshot.
+SOCKS=$(python3 - "$SCR/before.json" <<'PY'
+import json, sys
+b = json.load(open(sys.argv[1]))
+s = sorted(k for k, v in b.items() if v["type"] == "socket")
+json.dump({k: v for k, v in b.items() if v["type"] != "socket"}, open(sys.argv[1], "w"))
+print(" ".join(s))
+PY
+)
+echo "source sockets: ${SOCKS:-none}"
 echo "source: $(getfattr -R -d -m - --absolute-names "$S" 2>/dev/null | grep -c '^[a-z]') xattrs; flags: $(lsattr -Ra "$S" 2>/dev/null | awk '{print $1}' | sort | uniq -c | tr '\n' ' ')"
 mkdir -p "$SCR/repos"
 "$RESTIC" -r "$SCR/repos/restic" init -q && "$RESTIC" -r "$SCR/repos/restic" backup -q --with-atime "$S"; rc1=$?
@@ -128,6 +142,9 @@ if rt_nodes "$RESTIC" "$SCR/repos/restic" "$S" >"$SCR/n-restic" && rt_nodes "$RE
     if rt_node_diff "$SCR/n-restic" "$SCR/n-rustic" >"$SCR/ndiff"; then
         ck "same repository format (node-identical snapshots)" PASS "$(wc -l <"$SCR/n-restic") nodes"
     else ck "same repository format (node-identical snapshots)" FAIL "$(head -5 "$SCR/ndiff" | tr '\n' ' ')"; cat "$SCR/ndiff"; fi
+    ns=$(cat "$SCR/n-restic" "$SCR/n-rustic" | grep -c 'type="socket"')
+    [[ $ns == 0 ]] && ck "sockets skipped by both tools" PASS "source: $(wc -w <<<"$SOCKS") (${SOCKS:-none}); none in either snapshot" ||
+        ck "sockets skipped by both tools" FAIL "$ns socket nodes in the snapshots"
 else ck "same repository format (node-identical snapshots)" FAIL "can't decode the snapshots"; fi
 
 restore() {  # TOOL REPO DST

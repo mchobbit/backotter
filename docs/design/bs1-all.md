@@ -399,8 +399,8 @@ The user answered Q1-Q5 on 2026-11-17; nothing is open. Where the text above say
 yes" and the like, these govern.
 
 1. **NixOS: full A+B** (the user's choice). A restores 210139 with today's
-   tools like every other row; NixOS's row is about 41 min (est.), the total
-   about 3 h 10 min (est.).
+   tools like every other row; NixOS's row is about 36 min (est.), the total
+   about 3 h 5 min (est.).
 2. **`--load-wipes` in B:** yes, B only, after item 1's review (my
    judgment, as recommended).
 3. **Reuse `backshot1 cycle` for A and B:** yes, with `--hold` and

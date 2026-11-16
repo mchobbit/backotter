@@ -1,12 +1,12 @@
-HoltTest2 plan: bko-holt code 18b730e (not built), rustic-bko bko-bin, base BASE, ledger 95 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 6 of 81 cells, est. 6.0 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+HoltTest2 plan: bko-holt code 18b730e (not built), rustic-bko bko-bin, base BASE, ledger 98 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
+due: 6 of 86 cells, est. 6.0 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   holt:arch                     any      holt:plan-diff  golden plan changed (format)  1.0 gm  history:1
   holt:mint22                   any      holt:plan-diff  golden plan changed (partition)  1.0 gm  history:1
   holt:mint22+bigger            any      holt:variants   mint22's golden plan changed in partition  1.0 gm  history:1
   holt:mint22+oneshot           any      holt:variants   mint22's golden plan changed in partition  1.0 gm  history:1
   holt:debian13-stack+degraded  any      holt:variants   plan-visible change; its degraded source dump isn't in the corpus  1.0 gm  history:1
   holt:ubuntu26-raid+degraded   any      holt:variants   plan-visible change; its degraded source dump isn't in the corpus  1.0 gm  history:1
-carried: holt:aerynos, holt:alpine324, holt:alpinebsd, holt:anduinos2, holt:artix-dinit, holt:artix-s6, holt:biglinux, holt:cachyos and 67 more (carry:plan-diff: plan-visible change; its golden plans are unchanged)
-current: 0
+carried: holt:aerynos, holt:alpine324, holt:alpinebsd, holt:anduinos2, holt:artix-dinit, holt:artix-s6, holt:biglinux, holt:cachyos and 70 more (carry:plan-diff: plan-visible change; its golden plans are unchanged)
+current: 0   not runnable: holt:slackware15 (no inputs: 'testvm/test2/holt/spec.json: no entry slackware15'); holt:slackware15-uefi (no inputs: 'testvm/test2/holt/spec.json: no entry slackware15-uefi')
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written

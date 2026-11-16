@@ -529,6 +529,16 @@ its two volumes parses, and with the real configuration (copied to /tmp,
 systemd's crypttab gets `KEY keyfile-timeout=30s` on both lines, scripted's
 `preLVMCommands` passes `sh -n`; `luks_adopt` ran with every write sent to
 /tmp and the rebuild stubbed (N, the record, the module; the check's
-failure path put everything back). Not yet: a real `nixos-rebuild`, a boot
-with and without the drive, a wrong key, a restore, and scripted stage 1 at
-boot at all.
+failure path put everything back).
+
+On the Thinkpad itself (2026-11-16/17, systemd stage 1, systemd 260.5): a
+real adopt (two rebuilds, the check passed), then a boot with the drive and
+nothing typed (`UNLOCK=drive`), then a hands-free cycle round
+(nixos-26.05-20261116-210139: restore, the restored system's boot opened
+both volumes with the drive's key, verify PASS, 0 unexpected).  A boot with
+the drive unplugged: `dev-disk-by\x2dlabel-mybig512.device` timed out at
+31 s, both keydev mounts failed by dependency, systemd-cryptsetup logged
+"key file ... missing" and the console asked once; the typed passphrase
+opened both volumes, and `backshot1 unlock` said both `typed`,
+`UNLOCK=attended`.  Not yet: a wrong key, and scripted stage 1 at boot at
+all.

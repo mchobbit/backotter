@@ -1399,15 +1399,26 @@ truenas_disk_check() { local i=$1 L=$R/logs
 # for the passphrase after its countdown (or after Escape opens its menu:
 # z7a's logs): console-boot.py types it (the
 # plain boots), or console-keys.py --passphrase (the menu picks: the two
-# can't be nested); each boot must have had that one prompt, no second
-# (the BE's initramfs opens the pool with its key file).  judge.py zbm then
+# can't be nested); each boot must have had that one prompt, no second:
+# the BE's initramfs opens the pool with its key file, printing its own
+# "Encrypted ZFS password for zroot: [1/5]:" once with nothing typed and no
+# retry, the key available from that file (judge.py zbm-boot).  judge.py zbm then
 # holds the images, every BE, the pool's properties and the key settings.
 # ZBM_STATE is what a boot shows: the guest's own /etc/bko-be (make-void-zfs.sh
-# writes the BE's name there), the kernel, / and the command line.
+# writes the BE's name there), the kernel, / and the command line, and the
+# key of /'s encryption root ("key -" with none): its keylocation, keystatus
+# and whether a file:// key is in the initramfs ZBM loaded with that kernel
+# (lsinitrd's listing only, never the file).
 ZBM_STATE='echo "bko-be $(cat /etc/bko-be 2>/dev/null || echo none)"
 echo "uname $(uname -r)"
 echo "root $(findmnt -no SOURCE /)"
-echo "cmdline $(cat /proc/cmdline)"'
+echo "cmdline $(cat /proc/cmdline)"
+e=$(zfs get -H -o value encryptionroot "$(findmnt -no SOURCE /)" 2>/dev/null)
+if [ -z "$e" ] || [ "$e" = - ]; then echo "key -"; else
+    l=$(zfs get -H -o value keylocation "$e"); i=no
+    case $l in file:///*) lsinitrd "/boot/initramfs-$(uname -r).img" 2>/dev/null | awk -v p="${l#file:///}" "\$NF == p {f = 1} END {exit !f}" && i=yes ;; esac
+    echo "key $e $l $(zfs get -H -o value keystatus "$e") initramfs:$i"
+fi'
 # The menu's keys (Z1, "ZBM over the serial console"): Escape during the
 # countdown, which shows "seconds" (plain text: ZBM's colour codes split
 # anything longer across reads), 3.5 s for fzf's menu to draw, Down once a
@@ -1445,28 +1456,29 @@ PY
 # WHO NAME DATASET KVER WORDS LOG PROMPTS: WHO's boot of BE NAME (its
 # logs/WHO-zbm-NAME.txt, and its console LOG) against what the BE must
 # boot: /etc/bko-be NAME (or none), its newest kernel, root=zfs:DATASET and
-# the BE's own words on the command line, ZBM's line booting that kernel
-# for DATASET on the console, and PROMPTS passphrase prompts; the restored
-# disk's also the source's state.  Exit 1 if any isn't so.
+# the BE's own words on the command line, and judge.py zbm-boot's
+# prompts: ZBM's line booting that kernel for DATASET on the console, before
+# it PROMPTS of ZBM's passphrase prompts, after it nothing typed and (on an
+# encrypted pool) the initramfs's one load-key, no retry, the key loaded
+# from its file, which is in that initramfs (logs/WHO-zbm-NAME-prompts.txt);
+# the restored disk's also the source's state.  Exit 1 if any isn't so.
 zbm_judge_boot() {
-    local who=$1 name=$2 ds=$3 kver=$4 words=$5 log=$6 want=$7 f=$R/logs/$1-zbm-$2.txt why=() w n con b
+    local who=$1 name=$2 ds=$3 kver=$4 words=$5 log=$6 want=$7 f=$R/logs/$1-zbm-$2.txt why=() w b j=$R/logs/$1-zbm-$2-prompts.txt
     b=$(sed -n 's/^bko-be //p' "$f")
     [[ $b == "$name" || $b == none ]] || why+=("/etc/bko-be ${b:-unread}")
     [[ $(sed -n 's/^uname //p' "$f") == "$kver" ]] || why+=("uname -r $(sed -n 's/^uname //p' "$f"), not $kver")
     for w in "root=zfs:$ds" $words; do
         tr ' ' '\n' <<<"$(sed -n 's/^cmdline //p' "$f")" | grep -qxF -- "$w" || why+=("no $w on the command line")
     done
-    con=$(sed 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\x1b[()][A-Za-z0-9]//g' "$log" 2>/dev/null | tr -d '\r')
-    grep -qF "vmlinuz-$kver for $ds" <<<"$con" || why+=("no \"Booting .../vmlinuz-$kver for $ds\" on the console")
-    n=$(grep -ci 'enter passphrase' <<<"$con")
-    [[ $n == "$want" ]] || why+=("$n passphrase prompts on the console, not $want$( ((want)) && echo " (ZFSBootMenu's; a second is the BE's initramfs not opening the pool with its key file)")")
+    python3 -I "$HERE/judge.py" zbm-boot "$f" "$log" "$ds" "$kver" "$want" > "$j" 2>&1 ||
+        why+=("$( (grep '^DIFF ' "$j" || tail -1 "$j") | sed 's/^DIFF //' | head -4 | paste -sd ';' - | sed 's/;/; /g') (logs/${j##*/})")
     if [[ $who == restored ]] && ! cmp -s "$R/logs/source-zbm-$name.txt" "$f"; then
         why+=("not the source's boot: $(diff "$R/logs/source-zbm-$name.txt" "$f" | grep '^[<>]' | head -2 | tr '\n' ' ')")
     fi
     if ((${#why[@]})); then
         bad "ZFSBootMenu: the $who boot of $name: $(printf '%s; ' "${why[@]}" | sed 's/; $//') (logs/${f##*/}, ${log##*/})"; return 1
     fi
-    ok "ZFSBootMenu: the $who boot of $name: /etc/bko-be $b, $kver, root=zfs:$ds${words:+ and $words}, $n passphrase prompt(s)$([[ $who == restored ]] && echo ", as the source's")"
+    ok "ZFSBootMenu: the $who boot of $name: /etc/bko-be $b, $kver, root=zfs:$ds${words:+ and $words}, $(tail -1 "$j" | sed 's/^0 differences; //')$([[ $who == restored ]] && echo ", as the source's")"
 }
 # WHO IMAGE INDEX NAME [vm-run options...]: boot BE NAME (the menu's line
 # INDEX) picked on ZBM's menu, under --snapshot; WHO's state recorded.

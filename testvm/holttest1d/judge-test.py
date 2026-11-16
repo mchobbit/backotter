@@ -2973,6 +2973,84 @@ class ZfsBootMenu(unittest.TestCase):
         self.assertIn("ZFSBootMenu: a clone boot environment comes back as a plain dataset", r.stdout)
 
 
+class ZfsBootMenuBoot(unittest.TestCase):
+    """judge.py zbm-boot over one boot of a ZFSBootMenu BE (ht1.sh's
+    zbm_judge_boot, docs/design/zfsbootmenu.md Z7): ZBM's passphrase prompt
+    before it boots the BE, then the BE's initramfs's own load-key once,
+    nothing typed, no retry, and the key loaded from the file in that
+    initramfs.  The consoles are z7b's (void-zbm-enc) and z7a's (void-zbm),
+    cut down."""
+
+    DS, K = "zroot/ROOT/void-6.18", "6.18.63_1"
+    KEY = "key zroot file:///etc/zfs/zroot.key available initramfs:yes"
+
+    def console(self, enc=True, initrd=None):
+        """The serial console of a menu boot of void-6.18; INITRD replaces
+        what follows ZBM's line booting it."""
+        zbm = ("\x1b[2J\x1b[01;01HBdsDxe: starting Boot0008 \"ZFSBootMenu\" from HD(1,GPT,5650DFA9,0x800,0x100000)/\\EFI\\ZBM\\VMLINUZ.EFI\r\n"
+               "\x1b%G\x1b[?25l\x1b[10;32H\x1b[0;32m[RETURN]\x1b[0m boot now \x1b[13;23HBooting \x1b[0;36mzroot/ROOT/void\x1b[0m in \x1b[1;33m5\x1b[0m seconds\r\n")
+        if enc:
+            zbm += "[console-keys.py: sent '\\x1b', the rest once the menu is drawn]\nEnter passphrase for 'zroot': \r\n[console-keys.py: passphrase typed]\n"
+        zbm += "[console-keys.py: typed '\\x1b|||||||\\x1b[B||\\r']\n\x1b[H\x1b[J\r\nBooting \x1b[1;33m/boot/vmlinuz-6.18.63_1\x1b[0m for \x1b[0;36mzroot/ROOT/void-6.18\x1b[0m ...\r\n\r\n"
+        if initrd is None:
+            initrd = "Encrypted ZFS password for zroot:  [1/5]:" if enc else ""
+        return zbm + initrd + "- runit: $Id: c66c1e3b $: booting.\r\n=> Scanning for and importing ZFS pools...\r\n"
+
+    def run_judge(self, con, state, prompts=1, ds=DS, kver=K):
+        with tempfile.TemporaryDirectory() as tmp:
+            log, st = os.path.join(tmp, "serial.log"), os.path.join(tmp, "state.txt")
+            with open(log, "w") as f:
+                f.write(con)
+            with open(st, "w") as f:
+                f.write(f"bko-be void-6.18\nuname {kver}\nroot {ds}\ncmdline root=zfs:{ds}\n{state}\n")
+            r = subprocess.run([sys.executable, "-I", JUDGE, "zbm-boot", st, log, ds, kver, str(prompts)], capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_zbm_boot_passes(self):
+        rc, out = self.run_judge(self.console(), self.KEY)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("0 differences; 1 ZFSBootMenu passphrase prompt(s); the initramfs's load-key once (zroot [1/5]), no retry; "
+                      "zroot's key available from file:///etc/zfs/zroot.key, in initramfs-6.18.63_1.img", out)
+        rc, out = self.run_judge(self.console(enc=False), "key -", prompts=0)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("0 differences; 0 ZFSBootMenu passphrase prompt(s)", out)
+
+    def test_zbm_boot_second_prompt(self):
+        cases = [
+            ("Encrypted ZFS password for zroot:  [1/5]:Key load error: Failed to open key material file: No such file or directory\r\n"
+             "Encrypted ZFS password for zroot:  [2/5]:", "asked 2 time(s) (for zroot [1/5], for zroot [2/5]), not once at [1/5]"),
+            ("Encrypted ZFS password for zroot:  [1/5]:Enter passphrase for 'zroot': ", "a passphrase prompt in the BE's initramfs: \"Enter passphrase for 'zroot':"),
+            ("Encrypted ZFS password for zroot:  [1/5]:\n[console-keys.py: passphrase typed]\n", "console-keys.py typed after ZFSBootMenu booted the BE"),
+            ("", "the BE's initramfs never ran its load-key"),
+        ]
+        for initrd, want in cases:
+            rc, out = self.run_judge(self.console(initrd=initrd), self.KEY)
+            self.assertEqual(rc, 1, f"{initrd!r}: {out}")
+            self.assertIn(want, out, initrd)
+
+    def test_zbm_boot_key_state(self):
+        for state in ("key zroot file:///etc/zfs/zroot.key available initramfs:no", "key zroot file:///etc/zfs/zroot.key unavailable initramfs:yes",
+                      "key zroot prompt available initramfs:no", "key -", ""):
+            rc, out = self.run_judge(self.console(), state)
+            self.assertEqual(rc, 1, f"{state!r}: {out}")
+            self.assertIn("DIFF key " if state else "DIFF no key line", out, state)
+        rc, out = self.run_judge(self.console(enc=False), self.KEY, prompts=0)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("on a pool ZFSBootMenu never asked for", out)
+
+    def test_zbm_boot_counts_and_lines(self):
+        rc, out = self.run_judge(self.console(enc=False), "key -", prompts=1)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF 0 of ZFSBootMenu's passphrase prompts before it booted the BE, not 1", out)
+        rc, out = self.run_judge(self.console(), "key -", prompts=0)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF the BE's initramfs asked for a ZFS password on a pool without one", out)
+        # void's line is not void-6.18's (a BE's name the prefix of another's).
+        rc, out = self.run_judge(self.console(), self.KEY, ds="zroot/ROOT/void")
+        self.assertEqual(rc, 1, out)
+        self.assertIn('DIFF no "Booting /boot/vmlinuz-6.18.63_1 for zroot/ROOT/void" on the console', out)
+
+
 class Qubes(unittest.TestCase):
     """Qubes OS (docs/design/qubes.md, Q7): judge.py qubes holds a thin
     snapshot's origin and new LV UUID, activation skip, a pool's used data

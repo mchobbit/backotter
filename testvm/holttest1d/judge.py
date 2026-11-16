@@ -9,6 +9,7 @@ Usage: judge.py [--expect] [--new-uuids] [--removable] [--nvram-kept] [--reforma
        judge.py esp DIR
        judge.py bes SRC.json DST.json
        judge.py zbm SRC.json DST.json SRC-META.json DST-META.json
+       judge.py zbm-boot STATE.txt SERIAL.log DATASET KVER PROMPTS
        judge.py qubes SRC.json DST.json SRC-RAW.txt DST-RAW.txt
        judge.py qubes-check SRC-CHECK.log DST-CHECK.log
        judge.py --fit-plan BYTES [--fit-pct PCT] LAYOUT.json
@@ -18,7 +19,8 @@ every path must match but what load's boot stage writes by design (BOOT_STAGE).
 The esp form judges a Proxmox source's ESPs, which proxmox-boot-tool rebuilds
 (judge_esp).  The bes form judges a TrueNAS source's boot-pool (judge_bes), the
 zbm form a ZFSBootMenu source's boot environments, images and pool
-properties, from both dumps and both fsmeta records (judge_zbm).  The qubes
+properties, from both dumps and both fsmeta records (judge_zbm), the zbm-boot form
+the passphrase prompts of one boot of a BE (judge_zbm_boot).  The qubes
 form judges a Qubes OS source's thin snapshots, pools and raw volumes
 (judge_qubes), the qubes-check form the restored disk's bko-qubes-check.service
 lines against the source's (judge_qubes_check): ht1-offline.sh's, Q7 of
@@ -2164,6 +2166,85 @@ def judge_qubes(src_path, dst_path, sraw_path, draw_path):
     sys.exit(1 if bad else 0)
 
 
+# zbm-boot: a console's escapes (ZBM's colours, cursor moves, charset picks).
+ZBM_ANSI = re.compile(r"\x1b\[[0-9;?=]*[A-Za-z]|\x1b[()%][A-Za-z0-9@]")
+# The dracut zfs module's own prompt (mount-zfs.sh's ask_for_password, tries
+# 5), printed before each `zfs load-key` it runs, also when the keylocation
+# is a file and nothing is read: "Encrypted ZFS password for zroot:  [1/5]:".
+ZBM_INITRD_PROMPT = re.compile(r"Encrypted ZFS password for (\S+?):\s*(?:\[(\d+)/(\d+)\])?")
+# What console-boot.py and console-keys.py --passphrase answer (their PROMPT).
+ZBM_TYPED_PROMPT = re.compile(r"(?i)(?:please unlock disk|geli passphrase for|(?:^|\n)passphrase:|enter passphrase)[^\n]*")
+
+
+def judge_zbm_boot(state_path, log_path, ds, kver, prompts):
+    """`judge.py zbm-boot STATE LOG DATASET KVER PROMPTS`: the passphrase
+    prompts of one boot of a ZFSBootMenu BE (ht1.sh's zbm_judge_boot): its
+    serial console LOG and the guest's state after it (STATE, ht1.sh's
+    ZBM_STATE: the "key" line).  ZBM's line booting vmlinuz-KVER for DATASET
+    splits the console: before it, PROMPTS (0 or 1) of ZBM's "Enter
+    passphrase"; after it, in the BE's own initramfs, nothing typed (no
+    console-keys.py line, no prompt console-boot.py answers) and, on an
+    encrypted pool (PROMPTS 1), the dracut zfs module's "Encrypted ZFS
+    password for POOL: [1/5]" once and never a retry ([2/5]...: the key
+    file didn't open the pool), none on a plain one.  STATE's key line: on
+    an encrypted pool, the encryption root of / with a file:// keylocation,
+    its key available, and that file in the BE's initramfs for KVER (the
+    one ZBM loaded); on a plain one "key -".  Prints DIFF lines and a
+    summary; exit 1 on any DIFF."""
+    want = int(prompts)
+    bad, said = [], []
+    try:
+        with open(log_path, "rb") as f:
+            con = ZBM_ANSI.sub("", f.read().decode("utf-8", "replace")).replace("\r", "")
+    except OSError as e:
+        bad.append(f"the console log unread ({e.strerror})")
+        con = ""
+    m = re.search(r"Booting /boot/vmlinuz-" + re.escape(kver) + r" for " + re.escape(ds) + r"(?=\s|$)", con)
+    if not m:
+        bad.append(f'no "Booting /boot/vmlinuz-{kver} for {ds}" on the console')
+        before, after = con, ""
+    else:
+        before, after = con[:m.start()], con[m.end():]
+    n = len(re.findall(r"(?i)enter passphrase", before))
+    if n != want:
+        bad.append(f"{n} of ZFSBootMenu's passphrase prompts before it booted the BE, not {want}")
+    else:
+        said.append(f"{n} ZFSBootMenu passphrase prompt(s)")
+    if ZBM_TYPED_PROMPT.search(after):
+        bad.append(f"a passphrase prompt in the BE's initramfs: {ZBM_TYPED_PROMPT.search(after).group(0).strip()[:60]!r} (the key file didn't open the pool)")
+    if "[console-keys.py:" in after:
+        bad.append("console-keys.py typed after ZFSBootMenu booted the BE")
+    tries = ZBM_INITRD_PROMPT.findall(after)
+    if want:
+        if not tries:
+            bad.append("the BE's initramfs never ran its load-key (no \"Encrypted ZFS password for POOL: [1/5]\" after ZFSBootMenu booted it)")
+        elif len(tries) != 1 or tries[0][1] not in ("", "1"):
+            shown = ", ".join(f"for {p}" + (f" [{t}/{o}]" if t else "") for p, t, o in tries)
+            bad.append(f"the BE's initramfs asked {len(tries)} time(s) ({shown}), not once at [1/5] (a retry: its key file didn't open the pool)")
+        else:
+            said.append(f"the initramfs's load-key once ({tries[0][0]} [1/{tries[0][2] or '?'}]), no retry")
+    elif tries:
+        bad.append(f"the BE's initramfs asked for a ZFS password on a pool without one ({len(tries)} time(s))")
+    try:
+        with open(state_path, errors="replace") as f:
+            key = next((ln.split()[1:] for ln in f if ln.startswith("key ")), None)
+    except OSError:
+        key = None
+    if key is None:
+        bad.append("no key line in the boot's state (unread)")
+    elif want:
+        if len(key) != 4 or not key[1].startswith("file://") or key[2] != "available" or key[3] != "initramfs:yes":
+            bad.append(f"key {' '.join(key)}, not an encryption root with a file:// keylocation, available, and the file in initramfs-{kver}.img")
+        else:
+            said.append(f"{key[0]}'s key available from {key[1]}, in initramfs-{kver}.img")
+    elif key != ["-"]:
+        bad.append(f"key {' '.join(key)} on a pool ZFSBootMenu never asked for")
+    for b in bad:
+        print(f"DIFF {b}")
+    print(f"{len(bad)} differences; " + "; ".join(said))
+    sys.exit(1 if bad else 0)
+
+
 QUBES_CHECK = re.compile(r"^BKO-QUBES-CHECK (\S+) (PASS|FAIL)(?: (.*))?$")
 
 
@@ -2213,6 +2294,8 @@ def main():
         judge_bes(sys.argv[2], sys.argv[3])
     if sys.argv[1] == "zbm":
         judge_zbm(*sys.argv[2:6])
+    if sys.argv[1] == "zbm-boot":
+        judge_zbm_boot(*sys.argv[2:7])
     if sys.argv[1] == "qubes":
         judge_qubes(*sys.argv[2:6])
     if sys.argv[1] == "qubes-check":

@@ -1,54 +1,79 @@
-# BackShot1All: every distro that has passed BackShot1, again, with today's tools (draft)
+# BackShot1All: every distro with a passing backup on mybig512, again, with today's tools (draft)
 
-2026-11-13. Stored at the user's request, not yet run; the 10 open questions
-still need their answers before it runs.
-Revised the same day after a review against the repo. est. marks an estimate.
-L is a distro's library run (its backup on mybig512), B its fresh run.
+2026-11-17: cut to the seven distros with backups on the rebuilt mybig512.
+The drive was wiped and rebuilt on 2026-11-16 (XFS, label mybig512), and
+every library run of the old table went with it. Its seven passing runs of
+2026-11-16 are the new table; the other distros wait for a reinstall
+(Dropped rows). The attended block, the Bazzite rollback and the builds are
+gone, and A and B reuse `backshot1 cycle` (Q3). The open questions are now 5,
+and still need their answers before it runs.
+
+2026-11-13: first drafted and stored at the user's request; revised the same
+day after a review against the repo. Not yet run.
+
+est. marks an estimate. L is a distro's library run (its backup on mybig512),
+B its fresh run.
 
 ## Goal
 
-Show that today's `bko-holt` and `rustic-bko` still do a full bare-metal
-round trip on the Thinkpad for all 13 distros that passed BackShot1 there,
-without reinstalling any of them. Today's `bko-holt` means main at b3af94d
-or later:
-- the NixOS fixes, a8d84e1 and 220c013;
-- the zeroing of disk ends, 8b7e177;
-- holder release with `--erase`, 4b2b4d2 and e452150;
-- b3af94d, `--erase` on a disk whose table already matches (committed
-  14:09, which an earlier draft listed as pending).
+Show that today's `bko-holt` and `rustic-bko` do a full bare-metal round
+trip on the Thinkpad for all seven distros with a passing backup on
+mybig512, from that backup and from a fresh one, without reinstalling any of
+them. Today's tools are the ones staged under `backshot1/bin` on the drive:
+- `bko-holt` 0.2.6, static-pie, from `~/backotter-work/holt-bin/linux/` on
+  Chopin;
+- `rustic-bko` 0.11.4+backotter.16, static.
+
+Main's scripts include 043ea1a (LUKS family N, NixOS) and fe9ef31 (adopt
+installs efibootmgr and loads xfs on Alpine; DRIVE loads xfs before
+mounting). 60ce2b8, docs only, records family N's Thinkpad proof and is the
+one unpushed commit on 2026-11-17.
 
 ## Approach: no reinstalls, two halves per distro
 
-- **A, restore the library backup with today's tools.** `to-stick` from
-  whatever system is running (or straight to `phase2` if the laptop is already
-  on the rescue), `phase2 L`, `reboot`, `bs1-hold on`, `verify L`. This tests:
-  - load, including 8b7e177's zeroing, since bs1-restore always passes
-    `--erase`;
-  - rustic-bko restoring a snapshot made by an older build;
+- **A, restore the library backup with today's tools:** `backshot1 cycle L
+  1 --erase-serial 214532A60C34 --hold` from the installed system that is
+  running (Q3). That is `to-stick`, `plan`, `phase2 L`, `reboot`,
+  `wait-host`, `bs1-hold on` (Tooling 3, 6), `verify L`. This tests:
+  - load, including the zeroing of disk ends, since bs1-restore always
+    passes `--erase`;
+  - rustic-bko restoring the snapshot;
   - the boot stage;
   - all of it against L's own baseline.
 
   Every L has BackShot1's keys and hostname, so nothing is installed. Its
-  snapshot is `latest:/mnt/bs1-src` whatever its date: before 498eaa9 the
-  tree was mounted there, and since then it is backed up `--as-path` there.
+  snapshot is `latest:/mnt/bs1-src`.
+- **The library is a day old.** Every L was made and restored on
+  2026-11-16, most likely by the binaries staged now: item 0 compares each
+  L's `phase1.log` sha256 lines (bs1-backup logs both binaries' sha256) with
+  the staged ones. So A is chiefly how each distro gets back onto the laptop
+  for B, and the test's weight is in B. If a sha256 differs, A is again a
+  test of an older build's backup.
 - **B, a fresh round trip of the system A left,** in the same boot as A's
-  verify: `preflight`, `phase1` (today's dump and backup), `to-stick`,
-  `phase2 B --load-wipes` (Q3), `reboot`, `bs1-hold on`, `verify B`, then the
-  distro's extra checks. This adds dump, the backup, and load's own wipe on a
-  disk that already holds the same layout, which is the b3af94d case. A
+  verify: `preflight`, `phase1` (today's dump and backup), then `backshot1
+  cycle B 1 --erase-serial 214532A60C34 --hold --load-wipes` (Q2, Q3), then
+  the distro's extra checks. This adds dump, the backup, and load's own wipe
+  on a disk that already holds the same layout, which is the b3af94d case:
+  load zeroing the ends and writing a table that matches the one there. It
+  doesn't test holder release: the rescue opens no LUKS volume (bs1-restore
+  gives load the key only through `--key-file`) and imports no pool (the
+  stick masks zfs-import-cache, zfs-import-scan and zfs-mount), and none of
+  the seven has LVM or md on a plain partition, so on all seven there is
+  nothing to release. Holder release stays with the bs2 leftovers set, which
+  seeds its own holders. A
   library backup of a restored system is how the 2026-11-09 five-wipe cycle
   ran (Ubuntu, Fedora), so the pattern is proven.
 - **B needs A.** B backs up the system A restored, so a distro whose A can't
-  pass has no B (Fix policy).
+  pass has no B (Fix policy). NixOS is the exception if Q1 is yes: the
+  laptop runs its restore of L now.
 - **Runs are always named in full,** never by distro: `bs1-list --resolve`
-  takes the newest backup, which isn't always the one that passed. The driver
-  takes B's name from phase 1's `RUN=` line and keeps it in its state.
-- **No separate `plan` step.** `phase2` reads the whole backup, makes the
-  same plan and refuses before wiping. Skipping `plan` saves one full
-  `check --read-data` of each backup.
+  takes the newest backup, which isn't always the one that passed: each B
+  adds a newer run of its distro, and the drive also holds excluded runs
+  (below). The driver takes B's name
+  from phase 1's `RUN=` line and keeps it in its state.
 - **No OS updates, and no re-adopt** unless preflight or the driver's own
-  check names a missing tool. On Manjaro and EndeavourOS, bs1-adopt's
-  `pacman -Sy` would be a partial upgrade, so there I ask first.
+  check names a missing tool. On CachyOS, bs1-adopt's `pacman -Sy` would be
+  a partial upgrade, so there I ask first.
 - **The holds last only for the boot.** `bs1-hold on` runs as soon as SSH
   answers after each boot of the installed system, before `verify`, and so
   also before B's phase 1, which runs in that boot. It:
@@ -59,155 +84,162 @@ or later:
     below).
 
   All of it lives in `/run`, which is in neither the tree nor a manifest, and
-  a reboot undoes it. Bazzite's backup already carries its persistent hold:
-  uupd.timer disabled and sleep masked since 2026-11-11 09:39 (B9's backup
-  was made at 18:31 CET).
+  a reboot undoes it. bs1-backup and bs1-verify already stop the snapshot
+  timers (bs1-common `SNAPSHOTTERS`) and the ostree and ABRoot updaters
+  (`UPDATERS`), but none of the seven's own updaters.
 - **If an update slips in before the hold,** `verify`'s package check fails.
   The Persistent timers that matter (apt's, at least) wait a random delay
   after boot, so this is unlikely. If it happens, it counts as interference:
-  A is rerun once with no fix. If it happens twice, I ask you (Fix policy).
-- **One binary of each tool for every distro:** static builds of `bko-holt`
-  and `rustic-bko` (Tooling 2), built once and staged once. NixOS can't run a
-  dynamic glibc build. The static binary hasn't run `dump` on a glibc distro
-  yet, so the `gentoo` rehearsal (Tooling 8) covers that first.
+  that half is rerun once with no fix. If it happens twice, I ask you (Fix
+  policy).
+- **One binary of each tool for every distro:** the static builds already on
+  the drive. They most likely ran every phase 1 and restore of 2026-11-16,
+  NixOS's and Alpine's (musl) included (item 0), so no rehearsal of the
+  binaries themselves is owed.
+- **Nobody types anything.** Debian 13 and NixOS unlock from the drive
+  (`UNLOCK=drive`, families D and N), and the other five have no LUKS. The
+  old attended block and its console column are gone. The one console visit
+  left is NixOS's older generation, and only if Q4 says to boot it.
 
 ## Per-distro table
 
-| # | Distro (stack) | L: library run for A | Held besides sleep | Console | Extra checks | Est. A+B |
+| # | Distro (stack) | L: library run for A | Repo | Held besides sleep | Extra checks | Est. A+B |
 |---|---|---|---|---|---|---|
-| 1 | NixOS 26.05 (btrfs top level, 7 subvols, systemd-boot) | nixos-20261113-105758 (was B only from the running restore (Q2), but the laptop has run Void since; see row 13) | nothing auto by default | none | in B, after verify: gen 2 by `systemctl reboot --boot-loader-entry=nixos-generation-2.conf`, `/run/booted-system` checked, then back to gen 3 | 40 min |
-| 2 | Debian 12 (LUKS2+LVM, XFS) | debian-12-20261110-141705 | apt-daily{,-upgrade}.timer, unattended-upgrades | passphrase once, at A's restored boot (L predates unlocking from the drive); then `backshot1 adopt` and a reboot, so B needs nobody (bs1-luks-unattended.md) | both halves: LUKS UUID (`cryptsetup luksUUID`) is the baseline's; B: `UNLOCK=drive`, and verify's unlock check | 75 min + one wait |
-| 3 | Bazzite 44 (ostree, composefs) | bazzite-44-20261111-173140 | uupd already held in the backup; rpm-ostreed-automatic and bootc-fetch-apply-updates (verify stops them too) | rollback once, in A (Q4) | A: rollback booted from the GRUB menu and checked by eye (its /etc has no sshd), then `check-boot L` on the default; B: `check-boot B` on the default | 150 min |
-| 4 | Ubuntu 26.10 | ubuntu-26.10-20261109-203214 | apt timers, unattended-upgrades, snapd.service and snapd.socket | none | none | 70 min |
-| 5 | Fedora 44 (btrfs, SELinux) | fedora-44-20261109-204845 | dnf-makecache.timer, any dnf-automatic timer, packagekit | none | SELinux labels, compared by the manifest when the baseline has xattrs | 70 min |
-| 6 | Manjaro (F2FS, GRUB) | manjaro-20261109-200252 | pamac timers (pamac-mirrorlist rewrites /etc/pacman.d/mirrorlist) | none | none | 60 min |
-| 7 | EndeavourOS (btrfs, systemd-boot, dracut) | endeavouros-20261110-090500 (after bs1-adopt's firewalld fix; its only restore so far was `--reformat` onto XFS, so as-is onto btrfs is new: Q5) | none | none | none | 60 min |
-| 8 | Debian 13 (plain LVM) | debian-13-20261110-055903 | apt timers | none | none | 50 min |
-| 9 | openSUSE Tumbleweed (btrfs+snapper, shim+sdbootutil) | opensuse-tumbleweed-20261108-20261110-165711 | snapper-timeline/cleanup, btrfs-balance/scrub/trim, packagekit | none | `snapper list` for root and home; shim fallback kept; before phase2 B, btrfs free space above twice one snapshot (5.8 GiB each, restored as full copies) | 100 min |
-| 10 | Alpine 3.24 (ext4, GRUB by fallback) | alpine-3.24.4-20261110-184526 | none | none | BootCurrent is the baseline's kind (the firmware's NVMe0 fallback); before phase 1 B, `efibootmgr` is present (Chimera's `to-stick` needs it; Tooling 6) | 20 min |
-| 11 | Chimera (ZFS root, dinit) | chimera-20261112-092235 | none | none | `zpool status -x`; the pool is named rpool, not rpool_bko | 45 min |
-| 12 | Gentoo (OpenRC, LVM, GRUB lvmid) | gentoo-2.18-20261112-185749 | none | none | lvmid check (built into verify) | 50 min |
-| 13 | Void (musl, runit, btrfs top level, GRUB) | none: B only, from the running restore of void-20261113-152153, which passed on 2026-11-13 with main's static musl bko-holt (d965dc5) | none (no auto-updater by default) | none | the GRUB entry void_grub is the one booted; runit services sshd and avahi-daemon up | 25 min |
-| 14 | PikaOS 4 (XFS root, ext4 XBOOTLDR /boot, rEFInd, booster) | pika-4-20261114-134728 | booster-reassert.timer (bs1-common SNAPSHOTTERS) | none | every file under `EFI/refind` back with its content (bs1-manifest KEPT) and `refind_linux.conf` unchanged; BootCurrent is rEFInd's NVRAM entry; for B, a fresh install by `pika-bootstrap.sh` from the stick (~5 min; docs/design/pikaos.md, What P8 found) | 40 min |
-| 15 | KDE neon 24.04 (ext4, /swapfile, GRUB through shim in EFI/neon) | neon-24.04-20261114-141609 | apt timers, packagekit (Discover) | none | BootCurrent is the entry for `\EFI\neon\shimx64.efi`; `EFI/ubuntu/grub.cfg` back; no `(on /dev/` menuentry in grub.cfg; for B, a fresh install by `neon-bootstrap.sh` from the stick (~5 min; docs/design/kde-neon.md, What N8 found) | 50 min |
+| 1 | NixOS 26.05 (Calamares: LUKS2 xfs root, LUKS2 swap, systemd-boot, systemd stage 1; family N) | nixos-26.05-20261116-210139; the laptop runs its restore now, so B only (Q1) | not recorded here; item 0 records it | nothing auto by default | before B, on the running restore (Q4): the generations listed by reading (`/nix/var/nix/profiles/system-*-link`, `bootctl list`), each one's closure whole in the store, and an older one booted by `systemctl reboot --boot-loader-entry=...`, `/run/booted-system` checked, then back to the default; B, in a boot the drive's key opened (Order 1): verify's unlock check (`UNLOCK=drive`), LUKS UUIDs the baseline's | 30 min (B about 23-25, generation 5) |
+| 2 | Debian 13 (guided LVM-on-LUKS2: VG thinkpad-vg with xfs root, ext4 var and srv, swap; family D keyscript) | debian-13-20261116-151543 | 3.5G | apt-daily{,-upgrade}.timer, unattended-upgrades if installed | both halves: LUKS UUID (`cryptsetup luksUUID`) the baseline's, verify's unlock check (`UNLOCK=drive`); B: plan.txt shows the partition stage runs and nothing to release (the rescue opens no LUKS, so thinkpad-vg is never active) | 30 min |
+| 3 | CachyOS (ZFS root, Limine, no LUKS) | cachyos-20261116-163026 | 6.6G | none known (item 0 lists the active timers) | `zpool status -x`; the pool keeps the source's name (the baseline's), not rpool_bko; B: plan.txt shows no pool to export (the stick never imports one) | 30 min |
+| 4 | Fedora 44 Xfce (btrfs / and /home subvols, ext4 /boot, vfat ESP, no LUKS) | fedora-44-20261116-141133 | 3.1G | dnf-makecache.timer, any dnf-automatic timer, packagekit | SELinux labels, compared by the manifest when the baseline has xattrs | 25 min |
+| 5 | Ubuntu 24.04.5 (ext4 /, vfat ESP, shim+GRUB, no LUKS) | ubuntu-24.04-20261116-133442 | 1.4G | apt timers, unattended-upgrades, snapd.service and snapd.socket | none | 20 min |
+| 6 | Zorin OS 18 (UEFI, plain ext4 /, vfat ESP) | zorin-18-20261116-181641 | 4.3G | apt timers, unattended-upgrades, packagekit, snapd if present | none beyond verify: its first verify on 2026-11-16 failed only on `var/lock/{asound.state,card0}.lock`, expected since f49da8b; the re-verify passed, so A is the first whole run with that rule | 30 min |
+| 7 | Alpine 3.24 (ext4, OpenRC, UEFI) | alpine-3.24.4-20261116-192831 | 362M | none | before B's phase 1, `efibootmgr` is present and xfs loads at boot: L was taken after fe9ef31's adopt, so the restored system mounts mybig512 with no `modprobe` by hand | 15 min |
 
-Each L is the newest run whose own restore passed. EndeavourOS is the
-exception: it uses the one after the firewalld fix (row 7).
+Each L is the newest run whose own restore passed, by the 2026-11-16 list:
 
-**Old layouts:** checked in holt/src/load/layout.rs and osrel.rs.
-- `load` reads one schema, 1, and every dump ever made is schema 1.
-- Every L's os id and version is in today's SUPPORTED: Ubuntu 26.10 matches
-  by its major version, and Manjaro and EndeavourOS by an empty VERSION_ID.
-- The old dumps' missing fields are what A exists to catch. Only ostree
-  needs `backup_sources`, and Bazzite's L was made after B2.
+| Run | Last restore (2026-11-16) |
+|---|---|
+| ubuntu-24.04-20261116-133442 | PASS, 5 min round |
+| fedora-44-20261116-141133 | PASS, 7 min |
+| debian-13-20261116-151543 | PASS, 8 min, unattended |
+| cachyos-20261116-163026 | PASS, 9 min |
+| zorin-18-20261116-181641 | FAIL on var/lock only, re-verify PASS after f49da8b |
+| alpine-3.24.4-20261116-192831 | PASS, 4 min, after fe9ef31 |
+| nixos-26.05-20261116-210139 | PASS, 10 min, hands-free cycle |
 
-**Old baselines:** `package_list` has changed only for Gentoo (7ee759f),
-before Gentoo's L was made. verify skips lvmid where the baseline has none,
-and xattrs where the manifest has none.
+**Excluded runs on the drive.** They stay where they are (nothing on the
+drive is deleted without asking you), but no step names them:
+- alpine-3.24.4-20261116-192621: its baseline was taken before adopt
+  installed efibootmgr; never restored.
+- nixos-26.05-20261116-200906: attended LUKS, before family N.
+- nixos-26.05-20261116-205909: an accidental duplicate; never restored.
 
-Total about 13.5 h of machine time (est.), not counting fixes. Void was added
-on 2026-11-13 after its first BackShot1 passed (the user's choice), PikaOS
-(row 14, est. +40 min) on 2026-11-15 after its own passed, and KDE neon
-(row 15, est. +50 min) the same day.
+**Timings.** A is one cycle round, as timed on 2026-11-16 (Zorin's round
+wasn't given: 8 min, est., from its repo size). B is the preflight, phase 1
+(est. about one round) and one round, so about twice A, plus 2 min. Each
+round also runs `plan`, one more `check --read-data` of the backup, about
+1 min at these sizes (est.; Q3). So a round of R min gives A about R+1 and
+B about 2R+3; the table rounds A+B up to 5 min.
 
-Pending, not in the table: Vanilla OS 3 (ABRoot's two roots). BackShot1's
-plumbing for it landed 2026-11-15 (docs/design/vanillaos.md, What V11
-found; README "ABRoot"), but it hasn't passed: no `bs1-qemu.py` rehearsal on
-`vanilla3` yet, and no unattended Thinkpad install. It joins the table only
-after a Thinkpad run passes, and its other-root boot needs the console.
+Total about 3 h of machine time (est.), not counting fixes.
+
+**Dropped rows: to return when reinstalled and BackShot1 passes again.**
+They have no backup on mybig512 since the 2026-11-16 wipe. Each joins the
+table, with its stack, holds and extra checks from the 2026-11-13 draft (git
+history of this file, 08f427f and earlier: the committed version before
+2026-11-17), once a fresh install of it
+passes BackShot1 on the Thinkpad:
+- from the old table: Void (musl, btrfs, GRUB), Debian 12 (LUKS2+LVM, XFS),
+  Bazzite 44 (ostree; its rollback needs the console), Ubuntu 26.10,
+  Manjaro, EndeavourOS, openSUSE Tumbleweed (snapper), Chimera (ZFS, dinit),
+  Gentoo (OpenRC, LVM), PikaOS 4 (rEFInd, booster), KDE neon 24.04; the old
+  rows for Fedora 44, Debian 13 (plain LVM), Alpine and NixOS (btrfs, 7
+  subvols) are replaced by the new installs above;
+- passed BackShot1 on the Thinkpad after the draft but never in the table:
+  AnduinOS 2.0.5 (ad843f2), Guix (c173020), and CachyOS's earlier LUKS
+  btrfs install (now ZFS, row 3);
+- pending as before: Vanilla OS 3 (ABRoot's two roots; no Thinkpad pass
+  yet, and its other-root boot needs the console).
 
 ## Order
 
-The runs that need you at the laptop go first, right after a short canary,
-and everything unattended follows (the user's rule, 2026-11-13: front-load
-what needs a typed passphrase or a console visit). So the queue never stops
-on a prompt later, and the rest can run overnight to the end.
+All seven are unattended, so the old user block collapses. The front-loading
+rule (2026-11-13: what needs a typed passphrase or a console visit goes
+first) now touches only NixOS's older generation, if Q4 boots it.
 
-1. **First, once the tooling is staged: Void B, unattended, about 25 min
-   (est.).** It is already on the laptop (since 2026-11-13; NixOS was until
-   then, and now needs its A, in step 3), and it is the canary for the new
-   binaries and the driver end to end.
-2. **User block, about 2.5 h (est.), straight after the canary:**
-   - Debian 12 A: you type the passphrase once, at about +20 min (est.).
-     Its L was made before unlocking from the drive existed
-     (docs/design/bs1-luks-unattended.md), so A's restored boot asks. Then
-     `backshot1 adopt` sets the restored install up, a reboot with
-     mybig512 shows `backshot1 unlock` saying `UNLOCK=drive`, and B runs
-     with nobody typing.
-   - Bazzite A, with the rollback at its end, at about +2.5 h (est.).
-   - The block ends on Bazzite, which needs no passphrase, as the README
-     asks. If a fix stops it, the block resumes there before anything
-     unattended starts (`bs1-all --only`).
-3. **Unattended, about 10 h (est.), overnight if need be:**
-   - Ubuntu, Fedora and Manjaro first. Theirs are the oldest backups,
-     made by the oldest dumps and rustic-bko builds, so fixes land early and
-     fewer distros have to be rerun.
-   - Then NixOS (A, then B with its generation check), EndeavourOS, Debian 13,
-     Tumbleweed, Alpine, Chimera and Bazzite B.
-   - Gentoo last; it stays on the laptop (Q6).
-   - Consecutive A's wipe different stacks: btrfs under LUKS, LVM under ZFS,
-     and so on. That is extra coverage of the script's own wipe.
+1. **NixOS first, about 30 min (est.).** The laptop runs it now (the restore
+   of 210139). The generation check (Q4), then B. B's phase 1 runs in a boot
+   the drive's key opened, after Q4's older-generation visit: if `backshot1
+   unlock` says `UNLOCK=attended` (the drive-unplugged boot recorded in
+   60ce2b8 may still be the one running), reboot once with the drive in and
+   check for `UNLOCK=drive` before phase 1, or `cycle B` refuses the run. It
+   is also the canary for the new tooling and the driver end to end.
+2. **Then the biggest layouts, while the fixes are cheap:** Debian 13 (LVM
+   on LUKS), then CachyOS (ZFS root). They have the most for load to
+   recreate over its own layout, and the most for verify to compare.
+3. **Then the rest:** Fedora, Ubuntu, Zorin, Alpine. Alpine is last and stays
+   on the laptop (Q5).
+4. Consecutive A's wipe different stacks: LVM on LUKS under ZFS, ZFS under
+   btrfs, and so on. That is extra coverage of the script's own wipe.
 
-## Tooling to build first (about 4-5 h, est.)
+## Tooling to build first (about 3-4 h, est.)
 
-Chopin answers ping at 192.168.68.194, but at 14:19 it refused SSH and
-chopin.local didn't resolve. So everything below runs on Cinqcent, with
-Copland and Cage for parallel rehearsals. On all three the default rustc is
-1.85.1, 1.94.1 is installed too, and the musl target isn't.
+Builds and rehearsals go to Chopin, Cinqcent, Cage or Copland through
+`testvm/pick-host`. No binary is built: today's are on the drive.
 
 0. **Read-only checks first,** each from the session:
-   - The laptop is on NixOS gen 3 and no other session is using it or
-     mybig512 (BackShot2Alpine has used it).
-   - `backshot1 list`: every L is present with `PHASE1_OK`, and the drive's
-     free space is recorded.
-   - The firmware's boot entries are counted (Q8).
-   - Alpine's L lists `efibootmgr` in `baseline/packages.txt`.
-   - `keys/disk-passphrase` is non-empty with no trailing newline.
-1. **b3af94d.** It's on main, but its message records no test run and no
-   review. Run the holt suite once in a warm dir on Cinqcent
-   (`/bkoscratch/holt-warm/bs1all`; `main` and `review` exist there already),
-   and give it a High review: it decides what gets erased. Fix what the review
+   - The laptop runs NixOS (the restore of 210139: `/run/booted-system`),
+     and no other session is using it or mybig512. `backshot1 unlock`'s
+     answer is recorded: if it says `UNLOCK=attended` (the drive-unplugged
+     boot of 2026-11-17), Order 1's reboot with the drive in comes before B's
+     phase 1.
+   - `backshot1 list`: the seven L's are present with `PHASE1_OK`, NixOS's
+     repo size, and the drive's free space, recorded.
+   - Each L's `baseline/unlock.txt` (`drive` for Debian 13 and NixOS, `none`
+     for the rest) and its layout's firmware mode, `uefi`: what `cycle`
+     refuses otherwise.
+   - The staged binaries: `--version` (0.2.6, 0.11.4+backotter.16) and
+     sha256, against each L's `phase1.log` and Chopin's holt-bin.
+   - The firmware's boot entries, counted (Risks).
+   - The hands-free set-up (README, "The hands-free cycle"): the stick in a
+     laptop port, `BootMode` `Diagnostics`.
+   - The stick's `/cdrom/.disk/backotter.json`, recorded.
+   - `keys/disk-passphrase` is non-empty with no trailing newline (Debian
+     13's and NixOS's fallback).
+   - On each distro, at its first boot, the active timers (`systemctl
+     list-timers`), for the holds.
+1. **The `--erase` path.** b3af94d (`--erase` on a disk whose table already
+   matches) and d965dc5 (table-less disks) record no review in git. If Q2 is
+   yes, B relies on them alone, so they get one High review at the staged
+   version, and the holt suite runs once in a warm dir. Fix what the review
    finds, as usual.
-2. **The binaries,** both static the way holt/README.md documents
-   (`RUSTFLAGS="-C target-feature=+crt-static"`, `--target
-   x86_64-unknown-linux-gnu`), from git archives, on Cinqcent:
-   - `bko-holt` from the commit after item 1, with the default 1.85.1
-     (holt's rust-version is 1.85);
-   - `rustic-bko` from the fork head (rustic ea44449 = 0.11.4+backotter.10,
-     on core 5270ff3) with `cargo +1.94.1`. rustic's rust-version is 1.91.0,
-     so the default 1.85.1 can't build it.
-   - Nothing is installed in rustup. The core is a git dependency, so the
-     fetch needs the network.
-   - Record both sha256s.
-   - The final heads' SticTest2 is still owed (chimera-support), so it runs in
-     parallel (Q9).
+2. **The binaries:** none to build. A fix to either tool is rebuilt the way
+   the staged one was (bko-holt static-pie into Chopin's holt-bin) and
+   restaged (Fix policy).
 3. **`bs1-hold on|off|status`** (on the drive): the runtime holds above. It
-   does nothing on non-systemd systems, which have no automatic updates here.
-   `backshot1 stage`'s file list gains it.
+   does nothing on non-systemd systems (Alpine), which have no automatic
+   updates here. `backshot1 stage`'s file list gains it.
 4. **`backshot1 find-host`** finds the installed system by MAC, as
-   `find-rescue` does, for when mDNS fails (Bazzite has missed it before).
-   **`backshot1 nixos-gen N`** does the generation boot and its checks.
-5. **`bs1-restore --load-wipes`** (if Q3 is yes), B only:
+   `find-rescue` does, for when mDNS fails. **`backshot1 nixos-gen N`** does
+   the generation listing, the closure check and, if Q4 says so, the
+   generation boot.
+5. **`bs1-restore --load-wipes`** (if Q2 is yes), B only:
    - The script's own `vgchange -an`, `mdadm --stop`, `zpool export`, its
      "still active" check and `wipefs` are skipped, so `bko-holt load
-     --erase` releases the holders, zeroes the ends and writes the table
-     itself.
+     --erase` releases any holders (none on these seven), zeroes the ends
+     and writes the table itself.
    - The serial, plan, other-disks and nothing-mounted guards stay.
    - It fails unless plan.txt says the partition stage runs, and if the
      partition, format or restore stage reports "done already".
-   - In every mode, bs1-restore also logs the sha256 and `--version` of both
-     binaries (today it logs only `bko-holt --version`), so A's logs carry
-     them too.
-6. **bs1-adopt installs `efibootmgr` on Alpine.** eeab2a0 did that on
-   claude/bs1-alpine but was never merged; main's adopt does it only on
-   Chimera and Gentoo. It's a small change with no separate review. It is
-   used only if the check in item 0 or before phase 1 finds efibootmgr
-   missing, and then before phase 1, so B's backup has it and Chimera's
-   `to-stick` works.
+   - In every mode, bs1-restore also logs `rustic-bko --version` and both
+     binaries' sha256, as bs1-backup does (today it logs only `bko-holt
+     --version`), so A's logs carry them too.
+6. **`backshot1 cycle` gains `--hold` and `--load-wipes`** (if Q3 is yes):
+   `--hold` runs `bs1-hold on` between `wait-host` and `verify`;
+   `--load-wipes` passes through to `plan` and `phase2`.
 7. **`bs1-all QUEUE [--only D] [--from STEP] [--dry-run]`**, the driver on
    the Mac:
-   - It runs one distro's A then B end to end, starting with `find-rescue` if
-     the laptop is already on the stick.
+   - Per distro: A's cycle, the extra checks for A, preflight, phase 1, B's
+     cycle, the extra checks for B. NixOS (Q1) starts at the generation
+     check.
    - It keeps per-step state in `$BS1_STATE/bs1all/`, a fixed directory
      rather than the default `$TMPDIR`, so it can resume. It writes a
      journal: `STEP OK`, `FAIL`, `WAIT-USER`, `NEED-PASSPHRASE`, `ALL-DONE`.
@@ -217,33 +249,37 @@ Copland and Cage for parallel rehearsals. On all three the default rustc is
      notifications.
    - Before each phase 1, it checks for at least 80 GB free on the drive and
      for `efibootmgr` (`to-stick` needs it on every UEFI system).
-   - Timeouts:
-     - after the reboot of an `UNLOCK=attended` system (Debian 12's A, the
-       only one left), a push asks for the passphrase as soon as the reboot
-       is sent, and again if the laptop isn't back in 10 min;
-     - after any other reboot, `UNLOCK=drive` ones included, it warns after
-       3 min and fails after 15; a `drive` system not back after 5 min is
-       at its prompt (the drive's key failed), so a push goes out then;
-     - for phase2, it fails after three times that distro's last restore
-       time or 2 h, whichever is longer. `backshot1 phase2`'s own poll has no
-       limit.
-   - A WAIT-USER step (Bazzite's rollback) waits until the session writes a
-     `continue` file after you answer in chat.
-8. **Rehearsals,** on Cinqcent, Copland and Cage in parallel:
+   - Timeouts: `cycle`'s own (`to-stick` 7 min, `wait-host` 10 min, the
+     stick silent 10 min), with `BS1_RESTORE_LIMIT=60` (the longest round on
+     2026-11-16 was 10 min). A system that isn't back fails `wait-host` at
+     10 min, which fails the cycle: a FAIL and a push. For Debian 13 and
+     NixOS, `drive` systems, that most likely means the prompt (the drive's
+     key failed).
+   - The firmware's boot entries: `cycle` compares each round only with its
+     own round 1, so with one round per cycle its safety net never fires. The
+     driver counts them after every cycle and stops once there are more than
+     8 above item 0's count.
+   - A WAIT-USER step (NixOS's older generation, if Q4 boots it) waits until
+     the session writes a `continue` file after you answer in chat.
+8. **Rehearsals,** in parallel:
    - `bs1-qemu.py` gains a `--load-wipes` pass-through. It restores onto the
      guest's own disk, which is exactly B's case. It runs on:
      - `alpine324` (smoke);
-     - `nixos2605` (btrfs top level);
-     - `gentoo` (a glibc system running the static `dump`; the vg0 the
-       rescue autoactivates, released by load; XFS home; lvmid);
-     - `chimera-zfs` (the pool export).
-   - The bs2 leftovers set, strict, at b3af94d (`bs2-host leftovers --run
-     lo-after-b3af94d`), if bs2-host runs off Chopin. Its L3 was refused
-     before, which is the held-VG case.
+     - `nixos2605`;
+     - `ubuntu26-luks` (LVM on LUKS recreated over itself, with nothing to
+       release, as on Debian 13; there is still no Debian initramfs-tools
+       LUKS guest, README "Rehearsal");
+     - `cachyos-zfs` (a ZFS root recreated over its own pool, none
+       imported).
+   - The bs2 leftovers set, strict (`bs2-host leftovers --run
+     lo-load-wipes`). Its L3 was refused before, which is the held-VG case.
    - `bs1-all --dry-run`.
    - One High review covers items 3 to 7, with `--load-wipes` read first.
 
-After that, `backshot1 stage TOOLS_DIR` runs once, from the running NixOS.
+After that, `backshot1 stage TOOLS_DIR` runs once, from the running NixOS,
+so the drive's scripts are main's. TOOLS_DIR is a directory on the Mac
+holding copies of the drive's own `backshot1/bin/bko-holt` and `rustic-bko`,
+fetched first with `scp`, so the staged sha256s don't change.
 
 ## PASS criteria
 
@@ -256,13 +292,13 @@ After that, `backshot1 stage TOOLS_DIR` runs once, from the running NixOS.
     - the extra checks marked for A.
   - **B:**
     - `PREFLIGHT OK`, then `PHASE1_OK` (`check --read-data`);
-    - plan.txt shows that the partition stage runs, and, on LVM and ZFS
-      (Debian 13, Gentoo, Chimera), load's release step for what the rescue
-      started; if the rescue started nothing, the plan says so;
+    - plan.txt shows that the partition stage runs and, on all seven,
+      nothing to release (the rescue opens no LUKS and imports no pool);
     - phase2's PASS, then `verify B`'s PASS;
     - the extra checks in the table.
+  - NixOS, if Q1 is yes: B and the generation check only.
 - **BackShot1All passes when:**
-  - all 13 distros pass;
+  - all seven distros pass;
   - every restore log and every phase 1 log records the binaries' sha256:
     the staged ones, or, for a distro rerun after a fix, the final ones (Fix
     policy);
@@ -277,8 +313,9 @@ succeed."
   diagnose from `runs/RUN/restores/STAMP/` and the bko report, then sort the
   failure:
   - **Interference** (an update, sleep, mDNS, power): rerun, no fix.
-  - **An expectation in the harness** (a manifest EXPECTED path, say): a
-    small fix with no separate review (fix-cycle-speedups #4).
+  - **An expectation in the harness** (a manifest EXPECTED path, like
+    f49da8b's var/lock): a small fix with no separate review
+    (fix-cycle-speedups #4).
   - **A tool bug:** fixed by a High-effort agent that has a file map. A
     change to what gets erased, mounted or restored gets its own High review.
 - **Each fix:**
@@ -288,17 +325,19 @@ succeed."
     rescue into `/mnt/bs1-backup/backshot1/bin`);
   - then `bs1-all --from STEP` resumes that distro.
 - **After a failed phase2,** the laptop sits wiped on the rescue, and the
-  retry starts there.
+  retry starts there (`find-rescue`, then that half's steps by hand: `cycle`
+  starts from the installed system).
 - **Earlier distros are rerun (their B only)** when the reviewer judges that
   the fix touches a path they used.
 - **I stop and ask you when:**
   - the same step fails 3 times after fixes, or interference repeats;
-  - an A fails because of the old backup itself (something a fresh dump
-    would have recorded): fix load, or record it as a limit and skip that
-    distro (reinstalling is out of scope);
+  - an A fails because of the backup itself (something a fresh dump would
+    have recorded): fix load, or record it as a limit and skip that distro
+    (reinstalling is out of scope);
   - a fix would touch anything but the internal disk;
   - the drive falls below 80 GB free;
-  - an OS update or a re-adopt on Arch would be needed.
+  - item 0 counts 30 or more firmware boot entries;
+  - an OS update, or a re-adopt on CachyOS, would be needed.
 
 ## Your part
 
@@ -306,110 +345,90 @@ succeed."
   - Plug the Thinkpad's PSU in directly, not through the hub (the
     2026-11-08 low-power stall).
   - Leave the lid open and the USB Ethernet adapter in.
-  - Leave the rescue stick and mybig512 plugged in, and **unplug the spare
-    USB sticks** (phase2 refuses unexpected disks).
+  - Leave the rescue stick in one of the laptop's own ports (README, "The
+    hands-free cycle") and mybig512 plugged in, and **unplug the spare USB
+    sticks** (phase2 refuses unexpected disks).
   - Keep other sessions off the Thinkpad and mybig512 until the end.
   - Keep the Mac on power. The driver keeps it awake.
-  - Confirm that `keys/disk-passphrase` is still right for Debian 12.
-- **During the user block:**
-  - Type Debian 12's passphrase once, when the push asks (A's restored
-    boot; B unlocks from mybig512).
-  - Boot Bazzite's rollback once: the second GRUB entry, ending
-    `(ostree:1)` (hold Esc as GRUB starts if no menu shows). Read off
-    `rpm-ostree status` (booted marker on `.0`) and `cat /proc/cmdline`,
-    reboot, then tell me in chat.
+- **At the start, only if Q4 boots NixOS's older generation:** type the
+  passphrase once, when the push asks (that generation's initrd predates
+  family N).
 - **Any time:** if a push says the laptop isn't back, tell me what's on its
   screen. If it shows no OS after a failed restore, pick the stick from the
   F12 menu.
-- **At the end:** say which OS should stay (Q6).
+- **At the end:** say which OS should stay (Q5).
 
 ## Risks
 
 - **The backup drive filling.**
-  - B adds one repository per distro, about the size of that distro's newest
-    one. The draft's figure for all of them together was 45-60 GB (est.);
-    Bazzite's repository alone may be a large part of that. Item 0 replaces
-    the figure with the sum `backshot1 list` shows.
+  - B adds one repository per distro, about the size of L's: 19.3G for the
+    six with sizes listed, plus NixOS's (est. 20-25 GB in all). Item 0 has
+    the free space.
   - A rerun of phase 1 adds another.
   - The 80 GB check runs before each phase 1, and nothing on the drive is
     deleted without asking you.
-- **NVMe wear.**
-  - 23 restores: two of about 59 GiB for Bazzite, two of Tumbleweed with its
-    snapshots as full copies, and the rest 1-10 GiB each.
-  - That is about 250-350 GB (est.), a negligible fraction of a consumer
-    NVMe's rated endurance.
-- **Old backups.**
-  - Their snapshots were made by older rustic-bko builds: A is the test of
-    that, and a FAIL there is a real compatibility bug.
-  - Pre-xattr baselines compare without attributes, as documented.
-- **rustic-bko 0.11.4+backotter.10** changed what a restore does with
-  directories on XFS: their XFS options come off and go back on. Its SticTest2
-  hasn't run (Q9). Debian 12 (XFS root) and Gentoo (XFS home) are where it
-  shows here.
-- **Tumbleweed.**
-  - The snapper snapshots come back as full copies, so its restores write
-    more and take longer (known; the btrfs-shared-snapshots spec isn't
-    built).
-  - B's free space is checked before its phase 2 (table).
+- **NVMe wear.** 13 restores (six A's, seven B's) of a few GiB to about
+  15 GiB each (CachyOS): under 150 GB (est.), a negligible fraction of a
+  consumer NVMe's rated endurance.
 - **The rescue image.** `bs1-restore` uses the drive's `bin/`, so the stick
   supplies only:
-  - the kernel and OpenZFS 2.4.1;
+  - the kernel and OpenZFS;
   - the mkfs tools;
-  - the LVM, md, LUKS and ZFS tools that load's release runs.
+  - the LVM, md, LUKS and ZFS tools load runs to recreate the layout.
 
-  Keep the stick that passed NixOS today, and don't rebuild it mid-test.
+  Keep the stick that passed the seven on 2026-11-16 (item 0 records its
+  `backotter.json`), and don't rebuild it mid-test.
 - **mDNS.** Every system answers as `thinkpad` with the pinned host key, but
   avahi can lag. The driver falls back to `find-host`.
-- **Firmware boot entries.**
-  - load's boot stage runs `efibootmgr --create` and never removes an
-    older entry of the same name. Only `to-stick` deletes its own "BKO
-    rescue".
-  - So each restore adds an entry: about 23 more on top of every restore
-    since 2026-11-08, not "at most about 12" as the draft said.
-  - A full NVRAM store can make creating an entry fail, or worse on some
-    firmware (Q8).
-- **LUKS.** A restored Debian 12 sitting at its prompt blocks the queue. The
-  driver waits and asks; it never goes on. After A, Debian 12 unlocks from
-  mybig512, so a `drive` system at its prompt means the key failed: a FAIL
-  and a push, not a wait.
-- **Builds.** If Cinqcent can't fetch or build, Copland and Cage have the
-  same two toolchains.
+- **Firmware boot entries.** The restore's boot stage now deletes any entry
+  for the same partition and loader before making the source's again, and
+  `to-stick` deletes its own "BKO rescue", so the count should hold steady.
+  The driver's count across cycles (Tooling 7) is the safety net; a full
+  NVRAM store can make creating an entry fail, or worse on some firmware.
+- **LUKS.** Debian 13 and NixOS unlock from mybig512, so one sitting at its
+  prompt means the drive's key failed: a FAIL and a push, not a wait. The
+  queue can't go on past it, since the next step starts from that system.
+- **Alpine and xfs.** A fresh Alpine boot needs xfs loaded by hand before
+  its first mount of mybig512; L was taken after adopt fixed that for later
+  boots, and DRIVE now loads xfs itself, so the restore of L shouldn't need
+  it. If it does, that is a FAIL of the extra check, not a hand fix.
 
 ## Open questions (my recommendation first)
 
-1. **Name:** **BackShot1All**, after HoltTest1All. Or BackShot1Lib.
-2. **NixOS:** B only, from the running system: its library restores passed
-   today, and B runs today's load on NixOS anyway. Or full A+B for
-   uniformity (+25 min).
-3. **Let `bko-holt load --erase` do the wipe in B (`--load-wipes`):** yes, B
-   only. b3af94d is in, and this is the only way this test exercises holder
-   release and the matching-table case on real hardware. A keeps the
-   script's own wipe.
-4. **Bazzite's rollback:** in A, right after `verify L`. It is B9's own
-   check against B9's baseline, now with today's load, and it brings the user
-   block down from about 4 h to about 2.5 h (est.). Or in B, which also
-   covers today's ostree dump but keeps you about 1.2 h longer (est.). Or in
-   both, a second console visit. NixOS's generation check stays in B: it needs
-   no console.
-5. **EndeavourOS's XFS `--reformat` variant:** skip it. `--reformat` is on
-   claude/holt-reformat, not main. Or merge it first and add one more EOS
-   restore.
-6. **What stays on the laptop:** Gentoo, the last in the order. Or name
-   another, for one more A restore (15-75 min). If it's Bazzite, its
-   backup's hold stays on until you undo it (bazzite-support).
-7. **Builds:** Cinqcent, static through `+crt-static` on the gnu target, as
-   holt/README.md documents, with the 1.94.1 toolchain it already has for
-   rustic. Nothing changes in rustup. Or add `x86_64-unknown-linux-musl` to m's
-   rustup on Cinqcent, for both toolchains, which is what NixOS's static
-   build used on Chopin.
-8. **Firmware entries:** count them in item 0. Below 30, leave them. At 30 or
-   more, prune once before the start, with your OK: only entries whose
-   partition GUID is on no present disk, never "BKO rescue" or the
-   firmware's own. Or never prune.
-9. **rustic-bko:** the fork head (backotter.10), with the owed SticTest2 of
-   the final heads run during the tooling. The XFS restores (Debian 12,
-   Gentoo) wait for its result. Or keep the build that passed NixOS today,
-   whose version item 0 records.
-10. **When the user block runs:** first, right after the Void canary (Order;
-    the user's front-loading rule). Start the queue when you can be at the
-    laptop for about 3 h (est.).
+1. **NixOS:** B only, from the running system. Its A, the hands-free cycle
+   round of 2026-11-16, restored 210139 onto the laptop, most likely with
+   the staged binaries: item 0 confirms which binaries made it by
+   phase1.log's sha256, and the restore's bko-holt by its logged `--version`
+   only. B runs today's load on NixOS anyway. Or full A+B for uniformity
+   (+11 min, est.).
+2. **Let `bko-holt load --erase` do the wipe in B (`--load-wipes`):** yes, B
+   only, after item 1's review. This is the only way this test exercises
+   the matching-table case (b3af94d) on real hardware, on seven layouts.
+   Holder release isn't tested here (the rescue starts no holders on these
+   seven); the bs2 leftovers set covers it. A keeps the script's own wipe.
+3. **Reuse `backshot1 cycle` for A and B:** yes, one round each, with the
+   new `--hold` and `--load-wipes` (Tooling 6). It is the hands-free path
+   the seven passed on 2026-11-16, and the driver doesn't repeat its steps.
+   It costs one more `check --read-data` per restore (its `plan` step, about
+   1 min at these sizes, est.). Or the driver runs `to-stick`, `phase2`,
+   `reboot`, `wait-host` and `verify` itself with no `plan`, as the
+   2026-11-13 draft had it.
+4. **NixOS's older generation:** list the generations by reading and check
+   each one's closure, then boot the newest older one that has sshd, once,
+   before B, and type its passphrase (about +5 min, est.). Only the
+   generations made after family N unlock from the drive, and one from
+   before bs1-adopt has no sshd, so it is never booted; if a newer one than
+   the pre-family-N generation is there, no one types. Or the reading and
+   closure check only, which keeps the whole run hands-free.
+5. **What stays on the laptop:** Alpine, the last in the order. Or name
+   another, for one more A at the end (5-10 min, est.); NixOS, which runs
+   now, is the obvious one.
+
+Settled or dropped from the 2026-11-13 draft:
+- the name (old 1): BackShot1All, as you call it;
+- Bazzite's rollback (old 4), EndeavourOS's XFS `--reformat` variant (old
+  5) and when the user block runs (old 10): their distros or block are gone;
+- the builds (old 7) and the rustic-bko build (old 9): the staged binaries
+  are today's tools, and nothing is built;
+- pruning firmware entries (old 8): the boot stage no longer piles them up;
+  the 30-entry line is now a stop-and-ask in the Fix policy.

@@ -10,5 +10,5 @@ set hosts copland,cage
 
 t2      GateTest2 selftest hosts=cage
 t2      HoltTest2 alpine324
-stic1   rel8 alpine324
+stic1   rel9 alpine324
 cmd     true -- true

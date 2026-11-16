@@ -5,5 +5,5 @@
 # stic1 must name a round directory (drive.py): it stays pinned.
 set hosts chopin,cinqcent,copland,cage
 
-stic1   rel8                    why="SticTest1: every guest's check.sh"
+stic1   rel9                    why="SticTest1: every guest's check.sh"
 include holttest1all.batch

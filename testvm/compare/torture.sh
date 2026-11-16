@@ -72,14 +72,25 @@ truncate -s 1G "$T/sparse"
 echo "start" | dd of="$T/sparse" conv=notrunc status=none
 echo "middle" | dd of="$T/sparse" bs=1M seek=512 conv=notrunc status=none
 head -c 1G /dev/urandom >"$T/big-random"
-# Holes smaller than a chunk: one 8 KiB hole between two 256 KiB runs of
+# Holes smaller than a chunk: one 64 KiB hole between two 256 KiB runs of
 # data (inside one blob), and a hole in the last, partial block (as in a
 # sparse-copied ELF file or locale-archive).  A restore that only skips
-# all-zero blobs fills both.
+# all-zero blobs fills both.  sparse-small is written whole, its hole
+# punched (aligned for blocks up to 64 KiB), synced, and checked as S3
+# marks a file (fewer blocks than its size).  Not by truncate between two
+# appends: XFS keeps the speculative preallocation past EOF of a file
+# appended to, and st_blocks counts it until it is trimmed, so neither tool
+# marked the file and its hole came back filled.  The truncate way only
+# where nothing punches holes (JFS, NILFS2).
 rm -f "$T/sparse-small" "$T/sparse-tail"
-head -c 256K /dev/urandom >"$T/sparse-small"
-truncate -s +8K "$T/sparse-small"
-head -c 256K /dev/urandom >>"$T/sparse-small"
+sparse_small() {  # FILE HOLE-BYTES: true if S3 marks FILE
+    { head -c 262144 /dev/urandom; head -c "$2" /dev/zero; head -c 262144 /dev/urandom; } >"$1"
+    fallocate -p -o 262144 -l "$2" "$1" 2>/dev/null ||
+        { head -c 262144 /dev/urandom >"$1"; truncate -s +"$2" "$1"; head -c 262144 /dev/urandom >>"$1"; }
+    sync "$1"
+    (( $(stat -c %b "$1") * 512 < $(stat -c %s "$1") ))
+}
+sparse_small "$T/sparse-small" 65536 || echo "torture: skipped (unsupported here): sparse-small's hole" >&2
 head -c 4096 /dev/urandom >"$T/sparse-tail"
 truncate -s 4099 "$T/sparse-tail"
 

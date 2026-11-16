@@ -155,7 +155,21 @@ mkfix() {  # FSROOT: the fixture in FSROOT/fx; FSROOT is the ancestor checked
     # Holes and dense files that must stay dense.
     truncate -s 256M sparse-big; echo start | dd of=sparse-big conv=notrunc status=none
     echo middle | dd of=sparse-big bs=1M seek=128 conv=notrunc status=none
-    head -c 256K /dev/urandom >sparse-small; truncate -s +64K sparse-small; head -c 256K /dev/urandom >>sparse-small
+    # sparse-small: 256 KiB of data, a 64 KiB hole, 256 KiB of data, a file S3
+    # marks (fewer blocks than its size).  Written whole, the hole punched
+    # (aligned for blocks up to 64 KiB), synced, and checked.  Not by truncate
+    # between two appends: XFS keeps the speculative preallocation past EOF of
+    # a file appended to, and st_blocks counts it until it is trimmed, so
+    # neither tool marked the file and its hole came back filled.  The
+    # truncate way only where nothing punches holes (JFS, NILFS2).
+    sparse_small() {  # FILE HOLE-BYTES: true if S3 marks FILE
+        { head -c 262144 /dev/urandom; head -c "$2" /dev/zero; head -c 262144 /dev/urandom; } >"$1"
+        fallocate -p -o 262144 -l "$2" "$1" 2>/dev/null ||
+            { head -c 262144 /dev/urandom >"$1"; truncate -s +"$2" "$1"; head -c 262144 /dev/urandom >>"$1"; }
+        sync "$1"
+        (( $(stat -c %b "$1") * 512 < $(stat -c %s "$1") ))
+    }
+    sparse_small sparse-small 65536 || echo "fixture: refused: sparse-small's hole ($(stat -c '%b blocks, size %s' sparse-small))" >&2
     head -c 4096 /dev/urandom >sparse-tail; truncate -s 1M sparse-tail
     truncate -s 8M sparse-allhole
     head -c 4M /dev/zero >dense-zeros

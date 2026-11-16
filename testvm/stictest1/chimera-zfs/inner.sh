@@ -230,7 +230,21 @@ fixture() {  # DIR FS: the fixture in DIR, on a file system of type FS (zfs, ext
     printf middle | dd of=sparse bs=1048576 seek=32 conv=notrunc status=none
     truncate -s 8M all-hole
     truncate -s 16M data-at-end; head -c 4096 /dev/urandom | dd of=data-at-end bs=4096 seek=4095 conv=notrunc status=none
-    head -c 262144 /dev/urandom >sparse-small; truncate -s +8192 sparse-small; head -c 262144 /dev/urandom >>sparse-small
+    # sparse-small: 256 KiB of data, a 64 KiB hole, 256 KiB of data, a file S3
+    # marks (fewer blocks than its size).  Written whole, the hole punched
+    # (aligned for blocks up to 64 KiB), synced, and checked.  Not by truncate
+    # between two appends: XFS keeps the speculative preallocation past EOF of
+    # a file appended to, and st_blocks counts it until it is trimmed, so
+    # neither tool marked the file and its hole came back filled.  The
+    # truncate way only where nothing punches holes (JFS, NILFS2).
+    sparse_small() {  # FILE HOLE-BYTES: true if S3 marks FILE
+        { head -c 262144 /dev/urandom; head -c "$2" /dev/zero; head -c 262144 /dev/urandom; } >"$1"
+        fallocate -p -o 262144 -l "$2" "$1" 2>/dev/null ||
+            { head -c 262144 /dev/urandom >"$1"; truncate -s +"$2" "$1"; head -c 262144 /dev/urandom >>"$1"; }
+        sync
+        [ $(($(stat -f %b "$1") * 512)) -lt "$(stat -f %z "$1")" ]
+    }
+    sparse_small sparse-small 65536 || echo "sparse-small's hole refused on $fs ($(stat -f '%b blocks, size %z' sparse-small))"
     head -c 4194304 /dev/urandom >random
     fallocate -l 4M preallocated 2>/dev/null || echo "fallocate refused on $fs"; head -c 2097152 /dev/zero >zeros
     # Odd names, deep, empty and big directories.

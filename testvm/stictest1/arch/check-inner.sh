@@ -106,7 +106,21 @@ echo start | dd of=$T/sparse conv=notrunc status=none
 head -c 1M /dev/urandom | dd of=$T/sparse bs=1M seek=32 conv=notrunc status=none
 echo end | dd of=$T/sparse bs=1 seek=$((64 * 1048576 - 4)) conv=notrunc status=none
 truncate -s 8M $T/sparse-all-hole
-head -c 256K /dev/urandom >$T/sparse-small; truncate -s +8K $T/sparse-small; head -c 256K /dev/urandom >>$T/sparse-small
+# sparse-small: 256 KiB of data, a 64 KiB hole, 256 KiB of data, a file S3
+# marks (fewer blocks than its size).  Written whole, the hole punched
+# (aligned for blocks up to 64 KiB), synced, and checked.  Not by truncate
+# between two appends: XFS keeps the speculative preallocation past EOF of
+# a file appended to, and st_blocks counts it until it is trimmed, so
+# neither tool marked the file and its hole came back filled.  The
+# truncate way only where nothing punches holes (JFS, NILFS2).
+sparse_small() {  # FILE HOLE-BYTES: true if S3 marks FILE
+    { head -c 262144 /dev/urandom; head -c "$2" /dev/zero; head -c 262144 /dev/urandom; } >"$1"
+    fallocate -p -o 262144 -l "$2" "$1" 2>/dev/null ||
+        { head -c 262144 /dev/urandom >"$1"; truncate -s +"$2" "$1"; head -c 262144 /dev/urandom >>"$1"; }
+    sync "$1"
+    (( $(stat -c %b "$1") * 512 < $(stat -c %s "$1") ))
+}
+sparse_small $T/sparse-small 65536 || echo "fixture: skipped (unsupported here): sparse-small's hole ($(stat -c '%b blocks, size %s' $T/sparse-small))"
 head -c 4096 /dev/urandom >$T/sparse-tail; truncate -s 4099 $T/sparse-tail
 head -c 4M /dev/zero >$T/zeros; try fallocate -l 4M $T/preallocated
 # real holes from the guest's own files, if any

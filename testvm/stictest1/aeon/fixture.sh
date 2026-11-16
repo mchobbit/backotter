@@ -39,6 +39,9 @@ for f in /usr/bin/newuidmap /usr/bin/newgidmap /usr/bin/passwd /usr/bin/su /usr/
 done
 mkdir -p "$T/real/var-log" "$T/real/var-lib" "$T/real/var-lib-misc"
 if [[ $FS == btrfs ]]; then flag C "$T/real/var-log"; flag C "$T/real/var-lib"; fi
+# What the guest has there, for the judge: Aeon's health-checker (with
+# systemd-boot's boot counting) writes no health-check.state.
+ls -A /var/lib/misc >"$L/guest-var-lib-misc.txt" 2>&1
 for f in /var/lib/misc/health-check.state /var/lib/misc/transactional-update.state /var/lib/misc/health-check.rebooted; do
     [[ -e $f ]] && try cp -a --preserve=all "$f" "$T/real/var-lib-misc/"
 done
@@ -159,9 +162,8 @@ mkdir -p "$T/"$'\xe9'"-latin1-dir"; touch "$T/"$'\xe9'"-latin1-dir/f"
 D="$T/deep$(printf '/level%s' {1..40})"; mkdir -p "$D"; touch "$D/bottom"
 touch "$T/empty"; mkdir -p "$T/empty-dir"
 
-# Project IDs: btrfs takes none;
-# tried, and reported as skipped.
-echo project >"$T/projid-file"; try chattr -p 42 "$T/projid-file"
+# Project IDs: btrfs takes none, so none is set (the judge's LIMIT).
+echo project >"$T/projid-file"
 
 # Times: far past, far future, nanoseconds, atime apart from mtime.
 touch -d '1970-01-02 00:00:00.123456789' "$T/old"

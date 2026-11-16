@@ -34,7 +34,15 @@ mount -t tmpfs -o mode=0755${mnt_label:+,rootcontext=$mnt_label} bko-mnt /mnt ||
 mkfs.btrfs -q -f /dev/vdb >/dev/null && mkdir -p $W && mount -o noatime /dev/vdb $W || { echo "FAIL harness: no work disk"; exit 2; }
 mkdir -p $LB
 btrfs_feat() {  # DEV-or-IMAGE: the superblock's feature flags
-    btrfs inspect-internal dump-super "$1" 2>/dev/null | grep -E '^(incompat_flags|compat_ro_flags|csum_type|nodesize|sectorsize)' | tr -s ' \t' ' ' | tr '\n' ';'
+    # incompat_flags but COMPRESS_LZO (0x8) and COMPRESS_ZSTD (0x10): the
+    # kernel sets those when it first writes an extent so compressed, so
+    # they tell what data the file system holds, not how it was made (the
+    # guest's / has zstd data, a fresh scratch none).
+    local k v
+    while read -r k v; do
+        [[ $k == incompat_flags ]] && k=incompat_flags~compress v=$(printf '0x%x' $(( v & ~0x18 )))
+        printf '%s %s;' "$k" "$v"
+    done < <(btrfs inspect-internal dump-super "$1" 2>/dev/null | grep -E '^(incompat_flags|compat_ro_flags|csum_type|nodesize|sectorsize)' | tr -s ' \t' ' ')
 }
 # The ESP's FAT: its type, sector and cluster size (the boot sector), and
 # /boot/efi's mount options (fmask, dmask, codepage, iocharset, utf8...).

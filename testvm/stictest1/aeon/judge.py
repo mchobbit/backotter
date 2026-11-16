@@ -59,7 +59,7 @@ socket = TREE + "/socket"
 unl = set()
 for need, kinds in KINDS.items():
     if need.startswith("project IDs") and not any(e.get("projid") for p, e in src.items() if p.startswith(TREE)):
-        line("LIMIT", need, f"{FS} takes no project ID (chattr -p fails: btrfs has none): " + ("; ".join(l for l in rd("fixture.err").splitlines() if "-p" in l) or "none set"))
+        line("LIMIT", need, f"{FS} takes no project ID (btrfs has none): none set")
         continue
     bad = []
     for d in DIRS:
@@ -249,13 +249,20 @@ if FS == "btrfs":
          f"{len(etc)} /etc paths; {len(lab)} distinct labels; restored exactly in 4 directions")
     # The transactional state: health-checker's and t-u's (and
     # /etc/etc.syncpoint where t-u keeps one; this image has none).
+    # Only what the guest has (fixture.sh lists its /var/lib/misc): Aeon's
+    # health-checker, with systemd-boot's boot counting, writes no
+    # health-check.state; transactional-update.state it always has.
     want = ["health-check.state", "transactional-update.state"]
+    guest = set(rd("guest-var-lib-misc.txt").split())
+    absent = [w for w in want if w not in guest]
     st = [p for p in real if p.startswith(TREE + "/real/var-lib-misc/") or p.endswith("/etc.syncpoint")]
     have = [w for w in want if TREE + "/real/var-lib-misc/" + w in src]
     bad = same_in_all(set(st))
-    if len(have) < len(want): bad.append(f"not in the source: {sorted(set(want) - set(have))}: {rd('fixture.err')[-300:]!r}")
+    if "transactional-update.state" in absent: bad.append(f"the guest has no transactional-update.state: {sorted(guest)}")
+    if missing := sorted(set(want) - set(have) - set(absent)): bad.append(f"not in the source: {missing}: {rd('fixture.err')[-300:]!r}")
     line("FAIL" if bad else "PASS", "the transactional state (/var/lib/misc's health-check.state and transactional-update.state)",
-         "; ".join(bad)[:900] if bad else f"{len(st)} paths ({', '.join(p[len(TREE) + 6:] for p in st)}) restored exactly (contents, label, times) in 4 directions")
+         "; ".join(bad)[:900] if bad else f"{len(st)} paths ({', '.join(p[len(TREE) + 6:] for p in st)}) restored exactly (contents, label, times) in 4 directions"
+         + (f"; the guest has no {', '.join(absent)}" if absent else ""))
     what = "/"
 else:
     if anc_seen:

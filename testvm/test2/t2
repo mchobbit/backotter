@@ -58,7 +58,7 @@ CHECKOUT = os.path.dirname(os.path.dirname(HERE))
 from t2lib import DEFAULT_HOST_ROOT, DEFAULT_MAC_ROOT, GROUPS, canonical, expand, mac_ledger_file, mac_root  # noqa: E402
 from t2lib import DEFAULT_HOSTS, KNOWN_HOSTS                                        # noqa: E402
 from t2lib import sha256_hex, utc_now                                               # noqa: E402
-from t2lib import copies, hostrun, keys, ledger, words                              # noqa: E402
+from t2lib import copies, hostrun, keys, ledger, notify, words                      # noqa: E402
 from t2lib import facts as factsmod                                                 # noqa: E402
 from t2lib import plan as planmod                                                   # noqa: E402
 from t2lib import run as runmod                                                     # noqa: E402
@@ -686,6 +686,21 @@ COMMANDS = {"pull": cmd_pull, "ledger": cmd_ledger, "explain": cmd_explain, "cop
 
 
 def main(argv):
+    """t2 ARGV's exit code; the outermost t2 sends one notification once a run's work began
+    (t2lib/notify.py), whatever its end."""
+    token = notify.claim()
+    code = exc = None
+    try:
+        code = dispatch(argv)
+        return code
+    except BaseException as e:
+        exc = e
+        raise
+    finally:
+        notify.done(token, code, exc)
+
+
+def dispatch(argv):
     if not argv or argv[0] in ("-h", "--help", "help"):
         say(__doc__.strip())
         return 0 if argv else 2

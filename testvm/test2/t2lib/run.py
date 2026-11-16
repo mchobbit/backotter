@@ -30,7 +30,7 @@ import threading
 import time
 
 from . import HARD
-from . import copies, hostrun, host_root as default_host_root, keys, ledger, mac_root as default_mac_root
+from . import copies, hostrun, host_root as default_host_root, keys, ledger, mac_root as default_mac_root, notify
 from . import utc_now
 from . import plan as planmod
 from . import report
@@ -710,6 +710,7 @@ class RunState:
         self.limits = read_json(os.path.join(ctx.checkout, "testvm", "test2", d, "limits.json"), {}) or {}
         self._log = log
         os.makedirs(self.mac_dir, exist_ok=True)
+        notify.begun(run, word.word)
 
     def log(self, text):
         line = f"{utc_now()} {text}"
@@ -1267,6 +1268,11 @@ def finish(word, ctx, plan, run, result, mac_root=None, out=print, pull=None):
     result.setdefault("last_sweep", last_sweep(mac_root))
     text = report.render_report(result, plan, rows, ctx.classes.get("policy"), ctx.now)
     write_text(os.path.join(run_dir(run, mac_root), "report.txt"), text)
+    counts = {}
+    for c in result.get("cells") or []:
+        if c.get("verdict"):
+            counts[c["verdict"]] = counts.get(c["verdict"], 0) + 1
+    notify.outcome(run, ", ".join(f"{n} {v}" for v, n in sorted(counts.items())))
     out(text.rstrip())
     return plan_exit(plan, max(int(ex), ex2))
 

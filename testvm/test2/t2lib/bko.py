@@ -76,7 +76,7 @@ import threading
 import time
 import traceback
 
-from . import DEFAULT_MAC_ROOT, estimates, expand, keys, parse_utc, utc_now, words
+from . import DEFAULT_MAC_ROOT, estimates, expand, keys, notify, parse_utc, utc_now, words
 from . import mac_root as default_mac_root
 from . import plan as planmod
 from . import report
@@ -1118,6 +1118,7 @@ class Conductor:
     def _rest(self, resumed=False):
         t0 = self.doc.get("t0") or self.env.now()
         if resumed or any((p.totals or {}).get("due") for p in self.final.values()):
+            notify.begun(self.run, self.word.word)     # (before its children's: the composite names the notification)
             why = self.ensure_copy()
             if why:
                 self.say(f"t2: {why}")

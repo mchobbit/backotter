@@ -59,6 +59,7 @@ import time
 from . import batchfile as bf
 from . import batchsched as bs
 from . import hosts as H
+from . import notify
 from . import mac_root as default_mac_root
 from . import utc_now, DEFAULT_MAC_ROOT, expand
 
@@ -1329,6 +1330,7 @@ class Driver:
         else:
             lock.rename(self.id)
         self.load()   # (read again under the lock: a driver that just ended may have saved newer state)
+        notify.begun(self.id, f"t2 batch {os.path.basename(self.doc.get('file') or '?')}")
         old = {}
         for sgn in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
             old[sgn] = signal.getsignal(sgn)
@@ -1440,6 +1442,10 @@ class Driver:
     def end(self):
         sts = {e.id: self.st(e.id).get("status") for e in self.entries}
         code = EXIT_OK if all(v == "PASS" for v in sts.values()) else EXIT_FAIL
+        counts = {}
+        for v in sts.values():
+            counts[v or "?"] = counts.get(v or "?", 0) + 1
+        notify.outcome(self.id, ", ".join(f"{n} {v}" for v, n in sorted(counts.items())))
         self.state["exit"] = code
         self.state["ended"] = time.time()
         self.save()

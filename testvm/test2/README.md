@@ -269,6 +269,21 @@ by their wear tags; 50 GB per host for the day's Test2 rows plus this run's), th
 line, and last the wear line per host and disk (diskstats window, our jobs by wear tag, today by SMART;
 never a serial).
 
+### Notification
+
+When a run's work has begun, the outermost `t2` sends one notification as it ends:
+`pushover.sh -T BackOtter -m "Command-line test is complete. Send logs to Claude.\nWORD run RUN:
+OUTCOME[: counts] (duration)"`, OUTCOME being PASS, FAIL, REFUSED, ERROR or INTERRUPTED (from
+the exit code).  It is sent for a word's run, `t2 resume RUN` and `t2 batch FILE`
+(`t2 batch resume`), whatever the end, but never for a plan, the other commands, or a run
+refused before it began (a held lock, a PlanError).  Nested `t2`s (a composite's children, a
+batch's entries, drive.py) stay quiet: the outermost one sets `T2_NOTIFIED_BY` to its pid.
+`T2_NOTIFY=0` turns it off; `T2_PUSHOVER=/path` names the client (default: `pushover.sh` on
+PATH, then `/usr/local/bin`, `/opt/local/bin`), `T2_PUSHOVER=none` turns it off.  A test
+MAC_ROOT never notifies unless `T2_NOTIFY=1` and `T2_PUSHOVER` names a (fake) client.  A
+missing, failing or hung client (20 s) costs one line on stderr, never the exit code
+(t2lib/notify.py).
+
 ## Roots
 
 | Root | Default | Override |

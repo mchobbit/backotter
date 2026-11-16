@@ -94,7 +94,10 @@ case $G in
         # and this script imports the source's and target's as ht1src.
         PLAT=illumos RG=omnios58 DISK= RAWSFX=
         GPATH=/usr/gnu/bin:/usr/sbin:/usr/bin:/sbin:/opt/ooce/bin
-        BOOTSTATE='i=0; while svcs -H -o state | grep -q "\*" && [ $i -lt 60 ]; do sleep 2; i=$((i + 1)); done; svcs -H -o state,fmri | awk "\$1 != \"online\" && \$1 != \"disabled\" {print \"down \" \$2}" | sort'
+        # Settled: nothing in transition (*) and nothing enabled still
+        # offline, waiting on its dependencies (a first boot's NWAM can hold
+        # milestone/network and autofs back well after SSH answers), or 120 s.
+        BOOTSTATE='i=0; while svcs -H -o state | grep -q -e "\*" -e "^offline" && [ $i -lt 60 ]; do sleep 2; i=$((i + 1)); done; svcs -H -o state,fmri | awk "\$1 != \"online\" && \$1 != \"disabled\" {print \"down \" \$2}" | sort'
         # bootadm update-archive writes in /etc (system.d, versions) and
         # the root directory; the load log goes in /var/log/bko-holt.  Where
         # the source's archive was out of date (omnios58-mirror's: its own

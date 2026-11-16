@@ -260,9 +260,34 @@ PikaOS's and the others' are):
 Done when two corpus builds have the same sha256, the leak scans are 0, no
 other plan changes, and `t2 self-test` and Test2's tests pass.
 
-**BackShot1:** none. The Thinkpad isn't proposed for illumos: its Wi-Fi
-and GPU drivers are doubtful there, and the rescue images are wired-only
-anyway ([[rescue-wired-only]]).
+**BackShot1:** none yet. BackShot1 is Linux-only by design
+(`testvm/realworld/backshot1/README.md`: "Not covered: the BSDs, illumos
+and Haiku"), and its scripts make about 90 Linux-specific calls (`/sys`,
+`lsblk`, `efibootmgr`, `systemctl`, udev). An OpenIndiana BackShot1 is a
+project of its own, assessed 2026-11-16:
+
+1. **An illumos BackShot1** (`bs1-*`), ported from the Linux scripts.
+   - The live backup reads the disk by `diskinfo` and `/etc/mnttab`, as
+     `illumos.rs` does.
+   - `bs1-adopt` installs sshd keys and avahi with `pkg`, and holds
+     `svc:/system/boot-archive-update`.
+   - `bs1-to-stick` boots the stick with `bootadm`/`reboot` and no
+     efibootmgr: the stick is picked from the firmware's boot menu, or by a
+     one-time `BootNext` set from the stick's own Linux tools.
+2. **An illumos stick with `key-access`:** `stick/add-ssh-key.sh` for the
+   illumos image, so it starts sshd with BackShot1's keys, as the Linux
+   image does.
+3. **OpenIndiana on the Thinkpad,** installed by the user at the machine
+   from the text ISO. That wipes the current install. Then the hardware
+   facts:
+   - an illumos driver for its wired NIC ([[rescue-wired-only]]): a USB
+     Ethernet dongle may be needed;
+   - the NVMe driver;
+   - the UEFI boot through illumos' loader.
+4. Rehearsals on `oi2610` with `bs1-qemu.py` first, then the run.
+
+Est. 2-3 d plus the user's install, and it needs the user's word: it
+replaces the Thinkpad's OS.
 
 ## What O1 found (2026-11-14)
 
@@ -379,6 +404,60 @@ The system:
   pkg.openindiana.org, and leaves a 5-10 GiB overlay, most of it pkg's
   download cache. `in-guest.sh` now sets `flush-content-cache-on-success`
   and keeps two BEs.
+
+## Follow-ups of 2026-11-16
+
+This round had no batch or Test2 runs (the user's word: those come later).
+Test2's cells are planned and ready: `t2 plan` lists `stic:oi2610`,
+`holt:oi2610`, `holt:oi2610-bios`, `holt:oi2610+img`, `guest:oi2610` and
+`guest:oi2610-bios`.
+
+- **Updated guests:** `vm-update` on Chopin.
+  - `oi2610` changed 260 packages and now has two BEs: `openindiana`
+    (inactive) and `openindiana-2026:11:16` (booted).
+  - `oi2610-bios` was updated too.
+  - Both are published to vm-store and marked latest: `oi2610`
+    g5a1f258f83e2f118, `oi2610-bios` g5a93617de74ba2da. Copland and Cage
+    link them.
+- **HoltTest1 of the updated guests** (Chopin):
+  - `oi2610` passed as `o6a`. Its plan has the inactive-BE note, "boot
+    environment openindiana ... comes back as an empty plain dataset".
+  - `oi2610-bios` passed as `o6c-oi`.
+  - Its first run, `o6b`, failed once: the restored rpool was DEGRADED,
+    "too many errors". The rescuer logged ZFS-8000-FD (I/O errors exceeded)
+    at the end of the rebuild, and no load step reported an error. Booted
+    again, the counters were 0 and there were no data errors. It wasn't
+    seen again and is unexplained, likely transient I/O on a busy Chopin.
+- **`+img`, from the rescue image** `backotter-live-illumos-dev.20261116.352eac3`:
+  bko-holt 0.2.6 at holt-bin 1628af3, rel9.
+  - It was pinned under a private `T2_HOST_ROOT=/bkoscratch/oi-pin`, so
+    Test2's own pin wasn't touched.
+  - `oi2610` passed as `o6img2`, the image's own bko-holt and rustic-bko
+    doing the load.
+  - Its first run, `o6img`, failed only on boot state and on 21 mount
+    fields, because the check came too early. ht1-bsd.sh's illumos
+    `BOOTSTATE` waited only while a service was in transition (`*`), not
+    while one was still offline on its dependencies. NWAM's first boot held
+    `milestone/network`, `autofs` and `sendmail` back past it, and the dump
+    then lacked `/home` and `/net`.
+  - Fixed: it now also waits while anything enabled is offline, up to
+    120 s. The `ipfilter` boot-state FAIL of cinqcent's `o5e` was the same.
+- **vm-update's dump failed once.** On the first boot into the new BE,
+  `bko-holt dump` exited 3, so there was no fingerprint for `oi2610`.
+  - The failing line was only bko-holt's report-bug hint: vm-update kept
+    the last line of stderr. It now keeps the error lines.
+  - On the updated image the dump passes, 12 tries from the moment SSH
+    answers.
+  - **The recreation didn't reproduce it.** On cinqcent, `oi2610` was
+    updated in a throwaway overlay, rebooted into the new BE, and dumped at
+    once, 6 times from an uptime under a minute: every dump passed.
+  - The first attempt ran at vm-run's default 2 GiB and was void: `pkg
+    update` itself segfaulted in its solver.
+  - The likeliest cause left is a transient: since 66c4cd9, dump refuses
+    when `zpool` or `prtconf` can't run. Unreproduced; the next failure
+    will name itself in vm-update's log.
+- **Cinqcent** links both published versions. Its pre-update full folders
+  were removed, and the qcow2s' sha256 match Chopin's.
 
 ## Pieces to build (ordered, est.)
 

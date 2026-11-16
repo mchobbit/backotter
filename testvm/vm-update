@@ -970,8 +970,11 @@ class VM:
         r = self.ssh_bytes([dest, "dump"], None, DUMP_TIMEOUT)
         self.ssh_bytes(["rm", "-f", dest], None, 60)
         if r.returncode != 0:
-            tail = r.stderr.decode(errors="replace").strip().splitlines()[-1:]
-            return None, f"bko-holt dump: exit status {r.returncode} {' '.join(tail)}"
+            # The error itself, not only the last line: bko-holt ends a
+            # failure with its report-bug hint, which says nothing of why.
+            lines = [l for l in r.stderr.decode(errors="replace").strip().splitlines()
+                     if l.strip() and "report-bug" not in l and "needs into one redacted file" not in l]
+            return None, f"bko-holt dump: exit status {r.returncode} {' | '.join(lines[-4:])}"
         return r.stdout, ""
 
     def stderr_tail(self, n: int = 6) -> str:

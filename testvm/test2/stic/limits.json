@@ -444,6 +444,12 @@
   "SELinux labels / NFSv4 ACLs / BSD flags": "not on Void (LSMs lockdown,capability,landlock,yama) or Linux btrfs/ext4",
   "Sockets": "skipped by both tools by design (user decision); no socket tool in the guest"
  },
+ "void-zbm": {
+  "backups on relatime (the guest's datasets mount relatime) leave the source's atimes alone": "only symlinks' atimes move: readlink(2) has no O_NOATIME (both BACKOTTER.md), source and its mounts on relatime",
+  "birth times (ZFS crtime)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "inode flags OpenZFS on Linux refuses (S, A)": "OpenZFS on Linux keeps only immutable, append-only, nodump and project inheritance (zpl_ioctl_setflags: i a d P, in the fixture and every restore); chattr refuses S and A",
+  "whole-disk needs (GPT, the ESP with ZFSBootMenu's images, the NVRAM entries, the pool's bootfs and host id, the clone's origin snapshot)": "out of scope: whole-disk (HoltTest1 recreates the disk and the pool with its bootfs, restores the ESP's EFI/ZBM images byte for byte, remakes both NVRAM entries, restores every boot environment and boots each from ZFSBootMenu's menu; the inactive BE comes back a plain dataset, Decision 3a); here the scratch pools are made like the guest's and only its datasets' contents are restored"
+ },
  "zorin18": {
   "fs limits recorded": "nilfs2 refuses: xattr-user xattr-trusted acl-access cap-made projid; tmpfs refuses: projid; ext4 refuses: projid"
  }

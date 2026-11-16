@@ -609,6 +609,63 @@ builder checks the sync for errors and retries each xbps command 3 times.
   own-strings leak scan of `void-zbm`, owed since Z4, was done in Z7's
   prep (116 strings, 0 findings).
 
+## What Z6 found
+
+(2026-11-16, SticTest1 `void-zbm` by hand, round `roundrel9`, mark `z6a`,
+Chopin and Cinqcent, from a private copy of the entry, byte-identical to
+the synced one.)
+
+- **The entry is proxmox9's, not chimera-zfs's.** chimera-zfs tests on
+  datasets in the guest's own pool and has no `fixture.sh` or `judge.py`.
+  proxmox9's check makes a scratch pool per tree "made like" the guest's
+  root pool, read from the guest. That is what the Tests section asks for.
+  `testvm/stictest1/void-zbm` is proxmox9's `check.sh`, `inner.sh`,
+  `fixture.sh` and `judge.py` (and tumbleweed's `bkoshim.py`), with these
+  changes:
+  - `sfdisk` instead of `sgdisk`, because base-system has no gptfdisk;
+  - `mountpoint=none` handled on `zroot` and `zroot/ROOT`;
+  - property values with spaces kept whole. proxmox9's `propso` cut
+    `zroot/ROOT`'s `org.zfsbootmenu:commandline` at its first space;
+  - the boot environments. The inactive BE is mounted inside the tree at
+    `/run/bko-be/void-6.18`, where bko-holt's dump and load mount it. On
+    the source it is a clone of `void@pre-mainline`, as in the guest. On
+    each target it is a plain dataset, as load makes it (Decision 3a);
+  - Void's own files as the real examples: the set-id binaries,
+    iputils-ping's `cap_net_raw=p`, xbps's database, DKMS's zfs tree for
+    both kernels, runit's services, seedrng. The inactive BE's `/boot`
+    (its 6.18 kernel and 67 MB initramfs) and its `/etc/bko-be` are among
+    them.
+- **What the guest has.** python3, bash, `setcap`, sfdisk and the
+  guest's own OpenZFS 2.4.4. It has no attr or acl tools, so bkoshim.py
+  stands in for `setfattr` and `setfacl`. Nothing is installed from the
+  network.
+- **Result.** 29 PASS, 4 LIMIT, 0 FAIL on both hosts, with exit 0. Each
+  run took about 310 s and used 1.1 GiB of RAM-disk overlays.
+  - **The scratch pools match the guest:** 44 features, `ashift=12
+    autotrim=on compatibility=openzfs-2.3-linux`, 5 datasets with the
+    guest's 6 local properties (both `org.zfsbootmenu:commandline` values
+    among them), and the mount options. The source's clone has the guest's
+    origin, and the targets have none.
+  - **The inactive BE's dataset:** 130 paths came back onto each target's
+    own `void-6.18` in all 4 restores, with no differences. Its initramfs
+    and kernel have the same sha256 in every direction.
+  - **The LIMITs** are the same as proxmox9's, now in `limits.json`:
+    birth times; S and A, which OpenZFS refuses; symlinks' atimes on
+    relatime; the whole disk. The whole disk covers the ESP's ZBM images,
+    the NVRAM entries, `bootfs`, the host ID and the clone's origin, all of
+    which are HoltTest1's.
+- **Nothing failed, so bko-holt and the forks have no changes.**
+- **Test2:** `manifests.json` and `limits.json` have their void-zbm
+  entries, and check-manifests.py has none of its errors for void-zbm.
+  The counts are set to the entries present: 73 checks (check-manifests.py
+  and test_stic.py) and 77 files that take `BKO_TESTVM`. The README has
+  void-zbm in Cinqcent's row and an estimate of 310. These tests still
+  fail, all on HEAD's own gaps:
+  - test_stic and `drive.py --self-test`: neon24 and openbsd8-crypt have
+    no manifest entry, openbsd8-crypt's `BIN_DIR`, and no README estimate
+    for neon24, openbsd8-crypt and ubuntu24-uefi;
+  - test_77: an `aeon/__pycache__` directory in the Mac tree.
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Effort |
@@ -618,7 +675,7 @@ builder checks the sync for errors and retries each xbps command 3 times.
 | Z3 | bko-holt load (High-effort subagent): user properties through `zfs create -o` (checked), each inactive BE mounted under `TARGET/run/bko-be` and unmounted after, `run/bko-be` removed, the clone note, the `zfsbootmenu` arm (no loader, default BE's initramfs, `efi_entries` with `-u` if optional data), `--key-file` with `file://` keylocations and the key-file equality check, the refusals; `layload.md`'s boot stage. Done when `cargo test` passes and the scenario's plan mounts and restores both BEs, has no `grub-install`, and remakes both NVRAM entries | 0.8 d |
 | Z4 | `void-zbm`'s golden plan (`holt/tests/corpus/void-zbm`, `index.tsv` row); Test2 registrations to the batched pass. **Done 2026-11-14** (uncommitted): run `z4`, static bko-holt `8f5e153b…` dumped the live guest on Chopin (qcow2 and `uefi-vars.fd` unchanged); loader `zfsbootmenu`, both BEs, both images, the hinted `/run/bko-be/void-6.18` and both NVRAM entries in the dump. Two fixes: redact.rs's hostid pseudonym (0x00bab10c mapped back upper-case), and `openzfs-2.3-linux` in golden_plans' fake rescue. Two builds same sha256 (src.json `7c1de82a…`); leak scans 0 on Chopin and the Mac, and on Cinqcent with its own strings (116, 0 findings) in Z7's prep, 2026-11-15; lib tests and golden_plans as before. Test2 registrations still to the batched pass | 0.25 d |
 | Z5 | `void-zbm-enc`: `--encrypt` in the builder, the passphrase per build, `console-boot.py` at ZBM's prompt (build boot, vm-update), copied to Cinqcent, its golden plan and `index.tsv` row | 0.5 d |
-| Z6 | SticTest1 `void-zbm`, both archivers, both hosts, 0 FAIL | 0.3 d |
+| Z6 | SticTest1 `void-zbm`, both archivers, both hosts, 0 FAIL. **Done 2026-11-16** (uncommitted): rel9, mark `z6a`, 29 PASS, 4 LIMIT, 0 FAIL on Chopin and Cinqcent; entry from proxmox9's (see "What Z6 found"); manifests/limits entries, counts 73 and 77 | 0.3 d |
 | Z7 | HoltTest1 1V on Chopin and Cinqcent: ht1.sh's per-BE judge and per-BE boot through `console-keys.py`, the passphrase on the enc guest, RAM peaks in `ram-sizes.tsv`. Done when all four cells PASS with 0 fsmeta and 0 dump differences and every BE booted. **Done 2026-11-15:** all four cells PASS (void-zbm z7a, void-zbm-enc z7b on Chopin and Cinqcent; void-musl z7a on all four hosts), 0 fsmeta and 0 dump differences, both BEs booted on source and copy, checked again by a skeptic pass; bko-holt c6f179fb from d23c9ab via HT_HOLT. z7a's enc FAIL was console-keys.py waiting for the prompt before the countdown (ZBM asks after it). Known weakness (fixed 2026-11-16, z7c): the judge counted only ZBM's "enter passphrase", not the initramfs's own "Encrypted ZFS password for zroot: [1/5]:" line, which the dracut zfs module prints before its `zfs load-key` (answered by the key file, nothing typed) on every enc boot. `judge.py zbm-boot` (judge-test.py `ZfsBootMenuBoot`) now splits each boot's console at ZBM's "Booting .../vmlinuz-KVER for DATASET": ZBM's prompt only before it; after it nothing typed, no prompt console-boot.py would answer, the initramfs's load-key exactly once at [1/5] and no retry ([2/5]: the key file didn't open the pool), none on the plain guest; and ZBM_STATE's `key` line from the booted guest: /'s encryption root with a `file://` keylocation, keystatus available, and the file in lsinitrd's listing of that kernel's initramfs (`key -` on the plain guest). `ram-sizes.tsv`'s two rows are now Z7's peaks | 0.5 d |
 | Z8 | Docs: holt/README.md's supported list ("Void Linux, also on ZFS with ZFSBootMenu"), HoltTest1's 1V row and HoltTest1All, SticTest1's README, GuestTest1 grades; memory (holttest1d index, a zfsbootmenu-support note) | 0.15 d |
 | | *≈ 4.1 d* | |

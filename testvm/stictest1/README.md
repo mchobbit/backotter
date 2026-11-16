@@ -65,7 +65,7 @@ testvm/HOSTS.md has every host and what stays on the big ones):
 | Host | Guests |
 |---|---|
 | Chopin | aeon, anduinos2, nixos2605, chimera, garuda, biglinux, gentoo, guix15, kali, microos, pikaos4, proxmox9, truenas25, dragonfly6, ghostbsd26, ghostbsd26-zfs, hardenedbsd15, hardenedbsd15-zfs, kinoite44, ubuntu26-zfs, ubuntu26-uefi, ubuntu26-zfsmirror, ubuntu24, ubuntu24-uefi, debian12, devuan6, elementary8, zorin18, mint22, debian13, pop24, mx25, sculpt2610, slackware15, qubes43 |
-| Cinqcent | aerynos, alpine324, alpinebsd, freebsd14, freebsd15-geli, arch, artix-dinit, artix-s6, cachyos, chimera-uefi, chimera-zfs, debian13-stack, debian13-zfs, elementary8-luks, fedora44, fedora44-uefi, freebsd15, freebsd15-ufs, garuda, gentoo-systemd, haiku6, netbsd11, omarchy, omnios58, openbsd8, openbsd8-crypt, guix15-bios, leap16, pikaos4-luks, proxmox9-mirror, rocky10, rocky10-lvm, slackware15-uefi, solus49, tumbleweed, uc24, vanilla3, void-musl |
+| Cinqcent | aerynos, alpine324, alpinebsd, freebsd14, freebsd15-geli, arch, artix-dinit, artix-s6, cachyos, chimera-uefi, chimera-zfs, debian13-stack, debian13-zfs, elementary8-luks, fedora44, fedora44-uefi, freebsd15, freebsd15-ufs, garuda, gentoo-systemd, haiku6, netbsd11, omarchy, omnios58, openbsd8, openbsd8-crypt, guix15-bios, leap16, pikaos4-luks, proxmox9-mirror, rocky10, rocky10-lvm, slackware15-uefi, solus49, tumbleweed, uc24, vanilla3, void-musl, void-zbm |
 
 ## Running one
 
@@ -153,7 +153,7 @@ watched through their exit files every 15 s; the results land in
 
 The queue times guests by their newest passing run on the hosts, else by these.
 
-Estimates (seconds; an estimate for aeon, ~300 s (microos's 230 s and its larger ESP, docs/design/aeon.md A3), until its first run; round st2a's, GuestTest1's for the guests it added, Bazzite B5's for kinoite44, Chimera C4's for chimera, chimera-uefi and chimera-zfs, Gentoo G4's for gentoo and gentoo-systemd, AnduinOS A4's for anduinos2, PikaOS P5's for pikaos4 and pikaos4-luks, Kali K4's for kali, Guix GX5's for guix15 and guix15-bios, Proxmox P5's for proxmox9 and proxmox9-mirror, TrueNAS T5's for truenas25, Vanilla OS V6's for vanilla3, MicroOS M4's for microos, Leap 16 L4's for leap16, elementary E5's for elementary8 and elementary8-luks, an estimate for garuda until Garuda GA5's run, an estimate for biglinux until BigLinux's first run, one for hardenedbsd15-zfs until its first run (ghostbsd26-zfs's check on HBSD's slower kernel), Solus S4's for solus49, unmeasured estimates for slackware15 (devuan6's ext4 check plus LILO's /boot and pkgtools' database) and slackware15-uefi (rocky10's XFS check plus the ESP, the initrd tree and the scratch disk's layout) until Slackware S5's runs, and an unmeasured one for uc24 (vanilla3's half: four roots with no LVM or overlays, plus the LUKS2 headers and the guest's snaps) until Ubuntu Core U5's runs, and one for qubes43 until its first run (Qubes Q6: dom0's ~5.5 GiB root read offline, both tools, four restores)):
+Estimates (seconds; an estimate for aeon, ~300 s (microos's 230 s and its larger ESP, docs/design/aeon.md A3), until its first run; round st2a's, GuestTest1's for the guests it added, Bazzite B5's for kinoite44, Chimera C4's for chimera, chimera-uefi and chimera-zfs, Gentoo G4's for gentoo and gentoo-systemd, AnduinOS A4's for anduinos2, PikaOS P5's for pikaos4 and pikaos4-luks, Kali K4's for kali, Guix GX5's for guix15 and guix15-bios, Proxmox P5's for proxmox9 and proxmox9-mirror, TrueNAS T5's for truenas25, Vanilla OS V6's for vanilla3, MicroOS M4's for microos, Leap 16 L4's for leap16, elementary E5's for elementary8 and elementary8-luks, an estimate for garuda until Garuda GA5's run, an estimate for biglinux until BigLinux's first run, one for hardenedbsd15-zfs until its first run (ghostbsd26-zfs's check on HBSD's slower kernel), Solus S4's for solus49, unmeasured estimates for slackware15 (devuan6's ext4 check plus LILO's /boot and pkgtools' database) and slackware15-uefi (rocky10's XFS check plus the ESP, the initrd tree and the scratch disk's layout) until Slackware S5's runs, and an unmeasured one for uc24 (vanilla3's half: four roots with no LVM or overlays, plus the LUKS2 headers and the guest's snaps) until Ubuntu Core U5's runs, one for qubes43 until its first run (Qubes Q6: dom0's ~5.5 GiB root read offline, both tools, four restores), and ZFSBootMenu Z6's for void-zbm):
 aeon 300, aerynos 150, alpine324 153, alpinebsd 401, anduinos2 400, arch 137, artix-dinit 170,
 artix-s6 367, biglinux 300, cachyos 300, chimera 215, chimera-uefi 200, chimera-zfs 290,
 debian12 117, debian13 477, debian13-stack 547, debian13-zfs 856,
@@ -163,7 +163,7 @@ garuda 300, gentoo 270, gentoo-systemd 230, ghostbsd26-zfs 751, guix15 470, guix
 nixos2605 236, oi2610 490, omarchy 302, omnios58 370, openbsd8 338, pikaos4 300,
 pikaos4-luks 400, pop24 622, proxmox9 460, proxmox9-mirror 560, qubes43 900,
 rocky10 113, rocky10-lvm 151, sculpt2610 49, slackware15 330, slackware15-uefi 250, solus49 410, truenas25 1200, tumbleweed 186, ubuntu24 957, ubuntu26-uefi 374,
-ubuntu26-zfs 957, ubuntu26-zfsmirror 623, uc24 700, vanilla3 1400, void-musl 115, zorin18 586.
+ubuntu26-zfs 957, ubuntu26-zfsmirror 623, uc24 700, vanilla3 1400, void-musl 115, void-zbm 310, zorin18 586.
 
 ## BKO_TESTVM: checks from another testvm/
 

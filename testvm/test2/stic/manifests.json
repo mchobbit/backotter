@@ -1364,6 +1364,25 @@
     "entry:testvm/test2/stic/limits.json#void-musl"
    ]
   },
+  "void-zbm": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/void-zbm/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/void-zbm/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#void-zbm"
+   ]
+  },
   "zorin18": {
    "os": "linux",
    "bins": [

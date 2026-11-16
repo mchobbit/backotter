@@ -466,7 +466,13 @@ PY
 touch -h -m -d '2004-05-06 07:08:09.123456789' $A $D $F
 touch -h -a -d '2005-06-07 08:09:10.987654321' $A $D $F
 sync
-noatime() { for m in $ALL_MOUNTS; do mount -o remount,noatime "$m"; done; }
+# Slackware's /etc/mtab is a file (rc.S makes it), not /proc/mounts: on a
+# remount util-linux merges the options mtab holds, so after a strictatime
+# remount a plain "remount,noatime" asks for MS_NOATIME|MS_STRICTATIME, the
+# kernel keeps strictatime, and every read moves atimes.  nostrictatime
+# clears it.
+mnt_noatime() { mount -o remount,noatime,nostrictatime "$1"; }
+noatime() { for m in $ALL_MOUNTS; do mnt_noatime "$m"; done; }
 strictatime() { for m in $ALL_MOUNTS; do mount -o remount,strictatime "$m"; done; }
 rec() { python3 $B/fsmeta.py record "$1" "$2" --skip root/bko-torture/socket; }
 cmp() { python3 $B/fsmeta.py compare "$1" "$2" --json "$3" >"$3.txt" 2>&1; }
@@ -536,7 +542,7 @@ restore() {  # TOOL REPO TARGET
 }
 remount_noatime() {  # TARGET: its mounts noatime, as the source's when recorded
     local m
-    for m in $1 $( ((ESP)) && echo $1$D/boot/efi) $([[ $ROOTFS == ext4 ]] && echo $1$D/feat); do mount -o remount,noatime $m; done
+    for m in $1 $( ((ESP)) && echo $1$D/boot/efi) $([[ $ROOTFS == ext4 ]] && echo $1$D/feat); do mnt_noatime $m; done
 }
 DIRS="restic-restic rustic-rustic restic-rustic rustic-restic"
 for d in $DIRS; do
@@ -609,7 +615,7 @@ NRS=$W/nrbin/restic-bko NRU=$W/nrbin/rustic-bko
 su_() { setpriv --reuid=4321 --regid=4321 --clear-groups env HOME=/tmp RESTIC_PASSWORD=x RUSTIC_PASSWORD=x "$@"; }
 su_ sh -c "cd $N/src && mkdir -p d/e empty && echo a >d/f && chmod 0640 d/f && ln -s f d/l && ln d/f d/hl && mkfifo p && head -c 100000 /dev/urandom >big && truncate -s 10M sparse && echo z >>sparse && chattr +d big && chmod 2750 d/e && touch -d '2003-03-03 03:03:03.3' d/f && python3 $W/nrbin/nracl.py"
 echo "nonroot fixture exit $?" >>$L/env.txt
-mount -o remount,noatime $N
+mnt_noatime $N
 rec $N/src $L/nr-src.json
 for d in $DIRS; do
     b=${d%-*} r=${d#*-}; bb=$NRS; [ $b = rustic ] && bb=$NRU; rb=$NRS; [ $r = rustic ] && rb=$NRU

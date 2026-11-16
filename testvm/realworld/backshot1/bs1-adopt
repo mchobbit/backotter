@@ -230,6 +230,13 @@ install_tools() {
     # findmnt, lsblk or sfdisk.  Alpine's names; Chimera has no BusyBox, and
     # an apk on Gentoo is a tool, not its package manager.
     if [[ $distro != chimera && $distro != gentoo ]] && command -v apk >/dev/null; then apk_add coreutils findmnt lsblk blkid sfdisk mount umount util-linux-misc; fi
+    # Alpine's kernel doesn't load xfs by itself when BusyBox mount asks for
+    # it: the drive's mount (backshot1's DRIVE, bs1-to-stick, the restored
+    # system's verify) needs it loaded, so load it now and at every boot.
+    if [[ $distro == alpine ]]; then
+        modprobe xfs
+        grep -qx xfs /etc/modules 2>/dev/null || echo xfs >>/etc/modules
+    fi
     # Chimera's python package gives the python3 command; it has no python3 package.
     command -v python3 >/dev/null || pkg_install python3 python3 python3 python python3 python3 python python dev-lang/python python3
     if ! command -v findmnt >/dev/null || ! command -v lsblk >/dev/null; then
@@ -243,7 +250,7 @@ install_tools() {
     # clr-boot-manager writes NVRAM through libefivar and needs none.
     if [[ -d /sys/firmware/efi ]] && ! command -v efibootmgr >/dev/null; then
         case $distro in
-            chimera) apk_add efibootmgr ;;
+            alpine|chimera) apk_add efibootmgr ;;
             gentoo) emerge --ask=n --getbinpkg --noreplace sys-boot/efibootmgr ;;
             pika) DEBIAN_FRONTEND=noninteractive apt-get install -y efibootmgr ;;
             solus) eopkg_add efibootmgr ;;

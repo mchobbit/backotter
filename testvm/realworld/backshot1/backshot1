@@ -60,7 +60,7 @@ on_rescue() {
 }
 
 # Prints the drive's mount point on the machine, mounting it if nothing has.
-DRIVE="d=\$(findmnt -nro TARGET -S LABEL=$BACKUP_LABEL | head -n 1); if [ -z \"\$d\" ]; then mkdir -p /mnt/bs1-backup; mount LABEL=$BACKUP_LABEL /mnt/bs1-backup || exit 1; d=/mnt/bs1-backup; fi"
+DRIVE="d=\$(findmnt -nro TARGET -S LABEL=$BACKUP_LABEL | head -n 1); if [ -z \"\$d\" ]; then mkdir -p /mnt/bs1-backup; modprobe -q xfs 2>/dev/null; mount LABEL=$BACKUP_LABEL /mnt/bs1-backup || exit 1; d=/mnt/bs1-backup; fi"
 
 # run_on_drive SCRIPT ARGS...: on the installed system or the stick, whichever is up.
 run_on_drive() {

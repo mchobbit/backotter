@@ -3,6 +3,12 @@
 # slim-base-layer.sh: casper/ubuntu-server-minimal.backotter.squashfs.
 #
 # Usage: sudo [BKO_BIN=DIR] [BKO_HOLT_BIN=DIR] [BKO_ARCH=amd64|arm64] ./build-backotter-layer.sh SOURCE_ISO SLIM_DIR OUT_DIR
+#        [BKO_ARCH=amd64|arm64] ./build-backotter-layer.sh --settings
+#
+# --settings prints what BKO_ARCH changes (the bin directory, the machine, and
+# mksquashfs's options: arm64's are plain xz, as slim-base-layer.sh's) and
+# exits.  An arm64 layer is built on an arm64 host: the chroots run the base's
+# own binaries (docs/design/arm64.md, A4).
 #
 # SOURCE_ISO must be the ISO SLIM_DIR was built from: the packages come from
 # its pool/, which pins them to exactly the base layer's release.  The few the
@@ -94,6 +100,8 @@ ENABLE_UNITS=(backotter-key-access.service)
 ALLOWED_WHITEOUTS=(/etc/apt/sources.list.d/cdrom.sources)
 # Same settings as slim-base-layer.sh; see the comment there.
 MKSQUASHFS_OPTS=(-comp xz -Xbcj x86 -b 1M -Xdict-size 1M -noappend -no-progress)
+# arm64's, as slim-base-layer.sh's: plain xz (no BCJ filter).
+MKSQUASHFS_OPTS_ARM64=(-comp xz -b 1M -Xdict-size 1M -noappend -no-progress)
 
 ARCHIVERS=(restic-bko rustic-bko)
 
@@ -102,14 +110,21 @@ die() { echo "build-backotter-layer: $*" >&2; exit 1; }
 # Under sudo, $HOME is root's: the default is the invoking user's.
 BKO_BIN=${BKO_BIN:-$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/backotter-work/bko-bin}
 BKO_HOLT_BIN=${BKO_HOLT_BIN:-$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/backotter-work/holt-bin}
-# The bin directory of BKO_ARCH, and its ELF e_machine (bytes 18-19, little-endian).
+# The bin directory of BKO_ARCH, its ELF e_machine (bytes 18-19, little-endian),
+# and the kernel's name for it (uname -m), which DKMS's build paths use.
 case ${BKO_ARCH:=amd64} in
-    amd64) BIN_OS=linux ELF_MACHINE=3e00 ;;
-    arm64) BIN_OS=linux-arm64 ELF_MACHINE=b700 ;;
+    amd64) BIN_OS=linux ELF_MACHINE=3e00 KERNEL_MACHINE=x86_64 ;;
+    arm64) BIN_OS=linux-arm64 ELF_MACHINE=b700 KERNEL_MACHINE=aarch64
+           MKSQUASHFS_OPTS=("${MKSQUASHFS_OPTS_ARM64[@]}") ;;
     *) die "BKO_ARCH: amd64 or arm64, not $BKO_ARCH" ;;
 esac
 elf_machine() { od -An -tx1 -j18 -N2 "$1" 2>/dev/null | tr -d ' \n'; }
 
+# --settings: what BKO_ARCH changes, and nothing else (no root needed).
+if [[ ${1:-} == --settings ]]; then
+    declare -p BKO_ARCH BIN_OS ELF_MACHINE KERNEL_MACHINE MKSQUASHFS_OPTS
+    exit 0
+fi
 [[ $# -eq 3 ]] || die "usage: $0 SOURCE_ISO SLIM_DIR OUT_DIR"
 SOURCE_ISO=$(realpath "$1")
 SLIM=$(realpath "$2")
@@ -311,7 +326,7 @@ in_kb dkms add -m bcachefs -v "$BCACHEFS_VERSION" >/dev/null
 # Build it here: the module's build would first fetch a prebuilt one from
 # module.bcachefs.org (given a URL that fails, it doesn't), and leave out
 # the parts written in Rust.
-kb_dkms=/var/lib/dkms/bcachefs/$BCACHEFS_VERSION/$KVER/x86_64
+kb_dkms=/var/lib/dkms/bcachefs/$BCACHEFS_VERSION/$KVER/$KERNEL_MACHINE
 in_kb env BCACHEFS_MODULE_URL=file:///nonexistent BCACHEFS_RUST=0 \
     dkms build -m bcachefs -v "$BCACHEFS_VERSION" -k "$KVER" >/dev/null ||
     { tail -n 20 "$kb_root$kb_dkms/log/make.log" >&2; die "the bcachefs module didn't build"; }

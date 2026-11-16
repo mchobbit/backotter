@@ -1,14 +1,18 @@
 # Checks boot-test.py runs in the Linux image's root shell, one line at a time
 # (keep each check on one line).  Each check prints one line:
-# "BKO-CHECK <name> <ok|FAIL> <detail>".
+# "BKO-CHECK <name> <ok|FAIL> <detail>".  A line that starts "[amd64] " or
+# "[arm64] " is that image's alone (boot-test.py --arch).
 check kernel 'uname -r'
 check layers 'grep -o "layerfs-path=[^ ]*" /proc/cmdline'
 check hostname 'test "$(hostname)" = backotter && hostname'
 check rootfs 'findmnt -n -o FSTYPE /'
 check secureboot 'od -An -t u1 /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c 2>/dev/null | awk "{print (\$5==1 ? \"enabled\" : \"disabled\")}" | grep . || { test -d /sys/firmware/efi && echo "UEFI without Secure Boot" || echo "no EFI (BIOS boot)"; }'
 check snapd-gone '! dpkg-query -W -f="\${db:Status-Status}" snapd 2>/dev/null | grep -q "^installed"'
-check llvm-gone '! ls /usr/lib/x86_64-linux-gnu/libLLVM* >/dev/null 2>&1'
-check arm-firmware-gone 'test ! -e /usr/lib/firmware/qcom/x1e80100 && test ! -e /usr/lib/firmware/nvidia/tegra194'
+[amd64] check llvm-gone '! ls /usr/lib/x86_64-linux-gnu/libLLVM* >/dev/null 2>&1'
+[arm64] check llvm-gone '! ls /usr/lib/aarch64-linux-gnu/libLLVM* >/dev/null 2>&1'
+[amd64] check arm-firmware-gone 'test ! -e /usr/lib/firmware/qcom/x1e80100 && test ! -e /usr/lib/firmware/nvidia/tegra194'
+[arm64] check x86-firmware-gone 'test ! -e /usr/lib/firmware/intel/sof && test ! -e /usr/lib/firmware/intel/ish && test ! -e /usr/lib/firmware/amdnpu'
+[arm64] check arm-firmware-kept 'ls -d /usr/lib/firmware/qcom/x1e80100 /usr/lib/firmware/nvidia/tegra194'
 check modem-firmware-kept 'ls -d /usr/lib/firmware/qcom/sdx61'
 check switch-firmware 'ls /usr/lib/firmware/mellanox 2>/dev/null | wc -l | sed "s/$/ mellanox files/"'
 check tools 'for c in python3 lvm mdadm cryptsetup sgdisk mkfs.ext4 mkfs.xfs mkfs.btrfs ssh; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; echo all present'

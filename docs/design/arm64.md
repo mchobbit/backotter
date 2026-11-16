@@ -570,22 +570,232 @@ plus A3 only), `cargo test --offline --no-fail-fast`:
   dump got past the check. Its `dump` of cinqcent records `machine`
   `x86_64` and `efi_arch` `x64`.
 
-### Not done: the Bigfoot build
+### The Bigfoot build (2026-11-16)
 
-Bigfoot was off the network (no ARP reply) from 02:10 to at least 02:45 on
-2026-11-15, and again at 02:55 and 03:18 (ssh timed out), so these still
-need doing:
-- bko-holt `linux-arm64` built natively there from A3's source
-  (build-holt.sh, with `HOLT_SRC`, `HOLT_OUT`, `HOLT_LOGS` and `HOLT_INFO`
-  set to a scratch directory, never `holt-bin`).
-- Its `--version`, and its dump of the A0 Debian arm64 cloud guest: it
-  should record `aarch64` and `aa64`, GRUB through shim and
-  grub-efi-arm64-signed.
-- In that guest, the plan of its own dump, and the refusal of an amd64
-  dump.
-- The test suite run natively on aarch64.
+Bigfoot was off the network on 2026-11-15, so this waited a day. It was
+done from main `1552b54` (A3 plus the holt changes since), a `git archive`
+of holt/ and the scripts it needs (build-holt.sh, hosts.sh, hosts.json,
+hosts.py) in Bigfoot's `~/backotter-work/a3-scratch/bf1`. No source change
+was needed.
 
-Nothing is promoted into bko-bin or holt-bin.
+- **The build.** `build-holt.sh linux-arm64`, whole in `bko.slice`, with
+  `HOLT_SRC`, `HOLT_OUT`, `HOLT_LOGS`, `HOLT_INFO` and `TMPDIR` in the
+  scratch directory. Rust 1.94.1 (`e408947bf`, host
+  `aarch64-unknown-linux-gnu`, LLVM 21.1.8) from
+  `/home/m/bko-arm64/toolchains/rustup`, target
+  `aarch64-unknown-linux-gnu`, `+crt-static`, release, about 2 minutes.
+  - SHA-256 `21d9cbfb21c225292049c851b3cdba6702339203c51185516bd10949b49eade2`,
+    4,530,232 bytes: a static, stripped aarch64 ELF. `--version` says
+    `bko-holt 0.2.6`.
+  - Two builds, each with its own fresh target/ and tree copy at another
+    path, are the same bytes.
+- **The tests, natively.** `cargo test --offline --no-fail-fast` in
+  `bko.slice`: 641 passed, 8 failed, 3 ignored. The lib's 600 all pass.
+  - 7 are realtools.rs's, only because Bigfoot lacks the tools
+    (cryptsetup, mkfs.btrfs, mkfs.jfs, sgdisk and others), and installing
+    them would be a system change. Its binary, built there, run as root
+    in the A0 guest with the tools installed: all 17 pass.
+  - 1 is golden_plans: `vanilla3` differs by one line in assemble, the
+    thin pool's note "a dump from before Qubes's Q2" (08f427f's). That
+    isn't ARM64's: Chopin's x86_64 run at the same commit shows the same
+    one difference (648 passed, that 1 failed). The two arm64 fixtures'
+    plans match.
+- **The guest.** The A0 Debian 13 arm64 genericcloud image on a fresh qcow2
+  overlay, AAVMF without Secure Boot, port 3281, in `bko.slice`, with a
+  blank 8 GiB virtio spare disk (vdc). The binary ran as root in the guest.
+  - `dump --only-disk vda` records `os.machine` `aarch64` and
+    `firmware.efi_arch` `aa64`. Boot is GRUB through shim
+    (`grub-efi-arm64-signed`, `shim-signed`), found on the real ESP:
+    `EFI/BOOT/BOOTAA64.EFI` is a copy of `EFI/debian/shimaa64.efi`, beside
+    `grubaa64.efi`, `mmaa64.efi` and `fbaa64.efi`. GRUB has `arm64-efi`
+    installed. No warnings.
+  - The image's firmware booted the fallback path ("UEFI Misc Device"), so
+    NVRAM had no Debian entry. Plan onto vdc (exit 0) runs `grub-install
+    --target=arm64-efi --efi-directory=/boot/efi --bootloader-id=debian
+    --no-nvram` and `update-grub`, and makes no entry. The fallback path
+    comes back with the ESP.
+  - Then, with a `debian` entry for `\EFI\debian\shimaa64.efi` made and
+    booted, the dump's evidence names it. The plan then also runs
+    `efi-dedupe` and `efibootmgr --create --disk /dev/vdc --part 15 --label
+    debian --loader '\EFI\debian\shimaa64.efi'`. Neither plan names an x86
+    file or target.
+  - The refusal: the corpus's `debian13` (BIOS) and `ubuntu26-uefi` dumps,
+    as plan, `--only status` and `--erase /dev/vdc --through mount
+    --commit`. Each exited 3 with "the dump is of an x86_64 system
+    (x86_64), and this rescue system is ARM64 (aarch64): load restores a
+    system only from a rescue system of its own architecture; boot
+    BackOtter's amd64 image (backotter-live-linux-VERSION-amd64.img) on the
+    target machine". strace shows bko-holt's own execve and no other, and
+    no open of /dev/vdc. vdc's write counters stayed 0, and it still reads
+    as all zeros.
+  - The guest was powered off, and its overlay and spare deleted.
+
+Nothing is promoted into bko-bin or holt-bin. Bigfoot's
+`holt-bin/linux-arm64` still holds A2's `908ea6ea...` build.
+
+## What A4 built (2026-11-16)
+
+- **The source.** `ubuntu-26.04.1-live-server-arm64.iso` (the 4 KiB-page
+  one, not `+largemem`), from cdimage.ubuntu.com, its `SHA256SUMS` checked
+  against the Ubuntu CD key (`843938DF...`), sha256 `af78753c...`. It is in
+  Bigfoot's `/bkoscratch/imgbuild/server`, as the amd64 ISO is on the farm.
+  Its pool has `zfsutils-linux` 2.4.1 for arm64, and archive.ubuntu.com
+  serves `resolute`'s arm64 packages (no ports.ubuntu.com needed).
+- **The scripts.** Every change is keyed by architecture, and amd64's path
+  is what it was:
+  - `slim-base-layer.sh` reads the architecture from the base
+    (`dpkg --print-architecture` in its chroot; another host's base stops
+    there). On arm64, tier 2 drops x86 SoCs' firmware instead of ARM's
+    (below), and mksquashfs runs without `-Xbcj` (plain xz: 4.6.1 has no
+    arm64 filter). `--settings ARCH` prints tier 2's lists and mksquashfs's
+    options and exits. The report says `Arch: arm64` on arm64 only.
+  - `build-backotter-layer.sh`: `BKO_ARCH=arm64` also sets the DKMS path's
+    machine (`aarch64`) and plain xz. `--settings` prints what `BKO_ARCH`
+    sets.
+  - `make-img.sh` reads the architecture from the ISO's `.disk/info`. On
+    arm64:
+    - the serial entry is `console=tty0 console=ttyAMA0,115200n8` (SBSA's
+      and QEMU virt's PL011)
+    - the stock menu's `$cmdline` block (its Snapdragon X workarounds) is
+      kept, and the entries pass `$cmdline`
+    - the firmware entries are taken from "Boot from next volume" on, since
+      the arm64 menu has no `grub_platform` test
+    - `-boot_image any partition_offset=16`. The stock arm64 ISO has offset
+      0, so partition 1 holds no ISO 9660 tree, and casper mounts the
+      whole stick on /cdrom. While it does, the kernel won't let anything
+      mount the config partition (sda3: "Can't open blockdev"), and
+      `config-rw` and `config-settings` failed. amd64's ISO already has
+      offset 16, which puts /cdrom on sda1. With it, arm64's /cdrom is sda1
+      too.
+  - `boot-test.py --arch amd64|arm64` (default: the host's). arm64 runs
+    `qemu-system-aarch64 -machine virt,gic-version=host -cpu host
+    -enable-kvm`, with AAVMF in pflash (code read-only, a copy of the
+    vars): `no-secboot` code and `AAVMF_VARS.fd` for `uefi`, the `ms` pair
+    for `uefi-secureboot`. The NIC is `virtio-net-pci,romfile=`, the stick
+    is on qemu-xhci, and the CD is a `scsi-cd` on virtio-scsi (virt has no
+    IDE). `bios` and non-Linux platforms are refused.
+  - `linux/checks.sh` lines may start `[amd64] ` or `[arm64] `.
+    boot-test.py types such a line, without the tag, only for that
+    architecture. arm64's checks are `llvm-gone` (aarch64's path),
+    `x86-firmware-gone` and `arm-firmware-kept`, in place of amd64's
+    `llvm-gone` and `arm-firmware-gone`. amd64's typed script is the same
+    bytes as before.
+- **Firmware.** Ubuntu's arm64 kernel builds none of the drivers for these,
+  and none of its 8,542 modules lists any of these files (`modinfo -F
+  firmware`). So arm64's tier 2 drops them (700 files, 55.7 MB unpacked):
+  - Intel SoC audio DSPs: `intel/sof*`, `intel/avs`, `intel/catpt`,
+    `intel/dsp_fw_*`, `intel/fw_sst_*`, `IntcSST2`
+  - Intel's sensor hub: `intel/ish` and `LENOVO/`, `HP/`, `dell/`'s `ish/`
+  - Intel's IPU cameras: `intel/ipu`, `ipu3-fw`, `irci_*`
+  - the NPUs: `intel/vpu`, `amdnpu`
+
+  Everything else stays:
+  - the ARM firmware amd64's image drops: `qcom` (171 MB), `nvidia/tegra*`,
+    MediaTek, i.MX, Mali and the rest
+  - the PCIe and USB parts' firmware: iwlwifi, `intel/ibt`, `intel/ice`,
+    `intel/qat`, `intel/vsc` (mei-vsc is built), `i915/` (xe asks for 27 of
+    its files), `xe/`, amdgpu, radeon and nouveau
+  - the modem cards, and the kernel's device trees (100 MB unpacked, 4.7 MB
+    as xz)
+
+  Tier 3 (switch ASICs) is unchanged: 36 files, 90.3 MB.
+- **bcachefs: in.** apt.bcachefs.org's `resolute` lists arm64, with
+  `bcachefs-tools` and `bcachefs-kernel-dkms` 1:1.39.7, the pinned version.
+  DKMS built the module for 7.0.0-43-generic under `.../aarch64`: 1,456 KB
+  stripped. It loads with Secure Boot off, and the kernel refuses it with
+  Secure Boot on, as on amd64.
+- **The build.** The slim base and the layer were built natively on Bigfoot,
+  as root and whole in `bko.slice`, from a private tree in
+  `~/backotter-work/a4-scratch/tree` (`git archive` of main `1552b54` plus
+  A4's diff, `.backotter-commit` `1552b54.dirty`). They took about 6 and 3
+  minutes. No mount or loop device was left. The binaries:
+  `bko-bin/linux-arm64`'s restic-bko and rustic-bko (A2), and A3's bko-holt
+  `21d9cbfb...` from a private `a4-scratch/holt-bin/linux-arm64`. Nothing
+  was promoted.
+  - The slim base: kernel 7.0.0-30 → 7.0.0-43-generic, 131 packages
+    updated, 443 left. 1,593.7 MB unpacked, 903.3 MB as squashfs.
+  - The layer: 157.5 MB unpacked, 77.9 MB as squashfs.
+  - **`make-img.sh` ran on Chopin**, not Bigfoot. marker.py's config
+    partition needs mtools (`mmd`, `mcopy`). Bigfoot lacks it, and it
+    isn't in A0's package set. make-img.sh runs no chroot and no arm64
+    binary, so its inputs (checked by sha256 at both ends) went to Chopin's
+    `/bkoscratch/a4-scratch`, the images came back, and that directory was
+    deleted. No batch was running. With `apt install mtools` on Bigfoot,
+    the whole build would run there.
+- **The image.** `backotter-live-linux-dev.20261116.1552b54.dirty-arm64.img`,
+  in Bigfoot's `~/backotter-work/a4-scratch/images/out/`:
+  1,420,623,872 bytes, sha256
+  `5f64f934f478fd38857bcbc73e7e0c31e5cc284da5727c030b0c8e862521de0b`. Its
+  `--test` twin in `out/test/` is `3d60a778...`.
+- **Image size.** amd64's current image
+  (`dev.20261112.5b2fe9d-amd64`) is 1,248,854,016 bytes, so arm64's is
+  171.8 MB (13.8 %) bigger:
+
+  | part | amd64 | arm64 |
+  |---|---|---|
+  | slim base squashfs | 753.2 MB | 903.3 MB |
+  | layer squashfs | 68.7 MB | 77.9 MB |
+  | vmlinuz | 16.9 MB | 23.3 MB |
+
+  Most of the base's extra 150 MB is ARM firmware, which arm64 keeps and
+  amd64 drops (171 MB, against arm64's 56 MB of x86 firmware dropped), and
+  plain xz in place of xz with BCJ.
+- **Boot tests.** boot-test.py's checks, on Bigfoot in `bko.slice` (its
+  CPUs are all A720s, so QEMU needs no taskset):
+
+  | mode | media | reached the shell | checks |
+  |---|---|---|---|
+  | `uefi` | USB stick | 28 s | 36 ok, 0 FAIL |
+  | `uefi-secureboot` | USB stick | 28 s | 36 ok, 0 FAIL (shim, GRUB and the kernel signed; "Secure Boot enabled") |
+  | `uefi` | CD | 25 s | 33 ok, 0 FAIL |
+
+  - **Versions:** kernel 7.0.0-43-generic, `restic 0.19.1+backotter.7
+    compiled with go1.25.10 on linux/arm64`, `rustic 0.11.4+backotter.13`,
+    `bko-holt 0.2.6`, ZFS `zfs-2.4.1-1ubuntu5.1` (kmod the same), bcachefs
+    1.39.7, Python 3.14.4. The three binaries' sha256s in the image match
+    the sources' (`b79fe55a...`, `bdfbda6d...`, `21d9cbfb...`).
+  - The marker reads `linux ubuntu 26.04.1 zfs 2.4.1 47 features`.
+  - `--manifest` wrote 39 fields.
+- **In the image** (a one-off driver on boot-test.py's console, with a blank
+  8 GiB virtio spare as vda):
+  - `modprobe zfs` loaded zfs and spl, and a pool on a file was created,
+    listed and exported.
+  - `bko-holt dump` of the rescue system exited 0: `os.machine` `aarch64`,
+    `firmware.mode` `uefi`, `efi_arch` `aa64`, no warnings. `dump
+    --only-disk vda` exited 0 too.
+  - Then the corpus's `arm64-grub-shim` dump was typed in (sha256
+    matching), and its plan was made: `load src.json --map vda=/dev/vda
+    --erase /dev/vda`. It exited 0, with `grub-install --target=arm64-efi
+    --efi-directory=/boot/efi --bootloader-id=debian --no-nvram` and no x86
+    name. vda's write counter stayed 0, and its first 64 MiB still read
+    as zeros.
+- **amd64 unchanged.**
+  - boot-test.py's QEMU command is the same for all 42 cases (7
+    platforms, 3 modes, 2 media), and its typed checks are the same bytes
+    for every platform and medium.
+  - `--settings amd64` gives the old tier 2 lists and mksquashfs options in
+    both build scripts, and the DKMS machine is `x86_64`.
+  - HEAD's and A4's `make-img.sh`, run on the same fake amd64 ISO, give
+    the same file tree, the same `md5sum.txt` and the same boot layout,
+    apart from the marker's random IDs and xorriso's timestamp, with and
+    without `--test`. The amd64 image itself wasn't rebuilt.
+- **Tests.** `testvm/test2/tests/test_arm64_image.py` (17 tests) covers:
+  - boot-test.py's amd64 commands as before, arm64's (USB, CD, Secure
+    Boot), the refusals and the default architecture
+  - the `[ARCH]` filter
+  - both scripts' `--settings` for each architecture
+  - make-img.sh's menu and layout against a fake ISO. These 3 tests need
+    Linux's xorriso and mksquashfs; on the Mac they are skipped.
+
+  It passes on the Mac and on Bigfoot. test_img and test_arm64_builds pass.
+  test_plan has the same 17 failures at `1552b54` as with A4.
+
+Left for later:
+- t2 and img-one.sh don't build or boot-test the arm64 image yet. Their
+  bins are `bko-bin/linux` and `holt-bin/linux`, and their boot modes
+  include `bios`. That waits for A6 and a promoted `linux-arm64` set.
+- The image isn't published or promoted anywhere.
+- HoltTest1 1ARM's `+img` round trip is A6's.
 
 ## Pieces to build (ordered, est.)
 

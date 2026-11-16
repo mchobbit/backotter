@@ -2,7 +2,7 @@
 """Boot a BackOtter image in QEMU and check the live system from inside.
 
 Usage: boot-test.py IMG {uefi-secureboot,uefi,bios} [--media {usb,cdrom}]
-                     [--log FILE] [--timeout S] [--manifest FILE]
+                     [--log FILE] [--timeout S] [--manifest FILE] [--arch {amd64,arm64}]
 
 Watches the first serial port (an image from "make-img.sh --test" boots with a
 console there), picks "Shell" in BackOtter's console menu, runs the checks,
@@ -23,6 +23,13 @@ Needs: qemu-system-x86_64 and qemu-img, with KVM; for the UEFI modes, OVMF (Debi
 package "ovmf").  uefi-secureboot uses OVMF's Secure Boot build with
 Microsoft's keys enrolled, so it boots the image's signed shim and kernel the
 way a stock PC with Secure Boot on would.
+
+--arch arm64 (the default on an aarch64 host) boots an arm64 image instead:
+qemu-system-aarch64's virt machine with KVM, AAVMF (package "qemu-efi-aarch64";
+uefi-secureboot is its build with Microsoft's keys), a USB stick on xHCI or a
+SCSI CD, and the NIC without a boot ROM.  ARM64 has no BIOS mode.  On a
+mixed-core host, run it where QEMU's CPUs are one core type (Bigfoot's
+bko.slice): see docs/design/arm64.md.
 """
 
 from __future__ import annotations
@@ -45,6 +52,13 @@ FIRMWARE = {
     "uefi-secureboot": ("OVMF_CODE_4M.secboot.fd", "OVMF_VARS_4M.ms.fd"),
     "uefi": ("OVMF_CODE_4M.fd", "OVMF_VARS_4M.fd"),
 }
+# arm64's firmware, as testvm/vm-run takes it (docs/design/arm64.md, A0 and A1).
+AAVMF = "/usr/share/AAVMF"
+FIRMWARE_ARM64 = {
+    "uefi-secureboot": ("AAVMF_CODE.ms.fd", "AAVMF_VARS.ms.fd"),
+    "uefi": ("AAVMF_CODE.no-secboot.fd", "AAVMF_VARS.fd"),
+}
+ARCHES = ("amd64", "arm64")
 # QEMU hardware for platforms that can't use the default, q35 with qemu-xhci:
 # DragonFly 6.4's xhci enumerates no QEMU USB device (plain, behind a hub, or
 # UAS), and on q35 its interrupts go astray (AHCI timeouts, then a hang just
@@ -133,7 +147,53 @@ class Console:
                 time.sleep(step / self.rate)
 
 
-def qemu_command(img: str, platform: str, mode: str, media: str, tmp: str) -> list[str]:
+def host_arch() -> str:
+    """The build host's architecture, in Debian's names: what --arch defaults to."""
+    return "arm64" if os.uname().machine in ("aarch64", "arm64") else "amd64"
+
+
+def qemu_command_arm64(img: str, mode: str, media: str, tmp: str) -> list[str]:
+    """arm64's QEMU: the virt machine with the host's GIC and CPU, AAVMF in flash (its code
+    read-only, a copy of its variables), as vm-run boots an arm64 guest."""
+    if mode not in FIRMWARE_ARM64:
+        raise ValueError(f"arm64 has no {mode} mode: uefi or uefi-secureboot")
+    cmd = [
+        "qemu-system-aarch64", "-enable-kvm", "-machine", "virt,gic-version=host", "-cpu", "host",
+        "-smp", "2", "-m", "4096", "-display", "none", "-serial", "stdio", "-monitor", "none",
+        # virt's default NIC wants iPXE's efi-virtio.rom; the image never network-boots.
+        "-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0,romfile=",
+    ]
+    if media == "cdrom":
+        # virt has no IDE: the CD is on virtio-scsi.
+        cmd += [
+            "-device", "virtio-scsi-pci,id=scsi0",
+            "-drive", f"if=none,id=cd,file={img},format=raw,media=cdrom,readonly=on",
+            "-device", "scsi-cd,bus=scsi0.0,drive=cd,bootindex=1",
+        ]
+    else:
+        overlay = os.path.join(tmp, "stick.qcow2")
+        subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", "-F", "raw",
+                        "-b", os.path.abspath(img), overlay, "16G"], check=True)
+        cmd += [
+            "-device", "qemu-xhci,id=usb",
+            "-drive", f"if=none,id=stick,format=qcow2,file={overlay}",
+            "-device", "usb-storage,bus=usb.0,drive=stick,bootindex=1",
+        ]
+    code, vars_template = FIRMWARE_ARM64[mode]
+    vars_copy = os.path.join(tmp, "AAVMF_VARS.fd")
+    shutil.copy(os.path.join(AAVMF, vars_template), vars_copy)
+    return cmd + [
+        "-drive", f"if=pflash,format=raw,unit=0,readonly=on,file={os.path.join(AAVMF, code)}",
+        "-drive", f"if=pflash,format=raw,unit=1,file={vars_copy}",
+    ]
+
+
+def qemu_command(img: str, platform: str, mode: str, media: str, tmp: str,
+                 arch: str = "amd64") -> list[str]:
+    if arch == "arm64":
+        if platform != "linux":
+            raise ValueError(f"arm64 has no {platform} image: linux only")
+        return qemu_command_arm64(img, mode, media, tmp)
     cmd = [
         "qemu-system-x86_64", "-enable-kvm", "-cpu", "host", "-smp", "2", "-m", "4096",
         "-display", "none", "-serial", "stdio", "-monitor", "none",
@@ -171,9 +231,9 @@ def qemu_command(img: str, platform: str, mode: str, media: str, tmp: str) -> li
 
 
 def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: float,
-        user: str, manifest: str | None = None) -> bool:
+        user: str, manifest: str | None = None, arch: str = "amd64") -> bool:
     with tempfile.TemporaryDirectory() as tmp, open(log_path, "wb") as log:
-        proc = subprocess.Popen(qemu_command(img, platform, mode, media, tmp),
+        proc = subprocess.Popen(qemu_command(img, platform, mode, media, tmp, arch),
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         con = Console(proc, log, TYPING_RATE.get(platform))
         start = time.monotonic()
@@ -206,7 +266,7 @@ def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: 
             # result: the guest's tty buffers little input (4 KB on Linux, 1 KB
             # on NetBSD), and drops what's typed beyond that while a slow
             # check runs.
-            script = CHECK_FUNCTION + check_script(platform, media)
+            script = CHECK_FUNCTION + check_script(platform, media, arch)
             if manifest:
                 script += MANIFEST_FUNCTION + manifest_script(platform)
             script += DONE_LINE
@@ -251,9 +311,14 @@ def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: 
                 proc.wait()
 
 
-def check_script(platform: str, media: str) -> str:
+ARCH_LINE = re.compile(r"\[(amd64|arm64)\] ")
+
+
+def check_script(platform: str, media: str, arch: str = "amd64") -> str:
     """PLATFORM/checks.sh, and PLATFORM/config-checks.sh on a USB stick,
-    without their leading comments (not every shell takes typed comments)."""
+    without their leading comments (not every shell takes typed comments).
+    A line that starts "[ARCH] " is one architecture's: typed without that
+    prefix for ARCH's image, and left out for the other's."""
     names = ["checks.sh"] + (["config-checks.sh"] if media == "usb" else [])
     parts = []
     for name in names:
@@ -261,7 +326,13 @@ def check_script(platform: str, media: str) -> str:
             lines = f.read().splitlines()
         while lines and (lines[0].startswith("#") or not lines[0].strip()):
             lines.pop(0)
-        parts.append("\n".join(lines))
+        kept = []
+        for line in lines:
+            m = ARCH_LINE.match(line)
+            if m and m[1] != arch:
+                continue
+            kept.append(line[m.end():] if m else line)
+        parts.append("\n".join(kept))
     return "\n".join(parts) + "\n"
 
 
@@ -310,10 +381,16 @@ def main() -> int:
     ap.add_argument("--user", default=LIVE_USER, help=f"live user (default: {LIVE_USER})")
     ap.add_argument("--manifest", metavar="FILE",
                     help="also type PLATFORM/manifest.sh and write its fields to FILE (JSON)")
+    ap.add_argument("--arch", choices=ARCHES, default=host_arch(),
+                    help="the image's architecture (default: this host's, %(default)s)")
     args = ap.parse_args()
+    if args.arch == "arm64" and args.mode not in FIRMWARE_ARM64:
+        ap.error(f"arm64 has no {args.mode} mode: uefi or uefi-secureboot")
+    if args.arch == "arm64" and args.platform != "linux":
+        ap.error(f"arm64 has no {args.platform} image: linux only")
     ok = run(args.img, args.platform, args.mode, args.media,
              args.log or f"boot-test-{args.mode}-{args.media}.log", args.timeout, args.user,
-             args.manifest)
+             args.manifest, args.arch)
     return 0 if ok else 1
 
 

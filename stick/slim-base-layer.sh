@@ -22,8 +22,14 @@
 # The cuts come in three tiers (see the TIER sections below):
 #   1  software a rescue stick never runs: tracing and debug tools plus the
 #      LLVM/Clang they drag in, snapd, kernel headers, and what that orphans
-#   2  firmware for ARM hardware -- the stick is amd64-only
+#   2  firmware for the other architecture's hardware: ARM SoCs' on an amd64
+#      image, x86 SoCs' (whose drivers arm64's kernel doesn't build) on arm64's
 #   3  firmware for hardware no PC contains: data-centre switch ASICs
+#
+# The image's architecture is the ISO's (amd64 or arm64), and the build host's
+# must be the same: the chroots run the base's own binaries.  arm64's
+# differences: tier 2's list, and mksquashfs without a BCJ filter.
+# --settings ARCH prints what ARCH changes and exits (no root needed).
 #
 # IF TIER 3 TURNS OUT TO BE A MISTAKE, rebuild with --tiers "1 2".  That keeps
 # the switch firmware and changes nothing else.
@@ -86,6 +92,16 @@ TIER2_INCLUDE=(
     'qcom/sdx35/*' 'qcom/sdx61/*'        # 4G/5G modem cards (ThinkPads and others)
     'qcom/aic100/*' 'qcom/qdu100/*'      # Cloud AI 100 and X100 RAN accelerator cards
 )
+# arm64's tier 2: x86 SoCs' parts, none of whose drivers Ubuntu's arm64 kernel
+# builds and none of whose files its modules ask for (docs/design/arm64.md,
+# A4).  PCIe and USB parts stay (iwlwifi, ibt, ice, qat, i915/ for xe, amdgpu).
+TIER2_ARM64_EXCLUDE=(
+    'intel/sof*' 'intel/avs/*' 'intel/catpt/*'  # Intel SoCs' audio DSPs
+    'intel/dsp_fw_*' 'intel/fw_sst_*' 'intel/IntcSST2.bin*'  # older ones (Skylake, Atom)
+    'intel/ish/*' 'LENOVO/ish/*' 'HP/ish/*' 'dell/ish/*'  # Intel's sensor hub
+    'intel/ipu/*' 'intel/ipu3-fw.bin*' 'intel/irci_*'     # Intel SoCs' cameras (IPU)
+    'intel/vpu/*' 'amdnpu/*'                 # Intel's and AMD's NPUs
+)
 
 # --- TIER 3: firmware for hardware no PC contains -----------------------------
 # Remove this tier (--tiers "1 2") if it turns out to be a mistake.
@@ -103,12 +119,30 @@ TIER3_EXCLUDE=(
 # exactly what "xz -9" would produce here.  -Xbcj x86 makes mksquashfs try the
 # x86 filter on each block and keep whichever result is smaller.
 MKSQUASHFS_OPTS=(-comp xz -Xbcj x86 -b 1M -Xdict-size 1M -noappend -no-progress)
+# arm64's: plain xz.  The kernel's xz decoder has an ARM64 filter too, but
+# Debian 13's mksquashfs 4.6.1 (Bigfoot's) has no -Xbcj arm64 (arm64.md, A0).
+MKSQUASHFS_OPTS_ARM64=(-comp xz -b 1M -Xdict-size 1M -noappend -no-progress)
 
 die() { echo "slim-base-layer: $*" >&2; exit 1; }
+
+# arch_settings ARCH: tier 2's lists and mksquashfs's options for ARCH.
+arch_settings() {
+    case $1 in
+        amd64) ;;
+        arm64) TIER2_EXCLUDE=("${TIER2_ARM64_EXCLUDE[@]}")
+               TIER2_INCLUDE=()
+               MKSQUASHFS_OPTS=("${MKSQUASHFS_OPTS_ARM64[@]}") ;;
+        *) die "the base is $1's: amd64 or arm64 only" ;;
+    esac
+}
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --tiers) TIERS=$2; shift 2 ;;
+        --settings)
+            arch_settings "${2:-}"
+            declare -p TIER2_EXCLUDE TIER2_INCLUDE MKSQUASHFS_OPTS
+            exit 0 ;;
         -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) die "unknown option $1" ;;
         *) break ;;
@@ -156,6 +190,10 @@ rm "$OUT/stock.squashfs"
 stock_size=$(du -sx --block-size=1 "$ROOT" | cut -f1)
 
 in_root() { chroot "$ROOT" "$@"; }
+ARCH=$(in_root dpkg --print-architecture 2>/dev/null) ||
+    die "can't run the base's dpkg: is $SOURCE_ISO for this host's architecture?"
+arch_settings "$ARCH"
+[[ $ARCH == amd64 ]] || log "Arch:       $ARCH"
 present_commands() {
     local c
     for c in "${REQUIRED_COMMANDS[@]}"; do

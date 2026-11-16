@@ -23,7 +23,8 @@
 #     install-sources.yaml (the installer's list of layers), and the stock
 #     base's manifest.full (slim-base-layer.sh writes a new .manifest)
 #   - gets a GRUB menu with BackOtter entries only: normal, safe graphics,
-#     and serial console (console=ttyS0, for IPMI serial-over-LAN and tests)
+#     and serial console (console=ttyS0, for IPMI serial-over-LAN and tests;
+#     ttyAMA0 on arm64, whose image also keeps the stock menu's $cmdline)
 #   - adds /.disk/backotter.json, the image marker, and a third partition:
 #     256 MiB of FAT16 labelled BACKOTTER, the stick's writable config
 #     partition (see docs/design/stick-config.md), holding copies of the
@@ -75,11 +76,23 @@ xorriso -osirrox on -indev "$SOURCE_ISO" \
     -extract /md5sum.txt "$work/md5sum.txt.stock" \
     -extract /.disk/info "$work/disk-info.stock" 2>/dev/null
 chmod u+w "$work"/*
+arch=$(grep -owE 'amd64|arm64' "$work/disk-info.stock" | head -n 1)
+[[ -n $arch ]] || die "can't tell the architecture of $SOURCE_ISO"
+# What the architecture changes in the menu (docs/design/arm64.md, A4): the
+# serial entry's console, the PC's first UART or arm64's PL011 (SBSA servers,
+# QEMU's virt machine); and on arm64 the stock menu's quirks for Snapdragon
+# laptops, which it keeps in GRUB's $cmdline.  And the layout: amd64's ISO
+# has its ISO 9660 tree again at partition 1's start (partition_offset 16),
+# arm64's stock one doesn't, so casper would mount the whole stick on /cdrom,
+# and while it is, no partition of it (the config partition) can be mounted.
+serial=ttyS0 grub_cmdline="" boot_extra=()
+if [[ $arch == arm64 ]]; then
+    serial=ttyAMA0 boot_extra=(-boot_image any partition_offset=16)
+    [[ -z $(sed -n '/^set cmdline=/,/^fi$/p' "$work/grub.cfg.stock") ]] || grub_cmdline='$cmdline '
+fi
 
 # --- The output name ---------------------------------------------------------------
 if [[ -d $OUT_IMG ]]; then
-    arch=$(grep -owE 'amd64|arm64' "$work/disk-info.stock" | head -n 1)
-    [[ -n $arch ]] || die "can't tell the architecture of $SOURCE_ISO"
     version=dev.$(date -u +%Y%m%d)
     here=$(dirname "$0")
     if commit=$(git -C "$here" rev-parse --short=7 HEAD 2>/dev/null); then
@@ -120,7 +133,7 @@ entry() {   # entry TITLE EXTRA_KERNEL_ARGS
     cat <<EOF
 menuentry "$1" {
     set gfxpayload=keep
-    linux  /casper/vmlinuz layerfs-path=$LAYER.squashfs hostname=backotter nopersistent $2 ---
+    linux  /casper/vmlinuz ${grub_cmdline}layerfs-path=$LAYER.squashfs hostname=backotter nopersistent $2 ---
     initrd /casper/initrd
 }
 EOF
@@ -136,11 +149,20 @@ set menu_color_normal=white/black
 set menu_color_highlight=black/light-gray
 
 EOF
+    if [[ -n $grub_cmdline ]]; then
+        sed -n '/^set cmdline=/,/^fi$/p' "$work/grub.cfg.stock"
+        echo
+    fi
     entry "BackOtter rescue" ""
     entry "BackOtter rescue (safe graphics)" "nomodeset"
-    entry "BackOtter rescue (serial console ttyS0)" "console=tty0 console=ttyS0,115200n8"
-    # The stock menu's firmware entries (UEFI only).
-    sed -n '/^grub_platform/,$p' "$work/grub.cfg.stock"
+    entry "BackOtter rescue (serial console $serial)" "console=tty0 console=$serial,115200n8"
+    # The stock menu's firmware entries (UEFI only; arm64's menu, UEFI-only,
+    # has no grub_platform test).
+    if [[ $arch == arm64 ]]; then
+        sed -n "/^menuentry 'Boot from next volume'/,\$p" "$work/grub.cfg.stock"
+    else
+        sed -n '/^grub_platform/,$p' "$work/grub.cfg.stock"
+    fi
 } >"$work/grub.cfg"
 
 # md5sum.txt lists every file in the ISO9660 file system: drop the removed
@@ -174,7 +196,7 @@ xorriso -indev "$SOURCE_ISO" -outdev "$OUT_IMG" \
     -find /casper -name "$BASE.ubuntu-server*" -exec rm -- \
     "${maps[@]}" \
     -map "$work/md5sum.txt" /md5sum.txt \
-    -boot_image any replay \
+    -boot_image any replay "${boot_extra[@]}" \
     -append_partition "$CONFIG_PART" "$BASIC_DATA_GUID" "$work/config.img" 2>"$work/xorriso.log" ||
     { cat "$work/xorriso.log" >&2; die "xorriso failed"; }
 

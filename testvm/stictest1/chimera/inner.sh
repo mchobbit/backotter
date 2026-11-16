@@ -322,7 +322,8 @@ for fs in xfs ext4; do
             if [ $ch != ok ]; then fail "restore-over-immutable-$fs-$d" "harness: couldn't change the restored immutable/append-only files first"
             elif [ $rc = 0 ] && { [ $crc = 0 ] || [ -z "$cmpout2" ]; }; then
                 pass "restore-over-immutable-$fs-$d" "changed +i file (contents, a user xattr), +i dir (a new file), +i+d file (mode), +a file (a line more) back as backed up: $(echo "$cmpout" | oneline); exit 0"
-            else fail "restore-over-immutable-$fs-$d" "rc=$rc; $(echo "$cmpout" | oneline); $(msgs $W/ov-$fs-$d.log)"; fi
+            # (Its failure names the differences but that expected extra file.)
+            else fail "restore-over-immutable-$fs-$d" "rc=$rc; $(echo "$cmpout2" | oneline); $(msgs $W/ov-$fs-$d.log)"; fi
         fi
         chattr -R -i -a /mnt/$D 2>/dev/null; rmimg $D
     done

@@ -54,7 +54,11 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      "gone", nor an unreadable ledger "no row".  Every new done row's ledger row
      feeds the stop rules (stop-os OS takes that OS's lines out of the todo, an
      offline guest being an OS of its own; stop-starts, stop-family and stop-run
-     touch queue/RUN/stop on every host).  A done row with no ledger row gets
+     touch queue/RUN/stop on every host).  Each poll also feeds each host's swap-out and
+     this run's bytes (jobs.log, tag ht1:RUN...: R22) to the write stop rule; a cell with
+     a write allowance (its spec entry's write_allow, write_allow_bytes) has its own
+     bytes per attempt (tags ht1:RUN:GV, ht1:RUN-r2:GV), up to the allowance, excused
+     (allowed_bytes), the report still giving the true total.  A done row with no ledger row gets
      one: built from K by `t2-host row holt` when K holds the run's records (the
      hook failed), else rows_holt.backfill_row's LOST or HARNESS (R7), appended
      on its host; the row fed on is the one read back from the ledger.
@@ -166,6 +170,51 @@ KIND_DRIVER = {"linux": "ht1.sh", "bsd": "ht1-bsd.sh", "offline": "ht1-offline.s
 
 def needed_platforms(sf, cells):
     return sorted({plat_of(sf, c) for c in cells})
+
+
+def write_allow_bytes(sf, cell):
+    """The bytes of CELL's own writes a run may leave out of the write stop rule (RunGuards):
+    its spec entry's write_allow ({"gb": N, "measured": "..."} or N, GB of 1e9), or 0.
+    Only a plain cell (holt:GUEST) has one: a variant's (+img in RAM, bigger) isn't the
+    measured run."""
+    if "+" in todo_line(cell):
+        return 0
+    w = entry_of(sf, cell).get("write_allow")
+    gb = w.get("gb") if isinstance(w, dict) else w
+    try:
+        gb = float(gb)
+    except (TypeError, ValueError):
+        return 0
+    return int(gb * 1e9) if gb > 0 and math.isfinite(gb) else 0
+
+
+_RETRY_TAG = re.compile(r"(-r\d+):(.*)\Z", re.S)
+
+
+def allowed_bytes(by_tag, prefix, allow):
+    """{cell: bytes} the write allowances excuse: BY_TAG is this run's jobs.log sums by tag
+    ({tag: bytes}, Remote.tag_bytes by_tag), PREFIX its tag (ht1:RUN), ALLOW {gv: (cell,
+    bytes)}.  Each attempt of a cell (PREFIX:GV[:...], PREFIX-rN:GV[:...]) is a run of
+    its own: its bytes count up to the allowance, the rest is the stop rule's."""
+    per = {}
+    for tag, n in (by_tag or {}).items():
+        if not isinstance(n, (int, float)) or n <= 0:
+            continue
+        if tag.startswith(prefix + ":"):
+            q, rest = prefix, tag[len(prefix) + 1:]
+        else:
+            m = _RETRY_TAG.match(tag[len(prefix):]) if tag.startswith(prefix) else None
+            if not m:
+                continue
+            q, rest = prefix + m.group(1), m.group(2)
+        gv = rest.split(":", 1)[0]
+        if gv in allow:
+            per[(q, gv)] = per.get((q, gv), 0) + n
+    out = {}
+    for (q, gv), n in sorted(per.items()):
+        cell, cap = allow[gv]
+        out[cell] = out.get(cell, 0) + min(n, cap)
+    return {c: v for c, v in out.items() if v > 0}
 
 
 def holt_rel(plat):
@@ -446,14 +495,17 @@ with open(todo + ".lock", "a") as lk:
         except ValueError:
             return None
 
-    def tag_bytes(self, host, prefix, since):
+    def tag_bytes(self, host, prefix, since, by_tag=False):
         """Bytes this run's jobs wrote to physical disks (jobs.log lines whose tag= starts
-        with PREFIX and that ended at or after SINCE, epoch), R22: never the whole disk's."""
+        with PREFIX and that ended at or after SINCE, epoch), R22: never the whole disk's.
+        BY_TAG: {tag: bytes} instead (the write allowances' share, allowed_bytes)."""
         script = r'''
-import re, sys, time, calendar
+import json, re, sys, time, calendar
 prefix, since = sys.argv[1], float(sys.argv[2])
+by_tag = len(sys.argv) > 3 and sys.argv[3] == "by-tag"
 virt = re.compile(r"((zram|loop|nbd|md|ram|sr|zd)\d+|dm-\d+)\Z")
 total = 0
+sums = {}
 try:
     lines = open("/bkoscratch/wear/jobs.log", errors="replace").read().splitlines()
 except OSError:
@@ -470,16 +522,24 @@ for l in lines:
         t = since
     if t < since:
         continue
+    n = 0
     for part in f[5].split(","):
         k, _, v = part.partition("=")
         if v.isdigit() and k and not virt.match(k):
-            total += int(v)
-print(total)
+            n += int(v)
+    total += n
+    sums[tag] = sums.get(tag, 0) + n
+print(json.dumps(sums, sort_keys=True) if by_tag else total)
 '''
-        r = self.h.ssh(host, script=script, args=[prefix, str(since)], timeout=60)
+        r = self.h.ssh(host, script=script, args=[prefix, str(since)] + (["by-tag"] if by_tag else []), timeout=60)
         try:
-            return int(r.text.strip()) if r.rc == 0 else None
-        except ValueError:
+            if r.rc != 0:
+                return None
+            if not by_tag:
+                return int(r.text.strip())
+            got = json.loads(r.text.strip())
+            return {str(k): int(v) for k, v in got.items()} if isinstance(got, dict) else None
+        except (ValueError, TypeError, AttributeError):
             return None
 
 
@@ -545,6 +605,7 @@ class Runner:
         if not self.state["t0"]:
             self.state["t0"] = self.t0
         self.swap0 = dict(self.state["swap0"] or {})
+        self.allowed = dict(self.state["write_allowed"] or {})   # host -> {cell: bytes a write allowance excused}
         self.keep_copy()
 
     def keep_copy(self):
@@ -1320,19 +1381,55 @@ class Runner:
             self.stops.append(f"stop-starts: a run-wide stop rule tripped: touched {qrun}/stop on {', '.join(self.hosts)}")
             self.log(f"queue {qrun}: a run-wide stop rule tripped: nothing more starts")
 
+    def write_allows(self):
+        """{gv: (cell, bytes)}: the plan's cells with a write allowance (write_allow_bytes)."""
+        out = {}
+        for pc in getattr(self.plan, "cells", None) or ():
+            b = write_allow_bytes(self.sf, pc.cell)
+            if b > 0:
+                out[gv_of(pc.cell)] = (pc.cell, b)
+        return out
+
     def host_checks(self, qrun):
-        """The host-wide stop rules: swap-out since the run began, this run's bytes (R22)."""
+        """The host-wide stop rules: swap-out since the run began, this run's bytes (R22).
+        With a write allowance in the plan, the bytes come by tag and the allowed cells'
+        own (allowed_bytes) are fed as ALLOWED: the rule counts the rest."""
+        prefix = f"ht1:{self.run_id}"
+        allow = self.write_allows()
         for h in self.hosts:
             sw = self.remote.pswpout(h)
             if sw is not None and h not in self.swap0:
                 self.swap0[h] = sw
                 self.state["swap0"] = self.swap0
-            ours = self.remote.tag_bytes(h, f"ht1:{self.run_id}", self.t0 - 60)
+            allowed, plain = None, not allow
+            if allow:
+                try:
+                    by = self.remote.tag_bytes(h, prefix, self.t0 - 60, by_tag=True)
+                except TypeError:   # a remote with no by_tag: no allowance, the plain sum as before
+                    plain = True
+                else:
+                    ours = sum(by.values()) if isinstance(by, dict) else None
+                    allowed = allowed_bytes(by, prefix, allow) if isinstance(by, dict) else None
+            if plain:
+                ours = self.remote.tag_bytes(h, prefix, self.t0 - 60)
+            if ours is not None:
+                if allowed:
+                    self.allowed[h] = dict(allowed)
+                else:
+                    self.allowed.pop(h, None)
+                if (self.state["write_allowed"] or {}) != self.allowed:
+                    self.state["write_allowed"] = {k: dict(v) for k, v in self.allowed.items()}
+            kw = {"allowed": allowed} if allowed else {}
             try:
                 what = self.rs.stops.feed_host(h, swap_out_bytes=(sw - self.swap0[h]) if sw is not None else None,
-                                               ours_bytes=ours)
-            except Exception:
+                                               ours_bytes=ours, **kw)
+            except Exception as e:   # noqa: BLE001 - a feed that fails stops nothing, but says so (once)
                 what = "ok"
+                msg = f"host checks on {h}: the stop rules' feed failed: {type(e).__name__}: {e}"
+                seen = self.__dict__.setdefault("_feed_errors", set())
+                if msg not in seen:
+                    seen.add(msg)
+                    self.log(msg)
             self.act(qrun, what)
 
     def k_of(self, qrun, gv):
@@ -1646,7 +1743,9 @@ class Runner:
             cp = None
         return {"run": self.run_id, "word": self.rs.word.word, "family": "holt", "start": start, "end": utc_now(),
                 "cells": cells, "stops": stops, "notes": notes, "wear": {}, "exit": ex,
-                "hosts": list(self.hosts), "copy": cp, "holt_code": getattr(self, "code", None)}
+                "hosts": list(self.hosts), "copy": cp, "holt_code": getattr(self, "code", None),
+                "write_allowed": {h: dict(v) for h, v in sorted(self.allowed.items()) if v},
+                "write_allow_gb": {c: b / 1e9 for c, b in sorted(self.write_allows().values())}}
 
 
 def run(ctx, plan, remote=None, sleep=None, poll=POLL_S, clock=None, gate=None):

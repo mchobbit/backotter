@@ -331,7 +331,9 @@ def run_bytes(rr):
 def budget_lines(rr, policy, sweep=False, ledger=(), now=None, update=False):
     """Budget warnings (1.9, R22): this run's jobs per host (their wear tags), and the day's
     Test2 jobs per host (the ledger's rows of today, other runs', plus this run's).  Other
-    sessions' writes count in neither: SMART's day figure is on the wear line, never acted on."""
+    sessions' writes count in neither: SMART's day figure is on the wear line, never acted on.
+    The run line is the true total; rr's write_allowed ({host: {cell: bytes}}, holt's write
+    allowances) adds how much of it the stop rule left out."""
     b = (policy or {}).get("budget") or {}
     run_gb = b.get("update_gb", 40) if update else b.get("sweep_gb" if sweep else "run_gb", 2)
     day_gb = b.get("day_gb", 50)
@@ -340,9 +342,20 @@ def budget_lines(rr, policy, sweep=False, ledger=(), now=None, update=False):
         "warn only (bind_from not set)"
     out = []
     per = run_bytes(rr)
+    allowed = rr.get("write_allowed") or {}     # {host: {cell: bytes}}: holt's write allowances
+    allow_gb = rr.get("write_allow_gb") or {}   # {cell: GB}
     for h, x in sorted(per.items()):
         if x > run_gb:
-            out.append(f"budget: {h} wrote {x:.2f} GB in this run's jobs, over {run_gb} GB ({mode})")
+            line = f"budget: {h} wrote {x:.2f} GB in this run's jobs, over {run_gb} GB ({mode})"
+            mine = {c: v for c, v in (allowed.get(h) or {}).items() if isinstance(v, (int, float)) and v > 0}
+            if mine:
+                cells = ", ".join(f"{c}'s {allow_gb[c]:g} GB" if isinstance(allow_gb.get(c), (int, float)) else c
+                                  for c in sorted(mine))
+                # (the allowed bytes are the runner's last poll of jobs.log, the total the cells'
+                # or the final wear figures: never more of it than the total)
+                line += (f"; {min(sum(mine.values()) / GB, x):.2f} GB of it within the write allowance of {cells}, "
+                         "which the stop rule doesn't count")
+            out.append(line)
     day = time.strftime("%Y-%m-%d", time.gmtime(now or time.time()))
     daily = dict(per)
     mine = {rr.get("run")} | {f"{rr.get('run')}-r{a}" for a in range(2, 10)}

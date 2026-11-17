@@ -371,6 +371,16 @@ def remove_leftovers(items, log=print, dead=None):
 
 # --- the stop rules (1.9; R22) ------------------------------------------------------------------
 
+def allowed_note(allowed, counted):
+    """The write stop rule's words for ALLOWED ({cell: bytes} that cells' write allowances
+    excuse, holt.py's allowed_bytes) beside the true total: '' when nothing is excused."""
+    ex = sum(v for v in (allowed or {}).values() if v)
+    if ex <= 0:
+        return ""
+    return (f" ({ex / 1e9:.2f} GB of it within the write allowance of {', '.join(sorted(allowed))}, "
+            f"not counted; {counted / 1e9:.2f} GB counted)")
+
+
 class RunGuards:
     """The stop rules that hold across a whole run or composite, thread-safe: the harness count,
     swap-out, and the write bytes per family and host.  One per composite (Shared.guards); a
@@ -378,9 +388,14 @@ class RunGuards:
     starts nothing more.
 
         add_harness(cell) -> count
-        feed_host(family, host, swap_out_bytes=None, ours_bytes=None) -> why it tripped now, or None
+        feed_host(family, host, swap_out_bytes=None, ours_bytes=None, allowed=None)
+                                                -> why it tripped now, or None
         trip(why); tripped() -> bool; why() -> [text]
         to_json(), from_json(doc, policy...)    what a composite's resume rebuilds
+
+    ALLOWED ({cell: bytes}, holt's disk-heavy cells: holt/spec.json write_allow) is the part
+    of OURS_BYTES that those cells' write allowances excuse: the write rules count the host's
+    total less it; the words still give the true total.
     """
 
     def __init__(self, policy=None, sweep=False, update=False, now=None):
@@ -393,6 +408,7 @@ class RunGuards:
         self.bind = report.budget_binds(b.get("bind_from"), now)
         self.harness = 0
         self.bytes = {}         # {(family, host): the family's bytes on that host so far}
+        self.allowed = {}       # {(family, host): {cell: bytes of those a write allowance excuses}}
         self.reasons = []
         self._mu = threading.Lock()
 
@@ -420,7 +436,7 @@ class RunGuards:
         with self._mu:
             return sum(v for (f, h), v in self.bytes.items() if h == host)
 
-    def feed_host(self, family, host, swap_out_bytes=None, ours_bytes=None):
+    def feed_host(self, family, host, swap_out_bytes=None, ours_bytes=None, allowed=None):
         """Why this feed tripped the guards (the first time), else None."""
         with self._mu:
             why = None
@@ -428,12 +444,25 @@ class RunGuards:
                 why = f"{host}: {swap_out_bytes / GIB:.2f} GiB swapped out since the run began"
             if ours_bytes is not None:
                 self.bytes[(family, host)] = ours_bytes
+                al = {c: v for c, v in (allowed or {}).items() if v and v > 0}
+                if al:
+                    self.allowed[(family, host)] = al
+                else:
+                    self.allowed.pop((family, host), None)
                 total = sum(v for (f, h), v in self.bytes.items() if h == host)
-                if not why and total > self.write_x * self.run_gb * 1e9:
-                    why = (f"{host}: this run's jobs wrote {total / 1e9:.2f} GB, "
+                excused = {}
+                for (f, h), cells in self.allowed.items():
+                    if h == host:
+                        for c, v in cells.items():
+                            excused[c] = excused.get(c, 0) + v
+                counted = max(0, total - sum(excused.values()))
+                note = allowed_note(excused, counted)
+                if not why and counted > self.write_x * self.run_gb * 1e9:
+                    why = (f"{host}: this run's jobs wrote {total / 1e9:.2f} GB{note}, "
                            f"over {self.write_x:g} x the {self.run_gb:g} GB budget")
-                if not why and self.bind and total > self.run_gb * 1e9:
-                    why = f"{host}: this run's jobs wrote {total / 1e9:.2f} GB, over the {self.run_gb:g} GB budget (bound)"
+                if not why and self.bind and counted > self.run_gb * 1e9:
+                    why = (f"{host}: this run's jobs wrote {total / 1e9:.2f} GB{note}, "
+                           f"over the {self.run_gb:g} GB budget (bound)")
             if why and not self.reasons:
                 self.reasons.append(why)
                 return why
@@ -442,7 +471,8 @@ class RunGuards:
     def to_json(self):
         with self._mu:
             return {"harness": self.harness, "reasons": list(self.reasons),
-                    "bytes": [[f, h, v] for (f, h), v in sorted(self.bytes.items())]}
+                    "bytes": [[f, h, v] for (f, h), v in sorted(self.bytes.items())],
+                    "allowed": [[f, h, dict(v)] for (f, h), v in sorted(self.allowed.items())]}
 
     @classmethod
     def from_json(cls, doc, policy=None, sweep=False, update=False, now=None):
@@ -451,6 +481,7 @@ class RunGuards:
         g.harness = int(doc.get("harness") or 0)
         g.reasons = list(doc.get("reasons") or [])
         g.bytes = {(f, h): v for f, h, v in doc.get("bytes") or []}
+        g.allowed = {(f, h): dict(v) for f, h, v in doc.get("allowed") or [] if isinstance(v, dict) and v}
         return g
 
 
@@ -474,8 +505,11 @@ class StopEngine:
 
         feed({cell, family, part ("fast"/"slow" for gate layers, else None), verdict, class,
               needs {need: v}, os, host})
-        feed_host(host, swap_out_bytes=..., ours_bytes=...)   swap-out since the run began; this
-                                                               run's bytes from its wear tags (R22)
+        feed_host(host, swap_out_bytes=..., ours_bytes=..., allowed=...)
+                                                               swap-out since the run began; this
+                                                               run's bytes from its wear tags (R22);
+                                                               ALLOWED {cell: bytes} the part of them
+                                                               cells' write allowances excuse (holt)
 
     and gets back ok, stop-family, stop-os OS, stop-starts or stop-run.  Its state:
     stop_family (no guest of the family starts), stopped_os, stop_starts, stop_run, stops [text].
@@ -533,9 +567,12 @@ class StopEngine:
                         out = o if STOP_ORDER.index("stop-os") > STOP_ORDER.index(out.split()[0]) else out
         return out
 
-    def feed_host(self, host, swap_out_bytes=None, ours_bytes=None):
+    def feed_host(self, host, swap_out_bytes=None, ours_bytes=None, allowed=None):
         if self.guards is not None:
-            why = self.guards.feed_host(self.family, host, swap_out_bytes, ours_bytes)
+            if allowed:
+                why = self.guards.feed_host(self.family, host, swap_out_bytes, ours_bytes, allowed)
+            else:
+                why = self.guards.feed_host(self.family, host, swap_out_bytes, ours_bytes)
             if self.guards.tripped() and not self.stop_starts:
                 self.stop_starts = True
                 return self._stop("stop-starts", why or "; ".join(self.guards.why()))
@@ -545,13 +582,16 @@ class StopEngine:
             return self._stop("stop-starts", f"{host}: {swap_out_bytes / GIB:.2f} GiB swapped out since the run began")
         if ours_bytes is not None:
             limit = self.write_x * self.run_gb * 1e9
-            if ours_bytes > limit and not self.stop_starts:
+            al = {c: v for c, v in (allowed or {}).items() if v and v > 0}
+            counted = max(0, ours_bytes - sum(al.values()))
+            note = allowed_note(al, counted)
+            if counted > limit and not self.stop_starts:
                 self.stop_starts = True
-                return self._stop("stop-starts", f"{host}: this run's jobs wrote {ours_bytes / 1e9:.2f} GB, "
+                return self._stop("stop-starts", f"{host}: this run's jobs wrote {ours_bytes / 1e9:.2f} GB{note}, "
                                                  f"over {self.write_x:g} x the {self.run_gb:g} GB budget")
-            if self.bind and ours_bytes > self.run_gb * 1e9 and not self.stop_starts:
+            if self.bind and counted > self.run_gb * 1e9 and not self.stop_starts:
                 self.stop_starts = True
-                return self._stop("stop-starts", f"{host}: this run's jobs wrote {ours_bytes / 1e9:.2f} GB, over the "
+                return self._stop("stop-starts", f"{host}: this run's jobs wrote {ours_bytes / 1e9:.2f} GB{note}, over the "
                                                  f"{self.run_gb:g} GB budget (bound)")
         return "ok"
 

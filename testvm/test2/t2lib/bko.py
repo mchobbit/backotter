@@ -139,8 +139,10 @@ class Guards(runmod.RunGuards):
         super().trip(why)
         self._changed()
 
-    def feed_host(self, family, host, swap_out_bytes=None, ours_bytes=None):
-        why = super().feed_host(family, host, swap_out_bytes, ours_bytes)
+    def feed_host(self, family, host, swap_out_bytes=None, ours_bytes=None, allowed=None):
+        # ALLOWED (holt's write allowances, RunGuards.feed_host) passed on: without it a holt
+        # child's feed with vanilla3's bytes raised TypeError, which host_checks took for "ok"
+        why = super().feed_host(family, host, swap_out_bytes, ours_bytes, allowed)
         self._changed(urgent=bool(why))
         return why
 

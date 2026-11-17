@@ -245,7 +245,7 @@ the final plan has a valid PASS or a derived row.
 
 A runner gets `ctx.run`, a `RunState`: `run`, `word`, `family`, `mac_dir`,
 `host_root`, `hosts`, `copy` (per host: id, path, commit, dirty), `stops` (the stop
-rules: `feed(result)`, `feed_host(host, swap_out_bytes, ours_bytes)`, `may_start(os)`),
+rules: `feed(result)`, `feed_host(host, swap_out_bytes, ours_bytes, allowed)`, `may_start(os)`),
 `flakes`, `limits`, `write_cells(plan, attempt, name, reruns)` (cells.json or
 cells-r2.json on every host, atomically, with each host's planned keys),
 `replan(facts, rows)` (after a build or the fast holt gate: the plan again, with the
@@ -261,7 +261,14 @@ The stop rules: a failed fast gate starts no guest of its family; a failed slow
 gate starts nothing new; one need failing on 2 guests of an OS stops that OS; 2
 harness-class results stop the run (known flakes aside); over 1 GiB swapped out, or
 this run's jobs writing over twice the budget (their wear tags, never other
-sessions' writes), start nothing new.
+sessions' writes; classes.json policy.stop.write_budget_x x budget.run_gb), start nothing new.
+A known disk-heavy holt cell has a write allowance (holt/spec.json `write_allow`, a plain
+holt:GUEST cell only): its own bytes in each attempt (wear tags ht1:RUN:GUEST, ht1:RUN-r2:GUEST),
+up to the allowance, don't count toward that rule; what it writes over the allowance, and
+every other cell's bytes, do.  holt:vanilla3 has 36 GB: it runs on /bkoscratch
+(holt_disk_mode) and writes ~30 GB a run (29.57 and 29.98 GB measured, 2026-11-17), so
+without it any HoltTest2 with vanilla3 stopped every later start.  The stop's words and the
+report's budget line still give the true total, the line adding how much of it was allowed.
 
 The report has a line per cell (ran or skipped, verdict, rule, why, gm, GB, host,
 row), the stops, the rows written, budget warnings (2 GB per host for this run's jobs

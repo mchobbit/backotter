@@ -60,7 +60,7 @@ mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,filetyp
 tune2fs -r 9600 /dev/sdq3
 # check: /dev/sdq3 is ext4 with the source's features (read back by bko-holt's own probe)
 # vda4: ext4 "ubuntu-save"
-mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,filetype,extent,64bit,flex_bg,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000008 -L ubuntu-save -b 1024 -I 256 -N 8192 -g 8192 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000009,desc_size=64,resize=33554433 /dev/sdq4 32768k
+mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,filetype,extent,64bit,flex_bg,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000008 -L ubuntu-save -b 1024 -I 256 -N 8192 -g 8192 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000009,desc_size=64,resize=33554432 /dev/sdq4 32768k
 tune2fs -r 1638 /dev/sdq4
 # check: /dev/sdq4 is ext4 with the source's features (read back by bko-holt's own probe)
 # vda5: ext4 "ubuntu-data"

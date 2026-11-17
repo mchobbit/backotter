@@ -70,7 +70,7 @@ mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,filetyp
 tune2fs -r 79372 /dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002
 # check: /dev/mapper/ubuntu-data-bc000000-0000-4000-8000-000000000002 is ext4 with the source's features (read back by bko-holt's own probe)
 # dm-1: ext4 "ubuntu-save"
-mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,filetype,extent,64bit,flex_bg,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-00000000000f -L ubuntu-save -b 1024 -I 256 -N 6400 -g 8192 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000010,desc_size=64,resize=26214401 /dev/mapper/ubuntu-save-bc000000-0000-4000-8000-000000000001 25600k
+mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,filetype,extent,64bit,flex_bg,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-00000000000f -L ubuntu-save -b 1024 -I 256 -N 6400 -g 8192 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000010,desc_size=64,resize=26214400 /dev/mapper/ubuntu-save-bc000000-0000-4000-8000-000000000001 25600k
 tune2fs -r 1280 /dev/mapper/ubuntu-save-bc000000-0000-4000-8000-000000000001
 # check: /dev/mapper/ubuntu-save-bc000000-0000-4000-8000-000000000001 is ext4 with the source's features (read back by bko-holt's own probe)
 

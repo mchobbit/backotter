@@ -95,7 +95,7 @@ mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_
 tune2fs -r 13081 /dev/md/0
 # check: /dev/md/0 is ext4 with the source's features (read back by bko-holt's own probe)
 # dm-0: ext4 "keystore-rpool"
-mke2fs -F -q -t ext4 -O none,ext_attr,resize_inode,dir_index,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000009 -L keystore-rpool -b 4096 -I 256 -N 1024 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-00000000000a,stride=4,stripe_width=8192,desc_size=64,resize=2097152 /dev/mapper/keystore-rpool 4096k
+mke2fs -F -q -t ext4 -O none,ext_attr,resize_inode,dir_index,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000009 -L keystore-rpool -b 4096 -I 256 -N 1024 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-00000000000a,stride=4,stripe_width=8192,desc_size=64 /dev/mapper/keystore-rpool 4096k
 tune2fs -r 51 /dev/mapper/keystore-rpool
 # check: /dev/mapper/keystore-rpool is ext4 with the source's features (read back by bko-holt's own probe)
 zfs create -u -o mountpoint=none -o canmount=off -o normalization=formD -o utf8only=on rpool/ROOT

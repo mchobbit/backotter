@@ -735,6 +735,67 @@ fn load_remakes_what_the_tools_made_and_reads_it_back() {
     }
 }
 
+/// An ext4 of 1 KiB blocks (first data block 1) small enough that its
+/// reserved GDT blocks aren't capped at a block's worth: load's mke2fs
+/// reserves exactly as many as the source has (BackShot2's fail-004, where
+/// load's -E resize= counted the first data block and got one more).
+#[test]
+fn load_keeps_a_1k_ext4s_reserved_gdt_blocks() {
+    use bko_holt::load::commands as cmd;
+    if need("mke2fs").is_none() {
+        return;
+    }
+    let dir = TempDir::new("rt-1k-gdt");
+    for (i, (mib, feats)) in [(32, "64bit"), (25, "64bit"), (32, "^64bit"), (24, "^64bit")].iter().enumerate() {
+        let src = image(&dir, &format!("src{i}"), *mib);
+        run("mke2fs", &["-q", "-F", "-t", "ext4", "-b", "1024", "-O", feats, s(&src)]);
+        let want = probe_file(&src).first().unwrap().to_json();
+        assert_eq!(want.get("first_data_block").and_then(Value::as_u64), Some(1));
+        let r = want.get("reserved_gdt_blocks").and_then(Value::as_u64).unwrap();
+        assert!(r > 0 && r < 256, "{mib} MiB {feats}: {r} reserved GDT blocks, capped or none: not a test of the arithmetic");
+        let new = image(&dir, &format!("new{i}"), *mib);
+        run_cmds(&[cmd::mke2fs(s(&new), &want)]);
+        let got = probe_file(&new).first().unwrap().to_json();
+        for k in ["reserved_gdt_blocks", "blocks", "blocks_per_group", "inodes"] {
+            assert_eq!(got.get(k), want.get(k), "{mib} MiB {feats}: {k}");
+        }
+    }
+}
+
+/// An ext4 with as many inodes as its groups hold (-i 4096: 8 x block size
+/// a group) shrunk by a quarter: the inodes go with the groups, as resize2fs
+/// would have them, so load's mke2fs keeps the source's blocks and inodes
+/// per group (BackShot2's fail-005, where the source's inode count didn't
+/// fit the fewer groups and mke2fs cut blocks per group).
+#[test]
+fn fit_largest_keeps_ext_blocks_and_inodes_per_group() {
+    if need("mke2fs").is_none() || need("sfdisk").is_none() {
+        return;
+    }
+    const GIB: u64 = 1 << 30;
+    let dir = TempDir::new("rt-fit-ipg");
+    let root = 4 * GIB / 512;
+    let total = 2048 + root + 34;
+    let img = image_bytes(&dir, "src", root * 512);
+    run("mke2fs", &["-q", "-F", "-t", "ext4", "-b", "4096", "-i", "4096", s(&img)]);
+    let c = probe::content_json(&probe_file(&img));
+    let ipg = c.get("inodes_per_group").and_then(Value::as_u64).unwrap();
+    assert_eq!(ipg, 32768, "the source's inodes per group, 8 x block size");
+    let v = fit_dump(total, &[(1, 2048, root, c.clone())], "vda1", root * 512, 64 << 20);
+    let (_, d) = fit_disk(&v, (total - GIB / 512) * 512, 30);
+    let p = &d.parts[0];
+    let blocks = p.content.get("blocks").and_then(Value::as_u64).unwrap();
+    let groups = blocks.div_ceil(32768);
+    assert_eq!(p.content.get("inodes").and_then(Value::as_u64), Some(groups * ipg), "the fitted inode count");
+    let newimg = image_bytes(&dir, "fitted", p.sectors * 512);
+    run_cmds(&mkfs_cmds(s(&newimg), &p.content));
+    let got = probe::content_json(&probe_file(&newimg));
+    for k in ["blocks", "blocks_per_group", "inodes_per_group", "inodes", "reserved_gdt_blocks"] {
+        assert_eq!(got.get(k), p.content.get(k), "{k}: made, and as the fit wrote it down");
+    }
+    assert_eq!(got.get("blocks_per_group"), c.get("blocks_per_group"), "the source's blocks per group");
+}
+
 /// Runs them, as the format stage would (an `sh -c` step through a shell).
 fn run_cmds(cmds: &[Vec<String>]) {
     for c in cmds {

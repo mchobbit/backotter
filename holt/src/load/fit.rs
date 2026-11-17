@@ -14,6 +14,94 @@
 use crate::json::Value;
 use crate::report::human;
 
+/// An ext filesystem as resize2fs leaves it on a new number of blocks.
+#[derive(Debug, Clone, PartialEq)]
+struct ExtResized {
+    blocks: u64,
+    groups: u64,
+    ipg: u64,
+    inodes: u64,
+    reserved_gdt_blocks: Option<u64>,
+    reserved_blocks: Option<u64>,
+}
+
+/// Whether ext block group G holds a superblock backup (ext2fs_bg_has_super):
+/// every group without sparse_super, else 0, 1 and the powers of 3, 5 and 7.
+/// With sparse_super2, mke2fs's two backups go in group 1 and the last.
+fn ext_has_super(g: u64, feats: &[&str]) -> bool {
+    if feats.contains(&"sparse_super2") {
+        return true;
+    }
+    if g <= 1 || !feats.contains(&"sparse_super") {
+        return true;
+    }
+    [3u64, 5, 7].iter().any(|&b| {
+        let mut x = b;
+        while x < g {
+            x *= b;
+        }
+        x == g
+    })
+}
+
+/// The ext filesystem C on BLOCKS blocks, as resize2fs leaves it
+/// (e2fsprogs resize/resize2fs.c adjust_fs_info): the same blocks and inodes
+/// a group, as many groups as the blocks need, a last group too small for
+/// its own overhead and 50 blocks dropped (mke2fs drops it too), the inodes
+/// those groups have, the reserved GDT blocks taking up or giving back what
+/// the descriptors do, the reserved blocks keeping their share.  mke2fs -N
+/// (groups x inodes a group) -g makes exactly that.  None where the dump
+/// doesn't give what it takes (or for bigalloc, whose groups count
+/// clusters); Err where no group would be left.
+fn ext_resized(c: &Value, blocks: u64) -> Result<Option<ExtResized>, String> {
+    let feats: Vec<&str> = c.get("features").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
+    let (Some(bs), Some(bpg), Some(ipg), Some(isz), Some(old)) = (u(c, "block_size"), u(c, "blocks_per_group"), u(c, "inodes_per_group"), u(c, "inode_size"), u(c, "blocks")) else {
+        return Ok(None);
+    };
+    if bs == 0 || bpg == 0 || ipg == 0 || feats.contains(&"bigalloc") {
+        return Ok(None);
+    }
+    let first = u(c, "first_data_block").unwrap_or(u64::from(bs == 1024));
+    let desc = if feats.contains(&"64bit") { u(c, "descriptor_size").filter(|&d| d >= 32).unwrap_or(64) } else { 32 };
+    let gdpb = (bs / desc).max(1);
+    let rsv = if feats.contains(&"resize_inode") { u(c, "reserved_gdt_blocks").unwrap_or(0) } else { 0 };
+    let old_db = old.saturating_sub(first).div_ceil(bpg).div_ceil(gdpb);
+    let itb = (ipg * isz).div_ceil(bs);
+    let mut n = blocks;
+    let (groups, db) = loop {
+        if n <= first {
+            return Err("would have no block group left".into());
+        }
+        let groups = (n - first).div_ceil(bpg);
+        let db = groups.div_ceil(gdpb);
+        let mut over = 2 + itb;
+        if ext_has_super(groups - 1, &feats) {
+            over += 1 + db + rsv;
+        }
+        let rem = (n - first) % bpg;
+        if groups == 1 && rem != 0 && rem < over {
+            return Err(format!("would be one block group of {rem} blocks, too few for its own {over}"));
+        }
+        if groups > 1 && rem != 0 && rem < over + 50 {
+            n -= rem;
+            continue;
+        }
+        // At most 2^32 - 1 inodes: resize2fs leaves the last group out.
+        if groups * ipg > u64::from(u32::MAX) {
+            if groups == 1 {
+                return Err("would have more inodes than ext's 2^32 - 1".into());
+            }
+            n = first + (groups - 1) * bpg;
+            continue;
+        }
+        break (groups, db);
+    };
+    let reserved_gdt_blocks = feats.contains(&"resize_inode").then(|| (rsv + old_db).saturating_sub(db).min(bs / 4));
+    // resize2fs's own arithmetic, in doubles.
+    let reserved_blocks = u(c, "reserved_blocks").filter(|_| old > 0).map(|r| ((r as f64 * 100.0) / old as f64 * n as f64 / 100.0) as u64);
+    Ok(Some(ExtResized { blocks: n, groups, ipg, inodes: groups * ipg, reserved_gdt_blocks, reserved_blocks }))
+}
+
 /// Every start and size the fit chooses is a whole one of these.
 const MIB: u64 = 1 << 20;
 /// What a shrinking filesystem must have free beyond the shrink itself.
@@ -676,7 +764,35 @@ impl One<'_> {
         match kind.as_str() {
             "ext2" | "ext3" | "ext4" | "f2fs" => {
                 let bs = u(c, "block_size").ok_or_else(|| format!("--fit-largest: the dump doesn't give the block size of the {kind} on {dev}"))?;
-                let blocks = want / bs;
+                let mut blocks = want / bs;
+                if kind != "f2fs" && u(c, "blocks") != Some(blocks) {
+                    // As resize2fs would leave it: the same blocks and inodes
+                    // a group, so the inodes go with the groups.  Kept, the
+                    // source's inode count may not fit fewer groups, and
+                    // mke2fs would cut blocks per group to make room.
+                    if let Some(e) = ext_resized(c, blocks).map_err(|why| format!("--fit-largest: the {kind} on {dev} {why}"))? {
+                        blocks = e.blocks;
+                        if let (Some(old), Some(free)) = (u(c, "inodes"), u(c, "free_inodes")) {
+                            let used = old.saturating_sub(free);
+                            if e.inodes != old && used + used * SPARE_PCT / 100 > e.inodes {
+                                return Err(format!(
+                                    "--fit-largest: the {kind} on {dev} has {used} inodes in use, and in {} groups it would have {}, less than those and {SPARE_PCT}% to spare",
+                                    e.groups, e.inodes
+                                ));
+                            }
+                            if e.inodes != old {
+                                self.notes.push(format!("{dev}: the {kind} keeps {} inodes a group: {} groups, {} inodes (was {old})", e.ipg, e.groups, e.inodes));
+                            }
+                        }
+                        self.put(c, at, "inodes", e.inodes);
+                        if let Some(r) = e.reserved_gdt_blocks {
+                            self.put(c, at, "reserved_gdt_blocks", r);
+                        }
+                        if let Some(r) = e.reserved_blocks {
+                            self.put(c, at, "reserved_blocks", r);
+                        }
+                    }
+                }
                 want = blocks * bs;
                 self.put(c, at, "blocks", blocks);
             }
@@ -1575,6 +1691,92 @@ mod tests {
         let (out, _) = fitted(&v, (total - 5 * G + 64 * M) * 512, 50);
         assert_eq!(blocks(&out), 4 * ag + 64 * MIB / 4096);
         assert_eq!(at(&out, &["storage", "disks", "0", "partitions", "0", "content", "ag_count"]), 5);
+    }
+
+    /// BackShot2's fail-005 ext4 (alpine324-uefi's vda3, drifted): 4 KiB
+    /// blocks, 32768 a group, 32096 inodes a group, 261 reserved GDT blocks.
+    fn ext4_full(blocks: u64, free: u64) -> String {
+        let groups = blocks.div_ceil(32768);
+        format!(
+            r#"{{"type": "ext4", "usage": "filesystem", "uuid": "0b0e2c6e-1111-4222-8333-444455556666", "label": null,
+                 "block_size": 4096, "blocks": {blocks}, "size_bytes": {}, "free_blocks": {free}, "reserved_blocks": 176921,
+                 "blocks_per_group": 32768, "first_data_block": 0, "inode_size": 256, "inodes_per_group": 32096,
+                 "inodes": {}, "free_inodes": {}, "reserved_gdt_blocks": 261, "flex_bg_size": 16, "descriptor_size": 64,
+                 "features": ["has_journal", "ext_attr", "resize_inode", "dir_index", "filetype", "extent", "64bit", "flex_bg",
+                              "sparse_super", "large_file", "huge_file", "dir_nlink", "extra_isize", "metadata_csum"]}}"#,
+            blocks * 4096,
+            groups * 32096,
+            groups * 32096 - 40000
+        )
+    }
+
+    #[test]
+    fn a_resized_ext_keeps_its_blocks_and_inodes_per_group() {
+        let c = crate::json::parse(&ext4_full(3538432, 2_000_000)).unwrap();
+        // fail-005's shrink: 108 groups to 105, and their inodes; the
+        // source's 3466368 inodes would be 33013 a group, more than an
+        // inode bitmap block's 32768.
+        let e = ext_resized(&c, 3424947).unwrap().unwrap();
+        assert_eq!((e.blocks, e.groups, e.ipg, e.inodes), (3424947, 105, 32096, 105 * 32096));
+        assert_eq!(e.reserved_gdt_blocks, Some(261));
+        assert_eq!(e.reserved_blocks, Some(171246));
+        // A last group of 100 blocks is dropped, one of its own overhead
+        // (2 bitmaps, 2006 inode-table blocks) and 50 kept.
+        assert_eq!(ext_resized(&c, 104 * 32768 + 100).unwrap().unwrap().blocks, 104 * 32768);
+        assert_eq!(ext_resized(&c, 104 * 32768 + 2058).unwrap().unwrap().groups, 105);
+        // Group 125 (5^3) holds a backup: the superblock, 2 descriptor
+        // blocks and the 261 reserved come on top.
+        let e = ext_resized(&c, 125 * 32768 + 2058).unwrap().unwrap();
+        assert_eq!((e.blocks, e.groups), (125 * 32768, 125));
+        assert_eq!(ext_resized(&c, 125 * 32768 + 2322).unwrap().unwrap().groups, 126);
+        // The reserved GDT blocks take up what the descriptors give back
+        // (2 blocks of 64 to 1), or give it (to 3), as resize2fs has them.
+        assert_eq!(ext_resized(&c, 64 * 32768).unwrap().unwrap().reserved_gdt_blocks, Some(262));
+        assert_eq!(ext_resized(&c, 129 * 32768).unwrap().unwrap().reserved_gdt_blocks, Some(260));
+        // Less than a group's own overhead is no filesystem.
+        assert!(ext_resized(&c, 1000).is_err());
+        // Without inodes per group in the dump, nothing to go by.
+        let bare = crate::json::parse(&ext4(3538432, None)).unwrap();
+        assert_eq!(ext_resized(&bare, 3424947), Ok(None));
+    }
+
+    #[test]
+    fn ext_backups_are_in_groups_0_1_and_powers_of_3_5_7() {
+        let sparse = ["sparse_super"];
+        let with: Vec<u64> = (0..130).filter(|&g| ext_has_super(g, &sparse)).collect();
+        assert_eq!(with, [0, 1, 3, 5, 7, 9, 25, 27, 49, 81, 125]);
+        assert!((0..10).all(|g| ext_has_super(g, &[])));
+    }
+
+    #[test]
+    fn a_shrunk_ext_gets_the_inodes_its_groups_have() {
+        // fail-005: the partition (and so the ext4) loses 464835584 bytes.
+        let blocks = 3538432;
+        let root = blocks * 8;
+        let total = 2048 + root + 34;
+        let v = D::gpt(total).part(1, 2048, root, &ext4_full(blocks, 2_000_000), "").mount("vda1", blocks * 4096, 6 * GIB).build();
+        let (out, f) = fitted(&v, (total - 464835584 / 512) * 512, 9);
+        let c = out.at(&["storage", "disks", "0", "partitions", "0", "content"]).unwrap();
+        let n = at(c, &["blocks"]);
+        let groups = n.div_ceil(32768);
+        assert!(groups < 108, "{groups} groups");
+        assert_eq!(at(c, &["inodes"]), groups * 32096);
+        let argv = crate::load::commands::mke2fs("/dev/sdb1", c).join(" ");
+        assert!(argv.contains(&format!("-N {} -g 32768 ", groups * 32096)), "{argv}");
+        let r = f.report(9).join("\n");
+        assert!(r.contains(&format!("vda1: the ext4 keeps 32096 inodes a group: {groups} groups, {} inodes (was 3466368)", groups * 32096)), "{r}");
+    }
+
+    #[test]
+    fn a_shrunk_ext_whose_inodes_in_use_dont_fit_is_refused() {
+        let blocks = 3538432;
+        let root = blocks * 8;
+        let total = 2048 + root + 34;
+        // 3.4 M inodes in use: the 105 groups' 3.37 M can't hold them.
+        let ext = ext4_full(blocks, 2_000_000).replace(r#""free_inodes": 3426368"#, r#""free_inodes": 60000"#);
+        let v = D::gpt(total).part(1, 2048, root, &ext, "").mount("vda1", blocks * 4096, 6 * GIB).build();
+        let e = refused(&v, (total - 464835584 / 512) * 512, 9);
+        assert!(e.contains("inodes in use"), "{e}");
     }
 
     #[test]

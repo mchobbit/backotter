@@ -1783,6 +1783,29 @@ pub(crate) const EXT_SETTABLE: [&str; 30] = [
     "dir_nlink", "extra_isize", "quota", "bigalloc", "metadata_csum", "project", "verity",
 ];
 
+/// The -E resize=BLOCKS that has mke2fs reserve exactly the content's
+/// reserved GDT blocks, worked out as mke2fs works them out from it
+/// (e2fsprogs misc/mke2fs.c parse_extended_opts): ceil(ceil(BLOCKS / bpg) /
+/// per block) descriptor blocks, less the ceil(ceil(blocks / bpg) / per
+/// block) the filesystem itself has, both counting groups from block 0, not
+/// from the first data block (1 with 1 KiB blocks).  None without
+/// resize_inode, and for 0 reserved: mke2fs takes a resize= that reserves
+/// none as no request, and refuses one that isn't past the size.
+pub(crate) fn resize_for(c: &Value) -> Option<u64> {
+    let has = |f: &str| c.get("features").and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x.as_str() == Some(f)));
+    if !has("resize_inode") {
+        return None;
+    }
+    let (r, bs, n, bpg) = (num(c, "reserved_gdt_blocks")?, num(c, "block_size")?, num(c, "blocks")?, num(c, "blocks_per_group")?);
+    let desc = num(c, "descriptor_size").filter(|&d| d >= 32).unwrap_or(32);
+    let gdpb = bs / desc;
+    if r == 0 || gdpb == 0 || bpg == 0 {
+        return None;
+    }
+    let d = n.div_ceil(bpg).div_ceil(gdpb);
+    Some((d + r) * gdpb * bpg)
+}
+
 pub fn mke2fs(dev: &str, c: &Value) -> Vec<String> {
     let ty = s(c, "type").unwrap_or("ext4".into());
     let feats: Vec<String> = c.get("features").and_then(Value::as_array).into_iter().flatten().filter_map(|f| f.as_str()).filter(|f| EXT_SETTABLE.contains(f)).map(str::to_string).collect();
@@ -1824,16 +1847,8 @@ pub fn mke2fs(dev: &str, c: &Value) -> Vec<String> {
     // The reserved GDT blocks (for online growing) as the source's: a
     // filesystem grown since it was made has fewer than mke2fs gives a new
     // one of its size.  mke2fs reserves enough for -E resize=BLOCKS.
-    let has = |f: &str| c.get("features").and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x.as_str() == Some(f)));
-    if let (true, Some(r), Some(bs), Some(n), Some(bpg)) = (has("resize_inode"), num(c, "reserved_gdt_blocks"), num(c, "block_size"), num(c, "blocks"), num(c, "blocks_per_group")) {
-        let desc = num(c, "descriptor_size").filter(|&d| d >= 32).unwrap_or(32);
-        let first = u64::from(bs == 1024);
-        let gdpb = bs / desc;
-        if gdpb > 0 && bpg > 0 {
-            let groups = (n - first).div_ceil(bpg);
-            let d = groups.div_ceil(gdpb);
-            ext.push(format!("resize={}", (d + r) * gdpb * bpg + first));
-        }
+    if let Some(r) = resize_for(c) {
+        ext.push(format!("resize={r}"));
     }
     if !ext.is_empty() {
         a.extend(["-E".into(), ext.join(",")]);
@@ -4932,6 +4947,39 @@ mod tests {
 
     fn text(cmds: &[Cmd]) -> String {
         cmds.iter().map(Cmd::shell).collect()
+    }
+
+    /// -E resize= gives the source's reserved GDT blocks to the block: each
+    /// (block size, blocks, blocks a group, 64bit, reserved) here was made
+    /// by mke2fs 1.47.2 with this resize= and read back (cinqcent,
+    /// 2026-11-17).  With 1 KiB blocks the old + first data block asked for
+    /// one more (BackShot2's fail-004: 127 made 128).
+    #[test]
+    fn mke2fs_resize_reserves_the_sources_gdt_blocks() {
+        let cases: [(u64, u64, u64, bool, u64, u64); 7] = [
+            (1024, 1048576, 8192, true, 127, 17694720),
+            (1024, 1048576, 8192, false, 127, 34340864),
+            (1024, 1048577, 8192, true, 100, 14286848),
+            (1024, 1056769, 8192, false, 37, 11010048),
+            (1024, 8193, 8192, false, 3, 1048576),
+            (4096, 3538432, 32768, true, 261, 551550976),
+            (2048, 500001, 16384, true, 50, 26738688),
+        ];
+        for (bs, n, bpg, b64, r, want) in cases {
+            let (feats, desc) = if b64 { (r#""resize_inode", "64bit""#, r#", "descriptor_size": 64"#) } else { (r#""resize_inode""#, "") };
+            let c = crate::json::parse(&format!(
+                r#"{{"type": "ext4", "block_size": {bs}, "blocks": {n}, "blocks_per_group": {bpg}, "reserved_gdt_blocks": {r}, "features": [{feats}]{desc}}}"#
+            ))
+            .unwrap();
+            assert_eq!(resize_for(&c), Some(want), "{bs} {n} {bpg} {b64} {r}");
+            assert!(mke2fs("/dev/x", &c).iter().any(|a| a.ends_with(&format!("resize={want}"))));
+        }
+        // None reserved, or no resize_inode: no resize= (mke2fs would take
+        // the one as no request, or refuse it).
+        let none = crate::json::parse(r#"{"block_size": 4096, "blocks": 32768, "blocks_per_group": 32768, "reserved_gdt_blocks": 0, "features": ["resize_inode"]}"#).unwrap();
+        assert_eq!(resize_for(&none), None);
+        let off = crate::json::parse(r#"{"block_size": 4096, "blocks": 32768, "blocks_per_group": 32768, "reserved_gdt_blocks": 7, "features": []}"#).unwrap();
+        assert_eq!(resize_for(&off), None);
     }
 
     #[test]

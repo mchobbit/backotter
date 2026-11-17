@@ -90,9 +90,17 @@ if [ "$(uname)" = Linux ] && [ -e /etc/gentoo-release ] && has emerge; then
     # (test2/tests/test_vm_update.py checks that the two agree).  Any other
     # "[ebuild" line in the plan stops the update, by name, before anything
     # is built.  make.conf's getbinpkg makes the plan's -puDN the -uDNg after.
-    SOURCE_OK="sys-fs/lvm2 sys-boot/grub sys-kernel/dracut sys-kernel/installkernel sys-kernel/gentoo-kernel-bin virtual/dist-kernel net-dns/avahi app-doc/info-manual sys-apps/systemd net-libs/nghttp2 net-misc/rsync"
+    SOURCE_OK="sys-fs/lvm2 sys-boot/grub sys-kernel/dracut sys-kernel/installkernel sys-kernel/gentoo-kernel-bin virtual/dist-kernel net-dns/avahi app-doc/info-manual sys-apps/systemd net-libs/nghttp2 net-misc/rsync dev-python/charset-normalizer"
     o="--color=n --nospinner"
-    emerge --sync -q $o || exit 1
+    # Again, up to 5 times a minute apart, when the sync fails: an rsync
+    # mirror caught mid-update fails the tree's Manifest check
+    # ("Manifest mismatch for metadata/Manifest.gz", gentoo-systemd
+    # 2026-11-17), and the next sync puts it right.
+    tries=0
+    until emerge --sync -q $o; do
+        tries=$((tries + 1)); [ $tries -lt 5 ] || exit 1
+        say "emerge --sync failed: again in 60 s ($tries of 4)"; sleep 60
+    done
     plan=$(emerge -puDN $o @world) || { printf '%s\n' "$plan"; say "emerge -puDN @world failed"; exit 1; }
     printf '%s\n' "$plan"
     # CATEGORY/NAME of each "[ebuild" line: the version is the last
@@ -510,6 +518,24 @@ Linux)
         until $apt -o APT::Update::Error-Mode=any update; do
             tries=$((tries + 1)); [ $tries -lt 60 ] || exit 1; sleep 15
         done
+        # fetched CMD...: an apt-get that downloads, run again while it fails
+        # at a download, up to 10 times 30 s apart (Launchpad's PPAs answered
+        # every few requests with a 503 for over an hour on 2026-11-17, and
+        # apt's own three tries came too close together).  apt stops before
+        # dpkg runs when it can't fetch everything, and what it did fetch
+        # stays in its cache for the next try.  A last failure's output ends
+        # the log, for GuestTest2's flake rules to read.
+        fetched() {
+            n=0
+            while :; do
+                { "$@" 2>&1; echo $? >/run/bko-fetch.rc; } | tee /run/bko-fetch.log
+                r=$(cat /run/bko-fetch.rc)
+                [ "$r" -ne 0 ] && [ $n -lt 10 ] && grep -q '^E: Failed to fetch ' /run/bko-fetch.log || break
+                n=$((n + 1)); say "a download failed: apt-get again in 30 s ($n of 10)"; sleep 30
+            done
+            rm -f /run/bko-fetch.rc /run/bko-fetch.log
+            return "$r"
+        }
         # In batches, the downloads deleted after each: a desktop guest's
         # 16 GB disk hasn't room for all of a big update's packages at once
         # beside their unpacked files.  dist-upgrade does the rest (packages
@@ -569,10 +595,10 @@ EOF
         while [ $# -gt 0 ]; do
             batch=
             while [ $# -gt 0 ] && [ $(echo $batch | wc -w) -lt 40 ]; do batch="$batch $1"; shift; done
-            $apt install --only-upgrade $batch && $apt clean || exit 1
+            fetched $apt install --only-upgrade $batch && $apt clean || exit 1
             reclaim
         done
-        $apt dist-upgrade && $apt autoremove --purge && $apt clean || exit 1
+        fetched $apt dist-upgrade && $apt autoremove --purge && $apt clean || exit 1
         apt=$apt0
         if [ -n "$bkobin" ]; then
             rm -rf "$bkobin" || exit 1
@@ -681,7 +707,26 @@ print(d[0]["checksum"] if d else "")' "$1"
             pacman -Rdd --noconfirm plasma-x11-session || exit 1
         fi
         keyrings=$(pacman -Qq archlinux-keyring artix-keyring biglinux-keyring cachyos-keyring chaotic-keyring endeavouros-keyring manjaro-keyring omarchy-keyring 2>/dev/null)
-        pacman -Sy --noconfirm --needed $keyrings && pacman -Su --noconfirm || exit 1
+        # fetched CMD...: a pacman that downloads, run again while it fails
+        # at a download, up to 10 times 30 s apart (a mirror that stalled
+        # on one file: "Operation too slow", endeavouros-grub 2026-11-17).
+        # pacman upgrades nothing unless it has every package, and keeps
+        # what it fetched in its cache for the next try.  A last failure's
+        # output ends the log, for GuestTest2's flake rules to read.
+        fetched() {
+            n=0
+            while :; do
+                { "$@" 2>&1; echo $? >/run/bko-fetch.rc; } | tee /run/bko-fetch.log
+                r=$(cat /run/bko-fetch.rc)
+                [ "$r" -ne 0 ] && [ $n -lt 10 ] &&
+                    grep -qE 'failed to retrieve some files|failed retrieving file|failed to synchronize all databases' /run/bko-fetch.log ||
+                    break
+                n=$((n + 1)); say "a download failed: pacman again in 30 s ($n of 10)"; sleep 30
+            done
+            rm -f /run/bko-fetch.rc /run/bko-fetch.log
+            return "$r"
+        }
+        fetched pacman -Sy --noconfirm --needed $keyrings && fetched pacman -Su --noconfirm || exit 1
         yes | pacman -Scc >/dev/null
     # t2-section: Linux.tukit
     # A transactional system (MicroOS: microos; docs/design/aeon.md): / is a

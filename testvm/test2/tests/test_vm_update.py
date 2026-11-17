@@ -244,6 +244,54 @@ class TestInGuest(unittest.TestCase):
         r = subprocess.run(["sh", "-c", script], input=plan, capture_output=True, text=True)
         self.assertEqual(r.stdout.split(), ["dev-libs/font-adobe-100dpi", "dev-lang/rust"], r.stderr)
 
+    def run_fetched(self, section, fails, error):
+        """SECTION's fetched() around a command that fails FAILS times printing ERROR, then
+        succeeds: (exit status, how many times it ran, the output).  /run is a scratch folder
+        and sleep does nothing."""
+        m = re.search(r"^( *)fetched\(\) \{\n.*?^\1\}\n", self.sections()[section], re.M | re.S)
+        self.assertIsNotNone(m, section)
+        with tempfile.TemporaryDirectory() as d:
+            fn = textwrap.dedent(m[0]).replace("/run/", f"{d}/")
+            script = textwrap.dedent(f"""\
+                say() {{ echo "in-guest: $*"; }}
+                sleep() {{ :; }}
+                cmd() {{
+                    c=$(cat {d}/count 2>/dev/null || echo 0); echo $((c + 1)) >{d}/count
+                    if [ "$c" -lt {fails} ]; then echo "$1"; return 100; fi
+                    echo done
+                }}
+                """) + fn + 'fetched cmd "$1"; echo "rc=$?"\n'
+            r = subprocess.run(["sh", "-c", script, "sh", error], capture_output=True, text=True)
+            count = int(Path(d, "count").read_text())
+            self.assertEqual(sorted(os.listdir(d)), ["count"], "fetched() leaves its files behind")
+        return int(re.search(r"rc=(\d+)", r.stdout)[1]), count, r.stdout
+
+    def test_apt_and_pacman_downloads_are_tried_again(self):
+        """A download that failed (Launchpad's 503s; a pacman mirror's stall, 2026-11-17) is
+        tried again, 10 more times at most; any other failure stops at once, its status kept."""
+        for section, error in (("Linux.apt", "E: Failed to fetch https://x/y.deb  503  Service Unavailable"),
+                               ("Linux.pacman", "error: failed to commit transaction (failed to retrieve some files)"),
+                               ("Linux.pacman", "error: failed retrieving file 'x.pkg.tar.zst.sig' from m : Operation too slow")):
+            with self.subTest(section=section, error=error):
+                rc, n, out = self.run_fetched(section, 2, error)
+                self.assertEqual((rc, n), (0, 3), out)
+                self.assertIn("in-guest: a download failed", out)
+                rc, n, out = self.run_fetched(section, 99, error)
+                self.assertEqual((rc, n), (100, 11), out)
+                self.assertTrue(out.rstrip().splitlines()[-2].endswith(error.split()[-1]), out)
+                rc, n, out = self.run_fetched(section, 99, "E: Sub-process /usr/bin/dpkg returned an error code (1)")
+                self.assertEqual((rc, n), (100, 1), out)
+        apt = self.sections()["Linux.apt"]
+        self.assertIn("fetched $apt install --only-upgrade $batch", apt)
+        self.assertIn("fetched $apt dist-upgrade", apt)
+        self.assertIn("fetched pacman -Sy --noconfirm --needed $keyrings && fetched pacman -Su --noconfirm",
+                      self.sections()["Linux.pacman"])
+
+    def test_emerge_sync_is_tried_again(self):
+        sec = self.sections()["Linux.portage"]
+        self.assertIn("until emerge --sync -q $o; do", sec)
+        self.assertNotIn("emerge --sync -q $o || exit 1", sec)
+
     def test_linux_common_holds_no_package_manager(self):
         common = self.sections()["Linux.common"]
         for word in ("apt-get", "dnf", "pacman", "zypper", "xbps", "moss", "emerge"):

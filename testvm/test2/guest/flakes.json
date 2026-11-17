@@ -3,7 +3,7 @@
   "guest": "*",
   "pattern": "\\bE: Failed to fetch ",
   "why": "a mirror that didn't answer apt: not the guest's fault, and no check of the guest ran into it",
-  "ref": "apt-get's message when a repository can't be fetched; in-guest.sh retries apt update only, not the installs"
+  "ref": "apt-get's message when a repository can't be fetched; in-guest.sh retries apt update, and an install's downloads 10 times 30 s apart: this tail is the last try's"
  },
  {
   "guest": "*",

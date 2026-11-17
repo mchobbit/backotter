@@ -52,8 +52,10 @@
 # USE=cryptsetup; and net-libs/nghttp2, which curl's USE=http2 pulled in
 # on 2026-11-12 and the binhost has only with USE=-systemd (gentoo-systemd's
 # first vm-update --try stopped on it); and net-misc/rsync, whose 3.5.2-r1
-# the binhost lagged behind the tree on, the same day (its second).
-SOURCE_OK="sys-fs/lvm2 sys-boot/grub sys-kernel/dracut sys-kernel/installkernel sys-kernel/gentoo-kernel-bin virtual/dist-kernel net-dns/avahi app-doc/info-manual sys-apps/systemd net-libs/nghttp2 net-misc/rsync"
+# the binhost lagged behind the tree on, the same day (its second); and
+# dev-python/charset-normalizer, whose 3.5.2 the binhost has only with
+# USE=native-extensions, off by default (GuestTest2's gentoo try, 2026-11-17).
+SOURCE_OK="sys-fs/lvm2 sys-boot/grub sys-kernel/dracut sys-kernel/installkernel sys-kernel/gentoo-kernel-bin virtual/dist-kernel net-dns/avahi app-doc/info-manual sys-apps/systemd net-libs/nghttp2 net-misc/rsync dev-python/charset-normalizer"
 GENTOO_INIT='@GENTOO_INIT@'            # openrc (gentoo) or systemd (gentoo-systemd)
 # openrc: the Thinkpad's world set, less its firmware and microcode (a VM
 # has neither) and sudo; openssh comes with the stage3.  systemd: the boot

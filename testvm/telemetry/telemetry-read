@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""Read the farm's telemetry on Bigfoot, from the Mac (testvm/telemetry/README.md).
+
+  telemetry-read                       each host: batches, newest, how long silent
+  telemetry-read HOST [--last N]       HOST's last N batches (default 96, a day),
+                                       gaps over 20 min flagged: a possible freeze
+  telemetry-read HOST --at "2026-11-16 22:13" [--before MIN] [--after MIN]
+                                       fetch the batches around that time (local
+                                       time; --utc for UTC) into
+                                       ~/backotter-work/telemetry/HOST/at-STAMP/
+                                       and show the journal lines around it
+  telemetry-read HOST --grep REGEX [--last N] [--file journal|snap|meta]
+                                       search the last N batches on Bigfoot
+                                       (Python regex), print the matching lines
+
+A batch's name is its UTC start time on the host; its journal covers the time
+since the batch before.  So a freeze at T shows as no batch after T, and the
+first batch after the gap (after the reboot) holds what reached the disk
+before it: --at always fetches that one too.
+
+Reads over ssh as m@bigfoot.local (m is in group bkotel; sudo -n when that
+isn't in effect yet).  BKO_TEL_BIGFOOT (default m@bigfoot.local, "local" for
+this machine) and BKO_TEL_STORE (default /var/log/bko-telemetry) are for tests.
+"""
+import argparse
+import datetime as dt
+import io
+import os
+import re
+import shlex
+import subprocess
+import sys
+import tarfile
+
+BIGFOOT = os.environ.get("BKO_TEL_BIGFOOT", "m@bigfoot.local")
+STORE = os.environ.get("BKO_TEL_STORE", "/var/log/bko-telemetry")
+NAME_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z\.tar\.gz$")
+HOST_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+MEMBERS = ("journal.txt", "snap.txt", "meta.txt")
+MEMBER_CAP = 256 << 20  # bytes read from one member at most (the receiver's own limit)
+UTC = dt.timezone.utc
+
+# Run on Bigfoot: list a host's batches, or every host's.
+LIST_PY = r"""
+import os, re, sys
+store, host = sys.argv[1], sys.argv[2]
+pat = re.compile(r"^[0-9]{8}T[0-9]{6}Z\.tar\.gz$")
+def batches(d):
+    out = []
+    for e in os.scandir(d):
+        if pat.match(e.name) and e.is_file(follow_symlinks=False):
+            st = e.stat(follow_symlinks=False)
+            out.append((e.name, st.st_mtime, st.st_size))
+    return sorted(out)
+if host == "-":
+    for e in sorted(os.scandir(store), key=lambda e: e.name):
+        if e.name.startswith(".") or not e.is_dir(follow_symlinks=False):
+            continue
+        b = batches(e.path)
+        if b:
+            print(e.name, len(b), sum(x[2] for x in b), b[-1][0], "%.0f" % max(x[1] for x in b))
+        else:
+            print(e.name, 0, 0, "-", 0)
+else:
+    for n, m, s in batches(os.path.join(store, host)):
+        print(n, "%.0f" % m, s)
+"""
+
+# Run on Bigfoot: grep one member of the last N batches.  Reads line by
+# line (64 KiB at most per line, 256 MiB per member), never a whole member.
+GREP_PY = r"""
+import os, re, sys, tarfile
+d, rx, n, member, cap = sys.argv[1], re.compile(sys.argv[2]), int(sys.argv[3]), sys.argv[4], int(sys.argv[5])
+pat = re.compile(r"^[0-9]{8}T[0-9]{6}Z\.tar\.gz$")
+names = sorted(x for x in os.listdir(d) if pat.match(x))[-n:]
+hits = 0
+for name in names:
+    try:
+        with tarfile.open(os.path.join(d, name), "r:gz") as t:
+            for i, m in enumerate(t):
+                if i >= 10:
+                    break
+                if not (m.isfile() and m.name.lstrip("./") == member):
+                    continue
+                f, left = t.extractfile(m), 256 << 20
+                while left > 0:
+                    raw = f.readline(65536)
+                    if not raw:
+                        break
+                    left -= len(raw)
+                    line = raw.decode("utf-8", "replace").rstrip("\n")
+                    if rx.search(line):
+                        print(name[:16], line)
+                        hits += 1
+                        if hits >= cap:
+                            print("... stopped at %d lines (--max)" % cap)
+                            sys.exit(0)
+    except (OSError, EOFError, tarfile.TarError) as e:
+        print(name[:16], "UNREADABLE:", e)
+"""
+
+
+def remote(args, binary=False):
+    """Run ARGS on Bigfoot (as m; sudo -n if m can't read the store yet)."""
+    for prefix in ([], ["sudo", "-n"]):
+        cmd = prefix + args
+        if BIGFOOT == "local":
+            full = cmd
+        else:
+            full = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", BIGFOOT, shlex.join(cmd)]
+        p = subprocess.run(full, capture_output=True)
+        if p.returncode == 0:
+            return p.stdout if binary else p.stdout.decode("utf-8", "replace")
+        err = p.stderr.decode("utf-8", "replace")
+        if "Permission denied" not in err or prefix:
+            sys.exit("telemetry-read: %s failed: %s" % (" ".join(args[:2]), err.strip()[:500]))
+    return b"" if binary else ""
+
+
+def stamp_time(name):
+    return dt.datetime.strptime(name[:16], "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+
+
+def loc(t):
+    return t.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+def span(seconds):
+    seconds = int(abs(seconds))
+    d, rem = divmod(seconds, 86400)
+    h, rem = divmod(rem, 3600)
+    m, s = divmod(rem, 60)
+    if d:
+        return "%dd%02dh%02dm" % (d, h, m)
+    if h:
+        return "%dh%02dm" % (h, m)
+    return "%dm%02ds" % (m, s)
+
+
+def listing(host):
+    rows = []
+    for line in remote(["python3", "-I", "-c", LIST_PY, STORE, host]).splitlines():
+        n, m, s = line.split()
+        try:
+            t = stamp_time(n)
+        except ValueError:
+            print("telemetry-read: skipped %s: not a real time" % n, file=sys.stderr)
+            continue
+        rows.append((n, t, dt.datetime.fromtimestamp(float(m), UTC), int(s)))
+    return rows
+
+
+def copy_capped(src, dst, cap=MEMBER_CAP):
+    """Copy at most CAP bytes; True when the source had more."""
+    left = cap
+    while left > 0:
+        b = src.read(min(1 << 20, left))
+        if not b:
+            return False
+        dst.write(b)
+        left -= len(b)
+    return bool(src.read(1))
+
+
+def all_hosts(gap):
+    now = dt.datetime.now(UTC)
+    out = remote(["python3", "-I", "-c", LIST_PY, STORE, "-"])
+    if not out.strip():
+        print("no hosts in %s on Bigfoot yet" % STORE)
+        return
+    print("%-10s %7s %9s  %-17s %s" % ("host", "batches", "MiB", "newest", "last arrival"))
+    for line in out.splitlines():
+        h, count, size, newest, mtime = line.split()
+        if newest == "-":
+            print("%-10s %7s %9s  %-17s %s" % (h, 0, "0", "-", "-"))
+            continue
+        arr = dt.datetime.fromtimestamp(float(mtime), UTC)
+        age = (now - arr).total_seconds()
+        flag = "   SILENT: down or frozen?" if age > gap * 60 else ""
+        print("%-10s %7s %9.1f  %-17s %s (%s ago)%s" % (
+            h, count, int(size) / 1048576, newest[:16], loc(arr), span(age), flag))
+
+
+def show_list(host, last, gap):
+    rows = listing(host)
+    if not rows:
+        print("%s: no batches on Bigfoot" % host)
+        return
+    shown = rows[-last:]
+    prev = rows[-len(shown) - 1][1] if len(rows) > len(shown) else None
+    for n, t, arr, size in shown:
+        if prev is not None and (t - prev).total_seconds() > gap * 60:
+            print("  ---- gap of %s with no batch made: host down, frozen or timer stopped? ----" % span((t - prev).total_seconds()))
+        late = (arr - t).total_seconds()
+        note = "  (arrived %s late: spooled)" % span(late) if late > gap * 60 else ""
+        print("  %s  %s  %6.0f KB%s" % (n[:16], loc(t), size / 1000, note))
+        prev = t
+    now = dt.datetime.now(UTC)
+    newest_arr = max(r[2] for r in rows)
+    age = (now - newest_arr).total_seconds()
+    print("%s: %d batches stored; last arrival %s (%s ago)%s" % (
+        host, len(rows), loc(newest_arr), span(age),
+        ": SILENT, down or frozen?" if age > gap * 60 else ""))
+
+
+def parse_at(s, utc):
+    s = s.strip()
+    tz = None
+    if s.endswith("Z"):
+        s, tz = s[:-1], UTC
+    try:
+        t = dt.datetime.fromisoformat(s.replace(" ", "T", 1) if "T" not in s else s)
+    except ValueError:
+        sys.exit("telemetry-read: can't read the time %r (want YYYY-MM-DD HH:MM[:SS])" % s)
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=tz or (UTC if utc else None))
+        if t.tzinfo is None:
+            t = t.astimezone()  # naive: the Mac's local time
+    return t.astimezone(UTC)
+
+
+def line_time(line):
+    tok = line.split(" ", 1)[0]
+    if len(tok) < 19 or tok[4] != "-" or tok[10] != "T":
+        return None
+    try:
+        return dt.datetime.fromisoformat(tok).astimezone(UTC)
+    except ValueError:
+        return None
+
+
+def fetch_at(host, at, before, after, out_root):
+    rows = listing(host)
+    lo = at - dt.timedelta(minutes=before)
+    hi = at + dt.timedelta(minutes=after)
+    pick = [r[0] for r in rows if lo <= r[1] <= hi]
+    nxt = [r[0] for r in rows if r[1] >= at]
+    if nxt and nxt[0] not in pick:
+        pick.append(nxt[0])  # the first batch after T, however late
+    pick.sort()
+    if not pick:
+        sys.exit("telemetry-read: %s has no batches from %s on" % (host, loc(lo)))
+    data = remote(["tar", "-C", os.path.join(STORE, host), "-cf", "-"] + pick, binary=True)
+    outdir = os.path.join(out_root, host, "at-" + at.strftime("%Y%m%dT%H%M%SZ"))
+    os.makedirs(outdir, exist_ok=True)
+    notes = []
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as outer:
+        for om in outer.getmembers():
+            name = os.path.basename(om.name)
+            if not (om.isfile() and NAME_RE.match(name)):
+                continue
+            bdir = os.path.join(outdir, name[:16])
+            os.makedirs(bdir, exist_ok=True)
+            try:
+                with tarfile.open(fileobj=outer.extractfile(om), mode="r:gz") as inner:
+                    for i, im in enumerate(inner):
+                        if i >= 10:
+                            break
+                        m = im.name.lstrip("./")
+                        if not (im.isfile() and m in MEMBERS):
+                            continue  # only the three plain names
+                        with open(os.path.join(bdir, m), "wb") as f:
+                            if copy_capped(inner.extractfile(im), f):
+                                notes.append("%s: %s cut at %d MiB" % (name[:16], m, MEMBER_CAP >> 20))
+            except (OSError, EOFError, tarfile.TarError) as e:
+                notes.append("%s: unreadable: %s" % (name[:16], e))
+    batches = []
+    for d in sorted(os.listdir(outdir)):
+        if re.match(r"^[0-9]{8}T[0-9]{6}Z$", d):
+            try:
+                stamp_time(d)
+                batches.append(d)
+            except ValueError:
+                pass
+    # one journal, in batch order; the lines just before T, and a few after,
+    # picked on the way (never the whole journal in memory)
+    last_t, before_l, after_l = None, [], []
+    with open(os.path.join(outdir, "journal.txt"), "w") as j:
+        for b in batches:
+            j.write("### batch %s (%s)\n" % (b, loc(stamp_time(b))))
+            p = os.path.join(outdir, b, "journal.txt")
+            if os.path.exists(p):
+                with open(p, "rb") as f:
+                    while True:
+                        raw = f.readline(65536)
+                        if not raw:
+                            break
+                        line = raw.decode("utf-8", "replace")
+                        j.write(line)
+                        line = line.rstrip("\n")
+                        t = line_time(line)
+                        last_t = t or last_t
+                        if last_t is None:
+                            continue
+                        if last_t <= at:
+                            before_l.append(line)
+                            if len(before_l) > 50:
+                                before_l = before_l[-25:]
+                        elif len(after_l) < 10:
+                            after_l.append(line)
+            mp = os.path.join(outdir, b, "meta.txt")
+            if os.path.exists(mp):
+                with open(mp, encoding="utf-8", errors="replace") as f:
+                    notes += ["%s: %s" % (b, x.strip()[5:]) for x in f if x.startswith("note ")]
+    print("%s around %s: %d batches into %s" % (host, loc(at), len(batches), outdir))
+    for b in batches:
+        print("  %s  %s" % (b, loc(stamp_time(b))))
+    for n in notes:
+        print("  note %s" % n)
+    before_l = before_l[-25:]
+    print("--- journal, the last %d lines up to %s ---" % (len(before_l), loc(at)))
+    print("\n".join(before_l))
+    print("--- the next %d lines ---" % len(after_l))
+    print("\n".join(after_l))
+    print("--- whole journal: %s; each batch's snap.txt beside it" % os.path.join(outdir, "journal.txt"))
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("host", nargs="?")
+    ap.add_argument("--last", type=int, default=96, help="batches to list or grep (default 96, a day)")
+    ap.add_argument("--gap", type=int, default=20, help="minutes between batches that count as a gap (default 20)")
+    ap.add_argument("--at", help="fetch the batches around this time")
+    ap.add_argument("--before", type=int, default=30, help="--at: minutes before (default 30)")
+    ap.add_argument("--after", type=int, default=30, help="--at: minutes after (default 30)")
+    ap.add_argument("--utc", action="store_true", help="--at is UTC, not local time")
+    ap.add_argument("--out", default=os.path.expanduser("~/backotter-work/telemetry"),
+                    help="--at: where to put them (default ~/backotter-work/telemetry)")
+    ap.add_argument("--grep", help="search the last N batches for this regex")
+    ap.add_argument("--file", choices=("journal", "snap", "meta"), default="journal", help="--grep: which file")
+    ap.add_argument("--max", type=int, default=2000, help="--grep: stop after this many lines")
+    a = ap.parse_args()
+    if a.host is None:
+        if a.at or a.grep:
+            ap.error("--at and --grep need a HOST")
+        all_hosts(a.gap)
+        return
+    if not HOST_RE.match(a.host):
+        ap.error("bad host name %r" % a.host)
+    if a.at and a.grep:
+        ap.error("--at or --grep, not both")
+    if a.last < 1:
+        ap.error("--last must be 1 or more")
+    if a.at:
+        fetch_at(a.host, parse_at(a.at, a.utc), a.before, a.after, a.out)
+    elif a.grep:
+        try:
+            re.compile(a.grep)
+        except re.error as e:
+            ap.error("bad regex: %s" % e)
+        sys.stdout.write(remote(["python3", "-I", "-c", GREP_PY, os.path.join(STORE, a.host),
+                                 a.grep, str(a.last), a.file + ".txt", str(a.max)]))
+    else:
+        show_list(a.host, a.last, a.gap)
+
+
+if __name__ == "__main__":
+    main()

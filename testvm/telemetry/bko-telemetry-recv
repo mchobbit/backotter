@@ -1,0 +1,174 @@
+#!/bin/bash
+# Bigfoot's receiver for the farm's telemetry (testvm/telemetry/README.md).
+# Runs as bkotel, only as the forced command of a farm host's key:
+#
+#   restrict,command="/usr/local/bin/bko-telemetry-recv HOST" ssh-ed25519 KEY bko-telemetry@HOST
+#
+# HOST comes from that line, never from the client.  The client names one
+# file (SSH_ORIGINAL_COMMAND) and sends it on stdin:
+#
+#   YYYYMMDDTHHMMSSZ.tar.gz   stored as STORE/HOST/NAME.  NAME must be a real
+#                             UTC time, at most a day ahead of Bigfoot's
+#                             clock.  64 MiB at most, unpacking to 256 MiB at
+#                             most: a gzip'd tar of at most three plain files
+#                             named journal.txt, snap.txt, meta.txt
+#   ping                      answers "ok HOST", stores nothing
+#
+# Anything else is refused.  It never lists, reads back or runs anything.
+# One upload per host at a time (a lock), and the read gives up after 5 min.
+# Exit: 0 stored, 2 refused for good (the sender sets the file aside),
+# 3 refused for now (busy, no room, write failed: the sender retries).
+#
+# Room: each host may keep STORE_CAP / max(4, number of hosts) (2 GiB with
+# four hosts); over that, its own oldest batches (by arrival time) go first,
+# so one host can never push out another's.  Hourly: batches older than 30
+# days go, and every host is brought under its share.  Nothing is taken
+# that would leave Bigfoot's /var under 2 GiB free.
+# Installed as /usr/local/bin/bko-telemetry-recv by telemetry-setup.sh.
+set -u
+export LC_ALL=C
+umask 027
+
+# BKO_TEL_* are for local tests only: under sshd they are ignored, whatever
+# the server's AcceptEnv lets a client send.
+if [ -n "${SSH_CONNECTION:-}" ]; then
+    unset BKO_TEL_STORE BKO_TEL_MAX_BYTES BKO_TEL_MAX_UNPACKED BKO_TEL_STORE_CAP_KIB \
+        BKO_TEL_KEEP_DAYS BKO_TEL_MIN_FREE_KIB BKO_TEL_READ_SECS BKO_TEL_TEST_PATH
+fi
+PATH=${BKO_TEL_TEST_PATH:+$BKO_TEL_TEST_PATH:}/usr/sbin:/usr/bin:/sbin:/bin
+store=${BKO_TEL_STORE:-/var/log/bko-telemetry}
+max=${BKO_TEL_MAX_BYTES:-67108864}            # 64 MiB per file
+unpacked=${BKO_TEL_MAX_UNPACKED:-268435456}   # 256 MiB once unpacked
+cap_kib=${BKO_TEL_STORE_CAP_KIB:-8388608}     # 8 GiB for the whole store
+keep_days=${BKO_TEL_KEEP_DAYS:-30}
+min_free_kib=${BKO_TEL_MIN_FREE_KIB:-2097152} # keep 2 GiB free on Bigfoot's /var
+read_secs=${BKO_TEL_READ_SECS:-300}
+host=${1:-}
+req=${SSH_ORIGINAL_COMMAND:-}
+pat='^[0-9]{8}T[0-9]{6}Z\.tar\.gz$'
+
+say() { logger -t bko-telemetry-recv -- "$host: $*" 2>/dev/null || true; }
+refuse() {  # CODE MESSAGE
+    local code=$1; shift
+    echo "bko-telemetry-recv: refused: $*" >&2
+    say "refused ${req:0:80}: $*"
+    exit "$code"
+}
+kib_of() { du -sk "$1" 2>/dev/null | awk '{print $1}'; }
+
+# a host's share of the store: cap / max(4, host folders)
+quota_kib() {
+    local n
+    n=$(find "$store" -mindepth 1 -maxdepth 1 -type d ! -name '.*' 2>/dev/null | wc -l)
+    [ "$n" -ge 4 ] || n=4
+    echo $((cap_kib / n))
+}
+
+# prune_host DIR KIB: DIR's batches, oldest arrival (mtime) first, until
+# DIR is under KIB.  Only ever one host's own folder.
+prune_host() {
+    local d=$1 q=$2 used
+    used=$(kib_of "$d")
+    [ -n "$used" ] && [ "$used" -gt "$q" ] || return 0
+    # ls -tr: oldest mtime first; the names are checked, so plain words
+    ls -1tr -- "$d" 2>/dev/null | grep -E "$pat" | {
+        while read -r f; do
+            [ "$used" -le "$q" ] && break
+            s=$(du -k "$d/$f" 2>/dev/null | awk '{print $1}')
+            rm -f -- "$d/$f" && used=$((used - ${s:-0}))
+        done
+    }
+    say "${d##*/} was over its $q KiB; its oldest batches removed"
+}
+
+prune() {  # hourly at most: old batches, stale partial uploads, each host's share
+    local stamp=$store/.pruned lock=$store/.prune.lock q d
+    if [ -e "$stamp" ] && [ -n "$(find "$stamp" -mmin -60 2>/dev/null)" ]; then
+        return 0
+    fi
+    if ! mkdir "$lock" 2>/dev/null; then
+        # another receiver is pruning; a lock left by a killed one goes after 2 h
+        [ -n "$(find "$lock" -maxdepth 0 -mmin +120 2>/dev/null)" ] && rmdir "$lock" 2>/dev/null
+        return 0
+    fi
+    touch "$stamp"
+    find "$store" -mindepth 2 -maxdepth 2 -type f -name '*.tar.gz' -mtime +"$keep_days" \
+        -exec rm -f {} + 2>/dev/null
+    find "$store" -mindepth 3 -maxdepth 3 -path '*/.incoming/*' -type f -mmin +1440 \
+        -exec rm -f {} + 2>/dev/null
+    q=$(quota_kib)
+    for d in "$store"/*/; do
+        d=${d%/}
+        [ -d "$d" ] || continue
+        prune_host "$d" "$q"
+    done
+    rmdir "$lock" 2>/dev/null
+    return 0
+}
+
+# stamp_epoch STAMP: seconds since 1970 of YYYYMMDDTHHMMSSZ, or fail when it
+# isn't a real time (GNU date; BSD date for local tests)
+stamp_epoch() {
+    local s=$1 e back
+    e=$(date -u -d "${s:0:4}-${s:4:2}-${s:6:2} ${s:9:2}:${s:11:2}:${s:13:2}" +%s 2>/dev/null) ||
+        e=$(date -u -j -f %Y%m%dT%H%M%SZ "$s" +%s 2>/dev/null) || return 1
+    back=$(date -u -d "@$e" +%Y%m%dT%H%M%SZ 2>/dev/null || date -u -r "$e" +%Y%m%dT%H%M%SZ 2>/dev/null)
+    [ "$back" = "$s" ] || return 1
+    echo "$e"
+}
+
+[[ $host =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || refuse 2 "bad host name in the key's command"
+[ -n "$req" ] || refuse 2 "no file name given (this account only takes uploads)"
+if [ "$req" = ping ]; then
+    echo "ok $host"
+    exit 0
+fi
+[[ $req =~ $pat ]] || refuse 2 "bad request (want YYYYMMDDTHHMMSSZ.tar.gz or ping)"
+when=$(stamp_epoch "${req%.tar.gz}") || refuse 2 "not a real time: ${req%.tar.gz}"
+[ "$when" -le $(($(date -u +%s) + 86400)) ] || refuse 2 "more than a day ahead of Bigfoot's clock"
+
+dir=$store/$host
+mkdir -p "$dir/.incoming" || refuse 3 "cannot make $dir"
+# one upload per host at a time (the sender pushes one by one anyway)
+exec 8>"$dir/.lock" || refuse 3 "cannot open $dir/.lock"
+flock -n 8 || refuse 3 "another upload from $host is still running"
+
+# room: this host's own share first, then Bigfoot's free space with this
+# file counted in, so the floor holds even for the upload in flight
+max_kib=$((max / 1024 + 1))
+q=$(quota_kib)
+used=$(kib_of "$dir")
+[ "${used:-0}" -le $((q - max_kib)) ] || prune_host "$dir" $((q - max_kib))
+free=$(df -Pk "$store" 2>/dev/null | awk 'NR==2 {print $4}')
+if [ -n "$free" ] && [ $((free - max_kib)) -lt "$min_free_kib" ]; then
+    prune
+    refuse 3 "Bigfoot's store is nearly full (${free} KiB free)"
+fi
+
+tmp=$dir/.incoming/$req.$$
+trap 'rm -f "$tmp"' EXIT
+timeout -k 5 "$read_secs" head -c $((max + 1)) >"$tmp"
+rc=$?
+[ "$rc" = 124 ] && refuse 3 "upload not done in $read_secs s"
+[ "$rc" = 0 ] || refuse 3 "write failed"
+size=$(wc -c <"$tmp" | tr -d ' ')
+[ "$size" -gt "$max" ] && refuse 2 "file over $max bytes"
+[ "$size" -gt 0 ] || refuse 2 "empty file"
+# a gzip bomb stops here: count at most unpacked+1 bytes, under a time limit
+n=$(timeout -k 5 120 gzip -dc <"$tmp" 2>/dev/null | head -c $((unpacked + 1)) | wc -c | tr -d ' ')
+[ "${n:-0}" -le "$unpacked" ] || refuse 2 "unpacks to over $unpacked bytes"
+timeout -k 5 120 gzip -t "$tmp" 2>/dev/null || refuse 2 "not a gzip file (or cut short)"
+list=$(timeout -k 5 60 tar -tvzf "$tmp" 2>/dev/null) || refuse 2 "not a readable tar.gz"
+names=$(timeout -k 5 60 tar -tzf "$tmp" 2>/dev/null) || refuse 2 "not a readable tar.gz"
+[ "$(printf '%s\n' "$names" | grep -c .)" -le 3 ] || refuse 2 "more than three members"
+# only the three plain names, and only regular files
+bad=$(printf '%s\n' "$names" | grep -Ev '^(\./)?(journal|snap|meta)\.txt$' | head -n 1)
+[ -z "$bad" ] || refuse 2 "unexpected member in the tarball: ${bad:0:60}"
+bad=$(printf '%s\n' "$list" | grep -v '^-' | head -n 1)
+[ -z "$bad" ] || refuse 2 "a member is not a regular file: ${bad:0:80}"
+chmod 0640 "$tmp"
+mv -f "$tmp" "$dir/$req" || refuse 3 "rename failed"
+trap - EXIT
+echo "ok $req $size"
+prune
+exit 0

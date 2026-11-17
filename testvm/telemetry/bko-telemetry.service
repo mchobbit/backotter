@@ -1,0 +1,13 @@
+# testvm/telemetry/README.md; installed by telemetry-setup.sh
+[Unit]
+Description=BackOtter telemetry: this host's journal and a snapshot to Bigfoot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/bko-telemetry
+Nice=10
+IOSchedulingClass=idle
+# the script bounds itself to under 8 minutes; this is the backstop
+TimeoutStartSec=9min

@@ -1,0 +1,13 @@
+# /etc/default/bko-telemetry: settings for /usr/local/sbin/bko-telemetry
+# (testvm/telemetry/README.md).  telemetry-setup.sh writes this once and
+# leaves it alone after; the values here are the script's own defaults.
+BKO_TEL_HOST=bigfoot.local       # Bigfoot, by mDNS (also the known_hosts name)
+BKO_TEL_IP=192.168.68.197        # used when the name doesn't resolve
+BKO_TEL_USER=bkotel
+BKO_TEL_JOURNAL_MAX=40000000     # bytes of journal per batch, uncompressed
+BKO_TEL_SPOOL_MAX_MB=1024        # spool caps while Bigfoot is away
+BKO_TEL_SPOOL_MAX_FILES=2000
+BKO_TEL_TAIL_LINES=100000        # the newest entries kept when the read is cut
+BKO_TEL_JOURNAL_SECS=60          # bounds on the journal read, the snapshot,
+BKO_TEL_SNAP_SECS=120            # and each probe in it
+BKO_TEL_PROBE_SECS=27

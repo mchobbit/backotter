@@ -1,0 +1,597 @@
+#!/bin/bash
+# A farm host's telemetry push to Bigfoot (testvm/telemetry/README.md).  Run
+# as root every 15 minutes by bko-telemetry.timer; telemetry-setup.sh
+# installs it as /usr/local/sbin/bko-telemetry.
+#
+#   bko-telemetry              build this run's batch and push it
+#   bko-telemetry --no-push    build it into /run/bko-telemetry/local/ only
+#                              (a test: no push, no spool, the journal
+#                              position is left alone)
+#
+# Each run (never two at once: flock) builds one batch, NAME =
+# YYYYMMDDTHHMMSSZ.tar.gz (UTC, when the run started), holding
+#   journal.txt  the journal since the batch before (cursor; the first run:
+#                the last 15 minutes), every priority, kernel too, at most
+#                BKO_TEL_JOURNAL_MAX bytes: over that, the head of the read
+#                and the newest entries (a second read back from now)
+#   snap.txt     load, memory, pressure, dmesg tail, processes (D state with
+#                kernel stacks), qemu, failed units, network, the cmp-run.sh
+#                ledger; then the probes that touch disks: df, mounts,
+#                SMART and NVMe logs, zpools, sensors, boots, pstore
+#   meta.txt     host, boot id, script hash, what was cut or timed out
+#
+# A stalled root disk must not stop the batch, so the run works in RAM
+# (/run/bko-telemetry: lock, work dir, the new batch, the journal position)
+# and touches /var/lib/bko-telemetry only through bounded steps.  The new
+# batch is pushed first, straight from /run; only if that fails does it go
+# to the disk spool.  Then the spooled backlog goes, oldest first; a batch
+# leaves the spool only once the push exits 0.  Every probe runs under
+# timeout and in its own bounded step: a probe stuck in D state (which no
+# signal ends) is left behind and the run carries on without it.
+#
+# One line per run goes to stdout, so to the journal:
+#   journalctl -u bko-telemetry.service -o cat
+#
+# Settings: /etc/default/bko-telemetry (BKO_TEL_CONF).  State on disk:
+# /var/lib/bko-telemetry (BKO_TEL_STATE): id_ed25519, known_hosts (Bigfoot,
+# pinned by telemetry-setup.sh), journal.cursor, journal.since, spool/.
+# In RAM: /run/bko-telemetry (BKO_TEL_RUN).
+set -u
+export LC_ALL=C
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
+umask 077
+
+BKO_TEL_HOST=bigfoot.local       # Bigfoot, by mDNS
+BKO_TEL_IP=192.168.68.197        # used when the name doesn't resolve
+BKO_TEL_USER=bkotel
+BKO_TEL_JOURNAL_MAX=40000000     # bytes of journal.txt, uncompressed
+BKO_TEL_TAIL_LINES=100000        # the newest entries kept when the read is cut
+BKO_TEL_SPOOL_MAX_MB=1024
+BKO_TEL_SPOOL_MAX_FILES=2000
+BKO_TEL_JOURNAL_SECS=60          # bounds on the journal read, the snapshot,
+BKO_TEL_SNAP_SECS=120            # and each probe in it
+BKO_TEL_PROBE_SECS=27
+BKO_TEL_SSH=ssh                  # tests put a fake here
+conf=${BKO_TEL_CONF:-/etc/default/bko-telemetry}
+# shellcheck source=/dev/null
+[ -r "$conf" ] && . "$conf"
+state=${BKO_TEL_STATE:-/var/lib/bko-telemetry}
+run=${BKO_TEL_RUN:-/run/bko-telemetry}
+spool=$state/spool
+out=$run/out   # batches made here and neither pushed nor spooled yet
+host=$(uname -n)
+host=${host%%.*}
+
+push=1
+case ${1:-} in
+    "") ;;
+    --no-push) push=0 ;;
+    *) echo "usage: bko-telemetry [--no-push]" >&2; exit 2 ;;
+esac
+
+# all in RAM: nothing here waits on a disk
+mkdir -p "$run" "$out" || { echo "bko-telemetry: cannot make $run"; exit 1; }
+chmod 700 "$run"
+exec 9>"$run/lock"
+if ! flock -n 9; then
+    echo "bko-telemetry: an earlier run still holds $run/lock; skipping this one"
+    exit 0
+fi
+rm -rf "$run"/work.* 2>/dev/null
+work=$run/work.$$
+mkdir "$work" || exit 1
+trap 'rm -rf "$work"' EXIT
+
+utc() { date -u -d "@$1" "+$2" 2>/dev/null || date -u -r "$1" "+$2"; }  # EPOCH FORMAT
+start=$(date -u +%s)
+if [ -e "$out/$(utc "$start" %Y%m%dT%H%M%SZ).tar.gz" ]; then
+    sleep 1
+    start=$(date -u +%s)
+fi
+stamp=$(utc "$start" %Y%m%dT%H%M%SZ)
+name=$stamp.tar.gz
+notes=()  # lines for meta.txt and the log
+
+T() { timeout -k 5 20 "$@"; }
+have() { command -v "$1" >/dev/null 2>&1; }
+sec() { printf '\n=== %s ===\n' "$*"; }
+run_() {  # TITLE CMD...: a section from CMD (RAM-only probes), skipped when CMD is missing
+    local t=$1; shift
+    have "$1" || return 0
+    sec "$t"
+    T "$@" 2>&1
+}
+show() {  # FILE...: each readable file as a section
+    local f
+    for f in "$@"; do
+        [ -r "$f" ] || continue
+        sec "$f"
+        T cat "$f" 2>&1
+    done
+}
+
+# bounded SECS OUT CMD...: run CMD in the background (output to OUT), wait at
+# most SECS; 124 when it is still running (it is left behind, not waited for).
+bounded() {
+    local secs=$1 o=$2 pid n=0
+    shift 2
+    "$@" >"$o" 2>&1 9>&- &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        [ "$n" -ge $((secs * 10)) ] && return 124
+        sleep 0.1
+        n=$((n + 1))
+    done
+    wait "$pid"
+}
+
+# detach FILE: a copy under FILE's name, so a step left running writes on
+# into the old (now unlinked) file, not into what tar reads
+detach() { cp "$1" "$1.cut" && mv -f "$1.cut" "$1"; }
+
+# saved NAME: $run/NAME, else $state/NAME (read under a bound), into $work/NAME
+saved() {
+    local n=$1
+    if [ -s "$run/$n" ]; then
+        cp "$run/$n" "$work/$n"
+        return 0
+    fi
+    bounded 10 "$work/$n" cat "$state/$n" && [ -s "$work/$n" ] && return 0
+    rm -f "$work/$n"
+    return 1
+}
+
+# --- journal ---
+
+since=-15min
+if saved journal.since; then
+    s=$(head -c 20 "$work/journal.since" | tr -dc 0-9)
+    [ -n "$s" ] && since=@$s
+fi
+havecur=0
+saved journal.cursor && havecur=1 && cp "$work/journal.cursor" "$work/cursor"
+
+jread() {  # ARGS...: journalctl into journal.raw, cut at JOURNAL_MAX+1 bytes; journalctl's exit
+    journalctl --no-pager -o short-iso-precise "$@" |
+        head -c $((BKO_TEL_JOURNAL_MAX + 1)) >"$work/journal.raw"
+    return "${PIPESTATUS[0]}"
+}
+get_journal() {
+    local rc
+    if [ "$havecur" = 1 ]; then
+        jread --cursor-file="$work/cursor"
+        rc=$?
+        [ "$rc" = 0 ] && return 0
+        # cut by head: journalctl then fails on the closed pipe, not on the cursor
+        [ "$(wc -c <"$work/journal.raw")" -gt "$BKO_TEL_JOURNAL_MAX" ] && return "$rc"
+        echo "exit $rc" >"$work/journal.bad"
+        rm -f "$work/cursor"
+    fi
+    # journalctl (systemd 257) refuses --since beside --cursor-file, so the
+    # first read asks for its end cursor with --show-cursor (its last line)
+    jread --since="$since" --show-cursor
+    rc=$?
+    local last
+    last=$(tail -n 1 "$work/journal.raw")
+    case $last in
+        "-- cursor: "*)
+            printf '%s' "${last#-- cursor: }" >"$work/cursor"
+            local n
+            n=$(( $(wc -c <"$work/journal.raw") - ${#last} - 1 ))
+            [ "$n" -lt 0 ] && n=0
+            head -c "$n" "$work/journal.raw" >"$work/journal.cut" && mv -f "$work/journal.cut" "$work/journal.raw" ;;
+    esac
+    return "$rc"
+}
+jtail() {  # the newest TAIL_LINES entries, at most JOURNAL_MAX/2 bytes; a fresh cursor
+    journalctl --no-pager -o short-iso-precise -n "$BKO_TEL_TAIL_LINES" --cursor-file="$work/cursor2" |
+        tail -c $((BKO_TEL_JOURNAL_MAX / 2)) >"$work/journal.tail"
+    return "${PIPESTATUS[0]}"
+}
+
+bounded "$BKO_TEL_JOURNAL_SECS" "$work/journal.err" get_journal
+jrc=$?
+[ -e "$work/journal.raw" ] || : >"$work/journal.raw"
+[ "$jrc" = 124 ] && detach "$work/journal.raw"
+if [ -e "$work/journal.bad" ]; then
+    notes+=("the saved journal cursor failed ($(cat "$work/journal.bad"): $(head -c 160 "$work/journal.err" | tr '\n' ' ')): dropped, read since $since")
+fi
+jraw=$(wc -c <"$work/journal.raw" | tr -d ' ')
+newcur=""   # the cursor for the next run; none: it reads from this batch's start
+if [ "$jrc" = 0 ] && [ "$jraw" -le "$BKO_TEL_JOURNAL_MAX" ]; then
+    mv "$work/journal.raw" "$work/journal.txt"
+    [ -s "$work/cursor" ] && newcur=$work/cursor
+else
+    # cut by size or time, or failed: keep the head of the read, then the
+    # newest entries read back from now, so the minutes before a freeze win
+    case $jrc in
+        0) why="the read was over $BKO_TEL_JOURNAL_MAX bytes" ;;
+        124) why="journalctl did not finish in $BKO_TEL_JOURNAL_SECS s" ;;
+        *) why="journalctl exited $jrc: $(head -c 160 "$work/journal.err" | tr '\n' ' ')" ;;
+    esac
+    [ "$jraw" -gt "$BKO_TEL_JOURNAL_MAX" ] && why="the read was over $BKO_TEL_JOURNAL_MAX bytes"
+    head -c $((BKO_TEL_JOURNAL_MAX / 2)) "$work/journal.raw" >"$work/journal.txt"
+    bounded 30 "$work/tail.err" jtail
+    trc=$?
+    [ -e "$work/journal.tail" ] || : >"$work/journal.tail"
+    [ "$trc" = 124 ] && detach "$work/journal.tail"
+    printf '\n=== bko-telemetry: %s; the head of the read is above, the newest %s entries (at most %s bytes) below; what lay between is not here ===\n' \
+        "$why" "$BKO_TEL_TAIL_LINES" "$((BKO_TEL_JOURNAL_MAX / 2))" >>"$work/journal.txt"
+    cat "$work/journal.tail" >>"$work/journal.txt"
+    if [ "$trc" = 0 ] && [ -s "$work/cursor2" ]; then
+        newcur=$work/cursor2
+        notes+=("journal cut ($why): head and newest entries kept, the middle dropped")
+    else
+        notes+=("journal cut ($why), and the read of the newest entries gave exit $trc: the next run reads from this batch's start")
+    fi
+fi
+
+# --- snapshot ---
+
+probe_n=0 stuck=" "
+# probe TITLE TOOL CMD...: a section from CMD in its own bounded step, so a
+# stuck one costs at most BKO_TEL_PROBE_SECS; skipped when TOOL is missing
+# or the snapshot is nearly out of time.  1 when CMD was left behind.
+probe() {
+    local t=$1 tool=$2 f rc
+    shift 2
+    have "$tool" || return 0
+    sec "$t"
+    if [ $(($(date -u +%s) - snap_start + BKO_TEL_PROBE_SECS + 3)) -gt "$BKO_TEL_SNAP_SECS" ]; then
+        echo "(skipped: the snapshot is out of time)"
+        return 0
+    fi
+    probe_n=$((probe_n + 1))
+    f=$work/probe.$probe_n
+    bounded "$BKO_TEL_PROBE_SECS" "$f" "$@"
+    rc=$?
+    cat "$f"
+    if [ "$rc" = 124 ]; then
+        echo "(still running after $BKO_TEL_PROBE_SECS s: stuck, left behind)"
+        return 1
+    fi
+    return 0
+}
+dev_probe() {  # DEV TITLE TOOL CMD...: probe, but skip DEV once one of its probes got stuck
+    local d=$1
+    shift
+    case $stuck in *" $d "*) sec "$1"; echo "(skipped: an earlier probe of $d got stuck)"; return 0 ;; esac
+    probe "$@" || stuck="$stuck$d "
+}
+p_dstate() {
+    local pid tid n=0
+    T ps -eLo pid,tid,stat,etime,wchan:32,comm 2>&1 | awk 'NR == 1 || $3 ~ /^D/' >"$work/dstate"
+    cat "$work/dstate"
+    while read -r pid tid _; do
+        [ "$pid" = PID ] && continue
+        n=$((n + 1))
+        [ "$n" -gt 10 ] && break
+        echo "--- /proc/$pid/task/$tid/stack"
+        T cat "/proc/$pid/task/$tid/stack" 2>&1
+    done <"$work/dstate"
+}
+p_qemu() {
+    T ps -eo pid,etime,rss,args 2>/dev/null | grep '[q]emu-system' | cut -c1-240 >"$work/qemu"
+    echo "running qemu: $(wc -l <"$work/qemu" | tr -d ' ')"
+    cat "$work/qemu"
+}
+p_df() {
+    T df -hT -x tmpfs -x devtmpfs -x efivarfs -x squashfs -x overlay 2>&1
+    [ -d /mnt/bko-ram ] && T df -hT /mnt/bko-ram 2>&1 | tail -n +2
+    return 0
+}
+p_findmnt() {
+    T findmnt -l -o TARGET,SOURCE,FSTYPE,SIZE,USED,AVAIL,OPTIONS 2>&1 | awk 'NR == 1 || $1 ~ /^\/bkoscratch/'
+}
+p_boots() { T journalctl --list-boots --no-pager 2>&1 | tail -n 3; }
+p_sshd() { T systemctl status ssh.service --no-pager -n 5 2>&1 | head -n 20; }
+p_lsdir() { T ls -laR "$1" 2>&1 | head -n 50; }
+
+snap() {
+    local d f z n
+    snap_start=$(date -u +%s)
+    # first what lives in RAM: it is what matters most after a hang
+    sec "date"
+    date -u
+    echo "host $host  boot_id $(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
+    run_ "uname -r" uname -r
+    run_ "uptime" uptime
+    show /proc/loadavg /proc/uptime /proc/sys/kernel/tainted \
+        /proc/sys/fs/file-nr /proc/sys/kernel/pid_max /proc/sys/kernel/threads-max
+    run_ "free -m" free -m
+    show /proc/meminfo /proc/pressure/cpu /proc/pressure/memory /proc/pressure/io
+    run_ "swapon --show" swapon --show
+    run_ "zramctl" zramctl
+    if [ -r /proc/spl/kstat/zfs/arcstats ]; then
+        sec "ZFS ARC (size, c, c_max)"
+        awk '$1 == "size" || $1 == "c" || $1 == "c_max"' /proc/spl/kstat/zfs/arcstats
+    fi
+    if have dmesg; then
+        sec "dmesg (last 300 lines of the ring buffer)"
+        T dmesg --time-format iso 2>&1 | tail -n 300
+    fi
+    probe "D-state tasks (with kernel stacks, at most 10)" ps p_dstate
+    if have ps; then
+        sec "ps by CPU"
+        T ps -eo pid,ppid,stat,etime,pcpu,pmem,rss,comm --sort=-pcpu 2>&1 | head -n 31
+        sec "ps by RSS"
+        T ps -eo pid,ppid,stat,etime,pcpu,pmem,rss,comm --sort=-rss 2>&1 | head -n 16
+        sec "counts"
+        echo "processes $(T ps -e --no-headers 2>/dev/null | wc -l)"
+        echo "threads $(T ps -eL --no-headers 2>/dev/null | wc -l)"
+    fi
+    # these read other processes' command lines, which can hang on a stuck one
+    probe "qemu" ps p_qemu
+    probe "top -b -n1" top sh -c 'timeout -k 5 20 top -b -n1 2>&1 | head -n 40'
+    sec "thermal zones"
+    for z in /sys/class/thermal/thermal_zone*; do
+        [ -r "$z/temp" ] || continue
+        echo "${z##*/} $(cat "$z/type" 2>/dev/null) $(cat "$z/temp" 2>/dev/null)"
+    done
+    if have systemctl; then
+        sec "systemctl is-system-running"
+        T systemctl is-system-running 2>&1
+        sec "systemctl --failed"
+        T systemctl --failed --no-pager 2>&1
+        sec "test scopes (cmp-run.sh)"
+        T systemctl list-units --no-pager --no-legend 'run-*.scope' 'bko-*.scope' 2>&1 | head -n 40
+    fi
+    run_ "ip -s link" ip -s link
+    run_ "ss -s" ss -s
+    if have ss; then
+        echo "ssh connections established: $(T ss -Htn state established '( sport = :22 )' 2>/dev/null | wc -l)"
+    fi
+    # cmp-run.sh's reservation ledger (testvm/compare/cmp-run.sh), read only
+    for f in /mnt/bko-ram/.reserve /mnt/bko-ram/.reserve.wait; do
+        [ -r "$f" ] || continue
+        sec "tail $f"
+        T tail -n 20 "$f" 2>&1
+    done
+    if [ -d /sys/fs/pstore ]; then
+        sec "ls /sys/fs/pstore"
+        T ls -laR /sys/fs/pstore 2>&1 | head -n 50
+        n=0
+        for f in /sys/fs/pstore/dmesg-*; do
+            [ -r "$f" ] || continue
+            n=$((n + 1))
+            [ "$n" -gt 4 ] && break
+            sec "$f (first 200 KB)"
+            T head -c 200000 "$f" 2>&1
+        done
+    fi
+
+    # then what touches disks and devices, each probe bounded on its own
+    for d in /dev/nvme[0-9] /dev/nvme[0-9][0-9]; do
+        [ -c "$d" ] || continue
+        dev_probe "$d" "nvme error-log $d (8 newest)" nvme T nvme error-log "$d" --log-entries=8
+        dev_probe "$d" "nvme smart-log $d" nvme T nvme smart-log "$d"
+    done
+    probe "df -hT" df p_df
+    probe "findmnt /bkoscratch*" findmnt p_findmnt
+    if have zpool; then
+        probe "zpool status -x" zpool T zpool status -x
+        probe "zpool list" zpool T zpool list
+    fi
+    for d in /dev/nvme[0-9]n1 /dev/nvme[0-9][0-9]n1 /dev/sd[a-z]; do
+        [ -b "$d" ] || continue
+        case $d in
+            /dev/sd*) dev_probe "$d" "smartctl -a $d" smartctl T smartctl -a -n standby "$d" ;;  # don't spin up a sleeping disk
+            *) dev_probe "${d%n1}" "smartctl -a $d" smartctl T smartctl -a "$d" ;;
+        esac
+    done
+    probe "sensors" sensors T sensors
+    probe "journalctl --list-boots (last 3)" journalctl p_boots
+    probe "ssh.service" systemctl p_sshd
+    [ -d /var/lib/systemd/pstore ] && probe "ls /var/lib/systemd/pstore" ls p_lsdir /var/lib/systemd/pstore
+    return 0
+}
+
+bounded "$BKO_TEL_SNAP_SECS" "$work/snap.txt" snap
+src=$?
+[ "$src" = 124 ] && detach "$work/snap.txt"
+[ "$src" = 124 ] && notes+=("the snapshot did not finish in $BKO_TEL_SNAP_SECS s: snap.txt is partial")
+grep -q '^(still running after' "$work/snap.txt" && notes+=("a probe got stuck: see snap.txt")
+
+# --- meta, tarball (in RAM) ---
+bounded 5 "$work/hash" sha256sum "$0"
+{
+    echo "host $host"
+    echo "batch $stamp"
+    echo "boot_id $(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
+    echo "uptime $(cut -d' ' -f1 /proc/uptime 2>/dev/null)"
+    echo "script $(cut -c1-16 "$work/hash")"
+    echo "journal_bytes $jraw"
+    echo "journal_status $jrc"
+    echo "snap_status $src"
+    for n in ${notes[@]+"${notes[@]}"}; do echo "note $n"; done
+} >"$work/meta.txt"
+if ! tar -C "$work" -czf "$work/$name" journal.txt snap.txt meta.txt 2>"$work/tar.err"; then
+    echo "bko-telemetry: $name: could not build the batch: $(head -c 200 "$work/tar.err")"
+    exit 1
+fi
+tsize=$(wc -c <"$work/$name" | tr -d ' ')
+snapb=$(wc -c <"$work/snap.txt" | tr -d ' ')
+
+if [ "$push" = 0 ]; then
+    mkdir -p "$run/local"
+    mv -f "$work/$name" "$run/local/$name"
+    for n in ${notes[@]+"${notes[@]}"}; do echo "bko-telemetry: note: $n"; done
+    echo "bko-telemetry: --no-push: $run/local/$name journal=${jraw}B snap=${snapb}B batch=${tsize}B"
+    exit 0
+fi
+mv -f "$work/$name" "$out/$name"
+
+# the journal position in RAM moves on now: the batch is in $out, which the
+# next run retries.  The disk copy moves on once the batch is pushed or
+# spooled, so after a reboot nothing it holds is skipped.
+echo "$start" >"$run/journal.since.new" && mv -f "$run/journal.since.new" "$run/journal.since"
+if [ -n "$newcur" ]; then
+    cp "$newcur" "$run/journal.cursor.new" && mv -f "$run/journal.cursor.new" "$run/journal.cursor"
+else
+    rm -f "$run/journal.cursor"
+fi
+put_disk_state() {
+    mkdir -p "$state" && chmod 700 "$state" || return 1
+    echo "$start" >"$state/journal.since.new" && mv -f "$state/journal.since.new" "$state/journal.since"
+    if [ -n "$newcur" ]; then
+        cp "$newcur" "$state/journal.cursor.new" && sync "$state/journal.cursor.new" 2>/dev/null
+        mv -f "$state/journal.cursor.new" "$state/journal.cursor"
+    elif [ -e "$state/journal.cursor" ]; then
+        mv -f "$state/journal.cursor" "$state/journal.cursor.bad"
+    fi
+}
+
+# --- push ---
+
+# key and Bigfoot's pinned host key, copied to RAM (an old copy serves when
+# the disk doesn't answer)
+copy_creds() {
+    local f
+    for f in id_ed25519 known_hosts; do
+        cp "$state/$f" "$run/$f.new" && mv -f "$run/$f.new" "$run/$f" || return 1
+    done
+}
+bounded 10 "$work/creds.err" copy_creds
+rc=$?
+[ "$rc" = 124 ] && notes+=("copying the key from $state took over 10 s (disk stuck?): the copy in $run serves")
+[ "$rc" != 0 ] && [ "$rc" != 124 ] && notes+=("could not copy the key from $state: $(head -c 120 "$work/creds.err" | tr '\n' ' ')")
+
+addr=$(T getent ahostsv4 "$BKO_TEL_HOST" 2>/dev/null | awk 'NR == 1 {print $1}')
+addr=${addr:-$BKO_TEL_IP}
+push_one() {  # FILE: 0 stored, 2 refused for good, else not now
+    timeout -k 5 120 "$BKO_TEL_SSH" -F none -T -i "$run/id_ed25519" \
+        -o IdentitiesOnly=yes -o IdentityAgent=none \
+        -o UserKnownHostsFile="$run/known_hosts" -o GlobalKnownHostsFile=/dev/null \
+        -o HostKeyAlias="$BKO_TEL_HOST" -o StrictHostKeyChecking=yes \
+        -o BatchMode=yes -o ConnectTimeout=10 \
+        -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o LogLevel=ERROR \
+        "$BKO_TEL_USER@$addr" "${1##*/}" <"$1" >/dev/null 2>"$work/push.err" 9>&-
+}
+spool_put() {  # FILE DIR: FILE into DIR on disk, then out of RAM
+    mkdir -p "$2" || return 1
+    cp "$1" "$2/${1##*/}.part" && mv -f "$2/${1##*/}.part" "$2/${1##*/}" && rm -f "$1"
+}
+# move_out FILE DIR: spool_put under a bound; 124 when the disk didn't answer
+move_out() { bounded 20 "$work/spool.err" spool_put "$1" "$2"; }
+
+pushed=0 failed=0 refused=0 err="" bigfoot=0 disk_stuck=0
+handle() {  # FILE: push it; when that fails, to the disk spool
+    local f=$1 rc
+    if [ "$bigfoot" != no ]; then
+        push_one "$f"
+        rc=$?
+        if [ "$rc" = 0 ]; then
+            rm -f "$f"
+            pushed=$((pushed + 1)) bigfoot=yes
+            return 0
+        fi
+        if [ "$rc" = 2 ]; then
+            refused=$((refused + 1)) bigfoot=yes
+            notes+=("Bigfoot refused ${f##*/} for good: $(head -c 200 "$work/push.err" | tr '\n' ' ')")
+            # kept in spool/refused to look at; if the disk won't take it, dropped
+            if [ "$disk_stuck" = 1 ] || ! move_out "$f" "$spool/refused"; then
+                rm -f "$f"
+            fi
+            return 0
+        fi
+        failed=$((failed + 1)) bigfoot=no
+        err="exit $rc: $(head -c 200 "$work/push.err" | tr '\n' ' ')"
+    fi
+    [ "$disk_stuck" = 1 ] && return 1
+    move_out "$f" "$spool" && return 0
+    disk_stuck=1
+    notes+=("could not spool ${f##*/} on $state (disk stuck?): it waits in $out")
+    return 1
+}
+
+# the new batch first, straight from RAM; then older ones still in RAM
+handle "$out/$name" && bounded 20 "$work/state.err" put_disk_state
+set -- "$out"/*.tar.gz
+n=0
+while [ -e "$1" ] && [ "$#" -gt 20 ]; do rm -f "$1"; shift; n=$((n + 1)); done
+[ "$n" -gt 0 ] && notes+=("over 20 batches waiting in $out: dropped the $n oldest")
+for f in "$out"/*.tar.gz; do
+    [ -e "$f" ] || continue
+    handle "$f" || break
+done
+
+# the disk spool: its cap, then the backlog oldest first (all bounded, so
+# a stuck disk costs this run, not the next ones)
+backlog() {  # pushes only when bl_push=1, none after bl_deadline; prints "key value" lines
+    local f rc dropped=0 p=0 fl=0 rf=0
+    mkdir -p "$spool/refused" || return 1
+    rm -f "$spool"/*.part "$spool/refused"/*.part 2>/dev/null
+    while :; do
+        set -- "$spool"/*.tar.gz
+        [ -e "$1" ] || break
+        kib=$(du -sk "$spool" 2>/dev/null | awk '{print $1}')
+        [ "$#" -le "$BKO_TEL_SPOOL_MAX_FILES" ] && [ "${kib:-0}" -le $((BKO_TEL_SPOOL_MAX_MB * 1024)) ] && break
+        [ "$1" = "$spool/$name" ] && break  # never the batch just made
+        rm -f "$1"
+        dropped=$((dropped + 1))
+    done
+    [ "$dropped" -gt 0 ] && echo "note spool over its cap: dropped the $dropped oldest batches"
+    set -- "$spool"/refused/*.tar.gz
+    while [ -e "$1" ] && [ "$#" -gt 20 ]; do rm -f "$1"; shift; done
+    for f in "$spool"/*.tar.gz; do
+        [ "$bl_push" = 1 ] || break
+        [ -e "$f" ] || continue
+        if [ "$(date -u +%s)" -ge "$bl_deadline" ]; then
+            echo "note out of time: the rest wait for the next run"
+            break
+        fi
+        push_one "$f"
+        rc=$?
+        if [ "$rc" = 0 ]; then
+            rm -f "$f"
+            p=$((p + 1))
+        elif [ "$rc" = 2 ]; then
+            mv -f "$f" "$spool/refused/"
+            rf=$((rf + 1))
+            echo "note Bigfoot refused ${f##*/} for good: $(head -c 200 "$work/push.err" | tr '\n' ' ')"
+        else
+            fl=$((fl + 1))
+            echo "err exit $rc: $(head -c 200 "$work/push.err" | tr '\n' ' ')"
+            break  # Bigfoot away or full: stop, keep the rest
+        fi
+    done
+    set -- "$spool"/*.tar.gz
+    [ -e "$1" ] && echo "depth $#" || echo "depth 0"
+    echo "pushed $p"
+    echo "failed $fl"
+    echo "refused $rf"
+    echo "dropped $dropped"
+}
+depth="?" dropped=0
+if [ "$disk_stuck" = 1 ]; then
+    notes+=("the disk spool was skipped: $state did not answer")
+else
+    bl_push=0
+    [ "$bigfoot" = yes ] && bl_push=1
+    bl_deadline=$((start + 330))   # no new push after this (each takes at most 125 s)
+    w=$((start + 470 - $(date -u +%s)))
+    [ "$w" -ge 20 ] || w=20
+    bounded "$w" "$work/backlog" backlog
+    brc=$?
+    [ "$brc" = 124 ] && notes+=("the spool did not finish in $w s (disk stuck?)")
+    [ "$brc" != 0 ] && [ "$brc" != 124 ] && notes+=("the spool failed: $(head -c 160 "$work/backlog" | tr '\n' ' ')")
+    while read -r k v; do
+        case $k in
+            depth) depth=$v ;;
+            pushed) pushed=$((pushed + v)) ;;
+            failed) failed=$((failed + v)) ;;
+            refused) refused=$((refused + v)) ;;
+            dropped) dropped=$v ;;
+            note) notes+=("$v") ;;
+            err) err=$v ;;
+        esac
+    done <"$work/backlog"
+fi
+set -- "$out"/*.tar.gz
+[ -e "$1" ] && inram=$# || inram=0
+
+for n in ${notes[@]+"${notes[@]}"}; do echo "bko-telemetry: note: $n"; done
+echo "bko-telemetry: $name journal=${jraw}B snap=${snapb}B batch=${tsize}B" \
+    "pushed=$pushed failed=$failed refused=$refused spool=$depth inram=$inram dropped=$dropped" \
+    "to=$BKO_TEL_USER@$addr${err:+ push error $err}"
+exit 0

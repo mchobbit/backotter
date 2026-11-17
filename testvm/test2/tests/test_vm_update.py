@@ -314,6 +314,13 @@ class TestInGuest(unittest.TestCase):
         self.assertIn("[ \"$(systemctl show -p LoadState --value 'xfs_healer@-.service' 2>/dev/null)\" = loaded ]; then",
                       self.sections()["Linux.apt"])
 
+    def test_netbsd_postinstall_fixes_rc_d(self):
+        """A netbsd-11 daily's new /etc/rc.d/network failed postinstall's rc check, and with it
+        sysupgrade (t2v-20261117T1639-dc6b): sysupgrade.conf has postinstall fix rc as well."""
+        m = re.search(r'^POSTINSTALL_AUTOFIX="([^"]*)"$', self.sections()["NetBSD"], re.M)
+        self.assertIsNotNone(m)
+        self.assertEqual(set(m[1].split()), {"obsolete", "mtree", "opensslcertsrehash", "rc"})
+
     def run_xfs_healer(self, load_state="loaded", rootfs="btrfs", systemd=True, systemctl=True, mask_rc=0):
         """Linux.apt's xfs_healer@-.service block under stub systemctl and findmnt: LOAD_STATE,
         what `systemctl show -p LoadState` says; ROOTFS, findmnt's FSTYPE of /.  PATH holds the

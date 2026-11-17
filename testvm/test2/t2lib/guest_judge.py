@@ -587,6 +587,24 @@ SOURCE_RULES = {"S-apt": s_apt, "S-dnf": s_dnf, "S-pac": s_pac, "S-zyp": s_zyp, 
 
 # --- L-*: the loader's default entry (#18) -------------------------------------------------------
 
+# grub.d scripts whose "set default=" applies only on a boot after a failed
+# one: openSUSE's health-checker (MicroOS, Aeon) puts a "Previous boot
+# failed" entry first and "set default=1" under "if health_checker_flag".
+GRUB_FALLBACK_SECTIONS = ("05_health_check",)
+
+
+def _grub_unconditional(lines):
+    """grub.cfg's LINES less the sections in GRUB_FALLBACK_SECTIONS."""
+    skip = None
+    for x in lines:
+        m = re.match(r"### (BEGIN|END) /etc/grub\.d/(\S+) ###", x.strip())
+        if m and m.group(2) in GRUB_FALLBACK_SECTIONS:
+            skip = m.group(2) if m.group(1) == "BEGIN" else None
+            continue
+        if skip is None:
+            yield x
+
+
 def l_grub(sec):
     path = sec.first("/boot/grub/grub.cfg", "/boot/grub2/grub.cfg", "/grub/grub.cfg", "/boot/efi/EFI/grub/grub.cfg")
     if path is None:
@@ -596,7 +614,7 @@ def l_grub(sec):
         return ["no grub.cfg"]
     lines = sec.file(path)
     val = None
-    for x in lines:
+    for x in _grub_unconditional(lines):
         m = re.match(r'\s*set default="?([^"\s]*)"?\s*$', x)
         if m and "next_entry" not in m.group(1):
             val = m.group(1)

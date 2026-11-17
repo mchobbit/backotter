@@ -1005,7 +1005,10 @@ NetBSD)
         # from NetBSD's CDN), and the packages.  etcupdate, which asks
         # about every changed file, stays out: postinstall fixes what a
         # newer base needs of /etc (obsolete files, mtree's lists, the
-        # certificates' hashes).
+        # certificates' hashes) and the rc.d scripts, which belong to the
+        # etc set (a daily's new /etc/rc.d/network fails postinstall's rc
+        # check otherwise, t2v-20261117T1639-dc6b; local settings live in
+        # rc.conf, never in rc.d).
         arch=$(uname -m) rel=$(uname -r | sed 's/_.*//')
         # The running kernel's configuration, "(GENERIC)" in uname -v:
         # KERNEL=AUTO would need config(1), from the comp set, not here.
@@ -1041,7 +1044,7 @@ NetBSD)
 RELEASEDIR="$releasedir"
 KERNEL=${kernel:-GENERIC}
 SETS=AUTO
-POSTINSTALL_AUTOFIX="obsolete mtree opensslcertsrehash"
+POSTINSTALL_AUTOFIX="obsolete mtree opensslcertsrehash rc"
 ETCUPDATE=no
 AUTOCLEAN=yes
 EOF

@@ -249,6 +249,22 @@ class Loader(unittest.TestCase):
         env = "saved_entry=Advanced>Debian with Linux 6.1.0-9-amd64"
         self.assertEqual(ld("L-grub", sec(("file /boot/grub/grub.cfg", cfg), ("file /boot/grub/grubenv", env))).v, "FAIL")
 
+    def test_grub_health_check_fallback_default(self):
+        # MicroOS (t2v-20261117T1639-dc6b): 05_health_check's "set default=1"
+        # only applies after a failed boot; the default is 00_header's "0".
+        cfg = ('if [ "${next_entry}" ] ; then\n   set default="${next_entry}"\nelse\n   set default="0"\nfi\n'
+               "### BEGIN /etc/grub.d/05_health_check ###\n"
+               'if [ "${health_checker_flag}" -ge 1 ]; then\n'
+               '          menuentry "Previous boot failed; booting snapshot ${snapshot}" { true; }\n'
+               "          set default=1\nfi\n"
+               "### END /etc/grub.d/05_health_check ###\n"
+               "### BEGIN /etc/grub.d/10_linux ###\n" + GRUB.split("\n", 1)[1]
+               + "### END /etc/grub.d/10_linux ###\n")
+        self.assertEqual(ld("L-grub", sec(("file /boot/grub2/grub.cfg", cfg))).v, "PASS")
+        # A "set default=1" anywhere else still counts.
+        late = cfg + "### BEGIN /etc/grub.d/40_custom ###\nset default=1\n### END /etc/grub.d/40_custom ###\n"
+        self.assertEqual(ld("L-grub", sec(("file /boot/grub2/grub.cfg", late))).v, "FAIL")
+
     def test_grub_named_kernels_have_no_version(self):
         cfg = 'set default="0"\nmenuentry a {\n linux /vmlinuz-linux root=x\n}\n'
         self.assertEqual(ld("L-grub", sec(("file /boot/grub/grub.cfg", cfg))).v, "PASS")

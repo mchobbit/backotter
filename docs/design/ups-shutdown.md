@@ -1,9 +1,10 @@
 # UPS-driven shutdowns (plan)
 
-Status (2026-11-16): **partly applied.** UPS-B is complete. UPS-C has its
-master and all six of its secondaries. UPS-C is
-complete, Coventry included (2026-11-17). UPS-A has its master done.
-Bigfoot joins after the disk move. See "Applied so far" under the apply order. Each config change
+Status (2026-11-17): **applied on every machine.** UPS-A (GMKOne and
+Bigfoot), UPS-B (GMKTwo) and UPS-C (GMKThree and all six of its
+secondaries) are all set up. Still open: T4 for Bigfoot, after the disk
+move and in a window the user picks, and the user's T5 pull-the-plug
+tests. See "Applied so far" under the apply order. Each config change
 left a dated `.bak-*` copy beside the file in `/etc/nut`.
 
 ## Goal (the user's checklist)
@@ -280,7 +281,7 @@ bridges), GmkTwoPool and GmkThreePool (each on a JMS578 bridge).
 2. UPS-B thresholds (GMKTwo alone).
 3. UPS-C: GMKThree netserver, then the farm hosts (install nut-client), then
    Choubox, then Coventry (as root over ssh, done 2026-11-17). Then T2, T3 and T4.
-4. UPS-A: GMKOne netserver now. Bigfoot after the disk move. Then T2, T3
+4. UPS-A: GMKOne netserver, then Bigfoot (both done; Bigfoot joined 2026-11-17, before the disk move). Then T2, T3
    and T4 for Bigfoot.
 5. T5, the user's pull-the-plug tests.
 
@@ -348,16 +349,22 @@ bridges), GmkTwoPool and GmkThreePool (each on a JMS578 bridge).
   - `SHUTDOWNCMD "UPS_WAIT_MAX=300 /usr/local/sbin/ups-primary-halt bigfoot.local"`.
   - The dry run sees Bigfoot up, Bigfoot can already read
     `eaton@gmkone.local` (OL), and the UPS is OL.
-- **UPS-A, Bigfoot: not yet, after the disk move.** Until it joins, it gets
-  no warning. GMKOne waits up to 300 s for it on a real low battery, then
-  halts, and Bigfoot loses power uncleanly, as it would today. The 600 s
-  threshold covers that wait. To join it:
-  1. Install `bigfoot-ups-halt` in /usr/local/sbin.
-  2. Set `MODE=netclient` and
-     `MONITOR eaton@gmkone.local 1 upssecondary <pw> secondary`, with
-     `SHUTDOWNCMD "/usr/local/sbin/bigfoot-ups-halt"`.
-  3. Disable nut-driver@eaton and nut-server, and drop the `[eaton]`
-     section and the stale `LISTEN 192.168.68.72`.
+- **UPS-A, Bigfoot: joined 2026-11-17** at the user's request, before the
+  disk move. Joining touches only NUT, not the pool. Bigfoot and its disks
+  are on UPS-A (the user).
+  - `bigfoot-ups-halt` installed in /usr/local/sbin; its `--dry-run` lists
+    deluged, deluge-web, smbd, nmbd, nfs-server and vncserver@:1, and no
+    export.
+  - `MODE=netclient`; nut-driver@eaton and nut-server disabled and stopped.
+    ups.conf and upsd.conf are emptied, with the old `[eaton]` and the stale
+    `LISTEN 192.168.68.72` kept in `*.bak-netclient-20261117`.
+  - `MONITOR eaton@gmkone.local 1 upssecondary <pw> secondary` and
+    `SHUTDOWNCMD "/usr/local/sbin/bigfoot-ups-halt"`.
+    `NOTIFYCMD /usr/sbin/upssched` stays, with the stock upssched.conf: no
+    AT lines, so no timers.
+  - It reads OL from GMKOne, and GMKOne lists it as a client (`upsc -c`).
+  - Its real shutdown test (T4) waits for the disk move and a window the
+    user picks.
 
 ## Open questions for the user
 

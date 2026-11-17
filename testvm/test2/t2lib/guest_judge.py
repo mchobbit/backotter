@@ -1664,6 +1664,10 @@ _UUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{
 # end of its own name, so what follows (/boot/efi) and a trailing ":" stay: mount points differ.
 _RUNDIR = re.compile(r"(?:/[^\s/]+)*/vm-update-mount\.[\w.-]*\w"
                      r"|(?:/mnt/bko-ram/vm-update\.[^\s/]+|\S*/\.vm-update-run\.[^\s/]+|\S*/runs/t2v-[^\s/]+)\S*")
+# Test2's copy of the repo on the host (COPY_ROOT/ID, ID a commit and maybe .DIRTY: t2/copy/c64cebe,
+# t2/copy/3b00344.de67709fd) is in vm-update's own lines ("host mount: .../vm-mount --ro ...") and
+# changes with every commit: every guest had them new each run.  Its tN/ form is an old baseline's.
+_COPYDIR = re.compile(r"(?:/[^\s/]+)*/t[2N]/copy/[^\s/]+")
 # A guest's own mktemp names under /tmp or /var/tmp (transactional-update's
 # /tmp/transactional-update-l6Umk2, mktemp's /tmp/tmp.Va12wyap) are random each run, so their
 # suffix is XXXXXX: after tmp. any 6-12 letters and digits, after another name's last . or - only
@@ -1684,6 +1688,11 @@ _RANDOMART = re.compile(r"(^\s*|:\s+)\|[ .o+=*BOX@%&#/^SE]{1,17}\|\s*$")
 _NIXHASH = re.compile(r"(/nix/store/|/gcroots/auto/)[0-9a-df-np-sv-zN]{16,32}(?=[-\"'/\s]|$)")
 # 0x9aa000 has no word boundary after its x, so _HEX alone never sees it and _NUM made "NxNaaN"
 # of it: every guest memory layout (e820, [mem 0x...], efi: SMBIOS=0x...) was new each boot.
+# A zero count of errors or failures ("0 errors occurred", "Fail: 0", "failed=0") stays ZERO, not N:
+# an accepted zero must never let a later real count through.
+_COUNT_WORD = r"(?:errors?|failures?|failed|fails?|fatal|warnings?|problems?|critical)"
+_ZERO_BEFORE = re.compile(r"(?i)(?<![\w.])0(\s+(?:[a-z]+\s+)?" + _COUNT_WORD + r"\b)")
+_ZERO_AFTER = re.compile(r"(?i)(\b" + _COUNT_WORD + r"(?:\s*[:=]\s*|\s+))0(?![\w.])")
 _HEX0X = re.compile(r"\b0[xX][0-9a-fA-F]+\b")
 _HEX = re.compile(r"\b(?=[0-9a-fA-F]*\d)[0-9a-fA-F]{6,}\b")
 _NUM = re.compile(r"\d+")
@@ -1697,8 +1706,9 @@ LINES_MAX = 20000
 def normalize(line, run_dirs=()):
     """A log line with what differs from boot to boot taken out, or "" for a line with nothing
     left (ANSI and OSC sequences, timestamps, [ 12.345], UUIDs, 0x numbers, hex of 6 or more,
-    numbers, the run's directories, mktemp suffixes under /tmp, SSH key fingerprints, public keys
-    and randomart, Nix store hashes).  Stable: normalize(normalize(x)) == normalize(x), and a line
+    numbers but a zero count of errors or failures (ZERO), the run's directories and Test2's copy
+    of the repo, mktemp suffixes under /tmp, SSH key fingerprints, public keys and randomart, Nix
+    store hashes).  Stable: normalize(normalize(x)) == normalize(x), and a line
     normalized before 0x numbers were HEX ("NxNaaN") comes out as the raw line does now."""
     s = _ANSI.sub("", line)
     s = _CTRL.sub("", s)
@@ -1706,6 +1716,7 @@ def normalize(line, run_dirs=()):
         if d:
             s = s.replace(d, "RUN")
     s = _RUNDIR.sub("RUN", s)
+    s = _COPYDIR.sub("COPYDIR", s)
     s = _MKTEMP.sub(r"\1XXXXXX", s)
     s = _SSH_FP.sub("SHA256:KEY", s)
     s = _SSH_KEY.sub("KEY", s)
@@ -1716,6 +1727,8 @@ def normalize(line, run_dirs=()):
     s = _SYSLOG.sub("TIME", s)
     s = _CLOCK.sub("TIME", s)
     s = _UUID.sub("UUID", s)
+    s = _ZERO_BEFORE.sub(r"ZERO\1", s)
+    s = _ZERO_AFTER.sub(r"\1ZERO", s)
     s = _HEX0X.sub("HEX", s)
     s = _HEX.sub("HEX", s)
     s = _NUM.sub("N", s)

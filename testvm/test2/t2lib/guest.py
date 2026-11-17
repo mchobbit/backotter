@@ -1512,9 +1512,7 @@ def accept(rows, run, guest, lines_doc, mac, out=print):
     from . import run as runmod
     p = os.path.join(mac, "guest-baselines", f"{guest}.json")
     cur = runmod.read_json(p, {}) or {}
-    have = set(cur.get("lines") or [])
-    if cur.get("builder") and lines_doc.get("builder") and cur["builder"] != lines_doc["builder"]:
-        have = set()
+    have = set(cur.get("lines") or [])    # a changed builder keeps them (rows_guest.baseline_of)
     have |= {x.get("line") for x in lines_doc.get("lines") or [] if x.get("line")}
     runmod.write_json(p, {"v": 1, "guest": guest, "builder": lines_doc.get("builder"), "lines": sorted(have)})
     return True, class_row(row, mac)

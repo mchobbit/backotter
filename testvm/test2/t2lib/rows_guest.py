@@ -117,7 +117,8 @@ BUILDER = re.compile(r"testvm/(make-[^/]*\.sh|[^/]+/\*\*)\Z")   # a guest's buil
 
 
 def builder_digest(entry_raw, inputs):
-    """A digest of the guest's builder files' inputs: a change resets its log baseline."""
+    """A digest of the guest's builder files' inputs, recorded with its new lines and baseline for
+    the reader; it never resets the baseline (baseline_of)."""
     from . import canonical, sha256_hex
     want = [x for x in (entry_raw.get("harness") or []) if BUILDER.match(x)]
     h = (inputs or {}).get("harness") or {}
@@ -145,12 +146,14 @@ def older_logs(work, guest):
     return [t for t in (_read(os.path.join(d, n), 16 << 20) for n in ("update.log", "update-serial.log")) if t]
 
 
-def baseline_of(host_root, run, guest, builder):
-    """The Mac's accepted lines for GUEST, or None (none yet, or its builder changed)."""
+def baseline_of(host_root, run, guest, builder=None):
+    """The Mac's accepted lines for GUEST, or None (none yet).  A changed builder keeps them: the
+    image under test is the one it built before until it's rebuilt, and a rebuilt image's lines that
+    are new are new to the baseline too.  It reset it once, and testvm/bootstrap/** being every
+    bootstrap guest's builder, bootstrap/gentoo.sh (8ff8db0) cost alpine324, artix-*, chimera* and
+    nixos2605 every line accepted the run before (t2v-20261117T1944-5b0f)."""
     d = _json(os.path.join(host_root, "runs", run or "-", "baselines", f"{guest}.json")) if run else None
     if not isinstance(d, dict) or not isinstance(d.get("lines"), list):
-        return None
-    if d.get("builder") and builder and d["builder"] != builder:
         return None
     return d["lines"]
 

@@ -1495,6 +1495,51 @@ class Normalizer(unittest.TestCase):
         # a machine id or boot id (hex) elsewhere is still HEX
         self.assertEqual(J.normalize("machineid=bf7c7acdb8f24c948aa0e1f047fd67e2"), "machineid=HEX")
 
+    def test_the_copy_of_the_repo_goes(self):
+        """vm-update's "host mount:" line names Test2's copy, new with each commit: t2v-20261117T1944-5b0f
+        (copy c64cebe) had it new on every guest that accepted it under 3b00344.de67709fd."""
+        a = "14:02:11 host mount: /home/m/backotter-work/t2/copy/c64cebe/testvm/vm-mount --ro /a /b"
+        b = "15:12:01 host mount: /home/m/backotter-work/t2/copy/3b00344.de67709fd/testvm/vm-mount --ro /a /b"
+        na = J.normalize(a)
+        self.assertEqual(na, "TIME host mount: COPYDIR/testvm/vm-mount --ro /a /b")
+        self.assertEqual(J.normalize(b), na)
+        self.assertEqual(J.normalize(na), na)
+        # what the normalizer made of it before (the baselines of 2026-11-17) comes out the same
+        for old in ("TIME host mount: /home/m/backotter-work/tN/copy/HEX.HEX/testvm/vm-mount --ro /a /b",
+                    "TIME host mount: /home/m/backotter-work/tN/copy/HEX/testvm/vm-mount --ro /a /b"):
+            self.assertEqual(J.normalize(old), na, old)
+        for s in ("cp /srv/copy/x y", "/home/m/t2/copies/x", "t2/copy"):
+            self.assertNotIn("COPYDIR", J.normalize(s), s)
+
+    def test_zero_counts_of_errors_stay(self):
+        """An accepted "0 errors" must not let a later "3 errors" through."""
+        pairs = (("Removed 12 files, 3 directories (total of 4 MiB). 0 errors occurred.",
+                  "Removed N files, N directories (total of N MiB). ZERO errors occurred."),
+                 ("Fail: 0", "Fail: ZERO"), ("failed=0 ok=12", "failed=ZERO ok=N"),
+                 ("errors: 0, warnings: 0", "errors: ZERO, warnings: ZERO"),
+                 ("0 packages failed", "ZERO packages failed"), ("WARNING: 0 errors while detecting hardware", "WARNING: ZERO errors while detecting hardware"))
+        for raw, want in pairs:
+            n = J.normalize(raw)
+            self.assertEqual(n, want, raw)
+            self.assertEqual(J.normalize(n), n, raw)
+        for (zero, _), nonzero in zip(pairs, ("Removed 12 files, 3 directories (total of 4 MiB). 2 errors occurred.", "Fail: 3",
+                                              "failed=10 ok=12", "errors: 1, warnings: 0", "10 packages failed",
+                                              "WARNING: 2 errors while detecting hardware")):
+            self.assertNotEqual(J.normalize(nonzero), J.normalize(zero), nonzero)
+        self.assertEqual(J.normalize("Fail: 3"), "Fail: N")
+        # a zero that isn't a count stays N, and so do numbers near the words
+        for s, want in (("error 0x1f", "error HEX"), ("1.0 failed", "N.N failed"), ("fail0", "failN"), ("0 upgraded, 0 newly installed", "N upgraded, N newly installed"),
+                        ("Booted 0 times without errors", "Booted N times without errors"), ("errors 0.5", "errors N.N")):
+            self.assertEqual(J.normalize(s), want, s)
+        # a baseline line made before (N) stays N, so its zero is new once and must be accepted again
+        self.assertEqual(J.normalize("Fail: N"), "Fail: N")
+        base = ["Removed N files, N directories (total of N MiB). N errors occurred."]
+        self.assertEqual([x["line"] for x in J.sweep_lines({"update": "Removed 1 files, 2 directories (total of 3 MiB). 4 errors occurred."}, [], base)], [])
+        got = J.sweep_lines({"update": "Removed 1 files, 2 directories (total of 3 MiB). 0 errors occurred."}, [], base + ["Fail: ZERO"])
+        self.assertEqual([x["line"] for x in got], ["Removed N files, N directories (total of N MiB). ZERO errors occurred."])
+        self.assertEqual(J.sweep_lines({"update": "Fail: 0"}, [], ["Fail: ZERO"]), [])
+        self.assertEqual([x["line"] for x in J.sweep_lines({"update": "Fail: 2"}, [], ["Fail: ZERO"])], ["Fail: N"])
+
     def test_two_runs_of_a_line_agree(self):
         a = "[    3.111] systemd[1]: run 2026-11-08 05:00:00 took 12ms abcdef0123"
         b = "[    9.222] systemd[1]: run 2026-11-09 06:11:00 took 7ms 0123456abc"

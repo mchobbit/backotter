@@ -1283,13 +1283,18 @@ class Rows(unittest.TestCase):
         r = self.build()
         self.assertEqual(r["needs"]["logs"], "PASS")
 
-    def test_changed_builder_resets_the_baseline(self):
+    def test_changed_builder_keeps_the_baseline(self):
+        """bootstrap/gentoo.sh (8ff8db0) changed every bootstrap guest's builder digest, and alpine324's
+        60 lines accepted in t2v-20261117T1501-13fa were all new again in t2v-20261117T1944-5b0f."""
         self.log("update.log", "new line 1\n")
         self.result()
         p = os.path.join(self.hroot, "runs", "t2v-x", "baselines")
         os.makedirs(p, exist_ok=True)
         with open(os.path.join(p, "debian12.json"), "w", encoding="utf-8") as f:
             json.dump({"lines": ["new line N"], "builder": "another"}, f)
+        self.assertEqual(self.build()["needs"]["logs"], "PASS")
+        with open(os.path.join(p, "debian12.json"), "w", encoding="utf-8") as f:
+            json.dump({"lines": ["old line N"], "builder": "another"}, f)
         self.assertEqual(self.build()["needs"]["logs"], "DIFF")
 
     def test_standing_line_is_limit_new_and_to_class(self):
@@ -1987,6 +1992,17 @@ class Accept(unittest.TestCase):
         self.assertEqual(r["kind"], "class")
         with open(os.path.join(self.mac, "guest-baselines", "g1.json"), encoding="utf-8") as f:
             self.assertEqual(json.load(f)["lines"], ["new N"])
+
+    def test_a_changed_builder_keeps_what_was_accepted(self):
+        p = os.path.join(self.mac, "guest-baselines", "g1.json")
+        os.makedirs(os.path.dirname(p))
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump({"v": 1, "guest": "g1", "builder": "a", "lines": ["old N"]}, f)
+        ok, _ = self.go({"try": "PASS", "logs": "DIFF"})
+        self.assertTrue(ok)
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        self.assertEqual((d["lines"], d["builder"]), (["new N", "old N"], "b"))
 
     def test_refused_with_another_unmet_need(self):
         ok, why = self.go({"try": "FAIL", "logs": "DIFF"})

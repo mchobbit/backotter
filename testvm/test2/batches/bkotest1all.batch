@@ -3,7 +3,8 @@
 # spread rehearsal of §11.4: stic1 and the ht1 queues share the hosts, and the
 # queues grow onto the holt pools stic1 frees.
 # stic1 must name a round directory (drive.py): it stays pinned.
-set hosts chopin,cinqcent,copland,cage
+# No `set hosts`: the batch takes the host table's default hosts (testvm/hosts.json),
+# every one of them, choubox among them since 2026-11-17.
 
 stic1   rel9                    why="SticTest1: every guest's check.sh"
 include holttest1all.batch

@@ -56,8 +56,11 @@ EXCLUDE_PREFIXES = ("holt/target/",)
 # (docs/design/test2/design-classes.md); a small host (one whose ceiling,
 # facts.ceiling, some cell's reservation exceeds) after those among the cells
 # that fit it, and the cells that don't fit it are placed on the other hosts
-# only, then too.  copland and cage are known, small, not joined yet; czerny's
-# row is reserved (enabled false).  The per-host gate cells are gate_hosts()'s;
+# only, then too.  Every amd64 host is default: copland and cage joined
+# 2026-11-14, choubox 2026-11-17 (its trial runs waived by the user, its two
+# loop cells being over its ceiling); bigfoot, the arm64 host, is known and
+# not default, and czerny's row is reserved (enabled false).
+# The per-host gate cells are gate_hosts()'s;
 # host_class(H) is H's class in the table (big, small; None: not a known host).
 from . import hosts as hosts_table  # noqa: E402 - self-contained, imports nothing of t2lib
 

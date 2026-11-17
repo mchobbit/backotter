@@ -168,7 +168,8 @@ class Placement(unittest.TestCase):
         self.assertEqual([c.cell for c in p.due()], ["holt:debian13"])   # nothing of mint22's is queued
 
     def test_a_default_run_holds_the_small_hosts_and_keeps_the_big_work_big(self):
-        """All four amd64 hosts are default hosts since 2026-11-14, so a run without --hosts
+        """Every amd64 host is a default host (copland and cage since 2026-11-14, choubox
+        since 2026-11-17), so a run without --hosts
         has the small ones too.  What they cannot run is still kept off them, by their
         ceiling and their caps, never by their names: a stic check whose reservation is over
         9.0 9.2, and a holt source vm-mount reads on the host's ZFS."""
@@ -184,7 +185,8 @@ class Placement(unittest.TestCase):
         p = self.w.plan("SticTest2 rel4 ubuntu24 debian13 plan", facts=fx, hosts=hosts)
         self.assertEqual(sorted(p.cell("stic:ubuntu24").keys), sorted(big))      # --reserve 13 6
         self.assertEqual(sorted(p.cell("stic:debian13").keys), sorted(hosts))
-        self.assertIn(f"too big for {', '.join(small)} (ceilings 9.0 9.2, 9.0 9.2): needs 13 6",
+        self.assertIn(f"too big for {', '.join(small)} "
+                      f"(ceilings {', '.join('9.0 9.2' for _ in small)}): needs 13 6",
                       "; ".join(p.cell("stic:ubuntu24").reasons))
         q = self.w.plan("HoltTest2 ubuntu24 debian13 plan", facts=fx, hosts=hosts)
         self.assertEqual(sorted(q.cell("holt:ubuntu24").keys), sorted(big))   # needs_host_zfs, and 13 6

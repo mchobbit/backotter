@@ -1,7 +1,8 @@
-"""The KVM test hosts: all four amd64 hosts (chopin, cinqcent, copland and cage) are
-default hosts since 2026-11-14, so every run without --hosts uses the small hosts too, and
-choubox (a small amd64 cache host, 2026-11-17) and bigfoot (the arm64 host) are known,
-selectable hosts that no default list holds yet (a host joins the defaults only after
+"""The KVM test hosts: every amd64 host (chopin, cinqcent, copland, cage and choubox) is a
+default host, so every run without --hosts uses the small hosts too -- copland and cage
+since 2026-11-14, choubox since 2026-11-17 (its trial runs waived by the user: its two
+HostTest2 loop cells can never fit its 3 GiB RAM disk).  bigfoot (the arm64 host) is a
+known, selectable host that no default list holds yet (a host joins the defaults only after
 HostTest2 and one representative per family pass on it,
 docs/design/test2/design-classes.md).  What only a big host can run stays there by each
 cell's ceiling and caps, never by a host's name (test_small_hosts.py, test_host_caps.py):
@@ -46,16 +47,15 @@ def read(*parts):
 class Hosts(unittest.TestCase):
     def test_known_and_default(self):
         self.assertEqual(t2lib.KNOWN_HOSTS, ("chopin", "cinqcent", "copland", "cage", "choubox", "bigfoot"))
-        self.assertEqual(t2lib.DEFAULT_HOSTS, ("chopin", "cinqcent", "copland", "cage"))
+        self.assertEqual(t2lib.DEFAULT_HOSTS, ("chopin", "cinqcent", "copland", "cage", "choubox"))
         self.assertTrue(set(t2lib.DEFAULT_HOSTS) < set(t2lib.KNOWN_HOSTS))
-        # The enabled hosts that are not default ones: choubox (its trial runs are still to
-        # come) and bigfoot (docs/design/arm64.md A6).
-        self.assertEqual([h for h in t2lib.KNOWN_HOSTS if h not in t2lib.DEFAULT_HOSTS], ["choubox", "bigfoot"])
+        # The one enabled host that is not a default one: bigfoot (docs/design/arm64.md A6).
+        self.assertEqual([h for h in t2lib.KNOWN_HOSTS if h not in t2lib.DEFAULT_HOSTS], ["bigfoot"])
 
     def test_t2_hosts_option(self):
         with contextlib.redirect_stderr(io.StringIO()):
             t2 = load("t2cli_hosts", os.path.join(T2, "t2"))
-        self.assertEqual(t2.hosts_opt({}), ["chopin", "cinqcent", "copland", "cage"])
+        self.assertEqual(t2.hosts_opt({}), ["chopin", "cinqcent", "copland", "cage", "choubox"])
         self.assertEqual(t2.hosts_opt({"--hosts": "copland"}), ["copland"])
         self.assertEqual(t2.hosts_opt({"--hosts": "chopin,copland,cinqcent"}), ["chopin", "copland", "cinqcent"])
         self.assertEqual(t2.hosts_opt({"--hosts": "cage,copland"}), ["cage", "copland"])
@@ -97,7 +97,7 @@ class Hosts(unittest.TestCase):
         self.assertEqual(drive.HOSTS["copland"],
                          dict(ssh="m@copland.local", slot_range="2800-2899", ports=(2880, 2899)))
         self.assertEqual(drive.HOSTS["cage"], dict(ssh="m@cage.local", slot_range="3000-3099", ports=(3080, 3099)))
-        self.assertEqual(drive.DEFAULT_HOSTS, ("chopin", "cinqcent", "copland", "cage"))
+        self.assertEqual(drive.DEFAULT_HOSTS, ("chopin", "cinqcent", "copland", "cage", "choubox"))
         err = io.StringIO()
         with mock.patch.object(sys, "argv", ["drive.py", "r1", "--hosts", "cage,czerny"]), \
                 contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:

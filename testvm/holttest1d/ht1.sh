@@ -221,7 +221,7 @@ pin_id() {
     echo "sha256 $(head -n 1 "$IMG_PIN/rescuer.img.sha256" 2>/dev/null | cut -d' ' -f1)"
 }
 IMG_ID=""; [[ $VARIANT == img ]] && IMG_ID=$(pin_id)
-IMG_HARNESS=""   # a harness failure's why, for the RESULT line (rows_holt: HARNESS)
+IMG_HARNESS=""   # the pin's change, a harness failure's why for the RESULT line (rows_holt: HARNESS)
 PORT=${HT_PORT:-2690}   # by-hand runs: 2690-2699 (ht1-queue.sh hands out 2600-2689)
 export SSH_PORT=$PORT   # vm-run's guest SSH port
 RESCUER=${HT_RESCUER:-debian13}
@@ -256,6 +256,13 @@ fails=0
 say() { echo "$*" | tee -a "$R/report.txt"; }
 ok() { say "PASS $*"; }
 bad() { say "FAIL $*"; fails=$((fails + 1)); }
+# harness WHY: a FAIL of the harness itself, not of bko-holt (a read of the
+# rescuer that never came back, say).  The run carries on, so its first reason
+# goes on the RESULT line, which classes the run HARNESS, not FAIL (rows_holt),
+# only when every FAIL of the run was one: a real FAIL beside it stays a FAIL
+# and is rerun.
+hfails=0 HARNESS_WHY=""
+harness() { bad "$*"; hfails=$((hfails + 1)); HARNESS_WHY=${HARNESS_WHY:-$*}; }
 
 gkey=$W/vms/$G/id_ed25519
 rkey=$W/vms/$RESCUER/id_ed25519
@@ -423,6 +430,39 @@ ht_release() { rm -f "$R/img-key" "$R/img-key.pub"; [[ -n $HT_MOUNTED ]] && moun
 
 sshk() { local key=$1; shift; timeout "${TMO:-600}" ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o ServerAliveInterval=15 root@127.0.0.1 "$@"; }
 scpk() { local key=$1; shift; timeout 300 scp -q -i "$key" -P "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$@"; }
+# edges_read KEY CMD FILE WANT: the disks' first and last MiB (CMD, which only
+# reads) into FILE, WANT lines, one a disk.  sshk waits 5 seconds for the sshd
+# to answer, and on a loaded host a slow one answers nothing at all, so an
+# empty or short capture is not a disk that changed: try again a few times.
+# (WANT or more lines: a platform that prints a warning of its own still counts).
+# 1: it still couldn't be read, which is the harness's problem, not a write.
+edges_read() {
+    local key=$1 cmd=$2 file=$3 want=$4 i
+    for i in 1 2 3; do
+        [[ $i == 1 ]] || sleep 3
+        sshk "$key" "$cmd" > "$file" 2>&1 && [[ $(grep -c . "$file") -ge "$want" ]] && return 0
+    done
+    return 1
+}
+VDB_WHY=""
+# vdb_blank KEY: whether the dry run left /dev/vdb unwritten, by wipefs -n.
+# 0 no signature (nothing written), 1 a signature (something was), 2 nothing
+# to go by: no wipefs on the rescuer, wipefs itself failed, or the sshd didn't
+# answer three tries (VDB_WHY says which).  An unanswered call is not a PASS.
+# (wipefs's stdout only, where it lists a signature: a warning on stderr, the
+# rescuer's shell's own, say, goes to logs/vdb-blank.err and isn't a write.)
+vdb_blank() {
+    local key=$1 i out rc
+    for i in 1 2 3; do
+        [[ $i == 1 ]] || sleep 3
+        out=$(sshk "$key" 'command -v wipefs >/dev/null || { echo "no wipefs on the rescuer"; exit 9; }
+            wipefs -n /dev/vdb || { echo "wipefs -n failed"; exit 9; }' 2>"$R/logs/vdb-blank.err"); rc=$?
+        if ((rc == 0)); then [[ -z ${out//[[:space:]]/} ]]; return $?; fi
+        if ((rc == 9)); then VDB_WHY="$(tr '\n' ' ' <<<"$out")$(tail -n 1 "$R/logs/vdb-blank.err")"; return 2; fi
+        VDB_WHY="the rescuer didn't answer (exit $rc)"
+    done
+    return 2
+}
 vm_up() { # IMAGE LOG [vm-run options...] [-- QEMU_ARGS...]
     local image=$1 log=$2 opts=() qargs=(); shift 2
     while [[ $# -gt 0 && $1 != -- ]]; do opts+=("$1"); shift; done
@@ -1921,6 +1961,9 @@ phase_rebuild() {
     # The first and last MiB of every target and the decoy, before and after
     # the refusals and the dry run, which must write nothing.
     local edges="for d in ${erase[*]#--erase} $decoy; do s=\$(blockdev --getsz \$d); echo \$d \$(dd if=\$d bs=512 count=2048 status=none | md5sum | cut -c1-32) \$(dd if=\$d bs=512 skip=\$((s - 2048)) count=2048 status=none | md5sum | cut -c1-32); done"
+    # A line per target (erase holds --erase and the device, so half of it) and
+    # the decoy's; before is 0 while that capture couldn't be read.
+    local nedges=$(( ${#erase[@]} / 2 + 1 )) before=0
     local flags=()
     # (bs2: tier 1 boots with a fresh NVRAM, so --no-nvram as ever; tier 2
     # keeps one, and the case's own options say.)
@@ -1930,7 +1973,11 @@ phase_rebuild() {
     [[ -z ${HT_POOLS:-} ]] || flags+=(--pools "$HT_POOLS")
     # (A refusal variant always takes these: they are what it runs for.)
     if [[ ${HT_QUICK:-} != 1 || -n $FITONLY ]]; then
-    sshk "$rkey" "$edges" > "$R/logs/edges-before.txt" 2>&1
+    if edges_read "$rkey" "$edges" "$R/logs/edges-before.txt" "$nedges"; then
+        before=1
+    else
+        harness "the targets' and the decoy's first and last MiB couldn't be read before the refusals (logs/edges-before.txt): what they write isn't checked"
+    fi
     # Safety first: each refuses and writes nothing.
     load_step 4 refuse-nomap
     load_step 4 refuse-root --map vda=vda --erase vda
@@ -1969,11 +2016,14 @@ PY
     if [[ -n $FITONLY ]]; then
         # The refusal was the whole run: nothing may have been written.
         [[ $(sshk "$rkey" "blkid -o value -s LABEL $decoy") == ht1decoy ]] || bad "the decoy lost its filesystem"
-        sshk "$rkey" "$edges" > "$R/logs/edges-after.txt" 2>&1
-        if [[ -s $R/logs/edges-before.txt ]] && cmp -s "$R/logs/edges-before.txt" "$R/logs/edges-after.txt"; then
-            ok "the refusals left every target's and the decoy's first and last MiB as they were"
-        else
-            bad "a refusal wrote to a disk (logs/edges-before.txt, edges-after.txt)"
+        if ((before)); then
+            if ! edges_read "$rkey" "$edges" "$R/logs/edges-after.txt" "$nedges"; then
+                harness "the targets' and the decoy's first and last MiB couldn't be read after the refusals (logs/edges-after.txt)"
+            elif cmp -s "$R/logs/edges-before.txt" "$R/logs/edges-after.txt"; then
+                ok "the refusals left every target's and the decoy's first and last MiB as they were"
+            else
+                bad "a refusal wrote to a disk (logs/edges-before.txt, edges-after.txt)"
+            fi
         fi
         sshk "$rkey" 'cat /run/bko-holt/log/load.log 2>/dev/null' > "$R/logs/rebuild-load.log"
         [[ ${HT_KEEP:-} == 1 ]] && { kept_or_down; return; }
@@ -1983,13 +2033,20 @@ PY
     fi
     if [[ ${HT_QUICK:-} != 1 ]]; then
     load_step 0 dry-partition "${map[@]}" "${flags[@]}" --only partition
-    if ! sshk "$rkey" 'command -v wipefs >/dev/null'; then bad "no wipefs on the rescuer (or ssh failed): can't check vdb was left unwritten without --commit"
-    elif sshk "$rkey" 'o=$(wipefs -n /dev/vdb) && test -z "$o"'; then ok "nothing written without --commit"; else bad "vdb was written without --commit (or wipefs -n failed)"; fi
-    sshk "$rkey" "$edges" > "$R/logs/edges-after.txt" 2>&1
-    if [[ -s $R/logs/edges-before.txt ]] && cmp -s "$R/logs/edges-before.txt" "$R/logs/edges-after.txt"; then
-        ok "the refusals and the dry run left every target's and the decoy's first and last MiB as they were"
-    else
-        bad "a refusal or the dry run wrote to a disk (logs/edges-before.txt, edges-after.txt)"
+    vdb_blank "$rkey"
+    case $? in
+        0) ok "nothing written without --commit" ;;
+        1) bad "vdb was written without --commit" ;;
+        *) harness "whether vdb was written without --commit couldn't be checked: $VDB_WHY" ;;
+    esac
+    if ((before)); then
+        if ! edges_read "$rkey" "$edges" "$R/logs/edges-after.txt" "$nedges"; then
+            harness "the targets' and the decoy's first and last MiB couldn't be read after the refusals and the dry run (logs/edges-after.txt)"
+        elif cmp -s "$R/logs/edges-before.txt" "$R/logs/edges-after.txt"; then
+            ok "the refusals and the dry run left every target's and the decoy's first and last MiB as they were"
+        else
+            bad "a refusal or the dry run wrote to a disk (logs/edges-before.txt, edges-after.txt)"
+        fi
     fi
     fi
     local map=("${map[@]}" "${erase[@]}" "${flags[@]}")
@@ -2195,5 +2252,8 @@ for p in "${PHASES[@]}"; do
     [[ $fails == 0 ]] || { say "stopped after $p"; break; }
 done
 ht_summary
+# (The pin's why stands: the run stopped there.  harness()'s only when every
+# FAIL was one.)
+[[ -n $IMG_HARNESS ]] || ((hfails < fails)) || IMG_HARNESS=$HARNESS_WHY
 say "RESULT: $([[ $fails == 0 ]] && echo PASS || echo "FAIL ($fails${IMG_HARNESS:+; harness: $IMG_HARNESS})")"
 [[ $fails == 0 ]]

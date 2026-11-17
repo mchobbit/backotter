@@ -2,9 +2,9 @@
 --hosts: the default hosts' cells always (a default host --hosts leaves out keeps its
 cells, not runnable, as a pinned layer's are), and a host not joined yet (bigfoot) gets
 its own only when --hosts names it, so that HostTest2 can run there before it joins.
-Every amd64 host is a default host since 2026-11-14, so the universe holds a loop cell
-for each of the four, and `--hosts copland` is now a subset of the defaults, not an
-addition to them."""
+Every amd64 host is a default host (copland and cage since 2026-11-14, choubox since
+2026-11-17), so the universe holds a loop cell for each of the five, and `--hosts copland`
+is now a subset of the defaults, not an addition to them."""
 
 import os
 import shutil
@@ -110,7 +110,7 @@ class PlannedGateHosts(unittest.TestCase):
         for c in PINNED + others:
             pc = p.cell(c)
             self.assertEqual(pc.status, "not-runnable", c)
-            self.assertRegex("; ".join(pc.reasons), r"(chopin|cinqcent|cage) is not in --hosts", c)
+            self.assertRegex("; ".join(pc.reasons), r"(chopin|cinqcent|cage|choubox) is not in --hosts", c)
         # a copland row is judged as any host's: its cell is current on the next plan
         rows = [self.w.row(p.cell(c), "copland", plan_=p) for c in COPLAND_LOOP]
         q = self.plan_on(["copland"], rows)

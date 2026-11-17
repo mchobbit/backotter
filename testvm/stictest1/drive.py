@@ -69,10 +69,11 @@ and /mnt/bko-ram, /dev/shm and /bkoscratch entries named MARK-GUEST*.
 Options:
   --exclude G,G   leave these guests out (repeatable)
   --first G,G     start these before the rest (a recheck's failed guests)
-  --hosts H,H     of testvm/hosts.json's: chopin, cinqcent, copland, cage
-                  (default its default hosts, all four amd64 ones since
-                  2026-11-14; a guest that doesn't fit a small host is placed
-                  on the big ones by itself, below)
+  --hosts H,H     of testvm/hosts.json's: chopin, cinqcent, copland, cage,
+                  choubox (default its default hosts, every amd64 one:
+                  copland and cage since 2026-11-14, choubox since 2026-11-17;
+                  a guest that doesn't fit a small host is placed on the big
+                  ones by itself, below)
   --slots N|H=N   checks of ours at once: N on every host, H=N on H
                   (repeatable, comma-separated, later ones win; default
                   each host's stic_slots in testvm/hosts.json, else 3)
@@ -165,11 +166,11 @@ HOSTS_TABLE = _host_table()
 # range there, our ports (stic_ports).
 HOSTS = {r["name"]: dict(ssh=r["ssh"], slot_range=r["slot_range"], ports=tuple(r["stic_ports"]))
          for r in HOSTS_TABLE.rows()}
-# --hosts' default, the table's default hosts: the four amd64 hosts since
-# 2026-11-14 (copland and cage joined once HostTest2 and a representative per
-# family had passed there, design-classes.md: small hosts).  A guest a small
-# host can't run is kept off it by its ceiling, image and binaries, never by
-# its name (too_big, novm, prefer).
+# --hosts' default, the table's default hosts: every amd64 host (copland and
+# cage joined 2026-11-14, once HostTest2 and a representative per family had
+# passed there, design-classes.md: small hosts; choubox 2026-11-17, its trial
+# runs waived by the user).  A guest a small host can't run is kept off it by
+# its ceiling, image and binaries, never by its name (too_big, novm, prefer).
 DEFAULT_HOSTS = HOSTS_TABLE.defaults()
 GUEST_SLOTS = 3          # every check.sh's slot_take 3
 
@@ -1613,9 +1614,9 @@ def self_test():
           f"HOSTS' slot ranges are guest-slot.sh's slot_range_here ({here_ranges})")
     check(all(int(HOSTS[h]["slot_range"].split("-")[0]) <= HOSTS[h]["ports"][0] <= HOSTS[h]["ports"][1]
               <= int(HOSTS[h]["slot_range"].split("-")[1]) for h in HOSTS), "every host's ports are in its slot range")
-    check(set(DEFAULT_HOSTS) <= set(HOSTS) and {"copland", "cage"} <= set(DEFAULT_HOSTS)
+    check(set(DEFAULT_HOSTS) <= set(HOSTS) and {"copland", "cage", "choubox"} <= set(DEFAULT_HOSTS)
           and all(HOSTS_TABLE.host_arch(h) == "amd64" for h in DEFAULT_HOSTS),
-          "every default host is an amd64 host of HOSTS, copland and cage among them")
+          "every default host is an amd64 host of HOSTS, copland, cage and choubox among them")
     check(HOSTS["cage"] == dict(ssh="m@cage.local", slot_range="3000-3099", ports=(3080, 3099)),
           "cage: m@cage.local, slots 3000-3099, ports 3080-3099")
     rd = readme_estimates()

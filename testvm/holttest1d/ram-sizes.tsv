@@ -5,18 +5,21 @@
 # illumos, Haiku).  left is what the guest's run left on the host that ran it
 # (r3all's passes, else a raid run's), and the 1.0 GiB is for the rescuer's
 # overlay and the restored boot's snapshot, which a run deletes before it
-# ends.  MEM is 4 for all, never measured.
+# ends.  MEM is 4 for all, unless a row's source says it was measured.
 # BSD, illumos and Haiku rows are estimates (a pass deletes their disks:
-# 1.6 x the image + 0.3 GiB, or omnios58's from jobs.log's writes), and
-# variant rows reuse their guest's figure, unverified.  The source column says
-# how each row was made.
+# 1.6 x the image + 0.3 GiB, or omnios58's from jobs.log's writes), except
+# where the source column names a measured RAM-disk peak (oi2610, omnios58;
+# haiku6's is a lower bound), and variant rows reuse their guest's figure, unverified.  The
+# source column says how each row was made.
 # Two or more whole passes in /bkoscratch/holttest1d/peaks.tsv (PASS, all
 # four phases, not seeded) replace a row in ram-size.sh; one never lowers it.
 # host: the host that measured the row, or class:C, a row for every host of
-# class C in testvm/hosts.json (class:small: cage, copland) that has no row of
-# its own; a host with neither gets the largest of its rows.  No class:small
-# row is measured yet: the small hosts get the big hosts' largest until their
-# own peaks.tsv has 2 passes, or a row is added from them.
+# class C in testvm/hosts.json (class:small: copland, cage, choubox, bigfoot)
+# that has no row of its own; a host with neither gets the largest of its rows.
+# No class:small row is measured yet, and only haiku6 has a small host's row
+# (Choubox's, its only row, so every host takes it).  For every other guest
+# the small hosts get the big hosts' largest until their own peaks.tsv has
+# 2 passes, or a row is added from them.
 guest	variant	host	left_bytes	proposed_D_GiB	proposed_MEM_GiB	source
 aerynos	-	chopin	2660667392	4	4	chopin:/bkoscratch/holttest1d/r3all/aerynos du -s -B1 (RESULT: PASS); D: left 2.48 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
 alpine324	-	chopin	553926656	2	4	chopin:/bkoscratch/holttest1d/r3all/alpine324 du -s -B1 (RESULT: PASS); D: left 0.52 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
@@ -37,7 +40,7 @@ freebsd14	-	chopin	6193152	3	4	chopin:/bkoscratch/holttest1d/r3all/freebsd14 du 
 freebsd15	-	cinqcent	5718016	3	4	cinqcent:/bkoscratch/holttest1d/r3all/freebsd15 du -s -B1 (RESULT: PASS); D: est. 1.6 x image 0.86 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
 ghostbsd26	-	chopin	4988928	3	4	chopin:/bkoscratch/holttest1d/r3all/ghostbsd26 du -s -B1 (RESULT: PASS); D: est. 1.6 x image 1.00 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
 ghostbsd26-zfs	-	cinqcent	5234688	3	4	cinqcent:/bkoscratch/holttest1d/r3all/ghostbsd26-zfs du -s -B1 (RESULT: PASS); D: est. 1.6 x image 1.51 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
-haiku6	-	cinqcent	679936	3	4	cinqcent:/bkoscratch/holttest1d/r3all/haiku6 du -s -B1 (RESULT: PASS); D: est. 1.6 x image 0.65 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
+haiku6	-	choubox	3435973837	4	4	choubox:t2h-20261117T1244-359c ht1-bsd.sh RAM-disk 3.2 GiB and 3.0 GiB anon when the sampler stopped the run HARNESS over its 3 GiB estimate (after load boot passed): lower bounds, not a whole run's peak, so a whole pass's peaks replace it (two in peaks.tsv; one only raises it); D: ram-size.sh's peak rule, ceil(1.10 x 3.2 + 0.25); MEM: ceil(1.10 x 3.0 GiB anon), floor 4
 hardenedbsd15	-	chopin	5836800	4	4	chopin:/bkoscratch/holttest1d/r3all/hardenedbsd15 du -s -B1 (RESULT: PASS); D: est. 1.6 x image 2.06 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
 hardenedbsd15-zfs	-	chopin	-	4	4	est. (no run yet): 1.6 x image 0.94 GiB (measured, the fresh build before any vm-update) + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3 = 3, raised to hardenedbsd15's 4 for growth after vm-update; a run's peak replaces it
 mint22	-	chopin	14949056512	17	4	chopin:/bkoscratch/holttest1d/r3all/mint22 du -s -B1 (RESULT: PASS); D: left 13.92 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1

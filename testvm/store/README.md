@@ -11,7 +11,7 @@ this is how to use it.  The logic is `vmstore.py`; the tests are in `tests/`.
 |---|---|---|
 | mirror | Chopin, `/bkoscratch/bko-store` | the only publisher; pushes to Bigfoot; is also Chopin's cache |
 | master | Bigfoot, `/media/DantePool/bt/BkoStore` (`VM_STORE_BIGFOOT`) | the copy of record; written only by Chopin's push, by rename from `/media/DantePool/bt/.bko-staging`; vm-store never runs there |
-| cache | Cinqcent, Copland and Cage (Czerny once racked), `/bkoscratch/bko-cache` | fetches from Chopin with `ensure`, evicts with `gc` |
+| cache | Cinqcent, Copland, Cage and Choubox (Czerny once racked), `/bkoscratch/bko-cache` | fetches from Chopin with `ensure`, evicts with `gc` |
 
 A root's role is its `store.json`'s, set by `init`.  `testvm/hosts.json`
 records the same split as host roles (`store-mirror` on Chopin, `cache` on

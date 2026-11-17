@@ -108,17 +108,20 @@ fs_roundtrip.py on ext4, f2fs, tmpfs, jfs, sparse-rt.sh on zfs, zfs-nocomp
 and ext4 (`LINUX_FS`, `SPARSE_FS` change them; `all`, or `ANY_HOST=1`,
 runs every one).  The host is looked up in testvm/hosts.json (`--host`, else
 `hostname -s`; an unknown host stops it): a big host has its own profile, as
-above, and a small host (Copland, Cage; Czerny once enabled) the small
-profile.  The small hosts have no host ZFS, and their `vms/` is only the
-published guests a vm-store cache links, so they run no guest platform:
-linux and sparse only, fs_roundtrip.py on ext4, xfs, btrfs, f2fs, tmpfs
-and jfs, sparse-rt.sh on ext4, xfs and btrfs, ports from the first of the
-host's `slot_range` (2800 Copland, 3000 Cage, 3100 Czerny), at most three
-guests counted on that range like Cinqcent's.  That profile duplicates part
-of the big hosts' file systems.  With a 10 GiB RAM disk (cmp-run.sh's
-ceiling, which `cmp-run.sh --ceiling` prints, is 9.0 9.2), one
-fs_roundtrip.py and one sparse-rt.sh run at a time there
-(`JOBS_CAP` 1): two fs_roundtrip.py peak at 12.2 GiB in RAM, one at about 6.1.
+above, and a small host (Copland, Cage, Choubox; Czerny once enabled) the
+small profile.  The small hosts have host ZFS since 2026-11-14 (2.4.4,
+testvm/BACKPORTS.md), but the small profile runs no ZFS step, and their
+`vms/` is only the published guests a vm-store cache links, so they run no
+guest platform: linux and sparse only, fs_roundtrip.py on ext4, xfs, btrfs,
+f2fs, tmpfs and jfs, sparse-rt.sh on ext4, xfs and btrfs, ports from the
+first of the host's `slot_range` (2800 Copland, 3000 Cage, 3100 Czerny,
+3300 Choubox), at most three guests counted on that range like Cinqcent's.
+That profile duplicates part of the big hosts' file systems.  With a 10 GiB
+RAM disk (cmp-run.sh's ceiling, which `cmp-run.sh --ceiling` prints, is
+9.0 10.1 on Copland and Cage), one fs_roundtrip.py and one sparse-rt.sh run
+at a time there (`JOBS_CAP` 1): two fs_roundtrip.py peak at 12.2 GiB in RAM,
+one at about 6.1.  Choubox's 4G RAM disk (ceiling 3.0 6.0) is smaller than
+one fs_roundtrip.py's peak.
 A file system or step that can't run is a FAIL unless `ALLOW_SKIP` names it.  A fix round runs only what its
 fixes touch, on each round host (each skips the others' platforms); affected.sh
 runs on the Mac, where the forks' histories are:
@@ -246,7 +249,7 @@ the same scripts; the local restic, rustic and rustic_core trees go across
 the same way, for `SRC=` (without .git, `rustic-commit` names the commits
 "unknown" unless `RUSTIC_COMMIT` and `RUSTIC_CORE_COMMIT` give them):
 
-    testvm/sync-hosts.sh                  # every enabled host: chopin, cinqcent, copland, cage
+    testvm/sync-hosts.sh                  # every enabled host: chopin, cinqcent, copland, cage, choubox, bigfoot
     for h in chopin.local cinqcent.local; do     # the build hosts
         rsync -rlp --checksum --exclude target --exclude .git \
             ~/git/restic ~/git/rustic ~/git/rustic_core m@$h:backotter-work/src/

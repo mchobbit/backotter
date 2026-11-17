@@ -39,7 +39,7 @@ class Base(unittest.TestCase):
         self.set_conf({})
         self.facts = os.path.join(self.tmp, "facts.json")     # the stub facts source: the hosts' ceilings
         with open(self.facts, "w") as f:
-            json.dump({h: [64, 64] for h in ("chopin", "cinqcent", "copland", "cage")}, f)
+            json.dump({h: [64, 64] for h in ("chopin", "cinqcent", "copland", "cage", "choubox")}, f)
         self.env = dict(os.environ, T2_MAC_ROOT=self.root, T2_HOST_ROOT=os.path.join(self.tmp, "host"),
                         T2_BATCH_T2=f"{sys.executable} -B {STUB}", T2_STUB_CONF=self.conf, T2_BATCH_TICK="0.3",
                         T2_BATCH_POLL="0.1", T2_BATCH_STOP_WAIT="2", T2_BATCH_MIN_FREE_GB="0",
@@ -136,10 +136,10 @@ class E2E(Base):
         self.assertRegex(run, r"^t2h-\d{8}T\d{4}-[0-9a-f]{4}$")
         self.assertEqual(st["005-t2-holttest2"]["run"], run)
         with open(os.path.join(e, "placed")) as fh:
-            self.assertEqual(json.load(fh)["hosts"], ["chopin", "cinqcent", "copland", "cage"])
+            self.assertEqual(json.load(fh)["hosts"], ["chopin", "cinqcent", "copland", "cage", "choubox"])
         start = [c for c in self.calls() if c.startswith("START HoltTest2")]
         self.assertEqual(len(start), 1)
-        self.assertIn("chopin,cinqcent,copland,cage", start[0])
+        self.assertIn("chopin,cinqcent,copland,cage,choubox", start[0])
         self.assertIn("UNKNOWN_MAX=480", start[0])            # patience 2 h at hostjob's 15 s polls
         self.assertIn("T2_SSH=/usr/bin/false -o ServerAliveCountMax=4 -o ConnectionAttempts=3", start[0])
         for n in ("batch.json", "state.json", "batch.log", "schedule.txt", "report.txt"):
@@ -245,7 +245,7 @@ class E2E(Base):
         self.assertEqual(b1["batch"], bid)
         inflight = {r["entry"]: r["hosts"] for r in b1["running"]}
         self.assertEqual(set(inflight), {"002-t2-holttest2", "003-t2-stictest2-rel6", "004-cmd-long"})
-        self.assertEqual(inflight["002-t2-holttest2"], ["chopin", "cinqcent", "copland", "cage"])
+        self.assertEqual(inflight["002-t2-holttest2"], ["chopin", "cinqcent", "copland", "cage", "choubox"])
         self.wait_for(lambda: json.loads(rd(os.path.join(self.root, "batches", ".running")))["t"] != b1["t"],
                       what="a beacon refresh")
         st_line = self.t2("status")
@@ -310,7 +310,8 @@ class E2E(Base):
 
     def real_ceilings(self):
         with open(self.facts, "w") as f:
-            json.dump({"chopin": [23, 23], "cinqcent": [23, 23], "copland": [9, 9.2], "cage": [9, 9.2]}, f)
+            json.dump({"chopin": [23, 23], "cinqcent": [23, 23], "copland": [9, 9.2], "cage": [9, 9.2],
+                       "choubox": [3, 6]}, f)
 
     def test_split_matches_plan(self):
         """Free hosts get work: SticTest2 on the small hosts (one of its seven sets) beside a long
@@ -322,17 +323,17 @@ class E2E(Base):
         self.assertEqual(plan.returncode, 0, plan.stderr)
         doc = json.loads(plan.stdout)
         rows = {r["id"]: r for r in doc["schedule"]["rows"]}
-        self.assertEqual(rows["002-t2-stictest2-rel6"]["hosts"], ["copland", "cage"])
+        self.assertEqual(rows["002-t2-stictest2-rel6"]["hosts"], ["copland", "cage", "choubox"])
         self.assertEqual(rows["002-t2-stictest2-rel6"]["start"], rows["001-cmd-hog"]["start"])
         self.assertEqual(doc["capacity"]["cage"]["ceiling"], [9, 9.2])
         text = self.t2(f, "plan")
         self.assertIn("finish  +", text.stdout)
-        self.assertRegex(text.stdout, r"002-t2-stictest2-rel6 +copland cage ")
+        self.assertRegex(text.stdout, r"002-t2-stictest2-rel6 +copland cage choubox ")
         r = self.t2(f, "--dirty-ok", timeout=60)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         start = [c for c in self.calls() if c.startswith("START SticTest2")]
         self.assertEqual(len(start), 1)
-        self.assertIn(" copland,cage UNKNOWN_MAX", start[0])
+        self.assertIn(" copland,cage,choubox UNKNOWN_MAX", start[0])
         st = self.state()
         self.assertLess(st["002-t2-stictest2-rel6"]["started"], st["001-cmd-hog"]["ended"])
         with open(os.path.join(self.bdir(), "batch.json")) as fh:

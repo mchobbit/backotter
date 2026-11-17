@@ -1,7 +1,7 @@
 # Farm telemetry to Bigfoot
 
-Every 15 minutes each farm host (chopin, cinqcent, cage, copland) sends one
-batch to Bigfoot: its journal since the batch before (kernel messages
+Every 15 minutes each farm host (chopin, cinqcent, cage, copland, choubox)
+sends one batch to Bigfoot: its journal since the batch before (kernel messages
 included) and a snapshot of its state. After a host freezes, the batches
 show what it was doing before, and the time the batches stopped dates the
 freeze. Written after Cage froze twice on 2026-11-16 (16:00 idle, 22:13
@@ -88,8 +88,8 @@ reads that key from Bigfoot's `/etc/ssh` over the Mac's own ssh session to
 it (which the Mac's known_hosts checks), never from an unchecked scan, and
 each host's own scan of Bigfoot must match it.
 
-Room: each host may keep 8 GiB / max(4, number of hosts), so 2 GiB with
-four; over that, its own oldest batches (by arrival) go, so one host's key
+Room: each host may keep 8 GiB / max(4, number of hosts), so 1.6 GiB with
+five; over that, its own oldest batches (by arrival) go, so one host's key
 can never push out another host's history. At most once an hour, batches
 older than 30 days go too. The receiver refuses new batches (the hosts
 keep them) when storing one would leave Bigfoot's `/var` under 2 GiB free.
@@ -106,7 +106,7 @@ under `/var/log/bko-farm` (never the live `.log` files). One line per store in
 From the Mac, at the repo root:
 
     testvm/telemetry/telemetry-setup.sh --dry-run    # what it would do
-    testvm/telemetry/telemetry-setup.sh              # all four hosts
+    testvm/telemetry/telemetry-setup.sh              # all five hosts
     testvm/telemetry/telemetry-setup.sh cage         # one host
 
 It is idempotent, so run it again after changing a file here: it

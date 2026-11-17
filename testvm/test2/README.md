@@ -91,8 +91,9 @@ against its last PASS, group by group), `t2 copy [--hosts H,H] [--gc]`,
 [GUEST...] [--reproject]` (probes guests with no fingerprint at their generation; never
 inside BkoTest2), `t2 self-test`, and the test-only `t2 ledger seed-current`
 (`--family guest` sets `extra.try_ran`, `--family img` seeds PASSes at the images' binaries' digests).  Options anywhere:
-`--hosts H,H` (of testvm/hosts.json's enabled hosts: chopin, cinqcent, copland, cage;
-default its default hosts, all four of them since 2026-11-14; each host once; a cell whose reservation is
+`--hosts H,H` (of testvm/hosts.json's enabled hosts: chopin, cinqcent, copland, cage, choubox;
+default its default hosts, every amd64 one (copland and cage since 2026-11-14, choubox since
+2026-11-17); each host once; a cell whose reservation is
 over a host's ceiling, its facts' `preflight.ram.ceiling`, is never placed there, a cell is
 kept off a host its facts say can't run it (below), and one no host can take is not
 runnable; testvm/HOSTS.md has the table and how a host joins), `--json` (the plan as

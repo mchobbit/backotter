@@ -21,8 +21,8 @@ they enter the repository; nothing found may stay.  Two parts:
                169.254/16, fe80::/10, fc00::/7
       email    an e-mail address
       key      a private key (BEGIN ... PRIVATE KEY) or an SSH public key
-      host     the test hosts' names, chopin, cinqcent, copland and cage (cage as a
-               word only); allowed in index.tsv
+      host     the test hosts' names, chopin, cinqcent, copland, cage, choubox and
+               bigfoot (cage as a word only); allowed in index.tsv
                and README.md, and anywhere with --allow-hosts (fixtures)
 (b) Strings, with --strings FILE (JSON lines {"k": KIND, "v": VALUE}, made by
     `leakscan.py strings` on each host and never moved off it) and --git-email

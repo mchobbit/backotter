@@ -2,7 +2,7 @@
 list, range and profile derived from it equals the constants the scripts had before it
 (chopin and cinqcent the default hosts, copland and cage known, czerny's row reserved), with
 bigfoot, the arm64 host, known since 2026-11-14 (an amd64-only list leaves it out), and
-choubox, a small amd64 cache host, known since 2026-11-17 (enabled, not default).
+choubox, a small amd64 cache host, known and default since 2026-11-17.
 An alternative table (BKO_HOSTS_JSON) shows that the consumers follow it: czerny enabled
 gets its own range and the small profile, a host without the build role is refused."""
 
@@ -39,9 +39,9 @@ BEFORE_DRIVE = {   # drive.py's HOSTS before the table
 CHOUBOX_DRIVE = dict(ssh="m@choubox.local", slot_range="3300-3399", ports=(3380, 3399))
 BIGFOOT_DRIVE = dict(ssh="m@bigfoot.local", slot_range="3200-3299", ports=(3280, 3299))
 KNOWN = ("chopin", "cinqcent", "copland", "cage", "choubox", "bigfoot")
-# The default hosts: every amd64 host since 2026-11-14, when copland and cage joined
-# (bigfoot waits for HostTest2, docs/design/arm64.md A6; choubox for its trial runs).
-DEFAULTS = ("chopin", "cinqcent", "copland", "cage")
+# The default hosts: every amd64 host, copland and cage since 2026-11-14 and choubox since
+# 2026-11-17 (bigfoot waits for HostTest2, docs/design/arm64.md A6).
+DEFAULTS = ("chopin", "cinqcent", "copland", "cage", "choubox")
 BEFORE_GATE_FALLBACK = (("holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic", "bin:abi",
                          "bin:static", "bin:version")
                         + tuple(f"loop:{n}@{h}" for n in ("linux", "sparse") for h in DEFAULTS) + ("selftest",))

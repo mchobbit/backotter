@@ -5,7 +5,8 @@
 # No `set round`: t2 entries take the round at the fork heads (the backotter HEADs
 # of ~/git/restic, rustic_core, rustic), built as t2r-... when none exists yet
 # (testvm/test2/README.md).
-set hosts chopin,cinqcent,copland,cage
+# No `set hosts`: the batch takes the host table's default hosts (testvm/hosts.json),
+# every one of them, choubox among them since 2026-11-17.
 set retry 1
 
 manual  step 1: vm-update round (t2 GuestTest2 update, lid open), then rebuild the rescue images

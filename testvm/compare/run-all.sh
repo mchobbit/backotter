@@ -79,7 +79,7 @@
 #   JOBS_CAP     at most this many of each at once, whatever HOST_JOBS and
 #                SPARSE_JOBS say (default 1 on the small hosts, copland and
 #                cage, none elsewhere): their 10 GiB RAM disk (cmp-run.sh's
-#                ceiling 9.0 9.2) holds one fs_roundtrip.py in RAM, about
+#                ceiling 9.0 10.1) holds one fs_roundtrip.py in RAM, about
 #                6.1 GiB at its peak, not two (12.2 GiB on chopin and
 #                cinqcent, whatever their file systems); 0: no cap
 #   STEP_TIMEOUT seconds, every step (default by kind, 1.5-6 h: round 9's
@@ -191,10 +191,12 @@ case $prof in
     cinqcent) all="linux sparse freebsd netbsd openbsd_illumos"
         lfs="ext4 f2fs tmpfs jfs" sfs="zfs zfs-nocomp ext4"
         : "${MAX_GUESTS:=3}" "${COUNT_OTHERS:=1}" ;;
-    # The small hosts (copland, cage: 27 GiB, a 10 GiB RAM disk, no host
-    # ZFS, guests from the image cache): profiled like Cinqcent, each on its
-    # own range, one job of a kind at a time (JOBS_CAP); not build hosts, not
-    # default hosts anywhere yet.  Their profile's file systems overlap the
+    # The small hosts (copland, cage: 27 GiB, a 10 GiB RAM disk; choubox:
+    # 15.5 GiB, a 4G one; host ZFS on all since 2026-11-14 or their joining,
+    # guests from the image cache): profiled like Cinqcent, each on its own
+    # range, one job of a kind at a time (JOBS_CAP); default hosts (copland
+    # and cage since 2026-11-14, choubox since 2026-11-17), choubox no build
+    # host.  Their profile's file systems overlap the
     # big hosts' and each other's: SPLIT deals a round out without overlap.
     small) all="linux sparse"
         lfs="ext4 xfs btrfs f2fs tmpfs jfs" sfs="ext4 xfs btrfs"

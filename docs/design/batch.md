@@ -212,7 +212,7 @@ id or arguments moved, and keeps the rest).
 # The suite is the user's (memory: carpetbeater).  Step 1 (refresh) and the
 # ThinkPad block (step 5) are manual: see decisions 8 and 9.
 set round rel6
-set hosts chopin,cinqcent,copland,cage
+# No `set hosts`: the table's default hosts, every one of them.
 set retry 1
 
 manual  step 1: vm-update round, then rebuild the rescue images

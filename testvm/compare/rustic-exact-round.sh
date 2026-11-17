@@ -117,10 +117,12 @@
 #   --nb-host H, --fb-host H
 #                    step 2's NetBSD and FreeBSD hosts (default: a host
 #                    pick-host gives that has the build image)
-#   --hosts H,H      step 4's job hosts, of chopin cinqcent copland cage
-#                    (default pick-host's default hosts)
+#   --hosts H,H      step 4's job hosts, of the host table's default amd64
+#                    hosts (default pick-host's, which are those)
 #   --build-hosts H,H
-#                    build-round.sh's --hosts (default all)
+#                    build-round.sh's --hosts, of the host table's amd64
+#                    build-role hosts (default all of those); the job hosts
+#                    outside them get the round's bin (--dist-hosts)
 #   --round NAME     build-round.sh's ROUND (default rr15-STAMP)
 #   --old-bin DIR    OLD_BIN: a directory of OS/restic-bko, rustic-bko and
 #                    their commit files, all c517a69/ba93d6e; none for none
@@ -203,8 +205,6 @@ SCRATCH=/private/tmp/claude-501/-Users-mchobbit-git-backotter/b1242dfa-05e2-431d
 RX_LINUX_BIN=${RX_LINUX_BIN:-$SCRATCH/rx-linux/bin}
 RX_BSD_BIN=${RX_BSD_BIN:-$SCRATCH/rx-bsd/bin}
 CHOPIN_ADDR=${CHOPIN_ADDR:-192.168.68.194}
-ALL_HOSTS="chopin cinqcent copland cage"
-
 usage() { sed -n '2,/^$/{s/^# \{0,1\}//;p;}' "$me"; exit "${1:-0}"; }
 say() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*"; }
 die() { say "STOP: $*" >&2; exit 1; }
@@ -215,6 +215,16 @@ x() {
     elif [[ $1 == hssh ]]; then echo "    [dry-run] ssh $(dest "$2"): $3"
     else echo "    [dry-run] $(q "$@")"; fi
 }
+# The host table's lines come after say and die, which their failures call.
+# shellcheck source=../hosts.sh
+. "$REPO/testvm/hosts.sh"
+# The farm, from the host table (never a list of names here, as ht1-farm.sh
+# does it): ALL_HOSTS is pick-host's default amd64 hosts, BUILD_ALL the amd64
+# hosts with the build role, which is what build-round.sh will take.
+ALL_HOSTS=$(hosts_names --default --arch amd64 | tr '\n' ' ') || die "no hosts from the host table"
+BUILD_ALL=$(hosts_names --role build --arch amd64 | tr '\n' ' ') || die "no build hosts from the host table"
+ALL_HOSTS=${ALL_HOSTS% } BUILD_ALL=${BUILD_ALL% }
+[[ -n $ALL_HOSTS && -n $BUILD_ALL ]] || die "the host table has no default or no build host"
 
 steps=1,2,3,4 DRY=0 LOGDIR="" HOST1="" NBHOST="" FBHOST="" POOL="" BUILD_HOSTS="" ROUND=""
 OLD_ARG="" FORCE=0 KEEP=0 JOB_HOURS=10
@@ -241,8 +251,14 @@ done
 [[ $steps =~ ^[1-4](,[1-4])*$ ]] || { echo "--steps: a comma list of 1 2 3 4, not $steps" >&2; exit 2; }
 [[ $JOB_HOURS =~ ^[0-9]+$ && $JOB_HOURS -gt 0 ]] || { echo "--job-hours: hours, not $JOB_HOURS" >&2; exit 2; }
 want() { [[ ",$steps," == *",$1,"* ]]; }
-for h in $HOST1 $NBHOST $FBHOST $(echo "$POOL $BUILD_HOSTS" | tr ',' ' '); do
+for h in $HOST1 $NBHOST $FBHOST $(echo "$POOL" | tr ',' ' '); do
     [[ " $ALL_HOSTS " == *" $h "* ]] || { echo "no such farm host: $h (of $ALL_HOSTS)" >&2; exit 2; }
+done
+# Step 1 builds there: --host is a build-role host.
+[[ -z $HOST1 || " $BUILD_ALL " == *" $HOST1 "* ]] || { echo "--host: $HOST1 is no build host (of $BUILD_ALL)" >&2; exit 2; }
+# build-round.sh's --hosts takes only the build-role hosts.
+for h in $(echo "$BUILD_HOSTS" | tr ',' ' '); do
+    [[ " $BUILD_ALL " == *" $h "* ]] || { echo "--build-hosts: $h is no build host (of $BUILD_ALL)" >&2; exit 2; }
 done
 [[ $(uname -s) == Darwin ]] || { echo "rustic-exact-round: run this on the Mac, not on $(hostname -s)" >&2; exit 2; }
 
@@ -259,8 +275,6 @@ if [[ $DRY == 1 ]]; then sfx=-dry; fi
 mkdir -p "$LOGDIR"
 LOGDIR=$(cd "$LOGDIR" && pwd)
 exec > >(trap '' INT TERM; tee -a "$LOGDIR/driver.log") 2>&1
-# shellcheck source=../hosts.sh
-. "$REPO/testvm/hosts.sh"
 
 # --- ssh and rsync to the farm ----------------------------------------------------------
 SSHO=(-o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10)
@@ -837,7 +851,7 @@ alloc_port() {  # HOST: PORT_GOT, a free port of the host's
 # the one this run has given the fewest jobs (ties: pick-host's order).
 ASSIGNED=""
 place() {
-    local d=$1 m=$2 g=$3 n=$4 c h k best="" bs=999 i=0 args=(--all --field name --reserve "$1" "$2")
+    local d=$1 m=$2 g=$3 n=$4 c h hc k best="" bs=999 i=0 args=(--all --field name --reserve "$1" "$2")
     [[ -n $g ]] && args+=(--guest "$g")
     [[ -n $n ]] && args+=(--needs "$n")
     [[ -n $POOL ]] && args+=(--hosts "$POOL")
@@ -845,9 +859,15 @@ place() {
     if [[ -z $c ]]; then
         echo "$(date +%T) pick-host $(q "${args[@]}") gave nothing: falling back" >>"$LOGDIR/pick-host.log"
         for h in $(echo "${POOL:-$ALL_HOSTS}" | tr ',' ' '); do
-            if awk -v d="$d" -v m="$m" 'BEGIN { exit !(d > 9.0 || m > 9.2) }'; then
-                [[ $(hosts_get "$h" class) == big ]] || continue
+            # The host's own ceiling, as pick-host asks it: cmp-run.sh refuses a
+            # --reserve over it at once.  No figures: no job there (as pick-host).
+            hc=$(hssh "$h" "cd backotter-work && testvm/compare/cmp-run.sh --ceiling" 2>/dev/null |
+                awk '$1 ~ /^[0-9]/ && $2 ~ /^[0-9]/ { print $1, $2; exit }') || hc=""
+            if [[ -z $hc ]]; then
+                echo "$(date +%T) fallback: no cmp-run.sh --ceiling from $h: left out" >>"$LOGDIR/pick-host.log"
+                continue
             fi
+            awk -v d="$d" -v m="$m" -v c="$hc" 'BEGIN { split(c, f, " "); exit !(d <= f[1] && m <= f[2]) }' || continue
             [[ -z $g ]] || hssh "$h" "test -e backotter-work/vms/$g" 2>/dev/null || continue
             c+=" $h"
         done
@@ -903,8 +923,12 @@ FAILED=0
 # --- step 1 -----------------------------------------------------------------------------------
 step1_start() {
     say "== step 1: build and test the trees as they are (HEAD plus any uncommitted changes)"
-    local h=$HOST1
-    [[ -n $h ]] || h=$(place 3 6 "" "")
+    local h=$HOST1 b bp=""
+    # Step 1 builds (prep-rustic-src.sh, cargo test): only a build-role host,
+    # of --hosts when it is given (choubox is a default host with no build role).
+    for b in $BUILD_ALL; do [[ -z $POOL || ",$POOL," == *",$b,"* ]] && bp+=${bp:+,}$b; done
+    [[ -n $h || -n $bp ]] || die "step 1: no build host among --hosts ($POOL; build hosts: $BUILD_ALL)"
+    [[ -n $h ]] || h=$(POOL=$bp place 3 6 "" "")
     [[ -n $h ]] || die "step 1: pick-host found no host"
     ASSIGNED+=$'\n'"$h"
     S1_HOST=$h
@@ -1275,14 +1299,11 @@ step4() {
         echo "    [dry-run] git clone --shared --no-checkout $GIT/{restic,rustic_core,rustic} $G/ and check out $eh, $ch, $rh"
     fi
     local bh dist="" gv g125=0
-    bh=$(echo "${BUILD_HOSTS:-$ALL_HOSTS}" | tr ',' ' ')
-    # The job hosts that build nothing get the round's bin from build-round.sh.
-    if [[ -n $BUILD_HOSTS ]]; then
-        if [[ -z $POOL ]]; then dist=all
-        else
-            for h in $(echo "$POOL" | tr ',' ' '); do [[ " $bh " == *" $h "* ]] || dist+=${dist:+,}$h; done
-        fi
-    fi
+    bh=$(echo "${BUILD_HOSTS:-$BUILD_ALL}" | tr ',' ' ')
+    # The job hosts that build nothing get the round's bin from build-round.sh:
+    # with or without --build-hosts, since a default host need not be a build
+    # host (choubox has no build role), and place() may give it a job.
+    for h in $(echo "${POOL:-$ALL_HOSTS}" | tr ',' ' '); do [[ " $bh " == *" $h "* ]] || dist+=${dist:+,}$h; done
     # restic-bko goes to a build host with Go, which takes go on PATH, else the
     # newest ~/sdk/go*/bin/go (build-round.sh's choice, and BKO_GO doesn't reach
     # it): each such host's must be go1.25.10, checked now, not after the round.

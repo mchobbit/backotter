@@ -498,7 +498,7 @@ Other tools these runs need:
 **Which host.** Don't pick one by habit. `testvm/pick-host --reserve D M
 --guest GUEST --needs rescuer --needs debs` (D and M from `ram-size.sh` or
 `ram-sizes.tsv`) prints the default host with the most room now that can run
-it, over all four amd64 hosts. For a set of guests, `ht1-farm.sh` (below,
+it, over every default amd64 host. For a set of guests, `ht1-farm.sh` (below,
 "Queues") spreads one queue over every default host instead.
 
 `ht1.sh GUEST RUN [PHASE...]`, run as root on a test host under a

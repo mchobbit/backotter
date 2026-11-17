@@ -1,10 +1,19 @@
 # The KVM test hosts
 
-The test scripts run guests on four amd64 KVM hosts. Two are big, Chopin and
-Cinqcent, and two are small, Copland and Cage (the M900s). A fifth small host,
+The test scripts run guests on five amd64 KVM hosts. Two are big, Chopin and
+Cinqcent, two are small, Copland and Cage (the M900s), and the fifth is Choubox,
+smaller still. A sixth host,
 Czerny, is due at the end of November 2026 and has a reserved row already.
 Choubox (the user's GMKtec NucBox G3 Pro: i3-10110U, 4 threads, 15.5 GiB, one
-512 GB SATA SSD) joined on 2026-11-17 as a sixth, smaller host. It is small
+512 GB SATA SSD) joined the table on 2026-11-17 and the defaults the same day,
+by the user's choice, before its trial runs were done. They stood so: the
+gate's bin cells (abi, static, version) PASS; the holt alpine324, artix-s6,
+debian13 and netbsd11 lines PASS, freebsd15 FLAKY-FAIL (an ssh failure in
+HoltTest's edge checks, fixed the same day) and haiku6 HARNESS (over its
+RAM-disk estimate; its row in ram-sizes.tsv is raised); the stic mint22 and
+aerynos checks PASS, and its other 12 stic checks never started (the rounding
+stall fixed in 3b00344). Its two HostTest2 loop cells can never fit its
+3.0 GiB disk ceiling. The user waived the rest. It is small
 class with limits of its own in its row: 1 SticTest slot, 1 HoltTest job,
 1 BackShot2 slot and `base_gib` 3, with a 4G RAM disk and the ZFS ARC capped at
 512 MiB (`/etc/modprobe.d/zfs-bko.conf`), so its `cmp-run.sh --ceiling` is
@@ -28,7 +37,7 @@ Before starting heavy work by hand, check `testvm/test2/t2 batch status`: a runn
 | copland | small | 2800-2899 | 2880-2899 | build, cache | yes |
 | cage | small | 3000-3099 | 3080-3099 | build, cache | yes |
 | czerny | small | 3100-3199 | 3180-3199 | cache | no (row reserved: `enabled: false`) |
-| choubox | small (own limits) | 3300-3399 | 3380-3399 | cache | no (joined 2026-11-17; trial runs first) |
+| choubox | small (own limits) | 3300-3399 | 3380-3399 | cache | yes (since 2026-11-17) |
 | bigfoot | small, arm64 | 3200-3299 | 3280-3299 | build-arm64 | no |
 
 ## The table: testvm/hosts.json
@@ -157,9 +166,11 @@ doesn't publish: `vm-store publish sculpt2610` on Chopin after the round.
 Every cache host links it (`vms/sculpt2610` on Cinqcent, Copland and Cage).
 
 **Small hosts** (Copland, Cage, and Czerny later): 27 GiB of memory and a 10G
-RAM disk. Their ceiling is 9.0 11.2 (9.0 9.2 before their `base_gib` became 4), and
-9.0 10.2 while the ZFS module is loaded there, as it is on Cage (the module alone costs
-the ARC's GiB of headroom). Ask the host: `cmp-run.sh --ceiling`.
+RAM disk. Their ceiling is 9.0 10.1, measured on both on 2026-11-17 with the
+ZFS module loaded, as it is on each (the module alone costs the ARC's GiB of
+headroom; since 3b00344 cmp-run.sh floors the figure instead of rounding it).
+Ask the host: `cmp-run.sh --ceiling`. Choubox is small class too, with its own
+smaller limits and a 3.0 6.0 ceiling (above).
 Both have host ZFS since 2026-11-14 (`zpool`, 2.4.4 from trixie-backports;
 BACKPORTS.md), so `needs_host_zfs` no longer keeps cells off them; their
 ceiling still does. Their `vms/` is a set
@@ -192,8 +203,9 @@ starts its own job (`ht1.sh`, `make-*.sh`, a guest boot, a compare run) asks
 `testvm/pick-host` for the host, with the job's `--reserve` and guest, and runs
 it there. "Both hosts" (Chopin and Cinqcent) is not the default, and a PASS on
 "both hosts" is not the done criterion: a job passes on the host pick-host
-gave it. A sync names all four amd64 hosts (`testvm/sync-hosts.sh
-m@chopin.local m@cinqcent.local m@cage.local m@copland.local`), never two. Why:
+gave it. A sync names all five amd64 hosts (`testvm/sync-hosts.sh
+m@chopin.local m@cinqcent.local m@cage.local m@copland.local m@choubox.local`),
+never two. Why:
 docs/design/four-host-split.md.
 
 Placement works from capabilities, not host names. t2's facts probe
@@ -250,16 +262,16 @@ each of these is decided per cell, from the host's facts, not from its name:
 - guests that are not published to the store;
 - the host-ZFS holt sources;
 - bko-holt and image builds (the big build hosts; a round's build units are dealt over all four since 2026-11-14);
-- cells over a small host's ceiling (about 9.0 11): for example stic debian13-zfs
+- cells over a small host's ceiling (9.0 10.1, and Choubox's 3.0 6.0): for example stic debian13-zfs
   (`--reserve 13 5`) and
   ubuntu26-zfsmirror (23 GiB). The gate's per-host loop cells are the
   exception: they run on a small host too, with that class's smaller
   `host_reserve` (`loop:linux` 8.5 4, `loop:sparse` 6 4);
 - the holt pins in `classes.json`: openbsd8 on Chopin, and dragonfly6 and redox
   on Cinqcent. The redox tools are also on Cage and Copland, but not on Chopin.
-- UEFI holt sources, which run only where `rescuer-uefi.qcow2` exists (all
-  four amd64 hosts have it, checked 2026-11-14; placement still goes by the
-  host's facts);
+- UEFI holt sources, which run only where `rescuer-uefi.qcow2` exists (Chopin,
+  Cinqcent, Copland and Cage have it, checked 2026-11-14; placement still goes
+  by the host's facts, Choubox's too);
 - the fork gates (`fork:*` pinned in `gate/layers.json`);
 - run-all.sh's guest platforms. On a small host run-all.sh runs only linux and
   sparse.
@@ -389,7 +401,7 @@ other sessions' runs.
    run `stick/build-round.sh --dist-only --dist-hosts NAME ROUND`. A
    SticTest2 run refuses a ROUND that a host in use lacks.
 8. **Facts.** Run `testvm/test2/t2 SticTest2All plan --hosts
-   chopin,cinqcent,copland,cage,NAME`, and the same for `HoltTest2All` and `GateTest2`.
+   chopin,cinqcent,copland,cage,choubox,NAME`, and the same for `HoltTest2All` and `GateTest2`.
    Each plan probes the new host's facts (guests, ceiling, caps) and writes
    nothing. Its reasons show which cells it keeps off the new host and why
    (`kept off NAME: ...`). On the host, check that
@@ -404,7 +416,13 @@ other sessions' runs.
     `tests/test_holt.py`'s fake hosts, t2's usage, drive.py's self-test, and
     the `fixtures/p2/golden` files (`T2_GOLDEN=bless` in a whole
     `python3 -m unittest discover -s tests` run rewrites them). This is a code
-    change. Only then do t2, drive.py and SweepTest2's completeness check
+    change. Then the prose that counts the hosts by name: hosts.json's
+    `notes`, this page (the table, the host's paragraph, the sync line),
+    `t2lib/__init__.py`'s host comment, testvm/test2/README.md,
+    testvm/stictest1/README.md and testvm/compare/README.md. A shell script
+    reads the defaults from the table (`hosts_names --default --arch amd64`,
+    as ht1-farm.sh and rustic-exact-round.sh do), never a list of its own.
+    Only then do t2, drive.py and SweepTest2's completeness check
     include the host without `--hosts`. vm-update's fleet stays the
     hosts with the fleet role.
 

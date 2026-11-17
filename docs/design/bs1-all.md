@@ -32,7 +32,7 @@ one unpushed commit on 2026-11-17.
 ## Approach: no reinstalls, two halves per distro
 
 - **A, restore the library backup with today's tools:** `backshot1 cycle L
-  1 --erase-serial 214532A60C34 --hold` from the installed system that is
+  1 --erase-serial S7XMNF0Y787118 --hold` from the installed system that is
   running (Q3). That is `to-stick`, `plan`, `phase2 L`, `reboot`,
   `wait-host`, `bs1-hold on` (Tooling 3, 6), `verify L`. This tests:
   - load, including the zeroing of disk ends, since bs1-restore always
@@ -51,7 +51,7 @@ one unpushed commit on 2026-11-17.
   test of an older build's backup.
 - **B, a fresh round trip of the system A left,** in the same boot as A's
   verify: `preflight`, `phase1` (today's dump and backup), then `backshot1
-  cycle B 1 --erase-serial 214532A60C34 --hold --load-wipes` (Q2, Q3), then
+  cycle B 1 --erase-serial S7XMNF0Y787118 --hold --load-wipes` (Q2, Q3), then
   the distro's extra checks. This adds dump, the backup, and load's own wipe
   on a disk that already holds the same layout, which is the b3af94d case:
   load zeroing the ends and writing a table that matches the one there. It

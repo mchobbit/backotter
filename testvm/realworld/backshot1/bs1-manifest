@@ -78,6 +78,9 @@ EXPECTED = [
     # writes its PID into asound.state.lock and card0.lock there at every
     # boot (zorin-18-20261116-181641).
     "var/lock/*",
+    # Vanilla OS's vso and ABRoot log to /var/vlogs, a new file each minute
+    # they run (vanilla-3.0-20261117-132713).
+    "var/vlogs/*",
     "swap.img", "swapfile", "swap/*", "mnt/bs1-backup",
     # systemd-swap's swapFC files (BigLinux: its own @swapfile subvolume,
     # mounted at /swapfile), in use at backup time and written anew by
@@ -209,7 +212,9 @@ ABROOT_PRESENT = "/abroot-present"
 ABROOT_UPPERS = "var/lib/abroot/etc/"
 ABROOT_KEPT = ["boot/grub/grub.cfg", "boot/grub/grub.cfg.future", "boot/efi/EFI/vanilla", "boot/efi/EFI/vanilla/*",
                "boot/efi/EFI/BOOT", "boot/efi/EFI/BOOT/*"]
-ABROOT_REMADE = ["etc/fstab", "etc/fstab.old"]
+# Vanilla OS's first-setup writes its (empty) command list again at every
+# boot, the same bytes (Thinkpad vanilla-3.0-20261117-132713).
+ABROOT_REMADE = ["etc/fstab", "etc/fstab.old", "etc/org.vanillaos.FirstSetup.commands"]
 ABROOT_LINKS = (("var/home", "home"), ("var/root", "root"), ("var/mnt", "mnt"))
 # A prefix no list's pattern matches: the other root's upper and work dir.
 ABROOT_HELD = "//abroot-held/"
@@ -281,7 +286,10 @@ def logical(rel, ostree=None, abroot=None):
 # nixos-26.05-20261113-095929) comes back with mnt added.  Where /mnt was
 # there, the mkdir only moves its mtime, and a directory's mtime isn't
 # compared (same()).  mnt/bs1-backup itself is in EXPECTED.
-ADDED = ["mnt"]
+ADDED = ["mnt",
+         # abroot status (verify runs it) makes ABRoot's package lists, empty,
+         # in the present root's /etc upper when they aren't there.
+         "etc/abroot/packages.add", "etc/abroot/packages.remove"]
 
 # After bko-holt load --reformat (bs1-restore --reformat,
 # docs/design/reformat.md): what its boot stage rewrites for the new type;

@@ -370,8 +370,13 @@ master `grub.cfg` on `/boot` whose literal `set default=N` picks the root.
 `/` is the present root, read-only, with an overlay on `/etc` whose upper is
 in `/var/lib/abroot/etc/LABEL`; the other root and the `init` LV are mounted
 by nothing.  BackShot1 knows it by `/usr/share/abroot/abroot.json`
-(`is_abroot` in bs1-common).  Plumbed on 2026-11-15 (V11), **not yet run**:
-no `bs1-qemu.py` rehearsal on `vanilla3` and no Thinkpad run.
+(`is_abroot` in bs1-common).  Plumbed on 2026-11-15 (V11).  **Thinkpad
+BackShot1 PASS 2026-11-17** (run vanilla-3.0-20261117-132713: LUKS `/var`,
+attended; 563,666 files; 0 unexpected).  That run's fixes: verify drops its
+tree before `abroot status` (a second mount of `/` makes abroot report no
+present root), counts a boot's `vso upgrade` that found no updates as quiet,
+and expects `/var/vlogs`, first-setup's command list and abroot's empty
+package lists.  No `bs1-qemu.py` rehearsal on `vanilla3` yet.
 
 - **The tree is the layout's six paths** (`storage.backup_sources`): `/`
   (a bind of the present root, so its raw `/etc`, the image's), `/boot`,

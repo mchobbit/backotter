@@ -89,8 +89,18 @@ hold_updates() {
     done
 }
 updaters_quiet() {
-    local u ran=
-    for u in $UPDATERS; do ran+=$(journalctl -b -q --no-pager -u "$u.service" 2>/dev/null); done
+    local u j ran=
+    for u in $UPDATERS; do
+        j=$(journalctl -b -q --no-pager -u "$u.service" 2>/dev/null)
+        # Vanilla OS starts vso upgrade at boot (vanilla-updates.service,
+        # before verify can hold it): a run that found nothing to update
+        # (abroot upgrade --check-only) wrote nothing.
+        if [[ $u == vanilla-updates ]] && grep -q 'sysUpgrade.info.noUpdates' <<<"$j" &&
+           ! grep -E 'COMMAND=/usr/bin/abroot upgrade' <<<"$j" | grep -vq -- '--check-only'; then
+            continue
+        fi
+        ran+=$j
+    done
     [[ -z $ran ]] || { echo "the journal since this boot:"; tail -n 20 <<<"$ran"; return 1; }
 }
 OSTREE_TOOL=$HERE/bs1-ostree
@@ -294,6 +304,11 @@ if is_abroot; then
     check "the kernel arguments (/etc/abroot/kargs) are the baseline's" asame 'kargs'
     check "each root's hostname and /etc/bko-root are the baseline's" asame 'hostname|bko-root'
     check "the kernel command line is the baseline's" asame 'cmdline'
+    # abroot finds the present root from the mounts: with the tree's
+    # read-only bind of / up, "present partition not found", and abroot
+    # status exits 1 saying nothing (Thinkpad, 2026-11-17).  The record is
+    # made; the rest needs only the running system.
+    drop_tree
     python3 "$ABROOT_TOOL" boot-check "$B/abroot.txt" >"$O/boot-check.txt" 2>&1
     rc=$?
     cat "$O/boot-check.txt" >>"$LOG"

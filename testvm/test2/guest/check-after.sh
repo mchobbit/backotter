@@ -112,7 +112,7 @@ if ! has_rule K-none && ! has_rule K-haiku; then
     cmd kernel
     r=$(uname -r)
     if has_rule K-deb || has_rule K-fed || has_rule K-void || has_rule K-moss || has_rule K-gentoo || has_rule K-anduinos ||
-        has_rule K-pve || has_rule K-pika || has_rule K-slackware; then
+        has_rule K-pve || has_rule K-pika || has_rule K-slackware || has_rule K-sdbu; then
         # (Slackware: uname -r is the version alone, 5.15.19, for huge and generic alike, and
         # /lib/modules/VERSION is kernel-modules'.)
         echo "running $r"

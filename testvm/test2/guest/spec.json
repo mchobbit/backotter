@@ -83,7 +83,7 @@
     "rules": {
      "source": "S-zyp",
      "loader": "L-sd",
-     "kernel": "K-deb",
+     "kernel": "K-sdbu",
      "boot": "B-lin",
      "mounts": "M-lin"
     },

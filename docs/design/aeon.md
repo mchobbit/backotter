@@ -983,7 +983,10 @@ The corpus entry `holt/tests/corpus/microos` and its Test2 registrations
 - **A3** registrations only: SticTest1 `testvm/stictest1/aeon` with its
   manifest, limits (microos's, expected) and the README's estimate (300 s);
   GuestTest2's `aeon` (pm tukit, L-sd, uefi-sb, not established) and the
-  estimates. **Not registered:** HoltTest2's source (classes.json, holt/spec.json)
+  estimates. Its kernel rule is `K-sdbu` since 2026-11-17 (K-deb found no
+  `/boot/vmlinuz-*` on Aeon: GuestTest2All t2v-20261117T1501-13fa): the
+  running snapshot's `/usr/lib/modules/KVER/` with a vmlinuz, each needing
+  sdbootutil's copy on the ESP (`ESP/TOKEN/KVER/linux-*`), at most 3. **Not registered:** HoltTest2's source (classes.json, holt/spec.json)
   and the corpus entry: with no source dump, a holt cell is a golden_plans
   failure ("no corpus dump"), and holt/spec.json's UEFI sources must equal
   classes.json's. Both wait for the golden plan from a HoltTest1 PASS dump.

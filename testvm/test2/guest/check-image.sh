@@ -269,6 +269,18 @@ if ! has_rule K-none; then
             if [ -e "/boot/booster.img-${k#/boot/vmlinuz-}" ]; then echo "$k"; else echo "$k no-booster"; fi
         done
     fi
+    # Aeon (aeon.md, K-sdbu): the running snapshot's /usr/lib/modules/KVER/ that hold a vmlinuz,
+    # each with sdbootutil's copy on the ESP, ESP/TOKEN/KVER/linux-HASH (names only, by test -e).
+    if has_rule K-sdbu; then
+        esp=
+        for e in /boot/efi /efi /boot; do [ -d "$e/loader/entries" ] && { esp=$e; break; }; done
+        for d in /usr/lib/modules/*/; do
+            [ -e "${d}vmlinuz" ] || continue
+            v=${d%/} v=${v##*/} found=
+            for f in "$esp"/*/"$v"/linux-*; do [ -n "$esp" ] && [ -e "$f" ] && { found=1; break; }; done
+            if [ -n "$found" ]; then echo "$d"; else echo "$d no-esp"; fi
+        done
+    fi
     # Solus (solus.md): clr-boot-manager's kernels in /usr/lib64/kernel, each with the
     # initrd-NAME its package ships (names only, by test -e).
     if has_rule K-cbm; then

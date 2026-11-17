@@ -357,6 +357,10 @@ other sessions' runs.
      zfs-dkms zfsutils-linux` (ZFS from trixie contrib, built by DKMS against
      the running kernel's headers; check `modprobe zfs`). bcachefs-tools and
      ufsutils aren't packaged for trixie.
+   - python3-virt-firmware (`virt-fw-vars`), for `vm-run --mok`: the guests
+     whose `vm-run-options` enroll a MOK (anduinos2, solus49) don't boot
+     without it. Choubox lacked it at its join (GuestTest2All
+     t2v-20261117T1501-13fa: anduinos2 HARNESS in phase boot).
    - jq isn't needed.
    - `hostname -s` must print the row's name.
 2. **SSH.**

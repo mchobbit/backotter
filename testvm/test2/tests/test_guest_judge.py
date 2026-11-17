@@ -280,6 +280,25 @@ class Loader(unittest.TestCase):
         s = sec(("cmd sd-entries", "aerynos-6.17.conf"), ("file /efi/loader/loader.conf", "default nothing*"))
         self.assertEqual(ld("L-sd", s).v, "FAIL")
 
+    def test_sd_without_default_boots_its_first_by_id(self):
+        """EndeavourOS (t2v-20261117T1501-13fa): systemd-boot sorts ids newest first by the UAPI
+        version order, in which "K-fallback.conf" is older than "K.conf"; the fallback isn't chosen."""
+        eos = "e4705-7.1.8-arch1-3-fallback.conf\ne4705-7.1.8-arch1-3.conf"
+        self.assertEqual(ld("L-sd", sec(("cmd sd-entries", eos), ("file /efi/loader/loader.conf", "timeout 5"))).v, "PASS")
+        # the newest kernel's fallback over an older kernel's entry: still the old-entry finding
+        two = "e4705-7.1.8-arch1-3.conf\ne4705-7.1.9-arch1-1-fallback.conf"
+        self.assertEqual(ld("L-sd", sec(("cmd sd-entries", two), ("file /efi/loader/loader.conf", "timeout 5"))).v, "FAIL")
+        # a boot counter isn't part of the id, and an entry with no tries left sorts last
+        spent = "e4705-7.1.9-arch1-1-fallback+0-3.conf\ne4705-7.1.8-arch1-3.conf"
+        self.assertEqual(ld("L-sd", sec(("cmd sd-entries", spent), ("file /efi/loader/loader.conf", "timeout 5"))).v, "PASS")
+
+    def test_uapi_vercmp(self):
+        for a, b in (("M-7.1.8-arch1-3-fallback.conf", "M-7.1.8-arch1-3.conf"), ("6.9", "6.10"), ("1.0~rc1", "1.0"),
+                     ("1.0", "1.0.1"), ("1.0", "1.0^p1"), ("1.0^p1", "1.0.1"), ("a-1", "a.1"), ("abc", "abd"), ("1", "1a"),
+                     ("a", "1")):
+            self.assertEqual((J.uapi_vercmp(a, b), J.uapi_vercmp(b, a)), (-1, 1), (a, b))
+        self.assertEqual(J.uapi_vercmp("x-1.conf", "x-1.conf"), 0)
+
     def test_limine(self):
         ok = "default_entry: 1\n/Omarchy\n  protocol: linux\n"
         self.assertEqual(ld("L-limine", sec(("file /boot/limine.conf", ok))).v, "PASS")
@@ -472,6 +491,14 @@ class Kernels(unittest.TestCase):
         bad = self.k("K-pika", "/boot/vmlinuz-7.1.8-pikaos\n/boot/vmlinuz-7.3.3-pikaos no-booster")
         self.assertEqual((bad.v, bad.lines), ("FAIL", [J.NO_BOOSTER]))
         self.assertEqual(self.k("K-anduinos", "/boot/vmlinuz-7.3.3-pikaos no-booster").v, "PASS")
+
+    def test_sdbu_needs_each_kernels_esp_copy(self):
+        """Aeon (aeon.md): /usr/lib/modules/KVER/ with a vmlinuz, marked when sdbootutil's ESP copy is missing."""
+        two = "/usr/lib/modules/7.3.3-1-default/\n/usr/lib/modules/7.3.4-1-default/"
+        self.assertEqual(self.k("K-sdbu", two).v, "PASS")
+        bad = self.k("K-sdbu", "/usr/lib/modules/7.3.3-1-default/\n/usr/lib/modules/7.3.4-1-default/ no-esp")
+        self.assertEqual((bad.v, bad.lines), ("FAIL", [J.NO_ESP]))
+        self.assertEqual(self.k("K-pac", "/usr/lib/modules/7.3.4-1-default/ no-esp").v, "PASS")
 
     def test_abroot_needs_a_kernel_in_each_root(self):
         """Vanilla OS (vanillaos.md V5): "LABEL vmlinuz-K" per kernel in the init LV, "LABEL none"."""
@@ -789,6 +816,11 @@ class NewestKernel(unittest.TestCase):
         self.assertEqual(self.k("K-anduinos", "running 7.0.0-38-generic\ninstalled 7.0.0-38-generic\ninstalled 7.0.0-43-generic"),
                          [J.NOT_NEWEST])
         self.assertEqual(self.k("K-anduinos", "running 7.0.0-38-generic\ninstalled 7.0.0-43-generic"), [J.NO_MODULES])
+
+    def test_sdbu_is_debians_rule(self):
+        self.assertEqual(self.k("K-sdbu", "running 7.3.4-1-default\ninstalled 7.3.4-1-default"), [])
+        self.assertEqual(self.k("K-sdbu", "running 7.3.3-1-default\ninstalled 7.3.3-1-default\ninstalled 7.3.4-1-default"),
+                         [J.NOT_NEWEST])
 
     def test_pika_is_debians_rule(self):
         self.assertEqual(self.k("K-pika", "running 7.3.3-pikaos\ninstalled 7.1.8-pikaos\ninstalled 7.3.3-pikaos"), [])

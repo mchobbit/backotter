@@ -17,6 +17,7 @@ No I/O: every function takes text and dicts, so the judge is a key input and uni
 """
 
 import fnmatch
+import functools
 import re
 
 END = "=== end"
@@ -27,7 +28,7 @@ NEW_NEEDS = ("new:firmware", "new:ssh", "new:restic", "new:rustic", "new:smoke")
 KERNELS_MAX = {"K-deb": 3, "K-fed": 5, "K-ostree": 2, "K-pac": 2, "K-apk": 3, "K-void": 2, "K-moss": 3, "K-nix": 3, "K-fbsd": 3,
                "K-nbsd": 3, "K-obsd": 4, "K-dfly": 3, "K-ill": 4, "K-haiku": 2, "K-alpbsd": 3,
                "K-gentoo": 3, "K-anduinos": 3, "K-pve": 3, "K-pika": 3, "K-cbm": 3,
-               "K-slackware": 2}
+               "K-slackware": 2, "K-sdbu": 3}
 NO_RULE = "no rule for it"
 # K-pve (Proxmox VE, proxmox.md): Debian's /boot/vmlinuz-K, every one Proxmox's own (K-pve).
 NOT_PVE = "a kernel that isn't Proxmox's (vmlinuz-K-pve)"
@@ -51,6 +52,12 @@ NO_BOOSTER = "a kernel without its booster image /boot/booster.img-K"
 CBM_KERNEL = re.compile(r"com\.solus-project\.([^.]+)\.(.+)\Z")
 CBM_NO_INITRD = "a kernel without its initrd /usr/lib64/kernel/initrd-com.solus-project.K"
 CBM_NOT_INSTALLED = "the running kernel isn't in /usr/lib64/kernel"
+# K-sdbu (Aeon, aeon.md): sdbootutil copies each kernel of a snapshot to the ESP's TOKEN/KVER/
+# (linux-HASH, initrd-HASH) and boots it from there; /boot has no vmlinuz.  check-image.sh lists
+# the running snapshot's /usr/lib/modules/KVER/ that hold a vmlinuz, marking one without its ESP
+# copy (no-esp).  zypper's multiversion.kernels keeps latest, latest-1 and running.
+NO_ESP_MARK = "no-esp"
+NO_ESP = "a kernel without its copy on the ESP (ESP/TOKEN/KVER/linux-*)"
 # K-snapcore (Ubuntu Core, ubuntu-core.md U4): the kernels are modeenv's current_kernels
 # (pc-kernel_REV.snap), each extracted to ubuntu-boot's EFI/ubuntu/K/kernel.efi, and the run GRUB
 # boots EFI/ubuntu/kernel.efi, a link to one of them.  check-image.sh lists "kernel K" (or "kernel
@@ -205,6 +212,62 @@ def version_key(s):
 
 def newest(versions):
     return max(versions, key=version_key) if versions else None
+
+
+UAPI_VALID = set("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ~-^.")
+
+
+def uapi_vercmp(a, b):
+    """-1, 0 or 1: systemd's strverscmp_improved, the UAPI version format's order, by which
+    systemd-boot sorts entries.  Characters outside [A-Za-z0-9~^.-] are dropped; "~" is older than
+    anything, even the end; at an end the longer string is newer; a "-", "^" or "." where the
+    other has none is older; a number beats letters and numbers compare as numbers; letters as bytes.
+    (So "M-7.1.8-arch1-3-fallback.conf" is older than "M-7.1.8-arch1-3.conf".)"""
+    cmp = lambda x, y: (x > y) - (x < y)
+    i = j = 0
+    while True:
+        while i < len(a) and a[i] not in UAPI_VALID:
+            i += 1
+        while j < len(b) and b[j] not in UAPI_VALID:
+            j += 1
+        ca, cb = a[i:i + 1], b[j:j + 1]
+        if ca == "~" or cb == "~":
+            r = cmp(ca != "~", cb != "~")
+            if r:
+                return r
+            i, j = i + 1, j + 1
+            continue
+        if not ca or not cb:
+            return cmp(bool(ca), bool(cb))
+        for sep in "-^.":
+            if ca == sep or cb == sep:
+                r = cmp(ca != sep, cb != sep)
+                if r:
+                    return r
+                i, j = i + 1, j + 1
+                break
+        else:
+            if ca.isdigit() or cb.isdigit():
+                r = cmp(ca.isdigit(), cb.isdigit())
+                if r:
+                    return r
+                ea, eb = i, j
+                while ea < len(a) and a[ea].isdigit():
+                    ea += 1
+                while eb < len(b) and b[eb].isdigit():
+                    eb += 1
+                na, nb = int(a[i:ea]), int(b[j:eb])
+                r = cmp(na, nb)
+            else:
+                ea, eb = i, j
+                while ea < len(a) and a[ea].isalpha() and a[ea].isascii():
+                    ea += 1
+                while eb < len(b) and b[eb].isalpha() and b[eb].isascii():
+                    eb += 1
+                r = cmp(a[i:ea], b[j:eb])
+            if r:
+                return r
+            i, j = ea, eb
 
 
 # --- S-*: package sources (#19) ----------------------------------------------------------------
@@ -581,6 +644,17 @@ def l_bls(sec):
 OLD_ENTRY = re.compile(r"(oldkern|-old\b|previous|fallback)", re.I)
 
 
+SD_COUNTER = re.compile(r"\+(\d+)(-\d+)?\Z")
+
+
+def _sd_order(name):
+    """A sort key for a systemd-boot entry's NAME (no ".conf"): the larger, the earlier it boots."""
+    m = SD_COUNTER.search(name)
+    spent = bool(m) and int(m.group(1)) == 0
+    ident = (name[:m.start()] if m else name) + ".conf"
+    return (not spent, functools.cmp_to_key(uapi_vercmp)(ident))
+
+
 def l_sd(sec):
     entries = [x.strip() for x in sec.cmd("sd-entries") or () if x.strip()]
     entries = [x[:-5] if x.endswith(".conf") else x for x in entries]
@@ -600,7 +674,10 @@ def l_sd(sec):
         return ["loader.conf's default is an old entry"] if all(OLD_ENTRY.search(h) for h in hits) else []
     if len(entries) == 1:
         return []
-    chosen = max(entries, key=version_key)
+    # No default: systemd-boot boots the entry it sorts first.  sd-entries gives names only, so
+    # this is its order by id (the file name with ".conf", less a boot counter "+LEFT[-DONE]"),
+    # newest first (uapi_vercmp), an entry with no tries left last.
+    chosen = max(entries, key=_sd_order)
     return ["no default in loader.conf, and the sort's top is an old entry"] if OLD_ENTRY.search(chosen) else []
 
 
@@ -1102,6 +1179,8 @@ def judge_kernels(sec, checks):
         return Need("FAIL", None, [NO_INITRD])
     if rule == "K-pika" and any(x.endswith(" " + NO_BOOSTER_MARK) for x in ks):
         return Need("FAIL", None, [NO_BOOSTER])
+    if rule == "K-sdbu" and any(x.endswith(" " + NO_ESP_MARK) for x in ks):
+        return Need("FAIL", None, [NO_ESP])
     if rule == "K-cbm" and any(x.endswith(" " + NO_INITRD_MARK) for x in ks):
         return Need("FAIL", None, [CBM_NO_INITRD])
     if rule == "K-slackware":
@@ -1370,7 +1449,7 @@ def newest_kernel_lines(lines, rule, sec=None, steps=None):
     if rule == "K-snapcore":
         return _snapcore_kernel_lines(kv, installed)
     if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree", "K-gentoo", "K-anduinos", "K-abroot", "K-pve", "K-pika",
-                "K-slackware"):
+                "K-slackware", "K-sdbu"):
         run = kv.get("running")
         if not run or not installed:
             return ["kernel unverified: no running or installed kernel listed"]

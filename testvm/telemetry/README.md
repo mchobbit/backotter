@@ -171,7 +171,7 @@ backups. Readable by root and group `bkotel` (m) only.
 ## Removing
 
     testvm/telemetry/telemetry-setup.sh --uninstall cage          # one host
-    testvm/telemetry/telemetry-setup.sh --uninstall chopin cinqcent cage copland
+    testvm/telemetry/telemetry-setup.sh --uninstall chopin cinqcent cage copland choubox
 
 This stops and removes the timer, units, script, settings and
 `/var/lib/bko-telemetry` (key and spool) and `/run/bko-telemetry` on each host, and drops the host's

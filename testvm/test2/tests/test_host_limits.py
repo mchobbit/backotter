@@ -103,14 +103,19 @@ class Limits(AltTable):
     def test_the_real_table(self):
         """The user's choice (2026-11-13): the small hosts run 2 stic slots and 1 holt job with a
         BASE_GIB of 4; the big hosts keep the defaults. bs2 runs 5 cases at once on a big host,
-        2 on a small one. No row sets a limit of its own but chopin's and cinqcent's
-        holt_disk_mode (the user's choice, 2026-11-14, for vanilla3's 30 GiB disk)."""
+        2 on a small one. The rows that set a limit of their own: chopin's and cinqcent's
+        holt_disk_mode (the user's choice, 2026-11-14, for vanilla3's 30 GiB disk) and
+        choubox's smaller own four (2026-11-17: the smallest host, 1 of each and BASE_GIB 3)."""
         small = dict(DEFAULTS, stic_slots=2, holt_jobs=1, base_gib=4, bs2_slots=2)
         big = dict(DEFAULTS, bs2_slots=5, holt_disk_mode=True)
+        choubox = dict(small, stic_slots=1, holt_jobs=1, base_gib=3, bs2_slots=1)
+        own = {"chopin": {"holt_disk_mode"}, "cinqcent": {"holt_disk_mode"},
+               "choubox": {"stic_slots", "holt_jobs", "base_gib", "bs2_slots"}}
         self.assertEqual(H.LIMITS, DEFAULTS)
         for r in H.rows(all_=True):
-            self.assertEqual(H.limits(r["name"]), small if r["class"] == "small" else big, r["name"])
-            self.assertEqual(set(H.LIMITS) & set(r), {"holt_disk_mode"} if r["name"] in ("chopin", "cinqcent") else set(),
+            want = choubox if r["name"] == "choubox" else (small if r["class"] == "small" else big)
+            self.assertEqual(H.limits(r["name"]), want, r["name"])
+            self.assertEqual(set(H.LIMITS) & set(r), own.get(r["name"], set()),
                              f"{r['name']}: a limit set in its row")
         self.assertEqual(H.limits("nosuch"), DEFAULTS)
         self.assertEqual(H.load()["class_limits"], {"big": {"bs2_slots": 5},

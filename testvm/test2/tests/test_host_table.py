@@ -1,7 +1,8 @@
 """The host table, testvm/hosts.json (t2lib/hosts.py, testvm/hosts.sh): it checks, and every
 list, range and profile derived from it equals the constants the scripts had before it
 (chopin and cinqcent the default hosts, copland and cage known, czerny's row reserved), with
-bigfoot, the arm64 host, known since 2026-11-14 (an amd64-only list leaves it out).
+bigfoot, the arm64 host, known since 2026-11-14 (an amd64-only list leaves it out), and
+choubox, a small amd64 cache host, known since 2026-11-17 (enabled, not default).
 An alternative table (BKO_HOSTS_JSON) shows that the consumers follow it: czerny enabled
 gets its own range and the small profile, a host without the build role is refused."""
 
@@ -35,10 +36,11 @@ BEFORE_DRIVE = {   # drive.py's HOSTS before the table
     "copland": dict(ssh="m@copland.local", slot_range="2800-2899", ports=(2880, 2899)),
     "cage": dict(ssh="m@cage.local", slot_range="3000-3099", ports=(3080, 3099)),
 }
+CHOUBOX_DRIVE = dict(ssh="m@choubox.local", slot_range="3300-3399", ports=(3380, 3399))
 BIGFOOT_DRIVE = dict(ssh="m@bigfoot.local", slot_range="3200-3299", ports=(3280, 3299))
-KNOWN = ("chopin", "cinqcent", "copland", "cage", "bigfoot")
+KNOWN = ("chopin", "cinqcent", "copland", "cage", "choubox", "bigfoot")
 # The default hosts: every amd64 host since 2026-11-14, when copland and cage joined
-# (bigfoot waits for HostTest2, docs/design/arm64.md A6).
+# (bigfoot waits for HostTest2, docs/design/arm64.md A6; choubox for its trial runs).
 DEFAULTS = ("chopin", "cinqcent", "copland", "cage")
 BEFORE_GATE_FALLBACK = (("holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic", "bin:abi",
                          "bin:static", "bin:version")
@@ -99,11 +101,12 @@ class Table(unittest.TestCase):
         self.assertEqual(os.path.dirname(H.TABLE), TESTVM)   # found beside testvm/, wherever the tree is
 
     def test_names_and_order(self):
-        self.assertEqual(H.names(all_=True), ("chopin", "cinqcent", "copland", "cage", "czerny", "bigfoot"))
+        self.assertEqual(H.names(all_=True),
+                         ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox", "bigfoot"))
         self.assertEqual(H.known(), KNOWN)
         self.assertEqual(H.defaults(), DEFAULTS)
-        self.assertEqual(H.names(cls="small"), ("copland", "cage", "bigfoot"))
-        self.assertEqual(H.names(arch="amd64"), ("chopin", "cinqcent", "copland", "cage"))
+        self.assertEqual(H.names(cls="small"), ("copland", "cage", "choubox", "bigfoot"))
+        self.assertEqual(H.names(arch="amd64"), ("chopin", "cinqcent", "copland", "cage", "choubox"))
         self.assertEqual(H.names(arch="arm64"), ("bigfoot",))
         self.assertEqual(H.names(cls="big"), ("chopin", "cinqcent"))
         # all four amd64 hosts build a round's units since 2026-11-14
@@ -111,7 +114,7 @@ class Table(unittest.TestCase):
         self.assertEqual(H.with_role("fleet"), ("chopin",))
         self.assertEqual(H.with_role("store-mirror"), ("chopin",))
         self.assertEqual(H.with_role("bigfoot-link"), ("chopin",))
-        self.assertEqual(H.with_role("cache"), ("cinqcent", "copland", "cage"))
+        self.assertEqual(H.with_role("cache"), ("cinqcent", "copland", "cage", "choubox"))
 
     def test_czerny_is_reserved(self):
         r = H.row("czerny", all_=True)
@@ -121,7 +124,9 @@ class Table(unittest.TestCase):
         self.assertIsNone(H.host_class("czerny"))
         with self.assertRaisesRegex(H.HostsError, "czerny is not enabled"):
             H.row("czerny")
-        with self.assertRaisesRegex(H.HostsError, r"no such host chopin2 \(known: chopin, cinqcent, copland, cage, bigfoot\)"):
+        with self.assertRaisesRegex(H.HostsError,
+                                    r"no such host chopin2 \(known: chopin, cinqcent, copland, cage, choubox, "
+                                    r"bigfoot\)"):
             H.row("chopin2")
 
     def test_lookups(self):
@@ -187,7 +192,7 @@ class Table(unittest.TestCase):
             enable_czerny(alt.t)
             with open(alt.path, "w") as f:
                 json.dump(alt.t, f, indent=2)   # another size, so another key whatever the clock
-            self.assertEqual(H.known(H.load(alt.path))[-2:], ("czerny", "bigfoot"))
+            self.assertEqual(H.known(H.load(alt.path))[-3:], ("czerny", "choubox", "bigfoot"))
             with mock.patch.dict(os.environ, alt.env()):
                 self.assertEqual(H.path(), alt.path)
                 self.assertIn("czerny", H.known())
@@ -222,12 +227,13 @@ class Table(unittest.TestCase):
             e.pop(H.ENV, None)
             r = subprocess.run([sys.executable, "-I", "-B", py] + list(args), capture_output=True, text=True, env=e)
             return r.returncode, r.stdout, r.stderr
-        self.assertEqual(run("names"), (0, "chopin\ncinqcent\ncopland\ncage\nbigfoot\n", ""))
+        self.assertEqual(run("names"), (0, "chopin\ncinqcent\ncopland\ncage\nchoubox\nbigfoot\n", ""))
         self.assertEqual(run("names", "--default"), (0, "".join(h + "\n" for h in DEFAULTS), ""))
-        self.assertEqual(run("names", "--all")[1].split(), ["chopin", "cinqcent", "copland", "cage", "czerny", "bigfoot"])
+        self.assertEqual(run("names", "--all")[1].split(),
+                         ["chopin", "cinqcent", "copland", "cage", "czerny", "choubox", "bigfoot"])
         self.assertEqual(run("names", "--role", "fleet", "--field", "ssh"), (0, "m@chopin.local\n", ""))
         self.assertEqual(run("names", "--class", "small", "--field", "slot_range"),
-                         (0, "2800-2899\n3000-3099\n3200-3299\n", ""))
+                         (0, "2800-2899\n3000-3099\n3300-3399\n3200-3299\n", ""))
         self.assertEqual(run("get", "copland.local", "slot_range"), (0, "2800-2899\n", ""))
         self.assertEqual(run("get", "chopin", "roles"), (0, "build fleet store-mirror bigfoot-link\n", ""))
         self.assertEqual(run("get", "chopin", "ip"), (0, "\n", ""))
@@ -238,11 +244,11 @@ class Table(unittest.TestCase):
         self.assertIn("czerny is not enabled", err)
         rc, out, err = run("get", "nope", "ssh")
         self.assertEqual((rc, out), (1, ""))
-        self.assertIn("no such host nope (known: chopin, cinqcent, copland, cage, bigfoot)", err)
+        self.assertIn("no such host nope (known: chopin, cinqcent, copland, cage, choubox, bigfoot)", err)
         self.assertEqual(run("get", "chopin", "bogus")[0], 2)
         self.assertEqual(run("names", "--role")[0], 2)
         self.assertEqual(run("frob")[0], 2)
-        self.assertEqual(run("phrase"), (0, "chopin, cinqcent, copland, cage or bigfoot\n", ""))
+        self.assertEqual(run("phrase"), (0, "chopin, cinqcent, copland, cage, choubox or bigfoot\n", ""))
         self.assertEqual(run("check"), (0, TABLE + "\n", ""))
 
 
@@ -260,7 +266,7 @@ class DerivedEqualsBefore(unittest.TestCase):
 
     def test_drive(self):
         drive = load("ht_drive", os.path.join(TESTVM, "stictest1", "drive.py"), {H.ENV: TABLE})
-        self.assertEqual(drive.HOSTS, dict(BEFORE_DRIVE, bigfoot=BIGFOOT_DRIVE))
+        self.assertEqual(drive.HOSTS, dict(BEFORE_DRIVE, choubox=CHOUBOX_DRIVE, bigfoot=BIGFOOT_DRIVE))
         self.assertEqual(list(drive.HOSTS), list(KNOWN))
         self.assertEqual(drive.DEFAULT_HOSTS, DEFAULTS)
 
@@ -271,7 +277,8 @@ class DerivedEqualsBefore(unittest.TestCase):
     def test_bs2(self):
         bs2 = load("ht_bs2", os.path.join(TESTVM, "backshot2", "bs2"), {H.ENV: TABLE})
         # (Since 2026-11-13 a run's hosts are every enabled amd64 one; HOME's leads stay chopin and cinqcent.)
-        self.assertEqual(bs2.RUN_HOSTS, {h: f"m@{h}.local" for h in ("chopin", "cinqcent", "copland", "cage")})
+        self.assertEqual(bs2.RUN_HOSTS,
+                         {h: f"m@{h}.local" for h in ("chopin", "cinqcent", "copland", "cage", "choubox")})
         self.assertEqual(list(dict.fromkeys(bs2.HOME.values())), ["chopin", "cinqcent"])
 
     def test_guest_slot(self):
@@ -353,7 +360,8 @@ class DerivedEqualsBefore(unittest.TestCase):
         for h in ("czerny", "chopin2", "cinqcentx"):   # once: chopin* and cinqcent* matched by prefix
             r, _ = self.run_all(h)
             self.assertEqual(r.returncode, 2, h)
-            self.assertIn(f"no such host: {h} (--host chopin, cinqcent, copland, cage or bigfoot)", r.stderr)
+            self.assertIn(f"no such host: {h} (--host chopin, cinqcent, copland, cage, choubox or bigfoot)",
+                          r.stderr)
         # Bigfoot, an arm64 host: its profile (A6) runs the host steps only, on linux-arm64's binaries
         r, head = self.run_all("bigfoot")
         self.assertEqual(r.returncode, 2)
@@ -382,6 +390,7 @@ class DerivedEqualsBefore(unittest.TestCase):
 
     def test_sync_hosts_default(self):
         self.assertEqual(self.sync_hosts(), ["m@chopin.local", "m@cinqcent.local", "m@copland.local", "m@cage.local",
+                                             "m@choubox.local",
                                              "m@bigfoot.local"])   # code only: the arm64 host gets it too
 
 
@@ -398,7 +407,8 @@ class FollowsTheTable(unittest.TestCase):
         drive = load("ht_drive_alt", os.path.join(TESTVM, "stictest1", "drive.py"), self.alt.env())
         self.assertEqual(drive.HOSTS["czerny"], dict(ssh="m@czerny.local", slot_range="3100-3199", ports=(3180, 3199)))
         self.assertEqual(drive.DEFAULT_HOSTS, DEFAULTS)   # czerny is enabled there, not default
-        self.assertEqual(H.known(H.load(self.alt.path)), ("chopin", "cinqcent", "copland", "cage", "czerny", "bigfoot"))
+        self.assertEqual(H.known(H.load(self.alt.path)),
+                         ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox", "bigfoot"))
         with mock.patch.dict(os.environ, self.alt.env()):
             self.assertEqual(H.host_class("czerny"), "small")
             e = {"reserve": [14, 4], "host_reserve": {"small": [8.5, 4]}}
@@ -425,7 +435,8 @@ class FollowsTheTable(unittest.TestCase):
         self.assertEqual(head, ["== czerny: ports 3100+, at most 3 guests (others counted: 1, 3100-3199), 1 host jobs, "
                                 "1 sparse jobs; prefix bkora; OLD_BIN none; linux: ext4 xfs btrfs f2fs tmpfs jfs; "
                                 "sparse: ext4 xfs btrfs"])
-        self.assertEqual(DerivedEqualsBefore.sync_hosts(self, self.alt.env())[-2:], ["m@czerny.local", "m@bigfoot.local"])
+        self.assertEqual(DerivedEqualsBefore.sync_hosts(self, self.alt.env())[-3:],
+                         ["m@czerny.local", "m@choubox.local", "m@bigfoot.local"])
 
     def test_run_all_big_host_without_a_profile(self):
         alt = AltTable(lambda t: (enable_czerny(t), row_of(t, "czerny").update({"class": "big"})))

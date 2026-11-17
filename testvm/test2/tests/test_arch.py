@@ -78,13 +78,14 @@ class Table(unittest.TestCase):
     def test_arch_defaults_to_amd64(self):
         self.assertEqual({h: H.host_arch(h) for h in H.names(all_=True)},
                          {"chopin": "amd64", "cinqcent": "amd64", "copland": "amd64", "cage": "amd64", "czerny": "amd64",
-                          "bigfoot": "arm64"})
-        self.assertFalse(any("arch" in row_of(table(), h) for h in ("chopin", "cinqcent", "copland", "cage", "czerny")))
+                          "choubox": "amd64", "bigfoot": "arm64"})
+        self.assertFalse(any("arch" in row_of(table(), h)
+                             for h in ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox")))
         self.assertEqual(H.host_arch("bigfoot.local"), "arm64")
         self.assertEqual(H.host_arch("nosuch"), "amd64")   # every host was before the field
         self.assertEqual(H.names(arch="arm64"), ("bigfoot",))
-        self.assertEqual(H.names(arch="amd64"), ("chopin", "cinqcent", "copland", "cage"))
-        self.assertEqual(H.names(arch="amd64", all_=True)[-1], "czerny")
+        self.assertEqual(H.names(arch="amd64"), ("chopin", "cinqcent", "copland", "cage", "choubox"))
+        self.assertEqual(H.names(arch="amd64", all_=True)[-2:], ("czerny", "choubox"))
 
     def test_guest_arch(self):
         for g, a in (("debian13", "amd64"), ("debian13-arm64", "arm64"), ("debian13-zfs-arm64", "arm64"),
@@ -125,9 +126,9 @@ class Table(unittest.TestCase):
                                env=clean_env())
             return r.returncode, r.stdout, r.stderr
         self.assertEqual(run("names", "--arch", "arm64"), (0, "bigfoot\n", ""))
-        self.assertEqual(run("names", "--arch", "amd64"), (0, "chopin\ncinqcent\ncopland\ncage\n", ""))
+        self.assertEqual(run("names", "--arch", "amd64"), (0, "chopin\ncinqcent\ncopland\ncage\nchoubox\n", ""))
         self.assertEqual(run("names", "--arch", "sparc")[0], 2)
-        self.assertEqual(run("names", "--field", "arch"), (0, "amd64\namd64\namd64\namd64\narm64\n", ""))
+        self.assertEqual(run("names", "--field", "arch"), (0, "amd64\namd64\namd64\namd64\namd64\narm64\n", ""))
         self.assertEqual(run("get", "chopin", "arch"), (0, "amd64\n", ""))   # the default, not an empty line
         self.assertEqual(run("get", "chopin", "job_slice"), (0, "\n", ""))
         self.assertEqual(run("get", "bigfoot", "job_slice"), (0, "bko.slice\n", ""))
@@ -232,7 +233,7 @@ class Consumers(unittest.TestCase):
             bs2.use_hosts("chopin,bigfoot")
         self.assertIn("bigfoot: not an amd64 host", str(cm.exception))
         bs2.use_hosts("all")
-        self.assertEqual(list(bs2.RUN_HOSTS), ["chopin", "cinqcent", "copland", "cage"])
+        self.assertEqual(list(bs2.RUN_HOSTS), ["chopin", "cinqcent", "copland", "cage", "choubox"])
 
     def test_vm_update_merges_on_hosts_of_the_guests_arch(self):
         vmu = load("arch_vm_update", os.path.join(TESTVM, "vm-update"), {H.ENV: TABLE})
@@ -244,7 +245,7 @@ class Consumers(unittest.TestCase):
     def test_holt_ships_bko_holt_to_amd64_hosts_only(self):
         r = holt.Runner.__new__(holt.Runner)
         r.hosts, r.opts = ["chopin"], {"holt_ship": "known"}
-        self.assertEqual(r.all_hosts(), ["chopin", "cinqcent", "copland", "cage"])
+        self.assertEqual(r.all_hosts(), ["chopin", "cinqcent", "copland", "cage", "choubox"])
 
     def test_drive_py(self):
         drive = load("arch_drive", os.path.join(TESTVM, "stictest1", "drive.py"), {H.ENV: TABLE})

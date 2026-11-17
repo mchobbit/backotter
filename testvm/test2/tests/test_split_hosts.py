@@ -141,8 +141,10 @@ class RunAllSplit(unittest.TestCase):
         a = self.share("copland", {"SPLIT": "cage copland chopin.local cinqcent"})
         b = self.share("copland", {"SPLIT": "chopin,cinqcent,copland,cage"})
         self.assertEqual(a[:4], b[:4])
+        # all: every enabled amd64 host (choubox too since 2026-11-17), in any order
         c = self.share("copland", {"SPLIT": "all"})
-        self.assertEqual(c[:4], b[:4])
+        d = self.share("copland", {"SPLIT": "choubox cage copland chopin.local cinqcent"})
+        self.assertEqual(c[:4], d[:4])
 
     def test_two_hosts_and_the_port_clash(self):
         self.guests(*[g for gs in GUEST_PLATS.values() for g in gs])
@@ -237,7 +239,7 @@ class RunAllSplit(unittest.TestCase):
         alt = AltTable(lambda t: row_of(t, "czerny").update(enabled=True))
         try:
             out = {}
-            for h in ("chopin", "cinqcent", "copland", "cage", "czerny"):
+            for h in ("chopin", "cinqcent", "copland", "cage", "choubox", "czerny"):
                 out[h] = self.share(h, dict(alt.env(), SPLIT="all"))
                 self.assertEqual(out[h][0], 0, out[h][5])
             self.assertEqual(sorted(x for h in out for x in out[h][1]), sorted(ALL_LFS))
@@ -504,11 +506,13 @@ class Bs2Hosts(unittest.TestCase):
         """A run's hosts: every enabled one (its cases go where their source is, bs2's split());
         replay and the corpus still go to the source's HOME host without --hosts."""
         b = self.bs2
-        self.assertEqual(b.RUN_HOSTS, {h: f"m@{h}.local" for h in ("chopin", "cinqcent", "copland", "cage")})
+        self.assertEqual(b.RUN_HOSTS,
+                         {h: f"m@{h}.local" for h in ("chopin", "cinqcent", "copland", "cage", "choubox")})
         self.assertEqual(b.assign(b.ALPINE), b.HOME)
         self.assertEqual(b.assign(["alpine324", "alpine324-uefi"]), {"alpine324": "chopin", "alpine324-uefi": "chopin"})
         self.assertEqual(b.assign(["nosuch"]), {"nosuch": "chopin"})
         self.assertEqual((b.slots("chopin"), b.slots("cinqcent")), (5, 5))   # hosts.json's bs2_slots
+        self.assertEqual(b.slots("choubox"), 1)   # its row's own
 
     def test_four_hosts_one_source_each(self):
         b = self.bs2

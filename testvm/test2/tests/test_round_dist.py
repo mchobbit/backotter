@@ -296,11 +296,11 @@ class BuildRoundDist(unittest.TestCase):
         # every enabled amd64 host but the one the copies come from (chopin, the
         # table's first build host, which --dist-only takes by default); czerny
         # is a reserved row, bigfoot an arm64 one; nothing is written
-        self.assertEqual(named, ["cinqcent", "copland", "cage"])
+        self.assertEqual(named, ["cinqcent", "copland", "cage", "choubox"])
         self.assertFalse(os.path.exists(self.w.home("cage")))
         r = self.br("--dist-only", "--dry-run", "--hosts", "cinqcent", "--dist-hosts", "all", "r1")
         named = [x.split()[1].rstrip(":") for x in r.stdout.splitlines() if "would copy" in x]
-        self.assertEqual(named, ["chopin", "copland", "cage"])
+        self.assertEqual(named, ["chopin", "copland", "cage", "choubox"])
 
     def test_a_source_that_doesnt_check_is_copied_nowhere(self):
         b = round_bin(self.w)
@@ -488,7 +488,7 @@ class PromoteBins(unittest.TestCase):
         r = self.pb("--dry-run", "all")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         hosts = sorted({x.split()[1] for x in r.stdout.splitlines() if " bko-bin: " in x})
-        self.assertEqual(hosts, ["cage", "cinqcent", "copland"])   # not bigfoot: an arm64 host
+        self.assertEqual(hosts, ["cage", "choubox", "cinqcent", "copland"])   # not bigfoot: an arm64 host
         for args, msg in ((["--from", "cage", "chopin"], "--from cage: not a big build host"),
                           (["chopin"], "chopin is the source"),
                           (["czerny"], "no such enabled host czerny"),
@@ -628,11 +628,11 @@ class SticRoundStep(unittest.TestCase):
 # --- holt.py: ensure_holt ------------------------------------------------------------------------
 
 class Remote4(test_holt.FakeRemote):
-    """FakeRemote with copland and cage too."""
+    """FakeRemote with every other known amd64 host too (copland, cage and choubox)."""
 
     def __init__(self, outcomes):
         super().__init__(outcomes)
-        for h in ("copland", "cage"):
+        for h in ("copland", "cage", "choubox"):
             self.files[h], self.ledger[h] = {}, []
 
 
@@ -700,7 +700,7 @@ class HoltBuildHosts(unittest.TestCase):
         r = Remote4({})
         res = self.go({}, r)
         self.assertEqual(res["exit"], 0, res)
-        for h in ("copland", "cage"):
+        for h in ("copland", "cage", "choubox"):   # choubox is known, not default: holt_ship known reaches it
             self.assertEqual(r.files[h][self.HB + "/SHA256SUMS"], r.files["chopin"][self.HB + "/SHA256SUMS"], h)
             self.assertIn(self.HB + "/openbsd/bko-holt", r.files[h])
         self.assertEqual({h for h, _ in self.builds(r)}, {"chopin", "cinqcent"})

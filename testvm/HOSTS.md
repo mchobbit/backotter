@@ -3,6 +3,18 @@
 The test scripts run guests on four amd64 KVM hosts. Two are big, Chopin and
 Cinqcent, and two are small, Copland and Cage (the M900s). A fifth small host,
 Czerny, is due at the end of November 2026 and has a reserved row already.
+Choubox (the user's GMKtec NucBox G3 Pro: i3-10110U, 4 threads, 15.5 GiB, one
+512 GB SATA SSD) joined on 2026-11-17 as a sixth, smaller host. It is small
+class with limits of its own in its row: 1 SticTest slot, 1 HoltTest job,
+1 BackShot2 slot and `base_gib` 3, with a 4G RAM disk and the ZFS ARC capped at
+512 MiB (`/etc/modprobe.d/zfs-bko.conf`), so its `cmp-run.sh --ceiling` is
+3.0 6.0. That fits the `--reserve 3 6` SticTest guests and the HoltTest sources
+of D 3 or less; nothing else is placed there. Its role is `cache` only (cap
+260G, floor 60G on the /home partition, `/bkoscratch` a bind of
+`/home/bkoscratch`), and it links only the published guests that fit. Its
+Debian also holds the user's own projects, and it is the user's fallback
+bare-metal machine for real-world runs when a distro rejects the Thinkpad: such
+a run wipes it and takes it out of the farm until it is provisioned again.
 Bigfoot, the user's ARM64 machine, is the one arm64 host (since 2026-11-14,
 docs/design/arm64.md): it runs only arm64 guests, in a systemd slice.
 Every script takes the hosts from one table, `testvm/hosts.json`. This page
@@ -16,6 +28,7 @@ Before starting heavy work by hand, check `testvm/test2/t2 batch status`: a runn
 | copland | small | 2800-2899 | 2880-2899 | build, cache | yes |
 | cage | small | 3000-3099 | 3080-3099 | build, cache | yes |
 | czerny | small | 3100-3199 | 3180-3199 | cache | no (row reserved: `enabled: false`) |
+| choubox | small (own limits) | 3300-3399 | 3380-3399 | cache | no (joined 2026-11-17; trial runs first) |
 | bigfoot | small, arm64 | 3200-3299 | 3280-3299 | build-arm64 | no |
 
 ## The table: testvm/hosts.json

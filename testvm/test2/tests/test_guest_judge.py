@@ -1409,6 +1409,62 @@ class Normalizer(unittest.TestCase):
             self.assertNotIn("XXXXXX", n, s)
             self.assertEqual(J.normalize(n), n, s)
 
+    def test_ssh_host_keys_go(self):
+        """Host keys made on each run's first boot (ubuntu26-luks, freebsd15-mirror, pikaos4:
+        t2v-20261117T1639-dc6b) left lines that could never match a baseline."""
+        pairs = (
+            ("[ 23.7] cloud-init[1704]: SHA256:NJ5k8MKIc8Hy+LfGQyVssHrPVa6LvJ+N4VxJp2YxuNWFM root@ubuntu26-luks",
+             "[ 21.1] cloud-init[1698]: SHA256:aI9REU0QgVsZOfGs3eW1gN7zYRyoGyU+rzC5juQoAbcdEfG root@ubuntu26-luks",
+             "cloud-init[N]: SHAN:KEY root@ubuntuN-luks"),
+            ("256 SHA256:mekSGYw/K+YnXcgDCui44h5v0HEQZXeLuRBvo/Pojnw root@fbsd15-mirror (ED25519)",
+             "256 SHA256:zh2Uk1QvtGfRaJzAGAAU9PXu/ZOZwHiFpVHrhKKpr0g root@fbsd15-mirror (ED25519)",
+             "N SHAN:KEY root@fbsdN-mirror (HEX)"),
+            ("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJmSIYtxEFpU+cZbJIKs+uzscXofuWdiToALp+1KMFAp root@u",
+             "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEzQbwxwebsj9H2YZAuuYwZCEuv5ysRzhKcW4E3BwThn root@u",
+             "ssh-HEX KEY root@u"),
+            ("[ 23.776] cloud-init[1704]: |       o.+. o    |",
+             "[ 21.002] cloud-init[1698]: |  .ooo* +=E.     |",
+             "cloud-init[N]: |RANDOMART|"),
+            ("|    E.           |", "|o O ==.=+*       |", "|RANDOMART|"),
+        )
+        for a, b, want in pairs:
+            na = J.normalize(a)
+            self.assertEqual(na, want, a)
+            self.assertEqual(J.normalize(b), na, b)
+            self.assertEqual(J.normalize(na), na, a)
+        # what the normalizer made of them before (an old baseline) comes out the same
+        self.assertEqual(J.normalize("cloud-init[N]: SHAN:NJNNMKIcNHy+LfGQyVssHrPVNLvJ+NVNJpNYNuNWFM root@ubuntuN-luks"),
+                         "cloud-init[N]: SHAN:KEY root@ubuntuN-luks")
+        self.assertEqual(J.normalize("ssh-HEX AAAACNNzaCNlZDINNTENAAAAIJmSIYtxEFpU+cZbJIKs+uzscXofuWdiToALp+NKMFAp root@u"),
+                         "ssh-HEX KEY root@u")
+        self.assertEqual(J.normalize("cloud-init[N]: | . oo+ .oo|"), "cloud-init[N]: |RANDOMART|")
+
+    def test_ssh_key_rules_leave_tables_and_frames_alone(self):
+        for s in ("cloud-init[1]: +---[RSA 3072]----+", "cloud-init[1]: +----[SHA256]-----+",
+                  "ci-info: | lo | True | ::1/128 | . | host | . |", "ci-info: | Keytype | Fingerprint (sha256) |",
+                  "AAAA short", "| Device | Up |", "a | b |"):
+            n = J.normalize(s)
+            self.assertNotIn("KEY", n, s)
+            self.assertNotIn("RANDOMART", n, s)
+            self.assertEqual(J.normalize(n), n, s)
+
+    def test_nix_store_hashes_go(self):
+        """gcroots/auto's names hash each run's /tmp/nix-build-PID-RANDOM (nixos2605)."""
+        a = 'removing stale link from "/nix/var/nix/gcroots/auto/gxs3gk0idw4abj7mcpqrd0fd7c0zwj6x" to "/tmp/nix-build-936-659864821/result"'
+        b = 'removing stale link from "/nix/var/nix/gcroots/auto/i69wzmc480wsgkfwsfw893ijm3r377yb" to "/tmp/nix-build-839-3076501546/result"'
+        na = J.normalize(a)
+        self.assertEqual(na, 'removing stale link from "/nix/var/nix/gcroots/auto/NIXHASH" to "/tmp/nix-build-N-XXXXXX/result"')
+        self.assertEqual(J.normalize(b), na)
+        self.assertEqual(J.normalize(na), na)
+        # an old baseline's form
+        self.assertEqual(J.normalize('removing stale link from "/nix/var/nix/gcroots/auto/mwlNnNwkNnfNycNgrmprrNskysNyNfxd" '
+                                     'to "/tmp/nix-build-N-XXXXXX/result"'), na)
+        s = J.normalize("copying path '/nix/store/0g1lfp4hr5p6h7lyhd8vrx9v0zzcgfqc-libgpg-error-1.55' from 'https://cache.nixos.org'...")
+        self.assertEqual(s, "copying path '/nix/store/NIXHASH-libgpg-error-N.N' from 'https://cache.nixos.org'...")
+        self.assertEqual(J.normalize("/nix/store/NgNlfpNhrNpNhNlyhdNvrxNvNzzcgfqc-libgpg-error-N.N"), "/nix/store/NIXHASH-libgpg-error-N.N")
+        # a machine id or boot id (hex) elsewhere is still HEX
+        self.assertEqual(J.normalize("machineid=bf7c7acdb8f24c948aa0e1f047fd67e2"), "machineid=HEX")
+
     def test_two_runs_of_a_line_agree(self):
         a = "[    3.111] systemd[1]: run 2026-11-08 05:00:00 took 12ms abcdef0123"
         b = "[    9.222] systemd[1]: run 2026-11-09 06:11:00 took 7ms 0123456abc"

@@ -1638,6 +1638,18 @@ _RUNDIR = re.compile(r"(?:/[^\s/]+)*/vm-update-mount\.[\w.-]*\w"
 # a suffix with a digit or a capital in it (so /tmp/foo-update stays).  Before _HEX and _NUM, and
 # XXXXXX matches itself, so normalize stays stable and an old baseline's lNUmkN comes out the same.
 _MKTEMP = re.compile(r"(/(?:var/)?tmp/(?:tmp\.|[\w-]*[.-](?=[A-Za-z]*[A-Z\d])))[A-Za-z\d]{6,12}(?![\w.-])")
+# SSH host keys made on a run's first boot (cloud-init's on ubuntu26-luks and -raid, FreeBSD's
+# sshd on freebsd15-mirror, an update's new MLDSA key on pikaos4: images frozen by their builder)
+# are new each run: a SHA256: fingerprint's base64, a public key's AAAA... and ssh-keygen's
+# randomart rows (17 of " .o+=*BOX@%&#/^SE" between bars, alone on the line or after a "prog: ")
+# go.  Each also takes what the normalizer made of it before (SHAN:..., a row's spaces squeezed),
+# and what it leaves never matches again, so normalize stays stable.
+_SSH_FP = re.compile(r"\bSHA(?:256|N):[A-Za-z0-9+/]{20,}={0,2}")
+_SSH_KEY = re.compile(r"\bAAAA[A-Za-z0-9+/]{20,}={0,3}")
+_RANDOMART = re.compile(r"(^\s*|:\s+)\|[ .o+=*BOX@%&#/^SE]{1,17}\|\s*$")
+# Nix's base32 hashes after /nix/store/ and in gcroots/auto/ (whose names hash each run's
+# /tmp/nix-build-PID-RANDOM/result): 32 of 0-9 a-z less e o t u; N for what _NUM made of digits.
+_NIXHASH = re.compile(r"(/nix/store/|/gcroots/auto/)[0-9a-df-np-sv-zN]{16,32}(?=[-\"'/\s]|$)")
 # 0x9aa000 has no word boundary after its x, so _HEX alone never sees it and _NUM made "NxNaaN"
 # of it: every guest memory layout (e820, [mem 0x...], efi: SMBIOS=0x...) was new each boot.
 _HEX0X = re.compile(r"\b0[xX][0-9a-fA-F]+\b")
@@ -1653,7 +1665,8 @@ LINES_MAX = 20000
 def normalize(line, run_dirs=()):
     """A log line with what differs from boot to boot taken out, or "" for a line with nothing
     left (ANSI and OSC sequences, timestamps, [ 12.345], UUIDs, 0x numbers, hex of 6 or more,
-    numbers, the run's directories, mktemp suffixes under /tmp).  Stable: normalize(normalize(x)) == normalize(x), and a line
+    numbers, the run's directories, mktemp suffixes under /tmp, SSH key fingerprints, public keys
+    and randomart, Nix store hashes).  Stable: normalize(normalize(x)) == normalize(x), and a line
     normalized before 0x numbers were HEX ("NxNaaN") comes out as the raw line does now."""
     s = _ANSI.sub("", line)
     s = _CTRL.sub("", s)
@@ -1662,7 +1675,11 @@ def normalize(line, run_dirs=()):
             s = s.replace(d, "RUN")
     s = _RUNDIR.sub("RUN", s)
     s = _MKTEMP.sub(r"\1XXXXXX", s)
+    s = _SSH_FP.sub("SHA256:KEY", s)
+    s = _SSH_KEY.sub("KEY", s)
+    s = _NIXHASH.sub(r"\1NIXHASH", s)
     s = _BRK.sub("", s)
+    s = _RANDOMART.sub(r"\1|RANDOMART|", s)
     s = _ISO.sub("TIME", s)
     s = _SYSLOG.sub("TIME", s)
     s = _CLOCK.sub("TIME", s)
@@ -1726,8 +1743,11 @@ def drop_lists(text, heads):
 def sweep_lines(sources, known, baseline, older=()):
     """Step 5.  SOURCES {name: text}, KNOWN the compiled patterns, BASELINE the accepted lines or
     None (no baseline yet: every line is new), OLDER texts of the same guest's earlier logs on
-    this host (for the seen_before tag only).  [{line, source, seen_before}], sorted."""
+    this host (for the seen_before tag only).  [{line, source, seen_before}], sorted.  A baseline
+    line counts as normalize makes it now too, so a normalizer that learns a pattern keeps lines
+    accepted before it."""
     base = set(baseline or ())
+    base |= {normalize(x) for x in base}
     seen = set()
     for t in older or ():
         seen |= normalized_set(t)

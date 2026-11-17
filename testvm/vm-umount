@@ -40,6 +40,16 @@ wait_detach() {
     qemu-nbd --disconnect "$1" >/dev/null
     [[ -n $pid ]] && while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
 }
+# busy CMD...: run CMD, retrying for about 10 s while it fails, then once
+# more with its errors shown.  A device-mapper device or LV just unmounted can
+# be held for a moment by udev's probe or another job's LVM/blkid scan, and
+# removing it fails EBUSY (seen in BackShot2Alpine).
+busy() {
+    local i
+    udevadm settle --timeout=10 2>/dev/null || true
+    for i in 1 2 3 4 5 6 7 8 9 10; do "$@" >/dev/null 2>&1 && return 0; sleep 1; done
+    "$@" >/dev/null
+}
 # Line 1 of the state file is the first image's nbd device; the further
 # lines, undone last first, "pool NAME", "luks NAME", "vg NAME DEVICE,...",
 # "md DEVICE", "dm NAME" (a RAID 10 read as a RAID 0, or a logical volume
@@ -57,7 +67,7 @@ while read -r kind name; do
               zpool list "$name" >/dev/null 2>&1 && { zpool export "$name" || die "could not export ZFS pool $name"; } ;;
         luks) cryptsetup close "$name" || die "could not close LUKS device $name" ;;
         vg) read -r vg pvlist <<<"$name"
-            vgchange --devicesfile "" --devices "$pvlist" -a n "$vg" >/dev/null ||
+            busy vgchange --devicesfile "" --devices "$pvlist" -a n "$vg" ||
                 die "could not deactivate volume group $vg" ;;
         # A group vm-mount set up by hand (its "dm" lines come after, so are
         # undone before): what the host's own LVM activated of it meanwhile,
@@ -65,9 +75,9 @@ while read -r kind name; do
         lvm) read -r vg pvlist <<<"$name"
              vgchange --devicesfile "" --devices "$pvlist" -a n "$vg" >/dev/null 2>&1 || true ;;
         md) mdadm --stop "$name" >/dev/null || die "could not stop RAID $name" ;;
-        dm) dmsetup remove "$name" || die "could not remove $name" ;;
+        dm) busy dmsetup remove "$name" || die "could not remove $name" ;;
         cow) read -r c l f <<<"$name"
-             dmsetup remove "$c" || die "could not remove snapshot $c"
+             busy dmsetup remove "$c" || die "could not remove snapshot $c"
              losetup -d "$l" || die "could not detach $l"
              rm -f "$f" ;;
         loop) losetup -d "$name" || die "could not detach $name" ;;

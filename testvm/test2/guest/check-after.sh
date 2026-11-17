@@ -10,6 +10,11 @@ qt() { sed 's/^===/= ==/'; }
 cmd() { echo "=== cmd $1"; }
 
 cmd after-rules; echo "$RULES"
+# oneshot SCRIPT: is this rc.d script a boot-time task, not a daemon?  Its stop is a no-op
+# (stop_cmd=":"), so nothing stays running, yet with command= set rc.subr's status looks for
+# that command's process and says "is not running": FreeBSD's newsyslog (rotates once at boot,
+# cron runs it after) and NetBSD's virecover.  ht1-bsd.sh compares two readings, so it doesn't care.
+oneshot() { grep -Eq "^[[:space:]]*stop_cmd=[\"']?(:|true)[\"']?[[:space:]]*(#.*)?\$" "$1" 2>/dev/null; }
 # --- service state (ht1-bsd.sh's SERVICE_STATE and its OpenBSD and illumos forms)
 if has_rule B-lin; then
     cmd boot-state; boot_state 2>&1 | qt
@@ -17,6 +22,7 @@ elif has_rule B-bsd; then
     cmd boot-state
     svc=$(service -e 2>/dev/null)
     for s in $svc; do
+        oneshot "$s" && continue
         o=$($s status 2>&1)
         case $o in *"is not running"*) echo "down ${s##*/}" ;; esac
     done | sort

@@ -169,6 +169,52 @@ class CheckAfterKernelString(unittest.TestCase):
                                        "/usr/src/sys/arch/amd64/compile/GENERIC", k), "match no")
 
 
+class CheckAfterBsdServices(unittest.TestCase):
+    """check-after.sh's B-bsd boot-state: rc.d scripts whose stop is a no-op are boot-time tasks
+    (FreeBSD's newsyslog, NetBSD's virecover), not daemons that should be running."""
+
+    SCRIPTS = {
+        # the guests' own, cut down (freebsd15-ufs /etc/rc.d/newsyslog, netbsd11 /etc/rc.d/virecover)
+        "newsyslog": 'name="newsyslog"\ncommand="/usr/sbin/${name}"\nstart_cmd="newsyslog_start"\nstop_cmd=":"\n',
+        "virecover": "name=virecover\ncommand=/usr/libexec/${name}\nstop_cmd=':'\nreload_cmd=\":\"\n",
+        "sshd": 'name="sshd"\ncommand="/usr/sbin/${name}"\npidfile="/var/run/${name}.pid"\n',
+        "ntpd": 'name="ntpd"\ncommand="/usr/sbin/${name}"\nstop_postcmd="ntpd_poststop"\n',
+    }
+
+    def run_bsd(self, status):
+        import subprocess
+        with open(os.path.join(REPO, "testvm/test2/guest/check-after.sh"), encoding="utf-8") as f:
+            text = f.read()
+        fn = re.search(r"^oneshot\(\) \{.*?\}$", text, re.M).group(0)
+        block = text[text.index("elif has_rule B-bsd; then"):]
+        block = block[:block.index("\nelif has_rule B-obsd")]
+        d = tempfile.mkdtemp(prefix="t2-bsd-", dir=_tmp)
+        paths = []
+        for n, body in self.SCRIPTS.items():
+            p = os.path.join(d, n)
+            with open(p, "w", encoding="utf-8") as f:
+                # status as rc.subr answers it: a process looked for and not found
+                f.write(f"#!/bin/sh\n{body}\necho \"{n} {status[n]}.\"\n")
+            os.chmod(p, 0o755)
+            paths.append(p)
+        with open(os.path.join(d, "service"), "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nprintf '%s\\n' " + " ".join(paths) + "\n")
+        os.chmod(os.path.join(d, "service"), 0o755)
+        code = "has_rule() { return 0; }\ncmd() { echo \"=== cmd $1\"; }\n" + fn + "\nif false; then :\n" + block + "\nfi\n"
+        env = dict(os.environ, PATH=d + os.pathsep + os.environ.get("PATH", ""))
+        return subprocess.run(["sh", "-c", code], env=env, capture_output=True, text=True, check=True).stdout.splitlines()
+
+    def test_boot_time_tasks_are_not_down(self):
+        out = self.run_bsd({"newsyslog": "is not running", "virecover": "is not running",
+                            "sshd": "is running as pid 812", "ntpd": "is running as pid 640"})
+        self.assertEqual(out, ["=== cmd boot-state", "ok 4 services checked"])
+
+    def test_a_daemon_down_is_still_found(self):
+        out = self.run_bsd({"newsyslog": "is not running", "virecover": "is not running",
+                            "sshd": "is not running", "ntpd": "is running as pid 640"})
+        self.assertEqual(out, ["=== cmd boot-state", "down sshd", "ok 4 services checked"])
+
+
 class CheckAfterOstree(unittest.TestCase):
     """check-after.sh's K-ostree reading of `rpm-ostree status --json`: booted and default, as
     CHECKSUM.SERIAL, the default being the first deployment that isn't staged."""

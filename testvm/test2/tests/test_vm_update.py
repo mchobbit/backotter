@@ -284,8 +284,9 @@ class TestInGuest(unittest.TestCase):
         apt = self.sections()["Linux.apt"]
         self.assertIn("fetched $apt install --only-upgrade $batch", apt)
         self.assertIn("fetched $apt dist-upgrade", apt)
-        self.assertIn("fetched pacman -Sy --noconfirm --needed $keyrings && fetched pacman -Su --noconfirm",
-                      self.sections()["Linux.pacman"])
+        pac = self.sections()["Linux.pacman"]
+        self.assertIn("fetched pacman -Sy --noconfirm || exit 1", pac)
+        self.assertIn("fetched pacman -S --noconfirm --needed $up; } && fetched pacman -Su --noconfirm", pac)
 
     def test_emerge_sync_is_tried_again(self):
         sec = self.sections()["Linux.portage"]
@@ -313,6 +314,9 @@ class TestInGuest(unittest.TestCase):
         self.assertIn("if cmp -s /usr/pkg/etc/sysupgrade.conf.new /usr/pkg/etc/sysupgrade.conf; then", t)
         self.assertIn("[ \"$(systemctl show -p LoadState --value 'xfs_healer@-.service' 2>/dev/null)\" = loaded ]; then",
                       self.sections()["Linux.apt"])
+        pac = self.sections()["Linux.pacman"]
+        self.assertIn("if has pacman-mirrors && grep -qs '^ID=\"*manjaro' /etc/os-release; then", pac)
+        self.assertIn('if [ -n "$why" ]; then', pac)
 
     def test_netbsd_postinstall_fixes_rc_d(self):
         """A netbsd-11 daily's new /etc/rc.d/network failed postinstall's rc check, and with it
@@ -320,6 +324,142 @@ class TestInGuest(unittest.TestCase):
         m = re.search(r'^POSTINSTALL_AUTOFIX="([^"]*)"$', self.sections()["NetBSD"], re.M)
         self.assertIsNotNone(m)
         self.assertEqual(set(m[1].split()), {"obsolete", "mtree", "opensslcertsrehash", "rc"})
+
+    def run_mirrors(self, statuses, os_id="manjaro", mirrors=True, fasttrack_rc=0):
+        """Linux.pacman's Manjaro mirror block under a stub pacman-mirrors.  STATUSES: what each
+        `--status` says in turn, (exit status, text), the last one again when they run out;
+        --fasttrack writes "new" to the list and exits FASTTRACK_RC.  sleep does nothing; /run and
+        /etc are scratch folders.  (exit status, output, pacman-mirrors calls, the list after,
+        what is left in /run)"""
+        d = Path(tempfile.mkdtemp(prefix="t2-mirrors-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        for sub in ("bin", "run", "etc"):
+            (d / sub).mkdir()
+        (d / "etc" / "mirrorlist").write_text("old\n")
+        (d / "etc" / "os-release").write_text(f"NAME=x\nID={os_id}\nID_LIKE=arch\n")
+        for i, (rc, text) in enumerate(statuses):
+            (d / f"status{i}").write_text(f"{rc}\n{text}\n")
+        if mirrors:
+            (d / "bin" / "pacman-mirrors").write_text(f"""#!/bin/sh
+echo "$*" >>{d}/calls
+case "$1" in
+--status)
+    i=$(($(grep -c status {d}/calls) - 1)); [ -f {d}/status$i ] || i={len(statuses) - 1}
+    sed 1d {d}/status$i; exit $(head -n1 {d}/status$i) ;;
+--fasttrack) echo new >{d}/etc/mirrorlist; echo "Writing mirror list"; exit {fasttrack_rc} ;;
+esac
+""")
+            (d / "bin" / "pacman-mirrors").chmod(0o755)
+        for name in ("cp", "rm", "grep", "sed", "head"):
+            os.symlink(shutil.which(name), d / "bin" / name)
+        m = re.search(r"^( *)if has pacman-mirrors .*?^\1fi\n", self.sections()["Linux.pacman"], re.M | re.S)
+        self.assertIsNotNone(m)
+        block = (textwrap.dedent(m[0]).replace("/etc/pacman.d/mirrorlist", f"{d}/etc/mirrorlist")
+                 .replace("/etc/os-release", f"{d}/etc/os-release").replace("/run/", f"{d}/run/"))
+        code = ('has() { command -v "$1" >/dev/null 2>&1; }\nsay() { echo "in-guest: $*"; }\n'
+                'step() { echo "in-guest: step: $*"; }\nsleep() { :; }\n' + block + "echo fell-through\n")
+        r = subprocess.run(["/bin/sh", "-c", code], capture_output=True, text=True, env={"PATH": str(d / "bin")})
+        calls = (d / "calls").read_text().splitlines() if (d / "calls").exists() else []
+        out = (r.stdout + r.stderr).replace(str(d), "D")
+        return r.returncode, out, calls, (d / "etc" / "mirrorlist").read_text(), sorted(os.listdir(d / "run"))
+
+    def test_manjaro_mirrors_ranked_again_when_stale(self):
+        """manjaro (built 2026-08-25): its first mirrors stopped syncing in June, so pacman -Sy
+        read June's databases, updated nothing and downgraded archlinux-keyring (2026-11-17)."""
+        for rc, text, why in ((4, "Mirror #1 -- 00:00 X https://m/", "its first mirror was behind"),
+                              (5, "Mirror #3 https://m/ does not exist", "it named a mirror Manjaro no longer has"),
+                              (1, " MIRRORLIST ERROR ", "it had no mirror pacman-mirrors could read")):
+            with self.subTest(rc=rc):
+                got, out, calls, lst, left = self.run_mirrors([(rc, text), (0, "Mirror #1 OK 00:05 Y https://n/")])
+                self.assertEqual(got, 0, out)
+                self.assertEqual(out.splitlines(), [
+                    f"in-guest: step: mirrors: D/etc/mirrorlist ranked again by pacman-mirrors --fasttrack 5 ({why})",
+                    "fell-through"])
+                self.assertEqual(calls, ["--status", "--fasttrack 5", "--status"])
+                self.assertEqual((lst, left), ("new\n", []))
+
+    def test_manjaro_mirrors_up_to_date_are_left_alone(self):
+        for kw in ({"statuses": [(0, "Mirror #1 OK 00:05 Y https://n/")]},
+                   {"statuses": [(4, "behind")], "os_id": '"biglinux"'},
+                   {"statuses": [(4, "behind")], "os_id": "arch"},
+                   {"statuses": [(4, "behind")], "mirrors": False}):
+            with self.subTest(**kw):
+                rc, out, calls, lst, left = self.run_mirrors(**kw)
+                self.assertEqual((rc, out, lst, left), (0, "fell-through\n", "old\n", []))
+                self.assertFalse([c for c in calls if c != "--status"], calls)
+
+    def test_manjaro_status_that_does_not_download_is_tried_again_then_left(self):
+        fail = (1, "Downloading status failed!\nPlease check you network connection ...")
+        rc, out, calls, lst, left = self.run_mirrors([fail, fail, (0, "Mirror #1 OK")])
+        self.assertEqual((rc, lst, left, calls), (0, "old\n", [], ["--status"] * 3), out)
+        self.assertEqual(out.count("didn't download: again in 30 s"), 2, out)
+        self.assertNotIn("step:", out)
+        rc, out, calls, lst, left = self.run_mirrors([fail])
+        self.assertEqual((rc, lst, left, calls), (0, "old\n", [], ["--status"] * 11), out)
+        self.assertTrue(out.endswith("in-guest: Manjaro's mirror status didn't download: D/etc/mirrorlist stays as it is\n"
+                                     "fell-through\n"), out)
+        self.assertNotIn("step:", out)
+
+    def test_manjaro_new_list_that_will_not_come_right_fails_with_the_old_one_back(self):
+        for kw in ({"statuses": [(4, "behind")]}, {"statuses": [(4, "behind"), (0, "OK")], "fasttrack_rc": 1},
+                   {"statuses": [(4, "behind"), (1, "Downloading status failed!")]}):
+            with self.subTest(**kw):
+                rc, out, calls, lst, left = self.run_mirrors(**kw)
+                self.assertEqual((rc, lst, left), (1, "old\n", []), out)
+                self.assertNotIn("fell-through", out)
+                self.assertNotIn("step:", out)
+                self.assertEqual(calls.count("--fasttrack 5"), 11, calls)
+                self.assertIn("gave no list whose first mirror is up to date: D/etc/mirrorlist is as it was", out)
+
+    def test_manjaro_new_list_that_comes_right_on_a_later_try(self):
+        rc, out, calls, lst, left = self.run_mirrors([(4, "behind"), (4, "behind"), (0, "OK")])
+        self.assertEqual((rc, lst, left), (0, "new\n", []), out)
+        self.assertEqual(calls, ["--status", "--fasttrack 5", "--status", "--fasttrack 5", "--status"])
+        self.assertIn("gave no up-to-date list: again in 30 s (1 of 10)", out)
+        self.assertIn("in-guest: step: mirrors: D/etc/mirrorlist ranked again", out)
+
+    def test_manjaro_status_that_fails_otherwise_fails_the_update(self):
+        rc, out, calls, lst, left = self.run_mirrors([(2, "Traceback (most recent call last):")])
+        self.assertEqual((rc, lst, calls), (1, "old\n", ["--status"]), out)
+        self.assertIn("in-guest: pacman-mirrors --status exited 2", out)
+
+    def run_keyrings(self, keyrings, newer):
+        """Linux.pacman's -Sy, keyring and -Su lines under a stub pacman whose -Qqu names those
+        of its arguments in NEWER (with none, every upgrade), and a fetched() that just runs.
+        The pacman calls."""
+        d = Path(tempfile.mkdtemp(prefix="t2-keyrings-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        (d / "bin").mkdir()
+        (d / "bin" / "pacman").write_text(f"""#!/bin/sh
+echo "$*" >>{d}/calls
+if [ "$1" = -Qqu ]; then
+    shift; [ $# -gt 0 ] || {{ echo everything; exit 0; }}
+    r=1
+    for p; do case " {" ".join(newer)} " in *" $p "*) echo $p; r=0 ;; esac; done
+    exit $r
+fi
+""")
+        (d / "bin" / "pacman").chmod(0o755)
+        sec = self.sections()["Linux.pacman"]
+        start = sec.index("        fetched pacman -Sy --noconfirm || exit 1")
+        end = sec.index("|| exit 1\n", sec.index("fetched pacman -Su --noconfirm", start)) + len("|| exit 1\n")
+        code = (f'keyrings="{" ".join(keyrings)}"\nfetched() {{ "$@"; }}\n' + textwrap.dedent(sec[start:end])
+                + "echo fell-through\n")
+        r = subprocess.run(["/bin/sh", "-c", code], capture_output=True, text=True, env={"PATH": str(d / "bin")})
+        self.assertEqual((r.returncode, r.stdout), (0, "fell-through\n"), r.stderr)
+        return (d / "calls").read_text().splitlines()
+
+    def test_only_newer_keyrings_are_installed(self):
+        """pacman -S of a keyring the repositories have older downgrades it, --needed or not
+        (manjaro's June databases: archlinux-keyring 20260727 -> 20260612, 2026-11-17)."""
+        k = ["archlinux-keyring", "manjaro-keyring"]
+        self.assertEqual(self.run_keyrings(k, ["manjaro-keyring"]),
+                         ["-Sy --noconfirm", "-Qqu archlinux-keyring manjaro-keyring",
+                          "-S --noconfirm --needed manjaro-keyring", "-Su --noconfirm"])
+        self.assertEqual(self.run_keyrings(k, []),
+                         ["-Sy --noconfirm", "-Qqu archlinux-keyring manjaro-keyring", "-Su --noconfirm"])
+        # No keyring installed: -Qqu with no names would list every upgrade, so it doesn't run.
+        self.assertEqual(self.run_keyrings([], []), ["-Sy --noconfirm", "-Su --noconfirm"])
 
     def run_xfs_healer(self, load_state="loaded", rootfs="btrfs", systemd=True, systemctl=True, mask_rc=0):
         """Linux.apt's xfs_healer@-.service block under stub systemctl and findmnt: LOAD_STATE,

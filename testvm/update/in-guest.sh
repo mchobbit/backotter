@@ -742,7 +742,62 @@ print(d[0]["checksum"] if d else "")' "$1"
             rm -f /run/bko-fetch.rc /run/bko-fetch.log
             return "$r"
         }
-        fetched pacman -Sy --noconfirm --needed $keyrings && fetched pacman -Su --noconfirm || exit 1
+        # Manjaro: the installer ranks the mirrors once and nothing ranks them
+        # again, so a guest keeps the mirrors of the day it was built; some
+        # stop syncing, and pacman reads their old databases (manjaro, built
+        # 2026-08-25, its first mirrors frozen in June: "there is nothing to
+        # do" on 2026-11-17, and archlinux-keyring downgraded).  pacman-mirrors
+        # --status exits 0 while the first mirror is up to date on the
+        # guest's branch, 4 when it is behind, 5 when the list names a
+        # mirror Manjaro no longer has, 1 when the list has no Server line or
+        # repo.manjaro.org's status can't be read (tried again like
+        # fetched).  Then --fasttrack 5 ranks five mirrors up to date on
+        # that branch (pacman-mirrors.conf's, kept).  Offline it writes the
+        # list anyway, from its own old pool, and exits 0, so the old list
+        # comes back unless --status then says 0, and the update fails:
+        # pacman on mirrors known to be behind would update nothing.  A
+        # status that can't be read at all leaves the list alone, and pacman
+        # tries it.
+        if has pacman-mirrors && grep -qs '^ID="*manjaro' /etc/os-release; then
+            f=/etc/pacman.d/mirrorlist why= n=0
+            while s=$(pacman-mirrors --status 2>&1); r=$?
+                [ $r -eq 1 ] && [ $n -lt 10 ] && printf '%s\n' "$s" | grep -q 'Downloading status failed'; do
+                n=$((n + 1)); say "Manjaro's mirror status didn't download: again in 30 s ($n of 10)"; sleep 30
+            done
+            case $r in
+            0) ;;
+            1)  if printf '%s\n' "$s" | grep -q 'Downloading status failed'; then
+                    say "Manjaro's mirror status didn't download: $f stays as it is"
+                else
+                    why="it had no mirror pacman-mirrors could read"
+                fi ;;
+            4) why="its first mirror was behind" ;;
+            5) why="it named a mirror Manjaro no longer has" ;;
+            *) printf '%s\n' "$s"; say "pacman-mirrors --status exited $r"; exit 1 ;;
+            esac
+            if [ -n "$why" ]; then
+                cp -p $f /run/bko-mirrorlist || exit 1
+                n=0
+                until o=$(pacman-mirrors --fasttrack 5 2>&1) && s=$(pacman-mirrors --status 2>&1); do
+                    if [ $n -ge 10 ]; then
+                        cp -p /run/bko-mirrorlist $f; rm -f /run/bko-mirrorlist
+                        printf '%s\n' "$o" "$s"
+                        say "pacman-mirrors --fasttrack 5 gave no list whose first mirror is up to date: $f is as it was"
+                        exit 1
+                    fi
+                    n=$((n + 1)); say "pacman-mirrors --fasttrack 5 gave no up-to-date list: again in 30 s ($n of 10)"; sleep 30
+                done
+                rm -f /run/bko-mirrorlist
+                step "mirrors: $f ranked again by pacman-mirrors --fasttrack 5 ($why)"
+            fi
+        fi
+        # Then only the keyrings the repositories have newer: pacman -S of an
+        # older one downgrades it, --needed or not (archlinux-keyring on
+        # manjaro's stale mirrors).  -Su never downgrades.
+        fetched pacman -Sy --noconfirm || exit 1
+        up=
+        [ -z "$keyrings" ] || up=$(pacman -Qqu $keyrings)
+        { [ -z "$up" ] || fetched pacman -S --noconfirm --needed $up; } && fetched pacman -Su --noconfirm || exit 1
         yes | pacman -Scc >/dev/null
     # t2-section: Linux.tukit
     # A transactional system (MicroOS: microos; docs/design/aeon.md): / is a

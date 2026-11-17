@@ -446,8 +446,10 @@ What a Thinkpad run still lacks (not built):
   controller's key is in both.
 - **LUKS `/var`** (the installer's encryption option): `abroot unlock-var`
   asks through Plymouth from the init wrapper, not the initramfs, so none of
-  bs1-luks's unlock-from-drive families applies; such a run would be
-  attended, and is untested (no `vanilla3-luks` guest).
+  bs1-luks's unlock-from-drive families applies (its crypttab line finds
+  the volume already open), and the hook is in the read-only root image.
+  bs1-adopt records it as family A, attended (2026-11-17, Thinkpad:
+  adopt and preflight PASS, `UNLOCK=attended`); no `vanilla3-luks` guest.
 
 ## Keeping a library of backups
 

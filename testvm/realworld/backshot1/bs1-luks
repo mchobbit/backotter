@@ -339,6 +339,13 @@ luks_adopt() {
     gen=$(lk_generator)
     cmdline=$(cat /proc/cmdline)
     if [[ -e /run/ostree-booted ]]; then family=A reason="ostree (bko-holt load refuses LUKS there)"
+    # Vanilla OS: /sbin/init is ABRoot's wrapper, whose hook
+    # /usr/share/init.d/090-abroot-unlock-var.sh asks for /var's passphrase
+    # through Plymouth (abroot unlock-var) before systemd starts; its
+    # crypttab line finds the volume already open, and the initramfs never
+    # sees it.  The hook is in the read-only root image, so nothing here
+    # can hand it the drive's key (Thinkpad, 2026-11-17).
+    elif is_abroot; then family=A reason="ABRoot: its init wrapper's abroot unlock-var asks for /var's passphrase through Plymouth before systemd, so neither the initramfs nor crypttab opens it"
     else
         case $gen in
         mkinitcpio)

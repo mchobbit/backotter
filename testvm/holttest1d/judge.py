@@ -782,6 +782,36 @@ def lvcreate_made(d):
     return names, uuids
 
 
+def fs_thin_lvs(d):
+    """{(VG, LV)} of dump D's thin LVs that hold a filesystem the backup
+    reads: its dm device has a filesystem content, isn't a raw volume, and
+    is a backup source's device (so judge.py fs compares what it holds).
+    Such an LV's mapped_bytes is how much its restored filesystem wrote,
+    not layout; an LV holding anything else (a raw volume, nothing) keeps
+    its mapping compared, which is all that would show it came back empty."""
+    st = d.get("storage") or {}
+    backed = {s.get("device") for s in st.get("backup_sources") or [] if s.get("device")}
+    dms = {}
+    for x in st.get("dm_devices") or []:
+        dm = x.get("dm") or {}
+        c = x.get("content") if isinstance(x.get("content"), dict) else {}
+        if dm.get("vg") and dm.get("lv") and c.get("usage") == "filesystem" and c.get("type") \
+                and not x.get("raw_volume") and x.get("name") in backed:
+            dms[(dm.get("vg"), dm.get("lv"))] = c.get("type")
+    return {w for w, (_, seg) in thin_lvs(d).items() if seg.get("type") == "thin" and w in dms}
+
+
+def fs_thin_pools(d, fs_thins):
+    """{(VG, POOL)} of dump D's thin pools whose every thin LV is in
+    FS_THINS (fs_thin_lvs), and that have one at least: their used data and
+    metadata are only what those filesystems wrote."""
+    pools = {}
+    for (vg, _), (lv, seg) in thin_lvs(d).items():
+        if seg.get("type") == "thin":
+            pools.setdefault((vg, seg.get("thin_pool")), []).append((vg, lv.get("name")) in fs_thins)
+    return {w for w, ok in pools.items() if ok and all(ok)}
+
+
 def geli_records(d):
     """GELI providers (docs/design/geli.md) in dump D: (holder, record), the
     flattened paths of the disk or partition that holds one and of its geli
@@ -842,6 +872,53 @@ def flatten(v, path, out):
         out[path + ":set"] = v
     else:
         out[path] = v
+
+
+# A path in a snapshot tree: PREFIX.snapshots/.../(root|snapshot)/REST, the
+# first root or snapshot component after .snapshots/ the snapshot's own
+# root (snapper's .snapshots/N/snapshot, AnduinOS's
+# .snapshots/anduinos-btrfs-snapshots-manager/deployments/ID/root), its
+# live counterpart PREFIX + REST.
+SNAPSHOT_TREE = re.compile(r"^((?:.*/)?)\.snapshots/(?:[^/]+/)*?(?:root|snapshot)/(.+)$")
+SNAPSHOT_HOLE_KINDS = ("holes gained", "allocation lost", "holes lost", "holes lost (sub-block)")
+FS_NOCOW_FL = 0x00800000
+
+
+def snapshot_holes_why(kind, p, before, after):
+    """judge_fs's excuse for KIND, a sparseness difference of P, a file in
+    a snapshot tree (SNAPSHOT_TREE), or None.  Load makes such a snapshot as
+    a snapshot of the restored live subvolume, then restores the snapshot's
+    own files into it with --exact --clone-from: a file whose bytes already
+    match is kept as it is, its extents shared with the live copy (the
+    restore punches no holes into it, and on btrfs fills them only in a
+    NOCOW file: rustic_core's sparse.rs).  So where the source's two copies
+    had the same bytes but not the same holes, the restored snapshot's file
+    has the restored live copy's allocation.  Excused only when it is exactly that: the live
+    counterpart is in both records, the source's two copies have the same
+    size and SHA-256 and differ in holes or blocks, neither snapshot copy is
+    NOCOW, and the restored snapshot copy has the restored live copy's
+    size, SHA-256, blocks and holes."""
+    if kind not in SNAPSHOT_HOLE_KINDS:
+        return None
+    m = SNAPSHOT_TREE.match(p)
+    if not m:
+        return None
+    live = m.group(1) + m.group(2)
+    b, a, bl, al = (r.get(x) or {} for r, x in ((before, p), (after, p), (before, live), (after, live)))
+    if not all(e.get("type") == "file" for e in (b, a, bl, al)):
+        return None
+    if any(not isinstance(e.get("flags"), int) or e.get("flags") & FS_NOCOW_FL for e in (b, a)):
+        return None
+    if b.get("sha256") is None or (b.get("size"), b.get("sha256")) != (bl.get("size"), bl.get("sha256")):
+        return None
+    alloc = ("holes", "hole_blocks", "blocks")
+    if all(b.get(f) == bl.get(f) for f in alloc):
+        return None
+    if any(a.get(f) is None or a.get(f) != al.get(f) for f in ("size", "sha256") + alloc) or a.get("sha256") != b.get("sha256"):
+        return None
+    return ("a snapshot's file with its live copy's bytes but not its holes on the source: load makes the snapshot from the restored "
+            "live tree and the restore keeps a file whose bytes match as it is (--clone-from), so it has the restored live copy's "
+            "allocation, which it does")
 
 
 def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, reforms=()):
@@ -946,6 +1023,8 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
                 af, bf = before.get(p, {}).get("flags"), after.get(p, {}).get("flags")
                 if isinstance(af, int) and isinstance(bf, int) and (af ^ bf) & ~0x1400 == 0:
                     why = "btrfs's own no-compress flag, which its compression heuristic sets as data is written"
+            if not why:
+                why = snapshot_holes_why(kind, p, before, after)
             if not why and reforms:
                 why = reformat_why(kind, p, before, after, reforms)
             (allowed.setdefault(why, []) if why else real.setdefault(kind, [])).append(p)
@@ -2342,6 +2421,11 @@ def main():
     made_src, made_uuid_src = lvcreate_made(src)
     made_dst, made_uuid_dst = lvcreate_made(dst)
     snap_pools = thin_snapshot_pools(src)
+    # Thin LVs holding a backed-up filesystem on both sides, and the pools
+    # (without snapshots: Qubes's keep qubes_thin_why) holding only those.
+    src_thins = thin_lvs(src)
+    fs_thins = {w for w in fs_thin_lvs(src) & fs_thin_lvs(dst) if (w[0], src_thins[w][1].get("thin_pool")) not in snap_pools}
+    fs_pools = fs_thin_pools(src, fs_thins) & fs_thin_pools(dst, fs_thins)
     timeshift = timeshift_left_out(src)
     for d in (src, dst):
         if "--removable" in flags:
@@ -2437,6 +2521,12 @@ def main():
                     why = "a thin pool, its data and metadata LVs, the pool metadata spare and the thin LVs are made anew by lvcreate: new LV UUIDs, the rescuer's host and time"
                 elif re.fullmatch(r"segments\.\d+\.stripes\.\d+", m.group(3)) and isinstance(va, int) and isinstance(vb, int):
                     why = "where lvcreate puts a thin pool's data, metadata and spare LVs on the PV is its own"
+                elif re.fullmatch(r"(segments\.\d+\.)?mapped_bytes", m.group(3)) and who in fs_thins and isinstance(va, int) and isinstance(vb, int):
+                    why = ("a thin LV's mapped blocks, where it holds a filesystem the backup reads (judge.py fs compares its files): "
+                           "what the restore wrote into a new LV, not the source's history of writes and discards")
+                elif re.fullmatch(r"(segments\.\d+\.)?(data|metadata)_used_bytes", m.group(3)) and who in fs_pools and isinstance(va, int) and isinstance(vb, int):
+                    why = ("a thin pool's used data and metadata, where its every thin LV holds a filesystem the backup reads "
+                           "(judge.py fs compares their files): what the restore wrote into a new pool")
         if not why:
             why = qubes_thin_why(k, va, vb, a, snap_pools)
         m = re.match(r"^(storage\.dm_devices\.\d+)\.(dm\.dm_uuid|dm\.lv_uuid|links\.\d+)$", k)

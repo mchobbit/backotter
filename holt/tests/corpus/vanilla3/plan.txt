@@ -99,6 +99,7 @@ vgcfgrestore --devicesfile '' --devices /dev/sdq3 --file /run/bko-holt/lvm/vos-r
 vgchange --devicesfile '' --devices /dev/sdq3 --activate y vos-root
 # volume group vos-root: thin pool root (data 19 GiB, metadata 1 GiB) made again by lvcreate, empty; its LV UUID, its data and metadata LVs', those of its thin LVs (vos-root/root-a, vos-root/root-b) and their device ids are new (vgcfgrestore keeps the PVs', the group's and its other LVs' UUIDs); tags, activation skip and read-only are set as on the source, a profile and crop_metadata aren't carried over
 lvcreate --devicesfile '' --devices /dev/sdq3 --yes --type thin-pool -n root -L 19456m --poolmetadatasize 1024m --chunksize 64k --discards passdown --zero y --poolmetadataspare y vos-root
+# thin pool vos-root/root: made with 19 GiB of data and 1 GiB of metadata; the dump doesn't say how much of it the source used (no data_used_bytes: a dump from before Qubes's Q2); its 2 thin LVs (0 of them snapshots) add up to 38 GiB virtual, which is not what it holds
 # thin LV vos-root/root-a: 19 GiB virtual, device id 1 on the source
 lvcreate --devicesfile '' --devices /dev/sdq3 --type thin -V 19456m -n root-a --thinpool root vos-root
 # thin LV vos-root/root-b: 19 GiB virtual, device id 2 on the source

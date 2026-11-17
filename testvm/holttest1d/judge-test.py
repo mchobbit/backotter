@@ -2441,6 +2441,138 @@ class ThinPoolMade(unittest.TestCase):
             self.assertEqual(out.count("DIFF "), 1, out)
 
 
+class ThinCounters(unittest.TestCase):
+    """vanilla3 (2026-11-17): bko-holt's thin_usage (08f427f) records a pool's
+    data_used_bytes and metadata_used_bytes and a thin LV's mapped_bytes.  A
+    thin LV that holds a filesystem the backup reads comes back with what
+    the restore wrote, not the source's mapping (judge.py fs compares its
+    files); one that holds anything else keeps its mapping compared, the
+    only sign it came back empty, and so does its pool."""
+
+    judge = Geli.judge
+
+    @staticmethod
+    def counted(fs=True, used=(13333233664, 21262336), mapped=6400507904, raw=False, **kw):
+        d = ThinPoolMade.thin(**kw)
+        lvs = {lv["name"]: lv for lv in d["storage"]["lvm"]["volume_groups"][0]["logical_volumes"]}
+        lvs["root"].update(data_used_bytes=used[0], metadata_used_bytes=used[1])
+        lvs["root-a"].update(mapped_bytes=mapped, size_bytes=20401094656)
+        dm = d["storage"]["dm_devices"][1]
+        dm["dm"].update(vg="vos-root", lv="root-a")
+        if fs:
+            dm["content"] = {"type": "btrfs", "usage": "filesystem", "uuid": "32e2ca47-95b4-4079-a174-e313954c37e0"}
+            d["storage"]["backup_sources"] = [{"path": "/part-future", "device": "dm-1", "fstype": "btrfs"}]
+        if raw:
+            dm["raw_volume"] = {"image": "/.bko-holt/raw/vos-root/root-a.img", "why": "test"}
+        return d
+
+    DST = dict(order=("init", "root", "root-a", "lvol0_pmspare", "root_tmeta", "root_tdata"), at=(5376, 256, 512), host="ubuntu26-uefi", ids="d")
+
+    def test_counters_of_a_filesystem_pool(self):
+        rc, out = self.judge(self.counted(), self.counted(used=(13046317056, 20819968), mapped=6499926016, **self.DST))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("a thin LV's mapped blocks, where it holds a filesystem the backup reads", out)
+        self.assertIn("what the restore wrote into a new LV, not the source's history of writes and discards): 1: storage.lvm.volume_groups.0.logical_volumes.3.mapped_bytes", out)
+        self.assertIn("what the restore wrote into a new pool): 2:", out)
+
+    def test_size_still_counts(self):
+        dst = self.counted(used=(13046317056, 20819968), mapped=6499926016, **self.DST)
+        next(lv for lv in dst["storage"]["lvm"]["volume_groups"][0]["logical_volumes"] if lv["name"] == "root-a")["size_bytes"] = 10 * GIB
+        rc, out = self.judge(self.counted(), dst)
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(out.count("DIFF "), 1, out)
+        self.assertIn("DIFF storage.lvm.volume_groups.0.logical_volumes.3.size_bytes:", out)
+
+    def test_a_thin_lv_without_a_filesystem_back_empty(self):
+        """No filesystem, or a raw volume, or not a backup source: an LV's
+        mapping going to 0 is a DIFF, and so are its pool's counters."""
+        for src, dst in ((self.counted(fs=False), self.counted(fs=False, used=(0, 1 << 20), mapped=0, **self.DST)),
+                         (self.counted(raw=True), self.counted(raw=True, used=(0, 1 << 20), mapped=0, **self.DST))):
+            rc, out = self.judge(src, dst)
+            self.assertEqual(rc, 1, out)
+            self.assertIn("DIFF storage.lvm.volume_groups.0.logical_volumes.3.mapped_bytes: 6400507904 -> 0", out)
+            self.assertIn("DIFF storage.lvm.volume_groups.0.logical_volumes.2.data_used_bytes:", out)
+            self.assertIn("DIFF storage.lvm.volume_groups.0.logical_volumes.2.metadata_used_bytes:", out)
+            self.assertEqual(out.count("DIFF "), 3, out)
+        src, dst = self.counted(), self.counted(used=(0, 1 << 20), mapped=0, **self.DST)
+        for d in (src, dst):
+            d["storage"]["backup_sources"] = []
+        rc, out = self.judge(src, dst)
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(out.count("DIFF "), 3, out)
+
+    def test_restored_without_its_filesystem(self):
+        """The source's LV held a filesystem, the restored one doesn't: no excuse."""
+        dst = self.counted(fs=False, used=(13046317056, 20819968), mapped=6499926016, **self.DST)
+        rc, out = self.judge(self.counted(), dst)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("logical_volumes.3.mapped_bytes: 6400507904 -> 6499926016", out)
+        self.assertIn("logical_volumes.2.data_used_bytes:", out)
+
+
+class FsSnapshotHoles(unittest.TestCase):
+    """anduinos2 (2026-11-17): load makes a deployment's snapshot from the
+    restored live tree, and the restore keeps a file whose bytes match
+    (--clone-from), filling holes only in NOCOW files.  A snapshot's file
+    with its live copy's bytes but other holes on the source comes back with
+    the restored live copy's allocation: excused only when that is so."""
+
+    judge = Fs.judge
+    SNAP = ".snapshots/anduinos-btrfs-snapshots-manager/deployments/e707f13a-749e-46de-95b3-963c1ed78b68/root/usr/lib/locale/locale-archive"
+    LIVE = "usr/lib/locale/locale-archive"
+    DENSE = dict(size=42580048, blocks=83168, sha256="016e9d61", holes=False, hole_blocks=0, flags=0)
+    SPARSE = dict(DENSE, blocks=83104, holes=True, hole_blocks=64)
+    RESTORED = dict(DENSE, blocks=83008, holes=True, hole_blocks=160)
+    WHY = "a snapshot's file with its live copy's bytes but not its holes on the source"
+
+    def records(self, snap, live, rsnap, rlive, snap_path=None, live_path=None):
+        sp, lp = snap_path or self.SNAP, live_path or self.LIVE
+        return ({sp: meta("file", **snap), lp: meta("file", **live)},
+                {sp: meta("file", **rsnap), lp: meta("file", **rlive)})
+
+    def test_dense_snapshot_sparse_live(self):
+        rc, out = self.judge(*self.records(self.DENSE, self.SPARSE, self.RESTORED, self.RESTORED))
+        self.assertEqual(rc, 0, out)
+        self.assertIn(self.WHY, out)
+        self.assertIn("0 differences", out)
+        self.assertEqual(out.count(self.SNAP), 2, out)     # holes gained, allocation lost
+
+    def test_sparse_snapshot_dense_live(self):
+        dense = dict(self.DENSE)
+        rc, out = self.judge(*self.records(self.SPARSE, dense, dense, dense))
+        self.assertEqual(rc, 0, out)
+        self.assertIn(self.WHY, out)
+
+    def test_snapper_layout(self):
+        rc, out = self.judge(*self.records(self.DENSE, self.SPARSE, self.RESTORED, self.RESTORED,
+                                           snap_path=".snapshots/3/snapshot/usr/lib/locale/locale-archive"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn(self.WHY, out)
+
+    def test_differences(self):
+        nocow = dict(self.DENSE, flags=0x00800000)
+        for name, recs in (
+                ("other bytes on the source", self.records(dict(self.DENSE, sha256="aa"), self.SPARSE, dict(self.RESTORED, sha256="aa"), self.RESTORED)),
+                ("NOCOW", self.records(nocow, dict(self.SPARSE, flags=0x00800000), dict(self.RESTORED, flags=0x00800000), dict(self.RESTORED, flags=0x00800000))),
+                ("not the restored live copy's allocation", self.records(self.DENSE, self.SPARSE, self.RESTORED, dict(self.RESTORED, blocks=83040, hole_blocks=128))),
+                ("no root or snapshot component", self.records(self.DENSE, self.SPARSE, self.RESTORED, self.RESTORED,
+                                                              snap_path=".snapshots/anduinos/deployments/e707/usr/lib/locale/locale-archive")),
+                ("the same holes on the source", self.records(self.SPARSE, self.SPARSE, dict(self.DENSE), dict(self.SPARSE)))):
+            rc, out = self.judge(*recs)
+            self.assertEqual(rc, 1, f"{name}: {out}")
+            self.assertNotIn(self.WHY, out, name)
+            self.assertIn("DIFF ", out, name)
+
+    def test_live_counterpart_missing(self):
+        before, after = self.records(self.DENSE, self.SPARSE, self.RESTORED, self.RESTORED)
+        for d in (before, after):
+            del d[self.LIVE]
+        rc, out = self.judge(before, after)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF holes gained: 1", out)
+        self.assertIn("DIFF allocation lost: 1", out)
+
+
 class FsTransactional(unittest.TestCase):
     """judge.py fs over a MicroOS restore (docs/design/aeon.md, M5): load's
     transactional arm regenerates nothing in a snapshot, so the ESP, every
@@ -3103,8 +3235,51 @@ class Qubes(unittest.TestCase):
         rc, out = self.run_judge(src=self.layout(), dst=self.layout(ids="d", used=12 * GIB + 50 * MIB, dev=7, tid=4))
         self.assertEqual(rc, 0, out)
         self.assertIn("a thin LV's device id in a pool with snapshots", out)
-        self.assertIn("a thin pool's used data and metadata", out)
-        self.assertIn("a thin LV's mapped blocks", out)
+        self.assertIn("a thin pool's used data and metadata, within 5 % of the source's", out)
+        self.assertIn("a thin LV's mapped blocks: a zero run the source had provisioned stays unprovisioned", out)
+        self.assertNotIn("holds a filesystem the backup reads", out)
+
+    @classmethod
+    def with_root_pool(cls, ids="s", backed=True, **kw):
+        """layout plus Qubes's root-pool: a second thin pool, no snapshots,
+        its thin LV root holding dom0's ext4 /, a backup source if BACKED."""
+        d = cls.layout(ids=ids, **kw)
+        src = ids == "s"
+        d["storage"]["lvm"]["volume_groups"][0]["logical_volumes"] += [
+            {"name": "root-pool", "id": f"{ids}rootpool", "flags": [], "creation_host": "dom0" if src else "rescuer",
+             "data_used_bytes": 7 * GIB if src else 6 * GIB + 900 * MIB, "metadata_used_bytes": 4 * MIB if src else 3 * MIB,
+             "segments": [{"start_extent": 0, "extent_count": 5120, "type": "thin-pool", "metadata": "root-pool_tmeta", "pool": "root-pool_tdata",
+                           "transaction_id": 1, "chunk_size": 128}]},
+            {"name": "root", "id": f"{ids}root", "flags": [], "creation_host": "dom0" if src else "rescuer",
+             "mapped_bytes": 7 * GIB if src else 6 * GIB + 880 * MIB,
+             "segments": [{"start_extent": 0, "extent_count": 5120, "type": "thin", "thin_pool": "root-pool", "transaction_id": 1, "device_id": 1}]},
+        ]
+        d["storage"]["dm_devices"].append({"name": "dm-1", "dm": {"dm_name": "qubes_dom0-root", "vg": "qubes_dom0", "lv": "root",
+                                                                  "lv_uuid": f"{ids}root", "dm_uuid": f"LVM-vg1{ids}root"},
+                                           "content": {"type": "ext4", "usage": "filesystem", "uuid": "5f0c0e3a-1d2b-4c3d-9e4f-0a1b2c3d4e5f"}})
+        if backed:
+            d["storage"]["backup_sources"] = [{"path": "/", "device": "dm-1", "fstype": "ext4"}]
+        return d
+
+    def test_main_root_pool_of_a_filesystem(self):
+        """root-pool (no snapshots) holds dom0's backed-up ext4: its counters
+        take the filesystem excuse; vm-pool keeps the Qubes one."""
+        rc, out = self.run_judge(src=self.with_root_pool(), dst=self.with_root_pool(ids="d", used=12 * GIB + 50 * MIB, dev=7, tid=4))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("a thin LV's mapped blocks, where it holds a filesystem the backup reads", out)
+        self.assertIn("a thin pool's used data and metadata, where its every thin LV holds a filesystem the backup reads", out)
+        self.assertIn("a thin pool's used data and metadata, within 5 % of the source's", out)
+        self.assertIn("a thin LV's mapped blocks: a zero run the source had provisioned stays unprovisioned", out)
+        fs_lines = [l for l in out.splitlines() if "holds a filesystem the backup reads" in l]
+        self.assertEqual(len(fs_lines), 2, out)
+        self.assertTrue(all("logical_volumes.0." in l or "logical_volumes.1." in l for l in fs_lines), out)    # root, root-pool
+
+    def test_main_root_pool_not_backed_up(self):
+        rc, out = self.run_judge(src=self.with_root_pool(backed=False), dst=self.with_root_pool(ids="d", backed=False))
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn("holds a filesystem the backup reads", out)
+        self.assertEqual(out.count("DIFF "), 3, out)
+        self.assertIn("DIFF storage.lvm.volume_groups.0.logical_volumes.0.mapped_bytes:", out)
 
     def test_main_still_holds_origins(self):
         rc, out = self.run_judge(src=self.layout(), dst=self.layout(ids="d", origin="vm-work-private-1-back"))

@@ -120,6 +120,9 @@ FIELDS = ("ssh", "name")
 # The reserve the capacity score uses when there is none to go by: a host's score is
 # then the smaller of its free GiB, so the roomiest host wins.
 SCORE_FLOOR = 1.0
+# cmp-run.sh's EPS_GIB: the MiB of tolerance its fits() allows, so that this mirror of
+# the admission test says yes to exactly what that host would let in.
+EPS_GIB = 0.001
 
 
 def _host_table():
@@ -314,8 +317,10 @@ def num(x):
 
 
 def fits(room, reserve):
-    """Whether a --reserve (D, M) fits in ROOM (D, M), as cmp-run.sh's fits() does."""
-    return room is not None and room[0] >= reserve[0] and room[1] >= reserve[1]
+    """Whether a --reserve (D, M) fits in ROOM (D, M), as cmp-run.sh's fits() does
+    (EPS_GIB of tolerance and all: both figures are tenths of a GiB floored with it)."""
+    return (room is not None and room[0] + EPS_GIB >= reserve[0]
+            and room[1] + EPS_GIB >= reserve[1])
 
 
 def score_of(free, reserve):

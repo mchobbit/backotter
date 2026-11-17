@@ -387,8 +387,10 @@ def able_hosts(g, s, hosts, probes):
 
 def over_ceiling(s, ceil):
     """True when a check's --reserve (each VM's) is over a host's ceiling (cmp-run.sh's
-    ceiling(): it refuses such a --reserve at once); never while the ceiling is unknown."""
-    return bool(ceil) and (s.d > ceil[0] + 1e-9 or s.m > ceil[1] + 1e-9)
+    ceiling(): it refuses such a --reserve at once); never while the ceiling is unknown.
+    The tolerance is cmp-run.sh's EPS_GIB, the MiB its fits() allows, so this says no to
+    exactly what that host would refuse."""
+    return bool(ceil) and (s.d > ceil[0] + 1e-3 or s.m > ceil[1] + 1e-3)
 
 
 def too_big(guests, spec, ceils):

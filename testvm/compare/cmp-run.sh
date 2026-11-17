@@ -17,7 +17,8 @@
 #   cmp-run.sh --ceiling
 #       prints "DISK MEM", the most one job could ever get on this host
 #       (ceiling(): a --reserve or a queue line over it is refused at once),
-#       and writes nothing: not even the ledger's files.
+#       floored to a tenth as budget()'s figures are, and writes nothing: not
+#       even the ledger's files.
 #   cmp-run.sh --free
 #       prints "DISK MEM", the room a new --reserve could get here now
 #       (free_now(): the smaller of the ceiling and budget()'s room for each,
@@ -76,6 +77,30 @@
 #     cap: not the whole cap (zfs_arc_max, 8 GiB on the big hosts), which only
 #     the host's small throwaway test pools ever use, and the ARC gives memory
 #     back under pressure.  A host without ZFS (the small ones) has no ARC: 0.
+# Every figure is GiB floored to a tenth, and EPS_GIB (0.001, a MiB) is added
+# before the floor: fl() in ceiling(), budget() and free_now(), and the same
+# tolerance in fits(), the admission comparison.  Without it the bookkeeping's
+# own few KiB cost a whole tenth, because budget()'s RAM disk room is the
+# tmpfs's free space less 1 GiB and the ledger's three files live on that same
+# tmpfs: with the RAM disk otherwise empty df shows 4 KiB used, so on choubox's
+# 4 GiB tmpfs the room came to 2.99999 and floored to 2.9 while ceiling() said
+# 3.0, and a --reserve 3 6 (exactly that host's ceiling, as SticTest reserves)
+# could never be let in -- it waited for ever.  Float noise in the memory
+# figures (MemTotal is no round number of GiB: 5.9999 floored to 5.9) went the
+# same way.  ceiling() floors with the tolerance too, where it used to round to
+# the nearest tenth: a ceiling rounded up admits a --reserve that budget()
+# never grants, which is that same endless wait, so both ends must quantize
+# alike.  The tolerance cannot over-commit anything real: it is a thousandth of
+# the step it saves, both figures stop well short of the metal anyway (the RAM
+# disk 1 GiB short of the tmpfs, the memory 2 GiB short of MemAvailable), and
+# room genuinely in use -- a tenth of a GiB of leftovers, the smallest figure
+# any job reserves -- is a hundred times the tolerance and still comes off.
+# after_line() needs none of its own: it works in whole tenths (t() rounds to
+# the nearest one) on figures budget() has already floored.
+# facts_host.py and drive.py cut tree_anon(), budget(), after_line() and
+# ceiling() out of this file one at a time (sed) and run them on their own, so
+# each carries its own copy of whatever it needs, fl() included, and may lean
+# on nothing defined around it.
 # Each queue job runs in a systemd scope with MemoryHigh = DISK + MEM GiB
 # (its tmpfs pages count there too): past that it is slowed and reclaimed
 # into zram, never killed. A --reserve's scope has no MemoryHigh. zram
@@ -221,7 +246,9 @@ budget() {  # [ROWS] -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked;
     done <<<"$rows"
     awk -v size_k="${size:-0}" -v avail_k="${avail:-0}" -v arc_max="${arc_max:-0}" -v arc_size="${arc_size:-0}" \
         -v base="$base" -v arc_room="${ARC_ROOM_GIB:-1}" -v unused="$unused" '
-        function fl(x) { return int(x * 10 + (x < 0 ? -1 : 0)) / 10 }   # round down
+        # Down to a tenth, a MiB of tolerance first (EPS_GIB; see the header):
+        # the bookkeeping sits on this tmpfs, and 2.99999 is 3.0 of room.
+        function fl(x) { return int((x + 0.001) * 10 + (x < 0 ? -1 : 0)) / 10 }
         { rd += $2; rm += $3 }   # the rows of the ledger, on stdin
         END {
             G = 1073741824
@@ -267,7 +294,9 @@ after_line() {  # PID MAXDISK MAXMEM [LEDGER_ROWS WAIT_ROWS] -> "DISK MEM AHEAD 
     # MAXDISK/MAXMEM plus what the ledger's jobs hold are held back for. The figures
     # don't depend on PID's own needs: PID starts if they fit them. BACKFILL_MAX=0
     # holds back for everyone, as strict first come, first served does.
-    # (In tenths of a GiB: the figures come rounded to them.)
+    # (In tenths of a GiB: the figures come rounded to them, so t() rounds to
+    # the nearest tenth and nothing here needs fl()'s tolerance -- half a tenth
+    # of slack is fifty times it.)
     awk -v me="$1" -v d="$2" -v m="$3" -v hot="${HOT_C:-95}" -v now="$(date +%s)" \
         -v max="${BACKFILL_MAX:-1800}" '
         function t(x) { return int(x * 10 + (x < 0 ? -0.5 : 0.5)) }
@@ -306,7 +335,10 @@ hot() {  # [HOT_C]: true while the CPU or an NVMe is too hot to start more
     done
     return 1
 }
-fits() { awk -v a="$1" -v b="$2" -v c="$3" -v e="$4" 'BEGIN { exit !(b + 0 <= a + 0 && e + 0 <= c + 0) }'; }
+# MAXDISK WANTDISK MAXMEM WANTMEM: admission, with the same MiB of tolerance
+# the figures are floored by (EPS_GIB; see the header), so that a --reserve of
+# exactly the room offered is let in whichever way the last bit rounded.
+fits() { awk -v a="$1" -v b="$2" -v c="$3" -v e="$4" 'BEGIN { exit !(b + 0 <= a + 0.001 && e + 0 <= c + 0.001) }'; }
 parse() {  # LINE -> globals g grow ondisk d m (suffixes only at the end, in order); rc 1: a ':' in g
     local s=$1
     m=5 d=8 grow=0 ondisk=""
@@ -327,11 +359,15 @@ ceiling() {  # -> "DISK MEM": the most one job could ever get on this host
     arc_size=$(awk '$1 == "size" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
     df -Pk $RAM | awk -v arc_max="${arc_max:-0}" -v arc_size="${arc_size:-0}" -v arc_room="${ARC_ROOM_GIB:-1}" \
                       -v base="$base" '
+        # Down to a tenth with a MiB of tolerance, exactly as budget() floors
+        # its own figures (EPS_GIB; see the header): a ceiling rounded up to a
+        # tenth budget() never reaches is a --reserve that waits for ever.
+        function fl(x) { return int((x + 0.001) * 10 + (x < 0 ? -1 : 0)) / 10 }
         NR == 2 { size = $2 / 1048576 }
         END { G = 1073741824
               arc = arc_size / G + arc_room; if (arc > arc_max / G) arc = arc_max / G   # as budget() counts it
               while ((getline l < "/proc/meminfo") > 0) { split(l, f, /[: ]+/); if (f[1] == "MemTotal") t = f[2] / 1048576 }
-              printf "%.1f %.1f\n", size - 1, t - size - arc - base - 2 }'
+              printf "%.1f %.1f\n", fl(size - 1), fl(t - size - arc - base - 2) }'
 }
 free_now() {  # -> "DISK MEM": the room a new --reserve could get on this host now, floored
     # at 0, nothing written.  It is exactly what admission would let in: a --reserve D M
@@ -358,7 +394,7 @@ free_now() {  # -> "DISK MEM": the room a new --reserve could get on this host n
     read -r bd bm < <(budget "$rows") && [ -n "$bm" ] || return 1
     read -r ad am _ < <(after_line 0 "$bd" "$bm" "$rows" "$waits") && [ -n "$am" ] || return 1
     out=$(awk -v cd="$cd" -v cm="$cm" -v bd="$bd" -v bm="$bm" -v ad="$ad" -v am="$am" '
-        function fl(x) { x = int(x * 10 + (x < 0 ? -1 : 0)) / 10; return x < 0 ? 0 : x }   # down, then 0
+        function fl(x) { x = int((x + 0.001) * 10 + (x < 0 ? -1 : 0)) / 10; return x < 0 ? 0 : x }   # down (a MiB of tolerance), then 0
         function lo(a, b) { return a + 0 < b + 0 ? a + 0 : b + 0 }
         BEGIN { printf "%.1f %.1f\n%.1f %.1f\n", fl(lo(cd, bd)), fl(lo(cm, bm)), fl(lo(cd, ad)), fl(lo(cm, am)) }') &&
         [ -n "$out" ] || return 1

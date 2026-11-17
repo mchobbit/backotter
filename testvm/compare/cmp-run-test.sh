@@ -17,10 +17,12 @@
 #     "DISK MEM" (--free also "waiting N" and "after DISK MEM", and never
 #     more than the ceiling), and neither makes a file, not even the
 #     ledger's; then 0b, --free against a ledger and a line that hold rows
-#     (one an older cmp-run.sh's, with no SINCE), and 0c, which
+#     (one an older cmp-run.sh's, with no SINCE), 0c, which
 #     pins the one thing a huge row cannot: that a row within the 2 GiB of
 #     headroom ceiling() holds back and budget() doesn't comes off the
-#     memory once, not twice;
+#     memory once, not twice, and 0d, that the ledger's own files on the RAM
+#     disk cost the room nothing (a tenth of a GiB, before EPS_GIB) and a
+#     --reserve of exactly the ceiling is admitted at once;
 #   1 root's files, m's --reserve: waits in line (queue_up adds, then
 #     updates its row), gets the room once the row ahead's holder is gone
 #     (prune), takes a row and leaves the line (leave_line);
@@ -177,6 +179,43 @@ else
     kill "$hold1"
 fi
 check "0: nothing on stderr" quiet "$T/err.0c"
+check "0: the same files, still m's" same_files
+check "0: no temporary files left" no_leftovers
+
+# 0d: the ledger's own few KiB cost no room (choubox, 2026-11-17).  The ledger's
+# three files are on the RAM disk itself, so with it otherwise empty df shows
+# 4 KiB used and budget()'s room (the free space less 1 GiB) is a hair under
+# the ceiling's (the size less 1 GiB): floored without EPS_GIB's tolerance that
+# was a whole tenth less -- 2.9 against a ceiling of 3.0 on choubox's 4 GiB
+# tmpfs -- and a --reserve of exactly the ceiling, as SticTest's 3 6 is there,
+# could never be admitted however long it waited.  So --free's RAM disk room
+# must be the ceiling's here, and such a --reserve must start at once.  Memory
+# and heat are kept out of it as 4-6 do; skipped when the RAM disk holds more
+# than EPS_GIB's worth of anything (half a MiB: then the room really is lower,
+# and must be) or has no memory room to give at all.
+B0=(env BASE_GIB=0 HOT_C=200 NVME_C=200 CMP_LEDGER_DIR="$D" WEAR_LOG=off)
+fresh m
+# A line of its own, so that the ledger certainly holds a page of the tmpfs
+# (empty files need none, and the case would then prove nothing).  It is junk
+# that no holder owns, as a torn write leaves: live_rows drops it, so it takes
+# nothing off the room and only its page is in the way.
+printf 'notapid 1 1 - junk, as a torn write leaves\n' |
+    dd of="$D/.reserve" conv=nocreat,notrunc oflag=append status=none
+used_k=$(df -Pk /mnt/bko-ram | awk 'NR == 2 { print $3 }')
+c0=$("${B0[@]}" "$CMP_RUN" --ceiling 2>"$T/err.0d")
+f0=$("${B0[@]}" "$CMP_RUN" --free 2>>"$T/err.0d")
+if ! awk -v u="${used_k:-0}" -v m="$(awk 'NR == 1 { print $2 + 0 }' <<<"$f0")" \
+        'BEGIN { exit !(u > 0 && u <= 512 && m >= 0) }'; then
+    ok "0: (the RAM disk holds more than the ledger's files (${used_k:-?} KiB), or no memory room with BASE_GIB=0: the ledger's-own-files check is skipped)"
+else
+    check "0: the ledger's own files take nothing off the RAM disk room" \
+        awk -v c="$c0" 'NR == 1 { split(c, x, " "); exit !($1 + 0 == x[1] + 0) }' <<<"$f0"
+    "${B0[@]}" timeout 100 "$CMP_RUN" --reserve "${c0%% *}" 0 \
+        sh -c 'date +%s.%N >"$1"' sh "$T/ran.0d" 2>>"$T/err.0d" &
+    pids+=($!)
+    check "0: a --reserve of exactly the ceiling's RAM disk is admitted at once" until_true 20 test -s "$T/ran.0d"
+fi
+check "0: nothing on stderr" quiet "$T/err.0d"
 check "0: the same files, still m's" same_files
 check "0: no temporary files left" no_leftovers
 

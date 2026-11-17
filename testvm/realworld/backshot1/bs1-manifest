@@ -81,6 +81,23 @@ EXPECTED = [
     # Vanilla OS's vso and ABRoot log to /var/vlogs, a new file each minute
     # they run (vanilla-3.0-20261117-132713).
     "var/vlogs/*",
+    # BigLinux rewrites these at every boot or Plasma login, each confirmed
+    # by a plain reboot of the restored system (biglinux-20261117-145933):
+    # biglinux-improve-compatibility's "ln -sf .../build /usr/src/linux"
+    # follows the existing link and makes build/build from the second boot
+    # on; power-profiles-daemon-biglinux sed -i's its own unit; the session
+    # writes the SDDM wallpaper copy, the GTK 2 settings and a login stamp.
+    "usr/lib/modules/*/build/build",
+    "usr/lib/systemd/system/power-profiles-daemon-biglinux-start.service",
+    "usr/share/sddm/wallpaper/image.png",
+    "home/*/.gtkrc-2.0",
+    "home/*/.kdebiglinux/lastlogin",
+    # And at a shutdown, boot or login after that: biglinux-backlight-save
+    # keeps the brightness in /etc/bigbacklight, cupsd regenerates printcap,
+    # the session rewrites its preload list.
+    "etc/bigbacklight", "etc/bigbacklight/*",
+    "etc/printcap",
+    "home/*/.big_preload",
     "swap.img", "swapfile", "swap/*", "mnt/bs1-backup",
     # systemd-swap's swapFC files (BigLinux: its own @swapfile subvolume,
     # mounted at /swapfile), in use at backup time and written anew by

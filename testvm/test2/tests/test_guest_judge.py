@@ -1370,6 +1370,29 @@ class Normalizer(unittest.TestCase):
         self.assertEqual(J.normalize("/mnt/bko-ram/vm-update.g/vm-update-mount.g.abc12345/boot/efi x"),
                          "RUN/boot/efi x")
 
+    def test_mktemp_suffixes_go(self):
+        """The guest's own mktemp names are random each run (aeon, microos, hardenedbsd15-zfs)."""
+        za = "update: Executing `zypper -R /tmp/transactional-update-l6Umk2 --no-cd dup -y`:"
+        zb = "update: Executing `zypper -R /tmp/transactional-update-a1b2c3 --no-cd dup -y`:"
+        na = J.normalize(za)
+        self.assertEqual(na, "update: Executing `zypper -R /tmp/transactional-update-XXXXXX --no-cd dup -y`:")
+        self.assertEqual(na, J.normalize(zb))
+        self.assertEqual(J.normalize(na), na)
+        # what the normalizer made of it before (an old baseline) comes out the same
+        self.assertEqual(J.normalize("update: Executing `zypper -R /tmp/transactional-update-lNUmkN --no-cd dup -y`:"), na)
+        ta = J.normalize("update: /tmp/tmp.Va12wyap/update.tar 12 MB 400 kBps 01m02s")
+        self.assertEqual(ta, "update: /tmp/tmp.XXXXXX/update.tar N MB N kBps NmNs")
+        self.assertEqual(ta, J.normalize("update: /tmp/tmp.qwertyzxcv/update.tar 9 MB 3 kBps 00m09s"))
+        self.assertEqual(J.normalize("x /var/tmp/rpm-tmp.Ab3dEf y"), "x /var/tmp/rpm-tmp.XXXXXX y")
+        self.assertEqual(J.normalize(ta), ta)
+
+    def test_mktemp_leaves_names_alone(self):
+        for s in ("cleaning /tmp/foo-update now", "rm /tmp/.X11-unix", "/tmp/systemd-private done",
+                  "/srv/tmp.Ab3dEf x", "/tmp/tmp.abc x", "/tmp/a-Ab3dEfGhIjKlMn x"):
+            n = J.normalize(s)
+            self.assertNotIn("XXXXXX", n, s)
+            self.assertEqual(J.normalize(n), n, s)
+
     def test_two_runs_of_a_line_agree(self):
         a = "[    3.111] systemd[1]: run 2026-11-08 05:00:00 took 12ms abcdef0123"
         b = "[    9.222] systemd[1]: run 2026-11-09 06:11:00 took 7ms 0123456abc"

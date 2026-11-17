@@ -1632,6 +1632,12 @@ _UUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{
 # end of its own name, so what follows (/boot/efi) and a trailing ":" stay: mount points differ.
 _RUNDIR = re.compile(r"(?:/[^\s/]+)*/vm-update-mount\.[\w.-]*\w"
                      r"|(?:/mnt/bko-ram/vm-update\.[^\s/]+|\S*/\.vm-update-run\.[^\s/]+|\S*/runs/t2v-[^\s/]+)\S*")
+# A guest's own mktemp names under /tmp or /var/tmp (transactional-update's
+# /tmp/transactional-update-l6Umk2, mktemp's /tmp/tmp.Va12wyap) are random each run, so their
+# suffix is XXXXXX: after tmp. any 6-12 letters and digits, after another name's last . or - only
+# a suffix with a digit or a capital in it (so /tmp/foo-update stays).  Before _HEX and _NUM, and
+# XXXXXX matches itself, so normalize stays stable and an old baseline's lNUmkN comes out the same.
+_MKTEMP = re.compile(r"(/(?:var/)?tmp/(?:tmp\.|[\w-]*[.-](?=[A-Za-z]*[A-Z\d])))[A-Za-z\d]{6,12}(?![\w.-])")
 # 0x9aa000 has no word boundary after its x, so _HEX alone never sees it and _NUM made "NxNaaN"
 # of it: every guest memory layout (e820, [mem 0x...], efi: SMBIOS=0x...) was new each boot.
 _HEX0X = re.compile(r"\b0[xX][0-9a-fA-F]+\b")
@@ -1647,7 +1653,7 @@ LINES_MAX = 20000
 def normalize(line, run_dirs=()):
     """A log line with what differs from boot to boot taken out, or "" for a line with nothing
     left (ANSI and OSC sequences, timestamps, [ 12.345], UUIDs, 0x numbers, hex of 6 or more,
-    numbers, the run's directories).  Stable: normalize(normalize(x)) == normalize(x), and a line
+    numbers, the run's directories, mktemp suffixes under /tmp).  Stable: normalize(normalize(x)) == normalize(x), and a line
     normalized before 0x numbers were HEX ("NxNaaN") comes out as the raw line does now."""
     s = _ANSI.sub("", line)
     s = _CTRL.sub("", s)
@@ -1655,6 +1661,7 @@ def normalize(line, run_dirs=()):
         if d:
             s = s.replace(d, "RUN")
     s = _RUNDIR.sub("RUN", s)
+    s = _MKTEMP.sub(r"\1XXXXXX", s)
     s = _BRK.sub("", s)
     s = _ISO.sub("TIME", s)
     s = _SYSLOG.sub("TIME", s)

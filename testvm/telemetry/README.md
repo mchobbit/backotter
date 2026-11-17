@@ -94,6 +94,13 @@ can never push out another host's history. At most once an hour, batches
 older than 30 days go too. The receiver refuses new batches (the hosts
 keep them) when storing one would leave Bigfoot's `/var` under 2 GiB free.
 
+Daily, `bko-log-prune.timer` on Bigfoot (installed by setup) prunes every farm
+log store there to 30 days, even when no batch arrives: the telemetry batches
+(`bko-telemetry-recv --prune`, as bkotel), farm-monitor's
+`/var/log/journal/remote` (`journalctl --vacuum-time`) and the rotated copies
+under `/var/log/bko-farm` (never the live `.log` files). One line per store in
+`journalctl -u bko-log-prune`.
+
 ## Install
 
 From the Mac, at the repo root:
@@ -182,6 +189,7 @@ too, on Bigfoot:
 | `bko-telemetry.service`, `bko-telemetry.timer` | its units |
 | `bko-telemetry.default` | the first `/etc/default/bko-telemetry` |
 | `bko-telemetry-recv` | the receiver (Bigfoot) |
+| `bko-log-prune` | Bigfoot's daily prune of all farm logs (`bko-log-prune.timer`) |
 | `telemetry-setup.sh` | install and remove, from the Mac |
 | `telemetry-read` | read the store, from the Mac |
 

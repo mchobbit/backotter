@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Bigfoot's daily prune of the farm logs it collects (bko-log-prune.timer,
+# installed by telemetry-setup.sh).  Run as root.  Keeps KEEP_DAYS (30):
+#   /var/log/bko-telemetry   the telemetry batches (testvm/telemetry), via the
+#                            receiver's own prune as bkotel (age, then each
+#                            host's share of the 8 GiB cap)
+#   /var/log/journal/remote  farm-monitor's uploaded journals: vacuum by age
+#                            (its MaxUse=6G size cap stays as it is)
+#   /var/log/bko-farm        farm-monitor's heartbeat and netconsole logs:
+#                            rotated copies older than KEEP_DAYS (logrotate
+#                            makes them; the live .log files are never touched)
+# One line per store to the journal: before and after, in KiB.  A store that
+# isn't there is skipped; one failing never stops the others.
+set -u
+keep=${BKO_PRUNE_KEEP_DAYS:-30}
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+kib() { du -sk "$1" 2>/dev/null | awk '{print $1}'; }
+report() {  # NAME DIR BEFORE RC
+    echo "bko-log-prune: $1 $2: ${3:-?} -> $(kib "$2") KiB (rc $4)"
+}
+
+d=/var/log/bko-telemetry
+if [ -d "$d" ] && [ -x /usr/local/bin/bko-telemetry-recv ]; then
+    b=$(kib "$d")
+    BKO_TEL_KEEP_DAYS=$keep timeout -k 10 600 runuser -u bkotel -- \
+        env -u SSH_CONNECTION /usr/local/bin/bko-telemetry-recv --prune
+    report telemetry "$d" "$b" $?
+fi
+
+d=/var/log/journal/remote
+if [ -d "$d" ]; then
+    b=$(kib "$d")
+    timeout -k 10 600 journalctl -q -D "$d" --vacuum-time="${keep}d" >/dev/null
+    report journal-remote "$d" "$b" $?
+fi
+
+d=/var/log/bko-farm
+if [ -d "$d" ]; then
+    b=$(kib "$d")
+    # rotated copies only: NAME.log.N or NAME.log.N.gz
+    timeout -k 10 300 find "$d" -xdev -type f -regex '.*\.log\.[0-9]+\(\.gz\)?' \
+        -mtime +"$keep" -delete
+    report bko-farm "$d" "$b" $?
+fi
+exit 0

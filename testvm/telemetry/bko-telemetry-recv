@@ -117,6 +117,15 @@ stamp_epoch() {
     echo "$e"
 }
 
+# bko-log-prune.service (daily, as bkotel) runs "bko-telemetry-recv --prune":
+# a full prune now, whatever the hourly stamp says.  Never over ssh: the
+# forced command always passes a host name, and SSH_CONNECTION is set there.
+if [ "$host" = --prune ] && [ -z "${SSH_CONNECTION:-}" ]; then
+    rm -f "$store/.pruned"
+    prune
+    exit 0
+fi
+
 [[ $host =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || refuse 2 "bad host name in the key's command"
 [ -n "$req" ] || refuse 2 "no file name given (this account only takes uploads)"
 if [ "$req" = ping ]; then

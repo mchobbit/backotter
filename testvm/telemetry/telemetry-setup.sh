@@ -75,7 +75,7 @@ b64() { base64 <"$1" | tr -d '\n'; }
 # --- remote scripts (run by sudo -n bash -s; payloads in base64) ---
 
 bigfoot_script() {
-    printf "RECV='%s'\n" "$(b64 "$here/bko-telemetry-recv")"
+    printf "RECV='%s'\nPRUNE='%s'\n" "$(b64 "$here/bko-telemetry-recv")" "$(b64 "$here/bko-log-prune")"
     cat <<'EOF'
 set -eu
 if ! getent passwd bkotel >/dev/null; then
@@ -99,6 +99,34 @@ printf %s "$RECV" | base64 -d >/usr/local/bin/.bko-telemetry-recv.new
 chmod 0755 /usr/local/bin/.bko-telemetry-recv.new
 chown root:root /usr/local/bin/.bko-telemetry-recv.new
 mv -f /usr/local/bin/.bko-telemetry-recv.new /usr/local/bin/bko-telemetry-recv
+# the daily prune of every farm log store on Bigfoot (bko-log-prune)
+printf %s "$PRUNE" | base64 -d >/usr/local/sbin/.bko-log-prune.new
+chmod 0755 /usr/local/sbin/.bko-log-prune.new
+mv -f /usr/local/sbin/.bko-log-prune.new /usr/local/sbin/bko-log-prune
+cat >/etc/systemd/system/bko-log-prune.service <<'UNIT'
+[Unit]
+Description=BackOtter: prune the farm logs Bigfoot collects (telemetry, journal-remote, bko-farm) to 30 days
+
+[Service]
+Type=oneshot
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/usr/local/sbin/bko-log-prune
+UNIT
+cat >/etc/systemd/system/bko-log-prune.timer <<'UNIT'
+[Unit]
+Description=BackOtter: daily prune of the farm logs on Bigfoot
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now bko-log-prune.timer >/dev/null 2>&1
 r=$(env SSH_ORIGINAL_COMMAND=ping runuser -u bkotel -- /usr/local/bin/bko-telemetry-recv selftest)
 [ "$r" = "ok selftest" ] || { echo "receiver self-test failed: $r"; exit 1; }
 echo "store: $(findmnt -no SOURCE,FSTYPE -T /var/log/bko-telemetry) $(df -h --output=avail /var/log/bko-telemetry | tail -n 1 | tr -d ' ') free"
@@ -214,7 +242,7 @@ fi
 
 if [ "$dry" = 1 ]; then
     say "[dry-run] bigfoot (m@$BIGFOOT, sudo -n): user bkotel, /var/lib/bkotel/.ssh, store /var/log/bko-telemetry" \
-        "(bkotel 2750, m in group bkotel), /usr/local/bin/bko-telemetry-recv, a ping self-test"
+        "(bkotel 2750, m in group bkotel), /usr/local/bin/bko-telemetry-recv, bko-log-prune.timer (daily), a ping self-test"
     say "[dry-run] bigfoot: read its ed25519 host key over that checked ssh session"
     for h in "${hosts[@]}"; do
         say "[dry-run] $h: install /usr/local/sbin/bko-telemetry, bko-telemetry.{service,timer}," \

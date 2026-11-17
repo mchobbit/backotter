@@ -248,8 +248,8 @@ class TestGolden(unittest.TestCase):
     """Each family's case hashes, seeds 0-199 over its corpus dumps
     (tests/golden/FAMILY.json).  Rewritten only on purpose, with a new
     GENERATOR: `python3 -c 'import corpus_cases as K; K.write_golden("FAMILY")'`
-    in tests/.  Alpine's are the hashes the generator drew before the
-    family interface."""
+    in tests/.  Through GENERATOR "2", Alpine's were the hashes the
+    generator drew before the family interface."""
 
     def test_golden(self):
         from bs2lib import GENERATOR

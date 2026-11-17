@@ -1,6 +1,7 @@
 """Alpine (BackShot2Alpine's sources: alpine324, -uefi, -lvm, -luks): the
-first family.  Its cases are byte-identical to the ones the generator drew
-before the family interface (tests/golden/alpine.json; GENERATOR "2").
+first family.  Through GENERATOR "2" its cases were byte-identical to the
+ones the generator drew before the family interface; tests/golden/alpine.json
+holds GENERATOR "3"'s.
 
 - Content drift: recipe alpine-small-2 on every source (the deep tree kept
   under PATH_MAX until rustic-bko keeps paths past it, fail-001);

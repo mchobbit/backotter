@@ -377,7 +377,7 @@ class TestGenerator(unittest.TestCase):
             G.KNOWN = tuple(k for k in known if k != "fail-005")
             c = G.generate("t", None, d, 99, n_edits=0, with_content=False)
             self.assertIn("--fit-largest", c["load_options"])
-            G.KNOWN = known
+            G.KNOWN = tuple(known) + ("fail-005",)   # the steer, for an older bko-holt
             st = G.Stats()
             c = G.generate("t", None, d, 99, n_edits=0, with_content=False, stats=st)
         finally:

@@ -24,4 +24,7 @@ test hosts.  Stdlib only; Python 3.9 or newer.
 # The generator's version, recorded in every case it makes.  2 (2026-11-11):
 # swap sizes in whole pages, XFS's 4 KiB sectors set the log's, renumbered
 # partitions kept in number order, the MBR gap follows the first partition.
-GENERATOR = "2"
+# 3 (2026-11-17): fail-004 and fail-005 fixed in bko-holt and out of
+# generate.KNOWN, so 1 KiB ext blocks and targets that shrink an ext past
+# its inodes' groups are drawn again.
+GENERATOR = "3"

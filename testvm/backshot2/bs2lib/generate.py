@@ -378,13 +378,11 @@ def boots_from_fallback(dump):
 #             as restored, its embedded prefix naming /boot's old partition
 #             number: no renumbering of /boot's partition on a UEFI source
 #             that boots from it
-#   fail-004  ext4 with 1 KiB blocks: load's -E resize= gives one reserved GDT
-#             block more than the layout's: no 1 KiB blocks
-#   fail-005  --fit-largest shrinking an ext filesystem keeps its inode count,
-#             so where that count no longer fits the fewer groups at 8 x
-#             block size each, mke2fs cuts blocks per group: no target that
-#             shrinks one that far (fitcalc.ext_inodes_past_groups)
-KNOWN = ("fail-002", "fail-004", "fail-005")
+# Fixed and back in the draws (their steers stay, keyed on the name, for a
+# replay of an older bko-holt): fail-004 (1 KiB ext blocks: load's -E
+# resize= counted the first data block) and fail-005 (--fit-largest kept a
+# shrunk ext's inode count: fitcalc.ext_inodes_past_groups), both 2026-11-17.
+KNOWN = ("fail-002",)
 
 
 def boot_parts(d):

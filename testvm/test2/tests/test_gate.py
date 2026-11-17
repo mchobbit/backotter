@@ -989,6 +989,8 @@ class RunnerFailures(unittest.TestCase):
         self.assertEqual([x["verdict"] for x in io.rows], ["HARNESS", "HARNESS"])
         self.assertNotEqual(r["verdict"], "PASS")
         self.assertTrue(all(x["needs"] == {} and x["fails"] for x in io.rows))
+        # each row names the --reserve its job ran under (layers.json's [4, 4], no peaks yet)
+        self.assertEqual([x["extra"]["reserve_gib"] for x in io.rows], [[4.0, 4.0], [4.0, 4.0]])
 
     def test_a_job_waiting_in_line_is_an_answer(self):
         """A job still in cmp-run.sh's line has no .began: the poll exits 0 (not 'no answer'),
@@ -1197,6 +1199,7 @@ class RunnerFailures(unittest.TestCase):
         self.assertIn("a cut-down run (T2_LOOP_LINUX_FS=xfs)", row["note"])
         self.assertEqual(row["meta"]["loop"]["linux_fs"], "xfs")
         self.assertFalse(gate.full_run(row))
+        self.assertEqual(row["extra"]["reserve_gib"][0], row["extra"]["peaks"]["reserved_gib"])
         start = [c for c in io.calls if c[0] == "start"][0][2]
         self.assertIn("T2_LOOP_LINUX_FS=xfs", start)
         self.assertIn("--prefix bkog05004f2al ", start)

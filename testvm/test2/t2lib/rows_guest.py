@@ -382,6 +382,9 @@ def build(argv, hostctx=None):
         needs = {"try": "PASS" if rc == 0 else "FAIL"}
         v, cl = ("PASS", "pass") if rc == 0 else ("FAIL", "fail")
         extra = {"mode": a.mode, "try_ran": False, "by_hand": True}
+        res = _reserve_gib(result or {})
+        if res is not None:
+            extra["reserve_gib"] = res
         row = dict(common, origin=f"guest:by-hand:{guest}:{re.sub(r'[-:]', '', now)}", run=f"by-hand-{re.sub(r'[-:]', '', now)}",
                    rule="test1", reasons=["by hand"], planned_key=None, valid=False, verdict=v, needs=needs,
                    counts=_counts(needs), fails=[], ram_peak_kib=(result or {}).get("ram_peak_kib"), extra=extra,
@@ -442,6 +445,9 @@ def build(argv, hostctx=None):
     }
     if prev:
         extra["rerun_of"] = (ce or {}).get("rerun_of")
+    res = _reserve_gib(r)
+    if res is not None:
+        extra["reserve_gib"] = res
     planned = (ce or {}).get("planned_key")
     key_now = m.get("key") or (_keys.key(cell, inputs) if inputs else None)
     invalid = []
@@ -465,6 +471,16 @@ def build(argv, hostctx=None):
                           "pkg_changed": extra["pkg_changed"], "fingerprint": extra["fingerprint"], "skips": skips, "notes": need_notes,
                           "generation_before": r.get("generation_before"), "generation_after": r.get("generation_after")})
     return hostctx.row(**row) if hostctx is not None else row
+
+
+def _reserve_gib(result):
+    """[D, null]: the RAM disk GiB vm-update held its overlays under (result.json's
+    reserved_gib, VM_UPDATE_RAM: the job's cmp-run.sh --reserve D), for report.py's note on a
+    RAM peak over it; None when the overlays weren't in RAM."""
+    d = result.get("reserved_gib")
+    if isinstance(d, (int, float)) and not isinstance(d, bool):
+        return [float(d), None]
+    return None
 
 
 def _updates(work, guest):

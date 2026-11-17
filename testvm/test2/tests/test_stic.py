@@ -383,6 +383,25 @@ class TestRowsStic(unittest.TestCase):
         self.assertTrue(r["logs"].startswith("chopin:"))
         self.assertEqual(r["spec"]["path"], "testvm/test2/stic/manifests.json#debian12")
 
+    def test_records_its_reserve(self):
+        # check.sh's cmp-run.sh --reserve 4 6, for the report's note on a RAM peak over it
+        w = World(self.tmp, "debian12", fixture("debian12-pass.out"))
+        r = checked(w.build(waits=17, cells=w.cells()))
+        self.assertEqual(r["extra"]["reserve_gib"], [4.0, 6.0])
+
+    def test_check_reserve(self):
+        cr = rows_stic.check_reserve
+        self.assertEqual(cr('# cmp-run.sh --reserve 9 9 (a comment)\nHOT_C=90 "$WORK/cmp-run.sh" --reserve 7 5 timeout 1\n'),
+                         [7.0, 5.0])
+        self.assertEqual(cr('"$WORK/cmp-run.sh" --reserve 23 "$(awk -v m="${MEMORY:-4096}" ...)" "$self"\n'), [23.0, None])
+        admit = ('admit() {\n  cmp-run.sh --reserve 3 6 "$@"\n}\nadmit rt1 a &\nadmit rt2 b &\nadmit extras c\n')
+        self.assertEqual(cr(admit), [9.0, 18.0])   # three VMs, each under its own
+        self.assertIsNone(cr("echo no reservation\n"))
+        self.assertIsNone(cr(""))
+        for g in ("aerynos", "debian13-stack", "ubuntu26-zfsmirror"):   # the checks that log a ramdisk-peak-kib
+            with open(os.path.join(REPO, "testvm", "stictest1", g, "check.sh"), encoding="utf-8") as f:
+                self.assertIsNotNone(cr(f.read()), g)
+
     def test_sculpt_results_layout(self):
         w = World(self.tmp, "sculpt2610", fixture("sculpt2610-pass.out"), wall=50)
         r = checked(w.build(cells=w.cells()))

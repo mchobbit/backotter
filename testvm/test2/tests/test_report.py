@@ -227,6 +227,109 @@ class Report(unittest.TestCase):
         self.assertNotRegex(text, r"serial")
 
 
+class ReserveNotes(unittest.TestCase):
+    """A note for each row of the run whose RAM peak is over the --reserve DISK its job ran under."""
+    GIB = 1048576
+
+    def rr(self, *cells):
+        return {"run": "t2g-20261117T0029-6d8e", "word": "GateTest2", "family": "gate",
+                "cells": [{"cell": c, "outcome": "ran", "verdict": "PASS", "gm": 0, "gb": 0.0, "host": h, "rows": [i]}
+                          for c, h, i in cells]}
+
+    def row(self, i, cell, host, peak, reserve, kind="run"):
+        extra = {} if reserve is None else {"reserve_gib": reserve}
+        return {"id": i, "cell": cell, "host": host, "kind": kind, "ram_peak_kib": peak, "extra": extra}
+
+    def test_over_is_a_note(self):
+        rr = self.rr(("gate:holt", "chopin", "r1"))
+        led = [self.row("r1", "gate:holt", "chopin", 3471924, [2.0, 4.0])]
+        self.assertEqual(report.reserve_notes(rr, led), [
+            'over its RAM reservation: gate:holt on chopin peaked 3.3 GiB, reserved 2.0 GiB (cmp-run.sh --reserve): '
+            'raise "reserve" or set "peak_reserve" in gate/layers.json'])
+        text = report.render_report(rr, None, led, now=1794182400)
+        self.assertIn("\nnote: over its RAM reservation: gate:holt on chopin peaked 3.3 GiB", text)
+
+    def test_under_or_equal_is_none(self):
+        rr = self.rr(("gate:holt", "chopin", "r1"), ("gate:loop:linux@cage", "cage", "r2"))
+        led = [self.row("r1", "gate:holt", "chopin", 3 * self.GIB, [4.0, 4.0]),
+               self.row("r2", "gate:loop:linux@cage", "cage", 9 * self.GIB, [9.0, 9.2])]
+        self.assertEqual(report.reserve_notes(rr, led), [])
+        self.assertNotIn("over its RAM reservation", report.render_report(rr, None, led, now=1794182400))
+
+    def test_no_reserve_or_no_peak_is_none(self):
+        rr = self.rr(("gate:holt", "chopin", "r1"), ("img:linux", "chopin", "r2"), ("stic:x", "chopin", "r3"))
+        led = [self.row("r1", "gate:holt", "chopin", 3471924, None),       # an old row: not checked
+               self.row("r2", "img:linux", "chopin", None, [1.0, 5.0]),     # no peak recorded
+               self.row("r3", "stic:x", "chopin", 5 * self.GIB, [None, 6.0])]
+        self.assertEqual(report.reserve_notes(rr, led), [])
+        self.assertIsNone(report.over_reserve({"ram_peak_kib": 0, "extra": {"reserve_gib": [0.0, 4.0]}}))
+
+    def test_each_host_and_family(self):
+        rr = self.rr(("stic:aerynos", "cinqcent", "r1"), ("holt:debian13", "cage", "r2"),
+                     ("guest:arch", "copland", "r3"), ("gate:loop:linux@chopin", "chopin", "r4"),
+                     ("stic:debian12", "chopin", "r5"))
+        led = [self.row("r1", "stic:aerynos", "cinqcent", int(2.5 * self.GIB), [2.0, 5.0]),
+               self.row("r2", "holt:debian13", "cage", int(6.4 * self.GIB), [6.0, None]),
+               self.row("r3", "guest:arch", "copland", int(8.5 * self.GIB), [8.0, None]),
+               self.row("r4", "gate:loop:linux@chopin", "chopin", int(2.04 * self.GIB), [2.0, 4.0]),
+               self.row("r5", "stic:debian12", "chopin", self.GIB, [4.0, 6.0])]
+        notes = report.reserve_notes(rr, led)
+        self.assertEqual(len(notes), 4, notes)
+        self.assertIn("stic:aerynos on cinqcent peaked 2.5 GiB, reserved 2.0 GiB", notes[0])
+        self.assertTrue(notes[0].endswith("raise the --reserve DISK in testvm/stictest1/aerynos/check.sh"))
+        self.assertIn("holt:debian13 on cage peaked 6.4 GiB, reserved 6.0 GiB", notes[1])
+        self.assertIn("testvm/holttest1d/ram-sizes.tsv", notes[1])
+        self.assertIn("guest:arch on copland peaked 8.5 GiB, reserved 8.0 GiB", notes[2])
+        self.assertIn('past "ram_gib_max" (classes.json policy.guest), raise it', notes[2])
+        self.assertNotIn("spec.json", notes[2])   # its ram_gib is unused once a peak exists
+        # Over by less than 0.05 GiB: two decimals, so it never reads "2.0 over 2.0"
+        self.assertIn("gate:loop:linux@chopin on chopin peaked 2.04 GiB, reserved 2.00 GiB", notes[3])
+
+    def test_rows_as_dicts_and_derived_skipped(self):
+        r = self.row("r1", "gate:holt", "chopin", 3471924, [2.0, 4.0])
+        rr = self.rr(("gate:holt", "chopin", r))
+        self.assertEqual(len(report.reserve_notes(rr, [])), 1)          # the cell's own row dict
+        self.assertEqual(len(report.reserve_notes(rr, [r, r])), 1)      # once
+        c = dict(r, kind="carried")
+        self.assertEqual(report.reserve_notes(self.rr(("gate:holt", "chopin", c)), [c]), [])
+
+    def test_peak_a_few_mib_over_reads_in_mib(self):
+        self.assertEqual(report.gib_pair(2.003, 2.0), ("2051 MiB", "2048 MiB"))
+        self.assertEqual(report.gib_pair(3.31, 2.0), ("3.3 GiB", "2.0 GiB"))
+
+    def test_another_runs_row_is_not_noted(self):
+        # an adopted cell lists the PASS row of the run it waited for; that run notes it, not this one
+        r = dict(self.row("r1", "gate:holt", "chopin", 3471924, [2.0, 4.0]), run="t2g-20261117T0010-aaaa")
+        rr = self.rr(("gate:holt", "chopin", "r1"))
+        rr["cells"][0]["outcome"] = "adopted"
+        self.assertEqual(report.reserve_notes(rr, [r]), [])
+        rr["cells"][0]["outcome"] = "ran"
+        self.assertEqual(report.reserve_notes(rr, [r]), [])            # another run's row, whatever the outcome
+        mine = dict(r, run=rr["run"] + "-r2")                          # this run's retry: noted
+        self.assertEqual(len(report.reserve_notes(rr, [mine])), 1)
+
+    def test_guest_reserve_from_result(self):
+        # vm-update's result.json reserved_gib (VM_UPDATE_RAM, the job's --reserve D); none on disk
+        from t2lib import rows_guest
+        self.assertEqual(rows_guest._reserve_gib({"reserved_gib": 8, "ram_peak_kib": 1}), [8.0, None])
+        self.assertIsNone(rows_guest._reserve_gib({"reserved_gib": None}))
+        self.assertIsNone(rows_guest._reserve_gib({}))
+
+    def test_reserve_gib_keeps_the_key(self):
+        # extra is no input: a row with reserve_gib has the same key and still validates
+        from t2lib import keys
+        inputs = {"harness": {"testvm/test2/gate/holt-test.sh": "sha256:" + "0" * 64}}
+        base = {"origin": "gate:r:gate:holt:1", "family": "gate", "cell": "gate:holt", "kind": "run", "run": "r",
+                "word": "GateTest2", "rule": "fresh", "attempt": 1, "start": "2026-11-17T00:29:00Z", "inputs": inputs,
+                "valid": True, "verdict": "PASS", "class": "pass", "needs": {"cargo-test": "PASS"},
+                "commit": None, "committed": False, "copy": "c", "ram_peak_kib": 3471924}
+        a = ledger.complete(dict(base), host="chopin")
+        b = ledger.complete(dict(base, extra={"reserve_gib": [4.0, 4.0]}), host="chopin")
+        self.assertEqual(ledger.validate(b), [])
+        self.assertEqual((a["key"], a["groups"]), (b["key"], b["groups"]))
+        self.assertEqual(b["key"], keys.key("gate:holt", inputs))
+
+
 def flip_row(i, run, verdict="PASS", needs=None, soft=None, plumbing=None, cell="stic:a", key="k", klass=None, valid=True,
              kind="run"):
     return {"id": f"h-{i}", "t": f"2026-11-0{i}T00:00:00Z", "run": run, "cell": cell, "key": key, "verdict": verdict,

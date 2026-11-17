@@ -2,8 +2,9 @@
 
 render_plan(plan)          the plan form: selection, reasons, estimates (one line when nothing is due)
 render_report(rr, plan, ledger, policy, now)
-                           the report: a line per cell, stops, the rows written, budget warnings,
-                           the sweep line, and last the wear line per host and disk (no serials)
+                           the report: a line per cell, stops, the rows written, a note for each
+                           row whose RAM peak is over its reservation, budget warnings, the sweep
+                           line, and last the wear line per host and disk (no serials)
 sweep_line(policy, last, now)   how long since the last complete SweepTest2, on every report
 verdict_flips(rows, run_ids)    what changed at an unchanged key, against other runs
 render_composite(children, flips, totals, coverage, policy)     BkoTest2's and SweepTest2's report
@@ -228,6 +229,79 @@ def wear_lines(wear):
     return out or ["wear: no disk figures (facts or wear logs unreachable)"]
 
 
+# --- RAM peaks over the reservation ------------------------------------------------------------
+# A row's extra.reserve_gib is [DISK, MEM] (MEM may be null), the cmp-run.sh --reserve its job ran
+# under; nothing enforces a reservation, so a job that outgrows its DISK GiB of /mnt/bko-ram goes
+# unseen until a neighbour hits ENOSPC (gate:holt, 2026-11-17).  A row without the field (an old
+# row, img's) is never checked.  Where each family's reservation comes from:
+RESERVE_FIX = {
+    "gate": 'raise "reserve" or set "peak_reserve" in gate/layers.json',
+    "stic": "raise the --reserve DISK in testvm/stictest1/{name}/check.sh",
+    "holt": "raise its D in testvm/holttest1d/ram-sizes.tsv (ram-size.sh)",
+    "guest": 'the next run sizes D from this peak (1.1 x + 0.25 GiB); if that is past "ram_gib_max" '
+             '(classes.json policy.guest), raise it',
+}
+KIB_PER_GIB = 1048576
+
+
+def reserve_gib(row):
+    """The DISK GiB of ROW's extra.reserve_gib, or None when it records none."""
+    r = (row.get("extra") or {}).get("reserve_gib") if isinstance(row, dict) else None
+    if isinstance(r, (list, tuple)) and r and isinstance(r[0], (int, float)) and not isinstance(r[0], bool):
+        return float(r[0])
+    return None
+
+
+def over_reserve(row):
+    """(peak GiB, reserved GiB) when ROW's RAM peak is over the DISK GiB it reserved, else None."""
+    peak, d = row.get("ram_peak_kib") if isinstance(row, dict) else None, reserve_gib(row)
+    if d is None or not isinstance(peak, int) or isinstance(peak, bool) or peak <= 0:
+        return None
+    return (peak / KIB_PER_GIB, d) if peak > d * KIB_PER_GIB else None
+
+
+def gib_pair(peak, d):
+    """PEAK and D as GiB text that never reads the same figure twice: one decimal, else two,
+    else MiB (a peak within a few MiB of D)."""
+    for f in ("{:.1f}", "{:.2f}"):
+        a, b = f.format(peak), f.format(d)
+        if a != b:
+            return a + " GiB", b + " GiB"
+    return f"{peak * 1024:.0f} MiB", f"{d * 1024:.0f} MiB"
+
+
+def reserve_notes(rr, ledger=()):
+    """A note for each run row of RR's cells (ids looked up in LEDGER) whose RAM peak is over
+    the reservation its job ran under."""
+    by_id = {r.get("id"): r for r in ledger or () if isinstance(r, dict)}
+    # Only rows this run (or its retries) wrote: an adopted cell lists another run's row, and
+    # that run's report has already noted it.
+    mine = {rr.get("run")} | {f"{rr.get('run')}-r{a}" for a in range(2, 10)}
+    out, seen = [], set()
+    for c in rr.get("cells") or ():
+        if c.get("outcome") == "adopted":
+            continue
+        for i in c.get("rows") or ():
+            rid = i.get("id") if isinstance(i, dict) else i
+            row = by_id.get(rid) or (i if isinstance(i, dict) else None)
+            if not row or rid in seen or row.get("kind", "run") != "run":
+                continue
+            if rr.get("run") and row.get("run") and row.get("run") not in mine:
+                continue
+            seen.add(rid)
+            o = over_reserve(row)
+            if o is None:
+                continue
+            cell = row.get("cell") or c.get("cell") or "?"
+            fam, _, name = cell.partition(":")
+            peak, d = gib_pair(*o)
+            fix = RESERVE_FIX.get(fam)
+            out.append(f"over its RAM reservation: {cell} on {row.get('host') or c.get('host') or '?'} peaked {peak}, "
+                       f"reserved {d} (cmp-run.sh --reserve)"
+                       + (": " + fix.format(name=name.split("@")[0].split("+")[0]) if fix else ""))
+    return out
+
+
 def budget_binds(bind_from, now=None):
     """policy.budget.bind_from: null warns only; a date (YYYY-MM-DD or a UTC time) binds from then
     on ("warn for two weeks, then bind")."""
@@ -345,6 +419,7 @@ def render_report(rr, plan, ledger=(), policy=None, now=None):
             out.append("note: " + n)
     for n in rr.get("notes") or ():
         out.append("note: " + str(n))
+    out += ["note: " + n for n in reserve_notes(rr, ledger)]
     fam = rr.get("family") or (plan.family if plan else None)
     sweep = bool(plan and getattr(plan.word, "sweep", False))   # SweepTest2's budget only
     update = bool(plan and getattr(plan.word, "update", False))     # an update round's

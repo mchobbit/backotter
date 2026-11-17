@@ -321,10 +321,13 @@ def cmd_ledger(argv):
         for r in rows:
             say(canonical(r))
         return 0
+    from t2lib import report
     for r in rows:
+        over = report.over_reserve(r)   # a RAM peak over the job's --reserve DISK
         say(f"{r.get('t')}  {r.get('id'):<40} {r.get('cell'):<28} {r.get('kind'):<7} {r.get('verdict'):<10} "
             f"{r.get('rule') or '-':<18} {(r.get('key') or '')[:12]}  {'valid' if r.get('valid') else 'INVALID'}"
-            f"{'' if r.get('committed') else ' (uncommitted)'}")
+            f"{'' if r.get('committed') else ' (uncommitted)'}"
+            + (" (RAM peak %s over its %s reservation)" % report.gib_pair(*over) if over else ""))
     say(f"{len(rows)} rows" + (f" ({sum(v.bad.values())} bad lines skipped)" if sum(v.bad.values()) else ""))
     return 0
 

@@ -943,6 +943,10 @@ def build(argv, hostctx=None):
         row["extra"]["rerun_why"] = ce["rerun_why"]
     if made:
         row["extra"]["rescuer_made"] = made
+    # The --reserve D its run ran under (the manifest's "reserved", ht1-queue.sh's; report.py
+    # notes a RAM peak over it).  M isn't in the manifest.
+    if re.fullmatch(r"[0-9]+(?:[.][0-9]+)?", str(man["reserved"] or "")):
+        row["extra"]["reserve_gib"] = [float(man["reserved"]), None]
     return row
 
 

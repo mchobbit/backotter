@@ -328,11 +328,15 @@ sys.stdout.write(json.dumps(out))
 '''
 
 
-def _finish(o, host, out, t, tag=None):
+def _finish(o, host, out, t, tag=None, reserve=None):
+    """O with its logs, times and wear tag; RESERVE, the (DISK, MEM) of the job's cmp-run.sh
+    --reserve, goes into its row's extra.reserve_gib (report.py notes a RAM peak over it)."""
     o.logs = f"{host}:{out}"
     o.wall_s, o.waits_s = job_times(t)
     if tag:
         o.wear = {tag: None}
+    if reserve:
+        o.extra["reserve_gib"] = [float(reserve[0]), float(reserve[1])]
     return o
 
 
@@ -347,14 +351,15 @@ def run_holt(env, host, attempt):
     cmd = (f"bash {_q(env.copy_path(host) + '/testvm/test2/gate/holt-test.sh')} --out {_q(out)} --ram {_q(env.ram_dir(name, attempt))}"
            + (f" --raw {_q(raw)}" if raw else ""))
     tag = f"gate:{env.attempt_run(attempt)}:holt"
-    rc, out, t, why = host_job(env, host, name, attempt, cmd, reserve_for(e, env.rows, "gate:holt"), tag,
+    res = reserve_for(e, env.rows, "gate:holt")
+    rc, out, t, why = host_job(env, host, name, attempt, cmd, res, tag,
                                int(e.get("timeout_s", 3600)), ram=env.ram_dir(name, attempt))
     if rc is None:
-        return _finish(harness(why), host, out, t, tag)
+        return _finish(harness(why), host, out, t, tag, res)
     f = env.io.fetch(host, out, ["steps.tsv", "info.txt", "cargo-test.log", "golden.log", "redact-corpus.log",
                                  "redact-raw.tsv", "plans/diff.json", "job.log"])
     if rc != 0 or "steps.tsv" not in f:
-        return _finish(harness(f"holt-test.sh exit {rc}: " + tail(f.get("job.log"))), host, out, t, tag)
+        return _finish(harness(f"holt-test.sh exit {rc}: " + tail(f.get("job.log"))), host, out, t, tag, res)
     diff = None
     if f.get("plans/diff.json"):
         try:
@@ -364,7 +369,7 @@ def run_holt(env, host, attempt):
     info = parse_kv(f.get("info.txt"))
     o = holt_outcome(parse_steps(f["steps.tsv"]), f, diff, f.get("redact-raw.tsv"), info)
     o.meta["holt"] = {"rustc": info.get("rustc"), "commit": info.get("commit")}
-    return _finish(o, host, out, t, tag)
+    return _finish(o, host, out, t, tag, res)
 
 
 def fork_commits(env, names):
@@ -508,10 +513,11 @@ def run_fork_root(env, host, attempt, commit):
     cmd = (f"bash {_q(env.copy_path(host) + '/testvm/test2/gate/fork-root.sh')} --commit {commit} --out {_q(out)} "
            f"--ram {_q(env.ram_dir(name, attempt))}")
     tag = f"gate:{env.attempt_run(attempt)}:{name}"
-    rc, out, t, why = host_job(env, host, name, attempt, cmd, reserve_for(e, env.rows, "gate:" + name), tag,
+    res = reserve_for(e, env.rows, "gate:" + name)
+    rc, out, t, why = host_job(env, host, name, attempt, cmd, res, tag,
                                int(e.get("timeout_s", 3600)), ram=env.ram_dir(name, attempt))
     if rc is None:
-        return _finish(harness(why), host, out, t, tag)
+        return _finish(harness(why), host, out, t, tag, res)
     try:
         with open(os.path.join(env.checkout, ROOT_LIST_PATH), encoding="utf-8") as f:
             listing = f.read()
@@ -522,11 +528,11 @@ def run_fork_root(env, host, attempt, commit):
     names += ["run-%s.log" % p.replace("/", "_") for p in sorted({p for p, _ in runs})]
     f = env.io.fetch(host, out, names)
     if rc != 0:
-        return _finish(harness(f"fork-root.sh exit {rc}: " + tail(f.get("job.log"))), host, out, t, tag)
+        return _finish(harness(f"fork-root.sh exit {rc}: " + tail(f.get("job.log"))), host, out, t, tag, res)
     o = fork_root_outcome(listing, f)
     o.meta["commits"] = {"restic": commit}
     o.meta["go"] = parse_kv(f.get("info.txt")).get("go")
-    return _finish(o, host, out, t, tag)
+    return _finish(o, host, out, t, tag, res)
 
 
 def cargo_version(text):
@@ -670,7 +676,7 @@ def run_loop(env, kind, host, attempt):
                                               "sparse_fs": ev.get("T2_LOOP_SPARSE_FS") or "default"})
     o.extra.setdefault("peaks", {})["reserved_gib"] = d
     o.extra["prefix"] = pfx
-    return _finish(o, host, out, t, tag)
+    return _finish(o, host, out, t, tag, (d, mem))
 
 
 def run_selftest(env, attempt):

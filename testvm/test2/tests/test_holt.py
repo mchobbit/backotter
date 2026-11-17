@@ -271,6 +271,13 @@ class U51RowsHolt(RecordsMixin, unittest.TestCase):
         self.assertEqual((row["verdict"], row["class"]), ("HARNESS", "harness"))
         self.assertIn("over its reservation", row["note"])
 
+    def test_records_its_reserve(self):
+        # The manifest's "reserved 3" (ht1-queue.sh's --reserve D), for the report's note on a peak over it
+        row = self.complete_ok(self.build(self.k("linux-pass"), "debian13"))
+        self.assertEqual(row["extra"]["reserve_gib"], [3.0, None])
+        from t2lib import report
+        self.assertIsNone(report.over_reserve(row))   # 2072352 KiB, under 3 GiB
+
     def test_swept_is_lost(self):
         # (No exit: LOST from kept.txt's swept: alone, not from a signal's exit code.)
         k = self.k("linux-swept")
@@ -637,7 +644,7 @@ class SpecJson(unittest.TestCase):
 
     def test_entries_and_kinds(self):
         names = self.sf.names()
-        self.assertEqual(len(names), 82)   # 77, and A6's five arm64 sources
+        self.assertEqual(len(names), 84)   # 79, and A6's five arm64 sources
         text = rd(os.path.join(WT, "testvm", "holttest1d", "ht1.sh"))
         m = re.search(r'case \$G in\n(.*?)\nesac', text, re.S)
         bsd = re.search(r"^\s*(\S+)\)\s*\n\s*exec .*ht1-bsd\.sh", m.group(1), re.M).group(1).split("|")

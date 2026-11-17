@@ -346,6 +346,23 @@ def changed_after(start, items, limit=4000):
 
 # --- build ------------------------------------------------------------------------------------
 
+def check_reserve(text):
+    """[DISK, MEM] GiB of a check.sh's cmp-run.sh --reserve, as drive.py's parse_check reads it
+    (the first one outside comments; a check that admits N VMs, each under its own, reserves N
+    times it), MEM null when it is a shell expression; None without one."""
+    code = "\n".join(l for l in (text or "").splitlines() if not l.lstrip().startswith("#"))
+    r = re.search(r"--reserve\s+([0-9.]+)\s+(\S+)", code)
+    if not r:
+        return None
+    try:
+        d = float(r.group(1))
+    except ValueError:
+        return None
+    m = float(r.group(2)) if re.fullmatch(r"[0-9]+(?:[.][0-9]+)?", r.group(2)) else None
+    n = max(1, len(re.findall(r"^\s*admit\s+[A-Za-z]", code, re.M)))
+    return [d * n, None if m is None else m * n]
+
+
 def _args(argv):
     ap = argparse.ArgumentParser(prog="t2-host row stic", add_help=False)
     ap.add_argument("--mark", required=True)
@@ -574,6 +591,13 @@ def build(argv, hostctx=None):
         "extra": {"source": source, "rerun_of": (ce or {}).get("rerun_of")},
         "via": None,
     }
+    # The --reserve its check.sh ran under (report.py notes a RAM peak over it).
+    try:
+        res = check_reserve((src.read(f"testvm/stictest1/{g}/check.sh") or b"").decode("utf-8", "replace"))
+    except Exception:   # noqa: BLE001 - only the report's note: never the row
+        res = None
+    if res is not None:
+        row["extra"]["reserve_gib"] = res
     if moved:
         row["extra"]["changed"] = [n[:MAX_LEN] for n, _ in moved[:MAX_FAILS]]
     if fl:

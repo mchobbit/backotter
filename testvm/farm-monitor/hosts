@@ -1,0 +1,12 @@
+# bko-farm hosts, read by bko-farm-heartbeat and bko-farm-netconsole on
+# Bigfoot (installed as /etc/bko-farm/hosts; edits there are kept).
+#
+# One host per line:  NAME  ADDRESS  [SEED-IP]
+#   ADDRESS  an mDNS name (resolved again every cycle, so DHCP moves are
+#            followed) or a fixed IPv4 address.
+#   SEED-IP  optional; used only while the name has never resolved.
+# Both services re-read this file every cycle: no restart needed.
+chopin    chopin.local    192.168.68.194
+cinqcent  cinqcent.local  192.168.68.196
+cage      cage.local      192.168.68.199
+copland   copland.local   192.168.68.198

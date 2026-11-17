@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# bko-netconsole: point this host's kernel console at the bko-farm collector
+# (Bigfoot) over netconsole, and keep it pointed there.  Installed as
+# /usr/local/sbin/bko-netconsole by testvm/farm-monitor/install-sender.sh;
+# bko-netconsole.service runs it at boot and bko-netconsole.timer every
+# 10 min, so a DHCP move (ours or the collector's) or a new next hop is
+# followed.
+#
+#   bko-netconsole            configure, or refresh when anything moved
+#   bko-netconsole --status   show the target and the console log level
+#   bko-netconsole --remove   disable and remove the target, restore the
+#                             console log level it raised
+#
+# Settings: /etc/default/bko-netconsole (COLLECTOR, COLLECTOR_IP, PORT,
+# CONSOLE_LOGLEVEL, EXTENDED).  What it does each run:
+#   1. the collector's IPv4: COLLECTOR resolved now, else the last address
+#      that resolved (/var/lib/bko-farm/collector-ip), else COLLECTOR_IP;
+#   2. the interface: the lowest-metric default route's; local IP and next
+#      hop from `ip route get COLLECTOR oif IFACE` (the collector itself on
+#      the same subnet, else the gateway);
+#   3. the next hop's MAC: one ping, then `ip neigh`; when that fails the
+#      broadcast MAC (netconsole's own default), with a warning;
+#   4. configfs target /sys/kernel/config/netconsole/bko-farm (module and
+#      configfs loaded/mounted when needed): rewritten only when a value
+#      differs, disabled while it is changed;
+#   5. the console log level raised to CONSOLE_LOGLEVEL (5) when lower; the
+#      first level it found is kept for --remove.
+set -euo pipefail
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+COLLECTOR=bigfoot.local
+COLLECTOR_IP=
+PORT=6666
+CONSOLE_LOGLEVEL=5
+EXTENDED=1
+CONF=/etc/default/bko-netconsole
+if [[ -r $CONF ]]; then
+    # shellcheck source=/dev/null
+    . "$CONF"
+fi
+
+STATE=/var/lib/bko-farm
+CFS=/sys/kernel/config
+T=$CFS/netconsole/bko-farm
+LEVEL_ORIG=$STATE/printk-console.orig
+
+say() { echo "bko-netconsole: $*"; }
+die() { echo "bko-netconsole: $*" >&2; exit 1; }
+is_ipv4() { [[ $1 =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; }
+
+console_level() { awk '{print $1}' /proc/sys/kernel/printk; }
+
+collector_ip() {
+    local ip=
+    if is_ipv4 "$COLLECTOR"; then
+        echo "$COLLECTOR"; return 0
+    fi
+    ip=$(getent ahostsv4 "$COLLECTOR" 2>/dev/null | awk 'NR==1{print $1}') || ip=
+    if is_ipv4 "$ip"; then
+        mkdir -p "$STATE"
+        [[ $(cat "$STATE/collector-ip" 2>/dev/null) == "$ip" ]] || echo "$ip" >"$STATE/collector-ip"
+        echo "$ip"; return 0
+    fi
+    ip=$(cat "$STATE/collector-ip" 2>/dev/null) || ip=
+    if is_ipv4 "$ip"; then
+        say "$COLLECTOR does not resolve; using its last address $ip" >&2
+        echo "$ip"; return 0
+    fi
+    if is_ipv4 "$COLLECTOR_IP"; then
+        say "$COLLECTOR does not resolve; using COLLECTOR_IP $COLLECTOR_IP" >&2
+        echo "$COLLECTOR_IP"; return 0
+    fi
+    return 1
+}
+
+default_iface() {
+    ip -4 -o route show default | awk '{
+        dev = ""; metric = 0
+        for (i = 1; i < NF; i++) {
+            if ($i == "dev") dev = $(i + 1)
+            if ($i == "metric") metric = $(i + 1)
+        }
+        if (dev != "") print metric, dev
+    }' | sort -n | awk 'NR==1{print $2}'
+}
+
+field_after() {    # field_after WORD <<< "ip route get output"
+    awk -v w="$1" '{for (i = 1; i < NF; i++) if ($i == w) {print $(i + 1); exit}}'
+}
+
+cur() { cat "$T/$1" 2>/dev/null || true; }
+
+status() {
+    if [[ -d $T ]]; then
+        local a
+        for a in enabled extended dev_name local_ip remote_ip remote_port remote_mac; do
+            [[ -e $T/$a ]] && printf '  %-12s %s\n' "$a" "$(cur "$a")"
+        done
+    else
+        echo "  no target ($T)"
+    fi
+    printf '  %-12s %s\n' printk "$(tr '\t' ' ' </proc/sys/kernel/printk)"
+}
+
+remove() {
+    if [[ -d $T ]]; then
+        echo 0 >"$T/enabled" 2>/dev/null || true
+        rmdir "$T"
+        say "target removed"
+    fi
+    if [[ -s $LEVEL_ORIG ]]; then
+        dmesg -n "$(cat "$LEVEL_ORIG")"
+        say "console log level back to $(cat "$LEVEL_ORIG")"
+        rm -f "$LEVEL_ORIG"
+    fi
+    # Unload only when no other target (or boot-time netconsole=) uses it.
+    if [[ -d $CFS/netconsole ]] && [[ -z $(ls -A "$CFS/netconsole") ]] \
+        && ! grep -qw 'netconsole=[^ ]*' /proc/cmdline; then
+        modprobe -r netconsole 2>/dev/null || true
+    fi
+}
+
+configure() {
+    local cip dev route src via nh mac
+    cip=$(collector_ip) || die "cannot find the collector's address ($COLLECTOR, no last address, no COLLECTOR_IP)"
+    dev=$(default_iface)
+    [[ -n $dev ]] || die "no IPv4 default route"
+    route=$(ip -4 -o route get "$cip" oif "$dev" 2>/dev/null) || die "no route to $cip via $dev"
+    src=$(field_after src <<<"$route")
+    via=$(field_after via <<<"$route")
+    if ! is_ipv4 "$src"; then
+        src=$(ip -4 -o addr show dev "$dev" scope global | awk 'NR==1{sub(/\/.*/, "", $4); print $4}')
+    fi
+    is_ipv4 "$src" || die "$dev has no IPv4 address"
+    nh=${via:-$cip}
+    ping -n -q -c1 -W1 -I "$dev" "$nh" >/dev/null 2>&1 || true
+    mac=$(ip neigh show "$nh" dev "$dev" | field_after lladdr)
+    mac=${mac,,}
+    if ! [[ $mac =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ ]]; then
+        local old_mac
+        old_mac=$(cur remote_mac)
+        if [[ $(cur remote_ip) == "$cip" && $(cur dev_name) == "$dev" \
+              && $old_mac =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ && $old_mac != ff:ff:ff:ff:ff:ff ]]; then
+            # The collector is likely rebooting: keep the MAC that worked.
+            say "no MAC for next hop $nh on $dev just now; keeping $old_mac" >&2
+            mac=$old_mac
+        else
+            say "no MAC for next hop $nh on $dev; using broadcast" >&2
+            mac=ff:ff:ff:ff:ff:ff
+        fi
+    fi
+
+    if [[ ! -d $CFS/netconsole ]]; then
+        mountpoint -q "$CFS" || mount -t configfs configfs "$CFS"
+        modprobe netconsole
+        [[ -d $CFS/netconsole ]] || die "no $CFS/netconsole (kernel without CONFIG_NETCONSOLE_DYNAMIC?)"
+    fi
+    [[ -d $T ]] || mkdir "$T"
+
+    local -A want=([dev_name]=$dev [local_ip]=$src [remote_ip]=$cip
+                   [remote_port]=$PORT [remote_mac]=$mac)
+    # extended: the "+" format (level, sequence number, kernel timestamp,
+    # long messages fragmented with ncfrag=): lost packets show as gaps.
+    if [[ -e $T/extended ]]; then
+        if [[ $EXTENDED == 1 ]]; then want[extended]=1; else want[extended]=0; fi
+    fi
+    local k changed=0
+    for k in "${!want[@]}"; do
+        [[ $(cur "$k") == "${want[$k]}" ]] || changed=1
+    done
+    if [[ $changed == 0 && $(cur enabled) == 1 ]]; then
+        say "unchanged: $dev $src -> $cip:$PORT ($mac)"
+    else
+        [[ $(cur enabled) == 0 ]] || echo 0 >"$T/enabled"
+        for k in dev_name local_ip remote_ip remote_port remote_mac extended; do
+            [[ -n ${want[$k]:-} ]] || continue
+            [[ $(cur "$k") == "${want[$k]}" ]] || echo "${want[$k]}" >"$T/$k"
+        done
+        echo 1 >"$T/enabled" || die "could not enable the target on $dev (does its driver support netpoll?)"
+        say "enabled: $dev $src -> $cip:$PORT ($mac)$([[ ${want[extended]:-0} == 1 ]] && echo ", extended")"
+    fi
+
+    local lvl
+    lvl=$(console_level)
+    if (( lvl < CONSOLE_LOGLEVEL )); then
+        mkdir -p "$STATE"
+        [[ -s $LEVEL_ORIG ]] || echo "$lvl" >"$LEVEL_ORIG"
+        dmesg -n "$CONSOLE_LOGLEVEL"
+        say "console log level $lvl -> $CONSOLE_LOGLEVEL"
+    fi
+}
+
+[[ $(id -u) == 0 ]] || die "run as root"
+case ${1:-} in
+    "") configure ;;
+    --status) status ;;
+    --remove) remove ;;
+    -h|--help) sed -n '2,/^set -euo/s/^# \{0,1\}//p' "$0" | sed '$d' ;;
+    *) die "unknown argument $1 (see --help)" ;;
+esac

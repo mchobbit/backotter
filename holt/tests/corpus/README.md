@@ -498,6 +498,25 @@ write-table`, makes `zroot` with the source's feature flags, ashift 12 and
 its GUID, the datasets with their properties (`zroot/usr/src` too, which
 ghostbsd26-zfs hasn't), sets `bootfs`, and at boot points the restored
 zpool.cache at the new pool; nothing else is regenerated.
+ubuntu24-uefi (`make-ubuntu.sh --uefi`, 24.04.5: Subiquity's default, GPT
+with an ESP at /boot/efi and one ext4 /, UEFI under Secure Boot) and
+ubuntu24-luks (`--uefi --luks`: ubuntu26-luks's guided LVM on LUKS2 on
+24.04.5, an ext4 /boot beside the ESP and `dm_crypt-0` holding
+`ubuntu-vg/ubuntu-lv`, ext4 /), ubuntu26-uefi's and ubuntu26-luks's
+24.04 twins built on 2026-11-14, were added on 2026-11-17 from their
+HoltTest1 runs u24c on chopin, PASS, bko-holt 0.2.4 (collected on
+2026-11-14 into a private directory, the image the same as the run
+recorded).  Both were already HoltTest2 sources in classes.json, so
+golden_plans.rs had them as unplanned until now.  Their golden plans are
+their twins' but for what the sources are: mke2fs without `orphan_file`
+and `metadata_csum_seed` (24.04's ext4s were made without them), and
+`update-initramfs -u -k all` where the twins run dracut (24.04 is on
+initramfs-tools); ubuntu24-luks's `cryptsetup luksFormat` has the twin's
+cipher, key size, offset and LUKS2 area sizes and the source keyslot's own
+argon2id cost (1004442 KiB, 4 iterations, where ubuntu26-luks has 97932
+and 59), then `cryptsetup open ... dm_crypt-0` and `vgcfgrestore`, and both
+keep GRUB and shim (`grub-install --no-nvram`, `update-grub`, the `Ubuntu`
+entry for `\EFI\ubuntu\shimx64.efi`).
 The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
@@ -721,6 +740,13 @@ zfs-passphrase among them) and the raw dump's identifiers, cinqcent with
 too), and a check on chopin of the src.json, the index row and the plan
 for the passphrase's bytes (as is, as UTF-16LE and in hex): none; the same
 sha256 from both builds (src.json `fff7adb5...`, the row `4389b276...`).
+So did ubuntu24-uefi and ubuntu24-luks (2026-11-17), built from a private
+directory on chopin (/bkoscratch, its warm holt build at
+/bkoscratch/holt-warm/u24): chopin with 110 of its 115 strings
+(ubuntu24-luks's console-passphrase among them) and the raw dumps'
+identifiers, cinqcent with 111 of its 117, the Mac with the git e-mail, 0
+findings (their plans scanned too), the same sha256 from both builds
+(src.json `adbecc72...` and `9cffbfc9...`, index.tsv `1a433419...`).
 
 ## The golden plans
 

@@ -71,6 +71,8 @@ solus49	chopin	s3	dump	-	2026-11-14T17:41:34Z	0.2.6	-	same	13	ok:13:107	0	0	0	sa
 truenas25	chopin	t3	dump	-	2026-11-14T15:01:15Z	0.2.6	-	same	13	ok:13:362	0	0	0	same	ok:13	-
 tumbleweed	chopin	r4all	PASS	2026-11-08T02:22:00Z	2026-11-08T02:19:01Z	0.2.4	e19ee806417344236417ede6dd162d6ef9212a49b424c2b3eb455cee044db5aa	changed	18	ok:18:132	0	0	0	same	ok:18	-
 ubuntu24	cinqcent	r4all	PASS	2026-11-08T02:27:22Z	2026-11-08T02:23:40Z	0.2.4	772a51240b7581a2442849ac0c9bb74e0b25b90aee5dd4be60a27f48fb4ac1aa	changed	11	ok:11:92	0	0	0	same	ok:11	-
+ubuntu24-luks	chopin	u24c	PASS	2026-11-14T17:20:49Z	2026-11-14T17:15:05Z	0.2.4	d5c2fb955d8feddb3c2f0541a64471db09d6f7daaa2332f77d4dae33671785b6	same	19	ok:19:167	0	0	0	same	ok:19	-
+ubuntu24-uefi	chopin	u24c	PASS	2026-11-14T17:20:31Z	2026-11-14T17:14:58Z	0.2.4	15d126c1c87a33dc569b9b7a92b309b478f7fd9734a48bc86a8198bc0157a176	same	12	ok:12:102	0	0	0	same	ok:12	-
 ubuntu26-luks	cinqcent	lk1	PASS	2026-11-10T13:05:06Z	2026-11-10T13:01:05Z	0.2.4	-	same	19	ok:19:144	0	0	0	same	ok:19	-
 ubuntu26-raid	cinqcent	r4all	PASS	2026-11-08T02:35:06Z	2026-11-08T02:30:34Z	0.2.4	-	same	34	ok:34:216	0	0	0	same	ok:34	-
 ubuntu26-uefi	cinqcent	r4all	PASS	2026-11-08T02:22:58Z	2026-11-08T02:17:53Z	0.2.4	6029a9cda55062a4de867a17eb976e082f5f599aeebd6974b4ed103e7e012ee7	changed	12	ok:12:83	0	0	0	same	ok:12	-

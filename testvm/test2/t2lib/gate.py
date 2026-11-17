@@ -25,7 +25,7 @@ process group, and when it can't be seen gone there is no attempt 2.  A fast lay
 of the calling family starts), a slow one stop-starts.
 
     gate:holt          holt-test.sh on Chopin (pinned there: the raw dumps of
-                       /bkoscratch/test2/h1-raw are), under cmp-run.sh --reserve 2 4, in
+                       /bkoscratch/test2/h1-raw are), under cmp-run.sh --reserve 4 4 (then peak-sized), in
                        RAM: cargo test (--skip golden_), the golden plans in report mode
                        (diff.json goes into extra.plan_diff; a DIFF passes, R23) with their
                        invariants, and redact_dumps over h1-raw and the corpus

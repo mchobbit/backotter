@@ -12,7 +12,7 @@
     "holt"
    ],
    "pin": "chopin",
-   "runs": "gate/holt-test.sh under cmp-run.sh --reserve 2 4: cargo test -- --skip golden_; the golden plans (BKO_HOLT_GOLDEN=report); redact_dumps over h1-raw and the corpus",
+   "runs": "gate/holt-test.sh under cmp-run.sh --reserve 4 4 before any peak, then sized from its RAM peaks (cargo's target dir and the tests' TMPDIR peaked at 3.3 GiB on 2026-11-17, over the old 2: ENOSPC when the RAM disk was otherwise reserved): cargo test -- --skip golden_; the golden plans (BKO_HOLT_GOLDEN=report); redact_dumps over h1-raw and the corpus",
    "needs": [
     "cargo-test",
     "golden-plans",
@@ -20,9 +20,10 @@
     "redact-dumps"
    ],
    "reserve": [
-    2,
+    4,
     4
    ],
+   "peak_reserve": true,
    "timeout_s": 3600,
    "harness": [
     "testvm/test2/gate/holt-test.sh",

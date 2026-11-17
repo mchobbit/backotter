@@ -155,7 +155,8 @@ class LayersJson(unittest.TestCase):
         self.assertEqual(sorted(n for n, x in e.items() if x["part"] == "fast"),
                          sorted(["holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic",
                                  "bin:abi", "bin:static", "bin:version", "selftest"]))
-        self.assertEqual(e["holt"]["reserve"], [2, 4])
+        self.assertEqual(e["holt"]["reserve"], [4, 4])   # its peak was 3.3 GiB on 2026-11-17
+        self.assertTrue(e["holt"]["peak_reserve"])
         self.assertEqual(e["loop:linux"]["reserve"], [14, 4])   # 6 x HOST_JOBS + 2, HOST_JOBS 2
         self.assertEqual(e["loop:sparse"]["reserve"], [20, 4])  # IMG_GB 16 + 4
 

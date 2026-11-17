@@ -1,8 +1,8 @@
 # UPS-driven shutdowns (plan)
 
 Status (2026-11-16): **partly applied.** UPS-B is complete. UPS-C has its
-master and five of its six secondaries on the final shutdown scripts. Only
-Coventry is left, and that's the user's step. UPS-A has its master done.
+master and all six of its secondaries. UPS-C is
+complete, Coventry included (2026-11-17). UPS-A has its master done.
 Bigfoot joins after the disk move. See "Applied so far" under the apply order. Each config change
 left a dated `.bak-*` copy beside the file in `/etc/nut`.
 
@@ -22,7 +22,7 @@ left a dated `.bak-*` copy beside the file in `/etc/nut`.
 | GMKTwo .192 | NucBox G5, Debian 13, amd64, 6.12.107 | nut 2.8.1. **Was** MODE=none with a stale Greencell `nutdrv_qx` config, driver crash-looping, i.e. **unprotected**. Fixed in step 0: now standalone, `[eaton]` usbhid-ups, primary | Eaton 3S 700, OL, 78 W (14 %), ~34 min. GmkTwoPool on a JMS578 bridge. |
 | GMKThree .193 | NucBox G5, Debian 13, amd64, 6.12.107 | Same as GMKTwo: was unprotected (Greencell config), fixed in step 0 | Eaton 3S 700, OL, **179 W (32 %), ~15 min**. GmkThreePool on a JMS578 bridge. |
 | Bigfoot .197 | Minisforum MS-R1, Debian 13, **arm64**, 6.19.10 | nut 2.8.1, **netserver** for `[eaton]`, but **no UPS on its USB**: driver crash-loops; upsd listens on 192.168.68.72, a stale address | DantePool (6x20 TB raidz2 on ASMedia UAS bridges, already flaky). Runs deluge, smbd/nmbd, NFS server, vnc, openvpn, miniircd, hugos-heartbeat. |
-| Coventry .190 | NanoPi M6, Ubuntu 24.04, **arm64**, vendor 6.1 | nut 2.8.1, was the netserver for `[eaton]` (with Choubox as its secondary) | **No UPS on its USB** (the user confirmed: "Coventry has no UPS of its own"); driver crash-loops. `m` has **no sudo** here. No RTC: its clock and `last` are unreliable. |
+| Coventry .190 | NanoPi M6, Ubuntu 24.04, **arm64**, vendor 6.1 | nut 2.8.1, was the netserver for `[eaton]` (with Choubox as its secondary) | **No UPS on its USB** (the user confirmed: "Coventry has no UPS of its own"); driver crash-loops. `m` has **no sudo** here, but `root@coventry.local` takes the key. No RTC: its clock and `last` are unreliable. |
 | Choubox .195 | GMKtec NucBox G3 Pro, Debian 13, amd64 | nut-client only, **netclient**: `MONITOR eaton@coventry ... secondary` | **Still exists** and is up, though it left the bko farm. Its monitor watches Coventry's dead driver, so it is unprotected. |
 | Chopin .194, Cinqcent .196 | MoreFine S500+, Debian 13, amd64, 7.2 | **none installed** | bko KVM hosts, 12 threads / 62 GB, tests running under `cmp-run.sh --reserve` scopes (`run-p*-i*.scope`). WoL supported, **off** (`Wake-on: d`). |
 | Cage .199, Copland .198 | Lenovo M900, Debian 13, amd64, 7.2 | **none installed** | Same as above, 16 threads / 27 GB. |
@@ -51,8 +51,8 @@ The OS can't read it, so the user checks it.
 secondary.** The Eaton is on GMKThree's USB, and Coventry has none, so
 there's no real conflict: Coventry's master role is a leftover. Coventry
 moves from netserver to netclient (`MONITOR eaton@gmkthree.local`). This
-needs root on Coventry, which `m` doesn't have, so the user applies it (or
-grants sudo). Bigfoot's own leftover netserver goes the same way and becomes
+needs root on Coventry. `m` has no sudo there, but `root@coventry.local`
+takes the key, and the change was applied that way on 2026-11-17. Bigfoot's own leftover netserver goes the same way and becomes
 a netclient of GMKOne.
 
 **D2. Secondaries use NUT (`upsmon` netclient), not ssh pushed from the
@@ -180,7 +180,7 @@ later restore power, so every machine sees a clean power cycle and boots.
     run sees FAIL or timeouts, as with any host loss.
 - **Choubox:** keep its netclient, point `MONITOR` at `eaton@gmkthree.local`
   with the `upssecondary` user, and keep `SHUTDOWNCMD`.
-- **Coventry** (the user applies this, since `m` has no root there):
+- **Coventry** (as root over ssh; applied 2026-11-17):
   1. `MODE=netclient`.
   2. Disable nut-driver@eaton and nut-server, and drop the `[eaton]`
      section.
@@ -279,7 +279,7 @@ bridges), GmkTwoPool and GmkThreePool (each on a JMS578 bridge).
 1. Write `testvm/ups/` (the three scripts), then run T1.
 2. UPS-B thresholds (GMKTwo alone).
 3. UPS-C: GMKThree netserver, then the farm hosts (install nut-client), then
-   Choubox, then Coventry (the user, as root). Then T2, T3 and T4.
+   Choubox, then Coventry (as root over ssh, done 2026-11-17). Then T2, T3 and T4.
 4. UPS-A: GMKOne netserver now. Bigfoot after the disk move. Then T2, T3
    and T4 for Bigfoot.
 5. T5, the user's pull-the-plug tests.
@@ -296,8 +296,7 @@ bridges), GmkTwoPool and GmkThreePool (each on a JMS578 bridge).
   - `ignorelb`, charge.low 50, runtime.low 600, offdelay 60 and ondelay 120;
   - `HOSTSYNC 30`.
   - `SHUTDOWNCMD "UPS_WAIT_MAX=180 /usr/local/sbin/ups-primary-halt chopin.local cinqcent.local cage.local copland.local coventry.local choubox.local"`,
-    installed after T1 and T2 passed. Until Coventry is switched, its
-    entry keeps answering, so GMKThree waits the full 180 s.
+    installed after T1 and T2 passed.
 - **UPS-C, secondaries.**
   - Chopin, Cinqcent, Cage and Copland have `nut-client` installed from
     trixie and `MODE=netclient`, with
@@ -307,21 +306,16 @@ bridges), GmkTwoPool and GmkThreePool (each on a JMS578 bridge).
   - Choubox's MONITOR now points at `eaton@gmkthree.local` with the
     `upssecondary` user.
   - All five show as logged in on GMKThree (`upsc -c`).
-- **UPS-C, Coventry: not done, the user's step** (`m` has no root there).
-  Get the password from GMKThree with
-  `sudo grep -A1 upssecondary /etc/nut/upsd.users`, then as root on
-  Coventry:
-  ```
-  cd /etc/nut && cp -p nut.conf nut.conf.bak-20261116 && cp -p upsmon.conf upsmon.conf.bak-20261116
-  echo MODE=netclient > nut.conf
-  systemctl disable --now nut-driver@eaton nut-server
-  # in upsmon.conf, replace the MONITOR line with:
-  #   MONITOR eaton@gmkthree.local 1 upssecondary <pw> secondary
-  # and make sure SHUTDOWNCMD is "/sbin/shutdown -h +0"
-  systemctl restart nut-monitor
-  upsc eaton@gmkthree.local ups.status   # expect OL
-  ```
-  Then remove the `[eaton]` section from ups.conf.
+- **UPS-C, Coventry: done 2026-11-17** (as root over ssh; `root@coventry.local`
+  takes the key, though `m` has no sudo there).
+  - `MODE=netclient`; nut-driver@eaton and nut-server disabled and
+    stopped.
+  - ups.conf has no sections; the old `[eaton]` is in
+    `ups.conf.bak-netclient-20261117`.
+  - `MONITOR eaton@gmkthree.local 1 upssecondary <pw> secondary` and
+    `SHUTDOWNCMD "/sbin/shutdown -h +0"`.
+  - It reads OL from GMKThree, and GMKThree lists all six secondaries
+    (`upsc -c`).
 - **T1 PASS (2026-11-16, on Copland, two 1 GB guests, `testvm/ups/t1-rig.sh`):**
   - OB alone for 70 s halted nothing.
   - `ignorelb` dropped the UPS's own LB flag.
@@ -371,7 +365,7 @@ bridges), GmkTwoPool and GmkThreePool (each on a JMS578 bridge).
 2. ~~Should the farm halt on a 60 s on-battery timer?~~ Answered 2026-11-16:
    no, wait for low battery.
 3. Should Choubox stay on UPS-C, or is it being retired?
-4. Will you apply Coventry's change yourself, or give `m` sudo there?
+4. ~~Who applies Coventry's change?~~ Done 2026-11-17 as root over ssh.
 5. UPS-C's load under full test load: watch `upsc eaton@gmkthree.local
    ups.load` during a busy round. Over ~80 %, the farm should move onto a
    second UPS.

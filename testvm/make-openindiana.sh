@@ -26,7 +26,7 @@
 #   id_ed25519, .pub      SSH key that logs in as root
 #   install-serial.log    the console of the install (or first boot)
 #   setup.log             what the setup over SSH did
-#   vm-run-options        how vm-run must boot it: "--legacy-virtio-net"
+#   vm-run-options        how vm-run must boot it: "--legacy-virtio-net --memory 4096"
 #                         (illumos' vioif can't map the modern virtio NIC's
 #                         registers), and "--uefi --no-secure-boot" for the
 #                         installer's guest
@@ -233,6 +233,7 @@ SETUP
 grep -q '^SETUP-OK' setup.log || { halt; die "the setup didn't finish; see setup.log"; }
 halt
 
-if [[ $cloud == yes ]]; then echo "--legacy-virtio-net"; else echo "--uefi --no-secure-boot --legacy-virtio-net"; fi >vm-run-options
+# --memory 4096: IPS's solver swaps in 2 GB and the guest hangs (tmpfs full, GuestTest2 2026-11-17)
+if [[ $cloud == yes ]]; then echo "--legacy-virtio-net --memory 4096"; else echo "--uefi --no-secure-boot --legacy-virtio-net --memory 4096"; fi >vm-run-options
 qemu-img snapshot -c fresh-install "$DISK"
 echo "Done: $work_dir/$DISK ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""

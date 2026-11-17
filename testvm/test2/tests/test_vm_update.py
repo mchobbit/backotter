@@ -207,7 +207,7 @@ class TestInGuest(unittest.TestCase):
         """An image-mode system has dnf too, which can't change its /usr: the
         ostree branch has to come first, and never cleans up the rollback."""
         t = self.TEXT
-        self.assertLess(t.index('elif [ -e /run/ostree-booted ] && has rpm-ostree; then'), t.index("elif has dnf; then"))
+        self.assertLess(t.index('elif [ -e /run/ostree-booted ] && has rpm-ostree; then'), t.index("elif has dnf && "))
         code = "\n".join(l for l in self.sections()["Linux.ostree"].splitlines() if not l.lstrip().startswith("#"))
         self.assertNotIn("cleanup -r", code)
         self.assertNotIn("dnf", code)
@@ -307,7 +307,7 @@ class TestInGuest(unittest.TestCase):
     def test_the_silent_fixes_are_guarded_steps(self):
         t = self.TEXT
         self.assertIn('if ! grep -qF "\\"nixpkgs=$url\\"" /etc/nixos/configuration.nix; then', t)
-        self.assertIn("! apt-mark showhold | grep -qx snapd; then", t)
+        self.assertIn("if apt-mark showhold | grep -qx snapd; then", t)
         self.assertIn('if [ -z "$(ls /etc/openssl/certs)" ]; then', t)
         self.assertIn('if [ "$(cat /usr/pkg/etc/pkgin/repositories.conf 2>/dev/null)" != "$pkgs" ]; then', t)
         self.assertIn("if cmp -s /usr/pkg/etc/sysupgrade.conf.new /usr/pkg/etc/sysupgrade.conf; then", t)
@@ -450,7 +450,7 @@ class TestPkgset(TempDir):
 
     def test_dpkg(self):
         out = self.run_script("Linux", {
-            "apt-get": "true",
+            "apt-get": "true", "dpkg": "true",
             "dpkg-query": "echo 'ii  e2fsprogs 1.47.0-2 amd64'; echo 'rc  gone 1.0 amd64'"})
         self.check(out, ["base pm dpkg", "pkg e2fsprogs 1.47.0-2 amd64"])
         self.assertNotIn("gone", out)
@@ -518,7 +518,7 @@ class TestPkgset(TempDir):
         return files
 
     def test_portage(self):
-        out = self.run_script("Linux", {"emerge": "true", "dpkg-query": "exit 2", "apt-get": "true"},
+        out = self.run_script("Linux", {"emerge": "true", "dpkg-query": "exit 2", "apt-get": "true", "dpkg": "true"},
                               files=self.portage("sys-boot/grub-2.16-r1", "sys-kernel/gentoo-kernel-bin-6.18.63",
                                                  "media-fonts/font-adobe-100dpi-1.0.4", "net-dns/avahi-0.9_rc3",
                                                  "sys-firmware/intel-microcode-20260925_p20260925", "sys-fs/lvm2-2.03.39"))
@@ -537,7 +537,7 @@ class TestPkgset(TempDir):
         self.assertEqual(out, "unknown a merge under way: sys-boot/-MERGING-grub-2.16-r2\n")
 
     def test_portage_needs_gentoo_release(self):
-        out = self.run_script("Linux", {"apt-get": "true", "dpkg-query": "echo 'ii  e2fsprogs 1.47.0-2 amd64'"},
+        out = self.run_script("Linux", {"apt-get": "true", "dpkg": "true", "dpkg-query": "echo 'ii  e2fsprogs 1.47.0-2 amd64'"},
                               files=self.portage("sys-boot/grub-2.16-r1", gentoo=False))
         self.check(out, ["base pm dpkg"])
 
@@ -685,7 +685,7 @@ class TestPkgset(TempDir):
 
     def test_nothing_known_is_unknown(self):
         self.assertTrue(self.run_script("Plan9", {}).startswith("unknown"))
-        self.assertTrue(self.run_script("Linux", {"apt-get": "true", "dpkg-query": "exit 2"}).startswith("unknown"))
+        self.assertTrue(self.run_script("Linux", {"apt-get": "true", "dpkg": "true", "dpkg-query": "exit 2"}).startswith("unknown dpkg-query failed"))
 
 
 # --- fingerprint.py ----------------------------------------------------------------------------

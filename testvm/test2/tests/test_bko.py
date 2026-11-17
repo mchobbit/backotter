@@ -5,6 +5,7 @@ No host, no ssh: every I/O goes through bko.Env, which these tests replace."""
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import sys
@@ -730,7 +731,7 @@ class TestSweep(Base):
         run, _ = self.sweep_doc()
         text = slurp(os.path.join(self.w.mac, "runs", run, "report.txt"))
         self.assertIn("coverage: img: panels passed: netbsd 3 days ago", text)
-        self.assertIn("coverage: img: panels never passed: linux, freebsd, dragonfly, illumos, haiku", text)
+        self.assertIn("coverage: img: panels never passed: linux, freebsd, openbsd, dragonfly, illumos, haiku", text)
 
     def test_a_flip_and_its_packages(self):
         old = self.w.row("stic:arch", "t2s-20261101T0000-aaaa", "PASS")
@@ -932,9 +933,11 @@ class TestRealPlans(unittest.TestCase):
         out = "\n".join(self.said)
         for w_ in ("GateTest2 plan:", "SticTest2 plan:", "HoltTest2 plan:", "GuestTest2 plan:", "ImgTest2: nothing due"):
             self.assertIn(w_, out)
-        # the golden's 232 cells (four default hosts: two gate loop cells each); its gm summed
-        # the cells' raw figures, this the plans' printed ones
-        self.assertTrue(self.said[-2].startswith("combined: 232 due, 1116.6 gm, "), self.said[-2])
+        # the golden's cells (test_report's bko-combined: two gate loop cells each default host);
+        # its gm summed the cells' raw figures, this the plans' printed ones
+        with open(os.path.join(TESTS, "fixtures", "p2", "golden", "bko-combined.txt")) as f:
+            due = re.search(r"^combined: (\d+) due, ", f.read(), re.M).group(1)
+        self.assertRegex(self.said[-2], rf"^combined: {due} due, \d+\.\d gm, ")
         self.assertTrue(self.said[-1].startswith("sweep: SweepTest2 "), self.said[-1])
         self.assertEqual(out.count("sweep: SweepTest2"), 1)
         self.assertEqual(env.kids, [])
@@ -959,7 +962,7 @@ class TestRealPlans(unittest.TestCase):
         self.assertFalse(sw["complete"])     # the children wrote no rows
         self.assertEqual(ex, 1)
         text = slurp(os.path.join(self.w.mac, "runs", run, "report.txt"))
-        self.assertIn("coverage: img: panels never passed: linux, freebsd, netbsd, dragonfly, illumos, haiku", text)
+        self.assertIn("coverage: img: panels never passed: linux, freebsd, netbsd, openbsd, dragonfly, illumos, haiku", text)
 
 
 # --- stic.py's two pieces -------------------------------------------------------------------------

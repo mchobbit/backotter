@@ -3,6 +3,7 @@ holt/tests/common/mod.rs does (golden_plans.rs's diff.json)."""
 
 import io
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -107,7 +108,12 @@ class CorpusPlans(unittest.TestCase):
                 text = f.read()
             names = [n for n, _ in plandiff.sections(text)]
             self.assertEqual(names, ["header"] + list(plandiff.STAGES) + ["trailer"], p)
-            self.assertTrue(dict(plandiff.sections(text))["trailer"][-1].startswith(plandiff.GOLDEN_MARK), p)
+            # golden_plans.rs's lines end it: an "exit N; stderr:" one may be followed by load's
+            # stderr, each line "#   " (a refusal: omarchy's +reformat plans)
+            tail = dict(plandiff.sections(text))["trailer"]
+            last = max(i for i, l in enumerate(tail) if l.startswith(plandiff.GOLDEN_MARK))
+            self.assertTrue(all(l.startswith("#   ") for l in tail[last + 1:]), p)
+            self.assertTrue(not tail[last + 1:] or tail[last].endswith("stderr:"), p)
 
     def test_an_edit_is_charged_to_its_stage(self):
         for p in corpus_plans()[:12]:
@@ -146,10 +152,14 @@ class CorpusMatchesClasses(unittest.TestCase):
     def test_variants_txt_is_holt_variants_bigger(self):
         with open(VARIANTS, encoding="utf-8") as f:
             listed = sorted(l.split("#")[0].strip() for l in f if l.split("#")[0].strip())
-        self.assertEqual(listed, sorted(g + "+bigger" for g in self.holt()["variants"].get("bigger", [])))
+        # (+reformat-TYPE plans are golden-only, not HoltTest2 cells: docs/design/reformat.md)
         for v in listed:
-            g = v.split("+")[0]
-            self.assertTrue(os.path.isfile(os.path.join(CORPUS, g, "plan+bigger.txt")), v)
+            self.assertTrue(v.endswith("+bigger") or re.fullmatch(r"[a-z0-9-]+\+reformat-[a-z0-9]+", v), v)
+        self.assertEqual([v for v in listed if v.endswith("+bigger")],
+                         sorted(g + "+bigger" for g in self.holt()["variants"].get("bigger", [])))
+        for v in listed:
+            g, var = v.split("+", 1)
+            self.assertTrue(os.path.isfile(os.path.join(CORPUS, g, f"plan+{var}.txt")), v)
 
     def test_every_source_has_a_dump(self):
         h = self.holt()

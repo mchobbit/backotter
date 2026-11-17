@@ -312,6 +312,12 @@
   "fs limits recorded": "ext2 refuses: projid; ext4 refuses: projid; tmpfs refuses: projid",
   "security labels": "no SELinux/Smack on MX 25 (LSMs: lockdown,capability,landlock,yama,apparmor,tomoyo,bpf,ipe,ima,evm); AppArmor/TOMOYO keep no on-disk labels"
  },
+ "neon24": {
+  "Birth times": "ext4 and vfat keep them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
+  "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
+  "SELinux labels": "not applicable; the guest runs AppArmor, which keeps no labels on disk",
+  "Whole-disk needs (GPT, shim and GRUB's NVRAM entry under Secure Boot, EFI/neon and EFI/ubuntu's grub.cfg, the initramfs)": "out of scope: whole-disk (HoltTest1 1U recreates the disk, boots it alone from its NVRAM entry); here the scratch disk is laid out like the guest's and only its file systems' contents are restored"
+ },
  "netbsd11": {
   "linux/selinux/capabilities/zfs/btrfs/bcachefs attributes": "not on NetBSD 11 (no such attributes; FFS only)",
   "root extattrs/ACLs": "netbsd11's root is plain FFSv2 (lsextattr EOPNOTSUPP): extattrs and ACLs are tested on FFSv2ea images"
@@ -334,6 +340,11 @@
   "Restore over existing immutable/appendonly/nounlink files": "over-restic-restic: exit 1, 4 messages name the immutable/appendonly/nounlink files or EPERM, 0 others; tree still identical (BACKOTTER.md: not cleared yet on illumos) over-rustic-restic: exit 1, 4..."
  },
  "openbsd8": {
+  "ACLs, extended attributes, MAC labels, capabilities": "OpenBSD has none",
+  "Birth times": "OpenBSD/FFS2 keeps none (stat %B 0)",
+  "Restore over existing schg/sappnd files": "securelevel 1: system flags can't be cleared (BACKOTTER.md)"
+ },
+ "openbsd8-crypt": {
   "ACLs, extended attributes, MAC labels, capabilities": "OpenBSD has none",
   "Birth times": "OpenBSD/FFS2 keeps none (stat %B 0)",
   "Restore over existing schg/sappnd files": "securelevel 1: system flags can't be cleared (BACKOTTER.md)"

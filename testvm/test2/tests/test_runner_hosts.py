@@ -247,7 +247,7 @@ class QueueCantWhy(unittest.TestCase):
         """cant_why's case is ht1.sh's: the same guests go to ht1-bsd.sh and ht1-offline.sh."""
         q, h = rd(QUEUE), rd(os.path.join(HT, "ht1.sh"))
         for pat in (r"freebsd\*\|hardenedbsd\*\|ghostbsd\*\|netbsd\*\|alpinebsd\*\|openbsd\*\|dragonfly\*\|omnios\*\|oi\*\|haiku\*\)",
-                    r"redox\|sculpt\*\)"):
+                    r"redox\|sculpt\*\|qubes\*\)"):     # (Qubes dom0 read offline: docs/design/qubes.md)
             self.assertRegex(q, pat)
             self.assertRegex(h, pat)
 

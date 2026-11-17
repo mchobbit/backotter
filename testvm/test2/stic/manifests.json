@@ -919,6 +919,27 @@
     "entry:testvm/test2/stic/limits.json#mx25"
    ]
   },
+  "neon24": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/neon24/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/neon24/judge.py",
+    "entry:testvm/test2/stic/limits.json#neon24"
+   ],
+   "host": [
+    "pkg:dosfstools"
+   ],
+   "notes": "kali's check with elementary8's gptcopy.py (docs/design/kde-neon.md N9): the ESP's FAT32 made on the host with the guest's ESP's geometry"
+  },
   "netbsd11": {
    "os": "netbsd",
    "bins": [
@@ -1015,6 +1036,22 @@
    "judge": [
     "entry:testvm/test2/stic/limits.json#openbsd8"
    ]
+  },
+  "openbsd8-crypt": {
+   "os": "openbsd",
+   "bins": [
+    "openbsd/restic-bko",
+    "openbsd/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/openbsd8-crypt/**",
+    "testvm/stictest1/openbsd8/guest.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#openbsd8-crypt"
+   ],
+   "notes": "openbsd8's check (its guest.sh) on the softraid CRYPTO guest, the passphrase typed at /boot by vm_boot (docs/design/openbsd-crypto.md)"
   },
   "pikaos4": {
    "os": "linux",

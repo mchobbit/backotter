@@ -458,16 +458,32 @@ class Free(unittest.TestCase):
 
 
 class Kernels(unittest.TestCase):
-    def k(self, rule, listing, **kw):
+    # K-slackware also needs check-image.sh's slackware-boot: the loader boots the newest kernel.
+    SLACK_OK = "kernel vmlinuz-generic-6.12.58 100 aa\nmap 200"
+
+    def k(self, rule, listing, *more, **kw):
         c = checks(kernel=rule)
         c.update(kw)
-        return J.judge_image(sec(("cmd kernels", listing)), c, POLICY, 1)["image:kernels"]
+        return J.judge_image(sec(("cmd kernels", listing), *more), c, POLICY, 1)["image:kernels"]
 
     def test_each_rules_limit(self):
         for rule, limit in J.KERNELS_MAX.items():
             end = "-pve" if rule == "K-pve" else ""   # (K-pve's names are a rule of their own)
-            self.assertEqual(self.k(rule, "\n".join(f"k{i}{end}" for i in range(limit))).v, "PASS", rule)
-            self.assertEqual(self.k(rule, "\n".join(f"k{i}{end}" for i in range(limit + 1))).v, "FAIL", rule)
+            more = [("cmd slackware-boot", self.SLACK_OK)] if rule == "K-slackware" else []
+            self.assertEqual(self.k(rule, "\n".join(f"k{i}{end}" for i in range(limit)), *more).v, "PASS", rule)
+            self.assertEqual(self.k(rule, "\n".join(f"k{i}{end}" for i in range(limit + 1)), *more).v, "FAIL", rule)
+
+    def test_slackware_boots_the_newest_kernel(self):
+        """Slackware (slackware.md): LILO's map written after the newest kernel, or ELILO's ESP copy
+        identical to it; without slackware-boot the kernel is unverified."""
+        two = "/boot/vmlinuz-huge-6.12.58\n/boot/vmlinuz-generic-6.12.58"
+        self.assertEqual(self.k("K-slackware", two, ("cmd slackware-boot", self.SLACK_OK)).v, "PASS")
+        stale = self.k("K-slackware", two, ("cmd slackware-boot", "kernel vmlinuz-generic-6.12.58 300 aa\nmap 200"))
+        self.assertEqual((stale.v, stale.lines), ("FAIL", [J.SLACK_MAP_STALE]))
+        esp = self.k("K-slackware", two, ("cmd slackware-boot", "kernel vmlinuz-generic-6.12.58 100 aa\n"
+                                                                 "kernel vmlinuz-generic-6.6.1 50 bb\nesp-image vmlinuz bb"))
+        self.assertEqual((esp.v, esp.lines), ("FAIL", [J.SLACK_ESP_STALE]))
+        self.assertEqual(self.k("K-slackware", two).v, "FAIL")
 
     def test_no_kernel(self):
         self.assertEqual(self.k("K-deb", "").v, "FAIL")

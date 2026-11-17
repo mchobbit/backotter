@@ -31,8 +31,8 @@ Read this file first; then `t2 batch report bt-20261115T0312-9ab1` (one screen).
 ## The logs to read (step 2)
 
 - `t2 batch log bt-20261115T0312-9ab1 003-t2-sweeptest2-rel6:holt:g1c0 --tail 200`: 3 cell(s), group 1: what broke
-- (farm, 3 cells share it) `t2 batch log bt-20261115T0312-9ab1 003-t2-sweeptest2-rel6:holt:g3c0 --tail 200`: group 3: what broke
-- (farm, 3 cells share it) `t2 batch log bt-20261115T0312-9ab1 003-t2-sweeptest2-rel6:holt:g0c0 --tail 200`: group 0: what broke
+- (farm, 3 cell(s) share it) `t2 batch log bt-20261115T0312-9ab1 003-t2-sweeptest2-rel6:holt:g3c0 --tail 200`: group 3: what broke
+- (farm, 3 cell(s) share it) `t2 batch log bt-20261115T0312-9ab1 003-t2-sweeptest2-rel6:holt:g0c0 --tail 200`: group 0: what broke
 
 ## Manual steps the batch printed and did not run
 

@@ -17,7 +17,7 @@ current: 0   not runnable: gate:loop:linux@copland (copland is not in --hosts); 
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written
 SticTest2 plan: round rel4 (~/backotter-work/roundrel4/bin), base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 75 of 75 checks, est. 531.9 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+due: 75 of 75 checks, est. 534.1 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   stic:aeon                any      new       no PASS yet  5.0 gm  tsv
   stic:aerynos             any      new       no PASS yet  2.2 gm  tsv
   stic:alpine324           any      new       no PASS yet  2.6 gm  tsv
@@ -61,14 +61,14 @@ due: 75 of 75 checks, est. 531.9 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   stic:microos             any      new       no PASS yet  3.8 gm  tsv
   stic:mint22              any      new       no PASS yet  13.6 gm  tsv
   stic:mx25                any      new       no PASS yet  11.9 gm  tsv
-  stic:neon24              any      new       no PASS yet  5.0 gm  default
+  stic:neon24              any      new       no PASS yet  6.2 gm  README
   stic:netbsd11            any      new       no PASS yet  5.4 gm  tsv
   stic:nixos2605           any      new       no PASS yet  3.9 gm  tsv
   stic:oi2610              any      new       no PASS yet  8.2 gm  tsv
   stic:omarchy             any      new       no PASS yet  5.0 gm  tsv
   stic:omnios58            any      new       no PASS yet  6.2 gm  tsv
   stic:openbsd8            any      new       no PASS yet  5.7 gm  tsv
-  stic:openbsd8-crypt      any      new       no PASS yet  5.0 gm  default
+  stic:openbsd8-crypt      any      new       no PASS yet  6.0 gm  README
   stic:pikaos4             any      new       no PASS yet  5.0 gm  README
   stic:pikaos4-luks        any      new       no PASS yet  6.7 gm  README
   stic:pop24               any      new       no PASS yet  10.2 gm  tsv
@@ -97,7 +97,7 @@ current: 0
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written
 HoltTest2 plan: bko-holt code 5db6749 (not built), rustic-bko bko-bin, base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 86 of 88 cells, est. 450.4 gm, ~N wall, 28.9 GB (chopin 28.9, cinqcent 0.0)
+due: 88 of 88 cells, est. 460.4 gm, ~N wall, 28.9 GB (chopin 28.9, cinqcent 0.0)
   holt:aerynos                  any      holt:new  no PASS yet  6.0 gm  tsv
   holt:alpine324                any      holt:new  no PASS yet  1.9 gm  tsv
   holt:alpinebsd                any      holt:new  no PASS yet  3.7 gm  tsv
@@ -160,6 +160,8 @@ due: 86 of 88 cells, est. 450.4 gm, ~N wall, 28.9 GB (chopin 28.9, cinqcent 0.0)
   holt:rocky10-lvm              any      holt:new  no PASS yet  3.5 gm  tsv
   holt:rocky10-raid5            any      holt:new  no PASS yet  6.0 gm  tsv
   holt:sculpt2610               any      holt:new  no PASS yet  2.9 gm  tsv
+  holt:slackware15              any      holt:new  no PASS yet  5.0 gm  default
+  holt:slackware15-uefi         any      holt:new  no PASS yet  5.0 gm  default
   holt:solus49                  any      holt:new  no PASS yet  6.0 gm  tsv
   holt:tumbleweed               any      holt:new  no PASS yet  3.2 gm  tsv
   holt:ubuntu24                 any      holt:new  no PASS yet  3.8 gm  tsv
@@ -184,7 +186,7 @@ due: 86 of 88 cells, est. 450.4 gm, ~N wall, 28.9 GB (chopin 28.9, cinqcent 0.0)
   holt:alpine324+oneshot        any      holt:new  no PASS yet  3.0 gm  tsv
   holt:debian13-stack+degraded  any      holt:new  no PASS yet  4.7 gm  tsv
   holt:ubuntu26-raid+degraded   any      holt:new  no PASS yet  4.7 gm  tsv
-current: 0   not runnable: holt:slackware15 (no inputs: 'testvm/test2/holt/spec.json: no entry slackware15'); holt:slackware15-uefi (no inputs: 'testvm/test2/holt/spec.json: no entry slackware15-uefi')
+current: 0
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written
 GuestTest2 plan: base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
@@ -276,9 +278,9 @@ ImgTest2: nothing due (7 not-runnable); base BASE
 not runnable: img:linux (linux/bko-holt 8bb8df416890: no PASS at its digest; run t2 HoltTest2 alpine324; linux/restic-bko 879213069877: no PASS at its digest; run t2 SticTest2 ROUND sculpt2610; linux/rustic-bko 0e15cdd9c5ad: no PASS at its digest; run t2 SticTest2 ROUND sculpt2610)
 not runnable: img:freebsd (freebsd/bko-holt 59210e19f835: no PASS at its digest; run t2 HoltTest2 ghostbsd26; freebsd/restic-bko 30d10bfcdaa9: no PASS at its digest; run t2 SticTest2 ROUND ghostbsd26; freebsd/rustic-bko d175fa8d1c2c: no PASS at its digest; run t2 SticTest2 ROUND ghostbsd26)
 not runnable: img:netbsd (netbsd/bko-holt 2c73fa291e76: no PASS at its digest; run t2 HoltTest2 alpinebsd; netbsd/restic-bko c8ab90feed8d: no PASS at its digest; run t2 SticTest2 ROUND netbsd11; netbsd/rustic-bko 7618f1110cd9: no PASS at its digest; run t2 SticTest2 ROUND netbsd11)
-not runnable: img:openbsd (openbsd/bko-holt 8d019a6f324c: no PASS at its digest; run t2 HoltTest2 openbsd8; openbsd/restic-bko 2b67f5e581bc: no PASS at its digest; run t2 SticTest2 ROUND openbsd8; openbsd/rustic-bko 3343a242da0d: no PASS at its digest; run t2 SticTest2 ROUND openbsd8)
+not runnable: img:openbsd (openbsd/bko-holt 8d019a6f324c: no PASS at its digest; run t2 HoltTest2 openbsd8; openbsd/restic-bko 2b67f5e581bc: no PASS at its digest; run t2 SticTest2 ROUND openbsd8-crypt; openbsd/rustic-bko 3343a242da0d: no PASS at its digest; run t2 SticTest2 ROUND openbsd8-crypt)
 not runnable: img:dragonfly (dragonfly/bko-holt 29a491194633: no PASS at its digest; run t2 HoltTest2 dragonfly6; dragonfly/restic-bko a8015103d5db: no PASS at its digest; run t2 SticTest2 ROUND dragonfly6; dragonfly/rustic-bko 87350d635e74: no PASS at its digest; run t2 SticTest2 ROUND dragonfly6)
 not runnable: img:illumos (illumos/bko-holt 9f334a07f8e8: no PASS at its digest; run t2 HoltTest2 omnios58; illumos/restic-bko 0d82a9690d13: no PASS at its digest; run t2 SticTest2 ROUND omnios58; illumos/rustic-bko 5a87834d6355: no PASS at its digest; run t2 SticTest2 ROUND omnios58)
 not runnable: img:haiku (haiku/bko-holt bb9e1e37dcbe: no PASS at its digest; run t2 HoltTest2 haiku6; haiku/rustic-bko f0ca9138481d: no PASS at its digest; run t2 SticTest2 ROUND haiku6)
 sweep: SweepTest2 never ran, due now
-combined: 253 due, 1246.4 gm, 13756 s wall, 30.6 GB, ['gate:selftest'] left over
+combined: 255 due, 1258.7 gm, 13876 s wall, 30.6 GB, ['gate:selftest'] left over

@@ -169,15 +169,15 @@
      "why": "no PASS at its digest"
     },
     "restic-bko": {
-     "canary": "stic:openbsd8",
-     "command": "t2 SticTest2 ROUND openbsd8",
+     "canary": "stic:openbsd8-crypt",
+     "command": "t2 SticTest2 ROUND openbsd8-crypt",
      "digest": "2b67f5e581bc890ecab505ad81ea96d54bf2639753ae8e495f6d9a870909f598",
      "state": "none",
      "why": "no PASS at its digest"
     },
     "rustic-bko": {
-     "canary": "stic:openbsd8",
-     "command": "t2 SticTest2 ROUND openbsd8",
+     "canary": "stic:openbsd8-crypt",
+     "command": "t2 SticTest2 ROUND openbsd8-crypt",
      "digest": "3343a242da0d6bb0e90bf26aef0270102f3c80fc74e7573ce086b68a931adc2d",
      "state": "none",
      "why": "no PASS at its digest"
@@ -202,8 +202,8 @@
    "part": null,
    "reasons": [
     "openbsd/bko-holt 8d019a6f324c: no PASS at its digest; run t2 HoltTest2 openbsd8",
-    "openbsd/restic-bko 2b67f5e581bc: no PASS at its digest; run t2 SticTest2 ROUND openbsd8",
-    "openbsd/rustic-bko 3343a242da0d: no PASS at its digest; run t2 SticTest2 ROUND openbsd8"
+    "openbsd/restic-bko 2b67f5e581bc: no PASS at its digest; run t2 SticTest2 ROUND openbsd8-crypt",
+    "openbsd/rustic-bko 3343a242da0d: no PASS at its digest; run t2 SticTest2 ROUND openbsd8-crypt"
    ],
    "refused": true,
    "rep": null,

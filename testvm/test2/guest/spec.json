@@ -34,6 +34,8 @@
    "try": true,
    "harness": [
     "testvm/vm-update",
+    "testvm/vm-mount",
+    "testvm/vm-umount",
     "testvm/update/in-guest.sh#prologue",
     "testvm/test2/guest/job.sh",
     "testvm/test2/guest/check-image.sh",
@@ -44,6 +46,8 @@
    "try": false,
    "harness": [
     "testvm/vm-update",
+    "testvm/vm-mount",
+    "testvm/vm-umount",
     "testvm/update/in-guest.sh#prologue",
     "testvm/test2/guest/job.sh",
     "testvm/test2/guest/check-image.sh",

@@ -20,6 +20,20 @@
     --- PASS: TestRestoreExactBtrfs/Label (0.03s)
 === RUN   TestRestoreExactLabel
 --- PASS: TestRestoreExactLabel (0.03s)
+=== RUN   TestRestoreDeletePartlyRemoved
+--- PASS: TestRestoreDeletePartlyRemoved (0.02s)
+=== RUN   TestRestoreExactDeleteImmutableDir
+--- PASS: TestRestoreExactDeleteImmutableDir (0.03s)
+=== RUN   TestRestoreExactDeleteReplacedLink
+--- PASS: TestRestoreExactDeleteReplacedLink (0.04s)
+=== RUN   TestRestoreExactDeleteReplacedSiblings
+--- PASS: TestRestoreExactDeleteReplacedSiblings (0.05s)
+=== RUN   TestRestoreExactEntriesInImmutableDir
+--- PASS: TestRestoreExactEntriesInImmutableDir (0.06s)
+=== RUN   TestRestoreExactKeptImmutable
+--- PASS: TestRestoreExactKeptImmutable (0.07s)
+=== RUN   TestRestoreExactUnbrokenLinkKeepsFlags
+--- PASS: TestRestoreExactUnbrokenLinkKeepsFlags (0.08s)
 === RUN   TestRestorerXFSOptions
 --- PASS: TestRestorerXFSOptions (0.30s)
 === RUN   TestRestorerXFSOptionsOverExisting

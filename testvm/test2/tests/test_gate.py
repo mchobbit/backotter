@@ -185,9 +185,10 @@ class LayersJson(unittest.TestCase):
             self.assertEqual(r.inputs.get("soft", {}), {}, cell)       # the gate has no soft inputs
             self.assertEqual(r.inputs.get("plumbing", {}), {}, cell)   # nor plumbing
             row = {"inputs": r.inputs, "groups": r.groups, "key": r.key}
-            # gate:selftest keys every fixture (leakscan reads them): its budget is larger, and
-            # its whole row, at the most fails a row holds, still fits a ledger line.
-            budget = 40 * 1024 if cell == "gate:selftest" else 24 * 1024
+            # gate:selftest keys every fixture (leakscan reads them), gate:holt every file of holt/**
+            # (two or so a corpus guest, ~110 B each): their budget is larger, and gate:selftest's
+            # whole row, at the most fails a row holds, still fits a ledger line.
+            budget = 40 * 1024 if cell in ("gate:selftest", "gate:holt") else 24 * 1024
             self.assertLess(len(canonical(row)), budget, f"{cell}: its inputs alone take {len(canonical(row))} B")
             if cell == "gate:selftest":
                 o = gate.Outcome({"t2-self-test": "FAIL", "drive-self-test": "FAIL"}, ["x" * 300] * 30)
@@ -542,7 +543,7 @@ class Parsers(unittest.TestCase):
     def test_root_list_is_reviewed(self):
         text = read_file(os.path.join(REPO, gate.ROOT_LIST_PATH))
         runs, outs = gate.parse_root_list(text)
-        self.assertEqual(len(runs), 23)
+        self.assertEqual(len(runs), 30)
         self.assertEqual(sorted({p for p, _ in runs}), ["internal/fs", "internal/restorer"])
         for line in text.splitlines():
             if line.startswith("run "):
@@ -560,7 +561,7 @@ class Parsers(unittest.TestCase):
         self.assertEqual(o.needs["TestNodeProjectIDBcachefs"], "PASS")
         self.assertEqual(o.needs["TestRestorerOverRestrictingFlags"], "PASS")
         self.assertEqual(o.needs["root-list"], "PASS")
-        self.assertEqual(len(o.needs), 24)
+        self.assertEqual(len(o.needs), 31)
         self.assertEqual(o.verdict, "PASS")
         self.assertEqual(o.extra["cleanup"], "nothing was left mounted or attached")
         self.assertIsNone(o.note)

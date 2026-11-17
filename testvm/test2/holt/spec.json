@@ -40,6 +40,7 @@
         "testvm/omarchy/type-luks-passphrase.py": "guests whose first passphrase file is luks-passphrase",
         "testvm/vanilla/console-keys.py": "guests whose restored disk boots a second GRUB entry or ZFSBootMenu boot environment, picked on the serial menu (vm_up's GRUB_PICK: vanilla3's other root, void-zbm's and void-zbm-enc's other BE, typing the passphrase first on the enc guest)",
         "testvm/holttest1d/prep/microos-tu.sh": "ht1.sh's default HT_SOURCE_PREP for microos* and aeon* (a transactional-update source's slots, rollbacks and pending update)",
+        "testvm/holttest1d/prep/tumbleweed-snapper.sh": "ht1.sh's default HT_SOURCE_PREP for leap16* (snapper's chain, the old root and a rolled-back default: docs/design/leap16.md L5)",
         "testvm/holttest1d/grub-menu.py": "guests whose older slots ht1-tu.sh boots through GRUB's serial snapshot submenu (vm_up's GRUB_MENU: microos)",
         "testvm/holttest1d/nvboot-efivars.sh": "the UEFI guests (firmware uefi, classes.json holt.uefi): ht1.sh inlines it in NVBOOT, which runs only with a GVARS store (ht1.sh: uefi and --no-secure-boot) and reads the booted entry from efivarfs where efibootmgr is missing (Guix System)"
       }
@@ -50,6 +51,9 @@
       "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
       "harness": ["testvm/holttest1d/ht1.sh", "testvm/holttest1d/ht1-bsd.sh"],
       "judge": ["testvm/holttest1d/judge.py"],
+      "per_guest": {
+        "testvm/console-boot.py": "guests with a CONSOLE_KEY: a loader that asks for the GELI passphrase on the serial console (freebsd15-geli)"
+      },
       "variants": {
         "img": {"replace": ["bins"], "bins_from_image": true, "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
                 "rescuer": ["@image"],
@@ -67,7 +71,10 @@
       "per_guest": {
         "testvm/redox/console.py": "redox: its root login on the serial console",
         "testvm/sculpt-check.sh": "sculpt2610: its screen and partition",
-        "testvm/haiku/drive.py": "sculpt2610: sculpt-check.sh's screen reader"
+        "testvm/haiku/drive.py": "sculpt2610: sculpt-check.sh's screen reader",
+        "testvm/qubes/qubes-drive.py": "qubes43: its dom0 console (docs/design/qubes.md)",
+        "testvm/vm-mount": "qubes43: qubes_mount, its LUKS and LVM tree on the host",
+        "testvm/vm-umount": "qubes43: qubes_umount"
       }
     }
   },

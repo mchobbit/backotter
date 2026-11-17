@@ -877,15 +877,22 @@ class Derived(unittest.TestCase):
         self.assertEqual(run.lifecycle(w.word("ImgTest2", ctx), ctx, mac_root=self.mac, out=out.append), 2)
         self.assertIn("refused: img:linux", "\n".join(out))
 
-    def test_a_bare_update_nothing_can_run_says_why_and_exits_2(self):
+    def test_a_bare_update_refuses_the_untried_says_why_and_exits_2(self):
+        """No --try PASS anywhere: every guest is refused but sculpt2610, which has no --try
+        (its update round boots the update before it merges: guest/spec.json's about)."""
         import types
-        run.runner = lambda fam: types.SimpleNamespace(run=lambda c, q: self.fail("nothing is due"))
+        ran = []
+        run.runner = lambda fam: types.SimpleNamespace(run=lambda c, q: ran.append(c.run.run) or
+                                                       {"cells": [], "stops": [], "exit": 0})
+        self.fake_copies()
         ctx = self.w.ctx([])
+        p = plan.make(self.w.word("GuestTest2 update", ctx), ctx)
+        self.assertEqual([c.cell for c in p.due()], ["guest:sculpt2610"])
         out = []
         self.assertEqual(run.lifecycle(self.w.word("GuestTest2 update", ctx), ctx, mac_root=self.mac, out=out.append), 2)
+        self.assertEqual(len(ran), 1)
         text = "\n".join(out)
         self.assertIn("refused: guest:arch: no --try PASS within 7 days: run t2 GuestTest2 arch first", text)
-        p = plan.make(self.w.word("GuestTest2 update", ctx), ctx)
         self.assertEqual(text.count("refused: guest:"), sum(1 for c in p.cells if c.status == "not-runnable"))
 
     def test_a_refused_image_exits_2_after_the_due_ones_finish(self):

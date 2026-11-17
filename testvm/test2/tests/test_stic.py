@@ -50,12 +50,12 @@ def fixture(name):
 # --- U4.1: check-manifests.py --------------------------------------------------------------
 
 class TestManifests(unittest.TestCase):
-    def test_73_checks_have_complete_manifests(self):
+    def test_80_checks_have_complete_manifests(self):
         files = CM.repo_files()
         errs, reps, data = CM.check_stic(files)
         self.assertEqual(errs, [], "\n".join(errs[:20]))
         entries = CM.spec_entries(data)
-        self.assertEqual(len(entries), 73)
+        self.assertEqual(len(entries), 80)   # (73, the five arm64 checks of docs/design/arm64.md A6, neon24, openbsd8-crypt)
         self.assertEqual(sorted(entries), DRIVE.all_guests())
 
     def test_entries_name_what_the_checks_share(self):
@@ -206,6 +206,8 @@ class TestLint(unittest.TestCase):
         base = os.path.join(REPO, "testvm", "stictest1")
         for g in os.listdir(base):
             for fn in (os.listdir(os.path.join(base, g)) if os.path.isdir(os.path.join(base, g)) else []):
+                if not os.path.isfile(os.path.join(base, g, fn)):
+                    continue        # (a __pycache__ left by a run without -B)
                 with open(os.path.join(base, g, fn), errors="replace") as f:
                     n += "${BKO_TESTVM:-" in f.read()
         self.assertEqual(n, 82)   # (77, and the five arm64 checks of docs/design/arm64.md A6)

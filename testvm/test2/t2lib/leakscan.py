@@ -19,7 +19,9 @@ they enter the repository; nothing found may stay.  Two parts:
                (redact.rs:475)
       ip       private and link-local addresses: 10/8, 172.16/12, 192.168/16,
                169.254/16, fe80::/10, fc00::/7
-      email    an e-mail address
+      email    an e-mail address; not a systemd template unit's instance
+               (getty@tty1.service, a mount table's /run/credentials/...): its
+               last label a unit type, service, socket, target and the like
       key      a private key (BEGIN ... PRIVATE KEY) or an SSH public key
       host     the test hosts' names, chopin, cinqcent, copland, cage, choubox and
                bigfoot (cage as a word only); allowed in index.tsv
@@ -91,6 +93,8 @@ _MAC_EFI = re.compile(r"MAC[:(]([%s]{12})(?![%s])" % (_HEX, _HEX))
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\d|\.\d)")
 _IPV6 = re.compile(r"(?<![%s:])(?:[%s]{0,4}:){2,7}[%s]{0,4}(?![%s:])" % ((_HEX,) * 4))
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# systemd's unit types (systemd.unit(5)): NAME@INSTANCE.TYPE is a template unit's instance, no address.
+UNIT_TYPES = ("service", "socket", "device", "mount", "automount", "swap", "target", "path", "timer", "slice", "scope")
 # A bare build signature, user@host:/path (no dotted domain, so not _EMAIL's); host1 is a pseudonym.
 _BUILDSIG = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@(?!host\d+:)[A-Za-z0-9-]+:/")
 _KEY = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|(?:ssh-ed25519|ssh-rsa|ssh-dss|ecdsa-sha2-nistp\d+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) AAAA")
@@ -210,6 +214,8 @@ def pattern_spans(text, allow_hosts=False):
                 out.append((m.start(), m.end(), "ip", "IPv6 %s" % ("link-local" if a.is_link_local else "unique-local")))
     if "@" in text:
         for m in _EMAIL.finditer(text):
+            if m.group(0).rsplit(".", 1)[1] in UNIT_TYPES:
+                continue
             out.append((m.start(), m.end(), "email", "an e-mail address"))
         for m in _BUILDSIG.finditer(text):
             out.append((m.start(), m.end() - 2, "host", "a build signature's user@host"))

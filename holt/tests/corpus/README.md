@@ -474,7 +474,7 @@ boot run `update-initramfs -u -k all`, `grub-install --target=x86_64-efi
 --bootloader-id=ubuntu --no-nvram` and `update-grub` with os-prober off,
 then make the `elementary OS 8` NVRAM entry for `\EFI\ubuntu\shimx64.efi`.
 Their `scrubbed` 8 is step 3's e-mail scrub of the ESP's GRUB locale
-files named NAME@VARIANT.mo (`sr@latin.mo` and the like) in
+files named NAME@VARIANT with a `.mo` suffix (`sr@latin` and the like) in
 `EFI/ubuntu/grub/locale`: each becomes the path
 `EFI/ubuntu/grub/locale/builder-at-redacted`, so the ESP's file list has
 eight files at that one path, their sizes kept (load only looks names up
@@ -548,7 +548,7 @@ raw dumps are), for each dump:
    `builder-at-redacted`: redact.rs has no kind for them, and two dumps
    carry a kernel build signature (alpinebsd's and netbsd11's
    `os.kernel_version`, NetBSD's build address), as are the eight GRUB
-   locale names, NAME@VARIANT.mo, on elementary8's and elementary8-luks's
+   locale names, NAME@VARIANT with a `.mo` suffix, on elementary8's and elementary8-luks's
    ESPs.  A word of
    `os.kernel_version` or `os.kernel_release` (which redact.rs leaves as
    they are) that is a hostname redact.rs replaced becomes that hostname's

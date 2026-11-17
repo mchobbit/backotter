@@ -88,6 +88,10 @@ class Patterns(unittest.TestCase):
     def test_email_keys_hosts(self):
         self.assertEqual(classes([leakscan.Finding("f", "w", c, s) for c, s in leakscan.pattern_findings("builds@mkrepro.example.org", False)]), ["email"])
         self.assertEqual(leakscan.pattern_findings("builder-at-redacted", False), [])
+        # A systemd template unit's instance is no address; an address under such a name still is.
+        self.assertEqual(leakscan.pattern_findings("/run/credentials/serial-getty@ttyS0.service rw getty@tty1.service "
+                                                   "dirmngr@etc-pacman.d-gnupg.socket systemd-fsck@dev-vda2.service", False), [])
+        self.assertEqual([c for c, _ in leakscan.pattern_findings("ops@service.example.org", False)], ["email"])
         for t in ("-----BEGIN OPENSSH PRIVATE KEY-----", "ssh-ed25519 AAAAC3NzaC1", "ssh-rsa AAAAB3Nza"):
             self.assertEqual([c for c, _ in leakscan.pattern_findings(t, False)], ["key"], t)
         self.assertEqual([c for c, _ in leakscan.pattern_findings("the CHOPIN host and cinqcent.local", False)], ["host", "host"])

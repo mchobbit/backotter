@@ -174,7 +174,9 @@ class Driver(unittest.TestCase):
 
     def test_the_key_goes_at_the_rebuilds_end(self):
         ht = src("ht1.sh")
-        self.assertRegex(ht, r'vm_down "\$rkey"\n    rm -f "\$R/rescuer\.qcow2" "\$R/img-key" "\$R/img-key\.pub"')
+        # (after the rescuer goes down, BackShot2's chain saved first: 451bb1e)
+        self.assertRegex(ht, r'vm_down "\$rkey"(?:; fi)?\n(?:    [^\n]*\n){0,3}'
+                             r'    rm -f "\$R/rescuer\.qcow2" "\$R/img-key" "\$R/img-key\.pub"\n\}')
 
     def test_no_key_survives_to_k(self):
         # ht_end calls ht_release before R goes to K: the key can't be moved there.

@@ -32,7 +32,7 @@ OSES = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "omnios", "illumos
 STIC_OS = {"freebsd15": "freebsd", "freebsd15-ufs": "freebsd", "hardenedbsd15": "freebsd", "ghostbsd26": "freebsd",
            "ghostbsd26-zfs": "freebsd", "hardenedbsd15-zfs": "freebsd", "freebsd14": "freebsd", "freebsd15-geli": "freebsd", "netbsd11": "netbsd",
            "alpinebsd": "netbsd", "openbsd8": "openbsd", "dragonfly6": "dragonfly", "omnios58": "omnios",
-           "oi2610": "omnios", "haiku6": "haiku"}
+           "oi2610": "omnios", "haiku6": "haiku", "openbsd8-crypt": "openbsd"}
 GUESTS = ("aerynos alpine324 alpinebsd arch artix-dinit artix-s6 cachyos debian12 debian13 debian13-stack debian13-zfs "
           "devuan6 dragonfly6 fedora44 fedora44-raid fedora44-uefi freebsd14 freebsd15 freebsd15-builder "
           "freebsd15-geli freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs haiku6 hardenedbsd15 hardenedbsd15-zfs mint22 mx25 "
@@ -44,6 +44,10 @@ UEFI = set("aerynos alpinebsd debian13-stack fedora44-raid fedora44-uefi freebsd
            "ubuntu26-uefi ubuntu26-zfs endeavouros endeavouros-grub manjaro ubuntu26-luks kinoite44 chimera-uefi "
            "chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos aeon ubuntu24-uefi ubuntu24-luks solus49 elementary8 elementary8-luks void-zbm void-zbm-enc".split())
 PLATS = words.PLATS
+# HoltTest2 sources whose guests aren't GuestTest2's yet (docs/design/slackware.md: the
+# guest/spec.json registration comes later): in the hosts' facts and holt/spec.json only.
+HOLT_ONLY = ["slackware15", "slackware15-uefi"]
+UEFI.add("slackware15-uefi")
 NEW_GUESTS = set("endeavouros endeavouros-grub manjaro ubuntu26-luks chimera kinoite44 fedora44-raid ubuntu26-raid rocky10-raid5 freebsd15-mirror "
                  "omnios58-mirror chimera-uefi chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 oi2610-bios pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos aeon ubuntu24-uefi ubuntu24-luks solus49 elementary8 elementary8-luks hardenedbsd15-zfs void-zbm void-zbm-enc".split())
 PM = {"apt": "debian12 debian13 debian13-stack debian13-zfs devuan6 mint22 mx25 pop24 ubuntu24 ubuntu26-raid ubuntu26-uefi "
@@ -290,7 +294,7 @@ class World:
                              "harness": ["testvm/holttest1d/ht1.sh", "testvm/holttest1d/ht1-offline.sh"],
                              "judge": ["testvm/holttest1d/judge.py"], "rescuer": ["rescuer.qcow2"]}}
         entries = {}
-        for g in GUESTS:
+        for g in GUESTS + HOLT_ONLY:
             # (aeon: a SticTest check and a guest, no HoltTest2 source until its
             # golden plan: docs/design/aeon.md, A3.)
             if g in ("freebsd15-builder", "freebsd15-ufs", "aeon"):

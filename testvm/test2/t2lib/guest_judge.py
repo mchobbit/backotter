@@ -752,11 +752,25 @@ def _beadm(lines):
     return out
 
 
+BE_BACKUP = re.compile(r"(.+)-backup-\d+$")
+
+
+def _newest_be(bes):
+    """The newest of BES that isn't a backup: pkg update, when it updates the running BE in place,
+    first clones it as NAME-backup-N (omnios58, t2v-20261117T1639-dc6b), which is never to boot."""
+    names = {b[0] for b in bes}
+
+    def backup(name):
+        m = BE_BACKUP.match(name)
+        return bool(m) and m.group(1) in names
+    return max([b for b in bes if not backup(b[0])] or bes, key=lambda b: b[2])
+
+
 def l_ill(sec):
     bes = _beadm(sec.cmd("beadm"))
     if not bes:
         return ["beadm lists no boot environment"]
-    top = max(bes, key=lambda b: b[2])
+    top = _newest_be(bes)
     return [] if "R" in top[1] else ["the newest boot environment isn't the one to boot next"]
 
 
@@ -1469,7 +1483,7 @@ def newest_kernel_lines(lines, rule, sec=None, steps=None):
         bes = _beadm(sec.cmd("beadm-after") if sec is not None else None)
         if not bes:
             return ["kernel unverified: beadm lists no boot environment"]
-        top = max(bes, key=lambda b: b[2])
+        top = _newest_be(bes)
         return [] if "N" in top[1] and "R" in top[1] else [NOT_NEWEST]
     if rule == "K-fbsd":
         if kv.get("k") and kv.get("r"):

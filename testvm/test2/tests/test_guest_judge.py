@@ -925,6 +925,20 @@ class NewestKernel(unittest.TestCase):
         self.assertEqual(self.k("K-ill", "a;u;;;1;static;100\nb;u;NR;/;1;static;200"), [])
         self.assertEqual(self.k("K-ill", "a;u;NR;/;1;static;100\nb;u;;;1;static;200"), [J.NOT_NEWEST])
 
+    def test_illumos_pkg_backup_be_is_not_the_newest(self):
+        # omnios58 after an in-place pkg update (t2v-20261117T1639-dc6b): pkg's backup clone is
+        # the newest BE, the updated one still boots
+        after = ("omnios-r151058;7475;;;5910528;static;1777073663\nomnios-r151058y;e6a6;NR;/;1684905984;static;1793664459\n"
+                 "omnios-r151058y-backup-1;a11f;;;294912;static;1794937376")
+        self.assertEqual(self.k("K-ill", after), [])
+        self.assertEqual(ld("L-ill", sec(("cmd beadm", after))).v, "PASS")
+        # a BE merely named so, with no BE it would back up, is a BE like any other
+        other = "a;u;NR;/;1;static;100\nz-backup-1;u;;;1;static;200"
+        self.assertEqual(self.k("K-ill", other), [J.NOT_NEWEST])
+        # nor does a backup hide a newer real BE that isn't booted
+        newer = after + "\nomnios-r151060;b0b0;;;1;static;1794937999"
+        self.assertEqual(self.k("K-ill", newer), [J.NOT_NEWEST])
+
     def test_unverified_is_a_line_not_a_pass(self):
         self.assertEqual(self.k("K-nbsd", "unverified can't read /netbsd"), ["kernel unverified: can't read /netbsd"])
 

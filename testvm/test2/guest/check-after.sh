@@ -15,6 +15,11 @@ cmd after-rules; echo "$RULES"
 # that command's process and says "is not running": FreeBSD's newsyslog (rotates once at boot,
 # cron runs it after) and NetBSD's virecover.  ht1-bsd.sh compares two readings, so it doesn't care.
 oneshot() { grep -Eq "^[[:space:]]*stop_cmd=[\"']?(:|true)[\"']?[[:space:]]*(#.*)?\$" "$1" 2>/dev/null; }
+# nodaemon SCRIPT: is this rc.d/sendmail with mailer.conf handing sendmail(8) to dma, which runs
+# no daemon?  DragonFly's MTA is dma, yet its rc.d/sendmail and rc.conf defaults are sendmail's:
+# service -e lists the script (its last top-level rcvar= is sendmail_msp_queue_enable, YES by
+# default) and status finds no sendmail_submit or clientmqueue daemon, as there is none to find.
+nodaemon() { [ "${1##*/}" = sendmail ] && grep -Eq '^[[:space:]]*sendmail[[:space:]]+[^[:space:]]*/dma([[:space:]]|$)' "${MAILER_CONF:-/etc/mail/mailer.conf}" 2>/dev/null; }
 # --- service state (ht1-bsd.sh's SERVICE_STATE and its OpenBSD and illumos forms)
 if has_rule B-lin; then
     cmd boot-state; boot_state 2>&1 | qt
@@ -23,6 +28,7 @@ elif has_rule B-bsd; then
     svc=$(service -e 2>/dev/null)
     for s in $svc; do
         oneshot "$s" && continue
+        nodaemon "$s" && continue
         o=$($s status 2>&1)
         case $o in *"is not running"*) echo "down ${s##*/}" ;; esac
     done | sort
@@ -37,7 +43,9 @@ elif has_rule B-ill; then
     cmd boot-state
     i=0
     while svcs -H -o state | grep -q '\*' && [ $i -lt 60 ]; do sleep 2; i=$((i + 1)); done
-    svcs -H -o state,fmri | awk '$1 != "online" && $1 != "disabled" { print "down " $2 }' | sort
+    # legacy_run is an /etc/rc?.d script SMF ran at boot (an lrc: FMRI): ran is all a legacy
+    # script can be, as illumos' own S20sysetup, S81dodatadm_udaplt and S89PRESERVE are
+    svcs -H -o state,fmri | awk '$1 != "online" && $1 != "disabled" && $1 != "legacy_run" { print "down " $2 }' | sort
     n=$(($(svcs -H -o state 2>/dev/null | wc -l)))
     if [ "$n" -gt 0 ]; then echo "ok $n services checked"; else echo "error svcs lists nothing"; fi
 elif has_rule B-alpbsd; then

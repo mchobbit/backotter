@@ -119,7 +119,7 @@ class Spec(unittest.TestCase):
         from t2lib import guest_judge as J
         with open(os.path.join(REPO, "testvm/test2/guest/limits.json"), encoding="utf-8") as f:
             d = json.load(f)
-        self.assertEqual(sorted(d), ["kinoite44", "pikaos4", "pikaos4-luks", "vanilla3"])
+        self.assertEqual(sorted(d), ["kinoite44", "omnios58", "omnios58-mirror", "pikaos4", "pikaos4-luks", "vanilla3"])
         self.assertEqual(sorted(d["kinoite44"]), ["after:boot-state", "after:failed-units", "after:fstab", "image:free"])
         # PikaOS (pikaos.md): its one apt suite, pika, is rolling (sid's), with no -security suite
         for g in ("pikaos4", "pikaos4-luks"):
@@ -129,6 +129,11 @@ class Spec(unittest.TestCase):
         self.assertEqual(d["vanilla3"]["after:failed-units"]["lines"], ["failed systemd-networkd-wait-online.service"])
         self.assertEqual(d["vanilla3"]["after:boot-state"]["lines"], ["state degraded"])
         self.assertEqual(sorted(d["vanilla3"]), ["after:boot-state", "after:failed-units"])
+        # OmniOS (make-omnios.sh): cloud-init:initlocal disabled after the first boot, so the stages
+        # that require it stay offline at every boot
+        for g in ("omnios58", "omnios58-mirror"):
+            self.assertEqual(sorted(d[g]), ["after:boot-state"])
+            self.assertEqual(d[g]["after:boot-state"]["lines"], [f"down svc:/system/cloud-init:{s}" for s in ("final", "init", "modules")])
         for g in d:
             for n, e in d[g].items():
                 self.assertIn(n, J.IMAGE_NEEDS + J.AFTER_NEEDS)
@@ -171,7 +176,8 @@ class CheckAfterKernelString(unittest.TestCase):
 
 class CheckAfterBsdServices(unittest.TestCase):
     """check-after.sh's B-bsd boot-state: rc.d scripts whose stop is a no-op are boot-time tasks
-    (FreeBSD's newsyslog, NetBSD's virecover), not daemons that should be running."""
+    (FreeBSD's newsyslog, NetBSD's virecover), not daemons that should be running; nor is
+    rc.d/sendmail where mailer.conf hands sendmail to dma (DragonFly), which runs no daemon."""
 
     SCRIPTS = {
         # the guests' own, cut down (freebsd15-ufs /etc/rc.d/newsyslog, netbsd11 /etc/rc.d/virecover)
@@ -179,13 +185,19 @@ class CheckAfterBsdServices(unittest.TestCase):
         "virecover": "name=virecover\ncommand=/usr/libexec/${name}\nstop_cmd=':'\nreload_cmd=\":\"\n",
         "sshd": 'name="sshd"\ncommand="/usr/sbin/${name}"\npidfile="/var/run/${name}.pid"\n',
         "ntpd": 'name="ntpd"\ncommand="/usr/sbin/${name}"\nstop_postcmd="ntpd_poststop"\n',
+        # dragonfly6's, cut down: sendmail's own script, the last top-level rcvar the one service -e reads
+        "sendmail": 'name="sendmail"\nrcvar=`set_rcvar`\ncommand=${sendmail_program:-/usr/sbin/sendmail}\n'
+                    'name="sendmail_clientmqueue"\nrcvar="sendmail_msp_queue_enable"\n',
     }
+    # DragonFly 6.4's /etc/mail/mailer.conf, and the one sendmail itself has
+    DMA = "#\n# Set the Mail Transfer Agent for DragonFly\n#\n\nsendmail\t/usr/libexec/dma\nmailq\t\t/usr/libexec/dma\n"
+    SENDMAIL = "sendmail\t/usr/libexec/sendmail/sendmail\nmailq\t\t/usr/libexec/sendmail/sendmail\n"
 
-    def run_bsd(self, status):
+    def run_bsd(self, status, mailer=DMA):
         import subprocess
         with open(os.path.join(REPO, "testvm/test2/guest/check-after.sh"), encoding="utf-8") as f:
             text = f.read()
-        fn = re.search(r"^oneshot\(\) \{.*?\}$", text, re.M).group(0)
+        fn = "\n".join(re.search(rf"^{n}\(\) \{{.*?\}}$", text, re.M).group(0) for n in ("oneshot", "nodaemon"))
         block = text[text.index("elif has_rule B-bsd; then"):]
         block = block[:block.index("\nelif has_rule B-obsd")]
         d = tempfile.mkdtemp(prefix="t2-bsd-", dir=_tmp)
@@ -201,18 +213,59 @@ class CheckAfterBsdServices(unittest.TestCase):
             f.write("#!/bin/sh\nprintf '%s\\n' " + " ".join(paths) + "\n")
         os.chmod(os.path.join(d, "service"), 0o755)
         code = "has_rule() { return 0; }\ncmd() { echo \"=== cmd $1\"; }\n" + fn + "\nif false; then :\n" + block + "\nfi\n"
-        env = dict(os.environ, PATH=d + os.pathsep + os.environ.get("PATH", ""))
+        with open(os.path.join(d, "mailer.conf"), "w", encoding="utf-8") as f:
+            f.write(mailer)
+        env = dict(os.environ, PATH=d + os.pathsep + os.environ.get("PATH", ""), MAILER_CONF=os.path.join(d, "mailer.conf"))
         return subprocess.run(["sh", "-c", code], env=env, capture_output=True, text=True, check=True).stdout.splitlines()
 
+    UP = {"newsyslog": "is not running", "virecover": "is not running", "sshd": "is running as pid 812",
+          "ntpd": "is running as pid 640", "sendmail": "is running as pid 701"}
+
     def test_boot_time_tasks_are_not_down(self):
-        out = self.run_bsd({"newsyslog": "is not running", "virecover": "is not running",
-                            "sshd": "is running as pid 812", "ntpd": "is running as pid 640"})
-        self.assertEqual(out, ["=== cmd boot-state", "ok 4 services checked"])
+        self.assertEqual(self.run_bsd(self.UP), ["=== cmd boot-state", "ok 5 services checked"])
 
     def test_a_daemon_down_is_still_found(self):
-        out = self.run_bsd({"newsyslog": "is not running", "virecover": "is not running",
-                            "sshd": "is not running", "ntpd": "is running as pid 640"})
-        self.assertEqual(out, ["=== cmd boot-state", "down sshd", "ok 4 services checked"])
+        out = self.run_bsd(dict(self.UP, sshd="is not running"))
+        self.assertEqual(out, ["=== cmd boot-state", "down sshd", "ok 5 services checked"])
+
+    def test_sendmail_under_dma_runs_no_daemon(self):
+        # dragonfly6, t2v-20261117T1639-dc6b: "sendmail_submit is not running." with dma the MTA
+        out = self.run_bsd(dict(self.UP, sendmail="is not running"))
+        self.assertEqual(out, ["=== cmd boot-state", "ok 5 services checked"])
+
+    def test_sendmail_itself_down_is_still_found(self):
+        out = self.run_bsd(dict(self.UP, sendmail="is not running"), mailer=self.SENDMAIL)
+        self.assertEqual(out, ["=== cmd boot-state", "down sendmail", "ok 5 services checked"])
+
+
+class CheckAfterIllumosServices(unittest.TestCase):
+    """check-after.sh's B-ill boot-state: legacy_run is a legacy rc script SMF ran at boot (lrc:),
+    not a service down; offline and maintenance are."""
+
+    # omnios58's svcs -H -o state,fmri after the update (t2v-20261117T1639-dc6b), cut down
+    SVCS = ("legacy_run     lrc:/etc/rc2_d/S20sysetup\nlegacy_run     lrc:/etc/rc2_d/S81dodatadm_udaplt\n"
+            "legacy_run     lrc:/etc/rc2_d/S89PRESERVE\nonline         svc:/network/ssh:default\n"
+            "disabled       svc:/network/smtp:sendmail\noffline        svc:/system/cloud-init:init\n"
+            "maintenance    svc:/system/fmd:default\n")
+
+    def test_legacy_run_is_not_down(self):
+        import subprocess
+        with open(os.path.join(REPO, "testvm/test2/guest/check-after.sh"), encoding="utf-8") as f:
+            text = f.read()
+        block = text[text.index("elif has_rule B-ill; then"):]
+        block = block[:block.index("\nelif has_rule B-alpbsd")]
+        d = tempfile.mkdtemp(prefix="t2-ill-", dir=_tmp)
+        with open(os.path.join(d, "states"), "w", encoding="utf-8") as f:
+            f.write(self.SVCS)
+        with open(os.path.join(d, "svcs"), "w", encoding="utf-8") as f:
+            # -H -o state, or -H -o state,fmri
+            f.write(f"#!/bin/sh\ncase $3 in state) awk '{{print $1}}' {d}/states ;; *) cat {d}/states ;; esac\n")
+        os.chmod(os.path.join(d, "svcs"), 0o755)
+        code = "has_rule() { return 0; }\ncmd() { echo \"=== cmd $1\"; }\nif false; then :\n" + block + "\nfi\n"
+        env = dict(os.environ, PATH=d + os.pathsep + os.environ.get("PATH", ""))
+        out = subprocess.run(["sh", "-c", code], env=env, capture_output=True, text=True, check=True).stdout.splitlines()
+        self.assertEqual(out, ["=== cmd boot-state", "down svc:/system/cloud-init:init", "down svc:/system/fmd:default",
+                               "ok 7 services checked"])
 
 
 class CheckAfterOstree(unittest.TestCase):

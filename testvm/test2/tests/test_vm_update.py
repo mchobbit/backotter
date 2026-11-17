@@ -311,6 +311,60 @@ class TestInGuest(unittest.TestCase):
         self.assertIn('if [ -z "$(ls /etc/openssl/certs)" ]; then', t)
         self.assertIn('if [ "$(cat /usr/pkg/etc/pkgin/repositories.conf 2>/dev/null)" != "$pkgs" ]; then', t)
         self.assertIn("if cmp -s /usr/pkg/etc/sysupgrade.conf.new /usr/pkg/etc/sysupgrade.conf; then", t)
+        self.assertIn("[ \"$(systemctl show -p LoadState --value 'xfs_healer@-.service' 2>/dev/null)\" = loaded ]; then",
+                      self.sections()["Linux.apt"])
+
+    def run_xfs_healer(self, load_state="loaded", rootfs="btrfs", systemd=True, systemctl=True, mask_rc=0):
+        """Linux.apt's xfs_healer@-.service block under stub systemctl and findmnt: LOAD_STATE,
+        what `systemctl show -p LoadState` says; ROOTFS, findmnt's FSTYPE of /.  PATH holds the
+        stubs only, so with SYSTEMCTL false there is none.  (exit status, output, systemctl calls)"""
+        d = Path(tempfile.mkdtemp(prefix="t2-xfs-healer-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        (d / "bin").mkdir()
+        (d / "run-systemd").mkdir()
+        stubs = {"findmnt": f'[ "$*" = "-no FSTYPE /" ] && echo "{rootfs}"'}
+        if systemctl:
+            stubs["systemctl"] = f"""echo "$*" >>{d}/calls
+case "$1" in
+show) echo {load_state} ;;
+mask) exit {mask_rc} ;;
+reset-failed) echo "Unit not loaded." >&2; exit 1 ;;
+esac"""
+        for name, body in stubs.items():
+            (d / "bin" / name).write_text("#!/bin/sh\n" + body + "\n")
+            (d / "bin" / name).chmod(0o755)
+        sec = self.sections()["Linux.apt"]
+        block = sec[sec.index("if [ -d /run/systemd/system ] && has systemctl &&\n            [ \"$(systemctl show -p LoadState"):]
+        block = block.replace("/run/systemd/system", str(d / ("run-systemd" if systemd else "absent")))
+        code = ('has() { command -v "$1" >/dev/null 2>&1; }\nstep() { echo "in-guest: step: $*"; }\n'
+                + block + "\necho fell-through\n")
+        r = subprocess.run(["/bin/sh", "-c", code], capture_output=True, text=True, env={"PATH": str(d / "bin")})
+        calls = (d / "calls").read_text().splitlines() if (d / "calls").exists() else []
+        return r.returncode, r.stdout, calls
+
+    def test_xfs_healer_masked_off_xfs_roots(self):
+        """xfsprogs 7.2.0 enables xfs_healer@-.service on every system, and it fails on a root
+        that isn't XFS (pikaos4-luks: btrfs on dm-crypt, "degraded" after the update's reboot)."""
+        rc, out, calls = self.run_xfs_healer()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(out.splitlines(), ["in-guest: step: xfs_healer@-.service masked: / is btrfs, not XFS",
+                                            "fell-through"])
+        self.assertEqual(calls, ["show -p LoadState --value xfs_healer@-.service", "mask xfs_healer@-.service",
+                                 "reset-failed xfs_healer@-.service"])
+
+    def test_xfs_healer_left_alone_elsewhere(self):
+        for kw in ({"rootfs": "xfs"}, {"load_state": "masked"}, {"load_state": "not-found"}, {"rootfs": ""},
+                   {"systemd": False}, {"systemctl": False}):
+            with self.subTest(**kw):
+                rc, out, calls = self.run_xfs_healer(**kw)
+                self.assertEqual((rc, out), (0, "fell-through\n"))
+                self.assertFalse([c for c in calls if not c.startswith("show ")], calls)
+
+    def test_xfs_healer_mask_that_fails_fails_the_update(self):
+        rc, out, calls = self.run_xfs_healer(mask_rc=1)
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn("fell-through", out)
+        self.assertNotIn("reset-failed xfs_healer@-.service", calls)
 
     def test_shell_parses(self):
         r = subprocess.run(["sh", "-n", str(TESTVM / "update" / "in-guest.sh")], capture_output=True, text=True)

@@ -622,6 +622,22 @@ EOF
             done
             [ -z "$miss" ] || { $apt install $miss && $apt clean || exit 1; }
         fi
+        # xfsprogs 7.2.0 (Debian sid's; pikaos4-luks takes it) enables
+        # xfs_healer@-.service, the healer for /, on every system: on a root
+        # that isn't XFS its support check exits 255, the unit fails at every
+        # boot and the guest comes up "degraded" (upstream bug, not fixed in
+        # 7.2.1 or master).  Masked where / isn't XFS (in /etc, so it stays
+        # masked); an XFS root (pikaos4) keeps it.  Nothing to do without
+        # systemd or the unit, or once masked.
+        if [ -d /run/systemd/system ] && has systemctl &&
+            [ "$(systemctl show -p LoadState --value 'xfs_healer@-.service' 2>/dev/null)" = loaded ]; then
+            rootfs=$(findmnt -no FSTYPE / 2>/dev/null)
+            if [ -n "$rootfs" ] && [ "$rootfs" != xfs ]; then
+                step "xfs_healer@-.service masked: / is $rootfs, not XFS"
+                systemctl mask 'xfs_healer@-.service' >/dev/null || exit 1
+                systemctl reset-failed 'xfs_healer@-.service' >/dev/null 2>&1 || :
+            fi
+        fi
     # t2-section: Linux.ostree
     elif [ -e /run/ostree-booted ] && has rpm-ostree; then
         # An image-mode system (Fedora's atomic desktops, Bazzite; kinoite44):

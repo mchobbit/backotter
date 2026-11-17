@@ -185,12 +185,33 @@ SOLUS_GLOBS = ["boot/EFI/com.solus-project/kernel-com.solus-project.*", "boot/EF
 # every boot, and BackShot1 compares after the restored system's first boot
 # (HoltTest1 compares the tree before any boot, so judge.py holds its bytes).
 # It must still be there, a regular file; its content, size and mtime may move.
+# A baseline without one comes back with one: systemd's random-seed handling
+# writes it at a boot that finds none (solus-4.9-20261117-202222), so added
+# is expected too, as a regular file.
 SOLUS_PRESENT = ["boot/loader/random-seed"]
+
+# Solus's qol-assist: eopkg's updates leave QOL_TRIGGER, and
+# qol-assist-migration.service runs `qol-assist migrate` at the next boot
+# (usermod -aG input, groupmod on users and wheel) and removes it.  A baseline
+# that lists it had migrations pending, which the restored system's first boot
+# made (solus-4.9-20261117-202222): then the trigger is expected gone, and
+# these files changed.  Only then; bs1-adopt runs them since.
+QOL_TRIGGER = "var/lib/qol-assist/trigger"
+QOL_EXPECTED = ["etc/group", "etc/group-", "etc/gshadow", "etc/gshadow-", QOL_TRIGGER]
 
 
 def present_same(a, b):
     """A SOLUS_PRESENT path's rows, before and after: both regular files."""
     return stat.S_ISREG(int(a[0], 8)) and stat.S_ISREG(int(b[0], 8))
+
+
+def held_ok(label, p, old, new, present):
+    """Whether a held (kept) path's difference is still all right: a changed
+    one with the same type and bytes, or a SOLUS_PRESENT one still (or now,
+    added at a boot) a regular file."""
+    if label == "changed":
+        return kept_same(old[p], new[p]) or (p in present and present_same(old[p], new[p]))
+    return label == "added" and p in present and stat.S_ISREG(int(new[p][0], 8))
 
 
 def solus_lacks(rows):
@@ -616,6 +637,10 @@ def compare(old_path, new_path, reformatted=False):
         held = held + SOLUS_KEPT
         n = sum(1 for p in old if any(fnmatch.fnmatch(p, pat) for pat in SOLUS_KEPT))
         print(f"Solus: its ESP at /boot held to the baseline's bytes: {n} paths of EFI/com.solus-project, EFI/BOOT, loader/ and solus-enroll-me.cer")
+    qol = QOL_EXPECTED if QOL_TRIGGER in old else []
+    if qol:
+        print(f"Solus: qol-assist's migrations were pending at the backup ({QOL_TRIGGER}), so the first boot's are expected: "
+              f"{' '.join(qol)}")
     if apre:
         held = held + ABROOT_KEPT
         n = sum(1 for p in old if any(fnmatch.fnmatch(p, pat) for pat in ABROOT_KEPT))
@@ -627,9 +652,9 @@ def compare(old_path, new_path, reformatted=False):
         print("xattrs: this baseline has none, so they weren't compared")
     bad = [f"Solus: the baseline lacks {p} (was its ESP mounted at /boot?)" for p in lacks]
     for label, paths in (("missing", missing), ("added", added), ("changed", changed), ("xattrs", relabeled)):
-        unexpected = [p for p in paths if kept(p, held) and (label != "changed" or not (kept_same(old[p], new[p])
-                                                                                     or (p in present and present_same(old[p], new[p]))))]
+        unexpected = [p for p in paths if kept(p, held) and not held_ok(label, p, old, new, present)]
         unexpected += [p for p in paths if not kept(p, held) and not expected(p, store, mapping[label], label == "added", amapping[label]) and p not in snapper
+                       and p not in qol
                        and not (reformatted and any(fnmatch.fnmatch(p, pat) for pat in REFORMAT_EXPECTED))
                        and not (label == "xattrs" and relabeled_boot(p, old[p], new[p]))]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")

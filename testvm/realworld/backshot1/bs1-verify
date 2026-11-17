@@ -108,11 +108,31 @@ ABROOT_TOOL=$HERE/bs1-abroot
 rpm_ostree_same() {
     diff <(grep '^rpm-ostree ' "$RUN/baseline/deployments.txt") <(python3 "$OSTREE_TOOL" rpm-ostree)
 }
-packages_same() { package_list | cmp - "$RUN/baseline/packages.txt"; }
+# same_as FILE: whether stdin is FILE's bytes, with a diff from FILE in the
+# log if not.  Not cmp: Solus 4.9 ships without diffutils, and an install
+# adopted before bs1-adopt added it still has to verify
+# (solus-4.9-20261117-202222).  python3 is there: bs1-manifest needs it.
+same_as() {
+    python3 -c '
+import difflib, sys
+now = sys.stdin.buffer.read()
+try:
+    with open(sys.argv[1], "rb") as f:
+        then = f.read()
+except OSError as e:
+    sys.exit(f"{sys.argv[1]}: {e.strerror}")
+if now == then:
+    sys.exit(0)
+lines = lambda b: b.decode("utf-8", "replace").splitlines(True)
+sys.stdout.writelines(difflib.unified_diff(lines(then), lines(now), sys.argv[1], "now"))
+sys.exit(1)
+' "$1"
+}
+packages_same() { package_list | same_as "$RUN/baseline/packages.txt"; }
 swap_same() {
     local how=
     grep -qs '^/dev/dm-' "$RUN/baseline/swap-names.txt" && how=raw
-    swap_names ${how:+"$how"} | cmp - "$RUN/baseline/swap-names.txt"
+    swap_names ${how:+"$how"} | same_as "$RUN/baseline/swap-names.txt"
 }
 # From the firmware's variables themselves: AerynOS has no efibootmgr to ask.
 booted_the_restored_esp() {

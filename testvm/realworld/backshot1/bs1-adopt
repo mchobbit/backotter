@@ -133,6 +133,25 @@ solus_presets() {
         "enable sshd.service" "enable avahi-daemon.service" "enable avahi-daemon.socket" >/etc/systemd/system-preset/50-backshot1.preset
 }
 
+# eopkg's updates leave /var/lib/qol-assist/trigger, and
+# qol-assist-migration.service (ConditionPathExists on it) runs `qol-assist
+# migrate` at the next boot: usermod -aG input and groupmod, so etc/group and
+# etc/gshadow change.  A backup taken before that reboot had it pending, and
+# the restored system's first boot made those changes
+# (solus-4.9-20261117-202222).  So they're made now, after the last eopkg
+# transaction, and adopt leaves nothing pending.
+solus_qol() {
+    local trigger=/var/lib/qol-assist/trigger
+    if [[ ! -e $trigger ]]; then
+        echo "none pending"
+        return 0
+    fi
+    "$(command -v qol-assist || echo /usr/sbin/qol-assist)" migrate ||
+        { echo "bs1-adopt: qol-assist migrate failed" >&2; exit 1; }
+    rm -f "$trigger"
+    echo "qol-assist migrate ran; nothing is pending for the next boot"
+}
+
 start_runit() {     # start_runit NAME: a service just linked in takes runsvdir a few seconds to notice
     local dir=/etc/sv live=/var/service i
     if [[ -d /etc/runit/sv ]]; then dir=/etc/runit/sv live=/run/runit/service; fi   # Artix
@@ -256,6 +275,10 @@ install_tools() {
             solus) eopkg_add efibootmgr ;;
         esac
     fi
+    # Solus 4.9 ships without diffutils (no cmp or diff; comm is coreutils').
+    # bs1-verify no longer needs them (same_as), but the first Thinkpad run's
+    # verify did (solus-4.9-20261117-202222), and comparing by hand wants them.
+    if [[ $distro == solus ]] && ! command -v cmp >/dev/null; then eopkg_add diffutils; fi
 }
 
 allow_root_key_login() {
@@ -448,6 +471,11 @@ else
     start_mdns
     echo "== the firewall, if one is on"
     open_firewall
+fi
+# After start_mdns, whose avahi install is the last eopkg transaction.
+if [[ $distro == solus ]]; then
+    echo "== Solus: qol-assist's migrations, pending for the next boot"
+    solus_qol
 fi
 
 echo "== LUKS: unlocking from the backup drive"

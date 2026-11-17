@@ -356,7 +356,7 @@ initramfs.  So `verify` holds the whole ESP to the baseline's bytes
 to be there, a regular file (`SOLUS_PRESENT`).  It fails if
 the baseline lacks the ESP's loaders, a kernel, an initrd or an entry.  The
 package list is eopkg's database, `/var/lib/eopkg/package/NAME-VER-REL`.
-It goes on the Thinkpad from Solus's own GUI installer (ext4, no LUKS:
+It goes on the Thinkpad from Solus's own GUI installer (ext4 or F2FS, no LUKS:
 `bs1-luks` has no arm for Solus's prebuilt initrd, which nothing on the
 machine rebuilds).
 `bs1-adopt` installs `openssh-server` and `avahi` with `eopkg it` (after
@@ -364,10 +364,29 @@ machine rebuilds).
 partial update), and first writes `/etc/systemd/system-preset/50-backshot1.preset`
 enabling sshd and avahi-daemon, since Solus's presets end with `disable *`
 and usysconf applies them again after every eopkg transaction.  Plumbed
-2026-11-15; neither the `bs1-qemu.py --virtio` rehearsal on `solus49` nor
-the Thinkpad run has been done.  The rehearsal's firmware has no Secure
-Boot (OVMF_CODE_4M), so `solus49`'s `--mok` isn't used there: the restored
-ESP's boot under Secure Boot is HoltTest1's check (S5).
+2026-11-15.  The first Thinkpad run (solus-4.9-20261117-202222, F2FS root)
+restored and booted, and its verify failed three checks, all the harness's:
+- Solus 4.9 ships without diffutils, so `verify`'s swap and package checks
+  had no `cmp`: they compare with `same_as` (Python) now, and `bs1-adopt`
+  installs `diffutils` when `cmp` is missing.
+- `eopkg up` leaves `/var/lib/qol-assist/trigger`, and
+  qol-assist-migration.service ran `qol-assist migrate` at the restored
+  system's first boot (`usermod`, `groupmod`), changing `etc/group`,
+  `etc/gshadow` and their `-` backups: `bs1-adopt` now runs the migration
+  itself after its last eopkg transaction and removes the trigger, and
+  `bs1-manifest` expects those four files changed, and the trigger gone,
+  when the baseline lists the trigger (`QOL_EXPECTED`).
+- The baseline had no `loader/random-seed`, and the restored boot wrote
+  one: a `SOLUS_PRESENT` path added as a regular file is expected; one
+  missing after, or not a regular file, still fails.
+
+With those fixes the same restore's re-verify passed on 2026-11-17
+(341,494 files compared, none unexpected), unattended, no LUKS.
+
+The `bs1-qemu.py --virtio` rehearsal on `solus49` hasn't been done.  Its
+firmware has no Secure Boot (OVMF_CODE_4M), so `solus49`'s `--mok` isn't
+used there: the restored ESP's boot under Secure Boot is HoltTest1's check
+(S5).
 
 ## ABRoot: Vanilla OS's two roots
 

@@ -8,6 +8,10 @@ freeze. Written after Cage froze twice on 2026-11-16 (16:00 idle, 22:13
 under light load): ping answered, sshd closed new connections, and its own
 journal just stopped.
 
+It runs beside `testvm/farm-monitor/` (live journal upload, netconsole, a
+15 s heartbeat): farm-monitor has the moment of a freeze, these batches the
+host's state around it (memory, pressure, SMART, D-state stacks, reservations).
+
 ## Where things are
 
 | what | where |

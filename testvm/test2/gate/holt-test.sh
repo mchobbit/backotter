@@ -28,7 +28,7 @@
 #   redact-corpus  BKO_HOLT_DUMPS=holt/tests/corpus cargo test --test redact_dumps
 # A step whose test file, corpus or raw dumps aren't there is "skip" with
 # the reason as its NOTE.  info.txt: rustc, cargo, the copy's COMMIT, the
-# RAM directory's peak (ram_peak_kib, sampled every 10 s).
+# RAM directory's peak (ram_peak_kib, sampled every 0.2 s).
 #
 # Exit: 0 when every step ran to its end (steps.tsv says how each went);
 # 2 when it refused (no cargo, no --out, no holt tree).
@@ -83,11 +83,14 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'trap "" INT TERM HUP; exit 130' INT TERM HUP
-# The RAM directory's peak, every 10 s.
+# The RAM directory's peak, every 0.2 s: the tests' temporary trees come and
+# go within seconds, and a 10 s sampler read 3.3 and 8.7 GiB of a 19 GiB peak.
+# du -sk counts allocated blocks, which is what tmpfs spends (sparse images
+# count only their data).
 ( peak=0; while :; do
       k=$(du -sk "$ram" 2>/dev/null | cut -f1)
       [[ ${k:-0} -gt $peak ]] && { peak=$k; echo "$peak" >"$ram/.peak.new" && mv -f "$ram/.peak.new" "$ram/.peak"; }
-      sleep 10
+      sleep 0.2
   done ) &
 sampler=$!
 

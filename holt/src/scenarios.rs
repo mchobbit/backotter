@@ -5049,41 +5049,51 @@ fn slackware15_uefi_guest() {
 }
 
 /// Every scenario's dump, by name, for tests that must hold over all of
-/// them (load's fit.rs).
+/// them (load's fit.rs).  Each tree is built, dumped and dropped before the
+/// next: held all at once they were ~3.5 GiB of tmpfs.
 pub fn dumps() -> Vec<(&'static str, Value)> {
-    let (zfs, runner) = zfs_root_tree();
-    vec![
-        ("bios_btrfs", run(&bios_btrfs(), true, bios_btrfs_runner())),
-        ("uefi_shim", run(&uefi_shim(), true, FakeRunner::default())),
-        ("luks_lvm", run(&luks_lvm_tree(), true, FakeRunner::default())),
-        ("thin_lvm", run(&thin_lvm_tree(), true, thin_lvm_runner())),
-        ("vanilla", run(&vanilla_tree(true), true, vanilla_runner())),
-        ("vanilla_fresh", run(&vanilla_tree(false), true, vanilla_runner())),
-        ("md_raid1", run(&md_raid1_tree(), true, FakeRunner::default())),
-        ("zfs_root", run(&zfs, true, runner)),
-        ("whole_disk_fs", run(&misc_tree(), true, FakeRunner::default())),
-        ("kinoite_ostree", run(&kinoite_ostree(), true, kinoite_runner())),
-        ("gentoo_thinkpad", run(&gentoo_thinkpad(), true, FakeRunner::default())),
-        ("pikaos", run(&pikaos(), true, FakeRunner::default())),
-        ("biglinux", run(&biglinux(), true, biglinux_runner())),
-        ("anduinos", run(&anduinos(), true, anduinos_runner())),
-        ("kali", run(&kali(), true, FakeRunner::default())),
-        ("neon", run(&neon(), true, FakeRunner::default())),
-        ("elementary", run(&elementary(false), true, FakeRunner::default())),
-        ("elementary_luks", run(&elementary(true), true, FakeRunner::default())),
-        ("slackware15", run(&slackware15(), true, FakeRunner::default())),
-        ("slackware15_uefi", run(&slackware15_uefi(), true, FakeRunner::default())),
-        ("proxmox", { let (t, r) = proxmox(false); run(&t, true, r) }),
-        ("proxmox_mirror", { let (t, r) = proxmox(true); run(&t, true, r) }),
-        ("guix_uefi", run(&guix_uefi(), true, FakeRunner::default())),
-        ("guix_bios", run(&guix_bios(), true, guix_bios_runner())),
-        ("truenas", { let (t, r) = truenas(false); run(&t, true, r) }),
-        ("truenas_mirror", { let (t, r) = truenas(true); run(&t, true, r) }),
-        ("zfsbootmenu", { let (t, r) = zfsbootmenu(false); run(&t, true, r) }),
-        ("zfsbootmenu_enc", { let (t, r) = zfsbootmenu(true); run(&t, true, r) }),
-        ("qubes", { let (t, r) = qubes_tree(); run(&t, true, r) }),
-    ]
+    DUMPS.iter().map(|(n, f)| (*n, f())).collect()
 }
+
+/// One scenario's dump by its name in `dumps`, built alone.
+pub fn dump(name: &str) -> Value {
+    let (_, f) = DUMPS.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no scenario {name}"));
+    f()
+}
+
+type Dump = (&'static str, fn() -> Value);
+
+const DUMPS: &[Dump] = &[
+    ("bios_btrfs", || run(&bios_btrfs(), true, bios_btrfs_runner())),
+    ("uefi_shim", || run(&uefi_shim(), true, FakeRunner::default())),
+    ("luks_lvm", || run(&luks_lvm_tree(), true, FakeRunner::default())),
+    ("thin_lvm", || run(&thin_lvm_tree(), true, thin_lvm_runner())),
+    ("vanilla", || run(&vanilla_tree(true), true, vanilla_runner())),
+    ("vanilla_fresh", || run(&vanilla_tree(false), true, vanilla_runner())),
+    ("md_raid1", || run(&md_raid1_tree(), true, FakeRunner::default())),
+    ("zfs_root", || { let (t, r) = zfs_root_tree(); run(&t, true, r) }),
+    ("whole_disk_fs", || run(&misc_tree(), true, FakeRunner::default())),
+    ("kinoite_ostree", || run(&kinoite_ostree(), true, kinoite_runner())),
+    ("gentoo_thinkpad", || run(&gentoo_thinkpad(), true, FakeRunner::default())),
+    ("pikaos", || run(&pikaos(), true, FakeRunner::default())),
+    ("biglinux", || run(&biglinux(), true, biglinux_runner())),
+    ("anduinos", || run(&anduinos(), true, anduinos_runner())),
+    ("kali", || run(&kali(), true, FakeRunner::default())),
+    ("neon", || run(&neon(), true, FakeRunner::default())),
+    ("elementary", || run(&elementary(false), true, FakeRunner::default())),
+    ("elementary_luks", || run(&elementary(true), true, FakeRunner::default())),
+    ("slackware15", || run(&slackware15(), true, FakeRunner::default())),
+    ("slackware15_uefi", || run(&slackware15_uefi(), true, FakeRunner::default())),
+    ("proxmox", || { let (t, r) = proxmox(false); run(&t, true, r) }),
+    ("proxmox_mirror", || { let (t, r) = proxmox(true); run(&t, true, r) }),
+    ("guix_uefi", || run(&guix_uefi(), true, FakeRunner::default())),
+    ("guix_bios", || run(&guix_bios(), true, guix_bios_runner())),
+    ("truenas", || { let (t, r) = truenas(false); run(&t, true, r) }),
+    ("truenas_mirror", || { let (t, r) = truenas(true); run(&t, true, r) }),
+    ("zfsbootmenu", || { let (t, r) = zfsbootmenu(false); run(&t, true, r) }),
+    ("zfsbootmenu_enc", || { let (t, r) = zfsbootmenu(true); run(&t, true, r) }),
+    ("qubes", || { let (t, r) = qubes_tree(); run(&t, true, r) }),
+];
 
 // ---- illumos: OpenIndiana -------------------------------------------------
 

@@ -209,7 +209,7 @@ mod tests {
     use crate::load::Stage;
 
     pub(crate) fn kinoite() -> Value {
-        crate::scenarios::dumps().into_iter().find(|(n, _)| *n == "kinoite_ostree").unwrap().1
+        crate::scenarios::dump("kinoite_ostree")
     }
 
     fn plan(v: &Value, extra: &[&str]) -> crate::load::commands::Built {

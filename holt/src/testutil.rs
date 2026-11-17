@@ -31,6 +31,40 @@ impl Drop for TempDir {
     }
 }
 
+/// Writes `data` to `p`, leaving its all-zero 4 KiB blocks as holes.  The
+/// scenario disk images are mostly zeros (tens of MiB each, and each
+/// partition's slice again under /dev): written whole they filled the tmpfs
+/// the tests run in by gigabytes.  Reads see the same bytes.
+fn write_sparse(p: &Path, data: &[u8]) {
+    use std::os::unix::fs::FileExt;
+    const BLOCK: usize = 4096;
+    if data.len() < 16 * BLOCK {
+        std::fs::write(p, data).unwrap();
+        return;
+    }
+    let f = std::fs::File::create(p).unwrap();
+    let mut i = 0;
+    while i < data.len() {
+        let end = (i + BLOCK).min(data.len());
+        if data[i..end].iter().all(|&b| b == 0) {
+            i = end;
+            continue;
+        }
+        // A run of blocks that hold data, written at once.
+        let mut j = end;
+        while j < data.len() {
+            let e = (j + BLOCK).min(data.len());
+            if data[j..e].iter().all(|&b| b == 0) {
+                break;
+            }
+            j = e;
+        }
+        f.write_all_at(&data[i..j], i as u64).unwrap();
+        i = j;
+    }
+    f.set_len(data.len() as u64).unwrap();
+}
+
 /// A fake root directory.  Paths are given absolute ("/sys/block/sda/size")
 /// and land under the tree's own directory.
 pub struct Tree {
@@ -50,7 +84,7 @@ impl Tree {
     pub fn file(&self, abs: &str, content: impl AsRef<[u8]>) -> &Tree {
         let p = self.p(abs);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(p, content).unwrap();
+        write_sparse(&p, content.as_ref());
         self
     }
     pub fn dir(&self, abs: &str) -> &Tree {

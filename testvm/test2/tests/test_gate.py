@@ -155,8 +155,8 @@ class LayersJson(unittest.TestCase):
         self.assertEqual(sorted(n for n, x in e.items() if x["part"] == "fast"),
                          sorted(["holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic",
                                  "bin:abi", "bin:static", "bin:version", "selftest"]))
-        self.assertEqual(e["holt"]["reserve"], [4, 4])   # its peak was 3.3 GiB on 2026-11-17
-        self.assertTrue(e["holt"]["peak_reserve"])
+        self.assertEqual(e["holt"]["reserve"], [2, 4])   # fixed; the whole job peaks at 1.1 GiB (2026-11-17)
+        self.assertFalse(e["holt"].get("peak_reserve"))
         self.assertEqual(e["loop:linux"]["reserve"], [14, 4])   # 6 x HOST_JOBS + 2, HOST_JOBS 2
         self.assertEqual(e["loop:sparse"]["reserve"], [20, 4])  # IMG_GB 16 + 4
 
@@ -990,7 +990,7 @@ class RunnerFailures(unittest.TestCase):
         self.assertNotEqual(r["verdict"], "PASS")
         self.assertTrue(all(x["needs"] == {} and x["fails"] for x in io.rows))
         # each row names the --reserve its job ran under (layers.json's [4, 4], no peaks yet)
-        self.assertEqual([x["extra"]["reserve_gib"] for x in io.rows], [[4.0, 4.0], [4.0, 4.0]])
+        self.assertEqual([x["extra"]["reserve_gib"] for x in io.rows], [[2.0, 4.0], [2.0, 4.0]])
 
     def test_a_job_waiting_in_line_is_an_answer(self):
         """A job still in cmp-run.sh's line has no .began: the poll exits 0 (not 'no answer'),

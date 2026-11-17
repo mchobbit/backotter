@@ -37,7 +37,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 . "$here/thinkpad.conf"
 
 HOST=${BS1_HOST:-thinkpad.local}
-MACS=(00:e0:4c:68:23:c3 c8:a3:62:50:99:10 84:a9:38:9f:66:52)    # two USB Ethernet adapters, the onboard port
+MACS=(00:e0:4c:68:23:c3 c8:a3:62:50:99:10 84:a9:38:9f:66:52 1c:83:41:e8:f7:38)    # two USB Ethernet adapters, the X13's onboard port, the Lenovo A100's onboard port
 STATE=${BS1_STATE:-${TMPDIR:-/tmp}/backshot1-state}
 mkdir -p "$STATE"
 KEYS=${BS1_KEYS:-$HOME/.ssh/backshot1}

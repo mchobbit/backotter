@@ -3,9 +3,13 @@
 A bare-metal backup and restore of a real laptop, driven over SSH by a Claude
 session.  The person's only jobs are booting the rescue stick and clicking Done.
 
-The machine is named in `thinkpad.conf`: the Thinkpad, on its one NVMe disk,
+The machine is named in `thinkpad.conf`: "the Thinkpad", on its one NVMe disk,
 backing up to a USB drive labelled `mybig512`.  Everything acts on the disk with
-that serial number, never on a `/dev` name.
+that serial number, never on a `/dev` name.  Since 2026-11-17 "the Thinkpad"
+is a Lenovo A100 (F0J6006UFR) with a Samsung PM9C1a 512 GB (serial
+`S7XMNF0Y787118`), still named `thinkpad`, on its onboard Ethernet
+(`1c:83:41:e8:f7:38`); the runs before that were on a ThinkPad X13 with a
+Micron 256 GB (`214532A60C34`).
 
 It handles any Linux `bko-holt` supports, on any stack of partitions, LUKS, LVM,
 md, btrfs and ZFS on that disk, booted by UEFI or BIOS (an ostree system such as
@@ -117,11 +121,14 @@ is set up:
   the X13, behind an external hub, a boot aimed at the stick by BootNext
   reached it 1 time in 5 and otherwise fell through to the internal disk; in
   a laptop port it reached it 5 times in 5.
-- The firmware's `BootMode` is `Diagnostics`; those 5 boots were all in that
-  mode, and `Quick` hasn't been tried with the stick in a laptop port.  It
-  can be set over SSH, as root, with no visit to the firmware's setup:
+- On the X13, the firmware's `BootMode` was `Diagnostics`; those 5 boots
+  were all in that mode, and `Quick` wasn't tried with the stick in a laptop
+  port.  It can be set over SSH, as root, with no visit to the firmware's
+  setup (where the firmware has `thinklmi`):
 
       echo Diagnostics > /sys/class/firmware-attributes/thinklmi/attributes/BootMode/current_value
+
+  On the A100, BootNext reached the stick on its first try (2026-11-17).
 
 - The stick and the backup drive stay plugged in, and the installed system
   (the one to start from) answers SSH.

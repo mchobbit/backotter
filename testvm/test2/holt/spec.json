@@ -38,7 +38,7 @@
       "per_guest": {
         "testvm/console-boot.py": "guests whose first passphrase file is console-passphrase or zfs-passphrase",
         "testvm/omarchy/type-luks-passphrase.py": "guests whose first passphrase file is luks-passphrase",
-        "testvm/vanilla/console-keys.py": "guests whose restored disk boots a second GRUB entry, picked on the serial menu (vm_up's GRUB_PICK: vanilla3's other root)",
+        "testvm/vanilla/console-keys.py": "guests whose restored disk boots a second GRUB entry or ZFSBootMenu boot environment, picked on the serial menu (vm_up's GRUB_PICK: vanilla3's other root, void-zbm's and void-zbm-enc's other BE, typing the passphrase first on the enc guest)",
         "testvm/holttest1d/prep/microos-tu.sh": "ht1.sh's default HT_SOURCE_PREP for microos* and aeon* (a transactional-update source's slots, rollbacks and pending update)",
         "testvm/holttest1d/grub-menu.py": "guests whose older slots ht1-tu.sh boots through GRUB's serial snapshot submenu (vm_up's GRUB_MENU: microos)",
         "testvm/holttest1d/nvboot-efivars.sh": "the UEFI guests (firmware uefi, classes.json holt.uefi): ht1.sh inlines it in NVBOOT, which runs only with a GVARS store (ht1.sh: uefi and --no-secure-boot) and reads the booted entry from efivarfs where efibootmgr is missing (Guix System)"
@@ -119,6 +119,10 @@
     "alpine324": {"kind": "linux"},
     "aerynos": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/holttest1d/nvboot-efivars.sh"]},
     "void-musl": {"kind": "linux"},
+    "void-zbm": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/holttest1d/nvboot-efivars.sh", "testvm/vanilla/console-keys.py"],
+                 "notes": "glibc Void on a ZFS root booted by ZFSBootMenu (no loader in the OS; vm-run-options --guest-vars uefi-vars.fd: a fresh variable store doesn't boot it): ht1.sh boots the restored disk through the source's NVRAM entries into BE void, then BE void-6.18 picked on ZBM's serial menu by console-keys.py; judge.py zbm holds the ESP's EFI/ZBM images, both BEs and the pool's ZBM properties (docs/design/zfsbootmenu.md Z7)"},
+    "void-zbm-enc": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/holttest1d/nvboot-efivars.sh", "testvm/vanilla/console-keys.py", "testvm/console-boot.py"],
+                     "notes": "void-zbm with zroot an encryption root (passphrase, keylocation file:///etc/zfs/zroot.key, the key file in each BE's initramfs): ht1.sh types vms/void-zbm-enc/zfs-passphrase at ZBM's prompt through console-boot.py (console-keys.py --passphrase on the menu boots), load takes it by --key-file, and judge.py zbm-boot holds each boot to one ZBM prompt and the initramfs's load-key from its file (docs/design/zfsbootmenu.md Z5, Z7)"},
     "chimera": {"kind": "linux"},
     "chimera-uefi": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/holttest1d/nvboot-efivars.sh"]},
     "chimera-zfs": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/holttest1d/nvboot-efivars.sh"]},

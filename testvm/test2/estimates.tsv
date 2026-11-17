@@ -230,6 +230,8 @@ guest	guest:vanilla3	3.32	199	0.00	-	vanillaos.md V5: vm-update --try 79 s on ch
 guest	guest:pikaos4	14.05	843	0.00	-	pikaos.md P1: vm-update --try 723 s on chopin (12.05, 637 packages) + 0.5 for checks + 1.5 for a new guest's smoke backup (est.)
 guest	guest:pikaos4-luks	13.98	839	0.00	-	pikaos.md P4: vm-update --try 719 s on chopin (11.98, 637 packages) + 0.5 for checks + 1.5 for a new guest's smoke backup (est.)
 guest	guest:void-musl	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:void-zbm	1.62	97	0.00	-	zfsbootmenu.md Test2: GuestTest2 t2v-20261117T0106-b0b8 PASS on cinqcent, 97 s (--try, image and boot checks, new-guest smoke backup; chopin's t2v-20261117T0056-8fc8 97 s)
+guest	guest:void-zbm-enc	1.60	96	0.00	-	zfsbootmenu.md Test2: GuestTest2 t2v-20261117T0106-b0b8 PASS on cinqcent, 96 s, the passphrase typed at ZBM's prompt on both boots (chopin's t2v-20261117T0056-8fc8 96 s)
 guest	guest:zorin18	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 img	img:linux	3.00	180	0.00	-	11-07 boot logs: the --test image's boot tests (the files' times)
 img	img:freebsd	1.60	96	0.00	-	11-07 boot logs: the --test image's boot tests (the files' times)
@@ -259,6 +261,8 @@ holt	holt:garuda	4.00	240	0.00	-	contract: about one Linux source, 11-14
 holt	holt:biglinux	4.00	240	0.00	-	contract: about one Linux source, 11-14
 holt	holt:proxmox9	5.82	349	0.00	-	chopin pve6-10 PASS 2026-11-14, 08:39:14 to 08:45:03 (ht1.sh, in RAM; cinqcent pve6-12 314 s)
 holt	holt:proxmox9-mirror	7.13	428	0.00	-	chopin pve6-11 PASS 2026-11-14, 08:37:43 to 08:44:51 (ht1.sh, in RAM, both disks booted alone too; cinqcent pve6-13 368 s)
+holt	holt:void-zbm	6.03	362	0.00	-	chopin z9a PASS 2026-11-16, its phases 362 s (source 68, backup 39, rebuild 163, verify 92; cinqcent's z9a 337 s), ht1.sh in RAM, both BEs booted on source and copy (zfsbootmenu.md Z7)
+holt	holt:void-zbm-enc	8.08	485	0.00	-	chopin z9a PASS 2026-11-16, its phases 485 s (source 69, backup 41, rebuild 188, verify 187; cinqcent's z9a 366 s), ht1.sh in RAM, both BEs booted, the passphrase typed at ZBM's prompt each boot (zfsbootmenu.md Z7)
 stic	stic:alpine324-arm64	2.57	154	0.00	-	as stic:alpine324 (its in-guest part), until measured on bigfoot (docs/design/arm64.md A6)
 stic	stic:debian13-arm64	6.23	374	0.00	-	as stic:ubuntu26-uefi (its in-guest part), until measured on bigfoot (A6)
 stic	stic:debian13-zfs-arm64	14.28	857	12.00	-	as stic:debian13-zfs, until measured on bigfoot (A6); gb 12: its overlay is on /bkoscratch there (over the 10 GiB RAM disk)

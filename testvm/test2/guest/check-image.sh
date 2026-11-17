@@ -174,6 +174,54 @@ if has_rule L-elilo; then
         [ -r "$m/EFI/Slackware/elilo.conf" ] && sed 's/^/conf /' "$m/EFI/Slackware/elilo.conf"
     fi
 fi
+# ZFSBootMenu (zfsbootmenu.md): ZBM's EFI images at /boot/efi, "image NAME SHA256" for each
+# EFI/ZBM/*.EFI ("esp unmounted" when nothing is there); / ("root DATASET"), its pool's bootfs,
+# uname -r and hostid; and the pool's boot environments, the datasets with mountpoint=/, each
+# read where it is mounted (the booted one) or through a read-only mount of its own here (as
+# bko-holt's dump does): "be DATASET kernel K" for each /boot/vmlinuz-K ("... no-initrd" without
+# its initramfs-K.img), "be DATASET none" with none, "be DATASET unreadable" (no read-only mount).
+if has_rule L-zbm; then
+    cmd zbm
+    m=$(findmnt -n -o TARGET /boot/efi 2>/dev/null)
+    if [ -z "$m" ]; then
+        echo "esp unmounted"
+    else
+        for f in "$m"/EFI/ZBM/*; do
+            case $f in
+            *.EFI | *.efi) [ -f "$f" ] && echo "image ${f##*/} $(sha256sum "$f" | awk '{ print $1 }')" ;;
+            esac
+        done
+    fi
+    root=$(findmnt -n -o SOURCE,FSTYPE / 2>/dev/null | awk '$2 == "zfs" { print $1 }')
+    echo "root ${root:--}"
+    echo "running $(uname -r)"
+    echo "hostid $(hostid 2>/dev/null)"
+    if [ -n "$root" ]; then
+        pool=${root%%/*}
+        echo "bootfs $(zpool get -H -o value bootfs "$pool" 2>/dev/null)"
+        zfs list -H -o name,mountpoint -t filesystem -r "$pool" 2>/dev/null | awk -F '\t' '$2 == "/" { print $1 }' |
+            while read -r be; do
+                d=
+                if [ "$be" = "$root" ]; then
+                    b=/boot
+                elif d=$(mktemp -d) && mount -t zfs -o ro,zfsutil "$be" "$d" 2>/dev/null; then
+                    b=$d/boot
+                else
+                    echo "be $be unreadable"
+                    [ -z "$d" ] || rmdir "$d"
+                    continue
+                fi
+                n=0
+                for k in "$b"/vmlinuz-*; do
+                    [ -f "$k" ] || continue
+                    v=${k##*/vmlinuz-} n=$((n + 1))
+                    if [ -e "$b/initramfs-$v.img" ]; then echo "be $be kernel $v"; else echo "be $be kernel $v no-initrd"; fi
+                done
+                [ "$n" -gt 0 ] || echo "be $be none"
+                if [ -n "$d" ]; then umount "$d" 2>/dev/null; rmdir "$d"; fi
+            done
+    fi
+fi
 if has_rule L-fbsd; then
     emit /boot/loader.conf
     cmd zfs-boot

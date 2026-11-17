@@ -2178,6 +2178,71 @@
     "established": true
    }
   },
+  "void-zbm": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-void-zfs.sh",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.xbps",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#xbps"
+   ],
+   "checks": {
+    "pm": "xbps",
+    "rules": {
+     "source": "S-xbps",
+     "loader": "L-zbm",
+     "kernel": "K-void",
+     "boot": "B-lin",
+     "mounts": "M-zfs"
+    },
+    "kernels_max": 3,
+    "zbm_images": {
+     "VMLINUZ.EFI": "d4c2af93db661730e74d923c712a699c3d9f05681329c4db4d3ca2bfb6cdf84b",
+     "VMLINUZ-BACKUP.EFI": "d4c2af93db661730e74d923c712a699c3d9f05681329c4db4d3ca2bfb6cdf84b"
+    },
+    "fw": "uefi",
+    "established": false
+   },
+   "notes": "docs/design/zfsbootmenu.md: glibc Void on a ZFS root booted by ZFSBootMenu through its own NVRAM entry (vm-run-options --guest-vars uefi-vars.fd); L-zbm holds the ESP's EFI/ZBM images to the builder's (make-void-zfs.sh's zbm-kcl'd v3.1.0 release EFI, SOURCE_DATE_EPOCH-stamped), each boot environment's kernels and initramfs, BE void booted on its newest kernel, and hostid 00bab10c; kernels_max 3: two kernel series in BE void (linux and linux7.2), and vkpurge keeps the running one through an update"
+  },
+  "void-zbm-enc": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-void-zfs.sh",
+    "testvm/console-boot.py",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.xbps",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#xbps"
+   ],
+   "checks": {
+    "pm": "xbps",
+    "rules": {
+     "source": "S-xbps",
+     "loader": "L-zbm",
+     "kernel": "K-void",
+     "boot": "B-lin",
+     "mounts": "M-zfs"
+    },
+    "kernels_max": 3,
+    "zbm_images": {
+     "VMLINUZ.EFI": "d4c2af93db661730e74d923c712a699c3d9f05681329c4db4d3ca2bfb6cdf84b",
+     "VMLINUZ-BACKUP.EFI": "d4c2af93db661730e74d923c712a699c3d9f05681329c4db4d3ca2bfb6cdf84b"
+    },
+    "fw": "uefi",
+    "established": false
+   },
+   "notes": "docs/design/zfsbootmenu.md: glibc Void on a ZFS root booted by ZFSBootMenu through its own NVRAM entry (vm-run-options --guest-vars uefi-vars.fd); L-zbm holds the ESP's EFI/ZBM images to the builder's (make-void-zfs.sh's zbm-kcl'd v3.1.0 release EFI, SOURCE_DATE_EPOCH-stamped), each boot environment's kernels and initramfs, BE void booted on its newest kernel, and hostid 00bab10c; kernels_max 3: two kernel series in BE void (linux and linux7.2), and vkpurge keeps the running one through an update; vm-update types vms/void-zbm-enc/zfs-passphrase at ZBM's prompt (its PROMPT pattern), and check-image.sh's read-only mount of BE void-6.18 needs zroot's key, loaded at boot"
+  },
   "zorin18": {
    "kind": "ssh",
    "plat": "linux",

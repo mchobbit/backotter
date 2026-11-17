@@ -331,6 +331,47 @@ class Loader(unittest.TestCase):
         self.assertEqual(self.pve(one, ids=None).lines, ["no /etc/kernel/proxmox-boot-uuids"])
         self.assertEqual(self.pve({}, ids="# nothing").lines, [J.PVE_NO_ESP])
 
+    ZBM_SHA = "d4c2af93db661730e74d923c712a699c3d9f05681329c4db4d3ca2bfb6cdf84b"
+    ZBM_OK = ("image VMLINUZ-BACKUP.EFI {s}\nimage VMLINUZ.EFI {s}\nroot zroot/ROOT/void\nrunning 7.2.15_1\nhostid 00bab10c\n"
+              "bootfs zroot/ROOT/void\nbe zroot/ROOT/void kernel 6.18.63_1\nbe zroot/ROOT/void kernel 7.2.15_1\n"
+              "be zroot/ROOT/void-6.18 kernel 6.18.63_1").format(s=ZBM_SHA)
+
+    def zbm(self, body, pins=True):
+        c = checks(loader="L-zbm")
+        if pins:
+            c["zbm_images"] = {"VMLINUZ.EFI": self.ZBM_SHA, "VMLINUZ-BACKUP.EFI": self.ZBM_SHA}
+        return J.judge_image(sec(("cmd zbm", body)), c, POLICY, updates=1)["image:loader"]
+
+    def test_zbm(self):
+        """ZFSBootMenu (zfsbootmenu.md): the ESP's EFI/ZBM images are the builder's, each boot
+        environment's /boot has kernels with their initramfs, BE void (the bootfs) runs its newest
+        kernel, and hostid is ZBM's 00bab10c."""
+        self.assertEqual(self.zbm(self.ZBM_OK).v, "PASS")
+        self.assertEqual(self.zbm(self.ZBM_OK, pins=False).v, "PASS")
+        other = "0" * 64
+        self.assertEqual(self.zbm(self.ZBM_OK.replace(f"VMLINUZ.EFI {self.ZBM_SHA}", f"VMLINUZ.EFI {other}")).lines,
+                         ["EFI/ZBM/VMLINUZ.EFI isn't the builder's image (its SHA-256 changed)"])
+        self.assertEqual(self.zbm(self.ZBM_OK.replace(f"VMLINUZ.EFI {self.ZBM_SHA}", f"VMLINUZ.EFI {other}"), pins=False).lines,
+                         [J.ZBM_IMAGES_DIFFER])
+        self.assertEqual(self.zbm(self.ZBM_OK.replace(f"image VMLINUZ-BACKUP.EFI {self.ZBM_SHA}\n", "")).lines,
+                         ["no EFI/ZBM/VMLINUZ-BACKUP.EFI on the ESP"])
+        no_esp = "\n".join(x for x in self.ZBM_OK.splitlines() if not x.startswith("image ")) + "\nesp unmounted"
+        self.assertEqual(self.zbm(no_esp).lines, [J.ZBM_NO_ESP])
+        self.assertEqual(self.zbm(self.ZBM_OK.replace("kernel 6.18.63_1\nbe zroot/ROOT/void kernel 7.2.15_1",
+                                                      "kernel 6.18.63_1\nbe zroot/ROOT/void kernel 7.2.15_1 no-initrd")).lines,
+                         [J.ZBM_BE_NO_INITRAMFS])
+        self.assertEqual(self.zbm(self.ZBM_OK.replace("be zroot/ROOT/void-6.18 kernel 6.18.63_1", "be zroot/ROOT/void-6.18 none")).lines,
+                         [J.ZBM_BE_NO_KERNEL])
+        self.assertEqual(self.zbm(self.ZBM_OK.replace("be zroot/ROOT/void-6.18 kernel 6.18.63_1", "be zroot/ROOT/void-6.18 unreadable")).lines,
+                         [J.ZBM_BE_UNREADABLE])
+        # the clone booted (ZBM's menu, or a changed bootfs), or the older series running
+        self.assertEqual(self.zbm(self.ZBM_OK.replace("bootfs zroot/ROOT/void\n", "bootfs zroot/ROOT/void-6.18\n")).lines,
+                         [J.ZBM_NOT_BOOTFS])
+        self.assertEqual(self.zbm(self.ZBM_OK.replace("running 7.2.15_1", "running 6.18.63_1")).lines, [J.ZBM_NOT_NEWEST])
+        self.assertEqual(self.zbm(self.ZBM_OK.replace("hostid 00bab10c", "hostid 1e3c938e")).lines, [J.ZBM_HOSTID_WRONG])
+        self.assertEqual(self.zbm("root -\nrunning 7.2.15_1\nhostid 00bab10c", pins=False).lines,
+                         [J.ZBM_NO_IMAGE, J.ZBM_NO_BE, J.ZBM_NOT_BOOTFS])
+
     def test_fbsd(self):
         self.assertEqual(ld("L-fbsd", sec(("file /boot/loader.conf", 'zfs_load="YES"'), ("cmd zfs-boot", "root zroot/ROOT/default\nbootfs zroot/ROOT/default"))).v, "PASS")
         self.assertEqual(ld("L-fbsd", sec(("file /boot/loader.conf", 'kernel="kernel.old"'))).v, "FAIL")

@@ -952,9 +952,76 @@ def l_elilo(sec):
     return out
 
 
+# L-zbm (ZFSBootMenu, zfsbootmenu.md): ZBM is an EFI image the OS never rebuilds, so the ESP's
+# EFI/ZBM images must be the builder's (checks.zbm_images pins each by SHA-256; without a pin they
+# must at least agree).  ZBM lists every dataset with mountpoint=/ as a boot environment and
+# boots the newest kernel in the chosen BE's own /boot, so each BE holds kernels, each with its
+# dracut initramfs-K.img; the booted BE is the pool's bootfs, on its newest kernel; and hostid(1)
+# is 00bab10c, the spl.spl_hostid ZBM's release image hands every BE.  check-image.sh's zbm lists
+# "image NAME SHA256", "esp unmounted", "root DATASET", "bootfs DATASET", "running KVER",
+# "hostid H", and per BE "be DATASET kernel K [no-initrd]", "be DATASET none" or "... unreadable".
+ZBM_HOSTID = "00bab10c"
+ZBM_NO_ESP = "nothing is mounted at /boot/efi"
+ZBM_NO_IMAGE = "no ZFSBootMenu image in the ESP's EFI/ZBM"
+ZBM_IMAGES_DIFFER = "the ESP's EFI/ZBM images differ"
+ZBM_NO_BE = "the pool has no boot environment (a dataset with mountpoint=/)"
+ZBM_BE_UNREADABLE = "a boot environment can't be mounted read-only"
+ZBM_BE_NO_KERNEL = "a boot environment has no kernel in its /boot"
+ZBM_BE_NO_INITRAMFS = "a kernel in a boot environment's /boot without its initramfs-K.img"
+ZBM_NOT_BOOTFS = "the booted boot environment isn't the pool's bootfs"
+ZBM_NOT_NEWEST = "the running kernel isn't the newest in the booted boot environment's /boot"
+ZBM_HOSTID_WRONG = f"hostid isn't ZFSBootMenu's {ZBM_HOSTID}"
+
+
+def l_zbm(sec, checks=None):
+    kv, images, bes, bad = {}, {}, {}, set()
+    for x in sec.cmd("zbm") or ():
+        f = x.split()
+        if len(f) == 3 and f[0] == "image":
+            images[f[1]] = f[2]
+        elif len(f) >= 3 and f[0] == "be":
+            ks = bes.setdefault(f[1], [])
+            if f[2] == "kernel" and len(f) >= 4:
+                ks.append(f[3])
+                if f[4:] == [NO_INITRD_MARK]:
+                    bad.add(ZBM_BE_NO_INITRAMFS)
+            elif f[2] == "none":
+                bad.add(ZBM_BE_NO_KERNEL)
+            elif f[2] == "unreadable":
+                bad.add(ZBM_BE_UNREADABLE)
+        elif f == ["esp", "unmounted"]:
+            bad.add(ZBM_NO_ESP)
+        elif len(f) == 2:
+            kv[f[0]] = f[1]
+    out = []
+    pins = (checks or {}).get("zbm_images") or {}
+    if ZBM_NO_ESP not in bad:
+        if not images:
+            out.append(ZBM_NO_IMAGE)
+        for n, h in sorted(pins.items()):
+            if n not in images:
+                out.append(f"no EFI/ZBM/{n} on the ESP")
+            elif images[n] != h:
+                out.append(f"EFI/ZBM/{n} isn't the builder's image (its SHA-256 changed)")
+        if not pins and len(set(images.values())) > 1:
+            out.append(ZBM_IMAGES_DIFFER)
+    if not bes:
+        out.append(ZBM_NO_BE)
+    out += sorted(bad)
+    root = kv.get("root")
+    if not root or root != kv.get("bootfs"):
+        out.append(ZBM_NOT_BOOTFS)
+    if bes.get(root) and kv.get("running") != newest(bes[root]):
+        out.append(ZBM_NOT_NEWEST)
+    if kv.get("hostid") != ZBM_HOSTID:
+        out.append(ZBM_HOSTID_WRONG)
+    return out
+
+
 LOADER_RULES = {"L-grub": l_grub, "L-bls": l_bls, "L-sd": l_sd, "L-limine": l_limine, "L-fbsd": l_fbsd,
                 "L-nbsd": l_nbsd, "L-obsd": l_obsd, "L-dfly": l_dfly, "L-ill": l_ill, "L-pve": l_pve,
-                "L-cbm": l_cbm, "L-lilo": l_lilo, "L-elilo": l_elilo}
+                "L-cbm": l_cbm, "L-lilo": l_lilo, "L-elilo": l_elilo, "L-zbm": l_zbm}
+LOADER_TAKES_CHECKS = {"L-zbm"}   # (its pins are the guest's: checks.zbm_images)
 
 
 # --- the other image checks --------------------------------------------------------------------
@@ -1148,7 +1215,8 @@ def judge_image(sec, checks, policy=None, updates=None):
     elif ld not in LOADER_RULES:
         out["image:loader"] = Need("FAIL", None, [f"unknown rule {ld}"])
     else:
-        out["image:loader"] = verdict_lines(LOADER_RULES[ld](sec))
+        rule = LOADER_RULES[ld]
+        out["image:loader"] = verdict_lines(rule(sec, checks) if ld in LOADER_TAKES_CHECKS else rule(sec))
     if r.get("mounts") == "M-zfs":
         out["image:zfs-cache"] = judge_zfs_cache(sec)
     out["image:free"] = judge_free(sec, policy)

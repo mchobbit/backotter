@@ -21,5 +21,5 @@ ht1 h1c cachyos mx25 cachyos-zfs
 ht1 h1g gentoo gentoo-systemd
 ht1 h1m mint22
 ht1 h1z zorin18
-ht1 h1v void-musl
+ht1 h1v void-musl void-zbm void-zbm-enc
 ht1 h1h haiku6

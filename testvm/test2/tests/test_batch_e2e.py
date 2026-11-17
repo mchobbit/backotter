@@ -347,9 +347,10 @@ class E2E(Base):
         probe (a stub) shows an empty line, room and low load, and it joins live."""
         self.real_ceilings()
         self.set_conf({"HoltTest2": {"sleep": 2}, "SticTest2": {"sleep": 0.3}})
-        f = self.file("t2 HoltTest2 hosts=copland est=10m\nt2 SticTest2 rel6 hosts=copland est=5m\n")
+        # (--holt-bin: a HoltTest2 that builds needs a big build host, which copland isn't)
+        f = self.file("t2 HoltTest2 --holt-bin=/x hosts=copland est=10m\nt2 SticTest2 rel6 hosts=copland est=5m\n")
         rows = {r["id"]: r for r in json.loads(self.t2(f, "plan", "--json").stdout)["schedule"]["rows"]}
-        self.assertEqual(rows["002-t2-stictest2-rel6"]["start"], rows["001-t2-holttest2"]["end"])
+        self.assertEqual(rows["002-t2-stictest2-rel6"]["start"], rows["001-t2-holttest2-holt-bin-x"]["end"])
         self.assertIn("shares", rows["002-t2-stictest2-rel6"]["waits"])
         live = os.path.join(self.tmp, "live.json")
         with open(live, "w") as fh:
@@ -359,7 +360,7 @@ class E2E(Base):
         r = self.t2(f, "--dirty-ok", timeout=60)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         st = self.state()
-        self.assertLess(st["002-t2-stictest2-rel6"]["started"], st["001-t2-holttest2"]["ended"])
+        self.assertLess(st["002-t2-stictest2-rel6"]["started"], st["001-t2-holttest2-holt-bin-x"]["ended"])
         self.assertIn("live join on copland", self.blog())
 
     def test_mac_away_counts_no_lock_wait(self):

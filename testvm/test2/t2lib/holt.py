@@ -173,6 +173,17 @@ def holt_rel(plat):
     return "bko-holt" if plat == "linux" else f"{plat}/bko-holt"
 
 
+def big_build_hosts(hosts, table=None):
+    """The hosts of HOSTS, in their order, a bko-holt build may run on: the host table's big
+    build hosts (role build and the table's first class: chopin, cinqcent, never a small M900,
+    which has the role for a round's units since 2026-11-14 but no room for a holt build beside
+    the run's cells).  Runner.build_hosts' rule, and t2 batch's (batchfile.refusals, the
+    scheduler's feasible sets): one predicate, so the batch never places a HoltTest2 where its
+    stop rule would end it.  Raises when the table doesn't load."""
+    role = [h for h in hosts_table.with_role("build", table) if hosts_table.class_rank(h, table) == 0]
+    return [h for h in hosts if h in role]
+
+
 def order_groups(pcs):
     """The due cells in three parts: the canaries (canary:plumbing, canary:host), the guests
     whose golden plan changed (holt:plan-diff, holt:variants), the rest.  ht1-queue.sh
@@ -603,13 +614,12 @@ class Runner:
         cells) among --hosts, in --hosts' order; else the ones that hold this run's copy
         (it builds from there).  [] when there are none."""
         try:
-            from . import hosts as hosts_table
-            role = [h for h in hosts_table.with_role("build") if hosts_table.class_rank(h) == 0]
+            mine = big_build_hosts(self.hosts)
+            if mine:
+                return mine
+            role = big_build_hosts(hosts_table.with_role("build"))
         except Exception:   # noqa: BLE001 - a table that doesn't load builds nowhere (the reason says so)
             return []
-        mine = [h for h in self.hosts if h in role]
-        if mine:
-            return mine
         return [h for h in role if ((self.rs.copy or {}).get(h) or {}).get("path")]
 
     def started_pid(self, host, pid, pidfile, needle):

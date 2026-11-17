@@ -172,6 +172,27 @@ class Refusals(unittest.TestCase):
         self.assertTrue(any("not among the batch's hosts" in x for x in r), r)
         self.assertEqual(self.R("cmd x hosts=chopin -- true\n", hosts=["chopin", "cage"]), [])
 
+    def test_holt_build_needs_a_big_build_host(self):
+        """bt-20261115T1132-e4ca: HoltTest2 on the small hosts alone stops 9 s in (holt.py's stop
+        rule); the batch refuses it first, by the same predicate, unless it has --holt-bin."""
+        r = self.R("set hosts copland,cage\nt2 HoltTest2 alpine324\n")
+        self.assertEqual(len(r), 1, r)
+        for frag in ("001-t2-holttest2-alpine324", "copland,cage", "no", "add one (chopin, cinqcent)", "--holt-bin DIR"):
+            self.assertIn(frag, r[0])
+        r = self.R("t2 HoltTest2 alpine324 hosts=copland\n")
+        self.assertTrue(any("hosts copland have none" in x and "its hosts=" in x for x in r), r)
+        self.assertEqual(self.R("set hosts copland,cage\nt2 HoltTest2 alpine324 --holt-bin=/x\n"), [])
+        self.assertEqual(self.R("set hosts copland,cinqcent\nt2 HoltTest2 alpine324\n"), [])
+        # (+img cells alone run the image's own bko-holt: nothing to build)
+        self.assertEqual(self.R("set hosts copland,cage\nt2 HoltTest2 +img\n"), [])
+        self.assertEqual(self.R("set hosts copland,cage\nt2 HoltTest2 alpine324+img\n"), [])
+        self.assertEqual(len(self.R("set hosts copland,cage\nt2 HoltTest2 alpine324 alpine324+img\n")), 1)
+        r = self.R("set hosts copland,cage\nt2 BkoTest2 rel6\n")
+        self.assertTrue(any("HoltTest2 only" in x for x in r), r)
+        self.assertEqual(self.R("set hosts copland,cage\nht1 R1 debian13\nt2 GuestTest2\n"), [])
+        self.assertEqual(bf.holt_builders(["copland", "cinqcent", "cage", "chopin"], table()), ["cinqcent", "chopin"])
+        self.assertEqual(bf.word_argv(["HoltTest2", "a", "--holt-bin", "/d", "b"]), ["HoltTest2", "a", "b"])
+
     def test_table_rows(self):
         cases = {
             "cmd bs1 -- testvm/realworld/backshot1/run.sh": "BackShot1 is real hardware",

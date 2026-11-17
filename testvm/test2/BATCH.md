@@ -14,6 +14,16 @@ t2 batch resume BATCH                         # after a crash or a closed termin
 testvm/test2/batch-keeper.sh BATCH            # resumes it in a loop until it ends (a second terminal)
 ```
 
+Before anything starts the batch refuses, every unmet item listed (exit 2), what
+`docs/design/batch.md` §4.4 and §6.1 list: a dirty or non-main checkout, a held
+lock or unfinished run, a host that fails `t2`'s preflight, a refused entry.  One
+of those: an entry that may build bko-holt linux (`t2 HoltTest2` without
+`--holt-bin` and with a cell that isn't `+img`, `t2 BkoTest2`/`SweepTest2`) whose hosts (`hosts=`, else the batch's)
+hold no big build host (role `build`, class `big` in `testvm/hosts.json`: chopin,
+cinqcent), by HoltTest2's own stop rule's predicate (`holt.big_build_hosts`); add
+one to its hosts, or give the HoltTest2 `--holt-bin DIR`.  `plan` shows the same
+refusals, and the scheduler never places such an entry on a set without one.
+
 Check `t2 batch status` before starting heavy work by hand: a running batch
 holds whole pools on its hosts (its beacon names them), and a session's own
 `t2` run always wins its family lock.

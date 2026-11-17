@@ -213,6 +213,10 @@ def _t2_profile(e, src, cap, prof):
     walls = {frozenset(sets[0]): float((full.get("totals") or {}).get("wall_s") or 0)}
     prof.srcs[bs._key(sets[0])] = "plan"
     for s in sets[1:]:
+        if prof.needs_builder and not any(cap[h].builder for h in s if h in cap):
+            walls[frozenset(s)] = None      # (batchsched.feasible refuses it too: no plan needed)
+            prof.srcs[bs._key(s)] = "not runnable: no big build host for bko-holt"
+            continue
         pj = planner.plan(e, args, s)
         if not pj:
             continue
@@ -268,7 +272,8 @@ def build(batch, hosts, cap, src):
         split = "none" if serial_all else split_of(e)
         wall, wsrc = _base_wall(e, src)
         p = bs.Profile(e.id, e.kind, e.pos, bf.locks_of(e), pools, e.is_serial or serial_all, e.after, claim,
-                       {None: wall}, wsrc, split=split, growable=(e.kind == "ht1" and split == "any"))
+                       {None: wall}, wsrc, split=split, growable=(e.kind == "ht1" and split == "any"),
+                       needs_builder=bf.builds_holt(e))
         est_given = e.est_s is not None
         try:
             if e.kind == "t2":
@@ -341,7 +346,7 @@ class T2Planner:
         try:
             from . import plan as planmod
             from . import words
-            argv = [x for x in args if not x.startswith("--")]
+            argv = bf.word_argv(args)
             w = words.parse(argv, self.known())
             w.plan = True
             base = self.ctx()

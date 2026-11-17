@@ -50,17 +50,21 @@ SPLITS = ("none", "seven", "any")
 
 class HostCap:
     """One batch host: its pools' slots, its cmp-run.sh ceiling (DISK, MEM) or None, its class
-    (big, small), whether it is the shared host (Chopin: ties go against it), its arch."""
+    (big, small), whether it is the shared host (Chopin: ties go against it), its arch, whether
+    it is a big build host (holt.big_build_hosts: where a HoltTest2 may build bko-holt)."""
 
-    def __init__(self, name, cls=None, pools=None, ceiling=None, arch="amd64", shared=False, index=0):
+    def __init__(self, name, cls=None, pools=None, ceiling=None, arch="amd64", shared=False, index=0,
+                 builder=False):
         self.name, self.cls, self.arch = name, cls, arch
         self.pools = dict(pools or {})
         self.ceiling = tuple(ceiling) if ceiling else None
         self.shared, self.index = bool(shared), index
+        self.builder = bool(builder)
 
     def to_json(self):
         return {"name": self.name, "class": self.cls, "pools": dict(self.pools),
-                "ceiling": list(self.ceiling) if self.ceiling else None, "arch": self.arch, "shared": self.shared}
+                "ceiling": list(self.ceiling) if self.ceiling else None, "arch": self.arch, "shared": self.shared,
+                "builder": self.builder}
 
 
 def ceiling_of(f):
@@ -79,6 +83,8 @@ def capacity(table, hosts, facts=None):
     """{host: HostCap} for HOSTS, in their order: each pool's slots from hosts.limits() (gate 1);
     the ceiling from FACTS ({host: facts, or [D, M]}), None when not known."""
     from . import hosts as H
+    from .holt import big_build_hosts   # (import-time pure: HoltTest2's own stop rule's predicate)
+    builders = set(big_build_hosts(list(hosts), table))
     out = {}
     for i, h in enumerate(hosts):
         lim = H.limits(h, table)
@@ -86,7 +92,7 @@ def capacity(table, hosts, facts=None):
         out[h] = HostCap(h, r.get("class"), {"stic": lim["stic_slots"], "holt": lim["holt_jobs"],
                                              "bs2": lim["bs2_slots"], "gate": 1},
                          ceiling_of((facts or {}).get(h)), H.row_arch(r) if r else "amd64",
-                         bool(set(r.get("roles") or ()) & set(SHARED_ROLES)), i)
+                         bool(set(r.get("roles") or ()) & set(SHARED_ROLES)), i, h in builders)
     return out
 
 
@@ -130,11 +136,13 @@ class Profile:
     growable  an ht1: grows onto a freed holt pool
     jobs      [Job]: what shares, feasibility and packed walls are made from
     share     {host: (D, M)}: a share given outright, overriding the jobs'
-    builds    the round its plan would build, or None (two that build the same conflict)"""
+    builds    the round its plan would build, or None (two that build the same conflict)
+    needs_builder  its run may build bko-holt linux (batchfile.builds_holt): a set takes it only
+              with a big build host in it (HostCap.builder), as HoltTest2's stop rule asks"""
 
     def __init__(self, id, kind, pos, locks=(), pools=(), serial=False, after=(), hosts=None, walls=None,
                  wall_src="default", splittable=False, growable=False, share=None, single=None, jobs=None,
-                 split=None, builds=None, srcs=None):
+                 split=None, builds=None, srcs=None, needs_builder=False):
         self.id, self.kind, self.pos = id, kind, pos
         self.locks, self.pools = frozenset(locks), frozenset(pools)
         self.serial, self.after = bool(serial), tuple(after)
@@ -148,6 +156,7 @@ class Profile:
         self.jobs = [j if isinstance(j, Job) else Job.from_json(j) for j in (jobs or [])]
         self.builds = builds
         self.srcs = dict(srcs or {})        # {set key: source of that set's wall}, for --json
+        self.needs_builder = bool(needs_builder)
 
     @property
     def splittable(self):
@@ -169,7 +178,7 @@ class Profile:
                 "wall_src": self.wall_src, "split": self.split, "growable": self.growable,
                 "share": {h: list(v) for h, v in sorted(self.share.items())},
                 "jobs": [j.to_json() for j in self.jobs], "builds": self.builds,
-                "srcs": dict(sorted(self.srcs.items()))}
+                "srcs": dict(sorted(self.srcs.items())), "needs_builder": self.needs_builder}
 
     @classmethod
     def from_json(cls, d):
@@ -177,7 +186,7 @@ class Profile:
         return cls(d["id"], d["kind"], d.get("pos", 0), d.get("locks") or (), d.get("pools") or (), d.get("serial"),
                    d.get("after") or (), d.get("hosts"), walls, d.get("wall_src", "default"),
                    growable=d.get("growable"), share=d.get("share"), jobs=d.get("jobs"), split=d.get("split"),
-                   builds=d.get("builds"), srcs=d.get("srcs"))
+                   builds=d.get("builds"), srcs=d.get("srcs"), needs_builder=d.get("needs_builder"))
 
 
 class Start:
@@ -321,9 +330,12 @@ def single_on(p, h, cap):
 
 def feasible(p, hosts, cap):
     """Whether P on HOSTS still has a host for every job the batch's full set could run, and no
-    host of it is one none of its jobs can use (a pool held for nothing)."""
+    host of it is one none of its jobs can use (a pool held for nothing); and, for a P that may
+    build bko-holt (needs_builder), a big build host among HOSTS (HoltTest2 stops without one)."""
     k = frozenset(hosts)
     if any(h not in cap for h in hosts):
+        return False
+    if p.needs_builder and not any(cap[h].builder for h in hosts):
         return False
     if k in p.walls and p.walls[k] is None:
         return False

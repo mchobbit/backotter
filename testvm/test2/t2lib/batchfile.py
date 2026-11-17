@@ -6,6 +6,8 @@ is read through the READ the caller passes.
     locks_of(entry) -> set                  the t2 family locks the entry's run takes (run.family_locks)
     lock_list(entry) -> [str]               the same, in the order the run takes them
     pools_of(entry) -> set                  the host pools it owns on each host it uses (§4.5)
+    builds_holt(entry) -> bool              its run may build bko-holt linux (needs a big build host)
+    holt_builders(hosts, table) -> [host]   the big build hosts among HOSTS (holt.big_build_hosts)
     lock_matrix(entries, builds=None) -> {(id, id): reason}   pairs that may not run at once
     parse_duration("90m") -> 5400           fmt_hm(5400) -> "1:30"
 
@@ -52,6 +54,7 @@ _FAMILY = {"gatetest2": "gate", "stictest2": "stic", "holttest2": "holt", "guest
 FAMILY_POOLS = {"stic": {"stic"}, "holt": {"holt"}, "guest": {"holt"}, "img": {"holt"}, "gate": {"gate"},
                 "bko": {"stic", "holt", "gate"}, "sweep": {"stic", "holt", "gate"}}
 ROUND_FAMILIES = ("stic", "gate", "bko", "sweep")   # the words that take a ROUND
+HOLT_BUILD_FAMILIES = ("holt", "bko", "sweep")      # the words whose run may build bko-holt (builds_holt)
 KIND_POOLS = {"ht1": {"holt"}, "stic1": {"stic"}, "bs2": {"bs2"}}
 TTY_WORDS = ("read", "passwd", "su", "login", "vipw", "vigr", "visudo", "select")
 ALL_LOCKS = ("bko", "gate", "stic", "holt", "guest", "img")
@@ -569,6 +572,7 @@ def refusals(batch, table, known=None, allow_update=False, hosts=None):
                 out.append(f"{w}: hosts= names {', '.join(stray)}, not among the batch's hosts ({' '.join(bhosts)})")
         if e.kind == "t2":
             out += [f"{w}: {x}" for x in _t2_refusals(e, words, known, allow_update)]
+            out += [f"{w}: {x}" for x in _holt_build_refusals(e, bhosts, table)]
         elif e.kind == "bs2":
             for i, a in enumerate(low):
                 if a in ("--tier=3", "tier3") or (a == "--tier" and i + 1 < len(low) and low[i + 1] == "3"):
@@ -608,12 +612,81 @@ def _t2_refusals(e, words, known, allow_update):
         out.append("t2 GuestTest2 update holds vm-update's fleet lock through a 120 s heartbeat a Mac sleep loses: "
                    "refused unless `t2 batch FILE --allow-update` (lid open)")
     if known is not None:
-        argv = [x for x in e.args if not x.startswith("--")]
+        argv = word_argv(e.args)
         try:
             words.parse(argv, known)
         except words.Refused as ex:
             out.append(f"t2 {' '.join(e.args)}: {ex}")
     return out
+
+
+def word_argv(args):
+    """A t2 entry's word and its words (words.parse's argv): ARGS without its --options, and
+    without the DIR of a `--holt-bin DIR`."""
+    out, skip = [], False
+    for x in args:
+        if skip:
+            skip = False
+        elif x == "--holt-bin":
+            skip = True
+        elif not x.startswith("--"):
+            out.append(x)
+    return out
+
+
+def holt_bin_of(entry):
+    """The DIR of a t2 entry's --holt-bin DIR (or --holt-bin=DIR), else None."""
+    a = list(entry.args) if entry.kind == "t2" else []
+    for i, x in enumerate(a):
+        if x == "--holt-bin":
+            return a[i + 1] if i + 1 < len(a) and not a[i + 1].startswith("--") else None
+        if x.startswith("--holt-bin="):
+            return x[len("--holt-bin="):] or None
+    return None
+
+
+def builds_holt(entry):
+    """Whether ENTRY's run builds bko-holt linux when no host holds this code's build yet
+    (holt.Runner.ensure_holt): a t2 HoltTest2 word without --holt-bin, and BkoTest2 and
+    SweepTest2 (their holt child; --holt-bin goes with HoltTest2 only).  ht1 doesn't: it takes
+    the promoted holt-bin; nor do GuestTest2 and ImgTest2 (an image's panel cells are +img ones,
+    which run the image's own bko-holt), nor a HoltTest2 whose cells are all +img ones (`+img`
+    alone, or only NAME+img words: holt.Runner.flow builds for its non-+img cells only)."""
+    fam = entry.family
+    if fam == "holt":
+        if holt_bin_of(entry) is not None:
+            return False
+        toks = [t[5:] if t.startswith("holt:") else t
+                for t in word_argv(entry.args)[1:] if t.lower() not in ("stale", "plan")]
+        return not (toks and all(t.lower().endswith("+img") for t in toks))
+    return fam in HOLT_BUILD_FAMILIES
+
+
+def holt_builders(hosts, table=None):
+    """The big build hosts among HOSTS: holt.big_build_hosts, HoltTest2's own stop rule's
+    predicate (never a copy of it)."""
+    from . import holt   # (import-time pure)
+    return holt.big_build_hosts(list(hosts), table)
+
+
+def _holt_build_refusals(e, bhosts, table):
+    """An entry that builds bko-holt linux (builds_holt) whose hosts (hosts=, else the batch's)
+    hold no big build host: HoltTest2 would stop-family there 9 s in (bt-20261115T1132-e4ca)."""
+    if not builds_holt(e):
+        return []
+    hs = list(e.hosts) if e.hosts is not None else list(bhosts)
+    if holt_builders(hs, table):
+        return []
+    from . import hosts as H
+    every = holt_builders(H.known(table), table)
+    where = "its hosts= (and the batch's hosts)" if e.hosts is not None else "the batch's hosts (set hosts or --hosts)"
+    fix = f"add one ({', '.join(every) or 'none in the table'}) to {where}"
+    if e.family == "holt":
+        fix += ", or give the entry --holt-bin DIR (a ready bko-holt set on every host it uses)"
+    else:
+        fix += " (--holt-bin goes with HoltTest2 only)"
+    return [f"{e.args[0]} builds bko-holt linux on a big build host (role build, class big in testvm/hosts.json) "
+            f"and its hosts {','.join(hs)} have none: {fix}"]
 
 
 def _cmd_refusals(cmd):

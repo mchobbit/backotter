@@ -356,6 +356,7 @@ surprise:
 | `--universe` | test-only, refused in the real root | — |
 | a `cmd` whose command reads a tty, or contains `sudo` without `-n` | would prompt | fix the command |
 | two `ht1` entries with the same RUN | one queue would serve both | rename one |
+| a `t2` entry that may build bko-holt (HoltTest2 unless all its cells are `+img`, BkoTest2, SweepTest2) with no big build host among its hosts | HoltTest2 stops at once (§6.1 item 8) | add chopin or cinqcent to its hosts, or (HoltTest2) `--holt-bin DIR` |
 
 `t2 GuestTest2 update`, when allowed, is always `serial`: it changes guests
 under any `ht1`, `stic1` or `bs2` entry, which no lock of `t2`'s covers.
@@ -570,6 +571,18 @@ Refuse with every unmet item listed (exit 2), never a part-run batch:
 6. The Mac has room for the fetched logs: 5 GB free under `MAC_ROOT`.
 7. Every entry parses, every id is unique, no refused entry (§4.4), and every
    `t2` word is one `words.py` accepts — checked by planning each word.
+8. Every entry that may build bko-holt linux (`t2 HoltTest2` without
+   `--holt-bin`, unless its cells are all `+img` ones — `+img` alone or only
+   `NAME+img` words, which run the image's own bko-holt — and `t2
+   BkoTest2`/`SweepTest2` for their holt child; not `ht1`, which takes the
+   promoted holt-bin) has a big build host (role
+   `build`, class `big` in `testvm/hosts.json`) among its hosts (`hosts=`,
+   else the batch's). The predicate is HoltTest2's own stop rule's
+   (`holt.big_build_hosts`), so the two can't drift; the refusal names the
+   entry, its hosts and the remedies: add a big build host, or give the
+   HoltTest2 `--holt-bin DIR`. The scheduler, likewise, never places such an
+   entry on a candidate set without one (`bt-20261115T1132-e4ca`: HoltTest2 on
+   copland alone stopped 9 s in).
 
 ### 6.2 Resume
 
@@ -935,10 +948,13 @@ its family lock, makes a run dir and sleeps):
 
 ### 11.4 On the farm
 
-- `batches/smoke.batch`: `set hosts copland,cage`;
-  `t2 GateTest2 selftest hosts=cage`, `t2 HoltTest2 alpine324`,
-  `stic1 rel6 alpine324`, `cmd true -- true`. Runs in under an hour on the
-  two small hosts, overlaps at least two entries, and exercises every
+- `batches/smoke.batch`: `set hosts copland,cage,cinqcent`;
+  `t2 GateTest2 selftest hosts=cage`,
+  `t2 HoltTest2 alpine324 hosts=copland,cage,cinqcent`,
+  `stic1 rel9 alpine324 hosts=copland,cage`, `cmd true -- true`. Cinqcent is
+  there so HoltTest2 can build bko-holt (§6.1 item 8); its cell may run on
+  any of copland, cage, cinqcent; the other entries stay on copland and cage.
+  Runs in under an hour, overlaps at least two entries, and exercises every
   mechanism. Done when it passes twice, its `summary.tsv` matches the runs'
   own reports, each entry ran on the hosts `plan` predicted, and no host's
   `ht1-queue.sh`/`drive.py`/`cmp-run.sh` logs show more jobs at once than

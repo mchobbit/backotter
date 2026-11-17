@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# A bko KVM farm host's SHUTDOWNCMD: stop the test work, then power off
+# (docs/design/ups-shutdown.md, UPS-C).
+#
+# Usage (as root, from upsmon.conf on chopin, cinqcent, cage and copland):
+#   SHUTDOWNCMD "/usr/local/sbin/bko-ups-farm-halt"
+#   bko-ups-farm-halt --dry-run
+#
+#   1. Logs "UPS: farm halt" to syslog (logger -t ups) and stderr.
+#   2. Touches ~BKO_USER/backotter-work/cmp-logs/*/stop (BKO_USER default m),
+#      cmp-run.sh's own signal that a queue's workers start nothing more
+#      (testvm/compare/cmp-run.sh's header).  A stop file it makes is given
+#      to BKO_USER.  The files outlive the reboot on purpose: the queues stay
+#      stopped until someone restarts them.
+#   3. Sends SIGTERM (systemctl kill) to every loaded test scope:
+#      run-p*-i*.scope, cmp-run.sh --reserve's, and bko-*.scope, its queue
+#      jobs' (UPS_SCOPES overrides the list of globs).  Never pkill.  Then
+#      waits up to UPS_SCOPE_WAIT seconds (default 45) for them to empty.
+#      QEMU exits on SIGTERM, and the guests' disks are throwaway overlays.
+#   4. systemctl poweroff; systemd stops whatever is left.
+#
+# Any trouble in 2 or 3 is logged and the host still powers off.
+#
+#   --dry-run   print the queues and scopes it would touch, change nothing
+#
+# Installs as /usr/local/sbin/bko-ups-farm-halt (testvm/ups/README.md).
+# Needs: bash 4.4+, logger, systemctl, getent.
+
+set -euo pipefail
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+dry=0
+for a in "$@"; do
+    case $a in
+        --dry-run) dry=1 ;;
+        -h|--help) sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0 ;;
+        *) echo "bko-ups-farm-halt: unknown argument $a (see --help)" >&2; exit 2 ;;
+    esac
+done
+
+log() {
+    if [ $dry = 1 ]; then echo "bko-ups-farm-halt: $*"; return; fi
+    logger -t ups -- "farm-halt: $*" 2>/dev/null || true
+    echo "bko-ups-farm-halt: $*" >&2
+}
+
+user=${BKO_USER:-m}
+read -r -a globs <<<"${UPS_SCOPES:-run-p*-i*.scope bko-*.scope}"
+wait_max=${UPS_SCOPE_WAIT:-45}
+[[ $wait_max =~ ^[0-9]+$ ]] || { log "UPS_SCOPE_WAIT=$wait_max is not a number of seconds, using 45"; wait_max=45; }
+
+# The active test scopes, one per line.  --plain still puts a "●" before a
+# failed unit, so take the first word ending in .scope.
+scopes() {
+    systemctl list-units --type=scope --state=active --plain --no-legend "${globs[@]}" 2>/dev/null |
+        awk '{ for (i = 1; i <= NF; i++) if ($i ~ /\.scope$/) { print $i; break } }'
+}
+
+log "UPS: farm halt"
+
+home=$(getent passwd "$user" | cut -d: -f6) || home=
+[ -n "$home" ] || home=/home/$user
+queues=()
+for d in "$home"/backotter-work/cmp-logs/*/; do
+    [ -d "$d" ] && queues+=("${d%/}")
+done
+if [ ${#queues[@]} -eq 0 ]; then
+    log "no queues in $home/backotter-work/cmp-logs"
+fi
+for q in "${queues[@]}"; do
+    if [ $dry = 1 ]; then
+        if [ -e "$q/stop" ]; then log "queue $q: stopped already"; else log "would touch $q/stop"; fi
+        continue
+    fi
+    if [ -e "$q/stop" ]; then
+        log "queue $q: stopped already"
+    elif touch "$q/stop"; then
+        chown "$user:" "$q/stop" 2>/dev/null || true
+        log "touched $q/stop"
+    else
+        log "could not touch $q/stop"
+    fi
+done
+
+mapfile -t live < <(scopes)
+if [ ${#live[@]} -eq 0 ]; then
+    log "no test scopes"
+elif [ $dry = 1 ]; then
+    for s in "${live[@]}"; do log "would SIGTERM $s"; done
+    log "would wait up to ${wait_max}s for ${#live[@]} scope(s), then systemctl poweroff"
+    exit 0
+else
+    for s in "${live[@]}"; do
+        if systemctl kill --signal=TERM -- "$s"; then log "SIGTERM $s"; else log "could not SIGTERM $s"; fi
+    done
+    start=$SECONDS
+    while :; do
+        mapfile -t live < <(scopes)
+        [ ${#live[@]} -gt 0 ] || { log "test scopes gone after $((SECONDS - start))s"; break; }
+        if [ $((SECONDS - start)) -ge "$wait_max" ]; then
+            log "still running after ${wait_max}s, left to systemd: ${live[*]}"
+            break
+        fi
+        sleep 1
+    done
+fi
+
+if [ $dry = 1 ]; then
+    log "would systemctl poweroff"
+    exit 0
+fi
+log "systemctl poweroff"
+systemctl poweroff || { log "systemctl poweroff failed ($?), trying shutdown -h now"; shutdown -h now; }

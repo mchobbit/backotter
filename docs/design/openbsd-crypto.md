@@ -227,5 +227,9 @@ where they differ:
   now reads plain fstat's MOUNT column. With that, openbsd8-crypt+img PASS
   (copland, run o6c; judge 0 of 151 differ), openbsd8+img PASS, no OOM with
   rel8's rustic-bko; checks.sh's softraid line passes.
+- **O6 on the shipped image (2026-11-17):** generation 20261116.352eac3
+  (holt-bin 0.2.6 at 1628af3, rel9), pinned on chopin: openbsd8-crypt+img
+  PASS (run obi1; judge 0 of 151 differ, restored boot through the
+  passphrase, CRYPTO on sd0a) and openbsd8+img PASS. O1-O6 done.
 - **O4 result:** HoltTest1BSD PASS on chopin 2026-11-14, run obc3 (judge: 0
   of 151 fields differ), and plain openbsd8 still PASS (obp3).

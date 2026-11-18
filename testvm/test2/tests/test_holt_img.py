@@ -161,6 +161,7 @@ class Flow(unittest.TestCase):
         touched = [x for x in r.calls if x[1] == "touch" and x[2].endswith("/stop")]
         self.assertEqual(sorted(h for h, _, _ in touched), ["chopin", "cinqcent"])
         self.assertTrue(any("run-wide stop" in s for s in res["stops"]))
+        self.assertTrue(any(f"touched {holt.QUEUE}/" in s for s in res["stops"]), res["stops"])   # the runners' file
 
 
 class Driver(unittest.TestCase):

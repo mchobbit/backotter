@@ -249,7 +249,11 @@ its lock went with the Mac process, but its checks or queue runners may still ru
 unfinished BkoTest2 or SweepTest2 (`t2s-S` under `t2b-S`, and `t2h-S-img`) is resumed only
 through its composite: `t2 resume t2b-S` (alone it would run outside the composite's
 run-wide stops), and the refusals name the composite.  Ctrl-C, TERM or HUP on a composite
-trips its guards and waits for the children (exit 130; `t2 resume` goes on).  `--universe`
+trips its guards and waits for the children (exit 130; `t2 resume` goes on).  On a HoltTest2
+run (its t2, the lock holder) it writes `/bkoscratch/holttest1d/queue/RUN/stop` (and
+`RUN-r2`'s, when under way) on every host, the file the hosts' ht1-queue.sh runners read
+(`HOST_ROOT/runs/RUN/stop` is no stop), and exits 130: the runners start nothing more and
+log why, their running jobs finish, and `t2 resume RUN` collects the rows, with no rerun.  `--universe`
 on BkoTest2 and SweepTest2 needs a test `T2_MAC_ROOT`; it also cuts the stic and holt
 children's gate steps to its `gate:` cells (`options.gate_universe`, test only), and a cut
 sweep's sweep.json never counts in the default root.  Preflight

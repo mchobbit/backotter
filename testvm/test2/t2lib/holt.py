@@ -56,7 +56,12 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      "gone", nor an unreadable ledger "no row".  Every new done row's ledger row
      feeds the stop rules (stop-os OS takes that OS's lines out of the todo, an
      offline guest being an OS of its own; stop-starts, stop-family and stop-run
-     touch queue/RUN/stop on every host).  Each poll also feeds each host's swap-out to the
+     touch /bkoscratch/holttest1d/queue/RUN/stop on every host, the file ht1-queue.sh
+     reads; not HOST_ROOT/runs/RUN/stop).  Ctrl-C, TERM or HUP on the Mac's t2 (in the
+     main thread: a composite's child has its guards) writes that stop too, its line
+     saying why, for every queue under way, then ends the t2 (exit 130): the runners
+     start nothing more, their running jobs finish, and `t2 resume RUN` collects the
+     rows (holt.json keeps the stop: no rerun).  Each poll also feeds each host's swap-out to the
      swap rule, which holds that host alone (run.py's HostHolds: queue/RUN/max-HOST 0 there,
      so its runner starts nothing new and the other runners take the todo's lines, a line
      only it may run waiting; max-HOST back as it was when the hold ends, or when the todo
@@ -88,6 +93,8 @@ import math
 import os
 import re
 import shlex
+import signal
+import threading
 import time
 
 from . import hosts as hosts_table
@@ -611,6 +618,9 @@ class Runner:
             self.state["t0"] = self.t0
         self.swap0 = dict(self.state["swap0"] or {})
         self.allowed = dict(self.state["write_allowed"] or {})   # host -> {cell: bytes a write allowance excused}
+        self._sigs = {}
+        if self.state["interrupted"]:   # (a resume of a run stopped by a signal: that stop stands)
+            self.stops.append(self.state["interrupted"].get("stop") or "stop-starts: interrupted")
         self.keep_copy()
 
     def keep_copy(self):
@@ -1305,7 +1315,7 @@ class Runner:
         elif what in STOPPING:
             for h in self.hosts:
                 self.remote.touch(h, f"{QUEUE}/{qrun}/stop")
-            self.stops.append(f"{what}: touched {qrun}/stop on {', '.join(self.hosts)}")
+            self.stops.append(f"{what}: touched {QUEUE}/{qrun}/stop on {', '.join(self.hosts)}")
             self.log(f"queue {qrun}: {what}: nothing more starts")
 
     def said_end(self, qrun, h):
@@ -1408,7 +1418,8 @@ class Runner:
             self.state.save()
             for h in self.hosts:
                 self.remote.touch(h, f"{QUEUE}/{qrun}/stop")
-            self.stops.append(f"stop-starts: a run-wide stop rule tripped: touched {qrun}/stop on {', '.join(self.hosts)}")
+            self.stops.append(f"stop-starts: a run-wide stop rule tripped: touched {QUEUE}/{qrun}/stop on "
+                              f"{', '.join(self.hosts)}")
             self.log(f"queue {qrun}: a run-wide stop rule tripped: nothing more starts")
 
     def write_allows(self):
@@ -1599,11 +1610,76 @@ class Runner:
             return self.result(start, [], exit_=0)
         self.code = (self.plan.set or {}).get("holt_code") or keys.holt_code(self.ctx.src)
         self.state["code"] = self.code
+        self.catch_signals()
         try:
             return self.flow(start, pcs)
         except NoCopy as e:   # no copy to run from (a resume of a run that had none)
             self.stops.append(f"stop-family: {e}")
             return self.result(start, self.due(), exit_=1)
+        except KeyboardInterrupt as e:
+            self.interrupted(e.args[0] if e.args and e.args[0] else "SIGINT")
+            raise
+        finally:
+            self.restore_signals()
+
+    # -- signals: Ctrl-C, TERM or HUP on the Mac's t2 stops the queues' starts --
+    def catch_signals(self):
+        """SIGTERM and SIGHUP as Ctrl-C (KeyboardInterrupt), for run()'s life; in the main
+        thread only (a composite's child thread has the composite's guards instead)."""
+        if threading.current_thread() is not threading.main_thread():
+            return
+
+        def handler(signum, frame):
+            raise KeyboardInterrupt(signal.Signals(signum).name)
+        for s in (signal.SIGTERM, signal.SIGHUP):
+            try:
+                self._sigs.setdefault(s, signal.getsignal(s))
+                signal.signal(s, handler)
+            except (ValueError, OSError, AttributeError):
+                self._sigs.pop(s, None)
+
+    def restore_signals(self):
+        for s, h in list(self._sigs.items()):
+            try:
+                signal.signal(s, h if h is not None else signal.SIG_DFL)
+            except (ValueError, OSError, TypeError):
+                pass
+        self._sigs = {}
+
+    def interrupted(self, why):
+        """Ctrl-C (or SIGTERM, SIGHUP) on the Mac's t2: every queue of this run that has a
+        todo gets its stop on every host (QUEUE/QRUN/stop, saying why: the runners log it),
+        so its runners start nothing more; their running jobs finish, and `t2 resume RUN`
+        collects their rows (holt.json keeps the stop: no rerun queue starts).  Further
+        signals are ignored while the stops are written."""
+        if threading.current_thread() is threading.main_thread():
+            for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                try:
+                    self._sigs.setdefault(s, signal.getsignal(s))
+                    signal.signal(s, signal.SIG_IGN)
+                except (ValueError, OSError, AttributeError):
+                    pass
+        text = f"t2 on the Mac: {why}: nothing more starts\n"
+        qs = [q for q, d in sorted((self.state["queues"] or {}).items())
+              if d.get("todo_written") and not d.get("finished")]
+        for qrun in qs:
+            path = f"{QUEUE}/{qrun}/stop"
+            ok = []
+            for h in self.hosts:
+                try:
+                    self.remote.write(h, path, text)
+                    ok.append(h)
+                except Exception as e:   # noqa: BLE001 - one host's failure stops none of the others
+                    self.log(f"queue {qrun}: {why}: couldn't write {h}:{path}: {str(e)[:200]}")
+            self.log(f"queue {qrun}: {why}: wrote {path} on {', '.join(ok) or 'no host'}: nothing more starts "
+                     f"(running jobs finish; `t2 resume {self.run_id}` collects their rows)")
+        if not qs:   # (no queue under way: a resume starts them as it would have)
+            self.log(f"{why}: no queue of {self.run_id} under way: nothing on the hosts to stop")
+            return
+        stop = (f"stop-starts: interrupted ({why}): wrote {', '.join(QUEUE + '/' + q + '/stop' for q in qs)} "
+                f"on {', '.join(self.hosts)}")
+        self.stops.append(stop)
+        self.state["interrupted"] = {"at": utc_now(), "why": why, "queues": qs, "stop": stop}
 
     def flow(self, start, pcs):
         if self.state["all_img"] is None:
@@ -1757,6 +1833,8 @@ class Runner:
         for flag, what in (("stop_run", "stop-run"), ("stop_family", "stop-family"), ("stop_starts", "stop-starts")):
             if getattr(st, flag, False):
                 return f"{what} stopped the run"
+        if self.state["interrupted"]:
+            return f"the run was interrupted ({self.state['interrupted'].get('why')})"
         for h in self.hosts:
             for f in ("abort", "stop"):
                 if self.remote.exists(h, f"{QUEUE}/{qrun}/{f}"):

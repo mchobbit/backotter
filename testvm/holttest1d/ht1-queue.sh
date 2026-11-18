@@ -52,7 +52,8 @@
 # (--putback) instead of running, and never counts as a failed job; one that
 # can't go back (no answer from the queue host, @STOPPED) stays in todo.taken
 # with a done row (rc 1, run_s -), as a job's would.
-# On this host: touch queue/RUN/stop to start nothing more, queue/RUN/abort
+# On this host: touch queue/RUN/stop to start nothing more (its first line,
+# if any, says why in the log: Test2 writes one), queue/RUN/abort
 # to also end the running jobs (each keeps its state, as a FAIL does);
 # queue/RUN/max-HOST holds a new MAXJOBS for HOST.  queue/RUN/done gets a row
 # per job (end_utc host gv rc d_gib m_gib port wait_s run_s),
@@ -476,6 +477,7 @@ host_runs() {
 ge() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 >= b + 0) }'; }
 rdir() { if ((${2:-$RAM})); then echo "$WORK/$RUN/$1"; else echo "$RECS/$RUN/$1"; fi; }   # GV [RAM]: the job's R
 waiting() { [[ $1 == "$WHY" ]] || { [[ -z $2 ]] || say "waiting: $2"; WHY=$1; }; }   # KEY TEXT: once per reason
+stop_why() { local w; w=$(head -n 1 "$Q/stop" 2>/dev/null | tr -d '\r' | cut -c1-200); [[ -z $w ]] || echo " ($w)"; }   # queue/RUN/stop's first line
 sweep() {  # runs that died in RAM: their records to /bkoscratch, R deleted (as root)
     local out rc l
     out=$(sudo -n -E "$HERE/ht1-lib.sh" --sweep "$WORK" 2>&1); rc=$?
@@ -711,7 +713,7 @@ while :; do
     fi
     if ((paused)); then waiting paused ""
     elif [[ -e $Q/abort ]]; then waiting abort "abort: ending ${#JOB[@]} jobs, starting none"
-    elif [[ -e $Q/stop ]]; then waiting stop "stop: starting nothing more, ${#JOB[@]} running"
+    elif [[ -e $Q/stop ]]; then waiting stop "stop: starting nothing more$(stop_why), ${#JOB[@]} running"
     elif ((changed)); then waiting changed ""
     elif [[ -n $BROKE ]]; then waiting broke ""
     elif ((MAX == 0)); then waiting max "max 0 ($Q/max-$H)"
@@ -745,7 +747,7 @@ while :; do
     fi
     if ((${#JOB[@]} == 0)); then
         if [[ -e $Q/abort ]]; then say aborted; break
-        elif [[ -e $Q/stop ]]; then say stopped; break
+        elif [[ -e $Q/stop ]]; then say "stopped$(stop_why)"; break
         elif ((changed)); then say "stopped: the binaries changed"; break
         elif [[ -n $BROKE ]]; then say "stopped: $BROKE"; break; fi
     fi

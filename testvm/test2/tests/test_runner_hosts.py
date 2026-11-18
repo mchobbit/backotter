@@ -295,6 +295,33 @@ class QueueLaunchBackstop(unittest.TestCase):
         self.assertEqual(len(done), 2)
 
 
+@unittest.skipUnless(BASH, "no bash")
+class QueueStopWhy(unittest.TestCase):
+    """queue/RUN/stop's first line, when it has one (Test2 writes why it stopped), in the
+    runner's log: its waiting line and its last."""
+
+    def why(self, text):
+        t = tempfile.mkdtemp(prefix="t2-stopwhy-")
+        self.addCleanup(shutil.rmtree, t, True)
+        if text is not None:
+            wr(os.path.join(t, "stop"), text)
+        script = f"Q={t}\n" + shell_funcs(QUEUE, "stop_why") + 'echo "stopped$(stop_why)"\n'
+        p = subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.stderr, "")
+        return p.stdout
+
+    def test_the_first_line_says_why(self):
+        self.assertEqual(self.why("t2 on the Mac: SIGTERM: nothing more starts\nmore\n"),
+                         "stopped (t2 on the Mac: SIGTERM: nothing more starts)\n")
+        self.assertEqual(self.why(""), "stopped\n")      # (a touch: as before)
+        self.assertEqual(self.why(None), "stopped\n")
+
+    def test_the_loop_logs_it(self):
+        q = rd(QUEUE)
+        self.assertIn('waiting stop "stop: starting nothing more$(stop_why), ${#JOB[@]} running"', q)
+        self.assertIn('then say "stopped$(stop_why)"; break', q)
+
+
 class QueueRefusedReserve(unittest.TestCase):
     def test_the_refusal_is_cmp_runs(self):
         """reap's grep matches what cmp-run.sh says when a --reserve can never fit."""

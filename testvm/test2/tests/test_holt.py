@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -1271,6 +1272,75 @@ class U53HoltRun(unittest.TestCase):
         res = self.go({"debian13": (1, "FAIL")})
         self.assertFalse(self.rs.cells_written[1:], self.rs.cells_written)
         self.assertTrue(any("stopped by stop-os): holt:debian13" in n for n in res["notes"]), res["notes"])
+
+    def stopping_remote(self, outcomes):
+        """A FakeRemote whose queue runners end, starting nothing more, once their host has
+        the queue's stop (ht1-queue.sh's queue/RUN/stop)."""
+        class Stopping(FakeRemote):
+            def tick(self):
+                for (host, pid), p in self.procs.items():
+                    if p["alive"] and p["kind"] == "queue" and f"{holt.QUEUE}/{p['qrun']}/stop" in self.files[host]:
+                        p["alive"] = False
+                FakeRemote.tick(self)
+        return Stopping(outcomes)
+
+    def test_sigterm_stops_the_runners_and_resume_reruns_nothing(self):
+        r = self.stopping_remote({"redox": (1, "FAIL")})   # (the first line: it runs, and would rerun)
+        tick, sent = r.tick, []
+
+        def tick_then_term():
+            tick()
+            if not sent and any((r.files[h].get(holt.QUEUE + "/t2h-20261108T0300-abcd/done") or "").count("\n") > 1
+                                for h in r.files):
+                sent.append(1)
+                os.kill(os.getpid(), signal.SIGTERM)   # as `kill PID` of the lock holder, after one job
+        r.tick = tick_then_term
+        before = signal.getsignal(signal.SIGTERM)
+        with self.assertRaises(KeyboardInterrupt) as cm:
+            holt.run(self.ctx, self.plan, remote=r, sleep=lambda s: None, poll=0, gate=self.gate)
+        r.tick = tick
+        self.assertEqual(cm.exception.args, ("SIGTERM",))
+        self.assertIs(signal.getsignal(signal.SIGTERM), before)   # (put back)
+        q1 = holt.QUEUE + "/t2h-20261108T0300-abcd"
+        for h in ("chopin", "cinqcent"):   # the file the runners read, saying why
+            self.assertEqual(r.files[h].get(q1 + "/stop"), "t2 on the Mac: SIGTERM: nothing more starts\n")
+        self.assertTrue(any(f"wrote {q1}/stop on chopin, cinqcent: nothing more starts" in x for x in self.rs.logged),
+                        self.rs.logged)
+        # `t2 resume`: the rows the runners left, no rerun queue, the stop stands.
+        res = holt.resume(self.ctx, self.plan, remote=r, sleep=lambda s: None, poll=0, gate=self.gate)
+        starts = [c[0] for _, op, *c in r.calls if op == "start" and "ht1-queue.sh" in c[0]]
+        self.assertEqual(len(starts), 2, starts)
+        self.assertFalse([c for c in starts if "-r2 2600" in c], starts)
+        self.assertTrue(any(s.startswith(f"stop-starts: interrupted (SIGTERM): wrote {q1}/stop") for s in res["stops"]),
+                        res["stops"])
+        self.assertTrue(any(c["outcome"] == "skipped" for c in res["cells"]), res["cells"])
+        self.assertTrue(any("the run was interrupted (SIGTERM)" in n for n in res["notes"]), res["notes"])
+        self.assertEqual(res["exit"], 1)
+
+    def test_ctrl_c_before_any_queue_stops_nothing_on_the_hosts(self):
+        r = FakeRemote({})
+
+        def gate(ctx):
+            raise KeyboardInterrupt()   # Ctrl-C (SIGINT) during the gate
+        with self.assertRaises(KeyboardInterrupt):
+            holt.run(self.ctx, self.plan, remote=r, sleep=lambda s: None, poll=0, gate=gate)
+        self.assertFalse([p for h in r.files for p in r.files[h] if p.endswith("/stop")])
+        self.assertTrue(any("SIGINT: no queue of t2h-20261108T0300-abcd under way" in x for x in self.rs.logged),
+                        self.rs.logged)
+        res = holt.resume(self.ctx, self.plan, remote=r, sleep=lambda s: None, poll=0, gate=self.gate)
+        self.assertEqual(res["exit"], 0, res)   # (a resume runs it all)
+
+    def test_ctrl_c_in_a_rerun_stops_both_queues_left(self):
+        r = self.stopping_remote({"mint22": (1, "FAIL")})
+
+        def sleep(s):
+            if any(p["kind"] == "queue" and p["qrun"].endswith("-r2") for p in r.procs.values()):
+                raise KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt):
+            holt.run(self.ctx, self.plan, remote=r, sleep=sleep, poll=0, gate=self.gate)
+        q1 = holt.QUEUE + "/t2h-20261108T0300-abcd"
+        self.assertNotIn(q1 + "/stop", r.files["chopin"])          # (attempt 1 had finished)
+        self.assertEqual(r.files["chopin"].get(q1 + "-r2/stop"), "t2 on the Mac: SIGINT: nothing more starts\n")
 
     def test_offline_guests_are_an_os_of_their_own(self):
         sf = holt.spec_of(self.ctx)

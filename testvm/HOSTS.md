@@ -18,7 +18,10 @@ class with limits of its own in its row: 1 SticTest slot, 1 HoltTest job,
 1 BackShot2 slot and `base_gib` 3, with a 4G RAM disk and the ZFS ARC capped at
 512 MiB (`/etc/modprobe.d/zfs-bko.conf`), so its `cmp-run.sh --ceiling` is
 3.0 6.0. That fits the `--reserve 3 6` SticTest guests and the HoltTest sources
-of D 3 or less; nothing else is placed there. Its role is `cache` only (cap
+of D 3 or less; nothing else is placed there. Since 2026-11-18 its row also sets
+`max_wall_x` 2: t2 leaves to the other hosts the HoltTest2 and GuestTest2 cells longer than
+twice their family's median cell elsewhere, and those it ran over twice as long as elsewhere
+lately (testvm/test2/README.md, How a plan decides). Its role is `cache` only (cap
 260G, floor 60G on the /home partition, `/bkoscratch` a bind of
 `/home/bkoscratch`), and it links only the published guests that fit. Its
 Debian also holds the user's own projects, and it is the user's fallback

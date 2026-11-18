@@ -1,0 +1,8 @@
+{
+ "v": 1,
+ "notes": "Guests Test2 leaves out of its runs for now (testvm/test2/README.md, Holds; t2lib/plan.py Planner.held_why). Every stic, holt (any variant) and guest cell that boots a held guest is not runnable in every word, a word that names the cell included, whatever the specs (guest/spec.json, holt/spec.json, stic/manifests.json, classes.json) say: so a stop rule never sees its FAILs and a loop that reruns FAILs by name doesn't bring it back. T2_UNHOLD=GUEST[,GUEST...] (or all) in t2's environment runs a held guest's cells anyway, for its owner. Undo a hold by deleting its line (the file with an empty guests object, or no file, holds nothing). guests: {GUEST: REASON}.",
+ "guests": {
+  "slackware15": "another session's guest, in progress (docs/design/slackware.md): every HoltTest2 run FAILs it and stop-os linux then skips the other Linux cells (HoltTest2All t2h-20261118T1218-0d2f lost 12); held 2026-11-18, remove when its corpus dumps and fixes land",
+  "slackware15-uefi": "another session's guest, in progress (docs/design/slackware.md), as slackware15; held 2026-11-18, remove when its corpus dumps and fixes land"
+ }
+}

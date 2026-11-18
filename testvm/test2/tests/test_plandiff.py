@@ -145,7 +145,8 @@ class CorpusMatchesClasses(unittest.TestCase):
     counts a missing one as a difference, which this catches before a host run).
     A dump of no source is allowed, as golden_plans.rs's unplanned() only notes
     it: the corpus README's "some are not sources yet" (guests dumped before
-    they join classes.json, arm64.md A3's synthetic arm64-* dumps)."""
+    they join classes.json, arm64.md A3's synthetic arm64-* dumps).  A source
+    testvm/test2/holds.json holds may have none yet."""
 
     def classes(self):
         import json
@@ -174,7 +175,10 @@ class CorpusMatchesClasses(unittest.TestCase):
         arm = c.get("arm64", {}).get("holt", {})
         sources = {g for hh in (h, arm) for gs in hh.get("families", {}).values() for g in gs} | set(h.get("no_family", []))
         have = {g for g in os.listdir(CORPUS) if os.path.isfile(os.path.join(CORPUS, g, "src.json"))}
-        self.assertEqual(sorted(sources - have), [], "HoltTest2 sources without a corpus dump")
+        # (a guest testvm/test2/holds.json holds runs no HoltTest2 cell: its dump may come later)
+        from t2lib import plan
+        held = set(plan.load_holds(os.path.join(REPO, plan.HOLDS)))
+        self.assertEqual(sorted(sources - have - held), [], "HoltTest2 sources without a corpus dump")
         # Extras are fine (golden_plans.rs: "note  G: in the corpus, but not one of HoltTest2's
         # sources"), but not a guest classes.json rules out as a source for good.
         self.assertEqual(sorted(have & set(h.get("excluded", {}))), [], "corpus dumps of holt.excluded guests")

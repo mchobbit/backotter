@@ -137,6 +137,17 @@ without HoltTest's rescuer or debs for a holt cell that needs them; the reasons 
 can run it: ...`).  Facts without `caps` check none of it.  The identity check asks each
 host only about the guests it should hold.
 
+A host with a `max_wall_x` (testvm/hosts.json's limits; choubox's is 2 since 2026-11-18,
+the slowest host, whose slowness cost flakes and reruns) leaves two kinds of HoltTest2 and
+GuestTest2 cells to the others (`Planner.fit_wall`): a long one, whose wall elsewhere (the
+median of its last 5 measured walls on the other hosts, PASS or FAIL, else its estimate) is
+over `max_wall_x` times its family's median cell wall elsewhere; and one the host is slow
+at, whose last 3 walls there in 14 days are over `max_wall_x` times its wall elsewhere and
+over that family median.  The reasons say `kept off choubox: ...`.  It only moves a cell: a
+run whose only host is capped (`--hosts choubox`) still runs it there.  Its ceiling still
+keeps the big holt sources off it first; SticTest2's placement is drive.py's (choubox's
+one stic slot).  Undo: `max_wall_x` null, or the line out of choubox's row.
+
 For each cell, in order (`t2lib/plan.py`):
 
 1. A name, family letter or `All` selects it (`fresh:names`, `fresh:family:X`,
@@ -195,6 +206,20 @@ host change), and `policy`: `judge_change`, `beside`, `budget` (warn only
 while `bind_from` is null or a later date; it binds from that date), `stop`, `sweep` (due every 7 days until
 `shadow_days` after the first complete SweepTest2, then every 14), `guest` (`run`: the 7-day `--try`, RAM sizes,
 failed-state caps; `judge`: free-space limits, a judge input), `watch` and `unmapped_ignore` (R5).  `t2 self-test` checks it.
+
+## Holds: holds.json
+
+`holds.json` holds guests out of Test2 for now: `{"v": 1, "guests": {GUEST: REASON}}`.
+Every stic, holt (any variant) and guest cell that boots a held guest is not runnable,
+`held: GUEST: REASON`, in every word, a word that names it included, so its FAILs never trip
+a stop rule (stop-os) and a loop that reruns FAILs by name doesn't bring it back; the plan
+notes what is held.  A hold is independent of the specs, so a guest's spec, limits, estimates
+or class entries landing later don't undo it.  `T2_UNHOLD=GUEST[,GUEST...]` (or `all`) in
+t2's environment runs a held guest's cells anyway, for its owner.  To undo a hold, delete
+its line (an empty `guests`, or no file, holds nothing); `t2 self-test` checks the file.
+Since 2026-11-18 it holds slackware15 and slackware15-uefi: another session's guests, in
+progress, whose HoltTest2 FAILs made stop-os linux skip the other Linux cells (HoltTest2All
+t2h-20261118T1218-0d2f lost 12); remove them when their corpus dumps and fixes land.
 
 ## Estimates: estimates.tsv
 

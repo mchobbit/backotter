@@ -38,6 +38,10 @@ GATE_FALLBACK = (("holt", "fork:restic", "fork:rustic_core", "fork:rustic", "for
                   "bin:static", "bin:version")
                  + tuple(f"loop:{n}@{h}" for n in ("linux", "sparse") for h in gate_hosts()) + ("selftest",))
 _HEX40 = re.compile(r"\b[0-9a-f]{40}\b")
+# The guests Test2 leaves out for now (testvm/test2/README.md, Holds): {"v": 1, "guests":
+# {GUEST: REASON}}.  Every cell that boots a held guest is not runnable (Planner.held_why).
+HOLDS = "testvm/test2/holds.json"
+_HOLD_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]*\Z")
 
 
 class PlanError(Exception):
@@ -47,6 +51,34 @@ class PlanError(Exception):
 def load_json(path):
     with open(path) as f:
         return json.load(f)
+
+
+def load_holds(path):
+    """{guest: reason} from PATH (testvm/test2/holds.json); {} when it isn't there.  A file
+    that isn't {"v": 1, "guests": {GUEST: REASON}} with a guest name and a reason for each is
+    a PlanError: a hold that silently held nothing would let the guest back in."""
+    try:
+        d = load_json(path)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        raise PlanError(f"{HOLDS}: {e}")
+    gs = d.get("guests") if isinstance(d, dict) and d.get("v") == 1 else None
+    if not isinstance(gs, dict):
+        raise PlanError(f'{HOLDS}: not {{"v": 1, "guests": {{GUEST: REASON}}}}')
+    bad = [g for g, w in gs.items() if not _HOLD_NAME.match(str(g)) or not isinstance(w, str) or not w.strip()]
+    if bad:
+        raise PlanError(f"{HOLDS}: a guest name and a reason for each hold: {', '.join(map(str, bad))}")
+    return dict(gs)
+
+
+def median(xs):
+    """The median of the numbers XS, or None when there are none."""
+    xs = sorted(xs)
+    n = len(xs)
+    if not n:
+        return None
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
 
 
 def run_arches(hosts):
@@ -191,6 +223,22 @@ class Ctx:
         if self._drive is None:
             self._drive = self.options.get("drive") or load_drive(self.checkout)
         return self._drive
+
+    @property
+    def holds(self):
+        """{guest: reason}: testvm/test2/holds.json's held guests (options "holds" instead, for
+        tests), less those T2_UNHOLD names (options "unhold"): GUEST[,GUEST...], or "all".  No
+        file holds nothing; a file that doesn't check is a PlanError."""
+        if getattr(self, "_holds", None) is None:
+            held = self.options.get("holds")
+            if held is None:
+                held = load_holds(os.path.join(self.checkout, HOLDS))
+            un = self.options.get("unhold")
+            if un is None:
+                un = os.environ.get("T2_UNHOLD", "")
+            un = set(re.split(r"[\s,]+", un.strip())) - {""} if isinstance(un, str) else set(un)
+            self._holds = {} if "all" in un else {g: w for g, w in held.items() if g not in un}
+        return self._holds
 
     @property
     def bko_git(self):
@@ -759,6 +807,10 @@ class Planner:
     def place(self, v):
         """The hosts that may run the cell (pins, R17's UEFI rescuer) and, if none, why."""
         reach = [h for h in self.ctx.hosts if h in self.ctx.facts]
+        held = self.held_why(v)
+        if held:
+            v.why_not = held
+            return
         bad = (self.ctx.options.get("identity_bad") or {}).get(v.name)
         if bad is not None and v.family in ("stic", "holt"):
             v.why_not = f"its guest's identity failed: {bad}"
@@ -827,6 +879,8 @@ class Planner:
                         self.notes.append(note)
             if v.hosts and not v.why_not:
                 self.fit_ceilings(v, lambda h: self.holt_need_here(v, h))
+            if v.hosts and not v.why_not:
+                self.fit_wall(v)
         else:
             v.hosts = list(reach)
             self.fit_capabilities(v)
@@ -844,6 +898,23 @@ class Planner:
                     self.fit_ceilings(v, (spec.d, spec.m))
         if not v.hosts and not v.why_not:
             v.why_not = "no host in --hosts is reachable"
+
+    def held_why(self, v):
+        """Why cell V is held out of every run (ctx.holds: testvm/test2/holds.json, less
+        T2_UNHOLD's), or None.  A stic, holt (any variant) or guest cell is held when a guest it
+        boots is (cell_guests: its own, its spec's guests, a holt rescuer's); a named word holds
+        it too, so a loop that reruns its FAILs by name doesn't bring it back."""
+        holds = self.ctx.holds
+        if not holds or v.family not in ("stic", "holt", "guest"):
+            return None
+        gs = [v.name] if v.family == "guest" else self.cell_guests(v)
+        g = next((g for g in gs if g in holds), None)
+        if g is None:
+            return None
+        note = f"held ({HOLDS}; T2_UNHOLD=GUEST runs one anyway): " + ", ".join(sorted(holds))
+        if note not in self.notes:
+            self.notes.append(note)
+        return f"held: {g}: {holds[g]}"
 
     def place_guest(self, v, reach):
         e = self.guest_entry(v.name)
@@ -870,6 +941,8 @@ class Planner:
             from . import guest as guestmod
             self.fit_ceilings(v, guestmod.reserve_for(self.ctx.ledger, v.cell, e, guestmod.run_policy(self.cls),
                                                       bool(self.w.update)))
+        if v.hosts and not v.why_not:
+            self.fit_wall(v)
 
     # --- what a host can do: its guests, OpenZFS, HoltTest's rescuer and debs ---
 
@@ -1024,6 +1097,82 @@ class Planner:
                 v.pc.host = v.hosts[0]
         else:
             v.why_not = w
+
+    # --- wall: a long or slow cell kept off a slow host (hosts.json's max_wall_x) ---
+
+    WALL_ROWS = 5                                      # the last N measured walls elsewhere
+    OWN_ROWS, OWN_DAYS = 3, 14                         # ... and on the host itself, the last 14 days'
+    WALL_VERDICTS = ("PASS", "FAIL", "FLAKY-FAIL")     # (a HARNESS or LOST row ended early: no wall)
+
+    def measured_wall(self, cell, h, here=False):
+        """CELL's measured wall in seconds, or None (none measured): the median of the last
+        WALL_ROWS walls (run rows of WALL_VERDICTS, less their waits) on the hosts other than H,
+        so H's own slowness never counts; with HERE, of the last OWN_ROWS on H itself, of the
+        last OWN_DAYS only (an old slowness is tried again)."""
+        memo = self.__dict__.setdefault("_walls", {})
+        if (cell, h, here) not in memo:
+            ws, n = [], self.OWN_ROWS if here else self.WALL_ROWS
+            for r in sorted(self.rows_by_cell.get(cell, ()), key=lambda r: (row_t(r), r.get("id", "")), reverse=True):
+                w = r.get("wall_s")
+                if (r.get("kind") != "run" or r.get("verdict") not in self.WALL_VERDICTS or (r.get("host") == h) != here
+                        or not isinstance(w, (int, float)) or isinstance(w, bool) or w <= 0):
+                    continue
+                if here:
+                    t = parse_utc(row_t(r))
+                    if t is None or self.ctx.now - t > self.OWN_DAYS * 86400:
+                        break
+                ws.append(max(w - (r.get("waits_s") or 0), 0))
+                if len(ws) == n:
+                    break
+            memo[(cell, h, here)] = median(ws)
+        return memo[(cell, h, here)]
+
+    def family_wall(self, fam, h):
+        """The median of measured_wall(C, H) over FAMILY's cells measured elsewhere, or None."""
+        memo = self.__dict__.setdefault("_family_walls", {})
+        if (fam, h) not in memo:
+            ws = [self.measured_wall(c, h) for c in self.rows_by_cell if c.startswith(fam + ":")]
+            memo[(fam, h)] = median([w for w in ws if w is not None])
+        return memo[(fam, h)]
+
+    def wall_why(self, v, h, x):
+        """Why holt or guest cell V is too long or too slow for host H of max_wall_x X, or None:
+        its wall elsewhere (measured_wall, else its plan estimate) over X times its family's
+        median wall elsewhere (family_wall); or its own recent walls on H over X times its wall
+        elsewhere and over that family median (the cells H is slow at, a short cell's minute
+        or two aside)."""
+        w = self.measured_wall(v.cell, h)
+        fw = self.family_wall(v.family, h)
+        if fw:
+            e = self.estimator().cell(v.cell)["wall_s"] if w is None else w
+            if e > x * fw:
+                return f"~{e:.0f} s elsewhere, over its max_wall_x {x:g} x the {v.family} median {fw:.0f} s"
+        own = self.measured_wall(v.cell, h, here=True)
+        if w and own and own > x * w and own > (fw or 0):
+            return f"~{own:.0f} s there lately, over its max_wall_x {x:g} x its ~{w:.0f} s elsewhere"
+        return None
+
+    def fit_wall(self, v):
+        """Keep holt or guest cell V off each host whose max_wall_x (the host table's limit:
+        choubox's, the slowest host, since 2026-11-18) wall_why says V is too long or too slow
+        for, as long as another host of V's is left: the cap moves a cell, never strands it (a
+        run whose only host is capped, --hosts choubox, runs it there).  Its reasons name the
+        hosts it is kept off."""
+        if len(v.hosts) < 2:
+            return
+        over = {}
+        for h in v.hosts:
+            x = hosts_table.limit(h, "max_wall_x")
+            why = self.wall_why(v, h, x) if x else None
+            if why:
+                over[h] = why
+        if not over or len(over) == len(v.hosts):
+            return
+        v.hosts = [h for h in v.hosts if h not in over]
+        v.pc.reasons_extra = list(getattr(v.pc, "reasons_extra", None) or []) + [
+            "kept off " + "; ".join(f"{h}: {w}" for h, w in over.items())]
+        if len(v.hosts) == 1 and v.pc.host == "any":
+            v.pc.host = v.hosts[0]
 
     def gate_need(self, v):
         """A gate cell's cmp-run.sh --reserve (gate.reserve_for: the layer's host_reserve or

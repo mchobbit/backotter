@@ -1,6 +1,6 @@
 """The hosts' limits in the host table (gaps P13, P14, P15): stic_slots, guest_slots, holt_jobs,
-base_gib, holt_disk_mode and bs2_slots, each a row's field, else the table's class_limits, else the
-default (3, 3, 3, 6, false, 3).  With the table as it is every host has the defaults, and the planners give
+base_gib, holt_disk_mode, bs2_slots and max_wall_x, each a row's field, else the table's class_limits,
+else the default (3, 3, 3, 6, false, 3, null).  With the table as it is every host has the defaults, and the planners give
 the plans they gave before (estimates.pack and drive.simulate against the code of 602922f, the
 commit before the limits).  An alternative table (BKO_HOSTS_JSON) shows the consumers follow
 it: drive.py's --slots and guest slots, the big-first preference, pack's per-host slots,
@@ -39,7 +39,8 @@ QUEUE = os.path.join(TESTVM, "holttest1d", "ht1-queue.sh")
 DRIVE_PY = os.path.join(TESTVM, "stictest1", "drive.py")
 BEFORE = "602922f"   # the commit before the limits
 BASH = shutil.which("bash")
-DEFAULTS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False, "bs2_slots": 3}
+DEFAULTS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False, "bs2_slots": 3,
+            "max_wall_x": None}
 
 
 def load_module(name, path):
@@ -105,12 +106,13 @@ class Limits(AltTable):
         BASE_GIB of 4; the big hosts keep the defaults. bs2 runs 5 cases at once on a big host,
         2 on a small one. The rows that set a limit of their own: chopin's and cinqcent's
         holt_disk_mode (the user's choice, 2026-11-14, for vanilla3's 30 GiB disk) and
-        choubox's smaller own four (2026-11-17: the smallest host, 1 of each and BASE_GIB 3)."""
+        choubox's smaller own four (2026-11-17: the smallest host, 1 of each and BASE_GIB 3) and
+        its max_wall_x 2 (2026-11-18: the long and the slow cells left to the other hosts)."""
         small = dict(DEFAULTS, stic_slots=2, holt_jobs=1, base_gib=4, bs2_slots=2)
         big = dict(DEFAULTS, bs2_slots=5, holt_disk_mode=True)
-        choubox = dict(small, stic_slots=1, holt_jobs=1, base_gib=3, bs2_slots=1)
+        choubox = dict(small, stic_slots=1, holt_jobs=1, base_gib=3, bs2_slots=1, max_wall_x=2)
         own = {"chopin": {"holt_disk_mode"}, "cinqcent": {"holt_disk_mode"},
-               "choubox": {"stic_slots", "holt_jobs", "base_gib", "bs2_slots"}}
+               "choubox": {"stic_slots", "holt_jobs", "base_gib", "bs2_slots", "max_wall_x"}}
         self.assertEqual(H.LIMITS, DEFAULTS)
         for r in H.rows(all_=True):
             want = choubox if r["name"] == "choubox" else (small if r["class"] == "small" else big)
@@ -142,12 +144,14 @@ class Limits(AltTable):
                dict(cage={"holt_disk_mode": 1}), dict(class_limits={"tiny": {}}),
                dict(class_limits={"small": {"nope": 1}}), dict(class_limits={"small": {"holt_jobs": 0}}),
                dict(class_limits={"small": 3}), dict(class_limits=[]), dict(cage={"bs2_slots": 7}),
-               dict(cage={"bs2_slots": 0})]
+               dict(cage={"bs2_slots": 0}), dict(cage={"max_wall_x": 0.4}), dict(cage={"max_wall_x": 11}),
+               dict(cage={"max_wall_x": "2"}), dict(cage={"max_wall_x": True})]
         for i, e in enumerate(bad):
             with self.subTest(e=e):
                 with self.assertRaises(H.TableError):
                     H.load(self.use_table(table(**e), f"bad{i}.json"))
-        ok = table(class_limits={"small": {"base_gib": 4.5, "guest_slots": 1}}, cage={"base_gib": 0})
+        ok = table(class_limits={"small": {"base_gib": 4.5, "guest_slots": 1, "max_wall_x": 1.5}},
+                   cage={"base_gib": 0, "max_wall_x": None}, copland={"max_wall_x": 2})
         H.load(self.use_table(ok, "ok.json"))
 
     def test_class_rank(self):
@@ -399,6 +403,115 @@ class DiskMode(AltTable):
         self.assertEqual(self.place((6.0, 4.0), "img").hosts, ["chopin", "cage", "copland"],
                          "a +img that fits the RAM disk still goes anywhere")
         self.assertEqual(self.place((17.0, 4.0), "bigger").hosts, ["chopin", "cage"], "other variants: on /bkoscratch")
+
+
+# --- max_wall_x: the long and the slow cells kept off a slow host (2026-11-18) ------------------
+
+T_NOW = 1_800_000_000
+
+
+def utc(age_h):
+    import time
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(T_NOW - age_h * 3600))
+
+
+def wall_row(cell, host, wall, verdict="PASS", age_h=1.0, waits=0):
+    return {"cell": cell, "host": host, "kind": "run", "verdict": verdict, "wall_s": wall, "waits_s": waits,
+            "t": utc(age_h), "id": f"{host}-{cell}-{wall}-{age_h}"}
+
+
+def wall_planner(rows, est=300):
+    p = object.__new__(plan.Planner)
+    p.ctx = types.SimpleNamespace(now=T_NOW, facts={})
+    p.rows_by_cell = {}
+    for r in rows:
+        p.rows_by_cell.setdefault(r["cell"], []).append(r)
+    p.estimator = lambda: types.SimpleNamespace(cell=lambda c: {"wall_s": est})
+    return p
+
+
+def wall_view(cell, hosts=("chopin", "cage", "copland")):
+    fam, name = cell.split(":", 1)
+    return types.SimpleNamespace(cell=cell, family=fam, name=name, variant=None, hosts=list(hosts), why_not=None,
+                                 pc=types.SimpleNamespace(host="any", reasons_extra=None))
+
+
+# the guest family elsewhere: ten cells of 100 s on chopin and copland, so its median is 100 s
+FAMILY = [wall_row(f"guest:g{i}", h, 100) for i in range(10) for h in ("chopin", "copland")]
+
+
+class MaxWall(AltTable):
+    def place(self, cell, rows, hosts=("chopin", "cage", "copland"), est=300):
+        p = wall_planner(FAMILY + rows, est)
+        v = wall_view(cell, hosts)
+        p.fit_wall(v)
+        return v
+
+    def test_off_without_a_cap(self):
+        self.use_table(table())
+        v = self.place("guest:long", [wall_row("guest:long", "chopin", 900)])
+        self.assertEqual(v.hosts, ["chopin", "cage", "copland"])
+        self.assertIsNone(v.pc.reasons_extra)
+
+    def test_a_long_cell_goes_elsewhere(self):
+        self.use_table(table(cage={"max_wall_x": 2}))
+        v = self.place("guest:long", [wall_row("guest:long", "chopin", 250), wall_row("guest:long", "copland", 210),
+                                      wall_row("guest:long", "chopin", 230, "FAIL")])
+        self.assertEqual(v.hosts, ["chopin", "copland"])
+        self.assertEqual(v.pc.reasons_extra,
+                         ["kept off cage: ~230 s elsewhere, over its max_wall_x 2 x the guest median 100 s"])
+        v = self.place("guest:short", [wall_row("guest:short", "chopin", 190)])
+        self.assertEqual(v.hosts, ["chopin", "cage", "copland"], "under twice the median: stays")
+        v = self.place("guest:long", [wall_row("guest:long", "chopin", 250, waits=60)])
+        self.assertEqual(v.hosts, ["chopin", "cage", "copland"], "a wall less its waits (190 s)")
+
+    def test_the_slow_hosts_own_rows_never_make_it_long(self):
+        self.use_table(table(cage={"max_wall_x": 2}))
+        v = self.place("guest:mid", [wall_row("guest:mid", "cage", 280), wall_row("guest:mid", "chopin", 150)])
+        self.assertEqual(v.hosts, ["chopin", "cage", "copland"],
+                         "150 s elsewhere (with cage's 280 s it would be 215 s, over 200); 280 s under 2 x 150 s")
+        v = self.place("guest:mid", [wall_row("guest:mid", "cage", 400, "HARNESS"), wall_row("guest:mid", "chopin", 199),
+                                     wall_row("guest:mid", "chopin", 900, "HARNESS"), wall_row("guest:mid", "chopin", 900, "LOST")])
+        self.assertEqual(v.hosts, ["chopin", "cage", "copland"], "HARNESS and LOST rows measure no wall")
+
+    def test_a_cell_the_host_is_slow_at_goes_elsewhere(self):
+        self.use_table(table(cage={"max_wall_x": 2}))
+        slow = [wall_row("guest:slow", "cage", w, age_h=a) for w, a in ((330, 1), (310, 2), (120, 3))] + [
+            wall_row("guest:slow", "chopin", 140)]
+        v = self.place("guest:slow", slow)
+        self.assertEqual(v.hosts, ["chopin", "copland"])
+        self.assertEqual(v.pc.reasons_extra,
+                         ["kept off cage: ~310 s there lately, over its max_wall_x 2 x its ~140 s elsewhere"])
+        old = [dict(r, t=utc(15 * 24 + 1)) if r["host"] == "cage" else r for r in slow]
+        self.assertEqual(self.place("guest:slow", old).hosts, ["chopin", "cage", "copland"],
+                         "rows older than 14 days: tried there again")
+        tiny = [wall_row("guest:tiny", "cage", 90), wall_row("guest:tiny", "chopin", 20)]
+        self.assertEqual(self.place("guest:tiny", tiny).hosts, ["chopin", "cage", "copland"],
+                         "slow there but under the family's median: a minute is no reason")
+
+    def test_the_estimate_when_nothing_was_measured(self):
+        self.use_table(table(cage={"max_wall_x": 2}))
+        self.assertEqual(self.place("guest:new", [], est=300).hosts, ["chopin", "copland"])
+        self.assertEqual(self.place("guest:new", [], est=150).hosts, ["chopin", "cage", "copland"])
+
+    def test_never_strands_a_cell(self):
+        self.use_table(table(cage={"max_wall_x": 2}, copland={"max_wall_x": 2}))
+        rows = [wall_row("guest:long", "chopin", 900)]
+        self.assertEqual(self.place("guest:long", rows, hosts=("cage",)).hosts, ["cage"], "--hosts cage: runs there")
+        self.assertEqual(self.place("guest:long", rows, hosts=("cage", "copland")).hosts, ["cage", "copland"],
+                         "every host capped: the cap moves nothing")
+        v = self.place("guest:long", rows)
+        self.assertEqual((v.hosts, v.pc.host), (["chopin"], "chopin"))
+
+    def test_holt_cells_by_their_own_family(self):
+        self.use_table(table(cage={"max_wall_x": 2}))
+        rows = [wall_row(f"holt:h{i}", "chopin", 300) for i in range(5)] + [wall_row("holt:big", "copland", 500)]
+        p = wall_planner(FAMILY + rows)
+        v = wall_view("holt:big")
+        p.fit_wall(v)
+        self.assertEqual(v.hosts, ["chopin", "cage", "copland"], "500 s: under 2 x the holt median (300 s)")
+        self.assertEqual(p.family_wall("holt", "cage"), 300)
+        self.assertEqual(p.family_wall("guest", "cage"), 100)
 
 
 class FakeRunner(holt.Runner):

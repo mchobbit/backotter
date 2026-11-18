@@ -57,6 +57,12 @@ gets the defaults):
     bs2_slots        3     BackShot2's tier 1 and 2 cases at once there (bs2-host queue
                            --slots), 1-6: its queue's ports are 2943-2948 (2949 is a by-hand
                            tier 1's)
+    max_wall_x       null  a number, 0.5 to 10, or null (no cap): t2's planner keeps a
+                           HoltTest2 or GuestTest2 cell off the host when its wall elsewhere
+                           (the median of its last measured walls on the other hosts, else its
+                           estimate) is over max_wall_x times its family's median wall there,
+                           while another host of the cell's is left (plan.Planner.fit_wall):
+                           a slow host takes the short cells and leaves the long ones
 The defaults are what every host had before the table had limits.
 
 Command line (what hosts.sh wraps; exit 0 ok, 1 no such host, 2 usage or a bad table):
@@ -91,7 +97,8 @@ FIELDS = ("name", "ssh", "ip", "host_key_alias", "slot_range", "stic_ports", "cl
 REQUIRED = ("name", "ssh", "slot_range", "stic_ports", "class", "roles", "default", "enabled")
 # A host's limits and their defaults (the docstring): optional row fields, and the fields of
 # the table's class_limits {CLASS: {FIELD: VALUE}}.
-LIMITS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False, "bs2_slots": 3}
+LIMITS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False, "bs2_slots": 3,
+          "max_wall_x": None}
 FIELDS += tuple(LIMITS)
 # A host's architecture (its row's arch, else DEFAULT_ARCH), Debian's names; MACHINES maps
 # uname -m's to them.  A guest's is in its name (guest_arch): GUEST_ARCH_SUFFIXES.
@@ -145,6 +152,8 @@ def limit_error(k, v):
         return None if type(v) is int and 1 <= v <= 3 else "1 to 3 (every check.sh's slot_take 3)"
     if k == "bs2_slots":
         return None if type(v) is int and 1 <= v <= 6 else "1 to 6 (bs2-host queue's ports 2943-2948)"
+    if k == "max_wall_x":
+        return None if v is None or (type(v) in (int, float) and 0.5 <= v <= 10) else "null, or a number 0.5 to 10"
     return None if type(v) is int and 1 <= v <= 16 else "a whole number, 1 to 16"
 
 

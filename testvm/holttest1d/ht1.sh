@@ -562,15 +562,20 @@ exit $f'
 # restored machine may have no line its source lacked.  Under s6 the boot's
 # s6-rc change may still be running when SSH answers (sshd is a longrun,
 # up before the oneshots behind it, e.g. Artix's mount-net): wait for it to
-# end first, as systemd's is-system-running --wait does (up to 300 s).
+# end first, as systemd's is-system-running --wait does (up to 300 s).  So
+# with OpenRC (while an openrc, or Gentoo's older rc, process runs the
+# runlevel, or rc-status shows a service starting) and dinit (while dinitctl
+# list shows one starting, "<<").  Each wait logs on stderr.
 BOOTSTATE='if [ -d /run/systemd/system ]; then
     timeout 300 systemctl is-system-running --wait; systemctl --failed --no-legend --plain | awk "{print \$1}" | sort
 elif command -v rc-status >/dev/null; then
     echo openrc
+    i=0; while [ $i -lt 300 ] && { grep -qsxE "openrc|rc" /proc/[0-9]*/comm || rc-status -a 2>/dev/null | grep -q "\[ *starting"; }; do sleep 1; i=$((i + 1)); done; [ $i = 0 ] || echo "bootstate: waited ${i} s for openrc" >&2
     { rc-status -a | awk "/^Runlevel: / {lv=\$2; next} /^Dynamic Runlevel: / {lv=\$3; next} (lv == \"sysinit\" || lv == \"boot\" || lv == \"default\" || lv == \"needed/wanted\") && !/\\[ *started *\\]/ {print \"down \" \$1}"
       rc-status --crashed | sed "s/^/crashed /"; } | sort
 elif command -v dinitctl >/dev/null; then
     echo dinit
+    i=0; while [ $i -lt 300 ] && dinitctl list 2>/dev/null | grep -q "^\[[^]]*<<"; do sleep 1; i=$((i + 1)); done; [ $i = 0 ] || echo "bootstate: waited ${i} s for dinit" >&2
     dinitctl list | awk "!/^\\[[^]]*\\+[^]]*\\]/ {sub(/^\\[[^]]*\\] */, \"\"); print \"down \" \$1}" | sort
 elif command -v s6-rc >/dev/null; then
     echo s6

@@ -81,8 +81,13 @@ def main() -> int:
                 typed["at"] = None
                 log.write(chunk)
                 log.flush()
-                buf = (buf + ANSI.sub(b"", chunk))[-4096:]
-                if PROMPT.search(buf) and time.monotonic() - typed["last"] > 5:
+                # The escapes come out of what was read so far, not chunk by
+                # chunk: a UART hands the console over a byte at a time, and
+                # an escape split between two reads stayed in the prompt
+                # (SeaBIOS's serial console put "GELI\e[15;04H\e[15;05H
+                # Passphrase for disk1p3: " out once, and nothing was typed).
+                buf = (buf + chunk)[-8192:]
+                if PROMPT.search(ANSI.sub(b"", buf)) and time.monotonic() - typed["last"] > 5:
                     time.sleep(1)
                     # One key at a time: OpenBSD's /boot and FreeBSD's BIOS
                     # loader read the BIOS keyboard buffer, which holds only

@@ -33,6 +33,7 @@ pub mod status;
 pub mod target;
 pub mod transactional;
 pub mod truenas;
+pub mod umounttree;
 pub mod writetable;
 pub mod zfs_be;
 pub mod zfsbootmenu;

@@ -84,6 +84,7 @@ fn main() -> ExitCode {
         // Not in the usage: run by load's close, partition and boot stages.
         Some("snapcore-boot-areas") => ExitCode::from(bko_holt::load::snapcore::boot_areas_main(&args[1..])),
         Some("md-lbs") => ExitCode::from(bko_holt::mdsb::main(&args[1..])),
+        Some("umount-tree") => ExitCode::from(bko_holt::load::umounttree::main(&args[1..])),
         Some("efi-dedupe") => ExitCode::from(bko_holt::load::efidedupe::main(&args[1..])),
         Some("raw-write") => ExitCode::from(bko_holt::load::rawvol::main(&args[1..])),
         Some("write-table") => ExitCode::from(bko_holt::load::writetable::main(&args[1..])),

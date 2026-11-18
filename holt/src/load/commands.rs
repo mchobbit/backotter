@@ -4401,7 +4401,16 @@ impl Builder<'_> {
             return self.other_close(fam);
         }
         let t = &self.opts.target;
-        let mut out = vec![Cmd::new(&["umount", "--recursive", t])];
+        let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
+        // Where the mount stage mounts nothing at the target itself (Ubuntu
+        // Core: the four partitions under run/mnt), `umount --recursive`
+        // of it fails, "not mounted": umount-tree (umounttree.rs) takes
+        // each mount under it off instead, read from mountinfo.
+        let mut out = vec![if self.mount_points.iter().any(|p| p == t) {
+            Cmd::new(&["umount", "--recursive", t])
+        } else {
+            Cmd::new(&[exe.as_str(), "umount-tree", t]).why(format!("nothing is mounted at {t} itself: every mount under it, read from /proc/self/mountinfo, each before the one it's on"))
+        }];
         // A service that started while the target was mounted (systemd's
         // udevd, logind, timesyncd: PrivateMounts and the like) has its own
         // copy of those mounts, which umount here doesn't always reach, and
@@ -4438,7 +4447,6 @@ impl Builder<'_> {
         // Stopped, each md member gets back the source's logical block size
         // field: the rescue system's kernel may have written one the
         // source's kernel takes for non-zero padding, and refuses.
-        let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
         for md in self.layout.arr(&["storage", "md_arrays"]).to_vec() {
             for m in md.at(&["md", "members"]).and_then(Value::as_array).into_iter().flatten() {
                 let Some(src) = s(m, "device") else { continue };
@@ -5668,6 +5676,20 @@ mod tests {
         assert!(text(b.stage(Stage::Close)).starts_with("umount --recursive /mnt/bko-target\n"));
         let none = built(&[]);
         assert!(text(none.stage(Stage::Restore)).contains("no --repo"));
+    }
+
+    /// Ubuntu Core mounts nothing at the target itself, only under
+    /// run/mnt: close takes those off with umount-tree, not `umount
+    /// --recursive` of the target (which fails, "not mounted").
+    #[test]
+    fn close_without_a_root_mount() {
+        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/uc24/src.json")).unwrap();
+        let b = built_from(&j, &[]);
+        assert!(!b.mount_points.iter().any(|p| p == "/mnt/bko-target") && b.mount_points.iter().any(|p| p == "/mnt/bko-target/run/mnt/data"), "{:?}", b.mount_points);
+        let c = text(b.stage(Stage::Close));
+        let first = c.lines().find(|l| !l.starts_with('#') && !l.is_empty()).unwrap();
+        assert!(first.ends_with(" umount-tree /mnt/bko-target"), "{c}");
+        assert!(!c.contains("umount --recursive /mnt/bko-target\n"), "{c}");
     }
 
     #[test]

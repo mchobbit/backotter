@@ -1418,7 +1418,7 @@ class FakeGuest:
     def path(self, img):
         return f"/orig/{img}"
 
-    def ssh_cmd(self, port, *remote):
+    def ssh_cmd(self, port, *remote, connect_timeout=None):
         return ["true"]
 
 
@@ -2173,6 +2173,107 @@ class TestSshChecked(unittest.TestCase):
         with mock.patch.object(VU.stopping, "wait", lambda t: True):
             with self.assertRaisesRegex(VU.Failed, "stopped"):
                 self.vm(255, 0).ssh_checked("x", 5)
+
+
+class TestSshConnectTimeout(unittest.TestCase):
+    """ssh waits VM_SSH_CONNECT_TIMEOUT (default 30) for a guest sshd's banner, as vm-lib.sh's
+    vm_ssh since 873b2b9: a FreeBSD sshd's PTR lookup of 10.0.2.2 that loses one DNS answer
+    costs 5 s, which ConnectTimeout=5 made a failed ssh.  Only wait_ssh's first minute tries
+    5 s at a time."""
+
+    def setUp(self):
+        env = mock.patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("VM_SSH_CONNECT_TIMEOUT", None)
+
+    def guest(self):
+        g = VU.Guest.__new__(VU.Guest)
+        g.dir, g.user = Path("/g"), "root"
+        return g
+
+    def ct(self, cmd):
+        return [cmd[i + 1] for i, x in enumerate(cmd) if x == "-o" and cmd[i + 1].startswith("ConnectTimeout=")]
+
+    def test_the_default_is_30_s(self):
+        self.assertEqual(self.ct(self.guest().ssh_cmd(2222, "true")), ["ConnectTimeout=30"])
+
+    def test_the_environment_sets_it(self):
+        with mock.patch.dict(os.environ, {"VM_SSH_CONNECT_TIMEOUT": "45"}):
+            self.assertEqual(self.ct(self.guest().ssh_cmd(2222, "true")), ["ConnectTimeout=45"])
+        self.assertEqual(self.ct(self.guest().ssh_cmd(2222, "true", connect_timeout=5)), ["ConnectTimeout=5"])
+
+    def test_a_bad_value_fails(self):
+        for v in ("0", "-3", "5s"):
+            with mock.patch.dict(os.environ, {"VM_SSH_CONNECT_TIMEOUT": v}):
+                with self.assertRaisesRegex(VU.Failed, "VM_SSH_CONNECT_TIMEOUT"):
+                    self.guest().ssh_cmd(2222, "true")
+
+    def vm(self):
+        v = VU.VM.__new__(VU.VM)
+        v.g, v.port = self.guest(), 2222
+        v.g.log, v.g.note = io.StringIO(), lambda m: None
+        return v
+
+    def test_the_banner_wait_comes_on_top_of_the_commands_timeout(self):
+        seen = []
+
+        def fake_run(cmd, **kw):
+            seen.append((self.ct(cmd), kw["timeout"]))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        with mock.patch.object(VU, "run", fake_run):
+            self.vm().ssh("uname -sr", 30, log=False)
+            self.vm().ssh("echo up", 15, log=False, connect_timeout=5)
+        self.assertEqual(seen, [(["ConnectTimeout=30"], 60), (["ConnectTimeout=5"], 20)])
+        with mock.patch.object(VU.subprocess, "run", lambda cmd, **kw: seen.append((self.ct(cmd), kw["timeout"]))
+                               or subprocess.CompletedProcess(cmd, 0, b"", b"")):
+            self.vm().ssh_bytes(["true"], None, 60)
+        self.assertEqual(seen[-1], (["ConnectTimeout=30"], 90))
+
+    def test_a_timeout_says_the_whole_wait(self):
+        def slow(cmd, **kw):
+            raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+        with mock.patch.object(VU, "run", slow):
+            r = self.vm().ssh("x", 30, log=False)
+        self.assertEqual((r.returncode, r.stderr), (124, "timed out after 60 s"))
+
+    def test_wait_ssh_tries_5_s_for_a_minute_then_the_full_wait(self):
+        clock = [0.0]
+        cts = []
+        v = self.vm()
+        v.proc = types.SimpleNamespace(poll=lambda: None)
+        v.stop_typing = lambda: None
+
+        def ssh(script, timeout, log=True, connect_timeout=None):
+            cts.append((round(clock[0]), connect_timeout, timeout))
+            clock[0] += timeout + connect_timeout       # each try waits out its whole time
+            up = clock[0] > 150
+            return subprocess.CompletedProcess([], 0 if up else 255, "up\n" if up else "", "")
+        v.ssh = ssh
+        fake = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda s: clock.__setitem__(0, clock[0] + s))
+        with mock.patch.object(VU, "time", fake):
+            v.wait_ssh()
+        short = [c for c in cts if c[0] < 60]
+        self.assertTrue(short and all(c[1:] == (5, 15) for c in short), cts)
+        late = [c for c in cts if c[0] >= 60]
+        self.assertTrue(late and all(c[1:] == (30, 15) for c in late), cts)
+
+    def test_wait_ssh_short_tries_never_wait_longer_than_the_setting(self):
+        clock = [0.0]
+        cts = []
+        v = self.vm()
+        v.proc = types.SimpleNamespace(poll=lambda: None)
+        v.stop_typing = lambda: None
+
+        def ssh(script, timeout, log=True, connect_timeout=None):
+            cts.append(connect_timeout)
+            clock[0] += 1
+            return subprocess.CompletedProcess([], 0, "up\n", "")
+        v.ssh = ssh
+        os.environ["VM_SSH_CONNECT_TIMEOUT"] = "3"
+        with mock.patch.object(VU, "time", types.SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda s: None)):
+            v.wait_ssh()
+        self.assertEqual(cts, [3, 3])
 
 
 class TestJournal(TempDir):

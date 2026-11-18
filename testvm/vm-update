@@ -153,6 +153,11 @@ Environment:
                            default is the real fleet's
   VM_UPDATE_HOLT_BIN       the bko-holt set for the dump (default
                            /bkoscratch/holttest1d/bin)
+  VM_SSH_CONNECT_TIMEOUT=S how long ssh waits for the guest sshd's banner
+                           (default 30, as vm-lib.sh's vm_ssh): a FreeBSD-
+                           family sshd looks up 10.0.2.2's name first, and
+                           one lost DNS answer costs it 5 s.  Waiting for a
+                           boot tries 5 s at a time for its first minute
   VM_MOUNT_NBD="nbd14 ..." the nbd devices step 4's mount may take (default:
                            any free one, as vm-mount picks them)
   VM_UPDATE_LIMIT_KIB, VM_UPDATE_FREE_KIB
@@ -239,6 +244,8 @@ GATE_BLOCKED = 10                       # --merge-gate's "don't merge"
 WATCH_INTERVAL = 5
 RESERVE_WAIT = 3600                     # at most this long for room on another host
 SSH_UP_TIMEOUT = 900
+SSH_SHORT_TRIES_S = 60                  # wait_ssh's first minute: 5 s ssh tries (vm-lib.sh's vm_boot)
+SSH_SHORT_CONNECT = 5
 UPDATE_TIMEOUT = 3 * 3600
 TRIM_TIMEOUT = 1800
 POWEROFF_TIMEOUT = 300
@@ -473,11 +480,30 @@ class Guest:
     def path(self, img: str) -> str:
         return os.path.realpath(self.dir / img)
 
-    def ssh_cmd(self, port: int, *remote: str) -> list[str]:
+    def ssh_cmd(self, port: int, *remote: str, connect_timeout: int | None = None) -> list[str]:
+        """ssh to the guest; CONNECT_TIMEOUT (default ssh_connect_timeout()) bounds the wait
+        for its sshd's banner, QEMU's user network having taken the TCP connection at once."""
+        ct = ssh_connect_timeout() if connect_timeout is None else connect_timeout
         return ["ssh", "-q", "-i", str(self.dir / "id_ed25519"), "-p", str(port),
                 "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-                "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=15",
+                "-o", "BatchMode=yes", "-o", f"ConnectTimeout={ct}", "-o", "ServerAliveInterval=15",
                 f"{self.user}@127.0.0.1", *remote]
+
+
+def ssh_connect_timeout() -> int:
+    """VM_SSH_CONNECT_TIMEOUT (default 30 s, vm-lib.sh's vm_ssh's): ssh's wait for a guest
+    sshd's banner.  A FreeBSD-family sshd (UseDNS yes by default) looks up the client's name,
+    10.0.2.2, before it sends the banner, through QEMU's DNS to the host's nameserver: one
+    lost answer costs its resolver 5 s, two 15 s.  At 5 s (until 2026-11-18) a lost answer
+    was a failed ssh (873b2b9)."""
+    v = os.environ.get("VM_SSH_CONNECT_TIMEOUT") or "30"
+    try:
+        ct = int(v)
+    except ValueError:
+        ct = 0
+    if ct < 1:
+        raise Failed(f"VM_SSH_CONNECT_TIMEOUT={v}: whole seconds, at least 1")
+    return ct
 
 
 def free_port() -> int:
@@ -932,12 +958,15 @@ class VM:
             self.typer.terminate()
             self.typer.wait()
 
-    def ssh(self, script: str, timeout: float, log: bool = True) -> subprocess.CompletedProcess:
-        """Run sh SCRIPT in the guest as root."""
+    def ssh(self, script: str, timeout: float, log: bool = True,
+            connect_timeout: int | None = None) -> subprocess.CompletedProcess:
+        """Run sh SCRIPT in the guest as root.  TIMEOUT bounds SCRIPT; the wait for the
+        sshd's banner (CONNECT_TIMEOUT, default ssh_connect_timeout()) comes on top."""
+        ct = ssh_connect_timeout() if connect_timeout is None else connect_timeout
         try:
-            r = run(self.g.ssh_cmd(self.port, "sh", "-s"), input=script, timeout=timeout)
+            r = run(self.g.ssh_cmd(self.port, "sh", "-s", connect_timeout=ct), input=script, timeout=timeout + ct)
         except subprocess.TimeoutExpired:
-            r = subprocess.CompletedProcess([], 124, "", f"timed out after {timeout:.0f} s")
+            r = subprocess.CompletedProcess([], 124, "", f"timed out after {timeout + ct:.0f} s")
         if log:
             self.g.log.write(r.stdout + r.stderr)
             self.g.note(f"exit status {r.returncode}")
@@ -960,11 +989,14 @@ class VM:
         return r
 
     def ssh_bytes(self, remote: list[str], data: bytes | None, timeout: float) -> subprocess.CompletedProcess:
-        """Run REMOTE in the guest, bytes in and out, retried as ssh_checked."""
+        """Run REMOTE in the guest, bytes in and out, retried as ssh_checked.  TIMEOUT
+        bounds REMOTE, the wait for the banner coming on top (VM.ssh)."""
+        ct = ssh_connect_timeout()
+
         def once():
             try:
-                return subprocess.run(self.g.ssh_cmd(self.port, *remote), input=data or b"",
-                                      capture_output=True, timeout=timeout)
+                return subprocess.run(self.g.ssh_cmd(self.port, *remote, connect_timeout=ct), input=data or b"",
+                                      capture_output=True, timeout=timeout + ct)
             except subprocess.TimeoutExpired:
                 return subprocess.CompletedProcess([], 124, b"", b"timed out")
         r = once()
@@ -1045,7 +1077,8 @@ class VM:
         starts before the network is done can lose its connections);
         REBOOTING, until it has stopped answering first.  (Not by a boot id:
         the BSDs' kern.boottime moves when ntpd steps the clock.)"""
-        deadline = time.monotonic() + SSH_UP_TIMEOUT
+        began = time.monotonic()
+        deadline = began + SSH_UP_TIMEOUT
         down, answers = not rebooting, 0
         while time.monotonic() < deadline:
             if stopping.is_set():
@@ -1055,7 +1088,14 @@ class VM:
                              f" see {self.g.serial_path}{self.stderr_tail()}")
             # Within a timeout: QEMU's user network accepts the connection
             # before the guest is up, so ConnectTimeout alone never fires.
-            r = self.ssh("echo up", timeout=20, log=False)
+            # Short tries for the first minute (a try made before the
+            # guest's network is up waits out its whole ConnectTimeout), the
+            # full one after: a FreeBSD-family guest whose sshd can't reach
+            # DNS just then answers only once its lookup gives up (as
+            # vm-lib.sh's vm_boot).
+            short = time.monotonic() - began < SSH_SHORT_TRIES_S
+            ct = min(SSH_SHORT_CONNECT, ssh_connect_timeout()) if short else ssh_connect_timeout()
+            r = self.ssh("echo up", timeout=15, log=False, connect_timeout=ct)
             if r.returncode == 0 and r.stdout.strip() == "up":
                 if down:
                     answers += 1

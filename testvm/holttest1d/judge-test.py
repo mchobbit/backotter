@@ -2681,6 +2681,103 @@ class FsTransactional(unittest.TestCase):
         self.assertNotIn("transactional", out)
 
 
+class FsSnapcore(unittest.TestCase):
+    """judge.py fs over an Ubuntu Core restore (docs/design/ubuntu-core.md,
+    U6): vm-mount's tree has the roles under run/mnt/, /var/log is
+    run/mnt/data/system-data/var/log, and load's snapcore boot stage writes
+    nothing but its log there, so ubuntu-seed, ubuntu-boot, every .snap,
+    modeenv and state.json get no excuse (uc24close, 2026-11-18: load's log
+    and the var/log mtime were the only DIFFs)."""
+
+    D = "run/mnt/data/system-data"
+    HELD = ["run/mnt/ubuntu-seed/EFI/ubuntu/grubenv", "run/mnt/ubuntu-seed/EFI/ubuntu/grub.cfg",
+            "run/mnt/ubuntu-seed/EFI/boot/bootx64.efi", "run/mnt/ubuntu-seed/snaps/pc-kernel_3908.snap",
+            "run/mnt/ubuntu-seed/systems/20240603/model", "run/mnt/ubuntu-boot/EFI/ubuntu/grubenv",
+            "run/mnt/ubuntu-boot/EFI/ubuntu/grub.cfg", "run/mnt/ubuntu-boot/EFI/boot/grubx64.efi",
+            "run/mnt/ubuntu-boot/EFI/ubuntu/pc-kernel_3908.snap/kernel.efi",
+            f"{D}/var/lib/snapd/modeenv", f"{D}/var/lib/snapd/state.json", f"{D}/var/lib/snapd/snaps/pc-kernel_3908.snap"]
+    SRC = {"run": meta("dir"), "run/mnt": meta("dir"), "run/mnt/data": meta("dir"), "run/mnt/ubuntu-seed": meta("dir"),
+           "run/mnt/ubuntu-boot": meta("dir"), "run/mnt/ubuntu-save": meta("dir"), "run/mnt/ubuntu-save/bko-mark": meta("file"),
+           "run/mnt/data/bko-mark": meta("file"), D: meta("dir"), f"{D}/var": meta("dir"), f"{D}/var/log": meta("dir"),
+           f"{D}/var/log/syslog": meta("file"), "run/mnt/ubuntu-boot/EFI/ubuntu/pc-kernel_3908.snap": meta("dir"),
+           **{p: meta("file") for p in HELD}}
+
+    judge = Fs.judge
+
+    def changed(self, src, changes):
+        a = copy.deepcopy(src)
+        for p, kw in changes.items():
+            a[p].update(kw)
+        return self.judge(src, a)
+
+    def with_log(self):
+        a = copy.deepcopy(self.SRC)
+        a[f"{self.D}/var/log/bko-holt"] = meta("dir")
+        a[f"{self.D}/var/log/bko-holt/load.log"] = meta("file")
+        a[f"{self.D}/var/log"]["mtime"] = 2
+        return a
+
+    def test_loads_log_under_system_data_only(self):
+        """uc24close's three DIFFs, now the snapcore boot stage's."""
+        rc, out = self.judge(self.SRC, self.with_log())
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn(f"copied in by the snapcore boot stage (Ubuntu Core's /var/log is ubuntu-data's system-data/var/log)): 2: {self.D}/var/log/bko-holt, {self.D}/var/log/bko-holt/load.log", out)
+        self.assertIn(f"(system-data/var/log/bko-holt made): 1: {self.D}/var/log", out)
+        held = [p for p in self.SRC if re.search(r"^run/mnt/(ubuntu-seed|ubuntu-boot)(/|$)|\.snap$|/snapd/(modeenv|state\.json)$", p)]
+        self.assertIn(f"Ubuntu Core: no boot-stage excuse but load's log: {len(held)} paths of ubuntu-seed, ubuntu-boot, the .snaps, modeenv and state.json held to the source's", out)
+        self.assertIn("0 differences, 3 from the boot stage", out)
+
+    def test_seed_boot_snaps_and_snapd_state_are_held(self):
+        for p in self.HELD:
+            rc, out = self.changed(self.SRC, {p: {"sha256": "cd", "mtime": 2}})
+            self.assertEqual(rc, 1, f"{p}: {out}")
+            self.assertIn(f"DIFF content: 1: {p}", out)
+            self.assertIn(" 0 from the boot stage", out)
+        rc, out = self.changed(self.SRC, {"run/mnt/ubuntu-boot/EFI/ubuntu/grub.cfg": {"mode": 0o600}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF mode: 1: run/mnt/ubuntu-boot/EFI/ubuntu/grub.cfg", out)
+
+    def test_the_rest_of_var_log_and_the_log_elsewhere_still_count(self):
+        """Only system-data/var/log/bko-holt: another file in var/log, a log
+        at the plain var/log/bko-holt (no such path on Ubuntu Core), or a
+        mode change on system-data/var/log are the restore's."""
+        a = self.with_log()
+        a[f"{self.D}/var/log/syslog"].update(sha256="cd")
+        a[f"{self.D}/var/log"]["mode"] = 0o700
+        a["var/log/bko-holt/load.log"] = meta("file")
+        rc, out = self.judge(self.SRC, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF content: 1: {self.D}/var/log/syslog", out)
+        self.assertIn(f"DIFF mode: 1: {self.D}/var/log", out)
+        self.assertIn("var/log/bko-holt/load.log", [l for l in out.splitlines() if l.startswith("DIFF extra")][0])
+
+    def test_a_record_missing_a_role_fails(self):
+        for gone in ("run/mnt/ubuntu-seed/", "run/mnt/ubuntu-boot/", f"{self.D}/var/lib/snapd/snaps/",
+                     "run/mnt/ubuntu-boot/EFI/ubuntu/pc-kernel_3908.snap/", f"{self.D}/var/lib/snapd/state.json"):
+            src = {p: m for p, m in self.SRC.items() if not p.startswith(gone)}
+            rc, out = self.judge(src, copy.deepcopy(src))
+            self.assertEqual(rc, 1, f"{gone}: {out}")
+            self.assertIn("DIFF not in the source's record (Ubuntu Core's seed, boot and snaps):", out)
+
+    def test_other_systems_keep_their_rules(self):
+        src = {p: m for p, m in self.SRC.items() if p != f"{self.D}/var/lib/snapd/modeenv"}
+        src.update({"var": meta("dir"), "var/log": meta("dir")})
+        a = copy.deepcopy(src)
+        a.update({"var/log/bko-holt": meta("dir"), "var/log/bko-holt/load.log": meta("file")})
+        a["var/log"]["mtime"] = 2
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Ubuntu Core", out)
+        self.assertIn("(load's own log, copied in by the boot stage): 2: var/log/bko-holt, var/log/bko-holt/load.log", out)
+        # Without modeenv, the system-data/ log is no boot stage's.
+        a = copy.deepcopy(src)
+        a.update({f"{self.D}/var/log/bko-holt": meta("dir"), f"{self.D}/var/log/bko-holt/load.log": meta("file")})
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF extra: 2: {self.D}/var/log/bko-holt, {self.D}/var/log/bko-holt/load.log", out)
+
+
 class Transactional(unittest.TestCase):
     """judge.py's boot.transactional (M5): the restored machine boots the
     source's default, its pending update, as its default, and

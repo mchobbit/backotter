@@ -421,6 +421,37 @@ TU_STAGE = [
     (r"^var/lib/misc$", {"mtime (dirs)", "atime (dirs)"}, "health-check.state rewritten"),
 ]
 TU_HELD = r"^(boot|usr)(/|$)|^\.snapshots/\d+/snapshot/(boot|usr)(/|$)"
+# An Ubuntu Core source (docs/design/ubuntu-core.md, U6): vm-mount's tree has
+# the four roles under run/mnt/ (ubuntu-seed, ubuntu-boot, ubuntu-save, and
+# ubuntu-data at run/mnt/data, whose system-data/ holds the writable paths:
+# the running system's /var/log is run/mnt/data/system-data/var/log).
+# Load's snapcore boot stage regenerates nothing (no grub-install, no
+# initramfs, no NVRAM entry): it writes the boot areas back as dumped and
+# copies its own log in, so no other boot-stage rule applies.  Everything on
+# ubuntu-seed and ubuntu-boot, every .snap, modeenv and state.json must be
+# byte for byte the source's, and SNAPCORE_REQUIRED must be in the source's
+# record (with a .snap in the seed's snaps/ and in snapd's, and a kernel.efi
+# on ubuntu-boot), so that a record missing a role can't pass by having
+# nothing to compare.
+SNAPCORE_SOURCE = "run/mnt/data/system-data/var/lib/snapd/modeenv"   # (load's snapcore::MARKER)
+SNAPCORE_STAGE = [
+    (r"^run/mnt/data/system-data/var/log/bko-holt(/|$)", _WRITTEN, "load's own log, copied in by the snapcore boot stage (Ubuntu Core's /var/log is ubuntu-data's system-data/var/log)"),
+    (r"^run/mnt/data/system-data/var/log$", {"mtime (dirs)", "atime (dirs)"}, "system-data/var/log/bko-holt made"),
+]
+SNAPCORE_HELD = r"^run/mnt/(ubuntu-seed|ubuntu-boot)(/|$)|\.snap$|^run/mnt/data/system-data/var/lib/snapd/(modeenv|state\.json)$"
+SNAPCORE_REQUIRED = (SNAPCORE_SOURCE, "run/mnt/data/system-data/var/lib/snapd/state.json",
+                     "run/mnt/ubuntu-seed/EFI/ubuntu/grubenv", "run/mnt/ubuntu-seed/EFI/boot/bootx64.efi",
+                     "run/mnt/ubuntu-boot/EFI/ubuntu/grubenv", "run/mnt/ubuntu-boot/EFI/ubuntu/grub.cfg")
+SNAPCORE_GLOBS = [(r"^run/mnt/ubuntu-seed/snaps/[^/]+\.snap$", "run/mnt/ubuntu-seed/snaps/*.snap"),
+                  (r"^run/mnt/data/system-data/var/lib/snapd/snaps/[^/]+\.snap$", "run/mnt/data/system-data/var/lib/snapd/snaps/*.snap"),
+                  (r"^run/mnt/ubuntu-boot/EFI/ubuntu/[^/]+\.snap/kernel\.efi$", "run/mnt/ubuntu-boot/EFI/ubuntu/*.snap/kernel.efi")]
+
+
+def snapcore_missing(before):
+    """What an Ubuntu Core source's record lacks of SNAPCORE_REQUIRED and SNAPCORE_GLOBS."""
+    out = [p for p in SNAPCORE_REQUIRED if before.get(p, {}).get("type") != "file"]
+    return out + [g for r, g in SNAPCORE_GLOBS
+                  if not any(re.search(r, p) and m.get("type") == "file" for p, m in before.items())]
 
 
 def abroot_missing(before):
@@ -936,6 +967,7 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     abroot = any(re.search(ABROOT_SOURCE, p) for p in before)
     solus = any(re.search(SOLUS_SOURCE, p) for p in before)
     tu = any(re.search(TU_SOURCE, p) for p in before)
+    snapcore = before.get(SNAPCORE_SOURCE, {}).get("type") == "file"
     opensuse = not tu and any(re.search(OPENSUSE_SOURCE, p) for p in before)
     zbm = any(re.search(ZBM_SOURCE, p) for p in before)
     # Slackware's loaders (S6): LILO's own rules, mkinitrd's, ELILO kept.
@@ -983,6 +1015,9 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
         for p in OPENSUSE_REQUIRED:
             if before.get(p, {}).get("type") != "file":
                 real.setdefault("not in the source's record (openSUSE's shim and signed GRUB)", []).append(p)
+    if snapcore:
+        for p in snapcore_missing(before):
+            real.setdefault("not in the source's record (Ubuntu Core's seed, boot and snaps)", []).append(p)
     for kind, paths in diff.items():
         for p in paths:
             kept = (refind and re.search(REFIND_KEPT, p)) or (anduin and re.search(ANDUINOS_KEPT, p)) or (abroot and re.search(ABROOT_KEPT, p)) \
@@ -996,7 +1031,7 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
                 # Load's cp and touch -r of the remade initrd; its bytes are judged above.
                 why = "load copies the remade /boot/initrd.gz over the ESP's (as eliloconfig does)" if kind in ("content", "mtime", "atime") else None
             elif not why and not kept:
-                why = next((w for r, kinds, w in (TU_STAGE if tu else BOOT_STAGE) if kind in kinds and re.search(r, p)), None)
+                why = next((w for r, kinds, w in (TU_STAGE if tu else SNAPCORE_STAGE if snapcore else BOOT_STAGE) if kind in kinds and re.search(r, p)), None)
             if not why and kind == "missing" and before.get(p, {}).get("type") == "socket":
                 why = "a socket is made by whatever listens on it; no archiver restores one"
             if not why and new_uuids and any(re.search(r, p) for r in NEW_UUIDS_FILES) and kind in _WRITTEN:
@@ -1058,6 +1093,9 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     if tu:
         held = [p for p in before if re.search(TU_HELD, p)]
         print(f"transactional-update: no boot-stage excuse but load's log and health-check.state: {len(held)} paths of the ESP and every slot's /boot and /usr held to the source's")
+    if snapcore:
+        held = [p for p in before if re.search(SNAPCORE_HELD, p)]
+        print(f"Ubuntu Core: no boot-stage excuse but load's log: {len(held)} paths of ubuntu-seed, ubuntu-boot, the .snaps, modeenv and state.json held to the source's")
     n = sum(len(v) for v in real.values())
     print(f"{n} differences, {sum(len(v) for v in allowed.values())} from the boot stage")
     sys.exit(1 if n else 0)

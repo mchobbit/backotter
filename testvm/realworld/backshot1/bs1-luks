@@ -285,10 +285,13 @@ lk_dracut_systemd() {
         grep -E '^[^#]*omit_dracutmodules.*systemd' >/dev/null
 }
 
-# The modules of LUKS_MODULES this kernel has, as a module or built in.
+# lk_modules [EXTRA...]: the modules of LUKS_MODULES and EXTRA this kernel
+# has, as a module or built in, each once.
 lk_modules() {
-    local m
-    for m in $LUKS_MODULES; do
+    local m seen=' '
+    for m in $LUKS_MODULES "$@"; do
+        [[ -n $m && $seen != *" $m "* ]] || continue
+        seen+="$m "
         modinfo "$m" >/dev/null 2>&1 && printf '%s ' "$m"
     done
 }
@@ -505,10 +508,14 @@ reason=$(lk_q "$6")
 EOF
 }
 
-# lk_files FAMILY GENERATOR: the script, hooks and drop-ins.
+# lk_files FAMILY GENERATOR FSTYPE: the script, hooks and drop-ins.
 lk_files() {
-    local mods
-    mods=$(lk_modules)
+    local mods drivers
+    # The drive's own file system too: LUKS_MODULES has only ext4, and an
+    # initramfs without xfs (or vfat, exfat) can't mount a drive that is one
+    # (Artix, encrypt, the drive on XFS).  dracut's filesystems+= adds it
+    # there, so its add_drivers stays as it was and a rerun doesn't remake it.
+    mods=$(lk_modules "${3:-}") drivers=$(lk_modules)
     case $1 in
     D | E) lk_put "$UNLOCK_KEY" 755 "$(cat "$here/bs1-unlock-key")" || return 1 ;;
     esac
@@ -516,7 +523,7 @@ lk_files() {
     S:dracut)
         lk_put /etc/dracut.conf.d/90-backshot1.conf 644 "# BackShot1 (bs1-adopt): what reading the LUKS key from the backup drive takes.
 # TESTBED ONLY; bs1-adopt --luks-off removes it.
-add_drivers+=\" ${mods% } \"
+add_drivers+=\" ${drivers% } \"
 filesystems+=\" ${3:-ext4} \"${LK_DRACUT_EXTRA:+
 $LK_DRACUT_EXTRA}" || return 1
         ;;

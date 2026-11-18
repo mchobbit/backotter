@@ -513,7 +513,7 @@ How depends on what opens the volume:
 
 | Family | Who | How |
 |---|---|---|
-| S | systemd in the initramfs: dracut (Fedora, EndeavourOS, openSUSE, Gentoo systemd, Ubuntu 26.04), mkinitcpio's `sd-encrypt`; and any volume the booted system opens under systemd | crypttab's key field `/backshot1/keys/disk-passphrase:LABEL=mybig512`, option `keyfile-timeout=30s`; `/etc/crypttab.initramfs` for `sd-encrypt`; a dracut or mkinitcpio drop-in adds the USB and ext4 modules |
+| S | systemd in the initramfs: dracut (Fedora, EndeavourOS, openSUSE, Gentoo systemd, Ubuntu 26.04), mkinitcpio's `sd-encrypt`; and any volume the booted system opens under systemd | crypttab's key field `/backshot1/keys/disk-passphrase:LABEL=mybig512`, option `keyfile-timeout=30s`; `/etc/crypttab.initramfs` for `sd-encrypt`; a dracut or mkinitcpio drop-in adds the USB modules, ext4 and the drive's own file system |
 | D | initramfs-tools: Debian, Ubuntu up to 25.04, Mint, Chimera | crypttab option `keyscript=/usr/local/lib/backshot1/unlock-key` (`bs1-unlock-key`), the key field left `none`; it asks with askpass when the drive's key can't be read |
 | E | mkinitcpio's busybox `encrypt`: Arch, Manjaro, Omarchy | a `bs1key` hook, put right before `encrypt` by `/etc/mkinitcpio.conf.d/zz-backshot1.conf`, writes `/crypto_keyfile.bin` only if that key opens the volume |
 | N | NixOS (systemd or scripted stage 1) | `/etc/nixos/backshot1-luks.nix`, imported by `backshot1.nix` while it exists, sets each typed `boot.initrd.luks.devices` volume's `keyFile`: systemd stage 1 the same `PATH:LABEL=` form and `keyFileTimeout = 30`; scripted stage 1 a copy its `preOpenCommands` take off the drive (mounted read-only, `norecovery` for xfs), with `fallbackToPassword`; then `nixos-rebuild switch` |

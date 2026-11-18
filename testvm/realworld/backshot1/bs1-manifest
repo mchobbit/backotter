@@ -132,7 +132,8 @@ EXPECTED = [
 # entry-token: the restore's bootctl install writes it again (Chimera, with
 # systemd-boot), and the ESP's entries are under that name.  OpenRC's
 # save-keymaps and save-termencoding (Gentoo's boot runlevel) save the
-# console's keymap and encoding in its libexec dir at every boot.
+# console's keymap and encoding in its libexec dir at every boot: Gentoo's
+# /usr/libexec/rc, Artix's /usr/lib/openrc (artix-20261118-105750).
 # ld.so.cache: ldconfig.service (ConditionNeedsUpdate=/etc) remakes it at the
 # first boot after anything touched /usr since etc/.updated, as bs1-adopt's
 # package install does (avahi on cachyos-zfs under bs1-qemu): the restored
@@ -144,7 +145,7 @@ EXPECTED = [
 # vmlinuz: Garuda's dracut-rebuild (dracut-install-garuda), which the
 # restore's boot stage runs, copies each kernel to /boot again with dd
 # (garuda-20261114-154812: only a new mtime; docs/design/garuda.md, GA7).
-REMADE = ["etc/machine-id", "usr/share/applications/mimeinfo.cache", "etc/kernel/entry-token", "usr/libexec/rc/console/*", "etc/ld.so.cache",
+REMADE = ["etc/machine-id", "usr/share/applications/mimeinfo.cache", "etc/kernel/entry-token", "usr/libexec/rc/console/*", "usr/lib/openrc/console/*", "etc/ld.so.cache",
           "boot/vmlinuz-*",
           "etc/tuned/active_profile", "etc/tuned/post_loaded_profile", "etc/tuned/ppd_base_profile", "etc/tuned/profile_mode",
           "etc/modprobe.d/tuned.conf", "etc/supergfxd.conf", "etc/modprobe.d/supergfxd.conf", "usr/bin/steamdeps"]

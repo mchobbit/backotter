@@ -116,15 +116,18 @@ ABROOT_MENU = r'''sed -n "s/^set default=//p" /boot/grub/grub.cfg | head -1; sed
 def abroot_pick(menu):
     """(title, pattern, keys) for the master grub.cfg's other entry, from
     ABROOT_MENU's output, as ht1.sh's abroot_pick: its title as a regular
-    expression, the arrow toward it twice (two entries: the second press
-    stays there), then Enter.  None unless the default is 0 or 1 and there
-    are two entries."""
+    expression, GRUB's one-byte Up (^) or Down (v) toward it twice (two
+    entries: the second press stays there), then Enter.  Not the arrows:
+    with terminal_input console serial under UEFI, OVMF's TerminalDxe and
+    GRUB's serial driver both read COM1, either can take an arrow's ESC,
+    and GRUB waits 100 ms for the rest (guix15, 33ff371).  None unless the
+    default is 0 or 1 and there are two entries."""
     lines = [ln.strip() for ln in menu.strip().splitlines()]
     if len(lines) != 3 or lines[0].strip("\"'") not in ("0", "1"):
         return None
     d = int(lines[0].strip("\"'"))
     o = 1 - d
-    keys = r"\x1b[A|\x1b[A|\r" if o < d else r"\x1b[B|\x1b[B|\r"
+    keys = r"^|^|\r" if o < d else r"v|v|\r"
     return lines[1 + o], re.escape(lines[1 + o]), keys
 # The entry the firmware booted through, from efivarfs (no efibootmgr needed).
 NVBOOT = os.path.join(HERE, "..", "..", "holttest1d", "nvboot-efivars.sh")

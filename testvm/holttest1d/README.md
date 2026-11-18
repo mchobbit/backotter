@@ -203,9 +203,10 @@ source and on the restored disk, each boot alone:
   first boot, and no boot may change grub.cfg.
 - **How the other root is picked.**  The master grub.cfg reads `default`
   literally, so `grub-reboot` would do nothing: vm_up's `GRUB_PICK` runs the
-  guest under `testvm/vanilla/console-keys.py`, which types the arrow
-  toward the other entry twice and Enter once its title shows on GRUB's
-  serial menu.
+  guest under `testvm/vanilla/console-keys.py`, which types GRUB's
+  one-byte Up or Down (`^` or `v`, not an arrow's escape sequence: under
+  UEFI two readers share COM1) toward the other entry twice and Enter once
+  its title shows on GRUB's serial menu.
 - **mount-sys.**  ABRoot's init hook mounts /var and /etc's overlay and
   repairs the root's integrity when it finds it broken; it prints to the
   console only (before systemd).  Each boot's console log must have its

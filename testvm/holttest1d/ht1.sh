@@ -1202,8 +1202,12 @@ ABROOT_MENU='sed -n "s/^set default=//p" /boot/grub/grub.cfg | head -1; sed -n "
 ABROOT_REPAIRS='journalctl -b --no-pager 2>/dev/null | grep -i abroot | grep -iE "repair|integrity check"'
 # PICK_RE and PICK_KEYS, vm_up's GRUB_PICK and GRUB_KEYS for the master
 # grub.cfg's other entry (logs/source-abroot-menu.txt): its title as a
-# regular expression, and the arrow toward it twice (two entries: the
-# second press stays there), then Enter.  ABROOT_OTHER: its title.
+# regular expression, and GRUB's one-byte Up (^) or Down (v) toward it
+# twice (two entries: the second press stays there), then Enter.  Not the
+# arrows' ESC [ A: the master grub.cfg's terminal_input console serial puts
+# two readers on COM1 under UEFI (OVMF's TerminalDxe and GRUB's serial
+# driver), either can take the ESC, and GRUB waits 100 ms for the rest
+# (guix15, 33ff371).  ABROOT_OTHER: its title.
 abroot_pick() {
     local m=$R/logs/source-abroot-menu.txt d o t=()
     mapfile -t t < <(tail -n +2 "$m")
@@ -1211,7 +1215,7 @@ abroot_pick() {
     [[ ${#t[@]} == 2 && $d =~ ^[01]$ ]] || return 1
     o=$((1 - d)) ABROOT_OTHER=${t[o]}
     PICK_RE=$(sed 's/[][\.*^$()+?{}|]/\\&/g' <<<"${t[o]}")
-    if ((o < d)); then PICK_KEYS='\x1b[A|\x1b[A|\r'; else PICK_KEYS='\x1b[B|\x1b[B|\r'; fi
+    if ((o < d)); then PICK_KEYS='^|^|\r'; else PICK_KEYS='v|v|\r'; fi
 }
 # WHO LOG KEY: ABRoot's mount-sys (its init hook, before systemd: on the
 # console only, never in the journal; it mounts /var and /etc's overlay,

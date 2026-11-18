@@ -341,8 +341,12 @@ stop_guest
 
 # --- 3. "Previous State (A)" on GRUB's serial menu: root A ----------------------------
 # (After the upgrade the entries keep their order: 0 is A, now "Previous
-# State (A)", 1 is B, the default.  Up twice, then Enter.)
-python3 "$here/vanilla/console-keys.py" a-boot-serial.log 'Previous State \(A\)' '\x1b[A|\x1b[A|\r' -- \
+# State (A)", 1 is B, the default.  Up twice, then Enter: GRUB's one-byte
+# Up, ^, not the arrow's ESC [ A.  terminal_input console serial (install.sh)
+# puts two readers on COM1 under UEFI, OVMF's TerminalDxe and GRUB's serial
+# driver; either can take the ESC, and GRUB waits 100 ms for the rest, so
+# the key is lost (guix15, 33ff371).)
+python3 "$here/vanilla/console-keys.py" a-boot-serial.log 'Previous State \(A\)' '^|^|\r' -- \
     qemu-system-x86_64 "${vm[@]}" $(sb_args "$work/vars3.fd") -serial stdio </dev/null >/dev/null &
 qemu_pid=$!
 wait_ssh 600 || die "the boot into the previous root never answered on SSH; see a-boot-serial.log"

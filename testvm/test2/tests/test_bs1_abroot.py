@@ -532,12 +532,12 @@ class TestQemuPick(unittest.TestCase):
         title, pattern, keys = self.Q.abroot_pick("1\nPrevious State (A)\nCurrent State (B)\n")
         self.assertEqual(title, "Previous State (A)")
         self.assertRegex("   Previous State (A)   ", pattern)
-        self.assertEqual(keys, r"\x1b[A|\x1b[A|\r")
+        self.assertEqual(keys, r"^|^|\r")
 
     def test_other_entry_down(self):
         title, _, keys = self.Q.abroot_pick("0\nCurrent State (A)\nPrevious State (B)\n")
         self.assertEqual(title, "Previous State (B)")
-        self.assertEqual(keys, r"\x1b[B|\x1b[B|\r")
+        self.assertEqual(keys, r"v|v|\r")
 
     def test_not_two_entries(self):
         self.assertIsNone(self.Q.abroot_pick("1\nOnly\n"))

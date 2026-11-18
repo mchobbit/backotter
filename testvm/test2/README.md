@@ -349,6 +349,14 @@ classes it.  A `--try` cell whose last `--try` is over 7 days old is due
 sculpt2610 runs `guest/update-sculpt.sh` (`testvm/sculpt-update` under the round's shared fleet lock, no
 `--publish`: run `vm-store publish sculpt2610` on Chopin after the round); its console probe also runs
 `sculpt-update --check`, whose "newer image" or "newer release" is a note of `image:current`, never a FAIL.
+A guest cell keys only what its guest runs (`guest/spec.json`): `update/in-guest.sh` by its
+`# t2-section:` markers, the prologue and the guest's own sections (`in-guest.sh#Linux.apt`);
+`vm-update` by its code (`pycode:`: `keys.python_code`, the file less its comments and
+docstrings, which only `--help` reads), so a comment or help-text edit re-tests no guest;
+`vm-mount` and `vm-umount` only on Linux guests (`plats`), since vm-update's host mount check
+runs them only on a guest whose `uname -s` is Linux.  A code change to vm-update, or a change
+to job.sh, check-image.sh, check-after.sh, guest_judge.py or known-lines.json's `all`, still
+makes every guest due: each of them runs, or judges, every guest.
 Stic and holt cells key a guest's fingerprint (`vms/G/image-fingerprint.json`) when it
 speaks for the current generation, else the generation; a new generation at the same
 fingerprint is soft-stale and runs no canary, and the first plan after a fingerprint

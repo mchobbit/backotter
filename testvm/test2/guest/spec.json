@@ -1,7 +1,7 @@
 {
  "v": 1,
  "family": "guest",
- "about": "What a GuestTest2 cell's key covers (contract 1.4, 2.1). keys.py reads it: entries[GUEST] merges over kinds[its kind], lists adding up. A kind says how the guest is reached: ssh (vm-update --try), probe (no --try: vm-update --probe), redox and sculpt (no SSH: a console probe). checks is what the judge reads, and keyed as a judge input; the rest (ram_gib, cpus, memory, timeout_s, update) is the runner's. S-*, L-*, K-*, B-* and M-* are guest_judge.py's rule codes. Not in guest: keys: update/trim.sh, update/pkgset.sh, update/fingerprint.py, holttest1d/judge.py (contract D2). sculpt2610 has no SSH: its no-ssh file (written by make-sculpt.sh) makes vm-update refuse it, and testvm/sculpt-update updates it offline, recording image-state, so its generation keys its cells as any guest's does; an update round runs sculpt-update for it (guest/update-sculpt.sh, mode console-update), which boots the update before it merges, so no --try PASS gates it in a bare round.",
+ "about": "What a GuestTest2 cell's key covers (contract 1.4, 2.1). keys.py reads it: entries[GUEST] merges over kinds[its kind], lists adding up. A kind says how the guest is reached: ssh (vm-update --try), probe (no --try: vm-update --probe), redox and sculpt (no SSH: a console probe). checks is what the judge reads, and keyed as a judge input; the rest (ram_gib, cpus, memory, timeout_s, update) is the runner's. S-*, L-*, K-*, B-* and M-* are guest_judge.py's rule codes. Not in guest: keys: update/trim.sh, update/pkgset.sh, update/fingerprint.py, holttest1d/judge.py (contract D2). sculpt2610 has no SSH: its no-ssh file (written by make-sculpt.sh) makes vm-update refuse it, and testvm/sculpt-update updates it offline, recording image-state, so its generation keys its cells as any guest's does; an update round runs sculpt-update for it (guest/update-sculpt.sh, mode console-update), which boots the update before it merges, so no --try PASS gates it in a bare round. vm-update keys as pycode: (keys.python_code: less its comments and docstrings, which only --help reads), so a comment or help-text change re-tests no guest; vm-mount and vm-umount key only the Linux guests (plats), since vm-update runs them only on a guest whose uname -s is Linux (its host mount check).",
  "plumbing": [
   "testvm/vm-run",
   "testvm/vm-lib.sh",
@@ -33,9 +33,7 @@
   "ssh": {
    "try": true,
    "harness": [
-    "testvm/vm-update",
-    "testvm/vm-mount",
-    "testvm/vm-umount",
+    "pycode:testvm/vm-update",
     "testvm/update/in-guest.sh#prologue",
     "testvm/test2/guest/job.sh",
     "testvm/test2/guest/check-image.sh",
@@ -45,9 +43,7 @@
   "probe": {
    "try": false,
    "harness": [
-    "testvm/vm-update",
-    "testvm/vm-mount",
-    "testvm/vm-umount",
+    "pycode:testvm/vm-update",
     "testvm/update/in-guest.sh#prologue",
     "testvm/test2/guest/job.sh",
     "testvm/test2/guest/check-image.sh",
@@ -64,6 +60,20 @@
    "try": false,
    "harness": [
     "testvm/test2/guest/job.sh"
+   ]
+  }
+ },
+ "plats": {
+  "linux": {
+   "harness": [
+    "testvm/vm-mount",
+    "testvm/vm-umount"
+   ]
+  },
+  "linux-arm64": {
+   "harness": [
+    "testvm/vm-mount",
+    "testvm/vm-umount"
    ]
   }
  },

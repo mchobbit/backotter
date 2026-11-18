@@ -47,9 +47,12 @@ and an entry may also sit at the top level or under "cells", "checks",
 "guests" or "layers".  An entry with "kind" is merged over kinds[KIND] (and
 the file's "defaults"): lists add up, dicts merge, scalars are the entry's.
 "variants": {VARIANT: ENTRY} adds a variant's own inputs; its "replace": [FIELD...]
-makes those fields replace the kind's and the entry's instead of adding to them.  In
-strings, the path segments GUEST, PLAT and KIND (or {guest}, {plat}, {kind}) are the
-entry's guest, platform ("plat") and kind.  Every field is optional:
+makes those fields replace the kind's and the entry's instead of adding to them.
+"plats": {PLAT: ENTRY} merges like a kind, between the kind and the entry, for every
+entry whose plat (its own, or its kind's) is PLAT: inputs only that platform's cells
+reach (guest/spec.json: vm-mount, which vm-update runs only on a guest whose uname -s
+is Linux).  In strings, the path segments GUEST, PLAT and KIND (or {guest}, {plat},
+{kind}) are the entry's guest, platform ("plat") and kind.  Every field is optional:
 
     bins         binaries: "OS/NAME" ("linux/restic-bko"), "OS" (that OS's *-bko
                  binaries in the set), globs ("freebsd/*-bko"), "PLAT/bko-holt".
@@ -61,6 +64,8 @@ entry's guest, platform ("plat") and kind.  Every field is optional:
                  "PLAT/test-image" the pin's sha256, "PLAT/release-image" SHA256SUMS' .img line
     harness      repo paths and globs (* within a segment, ** across them); PATH#SECTION:
                  the lines of PATH between "# t2-section: SECTION" markers (no marker: the whole file);
+                 "pycode:PATH": a Python program less its comments and docstrings (python_code),
+                 the whole file when it doesn't parse;
     judge        "?PATH" for an optional one; "entry:FILE#KEY" (R3); "shared:PATH"
     guest_files  the guest's files (default vm-run-options, ssh-user,
                  console-passphrase, luks-passphrase, zfs-passphrase, no-ssh): GUEST:FILE
@@ -92,11 +97,14 @@ A facts dict is one host's facts_host.py output.  Options (opts) a caller can gi
     gitrepos     {name: commit} instead of reading BKO_GIT
 """
 
+import ast
+import io
 import json
 import os
 import re
 import subprocess
 import threading
+import tokenize
 
 from . import (GROUPS, HARD, SCOPE, bko_git, canonical, excluded, sha256_hex, tree_files)
 
@@ -111,7 +119,7 @@ GUEST_FILES = ("vm-run-options", "ssh-user", "console-passphrase", "luks-passphr
 SOFT_DEFAULT = {"stic": ("kernel", "zfs", "qemu", "ovmf"), "holt": ("kernel", "zfs", "qemu", "ovmf"), "gate": (),
                 "guest": ("kernel", "zfs"), "img": ("qemu", "ovmf")}
 CONTAINERS = ("entries", "cells", "checks", "guests", "layers")
-RESERVED = {"v", "family", "plumbing", "soft", "notes", "kinds", "defaults", "variants", "policy",
+RESERVED = {"v", "family", "plumbing", "soft", "notes", "kinds", "plats", "defaults", "variants", "policy",
             "comment", "_comment", "description", "doc", "version"} | set(CONTAINERS)
 VALUE_RE = re.compile(r"(sha256:[0-9a-f]{64}|gen:[0-9a-f]{64}|img:([0-9a-f]{64}|unknown)|ver:.{0,120}|"
                       r"git:[0-9a-f]{40}|dir:[0-9a-f]{64}|entry:[0-9a-f]{64}|code:[0-9a-f]{64}|fp:[0-9a-f]{64}|"
@@ -460,6 +468,11 @@ class SpecFile:
         kinds = self.data.get("kinds")
         if kind and isinstance(kinds, dict) and isinstance(kinds.get(kind), dict):
             parts.append(kinds[kind])
+        plats = self.data.get("plats")
+        if isinstance(plats, dict):
+            plat = next((p.get(k) for p in reversed(parts + [own]) for k in ("plat", "platform") if p.get(k)), None)
+            if isinstance(plats.get(plat), dict):
+                parts.append(plats[plat])
         parts.append(own)
         if variant:
             for src in (kinds.get(kind, {}) if kind and isinstance(kinds, dict) else {}, own):
@@ -703,6 +716,9 @@ def _file_input(r, group, src, specs, item, guest, plat, kind, facts):
     if item.startswith("host:"):
         _host_input(r, group, item[len("host:"):], facts)
         return
+    if item.startswith("pycode:"):
+        _pycode_input(r, group, src, item, optional)
+        return
     if "#" in item:
         _section_input(r, group, src, item, optional)
         return
@@ -756,6 +772,115 @@ def _section_input(r, group, src, item, optional):
         r.note(f"no section {section} in {path}: the whole file keys it")
         text = data
     r.put(group, item, "sha256:" + sha256_hex(text))
+
+
+def _docstrings(tree):
+    """The docstring nodes of TREE, the module's first: (module docstring or None, [the others])."""
+    mod, others = None, []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            b = node.body
+            if b and isinstance(b[0], ast.Expr) and isinstance(b[0].value, ast.Constant) \
+                    and isinstance(b[0].value.value, str):
+                if isinstance(node, ast.Module):
+                    mod = b[0]
+                else:
+                    others.append(b[0])
+    return mod, others
+
+
+def _docs_unread(tree):
+    """Whether nothing in TREE reads a docstring but print(__doc__), whose text is all it changes
+    (vm-update's --help).  Any other __doc__, an X.__doc__, a getdoc, help or inspect, or print
+    rebound: False, and every docstring counts."""
+    allowed = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print" \
+                and len(node.args) == 1 and not node.keywords and isinstance(node.args[0], ast.Name) \
+                and node.args[0].id == "__doc__":
+            allowed.add(id(node.args[0]))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in ("__doc__", "getdoc"):
+            return False
+        if isinstance(node, ast.Name) and node.id in ("getdoc", "help", "inspect"):
+            return False
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and any(
+                a.name.split(".")[0] == "inspect" or (a.asname or a.name) in ("print", "__doc__") for a in node.names):
+            return False
+        if isinstance(node, ast.Name) and node.id == "print" and not isinstance(node.ctx, ast.Load):
+            return False
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name in ("print", "__doc__"):
+            return False
+        if isinstance(node, ast.Name) and node.id == "__doc__" and id(node) not in allowed:
+            return False
+    return True
+
+
+def python_code(data):
+    """The bytes of Python source DATA less what can't change what it does: comments (all but a
+    first-line #! and a PEP 263 coding line), docstrings nothing reads (_docs_unread), and the
+    lines left blank, outside a string, by those or by the source.  Every other byte is kept as
+    it is, indentation and the inside of every other string among them; positions come from
+    ast and tokenize, whose extents agree across Python versions.  None: DATA doesn't parse
+    here (the caller keys the whole file)."""
+    try:
+        text = data.decode("utf-8")
+        tree = ast.parse(text)
+        toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (SyntaxError, ValueError, UnicodeDecodeError, tokenize.TokenError, IndentationError):
+        return None
+    lines = text.splitlines(keepends=True)
+
+    def col(row, byte_off):   # ast offsets are UTF-8 bytes; tokenize's and ours, characters
+        return len(lines[row - 1].encode("utf-8")[:byte_off].decode("utf-8", "replace"))
+
+    spans = []                # (row0, col0, row1, col1), characters, end exclusive
+    for t in toks:
+        if t.type == tokenize.COMMENT:
+            first = t.start[0] == 1 and t.string.startswith("#!")
+            cookie = t.start[0] <= 2 and re.match(r"^[ \t\f]*#.*?coding[:=][ \t]*[-\w.]+", lines[t.start[0] - 1])
+            if not (first or cookie):
+                spans.append((t.start[0], t.start[1], t.end[0], t.end[1]))
+    mod_doc, other_docs = _docstrings(tree)
+    docs = ([mod_doc] if mod_doc is not None else []) + other_docs if _docs_unread(tree) else []
+    doc_ids = {id(d.value) for d in docs}
+    for d in docs:
+        spans.append((d.lineno, col(d.lineno, d.col_offset), d.end_lineno, col(d.end_lineno, d.end_col_offset)))
+    inside = set()            # rows within a kept string after its first: their bytes are data
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Constant, ast.JoinedStr)) and id(node) not in doc_ids \
+                and (isinstance(node, ast.JoinedStr) or isinstance(node.value, (str, bytes))) \
+                and node.end_lineno and node.end_lineno > node.lineno:
+            inside.update(range(node.lineno + 1, node.end_lineno + 1))
+    rows = [list(l) for l in lines]
+    for r0, c0, r1, c1 in spans:
+        for r in range(r0, r1 + 1):
+            row = rows[r - 1]
+            a, b = (c0 if r == r0 else 0), (c1 if r == r1 else len(row))
+            for i in range(a, min(b, len(row))):
+                if row[i] not in "\r\n":
+                    row[i] = " "
+    out = []
+    for n, row in enumerate(rows, 1):
+        line = "".join(row)
+        if n in inside:
+            out.append(line)
+        elif line.strip():
+            out.append(line.rstrip() + "\n")
+    return "".join(out).encode("utf-8")
+
+
+def _pycode_input(r, group, src, item, optional):
+    path = item[len("pycode:"):]
+    data = src.read(path)
+    if data is None:
+        r.put(group, item, "absent" if optional else "missing")
+        return
+    code = python_code(data)
+    if code is None:
+        r.note(f"{path} doesn't parse as Python here: the whole file keys it")
+        code = data
+    r.put(group, item, "sha256:" + sha256_hex(code))
 
 
 def _host_input(r, group, path, facts):

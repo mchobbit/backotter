@@ -1514,6 +1514,7 @@ class Planner:
                     for g in ("harness", "judge", "plumbing", "xguest", "host"):
                         for n in r.inputs.get(g, {}):
                             p = n.split("#", 1)[0] if g in ("judge", "harness") else n
+                            p = p[len("pycode:"):] if p.startswith("pycode:") else p
                             if p.startswith("shared:"):
                                 p = p[len("shared:"):]
                                 p = "testvm/compare/cmp-run.sh" if p == "cmp-run.sh" else p

@@ -2591,11 +2591,21 @@ def update(name: str, args, hosts: list[str | None]) -> str:
             by_hand_row(res, out, hold[0].note)
 
 
+# argparse's usage line: the docstring's Usage paragraph, which test_vm_update holds it to.  Only
+# --help reads the docstring, so that GuestTest2's keys can leave it out (keys.python_code).
+USAGE = """vm-update [--try | --probe] [--hosts H,...] [--jobs N] [--cpus N] [--memory MB]
+                 [--out DIR] [--hook before=FILE]... [--hook after=FILE]... [--push LOCAL=REMOTE]...
+                 [--write-fingerprint] [--merge-gate CMD] [--keep-failed] GUEST...
+       vm-update --status|--finish [--hosts H,...] GUEST...
+       vm-update --reproject [--hosts H,...] GUEST...
+       vm-update --hold-fleet-lock RUN"""
+
+
 def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
         print(__doc__)
         return 0
-    p = argparse.ArgumentParser(prog="vm-update", usage=__doc__.split("\n\n")[1].removeprefix("Usage: "), add_help=False)
+    p = argparse.ArgumentParser(prog="vm-update", usage=USAGE, add_help=False)
     p.add_argument("--try", dest="try_", action="store_true")
     p.add_argument("--probe", action="store_true")
     p.add_argument("--status", action="store_true")

@@ -109,7 +109,7 @@ class Spec(unittest.TestCase):
     def test_every_file_it_names_exists(self):
         for n in self.sf.names():
             for x in self.sf.entry(n)["harness"]:
-                p = x.split("#")[0]
+                p = x.split("#")[0].removeprefix("pycode:")
                 base = p[:p.index("*")].rstrip("/") if "*" in p else p
                 self.assertTrue(os.path.exists(os.path.join(REPO, base)), f"{n}: {x}")
 

@@ -682,5 +682,144 @@ class NewForms(unittest.TestCase):
         self.assertNotIn("images", keys.wants(self.specs, ("holt",)))
 
 
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+
+
+class PyCode(unittest.TestCase):
+    """pycode:PATH (GuestTest2's vm-update): comments and unread docstrings key nothing; every
+    byte of code and of every other string does."""
+
+    SRC = ('#!/usr/bin/env python3\n'
+           '"""Module doc.\n\nUsage: x [--y]\n"""\n'
+           'import sys\n'
+           '\n'
+           '# a comment\n'
+           'S = """line one\n'
+           '\n'
+           '# not a comment: data   \n'
+           'end"""\n'
+           '\n'
+           '\n'
+           'def f(a):  # trailing\n'
+           '    """f\'s doc."""\n'
+           '    return a + 1\n'
+           '\n'
+           '\n'
+           'def main():\n'
+           '    if sys.argv[1:] == ["--help"]:\n'
+           '        print(__doc__)\n'
+           '    return f(1)\n')
+
+    def code(self, text):
+        return keys.python_code(text.encode())
+
+    def test_comments_docstrings_and_blank_lines_drop_out(self):
+        base = self.code(self.SRC)
+        for old, new in (("# a comment\n", "# another comment\n#\n\n\n"), ("Module doc.", "Other words.\n\nMore."),
+                         ("f's doc.", "a longer doc\n\n    over lines"), ("  # trailing", ""),
+                         ("\ndef main", "\n\n\n# about main\ndef main")):
+            self.assertIn(old, self.SRC)
+            self.assertEqual(self.code(self.SRC.replace(old, new, 1)), base, (old, new))
+        self.assertNotIn(b"Module doc", base)
+        self.assertNotIn(b"# a comment", base)
+        self.assertIn(b"#!/usr/bin/env python3", base)
+
+    def test_code_and_string_bytes_count(self):
+        base = self.code(self.SRC)
+        for old, new in (("a + 1", "a + 2"), ("line one\n\n", "line one\n"), ("data   \n", "data\n"),
+                         ("# not a comment", "# still data"), ("    return a + 1", "        return a + 1"),
+                         ("python3", "python2")):
+            self.assertIn(old, self.SRC)
+            self.assertNotEqual(self.code(self.SRC.replace(old, new, 1)), base, (old, new))
+
+    def test_a_docstring_read_otherwise_counts(self):
+        for read in ("    u = __doc__.split('\\n\\n')[1]\n", "    u = f.__doc__\n", "    import inspect\n",
+                     "    print = len\n"):
+            src = self.SRC.replace("    return f(1)\n", read + "    return f(1)\n")
+            base = self.code(src)
+            self.assertIn(b"Module doc", base, read)
+            self.assertNotEqual(self.code(src.replace("Module doc.", "Other words.")), base, read)
+            self.assertNotEqual(self.code(src.replace("f's doc.", "other")), base, read)
+            self.assertEqual(self.code(src.replace("# a comment", "# other")), base, read)
+
+    def test_unparsable_keys_the_whole_file(self):
+        self.assertIsNone(keys.python_code(b"def f(:\n"))
+        root = os.path.join(_tmp, "pycode")
+        make_repo(root, {"testvm/p.py": "def f(:\n", "testvm/q.py": self.SRC})
+        specs = keys.Specs(keys.TreeSource(root), overrides={"guest": {"v": 1, "family": "guest", "entries": {
+            "g": {"harness": ["pycode:testvm/p.py", "pycode:testvm/q.py", "pycode:testvm/none.py",
+                              "?pycode:testvm/none.py"]}}}})
+        r = keys.resolve("guest:g", keys.TreeSource(root), {}, specs)
+        h = r.inputs["harness"]
+        self.assertEqual(h["pycode:testvm/p.py"], "sha256:" + sha("def f(:\n"))
+        self.assertTrue(any("doesn't parse" in n for n in r.notes))
+        self.assertEqual(h["pycode:testvm/q.py"], "sha256:" + sha(self.code(self.SRC)))
+        self.assertEqual(h["pycode:testvm/none.py"], "absent")    # ?: optional (the later, same name)
+
+    def test_vm_update_docstring_keys_nothing(self):
+        """vm-update reads its docstring only for --help: an edit to it, or to a comment, leaves
+        guest:* keys alone; an edit to its code doesn't."""
+        with open(os.path.join(REPO, "testvm", "vm-update"), encoding="utf-8") as f:
+            text = f.read()
+        base = self.code(text)
+        self.assertIsNotNone(base)
+        self.assertEqual(self.code(text.replace("Bring BackOtter test guests up to date", "Update the guests", 1)), base)
+        self.assertEqual(self.code(text.replace('"""Write the run\'s journal', '"""Writes the run\'s journal', 1)), base)
+        self.assertEqual(self.code(text.replace("\nTESTVM = ", "\n# a new comment\n\nTESTVM = ", 1)), base)
+        self.assertNotEqual(self.code(text.replace("JOURNAL_LINES = 50000", "JOURNAL_LINES = 5000", 1)), base)
+
+
+class Plats(unittest.TestCase):
+    """"plats": {PLAT: ENTRY} merges between the kind and the entry, by the entry's (or its kind's) plat."""
+
+    def resolve(self, name):
+        root = os.path.join(_tmp, "plats")
+        if not os.path.isdir(root):
+            make_repo(root, {"testvm/k": "k\n", "testvm/l": "l\n", "testvm/e": "e\n"})
+        spec = {"v": 1, "family": "guest",
+                "kinds": {"ssh": {"harness": ["testvm/k"]}, "lin": {"plat": "linux", "harness": ["testvm/k"]}},
+                "plats": {"linux": {"harness": ["testvm/l"], "note": "plat's"}},
+                "entries": {"a": {"kind": "ssh", "plat": "linux", "harness": ["testvm/e"], "note": "own"},
+                            "b": {"kind": "ssh", "plat": "freebsd"},
+                            "c": {"kind": "lin"},
+                            "d": {"kind": "ssh"}}}
+        specs = keys.Specs(keys.TreeSource(root), overrides={"guest": spec})
+        return specs.get("guest").entry(name), keys.resolve("guest:" + name, keys.TreeSource(root), {}, specs)
+
+    def test_merge(self):
+        e, r = self.resolve("a")
+        self.assertEqual(sorted(r.inputs["harness"]), ["testvm/e", "testvm/k", "testvm/l"])
+        self.assertEqual(e["note"], "own")                       # the entry's scalars win
+        self.assertEqual(sorted(self.resolve("c")[1].inputs["harness"]), ["testvm/k", "testvm/l"])   # the kind's plat
+        for n in ("b", "d"):
+            self.assertEqual(sorted(self.resolve(n)[1].inputs["harness"]), ["testvm/k"], n)
+        self.assertNotIn("plats", keys.Specs(keys.TreeSource(os.path.join(_tmp, "plats")),
+                                             overrides={"guest": {"plats": {}, "x": {}}}).get("guest").names())
+
+
+class GuestSpecKeys(unittest.TestCase):
+    """The repo's guest/spec.json: vm-update by its code on every guest it runs on, vm-mount and
+    vm-umount on the Linux ones (B-lin: uname -s Linux, the only guests vm-update's host mount
+    check mounts), and no guest keying vm-update's bytes."""
+
+    def test_guest_harness(self):
+        src = keys.TreeSource(REPO)
+        specs = keys.Specs(src)
+        sf = specs.get("guest")
+        for name in sf.names():
+            e = sf.entry(name)
+            h = keys.resolve("guest:" + name, src, {}, specs).inputs.get("harness", {})
+            linux = ((e.get("checks") or {}).get("rules") or {}).get("boot") == "B-lin"
+            self.assertNotIn("testvm/vm-update", h, name)
+            if e.get("kind") in ("ssh", "probe"):
+                self.assertIn("pycode:testvm/vm-update", h, name)
+                self.assertTrue(h["pycode:testvm/vm-update"].startswith("sha256:"), name)
+            for p in ("testvm/vm-mount", "testvm/vm-umount"):
+                self.assertEqual(p in h, linux and e.get("kind") in ("ssh", "probe"), (name, p))
+            if linux:
+                self.assertTrue(str(e.get("plat")).startswith("linux"), name)
+
+
 if __name__ == "__main__":
     unittest.main()

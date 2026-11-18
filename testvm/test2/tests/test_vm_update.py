@@ -138,6 +138,13 @@ class TestSteps(unittest.TestCase):
         self.assertEqual(VU.parse_steps("in-guest: updated\nin-guest: NILFS: 3 MiB free\n"), [])
 
 
+class TestUsage(unittest.TestCase):
+    def test_usage_is_the_docstrings(self):
+        """argparse's USAGE is the docstring's Usage paragraph, which only --help reads (GuestTest2's
+        keys leave the docstring out: keys.python_code)."""
+        self.assertEqual(VU.__doc__.split("\n\n")[1], "Usage: " + VU.USAGE)
+
+
 class TestInGuest(unittest.TestCase):
     TEXT = (TESTVM / "update" / "in-guest.sh").read_text()
     NAMES = {"prologue", "NixOS", "Guix", "Linux.portage", "Linux.slackpkg", "Linux.abroot", "Linux.common", "Linux.apt", "Linux.ostree",

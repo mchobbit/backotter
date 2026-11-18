@@ -20,6 +20,7 @@
   "judge": [
    "testvm/test2/t2lib/guest_judge.py",
    "entry:testvm/test2/guest/known-lines.json#all",
+   "entry:testvm/test2/guest/known-lines.json#host",
    "entry:testvm/test2/guest/limits.json#{guest}",
    "entry:testvm/test2/guest/spec.json#entries.{guest}.checks",
    "entry:testvm/test2/classes.json#policy.guest.judge"

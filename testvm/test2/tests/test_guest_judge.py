@@ -1616,6 +1616,157 @@ class LogSweep(unittest.TestCase):
             self.assertFalse(any(p.search(J.normalize(bad)) for p in pats), bad)
 
 
+class HostLines(unittest.TestCase):
+    """known-lines.json's host section and the normalizer's host-timing rules (overstrike, dots):
+    the lines GuestTest2 passes 4-6 of 2026-11-18 (t2v-20261118T0617-4a11, -0942-226e,
+    -1159-2749) found new on ~50 guests each, only because placement put the guest on a host
+    whose CPU, firmware or speed it hadn't run on.  Raw, as journal.log, serial.log and update.log
+    had them."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(REPO, "testvm/test2/guest/known-lines.json"), encoding="utf-8") as f:
+            cls.known = json.load(f)
+
+    def left(self, pm, raw, baseline=()):
+        return [x["line"] for x in J.sweep_lines({"journal": raw + "\n"}, J.known_filter(self.known, pm), list(baseline))]
+
+    HOST = [
+        # the Ryzen 5600H hosts (chopin, cinqcent) and every AMD host's firmware, in a systemd guest's journal
+        "2026-11-18T11:30:16+00:00 kernel: amd_pstate: The CPPC feature is supported but currently disabled by the BIOS.",
+        "2026-11-18T11:30:16+00:00 kernel: amd_pstate: the _CPC object is not present in SBIOS or ACPI disabled",
+        "2026-11-18T11:30:16+00:00 kernel: Please enable it if your BIOS has the CPPC option.",
+        "2026-11-18T10:08:28+00:00 kernel: Unstable clock detected, switching default tracing clock to \"global\"",
+        "2026-11-18T10:08:28+00:00 kernel: If you want to keep using the local clock, then add:",
+        "2026-11-18T10:08:28+00:00 kernel:   \"trace_clock=local\"",
+        "2026-11-18T10:08:28+00:00 kernel: on the kernel command line",
+        "2026-11-18T10:08:28+00:00 kernel: clocksource: Marking clocksource tsc unstable due to inter CPU skew",
+        "2026-11-18T10:08:28+00:00 kernel: clocksource: CPU1      21220366004 < CPU0      21220368631 (cycles)",
+        "2026-11-18T10:08:28+00:00 kernel: clocksource: Long readout interval, skipping watchdog check: cs_nsec: 1000437580 wd_nsec: 1000437434",
+        "2026-11-18T10:08:28+00:00 kernel: x86 CPU feature dependency check failure: CPU0 has '18*32+31' enabled but '18*32+26' disabled. "
+        "Kernel might be fine, but no guarantees.",
+        "2026-11-18T10:08:29+00:00 kernel: acpi PNP0A03:00: fail to add MMCONFIG information, can't access extended configuration space under this bridge",
+        "2026-11-18T10:08:43+00:00 chronyd[1130]: System clock wrong by 1.842105 seconds",
+        "2026-11-18T10:08:43+00:00 chronyd[1130]: System clock was stepped by -1.842105 seconds",
+        # a non-systemd Linux guest's serial console (gentoo, mx25)
+        "[    0.101234] smpboot: CPU0: Intel(R) Core(TM) i3-10110U CPU @ 2.10GHz (family: 0x6, model: 0x8e, stepping: 0xc)",
+        "[    0.101234] Spectre V2 : Mitigation: Enhanced / Automatic IBRS",
+        "[    0.101234] Transient Scheduler Attacks: Mitigation: Clear CPU buffers",
+        "[    0.101234] ITS: Mitigation: Aligned branch/return thunks",
+        "[    0.101234] Performance Events: Skylake events, full-width counters, Intel PMU driver.",
+        # a BSD's boot banner (choubox's Intel CPU, the Ryzens')
+        "CPU: AMD Ryzen 5 5600H with Radeon Graphics          (3294.04-MHz K8-class CPU)",
+        "  Origin=\"AuthenticAMD\"  Id=0xa50f00  Family=0x19  Model=0x50  Stepping=0",
+        "  Structured Extended Features=0x219c07ab<FSGSBASE,TSCADJ,BMI1,AVX2,SMEP,BMI2,ERMS,INVPCID,RDSEED,ADX,SMAP,CLFLUSHOPT,CLWB,SHA>",
+        "  Structured Extended Features2=0x40000000",
+        "  VT-x: PAT,HLT,MTF,PAUSE,EPT,UG,VPID",
+        "random: fast provider: \"Intel Secure Key Seed\"",
+        "Setting up harvesting: PURE_RDSEED,RANDOMDEV,[CALLOUT],[UMA],[FS_ATIME],SWI,INTERRUPT,NET_NG,[NET_ETHER],NET_TUN,MOUSE,KEYBOARD,ATTACH,CACHED",
+        "TSC clock: 2592000000 Hz, NOT invariant",
+        "cpu0: Intel(R) Core(TM) i3-10110U CPU @ 2.10GHz, 2592.53 MHz, 06-8e-0c",
+        "cpu0: AMD Ryzen 5 5600H with Radeon Graphics , id 0xa50f00",
+        "cpu_rng: rdrand/rdseed",
+        "CPU 0: vendor 'AMD' model name 'AMD Ryzen 5 7640HS w/ Radeon 760M Graphics '",
+        # the BSD loader's console as the host's speed spins it: doubled, spinner between
+        "|\b/\b-\b\\\b|\b/\b//bboooott//kkeerrnneell//zzffss..kkoo  -\b-\x1b[25;21Hssiizzee  00xx662288ccaa00  aatt  00xx2255555500000000",
+        "\\\b|\b/\b-\b",
+    ]
+
+    def test_each_goes_for_every_guest(self):
+        for pm in (None, "apt", "freebsd", "hbsd", "ips"):
+            for x in self.HOST:
+                self.assertEqual(self.left(pm, x), [], (pm, x))
+
+    STAY = [
+        # a kernel WARNING, BUG or oops stays, even one the host's CPU sets off (choubox's ITS thunks)
+        "2026-11-18T10:08:28+00:00 kernel: CPA detected W^X violation: 8000000000000063 -> 0000000000000063 range: 0xffffffffc0a00000 - "
+        "0xffffffffc0a00fff PFN 10ab3c",
+        "2026-11-18T10:08:28+00:00 kernel: WARNING: arch/x86/mm/pat/set_memory.c:681 at __change_page_attr+0x5b0/0x5d0, CPU#0: swapper/0/1",
+        "2026-11-18T10:08:28+00:00 kernel: ------------[ cut here ]------------",
+        "2026-11-18T10:08:28+00:00 kernel: ---[ end trace 0000000000000000 ]---",
+        "2026-11-18T10:08:28+00:00 kernel: BUG: unable to handle page fault for address: ffffb2c6c0b9b000",
+        "2026-11-18T10:08:28+00:00 kernel: clocksource: timekeeping watchdog on CPU1: hpet wd-wd read-back delay of 1164ns",
+        "2026-11-18T10:08:28+00:00 kernel: EXT4-fs error (device vda2): ext4_lookup:1855: inode #2: comm ls: deleted inode referenced: 12",
+        "2026-11-18T10:08:43+00:00 chronyd[1130]: Fatal error : Could not read from helper : Connection reset by peer",
+        "[    0.101234] RETBleed: WARNING: Spectre v2 mitigation leaves CPU vulnerable to RETBleed attacks, data leaks possible!",
+        "2026-11-18T10:08:28+00:00 systemd[1]: chrony.service: Failed with result 'exit-code'.",
+        "CPU: 0 UID: 0 PID: 1 Comm: swapper/0 Not tainted 6.18.3-arch1-1 #1 PREEMPT(full)",
+        # a loader error stays, doubled or not
+        "ccaann''tt  llooaadd  ''kkeerrnneell''",
+        "|\b/\b-\bcan't load 'kernel'",
+        "|-- table --|",
+    ]
+
+    def test_real_signal_stays(self):
+        for x in self.STAY:
+            self.assertEqual(len(self.left("apt", x)), 1, x)
+            self.assertEqual(len(self.left("freebsd", x)), 1, x)
+
+    def test_overstrike(self):
+        self.assertEqual(J.overstrike("|\b/\b-\b\\\bLoading /boot/kernel/kernel"), "Loading /boot/kernel/kernel")
+        self.assertEqual(J.overstrike("ab\b\bc"), "c")
+        self.assertEqual(J.overstrike("\b\bx"), "x")
+        a = "|\b/\b-\b\\\b|\b/boot/kernel/geom_eli.ko size 0x9c4a8 at 0x2b5c000"
+        b = "-\b\\\b/boot/kernel/geom_eli.ko size 0x9c4a8 at 0x2b5c000"
+        self.assertEqual(J.normalize(a), J.normalize(b))
+        self.assertEqual(J.normalize(a), "/boot/kernel/geom_eli.ko size HEX at HEX")
+        self.assertEqual(J.normalize(a, erase=False), "|/-\\|/boot/kernel/geom_eli.ko size HEX at HEX")
+
+    def test_a_baseline_from_before_overstrike_still_counts(self):
+        raw = "|\b/\b-\bLoading /platform/i86pc/amd64/boot_archive..."
+        old = J.normalize(raw, erase=False)
+        self.assertEqual(self.left("ips", raw, [old]), [])
+        self.assertEqual(self.left("ips", raw, ["something else"]), ["Loading /platform/iNpc/amdN/boot_archive..."])
+        # the old form never accepts a different line
+        self.assertEqual(len(self.left("ips", "|\b/\b-\bLoading /platform/i86pc/amd64/unix failed", [old])), 1)
+
+    def test_progress_dots(self):
+        a, b = "Building module(s)........................ done.", "Building module(s)................................................ done."
+        self.assertEqual(J.normalize(a), J.normalize(b))
+        self.assertEqual(J.normalize(a), "Building module(s)... done.")
+        self.assertEqual(J.normalize("Reading package lists... Done"), "Reading package lists... Done")
+        self.assertEqual(J.normalize("cd .."), "cd ..")
+        self.assertEqual(J.normalize("." * 180), "...")
+        # a baseline line from before still counts (sweep_lines renormalizes the baseline)
+        self.assertEqual(self.left("apt", b, [J.normalize(a, erase=False).replace("...", "." * 24)]), [])
+
+    def test_systemds_orphan_unit_id(self):
+        a = ("2026-11-18T10:08:28+00:00 systemd[1]: Unit file for 'systemd-udevd-control.socket' was overridden by a symlink to "
+             "'systemd-udevd-varlink.socket'. Synthesized orphan unit 'orphaned-r1dd3faf2530d424881fc46c37a9a5fa7.socket'.")
+        b = a.replace("1dd3faf2530d424881fc46c37a9a5fa7", "6f2cc4d3e9ff1b2c7fe0f8a1b2c3d4e5")
+        na = J.normalize(a)
+        self.assertEqual(na, J.normalize(b))
+        self.assertIn("'orphaned-rHEX.socket'", na)
+        self.assertEqual(J.normalize(na), na)
+        # what the normalizer made of it before (digits N) comes out the same
+        self.assertEqual(J.normalize(a.replace("1dd3faf2530d424881fc46c37a9a5fa7", "rNddNfafNdNfcNcNaNaNfaN"[1:])), na)
+
+    def test_stable(self):
+        for x in self.HOST + self.STAY:
+            n = J.normalize(x)
+            self.assertEqual(J.normalize(n), n, x)
+
+    CHURN = {
+        # Rocky's dnf4 download progress: the speed's unit is the mirror's and the host's
+        "dnf": ["(12/41): kernel-modules-core-6.12.0-55.41.1.el10_0.x86_64.rpm  1.2 MB/s |  31 MB     00:25",
+                "(3/41): openssl-fips-provider-3.0.7-6.el10.x86_64 900 kB/s | 9.6 kB 00:00", "Rocky Linux 10 - Extras  2.1 kB/s | 1.9 kB     00:00"],
+        "pacman": ["core/linux-firmware-broadcom 20251111-1 20251125-1 -0.01 MiB", "extra/intel-ucode 20251111-1 20251112-1 0.00 MiB"],
+        "freebsd": ["Fetching 872 patches.....10....20....30....40....50....60....70....80 done.", "Fetching 2 metadata patches.. done."],
+        "tukit": ["( 3/12) Installing: systemd-259.2-1.1.x86_64 [....done]", "Retrieving: tukit-4.8.3-1.1.x86_64.rpm [..done (1.1 KiB/s)]",
+                  "(7/12) Executing postin script for: ucode-intel-20251111-1.1.x86_64 [..done]", "Preloading: ucode-intel-20251111-1.1.x86_64.rpm [done]"],
+    }
+
+    def test_update_churn_goes(self):
+        for pm, lines in self.CHURN.items():
+            for x in lines:
+                self.assertEqual(self.left(pm, x), [], (pm, x))
+        for pm, x in (("dnf", "Error: Failed to download metadata for repo 'extras': Cannot download repomd.xml"),
+                      ("pacman", "error: failed retrieving file 'git-2.52.0-1-x86_64.pkg.tar.zst' from geo.mirror.pkgbuild.com : Operation too slow"),
+                      ("freebsd", "Fetching 872 patches.....10....20 failed."),
+                      ("tukit", "Retrieving: foo-1.0.rpm [Error: not found]")):
+            self.assertEqual(len(self.left(pm, x)), 1, (pm, x))
+
+
 class Verdicts(unittest.TestCase):
     def test_limit_classed_and_new(self):
         d = {"after:boot-state": J.Need("LIMIT", None, ["down newsyslog"])}

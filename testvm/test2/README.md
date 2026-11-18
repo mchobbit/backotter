@@ -386,8 +386,8 @@ parses alone, between such a test and its end).
 docstrings, which only `--help` reads), so a comment or help-text edit re-tests no guest;
 `vm-mount` and `vm-umount` only on Linux guests (`plats`), since vm-update's host mount check
 runs them only on a guest whose `uname -s` is Linux.  A code change to vm-update, or a change
-to job.sh, check-image.sh, check-after.sh, guest_judge.py or known-lines.json's `all`, still
-makes every guest due: each of them runs, or judges, every guest.
+to job.sh, check-image.sh, check-after.sh, guest_judge.py or known-lines.json's `all` or `host`
+(the host-noise lines every guest takes, docs/design/test2.md step 5), still makes every guest due: each of them runs, or judges, every guest.
 Stic and holt cells key a guest's fingerprint (`vms/G/image-fingerprint.json`) when it
 speaks for the current generation, else the generation; a new generation at the same
 fingerprint is soft-stale and runs no canary, and the first plan after a fingerprint

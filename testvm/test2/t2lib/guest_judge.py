@@ -9,7 +9,7 @@ No I/O: every function takes text and dicts, so the judge is a key input and uni
     judge_after(before, after, checks, classed, steps)   {need: Need}: standing lines LIMIT, new ones FAIL
     merge_gate(before, after, checks, classed, hooks_ok, hook_why, steps)   (ok, why, new lines)
     new_guest_needs(sec, checks), probe_need(sec)    step 4
-    normalize(line), known_filter(known, pm), sweep_lines(...)    step 5, the log sweep
+    normalize(line), known_filter(known, pm), sweep_lines(...)    step 5, the log sweep (host: every guest)
     apply_limits(needs, standing, classed)       LIMIT or LIMIT-NEW, line by line
     verdict_of(needs, harness_why)               (verdict, class, to_class_only)
     match_flake(guest, tail, flakes)             only vm-update's failure tail
@@ -1655,6 +1655,13 @@ def update_check_need(sec):
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[78=>]|\x1b")
 _CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+# A progress run of dots ("Building module(s)........ done.", zypper's "[....done]", a line of them
+# alone) is as long as the host was slow: four or more are "...", which _DOTS leaves alone.
+_DOTS = re.compile(r"\.{4,}")
+# systemd's name for a running unit whose file became an alias ("Synthesized orphan unit
+# 'orphaned-r6f2c...'", on an update from systemd 258 to 259) is a random 128-bit ID each boot; N
+# for what _NUM made of its digits, so normalize stays stable.
+_ORPHAN = re.compile(r"\borphaned-r[0-9a-fN]{16,}")
 _BRK = re.compile(r"\[\s*\d+\.\d+\]")
 _ISO = re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?")
 _SYSLOG = re.compile(r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +\d{1,2} \d{2}:\d{2}:\d{2}\b")
@@ -1703,14 +1710,36 @@ LINE_MAX = 300
 LINES_MAX = 20000
 
 
-def normalize(line, run_dirs=()):
+def overstrike(s):
+    """S as a terminal shows it: a backspace erases the character before it.  The BSD and illumos
+    boot loaders spin "|", "/", "-" and a backslash, each followed by a backspace, on the serial
+    console, between and inside what they print, as fast as the host loads them; with the
+    backspaces only dropped (_CTRL), each boot's loader lines were new ones ("|/-/boot/kernel/zfs.ko
+    \\size HEX at HEX")."""
+    if "\b" not in s:
+        return s
+    out = []
+    for ch in s:
+        if ch == "\b":
+            if out:
+                out.pop()
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def normalize(line, run_dirs=(), erase=True):
     """A log line with what differs from boot to boot taken out, or "" for a line with nothing
     left (ANSI and OSC sequences, timestamps, [ 12.345], UUIDs, 0x numbers, hex of 6 or more,
     numbers but a zero count of errors or failures (ZERO), the run's directories and Test2's copy
     of the repo, mktemp suffixes under /tmp, SSH key fingerprints, public keys and randomart, Nix
-    store hashes).  Stable: normalize(normalize(x)) == normalize(x), and a line
-    normalized before 0x numbers were HEX ("NxNaaN") comes out as the raw line does now."""
+    store hashes, systemd's orphaned-r IDs, what a backspace erases (a boot loader's spinner),
+    progress dots past three).  Stable: normalize(normalize(x)) == normalize(x), and a line
+    normalized before 0x numbers were HEX ("NxNaaN") comes out as the raw line does now.  ERASE
+    false: backspaces are only dropped, as before overstrike (sweep_lines' old baselines)."""
     s = _ANSI.sub("", line)
+    if erase:
+        s = overstrike(s)
     s = _CTRL.sub("", s)
     for d in run_dirs or ():
         if d:
@@ -1727,12 +1756,14 @@ def normalize(line, run_dirs=()):
     s = _SYSLOG.sub("TIME", s)
     s = _CLOCK.sub("TIME", s)
     s = _UUID.sub("UUID", s)
+    s = _ORPHAN.sub("orphaned-rHEX", s)
     s = _ZERO_BEFORE.sub(r"ZERO\1", s)
     s = _ZERO_AFTER.sub(r"\1ZERO", s)
     s = _HEX0X.sub("HEX", s)
     s = _HEX.sub("HEX", s)
     s = _NUM.sub("N", s)
     s = _HEXNX.sub("HEX", s)
+    s = _DOTS.sub("...", s)
     return " ".join(s.split())[:LINE_MAX]
 
 
@@ -1754,10 +1785,15 @@ class Known(list):
 LIST_MARK = "list:"
 
 
+# known-lines.json's sections every guest takes, whatever its package manager: "all", and "host"
+# (what the host it was placed on prints through it: CPU, firmware, clocks).
+EVERY_GUEST = ("all", "host")
+
+
 def known_filter(known, pm=None):
-    """The compiled patterns of known-lines.json: "all" and PM's."""
+    """The compiled patterns of known-lines.json: EVERY_GUEST's and PM's."""
     pats, heads = Known(), []
-    for name in ("all", pm):
+    for name in EVERY_GUEST + (pm,):
         for p in (known or {}).get(name) or ():
             is_list = p.startswith(LIST_MARK)
             try:
@@ -1790,7 +1826,8 @@ def sweep_lines(sources, known, baseline, older=()):
     None (no baseline yet: every line is new), OLDER texts of the same guest's earlier logs on
     this host (for the seen_before tag only).  [{line, source, seen_before}], sorted.  A baseline
     line counts as normalize makes it now too, so a normalizer that learns a pattern keeps lines
-    accepted before it."""
+    accepted before it; a line with a backspace in it is accepted as the baseline has it from
+    before overstrike too (its backspaces only dropped), since a stored line can't be erased again."""
     base = set(baseline or ())
     base |= {normalize(x) for x in base}
     seen = set()
@@ -1799,8 +1836,14 @@ def sweep_lines(sources, known, baseline, older=()):
     out = {}
     heads = getattr(known, "lists", ())
     for src, text in sorted((sources or {}).items()):
-        for n in sorted(normalized_set(drop_lists(text, heads))):
-            if n in base or any(p.search(n) for p in known or ()):
+        text = drop_lists(text, heads)
+        before = {}
+        if base and "\b" in (text or ""):
+            for x in text.splitlines()[-LINES_MAX:]:
+                if "\b" in x:
+                    before.setdefault(normalize(x), set()).add(normalize(x, erase=False))
+        for n in sorted(normalized_set(text)):
+            if n in base or before.get(n, set()) & base or any(p.search(n) for p in known or ()):
                 continue
             if n not in out:
                 out[n] = {"line": n, "source": src, "seen_before": n in seen}

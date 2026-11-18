@@ -9,7 +9,7 @@ pub fn unescape(s: &str) -> String {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'\\' && i + 3 < b.len() && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c)) {
+        if b[i] == b'\\' && i + 4 <= b.len() && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c)) {
             let v = (b[i + 1] - b'0') as u32 * 64 + (b[i + 2] - b'0') as u32 * 8 + (b[i + 3] - b'0') as u32;
             if v <= 0xff {
                 out.push(v as u8);
@@ -380,6 +380,22 @@ bogus line
         assert_eq!(unescape("\\400"), "\\400");
         assert_eq!(unescape("plain"), "plain");
         assert_eq!(unescape("end\\"), "end\\");
+    }
+
+    /// A complete escape as the field's last 4 bytes decodes (a path that
+    /// ends in a space); a cut-off one stays as it is.
+    #[test]
+    fn escape_at_the_end() {
+        assert_eq!(unescape("/mnt/trailing\\040"), "/mnt/trailing ");
+        assert_eq!(unescape("\\040"), " ");
+        assert_eq!(unescape("/mnt/my\\040dir"), "/mnt/my dir");
+        assert_eq!(unescape("/mnt/cut\\04"), "/mnt/cut\\04");
+        assert_eq!(unescape("/mnt/cut\\0"), "/mnt/cut\\0");
+        assert_eq!(unescape("/mnt/cut\\"), "/mnt/cut\\");
+        assert_eq!(unescape("\\040\\040\\011\\134"), "  \t\\");
+        assert_eq!(unescape("a\\134\\040"), "a\\ ");
+        let m = parse_mountinfo("30 26 0:40 / /mnt/a\\040b\\040 rw - tmpfs tmpfs\\040x rw\n");
+        assert_eq!((m[0].target.as_str(), m[0].source.as_str()), ("/mnt/a b ", "tmpfs x"));
     }
 
     #[test]

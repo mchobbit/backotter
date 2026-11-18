@@ -63,12 +63,10 @@ pub fn udev_decode(s: &str) -> String {
     let mut out = Vec::new();
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'\\' && b.get(i + 1) == Some(&b'x') && i + 3 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 2..i + 4], 16) {
-                out.push(v);
-                i += 4;
-                continue;
-            }
+        if b[i] == b'\\' && b.get(i + 1) == Some(&b'x') && i + 4 <= b.len() && b[i + 2..i + 4].iter().all(u8::is_ascii_hexdigit) {
+            out.push(u8::from_str_radix(&s[i + 2..i + 4], 16).unwrap());
+            i += 4;
+            continue;
         }
         out.push(b[i]);
         i += 1;
@@ -1731,6 +1729,11 @@ mod tests {
         assert_eq!(udev_decode("a\\x2fb"), "a/b");
         assert_eq!(udev_decode("bad\\xzz"), "bad\\xzz");
         assert_eq!(udev_decode("end\\x2"), "end\\x2");
+        assert_eq!(udev_decode("Data\\x20"), "Data ");
+        assert_eq!(udev_decode("\\x20\\x2f\\x5c"), " /\\");
+        assert_eq!(udev_decode("end\\x"), "end\\x");
+        assert_eq!(udev_decode("odd\\xaé"), "odd\\xaé");
+        assert_eq!(udev_decode("sign\\x+f"), "sign\\x+f");
     }
 
     #[test]

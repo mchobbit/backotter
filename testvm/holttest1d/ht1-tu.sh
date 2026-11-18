@@ -80,7 +80,10 @@ journalctl -b -o cat --no-pager -u transactional-update-sync-etc-state.service 2
 journalctl -b -o cat --no-pager 2>/dev/null | grep -E "transactional-update-sync-etc-state\.service: (Deactivated successfully|Failed|Main process exited)" | sed "s/^/sync-unit /"
 systemctl --failed --no-legend --plain 2>/dev/null | awk "{print \"failed \" \$1}"
 journalctl -b -o cat --no-pager 2>/dev/null | grep -o "avc:  denied .*" | sed -E "s/ (pid|ino|dev|name|path)=[^ ]*//g; s/^/avc /" | sort -u
-journalctl -b -o cat --no-pager _COMM=systemd-cryptse 2>/dev/null | grep -q "TPM2 token unlocks" && echo "unlock tpm2"'
+if journalctl -b -o cat --no-pager _COMM=systemd-cryptse 2>/dev/null | grep -q "TPM2 token unlocks"; then echo "unlock tpm2"; fi'
+# (Both end with exit 0, so an sshk of either that doesn't is SSH's or its
+# timeout's: tu_boot_slot says so.  A bare `grep -q ... && echo` last made
+# every guest without a TPM unlock exit 1.)
 tu_get() { sed -n "s/^$1 //p" "$2" | head -n 1; }   # KEY FILE
 tu_is() { [[ -n $(sshk "$gkey" 'command -v tukit >/dev/null && findmnt -no OPTIONS / | tr , "\n" | grep -qx ro && echo tu') ]]; }
 
@@ -162,8 +165,11 @@ wait:bootable snapshot #$slot\\b" vm_up "${dst[0]}" "$R/logs/$who-serial.log" --
     vm_wait "$gkey" || { echo "slot $slot doesn't boot from GRUB's snapshot submenu (no SSH; logs/$who-serial.log)"; return 1; }
     grep -q 'grub-menu.py: all steps done' "$R/logs/$who-serial.log" ||
         { echo "GRUB's snapshot submenu: $(grep -o 'grub-menu.py: [^]]*' "$R/logs/$who-serial.log" | tail -n 1) (logs/$who-serial.log)"; return 1; }
-    sshk "$gkey" "$TU_STATE" > "$R/logs/$who-tu.txt" 2>&1
-    sshk "$gkey" "timeout 300 systemctl is-system-running --wait >/dev/null; $TU_BOOT" > "$R/logs/$who-tu-boot.txt" 2>&1
+    local rc
+    sshk "$gkey" "$TU_STATE" > "$R/logs/$who-tu.txt" 2>&1 ||
+        { rc=$?; echo "slot $slot's state over SSH: exit $rc ($(tail -n 1 "$R/logs/$who-tu.txt"); logs/$who-tu.txt)"; return 1; }
+    sshk "$gkey" "timeout 300 systemctl is-system-running --wait >/dev/null; $TU_BOOT" > "$R/logs/$who-tu-boot.txt" 2>&1 ||
+        { rc=$?; echo "slot $slot's boot checks over SSH: exit $rc ($(tail -n 1 "$R/logs/$who-tu-boot.txt"); logs/$who-tu-boot.txt)"; return 1; }
 }
 # A slot with no SSH of the guest's (MicroOS's slot 1, the image's own root,
 # from before combustion enabled sshd and set the key): booted alone from
@@ -350,7 +356,7 @@ tu_verify() {
         who=restored-slot$s
         if [[ $loader == bls ]]; then probs=$(tu_boot_slot_bls "$s" "$who" && tu_boot_problems "$who" "$s" 0)
         else probs=$(tu_boot_slot "$s" "$who" && tu_boot_problems "$who" "$s" 0)
-        fi
+        fi || [[ -n $probs ]] || probs="its boot failed and said nothing"   # (never a silent PASS)
         # (The submenu boots a slot as it is: health-checker saves nothing
         # where booted isn't the default, so the state is load's still.)
         [[ -n $probs || $(tu_get hc-path "$L/$who-tu.txt") == "$hcp" ]] || probs="health-check.state changed: $(tu_get hc-path "$L/$who-tu.txt"), load left $hcp"
@@ -384,7 +390,7 @@ tu_verify() {
         fi
         vm_down "$gkey"; return
     fi
-    probs=$(tu_boot_slot "$hcs" "$who") || { bad "transactional: health-checker's rollback: $probs"; vm_down "$gkey"; return; }
+    probs=$(tu_boot_slot "$hcs" "$who") || { bad "transactional: health-checker's rollback: slot $hcs from GRUB's snapshot submenu: ${probs:-its boot failed and said nothing (logs/$who-*)}"; vm_down "$gkey"; return; }
     [[ $(tu_get booted "$L/$who-tu.txt") == "$hcs" ]] || { bad "transactional: health-checker's rollback: the submenu booted slot $(tu_get booted "$L/$who-tu.txt"), not $hcs"; vm_down "$gkey"; return; }
     TMO=600 sshk "$gkey" "$TU_FAIL" > "$L/$who-fail.txt" 2>&1
     local nf; nf=$(sed -n 's/^new //p' "$L/$who-fail.txt")

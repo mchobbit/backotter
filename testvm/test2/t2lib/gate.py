@@ -166,9 +166,14 @@ def split_cell(cell):
 
 
 def full_run(row):
-    """A row whose RAM peak is a whole layer's: it finished (not HARNESS or LOST), and no
-    T2_LOOP_LINUX_FS or T2_LOOP_SPARSE_FS cut it down."""
+    """A row whose RAM peak is a whole layer's: it finished (not HARNESS or LOST), some need
+    of it passed (a run whose every row failed may have stopped at once: copland's sparse
+    rows of 2026-11-18 06:19, refused in 3 s, peaked at 44 KiB), and no T2_LOOP_LINUX_FS or
+    T2_LOOP_SPARSE_FS cut it down."""
     if row.get("verdict") in ("HARNESS", "LOST"):
+        return False
+    counts = row.get("counts")
+    if isinstance(counts, dict) and counts and not counts.get("PASS"):
         return False
     lp = (row.get("meta") or {}).get("loop") or {}
     return all(lp.get(k) in (None, "default") for k in ("linux_fs", "sparse_fs"))

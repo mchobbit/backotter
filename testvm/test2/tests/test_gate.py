@@ -1333,5 +1333,109 @@ class HostScript(unittest.TestCase):
         self.assertEqual(json.loads(again.text)["ids"][0], [rid, False])
 
 
+class SparseRoomTest(unittest.TestCase):
+    """gate:loop:sparse sizes sparse-rt.sh from its own cmp-run.sh reservation, not from what
+    df shows the host's other reserved jobs leaving (copland 2026-11-18 06:19: 3.9 GiB free on
+    a 10 GiB RAM disk, 2.7 GiB reserved, every row refused "too little room")."""
+
+    def room(self, free_kib, res=None, img=16):
+        """sparse-rt.sh's RAM disk room block on its own, df stubbed: (rc, W IMG_GB, stderr)."""
+        text = read_file(os.path.join(REPO, "testvm", "compare", "sparse-rt.sh"))
+        a = text.index('if [ "$W" != "$DISK_W" ]; then\n    # free:')
+        block = text[a:text.index("\nfi\n", a) + 4]
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "df"), "w") as f:
+                f.write(f"#!/bin/sh\necho 'Filesystem 1024-blocks Used Available Capacity Mounted on'\n"
+                        f"echo 'bko-ram 10485760 1 {free_kib} 61% /mnt/bko-ram'\n")
+            os.chmod(os.path.join(d, "df"), 0o755)
+            e = dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"])
+            e.pop("SPARSE_RAM_GIB", None)
+            if res is not None:
+                e["SPARSE_RAM_GIB"] = res
+            script = ('die() { echo "sparse-rt: $*" >&2; exit 2; }\n'
+                      f'W=/mnt/bko-ram/p-ext4 DISK_W=/var/tmp/p/ext4 IMG_GB={img}\n{block}echo "$W $IMG_GB"\n')
+            r = subprocess.run(["sh", "-c", script], capture_output=True, text=True, env=e, timeout=30)
+        return r.returncode, r.stdout.strip(), r.stderr
+
+    def test_a_reserved_run_takes_its_reservation(self):
+        rc, out, err = self.room(4159612, "2.7")          # copland 06:19, as it was
+        self.assertEqual((rc, out), (0, "/mnt/bko-ram/p-ext4 4"), err)
+        self.assertIn("IMG_GB 16 lowered to 4, the room in /mnt/bko-ram (3.9 GiB free less 4, at least 4; "
+                      "reserved 2.7 GiB)", err)
+        self.assertEqual(self.room(10380000, "6")[:2], (0, "/mnt/bko-ram/p-ext4 5"))     # 9.8 GiB free: 9 - 4
+        self.assertEqual(self.room(40 << 20, "20")[:2], (0, "/mnt/bko-ram/p-ext4 16"))   # room: IMG_GB as it is
+        self.assertEqual(self.room(40 << 20, "20", 40)[:2], (0, "/mnt/bko-ram/p-ext4 36"))   # 40 - 4
+
+    def test_short_room_goes_to_disk_with_the_figures(self):
+        rc, out, err = self.room(2 << 20, "2.7")            # less free than reserved: someone outside the ledger
+        self.assertEqual((rc, out), (0, "/var/tmp/p/ext4 16"), err)
+        self.assertIn("sparse-rt: on disk: /mnt/bko-ram has 2.0 GiB free, under its reservation 2.7 GiB; "
+                      "working in /var/tmp/p/ext4", err)
+        rc, out, err = self.room(4159612)                   # no reservation: 8 GiB free, as before, else disk
+        self.assertEqual((rc, out), (0, "/var/tmp/p/ext4 16"), err)
+        self.assertIn("has 3.9 GiB free, under 8 GiB (no reservation: SPARSE_RAM_GIB unset)", err)
+        self.assertEqual(self.room(9 << 20)[:2], (0, "/mnt/bko-ram/p-ext4 5"))
+        rc, _, err = self.room(9 << 20, "lots")
+        self.assertEqual(rc, 2)
+        self.assertIn("SPARSE_RAM_GIB=lots: GiB, a number", err)
+
+    def test_run_all_hands_each_sparse_step_its_share(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "work", "vms"))
+            os.makedirs(os.path.join(d, "bin", "linux"))
+            for t in ("restic", "rustic"):
+                with open(os.path.join(d, "bin", "linux", f"{t}-bko"), "w") as f:
+                    f.write("x 0.19.1+backotter.7\n")
+                with open(os.path.join(d, "bin", "linux", f"{t}-commit"), "w") as f:
+                    f.write("a" * 40 + "\n" + ("source digest x\n" if t == "restic" else "rustic_core " + "b" * 40 + "\n"))
+            e = {k: v for k, v in os.environ.items()
+                 if k not in ("LINUX_FS", "SPARSE_FS", "PORT_BASE", "MAX_GUESTS", "ANY_HOST", "JOBS_CAP", "SPARSE_RAM_GIB")}
+            e.update(BKO_WORK=os.path.join(d, "work"), OLD_BIN="none", UNCHECKED_BINARIES="1")
+
+            def dry(**kw):
+                r = subprocess.run(["bash", os.path.join(REPO, "testvm", "compare", "run-all.sh"), "--host", "chopin",
+                                    "--platforms", "sparse", "--dry-run", os.path.join(d, "bin"), os.path.join(d, "log")],
+                                   capture_output=True, text=True, env=dict(e, **kw), timeout=120)
+                return r.returncode, r.stdout + r.stderr
+            rc, out = dry(SPARSE_RAM_GIB="5.4", SPARSE_JOBS="2")
+            self.assertEqual(rc, 0, out[-800:])
+            self.assertEqual(out.count("SPARSE_RAM_GIB=2.70 "), 2, out[-1500:])       # xfs and btrfs, 5.4 / 2
+            rc, out = dry(SPARSE_RAM_GIB="2.7", SPARSE_JOBS="1")
+            self.assertEqual(out.count("SPARSE_RAM_GIB=2.70 "), 2, out[-1500:])
+            self.assertNotIn("SPARSE_RAM_GIB", dry()[1])
+            rc, out = dry(SPARSE_RAM_GIB="x")
+            self.assertNotEqual(rc, 0)
+            self.assertIn("SPARSE_RAM_GIB=x: GiB, a number", out)
+
+    def test_loop_hands_down_its_reservation(self):
+        text = read_file(os.path.join(REPO, "testvm", "test2", "gate", "loop.sh"))
+        self.assertIn('res=$(reserve_gib)\n    [[ -z $res ]] || env+=(SPARSE_RAM_GIB="$res")', text)
+        if not os.path.isdir("/proc/self"):
+            self.skipTest("reserve_gib reads /proc (Linux)")
+        with tempfile.TemporaryDirectory() as d:
+            # The row is an ancestor's: bash -c's, two shells up from the function.
+            script = (f'eval "$(sed -n "/^reserve_gib()/,/^}}/p" {os.path.join(REPO, "testvm", "test2", "gate", "loop.sh")})"; '
+                      f'echo "$$ 2.7 4 - reserve x" >{d}/.reserve; bash -c "$(declare -f reserve_gib); reserve_gib"; '
+                      f': >{d}/.reserve; echo "[$(reserve_gib)]"')
+            r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30,
+                               env=dict(os.environ, CMP_LEDGER_DIR=d))
+            self.assertEqual(r.stdout.split(), ["2.7", "[]"], r.stderr)
+
+    def test_peaks_from_disk_runs_and_refusals_teach_nothing(self):
+        o = gate.loop_outcome(fx_json("loop", "summary-linux.json"), 0, {"ram_peak_kib": "44", "ram_on_disk": "sparse-ext4 sparse-xfs"})
+        self.assertIsNone(o.ram_peak_kib)
+        self.assertEqual(o.extra["ram_on_disk"], ["sparse-ext4", "sparse-xfs"])
+        self.assertNotIn("peaks", o.extra)
+        e = {"reserve": [20, 4], "host_reserve": {"small": [6, 4]}, "peak_reserve": True}
+        cell = "gate:loop:sparse@copland"
+        good = {"cell": cell, "kind": "run", "t": "2026-11-18T03:46:00Z", "ram_peak_kib": 2344608, "verdict": "PASS",
+                "counts": {"PASS": 3, "FAIL": 0, "LIMIT": 0}, "meta": {"loop": {"linux_fs": "default", "sparse_fs": "default"}}}
+        refused = [dict(good, t=f"2026-11-18T06:{19 + i}:00Z", ram_peak_kib=44, verdict="FAIL",
+                        counts={"PASS": 0, "FAIL": 3, "LIMIT": 0}) for i in range(3)]
+        self.assertEqual(gate.reserve_for(e, [good] + refused, cell), (2.7, 4.0))       # not 0.3
+        self.assertFalse(gate.full_run(refused[0]))
+        self.assertTrue(gate.full_run(dict(refused[0], counts={"PASS": 1, "FAIL": 2, "LIMIT": 0})))
+
+
 if __name__ == "__main__":
     unittest.main()

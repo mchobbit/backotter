@@ -583,6 +583,11 @@ def loop_outcome(summary, rc, info=None, runall_out=""):
         if summary.get(k):
             extra[k] = summary[k][:5]
     peak = int(info["ram_peak_kib"]) if info and str(info.get("ram_peak_kib", "")).isdigit() else None
+    if info and info.get("ram_on_disk"):
+        # sparse-rt.sh found the RAM disk short and worked on disk (loop.sh): the RAM peak
+        # isn't the layer's, and a reservation learned from it would be too small.
+        extra["ram_on_disk"] = str(info["ram_on_disk"]).split()
+        peak = None
     if peak is not None:
         extra["peaks"] = {"ram_kib": peak}
     if rc not in (0, 1):

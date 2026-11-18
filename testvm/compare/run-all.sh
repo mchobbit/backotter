@@ -95,6 +95,11 @@
 #   BIG          sparse-rt.sh's big file on the host, GiB (20); GUEST_BIG in
 #                guests (2).  IMG_GB, when set, its image or tmpfs on the host
 #                (sparse-rt.sh's default 16 otherwise)
+#   SPARSE_RAM_GIB
+#                the RAM disk room (GiB) the sparse steps hold between them:
+#                a cmp-run.sh --reserve's DISK (GateTest2's loop.sh finds its
+#                own); each sparse-rt.sh is handed SPARSE_RAM_GIB / SPARSE_JOBS
+#                as its own SPARSE_RAM_GIB.  Unset: sparse-rt.sh goes by df
 #   BASELINE     an earlier LOG_DIR/summary.json: nonroot's per-direction
 #                counts must be the same as there
 #   ALLOW_SKIP   comma-separated targets that may be skipped: a file system
@@ -332,6 +337,12 @@ if (( JOBS_CAP > 0 )); then
     (( HOST_JOBS > JOBS_CAP )) && { echo "run-all: HOST_JOBS $HOST_JOBS -> $JOBS_CAP on $host (JOBS_CAP)"; HOST_JOBS=$JOBS_CAP; }
     (( SPARSE_JOBS > JOBS_CAP )) && { echo "run-all: SPARSE_JOBS $SPARSE_JOBS -> $JOBS_CAP on $host (JOBS_CAP)"; SPARSE_JOBS=$JOBS_CAP; }
 fi
+# Each sparse-rt.sh's share of the room the sparse steps hold (SPARSE_RAM_GIB).
+sram=""
+if [[ -n ${SPARSE_RAM_GIB:-} ]]; then
+    [[ $SPARSE_RAM_GIB =~ ^[0-9]+([.][0-9]+)?$ ]] || die "SPARSE_RAM_GIB=$SPARSE_RAM_GIB: GiB, a number"
+    sram=$(awk -v d="$SPARSE_RAM_GIB" -v j="$SPARSE_JOBS" 'BEGIN { printf "%.2f", d / j }')
+fi
 PFX=${RUN_PREFIX:-bkora}
 [[ $PFX =~ ^bko[a-z0-9]+$ ]] || die "RUN_PREFIX must be bko followed by letters or digits"
 SRCWORK=${BKO_WORK:-$HOME/backotter-work}
@@ -425,7 +436,7 @@ if [[ -z ${EXPECT_RESTIC_COMMIT:-} || -z ${EXPECT_RUSTIC_COMMIT:-} || -z ${EXPEC
 fi
 # The harness this needs (round 9's): a copy without it fails every row.
 for x in nonroot-rt.sh:NONROOT_MNT fs_roundtrip.py:BKO_OLD_RESTIC fs_roundtrip.py:sparse_blocks \
-    zfs-guest-rt.sh:OLD_RUSTIC sparse-rt.sh:SPARSE_ZFS_OPTS guest-slot.sh:slot_take; do
+    zfs-guest-rt.sh:OLD_RUSTIC sparse-rt.sh:SPARSE_ZFS_OPTS sparse-rt.sh:SPARSE_RAM_GIB guest-slot.sh:slot_take; do
     grep -q "${x#*:}" "$C/${x%%:*}" 2>/dev/null || bad+=("$C/${x%%:*} has no ${x#*:}: not this run-all.sh's harness")
 done
 oldpair() {  # OS: OLD_BIN/OS's two binaries, if both are there
@@ -522,7 +533,7 @@ for p in $plats; do
         for run in $SPARSE_FS; do
             fs=${run%-nocomp} opts=""; [[ $run == zfs-nocomp ]] && opts="-O compression=off"
             step sparse "$run" "sparse-$run" sparse 0 sparse 10800 1 "${OLD:+--identity}" \
-                "$(rootenv) SPARSE_PREFIX=$PFX-sp${SDW:+ SPARSE_DISK_WORK=$(q "$SDW/$run.work")} SPARSE_FS=$fs SPARSE_RUN=$run SPARSE_ZFS_OPTS=$(q "$opts") BIG=${BIG:-20} ${IMG_GB:+IMG_GB=$(q "$IMG_GB")} \
+                "$(rootenv) SPARSE_PREFIX=$PFX-sp${SDW:+ SPARSE_DISK_WORK=$(q "$SDW/$run.work")} SPARSE_FS=$fs SPARSE_RUN=$run SPARSE_ZFS_OPTS=$(q "$opts") BIG=${BIG:-20} ${IMG_GB:+IMG_GB=$(q "$IMG_GB")} ${sram:+SPARSE_RAM_GIB=$sram} \
                     $(q "$C/sparse-rt.sh" "$BIN/$LOS/restic-bko" "$BIN/$LOS/rustic-bko") \
                     ${OLD:+$(q "$OLD/$LOS/restic-bko" "$OLD/$LOS/rustic-bko")}"
         done ;;

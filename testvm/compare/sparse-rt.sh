@@ -91,7 +91,18 @@
 #               copied to /var/tmp/PREFIX/RUN/out at the end, however the
 #               run ends, and the rest dropped (the image only takes what
 #               is written in it; IMG_GB is lowered to what is free there
-#               less 4 GiB, with a note); RT_RAM=0 keeps it on disk
+#               less 4 GiB, never under 4, with a note); RT_RAM=0 keeps it
+#               on disk.  Where the RAM disk is short (SPARSE_RAM_GIB below)
+#               the work goes on disk all the same, with a note
+#               "sparse-rt: on disk: ..." that gives the figures
+#   SPARSE_RAM_GIB
+#               the room in /mnt/bko-ram this run holds (its share of a
+#               cmp-run.sh --reserve's DISK GiB; run-all.sh hands it down
+#               from GateTest2's loop.sh).  The ledger keeps the others'
+#               jobs within their own, so what df shows them using doesn't
+#               count against it: the work stays in RAM while df shows at
+#               least this much free.  Unset: while df shows 8 GiB free
+#               (IMG_GB 4 and 4 GiB beside it)
 #   SPARSE_DISK_WORK
 #               with the work in /mnt/bko-ram as above: where the lock and
 #               out/ go instead of /var/tmp/PREFIX/RUN (run-all.sh's arm64
@@ -109,7 +120,7 @@
 
 set -u
 die() { echo "sparse-rt: $*" >&2; exit 2; }
-[ $# -eq 2 ] || [ $# -eq 4 ] || { sed -n '2,89p' "$0" >&2; exit 2; }
+[ $# -eq 2 ] || [ $# -eq 4 ] || { sed -n '2,/^# The report ends/p' "$0" >&2; exit 2; }
 uid=$(id -u 2>/dev/null) || uid=$(/usr/xpg4/bin/id -u)   # illumos' id has no -u
 [ "$uid" = 0 ] || die "run it as root"
 abspath() { case $1 in /*) echo "$1" ;; *) echo "$(pwd)/$1" ;; esac; }
@@ -134,9 +145,30 @@ if [ "$FS" = dir ]; then MP=${SPARSE_DIR:-/root/bko-sparse}; else MP=/mnt/$PFX/$
 POOL=${SPARSE_POOL:-$PFX-$RUN}
 BIG=${BIG:-20} IMG_GB=${IMG_GB:-16}
 if [ "$W" != "$DISK_W" ]; then
-    free_gb=$(( $(df -Pk /mnt/bko-ram | awk 'NR == 2 { print $4 }') / 1048576 - 4 ))
-    [ "$free_gb" -ge 4 ] || die "/mnt/bko-ram has too little room; RT_RAM=0 for the disk"
-    [ "$IMG_GB" -le "$free_gb" ] || { echo "sparse-rt: IMG_GB $IMG_GB lowered to $free_gb, the room in /mnt/bko-ram" >&2; IMG_GB=$free_gb; }
+    # free: what df shows free in KiB.  A run that holds a reservation
+    # (SPARSE_RAM_GIB) stays in RAM while that much is free; one without, while
+    # 8 GiB are.  Either way the image is lowered to what is free less 4 GiB
+    # (the repositories and the rest beside it), never under 4: it only takes
+    # what is written in it (about 2.3 GiB with the repositories, IMG_GB 5),
+    # which the reservation, learned from the peaks, covers.
+    free_kib=$(df -Pk /mnt/bko-ram | awk 'NR == 2 { print $4 }')
+    case $free_kib in ''|*[!0-9]*) die "can't read df's free space on /mnt/bko-ram" ;; esac
+    res=${SPARSE_RAM_GIB:-}
+    if [ -n "$res" ]; then
+        need_kib=$(awk -v d="$res" 'BEGIN { if (d !~ /^[0-9]+([.][0-9]+)?$/) exit 1; printf "%d", d * 1048576 }') ||
+            die "SPARSE_RAM_GIB=$res: GiB, a number"
+        why="its reservation $res GiB" held="reserved $res GiB"
+    else
+        need_kib=$((8 * 1048576)) why="8 GiB (no reservation: SPARSE_RAM_GIB unset)" held="no reservation"
+    fi
+    free_gib=$(awk -v k="$free_kib" 'BEGIN { printf "%.1f", int(k * 10 / 1048576) / 10 }')   # floored to a tenth
+    if [ "$free_kib" -lt "$need_kib" ]; then
+        W=$DISK_W
+        echo "sparse-rt: on disk: /mnt/bko-ram has $free_gib GiB free, under $why; working in $W" >&2
+    else
+        img_max=$((free_kib / 1048576 - 4)); [ "$img_max" -ge 4 ] || img_max=4
+        [ "$IMG_GB" -le "$img_max" ] || { echo "sparse-rt: IMG_GB $IMG_GB lowered to $img_max, the room in /mnt/bko-ram ($free_gib GiB free less 4, at least 4; $held)" >&2; IMG_GB=$img_max; }
+    fi
 fi
 OUT=$W/out SRC=$MP/src
 case $FS in ext4|xfs|btrfs|zfs|tmpfs) [ "$os" = Linux ] || die "SPARSE_FS=$FS is for Linux" ;;

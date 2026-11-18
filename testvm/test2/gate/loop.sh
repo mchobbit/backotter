@@ -26,6 +26,14 @@
 # SPARSE_FS stay the host's share (run-all.sh's defaults) unless
 # T2_LOOP_LINUX_FS or T2_LOOP_SPARSE_FS name others (for tests); the rest of
 # the environment (EXPECT_*_VERSION, IMG_GB, BIG) passes through.
+# sparse: SPARSE_RAM_GIB, the DISK GiB of the cmp-run.sh --reserve row this
+# script runs under (its own PID's or the nearest ancestor's, in the ledger
+# /mnt/bko-ram/.reserve, as ht1-lib.sh's ht_reserve_row), goes to run-all.sh,
+# so that sparse-rt.sh sizes from the room reserved for it, not from what df
+# shows the host's other reserved jobs leaving; info.txt's reserve_gib (none:
+# no row).  A sparse-rt.sh that found even that room short worked on disk
+# ("sparse-rt: on disk:" in its log): info.txt's ram_on_disk names those
+# steps, and gate_judge.py's loop_outcome then learns no RAM peak from the run.
 # Every 10 s the size of /mnt/bko-ram/PFX-* and /mnt/bko-ram/nonroot-PFX-*
 # (du as root: the steps' files are root's) is sampled; the peak goes to
 # info.txt as ram_peak_kib.  Afterwards fs_roundtrip.py's emptied result
@@ -62,6 +70,18 @@ log=/mnt/bko-ram/$pfx-log
 [[ ! -e $log ]] || die "$log is there already: another run's"
 
 first() { head -n 1 "$1" 2>/dev/null | cut -d' ' -f1; }
+# The DISK GiB of the cmp-run.sh --reserve row held by this script or its
+# nearest ancestor (cmp-run.sh's reserving PID execs sudo, systemd-run, setpriv,
+# iolog.sh; a row counts while its PID lives), else nothing.  Read, never locked.
+reserve_gib() {
+    local p=$$ d i ledger=${CMP_LEDGER_DIR:-/mnt/bko-ram}/.reserve
+    for ((i = 0; i < 64; i++)); do
+        [[ $p =~ ^[0-9]+$ ]] && ((p > 1)) || return 0
+        d=$(awk -v p="$p" '$1 == p { print $2; exit }' "$ledger" 2>/dev/null)
+        if [[ -n $d && -d /proc/$p ]]; then echo "$d"; return 0; fi
+        p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+    done
+}
 # The Linux binaries' directory: linux, or linux-arm64 on an aarch64 host
 # (Bigfoot: run-all.sh's arm64 profile, docs/design/arm64.md A6).
 los=linux; [[ $(uname -m) != aarch64 ]] || los=linux-arm64
@@ -74,13 +94,15 @@ rm -f "$out/info.txt" "$out/run-all.out"
 sampler=""
 cleanup() {
     trap '' INT TERM HUP     # the stop's second signal must not cut this short
-    local peak k
+    local peak k disk
     [[ -z $sampler ]] || kill "$sampler" 2>/dev/null
     wait 2>/dev/null
     peak=$(cat "$log/.peak" 2>/dev/null)
     k=$(sudo -n du -sxk /mnt/bko-ram/"$pfx"-* /mnt/bko-ram/nonroot-"$pfx"-* 2>/dev/null | awk '{ s += $1 } END { print s + 0 }')
     [[ ${k:-0} -gt ${peak:-0} ]] && peak=$k
     echo "ram_peak_kib=${peak:-0}" >>"$out/info.txt"
+    disk=$(grep -rls --exclude-dir=work '^sparse-rt: on disk:' "$log" 2>/dev/null | sed 's|.*/||; s|\.log$||' | sort | tr '\n' ' ')
+    [[ -z ${disk// } ]] || echo "ram_on_disk=${disk% }" >>"$out/info.txt"
     if [[ -d $log ]]; then
         mkdir -p "$out/log"
         # The results, without work/ (links to vms/, overlays) or the semaphores.
@@ -110,6 +132,8 @@ if [[ $kind == linux ]]; then
     [[ -z ${T2_LOOP_LINUX_FS:-} ]] || env+=(LINUX_FS="$T2_LOOP_LINUX_FS")
 else
     env+=(SPARSE_JOBS=1)
+    res=$(reserve_gib)
+    [[ -z $res ]] || env+=(SPARSE_RAM_GIB="$res")
     [[ -z ${T2_LOOP_SPARSE_FS:-} ]] || env+=(SPARSE_FS="$T2_LOOP_SPARSE_FS")
 fi
 {
@@ -121,6 +145,7 @@ fi
     echo "host=$(hostname -s)"
     echo "linux_fs=${T2_LOOP_LINUX_FS:-default}"
     echo "sparse_fs=${T2_LOOP_SPARSE_FS:-default}"
+    [[ $kind != sparse ]] || echo "reserve_gib=${res:-none}"
     echo "start=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 } >"$out/info.txt"
 # In the background, so that a TERM reaches run-all.sh (whose own trap then

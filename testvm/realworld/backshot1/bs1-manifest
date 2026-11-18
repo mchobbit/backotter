@@ -81,6 +81,10 @@ EXPECTED = [
     # Vanilla OS's vso and ABRoot log to /var/vlogs, a new file each minute
     # they run (vanilla-3.0-20261117-132713).
     "var/vlogs/*",
+    # Chimera's syslog-ng keeps its state and pid file in /var itself and
+    # rewrites both every time it starts (chimera-20261118-040321).
+    "var/syslog-ng.persist",
+    "var/syslog-ng.pid",
     # BigLinux rewrites these at every boot or Plasma login, each confirmed
     # by a plain reboot of the restored system (biglinux-20261117-145933):
     # biglinux-improve-compatibility's "ln -sf .../build /usr/src/linux"

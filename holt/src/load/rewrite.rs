@@ -23,6 +23,7 @@
 
 use super::reformat::{self, Change};
 use crate::json::Value;
+use crate::mounts;
 use std::path::{Path, PathBuf};
 
 fn rootflags_word(w: &str, c: &Change) -> Option<String> {
@@ -61,7 +62,9 @@ pub fn fstab(text: &str, c: &Change) -> Result<String, String> {
         let body = line.trim_end_matches('\n');
         let f: Vec<&str> = body.split_whitespace().collect();
         if f.len() >= 3 && !f[0].starts_with('#') && f[2] == c.from {
-            let file = f[1].replace("\\040", " ");
+            // fstab(5)'s octal escapes (\040, \011, \012, \134, any \NNN)
+            // decoded for the match; the line keeps its own spelling.
+            let file = mounts::unescape(f[1]);
             if file == c.mount {
                 let dump = f.get(4).copied().unwrap_or("0");
                 out += &format!("{}\t{}\t{}\t{}\t{}\t{}", f[0], f[1], c.to, c.options, dump, c.passno);
@@ -82,7 +85,7 @@ pub fn fstab(text: &str, c: &Change) -> Result<String, String> {
         // mount has the new type's line and none of the old type's is left.
         let done = text.lines().any(|l| {
             let f: Vec<&str> = l.split_whitespace().collect();
-            f.len() >= 3 && !f[0].starts_with('#') && f[1].replace("\\040", " ") == c.mount && f[2] == c.to
+            f.len() >= 3 && !f[0].starts_with('#') && mounts::unescape(f[1]) == c.mount && f[2] == c.to
         });
         if done && gone.is_empty() {
             return Ok(text.to_string());
@@ -592,6 +595,52 @@ tmpfs                                     /tmp           tmpfs   defaults,noatim
         // Neither type's line for /: not the fstab the layout describes.
         let none = EOS_FSTAB.lines().filter(|l| !l.contains(" /              ")).map(|l| format!("{l}\n")).collect::<String>();
         assert!(fstab(&none, &change()).unwrap_err().contains("no btrfs line for /"));
+    }
+
+    // Mount points and a spec with fstab(5)'s octal escapes: a space, a tab,
+    // a newline, a backslash, an escape at the field's end, and a literal
+    // "\040" (its backslash escaped).
+    const ESCAPED_FSTAB: &str = "LABEL=My\\040Data /mnt/my\\040data btrfs subvol=/@data,noatime 0 0\n\
+LABEL=My\\040Data /mnt/tab\\011dir btrfs subvol=/@tab 0 0\n\
+LABEL=My\\040Data /mnt/new\\012line btrfs subvol=/@nl 0 0\n\
+LABEL=My\\040Data /mnt/back\\134slash btrfs subvol=/@bs 0 0\n\
+LABEL=My\\040Data /mnt/trailing\\040 btrfs subvol=/@tr 0 0\n\
+LABEL=My\\040Data /mnt/lit\\134040 btrfs subvol=/@lit 0 0\n\
+LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
+/dev/sdb1 /mnt/my\\040data\\040too ext4 defaults 0 2\n";
+
+    fn escaped_change() -> Change {
+        Change {
+            mount: "/mnt/my data".into(),
+            folded: vec!["/mnt/tab\tdir".into(), "/mnt/new\nline".into(), "/mnt/back\\slash".into(), "/mnt/trailing ".into(), "/mnt/lit\\040".into()],
+            ..change()
+        }
+    }
+
+    #[test]
+    fn fstab_with_escapes() {
+        let c = escaped_change();
+        let out = fstab(ESCAPED_FSTAB, &c).unwrap();
+        // The kept mount's line and the untouched ones keep their own
+        // escaped spelling: written back, each field decodes as it did.
+        assert_eq!(
+            out,
+            "LABEL=My\\040Data\t/mnt/my\\040data\txfs\tnoatime\t0\t0\n\
+LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
+/dev/sdb1 /mnt/my\\040data\\040too ext4 defaults 0 2\n"
+        );
+        let e = crate::mounts::parse_fstab(&out);
+        assert_eq!(e.iter().map(|e| (e.spec.as_str(), e.file.as_str())).collect::<Vec<_>>(), [("LABEL=My Data", "/mnt/my data"), ("LABEL=My Data", "/mnt/my dat"), ("/dev/sdb1", "/mnt/my data too")]);
+        // Run again: the new type's line is found by its decoded mount point.
+        assert_eq!(fstab(&out, &c).unwrap(), out);
+        // A folded mount not in it, by its decoded name, is an error.
+        let c2 = Change { folded: vec!["/mnt/lit 040".into()], ..escaped_change() };
+        assert!(fstab(ESCAPED_FSTAB, &c2).unwrap_err().contains("no btrfs line for /mnt/lit 040"));
+        // The kept mount's escape at the field's end.
+        let c3 = Change { mount: "/mnt/trailing ".into(), folded: vec![], ..change() };
+        let out3 = fstab("UUID=x /mnt/trailing\\040 btrfs subvol=@ 0 0\n", &c3).unwrap();
+        assert_eq!(out3, "UUID=x\t/mnt/trailing\\040\txfs\tnoatime\t0\t0\n");
+        assert_eq!(fstab(&out3, &c3).unwrap(), out3);
     }
 
     #[test]

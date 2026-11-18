@@ -27,6 +27,7 @@ pub mod reformat;
 pub mod release;
 pub mod rewrite;
 pub mod shared;
+pub mod sizes;
 pub mod snapcore;
 pub mod status;
 pub mod target;

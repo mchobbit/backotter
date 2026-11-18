@@ -740,6 +740,10 @@ pub fn prepare<'a>(layout: &'a Layout, opts: &Options, sys: &Sys) -> Prepared<'a
     }
     let system = scan(sys, &o2, &layout_pools(src));
     let mut mapping = map_disks(src, &o2, &system, sys);
+    // A filesystem bigger than its device: the dump is inconsistent, and
+    // nothing is planned to fit it (sizes.rs).  Checked on the source's
+    // sizes, before --fit-largest changes them.
+    mapping.problems.extend(super::sizes::problems(&src.v));
     if let Some(o) = &only {
         mapping.problems.extend(o.problems.iter().cloned());
         mapping.notes.extend(o.notes.iter().cloned());

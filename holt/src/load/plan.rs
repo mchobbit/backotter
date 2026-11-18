@@ -580,6 +580,31 @@ mod tests {
         assert!(create.contains("bpool /dev/vdb1"), "{create}");
     }
 
+    /// A filesystem bigger than its partition is refused, exit 4, by plan
+    /// and by the writing stages, with --fit-largest too: no mke2fs of a
+    /// size that can't fit.
+    #[test]
+    fn a_filesystem_bigger_than_its_partition_is_refused() {
+        let t = tree();
+        let runner = FakeRunner::default().with("/usr/sbin/rustic-bko --version", "rustic 0.11.4+backotter.4\n");
+        let s = Sys::new(t.root(), Box::new(runner), true);
+        // vda1 is 244224 4 KiB blocks: its ext4 one block more.
+        let over = Layout::from_json(crate::json::parse(&sample::bios_mbr().replace("\"blocks\": 244224", "\"blocks\": 244225")).unwrap()).unwrap();
+        let why = "vda1: the dump's ext4 is 954 MiB (1000345600 bytes), bigger than vda1 itself, 954 MiB (1000341504 bytes): the dump is inconsistent";
+        for a in [&["--map", "vda=vdb", "--repo", "/srv/r"][..], &["--map", "vda=vdb", "--repo", "/srv/r", "--fit-largest", "10"]] {
+            let (code, out, err) = run(&over, &opts(a), &s);
+            assert_eq!(code, EXIT_PLAN_PROBLEMS, "{a:?}: {out}");
+            assert!(out.contains(why), "{a:?}: {out}");
+            assert!(err.contains("problem"), "{err}");
+        }
+        let (code, _, err) = crate::load::exec::run(&over, &opts(&["--map", "vda=vdb", "--through", "format", "--commit"]), &s, &[Stage::Partition, Stage::Assemble, Stage::Format]);
+        assert_eq!(code, EXIT_PLAN_PROBLEMS);
+        assert!(err.contains(why) && err.contains("nothing was written"), "{err}");
+        // The same filesystem exactly its partition's size is planned.
+        let (code, out, err) = run(&layout(), &opts(&["--map", "vda=vdb", "--repo", "/srv/r"]), &s);
+        assert_eq!(code, EXIT_OK, "{out}{err}");
+    }
+
     #[test]
     fn problems_give_exit_4() {
         let t = tree();

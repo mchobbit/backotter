@@ -5,7 +5,14 @@
 #   [WEAR_TAG=TAG] iolog.sh WHAT -- CMD ...
 #       runs CMD, then appends one line to WEAR_LOG for this process's cgroup;
 #   [WEAR_TAG=TAG] iolog.sh --cgroup DIR WHAT
-#       appends the line for another cgroup (compare.py's qemu-nbd scopes).
+#       appends the line for another cgroup (compare.py's qemu-nbd scopes);
+#   MARK=$("$WEAR_IOLOG" --keep-mark); ...; "$WEAR_IOLOG" --keep-since "$MARK"
+#       from inside a job: what the job's cgroup wrote between the two (each
+#       syncs first), added to its line's keep= (below).  For a failed run's
+#       state moved out of RAM to keep it (ht1-lib.sh's R to K, t2-host tool
+#       guest failed-state's overlay): Test2's write stop rule leaves those
+#       bytes out, the wear figures keep them.  With no WEAR_KEEP (no iolog.sh
+#       above the job, or WEAR_LOG=off) --keep-since adds nothing.
 #
 # cmp-run.sh runs every job this way, in a systemd scope of its own with
 # IOAccounting=yes: cgroup v2 then counts the writes of everything in the
@@ -33,10 +40,26 @@
 #   host_dswap=BYTES  what the host wrote to its disk swap while the job ran,
 #   host_zram=BYTES   and to zram: everyone's, not the job's (the kernel counts
 #                     neither per cgroup); not with --cgroup
+#   keep=DISK=BYTES,...  the part of DISK=BYTES a failed run's kept state
+#                     wrote (--keep-since); every total still counts it
+# The job gets WEAR_KEEP (the file --keep-since appends DISK=BYTES lines to,
+# read and removed by the line) and WEAR_IOLOG (this script).
 # A qemu-nbd scope's line has SCOPE its own and WHAT "nbd for JOB_SCOPE";
 # wear-report.py adds it to its job's.  WEAR_LOG=off logs nothing.
 set -u
-tag=${WEAR_TAG:-}; tag=${tag//[!A-Za-z0-9._:+@-]/_}; tag=${tag:0:160}; s0=""
+tag=${WEAR_TAG:-}; tag=${tag//[!A-Za-z0-9._:+@-]/_}; tag=${tag:0:160}; s0="" keepf="" keepd=""
+
+wbytes() {  # CGROUP_DIR -> DISK=BYTES,...: what the cgroup has written, every device io.stat names
+    local mm rest w dev out=""
+    [ -r "$1/io.stat" ] || return 0
+    while read -r mm rest; do
+        w=$(sed -n 's/.*wbytes=\([0-9]*\).*/\1/p' <<<"$rest")
+        [ -n "$w" ] && [ "$w" -gt 0 ] || continue
+        dev=$(readlink -f "/sys/dev/block/$mm")
+        out+="${out:+,}${dev##*/}=$w"
+    done <"$1/io.stat"
+    printf '%s\n' "$out"
+}
 
 swapw() {  # -> "DISK ZRAM": bytes the host has written to its swap devices (/proc/swaps)
     awk 'FNR == NR { if (FNR > 1) { n = $1; sub(/.*\//, "", n); sw[n] = 1 } next }
@@ -62,6 +85,11 @@ line() {  # CGROUP_DIR RC SECONDS WHAT
     done <"$cg/io.stat"
     [ -n "$tag" ] && x+=$'\t'"tag=$tag"
     [ -n "$ser" ] && x+=$'\t'"serial=$ser"
+    if [ -n "$keepf" ] && [ -s "$keepf" ]; then
+        w=$(awk -F= 'NF == 2 && $1 ~ /^[A-Za-z0-9._-]+$/ && $2 ~ /^[0-9]+$/ { s[$1] += $2 }
+                     END { for (d in s) printf "%s%s=%.0f", (n++ ? "," : ""), d, s[d] }' "$keepf")
+        [ -n "$w" ] && x+=$'\t'"keep=$w"
+    fi
     w=$(cat "$cg/memory.swap.peak" 2>/dev/null); [[ $w =~ ^[0-9]+$ ]] && x+=$'\t'"swpeak=$w"
     w=$(cat "$cg/memory.peak" 2>/dev/null); [[ $w =~ ^[0-9]+$ ]] && x+=$'\t'"mpeak=$w"
     # The host's swap writes since the start (s0; a --cgroup line has none).
@@ -88,10 +116,38 @@ if [ "${1:-}" = --cgroup ]; then
     line "$2" - - "$3"
     exit 0
 fi
-[ $# -ge 3 ] && [ "$2" = -- ] || { echo "usage: $0 WHAT -- CMD ... | $0 --cgroup DIR WHAT" >&2; exit 2; }
-what=$1; shift 2
 cg=/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)
+if [ "${1:-}" = --keep-mark ]; then   # @DISK=BYTES,... (@ alone: nothing written yet)
+    sync; printf '@%s\n' "$(wbytes "$cg")"; exit 0
+fi
+if [ "${1:-}" = --keep-since ]; then   # MARK: the deltas on stdout, and into WEAR_KEEP
+    [ $# -eq 2 ] || { echo "usage: $0 --keep-since MARK" >&2; exit 2; }
+    sync
+    d=$(awk -v mark="${2#@}" -v cur="$(wbytes "$cg")" 'BEGIN {
+            n = split(mark, a, ","); for (i = 1; i <= n; i++) if (split(a[i], kv, "=") == 2) m[kv[1]] = kv[2]
+            n = split(cur, a, ","); for (i = 1; i <= n; i++) if (split(a[i], kv, "=") == 2 && kv[2] - m[kv[1]] > 0)
+                printf "%s=%.0f\n", kv[1], kv[2] - m[kv[1]] }')
+    [ -n "$d" ] || exit 0
+    printf '%s\n' "$d"
+    [ -n "${WEAR_KEEP:-}" ] && [ -f "$WEAR_KEEP" ] && printf '%s\n' "$d" >>"$WEAR_KEEP"
+    exit 0
+fi
+[ $# -ge 3 ] && [ "$2" = -- ] || { echo "usage: $0 WHAT -- CMD ... | $0 --cgroup DIR WHAT | $0 --keep-mark | $0 --keep-since MARK" >&2; exit 2; }
+what=$1; shift 2
 t0=$(date +%s) s0=$(swapw)
+# The job's WEAR_KEEP: 666, since a job may run as another user than this
+# script (cmp-run.sh's --reserve runs it as m, its CMD often under sudo), in
+# a folder of its own (fs.protected_regular refuses even root an append to
+# another user's file in sticky /tmp).
+keepd=""
+if [ "${WEAR_LOG:-}" != off ] && keepd=$(mktemp -d /tmp/iolog-keep.XXXXXX 2>/dev/null) &&
+        chmod 755 "$keepd" && : >"$keepd/keep" && chmod 666 "$keepd/keep"; then
+    keepf=$keepd/keep
+    export WEAR_KEEP=$keepf
+else
+    keepf=""; unset WEAR_KEEP
+fi
+WEAR_IOLOG=$(readlink -f "$0" 2>/dev/null || echo "$0"); export WEAR_IOLOG
 # In the background, so that a TERM (a reservation ended with kill) still
 # gets its line: passed on to CMD, then logged with CMD's own status (143
 # when the TERM ended it) once CMD has ended, and not before: else the end
@@ -101,7 +157,8 @@ t0=$(date +%s) s0=$(swapw)
 "$@" <&0 &
 child=$! rc=""
 trap '[ -n "$rc" ] || { kill -TERM "$child" 2>/dev/null; reap; }
-      line "$cg" "$rc" "$(($(date +%s) - t0))" "$what"; exit "$rc"' TERM INT HUP
+      line "$cg" "$rc" "$(($(date +%s) - t0))" "$what"; [ -z "$keepd" ] || rm -rf "$keepd"; exit "$rc"' TERM INT HUP
 reap
 line "$cg" "$rc" "$(($(date +%s) - t0))" "$what"
+[ -z "$keepd" ] || rm -rf "$keepd"
 exit "$rc"

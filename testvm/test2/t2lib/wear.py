@@ -3,7 +3,8 @@
 
 - tag sums: the physical-disk bytes of the jobs.log lines (iolog.sh's) whose
   tag= is a row's wear tag and whose end time falls in [row start - 60 s,
-  row t + 900 s];
+  row t + 900 s]; a line's keep= (a failed run's state kept) is in them, and
+  Job.kept_bytes() says how much, for the write stop rule, which leaves it out;
 - diskstats windows: what each physical disk wrote between two
   /proc/diskstats readings (facts' preflight.diskstats), all writers;
 - SMART day deltas: what each disk wrote per day by smart.log (the last
@@ -31,7 +32,7 @@ STAMP = re.compile(r"(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)Z\Z")
 DEFAULT_LOG = "/bkoscratch/wear/jobs.log"
 DEFAULT_SMART = "/bkoscratch/wear/smart.log"
 WINDOW = (60, 900)
-EXTRA = ("tag", "swpeak", "mpeak", "host_dswap", "host_zram")   # serial= is never kept
+EXTRA = ("tag", "swpeak", "mpeak", "host_dswap", "host_zram", "keep")   # serial= is never kept
 
 
 def epoch(s):
@@ -59,6 +60,21 @@ class Job:
 
     def physical_bytes(self):
         return sum(v for k, v in self.disks.items() if physical(k))
+
+    def kept_disks(self):
+        """{disk: bytes} of the line's physical bytes that a failed run's kept state wrote
+        (iolog.sh's keep=, ht1-lib.sh's R to K and tool guest failed-state's overlay), never
+        more than the line's own on that disk.  Every total counts them (they are wear);
+        only Test2's write stop rule leaves them out."""
+        out = {}
+        for kv in (self.x.get("keep") or "").split(","):
+            k, _, v = kv.partition("=")
+            if k and v.isdigit() and physical(k) and self.disks.get(k):
+                out[k] = min(int(v), self.disks[k])
+        return out
+
+    def kept_bytes(self):
+        return sum(self.kept_disks().values())
 
 
 def parse_jobs(text_):

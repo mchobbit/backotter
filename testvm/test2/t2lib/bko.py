@@ -141,10 +141,11 @@ class Guards(runmod.RunGuards):
         super().trip(why)
         self._changed()
 
-    def feed_host(self, family, host, swap_out_bytes=None, ours_bytes=None, allowed=None):
-        # ALLOWED (holt's write allowances, RunGuards.feed_host) passed on: without it a holt
-        # child's feed with vanilla3's bytes raised TypeError, which host_checks took for "ok"
-        why = super().feed_host(family, host, swap_out_bytes, ours_bytes, allowed)
+    def feed_host(self, family, host, swap_out_bytes=None, ours_bytes=None, allowed=None, kept=None):
+        # ALLOWED (holt's write allowances) and KEPT (a failed run's kept state, RunGuards.feed_host)
+        # passed on: without ALLOWED a holt child's feed with vanilla3's bytes raised TypeError,
+        # which host_checks took for "ok"
+        why = super().feed_host(family, host, swap_out_bytes, ours_bytes, allowed, kept)
         self._changed(urgent=bool(why))
         return why
 

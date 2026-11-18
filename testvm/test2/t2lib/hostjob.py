@@ -12,7 +12,7 @@
                         what host_job needs, for a runner with no RunEnv of its own
     host_checks(env, rs, tag_prefix, t0)
                         per host: swap-out since the first check, and the bytes this run's
-                        wear tags wrote, into rs.stops.feed_host (and so RunGuards)
+                        wear tags wrote (and kept, keep=), into rs.stops.feed_host (and so RunGuards)
     guards_of(rs)       the composite's RunGuards, or None
 
 host_job's env is anything with .host_root, .attempt_run(a), .copy_path(host), .io, .rs (a
@@ -450,13 +450,13 @@ import calendar, re, sys, time
 prefix, since = sys.argv[1], float(sys.argv[2])
 virt = re.compile(r"((zram|loop|nbd|md|ram|sr|zd)\d+|dm-\d+)\Z")
 retry = re.compile(re.escape(prefix) + r"-r\d+:")
-total = 0
+total = kept = 0
 try:
     with open("/bkoscratch/wear/jobs.log", errors="replace") as f:
         lines = f.read().splitlines()
 except OSError:
     lines = []
-# TIME HOST SCOPE RC SECS DISK=BYTES[,DISK=BYTES] WHAT tag=TAG serial=... (tab-separated)
+# TIME HOST SCOPE RC SECS DISK=BYTES[,DISK=BYTES] WHAT tag=TAG serial=... keep=DISK=BYTES,... (tab-separated)
 for l in lines:
     f = l.split("\t")
     tag = next((x[4:] for x in f if x.startswith("tag=")), "")
@@ -468,11 +468,18 @@ for l in lines:
         t = since
     if t < since:
         continue
+    disks = {}
     for part in f[5].split(","):
         k, _, v = part.partition("=")
         if v.isdigit() and k and not virt.match(k):
-            total += int(v)
-print(total)
+            disks[k] = disks.get(k, 0) + int(v)
+    total += sum(disks.values())
+    # keep=: the part a failed run's state wrote as it was kept (iolog.sh --keep-since)
+    for part in next((x[5:] for x in f[6:] if x.startswith("keep=")), "").split(","):
+        k, _, v = part.partition("=")
+        if v.isdigit() and disks.get(k):
+            kept += min(int(v), disks[k])
+print(total, kept)
 '''
 
 
@@ -485,14 +492,22 @@ def pswpout(io, host):
         return None
 
 
-def tag_bytes(io, host, prefix, since):
-    """Bytes the jobs tagged PREFIX (and PREFIX-rN) wrote to HOST's physical disks, from
-    the jobs.log lines ending at or after SINCE (R22: never the whole disk's), or None."""
+def tag_bytes_kept(io, host, prefix, since):
+    """(bytes, kept): the bytes the jobs tagged PREFIX (and PREFIX-rN) wrote to HOST's physical
+    disks, from the jobs.log lines ending at or after SINCE (R22: never the whole disk's), and
+    the part of them a failed run's state wrote as it was kept (the lines' keep=, 0 from a
+    script that gives none); (None, None) when they can't be read."""
     rc, out, _ = io.sh(host, f"python3 -I -B - {shlex.quote(prefix)} {since:.0f}", input=TAG_SCRIPT.encode(), timeout=60)
     try:
-        return int(out.strip()) if rc == 0 else None
+        f = out.split() if rc == 0 else []
+        return (int(f[0]), int(f[1]) if len(f) > 1 else 0) if f else (None, None)
     except (ValueError, AttributeError):
-        return None
+        return None, None
+
+
+def tag_bytes(io, host, prefix, since):
+    """tag_bytes_kept's bytes alone, or None."""
+    return tag_bytes_kept(io, host, prefix, since)[0]
 
 
 def guards_of(rs):
@@ -517,7 +532,9 @@ def tripped(rs):
 
 def host_checks(env, rs, tag_prefix, t0):
     """Per host: swap-out since this run's first check, and the bytes this run's jobs wrote
-    (TAG_PREFIX: guest:RUN), fed to rs.stops.feed_host.  [what feed_host said, other than ok]."""
+    (TAG_PREFIX: guest:RUN), fed to rs.stops.feed_host, with KEPT the part of them failed
+    runs' kept state wrote (tag_bytes_kept), which the write rule doesn't count.
+    [what feed_host said, other than ok]."""
     said = []
     swap0 = getattr(env, "swap0", None)
     if swap0 is None:
@@ -527,9 +544,19 @@ def host_checks(env, rs, tag_prefix, t0):
         sw = pswpout(env.io, h)
         if sw is not None and h not in swap0:
             swap0[h] = sw
-        ours = tag_bytes(env.io, h, tag_prefix, t0 - 60)
+        ours, kept = tag_bytes_kept(env.io, h, tag_prefix, t0 - 60)
+        if ours is not None:    # env.kept {host: bytes}: the report's budget line says it
+            km = getattr(env, "kept", None)
+            if not isinstance(km, dict):
+                km = env.kept = {}
+            if kept:
+                km[h] = kept
+            else:
+                km.pop(h, None)
+        kw = {"kept": kept} if kept else {}    # (an engine of the older signature takes no KEPT)
         try:
-            what = rs.stops.feed_host(h, swap_out_bytes=(sw - swap0[h]) if sw is not None else None, ours_bytes=ours)
+            what = rs.stops.feed_host(h, swap_out_bytes=(sw - swap0[h]) if sw is not None else None, ours_bytes=ours,
+                                      **kw)
         except Exception as e:   # noqa: BLE001 - a stop rule that can't be fed doesn't end the run
             env.log(f"{h}: host checks: {type(e).__name__}: {e}")
             continue

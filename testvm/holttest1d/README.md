@@ -552,7 +552,9 @@ holds the port only while one of its VMs is up: a second run started on
 the same port during the first's backup would answer the first's ssh
 later.
 `WEAR_TAG` (`ht1:RUN:GUEST`, or `GUEST-VARIANT` for a variant) names the
-run in the wear log; set it per command, not exported.  The run works in
+run in the wear log; set it per command, not exported.  A failed run's
+move from RAM to K goes in its line's `keep=` too (iolog.sh's
+`--keep-mark`/`--keep-since`), which Test2's write stop rule leaves out.  The run works in
 RAM and ends up in `/bkoscratch/holttest1d/ht1m/mint22/` (see "Where a run
 works, and what it keeps"); for a queue of guests, see "Queues:
 ht1-queue.sh".

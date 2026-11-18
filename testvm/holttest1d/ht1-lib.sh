@@ -859,7 +859,7 @@ ht_end() {  # RC
     # an unbound variable can't cut it short; cp and zstd inherit the ignored
     # signals (rsync doesn't: ht_rsync).
     trap '' TERM INT HUP PIPE QUIT
-    local rc=$1 code=1 m="" f pat over="" kept last="" said=0 zipped=() x=() what="" placed="" msg=""
+    local rc=$1 code=1 m="" f pat over="" kept last="" said=0 zipped=() x=() what="" placed="" msg="" keepmark="" kb=""
     set +eu
     trap - EXIT
     # The driver's own stdio again (ht_begin's copies): a signal that came
@@ -944,6 +944,10 @@ ht_end() {  # RC
         echo "$kept; deleted ${HT_BULK[*]:-nothing}; zstd ${zipped[*]:-nothing}" >"$R/logs/kept.txt"
     else
         echo "fail: everything kept (exit $rc${HT_SIG:+, SIG$HT_SIG}$( ((code == 0)) && echo ", no ${HT_DONE_PHASE:-verify}")), $(date -u +%FT%TZ)" >"$R/logs/kept.txt"
+        # The move below is evidence kept (Test2's design: a failed run's
+        # state moves to /bkoscratch): its bytes go to the job's keep= in the
+        # wear log, which the write stop rule leaves out (iolog.sh --keep-since).
+        [[ $R == "$K" || -z ${WEAR_KEEP:-} || ! -x ${WEAR_IOLOG:-} ]] || keepmark=$("$WEAR_IOLOG" --keep-mark 2>/dev/null)
     fi
 
     # R to K: copied into K.part (a full /bkoscratch can't leave half a run
@@ -983,6 +987,9 @@ ht_end() {  # RC
             echo "${0##*/}: couldn't copy $R's records to $K either: they are lost" >&2
         fi
         rm -rf --one-file-system "$R"; rmdir "${R%/*}" 2>/dev/null
+        if [[ -n $keepmark ]] && kb=$("$WEAR_IOLOG" --keep-since "$keepmark" 2>/dev/null) && [[ -n $kb ]]; then
+            echo "${0##*/}: moving the failed run's state wrote ${kb//$'\n'/ } (the wear log's keep=: Test2's write stop rule leaves it out)"
+        fi
     fi
     [[ -z $msg ]] || echo "${0##*/}: $msg"
     # Test2's row, from K as it now is (README "Where a run works, and what it keeps").

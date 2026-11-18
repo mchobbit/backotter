@@ -214,7 +214,9 @@ def sweep_line(policy, last, now):
 
 
 def wear_lines(wear):
-    """wear: {host: {disk: {model, window_bytes, ours_bytes, today_bytes}}} (no serials)."""
+    """wear: {host: {disk: {model, window_bytes, ours_bytes, today_bytes[, kept_bytes]}}} (no
+    serials).  kept_bytes, the part of our jobs' a failed run's state kept wrote (iolog.sh's
+    keep=), is real wear: it stays in the total, and the line says how much of it it was."""
     out = []
     for h in sorted(wear or {}):
         for d in sorted(wear[h] or {}):
@@ -224,8 +226,10 @@ def wear_lines(wear):
                 v = x.get(k)
                 return f"{v / GB:.2f} GB" if isinstance(v, (int, float)) else "?"
             model = f" ({x['model']})" if x.get("model") else ""
+            kb = x.get("kept_bytes")
+            kept = f"; {kb / GB:.2f} GB of it a failed run's state kept" if isinstance(kb, (int, float)) and kb > 0 else ""
             out.append(f"{h} {d}{model}: run window {g('window_bytes')} (diskstats, all writers), our jobs "
-                       f"{g('ours_bytes')} (wear tags), today {g('today_bytes')} (SMART)")
+                       f"{g('ours_bytes')} (wear tags{kept}), today {g('today_bytes')} (SMART)")
     return out or ["wear: no disk figures (facts or wear logs unreachable)"]
 
 
@@ -333,7 +337,8 @@ def budget_lines(rr, policy, sweep=False, ledger=(), now=None, update=False):
     Test2 jobs per host (the ledger's rows of today, other runs', plus this run's).  Other
     sessions' writes count in neither: SMART's day figure is on the wear line, never acted on.
     The run line is the true total; rr's write_allowed ({host: {cell: bytes}}, holt's write
-    allowances) adds how much of it the stop rule left out."""
+    allowances) and write_kept ({host: bytes} failed runs' state wrote as it was kept, the
+    jobs.log lines' keep=) add how much of it the stop rule left out."""
     b = (policy or {}).get("budget") or {}
     run_gb = b.get("update_gb", 40) if update else b.get("sweep_gb" if sweep else "run_gb", 2)
     day_gb = b.get("day_gb", 50)
@@ -344,9 +349,14 @@ def budget_lines(rr, policy, sweep=False, ledger=(), now=None, update=False):
     per = run_bytes(rr)
     allowed = rr.get("write_allowed") or {}     # {host: {cell: bytes}}: holt's write allowances
     allow_gb = rr.get("write_allow_gb") or {}   # {cell: GB}
+    kept = rr.get("write_kept") or {}           # {host: bytes}: failed runs' state, kept
     for h, x in sorted(per.items()):
         if x > run_gb:
             line = f"budget: {h} wrote {x:.2f} GB in this run's jobs, over {run_gb} GB ({mode})"
+            kb = kept.get(h)
+            if isinstance(kb, (int, float)) and kb > 0:
+                line += (f"; {min(kb / GB, x):.2f} GB of it a failed run's state kept on /bkoscratch, "
+                         "which the stop rule doesn't count")
             mine = {c: v for c, v in (allowed.get(h) or {}).items() if isinstance(v, (int, float)) and v > 0}
             if mine:
                 cells = ", ".join(f"{c}'s {allow_gb[c]:g} GB" if isinstance(allow_gb.get(c), (int, float)) else c

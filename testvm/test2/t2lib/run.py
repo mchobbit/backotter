@@ -641,14 +641,20 @@ def remove_leftovers(items, log=print, dead=None):
 
 # --- the stop rules (1.9; R22) ------------------------------------------------------------------
 
-def allowed_note(allowed, counted):
+def allowed_note(allowed, counted, kept=0):
     """The write stop rule's words for ALLOWED ({cell: bytes} that cells' write allowances
-    excuse, holt.py's allowed_bytes) beside the true total: '' when nothing is excused."""
+    excuse, holt.py's allowed_bytes) and KEPT (bytes a failed run's state wrote as it was
+    moved out of RAM to keep it: iolog.sh's keep=) beside the true total: '' when nothing
+    is excused."""
     ex = sum(v for v in (allowed or {}).values() if v)
-    if ex <= 0:
+    parts = []
+    if kept and kept > 0:
+        parts.append(f"{kept / 1e9:.2f} GB of it a failed run's state kept on /bkoscratch")
+    if ex > 0:
+        parts.append(f"{ex / 1e9:.2f} GB of it within the write allowance of {', '.join(sorted(allowed))}")
+    if not parts:
         return ""
-    return (f" ({ex / 1e9:.2f} GB of it within the write allowance of {', '.join(sorted(allowed))}, "
-            f"not counted; {counted / 1e9:.2f} GB counted)")
+    return f" ({'; '.join(parts)}, not counted; {counted / 1e9:.2f} GB counted)"
 
 
 class HostHolds:
@@ -748,15 +754,18 @@ class RunGuards:
     nothing new on.
 
         add_harness(cell) -> count
-        feed_host(family, host, swap_out_bytes=None, ours_bytes=None, allowed=None)
+        feed_host(family, host, swap_out_bytes=None, ours_bytes=None, allowed=None, kept=None)
                                                 -> why it tripped now, or None
         trip(why); tripped() -> bool; why() -> [text]
         held() -> {host: why}; hold_notes() -> [text]
         to_json(), from_json(doc, policy...)    what a composite's resume rebuilds
 
     ALLOWED ({cell: bytes}, holt's disk-heavy cells: holt/spec.json write_allow) is the part
-    of OURS_BYTES that those cells' write allowances excuse: the write rules count the host's
-    total less it; the words still give the true total.
+    of OURS_BYTES that those cells' write allowances excuse, and KEPT (bytes) the part a failed
+    run's state wrote as it moved out of RAM to /bkoscratch for its diagnostic rerun (the
+    design's own evidence-keeping; the jobs.log lines' keep=, wear.Job.kept_bytes): the write
+    rules count the host's total less both; the words, the wear line and the budget line still
+    give the true total.
     """
 
     def __init__(self, policy=None, sweep=False, update=False, now=None):
@@ -770,6 +779,7 @@ class RunGuards:
         self.harness = 0
         self.bytes = {}         # {(family, host): the family's bytes on that host so far}
         self.allowed = {}       # {(family, host): {cell: bytes of those a write allowance excuses}}
+        self.kept = {}          # {(family, host): bytes of those a failed run's kept state wrote}
         self.reasons = []
         self._mu = threading.Lock()
 
@@ -806,7 +816,7 @@ class RunGuards:
         with self._mu:
             return self.holds.notes()
 
-    def feed_host(self, family, host, swap_out_bytes=None, ours_bytes=None, allowed=None):
+    def feed_host(self, family, host, swap_out_bytes=None, ours_bytes=None, allowed=None, kept=None):
         """Why this feed tripped the guards (the first time), else None.  Swap-out holds or
         frees HOST alone (HostHolds); only a hold that lasts trips the guards."""
         with self._mu:
@@ -818,14 +828,20 @@ class RunGuards:
                     self.allowed[(family, host)] = al
                 else:
                     self.allowed.pop((family, host), None)
+                kb = min(int(kept), int(ours_bytes)) if isinstance(kept, (int, float)) and kept > 0 else 0
+                if kb:
+                    self.kept[(family, host)] = kb
+                else:
+                    self.kept.pop((family, host), None)
                 total = sum(v for (f, h), v in self.bytes.items() if h == host)
                 excused = {}
                 for (f, h), cells in self.allowed.items():
                     if h == host:
                         for c, v in cells.items():
                             excused[c] = excused.get(c, 0) + v
-                counted = max(0, total - sum(excused.values()))
-                note = allowed_note(excused, counted)
+                kept_all = sum(v for (f, h), v in self.kept.items() if h == host)
+                counted = max(0, total - sum(excused.values()) - kept_all)
+                note = allowed_note(excused, counted, kept_all)
                 if not why and counted > self.write_x * self.run_gb * 1e9:
                     why = (f"{host}: this run's jobs wrote {total / 1e9:.2f} GB{note}, "
                            f"over {self.write_x:g} x the {self.run_gb:g} GB budget")
@@ -841,7 +857,8 @@ class RunGuards:
         with self._mu:
             return {"harness": self.harness, "reasons": list(self.reasons),
                     "bytes": [[f, h, v] for (f, h), v in sorted(self.bytes.items())],
-                    "allowed": [[f, h, dict(v)] for (f, h), v in sorted(self.allowed.items())]}
+                    "allowed": [[f, h, dict(v)] for (f, h), v in sorted(self.allowed.items())],
+                    "kept": [[f, h, v] for (f, h), v in sorted(self.kept.items())]}
 
     @classmethod
     def from_json(cls, doc, policy=None, sweep=False, update=False, now=None):
@@ -851,6 +868,7 @@ class RunGuards:
         g.reasons = list(doc.get("reasons") or [])
         g.bytes = {(f, h): v for f, h, v in doc.get("bytes") or []}
         g.allowed = {(f, h): dict(v) for f, h, v in doc.get("allowed") or [] if isinstance(v, dict) and v}
+        g.kept = {(f, h): v for f, h, v in doc.get("kept") or [] if isinstance(v, (int, float)) and v > 0}
         return g
 
 
@@ -876,12 +894,14 @@ class StopEngine:
 
         feed({cell, family, part ("fast"/"slow" for gate layers, else None), verdict, class,
               needs {need: v}, os, host})
-        feed_host(host, swap_out_bytes=..., ours_bytes=..., allowed=...)
+        feed_host(host, swap_out_bytes=..., ours_bytes=..., allowed=..., kept=...)
                                                                the host's swap-out (cumulative, any
                                                                base: HostHolds judges its growth); this
                                                                run's bytes from its wear tags (R22);
                                                                ALLOWED {cell: bytes} the part of them
-                                                               cells' write allowances excuse (holt)
+                                                               cells' write allowances excuse (holt);
+                                                               KEPT the part failed runs' kept state
+                                                               wrote (keep=; RunGuards)
 
     and gets back ok, stop-family, stop-os OS, stop-starts or stop-run.  Its state:
     stop_family (no guest of the family starts), stopped_os, stop_starts, stop_run, stops [text];
@@ -942,10 +962,12 @@ class StopEngine:
                         out = o if STOP_ORDER.index("stop-os") > STOP_ORDER.index(out.split()[0]) else out
         return out
 
-    def feed_host(self, host, swap_out_bytes=None, ours_bytes=None, allowed=None):
+    def feed_host(self, host, swap_out_bytes=None, ours_bytes=None, allowed=None, kept=None):
         if self.guards is not None:
-            if allowed:
-                why = self.guards.feed_host(self.family, host, swap_out_bytes, ours_bytes, allowed)
+            # (only what is given: a guards object of an older signature takes the rest)
+            kw = {"kept": kept} if kept else {}
+            if allowed or kw:
+                why = self.guards.feed_host(self.family, host, swap_out_bytes, ours_bytes, allowed, **kw)
             else:
                 why = self.guards.feed_host(self.family, host, swap_out_bytes, ours_bytes)
             if self.guards.tripped() and not self.stop_starts:
@@ -959,8 +981,9 @@ class StopEngine:
         if ours_bytes is not None:
             limit = self.write_x * self.run_gb * 1e9
             al = {c: v for c, v in (allowed or {}).items() if v and v > 0}
-            counted = max(0, ours_bytes - sum(al.values()))
-            note = allowed_note(al, counted)
+            kb = min(int(kept), int(ours_bytes)) if isinstance(kept, (int, float)) and kept > 0 else 0
+            counted = max(0, ours_bytes - sum(al.values()) - kb)
+            note = allowed_note(al, counted, kb)
             if counted > limit and not self.stop_starts:
                 self.stop_starts = True
                 return self._stop("stop-starts", f"{host}: this run's jobs wrote {ours_bytes / 1e9:.2f} GB{note}, "
@@ -1654,25 +1677,28 @@ _d = json.loads(_T2_DATA)
 _run, _lo = _d["run"], _d.get("lo")
 _jobs = read_jobs(_d.get("log") or DEFAULT_LOG) or []
 _ours = collections.Counter()
+_kept = collections.Counter()
 for _j in _jobs:
     _parts = (_j.tag or "").split(":")
     if (_run in _parts or any(_p.startswith(_run + "-r") for _p in _parts)) and (_lo is None or (_j.t or 0) >= _lo):
         for _k, _v in _j.disks.items():
             if physical(_k):
                 _ours[_k] += _v
+        _kept.update(_j.kept_disks())
 try:
     with open(_d.get("smart") or DEFAULT_SMART) as _f:
         _st = smart_today(_f.read(), _d["day"])
 except OSError:
     _st = []
-sys.stdout.write(json.dumps({"ours": dict(_ours), "smart": _st}, sort_keys=True) + "\n")
+sys.stdout.write(json.dumps({"ours": dict(_ours), "kept": dict(_kept), "smart": _st}, sort_keys=True) + "\n")
 '''
 
 
 def wear_lines_data(run, hosts, before, after, start_epoch, now=None, timeout=60, log=None, smart=None):
-    """{host: {disk: {model, window_bytes, ours_bytes, today_bytes}}} for the report's wear
-    lines: diskstats between the run's start and end facts (all writers), this run's jobs
-    by their wear tags (jobs.log, R22), and the day by SMART (smart.log).  wear.py's own
+    """{host: {disk: {model, window_bytes, ours_bytes, today_bytes[, kept_bytes]}}} for the
+    report's wear lines: diskstats between the run's start and end facts (all writers), this
+    run's jobs by their wear tags (jobs.log, R22; kept_bytes the part of them a failed run's
+    state kept wrote, iolog.sh's keep=), and the day by SMART (smart.log).  wear.py's own
     functions run on each host (stdin, read only); no serial comes back."""
     from . import wear
     src_path = wear.__file__
@@ -1711,6 +1737,9 @@ def wear_lines_data(run, hosts, before, after, start_epoch, now=None, timeout=60
                         "today_bytes": (by_disk.get(d) or {}).get("bytes")}
         for d, b in (got.get("ours") or {}).items():
             disks.setdefault(d, {"model": None, "window_bytes": None, "ours_bytes": b, "today_bytes": None})
+        for d, b in (got.get("kept") or {}).items():   # (in ours_bytes: a failed run's state kept)
+            if d in disks and isinstance(b, int) and b > 0:
+                disks[d]["kept_bytes"] = b
         if disks:
             out[h] = disks
     return out

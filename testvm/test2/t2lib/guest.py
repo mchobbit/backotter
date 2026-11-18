@@ -1428,10 +1428,14 @@ class Runner:
         if ex is None:
             bad = any(c.get("verdict") in FAILING or c.get("class") == "lost" for c in cells)
             ex = 1 if bad or rs.stops.stops else 0
-        return {"run": rs.run, "word": self.word.word, "family": "guest", "start": start, "end": utc_now(), "cells": cells,
-                "stops": list(rs.stops.stops), "notes": self.notes, "wear": {}, "hosts": sorted({c["host"] for c in self.cells if c.get("host")}),
-                "copy": next((c.get("id") for c in (getattr(rs, "copy", None) or {}).values() if isinstance(c, dict) and c.get("id")), None),
-                "blocks": self.blocks, "exit": ex}
+        out = {"run": rs.run, "word": self.word.word, "family": "guest", "start": start, "end": utc_now(), "cells": cells,
+               "stops": list(rs.stops.stops), "notes": self.notes, "wear": {}, "hosts": sorted({c["host"] for c in self.cells if c.get("host")}),
+               "copy": next((c.get("id") for c in (getattr(rs, "copy", None) or {}).values() if isinstance(c, dict) and c.get("id")), None),
+               "blocks": self.blocks, "exit": ex}
+        kept = getattr(self.env, "kept", None)    # (hostjob.host_checks: failed runs' kept state, by host)
+        if isinstance(kept, dict) and any(kept.values()):
+            out["write_kept"] = {h: v for h, v in sorted(kept.items()) if v}
+        return out
 
     def pull(self):
         pull = (getattr(self.ctx, "options", None) or {}).get("pull")

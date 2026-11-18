@@ -68,7 +68,8 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      is empty), and this run's bytes (jobs.log, tag ht1:RUN...: R22) to the write stop rule; a cell with
      a write allowance (its spec entry's write_allow, write_allow_bytes) has its own
      bytes per attempt (tags ht1:RUN:GV, ht1:RUN-r2:GV), up to the allowance, excused
-     (allowed_bytes), the report still giving the true total.  A done row with no ledger row gets
+     (allowed_bytes), and so are the bytes a failed run's state wrote as it moved from RAM
+     to K (jobs.log's keep=), the report still giving the true total.  A done row with no ledger row gets
      one: built from K by `t2-host row holt` when K holds the run's records (the
      hook failed), else rows_holt.backfill_row's LOST or HARNESS (R7), appended
      on its host; the row fed on is the one read back from the ledger.
@@ -514,17 +515,21 @@ with open(todo + ".lock", "a") as lk:
         except ValueError:
             return None
 
-    def tag_bytes(self, host, prefix, since, by_tag=False):
+    def tag_bytes(self, host, prefix, since, by_tag=False, kept=False):
         """Bytes this run's jobs wrote to physical disks (jobs.log lines whose tag= starts
         with PREFIX and that ended at or after SINCE, epoch), R22: never the whole disk's.
-        BY_TAG: {tag: bytes} instead (the write allowances' share, allowed_bytes)."""
+        BY_TAG: {tag: bytes} instead (the write allowances' share, allowed_bytes).  KEPT:
+        (that, the same of the part a failed run's state wrote as it was kept: the lines'
+        keep=, iolog.sh --keep-since), which the write stop rule doesn't count."""
         script = r'''
 import json, re, sys, time, calendar
 prefix, since = sys.argv[1], float(sys.argv[2])
-by_tag = len(sys.argv) > 3 and sys.argv[3] == "by-tag"
+by_tag = len(sys.argv) > 3 and sys.argv[3] in ("by-tag", "by-tag-kept")
+with_kept = len(sys.argv) > 3 and sys.argv[3] == "by-tag-kept"
 virt = re.compile(r"((zram|loop|nbd|md|ram|sr|zd)\d+|dm-\d+)\Z")
 total = 0
 sums = {}
+kept = {}
 try:
     lines = open("/bkoscratch/wear/jobs.log", errors="replace").read().splitlines()
 except OSError:
@@ -541,19 +546,36 @@ for l in lines:
         t = since
     if t < since:
         continue
-    n = 0
+    disks = {}
     for part in f[5].split(","):
         k, _, v = part.partition("=")
         if v.isdigit() and k and not virt.match(k):
-            n += int(v)
+            disks[k] = disks.get(k, 0) + int(v)
+    n = sum(disks.values())
     total += n
     sums[tag] = sums.get(tag, 0) + n
-print(json.dumps(sums, sort_keys=True) if by_tag else total)
+    for part in next((x[5:] for x in f[6:] if x.startswith("keep=")), "").split(","):
+        k, _, v = part.partition("=")
+        if v.isdigit() and disks.get(k):
+            kept[tag] = kept.get(tag, 0) + min(int(v), disks[k])
+if with_kept:
+    print(json.dumps({"by": sums, "kept": kept}, sort_keys=True))
+else:
+    print(json.dumps(sums, sort_keys=True) if by_tag else total)
 '''
-        r = self.h.ssh(host, script=script, args=[prefix, str(since)] + (["by-tag"] if by_tag else []), timeout=60)
+        mode = ["by-tag-kept"] if kept else (["by-tag"] if by_tag else [])
+        r = self.h.ssh(host, script=script, args=[prefix, str(since)] + mode, timeout=60)
         try:
             if r.rc != 0:
-                return None
+                return (None, None) if kept else None
+            if kept:
+                got = json.loads(r.text.strip())
+                by, kb = (got.get("by"), got.get("kept")) if isinstance(got, dict) else (None, None)
+                if not isinstance(by, dict):
+                    return None, None
+                by = {str(k): int(v) for k, v in by.items()}
+                kb = {str(k): int(v) for k, v in (kb or {}).items()} if isinstance(kb, dict) else {}
+                return (by, kb) if by_tag else (sum(by.values()), sum(kb.values()))
             if not by_tag:
                 return int(r.text.strip())
             got = json.loads(r.text.strip())
@@ -625,6 +647,7 @@ class Runner:
             self.state["t0"] = self.t0
         self.swap0 = dict(self.state["swap0"] or {})
         self.allowed = dict(self.state["write_allowed"] or {})   # host -> {cell: bytes a write allowance excused}
+        self.kept = dict(self.state["write_kept"] or {})         # host -> bytes failed runs' kept state wrote
         self._sigs = {}
         if self.state["interrupted"]:   # (a resume of a run stopped by a signal: that stop stands)
             self.stops.append(self.state["interrupted"].get("stop") or "stop-starts: interrupted")
@@ -1497,8 +1520,10 @@ class Runner:
     def host_checks(self, qrun):
         """The host-wide stop rules: swap-out (HostHolds: it holds that host alone; then
         sync_holds), this run's bytes (R22).
-        With a write allowance in the plan, the bytes come by tag and the allowed cells'
-        own (allowed_bytes) are fed as ALLOWED: the rule counts the rest."""
+        The bytes come by tag, with the part of each a failed run's kept state wrote (the
+        R to K move, jobs.log's keep=): that part is fed as KEPT, and with a write allowance
+        in the plan the allowed cells' own (allowed_bytes, of their bytes less KEPT) as
+        ALLOWED: the rule counts the rest."""
         prefix = f"ht1:{self.run_id}"
         allow = self.write_allows()
         for h in self.hosts:
@@ -1506,17 +1531,30 @@ class Runner:
             if sw is not None and h not in self.swap0:
                 self.swap0[h] = sw
                 self.state["swap0"] = self.swap0
-            allowed, plain = None, not allow
-            if allow:
-                try:
-                    by = self.remote.tag_bytes(h, prefix, self.t0 - 60, by_tag=True)
-                except TypeError:   # a remote with no by_tag: no allowance, the plain sum as before
-                    plain = True
-                else:
-                    ours = sum(by.values()) if isinstance(by, dict) else None
-                    allowed = allowed_bytes(by, prefix, allow) if isinstance(by, dict) else None
-            if plain:
-                ours = self.remote.tag_bytes(h, prefix, self.t0 - 60)
+            allowed, kept, ours, old = None, 0, None, False
+            try:
+                got = self.remote.tag_bytes(h, prefix, self.t0 - 60, by_tag=True, kept=True)
+            except TypeError:   # a remote with no kept: as before it had one
+                old = True
+            else:
+                by, kb = got if isinstance(got, tuple) and len(got) == 2 else (None, None)
+                if isinstance(by, dict):
+                    kb = kb if isinstance(kb, dict) else {}
+                    ours, kept = sum(by.values()), sum(kb.values())
+                    if allow:
+                        allowed = allowed_bytes({t: n - kb.get(t, 0) for t, n in by.items()}, prefix, allow)
+            if old:
+                plain = not allow
+                if allow:
+                    try:
+                        by = self.remote.tag_bytes(h, prefix, self.t0 - 60, by_tag=True)
+                    except TypeError:   # a remote with no by_tag: no allowance, the plain sum as before
+                        plain = True
+                    else:
+                        ours = sum(by.values()) if isinstance(by, dict) else None
+                        allowed = allowed_bytes(by, prefix, allow) if isinstance(by, dict) else None
+                if plain:
+                    ours = self.remote.tag_bytes(h, prefix, self.t0 - 60)
             if ours is not None:
                 if allowed:
                     self.allowed[h] = dict(allowed)
@@ -1524,7 +1562,16 @@ class Runner:
                     self.allowed.pop(h, None)
                 if (self.state["write_allowed"] or {}) != self.allowed:
                     self.state["write_allowed"] = {k: dict(v) for k, v in self.allowed.items()}
+                km = self.__dict__.setdefault("kept", {})
+                if kept:
+                    km[h] = kept
+                else:
+                    km.pop(h, None)
+                if (self.state["write_kept"] or {}) != km:
+                    self.state["write_kept"] = dict(km)
             kw = {"allowed": allowed} if allowed else {}
+            if kept:
+                kw["kept"] = kept
             try:
                 what = self.rs.stops.feed_host(h, swap_out_bytes=(sw - self.swap0[h]) if sw is not None else None,
                                                ours_bytes=ours, **kw)
@@ -2029,6 +2076,7 @@ class Runner:
                 "cells": cells, "stops": stops, "notes": notes, "wear": {}, "exit": ex,
                 "hosts": list(self.hosts), "copy": cp, "holt_code": getattr(self, "code", None),
                 "write_allowed": {h: dict(v) for h, v in sorted(self.allowed.items()) if v},
+                "write_kept": {h: v for h, v in sorted(getattr(self, "kept", {}).items()) if v},
                 "write_allow_gb": {c: b / 1e9 for c, b in sorted(self.write_allows().values())}}
 
 

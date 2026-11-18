@@ -507,6 +507,33 @@ LOG_NAMES = ("update.log", "serial.log", "journal.log", "result.json", "steps.tx
              "new-lines.json", "row-summary.json")
 
 
+def keep_mark(env=None, run_=None):
+    """iolog.sh --keep-mark's mark of this job's writes so far, or None (no iolog.sh above the
+    job: no WEAR_KEEP or WEAR_IOLOG).  With keep_since: what a failed run's kept state wrote
+    goes to the job's keep= in the wear log, which Test2's write stop rule leaves out."""
+    env = os.environ if env is None else env
+    tool, keep = env.get("WEAR_IOLOG"), env.get("WEAR_KEEP")
+    if not tool or not keep or not os.path.isfile(keep):
+        return None
+    try:
+        r = (run_ or subprocess.run)([tool, "--keep-mark"], capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = (r.stdout or "").strip()
+    return [tool, m] if r.returncode == 0 and m.startswith("@") else None
+
+
+def keep_since(mark, run_=None):
+    """The bytes since MARK (keep_mark's) into the job's keep=: their DISK=BYTES lines, or ''."""
+    if not mark:
+        return ""
+    try:
+        r = (run_ or subprocess.run)([mark[0], "--keep-since", mark[1]], capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return (r.stdout or "").strip() if r.returncode == 0 else ""
+
+
 def failed_state(guest, run, attempt, out, hroot, flakes=(), cap_mib=OVERLAY_CAP_DEFAULT, after_row=False, say=print):
     """Before the row: the failed attempt's logs go to HOST_ROOT/failed/RUN/G/, and the overlay
     too when under the cap and no known flake's tail matches, else a note; the RAM folder
@@ -532,6 +559,8 @@ def failed_state(guest, run, attempt, out, hroot, flakes=(), cap_mib=OVERLAY_CAP
     ram_dir = overlay_dir if isinstance(overlay_dir, str) and os.path.basename(overlay_dir.rstrip("/")).startswith(".vm-update-run.") \
         and os.path.isdir(overlay_dir) else None
     action = {"action": "logs", "flake": False, "overlay": None, "note": None}
+    # What this writes to HOST_ROOT is the failed run's state, kept: the job's keep= (keep_mark).
+    mark = keep_mark()
     # The reservation goes with this job: whatever fails below (a full or unwritable HOST_ROOT
     # included), the RAM folder is given back, so nothing of ours sits in /mnt/bko-ram unreserved.
     try:
@@ -561,6 +590,9 @@ def failed_state(guest, run, attempt, out, hroot, flakes=(), cap_mib=OVERLAY_CAP
     finally:
         if ram_dir:
             shutil.rmtree(ram_dir, ignore_errors=True)
+        kept = keep_since(mark)
+        if kept:
+            action["keep"] = kept.replace("\n", ",")
     say(f"failed-state: {guest}: {action}")
     return action
 

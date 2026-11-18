@@ -1089,7 +1089,7 @@ ostree_verify() {
 # its system generations, each a GRUB entry: the current one first, the
 # others in the submenu "GNU system, old configurations...", newest first.
 # The source boots the one before its current one (picked on GRUB's serial
-# menu by console-keys.py: Down, Enter, Enter) and its current one again, for
+# menu by console-keys.py: v, Enter, Enter) and its current one again, for
 # the baseline; the restored disk does the same, alone, and must show what
 # the source did.  Nothing is switched (switch-generation rebuilds the boot
 # loader's files, from substitutes: GX6's gx6-11 waited on them past 10 min).
@@ -1110,7 +1110,13 @@ GUIX_GENS='n=$(readlink /var/guix/profiles/system | sed -n "s/^.*system-\([0-9]*
 p=$(ls /var/guix/profiles | sed -n "s/^system-\([0-9]*\)-link\$/\1/p" | sort -n | awk -v n="$n" "\$1 < n" | tail -n 1)
 [ -n "$n" ] && [ -n "$p" ] || { echo "no generation before ${n:-the current one}" >&2; exit 1; }
 echo "$n $p $(readlink -f /var/guix/profiles/system-$p-link)"'
-GUIX_PICK_RE='GNU system, old configurations' GUIX_PICK_KEYS='\x1b[B|\r|\r'
+# "v" is GRUB's menu Down as one byte.  The Down arrow is three (ESC [ B),
+# and on UEFI two readers share COM1 (terminal-inputs console and serial:
+# OVMF's TerminalDxe and GRUB's own serial driver), so one could take the
+# ESC and the other the rest; GRUB waits 100 ms for the rest of a sequence,
+# so Down was lost and the first Enter booted the current generation
+# (t2h-20261118T2037-e7d1 on Copland).  guix15-bios has only GRUB's reader.
+GUIX_PICK_RE='GNU system, old configurations' GUIX_PICK_KEYS='v|\r|\r'
 # The source's baseline: its previous generation booted, then its current
 # one again, with every GUIX_STATE line as at first.  Exit 1 when the run
 # can go no further.

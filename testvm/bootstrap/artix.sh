@@ -63,6 +63,28 @@ printf 'root:%s\n' "$ROOT_PASSWORD_HASH" | arch-chroot /mnt chpasswd -e
 case $INIT in
     dinit)
         for s in sshd dhcpcd; do ln -sfn "../$s" "/mnt/etc/dinit.d/boot.d/$s"; done
+        # A JFS root stays read-write, as the initramfs mounted it (its fsck
+        # hook checked it): dinit-rc's root-ro, fsck-root and
+        # early-root-rw.target would remount it ro and then rw, and JFS's
+        # remount to rw races other services' lookups (a NULL sbi->bmap oops
+        # in diRead, the boot failed).  The same two files as
+        # update/in-guest.sh writes, which says more.
+        if [[ $ROOT_FS == jfs ]]; then
+            cat >/mnt/etc/dinit.d/root-ro <<'EOF'
+# bko-jfs-root: / stays read-write, as the initramfs mounted it (its fsck
+# hook checked it): JFS's remount from ro to rw races other lookups.
+type    = scripted
+command = /bin/mount --make-rshared /
+restart = false
+EOF
+            cat >/mnt/etc/dinit.d/fsck-root <<'EOF'
+# bko-jfs-root: the initramfs checked / before mounting it read-write.
+type       = internal
+depends-on = early-prepare.target
+depends-ms = udevd-early
+after      = udev-settle
+EOF
+        fi
         ;;
     s6)
         # Artix's s6 front end: enable, then compile the database it boots from.

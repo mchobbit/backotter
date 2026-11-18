@@ -947,6 +947,37 @@ print(d[0]["checksum"] if d else "")' "$1"
             done
             [ $waited -eq 0 ] || say "$u done after ${waited} s ($s)"
         done
+        # dinit on a JFS root (artix-dinit): dinit-rc's root-ro remounts /
+        # read-only, fsck-root checks it, and early-root-rw.target remounts it
+        # read-write while net-lo, hostname and udevd already run.  JFS's
+        # remount to rw (jfs_mount_rw) frees its block map and makes it again,
+        # and a lookup that reads an inode from disk meanwhile reads the map
+        # unlocked: ip's, for net-lo, oopsed on the NULL sbi->bmap in diRead
+        # (Linux 7.2.14), net-lo failed and with it the whole boot, sshd
+        # never started (GuestTest2 t2v-20261118T1159-2749, cinqcent; one
+        # boot in several).  So / stays read-write, as the initramfs mounted
+        # it after its fsck hook checked it: root-ro only makes it rshared,
+        # and fsck-root is a target, with the same place in the order.  In
+        # /etc/dinit.d, ahead of /usr/lib/dinit.d.  bootstrap/artix.sh writes
+        # the same two files.
+        if [ -f /usr/lib/dinit.d/root-ro ] && [ -f /usr/lib/dinit.d/fsck-root ] &&
+            [ "$(findmnt -no FSTYPE / 2>/dev/null)" = jfs ] && ! grep -qs bko-jfs-root /etc/dinit.d/root-ro; then
+            step "dinit: / stays read-write at boot (JFS's ro to rw remount races lookups)"
+            cat >/etc/dinit.d/root-ro <<'EOF' &&
+# bko-jfs-root: / stays read-write, as the initramfs mounted it (its fsck
+# hook checked it): JFS's remount from ro to rw races other lookups.
+type    = scripted
+command = /bin/mount --make-rshared /
+restart = false
+EOF
+            cat >/etc/dinit.d/fsck-root <<'EOF' || exit 1
+# bko-jfs-root: the initramfs checked / before mounting it read-write.
+type       = internal
+depends-on = early-prepare.target
+depends-ms = udevd-early
+after      = udev-settle
+EOF
+        fi
         # The keyrings first: packages signed by keys newer than the guest's
         # keyring would fail to verify.  Omarchy's pacman hook stops a plain
         # pacman upgrade (for "omarchy update", which is interactive) unless

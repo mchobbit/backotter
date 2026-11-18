@@ -19,7 +19,7 @@ BSD=$HERE/ht1-bsd.sh
 
 # The functions under test, by name: each from its "name() {" to the next
 # line that is a "}" of its own (none of their heredocs has one).
-want=(geli_provs sr_vols geli_fstab_mp onetime_swaps geli_files_list geli_slot1_script mount_script umount_script)
+want=(geli_provs sr_vols geli_fstab_mp onetime_swaps geli_files_list geli_slot1_script mount_script umount_script log_panicked vm_wait resc_up)
 src=""
 for f in "${want[@]}"; do
     one=$(sed -n "/^$f() {/,/^}$/p" "$BSD")
@@ -261,6 +261,48 @@ chk "onetime_swaps: the -bios guest's p2" eval '[[ $(onetime_swaps "$T/bios.json
 chk "onetime_swaps: the -ufs guest's plain swap is not one" eval '[[ -z $(onetime_swaps "$T/ufs.json") ]]'
 chk "geli_files_list: paths relative to the mount point, and their SHA-256" \
     eval '[[ $(geli_files_list /mnt/src/data) == "cd /mnt/src/data && find . -type f -exec sha256 -r {} + | LC_ALL=C sort" ]]'
+
+# ---- the rescuer's boot -----------------------------------------------
+# log_panicked on consoles as they were, and resc_up with vm_up, sshk and
+# ht_qemus stubbed: a "VM" is its console file, and sshd answers once BOOTS
+# boots were made (UP_AT), which is what vm_wait asks.
+
+printf '%s\r\n' "Building databases: dev, utmp, utmpx." "[   2.3630987] panic: cpu1: time has not advanced in 1501 heartbeats" > "$T/nb-panic.log"
+printf '%s\r\n' "Setting sysctl variables:" "ddb.onpanic: 1 -> 0" "savecore: reboot after panic: page fault" "Nov 18 07:05:33 netbsd11 poweroff: powered off by root" > "$T/nb-fine.log"
+printf '%s\n' "panic[cpu1]/thread=fffffe0003c0bc20: BAD TRAP: type=e" > "$T/il-panic.log"
+printf '%s\n' "Fatal trap 12: page fault while in kernel mode" "panic: page fault" > "$T/fb-panic.log"
+chk "log_panicked: NetBSD's heartbeat panic, after its timestamp" log_panicked "$T/nb-panic.log"
+chk "log_panicked: illumos' panic[cpuN]/thread=" log_panicked "$T/il-panic.log"
+chk "log_panicked: FreeBSD's panic: at a line's start" log_panicked "$T/fb-panic.log"
+chk "log_panicked: not ddb.onpanic, savecore's or a poweroff" eval '! log_panicked "$T/nb-fine.log"'
+chk "log_panicked: not a console that isn't there" eval '! log_panicked "$T/none.log"'
+
+R=$T/run BOOTS=0 UP_AT=1 PANICS=0 HT_NOTE=""
+mkdir -p "$R"
+sleep() { :; }
+# shellcheck disable=SC2329,SC2317  # called by the functions eval'd above
+vm_up() { BOOTS=$((BOOTS + 1)); echo "$BOOTS $CONSOLE_KEY $*" >> "$R/ups"
+    if ((BOOTS <= PANICS)); then cp "$T/nb-panic.log" "$2"; else cp "$T/nb-fine.log" "$2"; fi; }
+# shellcheck disable=SC2329,SC2317
+sshk() { ((BOOTS >= UP_AT)); }
+# shellcheck disable=SC2329,SC2317
+ht_qemus() { :; }
+# shellcheck disable=SC2329,SC2317
+ht_note() { HT_NOTE+="${HT_NOTE:+; }$*"; }
+CONSOLE_KEY=k1 resc_up key "$R/img" "$R/c.log" --memory 3072 > "$T/resc1.out" 2>&1; rc=$?
+chk "resc_up: one boot where sshd answers" eval '((rc == 0 && BOOTS == 1)) && [[ ! -e $R/c.log.panic-1 && -z $HT_NOTE ]]'
+chk "resc_up: vm_up gets the image, the console, the options and CONSOLE_KEY" hasx "$R/ups" "1 k1 $R/img $R/c.log --memory 3072"
+rm -f "$R/ups"; BOOTS=0 UP_AT=2 PANICS=1 HT_NOTE=""
+CONSOLE_KEY=k2 resc_up key "$R/img" "$R/c.log" --memory 3072 > "$T/resc2.out" 2>&1; rc=$?
+chk "resc_up: a panic at boot boots it again, and that one answers" eval '((rc == 0 && BOOTS == 2))'
+chk "resc_up: the same vm_up both times" eval '[[ $(cut -d" " -f2- "$R/ups" | sort -u | grep -c .) == 1 ]]'
+chk "resc_up: the panicked console kept as LOG.panic-1" log_panicked "$R/c.log.panic-1"
+chk "resc_up: the second boot's console at LOG" eval '! log_panicked "$R/c.log"'
+chk "resc_up: a note with the panic's line" eval '[[ $HT_NOTE == *"panicked at boot"*"time has not advanced in 1501 heartbeats"* ]]'
+rm -f "$R/ups" "$R/c.log.panic-1"; BOOTS=0 UP_AT=9 PANICS=9 HT_NOTE=""
+CONSOLE_KEY= resc_up key "$R/img" "$R/c.log" > "$T/resc3.out" 2>&1; rc=$?
+chk "resc_up: a panic on the second boot too is a failure (2), with no third" eval '((rc == 2 && BOOTS == 2))'
+chk "resc_up: and says so" has "$T/resc3.out" "panicked at boot again"
 
 if ((nfail == 0)); then echo "ht1-bsd-test: all $ncase cases ok"; exit 0; fi
 echo "ht1-bsd-test: $nfail of $ncase cases FAIL"

@@ -175,6 +175,10 @@ RHOLT=$RH/bko-holt RARCH=$RH/rustic-bko RREPO=$RH
 # device, rraw N the node that reads it whole.
 RN=(); for i in 0 1 2 3 4 5 6 7; do RN+=("$DISK$i"); done
 rescuer_ready() {
+    # NetBSD's heartbeat(9) panics a CPU whose clock didn't move in 15 s of
+    # its own ticks, as a vCPU's beside a starved one on a loaded host
+    # (resc_up): off in the rescuer for the rest of its run.
+    [[ $PLAT == netbsd ]] && sshk "$rkey" 'sysctl -w kern.heartbeat.max_period=0' >/dev/null 2>&1
     if [[ $PLAT == illumos ]]; then
         # (A disk attached at boot can be late into /dev: devfsadm, and wait
         # until diskinfo lists every one.)
@@ -497,9 +501,47 @@ vm_up() { local image=$1 log=$2; shift 2
     fi
     setsid -f "$T/vm-run" --serial-log "$log" "$@" "$image" </dev/null >"$log.vm-run" 2>&1 {HT_FD1}>&- {HT_FD2}>&-
 }
-vm_wait() { local key=$1
-    for _ in $(seq 120); do TMO=8 sshk "$key" true 2>/dev/null && return 0; sleep 5; done
+# vm_wait KEY [LOG]: 0 sshd answers, 1 it didn't in ~26 minutes, 2 (with
+# LOG, the VM's console) its kernel panicked first (log_panicked).
+vm_wait() { local key=$1 log=${2:-}
+    for _ in $(seq 120); do
+        TMO=8 sshk "$key" true 2>/dev/null && return 0
+        [[ -n $log ]] && log_panicked "$log" && return 2
+        sleep 5
+    done
     return 1
+}
+# 0: the console at LOG has a kernel's panic line: "panic: " at a line's
+# start (FreeBSD, OpenBSD, DragonFly; NetBSD's after its "[ 2.36] "
+# timestamp), illumos' "panic[cpu1]/thread=ADDR: ".  Not "ddb.onpanic: "
+# nor savecore's "reboot after panic: ", which come after a line's start.
+log_panicked() { # LOG
+    [[ -f $1 ]] && tr -d '\r' < "$1" | grep -aqE '^(\[ *[0-9.]+\] )?panic(\[cpu[0-9]+\]/thread=[0-9a-fx]+)?: '
+}
+# A rescuer's boot: vm_up IMAGE LOG ARGS... and vm_wait KEY, once more when
+# its kernel panicked before sshd answered (the first console kept as
+# LOG.panic-1, a note in the report).  The rescuer isn't what the run tests,
+# and a loaded host panics a guest whose vCPU it starved: netbsd11's backup
+# rescuer, 2026-11-18 on Chopin at 91 C, "cpu1: time has not advanced in 1501
+# heartbeats" in /etc/rc, then a hang in its crash dump until vm_wait gave
+# up 25 minutes later.  The source's and the restored disk's boots are what
+# the run tests, so they don't come here.  (CONSOLE_KEY and IMG_BOOT, set
+# on this call, reach vm_up as they would on its own.)
+resc_up() { local key=$1 image=$2 log=$3 rc; shift 3
+    vm_up "$image" "$log" "$@"
+    vm_wait "$key" "$log"; rc=$?
+    ((rc == 2)) || return $rc
+    ht_note "the rescuer's kernel panicked at boot, booted again ($(basename "$log").panic-1: $(tr -d '\r' < "$log" | grep -aE -m 1 '^(\[ *[0-9.]+\] )?panic' | sed 's/^\[ *[0-9.]*\] //' | cut -c1-120))"
+    # shellcheck disable=SC2046  # PIDs
+    kill $(ht_qemus "$R") 2>/dev/null
+    for _ in $(seq 12); do [[ -n $(ht_qemus "$R") ]] || break; sleep 5; done
+    # shellcheck disable=SC2046
+    [[ -z $(ht_qemus "$R") ]] || { kill -9 $(ht_qemus "$R") 2>/dev/null; sleep 2; }
+    mv -f "$log" "$log.panic-1"
+    vm_up "$image" "$log" "$@"
+    vm_wait "$key" "$log"; rc=$?
+    ((rc == 2)) && echo "ht1-bsd: the rescuer's kernel panicked at boot again ($log)" >&2
+    return $rc
 }
 # This run's VM only (ht_qemus: a QEMU with its disks in R that this run
 # started, ht_own), never another run's that took the port while none of
@@ -987,8 +1029,8 @@ phase_backup() {
     geli=$(geli_provs "$R/dumps/src.json" 2>/dev/null) || geli=""   # (no layout: the mount script says so)
     sr=$(sr_vols "$R/dumps/src.json" 2>/dev/null) || sr=""
     [[ -n $geli$sr ]] && ck=$gpass
-    CONSOLE_KEY=$ck vm_up "$RESC" "$R/logs/backup-serial.log" "${rfw[@]}" --memory 3072 "${s_resc[@]}" "${all_src[@]}"
-    vm_wait "$rkey" || { bad "rescuer boots"; vm_down "$rkey"; return; }
+    CONSOLE_KEY=$ck resc_up "$rkey" "$RESC" "$R/logs/backup-serial.log" "${rfw[@]}" --memory 3072 "${s_resc[@]}" "${all_src[@]}" ||
+        { bad "rescuer boots"; vm_down "$rkey"; return; }
     rescuer_ready $((1 + n))
     if [[ -n $geli$sr ]]; then
         geli_key_put "$rkey" "$geli" || { bad "the GELI or softraid passphrase into the rescuer's tmpfs $GELI_DIR${GELI_WHY:+: $GELI_WHY}"; vm_down "$rkey"; return; }
@@ -1119,11 +1161,10 @@ phase_rebuild() {
         rm -f "$R/img.qcow2" "$R/img-key" "$R/img-key.pub" "$R/logs/rescuer-img-setup.log"
         qemu-img create -q -f qcow2 -b "$IMG_PIN/rescuer.img" -F raw "$R/img.qcow2" 16G
         ssh-keygen -q -t ed25519 -N '' -C ht1-img -f "$R/img-key" || { bad "rescuer setup (the rescue image: no key for the run)"; return; }
-        IMG_BOOT=1 vm_up "$R/img.qcow2" "$R/logs/rescuer-serial.log" "${ifw[@]}" --memory 3072 "${s_decoy[@]}" "${all_dst[@]}" --disk "$R/decoy.qcow2" --disk "$try"
+        IMG_BOOT=1 resc_up "$rkey" "$R/img.qcow2" "$R/logs/rescuer-serial.log" "${ifw[@]}" --memory 3072 "${s_decoy[@]}" "${all_dst[@]}" --disk "$R/decoy.qcow2" --disk "$try"
     else
-        vm_up "$try" "$R/logs/rescuer-serial.log" "${rfw[@]}" --memory 3072 "${s_decoy[@]}" "${all_dst[@]}" --disk "$R/decoy.qcow2"
-    fi
-    vm_wait "$rkey" || { bad "rescuer boots"; vm_down "$rkey"; return; }
+        resc_up "$rkey" "$try" "$R/logs/rescuer-serial.log" "${rfw[@]}" --memory 3072 "${s_decoy[@]}" "${all_dst[@]}" --disk "$R/decoy.qcow2"
+    fi || { bad "rescuer boots"; vm_down "$rkey"; return; }
     if ((IMG)); then
         # (After QEMU opened the image: the pin unchanged now means the
         # inode it booted is the one the run started with.)
@@ -1344,8 +1385,7 @@ phase_verify() {
     local vsnap=("${v_snap[@]}")
     [[ -n $sr ]] && { ck=$gpass; vsnap=(--snapshot); }
     if [[ -f $RESC ]]; then
-        CONSOLE_KEY=$ck vm_up "$RESC" "$R/logs/verify-rescuer-serial.log" "${vsnap[@]}" "${rfw[@]}" --memory 3072 "${s_resc[@]}" "${all_dst[@]}"
-        if vm_wait "$rkey"; then
+        if CONSOLE_KEY=$ck resc_up "$rkey" "$RESC" "$R/logs/verify-rescuer-serial.log" "${vsnap[@]}" "${rfw[@]}" --memory 3072 "${s_resc[@]}" "${all_dst[@]}"; then
             rescuer_ready $((1 + n))
             if [[ -n $geli$sr ]] && ! geli_key_put "$rkey" "$geli"; then
                 bad "the GELI or softraid passphrase into the rescuer's tmpfs $GELI_DIR${GELI_WHY:+: $GELI_WHY}"

@@ -1325,7 +1325,8 @@ phase_rebuild() {
                 put "$rkey" "$HOLT" $RH/bko-holt
             fi
         fi
-        sshk "$rkey" "$RHOLT load $RH/layout.json ${map[*]} --only status" > "$R/logs/rebuild-status-after-$s.txt" 2>&1
+        ht_status_read "$R/logs/rebuild-status-after-$s.txt" sshk "$rkey" "$RHOLT load $RH/layout.json ${map[*]} --only status" ||
+            { harness "the load status after $s couldn't be read: ssh got no answer (logs/rebuild-status-after-$s.txt)"; continue; }
         if [[ $s == oneshot ]]; then
             local st
             for st in partition format close; do

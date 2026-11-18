@@ -579,7 +579,8 @@ PY
             sshk 'cat /run/bko-holt/log/load.log' > "$R/logs/rebuild-load.log"
             sshk 'set -x; findmnt -R /mnt/bko-target; lsblk -f; sfdisk -d /dev/vdb' > "$R/logs/rebuild-failed-state.txt" 2>&1
             r_down; return; }
-        sshk "/mnt/share/bko-holt load /mnt/share/layout.json ${map[*]} --only status" > "$R/logs/rebuild-status-after-$s.txt" 2>&1
+        ht_status_read "$R/logs/rebuild-status-after-$s.txt" sshk "/mnt/share/bko-holt load /mnt/share/layout.json ${map[*]} --only status" ||
+            { harness "the load status after $s couldn't be read: ssh got no answer (logs/rebuild-status-after-$s.txt)"; continue; }
         if [[ $s == oneshot ]]; then
             grep -q "^next: nothing" "$R/logs/rebuild-status-after-$s.txt" || bad "status after the one-command rebuild: $(grep '^next' "$R/logs/rebuild-status-after-$s.txt")"
         else

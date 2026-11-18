@@ -93,6 +93,24 @@ ht_gib()  { awk -v k="$1" 'BEGIN { printf "%.1f", k / 1048576 }'; }   # KiB -> G
 ht_ge()   { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 >= b + 0) }'; }   # A >= B (GiB figures: 2.5 too)
 ht_lockfile() { echo "$HT_LOCKS/$(tr / % <<<"$1").lock"; }   # K -> its run lock
 ht_kept() { local m=""; read -r m 2>/dev/null <"$1/logs/kept.txt"; echo "${m%%:*}"; }   # DIR -> pass, fail, ...
+# ht_status_read FILE CMD...: CMD, the drivers' sshk of `bko-holt load
+# --only status` (which only reads), into FILE.  sshk gives the rescuer's
+# sshd 5 seconds to answer, and on a loaded host a slow one answers nothing
+# at all (choubox 2026-11-18, freebsd14: an empty
+# rebuild-status-after-boot.txt read as a FAIL of the boot stage), so a read
+# that got no answer -- ssh's 255, timeout's 124, or no output at all -- is
+# tried again a few times, with a note on stderr.  Anything bko-holt printed
+# is its answer and is judged as it is.  1: still no answer, the harness's
+# problem, not the load's.
+ht_status_read() {
+    local file=$1 i rc; shift
+    for i in 1 2 3; do
+        [[ $i == 1 ]] || { echo "${0##*/}: no answer reading ${file##*/} (exit $rc), try $i of 3" >&2; sleep 3; }
+        "$@" > "$file" 2>&1; rc=$?
+        [[ $rc != 255 && $rc != 124 && -s $file ]] && return 0
+    done
+    return 1
+}
 # R is this driver's, for K: a dead run's markers of its attempt go (seeding
 # is ht_seed's, and held stays: the sweep and the queue read its PID).
 ht_mark() { mkdir -p "$R/.ht" && rm -f "$R/.ht/summed" "$R/.ht/overrun" "$R/.ht/lowfree" "$R/.ht/moved" && echo $$ >"$R/.ht/pid" && echo "$K" >"$R/.ht/k"; }

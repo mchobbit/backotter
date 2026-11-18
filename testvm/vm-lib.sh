@@ -22,8 +22,15 @@
 #             shell is (DragonFly's is csh, which can't parse sh's syntax);
 #             stdin and stdout pass through.  Keep it to one line: csh ends a
 #             quoted string at a newline.  T bounds it (seconds, default
-#             3600): ssh's own ConnectTimeout never fires here, since QEMU's
-#             user network accepts the connection before the guest is up.
+#             3600).  QEMU's user network accepts the TCP connection at once,
+#             so ssh's ConnectTimeout (VM_SSH_CONNECT_TIMEOUT, default 30)
+#             bounds the wait for the guest sshd's banner.  It is long
+#             because a FreeBSD-family sshd (UseDNS yes by default) looks up
+#             the client's name, 10.0.2.2, before it sends the banner: the
+#             query goes through QEMU's DNS to the host's nameserver on the
+#             internet, and one lost answer costs the guest's resolver 5 s
+#             (two, 15 s).  At 5 s a lost answer was a failed connection,
+#             and -q keeps ssh from saying why.
 #   vm_sh SCRIPT
 #             Run SCRIPT, any number of lines, with the guest's /bin/sh (fed
 #             on stdin, so not for commands that read stdin themselves).
@@ -94,7 +101,13 @@ vm_boot() {
     fi
     VM_PID=$!
     deadline=$((SECONDS + ${VM_BOOT_TIMEOUT:-600}))
-    until vm_owns_port && T=15 vm_ssh true 2>/dev/null && vm_owns_port; do
+    # Short tries while it boots (a try made before the guest's network is up
+    # waits out its whole ConnectTimeout), the full ConnectTimeout after the
+    # first minute: a FreeBSD-family guest whose sshd can't reach DNS just
+    # then answers only after its lookup gives up (vm_ssh).
+    local began=$SECONDS ct
+    until ct=5; [[ $((SECONDS - began)) -lt 60 ]] || ct=${VM_SSH_CONNECT_TIMEOUT:-30}
+          vm_owns_port && VM_SSH_CONNECT_TIMEOUT=$ct T=$((ct + 10)) vm_ssh true 2>/dev/null && vm_owns_port; do
         if ! kill -0 "$VM_PID" 2>/dev/null; then
             echo "vm_boot: QEMU exited; $logdir/vm-run.log says:" >&2
             tail -n 5 "$logdir/vm-run.log" >&2
@@ -155,7 +168,7 @@ vm_ssh() {
     local sq="'"
     local q=${1//$sq/$sq\\$sq$sq}
     timeout "${T:-3600}" ssh -q -i "$VM_KEY" -p "$VM_PORT" -o BatchMode=yes \
-        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout="${VM_SSH_CONNECT_TIMEOUT:-30}" \
         -o ServerAliveInterval=30 "${VM_USER:-root}@127.0.0.1" "/bin/sh -c '$q'"
 }
 
@@ -178,7 +191,7 @@ vm_halt() {
     # only Shepherd's halt (which powers off) on its PATH: by /bin/sh, since
     # root's shell may be csh (DragonFly).
     if VM_PID=$pid vm_owns_port; then
-        T=30 vm_ssh '/sbin/poweroff || /sbin/shutdown -p now || /usr/sbin/shutdown -y -i5 -g0 || /bin/sh -c "command -v poweroff >/dev/null 2>&1 || halt"' \
+        T=45 vm_ssh '/sbin/poweroff || /sbin/shutdown -p now || /usr/sbin/shutdown -y -i5 -g0 || /bin/sh -c "command -v poweroff >/dev/null 2>&1 || halt"' \
             >/dev/null 2>&1 || true
     fi
     for _ in $(seq 30); do kill -0 "$pid" 2>/dev/null || break; sleep 2; done

@@ -448,6 +448,12 @@
   "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
   "SELinux labels": "not applicable; the guest runs AppArmor (186 profiles, 110 enforcing), which keeps no labels on disk"
  },
+ "ubuntu24-luks": {
+  "Birth times": "ext4 and vfat keep them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
+  "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
+  "SELinux labels": "not applicable; the guest runs AppArmor, which keeps no labels on disk",
+  "Whole-disk needs (GPT, LUKS2, PV/VG/LV metadata, shim and GRUB's NVRAM entry under Secure Boot, the initramfs)": "out of scope: whole-disk (HoltTest1 1U recreates the disk, LUKS2 and the ubuntu-vg VG with its UUIDs, boots it alone from its NVRAM entry); here the scratch disk is laid out like the guest's and only its file systems' contents are restored"
+ },
  "ubuntu26-arm64": {
   "Birth times": "ext4 keeps them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
   "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",

@@ -17,7 +17,7 @@ current: 0   not runnable: gate:loop:linux@copland (copland is not in --hosts); 
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written
 SticTest2 plan: round rel4 (~/backotter-work/roundrel4/bin), base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 75 of 75 checks, est. 534.1 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+due: 76 of 76 checks, est. 541.8 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   stic:aeon                any      new       no PASS yet  5.0 gm  tsv
   stic:aerynos             any      new       no PASS yet  2.2 gm  tsv
   stic:alpine324           any      new       no PASS yet  2.6 gm  tsv
@@ -84,6 +84,7 @@ due: 75 of 75 checks, est. 534.1 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   stic:truenas25           any      new       no PASS yet  20.0 gm  README
   stic:tumbleweed          any      new       no PASS yet  3.1 gm  tsv
   stic:ubuntu24            any      new       no PASS yet  15.9 gm  tsv
+  stic:ubuntu24-luks       any      new       no PASS yet  7.6 gm  tsv
   stic:ubuntu24-uefi       any      new       no PASS yet  6.2 gm  tsv
   stic:ubuntu26-uefi       any      new       no PASS yet  6.2 gm  tsv
   stic:ubuntu26-zfs        any      new       no PASS yet  16.4 gm  tsv
@@ -304,4 +305,4 @@ not runnable: img:dragonfly (dragonfly/bko-holt 29a491194633: no PASS at its dig
 not runnable: img:illumos (illumos/bko-holt 9f334a07f8e8: no PASS at its digest; run t2 HoltTest2 omnios58; illumos/restic-bko 0d82a9690d13: no PASS at its digest; run t2 SticTest2 ROUND omnios58; illumos/rustic-bko 5a87834d6355: no PASS at its digest; run t2 SticTest2 ROUND omnios58)
 not runnable: img:haiku (haiku/bko-holt bb9e1e37dcbe: no PASS at its digest; run t2 HoltTest2 haiku6; haiku/rustic-bko f0ca9138481d: no PASS at its digest; run t2 SticTest2 ROUND haiku6)
 sweep: SweepTest2 never ran, due now
-combined: 276 due, 1418.0 gm, 15465 s wall, 30.6 GB, ['gate:selftest'] left over
+combined: 277 due, 1425.6 gm, 15558 s wall, 30.6 GB, ['gate:selftest'] left over

@@ -60,6 +60,7 @@ stic	stic:tumbleweed	3.13	188	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:ubuntu24	15.95	957	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
 stic	stic:ubuntu26-uefi	6.23	374	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:ubuntu24-uefi	6.23	374	0.00	-	as stic:ubuntu26-uefi (same check), until measured
+stic	stic:ubuntu24-luks	7.63	458	0.00	-	as stic:elementary8-luks (its check, the same layout but swap), until measured
 stic	stic:ubuntu26-zfs	16.38	982	0.00	-	st1_marks.tsv: median of 4 exit-0 runs
 stic	stic:ubuntu26-zfsmirror	10.35	621	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
 stic	stic:void-musl	1.87	112	0.00	-	st1_marks.tsv: median of 5 exit-0 runs

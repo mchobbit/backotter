@@ -80,7 +80,11 @@ restore boots, with "missing 7" (gpg-agent's sockets, which no archiver
 keeps) and "inode flags" on about 34,100 files, every one 0 to 0x400
 (`FS_NOCOMP_FL`): btrfs marks those itself, as the restore is written
 under fstab's `compress=zstd:3` (as on kinoite44, docs/design/bazzite.md
-B5; stictest1/omarchy/check.sh doesn't count it either).
+B5; stictest1/omarchy/check.sh doesn't count it either).  Since
+2026-11-18 fsmeta.py's `differences` leaves such an m out itself: gained,
+alone, on a file or directory its record marks as on Btrfs (`"btrfs":
+true`, by statfs); an m lost, any other flag, or an m elsewhere still
+differs, and `compare --json` names the paths under "btrfs m gained".
 
 ### A round, scripted
 

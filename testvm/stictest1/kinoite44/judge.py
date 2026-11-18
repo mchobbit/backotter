@@ -314,7 +314,9 @@ if FS == "btrfs":
     line("FAIL" if bad else "PASS", "ostree fsck of the restored repository (content, mode, owner, xattrs per object)",
          "; ".join(bad)[:900] if bad else "source and 6 restores (rr and uu after their restores over existing, ru, ur, rz, uz): fsck exit 0, no errors")
     # Onto fstab's compress=zstd:1: btrfs marks a file FS_NOCOMP_FL (0x400)
-    # itself when its data doesn't compress (B4); anything else is a FAIL.
+    # itself when its data doesn't compress (B4), which fsmeta.differences()
+    # leaves out (btrfs_nocomp) and nocomp_gained() names; anything else is
+    # a FAIL.
     fc = rd("fstab-compress.txt")
     bad, nocomp = [], {}
     if "compress=" not in (fc.splitlines() or [""])[0]:
@@ -324,14 +326,11 @@ if FS == "btrfs":
         m = [x for x in rd(f"restore-{d}.log").splitlines() if re.search(r"(?i)warn|error|fail|ignor", x)]
         if m: bad.append(f"{NAMES[d]}: {m[:2]}")
         if diffs.get(d) is None: bad.append(f"{NAMES[d]}: no record"); continue
-        nocomp[d] = 0
+        nocomp[d] = len(tree_paths(fsmeta.nocomp_gained(src, full[d])))
         for k, pp in diffs[d].items():
             for p in tree_paths(pp):
                 if k == "missing" and p == socket or own_need(k, p): continue
                 if k == "selinux" and "security.selinux" not in src[p]["xattrs"]: continue
-                if k == "inode flags":
-                    a, b = src[p].get("flags") or 0, (full[d].get(p) or {}).get("flags") or 0
-                    if (a ^ b) & ~fsmeta.FLAGS_FS_INTERNAL == 0x400 and b & 0x400: nocomp[d] += 1; continue
                 bad.append(f"{NAMES[d]}: {k} {p}")
     probe = " ".join(rd("nocomp-probe.txt").split())
     detail = (f"mounted {fc.splitlines()[1] if len(fc.splitlines()) > 1 else '?'}; " if fc else "") + (f"this kernel's btrfs on new files: {probe}; " if probe else "") + ", ".join(f"{NAMES[d]}: {n} files gained FS_NOCOMP_FL (0x400), set by btrfs itself" for d, n in nocomp.items())

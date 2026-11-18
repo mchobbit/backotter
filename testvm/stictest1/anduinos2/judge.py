@@ -51,25 +51,11 @@ for d, dd in diffs.items():
             stubbed.update(p for p in dd[k] if p in STUBS)
             dd[k] = [p for p in dd[k] if p not in STUBS]
             if not dd[k]: del dd[k]
-# Btrfs marks a file m (FS_NOCOMP_FL, 0x400) itself when a range of it
-# doesn't compress as it is written back under compress=zstd:3: which files
-# depends on how writeback split each one (the same 11528 bytes come back
-# with m when 8192 of them were flushed first, without when all were), so a
-# restore can gain m, not every time, on a file whose node holds no flags
-# and that neither tool set flags on (SticTest2 t2s-20261118T1651-0bf1:
-# restic->rustic gave GRUB's x86_64-efi/hfsplus.mod m on Cinqcent, not on
-# Cage's rerun).  Not the restore's: judged without it.  An m the source has
-# still has to come back (each tool sets it).
-NOCOMP = 0x400
-nocomp = {}
-for d, dd in diffs.items():
-    if not dd or "inode flags" not in dd: continue
-    keep = []
-    for p in dd["inode flags"]:
-        b, a = (src.get(p) or {}).get("flags") or 0, ((full[d] or {}).get(p) or {}).get("flags") or 0
-        (nocomp.setdefault(d, []) if (a ^ b) & ~fsmeta.FLAGS_FS_INTERNAL == NOCOMP and a & NOCOMP else keep).append(p)
-    if keep: dd["inode flags"] = keep
-    else: del dd["inode flags"]
+# An m (FS_NOCOMP_FL) a restore gains alone on Btrfs, which compress=zstd:3
+# makes Btrfs set itself, fsmeta.differences() leaves out (btrfs_nocomp:
+# SticTest2 t2s-20261118T1651-0bf1's GRUB hfsplus.mod); named in the
+# inode-flags line.  An m the source has still has to come back.
+nocomp = {d: ps for d in full if full[d] is not None for ps in [fsmeta.nocomp_gained(src, full[d])] if ps}
 def tree_paths(ps): return [p for p in ps if p == TREE or p.startswith(TREE + "/")]
 socket = TREE + "/socket"
 sockets = {p for p in src if src[p]["type"] == "socket"}

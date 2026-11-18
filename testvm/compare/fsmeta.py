@@ -18,6 +18,8 @@ change the atimes being recorded.  ROOT may span several filesystems
 (e.g. / and /boot): the walk crosses into whatever is mounted below it.
 
 compare prints, per kind of metadata, how many paths differ, with examples.
+An m (no-compress) that a restore onto Btrfs gains, and nothing else, isn't
+a difference: Btrfs sets it itself (FS_NOCOMP_FL); --json names those paths.
 """
 
 from __future__ import annotations
@@ -41,6 +43,15 @@ FS_IOC_FSGETXATTR = 0x801C581F
 FS_FL_USER_VISIBLE = 0x0003DFFF | 0x00800000 | 0x20000000 | 0x40000000
 # Set by the filesystem itself, not restorable: ext4's hashed-directory index.
 FLAGS_FS_INTERNAL = 0x00001000
+# btrfs's m (no-compress).  Mounted compress= (not compress-force=), Btrfs
+# sets it itself on a file a range of which doesn't compress as it is
+# written back, so which restored files gain it depends on how writeback
+# split each one (anduinos2's SticTest2 t2s-20261118T1651-0bf1: GRUB's
+# hfsplus.mod, a node with no flags, came back with m on one host and not
+# on the rerun).  differences() leaves out an m gained alone on a Btrfs
+# restore (nocomp_gained()); an m lost, or gained anywhere else, still counts.
+FS_NOCOMP_FL = 0x00000400
+BTRFS_SUPER_MAGIC = 0x9123683E
 FLAG_NAMES = {0x10: "immutable", 0x20: "append", 0x40: "nodump", 0x80: "noatime",
               0x00800000: "nocow", 0x40000000: "casefold"}
 ZFS_IOC_GETDOSFLAGS = 0x80088301
@@ -134,6 +145,21 @@ def devices(*fstypes: str) -> set[int]:
 
 def zfs_devices() -> set[int]:
     return devices("zfs")
+
+
+def statfs_type(path: str) -> int | None:
+    """statfs(2)'s f_type of the file system path is on (Linux), else None.
+    Asked per st_dev, not of /proc/self/mounts: a Btrfs subvolume that isn't
+    mounted on its own has a st_dev of its own."""
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        buf = ctypes.create_string_buffer(256)          # struct statfs, f_type first
+        if libc.statfs(os.fsencode(path), buf) != 0:
+            return None
+        return ctypes.c_ulong.from_buffer(buf).value & 0xFFFFFFFF
+    except (OSError, AttributeError, ImportError):
+        return None
 
 
 def dos_flags(path: str, is_dir: bool) -> int | None:
@@ -260,6 +286,7 @@ def record(root: str, skip: list[str] = ()) -> dict[str, dict]:
     zfs = devices("zfs")
     no_seek_hole = devices(*NO_SEEK_HOLE)
     bcachefs = devices("bcachefs")
+    btrfs: dict[int, bool] = {}                 # st_dev -> on Btrfs
     # "." is ROOT itself: its owner, mode and labels matter as much as any
     # file's (an unlabeled / stops an SELinux system from booting), and a
     # restore into an existing mount point easily misses them.
@@ -293,6 +320,10 @@ def record(root: str, skip: list[str] = ()) -> dict[str, dict]:
                 e["xattrs"] = {}
             if kind in ("file", "dir"):
                 e["flags"] = inode_flags(path, kind == "dir")
+                if st.st_dev not in btrfs:
+                    btrfs[st.st_dev] = statfs_type(path) == BTRFS_SUPER_MAGIC
+                if btrfs[st.st_dev]:
+                    e["btrfs"] = True           # m may be Btrfs's own (FS_NOCOMP_FL)
                 e["projid"] = project_id(path, kind == "dir")
                 if st.st_dev in bcachefs:
                     # bcachefs (Linux 6.12) answers FS_IOC_FSGETXATTR with
@@ -323,6 +354,23 @@ def xattr_value(xattrs: dict[str, str], name: str) -> str | None:
     if name == "bcachefs_effective.project" and v is not None and bytes.fromhex(v).strip(b"\0 \n") == b"0":
         return None
     return v
+
+
+def btrfs_nocomp(b: dict, a: dict) -> bool:
+    """Whether the restored entry a differs from b in its inode flags only by
+    an m (FS_NOCOMP_FL) it gained on Btrfs, which may be Btrfs's own (see
+    FS_NOCOMP_FL).  An m lost, any other flag, or an m on another file
+    system: no."""
+    bf, af = b.get("flags"), a.get("flags")
+    return (bool(a.get("btrfs")) and bf is not None and af is not None
+            and (bf ^ af) & ~FLAGS_FS_INTERNAL == FS_NOCOMP_FL and bool(af & FS_NOCOMP_FL))
+
+
+def nocomp_gained(before: dict[str, dict], after: dict[str, dict]) -> list[str]:
+    """The paths differences() leaves out for an m gained on Btrfs alone
+    (btrfs_nocomp), for a judge to name."""
+    return [p for p in sorted(before.keys() & after.keys())
+            if before[p]["type"] == after[p]["type"] and btrfs_nocomp(before[p], after[p])]
 
 
 def differences(before: dict[str, dict], after: dict[str, dict]) -> dict[str, list[str]]:
@@ -379,7 +427,7 @@ def differences(before: dict[str, dict], after: dict[str, dict]) -> dict[str, li
             if xattr_value(bx, name) != xattr_value(ax, name):
                 note(xattr_kind(name), path)
         bf, af = b.get("flags"), a.get("flags")
-        if bf is not None and af is not None and (bf ^ af) & ~FLAGS_FS_INTERNAL:
+        if bf is not None and af is not None and (bf ^ af) & ~FLAGS_FS_INTERNAL and not btrfs_nocomp(b, a):
             note("inode flags", path)
         if b.get("projid") and b.get("projid") != a.get("projid"):
             note("project ID", path)
@@ -451,10 +499,13 @@ def main() -> int:
         after = json.load(f)
     diff = differences(before, after)
     if args.json:
+        out = {"paths": len(before), "coverage": coverage(before),
+               "differences": {k: {"count": len(v), "examples": v[:5]} for k, v in diff.items()}}
+        gained = nocomp_gained(before, after)
+        if gained:                      # not a difference (btrfs_nocomp), named
+            out["btrfs m gained"] = {"count": len(gained), "examples": gained[:5]}
         with open(args.json, "w") as f:
-            json.dump({"paths": len(before), "coverage": coverage(before),
-                       "differences": {k: {"count": len(v), "examples": v[:5]}
-                                       for k, v in diff.items()}}, f, indent=1)
+            json.dump(out, f, indent=1)
     if not diff:
         print(f"identical: {len(before)} paths")
     for kind in sorted(diff, key=lambda k: (ORDER.index(k) if k in ORDER else 99, k)):

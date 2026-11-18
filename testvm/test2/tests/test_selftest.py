@@ -1,5 +1,5 @@
 """t2 self-test's unit tests, one process per file (2026-11-18): the summary line, the pool,
-each file's own TMPDIR."""
+each file's own TMPDIR, UNIT_SERIAL's tests alone after the pool, no reruns."""
 
 import importlib.machinery
 import importlib.util
@@ -70,17 +70,16 @@ class UnitTests(unittest.TestCase):
 
     def test_each_file_its_own_process_and_tmpdir(self):
         res = t2.unit_tests(sys.executable, dict(os.environ), tests=self.d, jobs=2)
-        self.assertEqual([(n, rc, prc) for n, rc, _, _, prc in res],
-                         [("test_a.py", 0, None), ("test_b.py", 1, 1), ("test_c.py", 0, None)])   # b: again alone
-        self.assertEqual(t2.unit_summary([t for _, _, t, _, _ in res]), "FAILED (failures=1, errors=1, skipped=2)")
+        self.assertEqual([(n, rc) for n, rc, _, _ in res], [("test_a.py", 0), ("test_b.py", 1), ("test_c.py", 0)])
+        self.assertEqual(t2.unit_summary([t for _, _, t, _ in res]), "FAILED (failures=1, errors=1, skipped=2)")
         self.assertIn("ValueError: boom", res[1][2])
         left = [n for n in os.listdir(tempfile.gettempdir()) if n.startswith(("t2-selftest-test_a-", "t2-selftest-test_b-",
                                                                                "t2-selftest-test_c-"))]
         self.assertEqual(left, [])   # each file's TMPDIR is removed after it
 
-    def test_a_file_that_fails_beside_the_others_runs_again_alone(self):
-        """A file that needs the CPU to itself (wall-clock asserts) passes alone, as it does when
-        the files run one after another: that run decides."""
+    def test_a_failure_in_the_pool_is_not_run_again(self):
+        """A FAIL that would pass on a second run is a FLAKY-FAIL (docs/design/test2.md): the
+        pool's exit decides, nothing reruns."""
         flag = os.path.join(self.d, "busy")
         open(flag, "w").close()
         with open(os.path.join(self.d, "test_b.py"), "w") as f:   # fails the first time only
@@ -88,8 +87,49 @@ class UnitTests(unittest.TestCase):
                     f"        p = {flag!r}\n        busy = os.path.exists(p)\n        if busy: os.remove(p)\n"
                     "        self.assertFalse(busy)\n")
         res = t2.unit_tests(sys.executable, dict(os.environ), tests=self.d, jobs=3)
-        self.assertEqual([(n, rc, prc) for n, rc, _, _, prc in res],
-                         [("test_a.py", 0, None), ("test_b.py", 0, 1), ("test_c.py", 0, None)])
+        self.assertEqual([(n, rc) for n, rc, _, _ in res], [("test_a.py", 0), ("test_b.py", 1), ("test_c.py", 0)])
+        self.assertFalse(os.path.exists(flag))   # it ran once
+
+    def test_serial_tests_run_alone_after_the_pool(self):
+        """UNIT_SERIAL's entries (test_plan's wall-clock class) leave the pool and run after it,
+        alone; a whole file listed runs only then."""
+        log = os.path.join(self.d, "log")
+        body = ("import os, time, unittest\n"
+                "def mark(w):\n"
+                f"    with open({log!r}, 'a') as f: f.write(w + '\\n')\n"
+                "class Fast(unittest.TestCase):\n"
+                "    def test_fast(self):\n        time.sleep(0.5); mark('%s.Fast')\n"
+                "class Timed(unittest.TestCase):\n"
+                "    def test_timed(self):\n        mark('%s.Timed')\n"
+                "        self.assertIn('t2-selftest-%s-', os.path.basename(os.environ['TMPDIR']))\n")
+        for n in ("test_d", "test_e"):
+            with open(os.path.join(self.d, n + ".py"), "w") as f:
+                f.write(body % (n, n, n))
+        res = t2.unit_tests(sys.executable, dict(os.environ), tests=self.d, jobs=4,
+                            serial=("test_d.Timed", "test_e"))
+        self.assertEqual([(n, rc) for n, rc, _, _ in res],
+                         [("test_a.py", 0), ("test_b.py", 1), ("test_c.py", 0), ("test_d.py", 0),
+                          ("test_d.py (alone: test_d.Timed)", 0), ("test_e.py (alone: test_e)", 0)])
+        with open(log) as f:
+            order = f.read().split()
+        self.assertEqual(order[-3:], ["test_d.Timed", "test_e.Fast", "test_e.Timed"])   # after the pool, alone
+        self.assertEqual(sorted(order[:-3]), ["test_d.Fast"])                         # the pool: Timed left out
+        self.assertIn("Ran 1 test", res[4][2])
+        self.assertEqual(t2.unit_summary([t for _, _, t, _ in res]), "FAILED (failures=1, errors=1, skipped=2)")
+
+    def test_a_serial_entry_that_names_no_test_fails(self):
+        res = t2.unit_tests(sys.executable, dict(os.environ), tests=self.d, jobs=2,
+                            serial=("test_c.Gone", "test_z.Perf"))
+        self.assertEqual([(n, rc) for n, rc, _, _ in res][3:],
+                         [("test_c.py (alone: test_c.Gone)", 1), ("test_z.py (alone: test_z.Perf)", 2)])
+        self.assertIn("UNIT_SERIAL names no test: test_c.Gone", res[3][2])
+        self.assertEqual(res[2][1], 0)   # test_c's own tests still ran in the pool
+
+    def test_the_real_serial_list(self):
+        """test_plan's 2 s plan timings (Performance), and they exist."""
+        self.assertEqual(t2.UNIT_SERIAL, ("test_plan.Performance",))
+        with open(os.path.join(TESTS, "test_plan.py")) as f:   # (the alone run fails too when it's gone)
+            self.assertIn("\nclass Performance(", f.read())
 
     def test_jobs_from_the_environment(self):
         old = os.environ.get("T2_SELFTEST_JOBS")

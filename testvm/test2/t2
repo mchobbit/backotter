@@ -624,6 +624,39 @@ def guest_tool(name):
 
 UNIT_JOBS = 6   # test files at once (T2_SELFTEST_JOBS): 688 s one after another, test_plan's ~120 s the floor
 UNIT_COUNTS = ("failures", "errors", "skipped", "expected failures", "unexpected successes")
+# Tests that run after the pool, alone, one entry at a time (a file's module, or a test
+# class or test in it): their wall-clock asserts guard speed, so they need the CPU to
+# themselves.  test_plan.Performance: three plans over every cell and 10,000 rows, and
+# three nothing-due plans over 12 commits, each under 2 s (U2.6); 1.56 s alone, 2.49 s
+# beside 5 other files.  The pool skips them; ~6 s alone.  Nothing reruns to pass: a FAIL
+# that passes again is a FLAKY-FAIL (docs/design/test2.md), so a failure in the pool or
+# alone fails the self-test.
+UNIT_SERIAL = ("test_plan.Performance",)
+# One test file, by unittest's loader: "pool" leaves out the ids given (and what is under
+# them), "alone" runs only those, and fails when one names no test.  It prints what
+# python -m unittest prints.
+UNIT_RUNNER = r"""
+import sys, unittest
+tests, name, mode, sel = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+def flat(s):
+    for t in s:
+        if isinstance(t, unittest.TestSuite):
+            yield from flat(t)
+        else:
+            yield t
+def hit(i, s):
+    return i == s or i.startswith(s + ".")
+every = list(flat(unittest.defaultTestLoader.discover(tests, pattern=name)))
+if mode == "alone":
+    gone = [s for s in sel if not any(hit(t.id(), s) for t in every)]
+    if gone:
+        sys.exit("UNIT_SERIAL names no test: " + ", ".join(gone))
+    pick = [t for t in every if any(hit(t.id(), s) for s in sel)]
+else:
+    pick = [t for t in every if not any(hit(t.id(), s) for s in sel)]
+r = unittest.TextTestRunner().run(unittest.TestSuite(pick))
+sys.exit(0 if r.wasSuccessful() else 1)
+"""
 
 
 def unit_summary(texts):
@@ -646,18 +679,20 @@ def unit_summary(texts):
     return ("FAILED" if bad else "OK") + (f" ({parts})" if parts else "")
 
 
-def unit_tests(py, env, tests=None, jobs=None):
+def unit_tests(py, env, tests=None, jobs=None, serial=None):
     """Each tests/test_*.py in a process of its own, JOBS at once (never more than the Mac's
     CPUs), the biggest files first (the slow ones, test_plan's ~120 s, don't start last), each
-    with a TMPDIR of its own (removed after): [(name, rc, output, wall_s, pool_rc)] in the files'
-    order, POOL_RC the file's exit in the pool when it failed there and so ran again alone,
-    after the pool (else None): a file whose wall-clock asserts (test_plan's 2 s plans) failed
-    for want of CPU beside the others passes alone, as it does when the files run one after
-    another; one that fails again fails.  The files share no temp or fixture state: each makes
-    its own temporary roots (tempfile, under its TMPDIR) and reads the fixtures only."""
+    with a TMPDIR of its own (removed after), less SERIAL's tests (UNIT_SERIAL for the real
+    tests/, none for another TESTS); then each file's SERIAL tests alone, one file after
+    another, in a process and TMPDIR of their own.  [(name, rc, output, wall_s)]: the files in
+    order, then the alone runs, named "test_x.py (alone: test_x.C)".  Nothing runs twice and
+    any nonzero exit is the caller's FAIL.  The files share no temp or fixture state: each
+    makes its own temporary roots (tempfile, under its TMPDIR) and reads the fixtures only."""
     import shutil
     import tempfile
     from concurrent.futures import ThreadPoolExecutor
+    if serial is None:
+        serial = UNIT_SERIAL if tests is None else ()
     tests = tests or os.path.join(HERE, "tests")
     if jobs is None:
         try:
@@ -666,23 +701,31 @@ def unit_tests(py, env, tests=None, jobs=None):
             jobs = UNIT_JOBS
     jobs = max(1, min(jobs, os.cpu_count() or 1))
     files = sorted(os.path.basename(f) for f in glob.glob(os.path.join(tests, "test_*.py")))
+    alone = {}
+    for s in serial:
+        alone.setdefault(s.split(".", 1)[0] + ".py", []).append(s)
 
-    def one(name):
+    def one(name, mode, label):
         tmp = tempfile.mkdtemp(prefix="t2-selftest-" + name[:-3] + "-")
         t0 = time.time()
         try:
-            r = subprocess.run([py, "-B", "-m", "unittest", "discover", "-s", tests, "-p", name], cwd=CHECKOUT,
+            r = subprocess.run([py, "-B", "-c", UNIT_RUNNER, tests, name, mode] + alone.get(name, []), cwd=CHECKOUT,
                                capture_output=True, text=True, env=dict(env, TMPDIR=tmp))
-            return name, r.returncode, r.stdout + r.stderr, time.time() - t0
+            return label, r.returncode, r.stdout + r.stderr, time.time() - t0
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-    big = sorted(files, key=lambda n: (-os.path.getsize(os.path.join(tests, n)), n))
+    pool = [n for n in files if n[:-3] not in alone.get(n, [])]   # a whole file listed: alone only
+    big = sorted(pool, key=lambda n: (-os.path.getsize(os.path.join(tests, n)), n))
     with ThreadPoolExecutor(jobs) as ex:
-        done = {r[0]: r + (None,) for r in ex.map(one, big)}
-    for n in files:
-        if done[n][1] != 0:
-            done[n] = one(n) + (done[n][1],)
-    return [done[n] for n in files]
+        done = {r[0]: r for r in ex.map(lambda n: one(n, "pool", n), big)}
+    out = [done[n] for n in pool]
+    for n in sorted(alone):
+        label = f"{n} (alone: {', '.join(alone[n])})"
+        if n in files:
+            out.append(one(n, "alone", label))
+        else:
+            out.append((label, 2, f"UNIT_SERIAL names {n}, which {tests} lacks\n", 0.0))
+    return out
 
 
 def cmd_self_test(argv):
@@ -693,13 +736,11 @@ def cmd_self_test(argv):
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     t0 = time.time()
     res = unit_tests(py, env)
-    good = bool(res) and all(rc == 0 for _, rc, _, _, _ in res)
+    good = bool(res) and all(rc == 0 for _, rc, _, _ in res)
     ok = ok and good
-    alone = [name for name, rc, _, _, prc in res if prc is not None and rc == 0]
     say(f"{'ok  ' if good else 'FAIL'} unit tests (tests/test_*.py) ({time.time() - t0:.1f} s): "
-        + (unit_summary([t for _, _, t, _, _ in res]) if res else "no tests/test_*.py")
-        + (f" ({', '.join(alone)}: failed beside the others, passed alone)" if alone else ""))
-    for name, rc, text, _, _ in res:
+        + (unit_summary([t for _, _, t, _ in res]) if res else "no tests/test_*.py"))
+    for name, rc, text, _ in res:
         if rc != 0:
             say(f"     {name}: exit {rc}")
             for line in text.strip().splitlines()[-30:]:

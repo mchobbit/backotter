@@ -183,6 +183,18 @@ class TestManifests(unittest.TestCase):
             self.assertIn("ht1.sh sends debian13 to ht1.sh", text)
             self.assertNotIn("sends netbsd11", text)
 
+    def test_a_pycode_item_names_its_file(self):
+        # (f6899e7's "pycode:testvm/vm-update" was "matches no file" on all 84 ssh and probe guests)
+        files = {"testvm/vm-update", "testvm/update/in-guest.sh"}
+        self.assertEqual(CM.listed_paths(["pycode:testvm/vm-update", "testvm/update/in-guest.sh#prologue"], files),
+                         (files, []))
+        self.assertEqual(CM.listed_paths(["pycode:testvm/vm-gone", "?pycode:testvm/vm-maybe"], files),
+                         (set(), ["testvm/vm-gone"]))
+
+    def test_the_guest_spec_names_only_files_there_are(self):
+        errs, _ = CM.check_spec("testvm/test2/guest/spec.json", CM.repo_files())
+        self.assertEqual(errs, [], "\n".join(errs[:10]))
+
     def test_ht1_dispatch(self):
         self.assertEqual(CM.ht1_dispatch("netbsd11"), "ht1-bsd.sh")
         self.assertEqual(CM.ht1_dispatch("redox"), "ht1-offline.sh")

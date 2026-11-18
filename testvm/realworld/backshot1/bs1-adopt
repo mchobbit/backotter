@@ -367,7 +367,13 @@ EOF
         sed -z -E -i 's/imports([[:space:]]|#[^\n]*)*=([[:space:]]|#[^\n]*)*\[/& .\/backshot1.nix/' "$conf"
         grep -q 'backshot1\.nix' "$conf" || { echo "bs1-adopt: no imports list in $conf to add $module to" >&2; return 1; }
     fi
-    nixos-rebuild switch
+    nixos-rebuild switch || return
+    # switch writes /etc/hostname but leaves the running kernel's name alone,
+    # so until a reboot hostname still says nixos and avahi publishes
+    # nixos.local, and BackShot1's preflight stops.  Set it now, as
+    # set_hostname does, and have avahi publish the new name.
+    echo "$SOURCE_HOST" >/proc/sys/kernel/hostname
+    if systemctl -q is-active avahi-daemon.service; then systemctl restart avahi-daemon.service; fi
 }
 
 # Guix System builds /etc, sshd_config and the system profile from its

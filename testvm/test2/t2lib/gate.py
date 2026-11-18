@@ -43,8 +43,13 @@ of the calling family starts), a slow one stop-starts.
     gate:loop:linux@HOST, gate:loop:sparse@HOST
                        loop.sh: run-all.sh's linux or sparse steps from the copy, under
                        cmp-run.sh --reserve D M (D from the last rows' RAM peaks)
-    gate:selftest      on the Mac: t2 self-test and drive.py --self-test
+    gate:selftest      on the Mac: t2 self-test and drive.py --self-test, from the run's Mac tree
 
+On the Mac, gate:selftest and the fork layers' fork-tests.sh run from the run's frozen Mac
+tree (MAC_ROOT/trees/RUN, run.make_mac_tree: a detached git worktree made the preview the
+hosts' copies were made from), which is also where this file reads layers.json, the
+baseline and the root list, and what gate:selftest is measured from and its row's commit,
+dirty and copy say: a commit or an edit in the checkout mid-run changes none of them.
 On a host everything runs from the run's private copy, detached (setsid), its records in
 HOST_ROOT/runs/RUN/gate/LAYER/ (scratch only in reserved RAM directories), and its inputs
 are measured there afterwards, from the copy, with the host's facts, through the copy's
@@ -208,7 +213,13 @@ class RunEnv:
         rs = getattr(ctx, "run", None)
         self.rs = rs if rs is not None and hasattr(rs, "run") else None
         self.io = io or HostIO()
-        self.checkout = os.path.abspath(getattr(ctx, "checkout", None) or REPO)
+        # What runs on the Mac (selftest, fork-tests.sh) and what is read here runs from the
+        # run's frozen Mac tree (run.make_mac_tree) when it has one: a commit mid-run changes
+        # neither it nor gate:selftest's key.  Without one (a test, a bare run_layers), the checkout.
+        self.live = os.path.abspath(getattr(ctx, "checkout", None) or REPO)
+        mt = getattr(self.rs, "mac_tree", None) if self.rs else None
+        self.mac_tree = dict(mt) if isinstance(mt, dict) and mt.get("path") and os.path.isdir(mt["path"]) else None
+        self.checkout = self.mac_tree["path"] if self.mac_tree else self.live
         self.run = self.rs.run if self.rs else new_run_id()
         w = getattr(self.rs, "word", None) if self.rs else None
         w = w or (getattr(plan, "word", None) if plan is not None else None)
@@ -243,6 +254,17 @@ class RunEnv:
 
     def log(self, text):
         self._log("gate: " + text)
+
+    def mac_fields(self):
+        """{commit, committed, dirty, copy} of what ran on the Mac: the Mac tree's, else the
+        checkout's now (copies.preview; its errors raise)."""
+        if self.mac_tree:
+            t = self.mac_tree
+            return {"commit": t.get("commit"), "committed": not t.get("dirty"), "dirty": dict(t.get("dirty") or {}),
+                    "copy": t.get("id") or "unknown"}
+        from . import copies
+        pv = copies.preview(self.checkout)
+        return {"commit": pv.commit, "committed": not pv.dirty, "dirty": dict(pv.dirty), "copy": pv.id}
 
     def attempt_run(self, attempt):
         return self.run if attempt == 1 else f"{self.run}-r{attempt}"
@@ -730,7 +752,7 @@ def _host_env(env):
 
 def measure(env, host, cell, opts):
     """keys.measure() of CELL as run: on HOST from the run's copy with that host's facts
-    (on the Mac, for mac, from the checkout).  {"error"} when it can't."""
+    (on the Mac, for mac, from the run's Mac tree, else the checkout).  {"error"} when it can't."""
     from . import keys
     try:
         specs = keys.Specs(keys.TreeSource(env.checkout))
@@ -780,10 +802,9 @@ def append_row(env, host, row):
     """Write ROW on HOST through the copy's t2lib (complete, scrub, validate, append), or
     on the Mac into mac.jsonl.  (id, appended) or ("error", why)."""
     if host == "mac":
-        from . import copies, ledger, mac_ledger_file
+        from . import ledger, mac_ledger_file
         try:
-            pv = copies.preview(env.checkout)
-            common = {"commit": pv.commit, "committed": not pv.dirty, "dirty": dict(pv.dirty), "copy": pv.id}
+            common = env.mac_fields()
         except Exception as e:   # noqa: BLE001
             common = {"commit": None, "committed": False, "dirty": None, "copy": "unknown"}
             env.log(f"mac: no copy preview: {e}")
@@ -1061,14 +1082,14 @@ def adoptable(rows, cell, host, tree, planned, set_name, since, run=None):
 
 def rows_since(env, host, cell, since):
     """(rows of CELL in HOST's ledger written since SINCE, this run's tree there), read now
-    (the Mac's mac.jsonl and checkout for mac); (None, None) when they can't be read."""
+    (the Mac's mac.jsonl, and its Mac tree or checkout, for mac); (None, None) when they can't be read."""
     if host == "mac":
-        from . import copies, ledger, mac_ledger_file
+        from . import ledger, mac_ledger_file
         try:
-            pv = copies.preview(env.checkout)
+            mf = env.mac_fields()
             rows = [r for r in ledger.read(mac_ledger_file()).rows
                     if r.get("cell") == cell and str(r.get("t") or "") >= since]
-            return rows, {"commit": pv.commit, "dirty": dict(pv.dirty)}
+            return rows, {"commit": mf["commit"], "dirty": mf["dirty"]}
         except Exception:   # noqa: BLE001 - nothing adopted: the layer runs
             return None, None
     data = {"test2": env.copy_path(host).rstrip("/") + "/testvm/test2", "rows_of": {"cell": cell, "since": since},

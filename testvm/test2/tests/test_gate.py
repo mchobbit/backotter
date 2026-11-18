@@ -974,6 +974,51 @@ class Runner(unittest.TestCase):
         self.assertEqual(exp["linux/restic-bko"], ("0.19.1+backotter.5", ""))
 
 
+class MacTree(unittest.TestCase):
+    """What runs on the Mac runs from the run's frozen Mac tree (run.make_mac_tree), and
+    gate:selftest's row says that tree's commit, dirty and copy, not the checkout's now."""
+
+    def tree(self):
+        t = tempfile.mkdtemp(prefix="t2-mac-tree-")
+        self.addCleanup(shutil.rmtree, t, True)
+        os.makedirs(os.path.join(t, "testvm", "test2", "gate"))
+        shutil.copy(os.path.join(REPO, gate.LAYERS_PATH), os.path.join(t, gate.LAYERS_PATH))
+        return t
+
+    def test_selftest_runs_from_the_tree(self):
+        t = self.tree()
+        calls = []
+
+        class IO(FakeIO):
+            def local(self, argv, cwd=None, env=None, timeout=None):
+                calls.append((argv, cwd))
+                return 0, "ok"
+
+        ctx = Ctx()
+        ctx.run = RS()
+        dirty = {"testvm/test2/t2lib/gate.py": "ab" * 32}
+        ctx.run.mac_tree = {"path": t, "id": "6fff54b.d0123abcd", "commit": "6fff54b" + "0" * 33, "dirty": dirty,
+                            "digest": "x"}
+        env = gate.RunEnv(ctx, Plan([PC("gate:selftest")]), io=IO())
+        self.assertEqual((env.checkout, env.live), (t, REPO))
+        self.assertEqual(env.mac_fields(), {"commit": "6fff54b" + "0" * 33, "committed": False, "dirty": dirty,
+                                            "copy": "6fff54b.d0123abcd"})
+        gate.run_selftest(env, 1)
+        self.assertEqual([os.path.relpath(a[2], t) for a, _ in calls], ["testvm/stictest1/drive.py"])  # (no t2 there)
+        self.assertEqual([c for _, c in calls], [t])
+        rows, tree = gate.rows_since(env, "mac", "gate:selftest", "2026-11-18T00:00:00Z")
+        self.assertEqual(tree, {"commit": "6fff54b" + "0" * 33, "dirty": dirty})
+
+    def test_no_tree_or_a_tree_gone_is_the_checkout(self):
+        env, _ = env_with(FakeIO())
+        self.assertEqual((env.checkout, env.mac_tree), (REPO, None))
+        ctx = Ctx()
+        ctx.run = RS()
+        ctx.run.mac_tree = {"path": os.path.join(tempfile.gettempdir(), "t2-no-such-tree"), "id": "x"}
+        env = gate.RunEnv(ctx, Plan([]), io=FakeIO())
+        self.assertEqual((env.checkout, env.mac_tree), (REPO, None))
+
+
 class RunnerFailures(unittest.TestCase):
     """The review's failure paths (P3 fix round): a fetch or an ssh that fails, a job that
     has to be given up, fork-tests.sh that didn't finish, a ~/ HOST_ROOT, cut-down loops."""

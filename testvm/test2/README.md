@@ -208,7 +208,8 @@ plus the longest slow layer per host.
 `t2 WORD` without `plan` (`t2lib/run.py`): the family's lock
 (`MAC_ROOT/runs/.lock-FAMILY`), pull, facts, a pull again under the lock, preflight
 (refused at Tctl 90 C, no /mnt/bko-ram, m not in kvm, /bkoscratch under 80 GB free),
-the plan (`MAC_ROOT/runs/RUN/plan.json`), the private copy on each host, then the
+the plan (`MAC_ROOT/runs/RUN/plan.json`), the private copy on each host (for GateTest2,
+SticTest2 and HoltTest2 also the Mac tree, below), then the
 family runner (`t2lib/gate.py`, `stic.py`, `holt.py`, `guest.py`, `img.py`; BkoTest2 and
 SweepTest2 are `bko.py`'s conductor over them), a pull, the derived rows
 (carried and class, in `MAC_ROOT/ledger/mac.jsonl`) and the report
@@ -219,6 +220,18 @@ composite's children share its stamp, ImgTest2's panel is `t2h-STAMP-img`, and a
 round adds `-rN`.  Locks: a word takes its family's, ImgTest2 `img` and `holt` (its panel
 is a HoltTest2 run), and BkoTest2, SweepTest2 and `GuestTest2 update` `bko` and every
 family's (the update round also refuses while any Test2 run is unfinished).
+
+The Mac tree.  What a run runs on the Mac, gate:selftest (`t2 self-test` and drive.py
+--self-test, keyed on the Mac) and the fork layers' fork-tests.sh, runs from
+`MAC_ROOT/trees/RUN` (`copies.make_tree`, `run.make_mac_tree`): a detached, locked git
+worktree at the copy's commit with the copy's dirty, untracked and ignored files copied in,
+made from the same preview as the hosts' copies and hashed against it.  A commit or an edit
+in the checkout mid-run then changes neither what runs nor gate:selftest's key as run, and
+its row's commit, dirty and copy are the tree's.  The run removes it at its end (a run
+refused for want of it says `t2: no Mac tree: ...`); a resume reuses it while it is
+unchanged (`MAC_ROOT/runs/RUN/mac-tree.json`), else makes it again; a later run removes the
+trees of runs that ended without removing theirs (not live, over 2 days old).  While a run
+is on, `git worktree list` shows its tree.
 
 Unfinished runs and leftovers.  A run that began host work (a `cells-HOST.json`) and
 has no report.txt, changed in the last 12 hours, refuses a new run of its family:

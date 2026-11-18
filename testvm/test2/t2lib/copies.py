@@ -7,6 +7,10 @@ shared ~/backotter-work tree under a run.
 
     preview(checkout)      commit, dirty map, ID and the tree's hashes, without copying
     make(checkout, hosts)  the copy COPY_ROOT/ID on each host: made, or reused once verified
+    make_tree(checkout, dest, pv)
+                           the run's frozen tree on the Mac (a detached, locked git worktree
+                           made the preview's): what runs on the Mac runs from it
+    remove_tree(checkout, dest), gc_trees(checkout, trees_dir, keep)
     verify(host, path, hashes)
     gc(hosts)              delete complete copies over 7 days old that no recent run names
     committed_ok(row, head_hashes)   the committed rule
@@ -501,13 +505,14 @@ def _make_one(host, pv, root, timeout, log):
         s.close()
 
 
-def make(checkout, hosts, root=None, timeout=900, log=None):
+def make(checkout, hosts, root=None, timeout=900, log=None, pv=None):
     """The private copy of CHECKOUT on each of HOSTS (in parallel): {host: CopyResult}.
+    PV: the preview to copy (default: one now; make_tree's too, for the run's Mac tree).
     CopyError when a host fails or the checkout changed meanwhile."""
     import threading
     from . import hostrun
     log = log or (lambda m: None)
-    pv = preview(checkout)
+    pv = pv or preview(checkout)
     rr = hostrun.host_path(root or os.environ.get("T2_COPY_ROOT") or DEFAULT_ROOT)
     out, errs = {}, {}
 
@@ -551,6 +556,107 @@ def gc(hosts, root=None, host_root=None, days=7, dry_run=False, timeout=300):
         r = hostrun.ssh(h, script=_self_source(), args=["gc", rr, hr, str(days)] + (["--dry-run"] if dry_run else []),
                         timeout=timeout)
         out[h] = r.json() if r.rc == 0 else {"error": r.errtext.strip()[-300:] or f"rc {r.rc}"}
+    return out
+
+
+# --- the Mac's frozen tree -----------------------------------------------------------------
+# What a run runs on the Mac (gate:selftest; the fork layers' fork-tests.sh) runs from a tree
+# of its own, made with the hosts' copies from the same preview, so that a commit or an edit
+# in the checkout mid-run can't change what it runs or its key (as run != as planned).  A
+# detached git worktree (git, docs/ and the rest of the repo are there: the self-test reads
+# them), locked, at the preview's commit, with SCOPE then made the preview's exactly (its
+# dirty files, untracked and ignored ones too, copied in; any other file removed) and hashed
+# against it.
+
+TREE_LOCK_REASON = "t2: a run's frozen Mac tree (copies.make_tree)"
+
+
+def tree_info_ok(info):
+    """Whether INFO (make_tree's) names a tree that is still there and still its hashes."""
+    p = (info or {}).get("path")
+    if not p or not os.path.isdir(p) or not info.get("digest"):
+        return False
+    try:
+        return hashes_digest(tree_hashes(p, SCOPE)) == info["digest"]
+    except OSError:
+        return False
+
+
+def make_tree(checkout, dest, pv=None, log=None):
+    """The run's frozen tree of CHECKOUT at DEST (made again when it is there): its info
+    {path, id, commit, dirty, digest, made}.  PV: the preview the hosts' copies were made
+    from (default: one now).  CopyError when git can't, or a file the preview has beyond its
+    commit (dirty, untracked, ignored) changed since: the tree is the preview's or nothing."""
+    from . import utc_now
+    log = log or (lambda m: None)
+    checkout = os.path.abspath(checkout)
+    pv = pv or preview(checkout)
+    dest = os.path.abspath(dest)
+    if os.path.lexists(dest):
+        remove_tree(checkout, dest)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    # (hooks off: a post-checkout hook isn't the run's to run)
+    p = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-C", checkout, "worktree", "add", "--detach",
+                        "--lock", "--reason", TREE_LOCK_REASON, "-q", dest, pv.commit], capture_output=True)
+    if p.returncode != 0:
+        raise CopyError(f"git worktree add {dest}: {p.stderr.decode('utf-8', 'replace').strip()[-300:]}")
+    try:
+        now = tree_hashes(dest, SCOPE)
+        for rel in sorted(set(now) - set(pv.hashes)):
+            os.unlink(os.path.join(dest, rel))   # (a file or a symlink: tree_hashes lists no directory)
+        for rel, h in pv.hashes.items():
+            if now.get(rel) == h and rel not in pv.dirty:
+                continue
+            src, dst = os.path.join(checkout, rel), os.path.join(dest, rel)
+            if os.path.islink(dst) or os.path.isfile(dst):
+                os.unlink(dst)
+            elif os.path.isdir(dst):
+                shutil.rmtree(dst)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if h.startswith("->"):
+                os.symlink(h[2:], dst)
+            else:
+                shutil.copy2(src, dst, follow_symlinks=False)
+        got = tree_hashes(dest, SCOPE)
+    except OSError as e:
+        remove_tree(checkout, dest)
+        raise CopyError(f"the Mac tree {dest}: {e}") from e
+    if got != pv.hashes:
+        some, n = _diff(pv.hashes, got)
+        remove_tree(checkout, dest)
+        raise CopyError(f"the checkout changed while its Mac tree was made ({n} file(s): {', '.join(some)}); "
+                        "run again")
+    log(f"Mac tree {pv.id}: made at {dest}, {len(pv.hashes)} files verified")
+    return {"path": dest, "id": pv.id, "commit": pv.commit, "dirty": dict(pv.dirty),
+            "digest": hashes_digest(pv.hashes), "made": utc_now()}
+
+
+def remove_tree(checkout, dest):
+    """make_tree's DEST gone, and git's record of it (locked: forced twice)."""
+    checkout, dest = os.path.abspath(checkout), os.path.abspath(dest)
+    r = subprocess.run(["git", "-C", checkout, "worktree", "remove", "--force", "--force", dest], capture_output=True)
+    if os.path.islink(dest) or os.path.isfile(dest):
+        os.unlink(dest)
+    elif os.path.isdir(dest):
+        shutil.rmtree(dest, ignore_errors=True)
+    if r.returncode != 0:   # (not git's, or half made: whatever record git kept of it goes)
+        subprocess.run(["git", "-C", checkout, "worktree", "prune"], capture_output=True)
+
+
+def gc_trees(checkout, trees_dir, keep=()):
+    """Remove the Mac trees in TREES_DIR (one per run, named by its run id) of the runs not in
+    KEEP (the live and unfinished runs): those of runs that ended without removing theirs.
+    The run ids removed."""
+    out = []
+    try:
+        names = sorted(os.listdir(trees_dir))
+    except OSError:
+        return out
+    for n in names:
+        if n.startswith(".") or n in keep:
+            continue
+        remove_tree(checkout, os.path.join(trees_dir, n))
+        out.append(n)
     return out
 
 

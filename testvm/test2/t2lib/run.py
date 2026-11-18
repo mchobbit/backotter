@@ -80,6 +80,81 @@ def run_dir(run, mac_root=None):
     return os.path.join(runs_dir(mac_root), run)
 
 
+# --- the run's frozen Mac tree (copies.make_tree) -------------------------------------------
+# What runs on the Mac (gate:selftest, keyed on the Mac; the fork layers' fork-tests.sh) runs
+# from MAC_ROOT/trees/RUN, made with the hosts' copies from the same preview, so a commit or
+# an edit in the checkout mid-run can't change it or invalidate its row (gate.RunEnv).
+
+MAC_TREE_FAMILIES = ("gate", "stic", "holt")   # the families whose runs run gate layers
+MAC_TREE_GC_S = 2 * 86400   # a leftover tree of a run that isn't live, older than this, goes
+
+
+def trees_dir(mac_root=None):
+    return os.path.join(mac_root or default_mac_root(), "trees")
+
+
+def _stamp_of(run):
+    m = re.match(r"t2[a-z]-(\d{8}T\d{4}-[0-9a-f]{4})", run or "")
+    return m.group(1) if m else None
+
+
+def gc_mac_trees(checkout, mac_root=None, live=(), now=None):
+    """Remove the Mac trees of runs that ended without removing theirs: not LIVE (nor a live
+    composite's child, by its stamp) and made over MAC_TREE_GC_S ago.  The run ids removed."""
+    d = trees_dir(mac_root)
+    stamps = {_stamp_of(r) for r in live if r} - {None}
+    now = now or time.time()
+    keep = set(live)
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return []
+    for n in names:
+        try:
+            age = now - os.lstat(os.path.join(d, n, ".git")).st_mtime
+        except OSError:
+            age = now - os.lstat(os.path.join(d, n)).st_mtime
+        if _stamp_of(n) in stamps or age < MAC_TREE_GC_S:
+            keep.add(n)
+    return copies.gc_trees(checkout, d, keep=keep)
+
+
+def make_mac_tree(rs, ctx, pv=None, shared=None):
+    """rs.mac_tree, the run's frozen Mac tree's info (copies.make_tree), also in
+    MAC_ROOT/runs/RUN/mac-tree.json: the composite's when SHARED gives one, the run's own
+    when it is still there unchanged (a resume), else made now from PV (the preview its
+    copies were made from).  None for a family that runs nothing on the Mac.  CopyError."""
+    if rs.family not in MAC_TREE_FAMILIES:
+        return None
+    given = getattr(shared, "mac_tree", None) if shared is not None else None
+    if given:
+        rs.mac_tree, rs.mac_tree_owned = dict(given), False
+        return rs.mac_tree
+    rec = os.path.join(rs.mac_dir, "mac-tree.json")
+    old = read_json(rec)
+    if old and copies.tree_info_ok(old):
+        rs.log(f"Mac tree {old.get('id')}: the run's own, still at {old['path']}")
+        info = old
+    else:
+        if old:
+            rs.log(f"Mac tree {old.get('id')}: gone or changed: made again from the checkout now")
+        info = copies.make_tree(ctx.checkout, os.path.join(trees_dir(rs.mac_root), rs.run), pv=pv, log=rs.log)
+        write_json(rec, info)
+    rs.mac_tree, rs.mac_tree_owned = info, True
+    return info
+
+
+def drop_mac_tree(rs, ctx, out=print):
+    """The run's own Mac tree removed (at its end, the report written or not)."""
+    info = getattr(rs, "mac_tree", None) if rs is not None else None
+    if not info or not getattr(rs, "mac_tree_owned", False):
+        return
+    try:
+        copies.remove_tree(ctx.checkout, info["path"])
+    except OSError as e:
+        out(f"t2: the Mac tree {info['path']} wasn't removed: {e}")
+
+
 def write_json(path, obj):
     d = os.path.dirname(path)
     os.makedirs(d, exist_ok=True)
@@ -588,10 +663,12 @@ class RunGuards:
 class Shared:
     """What a composite gives each child's lifecycle() or resume(): its STAMP, the one private
     COPY ({host: {id, path, commit, dirty}}), the run-wide GUARDS, the child's PLAN if it
-    made it already, and a run-id SUFFIX (ImgTest2's panel: img)."""
+    made it already, a run-id SUFFIX (ImgTest2's panel: img) and its MAC_TREE (make_mac_tree's
+    info; None: each child makes its own)."""
 
-    def __init__(self, stamp, copy, guards, plan=None, suffix=None):
+    def __init__(self, stamp, copy, guards, plan=None, suffix=None, mac_tree=None):
         self.stamp, self.copy, self.guards, self.plan, self.suffix = stamp, copy, guards, plan, suffix
+        self.mac_tree = mac_tree
 
 
 def budget_gb(b, sweep=False, update=False):
@@ -849,6 +926,7 @@ class RunState:
         self.host_root = host_root or default_host_root()
         self.hosts = [h for h in ctx.hosts if h in ctx.facts]
         self.copy = {}
+        self.mac_tree, self.mac_tree_owned = None, False   # make_mac_tree's
         self.shared = shared
         pol = ctx.classes.get("policy")
         # SweepTest2's 5 GB budget is its own: the All forms keep the per-run 2 GB; an update round has its own too
@@ -1208,7 +1286,7 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, sh
     mod = runner(fam)
     if pull is not None:
         ctx.options.setdefault("pull", pull)
-    locks = []
+    locks, rs = [], None
     if shared is None:
         try:
             locks = acquire_locks(family_locks(word), "pending", mac_root)
@@ -1244,6 +1322,9 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, sh
             lefts = our_leftovers(mac_root, live)
             if lefts:
                 remove_leftovers(lefts, out)
+            gone = gc_mac_trees(ctx.checkout, mac_root, live)
+            if gone:
+                out(f"t2: removed the Mac trees of ended runs: {', '.join(gone)}")
             if mod is not None and hasattr(mod, "preflight"):
                 mod.preflight(ctx, out)
             if mod is not None and hasattr(mod, "pre_plan"):
@@ -1290,23 +1371,31 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, sh
         ctx.run = rs
         rs.log(f"{word.word} run {run}: {plan.totals['due']} due, est. {plan.totals['gm']} gm")
         # 5 copy
+        pvo = None
         if shared is not None:
             rs.copy = dict(shared.copy or {})
         else:
             try:
-                made = copies.make(ctx.checkout, rs.hosts, log=rs.log)
+                pvo = copies.preview(ctx.checkout)   # (one preview: the hosts' copies and the Mac tree alike)
+                made = copies.make(ctx.checkout, rs.hosts, log=rs.log, pv=pvo)
             except copies.CopyError as e:
                 out(f"t2: no private copy: {e}")
                 return EXIT_REFUSED
             pv = ctx.copy_preview or {}
             for h, c in made.items():
                 rs.copy[h] = {"id": c.id, "path": c.path, "commit": pv.get("commit") or ctx.head, "dirty": pv.get("dirty")}
+        try:
+            make_mac_tree(rs, ctx, pv=pvo, shared=shared)
+        except copies.CopyError as e:
+            out(f"t2: no Mac tree: {e}")
+            return EXIT_REFUSED
         # 5a-7: the runner builds, rekeys, writes cells.json (rs.write_cells) and runs
         result = mod.run(ctx, plan) or {}
         result = result if isinstance(result, dict) else getattr(result, "__dict__", {})
         # 8-10 on the runner's last plan (R1 5a, R15: its re-plans live in rs.plan)
         return finish(word, ctx, rs.plan or plan, run, result, mac_root, out, pull)
     finally:
+        drop_mac_tree(rs, ctx, out)
         for lk in reversed(locks):
             lk.release()
 
@@ -1522,7 +1611,7 @@ def resume(run, ctx, mac_root=None, out=print, pull=None, shared=None):
     if want and list(ctx.hosts) != want:
         out(f"t2: {run} ran on {','.join(want)}, not {','.join(ctx.hosts)}")
         return EXIT_REFUSED
-    locks = []
+    locks, rs = [], None
     try:
         if shared is None:
             from . import words as _w
@@ -1551,10 +1640,16 @@ def resume(run, ctx, mac_root=None, out=print, pull=None, shared=None):
         for h in rs.hosts:
             doc = read_json(os.path.join(rs.mac_dir, f"cells-{h}.json"), {}) or {}
             rs.copy[h] = doc.get("copy") or (shared.copy or {}).get(h, {}) if shared is not None else doc.get("copy") or {}
+        try:
+            make_mac_tree(rs, ctx, shared=shared)
+        except copies.CopyError as e:
+            out(f"t2: no Mac tree: {e}")
+            return EXIT_REFUSED
         result = mod.resume(ctx, plan) or {}
         result = result if isinstance(result, dict) else getattr(result, "__dict__", {})
         return finish(w, ctx, rs.plan or plan, run, result, mac_root, out, pull)
     finally:
+        drop_mac_tree(rs, ctx, out)
         for lk in reversed(locks):
             lk.release()
 

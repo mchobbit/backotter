@@ -798,7 +798,7 @@ class Derived(unittest.TestCase):
 
     def fake_copies(self):
         import types
-        run.copies.make = lambda checkout, hosts, log=None: {
+        run.copies.make = lambda checkout, hosts, log=None, pv=None: {
             h: types.SimpleNamespace(id="fixture", path=f"/fake/{h}") for h in hosts}
 
     def t2cli(self):
@@ -854,6 +854,81 @@ class Derived(unittest.TestCase):
         self.assertIs(seen["guards"], guards)
         self.assertIs(seen["plan"], p)
         self.assertEqual(calls, [])
+
+    def test_a_run_runs_its_mac_work_from_its_own_tree(self):
+        import types
+        from t2lib import copies
+        w = self.w
+        ctx = w.ctx(self.r_holt)
+        self.fake_copies()
+        seen = {}
+
+        def fake_run(c, pl):
+            t = dict(c.run.mac_tree)
+            files = copies.tree_hashes(t["path"])
+            rel = sorted(files)[0]
+            w.edit(rel, "a commit lands mid-run\n", commit=True)
+            w.edit("testvm/new-mid-run.txt", "and an edit\n")
+            seen.update(tree=t, same=copies.tree_hashes(t["path"]) == files, owned=c.run.mac_tree_owned,
+                        rec=run.read_json(os.path.join(c.run.mac_dir, "mac-tree.json")),
+                        head=copies.preview(t["path"]).commit)
+            return {"cells": [], "stops": [], "exit": 0}
+        run.runner = lambda fam: types.SimpleNamespace(run=fake_run)
+        base = w.head().strip()
+        run.lifecycle(w.word("GateTest2", ctx), ctx, mac_root=self.mac, out=lambda *_: None)
+        self.assertTrue(seen, "the runner ran")
+        t = seen["tree"]
+        self.assertTrue(seen["same"])                                  # the commit and the edit didn't reach it
+        self.assertEqual((t["commit"], seen["head"]), (base, base))
+        self.assertEqual(seen["rec"], t)
+        self.assertTrue(seen["owned"])
+        self.assertEqual(os.path.dirname(t["path"]), run.trees_dir(self.mac))
+        self.assertFalse(os.path.lexists(t["path"]))                   # removed at the run's end
+        self.assertNotIn(os.path.basename(t["path"]), world.git(w.repo, "worktree", "list"))
+
+    def test_mac_tree_reused_shared_or_none(self):
+        import types
+        from t2lib import copies
+        logs = []
+        rs = types.SimpleNamespace(family="gate", run="t2g-20261118T0100-aaaa", mac_root=self.mac,
+                                   mac_dir=run.run_dir("t2g-20261118T0100-aaaa", self.mac), log=logs.append,
+                                   mac_tree=None, mac_tree_owned=False)
+        os.makedirs(rs.mac_dir)
+        ctx = types.SimpleNamespace(checkout=self.w.repo)
+        a = run.make_mac_tree(rs, ctx)
+        self.assertTrue(rs.mac_tree_owned and copies.tree_info_ok(a))
+        self.assertEqual(run.make_mac_tree(rs, ctx), a)                # a resume: the run's own, still there
+        self.assertIn("the run's own", logs[-1])
+        with open(os.path.join(a["path"], sorted(copies.tree_hashes(a["path"]))[0]), "a") as f:
+            f.write("changed\n")
+        b = run.make_mac_tree(rs, ctx)                                  # changed: made again
+        self.assertTrue(copies.tree_info_ok(b))
+        self.assertIn("made again", " ".join(logs))
+        run.drop_mac_tree(rs, ctx, out=logs.append)
+        self.assertFalse(os.path.lexists(b["path"]))
+        sh = run.Shared("20261118T0100-aaaa", {}, None, mac_tree={"path": "/composite/tree", "id": "c"})
+        self.assertEqual(run.make_mac_tree(rs, ctx, shared=sh)["path"], "/composite/tree")
+        self.assertFalse(rs.mac_tree_owned)
+        run.drop_mac_tree(rs, ctx, out=self.fail)                      # not its own: left alone
+        rs.family = "guest"
+        self.assertIsNone(run.make_mac_tree(rs, ctx))
+
+    def test_gc_mac_trees(self):
+        from t2lib import copies
+        d = run.trees_dir(self.mac)
+        old = time.time() - run.MAC_TREE_GC_S - 60
+        made = {}
+        for n in ("t2g-20261101T0000-0001", "t2s-20261101T0000-0002", "t2g-20261101T0000-0003",
+                  "t2g-20261118T0000-0004"):
+            made[n] = copies.make_tree(self.w.repo, os.path.join(d, n))["path"]
+            if "1101" in n:
+                os.utime(os.path.join(made[n], ".git"), (old, old))
+        live = {"t2g-20261101T0000-0003", "t2b-20261101T0000-0002"}   # a run, and a composite (its child's stamp)
+        self.assertEqual(run.gc_mac_trees(self.w.repo, self.mac, live), ["t2g-20261101T0000-0001"])
+        self.assertEqual(sorted(os.listdir(d)), ["t2g-20261101T0000-0003", "t2g-20261118T0000-0004",
+                                                 "t2s-20261101T0000-0002"])
+        for p in made.values():
+            copies.remove_tree(self.w.repo, p)
 
     def test_plain_run_calls_pre_plan_and_preflight(self):
         import types

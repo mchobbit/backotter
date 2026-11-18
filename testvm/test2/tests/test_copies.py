@@ -295,6 +295,84 @@ class Make(unittest.TestCase):
         self.assertIn("bad copy id", err.getvalue())
 
 
+class MacTree(unittest.TestCase):
+    """The run's frozen Mac tree (copies.make_tree): the preview's exactly, a detached and
+    locked git worktree, untouched by later commits and edits in the checkout."""
+
+    def worktrees(self, r):
+        return git(r, "worktree", "list", "--porcelain").decode()
+
+    def test_make_tree_is_the_preview_and_stays_put(self):
+        r = repo("tree-1")
+        write(r, "testvm/stictest1/debian13/check.sh", "#!/bin/sh\necho dirty\n")   # modified
+        os.unlink(os.path.join(r, "testvm/vm-run"))                                  # deleted
+        write(r, "testvm/stictest1/debian13/new.sh", "untracked\n")                 # untracked
+        with open(os.path.join(r, ".gitignore"), "w") as f:
+            f.write(".cache/\n")
+        write(r, "testvm/.cache/x", "ignored, still the copy's\n")                   # ignored
+        os.chmod(os.path.join(r, "stick/build-round.sh"), 0o755)                     # a mode
+        pv = copies.preview(r)
+        dest = os.path.join(_tmp, "trees-1", "t2g-20261118T0000-abcd")
+        info = copies.make_tree(r, dest, pv)
+        self.assertEqual(copies.tree_hashes(dest), pv.hashes)
+        self.assertEqual({k: info[k] for k in ("path", "id", "commit", "dirty")},
+                         {"path": dest, "id": pv.id, "commit": pv.commit, "dirty": pv.dirty})
+        self.assertEqual(info["digest"], copies.hashes_digest(pv.hashes))
+        self.assertTrue(os.access(os.path.join(dest, "stick/build-round.sh"), os.X_OK))
+        self.assertEqual(git(dest, "rev-parse", "HEAD").decode().strip(), pv.commit)   # git works there
+        self.assertTrue(os.path.isfile(os.path.join(dest, "docs/x.md")))               # the whole repo
+        wl = [b for b in self.worktrees(r).split("\n\n") if os.path.basename(dest) in b]
+        self.assertEqual(len(wl), 1)
+        self.assertIn("\ndetached", wl[0])
+        self.assertIn("\nlocked t2: ", wl[0])
+        self.assertTrue(copies.tree_info_ok(info))
+        # the checkout moves on: a commit and an edit; the tree doesn't
+        git(r, "add", "-A")
+        git(r, "commit", "-q", "-m", "mid-run")
+        write(r, "testvm/compare/fsmeta.py", "# edited mid-run\n")
+        self.assertEqual(copies.tree_hashes(dest), pv.hashes)
+        self.assertTrue(copies.tree_info_ok(info))
+        # a tree that changed, or is gone, isn't the run's any more
+        write(dest, "testvm/compare/fsmeta.py", "# edited in the tree\n")
+        self.assertFalse(copies.tree_info_ok(info))
+        copies.remove_tree(r, dest)
+        self.assertFalse(os.path.lexists(dest))
+        self.assertNotIn(os.path.basename(dest), self.worktrees(r))
+        self.assertFalse(copies.tree_info_ok(info))
+
+    def test_make_tree_refuses_a_checkout_that_changed(self):
+        r = repo("tree-2")
+        write(r, "testvm/compare/fsmeta.py", "# dirty at the preview\n")
+        pv = copies.preview(r)
+        # a clean file edited after the preview: the tree is still the preview's (git's copy)
+        write(r, "holt/src/main.rs", "fn main() { /* after */ }\n")
+        ok = copies.make_tree(r, os.path.join(_tmp, "trees-2", "t2g-20261118T0000-0001"), pv)
+        self.assertEqual(copies.tree_hashes(ok["path"]), pv.hashes)
+        copies.remove_tree(r, ok["path"])
+        # a dirty one edited after it can't be the preview's: refused, nothing left
+        write(r, "testvm/compare/fsmeta.py", "# changed after the preview\n")
+        dest = os.path.join(_tmp, "trees-2", "t2g-20261118T0000-0002")
+        with self.assertRaises(copies.CopyError) as cm:
+            copies.make_tree(r, dest, pv)
+        self.assertIn("testvm/compare/fsmeta.py", str(cm.exception))
+        self.assertFalse(os.path.lexists(dest))
+        self.assertNotIn("t2g-20261118T0000-0002", self.worktrees(r))
+
+    def test_make_tree_again_and_gc(self):
+        r = repo("tree-3")
+        d = os.path.join(_tmp, "trees-3")
+        a = copies.make_tree(r, os.path.join(d, "t2g-20261118T0000-000a"))
+        b = copies.make_tree(r, os.path.join(d, "t2g-20261118T0000-000b"))
+        write(a["path"], "testvm/junk", "left by a crashed run\n")
+        again = copies.make_tree(r, a["path"])                                        # made again, clean
+        self.assertEqual(copies.tree_hashes(again["path"]), copies.preview(r).hashes)
+        self.assertEqual(copies.gc_trees(r, d, keep={"t2g-20261118T0000-000b"}), ["t2g-20261118T0000-000a"])
+        self.assertEqual(sorted(os.listdir(d)), ["t2g-20261118T0000-000b"])
+        self.assertTrue(copies.tree_info_ok(b))
+        self.assertEqual(copies.gc_trees(r, os.path.join(_tmp, "no-such-trees")), [])
+        copies.remove_tree(r, b["path"])
+
+
 class HostRun(unittest.TestCase):
     """hostrun (R1.8): what copies and pull run on a host, through the "local" host."""
 

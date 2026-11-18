@@ -785,6 +785,8 @@ class FakeRemote:
         self.imgsums = []        # (host, paths) asked of t2-host imgsum
         self.from_k = []         # (host, args) of t2-host row holt runs
         self.made = {}           # gv -> the one-time rescuer copies its attempt 1 makes
+        self.boots = {}          # gv -> (copy, key): attempt 1's row counts at that planned key
+        self.hold = {}           # guest -> ticks its line waits for its host's cells.json (may_take)
 
     def _new(self, host, info):
         self.pid += 1
@@ -912,9 +914,11 @@ class FakeRemote:
                 qm = re.search(r" (\w+)\.local$", p["cmd"])
                 qh = qm.group(1) if qm else host   # the todo is on the first host (QHOST)
                 todo = (self.files[qh].get(q + "/todo") or "").splitlines()
-                take = next((x for x in todo if x.split("+")[0] not in p["skip"]), None)
+                free = [x for x in todo if x.split("+")[0] not in p["skip"]]
+                take = next((x for x in free if self.may_take(host, x)), None)
                 if take is None:
-                    p["alive"] = False
+                    if not free:
+                        p["alive"] = False
                     continue
                 self.files[qh][q + "/todo"] = "".join(x + "\n" for x in todo if x != take)
                 gv = take.replace("+", "-")
@@ -932,7 +936,24 @@ class FakeRemote:
                         row.update(valid=self.valid, note=None if self.valid else "not measured: guest/x:generation")
                     if att == 1 and self.made.get(gv):
                         row.update(valid=False, note="key differs from the plan's", extra={"rescuer_made": self.made[gv]})
+                    if att == 1 and gv in self.boots:   # (the row hook: cells.json's planned key, read now)
+                        name, k = self.boots[gv]
+                        cj = json.loads(self.files[host].get(f"/bkoscratch/t2test/runs/{p['qrun']}/cells.json") or "{}")
+                        if ((cj.get("cells") or {}).get(gv) or {}).get("planned_key") == k:
+                            row.update(valid=True, inputs={"rescuer": {"rescuer/" + name: "img:x"}})
+                        else:
+                            row.update(valid=False, note="key differs from the plan's",
+                                       inputs={"rescuer": {"rescuer/" + name: "img:unknown"}})
                     self.ledger[host].append(row)
+
+    def may_take(self, host, line):
+        """A todo line HOST's runner may start now (self.hold: {guest: ticks it waits for its
+        host's cells.json, at most})."""
+        g = line.split("+")[0]
+        if g not in self.hold:
+            return True
+        self.hold[g] -= 1
+        return self.hold[g] <= 0 or "/bkoscratch/t2test/runs/t2h-20261108T0300-abcd/cells.json" in self.files[host]
 
 
 class FakePlan:
@@ -1243,6 +1264,86 @@ class U53HoltRun(unittest.TestCase):
         res = self.go({}, r)
         self.assertFalse(self.rs.cells_written[1:], self.rs.cells_written)
         self.assertTrue(any("stopped by stop-os): holt:dragonfly6" in n for n in res["notes"]), res["notes"])
+
+    OM = "/bkoscratch/holttest1d/rescuer/omnios58-reguid.qcow2"
+
+    def illumos_copy(self, remote=None, other=False):
+        """omnios58-mirror and omnios58 on cinqcent, which has no omnios58-reguid.qcow2 yet:
+        the mirror's attempt 1 makes it (the todo's order: it starts first), and omnios58
+        boots it.  The re-plan keys both at the facts' sum, with real inputs (OTHER: another
+        input changes too)."""
+        name = "rescuer/omnios58-reguid.qcow2"
+
+        def inp(cell, v):
+            out = {"rescuer": {name: v}}
+            if other and v != "missing" and cell == "holt:omnios58":
+                out["host"] = {"kernel": "ver:changed"}
+            return out
+        for c in ("holt:omnios58-mirror", "holt:omnios58"):
+            self.cells.append(self.PC(c, "holt:code", keys_={"cinqcent": keys.key(c, inp(c, "missing"))}))
+        self.ctx.facts = {h: {"guests": {}, "rescuers": {"images": {"rescuer.qcow2": {"sha256": RESCUER, "imgsum": None}}}}
+                          for h in ("chopin", "cinqcent")}
+
+        def replan(facts=None, ledger_rows=None):
+            self.rs.replans = getattr(self.rs, "replans", 0) + 1
+            im = (((facts or {}).get("cinqcent") or {}).get("rescuers") or {}).get("images", {}).get(
+                "omnios58-reguid.qcow2") or {}
+            if im.get("imgsum"):
+                cells = []
+                for pc in self.rs.plan.cells:
+                    if pc.cell in ("holt:omnios58-mirror", "holt:omnios58"):
+                        n = self.PC(pc.cell, pc.rule, pc.reasons, {"cinqcent": keys.key(pc.cell, inp(pc.cell, im["imgsum"]))})
+                        n.inp = {"cinqcent": inp(pc.cell, im["imgsum"])}
+                        cells.append(n)
+                    else:
+                        cells.append(pc)
+                self.rs.plan = FakePlan(cells)
+            return self.rs.plan, [], []
+        self.rs.replan = replan
+        r = remote or FakeRemote({})
+        r.made = {"omnios58-mirror": [self.OM]}
+        s = "img:" + hashlib.sha256(self.OM.encode()).hexdigest()
+        r.boots = {"omnios58": ("omnios58-reguid.qcow2", keys.key("holt:omnios58", inp("holt:omnios58", s)))}
+        r.hold = {"omnios58": 50}
+        return r
+
+    def test_a_cell_that_boots_a_copy_made_on_its_host_is_keyed_at_its_sum(self):
+        r = self.illumos_copy()
+        res = self.go({}, r)
+        cj = json.loads(r.files["cinqcent"]["/bkoscratch/t2test/runs/t2h-20261108T0300-abcd/cells.json"])
+        self.assertEqual(cj["cells"]["omnios58"]["planned_key"], r.boots["omnios58"][1])
+        self.assertEqual(jload(os.path.join(self.tmp, "cells-cinqcent.json"))["cells"]["omnios58"]["planned_key"],
+                         r.boots["omnios58"][1])
+        by = {c["cell"]: c for c in res["cells"]}
+        self.assertEqual((by["holt:omnios58"]["verdict"], by["holt:omnios58"]["attempts"]), ("PASS", 1))
+        # (the maker reruns at the sum, as before; the cell that booted its copy doesn't)
+        self.assertEqual(set(self.rs.cells_written[1][1]), {"holt:omnios58-mirror"})
+        self.assertTrue(any(n.startswith("keyed at the one-time rescuer holt:omnios58-mirror made on cinqcent")
+                            and "holt:omnios58" in n for n in res["notes"]), res["notes"])
+        self.assertEqual(res["exit"], 0, res)
+
+    def test_a_cell_whose_row_landed_at_a_copy_made_on_its_host_reruns(self):
+        class NoWrite(FakeRemote):
+            def write(self, host, path, text):
+                if path.endswith("/cells.json"):
+                    raise OSError("no room")
+                return super().write(host, path, text)
+        r = self.illumos_copy(NoWrite({}))
+        res = self.go({}, r)
+        rr = self.rs.cells_written[1][1]
+        self.assertEqual(set(rr), {"holt:omnios58-mirror", "holt:omnios58"})
+        self.assertEqual(rr["holt:omnios58"]["rerun_why"], "rescuer-made")
+        self.assertEqual(r.imgsums, [("cinqcent", [self.OM])])   # (summed once, for both)
+        by = {c["cell"]: c for c in res["cells"]}
+        self.assertEqual((by["holt:omnios58"]["verdict"], by["holt:omnios58"]["attempts"]), ("PASS", 2))
+        self.assertEqual(res["exit"], 0, res)
+
+    def test_a_key_that_changes_by_more_than_the_copy_isnt_taken(self):
+        r = self.illumos_copy(other=True)
+        res = self.go({}, r)
+        self.assertNotIn("/bkoscratch/t2test/runs/t2h-20261108T0300-abcd/cells.json", r.files["cinqcent"])
+        self.assertEqual(set(self.rs.cells_written[1][1]), {"holt:omnios58-mirror", "holt:omnios58"})
+        self.assertFalse(any(n.startswith("keyed at the one-time rescuer") for n in res["notes"]), res["notes"])
 
     def test_no_rerun_after_stop_starts(self):
         class Stops(FakeStops):

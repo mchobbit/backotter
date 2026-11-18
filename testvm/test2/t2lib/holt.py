@@ -80,6 +80,13 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      one-time rescuer copy the plan keyed missing (extra.rescuer_made): the copy
      goes into ctx.facts, is summed (1a) and the plan made again first, and its
      cells-r2.json entry says rerun_why rescuer-made, under which a pass is a PASS.
+     The copy is the host's for good (ht1-bsd.sh makes it once, under a lock), so the
+     other cells that boot it on that host (omnios58's copy: every illumos cell) are
+     keyed again as soon as its row lands (rekey_made): the copy summed, the plan made
+     again, and their cells.json entries there get the planned key at its sum, if
+     their rows haven't landed yet and the copy is all the key changes by.  One whose
+     row landed first (keyed missing or img:unknown at a copy a job on its host made
+     in this queue) is rerun as the maker is.
   7. The result (contract 1.9's RunResult) for run.py's report.  It fails (exit 1)
      on a stop, a cell that isn't a PASS, a due cell no runner ran, a job with no
      row, or a PASS whose row doesn't count (valid false).
@@ -1342,6 +1349,11 @@ class Runner:
                 seen.add((h, gv))
                 if row is not None:
                     self.act(qrun, self.feed(row, h))
+                    if attempt == 1 and (row.get("extra") or {}).get("rescuer_made"):
+                        try:
+                            self.rekey_made(qrun, h, row, seen | set(done))   # (done: landed, or landing)
+                        except Exception as e:   # noqa: BLE001 - its rows land as they would without it
+                            self.notes.append(f"{h}: not keyed again at the one-time rescuer: {type(e).__name__}: {e}")
             q["seen"] = sorted(seen)
             self.state.save()
             self.host_checks(qrun)
@@ -1760,7 +1772,7 @@ class Runner:
                 if cell in made:
                     reruns[cell]["rerun_why"] = "rescuer-made"
             if made.keys() & reruns.keys():
-                self.notes.append("rerun (attempt 1 made its one-time rescuer, so its row couldn't count): "
+                self.notes.append("rerun (attempt 1 made its one-time rescuer, or ran before its sum, so its row couldn't count): "
                                   + ", ".join(sorted(made.keys() & reruns.keys())))
             if not (self.state["queues"].get(q2) or {}).get("todo_written"):
                 self.rs.write_cells(self.plan, attempt=2, reruns=reruns)
@@ -1768,27 +1780,138 @@ class Runner:
             self.wait_queue(q2, 2)
         return self.result(start, pcs)
 
-    def made(self, qrun):
-        """{cell: (host, gv)} of the jobs whose row is a PASS that doesn't count and whose run
-        made its one-time rescuer copy (extra.rescuer_made): the plan keyed the copy missing,
-        so the cell's first row that can count is a rerun at the copy's sum."""
+    def copies_made(self, qrun):
+        """{host: {basename: path}} of the one-time rescuer copies queue QRUN's jobs made
+        (their rows' extra.rescuer_made)."""
         out = {}
         for (h, gv), d in sorted((self.done.get(qrun) or {}).items()):
             r = self.rows.get(f"ht1:{qrun}:{gv}:1") or {}
-            if r.get("verdict") == "PASS" and r.get("valid") is False and (r.get("extra") or {}).get("rescuer_made"):
+            for p in (r.get("extra") or {}).get("rescuer_made") or []:
+                out.setdefault(h, {})[os.path.basename(p)] = p
+        return out
+
+    @staticmethod
+    def copies_of(row, copies):
+        """The one-time rescuer copies ROW's run couldn't count by: the ones it made itself,
+        else those of COPIES ({basename: path}, made on its host by another job of the
+        queue) that its rescuer inputs key as missing or img:unknown."""
+        own = (row.get("extra") or {}).get("rescuer_made") or []
+        if own:
+            return list(own)
+        resc = (row.get("inputs") or {}).get("rescuer") or {}
+        return [p for n, p in sorted((copies or {}).items())
+                if resc.get("rescuer/" + n) in ("missing", keys.UNKNOWN_IMG)]
+
+    def made(self, qrun):
+        """{cell: (host, gv)} of the jobs whose row is a PASS that doesn't count because of a
+        one-time rescuer copy made in this queue: its run made it (extra.rescuer_made), or
+        another job on its host did and its row keyed it missing or img:unknown (it landed
+        before rekey_made could key it at the copy's sum).  The cell's first row that can
+        count is a rerun at the copy's sum."""
+        out = {}
+        copies = self.copies_made(qrun)
+        for (h, gv), d in sorted((self.done.get(qrun) or {}).items()):
+            r = self.rows.get(f"ht1:{qrun}:{gv}:1") or {}
+            if r.get("verdict") == "PASS" and r.get("valid") is False and self.copies_of(r, copies.get(h)):
                 out[self.cell_of_gv(gv)] = (h, gv)
         return out
 
-    def sum_made(self, qrun, cells):
-        """The one-time rescuer copies attempt 1 of CELLS made, put in ctx.facts as
-        facts_host.rescuers would show them and summed (ensure_imgsums), then the plan made
-        again, so cells-r2.json's planned keys carry their img: sums.  Returns the cells
-        whose copies got no sum (their rows still couldn't count)."""
+    def rekey_made(self, qrun, host, row, seen):
+        """A one-time rescuer copy a job on HOST just made (ROW's extra.rescuer_made), while
+        queue QRUN (attempt 1) runs: the copy is summed (ensure_imgsums) and the plan made
+        again, and HOST's cells.json entries of the other due cells that boot it, whose rows
+        haven't landed (not in SEEN), get their planned key at the copy's sum, so their rows
+        can count: every job of theirs on HOST boots that copy from now on (ht1-bsd.sh makes
+        it once, under a lock, and never again).  An entry is changed only when the copy is
+        all the new key differs by (with it back as missing or img:unknown, the key is the
+        planned one).  Returns the cells re-keyed."""
+        paths = (row.get("extra") or {}).get("rescuer_made") or []
         facts = getattr(self.ctx, "facts", None)
+        f = facts.get(host) if isinstance(facts, dict) else None
+        if not paths or not isinstance(f, dict):
+            return []
+        names = {os.path.basename(p) for p in paths}
+        subst = getattr(keys, "_subst", None)
+        maker = row.get("cell")
+
+        def boots(pc):
+            e = entry_of(self.sf, pc.cell)
+            guest = base_guest(pc.cell)
+            for x in e.get("rescuer") or []:
+                if isinstance(x, str) and not x.startswith(("@", "bin/")):
+                    if (subst(x, guest, e.get("plat"), e.get("kind")) if subst else x) in names:
+                        return True
+            return False
+        sibs = [pc for pc in self.due() if pc.cell != maker and (not pc.keys or host in pc.keys)
+                and (host, gv_of(pc.cell)) not in seen and boots(pc)]
+        if not sibs:
+            return []
+        resc = f["rescuers"] = f.get("rescuers") or {}
+        imgs = resc["images"] = resc.get("images") or {}
+        for n in names:
+            imgs.setdefault(n, {"sha256": None, "size": None, "mtime": None, "imgsum": None})
+        self.ensure_imgsums([pc for pc in self.due() if pc.cell == maker] + sibs)
+        if not all((imgs.get(n) or {}).get("sha256") or (imgs.get(n) or {}).get("imgsum") for n in names):
+            return []   # (no sum: their rows land invalid, and made() reruns them)
+        self.replan(pull=False)
+        mac = os.path.join(self.rs.mac_dir, f"cells-{host}.json")
+        try:
+            with open(mac) as fh:
+                doc = json.load(fh)
+        except (OSError, ValueError) as e:
+            self.notes.append(f"{host}: no cells.json to key again at the one-time rescuer ({e})")
+            return []
+        cells = doc.get("cells") or {}
+        new = {pc.cell: pc for pc in self.due()}
+        done = []
+        for pc in sibs:
+            ent = cells.get(gv_of(pc.cell))
+            npc = new.get(pc.cell)
+            nk = (npc.keys or {}).get(host) if npc is not None else None
+            old = (ent or {}).get("planned_key")
+            if not ent or not nk or not old or nk == old:
+                continue
+            inp = (getattr(npc, "inp", None) or {}).get(host)
+            if inp:   # (the copy alone: with it as it was planned, the key is the planned one)
+                def back(v):
+                    alt = {g: dict(x) for g, x in inp.items() if isinstance(x, dict)}
+                    for n in names:
+                        if "rescuer/" + n in alt.get("rescuer", {}):
+                            alt["rescuer"]["rescuer/" + n] = v
+                    return keys.key(pc.cell, alt)
+                if old not in (back("missing"), back(keys.UNKNOWN_IMG)):
+                    continue
+            ent["planned_key"] = nk
+            done.append(pc.cell)
+        if not done:
+            return []
+        text = json.dumps(doc, indent=1, sort_keys=True) + "\n"
+        try:
+            self.remote.write(host, os.path.join(self.rs.host_run_dir(host), "cells.json"), text)
+        except OSError as e:
+            self.notes.append(f"{host}: cells.json not keyed again at the one-time rescuer: {e}")
+            return []
+        with open(mac + ".tmp", "w") as fh:
+            fh.write(text)
+        os.replace(mac + ".tmp", mac)
+        self.log(f"queue {qrun}: {host} made the one-time rescuer {', '.join(sorted(names))}: "
+                 f"keyed again at its sum: {', '.join(done)}")
+        self.notes.append(f"keyed at the one-time rescuer {maker} made on {host} before their rows landed: "
+                          + ", ".join(done))
+        return done
+
+    def sum_made(self, qrun, cells):
+        """The one-time rescuer copies attempt 1 of CELLS made (or ran before the sums of:
+        copies_of), put in ctx.facts as facts_host.rescuers would show them and summed
+        (ensure_imgsums), then the plan made again, so cells-r2.json's planned keys carry
+        their img: sums.  Returns the cells whose copies got no sum (their rows still
+        couldn't count)."""
+        facts = getattr(self.ctx, "facts", None)
+        copies = self.copies_made(qrun)
         want = {}
         for cell, (h, gv) in cells.items():
             r = self.rows.get(f"ht1:{qrun}:{gv}:1") or {}
-            for p in (r.get("extra") or {}).get("rescuer_made") or []:
+            for p in self.copies_of(r, copies.get(h)):
                 f = facts.get(h) if isinstance(facts, dict) else None
                 if isinstance(f, dict):
                     resc = f["rescuers"] = f.get("rescuers") or {}

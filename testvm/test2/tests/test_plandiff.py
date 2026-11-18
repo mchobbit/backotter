@@ -142,12 +142,18 @@ VARIANTS = os.path.join(CORPUS, "variants.txt")
 class CorpusMatchesClasses(unittest.TestCase):
     """The corpus's own lists agree with the class table's: variants.txt is
     holt.variants.bigger, and every HoltTest2 source has its dump (golden_plans.rs
-    counts a missing one as a difference, which this catches before a host run)."""
+    counts a missing one as a difference, which this catches before a host run).
+    A dump of no source is allowed, as golden_plans.rs's unplanned() only notes
+    it: the corpus README's "some are not sources yet" (guests dumped before
+    they join classes.json, arm64.md A3's synthetic arm64-* dumps)."""
 
-    def holt(self):
+    def classes(self):
         import json
         with open(CLASSES, encoding="utf-8") as f:
-            return json.load(f)["holt"]
+            return json.load(f)
+
+    def holt(self):
+        return self.classes()["holt"]
 
     def test_variants_txt_is_holt_variants_bigger(self):
         with open(VARIANTS, encoding="utf-8") as f:
@@ -162,11 +168,16 @@ class CorpusMatchesClasses(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(CORPUS, g, f"plan+{var}.txt")), v)
 
     def test_every_source_has_a_dump(self):
-        h = self.holt()
-        sources = {g for gs in h["families"].values() for g in gs} | set(h.get("no_family", []))
+        c = self.classes()
+        h = c["holt"]
+        # (plan.py's arch_classes merges the arm64 block's holt into holt for a run on an arm64 host)
+        arm = c.get("arm64", {}).get("holt", {})
+        sources = {g for hh in (h, arm) for gs in hh.get("families", {}).values() for g in gs} | set(h.get("no_family", []))
         have = {g for g in os.listdir(CORPUS) if os.path.isfile(os.path.join(CORPUS, g, "src.json"))}
         self.assertEqual(sorted(sources - have), [], "HoltTest2 sources without a corpus dump")
-        self.assertEqual(sorted(have - sources), [], "corpus dumps of no HoltTest2 source")
+        # Extras are fine (golden_plans.rs: "note  G: in the corpus, but not one of HoltTest2's
+        # sources"), but not a guest classes.json rules out as a source for good.
+        self.assertEqual(sorted(have & set(h.get("excluded", {}))), [], "corpus dumps of holt.excluded guests")
         for g in sorted(have):
             self.assertTrue(os.path.isfile(os.path.join(CORPUS, g, "plan.txt")), g)
 

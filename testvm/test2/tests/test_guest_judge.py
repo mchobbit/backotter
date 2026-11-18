@@ -712,7 +712,36 @@ class RealLogLines(unittest.TestCase):
                  "building /gnu/store/b82cggd14k9d8k12kzga8spikk6zbs29-config.scm.drv...", "66 items will be downloaded",
                  "applying 2 grafts for curl-minimal-8.14.1 ...", "building CA certificate bundle...",
                  "warning: 'uv' is deprecated, use '(@ (gnu packages build-tools) uv)' instead",
-                 "shepherd: Service user-homes has been started."],
+                 "shepherd: Service user-homes has been started.",
+                 "\x1b[K libgit2-1.9.7                             204.0MiB/s 00:00 | 384KiB transferred",
+                 "\x1b[K libgit2-1.9.7-debug                         1.2GiB/s 00:00 | 512KiB transferred",
+                 # guix15's and guix15-bios's serial consoles (GuestTest2 t2v-20261118T2038-21eb): the
+                 # initrd Guile's Boehm GC warnings in 16-byte pieces, kernel lines between them
+                 "GC Warning: pthread_getattr_np or pthread_attr_g[    1.000199] init[1]: segfault at 3fff00 ip 00000000004d4953 "
+                 "sp 00007ffe9695bbf0 error 4 in guile[d4953,401000+201000] likely on CPU 0 (core 0, socket 0)",
+                 "etstack failed f[    1.002764] Code: 8b 05 d1 ec 34 00 48 83 c4 28 c3 0f 1f 40 00 48 8b 05 c1 ec 34 00 48 2d 00 01 00 00 "
+                 "48 89 05 b4 ec 34 00 48 8b 05 ad ec 34 00 <0f> b6 38 e8 65 a5 ff ff 48 8b 44 24 08 48 8b 15 99 ec 34 00 48 05",
+                 "or main thread", "GC Warning: Could not open /proc/stat",
+                 "GC Warning: pthr[    0.896150] PM:   Magic number: 2:195:652",
+                 "ead_getattr_np o[    0.897034] PM: genpd: Disabling unused power domains",
+                 "r pthread_attr_g[    0.905318] Write protecting the kernel read-only data: 38912k",
+                 "etstack failed f[    0.909719] Freeing unused kernel image (rodata/data gap) memory: 1100K",
+                 "GC Warning: pthr[    2.188468] init[1]: segfault at 3fff00 ip 00000000004d4953 sp 00007ffe6acddb80 error 4 "
+                 "in guile[d4953,401000+201000] likely on CPU 0 (core 0, socket 0)",
+                 "ead_getattr_np or pthread_attr_getstack failed for main thread",
+                 "GC Warning: pthread_getattr_np or pthread_attr_getstack failed for main thread",
+                 "[    0.919128] init[1]: segfault at 3fff00 ip 00000000004d5593 sp 00007ffca7250cf0 error 4 in guile[d5593,401000+202000] "
+                 "likely on CPU 1 (core 1, socket 0)",
+                 "[    0.919281] Code: 8b 05 71 01 35 00 48 83 c4 28 c3 0f 1f 40 00 48 8b 05 61 01 35 00 48 2d 00 01 00 00 48 89 05 54 01 35 "
+                 "00 48 8b 05 4d 01 35 00 <0f> b6 38 e8 65 a5 ff ff 48 8b 44 24 08 48 8b 15 39 01 35 00 48 05",
+                 # ... syslogd's echo of them, the next kernel line glued on, and the getty prompt's
+                 "2026-11-18 20:56:46 localhost linux: [    1.163892] init[1]: segfault at 3fff00 ip 00000000004d5593 sp 00007ffef9984fd0 "
+                 "error 4 in guile[d5593,401000+202000] likely on CPU 1 (core 1, socket 0)[    2.826518] parport0: PC-style at 0x378, "
+                 "irq 7 [PCSPP,TRISTATE]",
+                 "2026-11-18 21:36:09 localhost linux: [    0.919281] Code: 8b 05 71 01 35 00 48 83 c4 28 c3 0f 1f 40 00 48 8b 05 61 01 35 00 "
+                 "48 2d 00 01 00 00 48 89 05 54 01 35 00 48 8b 05 4d 01 35 00 <0f> b6 38 e8 65 a5 ff ff 48 8b 44 24 08 48 8b 15 39 01 35 00 "
+                 "48 05[    2.599722] input: PC Speaker as /devices/platform/pcspkr/input/input3",
+                 "guix15-bios login: [ 1033.413555] shepherd[1]: Terminating system log service."],
         "apt": ["Get:1 http://deb.debian.org/debian trixie/main amd64 bash amd64 5.2.37-2 [1,234 kB]", "Unpacking bash (5.2.37-2) over (5.2.37-1) ...",
                 "Reading package lists... Done", "base-files is already the newest version (13.8).", "Found linux image: /boot/vmlinuz-6.12.57+deb13-amd64"],
         "dnf": ["[ 1/42] Upgrading NetworkManager-1:1.52.0 100% |   2.1 MiB/s |   3.4 MiB |  00m02s", "[ 3/9] Installing hunspell-en-AU-0:2.1 100% |   1.0 MiB/s |  10.0 KiB |  00m00s",
@@ -821,7 +850,21 @@ class RealLogLines(unittest.TestCase):
     REAL_ERRORS = {
         "guix": ["guix system: error: aborting reconfiguration because commit 230aa373f315 of channel 'guix' is not a descendant of 9f1e7d1c2b3a",
                  "guix/build/syscalls.scm:2503:8: In procedure terminal-window-size:", "building /gnu/store/abc-foo.drv failed",
-                 "error: build of `/gnu/store/abc-foo.drv' failed", "guix system: warning: Failing to do that may downgrade your system!"],
+                 "error: build of `/gnu/store/abc-foo.drv' failed", "guix system: warning: Failing to do that may downgrade your system!",
+                 # a kernel line with an error word glued to a piece of the GC warnings, another
+                 # process's segfault, a fault in libguile, a Code: line without the probe's bytes
+                 "GC Warning: pthr[    0.896150] BUG: kernel NULL pointer dereference, address: 0000000000000000",
+                 "ead_getattr_np o[    0.897034] Kernel panic - not syncing: Attempted to kill init! exitcode=0x0000000b",
+                 "r pthread_attr_g[    0.905318] WARNING: CPU: 0 PID: 1 at mm/memory.c:1234 do_page_fault+0x12/0x34",
+                 "etstack failed f[    0.909719] EXT4-fs error (device vda2): ext4_lookup:1859: inode #2: comm init: deleted inode referenced: 12",
+                 "GC Warning: Coul[    0.909719] Out of memory: Killed process 1 (init)",
+                 "GC Warning: pthread_getattr_np or pthread_attr_g[    1.000199] shepherd[1]: segfault at 0 ip 00007f0000001234 "
+                 "sp 00007ffe9695bbf0 error 4 in libc.so.6[7f0000000000+28000] likely on CPU 0 (core 0, socket 0)",
+                 "[    1.000199] init[1]: segfault at 0 ip 00007f0000001234 sp 00007ffe9695bbf0 error 4 in libguile-3.0.so.1.7.0[7f0000000000+28000]",
+                 "[    1.002764] Code: 48 89 e5 41 57 41 56 41 55 41 54 53 48 83 ec 18 48 8b 05 c1 ec 34 00 <0f> 0b 48 c7 c7 00 00 00 00 e8 00 00",
+                 "2026-11-18 20:56:46 localhost linux: [    1.163892] init[1]: segfault at 3fff00 ip 00000000004d5593 sp 00007ffef9984fd0 "
+                 "error 4 in guile[d5593,401000+202000] likely on CPU 1 (core 1, socket 0)[    2.826518] I/O error, dev vda, sector 2048 op 0x0:(READ)",
+                 "guix15 login: [ 1033.413555] shepherd[1]: Service guix-daemon failed to start."],
         "nix": ["error: builder for '/nix/store/abc-foo.drv' failed with exit code 1", "error: Cannot build '/nix/store/abc-foo.drv'.", "building '/nix/store/abc.drv' failed"],
         "apt": ["The following packages have unmet dependencies:", "Reading package lists... Error!"],
         "dragonfly": ["in-guest: base system: make buildworld failed"],
@@ -856,6 +899,42 @@ class RealLogLines(unittest.TestCase):
         for pm, lines in self.REAL_ERRORS.items():
             for x in lines:
                 self.assertEqual(len(self.left(pm, x)), 1, (pm, x))
+
+    # Kernel lines of the guix guests' last init moments (their serial logs, t2v-20261118T2038-21eb).
+    GUIX_KERNEL = ["PM:   Magic number: 2:195:652", "clk: Disabling unused clocks", "evm: HMAC attrs: 0x1",
+                   "Freeing unused kernel image (initmem) memory: 4308K", "Run /init as init process",
+                   "sr 1:0:0:0: Attached scsi generic sg0 type 5", "ata2: found unknown device (class 0)",
+                   "init[1]: segfault at 3fff00 ip 00000000004d5593 sp 00007ffca7250cf0 error 4 in guile[d5593,401000+202000] "
+                   "likely on CPU 1 (core 1, socket 0)",
+                   "Code: 8b 05 71 01 35 00 48 83 c4 28 c3 0f 1f 40 00 48 8b 05 61 01 35 00 48 2d 00 01 00 00 48 89 05 54 01 35 00 48 8b 05 "
+                   "4d 01 35 00 <0f> b6 38 e8 65 a5 ff ff 48 8b 44 24 08 48 8b 15 39 01 35 00 48 05"]
+
+    @staticmethod
+    def fifo_cuts(msg, kernel, cuts):
+        """The console as the 16550 leaves it: MSG's line in 16-byte FIFO loads, a timestamped KERNEL
+        line written at each load boundary in CUTS (the multiples of 16 inside it)."""
+        out, at = "", 0
+        for c in sorted(cuts):
+            out += msg[at:c] + f"[    0.905318] {kernel}\r\n"
+            at = c
+        return out + msg[at:] + "\r\n"
+
+    def test_guix_gc_warnings_go_however_the_fifo_cuts_them(self):
+        """Every way the FIFO can cut each GC warning, with any kernel line between the pieces, is
+        dropped; with an error line between them, that glued-on line alone stays."""
+        import itertools
+        for msg in ("GC Warning: pthread_getattr_np or pthread_attr_getstack failed for main thread", "GC Warning: Could not open /proc/stat"):
+            bounds = range(16, len(msg), 16)
+            for n in range(len(bounds) + 1):
+                for cuts in itertools.combinations(bounds, n):
+                    for k in self.GUIX_KERNEL:
+                        raw = self.fifo_cuts(msg, k, cuts)
+                        self.assertEqual(self.left("guix", raw), [], (msg, cuts, k))
+                    for bad in ("BUG: kernel NULL pointer dereference, address: 0000000000000000",
+                                "EXT4-fs error (device vda2): ext4_lookup:1859: inode #2: comm init: bad extra_isize 1",
+                                "systemd-udevd[123]: segfault at 0 ip 00007f0000001234 sp 00007ffe9695bbf0 error 4 in libc.so.6[7f0000000000+28000]"):
+                        if cuts:
+                            self.assertEqual(len(self.left("guix", self.fifo_cuts(msg, bad, cuts[:1]))), 1, (msg, cuts, bad))
 
     def test_a_wrapped_package_list_goes_with_its_header(self):
         raw = "The following packages will be upgraded:\n  base-files bash\n  busybox dpkg\n1 upgraded, 0 newly installed\n  indented after the list\n"

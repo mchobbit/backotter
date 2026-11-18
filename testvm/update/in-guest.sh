@@ -1052,6 +1052,21 @@ print(d[0]["checksum"] if d else "")' "$1"
         # again what it needs).
         moss -y sync -u && moss -y state remove --keep 2 && moss -y cache prune || exit 1
         rm -rf /.moss/cache/downloads
+        # The sync swapped /usr under the running systemd, and none of moss's
+        # triggers (/usr/share/moss/triggers) re-executes it.  PID 1 starts
+        # every process through the systemd-executor it opened at boot (the
+        # old state's, /.moss/root/N/usr/lib/systemd/systemd-executor), which
+        # loads libsystemd-shared-OLD.so from /usr/lib/systemd, and a sync
+        # that moves systemd (261 to 262, GuestTest2 t2v-20261118T0027-d7c8)
+        # leaves only the new one there: each exec fails with status 127,
+        # so the reboot's ExecStops, swapoffs and umounts all fail
+        # (blk-availability, dracut-shutdown, systemd-random-seed, the swap
+        # partition's 15 units, /efi, /tmp...).  The reexec puts PID 1 on
+        # the new state's systemd and executor: the reboot is then clean (a
+        # sync of 261.4 to 262.2 in an overlay, 2026-11-18).
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reexec || exit 1
+        fi
     # t2-section: Linux.common
     else
         say "no package manager found"; exit 3

@@ -1146,6 +1146,33 @@ pub fn unmatched_fstab(sources: &[BackupSource], fstab: &[(&mounts::FstabEntry, 
         .collect()
 }
 
+/// The mounts that aren't backup sources after all:
+///   - with --only-disk (ONLY_DISK), a block device's mount that isn't on a
+///     kept disk (its device isn't in the dump: the backup drive, a USB
+///     stick), as BackShot1's own tree (bs1-common internal_mounts) leaves
+///     them out;
+///   - a store of ZFS key files that fstab doesn't mount (Ubuntu's
+///     keystore, LUKS on the zvol POOL/keystore, which the initramfs mounts
+///     at /run/keystore/POOL): an encryption root's file:// keylocation is
+///     on it, and load writes a new key there (load/commands.rs
+///     keystores()), so the old key isn't backed up, nor restored into the
+///     root's /run.
+pub fn not_backed_up(sources: &mut Vec<BackupSource>, only_disk: bool, zfs_tools: &Value, fstab: &[(&mounts::FstabEntry, Option<String>)]) {
+    if only_disk {
+        sources.retain(|s| s.device.is_some() || !s.source.starts_with("/dev/"));
+    }
+    let keys: Vec<String> = zfs_tools
+        .get("datasets")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|d| d.get("encryptionroot").is_some() && d.get("encryptionroot") == d.get("name"))
+        .filter_map(|d| d.get("keylocation")?.as_str()?.strip_prefix("file://").map(str::to_string))
+        .collect();
+    let in_fstab = |p: &str| fstab.iter().any(|(e, _)| e.file.trim_end_matches('/') == p.trim_end_matches('/'));
+    sources.retain(|s| s.fstype == "zfs" || s.path == "/" || in_fstab(&s.path) || !keys.iter().any(|k| k.starts_with(&format!("{}/", s.path.trim_end_matches('/')))));
+}
+
 /// A ZFS dataset mounted at more than one path, its whole tree each time
 /// (TrueNAS's boot-pool/.system/cores, at /var/db/system/cores and
 /// /var/lib/systemd/coredump): backed up once, at its first path, whose
@@ -1274,6 +1301,21 @@ fn is_whole_disk(b: &blockdev::BlockDev) -> bool {
     matches!(b.kind, Kind::Disk | Kind::Nbd | Kind::Ram)
 }
 
+/// The pool of a ZFS volume, by udev's /dev/zvol/POOL/... link (load finds
+/// zvols the same way: commands.rs zvols_of); None for any other device.
+fn zvol_pool(b: &blockdev::BlockDev) -> Option<String> {
+    b.udev.links.iter().find_map(|l| l.strip_prefix("/dev/zvol/")?.split('/').next().filter(|p| !p.is_empty()).map(str::to_string))
+}
+
+/// The pool a ZFS vdev belongs to: its label's, or udev's when the device
+/// couldn't be read.
+fn member_pool(d: &Dev) -> Option<String> {
+    if d.read_ok {
+        return d.contents.iter().filter(|c| c.kind == "zfs_member").find_map(|c| c.extra.as_ref()?.get("name")?.as_str().map(str::to_string));
+    }
+    (d.b.udev.get("ID_FS_TYPE") == Some("zfs_member")).then(|| d.b.udev.get("ID_FS_LABEL").map(str::to_string)).flatten()
+}
+
 /// The first of `only` that isn't a whole disk here.
 pub fn unknown_disk(sys: &Sys, only: &[String]) -> Option<String> {
     if only.is_empty() {
@@ -1369,11 +1411,27 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     // the dump reads them (crate::qubes).
     let activated = crate::qubes::activate_skipped(sys);
     let mut scanned = blockdev::scan(sys);
+    // A ZFS volume (zdN) is a whole disk too; --only-disk keeps those of the
+    // pools with a vdev on a kept disk, and what's on them (Ubuntu's
+    // keystore: LUKS on rpool/keystore), once the kept disks' labels say
+    // which pools those are (only_disk_zvols).
+    let mut zvols: Vec<BlockDev> = Vec::new();
     if !only.is_empty() {
         let left_out: Vec<String> = scanned.iter().filter(|b| is_whole_disk(b) && !only.contains(&b.name)).map(|b| b.name.clone()).collect();
-        scanned.retain(|b| !left_out.contains(&b.name) && !b.parent.as_ref().is_some_and(|p| left_out.contains(p)));
+        let (kept, out): (Vec<BlockDev>, Vec<BlockDev>) =
+            scanned.into_iter().partition(|b| !left_out.contains(&b.name) && !b.parent.as_ref().is_some_and(|p| left_out.contains(p)));
+        scanned = kept;
+        zvols = out.into_iter().filter(|b| zvol_pool(b).is_some() || b.parent.is_some()).collect();
     }
-    let devs: Vec<Dev> = scanned.into_iter().map(|b| examine(sys, b)).collect();
+    let mut devs: Vec<Dev> = scanned.into_iter().map(|b| examine(sys, b)).collect();
+    if !zvols.is_empty() {
+        let pools: Vec<String> = devs.iter().filter_map(member_pool).collect();
+        let keep: Vec<String> = zvols.iter().filter(|b| b.parent.is_none() && zvol_pool(b).is_some_and(|p| pools.contains(&p))).map(|b| b.name.clone()).collect();
+        let order: Vec<String> = blockdev::scan(sys).into_iter().map(|b| b.name).collect();
+        devs.extend(zvols.into_iter().filter(|b| keep.contains(&b.name) || b.parent.as_ref().is_some_and(|p| keep.contains(p))).map(|b| examine(sys, b)));
+        // In the kernel's order, as without --only-disk.
+        devs.sort_by_key(|d| order.iter().position(|n| *n == d.b.name).unwrap_or(usize::MAX));
+    }
     let mountinfo = sys.read("/proc/self/mountinfo").map(|t| mounts::parse_mountinfo(&t)).unwrap_or_default();
     let ctx = Ctx { devs: &devs, mounts: &mountinfo };
 
@@ -1445,6 +1503,7 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     for w in be_warnings {
         sys.warn(w);
     }
+    not_backed_up(&mut sources, !only.is_empty(), &zfs_tools, &fstab_resolved);
     let be_sources: Vec<BackupSource> = be_sources.into_iter().filter(|x| !sources.iter().any(|s| s.path == x.path)).collect();
     if !be_sources.is_empty() {
         sources.extend(be_sources);
@@ -1791,6 +1850,91 @@ mod tests {
         assert_eq!(unknown_disk(&s, &["nvme0n1".to_string()]), None);
         // A partition isn't a whole disk.
         assert_eq!(unknown_disk(&s, &["sda1".to_string()]).as_deref(), Some("sda1"));
+    }
+
+    /// Ubuntu's ZFS + encryption install, dumped --only-disk nvme0n1 (the
+    /// Thinkpad, 26.10): its rpool's vdev is nvme0n1p1 here, and the zvol
+    /// rpool/keystore (zd0, LUKS holding the pool's key) is a whole disk of
+    /// its own.  The zvol stays, with its partition (zd0p1), as does the
+    /// dm-0 on it; another pool's zvol (tank's zd16, on sda) goes with sda.
+    #[test]
+    fn only_disk_keeps_the_zvols_of_its_pools() {
+        let t = crate::testutil::Tree::new("only-disk-zvol");
+        let label = |pool: &str, guid: u64| {
+            let cfg = crate::json::parse(&format!(
+                r#"{{"version": 5000, "name": "{pool}", "state": 0, "txg": 4, "pool_guid": {guid}, "top_guid": 1, "guid": 1, "vdev_children": 1,
+                    "vdev_tree": {{"type": "disk", "id": 0, "guid": 1, "path": "/dev/x", "whole_disk": 0, "ashift": 12}}}}"#
+            ))
+            .unwrap();
+            let mut img = vec![0u8; 8 << 20];
+            img[1 << 20..5 << 20].copy_from_slice(&crate::probe::zfs::pack::vdev(4 << 20, &cfg));
+            img
+        };
+        let (nvme, sda) = (label("rpool", 777), label("tank", 888));
+        t.disk("nvme0n1", "259:0", &nvme, 512).partition("nvme0n1", "nvme0n1p1", "259:1", 1, 2048, 8192, &nvme);
+        t.disk("sda", "8:0", &sda, 512).partition("sda", "sda1", "8:1", 1, 2048, 8192, &sda);
+        t.disk("zd0", "230:0", &[0u8; 8192], 512).partition("zd0", "zd0p1", "230:1", 1, 2, 8, &[0u8; 8192]).file("/run/udev/data/b230:0", "S:zvol/rpool/keystore\n");
+        t.disk("zd16", "230:16", &[0u8; 8192], 512).file("/run/udev/data/b230:16", "S:zvol/tank/vol\n");
+        t.disk("dm-0", "252:0", &[0u8; 8192], 512).file("/sys/block/dm-0/slaves/zd0p1", "").file("/sys/block/dm-0/dm/name", "keystore-rpool");
+        t.file("/proc/self/mountinfo", "");
+        let s = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true);
+        let names = |only: &[&str], sect: &str| -> Vec<String> {
+            let only: Vec<String> = only.iter().map(|n| n.to_string()).collect();
+            let v = build_only(&s, None, "2026-11-18T00:00:00Z", &only);
+            v.at(&["storage", sect]).and_then(Value::as_array).into_iter().flatten().filter_map(|d| d.get("name").and_then(Value::as_str).map(str::to_string)).collect()
+        };
+        assert_eq!(names(&[], "disks"), ["nvme0n1", "sda", "zd0", "zd16"]);
+        assert_eq!(names(&["nvme0n1"], "disks"), ["nvme0n1", "zd0"]);
+        assert_eq!(names(&["nvme0n1"], "dm_devices"), ["dm-0"]);
+        let v = build_only(&s, None, "2026-11-18T00:00:00Z", &["nvme0n1".to_string()]);
+        let zd0 = v.at(&["storage", "disks", "1"]).unwrap();
+        assert_eq!(zd0.at(&["partitions", "0", "name"]).and_then(Value::as_str), Some("zd0p1"));
+        assert_eq!(zd0.at(&["links", "0"]).and_then(Value::as_str), Some("/dev/zvol/rpool/keystore"));
+        assert_eq!(names(&["sda"], "disks"), ["sda", "zd16"]);
+        // A zvol whose pool udev doesn't name (no link) isn't kept.
+        std::fs::remove_file(t.p("/run/udev/data/b230:0")).unwrap();
+        assert_eq!(names(&["nvme0n1"], "disks"), ["nvme0n1"]);
+    }
+
+    /// backup_sources less what isn't backed up: with --only-disk, the
+    /// mounts of left-out disks (the backup drive); a key store for a ZFS
+    /// encryption root that fstab doesn't mount (Ubuntu's keystore); not
+    /// a file system fstab mounts that holds a key file, nor a ZFS one.
+    #[test]
+    fn not_backed_up_sources() {
+        let src = |path: &str, device: Option<&str>, fstype: &str, source: &str| BackupSource {
+            path: path.into(),
+            from: Some(path.into()),
+            device: device.map(str::to_string),
+            fstype: fstype.into(),
+            source: source.into(),
+            subvol: None,
+            mount: None,
+            note: None,
+        };
+        let all = vec![
+            src("/", None, "zfs", "rpool/ROOT/ubuntu"),
+            src("/boot", Some("nvme0n1p2"), "ext4", "/dev/nvme0n1p2"),
+            src("/etc/zfs/keys", Some("nvme0n1p5"), "ext4", "/dev/nvme0n1p5"),
+            src("/run/keystore/rpool", Some("dm-0"), "ext4", "/dev/mapper/keystore-rpool"),
+            src("/run/media/m/mybig512", None, "xfs", "/dev/sdb1"),
+            src("/srv/nfs", None, "nfs4", "server:/srv"),
+        ];
+        let tools = crate::json::parse(
+            r#"{"datasets": [{"name": "rpool", "encryptionroot": "rpool", "keylocation": "file:///run/keystore/rpool/system.key"},
+                             {"name": "tank", "encryptionroot": "tank", "keylocation": "file:///etc/zfs/keys/tank.key"},
+                             {"name": "rpool/ROOT", "encryptionroot": "rpool", "keylocation": "none"}]}"#,
+        )
+        .unwrap();
+        let fstab_e = crate::mounts::parse_fstab("UUID=x /etc/zfs/keys ext4 defaults 0 2\nUUID=y /boot ext4 defaults 0 2\n");
+        let fstab: Vec<(&crate::mounts::FstabEntry, Option<String>)> = fstab_e.iter().map(|e| (e, None)).collect();
+        let paths = |only: bool| {
+            let mut v = all.clone();
+            not_backed_up(&mut v, only, &tools, &fstab);
+            v.into_iter().map(|s| s.path).collect::<Vec<_>>()
+        };
+        assert_eq!(paths(true), ["/", "/boot", "/etc/zfs/keys", "/srv/nfs"]);
+        assert_eq!(paths(false), ["/", "/boot", "/etc/zfs/keys", "/run/media/m/mybig512", "/srv/nfs"]);
     }
 
     #[test]

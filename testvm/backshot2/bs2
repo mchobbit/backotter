@@ -29,13 +29,20 @@ and holt/ in ~/backotter-work/bs2-wt (never the shared testvm/).
 How a BackShot2 run spreads (split()): each source has a lead, its HOME host when that's
 in the run, else the first that holds it.  The lead runs the source's tier 0 sweep and
 draws its tier 1 and 2 cases (bs2-host enqueue --to), exactly as one host alone would;
-then bs2 spreads those cases over every host that holds the source, each to the one that
-would finish it soonest for its slots (hosts.json's bs2_slots: big 5, small 2), so the
-hosts finish about together, and copies each case file from the lead to its host.  Each
-host gets its own queue.txt and runs it.  Before that, every host is checked (bin/ alike
-everywhere, the rescuers, ht1.sh's debs), and each prepares the sources it holds (bs2-host
-source, as root under cmp-run.sh --reserve 2 3, port 2949; nothing to do when ready):
-a host whose generation of a source differs from the lead's stops the run.
+bs2 spreads the cases over every host that holds the source, each to the one that would
+finish it soonest for its slots (hosts.json's bs2_slots: big 5, small 2), so the hosts
+finish about together, and copies each case file from the lead to its host.  Each host
+gets its own queue.txt and runs it.  First every host is checked (bin/ alike everywhere,
+the rescuers, ht1.sh's debs).  Then each host, on its own (start_hosts()): prepares the
+sources it holds (bs2-host source, as root under cmp-run.sh --reserve 2 3, port 2949;
+nothing to do when ready); if it leads, draws its sources' cases, as root outside the
+reservations (light(): tier 0 is planning, no VM); and starts its queue (a lead after its
+sweeps, also outside them) as soon as the cases it will run are drawn and copied, not
+once every lead has drawn.  Its share is the split of the planned cases, as plan prints
+it, each filled with the drawn case of its place in its list (fill()): the split the run
+made after every draw before.  A host whose generation of a source differs from the
+lead's, or that something else fails for, isn't started; the others run, and bs2 exits 1
+naming it.
 
 What a case reuses (ht1-bs2.sh; README "What a case reuses"): the source's preparation
 (its boot, dump and backup, made by bs2-host source), a rescuer resumed from a saved
@@ -103,6 +110,7 @@ CHOSEN = False   # --hosts given: replay and the corpus go only where vms/SOURCE
 ALPINE = list(HOME)
 ROOT = "/bkoscratch/backshot2"
 HOST_BS2 = "~/backotter-work/bs2-wt/testvm/backshot2/bs2-host"
+HOST_IOLOG = "~/backotter-work/bs2-wt/testvm/compare/iolog.sh"   # (light()'s wear-log line)
 # Seconds a case, per tier.  Tier 1 measured 2026-11-11 on cinqcent (400 cases, 3 slots,
 # phases.tsv): ~155 s (source 21, backup 4-14, rebuild ~95, verify ~26), ~50 s of it the
 # rescuer's apt of the bcachefs debs and 5 s polls; ~110 s est. after ht1.sh's fix
@@ -300,7 +308,7 @@ def plan_words(sources, n):
         sw = f", after its tier 0 sweeps (~{start[h] / 60:.0f} min)" if start.get(h) else ""
         print(f"{h}: {slots(h)} slots, {len(js)} cases ({'; '.join(by)}), ~{sec / 3600:.1f} h est.{sw}")
     print(f"the run: ~{longest / 3600:.1f} h est. (its slowest host; a case ~{SECS[1]} s at tier 1, ~{SECS[2]} s at tier 2,"
-          f" est.), after ~5-15 min of preparing what a host lacks and the leads drawing the cases")
+          f" est.), each host after ~5-15 min of preparing what it lacks and the leads drawing its cases")
     print("in RAM: ~0 GB written to the SSDs (records only, ~5 MB a case)")
 
 
@@ -334,34 +342,212 @@ def preflight(hosts):
         sys.exit("bs2: not started:\n  " + "\n  ".join(bad))
 
 
-def prepare(can, run):
-    """Each host makes the run's directories and prepares the sources it holds (bs2-host
-    source: once per generation, and again when the bko-holt or the harness that made the
-    preparation changed: what its cases reuse); {host: {source: generation}}."""
-    mine = {}
-    for s, hs in can.items():
-        for h in hs:
-            mine.setdefault(h, []).append(s)
-    cmds = {}
-    for h, ss in mine.items():
-        # (The RAM disk's dir as m: made first by a root job after a reboot, it was
-        # root's, and tier 0, which runs as m, couldn't write there.)
-        c = [f"mkdir -p {ROOT}/logs {ROOT}/runs /mnt/bko-ram/backshot2"]
-        c += [root(f"{HOST_BS2} source {s} --port 2949", "2 3", f"bs2:{run}:source-{s}") for s in ss]
-        c += [f'echo "gen {s} $(cat {ROOT}/sources/{s}/gen)"' for s in ss]
-        cmds[h] = " && ".join(c)
-    print(f"preparing: {'; '.join(f'{h} {len(ss)} sources' for h, ss in mine.items())} (nothing to do where ready)")
-    gens, bad = {}, []
-    for h, (rc, out, err) in par(cmds).items():
-        if rc:
-            bad.append(f"{h}: preparing its sources: exit {rc}: {(out + err).strip()[-300:]}")
-        for line in out.splitlines():
-            if line.startswith("gen "):
-                _, s, *g = line.split()
-                gens.setdefault(h, {})[s] = g[0] if g else None
-    if bad:
-        sys.exit("bs2: not started:\n  " + "\n  ".join(bad))
-    return gens
+def light(host, cmd, tag):
+    """CMD as root on HOST outside cmp-run.sh's reservations: tier 0's planning (a lead
+    drawing its cases, its sweeps), which runs no VM.  What it uses (the wear log,
+    /bkoscratch/wear/jobs.log, 2026-11-17 and 2026-11-18 on chopin and cinqcent): one
+    CPU (the planner runs --test-threads 1, the dry runs one at a time), a memory peak of
+    50-150 MB, 0.1-12 MB written to the SSD (the case files and the rows), and in RAM only
+    the dry runs' sparse scratch files, a few at once, each dropped after it is read;
+    60-70 s a 200-case list, ~5 min a 1000-case sweep.  Under a --reserve 2 2 it waited
+    for room it never used: on 2026-11-18 chopin's draws waited ~1h45m behind other
+    jobs, and every host's queue with them.  Still in a scope of its own, in the host's
+    job slice, under iolog.sh: its wear-log line, tagged TAG, as under cmp-run.sh."""
+    sl = HOSTS_TABLE.job_slice(host)
+    return (f"cd ~/backotter-work && sudo -E systemd-run --quiet --scope --collect{' --slice=' + sl if sl else ''}"
+            f" -p IOAccounting=yes env PATH=\"$PATH\" WEAR_TAG={tag} {reuse_env()}{HOST_IOLOG}"
+            f" {shlex.quote('light ' + cmd)} -- {cmd}")
+
+
+def prep_cmd(h, ss, run):
+    """The one command that has H make the run's directories and prepare SS, the sources
+    it holds (bs2-host source: once per generation, and again when the bko-holt or the
+    harness that made the preparation changed: what its cases reuse), printing a "gen
+    SOURCE GEN" line each.  A preparation may boot the source: under a reservation."""
+    # (The RAM disk's dir as m: made first by a root job after a reboot, it was
+    # root's, and tier 0, which runs as m, couldn't write there.)
+    c = [f"mkdir -p {ROOT}/logs {ROOT}/runs /mnt/bko-ram/backshot2"]
+    c += [root(f"{HOST_BS2} source {s} --port 2949", "2 3", f"bs2:{run}:source-{s}") for s in ss]
+    c += [f'echo "gen {s} $(cat {ROOT}/sources/{s}/gen)"' for s in ss]
+    return " && ".join(c)
+
+
+def prepare_one(h, ss, run):
+    """H prepares SS (prep_cmd): ({source: generation}, None), or (what it printed, the error)."""
+    rc, out, err = par({h: prep_cmd(h, ss, run)})[h]
+    gens = {}
+    for line in out.splitlines():
+        if line.startswith("gen "):
+            _, s, *g = line.split()
+            gens[s] = g[0] if g else None
+    return gens, (f"preparing its sources: exit {rc}: {(out + err).strip()[-300:]}" if rc else None)
+
+
+def draw_cmd(lead_host, ss, sources, n, run):
+    """The one command that has a lead draw its sources SS' cases, as one host alone would
+    (enqueue --to: tier 1, then tier 2 for a UEFI source), outside the reservations
+    (light()), one list after another, and print them (grep -H)."""
+    rd = f"{ROOT}/runs/{run}"
+    c = []
+    for s in ss:
+        c.append(light(lead_host, f"{HOST_BS2} enqueue {s} {n} --tier 1 --run {run} --to {rd}/pick-{s}-t1.txt",
+                       f"bs2:{run}:pick"))
+        if s != "alpine324":
+            c.append(light(lead_host, f"{HOST_BS2} enqueue {s} {tier2_each(sources)} --tier 2 --run {run} --from 500000"
+                                      f" --to {rd}/pick-{s}-t2.txt", f"bs2:{run}:pick"))
+    c += [f"sudo mkdir -p {rd}-t0", f"sudo chown -R m: {rd} {rd}-t0",
+          f"cd {rd} && {{ {' '.join(f'grep -H . pick-{s}-t[12].txt;' for s in ss)} true; }}"]
+    return " && ".join(c)
+
+
+def draw(lead_host, ss, sources, n, run):
+    """The lead draws SS' cases (draw_cmd): ({(source, tier): [path...]}, None), or ({}, the error)."""
+    rc, out, err = par({lead_host: draw_cmd(lead_host, ss, sources, n, run)})[lead_host]
+    if rc:
+        return {}, f"drawing the cases: exit {rc}: {(out + err).strip()[-400:]}"
+    picks = {}
+    for s, t, p in picks_of(out, ss):
+        picks.setdefault((s, t), []).append(p)
+    return picks, None
+
+
+def fill(js, picks):
+    """JS, a host's share of the run's planned cases (source, tier, i), as (source, tier, path):
+    the i-th case of the source's tier T list, in JS' order; and how many had no such case
+    (the lead drew fewer than asked)."""
+    out, short = [], 0
+    for s, t, i in js:
+        got = picks.get((s, t), [])
+        if i < len(got):
+            out.append((s, t, got[i]))
+        else:
+            short += 1
+    return out, short
+
+
+def ship(h, js, lead, run):
+    """JS' case files from their leads to H, and H's queue.txt (JS' order)."""
+    rd = f"{ROOT}/runs/{run}"
+    for L in sorted({lead[s] for s, _, _ in js} - {h}):
+        names = sorted({os.path.basename(p) for s, _, p in js if lead[s] == L})
+        src = subprocess.Popen(["ssh", RUN_HOSTS[L], f"cd {rd}/cases && tar -cf - {' '.join(names)}"], stdout=subprocess.PIPE)
+        dst = subprocess.run(["ssh", RUN_HOSTS[h], f"mkdir -p {rd}/cases && tar -C {rd}/cases -xf -"], stdin=src.stdout)
+        src.stdout.close()
+        if src.wait() or dst.returncode:
+            raise RuntimeError(f"copying {len(names)} cases from {L} failed")
+    if js:
+        r = ssh(h, f"mkdir -p {rd} && cat > {rd}/queue.txt", check=False, input="".join(f"{t} {p}\n" for _, t, p in js))
+        if r.returncode:
+            raise RuntimeError(f"writing its queue.txt: exit {r.returncode}")
+
+
+def launch(h, js, sweeps, n, run):
+    """H's chain, detached: the tier 0 sweeps (N * SWEEP cases each, outside the
+    reservations) of SWEEPS, the sources it leads, then its queue of JS.  (A sweep that
+    fails is in the log; the host's cases run regardless.)  False: nothing to start."""
+    rd = f"{ROOT}/runs/{run}"
+    c = [f"{{ {light(h, f'{HOST_BS2} tier0 {s} {n * SWEEP} --run {run}-t0 --keep-passes 50', f'bs2:{run}:tier0')}; }}"
+         for s in sweeps]
+    if sweeps:
+        c.append(f"sudo chown -R m: {rd}-t0")
+    if js:
+        c.append(f"{reuse_env()}{HOST_BS2} queue {run} --slots {slots(h)}")
+    if not c:
+        return False
+    r = ssh(h, f"setsid -f bash -c {json.dumps('; '.join(c))} > {ROOT}/logs/{run}.log 2>&1 < /dev/null", check=False)
+    if r.returncode:
+        raise RuntimeError(f"starting its queue: exit {r.returncode}")
+    return True
+
+
+def start_hosts(sources, n, run, can, lead, parts):
+    """Each host of PARTS ({host: its planned cases (source, tier, i)}: split() of the
+    run's jobs_of(), as plan prints it) starts its queue as soon as the cases it will run
+    are drawn, not once every lead has drawn every source's: each host in a thread of
+    its own.  A host prepares the sources it holds (CAN: {source: [host...]}); a lead
+    (LEAD: {source: host}) then draws its sources' cases, outside the reservations; a
+    host then waits for the leads of the sources it holds to have prepared them, checks
+    it has each at its lead's generation (the cases are drawn on that), waits for the
+    sources its cases are of to be drawn, takes its cases from the pick lists (fill()),
+    has their files copied from their leads, and starts (a lead's tier 0 sweeps first).
+    A host something fails for (its preparing, a lead's preparing or drawing, a
+    generation that differs from its lead's, the copy) isn't started; the others are.
+    Prints as each host draws and starts; returns {host: why} of those not started."""
+    import threading
+    hosts = list(parts)
+    mine = {h: [s for s in sources if h in can.get(s, ())] for h in hosts}
+    led = {}
+    for s in sources:
+        led.setdefault(lead[s], []).append(s)
+    prepped = {h: threading.Event() for h in hosts}
+    drawn = {s: threading.Event() for s in sources}
+    gens, ready, picks, drew, why = {}, set(), {}, set(), {}
+    lock = threading.Lock()
+
+    def say(msg):
+        with lock:
+            print(msg, flush=True)
+
+    def one(h):
+        try:
+            g, err = prepare_one(h, mine[h], run)
+            gens[h] = g
+            if err:
+                why[h] = err
+                return
+            ready.add(h)
+            prepped[h].set()
+            if led.get(h):
+                p, err = draw(h, led[h], sources, n, run)
+                if not err:
+                    with lock:
+                        picks.update(p)
+                        drew.update(led[h])
+                for s in led[h]:   # (now: the hosts waiting for them needn't wait for this one)
+                    drawn[s].set()
+                if err:
+                    why[h] = err
+                    return
+                say(f"{h}: drew the cases of {', '.join(led[h])}")
+            for s in mine[h]:
+                prepped[lead[s]].wait()
+                if lead[s] not in ready:
+                    why[h] = f"its lead {lead[s]} didn't prepare {s}"
+                    return
+                if gens.get(lead[s], {}).get(s) != gens[h].get(s):
+                    why[h] = (f"its {s} is at {gens[h].get(s)}, its lead {lead[s]}'s at {gens.get(lead[s], {}).get(s)}: "
+                              f"a source's cases are drawn on its lead's generation (refresh vms/{s}, or leave {h} out "
+                              f"with --hosts)")
+                    return
+            need = sorted({s for s, _, _ in parts[h]}, key=sources.index)
+            for s in need:
+                drawn[s].wait()
+            undrawn = [s for s in need if s not in drew]
+            if undrawn:
+                why[h] = (f"no cases of {', '.join(undrawn)}: not drawn (see its lead "
+                          f"{', '.join(sorted({lead[s] for s in undrawn}))})")
+                return
+            js, short = fill(parts[h], picks)
+            ship(h, js, lead, run)
+            if launch(h, js, led.get(h, []), n, run):
+                what = ", ".join(f"{s} {sum(1 for x in js if x[0] == s)}" for s in sources if any(x[0] == s for x in js))
+                sw = f", after the tier 0 sweep of {', '.join(led[h])}" if led.get(h) else ""
+                say(f"{h}: started {len(js)} cases on {slots(h)} slots ({what or 'none'}){sw}"
+                    f"{f'; {short} planned cases had none drawn (a lead drew fewer than asked)' if short else ''}"
+                    f" (log {ROOT}/logs/{run}.log)")
+        except Exception as e:   # (a thread's error is its host's, never the others')
+            why.setdefault(h, f"{type(e).__name__}: {e}")
+        finally:   # (so no host waits for ever on one that failed)
+            prepped[h].set()
+            for s in led.get(h, []):
+                drawn[s].set()
+
+    ts = [threading.Thread(target=one, args=(h,), daemon=True) for h in hosts]   # (daemons: a ^C ends bs2)
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    return why
 
 
 def picks_of(text, sources):
@@ -377,68 +563,18 @@ def picks_of(text, sources):
 
 
 def run_words(sources, n, run):
-    can, lead, parts, start = placement(sources, n)
+    can, lead, parts, _ = placement(sources, n)
     use = [h for h, js in parts.items() if js or h in lead.values()]
     preflight(use)
     sync(use)
-    gens = prepare({s: [h for h in hs if h in use] for s, hs in can.items()}, run)
-    bad = [f"{h}'s {s} is at {gens.get(h, {}).get(s)}, its lead {lead[s]}'s at {gens.get(lead[s], {}).get(s)}"
-           for s, hs in can.items() for h in hs if h in use and gens.get(h, {}).get(s) != gens.get(lead[s], {}).get(s)]
-    if bad:
-        sys.exit("bs2: not started: a source's cases are drawn on its lead's generation, and these differ:\n  " +
-                 "\n  ".join(bad) + "\n(refresh those vms/SOURCE, or leave the hosts out with --hosts)")
-    # The leads draw every case, as one host alone would (enqueue --to), at once.
-    rd = f"{ROOT}/runs/{run}"
-    picks = {}
-    for s in sources:
-        c = [root(f"{HOST_BS2} enqueue {s} {n} --tier 1 --run {run} --to {rd}/pick-{s}-t1.txt", tag=f"bs2:{run}:pick")]
-        if s != "alpine324":
-            c.append(root(f"{HOST_BS2} enqueue {s} {tier2_each(sources)} --tier 2 --run {run} --from 500000 --to {rd}/pick-{s}-t2.txt",
-                          tag=f"bs2:{run}:pick"))
-        picks.setdefault(lead[s], []).extend(c)
-    print(f"drawing the cases: {'; '.join(f'{h} {len(c)} lists' for h, c in picks.items())}")
-    cmds = {h: " && ".join(c + [f"sudo mkdir -p {rd}-t0", f"sudo chown -R m: {rd} {rd}-t0",
-                                f"cd {rd} && {{ grep -H . pick-*-t[12].txt; true; }}"])
-            for h, c in picks.items()}
-    out = ""
-    for h, (rc, o, err) in par(cmds).items():
-        if rc:
-            sys.exit(f"bs2: {h}: drawing the cases: exit {rc}: {(o + err).strip()[-400:]}")
-        out += o
-    jobs = picks_of(out, sources)
-    parts = split(jobs, {s: [h for h in hs if h in use] for s, hs in can.items()}, {h: slots(h) for h in use},
-                  sweep_secs(sources, n, lead))
-    # Each case file from its lead to its host; then each host's queue.txt.
-    for h, js in parts.items():
-        for L in sorted({lead[s] for s, _, _ in js} - {h}):
-            names = sorted({os.path.basename(p) for s, _, p in js if lead[s] == L})
-            src = subprocess.Popen(["ssh", RUN_HOSTS[L], f"cd {rd}/cases && tar -cf - {' '.join(names)}"], stdout=subprocess.PIPE)
-            dst = subprocess.run(["ssh", RUN_HOSTS[h], f"mkdir -p {rd}/cases && tar -C {rd}/cases -xf -"], stdin=src.stdout)
-            src.stdout.close()
-            if src.wait() or dst.returncode:
-                sys.exit(f"bs2: copying {len(names)} cases from {L} to {h} failed")
-        if js:
-            ssh(h, f"mkdir -p {rd} && cat > {rd}/queue.txt", input="".join(f"{t} {p}\n" for _, t, p in js))
-    sweep = {}
-    for s in sources:
-        sweep.setdefault(lead[s], []).append(
-            root(f"{HOST_BS2} tier0 {s} {n * SWEEP} --run {run}-t0 --keep-passes 50", tag=f"bs2:{run}:tier0"))
-    log = f"{ROOT}/logs/{run}.log"
-    for h in use:
-        js = parts.get(h, [])
-        # (A sweep that fails is in the log; the host's cases run regardless.)
-        c = [f"{{ {x}; }}" for x in sweep.get(h, [])]
-        if sweep.get(h):
-            c.append(f"sudo chown -R m: {rd}-t0")
-        if js:
-            c.append(f"{reuse_env()}{HOST_BS2} queue {run} --slots {slots(h)}")
-        if not c:
-            continue
-        ssh(h, f"setsid -f bash -c {json.dumps('; '.join(c))} > {log} 2>&1 < /dev/null")
-        what = ", ".join(f"{s} {sum(1 for x in js if x[0] == s)}" for s in sources if any(x[0] == s for x in js))
-        print(f"{h}: started {len(js)} cases on {slots(h)} slots ({what or 'none'})"
-              f"{', after the tier 0 sweep of ' + ', '.join(s for s in sources if lead[s] == h) if sweep.get(h) else ''}"
-              f" (log {log})")
+    can = {s: [h for h in hs if h in use] for s, hs in can.items()}
+    print(f"preparing, drawing and starting each host as its cases are drawn: "
+          f"{'; '.join(f'{h} {len(parts.get(h, []))} cases' for h in use)}")
+    why = start_hosts(sources, n, run, can, lead, {h: parts.get(h, []) for h in use})
+    if why:
+        sys.exit(f"bs2: run {run}: not started on {len(why)} of {len(use)} hosts"
+                 f"{f' (the others run: bs2 status {run})' if len(why) < len(use) else ''}:\n  " +
+                 "\n  ".join(f"{h} ({len(parts.get(h, []))} cases): {w}" for h, w in sorted(why.items(), key=lambda x: use.index(x[0]))))
     print(f"run {run}: bs2 status {run}")
 
 

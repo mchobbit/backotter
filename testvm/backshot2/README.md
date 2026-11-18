@@ -35,10 +35,23 @@ RUN` adds each host's rows up.  `plan` prints each host's share and hours.
 
 Before the cases are drawn, bs2 checks each host (the rescuers and their
 keys, ht1.sh's debs, rustic-bko, and `/bkoscratch/backshot2/bin/` alike on
-every host; it stops, naming what is missing) and has each prepare the
-sources it holds (`bs2-host source`, as root under `cmp-run.sh --reserve 2
-3`, port 2949; nothing to do when ready).  A host whose generation of a
-source differs from the lead's stops the run.
+every host; it stops, naming what is missing).  Then each host goes on by
+itself (`start_hosts()`): it prepares the sources it holds (`bs2-host
+source`, as root under `cmp-run.sh --reserve 2 3`, port 2949; nothing to do
+when ready); a lead draws its sources' cases; and the host starts its queue
+as soon as the cases it will run are drawn and copied to it, not once every
+lead has drawn every source's.  Its share is the split of the planned cases
+(what `plan` prints), each filled with the drawn case of its place in its
+list: the same split as when the run split the drawn cases after the last
+draw.  The leads draw, and run their tier 0 sweeps, as root outside the
+reservations (`light()`, still in a scope with its wear-log line): tier 0
+is planning, no VM, and uses one CPU, 50-150 MB and a few sparse scratch
+files in RAM (the wear log, 2026-11-17/18); under a `--reserve 2 2` on
+2026-11-18, chopin's draws waited ~1h45m behind other jobs for room they
+never used, and every queue with them.  A host whose generation of a source
+differs from the lead's, or that anything else fails for (its preparing, a
+lead's preparing or drawing, the copy), isn't started; the others run, and
+bs2 exits 1 naming it and why.
 
 Ports 2943-2949 on each host: the queue's slots 2943-2948 (at most 6), a
 source's preparing and a tier 1 by hand 2949.

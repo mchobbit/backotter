@@ -559,7 +559,10 @@ exit $f'
 # Slackware's BSD-style rc with its runlevel), then for Slackware each rc
 # script that is executable (on) whose daemon isn't running,
 # then one line per failed unit or service that isn't up, sorted.  A
-# restored machine may have no line its source lacked.
+# restored machine may have no line its source lacked.  Under s6 the boot's
+# s6-rc change may still be running when SSH answers (sshd is a longrun,
+# up before the oneshots behind it, e.g. Artix's mount-net): wait for it to
+# end first, as systemd's is-system-running --wait does (up to 300 s).
 BOOTSTATE='if [ -d /run/systemd/system ]; then
     timeout 300 systemctl is-system-running --wait; systemctl --failed --no-legend --plain | awk "{print \$1}" | sort
 elif command -v rc-status >/dev/null; then
@@ -571,6 +574,7 @@ elif command -v dinitctl >/dev/null; then
     dinitctl list | awk "!/^\\[[^]]*\\+[^]]*\\]/ {sub(/^\\[[^]]*\\] */, \"\"); print \"down \" \$1}" | sort
 elif command -v s6-rc >/dev/null; then
     echo s6
+    i=0; while [ $i -lt 300 ] && grep -qsx s6-rc /proc/[0-9]*/comm; do sleep 1; i=$((i + 1)); done; [ $i = 0 ] || echo "bootstate: waited ${i} s for s6-rc" >&2
     s6-rc -da list | sed "s/^/down /" | sort
 elif command -v herd >/dev/null; then
     # Guix System: herd status lists its services under Started:, Stopped:

@@ -1,4 +1,10 @@
 {
+ "ghostbsd26-zfs": {
+  "after:shadow": {
+   "lines": ["/tmp is shadowed by a later mount on /tmp"],
+   "why": "GhostBSD's own installer does it on every ZFS install: pc-sysinstall's setup_fstab (backend/functions-cleanup.sh) always appends 'tmpfs /tmp tmpfs rw,mode=1777' to fstab, and Install Station's zfs_datasets (install_station/data.py, make-ghostbsd.sh's ZFS_DATASETS) has a zroot/tmp dataset at /tmp, which the zfs rc script mounts over fstab's tmpfs at every boot; harmless, the tmpfs under it stays empty, and the UFS guest has the tmpfs alone (GuestTest2 t2v-20261117T1944-5b0f, the before and after hooks on Cage, 2026-11-17)"
+  }
+ },
  "kinoite44": {
   "image:free": {
    "lines": ["/ is at least 90% full"],
@@ -15,6 +21,12 @@
   "after:fstab": {
    "lines": ["findmnt --verify failed", "findmnt: [E] wrong order: /var/home specified before /var"],
    "why": "Anaconda's ostree fstab lists /home (a link to var/home) before /var; findmnt resolves the link, systemd orders the mounts itself, and HoltTest1 sees the same on source and restore (bazzite.md, What B6 found)"
+  }
+ },
+ "microos": {
+  "image:free": {
+   "lines": ["/boot/efi has under 200 MiB free"],
+   "why": "openSUSE's MicroOS VM image (make-opensuse.sh microos) has a 20 MiB ESP, 16 MiB free, holding only shim and GRUB: GRUB loads the kernel and initrd from the btrfs root's /boot inside the snapshot (grub.cfg's linux /boot/vmlinuz-*), so a kernel update never writes to the ESP and the 200 MiB floor for kernel-holding ESPs doesn't apply; image:free's 90% full line still guards it (GuestTest2 t2v-20261117T1944-5b0f, the before hook on Chopin, 2026-11-17)"
   }
  },
  "omnios58": {

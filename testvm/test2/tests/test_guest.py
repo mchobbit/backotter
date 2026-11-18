@@ -119,7 +119,8 @@ class Spec(unittest.TestCase):
         from t2lib import guest_judge as J
         with open(os.path.join(REPO, "testvm/test2/guest/limits.json"), encoding="utf-8") as f:
             d = json.load(f)
-        self.assertEqual(sorted(d), ["kinoite44", "omnios58", "omnios58-mirror", "pikaos4", "pikaos4-luks", "vanilla3"])
+        self.assertEqual(sorted(d), ["ghostbsd26-zfs", "kinoite44", "microos", "omnios58", "omnios58-mirror", "pikaos4", "pikaos4-luks",
+                                     "vanilla3"])
         self.assertEqual(sorted(d["kinoite44"]), ["after:boot-state", "after:failed-units", "after:fstab", "image:free"])
         # PikaOS (pikaos.md): its one apt suite, pika, is rolling (sid's), with no -security suite
         for g in ("pikaos4", "pikaos4-luks"):
@@ -134,6 +135,12 @@ class Spec(unittest.TestCase):
         for g in ("omnios58", "omnios58-mirror"):
             self.assertEqual(sorted(d[g]), ["after:boot-state"])
             self.assertEqual(d[g]["after:boot-state"]["lines"], [f"down svc:/system/cloud-init:{s}" for s in ("final", "init", "modules")])
+        # GhostBSD (pc-sysinstall's setup_fstab): fstab's tmpfs /tmp under Install Station's zroot/tmp
+        self.assertEqual(sorted(d["ghostbsd26-zfs"]), ["after:shadow"])
+        self.assertEqual(d["ghostbsd26-zfs"]["after:shadow"]["lines"], ["/tmp is shadowed by a later mount on /tmp"])
+        # MicroOS (openSUSE's VM image): a 20 MiB ESP holding only shim and GRUB, kernels on btrfs
+        self.assertEqual(sorted(d["microos"]), ["image:free"])
+        self.assertEqual(d["microos"]["image:free"]["lines"], ["/boot/efi has under 200 MiB free"])
         for g in d:
             for n, e in d[g].items():
                 self.assertIn(n, J.IMAGE_NEEDS + J.AFTER_NEEDS)

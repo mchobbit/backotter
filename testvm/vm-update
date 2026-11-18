@@ -94,9 +94,9 @@ update (NetBSD: a release's base sets) is reported and left alone.
                 base system from source: about 25 min with 8 and --memory
                 6144, the whole update)
   --memory MB   the VM's RAM instead of vm-run's 2048
-  --out DIR     update.log, serial.log, result.json, the two listings, the
-                steps and the hooks' outputs go in DIR (DIR/GUEST with several
-                guests); the guest's own
+  --out DIR     update.log, serial.log, journal.log, result.json, the two
+                listings, the steps and the hooks' outputs go in DIR (DIR/GUEST
+                with several guests); the guest's own
                 update.log gets one line saying so.  Without it, result.json
                 goes in vms/GUEST/.vm-update-last/
   --hook before=FILE, --hook after=FILE
@@ -164,8 +164,12 @@ not a link), and neither they, --finish, --reproject nor --probe
 --write-fingerprint run on the real tree with T2_HOST_ROOT or T2_WORK pointing
 elsewhere: a test's world has a tree of its own.
 
-Logs: vms/GUEST/update.log (what ran, with the guest's output) and
-vms/GUEST/update-serial.log (the serial console), or --out's.  Stopping
+Logs: vms/GUEST/update.log (what ran, with the guest's output),
+vms/GUEST/update-serial.log (the serial console) and, on a guest whose PID 1
+is systemd, vms/GUEST/update-journal.log (its journal's warnings and worse
+since the run's first boot, read just before the power-off, or when the run
+fails with the guest still answering), or --out's update.log, serial.log and
+journal.log.  Stopping
 vm-update (Ctrl-C, or a hangup or TERM) stops its VMs and deletes their
 overlays, changing nothing; merges already under way finish first.
 """
@@ -442,9 +446,11 @@ class Guest:
                 shared.write(f"{time.strftime('%F %T')} this run's log is {out}/update.log\n")
             self.log = open(out / "update.log", "a", encoding="utf-8")
             self.serial_path = out / "serial.log"
+            self.journal_path = out / "journal.log"
         else:
             self.log = open(self.dir / "update.log", "a", encoding="utf-8")
             self.serial_path = self.dir / "update-serial.log"
+            self.journal_path = self.dir / "update-journal.log"
         # One vm-update at a time per guest; held until this process exits.
         self.lock = open(self.dir / ".vm-update.lock", "a")
         try:
@@ -518,6 +524,42 @@ POWEROFF = SBIN + """case $(uname) in
              halt -p ;;
     *) if command -v apk >/dev/null; then /sbin/poweroff; else shutdown -p now; fi ;;
 esac"""
+
+# GuestTest2's log sweep reads a systemd guest's journal in place of its serial
+# console, whose boot status lines and kernel chatter differ run to run.
+# JOURNAL_SINCE, at the first boot's SSH: when systemd is PID 1 and journalctl
+# is there, that boot's start in seconds since the epoch on the guest's clock
+# (/proc/stat's btime), else nothing.  Every entry of this run's boots is at or
+# after it, and every entry the image brought (its builder's boots, an earlier
+# update's) is long before it.  (A clock QEMU set from the host's: no step.)
+JOURNAL_SINCE = SBIN + r"""if [ "$(cat /proc/1/comm 2>/dev/null)" = systemd ] && command -v journalctl >/dev/null 2>&1; then
+    while read -r k v _; do if [ "$k" = btime ]; then echo "$v"; fi; done </proc/stat
+fi"""
+# At most this many lines of it, the newest (the sweep reads 20000).
+JOURNAL_LINES = 50000
+JOURNAL_TIMEOUT = 120
+JOURNAL_RC = re.compile(r"^journalctl-rc=(\d+)$", re.M)
+
+
+def journal_script(since: int) -> str:
+    """The journal's warnings and worse (-p warning: kernel and services, as the console showed
+    them) of every boot from SINCE on.  short-iso, UTC: "TIME IDENT[PID]: MESSAGE" once
+    normalized (no locale's month names, no hostname, the PID a number), one line an entry and a
+    multi-line message's other lines indented; --quiet leaves out "-- Boot ID --" and "-- No
+    entries --".  journalctl's exit status on stderr, as journalctl-rc=N: tail's is the pipe's."""
+    return SBIN + ("{ TZ=UTC journalctl --no-pager --quiet --no-hostname --output=short-iso --priority=warning"
+                   f" --since=@{int(since)}; echo \"journalctl-rc=$?\" >&2; }} | tail -n {JOURNAL_LINES}")
+
+
+def merge_journal(pre: str | None, final: str) -> str:
+    """The run's journal: FINAL, read at the end, and PRE, read the same way just before the
+    update's reboot.  FINAL alone when it still has PRE's first line (a persistent journal,
+    /var/log/journal); else PRE, then FINAL (a volatile one, /run/log/journal, which the reboot
+    emptied: Ubuntu Core's).  Lines in both twice do no harm: the sweep reads a set."""
+    first = next((l for l in (pre or "").splitlines() if l.strip()), None)
+    if first is None or first in final.splitlines():
+        return final
+    return pre.rstrip("\n") + "\n" + final
 
 
 memory_lock = threading.Lock()
@@ -776,7 +818,12 @@ class VM:
         g.note(f"boot: SSH_PORT={self.port} RAM_DIR={self.ram_dir} {shlex.join(cmd)}")
         self.stderr: list[str] = []
         self.proc = self.stderr_thread = None
+        # journal_start's: the first boot's start, on a systemd guest; the journal read before the reboot
+        self.journal_since: int | None = None
+        self.journal_pre: str | None = None
+        self.journal_saved = False
         try:
+            g.journal_path.unlink(missing_ok=True)     # an earlier run's: never this one's
             self.serial = open(g.serial_path, "wb")
             self.proc = subprocess.Popen(cmd, cwd=g.dir,
                                          env=dict(os.environ, SSH_PORT=str(self.port), RAM_DIR=self.ram_dir),
@@ -1020,8 +1067,54 @@ class VM:
             time.sleep(2 if not down else 5)
         raise Failed(f"no SSH as {self.g.user} within {SSH_UP_TIMEOUT} s; see {self.g.serial_path}")
 
+    def journal_start(self) -> None:
+        """At the first boot's SSH: on a guest whose PID 1 is systemd, where its journal for this
+        run begins (JOURNAL_SINCE).  Asked as the hooks are (ssh_checked): an ssh that fails
+        twice fails the run, rather than a run swept from the serial console by mistake."""
+        r = self.ssh_checked(JOURNAL_SINCE, 30)
+        said = r.stdout.strip()
+        if r.returncode == 0 and said.isdigit():
+            self.journal_since = int(said)
+            self.g.note(f"journal: systemd is PID 1; this run's journal is from @{said} on")
+        elif said or r.returncode != 0:
+            self.g.note(f"journal: no start (exit status {r.returncode}, {said[:100]!r}): the serial console only")
+
+    def read_journal(self) -> str | None:
+        """journal_script's output, or None (no ssh, or journalctl failed: noted)."""
+        r = self.ssh(journal_script(self.journal_since), timeout=JOURNAL_TIMEOUT, log=False)
+        rc = [int(x) for x in JOURNAL_RC.findall(r.stderr)]
+        if r.returncode == 0 and rc == [0]:
+            return r.stdout
+        err = [l for l in r.stderr.strip().splitlines() if not JOURNAL_RC.match(l)][-2:]
+        self.g.note(f"journal: not read (ssh exit status {r.returncode}, journalctl's {rc[0] if rc else '?'})"
+                    + (f": {' | '.join(err)[:200]}" if err else ""))
+        return None
+
+    def journal_before_reboot(self) -> None:
+        """Before the update's reboot: the journal so far, for a volatile one the reboot empties."""
+        if self.journal_since is not None:
+            self.journal_pre = self.read_journal()
+
+    def save_journal(self) -> None:
+        """Write the run's journal (merge_journal) to the guest's journal_path: just before the
+        power-off, or on a failure with the guest still up.  Once; best effort, never a failure:
+        without it the sweep reads the serial console, as for a guest without systemd."""
+        if self.journal_since is None or self.journal_saved or (self.proc is not None and self.proc.poll() is not None):
+            return
+        self.journal_saved = True
+        try:
+            final = self.read_journal()
+            if final is None:
+                return
+            text = merge_journal(self.journal_pre, final)
+            self.g.journal_path.write_text(text, encoding="utf-8")
+            self.g.note(f"journal: {len(text.splitlines())} lines in {self.g.journal_path.name}")
+        except Exception as e:  # noqa: BLE001 - the journal is for the log sweep only
+            self.g.note(f"journal: not written: {type(e).__name__}: {e}")
+
     def poweroff(self) -> dict[str, str]:
         """Power the guest off; {image path: overlay holding its writes}."""
+        self.save_journal()
         deadline = time.monotonic() + POWEROFF_TIMEOUT
         while True:
             # Again if SSH lost the command (255) and the guest is still up.
@@ -2280,6 +2373,7 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
     try:
         say(name, f"booting (SSH port {vm.port})")
         vm.wait_ssh()
+        vm.journal_start()
         for spec in args.push or ():
             local, _, remote = spec.partition("=")
             res["phase"] = "push"
@@ -2314,6 +2408,7 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
             raise Failed("stopped")
         say(name, "rebooting")
         res["phase"] = "reboot"
+        vm.journal_before_reboot()
         up_before, t_before = vm.uptime(), time.monotonic()
         for attempt in range(5):
             if vm.ssh(REBOOT, timeout=30).returncode == 0:
@@ -2434,6 +2529,8 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
         g.log.write(traceback.format_exc())
         if vm.overrun:
             res["overrun"], res["overrun_why"] = True, vm.overrun
+        elif isinstance(e, Exception) and not stopping.is_set():
+            vm.save_journal()                  # a guest still up: its journal up to the failure
         keep = args.keep_failed and not isinstance(e, Blocked) and not stopping.is_set()
         res["kept_failed"] = keep
         raise

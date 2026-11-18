@@ -9,7 +9,8 @@
   "^Starting (?!.*\\b[Ff]ailed\\b)",
   "^Reached target ",
   "^TIME boot: SSH_PORT=N ",
-  "^TIME (merged on |image-state started on |vm-update( --\\S+)? on |merge rule: |hook \\S+: exit status N, sentinel )"
+  "^TIME (merged on |image-state started on |vm-update( --\\S+)? on |merge rule: |hook \\S+: exit status N, sentinel )",
+  "^TIME journal: (systemd is PID N; this run's journal is from @(N|HEX) on|(N|HEX) lines in \\S+)$"
  ],
  "apt": [
   "^(Get|Hit|Ign):N ",

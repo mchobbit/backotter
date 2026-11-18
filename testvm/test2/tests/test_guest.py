@@ -1267,6 +1267,71 @@ class Rows(unittest.TestCase):
             doc = json.load(f)
         self.assertEqual([x["line"] for x in doc["lines"]], ["new line N"])
 
+    def new_lines(self):
+        with open(os.path.join(self.out, "new-lines.json"), encoding="utf-8") as f:
+            return [(x["source"], x["line"]) for x in json.load(f)["lines"]]
+
+    def test_no_journal_sweeps_the_serial_console(self):
+        # a guest without systemd as PID 1 (or one that never answered again): as before
+        self.log("update.log", "Fetched 1 kB in 1s\nupdate says 1\n")
+        self.log("serial.log", "[    1.234567] console says 1\n")
+        self.result()
+        self.baseline([])
+        self.assertEqual(self.build()["needs"]["logs"], "DIFF")
+        self.assertEqual(self.new_lines(), [("serial", "console says N"), ("update", "update says N")])
+
+    def test_a_journal_stands_in_for_the_serial_console(self):
+        self.log("update.log", "update says 1\n")
+        self.log("serial.log", "[    1.234567] console says 1\n")
+        self.log("journal.log", "2026-11-18T10:00:01+00:00 kernel: journal says 1\n"
+                                "2026-11-18T10:00:02+0000 systemd[1]: unit says 2\n")
+        self.result()
+        self.baseline([])
+        self.build()
+        self.assertEqual(self.new_lines(), [("journal", "TIME kernel: journal says N"), ("journal", "TIME systemd[N]: unit says N"),
+                                            ("update", "update says N")])
+
+    def test_an_empty_journal_still_leaves_the_serial_console_out(self):
+        # a clean boot: no warnings at all
+        self.log("update.log", "Fetched 1 kB in 1s\n")
+        self.log("serial.log", "[    1.234567] console says 1\n")
+        self.log("journal.log", "")
+        self.result()
+        self.baseline([])
+        self.assertEqual(self.build()["needs"]["logs"], "PASS")
+        self.assertEqual(self.new_lines(), [])
+
+    def test_journal_lines_take_the_baseline_and_the_known_lines(self):
+        # baselines are a guest's whatever the source: a serial line accepted before stays accepted
+        self.log("update.log", "Fetched 1 kB in 1s\n")
+        self.log("journal.log", "2026-11-18T10:00:01+00:00 kernel: accepted 1\nReached target Multi-User System.\n")
+        self.result()
+        self.baseline(["TIME kernel: accepted N", "a serial line accepted before"])
+        self.assertEqual(self.build()["needs"]["logs"], "PASS")
+
+    def test_vm_updates_journal_notes_are_known(self):
+        self.log("update.log", "2026-11-18 10:00:00 journal: systemd is PID 1; this run's journal is from @1763450000 on\n"
+                               "2026-11-18 10:09:00 journal: 123456 lines in journal.log\n"
+                               "2026-11-18 10:09:00 journal: not read (ssh exit status 255, journalctl's ?)\n")
+        self.result()
+        self.baseline([])
+        self.build()
+        self.assertEqual(self.new_lines(), [("update", "TIME journal: not read (ssh exit status N, journalctl's ?)")])
+
+    def test_sweep_logs(self):
+        self.assertEqual(rows_guest.sweep_logs(self.out), [("update", "update.log"), ("serial", "serial.log")])
+        self.log("journal.log", "")
+        self.assertEqual(rows_guest.sweep_logs(self.out), [("update", "update.log"), ("journal", "journal.log")])
+
+    def test_seen_before_from_older_journal(self):
+        self.log("journal.log", "2026-11-18T10:00:01+00:00 kernel: new line 1\n")
+        with open(os.path.join(self.work, "vms", "debian12", "update-journal.log"), "w", encoding="utf-8") as f:
+            f.write("2026-11-17T09:00:00+00:00 kernel: new line 7\n")
+        self.result()
+        self.build()
+        with open(os.path.join(self.out, "new-lines.json"), encoding="utf-8") as f:
+            self.assertTrue(json.load(f)["lines"][0]["seen_before"])
+
     def test_seen_before_from_older_logs(self):
         self.log("update.log", "new line 1\n")
         with open(os.path.join(self.work, "vms", "debian12", "update.log"), "w", encoding="utf-8") as f:

@@ -381,8 +381,8 @@ def tree_mib(path):
     return n / (1 << 20)
 
 
-LOG_NAMES = ("update.log", "serial.log", "result.json", "steps.txt", "pkgset-before.txt", "pkgset-after.txt", "new-lines.json",
-             "row-summary.json")
+LOG_NAMES = ("update.log", "serial.log", "journal.log", "result.json", "steps.txt", "pkgset-before.txt", "pkgset-after.txt",
+             "new-lines.json", "row-summary.json")
 
 
 def failed_state(guest, run, attempt, out, hroot, flakes=(), cap_mib=OVERLAY_CAP_DEFAULT, after_row=False, say=print):

@@ -1331,6 +1331,7 @@ class FakeGuest:
         self.notes, self.log = [], io.StringIO()
         self.log.name = "update.log"
         self.serial_path = self.dir / "serial.log"
+        self.journal_path = self.dir / "journal.log"
 
     def note(self, m):
         self.notes.append(m)
@@ -2095,6 +2096,182 @@ class TestSshChecked(unittest.TestCase):
                 self.vm(255, 0).ssh_checked("x", 5)
 
 
+class TestJournal(TempDir):
+    """GuestTest2's log sweep reads a systemd guest's journal.log in place of its serial.log: where
+    it begins (JOURNAL_SINCE), how it is read (journal_script) and kept (save_journal)."""
+
+    def vm(self, *answers, alive=True):
+        """A VM whose ssh gives ANSWERS (rc, stdout, stderr) in turn."""
+        v = VU.VM.__new__(VU.VM)
+        v.g = FakeGuest(d=self.tmp)
+        v.journal_since, v.journal_pre, v.journal_saved = None, None, False
+        v.proc = types.SimpleNamespace(poll=lambda: None if alive else 0)
+        seq, v.calls = list(answers), []
+
+        def ssh(script, timeout, log=True):
+            v.calls.append(script)
+            rc, out, err = seq.pop(0)
+            return subprocess.CompletedProcess([], rc, out, err)
+        v.ssh = ssh
+        return v
+
+    def sh(self, script, path_dir):
+        return subprocess.run(["sh", "-c", script], capture_output=True, text=True,
+                              env=dict(os.environ, PATH=f"{path_dir}:{os.environ['PATH']}"))
+
+    def fake_proc(self, comm):
+        proc = self.tmp / "proc"
+        (proc / "1").mkdir(parents=True)
+        (proc / "1" / "comm").write_text(comm + "\n")
+        (proc / "stat").write_text("cpu  1 2 3\nbtime 1763450000\nprocesses 99\n")
+        return VU.JOURNAL_SINCE.replace("/proc/", f"{proc}/")
+
+    def stub(self, name, body):
+        bin_ = self.tmp / "bin"
+        bin_.mkdir(exist_ok=True)
+        f = bin_ / name
+        f.write_text("#!/bin/sh\n" + body)
+        f.chmod(0o755)
+        return bin_
+
+    def test_since_is_the_boot_of_a_systemd_guest(self):
+        script = self.fake_proc("systemd")
+        r = self.sh(script, self.stub("journalctl", "exit 0\n"))
+        self.assertEqual((r.returncode, r.stdout), (0, "1763450000\n"))
+
+    def test_no_since_without_systemd_as_pid_1(self):
+        for comm in ("init", "runit", "openrc-init", "dinit", "shepherd"):
+            with self.subTest(comm=comm):
+                shutil.rmtree(self.tmp / "proc", ignore_errors=True)
+                script = self.fake_proc(comm)
+                r = self.sh(script, self.stub("journalctl", "exit 0\n"))
+                self.assertEqual((r.returncode, r.stdout), (0, ""))
+
+    def test_no_since_without_journalctl(self):
+        script = self.fake_proc("systemd")
+        r = subprocess.run(["sh", "-c", script.replace("command -v journalctl", "command -v journalctl-not-here")],
+                           capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+
+    def test_no_proc_at_all_says_nothing(self):
+        # a BSD, illumos, Haiku: no /proc/1/comm
+        r = self.sh(VU.JOURNAL_SINCE.replace("/proc/", f"{self.tmp}/no-proc/"), self.stub("journalctl", "exit 0\n"))
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+
+    def test_the_journal_command(self):
+        s = VU.journal_script(1763450000)
+        for want in ("journalctl --no-pager --quiet --no-hostname --output=short-iso --priority=warning --since=@1763450000",
+                     "TZ=UTC", f"| tail -n {VU.JOURNAL_LINES}"):
+            self.assertIn(want, s)
+
+    def test_the_journal_command_runs(self):
+        bin_ = self.stub("journalctl", 'echo "2026-11-18T10:00:00+00:00 kernel: args $*"\necho "x: two"\nexit 0\n')
+        r = self.sh(VU.journal_script(5), bin_)
+        self.assertEqual(r.stdout.splitlines()[0],
+                         "2026-11-18T10:00:00+00:00 kernel: args --no-pager --quiet --no-hostname --output=short-iso"
+                         " --priority=warning --since=@5")
+        self.assertEqual(VU.JOURNAL_RC.findall(r.stderr), ["0"])
+
+    def test_journalctls_failure_is_on_stderr(self):
+        bin_ = self.stub("journalctl", 'echo "journalctl: unrecognized option" >&2\nexit 1\n')
+        r = self.sh(VU.journal_script(5), bin_)
+        self.assertEqual(r.returncode, 0)                  # tail's
+        self.assertEqual(VU.JOURNAL_RC.findall(r.stderr), ["1"])
+
+    def test_journal_start(self):
+        v = self.vm((0, "1763450000\n", ""))
+        v.journal_start()
+        self.assertEqual(v.journal_since, 1763450000)
+        self.assertEqual(v.calls, [VU.JOURNAL_SINCE])
+
+    def test_journal_start_without_systemd(self):
+        v = self.vm((0, "", ""))
+        v.journal_start()
+        self.assertIsNone(v.journal_since)
+        self.assertEqual(v.g.notes, [])
+
+    def test_journal_start_that_ssh_lost_twice_fails_the_run(self):
+        v = self.vm((255, "", ""), (255, "", ""))
+        with mock.patch.object(VU.stopping, "wait", lambda t: False), self.assertRaisesRegex(VU.Failed, "failed twice"):
+            v.journal_start()
+
+    def test_save(self):
+        v = self.vm((0, "2026-11-18T10:00:00+00:00 kernel: a\n", "journalctl-rc=0\n"))
+        v.journal_since = 7
+        v.save_journal()
+        self.assertEqual((self.tmp / "journal.log").read_text(), "2026-11-18T10:00:00+00:00 kernel: a\n")
+        self.assertIn("--since=@7", v.calls[0])
+        v.save_journal()                                   # once
+        self.assertEqual(len(v.calls), 1)
+
+    def test_an_empty_journal_is_still_written(self):
+        v = self.vm((0, "", "journalctl-rc=0\n"))
+        v.journal_since = 7
+        v.save_journal()
+        self.assertEqual((self.tmp / "journal.log").read_text(), "")
+
+    def test_no_save_without_systemd(self):
+        v = self.vm()
+        v.save_journal()
+        self.assertEqual(v.calls, [])
+        self.assertFalse((self.tmp / "journal.log").exists())
+
+    def test_no_save_once_the_vm_stopped(self):
+        v = self.vm(alive=False)
+        v.journal_since = 7
+        v.save_journal()
+        self.assertEqual(v.calls, [])
+        self.assertFalse((self.tmp / "journal.log").exists())
+
+    def test_no_file_when_journalctl_or_ssh_failed(self):
+        for ans in ((0, "", "journalctl-rc=1\nNo journal files were found.\n"), (255, "", ""), (124, "", "timed out"), (0, "x\n", "")):
+            with self.subTest(ans=ans):
+                v = self.vm(ans)
+                v.journal_since = 7
+                v.save_journal()
+                self.assertFalse((self.tmp / "journal.log").exists())
+                self.assertTrue(v.g.notes[-1].startswith("journal: not read"), v.g.notes)
+
+    def test_a_write_that_fails_is_only_noted(self):
+        v = self.vm((0, "a\n", "journalctl-rc=0\n"))
+        v.journal_since = 7
+        v.g.journal_path = self.tmp / "no-such-dir" / "journal.log"
+        v.save_journal()
+        self.assertTrue(v.g.notes[-1].startswith("journal: not written"), v.g.notes)
+
+    def test_volatile_journal_keeps_the_part_before_the_reboot(self):
+        v = self.vm((0, "T kernel: first boot\n", "journalctl-rc=0\n"), (0, "T kernel: second boot\n", "journalctl-rc=0\n"))
+        v.journal_since = 7
+        v.journal_before_reboot()
+        v.save_journal()
+        self.assertEqual((self.tmp / "journal.log").read_text(), "T kernel: first boot\nT kernel: second boot\n")
+
+    def test_before_reboot_does_nothing_without_systemd(self):
+        v = self.vm()
+        v.journal_before_reboot()
+        self.assertEqual((v.calls, v.journal_pre), ([], None))
+
+    def test_merge(self):
+        self.assertEqual(VU.merge_journal(None, "b\n"), "b\n")
+        self.assertEqual(VU.merge_journal("", "b\n"), "b\n")
+        self.assertEqual(VU.merge_journal("a\n", "a\nb\n"), "a\nb\n")        # persistent: it's all there
+        self.assertEqual(VU.merge_journal("a\n", "b\n"), "a\nb\n")           # volatile: the reboot emptied it
+        self.assertEqual(VU.merge_journal("a", ""), "a\n")
+
+    def test_poweroff_saves_it_first(self):
+        v = self.vm()
+        order = []
+        v.save_journal = lambda: order.append("journal")
+
+        def ssh(script, timeout, log=True):
+            order.append("poweroff")
+            raise RuntimeError("enough")
+        v.ssh = ssh
+        with self.assertRaises(RuntimeError):
+            v.poweroff()
+        self.assertEqual(order, ["journal", "poweroff"])
+
+
 class TestSnapcoreSettle(unittest.TestCase):
     """Ubuntu Core (ubuntu-core.md U4): after in-guest.sh's "restart pending", vm-update's reboot
     completes snapd's change; snapcore_settle reboots while one waits for a restart, waits out
@@ -2551,6 +2728,15 @@ class FakeVM:
     def type_passphrase(self):
         pass
 
+    def journal_start(self):
+        self.calls.append("journal-start")
+
+    def journal_before_reboot(self):
+        self.calls.append("journal-pre")
+
+    def save_journal(self):
+        self.calls.append("journal-save")
+
     def listing(self):
         self.calls.append("pkgset")
         return self.queue.pop(0)
@@ -2564,6 +2750,7 @@ class FakeVM:
         return json.dumps(dump_of("debian12")).encode(), ""
 
     def poweroff(self):
+        self.save_journal()                    # as VM.poweroff
         self.calls.append("poweroff")
         return {self.g.path(self.g.images[0]): str(Path(self.ram_dir) / "o")}
 
@@ -2639,8 +2826,11 @@ class TestFlow(World):
     def test_real_order(self):
         msg, res = self.run_update(hook=self.hook_files(before="before", after="after"), merge_gate="exit 0")
         c = self.calls()
-        self.assertEqual([x for x in c if x not in ("uname", "ssh", "reboot-up", "up")],
+        self.assertEqual([x for x in c if x not in ("uname", "ssh", "reboot-up", "up") and not x.startswith("journal-")],
                          ["hook", "pkgset", "in-guest", "hook", "pkgset", "dump", "trim", "poweroff", "host-mount", "ship"])
+        # the journal: from the first boot's SSH, read before the reboot and just before the power-off
+        self.assertEqual([x for x in c if x in ("up", "reboot-up", "poweroff") or x.startswith("journal-")],
+                         ["up", "journal-start", "journal-pre", "reboot-up", "journal-save", "poweroff"])
         self.assertEqual(res["phase"], "done")
         self.assertEqual(res["rc"], 0)
         self.assertTrue(res["merged"])
@@ -2800,6 +2990,36 @@ class TestFlow(World):
         e, res = self.fails(VU.Failed, try_=True)
         self.assertFalse(FakeVM.last.kept)
         self.assertFalse(res["kept_failed"])
+
+    def test_a_failure_saves_the_journal_while_the_guest_is_up(self):
+        FakeVM.fail_in = 1
+        self.fails(VU.Failed, try_=True)
+        c = self.calls()
+        self.assertEqual(c[-1], "journal-save")
+        self.assertNotIn("poweroff", c)
+
+    def test_a_stop_reads_no_journal(self):
+        class Stopped(FakeVM):
+            def ssh(self, script, timeout, log=True):
+                if "t2-section: prologue" in script:
+                    VU.stopping.set()
+                    return subprocess.CompletedProcess([], 255, "", "")
+                return FakeVM.ssh(self, script, timeout, log)
+        self.addCleanup(VU.stopping.clear)
+        with mock.patch.object(VU, "VM", Stopped):
+            self.fails(VU.Failed, try_=True)
+        self.assertNotIn("journal-save", self.calls())
+
+    def test_a_probe_saves_the_journal_too(self):
+        self.run_update(probe=True)
+        self.assertEqual([x for x in self.calls() if x.startswith("journal-") or x == "poweroff"],
+                         ["journal-start", "journal-save", "poweroff"])
+
+    def test_nothing_to_update_saves_the_journal_too(self):
+        FakeVM.fail_in = 3
+        self.run_update()
+        self.assertEqual([x for x in self.calls() if x.startswith("journal-") or x == "poweroff"],
+                         ["journal-start", "journal-save", "poweroff"])
 
     def test_a_stop_during_the_update_is_a_stop(self):
         class Stopped(FakeVM):

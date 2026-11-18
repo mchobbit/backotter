@@ -7,7 +7,7 @@ guest/job.sh runs, as its job ends:
         --rc N --cells CELLS
 
 and t2-host calls build(argv, hostctx), appends the row and prints its id.  build() reads DIR's
-records (result.json, hook-*.out, update.log, serial.log), the cell's entry in CELLS (rule,
+records (result.json, hook-*.out, update.log, and journal.log or else serial.log), the cell's entry in CELLS (rule,
 reasons, planned key, what attempt it is), the spec and guest/limits.json of the tree it runs
 from, HOST_ROOT/runs/RUN/baselines/G.json, and the cell's inputs (keys.measure).  It writes in
 DIR: new-lines.json, steps.txt, pkgset files are vm-update's, and row-summary.json, which the
@@ -143,7 +143,7 @@ def hook_status(result, name):
 def older_logs(work, guest):
     """This guest's earlier logs on this host, for the seen_before tag."""
     d = os.path.join(work, "vms", guest)
-    return [t for t in (_read(os.path.join(d, n), 16 << 20) for n in ("update.log", "update-serial.log")) if t]
+    return [t for t in (_read(os.path.join(d, n), 16 << 20) for n in ("update.log", "update-serial.log", "update-journal.log")) if t]
 
 
 def baseline_of(host_root, run, guest, builder=None):
@@ -308,14 +308,27 @@ def judge_job(guest, mode, result, out, entry, policy, classed, updates, rc, sto
     return needs, details, harness_why, hook_failed
 
 
-SWEEP_READ_MAX = 32 << 20   # the tail of update.log and serial.log the sweep reads
+SWEEP_READ_MAX = 32 << 20   # the tail of each log the sweep reads
+JOURNAL = "journal.log"
+
+
+def sweep_logs(out):
+    """[(source name, file in OUT)] the sweep reads.  The source names new-lines.json's lines
+    (t2 guest-lines shows it); baselines and known-lines.json's patterns are a guest's whatever
+    the source.  A systemd guest's journal.log (vm-update: its journal's warnings and worse since
+    the run's first boot) stands in for its serial console, whose boot status lines and kernel
+    chatter differ run to run; with none (no systemd as PID 1, or a guest that never answered
+    again to have it read) the serial console, as before.  Empty, it's still the guest's journal."""
+    if os.path.isfile(os.path.join(out, JOURNAL)):
+        return [("update", "update.log"), ("journal", JOURNAL)]
+    return [("update", "update.log"), ("serial", "serial.log")]
 
 
 def sweep(out, guest, entry, baseline, known, older):
     """(new-line records, logs value, why it's a SKIP or None, a note or None)."""
     pm = (entry.get("checks") or {}).get("pm")
     sources, big = {}, set()
-    for name, f in (("update", "update.log"), ("serial", "serial.log")):
+    for name, f in sweep_logs(out):
         p = os.path.join(out, f)
         t = _read(p, SWEEP_READ_MAX)
         if t:

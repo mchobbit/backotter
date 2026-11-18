@@ -295,6 +295,46 @@ class TestInGuest(unittest.TestCase):
         self.assertIn("fetched pacman -Sy --noconfirm || exit 1", pac)
         self.assertIn("fetched pacman -S --noconfirm --needed $up; } && fetched pacman -Su --noconfirm", pac)
 
+    def test_apt_batches_take_dependencies_first(self):
+        """apt's batches go dependencies first (libpcre2-8-0 before libglib2.0-0t64: pikaos4,
+        2026-11-18): each package once, alternatives and arch-qualified names count, virtual
+        ones and packages not upgraded don't, a cycle is cut, an unlisted package keeps its place."""
+        apt = self.sections()["Linux.apt"]
+        m = re.search(r"^( *)deps_first\(\) \{\n.*?^\1\}\n", apt, re.M | re.S)
+        self.assertIsNotNone(m)
+        self.assertIn('order=$(deps_first "$@"); [ -z "$order" ] || set -- $order', apt)
+        listing = textwrap.dedent("""\
+            bash
+              PreDepends: libc6
+              PreDepends: libtinfo6
+            libglib2.0-0t64
+              Depends: libc6
+              Depends: libpcre2-8-0
+             |Depends: <libffi-virt>
+              Depends: libffi8:any
+            libgcc-s1:i386
+              Depends: gcc-16-base:i386
+            <mailx>
+            cyc-a
+              Depends: cyc-b
+            cyc-b
+              Depends: cyc-a
+            libpcre2-8-0
+              Depends: libc6
+            """)
+        pkgs = ["bash", "libglib2.0-0t64", "unlisted", "libgcc-s1", "cyc-a", "cyc-b",
+                "libpcre2-8-0", "libffi8", "gcc-16-base", "libgcc-s1"]
+        with tempfile.TemporaryDirectory() as d:
+            stub = Path(d, "apt-cache")
+            stub.write_text(f"#!/bin/sh\ncat <<'EOF'\n{listing}EOF\n")
+            stub.chmod(0o755)
+            script = textwrap.dedent(m[0]) + 'deps_first "$@"; echo "rc=$?"; deps_first; echo "rc=$?"\n'
+            env = dict(os.environ, PATH=f"{d}:{os.environ['PATH']}")
+            r = subprocess.run(["sh", "-c", script, "sh", *pkgs], capture_output=True, text=True, env=env)
+        self.assertEqual(r.stdout.split(), [
+            "bash", "libpcre2-8-0", "libffi8", "libglib2.0-0t64", "unlisted", "gcc-16-base",
+            "libgcc-s1", "cyc-b", "cyc-a", "rc=0", "rc=0"], r.stderr)
+
     def test_emerge_sync_is_tried_again(self):
         sec = self.sections()["Linux.portage"]
         self.assertIn("until emerge --sync -q $o; do", sec)

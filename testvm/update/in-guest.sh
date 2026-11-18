@@ -627,6 +627,31 @@ Linux)
             rm -f /run/bko-fetch.rc /run/bko-fetch.log
             return "$r"
         }
+        # deps_first PKG...: the packages again, each after those of them it
+        # depends on (its candidate's Depends and Pre-Depends, as apt-cache
+        # lists them; a cycle is cut where it closes).  The batches below go
+        # in this order, so no package is set up before the newer library it
+        # was built against: on pikaos4 and pikaos4-luks (2026-11-18)
+        # libglib2.0-0t64 2.90.0 came in a batch before libpcre2-8-0 10.48
+        # (its Depends asks for >= 10.22 only), and every glib program run
+        # until libpcre2's batch warned that the old libpcre2-8.so.0 had "no
+        # version information available".  A package apt-cache doesn't list
+        # keeps its place.
+        deps_first() {
+            [ $# -gt 0 ] || return 0
+            apt-cache depends --important "$@" 2>/dev/null | awk -v want="$*" '
+                function visit(p,   i, n, d) {
+                    if (p in done) return
+                    done[p] = 1
+                    n = split(deps[p], d, " ")
+                    for (i = 1; i <= n; i++) if (d[i] in up) visit(d[i])
+                    print p
+                }
+                BEGIN { nw = split(want, w, " "); for (i = 1; i <= nw; i++) up[w[i]] = 1 }
+                /^[^ ]/ { cur = $1; sub(/:.*/, "", cur); next }
+                $1 ~ /^\|?(Pre)?Depends:$/ && $2 !~ /^</ { d = $2; sub(/:.*/, "", d); deps[cur] = deps[cur] " " d }
+                END { for (i = 1; i <= nw; i++) visit(w[i]) }'
+        }
         # In batches, the downloads deleted after each: a desktop guest's
         # 16 GB disk hasn't room for all of a big update's packages at once
         # beside their unpacked files.  dist-upgrade does the rest (packages
@@ -699,6 +724,7 @@ EOF
         fi
         apt-mark showhold >/run/bko-held || exit 1
         set -- $(apt list --upgradable 2>/dev/null | sed -n 's|/.*||p' | grep -vxF -f /run/bko-held)
+        order=$(deps_first "$@"); [ -z "$order" ] || set -- $order
         while [ $# -gt 0 ]; do
             batch=
             while [ $# -gt 0 ] && [ $(echo $batch | wc -w) -lt 40 ]; do batch="$batch $1"; shift; done

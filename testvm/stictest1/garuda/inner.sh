@@ -26,7 +26,7 @@ st() { echo "$1 $2" >>$L/status; }
 # SOURCE), its ESP, their options.
 rootdev=$(findmnt -n -o SOURCE /); rootdev=${rootdev%%\[*}
 ROOTSV=$(findmnt -n -o FSROOT /); ROOTSV=${ROOTSV#/}
-SUBS=$(findmnt -rn -t btrfs -o TARGET,FSROOT,SOURCE | awk -v d="$rootdev" '$1 != "/" && index($3, d "[") == 1 {print substr($1, 2) ":" substr($2, 2)}')
+SUBS=$(findmnt -rn -t btrfs -o TARGET,FSROOT,SOURCE | awk -v d="$rootdev" '$1 != "/" && index($3, d "[") == 1 {print substr($1, 2) ":" substr($2, 2)}' | sort -u)   # sorted: findmnt's order is mount order, which varies by boot
 ESPM=$(findmnt -rn -t vfat -o TARGET | head -1); ESPN=${ESPM#/}
 espdev=$(findmnt -n -o SOURCE "$ESPM")
 export SUBS ESPM

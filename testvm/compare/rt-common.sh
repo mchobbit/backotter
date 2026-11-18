@@ -29,6 +29,10 @@
 #             subtree (each repository chunks on its own) and device_id
 #             (rustic stores it only with --set-devid).  With RT_CONTENT
 #             set, content is kept too: content=["ID",...].
+#   rt_nodes RESTIC REPO PATH PRUNE
+#             the same, but not descending into the directories whose path
+#             (relative to PATH, with a trailing /) matches the ERE PRUNE:
+#             their own nodes are listed, not what is below them
 #   rt_path_nodes RESTIC REPO PATH
 #             the own node of each directory on the way to PATH and of PATH
 #             itself (not the snapshot's root), as rt_nodes prints them but
@@ -116,6 +120,24 @@
 # rt_nodes' scratch files and the decoder go in RT_TMP (default /tmp): a
 # script on a host that runs others at the same time (sparse-rt.sh) gives
 # it a directory of its own.
+#
+# How rt_nodes reads the trees.  Every restic call derives the key with
+# scrypt (~0.5 s: init tunes it to that) and loads the whole index, so one
+# "cat blob" a tree was hours for a tree of 16k directories (qubes43's dom0
+# root: ~0.8 s a call, two repositories).  rt_nodes reads each tree blob's
+# bytes, unchanged, with the rustic beside RESTIC (rustic-bko, or rustic)
+# instead: given the master key (restic's "cat masterkey", once), so no
+# KDF, and from a view of REPO in RT_TMP holding only REPO's tree packs
+# (hard links, else copies) and an index of them alone (rustic's "repair
+# index" of the view), so each call loads a few hundred KiB of index, not
+# all of REPO's.  A blob's bytes are the same whichever tool decrypts them
+# (the JSON as the tool that wrote it wrote it, decoded as before); the
+# view is checked against restic's "cat blob" of the snapshot's root tree
+# before it is used, and any tree it fails to give is read with restic.
+# No rustic, or any step failing: restic for every tree, as before.  The
+# trees of one level are read in RT_JOBS lanes at once (default 4) and
+# decoded by one awk, in the order the old queue read them (breadth first,
+# each tree's subtrees in node order), so the listing is the same.
 
 rt_awk=awk
 rt_tmp=${RT_TMP:-/tmp}
@@ -226,12 +248,21 @@ function val(key,   t, c, k, v, cnt, i, keys, vals, out) {
     if (substr(t, 1, 1) == "\"") return normtime(t)
     return t
 }
-{ s = s $0 "\n" }
-END {
+# One node: NAME<TAB>SUBTREE REST (REST: "<TAB>key=value"...).  Walking
+# (rt_nodes' levels), PRE NAME and REST instead (a lone tab after the name
+# when REST is empty, as the old "$2 = """ left it), and the subtree, if
+# any and not pruned, to the next level's queue: SUBTREE<TAB>PRE NAME/.
+function emit(name, subtree, rest) {
+    if (!walk) { print name "\t" subtree rest; return }
+    if (subtree != "-" && (prune == "" || (pre name "/") !~ prune)) print subtree "\t" pre name "/" >queue
+    print pre name (rest == "" ? "\t" : rest)
+}
+# The tree in s: 0 if it has no "nodes".
+function tree(   c, j, rest) {
     i = index(s, "\"nodes\"")
-    if (!i) exit 1
+    if (!i) return 0
     s = substr(s, i + 7); tokn()                  # the ':'
-    if (peekc() != "[") exit 0                     # "nodes": null
+    if (peekc() != "[") return 1                   # "nodes": null
     tokn()
     for (;;) {
         c = peekc()
@@ -253,22 +284,118 @@ END {
             nk[++cnt] = substr(k, 2, length(k) - 2); nv[nk[cnt]] = v
         }
         sortarr(nk, cnt)
-        line = name "\t" subtree
-        for (j = 1; j <= cnt; j++) line = line "\t" nk[j] "=" nv[nk[j]]
-        if (xnames != "") line = line "\txattr_names=" xnames
-        print line
+        rest = ""
+        for (j = 1; j <= cnt; j++) rest = rest "\t" nk[j] "=" nv[nk[j]]
+        if (xnames != "") rest = rest "\txattr_names=" xnames
+        emit(name, subtree, rest)
     }
+    return 1
+}
+function bad() { print id >badfile; failed = 1; exit 1 }
+# Walking, each tree comes after a line "\001ID<TAB>PRE".
+walk && substr($0, 1, 1) == "\001" {
+    if (started && !tree()) bad()
+    t = substr($0, 2); id = substr(t, 1, index(t, "\t") - 1); pre = substr(t, index(t, "\t") + 1)
+    s = ""; started = 1; next
+}
+{ s = s $0 "\n" }
+END {
+    if (failed) exit 1
+    if (!walk) { if (!tree()) exit 1; exit 0 }
+    if (started && !tree()) bad()
 }
 AWK
 
-rt_tree() {  # RESTIC REPO ID: the decoder's lines for one tree
-    RESTIC_PASSWORD=backotter-compare $1 -r $2 --no-cache --no-lock cat blob $3 | $rt_awk -v keepcontent="${RT_CONTENT:-}" -f $rt_decoder
+# The fast reader (see "How rt_nodes reads the trees" above).
+rt_fast_repo="" rt_fast_dir="" rt_fast_bin=""
+rt_rustic() {  # ARG...: rt_fast_bin with the master key, none of the caller's passwords
+    (unset RUSTIC_PASSWORD RUSTIC_PASSWORD_FILE RUSTIC_PASSWORD_COMMAND RUSTIC_KEY RUSTIC_KEY_FILE RUSTIC_KEY_COMMAND
+     exec "$rt_fast_bin" --no-progress --no-cache --key-file "$rt_fast_dir/key" "$@") </dev/null
+}
+rt_fast_close() {
+    [ -z "$rt_fast_dir" ] || rm -rf "$rt_fast_dir"
+    rt_fast_repo="" rt_fast_dir=""
+}
+rt_fast_packs() {  # REPO: the packs holding tree blobs, from REPO's index files
+    rm -f "$rt_fast_dir/index.bad"
+    for rt_f in "$1"/index/*; do
+        [ -f "$rt_f" ] || continue
+        rt_rustic -r "$1" cat index "${rt_f##*/}" 2>>"$rt_fast_dir/err" || { : >"$rt_fast_dir/index.bad"; break; }
+    done | tr -d ' \011\012\015' | tr '{' '\012' | $rt_awk '
+        /"blobs":\[/ { p = ""; if (match($0, /"id":"[0-9a-f]+"/)) p = substr($0, RSTART + 6, RLENGTH - 7); next }
+        /"type":"tree"/ && p != "" { if (!seen[p]++) print p; p = "" }'
+    [ ! -f "$rt_fast_dir/index.bad" ]
+}
+rt_fast_link() {  # REPO: the packs on stdin into the view, hard linked (else copied)
+    while IFS= read -r rt_p; do
+        rt_d=${rt_p%"${rt_p#??}"}
+        [ -f "$1/data/$rt_d/$rt_p" ] && mkdir -p "$rt_fast_dir/view/data/$rt_d" &&
+            { ln "$1/data/$rt_d/$rt_p" "$rt_fast_dir/view/data/$rt_d/$rt_p" 2>/dev/null ||
+                cp "$1/data/$rt_d/$rt_p" "$rt_fast_dir/view/data/$rt_d/$rt_p"; } || return 1
+    done
+}
+rt_fast_open() {  # RESTIC REPO TREE-ID: the view of REPO, if it gives TREE-ID as restic does
+    rt_fast_close
+    rt_fast_bin=""
+    for rt_c in "$(dirname "$1")/rustic-bko" "$(dirname "$1")/rustic"; do
+        [ -x "$rt_c" ] && { rt_fast_bin=$rt_c; break; }
+    done
+    [ -n "$rt_fast_bin" ] && [ -f "$2/config" ] && [ -d "$2/index" ] && [ -d "$2/data" ] || return 1
+    rt_fast_dir=$rt_tmp/bko-rt-fast
+    rm -rf "$rt_fast_dir"
+    rt_v=$rt_fast_dir/view
+    if mkdir -p "$rt_v/data" "$rt_v/index" "$rt_v/keys" "$rt_v/snapshots" && cp "$2/config" "$rt_v/config" &&
+        RESTIC_PASSWORD=backotter-compare $1 -r $2 --no-cache --no-lock cat masterkey \
+            >"$rt_fast_dir/key" 2>"$rt_fast_dir/err" </dev/null &&
+        rt_fast_packs "$2" >"$rt_fast_dir/packs" && [ -s "$rt_fast_dir/packs" ] &&
+        rt_fast_link "$2" <"$rt_fast_dir/packs" &&
+        rt_rustic -r "$rt_v" repair index >/dev/null 2>>"$rt_fast_dir/err" &&
+        RESTIC_PASSWORD=backotter-compare $1 -r $2 --no-cache --no-lock cat blob $3 \
+            >"$rt_fast_dir/root.restic" 2>>"$rt_fast_dir/err" </dev/null &&
+        echo >>"$rt_fast_dir/root.restic" &&
+        rt_rustic -r "$rt_v" cat tree-blob $3 >"$rt_fast_dir/root.rustic" 2>>"$rt_fast_dir/err" &&
+        cmp -s "$rt_fast_dir/root.restic" "$rt_fast_dir/root.rustic"; then
+        rt_fast_repo=$2
+        return 0
+    fi
+    rt_fast_close
+    return 1
 }
 
-rt_nodes() {  # RESTIC REPO PATH
+rt_blob() {  # RESTIC REPO ID: tree blob ID's bytes (the view's when REPO's is open, else restic's)
+    if [ -n "$rt_fast_repo" ] && [ "x$rt_fast_repo" = "x$2" ] &&
+        rt_rustic -r "$rt_fast_dir/view" cat tree-blob "$3" 2>/dev/null; then
+        return 0
+    fi
+    RESTIC_PASSWORD=backotter-compare $1 -r $2 --no-cache --no-lock cat blob $3 </dev/null
+}
+
+rt_tree() {  # RESTIC REPO ID: the decoder's lines for one tree
+    rt_blob $1 $2 $3 | $rt_awk -v keepcontent="${RT_CONTENT:-}" -f $rt_decoder
+}
+
+# A lane of a level: for each ID<TAB>PREFIX on stdin, "\001ID<TAB>PREFIX"
+# and the tree's blob; a tree it can't read ends it, its ID in .unread.
+rt_lane() {  # RESTIC REPO
+    while IFS='	' read -r rt_lid rt_lpre; do
+        printf '\001%s\t%s\n' "$rt_lid" "$rt_lpre"
+        rt_blob "$1" "$2" "$rt_lid" || { echo "$rt_lid" >>$rt_tmp/bko-rt-nodes.unread; return 1; }
+        echo
+    done
+}
+
+rt_nodes() {  # RESTIC REPO PATH [PRUNE]
     rt_id=$(RESTIC_PASSWORD=backotter-compare $1 -r $2 --no-cache --no-lock snapshots --json latest |
         sed -n 's/.*"tree":"\([0-9a-f]*\)".*/\1/p' | head -n 1)
     [ -n "$rt_id" ] || { echo "rt_nodes: no snapshot in $2" >&2; return 1; }
+    rt_fast_open "$1" "$2" "$rt_id"
+    rt_walk "$@"
+    rt_s=$?
+    rt_fast_close
+    return $rt_s
+}
+
+rt_walk() {  # RESTIC REPO PATH [PRUNE], rt_id the snapshot's tree: rt_nodes' listing
     rt_rest=${3#/} rt_self=""
     while [ -n "$rt_rest" ]; do
         rt_comp=${rt_rest%%/*}
@@ -278,18 +405,38 @@ rt_nodes() {  # RESTIC REPO PATH
         rt_id=$(printf '%s\n' "$rt_self" | cut -f 2)
     done
     printf '%s\n' "$rt_self" | $rt_awk -F '\t' 'BEGIN { OFS = "\t" } { $1 = "."; $2 = ""; sub(/\t\t/, "\t"); print }'
-    # Breadth first, the trees still to read in a queue: ID<TAB>PREFIX.
+    # Breadth first, a level at a time: the level's trees (ID<TAB>PREFIX)
+    # in .level, read in rt_jobs lanes of consecutive lines, each into its
+    # own .out file, then decoded in order by one awk, which writes the
+    # next level's trees to .queue.
+    rt_jobs=${RT_JOBS:-4}
+    rm -f $rt_tmp/bko-rt-nodes.out.*
     printf '%s\t\n' "$rt_id" >$rt_tmp/bko-rt-nodes.queue
     while [ -s $rt_tmp/bko-rt-nodes.queue ]; do
-        IFS='	' read -r rt_id rt_pre <$rt_tmp/bko-rt-nodes.queue
-        sed 1d $rt_tmp/bko-rt-nodes.queue >$rt_tmp/bko-rt-nodes.queue2 && mv $rt_tmp/bko-rt-nodes.queue2 $rt_tmp/bko-rt-nodes.queue
-        rt_tree $1 $2 $rt_id >$rt_tmp/bko-rt-nodes.tree || { echo "rt_nodes: can't read tree $rt_id" >&2; return 1; }
-        $rt_awk -F '\t' -v pre="$rt_pre" '$2 != "-" { print $2 "\t" pre $1 "/" }' \
-            $rt_tmp/bko-rt-nodes.tree >>$rt_tmp/bko-rt-nodes.queue
-        $rt_awk -F '\t' -v pre="$rt_pre" 'BEGIN { OFS = "\t" } { $1 = pre $1; $2 = ""; sub(/\t\t/, "\t"); print }' \
-            $rt_tmp/bko-rt-nodes.tree
+        mv $rt_tmp/bko-rt-nodes.queue $rt_tmp/bko-rt-nodes.level
+        rm -f $rt_tmp/bko-rt-nodes.unread
+        rt_n=$(wc -l <$rt_tmp/bko-rt-nodes.level | tr -d ' ')
+        rt_c=$(( (rt_n + rt_jobs - 1) / rt_jobs )) rt_j=0 rt_outs="" rt_pids=""
+        while [ $((rt_j * rt_c)) -lt "$rt_n" ]; do
+            sed -n "$((rt_j * rt_c + 1)),$(((rt_j + 1) * rt_c))p" $rt_tmp/bko-rt-nodes.level |
+                rt_lane $1 $2 >$rt_tmp/bko-rt-nodes.out.$rt_j &
+            rt_pids="$rt_pids $!" rt_outs="$rt_outs $rt_tmp/bko-rt-nodes.out.$rt_j" rt_j=$((rt_j + 1))
+        done
+        # shellcheck disable=SC2086
+        wait $rt_pids
+        # shellcheck disable=SC2086
+        cat $rt_outs | $rt_awk -v keepcontent="${RT_CONTENT:-}" -v walk=1 -v prune="${4:-}" \
+            -v queue=$rt_tmp/bko-rt-nodes.queue -v badfile=$rt_tmp/bko-rt-nodes.unread -f $rt_decoder
+        rt_s=$?
+        # shellcheck disable=SC2086
+        rm -f $rt_outs
+        if [ -s $rt_tmp/bko-rt-nodes.unread ] || [ $rt_s != 0 ]; then
+            echo "rt_nodes: can't read tree $(head -n 1 $rt_tmp/bko-rt-nodes.unread 2>/dev/null)" >&2
+            rm -f $rt_tmp/bko-rt-nodes.queue $rt_tmp/bko-rt-nodes.level $rt_tmp/bko-rt-nodes.unread
+            return 1
+        fi
     done
-    rm -f $rt_tmp/bko-rt-nodes.queue $rt_tmp/bko-rt-nodes.tree
+    rm -f $rt_tmp/bko-rt-nodes.queue $rt_tmp/bko-rt-nodes.level $rt_tmp/bko-rt-nodes.unread
 }
 
 rt_path_nodes() {  # RESTIC REPO PATH

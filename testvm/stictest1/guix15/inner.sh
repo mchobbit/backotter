@@ -21,34 +21,11 @@ mkdir -p $W $M $L $B
 cp /root/restic-bko /root/rustic-bko $B/ && chmod 755 $B $B/*
 . /root/rt-common.sh
 # rt_nodes (rt-common.sh) that doesn't descend into the directories whose
-# path (relative to PATH, with a trailing /) matches the ERE PRUNE: one
-# "cat blob" a tree is minutes for the real store copy's thousand trees.
+# path (relative to PATH, with a trailing /) matches the ERE PRUNE: the
+# real store copy's thousand trees are more than the comparison needs.
 # The pruned directories' own nodes are still listed.
 rt_nodes_pruned() {  # RESTIC REPO PATH PRUNE
-    rt_id=$(RESTIC_PASSWORD=backotter-compare $1 -r $2 --no-cache --no-lock snapshots --json latest |
-        sed -n 's/.*"tree":"\([0-9a-f]*\)".*/\1/p' | head -n 1)
-    [ -n "$rt_id" ] || { echo "rt_nodes_pruned: no snapshot in $2" >&2; return 1; }
-    rt_rest=${3#/} rt_self=""
-    while [ -n "$rt_rest" ]; do
-        rt_comp=${rt_rest%%/*}
-        case $rt_rest in */*) rt_rest=${rt_rest#*/} ;; *) rt_rest="" ;; esac
-        rt_self=$(rt_tree $1 $2 $rt_id | $rt_awk -F '\t' -v n="$rt_comp" '$1 == n')
-        [ -n "$rt_self" ] || { echo "rt_nodes_pruned: no $rt_comp in $2's tree" >&2; return 1; }
-        rt_id=$(printf '%s\n' "$rt_self" | cut -f 2)
-    done
-    printf '%s\n' "$rt_self" | $rt_awk -F '\t' 'BEGIN { OFS = "\t" } { $1 = "."; $2 = ""; sub(/\t\t/, "\t"); print }'
-    # Breadth first, the trees still to read in a queue: ID<TAB>PREFIX.
-    printf '%s\t\n' "$rt_id" >$rt_tmp/bko-rt-nodes.queue
-    while [ -s $rt_tmp/bko-rt-nodes.queue ]; do
-        IFS='	' read -r rt_id rt_pre <$rt_tmp/bko-rt-nodes.queue
-        sed 1d $rt_tmp/bko-rt-nodes.queue >$rt_tmp/bko-rt-nodes.queue2 && mv $rt_tmp/bko-rt-nodes.queue2 $rt_tmp/bko-rt-nodes.queue
-        rt_tree $1 $2 $rt_id >$rt_tmp/bko-rt-nodes.tree || { echo "rt_nodes_pruned: can't read tree $rt_id" >&2; return 1; }
-        $rt_awk -F '\t' -v pre="$rt_pre" -v prune="$4" '$2 != "-" && (pre $1 "/") !~ prune { print $2 "\t" pre $1 "/" }' \
-            $rt_tmp/bko-rt-nodes.tree >>$rt_tmp/bko-rt-nodes.queue
-        $rt_awk -F '\t' -v pre="$rt_pre" 'BEGIN { OFS = "\t" } { $1 = pre $1; $2 = ""; sub(/\t\t/, "\t"); print }' \
-            $rt_tmp/bko-rt-nodes.tree
-    done
-    rm -f $rt_tmp/bko-rt-nodes.queue $rt_tmp/bko-rt-nodes.tree
+    rt_nodes "$1" "$2" "$3" "$4"
 }
 res() { echo "$1 $2: $3"; }
 FS=$(findmnt -no FSTYPE / | head -1)

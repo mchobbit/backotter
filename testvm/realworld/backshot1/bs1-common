@@ -362,16 +362,23 @@ failed_units() {
 # (vtbd0p3; load also takes gpt/LABEL or the provider less .eli).  A GELI
 # provider unlocked by key files alone ("keyfile") isn't listed: load makes it
 # from the source's key files, not this passphrase.  Key slot 1 isn't either
-# (NAME:1): load says so in the plan when the source used it.
+# (NAME:1): load says so in the plan when the source used it.  Nor is a plain
+# dm-crypt swap that crypttab keys from /dev/urandom at every boot.
 layout_keys() {
     python3 - "$1" "$2" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 s = d["storage"]
-names = {e["name"] for e in (s.get("crypttab") or [])}
+# A plain dm-crypt swap or tmp that crypttab keys from /dev/urandom at every
+# boot has no passphrase (load makes nothing on it: Layout::random_key_crypt).
+fresh = {e["name"] for e in (s.get("crypttab") or [])
+         if e.get("key_file") in ("/dev/urandom", "/dev/random")
+         and any(o in ("swap", "tmp") or o.startswith("tmp=") for o in e.get("options") or [])}
+names = {e["name"] for e in (s.get("crypttab") or [])} - fresh
 for dm in s.get("dm_devices") or []:
-    if (dm.get("dm") or {}).get("target") == "crypt":
-        names.add(dm["dm"]["dm_name"])
+    m = dm.get("dm") or {}
+    if m.get("target") == "crypt" and not (m.get("crypt_type") == "PLAIN" and m.get("dm_name") in fresh):
+        names.add(m["dm_name"])
 for ds in ((s.get("zfs") or {}).get("tools") or {}).get("datasets") or []:
     if ds.get("encryptionroot") == ds.get("name") and ds.get("keyformat") == "passphrase":
         names.add(ds["name"])
@@ -416,10 +423,36 @@ luks_rec() {
     )
 }
 
+# zvols_on DISK: the ZFS volumes (/dev/zdN) of each imported pool with a vdev
+# on DISK, by path.  lsblk doesn't show them under DISK: ZFS stacks no holder
+# on its vdevs.  ZVOL_DIR (/dev/zvol) moves for the unit tests.
+zvols_on() {
+    local pool v l z=${ZVOL_DIR:-/dev/zvol}
+    command -v zpool >/dev/null || return 0
+    for pool in $(zpool list -Ho name 2>/dev/null); do
+        [[ -d $z/$pool ]] || continue
+        for v in $(zpool list -vHPL "$pool" 2>/dev/null | awk '$1 ~ /^\// { print $1 }'); do
+            lsblk -snlo NAME "$v" 2>/dev/null | awk -v d="$1" '$1 == d { f = 1 } END { exit !f }' || continue
+            find "$z/$pool" -type l ! -name '*-part[0-9]*' 2>/dev/null | while read -r l; do readlink -f "$l"; done
+            break
+        done
+    done | LC_ALL=C sort -u
+}
+
+# disk_devices DISK: every block device on DISK, by path: its partitions and
+# what stacks on them, and its pools' ZFS volumes and what stacks on those
+# (Ubuntu's keystore: LUKS on rpool/keystore, holding the pool's key).
+disk_devices() {
+    local z
+    lsblk -lnpo NAME "/dev/$1"
+    for z in $(zvols_on "$1"); do lsblk -lnpo NAME "$z"; done
+    return 0
+}
+
 # luks_devices DISK: the LUKS devices on DISK, by path.
 luks_devices() {
     local dev
-    lsblk -lnpo NAME "/dev/$1" | while read -r dev; do
+    disk_devices "$1" | while read -r dev; do
         [[ $(blkid -o value -s TYPE "$dev" 2>/dev/null) == crypto_LUKS ]] && echo "$dev"
     done
     return 0

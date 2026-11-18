@@ -309,6 +309,109 @@ OTHER = "11111111-2222-3333-4444-555555555555"
 
 
 @unittest.skipUnless(BASH, "needs bash 4 or newer")
+class ZvolDevices(Tmp):
+    """disk_devices and luks_devices: a pool's ZFS volumes count as its
+    disk's (Ubuntu's keystore, LUKS on rpool/keystore, holding rpool's key:
+    the Thinkpad on 26.10's ZFS + encryption), though lsblk shows no zvol
+    under the disk."""
+
+    def setUp(self):
+        super().setUp()
+        t = self.t
+        self.zvol = t / "zvol"
+        (self.zvol / "rpool").mkdir(parents=True)
+        (t / "dev").mkdir()
+        self.zd0 = t / "dev/zd0"
+        self.zd0.write_text("")
+        (self.zvol / "rpool/keystore").symlink_to(self.zd0)
+        (self.zvol / "rpool/keystore-part1").symlink_to(self.zd0)
+        self.vdev_disk = "nvme0n1"
+        exe(self.bin / "zpool", textwrap.dedent(f"""\
+            #!/bin/sh
+            case "$*" in
+            "list -Ho name") echo rpool ;;
+            "list -vHPL rpool") printf 'rpool\t476G\n\t/dev/nvme0n1p4\t470G\n' ;;
+            *) exit 1 ;;
+            esac
+            """))
+        exe(self.bin / "lsblk", textwrap.dedent(f"""\
+            #!/bin/sh
+            case "$*" in
+            "-lnpo NAME /dev/nvme0n1") printf '/dev/nvme0n1\n/dev/nvme0n1p1\n/dev/nvme0n1p3\n/dev/mapper/dm_crypt-0\n/dev/nvme0n1p4\n' ;;
+            "-snlo NAME /dev/nvme0n1p4") echo nvme0n1p4; cat "{t}/vdev-disk"; echo ;;
+            "-lnpo NAME {self.zd0}") printf '{self.zd0}\n/dev/mapper/keystore-rpool\n' ;;
+            *) exit 1 ;;
+            esac
+            """))
+        (t / "vdev-disk").write_text("nvme0n1")
+        exe(self.bin / "blkid", f'#!/bin/sh\nfor d; do :; done\n[ "$d" = "{self.zd0}" ] && echo crypto_LUKS\nexit 0\n')
+
+    def call(self, expr):
+        lib = functions(BS1 / "bs1-common", "zvols_on", "disk_devices", "luks_devices")
+        r = subprocess.run([BASH, "-c", f'ZVOL_DIR="{self.zvol}"\n{lib}\n{expr}'], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.splitlines()
+
+    def test_the_keystore_is_on_the_disk(self):
+        self.assertEqual(self.call("zvols_on nvme0n1"), [str(self.zd0)])
+        devs = self.call("disk_devices nvme0n1")
+        self.assertEqual(devs[:5], ["/dev/nvme0n1", "/dev/nvme0n1p1", "/dev/nvme0n1p3", "/dev/mapper/dm_crypt-0", "/dev/nvme0n1p4"])
+        self.assertEqual(devs[5:], [str(self.zd0), "/dev/mapper/keystore-rpool"])
+        self.assertEqual(self.call("luks_devices nvme0n1"), [str(self.zd0)])
+
+    def test_another_disks_pool_is_not(self):
+        (self.t / "vdev-disk").write_text("sda")
+        self.assertEqual(self.call("zvols_on nvme0n1"), [])
+        self.assertEqual(self.call("luks_devices nvme0n1"), [])
+
+    def test_no_pool_imported(self):
+        exe(self.bin / "zpool", "#!/bin/sh\nexit 1\n")
+        self.assertEqual(self.call("zvols_on nvme0n1"), [])
+        self.assertEqual(self.call("disk_devices nvme0n1")[-1], "/dev/nvme0n1p4")
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class AdoptZfsKeystore(Tmp):
+    """luks_adopt on Ubuntu 26.10's ZFS + encryption (dracut, systemd in the
+    initramfs): the keystore on rpool/keystore is opened by the initramfs's
+    ZFS code after it imports the pool, which asks for its passphrase, so
+    the install is attended (family A) and nothing changes."""
+
+    def test_attended(self):
+        t = self.t
+        here = t / "drive/backshot1"
+        (here / "keys").mkdir(parents=True)
+        shutil.copy(BS1 / "bs1-unlock-key", here / "bs1-unlock-key")
+        (here / "keys/disk-passphrase").write_text("s3cret")
+        (t / "proc-cmdline").write_text("BOOT_IMAGE=/vmlinuz-7.3.0-10-generic root=ZFS=rpool/ROOT/ubuntu_x ro quiet splash\n")
+        (t / "crypttab").write_text("dm_crypt-0 PARTUUID=7d881a58 /dev/urandom cipher=aes-cbc-essiv:sha256,initramfs,plain,size=256,swap\n")
+        exe(self.bin / "findmnt", f'#!/bin/sh\ncase "$2" in TARGET) echo "{t}/drive" ;; SOURCE) echo /dev/sdb1 ;; FSTYPE) echo xfs ;; esac\n')
+        exe(self.bin / "blkid", "#!/bin/sh\necho mybig512\n")
+        exe(self.bin / "cryptsetup", f'#!/bin/sh\necho "$@" >>"{t}/cryptsetup-calls"\nexit 0\n')
+        script = textwrap.dedent(f"""\
+            . "{BS1}/bs1-luks"
+            LUKS_DIR="{t}/etc/backshot1" LUKS_ORIG="{t}/etc/backshot1/orig" LUKS_MADE="{t}/etc/backshot1/made" LUKS_REC="{t}/etc/backshot1/luks-unlock"
+            LK_CMDLINE="{t}/proc-cmdline" LK_CRYPTTAB="{t}/crypttab"
+            here="{here}" init=systemd BACKUP_LABEL=mybig512 INTERNAL_SERIAL=S1
+            internal_disk() {{ echo nvme0n1; }}
+            is_abroot() {{ false; }}
+            lk_generator() {{ echo dracut; }}
+            lk_dracut_systemd() {{ true; }}
+            lk_luks_volumes() {{ echo "/dev/zd0 {UUID} keystore-rpool"; }}
+            lk_early() {{ false; }}
+            luks_adopt
+            """)
+        r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("luks: A: keystore-rpool is on a ZFS volume (/dev/zd0: Ubuntu's ZFS keystore)", r.stdout)
+        rec = (t / "etc/backshot1/luks-unlock").read_text()
+        self.assertIn("family=A\n", rec)
+        self.assertIn("keystore-rpool is on a ZFS volume (/dev/zd0: Ubuntu", rec)
+        self.assertIn("--test-passphrase", (t / "cryptsetup-calls").read_text())
+        self.assertEqual((t / "crypttab").read_text(), "dm_crypt-0 PARTUUID=7d881a58 /dev/urandom cipher=aes-cbc-essiv:sha256,initramfs,plain,size=256,swap\n")
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
 class BlsCmdline(Tmp):
     """Family B (AerynOS): the cmdline.d line, the options in force merged
     into it, and the boot entries' check."""
@@ -1014,6 +1117,25 @@ class LayoutKeys(Tmp):
     def test_zfs_encryption_corpus_unchanged(self):
         # rpool's key is raw (from the LUKS keystore): only the keystore asks.
         self.assertEqual(self.keys("ubuntu26-zfsmirror"), ["keystore-rpool=FILE"])
+
+    def test_zfs_keystore_and_plain_swap_corpus(self):
+        # The Thinkpad's 26.10 ZFS + encryption: the keystore asks, the
+        # plain swap (its crypttab name redacted to label-1) doesn't.
+        self.assertEqual(self.keys("bs1-ubuntu2610-zfsenc"), ["keystore-rpool=FILE"])
+
+    def test_plain_random_key_swap_is_not_listed(self):
+        # Ubuntu 26.10's ZFS + encryption: dm_crypt-0, plain dm-crypt swap
+        # keyed from /dev/urandom at every boot, beside the keystore.
+        d = json.loads((CORPUS / "ubuntu26-zfsmirror" / "src.json").read_text())
+        s = d["storage"]
+        tab = {"name": "dm_crypt-0", "device": "PARTUUID=7d881a58-39a3-4e53-8607-0f698dc7ae88", "key_file": "/dev/urandom",
+               "options": ["cipher=aes-cbc-essiv:sha256", "initramfs", "plain", "size=256", "swap"], "resolves_to": "vda3"}
+        s["crypttab"] = [tab]
+        s["dm_devices"].append({"name": "dm-9", "slaves": ["vda3"], "content": {"type": "swap"},
+                                "dm": {"dm_name": "dm_crypt-0", "dm_uuid": "CRYPT-PLAIN-dm_crypt-0", "target": "crypt", "crypt_type": "PLAIN"}})
+        self.assertEqual(self.keys(d), ["keystore-rpool=FILE"])
+        tab["key_file"] = "/etc/keys/swap.key"
+        self.assertEqual(self.keys(d), ["dm_crypt-0=FILE", "keystore-rpool=FILE"])
 
     def test_zfs_passphrase_root_is_listed(self):
         d = json.loads((CORPUS / "ubuntu26-zfsmirror" / "src.json").read_text())

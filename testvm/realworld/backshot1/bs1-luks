@@ -216,11 +216,11 @@ lk_current_image() {
     return 1
 }
 
-# lk_luks_volumes DISK: "DEV UUID NAME" for each LUKS device on DISK, NAME its
-# open mapping or -.
+# lk_luks_volumes DISK: "DEV UUID NAME" for each LUKS device on DISK (its
+# pools' ZFS volumes too: bs1-common disk_devices), NAME its open mapping or -.
 lk_luks_volumes() {
     local dev name
-    lsblk -lnpo NAME "/dev/$1" | while read -r dev; do
+    disk_devices "$1" | while read -r dev; do
         [[ $(blkid -o value -s TYPE "$dev" 2>/dev/null) == crypto_LUKS ]] || continue
         name=$(lsblk -lno NAME,TYPE "$dev" | awk '$2 == "crypt" { print $1; exit }')
         echo "$dev $(blkid -o value -s UUID "$dev") ${name:--}"
@@ -789,6 +789,14 @@ luks_adopt() {
     # that can't be makes the whole install attended (family A).
     while read -r dev uuid name; do
         if [[ $name == - ]]; then unhandled+=("$dev isn't open, so it isn't in the backup"); continue; fi
+        # Ubuntu's keystore, LUKS on the ZFS volume POOL/keystore (26.10's
+        # ZFS + encryption): the initramfs's ZFS code opens it itself once
+        # it has imported the pool, asking for the passphrase, and no
+        # crypttab or command line that S, D or E writes reaches it.
+        if [[ $dev == /dev/zd* || $(readlink -f "$dev" 2>/dev/null) == /dev/zd* ]]; then
+            unhandled+=("$name is on a ZFS volume ($dev: Ubuntu's ZFS keystore), which the initramfs's ZFS code opens itself after importing the pool, asking for the passphrase, and bs1-adopt has no way to hand it the drive's key")
+            continue
+        fi
         early=no
         lk_early "$name" && early=yes
         # B: the initramfs opens what the command line names (blsforme

@@ -75,6 +75,11 @@ entry's guest, platform ("plat") and kind.  Every field is optional:
     gitrepos     restic, rustic_core, rustic: git: of branch backotter in BKO_GIT (harness)
     plumbing     more plumbing files for this entry (beside the family's list)
     soft         the soft facts (default kernel, zfs, qemu, ovmf for stic and holt; none for gate)
+    made         host paths among its host inputs that the cell's check makes itself
+                 when they aren't there (a once-per-host cache, such as alpinebsd's
+                 ~/backotter-work/netbsd-tools): not inputs of their own.  A row whose
+                 key differs from the planned one only by such an input, absent when
+                 planned and made by the check, still counts (key_absent; ledger.validate)
     pin, plat, kind, guest, notes   not inputs
 
 A facts dict is one host's facts_host.py output.  Options (opts) a caller can give:
@@ -143,6 +148,17 @@ def key(cell, inputs):
     """The cell's hard key (64 hex)."""
     hard = {g: inputs[g] for g in HARD if inputs.get(g)}
     return sha256_hex(canonical({"v": 1, "cell": cell, "hard": hard}))
+
+
+def key_absent(cell, inputs, names):
+    """CELL's key with the inputs NAMES ("GROUP/NAME") absent: the key a check that
+    made them itself (its entry's "made") was planned with, when they weren't there."""
+    alt = {g: dict(x) for g, x in (inputs or {}).items()}
+    for n in names or ():
+        g, _, name = n.partition("/")
+        if name in alt.get(g, {}):
+            alt[g][name] = "absent"
+    return key(cell, alt)
 
 
 def groups(inputs):

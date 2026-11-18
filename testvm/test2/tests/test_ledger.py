@@ -133,6 +133,20 @@ class Schema(unittest.TestCase):
         self.assertEqual(errs(planned_key=base["key"]), [])
         self.assertTrue(any(e.startswith("valid: true") for e in errs(planned_key="f" * 64)))
         self.assertEqual(errs(planned_key="f" * 64, valid=False), [])          # a measured key that moved
+        # a cache the check made itself (rows_stic's made_by_check): absent when planned, still valid
+        inp = dict(base["inputs"], xguest={"host:~/backotter-work/netbsd-tools": "dir:" + "3" * 64})
+        made = dict(base, inputs=inp, key=keys.key(base["cell"], inp), groups=keys.groups(inp))
+        planned = keys.key_absent(base["cell"], inp, ["xguest/host:~/backotter-work/netbsd-tools"])
+        self.assertNotEqual(planned, made["key"])
+
+        def merrs(**over):
+            r = dict(made, **over)
+            r["c"] = ledger.row_c(r)
+            return ledger.validate(r)
+        self.assertTrue(any(e.startswith("valid: true") for e in merrs(planned_key=planned)))
+        self.assertEqual(merrs(planned_key=planned, extra={"made": ["xguest/host:~/backotter-work/netbsd-tools"]}), [])
+        self.assertTrue(any(e.startswith("valid: true") for e in   # made names an input, but the key moved by more
+                            merrs(planned_key="f" * 64, extra={"made": ["xguest/host:~/backotter-work/netbsd-tools"]})))
         self.assertTrue(any("doesn't go with verdict PASS" in e for e in errs(**{"class": "harness"})))
         self.assertEqual(errs(**{"class": "known-flake"}), [])
         self.assertEqual(errs(verdict="FAIL", **{"class": "fail"}), [])

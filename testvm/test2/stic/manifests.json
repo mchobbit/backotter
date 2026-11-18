@@ -113,7 +113,10 @@
     "netbsd11",
     "host:~/backotter-work/netbsd-tools"
    ],
-   "notes": "NetBSD's tools: ~/backotter-work/netbsd-tools, fetched from a throwaway netbsd11 when a tool is missing"
+   "made": [
+    "~/backotter-work/netbsd-tools"
+   ],
+   "notes": "NetBSD's tools: ~/backotter-work/netbsd-tools, fetched from a throwaway netbsd11 when a tool is missing (made: a host's first check fetches them, its row still counts)"
   },
   "anduinos2": {
    "os": "linux",

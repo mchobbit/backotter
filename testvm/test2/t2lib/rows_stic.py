@@ -33,7 +33,10 @@ img: sum: its disks) and the host inputs.  One modified after run.out.start
 (sync-hosts.sh, the copies and --private-copy write with rsync -rlp, which
 leaves a changed file the time of the copy) means the check may have run
 other inputs than the row names: the row is valid: false.  A Test2 row is
-also invalid without its cells.json entry or a planned key.
+also invalid without its cells.json entry or a planned key, or at a key other
+than the planned one, but for its entry's "made" host inputs: a cache the
+check fills itself on a host's first run (made_by_check: absent when planned,
+the planned key exactly with them absent; extra.made names them).
 
 Verdicts and classes (the stop rules count the classes):
     PASS, pass          nothing FAILs, every LIMIT classed, exit 0
@@ -315,6 +318,20 @@ def input_files(m, src, work, bdir, facts, home):
     return out
 
 
+def made_by_check(cell, m, entry, planned):
+    """["GROUP/host:PATH"] of ENTRY's "made" host inputs (paths its check makes itself when
+    they aren't there, such as alpinebsd's ~/backotter-work/netbsd-tools, fetched from a
+    throwaway netbsd11 on a host's first run) that M measured present, when they are what
+    the key differs from PLANNED by: with them absent it is PLANNED exactly.  Else []."""
+    from . import keys
+    made = {"host:" + p for p in (entry or {}).get("made") or [] if isinstance(p, str)}
+    if not made or planned is None or planned == m.get("key"):
+        return []
+    names = sorted(f"{g}/{n}" for g, x in (m.get("inputs") or {}).items() for n, v in x.items()
+                   if n in made and v != "absent")
+    return names if names and keys.key_absent(cell, m["inputs"], names) == planned else []
+
+
 def changed_after(start, items, limit=4000):
     """The (name, path) ITEMS whose file was modified after START (epoch seconds; a
     directory: any file under it, up to LIMIT files), in order.  start is date +%s of
@@ -548,11 +565,18 @@ def build(argv, hostctx=None):
                           + (" (a pattern derived from the check, not yet seen in a run.out)"
                              if fl.get("evidence") == "derived" else ""))[:MAX_LEN])
 
-    # What the check ran with is what the row names only if nothing changed since it began.
+    # What the check ran with is what the row names only if nothing changed since it began,
+    # but for what the check makes itself (its entry's "made": a cache it fills once per host).
     moved = changed_after(start, input_files(m, src, work, bdir, facts, home))
+    made = made_by_check(cell, m, entry, planned)
+    if made:
+        mine = {n.partition("/")[2] for n in made}
+        moved = [x for x in moved if x[0] not in mine]
+        notes.append("made by the check, absent when planned: " + ", ".join(sorted(mine))
+                     + " (the planned key is this one with them absent)")
 
     valid = not unmeasured and not bad_bins and not moved
-    if planned is not None and planned != m["key"]:
+    if planned is not None and planned != m["key"] and not made:
         valid = False
         notes.append(f"key {m['key'][:12]} isn't the planned {str(planned)[:12]}: inputs changed")
     if moved:
@@ -600,6 +624,8 @@ def build(argv, hostctx=None):
         row["extra"]["reserve_gib"] = res
     if moved:
         row["extra"]["changed"] = [n[:MAX_LEN] for n, _ in moved[:MAX_FAILS]]
+    if made:
+        row["extra"]["made"] = made
     if fl:
         row["extra"]["flake"] = {k: fl.get(k) for k in ("guest", "pattern", "why", "ref", "evidence") if k in fl}
     if (ce or {}).get("flake"):

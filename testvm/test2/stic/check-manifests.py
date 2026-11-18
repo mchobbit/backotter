@@ -585,6 +585,11 @@ def check_stic(files, path=MANIFESTS, out=None):
             errs.append(f"{g}: bins {sorted(got)}, drive.py hands the check {sorted(want)} (parse_check, RESTIC_FROM)")
         if e.get("os") and e["os"] != s.os:
             errs.append(f"{g}: os {e['os']}, drive.py's parse_check says {s.os}")
+        hin = {x[len("host:"):] for x in e.get("xguest") or [] if isinstance(x, str) and x.startswith("host:")}
+        hin |= {(x.get("path") if isinstance(x, dict) else x) for x in e.get("host_inputs") or []}
+        for p in e.get("made") or []:   # what the check makes itself is one of its host inputs
+            if p not in hin:
+                errs.append(f"{g}: made {p} isn't one of its host inputs (xguest host:PATH or host_inputs)")
         # references
         refs, dyn = closure(f"{STIC}/{g}/check.sh", files, stop)
         for p, where in sorted(refs.items()):

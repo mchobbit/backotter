@@ -66,6 +66,7 @@ class TestManifests(unittest.TestCase):
         self.assertIn("testvm/stictest1/freebsd15-ufs/extras.sh", e["hardenedbsd15"]["harness"])
         self.assertEqual(e["haiku6"]["bins"], ["haiku/rustic-bko", "linux/restic-bko"])
         self.assertEqual(e["alpinebsd"]["xguest"], ["netbsd11", "host:~/backotter-work/netbsd-tools"])
+        self.assertEqual(e["alpinebsd"]["made"], ["~/backotter-work/netbsd-tools"])   # its check fetches them
         for g in ("sculpt2610", "haiku6", "artix-dinit", "artix-s6", "arch"):
             self.assertIn("kernel", e[g]["host"], g)
         self.assertNotIn("host", e["debian12"])
@@ -549,6 +550,42 @@ class TestRowsStic(unittest.TestCase):
         w.age(os.path.join(w.bin, "linux", "rustic-bko"))
         r = checked(w.build(cells=w.cells()))
         self.assertTrue(r["valid"], r.get("note"))
+
+    def test_a_cache_the_check_made(self):
+        """alpinebsd's check fetches ~/backotter-work/netbsd-tools from a throwaway netbsd11
+        on a host's first run (its entry's "made"): planned absent, made during the check,
+        the row still counts (copland-20261117T195343Z-b2864d5a didn't)."""
+        w = World(self.tmp, "alpinebsd", "PASS Round trip restic-restic: ok\n")
+        name, hin = "host:~/backotter-work/netbsd-tools", w.facts["host_inputs"]
+        hin["~/backotter-work/netbsd-tools"] = "absent"
+        planned = w.key()                                        # planned before the host had them
+        hin["~/backotter-work/netbsd-tools"] = "dir:" + H64("3")
+        with open(w.facts_path, "w") as f:
+            json.dump(w.facts, f)
+        tools = os.path.join(self.tmp, "backotter-work", "netbsd-tools")   # ~ is the work dir's parent
+        os.makedirs(tools)
+        with open(os.path.join(tools, "mtree"), "w") as f:
+            f.write("mtree\n")
+        w.age(os.path.join(tools, "mtree"), dt=+30)              # fetched by the check
+        w.age(tools, dt=+30)
+        r = checked(w.build(cells=w.cells(planned_key=planned)))
+        self.assertNotEqual(r["key"], planned)
+        self.assertTrue(r["valid"], r.get("note"))
+        self.assertEqual(r["extra"]["made"], ["xguest/" + name])
+        self.assertNotIn("changed", r["extra"])
+        self.assertIn("made by the check, absent when planned: " + name, r["note"])
+        # the key moved by more than what the check made: never counts
+        r = checked(w.build(cells=w.cells(planned_key=H64("f"))))
+        self.assertFalse(r["valid"])
+        self.assertNotIn("made", r["extra"])
+        self.assertEqual(r["extra"]["changed"], [name])
+        self.assertIn("isn't the planned", r["note"])
+        # present when planned (other tools), rewritten during the check: never counts
+        hin["~/backotter-work/netbsd-tools"] = "dir:" + H64("9")   # the planner's facts, not the file's
+        planned = w.key()
+        r = checked(w.build(cells=w.cells(planned_key=planned)))
+        self.assertFalse(r["valid"])
+        self.assertEqual(r["extra"]["changed"], [name])
 
     def test_adopted_old_run(self):
         """drive.py run again on an old mark adopts checks that ended days ago and writes their

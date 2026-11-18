@@ -290,7 +290,10 @@ def validate(row, check_c=True):
     if row["planned_key"] is not None and not HEX64.match(row["planned_key"]):
         err.append("planned_key: not 64 hex")
     elif row["valid"] and row["planned_key"] is not None and row["planned_key"] != row["key"]:
-        err.append("valid: true, but the key isn't planned_key (such a row is valid: false)")
+        made = (row.get("extra") or {}).get("made")   # inputs its check made itself, absent when planned
+        if not (isinstance(made, list) and made and all(isinstance(n, str) for n in made)
+                and keys.key_absent(row["cell"], inputs, made) == row["planned_key"]):
+            err.append("valid: true, but the key isn't planned_key (such a row is valid: false)")
     if row["class"] not in VERDICT_CLASSES.get(row["verdict"], (row["class"],)):
         err.append(f"class: {row['class']!r} doesn't go with verdict {row['verdict']} "
                    f"({', '.join(VERDICT_CLASSES[row['verdict']])})")

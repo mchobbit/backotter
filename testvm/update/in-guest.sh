@@ -121,7 +121,50 @@ if [ "$(uname)" = Linux ] && [ -e /etc/gentoo-release ] && has emerge; then
         sed -E 's/:.*//; s/-[0-9]+(\.[0-9]+)*[a-z]?(_(alpha|beta|pre|rc|p)[0-9]*)*(-r[0-9]+)?$//' |
         grep -vxF "$(printf '%s\n' $SOURCE_OK)")
     [ -z "$bad" ] || { say "source builds outside the allowlist:" $bad; exit 1; }
+    # sys-boot/grub's COUNTER: Portage's merge counter, new on every merge of it.
+    grubc() { cat /var/db/pkg/sys-boot/grub-[0-9]*/COUNTER 2>/dev/null; }
+    grub_was=$(grubc)
     emerge -uDNg $o --quiet-build=y @world && emerge --depclean $o || exit 1
+    # CONFIG_PROTECT's ._cfgNNNN_NAME files: a package's new default for a
+    # config file the image changed (Portage replaces one the image left as
+    # it was).  The image's file stays, as apt's --force-confold keeps it,
+    # when it still has every line of the new default (the default plus the
+    # image's additions: bootstrap/gentoo.sh appends GRUB_CMDLINE_LINUX and
+    # GRUB_TIMEOUT to /etc/default/grub, and grub 2.14-r5 and 2.16-r1 both
+    # install the same files/grub.default-4, without them).  Removing the
+    # ._cfg file is etc-update's "keep": Portage's confmem then skips that
+    # same default from now on.  Any other is left for review, and named.
+    for c in $(find $(portageq envvar CONFIG_PROTECT) -name '._cfg[0-9][0-9][0-9][0-9]_*' 2>/dev/null | sort); do
+        f=${c%/*}/${c##*/._cfg[0-9][0-9][0-9][0-9]_}
+        if [ -f "$f" ] && ! grep -vxF -f "$f" -- "$c" >/dev/null; then
+            rm -f -- "$c" && say "kept the image's $f: it has every line of $c"
+        else
+            say "config file left for review: $c"
+        fi
+    done
+    # GRUB merged again: its ebuild only says "Re-run grub-install ... Re-run
+    # grub-mkconfig", so both are done here, as bootstrap/gentoo.sh installed
+    # it: UEFI only (GRUB_PLATFORMS="efi-64": no BIOS boot code), under the
+    # id gentoo with no NVRAM entry, and again at the fallback path
+    # EFI/BOOT/BOOTX64.EFI that the VM's firmware boots; the ESP at /efi
+    # (gentoo) or /boot (gentoo-systemd).  Else the old GRUB (ESP image and
+    # /boot/grub's modules) would boot a grub.cfg the new grub-mkconfig writes
+    # at the next kernel's installkernel.
+    if [ -n "$(grubc)" ] && [ "$(grubc)" != "$grub_was" ]; then
+        g=$(ls -d /var/db/pkg/sys-boot/grub-[0-9]*); g=${g#/var/db/pkg/}
+        esp=""
+        for e in /efi /boot /boot/efi; do
+            [ -e "$e/EFI/gentoo/grubx64.efi" ] && grep -q "^[^ ]* $e vfat " /proc/mounts || continue
+            grub-install --target=x86_64-efi --efi-directory=$e --bootloader-id=gentoo --no-nvram || exit 1
+            if [ -e "$e/EFI/BOOT/BOOTX64.EFI" ]; then
+                grub-install --target=x86_64-efi --efi-directory=$e --removable --no-nvram || exit 1
+            fi
+            esp=$e; break
+        done
+        [ -n "$esp" ] || { say "$g merged, and no GRUB in a mounted ESP to reinstall"; exit 1; }
+        grub-mkconfig -o /boot/grub/grub.cfg || exit 1
+        step "$g: GRUB reinstalled in the ESP at $esp, grub.cfg remade"
+    fi
     rm -rf /var/cache/binpkgs/* /var/cache/distfiles/*
     say "updated"
     exit 0

@@ -142,6 +142,13 @@
   "^TIME \\(N(\\.N)? [KMG]B/s\\) - ‘/var/cache/binhost/\\S+’ saved \\[\\S+\\]$",
   "^\\* Messages for package \\S+:$",
   "^\\* (See the CONFIGURATION FILES and CONFIGURATION FILES UPDATE TOOLS|sections of the emerge man page to learn how to update config files\\.)$",
+  "^\\* (For information on how to configure GRUBN please refer to the guide:|https://wiki\\.gentoo\\.org/wiki/GRUBN_Quick_Start|Re-run grub-install to update installed boot code!|Re-run grub-mkconfig to update grub\\.cfg!)$",
+  "^(Installing for \\S+ platform\\.|Installation finished\\. No error reported\\.)$",
+  "^(Generating grub configuration file \\.\\.\\.|Adding boot menu entry for UEFI Firmware Settings \\.\\.\\.|done)$",
+  "^Found (linux image|initrd image|theme): /boot/\\S+$",
+  "^Adding boot menu entry for EFI BootNext: [^()]+( \\(MAC:HEX\\))? \\(Boot(N|HEX)\\)$",
+  "^(Warning: os-prober will not be executed to detect other bootable partitions\\.|Systems on them will not be added to the GRUB boot configuration\\.|Check GRUB_DISABLE_OS_PROBER documentation entry\\.)$",
+  "^Warning: os-prober is not installed; EFI BootNext entries will not be filtered against detected OSes, so non-OS entries \\(e\\.g\\. firmware updaters\\) may appear in the menu\\.$",
   "^!!! The following binary packages have been ignored due to non matching USE:$",
   "^=[a-z0-9]+(-[a-z0-9]+)*/\\S+( -?[a-z0-9_+-]+)*$",
   "^(NOTE: The --binpkg-respect-use=n option will prevent emerge|from ignoring these binary packages if possible\\.|Using --binpkg-respect-use=y will silence this warning\\.)$"

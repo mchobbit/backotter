@@ -736,7 +736,20 @@ class RealLogLines(unittest.TestCase):
                     "  3000K .......... .......... .......... .......... .......... 52% 1.21M 2s",
                     "  4050K .......... ..........100% 8.43M=0.3s",
                     "!!! The following binary packages have been ignored due to non matching USE:",
-                    "    =net-libs/nghttp2-1.70.0 -systemd xml", "      Using --binpkg-respect-use=y will silence this warning."],
+                    "    =net-libs/nghttp2-1.70.0 -systemd xml", "      Using --binpkg-respect-use=y will silence this warning.",
+                    # sys-boot/grub's pkg_postinst on an upgrade: in-guest.sh's Linux.portage does
+                    # both (GuestTest2 t2v-20261118T0027-d7c8, grub 2.14-r5 -> 2.16-r1)
+                    " * For information on how to configure GRUB2 please refer to the guide:",
+                    " *     https://wiki.gentoo.org/wiki/GRUB2_Quick_Start",
+                    " * Re-run grub-install to update installed boot code!", " * Re-run grub-mkconfig to update grub.cfg!",
+                    # ... and its grub-install and grub-mkconfig (2.16's 31_efi_bootnext lists the VM's NVRAM)
+                    "Installing for x86_64-efi platform.", "Installation finished. No error reported.",
+                    "Generating grub configuration file ...", "Found theme: /boot/grub/themes/gentoo_glass/theme.txt",
+                    "Found linux image: /boot/vmlinuz-6.18.63-gentoo-dist-bin", "Found initrd image: /boot/initramfs-6.18.63-gentoo-dist-bin.img",
+                    "Adding boot menu entry for EFI BootNext: UEFI PXEv4 (MAC:525400123456) (Boot0002)",
+                    "Adding boot menu entry for EFI BootNext: EFI Internal Shell (Boot0006)",
+                    "Warning: os-prober is not installed; EFI BootNext entries will not be filtered against detected OSes, "
+                    "so non-OS entries (e.g. firmware updaters) may appear in the menu."],
         "nix": ["copying path '/nix/store/abc-foo-1.0' from 'https://cache.nixos.org'...", "building '/nix/store/abc-foo.drv'..."],
         "netbsd": ["Removed obsolete file /usr/lib/libunbound.so.8.1"],
         "openbsd": ["Installing patch 002_aesgmac", "Get/Verify syspatch78-002_aesgmac.tgz"],

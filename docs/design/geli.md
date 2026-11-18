@@ -6,6 +6,13 @@ and approved this design the same day with the recommended decisions D1-D7. est.
 before the code that depends on it. G1-G8 are the steps, D1-D7 the
 decisions.
 
+Round 2 (docs/design/geli2.md, 2026-11-17) adds two test guests for what
+this round left to unit tests and scenarios: `freebsd15-geli-bios` (the
+installer's BIOS default with onetime swap) and `freebsd15-geli-ufs` (UFS
+root on GELI, key slot 1, an authenticated key-file `/data`). Its HoltTest1
+runs found that load's `newfs -s` was wrong on a 4096-byte-sector provider,
+now fixed.
+
 ## Summary
 
 - `bko-holt dump` finds GELI providers on FreeBSD (HardenedBSD and GhostBSD

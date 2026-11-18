@@ -183,6 +183,8 @@ omarchy)    cmd=(asm $T/make-omarchy.sh 4.0.6 "$W") ;;
 freebsd15)  cmd=(asm $T/make-freebsd.sh 15.1 zfs "$W") ;;
 freebsd15-ufs) cmd=(asm $T/make-freebsd.sh 15.1 ufs "$W") ;;
 freebsd15-geli) cmd=(asm $T/make-freebsd.sh --uefi-geli 15.1 zfs "$W") ;;
+freebsd15-geli-bios) cmd=(asm $T/make-freebsd.sh --bios-geli 15.1 zfs "$W") ;;
+freebsd15-geli-ufs) cmd=(asm $T/make-freebsd.sh --geli-ufs 15.1 ufs "$W") ;;
 freebsd14)  cmd=(asm $T/make-freebsd.sh 14.5 zfs "$W") ;;
 hardenedbsd15) cmd=(asm $T/make-hardenedbsd.sh 15 23 ufs "$W") ;;
 hardenedbsd15-zfs) cmd=(asm $T/make-hardenedbsd.sh 15 23 zfs "$W") ;;
@@ -207,7 +209,7 @@ esac
 # The image's name: make-freebsd.sh calls it freebsd$major.qcow2 whatever the
 # guest, make-ghostbsd.sh ghostbsd$major.qcow2, make-hardenedbsd.sh
 # hardenedbsd$major.qcow2.
-IMG=$G; case $G in freebsd15-ufs|freebsd15-geli) IMG=freebsd15 ;; ghostbsd26-zfs) IMG=ghostbsd26 ;; hardenedbsd15-zfs) IMG=hardenedbsd15 ;; esac
+IMG=$G; case $G in freebsd15-ufs|freebsd15-geli|freebsd15-geli-bios|freebsd15-geli-ufs) IMG=freebsd15 ;; ghostbsd26-zfs) IMG=ghostbsd26 ;; hardenedbsd15-zfs) IMG=hardenedbsd15 ;; esac
 # Never two VMs on one port: compare.py's boot uses 2230 + COMPARE_SLOT.
 if ss -ltnH "sport = :$((2230 + SLOT))" | grep -q .; then echo "port $((2230 + SLOT)) is taken" >&2; exit 2; fi
 # The ISO: the recipe's .iso argument, wherever options put it.
@@ -251,7 +253,7 @@ else
         case $b in
         openSUSE-MicroOS.*.qcow2) ;;          # microos's input image, not a guest's disk
         *.qcow2|root-password|id_ed25519*|*.log|*.log.*|*.exit|*.start|image-state|vm-run-options|uefi-vars.fd|\
-        *-passphrase|*.verified|*.png|*.json|*.part|*.raw|update*|vmupdate*|install-media.*|*.try1|rebuild*) continue ;;
+        *-passphrase|*-passphrase-slot1|geli-*.key|*.verified|*.png|*.json|*.part|*.raw|update*|vmupdate*|install-media.*|*.try1|rebuild*) continue ;;
         esac
         if [ "$(stat -Lc %s "$f")" -gt $((64 << 20)) ]; then ln -s "$(readlink -f "$f")" $W/$b
         else cp -L "$f" $W/$b; fi

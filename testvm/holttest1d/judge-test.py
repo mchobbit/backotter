@@ -860,6 +860,37 @@ class Geli(unittest.TestCase):
                 self.assertEqual(rc, 1, f"{where} {field}: {out}")
                 self.assertIn(f".{field}", out)
 
+    def test_key_file_and_slot_fields_compared(self):
+        """freebsd15-geli-ufs (docs/design/geli2.md): a provider a key file
+        alone opens, with authentication and a second key slot.  keyed_by,
+        the key files' paths, the slots in use and the authentication
+        algorithm are plain values judge.py compares, so a restored provider
+        that lost one of them is a difference.  Only the path is in the dump:
+        the key file's bytes never are, and the restored provider opening
+        with it at boot is what ht1-bsd.sh checks instead."""
+        for field, value in (("keyed_by", "passphrase"), ("keyfiles", ["/etc/geli/other.key"]),
+                             ("keyfiles", []), ("keys", [0]), ("aalgo", None)):
+            for where in ("content", "partition", "flat"):
+                src = geli_guest(where)
+                geli_rec(src, where).update(keyed_by="keyfile", keyfiles=["/etc/geli/p4.key"],
+                                            keys=[0, 1], aalgo="HMAC/SHA256")
+                dst = copy.deepcopy(src)
+                geli_rec(dst, where)[field] = value
+                rc, out = self.judge(src, dst)
+                self.assertEqual(rc, 1, f"{where} {field}={value}: {out}")
+                self.assertIn(f".{field}", out)
+
+    def test_a_key_file_provider_agrees_with_itself(self):
+        """And the same record on both sides is no difference at all: nothing
+        of such a provider's is ignored, remade or excused."""
+        for where in ("content", "partition", "flat"):
+            src = geli_guest(where)
+            geli_rec(src, where).update(keyed_by="keyfile", keyfiles=["/etc/geli/p4.key"],
+                                        keys=[0, 1], aalgo="HMAC/SHA256")
+            rc, out = self.judge(src, copy.deepcopy(src))
+            self.assertEqual(rc, 0, f"{where}: {out}")
+            self.assertNotIn("DIFF", out)
+
     def test_inner_pool_compared(self):
         src = geli_guest()
         dst = copy.deepcopy(src)

@@ -12,7 +12,8 @@ if [ @ROOT_FS@ = zfs ]; then
 	# make-freebsd.sh --uefi-geli: an EFI system partition instead, and the
 	# pool on GELI, whose passphrase the loader asks for at boot.  The
 	# installer asks for it in a dialog box: bsddialog-geli, first in PATH,
-	# answers.
+	# answers.  --bios-geli: the same on BIOS (gptzfsboot asks), and the
+	# swap onetime-encrypted (ZFSBOOT_SWAP_ENCRYPTION).
 	export ZFSBOOT_DISKS="@ZFS_DISKS@"
 	export ZFSBOOT_VDEV_TYPE=@ZFS_VDEV_TYPE@
 	export ZFSBOOT_SWAP_MIRROR=
@@ -24,6 +25,7 @@ if [ @ROOT_FS@ = zfs ]; then
 			chmod 755 /tmp/bko-bin/bsddialog && export PATH=/tmp/bko-bin:$PATH
 	fi
 	export ZFSBOOT_SWAP_SIZE=2g
+	export ZFSBOOT_SWAP_ENCRYPTION=@ZFS_SWAP_GELI@
 	export ZFSBOOT_CONFIRM_LAYOUT=0
 	# 15.1's "umount" step ends with "umount -F FSTAB -a" over the
 	# installer's fstab entries with a mount point.  On a ZFS root there are
@@ -39,6 +41,10 @@ if [ @ROOT_FS@ = zfs ]; then
 			command bsdinstall "$@"
 		fi
 	}
+elif [ -f /etc/bko-geli-ufs.sh ]; then
+	# make-freebsd.sh --geli-ufs: UFS on GELI, which the guided UFS can't
+	# make; freebsd/geli-ufs.sh partitions in its place.
+	. /etc/bko-geli-ufs.sh
 else
 	# The installer adds the BIOS boot partition itself.
 	PARTITIONS="vtbd0 GPT { 2G freebsd-swap, auto freebsd-ufs / }"

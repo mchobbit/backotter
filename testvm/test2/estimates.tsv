@@ -109,6 +109,8 @@ holt	holt:zorin18	6.22	373	0.00	14.75	ht_rows.json r3all chopin PASS; r3all_file
 holt	holt:fedora44-raid	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
 holt	holt:freebsd15-mirror	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
 holt	holt:freebsd15-geli	5.60	336	0.00	-	chopin geli3 PASS 2026-11-14, 04:17:10Z to 04:22:46Z (ht1-bsd.sh, passphrase typed through console-boot.py)
+holt	holt:freebsd15-geli-bios	5.47	328	0.00	-	cinqcent geli2a PASS 2026-11-17, 21:53:16Z to 21:58:44Z (ht1-bsd.sh, passphrase typed through console-boot.py)
+holt	holt:freebsd15-geli-ufs	4.85	291	0.00	-	cinqcent geli2b PASS 2026-11-17, 23:19:19Z to 23:24:10Z (ht1-bsd.sh, slot-1 refusal and checks, /data key file)
 holt	holt:omnios58-mirror	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
 holt	holt:oi2610	5.63	338	0.00	-	openindiana.md: as holt:omnios58 (r3all chopin PASS), until measured (est.)
 holt	holt:oi2610-bios	5.63	338	0.00	-	openindiana.md: as holt:omnios58 (r3all chopin PASS), until measured (est.)
@@ -182,6 +184,8 @@ guest	guest:fedora44-uefi	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 
 guest	guest:freebsd14	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:freebsd15	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:freebsd15-geli	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:freebsd15-geli-bios	3.30	198	0.00	-	geli2.md: guest:freebsd15-geli's 1.8 + 1.5 for a new guest's smoke backup (no GuestTest2 run yet)
+guest	guest:freebsd15-geli-ufs	3.30	198	0.00	-	geli2.md: guest:freebsd15-geli's 1.8 + 1.5 for a new guest's smoke backup (no GuestTest2 run yet)
 guest	guest:freebsd15-mirror	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:freebsd15-ufs	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ghostbsd26	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks

@@ -1,0 +1,386 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.6"
+  },
+  "generated": "2026-11-17T23:19:46Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host-1"
+  },
+  "os": {
+    "family": "freebsd",
+    "id": "freebsd",
+    "version_id": "15.1",
+    "pretty_name": "FreeBSD 15.1-RELEASE-p7",
+    "kernel_name": "FreeBSD",
+    "kernel_release": "15.1-RELEASE-p7",
+    "kernel_version": "FreeBSD 15.1-RELEASE-p7 releng/15.1-n283696-bb03631fe3b7 GENERIC",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "uefi"
+  },
+  "storage": {
+    "disks": [
+      {
+        "name": "vtbd0",
+        "path": "/dev/vtbd0",
+        "kind": "disk",
+        "size_bytes": 17179869184,
+        "size": "16 GiB",
+        "logical_sector_size": 512,
+        "model": null,
+        "serial": null,
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "bc000000-0000-4000-8000-000000000001",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 40,
+          "last_usable_lba": 33554391,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 33554431,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 33554431,
+                "start_bytes": 512,
+                "size_bytes": 17179868672,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vtbd0p1",
+            "number": 1,
+            "start_lba": 2048,
+            "end_lba": 534527,
+            "sectors": 532480,
+            "start_bytes": 1048576,
+            "size_bytes": 272629760,
+            "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "type_name": "EFI System",
+            "uuid": "bc000000-0000-4000-8000-000000000002",
+            "partlabel": "efiboot0",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "content": {
+              "type": "vfat",
+              "usage": "filesystem",
+              "uuid": "BC00-0001",
+              "label": null,
+              "version": "FAT32",
+              "fat_bits": 32,
+              "bytes_per_sector": 512,
+              "sectors_per_cluster": 1,
+              "cluster_size": 512,
+              "reserved_sectors": 32,
+              "fats": 2,
+              "fat_sectors": 4096,
+              "total_sectors": 532480,
+              "size_bytes": 272629760,
+              "clusters": 524256,
+              "hidden_sectors": 0,
+              "media": "0xf0",
+              "oem_name": "BSD4.4",
+              "root_cluster": 2,
+              "fsinfo_sector": 1,
+              "backup_boot_sector": 2,
+              "boot_sector_label": null
+            },
+            "mounted_at": ["/boot/efi"]
+          },
+          {
+            "name": "vtbd0p2",
+            "number": 2,
+            "start_lba": 534528,
+            "end_lba": 2631679,
+            "sectors": 2097152,
+            "start_bytes": 273678336,
+            "size_bytes": 1073741824,
+            "type": "516e7cb5-6ecf-11d6-8ff8-00022d09712b",
+            "type_name": "FreeBSD swap",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "partlabel": "swap0",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "content": null,
+            "mounted_at": []
+          },
+          {
+            "name": "vtbd0p3",
+            "number": 3,
+            "start_lba": 2631680,
+            "end_lba": 31451135,
+            "sectors": 28819456,
+            "start_bytes": 1347420160,
+            "size_bytes": 14755561472,
+            "type": "516e7cb6-6ecf-11d6-8ff8-00022d09712b",
+            "type_name": "FreeBSD UFS",
+            "uuid": "bc000000-0000-4000-8000-000000000004",
+            "partlabel": "rootfs0",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "content": {
+              "type": "geli",
+              "usage": "crypto",
+              "uuid": null,
+              "label": null,
+              "version": "7",
+              "flags": ["BOOT", "GELIBOOT", "AUTORESIZE"],
+              "flags_raw": "0x282",
+              "ealgo": "AES-XTS",
+              "ealgo_id": 22,
+              "keylen": 256,
+              "aalgo": null,
+              "aalgo_id": 0,
+              "provsize": 14755561472,
+              "sectorsize": 4096,
+              "keys": [0, 1],
+              "iterations": 2991056
+            },
+            "snap_dir": true,
+            "geli": {
+              "version": 7,
+              "flags": ["BOOT", "GELIBOOT", "AUTORESIZE"],
+              "flags_raw": "0x282",
+              "ealgo": "AES-XTS",
+              "ealgo_id": 22,
+              "keylen": 256,
+              "aalgo": null,
+              "aalgo_id": 0,
+              "provsize": 14755561472,
+              "sectorsize": 4096,
+              "keys": [0, 1],
+              "iterations": 2991056,
+              "provider": "vtbd0p3.eli",
+              "attached": true,
+              "onetime": false,
+              "content": {
+                "type": "ufs",
+                "usage": "filesystem",
+                "uuid": "bc00000000000002",
+                "label": null,
+                "version": "2",
+                "superblock_offset": 65536,
+                "block_size": 32768,
+                "fragment_size": 4096,
+                "cylinder_groups": 23,
+                "inodes_per_group": 80128,
+                "minfree": 8,
+                "optimization": "time",
+                "extended_attributes": false,
+                "last_mounted_on": "/"
+              },
+              "keyed_by": "passphrase",
+              "keyfiles": [],
+              "newfs": "newfs -O 2 -U -a 32 -b 32768 -d 32768 -e 4096 -f 4096 -g 16384 -h 64 -i 8192 -j -k 6400 -m 8 -o time -s 28819448 DEVICE",
+              "tunefs": {}
+            },
+            "mounted_at": ["/"]
+          },
+          {
+            "name": "vtbd0p4",
+            "number": 4,
+            "start_lba": 31451136,
+            "end_lba": 33552383,
+            "sectors": 2101248,
+            "start_bytes": 16102981632,
+            "size_bytes": 1075838976,
+            "type": "516e7cb6-6ecf-11d6-8ff8-00022d09712b",
+            "type_name": "FreeBSD UFS",
+            "uuid": "bc000000-0000-4000-8000-000000000005",
+            "partlabel": "data0",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "content": {
+              "type": "geli",
+              "usage": "crypto",
+              "uuid": null,
+              "label": null,
+              "version": "7",
+              "flags": ["AUTH", "AUTORESIZE"],
+              "flags_raw": "0x210",
+              "ealgo": "AES-XTS",
+              "ealgo_id": 22,
+              "keylen": 128,
+              "aalgo": "HMAC/SHA256",
+              "aalgo_id": 18,
+              "provsize": 1075838976,
+              "sectorsize": 512,
+              "keys": [0],
+              "iterations": -1
+            },
+            "snap_dir": true,
+            "geli": {
+              "version": 7,
+              "flags": ["AUTH", "AUTORESIZE"],
+              "flags_raw": "0x210",
+              "ealgo": "AES-XTS",
+              "ealgo_id": 22,
+              "keylen": 128,
+              "aalgo": "HMAC/SHA256",
+              "aalgo_id": 18,
+              "provsize": 1075838976,
+              "sectorsize": 512,
+              "keys": [0],
+              "iterations": -1,
+              "provider": "vtbd0p4.eli",
+              "attached": true,
+              "onetime": false,
+              "content": {
+                "type": "ufs",
+                "usage": "filesystem",
+                "uuid": "bc00000000000003",
+                "label": null,
+                "version": "2",
+                "superblock_offset": 65536,
+                "block_size": 32768,
+                "fragment_size": 4096,
+                "cylinder_groups": 4,
+                "inodes_per_group": 16512,
+                "minfree": 8,
+                "optimization": "time",
+                "extended_attributes": false,
+                "last_mounted_on": "/data"
+              },
+              "keyed_by": "keyfile",
+              "keyfiles": ["/etc/geli/keyfile1.key"],
+              "newfs": "newfs -O 2 -U -a 32 -b 32768 -d 32768 -e 4096 -f 4096 -g 16384 -h 64 -i 8192 -k 1312 -m 8 -o time -s 1050616 DEVICE",
+              "tunefs": {}
+            },
+            "mounted_at": ["/data"]
+          }
+        ],
+        "boot_code": {
+          "kind": "none",
+          "first_bytes": "00000000000000000000000000000000",
+          "code_b64": null
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "/dev/vtbd0p3.eli",
+        "fstype": "ufs",
+        "options": "rw",
+        "device": "vtbd0p3",
+        "eli": true
+      },
+      {
+        "target": "/dev",
+        "source": "devfs",
+        "fstype": "devfs",
+        "options": "rw",
+        "device": null
+      },
+      {
+        "target": "/boot/efi",
+        "source": "/dev/gpt/efiboot0",
+        "fstype": "msdosfs",
+        "options": "rw",
+        "device": "vtbd0p1"
+      },
+      {
+        "target": "/data",
+        "source": "/dev/vtbd0p4.eli",
+        "fstype": "ufs",
+        "options": "rw",
+        "device": "vtbd0p4",
+        "eli": true
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/vtbd0p2",
+        "size_bytes": 1073741824,
+        "device": "vtbd0p2"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "/dev/vtbd0p3.eli",
+        "file": "/",
+        "type": "ufs",
+        "options": "rw",
+        "freq": 1,
+        "passno": 1,
+        "resolves_to": "vtbd0p3",
+        "eli": true
+      },
+      {
+        "spec": "/dev/gpt/efiboot0",
+        "file": "/boot/efi",
+        "type": "msdosfs",
+        "options": "rw",
+        "freq": 2,
+        "passno": 2,
+        "resolves_to": "vtbd0p1"
+      },
+      {
+        "spec": "/dev/vtbd0p2",
+        "file": "none",
+        "type": "swap",
+        "options": "sw",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vtbd0p2"
+      },
+      {
+        "spec": "/dev/vtbd0p4.eli",
+        "file": "/data",
+        "type": "ufs",
+        "options": "rw",
+        "freq": 2,
+        "passno": 2,
+        "resolves_to": "vtbd0p4",
+        "eli": true
+      }
+    ],
+    "zfs": {
+      "pools_from_labels": [],
+      "zpool_cache": null,
+      "tools": {
+        "imported_pools": [],
+        "datasets": []
+      }
+    },
+    "glabels": []
+  },
+  "boot": {
+    "loader": {
+      "name": "freebsd",
+      "firmware": "uefi",
+      "evidence": ["machdep.bootmethod says UEFI"]
+    },
+    "boot_partitions": [],
+    "loader_conf": "aesni_load=\"YES\"\ngeom_eli_load=\"YES\"\nboot_multicons=\"YES\"\nconsole=\"comconsole,vidconsole\"\nautoboot_delay=\"3\"\n",
+    "efibootmgr": "Boot to FW : false\nBootCurrent: 0001\nTimeout    : 0 seconds\nBootOrder  : 0000, 0001, 0002, 0003, 0004, 0005, 0006\n Boot0000* UiApp Fv(bc000000-0000-4000-8000-000000000006)/FvFile(bc000000-0000-4000-8000-000000000007)\n+Boot0001* UEFI Misc Device PciRoot(0x0)/Pci(0x3,0x0)\n Boot0002* UEFI PXEv4 (MAC:bc0000000004) PciRoot(0x0)/Pci(0x2,0x0)/MAC(bc0000000004,0x1)/IPv4(0.0.0.0,0x0,DHCP,0.0.0.0,0.0.0.0,0.0.0.0)\n Boot0003* UEFI PXEv6 (MAC:bc0000000004) PciRoot(0x0)/Pci(0x2,0x0)/MAC(bc0000000004,0x1)/IPv6(0000:0000:0000:0000:0000:0000:0000:0000,0x0,Static,0000:0000:0000:0000:0000:0000:0000:0000,0x40,0000:0000:0000:0000:0000:0000:0000:0000)\n Boot0004* UEFI HTTPv4 (MAC:bc0000000004) PciRoot(0x0)/Pci(0x2,0x0)/MAC(bc0000000004,0x1)/IPv4(0.0.0.0,0x0,DHCP,0.0.0.0,0.0.0.0,0.0.0.0)/Uri()\n Boot0005* UEFI HTTPv6 (MAC:bc0000000004) PciRoot(0x0)/Pci(0x2,0x0)/MAC(bc0000000004,0x1)/IPv6(0000:0000:0000:0000:0000:0000:0000:0000,0x0,Static,0000:0000:0000:0000:0000:0000:0000:0000,0x40,0000:0000:0000:0000:0000:0000:0000:0000)/Uri()\n Boot0006* EFI Internal Shell Fv(bc000000-0000-4000-8000-000000000006)/FvFile(bc000000-0000-4000-8000-000000000008)\n\n\nUnreferenced Variables:\n",
+    "kernel": "/boot/kernel/kernel"
+  },
+  "warnings": []
+}

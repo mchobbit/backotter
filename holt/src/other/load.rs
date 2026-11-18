@@ -7,7 +7,7 @@ use super::{freebsd, open, read_disk, Family, Found, RawDisk};
 use crate::blockdev::{BlockDev, Kind};
 use crate::json::Value;
 use crate::load::commands::{Builder, Cmd};
-use crate::load::layout::{Disk, TableKind};
+use crate::load::layout::{Disk, Layout, TableKind};
 use crate::load::target::{self, System, TargetDisk};
 use crate::load::{Options, RUN_DIR};
 use crate::mounts::{self, Mount};
@@ -250,6 +250,45 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
     System { disks, mounts, pools, pvs: vec![], devs: vec![], swaps: vec![] }
 }
 
+/// The sector size the device `src`'s filesystem goes on counts in, `rec`
+/// being that device's record (`Layout::device`): a GELI provider's own
+/// (`geli init -s`, kept in its record as `sectorsize`), else the logical
+/// sector size of the disk whose partition it is.  512 where the dump
+/// doesn't say (a disklabel partition), which leaves the source's own
+/// numbers as they are.
+pub(super) fn newfs_sector(layout: &Layout, src: &str, rec: &Value) -> u64 {
+    if let Some(n) = rec.get("sectorsize").and_then(Value::as_u64) {
+        return n.max(512);
+    }
+    layout.disks.iter().find(|d| d.name == src || d.parts.iter().any(|p| p.name == src)).map_or(512, |d| d.sector_size.max(512))
+}
+
+/// `dumpfs -m`'s `-s`, which is in DEV_BSIZE (512-byte) units, made the
+/// count of `sector`-byte sectors FreeBSD's `newfs` reads it as (newfs asks
+/// the device for its sector size and counts in those).  On a device with
+/// larger sectors -- a GELI provider made with `geli init -s 4096`, a 4Kn
+/// disk -- the source's number names the same bytes but `sector`/512 times
+/// too many sectors, and newfs refuses it ("maximum file system size is
+/// ...").  A size that isn't a whole number of sectors is rounded down:
+/// newfs must not be given more than the device holds.  `words` is the
+/// command, changed in place; the answer is what to say in the Cmd's `why`,
+/// and None where there was nothing to change.
+fn newfs_size_in_sectors(words: &mut [String], sector: u64) -> Option<String> {
+    if sector <= 512 {
+        return None;
+    }
+    let i = words.iter().position(|w| w == "-s")?;
+    let blocks: u64 = words.get(i + 1)?.parse().ok()?;
+    let per = sector / 512;
+    let sectors = blocks / per;
+    words[i + 1] = sectors.to_string();
+    let mut why = format!("dumpfs's -s {blocks} is in 512-byte units, and newfs counts this device's {sector}-byte sectors: -s {sectors}");
+    if blocks % per != 0 {
+        why += &format!(", rounded down ({blocks} of them isn't a whole number of {sector}-byte sectors, and newfs must not be given more than the device holds)");
+    }
+    Some(why)
+}
+
 impl Builder<'_> {
     /// The table, written by bko-holt itself from the dump (GUIDs, names
     /// and attributes exactly), with the boot code the source's MBR and
@@ -343,8 +382,8 @@ impl Builder<'_> {
         out
     }
 
-    /// newfs as the source's dumpfs -m printed it, and the tunefs settings
-    /// newfs doesn't take.
+    /// newfs as the source's dumpfs -m printed it, with its size in the
+    /// target device's sectors, and the tunefs settings newfs doesn't take.
     pub(crate) fn other_newfs(&mut self, src: &str, dev: &str) -> Vec<Cmd> {
         let p = self.layout.device(src).cloned().unwrap_or(Value::Null);
         let Some(cmd) = s(&p, "newfs") else {
@@ -360,14 +399,19 @@ impl Builder<'_> {
             _ => dev.to_string(),
         };
         let mut words: Vec<String> = cmd.split_whitespace().map(|w| if w == "DEVICE" { node.clone() } else { w.to_string() }).collect();
+        let mut why = format!("{src}: UFS as the source's (dumpfs -m)");
         // DragonFly's dumpfs -m gives -s in fragments, newfs takes sectors:
         // the whole partition (what made it) instead.
         if self.fam == Some(Family::DragonFly) {
             if let Some(i) = words.iter().position(|w| w == "-s") {
                 words.drain(i..(i + 2).min(words.len()));
             }
+        } else if self.fam == Some(Family::FreeBsd) {
+            if let Some(said) = newfs_size_in_sectors(&mut words, newfs_sector(self.layout, src, &p)) {
+                why += &format!("; {said}");
+            }
         }
-        let mut out = vec![Cmd { argv: words, why: Some(format!("{src}: UFS as the source's (dumpfs -m)")), ..Cmd::default() }];
+        let mut out = vec![Cmd { argv: words, why: Some(why), ..Cmd::default() }];
         let tf = p.get("tunefs").cloned().unwrap_or(Value::Null);
         for (flag, on) in [("-a", "POSIX.1e ACLs"), ("-N", "NFSv4 ACLs"), ("-l", "MAC multilabel")] {
             if s(&tf, flag).as_deref() == Some("enabled") {
@@ -699,6 +743,33 @@ mod tests {
         t.file("/dev/vtbd0", img).file("/dev/vtbd1", vec![0u8; 2048 * 512]);
         let s = freebsd_sys(&t, "");
         assert!(!scan(&s, Family::FreeBsd, &opts(), &[]).disk("vtbd0").unwrap().boot_medium);
+    }
+
+    /// dumpfs -m's -s counts 512-byte units and newfs the device's own
+    /// sectors: on a 4096-byte-sector provider (freebsd15-geli-ufs's p3,
+    /// geli2.md) the source's 28819448 is 3602431 of them, which is what
+    /// newfs's "maximum file system size" says there.
+    #[test]
+    fn newfs_size_is_the_devices_own_sectors() {
+        let words = |t: &str| t.split_whitespace().map(str::to_string).collect::<Vec<String>>();
+        let size = |t: &str, sector: u64| {
+            let mut w = words(t);
+            let why = newfs_size_in_sectors(&mut w, sector);
+            (w.join(" "), why)
+        };
+        let (cmd, why) = size("newfs -O 2 -f 4096 -s 28819448 /dev/vtbd1p3.eli", 4096);
+        assert_eq!(cmd, "newfs -O 2 -f 4096 -s 3602431 /dev/vtbd1p3.eli");
+        assert_eq!(why.unwrap(), "dumpfs's -s 28819448 is in 512-byte units, and newfs counts this device's 4096-byte sectors: -s 3602431");
+        // 512-byte sectors (the guest's p4): the source's own number.
+        assert_eq!(size("newfs -O 2 -U -s 1050616 /dev/vtbd1p4.eli", 512), ("newfs -O 2 -U -s 1050616 /dev/vtbd1p4.eli".to_string(), None));
+        // Not a whole number of sectors: down, never up.
+        let (cmd, why) = size("newfs -s 28819455 /dev/vtbd1p3.eli", 4096);
+        assert_eq!(cmd, "newfs -s 3602431 /dev/vtbd1p3.eli");
+        assert!(why.unwrap().ends_with("-s 3602431, rounded down (28819455 of them isn't a whole number of 4096-byte sectors, and newfs must not be given more than the device holds)"));
+        // Nothing to change: no -s, no number after it, not a number.
+        for t in ["newfs -O 2 -U /dev/vtbd1p3.eli", "newfs -O 2 -s", "newfs -s all /dev/vtbd1p3.eli"] {
+            assert_eq!(size(t, 4096), (t.to_string(), None), "{t}");
+        }
     }
 
     /// DragonFly's rescue image, shrunk: slice 2 a disklabel64 (in its second

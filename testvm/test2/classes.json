@@ -46,7 +46,7 @@
       "Obscure": ["pop24", "nixos2605", "omarchy", "sculpt2610", "redox", "tumbleweed", "debian12", "chimera",
                   "chimera-uefi", "chimera-zfs", "vanilla3", "pikaos4", "pikaos4-luks", "microos",
                   "solus49", "slackware15", "slackware15-uefi"],
-      "BSD": ["freebsd15", "freebsd15-mirror", "freebsd15-geli", "freebsd14", "ghostbsd26", "ghostbsd26-zfs", "hardenedbsd15",
+      "BSD": ["freebsd15", "freebsd15-mirror", "freebsd15-geli", "freebsd15-geli-bios", "freebsd15-geli-ufs", "freebsd14", "ghostbsd26", "ghostbsd26-zfs", "hardenedbsd15",
               "hardenedbsd15-zfs", "netbsd11", "alpinebsd", "openbsd8", "dragonfly6"]
     },
     "no_family": ["devuan6"],

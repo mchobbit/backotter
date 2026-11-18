@@ -962,6 +962,60 @@
     "established": true
    }
   },
+  "freebsd15-geli-bios": {
+   "kind": "ssh",
+   "plat": "freebsd",
+   "harness": [
+    "testvm/make-freebsd.sh",
+    "testvm/freebsd/**",
+    "testvm/console-boot.py",
+    "testvm/update/in-guest.sh#FreeBSD",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#freebsd"
+   ],
+   "checks": {
+    "pm": "freebsd",
+    "rules": {
+     "source": "S-fbsd",
+     "loader": "L-fbsd",
+     "kernel": "K-fbsd",
+     "boot": "B-bsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "bios",
+    "established": false
+   },
+   "notes": "docs/design/geli2.md: GELI round 2 (passphrase typed through console-boot.py); established false until its first GuestTest2 run"
+  },
+  "freebsd15-geli-ufs": {
+   "kind": "ssh",
+   "plat": "freebsd",
+   "harness": [
+    "testvm/make-freebsd.sh",
+    "testvm/freebsd/**",
+    "testvm/console-boot.py",
+    "testvm/update/in-guest.sh#FreeBSD",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#freebsd"
+   ],
+   "checks": {
+    "pm": "freebsd",
+    "rules": {
+     "source": "S-fbsd",
+     "loader": "L-fbsd",
+     "kernel": "K-fbsd",
+     "boot": "B-bsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "uefi",
+    "established": false
+   },
+   "notes": "docs/design/geli2.md: GELI round 2 (passphrase typed through console-boot.py); established false until its first GuestTest2 run"
+  },
   "freebsd15-mirror": {
    "kind": "ssh",
    "plat": "freebsd",

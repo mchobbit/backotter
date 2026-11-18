@@ -1,8 +1,8 @@
 """A synthetic world for P2's tests (U2.2-U2.6): a fixture checkout (git), BKO_GIT's three
 forks, both hosts' facts and a seeded ledger.  Nothing here touches a host or a default root.
 
-    w = World(tmpdir)            the checkout: 47 SticTest checks, 77 HoltTest sources and 9
-                                 variants, 13 gate cells, 79 guests, 7 images, with the real classes.json,
+    w = World(tmpdir)            the checkout: 47 SticTest checks, 81 HoltTest sources and 9
+                                 variants, 13 gate cells, 81 guests, 7 images, with the real classes.json,
                                  estimates.tsv, drive.py, affected.sh and ram-sizes.tsv
     w.facts()                    {host: facts}, as facts_host.py gives them
     w.ctx(rows, facts=..., **options)   a plan.Ctx
@@ -39,34 +39,36 @@ GUESTS = ("aerynos alpine324 alpinebsd arch artix-dinit artix-s6 cachyos debian1
           "netbsd11 nixos2605 omarchy omnios58 omnios58-mirror openbsd8 pop24 redox rocky10 rocky10-lvm "
           "rocky10-raid5 sculpt2610 tumbleweed ubuntu24 ubuntu26-raid ubuntu26-uefi ubuntu26-zfs ubuntu26-zfsmirror "
           "void-musl zorin18 endeavouros endeavouros-grub manjaro ubuntu26-luks chimera kinoite44 chimera-uefi "
-          "chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 oi2610-bios pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos aeon ubuntu24-uefi ubuntu24-luks solus49 elementary8 elementary8-luks void-zbm void-zbm-enc").split()
+          "chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 oi2610-bios pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos aeon ubuntu24-uefi ubuntu24-luks solus49 elementary8 elementary8-luks void-zbm void-zbm-enc freebsd15-geli-bios freebsd15-geli-ufs").split()
 UEFI = set("aerynos alpinebsd debian13-stack fedora44-raid fedora44-uefi freebsd15-geli omarchy pop24 ubuntu26-raid "
            "ubuntu26-uefi ubuntu26-zfs endeavouros endeavouros-grub manjaro ubuntu26-luks kinoite44 chimera-uefi "
-           "chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos aeon ubuntu24-uefi ubuntu24-luks solus49 elementary8 elementary8-luks void-zbm void-zbm-enc".split())
+           "chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos aeon ubuntu24-uefi ubuntu24-luks solus49 elementary8 elementary8-luks void-zbm void-zbm-enc freebsd15-geli-ufs".split())
 PLATS = words.PLATS
 # HoltTest2 sources whose guests aren't GuestTest2's yet (docs/design/slackware.md: the
 # guest/spec.json registration comes later): in the hosts' facts and holt/spec.json only.
 HOLT_ONLY = ["slackware15", "slackware15-uefi"]
 UEFI.add("slackware15-uefi")
 NEW_GUESTS = set("endeavouros endeavouros-grub manjaro ubuntu26-luks chimera kinoite44 fedora44-raid ubuntu26-raid rocky10-raid5 freebsd15-mirror "
-                 "omnios58-mirror chimera-uefi chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 oi2610-bios pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos aeon ubuntu24-uefi ubuntu24-luks solus49 elementary8 elementary8-luks hardenedbsd15-zfs void-zbm void-zbm-enc".split())
+                 "omnios58-mirror chimera-uefi chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 oi2610-bios pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos aeon ubuntu24-uefi ubuntu24-luks solus49 elementary8 elementary8-luks hardenedbsd15-zfs void-zbm void-zbm-enc freebsd15-geli-bios freebsd15-geli-ufs".split())
 PM = {"apt": "debian12 debian13 debian13-stack debian13-zfs devuan6 mint22 mx25 pop24 ubuntu24 ubuntu26-raid ubuntu26-uefi "
              "ubuntu26-zfs ubuntu26-zfsmirror zorin18 ubuntu26-luks anduinos2 neon24 pikaos4 pikaos4-luks proxmox9 proxmox9-mirror ubuntu24-uefi ubuntu24-luks elementary8 elementary8-luks",
       "dnf": "fedora44 fedora44-raid fedora44-uefi rocky10 rocky10-lvm rocky10-raid5", "rpm-ostree": "kinoite44",
       "pacman": "arch artix-dinit artix-s6 cachyos omarchy endeavouros endeavouros-grub manjaro cachyos-zfs garuda biglinux",
       "zypper": "tumbleweed", "xbps": "void-musl void-zbm void-zbm-enc", "apk": "alpine324 chimera chimera-uefi chimera-zfs", "moss": "aerynos",
       "NixOS": "nixos2605", "portage": "gentoo gentoo-systemd", "abroot": "vanilla3", "tukit": "microos aeon", "eopkg": "solus49",
-      "FreeBSD": "freebsd14 freebsd15 freebsd15-geli freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs hardenedbsd15 hardenedbsd15-zfs",
+      "FreeBSD": "freebsd14 freebsd15 freebsd15-geli freebsd15-geli-bios freebsd15-geli-ufs freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs hardenedbsd15 hardenedbsd15-zfs",
       "NetBSD": "netbsd11 alpinebsd", "OpenBSD": "openbsd8", "DragonFly": "dragonfly6", "SunOS": "omnios58 omnios58-mirror oi2610 oi2610-bios",
       "Haiku": "haiku6", "Redox": "redox", "Sculpt": "sculpt2610"}
 PM_OF = {g: pm for pm, gs in PM.items() for g in gs.split()}
 LINUX_PMS = ("apt", "dnf", "pacman", "zypper", "xbps", "apk", "moss", "rpm-ostree", "portage", "abroot", "tukit", "eopkg")
 SECTION = {"rpm-ostree": "ostree"}          # in-guest.sh's Linux.NAME, where it isn't the pm's
-BSD_PLAT = {"freebsd15": "freebsd", "freebsd15-mirror": "freebsd", "freebsd15-geli": "freebsd", "freebsd14": "freebsd", "ghostbsd26": "freebsd",
+BSD_PLAT = {"freebsd15": "freebsd", "freebsd15-mirror": "freebsd", "freebsd15-geli": "freebsd",
+            "freebsd15-geli-bios": "freebsd", "freebsd15-geli-ufs": "freebsd", "freebsd14": "freebsd", "ghostbsd26": "freebsd",
             "ghostbsd26-zfs": "freebsd", "hardenedbsd15": "freebsd", "hardenedbsd15-zfs": "freebsd", "netbsd11": "netbsd", "alpinebsd": "netbsd",
             "openbsd8": "openbsd", "dragonfly6": "dragonfly", "omnios58": "illumos", "omnios58-mirror": "illumos",
             "oi2610": "illumos", "oi2610-bios": "illumos", "haiku6": "haiku"}
-BSD_RESCUER = {"freebsd15": "freebsd15-ufs", "freebsd15-mirror": "freebsd15-ufs", "freebsd15-geli": "freebsd15-ufs", "freebsd14": "freebsd15-ufs",
+BSD_RESCUER = {"freebsd15": "freebsd15-ufs", "freebsd15-mirror": "freebsd15-ufs", "freebsd15-geli": "freebsd15-ufs",
+               "freebsd15-geli-bios": "freebsd15-ufs", "freebsd15-geli-ufs": "freebsd15-ufs", "freebsd14": "freebsd15-ufs",
                "ghostbsd26": "freebsd15-ufs", "ghostbsd26-zfs": "freebsd15-ufs", "hardenedbsd15": "freebsd15-ufs", "hardenedbsd15-zfs": "freebsd15-ufs",
                "netbsd11": "netbsd11", "alpinebsd": "netbsd11", "openbsd8": "openbsd8-newduid.qcow2",
                "dragonfly6": "dragonfly6-newfsid.qcow2", "omnios58": "omnios58-reguid.qcow2",

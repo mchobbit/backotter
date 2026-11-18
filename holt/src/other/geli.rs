@@ -1042,6 +1042,50 @@ mod tests {
         assert!(!b.notes.iter().any(|n| n.contains("vtbd0p2")), "{:?}", b.notes);
     }
 
+    /// freebsd15-geli-ufs (geli2.md): its root UFS is on a provider whose
+    /// sectors are 4096 bytes, and `dumpfs -m` prints the size in 512-byte
+    /// units, so newfs has to be given the 3602431 sectors the provider has
+    /// -- the number its own "maximum file system size is 3602431" names --
+    /// and not the source's 28819448, which it refuses.
+    #[test]
+    fn newfs_counts_the_geli_providers_own_sectors() {
+        use crate::load::Stage;
+        const P3: &str = "newfs -O 2 -U -a 32 -b 32768 -d 32768 -e 4096 -f 4096 -g 16384 -h 64 -i 8192 -j -k 6400 -m 8 -o time -s 28819448 DEVICE";
+        let newfs = |v: Value| {
+            let b = plan(v, &["--key-file", "vtbd0p3=/k"]);
+            assert!(b.problems.is_empty(), "{:?}", b.problems);
+            let c = b.stage(Stage::Format).iter().find(|c| c.argv.first().is_some_and(|a| a == "newfs")).expect("the newfs").clone();
+            (c.argv.join(" "), c.why.unwrap_or_default())
+        };
+        let (cmd, why) = newfs(ufs_on_geli(|r| put(r, "newfs", Value::from(P3))));
+        assert_eq!(cmd, P3.replace("-s 28819448", "-s 3602431").replace("DEVICE", "/dev/vtbd1p3.eli"));
+        assert_eq!(why, "vtbd0p3.eli: UFS as the source's (dumpfs -m); dumpfs's -s 28819448 is in 512-byte units, and newfs counts this device's 4096-byte sectors: -s 3602431");
+        // The guest's second provider (p4: authenticated, GELI's default
+        // 512-byte sectors) keeps the size dumpfs printed.
+        let p4 = |r: &mut Value| {
+            put(r, "newfs", Value::from("newfs -O 2 -U -s 1050616 DEVICE"));
+            put(r, "sectorsize", Value::from(512u64));
+            put(r, "flags_raw", Value::from("0x52"));
+            put(r, "aalgo_id", Value::from(18u64));
+        };
+        let (cmd, why) = newfs(ufs_on_geli(p4));
+        assert_eq!(cmd, "newfs -O 2 -U -s 1050616 /dev/vtbd1p3.eli");
+        assert_eq!(why, "vtbd0p3.eli: UFS as the source's (dumpfs -m)");
+        // A size that isn't a whole number of the provider's sectors: down.
+        let (cmd, why) = newfs(ufs_on_geli(|r| put(r, "newfs", Value::from("newfs -O 2 -U -s 28819455 DEVICE"))));
+        assert_eq!(cmd, "newfs -O 2 -U -s 3602431 /dev/vtbd1p3.eli");
+        assert!(why.ends_with("-s 3602431, rounded down (28819455 of them isn't a whole number of 4096-byte sectors, and newfs must not be given more than the device holds)"), "{why}");
+        // Which sectors: the provider's own, and for a plain partition its
+        // disk's (a 4Kn disk's dumpfs -m counts 512-byte units just the same).
+        let l = Layout::from_json(ufs_on_geli(|_| {})).unwrap();
+        let sector = |n: &str, l: &Layout| super::super::load::newfs_sector(l, n, l.device(n).unwrap());
+        assert_eq!((sector("vtbd0p3.eli", &l), sector("vtbd0p3", &l)), (4096, 512));
+        let mut v = ufs_on_geli(|_| {});
+        put(at_mut(&mut v, &["storage", "disks", "0"]), "logical_sector_size", Value::from(4096u64));
+        let l = Layout::from_json(v).unwrap();
+        assert_eq!((sector("vtbd0p3.eli", &l), sector("vtbd0p3", &l)), (4096, 4096));
+    }
+
     #[test]
     fn geli_only_on_freebsd() {
         let mut v = zfs_on_geli(|_| {});

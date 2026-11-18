@@ -2,10 +2,13 @@
 # Build a FreeBSD test guest for BackOtter: an unattended install from an
 # official ISO into a qcow2 disk image, under QEMU with KVM.
 #
-# Usage: ./make-freebsd.sh [--uefi-geli | --zfs-mirror] VERSION ROOT_FS WORK_DIR
+# Usage: ./make-freebsd.sh [--uefi-geli | --bios-geli | --geli-ufs | --zfs-mirror]
+#                          VERSION ROOT_FS WORK_DIR
 #   e.g. ./make-freebsd.sh 15.1 zfs vms/freebsd15
 #        ./make-freebsd.sh 14.5 ufs vms/freebsd14-ufs
 #        ./make-freebsd.sh --uefi-geli 15.1 zfs vms/freebsd15-geli
+#        ./make-freebsd.sh --bios-geli 15.1 zfs vms/freebsd15-geli-bios
+#        ./make-freebsd.sh --geli-ufs 15.1 ufs vms/freebsd15-geli-ufs
 #        ./make-freebsd.sh --zfs-mirror 15.1 zfs vms/freebsd15-mirror
 #
 # VERSION is a release in https://download.freebsd.org/releases/ISO-IMAGES/,
@@ -20,10 +23,15 @@
 #   id_ed25519, .pub      SSH key that logs in as root
 #   install-serial.log    the installer's serial console
 #   vm-run-options        with CPUS or MEMORY set: "--cpus N --memory MB",
-#                         how vm-run must boot it; with --uefi-geli,
-#                         "--uefi --no-secure-boot" (the loader isn't signed)
-#   console-passphrase    with --uefi-geli: GELI's passphrase (mode 600),
+#                         how vm-run must boot it; with --uefi-geli or
+#                         --geli-ufs, "--uefi --no-secure-boot" (the loader
+#                         isn't signed)
+#   console-passphrase    with any GELI option: GELI's passphrase (mode 600),
 #                         which the loader asks for on the console at boot
+#   console-passphrase-slot1, geli-p4.key
+#                         with --geli-ufs: the root provider's key slot 1
+#                         passphrase, and /data's provider's key file (the
+#                         guest's /etc/geli/p4.key), both mode 600
 #   zroot-b.qcow2         with --zfs-mirror: the second disk, the same size,
 #                         snapshot "fresh-install" too; vm-run-options says
 #                         "--disk zroot-b.qcow2" (a name that sorts after
@@ -42,6 +50,20 @@
 # "Encrypt Disks?" makes it), unlocked by the loader with the passphrase it
 # asks for, which vm-update, vm-lib and SticTest1 type from
 # console-passphrase.  Host name fbsdN-geli.
+#
+# --bios-geli (zfs only): what bsdinstall makes when its defaults are taken
+# with "Encrypt Disks? yes" and "Encrypt Swap? yes": BIOS + GPT (gptzfsboot,
+# which asks for the passphrase), the pool on GELI as --uefi-geli's, and the
+# swap partition onetime-encrypted (/dev/vtbd0p2.eli in fstab).  Host name
+# fbsdN-gelib.  docs/design/geli2.md.
+#
+# --geli-ufs (ufs only): UEFI, UFS root on GELI with GELIBOOT (passphrase in
+# key slot 0, console-passphrase-slot1's in slot 1), plain swap, and /data on
+# a provider of its own made with authentication (HMAC/SHA256) and opened by
+# a key file alone, /etc/geli/p4.key on the root, which rc.d/geli attaches at
+# boot (rc.conf geli_devices).  bsdinstall's guided UFS can't encrypt, so
+# freebsd/geli-ufs.sh partitions and makes the providers in its place.  Host
+# name fbsdN-gelu.  docs/design/geli2.md.
 #
 # --zfs-mirror (zfs only): pool "zroot" a two-way mirror of vtbd0 and vtbd1
 # (bsdinstall's ZFSBOOT_DISKS and ZFSBOOT_VDEV_TYPE=mirror).  BIOS boot, so
@@ -70,22 +92,25 @@ INSTALL_TIMEOUT=3600
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-freebsd: $*" >&2; exit 1; }
 
-geli=no mirror=no
+geli=no mirror=no gelivar=
 while [[ ${1:-} == --* ]]; do
     case $1 in
-    --uefi-geli) geli=yes ;;
+    --uefi-geli) geli=yes gelivar=uefi ;;
+    --bios-geli) geli=yes gelivar=bios ;;
+    --geli-ufs) geli=yes gelivar=ufs ;;
     --zfs-mirror) mirror=yes ;;
     *) die "unknown option $1" ;;
     esac
     shift
 done
-[[ $# -eq 3 ]] || die "usage: $0 [--uefi-geli | --zfs-mirror] VERSION ROOT_FS WORK_DIR"
+[[ $# -eq 3 ]] || die "usage: $0 [--uefi-geli | --bios-geli | --geli-ufs | --zfs-mirror] VERSION ROOT_FS WORK_DIR"
 version=$1 root_fs=$2
 [[ $version =~ ^[0-9]+\.[0-9]+$ ]] || die "VERSION looks like 15.1, not '$version'"
 case $root_fs in zfs|ufs) ;; *) die "ROOT_FS must be zfs or ufs" ;; esac
-[[ $geli == no || $root_fs == zfs ]] || die "--uefi-geli needs ROOT_FS zfs"
+[[ $gelivar != uefi && $gelivar != bios || $root_fs == zfs ]] || die "--$gelivar-geli needs ROOT_FS zfs"
+[[ $gelivar != ufs || $root_fs == ufs ]] || die "--geli-ufs needs ROOT_FS ufs"
 [[ $mirror == no || $root_fs == zfs ]] || die "--zfs-mirror needs ROOT_FS zfs"
-[[ $mirror == no || $geli == no ]] || die "--zfs-mirror and --uefi-geli don't go together"
+[[ $mirror == no || $geli == no ]] || die "--zfs-mirror and a GELI option don't go together"
 major=${version%%.*}
 
 ISO=FreeBSD-$version-RELEASE-amd64-disc1.iso
@@ -93,7 +118,9 @@ ANNOUNCE=announce-$version.asc
 iso_url=https://download.freebsd.org/releases/ISO-IMAGES/$version/$ISO
 announce_url=https://www.freebsd.org/releases/${version}R/announce.asc
 guest_name=${GUEST_NAME:-fbsd$major}
-[[ $geli == yes ]] && guest_name=${GUEST_NAME:-fbsd$major-geli}
+[[ $gelivar == uefi ]] && guest_name=${GUEST_NAME:-fbsd$major-geli}
+[[ $gelivar == bios ]] && guest_name=${GUEST_NAME:-fbsd$major-gelib}
+[[ $gelivar == ufs ]] && guest_name=${GUEST_NAME:-fbsd$major-gelu}
 [[ $mirror == yes ]] && guest_name=${GUEST_NAME:-fbsd$major-mirror}
 [[ $guest_name =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "GUEST_NAME '$guest_name' isn't a host name"
 DISK=freebsd$major.qcow2 DISK_B=zroot-b.qcow2
@@ -140,10 +167,11 @@ hash=$(printf '%s' "$password" | openssl passwd -6 -stdin)
 [[ -e id_ed25519 ]] || ssh-keygen -q -t ed25519 -N '' -C "root@$guest_name test guest" -f id_ed25519
 umask 022
 
-boot_type=BIOS extra_map=() extra_files=() zfs_disks=vtbd0 zfs_vdev=stripe
+boot_type=BIOS extra_map=() extra_files=() zfs_disks=vtbd0 zfs_vdev=stripe swap_geli=
 [[ $mirror == yes ]] && zfs_disks="vtbd0 vtbd1" zfs_vdev=mirror
-if [[ $geli == yes ]]; then
-    boot_type=UEFI
+[[ $gelivar == bios ]] && swap_geli=1
+if [[ $gelivar == uefi || $gelivar == bios ]]; then
+    [[ $gelivar == uefi ]] && boot_type=UEFI
     umask 077
     openssl rand -base64 24 | tr -dc 'A-Za-z0-9' >console-passphrase
     umask 022
@@ -155,9 +183,27 @@ sys.stdout.write(open(sys.argv[1]).read().replace("@GELI_PASSPHRASE@", k))' \
     extra_map=(-map "$work/bsddialog-geli" /etc/bsddialog-geli)
     extra_files=(/etc/bsddialog-geli)
 fi
+if [[ $gelivar == ufs ]]; then
+    boot_type=UEFI
+    umask 077
+    for f in console-passphrase console-passphrase-slot1; do
+        openssl rand -base64 24 | tr -dc 'A-Za-z0-9' >$f
+    done
+    cmp -s console-passphrase console-passphrase-slot1 && die "the two passphrases came out the same"
+    openssl rand 64 >geli-p4.key
+    mkdir "$work/bko-geli"
+    cp console-passphrase "$work/bko-geli/pass0"
+    cp console-passphrase-slot1 "$work/bko-geli/pass1"
+    cp geli-p4.key "$work/bko-geli/p4.key"
+    umask 022
+    extra_map=(-map "$here/freebsd/geli-ufs.sh" /etc/bko-geli-ufs.sh
+        -map "$work/bko-geli/pass0" /etc/bko-geli/pass0 -map "$work/bko-geli/pass1" /etc/bko-geli/pass1
+        -map "$work/bko-geli/p4.key" /etc/bko-geli/p4.key)
+    extra_files=(/etc/bko-geli-ufs.sh /etc/bko-geli/pass0 /etc/bko-geli/pass1 /etc/bko-geli/p4.key)
+fi
 sed -e "s|@ROOT_PASSWORD_HASH@|$hash|" -e "s|@HOSTNAME@|$guest_name|g" -e "s|@ROOT_FS@|$root_fs|g" \
     -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" -e "s|@BOOT_TYPE@|$boot_type|" \
-    -e "s|@ZFS_DISKS@|$zfs_disks|" -e "s|@ZFS_VDEV_TYPE@|$zfs_vdev|" \
+    -e "s|@ZFS_DISKS@|$zfs_disks|" -e "s|@ZFS_VDEV_TYPE@|$zfs_vdev|" -e "s|@ZFS_SWAP_GELI@|$swap_geli|" \
     "$here/freebsd/installerconfig" >"$work/installerconfig"
 if grep -n '@[A-Z_]\+@' "$work/installerconfig"; then die "installerconfig placeholders left unfilled"; fi
 xorriso -osirrox on -indev "$ISO" -extract /boot/loader.conf "$work/loader.conf" 2>/dev/null ||
@@ -168,7 +214,8 @@ printf '%s\n' 'console="comconsole"' 'autoboot_delay="1"' >>"$work/loader.conf"
 rm -f "$media"
 # The ISO's own El Torito images are hidden outside its file tree, so xorriso
 # can't carry them over; boot the copy from /boot/cdboot instead (BIOS only:
-# the installer runs by BIOS even when it installs a UEFI guest, --uefi-geli).
+# the installer runs by BIOS even when it installs a UEFI guest, --uefi-geli,
+# --geli-ufs).
 xorriso -indev "$ISO" -outdev "$media" \
     -boot_image any discard -boot_image any bin_path=/boot/cdboot \
     -boot_image any emul_type=no_emulation -boot_image any load_size=2048 \
@@ -204,7 +251,7 @@ grep -q '^BACKOTTER-INSTALL: OK' install-serial.log ||
 qemu-img snapshot -c fresh-install "$DISK"
 [[ $mirror == no ]] || qemu-img snapshot -c fresh-install "$DISK_B"
 opts=()
-[[ $geli == yes ]] && opts+=(--uefi --no-secure-boot)
+[[ $gelivar == uefi || $gelivar == ufs ]] && opts+=(--uefi --no-secure-boot)
 [[ $mirror == yes ]] && opts+=(--disk "$DISK_B")
 [[ $CPUS == 2 && $MEMORY == 2048 ]] || opts+=(--cpus "$CPUS" --memory "$MEMORY")
 [[ ${#opts[@]} -eq 0 ]] || echo "${opts[*]}" >vm-run-options

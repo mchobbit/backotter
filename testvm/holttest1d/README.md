@@ -42,7 +42,7 @@ guests.  A guest passes only when every check passes.  Status is as of
 | 1Obscure | Pop!_OS, NixOS, Guix System, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, openSUSE MicroOS, openSUSE Aeon, openSUSE Leap 16, Debian 12, Chimera Linux, PikaOS, Kali Linux, Vanilla OS, Solus, Slackware, Qubes OS | `pop24`, `nixos2605`, `guix15`, `guix15-bios`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `microos`, `aeon`, `leap16`, `debian12`, `chimera`, `chimera-uefi`, `chimera-zfs`, `pikaos4`, `pikaos4-luks`, `kali`, `vanilla3`, `solus49`, `slackware15`, `slackware15-uefi`, `qubes43` | passes, but for `aeon` (wired 2026-11-15, not run yet: systemd-boot BLS, LUKS2 sealed to its own TPM; docs/design/aeon.md, A4; "The transactional-update guest" below) and for `qubes43` (plumbing only, 2026-11-15: `ht1-offline.sh`'s Qubes path, below; not run: it waits for bko-holt's Q2-Q4, docs/design/qubes.md) and for `slackware15` and `slackware15-uefi` (BIOS with LILO, UEFI with ELILO; docs/design/slackware.md, S6), wired 2026-11-15 and not run yet, and `leap16` (UEFI with Secure Boot through SUSE's shim, btrfs with snapper, SELinux enforcing; docs/design/leap16.md), wired 2026-11-15 and not run yet: `prep/tumbleweed-snapper.sh` is its default prep, and its restored disk must boot under Secure Boot, Enforcing, with no AVC denial beyond ht1.sh's `SELINUX_KNOWN` (`solus49` on both hosts, 2026-11-14: runs `s5-3` Cinqcent and `s5-4` Chopin, under Secure Boot with Solus's MOK, the ESP at /boot out of fstab held byte for byte, booted alone through shim and systemd-boot, docs/design/solus.md; the Chimera guests on both hosts, 2026-11-12: `chimera` runs `c5-1` Cinqcent and `c5-2` Chopin, `chimera-uefi` `c5-3` Cinqcent and `c5-4` Chopin, `chimera-zfs` `c5-5` Chopin and `c5-6` Cinqcent; the PikaOS guests on both hosts, 2026-11-14: `pikaos4` runs `p6-4` Chopin and `p6-5` Cinqcent, `pikaos4-luks` `p6-6` Chopin and `p6-7` Cinqcent, booted alone from the EFI/BOOT fallback, `pikaos4-luks` with its passphrase typed by `console-boot.py`; rEFInd's ESP files and `refind_linux.conf` byte-identical, docs/design/pikaos.md; `kali` on both hosts, 2026-11-14: runs `k5-1` Chopin and `k5-2` Cinqcent, booted alone from the EFI/BOOT fallback with fresh OVMF variables, docs/design/kali.md; `vanilla3` on both hosts, 2026-11-14: runs `v7-1` Chopin and `v7-2` Cinqcent, on /bkoscratch ("The ABRoot guest" below), both roots booted alone, the other picked on GRUB's serial menu by `console-keys.py`, docs/design/vanillaos.md; the Guix guests on both hosts, 2026-11-14: `guix15` runs `gx6-2` Chopin and `gx6-4` Cinqcent (UEFI, booted alone through Guix's NVRAM entry, read from efivarfs by `nvboot-efivars.sh`: Guix has no efibootmgr; `gx6-3` Cinqcent FAILed once on one 4 KiB hole rustic-bko didn't keep in a hard-linked store file, not seen again), `guix15-bios` `gx6-5` Chopin and `gx6-6` Cinqcent (BIOS, GRUB written by `grub-bios-setup` from the source's own images); with the previous generation booted too, picked on GRUB's serial menu ("GNU system, old configurations...") on the source and on the restored disk alone: `guix15` `gx6-14` Chopin and `gx6-16` Cinqcent, `guix15-bios` `gx6-15` Chopin and `gx6-17` Cinqcent, docs/design/guix.md; `microos` on both hosts, 2026-11-14: runs `aeon2c` Cinqcent (a whole run) and `aeon1` Chopin (verify rerun after the fixes; a whole run there still to do), "The transactional-update guest" below, docs/design/aeon.md) |
 | 1H | Haiku | `haiku6` | passes (run `haiku024`, rustic-bko 0.11.4+backotter.7, which restores the volume root's metadata: Tracker's empty `trash` had made a new BFS volume look used) |
 | 1I | illumos | `omnios58`, `omnios58-mirror`, `oi2610`, `oi2610-bios` | all pass (`omnios58-mirror`: run `raid6`, the restored `rpool` ONLINE on both disks; OpenIndiana's two: runs `o5d` on chopin, `o5e`/`o5f` on cinqcent; updated, with two boot environments, `o6a` (`oi2610`) and `o6c-oi` (`oi2610-bios`) on chopin, and `oi2610+img` from the 2026-11-16 illumos image, `o6img2` on chopin and `o7img-oi` on cinqcent; docs/design/openindiana.md) |
-| 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `freebsd15-mirror`, `freebsd15-geli`, `openbsd8`, `netbsd11`, `ghostbsd26`, `ghostbsd26-zfs`, `hardenedbsd15`, `hardenedbsd15-zfs`, `dragonfly6`, `alpinebsd` | passes; `freebsd15-geli` (root pool on GELI, docs/design/geli.md) not run yet: it waits for bko-holt's GELI support (G2, G3); `hardenedbsd15-zfs` (ZFS root, `hardenedbsd15`'s twin, 2026-11-15) not run yet |
+| 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `freebsd15-mirror`, `freebsd15-geli`, `freebsd15-geli-bios`, `freebsd15-geli-ufs`, `openbsd8`, `netbsd11`, `ghostbsd26`, `ghostbsd26-zfs`, `hardenedbsd15`, `hardenedbsd15-zfs`, `dragonfly6`, `alpinebsd` | passes; `freebsd15-geli` (root pool on GELI, docs/design/geli.md) passes since G5 (`geli3`); `freebsd15-geli-bios` (bsdinstall's BIOS GELI default, onetime swap) and `freebsd15-geli-ufs` (UFS root on GELI with key slot 1, an authenticated key-file `/data`; docs/design/geli2.md) pass on cinqcent (`geli2a`, `geli2b`), cage and copland (`geli2c`), 2026-11-17; `hardenedbsd15-zfs` (ZFS root, `hardenedbsd15`'s twin, 2026-11-15) not run yet |
 
 **Cinqcent's old runs.** On 2026-11-13 every run dir and run log in
 Cinqcent's `/bkoscratch/holttest1d` moved to
@@ -436,6 +436,35 @@ compares every field of the `geli` record, judges the probe inside it as a
 partition's content, and lets `provsize` differ only where it is the
 partition's size on both sides.  ht1-bsd.sh's `geli_provs` and judge.py's
 `geli_records` are the two readers of the dump's GELI records.
+
+GELI's round 2 (docs/design/geli2.md) adds two guests.
+`freebsd15-geli-bios` is the installer's BIOS default: gptzfsboot asks for
+the passphrase, and the swap is onetime (`/dev/vtbd0p2.eli` in fstab).
+Verify checks that `swapinfo` on the restored guest lists the `.eli` device.
+The BIOS rescuer's gptzfsboot probes the attached disks and asks for the
+source's passphrase too (`GELI Passphrase for disk1p3:`), and console-boot.py
+types it.
+`freebsd15-geli-ufs` has a UFS root on GELI and uses key slot 1 as well
+(`console-passphrase-slot1`, `/tmp/ht1-geli/passphrase-slot1` in the
+rescuer). Its `/data` is an authenticated provider that only its key file
+opens: `/etc/geli/p4.key` on the root, attached by rc.d/geli at boot. For
+it:
+- The mount script attaches each key-file provider read-only, with the key
+  file from the mounted tree (`geli attach -r -p -k MP/etc/geli/p4.key`),
+  after the file system that holds the key and before the one on the
+  provider. The backup lists the provider's files with their SHA-256s
+  (`logs/source-geli-files-PART.txt`).
+- The rebuild first runs a plan without `--key-file vtbd0p3:1=...` and
+  requires load's slot-1 refusal. It then loads with `vtbd0p3` and
+  `vtbd0p3:1` and gives no key file for the key-file provider, which load
+  makes with a temporary key and `setkey`s after the restore.
+- Verify opens slot 1 read-only from the rescuer (`geli attach -r -n 1`)
+  before anything else attaches the provider. On the booted guest it checks
+  that `geli status` shows the key-file provider attached, that `/data` is
+  mounted from it, and that its files match the source's.
+
+`ht1-bsd-test.sh` (run by ht1-lib-test.sh) tests these readers and script
+writers on synthetic layouts.
 
 On illumos a root mirror finds its other half by the physical path (the PCI
 slot) in its label before the device id, so the disks keep their slots

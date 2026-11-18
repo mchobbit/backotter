@@ -224,8 +224,13 @@ rdir=$W/vms/$RG rkey=$rdir/id_ed25519
 # through console-boot.py.  In the rescuer it is GELI_KEY, in a tmpfs of its
 # own (GELI_DIR: a default install's /tmp is on its disk),
 # for geli attach -j and load --key-file.
+# Key slot 1 (docs/design/geli2.md, freebsd15-geli-ufs): a second passphrase
+# in console-passphrase-slot1, beside GELI_KEY as GELI_KEY1, for load's
+# --key-file NAME:1=FILE and the verify's read-only attach of that slot.
 gpass=""; [[ -f $gdir/console-passphrase ]] && gpass=$gdir/console-passphrase
-GELI_DIR=/tmp/ht1-geli GELI_KEY=/tmp/ht1-geli/passphrase
+gpass1=""; [[ -f $gdir/console-passphrase-slot1 ]] && gpass1=$gdir/console-passphrase-slot1
+GELI_DIR=/tmp/ht1-geli GELI_KEY=/tmp/ht1-geli/passphrase GELI_KEY1=/tmp/ht1-geli/passphrase-slot1
+GELI_WHY=""   # geli_key_put's own reason, for the caller's FAIL line
 # The guest's other disks (vm-run-options' --disk, named relative to its
 # directory) and its other options (firmware) for the source and restored
 # boots; its image is $G.qcow2, else the one *.qcow2 that isn't a --disk.
@@ -536,15 +541,18 @@ ls /boot/system/var/log/bko-holt/load.log >/dev/null 2>&1 && echo "load log kept
 exit $f'
 fi
 
-# The layout's GELI providers, one line each: the partition (or disk) that
-# holds one, the source's provider name less .eli (load's --key-file NAME)
-# and how it is keyed.  The one reader of the dump's GELI records, where
-# their shape may still move: a content of type geli, or a geli object on
-# the partition or in its content; the provider from geli.provider, else
-# PARTITION.eli; keyed_by passphrase when it says nothing.
+# The layout's GELI providers, one line each, five fields: the partition (or
+# disk) that holds one, the source's provider name less .eli (load's
+# --key-file NAME), how it is keyed, the key slots in use (comma-separated,
+# "0" when the record says nothing) and the key files that open it
+# (comma-separated paths in the source's own tree, "-" for none).  The one
+# reader of the dump's GELI records, where their shape may still move: a
+# content of type geli, or a geli object on the partition or in its content;
+# the provider from geli.provider, else PARTITION.eli; keyed_by passphrase
+# when it says nothing.
 geli_provs() { # LAYOUT
     python3 - "$1" <<'PY'
-import json, sys
+import json, re, sys
 d = json.load(open(sys.argv[1]))
 def geli_of(x):
     c = x.get("content") if isinstance(x.get("content"), dict) else {}
@@ -558,7 +566,15 @@ for disk in (d.get("storage") or {}).get("disks") or []:
         if g is None:
             continue
         prov = str(g.get("provider") or x["name"] + ".eli").removeprefix("/dev/")
-        print(x["name"], prov.removesuffix(".eli"), g.get("keyed_by") or "passphrase")
+        keys = [k for k in (g.get("keys") or []) if isinstance(k, int)]
+        kfs = [k for k in (g.get("keyfiles") or []) if isinstance(k, str)]
+        for k in kfs:
+            # The fields are white-space separated and the paths comma-separated:
+            # a path with either in it would be read as another field.
+            if re.search(r"[,\s]", k):
+                sys.exit(f"ht1-bsd: the GELI key file {k!r} on {x['name']}: a comma or white space in its path, which the harness can't pass on")
+        print(x["name"], prov.removesuffix(".eli"), g.get("keyed_by") or "passphrase",
+              ",".join(str(k) for k in keys) or "0", ",".join(kfs) or "-")
 PY
 }
 # OpenBSD's softraid volumes (docs/design/openbsd-crypto.md, openbsd8-crypt),
@@ -579,8 +595,21 @@ PY
 # The same for a softraid CRYPTO volume's (bioctl -p, load --key-file; bioctl
 # reads the file's first line, so a final newline would do as well), in an
 # mfs: OpenBSD has no tmpfs.
-geli_key_put() { # KEY
-    [[ -n $gpass ]] || { echo "ht1-bsd: the layout has GELI providers or softraid CRYPTO volumes, and $gdir has no console-passphrase" >&2; return 1; }
+# GELI being geli_provs' lines, a provider with key slot 1 in use also takes
+# console-passphrase-slot1, beside it as GELI_KEY1.  Why it couldn't goes in
+# GELI_WHY, for the caller's FAIL line.
+geli_key_put() { # KEY [GELI]
+    local want1=0
+    GELI_WHY=""
+    if [[ -n ${2:-} ]] && awk '{ n = split($4, s, ","); for (i = 1; i <= n; i++) if (s[i] == "1") f = 1 } END { exit !f }' <<<"$2"; then
+        want1=1
+    fi
+    [[ -n $gpass ]] || {
+        GELI_WHY="$gdir has no console-passphrase"
+        echo "ht1-bsd: the layout has GELI providers or softraid CRYPTO volumes, and $GELI_WHY" >&2; return 1; }
+    ((want1 == 0)) || [[ -n $gpass1 ]] || {
+        GELI_WHY="$gdir has no console-passphrase-slot1"
+        echo "ht1-bsd: the layout's GELI key slot 1 is in use, and $GELI_WHY" >&2; return 1; }
     if [[ $PLAT == openbsd ]]; then
         shk "$1" <<EOF || return 1
 mkdir -p $GELI_DIR || exit 1
@@ -600,9 +629,101 @@ EOF
     if [[ $PLAT == openbsd ]]; then
         sshk "$1" "umask 077; { cat $GELI_KEY; echo; } > $GELI_KEY.nl && chmod 600 $GELI_KEY.nl" || return 1
     fi
-    sshk "$1" "[ -s $GELI_KEY ] && [ \"\$(stat -f %Lp $GELI_KEY)\" = 600 ]"
+    sshk "$1" "[ -s $GELI_KEY ] && [ \"\$(stat -f %Lp $GELI_KEY)\" = 600 ]" || {
+        GELI_WHY="$GELI_KEY in the rescuer is empty or not mode 600"; return 1; }
+    ((want1)) || return 0
+    # Slot 1's, beside it: load's --key-file NAME:1=FILE and the verify's
+    # geli attach -n 1 -j.  Never slot 0's file for slot 1, nor the other
+    # way round.
+    python3 -c 'import sys; sys.stdout.buffer.write(open(sys.argv[1], "rb").read().rstrip(b"\n"))' "$gpass1" |
+        timeout 60 ssh -q -i "$1" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$GUSER@127.0.0.1" "umask 077; cat > $GELI_KEY1" || {
+            GELI_WHY="$GELI_KEY1 couldn't be written in the rescuer"; return 1; }
+    sshk "$1" "[ -s $GELI_KEY1 ] && [ \"\$(stat -f %Lp $GELI_KEY1)\" = 600 ]" || {
+        GELI_WHY="$GELI_KEY1 in the rescuer is empty or not mode 600"; return 1; }
 }
-geli_key_rm() { sshk "$1" "rm -f $GELI_KEY $GELI_KEY.nl; umount $GELI_DIR 2>/dev/null; rmdir $GELI_DIR 2>/dev/null; true" >/dev/null 2>&1; }   # KEY
+geli_key_rm() { sshk "$1" "rm -f $GELI_KEY $GELI_KEY.nl $GELI_KEY1; umount $GELI_DIR 2>/dev/null; rmdir $GELI_DIR 2>/dev/null; true" >/dev/null 2>&1; }   # KEY
+
+# The mount point the layout's fstab puts on PART's GELI provider (geli2.md's
+# /data on vtbd0p4.eli), or nothing.  Swap is none: it has no mount point.
+geli_fstab_mp() { # LAYOUT PART
+    python3 - "$1" "$2" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); part = sys.argv[2]
+for e in (d.get("storage") or {}).get("fstab") or []:
+    if e.get("resolves_to") == part and e.get("type") != "swap" \
+            and (e.get("eli") or str(e.get("spec") or "").endswith(".eli")) \
+            and str(e.get("file") or "").startswith("/"):
+        print(e["file"])
+        break
+PY
+}
+# The devices (vtbd0p2) whose swap the dump marks onetime: GELI made at each
+# boot by swapon, over a partition with no metadata on it, so load makes the
+# partition and nothing else (geli2.md's freebsd15-geli-bios).
+onetime_swaps() { # LAYOUT
+    python3 - "$1" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for w in (d.get("storage") or {}).get("swaps") or []:
+    if w.get("onetime") and w.get("device"):
+        print(w["device"])
+PY
+}
+# The files on a file system at DIR and their SHA-256, for comparing a GELI
+# provider's own contents with the source's (FreeBSD's sha256 -r prints
+# "HASH path"); paths relative to DIR, so the source's and the restored
+# system's listings compare whatever DIR they were read at.
+geli_files_list() { # DIR
+    echo "cd $1 && find . -type f -exec sha256 -r {} + | LC_ALL=C sort"
+}
+# Key slot 1 (geli2.md): each restored provider whose keys have 1 opened
+# read-only with slot 1's passphrase alone and closed again -- a script for
+# the verify's rescuer, one HT1-GELI-SLOT1 line a provider.  It runs before
+# the mount script, which attaches with slot 0; a provider the rescuer's
+# loader took is detached first, nothing being mounted from it yet.
+geli_slot1_script() { # LAYOUT FIRST
+    local geli; geli=$(geli_provs "$1") || return 1
+    HT_GELI=$geli HT_GELI_KEY1=$GELI_KEY1 python3 - "$1" "$2" "${RN[@]}" <<'PY'
+import json, os, sys
+d = json.load(open(sys.argv[1])); first = int(sys.argv[2]); rn = sys.argv[3:]
+geli = [l.split() for l in os.environ.get("HT_GELI", "").splitlines() if l.strip()]
+key1 = os.environ["HT_GELI_KEY1"]
+# GELI is FreeBSD's, where a partition is its disk's name and a suffix:
+# mount_script's node(), without the other systems' cases.
+disks = [x["name"] for x in d["storage"]["disks"]]
+out = []
+for part, _, _, *rest in geli:
+    if "1" not in (rest[0] if rest else "0").split(","):
+        continue
+    n = next((f"/dev/{rn[first + i]}{part[len(dn):]}" for i, dn in enumerate(disks) if part.startswith(dn)), None)
+    if n is None:
+        out.append(f"echo 'HT1-GELI-SLOT1 {part} no-node'")
+        continue
+    out.append(f"[ ! -c {n}.eli ] || geli detach {n}.eli || echo 'HT1-GELI-SLOT1 {part} busy'")
+    out.append(f"if geli attach -r -n 1 -j {key1} {n}; then")
+    out.append(f"  geli detach {n}.eli && echo 'HT1-GELI-SLOT1 {part} ok' || echo 'HT1-GELI-SLOT1 {part} no-detach'")
+    out.append("else")
+    out.append(f"  echo 'HT1-GELI-SLOT1 {part} no'")
+    out.append("fi")
+print("\n".join(out))
+PY
+}
+# geli_slot1_script run in the rescuer: one ok or bad a provider whose keys
+# have 1 (GELI being geli_provs' lines).
+geli_slot1_check() { # LAYOUT FIRST KEY GELI
+    local s log=$R/logs/verify-geli-slot1.log part slots
+    s=$(geli_slot1_script "$1" "$2") || { bad "the GELI key slot 1 check's script (geli_slot1_script)"; return; }
+    [[ -n $s ]] || return 0
+    shk "$3" <<<"$s" > "$log" 2>&1
+    while read -r part _ _ slots _; do
+        case ,${slots:-0}, in *,1,*) ;; *) continue ;; esac
+        if grep -qxF "HT1-GELI-SLOT1 $part ok" "$log"; then
+            ok "slot 1 opens the restored $part, read-only, with its own passphrase"
+        else
+            bad "slot 1 opens the restored $part (logs/verify-geli-slot1.log: $(tr -s ' \n' ' ' < "$log" | tail -c 300))"
+        fi
+    done <<<"$4"
+}
 
 # Mounts the layout's filesystems read-only at MP, its first disk being
 # the rescuer's Nth (and so on): a shell script for the rescuer.
@@ -634,18 +755,66 @@ def node(part):
                 return "NAME=" + p["wedge_name"]
     return None
 out = ["set -e", f"mkdir -p {mp}"]
-# GELI providers first, read-only with the passphrase, so that the pool's
-# member (or the UFS) is NODE.eli, as on the source; one already attached
-# (the kernel, with the rescuer's loader's key) is left so.  Each goes in
-# GELI_DIR's list, for umount_script's detach.
-for part, _, keyed in geli:
+key0 = os.environ["HT_GELI_KEY"]
+gdir = os.environ["HT_GELI_DIR"]
+# The file systems this script mounts, in the order it mounts them: the
+# fstab entries below, and / where a ZFS pool's boot environment goes.  A
+# GELI provider opened by a key file waits for the one that holds the file.
+zfs = (d["storage"].get("zfs") or {}).get("tools") or {}
+fs = []
+for e in d["storage"].get("fstab") or []:
+    if e.get("resolves_to") and e["file"].startswith("/") and e["type"] not in ("swap",):
+        fs.append(e)
+fs.sort(key=lambda e: (0 if e["file"] == "/" else e["file"].count("/"), e["file"]))
+mounts = (["/"] if zfs.get("imported_pools") else []) + [e["file"] for e in fs]
+def holder(path):
+    """The deepest of those mount points that holds PATH, or None."""
+    return max((m for m in mounts if path == m or path.startswith(m.rstrip("/") + "/")), key=len, default=None)
+def attach(part, keyed, kfs):
+    """The lines that attach PART's provider read-only.  A key file's path is
+    the source's own (/etc/geli/p4.key), so MP + it in the rescuer, its file
+    system being mounted at MP + its own mount point."""
     n = node(part)
-    if keyed != "passphrase":
-        out.append(f"echo 'GELI on {part} is keyed by {keyed}: the run has only the passphrase'; exit 1")
+    ks = " ".join(f"-k {mp}{f}" for f in kfs)
+    if keyed == "passphrase":
+        how = f"-j {key0}"
+    elif keyed in ("keyfile", "both") and not kfs:
+        return [f"echo 'GELI on {part}: keyed by {keyed}, and the dump names no key file'; exit 1"]
+    elif keyed == "keyfile":
+        how = f"-p {ks}"
+    elif keyed == "both":
+        how = f"-j {key0} {ks}"
+    else:
+        return [f"echo 'GELI on {part}: keyed by {keyed}, which the run cannot open'; exit 1"]
+    return [f"[ -c {n}.eli ] || geli attach -r {how} {n}",
+            f"[ -c {n}.eli ] || {{ echo 'geli attach {n}: no {n}.eli'; exit 1; }}",
+            f"echo {n}.eli >> {gdir}/attached"]
+# GELI providers keyed by a passphrase first, so that the pool's member (or
+# the UFS) is NODE.eli, as on the source; one already attached (the kernel,
+# with the rescuer's loader's key) is left so.  Each goes in GELI_DIR's list,
+# for umount_script's detach.  A provider whose key file is on another of the
+# layout's file systems (geli2.md's /data on vtbd0p4, its key file on the
+# encrypted root) is attached once that file system is mounted: pending below.
+pending = []   # (part, keyed, key files, the mount point that holds them)
+for part, _, keyed, *rest in geli:
+    kfs = [] if len(rest) < 2 or rest[1] == "-" else rest[1].split(",")
+    if keyed == "passphrase" or not kfs:
+        # (No key file where one is wanted: attach() says so and stops.)
+        out += attach(part, keyed, kfs)
         continue
-    out.append(f"[ -c {n}.eli ] || geli attach -r -j {os.environ['HT_GELI_KEY']} {n}")
-    out.append(f"[ -c {n}.eli ] || {{ echo 'geli attach {n}: no {n}.eli'; exit 1; }}")
-    out.append(f"echo {n}.eli >> {os.environ['HT_GELI_DIR']}/attached")
+    hs = {holder(f) for f in kfs}
+    if len(hs) != 1 or None in hs:
+        out.append(f"echo 'GELI on {part}: its key file ({', '.join(kfs)}) is not on one file system this script mounts'; exit 1")
+        continue
+    pending.append((part, keyed, kfs, hs.pop()))
+def released(m):
+    """The pending providers whose key file is on the file system just
+    mounted at M, attached now."""
+    lines = []
+    for p in [x for x in pending if x[3] == m]:
+        pending.remove(p)
+        lines += attach(p[0], p[1], p[2])
+    return lines
 # softraid CRYPTO volumes (OpenBSD): attached on their chunk with the
 # passphrase (bioctl -c C on a chunk with softraid metadata attaches it; on
 # one without, it would make a new volume, so the metadata is checked
@@ -665,7 +834,6 @@ for i, (vn, chunks, duid, level, key) in enumerate(sr):
     out.append(f"ht1sr{i}=$({find})")
     out.append(f"[ -n \"$ht1sr{i}\" ] || {{ echo 'softraid volume {vn} ({duid}): not attached'; exit 1; }}")
     out.append(f"echo \"HT1-SR {vn} {duid} on $ht1sr{i}: $(bioctl $ht1sr{i} | tr -s ' \\n' ' ')\"")
-zfs = (d["storage"].get("zfs") or {}).get("tools") or {}
 for p in zfs.get("imported_pools") or []:
     # illumos' rescuer has its own rpool: the source's (or target's) goes by
     # ht1src here (-t: the disks keep the name), read-write, so that its own
@@ -720,11 +888,7 @@ if zfs.get("imported_pools"):
     # (Read-only, a dataset whose mount point isn't there can't mount: the
     # rest do.)
     out.append("zfs mount -a || true")
-fs = []
-for e in d["storage"].get("fstab") or []:
-    if e.get("resolves_to") and e["file"].startswith("/") and e["type"] not in ("swap",):
-        fs.append(e)
-fs.sort(key=lambda e: (0 if e["file"] == "/" else e["file"].count("/"), e["file"]))
+    out += released("/")
 for e in fs:
     t = {"ufs": "ufs", "msdosfs": "msdosfs"}.get(e["type"], e["type"])
     target = mp + ("" if e["file"] == "/" else e["file"])
@@ -733,12 +897,23 @@ for e in fs:
         n += ".eli"   # a UFS on GELI (resolve() gives the partition, eli: true)
     if e["type"] == "hammer2" and "@" in e["spec"]:
         n += "@" + e["spec"].split("@", 1)[1]   # the same PFS (DragonFly)
+    # A file system on a provider still waiting for its key file: the mount
+    # would come before the attach, so the layout can't be mounted in order.
+    waiting = next((p for p in pending if n == node(p[0]) + ".eli"), None)
+    if waiting:
+        here = e["file"]
+        out.append(f"echo 'GELI on {waiting[0]}: {here} is on it, and its key file is under {waiting[3]}, which this script mounts later'; exit 1")
+        continue
     if plat == "haiku":
         # Mounted at boot before mount_server was stopped: unmounted first.
         out.append(f"for m in $(df | sed 's/\\x1b\\[[0-9;]*m//g' | awk -v d={n} '{{ if ($NF == d) print last; last = $1 }}'); do unmount \"$m\"; done")
         out.append(f"mkdir -p {target}; mount -ro -t bfs {n} {target}")
+        out += released(e["file"])
         continue
     out.append(f"mkdir -p {target} 2>/dev/null || true; mount -r -t {t} {n} {target}")
+    out += released(e["file"])
+if pending:
+    out.append("echo 'GELI on " + ", ".join(p[0] for p in pending) + ": this script mounts nothing that holds the key file'; exit 1")
 print("\n".join(out))
 PY
 }
@@ -816,7 +991,7 @@ phase_backup() {
     vm_wait "$rkey" || { bad "rescuer boots"; vm_down "$rkey"; return; }
     rescuer_ready $((1 + n))
     if [[ -n $geli$sr ]]; then
-        geli_key_put "$rkey" || { bad "the GELI or softraid passphrase into the rescuer's tmpfs $GELI_DIR"; vm_down "$rkey"; return; }
+        geli_key_put "$rkey" "$geli" || { bad "the GELI or softraid passphrase into the rescuer's tmpfs $GELI_DIR${GELI_WHY:+: $GELI_WHY}"; vm_down "$rkey"; return; }
     fi
     put "$rkey" "$RUSTIC" $RH/rustic-bko
     head -c 24 /dev/urandom | base64 > "$R/repo-password"
@@ -830,6 +1005,21 @@ phase_backup() {
     else
         bad "mount the source read-only (logs/backup-mount.log)"; vm_down "$rkey"; return
     fi
+    # A GELI provider of its own opened by a key file (geli2.md's /data on
+    # vtbd0p4, its key file read from the source's root once that is
+    # mounted): the files on it and their SHA-256, to compare with the
+    # restored system's at the verify's own boot.  Hashes and paths only.
+    local gpart gprov gkeyed gmp
+    [[ -z $geli ]] || while read -r gpart gprov gkeyed _ _; do
+        case $gkeyed in keyfile|both) ;; *) continue ;; esac
+        gmp=$(geli_fstab_mp "$R/dumps/src.json" "$gpart")
+        [[ -n $gmp ]] || { bad "the source's fstab mounts nothing on $gpart's GELI provider, which a key file opens"; continue; }
+        if TMO=1800 sshk "$rkey" "$(geli_files_list "/mnt/src$gmp")" > "$R/logs/source-geli-files-$gpart.txt" 2> "$R/logs/source-geli-files-$gpart.err"; then
+            ok "the source's $gmp on $gprov.eli, attached with the key file on the source's root ($(grep -c . "$R/logs/source-geli-files-$gpart.txt") files listed)"
+        else
+            bad "the source's files on $gmp ($gprov.eli): $(tail -1 "$R/logs/source-geli-files-$gpart.err")"
+        fi
+    done <<<"$geli"
     if TMO=7200 sshk "$rkey" "R=\"$RH/rustic-bko -r $RH/repo --password-file $RH/repo-password --no-progress --no-cache\"; rm -rf $RH/repo; \$R init && \$R backup --set-atime yes /mnt/src" > "$R/logs/backup.log" 2>&1; then
         ok "rustic-bko backup ($(sshk "$rkey" "du -sh $RH/repo" | cut -f1))"
     else
@@ -973,13 +1163,26 @@ phase_rebuild() {
     # --key-file NAME=FILE (the source's provider name), on every load below.
     # A softraid CRYPTO volume (OpenBSD) the same: its passphrase the
     # source's, --key-file NAME=FILE by the volume's name in the dump (sd1).
-    local geli sr kf=() gname
+    # A provider with key slot 1 in use (geli2.md's freebsd15-geli-ufs) takes
+    # --key-file NAME:1=FILE too, slot 1's own passphrase; kf0 is the same
+    # without those, for the refusal below.
+    local geli sr kf=() kf0=() slot1=() gname gpart gslots gkeyed
     geli=$(geli_provs "$R/dumps/src.json" 2>/dev/null) || geli=""   # (no layout: the disk count below says so)
     sr=$(sr_vols "$R/dumps/src.json" 2>/dev/null) || sr=""
     if [[ -n $geli$sr ]]; then
-        geli_key_put "$rkey" || { bad "rescuer setup (the GELI or softraid passphrase into its tmpfs $GELI_DIR)"; vm_down "$rkey"; return; }
-        [[ -z $geli ]] || while read -r _ gname _; do kf+=(--key-file "$gname=$GELI_KEY"); done <<<"$geli"
-        [[ -z $sr ]] || while read -r gname _; do kf+=(--key-file "$gname=$GELI_KEY"); done <<<"$sr"
+        geli_key_put "$rkey" "$geli" || { bad "rescuer setup (the GELI or softraid passphrase into its tmpfs $GELI_DIR${GELI_WHY:+: $GELI_WHY})"; vm_down "$rkey"; return; }
+        [[ -z $geli ]] || while read -r gpart gname gkeyed gslots _; do
+            # A provider opened by its key file alone gets none: load makes
+            # it with a temporary key and setkeys the restored key file in.
+            [[ $gkeyed == keyfile ]] && continue
+            kf+=(--key-file "$gname=$GELI_KEY"); kf0+=(--key-file "$gname=$GELI_KEY")
+            case ,${gslots:-0}, in
+            *,1,*) kf+=(--key-file "$gname:1=$GELI_KEY1"); slot1+=("$gpart") ;;
+            esac
+        done <<<"$geli"
+        [[ -z $sr ]] || while read -r gname _; do
+            kf+=(--key-file "$gname=$GELI_KEY"); kf0+=(--key-file "$gname=$GELI_KEY")
+        done <<<"$sr"
         how+="; ${geli:+GELI}${sr:+softraid}: ${kf[*]}"
     fi
     ok "rescuer up$how"
@@ -1012,6 +1215,20 @@ phase_rebuild() {
         map+=(--map "${srcn[i]}=${RN[i + 1]}")
         erase+=(--erase "$([[ $PLAT == haiku || $PLAT == illumos ]] && echo "${RN[i + 1]}" || rdev $((i + 1)))")
     done
+    # GELI key slot 1 (geli2.md, the design's D4): the same plan without
+    # --key-file NAME:1=FILE must refuse, and name the slot, before the real
+    # load -- a restored system whose slot 1 was dropped loses that way in.
+    # (Not under HT_QUICK's skip: the real load below gets the :1 key files,
+    # and nothing else would show load still asks for them.)
+    if ((${#slot1[@]})) && load_step 4 refuse-slot1 "${map[@]}" "${kf0[@]}"; then
+        for gpart in "${slot1[@]}"; do
+            if grep -q "$gpart.*key slot 1 is in use" "$R/logs/rebuild-refuse-slot1".{out,err}; then
+                ok "load without --key-file $gpart:1 refuses: $gpart's GELI key slot 1 is in use"
+            else
+                bad "load without --key-file $gpart:1 refused, but not for $gpart's GELI key slot 1 (logs/rebuild-refuse-slot1.out, .err)"
+            fi
+        done
+    fi
     map+=("${kf[@]}")
     [[ $quick == 1 ]] || {
     load_step 0 dry-partition "${map[@]}" --only partition
@@ -1130,11 +1347,16 @@ phase_verify() {
         CONSOLE_KEY=$ck vm_up "$RESC" "$R/logs/verify-rescuer-serial.log" "${vsnap[@]}" "${rfw[@]}" --memory 3072 "${s_resc[@]}" "${all_dst[@]}"
         if vm_wait "$rkey"; then
             rescuer_ready $((1 + n))
-            if [[ -n $geli$sr ]] && ! geli_key_put "$rkey"; then
-                bad "the GELI or softraid passphrase into the rescuer's tmpfs $GELI_DIR"
+            if [[ -n $geli$sr ]] && ! geli_key_put "$rkey" "$geli"; then
+                bad "the GELI or softraid passphrase into the rescuer's tmpfs $GELI_DIR${GELI_WHY:+: $GELI_WHY}"
                 echo exit 1 > "$R/logs/verify-mount.sh"
-            elif ! mount_script "$R/dumps/src.json" 1 /mnt/dst > "$R/logs/verify-mount.sh" 2> "$R/logs/verify-mount.log"; then
-                echo exit 1 > "$R/logs/verify-mount.sh"
+            else
+                # GELI key slot 1 before the mount script, which attaches the
+                # providers with slot 0: on the booted guest the root is
+                # attached already, so this is the only place to try slot 1.
+                [[ -z $geli ]] || geli_slot1_check "$R/dumps/src.json" 1 "$rkey" "$geli"
+                mount_script "$R/dumps/src.json" 1 /mnt/dst > "$R/logs/verify-mount.sh" 2> "$R/logs/verify-mount.log" ||
+                    echo exit 1 > "$R/logs/verify-mount.sh"
             fi
             if shk "$rkey" < "$R/logs/verify-mount.sh" > "$R/logs/verify-mount.log" 2>&1; then
                 grep '^HT1-POOL ' "$R/logs/verify-mount.log" | while read -r _ pn rest; do ok "the restored pool $pn imported from all its disks ($rest)"; done
@@ -1182,6 +1404,56 @@ phase_verify() {
                 bad "bioctl $vn: not CRYPTO on $chunks (logs/restored-bioctl-$vn.txt: $(tr -s ' \n' ' ' < "$R/logs/restored-bioctl-$vn.txt"))"
             fi
         done <<<"$sr"
+    fi
+    # GELI (geli2.md): a provider opened by a key file alone is attached by
+    # the restored system's own rc.d/geli, with the key file restored on its
+    # encrypted root, its file system mounted where fstab says, and the
+    # source's files on it (by SHA-256; the key file's own bytes are never
+    # read here, only its path in the dump).
+    if [[ -n $geli ]]; then
+        sshk "$gkey" "geli status; echo HT1-MOUNTS; mount -p" > "$R/logs/restored-geli.txt" 2>&1
+        local gpart gprov gkeyed gmp
+        while read -r gpart gprov gkeyed _ _; do
+            case $gkeyed in keyfile|both) ;; *) continue ;; esac
+            if awk -v p="$gprov.eli" -v c="$gprov" '/^HT1-MOUNTS$/ { s = 1 } !s && $1 == p && $3 == c { f = 1 } END { exit !f }' "$R/logs/restored-geli.txt"; then
+                ok "geli status: the restored $gprov.eli is attached on $gprov (rc.conf's geli_devices, its key file on the encrypted root)"
+            else
+                bad "geli status: the restored $gprov.eli isn't attached on $gprov (logs/restored-geli.txt)"
+            fi
+            gmp=$(geli_fstab_mp "$R/dumps/src.json" "$gpart")
+            if [[ -z $gmp ]]; then
+                bad "the source's fstab mounts nothing on $gpart's GELI provider, which a key file opens"
+                continue
+            fi
+            if awk -v d="/dev/$gprov.eli" -v m="$gmp" '/^HT1-MOUNTS$/ { s = 1; next } s && $1 == d && $2 == m { f = 1 } END { exit !f }' "$R/logs/restored-geli.txt"; then
+                ok "the restored $gmp is mounted from $gprov.eli"
+            else
+                bad "the restored $gmp isn't mounted from $gprov.eli (logs/restored-geli.txt)"
+            fi
+            TMO=1800 sshk "$gkey" "$(geli_files_list "$gmp")" > "$R/logs/restored-geli-files-$gpart.txt" 2>&1
+            if [[ ! -s $R/logs/source-geli-files-$gpart.txt ]]; then
+                bad "the source's files on $gmp were never listed (logs/source-geli-files-$gpart.txt): run the backup phase"
+            elif diff -q "$R/logs/source-geli-files-$gpart.txt" "$R/logs/restored-geli-files-$gpart.txt" >/dev/null; then
+                ok "the files on the restored $gmp are the source's ($(grep -c . "$R/logs/restored-geli-files-$gpart.txt") files, by SHA-256)"
+            else
+                bad "the files on the restored $gmp aren't the source's: $(diff "$R/logs/source-geli-files-$gpart.txt" "$R/logs/restored-geli-files-$gpart.txt" | grep -c '^[<>]') lines differ (logs/source-geli-files-$gpart.txt, restored-geli-files-$gpart.txt)"
+            fi
+        done <<<"$geli"
+    fi
+    # A swap the source's dump marks onetime: GELI swapon makes anew at each
+    # boot over a partition with no metadata, so the restored system's
+    # swapinfo names the .eli device (geli2.md's freebsd15-geli-bios).
+    local onetime sw; onetime=$(onetime_swaps "$R/dumps/src.json" 2>/dev/null) || onetime=""
+    if [[ -n $onetime ]]; then
+        sshk "$gkey" "swapinfo" > "$R/logs/restored-swapinfo.txt" 2>&1
+        while read -r sw; do
+            [[ -n $sw ]] || continue
+            if awk -v d="/dev/$sw.eli" '$1 == d { f = 1 } END { exit !f }' "$R/logs/restored-swapinfo.txt"; then
+                ok "swapinfo: the restored $sw.eli is on (the onetime swap swapon encrypts at boot)"
+            else
+                bad "swapinfo: no /dev/$sw.eli on the restored system (logs/restored-swapinfo.txt: $(tr -s ' \n' ' ' < "$R/logs/restored-swapinfo.txt"))"
+            fi
+        done <<<"$onetime"
     fi
     sshk "$gkey" "$BOOTSTATE" > "$R/logs/restored-bootstate.txt" 2>&1
     if diff -q "$R/logs/source-bootstate.txt" "$R/logs/restored-bootstate.txt" >/dev/null; then

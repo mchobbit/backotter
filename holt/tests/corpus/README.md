@@ -142,6 +142,24 @@ salt), and its golden plan makes the provider again with `geli init -b -g
 `/var/backups`' metadata backup again, and restores through load's
 msdosfs wrapper (`sh -c '..."$@"...' sh rustic-bko ... restore`), which
 invariants.rs's `commands` now reads through.
+freebsd15-geli-bios (bsdinstall's zfsboot with "Encrypt Disks" and "Encrypt
+Swap" on BIOS: gptzfsboot, zroot on a GELIBOOT provider, onetime swap
+`vtbd0p2.eli`) and freebsd15-geli-ufs (UEFI, a UFS root on a GELIBOOT
+provider with key slots 0 and 1, and an authenticated (HMAC/SHA256)
+provider for /data opened by the key file /etc/geli/p4.key;
+docs/design/geli2.md), HoltTest2 sources since GELI's round 2 (H5,
+2026-11-17), were added the same day from their HoltTest1 runs on
+cinqcent: `geli2a` (the bios guest, the promoted holt-bin's bko-holt 0.2.6)
+and `geli2b` (the ufs guest, the bko-holt 0.2.6 built from this tree with
+round 2's newfs fix), both PASS, the images the same as the runs recorded.
+freebsd15-geli-bios's golden plan is attended: it asks for the new
+passphrase and runs `geli init -b -g ... -i 2782171 -J`. freebsd15-geli-ufs's
+is refused (exit 4): the corpus plans take no `--key-file`, and its source
+uses key slot 1, which load won't drop silently (geli.md D4). Its stages
+still show the key-file provider made with a temporary key, written
+through by dd, newfs'd with `-s 3602431` on the 4096-byte-sector root
+provider (dumpfs's `-s 28819448` is in 512-byte units), and given the
+restored key file with `geli setkey -n 0 -K ... -P`.
 kali (`make-debian.sh --kali 2026.3 ext4`: Kali Linux 2026.3 by d-i with
 Kali's preseed; UEFI with Secure Boot off, GPT with an 883 MiB ESP at
 /boot/efi, ext4 /, swap; GRUB in EFI/kali and the same file as
@@ -654,7 +672,15 @@ at /bkoscratch/holt-warm/geli): chopin with its 90 strings (its
 console-passphrase among them) and the raw dump's identifiers, cinqcent
 with its 89, the Mac with the git e-mail, 0 findings, and a check of the
 src.json, index row and plan for the passphrase's bytes (as is and as
-UTF-16LE): none; the same sha256 from both builds.  So did kali
+UTF-16LE): none; the same sha256 from both builds.  So did freebsd15-geli-bios and
+freebsd15-geli-ufs (2026-11-17), built twice from a private directory on
+chopin (/bkoscratch, its warm holt build at /bkoscratch/holt-warm/geli2):
+chopin with its 143 strings and the raw dumps' identifiers, cinqcent with
+its 121, the Mac with the git e-mail, 0 findings (their plans scanned
+too). A separate check of the src.json files, index rows and plans looked
+for both guests' passphrases, the slot-1 passphrase and p4's key file (as
+they are, as UTF-16LE, in hex and in base64) and found none. Both builds
+gave the same sha256.  So did kali
 (2026-11-14), built from a private directory in cinqcent's RAM disk (its
 warm holt build at /bkoscratch/holt-warm/kali): cinqcent with its 92
 strings and the raw dump's identifiers, chopin with its 91, the Mac with

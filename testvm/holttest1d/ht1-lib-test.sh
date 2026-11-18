@@ -1241,6 +1241,15 @@ chk "ht1-offline.sh refuses it: exit 2, not $rcb, naming HT_VARIANT" eval 'same 
 chk "  and neither made a run directory" eval 'gone "$HT_WORK/$NAME-v" "$HT_RECORDS/$NAME-v"'
 verdict 50 "the HT_VARIANT names agree across the drivers, the queue and ram-size.sh" "$FX/out-c50a" "$FX/out-c50b"
 
+# ht1-bsd.sh's readers of the dump's GELI and softraid records and the
+# scripts it writes from them (geli_provs, mount_script, geli_slot1_script,
+# ...): its own self-test, which needs no VM, no root and no RAM disk, so it
+# can be run by hand too (ht1-bsd-test.sh).
+"$HERE/ht1-bsd-test.sh" >"$FX/out-c51" 2>&1; rc51=$?
+chk "ht1-bsd-test.sh: exit 0, not $rc51" eval 'same "$rc51" 0'
+chk "  every case ok" eval 'hasre "$FX/out-c51" "^ht1-bsd-test: all [0-9]+ cases ok$"'
+verdict 51 "ht1-bsd.sh's GELI and softraid readers (ht1-bsd-test.sh)" "$FX/out-c51"
+
 if ((nfail == 0)); then echo "ht1-lib-test: all $ncase cases ok"; exit 0; fi
 echo "ht1-lib-test: $nfail of $ncase cases FAIL"
 exit 1

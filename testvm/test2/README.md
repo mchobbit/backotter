@@ -350,7 +350,12 @@ sculpt2610 runs `guest/update-sculpt.sh` (`testvm/sculpt-update` under the round
 `--publish`: run `vm-store publish sculpt2610` on Chopin after the round); its console probe also runs
 `sculpt-update --check`, whose "newer image" or "newer release" is a note of `image:current`, never a FAIL.
 A guest cell keys only what its guest runs (`guest/spec.json`): `update/in-guest.sh` by its
-`# t2-section:` markers, the prologue and the guest's own sections (`in-guest.sh#Linux.apt`);
+`# t2-section:` markers, the prologue and the guest's own sections (`in-guest.sh#Linux.apt`).
+A section holds only code its guests alone run: every test that picks one (an if or elif
+condition, a case pattern, a for list, and the fi, done or `;;` that ends it) is the
+prologue's, or Linux.common's inside Linux, and so is what a guest of any package manager may
+run (the NILFS2, btrfs and ZFS fixes); test_vm_update checks it (each stretch of a section
+parses alone, between such a test and its end).
 `vm-update` by its code (`pycode:`: `keys.python_code`, the file less its comments and
 docstrings, which only `--help` reads), so a comment or help-text edit re-tests no guest;
 `vm-mount` and `vm-umount` only on Linux guests (`plats`), since vm-update's host mount check

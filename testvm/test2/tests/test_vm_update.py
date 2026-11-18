@@ -170,22 +170,22 @@ class TestInGuest(unittest.TestCase):
     def test_blocks_carry_their_package_manager(self):
         s = self.sections()
         for name, needle in (("Linux.apt", "snapshot.ubuntu.com"), ("Linux.apt", "Devuan's"), ("Linux.apt", "nilfs2"),
-                             ("Linux.apt", "zfs-list.cache"), ("Linux.apt", "has apt-get"),
+                             ("Linux.common", "zfs-list.cache"), ("Linux.common", "has apt-get && has dpkg"),
                              ("Linux.pacman", "geo.mirror.pkgbuild.com"), ("Linux.pacman", "Artix's mirrors"),
-                             ("Linux.pacman", "@factory"), ("Linux.pacman", "has pacman"),
-                             ("Linux.dnf", "fedora-updates.repo"), ("Linux.dnf", "vault"), ("Linux.dnf", "has dnf"),
-                             ("Linux.ostree", "/run/ostree-booted"), ("Linux.ostree", "rpm-ostree upgrade"),
+                             ("Linux.common", "@factory"), ("Linux.common", "elif has pacman"),
+                             ("Linux.common", "fedora-updates.repo"), ("Linux.dnf", "vault"), ("Linux.common", "has dnf"),
+                             ("Linux.common", "/run/ostree-booted"), ("Linux.ostree", "rpm-ostree upgrade"),
                              ("Linux.ostree", "rpm-ostree cleanup -b -m"),
-                             ("Linux.zypper", "history"), ("Linux.zypper", "install DVD"), ("Linux.zypper", "has zypper"),
-                             ("Linux.moss", "unstable stream"), ("Linux.moss", "has moss"),
-                             ("Linux.eopkg", "has eopkg"), ("Linux.eopkg", "eopkg up -y"), ("Linux.eopkg", "eopkg dc"),
-                             ("Linux.xbps", "has xbps-install"), ("Linux.apk", "apk upgrade"),
-                             ("Linux.portage", "/etc/gentoo-release"), ("Linux.portage", "emerge --sync"),
+                             ("Linux.zypper", "history"), ("Linux.zypper", "install DVD"), ("Linux.common", "has zypper"),
+                             ("Linux.moss", "unstable stream"), ("Linux.common", "has moss"),
+                             ("Linux.common", "has eopkg"), ("Linux.eopkg", "eopkg up -y"), ("Linux.eopkg", "eopkg dc"),
+                             ("Linux.common", "has xbps-install"), ("Linux.apk", "apk upgrade"),
+                             ("prologue", "/etc/gentoo-release"), ("Linux.portage", "emerge --sync"),
                              ("Linux.portage", "emerge -puDN"), ("Linux.portage", "emerge -uDNg"),
                              ("Linux.portage", "emerge --depclean"),
-                             ("Linux.slackpkg", "/etc/slackware-version"), ("Linux.slackpkg", "upgrade-all"),
+                             ("prologue", "/etc/slackware-version"), ("Linux.slackpkg", "upgrade-all"),
                              ("Linux.slackpkg", "lilo"), ("Linux.slackpkg", "EFI/Slackware"),
-                             ("Linux.abroot", "/usr/share/abroot/abroot.json"), ("Linux.abroot", "abroot upgrade </dev/null"),
+                             ("prologue", "/usr/share/abroot/abroot.json"), ("Linux.abroot", "abroot upgrade </dev/null"),
                              ("Linux.abroot", "No update available"), ("Linux.abroot", "vanilla-updates.timer"),
                              ("Linux.common", "/etc/os-release"), ("Linux.common", "no package manager found"),
                              ("prologue", "step() {"), ("prologue", 'say "updated"'), ("prologue", "no updater for"),
@@ -301,9 +301,79 @@ class TestInGuest(unittest.TestCase):
         self.assertNotIn("emerge --sync -q $o || exit 1", sec)
 
     def test_linux_common_holds_no_package_manager(self):
-        common = self.sections()["Linux.common"]
-        for word in ("apt-get", "dnf", "pacman", "zypper", "xbps", "moss", "emerge"):
-            self.assertNotIn(word, common)
+        """Linux.common names a package manager only in what picks its code (an if, elif or for
+        line and its continuations, or the f= file one tests), never in that code."""
+        prev = ""
+        for line in self.sections()["Linux.common"].splitlines():
+            code = line.strip()
+            test = code.startswith(("if ", "elif ", "for ", "f=")) or prev.endswith(("&&", "\\", "||"))
+            if not code.startswith("#") and not test:
+                for word in ("apt-get", "dnf", "pacman", "zypper", "xbps", "moss", "emerge"):
+                    self.assertNotIn(word, code)
+            prev = code
+
+    def chunks(self):
+        """[(section, [lines], first, last)]: each stretch of the file one section holds (0-based)."""
+        out, cur = [], None
+        for i, line in enumerate(self.TEXT.splitlines()):
+            m = re.match(r"\s*# t2-section: (\S+)\s*$", line)
+            if m:
+                cur = m[1]
+                out.append([cur, [], i + 1, i])
+            elif cur:
+                out[-1][1].append(line)
+                out[-1][3] = i
+        return [tuple(c) for c in out if c[1]]
+
+    def test_early_sections_end_the_script(self):
+        """The guests of the sections before Linux.common key none of what comes after them: each
+        such section's code ends in exit 0, so none of them falls through into it."""
+        for sec, body, a, b in self.chunks():
+            if sec in ("NixOS", "Guix", "Linux.portage", "Linux.slackpkg", "Linux.abroot", "Linux.snapcore"):
+                code = [l.strip() for l in body if l.strip() and not l.lstrip().startswith("#")]
+                if code:
+                    self.assertEqual(code[-1], "exit 0", f"{sec} at line {a + 1}")
+
+    def test_sections_hold_bodies_only(self):
+        """Soundness of the section keys: a guest's own section holds only code its guests alone
+        run.  So each stretch of one (a run of Linux.* stretches, for Linux.common) parses alone,
+        and sits between what picks it (a then, do, else or case pattern line) and that test's
+        end (fi, elif, else, done, ;;): the tests are the prologue's, or Linux.common's."""
+        lines = self.TEXT.splitlines()
+
+        def code(i):
+            return "" if lines[i].lstrip().startswith("#") else re.sub(r"\s+#[^'\"]*$", "", lines[i]).strip()
+
+        def near(i, step):
+            while 0 <= i < len(lines):
+                if code(i):
+                    return code(i)
+                i += step
+            return ""
+
+        def runs():
+            out, lin = [], []
+            for sec, body, a, b in self.chunks():
+                if sec == "prologue":
+                    continue
+                out.append((sec, list(body), a, b))
+                if not sec.startswith("Linux."):
+                    continue
+                if lin and lin[-1][3] + 1 == a - 1:         # the next stretch, after its marker
+                    lin[-1] = ("Linux.*", lin[-1][1] + body, lin[-1][2], b)
+                else:
+                    lin.append(("Linux.*", list(body), a, b))
+            return out + lin
+
+        for sec, body, a, b in runs():
+            if sec == "Linux.common" or not any(code(i) for i in range(a, b + 1)):
+                continue
+            text = "\n".join(body) + "\n"
+            r = subprocess.run(["sh", "-n"], input=text, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, f"{sec} at line {a + 1} doesn't parse alone: {r.stderr.strip()}")
+            before, after = near(a - 1, -1), near(b + 1, 1)
+            self.assertTrue(re.search(r"(\bthen|\bdo|^else|^[^()\s]+\))$", before), f"{sec} at line {a + 1}: after {before!r}")
+            self.assertTrue(re.match(r"(fi|elif|else|done|esac)\b|;;", after), f"{sec} at line {a + 1}: before {after!r}")
 
     def test_what_is_not_a_fix_is_no_step(self):
         for text in ('"updated"', "NILFS: $((", "no packages at", "is the one installed", "holds NetBSD", "$(uname -srm)",
@@ -530,9 +600,11 @@ esac"""
         os-release's ID, holds the auto-refreshes again, and stops at a pending restart."""
         t, sec = self.TEXT, self.sections()["Linux.snapcore"]
         self.assertLess(t.index("# t2-section: Linux.snapcore"), t.index("# t2-section: Linux.common"))
-        for needle in ("/var/lib/snapd/modeenv", "^ID=ubuntu-core$", "snap refresh --no-wait", "snap refresh --hold",
+        for needle in ("snap refresh --no-wait", "snap refresh --hold",
                        "All snaps up to date", "/run/systemd/shutdown/scheduled", 'say "updated"'):
             self.assertIn(needle, sec)
+        for needle in ("/var/lib/snapd/modeenv", "^ID=ubuntu-core$"):     # its test: the prologue's
+            self.assertIn(needle, self.sections()["prologue"])
         code = "\n".join(l for l in sec.splitlines() if not l.lstrip().startswith("#"))
         self.assertNotIn("apt", code)
         self.assertNotIn("--unhold", code)

@@ -598,7 +598,13 @@ Linux)
         # allocations with all its free memory free_cma (GuestTest2
         # t2v-20261118T0027-d7c8).  Nothing here kexecs, so kho=off, added
         # the way kdump-tools.cfg adds crashkernel= (GRUB's drop-ins; this
-        # update-grub writes it, the reboot after the update boots with it).
+        # update-grub writes it, the next boot boots with it).  Under ZFS the
+        # update can't run on this boot: ubuntu26-zfs hung (SSH gone, no
+        # console output) at the end of an update on a boot whose scratch
+        # reservation had succeeded ("Memory: 190160K/2008888K available",
+        # GuestTest2 t2v-20261118T0617-4a11, attempt 1 on choubox).  So
+        # exit 4 with "reboot first": vm-update reboots the guest and runs
+        # this script again, which then finds bko-kho.cfg and goes on.
         if grep -qs '^CONFIG_KEXEC_HANDOVER_ENABLE_DEFAULT=y' "/boot/config-$(uname -r)" &&
             ! grep -qw 'kho=off' /proc/cmdline && [ -f /etc/default/grub ] && has update-grub &&
             [ ! -f /etc/default/grub.d/bko-kho.cfg ]; then
@@ -606,6 +612,10 @@ Linux)
             mkdir -p /etc/default/grub.d &&
                 echo 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT kho=off"' >/etc/default/grub.d/bko-kho.cfg &&
                 update-grub || exit 1
+            if [ -d /sys/module/zfs ]; then
+                say "reboot first: kho=off, before ZFS's ARC runs the update short of kernel memory"
+                exit 4
+            fi
         fi
         # snapd (Ubuntu): the image's refresh hold has lapsed and it has never
         # refreshed, so the upgrade's new snapd (its postinst restarts it)

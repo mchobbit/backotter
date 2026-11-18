@@ -1133,7 +1133,11 @@ class VM:
     def journal_before_reboot(self) -> None:
         """Before the update's reboot: the journal so far, for a volatile one the reboot empties."""
         if self.journal_since is not None:
-            self.journal_pre = self.read_journal()
+            # Each reboot's (a reboot first, then the update's): a volatile
+            # journal loses what came before each one.
+            text = self.read_journal()
+            if text is not None:
+                self.journal_pre = merge_journal(self.journal_pre, text) if self.journal_pre else text
 
     def save_journal(self) -> None:
         """Write the run's journal (merge_journal) to the guest's journal_path: just before the
@@ -1816,6 +1820,9 @@ STEP = re.compile(r"^in-guest: step: (.*)$", re.M)
 TU_DEFAULT = re.compile(r"^in-guest: tukit: default (\S+)$", re.M)
 # in-guest.sh's Linux.snapcore: snapd's refresh change CHANGE waits for a restart (Ubuntu Core).
 SNAP_PENDING = re.compile(r"^in-guest: snapcore: restart pending (\d+)$", re.M)
+# in-guest.sh's exit 4: what it changed needs a boot before the update runs
+# (kho=off under ZFS); rebooted, it runs again, once.
+REBOOT_FIRST = re.compile(r"^in-guest: reboot first: (.+)$", re.M)
 # What snapd is at, on its first line: "restart ..." (a shutdown scheduled, or a change that
 # waits for a restart), "busy ID:STATUS..." (a change in progress) or "settled"; then
 # "change STATUS", the refresh change CHANGE's own.
@@ -1888,6 +1895,19 @@ def snapcore_settle(vm, g, change: str, res: dict) -> None:
         raise Failed(f"snapd's refresh (change {change}) ended {status or 'unlisted'}; its tasks are in {g.log.name}")
     if vm.ssh(SBIN + "snap refresh --hold", timeout=120).returncode != 0:
         raise Failed(f"snap refresh --hold failed after the refresh; see {g.log.name}")
+
+
+def reboot_guest(vm, g) -> None:
+    """Reboot the guest (REBOOT, asked up to five times) and wait for its SSH to come back."""
+    for _ in range(5):
+        if vm.ssh(REBOOT, timeout=30).returncode == 0:
+            break
+        if stopping.wait(10):
+            raise Failed("stopped")
+    else:
+        raise Failed(f"the reboot command failed; see {g.log.name}")
+    vm.type_passphrase()
+    vm.wait_ssh(rebooting=True)
 
 
 def parse_steps(stdout: str) -> list[str]:
@@ -2430,6 +2450,16 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
         say(name, "updating")
         res["phase"] = "update"
         r = vm.ssh((TESTVM / "update/in-guest.sh").read_text(), timeout=UPDATE_TIMEOUT)
+        first_out = ""
+        if r.returncode == 4 and (m := REBOOT_FIRST.search(r.stdout)) and not stopping.is_set():
+            say(name, f"rebooting before the update: {m[1]}")
+            g.note(f"in-guest.sh asked for a reboot before the update: {m[1]}")
+            res["phase"] = "reboot-first"
+            vm.journal_before_reboot()
+            reboot_guest(vm, g)
+            res["phase"] = "update"
+            first_out = r.stdout                   # its step lines count with the update's
+            r = vm.ssh((TESTVM / "update/in-guest.sh").read_text(), timeout=UPDATE_TIMEOUT)
         if r.returncode == 3:
             vm.poweroff()
             res["phase"] = "done"
@@ -2441,7 +2471,7 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
             res["tail"] = (r.stdout + r.stderr).strip().splitlines()[-8:]
             raise Failed(f"the update failed (exit status {r.returncode}); see {g.log.name}:\n  "
                          + "\n  ".join(res["tail"]))
-        steps = parse_steps(r.stdout)
+        steps = parse_steps(first_out + r.stdout)
         tu_default = TU_DEFAULT.search(r.stdout)
         (out / "steps.txt").write_text("".join(f"{s}\n" for s in steps), encoding="utf-8")
         if stopping.is_set():
@@ -2450,15 +2480,7 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
         res["phase"] = "reboot"
         vm.journal_before_reboot()
         up_before, t_before = vm.uptime(), time.monotonic()
-        for attempt in range(5):
-            if vm.ssh(REBOOT, timeout=30).returncode == 0:
-                break
-            if stopping.wait(10):
-                raise Failed("stopped")
-        else:
-            raise Failed(f"the reboot command failed; see {g.log.name}")
-        vm.type_passphrase()
-        vm.wait_ssh(rebooting=True)
+        reboot_guest(vm, g)
         # Proof that it did reboot: init is younger than it would be had it
         # run on.  The slack, for a clock the guest steps as it boots, is
         # 30 s, but less when that's all the time there was (a quick update).

@@ -2466,6 +2466,18 @@ class TestJournal(TempDir):
         v.save_journal()
         self.assertEqual((self.tmp / "journal.log").read_text(), "T kernel: first boot\nT kernel: second boot\n")
 
+    def test_volatile_journal_across_a_reboot_first(self):
+        # in-guest.sh's "reboot first", then the update's reboot: each boot's part is kept
+        v = self.vm((0, "T kernel: first boot\n", "journalctl-rc=0\n"), (0, "T kernel: second boot\n", "journalctl-rc=0\n"),
+                    (255, "", ""), (0, "T kernel: third boot\n", "journalctl-rc=0\n"))
+        v.journal_since = 7
+        v.journal_before_reboot()
+        v.journal_before_reboot()
+        v.journal_before_reboot()                  # not read: what it had stays
+        v.save_journal()
+        self.assertEqual((self.tmp / "journal.log").read_text(),
+                         "T kernel: first boot\nT kernel: second boot\nT kernel: third boot\n")
+
     def test_before_reboot_does_nothing_without_systemd(self):
         v = self.vm()
         v.journal_before_reboot()
@@ -2537,6 +2549,28 @@ class TestSnapcoreSettle(unittest.TestCase):
         r = subprocess.run(["sh", "-n"], input=s, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(VU.SNAP_PENDING.search("x\nin-guest: snapcore: restart pending 7\n")[1], "7")
+
+    def test_reboot_guest(self):
+        class VM(self.VM):
+            def ssh(self, script, timeout, log=True):
+                self.calls.append("reboot")
+                return subprocess.CompletedProcess([], 255 if len(self.calls) < 3 else 0, "", "")
+        g = types.SimpleNamespace(note=lambda m: None, log=types.SimpleNamespace(name="update.log"))
+        vm = VM([])
+        with mock.patch.object(VU, "stopping", self.Stop()):
+            VU.reboot_guest(vm, g)
+        self.assertEqual((vm.calls, vm.boots), (["reboot"] * 3, [True]))
+        vm.ssh = lambda script, timeout, log=True: subprocess.CompletedProcess([], 255, "", "")
+        with mock.patch.object(VU, "stopping", self.Stop()), self.assertRaises(VU.Failed) as e:
+            VU.reboot_guest(vm, g)
+        self.assertIn("reboot command failed", str(e.exception))
+
+    def test_reboot_first_is_what_in_guest_says(self):
+        src = (TESTVM / "update" / "in-guest.sh").read_text()
+        said = re.findall(r'say "(reboot first: [^"]*)"\n\s*exit 4', src)
+        self.assertTrue(said)
+        for s in said:
+            self.assertEqual(VU.REBOOT_FIRST.search(f"x\nin-guest: {s}\n")[1], s[len("reboot first: "):])
 
     def test_a_restart_more_then_settled(self):
         vm, res = self.settle(["busy 7:Doing\nchange Doing", "restart 7:Wait\nchange Wait",

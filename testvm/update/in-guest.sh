@@ -824,8 +824,9 @@ EOF
             snap_settle
             out=$(snap refresh 2>&1) || { printf '%s\n' "$out"; say "snap refresh failed"; exit 1; }
             printf '%s\n' "$out"
-            # A snap refreshed is an update no package listing shows.
-            refreshed=$(printf '%s\n' "$out" | sed -n 's/^\([^ ]*\) .* refreshed$/\1/p' | tr '\n' ' ')
+            # A snap refreshed is an update no package listing shows.  Sorted:
+            # snap refresh prints them in no fixed order.
+            refreshed=$(printf '%s\n' "$out" | sed -n 's/^\([^ ]*\) .* refreshed$/\1/p' | LC_ALL=C sort -u | tr '\n' ' ')
             [ -z "$refreshed" ] || step "snapd: refreshed $refreshed"
             snap_settle
         fi

@@ -822,6 +822,37 @@ esac"""
         self.assertNotIn("fell-through", out)
         self.assertNotIn("reset-failed xfs_healer@-.service", calls)
 
+    def run_snapd_refresh(self, refresh_out):
+        """Linux.apt's snap refresh after apt under a stub snap that prints REFRESH_OUT.  (exit
+        status, output)"""
+        d = Path(tempfile.mkdtemp(prefix="t2-snapd-refresh-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        (d / "snap").write_text("#!/bin/sh\ncat <<'EOF'\n" + refresh_out + "EOF\n")
+        (d / "snap").chmod(0o755)
+        sec = self.sections()["Linux.apt"]
+        a = sec.index('        if [ -n "$snapd" ]; then\n            snap_settle\n            out=$(snap refresh 2>&1)')
+        block = sec[a:sec.index("\n        fi\n", a) + len("\n        fi\n")]
+        code = ('step() { echo "in-guest: step: $*"; }\nsay() { echo "in-guest: $*"; }\nsnap_settle() { :; }\n'
+                "snapd=yes\n" + block + "echo fell-through\n")
+        r = subprocess.run(["/bin/sh", "-c", code], capture_output=True, text=True,
+                           env={"PATH": f"{d}:/usr/bin:/bin"})
+        return r.returncode, r.stdout
+
+    def test_snapd_refreshed_snaps_sorted(self):
+        """snap refresh lists the snaps it refreshed in no fixed order, and the step line was a new
+        log line every pass (ubuntu26-luks: "snapd core24 hwctl", then "hwctl snapd core24")."""
+        lines = {"snapd": "snapd 2.78 from Canonical** refreshed\n",
+                 "core24": "core24 20260101 from Canonical** refreshed\n",
+                 "hwctl": "hwctl 1.2 from Someone refreshed\n"}
+        for order in (("snapd", "core24", "hwctl"), ("hwctl", "snapd", "core24")):
+            with self.subTest(order=order):
+                rc, out = self.run_snapd_refresh("".join(lines[n] for n in order))
+                self.assertEqual(rc, 0, out)
+                self.assertIn("in-guest: step: snapd: refreshed core24 hwctl snapd \n", out)
+                self.assertTrue(out.endswith("fell-through\n"), out)
+        rc, out = self.run_snapd_refresh("All snaps up to date.\n")
+        self.assertEqual((rc, out), (0, "All snaps up to date.\nfell-through\n"))
+
     def test_shell_parses(self):
         r = subprocess.run(["sh", "-n", str(TESTVM / "update" / "in-guest.sh")], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)

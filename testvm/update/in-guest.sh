@@ -476,6 +476,15 @@ reclaim() { :; }
 if [ "$(uname)" = Linux ] && [ "$(findmnt -no FSTYPE / 2>/dev/null)" = nilfs2 ] && has nilfs-clean; then
     # t2-section: Linux.common
     nilfs=$(findmnt -no SOURCE /)
+    # journald off /var/log/journal for the rest of this boot, onto /run
+    # (vm-update reads the run's journal before the reboot, /run's too).
+    # After a cleaner run, what journald writes to its open system.journal
+    # never reaches the disk, though files written and synced do: a clean
+    # reboot then finds that file ONLINE ("corrupted or uncleanly shut
+    # down") with the rest of the boot's entries gone.  Closed first, the
+    # file stays clean (zorin18, GuestTest2 t2v-20261118T0027-d7c8 and
+    # throwaway boots on Chopin, 2026-11-18).
+    ! has journalctl || journalctl --relinquish-var >/dev/null 2>&1 || :
     reclaim() {
         sync
         nilfs-clean -r "$nilfs" && nilfs-clean -p 0 "$nilfs" || { say "nilfs-clean failed"; exit 1; }

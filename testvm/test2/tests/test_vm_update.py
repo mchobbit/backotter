@@ -290,10 +290,37 @@ class TestInGuest(unittest.TestCase):
                 self.assertEqual((rc, n), (100, 1), out)
         apt = self.sections()["Linux.apt"]
         self.assertIn("fetched $apt install --only-upgrade $batch", apt)
+        self.assertNotRegex(apt, r"(?<!fetched )\$apt clean")
         self.assertIn("fetched $apt dist-upgrade", apt)
         pac = self.sections()["Linux.pacman"]
         self.assertIn("fetched pacman -Sy --noconfirm || exit 1", pac)
         self.assertIn("fetched pacman -S --noconfirm --needed $up; } && fetched pacman -Su --noconfirm", pac)
+
+    def test_apt_lock_held_by_the_guests_own_apt_is_waited_out(self):
+        """apt-get clean (and any apt-get) stopped by the lists' or the archives' lock that an apt
+        of the guest's own holds, which DPkg::Lock::Timeout doesn't wait for (pop24, GuestTest2
+        t2v-20261118T1426-76be attempt 1): tried again, 10 more times at most.  dpkg's own lock
+        has waited 900 s already: no more."""
+        for error in ("E: Could not get lock /var/lib/apt/lists/lock. It is held by process 2213 (apt-get)",
+                      "E: Could not get lock /var/cache/apt/archives/lock. It is held by process 7 (apt-get)"):
+            with self.subTest(error=error):
+                rc, n, out = self.run_fetched("Linux.apt", 2, error)
+                self.assertEqual((rc, n), (0, 3), out)
+                self.assertIn("in-guest: another apt holds apt's lock: apt-get again in 30 s (2 of 10)", out)
+                rc, n, out = self.run_fetched("Linux.apt", 99, error)
+                self.assertEqual((rc, n), (100, 11), out)
+        rc, n, out = self.run_fetched("Linux.apt", 99, "E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 9 (apt-get)")
+        self.assertEqual((rc, n), (100, 1), out)
+
+    def test_pops_updaters_masked_before_apt(self):
+        """Pop!_OS's pop-system-updater and pop-upgrade run apt-get update on their own (pop24's
+        lock, t2v-20261118T1426-76be): masked for the boot where they're installed, before the
+        first apt-get."""
+        apt = self.sections()["Linux.apt"]
+        mask = "systemctl mask --runtime --now com.system76.SystemUpdater.service pop-upgrade.service"
+        self.assertIn(mask, apt)
+        self.assertIn("if has pop-system-updater || has pop-upgrade; then", apt)
+        self.assertLess(apt.index(mask), apt.index("$apt -o APT::Update::Error-Mode=any update"))
 
     def test_apt_batches_take_dependencies_first(self):
         """apt's batches go dependencies first (libpcre2-8-0 before libglib2.0-0t64: pikaos4,
@@ -822,21 +849,33 @@ esac"""
         self.assertNotIn("fell-through", out)
         self.assertNotIn("reset-failed xfs_healer@-.service", calls)
 
-    def run_snapd_refresh(self, refresh_out):
-        """Linux.apt's snap refresh after apt under a stub snap that prints REFRESH_OUT.  (exit
-        status, output)"""
+    def run_snapd_refresh(self, refresh_out, *more):
+        """Linux.apt's snap refresh after apt under a stub snap that prints REFRESH_OUT; given
+        MORE, (output, exit status) pairs, it prints and exits with each of them in turn first.
+        REFRESH_OUT None: MORE's last again once they run out.  (exit status, output, how many
+        times snap ran)"""
         d = Path(tempfile.mkdtemp(prefix="t2-snapd-refresh-"))
         self.addCleanup(shutil.rmtree, d, True)
-        (d / "snap").write_text("#!/bin/sh\ncat <<'EOF'\n" + refresh_out + "EOF\n")
+        tries = [*more] if refresh_out is None else [*more, (refresh_out, 0)]
+        for i, (text, rc) in enumerate(tries):
+            (d / f"out.{i}").write_text(text)
+            (d / f"rc.{i}").write_text(f"{rc}\n")
+        (d / "snap").write_text(textwrap.dedent(f"""\
+            #!/bin/sh
+            c=$(cat {d}/count 2>/dev/null || echo 0); echo $((c + 1)) >{d}/count
+            [ "$c" -lt {len(tries)} ] || c={len(tries) - 1}
+            cat {d}/out.$c; exit $(cat {d}/rc.$c)
+            """))
         (d / "snap").chmod(0o755)
         sec = self.sections()["Linux.apt"]
-        a = sec.index('        if [ -n "$snapd" ]; then\n            snap_settle\n            out=$(snap refresh 2>&1)')
+        a = sec.index('        if [ -n "$snapd" ]; then\n            snap_settle\n')
         block = sec[a:sec.index("\n        fi\n", a) + len("\n        fi\n")]
+        self.assertIn("snap refresh 2>&1", block)
         code = ('step() { echo "in-guest: step: $*"; }\nsay() { echo "in-guest: $*"; }\nsnap_settle() { :; }\n'
-                "snapd=yes\n" + block + "echo fell-through\n")
+                "sleep() { :; }\nsnapd=yes\n" + block + "echo fell-through\n")
         r = subprocess.run(["/bin/sh", "-c", code], capture_output=True, text=True,
                            env={"PATH": f"{d}:/usr/bin:/bin"})
-        return r.returncode, r.stdout
+        return r.returncode, r.stdout, int((d / "count").read_text())
 
     def test_snapd_refreshed_snaps_sorted(self):
         """snap refresh lists the snaps it refreshed in no fixed order, and the step line was a new
@@ -846,12 +885,44 @@ esac"""
                  "hwctl": "hwctl 1.2 from Someone refreshed\n"}
         for order in (("snapd", "core24", "hwctl"), ("hwctl", "snapd", "core24")):
             with self.subTest(order=order):
-                rc, out = self.run_snapd_refresh("".join(lines[n] for n in order))
+                rc, out, _ = self.run_snapd_refresh("".join(lines[n] for n in order))
                 self.assertEqual(rc, 0, out)
                 self.assertIn("in-guest: step: snapd: refreshed core24 hwctl snapd \n", out)
                 self.assertTrue(out.endswith("fell-through\n"), out)
-        rc, out = self.run_snapd_refresh("All snaps up to date.\n")
-        self.assertEqual((rc, out), (0, "All snaps up to date.\nfell-through\n"))
+        rc, out, n = self.run_snapd_refresh("All snaps up to date.\n")
+        self.assertEqual((rc, out, n), (0, "All snaps up to date.\nfell-through\n", 1))
+
+    # snap's own lines for a store that failed in transit (GuestTest2 t2v-20261118T1426-76be,
+    # attempt 1 of ubuntu26-zfs and of ubuntu26-raid).
+    SNAP_TIMEOUT = ('error: cannot perform the following tasks:\n- Monitoring snaps "core24", "hwctl", "snapd" to'
+                    ' determine whether extra refresh steps are required (Post "https://api.snapcraft.io/v2/snaps/'
+                    'refresh": net/http: request canceled while waiting for connection (Client.Timeout exceeded'
+                    ' while awaiting headers))\n')
+    SNAP_RESET = ('error: cannot perform the following tasks:\n- Download snap "hwctl" (131) from channel'
+                  ' "latest/stable/ubuntu-26.04" (Get "https://api.snapcraft.io/api/v1/snaps/download/'
+                  '9gTfXKJi0rgBnay9fPx90keffqR2l9fX_131.snap": read tcp 10.0.2.15:43138->185.125.190.109:443:'
+                  ' read: connection reset by peer)\n')
+
+    def test_snap_refresh_tried_again_when_the_store_fails_in_transit(self):
+        """A store request that timed out or a download whose connection was reset is tried again,
+        10 more times at most, 30 s apart; the snaps any try refreshed make the step line."""
+        for err in (self.SNAP_TIMEOUT, self.SNAP_RESET):
+            with self.subTest(err=err[60:100]):
+                rc, out, n = self.run_snapd_refresh("hwctl 1.2 from Someone refreshed\n",
+                                                    ("snapd 2.78 from Canonical** refreshed\n" + err, 1), (err, 1))
+                self.assertEqual((rc, n), (0, 3), out)
+                self.assertEqual(out.count("in-guest: the snap store didn't answer: snap refresh again in 30 s"), 2, out)
+                self.assertIn("in-guest: step: snapd: refreshed hwctl snapd \n", out)
+                self.assertTrue(out.endswith("fell-through\n"), out)
+                rc, out, n = self.run_snapd_refresh(None, (err, 1))
+                self.assertEqual((rc, n), (1, 11), out)
+                self.assertTrue(out.endswith(err + "in-guest: snap refresh failed\n"), out)
+                self.assertNotIn("fell-through", out)
+
+    def test_snap_refresh_other_failures_stop_at_once(self):
+        rc, out, n = self.run_snapd_refresh(None, ('error: cannot refresh "hwctl": snap "hwctl" has running apps (hwctl)\n', 1))
+        self.assertEqual((rc, n), (1, 1), out)
+        self.assertTrue(out.endswith("in-guest: snap refresh failed\n"), out)
 
     def test_shell_parses(self):
         r = subprocess.run(["sh", "-n", str(TESTVM / "update" / "in-guest.sh")], capture_output=True, text=True)

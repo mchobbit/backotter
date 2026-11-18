@@ -572,8 +572,19 @@ Linux)
         # stop them for this boot (runtime state only, in /run).  Then wait
         # for any still holding a lock: DPkg::Lock::Timeout covers dpkg's
         # lock, not the lists'.
+        # Pop!_OS's two updaters run apt-get update too: pop-system-updater
+        # at boot, and pop-upgrade's daemon when root's ssh login starts its
+        # user units (pop-upgrade-notify's "pop-upgrade release check" a
+        # minute on, and the updater's session half asks over D-Bus).  The
+        # second took the lists' lock from apt-get clean (pop24, GuestTest2
+        # t2v-20261118T1426-76be attempt 1): masked, D-Bus can't start them
+        # again.  The updater's KillMode=process leaves a running apt-get
+        # to finish; the update below waits it out.
         if [ -d /run/systemd/system ]; then
             systemctl mask --runtime --now packagekit.service >/dev/null 2>&1
+            if has pop-system-updater || has pop-upgrade; then
+                systemctl mask --runtime --now com.system76.SystemUpdater.service pop-upgrade.service >/dev/null 2>&1
+            fi
             systemctl stop apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service \
                 >/dev/null 2>&1
         fi
@@ -678,14 +689,24 @@ Linux)
         # apt's own three tries came too close together).  apt stops before
         # dpkg runs when it can't fetch everything, and what it did fetch
         # stays in its cache for the next try.  A last failure's output ends
-        # the log, for GuestTest2's flake rules to read.
+        # the log, for GuestTest2's flake rules to read.  The same for the
+        # lists' or the archives' lock held by an apt of the guest's own:
+        # DPkg::Lock::Timeout waits for dpkg's lock only, and apt-get clean
+        # takes both of the others.
         fetched() {
             n=0
             while :; do
                 { "$@" 2>&1; echo $? >/run/bko-fetch.rc; } | tee /run/bko-fetch.log
                 r=$(cat /run/bko-fetch.rc)
-                [ "$r" -ne 0 ] && [ $n -lt 10 ] && grep -q '^E: Failed to fetch ' /run/bko-fetch.log || break
-                n=$((n + 1)); say "a download failed: apt-get again in 30 s ($n of 10)"; sleep 30
+                [ "$r" -ne 0 ] && [ $n -lt 10 ] || break
+                if grep -q '^E: Failed to fetch ' /run/bko-fetch.log; then
+                    n=$((n + 1)); say "a download failed: apt-get again in 30 s ($n of 10)"
+                elif grep -qE '^E: Could not get lock /var/(lib/apt/lists|cache/apt/archives)/lock' /run/bko-fetch.log; then
+                    n=$((n + 1)); say "another apt holds apt's lock: apt-get again in 30 s ($n of 10)"
+                else
+                    break
+                fi
+                sleep 30
             done
             rm -f /run/bko-fetch.rc /run/bko-fetch.log
             return "$r"
@@ -816,14 +837,31 @@ EOF
         while [ $# -gt 0 ]; do
             batch=
             while [ $# -gt 0 ] && [ $(echo $batch | wc -w) -lt 40 ]; do batch="$batch $1"; shift; done
-            fetched $apt install --only-upgrade $batch && $apt clean || exit 1
+            fetched $apt install --only-upgrade $batch && fetched $apt clean || exit 1
             reclaim
         done
-        fetched $apt dist-upgrade && $apt autoremove --purge && $apt clean || exit 1
+        fetched $apt dist-upgrade && $apt autoremove --purge && fetched $apt clean || exit 1
         if [ -n "$snapd" ]; then
             snap_settle
-            out=$(snap refresh 2>&1) || { printf '%s\n' "$out"; say "snap refresh failed"; exit 1; }
-            printf '%s\n' "$out"
+            # Run again while the store or its CDN fails in transit, up to 10
+            # times 30 s apart: a POST to api.snapcraft.io that timed out, a
+            # download's connection reset (ubuntu26-zfs and ubuntu26-raid,
+            # GuestTest2 t2v-20261118T1426-76be attempt 1).  snap prints
+            # those as Go's url.Error, METHOD "URL": why; the store's own
+            # refusals aren't.  A snap whose lane did refresh keeps it, so
+            # every try's output counts for the step line.
+            all= n=0
+            until out=$(snap refresh 2>&1); do
+                printf '%s\n' "$out"; all="$all$out
+"
+                if [ $n -lt 10 ] && printf '%s\n' "$out" | grep -qE '(Get|Post|Head) "https://[^"]*": '; then
+                    n=$((n + 1)); say "the snap store didn't answer: snap refresh again in 30 s ($n of 10)"
+                    sleep 30; snap_settle
+                else
+                    say "snap refresh failed"; exit 1
+                fi
+            done
+            printf '%s\n' "$out"; out="$all$out"
             # A snap refreshed is an update no package listing shows.  Sorted:
             # snap refresh prints them in no fixed order.
             refreshed=$(printf '%s\n' "$out" | sed -n 's/^\([^ ]*\) .* refreshed$/\1/p' | LC_ALL=C sort -u | tr '\n' ' ')
@@ -852,7 +890,7 @@ EOF
             for p in fdisk ethtool; do
                 [ "$(dpkg-query -W -f '${db:Status-Status}' $p 2>/dev/null)" = installed ] || miss="$miss $p"
             done
-            [ -z "$miss" ] || { $apt install $miss && $apt clean || exit 1; }
+            [ -z "$miss" ] || { fetched $apt install $miss && fetched $apt clean || exit 1; }
         fi
         # xfsprogs 7.2.0 (Debian sid's; pikaos4-luks takes it) enables
         # xfs_healer@-.service, the healer for /, on every system: on a root

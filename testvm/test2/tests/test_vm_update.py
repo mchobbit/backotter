@@ -427,7 +427,7 @@ class TestInGuest(unittest.TestCase):
         self.assertIn('if ! grep -qF "\\"nixpkgs=$url\\"" /etc/nixos/configuration.nix; then', t)
         self.assertIn("if apt-mark showhold | grep -qx snapd; then", t)
         self.assertIn('if [ -z "$(ls /etc/openssl/certs)" ]; then', t)
-        self.assertIn('if [ "$(cat /usr/pkg/etc/pkgin/repositories.conf 2>/dev/null)" != "$pkgs" ]; then', t)
+        self.assertIn('if [ "$repo" != "$pkgs" ]; then', self.sections()["NetBSD"])
         self.assertIn("if cmp -s /usr/pkg/etc/sysupgrade.conf.new /usr/pkg/etc/sysupgrade.conf; then", t)
         self.assertIn("[ \"$(systemctl show -p LoadState --value 'xfs_healer@-.service' 2>/dev/null)\" = loaded ]; then",
                       self.sections()["Linux.apt"])
@@ -441,6 +441,64 @@ class TestInGuest(unittest.TestCase):
         m = re.search(r'^POSTINSTALL_AUTOFIX="([^"]*)"$', self.sections()["NetBSD"], re.M)
         self.assertIsNotNone(m)
         self.assertEqual(set(m[1].split()), {"obsolete", "mtree", "opensslcertsrehash", "rc"})
+
+    PKGS = "https://cdn.netbsd.org/pub/pkgsrc/packages/NetBSD/amd64/11.1/All"
+    OLD = "https://cdn.netbsd.org/pub/pkgsrc/packages/NetBSD/amd64/11.0/All"
+
+    def run_pkgin_repo(self, repo, answers):
+        """NetBSD's pkgin repository block under a stub ftp.  REPO: repositories.conf's text;
+        ANSWERS: what each ftp says in turn, (exit status, stderr), the last one again when they
+        run out.  sleep does nothing.  (exit status, output, ftp's arguments, the file after)"""
+        d = Path(tempfile.mkdtemp(prefix="t2-pkgin-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        (d / "bin").mkdir()
+        (d / "repositories.conf").write_text(repo)
+        for i, (rc, text) in enumerate(answers):
+            (d / f"ftp{i}").write_text(f"{rc}\n{text}\n")
+        (d / "bin" / "ftp").write_text(f"""#!/bin/sh
+echo "$*" >>{d}/calls
+i=$(($(wc -l <{d}/calls) - 1)); [ -f {d}/ftp$i ] || i={len(answers) - 1}
+sed 1d {d}/ftp$i >&2; exit $(head -n1 {d}/ftp$i)
+""")
+        (d / "bin" / "ftp").chmod(0o755)
+        for name in ("cat", "sed", "head", "wc"):
+            os.symlink(shutil.which(name), d / "bin" / name)
+        m = re.search(r'^( *)repo=\$\(cat /usr/pkg/etc/pkgin/repositories.conf.*?^\1fi\n', self.sections()["NetBSD"],
+                      re.M | re.S)
+        self.assertIsNotNone(m)
+        block = textwrap.dedent(m[0]).replace("/usr/pkg/etc/pkgin/repositories.conf", f"{d}/repositories.conf")
+        code = (f'pkgs={self.PKGS}\nsay() {{ echo "in-guest: $*"; }}\nstep() {{ echo "in-guest: step: $*"; }}\n'
+                'sleep() { :; }\n' + block + "echo fell-through\n")
+        r = subprocess.run(["/bin/sh", "-c", code], capture_output=True, text=True, env={"PATH": str(d / "bin")})
+        calls = (d / "calls").read_text().splitlines() if (d / "calls").exists() else []
+        return r.returncode, r.stdout + r.stderr, calls, (d / "repositories.conf").read_text()
+
+    def test_netbsd_pkgin_moves_to_the_release_when_its_summary_downloads(self):
+        rc, out, calls, conf = self.run_pkgin_repo(self.OLD + "\n", [(0, "")])
+        self.assertEqual((rc, conf), (0, self.PKGS + "\n"), out)
+        self.assertEqual(calls, [f"-V -o /dev/null {self.PKGS}/pkg_summary.bz2"])
+        self.assertEqual(out, f"in-guest: step: pkgin's repository is {self.PKGS}\nfell-through\n")
+
+    def test_netbsd_pkgin_on_the_release_asks_nothing(self):
+        """t2v-20261118T0942-226e (choubox): a guest already on 11.1's repository probed it, the
+        probe failed once, and the update said "no packages" for a repository it was using."""
+        rc, out, calls, conf = self.run_pkgin_repo(self.PKGS + "\n", [(1, "ftp: never")])
+        self.assertEqual((rc, out, calls, conf), (0, "fell-through\n", [], self.PKGS + "\n"))
+
+    def test_netbsd_pkgin_stays_when_the_release_has_no_packages_yet(self):
+        rc, out, calls, conf = self.run_pkgin_repo(self.OLD + "\n", [(1, "ftp: Error retrieving file `404 Not Found'")])
+        self.assertEqual((rc, conf, len(calls)), (0, self.OLD + "\n", 1), out)
+        self.assertEqual(out, f"in-guest: no packages at {self.PKGS} yet: pkgin stays on {self.OLD}\nfell-through\n")
+
+    def test_netbsd_pkgin_probe_that_fails_otherwise_is_tried_again(self):
+        flake = (1, "ftp: Can't connect to `151.101.2.132:443': Connection refused")
+        rc, out, calls, conf = self.run_pkgin_repo(self.OLD + "\n", [flake, (0, "")])
+        self.assertEqual((rc, conf, len(calls)), (0, self.PKGS + "\n", 2), out)
+        self.assertIn("step: pkgin's repository is", out)
+        rc, out, calls, conf = self.run_pkgin_repo(self.OLD + "\n", [flake])
+        self.assertEqual((rc, conf, len(calls)), (0, self.OLD + "\n", 3), out)
+        self.assertEqual(out, f"in-guest: {self.PKGS}/pkg_summary.bz2 didn't download ({flake[1]}): "
+                              f"pkgin stays on {self.OLD}\nfell-through\n")
 
     def run_mirrors(self, statuses, os_id="manjaro", mirrors=True, fasttrack_rc=0):
         """Linux.pacman's Manjaro mirror block under a stub pacman-mirrors.  STATUSES: what each

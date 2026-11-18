@@ -1455,14 +1455,30 @@ NetBSD)
         fi
         # pkgin follows the release the guest runs (11.0 to 11.1: from the
         # update after the one that brought the new base), once pkgsrc has
-        # packages for it: the branch can say 11.2 before pkgsrc does.
-        if ftp -o /dev/null "$pkgs/pkg_summary.gz" >/dev/null 2>&1; then
-            if [ "$(cat /usr/pkg/etc/pkgin/repositories.conf 2>/dev/null)" != "$pkgs" ]; then
-                echo "$pkgs" >/usr/pkg/etc/pkgin/repositories.conf
-                step "pkgin's repository is $pkgs"
-            fi
-        else
-            say "no packages at $pkgs yet: pkgin stays on $(cat /usr/pkg/etc/pkgin/repositories.conf)"
+        # packages for it: the branch can say 11.2 before pkgsrc does.  Only
+        # a guest whose repository isn't this release's asks: the summary
+        # pkgin reads first, pkg_summary.bz2 (ftp follows the CDN's
+        # redirects, amd64 to x86_64 and on to the quarterly branch).  A 404
+        # is "not yet"; any other failure is tried again, and said with
+        # ftp's own words: once, the probe of a guest already on 11.1's
+        # repository failed, silently, as "no packages"
+        # (t2v-20261118T0942-226e, choubox), every other run's got through.
+        repo=$(cat /usr/pkg/etc/pkgin/repositories.conf 2>/dev/null)
+        if [ "$repo" != "$pkgs" ]; then
+            got= n=0
+            while [ $n -lt 3 ]; do
+                n=$((n + 1))
+                if err=$(ftp -V -o /dev/null "$pkgs/pkg_summary.bz2" 2>&1 >/dev/null); then got=yes; break; fi
+                case $err in *"404 Not Found"*) got=no; break ;; esac
+                sleep 10
+            done
+            case $got in
+            yes)
+                echo "$pkgs" >/usr/pkg/etc/pkgin/repositories.conf || exit 1
+                step "pkgin's repository is $pkgs" ;;
+            no) say "no packages at $pkgs yet: pkgin stays on $repo" ;;
+            *) say "$pkgs/pkg_summary.bz2 didn't download ($(echo $err)): pkgin stays on $repo" ;;
+            esac
         fi
         has sysupgrade || pkgin -y install sysupgrade || exit 1
         releasedir=https://nycdn.netbsd.org/pub/NetBSD-daily/netbsd-${rel%%.*}/latest/$arch

@@ -580,6 +580,50 @@ Linux)
             step "boot menu: Pop_OS-current by default"
             echo "default Pop_OS-current" >>$l || exit 1
         fi
+        # Kexec handover (KHO), on by default in Ubuntu 26.04's 7.0 kernel
+        # (CONFIG_KEXEC_HANDOVER_ENABLE_DEFAULT=y), reserves a scratch area
+        # at boot that only movable pages may use.  On a 2 GiB guest, when
+        # the reservation succeeds (on some boots, not others), that is
+        # 1.28 GB, and the kernel keeps ~450 MB: ubuntu26-zfs's ARC, which
+        # isn't movable, starved it during an update, kswapd0 failing page
+        # allocations with all its free memory free_cma (GuestTest2
+        # t2v-20261118T0027-d7c8).  Nothing here kexecs, so kho=off, added
+        # the way kdump-tools.cfg adds crashkernel= (GRUB's drop-ins; this
+        # update-grub writes it, the reboot after the update boots with it).
+        if grep -qs '^CONFIG_KEXEC_HANDOVER_ENABLE_DEFAULT=y' "/boot/config-$(uname -r)" &&
+            ! grep -qw 'kho=off' /proc/cmdline && [ -f /etc/default/grub ] && has update-grub &&
+            [ ! -f /etc/default/grub.d/bko-kho.cfg ]; then
+            step "kernel command line: kho=off (kexec handover's scratch area took most of RAM)"
+            mkdir -p /etc/default/grub.d &&
+                echo 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT kho=off"' >/etc/default/grub.d/bko-kho.cfg &&
+                update-grub || exit 1
+        fi
+        # snapd (Ubuntu): the image's refresh hold has lapsed and it has never
+        # refreshed, so the upgrade's new snapd (its postinst restarts it)
+        # starts an auto-refresh at once, and the reboot stopped that in
+        # mid-change: its "Start snap services" task waits on a systemctl
+        # that a shutdown never answers, and systemd killed snapd after 90 s
+        # (ubuntu26-uefi, t2v-20261118T0027-d7c8; reproduced on its overlay,
+        # hwctl's refresh).  So auto-refreshes are held for good, as
+        # make-ubuntu-core.sh holds them (they would change a guest between
+        # updates too), and the snaps refresh after apt instead, by hand, the
+        # hold notwithstanding.  Only where snapd answers.
+        snapd=
+        if has snap && [ -f /var/lib/snapd/state.json ] && snap changes >/dev/null 2>&1; then
+            snapd=yes
+            snap_settle() {
+                t0=$(date +%s)
+                while b=$(snap changes 2>/dev/null | awk 'NR > 1 && $2 ~ /^(Do|Doing|Undo|Undoing|Wait)$/ { printf "%s:%s ", $1, $2 }'); [ -n "$b" ]; do
+                    [ $(($(date +%s) - t0)) -lt 1800 ] || { say "snapd still has changes in progress after 30 min: $b"; exit 1; }
+                    sleep 5
+                done
+            }
+            snap_settle
+            if ! snap refresh --time 2>/dev/null | grep -q '^hold: *forever'; then
+                step "snapd: auto-refreshes held (the snaps refresh with each update instead)"
+                snap refresh --hold >/dev/null || { say "snap refresh --hold failed"; exit 1; }
+            fi
+        fi
         # Error-Mode=any: a repository that failed to download is an error
         # (to retry), not a warning that leaves the old lists in place.
         apt="apt-get -y -o DPkg::Lock::Timeout=900 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
@@ -757,6 +801,15 @@ EOF
             reclaim
         done
         fetched $apt dist-upgrade && $apt autoremove --purge && $apt clean || exit 1
+        if [ -n "$snapd" ]; then
+            snap_settle
+            out=$(snap refresh 2>&1) || { printf '%s\n' "$out"; say "snap refresh failed"; exit 1; }
+            printf '%s\n' "$out"
+            # A snap refreshed is an update no package listing shows.
+            refreshed=$(printf '%s\n' "$out" | sed -n 's/^\([^ ]*\) .* refreshed$/\1/p' | tr '\n' ' ')
+            [ -z "$refreshed" ] || step "snapd: refreshed $refreshed"
+            snap_settle
+        fi
         [ -z "$trimmer" ] || { kill $trimmer; wait $trimmer; } 2>/dev/null
         apt=$apt0
         if [ -n "$bkobin" ]; then

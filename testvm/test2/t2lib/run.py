@@ -10,6 +10,7 @@ The pieces the runners use (t2lib.gate, t2lib.stic, t2lib.holt; their run(ctx, p
 module's RunState as ctx.run):
     new_run_id(family, stamp, suffix)   t2g-/t2s-/t2h-/t2v-/t2i-/t2b-/t2w-YYYYMMDDTHHMM-XXXX[-img]
     family_locks(word), last_sweep(mac_root)
+    FamilyLock, CellLocks       R21: a family's lock; a holt run's cells under it shared (CELL_LOCKED)
     Shared, RunGuards           what a composite (BkoTest2, SweepTest2) hands its children
     RunState                    the run id, its directories, the copy, cells.json writing,
                                 record_made(), the StopEngine, limits and flakes
@@ -54,11 +55,13 @@ class Refused(Exception):
 
 
 class Busy(Refused):
-    def __init__(self, holder, name):
+    def __init__(self, holder, name, what=None):
         h = holder or {}
-        super().__init__(f"another {name} run holds its lock: run {h.get('run', '?')}, pid {h.get('pid', '?')}, "
+        on = f" on {what}" if what else ""
+        super().__init__(f"another {name} run holds its lock{on}: run {h.get('run', '?')}, pid {h.get('pid', '?')}, "
                          f"started {h.get('start', '?')}")
         self.holder = holder
+        self.what = what
 
 
 def new_stamp(t=None):
@@ -182,53 +185,132 @@ def read_json(path, default=None):
         return default
 
 
-# --- one run of a family at a time (R21) -------------------------------------------------------
+# --- one run of a family at a time (R21); holt: one run of a cell at a time ------------------------
+
+# The families whose own runs lock cells, not the family: such a run takes the family's lock shared
+# and each due cell's exclusive (CellLocks), so runs over disjoint cells go side by side.  A word
+# that needs the whole family (ImgTest2's panel, BkoTest2, SweepTest2, GuestTest2 update) still
+# takes it exclusive, which waits out (refuses on) every shared holder.
+CELL_LOCKED = ("holt",)
+IMG_UNIT = "+img"     # every +img cell's second unit: the pins (HOST_ROOT/img-pin/P) are one per platform
+
+
+def pid_alive(pid):
+    """A Mac PID that may still run (one that can't be asked counts as alive)."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _try_flock(fd, how, wait):
+    """flock(FD, HOW) within WAIT seconds; False when it stayed taken."""
+    deadline = time.time() + wait
+    while True:
+        try:
+            fcntl.flock(fd, how | fcntl.LOCK_NB)
+            return True
+        except OSError as e:
+            if e.errno not in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK):
+                raise
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.05)
+
+
+def _probe(path):
+    """True when another open file holds PATH's flock (tested without taking it for long)."""
+    if not os.path.exists(path):
+        return False
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    except OSError as e:
+        if e.errno in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK):
+            return True
+        raise
+    finally:
+        os.close(fd)
+
 
 class FamilyLock:
-    """flock on MAC_ROOT/runs/.lock-NAME for a run's life; .lock-NAME.json names the holder."""
+    """flock on MAC_ROOT/runs/.lock-NAME for a run's life.  Exclusive, .lock-NAME.json names the
+    holder; shared (a CELL_LOCKED family's own runs), .lock-NAME.d/pid-PID-X.json names each."""
 
     def __init__(self, name, mac_root=None):
         self.name = name
         d = runs_dir(mac_root)
         self.path = os.path.join(d, f".lock-{name}")
-        self.info = self.path + ".json"
+        self.excl_info = self.path + ".json"
+        self.dir = self.path + ".d"
+        self.info = self.excl_info     # (this holder's own record, once acquired)
         self.fd = None
+        self.shared = False
+
+    def holders(self):
+        """The holders' records: the exclusive one's, then each shared holder's whose process runs."""
+        out = []
+        h = read_json(self.excl_info)
+        if h:
+            out.append(h)
+        try:
+            names = sorted(os.listdir(self.dir))
+        except OSError:
+            names = []
+        for n in names:
+            if n.startswith("pid-") and n.endswith(".json"):
+                j = read_json(os.path.join(self.dir, n))
+                if isinstance(j, dict) and pid_alive(j.get("pid")):
+                    out.append(j)
+        return out
 
     def holder(self):
-        return read_json(self.info)
+        hs = self.holders()
+        return hs[0] if hs else None
 
     def held(self):
-        """True when another process holds it (tested without taking it for long)."""
-        if not os.path.exists(self.path):
-            return False
-        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            return False
-        except OSError as e:
-            if e.errno in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK):
-                return True
-            raise
-        finally:
-            os.close(fd)
+        """True when another process holds it, shared or not (tested without taking it for long)."""
+        return _probe(self.path)
 
-    def acquire(self, run, wait=1.0):
-        """Busy when another run holds it.  It retries for WAIT seconds: a plan's held() takes
-        the lock for an instant, and that must not refuse a run."""
+    def acquire(self, run, wait=1.0, shared=False):
+        """Busy when another run holds it (exclusive: any holder; shared: an exclusive one).  It
+        retries for WAIT seconds: a plan's held() takes the lock for an instant, and that must not
+        refuse a run."""
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
-        deadline = time.time() + wait
-        while True:
+        try:
+            ok = _try_flock(fd, fcntl.LOCK_SH if shared else fcntl.LOCK_EX, wait)
+        except OSError:
+            os.close(fd)
+            raise
+        if not ok:
+            os.close(fd)
+            raise Busy(self.holder(), self.name)
+        self.fd, self.shared = fd, shared
+        if shared:
+            # (no exclusive holder can be there now: a record of one is a dead one's)
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
+                os.remove(self.excl_info)
             except OSError:
-                if time.time() >= deadline:
-                    os.close(fd)
-                    raise Busy(self.holder(), self.name)
-                time.sleep(0.05)
-        self.fd = fd
+                pass
+            os.makedirs(self.dir, exist_ok=True)
+            self.info = os.path.join(self.dir, f"pid-{os.getpid()}-{secrets.token_hex(3)}.json")
+        else:
+            # (nor a shared one now)
+            for n in (os.listdir(self.dir) if os.path.isdir(self.dir) else ()):
+                if n.startswith("pid-") and n.endswith(".json"):
+                    try:
+                        os.remove(os.path.join(self.dir, n))
+                    except OSError:
+                        pass
+            self.info = self.excl_info
         write_json(self.info, {"run": run, "pid": os.getpid(), "start": utc_now()})
         return self
 
@@ -249,6 +331,105 @@ class FamilyLock:
         self.release()
 
 
+def unit_file(unit):
+    return "u-" + re.sub(r"[^A-Za-z0-9.+_-]", "_", unit)
+
+
+def cell_units(cell):
+    """The lock units of CELL: itself, and a +img cell IMG_UNIT too."""
+    return [cell, IMG_UNIT] if cell.endswith("+img") else [cell]
+
+
+class CellLocks:
+    """A CELL_LOCKED family's run's cells: flock (exclusive) on MAC_ROOT/runs/.lock-FAMILY.d/u-UNIT
+    and u-UNIT.json {unit, run, pid, start} for each unit of its due cells (cell_units), for the
+    run's life, under the family's lock taken shared.  hold() is all or none for what it adds."""
+
+    def __init__(self, family, mac_root=None):
+        self.family = family
+        self.dir = FamilyLock(family, mac_root).dir
+        self.fds = {}      # unit -> fd
+        self.run = None
+
+    def path(self, unit):
+        return os.path.join(self.dir, unit_file(unit))
+
+    def units(self):
+        return sorted(self.fds)
+
+    def hold(self, cells, run, wait=1.0):
+        """Every unit of CELLS this holds too; Busy (and none of them added) when another run
+        holds one."""
+        self.run = run
+        want = []
+        for c in cells:
+            for u in cell_units(c):
+                if u not in self.fds and u not in want:
+                    want.append(u)
+        os.makedirs(self.dir, exist_ok=True)
+        got = []
+        try:
+            for u in want:
+                fd = os.open(self.path(u), os.O_RDWR | os.O_CREAT, 0o644)
+                try:
+                    ok = _try_flock(fd, fcntl.LOCK_EX, wait)
+                except OSError:
+                    os.close(fd)
+                    raise
+                if not ok:
+                    os.close(fd)
+                    raise Busy(read_json(self.path(u) + ".json"), self.family, u)
+                self.fds[u] = fd
+                got.append(u)
+                write_json(self.path(u) + ".json", {"unit": u, "run": run, "pid": os.getpid(), "start": utc_now()})
+        except BaseException:
+            for u in got:
+                self._drop(u)
+            raise
+        return self
+
+    def retag(self, run):
+        """The units' records say RUN (the run id, once the plan has made it)."""
+        self.run = run
+        for u in self.fds:
+            write_json(self.path(u) + ".json", {"unit": u, "run": run, "pid": os.getpid(), "start": utc_now()})
+
+    def _drop(self, u):
+        fd = self.fds.pop(u, None)
+        if fd is None:
+            return
+        try:
+            os.remove(self.path(u) + ".json")
+        except OSError:
+            pass
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+    def release(self):
+        for u in list(self.fds):
+            self._drop(u)
+
+    @staticmethod
+    def held_by(family, mac_root=None, exclude=()):
+        """{unit: run} of every unit another open file holds in FAMILY's .lock-FAMILY.d, less
+        the runs in EXCLUDE."""
+        d = FamilyLock(family, mac_root).dir
+        out = {}
+        try:
+            names = sorted(os.listdir(d))
+        except OSError:
+            return out
+        for n in names:
+            if not (n.startswith("u-") and n.endswith(".json")):
+                continue
+            j = read_json(os.path.join(d, n))
+            if not isinstance(j, dict) or not j.get("unit") or j.get("run") in exclude:
+                continue
+            if _probe(os.path.join(d, n[:-5])):
+                out[j["unit"]] = j.get("run") or "?"
+        return out
+
+
 def family_locks(word):
     """The lock names WORD takes (in order; a run takes each once).  sweep and bko share "bko"."""
     fam = word.family
@@ -261,12 +442,17 @@ def family_locks(word):
     return [fam]
 
 
-def acquire_locks(names, run, mac_root=None, wait=1.0):
-    """[FamilyLock] of NAMES, all held; Busy (and none held) when any is taken."""
+def cell_locked(word):
+    """True when WORD's own run locks its cells (the family lock shared): HoltTest2's words."""
+    return word.family in CELL_LOCKED and family_locks(word) == [word.family]
+
+
+def acquire_locks(names, run, mac_root=None, wait=1.0, shared=()):
+    """[FamilyLock] of NAMES, all held (those in SHARED shared); Busy (and none held) when any is taken."""
     held = []
     try:
         for n in names:
-            held.append(FamilyLock(n, mac_root).acquire(run, wait))
+            held.append(FamilyLock(n, mac_root).acquire(run, wait, shared=n in shared))
     except Busy:
         for lk in held:
             lk.release()
@@ -275,12 +461,15 @@ def acquire_locks(names, run, mac_root=None, wait=1.0):
 
 
 def held_runs(mac_root=None):
-    """The run ids holding a family lock in MAC_ROOT (any family; "pending" while one plans)."""
+    """The run ids holding a family lock in MAC_ROOT (any family, shared or not, and a
+    CELL_LOCKED family's cells; "pending" while one plans)."""
     out = set()
     for fam in RUN_PREFIX:
         lk = FamilyLock(fam, mac_root)
         if lk.held():
-            out.add((lk.holder() or {}).get("run") or "?")
+            out |= {h.get("run") or "?" for h in lk.holders()} or {"?"}
+    for fam in CELL_LOCKED:
+        out |= set(CellLocks.held_by(fam, mac_root).values())
     return out
 
 
@@ -345,15 +534,20 @@ def run_hosts(run, mac_root=None):
     return [h for h in order if h in cells] + [h for h in cells if h not in order]
 
 
-def running_cells(family, mac_root=None):
-    """{cell: run} of a live run of FAMILY (R21: plan shows them as running RUN)."""
+def running_cells(family, mac_root=None, exclude=()):
+    """{cell: run} of the live runs of FAMILY, less EXCLUDE's (R21: plan shows them as running
+    RUN; a CELL_LOCKED family's run plans them not-runnable).  A CELL_LOCKED family's held units
+    count, IMG_UNIT among them (the plan reads it for every +img cell), and the due cells of a run
+    holding the family's lock exclusive."""
     lk = FamilyLock(family, mac_root)
-    if not lk.held():
-        return {}
-    h = lk.holder() or {}
-    run = h.get("run")
-    p = read_json(os.path.join(run_dir(run, mac_root), "plan.json"), {}) if run else {}
-    return {c["cell"]: run for c in (p.get("cells") or []) if c.get("status") == "due"}
+    out = {}
+    run = (read_json(lk.excl_info) or {}).get("run")
+    if run and run not in exclude and lk.held() and not lk.holders()[1:]:   # (an exclusive holder is the only one)
+        p = read_json(os.path.join(run_dir(run, mac_root), "plan.json"), {}) or {}
+        out.update({c["cell"]: run for c in (p.get("cells") or []) if c.get("status") == "due"})
+    if family in CELL_LOCKED:
+        out.update(CellLocks.held_by(family, mac_root, exclude))
+    return out
 
 
 # --- preflight -----------------------------------------------------------------------------------
@@ -912,6 +1106,7 @@ class RunState:
         flakes         flakes.json's entries; limits: limits.json
         write_cells(plan, attempt=1, name="cells.json", reruns=None)   R1's step 6, on every host
         replan(facts, ledger_rows)   R1's step 5a: (plan, added, dropped) after a build
+        cell_locks     a holt run's own CellLocks (the re-plan holds what it adds), else None
         host_run_dir(host)   HOST_ROOT/runs/RUN
         record_made(host, path, pid)   for preflight's leftovers
         log(text)      to MAC_ROOT/runs/RUN/run.log and stdout
@@ -928,6 +1123,7 @@ class RunState:
         self.copy = {}
         self.mac_tree, self.mac_tree_owned = None, False   # make_mac_tree's
         self.shared = shared
+        self.cell_locks = None   # a CELL_LOCKED family's own run: its CellLocks (lifecycle, resume set it)
         pol = ctx.classes.get("policy")
         # SweepTest2's 5 GB budget is its own: the All forms keep the per-run 2 GB; an update round has its own too
         sweep, update = getattr(word, "sweep", False), getattr(word, "update", False)
@@ -1010,7 +1206,15 @@ class RunState:
             ctx.facts = dict(facts)
         if ledger_rows is not None:
             ctx.ledger = list(ledger_rows)
+        cl = getattr(self, "cell_locks", None)
+        if cl is not None:
+            # (cells another run holds now stay out; the ones this run adds it holds first, or
+            # the re-plan fails (Busy) and the plan stays as it was: the runner says so)
+            ctx.options["running"] = running_cells(self.family, self.mac_root, exclude=(self.run,))
+            ctx.options["running_skip"] = True
         new = planmod.make(self.word, ctx)
+        if cl is not None:
+            cl.hold([c.cell for c in new.due()], self.run)
         was = {c.cell for c in self.plan.due()}
         now = {c.cell for c in new.due()}
         added, dropped = sorted(now - was), sorted(was - now)
@@ -1287,9 +1491,11 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, sh
     if pull is not None:
         ctx.options.setdefault("pull", pull)
     locks, rs = [], None
+    cells_lk = None
+    by_cell = shared is None and cell_locked(word)
     if shared is None:
         try:
-            locks = acquire_locks(family_locks(word), "pending", mac_root)
+            locks = acquire_locks(family_locks(word), "pending", mac_root, shared=(fam,) if by_cell else ())
         except Busy as e:
             out(f"t2: {e}")
             return EXIT_REFUSED
@@ -1310,7 +1516,8 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, sh
                         f"`{resume_hint(busy[-1], mac_root)}` finishes it")
                     return EXIT_REFUSED
             for f_ in (x for x in family_locks(word) if x in RUN_PREFIX):
-                busy = unfinished_runs(f_, mac_root)   # file times: the real clock
+                # (a live run beside this one, over other cells, holds its locks: it isn't unfinished)
+                busy = unfinished_runs(f_, mac_root, exclude=held_runs(mac_root) if by_cell else ())   # file times: the real clock
                 if busy:
                     out(f"t2: run {busy[-1]} of {f_} is unfinished (it began host work and has no report): its checks "
                         f"or queue runners may still run on the hosts. `{resume_hint(busy[-1], mac_root)}` finishes it; once nothing "
@@ -1330,6 +1537,10 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, sh
             if mod is not None and hasattr(mod, "pre_plan"):
                 mod.pre_plan(ctx, word, out)
         # 4 plan
+        if by_cell:
+            # (the cells other live runs hold: this plan makes them not-runnable)
+            ctx.options["running"] = running_cells(fam, mac_root)
+            ctx.options["running_skip"] = True
         plan = shared.plan if shared is not None and shared.plan is not None else planmod.make(word, ctx)
         miss = (plan.set or {}).get("missing_on")
         if miss:
@@ -1340,6 +1551,13 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, sh
                          suffix=shared.suffix if shared is not None else None)
         for lk in locks:
             write_json(lk.info, {"run": run, "pid": os.getpid(), "start": utc_now()})
+        if by_cell:
+            cells_lk = CellLocks(fam, mac_root)
+            try:
+                plan = hold_due(cells_lk, plan, word, ctx, run, mac_root)
+            except Busy as e:
+                out(f"t2: {e}")
+                return EXIT_REFUSED
         if not plan.totals.get("due"):
             nr = plan.by_status("not-runnable")
             if word.form != "bare" and nr:
@@ -1368,6 +1586,7 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, sh
         ctx.options["facts_start"] = {h: dict(f) for h, f in ctx.facts.items()}
         ctx.options["run_start"] = time.time()
         rs = RunState(run, word, plan, ctx, mac_root, host_root, log=out, shared=shared)
+        rs.cell_locks = cells_lk
         ctx.run = rs
         rs.log(f"{word.word} run {run}: {plan.totals['due']} due, est. {plan.totals['gm']} gm")
         # 5 copy
@@ -1396,8 +1615,29 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, sh
         return finish(word, ctx, rs.plan or plan, run, result, mac_root, out, pull)
     finally:
         drop_mac_tree(rs, ctx, out)
+        if cells_lk is not None:
+            cells_lk.release()
         for lk in reversed(locks):
             lk.release()
+
+
+HOLD_TRIES = 3
+
+
+def hold_due(cells_lk, plan, word, ctx, run, mac_root=None):
+    """CELLS_LK holds every unit of PLAN's due cells for RUN, or the plan is made again with what
+    other runs took since (two runs planning at once), up to HOLD_TRIES times; the plan it holds.
+    Busy when it still can't."""
+    for i in range(HOLD_TRIES):
+        try:
+            cells_lk.hold([pc.cell for pc in plan.due()], run)
+            return plan
+        except Busy:
+            if i == HOLD_TRIES - 1:
+                raise
+        ctx.options["running"] = running_cells(word.family, mac_root, exclude=(run,))
+        plan = planmod.make(word, ctx)
+    return plan
 
 
 def plan_exit(plan, code):
@@ -1612,11 +1852,19 @@ def resume(run, ctx, mac_root=None, out=print, pull=None, shared=None):
         out(f"t2: {run} ran on {','.join(want)}, not {','.join(ctx.hosts)}")
         return EXIT_REFUSED
     locks, rs = [], None
+    cells_lk = None
     try:
         if shared is None:
             from . import words as _w
-            locks = acquire_locks(family_locks(restore_word(_w.Word(fam, ""), pj, ctx)), run, mac_root)
+            w0 = restore_word(_w.Word(fam, ""), pj, ctx)
+            by_cell = cell_locked(w0)
+            locks = acquire_locks(family_locks(w0), run, mac_root, shared=(fam,) if by_cell else ())
+            if by_cell:
+                cells_lk = CellLocks(fam, mac_root).hold([c["cell"] for c in pj.get("cells") or []
+                                                          if c.get("status") == "due"], run)
     except Busy as e:
+        for lk in reversed(locks):
+            lk.release()
         out(f"t2: {e}")
         return EXIT_REFUSED
     try:
@@ -1636,6 +1884,7 @@ def resume(run, ctx, mac_root=None, out=print, pull=None, shared=None):
             out(f"t2: no fresh plan for the derived rows ({e}): none is written")
         adopt_inputs(plan, fresh)
         rs = RunState(run, w, plan, ctx, mac_root, log=out, shared=shared)
+        rs.cell_locks = cells_lk
         ctx.run = rs
         for h in rs.hosts:
             doc = read_json(os.path.join(rs.mac_dir, f"cells-{h}.json"), {}) or {}
@@ -1650,6 +1899,8 @@ def resume(run, ctx, mac_root=None, out=print, pull=None, shared=None):
         return finish(w, ctx, rs.plan or plan, run, result, mac_root, out, pull)
     finally:
         drop_mac_tree(rs, ctx, out)
+        if cells_lk is not None:
+            cells_lk.release()
         for lk in reversed(locks):
             lk.release()
 

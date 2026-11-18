@@ -468,10 +468,10 @@ def session_claims(mac_root=None, ours_pids=(), ours_runs=()):
                 continue
         except OSError:
             continue
-        h = lk.holder() or {}
-        if h.get("pid") in ours_pids or (h.get("run") and h.get("run") in ours_runs):
-            continue
-        runs.setdefault(h.get("run") or "?", set()).add(name)
+        for h in lk.holders() or [{}]:   # (a holt lock has a holder per run when they hold cells)
+            if h.get("pid") in ours_pids or (h.get("run") and h.get("run") in ours_runs):
+                continue
+            runs.setdefault(h.get("run") or "?", set()).add(name)
     out = []
     for run, locks in sorted(runs.items()):
         pools = set()
@@ -489,10 +489,10 @@ def discover_run(entry, pid, mac_root=None):
     names = bf.lock_list(entry)
     if not names or not pid:
         return None
-    h = runmod.FamilyLock(names[0], mac_root).holder() or {}
-    r = h.get("run")
-    if h.get("pid") == pid and r and r != "pending" and runmod.RUN_RE.match(r):
-        return r
+    for h in runmod.FamilyLock(names[0], mac_root).holders():
+        r = h.get("run")
+        if h.get("pid") == pid and r and r != "pending" and runmod.RUN_RE.match(r):
+            return r
     return None
 
 

@@ -219,7 +219,16 @@ writes its carried rows.  Run ids: `t2g-`, `t2s-`, `t2h-`, `t2v-` (GuestTest2), 
 composite's children share its stamp, ImgTest2's panel is `t2h-STAMP-img`, and a rerun
 round adds `-rN`.  Locks: a word takes its family's, ImgTest2 `img` and `holt` (its panel
 is a HoltTest2 run), and BkoTest2, SweepTest2 and `GuestTest2 update` `bko` and every
-family's (the update round also refuses while any Test2 run is unfinished).
+family's (the update round also refuses while any Test2 run is unfinished).  A HoltTest2
+word's own run (since 2026-11-18) takes `holt` shared and then its due cells
+(`MAC_ROOT/runs/.lock-holt.d/u-CELL`, a `+img` cell also `u-+img`: the pins are one per
+platform), so holt runs over other cells go side by side: a cell another live run holds is
+planned not-runnable, "running in RUN" (a named word with nothing else due refuses), a run
+that loses a cell to one planning at the same moment plans again, and a re-plan holds what it
+adds.  The words that take `holt` whole (ImgTest2, the composites, the update round) are
+still refused while any holt run holds it.  One run at a time builds and ships a bko-holt
+CODE (`.lock-holt-bin-CODE16`, waited for, not refused).  `t2 batch` still runs its holt
+entries one at a time.
 
 The Mac tree.  What a run runs on the Mac, gate:selftest (`t2 self-test` and drive.py
 --self-test, keyed on the Mac) and the fork layers' fork-tests.sh, runs from
@@ -234,7 +243,7 @@ trees of runs that ended without removing theirs (not live, over 2 days old).  W
 is on, `git worktree list` shows its tree.
 
 Unfinished runs and leftovers.  A run that began host work (a `cells-HOST.json`) and
-has no report.txt, changed in the last 12 hours, refuses a new run of its family:
+has no report.txt, changed in the last 12 hours, and holds no lock refuses a new run of its family:
 its lock went with the Mac process, but its checks or queue runners may still run.
 `t2 resume RUN` finishes it; a report.txt in its run dir sets it aside.  A child of an
 unfinished BkoTest2 or SweepTest2 (`t2s-S` under `t2b-S`, and `t2h-S-img`) is resumed only

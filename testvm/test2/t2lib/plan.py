@@ -139,7 +139,8 @@ class Ctx:
     ledger         the merged rows, ordered by (t, id)
     copy_preview   {"id", "dirty", "commit"} of the copy a run would make
     options        universe [cells] (test only), classes (dict), bko_git, now (epoch), pulled
-                   {host: {t, rows, stale}}, running {cell: run}, inputs_fn(cell, host, opts) for
+                   {host: {t, rows, stale}}, running {cell: run} ("+img": every +img cell's), running_skip
+                   (those cells not-runnable: a holt run's own plan), inputs_fn(cell, host, opts) for
                    tests, heads {repo: commit}, drive (module), plandiff (module), last_sweep (sweep.json's),
                    extra_due (cells or {cell: why}, rule canary:carried), identity_bad {guest: why}
     """
@@ -2277,9 +2278,14 @@ class Planner:
             if v.pc.status == "rescuer?":
                 v.pc.status = "soft-stale"
         running = self.ctx.options.get("running") or {}
+        skip = self.ctx.options.get("running_skip")   # (a holt run's own plan: another run has these cells)
         for v in views:
-            if v.cell in running:
-                v.pc.running = running[v.cell]
+            r = running.get(v.cell) or (running.get("+img") if v.cell.endswith("+img") else None)
+            if r:
+                v.pc.running = r
+                if skip and v.pc.status == "due":
+                    v.pc.status = "not-runnable"
+                    v.pc.reasons.append(f"running in {r}" + ("" if v.cell in running else " (it holds the +img pins)"))
         if self.verdict_changed:
             self.notes.append("verdict changed at an unchanged key: " + ", ".join(self.verdict_changed))
         differ = []

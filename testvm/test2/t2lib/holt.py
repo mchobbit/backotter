@@ -23,7 +23,9 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      written for the builds it holds: on every host of --hosts, and best effort
      on the other default hosts (ctx.options holt_ship or T2_HOLT_SHIP "known":
      on every known host, the small ones too).  ctx.options["holt_bin"]
-     (--holt-bin DIR) tests a ready set instead.
+     (--holt-bin DIR) tests a ready set instead.  One run at a time builds and ships a
+     CODE (MAC_ROOT/runs/.lock-holt-bin-CODE16, waited for): holt runs over other cells
+     run side by side (run.CellLocks).
   0. +img cells (ImgTest2's panel) run on the pinned rescue image's own binaries: no CODE
      build for them, and no fast gate when they are all there is.  The pin of their
      platforms (`t2-host tool img pin P...`) is made on each host before the image sums.
@@ -704,6 +706,31 @@ class Runner:
         return os.path.join(self.host_root(), "holt-bin", self.code)
 
     def ensure_holt(self, pcs):
+        """_ensure_holt under MAC_ROOT/runs/.lock-holt-bin-CODE: holt runs over other cells go
+        side by side (run.CellLocks), and one at a time builds and ships a CODE (builds aren't
+        reproducible, R14); the next waits, then finds it built.  Returns None, or why not."""
+        if self.opts.get("holt_bin") or getattr(self.rs, "mac_root", None) is None:
+            return self._ensure_holt(pcs)
+        from . import run as runmod
+        lk = runmod.FamilyLock(f"holt-bin-{self.code[:16]}", self.rs.mac_root)
+        end, said = self.clock() + BUILD_TIMEOUT_S, False
+        while True:
+            try:
+                lk.acquire(self.run_id, wait=0.5)
+                break
+            except runmod.Busy as e:
+                if not said:
+                    self.log(f"bko-holt code {self.code[:12]}: {e}: waiting for it to build and ship")
+                    said = True
+                if self.clock() > end:
+                    return f"bko-holt code {self.code[:12]}: {e}, for over {BUILD_TIMEOUT_S // 3600} h"
+                self.sleep(self.poll)
+        try:
+            return self._ensure_holt(pcs)
+        finally:
+            lk.release()
+
+    def _ensure_holt(self, pcs):
         """bko-holt for every platform the cells need, in holt_dir() on every host of
         --hosts (and, best effort, on the other test hosts).  A platform any test host
         has already is copied from there, never built again (builds aren't reproducible,

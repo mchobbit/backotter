@@ -180,5 +180,6 @@ host's RAM line blocks every other HoltTest2 for as long.
   guest, with the plan saying "kept off HOST: stale generation", instead of
   failing the guest everywhere.
 - The holt family lock is Mac-wide by design (R21); a one-cell run can still
-  hold it for as long as it waits for room. Not changed here.
+  hold it for as long as it waits for room. Not changed here. (Since 2026-11-18
+  a HoltTest2 run locks only its cells: test2.md, "Two runs at once".)
 - P19 (a fork-test lane on Cage) is still open.

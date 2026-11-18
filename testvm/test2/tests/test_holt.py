@@ -1059,6 +1059,27 @@ class U53HoltRun(unittest.TestCase):
         self.assertTrue(res["stops"][0].startswith("stop-family: bko-holt"), res["stops"])
         self.assertFalse([1 for _, op, *c in self.remote.calls if op == "start" and "ht1-queue.sh" in c[0]])
 
+    def test_one_run_at_a_time_builds_a_code(self):
+        """Holt runs over other cells go side by side (run.CellLocks): the second to need a CODE
+        waits on MAC_ROOT/runs/.lock-holt-bin-CODE while the first builds and ships it."""
+        from t2lib import run as runmod
+        self.rs.mac_root = os.path.join(self.tmp, "mac")
+        name = "holt-bin-" + "c" * 16
+        other = runmod.FamilyLock(name, self.rs.mac_root).acquire("t2h-20261108T0200-beef")
+        waits = []
+
+        def sleep(s):
+            if other.fd is not None:
+                waits.append([op for _, op, *c in self.remote.calls if op == "start"])
+                other.release()
+        self.remote = FakeRemote({})
+        res = holt.run(self.ctx, self.plan, remote=self.remote, sleep=sleep, poll=0, gate=self.gate)
+        self.assertEqual(waits, [[]])     # nothing built while the other run held it
+        self.assertTrue(any("t2h-20261108T0200-beef" in t and "waiting for it to build" in t
+                            for t in self.rs.logged), self.rs.logged)
+        self.assertTrue([1 for _, op, *c in self.remote.calls if op == "start" and "--reserved" in c[0]], res)
+        self.assertFalse(runmod.FamilyLock(name, self.rs.mac_root).held())   # released after the ship
+
 
     # (The reviews' cases: a run must never pass on cells that didn't run or rows that don't count.)
     def test_runners_that_run_nothing_fail_the_run(self):

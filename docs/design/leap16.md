@@ -301,10 +301,31 @@ boot stage wrote a second time there.  judge.py fs excuses such a path as
 its live one is when the slot is the root's alias (`root_alias_slots`:
 every file and symlink in it the live path's, in both records; a
 read-only snapshot of the root never is), `FsOpensuseShim`'s two new tests.
-Left: dracut's resume module is still dropped (the rescue system has no
-swap on), so the restored image has no `resume=`; and the btrfs-embedded
-grubenv (`env_block=512+1`, in the reserved area mkfs.btrfs zeroes) reads
-"invalid environment block" at the restored disk's GRUB.
+Left then, fixed after (2026-11-19): (4) dracut's resume module was
+dropped: host-only dracut takes it only with swap on, and the rescue
+system has none, so the restored image couldn't resume from hibernation.
+`DRACUT_EACH_KERNEL` now passes `--add resume` when the restored image
+for that kernel had the module (lsinitrd's "dracut modules:"), and the
+resume= of its host-only command line (`etc/cmdline.d/95resume.conf`,
+`lsinitrd -f`) by `--include`.  The same holds for EndeavourOS's and
+Garuda's `dracut-rebuild` (`DRACUT_REBUILD_RESUME`: a dracut.conf.d
+drop-in while it runs, when a host-only image had the module) and for
+initramfs-tools with RESUME unset or auto (`UPDATE_INITRAMFS_RESUME`:
+its resume hook picks a device only outside a chroot, from /proc/swaps,
+so the device a restored image had in `conf/conf.d/zz-resume-auto`,
+read by unmkinitramfs, goes in conf.d while update-initramfs runs).
+mkinitcpio's `resume` hook and the systemd hook's generator don't look
+at the running machine, so they need nothing.  (5) GRUB's environment
+block: grubenv says `env_block=512+1`, a sector at 256 KiB in btrfs's
+reserved first MiB, where GRUB keeps what it writes at boot
+(`next_entry`); mkfs.btrfs zeroes it, and the restored disk's GRUB
+printed "invalid environment block" at every boot (AnduinOS's and
+BigLinux's GRUB use it too).  dump's btrfs probe records the block's
+variables (`grub_env_block`, per device), and format writes it again
+after mkfs.btrfs (`grub_env_block()` in load/commands.rs, `dd ...
+seek=512`); grubenv's own `saved_entry` is the restored file's.  The
+dumps then compare it, and ht1.sh FAILs a restored disk whose serial
+console has "invalid environment block" when the source's hasn't.
 
 ## Tests
 

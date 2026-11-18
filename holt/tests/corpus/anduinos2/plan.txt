@@ -55,6 +55,11 @@ mkswap -U bc000000-0000-4000-8000-000000000005 -L label-3 --pagesize 4096 /dev/s
 # vda4: btrfs "AnduinOS"
 mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,^block-group-tree -U bc000000-0000-4000-8000-000000000007 -L AnduinOS --csum crc32c -n 16384 -s 4096 -d single -m dup --device-uuid bc000000-0000-4000-8000-000000000008 /dev/sdq4
 # check: /dev/sdq4 is btrfs with the source's features (read back by bko-holt's own probe)
+# GRUB's environment block in btrfs's reserved area (grubenv's env_block=512+1), as the source's: mkfs.btrfs zeroed it
+dd of=/dev/sdq4 bs=512 seek=512 count=1 iflag=fullblock conv=notrunc,fsync status=none <<'EOF'
+# GRUB Environment Block
+#######################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################
+EOF
 mkdir -p /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000007
 # btrfs bc000000-0000-4000-8000-000000000007: its subvolumes
 mount -t btrfs -o subvolid=5 /dev/sdq4 /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000007
@@ -116,7 +121,7 @@ mount --rbind --make-rslave /dev /mnt/bko-target/dev
 mount --rbind --make-rslave /proc /mnt/bko-target/proc
 mount --rbind --make-rslave /sys /mnt/bko-target/sys
 mount --rbind --make-rslave /run /mnt/bko-target/run
-chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d "$k/kernel" ] || continue; m=; for p in $(lsinitrd -k "${k##*/}" 2>/dev/null | sed -n '\''s|^.* \(\(usr/\)*lib/modules/[^ ]*\.ko[.a-z0-9]*\)$|\1|p'\''); do [ -e "/$p" ] && b=${p##*/} && m="$m ${b%%.ko*}"; done; dracut --force --kver "${k##*/}" ${m:+--add-drivers "$m"} || exit; n=$((n + 1)); done; [ "$n" -gt 0 ]'
+chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d "$k/kernel" ] || continue; l=$(lsinitrd -k "${k##*/}" 2>/dev/null); m=; for p in $(printf '\''%s\n'\'' "$l" | sed -n '\''s|^.* \(\(usr/\)*lib/modules/[^ ]*\.ko[.a-z0-9]*\)$|\1|p'\''); do [ -e "/$p" ] && b=${p##*/} && m="$m ${b%%.ko*}"; done; a=; f=; if printf '\''%s\n'\'' "$l" | sed -n '\''/^dracut modules:$/,/^=/p'\'' | grep -qx resume; then a=resume; r=$(lsinitrd -k "${k##*/}" -f etc/cmdline.d/95resume.conf 2>/dev/null); [ -z "$r" ] || { f=$(mktemp) && printf '\''%s\n'\'' "$r" > "$f"; } || exit; fi; dracut --force --kver "${k##*/}" ${m:+--add-drivers "$m"} ${a:+--add "$a"} ${f:+--include "$f" /etc/cmdline.d/95resume.conf}; s=$?; [ -z "$f" ] || rm -f "$f"; [ "$s" -eq 0 ] || exit "$s"; n=$((n + 1)); done; [ "$n" -gt 0 ]'
 # the source's BIOS install beside the UEFI one: GRUB's core in the BIOS boot partition; the ESP isn't touched
 chroot /mnt/bko-target grub-install --target=i386-pc /dev/sdq
 # os-prober off: it would list the rescue system's disks

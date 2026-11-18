@@ -260,7 +260,7 @@ fn chimera_bios_guest() {
     let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
     let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
     let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
-    assert!(bt.contains("chroot /mnt/bko-target update-initramfs -u -k all\n"), "{bt}");
+    assert!(bt.contains(&format!("chroot /mnt/bko-target sh -c {}\n", crate::load::shell_quote(commands::UPDATE_INITRAMFS_RESUME))), "{bt}");
     assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
     assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{bt}");
     assert!(!bt.contains("update-grub"), "{bt}");
@@ -3446,7 +3446,7 @@ fn kali_guest() {
     let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
     assert!(f.contains("mke2fs ") && f.contains("mkswap ") && f.contains("mkfs.fat "), "{f}");
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    let i = bt.find("chroot /mnt/bko-target update-initramfs -u -k all\n").expect(&bt);
+    let i = bt.find(&format!("chroot /mnt/bko-target sh -c {}\n", crate::load::shell_quote(crate::load::commands::UPDATE_INITRAMFS_RESUME))).expect(&bt);
     let g = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=kali --no-nvram\n").expect(&bt);
     let off = bt.find("[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
     let cfg = bt.find("chroot /mnt/bko-target env LANG=C update-grub\n").expect(&bt);
@@ -3960,7 +3960,7 @@ fn elementary_guest() {
         let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
         assert!(f.contains("/dev/mapper/data-root\n") && f.contains("mkswap ") && f.contains("mkfs.fat "), "{f}");
         let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-        let i = bt.find("chroot /mnt/bko-target update-initramfs -u -k all\n").expect(&bt);
+        let i = bt.find(&format!("chroot /mnt/bko-target sh -c {}\n", crate::load::shell_quote(crate::load::commands::UPDATE_INITRAMFS_RESUME))).expect(&bt);
         let g = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=ubuntu --no-nvram\n").expect(&bt);
         let off = bt.find("[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
         let cfg = bt.find("chroot /mnt/bko-target env LANG=C update-grub\n").expect(&bt);

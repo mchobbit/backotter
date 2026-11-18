@@ -218,6 +218,7 @@
                 "no_holes"
               ],
               "compat_ro_features": ["free_space_tree", "free_space_tree_valid"],
+              "grub_env_block": {},
               "device": {
                 "devid": 1,
                 "uuid": "bc000000-0000-4000-8000-000000000005",

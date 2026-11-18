@@ -144,7 +144,7 @@ mount --rbind --make-rslave /dev /mnt/bko-target/dev
 mount --rbind --make-rslave /proc /mnt/bko-target/proc
 mount --rbind --make-rslave /sys /mnt/bko-target/sys
 mount --rbind --make-rslave /run /mnt/bko-target/run
-chroot /mnt/bko-target update-initramfs -u -k all
+chroot /mnt/bko-target sh -c 'c=/etc/initramfs-tools/conf.d/zz-resume-auto; r=; if [ ! -e "$c" ] && command -v unmkinitramfs >/dev/null; then for i in /boot/initrd.img-*; do [ -f "$i" ] || continue; d=$(mktemp -d) || exit; unmkinitramfs "$i" "$d" 2>/dev/null; r=$(cat "$d/conf/conf.d/zz-resume-auto" "$d/main/conf/conf.d/zz-resume-auto" 2>/dev/null | sed -n '\''s/^RESUME=//p'\'' | head -n 1); rm -rf "$d"; [ -z "$r" ] || break; done; fi; [ -z "$r" ] || printf '\''RESUME=%s\n'\'' "$r" > "$c" || exit; update-initramfs -u -k all; s=$?; [ -z "$r" ] || rm -f "$c"; exit "$s"'
 chroot /mnt/bko-target bootctl install --no-variables
 # the boot entries, for the restored kernels and root (Chimera's gen-systemd-boot, as its kernel hook runs it)
 chroot /mnt/bko-target sh -c 'gen-systemd-boot; r=$?; [ "$r" -ne 1 ] || { echo '\''gen-systemd-boot: warning: it made no entries (disabled, or bootctl says systemd-boot is not installed); the restored ones stay'\'' >&2; r=0; }; exit "$r"'

@@ -6,6 +6,14 @@ use crate::json::Obj;
 
 const SB: u64 = 0x10000;
 
+/// GRUB's environment block in btrfs's reserved first MiB: 1 sector at
+/// sector 512 (256 KiB), where GRUB can write (it can't write a file on
+/// btrfs).  openSUSE's GRUB and Ubuntu's keep it there, and the grubenv
+/// file says so (`env_block=512+1`); mkfs.btrfs zeroes it.
+pub const GRUB_ENV_BLOCK: u64 = 0x40000;
+pub const GRUB_ENV_SIZE: usize = 512;
+pub const GRUB_ENV_SIGNATURE: &[u8] = b"# GRUB Environment Block\n";
+
 const INCOMPAT: &[(u64, &str)] = &[
     (0x1, "mixed_backref"),
     (0x2, "default_subvol"),
@@ -78,6 +86,14 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
         );
     if incompat & 0x400 != 0 {
         d.put("metadata_uuid", uuid(sub(&b, 0x23b, 16)));
+    }
+    // Its variables (none, often: GRUB writes next_entry there and clears it).
+    if let Some(e) = src.read_exact_at(GRUB_ENV_BLOCK, GRUB_ENV_SIZE).filter(|e| e.starts_with(GRUB_ENV_SIGNATURE)) {
+        let mut vars = Obj::new();
+        for (k, v) in crate::boot::parse_grubenv(&String::from_utf8_lossy(&e)) {
+            vars.put(&k, v);
+        }
+        d.put("grub_env_block", vars);
     }
     Some(Content {
         kind: "btrfs".into(),
@@ -154,6 +170,25 @@ mod tests {
         assert!(d.get("metadata_uuid").unwrap().as_str().unwrap().starts_with("ee"));
         assert_eq!(d.get("features"), Some(&Value::from(vec!["metadata_uuid", "incompat_bit40"])));
         assert_eq!(d.get("checksum").and_then(Value::as_str), Some("xxhash64"));
+    }
+
+    /// GRUB's environment block at 256 KiB: its variables, none, or no
+    /// field when the sector isn't one.
+    #[test]
+    fn grub_env_block() {
+        let mut img = image("", 0);
+        img.resize(0x41000, 0);
+        assert!(probe(&MemSource(img.clone())).unwrap().details.build().get("grub_env_block").is_none());
+        let mut block = b"# GRUB Environment Block\nnext_entry=1\nhealth=a=b\n".to_vec();
+        block.resize(GRUB_ENV_SIZE, b'#');
+        img[0x40000..0x40200].copy_from_slice(&block);
+        let d = probe(&MemSource(img.clone())).unwrap().details.build();
+        assert_eq!(d.at(&["grub_env_block", "next_entry"]).and_then(Value::as_str), Some("1"));
+        assert_eq!(d.at(&["grub_env_block", "health"]).and_then(Value::as_str), Some("a=b"));
+        let mut empty = GRUB_ENV_SIGNATURE.to_vec();
+        empty.resize(GRUB_ENV_SIZE, b'#');
+        img[0x40000..0x40200].copy_from_slice(&empty);
+        assert_eq!(probe(&MemSource(img)).unwrap().details.build().get("grub_env_block").map(|v| v.compact()), Some("{}".into()));
     }
 
     #[test]

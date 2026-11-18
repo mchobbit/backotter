@@ -2179,6 +2179,12 @@ phase_verify() {
     CONSOLE_KEY=$ckey vm_up "${dst[0]}" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${dvfw[@]}" "${BS2_VFW[@]}" "${extra_dst[@]}"
     if ! vm_wait "$gkey"; then bad "the restored disk boots by itself (no SSH; logs/restored-serial.log)"; vm_down "$gkey"; return; fi
     ok "the restored disk boots by itself, SSH with the guest's key"
+    # GRUB's environment block (grubenv's env_block=512+1, in btrfs's
+    # reserved area, which mkfs.btrfs zeroes): load's format stage writes
+    # it again.  GRUB says so on the console when it can't read it.
+    if grep -aqs 'invalid environment block' "$R/logs/restored-serial.log" && ! grep -aqs 'invalid environment block' "$R/logs/source-serial.log"; then
+        bad "GRUB on the restored disk: \"invalid environment block\" (logs/restored-serial.log), not on the source's"
+    fi
     if grep -qs 'HD(' "$R/logs/source-nvram-boot.txt" && [[ -n $GVARS ]]; then
         sshk "$gkey" "$NVBOOT" > "$R/logs/restored-nvram-boot.txt" 2>&1
         if cmp -s "$R/logs/source-nvram-boot.txt" "$R/logs/restored-nvram-boot.txt"; then

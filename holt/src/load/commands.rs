@@ -479,9 +479,41 @@ pub const ZERO_TAIL: u64 = 1 << 20;
 /// restored machine boots with no UEFI variable readable (mokutil, the
 /// boot entries, shim's MOK lists; t2h-20261118T2037-e7d1).  The image
 /// still gets the drivers this machine needs.
-pub(crate) const DRACUT_EACH_KERNEL: &str = "n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; m=; \
-for p in $(lsinitrd -k \"${k##*/}\" 2>/dev/null | sed -n 's|^.* \\(\\(usr/\\)*lib/modules/[^ ]*\\.ko[.a-z0-9]*\\)$|\\1|p'); do [ -e \"/$p\" ] && b=${p##*/} && m=\"$m ${b%%.ko*}\"; done; \
-dracut --force --kver \"${k##*/}\" ${m:+--add-drivers \"$m\"} || exit; n=$((n + 1)); done; [ \"$n\" -gt 0 ]";
+///
+/// So with dracut's resume module: host-only takes it only when this
+/// machine has swap on (and the rescue system has none), so an image that
+/// had it gets it by --add, and the resume= its host-only command line
+/// had (etc/cmdline.d/95resume.conf, from the source's swap) by
+/// --include.  Without them the restored machine can't resume from
+/// hibernation (docs/design/leap16.md).
+pub(crate) const DRACUT_EACH_KERNEL: &str = "n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; l=$(lsinitrd -k \"${k##*/}\" 2>/dev/null); m=; \
+for p in $(printf '%s\\n' \"$l\" | sed -n 's|^.* \\(\\(usr/\\)*lib/modules/[^ ]*\\.ko[.a-z0-9]*\\)$|\\1|p'); do [ -e \"/$p\" ] && b=${p##*/} && m=\"$m ${b%%.ko*}\"; done; \
+a=; f=; if printf '%s\\n' \"$l\" | sed -n '/^dracut modules:$/,/^=/p' | grep -qx resume; then a=resume; r=$(lsinitrd -k \"${k##*/}\" -f etc/cmdline.d/95resume.conf 2>/dev/null); \
+[ -z \"$r\" ] || { f=$(mktemp) && printf '%s\\n' \"$r\" > \"$f\"; } || exit; fi; \
+dracut --force --kver \"${k##*/}\" ${m:+--add-drivers \"$m\"} ${a:+--add \"$a\"} ${f:+--include \"$f\" /etc/cmdline.d/95resume.conf}; s=$?; [ -z \"$f\" ] || rm -f \"$f\"; [ \"$s\" -eq 0 ] || exit \"$s\"; n=$((n + 1)); done; [ \"$n\" -gt 0 ]";
+
+/// EndeavourOS's and Garuda's dracut-rebuild (host-only images, then
+/// non-host-only fallbacks), with dracut's resume module kept as
+/// DRACUT_EACH_KERNEL keeps it: when a restored host-only image had it, a
+/// dracut.conf.d drop-in adds it while dracut-rebuild runs, and is removed
+/// after.  (Their dracut-rebuild passes --no-hostonly-cmdline: resume= is
+/// the kernel command line's.)
+pub(crate) const DRACUT_REBUILD_RESUME: &str = "c=/etc/dracut.conf.d/zz-bko-holt-resume.conf; a=; w=; for i in /boot/initramfs-*.img; do case $i in *-fallback.img) continue ;; esac; \
+if lsinitrd \"$i\" 2>/dev/null | sed -n '/^dracut modules:$/,/^=/p' | grep -qx resume; then a=1; fi; done; \
+if [ -n \"$a\" ] && [ ! -e \"$c\" ]; then printf 'add_dracutmodules+=\" resume \"\\n' > \"$c\" || exit; w=1; fi; dracut-rebuild; s=$?; [ -z \"$w\" ] || rm -f \"$c\"; exit \"$s\"";
+
+/// initramfs-tools' update-initramfs, with the resume device kept.  With
+/// RESUME unset (or auto), its resume hook picks the largest swap in
+/// /proc/swaps, and writes it into the image (conf/conf.d/zz-resume-auto),
+/// but not in a chroot (ischroot), and the rescue system has no swap on:
+/// the remade image would have no resume device.  So the one a restored
+/// image had (unmkinitramfs) goes in /etc/initramfs-tools/conf.d under
+/// that name while update-initramfs runs, which copies it into each image
+/// as it was, and is removed after.
+pub(crate) const UPDATE_INITRAMFS_RESUME: &str = "c=/etc/initramfs-tools/conf.d/zz-resume-auto; r=; \
+if [ ! -e \"$c\" ] && command -v unmkinitramfs >/dev/null; then for i in /boot/initrd.img-*; do [ -f \"$i\" ] || continue; d=$(mktemp -d) || exit; \
+unmkinitramfs \"$i\" \"$d\" 2>/dev/null; r=$(cat \"$d/conf/conf.d/zz-resume-auto\" \"$d/main/conf/conf.d/zz-resume-auto\" 2>/dev/null | sed -n 's/^RESUME=//p' | head -n 1); rm -rf \"$d\"; [ -z \"$r\" ] || break; done; fi; \
+[ -z \"$r\" ] || printf 'RESUME=%s\\n' \"$r\" > \"$c\" || exit; update-initramfs -u -k all; s=$?; [ -z \"$r\" ] || rm -f \"$c\"; exit \"$s\"";
 
 /// `dd` writing COUNT blocks of BS zero bytes to DEV, SEEK blocks in.
 fn zero(dev: &str, bs: u64, seek: u64, count: u64) -> Cmd {
@@ -2027,6 +2059,27 @@ pub fn mkfs_btrfs(devs: &[String], c: &Value, fs: &Value) -> Vec<String> {
     a
 }
 
+/// GRUB's environment block in btrfs's reserved area (probe/btrfs.rs),
+/// written to DEV as the source's: its signature, VARS (as GRUB wrote
+/// them) and '#' to the sector's end.  mkfs.btrfs zeroed it, and GRUB,
+/// told by grubenv's `env_block=512+1` to read it, prints "invalid
+/// environment block" at every boot (openSUSE Leap 16; docs/design/leap16.md).
+pub fn grub_env_block(dev: &str, vars: &Value) -> Result<Cmd, String> {
+    use crate::probe::btrfs::{GRUB_ENV_BLOCK, GRUB_ENV_SIGNATURE, GRUB_ENV_SIZE};
+    let mut b = String::from_utf8_lossy(GRUB_ENV_SIGNATURE).into_owned();
+    for (k, v) in vars.as_object().into_iter().flatten() {
+        b += &format!("{k}={}\n", v.as_str().unwrap_or_default());
+    }
+    if b.len() > GRUB_ENV_SIZE {
+        return Err(format!("GRUB's environment block on it holds {} bytes, more than its {GRUB_ENV_SIZE}", b.len()));
+    }
+    b += &"#".repeat(GRUB_ENV_SIZE - b.len());
+    let seek = GRUB_ENV_BLOCK / GRUB_ENV_SIZE as u64;
+    Ok(Cmd::new(&["dd".to_string(), format!("of={dev}"), format!("bs={GRUB_ENV_SIZE}"), format!("seek={seek}"), "count=1".into(), "iflag=fullblock".into(), "conv=notrunc,fsync".into(), "status=none".into()])
+        .input(b)
+        .why(format!("GRUB's environment block in btrfs's reserved area (grubenv's env_block={seek}+1), as the source's: mkfs.btrfs zeroed it")))
+}
+
 pub fn mkfs_fat(dev: &str, c: &Value) -> Vec<String> {
     let mut a = vec!["mkfs.fat".to_string()];
     if let Some(b) = num(c, "fat_bits") {
@@ -2319,18 +2372,26 @@ impl Builder<'_> {
                     }
                     btrfs_done.push(uuid.clone());
                     let fs = self.layout.arr(&["storage", "btrfs"]).iter().find(|f| s(f, "uuid").as_deref() == Some(uuid.as_str())).cloned().unwrap_or(Value::Null);
-                    let mut members: Vec<(u64, String)> = vec![];
+                    let mut members: Vec<(u64, String, Option<Value>)> = vec![];
                     for m in fs.get("devices").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str()) {
-                        let devid = self.layout.content(m).and_then(|c| num(c, "devid")).unwrap_or(0);
-                        members.push((devid, self.names.dev(m).unwrap_or_else(|| format!("<{m}>"))));
+                        let mc = self.layout.content(m);
+                        let devid = mc.and_then(|c| num(c, "devid")).unwrap_or(0);
+                        members.push((devid, self.names.dev(m).unwrap_or_else(|| format!("<{m}>")), mc.and_then(|c| c.get("grub_env_block")).cloned()));
                     }
                     if members.is_empty() {
-                        members.push((1, dev.clone()));
+                        members.push((1, dev.clone(), c.get("grub_env_block").cloned()));
                     }
-                    members.sort();
-                    let devs: Vec<String> = members.into_iter().map(|m| m.1).collect();
+                    members.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+                    let devs: Vec<String> = members.iter().map(|m| m.1.clone()).collect();
                     out.push(Cmd { argv: mkfs_btrfs(&devs, &c, &fs), why: Some(why), ..Cmd::default() });
                     out.push(Cmd::read_back(&dev, &c));
+                    for (_, d, env) in &members {
+                        match env.as_ref().filter(|e| !e.is_null()).map(|e| grub_env_block(d, e)) {
+                            Some(Ok(cmd)) => out.push(cmd),
+                            Some(Err(e)) => self.problems.push(format!("{src}: {e}")),
+                            None => {}
+                        }
+                    }
                     self.btrfs_inside(&uuid, &devs[0], &fs, &mut out);
                 }
                 "vfat" | "msdos" if self.fam.is_none_or(|f| f.on_linux()) && self.layout.device(&src).is_none_or(|v| v.get("esp_image").is_none()) => {
@@ -3924,7 +3985,11 @@ impl Builder<'_> {
             // kernel's package (/boot/initramfs-linux.img,
             // initramfs-linux-garuda.img), which dracut's own choice of path
             // would miss; their dracut-rebuild builds them, with fallbacks.
-            Some("dracut") if ["eos-dracut", "garuda-dracut-support"].iter().any(|p| self.layout.str_at(&["boot", "packages", *p]).is_some()) => Cmd::new(&["chroot", t, "dracut-rebuild"]),
+            // With a swap device, the resume module kept (DRACUT_REBUILD_RESUME).
+            Some("dracut") if ["eos-dracut", "garuda-dracut-support"].iter().any(|p| self.layout.str_at(&["boot", "packages", *p]).is_some()) => match self.swap_device() {
+                true => Cmd::new(&["chroot", t, "sh", "-c", DRACUT_REBUILD_RESUME]),
+                false => Cmd::new(&["chroot", t, "dracut-rebuild"]),
+            },
             Some("dracut") => Cmd::new(&["chroot", t, "sh", "-c", DRACUT_EACH_KERNEL]),
             // Alpine: mkinitfs KVER writes /boot/initramfs-FLAVOR.
             Some("mkinitfs") => Cmd::new(&["chroot", t, "sh", "-c", "for k in /lib/modules/*; do mkinitfs \"${k##*/}\" || exit; done"]),
@@ -3933,7 +3998,20 @@ impl Builder<'_> {
             // as booster.yaml says, from the chroot's /sys (this machine's).
             // The same guard as dracut's loop.
             Some("booster") => Cmd::new(&["chroot", t, "sh", "-c", "n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; k=${k##*/}; booster build --force --kernel-version \"$k\" \"/boot/booster.img-$k\" || exit; n=$((n + 1)); done; [ \"$n\" -gt 0 ]"]),
+            // initramfs-tools picked the resume device itself (RESUME unset
+            // or auto, a swap device to pick): UPDATE_INITRAMFS_RESUME.
+            Some("initramfs-tools") if self.swap_device() && self.layout.str_at(&["boot", "initramfs", "resume"]).is_none_or(|r| r == "auto") => {
+                Cmd::new(&["chroot", t, "sh", "-c", UPDATE_INITRAMFS_RESUME])
+            }
             _ => Cmd::new(&["chroot", t, "update-initramfs", "-u", "-k", "all"]),
+        })
+    }
+
+    /// Whether the source's fstab swaps on a device (not a swap file: what
+    /// initramfs-tools' resume hook and dracut's resume module look for).
+    fn swap_device(&self) -> bool {
+        self.layout.arr(&["storage", "fstab"]).iter().any(|e| {
+            s(e, "type").as_deref() == Some("swap") && s(e, "spec").is_some_and(|sp| !sp.starts_with('/') || sp.starts_with("/dev/"))
         })
     }
 
@@ -4981,53 +5059,200 @@ mod tests {
     use super::*;
     use crate::load::layout::{sample, Layout};
 
-    /// DRACUT_EACH_KERNEL run by sh over a fake tree ($R for the chroot's
-    /// /), with a fake lsinitrd (the restored images' listings, as
-    /// openSUSE's prints them) and a dracut that prints its arguments.
-    #[test]
-    fn dracut_keeps_the_restored_images_modules() {
-        use std::os::unix::fs::PermissionsExt;
-        let t = crate::testutil::TempDir::new("dracut-mods");
-        let (r, k) = (t.path().join("root"), "6.12.0-160100.8-default");
-        for f in [format!("usr/lib/modules/{k}/kernel/fs/efivarfs/efivarfs.ko.zst"), format!("lib/modules/{k}/kernel/drivers/block/loop.ko"),
-                  "lib/modules/7.0.1-1-default/kernel/fs/btrfs/btrfs.ko.zst".into(), "lib/modules/6.11.0-gone/modules.dep".into()] {
-            let p = r.join(f);
+    /// Fake programs for the boot stage's scripts run by sh: a directory of
+    /// sh scripts under DIR, for PATH.  Each file is written by a child
+    /// process, so that no fd of this one has it open for writing when
+    /// another test's thread forks (its exec would fail with ETXTBSY).
+    fn fakes(dir: &std::path::Path, fakes: &[(&str, String)]) -> String {
+        use std::io::Write;
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let bin = dir.join(format!("bin{}", N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
+        std::fs::create_dir_all(&bin).unwrap();
+        for (name, body) in fakes {
+            let mut c = std::process::Command::new("/bin/sh")
+                .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
+                .arg(bin.join(name))
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            c.stdin.take().unwrap().write_all(format!("#!/bin/sh\n{body}\n").as_bytes()).unwrap();
+            assert!(c.wait().unwrap().success());
+        }
+        bin.display().to_string()
+    }
+
+    /// SCRIPT run by sh with BIN first on PATH (or PATH alone, when
+    /// given), $R for the chroot's / and TMPDIR for mktemp.
+    fn run_script(script: &str, bin: &str, root: &std::path::Path, tmp: &std::path::Path, path: Option<&str>) -> std::process::Output {
+        std::fs::create_dir_all(tmp).unwrap();
+        std::process::Command::new("/bin/sh")
+            .args(["-c", script])
+            .env("R", root)
+            .env("TMPDIR", tmp)
+            .env("PATH", path.map_or_else(|| format!("{bin}:/usr/bin:/bin"), str::to_string))
+            .output()
+            .unwrap()
+    }
+
+    fn touch(root: &std::path::Path, files: &[String]) {
+        for f in files {
+            let p = root.join(f);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(&p, "").unwrap();
         }
-        let bin = t.path().join("bin");
-        std::fs::create_dir_all(&bin).unwrap();
+    }
+
+    /// DRACUT_EACH_KERNEL run by sh over a fake tree ($R for the chroot's
+    /// /), with a fake lsinitrd (the restored images' listings, as
+    /// openSUSE's prints them) and a dracut that prints its arguments and
+    /// the files it was given to --include.
+    #[test]
+    fn dracut_keeps_the_restored_images_modules() {
+        let t = crate::testutil::TempDir::new("dracut-mods");
+        let (r, k, k2) = (t.path().join("root"), "6.12.0-160100.8-default", "7.0.1-1-default");
+        touch(&r, &[format!("usr/lib/modules/{k}/kernel/fs/efivarfs/efivarfs.ko.zst"), format!("lib/modules/{k}/kernel/drivers/block/loop.ko"),
+                    format!("lib/modules/{k2}/kernel/fs/btrfs/btrfs.ko.zst"), "lib/modules/6.11.0-gone/modules.dep".into()]);
         let listing = format!(
             "Image: /boot/initrd-{k}: 24M\n\
+             ========================================================================\n\
+             Version: dracut-059+suse.640.g3a1b2c3d\n\
+             \n\
              Arguments:  --force --kver '{k}'\n\
+             \n\
+             dracut modules:\n\
+             systemd\n\
+             resume\n\
+             btrfs\n\
+             ========================================================================\n\
              lrwxrwxrwx   1 root     root            7 Oct 19 06:31 lib -> usr/lib\n\
              drwxr-xr-x   1 root     root            0 Nov 14 10:46 usr/lib/modules/{k}/kernel/fs/efivarfs\n\
              -rw-r--r--   1 root     root        17655 Oct 19 06:31 usr/lib/modules/{k}/kernel/fs/efivarfs/efivarfs.ko.zst\n\
              -rw-r--r--   1 root     root        25282 Oct 19 06:31 lib/modules/{k}/kernel/drivers/block/loop.ko\n\
              -rw-r--r--   1 root     root        25282 Oct 19 06:31 usr/lib/modules/{k}/kernel/drivers/scsi/gone.ko.xz\n\
-             -rw-r--r--   1 root     root         9001 Oct 19 06:31 usr/lib/modules/{k}/modules.dep\n");
-        let fakes = [("lsinitrd", format!("#!/bin/sh\n[ \"$1\" = -k ] && [ \"$2\" = {k} ] || {{ echo \"no initramfs for $2\" >&2; exit 1; }}\ncat <<'EOF'\n{listing}EOF\n")),
-                     ("dracut", "#!/bin/sh\nprintf '[%s]' \"$@\"; echo\n".to_string())];
-        for (name, body) in fakes {
-            let f = bin.join(name);
-            std::fs::write(&f, body).unwrap();
-            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+             -rw-r--r--   1 root     root          512 Oct 19 06:31 usr/lib/dracut/hooks/resume\n\
+             -rw-r--r--   1 root     root         9001 Oct 19 06:31 usr/lib/modules/{k}/modules.dep\n\
+             ========================================================================\n");
+        // k2's image had no resume module: its listing names only files
+        // with "resume" in them.
+        let listing2 = format!(
+            "Image: /boot/initrd-{k2}: 20M\n\
+             dracut modules:\n\
+             systemd\n\
+             btrfs\n\
+             ========================================================================\n\
+             -rw-r--r--   1 root     root          512 Oct 19 06:31 resume\n\
+             ========================================================================\n");
+        let lsinitrd = format!(
+            "[ \"$1\" = -k ] || exit 2\n\
+             case \"$2 $3 $4\" in\n\
+             '{k} -f etc/cmdline.d/95resume.conf') echo ' resume=UUID=eee0e84a-5975-4d26-b706-4145f8ebd5db' ;;\n\
+             '{k}  ') cat <<'EOF'\n{listing}EOF\n;;\n\
+             '{k2}  ') cat <<'EOF'\n{listing2}EOF\n;;\n\
+             *) echo \"no initramfs for $2\" >&2; exit 1 ;;\nesac\n");
+        let dracut = "printf '[%s]' \"$@\"; echo\nwhile [ $# -gt 0 ]; do [ \"$1\" = --include ] && echo \"$3: $(cat \"$2\")\"; shift; done\n".to_string();
+        let bin = fakes(t.path(), &[("lsinitrd", lsinitrd.clone()), ("dracut", dracut)]);
         let script = DRACUT_EACH_KERNEL.replace("/lib/modules/*", "$R/lib/modules/*").replace("\"/$p\"", "\"$R/$p\"");
         assert_eq!(script.matches("$R/").count(), 2, "{script}");
-        let run = |root: &std::path::Path| {
-            std::process::Command::new("sh").args(["-c", &script]).env("R", root).env("PATH", format!("{}:/usr/bin:/bin", bin.display())).output().unwrap()
-        };
-        let o = run(&r);
+        let tmp = t.path().join("tmp");
+        let o = run_script(&script, &bin, &r, &tmp, None);
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let out = String::from_utf8_lossy(&o.stdout).into_owned();
+        let mut lines = out.lines();
         // The modules the image had and the tree still has, in its order;
-        // a kernel with no image of its own (7.0.1) is made as before, and
-        // a directory with no kernel/ (6.11.0-gone) is no kernel.
-        assert_eq!(String::from_utf8_lossy(&o.stdout), format!("[--force][--kver][{k}][--add-drivers][ efivarfs loop]\n[--force][--kver][7.0.1-1-default]\n"));
+        // the resume module, and the resume= its command line had.
+        let first = lines.next().unwrap();
+        let inc = first.find("[--include][").map(|i| &first[i + 12..]).and_then(|r| r.split(']').next()).unwrap_or_else(|| panic!("{first}"));
+        assert_eq!(first, format!("[--force][--kver][{k}][--add-drivers][ efivarfs loop][--add][resume][--include][{inc}][/etc/cmdline.d/95resume.conf]"));
+        assert_eq!(lines.next(), Some("/etc/cmdline.d/95resume.conf:  resume=UUID=eee0e84a-5975-4d26-b706-4145f8ebd5db"));
+        // A kernel whose image had no resume module: none added; a
+        // directory with no kernel/ (6.11.0-gone) is no kernel.
+        assert_eq!(lines.next(), Some(format!("[--force][--kver][{k2}]").as_str()));
+        assert_eq!(lines.next(), None);
+        // The --include file is removed.
+        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
         // No kernel at all: it fails, as before.
         let empty = t.path().join("empty");
         std::fs::create_dir_all(empty.join("lib/modules")).unwrap();
-        assert!(!run(&empty).status.success());
+        assert!(!run_script(&script, &bin, &empty, &tmp, None).status.success());
+        // dracut's failure is the script's, and the file is removed.
+        let failing = fakes(t.path(), &[("dracut", "exit 3".into()), ("lsinitrd", lsinitrd)]);
+        assert_eq!(run_script(&script, &failing, &r, &tmp, None).status.code(), Some(3));
+        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
+    }
+
+    /// DRACUT_REBUILD_RESUME: a drop-in adds the resume module while
+    /// dracut-rebuild runs when a host-only image had it (a fallback's
+    /// doesn't count), and is removed after; one already there stays.
+    #[test]
+    fn dracut_rebuild_keeps_resume() {
+        let t = crate::testutil::TempDir::new("dracut-rebuild");
+        let r = t.path().join("root");
+        touch(&r, &["boot/initramfs-linux.img".into(), "boot/initramfs-linux-fallback.img".into(), "etc/dracut.conf.d/.keep".into()]);
+        let lsinitrd = "case $1 in *-fallback.img) printf 'dracut modules:\\nresume\\n====\\n' ;; *) cat \"$1.list\" ;; esac\n".to_string();
+        let rebuild = "cat \"$R\"/etc/dracut.conf.d/*.conf 2>/dev/null; echo rebuilt\n".to_string();
+        let bin = fakes(t.path(), &[("lsinitrd", lsinitrd.clone()), ("dracut-rebuild", rebuild)]);
+        let script = DRACUT_REBUILD_RESUME.replace("/boot/", "$R/boot/").replace("c=/etc/", "c=$R/etc/");
+        let tmp = t.path().join("tmp");
+        let conf = r.join("etc/dracut.conf.d/zz-bko-holt-resume.conf");
+        std::fs::write(r.join("boot/initramfs-linux.img.list"), "dracut modules:\nsystemd\nresume\n=====\n").unwrap();
+        let o = run_script(&script, &bin, &r, &tmp, None);
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        assert_eq!(String::from_utf8_lossy(&o.stdout), "add_dracutmodules+=\" resume \"\nrebuilt\n");
+        assert!(!conf.exists());
+        // Only the fallback had it: nothing added.
+        std::fs::write(r.join("boot/initramfs-linux.img.list"), "dracut modules:\nsystemd\n=====\n-rw-r--r-- 1 root root 1 Oct 19 06:31 resume\n").unwrap();
+        assert_eq!(String::from_utf8_lossy(&run_script(&script, &bin, &r, &tmp, None).stdout), "rebuilt\n");
+        // A drop-in of that name already there is the system's: kept.
+        std::fs::write(r.join("boot/initramfs-linux.img.list"), "dracut modules:\nresume\n=====\n").unwrap();
+        std::fs::write(&conf, "# mine\n").unwrap();
+        assert_eq!(String::from_utf8_lossy(&run_script(&script, &bin, &r, &tmp, None).stdout), "# mine\nrebuilt\n");
+        assert!(conf.exists());
+        // dracut-rebuild's failure is the script's.
+        std::fs::remove_file(&conf).unwrap();
+        let failing = fakes(t.path(), &[("dracut-rebuild", "exit 4".into()), ("lsinitrd", lsinitrd)]);
+        assert_eq!(run_script(&script, &failing, &r, &tmp, None).status.code(), Some(4));
+        assert!(!conf.exists());
+    }
+
+    /// UPDATE_INITRAMFS_RESUME: the resume device a restored image's
+    /// resume hook had picked (conf/conf.d/zz-resume-auto, in an early +
+    /// main image or a plain one) goes in conf.d while update-initramfs
+    /// runs, and is removed after.
+    #[test]
+    fn update_initramfs_keeps_the_auto_resume_device() {
+        let t = crate::testutil::TempDir::new("initramfs-resume");
+        let r = t.path().join("root");
+        touch(&r, &["boot/initrd.img-6.12.48+deb13-amd64".into(), "boot/initrd.img-6.12.57+deb13-amd64".into(), "etc/initramfs-tools/conf.d/.keep".into()]);
+        // The older image's resume hook found no swap; the newer's did.
+        let unmk = "case $1 in *48*) x=$2/conf/conf.d; mkdir -p $x; echo 'RESUME=' > $x/zz-resume-auto ;; \
+                    *57*) x=$2/main/conf/conf.d; mkdir -p $x $2/early; echo 'RESUME=UUID=bc000000-0000-4000-8000-000000000003' > $x/zz-resume-auto ;; esac\n".to_string();
+        let update = "echo \"update-initramfs $*\"; cat \"$R\"/etc/initramfs-tools/conf.d/* 2>/dev/null; :\n".to_string();
+        let bin = fakes(t.path(), &[("unmkinitramfs", unmk.clone()), ("update-initramfs", update.clone())]);
+        let script = UPDATE_INITRAMFS_RESUME.replace("/boot/", "$R/boot/").replace("c=/etc/", "c=$R/etc/");
+        let tmp = t.path().join("tmp");
+        let conf = r.join("etc/initramfs-tools/conf.d/zz-resume-auto");
+        let o = run_script(&script, &bin, &r, &tmp, None);
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        assert_eq!(String::from_utf8_lossy(&o.stdout), "update-initramfs -u -k all\nRESUME=UUID=bc000000-0000-4000-8000-000000000003\n");
+        assert!(!conf.exists());
+        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0, "unmkinitramfs's directories are removed");
+        // No image picked one: update-initramfs as it is.
+        std::fs::remove_file(r.join("boot/initrd.img-6.12.57+deb13-amd64")).unwrap();
+        assert_eq!(String::from_utf8_lossy(&run_script(&script, &bin, &r, &tmp, None).stdout), "update-initramfs -u -k all\n");
+        // The system's own zz-resume-auto: kept, and not read again.
+        std::fs::write(&conf, "RESUME=/dev/vda5\n").unwrap();
+        assert_eq!(String::from_utf8_lossy(&run_script(&script, &bin, &r, &tmp, None).stdout), "update-initramfs -u -k all\nRESUME=/dev/vda5\n");
+        assert!(conf.exists());
+        std::fs::remove_file(&conf).unwrap();
+        // No unmkinitramfs (Chimera's initramfs-tools, say): as it is.
+        let bare = fakes(t.path(), &[("update-initramfs", update)]);
+        let o = run_script(&script, &bare, &r, &tmp, Some(&bare));
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        // update-initramfs's failure is the script's, the file removed.
+        touch(&r, &["boot/initrd.img-6.12.57+deb13-amd64".into()]);
+        let failing = fakes(t.path(), &[("update-initramfs", "exit 5".into()), ("unmkinitramfs", unmk)]);
+        assert_eq!(run_script(&script, &failing, &r, &tmp, None).status.code(), Some(5));
+        assert!(!conf.exists());
     }
 
     fn built(extra: &[&str]) -> Built {
@@ -5339,6 +5564,58 @@ mod tests {
         assert!(t.contains("--label 'Linux Boot Manager' --loader '\\EFI\\NixOS-boot\\grubx64.efi'\n"), "{t}");
         assert!(t.contains("cp /mnt/bko-target/boot/EFI/NixOS-boot/grubx64.efi /mnt/bko-target/boot/EFI/BOOT/BOOTX64.EFI"), "{t}");
         assert!(n.contains("NixOS: UEFI GRUB's EFI image and grub.cfg came back"), "{n}");
+    }
+
+    /// GRUB's environment block in btrfs's reserved area (openSUSE's
+    /// env_block=512+1): written again after mkfs.btrfs, the source's
+    /// variables in it, to the device that had it; none when the dump has
+    /// none.
+    #[test]
+    fn btrfs_grub_env_block() {
+        let j = sample::bios_mbr().replace(r#""content": {"type": "btrfs", "usage": "filesystem","#, r#""content": {"type": "btrfs", "usage": "filesystem", "grub_env_block": {"next_entry": "1"},"#);
+        assert_ne!(j, sample::bios_mbr());
+        let b = built_from(&j, &[]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let f = text(b.stage(Stage::Format));
+        let block = format!("# GRUB Environment Block\nnext_entry=1\n{}", "#".repeat(512 - 38));
+        let dd = format!("# GRUB's environment block in btrfs's reserved area (grubenv's env_block=512+1), as the source's: mkfs.btrfs zeroed it\n\
+                          dd of=/dev/vdb3 bs=512 seek=512 count=1 iflag=fullblock conv=notrunc,fsync status=none <<'EOF'\n{block}\nEOF\n");
+        let at = f.find(&dd).unwrap_or_else(|| panic!("{f}"));
+        assert!(f.find("mkfs.btrfs").unwrap() < at && at < f.find("subvolume create").unwrap_or(usize::MAX), "{f}");
+        let c = b.stage(Stage::Format).iter().find(|c| c.argv.first().is_some_and(|a| a == "dd") && c.argv.iter().any(|a| a == "seek=512")).unwrap();
+        assert_eq!(c.stdin.as_deref().map(str::len), Some(512));
+        // An empty one: the signature and padding.
+        let e = grub_env_block("/dev/vdb3", &crate::json::parse("{}").unwrap()).unwrap();
+        assert_eq!(e.stdin.unwrap(), format!("# GRUB Environment Block\n{}", "#".repeat(512 - 25)));
+        // More than a sector: refused by name.
+        let big = crate::json::parse(&format!(r#"{{"x": "{}"}}"#, "y".repeat(600))).unwrap();
+        assert!(grub_env_block("/dev/vdb3", &big).unwrap_err().contains("more than its 512"));
+        // None in the dump: nothing written.
+        assert!(!text(built(&[]).stage(Stage::Format)).contains("seek=512"));
+    }
+
+    /// The resume device kept where the boot stage remakes the initramfs
+    /// with a generator that picks it from this machine's swap: an
+    /// initramfs-tools source with RESUME unset or auto and a swap device,
+    /// and EndeavourOS's dracut-rebuild with one.
+    #[test]
+    fn initramfs_resume_kept() {
+        let it = |extra: &str| sample::bios_mbr().replace(r#""efi": null,"#, &format!(r#""efi": null, "initramfs": {{"generator": "initramfs-tools"{extra}}},"#));
+        let wrapped = format!("chroot /mnt/bko-target sh -c {}\n", shell_quote(UPDATE_INITRAMFS_RESUME));
+        let plain = "chroot /mnt/bko-target update-initramfs -u -k all\n";
+        for (extra, want) in [("", &wrapped), (r#", "resume": null"#, &wrapped), (r#", "resume": "auto""#, &wrapped), (r#", "resume": "UUID=5e5e5e5e-0000-4000-8000-000000000002""#, &plain.to_string()), (r#", "resume": "none""#, &plain.to_string())] {
+            let bt = text(built_from(&it(extra), &[]).stage(Stage::Boot));
+            assert!(bt.contains(want.as_str()), "{extra}: {bt}");
+        }
+        // A swap file, or no swap: nothing for the hook to pick.
+        let file = it("").replace(r#""spec": "UUID=5e5e5e5e-0000-4000-8000-000000000002", "file": "none""#, r#""spec": "/swap.img", "file": "none""#);
+        assert!(text(built_from(&file, &[]).stage(Stage::Boot)).contains(plain));
+        let eos = sample::bios_mbr()
+            .replace(r#""id": "debian", "version_id": "13""#, r#""id": "endeavouros""#)
+            .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"}, "packages": {"eos-dracut": "1.7-1"},"#);
+        assert!(text(built_from(&eos, &[]).stage(Stage::Boot)).contains(&format!("chroot /mnt/bko-target sh -c {}\n", shell_quote(DRACUT_REBUILD_RESUME))));
+        let eos = eos.replace(r#""spec": "UUID=5e5e5e5e-0000-4000-8000-000000000002", "file": "none""#, r#""spec": "/swap/swapfile", "file": "none""#);
+        assert!(text(built_from(&eos, &[]).stage(Stage::Boot)).contains("chroot /mnt/bko-target dracut-rebuild\n"));
     }
 
     #[test]
@@ -6081,12 +6358,12 @@ mod tests {
             .replace(r#""id": "debian", "version_id": "13""#, r#""id": "endeavouros""#)
             .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"}, "packages": {"eos-dracut": "1.7-1"},"#);
         let bt = text(built_from(&eos, &[]).stage(Stage::Boot));
-        assert!(bt.contains("chroot /mnt/bko-target dracut-rebuild\n") && !bt.contains("--regenerate-all"), "{bt}");
+        assert!(bt.contains(&format!("chroot /mnt/bko-target sh -c {}\n", shell_quote(DRACUT_REBUILD_RESUME))) && !bt.contains("--regenerate-all"), "{bt}");
         let garuda = sample::bios_mbr()
             .replace(r#""id": "debian", "version_id": "13""#, r#""id": "garuda""#)
             .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"}, "packages": {"garuda-dracut-support": "1.6.0-2"},"#);
         let bt = text(built_from(&garuda, &[]).stage(Stage::Boot));
-        assert!(bt.contains("chroot /mnt/bko-target dracut-rebuild\n") && !bt.contains("--regenerate-all") && !bt.contains("--kver"), "{bt}");
+        assert!(bt.contains(&format!("chroot /mnt/bko-target sh -c {}\n", shell_quote(DRACUT_REBUILD_RESUME))) && !bt.contains("--regenerate-all") && !bt.contains("--kver"), "{bt}");
         let alpine = sample::bios_mbr()
             .replace(r#""id": "debian", "version_id": "13""#, r#""id": "alpine", "version_id": "3.24.3""#)
             .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "mkinitfs"},"#);
@@ -6103,6 +6380,7 @@ mod tests {
     /// runs in the chroot runs on FreeBSD's userland (chimerautils).
     #[test]
     fn chimera_boot_tools() {
+        let initramfs = &format!("chroot /mnt/bko-target sh -c {}\n", shell_quote(UPDATE_INITRAMFS_RESUME));
         let bios = sample::bios_mbr()
             .replace(r#""id": "debian", "version_id": "13""#, r#""id": "chimera""#)
             .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "initramfs-tools"}, "packages": {"grub": "2.14-r1", "grub-i386-pc": "2.14-r1", "initramfs-tools": "0.148.3-r2"},"#)
@@ -6110,7 +6388,7 @@ mod tests {
         let b = built_from(&bios, &[]);
         let bt = text(b.stage(Stage::Boot));
         assert!(b.problems.is_empty(), "{:?}", b.problems);
-        assert!(bt.contains("chroot /mnt/bko-target update-initramfs -u -k all\n"), "{bt}");
+        assert!(bt.contains(initramfs.as_str()), "{bt}");
         // The disk whose MBR holds GRUB, with no debconf to name it.
         assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
         assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{bt}");
@@ -6123,7 +6401,7 @@ mod tests {
         let ut = text(b.stage(Stage::Boot));
         assert!(ut.contains("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=chimera --no-nvram\n"), "{ut}");
         assert!(ut.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{ut}");
-        assert!(ut.contains("chroot /mnt/bko-target update-initramfs -u -k all\n"), "{ut}");
+        assert!(ut.contains(initramfs.as_str()), "{ut}");
         assert!(!ut.contains("gen-systemd-boot"), "{ut}");
         // UEFI with systemd-boot (chimera-uefi): the ESP as /boot; bootctl
         // reinstalls it, and gen-systemd-boot remakes the entries after the
@@ -6137,7 +6415,7 @@ mod tests {
         let st = text(b.stage(Stage::Boot));
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let gen = "chroot /mnt/bko-target sh -c 'gen-systemd-boot; r=$?; [ \"$r\" -ne 1 ] || { echo '\\''gen-systemd-boot: warning: it made no entries (disabled, or bootctl says systemd-boot is not installed); the restored ones stay'\\'' >&2; r=0; }; exit \"$r\"'\n";
-        let initramfs = st.find("chroot /mnt/bko-target update-initramfs -u -k all\n").expect(&st);
+        let initramfs = st.find(initramfs.as_str()).expect(&st);
         let bootctl = st.find("chroot /mnt/bko-target bootctl install --no-variables\n").expect(&st);
         let made = st.find(gen).expect(&st);
         assert!(initramfs < made && bootctl < made, "{st}");

@@ -650,6 +650,36 @@ class LuksGeometry(Op):
 
 # ---- filesystem geometry -----------------------------------------------------
 
+def usage_kept(c, g):
+    """G, the new superblock numbers of C's filesystem (a geometry model's,
+    which give only what the tool's options make), with C's free counts
+    carried onto them where they change: the same files, so the same inodes
+    in use, and the same bytes, in G's blocks, with ext's inode tables and
+    XFS's internal log as they grow or shrink.  Left as the source's, the
+    free counts would be read against the new totals: bs2a-20261118-1757's
+    alpine324-uefi-e738f619b03b8ce0 had 4 KiB blocks' 878020 free inodes
+    beside 1 KiB blocks' 5985792, so 5107772 "in use" of 6716, and load
+    rightly refused the --fit-largest shrink the generator had drawn."""
+    out = dict(g)
+    n = {**c, **g}
+    t = c.get("type")
+    if t in ("ext2", "ext3", "ext4"):
+        if c.get("inodes") is not None and c.get("free_inodes") is not None:
+            out["free_inodes"] = max(0, n["inodes"] - (c["inodes"] - c["free_inodes"]))
+        if c.get("free_blocks") is not None and c.get("blocks") and c.get("block_size"):
+            used = (c["blocks"] - c["free_blocks"]) * c["block_size"]
+            if c.get("inodes") is not None and c.get("inode_size"):
+                used += n["inodes"] * n["inode_size"] - c["inodes"] * c["inode_size"]
+            out["free_blocks"] = max(0, n["blocks"] - cdiv(max(0, used), n["block_size"]))
+    elif t == "xfs" and c.get("free_blocks") is not None and c.get("blocks"):
+        used = c["blocks"] - c["free_blocks"] + (n.get("log_blocks") or 0) - (c.get("log_blocks") or 0)
+        out["free_blocks"] = max(0, n["blocks"] - used)
+    for k in ("free_inodes", "free_blocks"):
+        if k in out and k not in g and out[k] == c.get(k):
+            del out[k]
+    return out
+
+
 def _fs(d, loc, types):
     dev = dumpx.resolve(d, loc)
     c = (dev or {}).get("content") or {}
@@ -687,6 +717,7 @@ class Ext4Geometry(Op):
         changed = {k: v for k, v in g.items() if c.get(k) != v}
         if not changed:
             raise Invalid("no change")
+        g = usage_kept(c, g)
         e = {"op": self.name, "fs": dumpx.locator(d, dev)}
         for k in ("block_size", "inode_size", "inodes_per_group", "flex_bg_size", "reserved_gdt_blocks"):
             if k in params:
@@ -723,6 +754,7 @@ class XfsGeometry(Op):
         g = geometry.xfs(blocks, bs, agb, lb, isz, ss, c.get("features") or [], c if ss != c["sector_size"] else None)
         if all(c.get(k) == v for k, v in g.items()):
             raise Invalid("no change")
+        g = usage_kept(c, g)
         e = {"op": self.name, "fs": dumpx.locator(d, dev)}
         for k in ("ag_count", "log_blocks", "inode_size", "sector_size"):
             if k in params:
@@ -854,7 +886,7 @@ def propagate(d, dev, new_bytes, grow_fs=True, grow_pv=True, sector=None):
             return sets
         cur = c["blocks"] * c["block_size"]
         if new_bytes < cur or (grow_fs and new_bytes // c["block_size"] != c["blocks"]):
-            sets = merge_sets(sets, {loc: {"content": geometry.ext4_resized(c, new_bytes)}})
+            sets = merge_sets(sets, {loc: {"content": usage_kept(c, geometry.ext4_resized(c, new_bytes))}})
         return sets
     if t == "xfs":
         if sector and c["sector_size"] < sector:
@@ -866,7 +898,7 @@ def propagate(d, dev, new_bytes, grow_fs=True, grow_pv=True, sector=None):
         if new_bytes < cur or (grow_fs and new_bytes // bs != c["blocks"]):
             # The sector size stays, and so does what it set (xfs_sector_fields).
             g = geometry.xfs(new_bytes // bs, bs, c["ag_blocks"], c["log_blocks"], c["inode_size"], c["sector_size"], c.get("features") or [])
-            sets = merge_sets(sets, {loc: {"content": g}})
+            sets = merge_sets(sets, {loc: {"content": usage_kept(c, g)}})
         return sets
     if new_bytes is None:
         return sets

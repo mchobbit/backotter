@@ -201,7 +201,8 @@ source with no family (the BSDs, illumos, Haiku, Redox, Sculpt OS) is
 `GENERATOR` 2, Alpine's cases were byte-identical to those drawn before the
 interface (`tests/golden/alpine.json`); each family's golden is rewritten
 only with a new `GENERATOR` (3, 2026-11-17: fail-004 and fail-005 back in
-the draws).
+the draws; 4, 2026-11-18: geometry edits and resizes keep the free inodes
+and blocks, and rule 1 checks a fitted ext's inodes as load does).
 
 Two more traits came with Vanilla OS (`vanilla3`): `abroot` (the master
 grub.cfg's entries and each root's abroot.cfg as rule 3 texts; load

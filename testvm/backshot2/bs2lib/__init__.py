@@ -26,5 +26,8 @@ test hosts.  Stdlib only; Python 3.9 or newer.
 # partitions kept in number order, the MBR gap follows the first partition.
 # 3 (2026-11-17): fail-004 and fail-005 fixed in bko-holt and out of
 # generate.KNOWN, so 1 KiB ext blocks and targets that shrink an ext past
-# its inodes' groups are drawn again.
-GENERATOR = "3"
+# its inodes' groups are drawn again.  4 (2026-11-18): a geometry edit or
+# resize carries the filesystem's free inodes and blocks onto its new
+# totals (edits.usage_kept), and rule 1 holds a fitted ext's inodes in use
+# to load's own check (fitcalc.ext_inodes_after): bs2a-20261118-1757.
+GENERATOR = "4"

@@ -439,6 +439,46 @@ class TestContent(unittest.TestCase):
         self.assertLessEqual(max(len(bytes.fromhex(e["to"])) for e in a if e["kind"] == "symlink"), 1024)   # XFS's limit
         self.assertFalse(any(e.get("xattrs") for e in CT.plan({"recipe": "alpine-small-2", "seed": 3}, "vfat")))
 
+    def test_geometry_keeps_what_is_in_use(self):
+        # bs2a-20261118-1757's alpine324-uefi-e738f619b03b8ce0: an
+        # ext4_geometry to 1 KiB blocks kept the source's free inodes beside
+        # its own inode count, so the drifted dump said millions in use;
+        # load refused the --fit-largest shrink the generator had drawn.
+        d = copy.deepcopy(corpus("ubuntu26-uefi"))
+        d["boot"]["efi"]["entries"] = []
+        src = dumpx.part(dumpx.disk(d), 2)
+        used_i, used_b = dumpx.used_inodes(src), (src["content"]["blocks"] - src["content"]["free_blocks"]) * 4096
+        self.assertEqual(used_i, 151656)
+        e = E.build(d, "ext4_geometry", {"fs": "vda2", "block_size": 1024, "inodes_per_group": 3464, "reserved_gdt_blocks": 256})
+        c = e["sets"]["vda2"]["content"]
+        self.assertEqual((c["inodes"], c["free_inodes"]), (6765192, 6765192 - used_i))
+        # The same bytes in 1 KiB blocks, with the inode tables' growth.
+        self.assertEqual(c["blocks"] - c["free_blocks"], -(-(used_b + (6765192 - 999744) * 256) // 1024))
+        dd = E.apply(d, [e])
+        size = dumpx.disk(dd)["size_bytes"]
+        t = {"vda": size - (2 << 30)}
+        pct = fitcalc.pct_needed(dd, t)
+        self.assertEqual(fitcalc.fits_after(dd, t, pct), [])
+        # The case as generator 3 drew it: what load refused, rule 1 now refuses too.
+        stale = copy.deepcopy(e)
+        for k in ("free_inodes", "free_blocks"):
+            del stale["sets"]["vda2"]["content"][k]
+        self.assertEqual(fitcalc.fits_after(E.apply(d, [stale]), t, pct),
+                         [(1, "after --fit-largest, vda2 has 5878408 inodes for 5917104 in use and 5% to spare")])
+        # And a filesystem truly that full of inodes, by load's own rule.
+        full = copy.deepcopy(dd)
+        dumpx.part(dumpx.disk(full), 2)["content"]["free_inodes"] = 600000
+        self.assertEqual(fitcalc.fits_after(full, t, pct),
+                         [(1, "after --fit-largest, vda2 has 5878408 inodes for 6165192 in use and 5% to spare")])
+        # A resize keeps them too: one group fewer, its inode table's blocks freed.
+        c = E.build(d, "resize", {"disk": "vda", "partition": 2, "by_sectors": -6144})["sets"]["vda2"]["content"]
+        self.assertEqual(c["inodes"] - c["free_inodes"], used_i)
+        self.assertEqual((c["blocks"] - c["free_blocks"]) * 4096, used_b - 8128 * 256)
+        # XFS's free blocks follow its blocks.
+        x = E.build(ALPINE, "resize", {"disk": "vda", "partition": 3, "by_sectors": -(1 << 20)})["sets"]["vda3"]["content"]
+        a = dumpx.part(dumpx.disk(ALPINE), 3)["content"]
+        self.assertEqual(x["blocks"] - x["free_blocks"], a["blocks"] - a["free_blocks"])
+
     def test_long_symlink_fits_the_restored_fs(self):
         c = {"recipe": "alpine-small-2", "seed": 3}
 

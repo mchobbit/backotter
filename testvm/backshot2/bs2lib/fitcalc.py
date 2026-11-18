@@ -86,7 +86,7 @@ def fits_after(drifted, targets, pct, planted=None):
                 why = shrink_room(drifted, dev, c, -dd["amount"])
                 if why:
                     out.append((1, why))
-    return out
+    return out + ext_inodes_after(drifted, targets, pct, planted)
 
 
 SPARE_BYTES = 1 << 30
@@ -136,6 +136,34 @@ def fs_blocks(drifted, targets, pct):
         if amount < 0 or size == dev.get("size_bytes"):
             size += amount
         out[dev["name"]] = size // bs
+    return out
+
+
+def ext_inodes_after(drifted, targets, pct, planted=None):
+    """Rule 1's inodes after the fit, by load's own rule (holt/src/load/fit.rs
+    resize_fs): an ext filesystem the fit shrinks keeps its inodes per
+    group, as resize2fs would, so it loses the inodes of the groups it
+    loses, and load refuses where what's in use (and what PLANTED adds on
+    its mounts), with 5% to spare, wouldn't fit those left.  [(1, why)]."""
+    out = []
+    devs = dumpx.devices(drifted)
+    for name, nb in fs_blocks(drifted, targets, pct).items():
+        dev = devs.get(name) or {}
+        c = dev.get("content") or {}
+        if c.get("type") not in ("ext2", "ext3", "ext4") or not c.get("blocks_per_group") or nb >= c["blocks"]:
+            continue
+        used = dumpx.used_inodes(dev)
+        if used is None:
+            continue
+        for m in dumpx.mount_of(drifted, dev):
+            if planted and m.get("target") in planted:
+                used += planted[m["target"]][1]
+        try:
+            g = geometry.ext4_resize2fs(c, nb)
+        except geometry.Invalid:
+            continue
+        if g["inodes"] != c["inodes"] and used + used * SPARE_PCT // 100 > g["inodes"]:
+            out.append((1, f"after --fit-largest, {name} has {g['inodes']} inodes for {used} in use and {SPARE_PCT}% to spare"))
     return out
 
 

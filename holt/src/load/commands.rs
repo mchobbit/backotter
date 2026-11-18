@@ -465,6 +465,24 @@ pub fn sfdisk_script(d: &Disk, target: &str, same_size: bool) -> Result<String, 
 pub const ZERO_HEAD: u64 = 4 << 20;
 pub const ZERO_TAIL: u64 = 1 << 20;
 
+/// The boot stage's dracut, in the restored system's chroot: each installed
+/// kernel's initramfs remade (not --regenerate-all: it takes every
+/// directory in /lib/modules, and a removed kernel can leave one behind
+/// with only depmod's indexes), with every kernel module the restored image
+/// for that kernel had (lsinitrd -k, those still in the tree) as
+/// --add-drivers.  Host-only dracut (the default on Fedora, openSUSE and
+/// others) takes the modules loaded on the machine it runs on, and that is
+/// the rescue system: what its kernel has built in, the source's kernel may
+/// have as a module, which host-only then leaves out.  efivarfs is one
+/// (built into Ubuntu's kernel, a module in openSUSE Leap 16's): without it
+/// in the initramfs, systemd mounts no /sys/firmware/efi/efivars, and the
+/// restored machine boots with no UEFI variable readable (mokutil, the
+/// boot entries, shim's MOK lists; t2h-20261118T2037-e7d1).  The image
+/// still gets the drivers this machine needs.
+pub(crate) const DRACUT_EACH_KERNEL: &str = "n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; m=; \
+for p in $(lsinitrd -k \"${k##*/}\" 2>/dev/null | sed -n 's|^.* \\(\\(usr/\\)*lib/modules/[^ ]*\\.ko[.a-z0-9]*\\)$|\\1|p'); do [ -e \"/$p\" ] && b=${p##*/} && m=\"$m ${b%%.ko*}\"; done; \
+dracut --force --kver \"${k##*/}\" ${m:+--add-drivers \"$m\"} || exit; n=$((n + 1)); done; [ \"$n\" -gt 0 ]";
+
 /// `dd` writing COUNT blocks of BS zero bytes to DEV, SEEK blocks in.
 fn zero(dev: &str, bs: u64, seek: u64, count: u64) -> Cmd {
     let mut a = vec!["dd".to_string(), "if=/dev/zero".into(), format!("of={dev}"), format!("bs={bs}")];
@@ -3907,9 +3925,7 @@ impl Builder<'_> {
             // initramfs-linux-garuda.img), which dracut's own choice of path
             // would miss; their dracut-rebuild builds them, with fallbacks.
             Some("dracut") if ["eos-dracut", "garuda-dracut-support"].iter().any(|p| self.layout.str_at(&["boot", "packages", *p]).is_some()) => Cmd::new(&["chroot", t, "dracut-rebuild"]),
-            // Not --regenerate-all: it takes every directory in /lib/modules, and
-            // a removed kernel can leave one behind with only depmod's indexes.
-            Some("dracut") => Cmd::new(&["chroot", t, "sh", "-c", "n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; dracut --force --kver \"${k##*/}\" || exit; n=$((n + 1)); done; [ \"$n\" -gt 0 ]"]),
+            Some("dracut") => Cmd::new(&["chroot", t, "sh", "-c", DRACUT_EACH_KERNEL]),
             // Alpine: mkinitfs KVER writes /boot/initramfs-FLAVOR.
             Some("mkinitfs") => Cmd::new(&["chroot", t, "sh", "-c", "for k in /lib/modules/*; do mkinitfs \"${k##*/}\" || exit; done"]),
             // PikaOS: what booster's own update-initramfs runs for each
@@ -4965,6 +4981,55 @@ mod tests {
     use super::*;
     use crate::load::layout::{sample, Layout};
 
+    /// DRACUT_EACH_KERNEL run by sh over a fake tree ($R for the chroot's
+    /// /), with a fake lsinitrd (the restored images' listings, as
+    /// openSUSE's prints them) and a dracut that prints its arguments.
+    #[test]
+    fn dracut_keeps_the_restored_images_modules() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = crate::testutil::TempDir::new("dracut-mods");
+        let (r, k) = (t.path().join("root"), "6.12.0-160100.8-default");
+        for f in [format!("usr/lib/modules/{k}/kernel/fs/efivarfs/efivarfs.ko.zst"), format!("lib/modules/{k}/kernel/drivers/block/loop.ko"),
+                  "lib/modules/7.0.1-1-default/kernel/fs/btrfs/btrfs.ko.zst".into(), "lib/modules/6.11.0-gone/modules.dep".into()] {
+            let p = r.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, "").unwrap();
+        }
+        let bin = t.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let listing = format!(
+            "Image: /boot/initrd-{k}: 24M\n\
+             Arguments:  --force --kver '{k}'\n\
+             lrwxrwxrwx   1 root     root            7 Oct 19 06:31 lib -> usr/lib\n\
+             drwxr-xr-x   1 root     root            0 Nov 14 10:46 usr/lib/modules/{k}/kernel/fs/efivarfs\n\
+             -rw-r--r--   1 root     root        17655 Oct 19 06:31 usr/lib/modules/{k}/kernel/fs/efivarfs/efivarfs.ko.zst\n\
+             -rw-r--r--   1 root     root        25282 Oct 19 06:31 lib/modules/{k}/kernel/drivers/block/loop.ko\n\
+             -rw-r--r--   1 root     root        25282 Oct 19 06:31 usr/lib/modules/{k}/kernel/drivers/scsi/gone.ko.xz\n\
+             -rw-r--r--   1 root     root         9001 Oct 19 06:31 usr/lib/modules/{k}/modules.dep\n");
+        let fakes = [("lsinitrd", format!("#!/bin/sh\n[ \"$1\" = -k ] && [ \"$2\" = {k} ] || {{ echo \"no initramfs for $2\" >&2; exit 1; }}\ncat <<'EOF'\n{listing}EOF\n")),
+                     ("dracut", "#!/bin/sh\nprintf '[%s]' \"$@\"; echo\n".to_string())];
+        for (name, body) in fakes {
+            let f = bin.join(name);
+            std::fs::write(&f, body).unwrap();
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let script = DRACUT_EACH_KERNEL.replace("/lib/modules/*", "$R/lib/modules/*").replace("\"/$p\"", "\"$R/$p\"");
+        assert_eq!(script.matches("$R/").count(), 2, "{script}");
+        let run = |root: &std::path::Path| {
+            std::process::Command::new("sh").args(["-c", &script]).env("R", root).env("PATH", format!("{}:/usr/bin:/bin", bin.display())).output().unwrap()
+        };
+        let o = run(&r);
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        // The modules the image had and the tree still has, in its order;
+        // a kernel with no image of its own (7.0.1) is made as before, and
+        // a directory with no kernel/ (6.11.0-gone) is no kernel.
+        assert_eq!(String::from_utf8_lossy(&o.stdout), format!("[--force][--kver][{k}][--add-drivers][ efivarfs loop]\n[--force][--kver][7.0.1-1-default]\n"));
+        // No kernel at all: it fails, as before.
+        let empty = t.path().join("empty");
+        std::fs::create_dir_all(empty.join("lib/modules")).unwrap();
+        assert!(!run(&empty).status.success());
+    }
+
     fn built(extra: &[&str]) -> Built {
         built_from(&sample::bios_mbr(), extra)
     }
@@ -5900,7 +5965,7 @@ mod tests {
         let ours = r#"{"anduinos-grub": "2.0.5+repack1-2", "anduinos-shim-signed": "15.8-1", "anduinos-btrfs-snapshots-manager": "2.0.5-3", "dracut": "110-11ubuntu0.1"}"#;
         let mok = format!(r#""mok": {{"cert": "/var/lib/shim-signed/mok/MOK.der", "sha256": "{FP}"}}"#);
         let shim = format!(r#"{{"name": "grub", "firmware": "uefi", "via_shim": true, "package": "anduinos-grub", {mok}}}"#);
-        let dracut = "chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; dracut --force --kver \"${k##*/}\" || exit; n=$((n + 1)); done; [ \"$n\" -gt 0 ]'\n";
+        let dracut = &format!("chroot /mnt/bko-target sh -c {}\n", shell_quote(DRACUT_EACH_KERNEL));
         let snap_note = |n: &[String]| n.iter().any(|n| n.starts_with("AnduinOS: the Disk Snapshots Manager's records name each snapshot by its Btrfs subvolume UUID"));
         let mok_note = |n: &[String]| n.iter().find(|n| n.starts_with("AnduinOS: shim, MokManager and AnduinOS's GRUB")).cloned();
 

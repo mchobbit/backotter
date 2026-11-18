@@ -3244,7 +3244,7 @@ fn anduinos_guest() {
         assert!(r.contains(&format!("btrfs property set -ts {top}/{path} ro true\n")), "{path}: {r}");
     }
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    let dracut = bt.find("chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; dracut --force --kver \"${k##*/}\" || exit; n=$((n + 1)); done; [ \"$n\" -gt 0 ]'\n").expect(&bt);
+    let dracut = bt.find(&format!("chroot /mnt/bko-target sh -c {}\n", crate::load::shell_quote(crate::load::commands::DRACUT_EACH_KERNEL))).expect(&bt);
     let off = bt.find("[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
     let cfg = bt.find("chroot /mnt/bko-target env LANG=C update-grub\n").expect(&bt);
     let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 2 --label AnduinOS --loader '\\EFI\\AnduinOS\\shimx64.efi'\n").expect(&bt);

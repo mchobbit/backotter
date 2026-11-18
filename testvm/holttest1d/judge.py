@@ -952,6 +952,51 @@ def snapshot_holes_why(kind, p, before, after):
             "allocation, which it does")
 
 
+# Snapper's slot of the booted root, the root itself again (openSUSE's /:
+# its default subvolume, .snapshots/N/snapshot), and a path in it.
+ROOT_ALIAS = re.compile(r"^(\.snapshots/\d+/snapshot)/(.+)$")
+ALIAS_SAME = ("type", "size", "sha256", "mtime", "mode", "uid", "gid", "target")
+
+
+def root_alias_slots(before, after):
+    """The snapper slots that are the booted root met again (ROOT_ALIAS):
+    each one's every file and symlink, in both records, the same file as
+    the live path (ALIAS_SAME; not atime, which the walk's own reads can
+    move between its two visits of one inode).  Its directories may differ
+    (the mount points hidden under it: /boot/efi, /var), so aren't asked.
+    A read-only snapshot of the root is another subvolume: the files the
+    boot stage wrote are new in the live tree only, so its copies aren't
+    the live ones in the restored record."""
+    seen, bad = set(), set()
+    for rec in (before, after):
+        for p, e in rec.items():
+            m = ROOT_ALIAS.match(p)
+            if not m or e.get("type") == "dir" or m.group(1) in bad:
+                continue
+            live = rec.get(m.group(2))
+            if live and all(e.get(f) == live.get(f) for f in ALIAS_SAME):
+                seen.add(m.group(1))
+            else:
+                bad.add(m.group(1))
+    return seen - bad
+
+
+def root_alias_live(kind, p, before, after, diff, slots):
+    """judge_fs's live counterpart of P when P is a path in one of SLOTS
+    (root_alias_slots), the booted root seen again through its snapper
+    slot, or None: the live path differs the same way (KIND), and P and it
+    are the same in each record (a directory too)."""
+    m = ROOT_ALIAS.match(p)
+    if not m or m.group(1) not in slots or m.group(2) not in diff.get(kind, ()):
+        return None
+    live = m.group(2)
+    for rec in (before, after):
+        a, b = rec.get(p), rec.get(live)
+        if not a or not b or any(a.get(f) != b.get(f) for f in ALIAS_SAME):
+            return None
+    return live
+
+
 def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, reforms=()):
     import importlib.util
     spec = importlib.util.spec_from_file_location("fsmeta", fsmeta_py)
@@ -1018,11 +1063,18 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     if snapcore:
         for p in snapcore_missing(before):
             real.setdefault("not in the source's record (Ubuntu Core's seed, boot and snaps)", []).append(p)
+    def is_kept(q):
+        return (refind and re.search(REFIND_KEPT, q)) or (anduin and re.search(ANDUINOS_KEPT, q)) or (abroot and re.search(ABROOT_KEPT, q)) \
+            or (solus and re.search(SOLUS_KEPT, q)) or (opensuse and re.search(OPENSUSE_KEPT, q)) or (zbm and re.search(ZBM_KEPT, q)) \
+            or (elilo and re.search(ELILO_KEPT, q) and q not in copies)
+
+    def stage_why(kind, q):
+        return next((w for r, kinds, w in own_stage + (TU_STAGE if tu else SNAPCORE_STAGE if snapcore else BOOT_STAGE)
+                     if kind in kinds and re.search(r, q)), None)
+    alias_slots = set() if tu else root_alias_slots(before, after)
     for kind, paths in diff.items():
         for p in paths:
-            kept = (refind and re.search(REFIND_KEPT, p)) or (anduin and re.search(ANDUINOS_KEPT, p)) or (abroot and re.search(ABROOT_KEPT, p)) \
-                or (solus and re.search(SOLUS_KEPT, p)) or (opensuse and re.search(OPENSUSE_KEPT, p)) or (zbm and re.search(ZBM_KEPT, p)) \
-                or (elilo and re.search(ELILO_KEPT, p) and p not in copies)
+            kept = is_kept(p)
             if lilo and p == LILO_COPY:
                 continue   # (counted above)
             why = None if kept else \
@@ -1032,6 +1084,18 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
                 why = "load copies the remade /boot/initrd.gz over the ESP's (as eliloconfig does)" if kind in ("content", "mtime", "atime") else None
             elif not why and not kept:
                 why = next((w for r, kinds, w in (TU_STAGE if tu else SNAPCORE_STAGE if snapcore else BOOT_STAGE) if kind in kinds and re.search(r, p)), None)
+            if not why and not kept and not tu:
+                # The booted root seen again through its snapper slot
+                # (openSUSE's / is the subvolume .snapshots/N/snapshot, and
+                # the walk of / meets it once more under /.snapshots, where
+                # its own /boot is no mount point on Leap 16): the same
+                # files, so what the boot stage wrote shows there too, with
+                # the live path's difference.  Excused as the live path is,
+                # only when it is that alias in both records.
+                live = root_alias_live(kind, p, before, after, diff, alias_slots)
+                lw = live and not is_kept(live) and stage_why(kind, live)
+                if lw:
+                    why = f"the booted root again at {p[:-len(live) - 1]}, its snapper slot (the same subvolume as /): {lw}"
             if not why and kind == "missing" and before.get(p, {}).get("type") == "socket":
                 why = "a socket is made by whatever listens on it; no archiver restores one"
             if not why and new_uuids and any(re.search(r, p) for r in NEW_UUIDS_FILES) and kind in _WRITTEN:

@@ -122,7 +122,7 @@ mount --rbind --make-rslave /dev /mnt/bko-target/dev
 mount --rbind --make-rslave /proc /mnt/bko-target/proc
 mount --rbind --make-rslave /sys /mnt/bko-target/sys
 mount --rbind --make-rslave /run /mnt/bko-target/run
-chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d "$k/kernel" ] || continue; dracut --force --kver "${k##*/}" || exit; n=$((n + 1)); done; [ "$n" -gt 0 ]'
+chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d "$k/kernel" ] || continue; m=; for p in $(lsinitrd -k "${k##*/}" 2>/dev/null | sed -n '\''s|^.* \(\(usr/\)*lib/modules/[^ ]*\.ko[.a-z0-9]*\)$|\1|p'\''); do [ -e "/$p" ] && b=${p##*/} && m="$m ${b%%.ko*}"; done; dracut --force --kver "${k##*/}" ${m:+--add-drivers "$m"} || exit; n=$((n + 1)); done; [ "$n" -gt 0 ]'
 # os-prober off: it would list the rescue system's disks
 sh -c '[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober'
 chroot /mnt/bko-target env LANG=C grub2-mkconfig -o /boot/grub2/grub.cfg

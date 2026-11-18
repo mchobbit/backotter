@@ -281,6 +281,31 @@ may change; `judge-test.py`'s `FsOpensuseShim`.  Test2: `leap16` in
 (tumbleweed's entry: zypper, uefi-sb, memory 4096), `estimates.tsv`, the
 counts and the p2 goldens.
 
+**L5 runs' three FAILs (2026-11-18):** `l5-1` (Chopin, 2026-11-14) and
+HoltTest2's `t2h-20261118T2037-e7d1` (Cage) failed the same three verify
+checks, all from two causes.  (1) mokutil on the restored boot ("EFI
+variables are not supported") and (2) the dumps' 96 fields (every
+`boot.efi.*`, `efivars_readable`, `secure_boot`, `via_shim`): the restored
+system boots under Secure Boot through shim, but with no efivarfs mounted.
+Leap 16's kernel has efivarfs as a module (`CONFIG_EFIVAR_FS=m`), systemd
+mounts `/sys/firmware/efi/efivars` in the initramfs only (not again after
+switch-root), and the boot stage's host-only dracut, run in the rescue
+system's chroot, takes the modules loaded there: Ubuntu's kernel has
+efivarfs built in, so it was left out (as were loop and the iSCSI drivers
+the source's image had).  Fix: load's dracut (`DRACUT_EACH_KERNEL`) passes
+every module the restored image for that kernel had (`lsinitrd -k`, those
+still in the tree) as `--add-drivers`.  (3) fsmeta's content and mtime
+diffs of `.snapshots/7/snapshot/boot/{grub2/grub.cfg,initrd-K}`: Leap's /
+is snapper's slot 7 and /boot is in it, so the walk meets the files the
+boot stage wrote a second time there.  judge.py fs excuses such a path as
+its live one is when the slot is the root's alias (`root_alias_slots`:
+every file and symlink in it the live path's, in both records; a
+read-only snapshot of the root never is), `FsOpensuseShim`'s two new tests.
+Left: dracut's resume module is still dropped (the rescue system has no
+swap on), so the restored image has no `resume=`; and the btrfs-embedded
+grubenv (`env_block=512+1`, in the reserved area mkfs.btrfs zeroes) reads
+"invalid environment block" at the restored disk's GRUB.
+
 ## Tests
 
 **SticTest1** (`testvm/stictest1/leap16`): from `tumbleweed`'s (Btrfs

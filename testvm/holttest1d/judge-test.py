@@ -1520,6 +1520,56 @@ class FsOpensuseShim(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertIn("grub-install writes the ESPs' loaders", out)
 
+    SLOT = ".snapshots/7/snapshot"
+    WRITTEN = {f"boot/initrd-{K}": {"sha256": "cd", "mtime": 2}, "boot/grub2/grub.cfg": {"sha256": "cd", "mtime": 2},
+               "boot/grub2": {"mtime": 2}}
+
+    def with_slot(self, snapshot=None):
+        """SRC with the booted root met again at SLOT (its own walk of
+        /.snapshots: the default subvolume is snapper's slot 7), each path
+        there the live one's record; SNAPSHOT: a read-only snapshot's
+        copies too, of an older root (its grubenv not the live one's)."""
+        src = copy.deepcopy(self.SRC)
+        for slot in (self.SLOT,) + ((snapshot,) if snapshot else ()):
+            src.update({f"{slot}/{p}": copy.deepcopy(m) for p, m in self.SRC.items() if p.startswith("boot/") and not p.startswith("boot/efi/")})
+        if snapshot:
+            src[f"{snapshot}/boot/grub2/grubenv"]["sha256"] = "00"
+        return src
+
+    def test_the_booted_root_again_in_its_snapper_slot(self):
+        """Leap 16's / is .snapshots/7/snapshot, and the walk meets its
+        /boot again there (no mount point: /boot is in the root
+        subvolume): what the boot stage wrote shows under the slot too,
+        excused as its live path is (t2h-20261118T2037-e7d1, cage)."""
+        src = self.with_slot()
+        rc, out = self.changed(src, {**self.WRITTEN, **{f"{self.SLOT}/{p}": kw for p, kw in self.WRITTEN.items()}})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn(f"boot stage (the booted root again at {self.SLOT}, its snapper slot (the same subvolume as /): the boot stage "
+                      f"rebuilds every initramfs (Alpine's have no .img; openSUSE's are initrd-VERSION)): 2: {self.SLOT}/boot/initrd-{self.K}", out)
+        self.assertIn(f"its snapper slot (the same subvolume as /): grub-install and update-grub rewrite /boot/grub (Fedora's /boot/grub2)): 3: "
+                      f"{self.SLOT}/boot/grub2", out)
+
+    def test_a_snapshot_of_the_root_is_held_to_the_sources(self):
+        """A read-only snapshot is another subvolume: the boot stage writes
+        nothing there, so a changed initrd or grub.cfg in one is the
+        restore's fault, even one with the live tree's new bytes, and so is
+        a slot path that isn't the live one's file in the restored record
+        (or one that changed where the live path didn't)."""
+        snap = ".snapshots/6/snapshot"
+        src = self.with_slot(snap)
+        changes = {**self.WRITTEN, **{f"{self.SLOT}/{p}": kw for p, kw in self.WRITTEN.items()}}
+        rc, out = self.changed(src, {**changes, f"{snap}/boot/initrd-{self.K}": {"sha256": "cd", "mtime": 2}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF content: 1: {snap}/boot/initrd-{self.K}", out)
+        # (Then the slot is no alias of the root, and nothing in it is excused.)
+        rc, out = self.changed(src, {**changes, f"{self.SLOT}/boot/grub2/grub.cfg": {"sha256": "ef", "mtime": 2}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF content: 2: {self.SLOT}/boot/grub2/grub.cfg, {self.SLOT}/boot/initrd-{self.K}", out)
+        rc, out = self.changed(src, {f"{self.SLOT}/boot/grub2/grub.cfg": {"sha256": "cd", "mtime": 2}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF content: 1: {self.SLOT}/boot/grub2/grub.cfg", out)
+
     def test_the_kernel_still_counts(self):
         rc, out = self.changed(self.SRC, {f"boot/vmlinuz-{self.K}": {"sha256": "cd"}, f"boot/initrd-{self.K}": {"mode": 0o644}})
         self.assertEqual(rc, 1, out)

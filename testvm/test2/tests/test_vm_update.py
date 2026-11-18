@@ -943,10 +943,12 @@ esac"""
         self.assertNotIn("apt", code)
         self.assertNotIn("--unhold", code)
 
-    def run_snapcore(self, changes, up_to_date=False, scheduled_at=None):
+    def run_snapcore(self, changes, up_to_date=False, scheduled_at=None, fails=None):
         """The Linux.snapcore section under a stub snap: CHANGES, the line `snap changes` gives
         at each call (none: no change), the last repeated; SCHEDULED_AT, the call from which a
-        shutdown is scheduled.  (exit status, output, the snap calls)"""
+        shutdown is scheduled; FAILS, {"list" or "no-wait": (K, TEXT)}: that `snap refresh
+        --ARG` prints TEXT and exits 1 its first K times.  (exit status, output, the snap
+        calls)"""
         d = Path(tempfile.mkdtemp(prefix="t2-snapcore-"))
         self.addCleanup(shutil.rmtree, d, True)
         (d / "bin").mkdir()
@@ -956,6 +958,13 @@ esac"""
         (d / "list").write_text("All snaps up to date.\n" if up_to_date else
                                 "Name       Version   Rev   Size  Publisher    Notes\npc-kernel  6.8.0-150 4001  333MB canonical**  kernel\n")
         sched = d / "scheduled"
+        fails = dict(fails or {})
+        for arg in ("list", "no-wait"):
+            k, text = fails.get(arg, (0, ""))
+            (d / f"{arg}.k").write_text(f"{k}\n")
+            (d / f"{arg}.err").write_text(text)
+        fail = ('a=${2#--}; i=$(cat $d/$a.i 2>/dev/null || echo 0); echo $((i + 1)) >$d/$a.i\n'
+                '    if [ $i -lt $(cat $d/$a.k) ]; then cat $d/$a.err; exit 1; fi\n    ')
         stubs = {
             "uname": "echo Linux", "sleep": "true",
             "snap": f"""d={d}
@@ -967,8 +976,8 @@ case "$1 $2" in
     echo "ID   Status  Spawn               Ready  Summary"
     line=$(sed -n "${{n}}p" $d/changes); [ -n "$line" ] || line=$(tail -n 1 $d/changes)
     [ "$line" = none ] || echo "$line" ;;
-"refresh --list") cat $d/list ;;
-"refresh --no-wait") echo 7 ;;
+"refresh --list") {fail}cat $d/list ;;
+"refresh --no-wait") {fail}echo 7 ;;
 "refresh --hold") echo held ;;
 "tasks "*) echo "Status  Spawn  Ready  Summary" ;;
 esac""",
@@ -1018,6 +1027,34 @@ esac""",
         rc, out, calls = self.run_snapcore(["5  Wait  today  -  Refresh"])
         self.assertEqual((rc, VU.SNAP_PENDING.search(out)[1]), (0, "5"), out)
         self.assertNotIn("refresh --no-wait", calls)
+
+    def test_snapcore_store_failing_in_transit_is_tried_again(self):
+        """Ubuntu Core's refresh --list and --no-wait, like Linux.apt's snap refresh: a store
+        request that timed out or a connection reset is tried again, 10 more times at most."""
+        done = ["none", "7  Done  today  today  Refresh"]
+        for err in (self.SNAP_TIMEOUT, self.SNAP_RESET):
+            for arg in ("list", "no-wait"):
+                with self.subTest(arg=arg, err=err[60:100]):
+                    rc, out, calls = self.run_snapcore(done, fails={arg: (2, err)})
+                    self.assertEqual(rc, 0, out)
+                    self.assertEqual(calls.count(f"refresh --{arg}"), 3, calls)
+                    self.assertEqual(out.count(f"in-guest: the snap store didn't answer: snap refresh --{arg} again in 30 s"), 2, out)
+                    self.assertIn("in-guest: snapcore: refresh change 7\n", out)
+                    self.assertIn("in-guest: updated", out)
+                    rc, out, calls = self.run_snapcore(done, fails={arg: (99, err)})
+                    self.assertEqual(rc, 1, out)
+                    self.assertEqual(calls.count(f"refresh --{arg}"), 11, calls)
+                    self.assertTrue(out.endswith(err + f"in-guest: snap refresh --{arg} failed" + (" (1)" if arg == "list" else "") + "\n"), out)
+                    self.assertNotIn("fell-through", out)
+
+    def test_snapcore_other_store_failures_stop_at_once(self):
+        err = 'error: cannot refresh: snap "pc-kernel" has "install-snap" change in progress\n'
+        for arg in ("list", "no-wait"):
+            with self.subTest(arg=arg):
+                rc, out, calls = self.run_snapcore(["none"], fails={arg: (99, err)})
+                self.assertEqual(rc, 1, out)
+                self.assertEqual(calls.count(f"refresh --{arg}"), 1, calls)
+                self.assertNotIn("didn't answer", out)
 
 
 # --- pkgset.sh under stub commands --------------------------------------------------------------

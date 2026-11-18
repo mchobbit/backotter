@@ -7,6 +7,12 @@
  },
  {
   "guest": "*",
+  "pattern": "\\b(Get|Post|Head) \"https://([^\"/]*\\.)?(snapcraft\\.io|snapcraftcontent\\.com)/[^\"]*\": ",
+  "why": "the Snap Store or its CDN that didn't answer snap: not the guest's fault, and no check of the guest ran into it",
+  "ref": "Go's url.Error (METHOD \"URL\": why: a timeout, a connection reset) as snap prints it; in-guest.sh retries snap refresh (Linux.apt) and Ubuntu Core's snap refresh --list and --no-wait 10 times 30 s apart: this tail is the last try's"
+ },
+ {
+  "guest": "*",
   "pattern": "\\bTemporary failure resolving\\b",
   "why": "the resolver had no answer: the network, not the guest",
   "ref": "apt's text for getaddrinfo's EAI_AGAIN"

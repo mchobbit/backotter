@@ -1803,6 +1803,26 @@ class Flakes(unittest.TestCase):
     def test_tail_matches(self):
         self.assertIsNotNone(J.match_flake("debian12", ["E: Failed to fetch http://x  Connection failed"], self.flakes()))
 
+    def test_snap_store_in_transit(self):
+        """snap's Go url.Error for the store or its CDN (ubuntu26-zfs, ubuntu26-raid, GuestTest2
+        t2v-20261118T1426-76be attempt 1): a flake once in-guest.sh's 10 tries ran out."""
+        for tail in (['- Monitoring snaps "core24", "snapd" to determine whether extra refresh steps are required'
+                      ' (Post "https://api.snapcraft.io/v2/snaps/refresh": net/http: request canceled while waiting'
+                      ' for connection (Client.Timeout exceeded while awaiting headers))', "in-guest: snap refresh failed"],
+                     ['- Download snap "hwctl" (131) from channel "latest/stable/ubuntu-26.04" (Get "https://api.snapcraft.io'
+                      '/api/v1/snaps/download/9gTfXKJi0rgBnay9fPx90keffqR2l9fX_131.snap": read tcp 10.0.2.15:43138->'
+                      '185.125.190.109:443: read: connection reset by peer)', "in-guest: snap refresh failed"],
+                     ['error: cannot list updates: Get "https://canonical-lgw01.cdn.snapcraftcontent.com/x.snap": EOF',
+                      "in-guest: snap refresh --list failed (1)"]):
+            with self.subTest(tail=tail[0][:50]):
+                f = J.match_flake("ubuntu26-zfs", tail, self.flakes())
+                self.assertIsNotNone(f)
+                self.assertIn("snapcraft", f["pattern"])
+        # the store's own refusals, and another host's url.Error, aren't
+        for tail in ('error: cannot refresh "hwctl": snap "hwctl" has running apps (hwctl)',
+                     'error: cannot install "x": Get "https://example.com/x": EOF'):
+            self.assertIsNone(J.match_flake("ubuntu26-zfs", [tail], self.flakes()), tail)
+
     def test_only_the_tail(self):
         log = ["E: Failed to fetch http://x"] + ["ok"] * 100 + ["in-guest: dist-upgrade failed"]
         self.assertIsNone(J.match_flake("debian12", log[-8:], self.flakes()))

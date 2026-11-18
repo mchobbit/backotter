@@ -316,14 +316,29 @@ if [ "$(uname)" = Linux ] && [ -f /var/lib/snapd/modeenv ] && grep -qs '^ID=ubun
         [ $(($(date +%s) - t0)) -lt 1800 ] || { say "snapd still has changes in progress after 30 min: $b"; exit 1; }
         sleep 10
     done
-    out=$(snap refresh --list 2>&1); rc=$?
+    # The store or its CDN failing in transit (Go's url.Error, METHOD "URL":
+    # why; the store's own refusals aren't): run again, up to 10 times 30 s
+    # apart, as Linux.apt's snap refresh does.  OUT, the last try's output;
+    # each earlier try's is printed.
+    stored() {
+        n=0
+        while :; do
+            out=$("$@" 2>&1); r=$?
+            [ $r -ne 0 ] && [ $n -lt 10 ] && printf '%s\n' "$out" | grep -qE '(Get|Post|Head) "https://[^"]*": ' || break
+            printf '%s\n' "$out"
+            n=$((n + 1)); say "the snap store didn't answer: $* again in 30 s ($n of 10)"; sleep 30
+        done
+        return $r
+    }
+    stored snap refresh --list; rc=$?
     printf '%s\n' "$out"
     if printf '%s\n' "$out" | grep -q 'All snaps up to date'; then
         say "snapd: all snaps up to date, nothing changed"
         exit 0
     fi
     [ $rc -eq 0 ] || { say "snap refresh --list failed ($rc)"; exit 1; }
-    id=$(snap refresh --no-wait 2>&1) || { printf '%s\n' "$id"; say "snap refresh --no-wait failed"; exit 1; }
+    stored snap refresh --no-wait || { printf '%s\n' "$out"; say "snap refresh --no-wait failed"; exit 1; }
+    id=$out
     case $id in
     '' | *[!0-9]*) printf '%s\n' "$id"; say "snap refresh --no-wait printed no change ID"; exit 1 ;;
     esac

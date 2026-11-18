@@ -722,6 +722,31 @@ EOF
             ( while sleep 30 && kill -0 $$ 2>/dev/null; do fstrim -a >/dev/null 2>&1; done ) </dev/null >/dev/null 2>&1 &
             trimmer=$!
         fi
+        # elementary OS ships its apps as system flatpaks, each behind a stub
+        # deb (org.gnome.epiphany, io.elementary.camera, ...) whose prerm
+        # removes the flatpak and whose postinst installs it again, "|| true".
+        # Upgrading the stubs moved every app to a new runtime
+        # (io.elementary.Platform 8.2 -> 9.1, 1.2 GB) while the old one stayed
+        # (flatpak remove keeps runtimes), all in the same apt run as the HWE
+        # kernel and the split linux-firmware (865 MB of archives): elementary8's
+        # 11.4 GiB root, 3.2 GiB free, filled, and Epiphany's postinst failed
+        # ("Not enough disk space"), left uninstalled (GuestTest2
+        # t2v-20261118T0027-d7c8).  So the flatpaks are updated first and the
+        # runtimes nothing uses any more removed (1.1 GB back, measured on an
+        # overlay of elementary8 on 2026-11-18): the stubs' postinsts then find
+        # their app's runtime there.  GL.default//24.08 stays: the epiphany
+        # stub installs it by name, which pins it.
+        if grep -qs '^ID=elementary$' /etc/os-release && has flatpak; then
+            fl0=$(flatpak list --system --columns=ref,active 2>/dev/null)
+            n=0
+            until flatpak update --system --noninteractive -y; do
+                n=$((n + 1)); [ $n -lt 10 ] || { say "flatpak update failed"; exit 1; }
+                say "flatpak update failed: again in 30 s ($n of 10)"; sleep 30
+            done
+            flatpak uninstall --system --unused --noninteractive -y || { say "flatpak uninstall --unused failed"; exit 1; }
+            [ "$(flatpak list --system --columns=ref,active 2>/dev/null)" = "$fl0" ] ||
+                step "flatpaks updated, unused runtimes removed"
+        fi
         apt-mark showhold >/run/bko-held || exit 1
         set -- $(apt list --upgradable 2>/dev/null | sed -n 's|/.*||p' | grep -vxF -f /run/bko-held)
         order=$(deps_first "$@"); [ -z "$order" ] || set -- $order

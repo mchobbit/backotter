@@ -132,7 +132,7 @@
                         "testvm/holttest1d/ht1-debug.sh", "testvm/holttest1d/ht1-lib-test.sh", "testvm/holttest1d/ht1-bsd-test.sh",
                         "testvm/holttest1d/judge-test.py",
                         "testvm/holttest1d/ht1-farm.sh", "testvm/audit/guest-tools.sh", "testvm/audit/probe.sh",
-                        "testvm/compare/cmp-run-test.sh", "testvm/compare/rustic-exact-round.sh",
+                        "testvm/compare/cmp-run-test.sh", "testvm/compare/rt-decoder-test.sh", "testvm/compare/rustic-exact-round.sh",
                         "testvm/make-guix.sh", "testvm/make-qubes.sh", "testvm/make-truenas.sh", "testvm/make-ubuntu-core.sh",
                         "testvm/vm-update", "testvm/vm-store", "testvm/vm-chroot", "testvm/compare/wear-setup.sh",
                         "testvm/compare/wear-smart.sh", "testvm/compare/compare-freebsd.sh",

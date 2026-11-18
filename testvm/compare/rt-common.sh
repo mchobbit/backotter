@@ -135,9 +135,16 @@
 # view is checked against restic's "cat blob" of the snapshot's root tree
 # before it is used, and any tree it fails to give is read with restic.
 # No rustic, or any step failing: restic for every tree, as before.  The
-# trees of one level are read in RT_JOBS lanes at once (default 4) and
-# decoded by one awk, in the order the old queue read them (breadth first,
-# each tree's subtrees in node order), so the listing is the same.
+# trees of one level are read in RT_JOBS lanes at once (default the CPUs
+# online, 4 to 12: rt_cpus), each lane's trees decoded by an awk of its own,
+# and the lanes' listings put together in the order the old queue read the
+# trees (breadth first, each tree's subtrees in node order), so the listing
+# is the same.  Reading a tree is quick (~20 ms with the view); decoding a
+# big one was what took the time, one awk at a time and in the square of
+# its size, before its window (the decoder's "Tokens are cut off..."):
+# rt_nodes of a repository of chopin's /usr/share (200k nodes) took 1189 s,
+# now 96 s (104 s in 4 lanes), the listing byte for byte the same
+# (2026-11-18).
 
 rt_awk=awk
 rt_tmp=${RT_TMP:-/tmp}
@@ -172,16 +179,41 @@ rt_decoder=$rt_tmp/bko-rt-nodes.awk
 cat >$rt_decoder <<'AWK'
 # Tokens are cut off the front of s: matching at the start of a string is
 # quick in every awk, indexing into the middle of a long one isn't (nawk).
-function peekc() {
-    if (index(" \t\r\n", substr(s, 1, 1))) sub(/^[ \t\r\n]+/, "", s)
-    return substr(s, 1, 1)
+# And s is a window of the tree, not the whole of it: cutting a token off
+# copies what is left, so a tree's decoding took time in the square of its
+# size (a directory of thousands of entries: minutes; most of rt_walk's
+# time on a real root, qubes43's dom0, more than reading the trees).  The
+# tree is cut into chunks of at most 1024 bytes once (load, in halves: as
+# quick in an awk whose substr counts UTF-8 characters from the start), and
+# the window takes the next chunk when it runs low (more); a token is
+# matched again with more of the tree while it reaches the window's end (a
+# string's closing quote not in it yet), so the tokens, and every line
+# printed, are the same.
+function load(t) { rt_nc = 0; rt_nx = 1; s = ""; cut(t) }
+function cut(t,   h) {
+    h = length(t)
+    if (h <= 1024) { rt_ch[++rt_nc] = t; return }
+    h = int(h / 2); cut(substr(t, 1, h)); cut(substr(t, h + 1))
 }
-function tokn(   c) {
+function more(n) {   # N more chunks onto the window: 0 when there were none
+    if (rt_nx > rt_nc) return 0
+    for (; n > 0 && rt_nx <= rt_nc; n--) { s = s rt_ch[rt_nx]; delete rt_ch[rt_nx]; rt_nx++ }
+    return 1
+}
+function peekc() {
+    for (;;) {
+        if (length(s) < 256) more(1)
+        if (index(" \t\r\n", substr(s, 1, 1))) sub(/^[ \t\r\n]+/, "", s)
+        if (s != "" || rt_nx > rt_nc) return substr(s, 1, 1)
+    }
+}
+function tokn(   c, n) {
     c = peekc()
     if (c == "") { tok = ""; return }
-    if (c == "\"") match(s, /^"([^"\\]|\\.)*"/)
+    n = 1
+    if (c == "\"") { while (!match(s, /^"([^"\\]|\\.)*"/) && more(n)) n *= 2 }
     else if (index("{}[],:", c)) RLENGTH = 1
-    else match(s, /^[^],:{}[ \t\r\n]+/)
+    else { while (match(s, /^[^],:{}[ \t\r\n]+/) && RLENGTH == length(s) && more(n)) n *= 2 }
     tok = substr(s, 1, RLENGTH); s = substr(s, RLENGTH + 1)
 }
 function civil(y, m, d,   era, yoe, doy) {   # days since 1970-01-01
@@ -261,7 +293,7 @@ function emit(name, subtree, rest) {
 function tree(   c, j, rest) {
     i = index(s, "\"nodes\"")
     if (!i) return 0
-    s = substr(s, i + 7); tokn()                  # the ':'
+    load(substr(s, i + 7)); tokn()                # the ':'
     if (peekc() != "[") return 1                   # "nodes": null
     tokn()
     for (;;) {
@@ -408,30 +440,37 @@ rt_walk() {  # RESTIC REPO PATH [PRUNE], rt_id the snapshot's tree: rt_nodes' li
     done
     printf '%s\n' "$rt_self" | $rt_awk -F '\t' 'BEGIN { OFS = "\t" } { $1 = "."; $2 = ""; sub(/\t\t/, "\t"); print }'
     # Breadth first, a level at a time: the level's trees (ID<TAB>PREFIX)
-    # in .level, read in RT_JOBS lanes of consecutive lines, each into its
-    # own .out file, then decoded in order by one awk, which writes the
-    # next level's trees to .queue.
-    rt_w_jobs=${RT_JOBS:-4}
-    rm -f $rt_tmp/bko-rt-nodes.out.*
+    # in .level, read in RT_JOBS lanes of consecutive lines, each lane's
+    # trees decoded by an awk of its own into its own .out file and its own
+    # .queue.N of the next level's trees; then the lanes' files, in order,
+    # are the listing and the next level's .queue: what one awk over all the
+    # lanes' trees in order printed (each tree is decoded by itself).
+    rt_w_jobs=${RT_JOBS:-$(rt_cpus)}
+    rm -f $rt_tmp/bko-rt-nodes.out.* $rt_tmp/bko-rt-nodes.queue.* $rt_tmp/bko-rt-nodes.bad.*
     printf '%s\t\n' "$rt_id" >$rt_tmp/bko-rt-nodes.queue
     while [ -s $rt_tmp/bko-rt-nodes.queue ]; do
         mv $rt_tmp/bko-rt-nodes.queue $rt_tmp/bko-rt-nodes.level
         rm -f $rt_tmp/bko-rt-nodes.unread
         rt_w_n=$(wc -l <$rt_tmp/bko-rt-nodes.level | tr -d ' ')
-        rt_w_c=$(( (rt_w_n + rt_w_jobs - 1) / rt_w_jobs )) rt_w_j=0 rt_w_outs="" rt_w_pids=""
+        rt_w_c=$(( (rt_w_n + rt_w_jobs - 1) / rt_w_jobs )) rt_w_j=0 rt_w_pids=""
         while [ $((rt_w_j * rt_w_c)) -lt "$rt_w_n" ]; do
             sed -n "$((rt_w_j * rt_w_c + 1)),$(((rt_w_j + 1) * rt_w_c))p" $rt_tmp/bko-rt-nodes.level |
-                rt_lane $1 $2 >$rt_tmp/bko-rt-nodes.out.$rt_w_j &
-            rt_w_pids="$rt_w_pids $!" rt_w_outs="$rt_w_outs $rt_tmp/bko-rt-nodes.out.$rt_w_j" rt_w_j=$((rt_w_j + 1))
+                rt_lane $1 $2 | $rt_awk -v keepcontent="${RT_CONTENT:-}" -v walk=1 -v prune="${4:-}" \
+                    -v queue=$rt_tmp/bko-rt-nodes.queue.$rt_w_j -v badfile=$rt_tmp/bko-rt-nodes.bad.$rt_w_j \
+                    -f $rt_decoder >$rt_tmp/bko-rt-nodes.out.$rt_w_j &
+            rt_w_pids="$rt_w_pids $!" rt_w_j=$((rt_w_j + 1))
         done
-        # shellcheck disable=SC2086
-        wait $rt_w_pids
-        # shellcheck disable=SC2086
-        cat $rt_w_outs | $rt_awk -v keepcontent="${RT_CONTENT:-}" -v walk=1 -v prune="${4:-}" \
-            -v queue=$rt_tmp/bko-rt-nodes.queue -v badfile=$rt_tmp/bko-rt-nodes.unread -f $rt_decoder
-        rt_w_s=$?
-        # shellcheck disable=SC2086
-        rm -f $rt_w_outs
+        rt_w_s=0
+        for rt_w_p in $rt_w_pids; do wait $rt_w_p || rt_w_s=1; done
+        rt_w_k=0
+        : >$rt_tmp/bko-rt-nodes.queue
+        while [ $rt_w_k -lt $rt_w_j ]; do
+            cat $rt_tmp/bko-rt-nodes.out.$rt_w_k
+            [ ! -f $rt_tmp/bko-rt-nodes.queue.$rt_w_k ] || cat $rt_tmp/bko-rt-nodes.queue.$rt_w_k >>$rt_tmp/bko-rt-nodes.queue
+            [ ! -f $rt_tmp/bko-rt-nodes.bad.$rt_w_k ] || cat $rt_tmp/bko-rt-nodes.bad.$rt_w_k >>$rt_tmp/bko-rt-nodes.unread
+            rm -f $rt_tmp/bko-rt-nodes.out.$rt_w_k $rt_tmp/bko-rt-nodes.queue.$rt_w_k $rt_tmp/bko-rt-nodes.bad.$rt_w_k
+            rt_w_k=$((rt_w_k + 1))
+        done
         if [ -s $rt_tmp/bko-rt-nodes.unread ] || [ $rt_w_s != 0 ]; then
             echo "rt_nodes: can't read tree $(head -n 1 $rt_tmp/bko-rt-nodes.unread 2>/dev/null)" >&2
             rm -f $rt_tmp/bko-rt-nodes.queue $rt_tmp/bko-rt-nodes.level $rt_tmp/bko-rt-nodes.unread
@@ -439,6 +478,17 @@ rt_walk() {  # RESTIC REPO PATH [PRUNE], rt_id the snapshot's tree: rt_nodes' li
         fi
     done
     rm -f $rt_tmp/bko-rt-nodes.queue $rt_tmp/bko-rt-nodes.level $rt_tmp/bko-rt-nodes.unread
+}
+
+# RT_JOBS' default: the CPUs online, at least 4 (the old default: a guest
+# of 2 vCPUs keeps it) and at most 12 (chopin's threads).  Each lane is a
+# rustic process at a time and its awk; the listing is the same for any.
+rt_cpus() {
+    rt_cpus_n=$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null)
+    case $rt_cpus_n in '' | *[!0-9]*) rt_cpus_n=4 ;; esac
+    [ "$rt_cpus_n" -ge 4 ] || rt_cpus_n=4
+    [ "$rt_cpus_n" -le 12 ] || rt_cpus_n=12
+    echo $rt_cpus_n
 }
 
 rt_path_nodes() {  # RESTIC REPO PATH

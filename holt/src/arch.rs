@@ -363,7 +363,15 @@ mod tests {
         t.debian13();
         let mut img = vec![0u8; 64 * MIB];
         write_gpt(&mut img, 512, &GptSpec { disk_guid: "6f1c2c3d-0000-4000-8000-0000000aa064", parts: vec![(ESP, ESP_UUID, 2048, 73727, 0, ""), (LINUX, "11112222-3333-4444-5555-666677778888", 73728, 131038, 0, "")] });
-        for (at, data) in [(2048, fat::sample::fat32(71680, 0x1234_abcd, "")), (73728, ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""))] {
+        // ext::sample's superblock is a full 64 MiB filesystem: this one is
+        // what mke2fs makes on vda2 (57311 sectors, so 7163 4 KiB blocks),
+        // holding a small root (a dump of an ext bigger than its partition,
+        // or with no free block or inode, is no source a restore can fit).
+        let mut root = ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, "");
+        for (o, v) in [(4, 7163u32), (12, 5500), (16, 8150)] {
+            root[1024 + o..1024 + o + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        for (at, data) in [(2048, fat::sample::fat32(71680, 0x1234_abcd, "")), (73728, root)] {
             img[at * 512..at * 512 + data.len()].copy_from_slice(&data);
         }
         let k = "6.12.57+deb13-arm64";

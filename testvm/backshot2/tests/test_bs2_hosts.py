@@ -153,11 +153,14 @@ class Slots(unittest.TestCase):
             with mock.patch.dict(os.environ, {B.HOSTS_TABLE.ENV: p}):
                 self.assertEqual(B.slots("cage"), 6)
                 self.assertEqual(B.slots("copland"), 2)
+            # A path of its own: a bad re-read of p would keep the table read there (hosts.py
+            # load keeps the last good table, for a file edited under a long run).
             next(r for r in t["hosts"] if r["name"] == "cage")["bs2_slots"] = 7
-            with open(p, "w") as f:
+            bad = os.path.join(d, "hosts-7.json")
+            with open(bad, "w") as f:
                 json.dump(t, f)
-            with self.assertRaises(B.HOSTS_TABLE.TableError):
-                B.HOSTS_TABLE.load(p)
+            with self.assertRaisesRegex(B.HOSTS_TABLE.TableError, r"bs2_slots 7: 1 to 6"):
+                B.HOSTS_TABLE.load(bad)
 
 
 class Plan(unittest.TestCase):

@@ -286,6 +286,25 @@ impl Layout {
                 || luks_uuid.is_some_and(|u| e.get("device").and_then(Value::as_str).is_some_and(|d| d.eq_ignore_ascii_case(&format!("UUID={u}"))))
         })
     }
+
+    /// A plain dm-crypt device that crypttab makes afresh at every boot,
+    /// with a random key (/dev/urandom or /dev/random) and the `swap` or
+    /// `tmp` option (Ubuntu's encrypted swap, `dm_crypt-0 PARTUUID=...
+    /// /dev/urandom ...,plain,swap`): (its open name, the key, the option).
+    /// Nothing on it outlives a boot, so load makes nothing on it and
+    /// leaves it to the restored crypttab.  A plain one with a real key
+    /// isn't this, and stays a Problem.
+    pub fn random_key_crypt(&self, name: &str) -> Option<(String, String, String)> {
+        let dm = self.arr(&["storage", "dm_devices"]).iter().find(|d| d.get("name").and_then(Value::as_str) == Some(name))?;
+        if dm.at(&["dm", "target"]).and_then(Value::as_str) != Some("crypt") || dm.at(&["dm", "crypt_type"]).and_then(Value::as_str) != Some("PLAIN") {
+            return None;
+        }
+        let dm_name = dm.at(&["dm", "dm_name"]).and_then(Value::as_str).unwrap_or(name);
+        let e = self.crypttab_entry(dm_name, None)?;
+        let key = s(e, "key_file").filter(|k| matches!(k.as_str(), "/dev/urandom" | "/dev/random"))?;
+        let opt = e.get("options").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).find(|o| *o == "swap" || *o == "tmp" || o.starts_with("tmp="))?;
+        Some((s(e, "name").unwrap_or_else(|| dm_name.to_string()), key, opt.to_string()))
+    }
 }
 
 /// The value at PATH in V, for writing (objects only).

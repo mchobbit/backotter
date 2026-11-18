@@ -1098,6 +1098,15 @@ impl Builder<'_> {
                 continue;
             }
             let name = s(dm, "name").unwrap_or_default();
+            // Made at every boot by crypttab with a random key: nothing to
+            // make here (format passes over what's on it).
+            if let Some((open_as, key, opt)) = self.layout.random_key_crypt(&name) {
+                let under = self.layout.slaves(&name).join(", ");
+                self.notes.push(format!(
+                    "{name} ({open_as}): plain dm-crypt that crypttab makes at every boot with a random key from {key} ({opt}): nothing is made on {under} but the partition (its ends zeroed, as every new partition's); the restored system's crypttab makes it at its first boot"
+                ));
+                continue;
+            }
             let dm_name = dm.at(&["dm", "dm_name"]).and_then(Value::as_str).unwrap_or(&name).to_string();
             let open_as = self.layout.crypttab_entry(&dm_name, dm.at(&["dm", "luks_uuid"]).and_then(Value::as_str)).and_then(|e| s(e, "name")).unwrap_or(dm_name);
             items.push((Item::Luks(dm.clone()), self.layout.slaves(&name), vec![(name, format!("/dev/mapper/{open_as}"))]));
@@ -2238,6 +2247,10 @@ impl Builder<'_> {
             // A raw volume (load/rawvol.rs) gets its bytes in the restore
             // stage, whatever they hold.
             if self.is_raw_volume(&src) {
+                continue;
+            }
+            // crypttab makes it, and what's on it, at boot (items()).
+            if self.layout.random_key_crypt(&src).is_some() {
                 continue;
             }
             let Some(dev) = self.names.dev(&src) else {
@@ -3669,6 +3682,10 @@ impl Builder<'_> {
                 continue;
             }
             let name = s(&dm, "name").unwrap_or_default();
+            // Its key is random at every boot: no keyslot, nothing to add.
+            if self.layout.random_key_crypt(&name).is_some() {
+                continue;
+            }
             let dm_name = dm.at(&["dm", "dm_name"]).and_then(Value::as_str).unwrap_or(&name).to_string();
             let Some(e) = self.layout.crypttab_entry(&dm_name, dm.at(&["dm", "luks_uuid"]).and_then(Value::as_str)).cloned() else { continue };
             let open_as = s(&e, "name").unwrap_or(dm_name);
@@ -5358,6 +5375,55 @@ mod tests {
         assert!(t.contains("btrfs subvolume create /run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003/@rootfs"), "{t}");
         assert!(t.contains("btrfs property set /run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003/@rootfs compression zstd"), "{t}");
         assert!(b.problems.is_empty(), "{:?}", b.problems);
+    }
+
+    /// The sample's swap as Ubuntu's installer encrypts it (26.10, ZFS +
+    /// encryption): plain dm-crypt dm-0 on vda2, which holds no header, and
+    /// crypttab's `dm_crypt-0 PARTUUID=... /dev/urandom ...,plain,swap`,
+    /// fstab naming the mapping.  crypttab makes it at every boot with a
+    /// random key and mkswaps it: load makes the partition and nothing on
+    /// it, adds no keyslot, and notes it.  With a real key file it stays a
+    /// Problem, as does a LUKS one's `swap` option (no PLAIN).
+    #[test]
+    fn plain_dm_crypt_swap_with_a_random_key_is_left_to_crypttab() {
+        let layout = |key: &str, crypt_type: &str| {
+            sample::bios_mbr()
+                .replace(
+                    r#""content": {"type": "swap", "usage": "other", "uuid": "5e5e5e5e-0000-4000-8000-000000000002", "label": null, "page_size": 4096}"#,
+                    r#""content": null"#,
+                )
+                .replace(
+                    r#""dm_devices": []"#,
+                    &format!(
+                        r#""dm_devices": [{{"name": "dm-0", "kind": "dm", "size_bytes": 1999634432, "slaves": ["vda2"], "holders": [],
+                            "content": {{"type": "swap", "usage": "other", "uuid": "de0ff632-a412-4f03-bc76-41b6f2566ced", "label": "dm_crypt-0", "version": "1"}},
+                            "dm": {{"dm_name": "dm_crypt-0", "dm_uuid": "CRYPT-{crypt_type}-dm_crypt-0", "mapper_path": "/dev/mapper/dm_crypt-0", "target": "crypt", "crypt_type": "{crypt_type}"}}}}]"#
+                    ),
+                )
+                .replace(
+                    r#"{"spec": "UUID=5e5e5e5e-0000-4000-8000-000000000002", "file": "none", "type": "swap", "options": "sw", "freq": 0, "passno": 0, "resolves_to": "vda2"}"#,
+                    r#"{"spec": "/dev/disk/by-id/dm-uuid-CRYPT-PLAIN-dm_crypt-0", "file": "none", "type": "swap", "options": "sw", "freq": 0, "passno": 0, "resolves_to": "dm-0"}"#,
+                )
+                .replace(
+                    r#""crypttab": null"#,
+                    &format!(r#""crypttab": [{{"name": "dm_crypt-0", "device": "/dev/vda2", "key_file": "{key}", "options": ["cipher=aes-cbc-essiv:sha256", "initramfs", "plain", "size=256", "swap"], "resolves_to": "vda2"}}]"#),
+                )
+        };
+        let j = layout("/dev/urandom", "PLAIN");
+        assert!(j.contains("CRYPT-PLAIN") && j.contains("\"resolves_to\": \"dm-0\"") && j.contains("\"content\": null"));
+        let b = built_from(&j, &[]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let all: String = b.stages.iter().map(|(_, c)| text(c)).collect();
+        assert!(!all.contains("cryptsetup") && !all.contains("dm_crypt-0") && !all.contains("mkswap"), "{all}");
+        assert!(b.notes.iter().any(|n| n
+            == "dm-0 (dm_crypt-0): plain dm-crypt that crypttab makes at every boot with a random key from /dev/urandom (swap): nothing is made on vda2 but the partition (its ends zeroed, as every new partition's); the restored system's crypttab makes it at its first boot"), "{:?}", b.notes);
+        let part = text(b.stage(Stage::Partition));
+        assert!(part.contains("vda2: its first 4 MiB and its last 1 MiB"), "{part}");
+        // A real key: plain dm-crypt load can't make.
+        let b = built_from(&layout("/etc/keys/swap.key", "PLAIN"), &[]);
+        assert!(b.problems.iter().any(|p| p == "dm-0: vda2 doesn't hold a LUKS header in the dump (plain dm-crypt isn't supported)"), "{:?}", b.problems);
+        let b = built_from(&layout("/dev/urandom", "LUKS2"), &[]);
+        assert!(b.problems.iter().any(|p| p.contains("doesn't hold a LUKS header")), "{:?}", b.problems);
     }
 
     /// NixOS's graphical installer (BackShot1's Thinkpad, NixOS 26.05): /

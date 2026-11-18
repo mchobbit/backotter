@@ -520,7 +520,9 @@ within 30 s, or the key doesn't fit, the usual prompt follows.  The settings
 are in the installed system, so in the backup: the restore's boot stage
 remakes the initramfs from them, and the restored system unlocks itself too
 (on NixOS by UEFI the restore remakes nothing: the restored system boots the
-initrd the backed-up ESP has, which already has them).  The drive may be
+initrd the backed-up ESP has, which already has them; on AerynOS the
+backed-up ESP's boot entries carry family B's command line, and its
+`cmdline.d` file comes back with `/etc` for the next `moss boot sync`).  The drive may be
 ext4 or xfs (the Thinkpad's `mybig512` is xfs).
 How depends on what opens the volume:
 
@@ -530,26 +532,34 @@ How depends on what opens the volume:
 | D | initramfs-tools: Debian, Ubuntu up to 25.04, Mint, Chimera | crypttab option `keyscript=/usr/local/lib/backshot1/unlock-key` (`bs1-unlock-key`), the key field left `none`; it asks with askpass when the drive's key can't be read |
 | E | mkinitcpio's busybox `encrypt`: Arch, Manjaro, Omarchy | a `bs1key` hook, put right before `encrypt` by `/etc/mkinitcpio.conf.d/zz-backshot1.conf`, writes `/crypto_keyfile.bin` only if that key opens the volume |
 | N | NixOS (systemd or scripted stage 1) | `/etc/nixos/backshot1-luks.nix`, imported by `backshot1.nix` while it exists, sets each typed `boot.initrd.luks.devices` volume's `keyFile`: systemd stage 1 the same `PATH:LABEL=` form and `keyFileTimeout = 30`; scripted stage 1 a copy its `preOpenCommands` take off the drive (mounted read-only, `norecovery` for xfs), with `fallbackToPassword`; then `nixos-rebuild switch` |
+| B | AerynOS: systemd in the initramfs that comes prebuilt with the kernel (it reads no crypttab of the system's), the kernel command line written by blsforme from `/etc/kernel/cmdline.d` | `/etc/kernel/cmdline.d/90-backshot1-luks.cmdline` gives each volume the initramfs opens `rd.luks.uuid=UUID rd.luks.key=UUID=/backshot1/keys/disk-passphrase:LABEL=mybig512 rd.luks.options=UUID=OPTIONS,keyfile-timeout=30s`, OPTIONS those the other `cmdline.d` files already give it (one `rd.luks.options=` for the volume, since the last wins); then `moss boot sync`, and every boot entry on the ESP must carry the key and those options as the last of each; a volume the booted system opens is S's |
 | A | non-systemd dracut, Alpine's mkinitfs, ostree | nothing: the run is attended |
 
 A volume that already opens with no one typing (a key file of its own in the
-initramfs, TPM2, FIDO2) is left alone (`own`).  The kernel command line and
-the boot loader are never touched.  Adopt checks the key with `cryptsetup
---test-passphrase` before changing anything, saves each file it changes in
-`/etc/backshot1/orig/`, records what it did in `/etc/backshot1/luks-unlock`,
-remakes the initramfs as the restore does and checks the new one; if that
-fails, it puts everything back.  Run again, it changes nothing.
+initramfs, TPM2, FIDO2; on B an `rd.luks.key=` of its own in another
+`cmdline.d` file) is left alone (`own`).  The kernel command line and the
+boot loader are never touched, but for B's `cmdline.d` file and the entries
+`moss boot sync` writes from it; another `cmdline.d` file is never edited
+(adopt warns of one with an `rd.luks.key=`: `--luks-off` leaves it).  Adopt
+checks the key with `cryptsetup --test-passphrase` before changing
+anything, makes the drive's key file mode 600 (systemd-cryptsetup warns of
+one anyone can read; `backshot1 stage` does too), saves each file it
+changes in `/etc/backshot1/orig/`, records what it did in
+`/etc/backshot1/luks-unlock`, remakes the initramfs as the restore does (B:
+the boot entries) and checks the new one; if that fails, it puts everything
+back.  Run again, it changes nothing.
 
 **Testbed only,** like the fixed host key: with the drive and the laptop
 together, anyone can read the disk.  Never on a release image, nor a machine
 outside the testbed.  `backshot1 adopt --luks-off` (`bs1-adopt --luks-off`)
-puts the files back and remakes the initramfs; `BS1_LUKS=no` skips the step.
+puts the files back and remakes the initramfs (B: `moss boot sync`);
+`BS1_LUKS=no` skips the step.
 
 The preflight and phase 1 check the drive's key against every volume, and
 say how the system unlocks, `UNLOCK=`:
 
 - `drive`: the drive's key opened every typed volume at this boot (the
-  journal's key-device mount for S and NixOS's systemd stage 1,
+  journal's key-device mount for S, B and NixOS's systemd stage 1,
   `/run/backshot1-unlock` for D, E and NixOS's scripted stage 1;
   `backshot1 unlock` shows it);
 - `own`: every volume opens by itself;

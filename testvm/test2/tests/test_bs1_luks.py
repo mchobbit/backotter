@@ -288,6 +288,228 @@ class Evidence(Tmp):
         self.assertIn("root isn't in", self.call("unlock_mode nvme0n1"))
 
 
+    def test_b_is_the_key_device_mount_as_s(self):
+        # AerynOS: blsforme's rd.luks.uuid names the mapping luks-UUID.
+        self.names = f"luks-{UUID}"
+        esc = UUID.replace("-", "\\x2d")
+        self.journal.write_text(f"Mounted run-systemd-cryptsetup-keydev\\x2dluks\\x2d{esc}.mount - /run/systemd/cryptsetup/keydev-luks-{UUID}.\n"
+                                f"Finished systemd-cryptsetup@luks\\x2d{esc}.service - Cryptography Setup for luks-{UUID}.\n")
+        self.assertEqual(self.call(f"unlock_how luks-{UUID} B"), "drive\n")
+        self.record("B", volumes=f"luks-{UUID}:{UUID}:B")
+        out = self.call("unlock_mode nvme0n1")
+        self.assertTrue(out.startswith("drive: ") and "(family B)" in out, out)
+        self.assertIn(f"  luks-{UUID} drive\n", out)
+        self.journal.write_text(f"Finished systemd-cryptsetup@luks\\x2d{esc}.service - Cryptography Setup for luks-{UUID}.\n")
+        self.assertTrue(self.call("unlock_mode nvme0n1").startswith(f"attended: luks-{UUID} was typed"))
+
+
+UUID = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
+OTHER = "11111111-2222-3333-4444-555555555555"
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class BlsCmdline(Tmp):
+    """Family B (AerynOS): the cmdline.d line, the options in force merged
+    into it, and the boot entries' check."""
+
+    def sh(self, expr, stdin=None, rc=0):
+        script = (f'. "{BS1}/bs1-luks"; LK_KEYSPEC={KEYSPEC}; LK_BLS_DIRS="{self.t}/usr {self.t}/etc"; '
+                  f'LK_BLS_FILE="{self.t}/etc/90-backshot1-luks.cmdline"\n{expr}')
+        r = subprocess.run([BASH, "-c", script], input=stdin, capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
+        return r.stdout + r.stderr
+
+    def eff(self, *args, uuid=UUID):
+        return self.sh(f"lk_bls_eff {uuid}", "\n".join(args) + "\n").strip()
+
+    def test_eff_none(self):
+        self.assertEqual(self.eff("root=UUID=x", f"rd.luks.uuid={UUID}", "quiet"), "- -")
+
+    def test_eff_the_last_of_each_wins(self):
+        self.assertEqual(self.eff(f"rd.luks.options={UUID}=discard", f"rd.luks.options={UUID}=discard,no-read-workqueue",
+                                  f"luks.key={UUID}=/k:LABEL=x"), "/k:LABEL=x discard,no-read-workqueue")
+
+    def test_eff_a_volume_own_over_every_volume(self):
+        self.assertEqual(self.eff("rd.luks.options=discard", f"rd.luks.options={OTHER}=tpm2-device=auto"), "- discard")
+        self.assertEqual(self.eff(f"rd.luks.options={UUID}=x-own", "rd.luks.options=discard"), "- x-own")
+        self.assertEqual(self.eff("rd.luks.key=/etc/all.key", f"rd.luks.key={OTHER}=/o.key"), "/etc/all.key -")
+
+    def test_opts_merge(self):
+        self.assertEqual(self.sh("lk_bls_opts -").strip(), "keyfile-timeout=30s")
+        self.assertEqual(self.sh("lk_bls_opts discard,keyfile-timeout=10s,discard,tries=2").strip(),
+                         "discard,tries=2,keyfile-timeout=30s")
+        self.assertEqual(self.sh("LUKS_WAIT=5; lk_bls_opts keyfile-timeout=30s").strip(), "keyfile-timeout=5s")
+
+    def test_text_is_the_thinkpad_trial(self):
+        # The hand-written 20-luks.cmdline that unlocked the Thinkpad.
+        self.assertEqual(self.sh(f"lk_bls_text '{UUID}|discard'"),
+                         f"rd.luks.uuid={UUID} rd.luks.key={UUID}={KEYSPEC} rd.luks.options={UUID}=discard,keyfile-timeout=30s")
+
+    def test_text_two_volumes(self):
+        out = self.sh(f"lk_bls_text '{UUID}|-' '{OTHER}|discard,keyfile-timeout=9s'")
+        self.assertEqual(out.split(" "), [f"rd.luks.uuid={UUID}", f"rd.luks.key={UUID}={KEYSPEC}", f"rd.luks.options={UUID}=keyfile-timeout=30s",
+                                          f"rd.luks.uuid={OTHER}", f"rd.luks.key={OTHER}={KEYSPEC}", f"rd.luks.options={OTHER}=discard,keyfile-timeout=30s"])
+
+    def test_args_in_blsforme_order_without_ours(self):
+        (self.t / "usr").mkdir()
+        (self.t / "etc").mkdir()
+        (self.t / "usr/10-aerynos.cmdline").write_text("quiet splash\n")
+        (self.t / "etc/20-luks.cmdline").write_text("# a note\nrd.luks.options=discard\trw\n")
+        (self.t / "etc/90-backshot1-luks.cmdline").write_text(f"rd.luks.key={UUID}=old\n")
+        (self.t / "etc/notes.txt").write_text("nothing\n")
+        self.assertEqual(self.sh("lk_bls_args").split(), ["quiet", "splash", "rd.luks.options=discard", "rw"])
+
+    def entry(self, name, options):
+        d = self.t / "efi/loader/entries"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_text(f"title AerynOS\nlinux /EFI/aerynos/kernel\noptions {options}\n")
+
+    def check(self, rc, vols=(f"{UUID}|discard",)):
+        return self.sh(f'lk_bls_entries_ok "{self.t}/efi/loader/entries" ' + " ".join(f"'{v}'" for v in vols), rc=rc)
+
+    def test_entries_ok(self):
+        self.entry("a.conf", f"root=UUID=r rd.luks.uuid={UUID} rw rd.luks.uuid={UUID} rd.luks.key={UUID}={KEYSPEC} rd.luks.options={UUID}=discard,keyfile-timeout=30s")
+        self.assertIn("a.conf: ok", self.check(0))
+
+    def test_entries_overridden_later(self):
+        self.entry("a.conf", f"rd.luks.uuid={UUID} rd.luks.key={UUID}={KEYSPEC} rd.luks.options={UUID}=discard,keyfile-timeout=30s")
+        self.entry("b.conf", f"rd.luks.uuid={UUID} rd.luks.key={UUID}={KEYSPEC} rd.luks.options={UUID}=discard,keyfile-timeout=30s rd.luks.options={UUID}=discard")
+        out = self.check(1)
+        self.assertIn("a.conf: ok", out)
+        self.assertIn(f'b.conf gives {UUID} key and options "{KEYSPEC} discard", not', out)
+
+    def test_entries_must_name_the_volume(self):
+        self.entry("a.conf", f"rd.luks.key={UUID}={KEYSPEC} rd.luks.options={UUID}=discard,keyfile-timeout=30s")
+        self.assertIn(f"has no rd.luks.uuid={UUID}", self.check(1))
+
+    def test_no_entries(self):
+        self.assertIn("no boot entry", self.check(1))
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class AdoptB(Tmp):
+    """luks_adopt and luks_off on a fake AerynOS: moss boot sync writes an
+    entry from the cmdline.d files as blsforme does, root's rd.luks.uuid
+    first."""
+
+    def setUp(self):
+        super().setUp()
+        t = self.t
+        self.drive = t / "drive"
+        here = self.drive / "backshot1"
+        (here / "keys").mkdir(parents=True)
+        shutil.copy(BS1 / "bs1-unlock-key", here / "bs1-unlock-key")
+        self.key = here / "keys/disk-passphrase"
+        self.key.write_text("s3cret")
+        self.key.chmod(0o644)
+        for d in ("usr/lib/kernel/cmdline.d", "etc/kernel/cmdline.d", "efi/loader/entries"):
+            (t / d).mkdir(parents=True)
+        self.cmdline_d = t / "etc/kernel/cmdline.d"
+        self.ours = self.cmdline_d / "90-backshot1-luks.cmdline"
+        (t / "usr/lib/kernel/cmdline.d/10-default.cmdline").write_text("quiet\n")
+        (t / "proc-cmdline").write_text(f"initrd=/x root=UUID=r rd.luks.uuid={UUID} quiet\n")
+        exe(self.bin / "findmnt", f'#!/bin/sh\ncase "$2" in TARGET) echo "{self.drive}" ;; SOURCE) echo /dev/sdb1 ;; FSTYPE) echo xfs ;; esac\n')
+        exe(self.bin / "blkid", "#!/bin/sh\necho mybig512\n")
+        exe(self.bin / "cryptsetup", "#!/bin/sh\nexit 0\n")
+        exe(self.bin / "modinfo", "#!/bin/sh\nexit 1\n")
+        exe(self.bin / "sleep", "#!/bin/sh\nexit 0\n")
+        self.moss_extra = t / "moss-extra"
+        exe(self.bin / "moss", textwrap.dedent(f"""\
+            #!/bin/sh
+            [ "$1 $2" = "boot sync" ] || exit 2
+            echo sync >>"{t}/moss-calls"
+            o="root=UUID=r rd.luks.uuid={UUID} rw $(cat "{t}"/usr/lib/kernel/cmdline.d/*.cmdline "{t}"/etc/kernel/cmdline.d/*.cmdline 2>/dev/null | grep -v '^#' | tr '\\n' ' ') $(cat "{self.moss_extra}" 2>/dev/null)"
+            printf 'title AerynOS\\nlinux /EFI/aerynos/kernel\\noptions %s\\n' "$o" >"{t}/efi/loader/entries/aerynos-6.17.conf"
+            """))
+
+    def adopt(self, what="luks_adopt", moss=True, rc=0):
+        t = self.t
+        if not moss:
+            (self.bin / "moss").unlink()
+        script = textwrap.dedent(f"""\
+            . "{BS1}/bs1-luks"
+            LUKS_DIR="{t}/etc/backshot1" LUKS_ORIG="{t}/etc/backshot1/orig" LUKS_MADE="{t}/etc/backshot1/made" LUKS_REC="{t}/etc/backshot1/luks-unlock"
+            LK_BLS_DIRS="{t}/usr/lib/kernel/cmdline.d {t}/etc/kernel/cmdline.d" LK_BLS_FILE="{self.ours}" LK_BLS_ESP="{t}/efi" LK_CMDLINE="{t}/proc-cmdline"
+            here="{self.drive}/backshot1" init=systemd BACKUP_LABEL=mybig512 INTERNAL_SERIAL=S1
+            internal_disk() {{ echo nvme0n1; }}
+            is_abroot() {{ false; }}
+            lk_generator() {{ echo prebuilt; }}
+            lk_luks_volumes() {{ echo "/dev/nvme0n1p2 {UUID} luks-{UUID}"; }}
+            lk_early() {{ [[ $1 == luks-{UUID} ]]; }}
+            {what}
+            """)
+        r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
+        return r.stdout + r.stderr
+
+    def syncs(self):
+        p = self.t / "moss-calls"
+        return len(p.read_text().splitlines()) if p.exists() else 0
+
+    def rec(self):
+        return (self.t / "etc/backshot1/luks-unlock").read_text()
+
+    def test_adopt_rerun_and_off(self):
+        installer = self.cmdline_d / "20-luks.cmdline"
+        installer.write_text(f"rd.luks.options={UUID}=discard\n")
+        out = self.adopt()
+        self.assertIn("family B (initramfs: prebuilt)", out)
+        self.assertEqual(self.ours.read_text(),
+                         f"rd.luks.uuid={UUID} rd.luks.key={UUID}={KEYSPEC} rd.luks.options={UUID}=discard,keyfile-timeout=30s\n")
+        self.assertIn("aerynos-6.17.conf: ok", out)
+        self.assertEqual(self.syncs(), 1)
+        self.assertIn("family=B\n", self.rec())
+        self.assertIn(f"volumes='luks-{UUID}:{UUID}:B'", self.rec())
+        self.assertEqual(stat.S_IMODE(self.key.stat().st_mode), 0o600)
+        self.assertNotIn("of its own", out)
+
+        out = self.adopt()
+        self.assertIn("unchanged; the initramfs isn't remade", out)
+        self.assertEqual(self.syncs(), 1)
+
+        out = self.adopt("luks_off")
+        self.assertIn(f"removed {self.ours}", out)
+        self.assertFalse(self.ours.exists())
+        self.assertFalse((self.t / "etc/backshot1").exists())
+        self.assertEqual(installer.read_text(), f"rd.luks.options={UUID}=discard\n")
+        self.assertEqual(self.syncs(), 2)
+        self.assertNotIn("rd.luks.key", (self.t / "efi/loader/entries/aerynos-6.17.conf").read_text())
+
+    def test_unsynced_entries_are_synced_again(self):
+        self.adopt()
+        (self.t / "efi/loader/entries/aerynos-6.17.conf").write_text(f"options root=UUID=r rd.luks.uuid={UUID}\n")
+        out = self.adopt()
+        self.assertIn("moss boot sync again", out)
+        self.assertEqual(self.syncs(), 2)
+
+    def test_hand_written_key_is_merged_and_warned_of(self):
+        hand = self.cmdline_d / "20-luks.cmdline"
+        hand.write_text(f"rd.luks.uuid={UUID} rd.luks.key={UUID}={KEYSPEC} rd.luks.options={UUID}=discard,keyfile-timeout=30s\n")
+        out = self.adopt()
+        self.assertIn(f"{hand} has an rd.luks.key= of its own", out)
+        self.assertIn(f"rd.luks.options={UUID}=discard,keyfile-timeout=30s\n", self.ours.read_text())
+
+    def test_a_key_of_its_own_is_own(self):
+        (self.cmdline_d / "20-luks.cmdline").write_text(f"rd.luks.key={UUID}=/etc/keys/root.key\n")
+        out = self.adopt()
+        self.assertIn("own: every LUKS volume unlocks with no one typing", out)
+        self.assertFalse(self.ours.exists())
+        self.assertEqual(self.syncs(), 0)
+
+    def test_an_entry_that_overrides_puts_everything_back(self):
+        self.moss_extra.write_text(f"rd.luks.options={UUID}=discard\n")
+        out = self.adopt(rc=1)
+        self.assertIn("lacks what unlocking from the drive needs", out)
+        self.assertFalse(self.ours.exists())
+        self.assertFalse((self.t / "etc/backshot1").exists())
+        self.assertEqual(self.syncs(), 2)
+
+    def test_without_moss_attended(self):
+        out = self.adopt(moss=False)
+        self.assertIn("A: the initramfs is prebuilt's; nothing else changes", out)
+        self.assertFalse(self.ours.exists())
+
+
 CORPUS = TESTS.parent.parent.parent / "holt" / "tests" / "corpus"
 
 

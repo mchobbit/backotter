@@ -128,7 +128,9 @@ stage)
     scp -q "${OPTS[@]}" "$tools/bko-holt" "$tools/rustic-bko" "root@$HOST:$d/backshot1/bin/"
     scp -q "${OPTS[@]}" "$KEYS/id_ed25519.pub" "root@$HOST:$d/backshot1/keys/authorized_keys"
     scp -q "${OPTS[@]}" "$KEYS/ssh_host_ed25519_key" "$KEYS/ssh_host_ed25519_key.pub" "root@$HOST:$d/backshot1/keys/"
-    on_host "chmod 755 '$d'/backshot1/bs1-* '$d'/backshot1/bin/*; chmod 600 '$d'/backshot1/keys/ssh_host_ed25519_key; '$d/backshot1/bin/bko-holt' --version; '$d/backshot1/bin/rustic-bko' --version; ls -la '$d/backshot1'"
+    # The LUKS key too, where it's there already: systemd-cryptsetup warns of
+    # one anyone can read.
+    on_host "chmod 755 '$d'/backshot1/bs1-* '$d'/backshot1/bin/*; chmod 600 '$d'/backshot1/keys/ssh_host_ed25519_key; [ ! -e '$d/backshot1/keys/disk-passphrase' ] || chmod 600 '$d/backshot1/keys/disk-passphrase'; '$d/backshot1/bin/bko-holt' --version; '$d/backshot1/bin/rustic-bko' --version; ls -la '$d/backshot1'"
     ;;
 adopt)
     old_login_if_new

@@ -435,14 +435,16 @@ luks_names() {
 }
 
 # unlock_how NAME HOW: how this boot opened the volume the record names, HOW
-# being the record's S, D, E or N: drive (the backup drive's key), typed, or
-# fetched (E: the key was copied, but couldn't be tested).
+# being the record's S, D, E, N or B: drive (the backup drive's key), typed,
+# or fetched (E: the key was copied, but couldn't be tested).
 unlock_how() {
     local name=$1 j
     case $2 in
-    S)
+    S | B)
         # systemd-cryptsetup-generator mounts the key's device at
-        # /run/systemd/cryptsetup/keydev-NAME; the initrd's journal is this boot's.
+        # /run/systemd/cryptsetup/keydev-NAME, whether crypttab (S) or the
+        # command line's rd.luks.key (B, AerynOS) named it; the initrd's
+        # journal is this boot's.
         j=$(journalctl -b -o cat --no-pager 2>/dev/null | grep -F "/run/systemd/cryptsetup/keydev-$name")
         if grep -Ei "keydev-$name/.*(fail|missing|incorrect)" <<<"$j" >/dev/null; then echo typed
         elif grep -E "^Mounted .*/run/systemd/cryptsetup/keydev-$name([ .]|$)" <<<"$j" >/dev/null; then echo drive

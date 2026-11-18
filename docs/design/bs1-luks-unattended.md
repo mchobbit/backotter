@@ -542,3 +542,49 @@ the drive unplugged: `dev-disk-by\x2dlabel-mybig512.device` timed out at
 opened both volumes, and `backshot1 unlock` said both `typed`,
 `UNLOCK=attended`.  Not yet: a wrong key, and scripted stage 1 at boot at
 all.
+
+## Built, family B (2026-11-18)
+
+AerynOS's initramfs comes prebuilt with its kernel (dracut's, systemd
+inside: systemd-cryptsetup and its generator, xfs.ko; USB storage and UAS
+built into the kernel), so it reads no crypttab of the installed system's,
+and adopt recorded the Thinkpad's AerynOS 2026.11 as family A.  Its boot
+entries are blsforme's: `moss boot sync` writes them to the ESP with every
+`/usr/lib/kernel/cmdline.d` and `/etc/kernel/cmdline.d` `*.cmdline` added,
+and an `rd.luks.uuid=` for the root's volume of its own.  A by-hand trial
+on the Thinkpad (systemd 262.2, LUKS2 root, xfs `mybig512`) put
+`rd.luks.key=UUID=/backshot1/keys/disk-passphrase:LABEL=mybig512` and
+`rd.luks.options=UUID=discard,keyfile-timeout=30s` in a cmdline.d file, and
+the next boot unlocked from the drive, nothing typed.
+
+- **Family B** (`bs1-luks`): prebuilt initramfs, `moss` there, systemd as
+  init.  A volume is early when it's under `/`, `/usr` or swap, or the
+  running command line names it in `rd.luks.uuid=` or `rd.luks.name=`.
+  Each early one gets `rd.luks.uuid=`, `rd.luks.key=` and one
+  `rd.luks.options=` in `/etc/kernel/cmdline.d/90-backshot1-luks.cmdline`
+  (no comment line: nothing says blsforme drops one; the name and
+  `/etc/backshot1/made` say whose it is).  The generator takes the last
+  `rd.luks.options=` (and `rd.luks.key=`) for a UUID, and a volume's own
+  over the one for every volume, so the options are the ones the other
+  cmdline.d files already put in force (`lk_bls_eff`), each once, with
+  `keyfile-timeout=30s` in place of any other.  Another file's key for the
+  volume (or a token in its options) is `own`.  Other cmdline.d files are
+  never edited; adopt warns of one with an `rd.luks.key=` (a hand-written
+  trial), which `--luks-off` would leave.  A late volume is S's crypttab
+  line.
+- **Remake and check:** `moss boot sync`, then every `loader/entries/*.conf`
+  in `/efi`, `/boot` or `/boot/efi` (else the internal disk's ESP or
+  XBOOTLDR, mounted read-only) must name each volume and give it the
+  drive's key and those options as the last of each; if not, everything
+  is put back.  A rerun whose files are unchanged syncs again only if the
+  entries lack it.  `--luks-off` removes the file and syncs.
+- **Evidence:** as S, the journal's key-device mount
+  (`/run/systemd/cryptsetup/keydev-luks-UUID`).
+- **The key file** is made mode 600 by adopt and by `backshot1 stage`:
+  systemd-cryptsetup warned of the trial's 0644 (it unlocked anyway).
+- **The restore** remakes nothing on AerynOS: the backed-up ESP's entries
+  carry the line, and the file comes back with `/etc`.
+
+No rehearsal: there is no AerynOS guest with LUKS.  Unit tests
+(`test_bs1_luks.py`: BlsCmdline, AdoptB, Evidence) run `luks_adopt` and
+`luks_off` against a fake `moss` that writes an entry as blsforme does.

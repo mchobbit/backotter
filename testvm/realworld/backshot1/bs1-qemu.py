@@ -41,7 +41,7 @@ install never upgraded).
 A LUKS guest's passphrase (the first of GUEST_DIR's luks-keyfile,
 console-passphrase and luks-passphrase, without a final newline) goes into
 keys/disk-passphrase.  When bs1-adopt sets the guest to unlock from the drive
-(docs/design/bs1-luks-unattended.md: families S, D and E), the source also:
+(docs/design/bs1-luks-unattended.md: families S, D, E and B), the source also:
   (a) runs bs1-adopt again, which must change nothing and remake nothing;
   (b) boots with the drive and nothing typed: "bs1-verify --unlock" must say
       UNLOCK=drive;
@@ -162,7 +162,7 @@ cat $t'''
 # What bs1-adopt's LUKS step writes, for "a second run changes nothing" and
 # "--luks-off puts it back".
 LUKS_FILES = ("find /etc/backshot1 /etc/crypttab /etc/crypttab.initramfs /etc/dracut.conf.d /etc/mkinitcpio.conf.d "
-              "/etc/initcpio /etc/initramfs-tools/hooks /usr/local/lib/backshot1 -type f 2>/dev/null | LC_ALL=C sort | "
+              "/etc/initcpio /etc/initramfs-tools/hooks /etc/kernel/cmdline.d /usr/local/lib/backshot1 -type f 2>/dev/null | LC_ALL=C sort | "
               "while read -r f; do echo \"$f $(sha256sum <\"$f\" | cut -c1-16)\"; done")
 fails = []
 
@@ -507,7 +507,7 @@ def main():
             return sh.show("bash /run/bs1-check/bs1-verify --unlock", 120)
         return sh.show(f"{mount_drive} && bash /mnt/bs1-backup/backshot1/bs1-verify --unlock", 120)
 
-    if family in ("S", "D", "E"):
+    if family in ("S", "D", "E", "B"):
         print("== LUKS (a): bs1-adopt again changes nothing", flush=True)
         _, sums = root.run(LUKS_FILES, 60)
         rc, out = root.show("sh /mnt/bs1-backup/backshot1/bs1-adopt", 3600)
@@ -590,7 +590,7 @@ def main():
     rc, out = root.show("bash /mnt/bs1-backup/backshot1/bs1-backup --preflight")
     check(rc == 0, "bs1-backup --preflight passes")
     mode = next((ln[7:].strip() for ln in out.splitlines() if ln.startswith("UNLOCK=")), None)
-    if family in ("S", "D", "E"):
+    if family in ("S", "D", "E", "B"):
         check(mode == "drive", f"the preflight says UNLOCK=drive: {mode}")
     elif family == "own":
         check(mode == "own", f"the preflight says UNLOCK=own: {mode}")

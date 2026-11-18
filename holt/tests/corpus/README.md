@@ -516,6 +516,37 @@ write-table`, makes `zroot` with the source's feature flags, ashift 12 and
 its GUID, the datasets with their properties (`zroot/usr/src` too, which
 ghostbsd26-zfs hasn't), sets `bootfs`, and at boot points the restored
 zpool.cache at the new pool; nothing else is regenerated.
+bs1-ubuntu2610-zfsenc is the corpus's first dump of a real machine, not a
+guest's: BackShot1's Thinkpad (bs1-backup's `bko-holt dump --only-disk
+nvme0n1`, bko-holt 0.2.6, 2026-11-18) on Ubuntu 26.10 as its desktop
+installer lays out "ZFS + encryption": GPT with a 1 GiB ESP at /boot/efi,
+an ext4 /boot, swap as plain dm-crypt (crypttab `dm_crypt-0 PARTUUID=...
+/dev/urandom ...,plain,swap`, made at every boot with a random key) and
+rpool with native encryption, its key `file:///run/keystore/rpool/system.key`
+on the keystore, LUKS2 `keystore-rpool` on the zvol rpool/keystore (zd0),
+ext4, which the initramfs mounts at /run/keystore/rpool; dracut, GRUB
+through shim.  That 0.2.6 dump left zd0 out (--only-disk kept whole disks by
+name, and a zvol is one) and listed the backup drive's and the keystore's
+mounts in backup_sources, which this tree's dump no longer does (report.rs
+build_with, not_backed_up).  So its raw dump is the real one as this tree's
+dump makes it, done by hand before the build (corpus_build ran on it as
+on any other): zd0 added with what the dump itself records of it (the
+zvol's `volsize`, dm-0's slave and LUKS UUID, its `/dev/zvol/rpool/keystore`
+link) and a `crypto_LUKS` content of type, UUID and version only, since
+nothing in the dump has its LUKS2 header's cipher, offset or keyslots; and
+the five backup_sources not backed up taken out.  Its provenance.tsv was
+written by hand: host `realworld`, run `bs1-backup`, generation and image
+`-`.  It is in the corpus before it is any HoltTest2 source (no guest has
+this layout), so golden_plans.rs notes it.  Its golden plan makes the plain
+swap's partition and nothing on it (a Note says crypttab makes it at
+boot), creates the zvol `encryption=off` under the encrypted rpool,
+formats the keystore with cryptsetup's defaults and the source's UUID
+(asking for the new passphrase; BackShot1 gives `--key-file
+keystore-rpool=`its drive's key), makes its ext4 and installs rpool's new
+raw key there, then at boot sets rpool's keylocation back, runs dracut,
+`grub-install --bootloader-id=ubuntu --no-nvram` and `update-grub`, and
+makes the `Ubuntu` entry for `\EFI\ubuntu\shimx64.efi`.  The redaction
+named `dm_crypt-0` `label-1` (it is also the swap's label).
 ubuntu24-uefi (`make-ubuntu.sh --uefi`, 24.04.5: Subiquity's default, GPT
 with an ESP at /boot/efi and one ext4 /, UEFI under Secure Boot) and
 ubuntu24-luks (`--uefi --luks`: ubuntu26-luks's guided LVM on LUKS2 on
@@ -758,7 +789,12 @@ So did hardenedbsd15-zfs (2026-11-15), built from a private directory on
 chopin (its warm holt build at /bkoscratch/holt-warm/hbsdzfs): chopin with
 its 110 strings and the raw dump's identifiers, cinqcent with its 116, the
 Mac with the git e-mail, 0 findings (its plan scanned too), the same sha256
-from both builds (src.json `8aab1604...`, and index.tsv).  So did void-zbm-enc (2026-11-16), built
+from both builds (src.json `8aab1604...`, and index.tsv).  So did
+bs1-ubuntu2610-zfsenc (2026-11-18), built from a private directory on
+chopin (/bkoscratch/holt-warm/zfsenc, its warm holt build there): chopin
+with 113 of its 118 strings and the raw dump's identifiers, cinqcent with
+116 of its 122, the Mac with the git e-mail, 0 findings (its plan scanned
+too), the same sha256 from both builds (src.json `db660138...`).  So did void-zbm-enc (2026-11-16), built
 from a private directory in chopin's RAM disk (its warm holt build at
 /bkoscratch/holt-warm/zbm): chopin with 134 of its 139 strings (its
 zfs-passphrase among them) and the raw dump's identifiers, cinqcent with

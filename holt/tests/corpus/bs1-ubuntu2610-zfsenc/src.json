@@ -1,0 +1,2956 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.6"
+  },
+  "generated": "2026-11-18T20:26:06Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host1",
+    "machine_id": "bd000000000040008000000000000001",
+    "dmi": {
+      "sys_vendor": "LENOVO",
+      "product_name": "F0J6006UFR",
+      "product_version": "Lenovo A100",
+      "board_vendor": "LENOVO",
+      "board_name": "3790",
+      "bios_vendor": "LENOVO",
+      "bios_version": "O6MKT0DA",
+      "bios_date": "12/16/2024",
+      "product_uuid": "bc000000-0000-4000-8000-000000000001",
+      "chassis_type": "13"
+    },
+    "virtualization": null
+  },
+  "os": {
+    "id": "ubuntu",
+    "version_id": "26.10",
+    "version_codename": "stonking",
+    "pretty_name": "Ubuntu Stonking Stingray (development branch)",
+    "debian_version": "forky/sid",
+    "kernel_release": "7.3.0-10-generic",
+    "kernel_version": "#10-Ubuntu SMP PREEMPT_DYNAMIC Thu Oct 22 07:35:54 UTC 2026",
+    "architecture": "x86_64",
+    "machine": "x86_64"
+  },
+  "firmware": {
+    "mode": "uefi",
+    "platform_size": 64,
+    "efi_arch": "x64",
+    "secure_boot": false,
+    "setup_mode": false,
+    "efivars_readable": true
+  },
+  "storage": {
+    "topology": {
+      "loop0 (loop, 4 KiB)": {},
+      "loop1 (loop, 66.8 MiB)": {},
+      "loop2 (loop, 20 MiB)": {},
+      "loop3 (loop, 252 MiB)": {},
+      "loop4 (loop, 16.5 MiB)": {},
+      "loop5 (loop, 606 MiB)": {},
+      "loop6 (loop, 395 MiB)": {},
+      "loop7 (loop, 91.7 MiB)": {},
+      "loop8 (loop, 18.8 MiB)": {},
+      "loop9 (loop, 15.7 MiB)": {},
+      "loop10 (loop, 49.3 MiB)": {},
+      "loop11 (loop, 828 KiB)": {},
+      "nvme0n1 (disk, 477 GiB, gpt)": {
+        "nvme0n1p1 (partition, 1 GiB) vfat on /boot/efi": {},
+        "nvme0n1p2 (partition, 2 GiB) ext4 on /boot": {},
+        "nvme0n1p3 (partition, 4 GiB)": {
+          "dm-1 (dm, 4 GiB, label-1) swap \"label-1\"": {}
+        },
+        "nvme0n1p4 (partition, 470 GiB) zfs_member \"rpool\"": {}
+      },
+      "zd0 (disk, 20 MiB) crypto_LUKS": {
+        "dm-0 (dm, 4 MiB, keystore-rpool) ext4 \"keystore-rpool\" on /run/keystore/rpool": {}
+      }
+    },
+    "disks": [
+      {
+        "name": "nvme0n1",
+        "path": "/dev/nvme0n1",
+        "kind": "disk",
+        "devno": "259:0",
+        "size_bytes": 512110190592,
+        "size": "477 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": "SAMSUNG MZVL8512HFLU-00BLL",
+        "vendor": null,
+        "serial": "SERIAL1",
+        "wwid": "serial2",
+        "firmware_revision": "4L2QKXF7",
+        "transport": "nvme",
+        "rotational": false,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/9",
+          "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1",
+          "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1_1",
+          "/dev/disk/by-id/nvme-serial2",
+          "/dev/disk/by-path/pci-0000:03:00.0-nvme-1"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "bc000000-0000-4000-8000-000000000002",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 2048,
+          "last_usable_lba": 1000215182,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 1000215215,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 1000215215,
+                "start_bytes": 512,
+                "size_bytes": 512110190080,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "nvme0n1p1",
+            "path": "/dev/nvme0n1p1",
+            "devno": "259:1",
+            "number": 1,
+            "start_lba": 2048,
+            "end_lba": 2203647,
+            "sectors": 2201600,
+            "start_bytes": 1048576,
+            "size_bytes": 1127219200,
+            "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "type_name": "EFI System",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part1",
+              "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1-part1",
+              "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1_1-part1",
+              "/dev/disk/by-id/nvme-serial2-part1",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-partnum/1",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-partuuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-uuid/BC00-0002",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part1",
+              "/dev/disk/by-uuid/BC00-0002"
+            ],
+            "holders": [],
+            "content": {
+              "type": "vfat",
+              "usage": "filesystem",
+              "uuid": "BC00-0002",
+              "label": null,
+              "version": "FAT32",
+              "fat_bits": 32,
+              "bytes_per_sector": 512,
+              "sectors_per_cluster": 8,
+              "cluster_size": 4096,
+              "reserved_sectors": 32,
+              "fats": 2,
+              "fat_sectors": 2152,
+              "total_sectors": 2201600,
+              "size_bytes": 1127219200,
+              "clusters": 274658,
+              "hidden_sectors": 2048,
+              "media": "0xf8",
+              "oem_name": "mkfs.fat",
+              "root_cluster": 2,
+              "fsinfo_sector": 1,
+              "backup_boot_sector": 6,
+              "boot_sector_label": null
+            },
+            "mounted_at": ["/boot/efi"]
+          },
+          {
+            "name": "nvme0n1p2",
+            "path": "/dev/nvme0n1p2",
+            "devno": "259:2",
+            "number": 2,
+            "start_lba": 2203648,
+            "end_lba": 6397951,
+            "sectors": 4194304,
+            "start_bytes": 1128267776,
+            "size_bytes": 2147483648,
+            "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+            "type_name": "Linux filesystem",
+            "uuid": "bc000000-0000-4000-8000-000000000004",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part2",
+              "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1-part2",
+              "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1_1-part2",
+              "/dev/disk/by-id/nvme-serial2-part2",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000004",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-partnum/2",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-partuuid/bc000000-0000-4000-8000-000000000004",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-uuid/bc000000-0000-4000-8000-000000000005",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part2",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000005"
+            ],
+            "holders": [],
+            "content": {
+              "type": "ext4",
+              "usage": "filesystem",
+              "uuid": "bc000000-0000-4000-8000-000000000005",
+              "label": null,
+              "version": "1.0",
+              "block_size": 4096,
+              "blocks": 524288,
+              "size_bytes": 2147483648,
+              "free_blocks": 476132,
+              "reserved_blocks": 26214,
+              "inodes": 131072,
+              "free_inodes": 130732,
+              "inode_size": 256,
+              "inodes_per_group": 8192,
+              "blocks_per_group": 32768,
+              "first_data_block": 0,
+              "revision": 1,
+              "features": [
+                "has_journal",
+                "ext_attr",
+                "resize_inode",
+                "dir_index",
+                "orphan_file",
+                "filetype",
+                "needs_recovery",
+                "extent",
+                "64bit",
+                "flex_bg",
+                "metadata_csum_seed",
+                "sparse_super",
+                "large_file",
+                "huge_file",
+                "dir_nlink",
+                "extra_isize",
+                "metadata_csum",
+                "orphan_present"
+              ],
+              "state": "clean",
+              "has_errors": false,
+              "errors_behavior": "continue",
+              "creator_os": "Linux",
+              "reserved_gdt_blocks": 255,
+              "default_hash": "half_md4",
+              "hash_seed": "bc000000-0000-4000-8000-000000000006",
+              "mkfs_time": 1795029999,
+              "last_mounted_on": "/boot",
+              "flex_bg_size": 16,
+              "descriptor_size": 64,
+              "min_extra_isize": 32,
+              "want_extra_isize": 32,
+              "journal_inode": 8
+            },
+            "mounted_at": ["/boot"]
+          },
+          {
+            "name": "nvme0n1p3",
+            "path": "/dev/nvme0n1p3",
+            "devno": "259:3",
+            "number": 3,
+            "start_lba": 6397952,
+            "end_lba": 14786559,
+            "sectors": 8388608,
+            "start_bytes": 3275751424,
+            "size_bytes": 4294967296,
+            "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+            "type_name": "Linux filesystem",
+            "uuid": "bc000000-0000-4000-8000-000000000007",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part3",
+              "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1-part3",
+              "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1_1-part3",
+              "/dev/disk/by-id/nvme-serial2-part3",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000007",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-partnum/3",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-partuuid/bc000000-0000-4000-8000-000000000007",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part3"
+            ],
+            "holders": ["dm-1"],
+            "content": null,
+            "mounted_at": []
+          },
+          {
+            "name": "nvme0n1p4",
+            "path": "/dev/nvme0n1p4",
+            "devno": "259:4",
+            "number": 4,
+            "start_lba": 14786560,
+            "end_lba": 1000212479,
+            "sectors": 985425920,
+            "start_bytes": 7570718720,
+            "size_bytes": 504538071040,
+            "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+            "type_name": "Linux filesystem",
+            "uuid": "bc000000-0000-4000-8000-000000000008",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part4",
+              "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1-part4",
+              "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1_1-part4",
+              "/dev/disk/by-id/nvme-serial2-part4",
+              "/dev/disk/by-label/rpool",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000008",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-label/rpool",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-partnum/4",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-partuuid/bc000000-0000-4000-8000-000000000008",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-uuid/10000000000000000001",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part4",
+              "/dev/disk/by-uuid/10000000000000000001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "zfs_member",
+              "usage": "filesystem",
+              "uuid": "10000000000000000001",
+              "label": "rpool",
+              "version": "5000",
+              "labels_valid": 4,
+              "pool_name": "rpool",
+              "pool_guid": "10000000000000000001",
+              "vdev_guid": "1000000000000000002",
+              "top_guid": "1000000000000000002",
+              "pool_state": "active",
+              "txg": 637,
+              "spa_version": 5000,
+              "hostname": "localhost.localdomain",
+              "hostid": 100000003
+            },
+            "mounted_at": []
+          }
+        ],
+        "boot_code": {
+          "kind": "none",
+          "first_bytes": "00000000000000000000000000000000",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 2
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "zd0",
+        "path": "/dev/zd0",
+        "kind": "disk",
+        "devno": "230:0",
+        "size_bytes": 20971520,
+        "size": "20 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 16384,
+        "model": null,
+        "vendor": null,
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": null,
+        "rotational": false,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": ["/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000009", "/dev/zvol/rpool/keystore"],
+        "holders": ["dm-0"],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "boot_code": null,
+        "content": {
+          "type": "crypto_LUKS",
+          "usage": "crypto",
+          "uuid": "bc000000-0000-4000-8000-000000000009",
+          "label": null,
+          "version": "2"
+        },
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [
+      {
+        "name": "dm-0",
+        "path": "/dev/dm-0",
+        "kind": "dm",
+        "devno": "252:0",
+        "size_bytes": 4194304,
+        "size": "4 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 16384,
+        "read_only": false,
+        "discard": false,
+        "links": [
+          "/dev/disk/by-diskseq/13",
+          "/dev/disk/by-id/dm-name-keystore-rpool",
+          "/dev/disk/by-id/dm-uuid-CRYPT-LUKS2-bc000000000040008000000000000009-keystore-rpool",
+          "/dev/disk/by-label/keystore-rpool",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-00000000000a",
+          "/dev/mapper/keystore-rpool"
+        ],
+        "holders": [],
+        "slaves": ["zd0"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "ext4",
+          "usage": "filesystem",
+          "uuid": "bc000000-0000-4000-8000-00000000000a",
+          "label": "keystore-rpool",
+          "version": "1.0",
+          "block_size": 4096,
+          "blocks": 1024,
+          "size_bytes": 4194304,
+          "free_blocks": 949,
+          "reserved_blocks": 51,
+          "inodes": 1024,
+          "free_inodes": 1012,
+          "inode_size": 256,
+          "inodes_per_group": 1024,
+          "blocks_per_group": 32768,
+          "first_data_block": 0,
+          "revision": 1,
+          "features": [
+            "ext_attr",
+            "resize_inode",
+            "dir_index",
+            "filetype",
+            "extent",
+            "64bit",
+            "flex_bg",
+            "metadata_csum_seed",
+            "sparse_super",
+            "large_file",
+            "huge_file",
+            "dir_nlink",
+            "extra_isize",
+            "metadata_csum"
+          ],
+          "state": "not clean",
+          "has_errors": false,
+          "errors_behavior": "continue",
+          "creator_os": "Linux",
+          "reserved_gdt_blocks": 0,
+          "default_hash": "half_md4",
+          "hash_seed": "bc000000-0000-4000-8000-00000000000b",
+          "mkfs_time": 1795029997,
+          "last_mounted_on": "/run/keystore/rpool",
+          "flex_bg_size": 16,
+          "descriptor_size": 64,
+          "raid_stride": 4,
+          "raid_stripe_width": 8192,
+          "min_extra_isize": 32,
+          "want_extra_isize": 32
+        },
+        "mounted_at": ["/run/keystore/rpool"],
+        "dm": {
+          "dm_name": "keystore-rpool",
+          "dm_uuid": "CRYPT-LUKS2-bc000000000040008000000000000009-keystore-rpool",
+          "mapper_path": "/dev/mapper/keystore-rpool",
+          "target": "crypt",
+          "crypt_type": "LUKS2",
+          "luks_uuid": "bc000000-0000-4000-8000-000000000009"
+        }
+      },
+      {
+        "name": "dm-1",
+        "path": "/dev/dm-1",
+        "kind": "dm",
+        "devno": "252:1",
+        "size_bytes": 4294967296,
+        "size": "4 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": false,
+        "links": [
+          "/dev/disk/by-diskseq/14",
+          "/dev/disk/by-id/dm-name-label-1",
+          "/dev/disk/by-id/dm-uuid-CRYPT-PLAIN-label-1",
+          "/dev/disk/by-label/label-1",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-00000000000c",
+          "/dev/mapper/label-1"
+        ],
+        "holders": [],
+        "slaves": ["nvme0n1p3"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "swap",
+          "usage": "other",
+          "uuid": "bc000000-0000-4000-8000-00000000000c",
+          "label": "label-1",
+          "version": "1",
+          "page_size": 4096,
+          "last_page": 1048575,
+          "size_bytes": 4294967296,
+          "bad_pages": 0
+        },
+        "mounted_at": [],
+        "dm": {
+          "dm_name": "label-1",
+          "dm_uuid": "CRYPT-PLAIN-label-1",
+          "mapper_path": "/dev/mapper/label-1",
+          "target": "crypt",
+          "crypt_type": "PLAIN"
+        }
+      }
+    ],
+    "loop_devices": [
+      {
+        "name": "loop0",
+        "path": "/dev/loop0",
+        "kind": "loop",
+        "devno": "7:0",
+        "size_bytes": 4096,
+        "size": "4 KiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/15",
+          "/dev/disk/by-loop-inode/0:52-1648",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fbare_5.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/bare_5.snap"
+      },
+      {
+        "name": "loop1",
+        "path": "/dev/loop1",
+        "kind": "loop",
+        "devno": "7:1",
+        "size_bytes": 70049792,
+        "size": "66.8 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/16",
+          "/dev/disk/by-loop-inode/0:52-1650",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fcore24_1643.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/core24_1643.snap"
+      },
+      {
+        "name": "loop2",
+        "path": "/dev/loop2",
+        "kind": "loop",
+        "devno": "7:2",
+        "size_bytes": 20930560,
+        "size": "20 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/17",
+          "/dev/disk/by-loop-inode/0:52-1652",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fdesktop-security-center_151.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/desktop-security-center_151.snap"
+      },
+      {
+        "name": "loop3",
+        "path": "/dev/loop3",
+        "kind": "loop",
+        "devno": "7:3",
+        "size_bytes": 264687616,
+        "size": "252 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/18",
+          "/dev/disk/by-loop-inode/0:52-198",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2ffirefox_8521.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/firefox_8521.snap"
+      },
+      {
+        "name": "loop4",
+        "path": "/dev/loop4",
+        "kind": "loop",
+        "devno": "7:4",
+        "size_bytes": 17301504,
+        "size": "16.5 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/19",
+          "/dev/disk/by-loop-inode/0:52-1182",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2ffirmware-updater_226.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/firmware-updater_226.snap"
+      },
+      {
+        "name": "loop5",
+        "path": "/dev/loop5",
+        "kind": "loop",
+        "devno": "7:5",
+        "size_bytes": 635518976,
+        "size": "606 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/20",
+          "/dev/disk/by-loop-inode/0:52-1654",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fgnome-46-2404_153.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/gnome-46-2404_153.snap"
+      },
+      {
+        "name": "loop6",
+        "path": "/dev/loop6",
+        "kind": "loop",
+        "devno": "7:6",
+        "size_bytes": 414167040,
+        "size": "395 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/21",
+          "/dev/disk/by-loop-inode/0:52-1656",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fmesa-2404_1165.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/mesa-2404_1165.snap"
+      },
+      {
+        "name": "loop7",
+        "path": "/dev/loop7",
+        "kind": "loop",
+        "devno": "7:7",
+        "size_bytes": 96141312,
+        "size": "91.7 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/22",
+          "/dev/disk/by-loop-inode/0:52-278",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fgtk-common-themes_1535.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/gtk-common-themes_1535.snap"
+      },
+      {
+        "name": "loop8",
+        "path": "/dev/loop8",
+        "kind": "loop",
+        "devno": "7:8",
+        "size_bytes": 19746816,
+        "size": "18.8 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/28",
+          "/dev/disk/by-loop-inode/0:52-1184",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fprompting-client_222.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/prompting-client_222.snap"
+      },
+      {
+        "name": "loop9",
+        "path": "/dev/loop9",
+        "kind": "loop",
+        "devno": "7:9",
+        "size_bytes": 16449536,
+        "size": "15.7 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/25",
+          "/dev/disk/by-loop-inode/0:52-1186",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fsnap-store_1367.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/snap-store_1367.snap"
+      },
+      {
+        "name": "loop10",
+        "path": "/dev/loop10",
+        "kind": "loop",
+        "devno": "7:10",
+        "size_bytes": 51654656,
+        "size": "49.3 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/30",
+          "/dev/disk/by-loop-inode/0:52-282",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fsnapd_26865.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/snapd_26865.snap"
+      },
+      {
+        "name": "loop11",
+        "path": "/dev/loop11",
+        "kind": "loop",
+        "devno": "7:11",
+        "size_bytes": 847872,
+        "size": "828 KiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/29",
+          "/dev/disk/by-loop-inode/0:52-280",
+          "/dev/disk/by-loop-ref/\\x2fvar\\x2flib\\x2fsnapd\\x2fsnaps\\x2fsnapd-desktop-integration_387.snap"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "backing_file": "/var/lib/snapd/snaps/snapd-desktop-integration_387.snap"
+      }
+    ],
+    "other_devices": [],
+    "lvm": {
+      "volume_groups": []
+    },
+    "zfs": {
+      "pools_from_labels": [
+        {
+          "name": "rpool",
+          "pool_guid": "10000000000000000001",
+          "state": 0,
+          "txg": 637,
+          "version": 5000,
+          "hostname": "localhost.localdomain",
+          "hostid": 100000003,
+          "vdev_children": 1,
+          "top_level_vdevs": [
+            {
+              "type": "disk",
+              "id": 0,
+              "guid": 1000000000000000002,
+              "path": "/dev/disk/by-id/nvme-serial2-part4",
+              "whole_disk": 0,
+              "metaslab_array": 132,
+              "metaslab_shift": 32,
+              "ashift": 12,
+              "asize": 504533352448,
+              "min_alloc": 4096,
+              "is_log": 0,
+              "create_txg": 4
+            }
+          ],
+          "features_for_read": {
+            "com.delphix:hole_birth": true,
+            "com.delphix:embedded_data": true,
+            "com.klarasystems:vdev_zaps_v2": true
+          },
+          "member_devices": ["nvme0n1p4"]
+        }
+      ],
+      "zpool_cache": {
+        "rpool": {
+          "version": 5000,
+          "name": "rpool",
+          "state": 0,
+          "txg": 4,
+          "pool_guid": 10000000000000000001,
+          "errata": 0,
+          "min_alloc": 4096,
+          "max_alloc": 4096,
+          "hostid": 100000004,
+          "hostname": "ubuntu",
+          "com.delphix:has_per_vdev_zaps": true,
+          "vdev_children": 1,
+          "vdev_tree": {
+            "type": "root",
+            "id": 0,
+            "guid": 10000000000000000001,
+            "create_txg": 4,
+            "com.klarasystems:vdev_zap_root": 129,
+            "children": [
+              {
+                "type": "disk",
+                "id": 0,
+                "guid": 1000000000000000002,
+                "path": "/dev/disk/by-id/nvme-serial2-part4",
+                "whole_disk": 0,
+                "metaslab_array": 132,
+                "metaslab_shift": 32,
+                "ashift": 12,
+                "asize": 504533352448,
+                "min_alloc": 4096,
+                "is_log": 0,
+                "create_txg": 4,
+                "com.delphix:vdev_zap_leaf": 130,
+                "com.delphix:vdev_zap_top": 131
+              }
+            ]
+          },
+          "features_for_read": {
+            "com.delphix:hole_birth": true,
+            "com.delphix:embedded_data": true,
+            "com.klarasystems:vdev_zaps_v2": true
+          }
+        }
+      },
+      "tools": {
+        "imported_pools": [
+          {
+            "name": "rpool",
+            "properties": {
+              "size": "502511173632",
+              "altroot": "-",
+              "health": "ONLINE",
+              "guid": "10000000000000000001",
+              "version": "-",
+              "bootfs": "-",
+              "delegation": "on",
+              "autoreplace": "off",
+              "cachefile": "-",
+              "failmode": "wait",
+              "listsnapshots": "off",
+              "autoexpand": "off",
+              "readonly": "off",
+              "ashift": "12",
+              "comment": "-",
+              "multihost": "off",
+              "autotrim": "on",
+              "compatibility": "off",
+              "dedup_table_quota": "auto",
+              "last_scrubbed_txg": "0"
+            },
+            "local_properties": {
+              "ashift": "12",
+              "autotrim": "on"
+            },
+            "features": {
+              "async_destroy": "enabled",
+              "empty_bpobj": "active",
+              "lz4_compress": "active",
+              "multi_vdev_crash_dump": "enabled",
+              "spacemap_histogram": "active",
+              "enabled_txg": "active",
+              "hole_birth": "active",
+              "extensible_dataset": "active",
+              "embedded_data": "active",
+              "bookmarks": "enabled",
+              "filesystem_limits": "enabled",
+              "large_blocks": "enabled",
+              "large_dnode": "active",
+              "sha512": "enabled",
+              "skein": "enabled",
+              "edonr": "enabled",
+              "userobj_accounting": "active",
+              "encryption": "active",
+              "project_quota": "active",
+              "device_removal": "enabled",
+              "obsolete_counts": "enabled",
+              "zpool_checkpoint": "enabled",
+              "spacemap_v2": "active",
+              "allocation_classes": "enabled",
+              "resilver_defer": "enabled",
+              "bookmark_v2": "enabled",
+              "redaction_bookmarks": "enabled",
+              "redacted_datasets": "enabled",
+              "bookmark_written": "enabled",
+              "log_spacemap": "active",
+              "livelist": "enabled",
+              "device_rebuild": "enabled",
+              "zstd_compress": "enabled",
+              "draid": "enabled",
+              "zilsaxattr": "active",
+              "head_errlog": "active",
+              "blake3": "enabled",
+              "block_cloning": "active",
+              "vdev_zaps_v2": "active",
+              "redaction_list_spill": "enabled",
+              "raidz_expansion": "enabled",
+              "fast_dedup": "enabled",
+              "longname": "enabled",
+              "large_microzap": "enabled",
+              "dynamic_gang_header": "enabled",
+              "block_cloning_endian": "active",
+              "physical_rewrite": "enabled"
+            },
+            "vdevs": {
+              "vdevs": {
+                "rpool": {
+                  "name": "rpool",
+                  "vdev_type": "root",
+                  "guid": 10000000000000000001,
+                  "class": "normal",
+                  "state": "ONLINE",
+                  "alloc_space": 5442785280,
+                  "total_space": 502511173632,
+                  "def_space": 502511173632,
+                  "read_errors": 0,
+                  "write_errors": 0,
+                  "checksum_errors": 0,
+                  "vdevs": {
+                    "/dev/disk/by-id/nvme-serial2-part4": {
+                      "name": "/dev/disk/by-id/nvme-serial2-part4",
+                      "vdev_type": "disk",
+                      "guid": 1000000000000000002,
+                      "path": "/dev/disk/by-id/nvme-serial2-part4",
+                      "class": "normal",
+                      "state": "ONLINE",
+                      "alloc_space": 5442785280,
+                      "total_space": 502511173632,
+                      "def_space": 502511173632,
+                      "rep_dev_size": 502515892224,
+                      "phys_space": 504538071040,
+                      "read_errors": 0,
+                      "write_errors": 0,
+                      "checksum_errors": 0,
+                      "slow_ios": 0
+                    }
+                  }
+                }
+              },
+              "logs": null,
+              "l2cache": null,
+              "spares": null,
+              "special": null,
+              "dedup": null
+            }
+          }
+        ],
+        "datasets": [
+          {
+            "name": "rpool",
+            "type": "filesystem",
+            "used": 5439082496,
+            "available": 481502863360,
+            "referenced": 196608,
+            "mountpoint": "/",
+            "canmount": "off",
+            "mounted": "no",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "file:///run/keystore/rpool/system.key",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/",
+                "source": "local"
+              },
+              "compression": {
+                "value": "lz4",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "off",
+                "source": "local"
+              },
+              "xattr": {
+                "value": "sa",
+                "source": "local"
+              },
+              "sync": {
+                "value": "standard",
+                "source": "local"
+              },
+              "dnodesize": {
+                "value": "auto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "posix",
+                "source": "local"
+              },
+              "relatime": {
+                "value": "on",
+                "source": "local"
+              },
+              "keylocation": {
+                "value": "file:///run/keystore/rpool/system.key",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT",
+            "type": "filesystem",
+            "used": 5405138944,
+            "available": 481502863360,
+            "referenced": 196608,
+            "mountpoint": "none",
+            "canmount": "off",
+            "mounted": "no",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "none",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7",
+            "type": "filesystem",
+            "used": 5404942336,
+            "available": 481502863360,
+            "referenced": 3686088704,
+            "mountpoint": "/",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/srv",
+            "type": "filesystem",
+            "used": 196608,
+            "available": 481502863360,
+            "referenced": 196608,
+            "mountpoint": "/srv",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/usr",
+            "type": "filesystem",
+            "used": 598016,
+            "available": 481502863360,
+            "referenced": 196608,
+            "mountpoint": "/usr",
+            "canmount": "off",
+            "mounted": "no",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/usr/local",
+            "type": "filesystem",
+            "used": 401408,
+            "available": 481502863360,
+            "referenced": 401408,
+            "mountpoint": "/usr/local",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/var",
+            "type": "filesystem",
+            "used": 1718059008,
+            "available": 481502863360,
+            "referenced": 196608,
+            "mountpoint": "/var",
+            "canmount": "off",
+            "mounted": "no",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/var/games",
+            "type": "filesystem",
+            "used": 196608,
+            "available": 481502863360,
+            "referenced": 196608,
+            "mountpoint": "/var/games",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/var/lib",
+            "type": "filesystem",
+            "used": 1708085248,
+            "available": 481502863360,
+            "referenced": 1590157312,
+            "mountpoint": "/var/lib",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/var/lib/AccountsService",
+            "type": "filesystem",
+            "used": 212992,
+            "available": 481502863360,
+            "referenced": 212992,
+            "mountpoint": "/var/lib/AccountsService",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/var/lib/NetworkManager",
+            "type": "filesystem",
+            "used": 258048,
+            "available": 481502863360,
+            "referenced": 258048,
+            "mountpoint": "/var/lib/NetworkManager",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/var/lib/apt",
+            "type": "filesystem",
+            "used": 66891776,
+            "available": 481502863360,
+            "referenced": 66891776,
+            "mountpoint": "/var/lib/apt",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/var/lib/dpkg",
+            "type": "filesystem",
+            "used": 50565120,
+            "available": 481502863360,
+            "referenced": 50565120,
+            "mountpoint": "/var/lib/dpkg",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/var/log",
+            "type": "filesystem",
+            "used": 5509120,
+            "available": 481502863360,
+            "referenced": 5509120,
+            "mountpoint": "/var/log",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/var/mail",
+            "type": "filesystem",
+            "used": 196608,
+            "available": 481502863360,
+            "referenced": 196608,
+            "mountpoint": "/var/mail",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/var/snap",
+            "type": "filesystem",
+            "used": 3391488,
+            "available": 481502863360,
+            "referenced": 3391488,
+            "mountpoint": "/var/snap",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/var/spool",
+            "type": "filesystem",
+            "used": 286720,
+            "available": 481502863360,
+            "referenced": 286720,
+            "mountpoint": "/var/spool",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT/ubuntu_xv8vu7/var/www",
+            "type": "filesystem",
+            "used": 196608,
+            "available": 481502863360,
+            "referenced": 196608,
+            "mountpoint": "/var/www",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/USERDATA",
+            "type": "filesystem",
+            "used": 8028160,
+            "available": 481502863360,
+            "referenced": 196608,
+            "mountpoint": "none",
+            "canmount": "off",
+            "mounted": "no",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "none",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/USERDATA/home_v5hcgt",
+            "type": "filesystem",
+            "used": 6619136,
+            "available": 481502863360,
+            "referenced": 6619136,
+            "mountpoint": "/home",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/home",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/USERDATA/root_v5hcgt",
+            "type": "filesystem",
+            "used": 1212416,
+            "available": 481502863360,
+            "referenced": 1212416,
+            "mountpoint": "/root",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "aes-256-gcm",
+            "encryptionroot": "rpool",
+            "keyformat": "raw",
+            "keylocation": "none",
+            "keystatus": "available",
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "auto",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/root",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/keystore",
+            "type": "volume",
+            "used": 23592960,
+            "available": 481509167104,
+            "referenced": 17289216,
+            "mountpoint": null,
+            "canmount": null,
+            "mounted": null,
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": null,
+            "volsize": 20971520,
+            "volblocksize": 16384,
+            "acltype": null,
+            "xattr": null,
+            "dnodesize": null,
+            "normalization": null,
+            "utf8only": null,
+            "casesensitivity": null,
+            "atime": null,
+            "relatime": null,
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "volsize": {
+                "value": "20971520",
+                "source": "local"
+              },
+              "refreservation": {
+                "value": "23592960",
+                "source": "local"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "btrfs": [],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/run/keystore/rpool",
+        "source": "/dev/mapper/keystore-rpool",
+        "fstype": "ext4",
+        "devno": "252:0",
+        "device": "dm-0",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,stripe=8192",
+        "size_bytes": 3915776,
+        "used_bytes": 28672,
+        "available_bytes": 3596288
+      },
+      {
+        "target": "/",
+        "source": "rpool/ROOT/ubuntu_xv8vu7",
+        "fstype": "zfs",
+        "devno": "0:37",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 485188960256,
+        "used_bytes": 3686137856,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/boot",
+        "source": "/dev/nvme0n1p2",
+        "fstype": "ext4",
+        "devno": "259:2",
+        "device": "nvme0n1p2",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw",
+        "size_bytes": 2040373248,
+        "used_bytes": 90136576,
+        "available_bytes": 1826086912
+      },
+      {
+        "target": "/home",
+        "source": "rpool/USERDATA/home_v5hcgt",
+        "fstype": "zfs",
+        "devno": "0:47",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 481509507072,
+        "used_bytes": 6684672,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/usr/local",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/usr/local",
+        "fstype": "zfs",
+        "devno": "0:49",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 481503346688,
+        "used_bytes": 524288,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/root",
+        "source": "rpool/USERDATA/root_v5hcgt",
+        "fstype": "zfs",
+        "devno": "0:41",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 481504133120,
+        "used_bytes": 1310720,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/var/log",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/log",
+        "fstype": "zfs",
+        "devno": "0:51",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 481508458496,
+        "used_bytes": 5636096,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/var/games",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/games",
+        "fstype": "zfs",
+        "devno": "0:50",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 481503084544,
+        "used_bytes": 262144,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/srv",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/srv",
+        "fstype": "zfs",
+        "devno": "0:48",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 481503084544,
+        "used_bytes": 262144,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/var/lib",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/lib",
+        "fstype": "zfs",
+        "devno": "0:52",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 483092987904,
+        "used_bytes": 1590165504,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/var/mail",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/mail",
+        "fstype": "zfs",
+        "devno": "0:53",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 481503084544,
+        "used_bytes": 262144,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/var/www",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/www",
+        "fstype": "zfs",
+        "devno": "0:55",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 481503084544,
+        "used_bytes": 262144,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/var/spool",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/spool",
+        "fstype": "zfs",
+        "devno": "0:56",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 481503215616,
+        "used_bytes": 393216,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/var/snap",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/snap",
+        "fstype": "zfs",
+        "devno": "0:54",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 481506230272,
+        "used_bytes": 3407872,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/var/lib/AccountsService",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/lib/AccountsService",
+        "fstype": "zfs",
+        "devno": "0:57",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 481503084544,
+        "used_bytes": 262144,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/var/lib/NetworkManager",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/lib/NetworkManager",
+        "fstype": "zfs",
+        "devno": "0:58",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 481503084544,
+        "used_bytes": 262144,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/var/lib/apt",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/lib/apt",
+        "fstype": "zfs",
+        "devno": "0:59",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 481569800192,
+        "used_bytes": 66977792,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/var/lib/dpkg",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/lib/dpkg",
+        "fstype": "zfs",
+        "devno": "0:60",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 481553416192,
+        "used_bytes": 50593792,
+        "available_bytes": 481502822400
+      },
+      {
+        "target": "/boot/efi",
+        "source": "/dev/nvme0n1p1",
+        "fstype": "vfat",
+        "devno": "259:1",
+        "device": "nvme0n1p1",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,fmask=0022,dmask=0022,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro",
+        "size_bytes": 1124999168,
+        "used_bytes": 6606848,
+        "available_bytes": 1118392320
+      },
+      {
+        "target": "/run/media/m/BACKOTTER",
+        "source": "/dev/sda3",
+        "fstype": "vfat",
+        "devno": "8:3",
+        "device": null,
+        "root": "/",
+        "options": "rw,nosuid,nodev,relatime",
+        "super_options": "rw,uid=1000,gid=1000,fmask=0022,dmask=0022,codepage=437,iocharset=iso8859-1,shortname=mixed,showexec,utf8,flush,errors=remount-ro",
+        "size_bytes": 268152832,
+        "used_bytes": 31035392,
+        "available_bytes": 237117440
+      },
+      {
+        "target": "/run/media/m/Ubuntu-Server 26.04.1 LTS amd64",
+        "source": "/dev/sda1",
+        "fstype": "iso9660",
+        "devno": "8:1",
+        "device": null,
+        "root": "/",
+        "options": "ro,nosuid,nodev,relatime",
+        "super_options": "ro,nojoliet,check=s,map=n,blocksize=2048,uid=1000,gid=1000,dmode=500,fmode=400,iocharset=utf8",
+        "size_bytes": 974624768,
+        "used_bytes": 974624768,
+        "available_bytes": 0
+      },
+      {
+        "target": "/run/media/m/mybig512",
+        "source": "/dev/sdb1",
+        "fstype": "xfs",
+        "devno": "8:17",
+        "device": null,
+        "root": "/",
+        "options": "rw,nosuid,nodev,relatime",
+        "super_options": "rw,inode64,logbufs=8,logbsize=32k,noquota",
+        "size_bytes": 511858737152,
+        "used_bytes": 111137976320,
+        "available_bytes": 400720760832
+      },
+      {
+        "target": "/tmp/a",
+        "source": "/dev/sdb1",
+        "fstype": "xfs",
+        "devno": "8:17",
+        "device": null,
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,inode64,logbufs=8,logbsize=32k,noquota",
+        "size_bytes": 511858737152,
+        "used_bytes": 111137976320,
+        "available_bytes": 400720760832
+      }
+    ],
+    "physical_root": "/",
+    "backup_sources": [
+      {
+        "path": "/",
+        "from": "/",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/ubuntu_xv8vu7",
+        "subvol": null
+      },
+      {
+        "path": "/boot",
+        "from": "/boot",
+        "device": "nvme0n1p2",
+        "fstype": "ext4",
+        "source": "/dev/nvme0n1p2",
+        "subvol": null
+      },
+      {
+        "path": "/boot/efi",
+        "from": "/boot/efi",
+        "device": "nvme0n1p1",
+        "fstype": "vfat",
+        "source": "/dev/nvme0n1p1",
+        "subvol": null
+      },
+      {
+        "path": "/home",
+        "from": "/home",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/USERDATA/home_v5hcgt",
+        "subvol": null
+      },
+      {
+        "path": "/root",
+        "from": "/root",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/USERDATA/root_v5hcgt",
+        "subvol": null
+      },
+      {
+        "path": "/srv",
+        "from": "/srv",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/srv",
+        "subvol": null
+      },
+      {
+        "path": "/usr/local",
+        "from": "/usr/local",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/usr/local",
+        "subvol": null
+      },
+      {
+        "path": "/var/games",
+        "from": "/var/games",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/games",
+        "subvol": null
+      },
+      {
+        "path": "/var/lib",
+        "from": "/var/lib",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/lib",
+        "subvol": null
+      },
+      {
+        "path": "/var/lib/AccountsService",
+        "from": "/var/lib/AccountsService",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/lib/AccountsService",
+        "subvol": null
+      },
+      {
+        "path": "/var/lib/NetworkManager",
+        "from": "/var/lib/NetworkManager",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/lib/NetworkManager",
+        "subvol": null
+      },
+      {
+        "path": "/var/lib/apt",
+        "from": "/var/lib/apt",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/lib/apt",
+        "subvol": null
+      },
+      {
+        "path": "/var/lib/dpkg",
+        "from": "/var/lib/dpkg",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/lib/dpkg",
+        "subvol": null
+      },
+      {
+        "path": "/var/log",
+        "from": "/var/log",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/log",
+        "subvol": null
+      },
+      {
+        "path": "/var/mail",
+        "from": "/var/mail",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/mail",
+        "subvol": null
+      },
+      {
+        "path": "/var/snap",
+        "from": "/var/snap",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/snap",
+        "subvol": null
+      },
+      {
+        "path": "/var/spool",
+        "from": "/var/spool",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/spool",
+        "subvol": null
+      },
+      {
+        "path": "/var/www",
+        "from": "/var/www",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/ubuntu_xv8vu7/var/www",
+        "subvol": null
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/dm-1",
+        "type": "partition",
+        "size_bytes": 4294963200,
+        "used_bytes": 0,
+        "priority": -1,
+        "device": "dm-1"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "/dev/disk/by-id/dm-uuid-CRYPT-PLAIN-label-1",
+        "file": "none",
+        "type": "swap",
+        "options": "sw",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "dm-1"
+      },
+      {
+        "spec": "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000005",
+        "file": "/boot",
+        "type": "ext4",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 1,
+        "resolves_to": "nvme0n1p2"
+      },
+      {
+        "spec": "/dev/disk/by-uuid/BC00-0002",
+        "file": "/boot/efi",
+        "type": "vfat",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 1,
+        "resolves_to": "nvme0n1p1"
+      }
+    ],
+    "crypttab": [
+      {
+        "name": "label-1",
+        "device": "PARTUUID=bc000000-0000-4000-8000-000000000007",
+        "key_file": "/dev/urandom",
+        "options": ["cipher=aes-cbc-essiv:sha256", "initramfs", "plain", "size=256", "swap"],
+        "resolves_to": "nvme0n1p3"
+      }
+    ],
+    "mdadm_conf": null
+  },
+  "boot": {
+    "loader": {
+      "name": "grub",
+      "firmware": "uefi",
+      "via_shim": true,
+      "package": "grub-efi-amd64-signed",
+      "shim_package": "shim-signed",
+      "evidence": [
+        "firmware booted \\EFI\\ubuntu\\shimx64.efi",
+        "shim's MOK variables are set",
+        "package grub-efi-amd64-signed is installed"
+      ]
+    },
+    "efi": {
+      "boot_current": "0011",
+      "boot_next": "0005",
+      "boot_order": [
+        "0011",
+        "0012",
+        "0002",
+        "0001",
+        "000C",
+        "0000",
+        "0004",
+        "0006",
+        "0007",
+        "000B",
+        "0009",
+        "0003",
+        "000D",
+        "0008",
+        "000F"
+      ],
+      "timeout_seconds": 1,
+      "entries": [
+        {
+          "number": "0000",
+          "load_option_hex": "090000008c00570069006e0064006f0077007300200042006f006f00740020004d0061006e006100670065007200000001041400000000bc00000040800000000000000d7fff040004012a000100000000080000000000000020080000000000000000bc00000040800000000000000e0202040446005c004500460049005c004d006900630072006f0073006f00660074005c0042006f006f0074005c0062006f006f0074006d006700660077002e0065006600690000007fff040057494e444f5753000100000088000000780000004200430044004f0042004a004500430054003d007b00390064006500610038003600320063002d0035006300640064002d0034006500370030002d0061006300630031002d006600330032006200330034003400640034003700390035007d00000000770100000010000000040000007fff0400",
+          "description": "Windows Boot Manager",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 5,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-00000000000d)",
+            "HD(1,GPT,bc000000-0000-4000-8000-00000000000e,0x800,0x82000)/File(\\EFI\\Microsoft\\Boot\\bootmgfw.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000000e",
+            "start_lba": 2048,
+            "sectors": 532480,
+            "device": null
+          },
+          "file": "\\EFI\\Microsoft\\Boot\\bootmgfw.efi",
+          "optional_data_bytes": 136
+        },
+        {
+          "number": "0001",
+          "load_option_hex": "01000000cc0055004500460049003a0020005000580045002000490050007600340020005200650061006c00740065006b002000500043004900650020004700420045002000460061006d0069006c007900200043006f006e00740072006f006c006c0065007200000002010c00d041030a0000000001010600001c010106000000030b25001c8341e8f738000000000000000000000000000000000000000000000000000000030c1b0000000000000000000000000000000000000000000000007fff040001046c00000000bc00000040800000000000000f5000580045002000490050007600340020005200650061006c00740065006b002000500043004900650020004700420045002000460061006d0069006c007900200043006f006e00740072006f006c006c006500720000007fff04000000424f",
+          "description": "UEFI: PXE IPv4 Realtek PCIe GBE Family Controller",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 3,
+          "device_path": [
+            "PciRoot(0x0)/Pci(0x1c,0x0)/Pci(0x0,0x0)/MAC()/IPv4()",
+            "VenHw(bc000000-0000-4000-8000-00000000000f)"
+          ],
+          "file": null,
+          "optional_data_bytes": 4
+        },
+        {
+          "number": "0002",
+          "load_option_hex": "01000000ed0055004500460049003a0020005000580045002000490050007600360020005200650061006c00740065006b002000500043004900650020004700420045002000460061006d0069006c007900200043006f006e00740072006f006c006c0065007200000002010c00d041030a0000000001010600001c010106000000030b25001c8341e8f738000000000000000000000000000000000000000000000000000000030d3c0000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000007fff040001046c00000000bc00000040800000000000000f5000580045002000490050007600360020005200650061006c00740065006b002000500043004900650020004700420045002000460061006d0069006c007900200043006f006e00740072006f006c006c006500720000007fff04000000424f",
+          "description": "UEFI: PXE IPv6 Realtek PCIe GBE Family Controller",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 2,
+          "device_path": [
+            "PciRoot(0x0)/Pci(0x1c,0x0)/Pci(0x0,0x0)/MAC()/IPv6()",
+            "VenHw(bc000000-0000-4000-8000-00000000000f)"
+          ],
+          "file": null,
+          "optional_data_bytes": 4
+        },
+        {
+          "number": "0003",
+          "load_option_hex": "090000007a0065006c0065006d0065006e00740061007200790020004f00530020003800000001041400000000bc00000040800000000000000d7fff040004012a00010000000010000000000000f738080000000000000000bc0000004080000000000000100202040434005c004500460049005c007500620075006e00740075005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "elementary OS 8",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 11,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-00000000000d)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000010,0x1000,0x838f7)/File(\\EFI\\ubuntu\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000010",
+            "start_lba": 4096,
+            "sectors": 538871,
+            "device": null
+          },
+          "file": "\\EFI\\ubuntu\\shimx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0004",
+          "load_option_hex": "090000007a00640065006200690061006e00000001041400000000bc00000040800000000000000d7fff040004012a000100000000080000000000000000100000000000000000bc0000004080000000000000110202040434005c004500460049005c00640065006200690061006e005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "debian",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 6,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-00000000000d)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000011,0x800,0x100000)/File(\\EFI\\debian\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000011",
+            "start_lba": 2048,
+            "sectors": 1048576,
+            "device": null
+          },
+          "file": "\\EFI\\debian\\shimx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0005",
+          "load_option_hex": "010000005e0042004b004f002000720065007300630075006500000004012a00020000000c0c1d00000000003828000000000000000000bc0000004080000000000000120202040430005c004500460049005c0062006f006f0074005c0062006f006f0074007800360034002e0065006600690000007fff0400",
+          "description": "BKO rescue",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": null,
+          "device_path": [
+            "HD(2,GPT,bc000000-0000-4000-8000-000000000012,0x1d0c0c,0x2838)/File(\\EFI\\boot\\bootx64.efi)"
+          ],
+          "partition": {
+            "number": 2,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000012",
+            "start_lba": 1903628,
+            "sectors": 10296,
+            "device": null
+          },
+          "file": "\\EFI\\boot\\bootx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0006",
+          "load_option_hex": "090000007a00420061007a007a00690074006500000001041400000000bc00000040800000000000000d7fff040004012a0001000000000800000000000000c0120000000000000000bc0000004080000000000000130202040434005c004500460049005c006600650064006f00720061005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "Bazzite",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 7,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-00000000000d)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000013,0x800,0x12c000)/File(\\EFI\\fedora\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000013",
+            "start_lba": 2048,
+            "sectors": 1228800,
+            "device": null
+          },
+          "file": "\\EFI\\fedora\\shimx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0007",
+          "load_option_hex": "0900000076004b004400450020006e0065006f006e002000540065007300740069006e0067002000450064006900740069006f006e00000001041400000000bc00000040800000000000000d7fff040004012a000100000000100000000000000060090000000000000000bc0000004080000000000000140202040430005c004500460049005c006e0065006f006e005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "KDE neon Testing Edition",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 8,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-00000000000d)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000014,0x1000,0x96000)/File(\\EFI\\neon\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000014",
+            "start_lba": 4096,
+            "sectors": 614400,
+            "device": null
+          },
+          "file": "\\EFI\\neon\\shimx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0008",
+          "load_option_hex": "09000000800072004500460049006e006400200042006f006f00740020004d0061006e006100670065007200000001041400000000bc00000040800000000000000d7fff040004012a0001000000000800000000000000980f0000000000000000bc000000408000000000000015020204043a005c004500460049005c0072006500660069006e0064005c0072006500660069006e0064005f007800360034002e0065006600690000007fff0400",
+          "description": "rEFInd Boot Manager",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 13,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-00000000000d)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000015,0x800,0xf9800)/File(\\EFI\\refind\\refind_x64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000015",
+            "start_lba": 2048,
+            "sectors": 1021952,
+            "device": null
+          },
+          "file": "\\EFI\\refind\\refind_x64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0009",
+          "load_option_hex": "0900000076006f00700065006e005300550053004500200042006f006f00740020004d0061006e00610067006500720020002800730079007300740065006d0064002d0062006f006f0074002900000001041400000000bc00000040800000000000000d7fff040004012a000100000000080000000000000000200000000000000000bc0000004080000000000000160202040430005c004500460049005c00730079007300740065006d0064005c007300680069006d002e0065006600690000007fff0400",
+          "description": "openSUSE Boot Manager (systemd-boot)",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 10,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-00000000000d)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000016,0x800,0x200000)/File(\\EFI\\systemd\\shim.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000016",
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "device": null
+          },
+          "file": "\\EFI\\systemd\\shim.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "000B",
+          "load_option_hex": "090000008c004c0069006e0075007800200042006f006f00740020004d0061006e006100670065007200000001041400000000bc00000040800000000000000d7fff040004012a000100000000080000000000000000200000000000000000bc0000004080000000000000170202040446005c004500460049005c00730079007300740065006d0064005c00730079007300740065006d0064002d0062006f006f0074007800360034002e0065006600690000007fff0400",
+          "description": "Linux Boot Manager",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 9,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-00000000000d)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000017,0x800,0x200000)/File(\\EFI\\systemd\\systemd-bootx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000017",
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "device": null
+          },
+          "file": "\\EFI\\systemd\\systemd-bootx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "000C",
+          "load_option_hex": "09000000780061007200740069007800000001041400000000bc00000040800000000000000d7fff040004012a000100000000080000000000000000200000000000000000bc0000004080000000000000180202040432005c004500460049005c00610072007400690078005c0067007200750062007800360034002e0065006600690000007fff0400",
+          "description": "artix",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 4,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-00000000000d)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000018,0x800,0x200000)/File(\\EFI\\artix\\grubx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000018",
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "device": null
+          },
+          "file": "\\EFI\\artix\\grubx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "000D",
+          "load_option_hex": "090000007a00470061007200750064006100000001041400000000bc00000040800000000000000d7fff040004012a000100000000100000000000000060090000000000000000bc0000004080000000000000190202040434005c004500460049005c004700610072007500640061005c0067007200750062007800360034002e0065006600690000007fff0400",
+          "description": "Garuda",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 12,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-00000000000d)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000019,0x1000,0x96000)/File(\\EFI\\Garuda\\grubx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000019",
+            "start_lba": 4096,
+            "sectors": 614400,
+            "device": null
+          },
+          "file": "\\EFI\\Garuda\\grubx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "000F",
+          "load_option_hex": "090000008c004c0069006e0075007800200042006f006f00740020004d0061006e006100670065007200000001041400000000bc00000040800000000000000d7fff040004012a000100000000080000000000000000200000000000000000bc00000040800000000000001a0202040446005c004500460049005c00730079007300740065006d0064005c00730079007300740065006d0064002d0062006f006f0074007800360034002e0065006600690000007fff0400",
+          "description": "Linux Boot Manager",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 14,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-00000000000d)",
+            "HD(1,GPT,bc000000-0000-4000-8000-00000000001a,0x800,0x200000)/File(\\EFI\\systemd\\systemd-bootx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000001a",
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "device": null
+          },
+          "file": "\\EFI\\systemd\\systemd-bootx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0011",
+          "load_option_hex": "0100000062005500620075006e0074007500000004012a000100000000080000000000000098210000000000000000bc0000004080000000000000030202040434005c004500460049005c007500620075006e00740075005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "Ubuntu",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 0,
+          "device_path": [
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000003,0x800,0x219800)/File(\\EFI\\ubuntu\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "start_lba": 2048,
+            "sectors": 2201600,
+            "device": "nvme0n1p1"
+          },
+          "file": "\\EFI\\ubuntu\\shimx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0012",
+          "load_option_hex": "01000000860055004500460049003a00200050004e0059002000550053004200200032002e003000200046004400200050004d00410050002c00200050006100720074006900740069006f006e0020003200000002010c00d041030a0000000001010600001403050600030003050600010004012a00020000000c0c1d00000000003828000000000000000000bc00000040800000000000001202027fff040001043600000000bc00000040800000000000000f300037003100390039003400300044004100380032004100330044003400340000007fff04000000424f",
+          "description": "UEFI: PNY USB 2.0 FD PMAP, Partition 2",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 1,
+          "device_path": [
+            "PciRoot(0x0)/Pci(0x14,0x0)/USB(0x3,0x0)/USB(0x1,0x0)/HD(2,GPT,bc000000-0000-4000-8000-000000000012,0x1d0c0c,0x2838)",
+            "VenHw(bc000000-0000-4000-8000-00000000000f)"
+          ],
+          "partition": {
+            "number": 2,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000012",
+            "start_lba": 1903628,
+            "sectors": 10296,
+            "device": null
+          },
+          "file": null,
+          "optional_data_bytes": 4
+        }
+      ],
+      "loader_interface": {
+        "loader_info": null,
+        "loader_device_partuuid": null,
+        "loader_image_identifier": null,
+        "loader_entry_selected": null,
+        "loader_entry_default": null,
+        "stub_info": null
+      },
+      "shim_variables": ["MokListRT", "MokListTrustedRT", "MokListXRT", "SbatLevelRT"]
+    },
+    "esps": [
+      {
+        "device": "nvme0n1p1",
+        "mounted_at": "/boot/efi",
+        "contents": {
+          "files": [
+            {
+              "path": "EFI/BOOT/BOOTX64.EFI",
+              "size": 966768,
+              "same_as": "EFI/ubuntu/shimx64.efi"
+            },
+            {
+              "path": "EFI/BOOT/fbx64.efi",
+              "size": 88344
+            },
+            {
+              "path": "EFI/BOOT/mmx64.efi",
+              "size": 856280,
+              "same_as": "EFI/ubuntu/mmx64.efi"
+            },
+            {
+              "path": "EFI/ubuntu/BOOTX64.CSV",
+              "size": 108
+            },
+            {
+              "path": "EFI/ubuntu/grub.cfg",
+              "size": 112
+            },
+            {
+              "path": "EFI/ubuntu/grubx64.efi",
+              "size": 2828168
+            },
+            {
+              "path": "EFI/ubuntu/mmx64.efi",
+              "size": 856280,
+              "same_as": "EFI/BOOT/mmx64.efi"
+            },
+            {
+              "path": "EFI/ubuntu/shimx64.efi",
+              "size": 966768,
+              "same_as": "EFI/BOOT/BOOTX64.EFI"
+            }
+          ],
+          "debian_grub_stub": null
+        }
+      }
+    ],
+    "grub": {
+      "dir": "/boot/grub",
+      "installed_platforms": ["x86_64-efi"],
+      "grub_cfg": {
+        "entries": [
+          "Revert system only",
+          "Revert system and user data",
+          "Revert system only (recovery mode)",
+          "Revert system and user data (recovery mode)",
+          "Ubuntu Stonking Stingray (development branch)",
+          "Advanced options for Ubuntu Stonking Stingray (development branch)>Ubuntu Stonking Stingray (development branch), with Linux 7.3.0-10-generic",
+          "Advanced options for Ubuntu Stonking Stingray (development branch)>Ubuntu Stonking Stingray (development branch), with Linux 7.3.0-10-generic (recovery mode)",
+          "Memory test (mt86+x64)",
+          "Memory test (mt86+x64, serial console)",
+          "Memory test (mt86+ia32)",
+          "Memory test (mt86+ia32, serial console)",
+          "Memory test (mt86+x64)",
+          "Memory test (mt86+x64, serial console)",
+          "Memory test (mt86+ia32)",
+          "Memory test (mt86+ia32, serial console)",
+          "UEFI Firmware Settings"
+        ],
+        "search_uuids": ["bc000000-0000-4000-8000-000000000005"],
+        "modules": [
+          "efi_gop",
+          "all_video",
+          "ieee1275_fb",
+          "vbe",
+          "vga",
+          "video_bochs",
+          "video_cirrus",
+          "part_gpt",
+          "ext2",
+          "gfxterm",
+          "gettext",
+          "gzio"
+        ],
+        "default_linux": "${kernel} root=ZFS=${root_dataset} ro quiet splash crashkernel=2G-4G:320M,4G-32G:512M,32G-64G:1024M,64G-128G:2048M,128G-:4096M",
+        "default_initrd": "${initrd}",
+        "lang": "en_US"
+      },
+      "grubenv": {},
+      "default_grub": {
+        "GRUB_DEFAULT": "0",
+        "GRUB_TIMEOUT_STYLE": "hidden",
+        "GRUB_TIMEOUT": "0",
+        "GRUB_DISTRIBUTOR": "`( . /etc/os-release && echo ${NAME} )`",
+        "GRUB_CMDLINE_LINUX": "",
+        "GRUB_CMDLINE_LINUX_DEFAULT": "$GRUB_CMDLINE_LINUX_DEFAULT crashkernel=2G-4G:320M,4G-32G:512M,32G-64G:1024M,64G-128G:2048M,128G-:4096M"
+      },
+      "debconf": {
+        "grub-efi/install_devices": "/dev/disk/by-id/nvme-serial2-part1",
+        "grub2/enable_os_prober": "false",
+        "grub2/linux_cmdline": "",
+        "grub2/linux_cmdline_default": "quiet splash",
+        "grub2/update_nvram": "true"
+      }
+    },
+    "systemd_boot": null,
+    "kernels": {
+      "installed": [
+        {
+          "version": "7.3.0-10-generic",
+          "vmlinuz_bytes": 17807752,
+          "initrd_bytes": 49740673,
+          "config": true,
+          "running": true,
+          "modules_installed": true
+        }
+      ],
+      "symlinks": {
+        "/boot/vmlinuz": "vmlinuz-7.3.0-10-generic",
+        "/boot/initrd.img": "initrd.img-7.3.0-10-generic"
+      }
+    },
+    "cmdline": {
+      "raw": "BOOT_IMAGE=/vmlinuz-7.3.0-10-generic root=ZFS=rpool/ROOT/ubuntu_xv8vu7 ro quiet splash crashkernel=2G-4G:320M,4G-32G:512M,32G-64G:1024M,64G-128G:2048M,128G-:4096M",
+      "words": [
+        "BOOT_IMAGE=/vmlinuz-7.3.0-10-generic",
+        "root=ZFS=rpool/ROOT/ubuntu_xv8vu7",
+        "ro",
+        "quiet",
+        "splash",
+        "crashkernel=2G-4G:320M,4G-32G:512M,32G-64G:1024M,64G-128G:2048M,128G-:4096M\n"
+      ],
+      "storage": {
+        "BOOT_IMAGE": "/vmlinuz-7.3.0-10-generic",
+        "root": "ZFS=rpool/ROOT/ubuntu_xv8vu7",
+        "ro": ""
+      }
+    },
+    "kernel_cmdline_file": null,
+    "initramfs": {
+      "generator": "dracut",
+      "modules": "most",
+      "compress": "zstd",
+      "resume": null,
+      "crypttab_in_initramfs": true
+    },
+    "packages": {
+      "grub-efi-amd64": "2.14-2ubuntu1",
+      "grub-efi-amd64-bin": "2.14-2ubuntu1",
+      "grub-efi-amd64-signed": "1.215+2.14-2ubuntu1",
+      "grub2-common": "2.14-2ubuntu2",
+      "grub-common": "2.14-2ubuntu2",
+      "shim-signed": "1.59+15.8-0ubuntu2",
+      "mokutil": "0.7.2-2",
+      "efibootmgr": "18-4.1ubuntu1",
+      "os-prober": "1.84ubuntu1",
+      "dracut": "111-3",
+      "cryptsetup": "2:2.8.7-1ubuntu3",
+      "cryptsetup-bin": "2:2.8.7-1ubuntu3",
+      "systemd-cryptsetup": "259.5-0ubuntu3",
+      "zfsutils-linux": "2.4.4-1ubuntu4",
+      "zfs-dracut": "2.4.4-1ubuntu4",
+      "e2fsprogs": "1.47.2-3ubuntu4",
+      "dosfstools": "4.2-1.2build1",
+      "exfatprogs": "1.4.2-1",
+      "ntfs-3g": "1:2026.2.25-1",
+      "linux-base": "4.15ubuntu5"
+    }
+  },
+  "warnings": []
+}

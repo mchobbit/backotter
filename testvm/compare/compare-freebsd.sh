@@ -43,14 +43,23 @@ work=$work_base/compare-freebsd/$guest
 mkdir -p "$work"
 cd "$work"
 
+# QEMU's user network accepts the TCP connection at once, so ssh's
+# ConnectTimeout bounds the wait for the guest sshd's banner: 30 s
+# (VM_SSH_CONNECT_TIMEOUT, as vm-lib.sh's vm_ssh), since FreeBSD's sshd
+# (UseDNS yes) looks up 10.0.2.2 first and one lost DNS answer costs it 5 s.
 ssh_to() {  # KEY PORT COMMAND...
     local key=$1 port=$2; shift 2
     ssh -q -i "$key" -p "$port" -o BatchMode=yes -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 root@127.0.0.1 "$@"
+        -o UserKnownHostsFile=/dev/null -o ConnectTimeout="${VM_SSH_CONNECT_TIMEOUT:-30}" root@127.0.0.1 "$@"
 }
+# 5 s tries for the first minute (a try made before the guest's network is up
+# waits out its whole ConnectTimeout), the full ConnectTimeout after, as
+# vm_boot; about as long in all as 80 tries of 5 s and 3 s apart were.
 wait_ssh() {  # KEY PORT PID
-    for _ in $(seq 80); do
-        ssh_to "$1" "$2" true 2>/dev/null && return 0
+    local began=$SECONDS ct
+    while (( SECONDS - began < 640 )); do
+        ct=5; (( SECONDS - began < 60 )) || ct=${VM_SSH_CONNECT_TIMEOUT:-30}
+        VM_SSH_CONNECT_TIMEOUT=$ct ssh_to "$1" "$2" true 2>/dev/null && return 0
         kill -0 "$3" 2>/dev/null || return 1
         sleep 3
     done

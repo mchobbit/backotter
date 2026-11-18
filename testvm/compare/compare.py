@@ -174,6 +174,14 @@ DST_MP = Path(f"/mnt/{PREFIX}-dst{SUFFIX}")
 SSH_PORT = os.environ.get("COMPARE_PORT") or str(2230 + int(SLOT))
 if not re.fullmatch(r"[0-9]{4,5}", SSH_PORT) or not 1024 <= int(SSH_PORT) <= 65535:
     raise SystemExit("COMPARE_PORT must be a port number from 1024 to 65535")
+# QEMU's user network accepts the TCP connection at once, so ssh's
+# ConnectTimeout bounds the wait for the guest sshd's banner: 30 s
+# (VM_SSH_CONNECT_TIMEOUT, as vm-lib.sh's vm_ssh), since a FreeBSD-family sshd
+# (UseDNS yes) looks up 10.0.2.2 first and one lost DNS answer costs it 5 s.
+# VM.wait_ssh's tries in a boot's first minute keep 5 s.
+SSH_CONNECT_TIMEOUT = os.environ.get("VM_SSH_CONNECT_TIMEOUT") or "30"
+if not re.fullmatch(r"[1-9][0-9]{0,3}", SSH_CONNECT_TIMEOUT):
+    raise SystemExit("VM_SSH_CONNECT_TIMEOUT must be a number of seconds")
 PASSWORD = "backotter-compare"                    # for restic's and borg's encryption
 DST_POOL_TEMP = f"{PREFIX}-dst{SUFFIX}"
 DST_NAME = f"{PREFIX}-dst{SUFFIX}"                # the restored disks' LUKS, md and VG names start so
@@ -1461,9 +1469,7 @@ class VM:
         self.cmd = [str(TESTVM / "vm-run")] + (["--ram"] if ram else []) + hardware
         self.cmd += [a for d in images[1:] for a in ("--disk", str(d))]
         self.monitor = log.with_name(log.name + ".monitor")
-        self.ssh_cmd = ["ssh", "-q", "-i", str(cfg.dir / "id_ed25519"), "-p", SSH_PORT, "-o", "BatchMode=yes",
-                        "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-                        "-o", "ConnectTimeout=5", "root@127.0.0.1"]
+        self.ssh_cmd = self.ssh_with(SSH_CONNECT_TIMEOUT)
         self.up = False
         self.typer = None
 
@@ -1537,13 +1543,23 @@ class VM:
             self.io_stall = io_stall_s() - stall0
             if time.monotonic() >= start + min(timeout + self.io_stall, 3 * timeout):
                 break
-            if run(self.ssh_cmd + ["true"], check=False, quiet=True).returncode == 0:
+            # 5 s tries while it boots (a try made before the guest's network
+            # is up waits out its whole ConnectTimeout), the full one after
+            # the first minute (SSH_CONNECT_TIMEOUT).
+            cmd = self.ssh_with("5") if time.monotonic() < start + 60 else self.ssh_cmd
+            if run(cmd + ["true"], check=False, quiet=True).returncode == 0:
                 self.up = True
                 break
             time.sleep(3)
         if self.typer and self.typer.poll() is None:
             self.typer.terminate()
         return self.up
+
+    def ssh_with(self, connect_timeout: str) -> list[str]:
+        """ssh to the guest as root, waiting CONNECT_TIMEOUT seconds for its banner."""
+        return ["ssh", "-q", "-i", str(self.cfg.dir / "id_ed25519"), "-p", SSH_PORT, "-o", "BatchMode=yes",
+                "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+                "-o", f"ConnectTimeout={connect_timeout}", "root@127.0.0.1"]
 
     def ssh(self, command: str, input: str | None = None, timeout: float = 600) -> subprocess.CompletedProcess:
         return run(self.ssh_cmd + [command], check=False, quiet=True, input=input, timeout=timeout)

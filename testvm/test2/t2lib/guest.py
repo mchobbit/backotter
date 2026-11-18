@@ -374,7 +374,14 @@ def identity_check(ctx, guests, sha256=False, run=None, io=None, log=None):
     a facts refresh after this step answers with the guest again (a stale cache's vms/GUEST is
     there, only linked to an older version), and apply_drops puts the drop back.  sha256: always
     hash.  A host that didn't answer, twice, isn't a guest's fault: ok false, harness true, and
-    no FAIL row."""
+    no FAIL row.
+
+    The hosts are asked at once (ask_each), each hashing its own disks: one after another, a
+    GuestTest2All's hashing took an hour on 2026-11-18 (Chopin 26 min, Cinqcent 11, Copland and
+    Cage 6 each, then Choubox) before any cell ran.  A rehash (a guest whose disks differ from
+    their merge record, or one with no image-state, which has none) asks each host once for all
+    its guests, with --cached: a disk t2-host imgsum's cache holds at the same stat isn't read
+    again.  sha256's hashing never uses the cache."""
     from . import run as runmod
     io = io or hostjob.HostIO()
     log = log or (lambda t: None)
@@ -384,9 +391,10 @@ def identity_check(ctx, guests, sha256=False, run=None, io=None, log=None):
         return {}
     info = {}
 
-    def ask(host, names, sha, backfill):
+    def ask(host, names, sha, backfill, cached=False):
         """{guest: its identity}, or None when HOST gave no answer, twice."""
-        a = ["identity"] + list(names) + (["--sha256"] if sha else []) + (["--backfill"] if backfill else [])
+        a = ["identity"] + list(names) + (["--sha256"] if sha else []) + (["--backfill"] if backfill else []) \
+            + (["--cached"] if cached else [])
         for n in range(2):
             try:
                 rc, out = remote_tool(io, host, a)
@@ -400,6 +408,27 @@ def identity_check(ctx, guests, sha256=False, run=None, io=None, log=None):
                 io.sleep(5)
         return None
 
+    def ask_each(jobs):
+        """ask(HOST, *ARGS) for each HOST: ARGS of JOBS, all at once: {host: its answer or None}."""
+        got = {}
+
+        def one(h, a):
+            try:
+                got[h] = ask(h, *a)
+            except Exception as e:   # noqa: BLE001 - ask's own catch covers the ssh; this, the rest
+                log(f"{h}: identity: {type(e).__name__}: {e}")
+                got[h] = None
+        if len(jobs) == 1:
+            for h, a in jobs.items():
+                one(h, a)
+            return got
+        ts = [threading.Thread(target=one, args=(h, a), name=f"identity-{h}", daemon=True) for h, a in sorted(jobs.items())]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        return got
+
     optional = {h for h in hosts if may_lack_guests(h)}
 
     def holders(g):
@@ -411,22 +440,30 @@ def identity_check(ctx, guests, sha256=False, run=None, io=None, log=None):
         return [h for h in hosts if h not in optional or has(h)] or hosts
 
     asked = {g: holders(g) for g in guests}
+    first = ask_each({h: ([g for g in guests if h in asked[g]], sha256, sha256) for h in hosts
+                      if any(h in asked[g] for g in guests)})
     for h in hosts:
-        names = [g for g in guests if h in asked[g]]
-        if not names:
-            continue
-        for g, v in (ask(h, names, sha256, sha256) or {}).items():
+        for g, v in (first.get(h) or {}).items():
             info.setdefault(g, {})[h] = v
-    out, rid = {}, None
+    seen = {}
     for g in guests:
-        per = info.get(g) or {}
+        per = info.setdefault(g, {})
         for h in asked[g]:
             per.setdefault(h, {"no_answer": True})
-        res = identity_compare(per, hashed=sha256, optional=optional)
+        seen[g] = identity_compare(per, hashed=sha256, optional=optional)
+    rehash = {}
+    for g in guests:
+        if seen[g]["ok"] is None:
+            for h in seen[g]["rehash"]:
+                rehash.setdefault(h, []).append(g)
+    again = ask_each({h: (gs, True, True, not sha256) for h, gs in rehash.items()})
+    out, rid = {}, None
+    for g in guests:
+        per, res = info[g], seen[g]
         dropped = dict(res.get("dropped") or {})
         if res["ok"] is None:
             for h in res["rehash"]:
-                got = (ask(h, [g], True, True) or {}).get(g)
+                got = (again.get(h) or {}).get(g)
                 if got:
                     per[h] = dict(per[h], **got)
                     if got.get("backfilled"):

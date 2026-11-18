@@ -1680,6 +1680,85 @@ class Identity(unittest.TestCase):
         self.assertEqual(r, {"g1": {"ok": True, "why": None}})
         self.assertEqual(ctx.facts["chopin"]["guests"]["g1"]["stat"]["disks"]["a"], d)
 
+    # 2026-11-18: every GuestTest2 rehashed each guest with no image-state (no merge record) on
+    # every host, one host after another, though t2-host imgsum had their sums cached
+    def _no_state_guest(self):
+        t = tmpdir()
+        g = os.path.join(t, "vms", "g1")
+        os.makedirs(g)
+        p = os.path.join(g, "a.qcow2")
+        with open(p, "wb") as f:
+            f.write(b"x")
+        with open(os.path.join(g, "image-state"), "w", encoding="utf-8") as f:
+            json.dump({"generation": None, "sha256": {"a.qcow2": "0" * 64}}, f)
+        return t, p
+
+    def _imgsum_cache(self, hroot, p, sha):
+        st = os.stat(p)
+        os.makedirs(os.path.join(hroot, "cache"), exist_ok=True)
+        with open(os.path.join(hroot, "cache", "imgsum.json"), "w", encoding="utf-8") as f:
+            json.dump({"v": 1, "files": {os.path.abspath(p): {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "ctime_ns": st.st_ctime_ns,
+                                                              "inode": st.st_ino, "sha256": sha, "t": "2026-11-18T00:00:00Z"}}}, f)
+
+    def test_tool_takes_a_cached_sum_while_the_stat_matches(self):
+        from t2lib import facts_host
+        t, p = self._no_state_guest()
+        hroot = tmpdir()
+        self._imgsum_cache(hroot, p, "c" * 64)
+        cache = tool_guest.imgsum_cache(hroot)
+        self.assertEqual(tool_guest.cached_sha(cache, p, os.stat(p)), facts_host.cached_sum(cache, p), "the facts' test, and the tool's")
+        with mock.patch.object(tool_guest, "qemu_info", lambda p: {"ok": True}):
+            r = tool_guest.identity_of(t, "g1", sha=True, backfill=True, cache=cache)
+            self.assertEqual((r["sha256"], r["sha256_cached"]), ({"a.qcow2": "c" * 64}, ["a.qcow2"]))
+            fresh = tool_guest.sha256_file(p)
+            r = tool_guest.identity_of(t, "g1", sha=True, backfill=True)
+            self.assertEqual(r["sha256"], {"a.qcow2": fresh}, "no cache: read")
+            self.assertNotIn("sha256_cached", r)
+            with mock.patch.dict(os.environ, {"T2_WORK": t, "T2_HOST_ROOT": hroot}), mock.patch("sys.stdout", new_callable=io_mod.StringIO) as o:
+                self.assertEqual(tool_guest.main(["identity", "g1", "--sha256", "--backfill", "--cached"]), 0)
+            self.assertEqual(json.loads(o.getvalue())["g1"]["sha256"], {"a.qcow2": "c" * 64})
+            st = os.stat(p)
+            os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 1000))
+            r = tool_guest.identity_of(t, "g1", sha=True, backfill=True, cache=cache)
+            self.assertEqual(r["sha256"], {"a.qcow2": fresh}, "a stat that moved: read again")
+            self.assertNotIn("sha256_cached", r)
+
+    def test_a_rehash_asks_each_host_once_with_the_cache_and_all_never(self):
+        d = {"size": 1, "mtime_ns": 2, "inode": 3}
+
+        def identity(host, g, args):
+            base = {"image_state": {"generation": None}, "disks": {"a": d}, "qemu": {}, "stat": None}
+            if "--sha256" in args:
+                base["sha256"] = {"a": "S"}
+            return base
+        for all_, want in ((False, [["identity", "g1", "g2"], ["identity", "g1", "g2", "--sha256", "--backfill", "--cached"]]),
+                           (True, [["identity", "g1", "g2", "--sha256", "--backfill"]])):
+            io_, rs = FakeIO(), RS(Word(all_=all_))
+            io_.identity = identity
+            ctx = Ctx(rs)
+            ctx.facts = {h: {"guests": {"g1": {}, "g2": {}}} for h in rs.hosts}
+            r = guest.identity_check(ctx, ["g1", "g2"], sha256=all_, io=io_)
+            self.assertEqual(r, {g: {"ok": True, "why": None} for g in ("g1", "g2")}, all_)
+            for h in rs.hosts:
+                self.assertEqual(sorted(x["args"] for hh, x in io_.scripts if hh == h), sorted(want), (all_, h))
+
+    def test_the_hosts_are_asked_at_once(self):
+        io_, rs = FakeIO(), RS(Word(all_=True), hosts=("chopin", "cinqcent", "copland"))
+        both = threading.Barrier(3, timeout=10)
+        real = io_.script
+
+        def script(host, script, data, timeout=120):
+            both.wait()       # a host asked only after another answered never gets here with it
+            return real(host, script, data, timeout)
+        io_.script = script
+        plain = io_.identity
+        io_.identity = lambda h, g, a: dict(plain(h, g, a), sha256={"a.qcow2": "s" * 64})
+        ctx = Ctx(rs)
+        ctx.facts = {h: {"guests": {"g1": {}}} for h in rs.hosts}
+        with mock.patch.object(guest, "may_lack_guests", lambda h: False):
+            r = guest.identity_check(ctx, ["g1"], sha256=True, io=io_)
+        self.assertTrue(r["g1"]["ok"], r)
+
 
 class RemoteTool(unittest.TestCase):
     def test_it_runs_over_stdin_with_no_copy(self):

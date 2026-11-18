@@ -1,8 +1,11 @@
 """t2-host tool guest: GuestTest2's helpers on a test host (contract 2.1, K3).
 
-    identity GUEST... [--sha256] [--backfill]   each guest's image-state, image-stat.json, disks and
+    identity GUEST... [--sha256] [--backfill] [--cached]
+                                                each guest's image-state, image-stat.json, disks and
                                                 qemu-img info -U, as JSON; --sha256 hashes the disks;
-                                                --backfill writes image-stat.json when they match
+                                                --backfill writes image-stat.json when they match;
+                                                --cached takes a disk's sum from t2-host imgsum's
+                                                cache while its stat matches, rather than reading it
     sweep [--failed-keep-days N]                what a killed run left: dead run folders, orphan shipped
                                                 overlays in RAM, old failed/ records
     gate --guest G --out DIR                    vm-update's --merge-gate: exit 0 merges, 10 doesn't
@@ -78,6 +81,27 @@ def guest_disks(gdir):
     return main + extra
 
 
+def imgsum_cache(hroot):
+    """HOST_ROOT/cache/imgsum.json's files, {path: {size, mtime_ns, ctime_ns, inode, sha256}}
+    (t2-host imgsum writes it, under its lock and by rename, so a read needs no lock), or {}."""
+    d = _json(os.path.join(hroot, "cache", "imgsum.json"))
+    f = d.get("files") if isinstance(d, dict) else None
+    return f if isinstance(f, dict) else {}
+
+
+def cached_sha(cache, path, st):
+    """The sha256 CACHE (imgsum_cache) holds for PATH while ST, its os.stat, still has the size,
+    mtime, ctime and inode it was hashed at, else None: facts_host.cached_sum's test, which this
+    file can't import (it goes over ssh's stdin alone)."""
+    e = (cache or {}).get(os.path.abspath(path))
+    if st is None or not isinstance(e, dict) or not isinstance(e.get("sha256"), str):
+        return None
+    if (e.get("size"), e.get("mtime_ns"), e.get("ctime_ns"), e.get("inode")) != \
+            (st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino):
+        return None
+    return e["sha256"]
+
+
 def sha256_file(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -124,14 +148,20 @@ def world_base(work, guest, name, path, q):
     return {"path": real, "qemu": qemu_info(real), "generation": (_json(os.path.join(real_dir, "image-state")) or {}).get("generation")}
 
 
-def identity_of(work, guest, sha=False, backfill=False):
+def identity_of(work, guest, sha=False, backfill=False, cache=None):
+    """GUEST's identity as identity_compare reads it.  SHA or BACKFILL hash its disks; CACHE
+    (imgsum_cache's, --cached) gives a disk whose stat it matches its sum unread ("sha256_cached"
+    names those).  The identity step's rehash passes it: a guest with no image-state of its own
+    has no merge record, so every GuestTest2 rehashed all of them on every host (some 1 TB a
+    run, 2026-11-17) while t2-host imgsum had their sums cached.  GuestTest2All's hashing never
+    does: it always reads."""
     gdir = os.path.join(work, "vms", guest)
     if not os.path.isdir(gdir):
         # an image cache's vms/GUEST is a link into the cache: one whose entry was evicted dangles
         return {"missing": True, "dangling": True} if os.path.islink(gdir) else {"missing": True}
     out = {"image_state": _json(os.path.join(gdir, "image-state")), "stat": _json(os.path.join(gdir, "image-stat.json")),
            "disks": {}, "qemu": {}}
-    names = guest_disks(gdir)
+    names, stats = guest_disks(gdir), {}
     for n in names:
         p = os.path.join(gdir, n)
         try:
@@ -139,6 +169,7 @@ def identity_of(work, guest, sha=False, backfill=False):
         except OSError:
             out["disks"][n] = None
             continue
+        stats[n] = s
         out["disks"][n] = {"size": s.st_size, "mtime_ns": s.st_mtime_ns, "inode": s.st_ino}
         out["qemu"][n] = q = qemu_info(p)
         if q.get("ok") and q.get("backing"):
@@ -146,6 +177,11 @@ def identity_of(work, guest, sha=False, backfill=False):
     if sha or backfill:
         out["sha256"] = {}
         for n in names:
+            h = cached_sha(cache, os.path.join(gdir, n), stats.get(n)) if cache else None
+            if h:
+                out["sha256"][n] = h
+                out.setdefault("sha256_cached", []).append(n)
+                continue
             try:
                 out["sha256"][n] = sha256_file(os.path.join(gdir, n))
             except OSError:
@@ -561,7 +597,8 @@ def main(args, ctx=None):
     work, hroot = work_root(ctx), host_root(ctx)
     if sub == "identity":
         sha, backfill = _flag(rest, "--sha256"), _flag(rest, "--backfill")
-        print(json.dumps({g: identity_of(work, g, sha, backfill) for g in rest}, sort_keys=True))
+        cache = imgsum_cache(hroot) if _flag(rest, "--cached") else None
+        print(json.dumps({g: identity_of(work, g, sha, backfill, cache) for g in rest}, sort_keys=True))
         return 0
     if sub == "sweep":
         days = float(_opt(rest, "--failed-keep-days", KEEP_DAYS_DEFAULT))

@@ -179,19 +179,32 @@ for k in os.listxattr(sys.argv[1], follow_symlinks=False): os.setxattr(sys.argv[
     truncate -s 16M data-at-end; head -c 4096 /dev/urandom | dd of=data-at-end bs=4096 seek=4095 conv=notrunc status=none
     # sparse-small: 256 KiB of data, a 64 KiB hole, 256 KiB of data, a file S3
     # marks (fewer blocks than its size).  Written whole, the hole punched
-    # (aligned for blocks up to 64 KiB), synced, and checked.  Not by truncate
-    # between two appends: XFS keeps the speculative preallocation past EOF of
-    # a file appended to, and st_blocks counts it until it is trimmed, so
-    # neither tool marked the file and its hole came back filled.  The
-    # truncate way only where nothing punches holes (JFS, NILFS2).
+    # (aligned for blocks up to 64 KiB), synced, and checked.  Punched by
+    # fallocate -p, else xfs_io's fpunch (the same fallocate(2)), else by
+    # truncate between two appends, and one line says which.  chimerautils'
+    # fallocate (15.1.2) rejects a bare number ("invalid offset argument
+    # '262144'", no syscall) but takes a suffix (256K, 256KiB, 262144B), so
+    # the sizes go as K (HOLE-BYTES a multiple of 1024).  Not by truncate
+    # between appends where a punch works: XFS keeps the speculative
+    # preallocation past EOF of a file appended to (192 KiB here), and
+    # st_blocks counts it until it is trimmed, so neither tool marked the file
+    # and its hole came back filled ("holes lost" on every XFS restore).  A
+    # hole refused anyway is a note, as rocky10's skip() is, not a LIMIT: the
+    # restores' fsmeta compares still judge the file.
     sparse_small() {  # FILE HOLE-BYTES: true if S3 marks FILE
-        { head -c 262144 /dev/urandom; head -c "$2" /dev/zero; head -c 262144 /dev/urandom; } >"$1"
-        fallocate -p -o 262144 -l "$2" "$1" 2>/dev/null ||
+        x=; { head -c 262144 /dev/urandom; head -c "$2" /dev/zero; head -c 262144 /dev/urandom; } >"$1"
+        if e=$(fallocate -p -o 256K -l $(($2 / 1024))K "$1" 2>&1); then how="fallocate -p"
+        elif command -v xfs_io >/dev/null 2>&1 && x=$(xfs_io -c "fpunch 262144 $2" "$1" 2>&1) && [ -z "$x" ]; then
+            how="xfs_io fpunch (fallocate -p failed: $(echo "$e" | oneline 200))"
+        else
             { head -c 262144 /dev/urandom >"$1"; truncate -s +"$2" "$1"; head -c 262144 /dev/urandom >>"$1"; }
+            how="truncate between appends (fallocate -p failed: $(echo "$e" | oneline 200); xfs_io fpunch: $(echo "${x:-absent, or failed silently}" | oneline 200))"
+        fi
+        echo "sparse-small on $fs: hole by $how"
         sync
         [ $(($(stat -f %b "$1") * 512)) -lt "$(stat -f %z "$1")" ]
     }
-    sparse_small sparse-small 65536 || echo "sparse-small's hole refused on $fs ($(stat -f '%b blocks, size %z' sparse-small))"
+    sparse_small sparse-small 65536 || echo "sparse-small's hole refused on $fs ($(stat -f '%b blocks, size %z' sparse-small)): not marked by S3, both tools restore it dense"
     head -c 4194304 /dev/urandom >random
     fallocate -l 4M preallocated; head -c 2097152 /dev/zero >zeros
     # Odd names, deep, empty and big directories.

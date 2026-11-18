@@ -61,5 +61,8 @@ else
 fi
 say "rebooting into the stick ($esp, $loader), once"
 sync
-# After a moment, so the controller hears that this worked.
-(sleep 2; reboot) >/dev/null 2>&1 </dev/null &
+# After a moment, so the controller hears that this worked.  -i: a desktop
+# session's block inhibitor (GNOME's "user session inhibited") otherwise
+# makes systemd 257+ refuse the reboot quietly.  Plain reboot where systemd
+# isn't running.
+(sleep 2; systemctl reboot -i || reboot) >/dev/null 2>&1 </dev/null &

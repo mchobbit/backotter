@@ -1,6 +1,7 @@
 {
  "about": [
-  "Patterns only, reviewed by hand: lines GuestTest2's log sweep drops, as re.search over a normalized line (guest_judge.normalize: numbers are N, hex HEX, times TIME). all: every guest; the others by the spec's checks.pm. A pattern marked list: also drops the indented lines under the line it matches (package names, wrapped). A new pattern re-runs only those guests. Keep it package-manager chatter: a real error must never match. The accepted per-guest lines are never here: they live on the Mac (guest-baselines), since they can hold machine IDs and hostnames."
+  "Patterns only, reviewed by hand: lines GuestTest2's log sweep drops, as re.search over a normalized line (guest_judge.normalize: numbers are N, hex HEX, times TIME). all: every guest; the others by the spec's checks.pm. A pattern marked list: also drops the indented lines under the line it matches (package names, wrapped). A new pattern re-runs only those guests. Keep it package-manager chatter: a real error must never match. The accepted per-guest lines are never here: they live on the Mac (guest-baselines), since they can hold machine IDs and hostnames.",
+  "hbsd, ld-elf.so.1's Tainted line: at every boot, /etc/rc.d/ldconfig (FreeBSD 15's) asks the run-time linker for its default path with /libexec/ld-elf.so.1 -v, and HardenedBSD's rtld refuses to be run directly while hardening.harden_rtld is 1, its default (sysctl hardening.harden_rtld=0 makes the same command print 'Default lib path /lib:/usr/lib'; seen on hardenedbsd15 and hardenedbsd15-zfs, GuestTest2 t2v-20261118T0027-d7c8, before and after the update).  Harmless: the hints file then lacks /lib and /usr/lib, which rtld searches anyway as its built-in default"
  ],
  "all": [
   "^in-guest: (Linux|FreeBSD|NetBSD|OpenBSD|DragonFly|SunOS|Haiku|Redox) ",
@@ -214,7 +215,8 @@
   "list:^The following package files will be deleted:$"
  ],
  "hbsd": [
-  "^\\[hbsd-update\\] "
+  "^\\[hbsd-update\\] ",
+  "^ld-elf\\.so\\.N: Tainted process refusing to run binary /libexec/ld-elf\\.so\\.N$"
  ],
  "netbsd": [
   "^(installing|removing|upgrading) \\S+",

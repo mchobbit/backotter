@@ -223,7 +223,7 @@ reboot)
 wait-host)
     sleep 30
     wait_for "the restored system" 600 "it may be at an unlock prompt, or hung; it needs a person" host_up
-    on_host 'hostname; sed -n "s/^PRETTY_NAME=//p" /etc/os-release | tr -d "\""; if command -v efibootmgr >/dev/null; then efibootmgr | head -n 1; fi' </dev/null
+    on_host 'cat /proc/sys/kernel/hostname; sed -n "s/^PRETTY_NAME=//p" /etc/os-release | tr -d "\""; if command -v efibootmgr >/dev/null; then efibootmgr | head -n 1; fi' </dev/null
     ;;
 cycle)
     usage="usage: backshot1 cycle NAME COUNT --erase-serial SERIAL [--reformat MOUNT=TYPE]..."

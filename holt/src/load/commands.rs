@@ -2065,8 +2065,19 @@ pub(crate) fn bcachefs_version(v: &str) -> Option<u32> {
 /// bcachefs format with the source's UUID, label, options and on-disk
 /// version: its version_min (the oldest version anything on it is
 /// written in), or its version when it has none.
+///
+/// --no_initialize leaves the journal and the root directory to the
+/// kernel's first mount, which is what format does by itself whenever the
+/// version asked for isn't the tools' own (the image's 1.39 tools
+/// recreating a 1.13 source).  When it is the tools' own, format would
+/// open the filesystem in userspace to initialize it, and 1.13's tools
+/// (the HoltTest rescuer's) corrupt their heap there in about one run of
+/// three, dying of SIGSEGV or SIGABRT (`tcache_thread_shutdown(): unaligned
+/// tcache chunk detected`) after the superblock is written.  The kernel
+/// initializes it at its first mount instead, load's or the restored
+/// system's, as it does for every other version.
 pub fn mkfs_bcachefs(dev: &str, c: &Value) -> Vec<String> {
-    let mut a = vec!["bcachefs".to_string(), "format".into(), "--force".into()];
+    let mut a = vec!["bcachefs".to_string(), "format".into(), "--force".into(), "--no_initialize".into()];
     // Left to itself, format writes the tools' newest version (1.39 from
     // the Linux image's 1.39 tools), which the source's older kernel may
     // not mount: the one-kernel rescue recreates the source's version
@@ -6069,15 +6080,15 @@ mod tests {
         let b = crate::json::parse(r#"{"type": "bcachefs", "uuid": "c9cbba71-4054-4849-a19c-e7d40fb5b1e4", "label": null, "version": "1.13", "block_size": 4096, "btree_node_size": 262144, "metadata_checksum": "crc32c", "data_checksum": "crc32c", "compression": "none", "str_hash": "siphash", "metadata_replicas": 1, "data_replicas": 1}"#).unwrap();
         assert_eq!(
             mkfs_bcachefs("/dev/vdb3", &b).join(" "),
-            "bcachefs format --force --version=1037 --uuid=c9cbba71-4054-4849-a19c-e7d40fb5b1e4 --block_size=4096 --btree_node_size=262144 --metadata_checksum=crc32c --data_checksum=crc32c --str_hash=siphash /dev/vdb3"
+            "bcachefs format --force --no_initialize --version=1037 --uuid=c9cbba71-4054-4849-a19c-e7d40fb5b1e4 --block_size=4096 --btree_node_size=262144 --metadata_checksum=crc32c --data_checksum=crc32c --str_hash=siphash /dev/vdb3"
         );
         // version_min, not the version a newer kernel raised it to (nixos2605's).
         let b2 = crate::json::parse(r#"{"type": "bcachefs", "version": "1.39", "version_min": "1.13"}"#).unwrap();
-        assert_eq!(mkfs_bcachefs("/dev/vdb3", &b2).join(" "), "bcachefs format --force --version=1037 /dev/vdb3");
+        assert_eq!(mkfs_bcachefs("/dev/vdb3", &b2).join(" "), "bcachefs format --force --no_initialize --version=1037 /dev/vdb3");
         // No version, or one that doesn't parse: no flag.
         for v in [r#"{"type": "bcachefs"}"#, r#"{"type": "bcachefs", "version": "1.x", "version_min": "junk"}"#] {
             let x = crate::json::parse(v).unwrap();
-            assert_eq!(mkfs_bcachefs("/dev/vdb3", &x).join(" "), "bcachefs format --force /dev/vdb3");
+            assert_eq!(mkfs_bcachefs("/dev/vdb3", &x).join(" "), "bcachefs format --force --no_initialize /dev/vdb3");
         }
         assert_eq!(bcachefs_version("1.39"), Some(1063));
         assert_eq!(bcachefs_version("0.24"), Some(24));

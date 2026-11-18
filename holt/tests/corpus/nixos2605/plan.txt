@@ -49,7 +49,7 @@ tune2fs -r 13107 /dev/sdq1
 mkswap -U bc000000-0000-4000-8000-000000000003 --pagesize 4096 /dev/sdq2
 # check: /dev/sdq2 is swap with the source's UUID, label and page size (read back by bko-holt's own probe)
 # vda3: bcachefs
-bcachefs format --force --version=1037 --uuid=bc000000-0000-4000-8000-000000000004 --block_size=512 --btree_node_size=262144 --metadata_checksum=crc32c --data_checksum=crc32c --str_hash=siphash --acl /dev/sdq3
+bcachefs format --force --no_initialize --version=1037 --uuid=bc000000-0000-4000-8000-000000000004 --block_size=512 --btree_node_size=262144 --metadata_checksum=crc32c --data_checksum=crc32c --str_hash=siphash --acl /dev/sdq3
 # check: /dev/sdq3 is bcachefs with the source's UUID, label and on-disk version (read back by bko-holt's own probe)
 
 # ---- mount ----

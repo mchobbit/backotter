@@ -35,7 +35,11 @@ The flow (2.2):
      --universe, test only) cuts the layers to those it names.
   4. drive.py --t2-run RUN --t2-copy COPY --t2-cells CELLS --logs-mark RUN ...
      with the due checks (canaries first after a plumbing change, drive.py's
-     longest first otherwise), the slow gate (gate:loop:*) beside it.  As rows
+     longest first otherwise), the slow gate (gate:loop:*) beside it.  The slow
+     gate goes first: drive.py starts once each of its layers' jobs is in
+     cmp-run.sh's line (largest --reserve first; at most SLOW_FIRST_S), so a big
+     loop layer has its room and the checks backfill beside it, rather than it
+     waiting behind them past BACKFILL_MAX and then holding the host.  As rows
      land (drive.py writes each as its guest ends, R10) the stop rules read
      them: one need failing on 2 guests of an OS puts that OS's checks in
      --skip-file; swap-out over 1 GiB in the last 10 min on a host holds that
@@ -86,6 +90,8 @@ from . import facts as factsmod
 
 DRIVE = os.path.join("testvm", "stictest1", "drive.py")
 POLL = 30
+SLOW_FIRST_S = 600                     # drive.py waits at most this for the slow gate's layers to be in the line
+SLOW_SETTLE_S = 5                      # and this after, for their cmp-run.sh to take its place
 HOST_EVERY = 4                         # polls between the host reads of R22's swap and write rules
 RERUN_VERDICTS = ("FAIL",)             # 1.9: a FAIL reruns once
 FAN_VERDICTS = ("FAIL", "FLAKY-FAIL")  # 1.6.2: a representative's FAIL or FLAKY-FAIL fans out
@@ -418,6 +424,8 @@ class SticRun:
         self.seen = set()
         self._os = None
         self._gctx = None
+        self._gp = None                      # the gate plan, made once (the fast part's, the slow part's too)
+        self.slow_in = threading.Event()     # the slow gate's layers are in cmp-run.sh's line (or it ended)
 
     def _env(self, name):
         return getattr(self.env, name, None)
@@ -770,16 +778,20 @@ class SticRun:
                 self._gctx = self.ctx
         return self._gctx
 
-    def gate_step(self, part):
+    def gate_step(self, part, on_due=None, on_submitted=None):
         """The gate layers of PART (fast: the archivers'; slow: loop) the gate plan has due.
-        (ok, refused): refused names why the gate can't run at all (then ok is False)."""
+        (ok, refused): refused names why the gate can't run at all (then ok is False).  The gate
+        plan is made once a run (the slow part takes the fast part's).  ON_DUE(cells): the layers
+        about to run; ON_SUBMITTED(host, name): gate.run_layers', as each job is in the line."""
         gate = self.env.gate()
         if gate is None:
             return False, f"the {part} archiver gate can't run: t2lib/gate.py doesn't import"
         try:
             names = (gate.family_layers("stic") or {}).get(part) or []
             gctx = self.gate_ctx()
-            gp = gate.gate_plan(gctx) if hasattr(gate, "gate_plan") else None
+            gp = self._gp
+            if gp is None:
+                gp = self._gp = gate.gate_plan(gctx) if hasattr(gate, "gate_plan") else None
         except Exception as e:   # noqa: BLE001 - a gate that can't be planned refuses the run
             return False, f"the {part} archiver gate can't be planned: {type(e).__name__}: {cut(e, 200)}"
         if gp is None:
@@ -797,8 +809,11 @@ class SticRun:
         if not due:
             return True, None
         self.log(f"gate {part}: {', '.join(due)}")
+        if on_due is not None:
+            on_due(list(due))
         try:
-            res = gate.run_layers(gctx, due, part, plan=gp)
+            kw = {"on_submitted": on_submitted} if on_submitted is not None else {}
+            res = gate.run_layers(gctx, due, part, plan=gp, **kw)
         except Exception as e:   # noqa: BLE001
             self.log(f"gate {part}: {type(e).__name__}: {e}")
             return False, None
@@ -852,15 +867,33 @@ class SticRun:
         return True
 
     def slow_gate(self):
-        """The slow gate beside the guests (a thread): a failure starts nothing more."""
+        """The slow gate beside the guests (a thread): a failure starts nothing more.  slow_in is
+        set once each of its due layers' jobs is in cmp-run.sh's line (or the gate ended)."""
+        try:
+            self._slow_gate()
+        finally:
+            self.slow_in.set()
+
+    def _slow_gate(self):
         if self.guards_check():   # a run-wide stop before it began: it doesn't start (and didn't fail)
             with self.mu:
                 self.state["gate_slow"] = None
             self.save()
             self.log("gate slow: not started: a run-wide stop rule tripped")
             return
+        want, got, mu = [None], [0], threading.Lock()
+
+        def on_due(cells):
+            with mu:
+                want[0] = len(cells)
+
+        def on_submitted(host, name):
+            with mu:
+                got[0] += 1
+                if want[0] is not None and got[0] >= want[0]:
+                    self.slow_in.set()
         try:
-            ok, refused = self.gate_step("slow")
+            ok, refused = self.gate_step("slow", on_due, on_submitted)
         except Exception as e:   # noqa: BLE001 - a thread's error, said and stopped on
             ok, refused = False, f"the slow gate: {type(e).__name__}: {cut(e, 200)}"
         with self.mu:
@@ -869,6 +902,19 @@ class SticRun:
             self.act("stop-starts", refused or "the slow gate failed")
         else:
             self.save()
+
+    def slow_first(self):
+        """drive.py starts once the slow gate's layers are in cmp-run.sh's line (at most
+        SLOW_FIRST_S): a big loop layer that came after the guests' checks waited for room
+        behind them, past BACKFILL_MAX, and then held the host for itself (2026-11-18: chopin
+        ran one job for 74 min).  First in the line, it has its room and the checks fit beside it."""
+        t0 = self.env.now()
+        if not self.slow_in.wait(SLOW_FIRST_S):
+            self.log(f"gate slow: its layers aren't all in cmp-run.sh's line after {SLOW_FIRST_S} s: drive.py starts")
+            return
+        if self.state.get("gate_slow") is None and not self.state.get("guards_tripped"):   # (still running)
+            self.log(f"gate slow: its layers are in cmp-run.sh's line ({self.env.now() - t0:.0f} s): drive.py starts")
+            self.env.sleep(SLOW_SETTLE_S)   # (cmp-run.sh takes its place in the line a moment after it starts)
 
     # -- 4./5. drive.py --
     def drive_argv(self, mark, guests, cells_path, attempt, first):
@@ -1242,6 +1288,7 @@ class SticRun:
             if guests:
                 slow = threading.Thread(target=self.slow_gate, daemon=True)
                 slow.start()
+                self.slow_first()
                 self.drive_round(info["id"], guests, info["cells_path"], 1, self.first_guests(pcs))
             with self.mu:
                 st["phase"] = "drive2"

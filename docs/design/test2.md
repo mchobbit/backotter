@@ -62,7 +62,7 @@ A cell is **due** when a scope rule selects it and it has no PASS at its current
 
 ### GateTest2 (new): no VMs
 
-**Trigger.** "GateTest2" runs the layers whose inputs changed, or prints "nothing due" in seconds. "GateTest2All" runs every layer (est. 35–45 min per host). The other words run their family's fast part first and its slow part beside their guests.
+**Trigger.** "GateTest2" runs the layers whose inputs changed, or prints "nothing due" in seconds. "GateTest2All" runs every layer (est. 35–45 min per host). The other words run their family's fast part first and its slow part beside their guests (its jobs in the hosts' lines before the guests').
 
 **Fast part (blocks):**
 - **holt:** cargo test (243 tests); golden plans for the 45 recorded dumps (bugreport::check_plan, bugreport.rs:465) with invariants (/ mounted, every fstab mount planned, the archiver found, pool disks in use, disk IDs round-tripped); the old-against-new plan diff, which names HoltTest2's guests; redact_dumps.
@@ -86,7 +86,7 @@ A cell is **due** when a scope rule selects it and it has no PASS at its current
 - **Plumbing** (cmp-run.sh, guest-slot.sh, vm-run, vm-lib.sh): one canary per run style (firmware mode, passphrase method, overlay place), the rest canary-verified (decision 4): debian12 (RAM-disk overlay), zorin18 (guest tmpfs), debian13-zfs (ZFS on the RAM disk), freebsd15-ufs (/dev/shm), omnios58 (two boots), haiku6 and sculpt2610 (host side), debian13-stack (UEFI with Secure Boot, vm_boot's console passphrase, vm-lib.sh:77-80) and omarchy (UEFI without, LUKS typed through QEMU's monitor), 54.6 gm. Nine SticTest guests boot UEFI.
 - **Judging helpers:** self-tests and a re-judge.
 
-**Steps.** (1) Preflight. (2) build-round.sh, reusing unchanged builds. (3) The fast archiver gate. (4) `plan`. (5) `drive.py --logs-mark MARK ROUND GUEST…`, longest first, canaries first after a harness change, beside the slow gate. (6) Ledger rows and a report: per check, ran or skipped, verdict, why, gm, GB. SticTest1's fix rules stay.
+**Steps.** (1) Preflight. (2) build-round.sh, reusing unchanged builds. (3) The fast archiver gate. (4) `plan`. (5) `drive.py --logs-mark MARK ROUND GUEST…`, longest first, canaries first after a harness change, beside the slow gate. The slow gate's jobs go into cmp-run.sh's line first, largest `--reserve` first, and drive.py starts once they are there (at most 10 min): a loop layer behind the checks waited past BACKFILL_MAX and then held its host for itself (gate:loop:linux@chopin behind qubes43 in t2s-20261118T1651-0bf1, two checks waiting 74 min; revised 2026-11-18). (6) Ledger rows and a report: per check, ran or skipped, verdict, why, gm, GB. SticTest1's fix rules stay.
 
 **Pass.** No FAIL or FLAKY-FAIL; every LIMIT already in BACKOTTER.md. **Writes.** aerynos's disks and zfsmirror's spare go to /mnt/bko-ram, zfsmirror alone among its host's large guests (7.67 GiB of overlays [stic (a)] plus est. 9–14 GiB of spare, ~17–22 GiB of Chopin's 28.9 GiB budget). It waits for room rather than fall back to disk, where it writes ~14 GB a run [cost (b)].
 

@@ -861,6 +861,8 @@ class Runner(unittest.TestCase):
                 order.append(cell)
                 live[0] += 1
                 peak[0] = max(peak[0], live[0])
+            if env.on_submitted is not None:   # (host_job's: the job is in cmp-run.sh's line)
+                env.on_submitted(env.host_for(cell), gate.split_cell(cell)[0])
             time.sleep(0.05)
             with lock:
                 live[0] -= 1
@@ -897,6 +899,46 @@ class Runner(unittest.TestCase):
             self.assertEqual((ok["stop"], ok["ok"], ok["exit"]), (None, True, 0))
         finally:
             gate.run_cell, gate.run_fork_cells, gate.fork_commits = saved
+
+    def test_slow_layers_go_into_the_line_largest_first(self):
+        """Each slow layer's job goes into cmp-run.sh's line after the one before it is there,
+        the largest --reserve first; one that never gets there holds the next SUBMIT_WAIT_S only.
+        ON_SUBMITTED hears of every job."""
+        order, heard, lock = [], [], threading.Lock()
+        stuck = {"gate:loop:sparse@cinqcent"}
+        release, began = threading.Event(), {}
+
+        def fake_cell(env, cell, commits=None):
+            with lock:
+                order.append(cell)
+                began[cell] = time.time()
+            if cell in stuck:   # waits for room it never gets in this test: no submission
+                release.wait(5)
+            else:
+                env.on_submitted(env.host_for(cell), gate.split_cell(cell)[0])
+            return {"cell": cell, "verdict": "PASS", "rows": [], "host": env.host_for(cell)}
+
+        saved = (gate.run_cell, gate.SUBMIT_WAIT_S)
+        gate.run_cell, gate.SUBMIT_WAIT_S = fake_cell, 0.2
+        try:
+            env, ctx = env_with(FakeIO())
+            env.rows = [{"cell": "gate:loop:linux@chopin", "kind": "run", "t": "2026-11-18T10:00:00Z", "id": "a",
+                         "ram_peak_kib": 30 * 1048576, "meta": {"loop": {"linux_fs": "default", "sparse_fs": "default"}}}]
+            cells = gate.cells_of(env, ["loop:linux", "loop:sparse"])
+            want = gate.slow_order(env, cells)
+            ds = [gate.reserve_for(gate.entry_or_empty(env.layers, gate.split_cell(c)[0]), env.rows, c) for c in want]
+            self.assertEqual(ds, sorted(ds, reverse=True))   # largest first
+            threading.Timer(2, release.set).start()
+            r = gate.run_layers(ctx, ["loop:linux", "loop:sparse"], "slow", env=env,
+                                on_submitted=lambda h, n: heard.append((h, n)))
+            self.assertEqual(order, want)
+            i = want.index("gate:loop:sparse@cinqcent")
+            if i + 1 < len(want):   # the stuck one held the next 0.2 s, not until its end
+                self.assertLess(began[want[i + 1]] - began[want[i]], 1.5)
+            self.assertEqual(sorted(heard), sorted((env.host_for(c), gate.split_cell(c)[0]) for c in cells if c not in stuck))
+            self.assertTrue(r["ok"])
+        finally:
+            gate.run_cell, gate.SUBMIT_WAIT_S = saved
 
     def test_run_the_word(self):
         seen = []

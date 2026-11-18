@@ -316,6 +316,17 @@ reruns once a PASS that couldn't count because its run made the one-time rescuer
 (dragonfly6's, openbsd8's, omnios58's) the plan keyed missing, at the copy's new sum
 (`rerun_why` `rescuer-made` in cells-r2.json); a pass then is a PASS.
 
+Who goes first into cmp-run.sh's line (since 2026-11-18).  SticTest2's slow gate goes into
+each host's line before drive.py's checks: drive.py starts once every due loop layer's job is
+in the line (at most 10 min, `stic.SLOW_FIRST_S`), and the slow layers go in largest
+`--reserve` first, each once the one before is there (`gate.slow_order`, at most 30 s
+apart).  A big layer that came in behind the checks waited past cmp-run.sh's BACKFILL_MAX
+(30 min) and then held the host for itself: in t2s-20261118T1651-0bf1 gate:loop:linux@chopin
+(13.7 GiB) waited behind qubes43's 16 GiB check, and Chopin ran that one check from 17:27 to
+18:41Z while two others waited 74 min.  First in the line, the layer has its room and the
+checks backfill beside it.  The stop rules are as before: a failed fast gate still starts
+no guest.
+
 The stop rules: a failed fast gate starts no guest of its family; a failed slow
 gate starts nothing new; one need failing on 2 guests of an OS stops that OS; 2
 harness-class results stop the run (known flakes aside); this run's jobs writing over

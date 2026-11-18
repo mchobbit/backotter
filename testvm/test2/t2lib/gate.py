@@ -3,8 +3,9 @@
 
     run(ctx, plan) -> RunResult          GateTest2 and GateTest2All: the plan's due gate
                                          cells, the fast layers one after another, then the
-                                         slow ones on every host at once
-    run_layers(ctx, names, part=None, plan=None)
+                                         slow ones on every host at once (largest
+                                         --reserve first into cmp-run.sh's line)
+    run_layers(ctx, names, part=None, plan=None, on_submitted=None)
                                          those layers only; SticTest2 and HoltTest2 call it
                                          for their family's fast part, and the slow part
                                          beside their guests.  {"cells", "rows", "stops",
@@ -96,6 +97,7 @@ ROOT_LIST_PATH = "testvm/test2/gate/restic-root-tests.txt"
 FORKS = ("restic", "rustic_core", "rustic")
 NOT_PASSED = ("FAIL", "FLAKY-FAIL", "HARNESS", "LOST")
 LOCK_POLL_S = 10
+SUBMIT_WAIT_S = 30   # a slow layer's job not in cmp-run.sh's line by then: the next one goes anyway
 FAST_ORDER = ("holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic",
               "bin:abi", "bin:static", "bin:version", "selftest")
 
@@ -256,6 +258,7 @@ class RunEnv:
         self.copy_id = next((c.get("id") for c in (getattr(self.rs, "copy", None) or {}).values()
                              if isinstance(c, dict) and c.get("id")), None) if self.rs else None
         self._log = log or (getattr(self.rs, "log", None) if self.rs else None) or _stderr
+        self.on_submitted = None   # host_job calls it (HOST, NAME) once a job is in cmp-run.sh's line
 
     def log(self, text):
         self._log("gate: " + text)
@@ -975,11 +978,27 @@ def gate_plan(ctx):
         return None
 
 
-def run_layers(ctx, names, part=None, plan=None, env=None, io=None, log=None):
-    """Run the gate layers NAMES (fast: one after another; slow: all at once).
+def slow_order(env, cells):
+    """The slow CELLS in the order their jobs go into cmp-run.sh's line: the largest --reserve
+    first (reserve_for's D, then M), so the biggest takes the room while it is free and the
+    smaller ones fit beside it or wait less; then by cell."""
+    def size(c):
+        try:
+            d, m = reserve_for(entry_or_empty(env.layers, split_cell(c)[0]), env.rows, c)
+            return float(d), float(m)
+        except Exception:   # noqa: BLE001 - a layer with no reserve sorts last
+            return 0.0, 0.0
+    return sorted(cells, key=lambda c: (tuple(-x for x in size(c)), c))
+
+
+def run_layers(ctx, names, part=None, plan=None, env=None, io=None, log=None, on_submitted=None):
+    """Run the gate layers NAMES (fast: one after another; slow: all at once, their jobs put
+    into cmp-run.sh's line largest first, slow_order: each next one once the one before is in
+    the line, or after SUBMIT_WAIT_S).
     {"cells": [entry], "rows": [id], "stops": [text], "stop": None|stop-family|stop-starts,
     "ok": bool, "exit": 0|1}.  Once a run-wide stop rule (RunGuards) has fired, no further layer
-    starts: its entry is outcome not-started, with no row."""
+    starts: its entry is outcome not-started, with no row.  ON_SUBMITTED(HOST, NAME): called as
+    each layer's host job is in cmp-run.sh's line (or couldn't start), hostjob.host_job's."""
     if env is None:
         if plan is None:
             plan = gate_plan(ctx)
@@ -996,15 +1015,31 @@ def run_layers(ctx, names, part=None, plan=None, env=None, io=None, log=None):
 
     if part == "slow":
         res, lock = {}, threading.Lock()
+        put = {c: threading.Event() for c in cells}
+        by_job = {(env.host_for(c), split_cell(c)[0]): c for c in cells}
+
+        def submitted(host, name):
+            c = by_job.get((host, name))
+            if c is not None:
+                put[c].set()
+            if on_submitted is not None:
+                on_submitted(host, name)
+        env.on_submitted = submitted
 
         def one(c):
-            r = guarded(lambda: locked(env, c, lambda: run_cell(env, c)), c)
+            try:
+                r = guarded(lambda: locked(env, c, lambda: run_cell(env, c)), c)
+            finally:
+                put[c].set()   # (it ended, or didn't start: the next one goes)
             with lock:
                 res[c] = r
 
-        ths = [threading.Thread(target=one, args=(c,)) for c in cells]
-        for th in ths:
+        ths = []
+        for c in slow_order(env, cells):
+            th = threading.Thread(target=one, args=(c,))
             th.start()
+            ths.append(th)
+            put[c].wait(SUBMIT_WAIT_S)
         for th in ths:
             th.join()
         results = [res[c] for c in cells]

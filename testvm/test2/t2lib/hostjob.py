@@ -217,7 +217,10 @@ def host_job(env, host, name, attempt, script_cmd, reserve=None, wear_tag=None, 
     JobFailure) says what went wrong when rc is None, never empty.  TIMEOUT_S counts from
     the job's start, after the wait for room (at most WAIT_S); a job past either is stopped
     (its process group gets a TERM), and when it can't be seen gone, why.still_running.
-    ON_BEGAN() is called once, when the job has left cmp-run.sh's line (or has ended)."""
+    ON_BEGAN() is called once, when the job has left cmp-run.sh's line (or has ended).
+    ENV.on_submitted(HOST, NAME), when ENV has one, is called once the job's start was tried
+    (it is in cmp-run.sh's line, or it couldn't start): SticTest2 starts drive.py after its slow
+    gate's layers are in the line (stic.py, gate.run_layers)."""
     out = job_dir(env, name, attempt, subdir)
     copy = env.copy_path(host)
     # In the job's command line as written ("$HOME"/'...' for a ~/ root): never a reused PID.
@@ -234,10 +237,20 @@ def host_job(env, host, name, attempt, script_cmd, reserve=None, wear_tag=None, 
     body = (f"cd {_q(copy)} || {{ echo 'no copy here' >&2; echo 2 > {_q(out + '/.exit')}; exit 2; }}; "
             f"export {exports}; date +%s > {_q(out + '/.submitted')}; "
             f"{run}; rc=$?; date +%s > {_q(out + '/.ended')}; echo $rc > {_q(out + '/.exit')}")
+    def submitted():
+        fn = getattr(env, "on_submitted", None)
+        if fn is not None:
+            try:
+                fn(host, name)
+            except Exception:   # noqa: BLE001 - only the caller's ordering
+                pass
+
     rc, _, err = env.io.sh(host, f"mkdir -p {_q(out)} && cd {_q(out)} && rm -f .exit .began .submitted .ended .pid")
     if rc != 0:
+        submitted()
         return None, out, {}, JobFailure(f"can't make {out} on {host}: {err.strip()[-150:]}")
     pid = env.io.start(host, f"bash -c {shlex.quote(body)}", out + "/job.log", out + "/.pid")
+    submitted()
     if not pid:
         return None, out, {}, JobFailure(f"the job didn't start on {host}")
     if ram and env.rs is not None and hasattr(env.rs, "record_made"):

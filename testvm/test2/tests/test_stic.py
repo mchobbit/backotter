@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 
@@ -728,7 +729,7 @@ class FakeGate:
     def gate_plan(self, ctx):
         return argparse.Namespace(due=lambda: [argparse.Namespace(cell=c) for c in self.due_cells])
 
-    def run_layers(self, ctx, names, part=None, plan=None):
+    def run_layers(self, ctx, names, part=None, plan=None, on_submitted=None):
         self.ran.append((part, list(names)))
         return {"ok": self.ok, "exit": 0 if self.ok else 1}
 
@@ -1191,6 +1192,64 @@ class TestSticRunGate(unittest.TestCase):
         self.assertEqual(sorted(gate.ran), [("fast", ["gate:bin:abi"]), ("slow", ["gate:loop:linux@chopin"])])
         self.assertEqual((res["exit"], len(env.argvs)), (0, 1))
 
+    def test_slow_gate_is_in_the_line_before_drive_py(self):
+        """The slow gate's layers' jobs go into cmp-run.sh's line before drive.py starts any check
+        (2026-11-18: a 13.7 GiB loop layer behind qubes43's check held chopin for 74 min)."""
+        events, lock = [], threading.Lock()
+        started = threading.Event()
+
+        class G(FakeGate):
+            def run_layers(self, ctx, names, part=None, plan=None, on_submitted=None):
+                if part == "slow":
+                    for c in names:
+                        with lock:
+                            events.append(("in-line", c))
+                        on_submitted(c.split("@")[1], c[5:].split("@")[0])
+                    started.wait(5)   # the layers run on beside the checks
+                return super().run_layers(ctx, names, part, plan)
+
+        gate = G(due=["gate:bin:abi", "gate:loop:linux@chopin", "gate:loop:linux@cinqcent"])
+        env = FakeEnv({MARK: [(1, row("debian12", "PASS", n=1))]}, gate=gate)
+        spawn = env.spawn
+
+        def spawn_after(argv, log, e):
+            with lock:
+                events.append(("drive.py", None))
+            started.set()
+            return spawn(argv, log, e)
+        env.spawn = spawn_after
+        res = stic.SticRun(self.ctx, Plan([PC("stic:debian12", "due", "changed:bin")]), env).go()
+        self.assertEqual(events, [("in-line", "gate:loop:linux@chopin"), ("in-line", "gate:loop:linux@cinqcent"),
+                                  ("drive.py", None)])
+        self.assertTrue(any(m.startswith("gate slow: its layers are in cmp-run.sh's line") for m in env.logs), env.logs)
+        self.assertEqual(res["exit"], 0)
+
+    def test_drive_py_waits_for_the_slow_gate_at_most_slow_first_s(self):
+        """A slow layer that never gets into the line (its lock held by another run) keeps
+        drive.py back SLOW_FIRST_S only."""
+        free = threading.Event()
+
+        class G(FakeGate):
+            def run_layers(self, ctx, names, part=None, plan=None, on_submitted=None):
+                if part == "slow":
+                    free.wait(5)
+                return super().run_layers(ctx, names, part, plan)
+
+        gate = G(due=["gate:loop:linux@chopin"])
+        env = FakeEnv({MARK: [(1, row("debian12", "PASS", n=1))]}, gate=gate)
+        spawn = env.spawn
+        env.spawn = lambda argv, log, e: (free.set(), spawn(argv, log, e))[1]
+        saved = stic.SLOW_FIRST_S
+        stic.SLOW_FIRST_S = 0.2
+        try:
+            t0 = time.time()
+            res = stic.SticRun(self.ctx, Plan([PC("stic:debian12", "due", "changed:bin")]), env).go()
+        finally:
+            stic.SLOW_FIRST_S = saved
+        self.assertLess(time.time() - t0, 4)
+        self.assertTrue(any("aren't all in cmp-run.sh's line after 0.2 s: drive.py starts" in m for m in env.logs), env.logs)
+        self.assertEqual((res["exit"], len(env.argvs)), (0, 1))
+
     def test_a_failed_fast_gate_starts_no_guest(self):
         gate = FakeGate(due=["gate:bin:abi"], ok=False)
         env = FakeEnv({MARK: [(1, row("debian12", "PASS", n=1))]}, gate=gate)
@@ -1208,7 +1267,7 @@ class TestSticRunGate(unittest.TestCase):
                 seen.append(("plan", ctx.facts))
                 return super().gate_plan(ctx)
 
-            def run_layers(self, ctx, names, part=None, plan=None):
+            def run_layers(self, ctx, names, part=None, plan=None, on_submitted=None):
                 seen.append((part, ctx.facts))
                 return super().run_layers(ctx, names, part, plan)
 
@@ -1220,7 +1279,7 @@ class TestSticRunGate(unittest.TestCase):
         self.assertEqual(res["exit"], 0)
         self.assertEqual(len(probes), 1)
         want = {"chopin": {"ok": True, "gate": "wants"}, "cinqcent": {"ok": True}}
-        self.assertEqual(sorted(p for p, _ in seen), ["fast", "plan", "plan", "slow"])
+        self.assertEqual(sorted(p for p, _ in seen), ["fast", "plan", "slow"])   # one gate plan a run
         self.assertTrue(all(f == want for _, f in seen), seen)
         self.assertEqual(self.ctx.facts["chopin"], {"ok": True, "stic": "only"})
 

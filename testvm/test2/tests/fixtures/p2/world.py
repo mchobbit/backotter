@@ -1,8 +1,8 @@
 """A synthetic world for P2's tests (U2.2-U2.6): a fixture checkout (git), BKO_GIT's three
 forks, both hosts' facts and a seeded ledger.  Nothing here touches a host or a default root.
 
-    w = World(tmpdir)            the checkout: 47 SticTest checks, 81 HoltTest sources and 9
-                                 variants, 13 gate cells, 81 guests, 7 images, with the real classes.json,
+    w = World(tmpdir)            the checkout: 47 SticTest checks, 87 HoltTest sources and 9
+                                 variants, 13 gate cells, 92 guests, 7 images, with the real classes.json,
                                  estimates.tsv, drive.py, affected.sh and ram-sizes.tsv
     w.facts()                    {host: facts}, as facts_host.py gives them
     w.ctx(rows, facts=..., **options)   a plan.Ctx
@@ -59,6 +59,20 @@ PM = {"apt": "debian12 debian13 debian13-stack debian13-zfs devuan6 mint22 mx25 
       "FreeBSD": "freebsd14 freebsd15 freebsd15-geli freebsd15-geli-bios freebsd15-geli-ufs freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs hardenedbsd15 hardenedbsd15-zfs",
       "NetBSD": "netbsd11 alpinebsd", "OpenBSD": "openbsd8", "DragonFly": "dragonfly6", "SunOS": "omnios58 omnios58-mirror oi2610 oi2610-bios",
       "Haiku": "haiku6", "Redox": "redox", "Sculpt": "sculpt2610"}
+# The guests registered on 2026-11-18 (the user's "add HoltTest2 and GuestTest2 to this loop"):
+# all eleven are GuestTest2's; guix15, guix15-bios, kali, leap16, truenas25 and uc24 are
+# HoltTest2 sources too, and GUEST_ONLY's aren't yet (no corpus dump: holt/tests/corpus/README.md).
+REG_GUESTS = ("alpine324-uefi alpine324-lvm alpine324-luks guix15 guix15-bios kali leap16 openbsd8-crypt "
+              "truenas25 truenas25-mirror uc24").split()
+GUEST_ONLY = ("alpine324-uefi", "alpine324-lvm", "alpine324-luks", "openbsd8-crypt", "truenas25-mirror")
+GUESTS += REG_GUESTS
+UEFI |= set("alpine324-uefi alpine324-lvm alpine324-luks guix15 kali leap16 truenas25 uc24".split())
+NEW_GUESTS |= set("alpine324-uefi alpine324-lvm alpine324-luks guix15 guix15-bios kali leap16 openbsd8-crypt uc24".split())
+PM["apk"] += " alpine324-uefi alpine324-lvm alpine324-luks"
+PM["apt"] += " kali"
+PM["zypper"] += " leap16"
+PM["OpenBSD"] += " openbsd8-crypt"
+PM.update({"Guix": "guix15 guix15-bios", "truenas": "truenas25 truenas25-mirror", "snap": "uc24"})
 PM_OF = {g: pm for pm, gs in PM.items() for g in gs.split()}
 LINUX_PMS = ("apt", "dnf", "pacman", "zypper", "xbps", "apk", "moss", "rpm-ostree", "portage", "abroot", "tukit", "eopkg")
 SECTION = {"rpm-ostree": "ostree"}          # in-guest.sh's Linux.NAME, where it isn't the pm's
@@ -74,6 +88,10 @@ BSD_RESCUER = {"freebsd15": "freebsd15-ufs", "freebsd15-mirror": "freebsd15-ufs"
                "dragonfly6": "dragonfly6-newfsid.qcow2", "omnios58": "omnios58-reguid.qcow2",
                "omnios58-mirror": "omnios58-reguid.qcow2", "oi2610": "omnios58-reguid.qcow2",
                "oi2610-bios": "omnios58-reguid.qcow2", "haiku6": "haiku6"}
+BSD_PLAT["openbsd8-crypt"] = "openbsd"      # (a guest only: GUEST_ONLY)
+BSD_RESCUER["openbsd8-crypt"] = "openbsd8-newduid.qcow2"
+LINUX_PMS += ("snap",)                      # uc24's Linux.snapcore
+SECTION["snap"] = "snapcore"
 T0 = 1793491200        # 2026-11-01T00:00:00Z
 ENV = {"GIT_AUTHOR_NAME": "t2", "GIT_AUTHOR_EMAIL": "t2", "GIT_COMMITTER_NAME": "t2", "GIT_COMMITTER_EMAIL": "t2",
        "GIT_AUTHOR_DATE": "2026-11-01T00:00:00Z", "GIT_COMMITTER_DATE": "2026-11-01T00:00:00Z",
@@ -218,7 +236,7 @@ class World:
         out = ["#!/bin/sh\n", "# t2-section: prologue\n", "say hello\n", "# t2-section: Linux.common\n", "linux common\n"]
         for pm in LINUX_PMS:
             out += [f"# t2-section: Linux.{SECTION.get(pm, pm)}\n", f"update with {pm}\n"]
-        for osn in ("NixOS", "FreeBSD", "NetBSD", "OpenBSD", "DragonFly", "SunOS", "Haiku", "Redox"):
+        for osn in ("NixOS", "Guix", "FreeBSD", "NetBSD", "OpenBSD", "DragonFly", "SunOS", "Haiku", "Redox"):
             out += [f"# t2-section: {osn}\n", f"update on {osn}\n"]
         out += ["# t2-section: prologue\n", "say done\n"]
         return "".join(out)
@@ -262,6 +280,8 @@ class World:
                 e["kind"] = "redox"
             if pm == "Sculpt":
                 e["kind"] = "sculpt"
+            if pm == "truenas":     # a probe boot only: no in-guest.sh, no update (docs/design/truenas.md)
+                e["kind"], e["update"], e["harness"] = "probe", False, ["testvm/compare/boot-state.sh"]
             entries[g] = e
         return {"v": 1, "family": "guest", "kinds": kinds, "entries": entries,
                 "excluded": {"freebsd15-builder": "a build helper"},
@@ -313,6 +333,8 @@ class World:
             if g == "sculpt2610":
                 e["harness"] = ["testvm/sculpt-check.sh"]
             entries[g] = e
+        for g in GUEST_ONLY:
+            entries.pop(g, None)
         return {"v": 1, "family": "holt", "kinds": kinds, "entries": entries,
                 "plumbing": ["testvm/holttest1d/ht1-lib.sh", "testvm/holttest1d/ht1-queue.sh",
                              "testvm/holttest1d/ram-size.sh", "testvm/holttest1d/ram-sizes.tsv", "testvm/vm-run",

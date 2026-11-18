@@ -54,14 +54,15 @@ class Spec(unittest.TestCase):
     def setUp(self):
         self.sf = rows_guest.load_spec(REPO)
 
-    def test_eighty_one_guests_and_the_exclusion(self):
-        self.assertEqual(len(self.sf.names()), 86)   # 81, and A6's five arm64 guests
+    def test_ninety_two_guests_and_the_exclusion(self):
+        self.assertEqual(len(self.sf.names()), 97)   # 92, and A6's five arm64 guests
         self.assertNotIn("freebsd15-builder", self.sf.names())
         self.assertEqual(self.sf.data["excluded"], {"freebsd15-builder": "a build helper"})
 
     def test_every_rule_is_the_judges(self):
         loaders, sources = set(J.LOADER_RULES) | {"L-none"}, set(J.SOURCE_RULES) | {"S-none"}
-        kernels = set(J.KERNELS_MAX) | {"K-none", "K-abroot"}     # (K-abroot's limit is per root: ABROOT_KERNELS_PER_ROOT)
+        kernels = set(J.KERNELS_MAX) | {"K-none", "K-abroot", "K-snapcore"}     # (K-abroot's limit is per root:
+        # ABROOT_KERNELS_PER_ROOT; K-snapcore's is SNAPCORE_KERNELS_MAX, modeenv's current kernels)
         boots = {"B-lin", "B-bsd", "B-obsd", "B-ill", "B-alpbsd", "B-none"}
         mounts = {"M-lin", "M-zfs", "M-alp", "M-bsd", "M-ill", "M-haiku", "M-none"}
         for n in self.sf.names():
@@ -74,7 +75,9 @@ class Spec(unittest.TestCase):
 
     def test_new_guests(self):
         new = sorted(n for n in self.sf.names() if not self.sf.entry(n)["checks"]["established"])
-        self.assertEqual(new, sorted(["endeavouros", "endeavouros-grub", "manjaro", "fedora44-raid", "ubuntu26-raid", "rocky10-raid5",
+        self.assertEqual(new, sorted(["alpine324-uefi", "alpine324-lvm", "alpine324-luks", "guix15", "guix15-bios", "kali", "leap16",
+                                      "openbsd8-crypt", "uc24",
+                                      "endeavouros", "endeavouros-grub", "manjaro", "fedora44-raid", "ubuntu26-raid", "rocky10-raid5",
                                       "freebsd15-mirror", "hardenedbsd15-zfs", "solus49", "omnios58-mirror", "ubuntu26-luks", "chimera", "kinoite44",
                                       "chimera-uefi", "chimera-zfs", "gentoo", "gentoo-systemd", "cachyos-zfs", "anduinos2", "neon24", "garuda", "biglinux", "vanilla3",
                                       "oi2610", "oi2610-bios", "pikaos4", "pikaos4-luks", "proxmox9", "proxmox9-mirror",
@@ -96,6 +99,10 @@ class Spec(unittest.TestCase):
         self.assertEqual((d["cpus"], d["memory"], d["timeout_s"]), (4, 6144, 7200))
         self.assertEqual(self.sf.entry("manjaro")["checks"]["kernels_max"], 3)
         self.assertTrue(self.sf.entry("arch")["try"])
+        # TrueNAS (truenas.md): apt is off and vm-update refuses --try and the update, so a probe boot only
+        for g in ("truenas25", "truenas25-mirror"):
+            self.assertEqual(self.sf.entry(g)["kind"], "probe", g)
+            self.assertIs(self.sf.entry(g)["update"], False, g)
 
     def test_sections_are_the_guests(self):
         h = self.sf.entry("debian12")["harness"]
@@ -119,7 +126,7 @@ class Spec(unittest.TestCase):
         from t2lib import guest_judge as J
         with open(os.path.join(REPO, "testvm/test2/guest/limits.json"), encoding="utf-8") as f:
             d = json.load(f)
-        self.assertEqual(sorted(d), ["ghostbsd26-zfs", "kinoite44", "microos", "omnios58", "omnios58-mirror", "pikaos4", "pikaos4-luks",
+        self.assertEqual(sorted(d), ["ghostbsd26-zfs", "kali", "kinoite44", "microos", "omnios58", "omnios58-mirror", "pikaos4", "pikaos4-luks",
                                      "vanilla3"])
         self.assertEqual(sorted(d["kinoite44"]), ["after:boot-state", "after:failed-units", "after:fstab", "image:free"])
         # PikaOS (pikaos.md): its one apt suite, pika, is rolling (sid's), with no -security suite
@@ -135,6 +142,9 @@ class Spec(unittest.TestCase):
         for g in ("omnios58", "omnios58-mirror"):
             self.assertEqual(sorted(d[g]), ["after:boot-state"])
             self.assertEqual(d[g]["after:boot-state"]["lines"], [f"down svc:/system/cloud-init:{s}" for s in ("final", "init", "modules")])
+        # Kali (kali.md, What K1 found): its one apt suite, kali-rolling, has no -security suite either
+        self.assertEqual(sorted(d["kali"]), ["image:sources"])
+        self.assertEqual(d["kali"]["image:sources"]["lines"], ["no -security suite in apt's sources"])
         # GhostBSD (pc-sysinstall's setup_fstab): fstab's tmpfs /tmp under Install Station's zroot/tmp
         self.assertEqual(sorted(d["ghostbsd26-zfs"]), ["after:shadow"])
         self.assertEqual(d["ghostbsd26-zfs"]["after:shadow"]["lines"], ["/tmp is shadowed by a later mount on /tmp"])

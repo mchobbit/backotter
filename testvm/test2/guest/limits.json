@@ -5,6 +5,12 @@
    "why": "GhostBSD's own installer does it on every ZFS install: pc-sysinstall's setup_fstab (backend/functions-cleanup.sh) always appends 'tmpfs /tmp tmpfs rw,mode=1777' to fstab, and Install Station's zfs_datasets (install_station/data.py, make-ghostbsd.sh's ZFS_DATASETS) has a zroot/tmp dataset at /tmp, which the zfs rc script mounts over fstab's tmpfs at every boot; harmless, the tmpfs under it stays empty, and the UFS guest has the tmpfs alone (GuestTest2 t2v-20261117T1944-5b0f, the before and after hooks on Cage, 2026-11-17)"
   }
  },
+ "kali": {
+  "image:sources": {
+   "lines": ["no -security suite in apt's sources"],
+   "why": "Kali is Debian testing rebuilt as kali-rolling: its one apt source is http.kali.org/kali kali-rolling (kali.sources, deb822, written by kali.postinst), which carries the security fixes too; there is no -security suite to point at, as on pikaos4 (docs/design/kali.md, What K1 found)"
+  }
+ },
  "kinoite44": {
   "image:free": {
    "lines": ["/ is at least 90% full"],

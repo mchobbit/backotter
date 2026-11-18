@@ -706,6 +706,13 @@ class RealLogLines(unittest.TestCase):
         return J.sweep_lines({"update": raw + "\n"}, J.known_filter(self.known, pm), [])
 
     CHATTER = {
+        "guix": ["substitute: \x1b[Klooking for substitutes on 'https://bordeaux.guix.gnu.org'... 100.0%",
+                 "\x1b[K guix-cli                                    1.0MiB/s 00:00 | 384KiB transferred",
+                 "\x1b[K 42% \u2595\u2588\u2588\u2588\u2588\u258c                         \u258f",
+                 "building /gnu/store/b82cggd14k9d8k12kzga8spikk6zbs29-config.scm.drv...", "66 items will be downloaded",
+                 "applying 2 grafts for curl-minimal-8.14.1 ...", "building CA certificate bundle...",
+                 "warning: 'uv' is deprecated, use '(@ (gnu packages build-tools) uv)' instead",
+                 "shepherd: Service user-homes has been started."],
         "apt": ["Get:1 http://deb.debian.org/debian trixie/main amd64 bash amd64 5.2.37-2 [1,234 kB]", "Unpacking bash (5.2.37-2) over (5.2.37-1) ...",
                 "Reading package lists... Done", "base-files is already the newest version (13.8).", "Found linux image: /boot/vmlinuz-6.12.57+deb13-amd64"],
         "dnf": ["[ 1/42] Upgrading NetworkManager-1:1.52.0 100% |   2.1 MiB/s |   3.4 MiB |  00m02s", "[ 3/9] Installing hunspell-en-AU-0:2.1 100% |   1.0 MiB/s |  10.0 KiB |  00m00s",
@@ -812,6 +819,9 @@ class RealLogLines(unittest.TestCase):
                 self.assertEqual(self.left(pm, x), [], (pm, x))
 
     REAL_ERRORS = {
+        "guix": ["guix system: error: aborting reconfiguration because commit 230aa373f315 of channel 'guix' is not a descendant of 9f1e7d1c2b3a",
+                 "guix/build/syscalls.scm:2503:8: In procedure terminal-window-size:", "building /gnu/store/abc-foo.drv failed",
+                 "error: build of `/gnu/store/abc-foo.drv' failed", "guix system: warning: Failing to do that may downgrade your system!"],
         "nix": ["error: builder for '/nix/store/abc-foo.drv' failed with exit code 1", "error: Cannot build '/nix/store/abc-foo.drv'.", "building '/nix/store/abc.drv' failed"],
         "apt": ["The following packages have unmet dependencies:", "Reading package lists... Error!"],
         "dragonfly": ["in-guest: base system: make buildworld failed"],

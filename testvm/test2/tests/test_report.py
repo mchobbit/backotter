@@ -622,7 +622,7 @@ class Runs(unittest.TestCase):
         rs.copy = {"chopin": {"id": "abc1234", "path": "/c/abc1234", "commit": "a" * 40, "dirty": {}}}
         doc = rs.cells_doc(p, "chopin")
         self.assertEqual(sorted(doc["cells"]), ["debian13", "debian13-oneshot", "debian13-stack",
-                                                "debian13-stack-bigger", "debian13-zfs", "proxmox9", "proxmox9-mirror"])
+                                                "debian13-stack-bigger", "debian13-zfs", "proxmox9", "proxmox9-mirror", "truenas25"])
         e = doc["cells"]["debian13-stack-bigger"]
         self.assertEqual((e["cell"], e["attempt"], e["planned_key"], e["rule"]),
                          ("holt:debian13-stack+bigger", 1, p.cell("holt:debian13-stack+bigger").keys["chopin"],

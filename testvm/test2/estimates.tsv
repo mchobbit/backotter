@@ -125,6 +125,12 @@ holt	holt:chimera-zfs	3.50	210	0.00	-	cinqcent chim3 PASS 2026-11-11, 16:37:57 t
 holt	holt:gentoo	4.00	240	0.00	-	gentoo.md G2b: chimera-uefi's chim4 (3.82 gm, UEFI, LVM) rounded up, until G5's first run (est.)
 holt	holt:cachyos-zfs	3.50	210	0.00	-	as holt:chimera-zfs (cinqcent chim3: UEFI, root on ZFS), until cachyos-zfs's first run (est.)
 holt	holt:gentoo-systemd	4.00	240	0.00	-	gentoo.md G3: as holt:gentoo (chimera-uefi's chim4, UEFI, LVM on LUKS, rounded up), until G5's first run (est.)
+holt	holt:guix15	5.08	305	0.00	6.20	chopin gx6-14 PASS 2026-11-14, phases 305 s (source 64, backup 36, rebuild 129, verify 76, the previous generation booted too), ht1.sh in RAM, RAM-disk peak 5.8 GiB (guix.md GX6)
+holt	holt:guix15-bios	4.02	241	0.00	5.02	chopin gx6-15 PASS 2026-11-14, phases 241 s (source 70, backup 31, rebuild 71, verify 69), ht1.sh in RAM, RAM-disk peak 4.7 GiB (guix.md GX6)
+holt	holt:kali	3.20	192	0.00	4.38	kali.md K5: k5-1 chopin and k5-2 cinqcent PASS 2026-11-14, ~3 min a run (source 23, backup 12-15, rebuild 106-119, verify 33-36), RAM-disk peak 4.1 GiB (ram-sizes.tsv kali)
+holt	holt:leap16	8.95	537	0.00	5.85	leap16.md L5: l5-1 chopin's phases 537 s (source 46 with the snapper prep, backup 103, rebuild 252, verify 136; l5-2 cinqcent's the same), FAIL runs before the L5 plumbing, so est. until a PASS; RAM-disk peak 5.45 GiB
+holt	holt:truenas25	15.00	900	0.00	25.13	chopin tn6-8 PASS 2026-11-14, its phases 900 s (source 85, backup 312, rebuild 217, verify 286; cinqcent's tn6-7 784 s), ht1.sh in RAM, RAM-disk peak 23.4 GiB (truenas.md T6)
+holt	holt:uc24	4.00	240	0.00	-	ubuntu-core.md: no HoltTest1 run yet (est.): an 8 GiB disk with ~2.2 GiB used, about one Linux source
 holt	holt:anduinos2	5.63	338	0.00	-	anduinos.md A3: as holt:ubuntu26-uefi (r3all chopin: UEFI, Secure Boot), until A5's first run (est.)
 holt	holt:neon24	6.32	379	0.00	-	chopin ht1u PASS 2026-11-14, 02:07:09Z to 02:13:28Z (ht1.sh, in RAM; cinqcent's ht1u PASS in 436 s)
 holt	holt:elementary8	9.03	542	0.00	-	chopin elem6c2 2026-11-14, 18:06:47Z to its ledger row at 18:15:49Z, all four phases (ht1.sh, in RAM; it FAILed only on the dumps' grub.cfg, os-prober's leak, since fixed: elementary.md E6), until a PASS (est.)
@@ -215,6 +221,17 @@ guest	guest:openbsd8	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for c
 guest	guest:pop24	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:proxmox9	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:proxmox9-mirror	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:alpine324-uefi	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:alpine324-lvm	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:alpine324-luks	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:guix15	36.00	2160	0.00	-	vm-update on chopin 2026-11-14: booted 08:31:15, host mount 09:03:35 (~32 min: guix pull of the channel head, reconfigure, delete-generations, gc) + 0.5 for checks + 1.5 for a new guest's smoke backup (est.)
+guest	guest:guix15-bios	36.00	2160	0.00	-	as guest:guix15 (vm-update on chopin 2026-11-14: booted 09:07:12, host mount 09:43:33, ~36 min) (est.)
+guest	guest:kali	3.20	192	0.00	-	kali.md K1: vm-update --try ~70 s on chopin (1.17) + 0.5 for checks + 1.5 for a new guest's smoke backup (est.)
+guest	guest:leap16	4.28	257	0.00	-	leap16.md L1: vm-update --try 137 s on cinqcent (2.28) + 0.5 for checks + 1.5 for a new guest's smoke backup (est.)
+guest	guest:openbsd8-crypt	3.30	198	0.00	-	openbsd-crypto.md: guest:openbsd8's 1.8 + 1.5 for a new guest's smoke backup (no GuestTest2 run yet)
+guest	guest:truenas25	2.50	150	0.00	-	est.: --probe only (update false: no --try, no smoke backup), a boot to the middleware (~85 s, tn6-8's source phase) + ~0.5 for checks
+guest	guest:truenas25-mirror	2.50	150	0.00	-	est.: --probe only (update false: no --try, no smoke backup), a boot to the middleware (~85 s, tn6-6's source phase) + ~0.5 for checks
+guest	guest:uc24	4.50	270	0.00	-	ubuntu-core.md: no vm-update --try timed yet (est.): test2.md 1.8 + 1.5 for a new guest's smoke backup, + ~1.2 for snapd's delayed refresh reboots
 guest	guest:redox	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:rocky10	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:rocky10-lvm	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks

@@ -800,8 +800,9 @@ class Plats(unittest.TestCase):
 
 class GuestSpecKeys(unittest.TestCase):
     """The repo's guest/spec.json: vm-update by its code on every guest it runs on, vm-mount and
-    vm-umount on the Linux ones (B-lin: uname -s Linux, the only guests vm-update's host mount
-    check mounts), and no guest keying vm-update's bytes."""
+    vm-umount on the Linux ones (plat linux: uname -s Linux, the only guests vm-update's host mount
+    check mounts; every B-lin guest is one, and guix15's are too, B-none until boot-state.sh knows
+    Shepherd), and no guest keying vm-update's bytes."""
 
     def test_guest_harness(self):
         src = keys.TreeSource(REPO)
@@ -810,15 +811,16 @@ class GuestSpecKeys(unittest.TestCase):
         for name in sf.names():
             e = sf.entry(name)
             h = keys.resolve("guest:" + name, src, {}, specs).inputs.get("harness", {})
-            linux = ((e.get("checks") or {}).get("rules") or {}).get("boot") == "B-lin"
+            linux = str(e.get("plat")).startswith("linux")
+            b_lin = ((e.get("checks") or {}).get("rules") or {}).get("boot") == "B-lin"
             self.assertNotIn("testvm/vm-update", h, name)
             if e.get("kind") in ("ssh", "probe"):
                 self.assertIn("pycode:testvm/vm-update", h, name)
                 self.assertTrue(h["pycode:testvm/vm-update"].startswith("sha256:"), name)
             for p in ("testvm/vm-mount", "testvm/vm-umount"):
                 self.assertEqual(p in h, linux and e.get("kind") in ("ssh", "probe"), (name, p))
-            if linux:
-                self.assertTrue(str(e.get("plat")).startswith("linux"), name)
+            if b_lin:
+                self.assertTrue(linux, name)
 
 
 if __name__ == "__main__":

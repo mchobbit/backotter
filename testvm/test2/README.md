@@ -20,10 +20,10 @@ Check `t2 batch status` before starting heavy work: a running batch holds whole 
 | `SticTest2All [ROUND]` | all 47 checks, fresh (SticTest1's scope) | runs them all anyway |
 | `HoltTest2 [GUEST[+VARIANT]...] [stale] [+bigger] [+oneshot] [+degraded] [+img]` | the due HoltTest cells | one line |
 | `HoltTest2X [X...]`, X in D A M U Z F C V BSD H I G Obscure | that family's guests, fresh (HoltTest1's letters) | runs them anyway |
-| `HoltTest2All` | all 81 sources and their 9 variant cells, fresh (no `+img` cells) | runs them all anyway |
+| `HoltTest2All` | all 87 sources and their 9 variant cells, fresh (no `+img` cells) | runs them all anyway |
 | `HoltTest2 G+img`, `HoltTest2 +img` | those cells fresh, a real rescue image as rescuer; `+img` alone: all 14 | runs them anyway |
 | `GuestTest2 [GUEST...] [stale]` | the due guests, or those guests fresh: identity, image checks, a `--try` in RAM, the checks after it, the log sweep | the guests whose last `--try` is over 7 days old; else one line |
-| `GuestTest2All` | the graded audit: all 81 guests fresh, sha256 identity | runs them all anyway |
+| `GuestTest2All` | the graded audit: all 92 guests fresh, sha256 identity | runs them all anyway |
 | `GuestTest2 update [GUEST...]` | the real update round (merges; sculpt2610 by `testvm/sculpt-update`); never with `stale` or All | a bare round needs a `--try` PASS within 7 days (not sculpt2610, which has no `--try`) |
 | `ImgTest2 [PLAT...] [release] [stale]` | images built since their PASS and owed panels, or those platforms fresh; `release` requires the panel | one line |
 | `ImgTest2All [release]` | every current image, its panel included | runs them all anyway |
@@ -36,6 +36,12 @@ check and a GuestTest2 guest (`--try` only: vm-update can't merge a guest that
 boots on its own TPM yet), but no HoltTest2 source until a HoltTest1 PASS dump
 gives it its golden plan (a source with no corpus dump is a golden_plans
 failure).
+So too, since 2026-11-18, alpine324-uefi, alpine324-lvm, alpine324-luks,
+openbsd8-crypt and truenas25-mirror: GuestTest2 guests, no HoltTest2 sources until
+their dumps are in holt/tests/corpus (its README, "Adding a source").  qubes43 and
+uc24-fde are in neither yet: qubes43 needs a console probe of its own (qubes.md) and
+a HoltTest1 run's dump, uc24-fde a vm-run-options with its TPM and variables and
+ht1.sh's same-machine boot (ubuntu-core.md U6).
 
 `WORD All` is the same as `WORDAll`, and `HoltTest2 D` or `HoltTest2 2D` the same as
 `HoltTest2D`; `HoltTest2 --holt-bin DIR` tests a ready bko-holt set (DIR/bko-holt,
@@ -164,7 +170,7 @@ change is carried; a change only to `holt.plan_visible` (commands.rs) runs the
 guests whose golden plan changed, their variants when the diff touches partition,
 assemble or close, and the degraded cells, and carries the rest (`carry:plan-diff`);
 before the plan diff is known (no blessed plan change, no gate:holt row at the
-current holt key) all 81 run (`holt:code`), as for any other code change (the stand-in
+current holt key) all 87 run (`holt:code`), as for any other code change (the stand-in
 for M1's module map).  A rustic-bko-only change runs that platform's rustic panel and
 carries the rest; a rescuer change runs its rescuer panel; a guest's new generation
 runs it and its variants; a driver change runs that driver's guests; a judge change
@@ -361,7 +367,7 @@ with every cell, fixture forks for BKO_GIT, both hosts' facts and seeded rows).
 ## Stand-ins until later pieces
 
 Until M1 affected.sh v1 serves the carry rule and any holt code change outside
-`plan_visible` reaches all 81 sources; until G2 a judge change makes cells due
+`plan_visible` reaches all 87 sources; until G2 a judge change makes cells due
 (`policy.judge_change`); until H3 `+close` is refused, variants run as runs of their
 own and `+img` runs as its own job.  G3, H4, C1, S1 and R1 are later still.
 

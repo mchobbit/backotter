@@ -186,6 +186,90 @@
    },
    "notes": "docs/design/arm64.md A5/A6: an arm64 guest on Bigfoot, its builder's --arch arm64; established false until its first GuestTest2 run there"
   },
+  "alpine324-luks": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-bootstrap.sh",
+    "testvm/bootstrap/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apk",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apk"
+   ],
+   "checks": {
+    "pm": "apk",
+    "rules": {
+     "source": "S-apk",
+     "loader": "L-grub",
+     "kernel": "K-apk",
+     "boot": "B-lin",
+     "mounts": "M-alp"
+    },
+    "fw": "uefi",
+    "established": false
+   },
+   "notes": "BackShot2Alpine's LUKS source (make-bootstrap.sh alpine-luks: ESP, /boot ext4, LUKS2 holding vg0 with root ext4 and swap); the initramfs opens it with its embedded /crypto_keyfile.bin, so nothing is typed, and vm-update's host mount takes vms/alpine324-luks/luks-keyfile as vm-mount's key (docs/design/backshot2.md B7); established false until its first GuestTest2 run"
+  },
+  "alpine324-lvm": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-bootstrap.sh",
+    "testvm/bootstrap/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apk",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apk"
+   ],
+   "checks": {
+    "pm": "apk",
+    "rules": {
+     "source": "S-apk",
+     "loader": "L-grub",
+     "kernel": "K-apk",
+     "boot": "B-lin",
+     "mounts": "M-alp"
+    },
+    "fw": "uefi",
+    "established": false
+   },
+   "notes": "BackShot2Alpine's LVM source (make-bootstrap.sh alpine-lvm: ESP at /boot/efi, VG vg0 with LVs root (XFS) and swap, free extents left; --uefi --no-secure-boot; docs/design/backshot2.md B7); established false until its first GuestTest2 run"
+  },
+  "alpine324-uefi": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-bootstrap.sh",
+    "testvm/bootstrap/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apk",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apk"
+   ],
+   "checks": {
+    "pm": "apk",
+    "rules": {
+     "source": "S-apk",
+     "loader": "L-grub",
+     "kernel": "K-apk",
+     "boot": "B-lin",
+     "mounts": "M-alp"
+    },
+    "fw": "uefi",
+    "established": false
+   },
+   "notes": "BackShot2Alpine's plain UEFI source (make-bootstrap.sh alpine-uefi: GPT, GRUB in a 512 MiB ESP at /boot/efi, swap, / on ext4; vm-run-options --uefi --no-secure-boot; docs/design/backshot2.md B7); established false until its first GuestTest2 run"
+  },
   "alpinebsd": {
    "kind": "ssh",
    "plat": "netbsd",
@@ -1203,6 +1287,60 @@
     "established": true
    }
   },
+  "guix15": {
+   "kind": "ssh",
+   "plat": "linux",
+   "timeout_s": 7200,
+   "harness": [
+    "testvm/make-guix.sh",
+    "testvm/guix/**",
+    "testvm/update/in-guest.sh#Guix",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#guix"
+   ],
+   "checks": {
+    "pm": "guix",
+    "rules": {
+     "source": "S-none",
+     "loader": "L-grub",
+     "kernel": "K-none",
+     "boot": "B-none",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false
+   },
+   "notes": "docs/design/guix.md: Guix System 1.5.0, UEFI without Secure Boot (vm-run-options --uefi --no-secure-boot), GPT ESP /boot/efi + swap + ext4 /; in-guest.sh#Guix runs guix pull, reconfigure --allow-downgrades, keeps two generations, gc (~32 min).  K-none and B-none for now: GRUB boots the kernel from /gnu/store (no /boot/vmlinuz for K-deb's count) and Shepherd is an init boot-state.sh doesn't know (it would say init unknown); a K-guix rule and a shepherd arm are later work, and touch every ssh guest's harness.  established false until its first GuestTest2 run"
+  },
+  "guix15-bios": {
+   "kind": "ssh",
+   "plat": "linux",
+   "timeout_s": 7200,
+   "harness": [
+    "testvm/make-guix.sh",
+    "testvm/guix/**",
+    "testvm/update/in-guest.sh#Guix",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#guix"
+   ],
+   "checks": {
+    "pm": "guix",
+    "rules": {
+     "source": "S-none",
+     "loader": "L-grub",
+     "kernel": "K-none",
+     "boot": "B-none",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": false
+   },
+   "notes": "docs/design/guix.md: Guix System 1.5.0, BIOS: GPT with a BIOS boot partition, swap, Btrfs guixroot with @, @home and @gnu (fstab by label); GRUB in the MBR reads /@gnu/store.  The same updater and rules as guix15 (K-none, B-none: its notes say why).  established false until its first GuestTest2 run"
+  },
   "haiku6": {
    "kind": "probe",
    "plat": "haiku",
@@ -1277,6 +1415,34 @@
     "established": false
    }
   },
+  "kali": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-debian.sh",
+    "testvm/debian/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false
+   },
+   "notes": "docs/design/kali.md: kali-rolling built by make-debian.sh --kali (testvm/debian/preseed.cfg), UEFI without Secure Boot (vm-run-options --uefi --no-secure-boot), GRUB in EFI/kali; its one apt source has no -security suite (guest/limits.json); established false until its first GuestTest2 run"
+  },
   "kinoite44": {
    "kind": "ssh",
    "plat": "linux",
@@ -1304,6 +1470,34 @@
     "fw": "uefi",
     "established": false
    }
+  },
+  "leap16": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-opensuse.sh",
+    "testvm/opensuse/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.zypper",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#zypper"
+   ],
+   "checks": {
+    "pm": "zypper",
+    "rules": {
+     "source": "S-zyp",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": false
+   },
+   "notes": "docs/design/leap16.md: openSUSE Leap 16.1 by Agama, UEFI with Secure Boot (vm-run-options --uefi: SUSE's shim), btrfs with snapper, SELinux enforcing; Linux.zypper's Leap arm runs zypper up; established false until its first GuestTest2 run"
   },
   "manjaro": {
    "kind": "ssh",
@@ -1638,6 +1832,32 @@
     "established": true
    }
   },
+  "openbsd8-crypt": {
+   "kind": "ssh",
+   "plat": "openbsd",
+   "harness": [
+    "testvm/make-openbsd.sh",
+    "testvm/openbsd/**",
+    "testvm/update/in-guest.sh#OpenBSD",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#openbsd"
+   ],
+   "checks": {
+    "pm": "openbsd",
+    "rules": {
+     "source": "S-obsd",
+     "loader": "L-obsd",
+     "kernel": "K-obsd",
+     "boot": "B-obsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "bios",
+    "established": false
+   },
+   "notes": "docs/design/openbsd-crypto.md: openbsd8 with its root disklabel inside a softraid CRYPTO volume (sd1 on chunk sd0a); vm-update types vms/openbsd8-crypt/console-passphrase at /boot's Passphrase: prompt on the serial console; the qcow2 is named openbsd8.qcow2 in its folder; established false until its first GuestTest2 run"
+  },
   "pikaos4": {
    "kind": "ssh",
    "plat": "linux",
@@ -1958,6 +2178,62 @@
     "established": true
    }
   },
+  "truenas25": {
+   "kind": "probe",
+   "plat": "linux",
+   "memory": 4096,
+   "harness": [
+    "testvm/make-truenas.sh",
+    "testvm/truenas/**",
+    "testvm/truenas-update",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#truenas"
+   ],
+   "checks": {
+    "pm": "truenas",
+    "rules": {
+     "source": "S-none",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-zfs"
+    },
+    "fw": "uefi",
+    "established": true
+   },
+   "update": false,
+   "notes": "docs/design/truenas.md: TrueNAS CE 25.10; apt is off and no-vm-update refuses --try and the real update, so a probe boot only (vm-update --probe: check-image.sh before, no in-guest.sh); updates are rebuilds with a newer .update file (make-truenas.sh), staleness by testvm/truenas-update --check.  memory 4096: the middleware wants more than vm-run's 2048.  established true, as haiku6's: a probe never runs new-guest.sh"
+  },
+  "truenas25-mirror": {
+   "kind": "probe",
+   "plat": "linux",
+   "memory": 4096,
+   "harness": [
+    "testvm/make-truenas.sh",
+    "testvm/truenas/**",
+    "testvm/truenas-update",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#truenas"
+   ],
+   "checks": {
+    "pm": "truenas",
+    "rules": {
+     "source": "S-none",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-zfs"
+    },
+    "fw": "bios",
+    "established": true
+   },
+   "update": false,
+   "notes": "docs/design/truenas.md: TrueNAS CE 25.10, BIOS: boot-pool a two-disk mirror plus data pool tank on a third disk (vm-run-options --disk truenas25-mirror-b.qcow2 --disk truenas25-mirror-data.qcow2 --disk-serials BKOTN0,BKOTN1,BKOTN2); a probe boot only, as truenas25's (its notes say why); not in the vm-store, so only Chopin and Cinqcent hold it"
+  },
   "ubuntu24": {
    "kind": "ssh",
    "plat": "linux",
@@ -2197,6 +2473,31 @@
     "fw": "bios",
     "established": true
    }
+  },
+  "uc24": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-ubuntu-core.sh",
+    "testvm/ubuntu-core/**",
+    "testvm/hosts.json",
+    "testvm/update/in-guest.sh#Linux.snapcore",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "checks": {
+    "pm": "snap",
+    "rules": {
+     "source": "S-none",
+     "loader": "L-none",
+     "kernel": "K-snapcore",
+     "boot": "B-lin",
+     "mounts": "M-none"
+    },
+    "fw": "uefi-sb",
+    "established": false
+   },
+   "notes": "docs/design/ubuntu-core.md: Ubuntu Core 24, no TPM, not encrypted (vm-run-options --uefi --memory 2048); Linux.snapcore runs snapd's refresh and ends before Linux.common; snapd owns GRUB on ubuntu-boot (L-none, K-snapcore checks kernel.efi), there is no fstab of the four roots (M-none) and no apt source (S-none); established false until its first GuestTest2 run"
   },
   "vanilla3": {
    "kind": "ssh",

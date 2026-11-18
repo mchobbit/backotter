@@ -147,8 +147,12 @@ watched through their exit files every 15 s; the results land in
 - `--stop-file F` (here, on the Mac): while F exists nothing new starts,
   and once nothing of ours runs the round ends, naming the guests not
   started. `--skip-file F`: the guests F names (whitespace-separated,
-  reread every poll) are never started. SticTest2 drives its stop rules
-  through these two.
+  reread every poll) are never started. `--hold-file F`: the hosts F names
+  (a line `HOST WHY`, reread every poll) start nothing new while named;
+  their running checks go on and the guests not started yet go to the other
+  hosts that can run them, or wait for the hold to end. SticTest2 drives its
+  stop rules through the first two and the per-host swap rule through the
+  third.
 - Test2's own flags, which `testvm/test2/t2 SticTest2` passes (see "Test2"
   below): `--t2-run RUN`, `--t2-copy DIR`, `--t2-cells F`, `--t2-attempt N`.
 
@@ -259,8 +263,9 @@ or its planned key.
 rerun and fan-out, ended in a valid PASS (an attempt-2 HARNESS or LOST
 leaves attempt 1's FAIL standing); 1 when any ended otherwise, had no row,
 or a stop rule fired (one need failing on 2 guests of an OS, 2 harness
-results, a failed slow gate, swap-out over 1 GiB on a host since the run
-began, or the run's own wear-tagged writes over 2 x its budget); 2 when it
+results, a failed slow gate, a host held 2 h by the swap rule, or the
+run's own wear-tagged writes over 2 x its budget; a host's swap-out over
+1 GiB in 10 min only holds that host, through `--hold-file`); 2 when it
 was refused (the archiver gate can't be loaded or planned, or drive.py
 ended non-zero having started nothing). Before cells.json it has the copy's
 `t2-host imgsum` sum the disks of a due guest with no image-state

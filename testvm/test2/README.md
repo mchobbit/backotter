@@ -246,7 +246,8 @@ the final plan has a valid PASS or a derived row.
 
 A runner gets `ctx.run`, a `RunState`: `run`, `word`, `family`, `mac_dir`,
 `host_root`, `hosts`, `copy` (per host: id, path, commit, dirty), `stops` (the stop
-rules: `feed(result)`, `feed_host(host, swap_out_bytes, ours_bytes, allowed)`, `may_start(os)`),
+rules: `feed(result)`, `feed_host(host, swap_out_bytes, ours_bytes, allowed)`, `may_start(os)`,
+`held()` the hosts the swap rule holds, `hold_notes()`),
 `flakes`, `limits`, `write_cells(plan, attempt, name, reruns)` (cells.json or
 cells-r2.json on every host, atomically, with each host's planned keys),
 `replan(facts, rows)` (after a build or the fast holt gate: the plan again, with the
@@ -260,9 +261,22 @@ reruns once a PASS that couldn't count because its run made the one-time rescuer
 
 The stop rules: a failed fast gate starts no guest of its family; a failed slow
 gate starts nothing new; one need failing on 2 guests of an OS stops that OS; 2
-harness-class results stop the run (known flakes aside); over 1 GiB swapped out, or
-this run's jobs writing over twice the budget (their wear tags, never other
-sessions' writes; classes.json policy.stop.write_budget_x x budget.run_gb), start nothing new.
+harness-class results stop the run (known flakes aside); this run's jobs writing over
+twice the budget (their wear tags, never other sessions' writes; classes.json
+policy.stop.write_budget_x x budget.run_gb) start nothing new.
+The swap rule is per host (run.py's `HostHolds`, since 2026-11-18): a host whose swap-out
+over the last 10 min is over 1 GiB is held, and only it: nothing new starts there, its
+running jobs go on, and its queued cells go to the other hosts that can take them under
+each family's placement rules (SticTest2: drive.py `--hold-file`; HoltTest2: the queue's
+`max-HOST` at 0, so the other runners take the todo's lines and a line only that host may
+run waits; GuestTest2: the job waits for another host it may run on; ImgTest2's placed
+images wait for their host).  The host starts again once held 15 min with at most 0.25 GiB
+swapped out over the window (the hysteresis); a hold that lasts 2 h is run-wide, the old
+stop-starts.  Swap-out since the run began no longer counts, nor swap in use.  The
+composite's families share the holds; each report lists them as `swap rule:` notes, and a
+hold is no stop (a run whose cells all ran elsewhere passes).  Defaults, overridable in
+classes.json policy.stop: `swap_out_gib` 1, `swap_window_min` 10, `swap_clear_gib` 0.25,
+`swap_hold_min` 15, `swap_hold_max_min` 120.
 A known disk-heavy holt cell has a write allowance (holt/spec.json `write_allow`, a plain
 holt:GUEST cell only): its own bytes in each attempt (wear tags ht1:RUN:GUEST, ht1:RUN-r2:GUEST),
 up to the allowance, don't count toward that rule; what it writes over the allowance, and

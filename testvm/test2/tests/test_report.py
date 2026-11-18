@@ -477,10 +477,13 @@ class Runs(unittest.TestCase):
         g.feed_host("stic", "h", ours_bytes=int(3e9))
         g.feed_host("stic", "h", ours_bytes=int(3e9))
         self.assertFalse(g.tripped())
-        # swap, one host
+        # swap holds its host alone (HostHolds), shared by the composite's families: no run-wide trip
         g = run.RunGuards(pol)
-        self.assertIn("swapped out", g.feed_host("stic", "h", swap_out_bytes=2 << 30))
-        self.assertIsNone(g.feed_host("stic", "h", swap_out_bytes=2 << 30))     # says it once
+        self.assertIsNone(g.feed_host("stic", "h", swap_out_bytes=2 << 30))
+        self.assertFalse(g.tripped())
+        self.assertIn("swapped out in the last 10 min", g.held()["h"])
+        self.assertEqual(run.StopEngine("holt", pol, guards=g).held(), g.held())
+        self.assertTrue(run.StopEngine("holt", pol, guards=g).may_start())
         # a per-family stop leaves the guards alone
         g = run.RunGuards(pol)
         a = run.StopEngine("gate", pol, guards=g)
@@ -585,7 +588,10 @@ class Runs(unittest.TestCase):
         self.assertEqual(s.feed(dict(h, cell="stic:x", flake={"guest": "x"})), "ok")    # a known flake: not counted
         self.assertEqual(s.feed(dict(h, cell="stic:debian13")), "stop-run")
         s = run.StopEngine("stic", pol)
-        self.assertEqual(s.feed_host("chopin", swap_out_bytes=2 << 30), "stop-starts")
+        self.assertEqual(s.feed_host("chopin", swap_out_bytes=2 << 30), "ok")      # swap holds the host alone
+        self.assertEqual(list(s.held()), ["chopin"])
+        self.assertTrue(s.may_start())
+        self.assertEqual(s.stops, [])
         s = run.StopEngine("stic", pol)
         self.assertEqual(s.feed_host("chopin", ours_bytes=3e9), "ok")         # over the budget: warn only
         self.assertEqual(s.feed_host("chopin", ours_bytes=4.1e9), "stop-starts")   # twice it: stop

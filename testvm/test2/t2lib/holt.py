@@ -54,8 +54,11 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      "gone", nor an unreadable ledger "no row".  Every new done row's ledger row
      feeds the stop rules (stop-os OS takes that OS's lines out of the todo, an
      offline guest being an OS of its own; stop-starts, stop-family and stop-run
-     touch queue/RUN/stop on every host).  Each poll also feeds each host's swap-out and
-     this run's bytes (jobs.log, tag ht1:RUN...: R22) to the write stop rule; a cell with
+     touch queue/RUN/stop on every host).  Each poll also feeds each host's swap-out to the
+     swap rule, which holds that host alone (run.py's HostHolds: queue/RUN/max-HOST 0 there,
+     so its runner starts nothing new and the other runners take the todo's lines, a line
+     only it may run waiting; max-HOST back as it was when the hold ends, or when the todo
+     is empty), and this run's bytes (jobs.log, tag ht1:RUN...: R22) to the write stop rule; a cell with
      a write allowance (its spec entry's write_allow, write_allow_bytes) has its own
      bytes per attempt (tags ht1:RUN:GV, ht1:RUN-r2:GV), up to the allowance, excused
      (allowed_bytes), the report still giving the true total.  A done row with no ledger row gets
@@ -1390,8 +1393,60 @@ class Runner:
                 out[gv_of(pc.cell)] = (pc.cell, b)
         return out
 
+    def sync_holds(self, qrun):
+        """The swap rule's held hosts (the stop engine's held(), {host: why}) for queue QRUN:
+        ht1-queue.sh's queue/RUN/max-HOST at 0 on a held host, so its runner starts nothing new
+        (its jobs go on; the other runners take the todo's lines, and a line only it may run
+        waits), and back to what it was (none: the host's holt_jobs) when the hold ends.  An
+        empty todo ends every hold: a held runner with nothing left to start may end."""
+        fn = getattr(self.rs.stops, "held", None)
+        try:
+            held = {str(h): str(w) for h, w in (fn() if fn is not None else {}).items()}
+        except Exception:   # noqa: BLE001 - holds that can't be read hold nothing
+            held = {}
+        q = (self.state["queues"] or {}).get(qrun)
+        if q is None:
+            return
+        applied = dict(q.get("held") or {})
+        runners = q.get("runners") or {}
+        held = {h: w for h, w in held.items() if h in runners}
+        if not held and not applied:
+            return
+        why_end = "the swap rule's hold is over"
+        if held:
+            todo = self.remote.read(self.qhost, f"{QUEUE}/{qrun}/todo")
+            if todo is not None and not any(x.split("#", 1)[0].strip() for x in todo.splitlines()):
+                held, why_end = {}, "the todo is empty"
+        changed = False
+        for h in sorted(set(held) - set(applied)):
+            path = f"{QUEUE}/{qrun}/max-{h}"
+            prev = self.remote.read(h, path)
+            try:
+                self.remote.write(h, path, "0\n")
+            except OSError as e:
+                self.log(f"queue {qrun}: hold on {h} not set: {e}")
+                continue
+            applied[h] = {"prev": prev if (prev or "").strip() else None, "why": held[h], "t": utc_now()}
+            changed = True
+            self.log(f"queue {qrun}: HOLD {h}: {held[h]}: its runner starts nothing new (max-{h} 0); "
+                     "the other runners take its lines")
+        for h in sorted(set(applied) - set(held)):
+            path = f"{QUEUE}/{qrun}/max-{h}"
+            try:
+                self.remote.write(h, path, applied[h].get("prev") or f"{max_jobs(h)}\n")
+            except OSError as e:
+                self.log(f"queue {qrun}: hold on {h} not lifted (tried again next poll): {e}")
+                continue
+            del applied[h]
+            changed = True
+            self.log(f"queue {qrun}: {h}: {why_end}: its runner starts again")
+        if changed:
+            q["held"] = applied
+            self.state.save()
+
     def host_checks(self, qrun):
-        """The host-wide stop rules: swap-out since the run began, this run's bytes (R22).
+        """The host-wide stop rules: swap-out (HostHolds: it holds that host alone; then
+        sync_holds), this run's bytes (R22).
         With a write allowance in the plan, the bytes come by tag and the allowed cells'
         own (allowed_bytes) are fed as ALLOWED: the rule counts the rest."""
         prefix = f"ht1:{self.run_id}"
@@ -1431,6 +1486,7 @@ class Runner:
                     seen.add(msg)
                     self.log(msg)
             self.act(qrun, what)
+        self.sync_holds(qrun)
 
     def k_of(self, qrun, gv):
         recs = os.environ.get("HT_RECORDS") or HOLT_L

@@ -1214,7 +1214,7 @@ class TestSticRunGate(unittest.TestCase):
 
 
 class TestSticRunHosts(unittest.TestCase):
-    """R22: swap-out on a host since the run began, and this run's own jobs' bytes."""
+    """R22: swap-out on a host (it holds that host alone: --hold-file), and this run's own jobs' bytes."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="t2-p4-hosts-")
@@ -1229,19 +1229,26 @@ class TestSticRunHosts(unittest.TestCase):
         res = stic.SticRun(ctx or RunCtx(self.tmp), Plan([PC(f"stic:{g}", "due", "new") for g in lin]), env).go()
         return res, env
 
+    def hold_file(self):
+        with open(os.path.join(self.tmp, "hold")) as f:
+            return f.read()
+
     def test_swap_out(self):
         res, env = self.run_with([{"pswpout": 100, "ours": 0, "page": 4096},
                                   {"pswpout": 100 + (2 << 30) // 4096, "ours": 0, "page": 4096}])
-        self.assertEqual(res["stops"], ["stop-starts: chopin: 2.00 GiB swapped out since the run began"])
-        self.assertTrue(os.path.exists(os.path.join(self.tmp, "stop")))
-        self.assertEqual(res["exit"], 1)
+        self.assertEqual(res["stops"], [])                       # a host's swap stops no run
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "stop")))
+        self.assertEqual(self.hold_file(), "chopin chopin: 2.00 GiB swapped out in the last 10 min\n")
+        self.assertEqual(res["exit"], 0)
+        argv = env.argvs[0]
+        self.assertEqual(argv[argv.index("--hold-file") + 1], os.path.join(self.tmp, "hold"))
 
     def test_swap_base_from_the_run_start_facts(self):
         ctx = RunCtx(self.tmp)
         ctx.options["facts_start"] = {"chopin": {"preflight": {"pswpout": 10}}}
         res, env = self.run_with([{"pswpout": 10 + (1 << 30) // 4096 + 1, "ours": 0, "page": 4096}], ctx)
-        self.assertEqual(len(res["stops"]), 1)
-        self.assertTrue(res["stops"][0].startswith("stop-starts: chopin: 1.00 GiB swapped out"), res["stops"])
+        self.assertEqual(res["stops"], [])
+        self.assertTrue(self.hold_file().startswith("chopin chopin: 1.00 GiB swapped out"), self.hold_file())
 
     def test_write_budget_counts_our_jobs_only(self):
         res, env = self.run_with([{"pswpout": 0, "ours": 3.9e9, "page": 4096},
@@ -1257,8 +1264,10 @@ class TestSticRunHosts(unittest.TestCase):
         sr.env.loads = [{"pswpout": 0, "ours": 0, "page": 4096}, {"pswpout": (3 << 30) // 4096, "ours": 0, "page": 4096}]
         sr.check_hosts()
         sr.check_hosts()
-        self.assertEqual(len(sr.stops), 1)
-        self.assertTrue(sr.stops[0].startswith("stop-starts: chopin: 3.00 GiB swapped out"), sr.stops)
+        self.assertEqual(sr.stops, [])
+        self.assertTrue(eng.held()["chopin"].startswith("chopin: 3.00 GiB swapped out in the last 10 min"), eng.held())
+        self.assertEqual(sr.state["held"], eng.held())
+        self.assertTrue(self.hold_file().startswith("chopin chopin: 3.00 GiB"))
 
     def test_no_host_figures_stop_nothing(self):
         res, env = self.run_with([None, {"pswpout": None, "ours": None}])

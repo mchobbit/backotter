@@ -103,6 +103,11 @@ Options:
                   not started are named in the summary)
   --skip-file F   guests named in F (whitespace-separated, reread every
                   poll) are never started
+  --hold-file F   hosts named in F (the first word of each line, reread
+                  every poll) start nothing new while named: their running
+                  checks go on, and the guests not started yet go to the
+                  other hosts that can run them, or wait for the hold to end
+                  (Test2's swap rule, per host)
 Test2 (testvm/test2/t2 SticTest2 passes these; README.md "Test2"):
   --t2-run RUN    the Test2 run id the rows belong to
   --t2-copy DIR   run the checks from the run's private copy on the hosts,
@@ -514,6 +519,24 @@ def simulate(guests, spec, est, hosts, cap, first=(), ranks=None):
 def stop_set(path):
     """Whether --stop-file is there now (none given: never)."""
     return bool(path) and os.path.exists(path)
+
+
+def hold_read(path):
+    """{host: why} --hold-file names now (a line: HOST WHY...; a missing or unreadable file:
+    none)."""
+    if not path:
+        return {}
+    try:
+        with open(path) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return {}
+    out = {}
+    for line in lines:
+        w = line.split(None, 1)
+        if w and NAME.match(w[0]):
+            out[w[0]] = w[1].strip() if len(w) > 1 else "held"
+    return out
 
 
 def skip_read(path):
@@ -1024,6 +1047,7 @@ class Driver:
         self.seen = set()   # hosts read at least once: nothing starts before all are (no run twice)
         self.stopped = False                        # --stop-file there (reread every poll)
         self.skipped = set()                        # --skip-file's guests (reread every poll)
+        self.hold = {}                              # --hold-file's {host: why} (reread every poll)
         self.read_files()
 
     def read_files(self):
@@ -1037,6 +1061,12 @@ class Driver:
         if skip - self.skipped:
             self.log("SKIP FILE names", " ".join(sorted(skip - self.skipped)), "- never started")
         self.skipped |= skip   # once skipped, skipped for the round
+        hold = hold_read(getattr(a, "hold_file", None))
+        for h in sorted(set(hold) - set(self.hold)):
+            self.log("HOLD FILE names", h, "-", hold[h], "- nothing new starts there")
+        for h in sorted(set(self.hold) - set(hold)):
+            self.log("hold file: ", h, "no longer held")
+        self.hold = hold
 
     def write_row(self, host, g, lost=False):
         """The guest's ledger row, on its host (best effort: a failure changes nothing else)."""
@@ -1263,6 +1293,8 @@ class Driver:
                     hold = f"NVME PAUSE: {snap['nvme']} C"
                 elif snap["room"] is None:
                     hold = "no room figures (no RAM disk or cmp-run.sh?): starting nothing"
+                elif host in self.hold:
+                    hold = f"HOLD: {self.hold[host]}: starting nothing new here"
                 held = self.state.setdefault("held", {})
                 if hold:
                     if held.get(host) != hold.split(":")[0]:
@@ -1834,6 +1866,45 @@ def self_test():
         drv.read_files()
         drv.start_some({"chopin": snap}, time.time())
         check(started == ["big", "short"], f"stop file gone: the queue goes on, longest first ({started})")
+        drv.logf.close()
+
+        # --hold-file (Test2's swap rule, per host): a host it names starts nothing new; the
+        # other host takes the queue, and the held one starts again once the file drops it.
+        holdf = os.path.join(tmp, "hold")
+        check(hold_read(holdf) == {} and hold_read(None) == {}, "no hold file: no host held")
+        with open(holdf, "w") as f:
+            f.write("chopin chopin: 1.20 GiB swapped out in the last 10 min\nbad/name x\n")
+        check(hold_read(holdf) == {"chopin": "chopin: 1.20 GiB swapped out in the last 10 min"},
+              f"hold file: a host and its why a line ({hold_read(holdf)})")
+        a.hold_file, a.hosts = holdf, ["chopin", "cinqcent"]
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(os.path.join(tmp, "state.json"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            drv = Driver(a, ["big", "short"], two, dict(big=900, short=100),
+                         {"chopin": dict(have=have), "cinqcent": dict(have=have)}, WT_SYNCED)
+        said = []
+        drv.log = lambda *x: said.append(" ".join(str(y) for y in x))
+        started = []
+        drv.launch = lambda host, g, ports: started.append((host, g)) or drv.jobs().setdefault(
+            g, drv.new_job(host, ports, time.time())) is not None
+        drv.read_files()
+        drv.start_some({h: dict(snap, listen=set()) for h in ("chopin", "cinqcent")}, time.time())
+        check(started and all(h == "cinqcent" for h, _ in started),
+              f"hold file: the held host starts nothing, the other takes its checks ({started})")
+        check(any(x.startswith("chopin HOLD: chopin: 1.20 GiB") for x in said), f"hold file: said once ({said})")
+        for g in [g for g in drv.jobs()]:
+            del drv.jobs()[g]
+        del started[:]
+        os.remove(holdf)
+        drv.read_files()
+        drv.start_some({"chopin": dict(snap, listen=set())}, time.time())
+        check(drv.hold == {} and started and all(h == "chopin" for h, _ in started),
+              f"hold file gone: the host starts again ({started})")
+        a.hold_file, a.hosts = None, ["chopin"]
+        drv.logf.close()
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(os.path.join(tmp, "state.json"))
+        drv = quiet_driver()
 
         old = ('L="$HOME"/backotter-work/stictest1/short/logs/t2s-20261108T0315-4f2a; mkdir -p "$L" && '
                '{ ( set -C; date +%s >"$L/run.out.start" ) 2>/dev/null || { [ -e "$L/run.out.start" ] && exit 3; exit 1; }; } && '
@@ -2039,6 +2110,7 @@ def main():
     ap.add_argument("--self-test", action="store_true", help="check the queue logic without hosts")
     ap.add_argument("--stop-file", metavar="F", help="start nothing while F exists (here)")
     ap.add_argument("--skip-file", metavar="F", help="never start the guests F names (here, reread every poll)")
+    ap.add_argument("--hold-file", metavar="F", help="start nothing new on the hosts F names (here, reread every poll)")
     ap.add_argument("--t2-run", metavar="RUN", help="Test2: the run id the ledger rows belong to")
     ap.add_argument("--t2-copy", metavar="DIR", help="Test2: the run's private copy on the hosts")
     ap.add_argument("--t2-cells", metavar="F", help="Test2: the run's cells.json on the hosts")
@@ -2063,7 +2135,7 @@ def main():
         ap.error("--t2-copy and --t2-cells go with --t2-run")
     if a.t2_attempt not in (1, 2):
         ap.error("--t2-attempt is 1 or 2")
-    for f in (a.stop_file, a.skip_file):
+    for f in (a.stop_file, a.skip_file, a.hold_file):
         if f and not os.path.isdir(os.path.dirname(os.path.abspath(f))):
             ap.error(f"no directory for {f}")
     a.bin = a.bin or f"~/backotter-work/round{a.round}/bin"

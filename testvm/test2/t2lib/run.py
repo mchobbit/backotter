@@ -13,7 +13,8 @@ module's RunState as ctx.run):
     Shared, RunGuards           what a composite (BkoTest2, SweepTest2) hands its children
     RunState                    the run id, its directories, the copy, cells.json writing,
                                 record_made(), the StopEngine, limits and flakes
-    StopEngine                  feed(result) -> ok | stop-family | stop-os OS | stop-starts | stop-run
+    StopEngine                  feed(result) -> ok | stop-family | stop-os OS | stop-starts | stop-run;
+                                held() -> {host: why}: the hosts the swap rule holds (HostHolds)
     rerun_verdict(), match_flake(), apply_limits(), limits_classed(), rerun_map(), fanout_due()
     derived_rows(plan, ...)     the carried and class rows for mac.jsonl
 """
@@ -381,16 +382,107 @@ def allowed_note(allowed, counted):
             f"not counted; {counted / 1e9:.2f} GB counted)")
 
 
+class HostHolds:
+    """The swap rule, per host (1.9, revised 2026-11-18).  A host whose swap-out over the
+    last swap_window_min minutes (10) is over swap_out_gib (1 GiB) is held: nothing new
+    starts there, its running jobs go on, and its queued cells go to the hosts that can take
+    them (each runner's own placement rules).  It starts again once it has been held
+    swap_hold_min minutes (15) and its swap-out over the window is at most swap_clear_gib
+    (0.25 GiB): the hysteresis, so a host that swapped once and recovered resumes, without
+    flapping.  A hold that lasts swap_hold_max_min minutes (120) is the old run-wide stop:
+    feed() says why, once (a host that never recovers would leave cells only it can take
+    waiting for ever).  Swap is a host's own state: the swap-out since the run began no
+    longer counts, nor does the swap in use (pages stay there long after the pressure).
+
+        feed(family, host, swap_out_bytes) -> the run-wide why, or None
+                                 SWAP_OUT_BYTES: the family's cumulative swap-out on HOST
+                                 (since any base of its own: only its growth counts)
+        held() -> {host: why};   notes() -> [what happened, for the report]
+
+    Not thread-safe: RunGuards calls it under its lock."""
+
+    def __init__(self, stop=None, clock=None):
+        st = stop or {}
+        self.trip_b = float(st.get("swap_out_gib", 1)) * GIB
+        self.window_s = float(st.get("swap_window_min", 10)) * 60
+        self.clear_b = float(st.get("swap_clear_gib", 0.25)) * GIB
+        self.min_s = float(st.get("swap_hold_min", 15)) * 60
+        self.max_s = float(st.get("swap_hold_max_min", 120)) * 60
+        self.clock = clock or time.time
+        self.series = {}     # (family, host) -> [(t, bytes)]: a virtual (first t, 0), then the readings
+        self.holds = {}      # host -> {"since": t, "why": text}
+        self.escalated = set()
+        self.said = []
+
+    def _mins(self, s):
+        return f"{s / 60:g}"
+
+    def growth(self, host, now):
+        """HOST's swap-out over the window: the most any family's readings grew by."""
+        out = 0
+        for (f, h), s in self.series.items():
+            if h != host or not s:
+                continue
+            ref = s[0]
+            for x in s:
+                if x[0] <= now - self.window_s:
+                    ref = x
+            out = max(out, s[-1][1] - ref[1])
+        return out
+
+    def feed(self, family, host, swap_out_bytes):
+        if swap_out_bytes is None:
+            return None
+        now = self.clock()
+        s = self.series.setdefault((family, host), [(now, 0)])
+        if swap_out_bytes < s[-1][1]:     # the counter went back (a reboot, a new base): start again
+            s[:] = [(now, swap_out_bytes)]
+        else:
+            s.append((now, swap_out_bytes))
+        while len(s) > 2 and s[1][0] <= now - self.window_s:    # keep one reading older than the window
+            s.pop(0)
+        g = self.growth(host, now)
+        win = self._mins(self.window_s)
+        h = self.holds.get(host)
+        if h is None:
+            if g > self.trip_b:
+                why = f"{host}: {g / GIB:.2f} GiB swapped out in the last {win} min"
+                self.holds[host] = {"since": now, "why": why}
+                self.said.append(f"held {why}: nothing new started there, its cells went to the other hosts "
+                                 f"({utc_now()})")
+            return None
+        held_s = now - h["since"]
+        if held_s >= self.min_s and g <= self.clear_b:
+            del self.holds[host]
+            self.said.append(f"{host}: started again after {held_s / 60:.0f} min held "
+                             f"({g / GIB:.2f} GiB swapped out in the last {win} min; {utc_now()})")
+            return None
+        if held_s >= self.max_s and host not in self.escalated:
+            self.escalated.add(host)
+            return (f"{host}: held {held_s / 60:.0f} min by the swap rule and swap-out hasn't eased "
+                    f"({g / GIB:.2f} GiB in the last {win} min)")
+        return None
+
+    def held(self):
+        return {h: d["why"] for h, d in self.holds.items()}
+
+    def notes(self):
+        return list(self.said)
+
+
 class RunGuards:
     """The stop rules that hold across a whole run or composite, thread-safe: the harness count,
-    swap-out, and the write bytes per family and host.  One per composite (Shared.guards); a
-    plain run has its own.  StopEngine feeds it; each runner asks tripped() once per poll and
-    starts nothing more.
+    the write bytes per family and host, and the swap rule's host holds (HostHolds: per host,
+    shared by the composite's families, since swap is the host's).  One per composite
+    (Shared.guards); a plain run has its own.  StopEngine feeds it; each runner asks
+    tripped() once per poll and starts nothing more, and held() for the hosts it starts
+    nothing new on.
 
         add_harness(cell) -> count
         feed_host(family, host, swap_out_bytes=None, ours_bytes=None, allowed=None)
                                                 -> why it tripped now, or None
         trip(why); tripped() -> bool; why() -> [text]
+        held() -> {host: why}; hold_notes() -> [text]
         to_json(), from_json(doc, policy...)    what a composite's resume rebuilds
 
     ALLOWED ({cell: bytes}, holt's disk-heavy cells: holt/spec.json write_allow) is the part
@@ -402,7 +494,7 @@ class RunGuards:
         p = policy or {}
         st, b = p.get("stop") or {}, p.get("budget") or {}
         self.harness_max = int(st.get("harness_results", 2))
-        self.swap_max = float(st.get("swap_out_gib", 1)) * GIB
+        self.holds = HostHolds(st)
         self.write_x = float(st.get("write_budget_x", 2))
         self.run_gb = budget_gb(b, sweep, update)
         self.bind = report.budget_binds(b.get("bind_from"), now)
@@ -436,12 +528,20 @@ class RunGuards:
         with self._mu:
             return sum(v for (f, h), v in self.bytes.items() if h == host)
 
-    def feed_host(self, family, host, swap_out_bytes=None, ours_bytes=None, allowed=None):
-        """Why this feed tripped the guards (the first time), else None."""
+    def held(self):
+        """{host: why}: the hosts the swap rule holds now (nothing new starts there)."""
         with self._mu:
-            why = None
-            if swap_out_bytes is not None and swap_out_bytes > self.swap_max:
-                why = f"{host}: {swap_out_bytes / GIB:.2f} GiB swapped out since the run began"
+            return self.holds.held()
+
+    def hold_notes(self):
+        with self._mu:
+            return self.holds.notes()
+
+    def feed_host(self, family, host, swap_out_bytes=None, ours_bytes=None, allowed=None):
+        """Why this feed tripped the guards (the first time), else None.  Swap-out holds or
+        frees HOST alone (HostHolds); only a hold that lasts trips the guards."""
+        with self._mu:
+            why = self.holds.feed(family, host, swap_out_bytes)
             if ours_bytes is not None:
                 self.bytes[(family, host)] = ours_bytes
                 al = {c: v for c, v in (allowed or {}).items() if v and v > 0}
@@ -506,14 +606,18 @@ class StopEngine:
         feed({cell, family, part ("fast"/"slow" for gate layers, else None), verdict, class,
               needs {need: v}, os, host})
         feed_host(host, swap_out_bytes=..., ours_bytes=..., allowed=...)
-                                                               swap-out since the run began; this
+                                                               the host's swap-out (cumulative, any
+                                                               base: HostHolds judges its growth); this
                                                                run's bytes from its wear tags (R22);
                                                                ALLOWED {cell: bytes} the part of them
                                                                cells' write allowances excuse (holt)
 
     and gets back ok, stop-family, stop-os OS, stop-starts or stop-run.  Its state:
-    stop_family (no guest of the family starts), stopped_os, stop_starts, stop_run, stops [text].
-    With GUARDS (a RunGuards), the harness count, swap-out and write bytes are the run's, shared
+    stop_family (no guest of the family starts), stopped_os, stop_starts, stop_run, stops [text];
+    held() {host: why}, the hosts the swap rule holds: the runner starts nothing new there and
+    sends their queued cells to the other hosts that can take them (a hold is no stop: it isn't
+    in stops, and hold_notes() gives the report what happened).
+    With GUARDS (a RunGuards), the harness count, swap holds and write bytes are the run's, shared
     with the composite's other families, and a guard another family tripped stops this one."""
 
     def __init__(self, family, policy=None, sweep=False, update=False, now=None, guards=None):
@@ -523,7 +627,7 @@ class StopEngine:
         self.family = family
         self.os_need = int(st.get("os_need_guests", 2))
         self.harness_max = int(st.get("harness_results", 2))
-        self.swap_max = float(st.get("swap_out_gib", 1)) * GIB
+        self.holds = HostHolds(st)      # (with GUARDS, theirs is the one fed)
         self.write_x = float(st.get("write_budget_x", 2))
         self.run_gb = budget_gb(b, sweep, update)
         self.bind = report.budget_binds(b.get("bind_from"), now)
@@ -577,9 +681,10 @@ class StopEngine:
                 self.stop_starts = True
                 return self._stop("stop-starts", why or "; ".join(self.guards.why()))
             return "ok"
-        if swap_out_bytes is not None and swap_out_bytes > self.swap_max and not self.stop_starts:
+        why = self.holds.feed(self.family, host, swap_out_bytes)
+        if why and not self.stop_starts:
             self.stop_starts = True
-            return self._stop("stop-starts", f"{host}: {swap_out_bytes / GIB:.2f} GiB swapped out since the run began")
+            return self._stop("stop-starts", why)
         if ours_bytes is not None:
             limit = self.write_x * self.run_gb * 1e9
             al = {c: v for c, v in (allowed or {}).items() if v and v > 0}
@@ -598,6 +703,15 @@ class StopEngine:
     def may_start(self, cell_os=None):
         return not (self.stop_run or self.stop_starts or self.stop_family or (cell_os and cell_os in self.stopped_os)
                     or (self.guards is not None and self.guards.tripped()))
+
+    def held(self):
+        """{host: why}: the hosts the swap rule holds now; a runner starts nothing new there."""
+        return self.guards.held() if self.guards is not None and hasattr(self.guards, "held") else self.holds.held()
+
+    def hold_notes(self):
+        if self.guards is not None and hasattr(self.guards, "hold_notes"):
+            return self.guards.hold_notes()
+        return self.holds.notes()
 
 
 # --- reruns, flakes, LIMITs (1.9, R3) ----------------------------------------------------------
@@ -1304,6 +1418,10 @@ def finish(word, ctx, plan, run, result, mac_root=None, out=print, pull=None):
                                                                          if len(unpassed) > 12 else ""))
     notes += [f"refused: {pc.cell}: " + "; ".join(pc.reasons) for pc in plan.by_status("not-runnable")
               if getattr(pc, "refused", False)]
+    try:   # the swap rule's host holds: no stop, but the report says what they did
+        notes += ["swap rule: " + n for n in getattr(getattr(ctx, "run", None), "stops", None).hold_notes()]
+    except Exception:   # noqa: BLE001 - a RunState or engine without them (tests): no such note
+        pass
     result["notes"] = list(result.get("notes") or []) + notes
     result.setdefault("last_sweep", last_sweep(mac_root))
     text = report.render_report(result, plan, rows, ctx.classes.get("policy"), ctx.now)

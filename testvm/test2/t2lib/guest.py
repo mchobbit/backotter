@@ -10,7 +10,8 @@
 A pool per host on the Mac, one shared list; each job is guest/job.sh through hostjob.host_job,
 under cmp-run.sh --reserve D M, WEAR_TAG=guest:RUN:G.  The pool's rules: at most 3 jobs a host (2 in an
 update round), none started while one of that host's is still in cmp-run.sh's line, and jobs of D >=
-big_gib one at a time.  An overrun below the cap reruns at 2 x D and feeds no stop rule.  A FAIL that
+big_gib one at a time, and none on a host the swap rule holds (run.py's HostHolds: the job waits for
+another host it may run on, or for the hold to end).  An overrun below the cap reruns at 2 x D and feeds no stop rule.  A FAIL that
 isn't to_class_only reruns once (try and probe), never in an update.  MAC_ROOT/runs/RUN/guest.json
 records what started and what ended: resume adopts an attempt that was started (hostjob.reattach_job)
 and starts another only once that one is proven gone with no row, never in an update round.
@@ -1140,6 +1141,20 @@ class Runner:
         self.last_checks = now
         self.env.swap0 = self.state.setdefault("swap0", self.env.swap0 or {})
         hostjob.host_checks(self.env, self.rs, f"guest:{self.rs.run}", self.t0)
+        held, was = self.held(), getattr(self, "_held_said", {})
+        for h in sorted(set(held) - set(was)):
+            self.log(f"HOLD {h}: {held[h]}: no job starts there; its jobs go to the other hosts they may run on")
+        for h in sorted(set(was) - set(held)):
+            self.log(f"{h}: the swap rule's hold is over: jobs start there again")
+        self._held_said = held
+
+    def held(self):
+        """{host: why}: the hosts the swap rule holds now (no job starts there)."""
+        fn = getattr(self.rs.stops, "held", None)
+        try:
+            return dict(fn() or {}) if fn is not None else {}
+        except Exception:   # noqa: BLE001 - holds that can't be read hold nothing
+            return {}
 
     def drive(self):
         while self.pending or self.active or self.done_q:
@@ -1158,7 +1173,10 @@ class Runner:
                 else:
                     still.append(it)
             self.pending = still
+            held = self.held()
             for host in self.hosts:
+                if host in held:
+                    continue
                 for it in list(self.pending):
                     if host in it.allowed and self.can_start(it, host):
                         self.pending.remove(it)

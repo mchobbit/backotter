@@ -735,12 +735,27 @@ class Runner:
         self.state.save()
         return st
 
+    def held(self, host):
+        """Why the swap rule holds HOST now (run.py's HostHolds), or None."""
+        fn = getattr(self.rs.stops, "held", None)
+        try:
+            return (fn() or {}).get(host) if fn is not None else None
+        except Exception:   # noqa: BLE001 - holds that can't be read hold nothing
+            return None
+
     def worker(self, host, pcs):
         for pc in pcs:
             plat = self.plat(pc)
             st = self.state.cell(plat)
             if st.get("done"):
                 continue
+            said = None
+            while self.may_start(plat) and self.held(host):   # (its images are placed: they wait for it)
+                why = self.held(host)
+                if why != said:
+                    self.log(f"{host}: HOLD: {why}: its next image waits")
+                    said = why
+                self.sleep(self.poll)
             if not self.may_start(plat):
                 with self.mu:
                     self.out_cells[pc.cell] = {"cell": pc.cell, "outcome": "skipped", "rule": pc.rule, "reasons": list(pc.reasons or [])

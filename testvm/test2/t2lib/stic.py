@@ -38,8 +38,11 @@ The flow (2.2):
      longest first otherwise), the slow gate (gate:loop:*) beside it.  As rows
      land (drive.py writes each as its guest ends, R10) the stop rules read
      them: one need failing on 2 guests of an OS puts that OS's checks in
-     --skip-file; 2 harness results (known flakes aside), a failed slow gate,
-     swap-out over 1 GiB on a host since the run began, or this run's own jobs
+     --skip-file; swap-out over 1 GiB in the last 10 min on a host holds that
+     host alone (run.py's HostHolds: named in --hold-file, it starts nothing
+     new and drive.py gives its checks to the other hosts that can run them,
+     until its swap-out eases; a hold of 2 h is run-wide); 2 harness results
+     (known flakes aside), a failed slow gate, or this run's own jobs
      (their wear tags in jobs.log, R22) writing over 2 x the run budget start
      nothing more (--stop-file), as does a run-wide stop of the composite this
      run is a child of (run.py's RunGuards, checked each poll: another family's
@@ -94,9 +97,11 @@ EXIT_OK, EXIT_FAIL, EXIT_REFUSED = 0, 1, 2
 
 try:
     from .run import Refused as _Refused   # t2 prints a Refused on one line and exits 2
+    from .run import HostHolds
 except Exception:   # pragma: no cover - run.py (P2) not importable
     class _Refused(Exception):
         """A run that can't start (exit 2)."""
+    HostHolds = None
 
 
 class SticError(_Refused):
@@ -144,18 +149,18 @@ def cut(text, n=160):
 class Stops:
     """1.9's rules on SticTest2's own rows and hosts: one need failing on
     OS_NEED_GUESTS guests of an OS stops that OS; HARNESS_RESULTS harness-class
-    results (known flakes aside) stop the run; swap-out over SWAP_OUT_GIB since
-    the run began, or this run's jobs writing over WRITE_BUDGET_X x the run
-    budget (R22), start nothing more.  feed(res) and feed_host(host, swap, ours)
-    answer "ok" | "stop-os OS" | "stop-run" | "stop-starts", as run.py's
-    StopEngine does (it also has the gate rules)."""
+    results (known flakes aside) stop the run; this run's jobs writing over
+    WRITE_BUDGET_X x the run budget (R22) start nothing more; swap-out holds
+    its host alone (run.py's HostHolds; held()).  feed(res) and feed_host(host,
+    swap, ours) answer "ok" | "stop-os OS" | "stop-run" | "stop-starts", as
+    run.py's StopEngine does (it also has the gate rules)."""
 
     def __init__(self, policy=None):
         stop = (policy or {}).get("stop") or {}
         budget = (policy or {}).get("budget") or {}
         self.os_need = int(stop.get("os_need_guests", 2))
         self.harness_max = int(stop.get("harness_results", 2))
-        self.swap_max = float(stop.get("swap_out_gib", 1)) * GIB
+        self.holds = HostHolds(stop) if HostHolds is not None else None
         self.write_max = float(stop.get("write_budget_x", 2)) * float(budget.get("run_gb", 2)) * 1e9
         self.failed, self.harness, self.stopped_os = {}, 0, set()
         self.stop_run = self.stop_starts = False
@@ -182,10 +187,17 @@ class Stops:
                     out = f"stop-os {osn}"
         return out
 
+    def held(self):
+        return self.holds.held() if self.holds is not None else {}
+
+    def hold_notes(self):
+        return self.holds.notes() if self.holds is not None else []
+
     def feed_host(self, host, swap_out_bytes=None, ours_bytes=None):
-        if swap_out_bytes is not None and swap_out_bytes > self.swap_max and not self.stop_starts:
+        why = self.holds.feed("stic", host, swap_out_bytes) if self.holds is not None else None
+        if why and not self.stop_starts:
             self.stop_starts = True
-            self.stops.append(f"stop-starts: {host}: {swap_out_bytes / GIB:.2f} GiB swapped out since the run began")
+            self.stops.append(f"stop-starts: {why}")
             return "stop-starts"
         if ours_bytes is not None and ours_bytes > self.write_max and not self.stop_starts:
             self.stop_starts = True
@@ -867,6 +879,7 @@ class SticRun:
                 "--t2-attempt", str(attempt), "--logs-mark", mark, "--bin", self.info["bin"], "--out", out,
                 "--stop-file", os.path.join(self.info["mac_dir"], "stop"),
                 "--skip-file", os.path.join(self.info["mac_dir"], "skip"),
+                "--hold-file", os.path.join(self.info["mac_dir"], "hold"),
                 "--hosts", ",".join(self.info["hosts"])]
         if first:
             argv += ["--first", ",".join(first)]
@@ -930,8 +943,9 @@ class SticRun:
             return base[host]
 
     def check_hosts(self):
-        """R22's host rules: swap-out on a host since the run began (host-wide), and this
-        run's own bytes (its wear tags in jobs.log; never other sessions' writes)."""
+        """R22's host rules: swap-out on a host (HostHolds: it holds that host alone), and this
+        run's own bytes (its wear tags in jobs.log; never other sessions' writes); then the
+        holds into --hold-file."""
         fn, feed = self._env("host_load"), getattr(self.engine, "feed_host", None)
         if fn is None or feed is None:
             return
@@ -956,6 +970,32 @@ class SticRun:
                 said = [s for s in (getattr(self.engine, "stops", None) or []) if s.startswith(ans)]
                 why = said[-1][len(ans):].lstrip(": ") if said else f"{h}: swap-out {swap}, ours {ours}"
                 self.act(ans, why)
+        self.sync_holds()
+
+    def sync_holds(self):
+        """The swap rule's held hosts ({host: why}, the engine's held()) into --hold-file, which
+        drive.py rereads every poll: nothing new starts on a host it names, and its checks go
+        to the other hosts that can run them.  Said as each hold begins and ends."""
+        fn = getattr(self.engine, "held", None)
+        try:
+            held = {str(h): str(w) for h, w in (fn() if fn is not None else {}).items()}
+        except Exception:   # noqa: BLE001 - holds that can't be read hold nothing
+            held = {}
+        path = os.path.join(self.info["mac_dir"], "hold")
+        with self.mu:
+            was = self.state.get("held") or {}
+            if held == was and os.path.exists(path):
+                return
+            tmp = path + ".new"
+            with open(tmp, "w") as f:
+                f.write("".join(f"{h} {w}\n" for h, w in sorted(held.items())))
+            os.replace(tmp, path)
+            self.state["held"] = dict(held)
+            self.save()
+        for h in sorted(set(held) - set(was)):
+            self.log(f"HOLD {h}: {held[h]}: nothing new starts there; its checks go to the other hosts")
+        for h in sorted(set(was) - set(held)):
+            self.log(f"{h}: the swap rule's hold is over: starting there again")
 
     def landed(self, mark):
         return self.final_rows(mark)

@@ -286,7 +286,7 @@ class CompositeGuards(unittest.TestCase):
         self.check({f"{PREFIX}:vanilla3": int(40e9)}, "ok", False)
         self.check({f"{PREFIX}:vanilla3": int(41e9)}, "stop-starts", True)
 
-    def test_swap_still_trips_beside_an_allowance(self):
+    def test_swap_still_holds_beside_an_allowance(self):
         class Swappy(FakeRemote):
             n = 0
 
@@ -296,9 +296,11 @@ class CompositeGuards(unittest.TestCase):
         r = self.runner([V3], {"chopin": {f"{PREFIX}:vanilla3": int(1e9)}}, remote=Swappy)
         r.host_checks(RUN)
         r.host_checks(RUN)
-        self.assertEqual(r.acted, ["ok", "ok", "stop-starts", "ok"])
-        self.assertIn("swapped out", r.rs.stops.stops[0])
-        self.assertTrue(r.rs.stops.guards.tripped())
+        self.assertEqual(r.acted, ["ok", "ok", "ok", "ok"])          # swap holds its host: no stop
+        self.assertEqual(sorted(r.rs.stops.held()), ["chopin", "cinqcent"])
+        self.assertIn("swapped out in the last 10 min", r.rs.stops.held()["chopin"])
+        self.assertEqual(r.rs.stops.stops, [])
+        self.assertFalse(r.rs.stops.guards.tripped())
 
     def test_bko_guards_takes_allowed(self):
         g = bko.Guards(POL)

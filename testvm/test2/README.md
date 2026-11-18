@@ -327,6 +327,13 @@ apart).  A big layer that came in behind the checks waited past cmp-run.sh's BAC
 checks backfill beside it.  The stop rules are as before: a failed fast gate still starts
 no guest.
 
+GuestTest2's pool starts its guests longest estimated wall first (the plan's estimate: the
+median of the last PASS-like rows, else estimates.tsv; ties in the plan's order), so the
+longest (elementary8-luks, elementary8, dragonfly6) no longer start mid-run.  Its identity
+step's hashing (`t2-host tool guest identity --sha256`, every disk in GuestTest2All) states
+every disk first, then reads 4 at once, the largest first (`T2_HASH_JOBS`; a spinning disk's
+files one at a time), with the digests sha256_file's.
+
 The stop rules: a failed fast gate starts no guest of its family; a failed slow
 gate starts nothing new; one need failing on 2 guests of an OS stops that OS; 2
 harness-class results stop the run (known flakes aside); this run's jobs writing over

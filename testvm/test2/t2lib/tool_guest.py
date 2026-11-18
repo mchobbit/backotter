@@ -2,7 +2,8 @@
 
     identity GUEST... [--sha256] [--backfill] [--cached]
                                                 each guest's image-state, image-stat.json, disks and
-                                                qemu-img info -U, as JSON; --sha256 hashes the disks;
+                                                qemu-img info -U, as JSON; --sha256 hashes the disks
+                                                (4 at once, T2_HASH_JOBS: identities, hash_files);
                                                 --backfill writes image-stat.json when they match;
                                                 --cached takes a disk's sum from t2-host imgsum's
                                                 cache while its stat matches, rather than reading it
@@ -31,9 +32,11 @@ import signal
 import struct
 import subprocess
 import sys
+import threading
 import time
 
 KEEP_DAYS_DEFAULT = 14
+HASH_JOBS = 4              # disks hashed at once (T2_HASH_JOBS): one thread read Chopin's 617 GB at 0.4 GB/s
 SHIPPED_MIN_AGE_S = 3600   # vm-update ships an overlay before it writes .vm-update.pending, and holds no lock here
 OVERLAY_CAP_DEFAULT = 1024
 
@@ -110,6 +113,59 @@ def sha256_file(path):
     return h.hexdigest()
 
 
+def rotational(dev):
+    """Whether the block device DEV (an st_dev) spins, by sysfs (a partition's disk's queue);
+    False when it can't be told (ZFS, overlay, not Linux): those share the pool."""
+    try:
+        base = f"/sys/dev/block/{os.major(dev)}:{os.minor(dev)}"
+        for q in (base + "/queue/rotational", base + "/../queue/rotational"):
+            if os.path.exists(q):
+                with open(q, encoding="utf-8") as f:
+                    return f.read().strip() == "1"
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def hash_files(paths, jobs=None):
+    """{path: its sha256, or None when it can't be read}: JOBS at once (T2_HASH_JOBS, default
+    HASH_JOBS; hashlib and the reads let go of the GIL), the largest first, and the files of a
+    spinning disk one at a time (more readers only make it seek).  The digests are
+    sha256_file's, whatever the order."""
+    from concurrent.futures import ThreadPoolExecutor
+    if jobs is None:
+        try:
+            jobs = int(os.environ.get("T2_HASH_JOBS") or HASH_JOBS)
+        except ValueError:
+            jobs = HASH_JOBS
+    out, size, spins = {}, {}, {}
+    for p in dict.fromkeys(paths):
+        try:
+            st = os.stat(p)
+        except OSError:
+            out[p] = None
+            continue
+        size[p] = st.st_size
+        if st.st_dev not in spins:
+            spins[st.st_dev] = threading.Lock() if rotational(st.st_dev) else None
+        spins[p] = spins[st.st_dev]
+
+    def one(p):
+        lock = spins.get(p)
+        try:
+            if lock is None:
+                return p, sha256_file(p)
+            with lock:
+                return p, sha256_file(p)
+        except OSError:
+            return p, None
+    order = sorted(size, key=lambda p: (-size[p], p))
+    if order:
+        with ThreadPoolExecutor(max(1, min(jobs, len(order)))) as ex:
+            out.update(ex.map(one, order))
+    return out
+
+
 def qemu_info(path):
     """{ok, format, why...}: read-only, safe beside a running VM (-U)."""
     try:
@@ -155,37 +211,68 @@ def identity_of(work, guest, sha=False, backfill=False, cache=None):
     has no merge record, so every GuestTest2 rehashed all of them on every host (some 1 TB a
     run, 2026-11-17) while t2-host imgsum had their sums cached.  GuestTest2All's hashing never
     does: it always reads."""
-    gdir = os.path.join(work, "vms", guest)
-    if not os.path.isdir(gdir):
-        # an image cache's vms/GUEST is a link into the cache: one whose entry was evicted dangles
-        return {"missing": True, "dangling": True} if os.path.islink(gdir) else {"missing": True}
-    out = {"image_state": _json(os.path.join(gdir, "image-state")), "stat": _json(os.path.join(gdir, "image-stat.json")),
-           "disks": {}, "qemu": {}}
-    names, stats = guest_disks(gdir), {}
-    for n in names:
-        p = os.path.join(gdir, n)
-        try:
-            s = os.stat(p)
-        except OSError:
-            out["disks"][n] = None
+    return identities(work, [guest], sha, backfill, cache)[guest]
+
+
+def identities(work, guests, sha=False, backfill=False, cache=None, jobs=None):
+    """{guest: identity_of's} for GUESTS: every guest's disks stated (and qemu-img info'd)
+    first, then the disks to hash hashed together (hash_files: JOBS at once, the largest
+    first), then each guest's sums and backfill.  Each disk is stated before it is read, as
+    when the guests went one by one: image-stat.json never records a stat newer than the
+    bytes hashed."""
+    seen, out = {}, {}
+    for g in guests:
+        if g in seen:
             continue
-        stats[n] = s
-        out["disks"][n] = {"size": s.st_size, "mtime_ns": s.st_mtime_ns, "inode": s.st_ino}
-        out["qemu"][n] = q = qemu_info(p)
-        if q.get("ok") and q.get("backing"):
-            q["base"] = world_base(work, guest, n, p, q)
-    if sha or backfill:
-        out["sha256"] = {}
+        gdir = os.path.join(work, "vms", g)
+        if not os.path.isdir(gdir):
+            # an image cache's vms/GUEST is a link into the cache: one whose entry was evicted dangles
+            out[g] = {"missing": True, "dangling": True} if os.path.islink(gdir) else {"missing": True}
+            seen[g] = None
+            continue
+        doc = {"image_state": _json(os.path.join(gdir, "image-state")), "stat": _json(os.path.join(gdir, "image-stat.json")),
+               "disks": {}, "qemu": {}}
+        names, stats = guest_disks(gdir), {}
         for n in names:
-            h = cached_sha(cache, os.path.join(gdir, n), stats.get(n)) if cache else None
-            if h:
-                out["sha256"][n] = h
-                out.setdefault("sha256_cached", []).append(n)
-                continue
+            p = os.path.join(gdir, n)
             try:
-                out["sha256"][n] = sha256_file(os.path.join(gdir, n))
+                s = os.stat(p)
             except OSError:
-                out["sha256"][n] = None
+                doc["disks"][n] = None
+                continue
+            stats[n] = s
+            doc["disks"][n] = {"size": s.st_size, "mtime_ns": s.st_mtime_ns, "inode": s.st_ino}
+            doc["qemu"][n] = q = qemu_info(p)
+            if q.get("ok") and q.get("backing"):
+                q["base"] = world_base(work, g, n, p, q)
+        out[g], seen[g] = doc, (gdir, names, stats)
+    todo = []
+    if sha or backfill:
+        for g, v in seen.items():
+            if v is None:
+                continue
+            gdir, names, stats = v
+            out[g]["sha256"] = {}
+            for n in names:
+                h = cached_sha(cache, os.path.join(gdir, n), stats.get(n)) if cache else None
+                if h:
+                    out[g]["sha256"][n] = h
+                    out[g].setdefault("sha256_cached", []).append(n)
+                else:
+                    todo.append(os.path.join(gdir, n))
+    sums = hash_files(todo, jobs) if todo else {}
+    for g, v in seen.items():
+        if v is not None:
+            identity_finish(out[g], *v, sums, backfill)
+    return out
+
+
+def identity_finish(out, gdir, names, stats, sums, backfill):
+    """OUT (identities' doc of one guest) with its disks' SUMS (hash_files') and its backfill."""
+    if "sha256" in out:
+        for n in names:
+            if n not in out["sha256"]:
+                out["sha256"][n] = sums.get(os.path.join(gdir, n))
     if backfill:
         st = out["image_state"] or {}
         want = st.get("sha256") or {}
@@ -194,7 +281,6 @@ def identity_of(work, guest, sha=False, backfill=False, cache=None):
             doc = {"generation": st["generation"], "disks": {n: out["disks"][n] for n in names}}
             _write_json(os.path.join(gdir, "image-stat.json"), doc)
             out["stat"], out["backfilled"] = doc, True
-    return out
 
 
 # --- what a killed run left ----------------------------------------------------------------------
@@ -598,7 +684,7 @@ def main(args, ctx=None):
     if sub == "identity":
         sha, backfill = _flag(rest, "--sha256"), _flag(rest, "--backfill")
         cache = imgsum_cache(hroot) if _flag(rest, "--cached") else None
-        print(json.dumps({g: identity_of(work, g, sha, backfill, cache) for g in rest}, sort_keys=True))
+        print(json.dumps(identities(work, rest, sha, backfill, cache), sort_keys=True))
         return 0
     if sub == "sweep":
         days = float(_opt(rest, "--failed-keep-days", KEEP_DAYS_DEFAULT))

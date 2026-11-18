@@ -2738,5 +2738,104 @@ class FirstHost(unittest.TestCase):
             guest.NO_SUCH_NAME
 
 
+class LongestFirst(unittest.TestCase):
+    """The pool starts guests longest estimated wall first (2026-11-18): alphabetically,
+    elementary8-luks (38 min), elementary8 (36) and dragonfly6 (32) started mid-run."""
+
+    def test_the_pool_starts_the_longest_first(self):
+        io, jobs = FakeIO(), FakeJobs()
+        names = ["arch", "debian12", "dragonfly6", "elementary8", "elementary8-luks", "zorin18"]
+        for n in names:
+            io.summ[n] = summary()
+        r, rs, ctx, _ = make(names, io, jobs, hosts=("chopin",))
+        walls = {"dragonfly6": {"gm": 32.0, "wall_s": 1920}, "elementary8": {"gm": 36.0, "wall_s": 2160},
+                 "elementary8-luks": {"gm": 38.0, "wall_s": 2280}, "zorin18": {"gm": 9.0}}   # zorin18: gm only
+        for pc in r.plan.cells:
+            pc.est = walls.get(pc.cell[6:], {"gm": 1.0})
+        r.run()
+        self.assertEqual([c["guest"] for c in jobs.calls],
+                         ["elementary8-luks", "elementary8", "dragonfly6", "zorin18", "arch", "debian12"])   # ties: the plan's order
+
+    def test_wall_of(self):
+        from types import SimpleNamespace as NS
+        self.assertEqual(guest.Runner.wall_of(NS(pc=NS(est={"wall_s": 0, "gm": 2.5}))), 150.0)
+        self.assertEqual(guest.Runner.wall_of(NS(pc=NS())), 0.0)
+
+
+class ParallelHashing(unittest.TestCase):
+    """tool_guest identity's disks hashed by a small pool (2026-11-18: GuestTest2All's setup read
+    Chopin's 617 GB with one thread, 25-28 min): the digests are sha256_file's."""
+
+    def setUp(self):
+        self.t = tempfile.mkdtemp(prefix="t2-hash-")
+        self.paths = {}
+        for g, disks in (("g1", {"a.qcow2": 3 << 20, "b.qcow2": 1}), ("g2", {"c.qcow2": 9 << 20}), ("g3", {})):
+            d = os.path.join(self.t, "vms", g)
+            os.makedirs(d)
+            for n, size in disks.items():
+                p = os.path.join(d, n)
+                with open(p, "wb") as f:
+                    f.write(os.urandom(size))
+                self.paths[(g, n)] = p
+        self.want = {k: tool_guest.sha256_file(p) for k, p in self.paths.items()}
+
+    def tearDown(self):
+        shutil.rmtree(self.t, ignore_errors=True)
+
+    def test_digests_as_one_by_one(self):
+        missing = os.path.join(self.t, "nope.qcow2")
+        for spins in (False, True):   # a spinning disk: its files one at a time, the same sums
+            with mock.patch.object(tool_guest, "rotational", lambda dev, s=spins: s):
+                got = tool_guest.hash_files(list(self.paths.values()) + [missing], jobs=4)
+            self.assertEqual({k: got[p] for k, p in self.paths.items()}, self.want)
+            self.assertIsNone(got[missing])
+
+    def test_the_pool_reads_at_once(self):
+        live, peak, mu = [0], [0], threading.Lock()
+        real = tool_guest.sha256_file
+
+        def slow(p):
+            with mu:
+                live[0] += 1
+                peak[0] = max(peak[0], live[0])
+            time.sleep(0.05)
+            with mu:
+                live[0] -= 1
+            return real(p)
+        with mock.patch.object(tool_guest, "sha256_file", slow), mock.patch.object(tool_guest, "rotational", lambda dev: False):
+            tool_guest.hash_files(list(self.paths.values()), jobs=4)
+        self.assertGreater(peak[0], 1)
+        peak[0] = 0
+        with mock.patch.object(tool_guest, "sha256_file", slow), mock.patch.object(tool_guest, "rotational", lambda dev: True):
+            tool_guest.hash_files(list(self.paths.values()), jobs=4)
+        self.assertEqual(peak[0], 1)   # one disk that spins: one reader
+
+    def test_identities_over_guests_as_identity_of_each(self):
+        with mock.patch.object(tool_guest, "qemu_info", lambda p: {"ok": True}):
+            both = tool_guest.identities(self.t, ["g1", "g2", "g3", "g4", "g1"], sha=True)
+            one = {g: tool_guest.identity_of(self.t, g, sha=True) for g in ("g1", "g2", "g3", "g4")}
+        self.assertEqual(both, one)
+        self.assertEqual(both["g1"]["sha256"], {"a.qcow2": self.want[("g1", "a.qcow2")], "b.qcow2": self.want[("g1", "b.qcow2")]})
+        self.assertEqual(both["g4"], {"missing": True})
+        hashed = []
+        with mock.patch.object(tool_guest, "qemu_info", lambda p: {"ok": True}), \
+                mock.patch.object(tool_guest, "hash_files", lambda ps, jobs=None: hashed.append(sorted(ps)) or {}):
+            tool_guest.identities(self.t, ["g1", "g2"], sha=False)
+        self.assertEqual(hashed, [])   # no --sha256, no --backfill: nothing read
+
+    def test_stated_before_read(self):
+        """Each disk is stated before any is hashed: a backfill never records a stat newer than the bytes read."""
+        order = []
+        real_hash = tool_guest.hash_files
+
+        def hash_files(ps, jobs=None):
+            order.append("hash")
+            return real_hash(ps, jobs)
+        with mock.patch.object(tool_guest, "qemu_info", lambda p: order.append("stat") or {"ok": True}), \
+                mock.patch.object(tool_guest, "hash_files", hash_files):
+            tool_guest.identities(self.t, ["g1", "g2"], sha=True)
+        self.assertEqual(order, ["stat", "stat", "stat", "hash"])
+
+
 if __name__ == "__main__":
     unittest.main()

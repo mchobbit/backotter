@@ -7,7 +7,7 @@
                                             step 1; a failing guest gets its FAIL row, under RUN
     cmd_lines(argv), cmd_fingerprints(argv) t2 guest-lines, t2 guest-fingerprints
 
-A pool per host on the Mac, one shared list; each job is guest/job.sh through hostjob.host_job,
+A pool per host on the Mac, one shared list, longest estimated wall first; each job is guest/job.sh through hostjob.host_job,
 under cmp-run.sh --reserve D M, WEAR_TAG=guest:RUN:G.  The pool's rules: at most 3 jobs a host (2 in an
 update round), none started while one of that host's is still in cmp-run.sh's line, and jobs of D >=
 big_gib one at a time, and none on a host the swap rule holds (run.py's HostHolds: the job waits for
@@ -1472,6 +1472,22 @@ class Runner:
         self.save()
         return out
 
+    @staticmethod
+    def wall_of(it):
+        """IT's estimated wall in seconds: the plan's (pc.est: the median of its last PASS-like
+        rows, else estimates.tsv), its gm when it has no wall, else 0."""
+        est = getattr(it.pc, "est", None) or {}
+        try:
+            return float(est.get("wall_s") or 0) or float(est.get("gm") or 0) * 60
+        except (TypeError, ValueError):
+            return 0.0
+
+    def longest_first(self, items):
+        """The pool's queue, longest estimated wall first (ties in the plan's order): in the
+        plan's (alphabetical) order the longest (elementary8-luks 38 min, elementary8 36,
+        dragonfly6 32) started mid-run and ended last."""
+        return sorted(items, key=lambda it: -self.wall_of(it))
+
     def adopt(self, items):
         """Resume: an attempt an earlier process started is waited for on its own host, before
         anything new starts.  The items left to start."""
@@ -1519,7 +1535,7 @@ class Runner:
             ex = self.run_update(items)
             ex = ex if ex else None
         else:
-            self.pending.extend(self.adopt(items))
+            self.pending.extend(self.longest_first(self.adopt(items)))
             self.drive()
         self.take_lines()
         rows = self.pull()

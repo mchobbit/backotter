@@ -1010,7 +1010,16 @@ grub2-editenv /boot/grub2/grubenv set default="$id" && echo "$id"'
 OSTREE_UNSET='grub2-editenv /boot/grub2/grubenv unset default'
 # The source's baseline: its two BLS entries (B5 and B6 need the two
 # deployments B1 built), each deployment booted, and the default again for
-# the dump, with grubenv as it was.  Exit 1 when the run can go no further.
+# the dump, with grubenv as it was.  The rollback reboots in the same QEMU,
+# as the restored disk's does; the default's boot for the dump is a new
+# QEMU, as abroot_source's and guix_source's are, on a fresh NVRAM (gvars:
+# a new copy of a GVARS store), as the restored disk's first boot (its
+# dump) is.  Fedora 44's bootloader-update.service (bootupd) adds a
+# "Fedora" entry for EFI/fedora/shimx64.efi at a first boot on a store
+# without one, and a reboot in the same QEMU boots through it: the source's
+# dump then had BootCurrent on that entry, the restored disk's on the
+# removable path (kinoite44, t2h-20261118T0132-4a99).  Exit 1 when the run
+# can go no further.
 ostree_source() {
     local L=$R/logs ne id a r
     ne=$(sshk "$gkey" 'ls /boot/loader/entries/ostree-*.conf 2>/dev/null | wc -l')
@@ -1023,7 +1032,10 @@ ostree_source() {
     sshk "$gkey" "$OSTREE_STATE" > "$L/source-ostree-rollback.txt" 2>&1
     bootstate "$gkey" > "$L/source-rollback-bootstate.txt"
     sshk "$gkey" "$OSTREE_UNSET" || { bad "ostree: grub2-editenv unset default on the source"; return 1; }
-    vm_reboot "$gkey" || { bad "ostree: the source boots its default entry again (no SSH; logs/source-serial.log)"; return 1; }
+    vm_down "$gkey"
+    gvars source; local vfw=("${VFW[@]}")
+    CONSOLE_KEY=$ckey vm_up "${src[0]}" "$L/source-serial-3.log" "${fw[@]}" "${vfw[@]}" "${extra_src[@]}"
+    vm_wait "$gkey" || { bad "ostree: the source boots its default entry again (no SSH; logs/source-serial-3.log)"; return 1; }
     sshk "$gkey" "$OSTREE_STATE" > "$L/source-ostree.txt" 2>&1
     sshk "$gkey" 'sha256sum </boot/grub2/grubenv' > "$L/source-grubenv-after.txt" 2>&1
     a=$(sed -n 's/^deployment //p' "$L/source-ostree.txt") r=$(sed -n 's/^deployment //p' "$L/source-ostree-rollback.txt")

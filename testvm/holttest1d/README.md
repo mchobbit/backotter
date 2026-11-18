@@ -145,7 +145,11 @@ ht1.sh boots both, on the source and on the restored disk:
 
 - **The source's baseline.**  On a source with `/run/ostree-booted`, the
   source phase first wants exactly two BLS entries.  It then boots the
-  rollback entry and the default again, and only then dumps.  Each boot
+  rollback entry (a reboot) and the default again (a new QEMU, so on a
+  fresh NVRAM, as the restored disk's first boot is: bootupd's
+  `bootloader-update.service` adds a "Fedora" NVRAM entry at a first
+  boot, which a reboot would boot through, and the dumps' `BootCurrent`
+  would differ), and only then dumps.  Each boot
   writes the booted deployment (`CHECKSUM.SERIAL`), `/proc/cmdline`,
   `/etc/bko-deployment`, the root's type and source, SELinux's mode and
   `ostree admin status` (`logs/source-ostree.txt`,

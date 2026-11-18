@@ -51,6 +51,25 @@ for d, dd in diffs.items():
             stubbed.update(p for p in dd[k] if p in STUBS)
             dd[k] = [p for p in dd[k] if p not in STUBS]
             if not dd[k]: del dd[k]
+# Btrfs marks a file m (FS_NOCOMP_FL, 0x400) itself when a range of it
+# doesn't compress as it is written back under compress=zstd:3: which files
+# depends on how writeback split each one (the same 11528 bytes come back
+# with m when 8192 of them were flushed first, without when all were), so a
+# restore can gain m, not every time, on a file whose node holds no flags
+# and that neither tool set flags on (SticTest2 t2s-20261118T1651-0bf1:
+# restic->rustic gave GRUB's x86_64-efi/hfsplus.mod m on Cinqcent, not on
+# Cage's rerun).  Not the restore's: judged without it.  An m the source has
+# still has to come back (each tool sets it).
+NOCOMP = 0x400
+nocomp = {}
+for d, dd in diffs.items():
+    if not dd or "inode flags" not in dd: continue
+    keep = []
+    for p in dd["inode flags"]:
+        b, a = (src.get(p) or {}).get("flags") or 0, ((full[d] or {}).get(p) or {}).get("flags") or 0
+        (nocomp.setdefault(d, []) if (a ^ b) & ~fsmeta.FLAGS_FS_INTERNAL == NOCOMP and a & NOCOMP else keep).append(p)
+    if keep: dd["inode flags"] = keep
+    else: del dd["inode flags"]
 def tree_paths(ps): return [p for p in ps if p == TREE or p.startswith(TREE + "/")]
 socket = TREE + "/socket"
 sockets = {p for p in src if src[p]["type"] == "socket"}
@@ -62,8 +81,10 @@ for need, kinds in KINDS.items():
         for k in kinds:
             ps = [p for p in tree_paths(diffs[d].get(k, [])) if not (k == "missing" and p in sockets)]
             if ps: bad.append(f"{NAMES[d]}: {k} {len(ps)} e.g. {ps[:3]!r}")
-    line("FAIL" if bad else "PASS", need, "; ".join(bad)[:900] if bad else
-         f"4 directions, {ntree} source paths on Btrfs (six subvolumes, read-only snapshots) and the ESP (vfat)")
+    gained = "; ".join(f"{NAMES[d]} {len(ps)} e.g. {ps[:2]!r}" for d, ps in nocomp.items()) if "inode flags" in kinds else ""
+    gained = f"; m (FS_NOCOMP_FL) gained, set by Btrfs itself as the restore was written back: {gained}" if gained else ""
+    line("FAIL" if bad else "PASS", need, ("; ".join(bad) + gained)[:900] if bad else
+         f"4 directions, {ntree} source paths on Btrfs (six subvolumes, read-only snapshots) and the ESP (vfat){gained}")
 # Sparse: marks and blocks.
 sp = [p for p, e in src.items() if p.startswith(TREE) and e["type"] == "file" and e.get("holes")]
 nodes = {t: rd(f"nodes-{t}.txt") for t in ("restic", "rustic")}

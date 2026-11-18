@@ -395,6 +395,18 @@ Tests set all of them; `t2 ledger seed-current` refuses the default MAC_ROOT.
     cd testvm/test2 && python3 -B -m unittest tests.test_words tests.test_plan tests.test_carry tests.test_report
 
 They need no host, and run under `/usr/bin/python3` (3.9) and `python3` (3.14).
+`t2 self-test` runs each test file in a process of its own, 6 at once (`T2_SELFTEST_JOBS`,
+never more than the CPUs), the biggest files first, each with a TMPDIR of its own: ~110 s
+rather than 688 s one after another.  A file that fails beside the others runs again alone
+after them, and that run decides (test_plan's 2 s plan timings fail for want of CPU, not
+otherwise; the line names such a file).  Its line is the one unittest would print for them
+all ("OK (skipped=N)", "FAILED (failures=F, ...)"); a failing file's last 30 lines follow.
+In BkoTest2 and SweepTest2, gate:selftest runs beside the stic, holt and guest children
+(`bko.Conductor.early_selftest`, `gate.early_selftest`): its attempt 1 runs from the gate
+child's own Mac tree, made then (`MAC_ROOT/runs/t2g-S/mac-tree.json`, which the gate child
+adopts), into `runs/t2g-S/gate/selftest/early.json`, and the gate child takes it as its
+attempt 1 when its tree is that one (path and digest), else runs it as before.  A run that
+stops meanwhile keeps nothing, and a gate child that never runs leaves no tree.
 P2's run in a synthetic world (`tests/fixtures/p2/world.py`: a temporary checkout
 with every cell, fixture forks for BKO_GIT, both hosts' facts and seeded rows).
 `T2_GOLDEN=bless` rewrites the plan form's golden files in

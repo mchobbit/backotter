@@ -29,6 +29,8 @@ t2v-S, t2g-S, t2i-S under t2b-S or t2w-S), one copy, one set of locks and one Ru
   6. stic, holt and guest in parallel threads, each run.lifecycle(..., shared=).  Each builds,
      gates and re-plans on its own.  A run-wide stop (harness count, swap-out, write budget)
      trips the shared RunGuards and every runner stops starting; per-family stops stay theirs.
+     Beside them, when it is due, gate:selftest's attempt 1 (no child runs it): from the gate
+     child's own Mac tree, made now, into its run dir, for the gate child to take (gate.early_selftest).
   7. Unless the guards tripped: facts and rows again; the gate child for what is still due,
      less every gate cell a run of this stamp already ran (its universe is the rest; nothing
      left, no child).  A layer a sibling's gate ran, failed or not, doesn't run twice.
@@ -382,6 +384,18 @@ class Env:
 
     def resume(self, run, ctx, shared, out):
         return runmod.resume(run, ctx, mac_root=self.mac_root, out=out, pull=self.pull, shared=shared)
+
+    def early_selftest(self, run, log, cancelled):
+        """gate:selftest's attempt 1 for the gate child RUN, beside the other children."""
+        from . import gate as gatemod
+        return gatemod.early_selftest(self.checkout, run, self.mac_root, log=log, cancelled=cancelled)
+
+    def drop_early_tree(self, run):
+        """The Mac tree early_selftest made for RUN, when RUN never started to take it."""
+        from . import copies
+        info = runmod.read_json(os.path.join(runmod.run_dir(run, self.mac_root), "mac-tree.json"))
+        if isinstance(info, dict) and info.get("path") and os.path.lexists(info["path"]):
+            copies.remove_tree(self.checkout, info["path"])
 
     def identity(self, ctx, guests, run, log):
         g = self.runner("guest")
@@ -1132,21 +1146,64 @@ class Conductor:
                 self.log(f"resume: {', '.join(words.FAMILY_WORD[f] for f in par)} hadn't ended")
         if self.doc.get("phase") == "children" or (resumed and par):
             ths = [threading.Thread(target=self.run_child_safe, args=(f,), name=f"bko-{f}") for f in par]
-            self.threads = ths
+            early = self.early_selftest()
+            self.threads = ths + ([early] if early is not None else [])
             for th in ths:
                 th.start()
-            for th in ths:
+            for th in self.threads:
                 th.join()       # (a Ctrl-C here: rest() trips the guards and waits for them)
             self.phase("gate")
         if self.doc.get("phase") == "gate":
             if "gate" in self.families():
                 self.run_child_safe("gate", self.gate_step)
+                self.drop_early_tree()
             self.phase("img" if self.fam == "bko" else "report")
         if self.doc.get("phase") == "img":
             if "img" in self.families():
                 self.run_child_safe("img", self.img_step)
             self.phase("report")
         return self.finish(t0)
+
+    def early_selftest(self):
+        """gate:selftest beside the children (a thread, started): no child family runs it, so the
+        gate child after them had little else left and ran it alone (567-720 s).  Its attempt 1
+        runs now, from the gate child's own Mac tree, made now (gate.early_selftest); the gate
+        child takes the result as its attempt 1 (same tree, same row) or, when anything differs,
+        runs it as before.  None when it isn't due, the gate child began, or the Env can't."""
+        fn = getattr(self.env, "early_selftest", None)
+        if fn is None or "gate" not in self.families() or "gate" not in self.final:
+            return None
+        st = self.child("gate")
+        if st.get("state") in ("done", "skipped", "not-run") or self.began(st):
+            return None
+        cell = "gate:selftest"
+        if cell not in {c.cell for c in self.final["gate"].due()} or cell in done_cells(self.ctx.ledger, self.stamp, "gate:"):
+            return None
+        run = st.get("run") or runmod.new_run_id("gate", stamp=self.stamp)
+        if runmod.read_json(os.path.join(self.rdir(run), "gate", "selftest", "early.json")):
+            return None   # (a resume: it ran before the composite died)
+
+        def go():
+            try:
+                fn(run, self.log, self.guards.tripped)
+            except Exception as e:   # noqa: BLE001 - the gate child then runs it itself
+                self.log(f"gate:selftest beside the children: {type(e).__name__}: {cut(e, 200)}: the gate child runs it")
+        self.log(f"{self.words['gate'].word}: gate:selftest starts beside the children ({run})")
+        th = threading.Thread(target=go, name="bko-gate:selftest", daemon=True)
+        th.start()
+        return th
+
+    def drop_early_tree(self):
+        """The Mac tree early_selftest made, when the gate child never started to take it."""
+        st = self.child("gate")
+        run = st.get("run") or runmod.new_run_id("gate", stamp=self.stamp)
+        fn = getattr(self.env, "drop_early_tree", None)
+        if fn is None or st.get("start"):   # (its lifecycle began: the tree is the run's own, removed at its end)
+            return
+        try:
+            fn(run)
+        except Exception as e:   # noqa: BLE001 - a later run's gc removes it
+            self.log(f"the Mac tree for {run} wasn't removed: {type(e).__name__}: {cut(e, 200)}")
 
     def anything_ran(self, fams=PARALLEL):
         """True when a child of FAMS had due cells (it ran something)."""

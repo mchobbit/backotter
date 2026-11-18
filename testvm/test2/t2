@@ -22,7 +22,7 @@
                                          a GuestTest2 run's new log lines, and accepting them
   t2 guest-fingerprints [GUEST...] [--reproject]
                                          probe guests with no fingerprint at their generation
-  t2 self-test                           tests/test_*.py, drive.py --self-test, the specs' checker,
+  t2 self-test                           tests/test_*.py (a process each, 6 at once), drive.py --self-test, the specs' checker,
                                          the fixtures' leak scan and the class table's check
   t2 ledger seed-current --family gate|stic|holt|guest|img [--perturb GROUP] [--cells C,...] [--age CELL=HOURS,...]
         [--round R] [--hosts H,H]        test only: synthetic PASS rows at the current keys
@@ -622,15 +622,89 @@ def guest_tool(name):
     return cmd
 
 
+UNIT_JOBS = 6   # test files at once (T2_SELFTEST_JOBS): 688 s one after another, test_plan's ~120 s the floor
+UNIT_COUNTS = ("failures", "errors", "skipped", "expected failures", "unexpected successes")
+
+
+def unit_summary(texts):
+    """unittest's last line over several runs' outputs: "OK", "OK (skipped=3)", "FAILED
+    (failures=1, errors=2, skipped=3)", as one run of them all prints it.  An output with no
+    result line (the process died) counts as an error."""
+    import re
+    n, bad = {k: 0 for k in UNIT_COUNTS}, False
+    for text in texts:
+        last = next((l.strip() for l in reversed((text or "").splitlines()) if re.match(r"(OK|FAILED)\b", l.strip())), None)
+        if last is None:
+            n["errors"] += 1
+            bad = True
+            continue
+        bad = bad or last.startswith("FAILED")
+        for k, v in re.findall(r"([a-z ]+)=(\d+)", last):
+            if k.strip() in n:
+                n[k.strip()] += int(v)
+    parts = ", ".join(f"{k}={v}" for k, v in n.items() if v)
+    return ("FAILED" if bad else "OK") + (f" ({parts})" if parts else "")
+
+
+def unit_tests(py, env, tests=None, jobs=None):
+    """Each tests/test_*.py in a process of its own, JOBS at once (never more than the Mac's
+    CPUs), the biggest files first (the slow ones, test_plan's ~120 s, don't start last), each
+    with a TMPDIR of its own (removed after): [(name, rc, output, wall_s, pool_rc)] in the files'
+    order, POOL_RC the file's exit in the pool when it failed there and so ran again alone,
+    after the pool (else None): a file whose wall-clock asserts (test_plan's 2 s plans) failed
+    for want of CPU beside the others passes alone, as it does when the files run one after
+    another; one that fails again fails.  The files share no temp or fixture state: each makes
+    its own temporary roots (tempfile, under its TMPDIR) and reads the fixtures only."""
+    import shutil
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor
+    tests = tests or os.path.join(HERE, "tests")
+    if jobs is None:
+        try:
+            jobs = int(os.environ.get("T2_SELFTEST_JOBS") or UNIT_JOBS)
+        except ValueError:
+            jobs = UNIT_JOBS
+    jobs = max(1, min(jobs, os.cpu_count() or 1))
+    files = sorted(os.path.basename(f) for f in glob.glob(os.path.join(tests, "test_*.py")))
+
+    def one(name):
+        tmp = tempfile.mkdtemp(prefix="t2-selftest-" + name[:-3] + "-")
+        t0 = time.time()
+        try:
+            r = subprocess.run([py, "-B", "-m", "unittest", "discover", "-s", tests, "-p", name], cwd=CHECKOUT,
+                               capture_output=True, text=True, env=dict(env, TMPDIR=tmp))
+            return name, r.returncode, r.stdout + r.stderr, time.time() - t0
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    big = sorted(files, key=lambda n: (-os.path.getsize(os.path.join(tests, n)), n))
+    with ThreadPoolExecutor(jobs) as ex:
+        done = {r[0]: r + (None,) for r in ex.map(one, big)}
+    for n in files:
+        if done[n][1] != 0:
+            done[n] = one(n) + (done[n][1],)
+    return [done[n] for n in files]
+
+
 def cmd_self_test(argv):
     if argv:
         raise Usage("t2 self-test")
     ok = True
     py = sys.executable
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
-    steps = [("unit tests (tests/test_*.py)", [py, "-B", "-m", "unittest", "discover", "-s",
-                                               os.path.join(HERE, "tests"), "-p", "test_*.py"]),
-             ("drive.py --self-test", [py, "-B", os.path.join(CHECKOUT, "testvm", "stictest1", "drive.py"),
+    t0 = time.time()
+    res = unit_tests(py, env)
+    good = bool(res) and all(rc == 0 for _, rc, _, _, _ in res)
+    ok = ok and good
+    alone = [name for name, rc, _, _, prc in res if prc is not None and rc == 0]
+    say(f"{'ok  ' if good else 'FAIL'} unit tests (tests/test_*.py) ({time.time() - t0:.1f} s): "
+        + (unit_summary([t for _, _, t, _, _ in res]) if res else "no tests/test_*.py")
+        + (f" ({', '.join(alone)}: failed beside the others, passed alone)" if alone else ""))
+    for name, rc, text, _, _ in res:
+        if rc != 0:
+            say(f"     {name}: exit {rc}")
+            for line in text.strip().splitlines()[-30:]:
+                say("     " + line)
+    steps = [("drive.py --self-test", [py, "-B", os.path.join(CHECKOUT, "testvm", "stictest1", "drive.py"),
                                        "--self-test"])]
     chk = os.path.join(HERE, "stic", "check-manifests.py")
     if os.path.isfile(chk):

@@ -201,6 +201,7 @@ class FakeEnv(bko.Env):
                                             resume=lambda ctx, plan: None)
         self.other_mod = argparse.Namespace(resume=lambda ctx, plan: None)   # stic, holt, img: a resume; gate: none
         self.refeed = {}    # {family: fn(shared)}: what its resume feeds again (SticTest2's refeed)
+        self.early, self.dropped = [], []   # early_selftest's (run, the families' runs begun then), drop_early_tree's runs
 
     def now(self):
         return time.time()
@@ -250,6 +251,14 @@ class FakeEnv(bko.Env):
 
     def lifecycle(self, word, ctx, shared, out):
         return self.w.child(word, ctx, shared, out)
+
+    def early_selftest(self, run, log, cancelled):
+        """(Never the real one here: it would run t2 self-test inside t2 self-test.)"""
+        time.sleep(0.05)
+        self.early.append((run, tuple(e[1] for e in self.w.events if e[0] == "run")))
+
+    def drop_early_tree(self, run):
+        self.dropped.append(run)
 
     def resume(self, run, ctx, shared, out):
         self.resumed.append(run)
@@ -590,6 +599,37 @@ class TestBko(Base):
         self.assertIn("1 due cell(s) with no decisive row: gate:bin:version", sw["missing"])
         doc = runmod.read_json(os.path.join(self.w.mac, "runs", run, "bko.json"))
         self.assertNotEqual(doc["children"]["gate"].get("state"), "skipped")
+
+    def test_gate_selftest_runs_beside_the_children(self):
+        """No child family runs gate:selftest: its attempt 1 starts with the children, for the gate
+        child's run (the gate child takes it, gate.run_selftest), not after them alone."""
+        self.assertEqual(self.conduct("SweepTest2 rel4"), 0)
+        run, doc = self.only_run("t2w-")
+        g = doc["children"]["gate"]["run"]
+        self.assertEqual(len(self.env.early), 1)
+        self.assertEqual(self.env.early[0][0], g)
+        self.assertNotIn("gate", self.env.early[0][1])   # before the gate child
+        self.assertEqual(self.env.dropped, [])            # the gate child ran: its tree is its own
+        self.assertTrue(any("gate:selftest starts beside the children (" + g + ")" in x for x in self.said), self.said[-30:])
+
+    def test_no_early_selftest_when_it_isnt_due(self):
+        self.w.row("gate:selftest", "t2x-old", "PASS")
+        self.w.gate_verdict = {"gate:holt": "FAIL"}
+        self.assertEqual(self.conduct("BkoTest2 rel4"), 1)
+        self.assertEqual(self.env.early, [])
+
+    def test_the_early_tree_goes_when_the_gate_child_never_runs(self):
+        orig = self.env.lifecycle
+
+        def lc(word, ctx, shared, out):
+            if word.family == "stic":
+                shared.guards.trip("chopin: 1.10 GiB swapped out")
+            return orig(word, ctx, shared, out)
+        self.env.lifecycle = lc
+        self.conduct("SweepTest2 rel4")
+        run, doc = self.only_run("t2w-")
+        self.assertEqual(doc["children"]["gate"]["state"], "not-run")
+        self.assertEqual(self.env.dropped, [runmod.new_run_id("gate", stamp=doc["stamp"])])
 
     def test_no_gate_child_when_nothing_is_left(self):
         self.w.row("gate:selftest", "t2x-old", "PASS")

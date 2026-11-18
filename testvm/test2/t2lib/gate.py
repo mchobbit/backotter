@@ -45,6 +45,7 @@ of the calling family starts), a slow one stop-starts.
                        loop.sh: run-all.sh's linux or sparse steps from the copy, under
                        cmp-run.sh --reserve D M (D from the last rows' RAM peaks)
     gate:selftest      on the Mac: t2 self-test and drive.py --self-test, from the run's Mac tree
+                       (a composite's: attempt 1 beside its other children, early_selftest)
 
 On the Mac, gate:selftest and the fork layers' fork-tests.sh run from the run's frozen Mac
 tree (MAC_ROOT/trees/RUN, run.make_mac_tree: a detached git worktree made the preview the
@@ -709,27 +710,91 @@ def run_loop(env, kind, host, attempt):
     return _finish(o, host, out, t, tag, (d, mem))
 
 
-def run_selftest(env, attempt):
+EARLY = "early.json"   # gate:selftest's attempt 1, run beside a composite's children (early_selftest)
+
+
+def selftest_results(checkout, d, io):
+    """{suite: (rc, output)}: t2 self-test and drive.py --self-test from CHECKOUT, with roots
+    of their own under D (removed after: never this run's, never the defaults)."""
     import shutil
     import tempfile
-    t0 = time.time()
-    d = os.path.join(env.mac_root, "runs", env.attempt_run(attempt), "gate", "selftest")
     os.makedirs(d, exist_ok=True)
-    # Roots of their own, removed after: never this run's, never the defaults.
     roots = tempfile.mkdtemp(prefix="roots-", dir=d)
     e = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", T2_MAC_ROOT=os.path.join(roots, "mac"),
              T2_HOST_ROOT=os.path.join(roots, "host"), T2_COPY_ROOT=os.path.join(roots, "copy"))
     e.pop("T2_LEDGER", None)
     res = {}
-    t2 = os.path.join(env.checkout, "testvm", "test2", "t2")
-    res["t2-self-test"] = (env.io.local([sys.executable, "-B", t2, "self-test"], cwd=env.checkout, env=e, timeout=1800)
+    t2 = os.path.join(checkout, "testvm", "test2", "t2")
+    res["t2-self-test"] = (io.local([sys.executable, "-B", t2, "self-test"], cwd=checkout, env=e, timeout=1800)
                            if os.path.exists(t2) else (None, "no testvm/test2/t2"))
-    drive = os.path.join(env.checkout, "testvm", "stictest1", "drive.py")
-    res["drive-self-test"] = env.io.local([sys.executable, "-B", drive, "--self-test"], cwd=env.checkout, env=e,
-                                          timeout=600)
+    drive = os.path.join(checkout, "testvm", "stictest1", "drive.py")
+    res["drive-self-test"] = io.local([sys.executable, "-B", drive, "--self-test"], cwd=checkout, env=e, timeout=600)
     shutil.rmtree(roots, ignore_errors=True)
+    return res
+
+
+def early_selftest(checkout, run, mac_root=None, log=None, cancelled=None, io=None):
+    """gate:selftest's attempt 1 ahead of its run RUN (a composite's gate child, t2g-S), beside
+    the composite's other children: RUN's Mac tree made now (MAC_ROOT/runs/RUN/mac-tree.json,
+    which run.make_mac_tree adopts when RUN starts: it is the run's own, unchanged), both
+    self-tests run from it under the layer's lock (R21), and their results in
+    MAC_ROOT/runs/RUN/gate/selftest/early.json for run_selftest.  Nothing is kept when
+    CANCELLED() says so after (a Ctrl-C, a run-wide stop: the gate child won't run, or not
+    with these).  The doc kept, or None.  copies.CopyError when the tree can't be made."""
+    from types import SimpleNamespace
+    from . import copies
+    from . import run as runmod
+    say = log or _stderr
+    rd = runmod.run_dir(run, mac_root)
+    rec = os.path.join(rd, "mac-tree.json")
+    info = runmod.read_json(rec)
+    if not (info and copies.tree_info_ok(info)):
+        info = copies.make_tree(checkout, os.path.join(runmod.trees_dir(mac_root), run), log=say)
+        runmod.write_json(rec, info)
+    d = os.path.join(rd, "gate", "selftest")
+    lk = SimpleNamespace(mac_root=mac_root or runmod.default_mac_root(), run=run, log=lambda t: say("gate: " + t))
+    with LayerLock(lk, "gate:selftest"):
+        start, t0 = utc_now(), time.time()
+        res = selftest_results(info["path"], d, io or HostIO())
+        if cancelled is not None and cancelled():
+            say("gate: gate:selftest beside the children: not kept (the run stopped)")
+            return None
+        doc = {"run": run, "tree": info["path"], "digest": info.get("digest"), "start": start,
+               "wall_s": int(time.time() - t0), "res": {k: [rc, text] for k, (rc, text) in res.items()}}
+        runmod.write_json(os.path.join(d, EARLY), doc)
+    say(f"gate: gate:selftest ran beside the children ({doc['wall_s']} s): {run} takes it")
+    return doc
+
+
+def early_result(env, d):
+    """early_selftest's doc in D, when it ran for this run from this run's own Mac tree (its
+    path and digest), else None (said when there was one)."""
+    from . import run as runmod
+    doc = runmod.read_json(os.path.join(d, EARLY))
+    if not isinstance(doc, dict):
+        return None
+    t = env.mac_tree or {}
+    if doc.get("run") == env.run and t.get("digest") and doc.get("digest") == t.get("digest") \
+            and doc.get("tree") == t.get("path") and isinstance(doc.get("res"), dict):
+        return doc
+    env.log(f"gate:selftest: the run beside the children was of another tree ({cut(doc.get('tree'), 120)}): run again")
+    return None
+
+
+def run_selftest(env, attempt):
+    t0 = time.time()
+    d = os.path.join(env.mac_root, "runs", env.attempt_run(attempt), "gate", "selftest")
+    os.makedirs(d, exist_ok=True)
+    early = early_result(env, d) if attempt == 1 else None
+    if early:
+        res = {k: tuple(v) for k, v in early["res"].items()}
+        env.log(f"gate:selftest: attempt 1 ran beside the children from {early.get('start')} ({early.get('wall_s')} s)")
+    else:
+        res = selftest_results(env.checkout, d, env.io)
     o = selftest_outcome(res)
-    o.wall_s = int(time.time() - t0)
+    o.wall_s = int(early["wall_s"]) if early else int(time.time() - t0)
+    if early and early.get("start"):
+        o.start = early["start"]
     o.logs = "mac:" + d
     try:
         for k, (rc, text) in res.items():

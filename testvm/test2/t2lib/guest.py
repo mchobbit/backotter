@@ -110,8 +110,11 @@ def reserve_for(rows, cell, entry, policy, update=False):
     largest + 0.25 GiB), else the spec's ram_gib, else ram_gib_first, never over ram_gib_max; M
     the guest's RAM + 1 GiB.  A row whose job was cut short (_cut_short: an overrun, or an update
     that failed part way) measures nothing: its peak is a floor D never goes under, and it counts
-    only while no row measured since says what the whole update took.  HARNESS and LOST rows
-    other than overruns count not at all (the job never got far)."""
+    only while no row measured since says what the whole update took, a rerun in the same run
+    aside: that is the same day's update again, whose peak varies (zorin18's NILFS2 root grows
+    its overlay with the run's length, not the update's size: 4.54 GiB at the overrun of a slow-
+    mirror attempt, 3.5 at its rerun's end, t2v-20261118T1426-76be), so the larger counts.
+    HARNESS and LOST rows other than overruns count not at all (the job never got far)."""
     mine = sorted((r for r in rows or () if r.get("cell") == cell and r.get("kind") == "run"
                    and (r.get("verdict") not in ("HARNESS", "LOST") or (r.get("extra") or {}).get("overrun"))
                    and isinstance(r.get("ram_peak_kib"), int) and r["ram_peak_kib"] > 0),
@@ -119,7 +122,9 @@ def reserve_for(rows, cell, entry, policy, update=False):
     cap = float(policy.get("ram_gib_max", 16))
     measured = [r for r in mine if not _cut_short(r)]
     newest = (measured[0].get("t") or "", measured[0].get("id") or "") if measured else None
-    floors = [r for r in mine if _cut_short(r) and (newest is None or (r.get("t") or "", r.get("id") or "") > newest)]
+    same_run = measured[0].get("run") if measured else None
+    floors = [r for r in mine if _cut_short(r) and (newest is None or (r.get("t") or "", r.get("id") or "") > newest
+                                                     or (same_run and r.get("run") == same_run))]
     if measured:
         d = round(1.1 * max(r["ram_peak_kib"] for r in measured) / 1048576 + 0.25, 1)
     elif entry.get("ram_gib"):

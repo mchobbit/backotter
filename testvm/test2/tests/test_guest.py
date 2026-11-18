@@ -583,6 +583,12 @@ class Pool(unittest.TestCase):
         self.assertEqual(guest.reserve_for([big_floor, rebooted], "guest:x", {}, pol)[0], 7.1)
         older = row("0", 9.0, verdict="HARNESS", overrun=True)
         self.assertEqual(guest.reserve_for([older, rebooted], "guest:x", {}, pol)[0], 2.5)
+        # ... but an overrun and its rerun in the same run are the same update: the larger counts
+        # (zorin18, t2v-20261118T1426-76be: 4.54 GiB at the overrun, 3.5 at the rerun's end)
+        over = dict(row("5", 4.54, verdict="HARNESS", overrun=True), run="t2v-a")
+        rerun = dict(row("6", 3.5, verdict="FAIL", phase="done"), run="t2v-a")
+        self.assertEqual(guest.reserve_for([over, rerun], "guest:x", {}, pol)[0], 5.2)          # 1.1 x 4.54 + 0.25
+        self.assertEqual(guest.reserve_for([over, dict(rerun, run="t2v-b")], "guest:x", {}, pol)[0], 4.1)
         # other HARNESS rows still count not at all
         self.assertEqual(guest.reserve_for([row("4", 12.0, verdict="HARNESS")], "guest:x", {}, pol)[0], 8.0)
 

@@ -263,6 +263,8 @@ install_tools() {
     fi
     # bs1-to-stick's BootNext needs it, and a Chimera install with systemd-boot
     # (bootctl) can lack it, as can a Gentoo one (it is no part of @system).
+    # AerynOS packages none: there bs1-to-stick writes the same entry through
+    # efivarfs by bs1-efi, and bs1-backup's baseline lists them by it.
     # The other systems' rehearsals all had it; NixOS gets it from adopt_nixos.
     # PikaOS's installer leaves it (rEFInd's refind-mkdefault uses it), but
     # it isn't held by anything there: apt's, if it was removed.  Solus's

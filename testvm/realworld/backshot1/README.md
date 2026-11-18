@@ -81,8 +81,10 @@ the backup drive stay plugged in.
                                   waits for it (7 min) and runs find-rescue
 
 If that doesn't work, the laptop comes back up as it was, and the person boots the
-stick by hand, then runs `find-rescue`.  It needs a UEFI system with
-`efibootmgr`, so not AerynOS.
+stick by hand, then runs `find-rescue`.  It needs a UEFI system.  Where
+there's no `efibootmgr` (AerynOS packages none), `bs1-efi` writes the same
+entry, byte for byte, and BootNext through efivarfs; `BS1_EFI=efivarfs`
+takes that way where `efibootmgr` is there too.
 
     backshot1 find-rescue         by the laptop's MAC addresses; hostname is backotter
     backshot1 plan NAME           reads the whole backup, plans; erases nothing
@@ -146,9 +148,20 @@ the last one), and the restore leaves BootNext on the restored system.  But
 the restore's boot stage makes the source's own entries again (`efibootmgr
 --create`, at the front of `BootOrder`), first deleting any entry for the
 same partition and loader, so the count stays the same from round to round.
-As a safety net the cycle still counts the entries after every round and
-stops once there are more than `BS1_ENTRY_GROWTH` (8) more than after round
-1; then delete the copies (`efibootmgr -b XXXX -B`) before the next cycle.
+
+A system that makes no entry of its own (AerynOS: `bootctl install
+--no-variables`) boots the ESP's removable-media loader, and left to choose,
+a firmware that prefers a plugged-in stick would boot the stick again.  So
+when no entry names a restored ESP, the restore makes a one-shot "BKO
+restored" entry for that ESP's `EFI/BOOT/BOOTX64.EFI` (`bs1-efi oneshot`:
+out of `BootOrder`, as "BKO rescue" is) and points BootNext at it.  Each
+restore deletes the last round's first, so it stays one entry.
+
+As a safety net the cycle still counts the entries after every round, in
+efivarfs (the `Boot####` variables, so AerynOS's too), and stops once there
+are more than `BS1_ENTRY_GROWTH` (8) more than after round 1; then delete the
+copies (`efibootmgr -b XXXX -B`, or without it `bs1-efi delete LABEL`)
+before the next cycle.
 
 Before anything changes, the cycle refuses a run that needs a person each
 round: one whose baseline's `unlock.txt` says `attended`, or that has no

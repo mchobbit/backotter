@@ -472,7 +472,7 @@ def main():
     with open(conf, "w") as f:
         f.write(f"SOURCE_HOST={host}\nINTERNAL_SERIAL={SERIAL}\nBACKUP_LABEL={LABEL}\n")
     scp = ["scp", "-q", *SSH, "-i", key, "-P", str(a.port)]
-    names = [os.path.join(HERE, f"bs1-{n}") for n in ("common", "backup", "restore", "verify", "manifest", "ostree", "abroot", "adopt", "luks", "unlock-key", "list")]
+    names = [os.path.join(HERE, f"bs1-{n}") for n in ("common", "backup", "restore", "verify", "manifest", "ostree", "abroot", "adopt", "luks", "unlock-key", "list", "efi")]
     names.append(os.path.join(HERE, "..", "..", "ostree_paths.py"))      # bs1-manifest's and bs1-ostree's
     subprocess.run([*scp, *names, conf, f"root@127.0.0.1:/mnt/bs1-backup/backshot1/"], check=True)
     subprocess.run([*scp, f"{a.tools}/bko-holt", f"{a.tools}/rustic-bko", "root@127.0.0.1:/mnt/bs1-backup/backshot1/bin/"], check=True)

@@ -208,7 +208,12 @@ run findmnt -R "$TREE"
 step "the baseline"
 B=$RUN/baseline
 package_list >"$B/packages.txt"
-efibootmgr -v >"$B/efibootmgr.txt" 2>&1
+# AerynOS has no efibootmgr: bs1-efi reads the same entries from efivarfs.
+if command -v efibootmgr >/dev/null || [[ ! -d /sys/firmware/efi ]]; then
+    efibootmgr -v >"$B/efibootmgr.txt" 2>&1
+else
+    python3 "$HERE/bs1-efi" list >"$B/efibootmgr.txt" 2>&1
+fi
 lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL,UUID,PARTUUID,MOUNTPOINTS,MODEL,SERIAL >"$B/lsblk.txt" 2>&1
 sfdisk -d "/dev/$disk" >"$B/sfdisk.txt" 2>&1
 cp /etc/fstab "$B/fstab" 2>/dev/null

@@ -122,7 +122,7 @@ stage)
     old_login_if_new
     d=$(on_host "$DRIVE; echo \"\$d\"")
     on_host "mkdir -p '$d/backshot1/bin' '$d/backshot1/runs' '$d/backshot1/keys'; chmod 700 '$d/backshot1/keys'"
-    scp -q "${OPTS[@]}" "$here"/bs1-{common,backup,restore,verify,manifest,ostree,abroot,adopt,luks,unlock-key,list,to-stick} "root@$HOST:$d/backshot1/"
+    scp -q "${OPTS[@]}" "$here"/bs1-{common,backup,restore,verify,manifest,ostree,abroot,adopt,luks,unlock-key,list,to-stick,efi} "root@$HOST:$d/backshot1/"
     scp -q "${OPTS[@]}" "$here/../../ostree_paths.py" "root@$HOST:$d/backshot1/"   # bs1-manifest's and bs1-ostree's
     scp -q "${OPTS[@]}" "$here/thinkpad.conf" "root@$HOST:$d/backshot1/bs1.conf"
     scp -q "${OPTS[@]}" "$tools/bko-holt" "$tools/rustic-bko" "root@$HOST:$d/backshot1/bin/"
@@ -278,13 +278,17 @@ EOF
         # The restore's boot stage deletes an entry for the same partition and
         # loader before it makes the source's again, so the count should hold
         # steady; this is a safety net, should copies pile up anyway, to stop
-        # before they fill the firmware's variable store.
-        n=$(on_host 'efibootmgr | grep -c "^Boot[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]" || true' </dev/null) ||
+        # before they fill the firmware's variable store.  Counted in efivarfs,
+        # which every system has (AerynOS has no efibootmgr): Boot#### of the
+        # global GUID, not BootNext or BootOrder.  Expanded on the laptop.
+        # shellcheck disable=SC2016
+        n=$(on_host 'v=/sys/firmware/efi/efivars; findmnt -rn $v >/dev/null || mount -t efivarfs efivarfs $v || exit 1
+            l=$(ls $v) || exit 1; echo "$l" | grep -c "^Boot[0-9A-F][0-9A-F][0-9A-F][0-9A-F]-8be4df61-93ca-11d2-aa0d-00e098032b8c" || true' </dev/null) ||
             die "can't count the firmware's boot entries after round $i"
         first=${first:-$n}
         echo "=== round $i of $count: $n firmware boot entries (round 1: $first)"
         (( n - first <= ${BS1_ENTRY_GROWTH:-8} )) ||
-            die "the firmware has $(( n - first )) more boot entries than after round 1 (BS1_ENTRY_GROWTH ${BS1_ENTRY_GROWTH:-8}): delete the copies (efibootmgr -b XXXX -B) and carry on with a new cycle"
+            die "the firmware has $(( n - first )) more boot entries than after round 1 (BS1_ENTRY_GROWTH ${BS1_ENTRY_GROWTH:-8}): delete the copies (efibootmgr -b XXXX -B, or without it the drive's bs1-efi delete LABEL) and carry on with a new cycle"
     done
     echo "=== $count of $count rounds passed: $run"
     ;;

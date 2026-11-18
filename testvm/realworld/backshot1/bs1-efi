@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+"""BackShot1: the firmware's boot entries through efivarfs alone, for a
+system with no efibootmgr (AerynOS).  As root.  Python 3's standard library
+and lsblk, nothing else.
+
+bs1-efi list
+    BootCurrent, BootNext, BootOrder, then one line per Boot#### in
+    efibootmgr -v's shape: "Boot0004* LABEL<TAB>HD(...)/File(...)".
+bs1-efi oneshot LABEL PARTITION LOADER
+    Delete every entry described LABEL, make one, active but left out of
+    BootOrder, for LOADER (\\EFI\\BOOT\\BOOTX64.EFI) on PARTITION
+    (/dev/sdb2), at the lowest free number, and point BootNext at it.  The
+    bytes are efibootmgr --create's: HD(N,GPT|MBR,SIG,START,SIZE)/File(LOADER).
+bs1-efi delete LABEL
+    Delete every entry described LABEL, and its number from BootOrder (as
+    efibootmgr -B does) and from BootNext.
+
+BootNext, BootOrder and Boot#### are in the kernel's list of known variables
+(fs/efivarfs/vars.c, variable_validate), so efivarfs neither marks their
+files immutable nor takes a malformed one: a write is checked by
+validate_load_option or validate_uint16 first.
+"""
+import os
+import struct
+import subprocess
+import sys
+import uuid
+
+SYS = "/sys"
+VARS = os.environ.get("BS1_EFIVARS", f"{SYS}/firmware/efi/efivars")
+GLOBAL = "8be4df61-93ca-11d2-aa0d-00e098032b8c"     # EFI_GLOBAL_VARIABLE
+NV_BS_RT = 7    # EFI_VARIABLE_NON_VOLATILE | BOOTSERVICE_ACCESS | RUNTIME_ACCESS
+LOAD_OPTION_ACTIVE = 1
+HEX = set("0123456789ABCDEF")
+
+
+def die(msg):
+    sys.exit(f"bs1-efi: {msg}")
+
+
+def path(name):
+    return f"{VARS}/{name}-{GLOBAL}"
+
+
+def ensure_mounted():
+    if not os.path.isdir(f"{SYS}/firmware/efi"):
+        die("this system wasn't booted by UEFI")
+    if VARS == f"{SYS}/firmware/efi/efivars" and not os.path.ismount(VARS):
+        if subprocess.run(["mount", "-t", "efivarfs", "efivarfs", VARS]).returncode:
+            die("can't mount efivarfs")
+
+
+def read(name):
+    try:
+        with open(path(name), "rb") as f:
+            raw = f.read()
+    except FileNotFoundError:
+        return None
+    return raw[4:]      # after the four bytes of attributes
+
+
+def write(name, data):
+    # One write(2) of the attributes and the data: efivarfs takes nothing
+    # less.  No O_TRUNC needed: a variable's new value replaces its old one.
+    buf = struct.pack("<I", NV_BS_RT) + data
+    try:
+        fd = os.open(path(name), os.O_WRONLY | os.O_CREAT, 0o644)
+        try:
+            n = os.write(fd, buf)
+        finally:
+            os.close(fd)
+    except OSError as e:
+        die(f"can't write {name}: {e.strerror}")
+    if n != len(buf):
+        die(f"short write to {name}: {n} of {len(buf)} bytes")
+    if read(name) != data:
+        die(f"{name} reads back other than written")
+
+
+def delete(name):
+    try:
+        os.unlink(path(name))
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        die(f"can't delete {name}: {e.strerror}")
+
+
+def boot_numbers():
+    out = []
+    for f in os.listdir(VARS):
+        n, _, g = f.partition("-")
+        # Boot####, upper-case hex as the spec has it: not BootNext.
+        if g == GLOBAL and len(n) == 8 and n.startswith("Boot") and set(n[4:]) <= HEX:
+            out.append(int(n[4:], 16))
+    return sorted(out)
+
+
+def u16_list(b):
+    return [x for (x,) in struct.iter_unpack("<H", b[: len(b) // 2 * 2])]
+
+
+def parse_option(b):
+    """(attributes, description, device path bytes) of a load option, or
+    None for one too short or with no end to its description."""
+    if len(b) < 8:
+        return None
+    attrs, fpl = struct.unpack_from("<IH", b)
+    i = 6
+    while i + 2 <= len(b) and b[i:i + 2] != b"\0\0":
+        i += 2
+    if i + 2 > len(b):
+        return None
+    return attrs, b[6:i].decode("utf-16-le", "replace"), b[i + 2:i + 2 + fpl]
+
+
+def show_path(dp):
+    nodes, i = [], 0
+    while i + 4 <= len(dp):
+        t, s, n = struct.unpack_from("<BBH", dp, i)
+        if n < 4 or t == 0x7F:
+            break
+        body = dp[i + 4:i + n]
+        if (t, s) == (4, 1) and len(body) >= 38:
+            num, start, size = struct.unpack_from("<IQQ", body)
+            sig, styp = body[20:36], body[37]
+            if styp == 2:
+                node = f"HD({num},GPT,{uuid.UUID(bytes_le=sig)},{start:#x},{size:#x})"
+            else:
+                node = f"HD({num},MBR,{struct.unpack_from('<I', sig)[0]:#x},{start:#x},{size:#x})"
+        elif (t, s) == (4, 4):
+            node = "File(" + body.decode("utf-16-le", "replace").rstrip("\0") + ")"
+        else:
+            node = f"Node({t},{s},{body.hex()})"
+        nodes.append(node)
+        i += n
+    return "/".join(nodes)
+
+
+def entries():
+    for n in boot_numbers():
+        b = read(f"Boot{n:04X}")
+        opt = parse_option(b) if b is not None else None
+        if opt is not None:
+            yield n, opt
+
+
+def sysfs(p):
+    with open(p) as f:
+        return int(f.read())
+
+
+def hd_node(part):
+    """The HD() media node for PARTITION, as libefiboot writes it."""
+    name = os.path.basename(os.path.realpath(part))
+    block = f"{SYS}/class/block/{name}"
+    try:
+        num = sysfs(f"{block}/partition")
+        start = sysfs(f"{block}/start")     # in 512-byte sectors, whatever the disk's
+        size = sysfs(f"{block}/size")
+        disk = os.path.basename(os.path.dirname(os.path.realpath(block)))
+        lbs = sysfs(f"{SYS}/class/block/{disk}/queue/logical_block_size")
+    except (OSError, ValueError):
+        die(f"{part} isn't a partition")
+    start, size = start * 512 // lbs, size * 512 // lbs
+    out = subprocess.run(["lsblk", "-ndo", "PTTYPE,PARTUUID", f"/dev/{name}"],
+                         capture_output=True, text=True).stdout.split()
+    if len(out) != 2:
+        die(f"lsblk names no partition table and PARTUUID for {part}: {out}")
+    pttype, partuuid = out
+    if pttype == "gpt":
+        sig, mbr_type, sig_type = uuid.UUID(partuuid).bytes_le, 2, 2
+    elif pttype == "dos":
+        # PARTUUID is the disk's signature, then -NN, the partition's number.
+        sig = struct.pack("<I", int(partuuid.split("-")[0], 16)) + bytes(12)
+        mbr_type, sig_type = 1, 1
+    else:
+        die(f"{part}: partition table {pttype}, neither gpt nor dos")
+    return struct.pack("<BBHIQQ16sBB", 4, 1, 42, num, start, size, sig, mbr_type, sig_type)
+
+
+def file_node(loader):
+    if not loader.startswith("\\"):
+        die(f"the loader is a path on the partition, \\EFI\\..., not {loader}")
+    p = (loader + "\0").encode("utf-16-le")
+    return struct.pack("<BBH", 4, 4, 4 + len(p)) + p
+
+
+def load_option(label, part, loader):
+    dp = hd_node(part) + file_node(loader) + b"\x7f\xff\x04\x00"
+    return struct.pack("<IH", LOAD_OPTION_ACTIVE, len(dp)) + (label + "\0").encode("utf-16-le") + dp
+
+
+def delete_label(label):
+    gone = [n for n, (_, desc, _) in entries() if desc == label]
+    for n in gone:
+        delete(f"Boot{n:04X}")
+        print(f"deleted Boot{n:04X} ({label})")
+    order = read("BootOrder")
+    if order is not None and set(u16_list(order)) & set(gone):
+        write("BootOrder", b"".join(struct.pack("<H", x) for x in u16_list(order) if x not in gone))
+    nxt = read("BootNext")
+    if nxt is not None and u16_list(nxt)[:1] and u16_list(nxt)[0] in gone:
+        delete("BootNext")
+
+
+def cmd_list():
+    for v in ("BootCurrent", "BootNext"):
+        b = read(v)
+        if b is not None and len(b) >= 2:
+            print(f"{v}: {u16_list(b)[0]:04X}")
+    b = read("BootOrder")
+    if b is not None:
+        print("BootOrder: " + ",".join(f"{x:04X}" for x in u16_list(b)))
+    for n, (attrs, desc, dp) in entries():
+        print(f"Boot{n:04X}{'*' if attrs & LOAD_OPTION_ACTIVE else ' '} {desc}\t{show_path(dp)}")
+
+
+def cmd_oneshot(label, part, loader):
+    opt = load_option(label, part, loader)      # before anything is deleted
+    delete_label(label)
+    used = set(boot_numbers())
+    n = next((i for i in range(0x10000) if i not in used), None)
+    if n is None:
+        die("no free Boot#### number")
+    order = read("BootOrder")
+    write(f"Boot{n:04X}", opt)
+    # Left out of BootOrder: should it not boot, the next boot is as before.
+    if read("BootOrder") != order:
+        die("BootOrder changed underneath")
+    write("BootNext", struct.pack("<H", n))
+    print(f"Boot{n:04X}* {label}\t{show_path(parse_option(opt)[2])}")
+    print(f"BootNext: {n:04X}")
+
+
+def main(argv):
+    if argv[:1] == ["list"] and len(argv) == 1:
+        ensure_mounted()
+        cmd_list()
+    elif argv[:1] == ["oneshot"] and len(argv) == 4:
+        ensure_mounted()
+        cmd_oneshot(*argv[1:])
+    elif argv[:1] == ["delete"] and len(argv) == 2:
+        ensure_mounted()
+        delete_label(argv[1])
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

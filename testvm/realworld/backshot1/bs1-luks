@@ -19,6 +19,10 @@
 #   S  systemd in the initramfs (dracut with its systemd module; mkinitcpio's
 #      sd-encrypt), and any volume the booted system opens under systemd:
 #      crypttab's key field PATH:LABEL=LABEL, option keyfile-timeout=WAITs.
+#      On mkinitcpio's unified kernel images, rd.luks.name/uuid/options in
+#      the command line mkinitcpio bakes into them (/etc/kernel/cmdline,
+#      /etc/cmdline.d/*.conf) become crypttab.initramfs's lines, and are
+#      taken out of those files, in the same remake.
 #   D  initramfs-tools' cryptroot: keyscript=/usr/local/lib/backshot1/unlock-key
 #      (bs1-unlock-key), the key field left as it was (none).
 #   E  mkinitcpio's busybox encrypt: the bs1key hook, before encrypt, writes
@@ -61,6 +65,20 @@ LK_BLS_DIRS="/usr/lib/kernel/cmdline.d /etc/kernel/cmdline.d"
 LK_BLS_FILE=/etc/kernel/cmdline.d/90-backshot1-luks.cmdline
 LK_BLS_ESP="/efi /boot /boot/efi"
 LK_CMDLINE=/proc/cmdline
+# Where crypttab, sd-encrypt's crypttab.initramfs, mkinitcpio's drop-ins and
+# the remade images are (the unit tests' fake root moves them).
+LK_CRYPTTAB=/etc/crypttab
+LK_CRYPTTAB_INI=/etc/crypttab.initramfs
+LK_MKI_CONF_D=/etc/mkinitcpio.conf.d
+LK_IMG_DIRS="/boot /efi /boot/efi"
+# Family S on mkinitcpio's unified kernel images: its presets, the files it
+# bakes the command line from (the first of LK_UKI_FILES, then every *.conf
+# under LK_UKI_DROPIN; the first is the one adopt may rewrite), and the EFI
+# variable systemd-stub sets when it booted this kernel.
+LK_UKI_PRESETS=/etc/mkinitcpio.d
+LK_UKI_FILES="/etc/kernel/cmdline /usr/lib/kernel/cmdline"
+LK_UKI_DROPIN=/etc/cmdline.d
+LK_STUB_INFO=/sys/firmware/efi/efivars/StubInfo-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
 
 lk_say() { echo "luks: $*"; }
 lk_err() { echo "bs1-adopt: $*" >&2; }
@@ -86,6 +104,8 @@ lk_save() {
 LK_CHANGED=0
 LK_EARLY_S=
 LK_BLS_VOLS=()
+LK_UKI=no
+LK_UKI_XLATE=no
 lk_put() {
     local file=$1 mode=$2 content=$3 new=no
     if [[ -f $file ]] && [[ $(cat "$file") == "$content" ]]; then return 0; fi
@@ -154,7 +174,7 @@ lk_remake() {
 # the ESP (Limine's copies under /boot/MACHINE-ID too), and unified images.
 lk_images() {
     local d
-    for d in /boot /efi /boot/efi; do
+    for d in $LK_IMG_DIRS; do
         [[ -d $d ]] || continue
         find "$d" -maxdepth 5 -xdev -type f -newer "$1" \( -name 'initramfs*' -o -name 'initrd*' -o -path '*/EFI/Linux/*.efi' \) \
             ! -name '*.old' ! -name '*.bak' 2>/dev/null
@@ -247,21 +267,25 @@ lk_tab_line() {
 }
 
 # lk_tab_edit FILE EDITS...: FILE's text with each EDIT applied, EDIT being
-# NAME|HOW|UUID|ADD|FIX: HOW S puts the drive's key and keyfile-timeout in,
-# D keyscript=; ADD 1 appends a line when there's none for NAME; FIX 1 names
-# the device UUID=, for the command line's rd.luks.uuid= or rd.luks.name= to
-# find the line by.  Edited lines are tab-separated, so a second run
-# reproduces them exactly.
+# NAME|HOW|UUID|ADD|FIX[|OPTIONS]: HOW S puts the drive's key and
+# keyfile-timeout in (and drops keyfile-offset, -size and -erase, which would
+# misread it), D keyscript=; ADD 1 appends a line when there's none for NAME;
+# FIX 1 names the device UUID=, for the command line's rd.luks.uuid= or
+# rd.luks.name= to find the line by; OPTIONS, when given, are the options to
+# start from instead of the line's (the command line's rd.luks.options=, which
+# were in force; "," for none).  Edited lines are tab-separated, so a second
+# run reproduces them exactly.
 lk_tab_edit() {
     local file=$1; shift
     { [[ -f $file ]] && cat "$file"; true; } | awk -v edits="$*" -v key="$LK_KEYSPEC" -v wait="$LUKS_WAIT" -v ks="$UNLOCK_KEY" '
-        BEGIN { n = split(edits, e, " "); for (i = 1; i <= n; i++) { split(e[i], f, "|"); how[f[1]] = f[2]; uuid[f[1]] = f[3]; add[f[1]] = f[4]; fixdev[f[1]] = f[5] } }
+        BEGIN { n = split(edits, e, " "); for (i = 1; i <= n; i++) { split(e[i], f, "|"); how[f[1]] = f[2]; uuid[f[1]] = f[3]; add[f[1]] = f[4]; fixdev[f[1]] = f[5]; ov[f[1]] = f[6] } }
         function fix(name, dev, k, o,    a, m, i, out) {
+            if (ov[name] != "") o = ov[name]
             m = split(o == "-" ? "" : o, a, ",")
             out = ""
             for (i = 1; i <= m; i++) {
                 if (a[i] == "") continue
-                if (how[name] == "S" && a[i] ~ /^keyfile-timeout=/) continue
+                if (how[name] == "S" && a[i] ~ /^(keyfile-timeout=|keyfile-offset=|keyfile-size=|keyfile-erase(=|$))/) continue
                 if (how[name] == "D" && a[i] ~ /^keyscript=/) continue
                 out = out (out == "" ? "" : ",") a[i]
             }
@@ -433,10 +457,219 @@ lk_bls_check() {
     return $rc
 }
 
+# Family S on mkinitcpio's unified kernel images (UKIs).  Each image carries
+# its command line in its .cmdline section, made by mkinitcpio -P from
+# /etc/kernel/cmdline (else /usr/lib/kernel/cmdline) and every *.conf under
+# /etc/cmdline.d, their # lines left out, newlines made spaces (build_uki).
+# rd.luks.options= there overrides crypttab's options, so the drive's
+# keyfile-timeout would be lost; such tokens are moved into
+# crypttab.initramfs and out of the file, and the next mkinitcpio -P bakes
+# both into the same images.  The running /proc/cmdline keeps the old tokens
+# until the next boot, so what's decided here is from the files.
+
+# lk_uki_presets: "UKI OWN": yes when a preset in LK_UKI_PRESETS builds a
+# unified image (NAME_uki), and OWN yes when one of those gives it a command
+# line of its own (NAME_cmdline, ALL_cmdline, --cmdline or --no-cmdline in
+# NAME_options), which adopt doesn't rewrite.  Read as mkinitcpio reads
+# them: each preset sourced, by itself.
+lk_uki_presets() {
+    local f r uki=no own=no
+    for f in "$LK_UKI_PRESETS"/*.preset; do
+        [[ -f $f ]] || continue
+        r=$(
+            set +eu
+            # shellcheck disable=SC1090
+            . "$f" >/dev/null 2>&1
+            u=no o=no
+            for p in "${PRESETS[@]}"; do
+                v=${p}_uki c=${p}_cmdline a="${p}_options[*]"
+                [[ -n ${!v:-} ]] || continue
+                u=yes
+                [[ -n ${!c:-}${ALL_cmdline:-} || " ${!a:-} " == *" --cmdline"* || " ${!a:-} " == *" --no-cmdline "* ]] && o=yes
+            done
+            echo "$u $o"
+        )
+        [[ $r == yes* ]] && uki=yes
+        [[ $r == *" yes" ]] && own=yes
+    done
+    echo "$uki $own"
+}
+
+# lk_uki_files: the files mkinitcpio bakes the command line from, in its
+# order; none when it would take /proc/cmdline.
+lk_uki_files() {
+    local f
+    for f in $LK_UKI_FILES; do
+        [[ -f $f ]] && { echo "$f"; break; }
+    done
+    [[ ! -d $LK_UKI_DROPIN ]] || find "$LK_UKI_DROPIN" -xtype f -name '*.conf' 2>/dev/null | LC_ALL=C sort -V
+}
+
+# lk_uki_text FILE...: the command line those files make, one argument a line.
+lk_uki_text() {
+    [[ $# -gt 0 ]] || return 0
+    grep -ha -- '^[^#]' "$@" 2>/dev/null | tr -s '[:space:]' '\n' | sed '/^$/d'
+}
+
+# The arguments systemd-cryptsetup-generator reads, rd. or not.
+LK_LUKS_ARG='^(rd\.)?luks(\.[a-z]+)?='
+
+# lk_uki_stray FILE...: the rd.luks/luks arguments on the running command
+# line that neither the files nor adopt's copies of them (orig/, the files
+# as they were before adopt took them out) give: the boot loader's.
+lk_uki_stray() {
+    local f o have
+    have=$(
+        lk_uki_text "$@"
+        for f in "$@"; do
+            o=$(lk_orig_name "$f")
+            [[ -f $o ]] && lk_uki_text "$o"
+        done
+    )
+    tr -s '[:space:]' '\n' <"$LK_CMDLINE" | grep -E "$LK_LUKS_ARG" | while read -r f; do
+        grep -qxF -- "$f" <<<"$have" || echo "$f"
+    done | paste -s -d ' ' -
+}
+
+LK_UUID_RE='[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+
+# lk_uki_map INI NAME:UUID...: the rd.luks arguments on stdin (one a line,
+# the files' command line) as crypttab lines for the volumes NAME:UUID (each
+# opened early, with a typed passphrase).  "vol NAME UUID OPTIONS" for each
+# volume the command line names or gives options, OPTIONS the ones it puts
+# in force ("," none, - the crypttab line's own); "bad WHY" for anything that
+# can't be moved into crypttab as it is.
+lk_uki_map() {
+    local ini=$1 v t rest u n k o allow=no
+    shift
+    local -A vname=() named=() vopt=() vkey=()
+    local gopt='' hasg=no
+    for v in "$@"; do vname[${v#*:}]=${v%%:*}; done
+    while read -r t; do
+        [[ -n $t ]] || continue
+        case ${t#rd.} in
+        luks.name=*)
+            rest=${t#*luks.name=} u=${rest%%=*} n=${rest#*=}
+            if [[ -z ${vname[$u]:-} ]]; then echo "bad $t: $u isn't a LUKS volume here that opens early with a typed passphrase"; continue; fi
+            [[ $n == "${vname[$u]}" ]] || { echo "bad $t: the volume is open as ${vname[$u]}, not $n"; continue; }
+            named[$u]=1 allow=yes
+            ;;
+        luks.uuid=*)
+            u=${t#*luks.uuid=} u=${u#luks-}
+            if [[ -z ${vname[$u]:-} ]]; then echo "bad $t: $u isn't a LUKS volume here that opens early with a typed passphrase"; continue; fi
+            named[$u]=1 allow=yes
+            ;;
+        luks.options=*)
+            rest=${t#*luks.options=}
+            if [[ $rest =~ ^($LK_UUID_RE)=(.*)$ ]]; then
+                u=${BASH_REMATCH[1]} o=${BASH_REMATCH[2]}
+                if [[ -z ${vname[$u]:-} ]]; then echo "bad $t: $u isn't a LUKS volume here that opens early with a typed passphrase"; continue; fi
+                vopt[$u]=$o
+            else
+                o=$rest gopt=$rest hasg=yes
+            fi
+            [[ ,$o, =~ ,(tpm2-device|fido2-device|pkcs11-uri)= ]] && echo "bad $t: a token opens it (TPM2, FIDO2 or PKCS#11)"
+            ;;
+        luks.key=*)
+            rest=${t#*luks.key=} k=$rest
+            if [[ $rest =~ ^($LK_UUID_RE)=(.*)$ ]]; then u=${BASH_REMATCH[1]} k=${BASH_REMATCH[2]}; vkey[$u]=$k; fi
+            [[ $k == "$LK_KEYSPEC" ]] || echo "bad $t: a key of its own"
+            ;;
+        *) echo "bad $t: only rd.luks.name, rd.luks.uuid and rd.luks.options are moved into crypttab" ;;
+        esac
+    done
+    # Once the command line names no volume, the initramfs opens every line
+    # of crypttab.initramfs, not only those it named.
+    if [[ $allow == yes && -f $ini ]]; then
+        while read -r n t _; do
+            [[ -z $n || $n == \#* ]] && continue
+            for u in "${!named[@]}"; do
+                if [[ $t == "UUID=$u" || $t == "/dev/disk/by-uuid/$u" ]] && [[ $n != "${vname[$u]}" ]]; then
+                    echo "bad $ini has $u as $n, but it's open as ${vname[$u]}"
+                fi
+                [[ $n == "${vname[$u]}" || $t == "UUID=$u" || $t == "/dev/disk/by-uuid/$u" ]] && continue 2
+            done
+            echo "bad $ini's $n isn't named on the command line, and would open in the initramfs once nothing is"
+        done <"$ini"
+    fi
+    for u in "${!vname[@]}"; do
+        [[ -n ${named[$u]:-}${vopt[$u]+x}${vkey[$u]:-} ]] || continue
+        if [[ ${vopt[$u]+x} ]]; then o=${vopt[$u]:-,}
+        # The generator gives options for every volume only to one crypttab
+        # doesn't list.
+        elif [[ $hasg == yes ]] && ! lk_tab_line "$ini" "${vname[$u]}" "/dev/disk/by-uuid/$u" "$u" >/dev/null; then o=${gopt:-,}
+        else o=-
+        fi
+        echo "vol ${vname[$u]} $u $o"
+    done
+}
+
+# lk_uki_drop FILE: FILE's text without its rd.luks/luks arguments, all
+# else byte for byte (# lines too; a word's separator goes with it, or the
+# next one's for a line's first word).
+lk_uki_drop() {
+    awk '
+        /^#/ { print; next }
+        {
+            s = $0; out = ""; lead = ""; first = 1; nw = 0
+            while (match(s, /[^ \t]+/)) {
+                sep = substr(s, 1, RSTART - 1); w = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+                if (++nw == 1) lead = sep
+                if (w ~ /^(rd\.)?luks(\.[a-z]+)?=/) continue
+                out = out (first ? lead : sep) w
+                first = 0
+            }
+            print out (first ? "" : s)
+        }' "$1"
+}
+
+# lk_uki_newfile FILE OUT: lk_uki_drop's text in OUT, without a final
+# newline when FILE has none.
+lk_uki_newfile() {
+    lk_uki_drop "$1" >"$2" || return 1
+    if [[ -s $1 && $(tail -c 1 "$1" | od -An -tx1 | tr -d ' \n') != 0a ]]; then truncate -s -1 "$2"; fi
+}
+
+# lk_put_file FILE NEW: FILE made NEW's bytes, unless they are already.
+lk_put_file() {
+    cmp -s "$1" "$2" && return 0
+    lk_save "$1" || return 1
+    cat "$2" >"$1" || return 1
+    LK_CHANGED=$((LK_CHANGED + 1))
+    lk_say "wrote $1 (its rd.luks arguments taken out, the rest as it was)"
+}
+
+# lk_u32 FILE OFFSET / lk_u16: little-endian integers from FILE (od reads
+# the host's order; BackShot1's hosts are x86-64 and arm64).
+lk_u32() { od -An -tu4 -j "$2" -N4 "$1" | tr -d ' \n'; }
+lk_u16() { od -An -tu2 -j "$2" -N2 "$1" | tr -d ' \n'; }
+
+# lk_pe_section FILE NAME: the bytes of the PE image's section NAME (a
+# unified image's .cmdline, say), NULs dropped; false when there's none.
+lk_pe_section() {
+    local f=$1 want=$2 pe n opt off i name vsize size ptr len
+    [[ $(head -c 2 "$f" 2>/dev/null) == MZ ]] || return 1
+    pe=$(lk_u32 "$f" 60)
+    [[ $(od -An -c -j "$pe" -N4 "$f" | tr -d ' \n') == 'PE\0\0' ]] || return 1
+    n=$(lk_u16 "$f" $((pe + 6))) opt=$(lk_u16 "$f" $((pe + 20)))
+    off=$((pe + 24 + opt))
+    for ((i = 0; i < n; i++, off += 40)); do
+        name=$(head -c $((off + 8)) "$f" | tail -c 8 | tr -d '\0')
+        [[ $name == "$want" ]] || continue
+        vsize=$(lk_u32 "$f" $((off + 8))) size=$(lk_u32 "$f" $((off + 16))) ptr=$(lk_u32 "$f" $((off + 20)))
+        len=$size
+        [[ $vsize -gt 0 && $vsize -lt $size ]] && len=$vsize
+        tail -c +$((ptr + 1)) "$f" | head -c "$len" | tr -d '\0'
+        return 0
+    done
+    return 1
+}
+
 # luks_adopt: the step itself.  False, having changed nothing, if it can't.
 luks_adopt() {
     local disk key mnt src lbl rel fstype gen family='' reason='' cmdline vols dev uuid name line k o how
     local vol_list=() own_list=() edits_tab=() edits_ini=() edits_bls=() unhandled=() early hooks='' files='' cd cdname fix re f
+    local xl_vols=() xl_files=() xl_dir='' xl_kind xl_rest xl_o i e n
     if [[ ${BS1_LUKS:-yes} == no ]]; then lk_say "skipped (BS1_LUKS=no)"; return 0; fi
     disk=$(internal_disk) || { lk_err "no single disk has serial $INTERNAL_SERIAL"; return 1; }
     LK_DISK=$disk
@@ -514,11 +747,40 @@ luks_adopt() {
         *) family=A reason="the initramfs is ${gen}'s" ;;
         esac
     fi
-    if [[ $family == S && $cmdline =~ (^|[[:space:]])(rd\.)?luks\.(options|key|crypttab)= ]]; then
-        family=A reason="rd.luks.options, rd.luks.key or rd.luks.crypttab on the command line would override crypttab"
+    LK_TAB=$LK_CRYPTTAB LK_INI=$LK_CRYPTTAB
+    [[ $gen == mkinitcpio && $family == S && " $hooks " == *" sd-encrypt "* ]] && LK_INI=$LK_CRYPTTAB_INI
+    # S's command line for the next boot: /proc/cmdline, but on mkinitcpio's
+    # unified images the one mkinitcpio -P will bake into them from its files
+    # (and whatever the boot loader adds to it, which is on /proc/cmdline
+    # too: lk_uki_stray).  The running command line still has what adopt
+    # took out of the files, until the next boot.
+    local scmd=$cmdline ukifiles=() uki=no ukiown=no stray='' ukiwhy='' over='(^|[[:space:]])(rd\.)?luks\.(options|key|crypttab)='
+    if [[ $family == S && $gen == mkinitcpio ]]; then
+        read -r uki ukiown < <(lk_uki_presets)
+        if [[ $uki == yes ]]; then
+            LK_UKI=yes
+            mapfile -t ukifiles < <(lk_uki_files)
+            if [[ $ukiown == yes ]]; then ukiwhy="a mkinitcpio preset gives its unified kernel images a command line of its own (NAME_cmdline, ALL_cmdline, or --cmdline in NAME_options), which bs1-adopt doesn't rewrite"
+            elif [[ ${#ukifiles[@]} -eq 0 ]]; then ukiwhy="mkinitcpio bakes /proc/cmdline into its unified kernel images (there's no ${LK_UKI_FILES%% *} or $LK_UKI_DROPIN/*.conf)"
+            else
+                stray=$(lk_uki_stray "${ukifiles[@]}")
+                scmd="$(lk_uki_text "${ukifiles[@]}" | paste -s -d ' ' -) $stray"
+            fi
+        fi
     fi
-    LK_TAB=/etc/crypttab LK_INI=/etc/crypttab
-    [[ $gen == mkinitcpio && $family == S && " $hooks " == *" sd-encrypt "* ]] && LK_INI=/etc/crypttab.initramfs
+    if [[ $family == S && $scmd =~ $over ]]; then
+        if [[ $LK_UKI == yes && -z $ukiwhy && -z $stray && $LK_INI == "$LK_CRYPTTAB_INI" ]]; then
+            # Moved into crypttab.initramfs, per volume, below.
+            LK_UKI_XLATE=yes
+            [[ -e $LK_STUB_INFO ]] || family=A reason="rd.luks.options, rd.luks.key or rd.luks.crypttab in ${ukifiles[*]} would override crypttab, and this boot didn't come through a unified kernel image (no systemd-stub StubInfo EFI variable), so those files may not be the command line the boot loader passes"
+        elif [[ $LK_UKI == yes && -n $stray ]]; then
+            family=A reason="rd.luks.options, rd.luks.key or rd.luks.crypttab on the command line would override crypttab, and the boot loader adds $stray (its entry, not the files mkinitcpio bakes into its unified kernel images), which bs1-adopt doesn't rewrite"
+        elif [[ -n $ukiwhy ]]; then
+            family=A reason="rd.luks.options, rd.luks.key or rd.luks.crypttab on the command line would override crypttab, and $ukiwhy"
+        else
+            family=A reason="rd.luks.options, rd.luks.key or rd.luks.crypttab on the command line would override crypttab (the boot loader's entry or GRUB's: bs1-adopt rewrites only the command line mkinitcpio bakes into unified kernel images from ${LK_UKI_FILES%% *} or $LK_UKI_DROPIN)"
+        fi
+    fi
 
     local re_cryptkey='(^|[[:space:]])cryptkey(=|[[:space:]]|$)'
     # B: the command line blsforme will write, but BackShot1's own part.
@@ -573,14 +835,44 @@ luks_adopt() {
         [[ -n $how ]] || continue
         vol_list+=("$name:$uuid:$how")
         fix=0
-        [[ $cmdline == *"$uuid"* ]] && fix=1
+        [[ $scmd == *"$uuid"* ]] && fix=1
         case $how:$early in
-        S:yes) edits_ini+=("$name|S|$uuid|1|$fix"); LK_EARLY_S+=" $name" ;;
+        S:yes) edits_ini+=("$name|S|$uuid|1|$fix"); LK_EARLY_S+=" $name"; xl_vols+=("$name:$uuid") ;;
         S:no) edits_tab+=("$name|S|$uuid|1|$fix") ;;
         D:*) edits_tab+=("$name|D|$uuid|0|0") ;;
         B:*) edits_bls+=("$uuid|$o") ;;
         esac
     done <<<"$vols"
+    # S on unified images: the files' rd.luks arguments become each volume's
+    # crypttab.initramfs line (its open name, UUID=, the options they put in
+    # force), and come out of the files they're in, which must be ones adopt
+    # may rewrite: /etc/kernel/cmdline or /etc/cmdline.d's, not a link.
+    if [[ $LK_UKI_XLATE == yes && $family == S && ${#unhandled[@]} -eq 0 ]]; then
+        while read -r xl_kind xl_rest; do
+            case $xl_kind in
+            bad) unhandled+=("$xl_rest") ;;
+            vol)
+                read -r n uuid xl_o <<<"$xl_rest"
+                for i in "${!edits_ini[@]}"; do
+                    e=${edits_ini[i]}
+                    [[ ${e%%|*} == "$n" ]] || continue
+                    e="${e%|*}|1"
+                    [[ $xl_o == - ]] || e+="|$xl_o"
+                    edits_ini[i]=$e
+                done
+                ;;
+            esac
+        done < <(lk_uki_text "${ukifiles[@]}" | grep -E "$LK_LUKS_ARG" | lk_uki_map "$LK_INI" "${xl_vols[@]}")
+        for f in "${ukifiles[@]}"; do
+            lk_uki_text "$f" | grep -E "$LK_LUKS_ARG" >/dev/null || continue
+            if [[ -L $f || ($f != "${LK_UKI_FILES%% *}" && $f != "$LK_UKI_DROPIN"/*) ]]; then
+                unhandled+=("rd.luks arguments in $f, which bs1-adopt doesn't rewrite (only ${LK_UKI_FILES%% *} and $LK_UKI_DROPIN/*.conf, not a link)")
+            else
+                xl_files+=("$f")
+            fi
+        done
+        [[ ${#xl_files[@]} -gt 0 || ${#unhandled[@]} -gt 0 ]] || unhandled+=("rd.luks arguments on the command line, but in none of ${ukifiles[*]}")
+    fi
     if [[ ${#unhandled[@]} -gt 0 ]]; then
         family=A reason=$(printf '%s\n' "${unhandled[@]}" | awk '!seen[$0]++' | paste -s -d ';' - | sed 's/;/; /g')
     elif [[ ${#vol_list[@]} -eq 0 ]]; then
@@ -607,6 +899,22 @@ luks_adopt() {
     fi
     if [[ $LK_INI != "$LK_TAB" && ${#edits_ini[@]} -gt 0 ]]; then
         lk_put "$LK_INI" 600 "$(lk_tab_edit "$LK_INI" "${edits_ini[@]}")" || return 1
+    fi
+    # After crypttab.initramfs (a remake between the two would still find
+    # the volume: crypttab's key, the old options), and before the one remake
+    # that bakes both into the images.
+    if [[ ${#xl_files[@]} -gt 0 ]]; then
+        xl_dir=$(mktemp -d) || return 1
+        for i in "${!xl_files[@]}"; do
+            if ! lk_uki_newfile "${xl_files[i]}" "$xl_dir/$i" || ! lk_put_file "${xl_files[i]}" "$xl_dir/$i"; then
+                rm -rf "$xl_dir"
+                lk_err "couldn't rewrite ${xl_files[i]}; putting everything back"
+                luks_off
+                return 1
+            fi
+        done
+        rm -rf "$xl_dir"
+        lk_say "(/proc/cmdline keeps the rd.luks arguments until the next boot, which takes the images remade below)"
     fi
     LK_BLS_VOLS=("${edits_bls[@]}")
     if [[ ${#edits_bls[@]} -gt 0 ]]; then
@@ -700,7 +1008,7 @@ $LK_DRACUT_EXTRA}" || return 1
     S:mkinitcpio)
         local m q=
         for m in $mods; do q+="'$m?' "; done
-        lk_put /etc/mkinitcpio.conf.d/zz-backshot1.conf 644 "# BackShot1 (bs1-adopt): what reading the LUKS key from the backup drive takes.
+        lk_put "$LK_MKI_CONF_D/zz-backshot1.conf" 644 "# BackShot1 (bs1-adopt): what reading the LUKS key from the backup drive takes.
 # TESTBED ONLY; bs1-adopt --luks-off removes it.
 MODULES+=(${q% })" || return 1
         ;;
@@ -724,7 +1032,7 @@ run_hook() {
     $UNLOCK_KEY --to /crypto_keyfile.bin
 }" || return 1
         # After every other drop-in (Omarchy's omarchy_hooks.conf sets HOOKS).
-        lk_put /etc/mkinitcpio.conf.d/zz-backshot1.conf 644 "# BackShot1 (bs1-adopt): bs1key reads the LUKS key from the backup drive
+        lk_put "$LK_MKI_CONF_D/zz-backshot1.conf" 644 "# BackShot1 (bs1-adopt): bs1key reads the LUKS key from the backup drive
 # right before encrypt.  TESTBED ONLY; bs1-adopt --luks-off removes it.
 _bs1=()
 for _h in \"\${HOOKS[@]}\"; do
@@ -754,7 +1062,7 @@ for m in $mods; do manual_add_modules \"\$m\"; done" || return 1
 # lk_check FAMILY GENERATOR STAMP: every image remade since STAMP has what
 # unlocking from the drive needs.
 lk_check() {
-    local family=$1 gen=$2 imgs img list tab n=0 bad=0 v want
+    local family=$1 gen=$2 imgs img list tab n=0 bad=0 v want ukis=0
     LK_TAB_MISSING=0
     # B remakes no initramfs: its boot entries carry the key.
     if [[ $family == B ]]; then
@@ -764,6 +1072,10 @@ lk_check() {
     imgs=$(lk_images "$3")
     [[ -n $imgs ]] || { lk_err "can't find the remade initramfs in /boot, /efi or the ESP"; return 1; }
     while read -r img; do
+        if [[ $family == S && $img == */EFI/Linux/*.efi ]]; then
+            ukis=$((ukis + 1))
+            lk_uki_check "$img" || bad=1
+        fi
         list=$(lk_list "$gen" "$img")
         if [[ -z $list ]]; then lk_say "  $img: can't list it, skipped"; continue; fi
         n=$((n + 1))
@@ -791,7 +1103,33 @@ lk_check() {
         [[ $bad -eq 0 ]] && lk_say "  $img: ok"
     done <<<"$imgs"
     [[ $n -gt 0 ]] || { lk_err "couldn't list any remade initramfs"; return 1; }
+    if [[ $family == S && $LK_UKI == yes && $ukis -eq 0 ]]; then
+        lk_err "mkinitcpio's presets build unified kernel images, but none was remade in */EFI/Linux"
+        bad=1
+    fi
     [[ $bad -eq 0 ]]
+}
+
+# lk_uki_check IMAGE: the unified image's .cmdline overrides no crypttab
+# line (no rd.luks.options, .key or .crypttab), and when adopt took the
+# rd.luks arguments out of its files, names no volume either: it's the
+# command line the files give now.
+lk_uki_check() {
+    local sec
+    if ! sec=$(lk_pe_section "$1" .cmdline); then
+        if [[ $LK_UKI == yes ]]; then lk_err "$1 has no .cmdline section adopt can read"; return 1; fi
+        lk_say "  $1: no .cmdline section read (warning)"
+        return 0
+    fi
+    if [[ $sec =~ (^|[[:space:]])((rd\.)?luks\.(options|key|crypttab)=[^[:space:]]*) ]]; then
+        lk_err "$1's command line has ${BASH_REMATCH[2]}, which overrides crypttab"
+        return 1
+    fi
+    if [[ $LK_UKI_XLATE == yes && $sec =~ (^|[[:space:]])((rd\.)?luks(\.[a-z]+)?=[^[:space:]]*) ]]; then
+        lk_err "$1's command line still has ${BASH_REMATCH[2]}: it isn't the one the rewritten files give"
+        return 1
+    fi
+    return 0
 }
 
 # Family N, NixOS (docs/design/bs1-luks-unattended.md, "Built"): the volumes

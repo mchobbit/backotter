@@ -398,7 +398,9 @@ Where the code differs from the design above:
   with every reason in the record; nothing else changes.
 - **S on the command line:** `rd.luks.options=`, `rd.luks.key=` or
   `rd.luks.crypttab=` there would override crypttab, so such an install is
-  family A rather than half set up. The device field becomes `UUID=` only
+  family A rather than half set up (but on mkinitcpio's unified kernel
+  images, from 2026-11-18: "Built, family S on unified kernel images"
+  below). The device field becomes `UUID=` only
   when the command line names the volume's UUID (`rd.luks.uuid`).
 - **E:** the hook tests the key with `cryptsetup open --test-passphrase`
   before leaving `/crypto_keyfile.bin`; a wrong key (exit 2) leaves no file,
@@ -588,3 +590,90 @@ the next boot unlocked from the drive, nothing typed.
 No rehearsal: there is no AerynOS guest with LUKS.  Unit tests
 (`test_bs1_luks.py`: BlsCmdline, AdoptB, Evidence) run `luks_adopt` and
 `luks_off` against a fake `moss` that writes an entry as blsforme does.
+
+## Built, family S on unified kernel images (2026-11-18)
+
+The Thinkpad's Arch (mkinitcpio 42 with `systemd` + `sd-encrypt`, presets
+`default_uki`/`fallback_uki` built with ukify, systemd-boot finding them in
+`EFI/Linux`) had `rd.luks.name=U=root rd.luks.options=U=discard
+root=/dev/mapper/root rootflags=... rw quiet` in `/etc/kernel/cmdline`,
+baked into each image's `.cmdline`.  `rd.luks.options=` overrides
+crypttab's options (`keyfile-timeout` too), so adopt said A.  By hand:
+`root UUID=U none discard` in `/etc/crypttab.initramfs`, the two
+`rd.luks` arguments out of `/etc/kernel/cmdline`, `mkinitcpio -P`, a typed
+boot; then adopt chose S and a hands-free cycle passed with
+`UNLOCK=drive` on both boots.  `bs1-luks` now does that itself.
+
+- **What mkinitcpio bakes** (`build_uki`, read in mkinitcpio 42.1's
+  source): with no `--cmdline`, the first of `/etc/kernel/cmdline` and
+  `/usr/lib/kernel/cmdline`, then every `*.conf` under `/etc/cmdline.d`
+  (`find -xtype f`, `sort -V`), `#` lines left out, newlines made spaces;
+  with none of them, `/proc/cmdline`.  A preset's `NAME_cmdline` or
+  `ALL_cmdline` becomes `--cmdline FILE`, which skips the rest.  ukify is
+  handed `--cmdline=@FILE` and `--config=/etc/kernel/uki.conf`; the
+  command line wins over the config's `Cmdline=`, so `uki.conf` never
+  gives these images their command line (only with `--no-cmdline`, which
+  adopt refuses).
+- **Decision from the files, not /proc/cmdline.**  On S with mkinitcpio and
+  a preset with `NAME_uki`, the next boot's command line is what those
+  files give (`lk_uki_text`), plus whatever `/proc/cmdline` has that
+  they don't (`lk_uki_stray`: the boot loader's).  An argument adopt took
+  out of a file counts as the file's until the reboot (its copy in
+  `orig/`), so a rerun before the reboot changes nothing, and after it
+  `/proc/cmdline` has none.
+- **The move** (`lk_uki_map`), only with sd-encrypt's crypttab.initramfs
+  and `StubInfo` (systemd-stub's EFI variable, so this boot did come
+  through a unified image): each `rd.luks.name=U=NAME` (NAME must be the
+  open mapping's name), `rd.luks.uuid=[luks-]U` and
+  `rd.luks.options=U=OPTS` (or `luks.`) of a typed volume opened early
+  gives its crypttab.initramfs line, `NAME UUID=U KEY OPTS,keyfile-timeout=30s`
+  (lk_tab_edit's sixth field: the command line's options were the ones in
+  force, so they replace the line's; `keyfile-offset`, `-size` and `-erase`
+  go, as they'd misread the drive's key).  `rd.luks.options=OPTS` for every
+  volume applies, as in systemd-cryptsetup-generator, only to one crypttab
+  doesn't list.  Refused (A, nothing changes): TPM2/FIDO2/PKCS#11 options,
+  an `rd.luks.key=` that isn't the drive's, `rd.luks.crypttab=`,
+  `rd.luks.data=`, `luks=`, an unknown UUID, a name that isn't the open
+  one, a crypttab.initramfs line for another volume (once the command line
+  names nothing, the initramfs opens every line), an argument in
+  `/usr/lib/kernel/cmdline` or a link, a preset's own command line, no
+  file at all (`/proc/cmdline` baked), the boot loader adding one.
+- **The rewrite** (`lk_uki_drop`): only the `rd.luks`/`luks.` words go, each
+  with the whitespace before it (a line's first word with the one after),
+  `#` lines and everything else byte for byte, no final newline added.
+  The original goes to `orig/` once, as every file adopt changes, so
+  `--luks-off` restores it exactly and remakes the images.
+- **Order:** crypttab.initramfs is written before the command-line file,
+  and one `mkinitcpio -P` bakes both, so no image ever has a command line
+  that names nothing without the crypttab line (a remake in between, say a
+  kernel update, would find crypttab's key under the old options: typed,
+  no hang).  A failed write, remake or check puts everything back.
+- **Check** (`lk_check`, `lk_uki_check`): each image remade under
+  `EFI/Linux` has crypttab's line in its initramfs (as before, by
+  `lsinitcpio -x`, which reads unified images) and a `.cmdline`
+  (`lk_pe_section`: the PE section table read with `od`, since Arch has
+  no python by default and objcopy is binutils') with no
+  `rd.luks.options`, `.key` or `.crypttab`; after a move, no `rd.luks`
+  argument at all.  At least one unified image must have been remade.  The
+  `.cmdline` check runs on any S system's unified images, a warning only
+  where adopt didn't move anything and can't read the section.
+  `lk_pe_section` gave objcopy's bytes for ZFSBootMenu's release EFI
+  (`.cmdline`, `.osrel`, `.sdmagic`) and Arch's `linuxx64.efi.stub`
+  (`.sdmagic`), on Cinqcent.
+- **Left family A, and why:** arguments from a systemd-boot type 1 entry's
+  `options`, GRUB's `GRUB_CMDLINE_LINUX`, Limine's or rEFInd's config.
+  The remake adopt runs (and the restore's boot stage) is the initramfs
+  generator's; it doesn't write those, so the command line and the crypttab
+  couldn't change in the same step, and the boot loader is something
+  BackShot1 never edits (Limine's and kernel-install's hooks write their
+  configs again from other sources).  So is a dracut or kernel-install
+  unified image: their remake doesn't rebuild it from
+  `/etc/kernel/cmdline`.
+- **Evidence:** unchanged, S's key-device mount (`keydev-NAME`, NAME the
+  kept mapping name) in the journal of the first boot after adopt.
+
+No rehearsal: no farm guest is an Arch install with sd-encrypt and unified
+images (`arch` has no LUKS; `omarchy` is busybox `encrypt` with Limine).
+Unit tests (`test_bs1_luks.py`: UkiCmdline, AdoptUki) run `luks_adopt` and
+`luks_off` on a fake root, with a fake `mkinitcpio -P` that builds PE images
+the way build_uki takes the command line, and a fake `lsinitcpio`.

@@ -528,7 +528,7 @@ How depends on what opens the volume:
 
 | Family | Who | How |
 |---|---|---|
-| S | systemd in the initramfs: dracut (Fedora, EndeavourOS, openSUSE, Gentoo systemd, Ubuntu 26.04), mkinitcpio's `sd-encrypt`; and any volume the booted system opens under systemd | crypttab's key field `/backshot1/keys/disk-passphrase:LABEL=mybig512`, option `keyfile-timeout=30s`; `/etc/crypttab.initramfs` for `sd-encrypt`; a dracut or mkinitcpio drop-in adds the USB modules, ext4 and the drive's own file system |
+| S | systemd in the initramfs: dracut (Fedora, EndeavourOS, openSUSE, Gentoo systemd, Ubuntu 26.04), mkinitcpio's `sd-encrypt`; and any volume the booted system opens under systemd | crypttab's key field `/backshot1/keys/disk-passphrase:LABEL=mybig512`, option `keyfile-timeout=30s`; `/etc/crypttab.initramfs` for `sd-encrypt`; a dracut or mkinitcpio drop-in adds the USB modules, ext4 and the drive's own file system.  On mkinitcpio's unified kernel images (presets with `default_uki`), `rd.luks.name`/`uuid`/`options` in the command line mkinitcpio bakes into them (`/etc/kernel/cmdline`, `/etc/cmdline.d/*.conf`) become each volume's `crypttab.initramfs` line and are taken out of that file, in the same `mkinitcpio -P` (below) |
 | D | initramfs-tools: Debian, Ubuntu up to 25.04, Mint, Chimera | crypttab option `keyscript=/usr/local/lib/backshot1/unlock-key` (`bs1-unlock-key`), the key field left `none`; it asks with askpass when the drive's key can't be read |
 | E | mkinitcpio's busybox `encrypt`: Arch, Manjaro, Omarchy | a `bs1key` hook, put right before `encrypt` by `/etc/mkinitcpio.conf.d/zz-backshot1.conf`, writes `/crypto_keyfile.bin` only if that key opens the volume |
 | N | NixOS (systemd or scripted stage 1) | `/etc/nixos/backshot1-luks.nix`, imported by `backshot1.nix` while it exists, sets each typed `boot.initrd.luks.devices` volume's `keyFile`: systemd stage 1 the same `PATH:LABEL=` form and `keyFileTimeout = 30`; scripted stage 1 a copy its `preOpenCommands` take off the drive (mounted read-only, `norecovery` for xfs), with `fallbackToPassword`; then `nixos-rebuild switch` |
@@ -537,10 +537,11 @@ How depends on what opens the volume:
 
 A volume that already opens with no one typing (a key file of its own in the
 initramfs, TPM2, FIDO2; on B an `rd.luks.key=` of its own in another
-`cmdline.d` file) is left alone (`own`).  The kernel command line and the
-boot loader are never touched, but for B's `cmdline.d` file and the entries
-`moss boot sync` writes from it; another `cmdline.d` file is never edited
-(adopt warns of one with an `rd.luks.key=`: `--luks-off` leaves it).  Adopt
+`cmdline.d` file) is left alone (`own`).  The boot loader is never touched,
+nor the kernel command line, but for B's `cmdline.d` file and the entries
+`moss boot sync` writes from it, and S's unified images (below); another
+`cmdline.d` file is never edited (adopt warns of one with an `rd.luks.key=`:
+`--luks-off` leaves it).  Adopt
 checks the key with `cryptsetup --test-passphrase` before changing
 anything, makes the drive's key file mode 600 (systemd-cryptsetup warns of
 one anyone can read; `backshot1 stage` does too), saves each file it
@@ -548,6 +549,49 @@ changes in `/etc/backshot1/orig/`, records what it did in
 `/etc/backshot1/luks-unlock`, remakes the initramfs as the restore does (B:
 the boot entries) and checks the new one; if that fails, it puts everything
 back.  Run again, it changes nothing.
+
+**S on mkinitcpio's unified kernel images** (Arch with `sd-encrypt`,
+`default_uki` in `/etc/mkinitcpio.d/linux.preset`, systemd-boot; the
+Thinkpad, 2026-11-18): `rd.luks.options=` on the command line overrides
+crypttab's options, `keyfile-timeout` with them, so before this adopt said
+family A.  When those arguments come from the files mkinitcpio bakes into
+the images' `.cmdline` (`/etc/kernel/cmdline`, else
+`/usr/lib/kernel/cmdline`, then every `/etc/cmdline.d/*.conf`), adopt
+instead:
+
+- writes each volume's `/etc/crypttab.initramfs` line: its open mapping
+  name (so `root=/dev/mapper/NAME` still matches), `UUID=`, the drive's
+  key, and the options the command line put in force with
+  `keyfile-timeout=30s` (`keyfile-offset`, `-size` and `-erase` dropped);
+- takes `rd.luks.name`, `rd.luks.uuid` and `rd.luks.options` (and `luks.`
+  ones) out of `/etc/kernel/cmdline` or the `/etc/cmdline.d` file they're
+  in, everything else byte for byte, the original in `/etc/backshot1/orig/`
+  (`--luks-off` puts it back exactly and remakes the images);
+- runs `mkinitcpio -P` once for both, and checks each remade image: its
+  initramfs has the crypttab line, and its `.cmdline` (read from the PE
+  section) has no `rd.luks.options`, `.key` or `.crypttab`, nor any
+  `rd.luks` argument left.  Otherwise it puts everything back.
+
+The running `/proc/cmdline` keeps the old arguments until the next boot,
+so adopt decides from the files (and from its own copy of them in
+`orig/`): run again before the reboot, it changes nothing.  The reboot
+preflight wants is the same as ever.  It stays family A (nothing changes)
+when the arguments come from the boot loader instead (a systemd-boot type 1
+entry's `options`, GRUB's `GRUB_CMDLINE_LINUX`, Limine's or rEFInd's
+config: on `/proc/cmdline` but in none of those files), from a preset's
+own command line (`NAME_cmdline`, `ALL_cmdline`, `--cmdline`), from
+`/usr/lib/kernel/cmdline` or a link, when this boot didn't come through a
+unified image (no systemd-stub `StubInfo` EFI variable), and for anything
+it can't move into crypttab as it is: TPM2, FIDO2 or PKCS#11 options, an
+`rd.luks.key=` that isn't the drive's, `rd.luks.crypttab=`, `rd.luks.data=`,
+a UUID that isn't a typed volume opened early, a name that isn't the one
+the volume is open as, or a `crypttab.initramfs` line the command line
+didn't name (it would open in the initramfs once nothing is named).  The
+boot loader's own entries stay out of reach because the remake that bakes
+crypttab into the initramfs (`mkinitcpio -P`, as the restore's boot stage
+runs it) doesn't rewrite them, so the two couldn't land in the same step;
+a boot whose command line no longer names the volume, with no crypttab
+line for it either, would wait for its root until the emergency shell.
 
 **Testbed only,** like the fixed host key: with the drive and the laptop
 together, anyone can read the disk.  Never on a release image, nor a machine

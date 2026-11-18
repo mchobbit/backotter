@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import tempfile
 import textwrap
@@ -508,6 +509,439 @@ class AdoptB(Tmp):
         out = self.adopt(moss=False)
         self.assertIn("A: the initramfs is prebuilt's; nothing else changes", out)
         self.assertFalse(self.ours.exists())
+
+
+def pe(sections):
+    """A minimal PE image, as systemd-stub's unified images are laid out:
+    the DOS header's e_lfanew, PE\\0\\0, the COFF header, a zeroed optional
+    header and the section table, each section's data 512-aligned (raw size
+    padded, virtual size the data's own)."""
+    opt = 240
+    table = 0x40 + 24 + opt
+    data_at = (table + 40 * len(sections) + 511) // 512 * 512
+    head = bytearray(data_at)
+    head[0:2] = b"MZ"
+    struct.pack_into("<I", head, 0x3C, 0x40)
+    head[0x40:0x44] = b"PE\0\0"
+    struct.pack_into("<HHIIIHH", head, 0x44, 0x8664, len(sections), 0, 0, 0, opt, 0x22)
+    body = bytearray()
+    for i, (name, data) in enumerate(sections):
+        raw = (len(data) + 511) // 512 * 512
+        struct.pack_into("<8sIIII", head, table + 40 * i, name.encode(), len(data), 0x1000 * (i + 1), raw, data_at + len(body))
+        body += data + b"\0" * (raw - len(data))
+    return bytes(head + body)
+
+
+# mkinitcpio -P on a fake root: each unified image's .cmdline from the files
+# build_uki reads (the first of etc/kernel/cmdline and usr/lib/kernel/cmdline,
+# then etc/cmdline.d/*.conf, # lines left out, newlines made spaces), or from
+# ROOT/stale when it's there (an image that ignores the rewrite); its initrd's
+# etc/crypttab, for the fake lsinitcpio, from etc/crypttab.initramfs.
+MKINITCPIO = r'''#!/usr/bin/env python3
+import os, re, shutil, struct, sys
+ROOT = %(root)r
+%(pe)s
+assert sys.argv[1:] == ["-P"], sys.argv
+open(os.path.join(ROOT, "mkinitcpio-calls"), "a").write("P\n")
+files = [f for f in (ROOT + "/etc/kernel/cmdline", ROOT + "/usr/lib/kernel/cmdline") if os.path.isfile(f)][:1]
+d = ROOT + "/etc/cmdline.d"
+if os.path.isdir(d):
+    files += sorted(os.path.join(d, n) for n in os.listdir(d) if n.endswith(".conf"))
+if os.path.exists(ROOT + "/stale"):
+    files = [ROOT + "/stale"]
+lines = [l for f in files for l in open(f, encoding="utf-8").read().split("\n") if l and not l.startswith("#")]
+cmdline = re.sub(r"\n+", " ", "\n".join(lines) + "\n")
+for name in ("arch-linux.efi", "arch-linux-fallback.efi"):
+    out = os.path.join(ROOT, "efi/EFI/Linux", name)
+    with open(out, "wb") as f:
+        f.write(pe([(".osrel", b"ID=arch\n"), (".cmdline", (cmdline + "\n").encode() + b"\0"), (".initrd", b"070701"), (".linux", b"MZkernel")]))
+    ird = os.path.join(ROOT, "initrd", name)
+    shutil.rmtree(ird, ignore_errors=True)
+    os.makedirs(ird + "/etc")
+    if os.path.exists(ROOT + "/etc/crypttab.initramfs"):
+        shutil.copy(ROOT + "/etc/crypttab.initramfs", ird + "/etc/crypttab")
+'''
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class UkiCmdline(Tmp):
+    """Family S on mkinitcpio's unified images: the files the command line
+    is baked from, taking the rd.luks arguments out of them, their crypttab
+    lines, the boot loader's own, and reading an image's .cmdline."""
+
+    def sh(self, expr, stdin=None, rc=0):
+        t = self.t
+        script = (f'. "{BS1}/bs1-luks"; LK_KEYSPEC={KEYSPEC}; LUKS_ORIG="{t}/orig"; LK_CMDLINE="{t}/proc-cmdline"; '
+                  f'LK_UKI_PRESETS="{t}/etc/mkinitcpio.d"; LK_UKI_FILES="{t}/etc/kernel/cmdline {t}/usr/lib/kernel/cmdline"; '
+                  f'LK_UKI_DROPIN="{t}/etc/cmdline.d"\n{expr}')
+        r = subprocess.run([BASH, "-c", script], input=stdin, capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
+        return r.stdout
+
+    def file(self, rel, text):
+        p = self.t / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+        return p
+
+    def drop(self, text):
+        f = self.file("in", text)
+        self.sh(f'lk_uki_newfile "{f}" "{self.t}/out"')
+        return (self.t / "out").read_text()
+
+    def test_drop_the_thinkpad_line(self):
+        self.assertEqual(self.drop(f"rd.luks.name={UUID}=root rd.luks.options={UUID}=discard root=/dev/mapper/root "
+                                   "rootflags=subvol=/@,compress=zstd:3 rw quiet\n"),
+                         "root=/dev/mapper/root rootflags=subvol=/@,compress=zstd:3 rw quiet\n")
+
+    def test_drop_keeps_the_rest_byte_for_byte(self):
+        self.assertEqual(self.drop(f"# rd.luks.options={UUID}=discard, a note\n  quiet\t rd.luks.uuid={UUID}  rw  \n"
+                                   f"rd.luks.options=discard\nsplash rd.luks.key=/k luks.options=x\n"),
+                         f"# rd.luks.options={UUID}=discard, a note\n  quiet  rw  \n\nsplash\n")
+        self.assertEqual(self.drop(f"root=/dev/mapper/root rd.luks.options={UUID}=discard"), "root=/dev/mapper/root")
+        self.assertEqual(self.drop("rd.luksfoo=1 xrd.luks.uuid=2 rw\n"), "rd.luksfoo=1 xrd.luks.uuid=2 rw\n")
+
+    def test_files_in_mkinitcpio_order(self):
+        self.assertEqual(self.sh("lk_uki_files"), "")
+        self.file("usr/lib/kernel/cmdline", "quiet\n")
+        self.assertEqual(self.sh("lk_uki_files"), f"{self.t}/usr/lib/kernel/cmdline\n")
+        self.file("etc/kernel/cmdline", "root=x\n")
+        self.file("etc/cmdline.d/10-b.conf", "b\n")
+        self.file("etc/cmdline.d/9-a.conf", "# note\na\n")
+        self.file("etc/cmdline.d/notes.txt", "c\n")
+        files = self.sh("lk_uki_files").split()
+        self.assertEqual(files, [f"{self.t}/etc/kernel/cmdline", f"{self.t}/etc/cmdline.d/9-a.conf", f"{self.t}/etc/cmdline.d/10-b.conf"])
+        self.assertEqual(self.sh("lk_uki_text " + " ".join(files)).split(), ["root=x", "a", "b"])
+
+    def test_presets(self):
+        self.assertEqual(self.sh("lk_uki_presets").strip(), "no no")
+        p = self.file("etc/mkinitcpio.d/linux.preset", "ALL_kver=/boot/vmlinuz-linux\nPRESETS=('default' 'fallback')\n"
+                      "default_image=/boot/initramfs-linux.img\nfallback_image=/boot/initramfs-linux-fallback.img\nfallback_options=\"-S autodetect\"\n")
+        self.assertEqual(self.sh("lk_uki_presets").strip(), "no no")
+        p.write_text("PRESETS=('default' 'fallback')\ndefault_uki=/efi/EFI/Linux/arch-linux.efi\n"
+                     "fallback_uki=/efi/EFI/Linux/arch-linux-fallback.efi\nfallback_options=\"-S autodetect\"\n")
+        self.assertEqual(self.sh("lk_uki_presets").strip(), "yes no")
+        for own in ('ALL_cmdline=/etc/kernel/other\n', 'fallback_cmdline=/etc/kernel/other\n',
+                    'fallback_options=(-S autodetect --cmdline /etc/kernel/other)\n', 'default_options="--no-cmdline"\n'):
+            with self.subTest(own):
+                p.write_text("PRESETS=('default' 'fallback')\ndefault_uki=/efi/a.efi\nfallback_uki=/efi/b.efi\n" + own)
+                self.assertEqual(self.sh("lk_uki_presets").strip(), "yes yes")
+
+    def map(self, args, vols=(f"root:{UUID}",), ini_text=None):
+        ini = self.t / "crypttab.initramfs"
+        if ini_text is not None:
+            ini.write_text(ini_text)
+        out = self.sh(f'lk_uki_map "{ini}" ' + " ".join(vols), "\n".join(args) + "\n")
+        return sorted(out.splitlines())
+
+    def test_map_the_thinkpad_line(self):
+        self.assertEqual(self.map([f"rd.luks.name={UUID}=root", f"rd.luks.options={UUID}=discard"]), [f"vol root {UUID} discard"])
+
+    def test_map_uuid_and_luks_prefix(self):
+        self.assertEqual(self.map([f"rd.luks.uuid=luks-{UUID}"], vols=(f"luks-{UUID}:{UUID}",)), [f"vol luks-{UUID} {UUID} -"])
+        self.assertEqual(self.map([f"luks.uuid={UUID}", f"luks.options={UUID}=discard,keyfile-timeout=5s"]),
+                         [f"vol root {UUID} discard,keyfile-timeout=5s"])
+
+    def test_map_options_for_every_volume(self):
+        # Only to a volume crypttab doesn't list (systemd-cryptsetup-generator).
+        self.assertEqual(self.map([f"rd.luks.uuid={UUID}", "rd.luks.options=discard"]), [f"vol root {UUID} discard"])
+        self.assertEqual(self.map([f"rd.luks.uuid={UUID}", "rd.luks.options=discard"], ini_text=f"root UUID={UUID} none luks\n"),
+                         [f"vol root {UUID} -"])
+        self.assertEqual(self.map([f"rd.luks.uuid={UUID}", "rd.luks.options=discard", f"rd.luks.options={UUID}="]), [f"vol root {UUID} ,"])
+
+    def test_map_two_volumes(self):
+        self.assertEqual(self.map([f"rd.luks.name={UUID}=root", f"rd.luks.name={OTHER}=swap", f"rd.luks.options={OTHER}=discard"],
+                                  vols=(f"root:{UUID}", f"swap:{OTHER}")),
+                         [f"vol root {UUID} -", f"vol swap {OTHER} discard"])
+
+    def test_map_refusals(self):
+        for args, why in [
+            ([f"rd.luks.name={UUID}=root", f"rd.luks.options={UUID}=tpm2-device=auto"], "a token opens it"),
+            ([f"rd.luks.name={UUID}=root", f"rd.luks.options={UUID}=discard,fido2-device=auto"], "a token opens it"),
+            ([f"rd.luks.name={UUID}=root", f"rd.luks.options={UUID}=pkcs11-uri=auto"], "a token opens it"),
+            ([f"rd.luks.name={UUID}=root", f"rd.luks.key={UUID}=/etc/keys/root.key"], "a key of its own"),
+            ([f"rd.luks.name={UUID}=root", "rd.luks.key=/etc/all.key"], "a key of its own"),
+            ([f"rd.luks.name={OTHER}=root"], f"{OTHER} isn't a LUKS volume here"),
+            ([f"rd.luks.name={UUID}=cryptroot"], "open as root, not cryptroot"),
+            ([f"rd.luks.options={OTHER}=discard"], f"{OTHER} isn't a LUKS volume here"),
+            ([f"rd.luks.name={UUID}=root", "rd.luks.crypttab=no"], "only rd.luks.name"),
+            ([f"rd.luks.name={UUID}=root", f"rd.luks.data={UUID}=/dev/sdb1"], "only rd.luks.name"),
+            (["luks=no"], "only rd.luks.name"),
+        ]:
+            with self.subTest(args):
+                out = self.map(args)
+                self.assertTrue(any(l.startswith("bad ") and why in l for l in out), out)
+
+    def test_map_a_line_the_command_line_leaves_out(self):
+        out = self.map([f"rd.luks.name={UUID}=root"], ini_text=f"root UUID={UUID} none\nhome UUID={OTHER} none\n")
+        self.assertTrue(any("home isn't named on the command line" in l for l in out), out)
+        out = self.map([f"rd.luks.name={UUID}=root"], ini_text=f"cryptroot UUID={UUID} none\n")
+        self.assertTrue(any(f"has {UUID} as cryptroot, but it's open as root" in l for l in out), out)
+
+    def test_stray_is_the_boot_loader(self):
+        k = self.file("etc/kernel/cmdline", "root=/dev/mapper/root rw\n")
+        self.file("proc-cmdline", f"rd.luks.name={UUID}=root rd.luks.options={UUID}=discard root=/dev/mapper/root rw\n")
+        self.assertEqual(self.sh(f'lk_uki_stray "{k}"').strip(), f"rd.luks.name={UUID}=root rd.luks.options={UUID}=discard")
+        # adopt's copy of the file as it was: the arguments are only waiting for the next boot.
+        self.file(f"orig/{str(k).replace('/', '%')}", f"rd.luks.name={UUID}=root\nrd.luks.options={UUID}=discard root=/dev/mapper/root rw\n")
+        self.assertEqual(self.sh(f'lk_uki_stray "{k}"').strip(), "")
+
+    def test_pe_section(self):
+        img = self.t / "arch-linux.efi"
+        img.write_bytes(pe([(".osrel", b"ID=arch\n"), (".cmdline", b"root=/dev/mapper/root rw quiet\n\0"), (".linux", b"MZ" + b"k" * 3000)]))
+        self.assertEqual(self.sh(f'lk_pe_section "{img}" .cmdline'), "root=/dev/mapper/root rw quiet\n")
+        self.assertEqual(self.sh(f'lk_pe_section "{img}" .osrel'), "ID=arch\n")
+        self.sh(f'lk_pe_section "{img}" .initrd', rc=1)
+        (self.t / "not-pe").write_bytes(b"\x7fELF" + b"\0" * 200)
+        self.sh(f'lk_pe_section "{self.t}/not-pe" .cmdline', rc=1)
+
+    @unittest.skipUnless(shutil.which("objcopy"), "no objcopy")
+    def test_pe_section_as_objcopy_reads_it(self):
+        """systemd-boot's stub, where the host has one, read both ways."""
+        stubs = [p for p in Path("/usr/lib/systemd/boot/efi").glob("linux*.efi.stub")] if Path("/usr/lib/systemd/boot/efi").is_dir() else []
+        if not stubs:
+            self.skipTest("no systemd-boot stub here")
+        out = self.t / "sdmagic"
+        subprocess.run(["objcopy", "-O", "binary", "--only-section=.sdmagic", str(stubs[0]), str(out)], check=True)
+        self.assertEqual(self.sh(f'lk_pe_section "{stubs[0]}" .sdmagic'), out.read_bytes().replace(b"\0", b"").decode())
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class AdoptUki(Tmp):
+    """luks_adopt and luks_off on a fake Arch: sd-encrypt, mkinitcpio presets
+    building unified images, systemd-boot, the command line in
+    /etc/kernel/cmdline: the Thinkpad's, 2026-11-18."""
+
+    LINE = (f"rd.luks.name={UUID}=root rd.luks.options={UUID}=discard root=/dev/mapper/root "
+            "rootflags=subvol=/@,compress=zstd:3 rw quiet\n")
+
+    def setUp(self):
+        super().setUp()
+        t = self.t
+        self.drive = t / "drive"
+        here = self.drive / "backshot1"
+        (here / "keys").mkdir(parents=True)
+        shutil.copy(BS1 / "bs1-unlock-key", here / "bs1-unlock-key")
+        (here / "keys/disk-passphrase").write_text("s3cret")
+        for d in ("etc/kernel", "etc/mkinitcpio.d", "etc/mkinitcpio.conf.d", "efi/EFI/Linux", "efivars"):
+            (t / d).mkdir(parents=True)
+        self.cmdline = t / "etc/kernel/cmdline"
+        self.cmdline.write_text(self.LINE)
+        self.ini = t / "etc/crypttab.initramfs"
+        self.preset = t / "etc/mkinitcpio.d/linux.preset"
+        self.preset.write_text(textwrap.dedent(f"""\
+            # mkinitcpio preset file for the 'linux' package
+            ALL_kver="/boot/vmlinuz-linux"
+            PRESETS=('default' 'fallback')
+            default_uki="{t}/efi/EFI/Linux/arch-linux.efi"
+            fallback_uki="{t}/efi/EFI/Linux/arch-linux-fallback.efi"
+            fallback_options="-S autodetect"
+            """))
+        # systemd-stub's cmdline is the image's .cmdline, as it booted.
+        self.boot()
+        self.stub = t / "efivars/StubInfo-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
+        self.stub.write_bytes(b"\x06\0\0\0s\0d\0")
+        src = Path(__file__).read_text()
+        pe_src = re.search(r"^def pe\(sections\):\n.*?\n    return bytes\(head \+ body\)\n", src, re.M | re.S).group(0)
+        exe(self.bin / "mkinitcpio", MKINITCPIO % {"root": str(t), "pe": pe_src})
+        exe(self.bin / "lsinitcpio", textwrap.dedent(f"""\
+            #!/bin/sh
+            if [ "$1" = -x ]; then cp -R "{t}/initrd/$(basename "$2")/." .; exit 0; fi
+            [ -d "{t}/initrd/$(basename "$1")" ] || exit 1
+            echo etc/crypttab
+            echo usr/lib/modules/6.17.8-arch1-1/kernel/drivers/usb/storage/usb-storage.ko.zst
+            """))
+        exe(self.bin / "findmnt", f'#!/bin/sh\ncase "$2" in TARGET) echo "{self.drive}" ;; SOURCE) echo /dev/sdb1 ;; FSTYPE) echo xfs ;; esac\n')
+        exe(self.bin / "blkid", "#!/bin/sh\necho mybig512\n")
+        exe(self.bin / "cryptsetup", "#!/bin/sh\nexit 0\n")
+        exe(self.bin / "modinfo", "#!/bin/sh\nexit 1\n")
+        exe(self.bin / "sleep", "#!/bin/sh\nexit 0\n")
+        self.vols = f"/dev/nvme0n1p2 {UUID} root"
+        self.early = "root"
+
+    def boot(self):
+        """A reboot: the running command line is the default image's (the
+        file's before the first remake)."""
+        img = self.t / "efi/EFI/Linux/arch-linux.efi"
+        if img.exists():
+            line = self.cmdline_of(img)
+        else:
+            line = " ".join(self.cmdline.read_text().split()) if self.cmdline.exists() else self.LINE.strip()
+        (self.t / "proc-cmdline").write_text(line + "\n")
+
+    def cmdline_of(self, img):
+        data = img.read_bytes()
+        i = data.index(b".cmdline")
+        size, _, _, ptr = struct.unpack_from("<IIII", data, i + 8)
+        return data[ptr:ptr + size].rstrip(b"\0").decode().strip()
+
+    def adopt(self, what="luks_adopt", rc=0):
+        t = self.t
+        # As bs1-adopt runs it: bs1-common's set -uo pipefail.
+        script = textwrap.dedent(f"""\
+            set -uo pipefail
+            . "{BS1}/bs1-luks"
+            LUKS_DIR="{t}/etc/backshot1" LUKS_ORIG="{t}/etc/backshot1/orig" LUKS_MADE="{t}/etc/backshot1/made" LUKS_REC="{t}/etc/backshot1/luks-unlock"
+            LK_CMDLINE="{t}/proc-cmdline" LK_CRYPTTAB="{t}/etc/crypttab" LK_CRYPTTAB_INI="{self.ini}" LK_MKI_CONF_D="{t}/etc/mkinitcpio.conf.d"
+            LK_IMG_DIRS="{t}/efi" LK_UKI_PRESETS="{t}/etc/mkinitcpio.d" LK_UKI_FILES="{self.cmdline} {t}/usr/lib/kernel/cmdline"
+            LK_UKI_DROPIN="{t}/etc/cmdline.d" LK_STUB_INFO="{self.stub}"
+            here="{self.drive}/backshot1" init=systemd BACKUP_LABEL=mybig512 INTERNAL_SERIAL=S1
+            internal_disk() {{ echo nvme0n1; }}
+            is_abroot() {{ false; }}
+            lk_generator() {{ echo mkinitcpio; }}
+            lk_mkinitcpio_conf() {{ echo "HOOKS base systemd autodetect microcode modconf kms keyboard sd-vconsole block sd-encrypt filesystems fsck"; echo "FILES "; }}
+            lk_luks_volumes() {{ printf '%s\\n' "{self.vols}"; }}
+            lk_early() {{ [[ " {self.early} " == *" $1 "* ]]; }}
+            {what}
+            """)
+        r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
+        return r.stdout + r.stderr
+
+    def remakes(self):
+        p = self.t / "mkinitcpio-calls"
+        return len(p.read_text().splitlines()) if p.exists() else 0
+
+    def rec(self):
+        return (self.t / "etc/backshot1/luks-unlock").read_text()
+
+    def uki(self, name="arch-linux.efi"):
+        return self.cmdline_of(self.t / "efi/EFI/Linux" / name)
+
+    def test_the_thinkpad_adopt_rerun_reboot_and_off(self):
+        out = self.adopt()
+        self.assertIn("family S (initramfs: mkinitcpio)", out)
+        self.assertEqual(self.ini.read_text(), f"root\tUUID={UUID}\t{KEYSPEC}\tdiscard,keyfile-timeout=30s\n")
+        self.assertEqual(stat.S_IMODE(self.ini.stat().st_mode), 0o600)
+        self.assertEqual(self.cmdline.read_text(), "root=/dev/mapper/root rootflags=subvol=/@,compress=zstd:3 rw quiet\n")
+        self.assertEqual(self.remakes(), 1)
+        for img in ("arch-linux.efi", "arch-linux-fallback.efi"):
+            self.assertEqual(self.uki(img), "root=/dev/mapper/root rootflags=subvol=/@,compress=zstd:3 rw quiet")
+            self.assertIn(f"{img}: ok", out)
+        self.assertIn(f"volumes='root:{UUID}:S'", self.rec())
+        self.assertIn(f"wrote {self.cmdline}", out)
+        self.assertEqual((self.t / "etc/backshot1/orig" / str(self.cmdline).replace("/", "%")).read_text(), self.LINE)
+        self.assertIn(str(self.ini), (self.t / "etc/backshot1/made").read_text())
+
+        # Before the reboot /proc/cmdline still has the arguments: the same S, nothing remade.
+        out = self.adopt()
+        self.assertIn("family S", out)
+        self.assertIn("unchanged; the initramfs isn't remade", out)
+        self.assertEqual(self.remakes(), 1)
+
+        self.boot()
+        self.assertNotIn("rd.luks", (self.t / "proc-cmdline").read_text())
+        out = self.adopt()
+        self.assertIn("unchanged; the initramfs isn't remade", out)
+        self.assertEqual(self.remakes(), 1)
+
+        out = self.adopt("luks_off")
+        self.assertIn(f"put back {self.cmdline}", out)
+        self.assertEqual(self.cmdline.read_text(), self.LINE)
+        self.assertFalse(self.ini.exists())
+        self.assertFalse((self.t / "etc/mkinitcpio.conf.d/zz-backshot1.conf").exists())
+        self.assertFalse((self.t / "etc/backshot1").exists())
+        self.assertEqual(self.remakes(), 2)
+        self.assertEqual(self.uki(), self.LINE.strip())
+
+    def test_an_existing_crypttab_initramfs_line(self):
+        # The command line's options were in force, not the line's; its
+        # key-file options go with the drive's key.
+        before = f"# <name> <device> <password> <options>\nroot\tUUID={UUID}\tnone\tluks,keyfile-size=512,keyfile-offset=8\n"
+        self.ini.write_text(before)
+        self.cmdline.write_text(f"rd.luks.uuid={UUID} rd.luks.options={UUID}=discard,no-read-workqueue root=/dev/mapper/root rw\n")
+        self.boot()
+        self.adopt()
+        self.assertEqual(self.ini.read_text(), f"# <name> <device> <password> <options>\nroot\tUUID={UUID}\t{KEYSPEC}\tdiscard,no-read-workqueue,keyfile-timeout=30s\n")
+        self.assertEqual(self.cmdline.read_text(), "root=/dev/mapper/root rw\n")
+        self.adopt("luks_off")
+        self.assertEqual(self.ini.read_text(), before)
+        self.assertEqual(self.cmdline.read_text(), f"rd.luks.uuid={UUID} rd.luks.options={UUID}=discard,no-read-workqueue root=/dev/mapper/root rw\n")
+
+    def test_a_cmdline_d_file(self):
+        self.cmdline.write_text("root=/dev/mapper/root rw quiet\n")
+        conf = self.t / "etc/cmdline.d/20-luks.conf"
+        conf.parent.mkdir()
+        conf.write_text(f"# the installer's\nrd.luks.name={UUID}=root\nrd.luks.options={UUID}=discard\n")
+        self.boot()
+        out = self.adopt()
+        self.assertIn(f"wrote {conf}", out)
+        self.assertEqual(conf.read_text(), "# the installer's\n\n\n")
+        self.assertEqual(self.cmdline.read_text(), "root=/dev/mapper/root rw quiet\n")
+        self.assertEqual(self.uki(), "root=/dev/mapper/root rw quiet")
+        self.adopt("luks_off")
+        self.assertEqual(conf.read_text(), f"# the installer's\nrd.luks.name={UUID}=root\nrd.luks.options={UUID}=discard\n")
+
+    def test_adopt_with_no_reboot_since_the_hand_made_state(self):
+        # The Thinkpad now: the arguments are back in the file, the running
+        # command line (from images made without them) has none.
+        (self.t / "proc-cmdline").write_text("root=/dev/mapper/root rootflags=subvol=/@,compress=zstd:3 rw quiet\n")
+        out = self.adopt()
+        self.assertIn("family S", out)
+        self.assertEqual(self.uki(), "root=/dev/mapper/root rootflags=subvol=/@,compress=zstd:3 rw quiet")
+
+    def test_an_image_that_still_overrides_puts_everything_back(self):
+        (self.t / "stale").write_text(self.LINE)
+        out = self.adopt(rc=1)
+        self.assertIn(f"rd.luks.options={UUID}=discard, which overrides crypttab", out)
+        self.assertIn("putting everything back", out)
+        self.assertEqual(self.cmdline.read_text(), self.LINE)
+        self.assertFalse(self.ini.exists())
+        self.assertFalse((self.t / "etc/backshot1").exists())
+        self.assertEqual(self.remakes(), 2)
+
+    def test_the_boot_loader_adds_them(self):
+        self.cmdline.write_text("root=/dev/mapper/root rw\n")
+        (self.t / "proc-cmdline").write_text(f"rd.luks.name={UUID}=root rd.luks.options={UUID}=discard root=/dev/mapper/root rw\n")
+        out = self.adopt()
+        self.assertIn("the boot loader adds", out)
+        self.assertIn("family=A\n", self.rec())
+        self.assertEqual(self.cmdline.read_text(), "root=/dev/mapper/root rw\n")
+        self.assertEqual(self.remakes(), 0)
+
+    def test_refusals_stay_attended(self):
+        cases = [
+            ("tpm2", lambda: self.cmdline.write_text(f"rd.luks.name={UUID}=root rd.luks.options={UUID}=tpm2-device=auto root=/dev/mapper/root\n"), "a token opens it"),
+            ("key", lambda: self.cmdline.write_text(f"rd.luks.name={UUID}=root rd.luks.key={UUID}=/etc/cryptsetup-keys.d/root.key root=/dev/mapper/root\n"), "a key of its own"),
+            ("unknown", lambda: self.cmdline.write_text(f"rd.luks.name={OTHER}=root rd.luks.options={OTHER}=discard root=/dev/mapper/root\n"), "isn't a LUKS volume here"),
+            ("usr-lib", lambda: (self.cmdline.unlink(), (self.t / "usr/lib/kernel").mkdir(parents=True), (self.t / "usr/lib/kernel/cmdline").write_text(self.LINE)), "doesn't rewrite"),
+            ("no-stub", lambda: self.stub.unlink(), "didn't come through a unified kernel image"),
+            ("preset", lambda: self.preset.write_text(self.preset.read_text() + "ALL_cmdline=/etc/kernel/cmdline-arch\n"), "a command line of its own"),
+            ("no-uki", lambda: self.preset.write_text("PRESETS=('default')\ndefault_image=/boot/initramfs-linux.img\n"), "the boot loader's entry or GRUB's"),
+        ]
+        for name, setup, why in cases:
+            with self.subTest(name):
+                self.tearDown_case()
+                setup()
+                self.boot()
+                out = self.adopt()
+                self.assertIn(why, out)
+                self.assertIn("family=A\n", self.rec())
+                self.assertFalse(self.ini.exists())
+                self.assertEqual(self.remakes(), 0)
+                self.assertFalse((self.t / "etc/mkinitcpio.conf.d/zz-backshot1.conf").exists())
+
+    def tearDown_case(self):
+        """Each subTest from the Thinkpad's state, nothing adopted."""
+        shutil.rmtree(self.t / "etc/backshot1", ignore_errors=True)
+        shutil.rmtree(self.t / "usr", ignore_errors=True)
+        self.cmdline.write_text(self.LINE)
+        self.stub.write_bytes(b"\x06\0\0\0s\0d\0")
+        self.preset.write_text(textwrap.dedent(f"""\
+            PRESETS=('default' 'fallback')
+            default_uki="{self.t}/efi/EFI/Linux/arch-linux.efi"
+            fallback_uki="{self.t}/efi/EFI/Linux/arch-linux-fallback.efi"
+            fallback_options="-S autodetect"
+            """))
+
+    def test_no_override_is_plain_s(self):
+        # rd.luks.uuid alone (as gentoo-systemd's): the line's device made UUID=, the file as it is.
+        self.cmdline.write_text(f"rd.luks.uuid={UUID} root=/dev/mapper/root rw\n")
+        self.boot()
+        self.adopt()
+        self.assertEqual(self.ini.read_text(), f"root\tUUID={UUID}\t{KEYSPEC}\tkeyfile-timeout=30s\n")
+        self.assertEqual(self.cmdline.read_text(), f"rd.luks.uuid={UUID} root=/dev/mapper/root rw\n")
+        self.assertFalse((self.t / "etc/backshot1/orig").exists() and any((self.t / "etc/backshot1/orig").iterdir()))
 
 
 CORPUS = TESTS.parent.parent.parent / "holt" / "tests" / "corpus"

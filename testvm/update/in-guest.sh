@@ -590,6 +590,22 @@ EOF
         # upgrade that is a downgrade, as neon means it.  apt=$apt0 below
         # drops the option again.
         if grep -qs '^ID=neon$' /etc/os-release; then apt="$apt --allow-downgrades"; fi
+        # TRIM while dpkg unpacks: vm-update's overlay (vm-run --ram --discard,
+        # in the host's RAM disk) keeps every block the guest writes until a
+        # TRIM hands it back, and trim.sh's comes only after the reboot.  On a
+        # root without online discard each download and each file a package
+        # replaced stayed there: elementary8's 445 upgrades, which grew / by a
+        # few MiB, peaked at 6.5 GiB (2026-11-17).  So fstrim every 30 s
+        # until the upgrade is done (or this script has gone): beside writes
+        # it is safe, as the weekly fstrim.timer is.  Not on NILFS2, whose
+        # cleaner reclaim runs between batches instead.  A LUKS volume opened
+        # without discards (elementary8-luks's, it seems) passes none on, and
+        # fstrim fails there, quietly: its overlay still holds every block.
+        trimmer=
+        if [ -z "$nilfs" ] && has fstrim; then
+            ( while sleep 30 && kill -0 $$ 2>/dev/null; do fstrim -a >/dev/null 2>&1; done ) </dev/null >/dev/null 2>&1 &
+            trimmer=$!
+        fi
         apt-mark showhold >/run/bko-held || exit 1
         set -- $(apt list --upgradable 2>/dev/null | sed -n 's|/.*||p' | grep -vxF -f /run/bko-held)
         while [ $# -gt 0 ]; do
@@ -599,6 +615,7 @@ EOF
             reclaim
         done
         fetched $apt dist-upgrade && $apt autoremove --purge && $apt clean || exit 1
+        [ -z "$trimmer" ] || { kill $trimmer; wait $trimmer; } 2>/dev/null
         apt=$apt0
         if [ -n "$bkobin" ]; then
             rm -rf "$bkobin" || exit 1
@@ -797,7 +814,24 @@ print(d[0]["checksum"] if d else "")' "$1"
         fetched pacman -Sy --noconfirm || exit 1
         up=
         [ -z "$keyrings" ] || up=$(pacman -Qqu $keyrings)
+        # TRIM while pacman unpacks: vm-update's overlay (vm-run --ram
+        # --discard, in the host's RAM disk) keeps every block the guest
+        # writes until a TRIM hands it back, and trim.sh's comes only after
+        # the reboot.  endeavouros's ext4 has no online discard: its upgrade
+        # of 2026-11-17 (2.2 GiB downloaded, 6.7 GiB unpacked, / grown by
+        # 0.4) passed 6 GiB of overlay with the files it replaced still in
+        # it, and outgrew three reservations.  So fstrim every 30 s until
+        # the upgrade is done (or this script has gone): beside writes it is
+        # safe, as the weekly fstrim.timer is.  The downloads stay in the
+        # cache until pacman -Scc; a LUKS volume opened without discards
+        # passes none on, and fstrim fails there, quietly.
+        trimmer=
+        if has fstrim; then
+            ( while sleep 30 && kill -0 $$ 2>/dev/null; do fstrim -a >/dev/null 2>&1; done ) </dev/null >/dev/null 2>&1 &
+            trimmer=$!
+        fi
         { [ -z "$up" ] || fetched pacman -S --noconfirm --needed $up; } && fetched pacman -Su --noconfirm || exit 1
+        [ -z "$trimmer" ] || { kill $trimmer; wait $trimmer; } 2>/dev/null
         yes | pacman -Scc >/dev/null
     # t2-section: Linux.tukit
     # A transactional system (MicroOS: microos; docs/design/aeon.md): / is a

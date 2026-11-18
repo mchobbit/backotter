@@ -555,6 +555,37 @@ class Pool(unittest.TestCase):
         self.assertEqual(guest.reserve_for(harness, "guest:x", {}, pol)[0], 8.0)
         self.assertEqual(guest.reserve_for(rows, "guest:x", {}, pol, update=True)[0], 6.0)
 
+    def test_d_from_a_cut_short_update_is_a_floor_not_a_measure(self):
+        # endeavouros, 2026-11-17: its mirror stalled part way into a 2.2 GiB download, and
+        # those rows' 1.4 GiB peaks sized D at 1.9 for an update that needs 6 and more
+        pol = dict(guest.RUN_DEFAULTS)
+        gib = 1048576
+
+        def row(t, peak, verdict="FAIL", needs=None, fails=(), **extra):
+            return {"cell": "guest:x", "kind": "run", "verdict": verdict, "ram_peak_kib": int(peak * gib), "t": t,
+                    "needs": needs or {}, "fails": list(fails), "extra": extra}
+        stalled = row("2", 1.4, needs={"try": "FAIL"}, fails=["image:loader: x", "try: vm-update exit 1 in phase update"])
+        self.assertTrue(guest._cut_short(stalled))
+        self.assertEqual(guest.reserve_for([stalled], "guest:x", {}, pol)[0], 8.0)            # ram_gib_first, not 1.8
+        self.assertEqual(guest.reserve_for([stalled], "guest:x", {"ram_gib": 3}, pol)[0], 3.0)
+        big_floor = row("3", 6.19, verdict="HARNESS", overrun=True)
+        self.assertTrue(guest._cut_short(big_floor))
+        self.assertEqual(guest.reserve_for([big_floor, stalled], "guest:x", {"ram_gib": 3}, pol)[0], 7.1)   # 1.1 x 6.19 + 0.25
+        # a fail after the update ended measures it (extra.phase, or the fail line's)
+        rebooted = row("1", 2.0, needs={"try": "FAIL"}, phase="reboot")
+        self.assertFalse(guest._cut_short(rebooted))
+        self.assertFalse(guest._cut_short(row("1", 2.0, needs={"try": "FAIL"}, fails=["try: vm-update exit 1 in phase after-hook"])))
+        self.assertTrue(guest._cut_short(row("1", 2.0, needs={"try": "FAIL"})))     # by hand: no phase known
+        self.assertFalse(guest._cut_short(row("1", 2.0, verdict="PASS", needs={"try": "PASS"})))
+        self.assertEqual(guest.reserve_for([rebooted], "guest:x", {}, pol)[0], 2.5)
+        # a floor counts only while it is newer than the newest measure
+        self.assertEqual(guest.reserve_for([stalled, rebooted], "guest:x", {}, pol)[0], 2.5)   # 1.1 x 1.4 + 0.25 < 2.5
+        self.assertEqual(guest.reserve_for([big_floor, rebooted], "guest:x", {}, pol)[0], 7.1)
+        older = row("0", 9.0, verdict="HARNESS", overrun=True)
+        self.assertEqual(guest.reserve_for([older, rebooted], "guest:x", {}, pol)[0], 2.5)
+        # other HARNESS rows still count not at all
+        self.assertEqual(guest.reserve_for([row("4", 12.0, verdict="HARNESS")], "guest:x", {}, pol)[0], 8.0)
+
     def test_the_job_is_guest_job_sh_under_its_reservation(self):
         jobs, io = FakeJobs(), FakeIO()
         io.summ["debian12"] = summary()

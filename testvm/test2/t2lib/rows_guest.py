@@ -456,7 +456,7 @@ def build(argv, hostctx=None):
         "pkg_changed": merge.get("pkg_changed"), "steps": merge.get("steps"), "new_lines": len(new_lines),
         "fingerprint": _fingerprint(work, guest), "reserved_gib": r.get("reserved_gib"), "overrun": bool(r.get("overrun")),
         "generation_before": r.get("generation_before"), "generation_after": r.get("generation_after"),
-        "trim_rc": r.get("trim_rc"), "to_class_only": bool(to_class), "standing": standing, "hook_failed": hook_failed,
+        "trim_rc": r.get("trim_rc"), "phase": r.get("phase"), "to_class_only": bool(to_class), "standing": standing, "hook_failed": hook_failed,
         "skips": skips, "notes": need_notes,
     }
     if prev:

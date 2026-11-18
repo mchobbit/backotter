@@ -20,6 +20,7 @@ import collections
 import json
 import math
 import os
+import re
 import shlex
 import subprocess
 import threading
@@ -78,19 +79,54 @@ def mode_of(entry, update=False):
     return KIND_MODE.get(entry.get("kind"), "try")
 
 
+# vm-update's phases from the update's end on (result.json's "phase" where it stopped): a job that
+# failed in one of these had run its whole update, so its RAM peak measures what the update needs.
+UPDATE_ENDED = ("reboot", "snapd", "after-hook", "gate", "dump", "trim", "poweroff", "ship", "done")
+_PHASE_RE = re.compile(r"\bin phase (\S+)")
+
+
+def _cut_short(r):
+    """Whether row R's job stopped before its update ended, so its RAM peak is only a floor of
+    what the update needs: an overrun (vm-update stopped it at its limit), or a try that failed
+    in or before the update (a download that failed for good: endeavouros's 1.4 GiB rows of
+    2026-11-17, whose mirror stalled two thirds into a 2.2 GiB download, sized the next run's D
+    at 1.9 GiB for an update that needs 6 and more).  The phase is extra.phase, or (rows before
+    it was recorded) the "in phase P" of the try's fail line; none known is a floor too."""
+    x = r.get("extra") or {}
+    if x.get("overrun"):
+        return True
+    if (r.get("needs") or {}).get("try") != "FAIL":
+        return False
+    phase = x.get("phase")
+    if not phase:
+        m = next((m for m in (_PHASE_RE.search(str(f)) for f in r.get("fails") or ()) if m), None)
+        phase = m.group(1) if m else None
+    return phase not in UPDATE_ENDED
+
+
 def reserve_for(rows, cell, entry, policy, update=False):
-    """(D, M) of a job's --reserve (contract 2.1): D from the last rows' RAM peaks, else the
-    spec's ram_gib, else ram_gib_first, never over ram_gib_max; M the guest's RAM + 1 GiB."""
+    """(D, M) of a job's --reserve (contract 2.1): D from the last 3 rows' RAM peaks (1.1 x the
+    largest + 0.25 GiB), else the spec's ram_gib, else ram_gib_first, never over ram_gib_max; M
+    the guest's RAM + 1 GiB.  A row whose job was cut short (_cut_short: an overrun, or an update
+    that failed part way) measures nothing: its peak is a floor D never goes under, and it counts
+    only while no row measured since says what the whole update took.  HARNESS and LOST rows
+    other than overruns count not at all (the job never got far)."""
     mine = sorted((r for r in rows or () if r.get("cell") == cell and r.get("kind") == "run"
-                   and r.get("verdict") not in ("HARNESS", "LOST") and isinstance(r.get("ram_peak_kib"), int) and r["ram_peak_kib"] > 0),
+                   and (r.get("verdict") not in ("HARNESS", "LOST") or (r.get("extra") or {}).get("overrun"))
+                   and isinstance(r.get("ram_peak_kib"), int) and r["ram_peak_kib"] > 0),
                   key=lambda r: (r.get("t") or "", r.get("id") or ""), reverse=True)[:3]
     cap = float(policy.get("ram_gib_max", 16))
-    if mine:
-        d = round(1.1 * max(r["ram_peak_kib"] for r in mine) / 1048576 + 0.25, 1)
+    measured = [r for r in mine if not _cut_short(r)]
+    newest = (measured[0].get("t") or "", measured[0].get("id") or "") if measured else None
+    floors = [r for r in mine if _cut_short(r) and (newest is None or (r.get("t") or "", r.get("id") or "") > newest)]
+    if measured:
+        d = round(1.1 * max(r["ram_peak_kib"] for r in measured) / 1048576 + 0.25, 1)
     elif entry.get("ram_gib"):
         d = float(entry["ram_gib"])
     else:
         d = float(policy.get("ram_gib_first", 8))
+    if floors:
+        d = max(d, round(1.1 * max(r["ram_peak_kib"] for r in floors) / 1048576 + 0.25, 1))
     d = max(min(d, cap), 1.0)
     if update:
         d = max(d, min(float(UPDATE_MIN_D), cap))

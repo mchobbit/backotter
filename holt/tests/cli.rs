@@ -107,15 +107,54 @@ fn sysroot_dump_is_json() {
 /// Dumps the machine the tests run on (a Debian 13 host or guest) and checks
 /// it against lsblk.  As root this compares our own superblock reading with
 /// udev/blkid's; as another user, the udev fallback.
+///
+/// The dump and lsblk are two reads of a tree that changes under them on a
+/// busy test host (loop, nbd and zvol devices, RAM disks and filesystems on
+/// them come and go), so a disagreement is read again, both sides, up to
+/// three times: a device made or formatted between the reads agrees the
+/// next time, a real disagreement every time.  A dump that fails fails at
+/// once.
 #[test]
 fn live_host_matches_lsblk() {
-    let o = bin(&["dump"], &[]);
-    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
-    let v = json::parse(&stdout(&o)).unwrap();
-    assert_eq!(v.at(&["os", "id"]).and_then(Value::as_str), Some("debian"));
-    let ls = Command::new("lsblk").args(["--json", "-b", "-o", "NAME,KNAME,SIZE,FSTYPE,UUID,LABEL,PTTYPE,PTUUID,TYPE,PARTUUID"]).output().unwrap();
-    assert!(ls.status.success());
-    let ls = json::parse(&String::from_utf8(ls.stdout).unwrap()).unwrap();
+    let mut errors = Vec::new();
+    for attempt in 1..=3 {
+        if attempt > 1 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        let o = bin(&["dump"], &[]);
+        assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+        let v = json::parse(&stdout(&o)).unwrap();
+        assert_eq!(v.at(&["os", "id"]).and_then(Value::as_str), Some("debian"));
+        let ls = Command::new("lsblk").args(["--json", "-b", "-o", "NAME,KNAME,SIZE,FSTYPE,UUID,LABEL,PTTYPE,PTUUID,TYPE,PARTUUID"]).output().unwrap();
+        assert!(ls.status.success());
+        let ls = json::parse(&String::from_utf8(ls.stdout).unwrap()).unwrap();
+        let privileged = v.get("privileged") == Some(&Value::Bool(true));
+        match compare_with_lsblk(&v, &ls, privileged) {
+            Ok(checked) => {
+                assert!(checked > 0, "lsblk listed nothing to check");
+                eprintln!("checked {checked} devices against lsblk (privileged: {privileged}, attempt {attempt})");
+                return;
+            }
+            Err(e) => {
+                eprintln!("attempt {attempt}: {e}");
+                errors.push(e);
+            }
+        }
+    }
+    panic!("the dump disagreed with lsblk three times:\n{}", errors.join("\n"));
+}
+
+/// The devices of lsblk's tree LS checked against the dump V: the number
+/// checked, or the first disagreement.
+fn compare_with_lsblk(v: &Value, ls: &Value, privileged: bool) -> Result<usize, String> {
+    macro_rules! check_eq {
+        ($a:expr, $b:expr, $($m:tt)+) => {{
+            let (a, b) = (&$a, &$b);
+            if a != b {
+                return Err(format!("{}: dump {:?}, lsblk {:?}", format!($($m)+), a, b));
+            }
+        }};
+    }
     // Flatten lsblk's tree.
     fn walk(v: &Value, out: &mut Vec<Value>) {
         for d in v.as_array().into_iter().flatten() {
@@ -137,7 +176,6 @@ fn live_host_matches_lsblk() {
             }
         }
     }
-    let privileged = v.get("privileged") == Some(&Value::Bool(true));
     let mut checked = 0;
     for l in &lsblk {
         let kname = l.get("kname").and_then(Value::as_str).unwrap();
@@ -145,9 +183,8 @@ fn live_host_matches_lsblk() {
         if size == 0 || l.get("type").and_then(Value::as_str) == Some("rom") {
             continue;
         }
-        let d = ours.iter().find(|d| d.get("name").and_then(Value::as_str) == Some(kname)).unwrap_or_else(|| panic!("{kname} missing from the dump"));
-        let our_size = d.get("size_bytes").and_then(Value::as_u64);
-        assert_eq!(our_size, Some(size), "size of {kname}");
+        let d = ours.iter().find(|d| d.get("name").and_then(Value::as_str) == Some(kname)).ok_or_else(|| format!("{kname} missing from the dump"))?;
+        check_eq!(d.get("size_bytes").and_then(Value::as_u64), Some(size), "size of {kname}");
         let fstype = l.get("fstype").and_then(Value::as_str);
         let our_type = d.at(&["content", "type"]).and_then(Value::as_str);
         // blkid's known false positive: a partitioned disk whose last
@@ -155,24 +192,23 @@ fn live_host_matches_lsblk() {
         // end, and blkid calls the whole disk a zfs_member.  We don't.
         let blkid_zfs_quirk = privileged && fstype == Some("zfs_member") && l.get("pttype").is_some_and(|p| !p.is_null()) && l.get("type").and_then(Value::as_str) == Some("disk");
         if blkid_zfs_quirk {
-            assert_eq!(our_type, None, "{kname}: whole disk with a table");
+            check_eq!(our_type, None::<&str>, "{kname}: whole disk with a table");
         } else if fstype.is_some() {
-            assert_eq!(our_type, fstype, "content type of {kname} (privileged: {privileged})");
+            check_eq!(our_type, fstype, "content type of {kname} (privileged: {privileged})");
             let uuid = l.get("uuid").and_then(Value::as_str);
             let our_uuid = d.at(&["content", "uuid"]).and_then(Value::as_str);
-            assert_eq!(our_uuid.map(str::to_lowercase), uuid.map(str::to_lowercase), "uuid of {kname}");
-            assert_eq!(d.at(&["content", "label"]).and_then(Value::as_str), l.get("label").and_then(Value::as_str), "label of {kname}");
+            check_eq!(our_uuid.map(str::to_lowercase), uuid.map(str::to_lowercase), "uuid of {kname}");
+            check_eq!(d.at(&["content", "label"]).and_then(Value::as_str), l.get("label").and_then(Value::as_str), "label of {kname}");
         }
         if let Some(pt) = l.get("pttype").and_then(Value::as_str) {
             if l.get("type").and_then(Value::as_str) != Some("part") {
-                assert_eq!(d.at(&["partition_table", "type"]).and_then(Value::as_str), Some(pt), "table of {kname}");
+                check_eq!(d.at(&["partition_table", "type"]).and_then(Value::as_str), Some(pt), "table of {kname}");
             }
         }
         if let (Some(pu), Some("part")) = (l.get("partuuid").and_then(Value::as_str), l.get("type").and_then(Value::as_str)) {
-            assert_eq!(d.get("uuid").and_then(Value::as_str).map(str::to_lowercase), Some(pu.to_lowercase()), "partuuid of {kname}");
+            check_eq!(d.get("uuid").and_then(Value::as_str).map(str::to_lowercase), Some(pu.to_lowercase()), "partuuid of {kname}");
         }
         checked += 1;
     }
-    assert!(checked > 0, "lsblk listed nothing to check");
-    eprintln!("checked {checked} devices against lsblk (privileged: {privileged})");
+    Ok(checked)
 }

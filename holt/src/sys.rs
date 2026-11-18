@@ -382,8 +382,21 @@ fn statvfs(path: &Path) -> Option<(u64, u64, u64)> {
     }
     // SAFETY: statvfs returned 0, so it initialised buf.
     let s = unsafe { buf.assume_init() };
-    let unit = s.f_frsize;
-    Some((s.f_blocks * unit, s.f_bfree * unit, s.f_bavail * unit))
+    usage_bytes(s.f_blocks, s.f_bfree, s.f_bavail, s.f_frsize)
+}
+
+/// Size, free and available bytes from statvfs's block counts, or None
+/// when they can't be a filesystem's: a product past u64, or more free or
+/// available blocks than the filesystem has.  A filesystem being written
+/// to hard or torn down can say so (bcachefs's free is capacity - used,
+/// which underflows); a dump then records no usage for that mount rather
+/// than a wrong one (load's fit reads it), and doesn't die on the overflow.
+#[cfg_attr(not(all(target_os = "linux", target_pointer_width = "64")), allow(dead_code))]
+fn usage_bytes(blocks: u64, bfree: u64, bavail: u64, frsize: u64) -> Option<(u64, u64, u64)> {
+    if bfree > blocks || bavail > blocks {
+        return None;
+    }
+    Some((blocks.checked_mul(frsize)?, bfree.checked_mul(frsize)?, bavail.checked_mul(frsize)?))
 }
 
 #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
@@ -491,5 +504,17 @@ mod tests {
         let (total, free, avail) = s.statvfs("/").expect("statvfs /");
         assert!(total > 0 && free <= total && avail <= free);
         assert_eq!(s.statvfs("/no/such/dir"), None);
+    }
+
+    #[test]
+    fn usage_bytes_refuses_impossible_counts() {
+        assert_eq!(usage_bytes(100, 40, 30, 4096), Some((409_600, 163_840, 122_880)));
+        assert_eq!(usage_bytes(0, 0, 0, 2 << 20), Some((0, 0, 0)));
+        // Free past the size: an underflowed capacity - used.
+        assert_eq!(usage_bytes(100, u64::MAX - 5, 30, 4096), None);
+        assert_eq!(usage_bytes(100, 40, 101, 4096), None);
+        // A size past u64 in bytes.
+        assert_eq!(usage_bytes(1 << 60, 1, 1, 4096), None);
+        assert_eq!(usage_bytes(u64::MAX / 4096, 0, 0, 4096), Some(((u64::MAX / 4096) * 4096, 0, 0)));
     }
 }

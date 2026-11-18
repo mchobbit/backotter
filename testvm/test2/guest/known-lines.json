@@ -94,7 +94,16 @@
   "^Total (Download|Installed) Size",
   "^Net Upgrade Size",
   "^:: (Synchronizing|Starting full|Running|Retrieving|Processing|Proceed)",
-  "downloading\\.\\.\\.$"
+  "downloading\\.\\.\\.$",
+  "^:: To use the new features provided in this GRUB update, it is recommended$",
+  "^(to install it to the MBR or UEFI\\. Due to potential configuration|incompatibilities, it is advised to run both, installation and generation|of configuration:|# grub-install \\.\\.\\.|# grub-mkconfig -o /boot/grub/grub\\.cfg)$",
+  "^(Installing for \\S+ platform\\.|Installation finished\\. No error reported\\.)$",
+  "^(Generating grub configuration file \\.\\.\\.|Adding boot menu entry for UEFI Firmware Settings \\.\\.\\.|done)$",
+  "^Found (linux image|initrd image|theme): /boot/\\S+$",
+  "^Found fallback initrd image\\(s\\) in /boot: \\S+$",
+  "^Adding boot menu entry for EFI BootNext: [^()]+( \\(MAC:HEX\\))? \\(Boot(N|HEX)\\)$",
+  "^Warning: os-prober is not installed; EFI BootNext entries will not be filtered against detected OSes, so non-OS entries \\(e\\.g\\. firmware updaters\\) may appear in the menu\\.$",
+  "^(Warning: os-prober will not be executed to detect other bootable partitions\\.|Systems on them will not be added to the GRUB boot configuration\\.|Check GRUB_DISABLE_OS_PROBER documentation entry\\.)$"
  ],
  "zypper": [
   "^Retrieving: (?!.*[Ee]rror)",

@@ -1026,6 +1026,75 @@ print(d[0]["checksum"] if d else "")' "$1"
                 step "mirrors: $f ranked again by pacman-mirrors --fasttrack 5 ($why)"
             fi
         fi
+        # GRUB, when the upgrade takes a new one.  Arch's grub only says ":: To
+        # use the new features provided in this GRUB update, it is recommended
+        # to install it to the MBR or UEFI ... # grub-install ... # grub-mkconfig"
+        # (endeavouros-grub, GuestTest2 t2v-20261118T0617-4a11, 2026-11-18):
+        # left undone, the old boot code (the core image in the ESP, or after
+        # the MBR) loads /boot/grub's new modules and the new grub-mkconfig's
+        # grub.cfg, and a symbol or version mismatch there stops the boot.
+        # Manjaro's and BigLinux's install-grub hook and Garuda's garuda-hooks
+        # do it themselves; again here it only writes the same files.  How it
+        # was installed is read before the upgrade (a hook may rewrite the
+        # ESP's image during it), as the builders install it (arch/install.sh,
+        # arch/install-live.sh, bootstrap/artix.sh):
+        # - UEFI (the guest booted so): the one EFI/ID/grubx64.efi in a vfat
+        #   ESP mounted at /efi, /boot/efi or /boot, ID being the
+        #   --bootloader-id (endeavouros, manjaro, Garuda, BigLinux), and the
+        #   fallback EFI/BOOT/BOOTX64.EFI when it is a copy of that image
+        #   (Calamares's installEFIFallback; the guests have no NVRAM entry,
+        #   --no-nvram, so their firmware boots the fallback);
+        # - BIOS: i386-pc, to the one disk under /boot/grub's file system
+        #   whose first sector is GRUB's boot.img (arch, cachyos, artix-*).
+        # Anything else (no GRUB boot code, two candidates, /boot on no one
+        # disk) is named and left alone rather than guessed, and only when
+        # the upgrade takes a new grub.
+        grubv() { pacman -Qo /usr/bin/grub-install 2>/dev/null | sed 's/.* is owned by //'; }
+        grub_was=$(grubv) grub_target= grub_dev= grub_id= grub_fb= grub_fbnote= grub_skip=
+        if [ -z "$grub_was" ]; then
+            :
+        elif [ -d /sys/firmware/efi ]; then
+            gn=0
+            for ge in /efi /boot/efi /boot; do
+                ls "$ge"/ >/dev/null 2>&1     # an automounted ESP mounts here
+                awk -v m="$ge" '$2 == m && $3 == "vfat" { f = 1 } END { exit !f }' /proc/mounts || continue
+                for gf in "$ge"/EFI/*/grubx64.efi; do
+                    [ -f "$gf" ] || continue
+                    gd=${gf%/grubx64.efi}; gd=${gd##*/}
+                    case $gd in [Bb][Oo][Oo][Tt]) continue ;; esac
+                    gn=$((gn + 1)) grub_dev=$ge grub_id=$gd
+                done
+            done
+            if [ $gn -eq 1 ]; then
+                grub_target=x86_64-efi
+                for gf in "$grub_dev"/EFI/*/*; do
+                    case ${gf#"$grub_dev"/EFI/} in [Bb][Oo][Oo][Tt]/[Bb][Oo][Oo][Tt][Xx]64.[Ee][Ff][Ii]) ;; *) continue ;; esac
+                    if [ "$(sha256sum <"$gf")" = "$(sha256sum <"$grub_dev/EFI/$grub_id/grubx64.efi")" ]; then
+                        grub_fb=$gf
+                    else
+                        grub_fbnote="; ${gf#"$grub_dev"/} left as it was: not a copy of EFI/$grub_id/grubx64.efi"
+                    fi
+                done
+            elif [ $gn -eq 0 ]; then
+                grub_skip="no EFI/*/grubx64.efi in a vfat ESP mounted at /efi, /boot/efi or /boot"
+            else
+                grub_skip="$gn EFI/*/grubx64.efi in the mounted ESPs, the last EFI/$grub_id in $grub_dev"
+            fi
+        elif [ -d /boot/grub/i386-pc ]; then
+            gs=$(findmnt -no SOURCE -T /boot/grub 2>/dev/null | sed 's/\[.*//')
+            gd=$(lsblk -lnps -o NAME,TYPE "$gs" 2>/dev/null | awk '$2 == "disk" { print $1 }' | sort -u)
+            if [ -z "$gd" ]; then
+                grub_skip="/boot/grub's file system ($gs) is on no disk lsblk shows"
+            elif [ "$(echo "$gd" | wc -l)" -ne 1 ]; then
+                grub_skip="/boot/grub's file system ($gs) is on more than one disk: $(echo $gd)"
+            elif ! head -c 512 "$gd" | grep -aq GRUB; then
+                grub_skip="the first sector of $gd, under /boot/grub's file system, isn't GRUB's"
+            else
+                grub_target=i386-pc grub_dev=$gd
+            fi
+        else
+            grub_skip="not booted by UEFI, and no /boot/grub/i386-pc"
+        fi
         # Then only the keyrings the repositories have newer: pacman -S of an
         # older one downgrades it, --needed or not (archlinux-keyring on
         # manjaro's stale mirrors).  -Su never downgrades.
@@ -1050,6 +1119,26 @@ print(d[0]["checksum"] if d else "")' "$1"
         fi
         { [ -z "$up" ] || fetched pacman -S --noconfirm --needed $up; } && fetched pacman -Su --noconfirm || exit 1
         [ -z "$trimmer" ] || { kill $trimmer; wait $trimmer; } 2>/dev/null
+        # A new grub: install it again where the old one was (read above),
+        # and its grub.cfg.
+        grub_now=$(grubv)
+        if [ -n "$grub_was" ] && [ -n "$grub_now" ] && [ "$grub_now" != "$grub_was" ]; then
+            case $grub_target in
+            x86_64-efi)
+                grub-install --target=x86_64-efi --efi-directory="$grub_dev" --bootloader-id="$grub_id" --no-nvram || exit 1
+                if [ -n "$grub_fb" ]; then
+                    cp "$grub_dev/EFI/$grub_id/grubx64.efi" "$grub_fb" || exit 1
+                    grub_fbnote=", and its copy ${grub_fb#"$grub_dev"/}"
+                fi
+                grub-mkconfig -o /boot/grub/grub.cfg || exit 1
+                step "$grub_was -> $grub_now: GRUB reinstalled (x86_64-efi) as EFI/$grub_id in the ESP at $grub_dev$grub_fbnote; grub.cfg remade" ;;
+            i386-pc)
+                grub-install --target=i386-pc "$grub_dev" || exit 1
+                grub-mkconfig -o /boot/grub/grub.cfg || exit 1
+                step "$grub_was -> $grub_now: GRUB reinstalled (i386-pc) to $grub_dev; grub.cfg remade" ;;
+            *)  say "warning: $grub_was -> $grub_now, and GRUB is not installed again: $grub_skip" ;;
+            esac
+        fi
         yes | pacman -Scc >/dev/null
     # t2-section: Linux.tukit
     # A transactional system (MicroOS: microos; docs/design/aeon.md): / is a

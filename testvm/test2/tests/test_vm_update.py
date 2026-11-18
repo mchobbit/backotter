@@ -578,6 +578,140 @@ fi
         # No keyring installed: -Qqu with no names would list every upgrade, so it doesn't run.
         self.assertEqual(self.run_keyrings([], []), ["-Sy --noconfirm", "-Su --noconfirm"])
 
+    def run_grub(self, was="grub 2:2.12-3", now="grub 2:2.14-1", efi=True, esps=None, mounted=None,
+                 i386=False, disks=None, hook=False, install_rc=0):
+        """Linux.pacman's GRUB blocks (read before the upgrade, act after it) around a stand-in
+        upgrade, under stub pacman (-Qo of grub-install says WAS, then NOW; None: no owner),
+        grub-install, grub-mkconfig, findmnt and lsblk.  EFI: /sys/firmware/efi is there.  ESPS:
+        {mount point (efi, boot/efi, boot): {path under it: contents}}; MOUNTED: the vfat mount
+        points /proc/mounts lists (default: every one of ESPS).  I386: /boot/grub/i386-pc is there;
+        DISKS: {name: first sector} lsblk names as /boot/grub's disks.  HOOK: the upgrade rewrites
+        the ESPs' grubx64.efi (a distribution's install-grub).  grub-install writes "new" to the
+        image it installs.  (exit status, output, calls, {ESP file: contents after})"""
+        d = Path(tempfile.mkdtemp(prefix="t2-grub-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        (d / "bin").mkdir()
+        esps = esps or {}
+        for mp, files in esps.items():
+            for rel, text in files.items():
+                (d / mp / rel).parent.mkdir(parents=True, exist_ok=True)
+                (d / mp / rel).write_text(text)
+        (d / "mounts").write_text("".join(f"/dev/vda1 {d}/{mp} vfat rw 0 0\n" for mp in (esps if mounted is None else mounted))
+                                  + f"/dev/vda2 {d}/boot ext4 rw 0 0\n")
+        if efi:
+            (d / "sys-efi").mkdir()
+        if i386:
+            (d / "boot" / "grub" / "i386-pc").mkdir(parents=True)
+        for name, sector in (disks or {}).items():
+            (d / name).write_bytes(sector)
+        (d / "version").write_text(was or "")
+        stubs = {
+            "pacman": f"""[ "$*" = "-Qo /usr/bin/grub-install" ] || exit 2
+v=$(cat {d}/version); [ -n "$v" ] || {{ echo "error: No package owns /usr/bin/grub-install" >&2; exit 1; }}
+echo "/usr/bin/grub-install is owned by $v" """,
+            "grub-install": f"""echo "grub-install $*" >>{d}/calls
+for a; do case $a in --efi-directory=*) e=${{a#*=}} ;; --bootloader-id=*) i=${{a#*=}} ;; esac; done
+[ -z "$i" ] || echo new >"$e/EFI/$i/grubx64.efi"
+echo "Installing for x86_64-efi platform."; exit {install_rc}""",
+            "grub-mkconfig": f'echo "grub-mkconfig $*" >>{d}/calls; echo "Generating grub configuration file ..."',
+            "findmnt": f'echo "findmnt $*" >>{d}/calls; echo "/dev/vda2[/@]"',
+            "lsblk": f"""echo "lsblk $*" >>{d}/calls; echo "/dev/vda2 part"
+for n in {" ".join(disks or {})}; do echo "{d}/$n disk"; done""",
+        }
+        if not shutil.which("sha256sum"):
+            stubs["sha256sum"] = "exec shasum -a 256"
+        for name, body in stubs.items():
+            (d / "bin" / name).write_text("#!/bin/sh\n" + body + "\n")
+            (d / "bin" / name).chmod(0o755)
+        sec = self.sections()["Linux.pacman"]
+        read = sec[sec.index("        grubv() {"):sec.index("        # Then only the keyrings")]
+        act = sec[sec.index("        # A new grub:"):sec.index("        yes | pacman -Scc")]
+        self.assertIn("for ge in /efi /boot/efi /boot; do", read)
+        read = (read.replace("for ge in /efi /boot/efi /boot; do", f"for ge in {d}/efi {d}/boot/efi {d}/boot; do")
+                .replace("/sys/firmware/efi", f"{d}/sys-efi").replace("/proc/mounts", f"{d}/mounts")
+                .replace("[ -d /boot/grub/i386-pc ]", f"[ -d {d}/boot/grub/i386-pc ]"))
+        upgrade = f'echo "{now or ""}" >{d}/version\n'
+        if hook:
+            upgrade += f'for f in {d}/*/EFI/*/grubx64.efi {d}/boot/efi/EFI/*/grubx64.efi; do [ ! -f "$f" ] || echo hooked >"$f"; done\n'
+        code = ('say() { echo "in-guest: $*"; }\nstep() { echo "in-guest: step: $*"; }\n'
+                + textwrap.dedent(read) + upgrade + textwrap.dedent(act) + "echo fell-through\n")
+        env = dict(os.environ, PATH=f"{d / 'bin'}:{os.environ['PATH']}")
+        r = subprocess.run(["/bin/sh", "-c", code], capture_output=True, text=True, env=env)
+        calls = (d / "calls").read_text().splitlines() if (d / "calls").exists() else []
+        files = {f"{mp}/{rel}": (d / mp / rel).read_text().strip() for mp, fs in esps.items() for rel in fs}
+        return r.returncode, (r.stdout + r.stderr).replace(str(d), "D"), [c.replace(str(d), "D") for c in calls], files
+
+    def test_grub_upgrade_reinstalls_uefi_grub_and_its_fallback_copy(self):
+        """endeavouros-grub, GuestTest2 t2v-20261118T0617-4a11: Arch's grub upgrade only says to
+        run grub-install and grub-mkconfig.  As install-live.sh installed it: the ESP's id,
+        --no-nvram, and the fallback copy the firmware boots, rewritten as well."""
+        rc, out, calls, files = self.run_grub(esps={"efi": {"EFI/endeavouros/grubx64.efi": "old", "EFI/boot/bootx64.efi": "old"}})
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(calls, ["grub-install --target=x86_64-efi --efi-directory=D/efi --bootloader-id=endeavouros --no-nvram",
+                                 "grub-mkconfig -o /boot/grub/grub.cfg"])
+        self.assertEqual(files, {"efi/EFI/endeavouros/grubx64.efi": "new", "efi/EFI/boot/bootx64.efi": "new"})
+        self.assertIn("in-guest: step: grub 2:2.12-3 -> grub 2:2.14-1: GRUB reinstalled (x86_64-efi) as EFI/endeavouros "
+                      "in the ESP at D/efi, and its copy EFI/boot/bootx64.efi; grub.cfg remade\n", out)
+        self.assertTrue(out.endswith("fell-through\n"), out)
+        # Garuda's ESP at /boot/efi, its fallback something else (left, and named); a hook that
+        # rewrote the image during the upgrade doesn't hide the copy that was there before.
+        rc, out, calls, files = self.run_grub(esps={"boot/efi": {"EFI/Garuda/grubx64.efi": "old", "EFI/BOOT/BOOTX64.EFI": "shim"}})
+        self.assertEqual((rc, files["boot/efi/EFI/BOOT/BOOTX64.EFI"]), (0, "shim"), out)
+        self.assertIn("--efi-directory=D/boot/efi --bootloader-id=Garuda --no-nvram", calls[0])
+        self.assertIn("EFI/Garuda in the ESP at D/boot/efi; EFI/BOOT/BOOTX64.EFI left as it was: not a copy of "
+                      "EFI/Garuda/grubx64.efi; grub.cfg remade", out)
+        rc, out, calls, files = self.run_grub(esps={"boot/efi": {"EFI/manjaro/grubx64.efi": "old", "EFI/boot/bootx64.efi": "old"}},
+                                              hook=True)
+        self.assertEqual((rc, files["boot/efi/EFI/boot/bootx64.efi"]), (0, "new"), out)
+
+    def test_grub_upgrade_reinstalls_bios_grub_to_its_disk(self):
+        """arch, cachyos, artix-*: grub-install --target=i386-pc to the one disk under /boot/grub
+        whose first sector is GRUB's boot.img."""
+        mbr = b"\xeb\x63\x90" + b"\0" * 0x17d + b"GRUB \0Geom\0Hard Disk\0Read\0 Error\r\n"
+        rc, out, calls, files = self.run_grub(efi=False, i386=True, disks={"vda": mbr})
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(calls, ["findmnt -no SOURCE -T /boot/grub", "lsblk -lnps -o NAME,TYPE /dev/vda2",
+                                 "grub-install --target=i386-pc D/vda", "grub-mkconfig -o /boot/grub/grub.cfg"])
+        self.assertIn("in-guest: step: grub 2:2.12-3 -> grub 2:2.14-1: GRUB reinstalled (i386-pc) to D/vda; grub.cfg remade\n", out)
+
+    def test_grub_target_in_doubt_is_named_and_left(self):
+        """No grub-install where GRUB's boot code can't be found, or could be in two places."""
+        mbr = b"\0" * 0x180 + b"GRUB \0Geom\0"
+        for kw, why in (
+                ({"esps": {"efi": {"EFI/endeavouros/grubx64.efi": "old"}}, "mounted": []},
+                 "no EFI/*/grubx64.efi in a vfat ESP mounted at /efi, /boot/efi or /boot"),
+                ({"esps": {"efi": {"EFI/systemd/systemd-bootx64.efi": "sd"}}},
+                 "no EFI/*/grubx64.efi in a vfat ESP mounted at /efi, /boot/efi or /boot"),
+                ({"esps": {"efi": {"EFI/arch/grubx64.efi": "a", "EFI/endeavouros/grubx64.efi": "b"}}},
+                 "2 EFI/*/grubx64.efi in the mounted ESPs, the last EFI/endeavouros in D/efi"),
+                ({"efi": False, "i386": True, "disks": {"vda": b"\0" * 512}},
+                 "the first sector of D/vda, under /boot/grub's file system, isn't GRUB's"),
+                ({"efi": False, "i386": True, "disks": {"vda": mbr, "vdb": mbr}},
+                 "/boot/grub's file system (/dev/vda2) is on more than one disk: D/vda D/vdb"),
+                ({"efi": False, "i386": True}, "/boot/grub's file system (/dev/vda2) is on no disk lsblk shows"),
+                ({"efi": False}, "not booted by UEFI, and no /boot/grub/i386-pc")):
+            with self.subTest(why=why):
+                rc, out, calls, files = self.run_grub(**kw)
+                self.assertEqual(rc, 0, out)
+                self.assertFalse([c for c in calls if c.startswith("grub-")], calls)
+                self.assertEqual(out, f"in-guest: warning: grub 2:2.12-3 -> grub 2:2.14-1, and GRUB is not installed again: {why}\n"
+                                      "fell-through\n")
+
+    def test_no_grub_upgrade_touches_nothing(self):
+        esps = {"efi": {"EFI/endeavouros/grubx64.efi": "old"}}
+        for kw in ({"now": "grub 2:2.12-3"}, {"was": None, "now": "grub 2:2.14-1"}, {"was": "grub 2:2.12-3", "now": None},
+                   {"was": None, "now": None, "efi": False}):
+            with self.subTest(**kw):
+                rc, out, calls, files = self.run_grub(esps=esps, **kw)
+                self.assertEqual((rc, out, files), (0, "fell-through\n", {"efi/EFI/endeavouros/grubx64.efi": "old"}))
+                self.assertFalse([c for c in calls if c.startswith("grub-")], calls)
+
+    def test_grub_install_that_fails_fails_the_update(self):
+        rc, out, calls, files = self.run_grub(esps={"efi": {"EFI/endeavouros/grubx64.efi": "old"}}, install_rc=1)
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn("fell-through", out)
+        self.assertNotIn("step:", out)
+
     def run_xfs_healer(self, load_state="loaded", rootfs="btrfs", systemd=True, systemctl=True, mask_rc=0):
         """Linux.apt's xfs_healer@-.service block under stub systemctl and findmnt: LOAD_STATE,
         what `systemctl show -p LoadState` says; ROOTFS, findmnt's FSTYPE of /.  PATH holds the

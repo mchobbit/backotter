@@ -1392,17 +1392,28 @@ EOF
         # installs nothing until it has every package, and the ones it got
         # stay in its cache for the next try.  A last failure's output
         # ends the log, for GuestTest2's flake rules to read.
+        # A repodata sync (-S) that failed is an "ERROR: [reposync] ..."
+        # line, and xbps-install goes on with the old repodata and may exit
+        # 0 or 17 (void-zbm, t2v-20261119T0726-e436: x86_64-repodata cut off
+        # at 69 % at 3 KB/s, then "Package 'xbps' is up to date."): tried
+        # again whatever the status, and a failure still after the last try,
+        # an update on stale repodata, is no success (1 in place of 0 or 17).
         fetched() {
             n=0
             while :; do
                 { "$@" 2>&1; echo $? >/run/bko-fetch.rc; } | tee /run/bko-fetch.log
                 r=$(cat /run/bko-fetch.rc)
-                [ "$r" -ne 0 ] && [ "$r" -ne 17 ] && [ $n -lt 10 ] &&
-                    grep -qE "failed to download .* package from|\[reposync\] failed to fetch file" /run/bko-fetch.log ||
+                stale=$(grep -c 'ERROR: \[reposync\] ' /run/bko-fetch.log)
+                [ $n -lt 10 ] && { [ "$stale" -gt 0 ] || { [ "$r" -ne 0 ] && [ "$r" -ne 17 ] &&
+                    grep -q "failed to download .* package from" /run/bko-fetch.log; }; } ||
                     break
                 n=$((n + 1)); say "a download failed: xbps-install again in 30 s ($n of 10)"; sleep 30
             done
             rm -f /run/bko-fetch.rc /run/bko-fetch.log
+            if [ "$stale" -gt 0 ]; then
+                say "xbps-install's repodata sync failed ($stale [reposync] errors): not run on stale repodata"
+                [ "$r" -ne 0 ] && [ "$r" -ne 17 ] || r=1
+            fi
             return "$r"
         }
         # xbps itself first, as xbps-install asks.

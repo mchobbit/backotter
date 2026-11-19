@@ -253,10 +253,10 @@ class TestInGuest(unittest.TestCase):
         r = subprocess.run(["sh", "-c", script], input=plan, capture_output=True, text=True)
         self.assertEqual(r.stdout.split(), ["dev-libs/font-adobe-100dpi", "dev-lang/rust"], r.stderr)
 
-    def run_fetched(self, section, fails, error):
-        """SECTION's fetched() around a command that fails FAILS times printing ERROR, then
-        succeeds: (exit status, how many times it ran, the output).  /run is a scratch folder
-        and sleep does nothing (so is /tmp/bko-*, DragonFly having no /run)."""
+    def run_fetched(self, section, fails, error, rc=100):
+        """SECTION's fetched() around a command that fails FAILS times printing ERROR and
+        exiting RC, then succeeds: (exit status, how many times it ran, the output).  /run is a
+        scratch folder and sleep does nothing (so is /tmp/bko-*, DragonFly having no /run)."""
         m = re.search(r"^( *)fetched\(\) \{\n.*?^\1\}\n", self.sections()[section], re.M | re.S)
         self.assertIsNotNone(m, section)
         with tempfile.TemporaryDirectory() as d:
@@ -266,7 +266,7 @@ class TestInGuest(unittest.TestCase):
                 sleep() {{ :; }}
                 cmd() {{
                     c=$(cat {d}/count 2>/dev/null || echo 0); echo $((c + 1)) >{d}/count
-                    if [ "$c" -lt {fails} ]; then echo "$1"; return 100; fi
+                    if [ "$c" -lt {fails} ]; then echo "$1"; return {rc}; fi
                     echo done
                 }}
                 """) + fn + 'fetched cmd "$1"; echo "rc=$?"\n'
@@ -321,12 +321,48 @@ class TestInGuest(unittest.TestCase):
                 self.assertIn("xbps", f["ref"])
         rc, n, out = self.run_fetched("Linux.xbps", 99, "ERROR: unresolvable shlib `libfoo.so.1'")
         self.assertEqual((rc, n), (100, 1), out)
+        # 17 with a package download failure in the log stops at once, its status kept
+        rc, n, out = self.run_fetched("Linux.xbps", 99, "ERROR: [trans] failed to download `x-1_1' package from `m': "
+                                      "Input/output error", rc=17)
+        self.assertEqual((rc, n), (17, 1), out)
         xbps = self.sections()["Linux.xbps"]
         self.assertIn("fetched xbps-install -Syu xbps || [ $? -eq 17 ] || exit 1", xbps)
         self.assertIn("fetched xbps-install -yu || exit 1", xbps)
         # 17 (current already) is no download failure, even with one in the log
         m = re.search(r"^( *)fetched\(\) \{\n.*?^\1\}\n", xbps, re.M | re.S)
         self.assertIn('[ "$r" -ne 17 ]', m[0])
+
+    def test_xbps_repodata_sync_failure_is_no_success(self):
+        """A repodata sync that failed while xbps-install exited 0 or 17 (void-zbm,
+        t2v-20261119T0726-e436: x86_64-repodata cut off at 69 %, then "Package 'xbps' is up to
+        date.", exit 0, and "in-guest: updated" on stale repodata) is tried again like a failed
+        download, and still failing after the last try it is a failure (1), whose tail is a
+        known flake; a sync that comes through on a later try is a success."""
+        error = ("ERROR: [reposync] failed to fetch file `https://repo-default.voidlinux.org/current/x86_64-repodata': "
+                 "Input/output error")
+        for status in (0, 17):
+            with self.subTest(status=status):
+                rc, n, out = self.run_fetched("Linux.xbps", 2, error, rc=status)
+                self.assertEqual((rc, n), (0, 3), out)
+                self.assertIn("in-guest: a download failed: xbps-install again", out)
+                self.assertNotIn("stale repodata", out)
+                rc, n, out = self.run_fetched("Linux.xbps", 99, error, rc=status)
+                self.assertEqual((rc, n), (1, 11), out)
+                self.assertIn("not run on stale repodata", out)
+                self.assert_flake("void-zbm", out, "xbps")
+        # The section's callers then stop: 1 is neither 0 nor 17.
+        xbps = self.sections()["Linux.xbps"]
+        m = re.search(r"^( *)fetched\(\) \{\n.*?^\1\}\n", xbps, re.M | re.S)
+        with tempfile.TemporaryDirectory() as d:
+            fn = textwrap.dedent(m[0]).replace("/run/", f"{d}/")
+            script = textwrap.dedent("""\
+                say() { :; }
+                sleep() { :; }
+                xbpsi() { echo "$ERR"; echo "Package 'xbps' is up to date."; return 0; }
+                """) + fn + "fetched xbpsi -Syu xbps || [ $? -eq 17 ] || exit 1\necho updated\n"
+            r = subprocess.run(["sh", "-c", script], capture_output=True, text=True, env={**os.environ, "ERR": error})
+            self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+            self.assertNotIn("updated", r.stdout)
 
     def assert_flake(self, guest, out, word):
         """OUT's last lines (the last try's failure) are a known flake whose ref names WORD."""

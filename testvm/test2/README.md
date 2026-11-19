@@ -358,6 +358,17 @@ composite's families share the holds; each report lists them as `swap rule:` not
 hold is no stop (a run whose cells all ran elsewhere passes).  Defaults, overridable in
 classes.json policy.stop: `swap_out_gib` 1, `swap_window_min` 10, `swap_clear_gib` 0.25,
 `swap_hold_min` 15, `swap_hold_max_min` 120.
+GuestTest2's network rule (guest.py's `NetHold`, since 2026-11-19; t2v-20261119T0157-c8c7's
+internet ran at 5 to 100 KiB/s for hours, and ten try jobs each downloaded for the whole
+5400 s): every 5 min while a job that downloads (try, update, console-update) waits, the
+first host that answers reads the first 2 MiB of deb.debian.org's, then mirrors.kernel.org's,
+trixie Packages.xz (15 s at most each; the best rate counts).  Under 256 KiB/s holds every
+host, since they share one internet: no such job starts, those running go on, probes and
+console boots still start.  It starts again once held 10 min and a probe reads 1024 KiB/s;
+a hold that lasts 4 h skips the waiting jobs.  The report lists it as `network rule:`
+notes.  Defaults, overridable in classes.json policy.guest.run: `net_probe_urls`,
+`net_probe_bytes`, `net_probe_s`, `net_min_kibs` (0: off), `net_clear_kibs`,
+`net_check_min`, `net_hold_min`, `net_hold_max_min`.
 A known disk-heavy holt cell has a write allowance (holt/spec.json `write_allow`, a plain
 holt:GUEST cell only): its own bytes in each attempt (wear tags ht1:RUN:GUEST, ht1:RUN-r2:GUEST),
 up to the allowance, don't count toward that rule; what it writes over the allowance, and

@@ -11,7 +11,8 @@ A pool per host on the Mac, one shared list, longest estimated wall first; each 
 under cmp-run.sh --reserve D M, WEAR_TAG=guest:RUN:G.  The pool's rules: at most 3 jobs a host (2 in an
 update round), none started while one of that host's is still in cmp-run.sh's line, and jobs of D >=
 big_gib one at a time, and none on a host the swap rule holds (run.py's HostHolds: the job waits for
-another host it may run on, or for the hold to end).  An overrun below the cap reruns at rerun_d (2 x D or 2 x its peak) on a host that fits it, and feeds no stop rule.  A FAIL that
+another host it may run on, or for the hold to end), nor a job that downloads (NET_MODES) anywhere
+while the network rule holds (NetHold: a probe of the farm's internet under net_min_kibs).  An overrun below the cap reruns at rerun_d (2 x D or 2 x its peak) on a host that fits it, and feeds no stop rule.  A FAIL that
 isn't to_class_only reruns once (try and probe), never in an update.  MAC_ROOT/runs/RUN/guest.json
 records what started and what ended: resume adopts an attempt that was started (hostjob.reattach_job)
 and starts another only once that one is proven gone with no row, never in an update round.
@@ -800,6 +801,116 @@ def _readline_timeout(stream, timeout):
     return box.get("l")
 
 
+# --- the network rule ------------------------------------------------------------------------------
+
+# The modes whose job downloads a guest's updates: a probe or a console boot (redox, sculpt2610's
+# try) reads no mirror, and starts whatever the internet does.
+NET_MODES = ("try", "update", "console-update")
+NET_DEFAULTS = {"net_probe_urls": ["https://deb.debian.org/debian/dists/trixie/main/binary-amd64/Packages.xz",
+                                   "https://mirrors.kernel.org/debian/dists/trixie/main/binary-amd64/Packages.xz"],
+                "net_probe_bytes": 2 * 1024 * 1024, "net_probe_s": 15, "net_min_kibs": 256, "net_clear_kibs": 1024,
+                "net_check_min": 5, "net_hold_min": 10, "net_hold_max_min": 240}
+
+
+def net_probe_cmd(url, nbytes, secs):
+    """The host's shell line that reads the first NBYTES of URL for at most SECS seconds and
+    prints "t2-net SPEED SIZE CODE" (curl's bytes/s, bytes, HTTP status), whatever curl's exit."""
+    return (f"curl -sS -o /dev/null -r 0-{int(nbytes) - 1} --max-time {int(secs)} "
+            f"-w 't2-net %{{speed_download}} %{{size_download}} %{{http_code}}\\n' {shlex.quote(url)} 2>/dev/null; true")
+
+
+def parse_net_probe(text):
+    """net_probe_cmd's output -> bytes/s (0.0 for a fetch that got nothing), or None for an
+    answer without the line (curl missing, the host's shell not reached)."""
+    for line in reversed(str(text or "").splitlines()):
+        m = re.match(r"\s*t2-net (\d+(?:\.\d+)?) (\d+) (\d{3})\s*$", line)
+        if m:
+            return float(m[1]) if 200 <= int(m[3]) < 300 and int(m[2]) > 0 else 0.0
+    return None
+
+
+class NetHold:
+    """The network rule (GuestTest2 t2v-20261119T0157-c8c7: the farm's internet ran at 5 to 100
+    KiB/s for hours, and ten try jobs each downloaded for 5400 s before the harness stopped them,
+    attempts 2 included).  Every net_check_min minutes while a job that downloads waits, one
+    host reads the first net_probe_bytes of each of net_probe_urls in turn, net_probe_s seconds
+    at most each, and the best rate counts (the first that is fast enough ends the probe).  A
+    rate under net_min_kibs KiB/s holds the farm, since its hosts share one internet: no job of
+    NET_MODES starts anywhere; those running go on.  It starts again once held net_hold_min
+    minutes and a probe reads at least net_clear_kibs (the hysteresis).  A hold that lasts
+    net_hold_max_min minutes gives up: the waiting jobs are skipped, so the run ends rather than
+    wait for ever.  A probe that can't be read (no host answered) changes nothing.
+    net_min_kibs 0 turns the rule off.
+
+        check(probe) -> None     PROBE(url, nbytes, secs) -> bytes/s or None; rate-limited
+        held() -> why or None;   gave_up() -> why or None;   notes() -> [what happened]"""
+
+    def __init__(self, policy=None, clock=None):
+        p = dict(NET_DEFAULTS, **{k: v for k, v in (policy or {}).items() if k in NET_DEFAULTS})
+        self.urls = [u for u in (p["net_probe_urls"] or []) if isinstance(u, str) and u]
+        self.nbytes, self.secs = int(p["net_probe_bytes"]), float(p["net_probe_s"])
+        self.min_b, self.clear_b = float(p["net_min_kibs"]) * 1024, float(p["net_clear_kibs"]) * 1024
+        self.every_s, self.min_s, self.max_s = float(p["net_check_min"]) * 60, float(p["net_hold_min"]) * 60, float(p["net_hold_max_min"]) * 60
+        self.clock = clock or time.time
+        self.last = None
+        self.hold = None          # {"since": t, "why": text}
+        self.given = None
+        self.said = []
+
+    @property
+    def on(self):
+        return self.min_b > 0 and bool(self.urls)
+
+    def rate(self, probe):
+        """The best rate the probe URLs give (the first fast enough ends it), and its URL; (None, None) when none could be read."""
+        best = (None, None)
+        for u in self.urls:
+            r = probe(u, self.nbytes, self.secs)
+            if r is not None and (best[0] is None or r > best[0]):
+                best = (r, u)
+            if r is not None and r >= self.clear_b:
+                break
+        return best
+
+    def check(self, probe):
+        if not self.on or self.given:
+            return None
+        now = self.clock()
+        if self.last is not None and now - self.last < self.every_s:
+            return None
+        self.last = now
+        r, url = self.rate(probe)
+        if r is None:
+            return None
+        kib = r / 1024
+        site = re.sub(r"^\w+://([^/]+).*", r"\1", url or "")
+        if self.hold is None:
+            if r < self.min_b:
+                why = f"the internet ran at {kib:.0f} KiB/s ({site}), under {self.min_b / 1024:g}"
+                self.hold = {"since": now, "why": why}
+                self.said.append(f"held every guest update: {why} ({utc_now()})")
+            return None
+        held_s = now - self.hold["since"]
+        if held_s >= self.min_s and r >= self.clear_b:
+            self.said.append(f"guest updates started again after {held_s / 60:.0f} min held (the internet at {kib:.0f} KiB/s; {utc_now()})")
+            self.hold = None
+            return None
+        if held_s >= self.max_s:
+            self.given = (f"the internet ran under {self.clear_b / 1024:g} KiB/s for {held_s / 60:.0f} min "
+                          f"(last {kib:.0f} KiB/s, {site}): the guest updates not yet started weren't run")
+            self.said.append(self.given)
+        return None
+
+    def held(self):
+        return None if self.hold is None else self.hold["why"]
+
+    def gave_up(self):
+        return self.given
+
+    def notes(self):
+        return list(self.said)
+
+
 # --- the pool --------------------------------------------------------------------------------------
 
 class UpdateEnv(hostjob.Env):
@@ -826,7 +937,7 @@ class Item:
 
 
 class Runner:
-    def __init__(self, ctx, plan, io=None, log=None, job=None, fleet=None, poll=POLL_S, clock=None, reattach=None):
+    def __init__(self, ctx, plan, io=None, log=None, job=None, fleet=None, poll=POLL_S, clock=None, reattach=None, net_probe=None):
         self.ctx, self.plan, self.rs = ctx, plan, ctx.run
         rs = self.rs
         self.word = rs.word
@@ -861,6 +972,9 @@ class Runner:
         self.state_path = os.path.join(rs.mac_dir, "guest.json")
         self.state = self._load_state()
         self.last_checks = 0.0
+        self.net = NetHold(self.policy, self.clock)     # the network rule
+        self.net_probe = net_probe or self.probe_net
+        self._net_said = None
 
     # --- state ------------------------------------------------------------------------------------
     def _load_state(self):
@@ -1035,6 +1149,8 @@ class Runner:
         lost = self.holder_lost()
         if lost:
             return f"the round's fleet-lock holder is gone ({lost}): no job starts without it"
+        if self.net.gave_up() and self.needs_net(it):
+            return self.net.gave_up()
         if hostjob.tripped(self.rs):
             return "a run-wide stop rule fired first"
         if not self.rs.stops.may_start(self.pm_of(it)):
@@ -1186,6 +1302,40 @@ class Runner:
             self.log(f"{h}: the swap rule's hold is over: jobs start there again")
         self._held_said = held
 
+    # --- the network rule (NetHold) ------------------------------------------------------------------
+    def needs_net(self, it):
+        """IT's job downloads (NET_MODES), and is no earlier process's attempt to adopt."""
+        return not it.resumed and mode_of(it.entry, self.update) in NET_MODES
+
+    def probe_net(self, url, nbytes, secs):
+        """NetHold's probe: the first host that answers (one the swap rule holds last) reads URL."""
+        held = self.held()
+        for h in sorted(self.hosts, key=lambda x: x in held):
+            try:
+                rc, out, _ = self.io.sh(h, net_probe_cmd(url, nbytes, secs), timeout=secs + 45)
+            except Exception:   # noqa: BLE001 - a host that can't be asked: the next
+                continue
+            r = parse_net_probe(out) if rc == 0 else None
+            if r is not None:
+                return r
+        return None
+
+    def net_check(self):
+        """The network rule's probe, when a job that downloads waits (NetHold rate-limits it); its holds logged once."""
+        if not any(self.needs_net(it) for it in self.pending):
+            return
+        try:
+            self.net.check(self.net_probe)
+        except Exception as e:   # noqa: BLE001 - a probe that breaks holds nothing
+            self.log(f"network rule: {type(e).__name__}: {e}")
+            return
+        why = self.net.held()
+        if why and why != self._net_said:
+            self.log(f"HOLD network: {why}: no guest update starts on any host; those running go on")
+        elif not why and self._net_said:
+            self.log("network: the hold is over: guest updates start again")
+        self._net_said = why
+
     def held(self):
         """{host: why}: the hosts the swap rule holds now (no job starts there)."""
         fn = getattr(self.rs.stops, "held", None)
@@ -1211,11 +1361,14 @@ class Runner:
                 else:
                     still.append(it)
             self.pending = still
-            held = self.held()
+            self.net_check()
+            held, net = self.held(), self.net.held()
             for host in self.hosts:
                 if host in held:
                     continue
                 for it in list(self.pending):
+                    if net and self.needs_net(it):
+                        continue
                     if host in it.allowed and self.can_start(it, host):
                         self.pending.remove(it)
                         self.start(it, host)
@@ -1462,7 +1615,7 @@ class Runner:
             bad = any(c.get("verdict") in FAILING or c.get("class") == "lost" for c in cells)
             ex = 1 if bad or rs.stops.stops else 0
         out = {"run": rs.run, "word": self.word.word, "family": "guest", "start": start, "end": utc_now(), "cells": cells,
-               "stops": list(rs.stops.stops), "notes": self.notes, "wear": {}, "hosts": sorted({c["host"] for c in self.cells if c.get("host")}),
+               "stops": list(rs.stops.stops), "notes": self.notes + ["network rule: " + n for n in self.net.notes()], "wear": {}, "hosts": sorted({c["host"] for c in self.cells if c.get("host")}),
                "copy": next((c.get("id") for c in (getattr(rs, "copy", None) or {}).values() if isinstance(c, dict) and c.get("id")), None),
                "blocks": self.blocks, "exit": ex}
         kept = getattr(self.env, "kept", None)    # (hostjob.host_checks: failed runs' kept state, by host)

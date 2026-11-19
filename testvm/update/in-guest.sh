@@ -1362,9 +1362,29 @@ EOF
     # t2-section: Linux.common
     elif has xbps-install; then
         # t2-section: Linux.xbps
+        # fetched CMD...: an xbps-install run again while it fails at a
+        # download, up to 10 times 30 s apart (void-zbm, GuestTest2
+        # t2v-20261119T0157-c8c7: "failed to download `gawk-5.4.2_1'
+        # package ... Input/output error" at 5 KB/s).  A transaction
+        # installs nothing until it has every package, and the ones it got
+        # stay in its cache for the next try.  A last failure's output
+        # ends the log, for GuestTest2's flake rules to read.
+        fetched() {
+            n=0
+            while :; do
+                { "$@" 2>&1; echo $? >/run/bko-fetch.rc; } | tee /run/bko-fetch.log
+                r=$(cat /run/bko-fetch.rc)
+                [ "$r" -ne 0 ] && [ "$r" -ne 17 ] && [ $n -lt 10 ] &&
+                    grep -qE "failed to download .* package from|\[reposync\] failed to fetch file" /run/bko-fetch.log ||
+                    break
+                n=$((n + 1)); say "a download failed: xbps-install again in 30 s ($n of 10)"; sleep 30
+            done
+            rm -f /run/bko-fetch.rc /run/bko-fetch.log
+            return "$r"
+        }
         # xbps itself first, as xbps-install asks.
-        xbps-install -Syu xbps || [ $? -eq 17 ] || exit 1   # 17: it is current already
-        xbps-install -yu || exit 1
+        fetched xbps-install -Syu xbps || [ $? -eq 17 ] || exit 1   # 17: it is current already
+        fetched xbps-install -yu || exit 1
         # Kernels are preserve=yes: an upgrade keeps the old one, its
         # initramfs and modules, until vkpurge removes them (not the one
         # running, nor any a package still owns).

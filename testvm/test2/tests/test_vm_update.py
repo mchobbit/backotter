@@ -298,6 +298,36 @@ class TestInGuest(unittest.TestCase):
         self.assertIn("fetched pacman -Sy --noconfirm || exit 1", pac)
         self.assertIn("fetched pacman -S --noconfirm --needed $up; } && fetched pacman -Su --noconfirm", pac)
 
+    def test_xbps_downloads_are_tried_again(self):
+        """xbps-install that failed at a download (void-zbm, t2v-20261119T0157-c8c7: Input/output
+        error at 5 KB/s) is tried again, 10 more times at most, and its last failure's tail is a
+        known flake; any other failure, and exit 17 (xbps is current), stop at once."""
+        for error in ("ERROR: [trans] failed to download `gawk-5.4.2_1' package from `https://repo-default.voidlinux.org/current': "
+                      "Input/output error",
+                      "ERROR: [reposync] failed to fetch file `https://repo-default.voidlinux.org/current/x86_64-repodata': "
+                      "Operation timed out"):
+            with self.subTest(error=error[:30]):
+                rc, n, out = self.run_fetched("Linux.xbps", 2, error)
+                self.assertEqual((rc, n), (0, 3), out)
+                self.assertIn("in-guest: a download failed: xbps-install again", out)
+                rc, n, out = self.run_fetched("Linux.xbps", 99, error)
+                self.assertEqual((rc, n), (100, 11), out)
+                flakes = json.loads((T2 / "guest" / "flakes.json").read_text())
+                sys.path.insert(0, str(T2))
+                self.addCleanup(sys.path.remove, str(T2))
+                from t2lib import guest_judge as J
+                f = J.match_flake("void-zbm", out.rstrip().splitlines()[-3:], flakes)
+                self.assertIsNotNone(f, out)
+                self.assertIn("xbps", f["ref"])
+        rc, n, out = self.run_fetched("Linux.xbps", 99, "ERROR: unresolvable shlib `libfoo.so.1'")
+        self.assertEqual((rc, n), (100, 1), out)
+        xbps = self.sections()["Linux.xbps"]
+        self.assertIn("fetched xbps-install -Syu xbps || [ $? -eq 17 ] || exit 1", xbps)
+        self.assertIn("fetched xbps-install -yu || exit 1", xbps)
+        # 17 (current already) is no download failure, even with one in the log
+        m = re.search(r"^( *)fetched\(\) \{\n.*?^\1\}\n", xbps, re.M | re.S)
+        self.assertIn('[ "$r" -ne 17 ]', m[0])
+
     def test_apt_lock_held_by_the_guests_own_apt_is_waited_out(self):
         """apt-get clean (and any apt-get) stopped by the lists' or the archives' lock that an apt
         of the guest's own holds, which DPkg::Lock::Timeout doesn't wait for (pop24, GuestTest2

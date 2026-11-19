@@ -58,5 +58,11 @@
   "pattern": "\\bUnable to contact valid package repository\\b|^\\s*Framework (stall|error):",
   "why": "an IPS publisher's repository (pkg.openindiana.org, pkg.omnios.org) that didn't answer pkg: not the guest's fault",
   "ref": "pkg(5)'s message when a repository can't be reached (GuestTest2 t2v-20261118T2305-edbb, oi2610: Framework stall); in-guest.sh's SunOS refreshes the catalogs and updates 10 times 30 s apart: this tail is the last try's"
+ },
+ {
+  "guest": "*",
+  "pattern": "\\bERROR: \\[trans\\] failed to download .* package from |\\bERROR: \\[reposync\\] failed to fetch file\\b",
+  "why": "a Void mirror that didn't serve a package or its repodata: not the guest's fault",
+  "ref": "xbps-install's messages for a failed download (GuestTest2 t2v-20261119T0157-c8c7, void-zbm: Input/output error at 5 KB/s); in-guest.sh's Linux.xbps runs xbps-install again 10 times 30 s apart: this tail is the last try's"
  }
 ]

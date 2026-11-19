@@ -344,7 +344,11 @@ end after 5400 s; waiting on the network: LINE`, rows_guest.net_stall: a flakes.
 curl's or Go's timeouts, in-guest.sh's download retries, an apt fetch under 64 kB/s for a minute
 or more) and 2 of those stop GuestTest2 only, since SticTest2 and HoltTest2 download nothing
 (t2v-20261119T0157-c8c7: seven updates crawled for 90 min each over a link dropping 40% of
-packets, and the run-wide count stopped the sweep's SticTest2); this run's jobs writing over
+packets, and the run-wide count stopped the sweep's SticTest2); so too a stic check whose test
+tools' install waited on the network (`FAIL harness-tools: apk add PKG... failed (waiting on the
+network: LINE)`, stictest1/apk-add.sh, the row's extra.net_stall by rows_stic.net_stall): 2 of
+those stop SticTest2 only (t2s-20261119T0726-e436: alpine324's and chimera's apk add ran out of
+time at 10-200 KB/s and stopped the whole sweep); this run's jobs writing over
 twice the budget (their wear tags, never other sessions' writes; classes.json
 policy.stop.write_budget_x x budget.run_gb) start nothing new.
 The swap rule is per host (run.py's `HostHolds`, since 2026-11-18): a host whose swap-out

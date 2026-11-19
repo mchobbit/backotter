@@ -72,6 +72,7 @@
    ],
    "harness": [
     "testvm/stictest1/alpine324/**",
+    "testvm/stictest1/apk-add.sh",
     "testvm/compare/fsmeta.py",
     "testvm/compare/rt-common.sh"
    ],
@@ -87,6 +88,7 @@
    ],
    "harness": [
     "testvm/stictest1/alpine324-arm64/**",
+    "testvm/stictest1/apk-add.sh",
     "testvm/stictest1/alpine324/check-inner.sh",
     "testvm/compare/fsmeta.py",
     "testvm/compare/rt-common.sh"
@@ -239,6 +241,7 @@
    ],
    "harness": [
     "testvm/stictest1/chimera/**",
+    "testvm/stictest1/apk-add.sh",
     "testvm/compare/fsmeta.py",
     "testvm/compare/rt-common.sh"
    ],
@@ -254,6 +257,7 @@
    ],
    "harness": [
     "testvm/stictest1/chimera-uefi/**",
+    "testvm/stictest1/apk-add.sh",
     "testvm/compare/fsmeta.py",
     "testvm/compare/rt-common.sh"
    ],
@@ -269,6 +273,7 @@
    ],
    "harness": [
     "testvm/stictest1/chimera-zfs/**",
+    "testvm/stictest1/apk-add.sh",
     "testvm/compare/fsmeta.py",
     "testvm/compare/rt-common.sh"
    ],

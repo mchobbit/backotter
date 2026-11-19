@@ -155,10 +155,11 @@ def cut(text, n=160):
 class Stops:
     """1.9's rules on SticTest2's own rows and hosts: one need failing on
     OS_NEED_GUESTS guests of an OS stops that OS; HARNESS_RESULTS harness-class
-    results (known flakes aside) stop the run; this run's jobs writing over
+    results (known flakes aside) stop the run, but HARNESS_RESULTS of them that waited on the
+    network (res["net"]: rows_stic.net_stall) stop SticTest2 only; this run's jobs writing over
     WRITE_BUDGET_X x the run budget (R22) start nothing more; swap-out holds
     its host alone (run.py's HostHolds; held()).  feed(res) and feed_host(host,
-    swap, ours) answer "ok" | "stop-os OS" | "stop-run" | "stop-starts", as
+    swap, ours) answer "ok" | "stop-os OS" | "stop-family" | "stop-run" | "stop-starts", as
     run.py's StopEngine does (it also has the gate rules)."""
 
     def __init__(self, policy=None):
@@ -168,13 +169,20 @@ class Stops:
         self.harness_max = int(stop.get("harness_results", 2))
         self.holds = HostHolds(stop) if HostHolds is not None else None
         self.write_max = float(stop.get("write_budget_x", 2)) * float(budget.get("run_gb", 2)) * 1e9
-        self.failed, self.harness, self.stopped_os = {}, 0, set()
-        self.stop_run = self.stop_starts = False
+        self.failed, self.harness, self.net, self.stopped_os = {}, 0, 0, set()
+        self.stop_run = self.stop_starts = self.stop_family = False
         self.stops = []
 
     def feed(self, res):
         out = "ok"
-        if res.get("class") in ("harness", "lost") and not res.get("flake"):
+        if res.get("class") in ("harness", "lost") and not res.get("flake") and res.get("net"):
+            self.net += 1
+            if self.net >= self.harness_max and not self.stop_family:
+                self.stop_family = True
+                self.stops.append(f"stop-family: {self.net} results stalled on the network (last {res.get('cell')}): "
+                                  "nothing more of this family starts")
+                return "stop-family"
+        elif res.get("class") in ("harness", "lost") and not res.get("flake"):
             self.harness += 1
             if self.harness >= self.harness_max and not self.stop_run:
                 self.stop_run = True
@@ -939,7 +947,10 @@ class SticRun:
         g = guest_of(row.get("cell", ""))
         return {"cell": row.get("cell"), "verdict": row.get("verdict"), "class": row.get("class"),
                 "needs": row.get("needs") or {}, "os": self.os_of().get(g),
-                "flake": (row.get("extra") or {}).get("flake"), "part": None}
+                "flake": (row.get("extra") or {}).get("flake"), "part": None,
+                # its tools' install waited on the network (rows_stic.net_stall): SticTest2's own
+                # stop, never the run-wide harness count, which would stop HoltTest2 and the rest
+                "net": bool((row.get("extra") or {}).get("net_stall")) and row.get("verdict") == "HARNESS"}
 
     def ours(self, r, mark=None):
         """Whether R is a row of this run (of MARK's origins, or any of the run's marks)."""

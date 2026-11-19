@@ -43,7 +43,9 @@ Verdicts and classes (the stop rules count the classes):
     FAIL, fail          a FAIL line, or a LIMIT not classed (LIMIT-NEW)
     HARNESS, harness    only harness FAILs (boot, copy, binaries, check ran,
                         harness, guest boots), exit 0 with no FAIL line missing,
-                        a non-zero exit with no FAIL line, or no verdict lines
+                        a non-zero exit with no FAIL line, or no verdict lines;
+                        one whose tools' install waited on the network
+                        (net_stall) has extra.net_stall: SticTest2's own stop
     LOST, harness       no exit file (drive.py: --lost)
     FLAKY-FAIL, fail    a PASS on attempt 2 (the rerun after a FAIL)
     PASS, known-flake   the same when cells.json marks attempt 1's FAILs a
@@ -68,6 +70,9 @@ HARNESS_NEEDS = ("boot", "copy", "binaries", "check ran", "harness", "harness-to
 RANK = {"PASS": 0, "SKIP": 0, "LIMIT": 1, "DIFF": 2, "LIMIT-NEW": 3, "FAIL": 4}
 OS_RESTIC = {"haiku": "linux"}   # drive.py's RESTIC_FROM: haiku6 reads its repository with Linux's restic-bko
 MAX_FAILS, MAX_LEN = 20, 200
+# A check's install of its test tools that waited on the network says so at its line's end
+# (stictest1/apk-add.sh: "FAIL harness-tools: apk add PKG... failed (waiting on the network: LINE)").
+NET_WAIT_RX = re.compile(r"\(waiting on the network: (.+)\)\s*$")
 
 
 # --- the check's lines ----------------------------------------------------------------
@@ -188,6 +193,25 @@ def judge(lines, exit_code, lost=False, limits_classed=None, attempt=1, flake=No
             verdict, cls = "FLAKY-FAIL", "fail"
             notes.append("passed on attempt 2: FLAKY-FAIL")
     return verdict, cls, needs, counts, fails[:MAX_FAILS], notes
+
+
+def net_stall(verdict, lines):
+    """What says a HARNESS result waited on the network, or None: a harness-tools FAIL line
+    ending "(waiting on the network: LINE)" (stictest1/apk-add.sh: apk's log line, or the
+    step's time running out) when every FAIL is a harness need.  Such a result counts toward
+    SticTest2's own stop only, never the run-wide harness count, as GuestTest2's stalled
+    updates do (t2s-20261119T0726-e436: alpine324's and chimera's installs ran out of time
+    on a link at 10-200 KB/s, and their two HARNESS rows stopped the whole sweep)."""
+    if verdict != "HARNESS":
+        return None
+    fails = [(n, d) for v, n, d in lines or () if v == "FAIL"]
+    if not fails or any(n not in HARNESS_NEEDS for n, _ in fails):
+        return None
+    for n, d in fails:
+        m = NET_WAIT_RX.search(d or "") if n == "harness-tools" else None
+        if m:
+            return " ".join(m.group(1).split())[:150]
+    return None
 
 
 def gm_of(load, start, end, waits):
@@ -556,6 +580,9 @@ def build(argv, hostctx=None):
     verdict, cls, needs, counts, fails, jn = judge(lines, code, a.lost, lc, attempt, (ce or {}).get("flake"),
                                                    (ce or {}).get("prev_needs"))
     notes += jn
+    net = net_stall(verdict, lines)
+    if net:
+        notes.append(f"waiting on the network: {net} (SticTest2's own stop, never the run's)"[:MAX_LEN])
     fl = None
     if verdict in ("FAIL", "HARNESS", "LOST") and attempt == 1:
         full = [f"FAIL {n}: {d}" for v, n, d in lines if v == "FAIL"]
@@ -626,6 +653,8 @@ def build(argv, hostctx=None):
         row["extra"]["changed"] = [n[:MAX_LEN] for n, _ in moved[:MAX_FAILS]]
     if made:
         row["extra"]["made"] = made
+    if net:
+        row["extra"]["net_stall"] = net
     if fl:
         row["extra"]["flake"] = {k: fl.get(k) for k in ("guest", "pattern", "why", "ref", "evidence") if k in fl}
     if (ce or {}).get("flake"):

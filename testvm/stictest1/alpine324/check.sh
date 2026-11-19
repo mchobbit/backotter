@@ -27,6 +27,8 @@ SCR=/mnt/bko-ram/$PFX/$GUEST
 mkdir -p "$SCR"
 export TMPDIR=$SCR WORK
 . "${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh"
+# shellcheck source=../apk-add.sh
+. "$HERE/../apk-add.sh"
 cleanup() { vm_halt; rm -rf -- "${SCR:?}"; rmdir "/mnt/bko-ram/${PFX:?}" 2>/dev/null; }
 trap cleanup EXIT
 log=$LOGS/check-$(date +%Y%m%d-%H%M%S).log
@@ -34,12 +36,15 @@ log=$LOGS/check-$(date +%Y%m%d-%H%M%S).log
     echo "== $GUEST $(date -Is) bin=$BIN port=$PORT"
     cat "$BIN/restic-commit" "$BIN/rustic-commit" 2>/dev/null | head -4
     VM_BOOT_TIMEOUT=300 vm_boot $GUEST "$PORT" "$LOGS/vm" --snapshot --memory 4096 || { echo "FAIL boot: guest didn't come up"; exit 1; }
-    T=300 vm_sh 'apk add -q --no-progress bash attr acl libcap-utils python3 e2fsprogs-extra xfsprogs-extra coreutils file 2>&1 | tail -3' ||
-        echo "FAIL harness-tools: apk add failed"
-    for f in "$BIN/restic-bko" "$BIN/rustic-bko" "${BKO_TESTVM:-$WORK/testvm}/compare/fsmeta.py" "${BKO_TESTVM:-$WORK/testvm}/compare/rt-common.sh" "$HERE/check-inner.sh"; do
-        vm_put "$f" "/root/$(basename "$f")" || echo "FAIL harness-copy: $f"
-    done
-    T=780 vm_sh 'bash /root/check-inner.sh' 2>&1
+    # No copy and no inner part without the tools (apk-add.sh: the image's
+    # index, this host's package cache, 4 tries; t2s-20261119T0726-e436's
+    # 300 s ran out on a crawling link, and the inner part had no bash).
+    if stic_apk_add bash attr acl libcap-utils python3 e2fsprogs-extra xfsprogs-extra coreutils file; then
+        for f in "$BIN/restic-bko" "$BIN/rustic-bko" "${BKO_TESTVM:-$WORK/testvm}/compare/fsmeta.py" "${BKO_TESTVM:-$WORK/testvm}/compare/rt-common.sh" "$HERE/check-inner.sh"; do
+            vm_put "$f" "/root/$(basename "$f")" || echo "FAIL harness-copy: $f"
+        done
+        T=780 vm_sh 'bash /root/check-inner.sh' 2>&1
+    fi
     echo "== end $(date -Is)"
 } >"$log" 2>&1
 grep -E '^(PASS|FAIL|LIMIT) ' "$log" | { if [[ -n $FILTER ]]; then grep -E "$FILTER"; else cat; fi; } >"$SCR/lines"

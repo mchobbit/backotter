@@ -38,6 +38,8 @@ mkdir -p "$SCR"
 export TMPDIR=$SCR WORK
 # shellcheck source=/dev/null
 . "${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh"
+# shellcheck source=../apk-add.sh
+. "$HERE/../apk-add.sh"
 cleanup() { vm_halt; rm -rf -- "${SCR:?}"; rmdir "/mnt/bko-ram/${PFX:?}" 2>/dev/null; }
 trap cleanup EXIT
 log=$LOGS/check-$(date +%Y%m%d-%H%M%S).log
@@ -47,17 +49,19 @@ log=$LOGS/check-$(date +%Y%m%d-%H%M%S).log
     # vm-run reads the guest's vm-run-options (--uefi --no-secure-boot); the
     # LUKS2 key is in the initramfs, so it boots unattended.
     VM_BOOT_TIMEOUT=300 vm_boot $GUEST "$PORT" "$LOGS/vm" --snapshot --memory 4096 || { echo "FAIL boot: guest didn't come up"; exit 1; }
-    # apk's own exit status (not tail's, nor mkdir's): without these tools
-    # the fixture would lack what they set and still compare equal.
-    T=300 vm_sh 'apk add --no-interactive -q --no-progress attr-progs acl-progs libcap-progs dosfstools >/root/apk.log 2>&1; rc=$?
-        tail -n 3 /root/apk.log; mkdir -p /root/c4; exit $rc' ||
-        echo "FAIL harness-tools: apk add attr-progs acl-progs libcap-progs dosfstools failed"
-    for f in "$BIN/restic-bko" "$BIN/rustic-bko" "${BKO_TESTVM:-$WORK/testvm}/compare/fsmeta.py" "${BKO_TESTVM:-$WORK/testvm}/compare/rt-common.sh" \
-             "$HERE/inner.sh" "$HERE/fatattr.py"; do
-        vm_put "$f" "/root/c4/$(basename "$f")" || echo "FAIL harness-copy: $f"
-    done
-    T=900 vm_sh 'sh /root/c4/inner.sh' 2>&1; rc=$?
-    [[ $rc -eq 0 ]] || echo "FAIL harness: inner.sh exit $rc"
+    # Without these tools the fixture would lack what they set and still
+    # compare equal: no copy and no inner part without them (apk-add.sh).
+    # /root/c4 first and alone: in t2s-20261119T0726-e436 the install's
+    # step ran out before its mkdir, and every copy then failed.
+    T=60 vm_ssh 'mkdir -p /root/c4' || echo "FAIL harness-copy: mkdir /root/c4 in the guest"
+    if stic_apk_add attr-progs acl-progs libcap-progs dosfstools; then
+        for f in "$BIN/restic-bko" "$BIN/rustic-bko" "${BKO_TESTVM:-$WORK/testvm}/compare/fsmeta.py" "${BKO_TESTVM:-$WORK/testvm}/compare/rt-common.sh" \
+                 "$HERE/inner.sh" "$HERE/fatattr.py"; do
+            vm_put "$f" "/root/c4/$(basename "$f")" || echo "FAIL harness-copy: $f"
+        done
+        T=900 vm_sh 'sh /root/c4/inner.sh' 2>&1; rc=$?
+        [[ $rc -eq 0 ]] || echo "FAIL harness: inner.sh exit $rc"
+    fi
     echo "== end $(date -Is)"
 } >"$log" 2>&1
 grep -E '^(PASS|FAIL|LIMIT) ' "$log" | { if [[ -n $FILTER ]]; then grep -E "$FILTER"; else cat; fi; } >"$SCR/lines"

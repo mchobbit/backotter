@@ -48,6 +48,13 @@ extra(s).sh, guest.sh, nracl.py and others. Shared helpers come from
 testvm/compare (fsmeta.py, rt-common.sh, guest-slot.sh, cmp-run.sh). arch keeps
 its own older fsmeta.py, so its verdicts stay as they were.
 
+The apk guests (alpine324, alpine324-arm64, chimera, chimera-uefi, chimera-zfs)
+install their test tools with `apk-add.sh`: the image's own index, a package
+cache on the host (`~/backotter-work/stictest1/GUEST/apk-cache`, refilled after
+each install that fetched anything), 4 tries, and nothing copied or run in the
+guest without the tools. When the network stalls, its FAIL line ends
+`(waiting on the network: LINE)`, which SticTest2 counts toward its own stop only.
+
 `testvm/sync-hosts.sh` copies testvm/ to the hosts, so the scripts run there
 from `~/backotter-work/testvm/stictest1/GUEST/check.sh`. They replace the old
 copies in `~/backotter-work/stictest1/GUEST/`, which hold the earlier rounds'

@@ -22,7 +22,7 @@ of D 3 or less; nothing else is placed there. Since 2026-11-18 its row also sets
 `max_wall_x` 2: t2 leaves to the other hosts the HoltTest2 and GuestTest2 cells longer than
 twice their family's median cell elsewhere, and those it ran over twice as long as elsewhere
 lately (testvm/test2/README.md, How a plan decides). Its role is `cache` only (cap
-260G, floor 60G on the /home partition, `/bkoscratch` a bind of
+300G since 2026-11-19, was 260G; floor 60G on the /home partition, `/bkoscratch` a bind of
 `/home/bkoscratch`), and it links only the published guests that fit. Its
 Debian also holds the user's own projects, and it is the user's fallback
 bare-metal machine for real-world runs when a distro rejects the Thinkpad: such
@@ -385,7 +385,9 @@ other sessions' runs.
 4. **Store cache.**
    - Create the cache: `vm-store init /bkoscratch/bko-cache --role cache --cap
      SIZE --floor SIZE`. Size the cap for every linked guest plus one new
-     version. For comparison, Cage's and Copland's 160G caps are 143G full.
+     version. For comparison, Cage's and Copland's caps were raised from 400G to
+     500G on 2026-11-19, at about 420G used (overlays of BackShot2 sources,
+     kept failures and HoltTest runs hold many objects, so gc frees little).
    - Link each guest the host should have: `vm-store link GUEST...`. This
      fetches from Chopin and creates `vms/GUEST`.
    - After this, every publish on Chopin relinks the host itself (it is

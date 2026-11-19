@@ -335,6 +335,78 @@ bootstrap in QEMU under Secure Boot: a blank NVMe, the ISO on a USB drive,
 then the disk alone by the NVRAM entry, with grub.cfg checked for other
 disks' systems.  Written 2026-11-15, not yet run.
 
+## Void musl on encrypted ZFS, ZFSBootMenu (family Z)
+
+Void Linux (musl) with its root on a natively encrypted ZFS pool, booted by
+ZFSBootMenu's v3.1.0 release EFI image: the `void-zbm-enc` guest's layout
+(ZFSBootMenu's own Void guide) on real hardware, with Xfce and LightDM.
+Pool `zroot`, boot environments `zroot/ROOT/void` (Void's default kernel and
+a newer series, linux7.2 on 2026-11-19) and its clone `zroot/ROOT/void-6.18`
+(the default kernel only), `zroot/home` and `zroot/var/log` shared.
+`testvm/realworld/void-zbm-bootstrap.sh` installs it from the stick; its
+header has the layout and the two musl gotchas.
+
+The inputs are pinned by SHA-256 in the script; their signatures are checked
+on Cinqcent, where minisign and signify are, as make-void-zfs.sh and
+make-bootstrap.sh check them (both lines must print OK):
+
+    ssh m@cinqcent.local 'cd /bkoscratch/rebuild-inputs/void-musl-rootfs &&
+      minisign -q -V -P RWT5+SoQD+dWTeOdNuc4Q/jq2+3+jpql7+JJp4WukkxTdpsZlk2EGuPj -m sha256sum.txt -x sha256sum.sig &&
+      sha256sum -c --ignore-missing --quiet sha256sum.txt && echo VOID-SIG-OK
+      cd /bkoscratch/rebuild-inputs/void-zbm &&
+      grep -qxF RWSUawlGznCLF8NxEb1EyrGpP2eIR9l7JIZgLzCdv+64uBDvfXNJm+cF zfsbootmenu.pub &&
+      signify-openbsd -V -q -p zfsbootmenu.pub -x sha256.sig -m sha256.txt &&
+      sha256sum -c --ignore-missing --quiet sha256.txt && echo ZBM-SIG-OK'
+
+`void-x86_64-musl-ROOTFS-20250202.tar.xz` (from `void-musl-rootfs/`),
+`zfsbootmenu-release-x86_64-v3.1.0-linux6.12.EFI` (from `void-zbm/`) and the
+script go onto the drive's `backshot1/void-zbm/`, while the installed system
+(or a Void live ISO) has the drive mounted; `sha256sum` them there.  The
+script keeps xbps's package cache and every run's log
+(`install-DATE-exitRC.log`) in that directory too.  The release image goes
+on the ESP as released (no `zbm-kcl`): `bs1-adopt` rewrites its `.cmdline`.
+
+Then `backshot1 to-stick` (it works from Void's live ISO as well: plain
+`reboot`, the live system's efibootmgr), and on the stick, detached, since
+it takes a while (two DKMS builds of zfs, ~1.5 GB of packages):
+
+    sudo bash /mnt/bs1-backup/backshot1/void-zbm/void-zbm-bootstrap.sh --detach SERIAL thinkpad
+
+(or from a copy in the stick's `/tmp`: it finds LABEL=mybig512 and mounts it
+at `/mnt/bs1-backup` itself).  It refuses a SERIAL that isn't exactly one
+NVMe disk with a `/dev/disk/by-id/nvme-*_SERIAL` link, or the disk the
+drive is on.  Wait for `/run/bko-void-zbm/exit` (a dropped SSH connection
+doesn't stop the run; the log is `/run/bko-void-zbm/install.log`): success
+is `0` and the last line `BKO-VOID-ZBM-INSTALL-OK`.  A failed run can just
+be run again: every run starts from the wipe.  The script leaves
+`ZFSBootMenu` first in BootOrder and its number in
+`/run/bko-void-zbm/zbm-entry` (`ZBM_ENTRY=NNNN`), for `efibootmgr -n` before
+the reboot.
+
+**The person types the passphrase once**, at the first boot: ZFSBootMenu
+asks `Enter passphrase for 'zroot':`, the passphrase in
+`keys/disk-passphrase`, on the US layout whatever the keys say (the release
+image sets no keymap; on the A100's French keyboard, type where the US keys
+would be).  Its menu then counts down and boots `zroot/ROOT/void`; the boot
+environment's initramfs opens the pool with `/etc/zfs/zroot.key`.  Start
+`backshot1 wait-host` once the passphrase is typed (it gives up after
+10 min, and ZFSBootMenu waits for as long as nobody types).  Unplug a Void
+live stick while there: preflight refuses extra USB disks.  Root and `m`
+have no password (`*`): the way in is SSH, and `ssh -t ... root@thinkpad.local
+passwd m` lets LightDM log `m` in.  `hostid` prints `00000000` on musl;
+`/etc/hostid` (` 0c b1 ba 00`) and `spl_hostid` are what ZFS reads.  The
+other boot environment boots from ZFSBootMenu's menu (`/etc/bko-be` names
+it).
+
+Then `backshot1 adopt` (family Z, below in "Unlocking from the drive"),
+reboot, `wait-host` (nobody types now), `unlock` (it must say `drive`;
+`typed` means the firmware booted `ZFSBootMenu (Backup)` or the removable
+path `EFI/BOOT/BOOTX64.EFI`, neither of which adopt changes), `preflight`,
+then `phase1` (it prints `RUN=NAME`) and
+`cycle NAME 1 --erase-serial SERIAL`.  Passed 2026-11-19, run
+`void-20261119-133257`: unattended (`UNLOCK=drive`), the round in 7 min,
+115,399 files compared, 0 unexpected.
+
 ## BigLinux: Timeshift's snapshots and systemd-swap
 
 BigLinux (Manjaro stable underneath; docs/design/biglinux.md) installs with

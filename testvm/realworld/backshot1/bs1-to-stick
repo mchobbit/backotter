@@ -60,6 +60,13 @@ else
     efibootmgr | grep -E "^Boot$entry"
 fi
 say "rebooting into the stick ($esp, $loader), once"
+# Ubuntu: unattended-upgrades.service holds the shutdown until a running
+# unattended-upgrade finishes, and on a development release that run can
+# spin for good ("Unattended-upgrade in progress" until the power button).
+# The backup is taken; stop the run itself so the shutdown goes through.
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl kill --signal=KILL apt-daily-upgrade.service apt-daily.service 2>/dev/null || true
+fi
 sync
 # After a moment, so the controller hears that this worked.  -i: a desktop
 # session's block inhibitor (GNOME's "user session inhibited") otherwise

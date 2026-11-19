@@ -374,16 +374,24 @@ answered, its boot id and its uptime.  A host that hasn't answered for a minute,
 another boot id, is held as the swap rule holds one (the same `held()`, `--hold-file`, `max-HOST`
 and pool rules; drive.py doesn't wait for a held host it never read), until it has answered for
 5 min in a row and been up that long; a hold of 2 h is run-wide.  A HARNESS or LOST result is
-host-lost when its host is held, was away (from its last answer before the hold to its first
-after) while the job ran, or booted after the job began (its uptime: a host back before any look
-saw it gone counts too), or when host_job got no answer from it in 20 polls: no stop rule counts
-it (not the run-wide harness count, nor a slow gate's stop-starts), the report lists it as a
+host-lost when its host booted after the job began (its uptime: a host back before any look
+saw it gone counts too), when it ended while its host is held (at or after the hold's away window
+began: an old row judged again in an r2 round isn't), when it ended inside an away window (its last
+answer before the hold to its first after) or 5 min after it (a no-answer blip under a job that ran
+on for hours isn't its loss), or when host_job got no answer from it in 20 polls: no stop rule counts
+it (not the run-wide harness count, nor a slow gate's stop-starts: SticTest2 goes on beside a
+host-lost slow layer, run_layers' `go`, and fails at the end), the report lists it as a
 `host rule:` note, and it is requeued once: GuestTest2 at once, to a host it may run on (never
 beside a job that may still run: with no answer and no reboot since, another host only;
 never a second real update); SticTest2 and HoltTest2 in their r2 round (`rerun_why`
-`host-lost` in cells-r2.json: a pass then is a PASS, not a FLAKY-FAIL); a gate layer as its
-attempt 2 once its host is back; and HoltTest2 starts its queue's runner again, once, on a host
-that rebooted under it when it is back and the todo still has lines.  A job TERMed by its host's
+`host-lost` in cells-r2.json: a pass then is a PASS, not a FLAKY-FAIL), HoltTest2's jobs a reboot
+killed too (their lines in todo.taken with no done row); a gate layer as its attempt 2 once its
+host is back (the gate looks at the host before each attempt, waits until it answers, then reruns
+unless no reboot was seen and its job may still run), and every rerun waits until its host has
+answered 5 min and been up that long; HoltTest2 starts its queue's runner again, once, on a host
+that rebooted under it when it is back and the todo still has lines; and drive.py gives up the
+running checks of a host that never answers again as LOST after 2 h (`--lost-after`), or 10 min
+once the run stops and the host is held, so the round ends.  A job TERMed by its host's
 shutdown writes its row before the host stops answering (holt:vanilla3's LOST, exit 143, at
 15:30:21Z): so a HARNESS or LOST result on a host the rule has looked at waits until the host is
 seen answering 2 min after the result's end (at most 15 min; the run's end counts what still

@@ -23,8 +23,9 @@ A FAIL, or a run that didn't finish (HARNESS), runs once more as attempt 2 under
 a pass then is FLAKY-FAIL.  Never beside a job that may still run: a host job given up
 (no room after its wait, past its timeout, the host not answering) gets a TERM to its
 process group, and when it can't be seen gone there is no attempt 2, unless its host rebooted since (the
-host rule, run.py's HostWatch: a HARNESS whose host went away under it is host-lost, and its attempt 2
-waits for the host to be back; a slow layer's host-lost result stops nothing).  A fast layer that doesn't pass answers stop-family (no guest
+host rule, run.py's HostWatch, fed a look before each attempt: a HARNESS whose host went away under it
+is host-lost; the gate first waits for the host to be back and settled, then reruns it unless its job may
+still run there, no reboot seen; a slow layer's host-lost result stops nothing, run_layers' "go").  A fast layer that doesn't pass answers stop-family (no guest
 of the calling family starts), a slow one stop-starts.
 
     gate:holt          holt-test.sh on Chopin (pinned there: the raw dumps of
@@ -83,6 +84,7 @@ from . import DEFAULT_HOSTS, gate_hosts, host_class, utc_now
 from .hostjob import (  # noqa: F401 - host_job and its helpers, as gate.X too
     CMP_RUN, FETCH_SCRIPT, POLL_S, UNKNOWN_MAX, HostIO, JobFailure, _q, guards_of, host_job, host_lost, host_seen,
     job_poll_cmd, job_times, layer_dir, tripped, wait_back)
+from .hostjob import feed_seen as hostjob_feed_seen
 from .gate_judge import (  # noqa: F401 - the judge's names, as gate.X too
     NEED_FAIL, TEXT_MAX, ROOTISH, cut, verdict_of, counts_of, Outcome, harness, CARGO_RESULT,
     CARGO_FAILED, CARGO_ERROR, parse_cargo, parse_steps, parse_kv, parse_diff_json, REDACT_LINE,
@@ -915,6 +917,7 @@ def run_one(env, cell, attempt_fn):
     for a in (1, 2):
         start = utc_now()
         env.log(f"{cell} on {host}: attempt {a}")
+        host_look(env, host)   # (the host rule's boot id before the job: a reboot under it then holds the host)
         try:
             o = attempt_fn(a)
         except Exception as ex:   # noqa: BLE001 - the layer's code failing is a harness result
@@ -945,17 +948,19 @@ def run_one(env, cell, attempt_fn):
             break
         stops = getattr(env.rs, "stops", None) if env.rs is not None else None
         rb = getattr(stops, "rebooted", None)
-        if o.still_running and not (host_lost and rb is not None and rb(host, start)):
-            # its job may still run on the host: never a second beside it (one that rebooted since: none does)
-            env.log(f"{cell}: no rerun: attempt {a}'s job may still run")
-            break
         if host_lost and a == 1:
+            # first back (a host still powered off when host_job gave up can't show its reboot
+            # yet), then whether attempt 1's job may still run there
             env.log(f"{cell}: host lost on {host} ({host_lost}): attempt 2 once it is back")
             ws = getattr(getattr(stops, "watch", None), "max_s", 7200)
             if not wait_back(stops, host, lambda h: host_seen(env.io, h), env.io.sleep, ws, env.log,
                              cancelled=lambda: tripped(env.rs)):
                 env.log(f"{cell}: no rerun: {host} isn't back")
                 break
+        if o.still_running and not (host_lost and rb is not None and rb(host, start)):
+            # its job may still run on the host: never a second beside it (one that rebooted since: none does)
+            env.log(f"{cell}: no rerun: attempt {a}'s job may still run")
+            break
     name, _ = split_cell(cell)
     if o.note and o.note.startswith(("plan diff not yet accepted", "unproven golden plans")):
         reasons = [o.note] + reasons   # R23: the report names the unaccepted plan diff
@@ -970,6 +975,18 @@ def run_one(env, cell, attempt_fn):
             "gm": 0.0, "wall_s": o.wall_s, "gb": None, "host": host, "needs": o.needs, "fails": o.fails,
             "note": o.note, "part": "slow" if entry_or_empty(env.layers, name).get("part") == "slow" else "fast",
             "plan_diff": o.extra.get("plan_diff") if name == "holt" else None, "host_lost": host_lost}
+
+
+def host_look(env, host):
+    """A look at HOST (hostjob.host_seen) fed to the host rule, as the other families' polls do:
+    the gate's own looks, so a standalone gate's rule knows the host's boot before each job."""
+    stops = getattr(env.rs, "stops", None) if env.rs is not None else None
+    if stops is None or not host or host in ("mac", "local") or getattr(stops, "feed_seen", None) is None:
+        return
+    try:
+        hostjob_feed_seen(stops, host, host_seen(env.io, host))
+    except Exception:   # noqa: BLE001 - a look that fails stops nothing
+        pass
 
 
 def layer_host_lost(env, cell, host, start, o):
@@ -1094,7 +1111,9 @@ def run_layers(ctx, names, part=None, plan=None, env=None, io=None, log=None, on
     into cmp-run.sh's line largest first, slow_order: each next one once the one before is in
     the line, or after SUBMIT_WAIT_S).
     {"cells": [entry], "rows": [id], "stops": [text], "stop": None|stop-family|stop-starts,
-    "ok": bool, "exit": 0|1}.  Once a run-wide stop rule (RunGuards) has fired, no further layer
+    "ok": bool, "go": bool, "exit": 0|1}: ok, every layer passed and ran; go, nothing in them
+    stops the rest (a slow layer whose host went away under it, host-lost, didn't pass but stops
+    nothing: SticTest2 goes on beside it).  Once a run-wide stop rule (RunGuards) has fired, no further layer
     starts: its entry is outcome not-started, with no row.  ON_SUBMITTED(HOST, NAME): called as
     each layer's host job is in cmp-run.sh's line (or couldn't start), hostjob.host_job's."""
     if env is None:
@@ -1169,7 +1188,8 @@ def run_layers(ctx, names, part=None, plan=None, env=None, io=None, log=None, on
     unran = any(r.get("outcome") == "not-started" for r in results)   # a gate that didn't run didn't pass
     return {"cells": results, "rows": [i for r in results for i in r["rows"]], "stops": stops,
             "stop": (("stop-family" if part == "fast" else "stop-starts") if stops else None),
-            "ok": not stops and not unran and not unpassed, "exit": 1 if stops or lost or unran or unpassed else 0}
+            "ok": not stops and not unran and not unpassed, "go": not stops and not unran,
+            "exit": 1 if stops or lost or unran or unpassed else 0}
 
 
 def not_started(env, cell):

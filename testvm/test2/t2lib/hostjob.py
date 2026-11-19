@@ -20,7 +20,8 @@
     host_lost(stops, host, start, end, seen=None, text=None)
                         why a harness-class result on HOST is the host's going away, or None
     wait_back(stops, host, seen, sleep, max_s, log=None, cancelled=None)
-                        until the host rule no longer holds HOST
+                        until HOST is back: the host rule doesn't hold it, and it has
+                        answered and been up host_settle_min
     guards_of(rs)       the composite's RunGuards, or None
 
 host_job's env is anything with .host_root, .attempt_run(a), .copy_path(host), .io, .rs (a
@@ -593,24 +594,55 @@ def host_lost(stops, host, start=None, end=None, seen=None, text=None):
 
 
 def wait_back(stops, host, seen, sleep, max_s, log=None, cancelled=None, poll=POLL_S, clock=None):
-    """Until the host rule no longer holds HOST (each poll a look, SEEN(host), fed to it), at most
-    MAX_S seconds by CLOCK (time.time), or until CANCELLED() (a run-wide stop): True once HOST is back."""
+    """Until HOST is back (each poll a look, SEEN(host), fed to the host rule): the host rule
+    doesn't hold it (its own hold, not the swap rule's: a swap hold isn't the host's going away,
+    and nothing here would lift it), and it is settled: its hold lifted while this waited (the
+    lift is host_settle_min of answers and uptime), or it has answered here host_settle_min in
+    a row and been up that long (no hold yet: a host the rule hadn't looked at before, back from
+    a quick reboot, isn't ready for a rerun at its first answer).  At most MAX_S seconds by
+    CLOCK (time.time), or until CANCELLED() (a run-wide stop): True once HOST is back."""
     clock = clock or time.time
-    t0, said = clock(), False
+    settle = _settle_s(stops)
+    t0, said, ok_from, was_held = clock(), False, None, False
     while True:
-        feed_seen(stops, host, seen(host))
+        look = seen(host)
+        feed_seen(stops, host, look)
+        now = clock()
         try:
-            held = (getattr(stops, "held", None) or dict)() or {}
+            held = (getattr(stops, "host_held", None) or getattr(stops, "held", None) or dict)() or {}
         except Exception:   # noqa: BLE001
             held = {}
-        if host not in held:
-            return True
+        if look is None:
+            ok_from = None
+        elif ok_from is None:
+            ok_from = now
+        if host in held:
+            was_held = True
+        elif look is not None:
+            up = look.get("up_s") if isinstance(look, dict) else None
+            up_ok = not isinstance(up, (int, float)) or isinstance(up, bool) or up >= settle
+            if up_ok and (was_held or now - ok_from >= settle):
+                return True
         if not said and log is not None:
-            log(f"{host}: waiting for the host rule's hold to end ({held[host]})")
+            log(f"{host}: waiting for it to be back ("
+                + (f"the host rule's hold: {held[host]}" if host in held else
+                   f"answering and up {settle / 60:g} min") + ")")
             said = True
         if clock() - t0 > max_s or (cancelled is not None and cancelled()):
             return False
         sleep(poll)
+
+
+def _settle_s(stops):
+    """The host rule's host_settle_min in seconds (STOPS' host_settle_s, else its watch's), else 300."""
+    for get in (lambda: stops.host_settle_s(), lambda: stops.watch.settle_s):
+        try:
+            v = get()
+        except Exception:   # noqa: BLE001
+            continue
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return float(v)
+    return 300.0
 
 
 def pswpout(io, host):

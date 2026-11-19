@@ -13,6 +13,7 @@ the host stops answering).  Real harness results on a healthy host still count.
     cd testvm/test2/tests && python3 -B -m unittest test_hostloss
 """
 
+import importlib.util
 import os
 import shutil
 import sys
@@ -148,6 +149,53 @@ class HostWatchRule(unittest.TestCase):
         self.assertEqual(len(said), 1)
         self.assertTrue(said[0].startswith("chopin: held 120 min by the host rule"), said)
 
+    def test_a_blip_with_no_reboot_loses_only_what_ended_in_it(self):
+        """2026-11-19 review: a 60 s blip at hour 1 of a 3 h holt cell made its real HARNESS at
+        hour 3 host-lost.  A window with no reboot counts for results that ended in it or
+        host_settle_min after it, not for every job that ran across it."""
+        w, c = watch()
+        b0 = c.t - 86400
+        start = c.t
+        w.feed("cinqcent", up(c, b0))
+        c.t += 3600
+        w.feed("cinqcent", up(c, b0))
+        blip = c.t
+        for _ in range(3):                                   # two missed looks a minute apart
+            c.t += 40
+            w.feed("cinqcent", None)
+        self.assertIn("cinqcent", w.held())
+        c.t += 30
+        back = c.t
+        w.feed("cinqcent", up(c, b0))                        # same boot: no reboot
+        self.assertIsNotNone(w.lost("cinqcent", start, blip + 60))          # ended while it was away
+        for _ in range(7):
+            c.t += MIN
+            w.feed("cinqcent", up(c, b0))
+        self.assertEqual(w.held(), {})
+        self.assertIsNotNone(w.lost("cinqcent", start, back + 2 * MIN))     # just after it
+        c.t = start + 3 * 3600
+        w.feed("cinqcent", up(c, b0))
+        self.assertIsNone(w.lost("cinqcent", start, c.t))                   # hours after: it counts
+        self.assertIsNone(w.lost("cinqcent", start, blip - 10 * MIN))       # before it: it counts
+
+    def test_a_hold_now_loses_no_row_that_ended_before_it(self):
+        """The r2 re-judge while the host is held: a real HARNESS from hours before the hold counts."""
+        w, c = watch()
+        t0 = c.t
+        w.feed("copland", up(c, t0 - 86400, A))
+        for _ in range(180):                                  # looked at every minute, three hours
+            c.t += MIN
+            w.feed("copland", up(c, t0 - 86400, A))
+        c.t += MIN
+        boot = c.t - 30
+        w.feed("copland", up(c, boot, B))                    # rebooted: held
+        self.assertIn("copland", w.held())
+        self.assertIsNone(w.lost("copland", t0, t0 + 3600))                 # ended at 10:00, held at 13:00
+        self.assertIsNone(w.lost("copland", utc_now(t0), utc_now(t0 + 3600)))
+        self.assertIsNotNone(w.lost("copland", t0, c.t))                    # ended now
+        self.assertIsNotNone(w.lost("copland", t0, boot - 10))              # the boot under it
+        self.assertIsNotNone(w.lost("copland", t0))                         # (no end: now)
+
     def test_policy_keys(self):
         w, c = watch(dict(POL["stop"], host_away_s=10, host_settle_min=1, host_hold_max_min=30))
         self.assertEqual((w.away_s, w.settle_s, w.max_s), (10, 60, 1800))
@@ -251,6 +299,35 @@ class Engines(unittest.TestCase):
         self.assertIn("swapped out", w)
         self.assertIn("rebooted", w)
 
+    def test_a_slow_gate_stop_after_a_settled_stop_run_keeps_the_worse(self):
+        g, c, e = self.sweep()
+        s = e["stic"]
+        s.feed_seen("cage", up(c, c.t - 86400))
+        g.add_harness("guest:x")                             # (one already counted run-wide)
+        s.feed({"cell": "stic:arch", "verdict": "HARNESS", "class": "harness", "host": "cage", "end": c.t})
+        self.assertEqual(len(s.pending), 1)
+        c.t += 3 * MIN
+        g.watch.feed("cage", up(c, c.t - 86400))   # (confirmed, behind the engine's back)
+        ans = s.feed({"cell": "gate:loop:linux", "part": "slow", "verdict": "FAIL", "class": "fail", "host": "chopin"})
+        self.assertEqual(ans, "stop-run")                    # not the slow gate's stop-starts
+        self.assertTrue(s.stop_starts and s.stop_run)
+
+    def test_settle_is_one_at_a_time(self):
+        g, c, e = self.sweep()
+        s = e["guest"]
+        s.feed_seen("cage", up(c, c.t - 86400))
+        for i in range(40):
+            s.feed({"cell": f"guest:g{i}", "verdict": "HARNESS", "class": "harness", "host": "cage", "end": c.t})
+        c.t += 3 * MIN
+        g.watch.feed("cage", up(c, c.t - 86400))
+        g.harness_max = 10 ** 6
+        ths = [threading.Thread(target=s.may_start) for _ in range(8)]
+        for th in ths:
+            th.start()
+        for th in ths:
+            th.join()
+        self.assertEqual((g.harness, s.pending), (40, []))   # each counted once
+
     def test_engine_and_stics_own_stops_without_guards(self):
         for s in (run.StopEngine("guest", POL), stic.Stops(POL)):
             c = Clock()
@@ -349,6 +426,43 @@ class HostJob(unittest.TestCase):
         s.watch.feed("chopin", None)
         self.assertFalse(hostjob.wait_back(s, "chopin", lambda h: None, sleep, 300, clock=c))
         self.assertFalse(hostjob.wait_back(s, "chopin", lambda h: None, sleep, 3600, cancelled=lambda: True, clock=c))
+
+    def test_wait_back_with_no_hold_waits_for_the_settle_time(self):
+        """A standalone gate's first look at a host back from a quick reboot: no hold (no boot id
+        to compare), so the wait is for host_settle_min of answers and of uptime."""
+        s = run.StopEngine("gate", POL)
+        c = Clock()
+        s.watch.clock = c
+        boot = c.t - 90
+        looks = []
+
+        def sleep(x):
+            c.t += MIN
+        self.assertTrue(hostjob.wait_back(s, "chopin", lambda h: looks.append(c.t) or up(c, boot), sleep, 3600, clock=c))
+        self.assertEqual(s.held(), {})
+        self.assertGreaterEqual(c.t - boot, 5 * MIN)
+        self.assertGreaterEqual(c.t - looks[0], 5 * MIN - 1)
+        state = {"n": 0}
+
+        def flaky(h):   # answers, then a failed look: the settle starts again
+            state["n"] += 1
+            return None if state["n"] == 3 else up(c, boot)
+        t0 = c.t
+        self.assertTrue(hostjob.wait_back(s, "chopin", flaky, sleep, 3600, clock=c))
+        self.assertGreaterEqual(c.t - t0, 8 * MIN)
+
+    def test_wait_back_waits_on_the_host_rule_alone(self):
+        g = run.RunGuards(POL)
+        c = Clock()
+        g.watch.clock = g.holds.clock = c
+        s = run.StopEngine("gate", POL, guards=g)
+        s.watch.settle_s = g.watch.settle_s = 0
+        g.holds.feed("stic", "chopin", 0)
+        c.t += MIN
+        g.holds.feed("stic", "chopin", 3 * run.GIB)              # the swap rule holds it
+        self.assertIn("chopin", s.held())
+        self.assertTrue(hostjob.wait_back(s, "chopin", lambda h: up(c, c.t - 86400),
+                                          lambda x: setattr(c, "t", c.t + MIN), 120, clock=c))
 
 
 class Verdicts(unittest.TestCase):
@@ -492,6 +606,35 @@ class Stic(unittest.TestCase):
         self.assertEqual((rr["stic:garuda"]["attempt"], rr["stic:garuda"]["rerun_of"]), (2, "chopin-1"))
         self.assertNotIn("rerun_why", rr["stic:alpine324"])
 
+    def test_a_host_lost_slow_gate_layer_stops_no_starts(self):
+        r = self.runner()
+        cells = [{"cell": "gate:loop:linux@chopin", "verdict": "HARNESS", "host_lost": "chopin: no answer since ...",
+                  "rows": []}]
+        fake = types.SimpleNamespace(
+            family_layers=lambda fam: {"slow": ["loop:linux"]},
+            gate_plan=lambda ctx: types.SimpleNamespace(due=lambda: [types.SimpleNamespace(cell="gate:loop:linux@chopin")]),
+            run_layers=lambda ctx, due, part, plan=None, **k: {"cells": cells, "rows": [], "stops": [], "stop": None,
+                                                              "ok": False, "go": True, "exit": 1})
+        r.env = types.SimpleNamespace(gate=lambda: fake)
+        r.gate_ctx = lambda: None
+        r._gp = None
+        r.ctx = types.SimpleNamespace(options={})
+        self.assertEqual(r.gate_step("slow"), (True, None))
+        self.assertTrue(any("host lost, no stop" in x for x in r.said), r.said)
+        fake.run_layers = lambda ctx, due, part, plan=None, **k: {"cells": [], "rows": [], "stops": ["stop-starts: x"],
+                                                                 "stop": "stop-starts", "ok": False, "go": False}
+        self.assertEqual(r.gate_step("slow"), (False, None))
+        fake.run_layers = lambda ctx, due, part, plan=None, **k: {"ok": True, "exit": 0}   # (an older gate: its ok)
+        self.assertEqual(r.gate_step("slow"), (True, None))
+
+    def test_drive_gets_the_hold_limit(self):
+        r = self.runner()
+        r.info = {"copy": {"path": "/c"}, "mac_dir": "/m", "id": "t2s-x", "bin": "b", "hosts": ["chopin"], "round": "rel9"}
+        r.ctx = types.SimpleNamespace(checkout="/repo")
+        argv, _ = r.drive_argv("t2s-x", ["arch"], "/cells", 1, [])
+        self.assertEqual(argv[argv.index("--lost-after") + 1], "7200")
+        self.assertEqual(argv[-2:], ["rel9", "arch"])
+
     def test_check_hosts_feed_the_rule_and_the_hold_file(self):
         tmp = tempfile.mkdtemp(prefix="t2hl-")
         self.addCleanup(lambda: shutil.rmtree(tmp, ignore_errors=True))
@@ -568,6 +711,53 @@ class Holt(unittest.TestCase):
         self.assertFalse(r.restart_runner(self.Q, "chopin"))                    # nothing left to run
 
 
+    def test_jobs_a_reboot_killed_are_host_lost_and_rerun_once(self):
+        """2026-11-19 review: the reboot took chopin's runner and its jobs' RAM dirs; their lines
+        stay in todo.taken with no done row, and nothing reran them."""
+        reb = {"chopin": True}
+        notes = []
+        stops = types.SimpleNamespace(rebooted=lambda h, since: reb.get(h, False), held=lambda: {},
+                                      add_host_lost=notes.append, stop_run=False, stop_family=False, stop_starts=False)
+        r = self.runner(stops)
+        reads = []
+        files = {("cage", f"{holt.QUEUE}/{self.Q}/todo.taken"):
+                 "vanilla3 chopin\nnixos25+luks=30%8 chopin\narch cage\ndebian13 chopin\n"}
+        r.remote = types.SimpleNamespace(read=lambda h, p: reads.append(p) or files.get((h, p)))
+        r.state["queues"] = {self.Q: {"started": "2026-11-19T14:38:35Z", "runners": {"chopin": {"pid": 1}}}}
+        r.done = {self.Q: {("chopin", "debian13"): {"rc": "0"}, ("cage", "arch"): {"rc": "0"}}}
+        r.rows = {}
+        new = r.reboot_killed(self.Q, "chopin")
+        self.assertEqual(sorted(new), ["nixos25-luks", "vanilla3"])
+        self.assertEqual(len(notes), 2)
+        self.assertEqual(r.host_lost_cells(self.Q), {"holt:nixos25+luks": ("chopin", "nixos25-luks"),
+                                                     "holt:vanilla3": ("chopin", "vanilla3")})
+        self.assertEqual(r.reboot_killed(self.Q, "chopin"), {})                 # once per runner
+        self.assertEqual(len(reads), 1)
+        self.assertEqual(r.reboot_killed(self.Q, "cage"), {})                   # no reboot: nothing
+        r.state["queues"][self.Q]["restarted"] = {"chopin": "2026-11-19T15:40:00Z"}
+        reb["chopin"] = False
+        self.assertEqual(r.reboot_killed(self.Q, "chopin"), {})                 # its new runner, no reboot since
+        r.done[self.Q][("chopin", "vanilla3")] = {"rc": "1"}                    # (a done row read late: that one)
+        r.rows[f"ht1:{self.Q}:vanilla3:1"] = {"verdict": "FAIL"}
+        self.assertEqual(sorted(r.host_lost_cells(self.Q)), ["holt:nixos25+luks"])
+
+    def test_a_killed_job_left_unrun_says_so(self):
+        stops = types.SimpleNamespace(stops=[])
+        r = self.runner(stops)
+        r.run_id, r.done, r.rows, r.taken, r.gate_cells, r.problems = self.Q, {}, {}, set(), [], []
+        r.rs.word, r.rs.copy = types.SimpleNamespace(word="HoltTest2"), {}
+        r.hosts, r.allowed, r.kept = ["chopin", "cage"], {}, {}
+        r.write_allows = lambda: {}
+        r.state["queues"] = {self.Q: {"killed": {"vanilla3": {"host": "chopin", "why": "chopin rebooted under it"}}}}
+        r.state["lost_plats"] = {}
+        r.due = lambda lost=False: []
+        pc = types.SimpleNamespace(cell="holt:vanilla3", rule="due", reasons=[])
+        res = r.result(time.time(), [pc])
+        c = [x for x in res["cells"] if x["cell"] == "holt:vanilla3"][0]
+        self.assertEqual(c["outcome"], "no-row")
+        self.assertIn("host lost", c["reasons"][-1])
+
+
 class Gate(unittest.TestCase):
     def test_a_layer_whose_host_rebooted_reruns_once_it_is_back(self):
         io = tgate.FakeIO()
@@ -593,6 +783,66 @@ class Gate(unittest.TestCase):
         self.assertIsNone(e["host_lost"])
         self.assertTrue(any("host lost" in n_ for n_ in s.host_notes()))
 
+    def test_a_layer_whose_host_is_still_off_reruns_once_it_is_back(self):
+        """SweepTest2 #4's case: the host is still powered off when host_job gives up (its job
+        may still run, no reboot seen yet).  The gate waits for it, sees its reboot, and reruns."""
+        io = tgate.FakeIO()
+        state = {"phase": "up", "down": 0}
+        sh = io.sh
+
+        def state_sh(host, cmd, timeout=60, input=None):
+            if "boot_id" in cmd and host == "chopin":
+                if state["phase"] == "up":
+                    return 0, f"pswpout 0\nboot {A}\nup 86400\n", ""
+                if state["phase"] == "down":
+                    state["down"] += 1
+                    if state["down"] >= 3:
+                        state["phase"] = "back"
+                    return 255, "", "Host is down"
+                return 0, f"pswpout 0\nboot {B}\nup 30\n", ""
+            return sh(host, cmd, timeout, input)
+        io.sh = state_sh
+        env, _ = tgate.env_with(io, ["gate:bin:abi"])
+        s = run.StopEngine("gate", POL)
+        s.watch.settle_s, s.watch.away_s = 0, 0
+        env.rs.stops = s
+        n = {"a": 0}
+
+        def attempt(a):
+            n["a"] = a
+            if a == 1:
+                state["phase"] = "down"
+                o = gate.harness(hostjob.JobFailure("no answer from chopin in 20 polls; pid 9 may still run",
+                                                    still_running=True))
+                o.start = utc_now(time.time() - 600)
+                return o
+            return gate.Outcome({"x": "PASS"}, [])
+        e = gate.run_one(env, "gate:bin:abi", attempt)
+        self.assertEqual(n["a"], 2)
+        self.assertEqual(e["verdict"], "PASS")
+        self.assertTrue(s.rebooted("chopin", time.time() - 600))
+
+    def test_no_rerun_beside_a_job_that_may_still_run(self):
+        """The host answers again with the same boot: attempt 1's job may still run there."""
+        io = tgate.FakeIO()
+        sh = io.sh
+        io.sh = lambda host, cmd, timeout=60, input=None: ((0, f"pswpout 0\nboot {A}\nup 86400\n", "")
+                                                           if "boot_id" in cmd else sh(host, cmd, timeout, input))
+        env, _ = tgate.env_with(io, ["gate:bin:abi"])
+        s = run.StopEngine("gate", POL)
+        s.watch.settle_s = 0
+        env.rs.stops = s
+        n = {"a": 0}
+
+        def attempt(a):
+            n["a"] = a
+            return gate.harness(hostjob.JobFailure("no answer from chopin in 20 polls; pid 9 may still run",
+                                                   still_running=True))
+        e = gate.run_one(env, "gate:bin:abi", attempt)
+        self.assertEqual((n["a"], e["verdict"]), (1, "HARNESS"))
+        self.assertTrue(e["host_lost"])
+        self.assertTrue(s.watch.known("chopin"))                              # (the gate's own look)
+
     def test_a_slow_layer_lost_with_its_host_stops_nothing(self):
         def fake_cell(env, cell, commits=None):
             if env.on_submitted is not None:
@@ -607,7 +857,62 @@ class Gate(unittest.TestCase):
             r = gate.run_layers(ctx, ["loop:linux"], "slow", env=env)
         finally:
             gate.run_cell = saved
-        self.assertEqual((r["stop"], r["stops"], r["ok"], r["exit"]), (None, [], False, 1))
+        self.assertEqual((r["stop"], r["stops"], r["ok"], r["go"], r["exit"]), (None, [], False, True, 1))
+
+
+DRIVE = None
+
+
+def drive():
+    global DRIVE
+    if DRIVE is None:
+        p = os.path.join(os.path.dirname(os.path.dirname(HERE)), "stictest1", "drive.py")
+        spec = importlib.util.spec_from_file_location("st1_drive_hostloss", p)
+        DRIVE = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(DRIVE)
+    return DRIVE
+
+
+class Drive(unittest.TestCase):
+    """drive.py's round on a host that never comes back (2026-11-19 review: a LOST needs a
+    status read, so the round, and SticTest2 with it, waited for ever)."""
+
+    def driver(self, hold=None, stopped=False, lost_after=7200):
+        d = types.SimpleNamespace(a=types.SimpleNamespace(lost_after=lost_after), hold=hold or {}, stopped=stopped,
+                                  unread={}, said=[], saves=0)
+        d.state = {"jobs": {"debian13": {"host": "cage", "exit": None, "launched": 1.0},
+                            "arch": {"host": "cage", "exit": None, "launched": 2.0, "unconfirmed": True},
+                            "alpine": {"host": "chopin", "exit": None, "launched": 3.0}}}
+        d.jobs = lambda: d.state["jobs"]
+        d.running = lambda host=None: drive().Driver.running(d, host)
+        d.log = lambda *x: d.said.append(" ".join(map(str, x)))
+        d.save = lambda: None
+        return d
+
+    def test_a_host_held_while_the_run_stops_gives_up_its_checks(self):
+        D = drive()
+        now = 1_800_000_000.0
+        d = self.driver(hold={"cage": "cage: no answer since ..."}, stopped=True)
+        d.unread = {"cage": now - D.LOST_HELD_S + 5}
+        D.Driver.give_up_unread(d, now)
+        self.assertEqual(sorted(d.running()), ["alpine", "arch", "debian13"])     # not long enough yet
+        D.Driver.give_up_unread(d, now + 10)
+        self.assertEqual(d.running(), ["alpine"])
+        j = d.jobs()["debian13"]
+        self.assertEqual((j["exit"], j["start"], j["end"]), ("lost", 1.0, None))
+        self.assertTrue(j["host_lost"].startswith("host lost: no status from cage"))
+        self.assertNotIn("unconfirmed", d.jobs()["arch"])
+
+    def test_a_host_unread_past_lost_after_gives_up_its_checks(self):
+        D = drive()
+        now = 1_800_000_000.0
+        d = self.driver()
+        d.unread = {"cage": now - 3600}
+        D.Driver.give_up_unread(d, now)
+        self.assertEqual(len(d.running()), 3)                                     # neither held nor long enough
+        d.a.lost_after = 3000
+        D.Driver.give_up_unread(d, now)
+        self.assertEqual(d.running(), ["alpine"])
 
 
 if __name__ == "__main__":

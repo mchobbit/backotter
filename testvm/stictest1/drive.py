@@ -109,6 +109,11 @@ Options:
                   checks go on, and the guests not started yet go to the
                   other hosts that can run them, or wait for the hold to end
                   (Test2's swap rule, per host)
+  --lost-after S  a host with checks of ours running that answers no status
+                  read for S seconds (default 7200, Test2's host_hold_max_min)
+                  gives them up as LOST (host lost), so the round can end;
+                  one --hold-file names after 600 s once --stop-file is there
+                  (Test2's host rule held it, and the run is stopping)
 Test2 (testvm/test2/t2 SticTest2 passes these; README.md "Test2"):
   --t2-run RUN    the Test2 run id the rows belong to
   --t2-copy DIR   run the checks from the run's private copy on the hosts,
@@ -234,6 +239,8 @@ def slots_words(cap, hosts):
     return str(next(iter(per.values()))) if per else str(cap)
 NVME_C = 75              # cmp-run.sh's: it starts nothing over it
 DEFAULT_EST = 600        # README: "Most guests finish in 2 to 15 minutes"
+LOST_AFTER_S = 7200      # --lost-after: a host with no status read that long gives up its running checks
+LOST_HELD_S = 600        # ... and a --hold-file host, once the --stop-file is there, after this long
 OS_WORDS = {"Linux": "linux", "FreeBSD": "freebsd", "NetBSD": "netbsd", "OpenBSD": "openbsd",
             "DragonFly": "dragonfly", "illumos": "omnios", "Haiku": "haiku"}
 RESTIC_FROM = {"haiku": "linux"}   # haiku6 reads its repository with Linux's restic-bko
@@ -1050,6 +1057,7 @@ class Driver:
         self.stopped = False                        # --stop-file there (reread every poll)
         self.skipped = set()                        # --skip-file's guests (reread every poll)
         self.hold = {}                              # --hold-file's {host: why} (reread every poll)
+        self.unread = {}                            # {host: when its status reads began failing, in a row}
         self.read_files()
 
     def all_seen(self):
@@ -1281,6 +1289,26 @@ class Driver:
                  + (f" slotwait={snap['slotwait']}" if snap["slotwait"] else ""))
         return snap
 
+    def give_up_unread(self, now):
+        """The running checks of a host no status read has reached for --lost-after seconds, or,
+        once --stop-file is there, for LOST_HELD_S of a host --hold-file names (Test2's host rule
+        held it: the run is stopping): LOST, host lost, so the round ends (a LOST needs a status
+        read, and a host that never comes back gives none: the round waited for ever).  Their rows
+        are written by collect() (the host may still not answer)."""
+        after = float(getattr(self.a, "lost_after", None) or LOST_AFTER_S)
+        for host, t in sorted(self.unread.items()):
+            run, gone = self.running(host), now - t
+            if not run or not (gone >= after or (self.stopped and host in self.hold and gone >= LOST_HELD_S)):
+                continue
+            why = (f"host lost: no status from {host} for {gone / 60:.0f} min"
+                   + (f" (held: {self.hold[host]}; the stop file is there)" if gone < after else ""))
+            for g in run:
+                j = self.jobs()[g]
+                j.update(exit="lost", start=j.get("start") or j["launched"], end=None, host_lost=why)
+                j.pop("unconfirmed", None)
+                self.log("LOST", g, "on", host, "-", why)
+            self.save()
+
     def start_some(self, snaps, now):
         a, spec = self.a, self.spec
         if self.stopped:   # --stop-file: nothing new starts
@@ -1358,8 +1386,12 @@ class Driver:
                 if snap is not None:
                     snaps[host] = snap
                     self.seen.add(host)
+                    self.unread.pop(host, None)
                     if snap["ceil"]:
                         self.ceils[host] = snap["ceil"]
+                else:
+                    self.unread.setdefault(host, now)
+            self.give_up_unread(time.time())
             self.mark_novm()
             self.mark_too_big()
             self.save()
@@ -1912,6 +1944,31 @@ def self_test():
         drv.start_some({"chopin": dict(snap, listen=set())}, time.time())
         check(drv.hold == {} and started and all(h == "chopin" for h, _ in started),
               f"hold file gone: the host starts again ({started})")
+        # A host with checks running that never answers again (2026-11-19 review: the round
+        # waited for ever): its checks are LOST, host lost, after --lost-after; a held one
+        # once the stop file is there, after LOST_HELD_S.
+        t = time.time()
+        drv.unread = {"chopin": t - LOST_HELD_S - 1}
+        a.lost_after = LOST_AFTER_S
+        drv.give_up_unread(t)
+        check(drv.running("chopin") != [], "an unread host, not held, no stop file: its checks still run")
+        with open(holdf, "w") as f:
+            f.write("chopin chopin: no answer since 2026-11-19T15:30:00Z\n")
+        open(stopf, "w").close()
+        drv.read_files()
+        drv.give_up_unread(t)
+        lost = [g for g, j in drv.jobs().items() if j["exit"] == "lost" and str(j.get("host_lost", "")).startswith("host lost")]
+        check(drv.running("chopin") == [] and lost, f"held, unread {LOST_HELD_S} s, stop file: LOST, host lost ({lost})")
+        os.remove(stopf)
+        os.remove(holdf)
+        drv.read_files()
+        for g in drv.jobs():
+            drv.jobs()[g]["exit"] = None
+        drv.unread = {"chopin": t - 60}
+        a.lost_after = 30
+        drv.give_up_unread(t)
+        check(drv.running("chopin") == [], "unread past --lost-after: LOST, held or not")
+        a.lost_after = LOST_AFTER_S
         a.hold_file, a.hosts = None, ["chopin"]
         drv.logf.close()
         with contextlib.suppress(FileNotFoundError):
@@ -2123,6 +2180,8 @@ def main():
     ap.add_argument("--stop-file", metavar="F", help="start nothing while F exists (here)")
     ap.add_argument("--skip-file", metavar="F", help="never start the guests F names (here, reread every poll)")
     ap.add_argument("--hold-file", metavar="F", help="start nothing new on the hosts F names (here, reread every poll)")
+    ap.add_argument("--lost-after", type=float, default=LOST_AFTER_S, metavar="S",
+                    help="give up a host's running checks as LOST after S s with no status read (%(default)s)")
     ap.add_argument("--t2-run", metavar="RUN", help="Test2: the run id the ledger rows belong to")
     ap.add_argument("--t2-copy", metavar="DIR", help="Test2: the run's private copy on the hosts")
     ap.add_argument("--t2-cells", metavar="F", help="Test2: the run's cells.json on the hosts")

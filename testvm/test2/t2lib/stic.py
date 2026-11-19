@@ -48,8 +48,11 @@ The flow (2.2):
      until its swap-out eases; a hold of 2 h is run-wide), as does a host
      that stops answering or reboots (run.py's HostWatch: its HARNESS and
      LOST rows are host-lost, judge_lost, counted by no stop rule and rerun
-     once in step 5, rerun_why host-lost); 2 harness results
-     (known flakes aside), a failed slow gate, or this run's own jobs
+     once in step 5, rerun_why host-lost; one that never answers again has
+     its running checks given up as LOST by drive.py, --lost-after the hold's
+     2 h, or 10 min once the run stops); 2 harness results
+     (known flakes aside), a failed slow gate (a host-lost slow layer fails
+     the run but stops nothing: run_layers' go), or this run's own jobs
      (their wear tags in jobs.log, R22) writing over 2 x the run budget start
      nothing more (--stop-file), as does a run-wide stop of the composite this
      run is a child of (run.py's RunGuards, checked each poll: another family's
@@ -875,7 +878,13 @@ class SticRun:
         except Exception as e:   # noqa: BLE001
             self.log(f"gate {part}: {type(e).__name__}: {e}")
             return False, None
-        ok = res.get("ok", res.get("exit", 1) == 0) if isinstance(res, dict) else bool(getattr(res, "ok", False))
+        # (go: nothing in the layers stops the guests; a slow layer whose host went away under it,
+        # host-lost, didn't pass but stops nothing: run_layers' go; the result still says it, result())
+        ok = (res.get("go", res.get("ok", res.get("exit", 1) == 0)) if isinstance(res, dict)
+              else bool(getattr(res, "ok", False)))
+        if isinstance(res, dict) and res.get("go") and not res.get("ok"):
+            self.log(f"gate {part}: " + ", ".join(f"{c.get('cell')} {c.get('verdict')}" for c in res.get("cells") or []
+                                                  if c.get("host_lost")) + ": host lost, no stop")
         if isinstance(res, dict):   # the report's lines for the layers this run ran (contract 1.9)
             with self.mu:
                 self.state.setdefault("gate_cells", []).extend(res.get("cells") or [])
@@ -987,6 +996,9 @@ class SticRun:
                 "--hosts", ",".join(self.info["hosts"])]
         if first:
             argv += ["--first", ",".join(first)]
+        w = getattr(getattr(self, "engine", None), "watch", None)   # (a host that never answers again: its checks LOST)
+        if isinstance(getattr(w, "max_s", None), (int, float)) and w.max_s > 0:
+            argv += ["--lost-after", f"{w.max_s:g}"]
         return argv + [self.info["round"]] + list(guests), out
 
     def first_guests(self, pcs):
@@ -1448,6 +1460,9 @@ class SticRun:
         st = self.state
         want = set(st.get("due") or []) | set(st.get("reruns") or {})
         cells, bad = [dict(c, outcome=c.get("outcome") or "ran") for c in st.get("gate_cells") or []], []
+        # (a gate layer that didn't pass stopped the run, but a host-lost slow one stops nothing: it fails here)
+        bad += [f"{c.get('cell')} {c.get('verdict')} (host lost)" for c in st.get("gate_cells") or []
+                if c.get("host_lost") and c.get("verdict") not in ("PASS", None)]
         notes = list(notes)
         by_cell = {}
         for x, (rid, _) in zip(derived, ids):

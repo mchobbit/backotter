@@ -816,12 +816,16 @@ class HostWatch:
     swap rule's is.
 
     lost(host, start, end) says whether a harness-class result of a job that ran on HOST from
-    START to END is the host's going away rather than the harness's: the host is held now, or
-    was away (from its last answer before a hold to its first answer after) at some time
-    between them, or booted after the job began (its
-    uptime: so a host that came back before the Mac ever saw it gone still counts).  Such a
-    result is host-lost: the runners requeue it once, and it never counts toward the run-wide
-    harness stop (StopEngine.feed's res["host_lost"]).
+    START to END is the host's going away rather than the harness's: the host booted after the
+    job began (its uptime: so a host that came back before the Mac ever saw it gone still
+    counts) and before END + host_settle_min; or the job ended while the host is held now, at
+    or after the start of the hold's away window (its last answer before); or it ended inside
+    an earlier away window (its last answer before a hold to its first answer after) or
+    host_settle_min after it.  A window with no reboot in it doesn't show that a job that ran on
+    past it was lost (2026-11-19 review: a 60 s blip under a 3 h holt cell made its real HARNESS
+    host-lost), nor does a hold that began after the job ended (an old row judged again in an
+    r2 round while its host is held).  Such a result is host-lost: the runners requeue it once,
+    and it never counts toward the run-wide harness stop (StopEngine.feed's res["host_lost"]).
 
         feed(host, seen) -> the run-wide why, or None
                                 SEEN: None when HOST didn't answer, else {"boot": its boot
@@ -915,15 +919,16 @@ class HostWatch:
         start, end = _epoch(start), _epoch(end)
         end = now if end is None else end
         start = end if start is None else start
-        h = self.holds.get(host)
-        if h is not None:
-            return h["why"]
         bt = (self.st.get(host) or {}).get("boot_t")
         for b in sorted(set((self.boots.get(host) or []) + ([bt] if bt is not None else []))):
             if start + self.SKEW_S < b <= end + self.settle_s:
                 return f"{host} rebooted at {utc_now(b)}, after the job began ({utc_now(start)})"
-        for t0, t1 in self.away.get(host) or ():
-            if t0 is not None and t0 <= end and (now if t1 is None else t1) >= start:
+        wins = [w for w in self.away.get(host) or () if w[0] is not None]
+        h = self.holds.get(host)
+        if h is not None and wins and end >= wins[-1][0] - self.SKEW_S:
+            return h["why"]   # held now, and the job ended after the host went away
+        for t0, t1 in wins:   # (no reboot under the job: only one that ended while it was away, or just after)
+            if t0 - self.SKEW_S <= end <= (now if t1 is None else t1) + self.settle_s:
                 return (f"{host} was away from {utc_now(t0)}" + (f" to {utc_now(t1)}" if t1 else "")
                         + " (the host rule held it)")
         return None
@@ -970,6 +975,7 @@ class RunGuards:
         trip(why); tripped() -> bool; why() -> [text]
         held() -> {host: why} (both rules'); hold_notes() -> [text] (the swap rule's)
         feed_seen(host, seen) -> why it tripped now, or None   (HostWatch.feed)
+        host_held() -> {host: why} (the host rule's alone)
         host_lost(host, start, end) -> why or None; rebooted(host, since) -> bool
         add_host_lost(text); host_notes() -> [text] (the host rule's, and its results)
         to_json(), from_json(doc, policy...)    what a composite's resume rebuilds
@@ -1031,6 +1037,11 @@ class RunGuards:
     def hold_notes(self):
         with self._mu:
             return self.holds.notes()
+
+    def host_held(self):
+        """{host: why}: the host rule's holds alone (a rerun waits for its host to be back: wait_back)."""
+        with self._mu:
+            return self.watch.held()
 
     def feed_seen(self, host, seen):
         """HOST's look (HostWatch.feed's SEEN): why the host rule tripped the guards now, else None."""
@@ -1187,6 +1198,7 @@ class StopEngine:
         self.watch = HostWatch(st)      # (the same)
         self.lost_said = []
         self.pending = []               # [(res, end, fed)]: harness-class results waiting for their host's confirm
+        self._pmu = threading.RLock()   # (pending: ImgTest2's worker threads feed while its main thread looks)
         self.write_x = float(st.get("write_budget_x", 2))
         self.run_gb = budget_gb(b, sweep, update)
         self.bind = report.budget_binds(b.get("bind_from"), now)
@@ -1228,6 +1240,10 @@ class StopEngine:
         """The pending harness-class results (feed): each one host-lost now (its host went away
         after it), counted (its host confirmed, waited host_confirm_max_min, or FINAL), or left.
         The worst stop it made, or "ok"."""
+        with self._pmu:
+            return self._settle(final)
+
+    def _settle(self, final):
         out, left, now = "ok", [], self._now()
         for res, end, fed in self.pending:
             host = res.get("host")
@@ -1245,16 +1261,20 @@ class StopEngine:
         return out
 
     def feed(self, res):
+        with self._pmu:
+            return self._feed(res)
+
+    def _feed(self, res):
         verdict, klass = res.get("verdict"), res.get("class")
         out = self.settle() if self.pending else "ok"
         if res.get("part") == "fast" and verdict in FAILING + ("HARNESS", "LOST"):
             if not self.stop_family:
                 self.stop_family = True
-                out = self._stop("stop-family", f"fast gate {res.get('cell')} {verdict}")
+                out = self._worse(out, self._stop("stop-family", f"fast gate {res.get('cell')} {verdict}"))
         elif res.get("part") == "slow" and verdict in FAILING + ("HARNESS", "LOST"):
             if not self.stop_starts:
                 self.stop_starts = True
-                out = self._stop("stop-starts", f"slow gate {res.get('cell')} {verdict}")
+                out = self._worse(out, self._stop("stop-starts", f"slow gate {res.get('cell')} {verdict}"))
         if klass in ("harness", "lost") and res.get("host_lost") and verdict not in FAILING:
             # its host went away under it (no answer, a reboot: HostWatch): not the harness's, so no
             # count at all; the runner requeues it once (SweepTest2 #4: chopin's maintenance
@@ -1315,6 +1335,15 @@ class StopEngine:
     def rebooted(self, host, since):
         g = self.guards if self.guards is not None and hasattr(self.guards, "rebooted") else None
         return g.rebooted(host, since) if g is not None else self.watch.rebooted(host, since)
+
+    def host_held(self):
+        """{host: why}: the host rule's holds alone (not the swap rule's): what wait_back waits on."""
+        g = self.guards if self.guards is not None and hasattr(self.guards, "host_held") else None
+        return g.host_held() if g is not None else self.watch.held()
+
+    def host_settle_s(self):
+        """host_settle_min in seconds: how long a host back from going away answers before a rerun there."""
+        return self.watch.settle_s
 
     def host_known(self, host):
         """True once the host rule has looked at HOST (a result there can wait for host_confirmed)."""

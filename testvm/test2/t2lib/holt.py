@@ -80,7 +80,9 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      A host that stops answering or reboots is held the same way (run.py's HostWatch,
      fed by Remote.seen each poll): its HARNESS and LOST rows are host-lost (judge_lost),
      counted by no stop rule; its runner, gone with the reboot, is started again once
-     when it is back and the todo still has lines (restart_runner).
+     when it is back and the todo still has lines (restart_runner), and the jobs the reboot
+     killed (their lines in todo.taken with no done row: reboot_killed) are host-lost too,
+     rerun once in RUN-r2.
   6. Rerun once: GVs whose row is a FAIL (contract 1.9; a HARNESS or LOST result
      says nothing of the cell, but a host-lost one, rerun_why host-lost) go into queue RUN-r2 with cells-r2.json (attempt 2,
      rerun_of the first row), T2_RUN=RUN, unless stop-run, stop-family or
@@ -1360,6 +1362,56 @@ class Runner:
         cells_name = q.get("cells_name") or ("cells-r2.json" if qrun.endswith("-r2") else "cells.json")
         return self.start_runner(qrun, h, cells_name, (q.get("elsewhere") or {}).get(h)) is not None
 
+    def reboot_killed(self, qrun, h):
+        """The jobs H's runner had under way when H rebooted (2026-11-19 review): the reboot took
+        the runner and their RAM work dirs, so their lines stay in the queue host's todo.taken
+        with no done row, and nothing else sees them.  Once H's runner is gone and H booted after
+        that runner began (the host rule: rebooted), each line of H there with no done row of H
+        is host-lost: the queue's killed {gv: {host, cell, line, why}}, rerun once in RUN-r2
+        (host_lost_cells, rerun_why host-lost), counted by no stop rule.  Looked at once per
+        runner of H (a todo.taken that can't be read: next time).  {gv: entry} of the new ones."""
+        q = self.state["queues"][qrun]
+        st = self.rs.stops
+        rb = getattr(st, "rebooted", None)
+        since = (q.get("restarted") or {}).get(h) or q.get("started")
+        if rb is None or not since or (q.get("killed_seen") or {}).get(h) == since:
+            return {}
+        try:
+            if not rb(h, since):
+                return {}
+        except Exception:   # noqa: BLE001 - a rule that can't be asked: nothing is host-lost
+            return {}
+        taken = self.remote.read(self.qhost, f"{QUEUE}/{qrun}/todo.taken")
+        if taken is None:
+            return {}
+        done = {(dh, gv) for dh, gv in (self.done.get(qrun) or {})}
+        killed = q.setdefault("killed", {})
+        new = {}
+        for line in taken.splitlines():
+            ln, _, th = line.split("#", 1)[0].strip().rpartition(" ")
+            if not ln or th != h:
+                continue
+            cell = "holt:" + re.sub(r"(=[0-9.]+)?(%[0-9.]+)?$", "", ln.strip())
+            gv = gv_of(cell)
+            if (h, gv) in done or gv in killed:
+                continue
+            killed[gv] = new[gv] = {"host": h, "line": ln.strip(), "cell": cell,
+                                    "why": f"{h} rebooted under it (its runner began {since}): in {qrun}'s "
+                                           "todo.taken with no done row"}
+        q.setdefault("killed_seen", {})[h] = since
+        self.state.save()
+        add = getattr(st, "add_host_lost", None)
+        for gv, k in sorted(new.items()):
+            cell = k["cell"]
+            self.log(f"queue {qrun}: {cell} on {h}: host lost ({k['why']}): not counted"
+                     + (", rerun once" if not qrun.endswith("-r2") else ""))
+            if add is not None:
+                try:
+                    add(f"{cell} killed on {h}: host lost ({k['why']}): no stop rule counts it")
+                except Exception:   # noqa: BLE001 - only the report's note
+                    pass
+        return new
+
     def done_rows(self, qrun):
         """The queue's done rows read so far (a host that can't be read this time keeps what
         an earlier look read)."""
@@ -1491,7 +1543,9 @@ class Runner:
                     gone[h] = gone.get(h, 0) + 1
                     if gone[h] < 2 and not self.said_end(qrun, h):
                         live.append(h)
-                    elif self.restart_runner(qrun, h):   # (True: started again; "wait": once its host settles)
+                        continue
+                    self.reboot_killed(qrun, h)   # (first: the lines its old runner had under way)
+                    if self.restart_runner(qrun, h):   # (True: started again; "wait": once its host settles)
                         gone[h] = 0
                         live.append(h)
                 else:
@@ -2143,6 +2197,10 @@ class Runner:
                     pass
             if o in (self.state["host_lost"] or {}) and r.get("verdict") in ("HARNESS", "LOST"):
                 out[self.cell_of_gv(gv)] = (h, gv)
+        done = {g for _, g in (self.done.get(qrun) or {})}
+        for gv, k in sorted((((self.state["queues"] or {}).get(qrun) or {}).get("killed") or {}).items()):
+            if gv not in done:   # (a reboot killed its job: no done row, reboot_killed)
+                out[k.get("cell") or self.cell_of_gv(gv)] = (k.get("host"), gv)
         return out
 
     def all_lost(self):
@@ -2184,8 +2242,12 @@ class Runner:
                 if r or hd:
                     att.append((r, hd))
             if not att:
+                killed = (((self.state["queues"] or {}).get(self.run_id) or {}).get("killed") or {}).get(gv)
                 if any(g == gv for _, g in self.taken):
                     outcome, why = "skipped", "stop-os took it out of the todo"
+                elif killed:
+                    outcome, why = "no-row", f"host lost: {killed.get('why')}"
+                    bad.append(f"{pc.cell} host lost, not rerun")
                 elif stopped:
                     outcome, why = "skipped", "a stop rule stopped the run first"
                 else:

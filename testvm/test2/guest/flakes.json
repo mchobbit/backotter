@@ -64,5 +64,17 @@
   "pattern": "\\bERROR: \\[trans\\] failed to download .* package from |\\bERROR: \\[reposync\\] failed to fetch file\\b",
   "why": "a Void mirror that didn't serve a package or its repodata: not the guest's fault",
   "ref": "xbps-install's messages for a failed download (GuestTest2 t2v-20261119T0157-c8c7, void-zbm: Input/output error at 5 KB/s); in-guest.sh's Linux.xbps runs xbps-install again 10 times 30 s apart: this tail is the last try's"
+ },
+ {
+  "guest": "*",
+  "pattern": "\\bguix (pull|system): error: Git error: |\\bsubstitution of /gnu/store/\\S+ failed\\b|\\bdownload from '[^']*' failed\\b",
+  "why": "the Guix channel's Git server (codeberg.org, where git.guix.gnu.org redirects) or a substitute server that didn't answer guix: not the guest's fault",
+  "ref": "guix pull's libgit2 errors and guix substitute's failed downloads (GuestTest2 t2v-20261119T0157-c8c7, guix15 and guix15-bios: \"Git error: SSL error: syscall failure\" at 50 % loss); in-guest.sh's Guix runs guix pull and guix system reconfigure again 10 times 60 s apart: this tail is the last try's"
+ },
+ {
+  "guest": "*",
+  "pattern": "\\bUnable to update repository \\S+|\\bmissing or size mismatch, cannot continue\\b",
+  "why": "a DragonFly dports mirror that didn't serve pkg its catalogue or a package: not the guest's fault",
+  "ref": "pkg's messages for a failed catalogue or package download (GuestTest2 t2v-20261119T0157-c8c7, dragonfly6 at 20 KB/s); in-guest.sh's DragonFly fetches the catalogue whole and runs pkg again 10 times 60 s apart: this tail is the last try's"
  }
 ]

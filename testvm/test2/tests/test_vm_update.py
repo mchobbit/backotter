@@ -256,11 +256,11 @@ class TestInGuest(unittest.TestCase):
     def run_fetched(self, section, fails, error):
         """SECTION's fetched() around a command that fails FAILS times printing ERROR, then
         succeeds: (exit status, how many times it ran, the output).  /run is a scratch folder
-        and sleep does nothing."""
+        and sleep does nothing (so is /tmp/bko-*, DragonFly having no /run)."""
         m = re.search(r"^( *)fetched\(\) \{\n.*?^\1\}\n", self.sections()[section], re.M | re.S)
         self.assertIsNotNone(m, section)
         with tempfile.TemporaryDirectory() as d:
-            fn = textwrap.dedent(m[0]).replace("/run/", f"{d}/")
+            fn = textwrap.dedent(m[0]).replace("/run/", f"{d}/").replace("/tmp/bko-", f"{d}/bko-")
             script = textwrap.dedent(f"""\
                 say() {{ echo "in-guest: $*"; }}
                 sleep() {{ :; }}
@@ -327,6 +327,84 @@ class TestInGuest(unittest.TestCase):
         # 17 (current already) is no download failure, even with one in the log
         m = re.search(r"^( *)fetched\(\) \{\n.*?^\1\}\n", xbps, re.M | re.S)
         self.assertIn('[ "$r" -ne 17 ]', m[0])
+
+    def assert_flake(self, guest, out, word):
+        """OUT's last lines (the last try's failure) are a known flake whose ref names WORD."""
+        flakes = json.loads((T2 / "guest" / "flakes.json").read_text())
+        if str(T2) not in sys.path:
+            sys.path.insert(0, str(T2))
+            self.addCleanup(sys.path.remove, str(T2))
+        from t2lib import guest_judge as J
+        f = J.match_flake(guest, out.rstrip().splitlines()[-3:], flakes)
+        self.assertIsNotNone(f, out)
+        self.assertIn(word, f["ref"])
+
+    def test_guix_downloads_are_tried_again(self):
+        """guix pull or guix system reconfigure that failed at a download (guix15 and guix15-bios,
+        t2v-20261119T0157-c8c7: libgit2's "SSL error: syscall failure" from codeberg.org at 50 %
+        loss, every try) is tried again, 10 more times at most, and its last failure's tail is a
+        known flake; any other failure stops at once."""
+        for error in ("guix pull: error: Git error: SSL error: syscall failure: ",
+                      "guix pull: error: Git error: unexpected http status code: 502",
+                      "substitution of /gnu/store/0123abcd-linux-libre-6.17.12 failed"):
+            with self.subTest(error=error[:40]):
+                rc, n, out = self.run_fetched("Guix", 2, error)
+                self.assertEqual((rc, n), (0, 3), out)
+                self.assertIn("in-guest: a download failed: cmd", out)
+                rc, n, out = self.run_fetched("Guix", 99, error)
+                self.assertEqual((rc, n), (100, 11), out)
+                self.assert_flake("guix15", out, "guix pull")
+        rc, n, out = self.run_fetched("Guix", 99, "guix system: error: failed to load '/etc/config.scm':")
+        self.assertEqual((rc, n), (100, 1), out)
+        guix = self.sections()["Guix"]
+        self.assertIn("fetched guix pull || exit 1", guix)
+        self.assertIn("fetched guix system reconfigure --allow-downgrades /etc/config.scm || exit 1", guix)
+        self.assertNotRegex(guix, r"(?m)^\s*guix (pull|system reconfigure)\b")
+
+    def test_dragonfly_pkg_fetches_the_catalogue_whole_and_is_tried_again(self):
+        """pkg's update kept the image's old catalogue when its data.pkg was cut off (dragonfly6,
+        t2v-20261119T0157-c8c7: "Avalon repository is up to date", then the mirror had none of
+        git-lite 2.49.0's packages): the catalogue is fetched whole (pkg update -f) before the
+        upgrade, and a pkg that failed at a download runs again, 10 more times at most, after
+        another whole fetch (not before an update's own retry); its last tail is a known flake."""
+        for error in ("pkg: cached package libidn2-2.3.8: missing or size mismatch, cannot continue",
+                      "Unable to update repository Avalon",
+                      "pkg: https://mirror-master.dragonflybsd.org/dports/x/LATEST/data.pkg: Operation timed out"):
+            with self.subTest(error=error[:40]):
+                rc, n, out = self.run_fetched("DragonFly", 2, error)
+                self.assertEqual((rc, n), (0, 3), out)
+                self.assertIn("in-guest: a download failed", out)
+                rc, n, out = self.run_fetched("DragonFly", 99, error)
+                self.assertEqual((rc, n), (100, 11), out)
+                if "timed out" not in error:
+                    self.assert_flake("dragonfly6", out, "DragonFly")
+        rc, n, out = self.run_fetched("DragonFly", 99, "pkg: No packages available to install matching 'gitt'")
+        self.assertEqual((rc, n), (100, 1), out)
+        sec = self.sections()["DragonFly"]
+        self.assertRegex(sec, r"fetched pkg update -f \|\| exit 1\n\s*fetched pkg upgrade -y \|\| exit 1")
+        self.assertIn("fetched pkg install -y git-lite", sec)
+        # A retry fetches the catalogue whole first, unless it retries that fetch itself.
+        m = re.search(r"^( *)fetched\(\) \{\n.*?^\1\}\n", sec, re.M | re.S)
+        with tempfile.TemporaryDirectory() as d:
+            fn = textwrap.dedent(m[0]).replace("/tmp/bko-", f"{d}/bko-")
+            for args, want in (("pkg install -y git-lite", ["pkg install -y git-lite", "pkg update -f", "pkg install -y git-lite"]),
+                               ("pkg update -f", ["pkg update -f", "pkg update -f"])):
+                with self.subTest(args=args):
+                    Path(d, "calls").write_text("")
+                    script = textwrap.dedent(f"""\
+                        say() {{ :; }}
+                        sleep() {{ :; }}
+                        pkg() {{
+                            echo "pkg $*" >>{d}/calls
+                            [ "$(grep -c . {d}/calls)" -gt 1 ] || {{ echo "Unable to update repository Avalon"; return 3; }}
+                        }}
+                        """) + fn + f"fetched {args}\n"
+                    r = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+                    self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                    self.assertEqual(Path(d, "calls").read_text().splitlines(), want)
+        # git ls-remote runs again while it fails, and its commit is what the section compares
+        self.assertIn("head=$(lsremote refs/heads/$branch) || exit 1", sec)
+        self.assertNotRegex(sec, r"(head|built)=\$\(git ls-remote")
 
     def test_apt_lock_held_by_the_guests_own_apt_is_waited_out(self):
         """apt-get clean (and any apt-get) stopped by the lists' or the archives' lock that an apt

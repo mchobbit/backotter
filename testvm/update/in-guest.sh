@@ -70,13 +70,35 @@ if [ "$(uname)" = Linux ] && [ -d /gnu/store ] && [ -d /var/guix/profiles ] && [
     # t2-section: Guix
     PATH=/root/.config/guix/current/bin:/run/current-system/profile/bin:/run/current-system/profile/sbin:$PATH
     export PATH
-    guix pull || exit 1
+    # fetched CMD...: a guix that downloads, run again while it fails at a
+    # download, up to 10 times 60 s apart (guix15 and guix15-bios, GuestTest2
+    # t2v-20261119T0157-c8c7: "guix pull: error: Git error: SSL error:
+    # syscall failure", every try of both attempts, codeberg.org, where
+    # git.guix.gnu.org redirects, cut off by an internet at 50 % loss).  A
+    # pull changes nothing until it has the commit, and the objects it got
+    # stay in its checkout; a reconfigure keeps in the store each substitute
+    # it got.  A last failure's output ends the log, for GuestTest2's flake
+    # rules to read.
+    fetched() {
+        n=0
+        while :; do
+            { "$@" 2>&1; echo $? >/run/bko-fetch.rc; } | tee /run/bko-fetch.log
+            r=$(cat /run/bko-fetch.rc)
+            [ "$r" -ne 0 ] && [ $n -lt 10 ] &&
+                grep -qE "error: Git error: |substitution of /gnu/store/.* failed|download from .* failed|TLS error in procedure|failed to connect to |Temporary failure in name resolution" /run/bko-fetch.log ||
+                break
+            n=$((n + 1)); say "a download failed: $1 $2 again in 60 s ($n of 10)"; sleep 60
+        done
+        rm -f /run/bko-fetch.rc /run/bko-fetch.log
+        return "$r"
+    }
+    fetched guix pull || exit 1
     say "$(guix describe | head -5 | tr '\n' ' ')"
     # --allow-downgrades: 1.5.0's commit (d58da8a, the installed system's)
     # is on its release branch, not an ancestor of master's, so the first
     # reconfigure would abort as a "downgrade" (2026-11-14).  The pull above
     # just took the channel's head, so nothing older can come in this way.
-    guix system reconfigure --allow-downgrades /etc/config.scm || exit 1
+    fetched guix system reconfigure --allow-downgrades /etc/config.scm || exit 1
     # Every generation is a GC root: keep this one and the one before
     # (delete-generations rewrites grub.cfg's menu), drop the older Guix
     # builds of root's pulls, then what only those held.
@@ -1473,7 +1495,32 @@ FreeBSD)
 DragonFly)
     # t2-section: DragonFly
     export ASSUME_ALWAYS_YES=yes
-    pkg upgrade -y || exit 1
+    # fetched pkg ARGS...: a pkg that downloads, run again while it fails at
+    # a download, up to 10 times 60 s apart, with the whole catalogue
+    # fetched again first (pkg update -f).  The catalogue is fetched whole
+    # before anything else too: pkg 2.2's own update before an upgrade, its
+    # data.pkg cut off by an internet at 50 % loss, said "Avalon repository
+    # is up to date" and kept the image's old catalogue, whose git-lite
+    # 2.49.0 and the rest the mirror no longer has ("Lzma library error",
+    # "cached package libidn2-2.3.8: missing or size mismatch, cannot
+    # continue"; dragonfly6, GuestTest2 t2v-20261119T0157-c8c7).  A last
+    # failure's output ends the log, for GuestTest2's flake rules to read.
+    fetched() {
+        n=0
+        while :; do
+            { "$@" 2>&1; echo $? >/tmp/bko-fetch.rc; } | tee /tmp/bko-fetch.log
+            r=$(cat /tmp/bko-fetch.rc)
+            [ "$r" -ne 0 ] && [ $n -lt 10 ] &&
+                grep -qE "Unable to update repository|Error updating repositories|missing or size mismatch|Repo extraction failed|Error extracting the archive|[Tt]imed? ?out|Transfer closed with|No address record|Connection (reset|refused)" /tmp/bko-fetch.log ||
+                break
+            n=$((n + 1)); say "a download failed: $1 $2 again in 60 s ($n of 10)"; sleep 60
+            [ "$2" = update ] || pkg update -f >/dev/null 2>&1
+        done
+        rm -f /tmp/bko-fetch.rc /tmp/bko-fetch.log
+        return "$r"
+    }
+    fetched pkg update -f || exit 1
+    fetched pkg upgrade -y || exit 1
     # The base system: DragonFly publishes it in binary only as each point
     # release's install image, and its fixes land on the release branch in
     # between.  So it is rebuilt from that branch's head, as DragonFly's own
@@ -1491,16 +1538,26 @@ DragonFly)
     repo=https://github.com/DragonFlyBSD/DragonFlyBSD.git
     gitpkgs=
     if ! has git; then
-        pkg query %n | sort >/tmp/bko-pkgs && pkg install -y git-lite || exit 1
+        pkg query %n | sort >/tmp/bko-pkgs && fetched pkg install -y git-lite || exit 1
         gitpkgs=$(pkg query %n | sort | comm -13 /tmp/bko-pkgs -)
     fi
-    head=$(git ls-remote $repo refs/heads/$branch | cut -f1)
+    # lsremote REF: REF's commit at $repo (nothing when it has none), git
+    # ls-remote run again while it fails, up to 10 times 30 s apart.
+    lsremote() {
+        n=0
+        until l=$(git ls-remote $repo "$1"); do
+            n=$((n + 1)); [ $n -le 10 ] || { say "git ls-remote $repo $1 kept failing" >&2; return 1; }
+            say "git ls-remote $repo failed: again in 30 s ($n of 10)" >&2; sleep 30
+        done
+        printf '%s\n' "$l" | cut -f1
+    }
+    head=$(lsremote refs/heads/$branch) || exit 1
     [ -n "$head" ] || { say "no $branch at $repo"; exit 1; }
     if [ -f /var/db/bko-base ]; then
         built=$(cat /var/db/bko-base)
     else
         tag=$(uname -v | sed -n 's/^DragonFly \(v[0-9.]*\)-RELEASE .*/\1/p')
-        built=$(git ls-remote $repo "refs/tags/$tag^{}" | cut -f1)
+        built=$(lsremote "refs/tags/$tag^{}") || exit 1
     fi
     if [ "$head" = "$built" ]; then
         say "base system: current, $branch at $head"
@@ -1509,7 +1566,14 @@ DragonFly)
         # What a rebuild cut short left (src-create-shallow won't clone
         # over a /usr/src).
         rm -rf /usr/src /usr/obj/* || exit 1
-        make -C /usr src-create-shallow BRANCH=$branch GITURL_SRC=$repo >/dev/null || exit 1
+        # Again, up to 5 times a minute apart, when the clone fails: GitHub
+        # or the way there cutting it off (git keeps nothing of a failed one).
+        n=0
+        until make -C /usr src-create-shallow BRANCH=$branch GITURL_SRC=$repo >/dev/null; do
+            n=$((n + 1)); [ $n -le 5 ] || exit 1
+            say "the shallow clone of $repo failed: again in 60 s ($n of 5)"; sleep 60
+            rm -rf /usr/src || exit 1
+        done
         commit=$(git -C /usr/src rev-parse HEAD) || exit 1
         # The running kernel's configuration: the release's is X86_64_GENERIC.
         k=$(uname -i)

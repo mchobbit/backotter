@@ -1092,8 +1092,16 @@ d=$!; KIDS+=("$d")
 waitfor 60 test -e "$FX/hold-c46"   # in ht_release
 mrc=- nq="" dv=""
 if [[ -f $FX/look.raw && -d $r ]] && cp --sparse=always "$FX/look.raw" "$r/look.raw"; then
-    nbds=$(for b in /sys/block/nbd*; do [[ -e $b/pid ]] || echo "${b##*/}"; done | tail -n 3 | tr '\n' ' ')
-    (unset TMPDIR; export VM_MOUNT_NBD=$nbds; exec "$TV/vm-mount" --ro "$r/look.raw" "$LMP") >"$FX/out-c46-mount" 2>&1; mrc=$?
+    # nbd loaded first, as vm-mount loads it: after a host's reboot no
+    # vm-mount has yet, and the glob would match nothing.
+    [[ -d /sys/module/nbd ]] || modprobe nbd max_part=16
+    nbds=$(shopt -s nullglob; for b in /sys/block/nbd*; do [[ -e $b/pid ]] || echo "${b##*/}"; done | tail -n 3 | tr '\n' ' ')
+    if [[ -z $nbds ]]; then
+        echo "no free nbd device in /sys/block (nbd loaded: $([[ -d /sys/module/nbd ]] && echo yes || echo no))" >"$FX/out-c46-mount"
+        mrc="none run: no free nbd device"
+    else
+        (unset TMPDIR; export VM_MOUNT_NBD=$nbds; exec "$TV/vm-mount" --ro "$r/look.raw" "$LMP") >"$FX/out-c46-mount" 2>&1; mrc=$?
+    fi
     dv=$(head -n 1 "$LST" 2>/dev/null)
     nq=$(cat "/sys/block/${dv#/dev/}/pid" 2>/dev/null) && nq=$(awk '$1 == "Tgid:" { print $2 }' "/proc/$nq/status" 2>/dev/null)
 fi

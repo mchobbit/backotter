@@ -39,9 +39,11 @@ default again; skipped when the baseline's other root is empty (a fresh
 install never upgraded).
 
 A LUKS guest's passphrase (the first of GUEST_DIR's luks-keyfile,
-console-passphrase and luks-passphrase, without a final newline) goes into
-keys/disk-passphrase.  When bs1-adopt sets the guest to unlock from the drive
-(docs/design/bs1-luks-unattended.md: families S, D, E and B), the source also:
+console-passphrase, luks-passphrase and zfs-passphrase, without a final
+newline) goes into keys/disk-passphrase.  When bs1-adopt sets the guest to
+unlock from the drive (docs/design/bs1-luks-unattended.md: families S, D, E
+and B; Z, ZFSBootMenu's hooks for ZFS native encryption: void-zbm-enc), the
+source also:
   (a) runs bs1-adopt again, which must change nothing and remake nothing;
   (b) boots with the drive and nothing typed: "bs1-verify --unlock" must say
       UNLOCK=drive;
@@ -164,9 +166,13 @@ fi
 cat $t'''
 # What bs1-adopt's LUKS step writes, for "a second run changes nothing" and
 # "--luks-off puts it back".
+# Family Z's are on the ESP: ZFSBootMenu's image and the hooks beside it.
 LUKS_FILES = ("find /etc/backshot1 /etc/crypttab /etc/crypttab.initramfs /etc/dracut.conf.d /etc/mkinitcpio.conf.d "
-              "/etc/initcpio /etc/initramfs-tools/hooks /etc/kernel/cmdline.d /usr/local/lib/backshot1 -type f 2>/dev/null | LC_ALL=C sort | "
+              "/etc/initcpio /etc/initramfs-tools/hooks /etc/kernel/cmdline.d /usr/local/lib/backshot1 "
+              "/boot/efi/EFI/ZBM /efi/EFI/ZBM -type f 2>/dev/null | LC_ALL=C sort | "
               "while read -r f; do echo \"$f $(sha256sum <\"$f\" | cut -c1-16)\"; done")
+# The families that unlock from the drive (bs1-luks).
+DRIVE_FAMILIES = ("S", "D", "E", "B", "Z")
 fails = []
 
 
@@ -369,7 +375,7 @@ def main():
 
     # The guest's LUKS passphrase, as the person writes theirs: no final newline.
     passfile = None
-    for n in ("luks-keyfile", "console-passphrase", "luks-passphrase"):
+    for n in ("luks-keyfile", "console-passphrase", "luks-passphrase", "zfs-passphrase"):
         src = os.path.join(a.guest_dir, n)
         if os.path.isfile(src):
             passfile = f"{w}/disk-passphrase"
@@ -378,7 +384,7 @@ def main():
             os.chmod(passfile, 0o600)
             break
     if (a.luks_typed or a.strip_embedded_key) and not passfile:
-        sys.exit(f"{a.guest_dir} has no luks-keyfile, console-passphrase or luks-passphrase")
+        sys.exit(f"{a.guest_dir} has no luks-keyfile, console-passphrase, luks-passphrase or zfs-passphrase")
     mount_drive = f"mkdir -p /mnt/bs1-backup; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do mount LABEL={LABEL} /mnt/bs1-backup 2>/dev/null && break; sleep 2; done; mountpoint -q /mnt/bs1-backup"
 
     def boot(name, disks, typed=False, delays=(25, 50, 80), pick=None):
@@ -510,7 +516,7 @@ def main():
             return sh.show("bash /run/bs1-check/bs1-verify --unlock", 120)
         return sh.show(f"{mount_drive} && bash /mnt/bs1-backup/backshot1/bs1-verify --unlock", 120)
 
-    if family in ("S", "D", "E", "B"):
+    if family in DRIVE_FAMILIES:
         print("== LUKS (a): bs1-adopt again changes nothing", flush=True)
         _, sums = root.run(LUKS_FILES, 60)
         rc, out = root.show("sh /mnt/bs1-backup/backshot1/bs1-adopt", 3600)
@@ -593,7 +599,7 @@ def main():
     rc, out = root.show("bash /mnt/bs1-backup/backshot1/bs1-backup --preflight")
     check(rc == 0, "bs1-backup --preflight passes")
     mode = next((ln[7:].strip() for ln in out.splitlines() if ln.startswith("UNLOCK=")), None)
-    if family in ("S", "D", "E", "B"):
+    if family in DRIVE_FAMILIES:
         check(mode == "drive", f"the preflight says UNLOCK=drive: {mode}")
     elif family == "own":
         check(mode == "own", f"the preflight says UNLOCK=own: {mode}")

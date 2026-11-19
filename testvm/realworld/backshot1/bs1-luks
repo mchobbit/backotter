@@ -40,6 +40,11 @@
 #      there, OPTIONS the ones in force (from the other cmdline.d files) and
 #      keyfile-timeout=WAITs; then moss boot sync, and the ESP's entries are
 #      checked.  A volume the booted system opens is S's.
+#   Z  ZFSBootMenu, with ZFS native encryption and no LUKS: a load-key.d hook
+#      (bs1-unlock-key --zfs) and a boot-sel.d hook on the ESP, which
+#      zbm.hookroot= in VMLINUZ.EFI's embedded command line names (below,
+#      "Family Z").  ZFS encryption without ZFSBootMenu changes nothing and
+#      writes no record, as before: attended.
 #   A  attended: anything else (non-systemd dracut, mkinitfs, ostree).
 #      Nothing changes; the record says why.
 # A volume that already unlocks with no one typing (a key file of its own,
@@ -99,8 +104,8 @@ lk_save() {
 }
 
 # lk_put FILE MODE CONTENT: writes CONTENT to FILE (and a final newline)
-# unless it's there already; MODE is a new file's.  LK_CHANGED counts the
-# files changed.
+# unless it's there already; MODE is a new file's (- for none: the ESP's
+# FAT, which has no modes to set).  LK_CHANGED counts the files changed.
 LK_CHANGED=0
 LK_EARLY_S=
 LK_BLS_VOLS=()
@@ -114,7 +119,7 @@ lk_put() {
     [[ -e $file ]] || new=yes
     # Into the file itself when it exists, so its mode, owner and label stay.
     printf '%s\n' "$content" >"$file" || return 1
-    [[ $new == no ]] || chmod "$mode" "$file"
+    [[ $new == no || $mode == - ]] || chmod "$mode" "$file"
     LK_CHANGED=$((LK_CHANGED + 1))
     lk_say "wrote $file"
 }
@@ -665,25 +670,18 @@ lk_pe_section() {
     return 1
 }
 
-# luks_adopt: the step itself.  False, having changed nothing, if it can't.
-luks_adopt() {
-    local disk key mnt src lbl rel fstype gen family='' reason='' cmdline vols dev uuid name line k o how
-    local vol_list=() own_list=() edits_tab=() edits_ini=() edits_bls=() unhandled=() early hooks='' files='' cd cdname fix re f
-    local xl_vols=() xl_files=() xl_dir='' xl_kind xl_rest xl_o i e n
-    if [[ ${BS1_LUKS:-yes} == no ]]; then lk_say "skipped (BS1_LUKS=no)"; return 0; fi
-    disk=$(internal_disk) || { lk_err "no single disk has serial $INTERNAL_SERIAL"; return 1; }
-    LK_DISK=$disk
-    vols=$(lk_luks_volumes "$disk")
-    if [[ -z $vols ]]; then
-        lk_say "no LUKS volume on $disk: nothing to do"
-        [[ ! -e $LUKS_REC ]] || lk_say "($LUKS_REC is from before; bs1-adopt --luks-off removes it)"
-        return 0
-    fi
+# lk_drive WHAT: the drive's key, checked, and where it is: LK_KEY (beside
+# bs1-adopt, on the drive), LK_PATH (its path on the drive), LK_FSTYPE (the
+# drive's file system) and LK_KEYSPEC (crypttab's PATH:LABEL=LABEL).  WHAT
+# says what needs it.  False, with the reason, if the key isn't there or
+# this isn't the backup drive.
+lk_drive() {
+    local mnt src lbl rel
     [[ -s $here/bs1-unlock-key ]] || { lk_err "no $here/bs1-unlock-key: stage the scripts again"; return 1; }
-    key=$here/keys/disk-passphrase
-    [[ -s $key ]] || { lk_err "LUKS volumes need the passphrase in $key (printf '%s' PASSPHRASE, no final newline)"; return 1; }
+    LK_KEY=$here/keys/disk-passphrase
+    [[ -s $LK_KEY ]] || { lk_err "$1 need the passphrase in $LK_KEY (printf '%s' PASSPHRASE, no final newline)"; return 1; }
     # systemd-cryptsetup warns of a key file anyone can read.
-    chmod 600 "$key" 2>/dev/null || true
+    chmod 600 "$LK_KEY" 2>/dev/null || true
 
     # Where the key is: this script's drive, by its label.
     if ! mnt=$(findmnt -no TARGET --target "$here") || ! src=$(findmnt -no SOURCE --target "$here"); then
@@ -696,8 +694,31 @@ luks_adopt() {
     rel=${here#"$mnt"}
     LK_PATH=${rel%/}/keys/disk-passphrase
     [[ $LK_PATH =~ ^/[A-Za-z0-9._/-]+$ ]] || { lk_err "the key's path on the drive, $LK_PATH, has characters crypttab can't take"; return 1; }
-    fstype=$(findmnt -no FSTYPE --target "$here")
+    LK_FSTYPE=$(findmnt -no FSTYPE --target "$here")
     LK_KEYSPEC=$LK_PATH:LABEL=$BACKUP_LABEL
+}
+
+# luks_adopt: the step itself.  False, having changed nothing, if it can't.
+luks_adopt() {
+    local disk key fstype gen family='' reason='' cmdline vols dev uuid name line k o how
+    local vol_list=() own_list=() edits_tab=() edits_ini=() edits_bls=() unhandled=() early hooks='' files='' cd cdname fix re f
+    local xl_vols=() xl_files=() xl_dir='' xl_kind xl_rest xl_o i e n
+    if [[ ${BS1_LUKS:-yes} == no ]]; then lk_say "skipped (BS1_LUKS=no)"; return 0; fi
+    disk=$(internal_disk) || { lk_err "no single disk has serial $INTERNAL_SERIAL"; return 1; }
+    LK_DISK=$disk
+    vols=$(lk_luks_volumes "$disk")
+    # No LUKS, but ZFS native encryption that asks: ZFSBootMenu's (family Z).
+    if [[ -z $vols ]] && declare -F zfs_passphrase_roots >/dev/null && [[ -n $(zfs_passphrase_roots "$disk") ]]; then
+        lk_zfs_adopt "$disk"
+        return
+    fi
+    if [[ -z $vols ]]; then
+        lk_say "no LUKS volume on $disk: nothing to do"
+        [[ ! -e $LUKS_REC ]] || lk_say "($LUKS_REC is from before; bs1-adopt --luks-off removes it)"
+        return 0
+    fi
+    lk_drive "LUKS volumes" || return 1
+    key=$LK_KEY fstype=$LK_FSTYPE
 
     # The key first, before anything changes.
     while read -r dev uuid name; do
@@ -1371,10 +1392,365 @@ lk_nix_check() {
     [[ $bad -eq 0 ]]
 }
 
+# Family Z, ZFSBootMenu (ZFS native encryption, no LUKS): ZFSBootMenu asks
+# for the passphrase of the encryption root of the boot environment (BE) it
+# boots, then kexecs the BE's kernel, whose own initramfs loads the key from
+# the key file keylocation=file:// names inside the BE (the guide's
+# /etc/zfs/zroot.key), so only ZFSBootMenu's prompt has to go.  ZFSBootMenu
+# runs its load-key.d hooks before it asks, and imports hooks at boot from
+# zbm.hookroot=DEVICE//PATH on its command line (zfsbootmenu(7)).  So:
+#   - LK_ZBM_DIR/LK_ZBM_HOOKS on the ESP gets a load-key.d hook, bs1-unlock-key
+#     --zfs with the record's values at its top, which loads the key from the
+#     drive (it waits up to LUKS_WAIT s; else ZFSBootMenu asks as before), and
+#     a boot-sel.d hook that carries what happened over the kexec as
+#     bs1.zbm=ROOT:HOW on the BE's command line (bs1-common's unlock_how Z);
+#   - LK_ZBM_DIR/VMLINUZ.EFI, the guide's image (never VMLINUZ-BACKUP.EFI,
+#     which stays the attended fallback), gets zbm.hookroot=UUID=ESP//PATH
+#     and zbm.wait_for=UUID=ESP in its embedded command line (.cmdline), as
+#     zbm-kcl writes it, by objcopy.  zbm.wait_for names only the ESP: for a
+#     device that isn't there ZFSBootMenu waits until a key is pressed, so
+#     never the drive.
+# No pool property changes, nor anything in the BE but the record.  The
+# restore brings the ESP back file by file under the same FAT volume ID
+# (mkfs.fat -i), so the restored image finds its hooks.  The image's
+# original is saved in LUKS_ORIG like any other file; --luks-off puts it
+# back and removes the hooks.
+LK_ZBM_DIR=EFI/ZBM
+LK_ZBM_HOOKS=backshot1
+LK_ZBM_KEYHOOK=load-key.d/10-bs1-zfskey
+LK_ZBM_MARKHOOK=boot-sel.d/10-bs1-mark
+
+# lk_rec_field FIELD: a value from the record (bs1-common's luks_rec, here
+# for --luks-off, which may run without it).
+lk_rec_field() {
+    [[ -r $LUKS_REC ]] || return 1
+    (
+        # shellcheck disable=SC1090
+        . "$LUKS_REC" >/dev/null 2>&1
+        printf '%s' "${!1:-}"
+    )
+}
+
+# lk_key_same KEY FILE: FILE holds the passphrase in KEY as libzfs reads a
+# passphrase key file (getline: one '\n' at its end dropped, nothing else),
+# so the two may differ by one '\n' at the end of either, as bko-holt's
+# restore check allows (key_file_check, holt/src/load/zfsbootmenu.rs).
+lk_key_same() {
+    cmp -s "$1" "$2" || { echo | cat "$2" - | cmp -s "$1" -; } || { echo | cat "$1" - | cmp -s - "$2"; }
+}
+
+# lk_zbm_find DISK: "ESP<tab>DEVICE<tab>IMAGE" for the first vfat file system
+# mounted from DISK with LK_ZBM_DIR/VMLINUZ.EFI on it (FAT's names ignore
+# case), a PE image; false for none.
+lk_zbm_find() {
+    local t s img
+    while read -r t s; do
+        t=$(printf '%b' "$t")
+        on_disk "$s" "$1" || continue
+        img=$t/$LK_ZBM_DIR/VMLINUZ.EFI
+        [[ -f $img && $(head -c 2 "$img" 2>/dev/null) == MZ ]] || continue
+        printf '%s\t%s\t%s\n' "$t" "$s" "$img"
+        return 0
+    done < <(findmnt -rn -t vfat -o TARGET,SOURCE)
+    return 1
+}
+
+# lk_zfs_bes DISK: "BE ENCROOT" for each dataset ZFSBootMenu takes for a boot
+# environment (mountpoint=/) in the pools on DISK, ENCROOT - when it isn't
+# encrypted.
+lk_zfs_bes() {
+    local pool v
+    for pool in $(zpool list -Ho name 2>/dev/null); do
+        for v in $(zpool list -vHPL "$pool" 2>/dev/null | awk '$1 ~ /^\// { print $1 }'); do
+            on_disk "$v" "$1" || continue
+            zfs list -H -o name,mountpoint,encryptionroot -t filesystem -r "$pool" 2>/dev/null | awk -F'\t' '$2 == "/" { print $1, ($3 == "" ? "-" : $3) }'
+            break
+        done
+    done
+}
+
+# lk_pe_signed FILE: the PE image carries a signature (its certificate
+# table isn't empty), which a changed .cmdline would break.
+lk_pe_signed() {
+    local pe opt magic dirs
+    pe=$(lk_u32 "$1" 60) opt=$((pe + 24))
+    magic=$(lk_u16 "$1" "$opt")
+    if [[ $magic == 523 ]]; then dirs=$((opt + 112)); else dirs=$((opt + 96)); fi
+    [[ $(lk_u32 "$1" $((dirs + 4 * 8 + 4))) != 0 ]]
+}
+
+# lk_zbm_sections FILE: "NAME SIZE VMA" for each section, as objdump has them.
+lk_zbm_sections() {
+    objdump -h -w "$1" 2>/dev/null | awk '$1 ~ /^[0-9]+$/ { print $2, $3, $4 }'
+}
+
+# lk_zbm_gap FILE: "0xVMA ROOM": where .cmdline is and how many bytes there
+# are up to the next section, which a new one must fit in (zbm-kcl's
+# find_cmdline_gap).
+lk_zbm_gap() {
+    local c m
+    read -r c m < <(lk_zbm_sections "$1" | while read -r n _ v; do echo "$n $((16#$v))"; done | awk '
+        $1 == ".cmdline" { c = $2; hc = 1; next }
+        { vs[++n] = $2 }
+        END {
+            if (!hc) exit 1
+            for (i = 1; i <= n; i++) if (vs[i] > c && (m == "" || vs[i] - c < m)) m = vs[i] - c
+            if (m != "") printf "%.0f %.0f\n", c, m
+        }') && [[ -n $m ]] || return 1
+    printf '0x%x %d\n' "$c" "$m"
+}
+
+# lk_words TEXT: TEXT's words, one space between each.
+lk_words() {
+    local w=()
+    read -ra w <<<"$1"
+    printf '%s' "${w[*]}"
+}
+
+# lk_zbm_cmdline TEXT HOOKROOT WAITFOR: the image's command line TEXT with
+# BackShot1's two arguments (each once, at the end); false, saying why, when
+# TEXT has a zbm.hookroot= or zbm.wait_for= of its own.
+lk_zbm_cmdline() {
+    local w ws=() out=()
+    read -ra ws <<<"$1"
+    for w in "${ws[@]}"; do
+        case $w in
+        "$2" | "$3") continue ;;
+        zbm.hookroot=* | zbm.wait_for=*) echo "the image's command line has $w of its own"; return 1 ;;
+        esac
+        out+=("$w")
+    done
+    out+=("$2" "$3")
+    printf '%s' "${out[*]}"
+}
+
+# lk_zbm_write IMAGE CMDLINE: IMAGE's .cmdline made "CMDLINE\0", as zbm-kcl
+# writes it (its leading space is overwritten by its own `cat >`: checked
+# byte for byte against the pinned zbm-kcl on the v3.1.0 release image,
+# 2026-11-19): objcopy drops the section and adds the new one at the same
+# address, on a copy, which must keep every other section's size and address
+# and read back as CMDLINE; then IMAGE is saved (lk_save) and replaced.
+lk_zbm_write() {
+    local img=$1 new=$2 tmp off room size before after got rc=1
+    tmp=$(mktemp -d) || return 1
+    if ! cp "$img" "$tmp/img.efi"; then
+        lk_err "can't copy $img"
+    elif ! read -r off room < <(lk_zbm_gap "$tmp/img.efi"); then
+        lk_err "can't find $img's .cmdline section and the room after it (objdump -h)"
+    else
+        printf '%s\0' "$new" >"$tmp/cmdline"
+        size=$(wc -c <"$tmp/cmdline")
+        before=$(lk_zbm_sections "$tmp/img.efi" | awk '$1 != ".cmdline"')
+        if [[ $size -gt $room ]]; then
+            lk_err "the new command line ($size bytes) doesn't fit in $img's room for it ($room bytes)"
+        elif ! objcopy --remove-section .cmdline "$tmp/img.efi" ||
+            ! objcopy --add-section ".cmdline=$tmp/cmdline" --change-section-vma ".cmdline=$off" "$tmp/img.efi"; then
+            lk_err "objcopy couldn't rewrite $img's .cmdline"
+        else
+            after=$(lk_zbm_sections "$tmp/img.efi" | awk '$1 != ".cmdline"')
+            got=$(lk_pe_section "$tmp/img.efi" .cmdline) || got=
+            if [[ $after != "$before" ]]; then
+                lk_err "objcopy moved or resized $img's other sections"
+            elif [[ $(lk_words "$got") != "$new" ]]; then
+                lk_err "$img's rewritten .cmdline reads \"$got\", not \"$new\""
+            elif lk_save "$img" && cp "$tmp/img.efi" "$img.bs1-new" && sync && mv -f "$img.bs1-new" "$img" && sync; then
+                LK_CHANGED=$((LK_CHANGED + 1))
+                lk_say "wrote $img (its embedded command line: $new)"
+                rc=0
+            else
+                rm -f "$img.bs1-new"
+                lk_err "couldn't replace $img"
+            fi
+        fi
+    fi
+    rm -rf "$tmp"
+    return $rc
+}
+
+# lk_zbm_keyhook: the load-key.d hook's text: bs1-unlock-key --zfs, with the
+# record's values at its top (ZFSBootMenu's initramfs has no /etc/backshot1),
+# for ZFSBootMenu's bash.  ZBM_ENCRYPTION_ROOT is the root it would ask for.
+lk_zbm_keyhook() {
+    # shellcheck disable=SC2016
+    printf '%s\n' '#!/bin/bash' \
+        "# BackShot1 (bs1-adopt): ZFSBootMenu's load-key.d hook, made from bs1-unlock-key." \
+        "# The passphrase of the encryption root ZFSBootMenu would ask for, from" \
+        "# $LK_PATH on LABEL=$BACKUP_LABEL; without the drive within $LUKS_WAIT s," \
+        "# or with a key that doesn't fit, ZFSBootMenu asks as before." \
+        "# TESTBED ONLY; bs1-adopt --luks-off removes it." \
+        "BS1_UNLOCK_SET=1 label=$(lk_q "$BACKUP_LABEL") path=$(lk_q "$LK_PATH") fstype=$(lk_q "$LK_FSTYPE") wait=$(lk_q "$LUKS_WAIT") volumes=''" \
+        'set -- --zfs "${ZBM_ENCRYPTION_ROOT:-}"'
+    tail -n +2 "$here/bs1-unlock-key"
+}
+
+# lk_zbm_markhook: the boot-sel.d hook's text.  ZFSBootMenu runs it for the
+# BE it is about to boot, after the key is loaded and right before
+# load_be_cmdline reads that BE's command line: the per-BE cache
+# BASE/environments/BE/cmdline (one argument a line, which load_be_cmdline
+# makes from the org.zfsbootmenu:commandline property when it isn't there
+# or is stale), or BASE/cmdline when someone edited the command line in the
+# menu.  The hook makes sure of the cache (load_be_cmdline, from
+# ZFSBootMenu's own library) and puts bs1.zbm=ROOT:HOW,... in it from the
+# load-key.d hook's marks.  Anything that fails leaves the command line as
+# it was: the booted system then says typed.
+lk_zbm_markhook() {
+    cat <<'HOOK'
+#!/bin/bash
+# BackShot1 (bs1-adopt): ZFSBootMenu's boot-sel.d hook.  Puts bs1.zbm=ROOT:HOW
+# on the chosen boot environment's kernel command line, HOW drive or typed as
+# the load-key.d hook marked it in /run/backshot1-unlock, so the booted system
+# can tell how ZFSBootMenu unlocked it.  TESTBED ONLY; bs1-adopt --luks-off
+# removes it.
+# BS1_ZBM_ROOT: a directory standing in for /, for the unit tests only.
+R=${BS1_ZBM_ROOT:-}
+for f in "$R/lib/profiling-lib.sh" "$R/etc/zfsbootmenu.conf" "$R/lib/kmsg-log-lib.sh" "$R/lib/zfsbootmenu-core.sh"; do
+    # shellcheck disable=SC1090
+    source "$f" >/dev/null 2>&1 || exit 0
+done
+fs=${ZBM_SELECTED_BE:-}
+[ -n "$fs" ] && [ -n "${BASE:-}" ] && [ -r "$R/run/backshot1-unlock" ] || exit 0
+marks=$(awk '!($1 in h) { o[++n] = $1 } { h[$1] = $2 } END { for (i = 1; i <= n; i++) printf "%s%s:%s", (i > 1 ? "," : ""), o[i], h[o[i]] }' "$R/run/backshot1-unlock")
+[ -n "$marks" ] || exit 0
+f=$BASE/cmdline
+if [ ! -r "$f" ]; then
+    f=$BASE/environments/$fs/cmdline
+    load_be_cmdline "$fs" >/dev/null 2>&1
+fi
+[ -f "$f" ] || exit 0
+{ grep -v '^bs1\.zbm=' "$f"; echo "bs1.zbm=$marks"; } >"$f.bs1" && cat "$f.bs1" >"$f"
+rm -f "$f.bs1"
+exit 0
+HOOK
+}
+
+# lk_zfs_adopt DISK: luks_adopt's ZFS part, for a disk with no LUKS volume
+# and ZFS encryption roots that ask (bs1-common's zfs_passphrase_roots).
+# Without ZFSBootMenu's VMLINUZ.EFI on a mounted ESP, nothing changes, as
+# before family Z: the run is attended.
+lk_zfs_adopt() {
+    local disk=$1 roots r kl guid bes rootds be_enc f esp espdev img uuid cmd='' new='' hdir why family=Z reason=''
+    local vol_list=() own_list=() unhandled=()
+    roots=$(zfs_passphrase_roots "$disk" | paste -s -d ' ' -)
+    if [[ $(findmnt -nro FSTYPE /) != zfs ]] || ! IFS=$'\t' read -r esp espdev img < <(lk_zbm_find "$disk"); then
+        lk_say "ZFS native encryption on $disk ($roots), not booted by ZFSBootMenu's $LK_ZBM_DIR/VMLINUZ.EFI: attended; nothing changes"
+        [[ ! -e $LUKS_REC ]] || lk_say "($LUKS_REC is from before; bs1-adopt --luks-off removes it)"
+        return 0
+    fi
+    lk_drive "ZFS encryption roots" || return 1
+    # The key first, before anything changes: load gives it to every root
+    # that asks (bs1-common's layout_keys).
+    # shellcheck disable=SC2086
+    if ! why=$(zfs_key_test "$LK_KEY" $roots); then
+        lk_err "$why ($LK_KEY): is it the passphrase, with no final newline?"
+        return 1
+    fi
+    lk_say "the drive's key opens every ZFS encryption root on $disk that asks: $roots"
+    lk_say "ZFSBootMenu: $img (the ESP, $espdev, at $esp)"
+
+    bes=$(lk_zfs_bes "$disk")
+    rootds=$(findmnt -nro SOURCE /)
+    be_enc=$(zfs get -H -o value encryptionroot "$rootds" 2>/dev/null)
+    for r in $roots; do
+        kl=$(zfs get -H -o value keylocation "$r" 2>/dev/null)
+        guid=$(zfs get -H -o value guid "$r" 2>/dev/null)
+        if [[ ! $r =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            unhandled+=("the encryption root $r has characters the record can't take")
+        elif awk -v r="$r" '$2 == r { f = 1 } END { exit !f }' <<<"$bes"; then
+            # ZFSBootMenu asks for it; the BE's initramfs mustn't ask again.
+            case $kl in
+            file://*)
+                f=${kl#file://}
+                if [[ $be_enc != "$r" ]]; then
+                    unhandled+=("$r holds a boot environment, but not the running one ($rootds), so its key file $f can't be checked")
+                elif [[ ! -f $f ]]; then
+                    unhandled+=("$r's key file $f (its keylocation) isn't there, so its boot environments' initramfs would ask again after ZFSBootMenu")
+                elif ! lk_key_same "$LK_KEY" "$f"; then
+                    lk_err "$r's key file $f isn't the drive's key $LK_KEY (but for one newline at the end): bko-holt load would make $r with a key the restored initramfs's copy of $f doesn't fit"
+                    return 1
+                else
+                    vol_list+=("$r:$guid:Z")
+                fi
+                ;;
+            *) unhandled+=("$r holds a boot environment and has keylocation=$kl, so its initramfs asks again after ZFSBootMenu") ;;
+            esac
+        elif [[ $kl == prompt ]]; then
+            unhandled+=("$r holds no boot environment and has keylocation=prompt: the booted system asks for it")
+        else
+            own_list+=("$r:$guid")
+        fi
+    done
+
+    # The image: unsigned (a signature wouldn't fit the changed .cmdline),
+    # its command line without quotes and without a hook root or device
+    # wait of its own; the ESP with a volume ID for zbm.hookroot.
+    uuid=$(blkid -o value -s UUID "$espdev" 2>/dev/null)
+    hdir=$esp/$LK_ZBM_DIR/$LK_ZBM_HOOKS
+    if [[ ${#vol_list[@]} -gt 0 ]]; then
+        cmd=$(lk_pe_section "$img" .cmdline) || cmd=
+        if ! command -v objcopy >/dev/null || ! command -v objdump >/dev/null; then
+            if declare -F pkg_install >/dev/null; then
+                lk_say "installing binutils, for objcopy and objdump"
+                pkg_install binutils binutils binutils binutils binutils binutils binutils binutils sys-devel/binutils binutils >/dev/null
+            fi
+        fi
+        if ! command -v objcopy >/dev/null || ! command -v objdump >/dev/null; then
+            unhandled+=("no objcopy and objdump (binutils) to rewrite $img's command line")
+        elif lk_pe_signed "$img"; then
+            unhandled+=("$img is signed (Secure Boot), and a changed command line would break its signature")
+        elif ! lk_zbm_gap "$img" >/dev/null; then
+            unhandled+=("$img has no .cmdline section bs1-adopt can rewrite")
+        elif [[ $cmd == *\"* ]]; then
+            unhandled+=("$img's command line has quoted arguments, which bs1-adopt doesn't rewrite")
+        elif [[ ! $uuid =~ ^[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}$ ]]; then
+            unhandled+=("the ESP $espdev has no FAT volume ID (${uuid:-none}) for zbm.hookroot=UUID=")
+        elif ! why=$(lk_zbm_cmdline "$cmd" "zbm.hookroot=UUID=$uuid//$LK_ZBM_DIR/$LK_ZBM_HOOKS" "zbm.wait_for=UUID=$uuid"); then
+            unhandled+=("$why, which bs1-adopt doesn't merge with its own")
+        else
+            new=$why
+        fi
+    fi
+    if [[ ${#unhandled[@]} -gt 0 ]]; then
+        family=A reason=$(printf '%s\n' "${unhandled[@]}" | awk '!seen[$0]++' | paste -s -d ';' - | sed 's/;/; /g')
+    elif [[ ${#vol_list[@]} -eq 0 ]]; then
+        family=own reason="every ZFS encryption root that asks opens with no one typing (a key file)"
+    fi
+
+    mkdir -p "$LUKS_DIR"
+    if [[ $family == A || $family == own ]]; then
+        lk_say "$family: $reason; nothing else changes"
+        lk_put "$LUKS_REC" 644 "$(lk_record "$family" zfsbootmenu "$LK_FSTYPE" "" "${own_list[*]}" "$reason")" || return 1
+        [[ ! -e $hdir/$LK_ZBM_KEYHOOK ]] || lk_say "($hdir has ZFSBootMenu hooks from before; bs1-adopt --luks-off removes them)"
+        return 0
+    fi
+    lk_say "family Z (ZFSBootMenu): ${vol_list[*]}${own_list:+; own: ${own_list[*]}}"
+    lk_put "$LUKS_REC" 644 "$(lk_record Z zfsbootmenu "$LK_FSTYPE" "${vol_list[*]}" "${own_list[*]}" "")
+esp=$uuid
+image=$(lk_q "$img")
+hooks=$(lk_q "$hdir")" || return 1
+    if ! lk_put "$hdir/$LK_ZBM_KEYHOOK" - "$(lk_zbm_keyhook)" || ! lk_put "$hdir/$LK_ZBM_MARKHOOK" - "$(lk_zbm_markhook)"; then
+        lk_err "couldn't write the hooks in $hdir; putting everything back"
+        luks_off
+        return 1
+    fi
+    if [[ $(lk_words "$cmd") != "$new" ]] && ! lk_zbm_write "$img" "$new"; then
+        lk_err "putting everything back"
+        luks_off
+        return 1
+    fi
+    if [[ $LK_CHANGED -eq 0 ]]; then
+        lk_say "unchanged; the initramfs isn't remade (nor ZFSBootMenu's image)"
+        return 0
+    fi
+    lk_say "done: reboot once with the drive plugged in, nothing typed, before the next backup (preflight wants a boot the drive unlocked)"
+}
+
 # luks_off: everything luks_adopt wrote, put back, and the initramfs remade.
 luks_off() {
-    local o f gen changed=0
+    local o f gen changed=0 zhooks=''
     gen=$(lk_generator)
+    # Family Z: the ESP's hook root, and no initramfs to remake (ZFSBootMenu's
+    # image comes back from orig/ like any other file).
+    if [[ $(lk_rec_field generator) == zfsbootmenu ]]; then gen=zfsbootmenu zhooks=$(lk_rec_field hooks); fi
     if [[ -d $LUKS_ORIG ]]; then
         for o in "$LUKS_ORIG"/*; do
             [[ -e $o ]] || continue
@@ -1393,7 +1769,14 @@ luks_off() {
     fi
     rm -rf "$LUKS_ORIG" "$LUKS_MADE" "$LUKS_REC"
     rmdir "$LUKS_DIR" "${UNLOCK_KEY%/*}" 2>/dev/null || true
-    if [[ $changed -eq 1 ]]; then
+    # The hooks' directories, once empty: only BackShot1's own, by its name.
+    if [[ $zhooks == /?*/"$LK_ZBM_DIR/$LK_ZBM_HOOKS" && -d $zhooks ]]; then
+        rmdir -- "${zhooks:?}/${LK_ZBM_KEYHOOK%/*}" "${zhooks:?}/${LK_ZBM_MARKHOOK%/*}" "${zhooks:?}" 2>/dev/null || true
+        [[ ! -d $zhooks ]] || lk_say "$zhooks has files bs1-adopt didn't write; left there"
+    fi
+    if [[ $gen == zfsbootmenu ]]; then
+        if [[ $changed -eq 1 ]]; then sync; else lk_say "nothing to put back"; fi
+    elif [[ $changed -eq 1 ]]; then
         if [[ $gen == prebuilt ]]; then lk_say "writing the boot entries again (moss boot sync)"; else lk_say "remaking the initramfs ($gen)"; fi
         lk_remake "$gen" || { lk_err "remaking the initramfs failed: run it by hand before rebooting"; return 1; }
     else

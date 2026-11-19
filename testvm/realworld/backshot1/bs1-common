@@ -410,13 +410,16 @@ rustic_in() {       # rustic_in RUN_DIR: sets RUSTIC for that run's repository
 # installed system and so in the backup, and what the initramfs leaves.
 LUKS_REC=/etc/backshot1/luks-unlock
 UNLOCK_MARK=/run/backshot1-unlock
+# Family Z: the booted kernel's command line, where ZFSBootMenu's boot-sel.d
+# hook leaves bs1.zbm=ROOT:HOW,... (bs1-luks).
+UNLOCK_CMDLINE=/proc/cmdline
 
 # luks_rec FIELD: a value from the record, or false without one.
 luks_rec() {
     [[ -r $LUKS_REC ]] || return 1
     (
         # shellcheck disable=SC2034
-        family='' generator='' label='' path='' fstype='' wait='' volumes='' own='' reason=''
+        family='' generator='' label='' path='' fstype='' wait='' volumes='' own='' reason='' esp='' image='' hooks=''
         # shellcheck disable=SC1090
         . "$LUKS_REC"
         printf '%s' "${!1:-}"
@@ -467,9 +470,35 @@ luks_names() {
     done | LC_ALL=C sort -u
 }
 
+# zfs_passphrase_roots DISK: the ZFS encryption roots that ask for a
+# passphrase (keyformat=passphrase) in each imported pool with a vdev on
+# DISK, as the running system has them (layout_zfs_passphrase reads a dump's).
+zfs_passphrase_roots() {
+    local pool v
+    command -v zpool >/dev/null || return 0
+    for pool in $(zpool list -Ho name 2>/dev/null); do
+        for v in $(zpool list -vHPL "$pool" 2>/dev/null | awk '$1 ~ /^\// { print $1 }'); do
+            lsblk -snlo NAME "$v" 2>/dev/null | awk -v d="$1" '$1 == d { f = 1 } END { exit !f }' || continue
+            zfs list -H -o name,encryptionroot,keyformat -r "$pool" 2>/dev/null | awk -F'\t' '$1 == $2 && $3 == "passphrase" { print $1 }'
+            break
+        done
+    done | LC_ALL=C sort -u
+}
+
+# zfs_key_test KEY ROOT...: KEY opens each ZFS encryption root (a dry run,
+# which works with the key already loaded); else says which not.
+zfs_key_test() {
+    local key=$1 r bad=0
+    shift
+    for r in "$@"; do
+        zfs load-key -n -L "file://$key" "$r" >/dev/null 2>&1 || { echo "the drive's key doesn't open the ZFS encryption root $r"; bad=1; }
+    done
+    return $bad
+}
+
 # unlock_how NAME HOW: how this boot opened the volume the record names, HOW
-# being the record's S, D, E, N or B: drive (the backup drive's key), typed,
-# or fetched (E: the key was copied, but couldn't be tested).
+# being the record's S, D, E, N, B or Z: drive (the backup drive's key),
+# typed, or fetched (E: the key was copied, but couldn't be tested).
 unlock_how() {
     local name=$1 j
     case $2 in
@@ -490,6 +519,14 @@ unlock_how() {
         else
             echo typed
         fi
+        ;;
+    Z)
+        # ZFSBootMenu (bs1-luks): its load-key.d hook marks each encryption
+        # root it was asked for, in ZFSBootMenu's own RAM, and its boot-sel.d
+        # hook carries the marks over the kexec on the booted kernel's
+        # command line, bs1.zbm=ROOT:HOW,...  No word for NAME: typed.
+        tr -s '[:space:]' '\n' <"$UNLOCK_CMDLINE" 2>/dev/null | sed -n 's/^bs1\.zbm=//p' | tail -n 1 | tr ',' '\n' |
+            awk -v n="$name" '{ i = index($0, ":") } i && substr($0, 1, i - 1) == n { h = substr($0, i + 1) } END { print (h == "drive" ? "drive" : "typed") }'
         ;;
     N)
         # NixOS: scripted stage 1's preOpenCommands leave the marker, as D
@@ -517,17 +554,27 @@ PY
 
 # unlock_mode DISK [LAYOUT]: how this system's encrypted volumes unlock at
 # boot.  The first line is "MODE: why", MODE one of
-#   drive     every typed LUKS volume was opened at this boot by the drive's key
-#   own       every LUKS volume opens with no one typing, by itself
+#   drive     every typed volume was opened at this boot by the drive's key
+#   own       every volume opens with no one typing, by itself
 #   attended  someone types a passphrase at boot
 #   none      nothing encrypted
-# then a line for each LUKS volume: "  NAME HOW".
+# then a line for each volume: "  NAME HOW".  The volumes are the LUKS
+# ones; or, with no LUKS volume and a record bs1-adopt wrote for
+# ZFSBootMenu (generator=zfsbootmenu: family Z, A or own), the ZFS
+# encryption roots that ask for a passphrase, LAYOUT's (a dump's) or else
+# the running system's.  Any other ZFS root that asks makes it attended.
 unlock_mode() {
     local disk=$1 layout=${2:-} names n v how fam vols own mode=own why='' lines='' zfs=''
     names=$(luks_names "$disk")
-    [[ -z $layout ]] || zfs=$(layout_zfs_passphrase "$layout" | tr '\n' ' ')
+    if [[ -n $layout ]]; then zfs=$(layout_zfs_passphrase "$layout" | tr '\n' ' ')
+    else zfs=$(zfs_passphrase_roots "$disk" | tr '\n' ' ')
+    fi
     if [[ -z $names && -z $zfs ]]; then echo "none: nothing on $disk is encrypted"; return 0; fi
-    if [[ -n $zfs ]]; then echo "attended: ZFS native encryption asks for ${zfs% }"; return 0; fi
+    if [[ -n $zfs ]]; then
+        if [[ -z $names && $(luks_rec generator) == zfsbootmenu ]]; then names=${zfs% }
+        else echo "attended: ZFS native encryption asks for ${zfs% }"; return 0
+        fi
+    fi
     if ! fam=$(luks_rec family); then
         echo "attended: not set up to unlock from the drive (no $LUKS_REC: bs1-adopt)"
         for n in $names; do echo "  $n typed"; done
@@ -556,8 +603,8 @@ unlock_mode() {
         fi
     done
     case $mode in
-    drive) why="the backup drive's key opened every typed LUKS volume at this boot (family $fam)" ;;
-    own) why="every LUKS volume opens with no one typing" ;;
+    drive) why="the backup drive's key opened every typed volume at this boot (family $fam)" ;;
+    own) why="every volume opens with no one typing" ;;
     esac
     echo "$mode: $why"
     printf '%s' "$lines"

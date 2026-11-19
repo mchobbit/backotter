@@ -533,7 +533,8 @@ How depends on what opens the volume:
 | E | mkinitcpio's busybox `encrypt`: Arch, Manjaro, Omarchy | a `bs1key` hook, put right before `encrypt` by `/etc/mkinitcpio.conf.d/zz-backshot1.conf`, writes `/crypto_keyfile.bin` only if that key opens the volume |
 | N | NixOS (systemd or scripted stage 1) | `/etc/nixos/backshot1-luks.nix`, imported by `backshot1.nix` while it exists, sets each typed `boot.initrd.luks.devices` volume's `keyFile`: systemd stage 1 the same `PATH:LABEL=` form and `keyFileTimeout = 30`; scripted stage 1 a copy its `preOpenCommands` take off the drive (mounted read-only, `norecovery` for xfs), with `fallbackToPassword`; then `nixos-rebuild switch` |
 | B | AerynOS: systemd in the initramfs that comes prebuilt with the kernel (it reads no crypttab of the system's), the kernel command line written by blsforme from `/etc/kernel/cmdline.d` | `/etc/kernel/cmdline.d/90-backshot1-luks.cmdline` gives each volume the initramfs opens `rd.luks.uuid=UUID rd.luks.key=UUID=/backshot1/keys/disk-passphrase:LABEL=mybig512 rd.luks.options=UUID=OPTIONS,keyfile-timeout=30s`, OPTIONS those the other `cmdline.d` files already give it (one `rd.luks.options=` for the volume, since the last wins); then `moss boot sync`, and every boot entry on the ESP must carry the key and those options as the last of each; a volume the booted system opens is S's |
-| A | non-systemd dracut, Alpine's mkinitfs, ostree | nothing: the run is attended |
+| Z | ZFSBootMenu with ZFS native encryption (passphrase) and no LUKS: `void-zbm-enc`, the ZFSBootMenu guide's install | ZFSBootMenu hooks on the ESP in `EFI/ZBM/backshot1/` (a `load-key.d` hook made from `bs1-unlock-key --zfs`, and a `boot-sel.d` hook), named by `zbm.hookroot=UUID=ESP//EFI/ZBM/backshot1 zbm.wait_for=UUID=ESP` added to `EFI/ZBM/VMLINUZ.EFI`'s embedded command line (below) |
+| A | non-systemd dracut, Alpine's mkinitfs, ostree; ZFS native encryption not booted by ZFSBootMenu (no record is written for it) | nothing: the run is attended |
 
 A volume that already opens with no one typing (a key file of its own in the
 initramfs, TPM2, FIDO2; on B an `rd.luks.key=` of its own in another
@@ -593,6 +594,52 @@ runs it) doesn't rewrite them, so the two couldn't land in the same step;
 a boot whose command line no longer names the volume, with no crypttab
 line for it either, would wait for its root until the emergency shell.
 
+**Z, ZFSBootMenu** (ZFS native encryption with a passphrase, no LUKS; the
+ZFSBootMenu guide's UEFI install, `EFI/ZBM/VMLINUZ.EFI` with
+`VMLINUZ-BACKUP.EFI` beside it).  ZFSBootMenu asks for the boot
+environment's encryption root, then kexecs the boot environment's kernel,
+whose own initramfs loads the key from the key file `keylocation=file://`
+names inside it (the guide's `/etc/zfs/zroot.key`).  So only ZFSBootMenu's
+prompt has to go, and nothing in the pool changes: no property, no dataset.
+Adopt:
+
+- checks `keys/disk-passphrase` against every encryption root that asks
+  (`zfs load-key -n -L file://...`), and the running boot environment's key
+  file against it: the same bytes, or one newline at the end of either (as
+  libzfs reads a passphrase file, and as bko-holt's restore checks it).
+  Either failing stops adopt with nothing changed;
+- writes two hooks in `EFI/ZBM/backshot1/` on the ESP.  The `load-key.d`
+  hook is `bs1-unlock-key --zfs` with the record's values at its top
+  (ZFSBootMenu's own initramfs has no `/etc/backshot1`).  It waits up to 30 s
+  for the drive, mounts it read-only (`norecovery` for xfs), runs
+  `zfs load-key -L file://.../keys/disk-passphrase ROOT` and unmounts.  It
+  never fails: without the drive, or with a key that doesn't fit,
+  ZFSBootMenu asks as before.  The `boot-sel.d` hook carries what happened
+  over the kexec: `bs1.zbm=ROOT:drive` (or `:typed`) on the booted kernel's
+  command line, written into ZFSBootMenu's own per-boot-environment command
+  line cache just before ZFSBootMenu reads it;
+- adds `zbm.hookroot=UUID=ESP//EFI/ZBM/backshot1 zbm.wait_for=UUID=ESP` to
+  `VMLINUZ.EFI`'s `.cmdline` section with objcopy, the way ZFSBootMenu's
+  `zbm-kcl` does it (byte for byte the same image, checked on the v3.1.0
+  release, but for objcopy's timestamp).  It installs binutils if objcopy
+  is missing.  The original is saved in `/etc/backshot1/orig/`.
+  `VMLINUZ-BACKUP.EFI` is never touched: it stays the attended way in.
+  `zbm.wait_for` names only the ESP, never the drive: for a device that
+  isn't there, ZFSBootMenu waits until a key is pressed.
+
+The ESP comes back file by file under the same FAT volume ID (`mkfs.fat
+-i`), so the restored image finds its hooks, and the restored boot
+environment's initramfs is remade with the restored key file; nothing needs
+adopting again.  It stays family A (nothing changes) when a boot
+environment's encryption root has `keylocation=prompt` (its initramfs would
+ask again), or the running boot environment isn't under it; when an
+encryption root with no boot environment has `keylocation=prompt`; and when
+the image is signed, has quoted arguments, or has a `zbm.hookroot=` or
+`zbm.wait_for=` of its own.  `--luks-off` puts `VMLINUZ.EFI` back, removes
+the hooks and their directories, and remakes nothing.  ZFS native
+encryption without ZFSBootMenu (the initramfs's own ZFS code asks) is
+attended, as before, and adopt writes no record for it.
+
 **Testbed only,** like the fixed host key: with the drive and the laptop
 together, anyone can read the disk.  Never on a release image, nor a machine
 outside the testbed.  `backshot1 adopt --luks-off` (`bs1-adopt --luks-off`)
@@ -604,8 +651,9 @@ say how the system unlocks, `UNLOCK=`:
 
 - `drive`: the drive's key opened every typed volume at this boot (the
   journal's key-device mount for S, B and NixOS's systemd stage 1,
-  `/run/backshot1-unlock` for D, E and NixOS's scripted stage 1;
-  `backshot1 unlock` shows it);
+  `/run/backshot1-unlock` for D, E and NixOS's scripted stage 1, and
+  `bs1.zbm=ROOT:drive` on `/proc/cmdline` for Z, whose volumes are the ZFS
+  encryption roots that ask; `backshot1 unlock` shows it);
 - `own`: every volume opens by itself;
 - `attended`: someone types at boot (family A, a system adopted before
   this, or one not rebooted since adopt);
@@ -699,7 +747,10 @@ system boots with the drive and nothing typed, and once more without it.
 (`--luks-monitor`: on the keyboard, for Omarchy's Plymouth),
 `--strip-embedded-key` first takes a guest's built-in key file away so it
 asks (`gentoo-systemd`, `chimera-uefi`), and `--luks-off` checks that
-`bs1-adopt --luks-off` puts every file back.
+`bs1-adopt --luks-off` puts every file back.  A ZFS guest's `zfs-passphrase`
+counts too: family Z (`void-zbm-enc`) runs the same boots with
+`--luks-typed` (ZFSBootMenu asks at the source's first boot), and the files
+compared include the ESP's `EFI/ZBM`.
 
 Passed on 2026-11-09: Ubuntu 26.04 and Fedora 44 (UEFI), Devuan 6 (OpenRC, and
 `bs1-adopt` alone on plain sysvinit), Alpine 3.24, Artix (dinit and s6), Void

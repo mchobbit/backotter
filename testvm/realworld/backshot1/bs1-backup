@@ -106,6 +106,15 @@ unlock_check() {
         dumped=$(python3 -c 'import json, sys; print(((json.load(open(sys.argv[1])).get("boot") or {}).get("initramfs") or {}).get("generator") or "")' "$1")
         [[ $dumped == "$gen" ]] || { echo "$LUKS_REC was written for $gen's initramfs, but bko-holt dump says ${dumped:-none}: bs1-adopt again"; return 1; }
     fi
+    # Family Z (ZFSBootMenu): the drive's key against each ZFS encryption
+    # root that asks, and the dump must see ZFSBootMenu too.
+    if [[ $(luks_rec family) == Z ]]; then
+        [[ -s $key ]] || { echo "encrypted volumes need the passphrase in $key"; return 1; }
+        # shellcheck disable=SC2046
+        zfs_key_test "$key" $(layout_zfs_passphrase "$1") || return 1
+        python3 -c 'import json, sys; sys.exit(0 if isinstance((json.load(open(sys.argv[1])).get("boot") or {}).get("zfsbootmenu"), dict) else 1)' "$1" ||
+            { echo "$LUKS_REC is for ZFSBootMenu (family Z), but bko-holt dump finds none: bs1-adopt again"; return 1; }
+    fi
     unlock_mode "$disk" "$1"
 }
 

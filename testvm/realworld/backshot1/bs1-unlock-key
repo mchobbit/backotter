@@ -16,19 +16,32 @@
 #   the key to FILE (/crypto_keyfile.bin), which encrypt then tries before
 #   it asks.  Only a key that opens the record's volume is left there.
 #
+#   unlock-key --zfs ENCROOT (family Z: ZFSBootMenu's load-key.d hook, which
+#   bs1-luks makes from this file with the record's values set at its top,
+#   BS1_UNLOCK_SET=1, since ZFSBootMenu's own initramfs has no
+#   /etc/backshot1): loads the key of the ZFS encryption root ENCROOT with
+#   `zfs load-key -L file://...` from the drive.  Always exits 0: without
+#   the drive, or with a key that doesn't fit, ZFSBootMenu asks as before.
+#   Once a boot found no drive, a second encryption root doesn't wait again.
+#
 # Each use adds "NAME drive" or "NAME typed" to /run/backshot1-unlock,
-# which the initramfs hands on to the booted system; bs1-verify reads the
-# last line for each volume.  Plain POSIX sh: busybox or klibc's in the
-# initramfs.  Messages go to stderr; a keyscript's stdout is the key.
+# which the initramfs hands on to the booted system (family Z: ZFSBootMenu's
+# boot-sel.d hook puts it on the booted kernel's command line, bs1.zbm=);
+# bs1-verify reads the last line for each volume.  Plain POSIX sh: busybox
+# or klibc's in the initramfs (bash in ZFSBootMenu's).  Messages go to
+# stderr; a keyscript's stdout is the key.
 
-label='' path='' fstype=ext4 wait=30 volumes=''
 # BS1_UNLOCK_ROOT: a directory standing in for /, for the unit tests only.
 R=${BS1_UNLOCK_ROOT:-}
 REC=$R/etc/backshot1/luks-unlock
-# shellcheck disable=SC1090
-[ -r "$REC" ] && . "$REC"
+if [ -z "${BS1_UNLOCK_SET:-}" ]; then
+    label='' path='' fstype=ext4 wait=30 volumes=''
+    # shellcheck disable=SC1090
+    [ -r "$REC" ] && . "$REC"
+fi
 MARK=$R/run/backshot1-unlock
 MNT=$R/run/backshot1-keydev
+NODRIVE=$R/run/backshot1-nodrive
 
 mark() { mkdir -p "${MARK%/*}" 2>/dev/null; echo "$1 $2" >>"$MARK"; }
 # The drive's device is there (in a test, a file stands in for it).
@@ -40,18 +53,24 @@ fetch() {
     [ -n "$label" ] && [ -n "$path" ] || return 1
     dev=$R/dev/disk/by-label/$label
     if ! present "$dev"; then
+        # The USB drivers first, where nothing loads them by itself.
+        for m in xhci_pci ehci_pci usb_storage uas sd_mod; do modprobe -q "$m" >/dev/null 2>&1; done
         echo "BackShot1: waiting up to $wait s for the backup drive $label" >&2
         i=0
         while ! present "$dev" && [ "$i" -lt "$wait" ]; do
             sleep 1
             i=$((i + 1))
+            # ZFSBootMenu: by libblkid too, should udev make no by-label link.
+            if [ "$mode" = zfs ] && ! present "$dev"; then
+                d=$(blkid -L "$label" 2>/dev/null) && [ -b "$d" ] && dev=$d
+            fi
         done
     fi
     present "$dev" || { echo "BackShot1: no backup drive $label; asking instead" >&2; return 1; }
     for m in usb_storage uas sd_mod "$fstype"; do modprobe -q "$m" >/dev/null 2>&1; done
-    # noload: an unclean journal isn't replayed onto the drive.
+    # noload, norecovery: an unclean journal or log isn't replayed onto the drive.
     opts=ro
-    case $fstype in ext3 | ext4) opts=ro,noload ;; esac
+    case $fstype in ext3 | ext4) opts=ro,noload ;; xfs) opts=ro,norecovery ;; esac
     mkdir -p "$MNT" || return 1
     mount -t "$fstype" -o "$opts" "$dev" "$MNT" 2>/dev/null || { rmdir "$MNT" 2>/dev/null; echo "BackShot1: can't mount $dev" >&2; return 1; }
     rc=1
@@ -71,7 +90,34 @@ askpass() {
 }
 
 umask 077
-if [ "${1:-}" = --to ]; then
+mode=keyscript
+case ${1:-} in --to) mode=to ;; --zfs) mode=zfs ;; esac
+
+if [ $mode = zfs ]; then
+    root=${2:-}
+    [ -n "$root" ] || { echo "BackShot1: usage: unlock-key --zfs ENCROOT" >&2; exit 0; }
+    # Loaded already (by another hook, or a key file): nothing to do.
+    [ "$(zfs get -H -o value keystatus "$root" 2>/dev/null)" = available ] && exit 0
+    tmp=$R/run/backshot1-key.$$
+    if [ -e "$NODRIVE" ]; then
+        mark "$root" typed
+    elif fetch "$tmp"; then
+        if zfs load-key -L "file://$tmp" "$root" >/dev/null 2>&1; then
+            echo "BackShot1: $root unlocked with the backup drive's key" >&2
+            mark "$root" drive
+        else
+            echo "BackShot1: the drive's key doesn't open $root; asking instead" >&2
+            mark "$root" typed
+        fi
+    else
+        : >"$NODRIVE"
+        mark "$root" typed
+    fi
+    rm -f "$tmp"
+    exit 0
+fi
+
+if [ $mode = to ]; then
     out=${2:?usage: unlock-key --to FILE}
     rm -f "$out"
     tmp=$R/run/backshot1-key.$$

@@ -1147,5 +1147,540 @@ class LayoutKeys(Tmp):
         self.assertEqual(self.keys(d), ["keystore-rpool=FILE", "rpool=FILE"])
 
 
+# Family Z: ZFSBootMenu's hooks for ZFS native encryption (bs1-luks).
+
+FAKE_ZFS = r'''#!/bin/sh
+# zfs get -H -o value PROP DS (T/zfs/DS/PROP); zfs load-key [-n] -L
+# file://F ROOT (it opens when F holds T/want); zfs list -H -o COLUMNS ...
+# (T/zfs-list-COLUMNS).
+T=%(t)r
+echo "$*" >>"$T/zfs-calls"
+case $1 in
+get)
+    for a; do last=$a; done
+    prop=$5
+    f="$T/zfs/$last/$prop"
+    [ -f "$f" ] && { cat "$f"; exit 0; }
+    case $prop in keystatus) echo unavailable ;; *) echo - ;; esac
+    ;;
+load-key)
+    for a; do last=$a; done
+    for a; do case $a in file://*) key=${a#file://} ;; esac; done
+    cmp -s "$key" "$T/want"
+    ;;
+list) cat "$T/zfs-list-$4" 2>/dev/null ;;
+*) exit 1 ;;
+esac
+'''
+
+
+@unittest.skipUnless(shutil.which("sh"), "no sh")
+class UnlockKeyZfs(Tmp):
+    """bs1-unlock-key --zfs (ZFSBootMenu's load-key.d hook): the drive's key
+    loaded with zfs load-key -L file://, else ZFSBootMenu asks; never fails."""
+
+    def setUp(self):
+        super().setUp()
+        t, self.root = self.t, self.t / "root"
+        for d in ("etc/backshot1", "run", "dev/disk/by-label", "drive/backshot1/keys"):
+            (self.root / d).mkdir(parents=True)
+        (self.root / "drive/backshot1/keys/disk-passphrase").write_text("s3cret")
+        (t / "want").write_text("s3cret")
+        (t / "zfs").mkdir()
+        exe(self.bin / "zfs", FAKE_ZFS % {"t": str(t)})
+        exe(self.bin / "mount", f'#!/bin/sh\necho "$@" >>"{t}/mounts"\nfor d; do :; done\ncp -R "{self.root}/drive/." "$d/"\n')
+        exe(self.bin / "umount", '#!/bin/sh\nrm -rf "$1"/*\n')
+        exe(self.bin / "modprobe", "#!/bin/sh\nexit 0\n")
+        exe(self.bin / "blkid", "#!/bin/sh\nexit 2\n")
+        exe(self.bin / "sleep", f'#!/bin/sh\necho slept >>"{t}/sleeps"\n')
+        (self.root / "etc/backshot1/luks-unlock").write_text(
+            "family=Z\ngenerator=zfsbootmenu\nlabel=mybig512\npath=/backshot1/keys/disk-passphrase\nfstype=xfs\nwait=2\nvolumes='zroot:123:Z'\n")
+
+    def plug(self):
+        (self.root / "dev/disk/by-label/mybig512").write_text("")
+
+    def run_key(self, *args, cmd=None, **env):
+        cmd = cmd or ["sh", str(BS1 / "bs1-unlock-key")]
+        return subprocess.run([*cmd, *args], capture_output=True, text=True, env=self.env(BS1_UNLOCK_ROOT=str(self.root), **env))
+
+    def marks(self):
+        p = self.root / "run/backshot1-unlock"
+        return p.read_text().splitlines() if p.exists() else []
+
+    def calls(self):
+        p = self.t / "zfs-calls"
+        return p.read_text().splitlines() if p.exists() else []
+
+    def test_loads_the_drive_key(self):
+        self.plug()
+        r = self.run_key("--zfs", "zroot")
+        self.assertEqual((r.returncode, r.stdout), (0, ""), r.stderr)
+        self.assertEqual(self.marks(), ["zroot drive"])
+        loads = [c for c in self.calls() if c.startswith("load-key")]
+        self.assertEqual(len(loads), 1)
+        self.assertRegex(loads[0], rf"^load-key -L file://{re.escape(str(self.root))}/run/backshot1-key\.[0-9]+ zroot$")
+        self.assertIn("-t xfs -o ro,norecovery", (self.t / "mounts").read_text())
+        self.assertEqual(list((self.root / "run").glob("backshot1-key.*")), [], "the key's copy is left in /run")
+        self.assertFalse((self.root / "run/backshot1-keydev").exists())
+
+    def test_a_key_that_doesnt_open_is_typed(self):
+        self.plug()
+        (self.t / "want").write_text("other")
+        r = self.run_key("--zfs", "zroot")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("doesn't open zroot; asking instead", r.stderr)
+        self.assertEqual(self.marks(), ["zroot typed"])
+
+    def test_without_the_drive_waits_once(self):
+        r = self.run_key("--zfs", "zroot")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("waiting up to 2 s", r.stderr)
+        self.assertEqual(len((self.t / "sleeps").read_text().splitlines()), 2)
+        r = self.run_key("--zfs", "zroot/home")
+        self.assertEqual(r.returncode, 0)
+        self.assertNotIn("waiting", r.stderr)
+        self.assertEqual(self.marks(), ["zroot typed", "zroot/home typed"])
+        self.assertFalse((self.t / "mounts").exists())
+
+    def test_a_loaded_key_is_left_alone(self):
+        self.plug()
+        (self.t / "zfs/zroot").mkdir()
+        (self.t / "zfs/zroot/keystatus").write_text("available\n")
+        r = self.run_key("--zfs", "zroot")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.marks(), [])
+        self.assertFalse((self.t / "mounts").exists())
+
+    def test_no_root_named_exits_0(self):
+        r = self.run_key("--zfs")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.marks(), [])
+
+    @unittest.skipUnless(BASH, "needs bash 4 or newer")
+    def test_the_hook_form_carries_the_record(self):
+        """lk_zbm_keyhook: ZFSBootMenu's initramfs has no /etc/backshot1."""
+        r = subprocess.run([BASH, "-c", f'. "{BS1}/bs1-luks"; here="{BS1}" BACKUP_LABEL=mybig512 LK_PATH=/backshot1/keys/disk-passphrase LK_FSTYPE=xfs LUKS_WAIT=2; lk_zbm_keyhook'],
+                           capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        hook = self.t / "10-bs1-zfskey"
+        hook.write_text(r.stdout)
+        self.assertTrue(r.stdout.startswith("#!/bin/bash\n# BackShot1 (bs1-adopt): ZFSBootMenu's load-key.d hook"))
+        (self.root / "etc/backshot1/luks-unlock").unlink()
+        self.plug()
+        r = self.run_key(cmd=[BASH, str(hook)], ZBM_ENCRYPTION_ROOT="zroot", ZBM_LOCKED_FS="zroot/ROOT/void")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.marks(), ["zroot drive"])
+        self.assertIn("-t xfs -o ro,norecovery", (self.t / "mounts").read_text())
+        # A wrong key, then no drive: still 0, ZFSBootMenu asks.
+        (self.t / "want").write_text("other")
+        self.assertEqual(self.run_key(cmd=[BASH, str(hook)], ZBM_ENCRYPTION_ROOT="zroot").returncode, 0)
+        self.assertEqual(self.marks()[-1], "zroot typed")
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class EvidenceZ(Tmp):
+    """unlock_how Z and unlock_mode on ZFSBootMenu: bs1.zbm= on the booted
+    kernel's command line, the ZFS roots that ask as the volumes."""
+
+    def setUp(self):
+        super().setUp()
+        self.rec = self.t / "luks-unlock"
+        self.cmdline = self.t / "cmdline"
+        self.cmdline.write_text("root=zfs:zroot/ROOT/void spl.spl_hostid=0x00bab10c loglevel=4\n")
+        self.roots = "zroot"
+
+    def call(self, expr):
+        lib = functions(BS1 / "bs1-common", "luks_rec", "unlock_how", "unlock_mode")
+        script = (f'LUKS_REC="{self.rec}" UNLOCK_MARK="{self.t}/mark" UNLOCK_CMDLINE="{self.cmdline}"\n{lib}\n'
+                  f'luks_names() {{ :; }}\nzfs_passphrase_roots() {{ [ -n "{self.roots}" ] && printf "%s\\n" {self.roots}; }}\n'
+                  f'layout_zfs_passphrase() {{ echo zroot; }}\n{expr}')
+        r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def record(self, family, volumes="zroot:123:Z", own="", reason="", generator="zfsbootmenu"):
+        self.rec.write_text(f"family={family}\ngenerator={generator}\nvolumes='{volumes}'\nown='{own}'\nreason='{reason}'\nesp=ABCD-1234\n")
+
+    def test_how_is_the_command_line(self):
+        self.assertEqual(self.call("unlock_how zroot Z"), "typed\n")
+        self.cmdline.write_text("root=zfs:zroot/ROOT/void bs1.zbm=zroot:drive quiet\n")
+        self.assertEqual(self.call("unlock_how zroot Z"), "drive\n")
+        self.assertEqual(self.call("unlock_how zroot/home Z"), "typed\n")
+        self.cmdline.write_text("bs1.zbm=zroot:drive bs1.zbm=zroot/home:typed,zroot:typed\n")
+        self.assertEqual(self.call("unlock_how zroot Z"), "typed\n")
+        self.cmdline.write_text("bs1.zbm=zroot/home:typed,zroot:drive\n")
+        self.assertEqual(self.call("unlock_how zroot Z"), "drive\n")
+
+    def test_mode_drive(self):
+        self.record("Z")
+        self.cmdline.write_text("root=zfs:zroot/ROOT/void bs1.zbm=zroot:drive\n")
+        for expr in ("unlock_mode vda", "unlock_mode vda layout.json"):
+            out = self.call(expr)
+            self.assertTrue(out.startswith("drive: ") and "(family Z)" in out, out)
+            self.assertIn("\n  zroot drive\n", out)
+
+    def test_mode_typed_this_boot(self):
+        self.record("Z")
+        self.cmdline.write_text("bs1.zbm=zroot:typed\n")
+        self.assertTrue(self.call("unlock_mode vda").startswith("attended: zroot was typed at this boot"))
+
+    def test_mode_family_a_says_why(self):
+        self.record("A", volumes="", reason="zroot holds a boot environment and has keylocation=prompt")
+        out = self.call("unlock_mode vda")
+        self.assertTrue(out.startswith("attended: zroot holds a boot environment"), out)
+        self.assertIn("  zroot typed", out)
+
+    def test_without_a_zfsbootmenu_record_zfs_asks(self):
+        self.assertTrue(self.call("unlock_mode vda").startswith("attended: ZFS native encryption asks for zroot"))
+        self.record("D", generator="initramfs-tools")
+        self.assertTrue(self.call("unlock_mode vda").startswith("attended: ZFS native encryption asks for zroot"))
+
+    def test_nothing_encrypted(self):
+        self.roots = ""
+        self.assertTrue(self.call("unlock_mode vda").startswith("none: "))
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class ZbmPieces(Tmp):
+    """Family Z's small parts: the image's command line, the key file
+    against the drive's key, .cmdline's room, a signed image."""
+
+    def sh(self, expr, rc=0):
+        r = subprocess.run([BASH, "-c", f'. "{BS1}/bs1-luks"\n{expr}'], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
+        return r.stdout
+
+    def test_cmdline_adds_ours_once(self):
+        hr, wf = "zbm.hookroot=UUID=ABCD-1234//EFI/ZBM/backshot1", "zbm.wait_for=UUID=ABCD-1234"
+        new = self.sh(f'lk_zbm_cmdline " quiet loglevel=0 nomodeset console=ttyS0,115200n8 zbm.timeout=5" {hr} {wf}')
+        self.assertEqual(new, f"quiet loglevel=0 nomodeset console=ttyS0,115200n8 zbm.timeout=5 {hr} {wf}")
+        self.assertEqual(self.sh(f'lk_zbm_cmdline "{new}" {hr} {wf}'), new)
+        self.assertEqual(self.sh(f'lk_zbm_cmdline "{wf} quiet {hr}" {hr} {wf}'), f"quiet {hr} {wf}")
+
+    def test_cmdline_refuses_a_hook_root_of_its_own(self):
+        out = self.sh('lk_zbm_cmdline "quiet zbm.hookroot=LABEL=X//hooks" zbm.hookroot=UUID=A//B zbm.wait_for=UUID=A', rc=1)
+        self.assertIn("zbm.hookroot=LABEL=X//hooks of its own", out)
+        self.sh('lk_zbm_cmdline "quiet zbm.wait_for=/dev/sda" zbm.hookroot=UUID=A//B zbm.wait_for=UUID=A', rc=1)
+
+    def test_key_file_one_newline_either_way(self):
+        key, f = self.t / "key", self.t / "file"
+        key.write_bytes(b"s3cret")
+        for content, same in ((b"s3cret", True), (b"s3cret\n", True), (b"s3cret\n\n", False), (b"s3cret\r\n", False), (b"s3cre", False), (b"s3cretx", False)):
+            f.write_bytes(content)
+            self.sh(f'lk_key_same "{key}" "{f}"', rc=0 if same else 1)
+        key.write_bytes(b"s3cret\n")
+        f.write_bytes(b"s3cret")
+        self.sh(f'lk_key_same "{key}" "{f}"')
+
+    def test_gap_is_up_to_the_next_section(self):
+        exe(self.bin / "objdump", textwrap.dedent("""\
+            #!/bin/sh
+            cat <<'EOF'
+
+            zfsbootmenu.EFI:     file format pei-x86-64
+
+            Sections:
+            Idx Name          Size      VMA               LMA               File off  Algn  Flags
+              0 .text         0000b9c8  0000000140001000  0000000140001000  00000400  2**4  CONTENTS, ALLOC, LOAD, READONLY, CODE
+              1 .osrel        00000119  0000000140016000  0000000140016000  0000e400  2**2  CONTENTS, ALLOC, LOAD, READONLY, DATA
+              2 .cmdline      00000040  0000000140017000  0000000140017000  0000e600  2**2  CONTENTS, ALLOC, LOAD, READONLY, DATA
+              3 .linux        00d6a000  0000000140018000  0000000140018000  0000e800  2**2  CONTENTS, ALLOC, LOAD, READONLY, DATA
+              4 .initrd       0307e042  0000000140d82000  0000000140d82000  00d78800  2**2  CONTENTS, ALLOC, LOAD, READONLY, DATA
+            EOF
+            """))
+        self.assertEqual(self.sh(f'lk_zbm_gap "{self.t}/x"'), "0x140017000 4096\n")
+        exe(self.bin / "objdump", "#!/bin/sh\nprintf 'Idx Name Size VMA\\n  0 .linux 00000010 0000000140018000\\n'\n")
+        self.sh(f'lk_zbm_gap "{self.t}/x"', rc=1)
+
+    def test_signed(self):
+        img = self.t / "img.efi"
+        b = bytearray(pe([(".cmdline", b"quiet\0"), (".linux", b"MZk")]))
+        img.write_bytes(bytes(b))
+        self.sh(f'lk_pe_signed "{img}"', rc=1)
+        # PE32+: the certificate table's size, data directory 4.
+        opt = 0x40 + 24
+        struct.pack_into("<H", b, opt, 0x20B)
+        img.write_bytes(bytes(b))
+        self.sh(f'lk_pe_signed "{img}"', rc=1)
+        struct.pack_into("<I", b, opt + 112 + 4 * 8 + 4, 0x2000)
+        img.write_bytes(bytes(b))
+        self.sh(f'lk_pe_signed "{img}"')
+
+
+# The fake objcopy for AdoptZ: a .cmdline rewrite as zbm-kcl's two calls do
+# it (--remove-section .cmdline, then --add-section .cmdline=F), on the test's
+# minimal PE images (pe()).
+MKPE = r'''#!/usr/bin/env python3
+import struct, sys
+%(pe)s
+def sections(b):
+    pe_at = struct.unpack_from("<I", b, 0x3C)[0]
+    n = struct.unpack_from("<H", b, pe_at + 6)[0]
+    opt = struct.unpack_from("<H", b, pe_at + 20)[0]
+    out = []
+    for i in range(n):
+        o = pe_at + 24 + opt + 40 * i
+        name, vsize, _, _, ptr = struct.unpack_from("<8sIIII", b, o)
+        out.append((name.rstrip(b"\0").decode(), b[ptr:ptr + vsize]))
+    return out
+a = sys.argv[1:]
+img = a[-1]
+secs = sections(open(img, "rb").read())
+if a[0] == "--remove-section":
+    secs = [s for s in secs if s[0] != a[1]]
+elif a[0] == "--add-section":
+    name, f = a[1].split("=", 1)
+    data = open(f, "rb").read()
+    secs.insert(0, (name, data))
+else:
+    sys.exit(2)
+open(img, "wb").write(pe(secs))
+'''
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class AdoptZ(Tmp):
+    """luks_adopt and luks_off on a fake void-zbm-enc: Void on a ZFS root
+    booted by ZFSBootMenu's release image at /boot/efi/EFI/ZBM/VMLINUZ.EFI,
+    zroot encrypted with a passphrase, keylocation=file:///etc/zfs/zroot.key."""
+
+    CMDLINE = "quiet loglevel=0 nomodeset console=ttyS0,115200n8 zbm.timeout=5"
+
+    def setUp(self):
+        super().setUp()
+        t = self.t
+        self.drive = t / "drive"
+        here = self.drive / "backshot1"
+        (here / "keys").mkdir(parents=True)
+        shutil.copy(BS1 / "bs1-unlock-key", here / "bs1-unlock-key")
+        (here / "keys/disk-passphrase").write_text("s3cret")
+        (t / "want").write_text("s3cret")
+        self.esp = t / "boot/efi"
+        (self.esp / "EFI/ZBM").mkdir(parents=True)
+        self.img = self.esp / "EFI/ZBM/VMLINUZ.EFI"
+        self.img.write_bytes(pe([(".osrel", b"ID=void\n"), (".cmdline", f" {self.CMDLINE}\0".encode()), (".linux", b"MZkernel"), (".initrd", b"zstd")]))
+        self.backup_img = self.esp / "EFI/ZBM/VMLINUZ-BACKUP.EFI"
+        shutil.copy(self.img, self.backup_img)
+        self.orig_bytes = self.img.read_bytes()
+        self.keyfile = t / "etc/zfs/zroot.key"
+        self.keyfile.parent.mkdir(parents=True)
+        self.keyfile.write_text("s3cret")
+        self.keyfile.chmod(0o400)
+        (t / "zfs").mkdir()
+        self.prop("zroot", "keylocation", f"file://{self.keyfile}")
+        self.prop("zroot", "guid", "1234567890")
+        self.prop("zroot/ROOT/void", "encryptionroot", "zroot")
+        (t / "zfs-list-name,mountpoint,encryptionroot").write_text(
+            "zroot\tnone\tzroot\nzroot/ROOT\tnone\tzroot\nzroot/ROOT/void\t/\tzroot\nzroot/ROOT/void-6.18\t/\tzroot\nzroot/home\t/home\tzroot\n")
+        (t / "zfs-list-name,encryptionroot,keyformat").write_text(
+            "zroot\tzroot\tpassphrase\nzroot/ROOT\tzroot\tpassphrase\nzroot/ROOT/void\tzroot\tpassphrase\nzroot/home\tzroot\tpassphrase\n")
+        exe(self.bin / "zfs", FAKE_ZFS % {"t": str(t)})
+        exe(self.bin / "zpool", '#!/bin/sh\ncase "$*" in "list -Ho name") echo zroot ;; "list -vHPL zroot") printf "zroot\\t15G\\n\\t/dev/vda2\\t15G\\n" ;; *) exit 1 ;; esac\n')
+        exe(self.bin / "findmnt", textwrap.dedent(f"""\
+            #!/bin/sh
+            case "$*" in
+            "-no TARGET --target "*) echo "{self.drive}" ;;
+            "-no SOURCE --target "*) echo /dev/sdb1 ;;
+            "-no FSTYPE --target "*) echo xfs ;;
+            "-nro FSTYPE /") cat "{t}/root-fstype" 2>/dev/null || echo zfs ;;
+            "-nro SOURCE /") echo zroot/ROOT/void ;;
+            "-rn -t vfat -o TARGET,SOURCE") [ -e "{t}/no-esp" ] || echo "{self.esp} /dev/vda1" ;;
+            *) exit 1 ;;
+            esac
+            """))
+        exe(self.bin / "blkid", '#!/bin/sh\ncase "$*" in *"-s UUID /dev/vda1") echo ABCD-1234 ;; *"-s LABEL /dev/sdb1") echo mybig512 ;; *) exit 2 ;; esac\n')
+        exe(self.bin / "objdump", textwrap.dedent(f"""\
+            #!/usr/bin/env python3
+            import struct, sys
+            b = open(sys.argv[-1], "rb").read()
+            pe_at = struct.unpack_from("<I", b, 0x3C)[0]
+            n = struct.unpack_from("<H", b, pe_at + 6)[0]
+            opt = struct.unpack_from("<H", b, pe_at + 20)[0]
+            print("Idx Name Size VMA LMA File off Algn")
+            vma = {{".osrel": 0x1000, ".cmdline": 0x2000, ".linux": 0x3000, ".initrd": 0x4000}}
+            for i in range(n):
+                name, vsize = struct.unpack_from("<8sI", b, pe_at + 24 + opt + 40 * i)
+                name = name.rstrip(b"\\0").decode()
+                print(f"  {{i}} {{name}} {{vsize:08x}} {{vma[name]:016x}} {{vma[name]:016x}} 0 2**2")
+            """))
+        exe(self.bin / "objcopy", MKPE % {"pe": PE_SRC})
+        exe(self.bin / "sync", "#!/bin/sh\nexit 0\n")
+
+    def prop(self, ds, name, value):
+        d = self.t / "zfs" / ds
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_text(value + "\n")
+
+    def adopt(self, what="luks_adopt", rc=0):
+        t = self.t
+        lib = functions(BS1 / "bs1-common", "zfs_passphrase_roots", "zfs_key_test")
+        script = textwrap.dedent(f"""\
+            . "{BS1}/bs1-luks"
+            LUKS_DIR="{t}/etc/backshot1" LUKS_ORIG="{t}/etc/backshot1/orig" LUKS_MADE="{t}/etc/backshot1/made" LUKS_REC="{t}/etc/backshot1/luks-unlock"
+            here="{self.drive}/backshot1" init=runit BACKUP_LABEL=mybig512 INTERNAL_SERIAL=S1
+            internal_disk() {{ echo vda; }}
+            on_disk() {{ true; }}
+            lk_luks_volumes() {{ :; }}
+            lk_generator() {{ echo dracut; }}
+            lk_remake() {{ echo "remade $1" >>"{t}/remakes"; }}
+            lsblk() {{ echo vda; }}
+            """) + lib + f"\n{what}\n"
+        r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
+        return r.stdout + r.stderr
+
+    def cmdline(self, img=None):
+        r = subprocess.run([BASH, "-c", f'. "{BS1}/bs1-luks"; lk_pe_section "{img or self.img}" .cmdline'], capture_output=True, text=True)
+        return r.stdout
+
+    def rec(self):
+        return (self.t / "etc/backshot1/luks-unlock").read_text()
+
+    def hooks(self):
+        return self.esp / "EFI/ZBM/backshot1"
+
+    def test_adopt_rerun_and_off(self):
+        out = self.adopt()
+        self.assertIn("family Z (ZFSBootMenu): zroot:1234567890:Z", out)
+        rec = self.rec()
+        for line in ("family=Z", "generator=zfsbootmenu", "label=mybig512", "path=/backshot1/keys/disk-passphrase", "fstype=xfs",
+                     "volumes='zroot:1234567890:Z'", "esp=ABCD-1234", f"image='{self.img}'", f"hooks='{self.hooks()}'"):
+            self.assertIn(line + "\n", rec)
+        self.assertEqual(self.cmdline(), f"{self.CMDLINE} zbm.hookroot=UUID=ABCD-1234//EFI/ZBM/backshot1 zbm.wait_for=UUID=ABCD-1234")
+        self.assertEqual(self.backup_img.read_bytes(), self.orig_bytes, "VMLINUZ-BACKUP.EFI must stay as it was")
+        key = (self.hooks() / "load-key.d/10-bs1-zfskey").read_text()
+        self.assertTrue(key.startswith("#!/bin/bash\n"))
+        self.assertIn("BS1_UNLOCK_SET=1 label='mybig512' path='/backshot1/keys/disk-passphrase' fstype='xfs' wait='30'", key)
+        self.assertIn((BS1 / "bs1-unlock-key").read_text().split("\n", 1)[1].strip(), key)
+        mark = (self.hooks() / "boot-sel.d/10-bs1-mark").read_text()
+        self.assertIn("bs1.zbm=", mark)
+        self.assertFalse((t := self.t / "remakes").exists(), "family Z remakes no initramfs")
+        self.assertTrue((self.t / "etc/backshot1/orig/" / str(self.img).replace("/", "%")).exists())
+
+        out = self.adopt()
+        self.assertIn("unchanged; the initramfs isn't remade", out)
+        self.assertNotIn("wrote", out)
+
+        out = self.adopt("luks_off")
+        self.assertEqual(self.img.read_bytes(), self.orig_bytes)
+        self.assertFalse(self.hooks().exists(), out)
+        self.assertFalse((self.t / "etc/backshot1").exists())
+        self.assertFalse(t.exists(), "--luks-off remakes no initramfs on ZFSBootMenu")
+        self.assertTrue((self.esp / "EFI/ZBM").is_dir())
+
+    def test_a_key_file_with_a_newline_is_the_same_key(self):
+        self.keyfile.chmod(0o600)
+        self.keyfile.write_text("s3cret\n")
+        self.assertIn("family Z (ZFSBootMenu)", self.adopt())
+
+    def test_a_key_file_that_isnt_the_drive_key_stops(self):
+        self.keyfile.chmod(0o600)
+        self.keyfile.write_text("other")
+        out = self.adopt(rc=1)
+        self.assertIn("zroot's key file", out)
+        self.assertFalse((self.t / "etc/backshot1").exists())
+        self.assertEqual(self.img.read_bytes(), self.orig_bytes)
+
+    def test_a_drive_key_that_doesnt_open_stops(self):
+        (self.t / "want").write_text("other")
+        out = self.adopt(rc=1)
+        self.assertIn("the drive's key doesn't open the ZFS encryption root zroot", out)
+        self.assertFalse((self.t / "etc/backshot1").exists())
+
+    def test_keylocation_prompt_is_attended(self):
+        self.prop("zroot", "keylocation", "prompt")
+        out = self.adopt()
+        self.assertIn("A: zroot holds a boot environment and has keylocation=prompt", out)
+        self.assertIn("family=A\n", self.rec())
+        self.assertIn("generator=zfsbootmenu\n", self.rec())
+        self.assertEqual(self.img.read_bytes(), self.orig_bytes)
+        self.assertFalse(self.hooks().exists())
+        self.adopt("luks_off")
+        self.assertFalse((self.t / "etc/backshot1").exists())
+
+    def test_a_hook_root_of_its_own_is_attended(self):
+        self.img.write_bytes(pe([(".cmdline", b" quiet zbm.hookroot=LABEL=X//hooks\0"), (".linux", b"MZk")]))
+        out = self.adopt()
+        self.assertIn("zbm.hookroot=LABEL=X//hooks of its own, which bs1-adopt doesn't merge", out)
+        self.assertFalse(self.hooks().exists())
+
+    def test_without_zfsbootmenu_nothing_changes(self):
+        (self.t / "no-esp").write_text("")
+        out = self.adopt()
+        self.assertIn("not booted by ZFSBootMenu's EFI/ZBM/VMLINUZ.EFI: attended; nothing changes", out)
+        self.assertFalse((self.t / "etc/backshot1").exists())
+
+    def test_a_failed_rewrite_puts_everything_back(self):
+        exe(self.bin / "objcopy", "#!/bin/sh\nexit 1\n")
+        out = self.adopt(rc=1)
+        self.assertIn("objcopy couldn't rewrite", out)
+        self.assertEqual(self.img.read_bytes(), self.orig_bytes)
+        self.assertFalse(self.hooks().exists())
+        self.assertFalse((self.t / "etc/backshot1").exists())
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class ZbmMarkHook(Tmp):
+    """The boot-sel.d hook on a fake ZFSBootMenu root: bs1.zbm= into the
+    chosen BE's command line cache, which load_be_cmdline makes first."""
+
+    def setUp(self):
+        super().setUp()
+        r = self.root = self.t / "zbm"
+        for d in ("lib", "etc", "run", "zfsbootmenu"):
+            (r / d).mkdir(parents=True)
+        for f in ("profiling-lib.sh", "kmsg-log-lib.sh"):
+            (r / "lib" / f).write_text(":\n")
+        (r / "etc/zfsbootmenu.conf").write_text(f"export BASE='{r}/zfsbootmenu'\n")
+        # load_be_cmdline: writes the BE's cache, as ZFSBootMenu's does.
+        (r / "lib/zfsbootmenu-core.sh").write_text(textwrap.dedent("""\
+            load_be_cmdline() {
+                mkdir -p "$BASE/environments/$1"
+                printf 'loglevel=4\\nconsole=ttyS0,115200n8\\nspl.spl_hostid=0x00bab10c\\n' >"$BASE/environments/$1/cmdline"
+            }
+            """))
+        r2 = subprocess.run([BASH, "-c", f'. "{BS1}/bs1-luks"; lk_zbm_markhook'], capture_output=True, text=True)
+        self.assertEqual(r2.returncode, 0, r2.stderr)
+        self.hook = self.t / "10-bs1-mark"
+        self.hook.write_text(r2.stdout)
+
+    def run_hook(self, be="zroot/ROOT/void"):
+        r = subprocess.run([BASH, str(self.hook)], capture_output=True, text=True, env=self.env(BS1_ZBM_ROOT=str(self.root), ZBM_SELECTED_BE=be))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def cache(self, be="zroot/ROOT/void"):
+        return (self.root / "zfsbootmenu/environments" / be / "cmdline").read_text().splitlines()
+
+    def test_the_mark_goes_into_the_cache(self):
+        (self.root / "run/backshot1-unlock").write_text("zroot drive\n")
+        self.run_hook()
+        self.assertEqual(self.cache(), ["loglevel=4", "console=ttyS0,115200n8", "spl.spl_hostid=0x00bab10c", "bs1.zbm=zroot:drive"])
+        # Again (back to the menu, another try): one word, the last marks.
+        (self.root / "run/backshot1-unlock").write_text("zroot drive\nzroot/home typed\nzroot typed\n")
+        self.run_hook()
+        self.assertEqual(self.cache()[-1], "bs1.zbm=zroot:typed,zroot/home:typed")
+        self.assertEqual(sum(1 for w in self.cache() if w.startswith("bs1.zbm=")), 1)
+
+    def test_an_edited_command_line_gets_it(self):
+        (self.root / "run/backshot1-unlock").write_text("zroot drive\n")
+        (self.root / "zfsbootmenu/cmdline").write_text("quiet\n")
+        self.run_hook()
+        self.assertEqual((self.root / "zfsbootmenu/cmdline").read_text().splitlines(), ["quiet", "bs1.zbm=zroot:drive"])
+        self.assertFalse((self.root / "zfsbootmenu/environments").exists())
+
+    def test_no_marks_changes_nothing(self):
+        self.run_hook()
+        self.assertFalse((self.root / "zfsbootmenu/environments").exists())
+        (self.root / "run/backshot1-unlock").write_text("zroot drive\n")
+        (self.root / "lib/zfsbootmenu-core.sh").unlink()
+        self.run_hook()
+        self.assertFalse((self.root / "zfsbootmenu/environments").exists())
+
+
+# pe()'s own source, for the fake objcopy.
+import inspect  # noqa: E402
+PE_SRC = "import struct\n" + inspect.getsource(pe)
+
+
 if __name__ == "__main__":
     unittest.main()

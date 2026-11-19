@@ -71,10 +71,11 @@ if [ "$(uname)" = Linux ] && [ -d /gnu/store ] && [ -d /var/guix/profiles ] && [
     PATH=/root/.config/guix/current/bin:/run/current-system/profile/bin:/run/current-system/profile/sbin:$PATH
     export PATH
     # fetched CMD...: a guix that downloads, run again while it fails at a
-    # download, up to 10 times 60 s apart (guix15 and guix15-bios, GuestTest2
+    # download, up to 20 times 60 s apart (guix15 and guix15-bios, GuestTest2
     # t2v-20261119T0157-c8c7: "guix pull: error: Git error: SSL error:
     # syscall failure", every try of both attempts, codeberg.org, where
-    # git.guix.gnu.org redirects, cut off by an internet at 50 % loss).  A
+    # git.guix.gnu.org redirects, cut off by an internet at 50 % loss; the
+    # fix's own --try then took 10 tries, a failed one taking 10 s).  A
     # pull changes nothing until it has the commit, and the objects it got
     # stay in its checkout; a reconfigure keeps in the store each substitute
     # it got.  A last failure's output ends the log, for GuestTest2's flake
@@ -84,10 +85,10 @@ if [ "$(uname)" = Linux ] && [ -d /gnu/store ] && [ -d /var/guix/profiles ] && [
         while :; do
             { "$@" 2>&1; echo $? >/run/bko-fetch.rc; } | tee /run/bko-fetch.log
             r=$(cat /run/bko-fetch.rc)
-            [ "$r" -ne 0 ] && [ $n -lt 10 ] &&
+            [ "$r" -ne 0 ] && [ $n -lt 20 ] &&
                 grep -qE "error: Git error: |substitution of /gnu/store/.* failed|download from .* failed|TLS error in procedure|failed to connect to |Temporary failure in name resolution" /run/bko-fetch.log ||
                 break
-            n=$((n + 1)); say "a download failed: $1 $2 again in 60 s ($n of 10)"; sleep 60
+            n=$((n + 1)); say "a download failed: $1 $2 again in 60 s ($n of 20)"; sleep 60
         done
         rm -f /run/bko-fetch.rc /run/bko-fetch.log
         return "$r"

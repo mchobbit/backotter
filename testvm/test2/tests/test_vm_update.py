@@ -342,7 +342,7 @@ class TestInGuest(unittest.TestCase):
     def test_guix_downloads_are_tried_again(self):
         """guix pull or guix system reconfigure that failed at a download (guix15 and guix15-bios,
         t2v-20261119T0157-c8c7: libgit2's "SSL error: syscall failure" from codeberg.org at 50 %
-        loss, every try) is tried again, 10 more times at most, and its last failure's tail is a
+        loss, every try) is tried again, 20 more times at most, and its last failure's tail is a
         known flake; any other failure stops at once."""
         for error in ("guix pull: error: Git error: SSL error: syscall failure: ",
                       "guix pull: error: Git error: unexpected http status code: 502",
@@ -352,7 +352,7 @@ class TestInGuest(unittest.TestCase):
                 self.assertEqual((rc, n), (0, 3), out)
                 self.assertIn("in-guest: a download failed: cmd", out)
                 rc, n, out = self.run_fetched("Guix", 99, error)
-                self.assertEqual((rc, n), (100, 11), out)
+                self.assertEqual((rc, n), (100, 21), out)
                 self.assert_flake("guix15", out, "guix pull")
         rc, n, out = self.run_fetched("Guix", 99, "guix system: error: failed to load '/etc/config.scm':")
         self.assertEqual((rc, n), (100, 1), out)

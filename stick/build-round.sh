@@ -28,9 +28,9 @@
 # native guest build.  The deal is printed before the builds start.
 #
 # --hosts.  all (the default) is every enabled amd64 host with the build role,
-# in the table's order: chopin, cinqcent, copland, cage.  A comma list names
-# any of them, and both is chopin,cinqcent.  Whatever it names, the units are
-# dealt over the hosts it names: --hosts chopin deals the whole round to
+# in the table's order: chopin, cinqcent, copland, cage, czerny.  A comma
+# list names any of them, and both is chopin,cinqcent.  Whatever it names, the
+# units are dealt over the hosts it names: --hosts chopin deals the whole round to
 # Chopin, --hosts chopin,cinqcent deals it over those two.
 #
 # --split.  deal (the default) deals the units as above.  legacy is the fixed

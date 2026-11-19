@@ -10,7 +10,8 @@
 #                empty list: nothing; default: all of the host's):
 #                  chopin:   linux sparse zfsguests dragonfly
 #                  cinqcent: linux sparse freebsd netbsd openbsd_illumos
-#                  a small host (copland, cage; testvm/hosts.json's class):
+#                  a small host (copland, cage, czerny; the class in
+#                            testvm/hosts.json):
 #                            linux sparse (no host ZFS); SPLIT: a share
 #                linux and sparse are every host's, each with its share of
 #                the file systems (LINUX_FS, SPARSE_FS)
@@ -50,25 +51,26 @@
 #                or a SHA256SUMS line that fails.
 #   PORT_BASE    ports are PORT_BASE + 10..19 (default the first port of the
 #                host's slot_range, testvm/hosts.json: 2700 chopin, 2900
-#                cinqcent, 2800 copland, 3000 cage; e.g. 2750 for 2760-2769)
-#   MAX_GUESTS   guests at once (default chopin 6, cinqcent, copland and cage
-#                3); COUNT_OTHERS=1 (every host's default but chopin's):
+#                cinqcent, 2800 copland, 3000 cage, 3100 czerny; e.g. 2750
+#                for 2760-2769)
+#   MAX_GUESTS   guests at once (default chopin 6, cinqcent, copland, cage and
+#                czerny 3); COUNT_OTHERS=1 (every host's default but chopin's):
 #                host-wide, with guest-slot.sh's slots on GUEST_PORTS (the
 #                host's slot_range: 2700-2799 chopin, 2900-2999 cinqcent,
-#                2800-2899 copland, 3000-3099 cage), which
+#                2800-2899 copland, 3000-3099 cage, 3100-3199 czerny), which
 #                stick/build-round.sh's guests and the SticTest1 checks take
 #                too, and every QEMU of ours there without one
 #   LINUX_FS     the linux steps run here, of zfs zfs-onto-ext4 bcachefs f2fs
 #                ext4 xfs btrfs tmpfs jfs nonroot (default chopin: zfs
 #                zfs-onto-ext4 bcachefs xfs btrfs nonroot, the only bcachefs
-#                tools are Chopin's; cinqcent: ext4 f2fs tmpfs jfs; copland
-#                and cage: ext4 xfs btrfs f2fs tmpfs jfs, what they have mkfs
-#                for, without ZFS (zfs, zfs-onto-ext4 and nonroot's pool) or
+#                tools are Chopin's; cinqcent: ext4 f2fs tmpfs jfs; copland,
+#                cage and czerny: ext4 xfs btrfs f2fs tmpfs jfs, what they
+#                have mkfs for, without ZFS (zfs, zfs-onto-ext4 and nonroot's pool) or
 #                bcachefs tools); all: every one
 #   SPARSE_FS    the sparse steps run here, of ext4 xfs btrfs zfs zfs-nocomp
 #                (default chopin: xfs btrfs; cinqcent: zfs zfs-nocomp ext4;
-#                copland and cage: ext4 xfs btrfs); all: every one.
-#                ANY_HOST=1 makes both default to all (on copland and cage
+#                copland, cage and czerny: ext4 xfs btrfs); all: every one.
+#                ANY_HOST=1 makes both default to all (on the small hosts
 #                too, ZFS's steps then fail)
 #   ZFS_GUESTS   zfsguests' guests, one to three (ports PORT_BASE + 17-19;
 #                default ubuntu24 ubuntu26-zfsmirror); proxmox9 or
@@ -77,9 +79,9 @@
 #   HOST_JOBS    fs_roundtrip.py and nonroot-rt.sh linux runs at once (4);
 #                SPARSE_JOBS sparse-rt.sh runs on the host at once (2)
 #   JOBS_CAP     at most this many of each at once, whatever HOST_JOBS and
-#                SPARSE_JOBS say (default 1 on the small hosts, copland and
-#                cage, none elsewhere): their 10 GiB RAM disk (cmp-run.sh's
-#                ceiling 9.0 10.1) holds one fs_roundtrip.py in RAM, about
+#                SPARSE_JOBS say (default 1 on the small hosts, copland, cage
+#                and czerny, none elsewhere): their 10 GiB RAM disk
+#                (cmp-run.sh's ceiling 9.0 10.1) holds one fs_roundtrip.py in RAM, about
 #                6.1 GiB at its peak, not two (12.2 GiB on chopin and
 #                cinqcent, whatever their file systems); 0: no cap
 #   STEP_TIMEOUT seconds, every step (default by kind, 1.5-6 h: round 9's
@@ -111,7 +113,7 @@
 #                amd64 host; an arm64 one, bigfoot, is refused): a
 #                round those hosts share, each step run by one of
 #                them only, in place of the profiles' shares (which overlap
-#                once copland or cage join chopin and cinqcent).  Every host
+#                once a small host joins chopin and cinqcent).  Every host
 #                deals the same: bcachefs stays on chopin and netbsd on
 #                cinqcent when they take part; ZFS's steps (zfs,
 #                zfs-onto-ext4, nonroot, sparse zfs and zfs-nocomp) go to big
@@ -196,13 +198,14 @@ case $prof in
     cinqcent) all="linux sparse freebsd netbsd openbsd_illumos"
         lfs="ext4 f2fs tmpfs jfs" sfs="zfs zfs-nocomp ext4"
         : "${MAX_GUESTS:=3}" "${COUNT_OTHERS:=1}" ;;
-    # The small hosts (copland, cage: 27 GiB, a 10 GiB RAM disk; choubox:
-    # 15.5 GiB, a 4G one; host ZFS on all since 2026-11-14 or their joining,
-    # guests from the image cache): profiled like Cinqcent, each on its own
-    # range, one job of a kind at a time (JOBS_CAP); default hosts (copland
-    # and cage since 2026-11-14, choubox since 2026-11-17), choubox no build
-    # host.  Their profile's file systems overlap the
-    # big hosts' and each other's: SPLIT deals a round out without overlap.
+    # The small hosts (copland, cage, czerny: 27 GiB, a 10 GiB RAM disk;
+    # choubox: 15.5 GiB, a 4G one; host ZFS on all since 2026-11-14 or their
+    # joining, guests from the image cache): profiled like Cinqcent, each on
+    # its own range, one job of a kind at a time (JOBS_CAP); default hosts
+    # (copland and cage since 2026-11-14, choubox since 2026-11-17; czerny,
+    # enabled 2026-11-19, is not default yet), choubox no build host.  Their
+    # profile's file systems overlap the big hosts' and each other's: SPLIT
+    # deals a round out without overlap.
     small) all="linux sparse"
         lfs="ext4 xfs btrfs f2fs tmpfs jfs" sfs="ext4 xfs btrfs"
         : "${MAX_GUESTS:=3}" "${COUNT_OTHERS:=1}" "${JOBS_CAP:=1}" ;;

@@ -10,9 +10,10 @@
 # HOST is an ssh destination, [USER@]NAME, or a host's name in
 # testvm/hosts.json (bigfoot: its row's ssh, m@bigfoot.local); the default
 # is every enabled host's ssh in testvm/hosts.json: m@chopin.local,
-# m@cinqcent.local, m@copland.local, m@cage.local and m@bigfoot.local (every
-# KVM test host, of either arch: this copies code only, so copland, cage and
-# bigfoot get it before they are default hosts elsewhere).
+# m@cinqcent.local, m@copland.local, m@cage.local, m@czerny.local,
+# m@choubox.local and m@bigfoot.local (every KVM test host, of either arch:
+# this copies code only, so czerny and bigfoot get it before they are default
+# hosts elsewhere).
 # Copied with rsync -rlp --checksum: what differs in
 # content is copied and gets the time of the copy, and nothing goes by file
 # times (never -t: Chopin's clock once ran two hours fast, which made rsync's

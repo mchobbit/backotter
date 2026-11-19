@@ -1,9 +1,13 @@
 # The KVM test hosts
 
-The test scripts run guests on five amd64 KVM hosts. Two are big, Chopin and
-Cinqcent, two are small, Copland and Cage (the M900s), and the fifth is Choubox,
-smaller still. A sixth host,
-Czerny, is due at the end of November 2026 and has a reserved row already.
+The test scripts run guests on six amd64 KVM hosts. Two are big, Chopin and
+Cinqcent, three are small, Copland, Cage and Czerny (the M900s), and the sixth
+is Choubox, smaller still. Czerny (a MoreFine M900 like Cage: Ryzen 7 H 255,
+16 threads, 27 GiB, a 10G RAM disk, XFS root, Debian 13 on trixie-backports
+with ZFS and bcachefs) was enabled on 2026-11-19 with Cage's roles and its own
+range 3100-3199. It is not a default host yet: its HostTest2 and one
+representative per family are still to run (step 9 below), and the user decides
+when it joins the defaults.
 Choubox (the user's GMKtec NucBox G3 Pro: i3-10110U, 4 threads, 15.5 GiB, one
 512 GB SATA SSD) joined the table on 2026-11-17 and the defaults the same day,
 by the user's choice, before its trial runs were done. They stood so: the
@@ -39,7 +43,7 @@ Before starting heavy work by hand, check `testvm/test2/t2 batch status`: a runn
 | cinqcent | big | 2900-2999 | 2980-2999 | build, cache | yes |
 | copland | small | 2800-2899 | 2880-2899 | build, cache | yes |
 | cage | small | 3000-3099 | 3080-3099 | build, cache | yes |
-| czerny | small | 3100-3199 | 3180-3199 | cache | no (row reserved: `enabled: false`) |
+| czerny | small | 3100-3199 | 3180-3199 | build, cache | no (enabled 2026-11-19, trial runs due) |
 | choubox | small (own limits) | 3300-3399 | 3380-3399 | cache | yes (since 2026-11-17) |
 | bigfoot | small, arm64 | 3200-3299 | 3280-3299 | build-arm64 | no |
 
@@ -168,9 +172,9 @@ sculpt-update on Chopin as a job of the round (testvm/test2/README.md), but
 doesn't publish: `vm-store publish sculpt2610` on Chopin after the round.
 Every cache host links it (`vms/sculpt2610` on Cinqcent, Copland and Cage).
 
-**Small hosts** (Copland, Cage, and Czerny later): 27 GiB of memory and a 10G
-RAM disk. Their ceiling is 9.0 10.1, measured on both on 2026-11-17 with the
-ZFS module loaded, as it is on each (the module alone costs the ARC's GiB of
+**Small hosts** (Copland, Cage and Czerny): 27 GiB of memory and a 10G
+RAM disk. Their ceiling is 9.0 10.1, measured on Copland and Cage on
+2026-11-17 with the ZFS module loaded, as it is on each (the module alone costs the ARC's GiB of
 headroom; since 3b00344 cmp-run.sh floors the figure instead of rounding it).
 Ask the host: `cmp-run.sh --ceiling`. Choubox is small class too, with its own
 smaller limits and a 3.0 6.0 ceiling (above).
@@ -206,10 +210,9 @@ starts its own job (`ht1.sh`, `make-*.sh`, a guest boot, a compare run) asks
 `testvm/pick-host` for the host, with the job's `--reserve` and guest, and runs
 it there. "Both hosts" (Chopin and Cinqcent) is not the default, and a PASS on
 "both hosts" is not the done criterion: a job passes on the host pick-host
-gave it. A sync names all five amd64 hosts (`testvm/sync-hosts.sh
-m@chopin.local m@cinqcent.local m@cage.local m@copland.local m@choubox.local`),
-never two. Why:
-docs/design/four-host-split.md.
+gave it. A sync names all six amd64 hosts (`testvm/sync-hosts.sh
+m@chopin.local m@cinqcent.local m@cage.local m@copland.local m@czerny.local
+m@choubox.local`), never two. Why: docs/design/four-host-split.md.
 
 Placement works from capabilities, not host names. t2's facts probe
 (`t2lib/facts_host.py`, sent over ssh from the Mac's checkout, read only)
@@ -327,9 +330,9 @@ stays out of default runs until HostTest2 passes on it
 
 ## Adding a host
 
-Czerny's row is already in the table (3100-3199, ports 3180-3199, small,
-cache, `default: false`, `enabled: false`). Adding it means one edit,
-`"enabled": true`, followed by the provisioning steps below. For any other new
+Czerny was added this way on 2026-11-19: its reserved row (3100-3199, ports
+3180-3199, small) got `"enabled": true` and Cage's roles (`build`, `cache`),
+and it keeps `default: false` until its trial runs pass. For any other new
 host, add a row first:
 
 1. Choose an unused 100-port range.

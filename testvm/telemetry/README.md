@@ -1,7 +1,7 @@
 # Farm telemetry to Bigfoot
 
-Every 15 minutes each farm host (chopin, cinqcent, cage, copland, choubox)
-sends one batch to Bigfoot: its journal since the batch before (kernel messages
+Every 15 minutes each farm host (chopin, cinqcent, cage, copland, czerny,
+choubox) sends one batch to Bigfoot: its journal since the batch before (kernel messages
 included) and a snapshot of its state. After a host freezes, the batches
 show what it was doing before, and the time the batches stopped dates the
 freeze. Written after Cage froze twice on 2026-11-16 (16:00 idle, 22:13

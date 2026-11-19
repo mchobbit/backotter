@@ -168,9 +168,9 @@ class Placement(unittest.TestCase):
         self.assertEqual([c.cell for c in p.due()], ["holt:debian13"])   # nothing of mint22's is queued
 
     def test_a_default_run_holds_the_small_hosts_and_keeps_the_big_work_big(self):
-        """Every amd64 host is a default host (copland and cage since 2026-11-14, choubox
-        since 2026-11-17), so a run without --hosts
-        has the small ones too.  What they cannot run is still kept off them, by their
+        """Five amd64 hosts are default (copland and cage since 2026-11-14, choubox
+        since 2026-11-17; czerny, enabled 2026-11-19, not yet), so a run without --hosts
+        has small ones too.  What they cannot run is still kept off them, by their
         ceiling and their caps, never by their names: a stic check whose reservation is over
         9.0 9.2, and a holt source vm-mount reads on the host's ZFS."""
         hosts = list(t2lib.DEFAULT_HOSTS)

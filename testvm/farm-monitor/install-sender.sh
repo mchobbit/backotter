@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Install (or remove) the bko-farm sender on one farm host (chopin,
-# cinqcent, cage, copland, choubox): its journal streams to Bigfoot and its
-# kernel console goes there over netconsole (testvm/farm-monitor/README.md).
+# cinqcent, cage, copland, czerny, choubox): its journal streams to Bigfoot
+# and its kernel console goes there over netconsole
+# (testvm/farm-monitor/README.md).
 # Run on the host, from a copy of this directory, after the collector is
 # installed and Bigfoot's ufw lets the farm in.  Idempotent.
 #

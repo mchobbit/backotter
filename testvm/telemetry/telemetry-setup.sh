@@ -6,7 +6,7 @@
 #   testvm/telemetry/telemetry-setup.sh [--dry-run] [HOST...]
 #   testvm/telemetry/telemetry-setup.sh [--dry-run] --uninstall HOST...
 #
-# HOST default: chopin cinqcent cage copland choubox.
+# HOST default: chopin cinqcent cage copland czerny choubox.
 #
 # Install:
 #   1. Bigfoot (m@bigfoot.local, sudo -n): user bkotel (no password, no
@@ -53,7 +53,7 @@ for a in "$@"; do
 done
 if [ "${#hosts[@]}" = 0 ]; then
     [ "$uninstall" = 1 ] && { echo "telemetry-setup.sh: --uninstall needs the hosts named" >&2; exit 2; }
-    hosts=(chopin cinqcent cage copland choubox)
+    hosts=(chopin cinqcent cage copland czerny choubox)
 fi
 for f in bko-telemetry bko-telemetry-recv bko-telemetry.service bko-telemetry.timer bko-telemetry.default; do
     [ -r "$here/$f" ] || { echo "telemetry-setup.sh: missing $here/$f" >&2; exit 1; }

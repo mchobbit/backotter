@@ -14,7 +14,7 @@
 # Two or more whole passes in /bkoscratch/holttest1d/peaks.tsv (PASS, all
 # four phases, not seeded) replace a row in ram-size.sh; one never lowers it.
 # host: the host that measured the row, or class:C, a row for every host of
-# class C in testvm/hosts.json (class:small: copland, cage, choubox, bigfoot)
+# class C in testvm/hosts.json (class:small: copland, cage, czerny, choubox, bigfoot)
 # that has no row of its own; a host with neither gets the largest of its rows.
 # No class:small row is measured yet, and only haiku6 has a small host's row
 # (Choubox's, its only row, so every host takes it).  For every other guest

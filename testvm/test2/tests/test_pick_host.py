@@ -481,9 +481,9 @@ class TheCommandLine(unittest.TestCase):
             with mock.patch.object(sys, "stderr", io.StringIO()), self.assertRaises(SystemExit) as cm:
                 ph.main(argv)
             self.assertEqual(cm.exception.code, 2, argv)
-        rc, _, err = self.run_main(["--hosts", "czerny"], {})
+        rc, _, err = self.run_main(["--hosts", "liszt"], {})
         self.assertEqual(rc, 2)
-        self.assertIn("no such host czerny", err)
+        self.assertIn("no such host liszt", err)
         rc, _, err = self.run_main(["--guest", "debian13,debian13-arm64"], {})
         self.assertEqual(rc, 2)
         self.assertIn("both architectures", err)
@@ -541,9 +541,9 @@ class TheCommandLine(unittest.TestCase):
         got = json.loads(out)                                    # no candidate at all
         self.assertEqual((rc, got["candidates"], got["ranked"]), (1, [], []))
         self.assertIn("no candidate host at all", got["error"])
-        rc, out, _ = self.run_main(["--hosts", "czerny", "--json"], {})       # bad --hosts
+        rc, out, _ = self.run_main(["--hosts", "liszt", "--json"], {})       # bad --hosts
         self.assertEqual(rc, 2)
-        self.assertIn("no such host czerny", json.loads(out)["error"])
+        self.assertIn("no such host liszt", json.loads(out)["error"])
         ps = {h: probe(host=h, free=(9.0, 9.0)) for h in defaults}
         rc, out, _ = self.run_main(["--guest", "nosuchguest", "--json"], ps)  # all dropped
         got = json.loads(out)

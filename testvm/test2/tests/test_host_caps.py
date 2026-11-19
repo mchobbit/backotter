@@ -276,7 +276,7 @@ class Identity(unittest.TestCase):
         self.assertEqual([h for h in ("chopin", "cinqcent", "copland", "cage") if guest.may_lack_guests(h)],
                          ["cinqcent", "copland", "cage"])          # cinqcent a cache since 2026-11-13
         self.assertFalse(guest.may_lack_guests("nosuch"))        # unknown: a fleet host, as before
-        self.assertFalse(guest.may_lack_guests("czerny"))        # reserved: not a host yet
+        self.assertTrue(guest.may_lack_guests("czerny"))         # a cache host since 2026-11-19
 
     def test_compare_leaves_out_a_cache_without_it(self):
         per = {"chopin": self.info(), "cinqcent": self.info(), "copland": {"missing": True}}

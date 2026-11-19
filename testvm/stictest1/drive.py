@@ -70,8 +70,8 @@ Options:
   --exclude G,G   leave these guests out (repeatable)
   --first G,G     start these before the rest (a recheck's failed guests)
   --hosts H,H     of testvm/hosts.json's: chopin, cinqcent, copland, cage,
-                  choubox (default its default hosts, every amd64 one:
-                  copland and cage since 2026-11-14, choubox since 2026-11-17;
+                  czerny, choubox (default its default hosts: copland and cage
+                  since 2026-11-14, choubox since 2026-11-17, czerny not yet;
                   a guest that doesn't fit a small host is placed on the big
                   ones by itself, below)
   --slots N|H=N   checks of ours at once: N on every host, H=N on H
@@ -171,11 +171,12 @@ HOSTS_TABLE = _host_table()
 # range there, our ports (stic_ports).
 HOSTS = {r["name"]: dict(ssh=r["ssh"], slot_range=r["slot_range"], ports=tuple(r["stic_ports"]))
          for r in HOSTS_TABLE.rows()}
-# --hosts' default, the table's default hosts: every amd64 host (copland and
-# cage joined 2026-11-14, once HostTest2 and a representative per family had
-# passed there, design-classes.md: small hosts; choubox 2026-11-17, its trial
-# runs waived by the user).  A guest a small host can't run is kept off it by
-# its ceiling, image and binaries, never by its name (too_big, novm, prefer).
+# --hosts' default, the table's default hosts (copland and cage joined
+# 2026-11-14, once HostTest2 and a representative per family had passed there,
+# design-classes.md: small hosts; choubox 2026-11-17, its trial runs waived by
+# the user; czerny, enabled 2026-11-19, is known and not default yet).  A
+# guest a small host can't run is kept off it by its ceiling, image and
+# binaries, never by its name (too_big, novm, prefer).
 DEFAULT_HOSTS = HOSTS_TABLE.defaults()
 GUEST_SLOTS = 3          # every check.sh's slot_take 3
 

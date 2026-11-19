@@ -130,7 +130,7 @@ class Limits(AltTable):
         self.assertEqual(H.limits("copland"), dict(DEFAULTS, stic_slots=2, holt_jobs=1, base_gib=4))
         self.assertEqual(H.limits("cage"), dict(DEFAULTS, stic_slots=2, holt_jobs=2, base_gib=4, holt_disk_mode=True))
         self.assertEqual(H.limits("cage.local"), H.limits("cage"))
-        self.assertEqual(H.limits("czerny"), H.limits("copland"), "a reserved row: its class's still")
+        self.assertEqual(H.limits("czerny"), H.limits("copland"), "czerny: the small class's, like copland")
         self.assertEqual(H.limits("chopin"), DEFAULTS)
         self.assertEqual(H.limits("nosuch"), DEFAULTS)
         self.assertEqual(H.limit("cage", "holt_jobs"), 2)

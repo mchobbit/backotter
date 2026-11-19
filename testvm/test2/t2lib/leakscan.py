@@ -23,8 +23,8 @@ they enter the repository; nothing found may stay.  Two parts:
                (getty@tty1.service, a mount table's /run/credentials/...): its
                last label a unit type, service, socket, target and the like
       key      a private key (BEGIN ... PRIVATE KEY) or an SSH public key
-      host     the test hosts' names, chopin, cinqcent, copland, cage, choubox and
-               bigfoot (cage as a word only); allowed in index.tsv
+      host     the test hosts' names, chopin, cinqcent, copland, cage, czerny,
+               choubox and bigfoot (cage as a word only); allowed in index.tsv
                and README.md, and anywhere with --allow-hosts (fixtures)
 (b) Strings, with --strings FILE (JSON lines {"k": KIND, "v": VALUE}, made by
     `leakscan.py strings` on each host and never moved off it) and --git-email
@@ -77,7 +77,7 @@ import re
 import subprocess
 import sys
 
-HOSTS = ("chopin", "cinqcent", "copland", "cage", "choubox", "bigfoot")   # t2lib.KNOWN_HOSTS (this runs on its own too)
+HOSTS = ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox", "bigfoot")   # t2lib.KNOWN_HOSTS (this runs on its own too)
 # Files that may name the hosts (R6.3): the corpus's index and README.
 HOST_NAMES_OK = ("index.tsv", "README.md")
 SKIP_DIRS = ("__pycache__",)

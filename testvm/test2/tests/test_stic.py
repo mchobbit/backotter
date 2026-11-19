@@ -956,7 +956,7 @@ class TestSticRun(unittest.TestCase):
         env = FakeEnv({MARK: []})
         env.run = lambda *a, **k: self.fail("build-round.sh started")
         with self.assertRaisesRegex(stic.SticError,
-                                    "no private copy on cinqcent, copland, cage to build the round from"):
+                                    "no private copy on cinqcent, copland, cage, czerny to build the round from"):
             stic.SticRun(self.ctx, old, env).go()
 
     def test_pending_round_is_built_then_rekeyed(self):
@@ -985,7 +985,7 @@ class TestSticRun(unittest.TestCase):
         argv, benv = built[0]
         self.assertTrue(argv[1].endswith("stick/build-round.sh"), argv)
         # every build host of the table is named, whatever --hosts says: they deal the units
-        self.assertEqual(argv[2:], ["--hosts", "chopin,cinqcent,copland,cage",
+        self.assertEqual(argv[2:], ["--hosts", "chopin,cinqcent,copland,cage,czerny",
                                     "t2r-5253b20-96596bb-6ccec58"])
         self.assertEqual((benv["BKO_PROFILE"], benv["BKO_GUEST_PROFILE"], benv["BKO_REMOTE_DIR"]),
                          ("release", "release", "/home/m/backotter-work/t2core-p4/copy/6fff54b"))

@@ -1,7 +1,7 @@
 # Farm monitor on Bigfoot
 
-Bigfoot watches the four build and test hosts (chopin, cinqcent, cage,
-copland) live, so the next freeze leaves a record from outside the machine
+Bigfoot watches the build and test hosts (chopin, cinqcent, cage, copland,
+czerny) live, so the next freeze leaves a record from outside the machine
 that froze. Three pieces:
 
 - **netconsole**: each host's kernel sends its console messages over UDP to

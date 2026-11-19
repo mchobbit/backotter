@@ -253,7 +253,7 @@ the same scripts; the local restic, rustic and rustic_core trees go across
 the same way, for `SRC=` (without .git, `rustic-commit` names the commits
 "unknown" unless `RUSTIC_COMMIT` and `RUSTIC_CORE_COMMIT` give them):
 
-    testvm/sync-hosts.sh                  # every enabled host: chopin, cinqcent, copland, cage, choubox, bigfoot
+    testvm/sync-hosts.sh                  # every enabled host: chopin, cinqcent, copland, cage, czerny, choubox, bigfoot
     for h in chopin.local cinqcent.local; do     # the build hosts
         rsync -rlp --checksum --exclude target --exclude .git \
             ~/git/restic ~/git/rustic ~/git/rustic_core m@$h:backotter-work/src/

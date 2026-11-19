@@ -1,8 +1,9 @@
-"""The KVM test hosts: every amd64 host (chopin, cinqcent, copland, cage and choubox) is a
-default host, so every run without --hosts uses the small hosts too -- copland and cage
+"""The KVM test hosts: chopin, cinqcent, copland, cage and choubox are default hosts, so
+every run without --hosts uses the small hosts too -- copland and cage
 since 2026-11-14, choubox since 2026-11-17 (its trial runs waived by the user: its two
-HostTest2 loop cells can never fit its 3 GiB RAM disk).  bigfoot (the arm64 host) is a
-known, selectable host that no default list holds yet (a host joins the defaults only after
+HostTest2 loop cells can never fit its 3 GiB RAM disk).  bigfoot (the arm64 host) and
+czerny (a small amd64 host since 2026-11-19) are known, selectable hosts that no default
+list holds yet (a host joins the defaults only after
 HostTest2 and one representative per family pass on it,
 docs/design/test2/design-classes.md).  What only a big host can run stays there by each
 cell's ceiling and caps, never by a host's name (test_small_hosts.py, test_host_caps.py):
@@ -46,11 +47,14 @@ def read(*parts):
 
 class Hosts(unittest.TestCase):
     def test_known_and_default(self):
-        self.assertEqual(t2lib.KNOWN_HOSTS, ("chopin", "cinqcent", "copland", "cage", "choubox", "bigfoot"))
+        self.assertEqual(t2lib.KNOWN_HOSTS,
+                         ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox", "bigfoot"))
         self.assertEqual(t2lib.DEFAULT_HOSTS, ("chopin", "cinqcent", "copland", "cage", "choubox"))
         self.assertTrue(set(t2lib.DEFAULT_HOSTS) < set(t2lib.KNOWN_HOSTS))
-        # The one enabled host that is not a default one: bigfoot (docs/design/arm64.md A6).
-        self.assertEqual([h for h in t2lib.KNOWN_HOSTS if h not in t2lib.DEFAULT_HOSTS], ["bigfoot"])
+        # The enabled hosts that are not default ones: czerny (enabled 2026-11-19, its trial
+        # runs due) and bigfoot (docs/design/arm64.md A6).
+        self.assertEqual([h for h in t2lib.KNOWN_HOSTS if h not in t2lib.DEFAULT_HOSTS],
+                         ["czerny", "bigfoot"])
 
     def test_t2_hosts_option(self):
         with contextlib.redirect_stderr(io.StringIO()):
@@ -61,10 +65,11 @@ class Hosts(unittest.TestCase):
         self.assertEqual(t2.hosts_opt({"--hosts": "cage,copland"}), ["cage", "copland"])
         self.assertEqual(t2.hosts_opt({"--hosts": "bigfoot"}), ["bigfoot"])
         self.assertEqual(t2.hosts_opt({"--hosts": "choubox"}), ["choubox"])
+        self.assertEqual(t2.hosts_opt({"--hosts": "chopin,czerny"}), ["chopin", "czerny"])
         with self.assertRaisesRegex(t2.Usage,
-                                    r"no such host czerny \(known: chopin, cinqcent, copland, cage, choubox, "
-                                    r"bigfoot\)"):
-            t2.hosts_opt({"--hosts": "chopin,czerny"})
+                                    r"no such host liszt \(known: chopin, cinqcent, copland, cage, czerny, "
+                                    r"choubox, bigfoot\)"):
+            t2.hosts_opt({"--hosts": "chopin,liszt"})
 
     def test_plan_gate_and_guest_defaults(self):
         self.assertEqual(plan.Ctx.__init__.__defaults__[1], t2lib.DEFAULT_HOSTS)
@@ -97,22 +102,25 @@ class Hosts(unittest.TestCase):
         self.assertEqual(drive.HOSTS["copland"],
                          dict(ssh="m@copland.local", slot_range="2800-2899", ports=(2880, 2899)))
         self.assertEqual(drive.HOSTS["cage"], dict(ssh="m@cage.local", slot_range="3000-3099", ports=(3080, 3099)))
+        self.assertEqual(drive.HOSTS["czerny"],
+                         dict(ssh="m@czerny.local", slot_range="3100-3199", ports=(3180, 3199)))
         self.assertEqual(drive.DEFAULT_HOSTS, ("chopin", "cinqcent", "copland", "cage", "choubox"))
         err = io.StringIO()
-        with mock.patch.object(sys, "argv", ["drive.py", "r1", "--hosts", "cage,czerny"]), \
+        with mock.patch.object(sys, "argv", ["drive.py", "r1", "--hosts", "cage,liszt"]), \
                 contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
             drive.main()
         self.assertEqual(cm.exception.code, 2)
-        self.assertIn("unknown host czerny (known: chopin, cinqcent, copland, cage, choubox, bigfoot)",
+        self.assertIn("unknown host liszt (known: chopin, cinqcent, copland, cage, czerny, choubox, bigfoot)",
                       err.getvalue())
 
     def test_guest_slot_ranges(self):
         gs = os.path.join(TESTVM, "compare", "guest-slot.sh")
         got = {h: subprocess.run(["bash", "-c", '. "$1"; slot_range_here "$2"', "-", gs, h],
                                  capture_output=True, text=True, check=True).stdout.strip()
-               for h in ("chopin", "copland", "cinqcent", "copland.local", "cage", "cage.local")}
+               for h in ("chopin", "copland", "cinqcent", "copland.local", "cage", "cage.local", "czerny")}
         self.assertEqual(got, {"chopin": "2700-2799", "copland": "2800-2899", "cinqcent": "2900-2999",
-                               "copland.local": "2800-2899", "cage": "3000-3099", "cage.local": "3000-3099"})
+                               "copland.local": "2800-2899", "cage": "3000-3099", "cage.local": "3000-3099",
+                               "czerny": "3100-3199"})
 
     def run_all_dry(self, host, extra_env=None):
         with tempfile.TemporaryDirectory() as d:
@@ -131,7 +139,7 @@ class Hosts(unittest.TestCase):
 
     def test_run_all_small_profiles(self):
         for host, base, ports in (("copland", 2800, "2800-2899"), ("cage", 3000, "3000-3099"),
-                                  ("choubox", 3300, "3300-3399")):
+                                  ("czerny", 3100, "3100-3199"), ("choubox", 3300, "3300-3399")):
             r = self.run_all_dry(host, {"HOST_JOBS": "2"})   # as gate/loop.sh sets it
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             head = [x for x in r.stdout.splitlines() if x.startswith(f"== {host}: ")]
@@ -148,18 +156,19 @@ class Hosts(unittest.TestCase):
         r = self.run_all_dry("cinqcent")   # the big hosts: no cap
         self.assertIn("4 host jobs, 2 sparse jobs", r.stdout)
         self.assertNotIn("JOBS_CAP", r.stdout)
-        r = subprocess.run(["bash", os.path.join(TESTVM, "compare", "run-all.sh"), "--host", "czerny", "--dry-run",
+        r = subprocess.run(["bash", os.path.join(TESTVM, "compare", "run-all.sh"), "--host", "liszt", "--dry-run",
                             REPO, "x"], capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 2)
-        self.assertIn("--host chopin, cinqcent, copland, cage, choubox or bigfoot", r.stderr)
+        self.assertIn("--host chopin, cinqcent, copland, cage, czerny, choubox or bigfoot", r.stderr)
 
     def test_sync_hosts_and_vm_update(self):
         sync = read("testvm", "sync-hosts.sh")   # its default: every enabled host of testvm/hosts.json
         self.assertIn("list=$(hosts_names --field ssh)", sync)
         self.assertEqual(t2lib.hosts_table.names(),
-                         ("chopin", "cinqcent", "copland", "cage", "choubox", "bigfoot"))   # test_host_table runs it
+                         ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox",
+                          "bigfoot"))   # test_host_table runs it
         vmu = load("vm_update_hosts", os.path.join(TESTVM, "vm-update"))
-        self.assertEqual(vmu.ALL_HOSTS, ["chopin.local"])   # cinqcent, copland, cage and choubox are caches
+        self.assertEqual(vmu.ALL_HOSTS, ["chopin.local"])   # cinqcent, copland, cage, czerny and choubox are caches
 
     def test_checks_take_their_hosts_range(self):
         d = os.path.join(TESTVM, "stictest1")

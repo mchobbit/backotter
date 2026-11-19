@@ -294,13 +294,13 @@ class BuildRoundDist(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         named = [x.split()[1].rstrip(":") for x in r.stdout.splitlines() if "would copy" in x]
         # every enabled amd64 host but the one the copies come from (chopin, the
-        # table's first build host, which --dist-only takes by default); czerny
-        # is a reserved row, bigfoot an arm64 one; nothing is written
-        self.assertEqual(named, ["cinqcent", "copland", "cage", "choubox"])
+        # table's first build host, which --dist-only takes by default);
+        # bigfoot is an arm64 one; nothing is written
+        self.assertEqual(named, ["cinqcent", "copland", "cage", "czerny", "choubox"])
         self.assertFalse(os.path.exists(self.w.home("cage")))
         r = self.br("--dist-only", "--dry-run", "--hosts", "cinqcent", "--dist-hosts", "all", "r1")
         named = [x.split()[1].rstrip(":") for x in r.stdout.splitlines() if "would copy" in x]
-        self.assertEqual(named, ["chopin", "copland", "cage", "choubox"])
+        self.assertEqual(named, ["chopin", "copland", "cage", "czerny", "choubox"])
 
     def test_a_source_that_doesnt_check_is_copied_nowhere(self):
         b = round_bin(self.w)
@@ -340,12 +340,13 @@ class BuildRoundDist(unittest.TestCase):
             self.assertEqual(r.returncode, 2, (args, r.stdout, r.stderr))
             self.assertIn(msg, r.stderr, args)
         no(["--dist-only", "r1"], "--dist-only needs --dist-hosts")
-        no(["--dist-only", "--dist-hosts", "czerny", "r1"], "czerny isn't an enabled host of testvm/hosts.json")
+        no(["--dist-only", "--dist-hosts", "liszt", "r1"], "liszt isn't an enabled host of testvm/hosts.json")
         no(["--dist-only", "--dist-hosts", "bigfoot2", "r1"], "bigfoot2 isn't an enabled host of testvm/hosts.json")
         no(["--dist-only", "--dist-hosts", "chopin", "r1"],
            "--dist-hosts: chopin is where the copies come from")
-        no(["--hosts", "czerny", "--dist-only", "--dist-hosts", "copland", "r1"],
-           "--hosts: all, both, or build hosts of testvm/hosts.json (chopin cinqcent copland cage), not czerny")
+        no(["--hosts", "liszt", "--dist-only", "--dist-hosts", "copland", "r1"],
+           "--hosts: all, both, or build hosts of testvm/hosts.json "
+           "(chopin cinqcent copland cage czerny), not liszt")
         no(["--hosts", "chopin,cage", "--dist-only", "--dist-hosts", "copland", "r1"],
            "--dist-only takes one --hosts")
         no(["--host", "chopin", "--dist-hosts", "cage", "r1"], "--dist-hosts and --dist-only are the Mac part's")
@@ -488,10 +489,10 @@ class PromoteBins(unittest.TestCase):
         r = self.pb("--dry-run", "all")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         hosts = sorted({x.split()[1] for x in r.stdout.splitlines() if " bko-bin: " in x})
-        self.assertEqual(hosts, ["cage", "choubox", "cinqcent", "copland"])   # not bigfoot: an arm64 host
+        self.assertEqual(hosts, ["cage", "choubox", "cinqcent", "copland", "czerny"])   # not bigfoot: an arm64 host
         for args, msg in ((["--from", "cage", "chopin"], "--from cage: not a big build host"),
                           (["chopin"], "chopin is the source"),
-                          (["czerny"], "no such enabled host czerny"),
+                          (["liszt"], "no such enabled host liszt"),
                           (["--sets", "images", "cage"], "--sets: of bko-bin cmp-bin holt-bin"),
                           ([], "Usage: promote-bins.sh")):
             r = self.pb(*args)
@@ -540,29 +541,32 @@ class SticRoundStep(unittest.TestCase):
         return [a for a in self.built[0][0][2:]]
 
     def test_the_tables_build_hosts_are_named(self):
-        """A run on two of them: the units are still dealt over all four (only the four
-        together can take every unit), and the two outside --hosts build from the run's copy."""
+        """A run on two of them: the units are still dealt over every build host of the table
+        (only together can they take every unit), and those outside --hosts build from the
+        run's copy."""
         self.step(["chopin", "cinqcent"], dict(self.PENDING))
-        self.assertEqual(self.argv(), ["--hosts", "chopin,cinqcent,copland,cage", "t2r-x"])
-        self.assertEqual(self.copied, [["copland", "cage"]])
+        self.assertEqual(self.argv(), ["--hosts", "chopin,cinqcent,copland,cage,czerny", "t2r-x"])
+        self.assertEqual(self.copied, [["copland", "cage", "czerny"]])
         e = self.built[0][1]
         self.assertEqual((e["BKO_PROFILE"], e["BKO_GUEST_PROFILE"], e["BKO_REMOTE_DIR"]),
                          ("release", "release", self.copy))
         self.assertEqual(self.probed, [(["chopin", "cinqcent"], ["roundt2r-x"])])
 
     def test_every_build_host_of_the_run_builds_and_none_is_copied_to(self):
-        """All four amd64 hosts have the build role since 2026-11-14: a run on all four deals
-        the units over all four, and there is nothing left to copy."""
-        self.step(["chopin", "cinqcent", "copland", "cage"], dict(self.PENDING))
-        self.assertEqual(self.argv(), ["--hosts", "chopin,cinqcent,copland,cage", "t2r-x"])
+        """The build role is on five amd64 hosts (copland and cage since 2026-11-14, czerny
+        since 2026-11-19): a run on all of them deals the units over all of them, and there is
+        nothing left to copy."""
+        self.step(["chopin", "cinqcent", "copland", "cage", "czerny"], dict(self.PENDING))
+        self.assertEqual(self.argv(), ["--hosts", "chopin,cinqcent,copland,cage,czerny", "t2r-x"])
         self.assertEqual(self.copied, [])
-        self.assertEqual(self.probed[0][0], ["chopin", "cinqcent", "copland", "cage"])   # facts of every --hosts host
+        self.assertEqual(self.probed[0][0],
+                         ["chopin", "cinqcent", "copland", "cage", "czerny"])   # facts of every --hosts host
 
     def test_hosts_without_build_hosts_still_build_there(self):
         """A run whose --hosts has no build host at all (a table where cage hasn't the role):
         every build host of the table builds it, from a copy made there first, and its bin is
         then copied to --hosts."""
-        with no_build_role("cage", "copland"):
+        with no_build_role("cage", "copland", "czerny"):
             _, env = self.step(["cage"], dict(self.PENDING))
             self.assertEqual(self.copied, [["chopin", "cinqcent"]])   # the copy on both build hosts first
             self.assertEqual(self.argv(), ["--hosts", "chopin,cinqcent", "--dist-hosts", "cage", "t2r-x"])
@@ -572,7 +576,7 @@ class SticRoundStep(unittest.TestCase):
     def test_one_build_host_in_the_table(self):
         """A table where only chopin has the role: it is dealt the whole round, and the
         --hosts host that builds nothing is copied to."""
-        with no_build_role("cage", "copland", "cinqcent"):
+        with no_build_role("cage", "copland", "cinqcent", "czerny"):
             self.step(["chopin", "copland"], dict(self.PENDING))
             self.assertEqual(self.copied, [])   # chopin is in --hosts: it builds the whole round
             self.assertEqual(self.argv(), ["--hosts", "chopin", "--dist-hosts", "copland", "t2r-x"])
@@ -584,7 +588,7 @@ class SticRoundStep(unittest.TestCase):
             with self.assertRaisesRegex(stic.SticError, "the copy on chopin is at /elsewhere, not "):
                 self.step(["copland"], dict(self.PENDING), copies={"chopin": "/elsewhere"})
             self.assertEqual(self.built, [])
-            with self.assertRaisesRegex(stic.SticError, "no private copy on chopin, cinqcent, cage"):
+            with self.assertRaisesRegex(stic.SticError, "no private copy on chopin, cinqcent, cage, czerny"):
                 self.step(["copland"], dict(self.PENDING), copies=False)
 
     def test_a_failed_build_refuses(self):
@@ -628,11 +632,11 @@ class SticRoundStep(unittest.TestCase):
 # --- holt.py: ensure_holt ------------------------------------------------------------------------
 
 class Remote4(test_holt.FakeRemote):
-    """FakeRemote with every other known amd64 host too (copland, cage and choubox)."""
+    """FakeRemote with every other known amd64 host too (copland, cage, czerny and choubox)."""
 
     def __init__(self, outcomes):
         super().__init__(outcomes)
-        for h in ("copland", "cage", "choubox"):
+        for h in ("copland", "cage", "czerny", "choubox"):
             self.files[h], self.ledger[h] = {}, []
 
 
@@ -700,7 +704,7 @@ class HoltBuildHosts(unittest.TestCase):
         r = Remote4({})
         res = self.go({}, r)
         self.assertEqual(res["exit"], 0, res)
-        for h in ("copland", "cage", "choubox"):   # choubox is known, not default: holt_ship known reaches it
+        for h in ("copland", "cage", "czerny", "choubox"):   # known, not default: holt_ship known reaches them too
             self.assertEqual(r.files[h][self.HB + "/SHA256SUMS"], r.files["chopin"][self.HB + "/SHA256SUMS"], h)
             self.assertIn(self.HB + "/openbsd/bko-holt", r.files[h])
         self.assertEqual({h for h, _ in self.builds(r)}, {"chopin", "cinqcent"})

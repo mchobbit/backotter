@@ -1,8 +1,8 @@
 """The per-host gate cells (gate:loop:linux@HOST, gate:loop:sparse@HOST) follow a run's
 --hosts: the default hosts' cells always (a default host --hosts leaves out keeps its
-cells, not runnable, as a pinned layer's are), and a host not joined yet (bigfoot) gets
-its own only when --hosts names it, so that HostTest2 can run there before it joins.
-Every amd64 host is a default host (copland and cage since 2026-11-14, choubox since
+cells, not runnable, as a pinned layer's are), and a host not joined yet (bigfoot, czerny)
+gets its own only when --hosts names it, so that HostTest2 can run there before it joins.
+Five amd64 hosts are default (copland and cage since 2026-11-14, choubox since
 2026-11-17), so the universe holds a loop cell for each of the five, and `--hosts copland`
 is now a subset of the defaults, not an addition to them."""
 
@@ -93,7 +93,7 @@ class PlannedGateHosts(unittest.TestCase):
         again = self.w.plan("GateTest2 rel4 plan", self.rows)
         self.assertEqual(again.due(), [])   # the seeded rows make every cell current: no due-churn
         self.assertIn("loop:linux@copland", plan.known_names(self.w.ctx())["gate"])
-        with self.assertRaises(words.Refused):   # czerny is a reserved row, no host
+        with self.assertRaises(words.Refused):   # czerny is a host, but not a default one: no cell here
             self.w.word("GateTest2 loop:linux@czerny plan")
 
     def test_hosts_copland(self):

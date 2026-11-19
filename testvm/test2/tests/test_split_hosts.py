@@ -141,9 +141,10 @@ class RunAllSplit(unittest.TestCase):
         a = self.share("copland", {"SPLIT": "cage copland chopin.local cinqcent"})
         b = self.share("copland", {"SPLIT": "chopin,cinqcent,copland,cage"})
         self.assertEqual(a[:4], b[:4])
-        # all: every enabled amd64 host (choubox too since 2026-11-17), in any order
+        # all: every enabled amd64 host (choubox too since 2026-11-17, czerny since
+        # 2026-11-19), in any order
         c = self.share("copland", {"SPLIT": "all"})
-        d = self.share("copland", {"SPLIT": "choubox cage copland chopin.local cinqcent"})
+        d = self.share("copland", {"SPLIT": "czerny choubox cage copland chopin.local cinqcent"})
         self.assertEqual(c[:4], d[:4])
 
     def test_two_hosts_and_the_port_clash(self):
@@ -183,9 +184,9 @@ class RunAllSplit(unittest.TestCase):
         r = self.run_all("copland", {"SPLIT": "chopin,cinqcent"})
         self.assertEqual(r.returncode, 2)
         self.assertIn("SPLIT: copland is not one of its hosts (chopin cinqcent)", r.stderr)
-        r = self.run_all("copland", {"SPLIT": "copland,czerny"})   # a reserved row
+        r = self.run_all("copland", {"SPLIT": "copland,liszt"})   # no such row
         self.assertEqual(r.returncode, 2)
-        self.assertIn("SPLIT: no such host: czerny", r.stderr)
+        self.assertIn("SPLIT: no such host: liszt", r.stderr)
         r = self.run_all("copland", {"SPLIT": "all", "ANY_HOST": "1"})
         self.assertEqual(r.returncode, 2)
         self.assertIn("SPLIT and ANY_HOST", r.stderr)
@@ -235,17 +236,14 @@ class RunAllSplit(unittest.TestCase):
         self.assertEqual((rc, lost), (0, []), out)
         self.assertEqual(plats, {"linux", "sparse", "zfsguests", "dragonfly"})
 
-    def test_czerny_joins_all_once_enabled(self):
-        alt = AltTable(lambda t: row_of(t, "czerny").update(enabled=True))
-        try:
-            out = {}
-            for h in ("chopin", "cinqcent", "copland", "cage", "choubox", "czerny"):
-                out[h] = self.share(h, dict(alt.env(), SPLIT="all"))
-                self.assertEqual(out[h][0], 0, out[h][5])
-            self.assertEqual(sorted(x for h in out for x in out[h][1]), sorted(ALL_LFS))
-            self.assertTrue(out["czerny"][1], "czerny gets a share")
-        finally:
-            alt.close()
+    def test_czerny_is_in_all(self):
+        """Enabled 2026-11-19: SPLIT=all deals it a share like any other small host."""
+        out = {}
+        for h in ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox"):
+            out[h] = self.share(h, {"SPLIT": "all"})
+            self.assertEqual(out[h][0], 0, out[h][5])
+        self.assertEqual(sorted(x for h in out for x in out[h][1]), sorted(ALL_LFS))
+        self.assertTrue(out["czerny"][1], "czerny gets a share")
 
 
 # --- cmp-pop.sh nodisk, cmp-run.sh DISKS_DIR (P18) -----------------------------------------
@@ -507,7 +505,8 @@ class Bs2Hosts(unittest.TestCase):
         replay and the corpus still go to the source's HOME host without --hosts."""
         b = self.bs2
         self.assertEqual(b.RUN_HOSTS,
-                         {h: f"m@{h}.local" for h in ("chopin", "cinqcent", "copland", "cage", "choubox")})
+                         {h: f"m@{h}.local"
+                          for h in ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox")})
         self.assertEqual(b.assign(b.ALPINE), b.HOME)
         self.assertEqual(b.assign(["alpine324", "alpine324-uefi"]), {"alpine324": "chopin", "alpine324-uefi": "chopin"})
         self.assertEqual(b.assign(["nosuch"]), {"nosuch": "chopin"})
@@ -548,7 +547,7 @@ class Bs2Hosts(unittest.TestCase):
 
     def test_bad_hosts(self):
         with self.assertRaises(SystemExit):
-            self.bs2.use_hosts("chopin,czerny")
+            self.bs2.use_hosts("chopin,liszt")
         with self.assertRaises(SystemExit):
             self.bs2.use_hosts("")
 
@@ -586,12 +585,14 @@ class RamSizeClass(unittest.TestCase):
         self.assertEqual(self.size("cinqcent", "g1"), {"g1": "9 5 table"})
         self.assertEqual(self.size("copland", "g1", "g2"), {"g1": "6 4 table", "g2": "5 4 table"})
         self.assertEqual(self.size("cage.local", "g1"), {"g1": "6 4 table"})   # H.DOMAIN is H
-        self.assertEqual(self.size("czerny", "g1"), {"g1": "9 5 table"})   # reserved: no class, the largest
+        self.assertEqual(self.size("czerny", "g1"), {"g1": "6 4 table"})   # a small host since 2026-11-19
+        self.assertEqual(self.size("liszt", "g1"), {"g1": "9 5 table"})   # no row: no class, the largest
 
     def test_class_follows_the_table(self):
-        alt = AltTable(lambda t: row_of(t, "czerny").update(enabled=True))
+        alt = AltTable(lambda t: row_of(t, "czerny").update(enabled=False))
         try:
-            self.assertEqual(self.size("czerny", "g1", env=alt.env()), {"g1": "6 4 table"})
+            # Reserved again: no class, so the largest row, as before 2026-11-19.
+            self.assertEqual(self.size("czerny", "g1", env=alt.env()), {"g1": "9 5 table"})
         finally:
             alt.close()
 

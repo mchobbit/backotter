@@ -59,9 +59,9 @@ its rows count only where the binaries are equal (R14).
   takes the round at the fork heads (BKO_GIT's `backotter` HEADs), or builds it as
   `t2r-R7-C7-U7`; GateTest2 takes that round, else bko-bin.  A round is always built on
   every build-role host of the table (chopin, cinqcent, copland and cage since
-  2026-11-14), whatever `--hosts` names, its units dealt over them by
-  `build-round.sh` (stick/deal-units.py: only the four together have what every unit
-  needs); the run's private copy is made first on the builders `--hosts` leaves out, and
+  2026-11-14, czerny since 2026-11-19), whatever `--hosts` names, its units dealt over
+  them by `build-round.sh` (stick/deal-units.py: only the build hosts together have what
+  every unit needs); the run's private copy is made first on the builders `--hosts` leaves out, and
   the round is copied to the other `--hosts` with `build-round.sh
   --dist-hosts`; a round already built that a `--hosts` host lacks is copied there
   (`--dist-only`).  HoltTest2 builds bko-holt only on the big build-role hosts among
@@ -99,10 +99,10 @@ against its last PASS, group by group), `t2 copy [--hosts H,H] [--gc]`,
 [GUEST...] [--reproject]` (probes guests with no fingerprint at their generation; never
 inside BkoTest2), `t2 self-test`, and the test-only `t2 ledger seed-current`
 (`--family guest` sets `extra.try_ran`, `--family img` seeds PASSes at the images' binaries' digests).  Options anywhere:
-`--hosts H,H` (of testvm/hosts.json's enabled hosts: chopin, cinqcent, copland, cage, choubox;
-default its default hosts, every amd64 one (copland and cage since 2026-11-14, choubox since
-2026-11-17); each host once; a cell whose reservation is
-over a host's ceiling, its facts' `preflight.ram.ceiling`, is never placed there, a cell is
+`--hosts H,H` (of testvm/hosts.json's enabled hosts: chopin, cinqcent, copland, cage, czerny,
+choubox; default its default hosts (copland and cage since 2026-11-14, choubox since
+2026-11-17; czerny, enabled 2026-11-19, is not default yet); each host once; a cell whose
+reservation is over a host's ceiling, its facts' `preflight.ram.ceiling`, is never placed there, a cell is
 kept off a host its facts say can't run it (below), and one no host can take is not
 runnable; testvm/HOSTS.md has the table and how a host joins), `--json` (the plan as
 JSON), `--universe CELL,...` (test only: the word's cells cut down to these).  Every

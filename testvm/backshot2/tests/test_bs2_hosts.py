@@ -140,7 +140,7 @@ class Leads(unittest.TestCase):
 class Slots(unittest.TestCase):
     def test_from_the_table(self):
         self.assertEqual({h: B.slots(h) for h in SLOTS}, SLOTS)
-        self.assertEqual(B.HOSTS_TABLE.limit("czerny", "bs2_slots"), 2, "a reserved row: its class's")
+        self.assertEqual(B.HOSTS_TABLE.limit("czerny", "bs2_slots"), 2, "czerny: the small class's")
 
     def test_a_row_of_its_own_and_the_cap(self):
         with open(TABLE) as f:

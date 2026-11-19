@@ -22,12 +22,14 @@ with open(os.path.join(TESTVM, "hosts.json")) as _f:
 
 
 def table():
-    """A fixture table: chopin, cinqcent (big), copland, cage (small), czerny (reserved), bigfoot
+    """A fixture table: chopin, cinqcent (big), copland, cage (small), czerny (held back as a
+    reserved row here, whatever the real table says, so the refusals cover one), bigfoot
     (arm64, not default), from the real table's rows."""
     t = copy.deepcopy(REAL)
     names = [r["name"] for r in t["hosts"]]
     for n in ("chopin", "cinqcent", "copland", "cage", "czerny", "bigfoot"):
         assert n in names, n
+    next(r for r in t["hosts"] if r["name"] == "czerny")["enabled"] = False
     return t
 
 

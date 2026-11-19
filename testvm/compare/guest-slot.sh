@@ -14,9 +14,9 @@
 #   slot_range_here [H]   our guests' port range on host H (default this
 #                         one; H or H.DOMAIN): its slot_range in
 #                         testvm/hosts.json (chopin 2700-2799, copland
-#                         2800-2899, cinqcent 2900-2999, cage 3000-3099); a
-#                         host not in the table (or not enabled there) is an
-#                         error, status 1 and no output
+#                         2800-2899, cinqcent 2900-2999, cage 3000-3099,
+#                         czerny 3100-3199); a host not in the table (or not
+#                         enabled there) is an error, status 1 and no output
 #
 # slot_take refuses (exit 2) a RANGE that isn't LO-HI, as an empty one from
 # a slot_range_here that failed.

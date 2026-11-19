@@ -7,7 +7,7 @@ on which UPS, is in `docs/design/ups-shutdown.md`.
 | script | runs on | what it does |
 |---|---|---|
 | `ups-primary-halt HOST...` | each UPS's master (GMKOne, GMKThree) | pings each HOST every 5 s until none answers, or for at most `UPS_WAIT_MAX` seconds (default 300), logs who was still up, then `systemctl poweroff` (D4) |
-| `bko-ups-farm-halt` | chopin, cinqcent, cage, copland | touches `~m/backotter-work/cmp-logs/*/stop`, SIGTERMs every `run-p*-i*.scope` and `bko-*.scope` (cmp-run.sh's), waits up to 45 s for them, then `systemctl poweroff` |
+| `bko-ups-farm-halt` | chopin, cinqcent, cage, copland, czerny | touches `~m/backotter-work/cmp-logs/*/stop`, SIGTERMs every `run-p*-i*.scope` and `bko-*.scope` (cmp-run.sh's), waits up to 45 s for them, then `systemctl poweroff` |
 | `bigfoot-ups-halt` | Bigfoot | stops deluged, deluge-web, smbd, nmbd, nfs-server and vncserver@:1, each under a 60 s timeout, then `systemctl poweroff`. No `zpool export`, ever |
 
 Each logs to syslog with tag `ups` (`journalctl -t ups`) and to stderr, and
@@ -57,7 +57,7 @@ GMKOne's `upsmon.conf` (UPS-A):
 
 GMKThree's `upsmon.conf` (UPS-C, a 180 s cap):
 
-    SHUTDOWNCMD "env UPS_WAIT_MAX=180 /usr/local/sbin/ups-primary-halt chopin.local cinqcent.local cage.local copland.local coventry.local choubox.local"
+    SHUTDOWNCMD "env UPS_WAIT_MAX=180 /usr/local/sbin/ups-primary-halt chopin.local cinqcent.local cage.local copland.local czerny.local coventry.local choubox.local"
     HOSTSYNC 30
     POWERDOWNFLAG /etc/killpower
 

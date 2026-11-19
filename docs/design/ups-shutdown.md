@@ -1,8 +1,8 @@
 # UPS-driven shutdowns (plan)
 
 Status (2026-11-17): **applied on every machine.** UPS-A (GMKOne and
-Bigfoot), UPS-B (GMKTwo) and UPS-C (GMKThree and all six of its
-secondaries) are all set up. Still open: T4 for Bigfoot, after the disk
+Bigfoot), UPS-B (GMKTwo) and UPS-C (GMKThree and all seven of its
+secondaries) are all set up (Czerny joined UPS-C 2026-11-19). Still open: T4 for Bigfoot, after the disk
 move and in a window the user picks, and the user's T5 pull-the-plug
 tests. See "Applied so far" under the apply order. Each config change
 left a dated `.bak-*` copy beside the file in `/etc/nut`.
@@ -13,7 +13,7 @@ left a dated `.bak-*` copy beside the file in `/etc/nut`.
 |-----|--------------------|------------------------------|
 | UPS-A | GMKOne | Bigfoot, then GMKOne |
 | UPS-B | GMKTwo | GMKTwo |
-| UPS-C | GMKThree | Cinqcent, Chopin, Cage, Copland, Coventry, Choubox, then GMKThree |
+| UPS-C | GMKThree | Cinqcent, Chopin, Cage, Copland, Czerny, Coventry, Choubox, then GMKThree |
 
 ## What exists today (surveyed read-only 2026-11-15, ~20:55)
 
@@ -41,7 +41,7 @@ Every host resolves `*.local`.
 
 **Outlets (confirmed by the user 2026-11-15):** UPS-A feeds GMKOne and
 Bigfoot. UPS-B feeds GMKTwo. UPS-C feeds GMKThree, Cinqcent, Chopin, Cage,
-Copland, Coventry and Choubox. So UPS-C's 179 W covers seven machines.
+Copland, Czerny (since 2026-11-19), Coventry and Choubox. So UPS-C's 179 W covers eight machines.
 
 **Still unknown:** each machine's BIOS "restore on AC power loss" setting.
 The OS can't read it, so the user checks it.
@@ -72,7 +72,7 @@ gets no early on-battery timer.
   - UPS-A: charge 40 %, runtime 600 s. Stopping Bigfoot's services and
     flushing DantePool over flaky USB bridges needs minutes, not seconds.
   - UPS-B: charge 30 %, runtime 300 s.
-  - UPS-C: charge 50 %, runtime 600 s. UPS-C carries seven machines, about
+  - UPS-C: charge 50 %, runtime 600 s. UPS-C carries eight machines, about
     15 min at 179 W (measured 2026-11-15 with all four farm hosts running
     tests). The Eaton's runtime estimate falls faster than linearly under
     heavy load. The farm's halt (up to 45 s for test scopes, plus about 90 s
@@ -157,9 +157,9 @@ later restore power, so every machine sees a clean power cycle and boots.
     `[upssecondary]` to upsd.users.
   - ups.conf adds `ignorelb`, charge 50 %, runtime 600 s, `offdelay = 60`
     and `ondelay = 120`.
-  - upsmon.conf: `SHUTDOWNCMD "/usr/local/sbin/ups-primary-halt chopin.local cinqcent.local cage.local copland.local coventry.local choubox.local"`
+  - upsmon.conf: `SHUTDOWNCMD "/usr/local/sbin/ups-primary-halt chopin.local cinqcent.local cage.local copland.local czerny.local coventry.local choubox.local"`
     (180 s cap) and `HOSTSYNC 30`.
-- **Chopin, Cinqcent, Cage and Copland:**
+- **Chopin, Cinqcent, Cage, Copland and Czerny:**
   - Install `nut-client` and set `MODE=netclient`.
   - upsmon.conf: `MONITOR eaton@gmkthree.local 1 upssecondary <pw> secondary`,
     and `SHUTDOWNCMD "/usr/local/sbin/bko-ups-farm-halt"`. There is no
@@ -296,17 +296,17 @@ bridges), GmkTwoPool and GmkThreePool (each on a JMS578 bridge).
     (random password, kept only in `/etc/nut` on each host);
   - `ignorelb`, charge.low 50, runtime.low 600, offdelay 60 and ondelay 120;
   - `HOSTSYNC 30`.
-  - `SHUTDOWNCMD "UPS_WAIT_MAX=180 /usr/local/sbin/ups-primary-halt chopin.local cinqcent.local cage.local copland.local coventry.local choubox.local"`,
+  - `SHUTDOWNCMD "UPS_WAIT_MAX=180 /usr/local/sbin/ups-primary-halt chopin.local cinqcent.local cage.local copland.local czerny.local coventry.local choubox.local"`,
     installed after T1 and T2 passed.
 - **UPS-C, secondaries.**
-  - Chopin, Cinqcent, Cage and Copland have `nut-client` installed from
+  - Chopin, Cinqcent, Cage, Copland and Czerny (2026-11-19, built in) have `nut-client` installed from
     trixie and `MODE=netclient`, with
     `MONITOR eaton@gmkthree.local 1 upssecondary <pw> secondary`.
     `SHUTDOWNCMD "/usr/local/sbin/bko-ups-farm-halt"`, installed in
     /usr/local/sbin.
   - Choubox's MONITOR now points at `eaton@gmkthree.local` with the
     `upssecondary` user.
-  - All five show as logged in on GMKThree (`upsc -c`).
+  - All six show as logged in on GMKThree (`upsc -c`).
 - **UPS-C, Coventry: done 2026-11-17** (as root over ssh; `root@coventry.local`
   takes the key, though `m` has no sudo there).
   - `MODE=netclient`; nut-driver@eaton and nut-server disabled and

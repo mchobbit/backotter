@@ -2,7 +2,7 @@
 # A bko KVM farm host's SHUTDOWNCMD: stop the test work, then power off
 # (docs/design/ups-shutdown.md, UPS-C).
 #
-# Usage (as root, from upsmon.conf on chopin, cinqcent, cage and copland):
+# Usage (as root, from upsmon.conf on chopin, cinqcent, cage, copland and czerny):
 #   SHUTDOWNCMD "/usr/local/sbin/bko-ups-farm-halt"
 #   bko-ups-farm-halt --dry-run
 #

@@ -264,10 +264,22 @@ if layout_is_uefi "$RUN/layout.json"; then
     # An earlier round's one-shot entry (below) names this ESP too, maybe at
     # another size: it goes first, so only the system's own entries match.
     must python3 "$HERE/bs1-efi" delete "BKO restored"
+    # The first in BootOrder that names a restored ESP, as the firmware would
+    # pick it, then any: with two on one ESP (ZFSBootMenu's VMLINUZ.EFI and
+    # VMLINUZ-BACKUP.EFI, the backup made first and so numbered lower) the
+    # lowest number isn't the system's own way in (void-zbm-enc family Z: the
+    # backup image has no BackShot1 hooks and asks).
     entry=
+    nv=$(efibootmgr -v)
     while read -r espdev; do
         guid=$(blkid -p -o value -s PART_ENTRY_UUID "$espdev")
-        entry=$(efibootmgr -v | awk -v g="$guid" 'tolower($0) ~ tolower(g) && /^Boot[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]/ { print substr($1, 5, 4); exit }')
+        entry=$(awk -v g="$guid" '
+            /^BootOrder:/ { n = split($2, ord, ",") }
+            tolower($0) ~ tolower(g) && /^Boot[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]/ { k = toupper(substr($1, 5, 4)); has[k] = 1; if (first == "") first = substr($1, 5, 4) }
+            END {
+                for (i = 1; i <= n; i++) if (toupper(ord[i]) in has) { print ord[i]; exit }
+                if (first != "") print first
+            }' <<<"$nv")
         [[ -z $entry ]] || break
     done < <(lsblk -lnpo NAME,PARTTYPE "/dev/$disk" | awk -v t="$ESP_TYPE" 'tolower($2) == t { print $1 }')
     if [[ -n $entry ]]; then

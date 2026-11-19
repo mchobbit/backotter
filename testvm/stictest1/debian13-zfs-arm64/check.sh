@@ -73,11 +73,23 @@ if [[ -n ${INVENTORY:-} ]]; then
 fi
 vm_put "$BIN/restic-bko" /root/bko/bin/restic-bko && vm_put "$BIN/rustic-bko" /root/bko/bin/rustic-bko || exit 1
 RB=/root/bko/bin/restic-bko UB=/root/bko/bin/rustic-bko
-T=300 vm_sh 'uname -m; uname -r; ldd --version | head -1; grep -E "^(passwd|group)" /etc/nsswitch.conf; zfs version | head -1; zfs get -H -o name,property,value utf8only,normalization,casesensitivity,xattr,acltype,dnodesize rpool | tr "\t" " "
+# attr and acl are installed here when the image lacks them.  From the image's
+# own apt lists first, and only if that fails after an apt-get update: the
+# update fetches all of trixie's arm64 lists, which on a slow line can take
+# longer than this step's old 300 s (ubuntu24 5ee69f0, ubuntu26-zfs in
+# SweepTest2 t2s-20261119T0726-e436).  apt's daily timers fire at a random
+# moment in the first hour after a boot (their stamps are the image's):
+# stopped for this boot, so that no unattended-upgrade holds dpkg's lock or
+# upgrades the guest under the test; DPkg::Lock::Timeout waits out one under way.
+T=1200 vm_sh 'uname -m; uname -r; ldd --version | head -1; grep -E "^(passwd|group)" /etc/nsswitch.conf; zfs version | head -1; zfs get -H -o name,property,value utf8only,normalization,casesensitivity,xattr,acltype,dnodesize rpool | tr "\t" " "
   /root/bko/bin/restic-bko version | head -1; /root/bko/bin/rustic-bko --version
+  systemctl stop apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service >/dev/null 2>&1
   if ! command -v setfattr >/dev/null || ! command -v setfacl >/dev/null; then
-    { apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q attr acl; } >/root/bko/apt.log 2>&1 || echo "could not install attr acl"
+    export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1
+    i="apt-get install -y -q -o DPkg::Lock::Timeout=600 attr acl"
+    { $i || { echo "apt-get update, then again:"; apt-get update -q && $i; }; } >/root/bko/apt.log 2>&1 || echo "could not install attr acl"
   fi; tail -n 25 /root/bko/apt.log 2>/dev/null; for c in setfattr setfacl getcap; do command -v $c; done' >"$LOGS/guest.txt" 2>&1
+[[ $? == 124 ]] && echo "the guest's setup above didn't end in 1200 s: stopped" >>"$LOGS/guest.txt"
 grep -q "/setfacl$" "$LOGS/guest.txt" || v FAIL harness "no setfacl in the guest (see guest.txt)"
 grep -qx aarch64 "$LOGS/guest.txt" || v FAIL "guest machine" "the guest didn't say aarch64 (see guest.txt)"
 

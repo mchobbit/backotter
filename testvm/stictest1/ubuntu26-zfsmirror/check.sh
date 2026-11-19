@@ -181,12 +181,23 @@ for f in fs_roundtrip.py compare.py fsmeta.py sparse-rt.sh rt-common.sh nonroot-
 done
 vm_put "$here/torture.sh" /root/bko/testvm/compare/torture-orig.sh && vm_put "$SCR/torture.sh" /root/bko/testvm/compare/torture.sh &&
     vm_put "$BIN/restic-bko" /root/bko/bin/restic-bko && vm_put "$BIN/rustic-bko" /root/bko/bin/rustic-bko || exit 1
-vm_sh 'chmod 755 /root/bko/testvm/compare/*.sh /root/bko/bin/*
+# attr and acl from the image's own apt lists first, and only if that fails
+# after an apt-get update (all of resolute's lists, slow on a slow line:
+# ubuntu24 5ee69f0, ubuntu26-zfs in SweepTest2 t2s-20261119T0726-e436).  apt's
+# daily timers fire at a random moment in the first hour after a boot (their
+# stamps are the image's): stopped for this boot, so that no
+# unattended-upgrade holds dpkg's lock or upgrades the guest under the test;
+# DPkg::Lock::Timeout waits out one under way.
+T=1200 vm_sh 'chmod 755 /root/bko/testvm/compare/*.sh /root/bko/bin/*
     uname -r; zfs version | tr "\n" " "; echo; zfs get -H -o name,property,value encryption,acltype,xattr rpool; zfs list -H -o name,avail rpool; df -h /var/tmp | tail -n 1
     /root/bko/bin/restic-bko version | head -n 1; /root/bko/bin/rustic-bko --version
+    systemctl stop apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service >/dev/null 2>&1
     if ! command -v setfacl >/dev/null || ! command -v setfattr >/dev/null; then
-        { apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q attr acl; } >/root/bko/apt.log 2>&1 || echo "apt failed"
+        export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1
+        i="apt-get install -y -q -o DPkg::Lock::Timeout=600 attr acl"
+        { $i || { echo "apt-get update, then again:"; apt-get update -q && $i; }; } >/root/bko/apt.log 2>&1 || echo "apt failed"
     fi' >"$LOGS/guest.log" 2>&1
+[[ $? == 124 ]] && echo "the guest's setup above didn't end in 1200 s: stopped" >>"$LOGS/guest.log"
 cat "$LOGS/guest.log" >&2
 
 echo "== $G: fs_roundtrip zfs-ds, then ext4 and nonroot-rt linux at once" >&2

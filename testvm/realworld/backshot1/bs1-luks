@@ -1455,6 +1455,21 @@ lk_zbm_find() {
     return 1
 }
 
+# lk_zbm_esp_ok HOOKS ID: the record's hook root HOOKS is on a FAT file system
+# mounted right above LK_ZBM_DIR, the ESP adopt wrote: it has adopt's hook,
+# or its volume ID is the record's ID.  --luks-off with the ESP unmounted
+# would put the image back into the root file system, and lose the original.
+lk_zbm_esp_ok() {
+    local hooks=$1 id=$2 esp fst src got
+    esp=${hooks%/"$LK_ZBM_DIR/$LK_ZBM_HOOKS"}
+    [[ -n $esp && $esp != "$hooks" ]] || return 1
+    read -r fst src < <(findmnt -rn -M "$esp" -o FSTYPE,SOURCE 2>/dev/null) || return 1
+    [[ $fst == vfat ]] || return 1
+    [[ -e $hooks/$LK_ZBM_KEYHOOK ]] && return 0
+    got=$(blkid -o value -s UUID "$(printf '%b' "$src")" 2>/dev/null)
+    [[ -n $id && ${id^^} == "${got^^}" ]]
+}
+
 # lk_zfs_bes DISK: "BE ENCROOT" for each dataset ZFSBootMenu takes for a boot
 # environment (mountpoint=/) in the pools on DISK, ENCROOT - when it isn't
 # encrypted.
@@ -1507,15 +1522,38 @@ lk_words() {
     printf '%s' "${w[*]}"
 }
 
+# lk_zbm_ours TEXT: the volume ID in the image's command line TEXT's
+# BackShot1 hook root (zbm.hookroot=UUID=ID//EFI/ZBM/backshot1, by its fixed
+# directory name), from an earlier adopt; false for none.
+lk_zbm_ours() {
+    local w ws=()
+    read -ra ws <<<"$1"
+    for w in "${ws[@]}"; do
+        if [[ $w =~ ^zbm\.hookroot=UUID=([0-9A-Fa-f]{4}-[0-9A-Fa-f]{4})//$LK_ZBM_DIR/$LK_ZBM_HOOKS$ ]]; then
+            printf '%s' "${BASH_REMATCH[1]}"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # lk_zbm_cmdline TEXT HOOKROOT WAITFOR: the image's command line TEXT with
 # BackShot1's two arguments (each once, at the end); false, saying why, when
-# TEXT has a zbm.hookroot= or zbm.wait_for= of its own.
+# TEXT has a zbm.hookroot= or zbm.wait_for= of its own.  An earlier adopt's
+# pair for another volume ID (the ESP's changed since) is BackShot1's, so
+# replaced.
 lk_zbm_cmdline() {
-    local w ws=() out=()
+    local w ws=() out=() old
+    old=$(lk_zbm_ours "$1") || old=
     read -ra ws <<<"$1"
     for w in "${ws[@]}"; do
         case $w in
         "$2" | "$3") continue ;;
+        esac
+        if [[ -n $old && ($w == "zbm.hookroot=UUID=$old//$LK_ZBM_DIR/$LK_ZBM_HOOKS" || $w == "zbm.wait_for=UUID=$old") ]]; then
+            continue
+        fi
+        case $w in
         zbm.hookroot=* | zbm.wait_for=*) echo "the image's command line has $w of its own"; return 1 ;;
         esac
         out+=("$w")
@@ -1608,7 +1646,9 @@ for f in "$R/lib/profiling-lib.sh" "$R/etc/zfsbootmenu.conf" "$R/lib/kmsg-log-li
     source "$f" >/dev/null 2>&1 || exit 0
 done
 fs=${ZBM_SELECTED_BE:-}
-[ -n "$fs" ] && [ -n "${BASE:-}" ] && [ -r "$R/run/backshot1-unlock" ] || exit 0
+# ZFSBootMenu's own default, as its parse-commandline sets it.
+BASE=${BASE:-$R/zfsbootmenu}
+[ -n "$fs" ] && [ -r "$R/run/backshot1-unlock" ] || exit 0
 marks=$(awk '!($1 in h) { o[++n] = $1 } { h[$1] = $2 } END { for (i = 1; i <= n; i++) printf "%s%s:%s", (i > 1 ? "," : ""), o[i], h[o[i]] }' "$R/run/backshot1-unlock")
 [ -n "$marks" ] || exit 0
 f=$BASE/cmdline
@@ -1687,18 +1727,8 @@ lk_zfs_adopt() {
     hdir=$esp/$LK_ZBM_DIR/$LK_ZBM_HOOKS
     if [[ ${#vol_list[@]} -gt 0 ]]; then
         cmd=$(lk_pe_section "$img" .cmdline) || cmd=
-        if ! command -v objcopy >/dev/null || ! command -v objdump >/dev/null; then
-            if declare -F pkg_install >/dev/null; then
-                lk_say "installing binutils, for objcopy and objdump"
-                pkg_install binutils binutils binutils binutils binutils binutils binutils binutils sys-devel/binutils binutils >/dev/null
-            fi
-        fi
-        if ! command -v objcopy >/dev/null || ! command -v objdump >/dev/null; then
-            unhandled+=("no objcopy and objdump (binutils) to rewrite $img's command line")
-        elif lk_pe_signed "$img"; then
+        if lk_pe_signed "$img"; then
             unhandled+=("$img is signed (Secure Boot), and a changed command line would break its signature")
-        elif ! lk_zbm_gap "$img" >/dev/null; then
-            unhandled+=("$img has no .cmdline section bs1-adopt can rewrite")
         elif [[ $cmd == *\"* ]]; then
             unhandled+=("$img's command line has quoted arguments, which bs1-adopt doesn't rewrite")
         elif [[ ! $uuid =~ ^[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}$ ]]; then
@@ -1708,6 +1738,21 @@ lk_zfs_adopt() {
         else
             new=$why
         fi
+        # binutils only once nothing else makes it family A, nor for a
+        # partial one (the roots above): A changes nothing but the record.
+        if [[ ${#unhandled[@]} -eq 0 ]] && { ! command -v objcopy >/dev/null || ! command -v objdump >/dev/null; }; then
+            if declare -F pkg_install >/dev/null; then
+                lk_say "installing binutils, for objcopy and objdump"
+                pkg_install binutils binutils binutils binutils binutils binutils binutils binutils sys-devel/binutils binutils >/dev/null
+            fi
+        fi
+        if [[ ${#unhandled[@]} -gt 0 ]]; then
+            :
+        elif ! command -v objcopy >/dev/null || ! command -v objdump >/dev/null; then
+            unhandled+=("no objcopy and objdump (binutils) to rewrite $img's command line")
+        elif ! lk_zbm_gap "$img" >/dev/null; then
+            unhandled+=("$img has no .cmdline section bs1-adopt can rewrite")
+        fi
     fi
     if [[ ${#unhandled[@]} -gt 0 ]]; then
         family=A reason=$(printf '%s\n' "${unhandled[@]}" | awk '!seen[$0]++' | paste -s -d ';' - | sed 's/;/; /g')
@@ -1715,12 +1760,26 @@ lk_zfs_adopt() {
         family=own reason="every ZFS encryption root that asks opens with no one typing (a key file)"
     fi
 
-    mkdir -p "$LUKS_DIR"
     if [[ $family == A || $family == own ]]; then
+        # An earlier family Z's hooks and image would still unlock from the
+        # drive under a record that says otherwise: put them back first.
+        if [[ $(lk_rec_field family) == Z ]]; then
+            lk_say "$LUKS_REC is family Z from before: putting back what it changed first"
+            luks_off || return 1
+        fi
+        mkdir -p "$LUKS_DIR"
         lk_say "$family: $reason; nothing else changes"
         lk_put "$LUKS_REC" 644 "$(lk_record "$family" zfsbootmenu "$LK_FSTYPE" "" "${own_list[*]}" "$reason")" || return 1
-        [[ ! -e $hdir/$LK_ZBM_KEYHOOK ]] || lk_say "($hdir has ZFSBootMenu hooks from before; bs1-adopt --luks-off removes them)"
+        [[ ! -e $hdir/$LK_ZBM_KEYHOOK ]] || lk_say "($hdir has ZFSBootMenu hooks bs1-adopt has no record of: remove them by hand, and the zbm.hookroot= and zbm.wait_for= BackShot1 put in $img's command line)"
         return 0
+    fi
+    mkdir -p "$LUKS_DIR"
+    # The image replaced since an earlier adopt (a ZFSBootMenu update: no
+    # BackShot1 hook root in it) is the original now; one with an earlier
+    # adopt's pair (another volume ID) still has the saved one.
+    if [[ -e $(lk_orig_name "$img") ]] && [[ $(lk_words "$cmd") != "$new" ]] && ! lk_zbm_ours "$cmd" >/dev/null; then
+        lk_say "$img was replaced since the last adopt: it is the original --luks-off puts back now"
+        cp -p "$img" "$(lk_orig_name "$img")" || return 1
     fi
     lk_say "family Z (ZFSBootMenu): ${vol_list[*]}${own_list:+; own: ${own_list[*]}}"
     lk_put "$LUKS_REC" 644 "$(lk_record Z zfsbootmenu "$LK_FSTYPE" "${vol_list[*]}" "${own_list[*]}" "")
@@ -1746,17 +1805,36 @@ hooks=$(lk_q "$hdir")" || return 1
 
 # luks_off: everything luks_adopt wrote, put back, and the initramfs remade.
 luks_off() {
-    local o f gen changed=0 zhooks=''
+    local o f gen changed=0 zhooks='' zesp failed=0
     gen=$(lk_generator)
     # Family Z: the ESP's hook root, and no initramfs to remake (ZFSBootMenu's
-    # image comes back from orig/ like any other file).
+    # image comes back from orig/ like any other file).  Only on that ESP,
+    # mounted where adopt found it: else nothing changes.
     if [[ $(lk_rec_field generator) == zfsbootmenu ]]; then gen=zfsbootmenu zhooks=$(lk_rec_field hooks); fi
+    if [[ -n $zhooks ]]; then
+        zesp=$(lk_rec_field esp)
+        if ! lk_zbm_esp_ok "$zhooks" "$zesp"; then
+            lk_err "the ESP (volume ID ${zesp:-?}) holding $zhooks isn't mounted at ${zhooks%/"$LK_ZBM_DIR/$LK_ZBM_HOOKS"}: mount it there and run bs1-adopt --luks-off again; nothing changed"
+            return 1
+        fi
+    fi
     if [[ -d $LUKS_ORIG ]]; then
         for o in "$LUKS_ORIG"/*; do
             [[ -e $o ]] || continue
             f=${o##*/}; f=${f//%//}
-            cat "$o" >"$f" && rm -f "$o" && lk_say "put back $f" && changed=1
+            if cat "$o" >"$f" && rm -f "$o"; then
+                lk_say "put back $f" && changed=1
+            else
+                lk_err "couldn't put back $f (its original is $o)"
+                failed=1
+            fi
         done
+    fi
+    # Anything not put back keeps the record, the originals and what adopt
+    # made, so a second --luks-off can finish.
+    if [[ $failed -eq 1 ]]; then
+        lk_err "$LUKS_DIR is kept: run bs1-adopt --luks-off again once that's fixed"
+        return 1
     fi
     if [[ -f $LUKS_MADE ]]; then
         while read -r f; do

@@ -1485,10 +1485,11 @@ class AdoptZ(Tmp):
             "-nro FSTYPE /") cat "{t}/root-fstype" 2>/dev/null || echo zfs ;;
             "-nro SOURCE /") echo zroot/ROOT/void ;;
             "-rn -t vfat -o TARGET,SOURCE") [ -e "{t}/no-esp" ] || echo "{self.esp} /dev/vda1" ;;
+            "-rn -M {self.esp} -o FSTYPE,SOURCE") [ -e "{t}/no-esp" ] || echo "vfat /dev/vda1" ;;
             *) exit 1 ;;
             esac
             """))
-        exe(self.bin / "blkid", '#!/bin/sh\ncase "$*" in *"-s UUID /dev/vda1") echo ABCD-1234 ;; *"-s LABEL /dev/sdb1") echo mybig512 ;; *) exit 2 ;; esac\n')
+        exe(self.bin / "blkid", f'#!/bin/sh\ncase "$*" in *"-s UUID /dev/vda1") cat "{t}/esp-uuid" 2>/dev/null || echo ABCD-1234 ;; *"-s LABEL /dev/sdb1") echo mybig512 ;; *) exit 2 ;; esac\n')
         exe(self.bin / "objdump", textwrap.dedent(f"""\
             #!/usr/bin/env python3
             import struct, sys
@@ -1610,6 +1611,64 @@ class AdoptZ(Tmp):
         self.assertIn("not booted by ZFSBootMenu's EFI/ZBM/VMLINUZ.EFI: attended; nothing changes", out)
         self.assertFalse((self.t / "etc/backshot1").exists())
 
+    def test_luks_off_with_the_esp_unmounted_changes_nothing(self):
+        self.adopt()
+        patched = self.img.read_bytes()
+        (self.t / "no-esp").write_text("")
+        out = self.adopt("luks_off", rc=1)
+        self.assertIn("isn't mounted at", out)
+        self.assertIn("nothing changed", out)
+        self.assertTrue((self.t / "etc/backshot1/orig/" / str(self.img).replace("/", "%")).exists(), "the original must be kept")
+        self.assertTrue((self.t / "etc/backshot1/luks-unlock").exists())
+        self.assertEqual(self.img.read_bytes(), patched)
+        (self.t / "no-esp").unlink()
+        self.adopt("luks_off")
+        self.assertEqual(self.img.read_bytes(), self.orig_bytes)
+        self.assertFalse(self.hooks().exists())
+
+    def test_a_failed_put_back_keeps_the_record(self):
+        self.adopt()
+        orig = self.t / "etc/backshot1/orig" / str(self.img).replace("/", "%")
+        self.img.unlink()
+        self.img.mkdir()  # cat can't write over a directory
+        out = self.adopt("luks_off", rc=1)
+        self.assertIn("couldn't put back", out)
+        self.assertTrue(orig.exists())
+        self.assertTrue((self.t / "etc/backshot1/luks-unlock").exists())
+        self.assertTrue((self.hooks() / "load-key.d/10-bs1-zfskey").exists())
+
+    def test_an_updated_image_is_the_new_original(self):
+        self.adopt()
+        newer = pe([(".osrel", b"ID=void\n"), (".cmdline", f" {self.CMDLINE} zbm.newer=1\0".encode()), (".linux", b"MZkernel2"), (".initrd", b"zstd")])
+        self.img.write_bytes(newer)
+        out = self.adopt()
+        self.assertIn("replaced since the last adopt", out)
+        self.assertEqual(self.cmdline(), f"{self.CMDLINE} zbm.newer=1 zbm.hookroot=UUID=ABCD-1234//EFI/ZBM/backshot1 zbm.wait_for=UUID=ABCD-1234")
+        self.adopt("luks_off")
+        self.assertEqual(self.img.read_bytes(), newer, "--luks-off puts back the update, not the older release")
+
+    def test_a_changed_volume_id_stays_z(self):
+        self.adopt()
+        (self.t / "esp-uuid").write_text("EF01-2345\n")
+        out = self.adopt()
+        self.assertIn("family Z (ZFSBootMenu)", out)
+        self.assertNotIn("replaced since", out)
+        self.assertEqual(self.cmdline(), f"{self.CMDLINE} zbm.hookroot=UUID=EF01-2345//EFI/ZBM/backshot1 zbm.wait_for=UUID=EF01-2345")
+        self.assertIn("esp=EF01-2345\n", self.rec())
+        self.adopt("luks_off")
+        self.assertEqual(self.img.read_bytes(), self.orig_bytes)
+
+    def test_z_then_a_puts_back_the_hooks_and_image(self):
+        self.adopt()
+        self.prop("zroot", "keylocation", "prompt")
+        out = self.adopt()
+        self.assertIn("family Z from before", out)
+        self.assertIn("family=A\n", self.rec())
+        self.assertEqual(self.img.read_bytes(), self.orig_bytes)
+        self.assertFalse(self.hooks().exists())
+        self.adopt("luks_off")
+        self.assertFalse((self.t / "etc/backshot1").exists())
+
     def test_a_failed_rewrite_puts_everything_back(self):
         exe(self.bin / "objcopy", "#!/bin/sh\nexit 1\n")
         out = self.adopt(rc=1)
@@ -1667,6 +1726,12 @@ class ZbmMarkHook(Tmp):
         self.run_hook()
         self.assertEqual((self.root / "zfsbootmenu/cmdline").read_text().splitlines(), ["quiet", "bs1.zbm=zroot:drive"])
         self.assertFalse((self.root / "zfsbootmenu/environments").exists())
+
+    def test_base_defaults_to_zfsbootmenus(self):
+        (self.root / "etc/zfsbootmenu.conf").write_text(":\n")
+        (self.root / "run/backshot1-unlock").write_text("zroot drive\n")
+        self.run_hook()
+        self.assertEqual(self.cache()[-1], "bs1.zbm=zroot:drive")
 
     def test_no_marks_changes_nothing(self):
         self.run_hook()

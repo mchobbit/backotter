@@ -224,6 +224,22 @@ if [[ ${#REFORMAT[@]} -gt 0 && -s /run/bko-holt/restore.globs ]]; then
         say "$left removed under what --reformat left out of the restore (restore.globs: btrfs snapshots and aliases), not differences"
     fi
 fi
+# bko-holt load's mount points for a second ZFS boot environment
+# (/run/bko-be/NAME or POOL/NAME, holt's zfs_be BE_DIR), left on the restored
+# root: only while they are empty directories, the BE unmounted, and the
+# diff lists them as added and nothing else under them.  The booted system's
+# /run hides them (run void-20261119-104402, void-zbm-enc).
+bedir=/mnt/bko-target/run/bko-be
+if [[ -d $bedir && ! -L $bedir ]] &&
+    ! awk -v p="$bedir" '$2 == p || index($2, p "/") == 1 { f = 1 } END { exit !f }' /proc/self/mounts &&
+    [[ -z $(find "$bedir" ! -type d -print -quit 2>/dev/null) ]]; then
+    be_all=$(grep -cE '^[-+MUT][[:space:]]+"run/bko-be(/|")' "$ATTEMPT/diff.txt")
+    be_add=$(grep -cE '^\+ +"run/bko-be(/[^"]*)?"$' "$ATTEMPT/diff.txt")
+    if [[ $be_add -gt 0 && $be_add -eq $be_all ]]; then
+        changes=$((changes - be_add))
+        say "$be_add empty directories under /run/bko-be are bko-holt load's mount points for a second boot environment, not differences"
+    fi
+fi
 say "differences: $changes (the list is in diff.txt)"
 [[ $changes -eq 0 ]] || die "$changes files differ from the backup after the restore"
 

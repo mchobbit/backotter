@@ -635,8 +635,13 @@ environment's encryption root has `keylocation=prompt` (its initramfs would
 ask again), or the running boot environment isn't under it; when an
 encryption root with no boot environment has `keylocation=prompt`; and when
 the image is signed, has quoted arguments, or has a `zbm.hookroot=` or
-`zbm.wait_for=` of its own.  `--luks-off` puts `VMLINUZ.EFI` back, removes
-the hooks and their directories, and remakes nothing.  ZFS native
+`zbm.wait_for=` of its own; one that was family Z is put back first.  A
+`VMLINUZ.EFI` replaced since adopt (a ZFSBootMenu update, which drops the
+two arguments) is the original from the next adopt on, and an ESP whose
+volume ID changed gets its pair rewritten.  `--luks-off` puts `VMLINUZ.EFI`
+back, removes the hooks and their directories, and remakes nothing; it
+changes nothing unless the recorded ESP is mounted where adopt found it,
+and keeps `/etc/backshot1` when a file can't be put back.  ZFS native
 encryption without ZFSBootMenu (the initramfs's own ZFS code asks) is
 attended, as before, and adopt writes no record for it.
 

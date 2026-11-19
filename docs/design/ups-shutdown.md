@@ -69,16 +69,27 @@ gets no early on-battery timer.
 - On each master, in ups.conf: `ignorelb` plus
   `override.battery.charge.low` and `override.battery.runtime.low`, so NUT
   raises LB at our threshold, not the Eaton's 20 %.
-  - UPS-A: charge 40 %, runtime 600 s. Stopping Bigfoot's services and
+  - UPS-A: charge 30 %, runtime 480 s (40 % and 600 s until 2026-11-18). Stopping Bigfoot's services and
     flushing DantePool over flaky USB bridges needs minutes, not seconds.
   - UPS-B: charge 30 %, runtime 300 s.
-  - UPS-C: charge 50 %, runtime 600 s. UPS-C carries eight machines, about
+  - UPS-C: charge 30 %, runtime 420 s (50 % and 600 s until 2026-11-18). UPS-C carries eight machines, about
     15 min at 179 W (measured 2026-11-15 with all four farm hosts running
     tests). The Eaton's runtime estimate falls faster than linearly under
     heavy load. The farm's halt (up to 45 s for test scopes, plus about 90 s
     of systemd shutdown) and GMKThree's wait for its secondaries (up to
     180 s) must all fit inside the threshold, so it gets more headroom
     than UPS-A.
+- 2026-11-18, the user: outages here last either under six minutes or
+  about an hour, so the thresholds should ride out ~6 minutes when they can
+  and otherwise leave just enough for a clean halt. Runtime is now the
+  main trigger and charge 30 % only a backstop for a bad estimate (at light
+  load runtime fires first). runtime.low = the master's halt chain plus
+  ~150 s for the estimate's nonlinearity: UPS-C 420 s (GMKThree waits up
+  to 180 s, then ~90 s of its own halt); UPS-A 480 s (GMKOne waits up to
+  300 s for Bigfoot, then its own halt). At 2026-11-18 loads that rides
+  ~13 min (UPS-C, 157 W) and ~7 min (UPS-A). The old UPS-C 600 s raised LB
+  on line power under heavy farm load (07:37 and 07:40 that day). UPS-B
+  (GMKTwo alone, ~35 min, ~90 s halt) stays at 30 % / 300 s.
 - No host uses an on-battery timer, so a short blip takes nothing down. The
   order inside one UPS comes from D4 (the master halts last), not from
   timers.
@@ -294,7 +305,7 @@ bridges), GmkTwoPool and GmkThreePool (each on a JMS578 bridge).
 - **UPS-C, master.** GMKThree has:
   - `MODE=netserver`, `LISTEN 0.0.0.0 3493`, and the `[upssecondary]` user
     (random password, kept only in `/etc/nut` on each host);
-  - `ignorelb`, charge.low 50, runtime.low 600, offdelay 60 and ondelay 120;
+  - `ignorelb`, charge.low 30, runtime.low 420 (50 and 600 until 2026-11-18), offdelay 60 and ondelay 120;
   - `HOSTSYNC 30`.
   - `SHUTDOWNCMD "UPS_WAIT_MAX=180 /usr/local/sbin/ups-primary-halt chopin.local cinqcent.local cage.local copland.local czerny.local coventry.local choubox.local"`,
     installed after T1 and T2 passed.
@@ -343,7 +354,7 @@ bridges), GmkTwoPool and GmkThreePool (each on a JMS578 bridge).
 - **UPS-A, master (2026-11-16).** GMKOne has:
   - `MODE=netserver`, `LISTEN 0.0.0.0 3493`, and its own `[upssecondary]`
     user;
-  - `ignorelb`, charge.low 40, runtime.low 600, offdelay 60 and ondelay 120
+  - `ignorelb`, charge.low 30, runtime.low 480 (40 and 600 until 2026-11-18), offdelay 60 and ondelay 120
     (`upsc` confirms all of them);
   - `HOSTSYNC 30`;
   - `SHUTDOWNCMD "UPS_WAIT_MAX=300 /usr/local/sbin/ups-primary-halt bigfoot.local"`.

@@ -33,8 +33,8 @@ Then check it with `--dry-run` (test T2 in the plan).
 The masters' `ups.conf`, in the `[eaton]` section (usbhid-ups):
 
     ignorelb
-    override.battery.charge.low = 50      # UPS-C; UPS-A 40, UPS-B 30
-    override.battery.runtime.low = 600    # UPS-C and UPS-A; UPS-B 300
+    override.battery.charge.low = 30      # all three UPSes
+    override.battery.runtime.low = 420    # UPS-C; UPS-A 480, UPS-B 300
     offdelay = 60
     ondelay = 120
 

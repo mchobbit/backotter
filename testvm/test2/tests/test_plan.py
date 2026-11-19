@@ -1275,6 +1275,67 @@ class ImgRefusal(ImgCase):
         self.assertIn("run t2 SticTest2 ROUND alpinebsd", "; ".join(c.reasons))
         self.assertEqual(c.binaries["restic-bko"]["canary"], "stic:alpinebsd")
 
+    def test_every_failing_cell_is_named_in_one_command(self):
+        # (not the first in order alone, which sent the user round one cell per run)
+        val = "sha256:" + self.w.images()["netbsd"]["bins"]["rustic-bko"]
+        bad = [self.bin_row(c, "netbsd/rustic-bko", val, verdict=v, age_h=0.5)
+               for c, v in (("stic:alpinebsd", "FAIL"), ("stic:netbsd11", "FAIL"), ("holt:netbsd11", "FLAKY-FAIL"))]
+        c = self.plan_img(self.good() + bad).cell("img:netbsd")
+        self.assertEqual(c.status, "not-runnable")
+        b = c.binaries["rustic-bko"]
+        self.assertEqual(b["command"], "t2 HoltTest2 netbsd11 and t2 SticTest2 ROUND alpinebsd netbsd11")
+        self.assertEqual(b["canary"], "holt:netbsd11")
+        self.assertIn("failed in 3 cells", b["why"])
+        for cell in ("stic:alpinebsd", "stic:netbsd11", "holt:netbsd11"):
+            self.assertIn(cell, b["why"])
+
+    def holt_code(self, commit=None):
+        return keys.holt_code(keys.GitSource(self.w.repo, commit or self.w.head(), scope=("holt",)))
+
+    def test_an_image_of_another_holt_code_names_the_rebuild(self):
+        # HoltTest2 builds and tests the checkout's bko-holt: a PASS there is no PASS for an image
+        # built from an older holt, and no HoltTest2 run can give it one
+        old = self.w.head()
+        im = self.w.images(commit=old)
+        self.w.edit("holt/src/load/exec.rs", "// runs the plan, changed\n", commit=True)
+        new = self.holt_code()
+        self.assertNotEqual(new, self.holt_code(old))
+        rows = [r for r in self.good(images=im) if not r["cell"].startswith("holt:")]
+        refresh = f"stick/img-refresh-holt.sh {self.w.head()} {new} netbsd and stick/img-lanes.sh netbsd to rebuild the image"
+        ok = self.bin_row("holt:netbsd11", "netbsd/bko-holt", "code:" + new)
+        c = self.plan_img(rows + [ok], facts=self.w.facts(images=im)).cell("img:netbsd")
+        self.assertEqual(c.status, "not-runnable")
+        b = c.binaries["bko-holt"]
+        self.assertEqual((b["state"], b["canary"], b["command"]), ("none", None, refresh))
+        self.assertIn("not this checkout's", b["why"])
+        self.assertNotIn("t2 HoltTest2", "; ".join(c.reasons))
+        # the checkout's code with no PASS yet: the HoltTest2 run, then the rebuild
+        b = self.plan_img(rows, facts=self.w.facts(images=im)).cell("img:netbsd").binaries["bko-holt"]
+        self.assertTrue(b["command"].startswith("t2 HoltTest2 "), b["command"])
+        self.assertTrue(b["command"].endswith(", then " + refresh), b["command"])
+        self.assertTrue(b["canary"].startswith("holt:"))
+        # ... or failing there: every failing cell, then the rebuild
+        bad = self.bin_row("holt:netbsd11", "netbsd/bko-holt", "code:" + new, verdict="FAIL", age_h=0.5)
+        b = self.plan_img(rows + [ok, bad], facts=self.w.facts(images=im)).cell("img:netbsd").binaries["bko-holt"]
+        self.assertEqual((b["canary"], b["command"]), ("holt:netbsd11", "t2 HoltTest2 netbsd11, then " + refresh))
+        # the image's own code passing still lets it run, the checkout's code aside
+        p = self.plan_img(self.good(images=im), facts=self.w.facts(images=im))
+        self.assertEqual(st(p, "img:netbsd")[0], "due", p.cell("img:netbsd").reasons)
+
+    def test_another_passing_holt_code_is_named_as_the_other_rebuild(self):
+        old = self.w.head()
+        im = self.w.images(commit=old)
+        self.w.edit("holt/src/load/exec.rs", "// runs the plan, changed\n", commit=True)
+        mid, mid_code = self.w.head(), self.holt_code()
+        self.w.edit("holt/src/load/exec.rs", "// runs the plan, changed again\n", commit=True)
+        rows = [r for r in self.good(images=im) if not r["cell"].startswith("holt:")]
+        ok = dict(self.bin_row("holt:netbsd11", "netbsd/bko-holt", "code:" + mid_code), commit=mid[:7])
+        b = self.plan_img(rows + [dict(ok, commit=None)], facts=self.w.facts(images=im)).cell("img:netbsd").binaries["bko-holt"]
+        self.assertNotIn("rebuild with the holt code", b["why"])     # (no commit here to rebuild from)
+        b = self.plan_img(rows + [ok], facts=self.w.facts(images=im)).cell("img:netbsd").binaries["bko-holt"]
+        self.assertIn(f"rebuild with the holt code {mid_code[:12]} ({mid[:12]}), which passed", b["why"])
+        self.assertIn(f"stick/img-refresh-holt.sh {self.w.head()} {self.holt_code()} netbsd", b["command"])
+
     def test_a_binary_the_sums_file_omits_is_refused(self):
         im = self.w.images()
         del im["netbsd"]["bins"]["bko-holt"]

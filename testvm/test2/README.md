@@ -74,8 +74,11 @@ its rows count only where the binaries are equal (R14).
 - Refused (exit 2): `+close` (waits for H3), `HoltTest2All +img` (the `+img` cells are
   `HoltTest2 +img`'s), names with an All form, BkoTest2 or SweepTest2, `stale` with an
   All form or SweepTest2, `GuestTest2 update` with `stale` or All, an image with a binary that has no PASS at
-  its digest (`ImgTest2` names the binary and the command; a bare run runs its other due
-  images first, then exits 2), freebsd15-ufs
+  its digest (`ImgTest2` names the binary and the command: every cell whose newest row at
+  that digest failed, at once, and for a bko-holt of another holt code than the checkout's,
+  which no HoltTest2 run here can test, the `stick/img-refresh-holt.sh` and `img-lanes.sh`
+  rebuild with the checkout's code, after its HoltTest2 run when it has no PASS; a bare run
+  runs its other due images first, then exits 2), freebsd15-ufs
   (the FreeBSD rescuer) as a HoltTest source,
   unknown names, a ROUND missing on a host in use, a second run of a family while
   one runs (its run id, PID and start are named).

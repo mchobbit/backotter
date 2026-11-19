@@ -489,6 +489,7 @@ class Planner:
         self._gate_holt = None
         self._binrows = None
         self._holt_codes = {}
+        self._tree_holt_code = None
         self._estimator = None
         self.heads = ctx.options.get("heads")
         self.opts = {}
@@ -1884,18 +1885,19 @@ class Planner:
         return self._holt_codes[commit]
 
     def binary_state(self, pairs):
-        """(state, why, failing cell or None) of a binary from PAIRS [(family, name, value)]: none
-        when no row or a cell's newest decisive row at that digest failed; else real, carried or
-        carried-other."""
+        """(state, why, failing cells) of a binary from PAIRS [(family, name, value)]: none when
+        no row, or when any cell's newest decisive row at that digest failed (every such cell is
+        named, sorted, so that one run can answer them all); else real, carried or carried-other."""
         per = {}
         for fam, n, val in pairs:
             for cell, rs in (self.bin_rows().get((fam, n, val)) or {}).items():
                 per.setdefault(cell, []).extend(rs)
-        best = None
+        best, failing = None, []
         for cell, rs in sorted(per.items()):
             rs.sort(key=lambda x: (row_t(x), x.get("id", "")), reverse=True)
             if rs[0].get("verdict") in ("FAIL", "FLAKY-FAIL"):
-                return "none", f"{cell}'s newest row at that digest is {rs[0].get('verdict')} ({rs[0].get('id')})", cell
+                failing.append((cell, rs[0]))
+                continue
             atk = {}
             for r in rs:
                 atk.setdefault(r.get("key"), r)
@@ -1907,15 +1909,28 @@ class Planner:
                 rank = ("carried-other", "carried", "real").index(st)
                 if best is None or rank > best[0]:
                     best = (rank, st, r)
+        if len(failing) == 1:
+            cell, r = failing[0]
+            return "none", f"{cell}'s newest row at that digest is {r.get('verdict')} ({r.get('id')})", [cell]
+        if failing:
+            return "none", f"the newest row at that digest failed in {len(failing)} cells: " + \
+                ", ".join(f"{c} {r.get('verdict')} ({r.get('id')})" for c, r in failing), [c for c, _ in failing]
         if best is None:
-            return "none", "no PASS at its digest", None
-        return best[1], best[2].get("id"), None
+            return "none", "no PASS at its digest", []
+        return best[1], best[2].get("id"), []
 
     @staticmethod
     def cell_command(cell):
         """The word that runs a stic or holt CELL by name."""
-        fam, name = cell.split(":", 1)
-        return f"t2 SticTest2 ROUND {name}" if fam == "stic" else f"t2 HoltTest2 {name}"
+        return Planner.cells_command([cell])
+
+    @staticmethod
+    def cells_command(cells):
+        """The words that run stic and holt CELLS by name: one per family, holt's first."""
+        holt = [c.split(":", 1)[1] for c in cells if c.split(":", 1)[0] != "stic"]
+        stic = [c.split(":", 1)[1] for c in cells if c.split(":", 1)[0] == "stic"]
+        words = ([f"t2 HoltTest2 {' '.join(holt)}"] if holt else []) + ([f"t2 SticTest2 ROUND {' '.join(stic)}"] if stic else [])
+        return " and ".join(words)
 
     def canary_cell(self, plat, name):
         """The platform's cheapest cell (by the Estimator) that uses binary NAME."""
@@ -1940,11 +1955,71 @@ class Planner:
         c = min(cells, key=lambda c: (est.cell(c)["gm"], c))
         return c, self.cell_command(c)
 
+    def tree_holt_code(self):
+        """CODE of this checkout's holt tree: the bko-holt a HoltTest2 run here builds and tests."""
+        if self._tree_holt_code is None:
+            self._tree_holt_code = keys.holt_code(self.ctx.src)
+        return self._tree_holt_code
+
+    def holt_commit_of(self, plat, code):
+        """A commit of this repository whose holt code is CODE (HEAD's first, then those of the
+        PLAT/bko-holt rows at it, newest first), as stick/img-refresh-holt.sh takes it; or None."""
+        rs = sorted((r for rs in (self.bin_rows().get(("holt", f"{plat}/bko-holt", "code:" + code)) or {}).values() for r in rs),
+                    key=lambda x: (row_t(x), x.get("id", "")), reverse=True)
+        for c in dict.fromkeys(c for c in [self.ctx.head] + [r.get("commit") for r in rs] if isinstance(c, str) and c):
+            full = c if c == self.ctx.head else self.ctx.git.rev(c)
+            if full and self.holt_code_at(full) == code:
+                return full
+        return None
+
+    def holt_other_pass(self, plat, tries=6):
+        """(commit, code) of the newest other holt code whose PLAT/bko-holt has a real PASS and a
+        commit here, or None: the rebuild that needs no HoltTest2 run, with another bko-holt."""
+        here, name = self.tree_holt_code(), f"{plat}/bko-holt"
+        newest = {}
+        for (fam, n, val), cells in self.bin_rows().items():
+            if fam == "holt" and n == name and val.startswith("code:") and val[5:] != here:
+                newest[val[5:]] = max(row_t(r) for rs in cells.values() for r in rs)
+        for code in sorted(newest, key=newest.get, reverse=True)[:tries]:
+            if self.binary_state([("holt", name, "code:" + code)])[0] == "real":
+                commit = self.holt_commit_of(plat, code)
+                if commit:
+                    return commit, code
+        return None
+
+    def holt_rebuild(self, plat, code, out):
+        """OUT's why and command for an image whose bko-holt is holt CODE, with no HoltTest2 PASS,
+        and not this checkout's code: no HoltTest2 run here can test it (HoltTest2 builds the
+        checkout's), so only a rebuild can, with the checkout's bko-holt once that has a PASS."""
+        here = self.tree_holt_code()
+        refresh = "stick/img-refresh-holt.sh {} " + here + " " + plat + " and stick/img-lanes.sh " + plat + " to rebuild the image"
+        why = f"the image's bko-holt is holt code {code[:12]}, not this checkout's {here[:12]}, and HoltTest2 tests only the checkout's"
+        st, w, failing = self.binary_state([("holt", f"{plat}/bko-holt", "code:" + here)])
+        commit = self.holt_commit_of(plat, here)
+        if st == "real" and commit:
+            out["why"] = f"{why}, which has a PASS"
+            out["canary"], out["command"] = None, refresh.format(commit)
+            return out
+        if st == "real":    # (it passed, but no commit has it: holt/ is uncommitted here)
+            out["why"] = f"{why}, which passed but is no commit's: commit holt/, then rebuild the image with it"
+            out["canary"], out["command"] = None, None
+            return out
+        cell, cmd = (failing[0], self.cells_command(failing)) if failing else self.canary_cell(plat, "bko-holt")
+        out["why"] = f"{why}; at the checkout's code {w}" if failing else \
+            f"{why}, which has " + ("no PASS" if st == "none" else "only a carried PASS")
+        other = self.holt_other_pass(plat)
+        if other is not None:
+            out["why"] += f"; or rebuild with the holt code {other[1][:12]} ({other[0][:12]}), which passed"
+        out["canary"] = cell
+        out["command"] = (f"{cmd}, then " if cmd else "") + refresh.format(commit or "COMMIT")
+        return out
+
     def judge_binary(self, plat, name, hexd, im):
-        """{state, digest, why, canary} of one of an image's binaries (contract 1.7's four steps)."""
+        """{state, digest, why, canary, command} of one of an image's binaries (contract 1.7's four
+        steps).  canary is the first cell the command runs (the one bko.py's carried canaries take)."""
         out = {"state": "none", "digest": hexd, "why": None, "canary": None}
         val = "sha256:" + hexd
-        pairs, failing = None, None
+        pairs, failing, code = None, [], None
         if name == "bko-holt":
             commit = im.get("holt_commit")
             code = self.holt_code_at(commit) if commit else None
@@ -1963,7 +2038,9 @@ class Planner:
                 out["why"] = w
         if pairs is None or out["state"] not in ("none", "carried-other"):
             return out      # (with no commit to go on no test can give it a PASS: only the rebuild can)
-        out["canary"], out["command"] = (failing, self.cell_command(failing)) if failing else self.canary_cell(plat, name)
+        if code is not None and out["state"] == "none" and code != self.tree_holt_code():
+            return self.holt_rebuild(plat, code, out)
+        out["canary"], out["command"] = (failing[0], self.cells_command(failing)) if failing else self.canary_cell(plat, name)
         return out
 
     def listed_bins(self, plat):

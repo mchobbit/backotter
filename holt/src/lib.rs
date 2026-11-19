@@ -25,6 +25,7 @@ pub mod other;
 pub mod parttable;
 pub mod probe;
 pub mod qubes;
+pub mod recovery;
 pub mod redact;
 pub mod report;
 #[cfg(test)]

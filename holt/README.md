@@ -257,12 +257,32 @@ byte.  `src/scenarios.rs` checks that for every fake system, and
 BKO_HOLT_DUMPS=/bkoscratch/holttest1d/r3all cargo test --test redact_dumps -- --nocapture
 ```
 
+## Recovery keys
+
+`src/recovery.rs` makes and reads a repository's recovery key: 12 words
+from BIP39's English list (`src/bip39-english.txt`, bitcoin/bips' file as
+it is), chosen at random (128 bits from the system's random source and
+BIP39's 4-bit checksum).  The words, in full, lower case and one space
+apart (`recovery::password`, a form that must never change), are the
+password of a second repository key (`rustic key add`): no cryptography of
+our own, and nothing derived from the passphrase.  `recovery::check` reads
+them as people type them back (any case and spacing, the first 4 letters
+of each word) and names what's wrong by position: an unknown word with
+suggestions, the wrong count, or a checksum that doesn't fit.  Nothing uses
+it yet.  `bko-recovery-words` tries it by hand; it is built with bko-holt
+but not shipped (the images take `bko-holt` alone):
+
+```
+bko-recovery-words new
+bko-recovery-words check aban abil able ...   # or the words on standard input
+```
+
 ## Building
 
 No dependencies; builds offline with Debian 13's own cargo (1.85):
 
 ```
-cargo build --release      # target/release/bko-holt
+cargo build --release      # target/release/bko-holt (and bko-recovery-words)
 ```
 
 The shipped Linux binary is built on Chopin by
@@ -305,6 +325,9 @@ cargo test
   dump of the machine running the tests checked against `lsblk` (run it as
   root too: then our own superblock reading is what's checked).
 - `tests/load_cli.rs`: `load`'s arguments and exit codes.
+- `src/recovery.rs`: BIP39's published test vectors (128-bit entropy), round
+  trips, abbreviations, every problem by position, and what a one-word
+  mistake can get past; `tests/recovery_cli.rs`: `bko-recovery-words`.
 - `src/redact.rs`, `src/bugreport.rs`: the redaction, and the report.
   `tests/redact_dumps.rs` checks real dumps when BKO_HOLT_DUMPS names a
   directory of them (each `src.json` under it; BKO_HOLT_DUMPS_ALL=1 takes

@@ -3,6 +3,8 @@ name = "bko-holt"
 version = "0.2.6"
 edition = "2021"
 rust-version = "1.85"
+# `cargo run` without --bin: bko-holt, as before there were two.
+default-run = "bko-holt"
 description = "Record a Linux system's disk layout and boot setup as JSON, and rebuild disks from it"
 license = "GPL-3.0-or-later"
 publish = false
@@ -18,6 +20,12 @@ path = "src/lib.rs"
 [[bin]]
 name = "bko-holt"
 path = "src/main.rs"
+
+# A program to try recovery keys (src/recovery.rs) by hand.  Built with the
+# rest, but not shipped: build-holt.sh and the images take bko-holt alone.
+[[bin]]
+name = "bko-recovery-words"
+path = "src/bin/bko-recovery-words.rs"
 
 [profile.release]
 lto = true

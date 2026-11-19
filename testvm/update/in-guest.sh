@@ -1670,8 +1670,31 @@ SunOS)
     # Downloads not kept once installed: OpenIndiana's image doesn't flush
     # them (a first update there is ~5 GiB of cache in the overlay).
     pkg set-property flush-content-cache-on-success True || exit 1
-    pkg update -v; rc=$?
-    [ $rc -eq 0 ] || [ $rc -eq 4 ] || exit 1
+    # A publisher's repository that pkg update can't reach is only a warning
+    # (pkg.openindiana.org's "Framework stall", GuestTest2
+    # t2v-20261118T2305-edbb): it plans from the catalog it had, says "No
+    # updates available" and exits 4, as with nothing to update.  So the
+    # catalogs are refreshed first, tried again while the network or the
+    # repository may still be coming back, and pkg update's own errors in
+    # reaching one fail the update: after exit 4 (nothing done) tried again,
+    # after 0 (updated from an old catalog) at once.
+    unreached() {
+        grep -Eq 'Unable to contact|Errors were encountered when attempting|Framework (stall|error)' /tmp/bko-pkg.log
+    }
+    tries=0
+    while :; do
+        if pkg refresh --full >/tmp/bko-pkg.log 2>&1 && ! unreached; then
+            { pkg update -v 2>&1; echo $? >/tmp/bko-pkg.rc; } | tee /tmp/bko-pkg.log
+            rc=$(cat /tmp/bko-pkg.rc)
+            [ "$rc" -eq 0 ] || [ "$rc" -eq 4 ] || { say "pkg update failed ($rc)"; exit 1; }
+            unreached || break
+            [ "$rc" -eq 4 ] || { say "pkg update couldn't reach a publisher's repository"; exit 1; }
+        fi
+        tries=$((tries + 1))
+        [ $tries -lt 10 ] || { cat /tmp/bko-pkg.log; say "a publisher's repository can't be reached"; exit 1; }
+        sleep 30
+    done
+    rm -f /tmp/bko-pkg.log /tmp/bko-pkg.rc
     # t2-section: prologue
     ;;
 Haiku)

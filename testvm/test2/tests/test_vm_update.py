@@ -362,6 +362,98 @@ class TestInGuest(unittest.TestCase):
             "bash", "libpcre2-8-0", "libffi8", "libglib2.0-0t64", "unlisted", "gcc-16-base",
             "libgcc-s1", "cyc-b", "cyc-a", "rc=0", "rc=0"], r.stderr)
 
+    # oi2610's pkg update when pkg.openindiana.org stalled (GuestTest2 t2v-20261118T2305-edbb):
+    # a warning, "No updates available" and exit 4, as with nothing to update.
+    IPS_STALL = textwrap.dedent("""\
+        No updates available for this image.
+
+        WARNING: Errors were encountered when attempting to retrieve package
+        catalog information. Packages added to the affected publisher repositories since
+        the last retrieval may not be available.
+
+        Errors were encountered when attempting to contact repository for publisher 'openindiana.org'.
+
+        Unable to contact valid package repository: https://pkg.openindiana.org/hipster/
+        Encountered the following error(s):
+          Framework stall:
+        URL: 'https://pkg.openindiana.org/hipster' (happened 4 times)
+
+        """)
+    IPS_REFRESH_STALL = ("pkg: 0/1 catalogs successfully updated:\n\n"
+                         "Unable to contact valid package repository: https://pkg.openindiana.org/hipster/\n"
+                         "Encountered the following error(s):\n  Framework stall:\n"
+                         "URL: 'https://pkg.openindiana.org/hipster' (happened 4 times)\n")
+
+    def run_sunos(self, refresh, update):
+        """The SunOS section with pkg a stand-in: REFRESH and UPDATE are [(exit status, output)],
+        one per call, the last one repeated.  /tmp is a scratch folder, sleep does nothing.
+        Returns (exit status, refreshes, updates, output); 0 is the section running to its end."""
+        with tempfile.TemporaryDirectory() as d:
+            for name, calls in (("refresh", refresh), ("update", update)):
+                for i, (rc, out) in enumerate(calls):
+                    Path(d, f"{name}.{i}.out").write_text(out)
+                    Path(d, f"{name}.{i}.rc").write_text(str(rc))
+                Path(d, f"{name}.last").write_text(str(len(calls) - 1))
+            body = self.sections()["SunOS"].replace("/tmp/", f"{d}/")
+            script = textwrap.dedent(f"""\
+                say() {{ echo "in-guest: $*"; }}
+                sleep() {{ :; }}
+                beadm() {{ :; }}
+                pkg() {{
+                    case $1 in set-property) return 0 ;; refresh) [ "$2" = --full ] || return 2 ;; update) ;; *) return 2 ;; esac
+                    n=$(cat {d}/$1.count 2>/dev/null || echo 0); echo $((n + 1)) >{d}/$1.count
+                    last=$(cat {d}/$1.last); [ "$n" -le "$last" ] || n=$last
+                    cat {d}/$1.$n.out; return $(cat {d}/$1.$n.rc)
+                }}
+                """) + textwrap.dedent(body) + "\necho end\n"
+            r = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+            count = [int(Path(d, f"{n}.count").read_text()) if Path(d, f"{n}.count").exists() else 0
+                     for n in ("refresh", "update")]
+            left = {f for f in os.listdir(d) if f.startswith("bko-")}
+            if r.returncode == 0:
+                self.assertEqual(left, set(), "the section leaves its files behind")
+        self.assertEqual(r.returncode == 0, r.stdout.rstrip().endswith("end"), r.stdout + r.stderr)
+        return r.returncode, count[0], count[1], r.stdout
+
+    def test_sunos_nothing_to_update_is_no_failure(self):
+        for rc, out in ((4, "No updates available for this image.\n"), (0, "Packages to update: 3\n")):
+            with self.subTest(rc=rc):
+                got = self.run_sunos([(0, "")], [(rc, out)])
+                self.assertEqual(got[:3], (0, 1, 1), got[3])
+                self.assertIn(out.strip(), got[3])
+
+    def test_sunos_unreachable_repository_fails(self):
+        """A publisher's repository pkg can't reach: pkg update's exit 4 then is no "nothing to
+        update" (t2v-20261118T2305-edbb oi2610, never updated yet "updated")."""
+        # refresh can't reach it, ever: 10 tries, then a failure whose tail is a known flake
+        rc, nr, nu, out = self.run_sunos([(1, self.IPS_REFRESH_STALL)], [(4, "No updates available for this image.\n")])
+        self.assertEqual((rc, nr, nu), (1, 10, 0), out)
+        self.assertIn("in-guest: a publisher's repository can't be reached", out)
+        flakes = json.loads((T2 / "guest" / "flakes.json").read_text())
+        sys.path.insert(0, str(T2))
+        self.addCleanup(sys.path.remove, str(T2))
+        from t2lib import guest_judge as J
+        self.assertIsNotNone(J.match_flake("oi2610", out.rstrip().splitlines()[-8:], flakes), out)
+        # refresh says nothing's wrong yet exits 0 with the warning: as bad
+        rc, nr, nu, out = self.run_sunos([(0, self.IPS_REFRESH_STALL)], [(4, "")])
+        self.assertEqual((rc, nr, nu), (1, 10, 0), out)
+        # refresh fine, pkg update's own refresh stalls: exit 4 and the warning, always
+        rc, nr, nu, out = self.run_sunos([(0, "")], [(4, self.IPS_STALL)])
+        self.assertEqual((rc, nr, nu), (1, 10, 10), out)
+        self.assertNotIn("in-guest: updated", out)
+        # ... twice, then it gets through: updated
+        rc, nr, nu, out = self.run_sunos([(1, self.IPS_REFRESH_STALL), (0, "")],
+                                         [(4, self.IPS_STALL), (4, self.IPS_STALL), (0, "Packages to update: 3\n")])
+        self.assertEqual((rc, nr, nu), (0, 4, 3), out)
+        # updated from the old catalog (0 and the warning): fails at once, not tried again
+        rc, nr, nu, out = self.run_sunos([(0, "")], [(0, "Packages to update: 3\n" + self.IPS_STALL)])
+        self.assertEqual((rc, nr, nu), (1, 1, 1), out)
+        self.assertIn("in-guest: pkg update couldn't reach a publisher's repository", out)
+        # any other failure: at once
+        rc, nr, nu, out = self.run_sunos([(0, "")], [(1, "pkg: no solution was found\n")])
+        self.assertEqual((rc, nr, nu), (1, 1, 1), out)
+        self.assertIn("in-guest: pkg update failed (1)", out)
+
     def test_emerge_sync_is_tried_again(self):
         sec = self.sections()["Linux.portage"]
         self.assertIn("until emerge --sync -q $o; do", sec)

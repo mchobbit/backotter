@@ -1701,6 +1701,67 @@ class Normalizer(unittest.TestCase):
         self.assertEqual(J.sweep_lines({"update": "Fail: 0"}, [], ["Fail: ZERO"]), [])
         self.assertEqual([x["line"] for x in J.sweep_lines({"update": "Fail: 2"}, [], ["Fail: ZERO"])], ["Fail: N"])
 
+    def test_dates_weekday_and_month_names_go(self):
+        """A date's names change by the day as its digits do: aeon's snapper line, accepted on a
+        Thursday morning, came back new that afternoon and the next day (t2v-20261119T1609-5ed5)."""
+        snapper = "Btrfs.cc(evalConfigInfo):115 qgroup '1/0' does not exist"
+        days = ("Thu 19 Nov 2026 03:21:07 AM UTC <3> " + snapper, "Thu 19 Nov 2026 04:09:55 PM UTC <3> " + snapper,
+                "Wed 2 Dec 2026 11:00:00 AM UTC <3> " + snapper, "Sunday 31 January 2027 01:02:03 pm UTC <3> " + snapper)
+        want = "WDAY N MONTH N TIME UTC <N> Btrfs.cc(evalConfigInfo):N qgroup 'N/N' does not exist"
+        for raw in days:
+            self.assertEqual(J.normalize(raw), want, raw)
+            self.assertEqual(J.normalize(want), want)
+        pairs = (("Hardware Clock updated to Wed Nov 18 23:59:01 UTC 2026.", "Thu Nov 19 00:00:02 EST 2026",
+                  "Hardware Clock updated to WDAY TIME UTC N.", "WDAY TIME EST N"),
+                 ("cloud-init[812]: Cloud-init v. 25.1 finished at Tue, 17 Nov 2026 10:00:01 +0000.",
+                  "cloud-init[90]: Cloud-init v. 25.1 finished at Mon, 7 Dec 2026 23:00:59 +0000.",
+                  "cloud-init[N]: Cloud-init v. N.N finished at WDAY, N MONTH N TIME +N.", None),
+                 ("NetBSD 10.1 (GENERIC) #0: Mon Dec 16 13:08:11 UTC 2024", "NetBSD 10.1 (GENERIC) #0: Tue Jan 7 13:08:11 UTC 2025",
+                  "NetBSD N.N (GENERIC) #N: WDAY TIME UTC N", None),
+                 ("ls: Wed Nov 18 12:01 x", "ls: Fri Dec 4 09:59 x", "ls: WDAY MONTH N N:N x", None),
+                 ("Generation 4 Nov 18 2026 12:00:00 (current)", "Generation 5 Dec 1 2026 08:00:00 (current)",
+                  "Generation N MONTH N N TIME (current)", None),
+                 ("fsck.jfs version 1.1.15, 04-Mar-2011", "fsck.jfs version 1.1.16, 12-Sep-2024", "fsck.jfs version N.N.N, N-MONTH-N", None),
+                 ("built Thursday, November 19, 2026", "built Friday, December 4, 2026", "built WDAY, MONTH N, N", None),
+                 ("dmesg [Thu Nov 19 03:21:07 2026] x", "dmesg [Sat May 2 13:21:07 2026] x", "dmesg [WDAY TIME N] x", None))
+        for a, b, want, also in pairs:
+            na = J.normalize(a)
+            self.assertEqual(na, want, a)
+            self.assertEqual(J.normalize(b), also or want, b)
+            self.assertEqual(J.normalize(na), na, a)
+
+    def test_date_names_in_old_baselines_migrate(self):
+        """A line as the normalizer made it before (the guest-baselines of 2026-11-19) comes out as
+        the raw line does now, so sweep_lines keeps it accepted, whatever the day."""
+        for old, raw in (("Thu N Nov N TIME AM UTC <N> Btrfs.cc(evalConfigInfo):N qgroup 'N/N' does not exist",
+                          "Fri 20 Nov 2026 07:15:00 PM UTC <3> Btrfs.cc(evalConfigInfo):115 qgroup '1/0' does not exist"),
+                         ("Wed TIME UTC N", "Sat Nov 21 01:00:00 UTC 2026"),
+                         ("Universal Time is now: Tue TIME UTC N.", "Universal Time is now: Thu Nov 19 15:00:00 UTC 2026."),
+                         ("Thu Nov N N:N", "Mon Jan 4 17:30"),
+                         ("cloud-init[N]: Cloud-init v. N.N running 'init' at Tue, N Nov N TIME +N. Up N.N seconds.",
+                          "cloud-init[7]: Cloud-init v. 25.1 running 'init' at Sun, 22 Nov 2026 09:00:00 +0000. Up 4.5 seconds."),
+                         ("in-guest: Generation N Nov N N TIME (current) guix", "in-guest: Generation 9 Dec 2 2026 10:11:12 (current) guix"),
+                         ("fsck.jfs version N.N.N, N-Mar-N", "fsck.jfs version 1.1.15, 04-Apr-2011")):
+            self.assertEqual(J.normalize(old), J.normalize(raw), old)
+            self.assertEqual(J.sweep_lines({"update": raw}, [], [old]), [], old)
+        # a new day's line still differs from a baseline line that differs in more than its date
+        got = J.sweep_lines({"update": "Fri 20 Nov 2026 07:15:00 PM UTC <3> Btrfs.cc(evalConfigInfo):115 qgroup '1/0' is broken"},
+                            [], ["Thu N Nov N TIME AM UTC <N> Btrfs.cc(evalConfigInfo):N qgroup 'N/N' does not exist"])
+        self.assertEqual([x["line"] for x in got], ["WDAY N MONTH N TIME UTC <N> Btrfs.cc(evalConfigInfo):N qgroup 'N/N' is broken"])
+
+    def test_date_names_leave_words_alone(self):
+        for s in ("Marking clocksource tsc unstable", "Monitoring 3 disks", "Decryption of 2 keys", "Separator 4",
+                  "Noverlayfs 2", "Julia 1.10", "Thunar 4.20", "Augeas 1.14", "May I ask", "the Sun's 2 rays",
+                  "may 3 files", "Mon-1 failed", "Sunday school", "Monday", "in March we", "Wednesday's 3",
+                  "MON 3", "Mondays 4", "PM: hibernation: Registered nosave memory", "12:00:01 PM: suspend entry",
+                  "12:00:01 AMD Ryzen", "12:00:01 PMU driver"):
+            n = J.normalize(s)
+            self.assertNotIn("WDAY", n, s)
+            self.assertNotIn("MONTH", n, s)
+            self.assertEqual(J.normalize(n), n, s)
+        self.assertEqual(J.normalize("12:00:01 PM: suspend entry"), "TIME PM: suspend entry")
+        self.assertEqual(J.normalize("12:00:01 AMD Ryzen"), "TIME AMD Ryzen")
+
     def test_two_runs_of_a_line_agree(self):
         a = "[    3.111] systemd[1]: run 2026-11-08 05:00:00 took 12ms abcdef0123"
         b = "[    9.222] systemd[1]: run 2026-11-09 06:11:00 took 7ms 0123456abc"

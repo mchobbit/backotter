@@ -1707,6 +1707,25 @@ _BRK = re.compile(r"\[\s*\d+\.\d+\]")
 _ISO = re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?")
 _SYSLOG = re.compile(r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +\d{1,2} \d{2}:\d{2}:\d{2}\b")
 _CLOCK = re.compile(r"\b\d{2}:\d{2}:\d{2}\b")
+# A date's weekday and month names, and a TIME's AM or PM, change from day to day (or noon to
+# noon) as its digits do, so an accepted line came back new the next day (aeon's snapper line
+# "Thu 19 Nov 2026 03:21:07 PM UTC <3> Btrfs.cc(evalConfigInfo):115 ...", t2v-20261119T1609-5ed5;
+# date(1)'s "Wed Nov 18 ... UTC 2026" in hwclock's lines, cloud-init's "Tue, 17 Nov 2026", a
+# kernel's build date).  Only in a date's shape: a weekday before a number, a TIME or a month
+# name; a month before a number or a TIME (_SYSLOG takes "Nov 19 03:21:07" whole) or after a
+# number (19 Nov, 19-Nov-2026); AM or PM right after a TIME, never "PM:" (the kernel's).  Case as
+# written, so "Monitor", "Marking", "may", "Sun's" stay.  Each takes N for a number too, so a
+# line normalized before ("Thu N Nov N TIME AM UTC") comes out as the raw line does now, and
+# WDAY and MONTH never match again: normalize stays stable.
+_DAYS = (r"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday"
+         r"|Mon|Tues|Tue|Wed|Thurs|Thur|Thu|Fri|Sat|Sun)")
+_MONTHS = (r"(?:January|February|March|April|May|June|July|August|September|October|November|December"
+           r"|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept|Sep|Oct|Nov|Dec)")
+_DNUM = r"(?:\d{1,4}|N)\b"
+_WEEKDAY = re.compile(rf"\b{_DAYS}\b(?=\.?,?[ \t]+(?:{_DNUM}|TIME\b|{_MONTHS}\b))")
+_MONTH = re.compile(rf"\b{_MONTHS}\b(?=\.?,?[ \t-]+(?:{_DNUM}|TIME\b))")
+_MONTH_AFTER = re.compile(rf"(\b(?:\d{{1,4}}|N)[ -]){_MONTHS}\b")
+_AMPM = re.compile(r"\bTIME[ \t]+(?:AM|PM|am|pm)(?![\w:])")
 _UUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
 # vm-update's host mount point (TMPDIR/vm-update-mount.GUEST.RANDOM) comes first and stops at the
 # end of its own name, so what follows (/boot/efi) and a trailing ":" stay: mount points differ.
@@ -1771,7 +1790,8 @@ def overstrike(s):
 
 def normalize(line, run_dirs=(), erase=True):
     """A log line with what differs from boot to boot taken out, or "" for a line with nothing
-    left (ANSI and OSC sequences, timestamps, [ 12.345], UUIDs, 0x numbers, hex of 6 or more,
+    left (ANSI and OSC sequences, timestamps and a date's weekday, month and AM/PM, [ 12.345],
+    UUIDs, 0x numbers, hex of 6 or more,
     numbers but a zero count of errors or failures (ZERO), the run's directories and Test2's copy
     of the repo, mktemp suffixes under /tmp, SSH key fingerprints, public keys and randomart, Nix
     store hashes, systemd's orphaned-r IDs, what a backspace erases (a boot loader's spinner),
@@ -1796,6 +1816,10 @@ def normalize(line, run_dirs=(), erase=True):
     s = _ISO.sub("TIME", s)
     s = _SYSLOG.sub("TIME", s)
     s = _CLOCK.sub("TIME", s)
+    s = _AMPM.sub("TIME", s)
+    s = _WEEKDAY.sub("WDAY", s)
+    s = _MONTH.sub("MONTH", s)
+    s = _MONTH_AFTER.sub(r"\1MONTH", s)
     s = _UUID.sub("UUID", s)
     s = _ORPHAN.sub("orphaned-rHEX", s)
     s = _ZERO_BEFORE.sub(r"ZERO\1", s)

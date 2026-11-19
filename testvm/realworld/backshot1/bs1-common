@@ -201,12 +201,20 @@ mount_cbm_esp() {
     echo "the ESP at /boot, out of fstab: $src ($(findmnt -nro FSTYPE /boot))"
 }
 
+# Proxmox VE on a ZFS root (docs/design/proxmox.md): proxmox-boot-tool keeps
+# the ESPs out of fstab, mounts each only while it works, and lists them by
+# vfat volume ID here.  They aren't backed up: bko-holt load formats each with
+# its volume ID, and proxmox-boot-tool init and refresh make it again from
+# /boot, as a kernel update does.
+PROXMOX_ESPS=/etc/kernel/proxmox-boot-uuids
+
 # Stops if DISK holds a filesystem the running system hasn't mounted: it would be
 # erased without being in the backup.  LAYOUT: one whose backup_sources' mount
 # hints (ABRoot's init LV and other root) count as mounted, since mount_hints
-# mounts them for the tree.
+# mounts them for the tree.  A vfat partition PROXMOX_ESPS lists counts too,
+# and is named.
 check_coverage() {
-    local mounted name fs
+    local mounted name fs uuid
     mounted=$(findmnt -rno SOURCE | sed 's/\[.*//')
     if [[ -n ${2:-} ]]; then
         mounted+=$'\n'$(python3 -c '
@@ -217,7 +225,14 @@ for s in json.load(open(sys.argv[1]))["storage"].get("backup_sources") or []:
     fi
     while read -r name fs; do
         [[ ${fs:-} =~ ^($REAL_FS)$ ]] || continue
-        grep -qxF "$name" <<<"$mounted" || die "$name ($fs) isn't mounted, so it wouldn't be backed up"
+        grep -qxF "$name" <<<"$mounted" && continue
+        uuid=
+        [[ $fs == vfat && -r ${PROXMOX_ESPS:-} ]] && uuid=$(blkid -p -o value -s UUID "$name" 2>/dev/null)
+        if [[ -n $uuid ]] && grep -qxiF "$uuid" "$PROXMOX_ESPS"; then
+            say "$name (vfat $uuid) isn't mounted: it is one of proxmox-boot-tool's ESPs ($PROXMOX_ESPS), not backed up; the restore formats it with that volume ID and proxmox-boot-tool makes it again from /boot"
+            continue
+        fi
+        die "$name ($fs) isn't mounted, so it wouldn't be backed up"
     done < <(lsblk -lnpo NAME,FSTYPE "/dev/$1")
 }
 

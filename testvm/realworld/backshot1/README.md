@@ -567,6 +567,41 @@ What a Thinkpad run still lacks (not built):
   bs1-adopt records it as family A, attended (2026-11-17, Thinkpad:
   adopt and preflight PASS, `UNLOCK=attended`); no `vanilla3-luks` guest.
 
+## Proxmox VE: proxmox-boot-tool's ESPs
+
+Proxmox VE 9 installed on ZFS (docs/design/proxmox.md) boots systemd-boot
+from ESPs that proxmox-boot-tool keeps: they aren't in fstab, nothing mounts
+them but proxmox-boot-tool while it works, and
+`/etc/kernel/proxmox-boot-uuids` lists them by vfat volume ID.  So the
+coverage check takes a vfat partition on the disk whose volume ID is in
+that list as accounted for, and says so; any other unmounted filesystem
+still stops it.  They aren't backed up: `bko-holt dump` records them in
+`boot.proxmox_boot`, and the preflight and phase 1 stop unless it lists the
+same ones, since the restore formats each with its volume ID, then runs
+`proxmox-boot-tool init` on each and one `refresh` in the chroot, which put
+systemd-boot, the kernels, initrds and loader entries back from `/boot`.
+NVRAM: `init`'s `bootctl install` makes or keeps "Linux Boot Manager" for
+the restored ESP (load makes no entry of its own for it), and the
+partitions keep their GPT GUIDs, so the entry still names it and BootNext
+picks it; with none, the one-shot "BKO restored" for `EFI/BOOT/BOOTX64.EFI`,
+which `init` writes too.
+
+`/etc/pve` is pmxcfs, a FUSE view of `/var/lib/pve-cluster/config.db`;
+that file and its WAL are backed up with `/` while pmxcfs runs, and phase 1
+stops (run it again) if pmxcfs checkpointed `config.db` while rustic read
+it, since the two copies might then not agree.  The tree's binds show `/etc/pve` as the empty directory under the mount, as
+`/var/lib/lxcfs` (lxcfs) too.  `/root/.ssh/authorized_keys` is pmxcfs's
+link to `/etc/pve/priv/authorized_keys`, so the controller's key comes back
+with `config.db`.  The ZFS datasets (`/`, `/rpool`, `/rpool/ROOT`,
+`/rpool/data`, `/var/lib/vz`) are in the tree; zvols for VM disks would
+come back empty (vzdump's to back up).  `bs1-manifest` expects
+`etc/issue` (pvebanner writes it at every boot, from `/etc/hosts`' address),
+`etc/kernel/proxmox-boot-uuids` and `etc/apt/apt.conf.d/76pveconf`
+(rewritten by `init` and `refresh`) with new mtimes but the same bytes
+(`PROXMOX_REMADE`, for a baseline with `usr/bin/pvebanner`).  The Thinkpad
+(2026-11-19: Proxmox VE 9.2.2, ZFS RAID0 on the NVMe, static address in
+`/etc/network/interfaces` on `vmbr0`, no LUKS, no swap) hasn't been run yet.
+
 ## Keeping a library of backups
 
 Each backup is a run of its own, named after the distro and the time:

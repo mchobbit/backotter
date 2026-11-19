@@ -207,6 +207,19 @@ SOLUS_PRESENT = ["boot/loader/random-seed"]
 QOL_TRIGGER = "var/lib/qol-assist/trigger"
 QOL_EXPECTED = ["etc/group", "etc/group-", "etc/gshadow", "etc/gshadow-", QOL_TRIGGER]
 
+# Proxmox VE (a baseline with pvebanner: docs/design/proxmox.md).  These are
+# written again with the same bytes: pvebanner.service writes etc/issue at
+# every boot, from the address /etc/hosts gives the node; the restore's
+# proxmox-boot-tool init and refresh rewrite its list of ESPs, and refresh's
+# proxmox-auto-removal hook its apt list of kernels to keep (the rescue's
+# own kernel isn't in the restored /boot, so it isn't listed).  The ESPs
+# themselves are in neither tree: proxmox-boot-tool mounts them only while
+# it works.  /etc/pve, pmxcfs's FUSE view of var/lib/pve-cluster/config.db,
+# is an empty directory in both trees, whose binds don't cross into it, and
+# config.db with its WAL is under var/lib/*.
+PROXMOX_SOURCE = "usr/bin/pvebanner"
+PROXMOX_REMADE = ["etc/issue", "etc/kernel/proxmox-boot-uuids", "etc/apt/apt.conf.d/76pveconf"]
+
 
 def present_same(a, b):
     """A SOLUS_PRESENT path's rows, before and after: both regular files."""
@@ -500,12 +513,13 @@ def links_same(a, b, flags=True):
     return a[7] == b[7] and (not flags or flags_same(a[8], b[8]))
 
 
-def same(rel, a, b, store, ostree=None, abroot=None):
+def same(rel, a, b, store, ostree=None, abroot=None, remade_also=()):
     # A directory's size only says how big it has ever been, and its mtime
     # moves whenever something inside it does.
     if stat.S_ISDIR(int(a[0], 8)) and stat.S_ISDIR(int(b[0], 8)):
         return a[:3] == b[:3]
-    remade = REMADE + STORE_REMADE.get(store, []) + (ostree_paths.REMADE if ostree else []) + (ABROOT_REMADE if abroot else [])
+    remade = (REMADE + STORE_REMADE.get(store, []) + (ostree_paths.REMADE if ostree else []) + (ABROOT_REMADE if abroot else [])
+              + list(remade_also))
     if any(fnmatch.fnmatch(logical(rel, ostree, abroot), pat) for pat in remade):
         # Written again by the running system, so its flags are its kernel's.
         return a[:4] + a[5:6] == b[:4] + b[5:6] and links_same(a, b, flags=False)
@@ -653,7 +667,10 @@ def compare(old_path, new_path, reformatted=False):
         held = held + ABROOT_KEPT
         n = sum(1 for p in old if any(fnmatch.fnmatch(p, pat) for pat in ABROOT_KEPT))
         print(f"ABRoot: {n} paths of the master grub.cfg, grub.cfg.future, EFI/vanilla and EFI/BOOT held to the baseline's bytes")
-    changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], store, odef, apre))
+    pve = PROXMOX_REMADE if PROXMOX_SOURCE in old else []
+    if pve:
+        print(f"Proxmox VE: written again by a boot or the restore, so with new mtimes, but the same otherwise: {' '.join(p for p in pve if p in old)}")
+    changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], store, odef, apre, pve))
     both = [p for p in set(old) & set(new) if len(old[p]) > 6 and len(new[p]) > 6]
     relabeled = sorted(p for p in both if old[p][6] != new[p][6])
     if not both:

@@ -31,6 +31,14 @@
 # (abroot.txt); and fails if the master grub.cfg, grub.cfg.future or the lock
 # moved while it ran.
 #
+# On Proxmox VE with proxmox-boot-tool (docs/design/proxmox.md) the ESPs in
+# /etc/kernel/proxmox-boot-uuids are mounted by nothing and aren't backed up:
+# the coverage check names them, and the dump's boot.proxmox_boot must list
+# the same ones, since the restore makes them again from /boot.  /etc/pve is
+# pmxcfs's FUSE view of /var/lib/pve-cluster/config.db, which is backed up
+# with /; the tree's binds don't cross into it, nor into /var/lib/lxcfs.  It
+# fails if pmxcfs checkpointed config.db while rustic read it.
+#
 # Encrypted volumes: both the preflight and phase 1 check that the drive's
 # keys/disk-passphrase opens each one, and say how they unlock at boot,
 # UNLOCK=drive, own, attended or none (unlock_mode in bs1-common; drive
@@ -117,12 +125,39 @@ unlock_check() {
     fi
     unlock_mode "$disk" "$1"
 }
+# proxmox_check LAYOUT: on a proxmox-boot-tool system, the dump's
+# boot.proxmox_boot must list the ESPs PROXMOX_ESPS does, in its order, or
+# load wouldn't make them again (the coverage check passed them over).  Says
+# which, or why not and false; nothing elsewhere.
+proxmox_check() {
+    [[ -r $PROXMOX_ESPS ]] || return 0
+    python3 - "$1" "$PROXMOX_ESPS" <<'PY'
+import json, sys
+pb = (json.load(open(sys.argv[1])).get("boot") or {}).get("proxmox_boot") or {}
+want = [l.strip() for l in open(sys.argv[2]) if l.strip() and not l.strip().startswith("#")]
+got = pb.get("uuids") or []
+if [u.upper() for u in got] != [u.upper() for u in want]:
+    print(f"{sys.argv[2]} lists {' '.join(want) or 'nothing'}, but bko-holt dump's boot.proxmox_boot has {' '.join(got) or 'none'}: this bko-holt wouldn't make proxmox-boot-tool's ESPs again")
+    sys.exit(1)
+modes = " ".join(f"{e.get('uuid')} ({e.get('device')}, {e.get('mode')})" for e in pb.get("esps") or [])
+print(f"proxmox-boot-tool's ESPs, not in the backup, which the restore formats and proxmox-boot-tool init and refresh make again: {modes}")
+PY
+}
+# pmxcfs keeps /etc/pve in an sqlite database in WAL mode, which rustic reads
+# live.  While the main file doesn't change, no checkpoint wrote to it, and
+# whatever of the WAL rustic read is a prefix sqlite can open; if it changed,
+# the two copies may not agree, and a restored pve-cluster that can't open
+# them leaves /etc/pve empty, and root's authorized_keys with it.
+PVE_DB=/var/lib/pve-cluster/config.db
+pve_db_moved() { stat -c '%i %y %s' "$PVE_DB"; }
 
 if [[ ${1:-} == --preflight ]]; then
     say "internal: $disk (serial $INTERNAL_SERIAL), backup drive: $drive"
     tmp=$(mktemp)
     # dump refuses a system it doesn't support: a Bazzite that moved to 45 stops here.
     "$BIN/bko-holt" dump --only-disk "$disk" >"$tmp" || { rm -f "$tmp"; die "bko-holt dump failed"; }
+    why=$(proxmox_check "$tmp") || { rm -f "$tmp"; die "$why"; }
+    [[ -z $why ]] || say "$why"
     if is_ostree; then
         why=$(ostree_preflight "$tmp") || { rm -f "$tmp"; die "$why"; }
         for u in $UPDATERS; do
@@ -177,6 +212,8 @@ step "the layout"
 "$BIN/bko-holt" dump --only-disk "$disk" >"$RUN/layout.json" 2>>"$LOG" || die "bko-holt dump failed"
 say "layout.json: $(wc -c <"$RUN/layout.json") bytes"
 grep -q "\"$drive\"" "$RUN/layout.json" && die "the layout mentions the backup drive"
+why=$(proxmox_check "$RUN/layout.json") || die "$why"
+[[ -z $why ]] || say "$why"
 keys=$(layout_keys "$RUN/layout.json" "$HERE/keys/disk-passphrase") || die "can't read the layout"
 if [[ -n $keys ]]; then
     [[ -s $HERE/keys/disk-passphrase ]] ||
@@ -248,8 +285,15 @@ pw=$RUN/repo-password
 (umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' >"$pw") || die "can't write the password"
 rustic_in "$RUN"
 must "${RUSTIC[@]}" init
+[[ -f $PVE_DB ]] && pve_db_moved >"$RUN/baseline/pve-db-before.txt" 2>&1
 must "${RUSTIC[@]}" backup --set-atime yes --as-path "$SNAP" "$TREE"
 must "${RUSTIC[@]}" snapshots
+if [[ -f $PVE_DB ]]; then
+    pve_db_moved >"$RUN/baseline/pve-db-after.txt" 2>&1
+    cmp -s "$RUN/baseline/pve-db-before.txt" "$RUN/baseline/pve-db-after.txt" ||
+        die "pmxcfs checkpointed $PVE_DB during the backup, so its copy and the WAL's may not agree: run phase1 again"
+    say "pmxcfs didn't checkpoint $PVE_DB during the backup: its copy and the WAL's agree"
+fi
 if is_ostree; then
     ostree_moved >"$RUN/baseline/ostree-after.txt" 2>&1
     cmp -s "$RUN/baseline/ostree-before.txt" "$RUN/baseline/ostree-after.txt" ||

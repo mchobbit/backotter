@@ -216,7 +216,7 @@ class Driver(unittest.TestCase):
         ht = src("ht1.sh")
         self.assertIn('qemu-img create -q -f qcow2 -b "$RESCUER_IMG" -F raw "$R/rescuer.qcow2" 16G', ht)
         self.assertIn("RHOLT=/usr/local/bin/bko-holt RARCH=/usr/local/bin/rustic-bko", ht)
-        self.assertIn('"$RHOLT load /mnt/share/layout.json $*"', ht)
+        self.assertIn('"echo $HT_STARTED; $RHOLT load /mnt/share/layout.json $*"', ht)
         self.assertIn('--archiver "$RARCH"', ht)
         self.assertIn("HT_RUSTIC=$IMG_PIN/rustic-bko HT_HOLT=$IMG_PIN/bko-holt", ht)
 

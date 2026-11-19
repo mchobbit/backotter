@@ -111,6 +111,33 @@ ht_status_read() {
     done
     return 1
 }
+# ht_load_try OUT ERR CMD...: CMD, the drivers' sshk of a load stage, its
+# remote command begun with `echo $HT_STARTED;`, its stdout (that line
+# taken off) into OUT, its stderr into ERR; CMD's exit.  The slow sshd
+# ht_status_read waits out can drop the stage's own ssh as well: choubox
+# 2026-11-19, freebsd14, the restore's connection closed preauth 5 seconds
+# in, ssh's 255 with nothing on either stream and nothing restored, a FAIL
+# of the restore and of everything verified after it.  (FreeBSD's sshd has
+# UseDNS yes: each login looks 10.0.2.2 up, through QEMU's resolver to the
+# host's 8.8.8.8, and the farm's link was dropping packets that morning.)
+# An ssh that exits
+# 255 before the remote shell said HT_STARTED never ran the stage, so it is
+# tried again a few times, with a note on stderr.  Once the line is there
+# the stage ran, and its exit (255 too: the connection lost mid-stage) is
+# judged as it is.
+HT_STARTED=HT1-LOAD-STARTED
+ht_load_try() {
+    local out=$1 err=$2 i rc; shift 2
+    for i in 1 2 3; do
+        [[ $i == 1 ]] || { echo "${0##*/}: no answer starting ${out##*/} (exit $rc), try $i of 3" >&2; sleep 3; }
+        "$@" > "$out.raw" 2> "$err"; rc=$?
+        if [[ $(head -n 1 "$out.raw") == "$HT_STARTED" ]]; then
+            tail -n +2 "$out.raw" > "$out"; rm -f "$out.raw"; return $rc
+        fi
+        [[ $rc == 255 ]] || break
+    done
+    mv -f "$out.raw" "$out"; return $rc
+}
 # R is this driver's, for K: a dead run's markers of its attempt go (seeding
 # is ht_seed's, and held stays: the sweep and the queue read its PID).
 ht_mark() { mkdir -p "$R/.ht" && rm -f "$R/.ht/summed" "$R/.ht/overrun" "$R/.ht/lowfree" "$R/.ht/moved" && echo $$ >"$R/.ht/pid" && echo "$K" >"$R/.ht/k"; }

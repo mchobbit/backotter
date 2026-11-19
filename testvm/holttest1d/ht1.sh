@@ -1881,7 +1881,7 @@ fit_checks() {
 
 # One bko-holt load call in the rescuer: WANT exit, NAME, then load's args.
 load_step() { local want=$1 name=$2; shift 2
-    sshk "$rkey" "$RHOLT load /mnt/share/layout.json $*" > "$R/logs/rebuild-$name.out" 2> "$R/logs/rebuild-$name.err"
+    ht_load_try "$R/logs/rebuild-$name.out" "$R/logs/rebuild-$name.err" sshk "$rkey" "echo $HT_STARTED; $RHOLT load /mnt/share/layout.json $*"
     local got=$?
     if [[ $got == "$want" ]]; then ok "load $name (exit $got)"; return 0; fi
     bad "load $name: exit $got, want $want: $(grep -v '^$' "$R/logs/rebuild-$name.err" | tail -3 | tr '\n' ' ')"

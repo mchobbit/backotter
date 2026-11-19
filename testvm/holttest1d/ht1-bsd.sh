@@ -1133,7 +1133,7 @@ img_setup() {
 }
 
 load_step() { local want=$1 name=$2; shift 2
-    sshk "$rkey" "$RHOLT load $RH/layout.json $*" > "$R/logs/rebuild-$name.out" 2> "$R/logs/rebuild-$name.err"
+    ht_load_try "$R/logs/rebuild-$name.out" "$R/logs/rebuild-$name.err" sshk "$rkey" "echo $HT_STARTED; $RHOLT load $RH/layout.json $*"
     local got=$?
     if [[ $got == "$want" ]]; then ok "load $name (exit $got)"; return 0; fi
     bad "load $name: exit $got, want $want: $(grep -v '^$' "$R/logs/rebuild-$name.err" | tail -3 | tr '\n' ' ')"

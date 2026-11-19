@@ -464,14 +464,14 @@ fi
 size_of() { qemu-img info --output=json "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])'; }
 
 # The command goes on sh's stdin: no quoting to survive (csh is DragonFly's
-# root shell; sh is everywhere).  SSH_CTO is ssh's ConnectTimeout, which
-# covers the TCP connect, the banner and the key exchange: 5 s was too short
-# for a guest busy just after a big write (copland 2026-11-19,
-# hardenedbsd15-zfs: the source's listing, the first ssh after the 587M
-# backup, closed preauth 5 s in, ssh's silent 255, an empty src.listing, and
-# the verify's mtree against it read the whole restored tree as "extra: .").
-# vm_wait's polls keep their own TMO=8, so a guest not up yet costs no more.
-SSH_CTO=30
+# root shell; sh is everywhere).  SSH_CTO (ht1-lib.sh, 30 s) is ssh's
+# ConnectTimeout, which covers the TCP connect, the banner and the key
+# exchange: 5 s was too short for a guest busy just after a big write
+# (copland 2026-11-19, hardenedbsd15-zfs: the source's listing, the first ssh
+# after the 587M backup, closed preauth 5 s in, ssh's silent 255, an empty
+# src.listing, and the verify's mtree against it read the whole restored tree
+# as "extra: .").  vm_wait's polls keep their own TMO=8, so a guest not up yet
+# costs no more.
 sshk() { local key=$1; shift; printf 'PATH=%s; export PATH\n%s\n' "$GPATH" "$*" | timeout "${TMO:-600}" ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_CTO -o ServerAliveInterval=15 "$GUSER@127.0.0.1" "/bin/sh -s"; }
 # A script on stdin, for anything longer than a line.
 shk() { local key=$1; { printf 'PATH=%s; export PATH\n' "$GPATH"; cat; } | timeout "${TMO:-600}" ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_CTO -o ServerAliveInterval=15 "$GUSER@127.0.0.1" "/bin/sh -s"; }

@@ -428,11 +428,14 @@ cp --remove-destination "$HOLT" "$S/bko-holt"
 HT_MOUNTED=""
 ht_release() { rm -f "$R/img-key" "$R/img-key.pub"; [[ -n $HT_MOUNTED ]] && mountpoint -q "$HT_MOUNTED" && "$T/vm-umount" "$HT_MOUNTED" >/dev/null 2>&1; rmdir "$SRC_MP" "$DST_MP" 2>/dev/null; }
 
-sshk() { local key=$1; shift; timeout "${TMO:-600}" ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o ServerAliveInterval=15 root@127.0.0.1 "$@"; }
+# ConnectTimeout is SSH_CTO (ht1-lib.sh, 30 s: a rescuer's sshd busy after a
+# big write can take longer than 5 s to answer); vm_wait's polls keep their
+# own TMO=8, so a guest not up yet costs no more.
+sshk() { local key=$1; shift; timeout "${TMO:-600}" ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_CTO -o ServerAliveInterval=15 root@127.0.0.1 "$@"; }
 scpk() { local key=$1; shift; timeout 300 scp -q -i "$key" -P "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$@"; }
 # edges_read KEY CMD FILE WANT: the disks' first and last MiB (CMD, which only
-# reads) into FILE, WANT lines, one a disk.  sshk waits 5 seconds for the sshd
-# to answer, and on a loaded host a slow one answers nothing at all, so an
+# reads) into FILE, WANT lines, one a disk.  sshk waits SSH_CTO seconds for the
+# sshd to answer, and on a loaded host a slow one answers nothing at all, so an
 # empty or short capture is not a disk that changed: try again a few times.
 # (WANT or more lines: a platform that prints a warning of its own still counts).
 # 1: it still couldn't be read, which is the harness's problem, not a write.

@@ -168,10 +168,12 @@ console_qemus() {  # SOCK
     for q in $(ht_qemus "$R"); do tr '\0' ' ' 2>/dev/null <"/proc/$q/cmdline" | grep -qF "path=$1" && echo "$q"; done
     return 0
 }
-sshk() { timeout "${TMO:-600}" ssh -q -i "$rkey" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o ServerAliveInterval=15 root@127.0.0.1 "$@"; }
+# ConnectTimeout is SSH_CTO (ht1-lib.sh, 30 s); the boot poll keeps its own
+# TMO=8, so a rescuer not up yet costs no more.
+sshk() { timeout "${TMO:-600}" ssh -q -i "$rkey" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_CTO -o ServerAliveInterval=15 root@127.0.0.1 "$@"; }
 # edges_read CMD FILE WANT: the disks' first and last MiB (CMD, which only
-# reads) into FILE, WANT lines, one a disk.  sshk waits 5 seconds for the sshd
-# to answer, and on a loaded host a slow one answers nothing at all, so an
+# reads) into FILE, WANT lines, one a disk.  sshk waits SSH_CTO seconds for the
+# sshd to answer, and on a loaded host a slow one answers nothing at all, so an
 # empty or short capture is not a disk that changed: try again a few times.
 # (WANT or more lines: a platform that prints a warning of its own still counts).
 # 1: it still couldn't be read, which is the harness's problem, not a write.

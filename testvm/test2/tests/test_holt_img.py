@@ -204,10 +204,12 @@ class Driver(unittest.TestCase):
     def test_bsd_ssh_waits_out_a_slow_handshake_and_an_empty_listing_is_no_mtree(self):
         # (copland 2026-11-19, hardenedbsd15-zfs: the listing's ssh closed preauth 5 s in, an
         # empty src.listing, and mtree -f on it read the restored tree as "extra: .")
+        # SSH_CTO is ht1-lib.sh's, shared by the Linux drivers' sshk too
+        self.assertIn("\nSSH_CTO=30\n", src("ht1-lib.sh"))
+        for name, n in (("ht1-bsd.sh", 2), ("ht1.sh", 1), ("ht1-offline.sh", 1)):
+            self.assertNotIn("ConnectTimeout=5 -o ServerAliveInterval=15", src(name), name)
+            self.assertEqual(src(name).count("-o ConnectTimeout=$SSH_CTO -o ServerAliveInterval=15"), n, name)
         ht = src("ht1-bsd.sh")
-        self.assertIn("\nSSH_CTO=30\n", ht)
-        self.assertNotIn("ConnectTimeout=5 -o ServerAliveInterval=15", ht)
-        self.assertEqual(ht.count("-o ConnectTimeout=$SSH_CTO -o ServerAliveInterval=15"), 2)
         listing = ht[ht.index("# Sockets aren't backed up"):ht.index('umount_script "$R/dumps/src.json" /mnt/src')]
         self.assertIn("for li in 1 2 3; do", listing)
         self.assertIn("[[ $lrc == 255 && ! -s $R/src.listing && ! -s $R/logs/fsmeta-src.log ]] || break", listing)

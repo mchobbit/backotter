@@ -94,9 +94,17 @@ ht_gib()  { awk -v k="$1" 'BEGIN { printf "%.1f", k / 1048576 }'; }   # KiB -> G
 ht_ge()   { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 >= b + 0) }'; }   # A >= B (GiB figures: 2.5 too)
 ht_lockfile() { echo "$HT_LOCKS/$(tr / % <<<"$1").lock"; }   # K -> its run lock
 ht_kept() { local m=""; read -r m 2>/dev/null <"$1/logs/kept.txt"; echo "${m%%:*}"; }   # DIR -> pass, fail, ...
+# SSH_CTO: the drivers' sshk (and ht1-bsd.sh's shk) ConnectTimeout, which
+# covers the TCP connect, the banner and the key exchange.  5 s was too short
+# for a rescuer's sshd busy just after a big write (copland 2026-11-19,
+# hardenedbsd15-zfs: the source's listing, the first ssh after the 587M
+# backup, closed preauth 5 s in; choubox's db2512e and c541185 the same).
+# A poll for a guest that may not be up yet keeps its own short timeout
+# (vm_wait's TMO=8), so it costs no more.
+SSH_CTO=30
 # ht_status_read FILE CMD...: CMD, the drivers' sshk of `bko-holt load
 # --only status` (which only reads), into FILE.  sshk gives the rescuer's
-# sshd 5 seconds to answer, and on a loaded host a slow one answers nothing
+# sshd SSH_CTO seconds to answer (it was 5), and on a loaded host a slow one answers nothing
 # at all (choubox 2026-11-18, freebsd14: an empty
 # rebuild-status-after-boot.txt read as a FAIL of the boot stage), so a read
 # that got no answer -- ssh's 255, timeout's 124, or no output at all -- is

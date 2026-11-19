@@ -135,10 +135,10 @@ class Golden(unittest.TestCase):
         p = self.w.plan("GateTest2 plan", self.w.seed(g0))
         self.golden("gate-nothing-due", p)
         # One line, the sweep line, and a "not runnable" line per default host the p2 world
-        # has no facts for (world.HOSTS is two of the four since 2026-11-14), as a default
-        # host left out of --hosts always gets.
+        # has no facts for (world.HOSTS is two of the six since 2026-11-19), as a default
+        # host left out of --hosts always gets, three at most (render_plan's cap).
         off = [h for h in t2lib.DEFAULT_HOSTS if h not in world.HOSTS]
-        self.assertEqual(p.render().count("\n"), 2 + len(off))
+        self.assertEqual(p.render().count("\n"), 2 + min(len(off), 3))
 
 
 class Report(unittest.TestCase):

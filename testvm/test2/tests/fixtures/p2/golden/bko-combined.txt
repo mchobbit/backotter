@@ -1,5 +1,5 @@
 GateTest2 plan: round rel4 (~/backotter-work/roundrel4/bin), base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 13 of 19 layers, est. 0.0 gm, ~N wall, 1.7 GB (chopin 0.6, cinqcent 1.1)
+due: 13 of 21 layers, est. 0.0 gm, ~N wall, 1.7 GB (chopin 0.6, cinqcent 1.1)
   gate:bin:abi               chopin   new       no PASS yet  0.0 gm  tsv
   gate:bin:static            chopin   new       no PASS yet  0.0 gm  tsv
   gate:bin:version           chopin   new       no PASS yet  0.0 gm  tsv
@@ -13,7 +13,7 @@ due: 13 of 19 layers, est. 0.0 gm, ~N wall, 1.7 GB (chopin 0.6, cinqcent 1.1)
   gate:loop:sparse@chopin    chopin   new       no PASS yet  0.0 gm  tsv
   gate:loop:sparse@cinqcent  cinqcent new       no PASS yet  0.0 gm  tsv
   gate:selftest              mac      new       no PASS yet  0.0 gm  tsv
-current: 0   not runnable: gate:loop:linux@copland (copland is not in --hosts); gate:loop:linux@cage (cage is not in --hosts); gate:loop:linux@choubox (choubox is not in --hosts); gate:loop:sparse@copland (copland is not in --hosts); gate:loop:sparse@cage (cage is not in --hosts); gate:loop:sparse@choubox (choubox is not in --hosts)
+current: 0   not runnable: gate:loop:linux@copland (copland is not in --hosts); gate:loop:linux@cage (cage is not in --hosts); gate:loop:linux@czerny (czerny is not in --hosts); gate:loop:linux@choubox (choubox is not in --hosts); gate:loop:sparse@copland (copland is not in --hosts); gate:loop:sparse@cage (cage is not in --hosts); +2 more
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written
 SticTest2 plan: round rel4 (~/backotter-work/roundrel4/bin), base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z

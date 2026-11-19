@@ -5,7 +5,9 @@ which the user changed: entries run in parallel from the first version, and
 the batch divides the work across the four hosts (§4.5). Nothing built.
 Hosts: chopin, cinqcent (big), copland, cage (small), all amd64, all
 `default: true` since 2026-11-14. Bigfoot and czerny are out of scope and the
-batch refuses to name them.
+batch refuses to name them. (Later: the batch takes the table's default hosts,
+choubox among them since 2026-11-17 and czerny since 2026-11-19; it refuses
+only Bigfoot, a reserved row and a non-amd64 host.)
 
 ## 0. Goal
 

@@ -1,9 +1,10 @@
 """The per-host gate cells (gate:loop:linux@HOST, gate:loop:sparse@HOST) follow a run's
 --hosts: the default hosts' cells always (a default host --hosts leaves out keeps its
-cells, not runnable, as a pinned layer's are), and a host not joined yet (bigfoot, czerny)
+cells, not runnable, as a pinned layer's are), and a host not joined yet (bigfoot)
 gets its own only when --hosts names it, so that HostTest2 can run there before it joins.
-Five amd64 hosts are default (copland and cage since 2026-11-14, choubox since
-2026-11-17), so the universe holds a loop cell for each of the five, and `--hosts copland`
+Six amd64 hosts are default (copland and cage since 2026-11-14, choubox since
+2026-11-17, czerny since 2026-11-19), so the universe holds a loop cell for each of the six,
+and `--hosts copland`
 is now a subset of the defaults, not an addition to them."""
 
 import os
@@ -84,7 +85,7 @@ class PlannedGateHosts(unittest.TestCase):
         return self.w.plan("GateTest2 rel4 plan", self.rows if rows is None else rows, facts=fx, hosts=hosts)
 
     def test_default_universe(self):
-        """Without --hosts: the pinned layers and a loop cell per default host, all four."""
+        """Without --hosts: the pinned layers and a loop cell per default host, all six."""
         p = self.p_default
         self.assertEqual([c.cell for c in p.cells if "@" in c.cell], DEFAULT_LOOP)
         self.assertEqual(len(p.cells), len(PINNED) + len(DEFAULT_LOOP) + 1)   # + gate:selftest
@@ -93,8 +94,9 @@ class PlannedGateHosts(unittest.TestCase):
         again = self.w.plan("GateTest2 rel4 plan", self.rows)
         self.assertEqual(again.due(), [])   # the seeded rows make every cell current: no due-churn
         self.assertIn("loop:linux@copland", plan.known_names(self.w.ctx())["gate"])
-        with self.assertRaises(words.Refused):   # czerny is a host, but not a default one: no cell here
-            self.w.word("GateTest2 loop:linux@czerny plan")
+        self.assertIn("loop:linux@czerny", plan.known_names(self.w.ctx())["gate"])   # a default host since 2026-11-19
+        with self.assertRaises(words.Refused):   # bigfoot is a host, but not a default one: no cell here
+            self.w.word("GateTest2 loop:linux@bigfoot plan")
 
     def test_hosts_copland(self):
         """--hosts copland is a subset of the defaults: its cells run, the other default
@@ -110,7 +112,7 @@ class PlannedGateHosts(unittest.TestCase):
         for c in PINNED + others:
             pc = p.cell(c)
             self.assertEqual(pc.status, "not-runnable", c)
-            self.assertRegex("; ".join(pc.reasons), r"(chopin|cinqcent|cage|choubox) is not in --hosts", c)
+            self.assertRegex("; ".join(pc.reasons), r"(chopin|cinqcent|cage|czerny|choubox) is not in --hosts", c)
         # a copland row is judged as any host's: its cell is current on the next plan
         rows = [self.w.row(p.cell(c), "copland", plan_=p) for c in COPLAND_LOOP]
         q = self.plan_on(["copland"], rows)

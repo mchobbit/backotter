@@ -248,7 +248,7 @@ class Consumers(unittest.TestCase):
         r = holt.Runner.__new__(holt.Runner)
         r.hosts, r.opts = ["chopin"], {"holt_ship": "known"}
         # the default hosts first (plan.DEFAULT_HOSTS), then the other known amd64 ones
-        self.assertEqual(r.all_hosts(), ["chopin", "cinqcent", "copland", "cage", "choubox", "czerny"])
+        self.assertEqual(r.all_hosts(), ["chopin", "cinqcent", "copland", "cage", "czerny", "choubox"])
 
     def test_drive_py(self):
         drive = load("arch_drive", os.path.join(TESTVM, "stictest1", "drive.py"), {H.ENV: TABLE})

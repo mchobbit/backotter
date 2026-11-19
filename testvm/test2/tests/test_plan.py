@@ -302,8 +302,9 @@ class Scenarios(WorldCase):
 
     def test_gate_unchanged_and_changed(self):
         """The p2 world has facts for world.HOSTS only, so the loop cells of the other
-        default hosts (copland and cage since 2026-11-14) are not runnable here, as a
-        default host left out of --hosts always is."""
+        default hosts (copland and cage since 2026-11-14, czerny and choubox later) are not
+        runnable here, as a default host left out of --hosts always is; render_plan names
+        three reasons at most (the first three hosts')."""
         off = [h for h in t2lib.DEFAULT_HOSTS if h not in world.HOSTS]
         p = self.w.plan("GateTest2 plan", self.r_gate)
         self.assertEqual(p.totals["due"], 0)
@@ -312,7 +313,7 @@ class Scenarios(WorldCase):
             f"GateTest2: nothing due (13 current, {2 * len(off)} not-runnable); round rel4, base "
             + self.base[:7]
             + "".join(f"\nnot runnable: gate:loop:linux@{h}, gate:loop:sparse@{h} ({h} is not in --hosts)"
-                      for h in off)
+                      for h in off[:3])
             + "\nsweep: SweepTest2 never ran, due now")
         self.w.edit("testvm/test2/gate/loop.sh", "# changed\n")
         p = self.w.plan("GateTest2 plan", self.r_gate)

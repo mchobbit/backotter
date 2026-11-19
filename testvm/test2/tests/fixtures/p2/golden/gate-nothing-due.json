@@ -339,6 +339,30 @@
    "via": null
   },
   {
+   "cell": "gate:loop:linux@czerny",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 5.0,
+    "src": "default",
+    "wall_s": 300
+   },
+   "host": "czerny",
+   "key": null,
+   "keys": {},
+   "klass": null,
+   "last_pass": null,
+   "part": "slow",
+   "reasons": [
+    "czerny is not in --hosts"
+   ],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "not-runnable",
+   "via": null
+  },
+  {
    "cell": "gate:loop:linux@choubox",
    "differ": [],
    "est": {
@@ -469,6 +493,30 @@
    "via": null
   },
   {
+   "cell": "gate:loop:sparse@czerny",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 5.0,
+    "src": "default",
+    "wall_s": 300
+   },
+   "host": "czerny",
+   "key": null,
+   "keys": {},
+   "klass": null,
+   "last_pass": null,
+   "part": "slow",
+   "reasons": [
+    "czerny is not in --hosts"
+   ],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "not-runnable",
+   "via": null
+  },
+  {
    "cell": "gate:loop:sparse@choubox",
    "differ": [],
    "est": {
@@ -549,7 +597,7 @@
   "round": "rel4"
  },
  "totals": {
-  "cells": 19,
+  "cells": 21,
   "counts": {
    "awaiting-canaries": 0,
    "canary-verified": 0,
@@ -557,7 +605,7 @@
    "class-pending": 0,
    "current": 13,
    "due": 0,
-   "not-runnable": 6,
+   "not-runnable": 8,
    "soft-stale": 0,
    "to-class": 0
   },

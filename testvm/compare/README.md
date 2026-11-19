@@ -112,7 +112,7 @@ fs_roundtrip.py on ext4, f2fs, tmpfs, jfs, sparse-rt.sh on zfs, zfs-nocomp
 and ext4 (`LINUX_FS`, `SPARSE_FS` change them; `all`, or `ANY_HOST=1`,
 runs every one).  The host is looked up in testvm/hosts.json (`--host`, else
 `hostname -s`; an unknown host stops it): a big host has its own profile, as
-above, and a small host (Copland, Cage, Choubox; Czerny once enabled) the
+above, and a small host (Copland, Cage, Czerny, Choubox) the
 small profile.  The small hosts have host ZFS since 2026-11-14 (2.4.4,
 testvm/BACKPORTS.md), but the small profile runs no ZFS step, and their
 `vms/` is only the published guests a vm-store cache links, so they run no

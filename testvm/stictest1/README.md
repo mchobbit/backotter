@@ -82,7 +82,7 @@ testvm/HOSTS.md has every host and what stays on the big ones):
   `~/backotter-work/round22/bin/linux` (or freebsd, netbsd, openbsd, omnios,
   dragonfly, haiku).
 - `PORT` is a free SSH port in your own range: Chopin 2700-2799, Copland
-  2800-2899, Cinqcent 2900-2999, Cage 3000-3099, and Czerny 3100-3199 once enabled (the
+  2800-2899, Cinqcent 2900-2999, Cage 3000-3099, Czerny 3100-3199 and Choubox 3300-3399 (the
   host's `slot_range` in testvm/hosts.json, guest-slot.sh's `slot_range_here`).
 - `PREFIX` names your scratch: `/mnt/bko-ram/PREFIX`. Make it a plain name:
   letters, digits, `.`, `_` and `-`, starting with a letter or digit.
@@ -116,12 +116,12 @@ copies.
 `drive.py` (here, run on the Mac) runs every guest's check.sh as one round,
 from one queue for the round's hosts (`--hosts`, of testvm/hosts.json's enabled
 hosts; default its default hosts, every amd64 one: Copland and Cage joined
-2026-11-14, Choubox 2026-11-17): longest guest first, each
+2026-11-14, Choubox 2026-11-17, Czerny 2026-11-19): longest guest first, each
 started the moment a host has a place, a guest slot, the guest's --reserve room after
 cmp-run.sh's waiting line, our free ports (each host's `stic_ports`: Chopin 2780-2799,
-Cinqcent 2980-2999, Copland 2880-2899, Cage 3080-3099, Choubox 3380-3399) and Tctl at
+Cinqcent 2980-2999, Copland 2880-2899, Cage 3080-3099, Czerny 3180-3199, Choubox 3380-3399) and Tctl at
 most 90 C. A guest whose --reserve is over a host's ceiling (cmp-run.sh's
-`ceiling()`: 9.0 10.1 on Copland and Cage, 3.0 6.0 on Choubox) never starts
+`ceiling()`: 9.0 10.1 on Copland, Cage and Czerny, 3.0 6.0 on Choubox) never starts
 there; one over every host's ceiling is named TOO BIG and never starts, and
 the round ends without it.  A guest never starts on a host without its image
 (`vms/GUEST/*.qcow2`, a cache host's link included: the small hosts' caches hold

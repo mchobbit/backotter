@@ -1,5 +1,5 @@
-GateTest2: nothing due (13 current, 6 not-runnable); round rel4, base BASE
+GateTest2: nothing due (13 current, 8 not-runnable); round rel4, base BASE
 not runnable: gate:loop:linux@copland, gate:loop:sparse@copland (copland is not in --hosts)
 not runnable: gate:loop:linux@cage, gate:loop:sparse@cage (cage is not in --hosts)
-not runnable: gate:loop:linux@choubox, gate:loop:sparse@choubox (choubox is not in --hosts)
+not runnable: gate:loop:linux@czerny, gate:loop:sparse@czerny (czerny is not in --hosts)
 sweep: SweepTest2 never ran, due now

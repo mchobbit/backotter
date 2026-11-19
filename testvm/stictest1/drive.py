@@ -71,7 +71,8 @@ Options:
   --first G,G     start these before the rest (a recheck's failed guests)
   --hosts H,H     of testvm/hosts.json's: chopin, cinqcent, copland, cage,
                   czerny, choubox (default its default hosts: copland and cage
-                  since 2026-11-14, choubox since 2026-11-17, czerny not yet;
+                  since 2026-11-14, choubox since 2026-11-17, czerny since
+                  2026-11-19;
                   a guest that doesn't fit a small host is placed on the big
                   ones by itself, below)
   --slots N|H=N   checks of ours at once: N on every host, H=N on H
@@ -174,7 +175,7 @@ HOSTS = {r["name"]: dict(ssh=r["ssh"], slot_range=r["slot_range"], ports=tuple(r
 # --hosts' default, the table's default hosts (copland and cage joined
 # 2026-11-14, once HostTest2 and a representative per family had passed there,
 # design-classes.md: small hosts; choubox 2026-11-17, its trial runs waived by
-# the user; czerny, enabled 2026-11-19, is known and not default yet).  A
+# the user; czerny 2026-11-19, by the user's choice).  A
 # guest a small host can't run is kept off it by its ceiling, image and
 # binaries, never by its name (too_big, novm, prefer).
 DEFAULT_HOSTS = HOSTS_TABLE.defaults()
@@ -1647,9 +1648,9 @@ def self_test():
           f"HOSTS' slot ranges are guest-slot.sh's slot_range_here ({here_ranges})")
     check(all(int(HOSTS[h]["slot_range"].split("-")[0]) <= HOSTS[h]["ports"][0] <= HOSTS[h]["ports"][1]
               <= int(HOSTS[h]["slot_range"].split("-")[1]) for h in HOSTS), "every host's ports are in its slot range")
-    check(set(DEFAULT_HOSTS) <= set(HOSTS) and {"copland", "cage", "choubox"} <= set(DEFAULT_HOSTS)
+    check(set(DEFAULT_HOSTS) <= set(HOSTS) and {"copland", "cage", "czerny", "choubox"} <= set(DEFAULT_HOSTS)
           and all(HOSTS_TABLE.host_arch(h) == "amd64" for h in DEFAULT_HOSTS),
-          "every default host is an amd64 host of HOSTS, copland, cage and choubox among them")
+          "every default host is an amd64 host of HOSTS, copland, cage, czerny and choubox among them")
     check(HOSTS["cage"] == dict(ssh="m@cage.local", slot_range="3000-3099", ports=(3080, 3099)),
           "cage: m@cage.local, slots 3000-3099, ports 3080-3099")
     rd = readme_estimates()

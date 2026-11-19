@@ -3,7 +3,7 @@ list, range and profile derived from it equals the constants the scripts had bef
 (chopin and cinqcent the default hosts, copland and cage known), with
 bigfoot, the arm64 host, known since 2026-11-14 (an amd64-only list leaves it out),
 choubox, a small amd64 cache host, known and default since 2026-11-17, and czerny, a small
-amd64 build and cache host, known since 2026-11-19 and not default yet.
+amd64 build and cache host, known and default since 2026-11-19.
 An alternative table (BKO_HOSTS_JSON) shows that the consumers follow it: czerny reserved
 again (enabled false) drops out of every list, range and profile, and a host without the
 build role is refused."""
@@ -42,9 +42,9 @@ CZERNY_DRIVE = dict(ssh="m@czerny.local", slot_range="3100-3199", ports=(3180, 3
 CHOUBOX_DRIVE = dict(ssh="m@choubox.local", slot_range="3300-3399", ports=(3380, 3399))
 BIGFOOT_DRIVE = dict(ssh="m@bigfoot.local", slot_range="3200-3299", ports=(3280, 3299))
 KNOWN = ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox", "bigfoot")
-# The default hosts: copland and cage since 2026-11-14 and choubox since 2026-11-17
-# (czerny and bigfoot wait for HostTest2: docs/design/arm64.md A6, testvm/HOSTS.md).
-DEFAULTS = ("chopin", "cinqcent", "copland", "cage", "choubox")
+# The default hosts: copland and cage since 2026-11-14, choubox since 2026-11-17 and czerny
+# since 2026-11-19 (bigfoot waits for HostTest2: docs/design/arm64.md A6, testvm/HOSTS.md).
+DEFAULTS = ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox")
 BEFORE_GATE_FALLBACK = (("holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic", "bin:abi",
                          "bin:static", "bin:version")
                         + tuple(f"loop:{n}@{h}" for n in ("linux", "sparse") for h in DEFAULTS) + ("selftest",))
@@ -94,8 +94,8 @@ def row_of(t, name):
 
 
 def reserve_czerny(t):
-    """czerny's row back as it was before 2026-11-19: reserved, no host."""
-    row_of(t, "czerny")["enabled"] = False
+    """czerny's row back as it was before 2026-11-19: reserved, no host (and so no default one)."""
+    row_of(t, "czerny").update(enabled=False, default=False)
 
 
 class Table(unittest.TestCase):
@@ -120,13 +120,14 @@ class Table(unittest.TestCase):
         self.assertEqual(H.with_role("bigfoot-link"), ("chopin",))
         self.assertEqual(H.with_role("cache"), ("cinqcent", "copland", "cage", "czerny", "choubox"))
 
-    def test_czerny_is_a_host_but_not_default(self):
-        """Enabled 2026-11-19 with cage's roles; its default is the user's to set."""
+    def test_czerny_is_a_default_host(self):
+        """Enabled 2026-11-19 with cage's roles, and default the same day (the user's choice)."""
         r = H.row("czerny")
         self.assertEqual((r["slot_range"], r["stic_ports"], r["class"], r["roles"], r["default"], r["enabled"]),
-                         ("3100-3199", [3180, 3199], "small", ["build", "cache"], False, True))
+                         ("3100-3199", [3180, 3199], "small", ["build", "cache"], True, True))
         self.assertEqual(H.host_class("czerny"), "small")
-        self.assertNotIn("czerny", H.defaults())
+        self.assertIn("czerny", H.defaults())
+        self.assertEqual(H.limits("czerny"), H.limits("cage"))   # the small class's, no limits of its own
         with self.assertRaisesRegex(H.HostsError,
                                     r"no such host chopin2 \(known: chopin, cinqcent, copland, cage, czerny, "
                                     r"choubox, bigfoot\)"):
@@ -429,7 +430,7 @@ class FollowsTheTable(unittest.TestCase):
     def test_python_consumers(self):
         drive = load("ht_drive_alt", os.path.join(TESTVM, "stictest1", "drive.py"), self.alt.env())
         self.assertNotIn("czerny", drive.HOSTS)
-        self.assertEqual(drive.DEFAULT_HOSTS, DEFAULTS)   # czerny was no default host either way
+        self.assertEqual(drive.DEFAULT_HOSTS, tuple(h for h in DEFAULTS if h != "czerny"))
         self.assertEqual(H.known(H.load(self.alt.path)),
                          ("chopin", "cinqcent", "copland", "cage", "choubox", "bigfoot"))
         with mock.patch.dict(os.environ, self.alt.env()):

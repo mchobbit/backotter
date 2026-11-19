@@ -5,9 +5,8 @@ Cinqcent, three are small, Copland, Cage and Czerny (the M900s), and the sixth
 is Choubox, smaller still. Czerny (a MoreFine M900 like Cage: Ryzen 7 H 255,
 16 threads, 27 GiB, a 10G RAM disk, XFS root, Debian 13 on trixie-backports
 with ZFS and bcachefs) was enabled on 2026-11-19 with Cage's roles and its own
-range 3100-3199. It is not a default host yet: its HostTest2 and one
-representative per family are still to run (step 9 below), and the user decides
-when it joins the defaults.
+range 3100-3199, and joined the defaults the same day by the user's choice
+(step 10 below). It has the small class's limits, as Cage and Copland do.
 Choubox (the user's GMKtec NucBox G3 Pro: i3-10110U, 4 threads, 15.5 GiB, one
 512 GB SATA SSD) joined the table on 2026-11-17 and the defaults the same day,
 by the user's choice, before its trial runs were done. They stood so: the
@@ -43,7 +42,7 @@ Before starting heavy work by hand, check `testvm/test2/t2 batch status`: a runn
 | cinqcent | big | 2900-2999 | 2980-2999 | build, cache | yes |
 | copland | small | 2800-2899 | 2880-2899 | build, cache | yes |
 | cage | small | 3000-3099 | 3080-3099 | build, cache | yes |
-| czerny | small | 3100-3199 | 3180-3199 | build, cache | no (enabled 2026-11-19, trial runs due) |
+| czerny | small | 3100-3199 | 3180-3199 | build, cache | yes (since 2026-11-19) |
 | choubox | small (own limits) | 3300-3399 | 3380-3399 | cache | yes (since 2026-11-17) |
 | bigfoot | small, arm64 | 3200-3299 | 3280-3299 | build-arm64 | no |
 
@@ -178,12 +177,13 @@ RAM disk. Their ceiling is 9.0 10.1, measured on Copland and Cage on
 headroom; since 3b00344 cmp-run.sh floors the figure instead of rounding it).
 Ask the host: `cmp-run.sh --ceiling`. Choubox is small class too, with its own
 smaller limits and a 3.0 6.0 ceiling (above).
-Both have host ZFS since 2026-11-14 (`zpool`, 2.4.4 from trixie-backports;
+All three have host ZFS (Copland and Cage since 2026-11-14; `zpool`, 2.4.4 from trixie-backports;
 BACKPORTS.md), so `needs_host_zfs` no longer keeps cells off them; their
 ceiling still does. Their `vms/` is a set
 of links into the vm-store cache, which holds only the published guests (21
-guests are not published yet). They are default hosts since 2026-11-14: the big
-hosts queued for hours while these two idled, and what only a big host can run
+guests are not published yet). They are default hosts (Copland and Cage since
+2026-11-14, Czerny since 2026-11-19): the big
+hosts queued for hours while Copland and Cage idled, and what only a big host can run
 is kept there by each cell's ceiling and capabilities, never by a host's name.
 
 The ceiling is the most that one `cmp-run.sh --reserve` can ever get on a host.
@@ -332,7 +332,7 @@ stays out of default runs until HostTest2 passes on it
 
 Czerny was added this way on 2026-11-19: its reserved row (3100-3199, ports
 3180-3199, small) got `"enabled": true` and Cage's roles (`build`, `cache`),
-and it keeps `default: false` until its trial runs pass. For any other new
+and `default: true` later the same day, by the user's choice. For any other new
 host, add a row first:
 
 1. Choose an unused 100-port range.
@@ -413,7 +413,7 @@ other sessions' runs.
    run `stick/build-round.sh --dist-only --dist-hosts NAME ROUND`. A
    SticTest2 run refuses a ROUND that a host in use lacks.
 8. **Facts.** Run `testvm/test2/t2 SticTest2All plan --hosts
-   chopin,cinqcent,copland,cage,choubox,NAME`, and the same for `HoltTest2All` and `GateTest2`.
+   chopin,cinqcent,copland,cage,czerny,choubox,NAME`, and the same for `HoltTest2All` and `GateTest2`.
    Each plan probes the new host's facts (guests, ceiling, caps) and writes
    nothing. Its reasons show which cells it keeps off the new host and why
    (`kept off NAME: ...`). On the host, check that

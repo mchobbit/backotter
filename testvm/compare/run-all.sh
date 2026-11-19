@@ -202,8 +202,8 @@ case $prof in
     # choubox: 15.5 GiB, a 4G one; host ZFS on all since 2026-11-14 or their
     # joining, guests from the image cache): profiled like Cinqcent, each on
     # its own range, one job of a kind at a time (JOBS_CAP); default hosts
-    # (copland and cage since 2026-11-14, choubox since 2026-11-17; czerny,
-    # enabled 2026-11-19, is not default yet), choubox no build host.  Their
+    # (copland and cage since 2026-11-14, choubox since 2026-11-17, czerny
+    # since 2026-11-19), choubox no build host.  Their
     # profile's file systems overlap the big hosts' and each other's: SPLIT
     # deals a round out without overlap.
     small) all="linux sparse"

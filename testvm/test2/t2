@@ -29,8 +29,8 @@
                                          (refused unless T2_MAC_ROOT is set and isn't the default)
 
 --hosts H,H: of chopin, cinqcent, copland, cage, czerny, choubox, bigfoot (default
-chopin,cinqcent,copland,cage,choubox: copland and cage since 2026-11-14,
-choubox since 2026-11-17; czerny, known since 2026-11-19, is not default yet).  A new host
+chopin,cinqcent,copland,cage,czerny,choubox: copland and cage since 2026-11-14,
+choubox since 2026-11-17, czerny since 2026-11-19).  A new host
 joins the defaults after HostTest2 and a representative per family pass there;
 a small host (copland, cage, czerny, choubox: some cell's
 reservation is over its cmp-run.sh ceiling) after the HostTest2 layers and one representative per

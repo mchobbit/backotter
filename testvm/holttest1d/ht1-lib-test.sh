@@ -503,6 +503,7 @@ wait "$d"; rc=$?
 chk "exit 143, not $rc" same "$rc" 143
 chk ".ht/pid was the driver's" same "$pidf" "$d"
 chk "the report ends with the RESULT line, not '$(tail -n 1 "$k/report.txt")'" same "$(tail -n 1 "$k/report.txt")" "RESULT: FAIL (1; ended by SIGTERM before its RESULT, exit 143)"
+chk "a FAIL line says the signal and the phase" has "$k/report.txt" "FAIL the run was ended by SIGTERM in its rebuild phase (exit 143)"
 chk "a RAM disk line before it" hasre "$k/report.txt" '^RAM disk: peak '
 chk "kept.txt" hasre "$k/logs/kept.txt" '^fail: everything kept \(exit 143, SIGTERM\), '
 chk "K holds everything" there "$k" src-0.qcow2 share/repo/pack src-meta.json rescuer.qcow2 dst-0.qcow2 decoy.qcow2 logs/phases.tsv
@@ -540,6 +541,7 @@ chk "the harness's RESULT line last, not '$(tail -n 1 "$k/report.txt")'" eval 't
 chk "records only, not $(ls_of "$k")" same "$(ls_of "$k")" "dumps logs report.txt src-meta.json.zst "
 chk "kept.txt: overrun" hasre "$k/logs/kept.txt" '^overrun: records only, [0-9TZ:-]+; harness: over its reservation: .*; deleted share .*; zstd src-meta.json$'
 chk "it stopped in backup" lacks "$k/report.txt" "== rebuild (fake)"
+chk "a FAIL line says the harness's stop and the phase" hasre "$k/report.txt" '^FAIL harness: over its reservation: .*: the run was stopped in its backup phase$'
 chk "peaks row: FAIL" same "$(pk c13 result)" FAIL
 chk "R is gone" gone "$HT_WORK/c13"
 drive c13 verify
@@ -690,10 +692,11 @@ T1_UNBOUND=backup drive c23
 k=$HT_RECORDS/c23/fake
 chk "exit 1, not $rc" same "$rc" 1
 chk "the RESULT line last, not '$(tail -n 1 "$k/report.txt")'" same "$(tail -n 1 "$k/report.txt")" "RESULT: FAIL (1; ended before its RESULT, exit 1)"
+chk "a FAIL line says where it ended, the RESULT's one FAIL" eval 'same "$(grep -c "^FAIL " "$k/report.txt")" 1 && hasre "$k/report.txt" "^FAIL the run ended in its backup phase \(exit 1\) before its RESULT line: the driver stopped short "'
 chk "kept.txt" hasre "$k/logs/kept.txt" '^fail: everything kept \(exit 1\), '
 chk "K holds the state so far" there "$k" src-0.qcow2 share/repo/pack src-meta.json
 chk "R is gone" gone "$HT_WORK/c23"
-verdict 23 "an unbound variable ends the run: RESULT: FAIL (ended before its RESULT), everything kept" "$out"
+verdict 23 "an unbound variable ends the run: a FAIL line and RESULT: FAIL (ended before its RESULT), everything kept" "$out"
 
 T1_LEAK=1 drive c24 source backup rebuild
 k=$HT_RECORDS/c24/fake

@@ -215,6 +215,26 @@ class Driver(unittest.TestCase):
         verify = ht[ht.index('bad "mtree: not compared'):]
         self.assertLess(verify.index('bad "mtree: not compared'), verify.index('mtree -f $RH/src.mtree'))
 
+    def test_bsd_rescuer_disks_named_or_a_fail_line(self):
+        # (copland 2026-11-19, omnios58-mirror: iostat -En a serial short, RN 3 of 4, and the
+        # decoy's ${RN[D]} ended the run under set -u with no FAIL line)
+        ht = src("ht1-bsd.sh")
+        ready = ht[ht.index("\nrescuer_ready() {"):ht.index("\nrdev() {")]
+        loop = ready[ready.index("for try in $(seq 30); do"):ready.index("\n        done\n")]
+        self.assertIn("(( ${#RN[@]} >= want )) && break", loop)
+        self.assertLess(loop.index("iostat -En"), loop.index("(( ${#RN[@]} >= want )) && break"))
+        self.assertIn("return 1", ready)
+        calls = re.findall(r"^.*\brescuer_ready \$\(\(.*$", ht, re.M)
+        self.assertEqual(len(calls), 4)
+        for c in calls:
+            self.assertRegex(c, r"rescuer_ready \$\(\([^)]*\)\) \|\| \{ harness .*\$RR_WHY|if ! rescuer_ready ", c)
+        # ht_end: a run cut short says so in a FAIL line, counted in its RESULT's.
+        lib = src("ht1-lib.sh")
+        end = lib[lib.index("    if ((said == 0)); then"):]
+        end = end[:end.index("    elif [[ -n $over ]]; then")]
+        self.assertLess(end.index('say "FAIL the run ended $where'), end.index('say "RESULT: FAIL ($fails; ended'))
+        self.assertNotIn("RESULT: FAIL ($((fails + 1))", end)
+
     def test_rebuild_asserts_rather_than_installs(self):
         ht = src("ht1.sh")
         branch = ht[ht.index('if [[ $VARIANT == img ]]; then\n        # The image\'s own tools'):]

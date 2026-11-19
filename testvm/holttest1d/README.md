@@ -1040,8 +1040,12 @@ All three drivers write the same way, through `ht1-lib.sh`:
 - **What it keeps.** A pass that ran verify keeps only its records, and so
   do an overrun and a run that died (both below).  Anything else keeps
   everything: a FAIL, a pass without verify (`source backup`, say), and a
-  run that ended early or by a signal, whose report then ends `RESULT: FAIL
-  (…; ended … before its RESULT, exit N)`.  `logs/kept.txt` says which:
+  run that ended early or by a signal, whose report then ends with a FAIL
+  line that says where (`FAIL the run ended in its rebuild phase (exit 1)
+  before its RESULT line: …`, `… was ended by SIGTERM …`, `FAIL harness: …:
+  the run was stopped …`; the driver's stderr, the job's log, has bash's
+  own reason) and `RESULT: FAIL (…; ended … before its RESULT, exit N)`,
+  that FAIL counted.  `logs/kept.txt` says which:
   `pass:`, `overrun:`, `swept:` or `lost: records only …`, or `fail:
   everything kept …`.
 

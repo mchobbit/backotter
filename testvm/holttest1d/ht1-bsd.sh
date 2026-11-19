@@ -174,37 +174,52 @@ RHOLT=$RH/bko-holt RARCH=$RH/rustic-bko RREPO=$RH
 # it's up: Haiku numbers them by the controller's ports); rdev N is the Nth's
 # device, rraw N the node that reads it whole.
 RN=(); for i in 0 1 2 3 4 5 6 7; do RN+=("$DISK$i"); done
+# rescuer_ready WANT: the rescuer's disks named (RN), WANT of them.  1 when
+# they couldn't all be named, RR_WHY saying what was seen (the caller's
+# FAIL line): a short RN would end the run at its first ${RN[i]} (set -u),
+# with no FAIL line.
+RR_WHY=""
 rescuer_ready() {
+    RR_WHY=""
     # NetBSD's heartbeat(9) panics a CPU whose clock didn't move in 15 s of
     # its own ticks, as a vCPU's beside a starved one on a loaded host
     # (resc_up): off in the rescuer for the rest of its run.
     [[ $PLAT == netbsd ]] && sshk "$rkey" 'sysctl -w kern.heartbeat.max_period=0' >/dev/null 2>&1
     if [[ $PLAT == illumos ]]; then
-        # (A disk attached at boot can be late into /dev: devfsadm, and wait
-        # until diskinfo lists every one.)
-        local want=$1
-        for _ in $(seq 30); do
-            mapfile -t RN < <(sshk "$rkey" 'devfsadm -c disk >/dev/null 2>&1; diskinfo -Hp | cut -f2')
-            (( ${#RN[@]} >= want )) && break
-            sleep 2
-        done
+        # (A disk attached at boot can be late into /dev and into iostat's
+        # kstats: devfsadm, and wait until diskinfo lists every one and, by
+        # serial, each is named.  copland 2026-11-19, omnios58-mirror's
+        # rebuild rescuer, SSH up 7 s after its login prompt: diskinfo
+        # listed WANT disks, iostat -En one serial short, RN had 3 of 4 and
+        # ${RN[D]} (the decoy's) ended the run with no FAIL line.)
         # By their serials (s_resc, s_decoy): the rescuer's own, the
         # guest's disks in order, the decoy.  The rescue image (+img's
         # rebuild, bkoimg) is its own disk, and the rescuer guest's disk
         # (bkoresc, the repository's) comes after the decoy.
-        local by; by=$(sshk "$rkey" 'iostat -En' | awk '/^c[0-9]/ {d = $1} /Serial No:/ {s = $0; sub(/.*Serial No: */, "", s); sub(/ .*/, "", s); print s, d}')
-        if grep -q '^bkoresc ' <<<"$by"; then
-            local order=(bkoresc) last=() i
-            grep -q '^bkoimg ' <<<"$by" && order=(bkoimg) last=(bkoresc)
-            for ((i = 0; i < n; i++)); do order+=("bkodisk-$i"); done
-            order+=(bkodecoy "${last[@]}")
-            RN=()
-            for i in "${order[@]}"; do
-                local d; d=$(awk -v s="$i" '$1 == s {print $2}' <<<"$by")
-                [[ -n $d ]] && RN+=("$d")
-            done
-        fi
-        return 0
+        local want=$1 out dl by i d try
+        for try in $(seq 30); do
+            ((try == 1)) || sleep 2
+            out=$(sshk "$rkey" 'devfsadm -c disk >/dev/null 2>&1; diskinfo -Hp | cut -f2; echo HT1-IOSTAT; iostat -En')
+            dl=$(sed '/^HT1-IOSTAT$/,$d' <<<"$out")
+            by=$(sed '1,/^HT1-IOSTAT$/d' <<<"$out" | awk '/^c[0-9]/ {d = $1} /Serial No:/ {s = $0; sub(/.*Serial No: */, "", s); sub(/ .*/, "", s); print s, d}')
+            mapfile -t RN < <(grep . <<<"$dl")
+            if grep -q '^bkoresc ' <<<"$by"; then
+                local order=(bkoresc) last=()
+                grep -q '^bkoimg ' <<<"$by" && order=(bkoimg) last=(bkoresc)
+                for ((i = 0; i < n; i++)); do order+=("bkodisk-$i"); done
+                order+=(bkodecoy "${last[@]}")
+                RN=()
+                for i in "${order[@]}"; do
+                    d=$(awk -v s="$i" '$1 == s {print $2}' <<<"$by")
+                    [[ -n $d ]] && RN+=("$d")
+                done
+            fi
+            (( ${#RN[@]} >= want )) && break
+        done
+        { echo "rescuer_ready $want, try $try: diskinfo $(grep -c . <<<"$dl"): $(tr '\n' ' ' <<<"$dl"); serials: $(tr '\n' ',' <<<"$by"); RN: ${RN[*]}"; } >> "$R/logs/rescuer-disks.txt"
+        (( ${#RN[@]} >= want )) && return 0
+        RR_WHY="$want disks wanted, ${#RN[@]} named after $try tries (diskinfo listed $(grep -c . <<<"$dl"); serials: $(grep . <<<"$by" | tr '\n' ',' | sed 's/,$//'); logs/rescuer-disks.txt)"
+        return 1
     fi
     [[ $PLAT == haiku ]] || return 0
     # Haiku's mount_server mounts every BFS volume it finds: stopped, so the
@@ -1038,7 +1053,7 @@ phase_backup() {
     [[ -n $geli$sr ]] && ck=$gpass
     CONSOLE_KEY=$ck resc_up "$rkey" "$RESC" "$R/logs/backup-serial.log" "${rfw[@]}" --memory 3072 "${s_resc[@]}" "${all_src[@]}" ||
         { bad "rescuer boots"; vm_down "$rkey"; return; }
-    rescuer_ready $((1 + n))
+    rescuer_ready $((1 + n)) || { harness "rescuer setup (the backup's rescuer's disks: $RR_WHY)"; vm_down "$rkey"; return; }
     if [[ -n $geli$sr ]]; then
         geli_key_put "$rkey" "$geli" || { bad "the GELI or softraid passphrase into the rescuer's tmpfs $GELI_DIR${GELI_WHY:+: $GELI_WHY}"; vm_down "$rkey"; return; }
     fi
@@ -1197,7 +1212,7 @@ phase_rebuild() {
         fi
         say "note: booted the pin $IMG_PIN: $IMG_ID"
     fi
-    rescuer_ready $((n + 2 + IMG))
+    rescuer_ready $((n + 2 + IMG)) || { harness "rescuer setup (the rebuild's rescuer's disks: $RR_WHY)"; vm_down "$rkey"; return; }
     local how=""
     if ((IMG)); then
         img_setup || { bad "rescuer setup (the rescue image: the repository's disk and its own binaries: $(tail -n 1 "$R/logs/rescuer-img-setup.log"))"; vm_down "$rkey"; return; }
@@ -1337,7 +1352,7 @@ phase_rebuild() {
             TMO=20 sshk "$rkey" "shutdown -r -q" >/dev/null 2>&1
             sleep 20
             vm_wait "$rkey" || { bad "the rescuer's restart after partition"; vm_down "$rkey"; return; }
-            rescuer_ready $((n + 2 + IMG))
+            rescuer_ready $((n + 2 + IMG)) || { harness "the rescuer's restart after partition (its disks: $RR_WHY)"; vm_down "$rkey"; return; }
             if ((IMG)); then
                 # (img-boot.py started sshd again at the image's menu.)
                 img_setup || { bad "the rescuer's restart after partition (the rescue image's repository disk: $(tail -n 1 "$R/logs/rescuer-img-setup.log"))"; vm_down "$rkey"; return; }
@@ -1413,8 +1428,10 @@ phase_verify() {
     [[ -n $sr ]] && { ck=$gpass; vsnap=(--snapshot); }
     if [[ -f $RESC ]]; then
         if CONSOLE_KEY=$ck resc_up "$rkey" "$RESC" "$R/logs/verify-rescuer-serial.log" "${vsnap[@]}" "${rfw[@]}" --memory 3072 "${s_resc[@]}" "${all_dst[@]}"; then
-            rescuer_ready $((1 + n))
-            if [[ -n $geli$sr ]] && ! geli_key_put "$rkey" "$geli"; then
+            if ! rescuer_ready $((1 + n)); then
+                harness "rescuer setup (the verify's rescuer's disks: $RR_WHY)"
+                echo exit 1 > "$R/logs/verify-mount.sh"
+            elif [[ -n $geli$sr ]] && ! geli_key_put "$rkey" "$geli"; then
                 bad "the GELI or softraid passphrase into the rescuer's tmpfs $GELI_DIR${GELI_WHY:+: $GELI_WHY}"
                 echo exit 1 > "$R/logs/verify-mount.sh"
             else

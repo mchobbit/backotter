@@ -83,6 +83,7 @@ HT_LIB=$(realpath "${BASH_SOURCE[0]}")
 HT_NAME='^[A-Za-z0-9][A-Za-z0-9._-]*$'            # RUN and GV: plain names (R and K are deleted and moved)
 HT_STARTED=0 HT_MADE_R=0 HT_SUMMED=0 HT_SAMPLER="" HT_LOCKER="" HT_SIG="" HT_NOTE="" HT_SEEDED="" HT_ROTATED="" HT_SEED_NEW=0
 HT_FD1="" HT_FD2=""
+HT_WHERE=""   # the phase the run is in or after, for ht_end's FAIL line
 HT_PEAK=0 HT_PEAK_ANON=- HT_CG="" HT_T0=0 HT_P0=0 HT_PLAT=linux HT_RESERVE_ROW=""
 HT_RUSTIC_REC="" HT_RUSTIC_SRC="" HT_RUSTIC_SHA="" HT_MODE="" RESERVED=0
 HT_BULK=() HT_ZIP=()
@@ -556,12 +557,13 @@ ht_desc() {  # PID [SKIP...]
 ht_mounting() { tr '\0' ' ' 2>/dev/null <"/proc/$1/cmdline" | grep -qE '(^|/)vm-u?mount '; }   # PID: a vm-mount or vm-umount
 
 ht_phase_start() {  # P
-    HT_STARTED=1 HT_P0=$(date +%s)
+    HT_STARTED=1 HT_P0=$(date +%s) HT_WHERE="in its $1 phase"
     echo 0 >"$R/.ht/peak"; echo 0 >"$R/.ht/peak-anon"
 }
 
 ht_phase_end() {  # P: its row in logs/phases.tsv
     local p=$1 k a m=0 ma=0 t=$R/logs/phases.tsv
+    HT_WHERE="after its $p phase"
     [[ ${HT_FAIL_AT:-} == "$p" ]] && bad "HT_FAIL_AT=$p: a test hook (no check failed)"
     read -r k a < <(ht_measure)
     ht_max "$R/.ht/peak" "$k"
@@ -934,13 +936,25 @@ ht_end() {  # RC
     last=$(tail -n 1 "$R/report.txt" 2>/dev/null)
     ((HT_SUMMED)) && [[ $last == "RESULT: "* ]] && said=1
     if ((said == 0)); then
-        ((HT_SUMMED)) || ht_summary
+        # A FAIL line of its own, counted in the RESULT's: a run cut short has
+        # its reason in the report's FAILs, never PASSes only and a bare
+        # RESULT (copland 2026-11-19, omnios58-mirror: an unbound ${RN[D]} in
+        # ht1-bsd.sh's rebuild, "PASS 5, FAIL 0, no fail lines").
+        local where=${HT_WHERE:-before its first phase}
         if [[ -n $over ]]; then
-            say "RESULT: FAIL ($((fails + 1)); harness: $over; stopped before its RESULT, exit $rc)"
+            say "FAIL harness: $over: the run was stopped $where"
+        elif [[ -n $HT_SIG ]]; then
+            say "FAIL the run was ended by SIG$HT_SIG $where (exit $rc)"
         else
-            say "RESULT: FAIL ($((fails + 1)); ended ${HT_SIG:+by SIG$HT_SIG }before its RESULT, exit $rc)"
+            say "FAIL the run ended $where (exit $rc) before its RESULT line: the driver stopped short (an unbound variable, an exit of its own: its stderr, the job's log, says which)"
         fi
         fails=$((fails + 1))
+        ((HT_SUMMED)) || ht_summary
+        if [[ -n $over ]]; then
+            say "RESULT: FAIL ($fails; harness: $over; stopped before its RESULT, exit $rc)"
+        else
+            say "RESULT: FAIL ($fails; ended ${HT_SIG:+by SIG$HT_SIG }before its RESULT, exit $rc)"
+        fi
         # The exit code: 1, or a signal's 128+N (not for the sampler's own stop).
         [[ -z $HT_SIG || -n $over ]] || code=$rc
     elif [[ -n $over ]]; then

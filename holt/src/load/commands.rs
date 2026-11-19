@@ -496,11 +496,14 @@ dracut --force --kver \"${k##*/}\" ${m:+--add-drivers \"$m\"} ${a:+--add \"$a\"}
 /// non-host-only fallbacks), with dracut's resume module kept as
 /// DRACUT_EACH_KERNEL keeps it: when a restored host-only image had it, a
 /// dracut.conf.d drop-in adds it while dracut-rebuild runs, and is removed
-/// after.  (Their dracut-rebuild passes --no-hostonly-cmdline: resume= is
-/// the kernel command line's.)
+/// after, and dracut.conf.d gets back the mtime it had (a file made and
+/// removed in it changes it, and the restored tree is the source's).
+/// (Their dracut-rebuild passes --no-hostonly-cmdline: resume= is the
+/// kernel command line's.)
 pub(crate) const DRACUT_REBUILD_RESUME: &str = "c=/etc/dracut.conf.d/zz-bko-holt-resume.conf; a=; w=; for i in /boot/initramfs-*.img; do case $i in *-fallback.img) continue ;; esac; \
 if lsinitrd \"$i\" 2>/dev/null | sed -n '/^dracut modules:$/,/^=/p' | grep -qx resume; then a=1; fi; done; \
-if [ -n \"$a\" ] && [ ! -e \"$c\" ]; then printf 'add_dracutmodules+=\" resume \"\\n' > \"$c\" || exit; w=1; fi; dracut-rebuild; s=$?; [ -z \"$w\" ] || rm -f \"$c\"; exit \"$s\"";
+if [ -n \"$a\" ] && [ ! -e \"$c\" ]; then w=$(mktemp) && touch -r \"${c%/*}\" \"$w\" && printf 'add_dracutmodules+=\" resume \"\\n' > \"$c\" || exit; fi; dracut-rebuild; s=$?; \
+[ -z \"$w\" ] || { rm -f \"$c\" && touch -r \"$w\" \"${c%/*}\" && rm -f \"$w\"; } || [ \"$s\" -ne 0 ] || s=1; exit \"$s\"";
 
 /// initramfs-tools' update-initramfs, with the resume device kept.  With
 /// RESUME unset (or auto), its resume hook picks the largest swap in
@@ -509,11 +512,15 @@ if [ -n \"$a\" ] && [ ! -e \"$c\" ]; then printf 'add_dracutmodules+=\" resume \
 /// the remade image would have no resume device.  So the one a restored
 /// image had (unmkinitramfs) goes in /etc/initramfs-tools/conf.d under
 /// that name while update-initramfs runs, which copies it into each image
-/// as it was, and is removed after.
-pub(crate) const UPDATE_INITRAMFS_RESUME: &str = "c=/etc/initramfs-tools/conf.d/zz-resume-auto; r=; \
+/// as it was, and is removed after; conf.d then gets back the mtime it had,
+/// as the restored tree is the source's (in t2h-20261118T2305-edbb,
+/// mint22's and pop24's conf.d mtime differed).  A RESUME in the
+/// environment wouldn't do: what the image gets is conf.d's files.
+pub(crate) const UPDATE_INITRAMFS_RESUME: &str = "c=/etc/initramfs-tools/conf.d/zz-resume-auto; r=; w=; \
 if [ ! -e \"$c\" ] && command -v unmkinitramfs >/dev/null; then for i in /boot/initrd.img-*; do [ -f \"$i\" ] || continue; d=$(mktemp -d) || exit; \
 unmkinitramfs \"$i\" \"$d\" 2>/dev/null; r=$(cat \"$d/conf/conf.d/zz-resume-auto\" \"$d/main/conf/conf.d/zz-resume-auto\" 2>/dev/null | sed -n 's/^RESUME=//p' | head -n 1); rm -rf \"$d\"; [ -z \"$r\" ] || break; done; fi; \
-[ -z \"$r\" ] || printf 'RESUME=%s\\n' \"$r\" > \"$c\" || exit; update-initramfs -u -k all; s=$?; [ -z \"$r\" ] || rm -f \"$c\"; exit \"$s\"";
+[ -z \"$r\" ] || { w=$(mktemp) && touch -r \"${c%/*}\" \"$w\" && printf 'RESUME=%s\\n' \"$r\" > \"$c\"; } || exit; update-initramfs -u -k all; s=$?; \
+[ -z \"$w\" ] || { rm -f \"$c\" && touch -r \"$w\" \"${c%/*}\" && rm -f \"$w\"; } || [ \"$s\" -ne 0 ] || s=1; exit \"$s\"";
 
 /// `dd` writing COUNT blocks of BS zero bytes to DEV, SEEK blocks in.
 fn zero(dev: &str, bs: u64, seek: u64, count: u64) -> Cmd {
@@ -5102,6 +5109,18 @@ mod tests {
         }
     }
 
+    /// Sets DIR's mtime to a fixed old one (as a restored tree's
+    /// directories have the source's), and returns it.
+    fn age(dir: &std::path::Path) -> std::time::SystemTime {
+        let st = std::process::Command::new("touch").args(["-t", "202001020304.05"]).arg(dir).status().unwrap();
+        assert!(st.success());
+        mtime(dir)
+    }
+
+    fn mtime(p: &std::path::Path) -> std::time::SystemTime {
+        std::fs::metadata(p).unwrap().modified().unwrap()
+    }
+
     /// DRACUT_EACH_KERNEL run by sh over a fake tree ($R for the chroot's
     /// /), with a fake lsinitrd (the restored images' listings, as
     /// openSUSE's prints them) and a dracut that prints its arguments and
@@ -5195,10 +5214,16 @@ mod tests {
         let tmp = t.path().join("tmp");
         let conf = r.join("etc/dracut.conf.d/zz-bko-holt-resume.conf");
         std::fs::write(r.join("boot/initramfs-linux.img.list"), "dracut modules:\nsystemd\nresume\n=====\n").unwrap();
+        let confd = r.join("etc/dracut.conf.d");
+        let was = age(&confd);
         let o = run_script(&script, &bin, &r, &tmp, None);
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         assert_eq!(String::from_utf8_lossy(&o.stdout), "add_dracutmodules+=\" resume \"\nrebuilt\n");
         assert!(!conf.exists());
+        // dracut.conf.d's mtime is the one it had, and the reference file
+        // is gone.
+        assert_eq!(mtime(&confd), was);
+        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
         // Only the fallback had it: nothing added.
         std::fs::write(r.join("boot/initramfs-linux.img.list"), "dracut modules:\nsystemd\n=====\n-rw-r--r-- 1 root root 1 Oct 19 06:31 resume\n").unwrap();
         assert_eq!(String::from_utf8_lossy(&run_script(&script, &bin, &r, &tmp, None).stdout), "rebuilt\n");
@@ -5210,8 +5235,10 @@ mod tests {
         // dracut-rebuild's failure is the script's.
         std::fs::remove_file(&conf).unwrap();
         let failing = fakes(t.path(), &[("dracut-rebuild", "exit 4".into()), ("lsinitrd", lsinitrd)]);
+        let was = age(&confd);
         assert_eq!(run_script(&script, &failing, &r, &tmp, None).status.code(), Some(4));
         assert!(!conf.exists());
+        assert_eq!(mtime(&confd), was);
     }
 
     /// UPDATE_INITRAMFS_RESUME: the resume device a restored image's
@@ -5231,11 +5258,15 @@ mod tests {
         let script = UPDATE_INITRAMFS_RESUME.replace("/boot/", "$R/boot/").replace("c=/etc/", "c=$R/etc/");
         let tmp = t.path().join("tmp");
         let conf = r.join("etc/initramfs-tools/conf.d/zz-resume-auto");
+        let confd = r.join("etc/initramfs-tools/conf.d");
+        let was = age(&confd);
         let o = run_script(&script, &bin, &r, &tmp, None);
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         assert_eq!(String::from_utf8_lossy(&o.stdout), "update-initramfs -u -k all\nRESUME=UUID=bc000000-0000-4000-8000-000000000003\n");
         assert!(!conf.exists());
-        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0, "unmkinitramfs's directories are removed");
+        // conf.d's mtime is the one it had (t2h-20261118T2305-edbb).
+        assert_eq!(mtime(&confd), was);
+        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0, "unmkinitramfs's directories and the reference file are removed");
         // No image picked one: update-initramfs as it is.
         std::fs::remove_file(r.join("boot/initrd.img-6.12.57+deb13-amd64")).unwrap();
         assert_eq!(String::from_utf8_lossy(&run_script(&script, &bin, &r, &tmp, None).stdout), "update-initramfs -u -k all\n");
@@ -5251,8 +5282,10 @@ mod tests {
         // update-initramfs's failure is the script's, the file removed.
         touch(&r, &["boot/initrd.img-6.12.57+deb13-amd64".into()]);
         let failing = fakes(t.path(), &[("update-initramfs", "exit 5".into()), ("unmkinitramfs", unmk)]);
+        let was = age(&confd);
         assert_eq!(run_script(&script, &failing, &r, &tmp, None).status.code(), Some(5));
         assert!(!conf.exists());
+        assert_eq!(mtime(&confd), was);
     }
 
     fn built(extra: &[&str]) -> Built {

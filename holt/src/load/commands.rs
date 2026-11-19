@@ -531,6 +531,34 @@ unmkinitramfs \"$i\" \"$d\" 2>/dev/null; r=$(cat \"$d/conf/conf.d/zz-resume-auto
 [ -z \"$r\" ] || { w=$(mktemp) && touch -r \"${c%/*}\" \"$w\" && printf 'RESUME=%s\\n' \"$r\" > \"$c\"; } || exit; update-initramfs -u -k all; s=$?; \
 [ -z \"$w\" ] || { rm -f \"$c\" && touch -r \"$w\" \"${c%/*}\" && rm -f \"$w\"; } || [ \"$s\" -ne 0 ] || s=1; exit \"$s\"";
 
+/// BIOS grub-install onto a disk that may end in a NILFS2 partition: `sh -c
+/// GRUB_BIOS_NILFS2 sh DISK COMMAND...` runs COMMAND with the disk's last
+/// 4 KiB not looking like a NILFS2 superblock.  grub-bios-setup won't embed
+/// core.img in a disk where it finds a filesystem besides the partition
+/// table ("multiple partition labels", then "will not proceed with
+/// blocklists"), and GRUB's NILFS2 driver finds one on the whole disk when
+/// the last partition is NILFS2 and runs to the disk's end (an MBR disk's
+/// last partition filled to it, as zorin18's /): with no superblock at the
+/// disk's byte 1024, it takes the secondary one, at the device's last 4 KiB,
+/// which is then the partition's own.  What it reads next is the
+/// partition's blocks at the whole disk's offsets, and whether that makes a
+/// directory GRUB can list is down to what the restore wrote, so
+/// grub-install failed now and then (t2h-20261119T1959-f82c, zorin18: the
+/// first 1 MiB a clean MBR, that superblock in the disk's last 4 KiB).  The
+/// source's own grub-install is as lucky.  So the superblock's magic
+/// (0x3434, at byte 6) is cleared through the whole disk while COMMAND
+/// runs, then put back: NILFS2 reads its superblocks only at mount, and
+/// what it writes is its own copy, through the partition; the magic it
+/// writes is the same two bytes.  The disk's cache is dropped first, so the
+/// check reads the disk and not the zeros the partition stage wrote there
+/// through it (which, cached, hid the superblock from GRUB too, until the
+/// restore's reads pushed them out).
+pub(crate) const GRUB_BIOS_NILFS2: &str = "d=$1; shift; blockdev --flushbufs \"$d\" && n=$(blockdev --getsize64 \"$d\") || exit; o=$(( (n / 4096 - 1) * 4096 + 6 )); \
+m=$(dd if=\"$d\" bs=1 skip=\"$o\" count=2 status=none | od -An -tx1 | tr -d ' \\n'); [ \"$m\" = 3434 ] || exec \"$@\"; \
+put() { printf \"$1\" | dd of=\"$d\" bs=1 seek=\"$o\" count=2 conv=notrunc,fsync status=none; }; \
+echo \"$d: its last 4 KiB is a NILFS2 superblock (the last partition's, which ends at the disk's end): its magic cleared while GRUB looks at the whole disk\"; \
+put '\\000\\000' || exit; trap 'put 44; exit 1' HUP INT TERM; \"$@\"; r=$?; trap - HUP INT TERM; put 44 || r=1; exit \"$r\"";
+
 /// `dd` writing COUNT blocks of BS zero bytes to DEV, SEEK blocks in.
 fn zero(dev: &str, bs: u64, seek: u64, count: u64) -> Cmd {
     let mut a = vec!["dd".to_string(), "if=/dev/zero".into(), format!("of={dev}"), format!("bs={bs}")];
@@ -3591,7 +3619,7 @@ impl Builder<'_> {
                     self.problems.push("BIOS GRUB: no install device in debconf's grub-pc/install_devices or in any MBR".into());
                 }
                 for d in devs {
-                    out.push(Cmd::new(&["chroot", &t, self.grub_tool("install"), "--target=i386-pc", &d]));
+                    out.push(self.grub_bios_install(&t, &d));
                 }
                 self.notes.push("debconf's grub-pc/install_devices still names the source's disks; `dpkg-reconfigure grub-pc` on the restored system fixes it".into());
                 self.remake_grub_cfg(&t, &mut out);
@@ -3984,6 +4012,19 @@ impl Builder<'_> {
     /// /boot/grub, or Fedora's /boot/grub2.
     pub(crate) fn grub_dir(&self) -> &str {
         self.layout.str_at(&["boot", "grub", "dir"]).unwrap_or("/boot/grub")
+    }
+
+    /// BIOS GRUB's grub-install onto DISK, in the target T; when the layout
+    /// has NILFS2, through GRUB_BIOS_NILFS2, which makes it hide a NILFS2
+    /// superblock at the disk's end from GRUB's look at the whole disk.
+    fn grub_bios_install(&self, t: &str, disk: &str) -> Cmd {
+        let install = ["chroot", t, self.grub_tool("install"), "--target=i386-pc", disk];
+        if !self.leaves().iter().any(|(_, c)| s(c, "type").as_deref() == Some("nilfs2")) {
+            return Cmd::new(&install);
+        }
+        let mut a = vec!["sh", "-c", GRUB_BIOS_NILFS2, "sh", disk];
+        a.extend(install);
+        Cmd::new(&a).why(format!("{disk}: GRUB would take a NILFS2 partition's secondary superblock, when it's the disk's last 4 KiB, for a filesystem on the whole disk, and refuse to embed core.img; while grub-install runs, that superblock's magic is cleared, then put back"))
     }
 
     /// grub-install / grub-mkconfig, or Fedora's grub2-*.
@@ -6128,6 +6169,62 @@ mod tests {
         let bt = text(b.stage(Stage::Boot));
         assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
         assert!(b.problems.is_empty(), "{:?}", b.problems);
+    }
+
+    /// zorin18's / is NILFS2, the MBR disk's last partition, to the disk's
+    /// end: BIOS grub-install runs through GRUB_BIOS_NILFS2
+    /// (t2h-20261119T1959-f82c).  A layout without NILFS2 runs it plain.
+    #[test]
+    fn bios_grub_install_with_nilfs2_at_the_disk_end() {
+        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/zorin18/src.json")).unwrap();
+        let b = built_from(&j, &[]);
+        let c = b.stage(Stage::Boot).iter().find(|c| c.argv.iter().any(|a| a == "grub-install")).expect("no grub-install").clone();
+        assert_eq!(c.argv[..2], ["sh", "-c"]);
+        assert_eq!(c.argv[2], GRUB_BIOS_NILFS2);
+        assert_eq!(c.argv[3..], ["sh", "/dev/vdb", "chroot", "/mnt/bko-target", "grub-install", "--target=i386-pc", "/dev/vdb"]);
+        let bt = text(b.stage(Stage::Boot));
+        assert_eq!(bt.matches(" grub-install --target=").count(), 1, "{bt}");
+        assert!(bt.contains("# /dev/vdb: GRUB would take a NILFS2 partition's secondary superblock"), "{bt}");
+        assert!(!text(built(&[]).stage(Stage::Boot)).contains("GRUB would take a NILFS2"));
+    }
+
+    /// GRUB_BIOS_NILFS2 run on a file for the disk, with a blockdev that
+    /// knows files: the command sees the last 4 KiB's magic cleared, the
+    /// disk is as it was after, and the command's exit status is the
+    /// script's.  Without the magic, the disk isn't written.
+    #[test]
+    fn grub_bios_nilfs2_hides_the_superblock_while_grub_runs() {
+        let t = crate::testutil::Tree::new("grub-nilfs2");
+        t.file("/bin/blockdev", "#!/bin/sh\ncase $1 in --flushbufs) echo \"flush $2\" >> \"${2%/*}/log\" ;; --getsize64) wc -c < \"$2\" | tr -d ' ' ;; *) exit 1 ;; esac\n");
+        std::process::Command::new("chmod").arg("755").arg(t.p("/bin/blockdev")).status().unwrap();
+        let path = format!("{}:{}", t.p("/bin").display(), std::env::var("PATH").unwrap_or_default());
+        // 64 KiB and 1 KiB more: the superblock is at the last whole 4 KiB.
+        let size = 65 * 1024;
+        let at = (size / 4096 - 1) * 4096;
+        let mut sb = vec![0u8; 4096];
+        sb[..8].copy_from_slice(&[2, 0, 0, 0, 0, 0, 0x34, 0x34]);
+        sb[8..16].copy_from_slice(b"rest of ");
+        let disk = t.p("/d/disk");
+        let log = t.p("/d/log");
+        // What GRUB sees: bytes 6 and 7 of the last 4 KiB, then exit RC.
+        let grub = format!("dd if={} bs=1 skip={} count=2 status=none | od -An -tx1 | tr -d ' \\n' >> {}; echo >> {}; exit \"$1\"", disk.display(), at + 6, log.display(), log.display());
+        for (magic, rc) in [(true, 0), (true, 1), (false, 0), (false, 3)] {
+            let mut img = vec![0u8; size];
+            img[size - 1] = 0xaa;
+            if magic {
+                img[at..at + 4096].copy_from_slice(&sb);
+            } else {
+                img[at + 6..at + 8].copy_from_slice(&[0x12, 0x34]);
+            }
+            t.file("/d/disk", &img);
+            let _ = std::fs::remove_file(&log);
+            let o = std::process::Command::new("sh").args(["-c", GRUB_BIOS_NILFS2, "sh", disk.to_str().unwrap(), "sh", "-c", &grub, "grub", &rc.to_string()]).env("PATH", &path).output().unwrap();
+            assert_eq!(o.status.code(), Some(rc), "{magic} {rc}: {}", String::from_utf8_lossy(&o.stderr));
+            let seen = std::fs::read_to_string(&log).unwrap();
+            assert_eq!(seen, format!("flush {}\n{}\n", disk.display(), if magic { "0000" } else { "1234" }), "{magic} {rc}");
+            assert_eq!(std::fs::read(&disk).unwrap(), img, "{magic} {rc}: the disk changed");
+            assert_eq!(String::from_utf8_lossy(&o.stdout).contains("NILFS2 superblock"), magic, "{magic} {rc}");
+        }
     }
 
     #[test]

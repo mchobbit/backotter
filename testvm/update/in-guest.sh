@@ -759,10 +759,15 @@ Linux)
         # fails on NILFS2: no xattrs, so no file capabilities.  Its
         # snap-confine stays without them, as make-from-live.sh built it, and
         # no snaps are installed.  So dpkg finds a setcap first that lets a
-        # failure on NILFS2 pass, and snapd takes its security updates (older
-        # images held it instead).  apt runs dpkg with PATH set to DPkg::Path
-        # (default /usr/sbin:/usr/bin:/sbin:/bin), so that's where it goes;
-        # dpkg passes PATH on to the maintainer scripts.
+        # failure on snap-confine pass, and snapd takes its security updates
+        # (older images held it instead).  Only snap-confine's: other
+        # packages fall back on their own when setcap fails
+        # (libgstreamer1.0-0's gst-ptp-helper and mtr-tiny's mtr-packet to
+        # setuid), and a setcap that let any NILFS2 file pass made their
+        # postinsts skip it (zorin18, GuestTest2 t2v-20261118T2305-edbb:
+        # "Setcap worked! gst-ptp-helper is not suid!").  apt runs dpkg with
+        # PATH set to DPkg::Path (default /usr/sbin:/usr/bin:/sbin:/bin), so
+        # that's where it goes; dpkg passes PATH on to the maintainer scripts.
         bkobin=
         apt0=$apt
         if [ -n "$nilfs" ] && dpkg -s snapd >/dev/null 2>&1; then
@@ -779,16 +784,19 @@ Linux)
                 trap 'exit 1' HUP INT TERM
                 # setcap [-q] [-v] [-n ROOTID] then CAPS FILE pairs (CAPS may
                 # be - for stdin, or -r): a failure passes only when every
-                # FILE is on NILFS2.
+                # FILE is snapd's snap-confine, on NILFS2; any other keeps
+                # setcap's own exit status.
                 { echo '#!/bin/sh'; echo "real=$real"; cat <<'EOF'
 "$real" "$@" && exit 0
 s=$? files=
+sc=$(readlink -f /usr/lib/snapd/snap-confine)
 while [ $# -gt 0 ]; do
     case $1 in
     -q | -v) shift ;;
     -n) [ $# -ge 2 ] || exit $s; shift 2 ;;
     *)
-        [ $# -ge 2 ] && [ -e "$2" ] && [ "$(findmnt -no FSTYPE -T "$2" 2>/dev/null)" = nilfs2 ] || exit $s
+        [ $# -ge 2 ] && [ -e "$2" ] && [ "$(readlink -f "$2")" = "$sc" ] &&
+            [ "$(findmnt -no FSTYPE -T "$2" 2>/dev/null)" = nilfs2 ] || exit $s
         files="$files $2"; shift 2 ;;
     esac
 done
@@ -888,6 +896,22 @@ EOF
         if [ -n "$bkobin" ]; then
             rm -rf "$bkobin" || exit 1
             bkobin=; trap - EXIT HUP INT TERM
+        fi
+        # A helper whose package falls back to setuid when setcap fails (a
+        # postinst that runs setcap and chmod u+s on the same path:
+        # gst-ptp-helper, mtr-packet), on NILFS2, which holds no file
+        # capabilities: given that fallback here when it has neither.
+        # make-from-live.sh's unsquashfs -no-xattrs dropped the live image's
+        # capabilities, and the setcap above let every NILFS2 file's failure
+        # pass until 2026-11-19, so zorin18's had neither.  A path the
+        # postinst names by a variable isn't found; none on zorin18 does.
+        if [ -n "$nilfs" ]; then
+            for f in $(grep -l setcap /var/lib/dpkg/info/*.postinst 2>/dev/null |
+                xargs -r sed -n "s#.*chmod u+s \\(/[^ ;|&\"')]*\\).*#\\1#p" | sort -u); do
+                [ -f "$f" ] && [ ! -u "$f" ] && [ -z "$(getcap "$f" 2>/dev/null)" ] || continue
+                step "$f setuid, its package's fallback: NILFS2 holds no file capabilities"
+                chmod u+s "$f" || exit 1
+            done
         fi
         # Linux Mint (make-from-live.sh): the live session's casper outlived
         # the live packages' removal, and runs at every shutdown.  Purged if

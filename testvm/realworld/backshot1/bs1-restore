@@ -174,12 +174,17 @@ while read -r m _; do
 done <<<"$target_mounts"
 "${RUSTIC[@]}" diff "latest:$SNAP" /mnt/bko-target >"$ATTEMPT/diff.txt" 2>&1
 rc=$?
+# With atime too: a ZFS dataset keeps noatime (atime=off temporary) through a
+# remount,relatime, and dracut in the boot stage would write it into the
+# restored initramfs's rootflags (run ubuntu-26.10-20261119-050205).  A mount
+# with neither relatime nor noatime is strictatime (findmnt never says so).
 while read -r m opts; do
     case ,$opts, in
         *,noatime,*) a=noatime ;;
-        *,strictatime,*) a=strictatime ;;
-        *) a=relatime ;;
+        *,relatime,*) a=atime,relatime ;;
+        *) a=atime,strictatime ;;
     esac
+    case ,$opts, in *,nodiratime,*) a=$a,nodiratime ;; esac
     mount -o "remount,$a" "$(printf %b "$m")" || say "couldn't put $m back to $a"
 done <<<"$target_mounts"
 tail -n 20 "$ATTEMPT/diff.txt" | tee -a "$LOG"

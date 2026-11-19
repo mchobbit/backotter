@@ -85,6 +85,9 @@ EXPECTED = [
     # rewrites both every time it starts (chimera-20261118-040321).
     "var/syslog-ng.persist",
     "var/syslog-ng.pid",
+    # Ubuntu's snaps' ibus links, made again at every login, so with only a
+    # new mtime (ubuntu-26.10-20261119-050205).
+    "root/snap/*/.config/ibus/bus", "home/*/snap/*/.config/ibus/bus",
     # BigLinux rewrites these at every boot or Plasma login, each confirmed
     # by a plain reboot of the restored system (biglinux-20261117-145933):
     # biglinux-improve-compatibility's "ln -sf .../build /usr/src/linux"

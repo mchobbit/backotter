@@ -1221,11 +1221,15 @@ verdict 49 "the default ledger ($DEFLEDGER) gets no row of the self-test's"
 # The HT_VARIANT names: one list, in the drivers and in what sizes and queues
 # their runs.  A variant added to ht1.sh alone would be refused by the queue
 # the moment someone put it in a todo, so they are checked against each other
-# here, where no VM is needed.
-vars_of() { sed -n 's/^case \$VARIANT in ""|\([a-z|]*\)).*/\1/p' "$1" | tr '|' '\n' | sort; }
+# here, where no VM is needed.  bs2 is not the queue's: only BackShot2's
+# bs2-host runs it, with the BS2_CASE, BS2_NAME and BS2_HOST it needs.
+vars_of() { sed -n 's/^case \$VARIANT in ""|\([a-z0-9|]*\)).*/\1/p' "$1" | tr '|' '\n' | sort; }
 v1=$(vars_of "$HERE/ht1.sh")
 chk "ht1.sh names its variants in one case line" eval '[[ -n $v1 ]]'
+chk "  bs2 among them, and the queue refuses fake+bs2" eval \
+    'grep -qx bs2 <<<"$v1" && ! "$HERE/ht1-queue.sh" --order fake+bs2'
 for v in $v1; do
+    [[ $v == bs2 ]] && continue
     chk "the queue takes fake+$v (its LINE_RE, and ram-size.sh)" "$HERE/ht1-queue.sh" --order "fake+$v"
     chk "ram-size.sh sizes fake+$v" eval '[[ $("$HERE/ram-size.sh" "fake+'"$v"'") == "fake+'"$v"' "[0-9]*" "[0-9]*" "* ]]'
 done

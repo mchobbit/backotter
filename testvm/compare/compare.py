@@ -324,7 +324,17 @@ def disk_images(stem: Path, n: int) -> list[Path]:
 # --- Disks ---------------------------------------------------------------------------
 
 def free_nbd() -> str:
-    for b in sorted(Path("/sys/block").glob("nbd*"), key=lambda p: int(p.name[3:])):
+    # As vm-mount does: on a freshly booted host nothing has loaded nbd yet,
+    # and /sys/block has no nbd devices to find.
+    loaded = ""
+    if not Path("/sys/module/nbd").is_dir():
+        r = run(["modprobe", "nbd", "max_part=16"], check=False)
+        if r.returncode != 0:
+            loaded = f" (modprobe nbd failed: {(r.stderr or r.stdout).strip()[-500:]})"
+    devs = sorted(Path("/sys/block").glob("nbd*"), key=lambda p: int(p.name[3:]))
+    if not devs:
+        raise SystemExit("no nbd devices in /sys/block" + loaded)
+    for b in devs:
         if NBD_ALLOWED is not None and b.name not in NBD_ALLOWED:
             continue
         if not (b / "pid").exists():

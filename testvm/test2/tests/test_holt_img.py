@@ -201,6 +201,20 @@ class Driver(unittest.TestCase):
             self.assertIn('IMG_HARNESS="the pin changed during the run"', ht, name)
             self.assertIn("${IMG_HARNESS:+; harness: $IMG_HARNESS}", ht, name)
 
+    def test_bsd_ssh_waits_out_a_slow_handshake_and_an_empty_listing_is_no_mtree(self):
+        # (copland 2026-11-19, hardenedbsd15-zfs: the listing's ssh closed preauth 5 s in, an
+        # empty src.listing, and mtree -f on it read the restored tree as "extra: .")
+        ht = src("ht1-bsd.sh")
+        self.assertIn("\nSSH_CTO=30\n", ht)
+        self.assertNotIn("ConnectTimeout=5 -o ServerAliveInterval=15", ht)
+        self.assertEqual(ht.count("-o ConnectTimeout=$SSH_CTO -o ServerAliveInterval=15"), 2)
+        listing = ht[ht.index("# Sockets aren't backed up"):ht.index('umount_script "$R/dumps/src.json" /mnt/src')]
+        self.assertIn("for li in 1 2 3; do", listing)
+        self.assertIn("[[ $lrc == 255 && ! -s $R/src.listing && ! -s $R/logs/fsmeta-src.log ]] || break", listing)
+        self.assertIn("elif [[ ! -s $R/src.listing ]]; then", listing)
+        verify = ht[ht.index('bad "mtree: not compared'):]
+        self.assertLess(verify.index('bad "mtree: not compared'), verify.index('mtree -f $RH/src.mtree'))
+
     def test_rebuild_asserts_rather_than_installs(self):
         ht = src("ht1.sh")
         branch = ht[ht.index('if [[ $VARIANT == img ]]; then\n        # The image\'s own tools'):]

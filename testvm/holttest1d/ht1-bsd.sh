@@ -449,14 +449,21 @@ fi
 size_of() { qemu-img info --output=json "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])'; }
 
 # The command goes on sh's stdin: no quoting to survive (csh is DragonFly's
-# root shell; sh is everywhere).
-sshk() { local key=$1; shift; printf 'PATH=%s; export PATH\n%s\n' "$GPATH" "$*" | timeout "${TMO:-600}" ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o ServerAliveInterval=15 "$GUSER@127.0.0.1" "/bin/sh -s"; }
+# root shell; sh is everywhere).  SSH_CTO is ssh's ConnectTimeout, which
+# covers the TCP connect, the banner and the key exchange: 5 s was too short
+# for a guest busy just after a big write (copland 2026-11-19,
+# hardenedbsd15-zfs: the source's listing, the first ssh after the 587M
+# backup, closed preauth 5 s in, ssh's silent 255, an empty src.listing, and
+# the verify's mtree against it read the whole restored tree as "extra: .").
+# vm_wait's polls keep their own TMO=8, so a guest not up yet costs no more.
+SSH_CTO=30
+sshk() { local key=$1; shift; printf 'PATH=%s; export PATH\n%s\n' "$GPATH" "$*" | timeout "${TMO:-600}" ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_CTO -o ServerAliveInterval=15 "$GUSER@127.0.0.1" "/bin/sh -s"; }
 # A script on stdin, for anything longer than a line.
-shk() { local key=$1; { printf 'PATH=%s; export PATH\n' "$GPATH"; cat; } | timeout "${TMO:-600}" ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o ServerAliveInterval=15 "$GUSER@127.0.0.1" "/bin/sh -s"; }
+shk() { local key=$1; { printf 'PATH=%s; export PATH\n' "$GPATH"; cat; } | timeout "${TMO:-600}" ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_CTO -o ServerAliveInterval=15 "$GUSER@127.0.0.1" "/bin/sh -s"; }
 put() { local key=$1 file=$2 dest=$3; timeout 600 ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$GUSER@127.0.0.1" "cat > '$dest' && chmod 755 '$dest'" < "$file"; }
 # edges_read KEY CMD FILE WANT: the disks' first and last MiB (CMD, which only
-# reads) into FILE, WANT lines, one a disk.  sshk waits 5 seconds for the sshd
-# to answer, and on a loaded host a slow one answers nothing at all, so an
+# reads) into FILE, WANT lines, one a disk.  sshk waits SSH_CTO seconds for the
+# sshd to answer, and on a loaded host a slow one answers nothing at all, so an
 # empty or short capture is not a disk that changed: try again a few times.
 # (WANT or more lines: a platform that prints a warning of its own still counts).
 # 1: it still couldn't be read, which is the harness's problem, not a write.
@@ -1067,8 +1074,21 @@ phase_backup() {
     else
         bad "rustic-bko backup (logs/backup.log)"
     fi
-    # Sockets aren't backed up (neither archiver keeps them).
-    TMO=3600 sshk "$rkey" "$(list_tree /mnt/src)" > "$R/src.listing" 2> "$R/logs/fsmeta-src.log" || bad "the listing of the source's files"
+    # Sockets aren't backed up (neither archiver keeps them).  The listing
+    # only reads: an ssh that got no answer (255, nothing on either stream)
+    # is tried again, and an empty listing is never one (a tree has its
+    # root's line at least).
+    local lrc li
+    for li in 1 2 3; do
+        [[ $li == 1 ]] || { echo "ht1-bsd: no answer listing the source's files (exit $lrc), try $li of 3" >&2; sleep 3; }
+        TMO=3600 sshk "$rkey" "$(list_tree /mnt/src)" > "$R/src.listing" 2> "$R/logs/fsmeta-src.log"; lrc=$?
+        [[ $lrc == 255 && ! -s $R/src.listing && ! -s $R/logs/fsmeta-src.log ]] || break
+    done
+    if [[ $lrc != 0 ]]; then
+        bad "the listing of the source's files: exit $lrc$([[ -s $R/logs/fsmeta-src.log ]] && echo ": $(tail -1 "$R/logs/fsmeta-src.log")")"
+    elif [[ ! -s $R/src.listing ]]; then
+        bad "the listing of the source's files: empty (logs/fsmeta-src.log)"
+    fi
     umount_script "$R/dumps/src.json" /mnt/src | shk "$rkey" >> "$R/logs/backup-mount.log" 2>&1
     [[ -z $geli$sr ]] || geli_key_rm "$rkey"
     vm_down "$rkey"
@@ -1142,6 +1162,7 @@ load_step() { local want=$1 name=$2; shift 2
 
 phase_rebuild() {
     say "== rebuild"
+    local fails0=$fails
     [[ -f $RESC ]] || { bad "no rescuer with the backup (run the backup phase)"; return; }
     # A rescuer HT_KEEP left up from the last try.
     [[ -z $(ht_qemus "$R") ]] || vm_down "$rkey"
@@ -1348,6 +1369,11 @@ phase_rebuild() {
         fi
     fi
     sshk "$rkey" "cat /var/run/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
+    # A rebuild that failed keeps the rescuer's sshd log: the overlay it
+    # wrote goes below, and an ssh 255 (ht_load_try) is told by it --
+    # "closed preauth" (no answer in time) or a session cut off.
+    # (auth.log: FreeBSD, DragonFly; authlog: OpenBSD, NetBSD, illumos.)
+    ((fails == fails0)) || sshk "$rkey" "cat /var/log/auth.log /var/log/authlog 2>/dev/null; true" > "$R/logs/rebuild-auth.log" 2>&1
     [[ ${HT_KEEP:-} == 1 ]] && { kept_or_down; return; }
     [[ -z $geli$sr ]] || geli_key_rm "$rkey"
     vm_down "$rkey"
@@ -1402,19 +1428,26 @@ phase_verify() {
             if shk "$rkey" < "$R/logs/verify-mount.sh" > "$R/logs/verify-mount.log" 2>&1; then
                 grep '^HT1-POOL ' "$R/logs/verify-mount.log" | while read -r _ pn rest; do ok "the restored pool $pn imported from all its disks ($rest)"; done
                 grep '^HT1-SR ' "$R/logs/verify-mount.log" | while read -r _ vn rest; do ok "the restored softraid volume $vn attached with the passphrase load gave it ($rest)"; done
-                if [[ $PLAT == haiku || $PLAT == illumos ]]; then
-                    TMO=3600 sshk "$rkey" "$(list_tree /mnt/dst)" > "$R/dst.listing" 2>/dev/null
-                    diff "$R/src.listing" "$R/dst.listing" | sed -n 's/^< /missing: /p; s/^> /extra: /p' > "$R/logs/fsmeta-compare.txt"
+                if [[ ! -s $R/src.listing ]]; then
+                    # No listing of the source to compare with (the backup's FAIL
+                    # says why): mtree -f on an empty spec reads the whole
+                    # restored tree as one "extra: .".
+                    bad "mtree: not compared: no listing of the source's files (the backup's)"
                 else
-                    put "$rkey" "$R/src.listing" $RH/src.mtree
-                    TMO=3600 sshk "$rkey" "cd /mnt/dst && mtree -f $RH/src.mtree -p /mnt/dst" > "$R/logs/fsmeta-compare.txt" 2>&1
-                fi
-                local diffs; diffs=$(grep -vE "$BOOT_STAGE_RE" "$R/logs/fsmeta-compare.txt" | grep -vE "$boot_re" | grep -vE "$KNOWN_RE" | grep -vE '^[[:space:]]' | grep -c .)
-                local known; known=$(grep -cE "$KNOWN_RE" "$R/logs/fsmeta-compare.txt")
-                if [[ $diffs == 0 ]]; then
-                    ok "mtree: the files agree but for the boot stage's ($(grep -c . "$R/logs/fsmeta-compare.txt") lines of it)$([[ $known -gt 0 ]] && echo "; known archiver limit: the volume root's mtime ($known lines)")"
-                else
-                    bad "mtree: $diffs differences: $(grep -vE "$BOOT_STAGE_RE" "$R/logs/fsmeta-compare.txt" | grep -vE "$boot_re" | grep -vE "$KNOWN_RE" | grep -vE '^[[:space:]]' | head -5 | tr '\n' ' ')"
+                    if [[ $PLAT == haiku || $PLAT == illumos ]]; then
+                        TMO=3600 sshk "$rkey" "$(list_tree /mnt/dst)" > "$R/dst.listing" 2>/dev/null
+                        diff "$R/src.listing" "$R/dst.listing" | sed -n 's/^< /missing: /p; s/^> /extra: /p' > "$R/logs/fsmeta-compare.txt"
+                    else
+                        put "$rkey" "$R/src.listing" $RH/src.mtree
+                        TMO=3600 sshk "$rkey" "cd /mnt/dst && mtree -f $RH/src.mtree -p /mnt/dst" > "$R/logs/fsmeta-compare.txt" 2>&1
+                    fi
+                    local diffs; diffs=$(grep -vE "$BOOT_STAGE_RE" "$R/logs/fsmeta-compare.txt" | grep -vE "$boot_re" | grep -vE "$KNOWN_RE" | grep -vE '^[[:space:]]' | grep -c .)
+                    local known; known=$(grep -cE "$KNOWN_RE" "$R/logs/fsmeta-compare.txt")
+                    if [[ $diffs == 0 ]]; then
+                        ok "mtree: the files agree but for the boot stage's ($(grep -c . "$R/logs/fsmeta-compare.txt") lines of it)$([[ $known -gt 0 ]] && echo "; known archiver limit: the volume root's mtime ($known lines)")"
+                    else
+                        bad "mtree: $diffs differences: $(grep -vE "$BOOT_STAGE_RE" "$R/logs/fsmeta-compare.txt" | grep -vE "$boot_re" | grep -vE "$KNOWN_RE" | grep -vE '^[[:space:]]' | head -5 | tr '\n' ' ')"
+                    fi
                 fi
             else
                 bad "mount the restored disk in the rescuer (logs/verify-mount.log)"

@@ -895,6 +895,46 @@ class Reruns(unittest.TestCase):
         self.assertEqual([c["d"] for c in jobs.calls], [1.0, 2.0, 4.0])
         self.assertEqual(rs.stops.fed, [])
 
+    def test_rerun_d_is_twice_the_overruns_peak_when_that_is_more(self):
+        gib = 1048576
+        # pop24, t2v-20261118T2305-edbb: D 1.3 stopped at 2.44 GiB; 2 x D = 2.6 peaked at 3.57 of its 3.6 limit
+        self.assertEqual(guest.rerun_d(1.3, 2554312, 16.0), 4.9)
+        # manjaro, t2v-20261118T0027-d7c8: 1.0 (2.43) -> 2.0 (3.31) -> 4.0 for 3.87; now one rerun
+        self.assertEqual(guest.rerun_d(1.0, int(2.43 * gib), 16.0), 4.9)
+        self.assertEqual(guest.rerun_d(5.0, int(6.03 * gib), 16.0), 12.1)
+        self.assertEqual(guest.rerun_d(5.0, int(4.0 * gib), 16.0), 10.0)       # 2 x D, the larger
+        self.assertEqual(guest.rerun_d(8.0, None, 16.0), 16.0)                  # no peak known: 2 x D
+        self.assertEqual(guest.rerun_d(4.0, int(9.35 * gib), 16.0), 16.0)       # never over the cap
+
+    def test_an_overruns_rerun_goes_where_it_fits(self):
+        # pop24's rerun at 4.9 can never fit choubox's 3.0 ceiling: cmp-run.sh would refuse it there
+        io, jobs = FakeIO(), FakeJobs()
+        io.summ["debian12"] = lambda a: summary("HARNESS", "harness", overrun=True, peak=2554312) if a == 1 else summary()
+        r, rs, ctx, _ = make(["debian12"], io, jobs, hosts=("choubox", "cinqcent"))
+        ctx.facts = {"choubox": {"guests": {}, "preflight": {"ram": {"ceiling": [3.0, 9.0]}}},
+                     "cinqcent": {"guests": {}, "preflight": {"ram": {"ceiling": [28.0, 40.0]}}}}
+        with mock.patch.object(guest, "reserve_for", lambda *a, **k: (1.3, 3)):
+            r.run_items = None
+            r.pending.append(r.item_of(r.plan.cells[0]))
+            r.state["identity_done"] = True
+            r.drive()
+        self.assertEqual([c["d"] for c in jobs.calls], [1.3, 4.9])
+        self.assertEqual(jobs.calls[1]["host"], "cinqcent")
+        self.assertEqual(guest.fitting_hosts(["choubox", "cinqcent", "x"], (4.9, 3), ctx.facts), ["cinqcent", "x"])   # x: no ceiling known
+
+    def test_an_overrun_no_host_fits_reruns_at_the_largest_ceiling(self):
+        io, jobs = FakeIO(), FakeJobs()
+        io.summ["debian12"] = lambda a: summary("HARNESS", "harness", overrun=True, peak=6 * 1048576) if a == 1 else summary()
+        r, rs, ctx, _ = make(["debian12"], io, jobs, hosts=("choubox", "copland"))
+        ctx.facts = {"choubox": {"guests": {}, "preflight": {"ram": {"ceiling": [3.0, 9.0]}}},
+                     "copland": {"guests": {}, "preflight": {"ram": {"ceiling": [9.0, 18.0]}}}}
+        with mock.patch.object(guest, "reserve_for", lambda *a, **k: (2.5, 3)):
+            r.run_items = None
+            r.pending.append(r.item_of(r.plan.cells[0]))
+            r.state["identity_done"] = True
+            r.drive()
+        self.assertEqual([(c["d"], c["host"]) for c in jobs.calls][1], (9.0, "copland"))   # not 12, which no host takes
+
     def test_a_console_guests_fail_doesnt_rerun(self):
         io, jobs = FakeIO(), FakeJobs()
         io.summ["redox"] = summary("FAIL", "fail", needs={"new:probe": "FAIL"})

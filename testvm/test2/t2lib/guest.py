@@ -11,7 +11,7 @@ A pool per host on the Mac, one shared list, longest estimated wall first; each 
 under cmp-run.sh --reserve D M, WEAR_TAG=guest:RUN:G.  The pool's rules: at most 3 jobs a host (2 in an
 update round), none started while one of that host's is still in cmp-run.sh's line, and jobs of D >=
 big_gib one at a time, and none on a host the swap rule holds (run.py's HostHolds: the job waits for
-another host it may run on, or for the hold to end).  An overrun below the cap reruns at 2 x D and feeds no stop rule.  A FAIL that
+another host it may run on, or for the hold to end).  An overrun below the cap reruns at rerun_d (2 x D or 2 x its peak) on a host that fits it, and feeds no stop rule.  A FAIL that
 isn't to_class_only reruns once (try and probe), never in an update.  MAC_ROOT/runs/RUN/guest.json
 records what started and what ended: resume adopts an attempt that was started (hostjob.reattach_job)
 and starts another only once that one is proven gone with no row, never in an update round.
@@ -27,6 +27,7 @@ import subprocess
 import threading
 import time
 
+from . import facts as factsmod
 from . import guest_judge as J
 from . import DEFAULT_HOSTS, hostjob, hostrun, mac_root, rows_guest, tool_guest, utc_now
 
@@ -138,6 +139,26 @@ def reserve_for(rows, cell, entry, policy, update=False):
         d = max(d, min(float(UPDATE_MIN_D), cap))
     mem = int(entry.get("memory") or 2048)
     return d, int(math.ceil(mem / 1024.0)) + 1
+
+
+def rerun_d(d, peak_kib, cap):
+    """An overrun's rerun D: 2 x D, or twice what the overrun had reached when it was stopped (its
+    peak, a floor: the update was still writing), whichever is larger, never over CAP.  The
+    watcher stops a job just past D + max(1, D/10), so at a small D 2 x D is about the peak itself,
+    and an update over twice its D overran again: manjaro's 1.0 -> 2.0 -> 4.0 for 3.87 GiB, and
+    pop24's 1.3 (stopped at 2.44 GiB) rerun at 2.6 peaked at 3.57 of its 3.6 limit, Pop!_OS's
+    kernel build with Firefox and COSMIC (t2v-20261118T0027-d7c8, t2v-20261118T2305-edbb)."""
+    nd = round(d * 2, 1)
+    if isinstance(peak_kib, (int, float)) and peak_kib > 0:
+        nd = max(nd, round(2 * peak_kib / 1048576, 1))
+    return min(cap, nd)
+
+
+def fitting_hosts(hosts, need, facts):
+    """HOSTS whose ceiling (facts.ceiling: the most one cmp-run.sh --reserve can ever get there)
+    NEED (D, M) fits; a host whose facts give none counts as fitting.  An overrun's rerun is
+    larger than the plan placed: on a host it can never fit, cmp-run.sh refuses it at once."""
+    return [h for h in hosts if not factsmod.over_ceiling(need, factsmod.ceiling((facts or {}).get(h)))]
 
 
 # --- the identity step --------------------------------------------------------------------------
@@ -1072,7 +1093,13 @@ class Runner:
         self.log(f"{it.cell} on {host}: attempt {it.attempt} {v}" + (f": {(summ.get('fails') or [''])[0]}" if summ.get("fails") else ""))
         # an overrun below the cap: again, larger; it feeds no stop rule
         if not self.update and summ.get("overrun") and it.d < self.cap and it.attempt < MAX_ATTEMPTS and not still:
-            it.d = min(self.cap, round(it.d * 2, 1))
+            d = rerun_d(it.d, summ.get("peak"), self.cap)
+            fit = fitting_hosts(it.allowed, (d, it.m), getattr(self.ctx, "facts", None))
+            if not fit:   # none takes that much: the most the largest host takes, if more than before
+                ceils = [c[0] for c in (factsmod.ceiling((self.ctx.facts or {}).get(h)) for h in it.allowed) if c and c[1] >= it.m]
+                d = max([c for c in ceils if c > it.d], default=d)
+                fit = fitting_hosts(it.allowed, (d, it.m), self.ctx.facts) or it.allowed
+            it.d, it.allowed = d, fit
             it.attempt += 1
             it.prev_verdict = "FAIL" if it.prev_verdict == "FAIL" else "HARNESS"   # a FAIL before it still counts
             self.log(f"{it.cell}: overrun: attempt {it.attempt} with D {it.d:g}")

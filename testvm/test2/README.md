@@ -305,8 +305,9 @@ the final plan has a valid PASS or a derived row.
 
 A runner gets `ctx.run`, a `RunState`: `run`, `word`, `family`, `mac_dir`,
 `host_root`, `hosts`, `copy` (per host: id, path, commit, dirty), `stops` (the stop
-rules: `feed(result)`, `feed_host(host, swap_out_bytes, ours_bytes, allowed)`, `may_start(os)`,
-`held()` the hosts the swap rule holds, `hold_notes()`),
+rules: `feed(result)`, `feed_host(host, swap_out_bytes, ours_bytes, allowed)`, `feed_seen(host, seen)`,
+`may_start(os)`, `held()` the hosts the swap rule or the host rule holds, `hold_notes()`, `host_notes()`,
+`host_lost(host, start, end)`, `rebooted(host, since)`),
 `flakes`, `limits`, `write_cells(plan, attempt, name, reruns)` (cells.json or
 cells-r2.json on every host, atomically, with each host's planned keys),
 `replan(facts, rows)` (after a build or the fast holt gate: the plan again, with the
@@ -364,6 +365,32 @@ composite's families share the holds; each report lists them as `swap rule:` not
 hold is no stop (a run whose cells all ran elsewhere passes).  Defaults, overridable in
 classes.json policy.stop: `swap_out_gib` 1, `swap_window_min` 10, `swap_clear_gib` 0.25,
 `swap_hold_min` 15, `swap_hold_max_min` 120.
+The host rule is per host too (run.py's `HostWatch`, since 2026-11-19: SweepTest2 #4's chopin was
+powered off for maintenance at 15:30Z, and the two HARNESS and four LOST results of its jobs made
+the run-wide harness count stop SticTest2, GuestTest2 and HoltTest2 on the four hosts that were
+fine, so GateTest2All never ran).  Every look at a host (hostjob.host_checks' one ssh a host and
+poll: GuestTest2, ImgTest2; SticTest2's host read; HoltTest2's `Remote.seen`) says whether it
+answered, its boot id and its uptime.  A host that hasn't answered for a minute, or answers with
+another boot id, is held as the swap rule holds one (the same `held()`, `--hold-file`, `max-HOST`
+and pool rules; drive.py doesn't wait for a held host it never read), until it has answered for
+5 min in a row and been up that long; a hold of 2 h is run-wide.  A HARNESS or LOST result is
+host-lost when its host is held, was away (from its last answer before the hold to its first
+after) while the job ran, or booted after the job began (its uptime: a host back before any look
+saw it gone counts too), or when host_job got no answer from it in 20 polls: no stop rule counts
+it (not the run-wide harness count, nor a slow gate's stop-starts), the report lists it as a
+`host rule:` note, and it is requeued once: GuestTest2 at once, to a host it may run on (never
+beside a job that may still run: with no answer and no reboot since, another host only;
+never a second real update); SticTest2 and HoltTest2 in their r2 round (`rerun_why`
+`host-lost` in cells-r2.json: a pass then is a PASS, not a FLAKY-FAIL); a gate layer as its
+attempt 2 once its host is back; and HoltTest2 starts its queue's runner again, once, on a host
+that rebooted under it when it is back and the todo still has lines.  A job TERMed by its host's
+shutdown writes its row before the host stops answering (holt:vanilla3's LOST, exit 143, at
+15:30:21Z): so a HARNESS or LOST result on a host the rule has looked at waits until the host is
+seen answering 2 min after the result's end (at most 15 min; the run's end counts what still
+waits), and is host-lost if the host goes away first; GuestTest2's attempt waits the same way
+before it is rerun or ends.  A real harness result on a host that stayed up counts as before, that
+much later.  Defaults, overridable in classes.json policy.stop: `host_away_s` 60,
+`host_settle_min` 5, `host_hold_max_min` 120, `host_confirm_s` 120, `host_confirm_max_min` 15.
 GuestTest2's network rule (guest.py's `NetHold`, since 2026-11-19; t2v-20261119T0157-c8c7's
 internet ran at 5 to 100 KiB/s for hours, and ten try jobs each downloaded for the whole
 5400 s): every 5 min while a job that downloads (try, update, console-update) waits, the

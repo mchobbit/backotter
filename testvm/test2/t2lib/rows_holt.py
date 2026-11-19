@@ -25,7 +25,8 @@ Verdicts and classes (for the stop rules):
     FLAKY-FAIL, fail   the same on attempt 2 (the rerun after a FAIL)
     PASS, known-flake  the same on attempt 2 when T2_CELLS marks the first's FAILs a known flake
     PASS, pass         the same on attempt 2 when T2_CELLS says attempt 1 made its one-time
-                       rescuer (rerun_why rescuer-made: a PASS that couldn't count, not a FAIL)
+                       rescuer (rerun_why rescuer-made: a PASS that couldn't count, not a FAIL),
+                       or that its host went away under attempt 1 (rerun_why host-lost: run.HostWatch)
     FAIL, fail         a check failed
     HARNESS, harness   refused (exit 2), stopped over its reservation before its RESULT line, no RESULT line
     LOST, lost         swept (the run died), ended by a signal, its records not copied to K
@@ -295,6 +296,8 @@ def classify(rep, kept, rc, code, attempt=1, flake=False, refused=False, lost=Fa
         if attempt >= 2:
             if rerun_why == "rescuer-made":
                 return "PASS", "pass", "; ".join(x for x in ("attempt 1 made the one-time rescuer", late) if x)
+            if rerun_why == "host-lost":
+                return "PASS", "pass", "; ".join(x for x in ("attempt 1's host went away under it (host lost)", late) if x)
             if flake:
                 return "PASS", "known-flake", "; ".join(x for x in ("attempt 2 passed; attempt 1's FAILs are a known flake", late) if x)
             return "FLAKY-FAIL", "fail", "; ".join(x for x in ("attempt 2 passed after attempt 1 failed", late) if x)

@@ -149,6 +149,13 @@ class Guards(runmod.RunGuards):
         self._changed(urgent=bool(why))
         return why
 
+    def feed_seen(self, host, seen):
+        # (the host rule's hold that lasted trips the guards as the swap rule's does: saved at once)
+        why = super().feed_seen(host, seen)
+        if why:
+            self._changed()
+        return why
+
     def forget(self, family):
         """Take FAMILY's share off the harness count (its runner counts its rows again)."""
         with self._mu:

@@ -599,9 +599,12 @@ class Runner:
         return rid[0]
 
     # --- the stop rules --------------------------------------------------------------------------------
-    def feed(self, pc, plat, host, verdict, needs, flake):
+    def feed(self, pc, plat, host, verdict, needs, flake, start=None, why=None):
         res = {"cell": pc.cell, "family": "img", "part": None, "verdict": verdict, "class": CLASS.get(verdict),
-               "needs": needs, "os": plat, "host": host, "flake": flake}
+               "needs": needs, "os": plat, "host": host, "flake": flake, "start": start}
+        if verdict in ("HARNESS", "LOST") and start is not None:   # its host went away under it: no stop counts it
+            res["host_lost"] = hostjob.host_lost(self.rs.stops, host, start, utc_now(),
+                                                 seen=lambda h: hostjob.host_seen(self.io, h), text=why)
         try:
             what = self.rs.stops.feed(res)
         except Exception:   # noqa: BLE001 - a stop engine that fails stops nothing
@@ -662,7 +665,7 @@ class Runner:
                       wall_s=st.get("wall_s", 0) + o.wall_s, boot_wall_s=int(o.wall_s), boot_waits_s=int(o.waits_s),
                       flake=bool(flake), key=m.get("key"))
             self.state.save()
-            self.feed(pc, plat, host, o.verdict, o.needs, bool(flake))
+            self.feed(pc, plat, host, o.verdict, o.needs, bool(flake), start=start, why=" ".join(map(str, o.fails or [])))
             self.log(f"{pc.cell} on {host}: attempt {attempt} {o.verdict}" + (f": {o.fails[0]}" if o.fails else ""))
             last_o = o
             if o.verdict != "FAIL" or o.still_running or attempt == 2 or not self.may_start(plat):

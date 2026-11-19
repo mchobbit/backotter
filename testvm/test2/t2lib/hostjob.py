@@ -11,8 +11,16 @@
     Env(rs, host_root, io=None, log=None)
                         what host_job needs, for a runner with no RunEnv of its own
     host_checks(env, rs, tag_prefix, t0)
-                        per host: swap-out since the first check, and the bytes this run's
-                        wear tags wrote (and kept, keep=), into rs.stops.feed_host (and so RunGuards)
+                        per host: a look (host_state: did it answer, its boot id and uptime)
+                        into rs.stops.feed_seen (the host rule, run.HostWatch), swap-out since
+                        the first check, and the bytes this run's wear tags wrote (and kept,
+                        keep=), into rs.stops.feed_host (and so RunGuards)
+    host_seen(io, host), host_state(io, host)
+                        a look at HOST: None (no answer) or {boot, up_s}; with its pswpout
+    host_lost(stops, host, start, end, seen=None, text=None)
+                        why a harness-class result on HOST is the host's going away, or None
+    wait_back(stops, host, seen, sleep, max_s, log=None, cancelled=None)
+                        until the host rule no longer holds HOST
     guards_of(rs)       the composite's RunGuards, or None
 
 host_job's env is anything with .host_root, .attempt_run(a), .copy_path(host), .io, .rs (a
@@ -501,6 +509,110 @@ print(total, kept)
 '''
 
 
+# A look at a host for the host rule (run.HostWatch): it answered (the ssh ran: this always
+# exits 0), its boot id and its uptime; and its pswpout for the swap rule, in the same ssh.
+STATE_CMD = ("printf 'pswpout '; awk '$1 == \"pswpout\" { print $2 }' /proc/vmstat 2>/dev/null; echo; "
+             "printf 'boot '; cat /proc/sys/kernel/random/boot_id 2>/dev/null; echo; "
+             "printf 'up '; cut -d' ' -f1 /proc/uptime 2>/dev/null; echo; exit 0")
+NO_ANSWER_RX = re.compile(r"\bno answer from (\S+) in \d+ polls")
+
+
+def parse_state(text):
+    """STATE_CMD's output -> ({boot, up_s}, pswpout bytes or None).  An answer without its
+    lines (a fake host, a host with no /proc) is still an answer: boot and up_s None."""
+    seen, sw, first = {"boot": None, "up_s": None}, None, None
+    for line in str(text or "").splitlines():
+        k, _, v = line.strip().partition(" ")
+        v = v.strip()
+        if first is None and line.strip():
+            first = line.strip()
+        if k == "pswpout" and v.isdigit():
+            sw = int(v) * 4096
+        elif k == "boot" and re.fullmatch(r"[0-9a-fA-F-]{8,64}", v):
+            seen["boot"] = v
+        elif k == "up":
+            try:
+                seen["up_s"] = float(v)
+            except ValueError:
+                pass
+    if sw is None and first and first.isdigit():   # a bare pswpout (pswpout()'s own form)
+        sw = int(first) * 4096
+    return seen, sw
+
+
+def host_state(io, host):
+    """(seen, pswpout bytes): SEEN None when HOST didn't answer (the ssh failed or timed out),
+    else {boot, up_s} (run.HostWatch.feed's); the bytes swapped out since its boot, or None."""
+    try:
+        rc, out, _ = io.sh(host, STATE_CMD, timeout=30)
+    except Exception:   # noqa: BLE001 - an ssh that can't be made is no answer
+        return None, None
+    if rc != 0:
+        return None, None
+    return parse_state(out)
+
+
+def host_seen(io, host):
+    """host_state's look alone."""
+    return host_state(io, host)[0]
+
+
+def feed_seen(stops, host, seen):
+    """SEEN into STOPS' host rule (an engine without one: "ok")."""
+    fn = getattr(stops, "feed_seen", None)
+    if fn is None:
+        return "ok"
+    try:
+        return fn(host, seen) or "ok"
+    except Exception:   # noqa: BLE001 - a look that can't be fed stops nothing
+        return "ok"
+
+
+def host_lost(stops, host, start=None, end=None, seen=None, text=None):
+    """Why a harness-class result of a job on HOST from START to END (epoch or UTC times) is the
+    host's going away, not the harness's (run.HostWatch.lost), or None.  TEXT (the result's
+    why) saying host_job got no answer from HOST is that by itself.  When the host rule knows
+    of nothing, SEEN(host) (a look: host_seen) is asked once and fed to it first, so a host
+    that rebooted before any look saw it gone still counts (its uptime)."""
+    fn = getattr(stops, "host_lost", None)
+    if fn is None or not host:
+        return None
+    m = NO_ANSWER_RX.search(str(text or ""))
+    try:
+        why = fn(host, start, end)
+        if why:
+            return why
+        if m and m.group(1) == host:
+            return m.group(0)
+        if seen is None:
+            return None
+        feed_seen(stops, host, seen(host))
+        return fn(host, start, end)
+    except Exception:   # noqa: BLE001 - a rule that can't be asked: the result counts as it would
+        return None
+
+
+def wait_back(stops, host, seen, sleep, max_s, log=None, cancelled=None, poll=POLL_S, clock=None):
+    """Until the host rule no longer holds HOST (each poll a look, SEEN(host), fed to it), at most
+    MAX_S seconds by CLOCK (time.time), or until CANCELLED() (a run-wide stop): True once HOST is back."""
+    clock = clock or time.time
+    t0, said = clock(), False
+    while True:
+        feed_seen(stops, host, seen(host))
+        try:
+            held = (getattr(stops, "held", None) or dict)() or {}
+        except Exception:   # noqa: BLE001
+            held = {}
+        if host not in held:
+            return True
+        if not said and log is not None:
+            log(f"{host}: waiting for the host rule's hold to end ({held[host]})")
+            said = True
+        if clock() - t0 > max_s or (cancelled is not None and cancelled()):
+            return False
+        sleep(poll)
+
+
 def pswpout(io, host):
     """Bytes swapped out on HOST since its boot, or None."""
     rc, out, _ = io.sh(host, "awk '$1 == \"pswpout\" { print $2 }' /proc/vmstat", timeout=30)
@@ -559,7 +671,12 @@ def host_checks(env, rs, tag_prefix, t0):
         swap0 = env.swap0 = {}
     hosts = getattr(env, "hosts", None) or getattr(rs, "hosts", None) or []
     for h in hosts:
-        sw = pswpout(env.io, h)
+        seen, sw = host_state(env.io, h)
+        what = feed_seen(rs.stops, h, seen)   # the host rule (run.HostWatch): no answer, a reboot
+        if what and what != "ok":
+            said.append(what)
+        if seen is None:   # no answer: nothing more to read there this time
+            continue
         if sw is not None and h not in swap0:
             swap0[h] = sw
         ours, kept = tag_bytes_kept(env.io, h, tag_prefix, t0 - 60)

@@ -48,6 +48,8 @@ Verdicts and classes (the stop rules count the classes):
                         (net_stall) has extra.net_stall: SticTest2's own stop
     LOST, harness       no exit file (drive.py: --lost)
     FLAKY-FAIL, fail    a PASS on attempt 2 (the rerun after a FAIL)
+    PASS, pass          the same when cells.json's rerun_why is host-lost (attempt 1
+                        was HARNESS or LOST because its host went away: run.HostWatch)
     PASS, known-flake   the same when cells.json marks attempt 1's FAILs a
                         known flake (flakes.json)
 gm = (wall - waits) / 60, wall from run.out.start to .end.
@@ -140,11 +142,13 @@ def known_flake(flakes, guest, fail_lines, run_out=""):
     return None
 
 
-def judge(lines, exit_code, lost=False, limits_classed=None, attempt=1, flake=None, prev_needs=None):
+def judge(lines, exit_code, lost=False, limits_classed=None, attempt=1, flake=None, prev_needs=None, rerun_why=None):
     """(verdict, class, needs, counts, fails, notes) of one run's lines.  EXIT_CODE
     is run.out.exit's number (None: no exit file).  LIMITS_CLASSED: the LIMIT
     needs already classed (None: every LIMIT counts as classed).  FLAKE: cells.json's
-    flake for attempt 2 (attempt 1's FAILs were a known flake)."""
+    flake for attempt 2 (attempt 1's FAILs were a known flake).  RERUN_WHY: cells.json's
+    for attempt 2; host-lost (attempt 1's host went away under it: run.HostWatch) makes a
+    pass a PASS, as no FAIL came before it."""
     needs, counts, fails, notes = {}, {"PASS": 0, "FAIL": 0, "LIMIT": 0}, [], []
     classed = None if limits_classed is None else set(limits_classed)
     new_limits = []
@@ -184,7 +188,9 @@ def judge(lines, exit_code, lost=False, limits_classed=None, attempt=1, flake=No
         notes.append(f"exit {exit_code} without a FAIL line")
     else:
         verdict, cls = "PASS", "pass"
-    if attempt >= 2 and verdict == "PASS":
+    if attempt >= 2 and verdict == "PASS" and rerun_why == "host-lost":
+        notes.append("attempt 1's host went away under it (host lost): this is its first full run")
+    elif attempt >= 2 and verdict == "PASS":
         if flake:
             cls = "known-flake"
             why = flake.get("why") if isinstance(flake, dict) else str(flake)
@@ -578,7 +584,7 @@ def build(argv, hostctx=None):
         lc = set(((data or {}).get(g) or {}).keys()) | last_pass_limits(getattr(hostctx, "ledger_path", None) or "", cell)
     flakes, _ = specs.json(FLAKES)
     verdict, cls, needs, counts, fails, jn = judge(lines, code, a.lost, lc, attempt, (ce or {}).get("flake"),
-                                                   (ce or {}).get("prev_needs"))
+                                                   (ce or {}).get("prev_needs"), (ce or {}).get("rerun_why"))
     notes += jn
     net = net_stall(verdict, lines)
     if net:

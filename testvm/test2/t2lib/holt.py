@@ -77,8 +77,12 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      one: built from K by `t2-host row holt` when K holds the run's records (the
      hook failed), else rows_holt.backfill_row's LOST or HARNESS (R7), appended
      on its host; the row fed on is the one read back from the ledger.
+     A host that stops answering or reboots is held the same way (run.py's HostWatch,
+     fed by Remote.seen each poll): its HARNESS and LOST rows are host-lost (judge_lost),
+     counted by no stop rule; its runner, gone with the reboot, is started again once
+     when it is back and the todo still has lines (restart_runner).
   6. Rerun once: GVs whose row is a FAIL (contract 1.9; a HARNESS or LOST result
-     says nothing of the cell) go into queue RUN-r2 with cells-r2.json (attempt 2,
+     says nothing of the cell, but a host-lost one, rerun_why host-lost) go into queue RUN-r2 with cells-r2.json (attempt 2,
      rerun_of the first row), T2_RUN=RUN, unless stop-run, stop-family or
      stop-starts fired, queue/RUN/stop or abort is there, or stop-os stopped the
      cell's OS.  So does a PASS that doesn't count because its run made the
@@ -511,6 +515,12 @@ with open(todo + ".lock", "a") as lk:
         except (ValueError, IndexError):
             return None
         return got if rc == 0 and isinstance(got, dict) else None
+
+    def seen(self, host):
+        """A look at HOST for the host rule (run.HostWatch): None when it didn't answer, else
+        {boot, up_s} (hostjob.host_state's)."""
+        from . import hostjob
+        return hostjob.host_seen(self, host)
 
     def pswpout(self, host):
         rc, out, _ = self.sh(host, "awk '$1 == \"pswpout\" { print $2 }' /proc/vmstat", timeout=30)
@@ -1284,28 +1294,71 @@ class Runner:
         for h, gs in (getattr(self, "pin_bad", None) or self.state["pin_bad"] or {}).items():
             if h in oe:
                 oe[h] = sorted(set(oe[h]) | set(gs))
-        from . import hostrun
+        q["cells_name"] = cells_name
+        q["elsewhere"] = {h: list(v) for h, v in oe.items() if v}   # (a runner started again: restart_runner)
         for h in self.hosts:
             if h in q["runners"]:
                 continue
-            env = self.queue_env(h, cells_name)
-            if oe.get(h):
-                env["ONLY_ELSEWHERE"] = " ".join(oe[h])
-            args = [qrun, str(BASEPORT), str(max_jobs(h))] + ([f"{self.qhost}.local"] if h != self.qhost else [])
-            cmd = ("env " + " ".join(f"{k}={hostrun.rq(v)}" for k, v in sorted(env.items())) + " "
-                   + " ".join([hostrun.rq(self.tool(h, "ht1-queue.sh"))] + args))
-            d = self.rs.host_run_dir(h)
-            out = os.path.join(d, f"runner-{qrun}.out")
-            pidfile = os.path.join(d, f"runner-{qrun}.pid")
-            pid = self.remote.start(h, cmd, out, pidfile)
-            pid = self.started_pid(h, pid, pidfile, "ht1-queue.sh")
-            q["runners"][h] = {"pid": pid, "out": out}
-            self.state.save()
-            if pid is None:
-                self.problems.append(f"queue {qrun}: the runner on {h} didn't start ({h}:{out})")
-            self.log(f"queue {qrun}: runner on {h} (pid {pid}){', leaving ' + ' '.join(oe[h]) + ' to the others' if oe.get(h) else ''}")
+            self.start_runner(qrun, h, cells_name, oe.get(h))
         q["started"] = utc_now()
         self.state.save()
+
+    def start_runner(self, qrun, h, cells_name, elsewhere=None):
+        """Queue QRUN's runner on host H (ELSEWHERE: its ONLY_ELSEWHERE guests); holt.json saved after."""
+        from . import hostrun
+        q = self.state["queues"][qrun]
+        env = self.queue_env(h, cells_name)
+        if elsewhere:
+            env["ONLY_ELSEWHERE"] = " ".join(elsewhere)
+        args = [qrun, str(BASEPORT), str(max_jobs(h))] + ([f"{self.qhost}.local"] if h != self.qhost else [])
+        cmd = ("env " + " ".join(f"{k}={hostrun.rq(v)}" for k, v in sorted(env.items())) + " "
+               + " ".join([hostrun.rq(self.tool(h, "ht1-queue.sh"))] + args))
+        d = self.rs.host_run_dir(h)
+        out = os.path.join(d, f"runner-{qrun}.out")
+        pidfile = os.path.join(d, f"runner-{qrun}.pid")
+        pid = self.remote.start(h, cmd, out, pidfile)
+        pid = self.started_pid(h, pid, pidfile, "ht1-queue.sh")
+        q["runners"][h] = {"pid": pid, "out": out}
+        self.state.save()
+        if pid is None:
+            self.problems.append(f"queue {qrun}: the runner on {h} didn't start ({h}:{out})")
+        self.log(f"queue {qrun}: runner on {h} (pid {pid}){', leaving ' + ' '.join(elsewhere) + ' to the others' if elsewhere else ''}")
+        return pid
+
+    def restart_runner(self, qrun, h):
+        """The host rule's requeue for a queue's own host (2026-11-19): H's runner is gone because H
+        rebooted after the queue started (run.HostWatch), H is back and no longer held, and the todo
+        still has lines: a new runner there, once per host and queue, so the lines only H may run
+        (pins, ceilings, images) run on it rather than wait for ever.  True when it started one;
+        "wait" while all that holds but H is still held (it settles: the queue waits for it, the
+        hold's own limit bounding the wait); else False."""
+        q = self.state["queues"][qrun]
+        st = self.rs.stops
+        rb, held = getattr(st, "rebooted", None), getattr(st, "held", None)
+        if rb is None or h in (q.get("restarted") or {}) or not q.get("started") or self.stops:
+            return False
+        try:
+            if not rb(h, q["started"]):
+                return False
+            hold = h in ((held() if held is not None else {}) or {})
+        except Exception:   # noqa: BLE001 - a rule that can't be asked starts nothing
+            return False
+        if any(getattr(st, f, False) for f in ("stop_run", "stop_family", "stop_starts")) or q.get("guards_tripped"):
+            return False
+        todo = self.remote.read(self.qhost, f"{QUEUE}/{qrun}/todo")
+        if not todo or not any(x.split("#", 1)[0].strip() for x in todo.splitlines()):
+            return False
+        for f in ("abort", "stop"):
+            if self.remote.exists(h, f"{QUEUE}/{qrun}/{f}"):
+                return False
+        if hold:
+            return "wait"
+        q.setdefault("restarted", {})[h] = utc_now()
+        self.state.save()
+        self.log(f"queue {qrun}: {h} rebooted and is back: its runner again (the host rule)")
+        self.notes.append(f"queue {qrun}: {h}'s runner started again after its host rebooted (the host rule)")
+        cells_name = q.get("cells_name") or ("cells-r2.json" if qrun.endswith("-r2") else "cells.json")
+        return self.start_runner(qrun, h, cells_name, (q.get("elsewhere") or {}).get(h)) is not None
 
     def done_rows(self, qrun):
         """The queue's done rows read so far (a host that can't be read this time keeps what
@@ -1345,10 +1398,34 @@ class Runner:
             return self.backfill(qrun, attempt, h, gv, d)
         return row, True
 
+    def judge_lost(self, row, host):
+        """Why ROW (HARNESS or LOST) is its host's going away under it (hostjob.host_lost: the host
+        rule over the row's start to its end; a look at the host first when it knows of nothing),
+        kept in holt.json's host_lost {origin: why} for the rerun (once, rerun_why host-lost); or None."""
+        if row.get("verdict") not in ("HARNESS", "LOST"):
+            return None
+        lost = self.state["host_lost"] or {}
+        o = row.get("origin") or ""
+        if o in lost:
+            return lost[o]
+        from . import hostjob
+        why = hostjob.host_lost(self.rs.stops, host, row.get("start"), row.get("t"),
+                                seen=getattr(self.remote, "seen", None), text=row.get("note"))
+        if why and o:
+            lost[o] = why
+            self.state["host_lost"] = lost
+            self.log(f"{row.get('cell')} {row.get('verdict')} on {host}: host lost ({why}): not counted"
+                     + (", rerun once" if o.endswith(":1") else ""))
+        return why
+
     def feed(self, row, host):
         res = {"cell": row.get("cell"), "family": "holt", "part": None, "verdict": row.get("verdict"),
                "class": row.get("class"), "needs": row.get("needs") or {}, "os": os_of(self.sf, row.get("cell") or ""),
-               "host": host, "flake": row.get("class") == "known-flake"}
+               "host": host, "flake": row.get("class") == "known-flake", "start": row.get("start"), "end": row.get("t")}
+        try:
+            res["host_lost"] = self.judge_lost(row, host)
+        except Exception:   # noqa: BLE001 - a rule that can't be asked: the row counts as it would
+            res["host_lost"] = None
         try:
             return self.rs.stops.feed(res)
         except Exception:   # a stop engine that fails stops nothing
@@ -1413,6 +1490,9 @@ class Runner:
                 if a is False:
                     gone[h] = gone.get(h, 0) + 1
                     if gone[h] < 2 and not self.said_end(qrun, h):
+                        live.append(h)
+                    elif self.restart_runner(qrun, h):   # (True: started again; "wait": once its host settles)
+                        gone[h] = 0
                         live.append(h)
                 else:
                     gone[h] = 0
@@ -1491,7 +1571,7 @@ class Runner:
         return out
 
     def sync_holds(self, qrun):
-        """The swap rule's held hosts (the stop engine's held(), {host: why}) for queue QRUN:
+        """The swap rule's and the host rule's held hosts (the stop engine's held(), {host: why}) for queue QRUN:
         ht1-queue.sh's queue/RUN/max-HOST at 0 on a held host, so its runner starts nothing new
         (its jobs go on; the other runners take the todo's lines, and a line only it may run
         waits), and back to what it was (none: the host's holt_jobs) when the hold ends.  An
@@ -1509,7 +1589,7 @@ class Runner:
         held = {h: w for h, w in held.items() if h in runners}
         if not held and not applied:
             return
-        why_end = "the swap rule's hold is over"
+        why_end = "the hold is over"
         if held:
             todo = self.remote.read(self.qhost, f"{QUEUE}/{qrun}/todo")
             if todo is not None and not any(x.split("#", 1)[0].strip() for x in todo.splitlines()):
@@ -1542,15 +1622,26 @@ class Runner:
             self.state.save()
 
     def host_checks(self, qrun):
-        """The host-wide stop rules: swap-out (HostHolds: it holds that host alone; then
-        sync_holds), this run's bytes (R22).
+        """The host-wide stop rules: a look at the host (the host rule, run.HostWatch: one that
+        stops answering or reboots is held alone), swap-out (HostHolds: it holds that host alone;
+        then sync_holds), this run's bytes (R22).
         The bytes come by tag, with the part of each a failed run's kept state wrote (the
         R to K move, jobs.log's keep=): that part is fed as KEPT, and with a write allowance
         in the plan the allowed cells' own (allowed_bytes, of their bytes less KEPT) as
         ALLOWED: the rule counts the rest."""
         prefix = f"ht1:{self.run_id}"
         allow = self.write_allows()
+        seen_fn = getattr(self.remote, "seen", None)
         for h in self.hosts:
+            if seen_fn is not None:   # the host rule (run.HostWatch): no answer, a reboot
+                from . import hostjob
+                try:
+                    seen = seen_fn(h)
+                except Exception:   # noqa: BLE001 - a look that fails is no answer
+                    seen = None
+                self.act(qrun, hostjob.feed_seen(self.rs.stops, h, seen))
+                if seen is None:
+                    continue
             sw = self.remote.pswpout(h)
             if sw is not None and h not in self.swap0:
                 self.swap0[h] = sw
@@ -1823,9 +1914,12 @@ class Runner:
         self.wait_queue(q1, 1)
         # attempt 2: the FAILs (contract 1.9: a FAIL reruns once), and the PASSes that couldn't
         # count because their run made the one-time rescuer, unless a stop rule says no
+        hlost = self.host_lost_cells(q1)   # (first: failed()'s note leaves them out)
         failed = self.failed(q1)
         made = self.made(q1)
         failed.update(made)
+        hlost = {c: v for c, v in hlost.items() if c not in failed}
+        failed.update(hlost)
         if failed:
             why = self.no_rerun(q1)
             st = self.rs.stops
@@ -1850,9 +1944,14 @@ class Runner:
                 reruns[cell] = {"attempt": 2, "rerun_of": r1.get("id"), "flake": None}
                 if cell in made:
                     reruns[cell]["rerun_why"] = "rescuer-made"
+                elif cell in hlost:
+                    reruns[cell]["rerun_why"] = "host-lost"
             if made.keys() & reruns.keys():
                 self.notes.append("rerun (attempt 1 made its one-time rescuer, or ran before its sum, so its row couldn't count): "
                                   + ", ".join(sorted(made.keys() & reruns.keys())))
+            if hlost.keys() & reruns.keys():
+                self.notes.append("rerun (attempt 1's host went away under it: host lost, no stop rule counted it): "
+                                  + ", ".join(sorted(hlost.keys() & reruns.keys())))
             if not (self.state["queues"].get(q2) or {}).get("todo_written"):
                 self.rs.write_cells(self.plan, attempt=2, reruns=reruns)
             self.start_queue(q2, [pc for pc in self.due() if pc.cell in reruns], "cells-r2.json")
@@ -2024,10 +2123,26 @@ class Runner:
             r = self.rows.get(f"ht1:{qrun}:{gv}:1") or {}
             if r.get("verdict") == "FAIL":
                 out[cell] = (h, gv)
-            else:
+            elif f"ht1:{qrun}:{gv}:1" not in (self.state["host_lost"] or {}):   # (those: host_lost_cells)
                 other.append(f"{cell} {r.get('verdict') or 'no row'} (exit {d.get('rc')})")
         if other:
             self.notes.append("not rerun (reruns are for FAILs): " + ", ".join(other))
+        return out
+
+    def host_lost_cells(self, qrun):
+        """{cell: (host, gv)} of attempt 1's HARNESS and LOST rows that are host-lost (judge_lost):
+        rerun once, rerun_why host-lost (a pass then is a PASS)."""
+        out = {}
+        for (h, gv), d in sorted((self.done.get(qrun) or {}).items()):
+            o = f"ht1:{qrun}:{gv}:1"
+            r = self.rows.get(o) or {}
+            if r.get("verdict") in ("HARNESS", "LOST") and o not in (self.state["host_lost"] or {}):
+                try:   # (judged again: one that landed before its host went away is host-lost now)
+                    self.judge_lost(r, h)
+                except Exception:   # noqa: BLE001 - a rule that can't be asked: no rerun of it
+                    pass
+            if o in (self.state["host_lost"] or {}) and r.get("verdict") in ("HARNESS", "LOST"):
+                out[self.cell_of_gv(gv)] = (h, gv)
         return out
 
     def all_lost(self):

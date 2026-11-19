@@ -45,7 +45,10 @@ The flow (2.2):
      --skip-file; swap-out over 1 GiB in the last 10 min on a host holds that
      host alone (run.py's HostHolds: named in --hold-file, it starts nothing
      new and drive.py gives its checks to the other hosts that can run them,
-     until its swap-out eases; a hold of 2 h is run-wide); 2 harness results
+     until its swap-out eases; a hold of 2 h is run-wide), as does a host
+     that stops answering or reboots (run.py's HostWatch: its HARNESS and
+     LOST rows are host-lost, judge_lost, counted by no stop rule and rerun
+     once in step 5, rerun_why host-lost); 2 harness results
      (known flakes aside), a failed slow gate, or this run's own jobs
      (their wear tags in jobs.log, R22) writing over 2 x the run budget start
      nothing more (--stop-file), as does a run-wide stop of the composite this
@@ -57,6 +60,7 @@ The flow (2.2):
      an error here stops our drive.py (SIGINT, then SIGTERM: its PID is ours),
      whose started checks run on for a resume.
   5. One more drive.py round, mark RUN-r2 and cells-r2.json, for the reruns of
+     the host-lost rows (attempt 2, rerun_why host-lost: a pass is a PASS) and of
      the FAILs (attempt 2, rerun_of attempt 1's row, the known flake attempt 1's
      FAIL lines match: rows_stic's full-line match) and the class members of a
      representative whose attempt 1 FAILed (fanout:CLASS, their attempt 1),
@@ -103,11 +107,14 @@ EXIT_OK, EXIT_FAIL, EXIT_REFUSED = 0, 1, 2
 
 try:
     from .run import Refused as _Refused   # t2 prints a Refused on one line and exits 2
-    from .run import HostHolds
+    from .run import HostHolds, HostWatch, merge_held
 except Exception:   # pragma: no cover - run.py (P2) not importable
     class _Refused(Exception):
         """A run that can't start (exit 2)."""
-    HostHolds = None
+    HostHolds = HostWatch = None
+
+    def merge_held(*maps):
+        return {h: w for m in maps for h, w in (m or {}).items()}
 
 
 class SticError(_Refused):
@@ -158,9 +165,11 @@ class Stops:
     results (known flakes aside) stop the run, but HARNESS_RESULTS of them that waited on the
     network (res["net"]: rows_stic.net_stall) stop SticTest2 only; this run's jobs writing over
     WRITE_BUDGET_X x the run budget (R22) start nothing more; swap-out holds
-    its host alone (run.py's HostHolds; held()).  feed(res) and feed_host(host,
-    swap, ours) answer "ok" | "stop-os OS" | "stop-family" | "stop-run" | "stop-starts", as
-    run.py's StopEngine does (it also has the gate rules)."""
+    its host alone (run.py's HostHolds; held()), and so does a host that stops answering or
+    reboots (run.py's HostWatch, fed by feed_seen; its results are host-lost, res["host_lost"],
+    and count toward no stop).  feed(res), feed_seen(host, seen) and feed_host(host, swap, ours)
+    answer "ok" | "stop-os OS" | "stop-family" | "stop-run" | "stop-starts", as run.py's
+    StopEngine does (it also has the gate rules)."""
 
     def __init__(self, policy=None):
         stop = (policy or {}).get("stop") or {}
@@ -168,6 +177,8 @@ class Stops:
         self.os_need = int(stop.get("os_need_guests", 2))
         self.harness_max = int(stop.get("harness_results", 2))
         self.holds = HostHolds(stop) if HostHolds is not None else None
+        self.watch = HostWatch(stop) if HostWatch is not None else None
+        self.lost_said = []
         self.write_max = float(stop.get("write_budget_x", 2)) * float(budget.get("run_gb", 2)) * 1e9
         self.failed, self.harness, self.net, self.stopped_os = {}, 0, 0, set()
         self.stop_run = self.stop_starts = self.stop_family = False
@@ -175,6 +186,10 @@ class Stops:
 
     def feed(self, res):
         out = "ok"
+        if res.get("class") in ("harness", "lost") and res.get("host_lost"):   # its host went away: no count
+            self.lost_said.append(f"{res.get('cell')} {res.get('verdict')} on {res.get('host') or '?'}: host lost "
+                                  f"({res.get('host_lost')}): no stop rule counts it")
+            return out
         if res.get("class") in ("harness", "lost") and not res.get("flake") and res.get("net"):
             self.net += 1
             if self.net >= self.harness_max and not self.stop_family:
@@ -202,10 +217,28 @@ class Stops:
         return out
 
     def held(self):
-        return self.holds.held() if self.holds is not None else {}
+        return merge_held(self.holds.held() if self.holds is not None else {},
+                          self.watch.held() if self.watch is not None else {})
 
     def hold_notes(self):
         return self.holds.notes() if self.holds is not None else []
+
+    def feed_seen(self, host, seen):
+        why = self.watch.feed(host, seen) if self.watch is not None else None
+        if why and not self.stop_starts:
+            self.stop_starts = True
+            self.stops.append(f"stop-starts: {why}")
+            return "stop-starts"
+        return "ok"
+
+    def host_lost(self, host, start=None, end=None):
+        return self.watch.lost(host, start, end) if self.watch is not None else None
+
+    def rebooted(self, host, since):
+        return bool(self.watch is not None and self.watch.rebooted(host, since))
+
+    def host_notes(self):
+        return (self.watch.notes() if self.watch is not None else []) + list(self.lost_said)
 
     def feed_host(self, host, swap_out_bytes=None, ours_bytes=None):
         why = self.holds.feed("stic", host, swap_out_bytes) if self.holds is not None else None
@@ -244,7 +277,16 @@ try:
 except OSError:
     pass
 import os as _os
-sys.stdout.write(json.dumps({"ours": _ours, "pswpout": _sw, "page": _os.sysconf("SC_PAGE_SIZE")}) + "\n")
+_boot = _up = None   # the host rule's look (run.HostWatch): the boot id and the uptime
+try:
+    with open("/proc/sys/kernel/random/boot_id") as _f:
+        _boot = _f.read().strip() or None
+    with open("/proc/uptime") as _f:
+        _up = float(_f.read().split()[0])
+except (OSError, ValueError, IndexError):
+    pass
+sys.stdout.write(json.dumps({"ours": _ours, "pswpout": _sw, "page": _os.sysconf("SC_PAGE_SIZE"),
+                             "boot": _boot, "up_s": _up}) + "\n")
 '''
 
 
@@ -322,6 +364,11 @@ class Env:
             except subprocess.TimeoutExpired:
                 continue
 
+    def host_seen(self, host):
+        """A look at HOST for the host rule (hostjob.host_seen): None for no answer."""
+        from . import hostjob
+        return hostjob.host_seen(hostjob.HostIO(), host)
+
     def driver_busy(self, out):
         """Whether a drive.py holds OUT/driver.lock (a resumed run's earlier one, still running)."""
         p = os.path.join(out, "driver.lock")
@@ -395,7 +442,8 @@ class Env:
         return r.rc == 0, r.errtext.strip()[-300:]
 
     def host_load(self, host, run, lo):
-        """{ours, pswpout, page} on HOST (R22's inputs), or None."""
+        """{ours, pswpout, page, boot, up_s} on HOST (R22's inputs, and the host rule's look),
+        {"answer": False} when HOST didn't answer (the ssh failed or timed out), or None."""
         from . import hostrun, wear
         try:
             with open(wear.__file__, encoding="utf-8") as f:
@@ -407,6 +455,8 @@ class Env:
             return None
         r = hostrun.ssh(host, script=src.replace(marker, "if False:") + HOST_LOAD,
                         data={"run": run, "lo": lo, "log": os.environ.get("T2_WEAR_LOG")}, timeout=60)
+        if r.rc in (124, 255):   # (hostrun: no answer)
+            return {"answer": False}
         if r.rc != 0:
             return None
         try:
@@ -605,7 +655,7 @@ class SticRun:
                     if rr is None:
                         continue
                     cells[guest_of(pc.cell)] = self.entry(pc, h, int(rr.get("attempt") or 2), {
-                        k: v for k, v in rr.items() if k in ("rerun_of", "flake", "rule", "reasons")})
+                        k: v for k, v in rr.items() if k in ("rerun_of", "flake", "rule", "reasons", "rerun_why")})
                 elif pc.status == "due":
                     cells[guest_of(pc.cell)] = self.entry(pc, h)
             doc = {"v": 1, "run": self.info["id"], "word": self.info["word"], "family": "stic", "attempt": attempt,
@@ -950,7 +1000,27 @@ class SticRun:
                 "flake": (row.get("extra") or {}).get("flake"), "part": None,
                 # its tools' install waited on the network (rows_stic.net_stall): SticTest2's own
                 # stop, never the run-wide harness count, which would stop HoltTest2 and the rest
-                "net": bool((row.get("extra") or {}).get("net_stall")) and row.get("verdict") == "HARNESS"}
+                "net": bool((row.get("extra") or {}).get("net_stall")) and row.get("verdict") == "HARNESS",
+                "host": row.get("host"), "host_lost": (self.state.get("host_lost") or {}).get(row.get("id")),
+                "start": row.get("start"), "end": row.get("t")}
+
+    def judge_lost(self, row):
+        """A HARNESS or LOST row whose host went away under it (hostjob.host_lost: the host rule,
+        asked from its start to its end; a look at the host first when it knows of nothing):
+        state host_lost {row id: why}, which res_of() feeds and reruns() requeues once."""
+        if row.get("verdict") not in INCONCLUSIVE or row.get("id") in (self.state.get("host_lost") or {}):
+            return
+        if (row.get("extra") or {}).get("net_stall"):
+            return
+        from . import hostjob
+        host = row.get("host")
+        why = hostjob.host_lost(self.engine, host, row.get("start"), row.get("t"), seen=self._env("host_seen"),
+                                text=row.get("note"))
+        if why:
+            with self.mu:
+                self.state.setdefault("host_lost", {})[row["id"]] = why
+            self.log(f"{row.get('cell')} {row.get('verdict')} on {host}: host lost ({why}): not counted, "
+                     "rerun once in the r2 round")
 
     def ours(self, r, mark=None):
         """Whether R is a row of this run (of MARK's origins, or any of the run's marks)."""
@@ -967,6 +1037,7 @@ class SticRun:
             with self.mu:
                 self.seen.add(r["id"])
                 self.state["fed"] = sorted(self.seen)
+            self.judge_lost(r)
             ans = self.engine.feed(self.res_of(r))
             if ans and ans != "ok":
                 self.act(ans, f"after {r.get('cell')} {r.get('verdict')} (row {r.get('id')})")
@@ -1015,6 +1086,15 @@ class SticRun:
                 continue
             if not isinstance(got, dict):
                 continue
+            seen_feed = getattr(self.engine, "feed_seen", None)   # the host rule (run.HostWatch)
+            if seen_feed is not None:
+                ans = seen_feed(h, None if got.get("answer") is False else {"boot": got.get("boot"),
+                                                                             "up_s": got.get("up_s")})
+                if ans and ans != "ok":
+                    said = [s for s in (getattr(self.engine, "stops", None) or []) if s.startswith(ans)]
+                    self.act(ans, said[-1][len(ans):].lstrip(": ") if said else f"{h}: held by the host rule")
+            if got.get("answer") is False:
+                continue
             sw = got.get("pswpout")
             base = self.swap0(h, sw) if isinstance(sw, int) else None
             swap = (sw - base) * int(got.get("page") or 4096) if isinstance(sw, int) and isinstance(base, int) else None
@@ -1030,7 +1110,7 @@ class SticRun:
         self.sync_holds()
 
     def sync_holds(self):
-        """The swap rule's held hosts ({host: why}, the engine's held()) into --hold-file, which
+        """The swap rule's and the host rule's held hosts ({host: why}, the engine's held()) into --hold-file, which
         drive.py rereads every poll: nothing new starts on a host it names, and its checks go
         to the other hosts that can run them.  Said as each hold begins and ends."""
         fn = getattr(self.engine, "held", None)
@@ -1052,7 +1132,7 @@ class SticRun:
         for h in sorted(set(held) - set(was)):
             self.log(f"HOLD {h}: {held[h]}: nothing new starts there; its checks go to the other hosts")
         for h in sorted(set(was) - set(held)):
-            self.log(f"{h}: the swap rule's hold is over: starting there again")
+            self.log(f"{h}: the hold is over: starting there again")
 
     def landed(self, mark):
         return self.final_rows(mark)
@@ -1071,6 +1151,8 @@ class SticRun:
                 self.feed_rows(mark)
                 if n % HOST_EVERY == 0:
                     self.check_hosts()
+                else:   # (another family's looks hold hosts too: the shared rules' holds, every poll)
+                    self.sync_holds()
                 self.guards_check()
                 n += 1
                 self.env.sleep(POLL)
@@ -1100,6 +1182,8 @@ class SticRun:
                 self.feed_rows(mark)
                 if n % HOST_EVERY == 0:
                     self.check_hosts()
+                else:   # (another family's looks hold hosts too: the shared rules' holds, every poll)
+                    self.sync_holds()
                 self.guards_check()   # another family's run-wide stop: drive.py's --stop-file
                 n += 1
                 if rc is not None:
@@ -1172,6 +1256,17 @@ class SticRun:
                 out[r["cell"]] = {"attempt": 2, "rerun_of": r["id"], "flake": fl, "rule": "rerun",
                                   "reasons": [f"attempt 1 {r['verdict']} (row {r['id']})"
                                               + (" (a known flake)" if fl else "")]}
+        for r in rows1.values():   # (judged again: one that landed before its host went away is host-lost now)
+            if r.get("verdict") in INCONCLUSIVE and r.get("id"):
+                try:
+                    self.judge_lost(r)
+                except Exception:   # noqa: BLE001 - a rule that can't be asked: no rerun of it
+                    pass
+        lost = self.state.get("host_lost") or {}
+        for g, r in sorted(rows1.items()):   # host-lost: requeued once (the hold keeps its host off until it is back)
+            if r.get("verdict") in INCONCLUSIVE and r.get("id") in lost and r.get("cell") not in out:
+                out[r["cell"]] = {"attempt": 2, "rerun_of": r["id"], "flake": None, "rule": "rerun", "rerun_why": "host-lost",
+                                  "reasons": [cut(f"attempt 1 {r['verdict']} (row {r['id']}): host lost: {lost[r['id']]}", 200)]}
         for cl in self.plan.classes or []:
             rep = guest_of(cl.get("rep") or "")
             r = rows1.get(rep)

@@ -10,10 +10,12 @@
 A pool per host on the Mac, one shared list, longest estimated wall first; each job is guest/job.sh through hostjob.host_job,
 under cmp-run.sh --reserve D M, WEAR_TAG=guest:RUN:G.  The pool's rules: at most 3 jobs a host (2 in an
 update round), none started while one of that host's is still in cmp-run.sh's line, and jobs of D >=
-big_gib one at a time, and none on a host the swap rule holds (run.py's HostHolds: the job waits for
-another host it may run on, or for the hold to end), nor a job that downloads (NET_MODES) anywhere
+big_gib one at a time, and none on a host the swap rule or the host rule holds (run.py's HostHolds and
+HostWatch: the job waits for another host it may run on, or for the hold to end), nor a job that downloads (NET_MODES) anywhere
 while the network rule holds (NetHold: a probe of the farm's internet under net_min_kibs).  An overrun below the cap reruns at rerun_d (2 x D or 2 x its peak) on a host that fits it, and feeds no stop rule.  A FAIL that
-isn't to_class_only reruns once (try and probe), never in an update.  MAC_ROOT/runs/RUN/guest.json
+isn't to_class_only reruns once (try and probe), never in an update.  A HARNESS or LOST attempt whose host went
+away under it (hostjob.host_lost: the host rule) is host-lost: requeued once, to a host it may run on (not that
+one while its job may still run there), never in an update, and no stop rule counts it.  MAC_ROOT/runs/RUN/guest.json
 records what started and what ended: resume adopts an attempt that was started (hostjob.reattach_job)
 and starts another only once that one is proven gone with no row, never in an update round.
 """
@@ -929,6 +931,8 @@ class Item:
         self.guest, self.pc, self.entry, self.d, self.m, self.allowed, self.attempt = guest, pc, entry, d, m, allowed, attempt
         self.rows, self.rerun_done = [], False
         self.prev_verdict, self.flake = None, None
+        self.host_requeued = None   # why its host was lost under an attempt that was requeued (once)
+        self.started_t = None       # when its attempt's job started (the host rule's window)
         self.resumed = None       # guest.json's record of an attempt an earlier process started
 
     @property
@@ -961,6 +965,7 @@ class Runner:
         self.big = float(self.policy.get("big_gib", 13))
         self.cap = float(self.policy.get("ram_gib_max", 16))
         self.pending = collections.deque()
+        self.unsure = []          # attempts waiting for their host's confirm (finish_job, take_unsure)
         self.active = {}          # thread name -> (item, host)
         self.line = {h: 0 for h in self.hosts}
         self.count = {h: 0 for h in self.hosts}
@@ -1081,6 +1086,8 @@ class Runner:
 
     def _job(self, it, host):
         began = {"v": False}
+        from . import parse_utc   # (a resumed attempt began when the earlier process started it)
+        it.started_t = (parse_utc((it.resumed or {}).get("t")) if isinstance(it.resumed, dict) else None) or self.clock()
 
         def on_began():
             with self.mu:
@@ -1210,6 +1217,75 @@ class Runner:
             self.pending.appendleft(it)
             return
         self.log(f"{it.cell} on {host}: attempt {it.attempt} {v}" + (f": {(summ.get('fails') or [''])[0]}" if summ.get("fails") else ""))
+        # its host went away under it (the host rule: no answer, a reboot): host-lost, which no stop
+        # rule counts, and requeued once, to another host it may run on or to the same one once it
+        # is back (the hold keeps it off until then); never beside a job that may still run there
+        # (no answer, no reboot since it began), never a second real update
+        lost = None
+        if v in ("HARNESS", "LOST") and not summ.get("overrun") and not summ.get("net_stall"):
+            lost = hostjob.host_lost(self.rs.stops, host, it.started_t, self.clock(),
+                                     seen=lambda h: hostjob.host_seen(self.io, h),
+                                     text=" ".join([str(why or ""), str(summ.get("harness") or "")]))
+            if not lost and self.may_wait_host(it, host):
+                # its host may be going away (a job TERMed as its host shut down ends before the host
+                # stops answering): it waits, unsure, for the host to be seen answering a while after
+                self.unsure.append((it, host, rc, t, summ, still, self.clock()))
+                return
+        if lost and self.requeue_lost(it, host, v, lost, still, summ):
+            return
+        self.after_attempt(it, host, rc, t, summ, still)
+
+    def may_wait_host(self, it, host):
+        """Whether IT's HARNESS or LOST attempt on HOST may wait for the host rule's confirm (unsure)."""
+        st = self.rs.stops
+        known = getattr(st, "host_known", None)
+        return bool(not self.update and not it.host_requeued and it.attempt < MAX_ATTEMPTS
+                    and hasattr(st, "host_confirmed") and known is not None and known(host))
+
+    def requeue_lost(self, it, host, v, lost, still, summ):
+        """IT's attempt on HOST is host-lost (LOST: why): requeued once (True), else said why not."""
+        summ["host_lost"] = lost
+        rb = getattr(self.rs.stops, "rebooted", None)
+        gone_there = bool(not still or (rb is not None and it.started_t is not None and rb(host, it.started_t)))
+        where = list(it.allowed) if gone_there else [h for h in it.allowed if h != host]
+        if self.update or it.host_requeued or it.attempt >= MAX_ATTEMPTS or not where:
+            self.notes.append(f"{it.cell}: attempt {it.attempt} {v} on {host}: host lost ({lost}); not requeued"
+                              + (" (an update round)" if self.update else " (requeued once already)" if it.host_requeued
+                                 else "" if where else f" (its job may still run on {host}, and no other host may run it)"))
+            return False
+        it.host_requeued = lost
+        it.allowed = where
+        it.attempt += 1
+        it.prev_verdict = "FAIL" if it.prev_verdict == "FAIL" else "HARNESS"   # a FAIL before it still counts
+        self.notes.append(f"{it.cell}: attempt {it.attempt - 1} {v} on {host}: host lost ({lost}); "
+                          f"requeued as attempt {it.attempt}" + ("" if host in where else f", not on {host}"))
+        self.log(f"{it.cell}: host lost on {host} ({lost}): attempt {it.attempt}"
+                 + ("" if host in where else f", not on {host} (its job may still run there)"))
+        self.pending.appendleft(it)
+        return True
+
+    def take_unsure(self, final=False):
+        """The attempts waiting for their host's confirm (finish_job): host-lost now (its host went
+        away soon after: requeued once), or confirmed, waited host_confirm_max_min or FINAL (then
+        they go on as any attempt that ended)."""
+        st = self.rs.stops
+        conf = getattr(st, "host_confirm", None)
+        grace, most = conf() if conf is not None else (0, 0)
+        left = []
+        for rec in self.unsure:
+            it, host, rc, t, summ, still, at = rec
+            lost = hostjob.host_lost(st, host, it.started_t, at + grace)
+            if lost and self.requeue_lost(it, host, summ.get("verdict"), lost, still, summ):
+                continue
+            if lost or final or st.host_confirmed(host, at) or self.clock() - at > most:
+                self.after_attempt(it, host, rc, t, summ, still)
+                continue
+            left.append(rec)
+        self.unsure = left
+
+    def after_attempt(self, it, host, rc, t, summ, still):
+        """An attempt that ended, not requeued for its host: an overrun's or a FAIL's rerun, else its end."""
+        v = summ.get("verdict")
         # an overrun below the cap: again, larger; it feeds no stop rule
         if not self.update and summ.get("overrun") and it.d < self.cap and it.attempt < MAX_ATTEMPTS and not still:
             d = rerun_d(it.d, summ.get("peak"), self.cap)
@@ -1262,7 +1338,9 @@ class Runner:
                "flake": bool(it.flake) and summ.get("verdict") == "PASS",
                # an attempt stopped while it waited on the network (rows_guest.net_stall): GuestTest2's
                # own stop, never the run-wide harness count, which would stop SticTest2 and HoltTest2 too
-               "net": bool(summ.get("net_stall")) and summ.get("verdict") == "HARNESS"}
+               "net": bool(summ.get("net_stall")) and summ.get("verdict") == "HARNESS",
+               # its host went away under it (finish_job: the host rule): no stop rule counts it
+               "host_lost": summ.get("host_lost"), "start": it.started_t, "end": self.clock()}
         try:
             self.rs.stops.feed(res)
         except Exception as e:   # noqa: BLE001
@@ -1299,7 +1377,7 @@ class Runner:
         for h in sorted(set(held) - set(was)):
             self.log(f"HOLD {h}: {held[h]}: no job starts there; its jobs go to the other hosts they may run on")
         for h in sorted(set(was) - set(held)):
-            self.log(f"{h}: the swap rule's hold is over: jobs start there again")
+            self.log(f"{h}: the hold is over: jobs start there again")
         self._held_said = held
 
     # --- the network rule (NetHold) ------------------------------------------------------------------
@@ -1337,7 +1415,7 @@ class Runner:
         self._net_said = why
 
     def held(self):
-        """{host: why}: the hosts the swap rule holds now (no job starts there)."""
+        """{host: why}: the hosts the swap rule or the host rule holds now (no job starts there)."""
         fn = getattr(self.rs.stops, "held", None)
         try:
             return dict(fn() or {}) if fn is not None else {}
@@ -1345,10 +1423,12 @@ class Runner:
             return {}
 
     def drive(self):
-        while self.pending or self.active or self.done_q:
+        while self.pending or self.active or self.done_q or self.unsure:
             while self.done_q:
                 rec = self.done_q.popleft()
                 self.finish_job(*rec)
+            if self.unsure:
+                self.take_unsure()
             for th_name in [n for n, (_i, _h, th) in self.active.items() if not th.is_alive()]:
                 self.active.pop(th_name, None)
             # the queue: cells a stop rule took out are reported as not run
@@ -1374,7 +1454,7 @@ class Runner:
                         self.start(it, host)
                         break
             self.host_checks()
-            if self.pending or self.active or self.done_q:
+            if self.pending or self.active or self.done_q or self.unsure:
                 if not self.done_q:
                     self.env.io.sleep(self.poll)
 

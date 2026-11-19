@@ -1052,6 +1052,12 @@ class Driver:
         self.hold = {}                              # --hold-file's {host: why} (reread every poll)
         self.read_files()
 
+    def all_seen(self):
+        """Every host read at least once, but those --hold-file names: a held host (Test2's host
+        rule holds one that stopped answering) starts nothing anyway, and the others mustn't
+        wait for it to answer."""
+        return self.seen >= set(self.hosts) - set(self.hold)
+
     def read_files(self):
         a = self.a
         was, self.stopped = self.stopped, stop_set(getattr(a, "stop_file", None))
@@ -1359,11 +1365,11 @@ class Driver:
             self.save()
             if not self.remaining() and not self.running():
                 break
-            if self.stopped and not self.running() and self.seen >= set(self.hosts):
+            if self.stopped and not self.running() and self.all_seen():
                 self.log("stop file: ending the round;", len(self.remaining()), "guests not started:",
                          " ".join(self.remaining()))
                 break
-            if self.seen >= set(self.hosts):
+            if self.all_seen():
                 self.start_some(snaps, now)
             for g, j in self.jobs().items():
                 if j.get("exit") is None and not j.get("alerted") and \
@@ -1894,6 +1900,10 @@ def self_test():
         check(started and all(h == "cinqcent" for h, _ in started),
               f"hold file: the held host starts nothing, the other takes its checks ({started})")
         check(any(x.startswith("chopin HOLD: chopin: 1.20 GiB") for x in said), f"hold file: said once ({said})")
+        drv.seen = {"cinqcent"}
+        check(drv.all_seen(), "hold file: a held host never read doesn't keep the others from starting")
+        drv.seen = set()
+        check(not drv.all_seen(), "hold file: an unheld host not read yet: nothing starts")
         for g in [g for g in drv.jobs()]:
             del drv.jobs()[g]
         del started[:]

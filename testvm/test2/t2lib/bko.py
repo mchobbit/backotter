@@ -352,7 +352,7 @@ class Env:
     def leftovers(self, live, out):
         lefts = runmod.our_leftovers(self.mac_root, live)
         if lefts:
-            runmod.remove_leftovers(lefts, out)
+            runmod.remove_leftovers(lefts, out, mac_root=self.mac_root)
 
     def held_runs(self):
         return runmod.held_runs(self.mac_root)
@@ -375,7 +375,7 @@ class Env:
         if live:
             return live
         if lefts:
-            runmod.remove_leftovers(lefts, out, dead=lambda h, p: True)    # (just checked)
+            runmod.remove_leftovers(lefts, out, dead=lambda h, p: True, mac_root=self.mac_root)    # (just checked)
         return None
 
     # the children

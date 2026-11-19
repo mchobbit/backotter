@@ -618,9 +618,49 @@ def pid_dead(host, pid):
     return r.rc == 0 and r.text.strip() == "dead"
 
 
-def remove_leftovers(items, log=print, dead=None):
+def _leftover_rm(path):
+    """The shell that removes PATH on its host and says what became of it, on its last line:
+    gone (it wasn't there), removed (it was, and isn't now) or kept (it still is)."""
+    q = shlex.quote(path)
+    there = f"{{ test -e {q} || test -L {q}; }}"
+    return (f"if {there}; then rm -rf --one-file-system -- {q} 2>/dev/null || "
+            f"sudo -n rm -rf --one-file-system -- {q}; if {there}; then echo kept; exit 1; fi; echo removed; "
+            f"else echo gone; fi")
+
+
+def forget_made(run, done, mac_root=None):
+    """Drop DONE ({(host, path)}: removed, or found gone) from dead RUN's made.json, under
+    record_made's lock; made.json itself goes once nothing is left in it.  So the next
+    preflight doesn't sweep (and say it removed) the same paths again."""
+    p = os.path.join(run_dir(run, mac_root), "made.json")
+    if not done or not os.path.exists(p):
+        return
+    with _MADE_MU:
+        fd = os.open(p + ".lock", os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            made = read_json(p, {}) or {}
+            left = {h: [it for it in (its or []) if (h, it.get("path")) not in done] for h, its in made.items()}
+            left = {h: its for h, its in left.items() if its}
+            if left:
+                write_json(p, left)
+            else:
+                os.unlink(p)
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+    if not os.path.exists(p):
+        try:
+            os.unlink(p + ".lock")
+        except OSError:
+            pass
+
+
+def remove_leftovers(items, log=print, dead=None, mac_root=None):
     """Remove a dead run's leftovers, run by run: when any PID its made.json recorded still
-    runs, or can't be checked, every leftover of that run is kept and said so."""
+    runs, or can't be checked, every leftover of that run is kept and said so.  A path already
+    gone is dropped quietly, a removed one said so; both leave the run's made.json
+    (forget_made), so they aren't swept again.  [(host, path, removed or gone)]."""
     dead = dead or pid_dead
     done, by_run = [], {}
     for it in items:
@@ -631,11 +671,20 @@ def remove_leftovers(items, log=print, dead=None):
             log(f"leftovers of {run} kept: pid {live[1]} on {live[0]} still runs or couldn't be checked "
                 f"({', '.join(p for _, _, p, _ in its)})")
             continue
+        cleared = set()
         for _, host, path, pid in its:
-            r = hostrun.ssh(host, f"rm -rf --one-file-system -- {shlex.quote(path)} 2>/dev/null || "
-                                  f"sudo -n rm -rf --one-file-system -- {shlex.quote(path)}", timeout=120)
-            log(f"leftover of {run} on {host}: {path} {'removed' if r.rc == 0 else 'NOT removed: ' + r.errtext[-120:]}")
-            done.append((host, path, r.rc == 0))
+            r = hostrun.ssh(host, _leftover_rm(path), timeout=120)
+            said = (r.text.strip().splitlines() or [""])[-1]
+            if said == "gone" and r.rc == 0:
+                cleared.add((host, path))
+            elif said == "removed" and r.rc == 0:
+                cleared.add((host, path))
+                log(f"leftover of {run} on {host}: {path} removed")
+            else:
+                why = r.errtext.strip()[-120:] or ("still there" if said == "kept" else f"rc {r.rc}")
+                log(f"leftover of {run} on {host}: {path} NOT removed: {why}")
+            done.append((host, path, (host, path) in cleared))
+        forget_made(run, cleared, mac_root)
     return done
 
 
@@ -1565,7 +1614,7 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, sh
             live |= set(unfinished_runs(None, mac_root))
             lefts = our_leftovers(mac_root, live)
             if lefts:
-                remove_leftovers(lefts, out)
+                remove_leftovers(lefts, out, mac_root=mac_root)
             gone = gc_mac_trees(ctx.checkout, mac_root, live)
             if gone:
                 out(f"t2: removed the Mac trees of ended runs: {', '.join(gone)}")

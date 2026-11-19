@@ -671,6 +671,64 @@ class Runs(unittest.TestCase):
             f.write("done\n")
         self.assertEqual(run.our_leftovers(self.mac), [])
 
+    def test_leftovers_gone_are_dropped_and_the_record_cleared(self):
+        """A leftover already gone is dropped quietly, "removed" only for one that was, and
+        made.json loses both: the next preflight sweeps nothing (it said "removed" for ever)."""
+        rid = "t2h-20261114T1739-dead"
+        ram = tempfile.mkdtemp(prefix="ram-", dir=self.tmp)
+        os.makedirs(os.path.join(ram, f"{rid}-linux", "sub"))
+        with open(os.path.join(ram, f"{rid}-linux", "sub", "f"), "w") as f:
+            f.write("x")
+        made = os.path.join(run.run_dir(rid, self.mac), "made.json")
+        run.write_json(made, {"chopin": [{"path": f"/mnt/bko-ram/{rid}-linux", "pid": 1},
+                                         {"path": f"/mnt/bko-ram/{rid}-freebsd", "pid": 2},
+                                         {"path": "/mnt/bko-ram/someone-elses", "pid": 3}],
+                              "cinqcent": [{"path": f"/mnt/bko-ram/{rid}-haiku", "pid": 4}]})
+        real, down = run.hostrun.ssh, {"cinqcent"}
+
+        def ssh(host, cmd=None, timeout=60, **kw):    # the hosts' /mnt/bko-ram is RAM here (GNU rm's flag aside)
+            if host in down:
+                return run.hostrun.Result(255, b"", b"ssh: connect to host cinqcent.local: No route to host")
+            return real(run.hostrun.LOCAL, cmd.replace("/mnt/bko-ram/", ram + "/").replace("--one-file-system ", ""),
+                        timeout=timeout, **kw)
+        run.hostrun.ssh = ssh
+        try:
+            log = []
+            done = run.remove_leftovers(run.our_leftovers(self.mac), log.append, dead=lambda h, p: True,
+                                        mac_root=self.mac)
+            self.assertEqual(sorted(done), [("chopin", f"/mnt/bko-ram/{rid}-freebsd", True),
+                                            ("chopin", f"/mnt/bko-ram/{rid}-linux", True),
+                                            ("cinqcent", f"/mnt/bko-ram/{rid}-haiku", False)])
+            self.assertFalse(os.path.exists(os.path.join(ram, f"{rid}-linux")))
+            self.assertEqual(len(log), 2, log)
+            self.assertIn(f"chopin: /mnt/bko-ram/{rid}-linux removed", log[0])
+            self.assertIn(f"cinqcent: /mnt/bko-ram/{rid}-haiku NOT removed: ssh: connect", log[1])
+            self.assertFalse(any("freebsd" in x for x in log))
+            # only what wasn't removed stays on record (and what the sweep never touches)
+            self.assertEqual(run.read_json(made), {"chopin": [{"path": "/mnt/bko-ram/someone-elses", "pid": 3}],
+                                                   "cinqcent": [{"path": f"/mnt/bko-ram/{rid}-haiku", "pid": 4}]})
+            down.clear()                                 # cinqcent answers; its dir turns out gone
+            log = []
+            run.remove_leftovers(run.our_leftovers(self.mac), log.append, dead=lambda h, p: True, mac_root=self.mac)
+            self.assertEqual(log, [])
+            self.assertEqual(run.our_leftovers(self.mac), [])
+            # a dir still there after rm (a mount under it, say) is NOT removed, and stays on record
+            run.write_json(made, {"chopin": [{"path": f"/mnt/bko-ram/{rid}-netbsd", "pid": 5}]})
+            run.hostrun.ssh = lambda host, cmd=None, timeout=60, **kw: run.hostrun.Result(1, b"kept\n", b"")
+            log = []
+            run.remove_leftovers(run.our_leftovers(self.mac), log.append, dead=lambda h, p: True, mac_root=self.mac)
+            self.assertEqual(log, [f"leftover of {rid} on chopin: /mnt/bko-ram/{rid}-netbsd NOT removed: still there"])
+            self.assertEqual(len(run.our_leftovers(self.mac)), 1)
+        finally:
+            run.hostrun.ssh = real
+        # a run whose every leftover is cleared has no made.json left
+        rid2 = "t2s-20261115T0325-dea2"
+        made2 = os.path.join(run.run_dir(rid2, self.mac), "made.json")
+        run.write_json(made2, {"chopin": [{"path": f"/mnt/bko-ram/{rid2}-fork-root-restic", "pid": 9}]})
+        run.forget_made(rid2, {("chopin", f"/mnt/bko-ram/{rid2}-fork-root-restic")}, self.mac)
+        self.assertFalse(os.path.exists(made2))
+        self.assertFalse(os.path.exists(made2 + ".lock"))
+
     def test_nothing_due_writes_carried_rows(self):
         """A bare run with nothing due writes its carried rows to mac.jsonl and starts nothing."""
         mac = os.path.join(self.tmp, "mac-life")

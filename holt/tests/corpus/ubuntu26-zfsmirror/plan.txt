@@ -79,6 +79,8 @@ zpool reguid -g 10000000000000000001 rpool
 # mount mounts every dataset in order
 sh -c '[ "$(zfs get -H -o value mounted rpool)" != yes ] || zfs unmount rpool'
 zfs create -V 20971520 -o refreservation=23592960 -o volblocksize=16384 -o encryption=off rpool/keystore
+# udev links /dev/zvol/rpool/keystore a moment after zfs create
+sh -c 'i=0; until udevadm settle; [ -b /dev/zvol/rpool/keystore ]; do i=$((i + 1)); [ $i -lt 30 ] || { echo /dev/zvol/rpool/keystore": no such block device 30 s after zfs create (udev never linked it)" >&2; exit 1; }; sleep 1; done'
 # LUKS2 on /dev/zvol/rpool/keystore: asks for the new passphrase
 cryptsetup luksFormat --batch-mode --type=luks2 --cipher=aes-xts-plain64 --key-size=512 --sector-size=512 --offset=32768 --pbkdf=argon2id --pbkdf-memory=105404 --pbkdf-parallel=2 --pbkdf-force-iterations=51 --hash=sha256 --luks2-metadata-size=16384 --luks2-keyslots-size=16744448 --uuid=bc000000-0000-4000-8000-000000000006 /dev/zvol/rpool/keystore
 cryptsetup open /dev/zvol/rpool/keystore keystore-rpool

@@ -78,6 +78,8 @@ zpool reguid -g 1000000000000000001 rpool
 sh -c '[ "$(zfs get -H -o value mounted rpool)" != yes ] || zfs unmount rpool'
 zfs create -u rpool/data
 zfs create -V 67108864 -o refreservation=70254592 -o volblocksize=16384 rpool/data/vm-100-disk-0
+# udev links /dev/zvol/rpool/data/vm-100-disk-0 a moment after zfs create
+sh -c 'i=0; until udevadm settle; [ -b /dev/zvol/rpool/data/vm-100-disk-0 ]; do i=$((i + 1)); [ $i -lt 30 ] || { echo /dev/zvol/rpool/data/vm-100-disk-0": no such block device 30 s after zfs create (udev never linked it)" >&2; exit 1; }; sleep 1; done'
 
 # ---- format ----
 # vda2: vfat

@@ -22,6 +22,15 @@ fn settled(argv: &[&str]) -> Cmd {
     Cmd::new(&["sh", "-c", &format!("i=0; until udevadm settle; {cmd}; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done")])
 }
 
+/// A wait for a zvol's /dev/zvol/NAME, which udev's 60-zvol.rules links
+/// after `zfs create -V` returns: what's made on it next (Ubuntu's keystore
+/// LUKS, a swap) fails without it.  Up to 30 s.
+fn zvol_wait(ds: &str) -> Cmd {
+    let p = shell_quote(&format!("/dev/zvol/{ds}"));
+    Cmd::new(&["sh", "-c", &format!("i=0; until udevadm settle; [ -b {p} ]; do i=$((i + 1)); [ $i -lt 30 ] || {{ echo {p}\": no such block device 30 s after zfs create (udev never linked it)\" >&2; exit 1; }}; sleep 1; done")])
+        .why(format!("udev links /dev/zvol/{ds} a moment after zfs create"))
+}
+
 /// An LVM command that sees DEVICES only (comma-separated), and no devices
 /// file: `CMD --devicesfile "" --devices DEVICES REST...`.
 pub(crate) fn lvm_argv<'a>(cmd: &'a str, devices: &'a str, rest: &[&'a str]) -> Vec<&'a str> {
@@ -2874,7 +2883,12 @@ impl Builder<'_> {
             }
             let here = self.zname(&name);
             a.push(here.clone());
+            // (volmode=none: no device node, nothing to wait for.)
+            let node = !a.iter().any(|x| x == "volmode=none");
             out.push(Cmd { argv: a, ..Cmd::default() });
+            if s(&ds, "type").as_deref() == Some("volume") && node && self.fam.map_or(true, |f| f.on_linux()) {
+                out.push(zvol_wait(&here));
+            }
             // illumos' zfs create has no -u: what it mounted, unmounted
             // (mount mounts every dataset in order).
             if self.fam == Some(crate::other::Family::Illumos) && s(&ds, "type").as_deref() != Some("volume") {

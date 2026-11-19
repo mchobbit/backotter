@@ -893,7 +893,9 @@ class StopEngine:
     """Runners feed it each cell's result as it lands:
 
         feed({cell, family, part ("fast"/"slow" for gate layers, else None), verdict, class,
-              needs {need: v}, os, host})
+              needs {need: v}, os, host, flake, net})   net: a harness result stalled on the
+                                                               network, the family's own stop at
+                                                               harness_max, never the run-wide count
         feed_host(host, swap_out_bytes=..., ours_bytes=..., allowed=..., kept=...)
                                                                the host's swap-out (cumulative, any
                                                                base: HostHolds judges its growth); this
@@ -924,6 +926,7 @@ class StopEngine:
         self.bind = report.budget_binds(b.get("bind_from"), now)
         self.guards = guards
         self.harness = 0
+        self.net = 0            # harness-class results stalled on the network (feed's res["net"]): this family's
         self.need_fail = {}
         self.stop_family = self.stop_starts = self.stop_run = False
         self.stopped_os = set()
@@ -944,7 +947,18 @@ class StopEngine:
             if not self.stop_starts:
                 self.stop_starts = True
                 out = self._stop("stop-starts", f"slow gate {res.get('cell')} {verdict}")
-        if klass in ("harness", "lost") and not res.get("flake"):
+        if klass in ("harness", "lost") and not res.get("flake") and res.get("net"):
+            # stopped while it waited on the network (GuestTest2's rows_guest.net_stall): the
+            # internet's, not the harness's, so the family's own stop at harness_max of them; the
+            # run-wide count would stop the composite's offline families too (t2s-20261119T0157-c8c7
+            # stopped on guest:rocky10-lvm's and guest:elementary8-luks's 90 min stalled downloads)
+            self.net += 1
+            if self.net >= self.harness_max and not self.stop_family:
+                self.stop_family = True
+                o = self._stop("stop-family", f"{self.net} results stalled on the network (last {res.get('cell')}): "
+                                              "nothing more of this family starts")
+                out = o if STOP_ORDER.index("stop-family") > STOP_ORDER.index(out.split()[0]) else out
+        elif klass in ("harness", "lost") and not res.get("flake"):
             self.harness += 1
             count = self.guards.add_harness(res.get("cell")) if self.guards is not None else self.harness
             if count >= self.harness_max and not self.stop_run:

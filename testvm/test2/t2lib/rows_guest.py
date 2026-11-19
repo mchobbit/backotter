@@ -173,6 +173,70 @@ def write_summary(out, doc):
         pass
 
 
+STOP_WHY = ".stop-why"   # hostjob.STOP_WHY: why the runner stopped the job (host_job's give_up)
+
+
+def stop_words(out):
+    """A stopped job's harness words: the runner's own reason when it stopped it (t2's job
+    timeout: "stopped by t2: no end after 5400 s (...)"), else "stopped from outside"."""
+    t = _read(os.path.join(out, STOP_WHY), 4096) if out else None
+    t = re.sub(r"\s*\([^()]*/[^()]*\)", "", " ".join((t or "").split()))   # its job.log's path: the row's logs has it
+    return f"stopped by t2: {t[:120]}" if t else "stopped from outside"
+
+
+# What says a stopped update was waiting on the network (on top of flakes.json's patterns): curl's
+# and libcurl's stalls (dnf, flatpak, zypper), Go's (rpm-ostree, bootc, snap), and in-guest.sh's
+# own retry lines (testvm/update/in-guest.sh: "again in 30 s").
+NET_STALL = (
+    r"\bTimeout was reached\b",
+    r"\bOperation too slow\b",
+    r"\bCurl error \((?:6|7|18|28|35|52|56)\)",
+    r"\bTLS handshake timeout\b",
+    r"\bi/o timeout\b",
+    r"^in-guest: (?:a download failed|a download timed out|flatpak update failed|the snap store didn't answer|emerge --sync failed)\b",
+)
+# apt's total: "Fetched 32.8 MB in 1h 13min 51s (7,400 B/s)"
+APT_FETCHED = re.compile(r"^Fetched [0-9.,]+ [kMG]?B in (?P<t>[0-9hmins ]+?) \((?P<r>[0-9.,]+) (?P<u>[kMG]?)B/s\)", re.M)
+NET_SLOW_BPS = 64 * 1000   # under this for a minute or more is a stalled network, not a busy mirror
+NET_SLOW_S = 60
+
+
+def _secs(t):
+    n = 0
+    for v, u in re.findall(r"(\d+)\s*(h|min|s)", t or ""):
+        n += int(v) * {"h": 3600, "min": 60, "s": 1}[u]
+    return n
+
+
+def net_stall(out, flakes=None):
+    """What in a stopped job's update.log says the update was waiting on the network, or None:
+    a known network flake's line (flakes.json, any guest's), a stall pattern (NET_STALL), or an
+    apt fetch slower than NET_SLOW_BPS for NET_SLOW_S or more.  The whole log counts: a job the
+    runner stopped at its timeout ran out of time, and these say where the time went
+    (t2v-20261119T0157-c8c7: seven updates crawled at 31 B/s-50 kB/s for 90 min each while the
+    farm's link was dropping 40% of packets, and were judged harness, which stopped the sweep)."""
+    t = _read(os.path.join(out, "update.log"), 8 << 20) if out else None
+    if not t:
+        return None
+    pats = []
+    for pat in [f.get("pattern") for f in (flakes or ()) if f.get("pattern")] + list(NET_STALL):
+        try:
+            pats.append(re.compile(pat))
+        except re.error:
+            continue
+    for line in t.splitlines():
+        if any(p.search(line) for p in pats):
+            return " ".join(line.split())[:150]
+    for m in APT_FETCHED.finditer(t):
+        try:
+            bps = float(m.group("r").replace(",", "")) * {"": 1, "k": 1e3, "M": 1e6, "G": 1e9}[m.group("u")]
+        except (ValueError, KeyError):
+            continue
+        if bps < NET_SLOW_BPS and _secs(m.group("t")) >= NET_SLOW_S:
+            return " ".join(m.group(0).split())[:150]
+    return None
+
+
 def judge_job(guest, mode, result, out, entry, policy, classed, updates, rc, stopped_mark=False):
     """(needs {need: value}, details {need: Need}, harness_why, hook_failed [names]).  STOPPED_MARK:
     job.sh was told to stop (a TERM, a timeout)."""
@@ -225,7 +289,7 @@ def judge_job(guest, mode, result, out, entry, policy, classed, updates, rc, sto
         if not result:
             return needs, details, f"no result.json in {out} (exit {rc})", hook_failed
         if rc != 0 and stopped_mark:
-            return needs, details, "stopped from outside", hook_failed
+            return needs, details, stop_words(out), hook_failed
         why = (result.get("merge") or {}).get("why")
         needs["try"] = "PASS" if rc == 0 else "FAIL"
         details["try"] = J.Need(needs["try"], None, [] if rc == 0 else [why or f"sculpt-update exit {rc}"])
@@ -271,7 +335,7 @@ def judge_job(guest, mode, result, out, entry, policy, classed, updates, rc, sto
     tail = result.get("tail") or []
     stopped = rc != 0 and (stopped_mark or (bool(tail) and str(tail[-1]).startswith("stopped")))
     if rc not in (0, GATE_BLOCKED) and (phase in HARNESS_PHASES or stopped or ("before" not in secs and "before" not in hook_failed)):
-        why = "stopped from outside" if stopped else harness_why or f"the guest never came up, or ssh failed: vm-update exit {rc} in phase {phase or '?'}"
+        why = stop_words(out) if stopped else harness_why or f"the guest never came up, or ssh failed: vm-update exit {rc} in phase {phase or '?'}"
         fail_hook_needs()
         return needs, details, why, hook_failed
     if mode == "probe" and rc != 0:   # no need says what went wrong after the hooks (a guest that won't power off)
@@ -428,6 +492,13 @@ def build(argv, hostctx=None):
             f.write("\n")
     except OSError as e:
         notes.append(f"new-lines.json not written: {e}")
+    # A stopped run that was waiting on the network: said, and the Mac's stop rules count it
+    # toward GuestTest2's own stop, never the run-wide harness count (run.StopEngine "net").
+    net = None
+    if harness_why and harness_why.startswith("stopped"):
+        net = net_stall(a.out, flakes_of(base))
+        if net:
+            harness_why = f"{harness_why}; waiting on the network: {net}"
     needs = J.apply_limits(needs, details, classed)
     verdict, klass, to_class = J.verdict_of(needs, harness_why)
     prev = (ce or {}).get("prev_verdict")
@@ -459,6 +530,8 @@ def build(argv, hostctx=None):
         "trim_rc": r.get("trim_rc"), "phase": r.get("phase"), "to_class_only": bool(to_class), "standing": standing, "hook_failed": hook_failed,
         "skips": skips, "notes": need_notes,
     }
+    if net:
+        extra["net_stall"] = net
     if prev:
         extra["rerun_of"] = (ce or {}).get("rerun_of")
     res = _reserve_gib(r)
@@ -485,7 +558,8 @@ def build(argv, hostctx=None):
                           "peak": r.get("ram_peak_kib"), "merged": merged, "merge_why": extra["merge_why"], "steps": extra["steps"],
                           "wall_s": wall, "new_lines": len(new_lines), "hook_failed": hook_failed, "phase": r.get("phase"),
                           "pkg_changed": extra["pkg_changed"], "fingerprint": extra["fingerprint"], "skips": skips, "notes": need_notes,
-                          "generation_before": r.get("generation_before"), "generation_after": r.get("generation_after")})
+                          "generation_before": r.get("generation_before"), "generation_after": r.get("generation_after"),
+                          "net_stall": net})
     return hostctx.row(**row) if hostctx is not None else row
 
 

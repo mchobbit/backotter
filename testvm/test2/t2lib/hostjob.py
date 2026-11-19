@@ -178,7 +178,11 @@ class JobFailure(str):
     def __new__(cls, text, still_running=False, gone=False):
         o = str.__new__(cls, text)
         o.still_running, o.gone = still_running, gone
+        o.stopped = False   # host_job gave up on it and its TERM ended it
         return o
+
+
+STOP_WHY = ".stop-why"   # in a job's records: why host_job stopped it (guest rows say so)
 
 
 UNKNOWN_MAX = 20   # polls in a row with no answer from the host before host_job gives up
@@ -245,7 +249,7 @@ def host_job(env, host, name, attempt, script_cmd, reserve=None, wear_tag=None, 
             except Exception:   # noqa: BLE001 - only the caller's ordering
                 pass
 
-    rc, _, err = env.io.sh(host, f"mkdir -p {_q(out)} && cd {_q(out)} && rm -f .exit .began .submitted .ended .pid")
+    rc, _, err = env.io.sh(host, f"mkdir -p {_q(out)} && cd {_q(out)} && rm -f .exit .began .submitted .ended .pid {STOP_WHY}")
     if rc != 0:
         submitted()
         return None, out, {}, JobFailure(f"can't make {out} on {host}: {err.strip()[-150:]}")
@@ -274,6 +278,12 @@ def host_job(env, host, name, attempt, script_cmd, reserve=None, wear_tag=None, 
     def give_up(why):
         began_now()
         gone = False
+        # Why it is stopped, in its records first: the job's row then says the runner stopped it
+        # and why (guest/job.sh's TERM alone reads as "stopped from outside", rows_guest).
+        try:
+            env.io.sh(host, f"printf '%s\\n' {shlex.quote(str(why))} > {_q(out + '/' + STOP_WHY)}", timeout=20)
+        except Exception:   # noqa: BLE001 - only the words of its row
+            pass
         if hasattr(env.io, "stop"):
             try:
                 gone = env.io.stop(host, pid, needle)
@@ -281,8 +291,9 @@ def host_job(env, host, name, attempt, script_cmd, reserve=None, wear_tag=None, 
                 gone = False
         env.log(f"{host}: {subdir}:{name} attempt {attempt}: {why}; "
                 + ("stopped" if gone else f"pid {pid} may still run: no rerun beside it"))
-        return None, out, {}, JobFailure(f"{why}; " + ("stopped" if gone else f"pid {pid} may still run"),
-                                         still_running=not gone)
+        o = JobFailure(f"{why}; " + ("stopped" if gone else f"pid {pid} may still run"), still_running=not gone)
+        o.stopped = bool(gone)   # it ended under the runner's TERM: what it wrote as it ended (a guest's row) is there
+        return None, out, {}, o
 
     t0, began, said, unknown, ex = time.time(), None, False, 0, None
     while True:
@@ -389,13 +400,20 @@ def reattach_job(env, host, name, attempt, timeout_s=3600, wait_s=4 * 3600, subd
         if time.time() - t0 > timeout_s + wait_s:
             began_now()
             stopped = False
+            try:   # as host_job's give_up: the job's row says the runner stopped it, and why
+                env.io.sh(host, f"printf '%s\\n' {shlex.quote(f'no end after {timeout_s + wait_s} s (resume)')} "
+                                f"> {_q(out + '/' + STOP_WHY)}", timeout=20)
+            except Exception:   # noqa: BLE001
+                pass
             if pid.isdigit() and hasattr(env.io, "stop"):
                 try:
                     stopped = env.io.stop(host, int(pid), needle)
                 except Exception:   # noqa: BLE001
                     stopped = False
-            return None, out, {}, JobFailure(f"attempt {attempt}'s job on {host} has no end after {timeout_s + wait_s} s (resume)",
-                                             still_running=not stopped)
+            o = JobFailure(f"attempt {attempt}'s job on {host} has no end after {timeout_s + wait_s} s (resume)",
+                           still_running=not stopped)
+            o.stopped = bool(stopped)
+            return None, out, {}, o
         env.io.sleep(POLL_S)
     began_now()
     f = env.io.fetch(host, out, [".submitted", ".began", ".ended", ".exit"])

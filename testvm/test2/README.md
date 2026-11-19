@@ -336,7 +336,13 @@ files one at a time), with the digests sha256_file's.
 
 The stop rules: a failed fast gate starts no guest of its family; a failed slow
 gate starts nothing new; one need failing on 2 guests of an OS stops that OS; 2
-harness-class results stop the run (known flakes aside); this run's jobs writing over
+harness-class results stop the run (known flakes aside), except a guest update that t2 stopped
+at its job timeout while it waited on the network: its row says so (`harness: stopped by t2: no
+end after 5400 s; waiting on the network: LINE`, rows_guest.net_stall: a flakes.json pattern,
+curl's or Go's timeouts, in-guest.sh's download retries, an apt fetch under 64 kB/s for a minute
+or more) and 2 of those stop GuestTest2 only, since SticTest2 and HoltTest2 download nothing
+(t2v-20261119T0157-c8c7: seven updates crawled for 90 min each over a link dropping 40% of
+packets, and the run-wide count stopped the sweep's SticTest2); this run's jobs writing over
 twice the budget (their wear tags, never other sessions' writes; classes.json
 policy.stop.write_budget_x x budget.run_gb) start nothing new.
 The swap rule is per host (run.py's `HostHolds`, since 2026-11-18): a host whose swap-out

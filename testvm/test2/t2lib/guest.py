@@ -992,7 +992,9 @@ class Runner:
                 extra = self.job_env(it, cells, mode)
                 rc, odir, t, why = self.job(self.env, host, it.guest, it.attempt, cmd, (it.d, it.m), tag, timeout, 4 * 3600, extra, None, "guest",
                                             on_began=on_began)
-            files = self.fetch_row(host, odir) if why is None or getattr(why, "gone", False) else {}
+            # a job the runner's TERM ended (its timeout) wrote its row as it ended: that row is the result
+            ended = why is None or getattr(why, "gone", False) or getattr(why, "stopped", False)
+            files = self.fetch_row(host, odir) if ended else {}
             self.done_q.append((it, host, rc, odir, t, why, files))
         finally:
             on_began()   # whatever happened, the job isn't in cmp-run.sh's line any more
@@ -1061,7 +1063,8 @@ class Runner:
                 self.bigs[host] -= 1
         summ = None
         gone = bool(getattr(why, "gone", False))   # resume: the attempt is proven gone
-        if (why is None or gone) and files.get("row-summary.json"):
+        stopped = bool(getattr(why, "stopped", False))   # host_job's TERM ended it: job.sh wrote its row
+        if (why is None or gone or stopped) and files.get("row-summary.json"):
             try:
                 summ = json.loads(files["row-summary.json"])
             except ValueError:
@@ -1140,7 +1143,10 @@ class Runner:
             return
         res = {"cell": it.cell, "family": "guest", "part": None, "verdict": summ.get("verdict"), "class": summ.get("class"),
                "needs": J.only_fail_needs(summ.get("needs")), "os": self.pm_of(it), "host": host,
-               "flake": bool(it.flake) and summ.get("verdict") == "PASS"}
+               "flake": bool(it.flake) and summ.get("verdict") == "PASS",
+               # an attempt stopped while it waited on the network (rows_guest.net_stall): GuestTest2's
+               # own stop, never the run-wide harness count, which would stop SticTest2 and HoltTest2 too
+               "net": bool(summ.get("net_stall")) and summ.get("verdict") == "HARNESS"}
         try:
             self.rs.stops.feed(res)
         except Exception as e:   # noqa: BLE001

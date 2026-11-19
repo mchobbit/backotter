@@ -1081,6 +1081,72 @@ class U53HoltRun(unittest.TestCase):
         self.assertTrue(res["stops"][0].startswith("stop-family: bko-holt"), res["stops"])
         self.assertFalse([1 for _, op, *c in self.remote.calls if op == "start" and "ht1-queue.sh" in c[0]])
 
+    class FailPlats(FakeRemote):
+        """Builds of FAIL's platforms end with exit 1; the others as FakeRemote's."""
+        FAIL = ()
+
+        def tick(self):
+            for (host, pid), p in list(self.procs.items()):
+                if p["alive"] and p["kind"] == "build" and p["plat"] in self.FAIL:
+                    self.files[host][p["env"]["HOLT_LOGS"] + "/exit"] = "1\n"
+                    p["alive"] = False
+            super().tick()
+
+    def fail_plats(self, *plats):
+        return type("Fail", (self.FailPlats,), {"FAIL": plats})({})
+
+    def test_failed_platform_build_skips_its_cells_alone(self):
+        """t2h-20261119T0157-c8c7: haiku's and dragonfly's builds failed (their Rust installs
+        couldn't fetch) and all 94 cells were skipped.  A failed build other than linux's
+        loses its platform's cells alone: they are skipped, saying why, the run fails, and
+        the rest run."""
+        res = self.go({}, self.fail_plats("openbsd"))
+        r = self.remote
+        self.assertEqual(res["exit"], 1, res)
+        self.assertFalse([s for s in res["stops"] if s.startswith("stop-family")], res["stops"])
+        by = {c["cell"]: c for c in res["cells"]}
+        self.assertEqual(by["holt:openbsd8"]["outcome"], "skipped")
+        self.assertTrue(any("no bko-holt openbsd: bko-holt openbsd build failed on chopin (exit 1" in x
+                            for x in by["holt:openbsd8"]["reasons"]), by["holt:openbsd8"]["reasons"])
+        for c in ("holt:debian13", "holt:debian13+oneshot", "holt:freebsd15", "holt:redox", "holt:mint22"):
+            self.assertEqual((by[c]["outcome"], by[c]["verdict"]), ("ran", "PASS"), c)
+        todo = r.written[("chopin", holt.QUEUE + "/t2h-20261108T0300-abcd/todo")].split()
+        self.assertNotIn("openbsd8", todo)
+        self.assertEqual(sorted(todo), sorted(["redox", "mint22", "freebsd15", "debian13+oneshot", "debian13"]))
+        hb = "/bkoscratch/t2test/holt-bin/" + "c" * 64
+        for h in ("chopin", "cinqcent"):
+            self.assertIn(hb + "/freebsd/bko-holt", r.files[h])
+            self.assertNotIn(hb + "/openbsd/bko-holt", r.files[h])
+            self.assertNotIn("openbsd", r.files[h][hb + "/SHA256SUMS"])
+        self.assertTrue(any("holt:openbsd8 skipped (no bko-holt openbsd)" in n for n in res["notes"]), res["notes"])
+        self.assertTrue(any(n.startswith("bko-holt openbsd build failed") and "1 cell(s) skipped (holt:openbsd8)" in n
+                            for n in res["notes"]), res["notes"])
+        self.assertTrue(any("bko-holt openbsd: bko-holt openbsd build failed" in t and "its cells are skipped" in t
+                            for t in self.rs.logged), self.rs.logged)
+        st = jload(os.path.join(self.tmp, "holt.json"))
+        self.assertEqual(list(st["lost_plats"]), ["openbsd"])
+        # A resume neither builds openbsd again nor runs its cell, and still fails.
+        n_builds = len([1 for _, op, *c in r.calls if op == "start" and "--reserved" in c[0]])
+        res2 = holt.resume(self.ctx, self.plan, remote=r, sleep=lambda s: None, poll=0, gate=self.gate)
+        self.assertEqual(res2["exit"], 1)
+        self.assertEqual(len([1 for _, op, *c in r.calls if op == "start" and "--reserved" in c[0]]), n_builds)
+        self.assertEqual({c["cell"]: c["outcome"] for c in res2["cells"]}["holt:openbsd8"], "skipped")
+
+    def test_failed_linux_build_still_stops_the_run(self):
+        res = self.go({}, self.fail_plats("linux"))
+        self.assertEqual(res["exit"], 1)
+        self.assertTrue(res["stops"][0].startswith("stop-family: bko-holt linux build failed"), res["stops"])
+        self.assertFalse([1 for _, op, *c in self.remote.calls if op == "start" and "ht1-queue.sh" in c[0]])
+
+    def test_failed_build_of_every_cell_stops_the_run(self):
+        """No cell left to run (HoltTest2 openbsd8 alone, its build failed): stop-family, as before."""
+        self.plan.cells[:] = [pc for pc in self.cells if pc.cell == "holt:openbsd8"]
+        res = self.go({}, self.fail_plats("openbsd"))
+        self.assertEqual(res["exit"], 1)
+        self.assertTrue(res["stops"][0].startswith("stop-family: bko-holt openbsd build failed"), res["stops"])
+        self.assertFalse([1 for _, op, *c in self.remote.calls if op == "start" and "ht1-queue.sh" in c[0]])
+        self.assertEqual([(c["cell"], c["outcome"]) for c in res["cells"]], [("holt:openbsd8", "skipped")])
+
     def test_one_run_at_a_time_builds_a_code(self):
         """Holt runs over other cells go side by side (run.CellLocks): the second to need a CODE
         waits on MAC_ROOT/runs/.lock-holt-bin-CODE while the first builds and ships it."""

@@ -68,7 +68,9 @@ its rows count only where the binaries are equal (R14).
   `--hosts` (chopin and cinqcent: a small host has no room for a holt build beside the
   run's own cells; refused, with the reason, when there is something to build and none) and
   ships it to every `--hosts` host; `T2_HOLT_SHIP=known` also ships it to every enabled
-  host.
+  host.  A failed build other than linux's skips only that platform's cells (each says
+  why; the run fails) and the others run; a failed linux build, or one that leaves no
+  cell to run, stops the run before any guest starts.
 - Refused (exit 2): `+close` (waits for H3), `HoltTest2All +img` (the `+img` cells are
   `HoltTest2 +img`'s), names with an All form, BkoTest2 or SweepTest2, `stale` with an
   All form or SweepTest2, `GuestTest2 update` with `stale` or All, an image with a binary that has no PASS at

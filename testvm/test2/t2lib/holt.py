@@ -23,7 +23,11 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      written for the builds it holds: on every host of --hosts, and best effort
      on the other default hosts (ctx.options holt_ship or T2_HOLT_SHIP "known":
      on every known host, the small ones too).  ctx.options["holt_bin"]
-     (--holt-bin DIR) tests a ready set instead.  One run at a time builds and ships a
+     (--holt-bin DIR) tests a ready set instead.  A failed build other than linux's
+     loses its platform alone (holt.json lost_plats): its cells are reported skipped,
+     saying why, the run fails, and the other platforms' cells run; a failed linux
+     build, a build still running after 4 h, or no cell left stops the run (stop-family,
+     no guest starts).  One run at a time builds and ships a
      CODE (MAC_ROOT/runs/.lock-holt-bin-CODE16, waited for): holt runs over other cells
      run side by side (run.CellLocks).
   0. +img cells (ImgTest2's panel) run on the pinned rescue image's own binaries: no CODE
@@ -775,7 +779,11 @@ class Runner:
         --hosts (and, best effort, on the other test hosts).  A platform any test host
         has already is copied from there, never built again (builds aren't reproducible,
         R14), and a binary already in a host's CODE/ is never written over.  Returns None,
-        or why not (the run then starts no guest)."""
+        or why not (the run then starts no guest).  A build other than linux's that ended
+        and failed loses only its platform: holt.json's lost_plats {PLAT: why} gets it,
+        due() leaves out the cells it builds for, result() says each is skipped, and the
+        other platforms are shipped and their cells run (all_lost(): when no cell is
+        left, the run stops as it did)."""
         plats = needed_platforms(self.sf, [pc.cell for pc in pcs])
         hd = self.holt_dir()
         if self.opts.get("holt_bin"):
@@ -825,7 +833,18 @@ class Runner:
             self.state.save()
         err = self.wait_builds(order)
         if err:
-            return err
+            # (A failed build that ended, other than linux's, loses its platform's cells
+            # alone; a build still running, or linux's failing, stops the run as before.)
+            bad = [p for p in order if (builds.get(p) or {}).get("rc") != 0]
+            if not bad or "linux" in bad or any(builds[p].get("rc") is None for p in bad):
+                return err
+            lost = dict(self.state["lost_plats"] or {})
+            for p in bad:
+                lost[p] = self.build_failure(p)
+                self.log(f"bko-holt {p}: {lost[p]}: its cells are skipped, the other platforms' run")
+            self.state["lost_plats"] = lost
+            order = [p for p in order if p not in bad]
+            plats = [p for p in plats if p not in bad]
         for p in order:
             b = builds[p]
             infos[p] = b["info"]
@@ -1002,10 +1021,15 @@ class Runner:
             self.sleep(self.poll)
         bad = [p for p in plats if (builds.get(p) or {}).get("rc") != 0]
         if bad:
-            return "; ".join(f"bko-holt {p} build failed on {builds[p]['host']} (exit {builds[p]['rc']}"
-                             + (f": {builds[p]['why']}" if builds[p].get("why") else "")
-                             + f"; logs {builds[p]['host']}:{builds[p]['logs']})" for p in bad)
+            return "; ".join(self.build_failure(p) for p in bad)
         return None
+
+    def build_failure(self, p):
+        """Why platform P's build of this run failed (its host, exit and logs)."""
+        b = self.state["builds"].get(p) or {}
+        return (f"bko-holt {p} build failed on {b.get('host')} (exit {b.get('rc')}"
+                + (f": {b['why']}" if b.get("why") else "")
+                + f"; logs {b.get('host')}:{b.get('logs')})")
 
     # --- 1a. image sums ------------------------------------------------------------------------------
     def ensure_imgsums(self, pcs):
@@ -1658,15 +1682,19 @@ class Runner:
             return None
 
     # --- the whole run ---------------------------------------------------------------------------------
-    def due(self):
-        return [pc for pc in self.plan.cells if pc.status == "due" and pc.family == "holt"]
+    def due(self, lost=False):
+        """The plan's due holt cells, less those whose platform's build failed (lost_plats:
+        an +img cell runs on the pin's binaries, never lost); LOST: those alone."""
+        gone = self.state["lost_plats"] or {}
+        return [pc for pc in self.plan.cells if pc.status == "due" and pc.family == "holt"
+                and lost == bool(gone and not is_img(pc.cell) and plat_of(self.sf, pc.cell) in gone)]
 
     def run(self):
         start = self.state["start"] or utc_now()
         self.state["start"] = start
         pcs = self.due()
-        if not pcs:
-            return self.result(start, [], exit_=0)
+        if not pcs:   # (a resume's cells may all be a failed build's: those are skipped, exit 1)
+            return self.result(start, [], exit_=None if self.due(lost=True) else 0)
         self.code = (self.plan.set or {}).get("holt_code") or keys.holt_code(self.ctx.src)
         self.state["code"] = self.code
         self.catch_signals()
@@ -1745,10 +1773,12 @@ class Runner:
             self.state["all_img"] = all(is_img(pc.cell) for pc in pcs)
         if not self.state["built"]:
             built = [pc for pc in pcs if not is_img(pc.cell)]   # +img cells: the pin's binaries
-            why = self.ensure_holt(built) if built else None
+            why = (self.ensure_holt(built) or self.all_lost()) if built else None
             if why:
                 self.stops.append("stop-family: " + why)
                 return self.result(start, pcs, exit_=1)
+            pcs = self.due()   # (less the cells of a platform whose build failed)
+            built = [pc for pc in pcs if not is_img(pc.cell)]
             self.state["plats"] = needed_platforms(self.sf, [pc.cell for pc in built])
             self.state["built"] = utc_now()
         if not self.state["gated"]:
@@ -1772,16 +1802,18 @@ class Runner:
         pcs = self.due()
         if not pcs:
             self.notes.append("nothing due after the gate's re-plan")
-            return self.result(start, [], exit_=0)
+            return self.result(start, [], exit_=None if self.due(lost=True) else 0)
         self.state["all_img"] = all(is_img(pc.cell) for pc in pcs)
         # Platforms the re-plan's cells need that the first builds didn't make (R1, R15).
         built = [pc for pc in pcs if not is_img(pc.cell)]
         more = [p for p in needed_platforms(self.sf, [pc.cell for pc in built]) if p not in (self.state["plats"] or [])]
         if more:
-            why = self.ensure_holt(built)
+            why = self.ensure_holt(built) or self.all_lost()
             if why:
                 self.stops.append("stop-family: " + why)
                 return self.result(start, pcs, exit_=1)
+            pcs = self.due()
+            more = [p for p in more if p not in (self.state["lost_plats"] or {})]
             self.state["plats"] = sorted(set(self.state["plats"] or []) | set(more))
         if not self.state["cells"]:
             self.state["cells"] = {h: p for h, p in self.rs.write_cells(self.plan).items()}
@@ -1998,6 +2030,14 @@ class Runner:
             self.notes.append("not rerun (reruns are for FAILs): " + ", ".join(other))
         return out
 
+    def all_lost(self):
+        """Why the run stops when a platform's failed build (lost_plats) left no due cell to
+        run, else None."""
+        gone = self.state["lost_plats"] or {}
+        if gone and not self.due():
+            return "; ".join(gone[p] for p in sorted(gone))
+        return None
+
     def no_rerun(self, qrun):
         st = self.rs.stops
         for flag, what in (("stop_run", "stop-run"), ("stop_family", "stop-family"), ("stop_starts", "stop-starts")):
@@ -2058,11 +2098,28 @@ class Runner:
             elif last.get("valid") is False:
                 note = str(last.get("note") or "")
                 bad.append(f"{pc.cell} PASS, but its row {last.get('id')} doesn't count (valid false: {note[:140]})")
+        # The cells of a platform whose bko-holt build failed (lost_plats): skipped, saying why.
+        gone = self.state["lost_plats"] or {}
+        seen = {pc.cell for pc in pcs}
+        for pc in self.due(lost=True):
+            if pc.cell in seen:
+                continue
+            p = plat_of(self.sf, pc.cell)
+            cells.append({"cell": pc.cell, "outcome": "skipped", "rule": pc.rule,
+                          "reasons": list(pc.reasons or []) + [f"no bko-holt {p}: {gone[p]}"], "rows": [],
+                          "verdict": None, "gm": 0.0, "wall_s": 0, "gb": None, "host": None})
+            bad.append(f"{pc.cell} skipped (no bko-holt {p})")
+        lost_notes = []
+        for p in sorted(gone):
+            n = [pc.cell for pc in self.due(lost=True) if plat_of(self.sf, pc.cell) == p and pc.cell not in seen]
+            if n:
+                lost_notes.append(f"{gone[p]}: {len(n)} cell(s) skipped ({', '.join(n[:8])}"
+                                  + (f", and {len(n) - 8} more" if len(n) > 8 else "") + ")")
         for c in self.gate_cells:
             if (c.get("outcome") or "ran") == "ran" and c.get("verdict") not in ("PASS", None):
                 bad.append(f"{c.get('cell')} {c.get('verdict')}")
         cells = [dict(c, outcome=c.get("outcome") or "ran") for c in self.gate_cells] + cells
-        notes = list(self.notes) + list(self.problems)
+        notes = list(self.notes) + lost_notes + list(self.problems)
         if bad:
             notes.append("not passed: " + "; ".join(bad[:12]) + (f"; and {len(bad) - 12} more" if len(bad) > 12 else ""))
         ex = exit_ if exit_ is not None else (1 if (bad or self.stops or self.problems or stopped) else 0)

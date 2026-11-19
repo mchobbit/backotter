@@ -267,7 +267,11 @@ efivarfs bound in):
    bring the key file back, `boot` stops here and says which one is missing.
    A ZFS key file inside the restored tree (`keylocation=file://` on the
    pool's own datasets, ZFSBootMenu's `/etc/zfs/zroot.key`) must be the
-   `--key-file` the pool was made with, byte for byte, or `boot` stops.
+   `--key-file` the pool was made with, byte for byte, or `boot` stops; for
+   a passphrase or hex key, one newline more or less at the end is the same
+   key (libzfs reads the first line and drops its newline: the ZFSBootMenu
+   guide's `echo ... > /etc/zfs/zroot.key` leaves one).  The restored file
+   is never rewritten.
 3. The initramfs, remade by the source's own generator, as the dump's
    `boot.initramfs.generator` names it (the restore changed identifiers the
    image embeds: crypttab, mdadm.conf, the zpool cache, LVM and md UUIDs):

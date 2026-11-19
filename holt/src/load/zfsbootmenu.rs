@@ -35,6 +35,20 @@ fn s(v: &Value, k: &str) -> Option<String> {
     v.get(k).and_then(Value::as_str).map(str::to_string)
 }
 
+/// The shell test that key file RESTORED holds the key in file KEY, else
+/// MSG on stderr and exit 1.  A raw key (RAW) is read whole, 32 bytes, so
+/// it must be the same byte for byte.  A passphrase or hex key is read by
+/// libzfs's get_key_material_raw (lib/libzfs/libzfs_crypto.c, OpenZFS
+/// 2.4.4) with getline(), which drops one '\n' at the end and nothing else
+/// ("\r" stays): so the two files may also differ by one '\n' at the end of
+/// either (a key file written by `echo PASSPHRASE >`, as the ZFSBootMenu
+/// guide has it).  Any other difference fails.
+pub(crate) fn key_file_check(key: &str, restored: &str, raw: bool, msg: &str) -> String {
+    let (k, r) = (shell_quote(key), shell_quote(restored));
+    let same = if raw { format!("cmp -s {k} {r}") } else { format!("cmp -s {k} {r} || echo | cat {r} - | cmp -s {k} - || echo | cat {k} - | cmp -s - {r}") };
+    format!("{same} || {{ echo {} >&2; exit 1; }}", shell_quote(msg))
+}
+
 impl Builder<'_> {
     /// boot.zfsbootmenu, when the source booted (or holds) ZFSBootMenu.
     pub(crate) fn zbm(&self) -> Option<&Value> {
@@ -59,7 +73,9 @@ impl Builder<'_> {
 
     /// The boot stage's check of each encryption root whose key file is in
     /// the restored tree and whose key --key-file gave: the restored file
-    /// is that key, byte for byte, under the target T.
+    /// is that key under the target T, byte for byte but for the one
+    /// newline at the end libzfs drops from a passphrase or hex key
+    /// (key_file_check).  The restored file is never rewritten.
     pub(crate) fn zfs_key_file_checks(&self, t: &str) -> Vec<Cmd> {
         let mut out = Vec::new();
         for ds in self.layout.arr(&["storage", "zfs", "tools", "datasets"]) {
@@ -68,9 +84,9 @@ impl Builder<'_> {
                 continue;
             }
             let (Some(path), Some(key)) = (self.key_file_in_tree(ds), self.opts.key_file(&name)) else { continue };
-            let (k, r) = (shell_quote(key), shell_quote(&format!("{t}{path}")));
             let msg = format!("ZFS encryption root {name}: the restored {path} is not the key --key-file {name}={key} gave, so the initramfs would carry a key that does not open the pool; give the key the source kept there");
-            out.push(Cmd::new(&["sh", "-c", &format!("cmp -s {k} {r} || {{ echo {} >&2; exit 1; }}", shell_quote(&msg))]).why(format!("{name}: the restored key file {path} must be the key it was made with")));
+            let raw = s(ds, "keyformat").as_deref() == Some("raw");
+            out.push(Cmd::new(&["sh", "-c", &key_file_check(key, &format!("{t}{path}"), raw, &msg)]).why(format!("{name}: the restored key file {path} must be the key it was made with")));
         }
         out
     }
@@ -136,5 +152,66 @@ impl Builder<'_> {
             ));
         }
         Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::key_file_check;
+
+    /// The key file check run by sh on real files: the same key passes, and
+    /// so does one '\n' more at the end of either file (what libzfs drops
+    /// from a passphrase); "\r\n", two newlines more, a different key or a
+    /// missing file fail.  A raw key passes only byte for byte.
+    #[test]
+    fn key_file_check_allows_the_newline_libzfs_drops() {
+        let dir = crate::testutil::TempDir::new("zbm-key");
+        let (k, r) = (dir.path().join("disk passphrase"), dir.path().join("zroot.key"));
+        let run = |key: &[u8], restored: Option<&[u8]>, raw: bool| -> (bool, String) {
+            std::fs::write(&k, key).unwrap();
+            let _ = std::fs::remove_file(&r);
+            if let Some(b) = restored {
+                std::fs::write(&r, b).unwrap();
+            }
+            let o = std::process::Command::new("sh").arg("-c").arg(key_file_check(k.to_str().unwrap(), r.to_str().unwrap(), raw, "zroot: not the key")).output().unwrap();
+            assert_eq!(std::fs::read(&k).unwrap(), key, "the given key is left as it was");
+            if let Some(b) = restored {
+                assert_eq!(std::fs::read(&r).unwrap(), b, "the restored key file is left as it was");
+            }
+            (o.status.success(), String::from_utf8_lossy(&o.stderr).into_owned())
+        };
+        for (key, restored) in [
+            (&b"SomeKeyphrase"[..], &b"SomeKeyphrase"[..]),
+            (b"SomeKeyphrase", b"SomeKeyphrase\n"),
+            (b"SomeKeyphrase\n", b"SomeKeyphrase"),
+            (b"SomeKeyphrase\n", b"SomeKeyphrase\n"),
+            (b"two words", b"two words\n"),
+        ] {
+            let (ok, err) = run(key, Some(restored), false);
+            assert!(ok && err.is_empty(), "{key:?} {restored:?}: {err}");
+        }
+        for (key, restored) in [
+            (&b"SomeKeyphrase"[..], &b"SomeKeyphrase\r\n"[..]),
+            (b"SomeKeyphrase", b"SomeKeyphrase\n\n"),
+            (b"SomeKeyphrase\n\n", b"SomeKeyphrase"),
+            (b"SomeKeyphrase", b"SomeKeyphrase "),
+            (b"SomeKeyphrase", b"SomeKeyphras\n"),
+            (b"SomeKeyphrase", b"OtherKeyphrase"),
+            (b"SomeKeyphrase", b"\nSomeKeyphrase"),
+            (b"SomeKeyphrase", b""),
+            (b"SomeKeyphrase", b"\n"),
+        ] {
+            let (ok, err) = run(key, Some(restored), false);
+            assert!(!ok && err == "zroot: not the key\n", "{key:?} {restored:?}: {err}");
+        }
+        let (ok, err) = run(b"SomeKeyphrase", None, false);
+        assert!(!ok && err.ends_with("zroot: not the key\n"), "{err}");
+        // Raw: 32 bytes read whole, so a newline more is a different key.
+        let rawkey: Vec<u8> = (0u8..32).collect();
+        assert!(run(&rawkey, Some(&rawkey), true).0);
+        let mut nl = rawkey.clone();
+        nl.push(b'\n');
+        assert!(!run(&rawkey, Some(&nl), true).0);
+        assert!(!run(&nl, Some(&rawkey), true).0);
     }
 }

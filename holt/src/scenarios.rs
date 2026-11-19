@@ -6150,10 +6150,22 @@ fn zfsbootmenu_encrypted() {
         assert!(create.contains(w), "{w}: {create}");
     }
     let bt = text(Stage::Boot);
-    let check = bt.find("sh -c 'cmp -s /root/zroot-passphrase /mnt/bko-target/etc/zfs/zroot.key || { echo '\\''ZFS encryption root zroot: the restored /etc/zfs/zroot.key is not the key --key-file zroot=/root/zroot-passphrase gave").expect(&bt);
+    // The same key, or one newline more or less at the end (libzfs drops
+    // one from a passphrase: the ZFSBootMenu guide's `echo ... >` key file).
+    let check = bt.find("sh -c 'cmp -s /root/zroot-passphrase /mnt/bko-target/etc/zfs/zroot.key || echo | cat /mnt/bko-target/etc/zfs/zroot.key - | cmp -s /root/zroot-passphrase - || echo | cat /root/zroot-passphrase - | cmp -s - /mnt/bko-target/etc/zfs/zroot.key || { echo '\\''ZFS encryption root zroot: the restored /etc/zfs/zroot.key is not the key --key-file zroot=/root/zroot-passphrase gave").expect(&bt);
     let loc = bt.find("zfs set keylocation=file:///etc/zfs/zroot.key zroot\n").expect(&bt);
     let dracut = bt.find("dracut --force --kver").expect(&bt);
     assert!(bt.find("umount /mnt/bko-target/run/bko-be/void-6.12'\n").unwrap() < check && check < loc && loc < dracut, "{bt}");
+    assert_eq!(bt.matches("cmp -s").count(), 3, "{bt}");
+    assert!(!bt.contains("> /mnt/bko-target/etc/zfs/zroot.key") && !bt.contains("install -m 400 /root/zroot-passphrase"), "the restored key file is never rewritten: {bt}");
+    // A raw key is read whole: byte for byte only.
+    let (_, b) = zbm_plan(true, &["--key-file", "zroot=/root/zroot-key"], |v| {
+        let Some(Value::Arr(mut ds)) = v.at(&["storage", "zfs", "tools", "datasets"]).cloned() else { panic!() };
+        set_at(&mut ds[0], &["keyformat"], Value::from("raw"));
+        set_at(v, &["storage", "zfs", "tools", "datasets"], Value::Arr(ds));
+    });
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("sh -c 'cmp -s /root/zroot-key /mnt/bko-target/etc/zfs/zroot.key || { echo "), "{bt}");
     assert_eq!(bt.matches("cmp -s").count(), 1, "{bt}");
 }
 

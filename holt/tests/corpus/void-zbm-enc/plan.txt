@@ -80,7 +80,7 @@ sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/void-6.18 || umount /mnt/bko-t
 sh -c '[ ! -d /mnt/bko-target/run/bko-be/void-6.18 ] || rmdir /mnt/bko-target/run/bko-be/void-6.18'
 sh -c '[ ! -d /mnt/bko-target/run/bko-be ] || rmdir /mnt/bko-target/run/bko-be'
 # zroot: the restored key file /etc/zfs/keyfile1.key must be the key it was made with
-sh -c 'cmp -s /srv/bko-keys/zroot /mnt/bko-target/etc/zfs/keyfile1.key || { echo '\''ZFS encryption root zroot: the restored /etc/zfs/keyfile1.key is not the key --key-file zroot=/srv/bko-keys/zroot gave, so the initramfs would carry a key that does not open the pool; give the key the source kept there'\'' >&2; exit 1; }'
+sh -c 'cmp -s /srv/bko-keys/zroot /mnt/bko-target/etc/zfs/keyfile1.key || echo | cat /mnt/bko-target/etc/zfs/keyfile1.key - | cmp -s /srv/bko-keys/zroot - || echo | cat /srv/bko-keys/zroot - | cmp -s - /mnt/bko-target/etc/zfs/keyfile1.key || { echo '\''ZFS encryption root zroot: the restored /etc/zfs/keyfile1.key is not the key --key-file zroot=/srv/bko-keys/zroot gave, so the initramfs would carry a key that does not open the pool; give the key the source kept there'\'' >&2; exit 1; }'
 # zroot: unlocks as the source did
 zfs set keylocation=file:///etc/zfs/keyfile1.key zroot
 # / with the source's atime options (rw,relatime), for host-only dracut's rootflags=

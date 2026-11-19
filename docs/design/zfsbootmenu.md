@@ -226,7 +226,10 @@ gets a `fresh-install` snapshot.
   prompt; extended to `file://`).
   - **New check:** after the restore, the target's `/etc/zfs/zroot.key`
     must be byte-equal to FILE. If not, it's a problem: the BE's initramfs
-    would carry a key that doesn't open the pool.
+    would carry a key that doesn't open the pool. One newline at the end
+    of either file is allowed (2026-11-19): libzfs drops it from a
+    passphrase or hex key (`get_key_material_raw`, getline), and the ZFSBootMenu
+    guide writes the key with `echo ... >`. A raw key stays byte-equal.
   - Without `--key-file`, the plan has a problem naming the source's key
     path.
 - **Boot stage: a new `zfsbootmenu` arm**, before the GRUB arms (Decision

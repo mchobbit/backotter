@@ -442,18 +442,18 @@
     "t2-self-test",
     "drive-self-test"
    ],
-   "notes": "Its key is the self-tests' code, the specs they read and the unit tests' fixtures (which leakscan scans: tests/fixtures/** one input each), not every repo file the spec checker reads through them (a row holds at most 64 KiB); holt/tests/corpus/** is gate:holt's",
+   "notes": "Its key is the self-tests' code, the specs they read and the unit tests' fixtures (which leakscan scans), not every repo file the spec checker reads through them (a row holds at most 64 KiB); the unit tests and their fixtures are two tree: inputs (keys.py), so a test file added grows no row; holt/tests/corpus/** is gate:holt's",
    "harness": [
     "testvm/test2/t2",
     "testvm/test2/t2-host",
     "testvm/test2/*.json",
     "testvm/test2/*.tsv",
     "testvm/test2/t2lib/*.py",
-    "testvm/test2/tests/*.py",
+    "tree:testvm/test2/tests/*.py",
     "testvm/test2/*/*.json",
     "?testvm/test2/*/*.py",
     "testvm/stictest1/drive.py",
-    "testvm/test2/tests/fixtures/**"
+    "tree:testvm/test2/tests/fixtures/**"
    ],
    "judge": [
     "testvm/test2/t2lib/gate_judge.py"

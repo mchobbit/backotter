@@ -770,6 +770,45 @@ class PyCode(unittest.TestCase):
         self.assertNotEqual(self.code(text.replace("JOURNAL_LINES = 50000", "JOURNAL_LINES = 5000", 1)), base)
 
 
+class Tree(unittest.TestCase):
+    """tree:GLOB (gate:selftest's unit tests and fixtures): every file GLOB matches is one input,
+    which any file's edit, addition or removal changes, and a file it covers is in no other
+    glob's hits, so the row doesn't grow with the files."""
+
+    FILES = {"testvm/t/a.py": "a\n", "testvm/t/b.py": "b\n", "testvm/t/fx/x.out": "x\n", "testvm/t/fx/d/y": "y\n",
+             "testvm/lib/c.py": "c\n"}
+    SPEC = ["tree:testvm/t/*.py", "testvm/*/*.py", "tree:testvm/t/fx/**", "?tree:testvm/none/**",
+            "tree:testvm/gone/**"]
+
+    def resolve(self, root):
+        specs = keys.Specs(keys.TreeSource(root), overrides={"guest": {"v": 1, "family": "guest", "entries": {
+            "g": {"harness": self.SPEC}}}})
+        return keys.resolve("guest:g", keys.TreeSource(root), {}, specs)
+
+    def test_one_input_for_its_files(self):
+        root = make_repo(os.path.join(_tmp, "tree-one"), self.FILES)
+        r = self.resolve(root)
+        h = r.inputs["harness"]
+        lines = "".join(f"{p}\t{sha(self.FILES[p])}\n" for p in ("testvm/t/fx/d/y", "testvm/t/fx/x.out"))
+        self.assertEqual(h["tree:testvm/t/fx/**"], "dir:" + sha(lines))
+        self.assertTrue(h["tree:testvm/t/*.py"].startswith("dir:"))
+        self.assertEqual(sorted(h), ["testvm/lib/c.py", "tree:testvm/gone/**", "tree:testvm/none/**",
+                                     "tree:testvm/t/*.py", "tree:testvm/t/fx/**"])     # a.py, b.py: in their tree only
+        self.assertEqual((h["tree:testvm/none/**"], h["tree:testvm/gone/**"]), ("absent", "missing"))
+        self.assertIn("harness/tree:testvm/gone/**", r.unknown)
+
+    def test_an_edit_an_addition_or_a_removal_changes_it(self):
+        base = self.resolve(make_repo(os.path.join(_tmp, "tree-base"), self.FILES))
+        for n, (over, gone) in enumerate([({"testvm/t/fx/d/y": "y2\n"}, ()), ({"testvm/t/fx/z": "z\n"}, ()),
+                                          ({}, ("testvm/t/fx/x.out",)), ({"testvm/t/c.py": "c\n"}, ())]):
+            files = {p: v for p, v in dict(self.FILES, **over).items() if p not in gone}
+            r = self.resolve(make_repo(os.path.join(_tmp, f"tree-{n}"), files))
+            self.assertNotEqual(r.key, base.key, (over, gone))
+            diff = [d[1] for d in keys.diff_inputs(base.inputs, r.inputs)]
+            self.assertEqual(len(diff), 1, diff)
+            self.assertTrue(diff[0].startswith("tree:testvm/t/"), diff)
+
+
 class Plats(unittest.TestCase):
     """"plats": {PLAT: ENTRY} merges between the kind and the entry, by the entry's (or its kind's) plat."""
 

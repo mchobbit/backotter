@@ -487,7 +487,8 @@ def subst(item, guest, plat=None, kind=None):
 
 def listed_paths(items, files):
     """The repo paths a spec list covers: (set of files, [paths or globs that match nothing]).
-    A "?PATH" that isn't there is no error; PATH#SECTION and pycode:PATH (keys.python_code) are PATH."""
+    A "?PATH" that isn't there is no error; PATH#SECTION and pycode:PATH (keys.python_code) are PATH,
+    tree:GLOB (one input for them all) is GLOB."""
     have, dead = set(), []
     for it in items or []:
         if not isinstance(it, str):
@@ -497,6 +498,7 @@ def listed_paths(items, files):
         optional = it.startswith("?")
         it = it[1:] if optional else it
         it = it[len("pycode:"):] if it.startswith("pycode:") else it
+        it = it[len("tree:"):] if it.startswith("tree:") else it
         if "#" in it and not it.startswith(("entry:", "shared:", "host:", "git:")):
             it = it.split("#", 1)[0]
         if optional and not is_glob(it) and it not in files:

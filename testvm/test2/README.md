@@ -467,9 +467,11 @@ They need no host, and run under `/usr/bin/python3` (3.9) and `python3` (3.14).
 never more than the CPUs), the biggest files first, each with a TMPDIR of its own: ~110 s
 rather than 688 s one after another.  The tests in `UNIT_SERIAL` (t2) leave the pool and
 run after it, alone: test_plan.Performance, whose 2 s plan limits took 2.49 s beside the
-other files and 1.56 s alone (~6 s).  Nothing runs twice: a file that fails, in the pool or
-alone, fails the self-test (a FAIL that passes again is a FLAKY-FAIL).  Its line is the one
-unittest would print for them all ("OK (skipped=N)", "FAILED (failures=F, ...)"); a failing
+other files and 1.56 s alone (~6 s).  Since 2026-11-19 its timings are the best of up to 3
+(2.03 s alone on a Mac busy with other work), and the 12-commit one's scaling is a count of
+its git runs, with a 3 s wall limit for gross slowdowns.  Nothing runs twice: a file that
+fails, in the pool or alone, fails the self-test (a FAIL that passes again is a FLAKY-FAIL).
+Its line is the one unittest would print for them all ("OK (skipped=N)", "FAILED (failures=F, ...)"); a failing
 file's last 30 lines follow.
 In BkoTest2 and SweepTest2, gate:selftest runs beside the stic, holt and guest children
 (`bko.Conductor.early_selftest`, `gate.early_selftest`): its attempt 1 runs from the gate

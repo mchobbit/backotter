@@ -169,6 +169,7 @@ class LayersJson(unittest.TestCase):
                 for p in e.get(g) or []:
                     if p.startswith("?"):
                         continue
+                    p = p[len("tree:"):] if p.startswith("tree:") else p
                     if keys.is_glob(p):
                         self.assertTrue(keys.expand_glob(p, names), f"{n}: {p} matches nothing")
                     else:
@@ -185,10 +186,11 @@ class LayersJson(unittest.TestCase):
             self.assertEqual(r.inputs.get("soft", {}), {}, cell)       # the gate has no soft inputs
             self.assertEqual(r.inputs.get("plumbing", {}), {}, cell)   # nor plumbing
             row = {"inputs": r.inputs, "groups": r.groups, "key": r.key}
-            # gate:selftest keys every fixture (leakscan reads them), gate:holt every file of holt/**
-            # (two or so a corpus guest, ~110 B each): their budget is larger, and gate:selftest's
+            # gate:holt keys every file of holt/** (two or so a corpus guest, ~110 B each): its
+            # budget is larger.  gate:selftest's unit tests and fixtures are two tree: inputs, so a
+            # test added grows no row (6.9 KiB, 2026-11-19; one input a file took 40 KiB), and its
             # whole row, at the most fails a row holds, still fits a ledger line.
-            budget = 40 * 1024 if cell in ("gate:selftest", "gate:holt") else 24 * 1024
+            budget = 40 * 1024 if cell == "gate:holt" else 24 * 1024
             self.assertLess(len(canonical(row)), budget, f"{cell}: its inputs alone take {len(canonical(row))} B")
             if cell == "gate:selftest":
                 o = gate.Outcome({"t2-self-test": "FAIL", "drive-self-test": "FAIL"}, ["x" * 300] * 30)
@@ -210,8 +212,13 @@ class LayersJson(unittest.TestCase):
             self.assertIn("testvm/test2/t2lib/gate_judge.py", r.inputs.get("judge", {}), cell)
             self.assertNotIn("testvm/test2/t2lib/gate.py", r.inputs.get("judge", {}), cell)
         st = keys.resolve("gate:selftest", src, {"host": "mac"}, specs, {"set": "bko-bin"})
-        fixtures = [n for n in st.inputs["harness"] if n.startswith("testvm/test2/tests/fixtures/")]
-        self.assertGreater(len(fixtures), 100)                           # leakscan's input is keyed
+        h = st.inputs["harness"]
+        # leakscan's input is keyed: every fixture, in one tree: input, and so are the unit tests
+        for tree in ("tree:testvm/test2/tests/fixtures/**", "tree:testvm/test2/tests/*.py"):
+            self.assertTrue(h.get(tree, "").startswith("dir:"), tree)
+        self.assertEqual([n for n in h if n.startswith("testvm/test2/tests/")], [])   # in no other input
+        self.assertIn("testvm/test2/stic/check-manifests.py", h)         # ?testvm/test2/*/*.py's other hits
+        self.assertIn("testvm/test2/t2lib/plan.py", h)
 
 
 class LayerInputs(unittest.TestCase):

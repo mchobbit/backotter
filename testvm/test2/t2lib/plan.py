@@ -1665,6 +1665,9 @@ class Planner:
                         for n in r.inputs.get(g, {}):
                             p = n.split("#", 1)[0] if g in ("judge", "harness") else n
                             p = p[len("pycode:"):] if p.startswith("pycode:") else p
+                            if p.startswith("tree:"):     # one input, every file it matches named
+                                named.update(keys.expand_glob(p[len("tree:"):], self.ctx.src.files()))
+                                continue
                             if p.startswith("shared:"):
                                 p = p[len("shared:"):]
                                 p = "testvm/compare/cmp-run.sh" if p == "cmp-run.sh" else p

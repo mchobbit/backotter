@@ -15,7 +15,8 @@ Values:
     img:HEX      a content sum of disk images (t2-host imgsum's cache); img:unknown until one is made
     ver:TEXT     a version, at most 120 characters
     git:HEX40    an external repository's commit
-    dir:HEX      a host directory's digest (sha256 over sorted "relpath<TAB>sha256" lines, links as "->target")
+    dir:HEX      a host directory's digest (sha256 over sorted "relpath<TAB>sha256" lines, links as "->target");
+                 a tree: input's, over its files' "repo path<TAB>sha256" lines
     entry:HEX    sha256 of the canonical JSON of one entry of a JSON file (R3: limits.json); "a.b.c" walks objects
     fp:HEX       a guest's fingerprint digest (image-fingerprint.json), the projection of the cell's family
     code:HEX     bko-holt by its code digest CODE (R14), built or not
@@ -65,7 +66,9 @@ is Linux).  In strings, the path segments GUEST, PLAT and KIND (or {guest}, {pla
     harness      repo paths and globs (* within a segment, ** across them); PATH#SECTION:
                  the lines of PATH between "# t2-section: SECTION" markers (no marker: the whole file);
                  "pycode:PATH": a Python program less its comments and docstrings (python_code),
-                 the whole file when it doesn't parse;
+                 the whole file when it doesn't parse; "tree:GLOB": every file GLOB matches as one
+                 input (dir:), so a growing set (gate:selftest's unit tests and fixtures) keeps
+                 the row's size; a file a tree: item covers is in no other glob's hits there;
     judge        "?PATH" for an optional one; "entry:FILE#KEY" (R3); "shared:PATH"
     guest_files  the guest's files (default vm-run-options, ssh-user,
                  console-passphrase, luks-passphrase, zfs-passphrase, no-ssh): GUEST:FILE
@@ -582,6 +585,7 @@ class Resolved:
         self.notes = []
         self.unknown = []
         self.pin = None
+        self.trees = {}     # {group: [compiled GLOB of its tree: items]}
 
     def note(self, text):
         if text not in self.notes:
@@ -719,6 +723,9 @@ def _file_input(r, group, src, specs, item, guest, plat, kind, facts):
     if item.startswith("pycode:"):
         _pycode_input(r, group, src, item, optional)
         return
+    if item.startswith("tree:"):
+        _tree_input(r, group, src, item, optional)
+        return
     if "#" in item:
         _section_input(r, group, src, item, optional)
         return
@@ -726,10 +733,41 @@ def _file_input(r, group, src, specs, item, guest, plat, kind, facts):
         hits = expand_glob(item, src.files())
         if not hits:
             r.put(group, item, "absent" if optional else "missing")
+        trees = r.trees.get(group) or ()
         for p in hits:
-            r.put(group, p, sha(src.sha256(p)))
+            if not any(t.match(p) for t in trees):     # keyed once, in its tree: input
+                r.put(group, p, sha(src.sha256(p)))
         return
     r.put(group, item, sha(src.sha256(item), optional))
+
+
+def tree_globs(items, guest=None, plat=None, kind=None):
+    """The GLOBs of a spec list's "tree:GLOB" items ("?tree:GLOB" too)."""
+    out = []
+    for item in _list(items):
+        if isinstance(item, str):
+            item = _subst(item, guest, plat, kind).lstrip("?")
+            if item.startswith("tree:"):
+                out.append(item[len("tree:"):])
+    return out
+
+
+def _tree_input(r, group, src, item, optional):
+    """tree:GLOB: one input, dir: over the sorted "path<TAB>sha256" lines (each with its
+    newline) of the files GLOB matches; nothing matched: absent or missing, like a glob."""
+    hits = expand_glob(item[len("tree:"):], src.files())
+    if not hits:
+        r.put(group, item, "absent" if optional else "missing")
+        return
+    lines = []
+    for p in hits:
+        h = src.sha256(p)
+        if not h:
+            r.put(group, item, "missing")
+            r.note(f"{item}: {p} couldn't be read")
+            return
+        lines.append(f"{p}\t{h}\n")
+    r.put(group, item, "dir:" + sha256_hex("".join(lines).encode("utf-8")))
 
 
 def _walk_entry(data, k):
@@ -1066,6 +1104,9 @@ def resolve(cell, src, facts, specs=None, opts=None):
     kind = entry.get("kind")
 
     _bin_inputs(r, c, entry, facts, src, opts, plat, guest, kind)
+    for group in ("harness", "judge", "plumbing"):
+        items = _list(entry.get(group)) + (_list(sf.data.get("plumbing")) if group == "plumbing" else [])
+        r.trees[group] = [glob_re(t) for t in tree_globs(items, guest, plat, kind)]
     for group in ("harness", "judge"):
         for item in _list(entry.get(group)):
             _file_input(r, group, src, specs, item, guest, plat, kind, facts)

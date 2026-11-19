@@ -807,15 +807,15 @@ def _readline_timeout(stream, timeout):
 # try) reads no mirror, and starts whatever the internet does.
 NET_MODES = ("try", "update", "console-update")
 NET_DEFAULTS = {"net_probe_urls": ["https://deb.debian.org/debian/dists/trixie/main/binary-amd64/Packages.xz",
-                                   "https://mirrors.kernel.org/debian/dists/trixie/main/binary-amd64/Packages.xz"],
+                                   "https://mirrors.edge.kernel.org/debian/dists/trixie/main/binary-amd64/Packages.xz"],
                 "net_probe_bytes": 2 * 1024 * 1024, "net_probe_s": 15, "net_min_kibs": 256, "net_clear_kibs": 1024,
                 "net_check_min": 5, "net_hold_min": 10, "net_hold_max_min": 240}
 
 
 def net_probe_cmd(url, nbytes, secs):
-    """The host's shell line that reads the first NBYTES of URL for at most SECS seconds and
-    prints "t2-net SPEED SIZE CODE" (curl's bytes/s, bytes, HTTP status), whatever curl's exit."""
-    return (f"curl -sS -o /dev/null -r 0-{int(nbytes) - 1} --max-time {int(secs)} "
+    """The host's shell line that reads the first NBYTES of URL (redirects followed) for at most
+    SECS seconds and prints "t2-net SPEED SIZE CODE" (curl's bytes/s, bytes, HTTP status), whatever curl's exit."""
+    return (f"curl -sSL -o /dev/null -r 0-{int(nbytes) - 1} --max-time {int(secs)} "
             f"-w 't2-net %{{speed_download}} %{{size_download}} %{{http_code}}\\n' {shlex.quote(url)} 2>/dev/null; true")
 
 

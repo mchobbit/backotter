@@ -363,7 +363,7 @@ classes.json policy.stop: `swap_out_gib` 1, `swap_window_min` 10, `swap_clear_gi
 GuestTest2's network rule (guest.py's `NetHold`, since 2026-11-19; t2v-20261119T0157-c8c7's
 internet ran at 5 to 100 KiB/s for hours, and ten try jobs each downloaded for the whole
 5400 s): every 5 min while a job that downloads (try, update, console-update) waits, the
-first host that answers reads the first 2 MiB of deb.debian.org's, then mirrors.kernel.org's,
+first host that answers reads the first 2 MiB of deb.debian.org's, then mirrors.edge.kernel.org's,
 trixie Packages.xz (15 s at most each; the best rate counts).  Under 256 KiB/s holds every
 host, since they share one internet: no such job starts, those running go on, probes and
 console boots still start.  It starts again once held 10 min and a probe reads 1024 KiB/s;

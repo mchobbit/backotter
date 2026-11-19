@@ -70,7 +70,7 @@ class Parse(unittest.TestCase):
 
     def test_command(self):
         c = guest.net_probe_cmd("https://h/p?a=1&b", 2 * MIB, 15)
-        self.assertIn("-r 0-2097151 --max-time 15", c)
+        self.assertIn("-sSL -o /dev/null -r 0-2097151 --max-time 15", c)   # -L: a mirror that redirects
         self.assertIn("'https://h/p?a=1&b'", c)
         self.assertIn("%{speed_download} %{size_download} %{http_code}", c)
         self.assertTrue(c.endswith("; true"))

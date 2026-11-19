@@ -1250,6 +1250,41 @@ chk "ht1-bsd-test.sh: exit 0, not $rc51" eval 'same "$rc51" 0'
 chk "  every case ok" eval 'hasre "$FX/out-c51" "^ht1-bsd-test: all [0-9]+ cases ok$"'
 verdict 51 "ht1-bsd.sh's GELI and softraid readers (ht1-bsd-test.sh)" "$FX/out-c51"
 
+# ht_load_try: a load stage's ssh that exits 255 before the remote shell
+# said HT_STARTED is tried again (3 tries); after the line, or with another
+# exit, it isn't; each 255 leaves a line in ERR saying which.  The fake sshk
+# answers nothing (255, noise on stderr) its first NOANS calls.
+lt() {  # NOANS RC MARKER(1/"")
+    (. "$HERE/ht1-lib.sh"; sleep() { :; }
+     echo 0 >"$FX/lt-n"
+     fake() { local n; n=$(($(cat "$FX/lt-n") + 1)); echo $n >"$FX/lt-n"
+         if ((n <= $1)); then echo "noise $n" >&2; return 255; fi
+         [[ -z $3 ]] || echo "$HT_STARTED"; echo body; echo "said $n" >&2; return "$2"; }
+     ht_load_try "$FX/lt.out" "$FX/lt.err" fake "$@" 2>"$FX/lt.note")
+}
+nlines() { grep -cE -- "$2" "$1"; }   # FILE ERE
+before='^ht1: try [123] of 3: ssh exit 255 [0-9]+ s in, before the stage started: '
+lt 2 4 1; rc=$?
+chk "two no-answers, then the stage: its exit 4, not $rc" same "$rc" 4
+chk "  3 calls, not $(cat "$FX/lt-n")" same "$(cat "$FX/lt-n")" 3
+chk "  OUT the stage's, the line off" same "$(cat "$FX/lt.out")" body
+chk "  ERR the last try's, then a line for each 255" eval 'same "$(head -n 1 "$FX/lt.err")" "said 3" && same "$(nlines "$FX/lt.err" "$before")" 2'
+chk "  a note on stderr per retry" eval 'has "$FX/lt.note" "ht1-lib-test.sh: no answer starting lt.out (exit 255), try 3 of 3"'
+lt 3 4 1; rc=$?
+chk "never an answer: 255, not $rc" same "$rc" 255
+chk "  3 calls, not $(cat "$FX/lt-n")" same "$(cat "$FX/lt-n")" 3
+chk "  ERR says bko-holt never ran, 3 times" eval 'same "$(nlines "$FX/lt.err" "$before")" 3 && hasre "$FX/lt.err" "bko-holt never ran\$"'
+lt 0 255 1; rc=$?
+chk "255 after the line: as it is, not $rc" same "$rc" 255
+chk "  1 call, not $(cat "$FX/lt-n")" same "$(cat "$FX/lt-n")" 1
+chk "  ERR says the connection was lost" eval 'hasre "$FX/lt.err" "^ht1: ssh exit 255 [0-9]+ s in, after the stage started: the connection was lost" && same "$(nlines "$FX/lt.err" "$before")" 0'
+lt 0 1 ""; rc=$?
+chk "exit 1 without the line: as it is, not $rc" same "$rc" 1
+chk "  1 call, OUT all of it, ERR CMD's alone" eval 'same "$(cat "$FX/lt-n")" 1 && same "$(cat "$FX/lt.out")" body && same "$(cat "$FX/lt.err")" "said 1"'
+lt 0 4 1; rc=$?
+chk "a stage that answered: its 4, ERR CMD's alone (no blank line)" eval 'same "$rc" 4 && same "$(cat "$FX/lt.err")" "said 1" && same "$(wc -l <"$FX/lt.err")" 1'
+verdict 52 "ht_load_try: an ssh 255 before the stage started is tried again, after it not; ERR says which" "$FX/lt.err" "$FX/lt.note"
+
 if ((nfail == 0)); then echo "ht1-lib-test: all $ncase cases ok"; exit 0; fi
 echo "ht1-lib-test: $nfail of $ncase cases FAIL"
 exit 1

@@ -117,26 +117,41 @@ ht_status_read() {
 # ht_status_read waits out can drop the stage's own ssh as well: choubox
 # 2026-11-19, freebsd14, the restore's connection closed preauth 5 seconds
 # in, ssh's 255 with nothing on either stream and nothing restored, a FAIL
-# of the restore and of everything verified after it.  (FreeBSD's sshd has
-# UseDNS yes: each login looks 10.0.2.2 up, through QEMU's resolver to the
-# host's 8.8.8.8, and the farm's link was dropping packets that morning.)
-# An ssh that exits
-# 255 before the remote shell said HT_STARTED never ran the stage, so it is
-# tried again a few times, with a note on stderr.  Once the line is there
-# the stage ran, and its exit (255 too: the connection lost mid-stage) is
-# judged as it is.
+# of the restore and of everything verified after it.  The same on choubox
+# that morning, freebsd15-mirror, the refuse-decoy stage: 255, both streams
+# empty, ended 5.04 seconds after it began: sshk's ConnectTimeout, which
+# bounds what comes before the login (QEMU's forward takes the connect at
+# once), so the rescuer's sshd was slow before any login -- not UseDNS's
+# lookup, which comes during it and would hang, not end at 5 s.  (The
+# rescuer's overlay, its auth.log in it, went at the rebuild's end;
+# ht1-bsd.sh keeps that log of a failed rebuild now, logs/rebuild-auth.log.)
+# An ssh that exits 255 before the remote shell said HT_STARTED never ran
+# the stage, so it is tried again a few times, with a note on stderr.  Once
+# the line is there the stage ran, and its exit (255 too: the connection
+# lost mid-stage) is judged as it is.  Each 255 also leaves a line in ERR:
+# which of the two, and how many seconds in (the driver's ConnectTimeout:
+# sshd never got as far as the login; 45 or so: ssh's ServerAlive gave up
+# on a guest gone quiet; 0: sshd closed at once), so a FAIL's text tells an
+# ssh that never got in from bko-holt cut off.
 HT_STARTED=HT1-LOAD-STARTED
 ht_load_try() {
-    local out=$1 err=$2 i rc; shift 2
+    local out=$1 err=$2 i rc t0 notes=(); shift 2
     for i in 1 2 3; do
         [[ $i == 1 ]] || { echo "${0##*/}: no answer starting ${out##*/} (exit $rc), try $i of 3" >&2; sleep 3; }
+        t0=$SECONDS
         "$@" > "$out.raw" 2> "$err"; rc=$?
         if [[ $(head -n 1 "$out.raw") == "$HT_STARTED" ]]; then
-            tail -n +2 "$out.raw" > "$out"; rm -f "$out.raw"; return $rc
+            tail -n +2 "$out.raw" > "$out"; rm -f "$out.raw"
+            [[ $rc != 255 ]] || notes+=("ht1: ssh exit 255 $((SECONDS - t0)) s in, after the stage started: the connection was lost, bko-holt's own exit unknown")
+            ((${#notes[@]} == 0)) || printf '%s\n' "${notes[@]}" >> "$err"
+            return $rc
         fi
         [[ $rc == 255 ]] || break
+        notes+=("ht1: try $i of 3: ssh exit 255 $((SECONDS - t0)) s in, before the stage started: no answer from the guest's sshd, bko-holt never ran")
     done
-    mv -f "$out.raw" "$out"; return $rc
+    mv -f "$out.raw" "$out"
+    ((${#notes[@]} == 0)) || printf '%s\n' "${notes[@]}" >> "$err"
+    return $rc
 }
 # R is this driver's, for K: a dead run's markers of its attempt go (seeding
 # is ht_seed's, and held stays: the sweep and the queue read its PID).

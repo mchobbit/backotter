@@ -366,9 +366,12 @@ class TestInGuest(unittest.TestCase):
         t2v-20261119T0157-c8c7: "Avalon repository is up to date", then the mirror had none of
         git-lite 2.49.0's packages): the catalogue is fetched whole (pkg update -f) before the
         upgrade, and a pkg that failed at a download runs again, 10 more times at most, after
-        another whole fetch (not before an update's own retry); its last tail is a known flake."""
+        another whole fetch (not before an update's own retry); its last tail is a known flake.
+        pkg 2.8's package fetch cut off says only "An error occurred while fetching package"
+        (dragonfly6, t2v-20261119T0726-e436: python312 for git-lite)."""
         for error in ("pkg: cached package libidn2-2.3.8: missing or size mismatch, cannot continue",
                       "Unable to update repository Avalon",
+                      "pkg: An error occurred while fetching package",
                       "pkg: https://mirror-master.dragonflybsd.org/dports/x/LATEST/data.pkg: Operation timed out"):
             with self.subTest(error=error[:40]):
                 rc, n, out = self.run_fetched("DragonFly", 2, error)

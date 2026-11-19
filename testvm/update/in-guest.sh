@@ -1504,15 +1504,18 @@ DragonFly)
     # is up to date" and kept the image's old catalogue, whose git-lite
     # 2.49.0 and the rest the mirror no longer has ("Lzma library error",
     # "cached package libidn2-2.3.8: missing or size mismatch, cannot
-    # continue"; dragonfly6, GuestTest2 t2v-20261119T0157-c8c7).  A last
-    # failure's output ends the log, for GuestTest2's flake rules to read.
+    # continue"; dragonfly6, GuestTest2 t2v-20261119T0157-c8c7).  pkg 2.8's
+    # package fetch cut off says only "An error occurred while fetching
+    # package" (python312 for git-lite at 10 KB/s, dragonfly6, GuestTest2
+    # t2v-20261119T0726-e436).  A last failure's output ends the log, for
+    # GuestTest2's flake rules to read.
     fetched() {
         n=0
         while :; do
             { "$@" 2>&1; echo $? >/tmp/bko-fetch.rc; } | tee /tmp/bko-fetch.log
             r=$(cat /tmp/bko-fetch.rc)
             [ "$r" -ne 0 ] && [ $n -lt 10 ] &&
-                grep -qE "Unable to update repository|Error updating repositories|missing or size mismatch|Repo extraction failed|Error extracting the archive|[Tt]imed? ?out|Transfer closed with|No address record|Connection (reset|refused)" /tmp/bko-fetch.log ||
+                grep -qE "Unable to update repository|Error updating repositories|An error occurred while fetching package|Failure when receiving data|missing or size mismatch|Repo extraction failed|Error extracting the archive|[Tt]imed? ?out|Transfer closed with|No address record|Connection (reset|refused)" /tmp/bko-fetch.log ||
                 break
             n=$((n + 1)); say "a download failed: $1 $2 again in 60 s ($n of 10)"; sleep 60
             [ "$2" = update ] || pkg update -f >/dev/null 2>&1

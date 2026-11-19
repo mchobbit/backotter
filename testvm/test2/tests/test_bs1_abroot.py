@@ -430,6 +430,24 @@ class TestManifest(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertNotIn("ABRoot", out)
 
+    def test_proxmox_remade(self):
+        # A Proxmox VE baseline (pvebanner): etc/issue and the list of ESPs
+        # may be written again with the same bytes, not other bytes.
+        (self.root / "usr/share/abroot/abroot.json").unlink()
+        put(self.root, "usr/bin/pvebanner", "#!/usr/bin/perl\n")
+        put(self.root, "etc/issue", "https://192.168.68.65:8006/\n")
+        put(self.root, "etc/kernel/proxmox-boot-uuids", "86B7-3300\n")
+        rc, out = self.after("etc/issue", "etc/kernel/proxmox-boot-uuids")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Proxmox VE: written again", out)
+        rc, out = self.after(("etc/issue", "https://10.0.0.1:8006/\n"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("changed: etc/issue", out)
+        (self.root / "usr/bin/pvebanner").unlink()
+        rc, out = self.after("etc/kernel/proxmox-boot-uuids")
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn("Proxmox VE", out)
+
     def test_logical(self):
         L = M.abroot_logical
         self.assertEqual(L("var/lib/abroot/etc/vos-b/ssh/x", "vos-b"), "etc/ssh/x")
@@ -504,6 +522,27 @@ class TestTree(unittest.TestCase):
         self.assertIn("DIE: /dev/mapper/vos--root-init (ext4) isn't mounted", r.stdout)
         r = self.sh(f'check_coverage vda "{self.layout}"; echo passed')
         self.assertEqual(r.stdout.strip(), "passed", r.stdout + r.stderr)
+
+    def test_coverage_proxmox_esps(self):
+        # proxmox-boot-tool's ESP, out of fstab and unmounted: passed and
+        # named when its volume ID is listed (in any case), else a stop.
+        exe(self.bin / "findmnt", '#!/bin/sh\nprintf "%s\\n" rpool/ROOT/pve-1 rpool /dev/fuse\n')
+        exe(self.bin / "lsblk", '#!/bin/sh\nprintf "%s\\n" "/dev/nvme0n1" "/dev/nvme0n1p1" "/dev/nvme0n1p2 vfat" "/dev/nvme0n1p3 zfs_member"\n')
+        exe(self.bin / "blkid", '#!/bin/sh\necho 86B7-3300\n')
+        uuids = self.t / "proxmox-boot-uuids"
+        body = f'say() {{ echo "SAY: $*"; }}\nPROXMOX_ESPS="{uuids}"\ncheck_coverage nvme0n1; echo passed'
+        for listed in ("86B7-3300\n", "86b7-3300\n"):
+            uuids.write_text(listed)
+            r = self.sh(body)
+            self.assertIn("SAY: /dev/nvme0n1p2 (vfat 86B7-3300) isn't mounted: it is one of proxmox-boot-tool's ESPs", r.stdout, r.stderr)
+            self.assertEqual(r.stdout.splitlines()[-1], "passed", r.stdout + r.stderr)
+        uuids.write_text("1234-ABCD\n")
+        r = self.sh(body)
+        self.assertIn("DIE: /dev/nvme0n1p2 (vfat) isn't mounted", r.stdout)
+        self.assertNotIn("passed", r.stdout)
+        uuids.unlink()
+        r = self.sh(body)
+        self.assertIn("DIE: /dev/nvme0n1p2 (vfat) isn't mounted", r.stdout)
 
     def test_mount_hints(self):
         r = self.sh(f'mount_hints vda "{self.layout}"; echo done')

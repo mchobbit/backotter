@@ -292,7 +292,8 @@ def cmd_pull(argv):
     for h, r in sorted(recs.items()):
         if r.get("ok"):
             say(f"{h}: {r.get('rows', 0)} rows ({r.get('mode')}), {r.get('bad', 0)} bad lines"
-                + (f"; {r['warning']}" if r.get("warning") else ""))
+                + (f"; {r['warning']}" if r.get("warning") else
+                   f"; {r['lost']} older row(s) kept in {h}.lost.jsonl" if r.get("lost") else ""))
         else:
             bad += 1
             say(f"{h}: unreachable, its last mirror kept ({r.get('error')})")

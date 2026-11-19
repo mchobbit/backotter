@@ -375,6 +375,25 @@ class Merge(unittest.TestCase):
         v = ledger.view(mac)
         self.assertEqual(sorted(r["id"] for r in v.rows), sorted(r["id"] for r in rows))
         self.assertTrue(any("no longer has" in w for w in v.warnings))
+        self.assertIn("3 row(s)", rec["warning"])
+        # later pulls keep the count but warn only for LOST_WARN_S after the loss (a host
+        # reinstalled weeks ago isn't news in every plan); a fresh loss warns again
+        t0 = ledger.parse_utc(rec["lost_t"])
+        rec = ledger.pull_one("local", mac, hroot, now=t0 + 60)
+        self.assertEqual((rec["mode"], rec["lost"]), ("incr", 3), rec)
+        self.assertIn("no longer has", rec.get("warning", ""))
+        rec = ledger.pull_one("local", mac, hroot, now=t0 + ledger.LOST_WARN_S + 1)
+        self.assertEqual((rec["mode"], rec["lost"], rec["lost_t"]), ("incr", 3, ledger.utc_now(t0)), rec)
+        self.assertNotIn("warning", rec)
+        self.assertFalse(any("no longer has" in w for w in ledger.view(mac).warnings))
+        self.assertEqual(len(ledger.view(mac).rows), 4)
+        os.unlink(hf)
+        ledger.append(hf, [rows[0]])   # rows[0] is back (in both files: merged once), rows[3] lost too
+        rec = ledger.pull_one("local", mac, hroot, now=t0 + ledger.LOST_WARN_S + 2)
+        self.assertEqual((rec["mode"], rec["lost"], rec["lost_new"]), ("full", 4, 1), rec)
+        self.assertIn("1 row(s)", rec["warning"])
+        self.assertIn("(4 there in all)", rec["warning"])
+        self.assertEqual(len(ledger.view(mac).rows), 4)
         # an unreachable host keeps its mirror
         os.environ["T2_SSH"] = "/bin/false"
         try:

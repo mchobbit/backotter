@@ -739,12 +739,15 @@ def _mirror_bytes(path):
         return b""
 
 
+LOST_WARN_S = 86400   # how long a pull that moved rows to HOST.lost.jsonl keeps warning about it
+
+
 def pull_one(host, root=None, remote_root=None, timeout=30, now=None):
     """Fetch HOST's ledger into MAC_ROOT/ledger/HOST.jsonl (incrementally while
     the mirror still matches the host's file, R26) and record the pull in
     pull.json; returns that record.  It writes nothing on the host.  An
     unreachable host keeps its last mirror (ok: false).  Rows that the host's
-    file has lost stay, in HOST.lost.jsonl, with a warning."""
+    file has lost stay, in HOST.lost.jsonl, with a warning for LOST_WARN_S."""
     from . import hostrun
     d = ledger_dir(root)
     os.makedirs(d, exist_ok=True)
@@ -771,6 +774,7 @@ def pull_one(host, root=None, remote_root=None, timeout=30, now=None):
             h = json.loads(hline)
             new = old + data if h["mode"] == "incr" else data
             got = parse(data)
+            add = []
             if h["mode"] == "incr":
                 nrows, nbad = rec.get("rows", 0) + len(got.rows), rec.get("bad", 0) + got.bad
             else:
@@ -789,9 +793,20 @@ def pull_one(host, root=None, remote_root=None, timeout=30, now=None):
             rec.update(ok=True, t=utc_now(now), mode=h["mode"], size=h["upto"], tail=h["tail"], rows=nrows,
                        bad=nbad, file=h.get("path"), remote_host=h.get("host"), error=None, lost=kept)
             rec.pop("note", None)
-            if kept:
-                rec["warning"] = (f"{kept} row(s) that {host}'s ledger file no longer has are kept "
-                                  f"in {os.path.basename(lostf)}")
+            # The warning is news: it stands for LOST_WARN_S after the pull that moved rows (a
+            # silent mid-run pull can't swallow it), then only "lost" (and "lost_t") keep the count,
+            # so a host's old loss (a reinstall) isn't repeated by every plan forever.
+            if add:
+                rec.update(lost_t=rec["t"], lost_new=len(add))
+            if not kept:
+                for k in ("lost_t", "lost_new"):
+                    rec.pop(k, None)
+            since = parse_utc(rec.get("lost_t"))
+            tnow = time.time() if now is None else now
+            if kept and since is not None and tnow - since < LOST_WARN_S:
+                rec["warning"] = (f"{rec.get('lost_new', kept)} row(s) that {host}'s ledger file no longer "
+                                  f"has are kept in {os.path.basename(lostf)} since {rec['lost_t']} "
+                                  f"({kept} there in all)")
             else:
                 rec.pop("warning", None)
         state[host] = rec

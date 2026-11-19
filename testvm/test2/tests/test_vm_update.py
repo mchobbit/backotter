@@ -203,12 +203,14 @@ class TestInGuest(unittest.TestCase):
 
     def test_abroot_before_apt(self):
         """Vanilla OS: its read-only root has no apt or dpkg (and its image may have apt
-        again some day), so ABRoot's branch comes before Linux.common's; never --force."""
+        again some day), so ABRoot's branch comes before Linux.common's; never --force.  It
+        runs no apt: it only masks apt's timers (apt-daily.timer, apt-daily-upgrade.timer)."""
         t = self.TEXT
         self.assertLess(t.index("# t2-section: Linux.abroot"), t.index("# t2-section: Linux.common"))
         code = "\n".join(l for l in self.sections()["Linux.abroot"].splitlines() if not l.lstrip().startswith("#"))
         self.assertNotIn("--force", code)
-        self.assertNotIn("apt", code)
+        self.assertNotRegex(code, r"\b(apt|apt-get|apt-cache|dpkg|lpkg)\s")
+        self.assertIn("for t in apt-daily.timer apt-daily-upgrade.timer; do", code)
 
     def test_ostree_before_dnf(self):
         """An image-mode system has dnf too, which can't change its /usr: the

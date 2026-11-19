@@ -257,6 +257,39 @@ if [ "$(uname)" = Linux ] && { [ -f /usr/share/abroot/abroot.json ] || has abroo
         systemctl mask --now vanilla-updates.timer || exit 1
         ;;
     esac
+    # apt-daily.timer and apt-daily-upgrade.timer: Debian's apt enables them
+    # in the image, but lpkg takes apt-config and apt-get off the root, which
+    # is read-only, so apt.systemd.daily fails whenever they fire
+    # ("apt-config: not found", "cannot create /daily_lock").  Their stamps
+    # are the image's last boot's (a test boot's overlay is thrown away), so
+    # every boot catches up, at a random moment (RandomizedDelaySec: 60 min,
+    # 12 h) after it: the unit failed in some boots and not others (GuestTest2
+    # and HoltTest2 of t2v/t2h-20261118T2305-edbb).  Masked in both roots'
+    # /etc uppers, as make-vanilla.sh masks them (an upgrade merges the
+    # present root's /etc into the other's; without one, nothing does).
+    rootlabel=$(lsblk -dno LABEL "$(findmnt -vno SOURCE /)" 2>/dev/null)
+    case $rootlabel in
+    vos-a) other=vos-b ;;
+    vos-b) other=vos-a ;;
+    *) say "ABRoot: the root's label is '$rootlabel', not vos-a or vos-b"; exit 1 ;;
+    esac
+    ou=/var/lib/abroot/etc/$other/systemd/system
+    for t in apt-daily.timer apt-daily-upgrade.timer; do
+        case $(systemctl is-enabled $t 2>/dev/null) in
+        ""|not-found) continue ;;
+        masked) ;;
+        *)
+            # Stopped before it is masked: masked first, the running timer
+            # loses its unit and fails ("Unit to trigger vanished").
+            step "$t masked"
+            systemctl stop $t && systemctl -q mask $t || exit 1
+            ;;
+        esac
+        if [ "$(readlink "$ou/$t" 2>/dev/null)" != /dev/null ]; then
+            step "$t masked in $other's /etc"
+            mkdir -p "$ou" && ln -sfn /dev/null "$ou/$t" || exit 1
+        fi
+    done
     # The master grub.cfg's default, which only an upgrade's swap changes.
     dflt() { sed -n 's/^set default=//p' /boot/grub/grub.cfg 2>/dev/null | head -n 1; }
     was=$(dflt)

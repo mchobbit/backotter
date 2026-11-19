@@ -35,8 +35,11 @@
 #   first-setup session never start: the user "vanilla" stays as the
 #   installer made it); vanilla-updates.timer masked (it would run vso
 #   upgrade, an abroot upgrade, on its own: the guest is updated only by
-#   vm-update); the serial console in the kernel's options (/etc/abroot/kargs,
-#   ABRoot's default with quiet and splash replaced, and init's
+#   vm-update); apt-daily.timer and apt-daily-upgrade.timer masked (lpkg
+#   takes apt off the root, so their service fails whenever one fires, at a
+#   random moment after a boot: update/in-guest.sh's ABRoot section); the
+#   serial console in the kernel's options (/etc/abroot/kargs, ABRoot's
+#   default with quiet and splash replaced, and init's
 #   vos-a/abroot.cfg the same) and in the master /boot/grub/grub.cfg
 #   (terminal serial and console, so a test can pick an entry); and the
 #   fallback loader EFI/BOOT/BOOTX64.EFI: a copy of EFI/vanilla's shim, with
@@ -173,7 +176,7 @@ chmod 600 /root/.ssh/authorized_keys
 systemctl unmask ssh.service || true
 systemctl enable ssh.service
 systemctl set-default multi-user.target
-systemctl mask vanilla-updates.timer
+systemctl mask vanilla-updates.timer apt-daily.timer apt-daily-upgrade.timer
 # The kernel's options: ABRoot's default kargs (core/kargs.go's
 # DefaultKargs in v2.6.0 and main, what an upgrade writes when
 # /etc/abroot/kargs is missing: the binary doesn't hold it as one string to

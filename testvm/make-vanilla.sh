@@ -92,9 +92,9 @@
 # running / is the present root read-only, /etc an overlay with its upper in
 # /var/lib/abroot/etc/<label>.  The first-setup user "vanilla" as the
 # installer makes it, GNOME installed but booting to text mode, sshd on,
-# vanilla-updates.timer masked, 4 GB RAM.  About 21 GiB written (each root
-# ~6 GiB, /var ~7.8 GiB with the cached image); a build takes ~17 minutes and
-# ~22 GiB of WORK_DIR at its peak.
+# vanilla-updates.timer and apt's two timers masked, 4 GB RAM.  About 21 GiB
+# written (each root ~6 GiB, /var ~7.8 GiB with the cached image); a build
+# takes ~17 minutes and ~22 GiB of WORK_DIR at its peak.
 #
 # Needs: qemu-system-x86_64 with KVM, OVMF (with the Secure Boot build and
 # its Microsoft-keys variable store), qemu-img, xorriso, openssl, python3,
@@ -311,6 +311,7 @@ probe first "first boot (Secure Boot, fresh variables)"
 [[ $(val first cmdline) == *console=ttyS0,115200n8* ]] || die "the first boot's command line has no serial console"
 [[ $(val first running) =~ ^(running|degraded)$ ]] || die "the first boot isn't up: $(val first running)"
 [[ $(val first timer) == masked ]] || die "vanilla-updates.timer isn't masked"
+[[ $(val first apt_timers) == "masked masked" ]] || die "apt-daily{,-upgrade}.timer aren't masked: $(val first apt_timers)"
 [[ $(val first other_has_usr) == no ]] || echo "make-vanilla: note: a fresh install's root B isn't empty" >&2
 timeout 60 "${ssh_root[@]}" 'echo a >/etc/bko-root; sync; cat /var/lib/abroot/etc/vos-a/bko-root' </dev/null | grep -qx a ||
     die "/etc/bko-root didn't land in vos-a's upper"
@@ -333,6 +334,7 @@ probe b-before "boot 2: the default entry (B), before its mark"
 [[ $(val b-before root_label) == vos-b ]] || die "the default entry didn't boot vos-b: $(val b-before root_label)"
 [[ $(val b-before running) =~ ^(running|degraded)$ ]] || die "the boot into B isn't up: $(val b-before running)"
 [[ $(val b-before timer) == masked ]] || die "vanilla-updates.timer isn't masked in B"
+[[ $(val b-before apt_timers) == "masked masked" ]] || die "apt-daily{,-upgrade}.timer aren't masked in B: $(val b-before apt_timers)"
 timeout 60 "${ssh_root[@]}" 'echo b >/etc/bko-root; sync; cat /var/lib/abroot/etc/vos-b/bko-root' </dev/null | grep -qx b ||
     die "/etc/bko-root didn't land in vos-b's upper"
 probe b "boot 2: root B, marked"

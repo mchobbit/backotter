@@ -977,6 +977,27 @@ docs/design/bs2-all.md's table, paragraph and A1/A2 rows.
   disk.  A2 needs a `/bkoscratch` mode for it on Chopin and Cinqcent.
   Tier 0's sfdisk dry run takes the host's (Vanilla has no sfdisk).
 
+## What SweepTest2 of 2026-11-18 found
+
+- **apt's two timers fail on Vanilla OS, at a random moment of a boot.**
+  GuestTest2 t2v-20261118T2305-edbb (`failed apt-daily-upgrade.service`
+  after the update's reboot) and HoltTest2 t2h-20261118T2305-edbb (the
+  source's "Previous State (A)" boot degraded by it, the restored ones
+  not).  Debian's apt enables `apt-daily.timer` and
+  `apt-daily-upgrade.timer` in the image, but lpkg takes `apt-config` and
+  `apt-get` off the read-only root, so `apt.systemd.daily` fails at once
+  ("apt-config: not found", "cannot create /daily_lock").  Their stamps
+  in `/var/lib/systemd/timers` are the image's last boot's (2026-11-14:
+  every test boot is on a throwaway overlay), so each boot catches up,
+  Persistent=true, after RandomizedDelaySec's random 0-60 min (0-12 h for
+  apt-daily): a boot that lasts minutes sees the failure now and then.
+  Fixed in the guest: both timers masked, in both roots' `/etc` uppers,
+  by install.sh at a build (probe.sh's `apt_timers`, checked in A and B)
+  and by in-guest.sh's ABRoot section at an update (each a step, so
+  vm-update merges them); until the image is updated and published, the
+  flake stays possible.  No judge excuse: on a real Vanilla OS the units
+  fail the same way, which is Vanilla's bug, not a restore's.
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Effort |

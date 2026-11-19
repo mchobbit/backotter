@@ -19,6 +19,7 @@ echo "BKO sb_state=$sb"
 echo "BKO cmdline=$(cat /proc/cmdline)"
 echo "BKO running=$(systemctl is-system-running --wait 2>/dev/null)"
 echo "BKO timer=$(systemctl is-enabled vanilla-updates.timer 2>/dev/null)"
+echo "BKO apt_timers=$(echo $(systemctl is-enabled apt-daily.timer apt-daily-upgrade.timer 2>/dev/null))"
 echo "BKO ssh_enabled=$(systemctl is-enabled ssh.service 2>/dev/null)"
 x mokutil --sb-state
 x cat /proc/cmdline

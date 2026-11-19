@@ -225,14 +225,16 @@ if [[ ${#REFORMAT[@]} -gt 0 && -s /run/bko-holt/restore.globs ]]; then
     fi
 fi
 # bko-holt load's mount points for a second ZFS boot environment
-# (/run/bko-be/NAME or POOL/NAME, holt's zfs_be BE_DIR), left on the restored
-# root: only while they are empty directories, the BE unmounted, and the
-# diff lists them as added and nothing else under them.  The booted system's
-# /run hides them (run void-20261119-104402, void-zbm-enc).
+# (/run/bko-be/NAME or POOL/NAME, holt's zfs_be BE_DIR), made on the restored
+# root, with the BE still mounted there until the close stage; the diff
+# doesn't cross into it.  Only while the root's part of them is directories
+# alone, whatever is mounted under them is ZFS, and the diff lists them as
+# added and nothing else under them.  The booted system's /run hides them
+# (run void-20261119-104402, void-zbm-enc).
 bedir=/mnt/bko-target/run/bko-be
 if [[ -d $bedir && ! -L $bedir ]] &&
-    ! awk -v p="$bedir" '$2 == p || index($2, p "/") == 1 { f = 1 } END { exit !f }' /proc/self/mounts &&
-    [[ -z $(find "$bedir" ! -type d -print -quit 2>/dev/null) ]]; then
+    ! awk -v p="$bedir" '($2 == p || index($2, p "/") == 1) && $3 != "zfs" { f = 1 } END { exit !f }' /proc/self/mounts &&
+    [[ -z $(find "$bedir" -xdev ! -type d -print -quit 2>/dev/null) ]]; then
     be_all=$(grep -cE '^[-+MUT][[:space:]]+"run/bko-be(/|")' "$ATTEMPT/diff.txt")
     be_add=$(grep -cE '^\+ +"run/bko-be(/[^"]*)?"$' "$ATTEMPT/diff.txt")
     if [[ $be_add -gt 0 && $be_add -eq $be_all ]]; then

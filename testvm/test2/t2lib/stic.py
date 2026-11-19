@@ -92,7 +92,7 @@ import sys
 import threading
 import time
 
-from . import mac_root, utc_now
+from . import harness_stop, mac_root, utc_now
 from . import facts as factsmod
 
 DRIVE = os.path.join("testvm", "stictest1", "drive.py")
@@ -178,7 +178,7 @@ class Stops:
         stop = (policy or {}).get("stop") or {}
         budget = (policy or {}).get("budget") or {}
         self.os_need = int(stop.get("os_need_guests", 2))
-        self.harness_max = int(stop.get("harness_results", 2))
+        self.harness_max = harness_stop(stop)[0]    # (T2_HARNESS_STOP over policy.stop.harness_results)
         self.holds = HostHolds(stop) if HostHolds is not None else None
         self.watch = HostWatch(stop) if HostWatch is not None else None
         self.lost_said = []

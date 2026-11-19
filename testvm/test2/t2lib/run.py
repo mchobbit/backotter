@@ -32,7 +32,7 @@ import shlex
 import threading
 import time
 
-from . import HARD
+from . import HARD, harness_stop, harness_stop_line
 from . import copies, hostrun, host_root as default_host_root, keys, ledger, mac_root as default_mac_root, notify
 from . import utc_now
 from . import plan as planmod
@@ -991,7 +991,7 @@ class RunGuards:
     def __init__(self, policy=None, sweep=False, update=False, now=None):
         p = policy or {}
         st, b = p.get("stop") or {}, p.get("budget") or {}
-        self.harness_max = int(st.get("harness_results", 2))
+        self.harness_max = harness_stop(st)[0]      # (T2_HARNESS_STOP over policy.stop.harness_results)
         self.holds = HostHolds(st)
         self.watch = HostWatch(st)
         self.lost_said = []     # the host-lost results, for the report (add_host_lost)
@@ -1193,7 +1193,7 @@ class StopEngine:
         b = p.get("budget") or {}
         self.family = family
         self.os_need = int(st.get("os_need_guests", 2))
-        self.harness_max = int(st.get("harness_results", 2))
+        self.harness_max = harness_stop(st)[0]      # (T2_HARNESS_STOP over policy.stop.harness_results)
         self.holds = HostHolds(st)      # (with GUARDS, theirs is the one fed)
         self.watch = HostWatch(st)      # (the same)
         self.lost_said = []
@@ -1577,6 +1577,9 @@ class RunState:
         self._log = log
         os.makedirs(self.mac_dir, exist_ok=True)
         notify.begun(run, word.word)
+        hs = harness_stop_line((pol or {}).get("stop"))
+        if hs:
+            self.log(hs)    # (T2_HARNESS_STOP, t2 --harness-stop: the run.log says what this run stopped at)
 
     def log(self, text):
         line = f"{utc_now()} {text}"

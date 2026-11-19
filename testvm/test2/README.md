@@ -352,6 +352,9 @@ those stop SticTest2 only (t2s-20261119T0726-e436: alpine324's and chimera's apk
 time at 10-200 KB/s and stopped the whole sweep); this run's jobs writing over
 twice the budget (their wear tags, never other sessions' writes; classes.json
 policy.stop.write_budget_x x budget.run_gb) start nothing new.
+`--harness-stop N` (or `T2_HARNESS_STOP=N`) on a word or `t2 resume`: N harness-class results
+stop the run in place of policy.stop.harness_results, for every family and a composite's children,
+entering no key; run.log and the report say `harness stop: N (override; policy P)`.
 The swap rule is per host (run.py's `HostHolds`, since 2026-11-18): a host whose swap-out
 over the last 10 min is over 1 GiB is held, and only it: nothing new starts there, its
 running jobs go on, and its queued cells go to the other hosts that can take them under

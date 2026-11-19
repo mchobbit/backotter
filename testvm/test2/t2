@@ -11,13 +11,16 @@
         ImgTest2 [PLAT...] [release] [stale] [plan]       ImgTest2All [release] [plan]
         BkoTest2 [ROUND] [stale] [plan]                   SweepTest2 [ROUND] [plan]
         (--universe is test-only: it cuts the word's cells down to those named)
+        --harness-stop N (or T2_HARNESS_STOP=N): N harness-class results stop the run, in place
+        of classes.json's policy.stop.harness_results, for every family and composite child; it
+        enters no key, and run.log and the report say "harness stop: N (override; policy P)"
   t2 plan WORD [ARG...]                  the same as WORD ... plan
   t2 pull                                each host's ledger mirrored, then the wear join
   t2 ledger show [--cell C] [--last N] [--json]
   t2 explain CELL [--hosts H,H] [--round R]
                                          its inputs against its last PASS, group by group
   t2 copy [--hosts H,H] [--gc]           the private copy of this checkout on the hosts
-  t2 resume RUN                          a run picked up again (R10); t2b-/t2w-: the composite
+  t2 resume RUN [--harness-stop N]       a run picked up again (R10); t2b-/t2w-: the composite
   t2 guest-lines RUN [--show [GUEST]] [--accept GUEST...|--accept-all]
                                          a GuestTest2 run's new log lines, and accepting them
   t2 guest-fingerprints [GUEST...] [--reproject]
@@ -61,6 +64,7 @@ CHECKOUT = os.path.dirname(os.path.dirname(HERE))
 from t2lib import DEFAULT_HOST_ROOT, DEFAULT_MAC_ROOT, GROUPS, canonical, expand, mac_ledger_file, mac_root  # noqa: E402
 from t2lib import DEFAULT_HOSTS, KNOWN_HOSTS                                        # noqa: E402
 from t2lib import sha256_hex, utc_now                                               # noqa: E402
+from t2lib import HARNESS_STOP_ENV, parse_harness_stop                              # noqa: E402
 from t2lib import copies, hostrun, keys, ledger, notify, words                      # noqa: E402
 from t2lib import facts as factsmod                                                 # noqa: E402
 from t2lib import plan as planmod                                                   # noqa: E402
@@ -117,6 +121,16 @@ def hosts_opt(opts):
     if unknown:
         raise Usage(f"--hosts: no such host {', '.join(unknown)} (known: {', '.join(KNOWN_HOSTS)})")
     return hs
+
+
+def harness_stop_opt(opts):
+    """--harness-stop N: T2_HARNESS_STOP=N for this process and its children (the stop
+    engines read it; no key does)."""
+    if "--harness-stop" in opts:
+        try:
+            os.environ[HARNESS_STOP_ENV] = str(parse_harness_stop(opts["--harness-stop"]))
+        except ValueError as e:
+            raise Usage(f"--harness-stop: {e}")
 
 
 def mirror_hosts():
@@ -238,7 +252,9 @@ def full_ctx(word, hosts, universe=None, do_pull=True, holt_bin=None):
 # --- commands ------------------------------------------------------------------------------------
 
 def cmd_word(argv):
-    opts, rest = take_opts(argv, {"--json": False, "--hosts": True, "--universe": True, "--holt-bin": True})
+    opts, rest = take_opts(argv, {"--json": False, "--hosts": True, "--universe": True, "--holt-bin": True,
+                                  "--harness-stop": True})
+    harness_stop_opt(opts)
     rest = words.split_plan_form(rest)
     hosts = hosts_opt(opts)
     lc = light_ctx(hosts)
@@ -405,9 +421,10 @@ def cmd_copy(argv):
 
 
 def cmd_resume(argv):
-    opts, rest = take_opts(argv, {"--hosts": True})
+    opts, rest = take_opts(argv, {"--hosts": True, "--harness-stop": True})
+    harness_stop_opt(opts)
     if len(rest) != 1:
-        raise Usage("t2 resume RUN")
+        raise Usage("t2 resume RUN [--harness-stop N]")
     if rest[0].startswith(("t2b-", "t2w-")):
         try:
             bko = importlib.import_module("t2lib.bko")
@@ -736,6 +753,7 @@ def cmd_self_test(argv):
     ok = True
     py = sys.executable
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    env.pop(HARNESS_STOP_ENV, None)     # (the tests read classes.json's own policy; theirs set it themselves)
     t0 = time.time()
     res = unit_tests(py, env)
     good = bool(res) and all(rc == 0 for _, rc, _, _ in res)
@@ -827,6 +845,11 @@ def dispatch(argv):
         say(__doc__.strip())
         return 0 if argv else 2
     try:
+        if os.environ.get(HARNESS_STOP_ENV, "").strip():
+            try:
+                parse_harness_stop(os.environ[HARNESS_STOP_ENV])
+            except ValueError as e:
+                raise Usage(f"{HARNESS_STOP_ENV}: {e}")
         if argv[0] in COMMANDS:
             return COMMANDS[argv[0]](argv[1:])
         return cmd_word(argv)

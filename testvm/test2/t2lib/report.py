@@ -13,7 +13,7 @@ render_composite(children, flips, totals, coverage, policy)     BkoTest2's and S
 import re
 import time
 
-from . import parse_utc
+from . import harness_stop_line, parse_utc
 from . import words
 
 NOUN = {"stic": "checks", "holt": "cells", "gate": "layers", "guest": "guests", "img": "images"}
@@ -397,6 +397,9 @@ def render_report(rr, plan, ledger=(), policy=None, now=None):
             + (f", bko-holt code {s['holt_code'][:7]}" if s.get("holt_code") else "")
             + f", hosts {' '.join(hosts) or '-'}")
     out = [head]
+    hs = harness_stop_line((policy or {}).get("stop"))   # (T2_HARNESS_STOP: never the policy's own number)
+    if hs:
+        out.append(hs)
     seen = set()
     cells = rr.get("cells") or []
     by_id = {r.get("id"): r for r in ledger or ()}
@@ -542,6 +545,9 @@ def render_composite(children, flips, totals, coverage, policy):
             for h, x in (c.get("gb") or {}).items():
                 per[h] = per.get(h, 0.0) + float(x or 0)
     out = [f"{t.get('word', 'composite')} report: run {t.get('run', '?')}"]
+    hs = harness_stop_line((policy or {}).get("stop"))
+    if hs:
+        out.append(hs)
     for c in kids:
         out.append(f"== {c.get('word', '?')} {c.get('run') or '-'} (exit {c.get('exit', '-')})")
         out.append(str(c.get("text") or "not run").rstrip("\n"))

@@ -198,6 +198,43 @@ def copy_root():
     return expand(os.environ.get("T2_COPY_ROOT") or DEFAULT_COPY_ROOT)
 
 
+# --- the run-wide harness stop's run-time override ------------------------------------
+
+# T2_HARNESS_STOP=N (t2 WORD --harness-stop N sets it): N harness-class results stop the run
+# in place of classes.json's policy.stop.harness_results, for every family and composite child
+# (run.py's RunGuards and StopEngine, stic.py's Stops) and the network rules' family counts that
+# read the same number.  It is read at run time only: classes.json and every key stay as they are.
+HARNESS_STOP_ENV = "T2_HARNESS_STOP"
+
+
+def parse_harness_stop(text):
+    """N (an integer, 1 or more) of TEXT, else ValueError."""
+    s = str(text).strip()
+    if not re.fullmatch(r"[0-9]+", s) or int(s) < 1:
+        raise ValueError(f"harness stop {text!r}: a whole number, 1 or more")
+    return int(s)
+
+
+def harness_stop(stop=None):
+    """(N, POLICY_N, OVERRIDE): the harness count that stops the run, policy.stop's
+    harness_results (STOP: that dict; default 2), and whether T2_HARNESS_STOP set N.
+    A T2_HARNESS_STOP that isn't a number (t2 refuses one at its start) is left out."""
+    pol = int((stop or {}).get("harness_results", 2))
+    raw = os.environ.get(HARNESS_STOP_ENV, "").strip()
+    if raw:
+        try:
+            return parse_harness_stop(raw), pol, True
+        except ValueError:
+            pass
+    return pol, pol, False
+
+
+def harness_stop_line(stop=None):
+    """"harness stop: 4 (override; policy 2)" while T2_HARNESS_STOP is set, else None."""
+    n, pol, over = harness_stop(stop)
+    return f"harness stop: {n} (override; policy {pol})" if over else None
+
+
 def bko_git():
     return expand(os.environ.get("BKO_GIT") or DEFAULT_BKO_GIT)
 

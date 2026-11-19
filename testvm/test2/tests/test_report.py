@@ -7,6 +7,8 @@ T2_GOLDEN=bless rewrites tests/fixtures/p2/golden/*.  The fixture checkout copie
 
 import argparse
 import contextlib
+import importlib.machinery
+import importlib.util
 import io
 import json
 import os
@@ -16,13 +18,14 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(HERE, "fixtures", "p2"))
 
 import t2lib  # noqa: E402
-from t2lib import estimates, ledger, plan, report, run   # noqa: E402
+from t2lib import bko, estimates, ledger, plan, report, run, stic   # noqa: E402
 import world                                 # noqa: E402
 
 GOLDEN = os.path.join(HERE, "fixtures", "p2", "golden")
@@ -1430,6 +1433,187 @@ class Derived(unittest.TestCase):
             self.assertEqual(t2.seed_imgsums(ctx, [hostrun.LOCAL]), 1)
         h = facts_host.cached_sum(facts_host.imgsum_cache(d), disk)
         self.assertRegex(h or "", "^[0-9a-f]{64}$")
+
+
+# --- the run-wide harness stop's run-time override (T2_HARNESS_STOP, t2 --harness-stop N): N
+# harness-class results stop the run in place of policy.stop.harness_results, in RunGuards,
+# StopEngine, bko.Guards and stic.Stops alike; run.log and the report say so; no key reads it.
+
+HS_ENV = t2lib.HARNESS_STOP_ENV
+HS_POL = {"budget": {"run_gb": 2, "sweep_gb": 5, "update_gb": 40, "bind_from": None},
+          "stop": {"os_need_guests": 2, "harness_results": 2, "swap_out_gib": 1, "write_budget_x": 2}}
+
+
+def hs_harness(cell):
+    return {"cell": cell, "verdict": "HARNESS", "class": "harness"}
+
+
+def hs_no_override():
+    return mock.patch.dict(os.environ, {HS_ENV: ""})
+
+
+def hs_override(n):
+    return mock.patch.dict(os.environ, {HS_ENV: str(n)})
+
+
+class HarnessStopParse(unittest.TestCase):
+    def test_parse(self):
+        self.assertEqual(t2lib.parse_harness_stop("4"), 4)
+        self.assertEqual(t2lib.parse_harness_stop(" 1 "), 1)
+        for bad in ("0", "-1", "x", "2.5", "", "4 5"):
+            with self.assertRaises(ValueError, msg=bad):
+                t2lib.parse_harness_stop(bad)
+
+    def test_default_is_the_policy(self):
+        with hs_no_override():
+            self.assertEqual(t2lib.harness_stop(HS_POL["stop"]), (2, 2, False))
+            self.assertEqual(t2lib.harness_stop({"harness_results": 3}), (3, 3, False))
+            self.assertEqual(t2lib.harness_stop(None), (2, 2, False))
+            self.assertIsNone(t2lib.harness_stop_line(HS_POL["stop"]))
+
+    def test_override(self):
+        with hs_override(4):
+            self.assertEqual(t2lib.harness_stop(HS_POL["stop"]), (4, 2, True))
+            self.assertEqual(t2lib.harness_stop_line(HS_POL["stop"]), "harness stop: 4 (override; policy 2)")
+        with hs_override("junk"):      # (t2 refuses it at its start; a stop engine keeps the policy's)
+            self.assertEqual(t2lib.harness_stop(HS_POL["stop"]), (2, 2, False))
+
+
+class HarnessStopEngines(unittest.TestCase):
+    def test_run_wide_count_shared_by_families(self):
+        with hs_override(4):
+            g = run.RunGuards(HS_POL)
+            a, b = run.StopEngine("stic", HS_POL, guards=g), run.StopEngine("holt", HS_POL, guards=g)
+            self.assertEqual((g.harness_max, a.harness_max, b.harness_max), (4, 4, 4))
+            for i, e in enumerate((a, b, a)):
+                self.assertEqual(e.feed(hs_harness(f"x:{i}")), "ok")
+            self.assertFalse(g.tripped())
+            self.assertEqual(b.feed(hs_harness("holt:last")), "stop-run")
+            self.assertTrue(g.tripped())
+            self.assertTrue(b.stops[0].startswith("stop-run: 4 harness-class results (last holt:last)"), b.stops)
+
+    def test_without_override_two_stop(self):
+        with hs_no_override():
+            s = run.StopEngine("guest", HS_POL)
+            self.assertEqual(s.feed(hs_harness("guest:a")), "ok")
+            self.assertEqual(s.feed(hs_harness("guest:b")), "stop-run")
+
+    def test_stics_own_stops(self):
+        with hs_override(4):
+            s = stic.Stops(HS_POL)
+            self.assertEqual([s.feed(hs_harness(f"stic:{i}")) for i in range(4)], ["ok", "ok", "ok", "stop-run"])
+        with hs_no_override():
+            s = stic.Stops(HS_POL)
+            self.assertEqual([s.feed(hs_harness(f"stic:{i}")) for i in range(2)], ["ok", "stop-run"])
+
+    def test_composite_guards_and_their_resume(self):
+        with hs_override(4):
+            g = bko.Guards(HS_POL)
+            self.assertEqual(g.harness_max, 4)
+            for i in range(3):
+                g.add_harness(f"stic:{i}")
+            self.assertFalse(g.tripped())
+            r = bko.Guards.from_json(g.to_json(), HS_POL)
+            self.assertEqual((r.harness_max, r.harness), (4, 3))
+            r.add_harness("holt:last")
+            self.assertTrue(r.tripped())
+            self.assertEqual(r.why(), ["4 harness-class results (last holt:last)"])
+        self.assertNotIn("harness_max", g.to_json())    # (the number is the process's, never the record's)
+
+    def test_policy_left_alone(self):
+        pol = {"stop": dict(HS_POL["stop"])}
+        with hs_override(4):
+            run.RunGuards(pol), run.StopEngine("gate", pol), stic.Stops(pol)
+        self.assertEqual(pol, {"stop": HS_POL["stop"]})
+
+
+class HarnessStopReports(unittest.TestCase):
+    def test_report_header(self):
+        rr = {"word": "SticTest2", "run": "t2s-20261119T0100-abcd", "cells": [], "hosts": ["chopin"]}
+        with hs_override(4):
+            text = report.render_report(rr, None, policy=HS_POL)
+        lines = text.splitlines()
+        self.assertTrue(lines[0].startswith("SticTest2 report: run t2s-20261119T0100-abcd"), lines[0])
+        self.assertEqual(lines[1], "harness stop: 4 (override; policy 2)")
+        with hs_no_override():
+            self.assertNotIn("harness stop", report.render_report(rr, None, policy=HS_POL))
+
+    def test_composite_header(self):
+        totals = {"word": "SweepTest2", "run": "t2w-20261119T0100-abcd", "now": 0}
+        with hs_override(4):
+            lines = report.render_composite([], [], totals, [], HS_POL).splitlines()
+        self.assertEqual(lines[:2], ["SweepTest2 report: run t2w-20261119T0100-abcd",
+                                     "harness stop: 4 (override; policy 2)"])
+        with hs_no_override():
+            self.assertNotIn("harness stop", report.render_composite([], [], totals, [], HS_POL))
+
+
+class HarnessStopWorld(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="t2-harness-stop-")
+        cls.w = world.World(os.path.join(cls.tmp, "w"))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_run_log_says_it(self):
+        ctx = self.w.ctx([])
+        wd = self.w.word("GateTest2", ctx)
+        p = plan.make(wd, ctx)
+        mac = os.path.join(self.tmp, "mac")
+        pol_n = int(((ctx.classes.get("policy") or {}).get("stop") or {}).get("harness_results", 2))
+        with hs_override(5):
+            rs = run.RunState("t2g-20261119T0100-abcd", wd, p, ctx, mac_root=mac, log=None)
+        self.assertEqual((rs.guards.harness_max, rs.stops.harness_max), (5, 5))
+        with open(os.path.join(rs.mac_dir, "run.log")) as f:
+            self.assertIn(f"harness stop: 5 (override; policy {pol_n})", f.read())
+        with hs_no_override():
+            rs = run.RunState("t2g-20261119T0101-abcd", wd, p, ctx, mac_root=mac, log=None)
+        self.assertEqual(rs.stops.harness_max, pol_n)
+        self.assertFalse(os.path.exists(os.path.join(rs.mac_dir, "run.log")))
+
+    def test_no_key_reads_it(self):
+        with hs_no_override():
+            p1 = self.w.plan("GateTest2 plan")
+            rows = self.w.seed(p1)
+        with hs_override(4):
+            p2 = self.w.plan("GateTest2 plan", rows)
+        self.assertEqual({c.cell: c.keys for c in p1.cells}, {c.cell: c.keys for c in p2.cells})
+        self.assertEqual(p2.totals["due"], 0)
+
+
+def hs_load_t2():
+    loader = importlib.machinery.SourceFileLoader("t2_harness_stop_under_test", os.path.join(os.path.dirname(HERE), "t2"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    m = importlib.util.module_from_spec(spec)
+    loader.exec_module(m)
+    return m
+
+
+class HarnessStopCli(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.t2 = hs_load_t2()
+
+    def test_option_sets_the_env(self):
+        with hs_no_override():
+            self.t2.harness_stop_opt({"--harness-stop": "4"})
+            self.assertEqual(os.environ[HS_ENV], "4")
+        with hs_no_override():
+            self.t2.harness_stop_opt({})
+            self.assertEqual(os.environ[HS_ENV], "")
+            with self.assertRaisesRegex(self.t2.Usage, "--harness-stop"):
+                self.t2.harness_stop_opt({"--harness-stop": "0"})
+
+    def test_a_bad_value_is_refused(self):
+        with hs_no_override(), contextlib.redirect_stderr(io.StringIO()) as e:
+            self.assertEqual(self.t2.dispatch(["SticTest2", "plan", "--harness-stop", "two"]), 2)
+        self.assertIn("--harness-stop", e.getvalue())
+        with hs_override("two"), contextlib.redirect_stderr(io.StringIO()) as e:
+            self.assertEqual(self.t2.dispatch(["resume", "t2s-20261119T0100-abcd"]), 2)
+        self.assertIn(HS_ENV, e.getvalue())
 
 
 if __name__ == "__main__":

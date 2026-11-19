@@ -78,7 +78,7 @@ import threading
 import time
 import traceback
 
-from . import DEFAULT_MAC_ROOT, estimates, expand, keys, notify, parse_utc, utc_now, words
+from . import DEFAULT_MAC_ROOT, estimates, expand, harness_stop_line, keys, notify, parse_utc, utc_now, words
 from . import mac_root as default_mac_root
 from . import plan as planmod
 from . import report
@@ -958,6 +958,9 @@ class Conductor:
         self.guards.on_change = self.save
         self.resumed = resumed
         self.save()
+        hs = harness_stop_line((pol or {}).get("stop"))
+        if hs:
+            self.log(hs)    # (T2_HARNESS_STOP, t2 --harness-stop: every child's StopEngine and the Guards stop at it)
         if not resumed:     # step 2's guest.preflight (run.resume runs none): what a killed job left
             for f in PLAN_ORDER[self.fam]:
                 mod = self.env.runner(f)

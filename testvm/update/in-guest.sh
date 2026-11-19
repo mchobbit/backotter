@@ -955,8 +955,30 @@ EOF
 d = [x for x in json.load(sys.stdin)["deployments"] if x.get(sys.argv[1])]
 print(d[0]["checksum"] if d else "")' "$1"
         }
+        # fetched CMD...: an rpm-ostree that downloads, run again while it
+        # fails on the network.  quay.io's CDN drops a layer's download now
+        # and then ("proxy failure: ... unexpected EOF", "Reading large
+        # regfile: unexpected end of file": kinoite44 on cinqcent, twice in
+        # t2v-20261118T2305-edbb, at layer 10 and then 41 of 42) and the
+        # image proxy's one reconnect fails too.  The layers already imported
+        # stay in the repo, so the next try fetches only those after them.
+        # rpm-ostreed's own transaction (an automatic update) is waited out
+        # the same way.  Any other error ends it.
+        fetched() {
+            n=0
+            while :; do
+                { "$@" 2>&1; echo $? >/run/bko-fetch.rc; } | tee /run/bko-fetch.log
+                r=$(cat /run/bko-fetch.rc)
+                [ "$r" -ne 0 ] && [ $n -lt 10 ] &&
+                    grep -qiE '^error: .*(EOF|end of file|connection reset|connection refused|broken pipe|timed out|timeout|TLS handshake|name resolution|no such host|network is unreachable|50[234] |Transaction in progress)' /run/bko-fetch.log ||
+                    break
+                n=$((n + 1)); say "a download failed: rpm-ostree again in 30 s ($n of 10)"; sleep 30
+            done
+            rm -f /run/bko-fetch.rc /run/bko-fetch.log
+            return "$r"
+        }
         was=$(booted booted) || exit 1
-        rpm-ostree upgrade || exit 1
+        fetched rpm-ostree upgrade || exit 1
         staged=$(booted staged) || exit 1
         if [ -n "$staged" ] && [ "$staged" != "$was" ]; then
             step "ostree: deployment $staged staged, in place of $was"

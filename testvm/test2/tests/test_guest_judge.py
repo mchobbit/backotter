@@ -741,7 +741,12 @@ class RealLogLines(unittest.TestCase):
                  "2026-11-18 21:36:09 localhost linux: [    0.919281] Code: 8b 05 71 01 35 00 48 83 c4 28 c3 0f 1f 40 00 48 8b 05 61 01 35 00 "
                  "48 2d 00 01 00 00 48 89 05 54 01 35 00 48 8b 05 4d 01 35 00 <0f> b6 38 e8 65 a5 ff ff 48 8b 44 24 08 48 8b 15 39 01 35 00 "
                  "48 05[    2.599722] input: PC Speaker as /devices/platform/pcspkr/input/input3",
-                 "guix15-bios login: [ 1033.413555] shepherd[1]: Terminating system log service."],
+                 "guix15-bios login: [ 1033.413555] shepherd[1]: Terminating system log service.",
+                 # CONFIG_PM_TRACE_RTC's chance matches after its Magic number line, a different device
+                 # or source line each boot (guix15-bios's serial.log, GuestTest2 t2v-20261119T1434-e089)
+                 "[    1.136567] PM:   hash matches drivers/base/power/main.c:1424", "[    1.041482] pci 0000:00:03.0: hash matches",
+                 "[    1.041482] pci 0000:00:1f.3: hash matches", "[    1.041482] serial8250 serial8250: hash matches",
+                 "2026-11-19 15:02:11 localhost linux: [    1.041482] pci 0000:00:1f.3: hash matches"],
         "apt": ["Get:1 http://deb.debian.org/debian trixie/main amd64 bash amd64 5.2.37-2 [1,234 kB]", "Unpacking bash (5.2.37-2) over (5.2.37-1) ...",
                 "Reading package lists... Done", "base-files is already the newest version (13.8).", "Found linux image: /boot/vmlinuz-6.12.57+deb13-amd64"],
         "dnf": ["[ 1/42] Upgrading NetworkManager-1:1.52.0 100% |   2.1 MiB/s |   3.4 MiB |  00m02s", "[ 3/9] Installing hunspell-en-AU-0:2.1 100% |   1.0 MiB/s |  10.0 KiB |  00m00s",
@@ -767,9 +772,26 @@ class RealLogLines(unittest.TestCase):
                    "Adding boot menu entry for EFI BootNext: UEFI PXEv4 (MAC:525400123456) (Boot0002)",
                    "Adding boot menu entry for EFI BootNext: EFI Internal Shell (Boot0006)",
                    "Warning: os-prober is not installed; EFI BootNext entries will not be filtered against detected OSes, "
-                   "so non-OS entries (e.g. firmware updaters) may appear in the menu."],
+                   "so non-OS entries (e.g. firmware updaters) may appear in the menu.",
+                   # a stalled mirror's file, which in-guest.sh's fetched() retries (endeavouros-grub,
+                   # GuestTest2 t2v-20261119T1434-e089)
+                   "error: failed retrieving file 'breeze-6.8.3-1-x86_64.pkg.tar.zst' from geo.mirror.pkgbuild.com : "
+                   "Operation too slow. Less than 1 bytes/sec transferred the last 10 seconds",
+                   "error: failed retrieving file 'protobuf-36.1-1-x86_64.pkg.tar.zst.sig' from geo.mirror.pkgbuild.com : "
+                   "Operation too slow. Less than 1 bytes/sec transferred the last 10 seconds",
+                   "error: failed retrieving file 'core.db' from mirror.rackspace.com : Operation too slow. "
+                   "Less than 1 bytes/sec transferred the last 10 seconds"],
         "apk": ["( 1/9) Upgrading alpine-base (3.24.1-r0 -> 3.24.2-r0)", "(10/19) Installing openssl (3.5.0-r0)", "OK: 123.4 MiB in 42 packages"],
-        "zypper": ["( 1/8) Installing: firewalld-2.3.1-1.1.noarch [.."],
+        "zypper": ["( 1/8) Installing: firewalld-2.3.1-1.1.noarch [..",
+                   # a preload one mirror lacks, and the refresh line the gpg-key lines cut off
+                   # (tumbleweed, leap16: GuestTest2 t2v-20261119T1434-e089)
+                   'Preloading: diffutils-3.12-2.1.x86_64.rpm [Error: "The requested URL returned error: 404", trying next mirror.]',
+                   'Preloading: ncurses-utils-6.6.20261107-117.1.x86_64.rpm [Error: "The requested URL returned error: 404", trying next mirror.]',
+                   "Retrieving repository 'openSUSE-Tumbleweed-Non-Oss' metadata [...", "Retrieving repository 'repo-oss (16.1)' metadata [..",
+                   "Retrieving repository 'repo-openh264 (16.1)' metadata [.", "Retrieving repository 'repo-oss (16.1)' metadata ["],
+        # aeon's and microos's (transactional-update's zypper)
+        "tukit": ['Preloading: libostree-1-1-2026.7-1.1.x86_64.rpm [Error: "The requested URL returned error: 404", trying next mirror.]',
+                  "Retrieving repository 'openSUSE-Tumbleweed-Oss' metadata [....", "Preloading: Aeon-release-20261117-4407.1.x86_64.rpm [done]"],
         "xbps": ["gzip-1.14_1.x86_64-musl.xbps: [84KB 100%] 1234KB/s ETA: 00m00s", "gzip-1.14_1: verifying RSA signature...", "gzip-1.14_1: updated successfully."],
         "freebsd": ["[ 7/120] Extracting FreeBSD-acct-15.1p1: .......... done", "[3/9] Upgrading curl-8.15.0...", "Fetching meta.conf: . done", "/rescue/zdb"],
         "dragonfly": ["[1/3] Deinstalling bind-tools-9.20.1...", "in-guest: base system: make buildworld (12:01:02)"],
@@ -864,7 +886,11 @@ class RealLogLines(unittest.TestCase):
                  "[    1.002764] Code: 48 89 e5 41 57 41 56 41 55 41 54 53 48 83 ec 18 48 8b 05 c1 ec 34 00 <0f> 0b 48 c7 c7 00 00 00 00 e8 00 00",
                  "2026-11-18 20:56:46 localhost linux: [    1.163892] init[1]: segfault at 3fff00 ip 00000000004d5593 sp 00007ffef9984fd0 "
                  "error 4 in guile[d5593,401000+202000] likely on CPU 1 (core 1, socket 0)[    2.826518] I/O error, dev vda, sector 2048 op 0x0:(READ)",
-                 "guix15 login: [ 1033.413555] shepherd[1]: Service guix-daemon failed to start."],
+                 "guix15 login: [ 1033.413555] shepherd[1]: Service guix-daemon failed to start.",
+                 # PM's own errors, and anything else after a device's name
+                 "[    1.041482] PM: Device 0000:00:1f.3 failed to resume async: error -110",
+                 "[    1.041482] pci 0000:00:03.0: hash matches, BAR 0: failed to assign",
+                 "[    1.136567] PM:   hash matches drivers/base/power/main.c:1424 (error -5)"],
         "nix": ["error: builder for '/nix/store/abc-foo.drv' failed with exit code 1", "error: Cannot build '/nix/store/abc-foo.drv'.", "building '/nix/store/abc.drv' failed"],
         "apt": ["The following packages have unmet dependencies:", "Reading package lists... Error!"],
         "dragonfly": ["in-guest: base system: make buildworld failed"],
@@ -872,13 +898,23 @@ class RealLogLines(unittest.TestCase):
         "pacman": ["error: failed to commit transaction (conflicting files)", "grub-install: error: cannot find EFI directory.",
                    "in-guest: warning: grub 2:2.12-3 -> grub 2:2.14-1, and GRUB is not installed again: "
                    "no EFI/*/grubx64.efi in a vfat ESP mounted at /efi, /boot/efi or /boot",
-                   "/usr/bin/grub-mkconfig: line 280: /boot/grub/grub.cfg.new: No such file or directory"],
+                   "/usr/bin/grub-mkconfig: line 280: /boot/grub/grub.cfg.new: No such file or directory",
+                   # a download that fails another way than too slowly
+                   "error: failed retrieving file 'core.db' from geo.mirror.pkgbuild.com : SSL certificate problem: certificate has expired",
+                   "error: failed retrieving file 'breeze-6.8.3-1-x86_64.pkg.tar.zst' from geo.mirror.pkgbuild.com : "
+                   "The requested URL returned error: 404"],
         "dnf": ["Error: Transaction test error:"],
         "portage": ["!!! Fetch failed for sys-devel/gettext-0.26-1, continuing...", ">>> Failed to emerge sys-boot/grub-2.16-r1",
                     " * ERROR: sys-boot/grub-2.16-r1::gentoo failed (compile phase):",
                     ">>> Jobs: 1 of 9 complete, 1 failed                Load avg: 3.05, 2.10, 1.08",
                     " * IMPORTANT: config file '/etc/default/grub' needs updating."],
-        "zypper": ["Retrieving: foo-1.0.rpm [Error: not found]"],
+        "zypper": ["Retrieving: foo-1.0.rpm [Error: not found]",
+                   'Preloading: kernel-default-7.3.4-1.1.x86_64.rpm [Error: "end of response with 175875867 bytes missing", trying next mirror.]',
+                   'Preloading: diffutils-3.12-2.1.x86_64.rpm [Error: "The requested URL returned error: 404"]',
+                   "Retrieving repository 'repo-oss (16.1)' metadata [...error]",
+                   "Retrieving repository 'repo-oss (16.1)' metadata [.....Repository 'repo-oss (16.1)' is invalid."],
+        "tukit": ['Preloading: kernel-default-7.3.4-1.1.x86_64.rpm [Error: "end of response with 175875867 bytes missing", trying next mirror.]',
+                  "Retrieving repository 'openSUSE-Tumbleweed-Oss' metadata [...error]"],
         "eopkg": ["Failed to record path /lib32", "Failed handler 'system-presets', please consult the log file: /var/log/usysconf.log",
                   "File conflicts:", "Not removing conflicted file : /usr/bin/envsubst", "System error. Program terminated.",
                   "Installed file /usr/lib64/libheif does not exist on system [Probably you manually deleted]"],
@@ -901,7 +937,8 @@ class RealLogLines(unittest.TestCase):
                 self.assertEqual(len(self.left(pm, x)), 1, (pm, x))
 
     # Kernel lines of the guix guests' last init moments (their serial logs, t2v-20261118T2038-21eb).
-    GUIX_KERNEL = ["PM:   Magic number: 2:195:652", "clk: Disabling unused clocks", "evm: HMAC attrs: 0x1",
+    GUIX_KERNEL = ["PM:   Magic number: 2:195:652", "PM:   hash matches drivers/base/power/main.c:1424", "pci 0000:00:1f.3: hash matches",
+                   "clk: Disabling unused clocks", "evm: HMAC attrs: 0x1",
                    "Freeing unused kernel image (initmem) memory: 4308K", "Run /init as init process",
                    "sr 1:0:0:0: Attached scsi generic sg0 type 5", "ata2: found unknown device (class 0)",
                    "init[1]: segfault at 3fff00 ip 00000000004d5593 sp 00007ffca7250cf0 error 4 in guile[d5593,401000+202000] "

@@ -33,11 +33,13 @@ All of C1-C7 are done, with the fixes after them:
   2026-11-19 (stic, holt, guest), but for that one HARNESS row.
 
 Still open:
-- GuestTest2's `S-apk` reads only `/etc/apk/repositories`; Chimera's list is
-  `/usr/lib/apk/repositories.d/*.list` (and `/etc/apk/repositories.d`), so the
-  three guests have rule S-none. Reading those too changes
-  `guest/check-image.sh`, in every guest's harness, so every guest becomes
-  due: the user's call.
+- GuestTest2's `S-apk` now reads apk v3's `repositories.d/*.list` too
+  (`/etc/apk` and `/lib/apk`, the directories apk reads; Chimera's
+  `/usr/lib/apk` list is read through its `/lib -> usr/lib` link),
+  with `set` variables and `/etc` hiding a same-named `/lib` file, and the
+  three guests are on rule S-apk (2026-11-19, the user's call: the change to
+  `guest/check-image.sh` makes every guest due). Their first GuestTest2 run
+  with it is still owed.
 - BIOS GRUB's plan note about debconf's `grub-pc/install_devices` and
   `dpkg-reconfigure grub-pc` (What C2 found) still shows on non-Debian
   systems, Chimera's included.

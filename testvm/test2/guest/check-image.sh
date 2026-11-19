@@ -18,7 +18,9 @@ has_rule S-dnf && emit /etc/yum.repos.d/fedora-updates.repo /etc/yum.repos.d/roc
 has_rule S-pac && emit /etc/pacman.d/mirrorlist /etc/pacman.d/endeavouros-mirrorlist /etc/pacman.d/cachyos-mirrorlist /etc/pacman.d/chaotic-mirrorlist
 has_rule S-zyp && emit /etc/zypp/repos.d/*.repo
 has_rule S-moss && emit /etc/moss/repo.d/*.kdl /etc/moss/system-model.kdl
-has_rule S-apk && emit /etc/apk/repositories
+# apk v3 (apk-repositories(5)) also reads repositories.d/*.list in /etc/apk and /lib/apk, and no
+# other directory; Chimera's /usr/lib/apk/repositories.d is read as /lib's (its /lib -> usr/lib).
+has_rule S-apk && emit /etc/apk/repositories /etc/apk/repositories.d/*.list /lib/apk/repositories.d/*.list
 has_rule S-xbps && emit /usr/share/xbps.d/* /etc/xbps.d/*
 has_rule S-nix && emit /etc/nixos/configuration.nix
 has_rule S-portage && emit /etc/portage/make.conf /etc/portage/binrepos.conf /etc/portage/binrepos.conf/* \

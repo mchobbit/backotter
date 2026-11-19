@@ -497,7 +497,7 @@
    "checks": {
     "pm": "apk",
     "rules": {
-     "source": "S-none",
+     "source": "S-apk",
      "loader": "L-grub",
      "kernel": "K-deb",
      "boot": "B-lin",
@@ -524,7 +524,7 @@
    "checks": {
     "pm": "apk",
     "rules": {
-     "source": "S-none",
+     "source": "S-apk",
      "loader": "L-sd",
      "kernel": "K-deb",
      "boot": "B-lin",
@@ -550,7 +550,7 @@
    "checks": {
     "pm": "apk",
     "rules": {
-     "source": "S-none",
+     "source": "S-apk",
      "loader": "L-grub",
      "kernel": "K-deb",
      "boot": "B-lin",

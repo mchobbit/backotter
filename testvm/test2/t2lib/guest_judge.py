@@ -396,8 +396,49 @@ def s_moss(sec):
     return []
 
 
+APK_TYPES = ("ndx", "v2", "v3")
+APK_LIB_DIR = "/lib/apk/repositories.d/"
+
+
+def apk_repositories(sec):
+    """The repositories apk would use, as URLs: /etc/apk/repositories, then the repositories.d
+    *.list files by name (apk-repositories(5), apk-tools 3), a name in /etc/apk/repositories.d
+    hiding the same name in /lib/apk/repositories.d (Chimera's /usr/lib/apk/repositories.d, by its
+    /lib -> usr/lib; apk reads no /usr/lib path itself, so neither does this).  Lines are "# comment",
+    "set [-default] KEY=VALUE" and "[ndx|v2|v3] [@tag] URL [COMPONENT...]" (one URL per component,
+    URL/COMPONENT); ${KEY} is expanded in values, URLs and components, an unknown one left as is.
+    Tagged repositories count: the old rule counted every active line."""
+    lists = {}
+    for d in (APK_LIB_DIR, "/etc/apk/repositories.d/"):
+        lists.update({p[len(d):]: v for p, v in sec.glob(d + "*.list").items() if "/" not in p[len(d):]})
+    env = {}
+
+    def expand(x):
+        return re.sub(r"\$\{([A-Za-z][A-Za-z0-9_]*)\}", lambda m: env.get(m.group(1), m.group(0)), x)
+
+    out = []
+    for lines in [sec.file("/etc/apk/repositories") or []] + [lists[n] for n in sorted(lists)]:
+        for x in _active(lines):
+            w = x.split()
+            if w[0] == "set":
+                dflt = len(w) > 1 and w[1] == "-default"
+                k, eq, v = " ".join(w[2 if dflt else 1:]).partition("=")
+                if eq and not (dflt and k in env):
+                    env[k] = expand(v)
+                continue
+            if w[0] in APK_TYPES:
+                w = w[1:]
+            if w and w[0].startswith("@"):
+                w = w[1:]
+            if not w:
+                continue
+            url = expand(w[0])
+            out += [url.rstrip("/") + "/" + expand(c) for c in w[1:]] or [url]
+    return out
+
+
 def s_apk(sec):
-    rep = _active(sec.file("/etc/apk/repositories"))
+    rep = apk_repositories(sec)
     if not rep:
         return ["no enabled apk repository"]
     osr = _os_release(sec)

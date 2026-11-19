@@ -3439,6 +3439,7 @@ impl Builder<'_> {
         // records the root's in the initramfs it makes), so what this stage
         // reads gets its atime bumped: each file's atime, as the restore
         // set it, is kept here and put back at the end.
+        out.extend(self.root_atime_remount(&t));
         out.push(Cmd::new(&["sh", "-c", &atimes_cmd(&t, "if-missing", &self.ro_shared())]).why("the restored atimes (the restore stage lists them), to put back after this stage's reads"));
         out.extend(self.rewrite_cmd(false));
         // LVM's devices file (RHEL, Fedora): LVM run in the chroot (by dracut)
@@ -3993,6 +3994,43 @@ impl Builder<'_> {
             (false, "install") => "grub-install",
             (false, _) => "grub-mkconfig",
         }
+    }
+
+    /// The target's / remounted with the atime options the source's / was
+    /// mounted with (the dump's storage.mounts), before dracut runs in the
+    /// chroot.  Host-only dracut writes the root's mount options as it
+    /// finds them (findmnt's OPTIONS for /) into the image's
+    /// etc/cmdline.d/20-root-dev.conf as rootflags=, and the restored
+    /// machine's initramfs then mounts / with them: whatever changed the
+    /// rescue system's mount since the mount stage would last on the
+    /// restored machine.  BackShot1's diff remounts the target noatime and
+    /// puts it back with remount,relatime, which a ZFS dataset ignores (it
+    /// stays noatime, atime=off temporary): the Thinkpad's Ubuntu 26.10 on
+    /// ZFS came back with rootflags=...,noatime,... and / noatime (run
+    /// ubuntu-26.10-20261119-050205).  So `atime` with relatime or
+    /// strictatime, which a ZFS dataset takes too; only the atime options:
+    /// the rest of the root's options come from the same fstab line or
+    /// dataset properties as the source's.  Only for dracut: no other
+    /// generator records the root's options.
+    fn root_atime_remount(&self, t: &str) -> Option<Cmd> {
+        if self.layout.str_at(&["boot", "initramfs", "generator"]) != Some("dracut") {
+            return None;
+        }
+        let m = self.layout.arr(&["storage", "mounts"]).iter().find(|m| s(m, "target").as_deref() == Some("/"))?;
+        let o = s(m, "options")?;
+        let has = |x: &str| o.split(',').any(|y| y == x);
+        let mut a = if has("noatime") {
+            "noatime"
+        } else if has("relatime") {
+            "atime,relatime"
+        } else {
+            "atime,strictatime"
+        }
+        .to_string();
+        if has("nodiratime") {
+            a.push_str(",nodiratime");
+        }
+        Some(Cmd::new(&["mount", "-o", &format!("remount,{a}"), t]).why(format!("/ with the source's atime options ({o}), for host-only dracut's rootflags=")))
     }
 
     /// Every initramfs remade by the source's own generator; None for one
@@ -6420,6 +6458,38 @@ mod tests {
         let prebuilt = arch.replace(r#""generator": "mkinitcpio""#, r#""generator": "prebuilt""#);
         let bt = text(built_from(&prebuilt, &[]).stage(Stage::Boot));
         assert!(!bt.contains("mkinitcpio") && !bt.contains("update-initramfs"), "{bt}");
+    }
+
+    /// Host-only dracut records the root's mount options (rootflags=), so
+    /// the boot stage remounts the target's / with the source's atime
+    /// options first: atime with relatime or strictatime (which undoes a
+    /// ZFS dataset's noatime too), noatime as it was.  Not for another
+    /// generator, nor without the source's / in the dump's mounts.
+    #[test]
+    fn dracut_root_gets_the_source_atime_options() {
+        let with = |opts: &str, generator: &str| {
+            sample::bios_mbr()
+                .replace(r#""id": "debian", "version_id": "13""#, r#""id": "fedora", "version_id": "44""#)
+                .replace(r#""efi": null,"#, &format!(r#""efi": null, "initramfs": {{"generator": "{generator}"}},"#))
+                .replace(r#""grub": {"debconf""#, r#""grub": {"dir": "/boot/grub2", "debconf""#)
+                .replace(r#""mounts": [],"#, &format!(r#""mounts": [{{"target": "/", "source": "/dev/vda3", "fstype": "btrfs", "root": "/@rootfs", "options": "{opts}", "super_options": "rw,space_cache=v2,subvolid=256,subvol=/@rootfs"}}],"#))
+        };
+        for (opts, want) in [
+            ("rw,nodev,relatime", "remount,atime,relatime"),
+            ("rw,noatime", "remount,noatime"),
+            ("rw", "remount,atime,strictatime"),
+            ("rw,relatime,nodiratime", "remount,atime,relatime,nodiratime"),
+        ] {
+            let bt = text(built_from(&with(opts, "dracut"), &[]).stage(Stage::Boot));
+            let remount = bt.find(&format!("mount -o {want} /mnt/bko-target\n")).unwrap_or_else(|| panic!("{opts}: {bt}"));
+            let dracut = bt.find("dracut --force --kver").expect(&bt);
+            let rbind = bt.find("mount --rbind").expect(&bt);
+            assert!(remount < rbind && rbind < dracut, "{bt}");
+        }
+        let bt = text(built_from(&with("rw,noatime", "mkinitcpio"), &[]).stage(Stage::Boot));
+        assert!(!bt.contains("remount"), "{bt}");
+        let bt = text(built_from(&sample::bios_mbr().replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"},"#), &[]).stage(Stage::Boot));
+        assert!(!bt.contains("remount"), "{bt}");
     }
 
     /// Chimera: Debian's initramfs-tools, without debconf or update-grub's

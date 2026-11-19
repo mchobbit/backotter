@@ -122,6 +122,8 @@ sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/d
 
 # ---- boot ----
 # refuses to start unless /mnt/bko-target/etc/fstab is the restored system's (its / matches the layout's)
+# / with the source's atime options (rw,relatime), for host-only dracut's rootflags=
+mount -o remount,atime,relatime /mnt/bko-target
 # the restored atimes (the restore stage lists them), to put back after this stage's reads
 sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run -o -path /mnt/bko-target/.snapshots/2/snapshot \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
 # the restored LVM devices file, kept

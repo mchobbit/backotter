@@ -83,6 +83,8 @@ sh -c '[ ! -d /mnt/bko-target/run/bko-be ] || rmdir /mnt/bko-target/run/bko-be'
 sh -c 'cmp -s /srv/bko-keys/zroot /mnt/bko-target/etc/zfs/keyfile1.key || { echo '\''ZFS encryption root zroot: the restored /etc/zfs/keyfile1.key is not the key --key-file zroot=/srv/bko-keys/zroot gave, so the initramfs would carry a key that does not open the pool; give the key the source kept there'\'' >&2; exit 1; }'
 # zroot: unlocks as the source did
 zfs set keylocation=file:///etc/zfs/keyfile1.key zroot
+# / with the source's atime options (rw,relatime), for host-only dracut's rootflags=
+mount -o remount,atime,relatime /mnt/bko-target
 # the restored atimes (the restore stage lists them), to put back after this stage's reads
 sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
 # the restored LVM devices file, kept

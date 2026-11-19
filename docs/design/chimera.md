@@ -6,6 +6,46 @@ three guests, root on ZFS for the Thinkpad, HoltTest1Obscure, and a supported
 system. C1 (the `chimera` guest) was built the same day, and its *checks* are
 settled below: see "What C1 found".
 
+## Status (2026-11-19)
+
+All of C1-C7 are done, with the fixes after them:
+- **File capabilities** (1691e62): see "Fix after C7".
+- **XFS realtime inheritance** (`t`, `0x100`) on directories: ruled "Restore
+  it" by the user, 2026-11-12. Both tools keep it since restic
+  0.19.1+backotter.6 and rustic_core 0.13.0+backotter.9; SticTest's
+  `xfs-rtinherit` on `chimera` is a PASS (f2177d7). Each fork's BACKOTTER.md
+  says a directory takes it without a realtime device.
+- **`chimera-zfs`'s pool** is built with `compatibility=openzfs-2.4`
+  (d83fecb).
+- **SticTest fixtures:** sparse-small's hole is punched after writing
+  (1edcfa5), with chimerautils' `fallocate` given K sizes, then `xfs_io
+  fpunch` (ddace37: its `fallocate` takes no bare byte counts; not a tool
+  bug); restore-over-immutable's expected extra file (7c8a834); the apk tools
+  come from the image's index and a host cache, with `/root/c4` made first
+  (aa0dbd4, after a network stall in t2s-20261119T0726-e436 gave
+  stic:chimera a HARNESS verdict).
+- **BackShot1 on real hardware, twice:** the old Thinkpad with root on ZFS
+  (C6, `chimera-20261112-092235`), and the Lenovo A100 with GNOME, ext4
+  root, the ESP as /boot and systemd-boot (`chimera-20261118-040321`, 87,202
+  files compared, one round after d2173ce expected syslog-ng's state in
+  /var).
+- **Test2:** every cell of the three guests PASS on 2026-11-18 and
+  2026-11-19 (stic, holt, guest), but for that one HARNESS row.
+
+Still open:
+- GuestTest2's `S-apk` reads only `/etc/apk/repositories`; Chimera's list is
+  `/usr/lib/apk/repositories.d/*.list` (and `/etc/apk/repositories.d`), so the
+  three guests have rule S-none. Reading those too changes
+  `guest/check-image.sh`, in every guest's harness, so every guest becomes
+  due: the user's call.
+- BIOS GRUB's plan note about debconf's `grub-pc/install_devices` and
+  `dpkg-reconfigure grub-pc` (What C2 found) still shows on non-Debian
+  systems, Chimera's included.
+- No `bs1-qemu.py --bios` rehearsal of `chimera`.
+- BackShot1All (docs/design/bs1-all.md) lists Chimera among its dropped rows,
+  to return once a fresh install passes again; the A100 run above is that
+  pass.
+
 **Conventions.** est. marks an estimate. *Check* marks a fact the docs don't
 state, to be settled on the first guest before the code that depends on it.
 Chimera's facts come from chimera-linux.org/docs (installation, apk, services,

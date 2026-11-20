@@ -9,7 +9,8 @@
 # From outside: BKO_WORK (the work tree, default /home/m/backotter-work: its
 # bko-bin/, holt-bin/, server/ and vms/), BKO_IMG_DIR (the images directory,
 # default BKO_WORK/images), S (the stick/ to build with, default
-# BKO_WORK/stick), ISO and SL (Linux's source ISO and slimmed base),
+# BKO_WORK/stick), ISO and SL (Linux's source ISO, by default the one SL's
+# report.txt names, and slimmed base),
 # BKO_HOLT_BIN (default BKO_WORK/holt-bin).  stick/img-lanes.sh runs it under
 # a reservation.
 #
@@ -33,7 +34,11 @@ same_dir() { local a b; a=$(stat -Lc %d:%i -- "$1" 2>/dev/null) && b=$(stat -Lc 
 if [[ ${T2_HOST_ROOT:-/bkoscratch/test2} != /bkoscratch/test2 ]] && same_dir "$I" /home/m/backotter-work/images; then
     echo "img-one: T2_HOST_ROOT=$T2_HOST_ROOT is a test's, and $I is the real set: set BKO_IMG_DIR to a world's" >&2; exit 2
 fi
-ISO=${ISO:-$W/server/ubuntu-26.04.1-live-server-amd64.iso} SL=${SL:-$W/server/slim}
+# Linux's source ISO is, by default, the one SL was made from (its report.txt's
+# "Source ISO:"), so repointing server/slim moves both together.
+SL=${SL:-$W/server/slim}
+ISO=${ISO:-$(sed -n 's/^Source ISO: *//p' "$SL/report.txt" 2>/dev/null | head -n 1)}
+ISO=${ISO:-$W/server/ubuntu-26.04.1-live-server-amd64.iso}
 H=${BKO_HOLT_BIN:-$W/holt-bin}; export BKO_HOLT_BIN=$H
 B=${BKO_BIN:-$W/bko-bin}; export BKO_BIN=$B
 mkdir -p "$D" || exit 1

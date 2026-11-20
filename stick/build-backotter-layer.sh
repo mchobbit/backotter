@@ -76,12 +76,18 @@ ARCHIVE_PACKAGES=(dosfstools nilfs-tools f2fs-tools)
 # layer must be too.  Through another host of Ubuntu's, which serves the same
 # archive, so that apt's preferences can tell it from the release pocket.
 UPDATES=http://security.ubuntu.com/ubuntu/
-ARCHIVE_DEPENDENCIES=(libsodium23)          # bcachefs-tools needs it
+ARCHIVE_DEPENDENCIES=(libsodium23 libsodium26)   # bcachefs-tools needs one: 23 (26.04's), 26 (26.10's)
 # bcachefs, from its own repository: the tools into the layer, and the DKMS
 # source of the same version to build the module from.  Pinned to the version
 # boot-tested; the repository keeps only its latest, so a new release there
 # fails the build until this is bumped.
-BCACHEFS_REPO=https://apt.bcachefs.org/resolute/
+# apt.bcachefs.org builds for some Debian and Ubuntu releases, by codename,
+# and the Ubuntu release takes the one built against its libraries.  26.10
+# (stonking) has none of its own (checked 2026-11-20): Debian forky's is the
+# same 1.39.7, linked against libsodium26 as stonking is (resolute's and
+# questing's want libsodium23, which stonking no longer has).
+declare -A BCACHEFS_DIST=([resolute]=resolute [stonking]=forky)
+BCACHEFS_REPO=""                             # https://apt.bcachefs.org/DIST/, once the release is known
 BCACHEFS_SUITE=bcachefs-tools-release
 BCACHEFS_KEY=keys/apt.bcachefs.org.asc       # from https://apt.bcachefs.org/apt.bcachefs.org.asc
 BCACHEFS_KEY_FPR=64DA57BD19CDE340D3B2DA48F7578FFBB284AA61
@@ -239,6 +245,8 @@ chmod 700 "$root$apt_dir/gnupg"
 cp "$root/etc/apt/sources.list.d/cdrom.sources" "$root$apt_dir/sources/"
 suite=$(sed -n 's/^Suites: *//p' "$root/etc/apt/sources.list.d/cdrom.sources")
 [[ $suite =~ ^[a-z]+$ ]] || die "can't tell the release from cdrom.sources (Suites: $suite)"
+[[ -n ${BCACHEFS_DIST[$suite]:-} ]] || die "no apt.bcachefs.org repository is chosen for $suite (BCACHEFS_DIST)"
+BCACHEFS_REPO=https://apt.bcachefs.org/${BCACHEFS_DIST[$suite]}/
 cp "$here/$BCACHEFS_KEY" "$root$apt_dir/bcachefs.asc"
 fpr=$(in_root env GNUPGHOME="$apt_dir/gnupg" gpg --batch --quiet --show-keys --with-colons \
     "$apt_dir/bcachefs.asc" | awk -F: '$1 == "fpr" { print $10; exit }')

@@ -1449,7 +1449,9 @@ impl Builder<'_> {
         }
         // The key: --key-file, else a temporary random one when the source
         // unlocked it with a key file of its own (replaced in boot), else a
-        // prompt for a new passphrase.
+        // prompt for a new passphrase.  Either way the boot stage adds the
+        // restored key file, when it's in the restored tree
+        // (restored_key_files).
         let tab_key = self.layout.crypttab_entry(&open_as, s(&c, "uuid").as_deref()).and_then(|e| s(e, "key_file")).filter(|k| !matches!(k.as_str(), "none" | "-" | ""));
         let key = match (self.opts.key_file(&open_as), &tab_key) {
             (Some(f), _) => Some(f.to_string()),
@@ -3906,7 +3908,7 @@ impl Builder<'_> {
     }
 
     /// Keys: the restored key files (crypttab's) replace the temporary ones
-    /// LUKS was made with.
+    /// LUKS was made with, or join the key --key-file gave.
     pub(crate) fn restored_key_files(&mut self, t: &str) -> Vec<Cmd> {
         let mut out = Vec::new();
         for dm in self.layout.arr(&["storage", "dm_devices"]).to_vec() {
@@ -3924,12 +3926,50 @@ impl Builder<'_> {
             let Some(k) = s(&e, "key_file").filter(|k| !matches!(k.as_str(), "none" | "-" | "")) else { continue };
             // A kept header (luks_keep_header) has the source's keyslots,
             // its key file's among them: nothing to add.
-            if self.opts.key_file(&open_as).is_some() || self.layout.slaves(&name).first().is_some_and(|u| crate::luksheader::kept(&self.layout.v, u).is_some()) {
+            if self.layout.slaves(&name).first().is_some_and(|u| crate::luksheader::kept(&self.layout.v, u).is_some()) {
                 continue;
             }
             let under = self.layout.slaves(&name).first().and_then(|u| self.names.dev(u)).unwrap_or_default();
+            // Made with --key-file's key: that keyslot stays (it's how the
+            // restore was opened, and BackShot1's typed passphrase), and the
+            // restored key file gets one beside it, as the source had (Manjaro's
+            // Calamares: the passphrase, and /crypto_keyfile.bin, which its
+            // initramfs carries and opens / with).  Not when it already opens
+            // the container (--key-file's bytes are the key file's): no second
+            // keyslot of the same key.  A key in systemd's path:device form
+            // (BackShot1's drive unlock) is on another device, and one under
+            // /dev (a raw key device, a USB stick's by-id name), /proc, /sys
+            // or /run isn't in the restored tree: nothing to add, as before.
+            // crypttab's keyfile-offset= and keyfile-size= say which bytes of
+            // the file are the key: the keyslot is made of those.
+            let slice: Vec<(&str, String)> = e
+                .get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter_map(|o| o.split_once('='))
+                .filter(|(n, _)| matches!(*n, "keyfile-offset" | "keyfile-size"))
+                .map(|(n, v)| (n, v.to_string()))
+                .collect();
+            let new_slice: String = slice.iter().map(|(n, v)| format!(" --new-{n}={}", shell_quote(v))).collect();
+            if let Some(given) = self.opts.key_file(&open_as) {
+                if k.contains(':') || !k.starts_with('/') || ["/dev/", "/proc/", "/sys/", "/run/"].iter().any(|d| k.starts_with(d)) {
+                    continue;
+                }
+                let (r, g, u) = (shell_quote(&format!("{t}{k}")), shell_quote(given), shell_quote(&under));
+                let test_slice: String = slice.iter().map(|(n, v)| format!(" --{n}={}", shell_quote(v))).collect();
+                out.push(
+                    Cmd::new(&["sh", "-c", &format!("cryptsetup open --test-passphrase --key-file={r}{test_slice} {u} 2>/dev/null || cryptsetup luksAddKey --key-file={g}{new_slice} {u} {r}")])
+                        .why(format!("{open_as}: the restored key file {k}, a keyslot beside --key-file's, unless it opens {under} already")),
+                );
+                continue;
+            }
             let tmp = format!("{RUN_DIR}/keys/{open_as}");
-            out.push(Cmd::new(&["cryptsetup", "luksAddKey", &format!("--key-file={tmp}"), &under, &format!("{t}{k}")]).why(format!("{open_as}: the restored key file {k}")));
+            let mut add = vec!["cryptsetup".to_string(), "luksAddKey".into(), format!("--key-file={tmp}")];
+            add.extend(slice.iter().map(|(n, v)| format!("--new-{n}={v}")));
+            add.extend([under.clone(), format!("{t}{k}")]);
+            out.push(Cmd { argv: add, why: Some(format!("{open_as}: the restored key file {k}")), ..Cmd::default() });
             out.push(Cmd::new(&["cryptsetup", "luksRemoveKey", &under, &tmp]));
         }
         out

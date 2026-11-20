@@ -3972,6 +3972,72 @@ fn elementary_guest() {
     }
 }
 
+/// crypttab opening the container with a key file in the restored tree
+/// (Manjaro's Calamares "Encrypt system": the passphrase in one keyslot,
+/// /crypto_keyfile.bin in another, embedded in the initramfs).  Without
+/// --key-file: made with a temporary key, which the boot stage swaps for
+/// the restored key file.  With it (BackShot1's layout_keys): made with
+/// --key-file's key, which keeps its keyslot, and the restored key file
+/// added beside it, before the initramfs is made, unless it opens the
+/// container already.  A key in systemd's path:device form is on another
+/// device: nothing added.
+#[test]
+fn luks_restored_key_file_with_and_without_key_file() {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    let plan = |key: &str, opts: &str, extra: &[&str]| {
+        let t = elementary(true);
+        t.file("/etc/crypttab", format!("cryptdata UUID=e1e01005-6b0a-4d6c-9a2e-8f7e1d2c3b4a {key} {opts}\n"));
+        let v = run(&t, true, FakeRunner::default());
+        assert_eq!(s(&v, &["storage", "crypttab", "0", "key_file"]), key);
+        let l = Layout::from_json(v).unwrap();
+        let args: Vec<String> = ["l.json"].iter().chain(extra).map(|a| a.to_string()).collect();
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&args) else { unreachable!() };
+        let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let asm = plan_text_of(b.stage(Stage::Assemble));
+        let bt = plan_text_of(b.stage(Stage::Boot));
+        (asm, bt)
+    };
+    let initramfs = format!("chroot /mnt/bko-target sh -c {}\n", crate::load::shell_quote(commands::UPDATE_INITRAMFS_RESUME));
+    // No --key-file: the temporary key, replaced.
+    let (asm, bt) = plan("/crypto_keyfile.bin", "luks", &[]);
+    assert!(asm.contains("dd if=/dev/urandom of=/run/bko-holt/keys/cryptdata bs=64 count=1 status=none\n"), "{asm}");
+    assert!(asm.contains(" --key-file=/run/bko-holt/keys/cryptdata /dev/vdb3\n"), "{asm}");
+    let add = bt.find("# cryptdata: the restored key file /crypto_keyfile.bin\ncryptsetup luksAddKey --key-file=/run/bko-holt/keys/cryptdata /dev/vdb3 /mnt/bko-target/crypto_keyfile.bin\ncryptsetup luksRemoveKey /dev/vdb3 /run/bko-holt/keys/cryptdata\n").expect(&bt);
+    assert!(add < bt.find(&initramfs).expect(&bt), "{bt}");
+    // --key-file: its key made it and stays; the restored key file joins it.
+    let (asm, bt) = plan("/crypto_keyfile.bin", "luks", &["--key-file", "cryptdata=/root/disk-passphrase"]);
+    assert!(!asm.contains("/dev/urandom") && !asm.contains("/run/bko-holt/keys/"), "{asm}");
+    assert!(asm.contains(" --key-file=/root/disk-passphrase /dev/vdb3\n") && asm.contains("cryptsetup open --key-file=/root/disk-passphrase /dev/vdb3 cryptdata\n"), "{asm}");
+    let add = bt
+        .find(
+            "# cryptdata: the restored key file /crypto_keyfile.bin, a keyslot beside --key-file's, unless it opens /dev/vdb3 already\n\
+             sh -c 'cryptsetup open --test-passphrase --key-file=/mnt/bko-target/crypto_keyfile.bin /dev/vdb3 2>/dev/null || cryptsetup luksAddKey --key-file=/root/disk-passphrase /dev/vdb3 /mnt/bko-target/crypto_keyfile.bin'\n",
+        )
+        .expect(&bt);
+    assert!(add < bt.find(&initramfs).expect(&bt), "{bt}");
+    assert!(!bt.contains("luksRemoveKey"), "--key-file's keyslot stays: {bt}");
+    // A key on another device (systemd's path:device): nothing to add.
+    let (_, bt) = plan("/backshot1/keys/disk-passphrase:LABEL=BKOBACKUP", "luks", &["--key-file", "cryptdata=/root/disk-passphrase"]);
+    assert!(!bt.contains("luksAddKey") && !bt.contains("luksRemoveKey") && !bt.contains("--test-passphrase"), "{bt}");
+    // A raw key device (a USB stick's by-id name) isn't in the restored
+    // tree either: nothing added, the boot stage doesn't stop on it.
+    let (_, bt) = plan("/dev/disk/by-id/usb-Stick_0001-0:0", "luks,keyfile-size=4096", &["--key-file", "cryptdata=/root/disk-passphrase"]);
+    assert!(!bt.contains("luksAddKey") && !bt.contains("--test-passphrase"), "{bt}");
+    // keyfile-offset= and keyfile-size=: the keyslot is those bytes, both ways.
+    let (_, bt) = plan("/etc/keys/root.key", "luks,keyfile-offset=512,keyfile-size=4096", &[]);
+    assert!(bt.contains("cryptsetup luksAddKey --key-file=/run/bko-holt/keys/cryptdata --new-keyfile-offset=512 --new-keyfile-size=4096 /dev/vdb3 /mnt/bko-target/etc/keys/root.key\n"), "{bt}");
+    let (_, bt) = plan("/etc/keys/root.key", "luks,keyfile-offset=512,keyfile-size=4096", &["--key-file", "cryptdata=/root/disk-passphrase"]);
+    assert!(
+        bt.contains("sh -c 'cryptsetup open --test-passphrase --key-file=/mnt/bko-target/etc/keys/root.key --keyfile-offset=512 --keyfile-size=4096 /dev/vdb3 2>/dev/null || cryptsetup luksAddKey --key-file=/root/disk-passphrase --new-keyfile-offset=512 --new-keyfile-size=4096 /dev/vdb3 /mnt/bko-target/etc/keys/root.key'\n"),
+        "{bt}"
+    );
+}
+
+fn plan_text_of(cmds: &[crate::load::commands::Cmd]) -> String {
+    cmds.iter().map(crate::load::commands::Cmd::shell).collect()
+}
+
 const PVE_KV: &str = "7.0.4-1-pve";
 /// Each disk's ESP: its PARTUUID and its vfat volume ID (as a serial).
 const PVE_ESPS: [(&str, u32, &str); 2] = [("e5e5e5e5-0000-4000-8000-000000000001", 0x1234_abcd, "1234-ABCD"), ("e5e5e5e5-0000-4000-8000-000000000002", 0x5678_ef01, "5678-EF01")];

@@ -153,10 +153,13 @@ record's family with the dump's `boot.initramfs.generator`.
 ## bko-holt: nothing to change for BackShot1
 
 - `bs1-restore` passes `--key-file NAME=disk-passphrase` for each volume,
-  so load formats with those bytes and skips the boot stage's
-  `luksAddKey` of a crypttab key file (commands.rs, near
-  `"the restored key file"`). The `path:LABEL=` field is never read as a
-  file.
+  so load formats with those bytes, and that keyslot stays. A crypttab key
+  file in the restored tree (Manjaro's `/crypto_keyfile.bin`, which its
+  initramfs carries) still gets its own keyslot in the boot stage, beside
+  it, unless it opens the volume already (commands.rs, near
+  `"the restored key file"`; until 2026-11-20 load skipped it, and a
+  restored Manjaro asked for the passphrase at every boot). The
+  `path:LABEL=` field is never read as a file: it adds no keyslot.
 - The boot stage remakes the initramfs in the chroot with the source's own
   generator. Every file above is in the restored root, so the new
   initramfs has them. Hostonly dracut filters crypttab by the target's root

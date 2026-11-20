@@ -1002,7 +1002,9 @@ as its crypttab and its encryption roots' `keylocation` recorded it:
 
 The new passphrases may differ from the old ones.  `--key-file NAME=FILE`
 gives a container's or encryption root's key from a file instead of a
-prompt, for scripted test restores.
+prompt, for scripted test restores.  A container made with it keeps that
+keyslot, and its crypttab key file, once restored, gets one beside it
+(unless it opens the container already), as the source had both.
 
 ## The JSON as a contract
 

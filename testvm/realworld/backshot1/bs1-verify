@@ -35,6 +35,9 @@
 # boot too, not typed (unlock_mode in bs1-common).  --unlock prints that
 # alone, for the preflight and the rehearsal, with no run: exit 0 if the
 # mode is drive, own or none.
+#
+# The check and --boot hold a sleep, idle and lid-switch inhibitor while
+# they run (hold_awake in bs1-common).
 
 # shellcheck disable=SC1091
 . "$(dirname "$(readlink -f "$0")")/bs1-common"
@@ -61,6 +64,8 @@ else
 fi
 : >"$LOG"
 say "checking restore $(basename "$ATTEMPT") of $(basename "$RUN")"
+# The restored system boots to its own desktop, which may suspend it when idle.
+hold_awake "bs1-verify: a suspend would cut the controller's SSH"
 fails=0
 check() {       # check WHAT COMMAND...
     local what=$1; shift

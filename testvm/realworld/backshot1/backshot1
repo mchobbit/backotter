@@ -3,7 +3,8 @@
 # Run from the controlling machine; README.md has the whole procedure.
 #
 #   backshot1 stage TOOLS_DIR     put the scripts, tools and keys on the backup drive
-#   backshot1 adopt [--luks-off]  run bs1-adopt on the machine, over the old login
+#   backshot1 adopt [--luks-off | --sleep-on]
+#                                 run bs1-adopt on the machine, over the old login
 #   backshot1 unlock              how this boot opened the LUKS volumes: UNLOCK=drive...
 #   backshot1 preflight           check everything phase1 needs; changes nothing
 #   backshot1 phase1              back up the running system; prints RUN=...
@@ -305,7 +306,7 @@ check-boot)
     on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-verify\" --boot '$run'"
     ;;
 *)
-    sed -n '2,32p' "$0"
+    sed -n '2,33p' "$0"
     exit 2
     ;;
 esac

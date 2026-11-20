@@ -16,6 +16,14 @@
 #   sudo sh /PATH/TO/mybig512/backshot1/bs1-adopt --luks-off
 #
 # undoes it, and does nothing else.
+#
+# First of all it stops the testbed from ever suspending or hibernating, by a
+# sleep.conf drop-in of BackShot1's own (no_sleep, below), under systemd or
+# elogind;
+#
+#   sudo sh /PATH/TO/mybig512/backshot1/bs1-adopt --sleep-on
+#
+# removes it, and does nothing else.
 
 # apk-tools 3 (Chimera's) asks before it changes anything when it has a tty;
 # --no-interactive stops that, and apk 2 may not know it.  Plain sh, for below.
@@ -37,9 +45,63 @@ here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 . "$here/bs1.conf"
 keys=$here/keys
 
+# This testbed never sleeps.  GNOME's idle auto-suspend (15 min after the
+# last input, at GDM too) suspended the Thinkpad during a phase 1, and the
+# controller's SSH timed out (Fedora 45, 2026-11-20); KDE's powerdevil,
+# Xfce's power manager and logind's IdleAction all suspend through logind,
+# which refuses what sleep.conf disallows, and reads it again at every
+# request.  bs1-backup and bs1-verify hold an inhibitor while they run
+# (hold_awake in bs1-common); this covers the time between the steps, the
+# restored system's first boot (the backup carries the drop-in, and the
+# restore brings it back) and adopt's own updates, as it's written first.
+# BackShot1's by its name, and by its first line.
+SLEEP_DROPINS="/etc/systemd/sleep.conf.d/90-backshot1.conf /etc/elogind/sleep.conf.d/90-backshot1.conf"
+SLEEP_HEAD="# BackShot1 (bs1-adopt): this testbed never sleeps"
+no_sleep() {
+    local sd=${SLEEP_DROPINS%% *} el=${SLEEP_DROPINS##* } f content
+    if [[ $init == systemd ]]; then f=$sd
+    elif [[ -d ${el%/sleep.conf.d/*} ]]; then f=$el
+    else
+        echo "no logind (systemd's or elogind's) here: nothing set; a desktop's own power manager could still suspend the machine"
+        return 0
+    fi
+    content="$SLEEP_HEAD, so that no idle desktop suspends it under a
+# backup or a check.  bs1-adopt --sleep-on removes this file.
+[Sleep]
+AllowSuspend=no
+AllowHibernation=no
+AllowSuspendThenHibernate=no
+AllowHybridSleep=no"
+    if [[ -f $f && $(cat "$f") == "$content" ]]; then echo "unchanged: $f"; return 0; fi
+    if mkdir -p "${f%/*}" && printf '%s\n' "$content" >"$f"; then
+        echo "wrote $f"
+    else
+        echo "bs1-adopt: couldn't write $f: an idle desktop could suspend the machine" >&2
+    fi
+}
+sleep_on() {
+    local f found=0
+    for f in $SLEEP_DROPINS; do
+        [[ -f $f ]] || continue
+        if [[ $(head -n 1 "$f") != "$SLEEP_HEAD"* ]]; then
+            echo "bs1-adopt: $f isn't BackShot1's; left there" >&2
+            continue
+        fi
+        rm -f "$f" || return 1
+        rmdir "${f%/*}" 2>/dev/null || true
+        echo "removed $f: the machine may sleep again"
+        found=1
+    done
+    [[ $found -eq 1 ]] || echo "nothing to remove: no drop-in of BackShot1's"
+}
+
 [[ $EUID -eq 0 ]] || { echo "bs1-adopt: run it as root" >&2; exit 2; }
 case ${1:-} in
 "") ;;
+--sleep-on)
+    sleep_on || exit 1
+    exit 0
+    ;;
 --luks-off)
     # shellcheck disable=SC1091
     . "$here/bs1-common"
@@ -49,7 +111,7 @@ case ${1:-} in
     luks_off || exit 1
     exit 0
     ;;
-*) echo "usage: bs1-adopt [--luks-off]" >&2; exit 2 ;;
+*) echo "usage: bs1-adopt [--luks-off | --sleep-on]" >&2; exit 2 ;;
 esac
 for f in authorized_keys ssh_host_ed25519_key ssh_host_ed25519_key.pub; do
     [[ -s $keys/$f ]] || { echo "bs1-adopt: no $keys/$f" >&2; exit 2; }
@@ -64,6 +126,8 @@ case $init in
     *) if command -v rc-service >/dev/null; then init=openrc; else init=sysv; fi ;;
 esac
 echo "== $distro, under $init"
+echo "== sleep: never, on this testbed"
+no_sleep
 
 # Artix packages each service's init script apart, per init system.
 with_script() { if [[ $distro == artix ]]; then echo "$1 $1-$init"; else echo "$1"; fi; }

@@ -46,12 +46,17 @@
 # after bs1-adopt).  Phase 1 writes it to baseline/unlock.txt, which
 # bs1-verify checks the restored boot against, and NEEDS_PASSPHRASE_AT_BOOT
 # for an attended run.
+#
+# The preflight and phase 1 hold a sleep, idle and lid-switch inhibitor
+# while they run (hold_awake in bs1-common): an idle desktop suspended a
+# phase 1 once.
 
 # shellcheck disable=SC1091
 . "$(dirname "$(readlink -f "$0")")/bs1-common"
 
 trap drop_tree EXIT
 trap 'die "interrupted"' INT TERM HUP
+hold_awake "bs1-backup${1:+ $1}: a suspend would cut the controller's SSH"
 
 step "preflight"
 [[ $(this_host) == "$SOURCE_HOST" ]] || die "this is $(this_host), not $SOURCE_HOST"

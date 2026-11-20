@@ -67,6 +67,18 @@ caught at different moments; `bs1-manifest` tells those from real differences.
   stops if the drive's key doesn't open every volume.  Reboot once after
   it, with the drive plugged in: the preflight wants a boot the drive
   unlocked.
+- **The testbed never sleeps.**  GNOME's idle auto-suspend (15 min after
+  the last input, at GDM too) suspended the Thinkpad during a phase 1's
+  `check --read-data`, and the controller's SSH timed out (Fedora 45,
+  2026-11-20).  So adopt first writes `/etc/systemd/sleep.conf.d/90-backshot1.conf`
+  (under elogind `/etc/elogind/sleep.conf.d/`), `AllowSuspend=no` and the
+  rest: logind refuses every desktop's suspend from then on, between the
+  steps too, and the restored system has the same file.  `backshot1 adopt
+  --sleep-on` (`bs1-adopt --sleep-on`) removes it.  The preflight, phase 1,
+  verify and check-boot also hold a logind block inhibitor (sleep, idle,
+  the lid switch; `systemd-inhibit --list` shows BackShot1's) while they
+  run, which needs no adopt; without logind (no elogind under runit,
+  OpenRC, sysvinit or shepherd) neither is there, and they say so.
 - The USB Ethernet adapter stays plugged in: the images are wired-only.
 
 ## The run

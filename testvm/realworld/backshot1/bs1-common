@@ -117,6 +117,37 @@ hold_snapshotters() {
     done
 }
 
+# hold_awake WHY: nothing suspends the machine, nor acts on its idleness or
+# its lid, until this script exits.  GNOME's idle auto-suspend (15 min after
+# the last input, at GDM too) suspended the Thinkpad during a phase 1's
+# check --read-data, and the controller's SSH timed out (Fedora 45,
+# 2026-11-20); KDE's powerdevil, Xfce's power manager and logind's
+# IdleAction can do the same.  A block inhibitor on logind, systemd's or
+# elogind's (whose systemd-inhibit may be called elogind-inhibit), taken by
+# a child that lives as long as this shell: runtime only, in /run, never in
+# the tree.  The child has descriptors of its own, as ssh waits for every
+# holder of its pipes.  Without logind it says so and carries on.
+# bs1-adopt's sleep.conf drop-in covers the time between the steps.
+hold_awake() {
+    local inh pid i
+    inh=$(command -v systemd-inhibit || command -v elogind-inhibit) ||
+        { say "no systemd-inhibit or elogind-inhibit: nothing holds sleep off (an idle desktop's power manager could suspend the machine)"; return 0; }
+    "$inh" --list >/dev/null 2>&1 ||
+        { say "$inh can't reach logind: nothing holds sleep off (an idle desktop's power manager could suspend the machine)"; return 0; }
+    "$inh" --what=sleep:idle:handle-lid-switch --mode=block --who=BackShot1 --why="$1" \
+        sh -c 'while kill -0 "$1" 2>/dev/null; do sleep 5; done' bs1-awake "$$" </dev/null >/dev/null 2>&1 &
+    pid=$!
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        if "$inh" --list 2>/dev/null | grep -qw -- "$pid"; then
+            say "holding sleep, idle and the lid switch off while this runs ($inh, pid $pid)"
+            return 0
+        fi
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.5
+    done
+    say "WARNING: $inh didn't take the inhibitor: an idle desktop's power manager could suspend the machine under this"
+}
+
 # on_disk SOURCE DISK: does this mount's source rest on DISK, through any stack
 # of partitions, md, LUKS and LVM, or a ZFS pool?
 on_disk() {

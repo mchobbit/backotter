@@ -635,7 +635,7 @@ How depends on what opens the volume:
 
 | Family | Who | How |
 |---|---|---|
-| S | systemd in the initramfs: dracut (Fedora, EndeavourOS, openSUSE, Gentoo systemd, Ubuntu 26.04), mkinitcpio's `sd-encrypt`; and any volume the booted system opens under systemd | crypttab's key field `/backshot1/keys/disk-passphrase:LABEL=mybig512`, option `keyfile-timeout=30s`; `/etc/crypttab.initramfs` for `sd-encrypt`; a dracut or mkinitcpio drop-in adds the USB modules, ext4 and the drive's own file system.  On mkinitcpio's unified kernel images (presets with `default_uki`), `rd.luks.name`/`uuid`/`options` in the command line mkinitcpio bakes into them (`/etc/kernel/cmdline`, `/etc/cmdline.d/*.conf`) become each volume's `crypttab.initramfs` line and are taken out of that file, in the same `mkinitcpio -P` (below) |
+| S | systemd in the initramfs: dracut (Fedora, EndeavourOS, openSUSE, Gentoo systemd, Ubuntu 26.04), mkinitcpio's `sd-encrypt`; and any volume the booted system opens under systemd; Ubuntu's ZFS keystore on dracut (26.10's "ZFS + encryption", volume `K`) | crypttab's key field `/backshot1/keys/disk-passphrase:LABEL=mybig512`, option `keyfile-timeout=30s`; `/etc/crypttab.initramfs` for `sd-encrypt`; a dracut or mkinitcpio drop-in adds the USB modules, ext4 and the drive's own file system.  On mkinitcpio's unified kernel images (presets with `default_uki`), `rd.luks.name`/`uuid`/`options` in the command line mkinitcpio bakes into them (`/etc/kernel/cmdline`, `/etc/cmdline.d/*.conf`) become each volume's `crypttab.initramfs` line and are taken out of that file, in the same `mkinitcpio -P` (below).  Ubuntu's keystore: a dracut module of BackShot1's, `/usr/lib/dracut/modules.d/99backshot1`, puts the drive's key where `systemd-cryptsetup` looks before it asks (below) |
 | D | initramfs-tools: Debian, Ubuntu up to 25.04, Mint, Chimera | crypttab option `keyscript=/usr/local/lib/backshot1/unlock-key` (`bs1-unlock-key`), the key field left `none`; it asks with askpass when the drive's key can't be read |
 | E | mkinitcpio's busybox `encrypt`: Arch, Manjaro, Omarchy | a `bs1key` hook, put right before `encrypt` by `/etc/mkinitcpio.conf.d/zz-backshot1.conf`, writes `/crypto_keyfile.bin` only if that key opens the volume |
 | N | NixOS (systemd or scripted stage 1) | `/etc/nixos/backshot1-luks.nix`, imported by `backshot1.nix` while it exists, sets each typed `boot.initrd.luks.devices` volume's `keyFile`: systemd stage 1 the same `PATH:LABEL=` form and `keyFileTimeout = 30`; scripted stage 1 a copy its `preOpenCommands` take off the drive (mounted read-only, `norecovery` for xfs), with `fallbackToPassword`; then `nixos-rebuild switch` |
@@ -701,6 +701,41 @@ runs it) doesn't rewrite them, so the two couldn't land in the same step;
 a boot whose command line no longer names the volume, with no crypttab
 line for it either, would wait for its root until the emergency shell.
 
+**S, Ubuntu's ZFS keystore** (Ubuntu 26.10's "ZFS + encryption", the
+Thinkpad 2026-11-19; volume HOW `K` in the record).  `rpool` is natively
+encrypted with a raw key, `keylocation=file:///run/keystore/rpool/system.key`,
+and that file is on ext4 in a LUKS2 volume on the zvol `rpool/keystore`.
+Nothing in crypttab or on the command line opens it: Ubuntu's dracut `zfs`
+module does (zfs-linux's `4001-dracut-Open-and-mount-luks-keystore.patch`,
+LP #2070066), in its pre-mount hook `90-zfs-load-key.sh`, once the pool is
+imported, by `systemd-cryptsetup attach keystore-rpool
+/dev/zvol/rpool/keystore` with no key file.  Given none, systemd-cryptsetup
+first tries `/run/cryptsetup-keys.d/keystore-rpool.key` and asks only when
+that's missing or doesn't fit.  Adopt:
+
+- checks that the volume is `keystore-POOL` on the zvol `POOL/keystore`, that
+  `POOL` is an encryption root keyed from `/run/keystore/POOL/` with `/`
+  under it, that the initramfs is dracut with systemd, and that the `zfs`
+  dracut module's `zfs-load-key.sh` opens it with `systemd-cryptsetup attach`;
+  anything else is family A, as before;
+- writes `/usr/lib/dracut/modules.d/99backshot1/` (module `backshot1`, asked
+  for by `add_dracutmodules` in `/etc/dracut.conf.d/90-backshot1.conf` with
+  the USB modules and the drive's file system) and
+  `/usr/local/lib/backshot1/unlock-key`.  Its pre-mount hook
+  `85-backshot1-keystore.sh` (`bs1-unlock-key --keystore`) waits up to 30 s
+  for the drive, mounts it read-only and copies the key to
+  `/run/cryptsetup-keys.d/keystore-rpool.key`; `95-backshot1-keystore-done.sh`
+  (`--keystore-done`), after the zfs module's, marks `keystore-rpool drive`
+  in `/run/backshot1-unlock` when the volume is open and that key opens it
+  (else `typed`), and removes the key;
+- remakes the initramfs and checks each image has the three hooks in that
+  order, `systemd-cryptsetup`, the script and the record.
+
+crypttab, the pool and the boot loader are not touched.  The restore makes
+the keystore with the drive's key (`--key-file keystore-rpool=...`), and its
+boot stage remakes the initramfs with the module, so the restored system
+unlocks by itself too.  The random-key swap needs nothing.
+
 **Z, ZFSBootMenu** (ZFS native encryption with a passphrase, no LUKS; the
 ZFSBootMenu guide's UEFI install, `EFI/ZBM/VMLINUZ.EFI` with
 `VMLINUZ-BACKUP.EFI` beside it).  ZFSBootMenu asks for the boot
@@ -763,7 +798,8 @@ say how the system unlocks, `UNLOCK=`:
 
 - `drive`: the drive's key opened every typed volume at this boot (the
   journal's key-device mount for S, B and NixOS's systemd stage 1,
-  `/run/backshot1-unlock` for D, E and NixOS's scripted stage 1, and
+  `/run/backshot1-unlock` for D, E, S's Ubuntu keystore and NixOS's
+  scripted stage 1, and
   `bs1.zbm=ROOT:drive` on `/proc/cmdline` for Z, whose volumes are the ZFS
   encryption roots that ask; `backshot1 unlock` shows it);
 - `own`: every volume opens by itself;
@@ -876,7 +912,12 @@ guest.  On 2026-11-13, unlocking from the drive, on Cinqcent: `ubuntu26-luks`
 Plymouth), `chimera-uefi` (D, Chimera's port of initramfs-tools) and
 `gentoo-systemd` (S, `rd.luks.uuid` on the command line), the last two with
 `--strip-embedded-key`, and `alpine324-luks` (`own`: left alone).  Debian's
-own initramfs-tools has no LUKS guest yet.  On 2026-11-14, Garuda (`garuda`,
+own initramfs-tools has no LUKS guest yet.  On 2026-11-20, Ubuntu 26.10's "ZFS + encryption"
+(`ubuntu2610-zfsenc`, `make-ubuntu.sh --uefi --zfs-enc`; family S, the
+keystore's dracut hooks; `--luks-typed --luks-off`) on Cinqcent, run
+`ubuntu-26.10-20261120-022116`: every boot with the drive opened
+`keystore-rpool` with its key, the restored one too, and without it the
+prompt came after the 30 s wait.  On 2026-11-14, Garuda (`garuda`,
 GRUB on btrfs with snapper's 4 snapshots restored as shared ones, dracut
 through `dracut-rebuild`, the source booted by the firmware's own entry for
 its fallback loader; on both hosts) and BigLinux (`biglinux`, `--virtio`,

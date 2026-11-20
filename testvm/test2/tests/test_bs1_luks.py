@@ -303,6 +303,18 @@ class Evidence(Tmp):
         self.journal.write_text(f"Finished systemd-cryptsetup@luks\\x2d{esc}.service - Cryptography Setup for luks-{UUID}.\n")
         self.assertTrue(self.call("unlock_mode nvme0n1").startswith(f"attended: luks-{UUID} was typed"))
 
+    def test_k_is_the_keystore_hooks_mark(self):
+        # Ubuntu's ZFS keystore (family S, volume HOW K): the dracut hooks' mark.
+        self.names = "keystore-rpool"
+        self.record("S", volumes=f"keystore-rpool:{UUID}:K")
+        self.assertTrue(self.call("unlock_mode nvme0n1").startswith("attended: keystore-rpool was typed"))
+        self.mark.write_text("keystore-rpool drive\n")
+        out = self.call("unlock_mode nvme0n1")
+        self.assertTrue(out.startswith("drive: ") and "(family S)" in out, out)
+        self.assertIn("  keystore-rpool drive\n", out)
+        self.mark.write_text("keystore-rpool fetched\n")
+        self.assertTrue(self.call("unlock_mode nvme0n1").startswith("attended: keystore-rpool was fetched"))
+
 
 UUID = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
 OTHER = "11111111-2222-3333-4444-555555555555"
@@ -372,43 +384,295 @@ class ZvolDevices(Tmp):
 
 @unittest.skipUnless(BASH, "needs bash 4 or newer")
 class AdoptZfsKeystore(Tmp):
-    """luks_adopt on Ubuntu 26.10's ZFS + encryption (dracut, systemd in the
-    initramfs): the keystore on rpool/keystore is opened by the initramfs's
-    ZFS code after it imports the pool, which asks for its passphrase, so
-    the install is attended (family A) and nothing changes."""
+    """luks_adopt and luks_off on a fake Ubuntu 26.10 with ZFS + encryption
+    (the Thinkpad, 2026-11-19): the keystore, LUKS on rpool/keystore, is
+    opened by Ubuntu's dracut zfs module with `systemd-cryptsetup attach` and
+    no key file, so it is family S's volume HOW K: BackShot1's dracut module
+    puts the drive's key in /run/cryptsetup-keys.d before that hook runs.
+    Anything else about it stays attended (family A), nothing changed."""
 
-    def test_attended(self):
+    ZFS_HOOK = textwrap.dedent("""\
+        #!/bin/sh
+        _open_and_mount_luks_keystore() {
+            pool="$1"
+            ks="/dev/zvol/$pool/keystore"
+            systemd-cryptsetup attach "keystore-${pool}" "${ks}"
+        }
+        case "$KEYLOCATION" in
+            "file:///run/keystore/${ENCRYPTIONROOT}/"*)
+                _open_and_mount_luks_keystore "${ENCRYPTIONROOT}" "${KEYLOCATION#file://}"
+                ;;
+        esac
+        """)
+    SWAP = "dm_crypt-0 PARTUUID=7d881a58 /dev/urandom cipher=aes-cbc-essiv:sha256,initramfs,plain,size=256,swap\n"
+
+    def setUp(self):
+        super().setUp()
         t = self.t
-        here = t / "drive/backshot1"
-        (here / "keys").mkdir(parents=True)
-        shutil.copy(BS1 / "bs1-unlock-key", here / "bs1-unlock-key")
-        (here / "keys/disk-passphrase").write_text("s3cret")
+        self.here = t / "drive/backshot1"
+        (self.here / "keys").mkdir(parents=True)
+        shutil.copy(BS1 / "bs1-unlock-key", self.here / "bs1-unlock-key")
+        (self.here / "keys/disk-passphrase").write_text("s3cret")
         (t / "proc-cmdline").write_text("BOOT_IMAGE=/vmlinuz-7.3.0-10-generic root=ZFS=rpool/ROOT/ubuntu_x ro quiet splash\n")
-        (t / "crypttab").write_text("dm_crypt-0 PARTUUID=7d881a58 /dev/urandom cipher=aes-cbc-essiv:sha256,initramfs,plain,size=256,swap\n")
-        exe(self.bin / "findmnt", f'#!/bin/sh\ncase "$2" in TARGET) echo "{t}/drive" ;; SOURCE) echo /dev/sdb1 ;; FSTYPE) echo xfs ;; esac\n')
+        (t / "crypttab").write_text(self.SWAP)
+        self.mods = t / "usr/lib/dracut/modules.d"
+        (self.mods / "90zfs").mkdir(parents=True)
+        (self.mods / "90zfs/zfs-load-key.sh").write_text(self.ZFS_HOOK)
+        (t / "zvol/rpool").mkdir(parents=True)
+        (t / "zvol/rpool/keystore").symlink_to("/dev/zd0")
+        (t / "boot").mkdir()
+        self.conf = t / "etc/dracut.conf.d/90-backshot1.conf"
+        self.ours = self.mods / "99backshot1"
+        self.mapping = "keystore-rpool"
+        self.gen = "dracut"
+        self.zfs = {"encryptionroot rpool": "rpool", "keylocation rpool": "file:///run/keystore/rpool/system.key",
+                    "encryptionroot rpool/ROOT/ubuntu_x": "rpool"}
+        exe(self.bin / "findmnt", textwrap.dedent(f"""\
+            #!/bin/sh
+            case "$1 $2" in
+            "-nro SOURCE") echo rpool/ROOT/ubuntu_x ;;
+            "-no TARGET") echo "{t}/drive" ;;
+            "-no SOURCE") echo /dev/sdb1 ;;
+            "-no FSTYPE") echo xfs ;;
+            esac
+            """))
         exe(self.bin / "blkid", "#!/bin/sh\necho mybig512\n")
         exe(self.bin / "cryptsetup", f'#!/bin/sh\necho "$@" >>"{t}/cryptsetup-calls"\nexit 0\n')
+        exe(self.bin / "modinfo", "#!/bin/sh\nexit 1\n")
+        exe(self.bin / "sleep", "#!/bin/sh\nexit 0\n")
+        # GNU readlink -f follows the zvol's link to /dev/zd0 whether it is
+        # there or not; macOS's doesn't.
+        exe(self.bin / "readlink", '#!/usr/bin/env python3\nimport os, sys\na = sys.argv[1:]\nprint(os.path.realpath(a[1]) if a[0] == "-f" else os.readlink(a[0]))\n')
+        # The remade image's listing: BackShot1's hooks only when its module
+        # is there and the drop-in asks for it, as dracut would take them.
+        rel = str(t).lstrip("/")
+        exe(self.bin / "lsinitrd", textwrap.dedent(f"""\
+            #!/bin/sh
+            [ "$1" = -m ] && {{ printf 'systemd\\nzfs\\n'; exit 0; }}
+            echo "-rwxr-xr-x 1 root root 1 Nov 20 00:00 usr/bin/systemd-cryptsetup"
+            echo "-rwxr-xr-x 1 root root 1 Nov 20 00:00 var/lib/dracut/hooks/pre-mount/90-zfs-load-key.sh"
+            [ -e "{t}/no-hooks" ] && exit 0
+            if [ -f "{self.ours}/module-setup.sh" ] && grep -q 'add_dracutmodules+=" backshot1 "' "{self.conf}"; then
+                echo "-rwxr-xr-x 1 root root 1 Nov 20 00:00 var/lib/dracut/hooks/pre-mount/85-backshot1-keystore.sh"
+                echo "-rwxr-xr-x 1 root root 1 Nov 20 00:00 var/lib/dracut/hooks/pre-mount/95-backshot1-keystore-done.sh"
+                echo "-rwxr-xr-x 1 root root 1 Nov 20 00:00 {rel}/usr/local/lib/backshot1/unlock-key"
+                echo "-rw-r--r-- 1 root root 1 Nov 20 00:00 {rel}/etc/backshot1/luks-unlock"
+            fi
+            """))
+
+    def adopt(self, what="luks_adopt", rc=0):
+        t = self.t
+        (self.bin / "zfs").unlink(missing_ok=True)
+        cases = "".join(f'"{k}") echo "{v}" ;;\n' for k, v in self.zfs.items())
+        exe(self.bin / "zfs", f'#!/bin/sh\n[ "$1 $2 $3 $4" = "get -H -o value" ] || exit 1\ncase "$5 $6" in\n{cases}*) echo - ;;\nesac\n')
         script = textwrap.dedent(f"""\
             . "{BS1}/bs1-luks"
             LUKS_DIR="{t}/etc/backshot1" LUKS_ORIG="{t}/etc/backshot1/orig" LUKS_MADE="{t}/etc/backshot1/made" LUKS_REC="{t}/etc/backshot1/luks-unlock"
-            LK_CMDLINE="{t}/proc-cmdline" LK_CRYPTTAB="{t}/crypttab"
-            here="{here}" init=systemd BACKUP_LABEL=mybig512 INTERNAL_SERIAL=S1
+            LK_CMDLINE="{t}/proc-cmdline" LK_CRYPTTAB="{t}/crypttab" LK_IMG_DIRS="{t}/boot"
+            LK_DRACUT_CONF="{self.conf}" LK_DRACUT_MODS="{self.mods}" UNLOCK_KEY="{t}/usr/local/lib/backshot1/unlock-key"
+            ZVOL_DIR="{t}/zvol"
+            here="{self.here}" init=systemd BACKUP_LABEL=mybig512 INTERNAL_SERIAL=S1
             internal_disk() {{ echo nvme0n1; }}
             is_abroot() {{ false; }}
-            lk_generator() {{ echo dracut; }}
+            lk_generator() {{ echo {self.gen}; }}
             lk_dracut_systemd() {{ true; }}
-            lk_luks_volumes() {{ echo "/dev/zd0 {UUID} keystore-rpool"; }}
+            lk_luks_volumes() {{ echo "/dev/zd0 {UUID} {self.mapping}"; }}
             lk_early() {{ false; }}
-            luks_adopt
+            lk_remake() {{ echo "$1" >>"{t}/remakes"; date >"{t}/boot/initrd.img-7.3.0-10-generic"; }}
+            {what}
             """)
         r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=self.env())
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("luks: A: keystore-rpool is on a ZFS volume (/dev/zd0: Ubuntu's ZFS keystore)", r.stdout)
-        rec = (t / "etc/backshot1/luks-unlock").read_text()
-        self.assertIn("family=A\n", rec)
-        self.assertIn("keystore-rpool is on a ZFS volume (/dev/zd0: Ubuntu", rec)
+        self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
+        return r.stdout + r.stderr
+
+    def remakes(self):
+        p = self.t / "remakes"
+        return len(p.read_text().splitlines()) if p.exists() else 0
+
+    def rec(self):
+        return (self.t / "etc/backshot1/luks-unlock").read_text()
+
+    def test_adopt_rerun_and_off(self):
+        t = self.t
+        out = self.adopt()
+        self.assertIn(f"family S (initramfs: dracut): keystore-rpool:{UUID}:K", out)
         self.assertIn("--test-passphrase", (t / "cryptsetup-calls").read_text())
-        self.assertEqual((t / "crypttab").read_text(), "dm_crypt-0 PARTUUID=7d881a58 /dev/urandom cipher=aes-cbc-essiv:sha256,initramfs,plain,size=256,swap\n")
+        rec = self.rec()
+        self.assertIn("family=S\n", rec)
+        self.assertIn(f"volumes='keystore-rpool:{UUID}:K'\n", rec)
+        self.assertIn("path=/backshot1/keys/disk-passphrase\n", rec)
+        self.assertIn("fstype=xfs\n", rec)
+        conf = self.conf.read_text()
+        self.assertIn('add_dracutmodules+=" backshot1 "', conf)
+        self.assertIn('filesystems+=" xfs "', conf)
+        setup = (self.ours / "module-setup.sh").read_text()
+        self.assertIn("check() { return 255; }", setup)
+        self.assertIn('inst_hook pre-mount 85 "$moddir/backshot1-keystore.sh"', setup)
+        self.assertIn('inst_hook pre-mount 95 "$moddir/backshot1-keystore-done.sh"', setup)
+        self.assertIn(f"inst_simple {t}/etc/backshot1/luks-unlock", setup)
+        self.assertTrue((self.ours / "backshot1-keystore.sh").read_text().endswith(f"{t}/usr/local/lib/backshot1/unlock-key --keystore\n"))
+        self.assertTrue((self.ours / "backshot1-keystore-done.sh").read_text().endswith("unlock-key --keystore-done\n"))
+        self.assertEqual((t / "usr/local/lib/backshot1/unlock-key").read_text(), (BS1 / "bs1-unlock-key").read_text())
+        self.assertEqual((t / "crypttab").read_text(), self.SWAP, "crypttab can't reach the keystore: left alone")
+        self.assertEqual(self.remakes(), 1)
+
+        out = self.adopt()
+        self.assertIn("unchanged; the initramfs isn't remade", out)
+        self.assertEqual(self.remakes(), 1)
+
+        self.adopt("luks_off")
+        self.assertFalse(self.ours.exists(), "--luks-off removes BackShot1's dracut module")
+        self.assertFalse(self.conf.exists())
+        self.assertFalse((t / "usr/local/lib/backshot1/unlock-key").exists())
+        self.assertFalse((t / "etc/backshot1").exists())
+        self.assertTrue((self.mods / "90zfs/zfs-load-key.sh").exists())
+        self.assertEqual((t / "crypttab").read_text(), self.SWAP)
+        self.assertEqual(self.remakes(), 2)
+
+    def test_an_image_without_the_hooks_puts_everything_back(self):
+        (self.t / "no-hooks").write_text("")
+        out = self.adopt(rc=1)
+        self.assertIn("has no pre-mount hook 85-backshot1-keystore.sh", out)
+        self.assertIn("putting everything back", out)
+        self.assertFalse(self.ours.exists())
+        self.assertFalse((self.t / "etc/backshot1").exists())
+
+    def attended(self, why):
+        out = self.adopt()
+        self.assertIn("luks: A: ", out)
+        rec = self.rec()
+        self.assertIn("family=A\n", rec)
+        self.assertIn(why, rec.replace("'\\''", "'"))
+        self.assertFalse(self.ours.exists())
+        self.assertFalse(self.conf.exists())
+        self.assertEqual(self.remakes(), 0)
+        self.assertEqual((self.t / "crypttab").read_text(), self.SWAP)
+
+    def test_zfs_module_without_ubuntus_patch(self):
+        (self.mods / "90zfs/zfs-load-key.sh").write_text("#!/bin/sh\nzfs load-key \"$ENCRYPTIONROOT\"\n")
+        self.attended("doesn't open it with systemd-cryptsetup attach")
+
+    def test_no_zfs_module(self):
+        shutil.rmtree(self.mods / "90zfs")
+        self.attended("there's no zfs dracut module")
+
+    def test_initramfs_tools(self):
+        self.gen = "initramfs-tools"
+        self.attended("only on dracut with systemd, not on initramfs-tools's initramfs)")
+
+    def test_pool_keyed_otherwise(self):
+        self.zfs["keylocation rpool"] = "prompt"
+        self.attended("isn't an encryption root keyed from /run/keystore/rpool/ (keylocation prompt)")
+
+    def test_root_not_under_the_pool(self):
+        self.zfs["encryptionroot rpool/ROOT/ubuntu_x"] = "-"
+        self.attended("but / (rpool/ROOT/ubuntu_x) isn't encrypted under rpool")
+
+    def test_open_under_another_name(self):
+        self.mapping = "ks"
+        self.attended("ks is on a ZFS volume (/dev/zd0), but isn't open as Ubuntu's keystore-POOL")
+
+    def test_another_zvol(self):
+        (self.t / "zvol/rpool/keystore").unlink()
+        (self.t / "zvol/rpool/keystore").symlink_to("/dev/zd16")
+        self.attended("not on the ZFS volume rpool/keystore")
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class UnlockKeyKeystore(Tmp):
+    """bs1-unlock-key --keystore and --keystore-done: BackShot1's dracut
+    hooks either side of Ubuntu's zfs-load-key.sh."""
+
+    def setUp(self):
+        super().setUp()
+        self.root = self.t / "root"
+        for d in ("etc/backshot1", "run", "dev/disk/by-label", "dev/mapper", "dev/zvol/rpool", "drive/backshot1/keys"):
+            (self.root / d).mkdir(parents=True)
+        (self.root / "drive/backshot1/keys/disk-passphrase").write_text("s3cret")
+        (self.root / "dev/zvol/rpool/keystore").write_text("")
+        exe(self.bin / "mount", f'#!/bin/sh\nfor d; do :; done\ncp -R "{self.root}/drive/." "$d/"\n')
+        exe(self.bin / "umount", '#!/bin/sh\nrm -rf "$1"/*\n')
+        exe(self.bin / "modprobe", "#!/bin/sh\nexit 0\n")
+        exe(self.bin / "sleep", "#!/bin/sh\nexit 0\n")
+        exe(self.bin / "cryptsetup", f'#!/bin/sh\necho "$@" >>"{self.t}/cryptsetup-calls"\nexit "$(cat "{self.t}/cryptsetup-rc" 2>/dev/null || echo 0)"\n')
+        self.record()
+        self.key = self.root / "run/cryptsetup-keys.d/keystore-rpool.key"
+
+    def record(self, volumes=f"keystore-rpool:{UUID}:K"):
+        (self.root / "etc/backshot1/luks-unlock").write_text(
+            f"family=S\nlabel=mybig512\npath=/backshot1/keys/disk-passphrase\nfstype=ext4\nwait=2\nvolumes='{volumes}'\n")
+
+    def plug(self):
+        (self.root / "dev/disk/by-label/mybig512").write_text("")
+
+    def opened(self):
+        """systemd-cryptsetup opened the keystore, as 90-zfs-load-key.sh does."""
+        (self.root / "dev/mapper/keystore-rpool").write_text("")
+
+    def run_key(self, *args):
+        return subprocess.run(["sh", str(BS1 / "bs1-unlock-key"), *args], capture_output=True, text=True,
+                              env=self.env(BS1_UNLOCK_ROOT=str(self.root)))
+
+    def marks(self):
+        p = self.root / "run/backshot1-unlock"
+        return p.read_text().splitlines() if p.exists() else []
+
+    def test_the_drive_opens_it(self):
+        self.plug()
+        r = self.run_key("--keystore")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.key.read_text(), "s3cret")
+        self.assertEqual(stat.S_IMODE(self.key.stat().st_mode), 0o600)
+        self.assertEqual(self.marks(), [])
+        self.opened()
+        r = self.run_key("--keystore-done")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.marks(), ["keystore-rpool drive"])
+        self.assertIn(f"--test-passphrase --key-file {self.key} {self.root}/dev/zvol/rpool/keystore", (self.t / "cryptsetup-calls").read_text())
+        self.assertFalse(self.key.exists(), "the key is taken away again")
+        self.assertFalse(self.key.parent.exists())
+
+    def test_a_key_that_doesnt_fit_was_typed(self):
+        self.plug()
+        self.run_key("--keystore")
+        self.opened()
+        (self.t / "cryptsetup-rc").write_text("2")
+        self.run_key("--keystore-done")
+        self.assertEqual(self.marks(), ["keystore-rpool typed"])
+        self.assertFalse(self.key.exists())
+
+    def test_not_opened_was_typed(self):
+        self.plug()
+        self.run_key("--keystore")
+        self.run_key("--keystore-done")
+        self.assertEqual(self.marks(), ["keystore-rpool typed"])
+        self.assertFalse(self.key.exists())
+
+    def test_cryptsetup_that_cant_tell_is_fetched(self):
+        self.plug()
+        self.run_key("--keystore")
+        self.opened()
+        (self.t / "cryptsetup-rc").write_text("127")
+        self.run_key("--keystore-done")
+        self.assertEqual(self.marks(), ["keystore-rpool fetched"])
+
+    def test_without_the_drive(self):
+        r = self.run_key("--keystore")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("waiting up to 2 s", r.stderr)
+        self.assertFalse(self.key.exists())
+        self.assertEqual(self.marks(), ["keystore-rpool typed"])
+        self.opened()
+        self.run_key("--keystore-done")
+        self.assertEqual(self.marks(), ["keystore-rpool typed"])
+        self.assertFalse((self.t / "cryptsetup-calls").exists())
+
+    def test_no_keystore_in_the_record(self):
+        self.record(volumes="root:abc:S")
+        self.plug()
+        self.assertEqual(self.run_key("--keystore").returncode, 0)
+        self.assertFalse(self.key.exists())
+        self.assertEqual(self.marks(), [])
 
 
 @unittest.skipUnless(BASH, "needs bash 4 or newer")

@@ -677,3 +677,73 @@ images (`arch` has no LUKS; `omarchy` is busybox `encrypt` with Limine).
 Unit tests (`test_bs1_luks.py`: UkiCmdline, AdoptUki) run `luks_adopt` and
 `luks_off` on a fake root, with a fake `mkinitcpio -P` that builds PE images
 the way build_uki takes the command line, and a fake `lsinitcpio`.
+
+## Built, S's Ubuntu ZFS keystore (2026-11-20)
+
+Ubuntu 26.10's "ZFS + encryption" (the Thinkpad, run
+ubuntu-26.10-20261119-061810, accepted attended): `rpool` natively
+encrypted with a raw key, `keylocation=file:///run/keystore/rpool/system.key`,
+that file on ext4 in LUKS2 `keystore-rpool` on the zvol `rpool/keystore`;
+swap plain dm-crypt with a random key; dracut 111 with systemd.  Since
+bf5eb2f adopt saw the keystore and recorded family A.
+
+- **What opens it** (read from the source, not guessed): zfs-linux
+  2.4.4-1ubuntu4's `debian/patches/ubuntu/4001-dracut-Open-and-mount-luks-keystore.patch`
+  (LP #2070066) adds to the dracut `zfs` module's pre-mount hook
+  `90-zfs-load-key.sh`, for an encryption root `E` keyed from
+  `file:///run/keystore/E/...`: `systemd-cryptsetup attach "keystore-E"
+  /dev/zvol/E/keystore` (no key file, no options), then a mount at
+  `/run/keystore/E`; the module now depends on `systemd-cryptsetup`.  No
+  crypttab line or `rd.luks` argument is involved, so nothing S writes
+  reaches it.  systemd's `cryptsetup.c` (v258, `verb_attach`,
+  `discover_key`): with no key file it first tries `VOLUME.key` in
+  `/etc/cryptsetup-keys.d` and `/run/cryptsetup-keys.d`, and when that key
+  fails (`-EAGAIN`) drops it and asks with the password agent, as before.
+- **The hook:** family S, the volume's HOW `K`.  A dracut module of
+  BackShot1's, `/usr/lib/dracut/modules.d/99backshot1` (`check` 255,
+  `depends` zfs; `add_dracutmodules+=" backshot1 "` in
+  `90-backshot1.conf` beside the USB modules and the drive's file system)
+  installs the record, `bs1-unlock-key`, `cryptsetup`, and two pre-mount
+  hooks: `85-backshot1-keystore.sh` runs `unlock-key --keystore`, which
+  waits up to 30 s for the drive and copies its key to
+  `/run/cryptsetup-keys.d/keystore-rpool.key`; `95-backshot1-keystore-done.sh`
+  runs `--keystore-done`, which marks `keystore-rpool drive` in
+  `/run/backshot1-unlock` when the mapping is open and that key opens the
+  zvol (`cryptsetup open --test-passphrase`; exit 2 is `typed`, anything
+  else `fetched`), and removes the key.  Without the drive it marks `typed`
+  and systemd-cryptsetup asks.  crypttab, the pool's properties and the
+  boot loader are untouched.
+- **Detection** (`lk_keystore_ok`): open as `keystore-POOL` on the zvol
+  `POOL/keystore`; family S on dracut; `POOL` its own encryption root with
+  `keylocation=file:///run/keystore/POOL/...`, and `/` under it; a dracut
+  `zfs-load-key.sh` with `systemd-cryptsetup attach` and `/run/keystore/`.
+  Anything else stays A, with the reason (initramfs-tools' Ubuntu up to
+  25.04 among them).
+- **Check:** each remade image lists `85-backshot1-keystore.sh`,
+  `90-zfs-load-key.sh` and `95-backshot1-keystore-done.sh` under
+  `hooks/pre-mount`, `systemd-cryptsetup`, the script and the record, and
+  has the systemd module; else everything is put back.
+- **Evidence:** `unlock_how` K reads `/run/backshot1-unlock`, as D and E.
+- **The restore:** load makes the keystore with the drive's key
+  (`--key-file keystore-rpool=...`, unchanged), and the boot stage's dracut
+  takes the module from the restored `/usr/lib/dracut/modules.d`.
+
+Unit tests: `test_bs1_luks.py` AdoptZfsKeystore (adopt, rerun, `--luks-off`,
+an image without the hooks, seven refusals), UnlockKeyKeystore, Evidence.
+Guest: `make-ubuntu.sh --uefi --zfs-enc` (`ubuntu/storage-zfs-enc.yaml`,
+Subiquity's guided ZFS with a password: the same layout as the Thinkpad's).
+
+**Rehearsal** (2026-11-20, Cinqcent, `cmp-run.sh --reserve 14 6`, work in
+`/mnt/bko-ram`): `ubuntu2610-zfsenc` (26.10 server, Subiquity's guided ZFS
+with a password, then a full upgrade: zfs-linux 2.4.4-1ubuntu4, dracut 112,
+systemd 261), bko-holt 0.2.6 from 3fc3d5d, the 20261120 test image,
+`bs1-qemu.py --luks-typed --luks-off`: PASS, 38 checks, BackShot1 run
+`ubuntu-26.10-20261120-022116`.  Adopt took it as `family S ...
+keystore-rpool:UUID:K`, both images checked; a second adopt changed
+nothing; `--luks-off` put every file back.  The boot with the drive logged
+`dracut-pre-mount: BackShot1: the backup drive's key is
+systemd-cryptsetup's for keystore-rpool` and no prompt (`UNLOCK=drive`);
+without it, the wait and then systemd-cryptsetup's "Please enter
+passphrase for disk keystore-rpool" (`typed`).  The preflight said
+`UNLOCK=drive`; the restored system booted from NVRAM unlocked by the
+drive, `bs1-verify` 0 unexpected, and without the drive asked again.

@@ -42,8 +42,9 @@ A LUKS guest's passphrase (the first of GUEST_DIR's luks-keyfile,
 console-passphrase, luks-passphrase and zfs-passphrase, without a final
 newline) goes into keys/disk-passphrase.  When bs1-adopt sets the guest to
 unlock from the drive (docs/design/bs1-luks-unattended.md: families S, D, E
-and B; Z, ZFSBootMenu's hooks for ZFS native encryption: void-zbm-enc), the
-source also:
+and B; Z, ZFSBootMenu's hooks for ZFS native encryption: void-zbm-enc; S's
+Ubuntu ZFS keystore, dracut hooks around the zfs module's: ubuntu2610-zfsenc),
+the source also:
   (a) runs bs1-adopt again, which must change nothing and remake nothing;
   (b) boots with the drive and nothing typed: "bs1-verify --unlock" must say
       UNLOCK=drive;
@@ -166,9 +167,11 @@ fi
 cat $t'''
 # What bs1-adopt's LUKS step writes, for "a second run changes nothing" and
 # "--luks-off puts it back".
-# Family Z's are on the ESP: ZFSBootMenu's image and the hooks beside it.
+# Family Z's are on the ESP: ZFSBootMenu's image and the hooks beside it;
+# the Ubuntu ZFS keystore's, BackShot1's dracut module.
 LUKS_FILES = ("find /etc/backshot1 /etc/crypttab /etc/crypttab.initramfs /etc/dracut.conf.d /etc/mkinitcpio.conf.d "
               "/etc/initcpio /etc/initramfs-tools/hooks /etc/kernel/cmdline.d /usr/local/lib/backshot1 "
+              "/usr/lib/dracut/modules.d/99backshot1 "
               "/boot/efi/EFI/ZBM /efi/EFI/ZBM -type f 2>/dev/null | LC_ALL=C sort | "
               "while read -r f; do echo \"$f $(sha256sum <\"$f\" | cut -c1-16)\"; done")
 # The families that unlock from the drive (bs1-luks).

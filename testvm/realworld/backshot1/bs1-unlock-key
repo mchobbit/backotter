@@ -24,6 +24,17 @@
 #   the drive, or with a key that doesn't fit, ZFSBootMenu asks as before.
 #   Once a boot found no drive, a second encryption root doesn't wait again.
 #
+#   unlock-key --keystore, then --keystore-done (family S's Ubuntu ZFS
+#   keystore, volume HOW K: BackShot1's dracut module's pre-mount hooks 85
+#   and 95, either side of the zfs module's 90-zfs-load-key.sh, which opens
+#   keystore-POOL with `systemd-cryptsetup attach` and no key file):
+#   --keystore copies the drive's key to /run/cryptsetup-keys.d/NAME.key
+#   for each of the record's K volumes, where systemd-cryptsetup looks
+#   before it asks; --keystore-done marks NAME drive when the volume is open
+#   and that key opens /dev/zvol/POOL/keystore (else typed: the prompt took
+#   it; fetched when cryptsetup can't tell), and removes the key.  Both
+#   always exit 0.
+#
 # Each use adds "NAME drive" or "NAME typed" to /run/backshot1-unlock,
 # which the initramfs hands on to the booted system (family Z: ZFSBootMenu's
 # boot-sel.d hook puts it on the booted kernel's command line, bs1.zbm=);
@@ -42,6 +53,7 @@ fi
 MARK=$R/run/backshot1-unlock
 MNT=$R/run/backshot1-keydev
 NODRIVE=$R/run/backshot1-nodrive
+KEYS_D=$R/run/cryptsetup-keys.d
 
 mark() { mkdir -p "${MARK%/*}" 2>/dev/null; echo "$1 $2" >>"$MARK"; }
 # The drive's device is there (in a test, a file stands in for it).
@@ -91,7 +103,50 @@ askpass() {
 
 umask 077
 mode=keyscript
-case ${1:-} in --to) mode=to ;; --zfs) mode=zfs ;; esac
+case ${1:-} in --to) mode=to ;; --zfs) mode=zfs ;; --keystore) mode=keystore ;; --keystore-done) mode=keystore-done ;; esac
+
+if [ $mode = keystore ] || [ $mode = keystore-done ]; then
+    ks=''
+    for v in $volumes; do
+        [ "${v##*:}" = K ] && ks="$ks ${v%%:*}"
+    done
+    [ -n "$ks" ] || exit 0
+    if [ $mode = keystore ]; then
+        tmp=$R/run/backshot1-key.$$
+        if fetch "$tmp" && mkdir -p "$KEYS_D"; then
+            for n in $ks; do
+                cat "$tmp" >"$KEYS_D/$n.key" && echo "BackShot1: the backup drive's key is systemd-cryptsetup's for $n" >&2
+            done
+        else
+            for n in $ks; do mark "$n" typed; done
+        fi
+        rm -f "$tmp"
+        exit 0
+    fi
+    for n in $ks; do
+        f=$KEYS_D/$n.key
+        [ -f "$f" ] || continue
+        if present "$R/dev/mapper/$n"; then
+            # Exit 2 is "no key slot opened": the drive's key didn't fit, so
+            # systemd-cryptsetup asked.
+            cryptsetup open --test-passphrase --key-file "$f" "$R/dev/zvol/${n#keystore-}/keystore" >/dev/null 2>&1
+            rc=$?
+            if [ $rc -eq 0 ]; then
+                mark "$n" drive
+            elif [ $rc -eq 2 ]; then
+                echo "BackShot1: the drive's key doesn't open $n; it was asked for" >&2
+                mark "$n" typed
+            else
+                mark "$n" fetched
+            fi
+        else
+            mark "$n" typed
+        fi
+        rm -f "$f"
+    done
+    rmdir "$KEYS_D" 2>/dev/null
+    exit 0
+fi
 
 if [ $mode = zfs ]; then
     root=${2:-}

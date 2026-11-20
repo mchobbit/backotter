@@ -23,6 +23,12 @@
 #      the command line mkinitcpio bakes into them (/etc/kernel/cmdline,
 #      /etc/cmdline.d/*.conf) become crypttab.initramfs's lines, and are
 #      taken out of those files, in the same remake.
+#      Ubuntu's ZFS keystore (26.10's "ZFS + encryption": LUKS2 on the zvol
+#      POOL/keystore, holding POOL's key), which dracut's zfs module opens
+#      with systemd-cryptsetup and no key file, is family S's volume HOW K:
+#      BackShot1's dracut module LK_KS_MOD puts the drive's key in
+#      /run/cryptsetup-keys.d/keystore-POOL.key first (below, "Ubuntu's ZFS
+#      keystore").
 #   D  initramfs-tools' cryptroot: keyscript=/usr/local/lib/backshot1/unlock-key
 #      (bs1-unlock-key), the key field left as it was (none).
 #   E  mkinitcpio's busybox encrypt: the bs1key hook, before encrypt, writes
@@ -84,6 +90,13 @@ LK_UKI_PRESETS=/etc/mkinitcpio.d
 LK_UKI_FILES="/etc/kernel/cmdline /usr/lib/kernel/cmdline"
 LK_UKI_DROPIN=/etc/cmdline.d
 LK_STUB_INFO=/sys/firmware/efi/efivars/StubInfo-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
+# Family S on dracut: BackShot1's drop-in; dracut's modules, among them the
+# zfs module's pre-mount hook (zfs-load-key.sh) and BackShot1's own for
+# Ubuntu's ZFS keystore (volume HOW K), LK_KS_MOD, module "backshot1".
+LK_DRACUT_CONF=/etc/dracut.conf.d/90-backshot1.conf
+LK_DRACUT_MODS=/usr/lib/dracut/modules.d
+LK_KS_MOD=99backshot1
+LK_KEYSTORE=
 
 lk_say() { echo "luks: $*"; }
 lk_err() { echo "bs1-adopt: $*" >&2; }
@@ -698,11 +711,115 @@ lk_drive() {
     LK_KEYSPEC=$LK_PATH:LABEL=$BACKUP_LABEL
 }
 
+# Ubuntu's ZFS keystore (26.10's "ZFS + encryption", the Thinkpad
+# 2026-11-19): the pool POOL is natively encrypted, keylocation=
+# file:///run/keystore/POOL/system.key, and that file is on ext4 in LUKS2 on
+# the zvol POOL/keystore.  Nothing in crypttab or on the command line opens
+# it: Ubuntu's dracut zfs module (zfs-linux's
+# 4001-dracut-Open-and-mount-luks-keystore.patch, LP: #2070066) does, in its
+# pre-mount hook 90-zfs-load-key.sh, once the pool is imported:
+#     systemd-cryptsetup attach "keystore-POOL" /dev/zvol/POOL/keystore
+# then mounts it at /run/keystore/POOL.  With no key file named,
+# systemd-cryptsetup first tries a key file named after the volume in
+# /etc/cryptsetup-keys.d or /run/cryptsetup-keys.d (systemd's
+# src/cryptsetup/cryptsetup.c, discover_key) and asks only when there's none
+# or it doesn't fit.  So BackShot1's dracut module LK_KS_MOD ("backshot1",
+# add_dracutmodules in LK_DRACUT_CONF) adds two pre-mount hooks around the
+# zfs module's: 85-backshot1-keystore.sh (bs1-unlock-key --keystore) waits up
+# to LUKS_WAIT s for the drive and copies its key to
+# /run/cryptsetup-keys.d/keystore-POOL.key; 95-backshot1-keystore-done.sh
+# (--keystore-done) marks in /run/backshot1-unlock whether that key opened
+# it (drive) or not (typed), and removes the key.  Without the drive, or
+# with a key that doesn't fit, systemd-cryptsetup asks as before.  The
+# volume's HOW is K, within family S (dracut with systemd).
+
+# lk_ks_zfs_hook: the zfs dracut module's zfs-load-key.sh.
+lk_ks_zfs_hook() {
+    local f
+    for f in "$LK_DRACUT_MODS"/*/zfs-load-key.sh; do
+        [[ -f $f ]] && { echo "$f"; return 0; }
+    done
+    return 1
+}
+
+# lk_keystore_ok DEV NAME FAMILY GENERATOR: DEV, LUKS on a zvol open as NAME,
+# is Ubuntu's ZFS keystore, opened by dracut's zfs module with
+# systemd-cryptsetup and no key file (above); else says why not, and false.
+lk_keystore_ok() {
+    local dev=$1 name=$2 pool kl er rootds hook
+    pool=${name#keystore-}
+    if [[ $name != keystore-?* || ! $pool =~ ^[A-Za-z0-9._-]+$ ]]; then
+        echo "$name is on a ZFS volume ($dev), but isn't open as Ubuntu's keystore-POOL"
+        return 1
+    fi
+    if [[ $(readlink -f "${ZVOL_DIR:-/dev/zvol}/$pool/keystore" 2>/dev/null) != "$(readlink -f "$dev")" ]]; then
+        echo "$name is on $dev, not on the ZFS volume $pool/keystore that Ubuntu's initramfs opens as keystore-$pool"
+        return 1
+    fi
+    if [[ $3:$4 != S:dracut ]]; then
+        echo "$name is on a ZFS volume ($dev: Ubuntu's ZFS keystore), which the initramfs's ZFS code opens itself after importing the pool, asking for the passphrase (bs1-adopt hands it the drive's key only on dracut with systemd, not on ${4}'s initramfs)"
+        return 1
+    fi
+    er=$(zfs get -H -o value encryptionroot "$pool" 2>/dev/null)
+    kl=$(zfs get -H -o value keylocation "$pool" 2>/dev/null)
+    if [[ $er != "$pool" || $kl != "file:///run/keystore/$pool/"?* ]]; then
+        echo "$name is on $pool/keystore, but $pool isn't an encryption root keyed from /run/keystore/$pool/ (keylocation ${kl:-unknown}), for which Ubuntu's initramfs opens it"
+        return 1
+    fi
+    rootds=$(findmnt -nro SOURCE /)
+    if [[ $(zfs get -H -o value encryptionroot "$rootds" 2>/dev/null) != "$pool" ]]; then
+        echo "$name is $pool's keystore, but / ($rootds) isn't encrypted under $pool, so the initramfs doesn't open it"
+        return 1
+    fi
+    if ! hook=$(lk_ks_zfs_hook); then
+        echo "$name is Ubuntu's ZFS keystore, but there's no zfs dracut module (zfs-load-key.sh in $LK_DRACUT_MODS) to open it"
+        return 1
+    fi
+    if ! grep -q 'systemd-cryptsetup attach' "$hook" || ! grep -qF '/run/keystore/' "$hook"; then
+        echo "$name is Ubuntu's ZFS keystore, but $hook doesn't open it with systemd-cryptsetup attach (Ubuntu's patch), whose key file bs1-adopt can put there"
+        return 1
+    fi
+}
+
+# lk_ks_setup: LK_KS_MOD's module-setup.sh.  Asked for by add_dracutmodules
+# alone (check 255), after the zfs module.
+lk_ks_setup() {
+    cat <<EOF
+#!/bin/bash
+# BackShot1 (bs1-adopt): Ubuntu's ZFS keystore opens with the key on the
+# backup drive (bs1-luks, "Ubuntu's ZFS keystore").  Around the zfs module's
+# pre-mount hook 90-zfs-load-key.sh, which opens keystore-POOL with
+# systemd-cryptsetup and no key file (so it tries
+# /run/cryptsetup-keys.d/keystore-POOL.key before it asks): at 85 the
+# drive's key goes there, at 95 how it opened is marked and the key removed.
+# TESTBED ONLY; bs1-adopt --luks-off removes this module.
+check() { return 255; }
+depends() { echo zfs; return 0; }
+install() {
+    inst_simple $LUKS_REC
+    inst_script $UNLOCK_KEY
+    inst_multiple mount umount modprobe sleep cat mkdir rmdir rm
+    inst_multiple -o cryptsetup blkid
+    inst_hook pre-mount 85 "\$moddir/backshot1-keystore.sh"
+    inst_hook pre-mount 95 "\$moddir/backshot1-keystore-done.sh"
+}
+EOF
+}
+
+# lk_ks_hook ARG WHAT: a pre-mount hook that runs bs1-unlock-key ARG (dracut
+# sources its hooks, so in a process of its own).
+lk_ks_hook() {
+    printf '%s\n' '#!/bin/sh' \
+        "# BackShot1 (bs1-adopt), Ubuntu's ZFS keystore: $2." \
+        "# TESTBED ONLY; bs1-adopt --luks-off removes it." \
+        "$UNLOCK_KEY $1"
+}
+
 # luks_adopt: the step itself.  False, having changed nothing, if it can't.
 luks_adopt() {
     local disk key fstype gen family='' reason='' cmdline vols dev uuid name line k o how
     local vol_list=() own_list=() edits_tab=() edits_ini=() edits_bls=() unhandled=() early hooks='' files='' cd cdname fix re f
-    local xl_vols=() xl_files=() xl_dir='' xl_kind xl_rest xl_o i e n
+    local xl_vols=() xl_files=() xl_dir='' xl_kind xl_rest xl_o i e n why
     if [[ ${BS1_LUKS:-yes} == no ]]; then lk_say "skipped (BS1_LUKS=no)"; return 0; fi
     disk=$(internal_disk) || { lk_err "no single disk has serial $INTERNAL_SERIAL"; return 1; }
     LK_DISK=$disk
@@ -812,10 +929,16 @@ luks_adopt() {
         if [[ $name == - ]]; then unhandled+=("$dev isn't open, so it isn't in the backup"); continue; fi
         # Ubuntu's keystore, LUKS on the ZFS volume POOL/keystore (26.10's
         # ZFS + encryption): the initramfs's ZFS code opens it itself once
-        # it has imported the pool, asking for the passphrase, and no
-        # crypttab or command line that S, D or E writes reaches it.
+        # it has imported the pool, and no crypttab or command line that S,
+        # D or E writes reaches it.  On dracut with systemd it's K (below,
+        # "Ubuntu's ZFS keystore"); anywhere else, attended.
         if [[ $dev == /dev/zd* || $(readlink -f "$dev" 2>/dev/null) == /dev/zd* ]]; then
-            unhandled+=("$name is on a ZFS volume ($dev: Ubuntu's ZFS keystore), which the initramfs's ZFS code opens itself after importing the pool, asking for the passphrase, and bs1-adopt has no way to hand it the drive's key")
+            if why=$(lk_keystore_ok "$dev" "$name" "$family" "$gen"); then
+                vol_list+=("$name:$uuid:K")
+                LK_KEYSTORE+=" $name"
+            else
+                unhandled+=("$why")
+            fi
             continue
         fi
         early=no
@@ -956,7 +1079,7 @@ luks_adopt() {
         done
     fi
     # dracut puts crypttab in only when it's host-only; then by name.
-    [[ $family:$gen == S:dracut ]] && grep -qsx 'install_items+=" /etc/crypttab "' /etc/dracut.conf.d/90-backshot1.conf &&
+    [[ $family:$gen == S:dracut ]] && grep -qsx 'install_items+=" /etc/crypttab "' "$LK_DRACUT_CONF" &&
         LK_DRACUT_EXTRA='install_items+=" /etc/crypttab "'
     lk_files "$family" "$gen" "$fstype" || return 1
 
@@ -1028,11 +1151,18 @@ lk_files() {
     esac
     case $1:$2 in
     S:dracut)
-        lk_put /etc/dracut.conf.d/90-backshot1.conf 644 "# BackShot1 (bs1-adopt): what reading the LUKS key from the backup drive takes.
+        lk_put "$LK_DRACUT_CONF" 644 "# BackShot1 (bs1-adopt): what reading the LUKS key from the backup drive takes.
 # TESTBED ONLY; bs1-adopt --luks-off removes it.
 add_drivers+=\" ${drivers% } \"
 filesystems+=\" ${3:-ext4} \"${LK_DRACUT_EXTRA:+
-$LK_DRACUT_EXTRA}" || return 1
+$LK_DRACUT_EXTRA}${LK_KEYSTORE:+
+add_dracutmodules+=\" ${LK_KS_MOD#[0-9][0-9]} \"}" || return 1
+        if [[ -n $LK_KEYSTORE ]]; then
+            lk_put "$UNLOCK_KEY" 755 "$(cat "$here/bs1-unlock-key")" || return 1
+            lk_put "$LK_DRACUT_MODS/$LK_KS_MOD/module-setup.sh" 755 "$(lk_ks_setup)" || return 1
+            lk_put "$LK_DRACUT_MODS/$LK_KS_MOD/backshot1-keystore.sh" 755 "$(lk_ks_hook --keystore "before the zfs module's 90-zfs-load-key.sh opens it, the drive's key as systemd-cryptsetup's key file for it")" || return 1
+            lk_put "$LK_DRACUT_MODS/$LK_KS_MOD/backshot1-keystore-done.sh" 755 "$(lk_ks_hook --keystore-done "after 90-zfs-load-key.sh, whether that key opened it; the key taken away")" || return 1
+        fi
         ;;
     S:mkinitcpio)
         local m q=
@@ -1113,9 +1243,19 @@ lk_check() {
         D:*) want=("${UNLOCK_KEY#/}" "${LUKS_REC#/}") ;;
         E:*) want=(hooks/bs1key "${UNLOCK_KEY#/}" "${LUKS_REC#/}") ;;
         esac
+        [[ $family == S && -n ${LK_KEYSTORE:-} ]] && want=("${UNLOCK_KEY#/}" "${LUKS_REC#/}")
         for v in "${want[@]}"; do
             grep -qxF "$v" <<<"$list" || { lk_err "$img has no $v"; bad=1; }
         done
+        # Ubuntu's ZFS keystore: BackShot1's two pre-mount hooks on either
+        # side of the zfs module's, systemd-cryptsetup, and systemd.
+        if [[ $family == S && -n ${LK_KEYSTORE:-} ]]; then
+            for v in 85-backshot1-keystore 90-zfs-load-key 95-backshot1-keystore-done; do
+                grep -Eq "(^|/)hooks/pre-mount/$v\.sh\$" <<<"$list" || { lk_err "$img has no pre-mount hook $v.sh"; bad=1; }
+            done
+            grep -Eq '(^|/)systemd-cryptsetup$' <<<"$list" || { lk_err "$img has no systemd-cryptsetup"; bad=1; }
+            lsinitrd -m "$img" 2>/dev/null | grep -x systemd >/dev/null || { lk_err "$img has no systemd in it"; bad=1; }
+        fi
         if [[ $family == S && -n ${LK_EARLY_S:-} ]]; then
             [[ $gen != dracut ]] || lsinitrd -m "$img" 2>/dev/null | grep -x systemd >/dev/null ||
                 { lk_err "$img has no systemd in it"; bad=1; }
@@ -1847,6 +1987,11 @@ luks_off() {
     fi
     rm -rf "$LUKS_ORIG" "$LUKS_MADE" "$LUKS_REC"
     rmdir "$LUKS_DIR" "${UNLOCK_KEY%/*}" 2>/dev/null || true
+    # The keystore's dracut module (BackShot1's own, by its name), once empty.
+    if [[ -d ${LK_DRACUT_MODS:?}/${LK_KS_MOD:?} ]]; then
+        rmdir -- "${LK_DRACUT_MODS:?}/${LK_KS_MOD:?}" 2>/dev/null ||
+            lk_say "$LK_DRACUT_MODS/$LK_KS_MOD has files bs1-adopt didn't write; left there"
+    fi
     # The hooks' directories, once empty: only BackShot1's own, by its name.
     if [[ $zhooks == /?*/"$LK_ZBM_DIR/$LK_ZBM_HOOKS" && -d $zhooks ]]; then
         rmdir -- "${zhooks:?}/${LK_ZBM_KEYHOOK%/*}" "${zhooks:?}/${LK_ZBM_MARKHOOK%/*}" "${zhooks:?}" 2>/dev/null || true

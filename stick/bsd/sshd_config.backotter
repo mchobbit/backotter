@@ -6,3 +6,8 @@ PasswordAuthentication yes
 KbdInteractiveAuthentication yes
 PermitRootLogin no
 AllowUsers backotter
+# No reverse lookup of the client before the banner: FreeBSD's sshd defaults
+# to UseDNS yes, and over a bad link one lost PTR answer holds a login up 5 s
+# (two, 15 s).  Set on every image, whatever its own default.  AllowUsers
+# above names no host, so nothing here needs the client's name.
+UseDNS no

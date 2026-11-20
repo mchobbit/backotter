@@ -1702,6 +1702,43 @@ class ImgBoot(unittest.TestCase):
         self.assertTrue(r.stderr.startswith("Usage: img-boot.py LOG"), r.stderr)
 
 
+class SshdSettings(unittest.TestCase):
+    """stick/bsd/sshd_config.backotter, the lines every BSD, illumos and Haiku image's build.sh
+    puts first in its sshd_config (sshd keeps the first value it reads)."""
+    CONF = os.path.join(WT, "stick", "bsd", "sshd_config.backotter")
+    BUILDS = ("freebsd", "dragonfly", "netbsd", "openbsd", "illumos", "haiku")
+
+    def settings(self):
+        with open(self.CONF, encoding="utf-8") as f:
+            return [x.split(None, 1) for x in f.read().splitlines() if x.strip() and not x.lstrip().startswith("#")]
+
+    def test_no_reverse_lookup_of_the_client(self):
+        # FreeBSD's sshd defaults to UseDNS yes: a lost PTR answer for 10.0.2.2 held a
+        # rescuer's login 5 s (choubox 2026-11-19).
+        self.assertIn(["UseDNS", "no"], self.settings())
+
+    def test_every_image_puts_the_lines_first(self):
+        for plat in self.BUILDS:
+            with open(os.path.join(WT, "stick", plat, "build.sh"), encoding="utf-8") as f:
+                b = f.read()
+            self.assertRegex(b, r"\{ cat \S*in/sshd_config\.backotter\"?; echo; cat \S*sshd_config\"?; \}", plat)
+
+    def test_it_wins_over_a_stock_usedns_yes(self):
+        sshd = "/usr/sbin/sshd" if os.access("/usr/sbin/sshd", os.X_OK) else shutil.which("sshd")
+        if not sshd or not shutil.which("ssh-keygen"):
+            self.skipTest("no sshd here")
+        with tempfile.TemporaryDirectory() as t:
+            hk, c = os.path.join(t, "hk"), os.path.join(t, "sshd_config")
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", hk], check=True, timeout=60)
+            with open(self.CONF, encoding="utf-8") as f, open(c, "w", encoding="utf-8") as o:
+                o.write(f.read() + "\nUseDNS yes\n")
+            r = subprocess.run([sshd, "-T", "-f", c, "-h", hk], capture_output=True, text=True, timeout=60)
+            if r.returncode != 0 and "usedns" not in r.stdout:
+                self.skipTest("sshd -T can't run here: " + r.stderr.strip()[:200])
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("usedns no", r.stdout.lower().splitlines())
+
+
 class Spec(unittest.TestCase):
     def test_the_seven(self):
         with open(os.path.join(T2, "img", "spec.json"), encoding="utf-8") as f:

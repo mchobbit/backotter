@@ -48,11 +48,14 @@ def shell_lines(pubkey, cfg):
     long one).  The key file's umask is its subshell's only: sshd and every SSH session
     it starts inherit the shell's, and a run's rebuild (grub-install, update-grub in the
     chroot) must write with the image's default, as a console user's would, not 077.
-    ssh-keygen -A: the images have no host keys."""
+    ssh-keygen -A: the images have no host keys.  UseDNS=no: an image built before
+    stick/bsd/sshd_config.backotter set it keeps FreeBSD's default, yes, and one lost PTR
+    answer for 10.0.2.2 (QEMU's DNS to the host's nameserver) holds each login up 5 s."""
     return (["export TERM=dumb; stty -echo"] + list(cfg["extra"])
             + ["(umask 077; printf '%s\\n' " + shquote(pubkey) + " >/tmp/bko-k)", "ssh-keygen -A",
                "$(command -v sshd) -o AuthorizedKeysFile=/tmp/bko-k -o StrictModes=no"
-               f" -o PermitRootLogin=prohibit-password -o AllowUsers={cfg['user']} -o PasswordAuthentication=no",
+               f" -o PermitRootLogin=prohibit-password -o AllowUsers={cfg['user']} -o PasswordAuthentication=no"
+               " -o UseDNS=no",
                "echo BKO-IMG-SSHD-$?"])
 
 

@@ -295,6 +295,19 @@ class Driver(unittest.TestCase):
             self.assertIn(o, sshd)
         self.assertTrue(all(len(x) < 300 for x in lines))
 
+    def test_img_boot_sshd_does_no_reverse_lookup(self):
+        # An image built before sshd_config.backotter said UseDNS no keeps FreeBSD's yes:
+        # the command line's -o wins over the image's file.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("img_boot", os.path.join(HT, "img-boot.py"))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        for plat in ("linux", "linux-arm64", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "haiku"):
+            lines = m.shell_lines("ssh-" + "ed25519 AAAA t2", m.config(plat))
+            sshd = next(x for x in lines if "AuthorizedKeysFile" in x)
+            self.assertIn(" -o UseDNS=no", sshd, plat)
+            self.assertTrue(all(len(x) < 300 for x in lines), plat)
+
     def test_img_boot_umask_is_the_key_files_only(self):
         # sshd and its sessions inherit the console shell's umask: a shell-wide 077 made a
         # run's grub-install and update-grub write /boot/grub 0600 (T4.4's fsmeta DIFFs).

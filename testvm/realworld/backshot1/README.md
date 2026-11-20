@@ -653,7 +653,7 @@ How depends on what opens the volume:
 | N | NixOS (systemd or scripted stage 1) | `/etc/nixos/backshot1-luks.nix`, imported by `backshot1.nix` while it exists, sets each typed `boot.initrd.luks.devices` volume's `keyFile`: systemd stage 1 the same `PATH:LABEL=` form and `keyFileTimeout = 30`; scripted stage 1 a copy its `preOpenCommands` take off the drive (mounted read-only, `norecovery` for xfs), with `fallbackToPassword`; then `nixos-rebuild switch` |
 | B | AerynOS: systemd in the initramfs that comes prebuilt with the kernel (it reads no crypttab of the system's), the kernel command line written by blsforme from `/etc/kernel/cmdline.d` | `/etc/kernel/cmdline.d/90-backshot1-luks.cmdline` gives each volume the initramfs opens `rd.luks.uuid=UUID rd.luks.key=UUID=/backshot1/keys/disk-passphrase:LABEL=mybig512 rd.luks.options=UUID=OPTIONS,keyfile-timeout=30s`, OPTIONS those the other `cmdline.d` files already give it (one `rd.luks.options=` for the volume, since the last wins); then `moss boot sync`, and every boot entry on the ESP must carry the key and those options as the last of each; a volume the booted system opens is S's |
 | Z | ZFSBootMenu with ZFS native encryption (passphrase) and no LUKS: `void-zbm-enc`, the ZFSBootMenu guide's install | ZFSBootMenu hooks on the ESP in `EFI/ZBM/backshot1/` (a `load-key.d` hook made from `bs1-unlock-key --zfs`, and a `boot-sel.d` hook), named by `zbm.hookroot=UUID=ESP//EFI/ZBM/backshot1 zbm.wait_for=UUID=ESP` added to `EFI/ZBM/VMLINUZ.EFI`'s embedded command line (below) |
-| A | non-systemd dracut, Alpine's mkinitfs, ostree; ZFS native encryption not booted by ZFSBootMenu (no record is written for it) | nothing: the run is attended |
+| A | non-systemd dracut, Alpine's mkinitfs, ostree; ZFS native encryption not booted by ZFSBootMenu (no record is written for it); GRUB reading /boot from LUKS, whatever the initramfs is (below) | nothing: the run is attended |
 
 A volume that already opens with no one typing (a key file of its own in the
 initramfs, TPM2, FIDO2; on B an `rd.luks.key=` of its own in another
@@ -799,6 +799,23 @@ and keeps `/etc/backshot1` when a file can't be put back.  ZFS native
 encryption without ZFSBootMenu (the initramfs's own ZFS code asks) is
 attended, as before, and adopt writes no record for it.
 
+**GRUB with /boot inside LUKS** (`GRUB_ENABLE_CRYPTODISK=y`, no separate
+unencrypted /boot: Manjaro's installer puts /boot on the LUKS1 root,
+2026-11-20).  GRUB itself asks for that volume's passphrase before Linux
+starts, and nothing adopt writes reaches GRUB; the key file the installer
+builds into the initramfs (`/crypto_keyfile.bin`, opening the root and swap
+a second time) only spares a second prompt, so those volumes look `own` to
+crypttab and the initramfs.  When the file system holding
+`/boot/grub/grub.cfg` (or `/boot/grub2/grub.cfg`) is on an open LUKS
+volume, and this boot's `LoaderInfo` EFI variable, if any, names GRUB (a
+`grub.cfg` left behind by an install that boots by systemd-boot doesn't
+count), adopt records family A, "GRUB asks for the passphrase of NAME
+before Linux: /boot is inside LUKS", and changes nothing; the preflight
+and phase 1 say `UNLOCK=attended` with that reason from the running system
+whatever the record says (one written before this said `own`), so `cycle`
+refuses the run and it goes in the attended block (below).  A separate
+unencrypted /boot is as before.
+
 **Testbed only,** like the fixed host key: with the drive and the laptop
 together, anyone can read the disk.  Never on a release image, nor a machine
 outside the testbed.  `backshot1 adopt --luks-off` (`bs1-adopt --luks-off`)
@@ -815,8 +832,8 @@ say how the system unlocks, `UNLOCK=`:
   `bs1.zbm=ROOT:drive` on `/proc/cmdline` for Z, whose volumes are the ZFS
   encryption roots that ask; `backshot1 unlock` shows it);
 - `own`: every volume opens by itself;
-- `attended`: someone types at boot (family A, a system adopted before
-  this, or one not rebooted since adopt);
+- `attended`: someone types at boot (family A, GRUB reading /boot from
+  LUKS, a system adopted before this, or one not rebooted since adopt);
 - `none`: nothing encrypted.
 
 Phase 1 writes it to the baseline's `unlock.txt`, and `verify` then checks

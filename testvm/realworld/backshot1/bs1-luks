@@ -51,7 +51,9 @@
 #      zbm.hookroot= in VMLINUZ.EFI's embedded command line names (below,
 #      "Family Z").  ZFS encryption without ZFSBootMenu changes nothing and
 #      writes no record, as before: attended.
-#   A  attended: anything else (non-systemd dracut, mkinitfs, ostree).
+#   A  attended: anything else (non-systemd dracut, mkinitfs, ostree), and
+#      any install whose GRUB reads /boot from a LUKS volume (it asks before
+#      Linux, whatever opens the volume after: lk_grub_luks).
 #      Nothing changes; the record says why.
 # A volume that already unlocks with no one typing (a key file of its own,
 # TPM2, FIDO2) is left alone and recorded as own.
@@ -815,6 +817,20 @@ lk_ks_hook() {
         "$UNLOCK_KEY $1"
 }
 
+# lk_grub_luks VOLS: GRUB with /boot inside LUKS (bs1-common,
+# grub_luks_boot) asks for that volume's passphrase before Linux, and
+# nothing adopt writes reaches GRUB: the whole install is attended, however
+# its initramfs opens the volume after (Manjaro's own /crypto_keyfile.bin
+# made it own, 2026-11-20).  Puts that first in the caller's unhandled.
+lk_grub_luks() {
+    local g
+    declare -F grub_luks_boot >/dev/null || return 0
+    # shellcheck disable=SC2046
+    g=$(grub_luks_boot $(awk '$3 != "-" { print $3 }' <<<"$1"))
+    [[ -n $g ]] || return 0
+    unhandled=("$(grub_luks_reason "$g")" ${unhandled[@]+"${unhandled[@]}"})
+}
+
 # luks_adopt: the step itself.  False, having changed nothing, if it can't.
 luks_adopt() {
     local disk key fstype gen family='' reason='' cmdline vols dev uuid name line k o how
@@ -995,6 +1011,7 @@ luks_adopt() {
         B:*) edits_bls+=("$uuid|$o") ;;
         esac
     done <<<"$vols"
+    lk_grub_luks "$vols"
     # S on unified images: the files' rd.luks arguments become each volume's
     # crypttab.initramfs line (its open name, UUID=, the options they put in
     # force), and come out of the files they're in, which must be ones adopt
@@ -1457,6 +1474,7 @@ lk_nixos() {
         [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || { unhandled+=("$name has characters the module can't take"); continue; }
         vol_list+=("$name:$uuid:N")
     done <<<"$vols"
+    lk_grub_luks "$vols"
     if [[ ${#unhandled[@]} -gt 0 ]]; then
         family=A reason=$(printf '%s\n' "${unhandled[@]}" | awk '!seen[$0]++' | paste -s -d ';' - | sed 's/;/; /g')
     elif [[ ${#vol_list[@]} -eq 0 ]]; then

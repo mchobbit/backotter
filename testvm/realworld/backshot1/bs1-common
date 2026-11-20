@@ -601,6 +601,49 @@ for ds in ((s.get("zfs") or {}).get("tools") or {}).get("datasets") or []:
 PY
 }
 
+# GRUB with /boot inside LUKS (GRUB_ENABLE_CRYPTODISK=y, /boot/grub on an
+# encrypted root or an encrypted /boot of its own: the Manjaro installer's,
+# 2026-11-20) asks for the volume's passphrase itself, before Linux, and no
+# initramfs, crypttab line or key file reaches that prompt; a key file in
+# the initramfs (Manjaro's /crypto_keyfile.bin) only spares a second one.
+# Where GRUB keeps grub.cfg, its defaults, and the EFI variable a boot
+# loader of the Boot Loader Interface (systemd-boot, Limine; GRUB's bli
+# module) sets (the unit tests move them).
+GRUB_DIRS="/boot/grub /boot/grub2"
+GRUB_DEFAULTS=/etc/default/grub
+GRUB_LOADER_INFO=/sys/firmware/efi/efivars/LoaderInfo-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
+
+# grub_luks_boot NAME...: of the open LUKS mappings NAME..., those the GRUB
+# that boots this system opens to read /boot: the file system holding its
+# grub.cfg is on them.  Nothing when this boot's LoaderInfo names another
+# boot loader (a grub.cfg left behind by an install that boots by
+# systemd-boot), or when that file system isn't on a device (ZFS).
+grub_luks_boot() {
+    local d src info
+    [[ $# -gt 0 ]] || return 0
+    if [[ -r $GRUB_LOADER_INFO ]]; then
+        # 4 bytes of attributes, then UTF-16LE.
+        info=$(tail -c +5 "$GRUB_LOADER_INFO" 2>/dev/null | tr -d '\0')
+        [[ -z $info || $info == *GRUB* ]] || return 0
+    fi
+    for d in $GRUB_DIRS; do
+        [[ -f $d/grub.cfg ]] || continue
+        src=$(findmnt -nro SOURCE -T "$d" 2>/dev/null | head -n 1)
+        src=${src%%\[*}
+        [[ $src == /dev/* ]] || continue
+        lsblk -snlo NAME "$src" 2>/dev/null | awk -v names=" $* " 'index(names, " " $1 " ")'
+    done | LC_ALL=C sort -u
+}
+
+# grub_luks_reason NAMES: why GRUB_LUKS_BOOT's volumes make a boot attended.
+grub_luks_reason() {
+    local f hint=''
+    for f in "$GRUB_DEFAULTS" "$GRUB_DEFAULTS".d/*.cfg; do
+        grep -Eqs '^[[:space:]]*GRUB_ENABLE_CRYPTODISK=["'\'']?y' "$f" && { hint=" (GRUB_ENABLE_CRYPTODISK=y in $f)"; break; }
+    done
+    echo "GRUB asks for the passphrase of $(paste -s -d ' ' - <<<"$1" | sed 's/ /, /g') before Linux: /boot is inside LUKS$hint"
+}
+
 # unlock_mode DISK [LAYOUT]: how this system's encrypted volumes unlock at
 # boot.  The first line is "MODE: why", MODE one of
 #   drive     every typed volume was opened at this boot by the drive's key
@@ -611,10 +654,14 @@ PY
 # ones; or, with no LUKS volume and a record bs1-adopt wrote for
 # ZFSBootMenu (generator=zfsbootmenu: family Z, A or own), the ZFS
 # encryption roots that ask for a passphrase, LAYOUT's (a dump's) or else
-# the running system's.  Any other ZFS root that asks makes it attended.
+# the running system's.  Any other ZFS root that asks makes it attended, and
+# so does GRUB opening /boot's LUKS volume (grub_luks_boot), whatever the
+# record says: that volume is typed.
 unlock_mode() {
-    local disk=$1 layout=${2:-} names n v how fam vols own mode=own why='' lines='' zfs=''
+    local disk=$1 layout=${2:-} names n v how fam vols own mode=own why='' lines='' zfs='' grub=''
     names=$(luks_names "$disk")
+    # shellcheck disable=SC2086
+    [[ -z $names ]] || grub=$(grub_luks_boot $names)
     if [[ -n $layout ]]; then zfs=$(layout_zfs_passphrase "$layout" | tr '\n' ' ')
     else zfs=$(zfs_passphrase_roots "$disk" | tr '\n' ' ')
     fi
@@ -623,6 +670,17 @@ unlock_mode() {
         if [[ -z $names && $(luks_rec generator) == zfsbootmenu ]]; then names=${zfs% }
         else echo "attended: ZFS native encryption asks for ${zfs% }"; return 0
         fi
+    fi
+    # GRUB's prompt comes before anything the record set up (a record from
+    # before this check may say own: Manjaro's key file opens the volume a
+    # second time, in the initramfs).
+    if [[ -n $grub ]]; then
+        echo "attended: $(grub_luks_reason "$grub")"
+        own=" $(luks_rec own) "
+        for n in $names; do
+            if ! grep -qxF "$n" <<<"$grub" && [[ $own == *" $n:"* ]]; then echo "  $n own"; else echo "  $n typed"; fi
+        done
+        return 0
     fi
     if ! fam=$(luks_rec family); then
         echo "attended: not set up to unlock from the drive (no $LUKS_REC: bs1-adopt)"

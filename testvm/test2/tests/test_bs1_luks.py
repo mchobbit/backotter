@@ -221,9 +221,10 @@ class Evidence(Tmp):
         self.names = "root"
 
     def call(self, expr):
-        lib = functions(BS1 / "bs1-common", "luks_rec", "unlock_how", "unlock_mode")
-        # luks_names: the open LUKS mappings on the disk.
-        script = f'LUKS_REC="{self.rec}" UNLOCK_MARK="{self.mark}"\n{lib}\nluks_names() {{ printf "%s" "{self.names}"; }}\n{expr}'
+        lib = functions(BS1 / "bs1-common", "luks_rec", "unlock_how", "grub_luks_boot", "grub_luks_reason", "unlock_mode")
+        # luks_names: the open LUKS mappings on the disk.  No grub.cfg (EvidenceGrub has one).
+        script = (f'LUKS_REC="{self.rec}" UNLOCK_MARK="{self.mark}" GRUB_DIRS="{self.t}/no-grub"\n{lib}\n'
+                  f'luks_names() {{ printf "%s" "{self.names}"; }}\n{expr}')
         r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=self.env())
         self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout
@@ -2004,6 +2005,225 @@ class ZbmMarkHook(Tmp):
         (self.root / "lib/zfsbootmenu-core.sh").unlink()
         self.run_hook()
         self.assertFalse((self.root / "zfsbootmenu/environments").exists())
+
+
+ROOT_UUID = "6a1b2c3d-0000-4000-8000-00000000000a"
+SWAP_UUID = "6a1b2c3d-0000-4000-8000-00000000000b"
+LOADER_INFO = "LoaderInfo-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
+
+
+class GrubFakes(Tmp):
+    """A fake Manjaro by its installer: GRUB_ENABLE_CRYPTODISK=y, /boot on the
+    LUKS1 root (no /boot of its own), root and swap opened by the initramfs
+    and crypttab with /crypto_keyfile.bin (2026-11-20).  findmnt -T says
+    which device holds /boot/grub, lsblk -s what it stacks on."""
+
+    def setUp(self):
+        super().setUp()
+        t = self.t
+        (t / "boot/grub").mkdir(parents=True)
+        (t / "boot/grub/grub.cfg").write_text("insmod cryptodisk\ninsmod luks\ncryptomount -u 6a1b2c3d00004000800000000000000a\n")
+        (t / "etc/default").mkdir(parents=True)
+        (t / "etc/default/grub").write_text('GRUB_TIMEOUT=5\nGRUB_ENABLE_CRYPTODISK=y\nGRUB_CMDLINE_LINUX=""\n')
+        (t / "efivars").mkdir()
+        self.lsblk = t / "lsblk"
+        self.lsblk.mkdir()
+        (self.lsblk / f"luks-{ROOT_UUID}").write_text(f"luks-{ROOT_UUID}\nnvme0n1p2\nnvme0n1\n")
+        (self.lsblk / "nvme0n1p1").write_text("nvme0n1p1\nnvme0n1\n")
+        self.grub_on(f"/dev/mapper/luks-{ROOT_UUID}")
+        exe(self.bin / "lsblk", f'#!/bin/sh\nfor a; do :; done\ncat "{self.lsblk}/${{a##*/}}" 2>/dev/null\n')
+        self.drive = t / "drive"
+
+    def grub_on(self, src):
+        (self.t / "grub-src").write_text(src + "\n")
+
+    def loader(self, name):
+        # 4 bytes of attributes, then UTF-16LE with a final NUL.
+        (self.t / "efivars" / LOADER_INFO).write_bytes(b"\x06\0\0\0" + (name + "\0").encode("utf-16-le"))
+
+    def grub_vars(self):
+        t = self.t
+        return f'GRUB_DIRS="{t}/boot/grub {t}/boot/grub2" GRUB_DEFAULTS="{t}/etc/default/grub" GRUB_LOADER_INFO="{t}/efivars/{LOADER_INFO}"'
+
+    def findmnt(self, drive_source="/dev/sdb1"):
+        exe(self.bin / "findmnt", textwrap.dedent(f"""\
+            #!/bin/sh
+            if [ "$3" = -T ]; then cat "{self.t}/grub-src"; exit 0; fi
+            case "$2" in TARGET) echo "{self.drive}" ;; SOURCE) echo {drive_source} ;; FSTYPE) echo xfs ;; esac
+            """))
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class EvidenceGrub(GrubFakes):
+    """unlock_mode with GRUB reading /boot from LUKS: attended, whatever the
+    record says, with GRUB's prompt as the reason."""
+
+    def setUp(self):
+        super().setUp()
+        self.findmnt()
+        self.rec = self.t / "luks-unlock"
+        self.names = f"luks-{ROOT_UUID}\nluks-{SWAP_UUID}"
+        # What adopt wrote before it knew GRUB's prompt: own.
+        self.rec.write_text(f"family=own\ngenerator=mkinitcpio\nvolumes=''\nown='luks-{ROOT_UUID}:{ROOT_UUID} luks-{SWAP_UUID}:{SWAP_UUID}'\n"
+                            "reason='every LUKS volume unlocks with no one typing'\n")
+
+    def mode(self, extra=""):
+        lib = functions(BS1 / "bs1-common", "luks_rec", "unlock_how", "grub_luks_boot", "grub_luks_reason", "unlock_mode")
+        script = (f'LUKS_REC="{self.rec}" UNLOCK_MARK="{self.t}/mark" {self.grub_vars()}\n{lib}\n'
+                  f'luks_names() {{ printf "%s" "{self.names}"; }}\n'
+                  f'zfs_passphrase_roots() {{ :; }}\n{extra}\nunlock_mode nvme0n1')
+        r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_cryptodisk_is_attended_over_an_own_record(self):
+        out = self.mode()
+        self.assertEqual(out.splitlines()[0],
+                         f"attended: GRUB asks for the passphrase of luks-{ROOT_UUID} before Linux: /boot is inside LUKS "
+                         f"(GRUB_ENABLE_CRYPTODISK=y in {self.t}/etc/default/grub)")
+        self.assertEqual(out.splitlines()[1:], [f"  luks-{ROOT_UUID} typed", f"  luks-{SWAP_UUID} own"])
+
+    def test_without_a_record_too(self):
+        self.rec.unlink()
+        out = self.mode()
+        self.assertTrue(out.startswith(f"attended: GRUB asks for the passphrase of luks-{ROOT_UUID} before Linux"), out)
+        self.assertIn(f"  luks-{SWAP_UUID} typed", out)
+
+    def test_btrfs_subvolume_and_no_hint(self):
+        self.grub_on(f"/dev/mapper/luks-{ROOT_UUID}[/@]")
+        (self.t / "etc/default/grub").write_text("GRUB_TIMEOUT=5\n")
+        out = self.mode()
+        self.assertEqual(out.splitlines()[0], f"attended: GRUB asks for the passphrase of luks-{ROOT_UUID} before Linux: /boot is inside LUKS")
+
+    def test_lvm_on_luks(self):
+        # /boot on an LV of a VG on LUKS (the Arch wiki's encrypted /boot):
+        # lsblk -s walks the LV down to the LUKS mapping.
+        (self.lsblk / "vg-root").write_text("vg-root\ncryptlvm\nnvme0n1p2\nnvme0n1\n")
+        self.grub_on("/dev/mapper/vg-root")
+        self.names = "cryptlvm"
+        out = self.mode()
+        self.assertTrue(out.startswith("attended: GRUB asks for the passphrase of cryptlvm before Linux"), out)
+        self.assertEqual(out.splitlines()[1:], ["  cryptlvm typed"])
+
+    def test_grub2_dir(self):
+        shutil.move(self.t / "boot/grub", self.t / "boot/grub2")
+        self.assertTrue(self.mode().startswith("attended: GRUB asks"))
+
+    def test_loader_info_naming_grub_counts(self):
+        self.loader("GRUB 2.12")
+        self.assertTrue(self.mode().startswith("attended: GRUB asks"))
+
+    def test_separate_unencrypted_boot_stays_own(self):
+        self.grub_on("/dev/nvme0n1p1")
+        out = self.mode()
+        self.assertTrue(out.startswith("own: "), out)
+        self.assertEqual(out.splitlines()[1:], [f"  luks-{ROOT_UUID} own", f"  luks-{SWAP_UUID} own"])
+
+    def test_another_boot_loader_ignores_a_left_grub_cfg(self):
+        self.loader("systemd-boot 258.2-1-arch")
+        self.assertTrue(self.mode().startswith("own: "))
+
+    def test_no_grub_cfg_and_zfs_boot(self):
+        (self.t / "boot/grub/grub.cfg").unlink()
+        self.assertTrue(self.mode().startswith("own: "))
+        (self.t / "boot/grub/grub.cfg").write_text("")
+        self.grub_on("bpool/BOOT/ubuntu_abc")
+        self.assertTrue(self.mode().startswith("own: "))
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class AdoptGrub(GrubFakes):
+    """luks_adopt with GRUB reading /boot from LUKS: family A with GRUB's
+    prompt as the reason, nothing else written; a separate unencrypted /boot
+    as before."""
+
+    def setUp(self):
+        super().setUp()
+        t = self.t
+        here = self.drive / "backshot1"
+        (here / "keys").mkdir(parents=True)
+        shutil.copy(BS1 / "bs1-unlock-key", here / "bs1-unlock-key")
+        (here / "keys/disk-passphrase").write_text("s3cret")
+        for d in ("etc/mkinitcpio.d", "etc/mkinitcpio.conf.d", "boot/efi"):
+            (t / d).mkdir(parents=True, exist_ok=True)
+        self.findmnt()
+        exe(self.bin / "blkid", "#!/bin/sh\necho mybig512\n")
+        exe(self.bin / "cryptsetup", "#!/bin/sh\nexit 0\n")
+        exe(self.bin / "modinfo", "#!/bin/sh\nexit 1\n")
+        exe(self.bin / "mkinitcpio", f'#!/bin/sh\necho "$@" >>"{t}/mkinitcpio-calls"\n')
+        exe(self.bin / "sleep", "#!/bin/sh\nexit 0\n")
+        (t / "etc/crypttab").write_text(f"# <name> <device> <password> <options>\nluks-{SWAP_UUID} UUID={SWAP_UUID} /crypto_keyfile.bin luks\n")
+        (t / "proc-cmdline").write_text(f"BOOT_IMAGE=/boot/vmlinuz-6.18-x86_64 root=UUID=r rw cryptdevice=UUID={ROOT_UUID}:luks-{ROOT_UUID} "
+                                        f"root=/dev/mapper/luks-{ROOT_UUID} resume=/dev/mapper/luks-{SWAP_UUID} quiet\n")
+        self.vols = f"/dev/nvme0n1p2 {ROOT_UUID} luks-{ROOT_UUID}\n/dev/nvme0n1p3 {SWAP_UUID} luks-{SWAP_UUID}"
+        self.hooks = "base udev autodetect microcode kms modconf block keyboard keymap consolefont plymouth encrypt openswap resume filesystems"
+        self.files = "/crypto_keyfile.bin"
+        self.early = f"luks-{ROOT_UUID}"
+
+    def adopt(self, rc=0):
+        t = self.t
+        lib = functions(BS1 / "bs1-common", "grub_luks_boot", "grub_luks_reason")
+        script = textwrap.dedent(f"""\
+            set -uo pipefail
+            . "{BS1}/bs1-luks"
+            LUKS_DIR="{t}/etc/backshot1" LUKS_ORIG="{t}/etc/backshot1/orig" LUKS_MADE="{t}/etc/backshot1/made" LUKS_REC="{t}/etc/backshot1/luks-unlock"
+            LK_CMDLINE="{t}/proc-cmdline" LK_CRYPTTAB="{t}/etc/crypttab" LK_CRYPTTAB_INI="{t}/etc/crypttab.initramfs" LK_MKI_CONF_D="{t}/etc/mkinitcpio.conf.d"
+            LK_IMG_DIRS="{t}/boot/efi" LK_UKI_PRESETS="{t}/etc/mkinitcpio.d" LK_UKI_FILES="{t}/etc/kernel/cmdline" LK_UKI_DROPIN="{t}/etc/cmdline.d"
+            LK_STUB_INFO="{t}/efivars/none"
+            {self.grub_vars()}
+            here="{self.drive}/backshot1" init=systemd BACKUP_LABEL=mybig512 INTERNAL_SERIAL=S1
+            internal_disk() {{ echo nvme0n1; }}
+            is_abroot() {{ false; }}
+            lk_generator() {{ echo mkinitcpio; }}
+            lk_mkinitcpio_conf() {{ echo "HOOKS {self.hooks}"; echo "FILES {self.files}"; }}
+            lk_luks_volumes() {{ printf '%s\\n' "{self.vols}"; }}
+            lk_early() {{ [[ " {self.early} " == *" $1 "* ]]; }}
+            """) + lib + "\nluks_adopt\n"
+        r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
+        self.assertNotIn("command not found", r.stderr)
+        return r.stdout + r.stderr
+
+    def rec(self):
+        return (self.t / "etc/backshot1/luks-unlock").read_text()
+
+    def why(self):
+        return f"GRUB asks for the passphrase of luks-{ROOT_UUID} before Linux: /boot is inside LUKS (GRUB_ENABLE_CRYPTODISK=y in {self.t}/etc/default/grub)"
+
+    def test_manjaro_cryptodisk_is_attended_not_own(self):
+        tab = (self.t / "etc/crypttab").read_text()
+        out = self.adopt()
+        self.assertIn(f"luks: A: {self.why()}; nothing else changes", out)
+        self.assertIn("family=A\n", self.rec())
+        self.assertIn(f"reason='{self.why()}'", self.rec())
+        self.assertIn(f"own='luks-{ROOT_UUID}:{ROOT_UUID} luks-{SWAP_UUID}:{SWAP_UUID}'", self.rec())
+        self.assertEqual((self.t / "etc/crypttab").read_text(), tab)
+        self.assertFalse((self.t / "mkinitcpio-calls").exists())
+        self.assertFalse((self.t / "etc/mkinitcpio.conf.d/zz-backshot1.conf").exists())
+
+    def test_separate_unencrypted_boot_stays_own(self):
+        self.grub_on("/dev/nvme0n1p1")
+        out = self.adopt()
+        self.assertIn("luks: own: every LUKS volume unlocks with no one typing; nothing else changes", out)
+        self.assertIn("family=own\n", self.rec())
+
+    def test_a_typed_volume_s_would_handle_is_attended_too(self):
+        # sd-encrypt and no key file: family S would write crypttab.initramfs.
+        self.hooks = "base systemd autodetect microcode modconf kms keyboard sd-vconsole block sd-encrypt filesystems fsck"
+        self.files = ""
+        (self.t / "etc/crypttab").write_text("")
+        out = self.adopt()
+        self.assertIn(f"luks: A: {self.why()}", out)
+        self.assertIn("family=A\n", self.rec())
+        self.assertFalse((self.t / "etc/crypttab.initramfs").exists())
+        self.assertEqual((self.t / "etc/crypttab").read_text(), "")
+        self.assertFalse((self.t / "mkinitcpio-calls").exists())
+        # Without GRUB's prompt, the same install is family S, as before
+        # (the fake mkinitcpio makes no image, so its check puts it back).
+        shutil.rmtree(self.t / "etc/backshot1")
+        self.grub_on("/dev/nvme0n1p1")
+        out = self.adopt(rc=1)
+        self.assertIn("family S (initramfs: mkinitcpio)", out)
 
 
 # pe()'s own source, for the fake objcopy.

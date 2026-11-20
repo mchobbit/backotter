@@ -109,6 +109,49 @@ def replay(case, source_dump):
     return E.apply(source_dump, case.get("edits") or [])
 
 
+DISK_GIB = 2   # a tier 1 case's RAM disk (cmp-run.sh --reserve DISK 3): what the sources' own cases peak under
+
+
+def _crypted(d, dev):
+    """Whether DEV sits on a dm-crypt device (LUKS), at any depth."""
+    devs = dumpx.devices(d)
+    return any(((devs.get(n) or {}).get("dm") or {}).get("target") == "crypt" for n in dumpx.holders_down(d, dev["name"]))
+
+
+def itable_growth(case, source_dump):
+    """The bytes of ext2/3/4 inode table the case's restore writes out in full
+    and the source's doesn't: inodes x inode size, past the source's own, of
+    every ext filesystem on dm-crypt.  mke2fs leaves the tables to the
+    kernel's lazy init (ext4lazyinit), which zeroes them after the first
+    mount; on a plain disk or an LV those zeroes are WRITE_ZEROES, which the
+    qcow2 in the RAM disk keeps as zero clusters, but dm-crypt turns them
+    into ciphertext, every byte of it allocated.  (alpine324-luks-4566bc24a61c4490,
+    bs2a-20261120-1136: 1024-byte inodes x 2081920 is 1.99 GiB of table, the
+    source's 0.16, peaked over 3.2 GiB of a 2 GiB reservation in its rebuild;
+    alpine324-uefi's cases with 3.4 GiB of table peaked at 1.4.)"""
+    def tables(d):
+        out = {}
+        for dev, c in dumpx.filesystems(d):
+            if c.get("type") in ("ext2", "ext3", "ext4") and _crypted(d, dev):
+                out[dumpx.locator(d, dev)] = (c.get("inodes") or 0) * (c.get("inode_size") or 0)
+        return out
+    before, after = tables(source_dump), tables(replay(case, source_dump))
+    return sum(max(0, b - before.get(loc, 0)) for loc, b in after.items())
+
+
+def disk_gib(case, source_dump, base=DISK_GIB, ceiling=None):
+    """The RAM disk (GiB, whole) the case's tier 1 reserves: BASE, the room
+    the source's own cases need, and a GiB more for each (part of a) GiB of
+    inode table it writes past the source's (itable_growth); at most CEILING
+    (cmp-run.sh --ceiling's disk: a --reserve over it is refused, and the
+    queue's case would leave no row), never under BASE."""
+    g = itable_growth(case, source_dump)
+    d = base + -(-g // (1 << 30))
+    if ceiling is not None:
+        d = min(d, int(ceiling))
+    return max(base, d)
+
+
 def name_of(case):
     return case.get("name") or f"{source_name(case).replace('run:', 'run-')}-{case_hash(case)}"
 

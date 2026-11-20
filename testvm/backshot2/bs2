@@ -271,6 +271,14 @@ def reuse_env():
     return "".join(f"{v}={shlex.quote(os.environ[v])} " for v in REUSE_VARS if v in os.environ)
 
 
+def reserve_tier1(case):
+    """The start of CASE's tier 1 by hand (replay, soak, the corpus), in ~/backotter-work: as
+    root under a cmp-run.sh --reserve of the RAM disk bs2-host reserve gives it (its inode
+    tables on LUKS: bs2lib/case.py disk_gib) and 3 GiB of memory; the --tier and the rest follow."""
+    return (f"D=$({HOST_BS2} reserve {case}) && {reuse_env()}./cmp-run.sh --reserve \"$D\" 3 "
+            f"sudo -E {HOST_BS2} tier1 {case}")
+
+
 def root(cmd, reserve="2 2", tag="bs2:mac"):
     """CMD as root under a reservation, as m submits it (cmp-run.sh as m)."""
     return f"cd ~/backotter-work && WEAR_TAG={tag} {reuse_env()}./cmp-run.sh --reserve {reserve} sudo -E {cmd}"
@@ -651,7 +659,7 @@ def corpus(plan, tier):
             ssh(h, root(f"{HOST_BS2} tier0-cases {' '.join(fs)} --run {stamp}"))
         else:
             for f in fs:
-                ssh(h, f"cd ~/backotter-work && {reuse_env()}./cmp-run.sh --reserve 2 3 sudo -E {HOST_BS2} tier1 {f} --tier {tier} --run {stamp} --port 2949", check=False)
+                ssh(h, f"cd ~/backotter-work && {reserve_tier1(f)} --tier {tier} --run {stamp} --port 2949", check=False)
 
 
 def assign(sources, hosts=None, have=None):
@@ -751,7 +759,7 @@ def main():
         if w == "replay" and tier == 0:
             ssh(h, root(f"{HOST_BS2} tier0-cases {rp} --run {stamp}"))
         elif w == "replay":
-            ssh(h, f"cd ~/backotter-work && {reuse_env()}./cmp-run.sh --reserve 2 3 sudo -E {HOST_BS2} tier1 {rp} --tier {tier} --run {stamp} --port 2949", check=False)
+            ssh(h, f"cd ~/backotter-work && {reserve_tier1(rp)} --tier {tier} --run {stamp} --port 2949", check=False)
         elif w == "shrink":
             if tier == 0:
                 ssh(h, root(f"{HOST_BS2} shrink {rp} --tier 0"))
@@ -761,7 +769,7 @@ def main():
             n = int(a[2])
             ok = 0
             for i in range(n):
-                r = ssh(h, f"cd ~/backotter-work && {reuse_env()}./cmp-run.sh --reserve 2 3 sudo -E {HOST_BS2} tier1 {rp} --tier 1 --run {stamp} --port 2949", check=False)
+                r = ssh(h, f"cd ~/backotter-work && {reserve_tier1(rp)} --tier 1 --run {stamp} --port 2949", check=False)
                 ok += r.returncode == 0
             print(f"soak: {ok} of {n} passed (N of {n} bounds a race below ~{300 // max(1, n)}% only)")
     else:

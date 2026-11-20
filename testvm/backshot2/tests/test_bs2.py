@@ -610,6 +610,35 @@ class TestSweep(unittest.TestCase):
         self.assertTrue(C.touches_esp({"edits": [], "load_options": ["--removable"]}, uefi))
 
 
+class TestReservation(unittest.TestCase):
+    """A case's RAM disk (case.disk_gib): ext inode tables on LUKS are written out in full."""
+
+    def test_luks_inode_tables_raise_it(self):
+        # alpine324-luks-4566bc24a61c4490's shape: 1024-byte inodes, 4x as many as the source's,
+        # on an LV on LUKS (ubuntu26-luks: ubuntu-vg/ubuntu-lv, 655360 x 256 = 0.16 GiB of table).
+        e = E.build(LUKS, "ext4_geometry", {"fs": "ubuntu-vg/ubuntu-lv", "inode_size": 1024, "inodes_per_group": 26016})
+        c = {"edits": [e]}
+        got = E.apply(LUKS, [e])
+        cc = dumpx.resolve(got, "ubuntu-vg/ubuntu-lv")["content"]
+        grow = cc["inodes"] * 1024 - 655360 * 256
+        self.assertEqual(C.itable_growth(c, LUKS), grow)
+        self.assertGreater(grow, 1 << 30)
+        self.assertEqual(C.disk_gib(c, LUKS), 2 + -(-grow // (1 << 30)))
+        self.assertGreaterEqual(C.disk_gib(c, LUKS), 4)
+        self.assertEqual(C.disk_gib(c, LUKS, ceiling=3.5), 3)   # never past the host's ceiling
+        self.assertEqual(C.disk_gib(c, LUKS, base=6), 6 + -(-grow // (1 << 30)))
+
+    def test_plain_disks_and_smaller_tables_keep_the_base(self):
+        # Off LUKS the zeroes stay zero clusters (alpine324-uefi's 3.4 GiB tables peaked at 1.4 GiB).
+        e = E.build(ALPINE, "ext4_geometry", {"fs": "vda1", "inode_size": 1024})
+        self.assertEqual(C.itable_growth({"edits": [e]}, ALPINE), 0)
+        self.assertEqual(C.disk_gib({"edits": [e]}, ALPINE), 2)
+        # Fewer inodes on LUKS than the source's: nothing past the base.
+        e = E.build(LUKS, "ext4_geometry", {"fs": "ubuntu-vg/ubuntu-lv", "inodes_per_group": 4096})
+        self.assertEqual(C.itable_growth({"edits": [e]}, LUKS), 0)
+        self.assertEqual(C.disk_gib({"edits": [e]}, LUKS), 2)
+        self.assertEqual(C.disk_gib({"edits": []}, LUKS, ceiling=1), 2)   # (and never under the base)
+
 class TestJudgeExpect(unittest.TestCase):
     def judge(self, *args):
         return subprocess.run([sys.executable, JUDGE] + list(args), capture_output=True, text=True)

@@ -1,0 +1,60 @@
+# holt's lint set for RustAudit1 (docs/design/rust-audit.md, RA3, decision
+# D3), as rust-lint.sh's runs pass it: holt has no [lints] table yet, so the
+# flags go on clippy's command line (after --), and [clippy.toml] is written
+# to the run's CLIPPY_CONF_DIR.  RA6 turns this file into holt's own
+# Cargo.toml [lints] and clippy.toml; until then, change the policy here.
+#
+# The default clippy groups are errors under RA3, but run here as warnings
+# (clippy::all, below): a lint error in the lib would stop clippy before the
+# bins and tests that depend on it are read.  rust-lint.sh's summary counts
+# them by group, so "default groups clean" is a count of zero there.
+#
+# Sections: [flags] for every pass over the crate; [parser] added to them
+# for the second pass (clippy --lib, so no test code), whose diagnostics are
+# kept only in the [parser-files] (fnmatch globs, relative to holt/) and only
+# for the [parser] lints: there a panic is a damaged disk crashing a restore.
+
+[flags]
+# rustc
+-W unsafe_op_in_unsafe_fn
+-W unreachable_pub
+-W missing_docs
+-W rust_2018_idioms
+-W unused_qualifications
+# clippy: the default groups (correctness, suspicious, style, complexity, perf)
+-W clippy::all
+# pedantic, read finding by finding, with a short allow-list:
+-W clippy::pedantic
+# must_use_candidate: nearly every getter; noise for a CLI's library
+-A clippy::must_use_candidate
+# module_name_repetitions: probe::luks::LuksHeader and the like read well
+-A clippy::module_name_repetitions
+# similar_names: on-disk field names (s_blocks, s_block) mirror the formats
+-A clippy::similar_names
+# unsafe: each block a SAFETY comment, one unsafe operation per block
+-W clippy::undocumented_unsafe_blocks
+-W clippy::multiple_unsafe_ops_per_block
+
+[parser]
+-W clippy::indexing_slicing
+-W clippy::arithmetic_side_effects
+-W clippy::cast_possible_truncation
+-W clippy::unwrap_used
+
+[parser-files]
+src/probe/*.rs
+src/parttable.rs
+src/luksheader.rs
+src/mdsb.rs
+src/bootcode.rs
+src/bytes.rs
+src/other/bsdlabel.rs
+src/other/geli.rs
+src/other/softraid.rs
+src/other/labelled.rs
+
+[clippy.toml]
+msrv = "1.85"
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true

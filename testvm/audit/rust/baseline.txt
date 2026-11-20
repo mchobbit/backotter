@@ -1,0 +1,160 @@
+# RustAudit1's mechanical baseline (testvm/audit/rust-lint.sh; docs/design/rust-audit.md, RA2): what
+# rustfmt, clippy, rustdoc and the compiler say on BackOtter's own lines only (rust-scope.sh's
+# scope-NAME.txt beside this file), per crate, target and tool.  Written by rust-lint.sh --baseline;
+# the raw and filtered output stay on the Mac that ran it, in BKO_AUDIT_LOCAL/rust/RUN.
+
+run 20261120T200632 on chopin, 2026-11-20 20:06:34 +0100, 965 s on the host
+  holt         c4917fc8ac22; scope: 63495 of 63495 lines ours in 97 files; .rs: 63495 of 63495 in 97 files
+  rustic_core  695d676490ee; scope: 22522 of 54707 lines ours in 89 files; .rs: 20944 of 42858 in 67 files
+  rustic       2c3b2370fec5, built against rustic_core-695d676490ee; scope: 1035 of 14786 lines ours in 28 files; .rs: 444 of 4386 in 15 files
+toolchain 1.94.1: rustc 1.94.1 (e408947bf 2026-03-25); clippy 0.1.94 (e408947bfd 2026-03-25); rustfmt 1.8.0-stable (e408947bfd 2026-03-25)
+  also 1.85.1: rustc 1.85.1 (4eb161250 2025-03-15); no clippy
+  also nightly-2026-10-31: rustc 1.101.0-nightly (92b5b8c87 2026-10-29); clippy 0.1.101 (92b5b8c87c 2026-10-29)
+lints: holt testvm/audit/rust/holt-lints.txt (RA3's set, default groups as warnings); forks upstream's own plus -W clippy::undocumented_unsafe_blocks -W clippy::multiple_unsafe_ops_per_block
+
+crate        target       tool             ours errors upstream untouched outside   (counts on our lines; upstream = upstream lines of files we touched)
+holt         any          fmt              3772      0        0         0       0   hunks; -7454 +38380 lines
+holt         linux        clippy           3123      0        0         0       0
+holt         musl         clippy           3123      0        0         0       0
+holt         aarch64-musl clippy           3123      0        0         0       0
+holt         freebsd      clippy           3120      0        0         0       0
+holt         netbsd       clippy           3120      0        0         0       0
+holt         illumos      clippy           3120      0        0         0       0
+holt         openbsd      clippy           3192      0        0         0       0
+holt         dragonfly    clippy           3192      0        0         0       0
+holt         haiku        clippy           3192      0        0         0       0
+holt         linux        clippy-parser     345      0        0         0       0
+holt         linux        doc                 7      0        0         0       0
+holt         linux        check-1.85.1        0      0        0         0       0
+rustic_core  any          fmt               397      0        2         0       0   hunks; -571 +2122 lines
+rustic_core  linux        clippy            363      0        2         0       0
+rustic_core  freebsd      clippy            268      0        2         0       0
+rustic_core  netbsd       clippy            269      0        2         0       0
+rustic_core  illumos      clippy            253      0        2         0       0
+rustic_core  openbsd      clippy            250      0        4         1       1
+rustic_core  dragonfly    clippy            264      0        4         1       0
+rustic_core  haiku        clippy            246      0        4         1       1
+rustic_core  linux        doc                 2      0        6         4       0
+rustic       any          fmt                 2      0        0         0       0   hunks; -5 +21 lines
+rustic       linux        clippy             19      0        1         0       0
+rustic       linux        doc                 0      0        3         5       0
+
+== holt any fmt: 3772 on our lines
+   files (hunks): src/load/commands.rs 516, src/scenarios.rs 500, src/boot.rs 191, src/load/fit.rs 144, src/report.rs 137, src/redact.rs 107, src/load/target.rs 96, src/load/transactional.rs 92, +89 more
+== holt linux clippy: 3123 on our lines
+   groups: clippy::pedantic 2170, rustc 901, rust_2018_idioms 28, clippy::complexity 15, clippy::style 6, clippy::perf 2, clippy::suspicious 1
+   lints:  clippy::doc_markdown 897, missing_docs 786, clippy::unreadable_literal 333, clippy::cast_possible_truncation 133, clippy::format_push_string 130, clippy::many_single_char_names 108, clippy::cast_lossless 69, clippy::redundant_closure_for_method_calls 69, unreachable_pub 66, clippy::map_unwrap_or 64, +57 more
+   files:  src/scenarios.rs 334, src/load/commands.rs 258, tests/common/mod.rs 121, src/bytes.rs 106, src/report.rs 105, src/boot.rs 98, +89 more
+== holt musl clippy: 3123 on our lines
+   groups: clippy::pedantic 2170, rustc 901, rust_2018_idioms 28, clippy::complexity 15, clippy::style 6, clippy::perf 2, clippy::suspicious 1
+   lints:  clippy::doc_markdown 897, missing_docs 786, clippy::unreadable_literal 333, clippy::cast_possible_truncation 133, clippy::format_push_string 130, clippy::many_single_char_names 108, clippy::cast_lossless 69, clippy::redundant_closure_for_method_calls 69, unreachable_pub 66, clippy::map_unwrap_or 64, +57 more
+   files:  src/scenarios.rs 334, src/load/commands.rs 258, tests/common/mod.rs 121, src/bytes.rs 106, src/report.rs 105, src/boot.rs 98, +89 more
+== holt aarch64-musl clippy: 3123 on our lines
+   groups: clippy::pedantic 2170, rustc 901, rust_2018_idioms 28, clippy::complexity 15, clippy::style 6, clippy::perf 2, clippy::suspicious 1
+   lints:  clippy::doc_markdown 897, missing_docs 786, clippy::unreadable_literal 333, clippy::cast_possible_truncation 133, clippy::format_push_string 130, clippy::many_single_char_names 108, clippy::cast_lossless 69, clippy::redundant_closure_for_method_calls 69, unreachable_pub 66, clippy::map_unwrap_or 64, +57 more
+   files:  src/scenarios.rs 334, src/load/commands.rs 258, tests/common/mod.rs 121, src/bytes.rs 106, src/report.rs 105, src/boot.rs 98, +89 more
+== holt freebsd clippy: 3120 on our lines
+   groups: clippy::pedantic 2167, rustc 901, rust_2018_idioms 28, clippy::complexity 15, clippy::style 6, clippy::perf 2, clippy::suspicious 1
+   lints:  clippy::doc_markdown 895, missing_docs 786, clippy::unreadable_literal 333, clippy::cast_possible_truncation 133, clippy::format_push_string 130, clippy::many_single_char_names 108, clippy::cast_lossless 69, clippy::redundant_closure_for_method_calls 69, unreachable_pub 66, clippy::map_unwrap_or 64, +57 more
+   files:  src/scenarios.rs 334, src/load/commands.rs 258, tests/common/mod.rs 121, src/bytes.rs 106, src/report.rs 105, src/boot.rs 98, +89 more
+== holt netbsd clippy: 3120 on our lines
+   groups: clippy::pedantic 2167, rustc 901, rust_2018_idioms 28, clippy::complexity 15, clippy::style 6, clippy::perf 2, clippy::suspicious 1
+   lints:  clippy::doc_markdown 895, missing_docs 786, clippy::unreadable_literal 333, clippy::cast_possible_truncation 133, clippy::format_push_string 130, clippy::many_single_char_names 108, clippy::cast_lossless 69, clippy::redundant_closure_for_method_calls 69, unreachable_pub 66, clippy::map_unwrap_or 64, +57 more
+   files:  src/scenarios.rs 334, src/load/commands.rs 258, tests/common/mod.rs 121, src/bytes.rs 106, src/report.rs 105, src/boot.rs 98, +89 more
+== holt illumos clippy: 3120 on our lines
+   groups: clippy::pedantic 2167, rustc 901, rust_2018_idioms 28, clippy::complexity 15, clippy::style 6, clippy::perf 2, clippy::suspicious 1
+   lints:  clippy::doc_markdown 895, missing_docs 786, clippy::unreadable_literal 333, clippy::cast_possible_truncation 133, clippy::format_push_string 130, clippy::many_single_char_names 108, clippy::cast_lossless 69, clippy::redundant_closure_for_method_calls 69, unreachable_pub 66, clippy::map_unwrap_or 64, +57 more
+   files:  src/scenarios.rs 334, src/load/commands.rs 258, tests/common/mod.rs 121, src/bytes.rs 106, src/report.rs 105, src/boot.rs 98, +89 more
+== holt openbsd clippy: 3192 on our lines
+   groups: clippy::pedantic 2237, rustc 901, rust_2018_idioms 28, clippy::complexity 17, clippy::style 6, clippy::perf 2, clippy::suspicious 1
+   lints:  clippy::doc_markdown 879, missing_docs 786, clippy::unreadable_literal 333, clippy::cast_possible_truncation 133, clippy::format_push_string 130, clippy::assert_is_empty 111, clippy::many_single_char_names 108, clippy::cast_lossless 69, clippy::redundant_closure_for_method_calls 69, clippy::map_unwrap_or 67, +61 more
+   files:  src/scenarios.rs 318, src/load/commands.rs 258, tests/common/mod.rs 121, src/bytes.rs 106, src/report.rs 106, src/boot.rs 97, +90 more
+== holt dragonfly clippy: 3192 on our lines
+   groups: clippy::pedantic 2237, rustc 901, rust_2018_idioms 28, clippy::complexity 17, clippy::style 6, clippy::perf 2, clippy::suspicious 1
+   lints:  clippy::doc_markdown 879, missing_docs 786, clippy::unreadable_literal 333, clippy::cast_possible_truncation 133, clippy::format_push_string 130, clippy::assert_is_empty 111, clippy::many_single_char_names 108, clippy::cast_lossless 69, clippy::redundant_closure_for_method_calls 69, clippy::map_unwrap_or 67, +61 more
+   files:  src/scenarios.rs 318, src/load/commands.rs 258, tests/common/mod.rs 121, src/bytes.rs 106, src/report.rs 106, src/boot.rs 97, +90 more
+== holt haiku clippy: 3192 on our lines
+   groups: clippy::pedantic 2237, rustc 901, rust_2018_idioms 28, clippy::complexity 17, clippy::style 6, clippy::perf 2, clippy::suspicious 1
+   lints:  clippy::doc_markdown 879, missing_docs 786, clippy::unreadable_literal 333, clippy::cast_possible_truncation 133, clippy::format_push_string 130, clippy::assert_is_empty 111, clippy::many_single_char_names 108, clippy::cast_lossless 69, clippy::redundant_closure_for_method_calls 69, clippy::map_unwrap_or 67, +61 more
+   files:  src/scenarios.rs 318, src/load/commands.rs 258, tests/common/mod.rs 121, src/bytes.rs 106, src/report.rs 106, src/boot.rs 97, +90 more
+== holt linux clippy-parser: 345 on our lines
+   groups: clippy::restriction 314, clippy::pedantic 31
+   lints:  clippy::arithmetic_side_effects 213, clippy::indexing_slicing 99, clippy::cast_possible_truncation 31, clippy::unwrap_used 2
+   files:  src/bytes.rs 66, src/probe/lvm.rs 43, src/probe/zfs.rs 41, src/parttable.rs 38, src/other/softraid.rs 27, src/other/labelled.rs 23, +17 more
+== holt linux doc: 7 on our lines
+   groups: rustdoc 7
+   lints:  rustdoc::invalid_html_tags 5, rustdoc::bare_urls 1, rustdoc::broken_intra_doc_links 1
+   files:  src/boot.rs 4, src/load/mod.rs 1, src/other/softraid.rs 1, src/recovery.rs 1
+== rustic_core any fmt: 397 on our lines
+   files (hunks): crates/core/src/backend/osattrs/linux.rs 67, crates/core/tests/integration/restore.rs 58, crates/core/src/backend/osattrs.rs 40, crates/core/src/commands/restore.rs 36, crates/core/src/backend/osattrs/sparse.rs 30, crates/core/src/backend/local_destination.rs 22, crates/core/src/commands/restore/exact.rs 20, crates/core/src/backend/node/generic_attributes.rs 18, +28 more
+== rustic_core linux clippy: 363 on our lines
+   groups: clippy::pedantic 358, clippy::style 3, clippy::nursery 2
+   lints:  clippy::doc_markdown 353, clippy::unnecessary_wraps 4, clippy::doc_lazy_continuation 2, clippy::collapsible_if 1, clippy::option_if_let_else 1, clippy::too_long_first_doc_paragraph 1, clippy::too_many_lines 1
+   files:  crates/core/src/commands/restore.rs 76, crates/core/src/backend/osattrs.rs 58, crates/core/src/backend/local_destination.rs 53, crates/core/tests/integration/restore.rs 43, crates/core/src/backend/osattrs/linux.rs 21, crates/core/src/backend/ignore.rs 12, +23 more
+== rustic_core freebsd clippy: 268 on our lines
+   groups: clippy::pedantic 259, clippy::style 3, clippy::correctness 2, clippy::nursery 2, clippy::complexity 1, rustc 1
+   lints:  clippy::doc_markdown 251, clippy::unnecessary_wraps 8, clippy::bad_bit_mask 2, clippy::doc_lazy_continuation 2, clippy::collapsible_if 1, clippy::option_if_let_else 1, clippy::too_long_first_doc_paragraph 1, clippy::useless_conversion 1, unused_qualifications 1
+   files:  crates/core/src/commands/restore.rs 72, crates/core/src/backend/osattrs.rs 59, crates/core/src/backend/local_destination.rs 34, crates/core/src/backend/ignore.rs 12, crates/core/src/backend/node/generic_attributes.rs 9, crates/core/src/backend/osattrs/freebsd_acl.rs 8, +20 more
+== rustic_core netbsd clippy: 269 on our lines
+   groups: clippy::pedantic 261, clippy::style 3, clippy::correctness 2, clippy::nursery 2, clippy::complexity 1
+   lints:  clippy::doc_markdown 253, clippy::unnecessary_wraps 8, clippy::bad_bit_mask 2, clippy::doc_lazy_continuation 2, clippy::collapsible_if 1, clippy::option_if_let_else 1, clippy::too_long_first_doc_paragraph 1, clippy::useless_conversion 1
+   files:  crates/core/src/commands/restore.rs 72, crates/core/src/backend/osattrs.rs 60, crates/core/src/backend/local_destination.rs 34, crates/core/src/backend/ignore.rs 12, crates/core/src/backend/node/generic_attributes.rs 9, crates/core/src/backend/osattrs/freebsd_acl.rs 8, +20 more
+== rustic_core illumos clippy: 253 on our lines
+   groups: clippy::pedantic 241, clippy::restriction 4, clippy::style 3, clippy::correctness 2, clippy::nursery 2, clippy::complexity 1
+   lints:  clippy::doc_markdown 233, clippy::unnecessary_wraps 8, clippy::multiple_unsafe_ops_per_block 3, clippy::bad_bit_mask 2, clippy::doc_lazy_continuation 2, clippy::collapsible_if 1, clippy::option_if_let_else 1, clippy::too_long_first_doc_paragraph 1, clippy::undocumented_unsafe_blocks 1, clippy::useless_conversion 1
+   files:  crates/core/src/commands/restore.rs 72, crates/core/src/backend/osattrs.rs 57, crates/core/src/backend/local_destination.rs 21, crates/core/src/backend/osattrs/illumos.rs 13, crates/core/src/backend/ignore.rs 12, crates/core/src/backend/node/generic_attributes.rs 9, +19 more
+== rustic_core openbsd clippy: 250 on our lines
+   groups: clippy::pedantic 238, clippy::style 4, clippy::correctness 2, clippy::nursery 2, unused 2, clippy::complexity 1, clippy::restriction 1
+   lints:  clippy::doc_markdown 226, clippy::unnecessary_wraps 12, clippy::bad_bit_mask 2, clippy::doc_lazy_continuation 2, dead_code 2, clippy::collapsible_if 1, clippy::multiple_unsafe_ops_per_block 1, clippy::option_if_let_else 1, clippy::too_long_first_doc_paragraph 1, clippy::unnecessary_fallible_conversions 1, +1 more
+   files:  crates/core/src/commands/restore.rs 72, crates/core/src/backend/osattrs.rs 58, crates/core/src/backend/local_destination.rs 20, crates/core/src/backend/ignore.rs 12, crates/core/src/backend/node/generic_attributes.rs 9, crates/core/src/backend/osattrs/openbsd.rs 9, +19 more
+== rustic_core dragonfly clippy: 264 on our lines
+   groups: clippy::pedantic 257, clippy::style 3, clippy::correctness 2, clippy::nursery 2
+   lints:  clippy::doc_markdown 246, clippy::unnecessary_wraps 11, clippy::bad_bit_mask 2, clippy::doc_lazy_continuation 2, clippy::collapsible_if 1, clippy::option_if_let_else 1, clippy::too_long_first_doc_paragraph 1
+   files:  crates/core/src/commands/restore.rs 72, crates/core/src/backend/osattrs.rs 59, crates/core/src/backend/local_destination.rs 34, crates/core/src/backend/ignore.rs 12, crates/core/src/backend/node/generic_attributes.rs 9, crates/core/src/backend/osattrs/dragonfly.rs 9, +19 more
+== rustic_core haiku clippy: 246 on our lines
+   groups: clippy::pedantic 236, clippy::style 3, clippy::correctness 2, clippy::nursery 2, clippy::restriction 2, unused 1
+   lints:  clippy::doc_markdown 224, clippy::unnecessary_wraps 12, clippy::bad_bit_mask 2, clippy::doc_lazy_continuation 2, clippy::multiple_unsafe_ops_per_block 2, clippy::collapsible_if 1, clippy::option_if_let_else 1, clippy::too_long_first_doc_paragraph 1, dead_code 1
+   files:  crates/core/src/commands/restore.rs 72, crates/core/src/backend/osattrs.rs 56, crates/core/src/backend/local_destination.rs 21, crates/core/src/backend/ignore.rs 12, crates/core/src/backend/osattrs/haiku.rs 11, crates/core/src/backend/node/generic_attributes.rs 9, +18 more
+== rustic_core linux doc: 2 on our lines
+   groups: rustdoc 2
+   lints:  rustdoc::broken_intra_doc_links 2
+   files:  crates/core/src/archiver/tree.rs 1, crates/core/src/commands/restore/exact.rs 1
+== rustic any fmt: 2 on our lines
+   files (hunks): src/application.rs 1, src/commands/restore.rs 1
+== rustic linux clippy: 19 on our lines
+   groups: clippy::pedantic 19
+   lints:  clippy::doc_markdown 19
+   files:  src/application.rs 10, src/commands/backup.rs 3, src/commands/diff.rs 2, src/config.rs 2, src/config/hooks.rs 1, src/config/logging.rs 1
+
+tests:
+  holt on 1.85.1: 713 passed, 0 failed, 3 ignored (13 test binaries)
+  holt on 1.94.1: 713 passed, 0 failed, 3 ignored (13 test binaries)
+
+steps: crate target tool exit seconds max-RSS-MiB ran-to-its-end
+  holt         any          fmt               1     2    552 yes
+  holt         linux        clippy            0    15    941 yes
+  holt         musl         clippy            0    15    942 yes
+  holt         aarch64-musl clippy            0    16    941 yes
+  holt         freebsd      clippy            0    15    972 yes
+  holt         netbsd       clippy            0    15    968 yes
+  holt         illumos      clippy            0    15    970 yes
+  holt         openbsd      clippy            0    10    992 yes
+  holt         dragonfly    clippy            0    29   1264 yes
+  holt         haiku        clippy            0    28   1264 yes
+  holt         linux        clippy-parser     0     7    587 yes
+  holt         linux        doc               0     0    106 yes
+  holt         linux        check-1.85.1      0     0     43 yes
+  holt         linux        test-1.85.1       0    75   1725 yes
+  holt         linux        test-1.94.1       0    53   1600 yes
+  rustic_core  any          fmt               1     0    181 yes
+  rustic_core  linux        clippy            0   169    921 yes
+  rustic_core  freebsd      clippy            0    77    704 yes
+  rustic_core  netbsd       clippy            0    24    689 yes
+  rustic_core  illumos      clippy            0    24    688 yes
+  rustic_core  openbsd      clippy            0    88   1304 yes
+  rustic_core  dragonfly    clippy            0    36   1309 yes
+  rustic_core  haiku        clippy            0    36   1316 yes
+  rustic_core  linux        doc               0    15    857 yes
+  rustic       any          fmt               1     0    104 yes
+  rustic       linux        clippy            0   176    942 yes
+  rustic       linux        doc               0    15   1040 yes

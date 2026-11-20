@@ -19,6 +19,52 @@ themselves (never into `~/backotter-work/testvm` or `stick`, which belong to
 | `audited-heads` | The last audited commit of each fork, its date and what audit |
 | `stock-baseline.txt` | The baseline's summary: versions, commits, toolchains, step times, counts, stock's own failures by name |
 
+## Rust practice audit (RustAudit1)
+
+The mechanical half of `docs/design/rust-audit.md` (RA0, RA2, and RA9's
+re-run): rustfmt, clippy, rustdoc and the compiler over holt, rustic_core
+and rustic, each tool's output kept only where the line is ours.
+
+| Script | What it does |
+|---|---|
+| `rust-scope.sh [--out DIR] [NAME[=REV] ...]` | Per crate, the lines that are ours, as `PATH START-END` ranges and a per-file count (`rust/scope-NAME.txt`, committed): in the forks, the lines `git blame -w -M -C` gives to a `backotter:` commit in the files the stock tag's diff touches (the upstream fixes cherry-picked onto rustic_core are not ours), files a `backotter:` commit added whole; `vendor/walkdir`, the diff from the crates.io release (fetched, checked against stock rustic's Cargo.lock), and whether the import commit was that release plus marked hunks only; holt, every `.rs` file |
+| `rust-filter.py --scope FILE [--root DIR] ... INPUT ...` | Keeps from cargo's JSON or short diagnostics and `cargo fmt --check`'s hunks only those on our lines, and counts them by lint, lint group (from `clippy-driver -W help`) and file; `--json` for the counts, `--compare OLD NEW` for growth, `--summarize RUNDIR` for a run's summary.  Its tests: `python3 -I test_rust_filter.py` |
+| `rust-lint.sh [--host H] [--targets LIST] [--tests] [--baseline] [--compare OLDRUN] [NAME[=REV] ...]` | The runner: ships the trees (`git archive`; holt's `holt/` alone) and `rust-lint-host.sh` to Chopin, runs it detached under `cmp-run.sh --reserve 2 8`, `WEAR_TAG=audit:rustlint-RUN`, copies the output back and filters it.  Exit 2 if a step didn't run to its end, 1 with `--compare` and a new diagnostic on our lines |
+| `rust-lint-host.sh` | The host part; its header lists every command per crate and target |
+| `rust/holt-lints.txt` | holt's lint set (RA3), passed on clippy's command line until RA6 commits it to holt's `[lints]` and `clippy.toml`; its `[parser]` pass keeps only the restriction lints in the parser modules |
+| `rust/baseline.txt` | The last `--baseline` run's summary: commits, toolchains, per crate, target and tool the counts on our lines, top lints and files, holt's tests, step times and memory |
+
+- **Targets** (`--targets`, default all): `linux`, `musl`, `aarch64-musl`,
+  `freebsd`, `netbsd`, `illumos` with rustup's std (1.94.1); `openbsd`,
+  `dragonfly`, `haiku`, which rustup has no std for, with
+  nightly-2026-10-31's clippy and `-Zbuild-std` (a check build, nothing
+  linked: newer clippy, so a few lints 1.94.1 lacks).  holt gets every
+  target, rustic_core all but the musl two (its lib only, off Linux), rustic
+  linux only.  A cross target's build scripts (zstd-sys's C) compile with the
+  host's `cc` and `ar` (`CC_T`, `AR_T`): NetBSD's and illumos' found no
+  compiler of their own, and a check build never links what they make.
+- **Natively, in the build guests: not built.**  None of the guests' Rust as
+  the builds install it has clippy: OpenBSD's `pkg_add rust` (OpenBSD ships
+  clippy as the separate `rust-clippy` package, which `install_tools` in
+  `stick/openbsd/build-rustic.sh` doesn't add); Haiku's `rust_bin` (whether
+  it carries `cargo-clippy` is not checked); DragonFly has no native build at
+  all (dports' Rust is 1.85.1, too old for rustic; `stick/dragonfly/
+  build-rustic.sh` cross-builds with the same nightly).  A native mode would
+  need clippy added to those guests' build images (`--setup`) and a lint
+  step in `stick/build-rustic-native.sh` and `stick/haiku/build-rustic.sh`,
+  which only build and smoke-test; the nightly check build above reads the
+  same per-OS code from Linux.
+- **On Chopin**, as user m with rustup: the clippy component of
+  nightly-2026-10-31 (added 2026-11-20 for the three targets above).
+- **The run's files**: on the host `~/backotter-work/bko-audit/rustlint/RUN/`
+  (raw), its own target dirs `/bkoscratch/bko-audit/cache/target/lint-NAME`;
+  on the Mac `BKO_AUDIT_LOCAL/rust/RUN/` (`raw/`, `filtered/`, `scope/`,
+  `summary.txt`).  RUN is the start time, `YYYYMMDDTHHMMSS`.
+- **Measured 2026-11-20** on Chopin, every target and `--tests`, caches
+  warm from a probe: 965 s on the host, 17 min in all; the most memory a
+  step took, 1.7 GiB (holt's tests), a clippy 1.3 GiB.  The step table is
+  at the end of `rust/baseline.txt`.
+
 ## Guest tools audit
 
 `guest-tools.sh` lists the tools on each test guest and says what changed

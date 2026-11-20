@@ -1,0 +1,625 @@
+# rust-scope.sh: the lines of rustic_core that are BackOtter's own (RustAudit1, RA0)
+# name=rustic_core commit=695d676490ee1794bdae08f2ba402f12c15663a4 stock=rustic_core-v0.13.0 1030be4568e5f83ddf9a1d5354479adc57dce227 date=2026-11-20 20:24:15 +0100
+# rule: in files stock..commit touches, lines git blame -w -M -C gives to a commit whose subject
+#   starts "backotter:"; files a backotter: commit added, whole; vendor/walkdir: the diff from crates.io
+# upstream commits in stock..commit (not ours): 19
+# PATH START-END, relative to the repository root
+BACKOTTER.md 1-1447
+crates/core/src/backend/node/generic_attributes.rs 1-523
+crates/core/src/backend/osattrs.rs 1-2177
+crates/core/src/backend/osattrs/bsd_flags.rs 1-149
+crates/core/src/backend/osattrs/bsd_held.rs 1-123
+crates/core/src/backend/osattrs/dragonfly.rs 1-128
+crates/core/src/backend/osattrs/freebsd.rs 1-320
+crates/core/src/backend/osattrs/freebsd_acl.rs 1-426
+crates/core/src/backend/osattrs/freebsd_netbsd.rs 1-441
+crates/core/src/backend/osattrs/haiku.rs 1-525
+crates/core/src/backend/osattrs/haiku_attrs.rs 1-821
+crates/core/src/backend/osattrs/illumos.rs 1-1055
+crates/core/src/backend/osattrs/illumos_acl.rs 1-256
+crates/core/src/backend/osattrs/illumos_idmap.rs 1-182
+crates/core/src/backend/osattrs/illumos_project.rs 1-78
+crates/core/src/backend/osattrs/illumos_sysattr.rs 1-476
+crates/core/src/backend/osattrs/illumos_xattrmeta.rs 1-111
+crates/core/src/backend/osattrs/linux.rs 1-2160
+crates/core/src/backend/osattrs/netbsd.rs 1-139
+crates/core/src/backend/osattrs/openbsd.rs 1-148
+crates/core/src/backend/osattrs/other.rs 1-90
+crates/core/src/backend/osattrs/sparse.rs 1-1888
+crates/core/src/commands/restore/exact.rs 1-816
+crates/core/src/commands/restore/files_writer.rs 1-626
+crates/core/tests/integration/merge.rs 1-57
+Cargo.lock 553-553
+Cargo.lock 555-555
+Cargo.lock 921-921
+Cargo.lock 923-923
+Cargo.lock 4308-4308
+Cargo.lock 4339-4339
+Cargo.lock 4402-4402
+Cargo.lock 4404-4404
+Cargo.lock 4467-4467
+Cargo.lock 4469-4469
+Cargo.lock 5035-5035
+Cargo.lock 5488-5488
+Cargo.lock 5934-5934
+Cargo.lock 5936-5936
+Cargo.lock 5943-5943
+Cargo.lock 5945-5945
+Cargo.lock 5952-5952
+Cargo.lock 5954-5954
+Cargo.toml 10-17
+Cargo.toml 82-83
+crates/core/Cargo.toml 3-3
+crates/core/Cargo.toml 112-115
+crates/core/src/archiver.rs 7-7
+crates/core/src/archiver.rs 11-11
+crates/core/src/archiver.rs 20-20
+crates/core/src/archiver.rs 142-146
+crates/core/src/archiver.rs 150-152
+crates/core/src/archiver.rs 165-165
+crates/core/src/archiver.rs 168-169
+crates/core/src/archiver.rs 177-184
+crates/core/src/archiver.rs 200-205
+crates/core/src/archiver.rs 213-213
+crates/core/src/archiver.rs 225-225
+crates/core/src/archiver.rs 238-242
+crates/core/src/archiver.rs 246-246
+crates/core/src/archiver/file_archiver.rs 1-1
+crates/core/src/archiver/file_archiver.rs 21-21
+crates/core/src/archiver/file_archiver.rs 108-112
+crates/core/src/archiver/file_archiver.rs 149-149
+crates/core/src/archiver/file_archiver.rs 157-157
+crates/core/src/archiver/file_archiver.rs 173-176
+crates/core/src/archiver/file_archiver.rs 193-229
+crates/core/src/archiver/parent.rs 35-38
+crates/core/src/archiver/parent.rs 100-100
+crates/core/src/archiver/parent.rs 110-110
+crates/core/src/archiver/parent.rs 122-122
+crates/core/src/archiver/parent.rs 126-132
+crates/core/src/archiver/parent.rs 237-237
+crates/core/src/archiver/parent.rs 247-247
+crates/core/src/archiver/parent.rs 252-252
+crates/core/src/archiver/parent.rs 319-322
+crates/core/src/archiver/parent.rs 366-366
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex.snap 28-30
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex.snap 58-60
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex.snap 88-90
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex.snap 119-121
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex.snap 152-154
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_relative.snap 28-30
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_relative.snap 58-60
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_relative.snap 88-90
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_relative.snap 119-121
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_relative.snap 152-154
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_root.snap 28-30
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_root.snap 58-60
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_root.snap 88-90
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_root.snap 119-121
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_root.snap 152-154
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple.snap 26-28
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple.snap 56-58
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple.snap 86-88
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple_relative.snap 26-28
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple_relative.snap 56-58
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple_relative.snap 86-88
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple_root.snap 26-28
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple_root.snap 56-58
+crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple_root.snap 86-88
+crates/core/src/archiver/tree.rs 3-3
+crates/core/src/archiver/tree.rs 20-21
+crates/core/src/archiver/tree.rs 28-30
+crates/core/src/archiver/tree.rs 37-51
+crates/core/src/archiver/tree.rs 57-57
+crates/core/src/archiver/tree.rs 97-97
+crates/core/src/archiver/tree.rs 100-100
+crates/core/src/archiver/tree.rs 123-127
+crates/core/src/archiver/tree.rs 133-134
+crates/core/src/archiver/tree.rs 190-199
+crates/core/src/archiver/tree.rs 205-231
+crates/core/src/backend.rs 10-10
+crates/core/src/backend.rs 14-19
+crates/core/src/backend.rs 574-588
+crates/core/src/backend/decrypt.rs 3-3
+crates/core/src/backend/decrypt.rs 78-78
+crates/core/src/backend/decrypt.rs 692-841
+crates/core/src/backend/ignore.rs 8-11
+crates/core/src/backend/ignore.rs 17-19
+crates/core/src/backend/ignore.rs 27-27
+crates/core/src/backend/ignore.rs 60-77
+crates/core/src/backend/ignore.rs 85-86
+crates/core/src/backend/ignore.rs 212-212
+crates/core/src/backend/ignore.rs 220-220
+crates/core/src/backend/ignore.rs 241-245
+crates/core/src/backend/ignore.rs 251-264
+crates/core/src/backend/ignore.rs 267-269
+crates/core/src/backend/ignore.rs 281-283
+crates/core/src/backend/ignore.rs 290-291
+crates/core/src/backend/ignore.rs 295-315
+crates/core/src/backend/ignore.rs 350-350
+crates/core/src/backend/ignore.rs 353-401
+crates/core/src/backend/ignore.rs 404-428
+crates/core/src/backend/ignore.rs 436-438
+crates/core/src/backend/ignore.rs 445-461
+crates/core/src/backend/ignore.rs 463-471
+crates/core/src/backend/ignore.rs 475-483
+crates/core/src/backend/ignore.rs 490-494
+crates/core/src/backend/ignore.rs 496-498
+crates/core/src/backend/ignore.rs 506-510
+crates/core/src/backend/ignore.rs 513-666
+crates/core/src/backend/ignore/mapper.rs 13-15
+crates/core/src/backend/ignore/mapper.rs 18-18
+crates/core/src/backend/ignore/mapper.rs 20-21
+crates/core/src/backend/ignore/mapper.rs 47-49
+crates/core/src/backend/ignore/mapper.rs 88-93
+crates/core/src/backend/ignore/mapper.rs 98-103
+crates/core/src/backend/ignore/mapper.rs 111-113
+crates/core/src/backend/ignore/mapper.rs 115-116
+crates/core/src/backend/ignore/mapper.rs 120-141
+crates/core/src/backend/ignore/mapper.rs 146-146
+crates/core/src/backend/ignore/mapper.rs 148-148
+crates/core/src/backend/ignore/mapper.rs 154-154
+crates/core/src/backend/ignore/mapper.rs 159-177
+crates/core/src/backend/ignore/mapper.rs 179-179
+crates/core/src/backend/ignore/mapper.rs 194-195
+crates/core/src/backend/ignore/mapper.rs 198-209
+crates/core/src/backend/ignore/mapper.rs 212-229
+crates/core/src/backend/ignore/mapper.rs 234-235
+crates/core/src/backend/ignore/mapper.rs 255-266
+crates/core/src/backend/ignore/mapper.rs 299-309
+crates/core/src/backend/ignore/mapper.rs 312-314
+crates/core/src/backend/ignore/mapper.rs 324-365
+crates/core/src/backend/ignore/mapper.rs 368-391
+crates/core/src/backend/ignore/mapper.rs 395-396
+crates/core/src/backend/ignore/mapper.rs 429-429
+crates/core/src/backend/ignore/mapper.rs 442-443
+crates/core/src/backend/ignore/mapper.rs 450-572
+crates/core/src/backend/ignore/mapper/nix_mapper.rs 46-47
+crates/core/src/backend/ignore/mapper/nix_mapper.rs 112-116
+crates/core/src/backend/ignore/mapper/nix_mapper.rs 137-139
+crates/core/src/backend/ignore/mapper/nix_mapper.rs 150-177
+crates/core/src/backend/local_destination.rs 6-6
+crates/core/src/backend/local_destination.rs 12-12
+crates/core/src/backend/local_destination.rs 29-29
+crates/core/src/backend/local_destination.rs 44-48
+crates/core/src/backend/local_destination.rs 51-53
+crates/core/src/backend/local_destination.rs 59-59
+crates/core/src/backend/local_destination.rs 62-64
+crates/core/src/backend/local_destination.rs 82-83
+crates/core/src/backend/local_destination.rs 102-104
+crates/core/src/backend/local_destination.rs 106-106
+crates/core/src/backend/local_destination.rs 108-109
+crates/core/src/backend/local_destination.rs 112-112
+crates/core/src/backend/local_destination.rs 153-155
+crates/core/src/backend/local_destination.rs 159-171
+crates/core/src/backend/local_destination.rs 214-214
+crates/core/src/backend/local_destination.rs 256-271
+crates/core/src/backend/local_destination.rs 285-287
+crates/core/src/backend/local_destination.rs 308-310
+crates/core/src/backend/local_destination.rs 329-331
+crates/core/src/backend/local_destination.rs 351-351
+crates/core/src/backend/local_destination.rs 354-358
+crates/core/src/backend/local_destination.rs 362-363
+crates/core/src/backend/local_destination.rs 410-410
+crates/core/src/backend/local_destination.rs 463-463
+crates/core/src/backend/local_destination.rs 473-519
+crates/core/src/backend/local_destination.rs 537-537
+crates/core/src/backend/local_destination.rs 549-550
+crates/core/src/backend/local_destination.rs 560-560
+crates/core/src/backend/local_destination.rs 566-566
+crates/core/src/backend/local_destination.rs 568-574
+crates/core/src/backend/local_destination.rs 600-600
+crates/core/src/backend/local_destination.rs 605-608
+crates/core/src/backend/local_destination.rs 612-613
+crates/core/src/backend/local_destination.rs 615-625
+crates/core/src/backend/local_destination.rs 630-630
+crates/core/src/backend/local_destination.rs 632-636
+crates/core/src/backend/local_destination.rs 643-645
+crates/core/src/backend/local_destination.rs 649-652
+crates/core/src/backend/local_destination.rs 657-657
+crates/core/src/backend/local_destination.rs 662-662
+crates/core/src/backend/local_destination.rs 664-670
+crates/core/src/backend/local_destination.rs 674-675
+crates/core/src/backend/local_destination.rs 677-685
+crates/core/src/backend/local_destination.rs 694-694
+crates/core/src/backend/local_destination.rs 707-716
+crates/core/src/backend/local_destination.rs 721-725
+crates/core/src/backend/local_destination.rs 731-731
+crates/core/src/backend/local_destination.rs 733-733
+crates/core/src/backend/local_destination.rs 737-737
+crates/core/src/backend/local_destination.rs 739-748
+crates/core/src/backend/local_destination.rs 753-757
+crates/core/src/backend/local_destination.rs 762-762
+crates/core/src/backend/local_destination.rs 808-810
+crates/core/src/backend/local_destination.rs 827-828
+crates/core/src/backend/local_destination.rs 832-833
+crates/core/src/backend/local_destination.rs 841-843
+crates/core/src/backend/local_destination.rs 860-861
+crates/core/src/backend/local_destination.rs 865-866
+crates/core/src/backend/local_destination.rs 874-876
+crates/core/src/backend/local_destination.rs 922-923
+crates/core/src/backend/local_destination.rs 925-925
+crates/core/src/backend/local_destination.rs 956-956
+crates/core/src/backend/local_destination.rs 961-961
+crates/core/src/backend/local_destination.rs 969-969
+crates/core/src/backend/local_destination.rs 973-973
+crates/core/src/backend/local_destination.rs 983-990
+crates/core/src/backend/local_destination.rs 993-1001
+crates/core/src/backend/local_destination.rs 1003-1004
+crates/core/src/backend/local_destination.rs 1008-1012
+crates/core/src/backend/local_destination.rs 1014-1017
+crates/core/src/backend/local_destination.rs 1031-1031
+crates/core/src/backend/local_destination.rs 1033-1035
+crates/core/src/backend/local_destination.rs 1046-1049
+crates/core/src/backend/local_destination.rs 1064-1140
+crates/core/src/backend/local_destination.rs 1142-1152
+crates/core/src/backend/local_destination.rs 1154-1160
+crates/core/src/backend/local_destination.rs 1162-1162
+crates/core/src/backend/local_destination.rs 1164-1186
+crates/core/src/backend/local_destination.rs 1188-1203
+crates/core/src/backend/local_destination.rs 1206-1220
+crates/core/src/backend/local_destination.rs 1225-1225
+crates/core/src/backend/local_destination.rs 1229-1243
+crates/core/src/backend/local_destination.rs 1246-1246
+crates/core/src/backend/local_destination.rs 1248-1368
+crates/core/src/backend/local_destination.rs 1393-1887
+crates/core/src/backend/local_destination.rs 1966-1967
+crates/core/src/backend/node.rs 1-1
+crates/core/src/backend/node.rs 25-25
+crates/core/src/backend/node.rs 147-150
+crates/core/src/backend/node.rs 157-160
+crates/core/src/backend/node.rs 255-259
+crates/core/src/backend/node.rs 289-292
+crates/core/src/backend/node.rs 653-704
+crates/core/src/backend/node/modification.rs 108-110
+crates/core/src/backend/node/modification.rs 170-172
+crates/core/src/backend/node/modification.rs 176-198
+crates/core/src/blob/tree.rs 8-8
+crates/core/src/blob/tree.rs 479-484
+crates/core/src/blob/tree.rs 492-492
+crates/core/src/blob/tree.rs 518-526
+crates/core/src/blob/tree.rs 542-543
+crates/core/src/blob/tree.rs 555-555
+crates/core/src/blob/tree.rs 574-576
+crates/core/src/blob/tree.rs 600-607
+crates/core/src/blob/tree.rs 620-622
+crates/core/src/blob/tree.rs 626-628
+crates/core/src/blob/tree.rs 640-644
+crates/core/src/blob/tree.rs 647-647
+crates/core/src/blob/tree.rs 650-650
+crates/core/src/blob/tree.rs 653-658
+crates/core/src/blob/tree.rs 662-662
+crates/core/src/chunker.rs 1-1
+crates/core/src/chunker.rs 29-29
+crates/core/src/chunker.rs 49-67
+crates/core/src/chunker.rs 78-118
+crates/core/src/chunker/rabin.rs 149-156
+crates/core/src/chunker/rabin.rs 391-443
+crates/core/src/commands/backup.rs 4-4
+crates/core/src/commands/backup.rs 19-20
+crates/core/src/commands/backup.rs 292-303
+crates/core/src/commands/backup.rs 309-309
+crates/core/src/commands/merge.rs 16-16
+crates/core/src/commands/merge.rs 21-36
+crates/core/src/commands/merge.rs 56-61
+crates/core/src/commands/merge.rs 169-188
+crates/core/src/commands/restore.rs 9-15
+crates/core/src/commands/restore.rs 25-27
+crates/core/src/commands/restore.rs 31-31
+crates/core/src/commands/restore.rs 35-39
+crates/core/src/commands/restore.rs 43-52
+crates/core/src/commands/restore.rs 73-73
+crates/core/src/commands/restore.rs 77-84
+crates/core/src/commands/restore.rs 87-90
+crates/core/src/commands/restore.rs 97-99
+crates/core/src/commands/restore.rs 101-105
+crates/core/src/commands/restore.rs 108-272
+crates/core/src/commands/restore.rs 275-346
+crates/core/src/commands/restore.rs 350-350
+crates/core/src/commands/restore.rs 353-353
+crates/core/src/commands/restore.rs 381-386
+crates/core/src/commands/restore.rs 391-446
+crates/core/src/commands/restore.rs 473-476
+crates/core/src/commands/restore.rs 483-483
+crates/core/src/commands/restore.rs 485-485
+crates/core/src/commands/restore.rs 490-490
+crates/core/src/commands/restore.rs 496-503
+crates/core/src/commands/restore.rs 506-509
+crates/core/src/commands/restore.rs 511-516
+crates/core/src/commands/restore.rs 545-546
+crates/core/src/commands/restore.rs 558-577
+crates/core/src/commands/restore.rs 579-600
+crates/core/src/commands/restore.rs 607-616
+crates/core/src/commands/restore.rs 622-625
+crates/core/src/commands/restore.rs 653-653
+crates/core/src/commands/restore.rs 666-702
+crates/core/src/commands/restore.rs 704-709
+crates/core/src/commands/restore.rs 713-715
+crates/core/src/commands/restore.rs 731-817
+crates/core/src/commands/restore.rs 819-823
+crates/core/src/commands/restore.rs 825-866
+crates/core/src/commands/restore.rs 868-872
+crates/core/src/commands/restore.rs 876-876
+crates/core/src/commands/restore.rs 880-885
+crates/core/src/commands/restore.rs 887-937
+crates/core/src/commands/restore.rs 940-958
+crates/core/src/commands/restore.rs 964-994
+crates/core/src/commands/restore.rs 999-999
+crates/core/src/commands/restore.rs 1009-1014
+crates/core/src/commands/restore.rs 1016-1018
+crates/core/src/commands/restore.rs 1023-1025
+crates/core/src/commands/restore.rs 1030-1047
+crates/core/src/commands/restore.rs 1050-1077
+crates/core/src/commands/restore.rs 1080-1097
+crates/core/src/commands/restore.rs 1100-1100
+crates/core/src/commands/restore.rs 1130-1139
+crates/core/src/commands/restore.rs 1141-1146
+crates/core/src/commands/restore.rs 1149-1149
+crates/core/src/commands/restore.rs 1152-1158
+crates/core/src/commands/restore.rs 1162-1162
+crates/core/src/commands/restore.rs 1178-1222
+crates/core/src/commands/restore.rs 1227-1230
+crates/core/src/commands/restore.rs 1237-1239
+crates/core/src/commands/restore.rs 1241-1251
+crates/core/src/commands/restore.rs 1263-1267
+crates/core/src/commands/restore.rs 1272-1273
+crates/core/src/commands/restore.rs 1276-1349
+crates/core/src/commands/restore.rs 1351-1368
+crates/core/src/commands/restore.rs 1373-1376
+crates/core/src/commands/restore.rs 1380-1385
+crates/core/src/commands/restore.rs 1392-1399
+crates/core/src/commands/restore.rs 1403-1406
+crates/core/src/commands/restore.rs 1417-1417
+crates/core/src/commands/restore.rs 1422-1422
+crates/core/src/commands/restore.rs 1428-1431
+crates/core/src/commands/restore.rs 1436-1454
+crates/core/src/commands/restore.rs 1456-1474
+crates/core/src/commands/restore.rs 1476-1476
+crates/core/src/commands/restore.rs 1479-1501
+crates/core/src/commands/restore.rs 1503-1628
+crates/core/src/commands/restore.rs 1652-1658
+crates/core/src/commands/restore.rs 1660-1660
+crates/core/src/commands/restore.rs 1665-1667
+crates/core/src/commands/restore.rs 1669-1682
+crates/core/src/commands/restore.rs 1688-1704
+crates/core/src/commands/restore.rs 1706-1707
+crates/core/src/commands/restore.rs 1709-1709
+crates/core/src/commands/restore.rs 1711-1721
+crates/core/src/commands/restore.rs 1723-1723
+crates/core/src/commands/restore.rs 1726-1726
+crates/core/src/commands/restore.rs 1728-1762
+crates/core/src/commands/restore.rs 1765-1824
+crates/core/src/commands/restore.rs 1867-1874
+crates/core/src/commands/restore.rs 1881-1881
+crates/core/src/commands/restore.rs 1884-1884
+crates/core/src/commands/restore.rs 1887-1893
+crates/core/src/commands/restore.rs 1895-1915
+crates/core/src/commands/restore.rs 1920-1922
+crates/core/src/commands/restore.rs 1925-1925
+crates/core/src/commands/restore.rs 1966-1967
+crates/core/src/commands/restore.rs 1981-1981
+crates/core/src/commands/restore.rs 1984-1995
+crates/core/src/commands/restore.rs 2000-2008
+crates/core/src/commands/restore.rs 2010-2017
+crates/core/src/commands/restore.rs 2042-2046
+crates/core/src/commands/restore.rs 2049-2049
+crates/core/src/commands/restore.rs 2051-2056
+crates/core/src/commands/restore.rs 2068-2069
+crates/core/src/commands/restore.rs 2072-2541
+crates/core/src/commands/restore.rs 2549-2552
+crates/core/src/commands/restore.rs 2559-2560
+crates/core/src/commands/restore.rs 2565-2575
+crates/core/src/commands/restore.rs 2580-2581
+crates/core/src/commands/restore.rs 2599-2630
+crates/core/src/commands/restore.rs 2639-2645
+crates/core/src/commands/restore.rs 2649-2650
+crates/core/src/commands/restore.rs 2657-2657
+crates/core/src/commands/restore.rs 2676-2676
+crates/core/src/commands/restore.rs 2702-2702
+crates/core/src/commands/restore.rs 2708-2708
+crates/core/src/commands/restore.rs 2717-2729
+crates/core/src/commands/restore.rs 2731-2733
+crates/core/src/commands/restore.rs 2735-2737
+crates/core/src/commands/restore.rs 2739-2739
+crates/core/src/commands/restore.rs 2749-2750
+crates/core/src/commands/restore.rs 2752-2753
+crates/core/src/commands/restore.rs 2755-2755
+crates/core/src/commands/restore.rs 2773-3312
+crates/core/src/lib.rs 164-167
+crates/core/src/repofile.rs 7-7
+crates/core/src/repofile.rs 137-148
+crates/core/src/repofile.rs 181-202
+crates/core/src/repofile/snapshotfile.rs 250-256
+crates/core/src/repofile/snapshotfile.rs 285-285
+crates/core/src/repository.rs 53-56
+crates/core/src/repository.rs 1595-1599
+crates/core/src/repository.rs 1610-1617
+crates/core/src/repository.rs 1624-1625
+crates/core/src/repository.rs 1821-1824
+crates/core/src/repository.rs 1847-1891
+crates/core/src/repository.rs 1978-2020
+crates/core/tests/integration.rs 36-36
+crates/core/tests/integration.rs 64-65
+crates/core/tests/integration/backup.rs 18-19
+crates/core/tests/integration/backup.rs 249-250
+crates/core/tests/integration/backup.rs 312-330
+crates/core/tests/integration/backup.rs 334-339
+crates/core/tests/integration/backup.rs 341-364
+crates/core/tests/integration/backup.rs 366-385
+crates/core/tests/integration/backup.rs 389-403
+crates/core/tests/integration/backup.rs 405-410
+crates/core/tests/integration/backup.rs 412-415
+crates/core/tests/integration/ls.rs 9-9
+crates/core/tests/integration/ls.rs 71-77
+crates/core/tests/integration/ls.rs 80-80
+crates/core/tests/integration/ls.rs 93-115
+crates/core/tests/integration/restore.rs 4-9
+crates/core/tests/integration/restore.rs 17-18
+crates/core/tests/integration/restore.rs 51-51
+crates/core/tests/integration/restore.rs 72-72
+crates/core/tests/integration/restore.rs 77-80
+crates/core/tests/integration/restore.rs 82-86
+crates/core/tests/integration/restore.rs 93-93
+crates/core/tests/integration/restore.rs 96-106
+crates/core/tests/integration/restore.rs 108-118
+crates/core/tests/integration/restore.rs 122-221
+crates/core/tests/integration/restore.rs 223-224
+crates/core/tests/integration/restore.rs 229-291
+crates/core/tests/integration/restore.rs 293-304
+crates/core/tests/integration/restore.rs 306-322
+crates/core/tests/integration/restore.rs 324-352
+crates/core/tests/integration/restore.rs 354-357
+crates/core/tests/integration/restore.rs 360-377
+crates/core/tests/integration/restore.rs 379-389
+crates/core/tests/integration/restore.rs 391-429
+crates/core/tests/integration/restore.rs 432-442
+crates/core/tests/integration/restore.rs 444-445
+crates/core/tests/integration/restore.rs 447-453
+crates/core/tests/integration/restore.rs 455-460
+crates/core/tests/integration/restore.rs 462-486
+crates/core/tests/integration/restore.rs 488-489
+crates/core/tests/integration/restore.rs 493-495
+crates/core/tests/integration/restore.rs 497-590
+crates/core/tests/integration/restore.rs 592-671
+crates/core/tests/integration/restore.rs 673-757
+crates/core/tests/integration/restore.rs 759-759
+crates/core/tests/integration/restore.rs 761-810
+crates/core/tests/integration/restore.rs 812-826
+crates/core/tests/integration/restore.rs 828-1259
+crates/core/tests/integration/restore.rs 1261-1400
+crates/core/tests/integration/restore.rs 1402-1404
+crates/core/tests/integration/restore.rs 1407-1446
+crates/core/tests/snapshots/integration__backup-tar-matching-snaps-nix.snap 29-29
+crates/core/tests/snapshots/integration__backup-tar-summary-second-nix.snap 24-24
+crates/core/tests/snapshots/integration__backup-tar-summary-third-nix.snap 27-27
+crates/core/tests/snapshots/integration__dryrun-tar-summary-second-nix.snap 24-24
+vendor/walkdir/Cargo.toml 42-46
+vendor/walkdir/README.md 3-19
+vendor/walkdir/src/dent.rs 51-57
+vendor/walkdir/src/dent.rs 149-155
+vendor/walkdir/src/dent.rs 157-157
+vendor/walkdir/src/dent.rs 159-159
+vendor/walkdir/src/dent.rs 198-210
+vendor/walkdir/src/dent.rs 226-244
+vendor/walkdir/src/dent.rs 260-260
+vendor/walkdir/src/dent.rs 305-306
+vendor/walkdir/src/dent.rs 308-308
+vendor/walkdir/src/dent.rs 311-311
+vendor/walkdir/src/dent.rs 320-320
+vendor/walkdir/src/dent.rs 346-385
+vendor/walkdir/src/dent.rs 406-406
+vendor/walkdir/src/lib.rs 114-118
+vendor/walkdir/src/lib.rs 131-132
+vendor/walkdir/src/lib.rs 136-140
+vendor/walkdir/src/lib.rs 658-659
+vendor/walkdir/src/lib.rs 860-862
+vendor/walkdir/src/lib.rs 864-866
+vendor/walkdir/src/lib.rs 885-886
+vendor/walkdir/src/lib.rs 928-929
+vendor/walkdir/src/lib.rs 994-995
+vendor/walkdir/src/longpath.rs 1-261
+vendor/walkdir/src/noatime.rs 1-167
+vendor/walkdir/src/tests/recursive.rs 1092-1129
+vendor/walkdir/src/util.rs 8-9
+# per file: lines OURS TOTAL HOW PATH (HOW: added = a file a backotter: commit added, whole;
+#   blame = git blame; walkdir = the diff from crates.io; whole = holt)
+# lines   1447   1447 added BACKOTTER.md
+# lines    523    523 added crates/core/src/backend/node/generic_attributes.rs
+# lines   2177   2177 added crates/core/src/backend/osattrs.rs
+# lines    149    149 added crates/core/src/backend/osattrs/bsd_flags.rs
+# lines    123    123 added crates/core/src/backend/osattrs/bsd_held.rs
+# lines    128    128 added crates/core/src/backend/osattrs/dragonfly.rs
+# lines    320    320 added crates/core/src/backend/osattrs/freebsd.rs
+# lines    426    426 added crates/core/src/backend/osattrs/freebsd_acl.rs
+# lines    441    441 added crates/core/src/backend/osattrs/freebsd_netbsd.rs
+# lines    525    525 added crates/core/src/backend/osattrs/haiku.rs
+# lines    821    821 added crates/core/src/backend/osattrs/haiku_attrs.rs
+# lines   1055   1055 added crates/core/src/backend/osattrs/illumos.rs
+# lines    256    256 added crates/core/src/backend/osattrs/illumos_acl.rs
+# lines    182    182 added crates/core/src/backend/osattrs/illumos_idmap.rs
+# lines     78     78 added crates/core/src/backend/osattrs/illumos_project.rs
+# lines    476    476 added crates/core/src/backend/osattrs/illumos_sysattr.rs
+# lines    111    111 added crates/core/src/backend/osattrs/illumos_xattrmeta.rs
+# lines   2160   2160 added crates/core/src/backend/osattrs/linux.rs
+# lines    139    139 added crates/core/src/backend/osattrs/netbsd.rs
+# lines    148    148 added crates/core/src/backend/osattrs/openbsd.rs
+# lines     90     90 added crates/core/src/backend/osattrs/other.rs
+# lines   1888   1888 added crates/core/src/backend/osattrs/sparse.rs
+# lines    816    816 added crates/core/src/commands/restore/exact.rs
+# lines    626    626 added crates/core/src/commands/restore/files_writer.rs
+# lines     57     57 added crates/core/tests/integration/merge.rs
+# lines     18   5958 blame Cargo.lock
+# lines     10    140 blame Cargo.toml
+# lines      0    675 blame crates/backend/src/local.rs
+# lines      0    790 blame crates/backend/src/opendal.rs
+# lines      5    137 blame crates/core/Cargo.toml
+# lines     36    262 blame crates/core/src/archiver.rs
+# lines     50    229 blame crates/core/src/archiver/file_archiver.rs
+# lines     22    373 blame crates/core/src/archiver/parent.rs
+# lines     15    163 blame crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex.snap
+# lines     15    163 blame crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_relative.snap
+# lines     15    163 blame crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_root.snap
+# lines      9     99 blame crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple.snap
+# lines      9     99 blame crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple_relative.snap
+# lines      9     99 blame crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple_root.snap
+# lines     68    238 blame crates/core/src/archiver/tree.rs
+# lines     22    632 blame crates/core/src/backend.rs
+# lines      0    660 blame crates/core/src/backend/cache.rs
+# lines    152    921 blame crates/core/src/backend/decrypt.rs
+# lines    358    666 blame crates/core/src/backend/ignore.rs
+# lines    325    572 blame crates/core/src/backend/ignore/mapper.rs
+# lines     38    177 blame crates/core/src/backend/ignore/mapper/nix_mapper.rs
+# lines   1066   1973 blame crates/core/src/backend/local_destination.rs
+# lines     71    705 blame crates/core/src/backend/node.rs
+# lines     29    198 blame crates/core/src/backend/node/modification.rs
+# lines      0    297 blame crates/core/src/blob.rs
+# lines      0   1180 blame crates/core/src/blob/packer.rs
+# lines     51   1084 blame crates/core/src/blob/tree.rs
+# lines     62    118 blame crates/core/src/chunker.rs
+# lines     61    444 blame crates/core/src/chunker/rabin.rs
+# lines     16    373 blame crates/core/src/commands/backup.rs
+# lines      0    957 blame crates/core/src/commands/forget.rs
+# lines     43    188 blame crates/core/src/commands/merge.rs
+# lines      0   1674 blame crates/core/src/commands/prune.rs
+# lines      0    270 blame crates/core/src/commands/repair/snapshots.rs
+# lines   2546   3312 blame crates/core/src/commands/restore.rs
+# lines      4    186 blame crates/core/src/lib.rs
+# lines     35    202 blame crates/core/src/repofile.rs
+# lines      0    451 blame crates/core/src/repofile/keyfile.rs
+# lines      8   1618 blame crates/core/src/repofile/snapshotfile.rs
+# lines    111   2020 blame crates/core/src/repository.rs
+# lines      3    247 blame crates/core/tests/integration.rs
+# lines     98    415 blame crates/core/tests/integration/backup.rs
+# lines      0    139 blame crates/core/tests/integration/hotcold.rs
+# lines     32    115 blame crates/core/tests/integration/ls.rs
+# lines   1333   1446 blame crates/core/tests/integration/restore.rs
+# lines      0     95 blame crates/core/tests/keys.rs
+# lines      0    150 blame crates/core/tests/snapshots/integration__backup-tar-groups-nix.snap
+# lines      1     51 blame crates/core/tests/snapshots/integration__backup-tar-matching-snaps-nix.snap
+# lines      1     45 blame crates/core/tests/snapshots/integration__backup-tar-summary-second-nix.snap
+# lines      1     48 blame crates/core/tests/snapshots/integration__backup-tar-summary-third-nix.snap
+# lines      0     77 blame crates/core/tests/snapshots/integration__backup-tar-tree-nix.snap
+# lines      1     44 blame crates/core/tests/snapshots/integration__dryrun-tar-summary-second-nix.snap
+# lines      0     77 blame crates/core/tests/snapshots/integration__dryrun-tar-tree-nix.snap
+# lines      0   1392 blame crates/core/tests/snapshots/integration__ls-nix.snap
+# lines      0   1212 blame crates/core/tests/snapshots/integration__rewrite-nodes-nix.snap
+# lines      0     75 blame crates/core/tests/snapshots/integration__vfs-nix.snap
+# lines      5     54 walkdir vendor/walkdir/Cargo.toml
+# lines     17    156 walkdir vendor/walkdir/README.md
+# lines     95    442 walkdir vendor/walkdir/src/dent.rs
+# lines     26   1215 walkdir vendor/walkdir/src/lib.rs
+# lines    261    261 walkdir vendor/walkdir/src/longpath.rs
+# lines    167    167 walkdir vendor/walkdir/src/noatime.rs
+# lines     38   1130 walkdir vendor/walkdir/src/tests/recursive.rs
+# lines      2     26 walkdir vendor/walkdir/src/util.rs
+# total: 22522 of 54707 lines ours in 89 files; .rs: 20944 of 42858 in 67 files
+# walkdir: vendor/walkdir against crates.io walkdir-2.5.0 (sha256 29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b, as stock rustic's Cargo.lock)
+# walkdir import 06f4d9c1724f (backotter: vendor walkdir 2.5.0, listing directories without changing their atimes) against the release:
+#   dropped: .cargo_vcs_info.json (in the .crate, not in the import)
+#   dropped: .github/workflows/ci.yml (in the .crate, not in the import)
+#   dropped: Cargo.toml.orig (in the .crate, not in the import)
+#   changed: Cargo.toml, 1 hunks (diff -U3), 0 without a BackOtter mark in them
+#   changed: README.md, 1 hunks (diff -U3), 0 without a BackOtter mark in them
+#   changed: src/dent.rs, 2 hunks (diff -U3), 0 without a BackOtter mark in them
+#   changed: src/lib.rs, 3 hunks (diff -U3), 1 without a BackOtter mark in them
+#   added: src/noatime.rs (165 lines)
+# walkdir import verdict: the release plus our changes, but with hunks that carry no BackOtter mark: read them (RA4 R8)

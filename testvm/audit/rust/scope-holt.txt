@@ -1,0 +1,201 @@
+# rust-scope.sh: the lines of holt (bko-holt) that are BackOtter's own: all of them (RustAudit1, RA0)
+# name=holt commit=c4917fc8ac22c983f1697cb1d541ee95bab6a08e stock=none date=2026-11-20 20:04:10 +0100
+# rule: every .rs file under holt/ at c4917fc8ac22c983f1697cb1d541ee95bab6a08e, whole; paths relative to holt/
+# PATH START-END
+src/abroot.rs 1-674
+src/arch.rs 1-669
+src/bin/bko-recovery-words.rs 1-128
+src/blockdev.rs 1-382
+src/boot.rs 1-3028
+src/bootcode.rs 1-260
+src/bugreport.rs 1-753
+src/bytes.rs 1-510
+src/efi.rs 1-492
+src/json.rs 1-696
+src/lib.rs 1-84
+src/load/abroot.rs 1-372
+src/load/commands.rs 1-7359
+src/load/efidedupe.rs 1-366
+src/load/exec.rs 1-355
+src/load/fit.rs 1-2405
+src/load/layout.rs 1-550
+src/load/mod.rs 1-645
+src/load/ostree.rs 1-528
+src/load/plan.rs 1-622
+src/load/qubes.rs 1-154
+src/load/rawvol.rs 1-455
+src/load/readback.rs 1-396
+src/load/reformat.rs 1-765
+src/load/release.rs 1-509
+src/load/rewrite.rs 1-803
+src/load/shared.rs 1-577
+src/load/sizes.rs 1-287
+src/load/snapcore.rs 1-474
+src/load/status.rs 1-457
+src/load/target.rs 1-1344
+src/load/transactional.rs 1-1412
+src/load/truenas.rs 1-116
+src/load/umounttree.rs 1-204
+src/load/writetable.rs 1-295
+src/load/zfs_be.rs 1-274
+src/load/zfsbootmenu.rs 1-217
+src/luksheader.rs 1-241
+src/main.rs 1-217
+src/mdsb.rs 1-114
+src/mounts.rs 1-474
+src/osrel.rs 1-888
+src/ostree.rs 1-342
+src/other/bsdlabel.rs 1-97
+src/other/dfly.rs 1-221
+src/other/freebsd.rs 1-432
+src/other/geli.rs 1-1143
+src/other/haiku.rs 1-177
+src/other/illumos.rs 1-166
+src/other/labelled.rs 1-399
+src/other/load.rs 1-845
+src/other/mod.rs 1-408
+src/other/offline.rs 1-110
+src/other/softraid.rs 1-903
+src/parttable.rs 1-965
+src/probe/bcachefs.rs 1-116
+src/probe/bfs.rs 1-57
+src/probe/btrfs.rs 1-202
+src/probe/ext.rs 1-360
+src/probe/f2fs.rs 1-131
+src/probe/fat.rs 1-382
+src/probe/geli.rs 1-294
+src/probe/hammer2.rs 1-53
+src/probe/luks.rs 1-249
+src/probe/lvm.rs 1-812
+src/probe/md.rs 1-263
+src/probe/misc.rs 1-217
+src/probe/mod.rs 1-176
+src/probe/nilfs2.rs 1-107
+src/probe/redoxfs.rs 1-50
+src/probe/ufs.rs 1-98
+src/probe/xfs.rs 1-284
+src/probe/zfs.rs 1-676
+src/qubes.rs 1-608
+src/recovery.rs 1-810
+src/redact.rs 1-2015
+src/report.rs 1-1973
+src/scenarios.rs 1-7536
+src/snapcore.rs 1-863
+src/store.rs 1-769
+src/sys.rs 1-520
+src/testutil.rs 1-141
+src/transactional.rs 1-320
+src/truenas.rs 1-154
+src/zfs_be.rs 1-454
+src/zfsbootmenu.rs 1-480
+tests/bs2_plan.rs 1-103
+tests/cli.rs 1-214
+tests/common/invariants.rs 1-671
+tests/common/mod.rs 1-367
+tests/corpus_build.rs 1-567
+tests/golden_plans.rs 1-1188
+tests/load_cli.rs 1-89
+tests/realtools.rs 1-975
+tests/recovery_cli.rs 1-121
+tests/redact_dumps.rs 1-43
+tests/root_stack.rs 1-228
+# per file: lines OURS TOTAL HOW PATH (HOW: added = a file a backotter: commit added, whole;
+#   blame = git blame; walkdir = the diff from crates.io; whole = holt)
+# lines    674    674 whole src/abroot.rs
+# lines    669    669 whole src/arch.rs
+# lines    128    128 whole src/bin/bko-recovery-words.rs
+# lines    382    382 whole src/blockdev.rs
+# lines   3028   3028 whole src/boot.rs
+# lines    260    260 whole src/bootcode.rs
+# lines    753    753 whole src/bugreport.rs
+# lines    510    510 whole src/bytes.rs
+# lines    492    492 whole src/efi.rs
+# lines    696    696 whole src/json.rs
+# lines     84     84 whole src/lib.rs
+# lines    372    372 whole src/load/abroot.rs
+# lines   7359   7359 whole src/load/commands.rs
+# lines    366    366 whole src/load/efidedupe.rs
+# lines    355    355 whole src/load/exec.rs
+# lines   2405   2405 whole src/load/fit.rs
+# lines    550    550 whole src/load/layout.rs
+# lines    645    645 whole src/load/mod.rs
+# lines    528    528 whole src/load/ostree.rs
+# lines    622    622 whole src/load/plan.rs
+# lines    154    154 whole src/load/qubes.rs
+# lines    455    455 whole src/load/rawvol.rs
+# lines    396    396 whole src/load/readback.rs
+# lines    765    765 whole src/load/reformat.rs
+# lines    509    509 whole src/load/release.rs
+# lines    803    803 whole src/load/rewrite.rs
+# lines    577    577 whole src/load/shared.rs
+# lines    287    287 whole src/load/sizes.rs
+# lines    474    474 whole src/load/snapcore.rs
+# lines    457    457 whole src/load/status.rs
+# lines   1344   1344 whole src/load/target.rs
+# lines   1412   1412 whole src/load/transactional.rs
+# lines    116    116 whole src/load/truenas.rs
+# lines    204    204 whole src/load/umounttree.rs
+# lines    295    295 whole src/load/writetable.rs
+# lines    274    274 whole src/load/zfs_be.rs
+# lines    217    217 whole src/load/zfsbootmenu.rs
+# lines    241    241 whole src/luksheader.rs
+# lines    217    217 whole src/main.rs
+# lines    114    114 whole src/mdsb.rs
+# lines    474    474 whole src/mounts.rs
+# lines    888    888 whole src/osrel.rs
+# lines    342    342 whole src/ostree.rs
+# lines     97     97 whole src/other/bsdlabel.rs
+# lines    221    221 whole src/other/dfly.rs
+# lines    432    432 whole src/other/freebsd.rs
+# lines   1143   1143 whole src/other/geli.rs
+# lines    177    177 whole src/other/haiku.rs
+# lines    166    166 whole src/other/illumos.rs
+# lines    399    399 whole src/other/labelled.rs
+# lines    845    845 whole src/other/load.rs
+# lines    408    408 whole src/other/mod.rs
+# lines    110    110 whole src/other/offline.rs
+# lines    903    903 whole src/other/softraid.rs
+# lines    965    965 whole src/parttable.rs
+# lines    116    116 whole src/probe/bcachefs.rs
+# lines     57     57 whole src/probe/bfs.rs
+# lines    202    202 whole src/probe/btrfs.rs
+# lines    360    360 whole src/probe/ext.rs
+# lines    131    131 whole src/probe/f2fs.rs
+# lines    382    382 whole src/probe/fat.rs
+# lines    294    294 whole src/probe/geli.rs
+# lines     53     53 whole src/probe/hammer2.rs
+# lines    249    249 whole src/probe/luks.rs
+# lines    812    812 whole src/probe/lvm.rs
+# lines    263    263 whole src/probe/md.rs
+# lines    217    217 whole src/probe/misc.rs
+# lines    176    176 whole src/probe/mod.rs
+# lines    107    107 whole src/probe/nilfs2.rs
+# lines     50     50 whole src/probe/redoxfs.rs
+# lines     98     98 whole src/probe/ufs.rs
+# lines    284    284 whole src/probe/xfs.rs
+# lines    676    676 whole src/probe/zfs.rs
+# lines    608    608 whole src/qubes.rs
+# lines    810    810 whole src/recovery.rs
+# lines   2015   2015 whole src/redact.rs
+# lines   1973   1973 whole src/report.rs
+# lines   7536   7536 whole src/scenarios.rs
+# lines    863    863 whole src/snapcore.rs
+# lines    769    769 whole src/store.rs
+# lines    520    520 whole src/sys.rs
+# lines    141    141 whole src/testutil.rs
+# lines    320    320 whole src/transactional.rs
+# lines    154    154 whole src/truenas.rs
+# lines    454    454 whole src/zfs_be.rs
+# lines    480    480 whole src/zfsbootmenu.rs
+# lines    103    103 whole tests/bs2_plan.rs
+# lines    214    214 whole tests/cli.rs
+# lines    671    671 whole tests/common/invariants.rs
+# lines    367    367 whole tests/common/mod.rs
+# lines    567    567 whole tests/corpus_build.rs
+# lines   1188   1188 whole tests/golden_plans.rs
+# lines     89     89 whole tests/load_cli.rs
+# lines    975    975 whole tests/realtools.rs
+# lines    121    121 whole tests/recovery_cli.rs
+# lines     43     43 whole tests/redact_dumps.rs
+# lines    228    228 whole tests/root_stack.rs
+# total: 63495 of 63495 lines ours in 97 files; .rs: 63495 of 63495 in 97 files

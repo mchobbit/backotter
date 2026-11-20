@@ -1,6 +1,7 @@
 # RustAudit1: our Rust against the Rust community's best practice
 
-Status: approved 2026-11-20, with every recommendation (D1-D12).  Not run.
+Status: approved 2026-11-20, with every recommendation (D1-D12).  RA3-RA9 not run.
+RA0's and RA2's tools built and RA2 run 2026-11-20 (`testvm/audit/rust-*`, README's "Rust practice audit"; `testvm/audit/rust/baseline.txt`; RA1's toolchain was on Chopin, plus the nightly's clippy; `cargo deny` not run).
 
 A plan to audit, and then fix, every line of Rust BackOtter owns: all of
 bko-holt (`holt/`), and our patches to rustic_core, rustic and the vendored

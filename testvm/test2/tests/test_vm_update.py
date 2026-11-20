@@ -536,6 +536,299 @@ class TestInGuest(unittest.TestCase):
         self.assertTrue(any(re.search(f["pattern"], "\n".join(tail), re.M) for f in flakes
                             if f["pattern"].startswith("\\bE: Failed to fetch")), tail)
 
+    def unknown_lines(self, pm, lines):
+        """Those of LINES that known-lines.json leaves for PM's guests (normalized as the sweep does)."""
+        if str(T2) not in sys.path:
+            sys.path.insert(0, str(T2))
+            self.addCleanup(sys.path.remove, str(T2))
+        from t2lib import guest_judge as J
+        pats = J.known_filter(json.loads((T2 / "guest" / "known-lines.json").read_text()), pm)
+        return [x for x in lines if not any(p.search(J.normalize(x)) for p in pats)]
+
+    def stub_bin(self, name, body):
+        """A folder with NAME, a sh script BODY, in it: for the front of PATH."""
+        b = Path(tempfile.mkdtemp(prefix="t2-stub-"))
+        self.addCleanup(shutil.rmtree, b, True)
+        (b / name).write_text("#!/bin/sh\n" + body)
+        (b / name).chmod(0o755)
+        return str(b)
+
+    def run_fetched_as(self, section, argv, fails, error, rc=100):
+        """SECTION's fetched() running ARGV, whose command (a stub) fails FAILS times, printing a
+        progress line, ERROR and a line on stderr, exiting RC, then works; the stub runs with any
+        other arguments (pkg update -f before a DragonFly retry) as a no-op.  (exit status, how
+        many times ARGV ran, stdout, stderr)"""
+        m = re.search(r"^( *)fetched\(\) \{\n.*?^\1\}\n", self.sections()[section], re.M | re.S)
+        self.assertIsNotNone(m, section)
+        name, args = argv.split(" ", 1)
+        with tempfile.TemporaryDirectory() as d:
+            b = self.stub_bin(name, textwrap.dedent(f"""\
+                [ "$*" = "{args}" ] || exit 0
+                c=$(cat {d}/count 2>/dev/null || echo 0); echo $((c + 1)) >{d}/count
+                if [ "$c" -lt {fails} ]; then echo "progress of try $((c + 1))"; printf '%s\\n' "$ERR"; echo "W: its stderr" >&2; exit {rc}; fi
+                echo "the try that worked"
+                """))
+            fn = textwrap.dedent(m[0]).replace("/run/", f"{d}/").replace("/tmp/bko-", f"{d}/bko-")
+            script = 'say() { echo "in-guest: $*"; }\nsleep() { :; }\n' + fn + f'fetched {argv}; echo "rc=$?"\n'
+            r = subprocess.run(["sh", "-c", script], capture_output=True, text=True,
+                               env={**os.environ, "ERR": error, "PATH": f"{b}:{os.environ['PATH']}"})
+            count = int(Path(d, "count").read_text())
+            self.assertEqual(sorted(os.listdir(d)), ["count"], "fetched() leaves its files behind")
+        return int(re.search(r"rc=(\d+)", r.stdout)[1]), count, r.stdout, r.stderr
+
+    # (section, the guests' pm, what the section runs, a try's error, how many tries more at most)
+    FETCHED = (
+        ("Linux.apt", "apt", "apt-get -y install --only-upgrade bash",
+         "E: Failed to fetch https://ppa.launchpadcontent.net/x/y/ubuntu/pool/main/y.deb  503  Service Unavailable [IP: 1.2.3.4 443]", 10),
+        ("Linux.apt", "apt", "apt-get -y clean", "E: Could not get lock /var/lib/apt/lists/lock. It is held by process 2213 (apt-get)", 10),
+        ("Linux.pacman", "pacman", "pacman -Su --noconfirm",
+         "error: failed retrieving file 'breeze-6.8.3-1-x86_64.pkg.tar.zst' from geo.mirror.pkgbuild.com : "
+         "Operation too slow. Less than 1 bytes/sec transferred the last 10 seconds", 10),
+        ("Linux.ostree", "rpm-ostree", "rpm-ostree upgrade",
+         "error: Importing: Unencapsulating base: Reading large regfile: unexpected end of file", 10),
+        ("Linux.xbps", "xbps", "xbps-install -yu",
+         "ERROR: [trans] failed to download `gawk-5.4.2_1' package from `https://repo-default.voidlinux.org/current': Input/output error", 10),
+        ("Linux.xbps", "xbps", "xbps-install -Syu xbps",
+         "ERROR: [reposync] failed to fetch file `https://repo-default.voidlinux.org/current/x86_64-repodata': Operation timed out", 10),
+        ("Guix", "guix", "guix pull", "guix pull: error: Git error: SSL error: syscall failure: ", 20),
+        ("Guix", "guix", "guix system reconfigure --allow-downgrades /etc/config.scm",
+         "substitution of /gnu/store/0123abcd-linux-libre-6.17.12 failed", 20),
+        ("DragonFly", "dragonfly", "pkg upgrade -y", "pkg: An error occurred while fetching package", 10),
+        ("DragonFly", "dragonfly", "pkg update -f", "Unable to update repository Avalon", 10),
+    )
+
+    def test_fetched_tries_tried_again_are_one_line_each(self):
+        """Every fetched() (apt, pacman, rpm-ostree, xbps, Guix, DragonFly's pkg), as apt-get
+        update's loop (neon24, 2026-11-20): a try tried again is one line, the retry line with the
+        error that made it one, which known-lines.json accepts for that section's guests; its own
+        lines never reach the log.  The try that worked is printed alone; the last of a failure that
+        persists is printed whole, ending the log."""
+        for section, pm, argv, error, most in self.FETCHED:
+            with self.subTest(section=section, argv=argv):
+                rc, n, out, err = self.run_fetched_as(section, argv, 2, error)
+                self.assertEqual((rc, n, err), (0, 3, ""), out)
+                lines = out.splitlines()
+                self.assertEqual(lines[2:], ["the try that worked", "rc=0"], out)
+                for i, x in enumerate(lines[:2], 1):
+                    self.assertRegex(x, rf"^in-guest: .* again in \d+ s \({i} of {most}\): {re.escape(error)}$")
+                self.assertEqual(self.unknown_lines(pm, lines[:2]), [], lines[:2])
+                rc, n, out, err = self.run_fetched_as(section, argv, 99, error)
+                self.assertEqual((rc, n, err), (100, most + 1, ""), out)
+                lines = out.splitlines()
+                self.assertEqual(lines[most:most + 3], [f"progress of try {most + 1}", error, "W: its stderr"], out)
+                # (xbps then says why a 0 or 17 is no success: here 100 stays)
+                self.assertEqual(lines[most + 3:], (["in-guest: xbps-install's repodata sync failed (1 [reposync] errors): "
+                                                     "not run on stale repodata"] if "[reposync]" in error else []) + ["rc=100"])
+                # an error the section doesn't retry: the try's output whole, at once
+                rc, n, out, err = self.run_fetched_as(section, argv, 99, "E: Sub-process /usr/bin/dpkg returned an error code (1)")
+                self.assertEqual((rc, n), (100, 1), out)
+                self.assertEqual(out.splitlines(), ["progress of try 1", "E: Sub-process /usr/bin/dpkg returned an error code (1)",
+                                                    "W: its stderr", "rc=100"])
+        # a progress bar's frames (\r) in the line that made a retry: one line still
+        rc, n, out, err = self.run_fetched_as("Guix", "guix pull", 1, "50%\rguix pull: error: Git error: SSL error: syscall failure: ")
+        self.assertEqual((rc, n), (0, 2), out)
+        self.assertEqual(out.splitlines()[0], "in-guest: a download failed: guix pull again in 60 s (1 of 20): "
+                         "50%guix pull: error: Git error: SSL error: syscall failure: ")
+
+    def test_retry_lines_known_for_their_guests_only(self):
+        """The retry lines are accepted only for their own package manager's guests, and only in
+        their own words: a line that merely starts like one, or the try's error alone, stays."""
+        line = "in-guest: a download failed: pacman again in 30 s (1 of 10): error: failed retrieving file 'x' from m : 404"
+        self.assertEqual(self.unknown_lines("pacman", [line]), [])
+        for pm in ("apt", "xbps", "guix", None):
+            self.assertEqual(self.unknown_lines(pm, [line]), [line], pm)
+        for pm, x in (("apt", "in-guest: a download failed: apt-get again in 30 s (1 of 10)"),
+                      ("apt", "in-guest: flatpak update failed"),
+                      ("portage", "in-guest: emerge --sync failed: again in 60 s"),
+                      ("ips", "in-guest: pkg update failed (1)"),
+                      ("ips", "in-guest: a publisher's repository can't be reached"),
+                      ("snap", "in-guest: snap refresh --list failed (1)"),
+                      ("dragonfly", "in-guest: git ls-remote https://github.com/DragonFlyBSD/DragonFlyBSD.git refs/heads/x kept failing"),
+                      ("pacman", "error: failed retrieving file 'x' from m : 404")):
+            self.assertEqual(self.unknown_lines(pm, [x]), [x], (pm, x))
+
+    def test_emerge_sync_tries_tried_again_are_one_line_each(self):
+        """emerge --sync again while it fails (a Manifest mismatch, gentoo-systemd 2026-11-17), up
+        to 5 times: a failed try is one line, its first !!! line, and the try that worked is
+        printed alone, stdout and stderr; the last of 5 failed tries is printed whole."""
+        sec = self.sections()["Linux.portage"]
+        self.assertNotIn("emerge --sync -q $o || exit 1", sec)
+        m = re.search(r"^( *)tries=0\n\1until emerge --sync .*?\n\1done\n(?:\1(?:cat|rm) [^\n]*\n)*", sec, re.M | re.S)
+        self.assertIsNotNone(m)
+        for fails, want_rc in ((2, 0), (99, 1)):
+            with self.subTest(fails=fails), tempfile.TemporaryDirectory() as d:
+                b = self.stub_bin("emerge", textwrap.dedent(f"""\
+                    [ "$*" = "--sync -q --color=n --nospinner" ] || exit 2
+                    c=$(cat {d}/count 2>/dev/null || echo 0); echo $((c + 1)) >{d}/count
+                    if [ "$c" -lt {fails} ]; then
+                        echo ">>> Syncing repository 'gentoo' into '/var/db/repos/gentoo'... ($((c + 1)))"
+                        echo "!!! Manifest mismatch for metadata/Manifest.gz" >&2; exit 1
+                    fi
+                    echo ">>> Syncing repository 'gentoo' into '/var/db/repos/gentoo'... done"
+                    echo " * IMPORTANT: 2 news items need reading for repository 'gentoo'." >&2
+                    """))
+                code = ('say() { echo "in-guest: $*"; }\nsleep() { :; }\no="--color=n --nospinner"\n(\n'
+                        + textwrap.dedent(m[0]).replace("/run/", f"{d}/") + '); echo "rc=$?"\n')
+                r = subprocess.run(["sh", "-c", code], capture_output=True, text=True,
+                                   env={**os.environ, "PATH": f"{b}:{os.environ['PATH']}"})
+                self.assertEqual(sorted(os.listdir(d)), ["count"], "the loop leaves its files behind")
+                lines = r.stdout.splitlines()
+                tried = min(fails, 4)
+                self.assertEqual(lines[:tried], [f"in-guest: emerge --sync failed: again in 60 s ({i} of 4): "
+                                                 "!!! Manifest mismatch for metadata/Manifest.gz" for i in range(1, tried + 1)], r.stdout)
+                self.assertEqual(self.unknown_lines("portage", lines[:tried]), [])
+                if want_rc == 0:
+                    self.assertEqual(lines[tried:], [">>> Syncing repository 'gentoo' into '/var/db/repos/gentoo'... done", "rc=0"])
+                    self.assertEqual(r.stderr, " * IMPORTANT: 2 news items need reading for repository 'gentoo'.\n")
+                else:
+                    self.assertEqual(lines[tried:], [">>> Syncing repository 'gentoo' into '/var/db/repos/gentoo'... (5)", "rc=1"])
+                    self.assertEqual(r.stderr, "!!! Manifest mismatch for metadata/Manifest.gz\n")
+
+    def run_flatpak(self, fails):
+        """Linux.apt's flatpak update on elementary under a stub flatpak whose update fails FAILS
+        times: (exit status, stdout, stderr, how many updates ran)."""
+        sec = self.sections()["Linux.apt"]
+        a = sec.index("        if grep -qs '^ID=elementary$' /etc/os-release && has flatpak; then\n")
+        block = sec[a:sec.index("\n        fi\n", a) + len("\n        fi\n")]
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "os-release").write_text("ID=elementary\n")
+            b = self.stub_bin("flatpak", textwrap.dedent(f"""\
+                case $1 in
+                list) echo "org.gnome.Epiphany/x86_64/stable	true" ;;
+                uninstall) echo "Nothing unused to uninstall" ;;
+                update)
+                    c=$(cat {d}/count 2>/dev/null || echo 0); echo $((c + 1)) >{d}/count
+                    echo "Looking for updates..."
+                    if [ "$c" -lt {fails} ]; then
+                        echo "error: While pulling runtime/io.elementary.Platform/x86_64/8.2 from remote appcenter: Curl error: Timeout was reached" >&2
+                        exit 1
+                    fi
+                    echo "Updates complete." ;;
+                esac
+                """))
+            code = ('has() { command -v "$1" >/dev/null 2>&1; }\nsay() { echo "in-guest: $*"; }\n'
+                    'step() { echo "in-guest: step: $*"; }\nsleep() { :; }\n(\n'
+                    + textwrap.dedent(block).replace("/etc/os-release", f"{d}/os-release").replace("/run/", f"{d}/")
+                    + '); echo "rc=$?"\n')
+            r = subprocess.run(["sh", "-c", code], capture_output=True, text=True,
+                               env={**os.environ, "PATH": f"{b}:{os.environ['PATH']}"})
+            self.assertEqual(sorted(os.listdir(d)), ["count", "os-release"], "the loop leaves its files behind")
+            return int(re.search(r"rc=(\d+)", r.stdout)[1]), r.stdout, r.stderr, int(Path(d, "count").read_text())
+
+    def test_flatpak_update_tries_tried_again_are_one_line_each(self):
+        """elementary's flatpak update, tried up to 10 times: a failed try is one line, its error:
+        line (accepted for the apt guests), and the try that worked is printed alone; the 10th
+        failure is printed whole."""
+        error = ("error: While pulling runtime/io.elementary.Platform/x86_64/8.2 from remote appcenter: "
+                 "Curl error: Timeout was reached")
+        rc, out, err, n = self.run_flatpak(2)
+        self.assertEqual((rc, n, err), (0, 3, ""), out)
+        lines = out.splitlines()
+        self.assertEqual(lines, [f"in-guest: flatpak update failed: again in 30 s ({i} of 10): {error}" for i in (1, 2)]
+                         + ["Looking for updates...", "Updates complete.", "Nothing unused to uninstall", "rc=0"])
+        self.assertEqual(self.unknown_lines("apt", lines[:2]), [])
+        rc, out, err, n = self.run_flatpak(99)
+        self.assertEqual((rc, n, err), (1, 10, error + "\n"), out)
+        self.assertEqual(out.splitlines()[9:], ["Looking for updates...", "in-guest: flatpak update failed", "rc=1"])
+
+    def test_snap_refresh_tries_tried_again_are_one_line_each(self):
+        """Linux.apt's snap refresh: a try the store failed in transit is one line, its url.Error
+        line (accepted for the apt guests); its own lines never reach the log, though the snaps it
+        refreshed still make the step line."""
+        for err in (self.SNAP_TIMEOUT, self.SNAP_RESET):
+            with self.subTest(err=err[60:100]):
+                rc, out, n = self.run_snapd_refresh("hwctl 1.2 from Someone refreshed\n",
+                                                    ("snapd 2.78 from Canonical** refreshed\n" + err, 1), (err, 1))
+                self.assertEqual((rc, n), (0, 3), out)
+                why = err.splitlines()[1]
+                lines = out.splitlines()
+                self.assertEqual(lines[:2], [f"in-guest: the snap store didn't answer: snap refresh again in 30 s ({i} of 10): {why}"
+                                             for i in (1, 2)])
+                self.assertEqual(lines[2:], ["hwctl 1.2 from Someone refreshed", "in-guest: step: snapd: refreshed hwctl snapd ",
+                                             "fell-through"])
+                self.assertEqual(self.unknown_lines("apt", lines[:2]), [])
+
+    def test_snapcore_tries_tried_again_are_one_line_each(self):
+        """Ubuntu Core's refresh --list and --no-wait: a try the store failed in transit is one
+        line, its url.Error line, accepted for uc24 (known-lines.json's snap); its own lines never
+        reach the log."""
+        done = ["none", "7  Done  today  today  Refresh"]
+        for arg in ("list", "no-wait"):
+            with self.subTest(arg=arg):
+                rc, out, calls = self.run_snapcore(done, fails={arg: (2, self.SNAP_TIMEOUT)})
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("error: cannot perform the following tasks", out)
+                why = self.SNAP_TIMEOUT.splitlines()[1]
+                retries = [x for x in out.splitlines() if "didn't answer" in x]
+                self.assertEqual(retries, [f"in-guest: the snap store didn't answer: snap refresh --{arg} again in 30 s ({i} of 10): {why}"
+                                           for i in (1, 2)])
+                self.assertEqual(self.unknown_lines("snap", retries), [])
+        spec = json.loads((T2 / "guest" / "spec.json").read_text())
+        self.assertIn("entry:testvm/test2/guest/known-lines.json#snap", spec["entries"]["uc24"].get("judge", []))
+
+    def test_dragonfly_git_tries_tried_again_are_one_line_each(self):
+        """DragonFly's git ls-remote and shallow clone, run again while they fail: a failed try is
+        one line, its fatal: line (accepted for dragonfly6), git's own stderr only from the try that
+        worked or the last."""
+        sec = self.sections()["DragonFly"]
+        fatal = "fatal: unable to access 'https://github.com/DragonFlyBSD/DragonFlyBSD.git/': Could not resolve host: github.com"
+        m = re.search(r"^( *)lsremote\(\) \{\n.*?^\1\}\n", sec, re.M | re.S)
+        self.assertIsNotNone(m)
+        for fails, want in ((2, 0), (99, 1)):
+            with self.subTest(what="ls-remote", fails=fails), tempfile.TemporaryDirectory() as d:
+                b = self.stub_bin("git", textwrap.dedent(f"""\
+                    c=$(cat {d}/count 2>/dev/null || echo 0); echo $((c + 1)) >{d}/count
+                    if [ "$c" -lt {fails} ]; then echo "{fatal}" >&2; exit 128; fi
+                    printf 'abc123\\trefs/heads/DragonFly_RELEASE_6_4\\n'
+                    """))
+                code = ('say() { echo "in-guest: $*"; }\nsleep() { :; }\nrepo=https://github.com/DragonFlyBSD/DragonFlyBSD.git\n'
+                        + textwrap.dedent(m[0]).replace("/tmp/bko-", f"{d}/bko-")
+                        + 'head=$(lsremote refs/heads/DragonFly_RELEASE_6_4); echo "rc=$? head=$head"\n')
+                r = subprocess.run(["sh", "-c", code], capture_output=True, text=True,
+                                   env={**os.environ, "PATH": f"{b}:{os.environ['PATH']}"})
+                self.assertEqual(sorted(os.listdir(d)), ["count"], "lsremote leaves its files behind")
+                lines = r.stderr.splitlines()
+                tried = min(fails, 10)
+                self.assertEqual(lines[:tried], ["in-guest: git ls-remote https://github.com/DragonFlyBSD/DragonFlyBSD.git failed: "
+                                                 f"again in 30 s ({i} of 10): {fatal}" for i in range(1, tried + 1)], r.stderr)
+                self.assertEqual(self.unknown_lines("dragonfly", lines[:tried]), [])
+                if want == 0:
+                    self.assertEqual((r.stdout, lines[tried:]), ("rc=0 head=abc123\n", []))
+                else:
+                    self.assertEqual(r.stdout, "rc=1 head=\n")
+                    self.assertEqual(lines[tried:], [fatal, "in-guest: git ls-remote https://github.com/DragonFlyBSD/DragonFlyBSD.git "
+                                                     "refs/heads/DragonFly_RELEASE_6_4 kept failing"])
+        m = re.search(r"^( *)n=0\n\1until make -C /usr src-create-shallow .*?\n\1done\n(?:\1(?:cat|rm) [^\n]*\n)*", sec, re.M | re.S)
+        self.assertIsNotNone(m)
+        reset = "fatal: unable to access 'https://github.com/DragonFlyBSD/DragonFlyBSD.git/': Recv failure: Connection reset by peer"
+        for fails, want in ((2, 0), (99, 1)):
+            with self.subTest(what="clone", fails=fails), tempfile.TemporaryDirectory() as d:
+                code = textwrap.dedent(f"""\
+                    say() {{ echo "in-guest: $*"; }}
+                    sleep() {{ :; }}
+                    make() {{
+                        c=$(cat {d}/count 2>/dev/null || echo 0); echo $((c + 1)) >{d}/count
+                        echo "Cloning into '/usr/src'..." >&2; mkdir -p {d}/src
+                        if [ "$c" -lt {fails} ]; then echo "{reset}" >&2; echo "*** Error code 128" >&2; return 2; fi
+                        echo "make: checked out"
+                    }}
+                    branch=DragonFly_RELEASE_6_4 repo=https://github.com/DragonFlyBSD/DragonFlyBSD.git
+                    (
+                    """) + textwrap.dedent(m[0]).replace("/tmp/bko-", f"{d}/bko-").replace("/usr/src", f"{d}/src") + '); echo "rc=$?"\n'
+                r = subprocess.run(["sh", "-c", code], capture_output=True, text=True)
+                left = sorted(os.listdir(d))
+                lines = r.stdout.splitlines()
+                tried = min(fails, 5)
+                self.assertEqual(lines[:tried], [f"in-guest: the shallow clone of https://github.com/DragonFlyBSD/DragonFlyBSD.git failed: "
+                                                 f"again in 60 s ({i} of 5): {reset}" for i in range(1, tried + 1)], r.stdout)
+                self.assertEqual(self.unknown_lines("dragonfly", lines[:tried]), [])
+                self.assertEqual(lines[tried:], [f"rc={want}"])
+                if want == 0:
+                    self.assertEqual((r.stderr, left), ("Cloning into '/usr/src'...\n", ["count", "src"]))
+                else:
+                    self.assertEqual(r.stderr, f"Cloning into '/usr/src'...\n{reset}\n*** Error code 128\n")
+                    self.assertEqual(left, ["count", "src"])
+
     def test_pops_updaters_masked_before_apt(self):
         """Pop!_OS's pop-system-updater and pop-upgrade run apt-get update on their own (pop24's
         lock, t2v-20261118T1426-76be): masked for the boot where they're installed, before the
@@ -678,10 +971,65 @@ class TestInGuest(unittest.TestCase):
         self.assertEqual((rc, nr, nu), (1, 1, 1), out)
         self.assertIn("in-guest: pkg update failed (1)", out)
 
-    def test_emerge_sync_is_tried_again(self):
-        sec = self.sections()["Linux.portage"]
-        self.assertIn("until emerge --sync -q $o; do", sec)
-        self.assertNotIn("emerge --sync -q $o || exit 1", sec)
+    def test_sunos_tries_tried_again_are_one_line_each(self):
+        """A pkg refresh or pkg update that couldn't reach a publisher's repository, tried again,
+        is one line with its first line that says so (accepted for the ips guests); its own lines
+        never reach the log (oi2610's pkg update printed its whole "Framework stall" each try).
+        The try that worked is printed alone, the last that failed whole."""
+        rc, nr, nu, out = self.run_sunos([(0, "")], [(4, self.IPS_STALL), (4, self.IPS_STALL), (0, "Packages to update: 3\n")])
+        self.assertEqual((rc, nr, nu), (0, 3, 3), out)
+        why = "WARNING: Errors were encountered when attempting to retrieve package"
+        lines = out.splitlines()
+        self.assertEqual(lines, [f"in-guest: pkg update couldn't reach a publisher's repository (try {i} of 10): {why}" for i in (1, 2)]
+                         + ["Packages to update: 3", "end"])
+        self.assertEqual(self.unknown_lines("ips", lines[:2]), [])
+        rc, nr, nu, out = self.run_sunos([(1, self.IPS_REFRESH_STALL), (0, self.IPS_REFRESH_STALL), (0, "")],
+                                         [(4, "No updates available for this image.\n")])
+        self.assertEqual((rc, nr, nu), (0, 3, 1), out)
+        lines = out.splitlines()
+        why = "Unable to contact valid package repository: https://pkg.openindiana.org/hipster/"
+        self.assertEqual(lines, [f"in-guest: pkg refresh --full failed (try 1 of 10): {why}",
+                                 f"in-guest: pkg refresh --full couldn't reach a publisher's repository (try 2 of 10): {why}",
+                                 "No updates available for this image.", "end"])
+        self.assertEqual(self.unknown_lines("ips", lines[:2]), [])
+        # one that never gets through: 9 lines, then the 10th try whole
+        rc, nr, nu, out = self.run_sunos([(0, "")], [(4, self.IPS_STALL)])
+        self.assertEqual((rc, nr, nu), (1, 10, 10), out)
+        self.assertEqual(sum(x.startswith("in-guest: pkg update couldn't reach") for x in out.splitlines()), 9, out)
+        self.assertTrue(out.endswith(self.IPS_STALL + "in-guest: a publisher's repository can't be reached\n"), out)
+
+    def run_redox(self, fails):
+        """The Redox section under a stub pkg whose update times out FAILS times: (exit status,
+        output, how many times it ran)."""
+        with tempfile.TemporaryDirectory() as d:
+            code = textwrap.dedent(f"""\
+                say() {{ echo "in-guest: $*"; }}
+                sleep() {{ :; }}
+                pkg() {{
+                    c=$(cat {d}/count 2>/dev/null || echo 0); echo $((c + 1)) >{d}/count
+                    echo "Downloading kernel ($((c + 1)))"
+                    if [ "$c" -lt {fails} ]; then echo "Download error: https://static.redox-os.org/pkg/x86_64-unknown-redox/kernel.pkgar: operation timed out"; return 0; fi
+                    echo "Installed kernel"
+                }}
+                (
+                """) + textwrap.dedent(self.sections()["Redox"]).replace("/tmp/", f"{d}/") + '); echo "rc=$?"\n'
+            r = subprocess.run(["sh", "-c", code], capture_output=True, text=True)
+            n = int(Path(d, "count").read_text())
+            if r.stdout.endswith("rc=0\n"):
+                self.assertEqual(os.listdir(d), ["count"], "the section leaves its files behind")
+        return int(re.search(r"rc=(\d+)", r.stdout)[1]), r.stdout, n
+
+    def test_redox_tries_tried_again_are_one_line_each(self):
+        """Redox's pkg update, again while a download times out: a timed-out try is one line, the
+        line that says so, and the try that worked is printed alone; the 5th timeout whole."""
+        why = "Download error: https://static.redox-os.org/pkg/x86_64-unknown-redox/kernel.pkgar: operation timed out"
+        rc, out, n = self.run_redox(2)
+        self.assertEqual((rc, n), (0, 3), out)
+        self.assertEqual(out.splitlines(), [f"in-guest: a download timed out: again in 20 s ({i} of 4): {why}" for i in (1, 2)]
+                         + ["Downloading kernel (3)", "Installed kernel", "rc=0"])
+        rc, out, n = self.run_redox(99)
+        self.assertEqual((rc, n), (1, 5), out)
+        self.assertEqual(out.splitlines()[4:], ["Downloading kernel (5)", why, "in-guest: pkg's downloads timed out 5 times", "rc=1"])
 
     def test_linux_common_holds_no_package_manager(self):
         """Linux.common names a package manager only in what picks its code (an if, elif or for

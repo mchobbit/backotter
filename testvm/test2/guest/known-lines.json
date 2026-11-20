@@ -6,7 +6,8 @@
   "tukit (aeon, microos): transactional-update runs zypper inside its snapshot, so zypper's patterns, and its scriptlets' and preloads' progress lines (GuestTest2 t2v-20261118T1159-2749: spec.json named #tukit before there was one, so these guests had only all's and host's)",
   "guix (guix15, guix15-bios): guix pull's and guix system reconfigure's chatter (substitute lookups, progress bars, download rates, /gnu/store paths, grafts, profile hooks, activation, Shepherd's service starts) from both guests' 2026-11-14 update.logs on Chopin.  And the serial console's early boot (GuestTest2 t2v-20261118T2038-21eb): the initrd's Guile (PID 1) has no /proc yet, so Boehm GC warns 'GC Warning: pthread_getattr_np or pthread_attr_getstack failed for main thread' and 'GC Warning: Could not open /proc/stat' and finds its stack by probing, a SIGSEGV it handles, which the kernel logs for PID 1 anyway ('init[1]: segfault at ... in guile[...]', its 'Code:' line with the probe's movzbl (%rax),%edi at <0f> b6 38, call e8), on the console and again from syslogd.  The 16550's 16-byte FIFO cuts the warnings into 16-byte pieces ('GC Warning: pthr', 'ead_getattr_np o', 'r pthread_attr_g', 'etstack failed f', 'or main thread'; 'GC Warning: Coul', 'd not open /proc', '/stat') and the kernel's lagging console output lands between them, so each boot glues other lines on ('GC Warning: pthr PM: Magic number: N:N:N', 'etstack failed f Code: ...'); syslogd's echo and the getty prompt get the next kernel line glued on too.  A glued-on kernel line is dropped only when it is the probe's segfault or has no error word (err, fail, warn, BUG, oops, panic, call trace, segfault, timed out, ...): any other segfault, and a Code: line without the probe's bytes, stay judged.  Download rates: store names have dots (libgit2-1.9.1-debug).  Kept out on purpose: Guile backtraces (In ..., N:N N (...)), 'guix system: warning:' and error lines.  truenas (truenas25, truenas25-mirror): empty until the first probe boot's journal shows the middleware's chatter",
   "Retried downloads and per-boot chance matches whose values change every run, so a line accepted for one guest was new on its next run (GuestTest2 t2v-20261119T1434-e089).  pacman (the Arch family): curl's 'Operation too slow' on one file ('error: failed retrieving file 'breeze-6.8.3-1-x86_64.pkg.tar.zst' from geo.mirror.pkgbuild.com : Operation too slow. Less than 1 bytes/sec transferred the last 10 seconds', a .sig too; endeavouros-grub), which in-guest.sh's Linux.pacman fetched() greps for ('failed retrieving file') and retries up to 10 times ('a download failed: pacman again in 30 s (N of 10)'); a failure that persists still fails the update there.  Only the too-slow form: another curl error, and pacman's other error lines, stay judged.  zypper and tukit (tumbleweed, leap16; aeon, microos): a preload that one mirror answers with an HTTP error ('Preloading: diffutils-3.12-2.1.x86_64.rpm [Error: \"The requested URL returned error: 404\", trying next mirror.]'), which zypper itself takes from the next mirror, failing the transaction if none has it; and the repository refresh's progress line, which the gpg-key lines cut off after one to three dots ('Retrieving repository 'repo-oss (16.1)' metadata [..').  Kept out: 'end of response with N bytes missing' and any other preload error, and a refresh line with anything after its dots.  guix (guix15, guix15-bios): linux-libre's CONFIG_PM_TRACE_RTC reads the RTC at boot as a suspend trace ('PM:   Magic number: N:N:N', accepted per guest) and names whatever device or source line its hash matches by chance, a different one each boot: '<bus or driver> <device>: hash matches' (pci 0000:00:1f.3, pci 0000:00:03.0) and 'PM:   hash matches <file>:<line>' (drivers/base/power/main.c:1424), on the console or from syslogd; only the fixed 'hash matches' message, anchored",
-  "apt (every apt guest): in-guest.sh's Linux.apt runs apt-get update up to 60 times 15 s apart and prints a failed try as one line, 'in-guest: apt-get update failed (try N of 60): ' and that try's first E: line, or its first Err: line and the reason under it ('E: Failed to fetch https://archive.neon.kde.org/user/dists/noble/InRelease  502  Bad Gateway [IP: 1.2.3.4 443]'; neon24, a FREEZE run 2026-11-20, which passed on try 4).  The try that worked is printed alone, so the failed tries' own lines never reach the log; a failure that persists prints its last try whole and fails the update there, so its lines stay judged.  Only that summary line, anchored"
+  "apt (every apt guest): in-guest.sh's Linux.apt runs apt-get update up to 60 times 15 s apart and prints a failed try as one line, 'in-guest: apt-get update failed (try N of 60): ' and that try's first E: line, or its first Err: line and the reason under it ('E: Failed to fetch https://archive.neon.kde.org/user/dists/noble/InRelease  502  Bad Gateway [IP: 1.2.3.4 443]'; neon24, a FREEZE run 2026-11-20, which passed on try 4).  The try that worked is printed alone, so the failed tries' own lines never reach the log; a failure that persists prints its last try whole and fails the update there, so its lines stay judged.  Only that summary line, anchored",
+  "in-guest.sh's other retry loops (2026-11-20), as apt-get update's above: each try's output goes to a file first (/run on Linux and Guix, /tmp on DragonFly, illumos and Redox), a try tried again is one line, the retry line it always printed with the first of the try's lines that made it a retry appended ('in-guest: a download failed: pacman again in 30 s (1 of 10): error: failed retrieving file ...'), and the try that worked, or the last that failed, is printed whole.  So a failed try's own lines never reach the log, and its one line is accepted for that loop's guests: apt (fetched()'s download and lock retries, elementary's flatpak update, the snap refresh after apt), pacman, rpm-ostree, xbps, guix (guix pull, guix system reconfigure), dragonfly (pkg, git ls-remote, the base system's shallow clone), portage (emerge --sync), snap (Ubuntu Core's refresh --list and --no-wait) and ips (pkg refresh --full, and pkg update that couldn't reach a publisher's repository: '(try N of 10)').  Redox's loop is the same but runs on no guest yet (the redox guest is a console probe), so redox has no pattern.  A failure that persists prints its last try whole and fails the update, so its lines stay judged.  Only each retry line's own words, anchored"
  ],
  "all": [
   "^in-guest: (Linux|FreeBSD|NetBSD|OpenBSD|DragonFly|SunOS|Haiku|Redox) ",
@@ -84,7 +85,10 @@
   "^update-alternatives: using \\S+ to provide \\S+ \\(\\S+\\) in auto mode$",
   "^Created symlink '/etc/systemd/\\S+' → '\\S+'\\.$",
   "^Removed '/etc/systemd/\\S+'\\.$",
-  "^in-guest: apt-get update failed \\(try N of N\\): "
+  "^in-guest: apt-get update failed \\(try N of N\\): ",
+  "^in-guest: (a download failed|another apt holds apt's lock): apt-get again in N s \\(N of N\\): ",
+  "^in-guest: flatpak update failed: again in N s \\(N of N\\): ",
+  "^in-guest: the snap store didn't answer: snap refresh again in N s \\(N of N\\): "
  ],
  "dnf": [
   "^(Upgrading|Installing|Reinstalling|Downgrading|Cleanup|Verifying|Erasing|Obsoleting|Running scriptlet|Preparing) ?: .*N/N$",
@@ -105,7 +109,8 @@
   "^Staging deployment\\.\\.\\.done$",
   "list:^(Upgraded|Downgraded|Removed|Added):$",
   "^Run \"systemctl reboot\" to start a reboot$",
-  "^No upgrade available\\.$"
+  "^No upgrade available\\.$",
+  "^in-guest: a download failed: rpm-ostree again in N s \\(N of N\\): "
  ],
  "abroot": [
   "^INFO (Checking for system updates\\.\\.\\.|No update available\\.|Upgrade completed successfully\\.)$",
@@ -140,7 +145,8 @@
   "^Adding boot menu entry for EFI BootNext: [^()]+( \\(MAC:HEX\\))? \\(Boot(N|HEX)\\)$",
   "^Warning: os-prober is not installed; EFI BootNext entries will not be filtered against detected OSes, so non-OS entries \\(e\\.g\\. firmware updaters\\) may appear in the menu\\.$",
   "^(Warning: os-prober will not be executed to detect other bootable partitions\\.|Systems on them will not be added to the GRUB boot configuration\\.|Check GRUB_DISABLE_OS_PROBER documentation entry\\.)$",
-  "^error: failed retrieving file '[^'/ ]+' from [A-Za-z0-9.-]+ : Operation too slow\\. Less than N bytes/sec transferred the last N seconds$"
+  "^error: failed retrieving file '[^'/ ]+' from [A-Za-z0-9.-]+ : Operation too slow\\. Less than N bytes/sec transferred the last N seconds$",
+  "^in-guest: a download failed: pacman again in N s \\(N of N\\): "
  ],
  "zypper": [
   "^Retrieving: (?!.*[Ee]rror)",
@@ -166,12 +172,16 @@
   "^Preloading: \\S+\\.rpm \\[Error: \"The requested URL returned error: N\", trying next mirror\\.\\]$",
   "^Retrieving repository '[^']+' metadata \\[\\.{0,3}$"
  ],
+ "snap": [
+  "^in-guest: the snap store didn't answer: snap refresh --(list|no-wait) again in N s \\(N of N\\): "
+ ],
  "xbps": [
   "^\\[\\*\\] ",
   "^(Updating|Downloading|Verifying|Unpacking|Configuring|Removing) ",
   "^N downloaded, ",
   "^\\S+(\\.xbps(\\.sigN?)?|-repodata): (\\[N[KMG]?B N%\\]|N[KMG]?B \\[avg rate: )",
-  "^\\S+: (verifying RSA signature|collecting files|unpacking|configuring|updated successfully)(\\.\\.\\.| \\.\\.\\.|\\.)$"
+  "^\\S+: (verifying RSA signature|collecting files|unpacking|configuring|updated successfully)(\\.\\.\\.| \\.\\.\\.|\\.)$",
+  "^in-guest: a download failed: xbps-install again in N s \\(N of N\\): "
  ],
  "portage": [
   "^>>> (Emerging( binary)?|Installing|Completed) \\(N of N\\) \\S+::\\S+$",
@@ -213,7 +223,8 @@
   "^Warning: os-prober is not installed; EFI BootNext entries will not be filtered against detected OSes, so non-OS entries \\(e\\.g\\. firmware updaters\\) may appear in the menu\\.$",
   "^!!! The following binary packages have been ignored due to non matching USE:$",
   "^=[a-z0-9]+(-[a-z0-9]+)*/\\S+( -?[a-z0-9_+-]+)*$",
-  "^(NOTE: The --binpkg-respect-use=n option will prevent emerge|from ignoring these binary packages if possible\\.|Using --binpkg-respect-use=y will silence this warning\\.)$"
+  "^(NOTE: The --binpkg-respect-use=n option will prevent emerge|from ignoring these binary packages if possible\\.|Using --binpkg-respect-use=y will silence this warning\\.)$",
+  "^in-guest: emerge --sync failed: again in N s \\(N of N\\): "
  ],
  "apk": [
   "^\\( ?N/N\\) (Upgrading|Installing|Purging|Replacing|Downgrading)",
@@ -290,7 +301,8 @@
   "^(TIME \\S+ (linux|kernel): )?Code: (<?[0-9a-fN]{1,2}>? )*<Nf> bN N eN( <?[0-9a-fN]{1,2}>?)*( ?(?!.*(?i:\\b(err|fail|warn|bug\\b|oops|panic|call trace|rip:|segfault|kill|out of memory|oom\\b|denied|corrupt|timed? out|timeout|unable|cannot|can't|not found|invalid|refused|abort|taint|lockup|stall|hung\\b|fatal|critical|unexpected)))\\S.*)?$",
   "^guix[\\w-]* login: ?(?!.*(?i:\\b(err|fail|warn|bug\\b|oops|panic|call trace|rip:|segfault|kill|out of memory|oom\\b|denied|corrupt|timed? out|timeout|unable|cannot|can't|not found|invalid|refused|abort|taint|lockup|stall|hung\\b|fatal|critical|unexpected)))\\S.*$",
   "^(TIME \\S+ (linux|kernel): )?[a-z][\\w-]* [\\w:.-]+: hash matches$",
-  "^(TIME \\S+ (linux|kernel): )?PM: hash matches [\\w./-]+\\.[ch]:N$"
+  "^(TIME \\S+ (linux|kernel): )?PM: hash matches [\\w./-]+\\.[ch]:N$",
+  "^in-guest: a download failed: guix (pull|system) again in N s \\(N of N\\): "
  ],
  "freebsd": [
   "^\\[ ?N/N\\] (Upgrading|Installing|Reinstalling|Deleting|Deinstalling|Extracting) ",
@@ -340,10 +352,14 @@
   "^Number of packages to be ",
   "list:^(New|Installed) packages to be [A-Z]+:$",
   "list:^The following package files will be deleted:$",
-  "^in-guest: base system: make \\S+( \\S+)* \\(TIME\\)$"
+  "^in-guest: base system: make \\S+( \\S+)* \\(TIME\\)$",
+  "^in-guest: a download failed: pkg (update|upgrade|install) again in N s \\(N of N\\): ",
+  "^in-guest: git ls-remote \\S+ failed: again in N s \\(N of N\\): ",
+  "^in-guest: the shallow clone of \\S+ failed: again in N s \\(N of N\\): "
  ],
  "ips": [
-  "^(Packages to update|Create boot environment|Create backup boot environment|DOWNLOAD|PHASE|Planning|Downloading|Executing)"
+  "^(Packages to update|Create boot environment|Create backup boot environment|DOWNLOAD|PHASE|Planning|Downloading|Executing)",
+  "^in-guest: pkg (refresh --full failed|refresh --full couldn't reach a publisher's repository|update couldn't reach a publisher's repository) \\(try N of N\\): "
  ],
  "haiku": [
   "^(Refreshing repository|Validating checksum|Downloading|Fetching|Skipping)",

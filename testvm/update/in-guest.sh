@@ -78,19 +78,21 @@ if [ "$(uname)" = Linux ] && [ -d /gnu/store ] && [ -d /var/guix/profiles ] && [
     # fix's own --try then took 10 tries, a failed one taking 10 s).  A
     # pull changes nothing until it has the commit, and the objects it got
     # stay in its checkout; a reconfigure keeps in the store each substitute
-    # it got.  A last failure's output ends the log, for GuestTest2's flake
-    # rules to read.
+    # it got.  Each try's output goes to /run first: a try tried again is
+    # one line, with the first of its lines that made it so (its own lines
+    # never reach the log, for GuestTest2's sweep), and the last try's
+    # output is printed whole, a last failure's ending the log for
+    # GuestTest2's flake rules to read.
     fetched() {
         n=0
         while :; do
-            { "$@" 2>&1; echo $? >/run/bko-fetch.rc; } | tee /run/bko-fetch.log
-            r=$(cat /run/bko-fetch.rc)
+            "$@" >/run/bko-fetch.log 2>&1; r=$?
             [ "$r" -ne 0 ] && [ $n -lt 20 ] &&
-                grep -qE "error: Git error: |substitution of /gnu/store/.* failed|download from .* failed|TLS error in procedure|failed to connect to |Temporary failure in name resolution" /run/bko-fetch.log ||
+                why=$(grep -m1 -E "error: Git error: |substitution of /gnu/store/.* failed|download from .* failed|TLS error in procedure|failed to connect to |Temporary failure in name resolution" /run/bko-fetch.log) ||
                 break
-            n=$((n + 1)); say "a download failed: $1 $2 again in 60 s ($n of 20)"; sleep 60
+            n=$((n + 1)); say "a download failed: $1 $2 again in 60 s ($n of 20): $(printf '%s' "$why" | tr -d '\r')"; sleep 60
         done
-        rm -f /run/bko-fetch.rc /run/bko-fetch.log
+        cat /run/bko-fetch.log; rm -f /run/bko-fetch.log
         return "$r"
     }
     fetched guix pull || exit 1
@@ -130,12 +132,23 @@ if [ "$(uname)" = Linux ] && [ -e /etc/gentoo-release ] && has emerge; then
     # Again, up to 5 times a minute apart, when the sync fails: an rsync
     # mirror caught mid-update fails the tree's Manifest check
     # ("Manifest mismatch for metadata/Manifest.gz", gentoo-systemd
-    # 2026-11-17), and the next sync puts it right.
+    # 2026-11-17), and the next sync puts it right.  Each try's output goes
+    # to /run first: a failed try is one line, its first !!! or error line,
+    # and the last try's output is printed whole, stdout and stderr as
+    # emerge wrote them (GuestTest2's sweep, as apt-get update's in
+    # Linux.apt).
     tries=0
-    until emerge --sync -q $o; do
-        tries=$((tries + 1)); [ $tries -lt 5 ] || exit 1
-        say "emerge --sync failed: again in 60 s ($tries of 4)"; sleep 60
+    until emerge --sync -q $o >/run/bko-sync.out 2>/run/bko-sync.err; do
+        tries=$((tries + 1))
+        if [ $tries -ge 5 ]; then
+            cat /run/bko-sync.out; cat /run/bko-sync.err >&2
+            rm -f /run/bko-sync.out /run/bko-sync.err; exit 1
+        fi
+        why=$(cat /run/bko-sync.out /run/bko-sync.err | grep -m1 -E '^!!! |[Ee]rror' | tr -d '\r')
+        say "emerge --sync failed: again in 60 s ($tries of 4): ${why:-no !!! or error line}"; sleep 60
     done
+    cat /run/bko-sync.out; cat /run/bko-sync.err >&2
+    rm -f /run/bko-sync.out /run/bko-sync.err
     plan=$(emerge -puDN $o @world) || { printf '%s\n' "$plan"; say "emerge -puDN @world failed"; exit 1; }
     printf '%s\n' "$plan"
     # CATEGORY/NAME of each "[ebuild" line: the version is the last
@@ -375,14 +388,14 @@ if [ "$(uname)" = Linux ] && [ -f /var/lib/snapd/modeenv ] && grep -qs '^ID=ubun
     # The store or its CDN failing in transit (Go's url.Error, METHOD "URL":
     # why; the store's own refusals aren't): run again, up to 10 times 30 s
     # apart, as Linux.apt's snap refresh does.  OUT, the last try's output;
-    # each earlier try's is printed.
+    # each earlier try is one line, its url.Error line (its own lines never
+    # reach the log, for GuestTest2's sweep).
     stored() {
         n=0
         while :; do
             out=$("$@" 2>&1); r=$?
-            [ $r -ne 0 ] && [ $n -lt 10 ] && printf '%s\n' "$out" | grep -qE '(Get|Post|Head) "https://[^"]*": ' || break
-            printf '%s\n' "$out"
-            n=$((n + 1)); say "the snap store didn't answer: $* again in 30 s ($n of 10)"; sleep 30
+            [ $r -ne 0 ] && [ $n -lt 10 ] && why=$(printf '%s\n' "$out" | grep -m1 -E '(Get|Post|Head) "https://[^"]*": ') || break
+            n=$((n + 1)); say "the snap store didn't answer: $* again in 30 s ($n of 10): $why"; sleep 30
         done
         return $r
     }
@@ -777,27 +790,28 @@ Linux)
         # every few requests with a 503 for over an hour on 2026-11-17, and
         # apt's own three tries came too close together).  apt stops before
         # dpkg runs when it can't fetch everything, and what it did fetch
-        # stays in its cache for the next try.  A last failure's output ends
-        # the log, for GuestTest2's flake rules to read.  The same for the
-        # lists' or the archives' lock held by an apt of the guest's own:
+        # stays in its cache for the next try.  The same for the lists' or
+        # the archives' lock held by an apt of the guest's own:
         # DPkg::Lock::Timeout waits for dpkg's lock only, and apt-get clean
-        # takes both of the others.
+        # takes both of the others.  Each try's output goes to /run first, as
+        # apt-get update's above: a try tried again is one line, its first
+        # E: line that made it so, and the last try's output is printed
+        # whole, a last failure's ending the log for GuestTest2's flake rules.
         fetched() {
             n=0
             while :; do
-                { "$@" 2>&1; echo $? >/run/bko-fetch.rc; } | tee /run/bko-fetch.log
-                r=$(cat /run/bko-fetch.rc)
+                "$@" >/run/bko-fetch.log 2>&1; r=$?
                 [ "$r" -ne 0 ] && [ $n -lt 10 ] || break
-                if grep -q '^E: Failed to fetch ' /run/bko-fetch.log; then
-                    n=$((n + 1)); say "a download failed: apt-get again in 30 s ($n of 10)"
-                elif grep -qE '^E: Could not get lock /var/(lib/apt/lists|cache/apt/archives)/lock' /run/bko-fetch.log; then
-                    n=$((n + 1)); say "another apt holds apt's lock: apt-get again in 30 s ($n of 10)"
+                if why=$(grep -m1 '^E: Failed to fetch ' /run/bko-fetch.log); then
+                    n=$((n + 1)); say "a download failed: apt-get again in 30 s ($n of 10): $why"
+                elif why=$(grep -m1 -E '^E: Could not get lock /var/(lib/apt/lists|cache/apt/archives)/lock' /run/bko-fetch.log); then
+                    n=$((n + 1)); say "another apt holds apt's lock: apt-get again in 30 s ($n of 10): $why"
                 else
                     break
                 fi
                 sleep 30
             done
-            rm -f /run/bko-fetch.rc /run/bko-fetch.log
+            cat /run/bko-fetch.log; rm -f /run/bko-fetch.log
             return "$r"
         }
         # deps_first PKG...: the packages again, each after those of them it
@@ -919,11 +933,21 @@ EOF
         # stub installs it by name, which pins it.
         if grep -qs '^ID=elementary$' /etc/os-release && has flatpak; then
             fl0=$(flatpak list --system --columns=ref,active 2>/dev/null)
+            # Each try's output goes to /run first: a failed try is one line,
+            # its first error: line, and the last try's is printed whole,
+            # stdout and stderr as flatpak wrote them (as apt-get update's).
             n=0
-            until flatpak update --system --noninteractive -y; do
-                n=$((n + 1)); [ $n -lt 10 ] || { say "flatpak update failed"; exit 1; }
-                say "flatpak update failed: again in 30 s ($n of 10)"; sleep 30
+            until flatpak update --system --noninteractive -y >/run/bko-flatpak.out 2>/run/bko-flatpak.err; do
+                n=$((n + 1))
+                if [ $n -ge 10 ]; then
+                    cat /run/bko-flatpak.out; cat /run/bko-flatpak.err >&2
+                    rm -f /run/bko-flatpak.out /run/bko-flatpak.err; say "flatpak update failed"; exit 1
+                fi
+                why=$(cat /run/bko-flatpak.out /run/bko-flatpak.err | grep -m1 -i '^error: ' | tr -d '\r')
+                say "flatpak update failed: again in 30 s ($n of 10): ${why:-no error: line}"; sleep 30
             done
+            cat /run/bko-flatpak.out; cat /run/bko-flatpak.err >&2
+            rm -f /run/bko-flatpak.out /run/bko-flatpak.err
             flatpak uninstall --system --unused --noninteractive -y || { say "flatpak uninstall --unused failed"; exit 1; }
             [ "$(flatpak list --system --columns=ref,active 2>/dev/null)" = "$fl0" ] ||
                 step "flatpaks updated, unused runtimes removed"
@@ -946,16 +970,19 @@ EOF
             # GuestTest2 t2v-20261118T1426-76be attempt 1).  snap prints
             # those as Go's url.Error, METHOD "URL": why; the store's own
             # refusals aren't.  A snap whose lane did refresh keeps it, so
-            # every try's output counts for the step line.
+            # every try's output counts for the step line.  A try tried again
+            # is one line, its url.Error line, its own lines never reaching
+            # the log (GuestTest2's sweep, as apt-get update's above); the
+            # last try's output is printed whole.
             all= n=0
             until out=$(snap refresh 2>&1); do
-                printf '%s\n' "$out"; all="$all$out
+                all="$all$out
 "
-                if [ $n -lt 10 ] && printf '%s\n' "$out" | grep -qE '(Get|Post|Head) "https://[^"]*": '; then
-                    n=$((n + 1)); say "the snap store didn't answer: snap refresh again in 30 s ($n of 10)"
+                if [ $n -lt 10 ] && why=$(printf '%s\n' "$out" | grep -m1 -E '(Get|Post|Head) "https://[^"]*": '); then
+                    n=$((n + 1)); say "the snap store didn't answer: snap refresh again in 30 s ($n of 10): $why"
                     sleep 30; snap_settle
                 else
-                    say "snap refresh failed"; exit 1
+                    printf '%s\n' "$out"; say "snap refresh failed"; exit 1
                 fi
             done
             printf '%s\n' "$out"; out="$all$out"
@@ -1061,18 +1088,20 @@ print(d[0]["checksum"] if d else "")' "$1"
         # image proxy's one reconnect fails too.  The layers already imported
         # stay in the repo, so the next try fetches only those after them.
         # rpm-ostreed's own transaction (an automatic update) is waited out
-        # the same way.  Any other error ends it.
+        # the same way.  Any other error ends it.  Each try's output goes to
+        # /run first: a try tried again is one line, its error: line, and the
+        # last try's output is printed whole (GuestTest2's sweep and flake
+        # rules, as apt-get update's in Linux.apt).
         fetched() {
             n=0
             while :; do
-                { "$@" 2>&1; echo $? >/run/bko-fetch.rc; } | tee /run/bko-fetch.log
-                r=$(cat /run/bko-fetch.rc)
+                "$@" >/run/bko-fetch.log 2>&1; r=$?
                 [ "$r" -ne 0 ] && [ $n -lt 10 ] &&
-                    grep -qiE '^error: .*(EOF|end of file|connection reset|connection refused|broken pipe|timed out|timeout|TLS handshake|name resolution|no such host|network is unreachable|50[234] |Transaction in progress)' /run/bko-fetch.log ||
+                    why=$(grep -m1 -iE '^error: .*(EOF|end of file|connection reset|connection refused|broken pipe|timed out|timeout|TLS handshake|name resolution|no such host|network is unreachable|50[234] |Transaction in progress)' /run/bko-fetch.log) ||
                     break
-                n=$((n + 1)); say "a download failed: rpm-ostree again in 30 s ($n of 10)"; sleep 30
+                n=$((n + 1)); say "a download failed: rpm-ostree again in 30 s ($n of 10): $(printf '%s' "$why" | tr -d '\r')"; sleep 30
             done
-            rm -f /run/bko-fetch.rc /run/bko-fetch.log
+            cat /run/bko-fetch.log; rm -f /run/bko-fetch.log
             return "$r"
         }
         was=$(booted booted) || exit 1
@@ -1167,19 +1196,21 @@ EOF
         # at a download, up to 10 times 30 s apart (a mirror that stalled
         # on one file: "Operation too slow", endeavouros-grub 2026-11-17).
         # pacman upgrades nothing unless it has every package, and keeps
-        # what it fetched in its cache for the next try.  A last failure's
-        # output ends the log, for GuestTest2's flake rules to read.
+        # what it fetched in its cache for the next try.  Each try's output
+        # goes to /run first: a try tried again is one line, the first of its
+        # lines that made it so, and the last try's output is printed whole,
+        # a last failure's ending the log for GuestTest2's flake rules (as
+        # apt-get update's in Linux.apt).
         fetched() {
             n=0
             while :; do
-                { "$@" 2>&1; echo $? >/run/bko-fetch.rc; } | tee /run/bko-fetch.log
-                r=$(cat /run/bko-fetch.rc)
+                "$@" >/run/bko-fetch.log 2>&1; r=$?
                 [ "$r" -ne 0 ] && [ $n -lt 10 ] &&
-                    grep -qE 'failed to retrieve some files|failed retrieving file|failed to synchronize all databases' /run/bko-fetch.log ||
+                    why=$(grep -m1 -E 'failed to retrieve some files|failed retrieving file|failed to synchronize all databases' /run/bko-fetch.log) ||
                     break
-                n=$((n + 1)); say "a download failed: pacman again in 30 s ($n of 10)"; sleep 30
+                n=$((n + 1)); say "a download failed: pacman again in 30 s ($n of 10): $(printf '%s' "$why" | tr -d '\r')"; sleep 30
             done
-            rm -f /run/bko-fetch.rc /run/bko-fetch.log
+            cat /run/bko-fetch.log; rm -f /run/bko-fetch.log
             return "$r"
         }
         # Manjaro: the installer ranks the mirrors once and nothing ranks them
@@ -1416,18 +1447,22 @@ EOF
         # at 69 % at 3 KB/s, then "Package 'xbps' is up to date."): tried
         # again whatever the status, and a failure still after the last try,
         # an update on stale repodata, is no success (1 in place of 0 or 17).
+        # Each try's output goes to /run first: a try tried again is one
+        # line, the first of its lines that made it so, and the last try's
+        # output is printed whole (GuestTest2's sweep and flake rules, as
+        # apt-get update's in Linux.apt).
         fetched() {
             n=0
             while :; do
-                { "$@" 2>&1; echo $? >/run/bko-fetch.rc; } | tee /run/bko-fetch.log
-                r=$(cat /run/bko-fetch.rc)
+                "$@" >/run/bko-fetch.log 2>&1; r=$?
                 stale=$(grep -c 'ERROR: \[reposync\] ' /run/bko-fetch.log)
                 [ $n -lt 10 ] && { [ "$stale" -gt 0 ] || { [ "$r" -ne 0 ] && [ "$r" -ne 17 ] &&
                     grep -q "failed to download .* package from" /run/bko-fetch.log; }; } ||
                     break
-                n=$((n + 1)); say "a download failed: xbps-install again in 30 s ($n of 10)"; sleep 30
+                why=$(grep -m1 -E 'ERROR: \[reposync\] |failed to download .* package from' /run/bko-fetch.log | tr -d '\r')
+                n=$((n + 1)); say "a download failed: xbps-install again in 30 s ($n of 10): $why"; sleep 30
             done
-            rm -f /run/bko-fetch.rc /run/bko-fetch.log
+            cat /run/bko-fetch.log; rm -f /run/bko-fetch.log
             if [ "$stale" -gt 0 ]; then
                 say "xbps-install's repodata sync failed ($stale [reposync] errors): not run on stale repodata"
                 [ "$r" -ne 0 ] && [ "$r" -ne 17 ] || r=1
@@ -1536,20 +1571,22 @@ DragonFly)
     # continue"; dragonfly6, GuestTest2 t2v-20261119T0157-c8c7).  pkg 2.8's
     # package fetch cut off says only "An error occurred while fetching
     # package" (python312 for git-lite at 10 KB/s, dragonfly6, GuestTest2
-    # t2v-20261119T0726-e436).  A last failure's output ends the log, for
-    # GuestTest2's flake rules to read.
+    # t2v-20261119T0726-e436).  Each try's output goes to /tmp first (no
+    # /run here): a try tried again is one line, the first of its lines
+    # that made it so (its own lines never reach the log, for GuestTest2's
+    # sweep), and the last try's output is printed whole, a last failure's
+    # ending the log for GuestTest2's flake rules to read.
     fetched() {
         n=0
         while :; do
-            { "$@" 2>&1; echo $? >/tmp/bko-fetch.rc; } | tee /tmp/bko-fetch.log
-            r=$(cat /tmp/bko-fetch.rc)
+            "$@" >/tmp/bko-fetch.log 2>&1; r=$?
             [ "$r" -ne 0 ] && [ $n -lt 10 ] &&
-                grep -qE "Unable to update repository|Error updating repositories|An error occurred while fetching package|Failure when receiving data|missing or size mismatch|Repo extraction failed|Error extracting the archive|[Tt]imed? ?out|Transfer closed with|No address record|Connection (reset|refused)" /tmp/bko-fetch.log ||
+                why=$(grep -m1 -E "Unable to update repository|Error updating repositories|An error occurred while fetching package|Failure when receiving data|missing or size mismatch|Repo extraction failed|Error extracting the archive|[Tt]imed? ?out|Transfer closed with|No address record|Connection (reset|refused)" /tmp/bko-fetch.log) ||
                 break
-            n=$((n + 1)); say "a download failed: $1 $2 again in 60 s ($n of 10)"; sleep 60
+            n=$((n + 1)); say "a download failed: $1 $2 again in 60 s ($n of 10): $(printf '%s' "$why" | tr -d '\r')"; sleep 60
             [ "$2" = update ] || pkg update -f >/dev/null 2>&1
         done
-        rm -f /tmp/bko-fetch.rc /tmp/bko-fetch.log
+        cat /tmp/bko-fetch.log; rm -f /tmp/bko-fetch.log
         return "$r"
     }
     fetched pkg update -f || exit 1
@@ -1575,13 +1612,21 @@ DragonFly)
         gitpkgs=$(pkg query %n | sort | comm -13 /tmp/bko-pkgs -)
     fi
     # lsremote REF: REF's commit at $repo (nothing when it has none), git
-    # ls-remote run again while it fails, up to 10 times 30 s apart.
+    # ls-remote run again while it fails, up to 10 times 30 s apart.  Its
+    # stderr goes to /tmp first: a try tried again is one line, its first
+    # fatal: or error: line, and the last try's stderr is printed whole.
     lsremote() {
         n=0
-        until l=$(git ls-remote $repo "$1"); do
-            n=$((n + 1)); [ $n -le 10 ] || { say "git ls-remote $repo $1 kept failing" >&2; return 1; }
-            say "git ls-remote $repo failed: again in 30 s ($n of 10)" >&2; sleep 30
+        until l=$(git ls-remote $repo "$1" 2>/tmp/bko-lsremote.err); do
+            n=$((n + 1))
+            if [ $n -gt 10 ]; then
+                cat /tmp/bko-lsremote.err >&2; rm -f /tmp/bko-lsremote.err
+                say "git ls-remote $repo $1 kept failing" >&2; return 1
+            fi
+            why=$(grep -m1 -E '^(fatal|error): ' /tmp/bko-lsremote.err | tr -d '\r')
+            say "git ls-remote $repo failed: again in 30 s ($n of 10): ${why:-no fatal: or error: line}" >&2; sleep 30
         done
+        cat /tmp/bko-lsremote.err >&2; rm -f /tmp/bko-lsremote.err
         printf '%s\n' "$l" | cut -f1
     }
     head=$(lsremote refs/heads/$branch) || exit 1
@@ -1601,12 +1646,17 @@ DragonFly)
         rm -rf /usr/src /usr/obj/* || exit 1
         # Again, up to 5 times a minute apart, when the clone fails: GitHub
         # or the way there cutting it off (git keeps nothing of a failed one).
+        # Its stderr goes to /tmp first, as lsremote's: a try tried again is
+        # one line, and the last try's stderr is printed whole.
         n=0
-        until make -C /usr src-create-shallow BRANCH=$branch GITURL_SRC=$repo >/dev/null; do
-            n=$((n + 1)); [ $n -le 5 ] || exit 1
-            say "the shallow clone of $repo failed: again in 60 s ($n of 5)"; sleep 60
+        until make -C /usr src-create-shallow BRANCH=$branch GITURL_SRC=$repo >/dev/null 2>/tmp/bko-clone.err; do
+            n=$((n + 1))
+            [ $n -le 5 ] || { cat /tmp/bko-clone.err >&2; rm -f /tmp/bko-clone.err; exit 1; }
+            why=$(grep -m1 -E '^(fatal|error): ' /tmp/bko-clone.err | tr -d '\r')
+            say "the shallow clone of $repo failed: again in 60 s ($n of 5): ${why:-no fatal: or error: line}"; sleep 60
             rm -rf /usr/src || exit 1
         done
+        cat /tmp/bko-clone.err >&2; rm -f /tmp/bko-clone.err
         commit=$(git -C /usr/src rev-parse HEAD) || exit 1
         # The running kernel's configuration: the release's is X86_64_GENERIC.
         k=$(uname -i)
@@ -1827,24 +1877,35 @@ SunOS)
     # catalogs are refreshed first, tried again while the network or the
     # repository may still be coming back, and pkg update's own errors in
     # reaching one fail the update: after exit 4 (nothing done) tried again,
-    # after 0 (updated from an old catalog) at once.
+    # after 0 (updated from an old catalog) at once.  Each try's output goes
+    # to /tmp first: a try tried again is one line, the first of its lines
+    # that says why (its own lines never reach the log, for GuestTest2's
+    # sweep), and the last try's output is printed whole.  No grep -m: not
+    # every illumos grep has it.
     unreached() {
         grep -Eq 'Unable to contact|Errors were encountered when attempting|Framework (stall|error)' /tmp/bko-pkg.log
     }
     tries=0
     while :; do
-        if pkg refresh --full >/tmp/bko-pkg.log 2>&1 && ! unreached; then
-            { pkg update -v 2>&1; echo $? >/tmp/bko-pkg.rc; } | tee /tmp/bko-pkg.log
-            rc=$(cat /tmp/bko-pkg.rc)
-            [ "$rc" -eq 0 ] || [ "$rc" -eq 4 ] || { say "pkg update failed ($rc)"; exit 1; }
+        if ! pkg refresh --full >/tmp/bko-pkg.log 2>&1; then
+            what="pkg refresh --full failed"
+        elif unreached; then
+            what="pkg refresh --full couldn't reach a publisher's repository"
+        else
+            pkg update -v >/tmp/bko-pkg.log 2>&1; rc=$?
+            [ "$rc" -eq 0 ] || [ "$rc" -eq 4 ] || { cat /tmp/bko-pkg.log; say "pkg update failed ($rc)"; exit 1; }
             unreached || break
-            [ "$rc" -eq 4 ] || { say "pkg update couldn't reach a publisher's repository"; exit 1; }
+            [ "$rc" -eq 4 ] || { cat /tmp/bko-pkg.log; say "pkg update couldn't reach a publisher's repository"; exit 1; }
+            what="pkg update couldn't reach a publisher's repository"
         fi
         tries=$((tries + 1))
         [ $tries -lt 10 ] || { cat /tmp/bko-pkg.log; say "a publisher's repository can't be reached"; exit 1; }
+        why=$(grep -E 'Unable to contact|Errors were encountered when attempting|Framework (stall|error)' /tmp/bko-pkg.log | head -n 1)
+        [ -n "$why" ] || why=$(grep '^pkg: ' /tmp/bko-pkg.log | head -n 1)
+        say "$what (try $tries of 10): ${why:-no pkg: or error line}"
         sleep 30
     done
-    rm -f /tmp/bko-pkg.log /tmp/bko-pkg.rc
+    cat /tmp/bko-pkg.log; rm -f /tmp/bko-pkg.log
     # t2-section: prologue
     ;;
 Haiku)
@@ -1878,16 +1939,25 @@ Redox)
     # so its errors are read from what it says, with case: grep panics on
     # Redox today.  Under --yes, pkg doesn't retry a download that times
     # out ("Download error: ... timed out"), which is common: again, here.
+    # A try tried again is one line, its first line that says so (its own
+    # lines never reach the log, for GuestTest2's sweep); the last try's
+    # output is printed whole.  Its line by read and case, not grep.
     tries=0
     while :; do
         pkg --yes update >/tmp/bko-pkg.log 2>&1; rc=$?
-        cat /tmp/bko-pkg.log
         case $(cat /tmp/bko-pkg.log) in
         *"Download error"*|*"timed out"*)
             tries=$((tries + 1))
-            [ $tries -lt 5 ] || { say "pkg's downloads timed out $tries times"; exit 1; }
-            say "a download timed out; again in 20 s"
+            [ $tries -lt 5 ] || { cat /tmp/bko-pkg.log; say "pkg's downloads timed out $tries times"; exit 1; }
+            why=
+            while IFS= read -r l; do
+                case $l in *"Download error"*|*"timed out"*) why=$l; break ;; esac
+            done </tmp/bko-pkg.log
+            say "a download timed out: again in 20 s ($tries of 4): $why"
             sleep 20; continue ;;
+        esac
+        cat /tmp/bko-pkg.log
+        case $(cat /tmp/bko-pkg.log) in
         *error:*|*Error:*) say "pkg failed"; exit 1 ;;
         esac
         [ $rc -eq 0 ] || { say "pkg exited $rc"; exit 1; }

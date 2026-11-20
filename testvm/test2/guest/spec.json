@@ -2485,6 +2485,9 @@
     "testvm/compare/boot-state.sh",
     "testvm/test2/guest/new-guest.sh"
    ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#snap"
+   ],
    "checks": {
     "pm": "snap",
     "rules": {

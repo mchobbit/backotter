@@ -945,6 +945,60 @@ class RealLogLines(unittest.TestCase):
             for x in lines:
                 self.assertEqual(len(self.left(pm, x)), 1, (pm, x))
 
+    # in-guest.sh's retry loops (2026-11-20): a try tried again is one line, its retry line and
+    # the line that made it one; the try's own lines never reach the log.
+    RETRY_LINES = {
+        "apt": ["in-guest: a download failed: apt-get again in 30 s (1 of 10): E: Failed to fetch "
+                "https://ppa.launchpadcontent.net/x/y/ubuntu/pool/main/y.deb  503  Service Unavailable [IP: 1.2.3.4 443]",
+                "in-guest: another apt holds apt's lock: apt-get again in 30 s (2 of 10): E: Could not get lock "
+                "/var/lib/apt/lists/lock. It is held by process 2213 (apt-get)",
+                "in-guest: flatpak update failed: again in 30 s (3 of 10): error: While pulling runtime/io.elementary.Platform/"
+                "x86_64/8.2 from remote appcenter: Curl error: Timeout was reached",
+                "in-guest: the snap store didn't answer: snap refresh again in 30 s (1 of 10): - Download snap \"hwctl\" (131) "
+                "from channel \"latest/stable\" (Get \"https://api.snapcraft.io/api/v1/snaps/download/x_131.snap\": "
+                "read: connection reset by peer)"],
+        "pacman": ["in-guest: a download failed: pacman again in 30 s (1 of 10): error: failed retrieving file "
+                   "'breeze-6.8.3-1-x86_64.pkg.tar.zst' from geo.mirror.pkgbuild.com : The requested URL returned error: 404"],
+        "rpm-ostree": ["in-guest: a download failed: rpm-ostree again in 30 s (1 of 10): error: Importing: Unencapsulating "
+                       "base: Reading large regfile: unexpected end of file"],
+        "xbps": ["in-guest: a download failed: xbps-install again in 30 s (1 of 10): ERROR: [trans] failed to download "
+                 "`gawk-5.4.2_1' package from `https://repo-default.voidlinux.org/current': Input/output error"],
+        "guix": ["in-guest: a download failed: guix pull again in 60 s (1 of 20): guix pull: error: Git error: SSL error: syscall failure: ",
+                 "in-guest: a download failed: guix system again in 60 s (4 of 20): substitution of "
+                 "/gnu/store/0123abcd-linux-libre-6.17.12 failed"],
+        "dragonfly": ["in-guest: a download failed: pkg upgrade again in 60 s (1 of 10): pkg: An error occurred while fetching package",
+                      "in-guest: git ls-remote https://github.com/DragonFlyBSD/DragonFlyBSD.git failed: again in 30 s (1 of 10): "
+                      "fatal: unable to access 'https://github.com/DragonFlyBSD/DragonFlyBSD.git/': Could not resolve host: github.com",
+                      "in-guest: the shallow clone of https://github.com/DragonFlyBSD/DragonFlyBSD.git failed: again in 60 s (2 of 5): "
+                      "fatal: early EOF"],
+        "portage": ["in-guest: emerge --sync failed: again in 60 s (1 of 4): !!! Manifest mismatch for metadata/Manifest.gz"],
+        "snap": ["in-guest: the snap store didn't answer: snap refresh --list again in 30 s (1 of 10): - Monitoring snaps "
+                 "(Post \"https://api.snapcraft.io/v2/snaps/refresh\": net/http: request canceled)"],
+        "ips": ["in-guest: pkg update couldn't reach a publisher's repository (try 1 of 10): WARNING: Errors were encountered "
+                "when attempting to retrieve package",
+                "in-guest: pkg refresh --full failed (try 2 of 10): Unable to contact valid package repository: "
+                "https://pkg.openindiana.org/hipster/",
+                "in-guest: pkg refresh --full couldn't reach a publisher's repository (try 3 of 10): Framework stall:"],
+    }
+
+    def test_in_guest_retry_lines_go_for_their_guests(self):
+        """Each retry line goes for its own package manager's guests only; the summary-less old
+        form, the giving-up lines and the try's own error lines stay."""
+        for pm, lines in self.RETRY_LINES.items():
+            for x in lines:
+                self.assertEqual(self.left(pm, x), [], (pm, x))
+                for other in ("apt", "pacman", "ips") if pm != "apt" else ("pacman", "ips"):
+                    if other != pm:
+                        self.assertEqual(len(self.left(other, x)), 1, (other, x))
+        for pm, x in (("apt", "in-guest: a download failed: apt-get again in 30 s (1 of 10)"),
+                      ("apt", "in-guest: flatpak update failed"), ("apt", "in-guest: snap refresh failed"),
+                      ("pacman", "error: failed retrieving file 'x.pkg.tar.zst' from m : The requested URL returned error: 404"),
+                      ("portage", "!!! Manifest mismatch for metadata/Manifest.gz"),
+                      ("ips", "in-guest: a publisher's repository can't be reached"), ("ips", "in-guest: pkg update failed (1)"),
+                      ("snap", "in-guest: snap refresh --no-wait failed"),
+                      ("dragonfly", "in-guest: git ls-remote https://github.com/DragonFlyBSD/DragonFlyBSD.git refs/tags/v6.4.2^{} kept failing")):
+            self.assertEqual(len(self.left(pm, x)), 1, (pm, x))
+
     # Kernel lines of the guix guests' last init moments (their serial logs, t2v-20261118T2038-21eb).
     GUIX_KERNEL = ["PM:   Magic number: 2:195:652", "PM:   hash matches drivers/base/power/main.c:1424", "pci 0000:00:1f.3: hash matches",
                    "clk: Disabling unused clocks", "evm: HMAC attrs: 0x1",

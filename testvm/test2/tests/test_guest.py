@@ -995,6 +995,97 @@ class Reruns(unittest.TestCase):
         self.assertTrue(any("baselines/debian12.json" in c for _h, c, _i in io.shell))
 
 
+class FlakyIO(FakeIO):
+    """FakeIO whose writes of a file named WHAT fail (exit 1, or a raise) FAILS times; its waits recorded."""
+
+    def __init__(self, what, fails, exc=None):
+        super().__init__()
+        self.what, self.fails, self.exc, self.waits, self.puts = what, fails, exc, [], 0
+
+    def sh(self, host, cmd, timeout=60, input=None):
+        if self.what in cmd and "cat >" in cmd:
+            with self.mu:
+                self.puts += 1
+                n = self.puts
+            if n <= self.fails:
+                if self.exc:
+                    raise self.exc
+                return 1, "", "ssh: connect to host chopin.local port 22: Connection reset\n"
+        return super().sh(host, cmd, timeout=timeout, input=input)
+
+    def sleep(self, s):
+        self.waits.append(s)
+
+
+class CellsWrite(unittest.TestCase):
+    """write_job_cells and upload_baselines: written beside, moved into place, seen there; a write
+    that failed is tried again, and a cells file never written runs no job (the freeze run, 2026-11-20:
+    elementary8-luks and neon24 passed into invalid rows, no cell entry)."""
+
+    def item(self, r):
+        return r.item_of(r.plan.cells[0])
+
+    def test_the_cells_file_is_moved_into_place_and_checked(self):
+        r, rs, _ctx, io = make(["debian12"], hosts=("chopin",))
+        path = r.write_job_cells(self.item(r), "chopin")
+        self.assertEqual(path, f"{rs.host_root}/runs/{rs.run}/cells-debian12-1.json")
+        [(h, cmd, data)] = io.shell
+        self.assertEqual(h, "chopin")
+        self.assertIn(f"cat > {path}.tmp && mv -f {path}.tmp {path} && test -s {path}", cmd)
+        self.assertEqual(json.loads(data)["cells"]["debian12"]["cell"], "guest:debian12")
+
+    def test_a_failed_write_is_tried_again(self):
+        io = FlakyIO("cells-debian12", 2)
+        r, _rs, _ctx, _ = make(["debian12"], io, hosts=("chopin",))
+        r.write_job_cells(self.item(r), "chopin")
+        self.assertEqual(io.puts, 3)
+        self.assertEqual(io.waits, [guest.PUT_WAIT_S, 2 * guest.PUT_WAIT_S])
+
+    def test_an_ssh_that_raises_is_a_failed_write(self):
+        io = FlakyIO("cells-debian12", 1, exc=OSError("broken pipe"))
+        r, _rs, _ctx, _ = make(["debian12"], io, hosts=("chopin",))
+        r.write_job_cells(self.item(r), "chopin")
+        self.assertEqual(io.puts, 2)
+
+    def test_a_write_that_never_succeeds_raises(self):
+        io = FlakyIO("cells-debian12", 99)
+        r, _rs, _ctx, _ = make(["debian12"], io, hosts=("chopin",))
+        with self.assertRaises(RuntimeError) as cm:
+            r.write_job_cells(self.item(r), "chopin")
+        self.assertEqual(io.puts, guest.PUT_TRIES)
+        self.assertEqual(len(io.waits), guest.PUT_TRIES - 1)   # no wait after the last
+        self.assertIn("cells-debian12-1.json wasn't written on chopin: exit 1: ssh: connect", str(cm.exception))
+
+    def test_a_cells_file_not_written_runs_no_job_and_is_a_harness_result(self):
+        io, jobs = FlakyIO("cells-debian12", 99), FakeJobs()
+        io.summ["arch"] = summary()
+        r, _rs, _ctx, _ = make(["debian12", "arch"], io, jobs, hosts=("chopin",))
+        whys = []
+
+        def row(ctx, g, host, run, attempt, why, rule, **k):
+            whys.append((g, why))
+            return {"x": 1, "needs": {"harness": "FAIL"}, "fails": ["f"]}
+        with mock.patch.object(guest, "harness_row", row), mock.patch.object(guest, "append_row", lambda *a, **k: "rid"):
+            res = r.run()
+        self.assertEqual([c["guest"] for c in jobs.calls], ["arch"])
+        self.assertTrue(whys and all(g == "debian12" and "cells file" in w for g, w in whys))
+        c = [c for c in res["cells"] if c["cell"] == "guest:debian12"][0]
+        self.assertEqual(c["verdict"], "HARNESS")
+
+    def test_a_baseline_not_written_is_noted_and_the_run_goes_on(self):
+        io, jobs = FlakyIO("baselines/debian12.json", 99), FakeJobs()
+        io.summ["debian12"] = summary()
+        r, rs, _ctx, _ = make(["debian12"], io, jobs, hosts=("chopin",))
+        p = os.path.join(rs.mac_root, "guest-baselines", "debian12.json")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write('{"lines": []}')
+        r.run()
+        self.assertEqual(io.puts, guest.PUT_TRIES)
+        self.assertEqual([c["guest"] for c in jobs.calls], ["debian12"])
+        self.assertTrue(any("guest:debian12: baseline not written on chopin" in n for n in r.notes), r.notes)
+
+
 class Waves(unittest.TestCase):
     def test_first_of_each_package_manager(self):
         io = FakeIO()

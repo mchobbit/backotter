@@ -29,6 +29,11 @@ for v in T2_HOST_ROOT T2_WORK BKO_WORK T2_CELLS T2_COPY_ROOT T2_LEDGER; do
 done
 RULES=${T2_GUEST_RULES:-} PLAT=${T2_GUEST_PLAT:-linux}
 CELLS=${T2_CELLS:-}
+# the Mac writes it first (write_job_cells): with none, the row would be invalid after the whole
+# update ("no cell entry"), so a harness fault now, before vm-update
+if [[ -n $CELLS && ! -s $CELLS ]]; then
+    echo "job.sh: the cells file $CELLS is missing or empty: not running $G" >&2; exit 2
+fi
 mkdir -p "$OUT/hooks" || exit 2
 H=$OUT/hooks
 

@@ -36,6 +36,8 @@ from . import DEFAULT_HOSTS, hostjob, hostrun, mac_root, rows_guest, tool_guest,
 
 POLL_S = 15
 MAX_ATTEMPTS = 3
+PUT_TRIES = 3     # put_file: a host file's write, tried this often (an ssh that failed, 2026-11-20)
+PUT_WAIT_S = 5    # and this long times the try between (io.sleep)
 JOBS_PER_HOST = 3
 UPDATE_JOBS = 2
 UPDATE_MIN_D = 6
@@ -1035,10 +1037,35 @@ class Runner:
                 continue
             d = f"{self.host_root.rstrip('/')}/runs/{self.rs.run}/baselines"
             for h in self.hosts:
-                self.io.sh(h, f"mkdir -p {hostrun.rq(d)} && cat > {hostrun.rq(d + '/' + g + '.json')}", input=data, timeout=60)
+                why = self.put_file(h, f"{d}/{g}.json", data)
+                if why:   # the run goes on: the guest's rows there judge its lines with no baseline
+                    self.log(f"{g}: baseline not written on {h}: {why}")
+                    self.notes.append(f"guest:{g}: baseline not written on {h} ({why}): its lines there are judged as with none")
+
+    def put_file(self, host, path, data):
+        """DATA as HOST's PATH: written beside it, moved into place and seen there, not empty.  A
+        write that failed is tried again (PUT_TRIES, waits of PUT_WAIT_S times the try).  None, or
+        why not: one ssh's write of the cells file failed, unseen, and elementary8-luks and neon24
+        passed on chopin into invalid rows, with no cell entry (the freeze run, 2026-11-20)."""
+        tmp = path + ".tmp"
+        cmd = (f"mkdir -p {hostrun.rq(os.path.dirname(path))} && cat > {hostrun.rq(tmp)} && mv -f {hostrun.rq(tmp)} {hostrun.rq(path)}"
+               f" && test -s {hostrun.rq(path)}")
+        why = None
+        for n in range(PUT_TRIES):
+            try:
+                rc, _out, err = self.io.sh(host, cmd, input=data, timeout=60)
+                why = None if rc == 0 else f"exit {rc}" + (f": {str(err).strip()[-200:]}" if str(err or "").strip() else "")
+            except Exception as e:   # noqa: BLE001 - an ssh that raised is a write that failed: tried again
+                why = f"{type(e).__name__}: {e}"
+            if why is None:
+                return None
+            if n < PUT_TRIES - 1:
+                self.io.sleep(PUT_WAIT_S * (n + 1))
+        return f"{why} ({PUT_TRIES} tries)"
 
     def write_job_cells(self, it, host):
-        """The attempt's own cells file (reruns: rule, attempt, what it reruns)."""
+        """The attempt's own cells file (reruns: rule, attempt, what it reruns); one not written
+        (put_file) raises, which job_thread makes the attempt's harness result."""
         path = f"{self.host_root.rstrip('/')}/runs/{self.rs.run}/cells-{it.guest}-{it.attempt}.json"
         cp = (getattr(self.rs, "copy", None) or {}).get(host) or {}
         pc = it.pc
@@ -1049,8 +1076,9 @@ class Runner:
         doc = {"run": self.rs.run, "word": self.word.text, "attempt": it.attempt,
                "copy": {k: cp.get(k) for k in ("id", "path", "commit", "dirty")} if isinstance(cp, dict) else {},
                "cells": {it.guest: ent}}
-        self.io.sh(host, f"mkdir -p {hostrun.rq(os.path.dirname(path))} && cat > {hostrun.rq(path)}", input=json.dumps(doc, sort_keys=True).encode(),
-                   timeout=60)
+        why = self.put_file(host, path, json.dumps(doc, sort_keys=True).encode())
+        if why:   # job_thread: a harness result, and no job run against a missing file
+            raise RuntimeError(f"the cells file {path} wasn't written on {host}: {why}")
         return path
 
     def job_env(self, it, cells, mode):

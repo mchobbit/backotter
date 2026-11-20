@@ -232,7 +232,10 @@ pub fn limine(text: &str, c: &Change) -> String {
         .map(|l| {
             let t = l.trim_start();
             for key in ["cmdline:", "kernel_cmdline:", "CMDLINE=", "KERNEL_CMDLINE="] {
-                if t.len() >= key.len() && t[..key.len()].eq_ignore_ascii_case(key) {
+                // Bytes, not a str slice: a title like `/Ubuntu 中文版` has
+                // no char boundary at every key's length.  A match is ASCII,
+                // so `cut` is a boundary.
+                if t.as_bytes().get(..key.len()).is_some_and(|p| p.eq_ignore_ascii_case(key.as_bytes())) {
                     let cut = l.len() - t.len() + key.len();
                     return format!("{}{}", &l[..cut], cmdline(&l[cut..], c));
                 }
@@ -711,6 +714,10 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         assert_eq!(refind("menuentry x {\n    options \"rw rootflags=subvol=@\"\n}\n", &c), "menuentry x {\n    options \"rw\"\n}\n");
         let l = "/Omarchy\n    protocol: linux\n    kernel_cmdline: cryptdevice=PARTUUID=x:root root=/dev/mapper/root zswap.enabled=0 rootflags=subvol=@ rw\n";
         assert_eq!(limine(l, &c), "/Omarchy\n    protocol: linux\n    kernel_cmdline: cryptdevice=PARTUUID=x:root root=/dev/mapper/root zswap.enabled=0 rw\n");
+        // RustAudit1 H8-01: multi-byte characters across the keys' lengths
+        // (版 at bytes 14..17 of the title, 中 at 7..10 of the comment).
+        let l = "/Ubuntu 中文版\n# 12345中文 kernel_cmdline: x\n    protocol: linux\n    kernel_cmdline: quiet rootflags=subvol=@ rw\n";
+        assert_eq!(limine(l, &c), "/Ubuntu 中文版\n# 12345中文 kernel_cmdline: x\n    protocol: linux\n    kernel_cmdline: quiet rw\n");
     }
 
     #[test]

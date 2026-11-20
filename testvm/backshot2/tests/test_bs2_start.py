@@ -101,6 +101,19 @@ class Commands(unittest.TestCase):
         self.assertEqual(order, sorted(order), "each source's tier 1, then its tier 2, in order")
         self.assertIn("grep -H . pick-alpine324-lvm-t[12].txt;", c)
 
+    def test_light_runs_with_roots_sbin(self):
+        """light()'s "$PATH" expands in m's ssh shell (no sbin on Debian): the dry runs'
+        sfdisk and mkfs are in root's sbin dirs, first, m's PATH kept after them."""
+        import re
+        import subprocess
+        c = B.light("chopin", "true", "bs2:t")
+        word = re.search(r' env (PATH="[^"]*") ', c).group(1)
+        m_path = "/usr/local/bin:/usr/bin:/bin:/usr/games"
+        got = subprocess.run(["/bin/sh", "-c", f'{word}; printf %s "$PATH"'], env={"PATH": m_path},
+                             capture_output=True, text=True, check=True).stdout
+        self.assertEqual(got.split(":")[:3], ["/usr/local/sbin", "/usr/sbin", "/sbin"])
+        self.assertTrue(got.endswith(":" + m_path), got)
+
     def test_alpine324_draws_tier_1_only(self):
         c = B.draw_cmd("chopin", ["alpine324"], B.ALPINE, N, RUN)
         self.assertIn("enqueue alpine324 200 --tier 1 ", c)

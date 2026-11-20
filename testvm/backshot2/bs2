@@ -111,6 +111,7 @@ ALPINE = list(HOME)
 ROOT = "/bkoscratch/backshot2"
 HOST_BS2 = "~/backotter-work/bs2-wt/testvm/backshot2/bs2-host"
 HOST_IOLOG = "~/backotter-work/bs2-wt/testvm/compare/iolog.sh"   # (light()'s wear-log line)
+ROOT_SBIN = "/usr/local/sbin:/usr/sbin:/sbin"   # (light()'s PATH: root's, before m's)
 # Seconds a case, per tier.  Tier 1 measured 2026-11-11 on cinqcent (400 cases, 3 slots,
 # phases.tsv): ~155 s (source 21, backup 4-14, rebuild ~95, verify ~26), ~50 s of it the
 # rescuer's apt of the bcachefs debs and 5 s polls; ~110 s est. after ht1.sh's fix
@@ -352,10 +353,13 @@ def light(host, cmd, tag):
     60-70 s a 200-case list, ~5 min a 1000-case sweep.  Under a --reserve 2 2 it waited
     for room it never used: on 2026-11-18 chopin's draws waited ~1h45m behind other
     jobs, and every host's queue with them.  Still in a scope of its own, in the host's
-    job slice, under iolog.sh: its wear-log line, tagged TAG, as under cmp-run.sh."""
+    job slice, under iolog.sh: its wear-log line, tagged TAG, as under cmp-run.sh.
+    Its PATH is root's sbin dirs (ROOT_SBIN) before m's: "$PATH" expands in m's ssh
+    shell, which has no sbin on Debian, and the dry runs' sfdisk, mkfs and the like are
+    there (root()'s commands get them from sudo's secure_path)."""
     sl = HOSTS_TABLE.job_slice(host)
     return (f"cd ~/backotter-work && sudo -E systemd-run --quiet --scope --collect{' --slice=' + sl if sl else ''}"
-            f" -p IOAccounting=yes env PATH=\"$PATH\" WEAR_TAG={tag} {reuse_env()}{HOST_IOLOG}"
+            f" -p IOAccounting=yes env PATH=\"{ROOT_SBIN}:$PATH\" WEAR_TAG={tag} {reuse_env()}{HOST_IOLOG}"
             f" {shlex.quote('light ' + cmd)} -- {cmd}")
 
 

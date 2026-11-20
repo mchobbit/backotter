@@ -7,11 +7,14 @@ The pin is HOST_ROOT/img-pin/PLATFORM/: rescuer.img, a hard link or a reflink of
 its inode; rescuer.img.sha256; source.json ({path, size, mtime_ns, inode, sha256} of the
 image it was pinned from, plus release_same on Linux); restic-bko, rustic-bko and
 bko-holt, the binaries images/PLATFORM/bko-bin.sha256 records; bins-stale, only when
-they no longer can be had.  Nothing under images/, bko-bin/ or holt-bin/ is written.
+they no longer can be had: a line for each, "NAME: " and where it was looked for, what was
+there, what the image records and what brings them in line.  Nothing under images/,
+bko-bin/ or holt-bin/ is written.
 
 Prints one JSON object {PLATFORM: result}:
     ok        true, or false with why (a refusal: a build under way, no image, an error)
-    sha256, how ("current", "link" or "reflink"), source, bins, stale [names]
+    sha256, how ("current", "link" or "reflink"), source, bins, stale [names],
+    stale_why {name: its bins-stale line}
     release_same (Linux): {same: true|false|null, why}
 Exit 0 once every platform has a result; 2 on bad usage.
 """
@@ -22,6 +25,7 @@ import glob
 import hashlib
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -201,9 +205,30 @@ def release_same(idir, test_img, run=None):
     return {"same": True, "why": f"{len(got['test'])} squashfs file(s) equal"}
 
 
-def pin_bins(pdir, plat, want, work):
-    """The recorded binaries, in the pin, each checked by its sha256.  [names missing]."""
-    stale = []
+def stale_note(name, plat, src, got, sha, idir):
+    """bins-stale's line for NAME: where it was looked for, what was there, what the image
+    records, and what brings them in line."""
+    try:
+        with open(os.path.join(idir, "bko-holt.commit"), encoding="utf-8") as f:
+            commit = f.read().split()[0][:40]
+    except (OSError, IndexError):
+        commit = ""
+    there = f"{src} is {got[:12]}" if got else f"no {src}"
+    if name == "bko-holt":
+        fix = ("bring this host's holt-bin/{0} to the image's build: stick/img-xcopy.sh {2} {0} on the host "
+               "that built the image, or stick/img-refresh-holt.sh {1} CODE {0} here"
+               .format(plat, commit or "COMMIT", socket.gethostname().split(".")[0] or "THIS-HOST"))
+        made = f" (commit {commit[:7]})" if commit else ""
+    else:
+        fix = f"bring this host's bko-bin/{plat} to the image's round, or rebuild the image (stick/img-lanes.sh {plat})"
+        made = ""
+    return f"{name}: {there}, images/{plat}/bko-bin.sha256 records {sha[:12]}{made}: {fix}"
+
+
+def pin_bins(pdir, plat, want, work, idir=None):
+    """The recorded binaries, in the pin, each checked by its sha256.  {name missing: its
+    bins-stale line}, in name order."""
+    stale = {}
     for name, sha in sorted(want.items()):
         pinned = os.path.join(pdir, name)
         if os.path.isfile(pinned) and sha256_file(pinned) == sha:
@@ -211,11 +236,11 @@ def pin_bins(pdir, plat, want, work):
         src = (os.path.join(work, "holt-bin", plat, "bko-holt") if name == "bko-holt"
                else os.path.join(work, "bko-bin", plat, name))
         try:
-            if sha256_file(src) != sha:
-                stale.append(name)
-                continue
+            got = sha256_file(src)
         except OSError:
-            stale.append(name)
+            got = None
+        if got != sha:
+            stale[name] = stale_note(name, plat, src, got, sha, idir or "")
             continue
         tmp = f"{pinned}.tmp.{os.getpid()}"
         with open(src, "rb") as a, open(tmp, "wb") as b:
@@ -306,17 +331,19 @@ def pin_one(plat, images, work, host_root, mounts=None, link=None, copy=None, xo
             want = recorded_bins(idir)
             stale_f = os.path.join(pdir, STALE_FILE)
             if want is None:
-                stale = ["bko-bin.sha256"]
+                notes = {"bko-bin.sha256": f"bko-bin.sha256: no {os.path.join(idir, 'bko-bin.sha256')}: rebuild the image "
+                                           f"(stick/img-lanes.sh {plat})"}
             else:
-                stale = pin_bins(pdir, plat, want, work)
+                notes = pin_bins(pdir, plat, want, work, idir)
+            stale = list(notes)
             if stale:
-                write_atomic(stale_f, "".join(n + "\n" for n in stale))
+                write_atomic(stale_f, "".join(notes[n] + "\n" for n in stale))
             else:
                 try:
                     os.unlink(stale_f)
                 except OSError:
                     pass
-            res.update(sha256=sha, how=how, source=source, bins=want or {}, stale=stale)
+            res.update(sha256=sha, how=how, source=source, bins=want or {}, stale=stale, stale_why=notes)
             return res
         finally:
             os.close(lk)

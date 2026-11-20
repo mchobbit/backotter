@@ -1255,7 +1255,9 @@ class Planner:
         ok = [h for h, im in ims.items() if im and not (im.get("pin") or {}).get("bins_stale")]
         if not ok and v.hosts:
             stale = [h for h, im in ims.items() if im]
-            v.why_not = (f"the {plat} image's binaries no longer match bko-bin.sha256 (bins-stale on {', '.join(stale)})"
+            v.why_not = (f"the {plat} image's binaries no longer match bko-bin.sha256 (bins-stale on {', '.join(stale)}:"
+                         f" its img-pin/{plat}/bins-stale says what was looked for and what brings it in line;"
+                         f" stick/img-xcopy.sh brings holt-bin along with the image)"
                          if stale else f"no current image of {plat} on a reachable host")
         v.hosts = ok
 

@@ -440,12 +440,40 @@ class Pin(unittest.TestCase):
         r = self.pin(mounts=tool_img.parse_mountinfo("1 0 1:1 / / rw - x y z\n"))
         self.assertTrue(r["ok"])
         self.assertEqual(r["stale"], ["bko-holt"])
-        self.assertEqual(rd(os.path.join(self.pdir(), "bins-stale")), "bko-holt\n")
+        note = rd(os.path.join(self.pdir(), "bins-stale"))
+        self.assertEqual(note.count("\n"), 1)
+        self.assertEqual(r["stale_why"], {"bko-holt": note.rstrip("\n")})
+        # (Where it looked, what it found, what the image records, what to run.)
+        src = os.path.join(self.work, "holt-bin", "netbsd", "bko-holt")
+        self.assertTrue(note.startswith("bko-holt: %s is %s, " % (src, sha_text("another build\n")[:12])), note)
+        self.assertIn(f"bko-bin.sha256 records {sha_text(self.HOL)[:12]}", note)
+        self.assertIn("stick/img-xcopy.sh", note)
+        self.assertIn("stick/img-refresh-holt.sh COMMIT CODE netbsd", note)
         self.assertFalse(os.path.exists(os.path.join(self.pdir(), "bko-holt")))
         # the set is back: the file goes
         wr(os.path.join(self.work, "holt-bin", "netbsd", "bko-holt"), self.HOL, 0o755)
         self.assertEqual(self.pin(mounts=tool_img.parse_mountinfo("1 0 1:1 / / rw - x y z\n"))["stale"], [])
         self.assertFalse(os.path.exists(os.path.join(self.pdir(), "bins-stale")))
+
+    def test_a_stale_note_names_the_commit_and_a_missing_binary(self):
+        wr(os.path.join(self.images, "netbsd", "bko-holt.commit"), "e" * 40 + "\n")
+        os.unlink(os.path.join(self.work, "holt-bin", "netbsd", "bko-holt"))
+        os.unlink(os.path.join(self.work, "bko-bin", "netbsd", "rustic-bko"))
+        r = self.pin(mounts=tool_img.parse_mountinfo("1 0 1:1 / / rw - x y z\n"))
+        self.assertEqual(r["stale"], ["bko-holt", "rustic-bko"])
+        lines = rd(os.path.join(self.pdir(), "bins-stale")).splitlines()
+        self.assertEqual([x.split(":")[0] for x in lines], ["bko-holt", "rustic-bko"])
+        self.assertIn("no " + os.path.join(self.work, "holt-bin", "netbsd", "bko-holt"), lines[0])
+        self.assertIn("(commit eeeeeee)", lines[0])
+        self.assertIn(f"stick/img-refresh-holt.sh {'e' * 40} CODE netbsd", lines[0])
+        self.assertIn("no " + os.path.join(self.work, "bko-bin", "netbsd", "rustic-bko"), lines[1])
+        self.assertIn("stick/img-lanes.sh netbsd", lines[1])
+
+    def test_no_bko_bin_sha256_is_its_own_note(self):
+        os.unlink(os.path.join(self.images, "netbsd", "bko-bin.sha256"))
+        r = self.pin(mounts=tool_img.parse_mountinfo("1 0 1:1 / / rw - x y z\n"))
+        self.assertEqual(r["stale"], ["bko-bin.sha256"])
+        self.assertIn("rebuild the image", rd(os.path.join(self.pdir(), "bins-stale")))
 
     def test_no_writes_under_images_or_the_binaries(self):
         before = self.tree()
@@ -1357,18 +1385,68 @@ class Guards(unittest.TestCase):
         self.assertIn("no ", r.stderr)
         self.assertFalse(os.path.exists(self.calls))
 
+    def built(self):
+        """An image of netbsd here that holt-bin/netbsd built."""
+        d = os.path.join(self.w, "images", "netbsd")
+        wr(os.path.join(d, "done.exit"), "0\n")
+        wr(os.path.join(d, "bko-bin.sha256"), "%s  ./bko-holt\n" % sha_text("holt\n"))
+        wr(os.path.join(d, "bko-holt.commit"), "b" * 40 + "\n")
+        wr(os.path.join(self.w, "holt-bin", "netbsd", "bko-holt"), "holt\n", 0o755)
+
     @unittest.skipUnless(LINUX, "needs flock and bash 4")
     def test_img_xcopy_holds_dests_lock_across_the_rsync(self):
-        wr(os.path.join(self.w, "images", "netbsd", "done.exit"), "0\n")
+        self.built()
         r = self.run_it("img-xcopy.sh", "dest", "netbsd", BKO_DEST_IMAGES="w/images")
         self.assertEqual(r.returncode, 0, r.stderr)
         calls = rd(self.calls).splitlines()
-        self.assertEqual(len([c for c in calls if c.startswith("rsync")]), 2)
-        for c in calls:
-            if c.startswith("rsync"):
-                self.assertIn("--rsync-path=flock -n w/images/.lock-netbsd rsync", c)
-                self.assertIn("dest:w/images/netbsd/", c)
-        self.assertIn("cd w/images &&", calls[0])
+        rs = [c for c in calls if c.startswith("rsync")]
+        self.assertEqual(len(rs), 3)
+        for c in rs:
+            self.assertIn("flock -n w/images/.lock-netbsd rsync", c)
+        for c in (rs[0], rs[2]):
+            self.assertIn("--rsync-path=flock -n w/images/.lock-netbsd rsync", c)
+            self.assertIn("dest:w/images/netbsd/", c)
+        # (DEST's holt-bin is beside its images; the binary lands by temp name.)
+        self.assertIn("--rsync-path=mkdir -p w/holt-bin/netbsd && flock -n w/images/.lock-netbsd rsync", rs[1])
+        self.assertIn("dest:w/holt-bin/netbsd/.bko-holt.xcopy.", rs[1])
+        self.assertTrue(rs[2].endswith("dest:w/images/netbsd/done.exit"), rs[2])
+        self.assertEqual(calls[0], "ssh -n -o BatchMode=yes dest true")
+        self.assertIn("cd w/images &&", calls[1])
+        fin = [c for c in calls if " bash -s -- " in c]
+        self.assertEqual(len(fin), 1)
+        self.assertIn("bash -s -- w/holt-bin w/images netbsd %s %s .bko-holt.xcopy." % (sha_text("holt\n"), "b" * 40), fin[0])
+        self.assertLess(calls.index(fin[0]), calls.index(rs[2]))
+
+    @unittest.skipUnless(LINUX, "needs flock and bash 4")
+    def test_img_xcopy_says_when_holt_bin_here_is_no_longer_the_images(self):
+        self.built()
+        wr(os.path.join(self.w, "holt-bin", "netbsd", "bko-holt"), "a later refresh\n", 0o755)
+        r = self.run_it("img-xcopy.sh", "dest", "netbsd", BKO_DEST_IMAGES="w/images")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("NOT brought in line", r.stderr)
+        self.assertIn("stick/img-refresh-holt.sh %s CODE netbsd" % ("b" * 40), r.stderr)
+        calls = rd(self.calls).splitlines()
+        self.assertFalse([c for c in calls if "holt-bin" in c])
+        # (The image itself still lands: its pin writes bins-stale.)
+        self.assertTrue(calls[-2].endswith("dest:w/images/netbsd/done.exit"), calls)
+
+    @unittest.skipUnless(LINUX, "needs flock and bash 4")
+    def test_img_xcopy_refuses_a_dest_ssh_cant_reach(self):
+        self.built()
+        wr(os.path.join(self.stubs, "ssh"), f'#!/bin/sh\necho ssh "$@" >>{self.calls}\necho "ssh: Could not resolve hostname dest" >&2\nexit 255\n', 0o755)
+        r = self.run_it("img-xcopy.sh", "dest", "netbsd", "freebsd", BKO_DEST_IMAGES="w/images")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("ssh can't reach 'dest': name a farm host (", r.stderr)
+        self.assertEqual(rd(self.calls).splitlines(), ["ssh -n -o BatchMode=yes dest true"])
+
+    def test_img_xcopy_maps_a_farm_hosts_name_to_its_ssh(self):
+        with open(os.path.join(WT, "testvm", "hosts.json"), encoding="utf-8") as f:
+            row = [h for h in json.load(f)["hosts"] if h.get("enabled")][0]
+        r = self.run_it("img-xcopy.sh", row["name"], "netbsd", BKO_DEST_IMAGES="w/images")
+        self.assertIn("img-xcopy: %s is %s (testvm/hosts.json)" % (row["name"], row["ssh"]), r.stdout)
+        self.assertEqual(r.returncode, 1, r.stderr)   # (no done.exit: refused before any ssh)
+        r = self.run_it("img-xcopy.sh", "m@elsewhere.local", "netbsd", BKO_DEST_IMAGES="w/images")
+        self.assertNotIn("testvm/hosts.json", r.stdout)
 
     @unittest.skipUnless(LINUX, "needs flock and bash 4")
     def test_img_xcopy_refuses_while_a_build_here_holds_the_lock(self):
@@ -1378,6 +1456,91 @@ class Guards(unittest.TestCase):
             r = self.run_it("img-xcopy.sh", "dest", "netbsd", BKO_DEST_IMAGES="w/images")
         self.assertEqual(r.returncode, 1, r.stderr)
         self.assertFalse(os.path.exists(self.calls))
+
+
+@unittest.skipUnless(LINUX and shutil.which("rsync"), "needs flock, bash 4 and rsync")
+class XcopyHolt(unittest.TestCase):
+    """stick/img-xcopy.sh brings DEST's holt-bin along with the image: an ssh stub runs the
+    remote side in a directory here (DEST's home), real rsync goes through it."""
+    SHA, OLD = sha_text("new holt\n"), "a" * 40
+    NEW = "b" * 40
+
+    def setUp(self):
+        self.t = os.path.realpath(tempfile.mkdtemp(prefix="t2-k4-xcopy-"))
+        self.addCleanup(shutil.rmtree, self.t, True)
+        self.w, self.dest = os.path.join(self.t, "w"), os.path.join(self.t, "dest")
+        self.stubs, self.calls = os.path.join(self.t, "path"), os.path.join(self.t, "calls")
+        wr(os.path.join(self.stubs, "stat"), "#!/bin/sh\necho 1:1\n", 0o755)
+        wr(os.path.join(self.stubs, "ssh"), f"""#!/bin/bash
+echo ssh "$@" >>{self.calls}
+n=
+while [ $# -gt 0 ]; do case $1 in -n) n=1; shift;; -o|-l|-p|-i) shift 2;; -*) shift;; *) break;; esac; done
+shift
+case "$*" in *cmp-run.sh*) exit 0;; esac
+cd {self.dest} || exit 255
+case "$*" in *"bash -s"*) if [ -e {self.t}/hold ]; then exec 9>>w/images/.lock-netbsd; flock 9; sh -c "$*" 9>&-; exit; fi;; esac
+if [ -n "$n" ]; then exec sh -c "$*" </dev/null; fi
+exec sh -c "$*"
+""", 0o755)
+        d = os.path.join(self.w, "images", "netbsd")
+        wr(os.path.join(d, "done.exit"), "0\n")
+        wr(os.path.join(d, "test", "bko.img"), "image\n")
+        wr(os.path.join(d, "bko-bin.sha256"), "%s  ./bko-holt\n" % self.SHA)
+        wr(os.path.join(d, "bko-holt.commit"), self.NEW + "\n")
+        wr(os.path.join(self.w, "holt-bin", "netbsd", "bko-holt"), "new holt\n", 0o755)
+        wr(os.path.join(self.w, "holt-bin", "netbsd", "COMMIT"), self.NEW + "\n")
+        self.dh = os.path.join(self.dest, "w", "holt-bin")
+        wr(os.path.join(self.dest, "w", "images", "netbsd", "done.exit"), "0\n")
+        wr(os.path.join(self.dh, "netbsd", "bko-holt"), "old holt\n", 0o755)
+        wr(os.path.join(self.dh, "netbsd", "COMMIT"), self.OLD + "\n")
+        wr(os.path.join(self.dh, "freebsd", "bko-holt"), "fb\n", 0o755)
+        wr(os.path.join(self.dh, "SHA256SUMS"), "%s  netbsd/bko-holt\n" % ("0" * 64))
+
+    def run_it(self, **env):
+        e = dict(os.environ, BKO_WORK=self.w, T2_HOST_ROOT=os.path.join(self.t, "state"),
+                 BKO_DEST_IMAGES="w/images", PATH=self.stubs + ":" + os.environ["PATH"])
+        e.update(env)
+        return subprocess.run([BASH, os.path.join(WT, "stick", "img-xcopy.sh"), "dest", "netbsd"], env=e, capture_output=True, text=True)
+
+    def test_dests_holt_bin_is_the_images(self):
+        r = self.run_it()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("netbsd: DEST's holt-bin/netbsd is bko-holt %s, commit bbbbbbb" % self.SHA[:12], r.stdout)
+        self.assertEqual((rd(os.path.join(self.dh, "netbsd", "bko-holt")), rd(os.path.join(self.dh, "netbsd", "COMMIT"))),
+                         ("new holt\n", self.NEW + "\n"))
+        self.assertEqual(sorted(os.listdir(os.path.join(self.dh, "netbsd"))), ["COMMIT", "bko-holt"])
+        self.assertEqual(rd(os.path.join(self.dh, "SHA256SUMS")),
+                         "%s  freebsd/bko-holt\n%s  netbsd/bko-holt\n" % (sha_text("fb\n"), self.SHA))
+        self.assertEqual(sorted(os.listdir(self.dh)), ["SHA256SUMS", "freebsd", "netbsd"])
+        di = os.path.join(self.dest, "w", "images", "netbsd")
+        self.assertEqual(rd(os.path.join(di, "bko-holt.commit")), self.NEW + "\n")
+        self.assertEqual(rd(os.path.join(di, "done.exit")), "0\n")
+
+    def test_a_held_lock_there_leaves_its_holt_bin(self):
+        # (A build there takes the platform's lock as the binary lands: it isn't replaced, and
+        # SHA256SUMS stays.)
+        wr(os.path.join(self.t, "hold"), "")
+        r = self.run_it()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("NOT brought in line", r.stderr)
+        self.assertIn("a build of netbsd holds", r.stderr)
+        self.assertEqual(rd(os.path.join(self.dh, "netbsd", "bko-holt")), "old holt\n")
+        self.assertEqual(rd(os.path.join(self.dh, "netbsd", "COMMIT")), self.OLD + "\n")
+        self.assertEqual(sorted(os.listdir(os.path.join(self.dh, "netbsd"))), ["COMMIT", "bko-holt"])
+        self.assertEqual(rd(os.path.join(self.dh, "SHA256SUMS")), "%s  netbsd/bko-holt\n" % ("0" * 64))
+        self.assertEqual(rd(os.path.join(self.dest, "w", "images", "netbsd", "done.exit")), "0\n")
+
+    def test_a_bad_copy_there_is_refused(self):
+        real = shutil.which("rsync")
+        wr(os.path.join(self.stubs, "rsync"), f"""#!/bin/bash
+{real} "$@" || exit
+case "$*" in *holt-bin*) for f in {self.dh}/netbsd/.bko-holt.xcopy.*; do echo torn >"$f"; done;; esac
+""", 0o755)
+        r = self.run_it()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("its copy there is", r.stderr)
+        self.assertEqual(rd(os.path.join(self.dh, "netbsd", "bko-holt")), "old holt\n")
+        self.assertEqual(sorted(os.listdir(os.path.join(self.dh, "netbsd"))), ["COMMIT", "bko-holt"])
 
 
 @unittest.skipUnless(LINUX, "needs flock and bash 4")

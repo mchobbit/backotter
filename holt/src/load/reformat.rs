@@ -141,6 +141,26 @@ fn under(path: &str, top: &str) -> bool {
     top == "/" || path == top || path.starts_with(&format!("{top}/"))
 }
 
+/// GRUB's environment block that C's btrfs had in its reserved first MiB
+/// (probe/btrfs.rs's `grub_env_block`: grubenv's `env_block=512+1`).  The
+/// new type has no such area, so mkfs leaves nothing there for GRUB to
+/// read: boot's rewrite moves the block's variables into grubenv itself
+/// and takes its env_block= out (rewrite::grubenv_unblock).
+pub fn grub_env_block(v: &Value, c: &Change) -> Option<Value> {
+    if c.from != "btrfs" {
+        return None;
+    }
+    device(v, &c.src)?.get("content")?.get("grub_env_block").filter(|b| b.as_object().is_some()).cloned()
+}
+
+/// Whether PATH (in the restored system) is on C's filesystem: the source's
+/// fstab mount holding it, the longest one above it, is C's mount or one
+/// it folds.
+pub fn holds(v: &Value, c: &Change, path: &str) -> bool {
+    let owner = arr(v, &["storage", "fstab"]).iter().filter_map(|e| s(e, "file")).filter(|f| f.starts_with('/') && under(path, f)).max_by_key(String::len);
+    owner.is_some_and(|o| o == c.mount || c.folded.contains(&o))
+}
+
 /// The options of a reformatted filesystem's fstab entry: the generic ones
 /// kept, the rest dropped (and returned).
 pub fn generic_options(o: &str) -> (String, Vec<String>) {
@@ -460,6 +480,11 @@ pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
         if c.from == "btrfs" {
             n.push(format!("reformat {}: chattr C and c and btrfs.* xattrs don't come along ({} refuses them; rustic-bko warns in load.log)", c.src, c.to));
         }
+        if let Some(b) = grub_env_block(v, c) {
+            let vars: Vec<String> = b.as_object().into_iter().flatten().map(|(k, x)| format!("{k}={}", x.as_str().unwrap_or_default())).collect();
+            let vars = if vars.is_empty() { "no variables".to_string() } else { vars.join(" ") };
+            n.push(format!("reformat {}: GRUB's environment block in btrfs's reserved area ({vars}) has no place on {}: boot moves its variables into grubenv and takes out grubenv's env_block=", c.src, c.to));
+        }
         if c.mount == "/" {
             n.push("reformat: boot rewrites fstab and the kernel command lines (rootflags=, rootfstype=), then checks the initramfs has the new type's module".into());
         } else {
@@ -709,6 +734,25 @@ mod tests {
         assert_eq!(c.get("compat_ro_features").map(Value::compact).as_deref(), Some(r#"["free_space_tree"]"#));
         let nixos = crate::json::parse(&eos().compact().replace(r#""id":"endeavouros""#, r#""id":"nixos""#)).unwrap();
         assert!(work_out(&nixos, &re(&[("/", "xfs")])).problems[0].contains("isn't built for NixOS"), "{:?}", work_out(&nixos, &re(&[("/", "xfs")])).problems);
+    }
+
+    /// A btrfs whose reserved area holds GRUB's environment block (Leap
+    /// 16's, AnduinOS's, BigLinux's GRUB): the new type has none, which the
+    /// plan says; the block's mounts are the files it holds.
+    #[test]
+    fn grub_env_block_on_a_reformatted_btrfs() {
+        let with = crate::json::parse(&eos().compact().replace(r#""label":"endeavouros"}"#, r#""label":"endeavouros","grub_env_block":{"next_entry":"1"}}"#)).unwrap();
+        let r = work_out(&with, &re(&[("/", "ext4")]));
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let c = &r.changes[0];
+        assert_eq!(grub_env_block(&with, c).map(|b| b.compact()).as_deref(), Some(r#"{"next_entry":"1"}"#));
+        assert!(r.notes.iter().any(|n| n == "reformat nvme0n1p2: GRUB's environment block in btrfs's reserved area (next_entry=1) has no place on ext4: boot moves its variables into grubenv and takes out grubenv's env_block="), "{:?}", r.notes);
+        let none = work_out(&eos(), &re(&[("/", "ext4")]));
+        assert!(grub_env_block(&eos(), &none.changes[0]).is_none());
+        assert!(!none.notes.iter().any(|n| n.contains("environment block")), "{:?}", none.notes);
+        // Which files are on it: / and what it folds, not the ESP.
+        assert!(holds(&with, c, "/boot/grub/grubenv") && holds(&with, c, "/var/log/x") && holds(&with, c, "/home"));
+        assert!(!holds(&with, c, "/efi/grub/grubenv") && !holds(&with, c, "/efi"));
     }
 
     #[test]

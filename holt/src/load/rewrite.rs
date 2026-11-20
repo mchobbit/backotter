@@ -129,6 +129,44 @@ pub fn grubenv(text: &str, c: &Change) -> Result<String, String> {
     Ok(out)
 }
 
+/// grubenv on a filesystem that had GRUB's environment block in btrfs's
+/// reserved area and doesn't now (--reformat from btrfs): its env_block=
+/// line taken out, so GRUB no longer reads a sector the new type uses, and
+/// the block's variables VARS (reformat::grub_env_block, as GRUB wrote
+/// them) put in, each over the file's own (GRUB reads the block after the
+/// file), padded with # back to the file's size.  A file with no
+/// env_block= is left as it is.
+pub fn grubenv_unblock(text: &str, vars: &Value) -> Result<String, String> {
+    let body = text.trim_end_matches('#');
+    if !body.split_inclusive('\n').any(|l| l.starts_with("env_block=")) {
+        return Ok(text.to_string());
+    }
+    let vars: Vec<(&str, &str)> = vars.as_object().into_iter().flatten().map(|(k, v)| (k.as_str(), v.as_str().unwrap_or_default())).collect();
+    let mut out = String::new();
+    let mut done: Vec<&str> = Vec::new();
+    for l in body.split_inclusive('\n') {
+        let name = l.split_once('=').map(|(k, _)| k);
+        if name == Some("env_block") {
+            continue;
+        }
+        match vars.iter().find(|(k, _)| Some(*k) == name) {
+            Some((k, v)) => {
+                out += &format!("{k}={v}\n");
+                done.push(k);
+            }
+            None => out += l,
+        }
+    }
+    for (k, v) in vars.iter().filter(|(k, _)| !done.contains(k)) {
+        out += &format!("{k}={v}\n");
+    }
+    if out.len() > text.len() {
+        return Err(format!("GRUB's environment block's variables don't fit in it ({} bytes, the file's {})", out.len(), text.len()));
+    }
+    out += &"#".repeat(text.len() - out.len());
+    Ok(out)
+}
+
 /// A shell assignment's value through cmdline(), inside its quotes: the
 /// lines whose variable NAMED says, `NAME=` or `NAME+=`.
 fn assignments(text: &str, c: &Change, named: impl Fn(&str) -> bool) -> String {
@@ -342,6 +380,19 @@ impl Run<'_> {
                 refind_files.extend(read_dir(&self.at(&format!("{d}/EFI"))).into_iter().map(|p| p.join("refind.conf")));
                 for p in refind_files {
                     self.edit(&p, |t| Ok(refind(t, c)));
+                }
+            }
+        }
+        // GRUB's environment block, on a btrfs only: the grubenv files on
+        // this filesystem stop pointing at it, and keep its variables.
+        if let Some(vars) = reformat::grub_env_block(layout, c) {
+            for d in boot_dirs(layout) {
+                for g in ["grub2/grubenv", "grub/grubenv"] {
+                    let p = format!("{d}/{g}");
+                    if reformat::holds(layout, c, &p) {
+                        let at = self.at(&p);
+                        self.edit(&at, |t| grubenv_unblock(t, &vars));
+                    }
                 }
             }
         }
@@ -671,6 +722,24 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         assert!(out.starts_with("# GRUB Environment Block\nsaved_entry=x\nkernelopts=root=UUID=x ro rhgb quiet\n#"));
     }
 
+    /// --reformat from a btrfs with GRUB's environment block (Leap 16's
+    /// env_block=512+1): grubenv loses env_block= and gets the block's
+    /// variables, still 1024 bytes; without env_block= it's left alone.
+    #[test]
+    fn grubenv_unblock_moves_the_block_in() {
+        let mut env = "# GRUB Environment Block\nsaved_entry=x\nnext_entry=0\nenv_block=512+1\n".to_string();
+        env += &"#".repeat(1024 - env.len());
+        let vars = crate::json::parse(r#"{"next_entry": "2", "health": "a=b"}"#).unwrap();
+        let out = grubenv_unblock(&env, &vars).unwrap();
+        assert_eq!(out.len(), 1024);
+        assert!(out.starts_with("# GRUB Environment Block\nsaved_entry=x\nnext_entry=2\nhealth=a=b\n#"), "{out}");
+        assert_eq!(grubenv_unblock(&out, &vars).unwrap(), out);
+        let empty = grubenv_unblock(&env, &crate::json::parse("{}").unwrap()).unwrap();
+        assert!(empty.starts_with("# GRUB Environment Block\nsaved_entry=x\nnext_entry=0\n#"), "{empty}");
+        let big = crate::json::parse(&format!(r#"{{"x": "{}"}}"#, "y".repeat(1100))).unwrap();
+        assert!(grubenv_unblock(&env, &big).unwrap_err().contains("don't fit"));
+    }
+
     #[test]
     fn mkinitcpio_and_mount_units() {
         assert_eq!(mkinitcpio("MODULES=(btrfs i915)\nBINARIES=(/usr/bin/btrfs)\nHOOKS=(base udev autodetect btrfs filesystems fsck)\nFILES=()\n"), "MODULES=(i915)\nBINARIES=()\nHOOKS=(base udev autodetect filesystems fsck)\nFILES=()\n");
@@ -709,6 +778,23 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         run.leftovers(&change(), &layout);
         assert!(run.errors.is_empty(), "{:?}", run.errors);
         assert!(run.log.contains("made for btrfs, still there: grub-btrfs"), "{}", run.log);
+        // GRUB's environment block (a btrfs Leap-style GRUB used): the
+        // grubenv on the reformatted / stops pointing at it.
+        let mut env = "# GRUB Environment Block\nsaved_entry=x\nenv_block=512+1\n".to_string();
+        env += &"#".repeat(1024 - env.len());
+        w("/boot/grub2/grubenv", &env);
+        let with_block = crate::json::parse(
+            r#"{"boot": {"esps": [{"mounted_at": "/efi"}]},
+  "storage": {"disks": [{"name": "nvme0n1", "partitions": [{"name": "nvme0n1p2", "content": {"type": "btrfs", "grub_env_block": {"next_entry": "1"}}}]}],
+              "fstab": [{"file": "/efi"}, {"file": "/"}, {"file": "/home"}]}}"#,
+        )
+        .unwrap();
+        run.log.clear();
+        run.rewrite(&change(), &with_block, false);
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        let g = std::fs::read_to_string(format!("{root}/boot/grub2/grubenv")).unwrap();
+        assert!(g.len() == 1024 && g.starts_with("# GRUB Environment Block\nsaved_entry=x\nnext_entry=1\n#"), "{g}");
+        assert!(run.log.contains("    - env_block=512+1\n") && run.log.contains("    + next_entry=1\n"), "{}", run.log);
         // An entry the rewrite missed fails the check.
         w("/efi/loader/entries/other.conf", "options root=UUID=x rootflags=subvol=@\n");
         run.leftovers(&change(), &layout);

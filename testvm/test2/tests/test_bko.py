@@ -786,7 +786,7 @@ class TestSweep(Base):
 
         def row(cell, run, verdict="PASS", kind="run", extra=None):
             r = orig(cell, run, verdict, kind, extra)
-            if cell == "stic:arch" and run.startswith("t2s-2026111"):
+            if cell == "stic:arch" and run != old["run"]:      # the sweep's own stic run, whatever its date
                 r["inputs"] = {"soft": {"arch:generation": "gen:" + "2" * 12}}
             return r
 

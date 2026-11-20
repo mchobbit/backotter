@@ -632,6 +632,65 @@ class Fit(unittest.TestCase):
         out = self.bad(src, dst, "--fit", str(-GIB))
         self.assertIn("DIFF fit:storage.dm_devices.0.size_bytes", out)
 
+    # An ext whose fitted size leaves a last block group too small for its
+    # own inode table and 50 blocks: mke2fs leaves it out, as load's fit does
+    # (holt/src/load/fit.rs ext_resized).  BackShot2Alpine
+    # bs2a-20261120-1136's two alpine324-uefi cases, numbers as dumped.
+
+    @staticmethod
+    def alpine_ext4(blocks, isz, rsv):
+        """Alpine's / as mke2fs made it: 1 KiB blocks, groups of 8192."""
+        return {"type": "ext4", "usage": "filesystem", "uuid": "92805489-bd8f-4f2e-996d-e4ce073aecbd",
+                "label": None, "version": "1.0", "block_size": 1024, "blocks": blocks,
+                "size_bytes": blocks * 1024, "free_blocks": 12000000, "first_data_block": 1,
+                "blocks_per_group": 8192, "inodes_per_group": 8192, "inode_size": isz,
+                "inodes": -(-(blocks - 1) // 8192) * 8192, "free_inodes": 1000000,
+                "descriptor_size": 64, "reserved_gdt_blocks": rsv, "reserved_blocks": blocks // 20,
+                "features": ["has_journal", "ext_attr", "resize_inode", "dir_index", "orphan_file", "filetype",
+                             "extent", "64bit", "flex_bg", "metadata_csum_seed", "sparse_super", "large_file",
+                             "huge_file", "dir_nlink", "extra_isize", "metadata_csum"],
+                "state": "clean"}
+
+    def alpine_case(self, parts, big, delta, pct, made, stub):
+        """The restored dump with MADE blocks passes; one whose ext kept the
+        STUB blocks mke2fs leaves out (filling its partition) is a DIFF."""
+        src = dump([disk("vda", 16 * GIB, parts, gpt=True)])
+        outs = []
+        for blocks in (made, made + stub):
+            dst = copy.deepcopy(src)
+            x = shrink_disk(dst, 0, delta)
+            p = x["partitions"][big]
+            # The partition loses what the plan says (the ext filled it).
+            fit_part(x, big, (made + stub - p["content"]["blocks"]) * 1024)
+            c = p["content"]
+            c["blocks"], c["size_bytes"] = blocks, blocks * 1024
+            c["inodes"] = (blocks - 1) // 8192 * 8192
+            outs.append(self.judge(src, dst, "--expect", "--fit", str(delta), "--fit-pct", str(pct)))
+        (rc, out), (rc2, out2) = outs
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(rc2, 1, out2)
+        self.assertIn(f"partitions.{big}.content.blocks: {src['storage']['disks'][0]['partitions'][big]['content']['blocks']}"
+                      f" should have been fitted to {made}, and is {made + stub}", out2)
+
+    def test_ext_last_group_left_out_chopin(self):
+        """alpine324-uefi-a9d584a20b5fdbcd: 14153372 blocks, 851443712 bytes
+        less; the partition's 13321884 leave a group of 1691, under its 2048
+        inode-table blocks, 2 bitmaps and 50, so mke2fs made 13320193."""
+        parts = [part("vda1", 1, 4197547, 1048576, None, gpt=True),
+                 part("vda2", 2, 5186, 4192361, swap(4192361 * 512), gpt=True),
+                 part("vda3", 3, 5246835, 28306744, self.alpine_ext4(14153372, 256, 126), gpt=True)]
+        self.alpine_case(parts, 2, -851443712, 6, 13320193, 1691)
+
+    def test_ext_last_group_left_out_cinqcent(self):
+        """alpine324-uefi-2fba4823f0a5008b: 14152684 blocks, the target 600576
+        bytes less, so 1 MiB off the partition; its 14151660 leave a group of
+        4075, under its 4096 inode-table blocks (512-byte inodes), so mke2fs
+        made 14147585."""
+        parts = [part("vda2", 2, 2048, 4194304, swap(4194304 * 512), gpt=True),
+                 part("vda3", 3, 5249024, 28305368, self.alpine_ext4(14152684, 512, 256), gpt=True),
+                 part("vda8", 8, 4196352, 1048576, None, gpt=True)]
+        self.alpine_case(parts, 1, -600576, 11, 14147585, 4075)
+
     # What load refuses: judge.py says so rather than judging it.
 
     def test_tie_refused(self):

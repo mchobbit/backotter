@@ -1498,7 +1498,8 @@ def fit_fs_expect(want, flat, at, container, amount):
     """What the fit decides about the sizes of the filesystem (or LVM PV) whose
     fields start at AT, inside a CONTAINER that changed by AMOUNT bytes: one
     that filled its container goes on filling it, with the block count that
-    follows.  One the source left short of its end is its mkfs's business, not
+    follows (an ext's less a last group too small to be made,
+    ext_fit_blocks).  One the source left short of its end is its mkfs's business, not
     the fit's (JFS's aggregate is 52 MiB under its partition), so nothing is
     expected of it; fit_may_differ lets it move."""
     kind = flat.get(at + "type")
@@ -1517,7 +1518,63 @@ def fit_fs_expect(want, flat, at, container, amount):
     block = _int(flat.get(at + "block_size"))
     blocks = _int(flat.get(at + "blocks"))
     if block and blocks is not None and amount % block == 0:
-        want[at + "blocks"] = blocks + amount // block
+        n = blocks + amount // block
+        if kind in ("ext2", "ext3", "ext4") and amount:
+            n = ext_fit_blocks(flat, at, n)
+            if fields == ("size_bytes",):
+                want[at + "size_bytes"] = n * block
+        want[at + "blocks"] = n
+
+
+def _ext_has_super(g, feats):
+    """Whether ext block group G holds a superblock backup (ext2fs_bg_has_super):
+    every group without sparse_super, else 0, 1 and the powers of 3, 5 and 7;
+    with sparse_super2, take it that it does (mke2fs's last-group backup)."""
+    if "sparse_super2" in feats or g <= 1 or "sparse_super" not in feats:
+        return True
+    for b in (3, 5, 7):
+        x = b
+        while x < g:
+            x *= b
+        if x == g:
+            return True
+    return False
+
+
+def ext_fit_blocks(flat, at, n):
+    """The blocks an ext filesystem whose fields start at AT has once remade on
+    N blocks: a last group too small for its own bitmaps, inode table (and
+    superblock backup) and 50 blocks more is left out, by mke2fs
+    (lib/ext2fs/initialize.c) as by resize2fs (adjust_fs_info), and so by
+    load (holt/src/load/fit.rs ext_resized, which gives mke2fs that size), as
+    is a last group that would take the inodes past 2^32 - 1.  N itself where
+    the dump doesn't give the geometry (or for bigalloc, whose groups count
+    clusters)."""
+    feats = [v for k, v in flat.items() if re.fullmatch(re.escape(at) + r"features\.\d+", k)]
+    bs, bpg, ipg, isz = (_int(flat.get(at + f)) for f in ("block_size", "blocks_per_group", "inodes_per_group", "inode_size"))
+    if not bs or not bpg or not ipg or not isz or "bigalloc" in feats:
+        return n
+    first = _int(flat.get(at + "first_data_block"))
+    first = (1 if bs == 1024 else 0) if first is None else first
+    desc = (_int(flat.get(at + "descriptor_size")) or 0) if "64bit" in feats else 32
+    desc = desc if desc >= 32 else 64
+    gdpb = max(1, bs // desc)
+    rsv = (_int(flat.get(at + "reserved_gdt_blocks")) or 0) if "resize_inode" in feats else 0
+    itb = -(-(ipg * isz) // bs)
+    while n > first:
+        groups = -(-(n - first) // bpg)
+        over = 2 + itb
+        if _ext_has_super(groups - 1, feats):
+            over += 1 + -(-groups // gdpb) + rsv
+        rem = (n - first) % bpg
+        if groups > 1 and rem and rem < over + 50:
+            n -= rem
+            continue
+        if groups > 1 and groups * ipg > 0xFFFFFFFF:
+            n = first + (groups - 1) * bpg
+            continue
+        break
+    return n
 
 
 def fit_expect(plan, flat):

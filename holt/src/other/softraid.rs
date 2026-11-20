@@ -392,8 +392,8 @@ impl Builder<'_> {
             }
             let proto = format!("{RUN_DIR}/{}.disklabel", v.name);
             out.push(Cmd::write_file(&proto, label));
-            out.push(Cmd::new(&["sh", "-c", &format!("{find}disklabel -R \"$v\" {proto}")]).why(format!("{}'s disklabel, on {shown}", v.name)));
-            out.push(Cmd::new(&["sh", "-c", &format!("{find}printf 'i\\n%s\\nw\\nq\\n' {duid} | disklabel -E \"$v\" >/dev/null")]).why(format!("{}'s disklabel UID, {duid}: its partitions are {duid}.a and so on from here", v.name)));
+            out.push(Cmd::new(&["sh", "-c", &format!("{find}disklabel -R \"$v\" {}", crate::load::shell_quote(&proto))]).why(format!("{}'s disklabel, on {shown}", v.name)));
+            out.push(Cmd::new(&["sh", "-c", &format!("{find}printf 'i\\n%s\\nw\\nq\\n' {} | disklabel -E \"$v\" >/dev/null", crate::load::shell_quote(&duid))]).why(format!("{}'s disklabel UID, {duid}: its partitions are {duid}.a and so on from here", v.name)));
         }
         out
     }

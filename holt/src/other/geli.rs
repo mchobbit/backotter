@@ -368,8 +368,12 @@ fn pass_file(src: &str) -> String {
 
 /// Reads a new passphrase from the terminal without echo, into `file`.
 fn prompt(src: &str, file: &str) -> Cmd {
+    // SRC and FILE shell-quoted, SRC's % kept from printf (a word with
+    // nothing to quote stays bare, and the question as it was).
+    let ask = crate::load::shell_quote(&format!("GELI passphrase for the new {}: ", src.replace('%', "%%")));
     let script = format!(
-        "umask 077; mkdir -p {RUN_DIR}/keys; stty -echo </dev/tty; printf 'GELI passphrase for the new {src}: ' >/dev/tty; IFS= read -r p </dev/tty; s=$?; stty echo </dev/tty; printf '\\n' >/dev/tty; [ $s -eq 0 ] && [ -n \"$p\" ] && printf %s \"$p\" > {file}"
+        "umask 077; mkdir -p {RUN_DIR}/keys; stty -echo </dev/tty; printf {ask} >/dev/tty; IFS= read -r p </dev/tty; s=$?; stty echo </dev/tty; printf '\\n' >/dev/tty; [ $s -eq 0 ] && [ -n \"$p\" ] && printf %s \"$p\" > {}",
+        crate::load::shell_quote(file)
     );
     Cmd::new(&["sh", "-c", &script]).why(format!("GELI on {src}: asks for the new passphrase, once (not echoed; kept in {file}, mode 600, until it's used)"))
 }
@@ -482,8 +486,9 @@ impl Builder<'_> {
             if m.auth() {
                 let ss = m.sectorsize.max(512);
                 let mins = p.size / (100 << 20) / 60;
+                let qe = crate::load::shell_quote(&eli);
                 let script = format!(
-                    "n=$(diskinfo {eli} | cut -f3); m=$((n / 1048576)); dd if=/dev/zero of={eli} bs=1m count=$m status=none && r=$(((n - m * 1048576) / {ss})) && {{ [ $r -eq 0 ] || dd if=/dev/zero of={eli} bs={ss} seek=$((m * 1048576 / {ss})) count=$r status=none; }}"
+                    "n=$(diskinfo {qe} | cut -f3); m=$((n / 1048576)); dd if=/dev/zero of={qe} bs=1m count=$m status=none && r=$(((n - m * 1048576) / {ss})) && {{ [ $r -eq 0 ] || dd if=/dev/zero of={qe} bs={ss} seek=$((m * 1048576 / {ss})) count=$r status=none; }}"
                 );
                 out.push(Cmd::new(&["sh", "-c", &script]).why(format!(
                     "{eli} is authenticated ({}): every sector's checksum is written once, all {} of it (about {} at 100 MB/s)",
@@ -603,10 +608,15 @@ impl Builder<'_> {
             if !cands.contains(&base) {
                 cands.push(base);
             }
-            let list = cands.join(" ");
-            let b = format!("{t}/var/backups");
+            // Each word shell-quoted; $n too, when a name needs it (a plain
+            // name's script stays as it was).
+            let q = crate::load::shell_quote;
+            let n = if cands.iter().all(|c| q(c) == *c) { "$n" } else { "\"$n\"" };
+            let list = cands.iter().map(|c| q(c)).collect::<Vec<_>>().join(" ");
+            let b = q(&format!("{t}/var/backups"));
+            let (qd, qb) = (q(&dev), q(&format!("{t}/var/backups/{tgt}.eli")));
             out.push(
-                Cmd::new(&["sh", "-c", &format!("f=; for n in {list}; do [ ! -f {b}/$n.eli ] || f=1; done; [ -z \"$f\" ] || {{ (umask 077; geli backup {dev} {b}/{tgt}.eli) && for n in {list}; do [ $n = {tgt} ] || rm -f {b}/$n.eli; done; }}")])
+                Cmd::new(&["sh", "-c", &format!("f=; for n in {list}; do [ ! -f {b}/{n}.eli ] || f=1; done; [ -z \"$f\" ] || {{ (umask 077; geli backup {qd} {qb}) && for n in {list}; do [ {n} = {} ] || rm -f {b}/{n}.eli; done; }}", q(&tgt))])
                     .why(format!("{}: /var/backups' GELI metadata backup, written again for the new provider (the restored one is the old provider's)", p.src)),
             );
         }

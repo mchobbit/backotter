@@ -9,7 +9,7 @@ use crate::json::Value;
 use crate::load::commands::{Builder, Cmd};
 use crate::load::layout::{Disk, Layout, TableKind};
 use crate::load::target::{self, System, TargetDisk};
-use crate::load::{Options, RUN_DIR};
+use crate::load::{shell_quote as q, Options, RUN_DIR};
 use crate::mounts::{self, Mount};
 use crate::sys::Sys;
 
@@ -299,6 +299,9 @@ impl Builder<'_> {
         for (src, tgt) in self.names.mapping.pairs.clone() {
             let Some(d) = self.layout.disk(&src).cloned() else { continue };
             let dev = format!("/dev/{tgt}");
+            // The words the sh -c scripts below take, quoted (a word with
+            // nothing to quote stays bare).
+            let (qtgt, qdev) = (q(&tgt), q(&dev));
             if d.table.is_none() {
                 out.push(Cmd::note(format!("{src} has no partition table: its content goes on {dev} itself")));
                 continue;
@@ -306,36 +309,36 @@ impl Builder<'_> {
             if self.opts.erase.iter().any(|e| e == &dev || e == &tgt) || fam.on_linux() {
                 match fam {
                     Family::Redox | Family::Genode => out.push(Cmd::new(&["wipefs", "--all", &dev]).why(format!("{src} -> {dev}: clear the old table and signatures"))),
-                    Family::FreeBsd => out.push(Cmd::new(&["sh", "-c", &format!("gpart destroy -F {tgt} 2>/dev/null; dd if=/dev/zero of={dev} bs=1m count=1 2>/dev/null; true")]).why(format!("--erase {dev}: its old table"))),
-                    Family::DragonFly => out.push(Cmd::new(&["sh", "-c", &format!("dd if=/dev/zero of={dev} bs=1m count=1 2>/dev/null; true")]).why(format!("--erase {dev}: its old table"))),
-                    Family::Illumos => out.push(Cmd::new(&["sh", "-c", &format!("dd if=/dev/zero of=/dev/rdsk/{tgt}p0 bs=1048576 count=1 2>/dev/null; true")]).why(format!("--erase {tgt}: its old label"))),
+                    Family::FreeBsd => out.push(Cmd::new(&["sh", "-c", &format!("gpart destroy -F {qtgt} 2>/dev/null; dd if=/dev/zero of={qdev} bs=1m count=1 2>/dev/null; true")]).why(format!("--erase {dev}: its old table"))),
+                    Family::DragonFly => out.push(Cmd::new(&["sh", "-c", &format!("dd if=/dev/zero of={qdev} bs=1m count=1 2>/dev/null; true")]).why(format!("--erase {dev}: its old table"))),
+                    Family::Illumos => out.push(Cmd::new(&["sh", "-c", &format!("dd if=/dev/zero of={} bs=1048576 count=1 2>/dev/null; true", q(&format!("/dev/rdsk/{tgt}p0")))]).why(format!("--erase {tgt}: its old label"))),
                     Family::Haiku => {
                         let raw = format!("{}/raw", super::haiku::dir_of(&tgt));
-                        out.push(Cmd::new(&["sh", "-c", &format!("dd if=/dev/zero of={raw} bs=1048576 count=1 2>/dev/null; true")]).why(format!("--erase {raw}: its old table")));
+                        out.push(Cmd::new(&["sh", "-c", &format!("dd if=/dev/zero of={} bs=1048576 count=1 2>/dev/null; true", q(&raw))]).why(format!("--erase {raw}: its old table")));
                     }
                     Family::NetBsd | Family::OpenBsd => {
                         let raw = format!("/dev/r{tgt}{}", super::labelled::raw_letter(fam));
                         if fam == Family::NetBsd {
-                            out.push(Cmd::new(&["sh", "-c", &format!("dkctl {tgt} listwedges 2>/dev/null | sed -n 's/^\\(dk[0-9]*\\):.*/\\1/p' | while read -r w; do dkctl {tgt} delwedge $w; done; true")]).why(format!("--erase {dev}: its wedges")));
+                            out.push(Cmd::new(&["sh", "-c", &format!("dkctl {qtgt} listwedges 2>/dev/null | sed -n 's/^\\(dk[0-9]*\\):.*/\\1/p' | while read -r w; do dkctl {qtgt} delwedge $w; done; true")]).why(format!("--erase {dev}: its wedges")));
                         }
-                        out.push(Cmd::new(&["sh", "-c", &format!("dd if=/dev/zero of={raw} bs=1m count=1 2>/dev/null; true")]).why(format!("--erase {dev}: its old table and label")));
+                        out.push(Cmd::new(&["sh", "-c", &format!("dd if=/dev/zero of={} bs=1m count=1 2>/dev/null; true", q(&raw))]).why(format!("--erase {dev}: its old table and label")));
                     }
                 }
             }
             let (node, size) = match fam {
-                Family::Redox | Family::Genode => (dev.clone(), format!("$(blockdev --getsize64 {dev})")),
+                Family::Redox | Family::Genode => (dev.clone(), format!("$(blockdev --getsize64 {qdev})")),
                 Family::Haiku => (format!("{}/raw", super::haiku::dir_of(&tgt)), "auto".to_string()),
                 Family::Illumos => (format!("/dev/rdsk/{tgt}p0"), "auto".to_string()),
-                Family::DragonFly => (dev.clone(), format!("$(printf %d 0x$(diskinfo {dev} | sed -n 's/.*size=0x\\([0-9a-fA-F]*\\).*/\\1/p'))")),
+                Family::DragonFly => (dev.clone(), format!("$(printf %d 0x$(diskinfo {qdev} | sed -n 's/.*size=0x\\([0-9a-fA-F]*\\).*/\\1/p'))")),
                 Family::NetBsd | Family::OpenBsd => {
                     let raw = format!("/dev/r{tgt}{}", super::labelled::raw_letter(fam));
-                    let size = format!("$(disklabel {tgt} | awk '/^bytes.sector:/ {{ b = $2 }} /^total sectors:/ {{ t = $3 }} END {{ print b * t }}')");
+                    let size = format!("$(disklabel {qtgt} | awk '/^bytes.sector:/ {{ b = $2 }} /^total sectors:/ {{ t = $3 }} END {{ print b * t }}')");
                     (raw, size)
                 }
-                _ => (dev.clone(), format!("$(diskinfo {dev} | cut -f3)")),
+                _ => (dev.clone(), format!("$(diskinfo {qdev} | cut -f3)")),
             };
             out.push(
-                Cmd::new(&["sh", "-c", &format!("{exe} write-table {} {src} {node} {size}", crate::load::shell_quote(&self.opts.layout))])
+                Cmd::new(&["sh", "-c", &format!("{} write-table {} {} {} {size}", q(&exe), q(&self.opts.layout), q(&src), q(&node))])
                     .why(format!("{src} -> {dev}: the source's table, GUIDs and boot code exactly")),
             );
             match fam {
@@ -367,11 +370,11 @@ impl Builder<'_> {
                             out.push(Cmd::new(&["disklabel", "-R", &tgt, &proto]).why(format!("{src}'s disklabel")));
                             // disklabel -R makes a DUID of its own; fstab names the source's.
                             if let Some(duid) = self.layout.device(&src).and_then(|v| s(v, "duid")) {
-                                out.push(Cmd::new(&["sh", "-c", &format!("printf 'i\\n%s\\nw\\nq\\n' {duid} | disklabel -E {tgt} >/dev/null")]).why(format!("{src}'s disklabel UID, {duid}")));
+                                out.push(Cmd::new(&["sh", "-c", &format!("printf 'i\\n%s\\nw\\nq\\n' {} | disklabel -E {qtgt} >/dev/null", q(&duid))]).why(format!("{src}'s disklabel UID, {duid}")));
                             }
                         }
                         (Some(TableKind::Gpt), None) if fam == Family::NetBsd => {
-                            out.push(Cmd::new(&["sh", "-c", &format!("dkctl {tgt} listwedges | grep -q '^dk' || dkctl {tgt} makewedges")]).why("the GPT's partitions as wedges"));
+                            out.push(Cmd::new(&["sh", "-c", &format!("dkctl {qtgt} listwedges | grep -q '^dk' || dkctl {qtgt} makewedges")]).why("the GPT's partitions as wedges"));
                         }
                         _ => {}
                     }
@@ -485,6 +488,7 @@ impl Builder<'_> {
     /// is each pool's zpool.cache where the source kept it, and load's log.
     pub(crate) fn other_boot(&mut self, fam: Family) -> Vec<Cmd> {
         let t = self.opts.target.clone();
+        let qt = q(&t);
         let mut out = vec![Cmd::note("the boot code (MBR, freebsd-boot) was written with the partition table".to_string())];
         out.extend(self.geli_boot());
         // newfs -U makes /.snap (for UFS snapshots); a source without it
@@ -493,15 +497,16 @@ impl Builder<'_> {
             let (Some(file), Some(src)) = (s(&e, "file"), s(&e, "resolves_to")) else { continue };
             if self.layout.device(&src).and_then(|v| v.get("snap_dir")).and_then(Value::as_bool) == Some(false) {
                 let top = format!("{t}{}", if file == "/" { "" } else { file.as_str() });
+                let (snap, top) = (q(&format!("{top}/.snap")), q(&top));
                 let r = format!("{RUN_DIR}/snapref");
-                out.push(Cmd::new(&["sh", "-c", &format!("[ ! -d {top}/.snap ] || {{ touch -r {top} {r} && rmdir {top}/.snap && touch -r {r} {top}; }}")]).why(format!("{file} had no .snap on the source (its directory's times kept)")));
+                out.push(Cmd::new(&["sh", "-c", &format!("[ ! -d {snap} ] || {{ touch -r {top} {r} && rmdir {snap} && touch -r {r} {top}; }}")]).why(format!("{file} had no .snap on the source (its directory's times kept)")));
             }
         }
         let cache = if self.layout.v.at(&["storage", "zfs", "zpool_cache"]).is_some_and(|c| !c.is_null()) { Some(()) } else { None };
         for p in self.pools.clone() {
             if cache.is_some() {
                 out.push(
-                    Cmd::new(&["sh", "-c", &format!("for c in /etc/zfs/zpool.cache /boot/zfs/zpool.cache; do [ -f {t}$c ] && zpool set cachefile={t}$c {p}; done; true")])
+                    Cmd::new(&["sh", "-c", &format!("for c in /etc/zfs/zpool.cache /boot/zfs/zpool.cache; do [ -f {qt}$c ] && zpool set cachefile={qt}$c {}; done; true", q(&p))])
                         .why("the restored system's zpool.cache names the new pool"),
                 );
             }
@@ -550,7 +555,7 @@ impl Builder<'_> {
         // aren't 0 (a packaged build's are), so such a build gets 1 ns for
         // the run (the second, all bootadm's filestat compares, kept) and
         // the fragment's exact mtime (cp -p) back after.
-        let v = format!("{t}/etc/versions");
+        let v = q(&format!("{t}/etc/versions"));
         let r = format!("{RUN_DIR}/versref");
         let mut out = vec![
             Cmd::new(&["sh", "-c", &format!("[ -f {v}/build ] && [ ! -h {v}/build ] || exit 0; for f in {v}/build.*; do if [ -e \"$f\" ] || [ -h \"$f\" ]; then exit 0; fi; done; touch -r {v} {r} && cp -p {v}/build {v}/build.bko-holt && s=$(/usr/gnu/bin/stat -c %.9Y {v}/build) && case $s in *.000000000) /usr/gnu/bin/touch -m -d @${{s%.*}}.000000001 {v}/build;; esac")])
@@ -593,7 +598,7 @@ impl Builder<'_> {
                 for p in d.parts.iter().filter(|p| p.ptype.eq_ignore_ascii_case(crate::parttable::ESP)) {
                     let node = part_node(fam, &d, &tgt, p.number);
                     let mnt = format!("{RUN_DIR}/esp");
-                    out.push(Cmd::new(&["sh", "-c", &format!("mkdir -p {mnt} && mount -t msdos {node} {mnt} && mkdir -p {mnt}/EFI/BOOT && cp /usr/mdec/bootx64.efi {mnt}/EFI/BOOT/BOOTX64.EFI; s=$?; umount {mnt}; exit $s")]).why("the ESP's loader (BOOTX64.EFI), as the source's"));
+                    out.push(Cmd::new(&["sh", "-c", &esp_loader(&node, &mnt)]).why("the ESP's loader (BOOTX64.EFI), as the source's"));
                 }
             }
         } else if fam == Family::NetBsd {
@@ -604,7 +609,7 @@ impl Builder<'_> {
             // / in a softraid volume: installboot on the volume writes
             // biosboot to its chunk's disk and /boot to the chunk's boot area.
             out.push(
-                Cmd::new(&["sh", "-c", &format!("{find}installboot -v -r {t} \"$v\" /usr/mdec/biosboot /usr/mdec/boot")])
+                Cmd::new(&["sh", "-c", &format!("{find}installboot -v -r {} \"$v\" /usr/mdec/biosboot /usr/mdec/boot", q(&t))])
                     .why("OpenBSD's biosboot, and /boot it loads, through the softraid volume / is in (onto its chunk)"),
             );
         } else {
@@ -641,11 +646,25 @@ impl Builder<'_> {
         // then, it unmounts with -f, which still writes everything out.
         let softraid = _fam == Family::OpenBsd && !self.layout.arr(&["storage", "softraid_volumes"]).is_empty();
         let umount = if softraid { super::softraid::UMOUNT_BUSY } else { "umount \"$m\" || exit" };
-        out.push(Cmd::new(&["sh", "-c", &format!("{list} | awk '$0 == \"{t}\" || index($0, \"{t}/\") == 1' | sort -r | while read -r m; do {umount}; done")]).why("everything under the target, deepest first"));
+        // A target with a character to quote can't go in awk's program: it
+        // goes to the shell's case as a quoted word instead.
+        let script = if q(&t) == t {
+            format!("{list} | awk '$0 == \"{t}\" || index($0, \"{t}/\") == 1' | sort -r | while read -r m; do {umount}; done")
+        } else {
+            format!("t={}; {list} | sort -r | while read -r m; do case $m in \"$t\" | \"$t\"/*) {umount};; esac; done", q(&t))
+        };
+        out.push(Cmd::new(&["sh", "-c", &script]).why("everything under the target, deepest first"));
         let _ = mps;
         out.extend(self.closers.iter().rev().cloned());
         out
     }
+}
+
+/// The `sh -c` script that puts the rescue system's BOOTX64.EFI on the ESP
+/// NODE (a NetBSD wedge by its GPT name, NAME=EFI system), mounted at MNT.
+fn esp_loader(node: &str, mnt: &str) -> String {
+    let (node, mnt) = (q(node), q(mnt));
+    format!("mkdir -p {mnt} && mount -t msdos {node} {mnt} && mkdir -p {mnt}/EFI/BOOT && cp /usr/mdec/bootx64.efi {mnt}/EFI/BOOT/BOOTX64.EFI; s=$?; umount {mnt}; exit $s")
 }
 
 #[cfg(test)]
@@ -833,6 +852,44 @@ mod tests {
         assert!(stick.boot_medium && !stick.holds_root, "{:?}", stick.in_use);
         let other = sys.disk("c2t0d0").unwrap();
         assert!(!other.boot_medium && !other.holds_root && other.blank());
+    }
+
+    /// What a shell makes of SCRIPT: its syntax checked (sh -n).
+    fn parses(script: &str) -> bool {
+        std::process::Command::new("sh").arg("-n").arg("-c").arg(script).status().unwrap().success()
+    }
+
+    /// RustAudit1 H9-04: a --target with a space, quotes, $, a backtick and
+    /// a newline, planned for each BSD's and illumos' corpus dump, is quoted
+    /// in every sh -c script: no script holds it raw (quoted, its ' is
+    /// '\'') and each one parses.  A UFS without .snap (ghostbsd26) has its
+    /// .snap command so, and a geli guest its passphrase prompt.
+    #[test]
+    fn sh_scripts_quote_a_hostile_target() {
+        use crate::load::{commands, target::Mapping, Parsed, Stage};
+        let hostile = "/mnt/new d'isk\"$x`y`\nz";
+        for g in ["freebsd15", "freebsd15-geli", "freebsd15-geli-ufs", "freebsd15-mirror", "ghostbsd26", "netbsd11", "openbsd8", "omnios58", "oi2610", "oi2610-bios", "dragonfly6", "alpinebsd"] {
+            let text = std::fs::read_to_string(format!("{}/tests/corpus/{g}/src.json", env!("CARGO_MANIFEST_DIR"))).unwrap();
+            let l = Layout::from_json(crate::json::parse(&text).unwrap()).unwrap();
+            let pairs = l.disks.iter().map(|d| (d.name.clone(), d.name.clone())).collect();
+            let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".into(), "--target".into(), hostile.into()]) else { unreachable!() };
+            let b = commands::build(&l, &o, &Mapping { pairs, ..Mapping::default() });
+            let mut n = 0;
+            for s in Stage::ALL {
+                for c in b.stage(s).iter().filter(|c| c.argv.len() > 2 && c.argv[0] == "sh" && c.argv[1] == "-c") {
+                    let script = &c.argv[2];
+                    assert!(!script.contains(hostile), "{g} {}: {script}", s.name());
+                    assert!(parses(script), "{g} {}: {script}", s.name());
+                    n += usize::from(script.contains("new d"));
+                }
+            }
+            assert!(n > 0, "{g}: no sh -c script names the target");
+        }
+        // NetBSD's ESP by its GPT name.
+        let e = esp_loader("NAME=EFI sys'part", "/var/run/bko-holt/esp");
+        assert!(e.contains("mount -t msdos 'NAME=EFI sys'\\''part' /var/run/bko-holt/esp &&"), "{e}");
+        assert!(parses(&e));
+        assert_eq!(esp_loader("NAME=EFI", "/m"), "mkdir -p /m && mount -t msdos NAME=EFI /m && mkdir -p /m/EFI/BOOT && cp /usr/mdec/bootx64.efi /m/EFI/BOOT/BOOTX64.EFI; s=$?; umount /m; exit $s");
     }
 
     #[test]

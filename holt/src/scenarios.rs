@@ -2239,7 +2239,8 @@ fn gentoo_thinkpad_guest() {
     let b = plan(v.clone());
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
-    let dracut = bt.find(&format!("chroot /mnt/bko-target dracut --force /boot/initramfs-{k}.img {k}\n")).expect(&bt);
+    // With the restored image's modules and resume (DRACUT_ONE_IMAGE).
+    let dracut = bt.find(&format!("chroot /mnt/bko-target sh -c {} sh {k} /boot/initramfs-{k}.img\n", crate::load::shell_quote(commands::DRACUT_ONE_IMAGE))).expect(&bt);
     let install = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/efi --bootloader-id=gentoo --no-nvram\n").expect(&bt);
     let cfg = bt.find("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n").expect(&bt);
     let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vda --part 1 --label gentoo --loader '\\EFI\\gentoo\\grubx64.efi'\n").expect(&bt);
@@ -2302,7 +2303,7 @@ fn gentoo_dracut_per_kernel() {
     let (k2, k3) = ("6.18.9-gentoo-dist-bin", "6.19.1-gentoo-dist-bin");
     let no_modules = |kv: &str| format!("Gentoo: kernel {kv} has no /lib/modules/{kv}, so dracut can't remake its initramfs; the restored one stays");
     let dracut = |b: &crate::load::commands::Built| b.stage(Stage::Boot).iter().map(Cmd::shell).collect::<String>().lines().filter(|l| l.contains(" dracut ")).map(|l| format!("{l}\n")).collect::<Vec<_>>();
-    let line = |kv: &str| format!("chroot /mnt/bko-target dracut --force /boot/initramfs-{kv}.img {kv}\n");
+    let line = |kv: &str| format!("chroot /mnt/bko-target sh -c {} sh {kv} /boot/initramfs-{kv}.img\n", crate::load::shell_quote(crate::load::commands::DRACUT_ONE_IMAGE));
 
     // Three kernels: k2 and k with modules, k3 without.
     let (v, b) = gentoo_plan(|t| {

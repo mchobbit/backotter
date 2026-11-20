@@ -123,6 +123,13 @@ claude/backshot2-alpine-fc847f, which merges main, after it took in 8f3398a.
   `initrd`), but on Gentoo the loop names the file anyway:
   `dracut --force /boot/initramfs-K.img K`. Images are host-only
   (`01-gentoo.conf`), built with /dev, /proc, /sys and /run bound.
+  Since 2026-11-20 (`DRACUT_ONE_IMAGE`) that dracut also gets what the
+  restored image had and the rescue system's chroot hides from host-only
+  dracut, as the generic loop does since 1007abf and 79ff930: its kernel
+  modules still in the tree (`--add-drivers`), its resume module (`--add
+  resume`; the chroot has no swap on) and its `etc/cmdline.d/95resume.conf`
+  (`--include`), read by `lsinitrd /boot/initramfs-K.img` first. Before
+  that, a restored Gentoo with swap and hibernation lost resume.
 - `initramfs()`'s fallback (`_ =>`, `update-initramfs -u -k all`) is a hard
   failure on Gentoo. Gentoo gets its own arms: `dracut` as above; `none`
   runs nothing and notes it (a unit test, no guest: untested on a real

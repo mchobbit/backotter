@@ -493,6 +493,16 @@ pub const ZERO_TAIL: u64 = 1 << 20;
 /// boot entries, shim's MOK lists; t2h-20261118T2037-e7d1).  The image
 /// still gets the drivers this machine needs.
 ///
+/// The list is all the restored image's modules, not only the ones the
+/// rescue system hides: which those are (built into its kernel, or not
+/// loaded in it) can't be told from the chroot, and naming them by kind
+/// (file systems, efivarfs, crypto) would miss the next one.  It is no
+/// longer than what the source's own image had: a host-only image's tens
+/// of modules, or a generic one's few thousand, which dracut takes anyway
+/// (well under the kernel's 128 KiB for one argument).  The remade image is
+/// the source's and this machine's together; the next dracut run on the
+/// restored machine makes it host-only for that machine alone.
+///
 /// So with dracut's resume module: host-only takes it only when this
 /// machine has swap on (and the rescue system has none), so an image that
 /// had it gets it by --add, and the resume= its host-only command line
@@ -504,6 +514,19 @@ for p in $(printf '%s\\n' \"$l\" | sed -n 's|^.* \\(\\(usr/\\)*lib/modules/[^ ]*
 a=; f=; if printf '%s\\n' \"$l\" | sed -n '/^dracut modules:$/,/^=/p' | grep -qx resume; then a=resume; r=$(lsinitrd -k \"${k##*/}\" -f etc/cmdline.d/95resume.conf 2>/dev/null); \
 [ -z \"$r\" ] || { f=$(mktemp) && printf '%s\\n' \"$r\" > \"$f\"; } || exit; fi; \
 dracut --force --kver \"${k##*/}\" ${m:+--add-drivers \"$m\"} ${a:+--add \"$a\"} ${f:+--include \"$f\" /etc/cmdline.d/95resume.conf}; s=$?; [ -z \"$f\" ] || rm -f \"$f\"; [ \"$s\" -eq 0 ] || exit \"$s\"; n=$((n + 1)); done; [ \"$n\" -gt 0 ]";
+
+/// DRACUT_EACH_KERNEL's dracut for one kernel and one image, both named:
+/// `sh -c DRACUT_ONE_IMAGE sh KVER IMAGE`.  Gentoo's (gentoo_initramfs):
+/// its 01-gentoo.conf is host-only too, so the image IMAGE was (read by
+/// lsinitrd before dracut replaces it) gives the remade one its kernel
+/// modules still in the tree, its resume module and its 95resume.conf, as
+/// DRACUT_EACH_KERNEL's restored images do.  With no image lsinitrd can
+/// read, it is plain `dracut --force IMAGE KVER`.
+pub(crate) const DRACUT_ONE_IMAGE: &str = "k=$1; i=$2; l=$(lsinitrd \"$i\" 2>/dev/null); m=; \
+for p in $(printf '%s\\n' \"$l\" | sed -n 's|^.* \\(\\(usr/\\)*lib/modules/[^ ]*\\.ko[.a-z0-9]*\\)$|\\1|p'); do [ -e \"/$p\" ] && b=${p##*/} && m=\"$m ${b%%.ko*}\"; done; \
+a=; f=; if printf '%s\\n' \"$l\" | sed -n '/^dracut modules:$/,/^=/p' | grep -qx resume; then a=resume; r=$(lsinitrd -f etc/cmdline.d/95resume.conf \"$i\" 2>/dev/null); \
+[ -z \"$r\" ] || { f=$(mktemp) && printf '%s\\n' \"$r\" > \"$f\"; } || exit; fi; \
+dracut --force ${m:+--add-drivers \"$m\"} ${a:+--add \"$a\"} ${f:+--include \"$f\" /etc/cmdline.d/95resume.conf} \"$i\" \"$k\"; s=$?; [ -z \"$f\" ] || rm -f \"$f\"; exit \"$s\"";
 
 /// EndeavourOS's and Garuda's dracut-rebuild (host-only images, then
 /// non-host-only fallbacks), with dracut's resume module kept as
@@ -4201,7 +4224,9 @@ impl Builder<'_> {
     /// each kernel's image under the name installkernel gives it
     /// (/boot/initramfs-K.img), named on the command line: left to itself,
     /// dracut 112 could pick /efi/MACHINE-ID/K/initrd or
-    /// /lib/modules/K/initrd.  `none` makes nothing.  Everything else is
+    /// /lib/modules/K/initrd.  Its host-only image keeps what the restored
+    /// one had and the rescue system's chroot can't show it (the modules,
+    /// the resume module and resume=: DRACUT_ONE_IMAGE).  `none` makes nothing.  Everything else is
     /// refused by name: genkernel, ugrd, a unified kernel image, an
     /// installkernel layout other than grub or compat, an image at
     /// /lib/modules/K/initrd.  installkernel's .old copies come back with
@@ -4241,7 +4266,8 @@ impl Builder<'_> {
                         self.notes.push(format!("Gentoo: kernel {v} has no /lib/modules/{v}, so dracut can't remake its initramfs; the restored one stays"));
                         continue;
                     }
-                    out.push(Cmd::new(&["chroot", t, "dracut", "--force", &format!("/boot/initramfs-{v}.img"), &v]).why(format!("kernel {v}'s initramfs, by the name installkernel gives it")));
+                    out.push(Cmd::new(&["chroot", t, "sh", "-c", DRACUT_ONE_IMAGE, "sh", &v, &format!("/boot/initramfs-{v}.img")])
+                        .why(format!("kernel {v}'s initramfs, by the name installkernel gives it, with the restored image's modules and resume")));
                 }
                 if with_image == 0 {
                     self.problems.push("Gentoo: the initramfs generator is dracut, but no kernel in /boot has an initramfs to remake".into());
@@ -5407,6 +5433,71 @@ mod tests {
         // dracut's failure is the script's, and the file is removed.
         let failing = fakes(t.path(), &[("dracut", "exit 3".into()), ("lsinitrd", lsinitrd)]);
         assert_eq!(run_script(&script, &failing, &r, &tmp, None).status.code(), Some(3));
+        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
+    }
+
+    /// DRACUT_ONE_IMAGE run by sh over a fake tree, as Gentoo's boot stage
+    /// runs it (KVER and IMAGE its arguments), with a fake lsinitrd (dracut
+    /// 112's listing of a host-only image with the resume module, read by
+    /// the image's path) and a dracut that prints its arguments and the
+    /// files it was given to --include.
+    #[test]
+    fn dracut_one_image_keeps_modules_and_resume() {
+        let t = crate::testutil::TempDir::new("dracut-one");
+        let (r, k) = (t.path().join("root"), "6.18.63-gentoo-dist-bin");
+        let (img, img2) = (format!("/boot/initramfs-{k}.img"), "/boot/initramfs-6.18.9-gentoo-dist-bin.img");
+        touch(&r, &[format!("lib/modules/{k}/kernel/fs/efivarfs/efivarfs.ko.xz"), format!("lib/modules/{k}/kernel/drivers/md/dm-mod.ko.xz")]);
+        let listing = format!(
+            "Image: {img}: 18M\n\
+             ========================================================================\n\
+             Version: dracut-112\n\
+             \n\
+             Arguments:  --kver '{k}' --force\n\
+             \n\
+             dracut modules:\n\
+             bash\n\
+             resume\n\
+             lvm\n\
+             ========================================================================\n\
+             -rw-r--r--   1 root     root        11204 Nov 12 18:02 lib/modules/{k}/kernel/fs/efivarfs/efivarfs.ko.xz\n\
+             -rw-r--r--   1 root     root        81116 Nov 12 18:02 lib/modules/{k}/kernel/drivers/md/dm-mod.ko.xz\n\
+             -rw-r--r--   1 root     root        30020 Nov 12 18:02 lib/modules/{k}/kernel/drivers/nvme/gone.ko.xz\n\
+             ========================================================================\n");
+        // The other image's resume is only a file's name; it has no module.
+        let listing2 = "Image: x: 9M\ndracut modules:\nbash\nlvm\n====\n-rw-r--r-- 1 root root 1 Nov 12 18:02 usr/lib/dracut/hooks/resume\n====\n";
+        let lsinitrd = format!(
+            "case \"$*\" in\n\
+             '-f etc/cmdline.d/95resume.conf {img}') echo ' resume=UUID=bc000000-0000-4000-8000-000000000004' ;;\n\
+             '{img}') cat <<'EOF'\n{listing}EOF\n;;\n\
+             '{img2}') cat <<'EOF'\n{listing2}EOF\n;;\n\
+             *) echo \"no such image $*\" >&2; exit 1 ;;\nesac\n");
+        let dracut = "printf '[%s]' \"$@\"; echo\nwhile [ $# -gt 0 ]; do [ \"$1\" = --include ] && echo \"$3: $(cat \"$2\")\"; shift; done\n".to_string();
+        let bin = fakes(t.path(), &[("lsinitrd", lsinitrd.clone()), ("dracut", dracut)]);
+        let script = DRACUT_ONE_IMAGE.replace("\"/$p\"", "\"$R/$p\"");
+        assert_eq!(script.matches("$R/").count(), 1, "{script}");
+        let with = |k: &str, i: &str| format!("set -- {k} {i}; {script}");
+        let tmp = t.path().join("tmp");
+        let o = run_script(&with(k, &img), &bin, &r, &tmp, None);
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let out = String::from_utf8_lossy(&o.stdout).into_owned();
+        let mut lines = out.lines();
+        let first = lines.next().unwrap();
+        let inc = first.find("[--include][").map(|i| &first[i + 12..]).and_then(|r| r.split(']').next()).unwrap_or_else(|| panic!("{first}"));
+        assert_eq!(first, format!("[--force][--add-drivers][ efivarfs dm-mod][--add][resume][--include][{inc}][/etc/cmdline.d/95resume.conf][{img}][{k}]"));
+        assert_eq!(lines.next(), Some("/etc/cmdline.d/95resume.conf:  resume=UUID=bc000000-0000-4000-8000-000000000004"));
+        assert_eq!(lines.next(), None);
+        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
+        // An image with no resume module (and no module still in the
+        // tree): plain dracut.
+        let o = run_script(&with("6.18.9-gentoo-dist-bin", img2), &bin, &r, &tmp, None);
+        assert_eq!(String::from_utf8_lossy(&o.stdout), format!("[--force][{img2}][6.18.9-gentoo-dist-bin]\n"));
+        // No image lsinitrd can read: plain dracut, as before.
+        let o = run_script(&with(k, "/boot/missing.img"), &bin, &r, &tmp, None);
+        assert!(o.status.success());
+        assert_eq!(String::from_utf8_lossy(&o.stdout), format!("[--force][/boot/missing.img][{k}]\n"));
+        // dracut's failure is the script's, and the file is removed.
+        let failing = fakes(t.path(), &[("dracut", "exit 3".into()), ("lsinitrd", lsinitrd)]);
+        assert_eq!(run_script(&with(k, &img), &failing, &r, &tmp, None).status.code(), Some(3));
         assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
     }
 

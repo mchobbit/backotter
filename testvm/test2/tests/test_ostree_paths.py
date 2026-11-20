@@ -412,6 +412,35 @@ class TestManifest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("changed: 3, of which unexpected: 3", out)
 
+    def test_set_property_dropins_come_and_go(self):
+        """Fedora (fedora-45-20261120-053419): uresourced's systemctl
+        set-property drop-ins under etc/systemd/system.control depend on who
+        logged in since the boot, so one changed, one gone and one new are
+        all expected; an administrator's drop-in there, and the units in
+        etc/systemd/system, stay held."""
+        ctl = self.root / "etc" / "systemd" / "system.control"
+        for d in ("user.slice.d", "user-60578.slice.d", "user@0.service.d", "foo.service.d"):
+            (ctl / d).mkdir(parents=True)
+        (ctl / "user.slice.d" / "50-CPUWeight.conf").write_text("CPUWeight=100\n")
+        (ctl / "user-60578.slice.d" / "50-MemoryMin.conf").write_text("MemoryMin=250M\n")
+        (ctl / "foo.service.d" / "50-CPUWeight.conf").write_text("CPUWeight=50\n")
+        (self.root / "etc" / "systemd" / "system" / "x.service").parent.mkdir(parents=True)
+        (self.root / "etc" / "systemd" / "system" / "x.service").write_text("[Unit]\n")
+        a = self.manifest("a.tsv")
+        self.touch("etc/systemd/system.control/user.slice.d/50-CPUWeight.conf", "CPUWeight=500\n")
+        (ctl / "user-60578.slice.d" / "50-MemoryMin.conf").unlink()
+        (ctl / "user-1000.slice.d").mkdir()
+        (ctl / "user-1000.slice.d" / "50-IOWeight.conf").write_text("IOWeight=500\n")
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("missing: 1, of which unexpected: 0", out)
+        self.assertIn("added: 2, of which unexpected: 0", out)
+        self.touch("etc/systemd/system/x.service", "[Service]\n")
+        self.touch("etc/systemd/system.control/foo.service.d/50-CPUWeight.conf", "CPUWeight=10\n")
+        rc, out = self.compare(a, self.manifest("c.tsv"))
+        self.assertEqual(rc, 1)
+        self.assertIn("changed: 3, of which unexpected: 2", out)
+
     def objects(self):
         """A repository object hardlinked into both deployments (nlink 3), as
         a bare repository has them, and a file outside ostree/."""

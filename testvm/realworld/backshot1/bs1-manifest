@@ -88,6 +88,17 @@ EXPECTED = [
     # Ubuntu's snaps' ibus links, made again at every login, so with only a
     # new mtime (ubuntu-26.10-20261119-050205).
     "root/snap/*/.config/ibus/bus", "home/*/snap/*/.config/ibus/bus",
+    # systemctl set-property's drop-ins for the users' slices and managers.
+    # Fedora's uresourced writes them at every boot and for each user who
+    # logs in (user.slice, user-UID.slice, user@UID.service: 50-CPUWeight,
+    # -IOWeight, -MemoryLow, -MemoryMin), so which there are and what they
+    # hold depend on who logged in since the boot: gdm, root over SSH, the
+    # desktop's user (fedora-45-20261120-053419: 18 files).  Only those:
+    # any other drop-in there is an administrator's and stays held, as on
+    # ostree (ostree_paths.py, docs/design/bazzite.md).
+    "etc/systemd/system.control", "etc/systemd/system.control/user*.slice.d",
+    "etc/systemd/system.control/user*.slice.d/50-*.conf", "etc/systemd/system.control/user@*.service.d",
+    "etc/systemd/system.control/user@*.service.d/50-*.conf",
     # BigLinux rewrites these at every boot or Plasma login, each confirmed
     # by a plain reboot of the restored system (biglinux-20261117-145933):
     # biglinux-improve-compatibility's "ln -sf .../build /usr/src/linux"

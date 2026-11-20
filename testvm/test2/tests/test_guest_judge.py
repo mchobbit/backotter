@@ -2057,6 +2057,126 @@ class Flakes(unittest.TestCase):
             self.assertIsNone(J.match_flake("debian12", [tail], self.flakes()), tail)
 
 
+class FreezeLines(unittest.TestCase):
+    """What the OtterGrind1 freeze (GuestTest2 t2v-20261120T0601-2cfb) found new only because a value
+    or the host's timing changed: a kernel's hex PFN (proxmox9), the BSD loaders' cut escape
+    sequences (ghostbsd26-zfs, freebsd15, hardenedbsd15), OpenBSD's floppy probe inside an rc line
+    (openbsd8, openbsd8-crypt).  Raw, as the guests' journal.log and serial.log had them."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(REPO, "testvm/test2/guest/known-lines.json"), encoding="utf-8") as f:
+            cls.known = json.load(f)
+
+    def left(self, pm, raw, baseline=(), src="serial"):
+        return [x["line"] for x in J.sweep_lines({src: raw}, J.known_filter(self.known, pm), list(baseline))]
+
+    WX = ("2026-11-20T07:35:16+00:00 kernel: CPA detected W^X violation: 8000000000000123 -> 0000000000000123 range: "
+          "0xffffffffc0200000 - 0xffffffffc0200fff PFN {}")
+
+    def test_a_pfn_is_hex(self):
+        forms = {J.normalize(self.WX.format(p)) for p in ("5a00", "1800", "1e00", "2f5a3", "10ab3c")}
+        self.assertEqual(forms, {"TIME kernel: CPA detected W^X violation: HEX -> HEX range: HEX - HEX PFN HEX"})
+        # the W^X line accepted before as PFN N (proxmox9's baseline) takes the PFN 5a00 one
+        old = "TIME kernel: CPA detected W^X violation: HEX -> HEX range: HEX - HEX PFN N"
+        self.assertEqual(self.left("apt", self.WX.format("5a00") + "\n", [old], "journal"), [])
+        # a word after PFN stays a word
+        self.assertEqual(J.normalize("PFN table full"), "PFN table full")
+        self.assertEqual(J.normalize("PFN bad"), "PFN bad")
+
+    # ghostbsd26-zfs (cinqcent), ghostbsd26: the loader's two RIS ("\x1b←cc") and the efi console's
+    # backspace as a cursor move ("-\x1b[01;01H"), a \r cutting the line after the "["
+    GBZ = "/\b-\b\\\b|\b\x1b←cc/\b-\b\\\b|\b/\b-\b\x1b[1;1H-\x1b[01;01H["
+    GBZ_MENU = ("/\b-\b\\\b|\b\x1b←cc/\b-\b\\\b|\b/\b-\b\x1b[1;1H-\x1b[01;01H[[EEnntteerr]]  bboooott  nnooww,,  aannyy  "
+                "ootthheerr  k\x1b[01;29Hk\x1b[01;30Heeyy  ffoorr  bboooott  mmeennuu......  33 \x1b[25;1H ")
+    GB_MENU = ("-\b\x1b←cc\\\b|\b\x1b[1;1H|\x1b[01;01H[[EEnntteerr]]  bboooott  nnooww,,  aannyy  ootthheerr  kkeeyy  ffoorr  "
+               "bboooott  mmeennuu......  33 \x1b[25;1H ")
+    # freebsd15 (choubox): comconsole's ESC [ J cut by OVMF's sequences and a spinner character
+    FB = ["/\b-\b\\\b|\b\x1b←cc/\b-\b\\\b|\b/\b-\b\x1b[H\x1b[-\x1b[01;01H\x1b[0;30m\x1b[2JJ\\\b\x1b[9;45H  \x1b[31m```"
+          "                        \x1b[31;1m`\x1b[31m\x1b[10;45H s` `.....---...\x1b[31;1m....--.```   -/\x1b[31m\x1b[11;45H +o   .--`",
+          "|\b\x1b←cc/\b-\b\\\b|\b/\b-\b\x1b[H\x1b[-\x1b[01;01H\x1b[0;30m\x1b[2JJ\\\b\x1b[9;45H  \x1b[31m```"
+          "                        \x1b[31;1m`\x1b[31m\x1b[10;45H s` `.....---...\x1b[31;1m....--.```   -/\x1b[31m\x1b[11;45H +o   .--`"]
+    # hardenedbsd15 (choubox): once a spinner character and a stray ESC [ inside it, once not
+    HB = ["-\b\x1b←cc\\\b|\b|\x1b[23;03H\x1b[H\x1b[\x1b[01;01H\x1b[0;30m\x1b[2JJ/\b\x1b[9;47H\x1b[mdUtPUzJxc21rZmUzOGtFdVhMaW1QKzdY",
+          "-\b\x1b←cc\\\b|\b\x1b[H\x1b[|\x1b[01;01H\x1b[0;30m\x1b[2JJ/\b\x1b[9;47H\x1b[mdUtPUzJxc21rZmUzOGtFdVhMaW1QKzdY"]
+    MENU = "[[EEnntteerr]] bboooott nnooww,, aannyy ootthheerr kkeeyy ffoorr bboooott mmeennuu... N"
+    SEABIOS = "\x1bc\x1b[?7l\x1b[2J\x1b[0mSeaBIOS (version 1.17.0-debian-1.17.0-1~bpo13+1)"
+
+    def test_cut_escapes_come_out(self):
+        self.assertEqual(J.normalize(self.GBZ), "[")
+        self.assertEqual(J.normalize(self.GBZ_MENU), self.MENU)
+        self.assertEqual(J.normalize(self.GB_MENU), self.MENU)
+        self.assertEqual({J.normalize(x) for x in self.FB}, {"``` ` s` `...---...--.``` -/ +o .--`"})
+        self.assertEqual({J.normalize(x) for x in self.HB}, {"dUtPUzJxcNrZmUzOGtFdVhMaWNQKzdY"})
+        self.assertEqual(J.normalize(self.SEABIOS), "SeaBIOS (version N.N.N-debian-N.N.N-N~bpoN+N)")
+        # OVMF's ESC [=3h is a whole CSI
+        self.assertEqual(J.normalize("\x1b[=3h\x1b[=3hBdsDxe: loading Boot0001"), "BdsDxe: loading BootN")
+        self.assertEqual(J.escapes("ab\x1b[1;1Hc"), "abc")
+        # a "←" that isn't OVMF's ESC stays, and so does a spinner character before any other move
+        self.assertEqual(J.normalize("a ← b"), "a ← b")
+        self.assertEqual(J.normalize("x -\x1b[5;1Hy"), "x -y")
+
+    def test_stable(self):
+        for x in [self.GBZ, self.GBZ_MENU, self.GB_MENU, self.SEABIOS, "←\b←cc", "←x\bc"] + self.FB + self.HB:
+            n = J.normalize(x)
+            self.assertEqual(J.normalize(n), n, repr(x))
+
+    def test_the_freebsd_logo_goes_whole(self):
+        for x in self.FB:
+            self.assertEqual(self.left("freebsd", x + "\n"), [], repr(x))
+
+    def test_a_baseline_from_before_escapes_still_counts(self):
+        # ghostbsd26-zfs's and openbsd8's baselines as the freeze's lines were accepted
+        self.assertEqual(J.normalize(self.GBZ, rejoin=False), "←cc-[")
+        self.assertEqual(self.left("ghostbsd", self.GBZ + "\n", ["←cc-["]), [])
+        self.assertEqual(self.left("openbsd", self.SEABIOS + "\n", ["cSeaBIOS (version N.N.N-debian-N.N.N-N~bpoN+N)"]), [])
+        self.assertEqual(self.left("ghostbsd", self.GBZ + "\n", ["something else"]), ["["])
+        # the old form never accepts a different line
+        err = "-\b\x1b←cc\\\b|\b\x1b[1;1H|\x1b[01;01Hccaann''tt  llooaadd  ''kkeerrnneell''"
+        self.assertEqual(len(self.left("ghostbsd", err + "\n", ["←cc-["])), 1)
+        self.assertEqual(self.left("ghostbsd", err + "\n", []), ["ccaann''tt llooaadd ''kkeerrnneell''"])
+
+    # openbsd8 (choubox) and openbsd8-crypt (cage): the probe inside an rc line, the kernel's \n,
+    # the tty's \r, then the rest of the rc line
+    RC = "reordering: ld.so libc libcrypto ssh-agent smtpd-ca smtpd-control smtpd-dispatcher smtpd-lka smtpd-queue smtpd-scheduler sshd-auth sshd-session httpd smtpd sshd."
+    FD = "fd0 at fdc0 drive 1: density unknown"
+    OB = ["starting network\r\nreordering:fd0 at fdc0 drive 1: density unknown\n\r ld.so libc libcrypto ssh-agent smtpd-ca smtpd-control "
+          "smtpd-dispatcher smtpd-lka smtpd-queue smtpd-scheduler sshd-auth sshd-session httpd smtpd sshd.\r\nstarting early daemons: "
+          "syslogd pflogd ntpd.\r\n",
+          "starting network\r\nreordering: ld.so libc libcrypto ssh-agent smtpd-ca smtpd-controlfd0 at fdc0 drive 1: density unknown\n\r"
+          " smtpd-dispatcher smtpd-lka smtpd-queue smtpd-scheduler sshd-auth sshd-session httpd smtpd sshd.\r\nstarting early daemons: "
+          "syslogd pflogd ntpd.\r\n",
+          "starting network\r\nreordering: ld.so libc libcrypto ssh-agent smtpd-ca smtpd-control smtpd-dispatcher smtpd-lka smtpd-queue "
+          "smtpd-scheduler sshd-auth sshd-session httpd smtpd sshdfd0 at fdc0 drive 1: density unknown\n\r.\r\nstarting early daemons: "
+          "syslogd pflogd ntpd.\r\n",
+          "starting network\r\nreordering: ld.so libc libcrypto ssh-agent smtpd-ca smtpd-control smtpd-dispatcher smtpd-lka smtpd-queue "
+          "smtpd-scheduler sshd-auth sshd-session httpd smtpd sshd.\r\nstarting early daemons: syslogd pflogd ntpdfd0 at fdc0 drive 1: "
+          "density unknown\n\r.\r\n"]
+
+    def test_a_late_probe_is_its_own_line(self):
+        want = {"starting network", self.RC, "fdN at fdcN drive N: density unknown", "starting early daemons: syslogd pflogd ntpd."}
+        for t in self.OB:
+            self.assertEqual(J.normalized_set(t), want, repr(t))
+            self.assertEqual(J.unsplice(J.unsplice(t)), J.unsplice(t))
+        # alone already, or no probe: as it was
+        alone = "starting network\r\n" + self.FD + "\n\r" + self.RC + "\r\n"
+        self.assertEqual(J.unsplice(alone), alone)
+        self.assertEqual(J.unsplice("a\r\nb\r\n"), "a\r\nb\r\n")
+        # every boot's lines are the same, whatever the host's timing
+        base = sorted(want)
+        for t in self.OB:
+            self.assertEqual(self.left("openbsd", t, base), [], repr(t))
+
+    def test_a_probe_accepted_spliced_counts_alone(self):
+        # openbsd8's baseline had the probe only inside rc lines
+        old = ["reordering: ld.so libc libcrypto ssh-agent smtpd-ca smtpd-controlfdN at fdcN drive N: density unknown",
+               "starting network", self.RC, "starting early daemons: syslogd pflogd ntpd."]
+        self.assertEqual(self.left("openbsd", self.OB[0], old), [])
+        # a different kernel line in the same place stays new
+        other = self.OB[0].replace(self.FD, "fd0 at fdc0 drive 1: I/O error")
+        self.assertEqual(self.left("openbsd", other, old), ["fdN at fdcN drive N: I/O error"])
+
+
 class Grades(unittest.TestCase):
     PASS = {"verdict": "PASS", "needs": {"try": "PASS"}}
 

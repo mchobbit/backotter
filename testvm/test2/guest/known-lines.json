@@ -45,7 +45,7 @@
   "^CPU N: vendor '(AMD|Intel)' model name '[^']+'$",
   "^[-|/\\\\]+$",
   "^(?!.*(eerrrroorr|EERRRROORR|ffaaiill|ccaann''tt|nnoott ffoouunndd|uunnaabbllee|mmiissssiinngg)).*(//bboooott//|//eettcc//|kkeerrnneell|ssiizzee==|ssiizzee NxxN|tteexxtt==|ddaattaa==|^aattaa==|LLooaaddiinngg |^Looaaddiinngg |AAuuttoobboooott )",
-  "^\\S*J ``` ` s` `\\.\\.\\.---\\.\\.\\.--\\.``` -/ \\+o "
+  "^(\\S*J )?``` ` s` `\\.\\.\\.---\\.\\.\\.--\\.``` -/ \\+o "
  ],
  "apt": [
   "^(Get|Hit|Ign):N ",

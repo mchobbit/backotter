@@ -1694,7 +1694,24 @@ def update_check_need(sec):
 
 # --- step 5: the log sweep --------------------------------------------------------------------------
 
-_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[78=>]|\x1b")
+# Whole escape sequences: CSI (with any of its parameter bytes 0-9:;<=>?, as OVMF's ESC [=3h), OSC,
+# a charset pick and the one-byte ones (DECSC/DECRC, keypad, RIS's ESC c).  An ESC that starts none
+# of them is dropped alone, but only once they are out (escapes).  _ESC_OLD: before escapes, what
+# old baselines were normalized with (an ESC alone dropped at once, ESC c and ESC [=3h left).
+_ESC_SEQ = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[78=>c]")
+_ESC_OLD = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[78=>]|\x1b")
+# The BSD loaders' dual console (efi and comconsole) writes the same screen twice to the one serial
+# port, interleaved byte by byte as fast as the host runs it, so a sequence of one is cut by the
+# other's: "\x1b[H\x1b[-\x1b[01;01H\x1b[0;30m\x1b[2JJ" (freebsd15) is comconsole's ESC [ J with
+# OVMF's own sequences and a spinner character inside it; dropping its ESC alone left "[-J", and
+# which fragments were left changed from boot to boot.  Two more of the efi console's: OVMF draws
+# an ESC that the loader prints through it as "←", so its RIS is "←c" ("\x1b←cc" is the two RIS
+# interleaved: every freebsd, ghostbsd and hardenedbsd guest's "←cc"), and it backs over a spinner
+# character by moving the cursor, in its own two-digit form ("-\x1b[01;01H"), not by a backspace
+# (ghostbsd26-zfs's "←cc-[" in t2v-20261120T0601-2cfb).  escapes takes them out until nothing
+# changes, so a sequence that one cut in two comes whole again once what was inside it is gone.
+_EFI_ESC = re.compile(r"←(?=\x1b*c)")
+_EFI_BS = re.compile(r"[|/\\-]\x1b\[\d\d;\d\dH")
 _CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 # A progress run of dots ("Building module(s)........ done.", zypper's "[....done]", a line of them
 # alone) is as long as the host was slow: four or more are "...", which _DOTS leaves alone.
@@ -1771,8 +1788,25 @@ _NUM = re.compile(r"\d+")
 # What _NUM leaves of such a number (and of what was normalized before _HEX0X: old baselines):
 # "Nx" then hex or N, whole.  After _NUM, so normalize stays stable (a 1920x1080 is HEX too).
 _HEXNX = re.compile(r"\bN[xX][0-9a-fA-FN]+\b")
+# The kernel prints a page frame number in hex without 0x ("CPA detected W^X violation: ... PFN
+# 2f5a3"), so one under six digits came out of _NUM as NfNaN, NdN, Nfe or N, a new line whenever
+# the PFN changed (proxmox9 in t2v-20261120T0601-2cfb, its W^X WARN accepted before as PFN N).
+# After _HEXNX: it takes N for digits, so normalize stays stable and an old PFN NfN is HEX too.
+_PFN = re.compile(r"\bPFN (?=[0-9a-fA-FN]*[\dN])[0-9a-fA-FN]+\b")
 LINE_MAX = 300
 LINES_MAX = 20000
+
+
+def escapes(s):
+    """S less its escape sequences, the BSD loaders' cut ones too (_EFI_ESC, _EFI_BS): whole ones
+    out again and again until nothing changes, then any ESC still alone."""
+    if "\x1b" not in s and "←" not in s:
+        return s
+    while True:
+        t = _ESC_SEQ.sub("", _EFI_BS.sub("", _EFI_ESC.sub("\x1b", s)))
+        if t == s:
+            return s.replace("\x1b", "")
+        s = t
 
 
 def overstrike(s):
@@ -1793,20 +1827,23 @@ def overstrike(s):
     return "".join(out)
 
 
-def normalize(line, run_dirs=(), erase=True):
+def normalize(line, run_dirs=(), erase=True, rejoin=True):
     """A log line with what differs from boot to boot taken out, or "" for a line with nothing
-    left (ANSI and OSC sequences, timestamps and a date's weekday, month and AM/PM, [ 12.345],
-    UUIDs, 0x numbers, hex of 6 or more,
+    left (escape sequences, the BSD loaders' cut ones too, timestamps and a date's weekday, month
+    and AM/PM, [ 12.345], UUIDs, 0x numbers, hex of 6 or more, a kernel's PFN,
     numbers but a zero count of errors or failures (ZERO), the run's directories and Test2's copy
     of the repo, mktemp suffixes under /tmp, SSH key fingerprints, public keys and randomart, Nix
     store hashes, systemd's orphaned-r IDs, what a backspace erases (a boot loader's spinner),
     progress dots past three).  Stable: normalize(normalize(x)) == normalize(x), and a line
     normalized before 0x numbers were HEX ("NxNaaN") comes out as the raw line does now.  ERASE
-    false: backspaces are only dropped, as before overstrike (sweep_lines' old baselines)."""
-    s = _ANSI.sub("", line)
+    false: backspaces are only dropped, as before overstrike; REJOIN false: escape sequences as
+    before escapes (an ESC alone dropped at once, RIS's c left): sweep_lines' old baselines."""
+    s = escapes(line) if rejoin else _ESC_OLD.sub("", line)
     if erase:
         s = overstrike(s)
     s = _CTRL.sub("", s)
+    if rejoin and "←" in s:
+        s = escapes(s)   # a "←c" that a backspace or a control character kept apart
     for d in run_dirs or ():
         if d:
             s = s.replace(d, "RUN")
@@ -1833,13 +1870,33 @@ def normalize(line, run_dirs=(), erase=True):
     s = _HEX.sub("HEX", s)
     s = _NUM.sub("N", s)
     s = _HEXNX.sub("HEX", s)
+    s = _PFN.sub("PFN HEX", s)
     s = _DOTS.sub("...", s)
     return " ".join(s.split())[:LINE_MAX]
 
 
+# A kernel line that comes late, from its own thread, while a boot script writes a line: OpenBSD's
+# floppy probe ("fd0 at fdc0 drive 1: density unknown", QEMU's) lands inside /etc/rc's lines on
+# some hosts, anywhere in them ("reordering: ld.so ... smtpd-controlfd0 at fdc0 drive 1: density
+# unknown", then the kernel's newline, the tty's \r and the rest " smtpd-dispatcher ... sshd."),
+# so each boot made two new lines (openbsd8, openbsd8-crypt in t2v-20261120T0601-2cfb; they were
+# accepted line by line).  Digits or N, so a baseline's normalized lines are read the same way.
+_LATE = (r"fd(?:\d+|N) at fdc(?:\d+|N) drive (?:\d+|N): ",)
+_SPLICE = re.compile(r"(?<![^\r\n])([^\r\n]+?)((?:" + "|".join(_LATE) + r")[^\r\n]*)\n\r?")
+_SPLICED = re.compile(r".+?((?:" + "|".join(_LATE) + r").*)\Z")
+
+
+def unsplice(text):
+    """TEXT with each late kernel line (_LATE) that landed inside another line put on a line of its
+    own before it, and the line it cut joined up again.  Stable: a late line alone stays."""
+    if not text or not _SPLICE.search(text):
+        return text
+    return _SPLICE.sub(r"\2\n\1", text)
+
+
 def normalized_set(text, run_dirs=()):
     out = set()
-    for x in (text or "").splitlines()[-LINES_MAX:]:
+    for x in unsplice(text or "").splitlines()[-LINES_MAX:]:
         n = normalize(x, run_dirs)
         if n:
             out.add(n)
@@ -1891,27 +1948,37 @@ def drop_lists(text, heads):
     return "\n".join(out)
 
 
+# The (erase, rejoin) forms a raw line had before overstrike and escapes, by whether it has a
+# backspace in it and whether an ESC or OVMF's "←".
+OLD_FORMS = {(False, False): (), (True, False): ((False, True),), (False, True): ((True, False),),
+             (True, True): ((False, True), (True, False), (False, False))}
+
+
 def sweep_lines(sources, known, baseline, older=()):
     """Step 5.  SOURCES {name: text}, KNOWN the compiled patterns, BASELINE the accepted lines or
     None (no baseline yet: every line is new), OLDER texts of the same guest's earlier logs on
     this host (for the seen_before tag only).  [{line, source, seen_before}], sorted.  A baseline
     line counts as normalize makes it now too, so a normalizer that learns a pattern keeps lines
-    accepted before it; a line with a backspace in it is accepted as the baseline has it from
-    before overstrike too (its backspaces only dropped), since a stored line can't be erased again."""
+    accepted before it (and a late kernel line accepted inside another line counts alone too,
+    unsplice); a line with a backspace or an escape sequence in it is accepted as the baseline has
+    it from before overstrike and escapes too (OLD_FORMS), since a stored line can't be erased or
+    rejoined again."""
     base = set(baseline or ())
     base |= {normalize(x) for x in base}
+    base |= {m.group(1) for m in map(_SPLICED.match, list(base)) if m}   # a late line accepted spliced
     seen = set()
     for t in older or ():
         seen |= normalized_set(t)
     out = {}
     heads = getattr(known, "lists", ())
     for src, text in sorted((sources or {}).items()):
-        text = drop_lists(text, heads)
+        text = drop_lists(unsplice(text), heads)
         before = {}
-        if base and "\b" in (text or ""):
+        if base and any(c in (text or "") for c in "\b\x1b←"):
             for x in text.splitlines()[-LINES_MAX:]:
-                if "\b" in x:
-                    before.setdefault(normalize(x), set()).add(normalize(x, erase=False))
+                forms = {normalize(x, erase=e, rejoin=r) for e, r in OLD_FORMS[("\b" in x, "\x1b" in x or "←" in x)]}
+                if forms:
+                    before.setdefault(normalize(x), set()).update(forms)
         for n in sorted(normalized_set(text)):
             if n in base or before.get(n, set()) & base or any(p.search(n) for p in known or ()):
                 continue

@@ -74,10 +74,14 @@ impl FileSource {
 
     /// Reads whole 4 KiB blocks: a BSD's or illumos' raw disk device takes
     /// only reads that start and end on a sector boundary.
+    /// An offset from disk data can be anything: one whose end doesn't fit
+    /// in a u64 reads nothing (unchecked, it wrapped, and `end - start`
+    /// asked for a buffer the size of the device).
     fn raw_read(&self, offset: u64, len: usize) -> Vec<u8> {
         const A: u64 = 4096;
+        let Some(stop) = offset.checked_add(len as u64) else { return Vec::new() };
         let start = offset - offset % A;
-        let end = offset.saturating_add(len as u64).div_ceil(A).saturating_mul(A).min(self.size.max(offset + len as u64));
+        let end = stop.div_ceil(A).saturating_mul(A).min(self.size.max(stop));
         let skip = (offset - start) as usize;
         let mut b = self.raw_read_exact(start, (end - start) as usize);
         if skip >= b.len() {
@@ -135,7 +139,9 @@ impl ByteSource for OffsetSource<'_> {
             return Vec::new();
         }
         let len = (len as u64).min(self.len - offset) as usize;
-        self.inner.read_at(self.start + offset, len)
+        // `start` can come from disk data (a disklabel64's offset).
+        let Some(at) = self.start.checked_add(offset) else { return Vec::new() };
+        self.inner.read_at(at, len)
     }
 }
 
@@ -389,6 +395,30 @@ mod tests {
         assert_eq!(f.read_at(0, 512), b"hello".to_vec());
         assert_eq!(f.read_at(3, 2), b"lo".to_vec());
         assert_eq!(f.read_at(6, 2), Vec::<u8>::new());
+    }
+
+    /// RustAudit1 H1-01/H2-01: an offset from a damaged or hostile header
+    /// near u64::MAX reads nothing: no overflow panic (debug), and no
+    /// device-sized buffer from a wrapped end (release).
+    #[test]
+    fn file_source_reads_near_u64_max() {
+        let dir = crate::testutil::TempDir::new("bytes-max");
+        let path = dir.path().join("img");
+        std::fs::write(&path, vec![7u8; 8192]).unwrap();
+        let f = FileSource::open(&path).unwrap();
+        for (off, len) in [(u64::MAX, 512), (u64::MAX - 100, 16384), (u64::MAX - 512, 16384), (u64::MAX - 20000, 16384), (u64::MAX - 4095, 4096)] {
+            assert_eq!(f.read_at(off, len), Vec::<u8>::new(), "FileSource {off:#x}+{len}");
+            assert_eq!(f.read_exact_at(off, len), None);
+        }
+        let o = OffsetSource { inner: &f, start: u64::MAX - 512, len: u64::MAX };
+        assert_eq!(o.read_at(16384, 16384), Vec::<u8>::new());
+        assert_eq!(o.read_at(0, 16384), Vec::<u8>::new());
+        let m = MemSource(vec![1; 64]);
+        let o = OffsetSource { inner: &m, start: u64::MAX - 512, len: 4096 };
+        assert_eq!(o.read_at(1024, 512), Vec::<u8>::new());
+        // An ordinary window still reads what it did.
+        let o = OffsetSource { inner: &f, start: 4096, len: 4096 };
+        assert_eq!(o.read_at(4090, 100), vec![7u8; 6]);
     }
 }
 

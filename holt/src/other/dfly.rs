@@ -56,7 +56,9 @@ pub fn parse_disklabel64(text: &str) -> (u64, Vec<L64Part>) {
                 continue;
             }
             let (Ok(size), Ok(offset)) = (f[0].parse::<u64>(), f[1].parse::<u64>()) else { continue };
-            parts.push(L64Part { letter, size_kib: size * block / 1024, offset_kib: offset * block / 1024, fstype: f[2].to_string() });
+            // The label is the disk's: a size or offset past 64 bits is no partition.
+            let (Some(size_kib), Some(offset_kib)) = (size.checked_mul(block).map(|b| b / 1024), offset.checked_mul(block).map(|b| b / 1024)) else { continue };
+            parts.push(L64Part { letter, size_kib, offset_kib, fstype: f[2].to_string() });
         }
     }
     (base, parts)
@@ -101,8 +103,10 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
             let Some(text) = sys.run("disklabel64", &["-r", &f.name]) else { continue };
             let (base, parts) = parse_disklabel64(&text);
             for p in &parts {
-                let start = f.start + base + p.offset_kib * 1024;
-                let len = p.size_kib * 1024;
+                let (Some(start), Some(len)) = (p.offset_kib.checked_mul(1024).and_then(|o| o.checked_add(base)).and_then(|o| o.checked_add(f.start)), p.size_kib.checked_mul(1024)) else {
+                    sys.warn(format!("{}{}: disklabel64's offset or size doesn't fit in 64 bits", f.name, p.letter));
+                    continue;
+                };
                 let c = probe::probe_all(&OffsetSource { inner: &src, start, len });
                 lcontents.push((format!("{}{}", f.name, p.letter), start, len, p.clone(), f.number, c));
             }
@@ -217,5 +221,14 @@ mod tests {
         assert_eq!(parts.len(), 3);
         assert_eq!(parts[2], L64Part { letter: 'd', size_kib: 13629440, offset_kib: 3145728, fstype: "HAMMER2".into() });
         assert_eq!(resolve("vbd0s1d@ROOT", &["vbd0s1d".to_string()]).as_deref(), Some("vbd0s1d"));
+    }
+
+    /// RustAudit1 H1-01: a disklabel64 line whose size or offset in bytes
+    /// doesn't fit in 64 bits is no partition, not an overflow.
+    #[test]
+    fn label64_past_64_bits() {
+        let t = "partitions data base: 0x0000000f8200\ndisplay block size: 4096\n  a:    1048576          0    4.2BSD\n  b:   18446744073709551615    1048576      swap\n  d:   1024    18446744073709551615   HAMMER2\n";
+        let (_, parts) = parse_disklabel64(t);
+        assert_eq!(parts, vec![L64Part { letter: 'a', size_kib: 4194304, offset_kib: 0, fstype: "4.2BSD".into() }]);
     }
 }

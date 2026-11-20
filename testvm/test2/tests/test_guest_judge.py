@@ -1593,9 +1593,33 @@ class Normalizer(unittest.TestCase):
         self.assertEqual(J.normalize("x /var/tmp/rpm-tmp.Ab3dEf y"), "x /var/tmp/rpm-tmp.XXXXXX y")
         self.assertEqual(J.normalize(ta), ta)
 
+    def test_mktemp_known_names_take_lowercase_suffixes(self):
+        """transactional-update's random six are all lowercase about 0.5% of the time: aeon's
+        transactional-update-yqdnwt was a new line (2026-11-20) beside a normalized l45TSR."""
+        want = "Executing `zypper -R /tmp/transactional-update-XXXXXX --no-cd dup -y --auto-agree-with-product-licenses`:"
+        for suf in ("yqdnwt", "l45TSR", "abcdef", "XXXXXX"):
+            n = J.normalize(f"Executing `zypper -R /tmp/transactional-update-{suf} --no-cd dup -y --auto-agree-with-product-licenses`:")
+            self.assertEqual(n, want, suf)
+            self.assertEqual(J.normalize(n), n, suf)
+        self.assertEqual(J.normalize("x /var/tmp/transactional-update-qwerty/etc y"),
+                         "x /var/tmp/transactional-update-XXXXXX/etc y")
+        self.assertEqual(J.normalize("mount /tmp/grub-btrfs.abcdefghij x"), "mount /tmp/grub-btrfs.XXXXXX x")
+        # the stored raw yqdnwt line (accepted 2026-11-20) still counts, as the normal form
+        got = J.sweep_lines({"log": "Executing `zypper -R /tmp/transactional-update-mnbvcx -n purge-kernels`:"}, (),
+                            ["Executing `zypper -R /tmp/transactional-update-yqdnwt -n purge-kernels`:"])
+        self.assertEqual(got, [])
+        # a known name's suffix is still a whole word of 6-12: shorter, longer or with a tail stays
+        for s in ("/tmp/transactional-update-abc x", "/tmp/transactional-update-abcdefghijklm x",
+                  "/tmp/transactional-update-abcdef.log x", "/tmp/transactional-update-abcdef-x y",
+                  "/tmp/xtransactional-update-abcdef x", "/srv/transactional-update-abcdef x"):
+            n = J.normalize(s)
+            self.assertNotIn("XXXXXX", n, s)
+            self.assertEqual(J.normalize(n), n, s)
+
     def test_mktemp_leaves_names_alone(self):
         for s in ("cleaning /tmp/foo-update now", "rm /tmp/.X11-unix", "/tmp/systemd-private done",
-                  "/srv/tmp.Ab3dEf x", "/tmp/tmp.abc x", "/tmp/a-Ab3dEfGhIjKlMn x"):
+                  "/srv/tmp.Ab3dEf x", "/tmp/tmp.abc x", "/tmp/a-Ab3dEfGhIjKlMn x",
+                  "/tmp/my-update.static x", "/tmp/pikman-gui.sock: x", "/tmp/foo-abcdef x"):
             n = J.normalize(s)
             self.assertNotIn("XXXXXX", n, s)
             self.assertEqual(J.normalize(n), n, s)

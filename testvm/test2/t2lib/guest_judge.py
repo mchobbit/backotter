@@ -1737,10 +1737,15 @@ _RUNDIR = re.compile(r"(?:/[^\s/]+)*/vm-update-mount\.[\w.-]*\w"
 _COPYDIR = re.compile(r"(?:/[^\s/]+)*/t[2N]/copy/[^\s/]+")
 # A guest's own mktemp names under /tmp or /var/tmp (transactional-update's
 # /tmp/transactional-update-l6Umk2, mktemp's /tmp/tmp.Va12wyap) are random each run, so their
-# suffix is XXXXXX: after tmp. any 6-12 letters and digits, after another name's last . or - only
-# a suffix with a digit or a capital in it (so /tmp/foo-update stays).  Before _HEX and _NUM, and
-# XXXXXX matches itself, so normalize stays stable and an old baseline's lNUmkN comes out the same.
-_MKTEMP = re.compile(r"(/(?:var/)?tmp/(?:tmp\.|[\w-]*[.-](?=[A-Za-z]*[A-Z\d])))[A-Za-z\d]{6,12}(?![\w.-])")
+# suffix is XXXXXX: after tmp. and the other known mktemp names (_MKTEMP_NAMES) any 6-12 letters and
+# digits, after another name's last . or - only a suffix with a digit or a capital in it (so
+# /tmp/foo-update stays).  A known name takes an all-lowercase suffix too: transactional-update's
+# six of [A-Za-z0-9] are all lowercase about 0.5% of the time (aeon's transactional-update-yqdnwt
+# was a new line, 2026-11-20).  Before _HEX and _NUM, and XXXXXX matches itself, so normalize stays
+# stable and an old baseline's lNUmkN (or yqdnwt) comes out the same.
+_MKTEMP_NAMES = ("tmp.", "transactional-update-", "grub-btrfs.")
+_MKTEMP = re.compile(r"(/(?:var/)?tmp/(?:" + "|".join(re.escape(n) for n in _MKTEMP_NAMES)
+                     + r"|[\w-]*[.-](?=[A-Za-z]*[A-Z\d])))[A-Za-z\d]{6,12}(?![\w.-])")
 # SSH host keys made on a run's first boot (cloud-init's on ubuntu26-luks and -raid, FreeBSD's
 # sshd on freebsd15-mirror, an update's new MLDSA key on pikaos4: images frozen by their builder)
 # are new each run: a SHA256: fingerprint's base64, a public key's AAAA... and ssh-keygen's

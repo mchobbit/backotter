@@ -13,6 +13,10 @@ use super::{shell_quote, Options, Stage, RUN_DIR};
 use crate::json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
+/// The os-release ids whose GRUB is Debian's (update-grub, and grub-install
+/// with Debian's --force-extra-removable).
+const DEBIAN_GRUB_IDS: [&str; 8] = ["debian", "ubuntu", "linuxmint", "zorin", "neon", "elementary", "anduinos", "kali"];
+
 /// A closer for a device just let go of (an LV, a LUKS mapping, an md
 /// array): udev probes a device when the last writer closes it, and while
 /// its worker has it open the device can't be stopped.  So udev is waited
@@ -3685,21 +3689,40 @@ impl Builder<'_> {
                 let id = self.bootloader_id();
                 let n = self.boot_names();
                 let mut a = vec!["chroot".to_string(), t.clone(), "grub-install".into(), format!("--target={}", n.grub_efi_target), format!("--efi-directory={esp}"), format!("--bootloader-id={id}"), "--no-nvram".into()];
-                if self.opts.removable {
+                // --removable: Debian's grub-install writes the fallback
+                // path itself (--force-extra-removable, a Debian patch);
+                // upstream GRUB's refuses that option (Alpine's, Arch's,
+                // Gentoo's), so its image is copied there after it
+                // (BackShot2's fail-003).
+                let debian = self.grub_install_is_debians();
+                if self.opts.removable && debian {
                     a.push("--force-extra-removable".into());
                 }
-                // --reformat: a fallback loader that's a copy of this GRUB
-                // (Calamares's installEFIFallback) reads only the old type,
-                // so firmware that falls back to it would stop in grub rescue.
-                // It's renewed with GRUB.  (FAT finds EFI/BOOT in any case.)
+                // A fallback loader that's a copy of this GRUB (Alpine's
+                // setup-disk, Calamares's installEFIFallback) is GRUB as the
+                // source's grub-install made it: its embedded prefix names
+                // /boot's partition by its old number (BackShot2's
+                // fail-002), and with --reformat it reads only the old type,
+                // so firmware that falls back to it would stop in grub
+                // rescue.  It's renewed with GRUB: when the dump's ESP
+                // inventory says it's a copy, always; with --reformat, also
+                // when the restored files compare equal.  (FAT finds EFI/BOOT
+                // in any case.)
                 let (fallback, loader) = (format!("{t}{esp}/{}", n.fallback), format!("{t}{esp}/EFI/{id}/{}", n.grub));
-                let renew = !self.opts.reformats.is_empty() && !self.opts.removable;
+                let copy = !self.opts.removable && self.fallback_is_grub_copy(&id);
+                let renew = !self.opts.reformats.is_empty() && !self.opts.removable && !copy;
                 if renew {
                     out.push(Cmd::new(&["sh", "-c", &format!("rm -f {RUN_DIR}/fallback-is-grub; [ ! -f {fallback} ] || ! cmp -s {fallback} {loader} || touch {RUN_DIR}/fallback-is-grub")]).why("--reformat: is the fallback loader a copy of GRUB?"));
                 }
                 out.push(Cmd { argv: a, ..Cmd::default() });
                 if renew {
                     out.push(Cmd::new(&["sh", "-c", &format!("[ ! -e {RUN_DIR}/fallback-is-grub ] || cp {loader} {fallback}")]).why("--reformat: the fallback loader, a copy of GRUB, renewed with it"));
+                }
+                if copy {
+                    out.push(Cmd::new(&["cp", &loader, &fallback]).why(format!("the fallback loader, {}, a copy of GRUB on the source, renewed with it: the old one names /boot's partition as it was", n.fallback)));
+                }
+                if self.opts.removable && !debian {
+                    out.push(self.grub_removable_copy(&t, &esp, &id, via_shim));
                 }
                 self.remake_grub_cfg(&t, &mut out);
             }
@@ -3958,7 +3981,7 @@ impl Builder<'_> {
             Some(l) if !l.is_empty() => format!("LANG={l}.UTF-8"),
             _ => "LANG=C".to_string(),
         };
-        if matches!(self.layout.str_at(&["os", "id"]), Some("debian" | "ubuntu" | "linuxmint" | "zorin" | "neon" | "elementary" | "anduinos" | "kali")) {
+        if matches!(self.layout.str_at(&["os", "id"]), Some(id) if DEBIAN_GRUB_IDS.contains(&id)) {
             return Cmd::new(&["chroot", t, "env", &lang, "update-grub"]);
         }
         let cfg = format!("{}/grub.cfg", self.grub_dir());
@@ -4375,6 +4398,44 @@ impl Builder<'_> {
             .iter()
             .filter_map(|f| s(f, "path"))
             .find(|p| p.to_ascii_lowercase().ends_with(suffix) && !p.to_ascii_lowercase().starts_with("efi/boot/"))
+    }
+
+    /// Whether the source's grub-install is Debian's, which has
+    /// --force-extra-removable (a Debian patch; upstream GRUB has no such
+    /// option): Debian's GRUB comes in grub-common and its UEFI packages
+    /// are grub-efi-ARCH(-signed); or the system is one of Debian's family.
+    fn grub_install_is_debians(&self) -> bool {
+        self.layout.str_at(&["boot", "packages", "grub-common"]).is_some()
+            || self.layout.str_at(&["boot", "loader", "package"]).is_some_and(|p| p.starts_with("grub-efi-"))
+            || matches!(self.layout.str_at(&["os", "id"]), Some(id) if DEBIAN_GRUB_IDS.contains(&id))
+    }
+
+    /// Whether the source's ESP had its fallback loader (EFI/BOOT/BOOTX64.EFI,
+    /// BOOTAA64.EFI) as a byte copy of GRUB's image in EFI/ID, as the
+    /// dump's ESP inventory says (its same_as, which names the first copy
+    /// found: either way round, or both naming a third).
+    fn fallback_is_grub_copy(&self, id: &str) -> bool {
+        let n = self.boot_names();
+        let files = self.layout.arr(&["boot", "esps", "0", "contents", "files"]);
+        let find = |p: &str| files.iter().find(|f| s(f, "path").is_some_and(|x| x.eq_ignore_ascii_case(p)));
+        let (Some(fb), Some(grub)) = (find(n.fallback), find(&format!("EFI/{id}/{}", n.grub))) else { return false };
+        let names = |a: &Value, b: &Value| s(a, "same_as").zip(s(b, "path")).is_some_and(|(x, y)| x.eq_ignore_ascii_case(&y));
+        names(fb, grub) || names(grub, fb) || s(fb, "same_as").zip(s(grub, "same_as")).is_some_and(|(x, y)| x.eq_ignore_ascii_case(&y))
+    }
+
+    /// --removable for upstream GRUB, whose grub-install has no
+    /// --force-extra-removable: the image it just wrote to EFI/ID copied to
+    /// the fallback path; through shim, shim there with GRUB beside it, as
+    /// Debian's option does (shim loads GRUB from its own directory).
+    fn grub_removable_copy(&self, t: &str, esp: &str, id: &str, via_shim: bool) -> Cmd {
+        let n = self.boot_names();
+        let (from, dir) = (shell_quote(&format!("{t}{esp}/EFI/{id}")), shell_quote(&format!("{t}{esp}/EFI/BOOT")));
+        let (f, g) = (n.fallback_file, n.grub);
+        if via_shim {
+            let sh = n.shim;
+            return Cmd::new(&["sh", "-c", &format!("mkdir -p {dir} && cp {from}/{sh} {dir}/{f} && cp {from}/{g} {dir}/{g}")]).why(format!("--removable: shim and GRUB at the fallback path too ({}'s grub-install has no --force-extra-removable, Debian's option)", self.layout.str_at(&["os", "id"]).unwrap_or("this system")));
+        }
+        Cmd::new(&["sh", "-c", &format!("mkdir -p {dir} && cp {from}/{g} {dir}/{f}")]).why(format!("--removable: GRUB at the fallback path too ({}'s grub-install has no --force-extra-removable, Debian's option)", self.layout.str_at(&["os", "id"]).unwrap_or("this system")))
     }
 
     /// A store system (NixOS, Guix System) with --removable: the ESP's
@@ -6496,6 +6557,62 @@ mod tests {
         assert!(bt.find(initramfs).expect(&bt) < g && g < bt.find(cfg).expect(&bt), "{bt}");
         assert!(!bt.contains("x86_64-efi") && !bt.contains("grub-mkconfig") && !bt.contains("efibootmgr"), "{bt}");
         assert!(b.notes.iter().any(|n| n.starts_with("debconf's grub-pc/install_devices still names the source's disks")), "{:?}", b.notes);
+    }
+
+    /// Upstream GRUB on UEFI, as Alpine's setup-disk installs it: EFI/alpine
+    /// and a copy of its image at the fallback path (EFI/boot/bootx64.efi).
+    /// BackShot2's fail-002 (testvm/backshot2/cases): grub-install renews
+    /// EFI/alpine only, and the fallback the firmware boots kept the old
+    /// /boot partition's number, so the copy is renewed too.  fail-003:
+    /// --removable gave grub-install Debian's --force-extra-removable,
+    /// which upstream GRUB refuses; the image is copied there instead.
+    #[test]
+    fn upstream_uefi_grub_fallback_copy_and_removable() {
+        let alpine = sample::bios_mbr().replace(r#""id": "debian", "version_id": "13""#, r#""id": "alpine", "version_id": "3.24.3""#);
+        let esp = |same: &str| format!(r#"[{{"device": "vda1", "mounted_at": "/boot/efi", "contents": {{"files": [{{"path": "EFI/alpine/grubx64.efi"}}, {{"path": "EFI/boot/bootx64.efi"{same}}}]}}}}]"#);
+        let uefi = |loader: &str, esp: &str| {
+            alpine
+                .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+                .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, &format!(r#""loader": {loader}"#))
+                .replace(r#""efi": null,"#, &format!(r#""efi": {{"entries": [], "boot_order": []}}, "esps": {esp},"#))
+        };
+        let plain = r#"{"name": "grub", "firmware": "uefi", "via_shim": false, "package": "grub-efi"}"#;
+        let copy = esp(r#", "same_as": "EFI/alpine/grubx64.efi""#);
+        let install = "chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=alpine --no-nvram\n";
+        let renew = "cp /mnt/bko-target/boot/efi/EFI/alpine/grubx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI\n";
+
+        // fail-002: the copy renewed after grub-install, before grub.cfg.
+        let bt = text(built_from(&uefi(plain, &copy), &[]).stage(Stage::Boot));
+        let (i, r, c) = (bt.find(install).expect(&bt), bt.find(renew).expect(&bt), bt.find("grub-mkconfig -o /boot/grub/grub.cfg").expect(&bt));
+        assert!(i < r && r < c, "{bt}");
+        assert!(!bt.contains("fallback-is-grub"), "{bt}");
+        // Named either way round by same_as, or both naming a third.
+        let twin = r#"[{"device": "vda1", "mounted_at": "/boot/efi", "contents": {"files": [{"path": "EFI/alpine/grubx64.efi", "same_as": "EFI/boot/bootx64.efi"}, {"path": "EFI/boot/bootx64.efi", "same_as": "EFI/alpine/grubx64.efi"}]}}]"#;
+        assert!(text(built_from(&uefi(plain, twin), &[]).stage(Stage::Boot)).contains(renew));
+        let third = r#"[{"device": "vda1", "mounted_at": "/boot/efi", "contents": {"files": [{"path": "EFI/BOOT/grubx64.efi", "same_as": "EFI/alpine/grubx64.efi"}, {"path": "EFI/alpine/grubx64.efi", "same_as": "EFI/BOOT/grubx64.efi"}, {"path": "EFI/BOOT/BOOTX64.EFI", "same_as": "EFI/BOOT/grubx64.efi"}]}}]"#;
+        assert!(text(built_from(&uefi(plain, third), &[]).stage(Stage::Boot)).contains(renew));
+        // A fallback that isn't GRUB's copy (another loader) is left.
+        let bt = text(built_from(&uefi(plain, &esp("")), &[]).stage(Stage::Boot));
+        assert!(bt.contains(install) && !bt.contains(renew) && !bt.contains("BOOTX64"), "{bt}");
+        // With --reformat, the dump's word for it is enough.
+        let bt = text(built_from(&uefi(plain, &copy), &["--reformat", "/=xfs"]).stage(Stage::Boot));
+        assert!(bt.contains(renew) && !bt.contains("fallback-is-grub"), "{bt}");
+
+        // fail-003: --removable copies the image; no Debian option.
+        for files in [copy.as_str(), &esp("")] {
+            let bt = text(built_from(&uefi(plain, files), &["--removable"]).stage(Stage::Boot));
+            assert!(!bt.contains("--no-nvram --force-extra-removable") && bt.contains(install), "{bt}");
+            let cp = bt.find("mkdir -p /mnt/bko-target/boot/efi/EFI/BOOT && cp /mnt/bko-target/boot/efi/EFI/alpine/grubx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI").expect(&bt);
+            assert!(bt.find(install).unwrap() < cp && !bt.contains(renew), "{bt}");
+        }
+        // Through shim: shim at the fallback path, GRUB beside it.
+        let shim = r#"{"name": "grub", "firmware": "uefi", "via_shim": true, "package": "grub-efi"}"#;
+        let bt = text(built_from(&uefi(shim, &esp("")), &["--removable"]).stage(Stage::Boot));
+        assert!(bt.contains("cp /mnt/bko-target/boot/efi/EFI/alpine/shimx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI && cp /mnt/bko-target/boot/efi/EFI/alpine/grubx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/grubx64.efi"), "{bt}");
+        // Debian's GRUB (grub-common, or its family's ids) keeps its option.
+        let deb = uefi(plain, &esp("")).replace(r#""id": "alpine", "version_id": "3.24.3""#, r#""id": "devuan", "version_id": "6""#).replace(r#""kernels":"#, r#""packages": {"grub-common": "2.12-9"}, "kernels":"#);
+        let bt = text(built_from(&deb, &["--removable"]).stage(Stage::Boot));
+        assert!(bt.contains("--bootloader-id=alpine --no-nvram --force-extra-removable\n") && !bt.contains("EFI/BOOT && cp"), "{bt}");
     }
 
     /// AnduinOS (docs/design/anduinos.md): Ubuntu's update-grub and the

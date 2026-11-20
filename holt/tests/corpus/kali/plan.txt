@@ -80,6 +80,8 @@ mount --rbind --make-rslave /sys /mnt/bko-target/sys
 mount --rbind --make-rslave /run /mnt/bko-target/run
 chroot /mnt/bko-target update-initramfs -u -k all
 chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=kali --no-nvram
+# the fallback loader, EFI/BOOT/BOOTX64.EFI, a copy of GRUB on the source, renewed with it: the old one names /boot's partition as it was
+cp /mnt/bko-target/boot/efi/EFI/kali/grubx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI
 # os-prober off: it would list the rescue system's disks
 sh -c '[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober'
 chroot /mnt/bko-target env LANG=C update-grub

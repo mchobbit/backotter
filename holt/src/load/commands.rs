@@ -2942,6 +2942,11 @@ impl Builder<'_> {
     }
 }
 
+/// The start of a script run in the restored system's chroot that labels
+/// with its SELinux policy: it exits 0 unless SELinux is enabled there, and
+/// has setfiles and the policy's file_contexts, which it leaves in $f.
+const SELINUX_SETFILES_GATE: &str = "[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ \"${SELINUX:-disabled}\" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ -f \"$f\" ] && command -v setfiles >/dev/null || exit 0; ";
+
 // ---- mount, restore -----------------------------------------------------
 
 /// fstab's options for the mount stage's own mounts: without those that
@@ -3793,6 +3798,7 @@ impl Builder<'_> {
                 ])
                 .why("SELinux labels for the files the boot stage wrote"),
             );
+            out.extend(self.mount_point_labels());
         }
         for d in ["run", "sys", "proc", "dev"] {
             out.push(Cmd::new(&["umount", "--recursive", &format!("{t}/{d}")]));
@@ -3800,6 +3806,57 @@ impl Builder<'_> {
         out.push(lvm_devices_back);
         out.extend(self.boot_tail(&t));
         out
+    }
+
+    /// SELinux labels for the mount points the mount stage made (BackShot1,
+    /// Leap 16): the backup reads through the mounts, so the directory
+    /// under each one was mkdir'd bare and the restore never reached it,
+    /// and early boot (systemd-modules-load, systemd-sysctl) hit AVC
+    /// denials on the unlabeled /usr/local and /var before their subvolumes
+    /// mounted.  Each filesystem holding mount points is bound, not
+    /// recursively, at RUN_DIR/mount-points + its own path, so those directories
+    /// show bare at their logical paths, and setfiles -r labels them from
+    /// the policy as the installer had them (they're empty: nothing below
+    /// them is touched).  Not under a filesystem without xattrs (an ESP),
+    /// nor under /dev, /proc, /sys or /run.
+    fn mount_point_labels(&self) -> Option<Cmd> {
+        let t = self.opts.target.trim_end_matches('/');
+        let mut mps: Vec<String> = self
+            .mount_points
+            .iter()
+            .filter_map(|d| d.strip_prefix(t))
+            .map(|p| if p.is_empty() { "/".to_string() } else { p.to_string() })
+            // Not under the chroot's own /dev, /proc, /sys and /run, which
+            // hide the restored ones (and TrueNAS's other boot environments
+            // at /run/bko-be: load's mounts, not the system's).
+            .filter(|p| !["/dev", "/proc", "/sys", "/run"].iter().any(|d| p == d || p.starts_with(&format!("{d}/"))))
+            .collect();
+        mps.sort();
+        mps.dedup();
+        let under = |p: &str, m: &str| p != m && (p == "/" || m.starts_with(&format!("{p}/")));
+        // (filesystem's mount point, the mount points directly on it), shallowest first.
+        let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+        for m in mps.iter().filter(|m| *m != "/") {
+            let Some(p) = mps.iter().filter(|p| under(p, m)).max_by_key(|p| p.len()) else { continue };
+            if self.fstab_type_of(p).is_some_and(|ty| matches!(ty.as_str(), "vfat" | "msdos" | "exfat" | "ntfs" | "ntfs3" | "fuseblk")) {
+                continue;
+            }
+            match groups.iter_mut().find(|(g, _)| g == p) {
+                Some((_, v)) => v.push(m.clone()),
+                None => groups.push((p.clone(), vec![m.clone()])),
+            }
+        }
+        if groups.is_empty() {
+            return None;
+        }
+        groups.sort_by_key(|(p, _)| if p == "/" { 0 } else { p.matches('/').count() });
+        let mut script = format!("{SELINUX_SETFILES_GATE}r={RUN_DIR}/mount-points");
+        for (p, ms) in &groups {
+            let at = if p == "/" { "\"$r\"".to_string() } else { format!("\"$r\"{}", shell_quote(p)) };
+            let paths: Vec<String> = ms.iter().map(|m| format!("\"$r\"{}", shell_quote(m))).collect();
+            script.push_str(&format!("; mkdir -p {at} && mount --bind {} {at} || exit 1; setfiles -r \"$r\" \"$f\" {}; s=$?; umount {at}; [ $s = 0 ] || exit $s", shell_quote(p), paths.join(" ")));
+        }
+        Some(Cmd::new(&["chroot", &self.opts.target, "sh", "-c", &script]).why("SELinux labels for the mount points load made, which the mounts hide from the restore"))
     }
 
     /// Keys: the restored key files (crypttab's) replace the temporary ones
@@ -5593,6 +5650,43 @@ mod tests {
         assert!(t.contains("chroot /mnt/bko-target bootctl install --no-variables\n"), "{t}");
         // bootctl writes /etc/kernel/entry-token: relabelled, when it's there.
         assert!(t.contains(r#"[ ! -d /etc/kernel ] || set -- /etc/kernel; setfiles "$f" /boot /var/log/bko-holt "$@";"#), "{t}");
+    }
+
+    /// The mount points the mount stage made, hidden from the restore under
+    /// their mounts (BackShot1, Leap 16: unlabeled_t /usr/local and /var at
+    /// early boot): each filesystem holding some is bound alone under
+    /// RUN_DIR/mount-points, and setfiles -r labels them at their logical
+    /// paths, nested ones (/var/lib/x on /var) from /var's bind; none on a
+    /// filesystem without xattrs, nor under the chroot's own /run.
+    #[test]
+    fn mount_points_under_mounts_are_labelled() {
+        let script = |boot_ty: &str| {
+            let sub = |file: &str, vol: &str| format!(r#"{{"spec": "UUID=b7b7b7b7-0000-4000-8000-000000000003", "file": "{file}", "type": "btrfs", "options": "subvol={vol}", "freq": 0, "passno": 0, "resolves_to": "vda3"}},"#);
+            let extra = [sub("/var/lib/x", "@x"), sub("/usr/local", "@usr_local"), sub("/var", "@var"), sub("/boot/grub", "@grub"), sub("/run/x", "@run_x")].concat();
+            let j = sample::bios_mbr()
+                .replace(r#""file": "/boot", "type": "ext4""#, &format!(r#""file": "/boot", "type": "{boot_ty}""#))
+                .replace(r#""fstab": ["#, &format!(r#""fstab": [{extra}"#));
+            let b = built_from(&j, &[]);
+            let c = b.stage(Stage::Boot).iter().find(|c| c.argv.last().is_some_and(|a| a.contains("/mount-points"))).cloned();
+            let umount = b.stage(Stage::Boot).iter().position(|c| c.argv.starts_with(&["umount".to_string(), "--recursive".to_string()]));
+            let at = b.stage(Stage::Boot).iter().position(|c| c.argv.last().is_some_and(|a| a.contains("/mount-points")));
+            assert!(at < umount, "labelled while /proc and /run are still bound");
+            let c = c.expect("a mount point label command");
+            assert_eq!(c.argv[..4], ["chroot", "/mnt/bko-target", "sh", "-c"]);
+            c.argv[4].clone()
+        };
+        let s = script("ext4");
+        assert!(s.starts_with(SELINUX_SETFILES_GATE), "{s}");
+        let want = concat!(
+            r#"r=/run/bko-holt/mount-points; mkdir -p "$r" && mount --bind / "$r" || exit 1; setfiles -r "$r" "$f" "$r"/boot "$r"/usr/local "$r"/var; s=$?; umount "$r"; [ $s = 0 ] || exit $s"#,
+            r#"; mkdir -p "$r"/boot && mount --bind /boot "$r"/boot || exit 1; setfiles -r "$r" "$f" "$r"/boot/grub; s=$?; umount "$r"/boot; [ $s = 0 ] || exit $s"#,
+            r#"; mkdir -p "$r"/var && mount --bind /var "$r"/var || exit 1; setfiles -r "$r" "$f" "$r"/var/lib/x; s=$?; umount "$r"/var; [ $s = 0 ] || exit $s"#,
+        );
+        assert!(s.ends_with(want), "{s}");
+        assert!(!s.contains("--rbind") && !s.contains(" -R") && !s.contains("/run/x"), "{s}");
+        // /boot an ESP (vfat): /boot itself is labelled on /, nothing under it.
+        let s = script("vfat");
+        assert!(s.contains(r#"setfiles -r "$r" "$f" "$r"/boot "$r"/usr/local "$r"/var;"#) && !s.contains("/boot/grub") && !s.contains("mount --bind /boot"), "{s}");
     }
 
     /// PikaOS (docs/design/pikaos.md): booster's image remade for each

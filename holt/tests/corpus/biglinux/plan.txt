@@ -102,6 +102,8 @@ mkdir -p /mnt/bko-target/var/log/bko-holt
 cp -a /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
 # SELinux labels for the files the boot stage wrote
 chroot /mnt/bko-target sh -c '[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ "${SELINUX:-disabled}" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ ! -f "$f" ] || ! command -v setfiles >/dev/null || { [ ! -d /etc/kernel ] || set -- /etc/kernel; setfiles "$f" /boot /var/log/bko-holt "$@"; }'
+# SELinux labels for the mount points load made, which the mounts hide from the restore
+chroot /mnt/bko-target sh -c '[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ "${SELINUX:-disabled}" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ -f "$f" ] && command -v setfiles >/dev/null || exit 0; r=/run/bko-holt/mount-points; mkdir -p "$r" && mount --bind / "$r" || exit 1; setfiles -r "$r" "$f" "$r"/boot/efi "$r"/home "$r"/swapfile; s=$?; umount "$r"; [ $s = 0 ] || exit $s'
 umount --recursive /mnt/bko-target/run
 umount --recursive /mnt/bko-target/sys
 umount --recursive /mnt/bko-target/proc

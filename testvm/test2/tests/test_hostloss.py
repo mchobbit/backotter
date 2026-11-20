@@ -14,6 +14,7 @@ the host stops answering).  Real harness results on a healthy host still count.
 """
 
 import importlib.util
+import json
 import os
 import shutil
 import sys
@@ -27,7 +28,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
-from t2lib import gate, holt, hostjob, rows_holt, rows_stic, run, stic, utc_now  # noqa: E402
+from t2lib import gate, guest, holt, hostjob, rows_holt, rows_stic, run, stic, utc_now  # noqa: E402
 import test_gate as tgate  # noqa: E402
 import test_guest as tg  # noqa: E402
 
@@ -86,7 +87,9 @@ class HostWatchRule(unittest.TestCase):
             w.feed("chopin", up(c, b0))
             self.assertIn("chopin", w.held())
         c.t += MIN
-        w.feed("chopin", None)                               # a failed look starts the settle again
+        w.feed("chopin", None)                               # away a minute again starts the settle again
+        c.t += MIN
+        w.feed("chopin", None)
         for _ in range(5):                                   # (5 min from the first answer after it)
             c.t += MIN
             w.feed("chopin", up(c, b0))
@@ -95,6 +98,57 @@ class HostWatchRule(unittest.TestCase):
         w.feed("chopin", up(c, b0))
         self.assertEqual(w.held(), {})
         self.assertTrue(any(n.startswith("chopin: started again after") for n in w.notes()), w.notes())
+
+    def test_a_look_that_fails_alone_doesnt_start_the_settle_again(self):
+        """A host flapping on one ssh at a time (a look timing out under load every few minutes)
+        is back: held, it was kept held until host_hold_max_min made the hold run-wide."""
+        w, c = watch()
+        b0 = c.t - 99999
+        w.feed("chopin", up(c, b0))
+        for _ in range(3):
+            c.t += 30
+            w.feed("chopin", None)
+        self.assertIn("chopin", w.held())
+        for _ in range(5):                                   # back, a failed look every 70 s between
+            c.t += MIN
+            w.feed("chopin", up(c, b0))
+            c.t += 10
+            w.feed("chopin", None)
+            self.assertIn("chopin", w.held())
+        c.t += 30
+        w.feed("chopin", up(c, b0))                          # 5 min after its first answer: lifted
+        self.assertEqual(w.held(), {})
+        self.assertEqual(len(w.away["chopin"]), 1)          # (one window: the failed looks made none)
+        for _ in range(10):                                  # flapping a look at a time stays unheld
+            c.t += 10
+            w.feed("chopin", None)
+            c.t += 20
+            w.feed("chopin", up(c, b0))
+        self.assertEqual(w.held(), {})
+        self.assertIsNone(w.feed("chopin", up(c, b0)))
+
+    def test_away_again_while_held_is_a_window_of_its_own(self):
+        """Lifted later, a job that ended in its second time away is host-lost (lost())."""
+        w, c = watch()
+        b0 = c.t - 99999
+        w.feed("chopin", up(c, b0))
+        c.t += MIN
+        w.feed("chopin", None)
+        c.t += MIN
+        w.feed("chopin", None)                               # held
+        c.t += MIN
+        w.feed("chopin", up(c, b0))                          # back: the first window ends
+        c.t += 2 * MIN
+        w.feed("chopin", None)
+        t_end = c.t + 10                                     # a job ends while it is away again
+        c.t += MIN
+        w.feed("chopin", None)
+        self.assertEqual(len(w.away["chopin"]), 2)
+        for _ in range(7):
+            c.t += MIN
+            w.feed("chopin", up(c, b0))
+        self.assertEqual(w.held(), {})
+        self.assertIsNotNone(w.lost("chopin", t_end - 3600, t_end))
 
     def test_a_reboot_holds_until_it_has_been_up_the_settle_time(self):
         w, c = watch()
@@ -245,6 +299,30 @@ class Engines(unittest.TestCase):
         self.assertEqual(g.harness, 1)
         self.assertEqual(e["guest"].feed_seen("cage", up(c, t0 - 86400)), "stop-run")
         self.assertTrue(g.tripped())
+
+    def test_lost_again_on_another_host_counts_once(self):
+        g, c, e = self.sweep()
+        res = {"cell": "guest:arch", "verdict": "HARNESS", "class": "harness", "host": "cage",
+               "host_lost": "cage: no answer", "lost_again": "cage: no answer; before on chopin: chopin rebooted"}
+        self.assertEqual(e["guest"].feed(res), "ok")
+        self.assertEqual(g.harness, 1)
+        self.assertTrue(any("host lost again" in n and "counted" in n for n in g.host_notes()), g.host_notes())
+        self.assertEqual(e["guest"].feed(dict(res, cell="guest:void-musl")), "stop-run")
+
+    def test_the_rules_notes_outlive_a_resume(self):
+        g, c, e = self.sweep()
+        e["guest"].feed_seen("chopin", up(c, c.t - 86400))
+        for _ in range(3):
+            c.t += MIN
+            e["guest"].feed_seen("chopin", None)
+        e["guest"].feed({"cell": "guest:arch", "verdict": "HARNESS", "class": "harness", "host": "chopin",
+                         "host_lost": "chopin: no answer"})
+        g.holds.said.append("held cage: swapped out 2 GiB")
+        g2 = run.RunGuards.from_json(json.loads(json.dumps(g.to_json())), POL)
+        self.assertEqual(g2.host_notes(), g.host_notes())
+        self.assertEqual(g2.hold_notes(), ["held cage: swapped out 2 GiB"])
+        self.assertTrue(any("host lost" in n for n in g2.host_notes()))
+        self.assertEqual(run.RunGuards.from_json({}, POL).host_notes(), [])    # (an older bko.json)
 
     def test_a_row_written_as_its_host_shut_down_is_host_lost(self):
         """holt:vanilla3's LOST row (exit 143, 15:30:21Z) landed before chopin stopped answering."""
@@ -521,15 +599,50 @@ class Guest(unittest.TestCase):
         self.assertTrue(any("host lost" in n and "requeued as attempt 2" in n for n in res["notes"]), res["notes"])
         self.assertEqual(rs.stops.harness, 0)
 
-    def test_lost_twice_is_not_counted_and_not_requeued_again(self):
+    def test_lost_on_two_hosts_counts_once_and_isnt_requeued_again(self):
         r, rs, job = self.make(lambda host, attempt: hostjob.JobFailure(f"no answer from {host} in 20 polls; pid 4 may "
                                                                         "still run", still_running=True))
         res = r.run()
         self.assertEqual(len(job.calls), 2)
+        self.assertNotEqual(job.calls[0][0], job.calls[1][0])
         c = res["cells"][0]
         self.assertEqual(c["verdict"], "HARNESS")
-        self.assertEqual((rs.stops.harness, rs.stops.stop_run), (0, False))
+        self.assertEqual((rs.stops.harness, rs.stops.stop_run), (1, False))   # (two hosts lost under one cell)
         self.assertTrue(any("not requeued (requeued once already)" in n for n in res["notes"]), res["notes"])
+        self.assertTrue(any("host lost again" in n for n in rs.stops.host_notes()), rs.stops.host_notes())
+
+    def test_lost_twice_on_its_one_host_is_not_counted(self):
+        """The same host gone twice under it (requeued there once it was back) is the host's."""
+        io = tg.FakeIO()
+        io.summ["debian12"] = tg.summary()
+        job = self.jobs(lambda host, attempt: hostjob.JobFailure(f"no answer from {host} in 20 polls"))
+        r, rs, _, _ = tg.make(["debian12"], io, job, hosts=("chopin",))
+        rs.stops = run.StopEngine("guest", POL)
+        rs.stops.watch.confirm_s = 0.05
+        res = r.run()
+        self.assertEqual(job.calls, [("chopin", 1), ("chopin", 2)])
+        self.assertEqual(res["cells"][0]["verdict"], "HARNESS")
+        self.assertEqual(rs.stops.harness, 0)
+
+    def test_a_resume_keeps_the_requeue_it_had(self):
+        """guest.json's started record carries host_requeued: the resumed attempt isn't requeued twice."""
+        r, rs, job = self.make(lambda host, attempt: None)
+        it = r.item_of(r.due()[0])
+        it.host_requeued, it.lost_host, it.attempt, it.allowed = "chopin: no answer", "chopin", 2, ["cinqcent"]
+        r.start(it, "cinqcent")
+        t0 = time.time()
+        while not r.done_q and time.time() - t0 < 5:
+            time.sleep(0.002)
+        st = json.loads(json.dumps(r.state["started"]["debian12"]))     # (as guest.json holds it)
+        self.assertEqual((st["host_requeued"], st["lost_host"], st["allowed"]), ("chopin: no answer", "chopin", ["cinqcent"]))
+        it2 = r.item_of(r.due()[0])
+        self.assertEqual((it2.host_requeued, it2.allowed), (None, ["chopin", "cinqcent"]))
+        guest.Runner.restore(it2, st)
+        self.assertEqual((it2.host_requeued, it2.lost_host, it2.allowed, it2.attempt, it2.resumed is st),
+                         ("chopin: no answer", "chopin", ["cinqcent"], 2, True))
+        it3 = r.item_of(r.due()[0])
+        guest.Runner.restore(it3, {"attempt": 1, "host": "chopin"})            # (an older guest.json)
+        self.assertEqual((it3.host_requeued, it3.allowed), (None, ["chopin", "cinqcent"]))
 
     def test_a_job_ended_as_its_host_shut_down_is_requeued(self):
         """job.sh's row, written as its TERM came from the shutdown, reaches the Mac before the

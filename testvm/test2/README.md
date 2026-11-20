@@ -379,7 +379,8 @@ poll: GuestTest2, ImgTest2; SticTest2's host read; HoltTest2's `Remote.seen`) sa
 answered, its boot id and its uptime.  A host that hasn't answered for a minute, or answers with
 another boot id, is held as the swap rule holds one (the same `held()`, `--hold-file`, `max-HOST`
 and pool rules; drive.py doesn't wait for a held host it never read), until it has answered for
-5 min in a row and been up that long; a hold of 2 h is run-wide.  A HARNESS or LOST result is
+5 min in a row and been up that long (a look that fails alone, for under a minute, doesn't start
+the 5 min again); a hold of 2 h is run-wide.  A HARNESS or LOST result is
 host-lost when its host booted after the job began (its uptime: a host back before any look
 saw it gone counts too), when it ended while its host is held (at or after the hold's away window
 began: an old row judged again in an r2 round isn't), when it ended inside an away window (its last
@@ -389,7 +390,8 @@ it (not the run-wide harness count, nor a slow gate's stop-starts: SticTest2 goe
 host-lost slow layer, run_layers' `go`, and fails at the end), the report lists it as a
 `host rule:` note, and it is requeued once: GuestTest2 at once, to a host it may run on (never
 beside a job that may still run: with no answer and no reboot since, another host only;
-never a second real update); SticTest2 and HoltTest2 in their r2 round (`rerun_why`
+never a second real update; lost again on another host, it counts once toward the harness stop,
+`lost_again`); SticTest2 and HoltTest2 in their r2 round (`rerun_why`
 `host-lost` in cells-r2.json: a pass then is a PASS, not a FLAKY-FAIL), HoltTest2's jobs a reboot
 killed too (their lines in todo.taken with no done row); a gate layer as its attempt 2 once its
 host is back (the gate looks at the host before each attempt, waits until it answers, then reruns
@@ -405,6 +407,8 @@ waits), and is host-lost if the host goes away first; GuestTest2's attempt waits
 before it is rerun or ends.  A real harness result on a host that stayed up counts as before, that
 much later.  Defaults, overridable in classes.json policy.stop: `host_away_s` 60,
 `host_settle_min` 5, `host_hold_max_min` 120, `host_confirm_s` 120, `host_confirm_max_min` 15.
+A composite's report lists every family's `swap rule:` and `host rule:` notes again in its whole-run
+part (a child's report has only those up to its own end), and bko.json keeps them for a resume.
 GuestTest2's network rule (guest.py's `NetHold`, since 2026-11-19; t2v-20261119T0157-c8c7's
 internet ran at 5 to 100 KiB/s for hours, and ten try jobs each downloaded for the whole
 5400 s): every 5 min while a job that downloads (try, update, console-update) waits, the

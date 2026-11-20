@@ -1431,6 +1431,20 @@ class Conductor:
             out.add(runmod.new_run_id("holt", stamp=self.stamp, suffix="img"))   # its panel
         return out
 
+    def rule_notes(self):
+        """The whole run's swap-rule and host-rule notes (the guards', every family's): a child's
+        report lists only those up to its own end, and none of a child that ended first lists
+        a host the rule held later."""
+        g = self.guards
+        out = []
+        for word, fn in (("swap rule", "hold_notes"), ("host rule", "host_notes")):
+            try:
+                ns = getattr(g, fn)() if g is not None and hasattr(g, fn) else []
+            except Exception:   # noqa: BLE001 - guards without them (tests): no such note
+                ns = []
+            out += [f"{word}: {n}" for n in dict.fromkeys(ns)]
+        return out
+
     def child_entry(self, fam, rows):
         st = (self.doc.get("children") or {}).get(fam) or {}
         w = self.words[fam].word if fam in self.words else words.FAMILY_WORD[fam]
@@ -1676,6 +1690,7 @@ class Conductor:
             cov = self.coverage()
             text = report.render_composite(children, flips, totals, cov, policy)
             extra = [f"note: {n}" for n in self.notes]
+            extra += self.rule_notes()
             extra += [f"guest:{g}: identity: {why}: its stic and holt cells didn't run"
                       for g, why in sorted((self.doc.get("identity_bad") or {}).items())]
             if w.sweep:

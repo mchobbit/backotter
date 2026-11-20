@@ -811,7 +811,8 @@ class HostWatch:
     that answers with another boot id than before (it rebooted), is held: nothing new starts
     there, and its queued cells go to the hosts that can take them, as the swap rule's hold
     does (the same held()).  The hold lifts once the host has answered for host_settle_min
-    minutes (5) in a row with no failed look between, and has been up that long.  A hold
+    minutes (5) in a row with no host_away_s without an answer between (a look that fails
+    alone doesn't start the settle again), and has been up that long.  A hold
     that lasts host_hold_max_min minutes (120) is run-wide, once (feed() says why), as the
     swap rule's is.
 
@@ -862,11 +863,18 @@ class HostWatch:
         s = self.st.setdefault(host, {})
         h = self.holds.get(host)
         if seen is None:
-            s.pop("ok_since", None)
             s.setdefault("fail_t", now)
-            if h is None and now - s["fail_t"] >= self.away_s:
-                self._hold(host, now, f"{host}: no answer since {utc_now(s['fail_t'])}", s.get("ok_t") or s["fail_t"])
-                return None
+            # (a look that fails alone, under host_away_s, is no going away, held or not: a held
+            # host's settle goes on through it, or one ssh timing out under load every few
+            # minutes kept a host that was back held until host_hold_max_min made it run-wide)
+            if now - s["fail_t"] >= self.away_s:
+                s.pop("ok_since", None)
+                if h is None:
+                    self._hold(host, now, f"{host}: no answer since {utc_now(s['fail_t'])}", s.get("ok_t") or s["fail_t"])
+                    return None
+                w = self.away.setdefault(host, [])
+                if not w or w[-1][1] is not None:   # away again while held: a window of its own (lost())
+                    w.append([s.get("ok_t") or s["fail_t"], None])
         else:
             boot = seen.get("boot") if isinstance(seen.get("boot"), str) and seen.get("boot") else None
             up = seen.get("up_s")
@@ -1118,7 +1126,9 @@ class RunGuards:
             return {"harness": self.harness, "reasons": list(self.reasons),
                     "bytes": [[f, h, v] for (f, h), v in sorted(self.bytes.items())],
                     "allowed": [[f, h, dict(v)] for (f, h), v in sorted(self.allowed.items())],
-                    "kept": [[f, h, v] for (f, h), v in sorted(self.kept.items())]}
+                    "kept": [[f, h, v] for (f, h), v in sorted(self.kept.items())],
+                    # (the report's: a resumed composite still lists what the rules did before)
+                    "notes": {"swap": self.holds.notes(), "host": self.watch.notes(), "lost": list(self.lost_said)}}
 
     @classmethod
     def from_json(cls, doc, policy=None, sweep=False, update=False, now=None):
@@ -1129,6 +1139,10 @@ class RunGuards:
         g.bytes = {(f, h): v for f, h, v in doc.get("bytes") or []}
         g.allowed = {(f, h): dict(v) for f, h, v in doc.get("allowed") or [] if isinstance(v, dict) and v}
         g.kept = {(f, h): v for f, h, v in doc.get("kept") or [] if isinstance(v, (int, float)) and v > 0}
+        n = doc.get("notes") if isinstance(doc.get("notes"), dict) else {}
+        g.holds.said = [str(x) for x in n.get("swap") or []]
+        g.watch.said = [str(x) for x in n.get("host") or []]
+        g.lost_said = [str(x) for x in n.get("lost") or []]
         return g
 
 
@@ -1160,7 +1174,9 @@ class StopEngine:
                                                                host_lost: why a harness-class result
                                                                is its host's going away (HostWatch.lost,
                                                                hostjob.host_lost): counted by no stop
-                                                               rule (the runner requeues it once)
+                                                               rule (the runner requeues it once);
+                                                               lost_again: why it was lost on a second
+                                                               host after that requeue: it counts
         feed_seen(host, seen)                                  a look at HOST (HostWatch.feed): the host
                                                                rule's holds; a hold that lasts is stop-starts
         feed_host(host, swap_out_bytes=..., ours_bytes=..., allowed=..., kept=...)
@@ -1275,6 +1291,13 @@ class StopEngine:
             if not self.stop_starts:
                 self.stop_starts = True
                 out = self._worse(out, self._stop("stop-starts", f"slow gate {res.get('cell')} {verdict}"))
+        if klass in ("harness", "lost") and res.get("lost_again") and verdict not in FAILING:
+            # its host went away under it again, on another host than the first time (the runner
+            # requeues once): two hosts lost under one cell is the cell's as much as theirs, so it
+            # counts once, as a harness result does (GuestTest2: Runner.requeue_lost)
+            self.add_host_lost(f"{res.get('cell')} {verdict} on {res.get('host') or '?'}: host lost again "
+                               f"({res.get('lost_again')}): counted as a harness result")
+            return self._worse(out, self._count_harness(res))
         if klass in ("harness", "lost") and res.get("host_lost") and verdict not in FAILING:
             # its host went away under it (no answer, a reboot: HostWatch): not the harness's, so no
             # count at all; the runner requeues it once (SweepTest2 #4: chopin's maintenance

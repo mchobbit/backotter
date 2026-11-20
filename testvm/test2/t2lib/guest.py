@@ -15,7 +15,10 @@ HostWatch: the job waits for another host it may run on, or for the hold to end)
 while the network rule holds (NetHold: a probe of the farm's internet under net_min_kibs).  An overrun below the cap reruns at rerun_d (2 x D or 2 x its peak) on a host that fits it, and feeds no stop rule.  A FAIL that
 isn't to_class_only reruns once (try and probe), never in an update.  A HARNESS or LOST attempt whose host went
 away under it (hostjob.host_lost: the host rule) is host-lost: requeued once, to a host it may run on (not that
-one while its job may still run there), never in an update, and no stop rule counts it.  MAC_ROOT/runs/RUN/guest.json
+one while its job may still run there), never in an update, and no stop rule counts it; lost again on another
+host, it counts once as a harness result (StopEngine's lost_again).  A guest whose log baseline wasn't
+written on a host runs on the others that may run it (placed_by_baseline); one that ran there anyway says so
+in its cell (no_baseline) and a note.  MAC_ROOT/runs/RUN/guest.json
 records what started and what ended: resume adopts an attempt that was started (hostjob.reattach_job)
 and starts another only once that one is proven gone with no row, never in an update round.
 """
@@ -934,6 +937,8 @@ class Item:
         self.rows, self.rerun_done = [], False
         self.prev_verdict, self.flake = None, None
         self.host_requeued = None   # why its host was lost under an attempt that was requeued (once)
+        self.lost_host = None       # ... and which host that was (lost again on another: it counts)
+        self.no_baseline = set()    # the hosts its log baseline wasn't written on (upload_baselines)
         self.started_t = None       # when its attempt's job started (the host rule's window)
         self.resumed = None       # guest.json's record of an attempt an earlier process started
 
@@ -1027,7 +1032,10 @@ class Runner:
 
     # --- baselines and cells ---------------------------------------------------------------------
     def upload_baselines(self, guests):
+        """Each guest's log baseline onto every host; {guest: {host}} of those it wasn't written on
+        (noted: placed_by_baseline keeps the guest off them when another host may run it)."""
         root = os.path.join(getattr(self.rs, "mac_root", None) or mac_root(), "guest-baselines")
+        missed = {}
         for g in guests:
             p = os.path.join(root, f"{g}.json")
             try:
@@ -1041,6 +1049,25 @@ class Runner:
                 if why:   # the run goes on: the guest's rows there judge its lines with no baseline
                     self.log(f"{g}: baseline not written on {h}: {why}")
                     self.notes.append(f"guest:{g}: baseline not written on {h} ({why}): its lines there are judged as with none")
+                    missed.setdefault(g, set()).add(h)
+        return missed
+
+    def placed_by_baseline(self, items, missed):
+        """Items whose baseline missed a host (upload_baselines' MISSED): run on the hosts that have
+        it, when one of them may run it; else marked (no_baseline), and its cell says so (finalize)."""
+        for it in items:
+            miss = set(missed.get(it.guest) or ())
+            if not miss:
+                continue
+            if it.resumed:   # (an attempt already running where it runs: only marked)
+                it.no_baseline = miss
+                continue
+            keep = [h for h in it.allowed if h not in miss]
+            if keep and keep != it.allowed:
+                self.log(f"{it.cell}: not on {', '.join(sorted(set(it.allowed) & miss))}: its baseline isn't there")
+                it.allowed = keep
+            elif not keep:
+                it.no_baseline = miss
 
     def put_file(self, host, path, data):
         """DATA as HOST's PATH: written beside it, moved into place and seen there, not empty.  A
@@ -1136,7 +1163,9 @@ class Runner:
                 tag = f"guest:{self.rs.run}:{it.guest}"
                 with self.mu:
                     self.state["started"][it.guest] = {"host": host, "attempt": it.attempt, "d": it.d, "t": utc_now(), "prev_verdict": it.prev_verdict,
-                                                       "flake": it.flake, "rerun_done": it.rerun_done, "rows": list(it.rows)}
+                                                       "flake": it.flake, "rerun_done": it.rerun_done, "rows": list(it.rows),
+                                                       "host_requeued": it.host_requeued, "lost_host": it.lost_host,
+                                                       "allowed": list(it.allowed)}
                 self.save()
                 extra = self.job_env(it, cells, mode)
                 rc, odir, t, why = self.job(self.env, host, it.guest, it.attempt, cmd, (it.d, it.m), tag, timeout, 4 * 3600, extra, None, "guest",
@@ -1264,10 +1293,13 @@ class Runner:
         self.after_attempt(it, host, rc, t, summ, still)
 
     def may_wait_host(self, it, host):
-        """Whether IT's HARNESS or LOST attempt on HOST may wait for the host rule's confirm (unsure)."""
+        """Whether IT's HARNESS or LOST attempt on HOST may wait for the host rule's confirm (unsure):
+        one that may be requeued, or one requeued once already on another host's loss (lost here
+        too, it counts: requeue_lost's lost_again)."""
         st = self.rs.stops
         known = getattr(st, "host_known", None)
-        return bool(not self.update and not it.host_requeued and it.attempt < MAX_ATTEMPTS
+        again = bool(it.host_requeued and it.lost_host and it.lost_host != host)
+        return bool(not self.update and (again or (not it.host_requeued and it.attempt < MAX_ATTEMPTS))
                     and hasattr(st, "host_confirmed") and known is not None and known(host))
 
     def requeue_lost(self, it, host, v, lost, still, summ):
@@ -1277,11 +1309,14 @@ class Runner:
         gone_there = bool(not still or (rb is not None and it.started_t is not None and rb(host, it.started_t)))
         where = list(it.allowed) if gone_there else [h for h in it.allowed if h != host]
         if self.update or it.host_requeued or it.attempt >= MAX_ATTEMPTS or not where:
+            if it.host_requeued and it.lost_host and it.lost_host != host:
+                # lost on a second host: no longer two hosts' bad luck, so a harness result (feed)
+                summ["lost_again"] = f"{lost}; before on {it.lost_host}: {it.host_requeued}"
             self.notes.append(f"{it.cell}: attempt {it.attempt} {v} on {host}: host lost ({lost}); not requeued"
                               + (" (an update round)" if self.update else " (requeued once already)" if it.host_requeued
                                  else "" if where else f" (its job may still run on {host}, and no other host may run it)"))
             return False
-        it.host_requeued = lost
+        it.host_requeued, it.lost_host = lost, host
         it.allowed = where
         it.attempt += 1
         it.prev_verdict = "FAIL" if it.prev_verdict == "FAIL" else "HARNESS"   # a FAIL before it still counts
@@ -1349,6 +1384,10 @@ class Runner:
                  "merge_why": summ.get("merge_why"), "steps": summ.get("steps"), "fingerprint": summ.get("fingerprint"),
                  "pm": self.pm_of(it), "skips": summ.get("skips") or {}, "need_notes": summ.get("notes") or {},
                  "generation_before": summ.get("generation_before"), "generation_after": summ.get("generation_after")}
+        if host in it.no_baseline:   # (upload_baselines: its lines were judged as with no baseline)
+            entry["no_baseline"] = True
+            self.notes.append(f"{it.cell}: ran on {host}, where its baseline wasn't written: its new lines are judged "
+                              f"as with none (attempt {it.attempt} {v}); don't accept them from this run")
         self.cells.append(entry)
         with self.mu:
             self.state["ended"][it.guest] = entry
@@ -1368,7 +1407,7 @@ class Runner:
                # own stop, never the run-wide harness count, which would stop SticTest2 and HoltTest2 too
                "net": bool(summ.get("net_stall")) and summ.get("verdict") == "HARNESS",
                # its host went away under it (finish_job: the host rule): no stop rule counts it
-               "host_lost": summ.get("host_lost"), "start": it.started_t, "end": self.clock()}
+               "host_lost": summ.get("host_lost"), "lost_again": summ.get("lost_again"), "start": it.started_t, "end": self.clock()}
         try:
             self.rs.stops.feed(res)
         except Exception as e:   # noqa: BLE001
@@ -1797,6 +1836,19 @@ class Runner:
                 rest.append(it)
         return rest
 
+    @staticmethod
+    def restore(it, st):
+        """IT as guest.json's started record ST left it (resume: adopt waits for that attempt)."""
+        it.attempt = int(st.get("attempt") or 1)
+        it.d = float(st.get("d") or it.d)
+        it.prev_verdict, it.flake, it.rerun_done = st.get("prev_verdict"), st.get("flake"), bool(st.get("rerun_done"))
+        it.rows = list(st.get("rows") or [])
+        # (requeued once for its host already: a resume doesn't requeue it twice, nor put it back
+        # where its requeue or an overrun's rerun took it off)
+        it.host_requeued, it.lost_host = st.get("host_requeued"), st.get("lost_host")
+        it.allowed = [h for h in st.get("allowed") or () if h in it.allowed] or it.allowed
+        it.resumed = st
+
     def run(self, resume=False):
         start = utc_now()
         if not resume:
@@ -1817,12 +1869,8 @@ class Runner:
             for it in items:
                 st = (self.state.get("started") or {}).get(it.guest)
                 if st:   # a job that started and whose end wasn't seen: adopt it (adopt, hostjob.reattach_job)
-                    it.attempt = int(st.get("attempt") or 1)
-                    it.d = float(st.get("d") or it.d)
-                    it.prev_verdict, it.flake, it.rerun_done = st.get("prev_verdict"), st.get("flake"), bool(st.get("rerun_done"))
-                    it.rows = list(st.get("rows") or [])
-                    it.resumed = st
-        self.upload_baselines([it.guest for it in items])
+                    self.restore(it, st)
+        self.placed_by_baseline(items, self.upload_baselines([it.guest for it in items]))
         ex = None
         if not resume or not self.state.get("identity_done"):
             items = self.identity_entries(items)

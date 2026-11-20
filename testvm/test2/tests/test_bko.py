@@ -551,6 +551,31 @@ class TestBko(Base):
         self.assertIn("stops: chopin: 1.50 GiB swapped out since the run began; SticTest2: stop-starts", text)
         self.assertEqual(doc["guards"]["reasons"], ["chopin: 1.50 GiB swapped out since the run began"])
 
+    def test_the_whole_run_lists_every_familys_host_rule_notes(self):
+        """A child's report has the guards' notes up to its own end; the composite's whole-run
+        part lists them all, a holt one after stic ended too, each once."""
+        def stic_lost(world, w_, ctx, shared, out):
+            shared.guards.add_host_lost("stic:garuda LOST on chopin: host lost (chopin: no answer): no stop rule counts it")
+            return 0
+
+        def holt_lost(world, w_, ctx, shared, out):
+            time.sleep(0.05)
+            shared.guards.add_host_lost("holt:vanilla3 LOST on cage: host lost (cage rebooted): no stop rule counts it")
+            shared.guards.holds.said.append("held cage: swapped out 2 GiB")
+            return 0
+
+        self.w.behave = {"stic": stic_lost, "holt": holt_lost}
+        self.conduct("BkoTest2 rel4")
+        run, doc = self.only_run()
+        text = slurp(os.path.join(self.w.mac, "runs", run, "report.txt"))
+        whole = text.split("== the whole run", 1)[1]
+        self.assertIn("host rule: stic:garuda LOST on chopin: host lost", whole)
+        self.assertIn("host rule: holt:vanilla3 LOST on cage: host lost", whole)
+        self.assertIn("swap rule: held cage: swapped out 2 GiB", whole)
+        self.assertEqual(whole.count("holt:vanilla3 LOST"), 1, whole)
+        self.assertTrue(whole.rstrip().splitlines()[-1].startswith("sweep: "), whole)
+        self.assertEqual(doc["guards"]["notes"]["lost"][0][:19], "stic:garuda LOST on")
+
     def test_a_family_stop_stays_in_its_family(self):
         def stic_stops(world, w_, ctx, shared, out):
             ctx.run.stops.stops.append("stop-family: fast gate gate:bin:version FAIL")

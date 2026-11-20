@@ -148,10 +148,19 @@ EXPECTED = [
 # vmlinuz: Garuda's dracut-rebuild (dracut-install-garuda), which the
 # restore's boot stage runs, copies each kernel to /boot again with dd
 # (garuda-20261114-154812: only a new mtime; docs/design/garuda.md, GA7).
+# The restore's update-initramfs -u -k all runs depmod, which writes each
+# kernel's module indexes again, and on Pop!_OS kernelstub, which writes its
+# configuration again: the same bytes, new mtimes (pop-24.04-20261120-021008:
+# 11 files).  depmod's outputs by name, not modules.*, so modules.order and
+# modules.builtin* from the package stay held; lib/modules for a /lib that
+# isn't /usr's.
+DEPMOD = ["modules.alias", "modules.alias.bin", "modules.builtin.alias.bin", "modules.builtin.bin", "modules.dep",
+          "modules.dep.bin", "modules.devname", "modules.softdep", "modules.symbols", "modules.symbols.bin", "modules.weakdep"]
 REMADE = ["etc/machine-id", "usr/share/applications/mimeinfo.cache", "etc/kernel/entry-token", "usr/libexec/rc/console/*", "usr/lib/openrc/console/*", "etc/ld.so.cache",
           "boot/vmlinuz-*",
           "etc/tuned/active_profile", "etc/tuned/post_loaded_profile", "etc/tuned/ppd_base_profile", "etc/tuned/profile_mode",
-          "etc/modprobe.d/tuned.conf", "etc/supergfxd.conf", "etc/modprobe.d/supergfxd.conf", "usr/bin/steamdeps"]
+          "etc/modprobe.d/tuned.conf", "etc/supergfxd.conf", "etc/modprobe.d/supergfxd.conf", "usr/bin/steamdeps",
+          "etc/kernelstub/configuration"] + [f"{d}/modules/*/{m}" for d in ("usr/lib", "lib") for m in DEPMOD]
 
 # Kept, not remade, though EXPECTED has boot/efi/*: bko-holt load leaves
 # rEFInd as the ESP brought it back and installs nothing (PikaOS,

@@ -384,6 +384,34 @@ class TestManifest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("changed: swapfiles/x", out)
 
+    def test_initramfs_rebuild_rewrites(self):
+        """Pop!_OS (pop-24.04-20261120-021008): the restore's update-initramfs
+        runs depmod and kernelstub, which write their files again with the
+        same bytes.  A new mtime is expected; new bytes aren't, and the
+        package's modules.order and the .ko files stay held."""
+        mod = self.root / "usr" / "lib" / "modules" / "7.2.15-76070215-generic"
+        (mod / "kernel").mkdir(parents=True)
+        (self.root / "etc" / "kernelstub").mkdir(parents=True)
+        made = ["etc/kernelstub/configuration"] + [f"usr/lib/modules/7.2.15-76070215-generic/modules.{n}" for n in
+                ("alias", "alias.bin", "builtin.alias.bin", "builtin.bin", "dep", "dep.bin", "devname", "softdep",
+                 "symbols", "symbols.bin")]
+        for rel in made + ["usr/lib/modules/7.2.15-76070215-generic/modules.order",
+                           "usr/lib/modules/7.2.15-76070215-generic/kernel/x.ko.zst"]:
+            (self.root / rel).write_text("x\n")
+        a = self.manifest("a.tsv")
+        for rel in made:
+            self.touch(rel)
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("changed: 0, of which unexpected: 0", out)
+        for rel in ("usr/lib/modules/7.2.15-76070215-generic/modules.order",
+                    "usr/lib/modules/7.2.15-76070215-generic/kernel/x.ko.zst"):
+            self.touch(rel)
+        self.touch("usr/lib/modules/7.2.15-76070215-generic/modules.dep", "y\n")
+        rc, out = self.compare(a, self.manifest("c.tsv"))
+        self.assertEqual(rc, 1)
+        self.assertIn("changed: 3, of which unexpected: 3", out)
+
     def objects(self):
         """A repository object hardlinked into both deployments (nlink 3), as
         a bare repository has them, and a file outside ostree/."""

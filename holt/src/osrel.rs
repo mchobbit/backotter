@@ -158,7 +158,13 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("elementary", "8", "elementary OS 8"),
     // Rolling: Arch's os-release has no VERSION_ID.
     ("arch", "", "Arch Linux"),
+    // Each release by its own row, as Debian 12/13 and FreeBSD 14/15 are:
+    // a Fedora 46 is checked before it's claimed.  45 (the Thinkpad's
+    // Workstation, BackShot1) boots as 44 does: shim, grub2-mkconfig with
+    // BLS entries, dracut.  Its atomic desktops aren't claimed by this row
+    // (check_supported).
     ("fedora", "44", "Fedora 44"),
+    ("fedora", "45", "Fedora 45"),
     ("alpine", "3", "Alpine Linux 3"),
     // Rolling, like Arch.
     ("artix", "", "Artix Linux"),
@@ -232,8 +238,8 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("gentoo", "*", "Gentoo Linux"),
     // ostree-based, on Fedora's atomic desktops (Kinoite): ID=bazzite,
     // VERSION_ID the Fedora release.  Silverblue and Kinoite themselves say
-    // fedora 44, so the Fedora row takes them; ostree is told by its own
-    // markers (crate::ostree::detect).
+    // fedora 44, so the Fedora row takes them (44 only, check_supported);
+    // ostree is told by its own markers (crate::ostree::detect).
     ("bazzite", "44", "Bazzite 44"),
     // Debian sid underneath (ID_LIKE=debian), rolling, but VERSION_ID is
     // its release ("4", Nest): a PikaOS 5 is checked before it's claimed.
@@ -307,6 +313,15 @@ pub fn check_supported(os: Option<&OsRelease>) -> Result<(), String> {
     if id == "qubes" && ver.split('.').nth(1).and_then(|m| m.parse::<u64>().ok()).is_some_and(|m| ver.starts_with("4.") && m < 3) {
         return Err(format!("this is Qubes OS {ver} (ID=qubes, VERSION_ID={ver}), and bko-holt dump supports Qubes OS 4.3 and later only"));
     }
+    // Fedora's atomic desktops (Silverblue, Kinoite: ID=fedora with an
+    // OSTREE_VERSION) are claimed at 44 only, kinoite44's, as Bazzite is by
+    // its own row: the Fedora 45 row is Workstation's.
+    if id == "fedora" && os.get("OSTREE_VERSION").is_some() && ver.split('.').next() != Some("44") {
+        return Err(format!(
+            "this is a Fedora {ver} atomic desktop (ID=fedora, VERSION_ID={ver}, OSTREE_VERSION={}), and bko-holt dump supports Fedora's atomic desktops (Silverblue, Kinoite) at 44 only",
+            os.get("OSTREE_VERSION").unwrap_or("")
+        ));
+    }
     if supported(id, ver) {
         return Ok(());
     }
@@ -379,7 +394,7 @@ pub(crate) mod tests {
         assert!(check_supported(Some(&parse(neon))).is_ok());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Solus 4, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, Aeon, openSUSE Leap 16, Rocky Linux 10, Qubes OS 4.3, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Slackware 15, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox, Sculpt OS or Ubuntu Core 24"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Fedora 45, Alpine Linux 3, Artix Linux, AerynOS, Solus 4, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, Aeon, openSUSE Leap 16, Rocky Linux 10, Qubes OS 4.3, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Slackware 15, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox, Sculpt OS or Ubuntu Core 24"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -402,6 +417,7 @@ pub(crate) mod tests {
         assert!(check_supported(Some(&parse("ID=arch\nBUILD_ID=rolling\n"))).is_ok());
         assert!(check_supported(Some(&parse("ID=fedora\nVERSION_ID=44\n"))).is_ok());
         assert!(check_supported(Some(&parse("ID=fedora\nVERSION_ID=43\n"))).is_err());
+        assert!(check_supported(Some(&parse("ID=fedora\nVERSION_ID=46\n"))).is_err());
         // Debian testing/sid has no VERSION_ID.
         let sid = parse("ID=debian\nPRETTY_NAME=\"Debian GNU/Linux forky/sid\"\n");
         assert!(check_supported(Some(&sid)).is_err());
@@ -470,6 +486,25 @@ pub(crate) mod tests {
         assert!(check_supported(Some(&parse("ID=bluefin\nID_LIKE=fedora\nVERSION_ID=44\n"))).is_err());
         let k = parse("NAME=\"Fedora Linux\"\nVERSION=\"44.20261111.0 (Kinoite)\"\nID=fedora\nVERSION_ID=44\nVARIANT_ID=kinoite\nOSTREE_VERSION='44.20261111.0'\n");
         assert!(check_supported(Some(&k)).is_ok());
+        // Kinoite 45 isn't claimed by Workstation's Fedora 45 row.
+        let k45 = parse("NAME=\"Fedora Linux\"\nVERSION=\"45.20261118.0 (Kinoite)\"\nID=fedora\nVERSION_ID=45\nVARIANT_ID=kinoite\nOSTREE_VERSION='45.20261118.0'\n");
+        assert!(check_supported(Some(&k45)).unwrap_err().contains("atomic desktops (Silverblue, Kinoite) at 44 only"));
+    }
+
+    /// The Thinkpad's /etc/os-release, Fedora 45 Workstation (BackShot1,
+    /// 2026-11-20).
+    const FEDORA45: &str = "NAME=\"Fedora Linux\"\nVERSION=\"45 (Workstation Edition)\"\nRELEASE_TYPE=stable\nID=fedora\nVERSION_ID=45\nVERSION_CODENAME=\"\"\nPRETTY_NAME=\"Fedora Linux 45 (Workstation Edition)\"\nANSI_COLOR=\"0;38;2;60;110;180\"\nLOGO=fedora-logo-icon\nCPE_NAME=\"cpe:/o:fedoraproject:fedora:45\"\nDEFAULT_HOSTNAME=\"fedora\"\nHOME_URL=\"https://fedoraproject.org/\"\nDOCUMENTATION_URL=\"https://docs.fedoraproject.org/en-US/fedora/f45/\"\nSUPPORT_URL=\"https://ask.fedoraproject.org/\"\nBUG_REPORT_URL=\"https://bugzilla.redhat.com/\"\nREDHAT_BUGZILLA_PRODUCT=\"Fedora\"\nREDHAT_BUGZILLA_PRODUCT_VERSION=45\nREDHAT_SUPPORT_PRODUCT=\"Fedora\"\nREDHAT_SUPPORT_PRODUCT_VERSION=45\nSUPPORT_END=2027-11-24\nVARIANT=\"Workstation Edition\"\nVARIANT_ID=workstation\n";
+
+    #[test]
+    fn fedora45() {
+        let o = parse(FEDORA45);
+        assert_eq!(o.get("ID"), Some("fedora"));
+        assert_eq!(o.get("VERSION_ID"), Some("45"));
+        assert_eq!(o.get("VERSION_CODENAME"), Some(""));
+        assert_eq!(o.get("VARIANT_ID"), Some("workstation"));
+        assert!(check_supported(Some(&o)).is_ok());
+        assert!(supported("fedora", "45"));
+        assert!(supported_names().contains("Fedora 44, Fedora 45, Alpine Linux 3"));
     }
 
     /// PikaOS 4's /etc/os-release (its base-files' source).

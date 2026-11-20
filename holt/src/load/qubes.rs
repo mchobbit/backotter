@@ -92,18 +92,15 @@ impl Builder<'_> {
             "Qubes OS: GRUB 2 without shim (Secure Boot off): {LOADER} and EFI/BOOT/BOOTX64.EFI are the restored ESP's; only {cfg} is remade, by grub2-mkconfig with 20_linux_xen (Xen {}); GRUB_CMDLINE_XEN_DEFAULT and GRUB_CMDLINE_LINUX stay as restored (rd.luks.uuid= names the LUKS UUID, which load keeps)",
             s(&xen, "version").unwrap_or_else(|| "?".into())
         ));
-        let p = format!("{t}/usr/bin/os-prober");
+        let (off, on) = os_prober_off(t);
         let lang = match self.layout.str_at(&["boot", "grub", "grub_cfg", "lang"]) {
             Some(l) if !l.is_empty() => format!("LANG={l}.UTF-8"),
             _ => "LANG=C".to_string(),
         };
-        out.push(Cmd::new(&["sh", "-c", &format!("[ ! -e {p} ] || mount --bind {t}/usr/bin/true {p}")]).why("os-prober off: it would list the rescue system's disks"));
+        out.push(Cmd::new(&["sh", "-c", &off]).why("os-prober off: it would list the rescue system's disks"));
         out.push(Cmd::new(&["chroot", t, "env", &lang, "grub2-mkconfig", "-o", &cfg]));
-        out.push(Cmd::new(&["sh", "-c", &format!("! grep -q ' {p} ' /proc/self/mountinfo || umount {p}")]));
-        out.push(
-            Cmd::new(&["sh", "-c", &format!("grep -q '^[[:space:]]*multiboot2[[:space:]].*/xen' {t}{cfg} || {{ echo '{cfg}: grub2-mkconfig made no Xen entry (20_linux_xen found no /boot/xen-*.gz?)' >&2; exit 1; }}")])
-                .why("Qubes OS: the remade menu boots Xen"),
-        );
+        out.push(Cmd::new(&["sh", "-c", &on]));
+        out.push(Cmd::new(&["sh", "-c", &xen_check(t, &cfg)]).why("Qubes OS: the remade menu boots Xen"));
         out
     }
 
@@ -141,8 +138,80 @@ impl Builder<'_> {
     }
 }
 
+/// The `sh -c` scripts that turn os-prober off under target T for
+/// grub2-mkconfig (true bound over it) and on again; T and the paths in it
+/// shell-quoted (a word with nothing to quote stays bare).
+fn os_prober_off(t: &str) -> (String, String) {
+    let q = super::shell_quote;
+    let p = format!("{t}/usr/bin/os-prober");
+    let qp = q(&p);
+    let off = format!("[ ! -e {qp} ] || mount --bind {} {qp}", q(&format!("{t}/usr/bin/true")));
+    let on = format!("! grep -q {} /proc/self/mountinfo || umount {qp}", q(&format!(" {p} ")));
+    (off, on)
+}
+
+/// The `sh -c` script that fails unless T's grub.cfg CFG has a Xen entry.
+fn xen_check(t: &str, cfg: &str) -> String {
+    let q = super::shell_quote;
+    let msg = format!("{cfg}: grub2-mkconfig made no Xen entry (20_linux_xen found no /boot/xen-*.gz?)");
+    format!("grep -q '^[[:space:]]*multiboot2[[:space:]].*/xen' {} || {{ echo {} >&2; exit 1; }}", q(&format!("{t}{cfg}")), q(&msg))
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::testutil::Tree;
+
+    /// The scripts' text for the usual target, as before they were quoted.
+    #[test]
+    fn scripts_for_a_plain_target() {
+        let (off, on) = super::os_prober_off("/mnt/bko-target");
+        assert_eq!(off, "[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober");
+        assert_eq!(on, "! grep -q ' /mnt/bko-target/usr/bin/os-prober ' /proc/self/mountinfo || umount /mnt/bko-target/usr/bin/os-prober");
+        assert_eq!(
+            super::xen_check("/mnt/bko-target", "/boot/grub2/grub.cfg"),
+            "grep -q '^[[:space:]]*multiboot2[[:space:]].*/xen' /mnt/bko-target/boot/grub2/grub.cfg || { echo '/boot/grub2/grub.cfg: grub2-mkconfig made no Xen entry (20_linux_xen found no /boot/xen-*.gz?)' >&2; exit 1; }"
+        );
+    }
+
+    /// RustAudit1 H8-02: a --target with a space, quotes, $, a backtick
+    /// and a newline reaches mount, grep and umount as one word each.
+    #[test]
+    fn scripts_quote_a_hostile_target() {
+        let tree = Tree::new("qubes-quote");
+        let t = format!("{}/a b'c\"d$HOME`id`\ne", tree.root().display());
+        let p = format!("{t}/usr/bin/os-prober");
+        for f in ["/usr/bin/os-prober", "/usr/bin/true", "/boot/grub2/grub.cfg"] {
+            let path = format!("{t}{f}");
+            std::fs::create_dir_all(std::path::Path::new(&path).parent().unwrap()).unwrap();
+            std::fs::write(&path, "menuentry 'Qubes' {\n\tmultiboot2 /xen-4.19.gz\n}\n").unwrap();
+        }
+        // mount, umount and grep that print their arguments, a line each.
+        let log = tree.p("/log");
+        for c in ["mount", "umount", "grep"] {
+            tree.file(&format!("/bin/{c}"), format!("#!/bin/sh\nfor a in \"$@\"; do printf '%s|' \"$a\"; done >> '{}'\necho >> '{}'\n", log.display(), log.display()));
+            std::process::Command::new("chmod").arg("755").arg(tree.p(&format!("/bin/{c}"))).status().unwrap();
+        }
+        let path = format!("{}:{}", tree.p("/bin").display(), std::env::var("PATH").unwrap_or_default());
+        let run = |script: &str, fake: bool| {
+            let mut c = std::process::Command::new("sh");
+            c.arg("-c").arg(script);
+            if fake {
+                c.env("PATH", &path);
+            }
+            c.output().unwrap()
+        };
+        let (off, on) = super::os_prober_off(&t);
+        assert!(run(&off, true).status.success());
+        assert!(run(&on, true).status.success());
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), format!("--bind|{t}/usr/bin/true|{p}|\n-q| {p} |/proc/self/mountinfo|\n{p}|\n"));
+        // The real grep: a menu with Xen passes; one without fails, saying so.
+        assert!(run(&super::xen_check(&t, "/boot/grub2/grub.cfg"), false).status.success());
+        std::fs::write(format!("{t}/boot/grub2/grub.cfg"), "menuentry 'Linux' {}\n").unwrap();
+        let o = run(&super::xen_check(&t, "/boot/grub2/grub.cfg"), false);
+        assert_eq!(o.status.code(), Some(1));
+        assert_eq!(String::from_utf8_lossy(&o.stderr), "/boot/grub2/grub.cfg: grub2-mkconfig made no Xen entry (20_linux_xen found no /boot/xen-*.gz?)\n");
+    }
+
     #[test]
     fn versions() {
         assert!(super::supported_version("4.3"));

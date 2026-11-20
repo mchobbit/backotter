@@ -461,6 +461,81 @@ class TestInGuest(unittest.TestCase):
         rc, n, out = self.run_fetched("Linux.apt", 99, "E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 9 (apt-get)")
         self.assertEqual((rc, n), (100, 1), out)
 
+    # neon24's apt-get update against archive.neon.kde.org's 502s (a FREEZE run, 2026-11-20)
+    UPDATE_OUT = ("Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease\n"
+                  "Err:5 https://archive.neon.kde.org/user noble InRelease\n  502  Bad Gateway [IP: 1.2.3.4 443]\n"
+                  "Reading package lists...\n")
+    UPDATE_ERR = ("E: Failed to fetch https://archive.neon.kde.org/user/dists/noble/InRelease  502  Bad Gateway [IP: 1.2.3.4 443]\n"
+                  "E: The repository 'https://archive.neon.kde.org/user noble InRelease' no longer has a Release file.\n")
+
+    def run_apt_update(self, fails, out=UPDATE_OUT, err=UPDATE_ERR):
+        """Linux.apt's apt-get update loop around an apt-get that fails FAILS times printing OUT
+        and ERR, then succeeds: (exit status, how many times it ran, stdout, stderr).  /run is a
+        scratch folder and sleep does nothing."""
+        m = re.search(r"^( *)tries=0\n\1until \$apt -o APT::Update::Error-Mode=any update .*?\n\1done\n.*?\n\1rm -f \S+ \S+\n",
+                      self.sections()["Linux.apt"], re.M | re.S)
+        self.assertIsNotNone(m)
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "out").write_text(out)
+            Path(d, "err").write_text(err)
+            loop = textwrap.dedent(m[0]).replace("/run/", f"{d}/")
+            script = textwrap.dedent(f"""\
+                say() {{ echo "in-guest: $*"; }}
+                sleep() {{ :; }}
+                aptget() {{
+                    c=$(cat {d}/count 2>/dev/null || echo 0); echo $((c + 1)) >{d}/count
+                    if [ "$c" -lt {fails} ]; then cat {d}/out; cat {d}/err >&2; return 100; fi
+                    echo "Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease"
+                    echo "Get:5 https://archive.neon.kde.org/user noble InRelease [12.1 kB]"
+                    echo "W: a warning of the try that worked" >&2
+                }}
+                apt=aptget
+                (
+                """) + loop + "); echo \"rc=$?\"\n"
+            r = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+            count = int(Path(d, "count").read_text())
+            self.assertEqual(sorted(os.listdir(d)), ["count", "err", "out"], "the loop leaves its files behind")
+        return int(re.search(r"rc=(\d+)", r.stdout)[1]), count, r.stdout, r.stderr
+
+    def test_apt_update_prints_only_the_try_that_worked(self):
+        """apt-get update's failed tries are one line each, the first E: line in it (or the first
+        Err: line and its reason); the try that worked is printed as apt-get wrote it, stdout and
+        stderr (neon24: three 502s from archive.neon.kde.org left six lines GuestTest2's sweep
+        judged new, though the update passed on try 4)."""
+        rc, n, out, err = self.run_apt_update(3)
+        self.assertEqual((rc, n), (0, 4), out + err)
+        why = "E: Failed to fetch https://archive.neon.kde.org/user/dists/noble/InRelease  502  Bad Gateway [IP: 1.2.3.4 443]"
+        self.assertEqual(out.splitlines(), [f"in-guest: apt-get update failed (try {i} of 60): {why}" for i in (1, 2, 3)] + [
+            "Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease",
+            "Get:5 https://archive.neon.kde.org/user noble InRelease [12.1 kB]", "rc=0"])
+        self.assertEqual(err, "W: a warning of the try that worked\n")
+        # no E: line: the Err: line and the reason under it
+        rc, n, out, err = self.run_apt_update(1, err="")
+        self.assertEqual((rc, n), (0, 2), out + err)
+        self.assertEqual(out.splitlines()[0], "in-guest: apt-get update failed (try 1 of 60): "
+                         "Err:5 https://archive.neon.kde.org/user noble InRelease 502 Bad Gateway [IP: 1.2.3.4 443]")
+        rc, n, out, err = self.run_apt_update(1, out="", err="")
+        self.assertEqual(out.splitlines()[0], "in-guest: apt-get update failed (try 1 of 60): no E: or Err: line")
+        rc, n, out, err = self.run_apt_update(0)
+        self.assertEqual((rc, n, err), (0, 1, "W: a warning of the try that worked\n"))
+        self.assertNotIn("in-guest:", out)
+
+    def test_apt_update_that_keeps_failing_ends_with_its_last_try(self):
+        """60 failed tries: exit status 1, 59 summary lines, then the last try's output whole, so
+        the failure tail (vm-update: stdout then stderr, the last 8 lines) is what apt-get said and
+        flakes.json's E: Failed to fetch rule still reads it."""
+        rc, n, out, err = self.run_apt_update(99)
+        self.assertEqual((rc, n), (1, 60), out + err)
+        lines = out.splitlines()
+        self.assertEqual(sum(x.startswith("in-guest: apt-get update failed (try ") for x in lines), 59)
+        self.assertTrue(lines[58].startswith("in-guest: apt-get update failed (try 59 of 60): E: Failed to fetch "))
+        self.assertEqual("\n".join(lines[59:]) + "\n", self.UPDATE_OUT + "rc=1\n")
+        self.assertEqual(err, self.UPDATE_ERR)
+        flakes = json.loads((T2 / "guest" / "flakes.json").read_text())
+        tail = (out.replace("rc=1\n", "") + err).strip().splitlines()[-8:]
+        self.assertTrue(any(re.search(f["pattern"], "\n".join(tail), re.M) for f in flakes
+                            if f["pattern"].startswith("\\bE: Failed to fetch")), tail)
+
     def test_pops_updaters_masked_before_apt(self):
         """Pop!_OS's pop-system-updater and pop-upgrade run apt-get update on their own (pop24's
         lock, t2v-20261118T1426-76be): masked for the boot where they're installed, before the

@@ -748,7 +748,12 @@ class RealLogLines(unittest.TestCase):
                  "[    1.041482] pci 0000:00:1f.3: hash matches", "[    1.041482] serial8250 serial8250: hash matches",
                  "2026-11-19 15:02:11 localhost linux: [    1.041482] pci 0000:00:1f.3: hash matches"],
         "apt": ["Get:1 http://deb.debian.org/debian trixie/main amd64 bash amd64 5.2.37-2 [1,234 kB]", "Unpacking bash (5.2.37-2) over (5.2.37-1) ...",
-                "Reading package lists... Done", "base-files is already the newest version (13.8).", "Found linux image: /boot/vmlinuz-6.12.57+deb13-amd64"],
+                "Reading package lists... Done", "base-files is already the newest version (13.8).", "Found linux image: /boot/vmlinuz-6.12.57+deb13-amd64",
+                # in-guest.sh's Linux.apt: an apt-get update try that failed and was tried again (neon24, 2026-11-20)
+                "in-guest: apt-get update failed (try 3 of 60): E: Failed to fetch https://archive.neon.kde.org/user/dists/noble/InRelease  "
+                "502  Bad Gateway [IP: 1.2.3.4 443]",
+                "in-guest: apt-get update failed (try 1 of 60): Err:5 https://archive.neon.kde.org/user noble InRelease 504 Gateway Time-out "
+                "[IP: 2a01:4f8::1 443]"],
         "dnf": ["[ 1/42] Upgrading NetworkManager-1:1.52.0 100% |   2.1 MiB/s |   3.4 MiB |  00m02s", "[ 3/9] Installing hunspell-en-AU-0:2.1 100% |   1.0 MiB/s |  10.0 KiB |  00m00s",
                 "[12/42] Removing NetworkManager-1:1.50.0 100% |   0.0 B/s |   0.0 B |  00m00s", "Erasing          : kernel-6.12.0-55.el10_0.x86_64    4/9",
                 " libmount   x86_64   2.40.2-10.el10   baseos   153 k", "replacing ethtool x86_64 2:6.15-1.fc44 anaconda 1.4 MiB", ">>> Finished %post scriptlet: audit-1:4.1.2-1.fc44.x86_64"],
@@ -892,7 +897,11 @@ class RealLogLines(unittest.TestCase):
                  "[    1.041482] pci 0000:00:03.0: hash matches, BAR 0: failed to assign",
                  "[    1.136567] PM:   hash matches drivers/base/power/main.c:1424 (error -5)"],
         "nix": ["error: builder for '/nix/store/abc-foo.drv' failed with exit code 1", "error: Cannot build '/nix/store/abc-foo.drv'.", "building '/nix/store/abc.drv' failed"],
-        "apt": ["The following packages have unmet dependencies:", "Reading package lists... Error!"],
+        "apt": ["The following packages have unmet dependencies:", "Reading package lists... Error!",
+                # a failed try's own lines: in-guest.sh prints only its summary (the last try's whole)
+                "Err:5 https://archive.neon.kde.org/user noble InRelease", "  502  Bad Gateway [IP: 1.2.3.4 443]",
+                "E: The repository 'https://archive.neon.kde.org/user noble InRelease' no longer has a Release file.",
+                "in-guest: apt-get update failed", "in-guest: apt-get dist-upgrade failed (try 1 of 60): E: x"],
         "dragonfly": ["in-guest: base system: make buildworld failed"],
         "freebsd": ["Fetching foo-1.0.pkg: size mismatch, cannot continue"],
         "pacman": ["error: failed to commit transaction (conflicting files)", "grub-install: error: cannot find EFI directory.",

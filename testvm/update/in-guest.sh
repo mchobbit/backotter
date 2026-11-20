@@ -750,10 +750,28 @@ Linux)
             fi
             export APT_CONFIG=/run/bko-apt.conf
         fi
+        # Up to 60 times 15 s apart.  Each try's output goes to /run first,
+        # and only the try that worked is printed, its stdout and stderr as
+        # apt-get wrote them: a failed try is one line, its first E: line
+        # (or its first Err: line and the reason under it), so a mirror's
+        # passing 502s don't stay in the log for GuestTest2's sweep
+        # (neon24's archive.neon.kde.org, three tries, 2026-11-20).  The
+        # last failure's output is printed whole, ending the log, for
+        # GuestTest2's flake rules to read.
         tries=0
-        until $apt -o APT::Update::Error-Mode=any update; do
-            tries=$((tries + 1)); [ $tries -lt 60 ] || exit 1; sleep 15
+        until $apt -o APT::Update::Error-Mode=any update >/run/bko-update.out 2>/run/bko-update.err; do
+            tries=$((tries + 1))
+            if [ $tries -ge 60 ]; then
+                cat /run/bko-update.out; cat /run/bko-update.err >&2
+                rm -f /run/bko-update.out /run/bko-update.err; exit 1
+            fi
+            why=$(cat /run/bko-update.out /run/bko-update.err | grep -m1 '^E: ') ||
+                why=$(cat /run/bko-update.out /run/bko-update.err | grep -m1 -A1 '^Err:' | tr -s ' \n' '  ' | sed 's/ *$//')
+            say "apt-get update failed (try $tries of 60): ${why:-no E: or Err: line}"
+            sleep 15
         done
+        cat /run/bko-update.out; cat /run/bko-update.err >&2
+        rm -f /run/bko-update.out /run/bko-update.err
         # fetched CMD...: an apt-get that downloads, run again while it fails
         # at a download, up to 10 times 30 s apart (Launchpad's PPAs answered
         # every few requests with a 503 for over an hour on 2026-11-17, and

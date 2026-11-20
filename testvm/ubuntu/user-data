@@ -42,7 +42,9 @@ autoinstall:
 @STORAGE@
   late-commands:
     # Root: the same password, and the SSH key, as on the other test guests.
-    - curtin in-target -- sh -c 'echo "root:@PASSWORD_HASH@" | chpasswd -e'
+    # By usermod, no shell: inside sh -c "...", the hash's $ fields expanded
+    # to nothing, which 26.10's chpasswd -e refuses.
+    - curtin in-target -- usermod -p '@PASSWORD_HASH@' root
     - mkdir -p -m 700 /target/root/.ssh
     - echo '@AUTHORIZED_KEY@' >/target/root/.ssh/authorized_keys
     - chmod 600 /target/root/.ssh/authorized_keys

@@ -1,0 +1,10 @@
+  # Subiquity's guided "ZFS with encryption" (layout name zfs with a
+  # password), as an Ubuntu install with ZFS and "Encrypt the disk" ticked
+  # lays it out: on UEFI, GPT with an EFI system partition, /boot, swap
+  # (dm-crypt with a random key at every boot), and the pool rpool,
+  # natively encrypted with a raw key kept in a LUKS2 "keystore" on the zvol
+  # rpool/keystore, whose passphrase is asked for at every boot.
+  storage:
+    layout:
+      name: zfs
+      password: '@PASSPHRASE@'

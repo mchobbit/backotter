@@ -5,11 +5,12 @@
 # under QEMU with KVM.  (Linux Mint 22 is built on Ubuntu 24.04, so a 24.04
 # guest covers what a Mint restore depends on, minus the desktop.)
 #
-# Usage: ./make-ubuntu.sh [--arch amd64|arm64] [--uefi] [--zfs-guided | --zfs-mirror | --raid | --luks] [--name NAME] VERSION WORK_DIR
+# Usage: ./make-ubuntu.sh [--arch amd64|arm64] [--uefi] [--zfs-guided | --zfs-enc | --zfs-mirror | --raid | --luks] [--name NAME] VERSION WORK_DIR
 #   e.g. ./make-ubuntu.sh 24.04 vms/ubuntu24
 #        ./make-ubuntu.sh --zfs-mirror --name ubuntu26-zfsmirror 26.04.1 vms/ubuntu26-zfsmirror
 #        ./make-ubuntu.sh --uefi --name ubuntu26-uefi 26.04.1 vms/ubuntu26-uefi
 #        ./make-ubuntu.sh --uefi --zfs-guided --name ubuntu26-zfs 26.04.1 vms/ubuntu26-zfs
+#        ./make-ubuntu.sh --uefi --zfs-enc --name ubuntu2610-zfsenc 26.10 vms/ubuntu2610-zfsenc
 #        ./make-ubuntu.sh --uefi --raid --name ubuntu26-raid 26.04.1 vms/ubuntu26-raid
 #        ./make-ubuntu.sh --uefi --luks --name ubuntu26-luks 26.04.1 vms/ubuntu26-luks
 #        ./make-ubuntu.sh --uefi --name ubuntu24-uefi 24.04.5 vms/ubuntu24-uefi
@@ -32,7 +33,8 @@
 #                         --raid: "--uefi --disk NAME-b.qcow2 ... NAME-d.qcow2"
 #   NAME-b.qcow2          with --zfs-mirror: the second disk (--raid: NAME-b,
 #                         -c and -d.qcow2, three more), each with the snapshot
-#   zfs-passphrase        with --zfs-mirror: the pool's passphrase (mode 600)
+#   zfs-passphrase        with --zfs-mirror or --zfs-enc: the keystore's
+#                         passphrase (mode 600)
 #   console-passphrase    with --luks: the LUKS passphrase (mode 600)
 #
 # The guest, host name NAME: BIOS + MBR, /boot (1 GiB ext4), swap (2 GiB),
@@ -55,6 +57,15 @@
 # /etc/zfs/zfs-list.cache, so its boot mounts /boot/efi before bpool's /boot
 # hides it; the guest's first vm-update writes the cache
 # (update/in-guest.sh), after which /boot/efi mounts over /boot.
+#
+# --zfs-enc (with --uefi) is Subiquity's guided "ZFS with encryption"
+# (ubuntu/storage-zfs-enc.yaml), the layout an Ubuntu desktop install gets
+# from "Erase disk and install Ubuntu" with ZFS and encryption (the
+# Thinkpad's 26.10, 2026-11-19): rpool natively encrypted, its raw key in
+# /run/keystore/rpool/system.key, on ext4 in the LUKS2 volume
+# keystore-rpool on the zvol rpool/keystore, which the initramfs (dracut's
+# zfs module, Ubuntu's patch) opens with systemd-cryptsetup, asking for the
+# passphrase (zfs-passphrase) on the serial console at every boot.
 #
 # --zfs-mirror makes it two 16 GiB disks instead, with /boot on an mdadm
 # RAID 1 across both, swap on both, and rpool a two-way mirror, encrypted as
@@ -108,13 +119,14 @@ INSTALL_TIMEOUT=2400
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-ubuntu: $*" >&2; exit 1; }
 
-firmware=bios name="" mirror=no guided=no raid=no luks=no arch=amd64
+firmware=bios name="" mirror=no guided=no zfsenc=no raid=no luks=no arch=amd64
 while [[ $# -gt 0 ]]; do
     case $1 in
         --arch) arch=${2:-}; shift 2 || die "--arch takes amd64 or arm64" ;;
         --uefi) firmware=uefi; shift ;;
         --zfs-mirror) mirror=yes; shift ;;
         --zfs-guided) guided=yes; shift ;;
+        --zfs-enc) zfsenc=yes; shift ;;
         --raid) raid=yes; shift ;;
         --luks) luks=yes; shift ;;
         --name) name=$2; shift 2 ;;
@@ -122,13 +134,13 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
-[[ $# -eq 2 ]] || die "usage: $0 [--arch amd64|arm64] [--uefi] [--zfs-guided | --zfs-mirror | --raid | --luks] [--name NAME] VERSION WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 [--arch amd64|arm64] [--uefi] [--zfs-guided | --zfs-enc | --zfs-mirror | --raid | --luks] [--name NAME] VERSION WORK_DIR"
 case $arch in
     amd64) ;;
     arm64)
         [[ $(uname -m) == aarch64 ]] || die "--arch arm64 builds on an aarch64 host (Bigfoot), not on $(uname -m)"
         [[ $mirror == no ]] || die "--zfs-mirror is for BIOS only, and an arm64 guest is UEFI"
-        [[ $guided == no && $raid == no && $luks == no ]] || die "--arch arm64 builds the direct layout only, for now"
+        [[ $guided == no && $zfsenc == no && $raid == no && $luks == no ]] || die "--arch arm64 builds the direct layout only, for now"
         firmware=uefi ;;
     *) die "--arch takes amd64 or arm64, not '$arch'" ;;
 esac
@@ -138,6 +150,8 @@ esac
 [[ $guided == yes && $mirror == yes ]] && die "--zfs-guided and --zfs-mirror are two layouts"
 [[ $luks == yes && $firmware != uefi ]] && die "--luks is for UEFI only (with --uefi)"
 [[ $luks == yes && ($mirror == yes || $guided == yes || $raid == yes) ]] && die "--luks is a layout of its own"
+[[ $zfsenc == yes && $firmware != uefi ]] && die "--zfs-enc is for UEFI only (with --uefi)"
+[[ $zfsenc == yes && ($mirror == yes || $guided == yes || $raid == yes || $luks == yes) ]] && die "--zfs-enc is a layout of its own"
 version=$1
 [[ $version =~ ^[0-9]{2}\.[0-9]{2}(\.[0-9]+)?$ ]] || die "VERSION looks like 24.04 or 24.04.1, not '$version'"
 release=$(cut -d. -f1-2 <<<"$version")
@@ -154,6 +168,7 @@ storage=zfs
 [[ $firmware == uefi ]] && storage=direct
 [[ $mirror == yes ]] && storage=zfs-mirror
 [[ $guided == yes ]] && storage=zfs-guided
+[[ $zfsenc == yes ]] && storage=zfs-enc
 [[ $raid == yes ]] && storage=raid
 [[ $luks == yes ]] && storage=luks
 DISK_B=$guest_name-b.qcow2
@@ -214,7 +229,7 @@ password=$(openssl rand -base64 18)
 printf '%s\n' "$password" >root-password
 hash=$(printf '%s' "$password" | openssl passwd -6 -stdin)
 # Letters and digits only, so it needs no quoting anywhere.
-[[ $mirror == yes ]] && openssl rand -base64 24 | tr -dc 'A-Za-z0-9' >zfs-passphrase
+[[ $mirror == yes || $zfsenc == yes ]] && openssl rand -base64 24 | tr -dc 'A-Za-z0-9' >zfs-passphrase
 [[ $luks == yes ]] && openssl rand -base64 24 | tr -dc 'A-Za-z0-9' >console-passphrase
 [[ -e id_ed25519 ]] || ssh-keygen -q -t ed25519 -N '' -C "root@$guest_name test guest" -f id_ed25519
 umask 022

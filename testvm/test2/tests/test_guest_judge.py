@@ -2216,6 +2216,11 @@ class FreezeLines(unittest.TestCase):
         alone = "starting network\r\n" + self.FD + "\n\r" + self.RC + "\r\n"
         self.assertEqual(J.unsplice(alone), alone)
         self.assertEqual(J.unsplice("a\r\nb\r\n"), "a\r\nb\r\n")
+        # a probe line with a prefix of its own is whole: a syslog file's (\n) and NetBSD's
+        # console's (a timestamp, \r\n) keep their next line as it is
+        for t in ("Nov 20 12:00:01 obsd /bsd: " + self.FD + "\nNov 20 12:00:01 obsd /bsd: wsdisplay0 at vga1 mux 1\n",
+                  "[   1.0101218] fd0 at fdc0 drive 0: 1.44MB, 80 cyl, 2 head, 18 sec\r\n[   1.0383561] wd0 at atabus0 drive 0\r\n"):
+            self.assertEqual(J.unsplice(t), t, repr(t))
         # every boot's lines are the same, whatever the host's timing
         base = sorted(want)
         for t in self.OB:

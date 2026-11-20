@@ -1881,8 +1881,11 @@ def normalize(line, run_dirs=(), erase=True, rejoin=True):
 # unknown", then the kernel's newline, the tty's \r and the rest " smtpd-dispatcher ... sshd."),
 # so each boot made two new lines (openbsd8, openbsd8-crypt in t2v-20261120T0601-2cfb; they were
 # accepted line by line).  Digits or N, so a baseline's normalized lines are read the same way.
+# Only with its "\n\r" ending, the kernel's own: a line that merely has a prefix before the probe
+# (a syslog file's "Nov 20 12:00:01 host /bsd: fd0 at ...\n", NetBSD's "[   1.0101218] fd0 at
+# ...\r\n" on its console) is whole, and its prefix isn't glued onto the next line.
 _LATE = (r"fd(?:\d+|N) at fdc(?:\d+|N) drive (?:\d+|N): ",)
-_SPLICE = re.compile(r"(?<![^\r\n])([^\r\n]+?)((?:" + "|".join(_LATE) + r")[^\r\n]*)\n\r?")
+_SPLICE = re.compile(r"(?<![^\r\n])([^\r\n]+?)((?:" + "|".join(_LATE) + r")[^\r\n]*)\n\r")
 _SPLICED = re.compile(r".+?((?:" + "|".join(_LATE) + r").*)\Z")
 
 

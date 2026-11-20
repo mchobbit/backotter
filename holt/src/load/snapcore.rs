@@ -238,7 +238,7 @@ impl Builder<'_> {
             match self.names.mapping.target_of(&disk) {
                 Some(tgt) => {
                     let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
-                    out.push(Cmd::new(&["sh", "-c", &format!("{exe} snapcore-boot-areas {} {disk} /dev/{tgt}", super::shell_quote(&self.opts.layout))]).why(format!(
+                    out.push(Cmd::new(&["sh", "-c", &boot_areas_script(&exe, &self.opts.layout, &disk, &format!("/dev/{tgt}"))]).why(format!(
                         "{disk} -> /dev/{tgt}: the gadget's MBR code, and BIOS Boot's core.img when it has one, byte for byte (UEFI boots shim from the seed)"
                     )));
                 }
@@ -261,6 +261,14 @@ impl Builder<'_> {
         out.extend(self.boot_tail(&t));
         out
     }
+}
+
+/// The `sh -c` script that runs `EXE snapcore-boot-areas LAYOUT DISK DEVICE`,
+/// each word shell-quoted (a word with nothing to quote stays bare): bko-holt
+/// may run from a stick mounted at a path with a space.
+fn boot_areas_script(exe: &str, layout: &str, disk: &str, dev: &str) -> String {
+    let q = super::shell_quote;
+    format!("{} snapcore-boot-areas {} {} {}", q(exe), q(layout), q(disk), q(dev))
 }
 
 /// `bko-holt snapcore-boot-areas LAYOUT DISK DEVICE` (not in the usage: run
@@ -351,6 +359,23 @@ mod tests {
     fn run(script: &str) -> (bool, String, String) {
         let o = std::process::Command::new("sh").arg("-c").arg(script).output().unwrap();
         (o.status.success(), String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned())
+    }
+
+    /// RustAudit1 H8-03: bko-holt run from a path with a space, quotes, $,
+    /// a backtick and a newline is still one word; a plain one stays bare.
+    #[test]
+    fn boot_areas_script_quotes_its_words() {
+        assert_eq!(boot_areas_script("/usr/local/bin/bko-holt", "/run/x/l.json", "vda", "/dev/vdb"), "/usr/local/bin/bko-holt snapcore-boot-areas /run/x/l.json vda /dev/vdb");
+        let t = Tree::new("snapcore-exe");
+        let dir = format!("{}/BKO STICK'\"$HOME`id`\nx", t.root().display());
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = format!("{dir}/bko-holt");
+        std::fs::write(&exe, "#!/bin/sh\nfor a in \"$@\"; do printf '%s|' \"$a\"; done\n").unwrap();
+        std::process::Command::new("chmod").arg("755").arg(&exe).status().unwrap();
+        let layout = format!("{dir}/l a.json");
+        let (ok, out, err) = run(&boot_areas_script(&exe, &layout, "vda", "/dev/vdb"));
+        assert!(ok, "{err}");
+        assert_eq!(out, format!("snapcore-boot-areas|{layout}|vda|/dev/vdb|"));
     }
 
     /// A restored tree as uc24-fde's: one kernel, two recovery systems.

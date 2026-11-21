@@ -336,16 +336,22 @@ impl Run<'_> {
         PathBuf::from(format!("{}{p}", self.t))
     }
 
-    fn edit(&mut self, path: &Path, f: impl Fn(&str) -> Result<String, String>) {
-        let Ok(old) = std::fs::read_to_string(path) else { return };
+    /// PATH through F, written back and logged when F changed it; whether
+    /// it did.  A file that isn't there is left alone.
+    fn edit(&mut self, path: &Path, f: impl Fn(&str) -> Result<String, String>) -> bool {
+        let Ok(old) = std::fs::read_to_string(path) else { return false };
         match f(&old) {
             Ok(new) if new != old => match std::fs::write(path, &new) {
-                Ok(()) => self.log += &format!("bko-holt rewrite: {}:\n{}", path.display(), changed_lines(&old, &new)),
+                Ok(()) => {
+                    self.log += &format!("bko-holt rewrite: {}:\n{}", path.display(), changed_lines(&old, &new));
+                    return true;
+                }
                 Err(e) => self.errors.push(format!("{}: {e}", path.display())),
             },
             Ok(_) => {}
             Err(e) => self.errors.push(format!("{}: {e}", path.display())),
         }
+        false
     }
 
     fn rewrite(&mut self, c: &Change, layout: &Value, btrfs_left: bool) {
@@ -387,14 +393,21 @@ impl Run<'_> {
             }
         }
         // GRUB's environment block, on a btrfs only: the grubenv files on
-        // this filesystem stop pointing at it, and keep its variables.
-        if let Some(vars) = reformat::grub_env_block(layout, c) {
+        // this filesystem stop pointing at it, and keep its variables.  The
+        // file decides, not the layout: a dump made before probe/btrfs.rs
+        // read the block (79ff930) has no grub_env_block, and its grubenv's
+        // env_block= still has to go (RustAudit1 XH1-01).
+        if c.from == "btrfs" {
+            let block = reformat::grub_env_block(layout, c);
+            let vars = block.clone().unwrap_or_else(|| Value::Obj(Vec::new()));
             for d in boot_dirs(layout) {
                 for g in ["grub2/grubenv", "grub/grubenv"] {
                     let p = format!("{d}/{g}");
                     if reformat::holds(layout, c, &p) {
                         let at = self.at(&p);
-                        self.edit(&at, |t| grubenv_unblock(t, &vars));
+                        if self.edit(&at, |t| grubenv_unblock(t, &vars)) && block.is_none() {
+                            self.log += &format!("bko-holt rewrite: {p}: the dump doesn't have the variables of GRUB's environment block (a dump made before bko-holt read it); env_block= taken out without them\n");
+                        }
                     }
                 }
             }
@@ -802,6 +815,24 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         let g = std::fs::read_to_string(format!("{root}/boot/grub2/grubenv")).unwrap();
         assert!(g.len() == 1024 && g.starts_with("# GRUB Environment Block\nsaved_entry=x\nnext_entry=1\n#"), "{g}");
         assert!(run.log.contains("    - env_block=512+1\n") && run.log.contains("    + next_entry=1\n"), "{}", run.log);
+        // RustAudit1 XH1-01: a dump from before the probe read the block
+        // has no grub_env_block, and env_block= still goes, with a log line.
+        let no_block = crate::json::parse(
+            r#"{"boot": {"esps": [{"mounted_at": "/efi"}]},
+  "storage": {"disks": [{"name": "nvme0n1", "partitions": [{"name": "nvme0n1p2", "content": {"type": "btrfs"}}]}],
+              "fstab": [{"file": "/efi"}, {"file": "/"}, {"file": "/home"}]}}"#,
+        )
+        .unwrap();
+        w("/boot/grub2/grubenv", &env);
+        run.log.clear();
+        run.rewrite(&change(), &no_block, false);
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        let g = std::fs::read_to_string(format!("{root}/boot/grub2/grubenv")).unwrap();
+        assert!(g.len() == 1024 && g.starts_with("# GRUB Environment Block\nsaved_entry=x\n#") && !g.contains("env_block="), "{g}");
+        assert!(run.log.contains("    - env_block=512+1\n") && run.log.contains("/boot/grub2/grubenv: the dump doesn't have the variables"), "{}", run.log);
+        run.log.clear();
+        run.rewrite(&change(), &no_block, false);
+        assert!(run.errors.is_empty() && run.log.is_empty(), "{:?} {}", run.errors, run.log);
         // An entry the rewrite missed fails the check.
         w("/efi/loader/entries/other.conf", "options root=UUID=x rootflags=subvol=@\n");
         run.leftovers(&change(), &layout);

@@ -30,4 +30,9 @@ test hosts.  Stdlib only; Python 3.9 or newer.
 # resize carries the filesystem's free inodes and blocks onto its new
 # totals (edits.usage_kept), and rule 1 holds a fitted ext's inodes in use
 # to load's own check (fitcalc.ext_inodes_after): bs2a-20261118-1757.
-GENERATOR = "4"
+# 5 (2026-11-21): fail-001, fail-002 and fail-003 fixed (rustic_core
+# 6b1e432, bko-holt e8986b2) and their steers lifted: Alpine's deep tree
+# goes past PATH_MAX (alpine-small-1), /boot's partition is renumbered on a
+# UEFI source that boots from the fallback loader, and --removable is drawn
+# for Alpine and upstream UEFI GRUB again.
+GENERATOR = "5"

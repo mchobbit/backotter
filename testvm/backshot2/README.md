@@ -207,15 +207,17 @@ that sources share (`dracut`, `mkinitcpio`, `booster`, `initramfs-tools`,
 refuses and why.  `families.hooks(source, dump)` merges them, once per
 case: rule 2's tables and versions, the quirks run after the three rules,
 rule 3's texts and patterns, the content recipe (Alpine's alone until A7),
-the sweep, the steer around known findings (`fail-003` for Alpine and
-every upstream UEFI GRUB), and tier 0's mode (`chroot`; NixOS `plan`).  A
+the sweep, the steer around known findings (`fail-003`'s for Alpine and
+every upstream UEFI GRUB, which runs only while `generate.KNOWN` names it:
+fixed since GENERATOR 5), and tier 0's mode (`chroot`; NixOS `plan`).  A
 source with no family (the BSDs, illumos, Haiku, Redox, Sculpt OS) is
 `families.skipped()`: `PLANNED` names the piece that builds it.  Through
 `GENERATOR` 2, Alpine's cases were byte-identical to those drawn before the
 interface (`tests/golden/alpine.json`); each family's golden is rewritten
 only with a new `GENERATOR` (3, 2026-11-17: fail-004 and fail-005 back in
 the draws; 4, 2026-11-18: geometry edits and resizes keep the free inodes
-and blocks, and rule 1 checks a fitted ext's inodes as load does).
+and blocks, and rule 1 checks a fitted ext's inodes as load does; 5,
+2026-11-21: fail-001, fail-002 and fail-003 fixed and back in the draws).
 
 Two more traits came with Vanilla OS (`vanilla3`): `abroot` (the master
 grub.cfg's entries and each root's abroot.cfg as rule 3 texts; load
@@ -280,10 +282,12 @@ the corpus joins its family's golden as one more entry under `guests` and
 - **Known findings are steered around** (`generate.KNOWN`), so the draws can
   find new ones; each stays in `cases/`, and comes back into the draws once
   fixed.
-- **The deep tree** of the content drift is planted just under PATH_MAX
-  (recipe `alpine-small-2`, `bs2lib/families/alpine.py`) until rustic-bko
-  keeps paths past it (fail-001); `alpine-small-1`, past it, is the corpus
-  case.  fsmeta.py walks by path, so
+- **The deep tree** of the content drift goes past PATH_MAX (recipe
+  `alpine-small-1`, `bs2lib/families/alpine.py`) since GENERATOR 5:
+  rustic-bko keeps such paths since rustic_core 6b1e432 (0.13.0+backotter.17,
+  fail-001), so a run needs bko-bin's rustic-bko at least that new.
+  Through GENERATOR 4 it was planted just under PATH_MAX (`alpine-small-2`).
+  fsmeta.py walks by path, so
   it skips `srv/bs2/deep0` and `bs2-host deep` compares that subtree by
   directory fds.
 - **`--new-uuids`** is drawn only when the build plans it (`caps.json`):

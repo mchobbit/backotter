@@ -2,11 +2,12 @@
 EndeavourOS, Garuda and Manjaro, Gentoo, Chimera's ZFS guest): GRUB
 without Debian's patches.
 
-- Known fail-003 (testvm/backshot2/cases/fail-003-removable-force-extra):
-  load's `--removable` adds grub-install --force-extra-removable, Debian's
-  own option, which upstream GRUB refuses ("unrecognized option").  Found
-  on Alpine (whose family steers around it); the same grub-install runs
-  for these sources, so the steer drops --removable here too.
+- fail-003 (testvm/backshot2/cases/fail-003-removable-force-extra), fixed
+  in bko-holt e8986b2: load's `--removable` added grub-install
+  --force-extra-removable, Debian's own option, which upstream GRUB refuses
+  ("unrecognized option").  Found on Alpine; the same grub-install runs for
+  these sources.  Its steer (no --removable) runs only while generate.KNOWN
+  names it, for a replay of an older bko-holt.
 - Matches a UEFI GRUB source whose boot stage is load's generic
   grub-install arm: not through shim (Fedora's and AnduinOS's arms run no
   grub-install), not Fedora's /boot/grub2, not a store system, and no
@@ -28,12 +29,15 @@ def upstream_efi_grub(source, dump):
 
 
 def no_removable(dump, drifted, edits, opts):
+    """fail-003's steer, while generate.KNOWN names it (an older bko-holt)."""
+    from .. import generate as G
+    if "fail-003" not in G.KNOWN:
+        return opts
     return [o for o in opts if o != "--removable"]
 
 
 TRAITS = [Trait(
     name="grub_upstream",
     matches=upstream_efi_grub,
-    known={"fail-003": "--removable runs grub-install --force-extra-removable, Debian's own option, which upstream GRUB refuses"},
     steer=no_removable,
 )]

@@ -177,10 +177,24 @@ class TestGrubUpstream(unittest.TestCase):
         for g in ("alpine324", "debian13-stack", "ubuntu26-uefi", "fedora44-uefi", "kinoite44", "anduinos2", "nixos2605"):
             self.assertNotIn("grub_upstream", F.hooks(g, K.dump(g)).names, g)
 
-    def test_no_removable(self):
+    def test_removable_drawn_again(self):
+        # fail-003 is fixed (bko-holt e8986b2): upstream GRUB's sources draw
+        # --removable again; the steer drops it only while generate.KNOWN names it.
+        from bs2lib import generate as G
+        self.assertNotIn("fail-003", G.KNOWN)
         for g in ("gentoo", "manjaro", "garuda", "biglinux"):
-            self.assertFalse(any("--removable" in c["load_options"] for c in K.cases(g)), g)
+            self.assertTrue(any("--removable" in c["load_options"] for c in K.cases(g)), g)
         self.assertTrue(any("--removable" in c["load_options"] for c in K.cases("ubuntu26-uefi")))
+        d = K.dump("gentoo")
+        h = F.hooks("gentoo", d)
+        self.assertEqual(h.steer(d, d, [], ["--removable"]), ["--removable"])
+        known = G.KNOWN
+        try:
+            G.KNOWN = tuple(known) + ("fail-003",)
+            self.assertEqual(h.steer(d, d, [], ["--removable", "--x"]), ["--x"])
+            self.assertEqual(F.hooks("ubuntu26-uefi", K.dump("ubuntu26-uefi")).steer(d, d, [], ["--removable"]), ["--removable"])
+        finally:
+            G.KNOWN = known
 
 
 if __name__ == "__main__":

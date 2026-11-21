@@ -386,6 +386,33 @@ class TestGenerator(unittest.TestCase):
         self.assertFalse(any(e["op"] == "target_size" for e in c["edits"]))
         self.assertIn("target_size: fail-005", st.discarded)
 
+    def test_fail_002_steer_only_while_known(self):
+        # fail-002 is fixed (bko-holt e8986b2): /boot's partition on a UEFI
+        # source that boots from the fallback loader is renumbered again; the
+        # steer keeps it out only while generate.KNOWN names it.
+        import random
+        d = corpus("gentoo")   # GRUB's copy at EFI/BOOT; /boot on vda3
+        self.assertTrue(G.boots_from_fallback(d))
+        nums = {p["number"] for p in dumpx.disk(d)["partitions"] if p["name"] in G.boot_parts(d)}
+        self.assertTrue(nums)
+
+        def froms():
+            out = set()
+            for k in range(200):
+                r = G.draw_renumber(random.Random(k), d)
+                out |= {e[1]["from"] for e in r or []}
+            return out
+        self.assertNotIn("fail-002", G.KNOWN)
+        self.assertTrue(froms() & nums)
+        known = G.KNOWN
+        try:
+            G.KNOWN = tuple(known) + ("fail-002",)   # the steer, for an older bko-holt
+            got = froms()
+        finally:
+            G.KNOWN = known
+        self.assertTrue(got)
+        self.assertFalse(got & nums)
+
     def test_new_uuids_only_when_built(self):
         for seed in range(100):
             self.assertNotIn("--new-uuids", G.generate("ubuntu26-luks", None, LUKS, seed)["load_options"])

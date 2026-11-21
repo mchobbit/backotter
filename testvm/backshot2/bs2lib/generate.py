@@ -370,19 +370,24 @@ def boots_from_fallback(dump):
 
 # Known findings the generator steers around, so that the cases it draws can
 # find new ones (each has its own case in testvm/backshot2/cases/, run with
-# the corpus, and comes back into the draws once it's fixed).  These are
-# bko-holt load's, for any source; a family's or trait's own are its
-# `known` and `steer` (fail-003, upstream GRUB's missing
-# --force-extra-removable: families/alpine.py and grub_upstream.py):
-#   fail-002  load leaves the source's fallback loader (EFI/BOOT/BOOTX64.EFI)
-#             as restored, its embedded prefix naming /boot's old partition
-#             number: no renumbering of /boot's partition on a UEFI source
-#             that boots from it
+# the corpus, and comes back into the draws once it's fixed).  None today.
 # Fixed and back in the draws (their steers stay, keyed on the name, for a
-# replay of an older bko-holt): fail-004 (1 KiB ext blocks: load's -E
-# resize= counted the first data block) and fail-005 (--fit-largest kept a
-# shrunk ext's inode count: fitcalc.ext_inodes_past_groups), both 2026-11-17.
-KNOWN = ("fail-002",)
+# replay of an older bko-holt or rustic-bko):
+#   fail-002  load left the source's fallback loader (EFI/BOOT/BOOTX64.EFI)
+#             as restored, its embedded prefix naming /boot's old partition
+#             number; its steer: no renumbering of /boot's partition on a
+#             UEFI source that boots from it (fixed in bko-holt e8986b2)
+#   fail-003  load's --removable ran grub-install --force-extra-removable,
+#             Debian's own option, which upstream GRUB refuses; its steer
+#             (families/alpine.py, grub_upstream.py): no --removable on those
+#             sources (fixed in bko-holt e8986b2)
+#   fail-004  1 KiB ext blocks: load's -E resize= counted the first data block
+#   fail-005  --fit-largest kept a shrunk ext's inode count
+#             (fitcalc.ext_inodes_past_groups); both fixed 2026-11-17
+# fail-001 (rustic-bko skipped paths past PATH_MAX, fixed in rustic_core
+# 6b1e432, 0.13.0+backotter.17) had no steer here: Alpine's recipe kept the
+# deep tree under PATH_MAX (families/alpine.py RECIPE).
+KNOWN = ()
 
 
 def boot_parts(d):

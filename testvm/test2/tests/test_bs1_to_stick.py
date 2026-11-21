@@ -4,7 +4,8 @@ BACKOTTER partition has the SSH keys that make it start sshd
 booted with SSH off, and the controller waited 7 min for nothing, twice
 (2026-11-21).  No root, no firmware: the whole script runs against a fake
 bs1-common, /sys under a temporary directory, and fake blkid, lsblk, mount,
-umount and efibootmgr.  Needs bash 4 and ssh-keygen (Linux hosts)."""
+umount, efibootmgr and python3 (for bs1-efi).  Needs bash (3.2, the Mac's,
+will do) and ssh-keygen."""
 
 import os
 import shutil
@@ -18,18 +19,21 @@ TESTS = Path(__file__).resolve().parent
 BS1 = TESTS.parent.parent / "realworld" / "backshot1"
 
 
-def modern_bash():
-    for b in ("bash", "/usr/local/bin/bash", "/opt/homebrew/bin/bash"):
+def newest_bash():
+    """The newest bash here: the laptops run 5, but the script keeps to 3.2."""
+    best = None
+    for b in ("/opt/homebrew/bin/bash", "/usr/local/bin/bash", "bash", "/bin/bash"):
         try:
             out = subprocess.run([b, "-c", "echo ${BASH_VERSINFO[0]}"], capture_output=True, text=True, timeout=10)
         except (OSError, subprocess.SubprocessError):
             continue
-        if out.returncode == 0 and out.stdout.strip().isdigit() and int(out.stdout.strip()) >= 4:
-            return b
-    return None
+        v = out.stdout.strip()
+        if out.returncode == 0 and v.isdigit() and (best is None or int(v) > best[0]):
+            best = (int(v), b)
+    return best and best[1]
 
 
-BASH = modern_bash()
+BASH = newest_bash()
 KEYGEN = shutil.which("ssh-keygen")
 
 
@@ -42,7 +46,7 @@ def keygen(path, comment):
     subprocess.run([KEYGEN, "-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(path)], check=True)
 
 
-@unittest.skipUnless(BASH and KEYGEN and shutil.which("readlink"), "needs bash 4 and ssh-keygen")
+@unittest.skipUnless(BASH and KEYGEN and shutil.which("readlink"), "needs bash and ssh-keygen")
 class ToStick(unittest.TestCase):
     def setUp(self):
         self.t = Path(tempfile.mkdtemp(prefix="bs1-to-stick-"))
@@ -88,17 +92,32 @@ case "$*" in
 *) exit 1 ;;
 esac
 """)
-        exe(b / "findmnt", "#!/bin/sh\nexit 0\n")
+        # BACKOTTER is mounted already (a desktop's udisks) where mounted-at says.
+        exe(b / "findmnt", f"""#!/bin/sh
+case "$*" in
+*"-S /dev/sdz3"*) [ -e {t}/mounted-at ] || exit 1; cat {t}/mounted-at ;;
+esac
+exit 0
+""")
         exe(b / "mount", f"""#!/bin/sh
 echo "mount $*" >>{t}/mounts
 for a; do dev=$tgt; tgt=$a; done
 case $dev in
-/dev/sdz3) cp -R {t}/backotter-part/. "$tgt"/ ;;
+/dev/sdz3) [ ! -e {t}/mount-fails ] || exit 32; cp -R {t}/backotter-part/. "$tgt"/ ;;
 /dev/sdz2) mkdir -p "$tgt/EFI/BOOT" && : >"$tgt/EFI/BOOT/BOOTX64.EFI" ;;
 *) exit 32 ;;
 esac
 """)
-        exe(b / "umount", f'#!/bin/sh\necho "umount $*" >>{t}/mounts\nfind "$1" -mindepth 1 -delete\n')
+        exe(b / "umount", f"""#!/bin/sh
+echo "umount $*" >>{t}/mounts
+# Busy, the first time only.
+if [ -e {t}/umount-fails-once ]; then rm {t}/umount-fails-once; exit 32; fi
+find "$1" -mindepth 1 -delete
+""")
+        exe(b / "python3", f"""#!/bin/sh
+echo "$*" >>{t}/efivarfs.log
+case "$*" in *" list") echo "BootNext: 0002"; echo "BootOrder: 0001" ;; esac
+""")
         exe(b / "efibootmgr", f"""#!/bin/sh
 [ $# -eq 0 ] || echo "$*" >>{t}/efi.log
 case "$*" in *--create*) : >{t}/created ;; esac
@@ -119,21 +138,29 @@ echo "Boot0001* Linux"
             # FAT has no modes: anyone may read it.
             os.chmod(self.part / "ssh_host_ed25519_key", 0o644)
 
-    def run_it(self):
-        env = {"PATH": f"{self.bin}:/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C", "TMPDIR": str(self.t / "tmp")}
+    def run_it(self, **extra):
+        env = {"PATH": f"{self.bin}:/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C", "TMPDIR": str(self.t / "tmp"),
+               **extra}
         return subprocess.run([BASH, str(self.here / "bs1-to-stick")], capture_output=True, text=True,
                               timeout=30, env=env)
 
-    def efi_calls(self):
-        p = self.t / "efi.log"
+    def efi_calls(self, log="efi.log"):
+        p = self.t / log
         return p.read_text() if p.exists() else ""
 
+    def mounts(self):
+        p = self.t / "mounts"
+        return p.read_text().splitlines() if p.exists() else []
+
+    def assert_no_temp(self):
+        self.assertEqual(list((self.t / "tmp").iterdir()), [], "temporary files left")
+
     def assert_clean(self):
-        mounts = (self.t / "mounts").read_text().splitlines()
+        mounts = self.mounts()
         self.assertEqual(sum(m.startswith("mount ") for m in mounts),
                          sum(m.startswith("umount ") for m in mounts), mounts)
-        self.assertIn("mount -t vfat -o ro /dev/sdz3", (self.t / "mounts").read_text())
-        self.assertEqual(list((self.t / "tmp").iterdir()), [], "temporary files left")
+        self.assertIn("mount -t vfat -o ro,nosuid,nodev,noexec /dev/sdz3", mounts[0])
+        self.assert_no_temp()
 
     def assert_stopped(self, r, *why):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
@@ -199,6 +226,70 @@ echo "Boot0001* Linux"
         self.assertIn("not checking that the stick lets the controller's key in", r.stdout)
         self.assertIn("not checking the stick's host key against the pinned one", r.stdout)
         self.assertIn("--bootnext", self.efi_calls())
+
+    def desktop_mounted(self):
+        """BACKOTTER read-write under /run/media, where findmnt -r writes a space as \\x20."""
+        at = self.t / "run" / "media" / "m e" / "BACKOTTER"
+        shutil.copytree(self.part.parent, at)
+        (self.t / "mounted-at").write_text(str(at).replace(" ", "\\x20") + "\n")
+        return at
+
+    def test_desktop_mounted_stick_is_read_where_it_is(self):
+        self.stick_keys()
+        at = self.desktop_mounted()
+        r = self.run_it()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"is mounted at {at} already", r.stdout)
+        self.assertIn("has the SSH keys", r.stdout)
+        self.assertFalse([m for m in self.mounts() if "sdz3" in m or str(at) in m], self.mounts())
+        self.assertTrue((at / "backotter" / "authorized_keys").exists(), "the desktop's mount was touched")
+        self.assertIn("--bootnext 0002", self.efi_calls())
+        self.assert_no_temp()
+
+    def test_desktop_mounted_stick_without_keys_stops(self):
+        self.stick_keys(auth=False, host=False)
+        at = self.desktop_mounted()
+        r = self.run_it()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("BootNext is left alone", r.stdout)
+        self.assertEqual(self.efi_calls(), "")
+        self.assertFalse([m for m in self.mounts() if "sdz3" in m or str(at) in m], self.mounts())
+        self.assertTrue((at / "backotter" / "settings.toml").exists(), "the desktop's mount was touched")
+        self.assert_no_temp()
+
+    def test_mount_failure_stops_and_cleans_up(self):
+        self.stick_keys()
+        (self.t / "mount-fails").touch()
+        r = self.run_it()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("can't mount /dev/sdz3, the stick's BACKOTTER partition", r.stdout)
+        self.assertEqual(self.efi_calls(), "")
+        self.assert_no_temp()
+
+    def test_busy_unmount_stops_and_the_trap_unmounts(self):
+        self.stick_keys()
+        (self.t / "umount-fails-once").touch()
+        r = self.run_it()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("can't unmount /dev/sdz3", r.stdout)
+        self.assertEqual(self.efi_calls(), "")
+        mounts = self.mounts()
+        self.assertEqual(sum(m.startswith("umount ") for m in mounts), 2, mounts)
+        self.assert_no_temp()
+
+    def test_efivarfs_no_keys_stops_before_bs1_efi(self):
+        self.stick_keys(auth=False, host=False)
+        r = self.run_it(BS1_EFI="efivarfs")
+        self.assert_stopped(r, "no backotter/authorized_keys", "no backotter/ssh_host_ed25519_key")
+        self.assertEqual(self.efi_calls("efivarfs.log"), "", "bs1-efi ran")
+
+    def test_efivarfs_keys_present_proceeds(self):
+        self.stick_keys()
+        r = self.run_it(BS1_EFI="efivarfs")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.efi_calls(), "")
+        self.assertIn(" oneshot BKO rescue /dev/sdz2 \\EFI\\BOOT\\BOOTX64.EFI", self.efi_calls("efivarfs.log"))
+        self.assert_clean()
 
 
 if __name__ == "__main__":

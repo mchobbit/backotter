@@ -35,15 +35,37 @@ internal=$(internal_disk) || die "no single disk has serial $INTERNAL_SERIAL"
 # `backshot1 stage`), that the controller's key is among them and the host
 # key is the one the controller pins.
 KEY_LINE='^(ssh-(ed25519|rsa)|ecdsa-sha2-[a-z0-9-]+|sk-[a-z0-9@.-]+) '
+# Global, not local: the EXIT trap reads them after a die, and bash 3 (the
+# Mac's, which runs the tests) has dropped a function's locals by then.
+stick_kt='' stick_own=''
+stick_cleanup() {
+    [[ -n $stick_kt ]] || return 0
+    # Never rm -r: $stick_kt/mnt may still be the stick.
+    if [[ -n $stick_own ]]; then umount "$stick_kt/mnt" 2>/dev/null; rmdir "$stick_kt/mnt" 2>/dev/null; fi
+    rm -f "$stick_kt/keys" "$stick_kt/want" "$stick_kt/host"
+    rmdir "$stick_kt" 2>/dev/null
+    stick_kt=''
+}
 check_stick_keys() {
-    local kt cfg fix why=() pub
+    local kt cfg fix why=() pub m
     fix="on the Mac: stick/add-ssh-key.sh --host-key ~/.ssh/backshot1/ssh_host_ed25519_key /dev/<stick> ~/.ssh/backshot1/id_ed25519.pub (the stick, unmounted, as the Mac names it; here it's /dev/$disk), or copy id_ed25519.pub to BACKOTTER/backotter/authorized_keys and ssh_host_ed25519_key beside it"
     kt=$(mktemp -d) || die "can't make a temporary directory"
-    mkdir "$kt/mnt"
-    # Never rm -r: $kt/mnt may still be the stick.
-    trap 'umount "$kt/mnt" 2>/dev/null; rmdir "$kt/mnt" 2>/dev/null; rm -f "$kt/keys" "$kt/want" "$kt/host"; rmdir "$kt" 2>/dev/null' EXIT
-    mount -t vfat -o ro "$config" "$kt/mnt" || die "can't mount $config, the stick's BACKOTTER partition"
-    cfg=$kt/mnt/backotter
+    stick_kt=$kt
+    trap stick_cleanup EXIT
+    # A desktop (udisks, /run/media/...) may have BACKOTTER mounted read-write
+    # already, and Linux won't mount it read-only beside that: read it there.
+    # findmnt -r writes a space as \x20.
+    m=$(findmnt -rno TARGET -S "$config" 2>/dev/null | head -n 1)
+    if [[ -n $m ]]; then
+        m=$(printf '%b' "$m")
+        say "the stick's BACKOTTER ($config) is mounted at $m already: reading it there"
+        cfg=$m/backotter
+    else
+        mkdir "$kt/mnt" || die "can't make a mount point in $kt"
+        stick_own=1
+        mount -t vfat -o ro,nosuid,nodev,noexec "$config" "$kt/mnt" || die "can't mount $config, the stick's BACKOTTER partition"
+        cfg=$kt/mnt/backotter
+    fi
     # FAT, perhaps edited on Windows: no carriage returns.
     tr -d '\r' 2>/dev/null <"$cfg/authorized_keys" | grep -E "$KEY_LINE" | cut -d' ' -f1,2 | sort -u >"$kt/keys"
     if [[ ! -s $kt/keys ]]; then
@@ -70,10 +92,12 @@ check_stick_keys() {
             why+=("backotter/ssh_host_ed25519_key isn't the host key the controller pins (the drive's backshot1/keys/ssh_host_ed25519_key)")
         fi
     fi
-    umount "$kt/mnt" || die "can't unmount $config"
-    rmdir "$kt/mnt"
-    rm -f "$kt/keys" "$kt/want" "$kt/host"
-    rmdir "$kt"
+    if [[ -n $stick_own ]]; then
+        umount "$kt/mnt" || die "can't unmount $config"
+        rmdir "$kt/mnt"
+        stick_own=''
+    fi
+    stick_cleanup
     trap - EXIT
     if [[ ${#why[@]} -gt 0 ]]; then
         local w

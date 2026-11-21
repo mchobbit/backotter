@@ -921,7 +921,7 @@ one considered).  Two things make that hold, on every platform alike:
 
 Per platform:
 
-- **Linux**: OpenZFS 2.4.1 on the image.  ubuntu24 (OpenZFS 2.2.2, the
+- **Linux**: OpenZFS 2.4.4 on the image (Ubuntu 26.10 base, kernel 7.3.0, since 2026-11-21; the same 47 features as 2.4.1).  ubuntu24 (OpenZFS 2.2.2, the
   oldest ZFS guest) gets exactly its 39 features; ubuntu26-zfs's `bpool`,
   the pool GRUB reads, gets its 11 and none of the 36 it has disabled.
 - **illumos**: OmniOS r151058.  illumos-gate master, illumos-joyent

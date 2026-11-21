@@ -102,6 +102,13 @@ class TabEdit(Tmp):
         self.assertEqual(out, "nvme0n1p3_crypt\tUUID=abc\tnone\tluks,discard,keyscript=/usr/local/lib/backshot1/unlock-key\n")
         self.assertEqual(self.edit(out, "nvme0n1p3_crypt|D|abc|0|0"), out)
 
+    def test_d_replaces_decrypt_keyctl_and_keeps_the_rest(self):
+        line = "luks-197e UUID=197e none luks,keyscript=decrypt_keyctl,no-read-workqueue,no-write-workqueue,discard\n"
+        out = self.edit(line, "luks-197e|D|197e|0|0")
+        self.assertEqual(out, "luks-197e\tUUID=197e\tnone\tluks,no-read-workqueue,no-write-workqueue,discard,"
+                              "keyscript=/usr/local/lib/backshot1/unlock-key\n")
+        self.assertEqual(self.edit(out, "luks-197e|D|197e|0|0"), out)
+
     def test_d_adds_no_line(self):
         self.assertEqual(self.edit("other UUID=x none luks\n", "root|D|abc|0|0"), "other UUID=x none luks\n")
 
@@ -2224,6 +2231,219 @@ class AdoptGrub(GrubFakes):
         self.grub_on("/dev/nvme0n1p1")
         out = self.adopt(rc=1)
         self.assertIn("family S (initramfs: mkinitcpio)", out)
+
+
+MX_ROOT = "197e0ff7-8d83-4bbd-941c-bd672b29986b"
+MX_HOME = "e703bbfd-11da-4851-8689-d2b93dcd796b"
+MX_OPTS = "luks,keyscript=decrypt_keyctl,no-read-workqueue,no-write-workqueue,discard"
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class AdoptD(Tmp):
+    """luks_adopt and luks_off on a fake MX Linux 25.3 (the Thinkpad,
+    2026-11-21): Debian 13 under sysvinit, initramfs-tools, root and /home
+    each LUKS with Debian's keyscript=decrypt_keyctl; the initramfs opens
+    root, cryptdisks-early /home.  Both are family D's: our keyscript in
+    decrypt_keyctl's place, the other options kept."""
+
+    def setUp(self):
+        super().setUp()
+        t = self.t
+        self.here = t / "drive/backshot1"
+        (self.here / "keys").mkdir(parents=True)
+        shutil.copy(BS1 / "bs1-unlock-key", self.here / "bs1-unlock-key")
+        (self.here / "keys/disk-passphrase").write_text("s3cret")
+        for d in ("boot", "etc/init.d", "etc/default", "etc/initramfs-tools/hooks"):
+            (t / d).mkdir(parents=True)
+        exe(t / "etc/init.d/cryptdisks-early", "#!/bin/sh\n")
+        exe(t / "etc/init.d/cryptdisks", "#!/bin/sh\n")
+        (t / "etc/default/cryptdisks").write_text("# Run cryptdisks at startup?\nCRYPTDISKS_ENABLE=Yes\n")
+        (t / "proc-cmdline").write_text("BOOT_IMAGE=/vmlinuz-6.12.57+deb13-amd64 root=UUID=r ro quiet splash\n")
+        self.tab = (f"# <target name> <source device> <key file> <options>\n"
+                    f"luks-{MX_ROOT} UUID={MX_ROOT} none {MX_OPTS}\n"
+                    f"luks-{MX_HOME} UUID={MX_HOME} none {MX_OPTS}\n")
+        (t / "crypttab").write_text(self.tab)
+        (t / "key-mount").write_text("/\n")
+        exe(self.bin / "findmnt", textwrap.dedent(f"""\
+            #!/bin/sh
+            if [ "$3" = -T ]; then cat "{t}/key-mount"; exit 0; fi
+            case "$2" in TARGET) echo "{t}/drive" ;; SOURCE) echo /dev/sdb1 ;; FSTYPE) echo xfs ;; esac
+            """))
+        exe(self.bin / "blkid", "#!/bin/sh\necho mybig512\n")
+        exe(self.bin / "cryptsetup", "#!/bin/sh\nexit 0\n")
+        exe(self.bin / "modinfo", "#!/bin/sh\nexit 1\n")
+        exe(self.bin / "sleep", "#!/bin/sh\nexit 0\n")
+        # The remade image: BackShot1's keyscript and record only when the
+        # cryptroot hook would copy them (an early volume's line has it).
+        rel = str(t).lstrip("/")
+        exe(self.bin / "lsinitramfs", textwrap.dedent(f"""\
+            #!/bin/sh
+            echo usr/lib/modules/6.12.57+deb13-amd64/kernel/drivers/usb/storage/usb-storage.ko
+            if [ -e "{t}/early" ] && grep -q "keyscript={t}/usr/local/lib/backshot1/unlock-key" "{t}/crypttab"; then
+                echo "{rel}/usr/local/lib/backshot1/unlock-key"
+                echo "{rel}/etc/backshot1/luks-unlock"
+            fi
+            """))
+        self.vols = f"/dev/nvme0n1p3 {MX_ROOT} luks-{MX_ROOT}\n/dev/nvme0n1p4 {MX_HOME} luks-{MX_HOME}"
+        self.early = f"luks-{MX_ROOT}"
+        self.init = "sysv"
+
+    def adopt(self, what="luks_adopt", rc=0):
+        t = self.t
+        if self.early:
+            (t / "early").write_text("")
+        script = textwrap.dedent(f"""\
+            set -uo pipefail
+            . "{BS1}/bs1-luks"
+            LUKS_DIR="{t}/etc/backshot1" LUKS_ORIG="{t}/etc/backshot1/orig" LUKS_MADE="{t}/etc/backshot1/made" LUKS_REC="{t}/etc/backshot1/luks-unlock"
+            LK_CMDLINE="{t}/proc-cmdline" LK_CRYPTTAB="{t}/crypttab" LK_IMG_DIRS="{t}/boot"
+            LK_ITH_HOOK="{t}/etc/initramfs-tools/hooks/backshot1" UNLOCK_KEY="{t}/usr/local/lib/backshot1/unlock-key"
+            LK_CRYPTDISKS="{t}/etc/init.d/cryptdisks-early {t}/etc/init.d/cryptdisks" LK_CRYPTDISKS_DEFAULT="{t}/etc/default/cryptdisks"
+            here="{self.here}" init={self.init} BACKUP_LABEL=mybig512 INTERNAL_SERIAL=S1
+            internal_disk() {{ echo nvme0n1; }}
+            is_abroot() {{ false; }}
+            lk_generator() {{ echo initramfs-tools; }}
+            lk_luks_volumes() {{ printf '%s\\n' "{self.vols}"; }}
+            lk_early() {{ [[ " {self.early} " == *" $1 "* ]]; }}
+            lk_remake() {{ echo "$1" >>"{t}/remakes"; date >"{t}/boot/initrd.img-6.12.57+deb13-amd64"; }}
+            {what}
+            """)
+        r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
+        self.assertNotIn("command not found", r.stderr)
+        return r.stdout + r.stderr
+
+    def remakes(self):
+        p = self.t / "remakes"
+        return len(p.read_text().splitlines()) if p.exists() else 0
+
+    def rec(self):
+        return (self.t / "etc/backshot1/luks-unlock").read_text().replace("'\\''", "'")
+
+    def ours(self, name, uuid):
+        ks = f"{self.t}/usr/local/lib/backshot1/unlock-key"
+        return f"{name}\tUUID={uuid}\tnone\tluks,no-read-workqueue,no-write-workqueue,discard,keyscript={ks}"
+
+    def attended(self, why):
+        out = self.adopt()
+        self.assertIn("luks: A: ", out)
+        self.assertIn("family=A\n", self.rec())
+        self.assertIn(why, self.rec())
+        self.assertEqual((self.t / "crypttab").read_text(), self.tab)
+        self.assertFalse((self.t / "usr/local/lib/backshot1/unlock-key").exists())
+        self.assertFalse((self.t / "etc/initramfs-tools/hooks/backshot1").exists())
+        self.assertEqual(self.remakes(), 0)
+
+    def test_mx_decrypt_keyctl_root_and_cryptdisks_home(self):
+        t = self.t
+        out = self.adopt()
+        self.assertIn(f"family D (initramfs: initramfs-tools): luks-{MX_ROOT}:{MX_ROOT}:D luks-{MX_HOME}:{MX_HOME}:D", out)
+        self.assertEqual((t / "crypttab").read_text().splitlines(),
+                         ["# <target name> <source device> <key file> <options>",
+                          self.ours(f"luks-{MX_ROOT}", MX_ROOT), self.ours(f"luks-{MX_HOME}", MX_HOME)])
+        self.assertNotIn("decrypt_keyctl", (t / "crypttab").read_text())
+        self.assertIn("family=D\n", self.rec())
+        self.assertIn(f"volumes='luks-{MX_ROOT}:{MX_ROOT}:D luks-{MX_HOME}:{MX_HOME}:D'\n", self.rec())
+        self.assertEqual((t / "usr/local/lib/backshot1/unlock-key").read_text(), (BS1 / "bs1-unlock-key").read_text())
+        self.assertIn("manual_add_modules", (t / "etc/initramfs-tools/hooks/backshot1").read_text())
+        self.assertEqual(self.remakes(), 1)
+
+        out = self.adopt()
+        self.assertIn("unchanged; the initramfs isn't remade", out)
+        self.assertEqual(self.remakes(), 1)
+
+        self.adopt("luks_off")
+        self.assertEqual((t / "crypttab").read_text(), self.tab, "--luks-off brings decrypt_keyctl back")
+        self.assertFalse((t / "usr/local/lib/backshot1/unlock-key").exists())
+        self.assertFalse((t / "etc/initramfs-tools/hooks/backshot1").exists())
+        self.assertFalse((t / "etc/backshot1").exists())
+        self.assertEqual(self.remakes(), 2)
+
+    def test_a_full_path_decrypt_keyctl_is_ours_too(self):
+        self.tab = self.tab.replace("keyscript=decrypt_keyctl", "keyscript=/lib/cryptsetup/scripts/decrypt_keyctl")
+        (self.t / "crypttab").write_text(self.tab)
+        self.adopt()
+        self.assertNotIn("decrypt_keyctl", (self.t / "crypttab").read_text())
+        self.assertIn(self.ours(f"luks-{MX_HOME}", MX_HOME), (self.t / "crypttab").read_text())
+
+    def test_sysvinit_late_volume_alone(self):
+        # Root unencrypted: only cryptdisks opens a LUKS volume, and the
+        # initramfs needn't carry the keyscript.
+        self.vols = f"/dev/nvme0n1p4 {MX_HOME} luks-{MX_HOME}"
+        self.early = ""
+        self.tab = f"luks-{MX_HOME} UUID={MX_HOME} none luks,discard\n"
+        (self.t / "crypttab").write_text(self.tab)
+        out = self.adopt()
+        self.assertIn(f"family D (initramfs: initramfs-tools): luks-{MX_HOME}:{MX_HOME}:D", out)
+        ks = f"{self.t}/usr/local/lib/backshot1/unlock-key"
+        self.assertEqual((self.t / "crypttab").read_text(), f"luks-{MX_HOME}\tUUID={MX_HOME}\tnone\tluks,discard,keyscript={ks}\n")
+        self.assertTrue((self.t / "usr/local/lib/backshot1/unlock-key").exists())
+
+    def test_cryptdisks_turned_off_is_attended(self):
+        (self.t / "etc/default/cryptdisks").write_text("CRYPTDISKS_ENABLE=No\n")
+        self.attended(f"luks-{MX_HOME} is opened after the initramfs, without systemd")
+
+    def test_no_cryptdisks_scripts_is_attended(self):
+        (self.t / "etc/init.d/cryptdisks").unlink()
+        (self.t / "etc/init.d/cryptdisks-early").unlink()
+        self.attended(f"luks-{MX_HOME} is opened after the initramfs, without systemd")
+
+    def test_keyscript_off_the_root_fs_is_attended(self):
+        (self.t / "key-mount").write_text("/usr/local\n")
+        self.attended(f"luks-{MX_HOME} is opened by cryptdisks after the initramfs, but {self.t}/usr/local/lib/backshot1/unlock-key isn't on the root file system")
+
+    def test_noauto_late_volume_is_attended(self):
+        self.tab = self.tab.replace(f"UUID={MX_HOME} none luks,", f"UUID={MX_HOME} none luks,noauto,")
+        (self.t / "crypttab").write_text(self.tab)
+        self.attended(f"luks-{MX_HOME} is noauto in /etc/crypttab: nothing opens it at boot")
+
+    def test_an_unknown_keyscript_stays_attended(self):
+        self.tab = self.tab.replace(f"UUID={MX_ROOT} none {MX_OPTS}", f"UUID={MX_ROOT} none luks,keyscript=/lib/cryptsetup/scripts/passdev")
+        (self.t / "crypttab").write_text(self.tab)
+        self.attended(f"luks-{MX_ROOT} has a keyscript of its own (/lib/cryptsetup/scripts/passdev)")
+
+    def test_an_unknown_keyscript_on_a_late_volume_stays_attended(self):
+        self.tab = self.tab.replace(f"UUID={MX_HOME} none {MX_OPTS}", f"UUID={MX_HOME} none luks,keyscript=/usr/local/sbin/my-key")
+        (self.t / "crypttab").write_text(self.tab)
+        self.attended(f"luks-{MX_HOME} has a keyscript of its own (/usr/local/sbin/my-key)")
+
+    def test_openrc_late_volume_stays_attended(self):
+        # Not Debian's sysvinit (OpenRC's dmcrypt, say), even with the
+        # cryptdisks scripts lying there.
+        for init in ("openrc", "runit", "dinit"):
+            with self.subTest(init=init):
+                shutil.rmtree(self.t / "etc/backshot1", ignore_errors=True)
+                self.init = init
+                self.attended(f"luks-{MX_HOME} is opened after the initramfs, without systemd")
+
+    def test_systemd_late_volume_is_still_s(self):
+        self.init = "systemd"
+        self.tab = self.tab.replace(f"UUID={MX_ROOT} none {MX_OPTS}", f"UUID={MX_ROOT} none luks,discard")
+        self.tab = self.tab.replace(f"UUID={MX_HOME} none {MX_OPTS}", f"UUID={MX_HOME} none luks,discard")
+        (self.t / "crypttab").write_text(self.tab)
+        out = self.adopt()
+        self.assertIn(f"luks-{MX_ROOT}:{MX_ROOT}:D luks-{MX_HOME}:{MX_HOME}:S", out)
+        self.assertIn(f"luks-{MX_HOME}\tUUID={MX_HOME}\t{KEYSPEC}\tluks,discard,keyfile-timeout=30s\n", (self.t / "crypttab").read_text())
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class KeyscriptOurs(Tmp):
+    """lk_ks_ours: no keyscript, BackShot1's or Debian's decrypt_keyctl may
+    become BackShot1's; any other may not."""
+
+    def ours(self, opts):
+        script = f'. "{BS1}/bs1-luks"; UNLOCK_KEY=/usr/local/lib/backshot1/unlock-key; lk_ks_ours "$1"'
+        return subprocess.run([BASH, "-c", script, "x", opts], capture_output=True, text=True).returncode == 0
+
+    def test_cases(self):
+        for opts in ("-", "luks,discard", MX_OPTS, "luks,keyscript=/lib/cryptsetup/scripts/decrypt_keyctl",
+                     "keyscript=/usr/lib/cryptsetup/scripts/decrypt_keyctl,luks", "luks,keyscript=/usr/local/lib/backshot1/unlock-key"):
+            with self.subTest(opts=opts):
+                self.assertTrue(self.ours(opts))
+        for opts in ("luks,keyscript=passdev", "luks,keyscript=/lib/cryptsetup/scripts/decrypt_gnupg",
+                     "keyscript=/usr/local/bin/decrypt_keyctl", "luks,keyscript=/usr/local/lib/backshot1/unlock-key2"):
+            with self.subTest(opts=opts):
+                self.assertFalse(self.ours(opts))
 
 
 # pe()'s own source, for the fake objcopy.

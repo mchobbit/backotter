@@ -30,7 +30,15 @@
 #      /run/cryptsetup-keys.d/keystore-POOL.key first (below, "Ubuntu's ZFS
 #      keystore").
 #   D  initramfs-tools' cryptroot: keyscript=/usr/local/lib/backshot1/unlock-key
-#      (bs1-unlock-key), the key field left as it was (none).
+#      (bs1-unlock-key), the key field left as it was (none).  A volume with
+#      Debian's own keyscript=decrypt_keyctl (MX Linux's installer: it only
+#      keeps one typed passphrase for every volume) gets ours instead; any
+#      other keyscript is attended.  On sysvinit, a volume the booted system
+#      opens with Debian's cryptdisks-early or cryptdisks init script (the
+#      same crypttab, keyscript= honoured outside the initramfs too) is D's
+#      as well, its keyscript on the root file system.  Any other init that
+#      opens a volume after the initramfs (OpenRC's dmcrypt, runit, dinit)
+#      is attended.
 #   E  mkinitcpio's busybox encrypt: the bs1key hook, before encrypt, writes
 #      /crypto_keyfile.bin (bs1-unlock-key --to).
 #   N  NixOS: /etc/nixos/backshot1-luks.nix (backshot1.nix imports it while
@@ -83,6 +91,12 @@ LK_CMDLINE=/proc/cmdline
 LK_CRYPTTAB=/etc/crypttab
 LK_CRYPTTAB_INI=/etc/crypttab.initramfs
 LK_MKI_CONF_D=/etc/mkinitcpio.conf.d
+# Family D: BackShot1's initramfs-tools hook; Debian's cryptsetup init
+# scripts, which open crypttab's other volumes on sysvinit, and their
+# defaults (CRYPTDISKS_ENABLE).
+LK_ITH_HOOK=/etc/initramfs-tools/hooks/backshot1
+LK_CRYPTDISKS="/etc/init.d/cryptdisks-early /etc/init.d/cryptdisks"
+LK_CRYPTDISKS_DEFAULT=/etc/default/cryptdisks
 LK_IMG_DIRS="/boot /efi /boot/efi"
 # Family S on mkinitcpio's unified kernel images: its presets, the files it
 # bakes the command line from (the first of LK_UKI_FILES, then every *.conf
@@ -123,6 +137,7 @@ lk_save() {
 # FAT, which has no modes to set).  LK_CHANGED counts the files changed.
 LK_CHANGED=0
 LK_EARLY_S=
+LK_EARLY_D=
 LK_BLS_VOLS=()
 LK_UKI=no
 LK_UKI_XLATE=no
@@ -284,6 +299,44 @@ lk_tab_line() {
         fi
     done <"$file"
     return 1
+}
+
+# lk_keyscript OPTIONS: the keyscript= that crypttab OPTIONS (- for none)
+# give, as written, or nothing.
+lk_keyscript() {
+    tr ',' '\n' <<<"$1" | sed -n 's/^keyscript=//p' | tail -n 1
+}
+
+# lk_ks_ours OPTIONS: OPTIONS have no keyscript, BackShot1's, or Debian's
+# decrypt_keyctl (/lib/cryptsetup/scripts/, where Debian's cryptsetup finds a
+# bare name), which only keeps one typed passphrase for every volume, so D
+# may put BackShot1's in its place: a typed boot then asks for each volume.
+lk_ks_ours() {
+    case $(lk_keyscript "$1") in
+    "" | "$UNLOCK_KEY" | decrypt_keyctl | /lib/cryptsetup/scripts/decrypt_keyctl | /usr/lib/cryptsetup/scripts/decrypt_keyctl) return 0 ;;
+    esac
+    return 1
+}
+
+# lk_cryptdisks: on sysvinit, Debian's cryptsetup init scripts
+# (cryptdisks-early, cryptdisks) open crypttab's volumes the initramfs
+# didn't, running a keyscript= as the initramfs does (cryptdisks-functions).
+# False when neither is there, or /etc/default/cryptdisks turns them off.
+lk_cryptdisks() {
+    local f on=no
+    [[ $init == sysv ]] || return 1
+    for f in $LK_CRYPTDISKS; do [[ -x $f ]] && on=yes; done
+    [[ $on == yes ]] || return 1
+    # shellcheck disable=SC1090
+    ! (CRYPTDISKS_ENABLE=Yes; . "$LK_CRYPTDISKS_DEFAULT" 2>/dev/null; [[ ${CRYPTDISKS_ENABLE,,} == no ]])
+}
+
+# lk_on_root PATH: PATH (or its nearest directory that's there) is on the
+# root file system, which is open before any late volume is.
+lk_on_root() {
+    local p=$1
+    while [[ ! -e $p && $p == /?* ]]; do p=${p%/*}; [[ -n $p ]] || p=/; done
+    [[ $(findmnt -nro TARGET -T "$p" 2>/dev/null | head -n 1) == / ]]
 }
 
 # lk_tab_edit FILE EDITS...: FILE's text with each EDIT applied, EDIT being
@@ -988,7 +1041,7 @@ luks_adopt() {
             ;;
         D:yes)
             if [[ -z $line ]]; then unhandled+=("$name has no line in /etc/crypttab for cryptroot")
-            elif [[ $o == *keyscript=* && $o != *"keyscript=$UNLOCK_KEY"* ]]; then unhandled+=("$name has a keyscript of its own")
+            elif ! lk_ks_ours "$o"; then unhandled+=("$name has a keyscript of its own ($(lk_keyscript "$o"))")
             else how=D
             fi
             ;;
@@ -996,8 +1049,19 @@ luks_adopt() {
         B:yes) how=B ;;
         A:*) unhandled+=("$reason") ;;
         *:no)
-            # Opened by the booted system: systemd's crypttab takes the key form.
-            if [[ $init == systemd ]]; then how=S; else unhandled+=("$name is opened after the initramfs, without systemd"); fi
+            # Opened by the booted system: systemd's crypttab takes the key
+            # form; on sysvinit, Debian's cryptdisks scripts take D's
+            # keyscript (MX Linux's /home), which must be on / to be there.
+            if [[ $init == systemd ]]; then how=S
+            elif [[ $family == D ]] && lk_cryptdisks; then
+                if [[ -z $line ]]; then unhandled+=("$name has no line in /etc/crypttab for cryptdisks")
+                elif [[ ,$o, == *,noauto,* ]]; then unhandled+=("$name is noauto in /etc/crypttab: nothing opens it at boot")
+                elif ! lk_ks_ours "$o"; then unhandled+=("$name has a keyscript of its own ($(lk_keyscript "$o"))")
+                elif ! lk_on_root "$UNLOCK_KEY"; then unhandled+=("$name is opened by cryptdisks after the initramfs, but $UNLOCK_KEY isn't on the root file system")
+                else how=D
+                fi
+            else unhandled+=("$name is opened after the initramfs, without systemd")
+            fi
             ;;
         esac
         [[ -n $how ]] || continue
@@ -1007,7 +1071,8 @@ luks_adopt() {
         case $how:$early in
         S:yes) edits_ini+=("$name|S|$uuid|1|$fix"); LK_EARLY_S+=" $name"; xl_vols+=("$name:$uuid") ;;
         S:no) edits_tab+=("$name|S|$uuid|1|$fix") ;;
-        D:*) edits_tab+=("$name|D|$uuid|0|0") ;;
+        D:yes) edits_tab+=("$name|D|$uuid|0|0"); LK_EARLY_D+=" $name" ;;
+        D:no) edits_tab+=("$name|D|$uuid|0|0") ;;
         B:*) edits_bls+=("$uuid|$o") ;;
         esac
     done <<<"$vols"
@@ -1220,7 +1285,7 @@ HOOKS=(\"\${_bs1[@]}\")
 unset _h _bs1" || return 1
         ;;
     D:initramfs-tools)
-        lk_put /etc/initramfs-tools/hooks/backshot1 755 "#!/bin/sh
+        lk_put "$LK_ITH_HOOK" 755 "#!/bin/sh
 # BackShot1 (bs1-adopt): what the keyscript $UNLOCK_KEY reads, and the
 # modules for the drive.  cryptroot's hook copies the keyscript itself.
 # TESTBED ONLY; bs1-adopt --luks-off removes it.
@@ -1257,7 +1322,8 @@ lk_check() {
         n=$((n + 1))
         want=()
         case $family:$gen in
-        D:*) want=("${UNLOCK_KEY#/}" "${LUKS_REC#/}") ;;
+        # A volume cryptdisks opens late reads the keyscript from /.
+        D:*) [[ -z ${LK_EARLY_D:-} ]] || want=("${UNLOCK_KEY#/}" "${LUKS_REC#/}") ;;
         E:*) want=(hooks/bs1key "${UNLOCK_KEY#/}" "${LUKS_REC#/}") ;;
         esac
         [[ $family == S && -n ${LK_KEYSTORE:-} ]] && want=("${UNLOCK_KEY#/}" "${LUKS_REC#/}")

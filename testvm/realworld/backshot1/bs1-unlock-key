@@ -11,6 +11,13 @@
 #   ($CRYPTTAB_TRIED 0) waits up to wait= seconds for LABEL=label and reads
 #   path= on it; every other case asks, as the volume did before, with
 #   cryptsetup's askpass.  A wrong key costs one of crypttab's tries=.
+#   On sysvinit, Debian's cryptdisks-early and cryptdisks init scripts run
+#   it the same way for the volumes the booted system opens (MX Linux's
+#   /home), from the root file system, with the booted system's own mount,
+#   modprobe and udev's by-label links (libblkid's blkid -L should there be
+#   none).  Where it took the place of Debian's decrypt_keyctl (MX Linux's
+#   installer), a typed boot asks for each volume: decrypt_keyctl's one
+#   passphrase kept for every volume is gone while BackShot1's is there.
 #
 #   unlock-key --to FILE (mkinitcpio's bs1key hook, before encrypt): writes
 #   the key to FILE (/crypto_keyfile.bin), which encrypt then tries before
@@ -72,8 +79,10 @@ fetch() {
         while ! present "$dev" && [ "$i" -lt "$wait" ]; do
             sleep 1
             i=$((i + 1))
-            # ZFSBootMenu: by libblkid too, should udev make no by-label link.
-            if [ "$mode" = zfs ] && ! present "$dev"; then
+            # By libblkid too, should udev make no by-label link
+            # (ZFSBootMenu; the booted system, for cryptdisks).  Not in
+            # the unit tests' fake root, but for --zfs's.
+            if { [ "$mode" = zfs ] || [ -z "$R" ]; } && ! present "$dev"; then
                 d=$(blkid -L "$label" 2>/dev/null) && [ -b "$d" ] && dev=$d
             fi
         done

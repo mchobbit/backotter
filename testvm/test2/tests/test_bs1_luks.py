@@ -4,6 +4,7 @@ evidence of how a boot opened each volume and its layout_keys, on fake
 inputs and the corpus's dumps.  No VM, no root, no initramfs: fake mount,
 askpass, cryptsetup, journalctl and lsblk."""
 
+import hashlib
 import json
 import os
 import re
@@ -2516,6 +2517,229 @@ class KeyscriptOurs(Tmp):
                      "keyscript=/usr/local/bin/decrypt_keyctl", "luks,keyscript=/usr/local/lib/backshot1/unlock-key2"):
             with self.subTest(opts=opts):
                 self.assertFalse(self.ours(opts))
+
+
+TW_UUID = "774040c6-c9ac-4d0d-a4b9-b9abcb7578af"
+TW_NAME = "cr_nvme-eui.002538f751b6167e-part2"
+TW_KV = "7.3.4-1-default"
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class AdoptSdbootutil(Tmp):
+    """luks_adopt and luks_off on a fake openSUSE Tumbleweed 20261119 (the
+    Thinkpad, 2026-11-21): Agama's LUKS2 + LVM, btrfs root on snapper's
+    @/.snapshots/1/snapshot, systemd-boot managed by sdbootutil, dracut
+    with systemd.  What boots is sdbootutil's initrd on the ESP, named by
+    its checksum in each snapshot's entry, so the remake is `sdbootutil
+    mkinitrd` (the running snapshot's entries) and the check reads the
+    initrd that entry names; dracut's /boot output is never made or read.
+    The fake sdbootutil "builds" an initrd whose content is crypttab, as
+    sdbootutil does: initrd-SHA1, the entry rewritten, files no entry
+    names removed (bootctl cleanup)."""
+
+    def setUp(self):
+        super().setUp()
+        t = self.t
+        self.here = t / "drive/backshot1"
+        (self.here / "keys").mkdir(parents=True)
+        shutil.copy(BS1 / "bs1-unlock-key", self.here / "bs1-unlock-key")
+        (self.here / "keys/disk-passphrase").write_text("s3cret")
+        self.tab = f"{TW_NAME}  UUID={TW_UUID}  none  x-initrd.attach\n"
+        (t / "crypttab").write_text(self.tab)
+        (t / "bootloader").write_text('## Path:\tSystem/Bootloader\nLOADER_TYPE="systemd-boot"\n\nSECURE_BOOT="yes"\n')
+        self.conf = t / "etc/dracut.conf.d/90-backshot1.conf"
+        self.esp = t / "efi"
+        self.kdir = self.esp / f"opensuse-tumbleweed/{TW_KV}"
+        self.kdir.mkdir(parents=True)
+        (self.esp / "loader/entries").mkdir(parents=True)
+        (self.kdir / "linux-6263c24d").write_text("kernel")
+        self.old = self.initrd_name(self.tab)
+        (self.kdir / self.old).write_text(self.tab)
+        for n in (1, 2, 3, 4):
+            self.entry(n).write_text(textwrap.dedent(f"""\
+                # Boot Loader Specification type#1 entry
+                title      openSUSE Tumbleweed 20261119
+                version    {n}_{TW_KV}
+                sort-key   opensuse-tumbleweed
+                options    root=/dev/mapper/system-root splash=silent quiet security=selinux selinux=1 rootflags=subvol=@/.snapshots/{n}/snapshot
+                linux      /opensuse-tumbleweed/{TW_KV}/linux-6263c24d
+                initrd     /opensuse-tumbleweed/{TW_KV}/{self.old}
+                """))
+        (t / "rootsub").write_text("@/.snapshots/1/snapshot\n")
+        (t / "proc-cmdline").write_text(f"initrd=\\opensuse-tumbleweed\\{TW_KV}\\{self.old} root=/dev/mapper/system-root splash=silent quiet security=selinux selinux=1 rootflags=subvol=@/.snapshots/1/snapshot\n")
+        exe(self.bin / "findmnt", textwrap.dedent(f"""\
+            #!/bin/sh
+            case "$1 $2" in
+            "-no TARGET") echo "{t}/drive" ;;
+            "-no SOURCE") echo /dev/sdb1 ;;
+            "-no FSTYPE") echo xfs ;;
+            "--fstab -no") cat "{t}/fstab-root" 2>/dev/null ;;
+            esac
+            """))
+        exe(self.bin / "blkid", "#!/bin/sh\necho mybig512\n")
+        exe(self.bin / "cryptsetup", f'#!/bin/sh\necho "$@" >>"{t}/cryptsetup-calls"\nexit 0\n')
+        exe(self.bin / "modinfo", "#!/bin/sh\nexit 1\n")
+        exe(self.bin / "sleep", "#!/bin/sh\nexit 0\n")
+        exe(self.bin / "dracut", f'#!/bin/sh\necho "$@" >>"{t}/dracut-calls"\n')
+        exe(self.bin / "bootctl", f'#!/bin/sh\n[ "$1" = --print-boot-path ] && echo "{self.esp}"\n')
+        exe(self.bin / "btrfs", f'#!/bin/sh\n[ "$1 $2 $3" = "subvolume show /" ] && cat "{t}/rootsub"\n')
+        # lsinitrd: an image's crypttab is its content; dracut's systemd
+        # module; a listing with usb-storage.
+        exe(self.bin / "lsinitrd", textwrap.dedent("""\
+            #!/bin/sh
+            case "$1" in
+            -m) echo systemd ;;
+            -f) cat "$3" ;;
+            *) [ -f "$1" ] && echo "-rw-r--r-- 1 root root 1 Nov 21 00:00 usr/lib/modules/x/kernel/drivers/usb/storage/usb-storage.ko.zst" ;;
+            esac
+            """))
+        # sdbootutil mkinitrd: the running snapshot's (rootsub's) entry gets
+        # an initrd of the crypttab it reads (or, with "stale", the one
+        # before), named by its checksum; unnamed initrds go.
+        exe(self.bin / "sdbootutil", textwrap.dedent(f"""\
+            #!/usr/bin/env python3
+            import glob, hashlib, os, re, sys
+            t, kdir, ent = {str(t)!r}, {str(self.kdir)!r}, {str(self.esp / "loader/entries")!r}
+            open(os.path.join(t, "sdbootutil-calls"), "a").write(" ".join(sys.argv[1:]) + "\\n")
+            if sys.argv[1:] != ["mkinitrd"]:
+                sys.exit(2)
+            tab = open(os.path.join(t, "stale-tab" if os.path.exists(os.path.join(t, "stale-tab")) else "crypttab")).read()
+            name = "initrd-" + hashlib.sha1(tab.encode()).hexdigest()
+            if not os.path.exists(os.path.join(kdir, name)):
+                open(os.path.join(kdir, name), "w").write(tab)
+            sub = open(os.path.join(t, "rootsub")).read().strip()
+            for e in glob.glob(ent + "/*.conf"):
+                s = open(e).read()
+                if "rootflags=subvol=" + sub + "\\n" in s:
+                    open(e, "w").write(re.sub(r"(?m)^initrd .*$", "initrd     /opensuse-tumbleweed/{TW_KV}/" + name, s))
+            used = "".join(open(e).read() for e in glob.glob(ent + "/*.conf"))
+            for f in glob.glob(kdir + "/initrd-*"):
+                if os.path.basename(f) not in used:
+                    os.remove(f)
+            """))
+
+    @staticmethod
+    def initrd_name(tab):
+        return "initrd-" + hashlib.sha1(tab.encode()).hexdigest()
+
+    def entry(self, n):
+        return self.esp / f"loader/entries/opensuse-tumbleweed-{TW_KV}-{n}.conf"
+
+    def initrd_of(self, n):
+        return re.search(r"(?m)^initrd +\S+/(\S+)$", self.entry(n).read_text()).group(1)
+
+    def adopt(self, what="luks_adopt", rc=0):
+        t = self.t
+        script = textwrap.dedent(f"""\
+            . "{BS1}/bs1-luks"
+            LUKS_DIR="{t}/etc/backshot1" LUKS_ORIG="{t}/etc/backshot1/orig" LUKS_MADE="{t}/etc/backshot1/made" LUKS_REC="{t}/etc/backshot1/luks-unlock"
+            LK_CMDLINE="{t}/proc-cmdline" LK_CRYPTTAB="{t}/crypttab" LK_IMG_DIRS="{t}/boot" LK_SDBU_CONF="{t}/bootloader"
+            LK_DRACUT_CONF="{self.conf}" LK_DRACUT_MODS="{t}/usr/lib/dracut/modules.d" UNLOCK_KEY="{t}/usr/local/lib/backshot1/unlock-key"
+            here="{self.here}" init=systemd BACKUP_LABEL=mybig512 INTERNAL_SERIAL=S1
+            internal_disk() {{ echo nvme0n1; }}
+            is_abroot() {{ false; }}
+            lk_generator() {{ echo dracut; }}
+            lk_luks_volumes() {{ echo "/dev/nvme0n1p2 {TW_UUID} {TW_NAME}"; }}
+            lk_early() {{ true; }}
+            {what}
+            """)
+        r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
+        return r.stdout + r.stderr
+
+    def calls(self, name):
+        p = self.t / f"{name}-calls"
+        return p.read_text().splitlines() if p.exists() else []
+
+    def test_detection(self):
+        def found(text, sdbootutil=True):
+            if text is None:
+                (self.t / "bootloader").unlink(missing_ok=True)
+            else:
+                (self.t / "bootloader").write_text(text)
+            if not sdbootutil:
+                (self.bin / "sdbootutil").unlink(missing_ok=True)
+            script = f'. "{BS1}/bs1-luks"; LK_SDBU_CONF="{self.t}/bootloader"; lk_sdbootutil'
+            return subprocess.run([BASH, "-c", script], env=self.env(), capture_output=True).returncode == 0
+        self.assertTrue(found('LOADER_TYPE="systemd-boot"\n'))
+        self.assertTrue(found('LOADER_TYPE="grub2-bls"\n'))
+        # Leap 16's GRUB 2 and its snapshot menu: dracut's /boot initrd.
+        self.assertFalse(found('LOADER_TYPE="grub2-efi"\n'))
+        self.assertFalse(found(None))
+        self.assertFalse(found('LOADER_TYPE="systemd-boot"\n', sdbootutil=False))
+
+    def test_entries_of_the_running_snapshot(self):
+        script = f'. "{BS1}/bs1-luks"; lk_sdbu_entries; echo; lk_sdbu_images'
+        out = subprocess.run([BASH, "-c", script], env=self.env(), capture_output=True, text=True).stdout
+        self.assertEqual(out.splitlines(), [f"yes {self.entry(1)}", f"no {self.entry(2)}", f"no {self.entry(3)}", f"no {self.entry(4)}", "",
+                                            str(self.kdir / self.old)])
+        # / not a snapshot (no rollback layout): every entry is this root's.
+        (self.t / "rootsub").write_text("@\n")
+        out = subprocess.run([BASH, "-c", script], env=self.env(), capture_output=True, text=True).stdout
+        self.assertEqual(out.splitlines()[:4], [f"yes {self.entry(n)}" for n in (1, 2, 3, 4)])
+
+    def test_adopt_rerun_and_off(self):
+        t = self.t
+        out = self.adopt()
+        self.assertIn(f"family S (initramfs: dracut): {TW_NAME}:{TW_UUID}:S", out)
+        line = f"{TW_NAME}\tUUID={TW_UUID}\t{KEYSPEC}\tx-initrd.attach,keyfile-timeout=30s"
+        self.assertEqual((t / "crypttab").read_text(), line + "\n")
+        self.assertIn("generator=dracut\n", (t / "etc/backshot1/luks-unlock").read_text(), "the dump's generator, for preflight")
+        self.assertEqual(self.calls("sdbootutil"), ["mkinitrd"])
+        self.assertEqual(self.calls("dracut"), [], "dracut's /boot initrd boots nothing here")
+        new = self.initrd_of(1)
+        self.assertNotEqual(new, self.old)
+        self.assertEqual((self.kdir / new).read_text(), line + "\n")
+        self.assertIn(f"{self.kdir / new}: ok", out)
+        for n in (2, 3, 4):
+            self.assertEqual(self.initrd_of(n), self.old, "another snapshot's entry keeps its initrd")
+        self.assertIn("3 boot entries for other snapper snapshots keep the initrd they had", out)
+
+        out = self.adopt()
+        self.assertIn("unchanged; the initramfs isn't remade", out)
+        self.assertEqual(self.calls("sdbootutil"), ["mkinitrd"])
+
+        out = self.adopt("luks_off")
+        self.assertEqual((t / "crypttab").read_text(), self.tab)
+        self.assertFalse(self.conf.exists())
+        self.assertFalse((t / "etc/backshot1").exists())
+        self.assertEqual(self.calls("sdbootutil"), ["mkinitrd", "mkinitrd"], "--luks-off remakes through sdbootutil too")
+        self.assertEqual([self.initrd_of(n) for n in (1, 2, 3, 4)], [self.old] * 4)
+        self.assertFalse((self.kdir / new).exists())
+        self.assertEqual(self.calls("dracut"), [])
+
+    def test_an_initrd_without_the_line_puts_everything_back(self):
+        (self.t / "stale-tab").write_text(self.tab)
+        out = self.adopt(rc=1)
+        self.assertIn(f"{self.kdir / self.old}'s crypttab doesn't give {TW_NAME} the drive's key", out)
+        self.assertIn("putting everything back", out)
+        self.assertEqual((self.t / "crypttab").read_text(), self.tab)
+        self.assertFalse((self.t / "etc/backshot1").exists())
+        self.assertFalse(self.conf.exists())
+        self.assertEqual(self.initrd_of(1), self.old)
+        self.assertEqual(self.calls("dracut"), [])
+
+    def test_no_entry_for_the_running_snapshot_puts_everything_back(self):
+        (self.t / "rootsub").write_text("@/.snapshots/7/snapshot\n")
+        out = self.adopt(rc=1)
+        self.assertIn("sdbootutil: no boot entry in", out)
+        self.assertIn("boots this root (@/.snapshots/7/snapshot)", out)
+        self.assertEqual((self.t / "crypttab").read_text(), self.tab)
+        self.assertFalse((self.t / "etc/backshot1").exists())
+
+    def test_an_entry_that_overrides_crypttab_puts_everything_back(self):
+        e = self.entry(1)
+        e.write_text(e.read_text().replace(" quiet ", f" quiet rd.luks.options={TW_UUID}=discard "))
+        out = self.adopt(rc=1)
+        self.assertIn(f"options have rd.luks.options={TW_UUID}=discard, which overrides crypttab", out)
+        self.assertEqual((self.t / "crypttab").read_text(), self.tab)
+
+    def test_transactional_is_attended(self):
+        (self.t / "fstab-root").write_text("ro,subvol=@/.snapshots/1/snapshot\n")
+        out = self.adopt()
+        self.assertIn("luks: A: sdbootutil on a transactional system", out)
+        self.assertEqual((self.t / "crypttab").read_text(), self.tab)
+        self.assertEqual(self.calls("sdbootutil"), [])
 
 
 # pe()'s own source, for the fake objcopy.

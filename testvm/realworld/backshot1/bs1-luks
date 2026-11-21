@@ -29,6 +29,11 @@
 #      BackShot1's dracut module LK_KS_MOD puts the drive's key in
 #      /run/cryptsetup-keys.d/keystore-POOL.key first (below, "Ubuntu's ZFS
 #      keystore").
+#      openSUSE's sdbootutil (Tumbleweed with systemd-boot, Agama's
+#      choice; grub2-bls too): the initrd that boots is sdbootutil's copy
+#      on the ESP, which its entries name by checksum, not dracut's /boot
+#      one, so the remake is `sdbootutil mkinitrd` (below, "openSUSE's
+#      sdbootutil").
 #   D  initramfs-tools' cryptroot: keyscript=/usr/local/lib/backshot1/unlock-key
 #      (bs1-unlock-key), the key field left as it was (none, or
 #      decrypt_keyctl's cache ID, which ours ignores).  A volume with
@@ -114,6 +119,8 @@ LK_DRACUT_CONF=/etc/dracut.conf.d/90-backshot1.conf
 LK_DRACUT_MODS=/usr/lib/dracut/modules.d
 LK_KS_MOD=99backshot1
 LK_KEYSTORE=
+# Family S on openSUSE's sdbootutil: its boot loader setting.
+LK_SDBU_CONF=/etc/sysconfig/bootloader
 
 lk_say() { echo "luks: $*"; }
 lk_err() { echo "bs1-adopt: $*" >&2; }
@@ -185,6 +192,13 @@ lk_remake() {
                 n=$((n + 1))
             done
             [[ $n -gt 0 ]]
+        # openSUSE's sdbootutil: what boots is its initrd on the ESP, made
+        # anew (dracut, no reuse) for each kernel of the running snapshot,
+        # whose entries it rewrites; dracut's /boot/initrd-KVER boots
+        # nothing.  The restore keeps the ESP's (lk_sdbu_entries).
+        elif lk_sdbootutil; then
+            lk_say "sdbootutil mkinitrd: the ESP's initrd for this snapshot's boot entries"
+            sdbootutil mkinitrd
         elif command -v dracut-rebuild >/dev/null; then dracut-rebuild
         else
             for k in /lib/modules/*; do
@@ -243,6 +257,11 @@ lk_crypttab_in() {
 # The running kernel's image, for what the current one has in it.
 lk_current_image() {
     local k f mid
+    # sdbootutil's: the one this root's boot entry names on the ESP.
+    if lk_sdbootutil; then
+        f=$(lk_sdbu_images | head -n 1)
+        [[ -n $f && -f $f ]] && { echo "$f"; return 0; }
+    fi
     k=$(uname -r)
     mid=$(cat /etc/machine-id 2>/dev/null)
     for f in "/boot/initramfs-$k.img" "/boot/initrd.img-$k" "/boot/initrd-$k" \
@@ -402,6 +421,94 @@ lk_dracut_systemd() {
     [[ $init == systemd ]] || return 1
     ! cat /etc/dracut.conf /etc/dracut.conf.d/*.conf /usr/lib/dracut/dracut.conf.d/*.conf 2>/dev/null |
         grep -E '^[^#]*omit_dracutmodules.*systemd' >/dev/null
+}
+
+# openSUSE's sdbootutil (Tumbleweed with systemd-boot, the Thinkpad
+# 2026-11-21: sdbootutil 1+git20261111, dracut 112, snapper's root
+# snapshots).  Each kernel's BLS entry on the ESP names
+# /ENTRY-TOKEN/KVER/linux-SHA1 and initrd-SHA1, the checksums of the files;
+# the initrd is dracut's output (host-only, the running /etc/crypttab in it)
+# that sdbootutil copied there, and dracut's own /boot/initrd-KVER boots
+# nothing.  Its entries are one per snapper snapshot (rootflags=subvol=
+# @/.snapshots/N/snapshot); a new snapshot's (snapper's plugin: zypper's
+# pre/post pairs) reuses its parent's initrd.  `sdbootutil mkinitrd` makes
+# the initrd anew for each kernel of the running snapshot (dracut with
+# --no-reuse-initrd), copies it under its new checksum, rewrites that
+# snapshot's entries, and `bootctl cleanup` drops a file no entry names.
+# Only the running snapshot's entries matter: its /etc has adopt's
+# crypttab; another snapshot's entry boots that snapshot, whose own /etc
+# lacks the line, and keeps the initrd it had (built from such an /etc),
+# so booting an older snapshot asks, as it should.  --luks-off's remake is
+# the same command, after the put back.  The restore: bko-holt load brings
+# the ESP back byte for byte (systemd-boot through shim: no bootctl
+# install), the LUKS UUID and the filesystems' kept, so the restored
+# entries and initrds are adopt's and boot as they did; its dracut in the
+# chroot remakes only /boot/initrd-KVER.
+
+# lk_sdbootutil: sdbootutil manages the boot loader, systemd-boot or
+# grub2-bls, as /etc/sysconfig/bootloader's LOADER_TYPE says.
+lk_sdbootutil() {
+    local t
+    command -v sdbootutil >/dev/null || return 1
+    # shellcheck disable=SC1090
+    t=$(if [[ -f $LK_SDBU_CONF ]]; then . "$LK_SDBU_CONF" >/dev/null 2>&1; fi; echo "${LOADER_TYPE:-}")
+    [[ $t == systemd-boot || $t == grub2-bls ]]
+}
+
+# lk_sdbu_entries: each BLS entry on sdbootutil's ESP (bootctl's boot
+# path), "yes ENTRY" when it boots the running root (its rootflags=subvol=
+# is /'s subvolume, as sdbootutil reads it; any entry when / isn't a snapper
+# snapshot), else "no ENTRY".
+lk_sdbu_entries() {
+    local boot sub e re='^/?(.+/)?\.snapshots/[0-9]+/snapshot$'
+    boot=$(bootctl --print-boot-path 2>/dev/null) || return 1
+    sub=$(btrfs subvolume show / 2>/dev/null | head -n 1)
+    [[ $sub =~ $re ]] || sub=
+    for e in "$boot"/loader/entries/*.conf; do
+        [[ -f $e ]] || continue
+        if [[ -z $sub ]] || awk -v s="${sub#/}" '
+            $1 == "options" { for (i = 2; i <= NF; i++) if ($i ~ /^rootflags=/) {
+                m = split(substr($i, 11), o, ",")
+                for (j = 1; j <= m; j++) if (o[j] ~ /^subvol=/) { v = substr(o[j], 8); sub(/^\//, "", v); if (v == s) f = 1 }
+            } }
+            END { exit !f }' "$e"; then
+            echo "yes $e"
+        else
+            echo "no $e"
+        fi
+    done
+}
+
+# lk_sdbu_images: the initrds the running root's entries name, on the ESP.
+lk_sdbu_images() {
+    local boot y e p
+    boot=$(bootctl --print-boot-path 2>/dev/null) || return 1
+    lk_sdbu_entries | while read -r y e; do
+        [[ $y == yes ]] || continue
+        awk '$1 == "initrd" { print $2 }' "$e" | while read -r p; do echo "${boot%/}/${p#/}"; done
+    done | LC_ALL=C sort -u
+}
+
+# lk_sdbu_check: the running root's entries each have an initrd and no
+# rd.luks.options, .key or .crypttab (sdbootutil mkinitrd writes their
+# options from /etc/kernel/cmdline); says how many entries boot other
+# snapshots, whose initrds stay as they were.
+lk_sdbu_check() {
+    local y e n=0 others=0 bad=0 o
+    while read -r y e; do
+        [[ -n $e ]] || continue
+        if [[ $y != yes ]]; then others=$((others + 1)); continue; fi
+        n=$((n + 1))
+        awk '$1 == "initrd" { f = 1 } END { exit !f }' "$e" || { lk_err "$e has no initrd line"; bad=1; }
+        o=$(awk '$1 == "options" { $1 = ""; print }' "$e")
+        if [[ $o =~ (^|[[:space:]])((rd\.)?luks\.(options|key|crypttab)=[^[:space:]]*) ]]; then
+            lk_err "$e's options have ${BASH_REMATCH[2]}, which overrides crypttab"
+            bad=1
+        fi
+    done < <(lk_sdbu_entries)
+    [[ $n -gt 0 ]] || { lk_err "sdbootutil: no boot entry in $(bootctl --print-boot-path 2>/dev/null || echo 'the ESP')/loader/entries boots this root ($(btrfs subvolume show / 2>/dev/null | head -n 1))"; return 1; }
+    [[ $others -eq 0 ]] || lk_say "  $others boot entries for other snapper snapshots keep the initrd they had (that snapshot's /etc/crypttab, without the drive's key): booting one of them asks"
+    [[ $bad -eq 0 ]]
 }
 
 # lk_modules [EXTRA...]: the modules of LUKS_MODULES and EXTRA this kernel
@@ -943,7 +1050,12 @@ luks_adopt() {
             fi
             ;;
         dracut)
-            if lk_dracut_systemd; then family=S
+            # sdbootutil on a transactional system (MicroOS, Aeon: / read-only
+            # in fstab) makes its initrds from inside the snapshots, and
+            # bko-holt load regenerates nothing there.
+            if lk_sdbootutil && findmnt --fstab -no OPTIONS / 2>/dev/null | tr ',' '\n' | grep -qx ro; then
+                family=A reason="sdbootutil on a transactional system (/ read-only in fstab): bs1-adopt doesn't remake its snapshots' initrds"
+            elif lk_dracut_systemd; then family=S
             else family=A reason="dracut without its systemd module (rd.luks.key needs the command line)"
             fi
             ;;
@@ -1318,9 +1430,19 @@ lk_check() {
         [[ ${#LK_BLS_VOLS[@]} -eq 0 ]] || lk_bls_check "${LK_BLS_VOLS[@]}"
         return
     fi
-    imgs=$(lk_images "$3")
+    # sdbootutil: the initrds this root's entries name (not "written since
+    # STAMP": an initrd as reproducible as the one before keeps its name and
+    # file, and FAT's local-time mtimes can read as the future).
+    if [[ $gen == dracut ]] && lk_sdbootutil; then
+        lk_sdbu_check || return 1
+        imgs=$(lk_sdbu_images)
+        [[ -n $imgs ]] || { lk_err "sdbootutil: this root's boot entries name no initrd"; return 1; }
+    else
+        imgs=$(lk_images "$3")
+    fi
     [[ -n $imgs ]] || { lk_err "can't find the remade initramfs in /boot, /efi or the ESP"; return 1; }
     while read -r img; do
+        [[ -f $img ]] || { lk_err "$img isn't there"; bad=1; continue; }
         if [[ $family == S && $img == */EFI/Linux/*.efi ]]; then
             ukis=$((ukis + 1))
             lk_uki_check "$img" || bad=1

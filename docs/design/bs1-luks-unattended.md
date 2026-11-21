@@ -750,3 +750,75 @@ without it, the wait and then systemd-cryptsetup's "Please enter
 passphrase for disk keystore-rpool" (`typed`).  The preflight said
 `UNLOCK=drive`; the restored system booted from NVRAM unlocked by the
 drive, `bs1-verify` 0 unexpected, and without the drive asked again.
+
+## Built, family S on openSUSE's sdbootutil (2026-11-21)
+
+openSUSE Tumbleweed 20261119 by Agama (the Thinkpad): systemd-boot 262.2
+through shim, managed by sdbootutil 1+git20261111
+(`/etc/sysconfig/bootloader`: `LOADER_TYPE="systemd-boot"`), dracut 112
+with systemd, LUKS2 then LVM `system` (btrfs root, swap), the root
+snapper's `@/.snapshots/1/snapshot`, SELinux enforcing.  Adopt classified
+it S correctly, but its check failed and rolled back, twice: the image it
+read was the ESP's, and that one hadn't been remade.
+
+- **What boots** (read from `/usr/bin/sdbootutil`, `install_kernel`):
+  each kernel's BLS entry on the ESP names `/ENTRY-TOKEN/KVER/linux-SHA1`
+  and `initrd-SHA1`, the files' checksums, one entry per snapper snapshot
+  (`rootflags=subvol=@/.snapshots/N/snapshot`).  The initrd is dracut's
+  output (host-only, so `/etc/crypttab` is in it), copied there by
+  sdbootutil; dracut's own `/boot/initrd-KVER` boots nothing.  A new
+  snapshot's entry (snapper's `10-sdbootutil.snapper` plugin, zypper's
+  pre/post pairs) reuses its parent's initrd.
+- **The remake:** `lk_sdbootutil` (sdbootutil on PATH and `LOADER_TYPE`
+  systemd-boot or grub2-bls) makes dracut's arm of `lk_remake` run
+  `sdbootutil mkinitrd`: dracut anew (`--no-reuse-initrd`) for each kernel
+  of the running snapshot, the file copied under its new checksum, that
+  snapshot's entries rewritten, and `bootctl cleanup` drops any initrd no
+  entry names.  `--luks-off` and the roll-back after a failed check are the
+  same command after the put back.  The record keeps `generator=dracut`,
+  what the dump says.  sdbootutil on a transactional system (/ read-only
+  in fstab: MicroOS, Aeon) is attended.
+- **Snapshots:** only the running snapshot's entries get the new initrd.
+  Another snapshot's entry boots that snapshot, whose own `/etc/crypttab`
+  lacks the drive's key, and keeps the initrd it had (made from such an
+  `/etc`), so booting an older snapshot asks for the passphrase, as it
+  should; adopt says how many such entries there are.  Snapshots made
+  after adopt inherit the new initrd through sdbootutil's reuse.
+- **Check:** the initrds the running root's entries name (`lk_sdbu_entries`:
+  `bootctl --print-boot-path`, `btrfs subvolume show /`'s path against each
+  entry's `rootflags=subvol=`), not "written since the stamp" (a
+  reproducible initrd keeps its name and file, and the ESP's FAT
+  timestamps read as an hour in the future here, which is how the failed
+  run found the stale image at all); at least one such entry, each with an
+  initrd and no `rd.luks.options|key|crypttab` in its options, and each
+  initrd's crypttab giving the volume the drive's key, as for any S image.
+- **The restore** (`bko-holt load` plan on this layout, 0.2.6): the dump
+  says systemd-boot `via_shim`, so the boot stage keeps the restored ESP
+  ("only the boot entries are made", no `bootctl install`); luksFormat
+  keeps the LUKS UUID, the filesystems keep theirs, the restore stage
+  makes snapshots 2-4 again; so every restored entry and its initrd are
+  the backed-up ones and boot as they did.  Its dracut loop in the chroot
+  remakes only `/boot/initrd-KVER`, which boots nothing: harmless for
+  BackShot1 (same machine), but a restore onto other hardware would boot
+  the source's host-only initrd.  Running `sdbootutil mkinitrd` in the
+  boot stage's chroot would close that; not built (untested in a rescue
+  chroot: it reads `/proc/cmdline` as a last resort, `bootctl`'s view of
+  the ESP and the root subvolume, and may chroot into a snapshot itself).
+
+Unit tests: `test_bs1_luks.py` AdoptSdbootutil (detection; the running
+snapshot's entries; adopt, rerun, `--luks-off` with a fake sdbootutil that
+names initrds by checksum and cleans up; a remade initrd without the line,
+no entry for the running snapshot and an entry whose options override
+crypttab each put everything back; transactional is attended).
+
+**On the Thinkpad** (2026-11-21, the fixed `bs1-luks` bind-mounted over the
+staged one in a private mount namespace, so `here` stayed on mybig512):
+adopt wrote crypttab, the drop-in and the record, `sdbootutil mkinitrd`
+made `initrd-aa80211...` for entry `-1` (the default), whose crypttab is
+`cr_nvme-eui.002538f751b6167e-part2 /dev/disk/by-uuid/774040c6-...
+/backshot1/keys/disk-passphrase:LABEL=mybig512 x-initrd.attach,keyfile-timeout=30s`;
+entries 2-4 kept `initrd-4dca1b8...`.  `--luks-off` put crypttab back and
+gave entry 1 a fresh initrd with the original line (`bootctl cleanup`
+removed aa80211); a second adopt made `initrd-aa80211...` again (dracut's
+`--reproducible`), and a third changed nothing.  The drive-unlocked boot
+and BackShot1 itself are next.

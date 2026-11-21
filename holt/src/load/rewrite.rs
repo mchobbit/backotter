@@ -14,7 +14,8 @@
 //! With --check, after the boot stage made the initramfs and the loader:
 //! each initramfs image is listed with its generator's tool and must hold
 //! the new type's module (or its kernel has it built in); a kernel command
-//! line still asking for a subvolume fails too.  What else is left of the
+//! line still asking for a subvolume fails too (grub-btrfs's old
+//! grub-btrfs.cfg only while a grub.cfg reads it).  What else is left of the
 //! old type (its UUID next to its name, its tools' configuration) is listed
 //! as warnings.
 //!
@@ -494,6 +495,17 @@ impl Run<'_> {
         }
     }
 
+    /// Whether a grub.cfg (beside FILE, or in a boot directory's grub or
+    /// grub2) has an uncommented line naming NAME: GRUB would read FILE.
+    fn grub_reads(&self, file: &Path, layout: &Value, name: &str) -> bool {
+        let mut cfgs: Vec<PathBuf> = file.parent().map(|d| d.join("grub.cfg")).into_iter().collect();
+        for d in boot_dirs(layout) {
+            cfgs.push(self.at(&format!("{d}/grub/grub.cfg")));
+            cfgs.push(self.at(&format!("{d}/grub2/grub.cfg")));
+        }
+        cfgs.iter().any(|g| std::fs::read_to_string(g).is_ok_and(|t| t.lines().any(|l| !l.trim_start().starts_with('#') && l.contains(name))))
+    }
+
     /// What's left of the old type: a command line still asking for a
     /// subvolume fails (the root wouldn't mount); the old UUID beside the
     /// old type's name, and the old type's tools, are warnings.
@@ -519,6 +531,15 @@ impl Run<'_> {
                 }
                 let text = String::from_utf8_lossy(&bytes);
                 let name = p.to_string_lossy().trim_start_matches(self.t).to_string();
+                // grub-btrfs's snapshot menu: its 41_snapshots-btrfs stops on
+                // a root that isn't btrfs, so grub-mkconfig wrote no submenu
+                // reading it and the old file stays (BigLinux, Garuda).  Its
+                // entries boot snapshots that weren't brought over; while no
+                // grub.cfg reads it, it's a leftover, not a boot that fails.
+                if c.mount == "/" && c.from == "btrfs" && p.file_name().is_some_and(|n| n == "grub-btrfs.cfg") && !self.grub_reads(&p, layout, "grub-btrfs.cfg") {
+                    self.log += &format!("bko-holt rewrite: left over: {name}: grub-btrfs's snapshot menu for the old btrfs root, which no grub.cfg reads now\n");
+                    continue;
+                }
                 for (i, l) in text.lines().enumerate() {
                     let t = l.trim_start();
                     if t.starts_with('#') {
@@ -833,6 +854,21 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         run.log.clear();
         run.rewrite(&change(), &no_block, false);
         assert!(run.errors.is_empty() && run.log.is_empty(), "{:?} {}", run.errors, run.log);
+        // grub-btrfs's old snapshot menu (BigLinux): no grub.cfg reads it
+        // after grub-mkconfig on the new root, so it's a leftover; while a
+        // grub.cfg still sources it, its subvolume lines fail the check.
+        let snap = "submenu 'x' {\n  menuentry 'snap' {\n    linux \"/timeshift-btrfs/snapshots/1/@/boot/vmlinuz\" root=UUID=x rootflags=subvol=\"timeshift-btrfs/snapshots/1/@\"\n  }\n}\n";
+        w("/boot/grub/grub-btrfs.cfg", snap);
+        w("/boot/grub/grub.cfg", "### BEGIN /etc/grub.d/41_snapshots-btrfs ###\n# configfile ${prefix}/grub-btrfs.cfg\n### END /etc/grub.d/41_snapshots-btrfs ###\n");
+        run.log.clear();
+        run.leftovers(&change(), &layout);
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        assert!(run.log.contains("left over: /boot/grub/grub-btrfs.cfg: grub-btrfs's snapshot menu"), "{}", run.log);
+        w("/boot/grub/grub.cfg", "submenu 'snapshots' {\n    configfile \"${prefix}/grub-btrfs.cfg\"\n}\n");
+        run.leftovers(&change(), &layout);
+        assert!(run.errors.iter().any(|e| e.contains("grub-btrfs.cfg:3: a kernel command line still asks for a subvolume")), "{:?}", run.errors);
+        std::fs::remove_file(format!("{root}/boot/grub/grub-btrfs.cfg")).unwrap();
+        run.errors.clear();
         // An entry the rewrite missed fails the check.
         w("/efi/loader/entries/other.conf", "options root=UUID=x rootflags=subvol=@\n");
         run.leftovers(&change(), &layout);

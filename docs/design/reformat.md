@@ -198,7 +198,12 @@ These are left installed and enabled.  Disabling a user's services is a
 policy choice, and most of them stop by themselves on a filesystem they don't
 handle.  The boot stage lists the ones it finds: btrfs scrub and balance
 timers, snapper configs, Timeshift in btrfs mode, `grub-btrfs` and its
-`grub-btrfsd.service`.
+`grub-btrfsd.service`.  `grub-btrfs`'s old snapshot menu,
+`/boot/grub/grub-btrfs.cfg`, stays too: its `41_snapshots-btrfs` stops on a
+root that isn't btrfs ("Root filesystem isn't btrfs"), so the new grub.cfg
+has no submenu reading it.  `--check` lists it as a leftover while no
+grub.cfg names it, and fails on its subvolume command lines if one does
+(BigLinux `/=ext4`).
 
 One exception, to be confirmed in testing: if a `/etc/grub.d` script such as
 `grub-btrfs`'s `41_snapshots-btrfs` makes `grub-mkconfig` fail on a

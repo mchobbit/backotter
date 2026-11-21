@@ -188,15 +188,33 @@ done
 # of its members, appeared (mdadm --incremental, as md126 and up): stop that,
 # so it is set up here as below, and isn't left behind.  This host's LVM may
 # have activated a group on it by itself too (event activation): that first,
-# or the array is busy.
+# or the array is busy.  Both run behind udev's back (LVM's activation is a
+# systemd-run service udevadm settle doesn't wait for), so a new LV can still
+# be held open for a moment (udev's blkid, udisks) or appear after the first
+# look: settle and look again, a few times, before giving up.
+remove_dm_tree() {      # a dm-N under /sys/class/block, holders first
+    local d
+    for d in /sys/class/block/"$1"/holders/dm-*; do
+        [[ -e $d ]] && remove_dm_tree "${d##*/}"
+    done
+    [[ -e /sys/class/block/$1/dm/name ]] || return 0
+    dmsetup remove --retry "$(cat "/sys/class/block/$1/dm/name")" 2>/dev/null
+}
 release_host_md() {
-    local h d
+    local h d err
     for h in /sys/class/block/"$(basename "$(realpath "$1")")"/holders/md*; do
         [[ -e $h ]] || continue
-        for d in "$h"/holders/dm-*; do
-            [[ -e $d ]] && { dmsetup remove "$(cat "$d/dm/name")" || { undo; die "${d##*/} holds ${h##*/}"; }; }
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            udevadm settle
+            err=""
+            for d in "$h"/holders/dm-*; do
+                [[ -e $d ]] && { remove_dm_tree "${d##*/}" || err="${d##*/} holds ${h##*/}"; }
+            done
+            [[ -z $err ]] && mdadm --stop "/dev/${h##*/}" >/dev/null 2>&1 && continue 2
+            [[ -n $err ]] || err="could not stop ${h##*/}, which this host assembled from ${1##*/}"
+            sleep 1
         done
-        mdadm --stop "/dev/${h##*/}" >/dev/null || { undo; die "could not stop ${h##*/}, which this host assembled from ${1##*/}"; }
+        undo; die "$err"
     done
 }
 n=0

@@ -1241,6 +1241,48 @@ class FsGentoo(unittest.TestCase):
         self.assertNotIn("(Gentoo", out)
 
 
+class FsEndeavourOsGrub(unittest.TestCase):
+    """judge.py fs over what load's boot stage does on EndeavourOS with GRUB
+    (endeavouros-grub): grub-install writes EFI/endeavouros/grubx64.efi in an
+    ESP at /efi, and load renews GRUB's fallback copy, which Calamares named
+    EFI/boot/bootx64.efi in lower case (t2h-20261121T0051-bba3: its mtime was
+    a DIFF)."""
+
+    SRC = {"efi": meta("dir"), "efi/EFI": meta("dir"), "efi/EFI/endeavouros": meta("dir"),
+           "efi/EFI/endeavouros/grubx64.efi": meta("file"), "efi/EFI/boot": meta("dir"),
+           "efi/EFI/boot/bootx64.efi": meta("file"), "efi/EFI/boot/other.efi": meta("file"),
+           "boot": meta("dir"), "boot/grub": meta("dir"), "boot/grub/grub.cfg": meta("file")}
+
+    judge = Fs.judge
+
+    def changed(self, changes):
+        a = copy.deepcopy(self.SRC)
+        for p, kw in changes.items():
+            a[p].update(kw)
+        return self.judge(self.SRC, a)
+
+    def test_the_renewed_fallback_copy(self):
+        rc, out = self.changed({"efi/EFI/endeavouros/grubx64.efi": {"sha256": "cd", "mtime": 2},
+                                "efi/EFI/boot/bootx64.efi": {"mtime": 2}, "boot/grub/grub.cfg": {"sha256": "cd"}})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn("after grub-install in an ESP at /efi (EndeavourOS with GRUB)): 1: efi/EFI/boot/bootx64.efi", out)
+        rc, out = self.changed({"efi/EFI/boot/bootx64.efi": {"sha256": "cd", "mtime": 2}})
+        self.assertEqual(rc, 0, out)
+
+    def test_the_rest_of_the_fallback_directory_counts(self):
+        rc, out = self.changed({"efi/EFI/boot/other.efi": {"sha256": "cd"}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF content: 1: efi/EFI/boot/other.efi", out)
+        src = {"efi/EFI/boot/bootx64.efi.bak": meta("file"), "efi/EFI/bootx/bootx64.efi": meta("file")}
+        a = copy.deepcopy(src)
+        for p in a:
+            a[p].update(sha256="cd")
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF content: 2: efi/EFI/boot/bootx64.efi.bak, efi/EFI/bootx/bootx64.efi", out)
+
+
 class FsGaruda(unittest.TestCase):
     """judge.py fs over what load's boot stage does on Garuda (ga4-2):
     dracut-rebuild dd-copies the kernel to /boot again, the same bytes in a

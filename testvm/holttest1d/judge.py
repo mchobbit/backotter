@@ -260,6 +260,11 @@ BOOT_STAGE = [
     (r"^etc/apt/apt\.conf\.d$", {"mtime (dirs)", "atime (dirs)"}, "proxmox-auto-removal replaces 76pveconf"),
     (r"^var/tmp/espmounts$", {"mtime (dirs)", "atime (dirs)"}, "proxmox-boot-tool mounts each ESP under /var/tmp/espmounts/ID while it works"),
     (r"^efi/EFI/endeavouros(/|$)", _WRITTEN, "grub-install writes the loader in an ESP at /efi (EndeavourOS with GRUB)"),
+    # Load renews GRUB's fallback copy after grub-install (bko-holt e8986b2,
+    # BackShot2 fail-002): EndeavourOS's Calamares made it as EFI/boot/
+    # bootx64.efi, lower case, which bootctl's rule (EFI/BOOT, EFI/Boot)
+    # doesn't reach; vfat matches it by any case.
+    (r"^efi/EFI/(?i:boot/bootx64\.efi)$", _WRITTEN, "load renews GRUB's fallback copy, EFI/BOOT/BOOTX64.EFI (vfat: any case), after grub-install in an ESP at /efi (EndeavourOS with GRUB)"),
     (r"^efi/EFI/gentoo(/|$)", _WRITTEN, "grub-install writes the loader in an ESP at /efi (Gentoo)"),
     (r"^boot/EFI/gentoo(/|$)", _WRITTEN, "grub-install writes the loader in an ESP at /boot (Gentoo with systemd)"),
     (r"^(boot/)?efi/[0-9a-f]{32}/[^/]+/initrd$", _WRITTEN, "dracut --regenerate-all rebuilds a Type 1 entry's initrd, on the ESP under the machine id (EndeavourOS)"),

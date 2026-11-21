@@ -490,9 +490,12 @@ class TestTree(unittest.TestCase):
         self.log = self.t / "mount.log"
         exe(self.bin / "mount", f'#!/bin/sh\necho "$*" >>"{self.log}"\n')
         # Mounted: the running system's four; findmnt -rn PATH: nothing there.
-        exe(self.bin / "findmnt", '#!/bin/sh\ncase "$*" in\n-rno\\ SOURCE) printf "%s\\n" /dev/mapper/vos--root-root--b /dev/vda1 /dev/vda2 /dev/mapper/vos--var-var ;;\n*) exit 1 ;;\nesac\n')
-        exe(self.bin / "lsblk", '#!/bin/sh\nprintf "%s\\n" "/dev/vda" "/dev/vda1 ext4" "/dev/vda2 vfat" "/dev/vda3 LVM2_member" "/dev/vda4 LVM2_member" '
-                                '"/dev/mapper/vos--root-init ext4" "/dev/mapper/vos--root-root--a btrfs" "/dev/mapper/vos--root-root--b btrfs" "/dev/mapper/vos--var-var btrfs"\n')
+        # MAJ:MIN: btrfs's anonymous numbers, which match no device.
+        exe(self.bin / "findmnt", '#!/bin/sh\ncase "$*" in\n-rno\\ SOURCE) printf "%s\\n" /dev/mapper/vos--root-root--b /dev/vda1 /dev/vda2 /dev/mapper/vos--var-var ;;\n'
+                                  '-rno\\ MAJ:MIN) printf "%s\\n" 0:40 254:1 254:2 0:41 ;;\n*) exit 1 ;;\nesac\n')
+        # lsblk -lnpo NAME,KNAME,MAJ:MIN,FSTYPE.
+        exe(self.bin / "lsblk", '#!/bin/sh\nprintf "%s\\n" "/dev/vda /dev/vda 254:0" "/dev/vda1 /dev/vda1 254:1 ext4" "/dev/vda2 /dev/vda2 254:2 vfat" "/dev/vda3 /dev/vda3 254:3 LVM2_member" "/dev/vda4 /dev/vda4 254:4 LVM2_member" '
+                                '"/dev/mapper/vos--root-init /dev/dm-0 253:0 ext4" "/dev/mapper/vos--root-root--a /dev/dm-1 253:1 btrfs" "/dev/mapper/vos--root-root--b /dev/dm-2 253:2 btrfs" "/dev/mapper/vos--var-var /dev/dm-3 253:3 btrfs"\n')
 
     def sh(self, body, on_disk="return 0"):
         lib = bash_functions(BS1 / "bs1-common", "internal_mounts", "check_coverage", "mount_hints")
@@ -526,8 +529,8 @@ class TestTree(unittest.TestCase):
     def test_coverage_proxmox_esps(self):
         # proxmox-boot-tool's ESP, out of fstab and unmounted: passed and
         # named when its volume ID is listed (in any case), else a stop.
-        exe(self.bin / "findmnt", '#!/bin/sh\nprintf "%s\\n" rpool/ROOT/pve-1 rpool /dev/fuse\n')
-        exe(self.bin / "lsblk", '#!/bin/sh\nprintf "%s\\n" "/dev/nvme0n1" "/dev/nvme0n1p1" "/dev/nvme0n1p2 vfat" "/dev/nvme0n1p3 zfs_member"\n')
+        exe(self.bin / "findmnt", '#!/bin/sh\ncase "$*" in\n-rno\\ MAJ:MIN) printf "%s\\n" 0:40 0:41 0:42 ;;\n*) printf "%s\\n" rpool/ROOT/pve-1 rpool /dev/fuse ;;\nesac\n')
+        exe(self.bin / "lsblk", '#!/bin/sh\nprintf "%s\\n" "/dev/nvme0n1 /dev/nvme0n1 259:0" "/dev/nvme0n1p1 /dev/nvme0n1p1 259:1" "/dev/nvme0n1p2 /dev/nvme0n1p2 259:2 vfat" "/dev/nvme0n1p3 /dev/nvme0n1p3 259:3 zfs_member"\n')
         exe(self.bin / "blkid", '#!/bin/sh\necho 86B7-3300\n')
         uuids = self.t / "proxmox-boot-uuids"
         body = f'say() {{ echo "SAY: $*"; }}\nPROXMOX_ESPS="{uuids}"\ncheck_coverage nvme0n1; echo passed'
@@ -543,6 +546,39 @@ class TestTree(unittest.TestCase):
         uuids.unlink()
         r = self.sh(body)
         self.assertIn("DIE: /dev/nvme0n1p2 (vfat) isn't mounted", r.stdout)
+
+    def coverage_alpine(self, sources, devnos):
+        # The Thinkpad on Alpine 3.24 (2026-11-21): mdev makes
+        # /dev/mapper/root a block node of its own (253:0), not a link, and
+        # the mount table names / /dev/dm-0, lsblk's KNAME.
+        exe(self.bin / "findmnt", '#!/bin/sh\ncase "$*" in\n'
+                                  f'-rno\\ SOURCE) printf "%s\\n" {sources} ;;\n-rno\\ MAJ:MIN) printf "%s\\n" {devnos} ;;\n*) exit 1 ;;\nesac\n')
+        exe(self.bin / "lsblk", '#!/bin/sh\nprintf "%s\\n" "/dev/nvme0n1 /dev/nvme0n1 259:0" "/dev/nvme0n1p1 /dev/nvme0n1p1 259:1 vfat" "/dev/nvme0n1p2 /dev/nvme0n1p2 259:2 swap" '
+                                '"/dev/nvme0n1p3 /dev/nvme0n1p3 259:3 crypto_LUKS" "/dev/mapper/root /dev/dm-0 253:0 ext4"\n')
+        return self.sh('check_coverage nvme0n1; echo passed')
+
+    def test_coverage_alpine_mdev(self):
+        r = self.coverage_alpine("sysfs devtmpfs /dev/dm-0 /dev/nvme0n1p1 /dev/sda1", "0:22 0:6 253:0 259:1 8:1")
+        self.assertEqual(r.stdout.strip(), "passed", r.stdout + r.stderr)
+
+    def test_coverage_by_kname_or_number_alone(self):
+        # The kernel's name with no number (a btrfs's anonymous one), and
+        # the number with neither name, each count.
+        r = self.coverage_alpine("/dev/dm-0 /dev/nvme0n1p1", "0:40 259:1")
+        self.assertEqual(r.stdout.strip(), "passed", r.stdout + r.stderr)
+        r = self.coverage_alpine("/dev/root /dev/nvme0n1p1", "253:0 259:1")
+        self.assertEqual(r.stdout.strip(), "passed", r.stdout + r.stderr)
+
+    def test_coverage_alpine_unmounted_still_stops(self):
+        # The ESP not mounted: neither its name nor its number is there.
+        r = self.coverage_alpine("/dev/dm-0 /dev/sda1", "253:0 8:1")
+        self.assertIn("DIE: /dev/nvme0n1p1 (vfat) isn't mounted", r.stdout)
+        self.assertNotIn("passed", r.stdout)
+        # Nor the root, though the LUKS device under it is "mounted" by
+        # no name of its own.
+        r = self.coverage_alpine("/dev/nvme0n1p1 /dev/nvme0n1p3", "259:1 259:3")
+        self.assertIn("DIE: /dev/mapper/root (ext4) isn't mounted", r.stdout)
+        self.assertNotIn("passed", r.stdout)
 
     def test_mount_hints(self):
         r = self.sh(f'mount_hints vda "{self.layout}"; echo done')

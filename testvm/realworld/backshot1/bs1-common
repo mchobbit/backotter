@@ -243,10 +243,14 @@ PROXMOX_ESPS=/etc/kernel/proxmox-boot-uuids
 # erased without being in the backup.  LAYOUT: one whose backup_sources' mount
 # hints (ABRoot's init LV and other root) count as mounted, since mount_hints
 # mounts them for the tree.  A vfat partition PROXMOX_ESPS lists counts too,
-# and is named.
+# and is named.  Mounted is by device number as well as by name: Alpine's
+# mdev makes /dev/mapper/root a node of its own, not a link to /dev/dm-0,
+# and the mount table names / /dev/dm-0 (lsblk's KNAME); a btrfs mount's
+# number is an anonymous 0:N, so its source's name still counts.
 check_coverage() {
-    local mounted name fs uuid
+    local mounted devnos name kname devno fs uuid
     mounted=$(findmnt -rno SOURCE | sed 's/\[.*//')
+    devnos=$(findmnt -rno MAJ:MIN)
     if [[ -n ${2:-} ]]; then
         mounted+=$'\n'$(python3 -c '
 import json, sys
@@ -254,9 +258,11 @@ for s in json.load(open(sys.argv[1]))["storage"].get("backup_sources") or []:
     if s.get("from") is None and isinstance(s.get("mount"), dict) and s["mount"].get("device"):
         print(s["mount"]["device"])' "$2") || die "can't read the mount hints in $2"
     fi
-    while read -r name fs; do
+    # FSTYPE last: the one column that can be empty.
+    while read -r name kname devno fs; do
         [[ ${fs:-} =~ ^($REAL_FS)$ ]] || continue
-        grep -qxF "$name" <<<"$mounted" && continue
+        grep -qxF -e "$name" -e "${kname:-$name}" <<<"$mounted" && continue
+        [[ ${devno:-} == *:* ]] && grep -qxF "$devno" <<<"$devnos" && continue
         uuid=
         [[ $fs == vfat && -r ${PROXMOX_ESPS:-} ]] && uuid=$(blkid -p -o value -s UUID "$name" 2>/dev/null)
         if [[ -n $uuid ]] && grep -qxiF "$uuid" "$PROXMOX_ESPS"; then
@@ -264,7 +270,7 @@ for s in json.load(open(sys.argv[1]))["storage"].get("backup_sources") or []:
             continue
         fi
         die "$name ($fs) isn't mounted, so it wouldn't be backed up"
-    done < <(lsblk -lnpo NAME,FSTYPE "/dev/$1")
+    done < <(lsblk -lnpo NAME,KNAME,MAJ:MIN,FSTYPE "/dev/$1")
 }
 
 # mount_hints DISK LAYOUT: each filesystem on DISK that LAYOUT's

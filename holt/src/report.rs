@@ -192,6 +192,13 @@ impl Ctx<'_> {
     fn by_devno(&self, devno: &str) -> Option<&Dev> {
         self.devs.iter().find(|d| d.b.devno == devno)
     }
+    /// The device-mapper device named NAME, as /dev/mapper/NAME is.
+    /// Without udev (Alpine's mdev; libdevmapper makes its own nodes),
+    /// /dev/mapper/root is a block node of its own, not a link to ../dm-0,
+    /// so following links never reaches the kernel's name.
+    fn dm_named(&self, name: &str) -> Option<&Dev> {
+        self.devs.iter().find(|d| d.b.dm_name.as_deref() == Some(name))
+    }
     fn partition_uuid(&self, d: &Dev) -> Option<String> {
         if let (Some(parent), Some(n)) = (&d.b.parent, d.b.partition_number) {
             if let Some(t) = self.dev(parent).and_then(|p| p.table.as_ref()) {
@@ -246,7 +253,11 @@ impl Ctx<'_> {
                 let canon = std::fs::canonicalize(sys.p(val)).ok();
                 let name = canon.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned());
                 let name = name.unwrap_or_else(|| val.trim_start_matches("/dev/").to_string());
-                return self.dev(&name).map(|d| d.b.name.clone()).or_else(|| {
+                let mapper = match &canon {
+                    Some(c) => c.parent().and_then(|p| p.file_name()).is_some_and(|d| d == "mapper").then_some(name.as_str()),
+                    None => val.strip_prefix("/dev/mapper/"),
+                };
+                return self.dev(&name).or_else(|| self.dm_named(mapper?)).map(|d| d.b.name.clone()).or_else(|| {
                     // A link udev knows of, though not on this root's /dev.
                     self.devs.iter().find(|d| d.b.udev.links.iter().any(|l| l == val)).map(|d| d.b.name.clone())
                 });
@@ -1853,6 +1864,32 @@ mod tests {
         assert_eq!(unknown_disk(&s, &["nvme0n1".to_string()]), None);
         // A partition isn't a whole disk.
         assert_eq!(unknown_disk(&s, &["sda1".to_string()]).as_deref(), Some("sda1"));
+    }
+
+    /// Alpine's mdev (the Thinkpad, 2026-11-21): /dev/mapper/root is a block
+    /// node of its own, not a link to ../dm-0, and LVM's /dev/VG/LV links
+    /// end at such a node.  Each resolves by its device-mapper name; a
+    /// /dev/mapper path with no node on this /dev too; another node named
+    /// like a dm device, outside /dev/mapper, doesn't.
+    #[test]
+    fn resolve_mdev_mapper_nodes() {
+        let t = crate::testutil::Tree::new("resolve-mdev");
+        for (dm, devno, name) in [("dm-0", "253:0", "root"), ("dm-1", "253:1", "vg0-swap"), ("dm-2", "253:2", "late")] {
+            t.disk(dm, devno, &[0u8; 4096], 512).file(&format!("/sys/block/{dm}/dm/name"), format!("{name}\n"));
+        }
+        t.file("/dev/mapper/root", "").file("/dev/mapper/vg0-swap", "").symlink("/dev/vg0/swap", "../mapper/vg0-swap").file("/dev/root", "");
+        t.file("/etc/fstab", "/dev/mapper/root / btrfs defaults 0 1\n/dev/vg0/swap none swap sw 0 0\n/dev/mapper/late /late ext4 defaults 0 2\n/dev/root /x ext4 defaults 0 2\n/dev/mapper/none /y ext4 defaults 0 2\n");
+        // btrfs's anonymous devno: the mount's device is its source's.
+        t.file("/proc/self/mountinfo", "30 1 0:40 /@ / rw - btrfs /dev/mapper/root rw,subvolid=256,subvol=/@\n");
+        let s = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true);
+        let v = build_only(&s, None, "2026-11-21T00:00:00Z", &[]);
+        let to = |i: &str| v.at(&["storage", "fstab", i, "resolves_to"]).and_then(Value::as_str).map(str::to_string);
+        assert_eq!(to("0").as_deref(), Some("dm-0"));
+        assert_eq!(to("1").as_deref(), Some("dm-1"));
+        assert_eq!(to("2").as_deref(), Some("dm-2"));
+        assert_eq!(to("3"), None);
+        assert_eq!(to("4"), None);
+        assert_eq!(v.at(&["storage", "mounts", "0", "device"]).and_then(Value::as_str), Some("dm-0"));
     }
 
     /// Ubuntu's ZFS + encryption install, dumped --only-disk nvme0n1 (the

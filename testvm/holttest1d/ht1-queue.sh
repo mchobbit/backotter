@@ -60,7 +60,8 @@
 # queue/RUN/runner-HOST.log what the runner did, /bkoscratch/holttest1d/
 # RUN-GV.log each job's output.  HT_HOLT, HT_HOLT_BIN, HT_BKO_BIN, HT_ROUND,
 # HT_RUSTIC and HT_RAM reach ht1.sh (paths made absolute), and HT_WORK with
-# HT_RECORDS (tests: /mnt/bko-ram/NAME and /bkoscratch/NAME); any other HT_
+# HT_RECORDS (tests: /mnt/bko-ram/NAME and /bkoscratch/NAME), and HT_STALL_MIN
+# (ht1-lib.sh's watchdog; the jobs' Test2 rows then don't count); any other HT_
 # one (HT_QUICK, HT_LIMIT_KIB and the like) refuses the start.  HoltTest2's
 # T2_RUN, T2_CELLS and T2_HOST_ROOT reach the jobs too (their ledger rows:
 # ht1-lib.sh).  bko-holt is HT_HOLT's, HT_HOLT_BIN's or, by default, the
@@ -226,10 +227,13 @@ MINFREE_GB=$((10#$MINFREE_GB))
 [[ $BIG_GIB =~ $NUM_RE ]] || die "BIG_GIB: a number of GiB"
 [[ $RAM == [01] ]] || die "HT_RAM: 1 (in RAM, the default) or 0 (on /bkoscratch)"
 # Any other HT_ setting (debugging, a test hook) would change every job's run
-# (sudo -E passes them on).
+# (sudo -E passes them on).  HT_STALL_MIN does too, but only how long a hung
+# stage waits (every job's Test2 row then doesn't count): it passes.
+[[ -z ${HT_STALL_MIN+set} || $HT_STALL_MIN =~ ^(0|[1-9][0-9]*)$ ]] ||
+    die "HT_STALL_MIN=$HT_STALL_MIN: whole minutes of no progress that stop a job's stage (0: never; no leading zero)"
 for v in $(compgen -e); do
     case $v in
-    HT_HOLT|HT_HOLT_BIN|HT_BKO_BIN|HT_ROUND|HT_RUSTIC|HT_RAM|HT_WORK|HT_RECORDS) ;;
+    HT_HOLT|HT_HOLT_BIN|HT_BKO_BIN|HT_ROUND|HT_RUSTIC|HT_RAM|HT_WORK|HT_RECORDS|HT_STALL_MIN) ;;
     HT_*) die "$v is set: unset it (the queue's jobs are plain HoltTest1 runs)" ;;
     esac
 done

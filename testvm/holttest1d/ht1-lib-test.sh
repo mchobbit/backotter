@@ -88,6 +88,17 @@ if [[ ${1:-} == run ]]; then
             for ((i = 0; i < 10; i++)); do echo "w $i" >>"$R/$T1_IDLEF"; sleep 3; done
         fi
         [[ ${T1_LOADHANG:-} != "$1" ]] || ht_load_try "$R/logs/rebuild-restore.out" "$R/logs/rebuild-restore.err" t1_hang
+        # ht1-bsd.sh's prep_lock, prep and prep_unlock (case 56): a wait on the
+        # lock another run holds (the test, for T1_PREPWAIT s), then a prep whose
+        # only work is FX/prep.part (outside R) written every 3 s, T1_PREPS times.
+        if [[ ${T1_PREP:-} == "$1" ]]; then
+            ht_stage "wait prep lock"
+            flock -w 60 "$FX/prep.lock" true
+            ht_stage prep "$FX/prep.part"
+            for ((i = 0; i < ${T1_PREPS:-10}; i++)); do echo "p $i" >>"$FX/prep.part"; sleep 3; done
+            [[ ${T1_PREPS:-10} != 0 ]] || sleep 30
+            ht_stage "$HT_PHASE"
+        fi
         # The same in a function call whose stdio is in R, as sshk ... >"$R/logs/X" is.
         [[ ${T1_REDIR:-} != "$1" ]] || t1_wait >"$R/logs/redir.out" 2>"$R/logs/redir.err" <"$R/logs/source-bootstate.txt"
         # shellcheck disable=SC2154  # unset on purpose: set -u ends the driver here
@@ -367,7 +378,7 @@ kept_ls="dst-meta.json.zst dumps logs report.txt src-meta.json.zst "
 # files (a run from source on /bkoscratch refuses); 46 a vm-mount someone else made of a file in R stays up;
 # 47-49 Test2's ledger rows (ht_t2_row): which runs get one and what it says, a missing, failing or hanging
 # t2-host changing nothing, and none in the default ledger; 50-52 the variant names, ht1-bsd-test.sh and
-# ht_load_try; 53-55 the no-progress watchdog.
+# ht_load_try; 53-56 the no-progress watchdog.
 
 drive c1 source bogus
 chk "exit 2, not $rc" same "$rc" 2
@@ -1367,10 +1378,42 @@ lim=$(unset HT_STALL_SEC HT_STALL_MIN; . "$HERE/ht1-lib.sh"
            "$(HT_STALL_MIN=0 ht_stall_sec 'load restore') $(HT_STALL_MIN=7 ht_stall_sec 'load restore') $(HT_STALL_MIN=7 ht_stall_sec verify)" \
            "$(ht_dur 2700) $(ht_dur 12)")
 chk "the limits: '$lim'" same "$lim" "2700 2700 1800 1800 0 420 420 45 min 12 s"
+# A "wait ..." stage (ht1-bsd.sh's wait for a prep lock) is never stopped, whatever the settings.
+lim=$(unset HT_STALL_SEC HT_STALL_MIN; . "$HERE/ht1-lib.sh"
+      echo "$(ht_stall_sec 'wait prep lock') $(HT_STALL_MIN=7 ht_stall_sec 'wait prep lock') $(HT_STALL_SEC=12 ht_stall_sec 'wait prep lock') $(ht_stall_sec prep)")
+chk "a wait stage's limits: '$lim'" same "$lim" "0 0 0 1800"
 HT_STALL_MIN=x drive c55
 chk "HT_STALL_MIN=x: exit 2, not $rc, saying why" eval 'same "$rc" 2 && grep -q "HT_STALL_MIN=x: whole minutes" "$out"'
 chk "  nothing under either root for it" gone "$HT_WORK/c55" "$HT_RECORDS/c55"
-verdict 55 "the watchdog's limits, and HT_STALL_MIN's refusal" "$out"
+o55=$out
+# A leading zero: bash's $((08)) is an error (the watchdog silently off), 010 is 8.
+HT_STALL_MIN=08 drive c55b; o55b=$out
+chk "HT_STALL_MIN=08: exit 2, not $rc, saying why" eval 'same "$rc" 2 && grep -q "HT_STALL_MIN=08: whole minutes .*no leading zero" "$out"'
+HT_STALL_MIN=010 drive c55c; o55c=$out
+chk "HT_STALL_MIN=010: exit 2, not $rc" same "$rc" 2
+HT_STALL_SEC=012 drive c55d; o55d=$out
+chk "HT_STALL_SEC=012: exit 2, not $rc, saying why" eval 'same "$rc" 2 && grep -q "HT_STALL_SEC=012: a number of seconds" "$out"'
+HT_STALL_TICK=02 drive c55e; o55e=$out
+chk "HT_STALL_TICK=02: exit 2, not $rc" same "$rc" 2
+chk "  nothing under either root for them" gone "$HT_WORK/c55b" "$HT_RECORDS/c55b" "$HT_WORK/c55c" "$HT_RECORDS/c55c" "$HT_WORK/c55d" "$HT_RECORDS/c55d"
+verdict 55 "the watchdog's limits (a wait stage's none), and the refusal of a bad or zero-led HT_STALL_*" "$o55" "$o55b" "$o55c" "$o55d" "$o55e"
+
+# 56: ht1-bsd.sh's one-time rescuer prep (prep_lock, prep_unlock): waiting
+# 20 s for the lock another run holds is never stopped; the prep's work is
+# its .part outside R, written every 3 s for 30 s: progress; a prep that
+# writes nothing for 30 s is stopped, a FAIL that names the stage prep.
+rm -f "$FX/prep.part"; : >"$FX/prep.lock"
+flock "$FX/prep.lock" sleep 20 & lk=$!
+waitfor 5 eval '! flock -n "$FX/prep.lock" true'
+HT_STALL_SEC=12 HT_STALL_TICK=2 T1_PREP=backup drive c56a source backup; rca=$rc oa=$out
+wait "$lk" 2>/dev/null
+chk "a 20 s wait for the lock, then a prep that writes its .part: exit 0, not $rca" same "$rca" 0
+chk "  RESULT: PASS" same "$(tail -n 1 "$HT_RECORDS/c56a/fake/report.txt")" "RESULT: PASS"
+chk "  it waited and prepped (wall $(pk c56a wall_s) s, 50+)" awk -v w="$(pk c56a wall_s)" 'BEGIN { exit !(w >= 50) }'
+chk "  the .part was written" eval '[[ $(wc -l <"$FX/prep.part") == 10 ]]'
+HT_STALL_SEC=12 HT_STALL_TICK=2 T1_PREP=backup T1_PREPS=0 drive c56b source backup; rcb=$rc ob=$out
+chk "a prep that writes nothing: exit 1, not $rcb, the FAIL names the stage prep" eval 'same "$rcb" 1 && hasre "$HT_RECORDS/c56b/fake/report.txt" "^FAIL stage prep made no progress for 12 s \(.*\): the run was stopped in its backup phase\$"'
+verdict 56 "the watchdog and ht1-bsd.sh's prep: the wait for its lock is never stopped, its .part outside R counts" "$oa" "$ob"
 
 if ((nfail == 0)); then echo "ht1-lib-test: all $ncase cases ok"; exit 0; fi
 echo "ht1-lib-test: $nfail of $ncase cases FAIL"

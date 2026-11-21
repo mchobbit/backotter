@@ -292,12 +292,20 @@ ht_rustic_take "$PLAT"
 # second finds it made.  The wait is in the background, so that a signal (the
 # sampler's stop, a kill) ends it at once; ht_release ends the waiter then.
 # Up to 2 h: DragonFly's prep can take up to 90 min (boot, cpdup, poweroff).
+# The watchdog (ht1-lib.sh's ht_stage): the wait is its stage "wait prep
+# lock", never stopped (the run that holds the lock has its own watchdog,
+# and flock -w bounds the wait); the prep is its stage "prep", where the
+# .part its QEMU writes, outside R, counts as progress (DragonFly's cpdup
+# prints nothing); prep_unlock goes back to the phase's.
 plw=""
 prep_lock() {
+    ht_stage "wait prep lock"
     { exec {plk}>>"/bkoscratch/holttest1d/rescuer/.$RG-prep.lock" && { flock -w 7200 "$plk" & plw=$!; wait "$plw"; }; }
     local s=$?; plw=""
     ((s == 0)) || { echo "ht1-bsd: no lock for $prep" >&2; exit 1; }
+    ht_stage prep "$prep.part"
 }
+prep_unlock() { exec {plk}>&-; ht_stage "$HT_PHASE"; }
 ht_release() { rm -f "$R/img-key" "$R/img-key.pub"; [[ -z $plw ]] || kill "$plw" 2>/dev/null; }   # (ht_end calls it)
 # The prep's VM: the QEMU on its image (vm-run names it by its real path; the
 # lock keeps it the only one), never another run's on the port.
@@ -333,7 +341,7 @@ PREP
         grep -q "^DUID" "$R/logs/rescuer-prep.log" && mv "$prep.part" "$prep"
         [[ -f $prep ]] && ht_note "made the one-time rescuer $prep ($(du -sh "$prep" | cut -f1) on /bkoscratch)"
     fi
-    exec {plk}>&-
+    prep_unlock
     [[ -f $prep ]] || { echo "ht1-bsd: no OpenBSD rescuer with its own DUID (logs/rescuer-prep.log)" >&2; exit 1; }
     rimg=$prep
 fi
@@ -356,7 +364,7 @@ if [[ $PLAT == illumos ]]; then
         grep -q "^PREP-DONE" "$R/logs/rescuer-prep.log" && mv "$prep.part" "$prep"
         [[ -f $prep ]] && ht_note "made the one-time rescuer $prep ($(du -sh "$prep" | cut -f1) on /bkoscratch)"
     fi
-    exec {plk}>&-
+    prep_unlock
     [[ -f $prep ]] || { echo "ht1-bsd: no illumos rescuer with a pool GUID of its own (logs/rescuer-prep.log)" >&2; exit 1; }
     rimg=$prep
 fi
@@ -401,7 +409,7 @@ PREP
         grep -q "^PREP-DONE" "$R/logs/rescuer-prep.log" && mv "$prep.part" "$prep"
         [[ -f $prep ]] && ht_note "made the one-time rescuer $prep ($(du -sh "$prep" | cut -f1) on /bkoscratch)"
     fi
-    exec {plk}>&-
+    prep_unlock
     [[ -f $prep ]] || { echo "ht1-bsd: no DragonFly rescuer with a HAMMER2 of its own (logs/rescuer-prep.log)" >&2; exit 1; }
     rimg=$prep
 fi

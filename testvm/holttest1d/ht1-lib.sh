@@ -49,14 +49,14 @@
 # or refuse; 0: /bkoscratch), HT_CLEAN (0: leave R as it is), HT_RESERVE_PID
 # (the ledger PID of a reservation that outlives the run, read instead of the
 # ancestors'), HT_KEEP, HT_RUSTIC, HT_ROUND, HT_BKO_BIN, HT_FAIL_AT (a test
-# hook: a FAIL after that phase); tests only: HT_WORK, HT_RECORDS,
-# HT_STALL_MIN (minutes of no progress that stop a stage; 0: never;
-# unset: ht_stall_sec's defaults); tests only: HT_WORK, HT_RECORDS,
-# HT_LIMIT_KIB (the use past which a run in RAM is stopped), HT_FREE_KIB
-# (the RAM disk's free KiB, as the sampler sees it), HT_STALL_SEC,
-# HT_STALL_TICK and HT_STALL_CPU (the watchdog's limit and check interval in
-# seconds, and its CPU threshold in CPU seconds), the last five refused with
-# the default HT_WORK.
+# hook: a FAIL after that phase), HT_STALL_MIN (minutes of no progress that
+# stop a stage; 0: never; unset: ht_stall_sec's defaults; a run's Test2 row
+# with it set doesn't count); tests only: HT_WORK, HT_RECORDS, HT_LIMIT_KIB
+# (the use past which a run in RAM is stopped), HT_FREE_KIB (the RAM disk's
+# free KiB, as the sampler sees it), HT_STALL_SEC, HT_STALL_TICK and
+# HT_STALL_CPU (the watchdog's limit and check interval in seconds, and its
+# CPU threshold in CPU seconds), the last five refused with the default
+# HT_WORK.  Numbers have no leading zero.
 # Exit codes: 0 PASS; 1 FAIL, ended early, stopped over its reservation or
 # for making no progress;
 # 2 refused before any phase, R removed; 129, 130, 143 ended by HUP, INT, TERM.
@@ -91,6 +91,7 @@ HT_LEDGER=/mnt/bko-ram/.reserve                   # cmp-run.sh's ledger: PID DIS
 HT_LOCKS=/run/lock/bko-ht1                        # run locks: on neither disk, gone at a reboot
 HT_LIB=$(realpath "${BASH_SOURCE[0]}")
 HT_NAME='^[A-Za-z0-9][A-Za-z0-9._-]*$'            # RUN and GV: plain names (R and K are deleted and moved)
+HT_UINT='^(0|[1-9][0-9]*)$'                       # a number as the env gives it: no leading zero (bash reads 08 as octal)
 HT_STARTED=0 HT_MADE_R=0 HT_SUMMED=0 HT_SAMPLER="" HT_LOCKER="" HT_SIG="" HT_NOTE="" HT_SEEDED="" HT_ROTATED="" HT_SEED_NEW=0
 HT_FD1="" HT_FD2=""
 HT_WHERE=""   # the phase the run is in or after, for ht_end's FAIL line
@@ -178,9 +179,15 @@ ht_load_try() {
     ht_stage "$HT_PHASE"
     return $rc
 }
-# ht_stage NAME: the stage the watchdog names (R/.ht/stage: NAME, then the
-# phase); a new one is progress.  Nothing outside a run's R (ht_load_try's own self-test).
-ht_stage() { [[ -n ${R:-} && -d $R/.ht ]] && printf '%s\n%s\n' "${1:-start}" "$HT_PHASE" >"$R/.ht/stage"; return 0; }
+# ht_stage NAME [FILE...]: the stage the watchdog names (R/.ht/stage: NAME,
+# the phase, then the FILEs); a new one is progress, and so is a change of
+# a FILE (outside R: ht1-bsd.sh's one-time rescuer's .part, that its prep's
+# QEMU writes).  A stage "wait ..." is never stopped (ht_stall_sec).
+# Nothing outside a run's R (ht_load_try's own self-test).
+ht_stage() {
+    [[ -n ${R:-} && -d $R/.ht ]] && printf '%s\n' "${1:-start}" "$HT_PHASE" "${@:2}" >"$R/.ht/stage"
+    return 0
+}
 # R is this driver's, for K: a dead run's markers of its attempt go (seeding
 # is ht_seed's, and held stays: the sweep and the queue read its PID).
 ht_mark() { mkdir -p "$R/.ht" && rm -f "$R/.ht/summed" "$R/.ht/overrun" "$R/.ht/lowfree" "$R/.ht/moved" "$R/.ht/stalled" "$R/.ht/stage" "$R/.ht/progress" && echo $$ >"$R/.ht/pid" && echo "$K" >"$R/.ht/k"; }
@@ -225,16 +232,17 @@ ht_paths() {
         debug) [[ ${HT_CLEAN:-1} == 0 && -n ${HT_RESERVE_PID:-} ]] ||
             ht_die "RUN debug is ht1-debug.sh's (with HT_CLEAN=0 and HT_RESERVE_PID): take another RUN" ;;
     esac
+    # (Numbers without a leading zero: $((08)) is an error, and 010 is 8.)
     for p in HT_LIMIT_KIB HT_FREE_KIB; do
-        [[ -z ${!p:-} ]] || [[ ${!p} =~ ^[0-9]+$ && $HT_WORK != "$HT_WORK_DEFAULT" ]] ||
+        [[ -z ${!p:-} ]] || [[ ${!p} =~ $HT_UINT && $HT_WORK != "$HT_WORK_DEFAULT" ]] ||
             ht_die "$p=${!p}: a number of KiB, for tests (with their own HT_WORK) only"
     done
     for p in HT_STALL_SEC HT_STALL_TICK HT_STALL_CPU; do
-        [[ -z ${!p:-} ]] || [[ ${!p} =~ ^[0-9]+$ && $HT_WORK != "$HT_WORK_DEFAULT" ]] ||
+        [[ -z ${!p:-} ]] || [[ ${!p} =~ $HT_UINT && $HT_WORK != "$HT_WORK_DEFAULT" ]] ||
             ht_die "$p=${!p}: a number of seconds, for tests (with their own HT_WORK) only"
     done
-    [[ -z ${HT_STALL_MIN:-} || $HT_STALL_MIN =~ ^[0-9]+$ ]] ||
-        ht_die "HT_STALL_MIN=$HT_STALL_MIN: whole minutes of no progress that stop a stage (0: never)"
+    [[ -z ${HT_STALL_MIN:-} || $HT_STALL_MIN =~ $HT_UINT ]] ||
+        ht_die "HT_STALL_MIN=$HT_STALL_MIN: whole minutes of no progress that stop a stage (0: never; no leading zero)"
     K=$HT_RECORDS/$RUN/$GV
     row=$(ht_reserve_row); HT_RESERVE_ROW=${row%% *} RESERVED=${row#* }; RESERVED=${RESERVED:-0}
     case ${HT_RAM:-} in
@@ -524,19 +532,24 @@ ht_limit_kib() {  # RESERVED: the use past which a run in RAM is stopped, RESERV
     awk -v r="$1" 'BEGIN { m = r * 0.1; if (m < 1) m = 1; printf "%d", (r + m) * 1048576 }'
 }
 # The no-progress watchdog (the sampler's): a run is stopped when the stage
-# it is in (R/.ht/stage: the phase, or ht_load_try's "load NAME") has made
-# no progress for ht_stall_sec's limit.  Progress is any of: a new stage; a
-# file in R (but .ht) new, gone, or of another size or mtime (logs, serial
-# consoles, disks QEMU writes, the repository, dumps), but for the
-# rescuer's own disks (HT_STALL_IDLE) outside the backup phase; a deleted file in R
-# that a QEMU holds open (its -snapshot overlay) of another size or mtime;
+# it is in (R/.ht/stage: the phase, ht_load_try's "load NAME", or
+# ht1-bsd.sh's "prep" and "wait prep lock") has made no progress for
+# ht_stall_sec's limit.  Progress is any of: a new stage; a file in R (but
+# .ht), or one the stage names (ht_stage), new, gone, or of another size or
+# mtime (logs, serial consoles, disks QEMU writes, the repository, dumps),
+# but for the rescuer's own disks (HT_STALL_IDLE) outside the backup phase;
+# a deleted file in R that a QEMU holds open (its -snapshot overlay) of
+# another size or mtime;
 # or HT_STALL_CPU (10) CPU seconds used by the driver and its own
 # processes (theirs and their reaped children's, a QEMU's not), since the
 # last progress: fsmeta.py or judge.py at work on a big tree, a sha256sum,
 # a host-side rustic-bko.  A guest that hangs with a command (bko-holt in
 # the rescuer, its ssh waiting) changes none of them; one that keeps
-# writing to its console or disk counts as progressing, so a stage is only
-# ever stopped later than it would be with less to look at.  The rescuer's
+# writing to its console or disk counts as progressing.  The other way: a
+# stage that works quietly in a guest, reading only (a rescuer's verify or
+# read-data check that prints nothing until its end), shows none of them
+# either, and is stopped at the limit though it isn't hung: the limits
+# below are 2 to 3 times the longest such quiet seen in a PASS.  The rescuer's
 # own disks are left out but in the backup phase (ht1-bsd.sh's backup goes
 # into rescuer-try.qcow2): an idle Debian rescuer writes its journal, btrfs
 # commits and its timers' work there every minute or two (chopin
@@ -551,24 +564,31 @@ ht_limit_kib() {  # RESERVED: the use past which a run in RAM is stopped, RESERV
 # not hung, reached 624 s (truenas25's source).  So 30 min for every stage
 # and 45 min for a load restore or oneshot (a big tree's writes), 2 to 3
 # times the longest seen.  HT_STALL_MIN=N takes N minutes for every stage
-# (0: no watchdog); HT_STALL_SEC (tests) the same in seconds.
+# (0: no watchdog); HT_STALL_SEC (tests) the same in seconds.  But a stage
+# "wait ..." is never stopped, whatever they say: ht1-bsd.sh's wait for the
+# lock of a one-time rescuer another run is making (its own flock -w
+# bounds it, and the run making it has its own watchdog, in its stage
+# "prep").
 ht_stall_sec() {  # STAGE: the seconds of no progress that stop the run in it (0: never)
     local m
-    if [[ -n ${HT_STALL_SEC:-} ]]; then echo "$HT_STALL_SEC"; return; fi
+    case $1 in "wait "*) echo 0; return ;; esac
+    if [[ -n ${HT_STALL_SEC:-} ]]; then echo "$((10#$HT_STALL_SEC))"; return; fi
     if [[ -n ${HT_STALL_MIN:-} ]]; then m=$HT_STALL_MIN
     else case $1 in "load restore"|"load oneshot") m=45 ;; *) m=30 ;; esac; fi
-    echo $((m * 60))
+    echo $((10#$m * 60))
 }
 ht_dur() { if (($1 % 60)); then echo "$1 s"; else echo "$(($1 / 60)) min"; fi; }   # SECONDS: "N min", else "N s"
 # R's progress signals in PHASE, one line each (LC_ALL=C sorted): a file's
 # path, size and mtime (HT_STALL_IDLE's but in backup); a deleted file a
-# QEMU holds open in R, its size and mtime.
+# QEMU holds open in R, its size and mtime; each FILE's (the stage's own,
+# outside R: its absolute path) while it is there.
 HT_STALL_IDLE=(rescuer.qcow2 rescuer-try.qcow2 img.qcow2)   # (ht1-bsd.sh's +img: the image's overlay)
-ht_progress() {  # PHASE
+ht_progress() {  # PHASE [FILE...]
     local q f l x=()
     [[ $1 == backup ]] || for f in "${HT_STALL_IDLE[@]}"; do x+=(! -path "$R/$f"); done
     {
         find "$R" -xdev -path "$R/.ht" -prune -o -type f "${x[@]}" -printf '%P %s %T@\n' 2>/dev/null
+        for f in "${@:2}"; do [[ $f != /* ]] || find "$f" -maxdepth 0 -printf '%p %s %T@\n' 2>/dev/null; done
         for q in $(pgrep '^qemu-system'); do
             for f in /proc/"$q"/fd/*; do
                 l=$(readlink "$f" 2>/dev/null)
@@ -614,7 +634,7 @@ ht_cpu_ticks() {  # PID [SKIP...]
 # ENOSPC is an ordinary FAIL.  HT_FREE_KIB (tests) stands in for df's free.
 ht_sampler() {
     local k a s="" lim rk free why miss=0 me=$BASHPID
-    local hz tick=${HT_STALL_TICK:-60} cpus=${HT_STALL_CPU:-10} now next=0 mark=0 st ph st0="" cpu cpu0=0 last="" stall="" sl l
+    local hz tick=$((10#${HT_STALL_TICK:-60})) cpus=$((10#${HT_STALL_CPU:-10})) now next=0 mark=0 st ph wf=() st0="" cpu cpu0=0 last="" stall="" sl l
     trap '[[ -z ${s:-} ]] || kill "$s" 2>/dev/null; exit 0' TERM
     cd / || :
     lim=$(ht_limit_kib "$RESERVED")
@@ -630,9 +650,9 @@ ht_sampler() {
         why=""
         printf -v now '%(%s)T' -1
         if ((now >= next)); then
-            next=$((now + tick)) st=start ph=""
-            { IFS= read -r st; IFS= read -r ph; } 2>/dev/null <"$R/.ht/stage"; [[ -n $st ]] || st=start
-            ht_progress "$ph" >"$R/.ht/progress.new"
+            next=$((now + tick)) st=start ph="" wf=()
+            { IFS= read -r st; IFS= read -r ph; mapfile -t wf; } 2>/dev/null <"$R/.ht/stage"; [[ -n $st ]] || st=start
+            ht_progress "$ph" "${wf[@]}" >"$R/.ht/progress.new"
             cpu=$(ht_cpu_ticks $$ "$me" "$HT_LOCKER")
             l=""
             if [[ $st != "$st0" ]]; then

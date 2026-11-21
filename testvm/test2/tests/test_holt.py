@@ -446,6 +446,15 @@ class U51RowsHolt(RecordsMixin, unittest.TestCase):
         row = self.build(self.k("linux-pass", env={"HT_BOOT_EACH_DISK": "1"}), "debian13")
         self.assertTrue(row["valid"], row["note"])
 
+    def test_stall_limits(self):
+        """The watchdog's limits (ht1-lib.sh): any HT_STALL_MIN, 0 too, and the tests' HT_STALL_SEC,
+        HT_STALL_TICK and HT_STALL_CPU make a by-hand run's row, which never counts."""
+        for k, v in (("HT_STALL_MIN", "0"), ("HT_STALL_MIN", "30"), ("HT_STALL_SEC", "12"),
+                     ("HT_STALL_TICK", "2"), ("HT_STALL_CPU", "2")):
+            row = self.build(self.k("linux-pass", env={k: v}), "debian13")
+            self.assertFalse(row["valid"], k)
+            self.assertIn(f"set for debugging or tests: {k}={v}", row["note"])
+
     def test_code_dir_and_variant(self):
         code = "c" * 64
         hb = os.path.join(self.tmp, "holt-bin", code)

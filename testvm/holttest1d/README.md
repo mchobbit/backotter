@@ -1072,10 +1072,13 @@ All three drivers write the same way, through `ht1-lib.sh`:
   run keeps its records only: for its size, reserve more (or raise the
   guest's row in `ram-sizes.tsv`) and run it again.
 - **The no-progress watchdog.** In RAM or on /bkoscratch, every 60 s the
-  run looks for progress in the stage it is in (the phase, or within
-  rebuild the load stage, `load restore`, ...): a new stage, a file in R
+  run looks for progress in the stage it is in (the phase, within
+  rebuild the load stage, `load restore`, ..., or ht1-bsd.sh's `prep` of a
+  one-time rescuer): a new stage, a file in R
   new, gone or of another size or mtime (its logs and serial consoles,
-  the disks its QEMU writes, the repository, dumps), a deleted file in R a
+  the disks its QEMU writes, the repository, dumps; in `prep`, the
+  rescuer's `.part` on /bkoscratch too, which DragonFly's silent `cpdup`
+  writes), a deleted file in R a
   QEMU of the run holds open (a `-snapshot` overlay), or 10 s of CPU used
   by the driver and what it runs (a QEMU's not).  The rescuer's own disks
   (`rescuer.qcow2`, `rescuer-try.qcow2`, ht1-bsd.sh's `+img` overlay
@@ -1098,11 +1101,20 @@ All three drivers write the same way, through `ht1-lib.sh`:
   a backup (dragonfly6, cinqcent), 467 s in verify and 223 s in source;
   slow FAILs that weren't hung reached 624 s (truenas25's source).  A guest
   that keeps writing to its console or disk while hung counts as working,
-  so a hang is only ever stopped later, never a slow stage sooner.
+  so such a hang is stopped late or not at all.  The other way, a stage
+  that works quietly in a guest, only reading (a rescuer's verify or a
+  read-data check that prints nothing until it ends), shows none of these
+  either and is stopped after 30 minutes of that, hung or not: the limits
+  are 2 to 3 times the longest such quiet seen in a PASS.  ht1-bsd.sh's
+  wait for the lock of a one-time rescuer another run is making (stage
+  `wait prep lock`) is never stopped: `flock -w 7200` bounds it, and the
+  run making it has its own watchdog.
   `HT_STALL_MIN=N` sets N minutes for every stage, `HT_STALL_MIN=0` turns
-  the watchdog off (both in the manifest's env lines); `HT_STALL_SEC`,
+  the watchdog off (both in the manifest's env lines; ht1-queue.sh passes
+  it on to its jobs); a run with it set is a by-hand run, whose Test2 row
+  never counts.  `HT_STALL_SEC`,
   `HT_STALL_TICK` and `HT_STALL_CPU` are ht1-lib-test.sh's (refused with
-  the default `HT_WORK`).  Before it, a hang waited out the stage's
+  the default `HT_WORK`; their rows never count either).  Before it, a hang waited out the stage's
   `timeout` (3600 s for a load stage, 7200 s in ht1-bsd.sh) and then the
   cell's: an omnios58+img restore sat 2 h in a hung `diskinfo` (cinqcent,
   2026-11-21).
@@ -1156,7 +1168,8 @@ All three drivers write the same way, through `ht1-lib.sh`:
   records-only record; `HT_LIMIT_KIB` or `HT_FREE_KIB` (ht1-lib-test.sh's
   stand-ins for the limit and the RAM disk's free space), or
   `HT_STALL_SEC`, `HT_STALL_TICK` or `HT_STALL_CPU`, without a test's
-  own `HT_WORK`; an `HT_STALL_MIN` that isn't whole minutes; and
+  own `HT_WORK`; an `HT_STALL_MIN` that isn't whole minutes (these numbers
+  without a leading zero: bash reads `08` as octal); and
   the drivers' own (a bad `HT_VARIANT`, `degraded` on one disk, redox
   without its tools).  A dead run's R that a refused run had taken stays
   as it was, for the sweep.
@@ -1316,7 +1329,8 @@ as root, no RAM disk) says why in its `.out` file only: its log,
 - **Binaries and settings.** `HT_HOLT`, `HT_HOLT_BIN`, `HT_BKO_BIN`, `HT_ROUND`,
   `HT_RUSTIC` and `HT_RAM` reach every job, and so do `HT_WORK` and
   `HT_RECORDS` (tests only: `/mnt/bko-ram/NAME` and `/bkoscratch/NAME`,
-  one NAME); the runner logs them at its start.  It refuses to start while
+  one NAME) and `HT_STALL_MIN` (the watchdog's limit; the jobs' Test2 rows
+  then don't count); the runner logs them at its start.  It refuses to start while
   any other `HT_` variable is set, a debugging or test setting that would
   change every job's run (`HT_QUICK`, `HT_THROUGH`, `HT_KEEP`, `HT_CLEAN`,
   `HT_PORT`, `HT_LIMIT_KIB` and the like).  Without `HT_HOLT` or

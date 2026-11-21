@@ -57,8 +57,11 @@ VARIANTS = ("bigger", "oneshot", "degraded", "img", "smaller", "fitbigger", "nea
 REFUSALS = ("nearfull", "refuse")
 ALL_PHASES = ["source", "backup", "rebuild", "verify"]
 # Settings that change what a run checks or with what: such a run's row never counts (R7).
+# (HT_STALL_*: the watchdog's limits, ht1-lib.sh; any HT_STALL_MIN, 0 too, is another than a
+# plain run's 30 and 45 min.)
 DEBUG_ENV = ("HT_QUICK", "HT_THROUGH", "HT_KEEP", "HT_FAIL_AT", "HT_RESCUER", "HT_RESCUER_IMG",
-             "HT_LIMIT_KIB", "HT_FREE_KIB", "HT_NVRAM")
+             "HT_LIMIT_KIB", "HT_FREE_KIB", "HT_NVRAM",
+             "HT_STALL_MIN", "HT_STALL_SEC", "HT_STALL_TICK", "HT_STALL_CPU")
 # The same for one value only: HT_BOOT_EACH_DISK=0 turns the boot of each disk alone off (=1
 # only adds it, on a source of one ESP: a plain run's checks and more).
 DEBUG_ENV_VALUES = {"HT_BOOT_EACH_DISK": ("0",)}

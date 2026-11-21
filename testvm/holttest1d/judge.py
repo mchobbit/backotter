@@ -1932,6 +1932,9 @@ def reformat_expect(src, dst, reforms):
             ss["fstab"] = [e for e in ss["fstab"] if not (e.get("resolves_to") == dev and e.get("file") in folded)]
             entry.update(type=to, options=generic_options(entry.get("options")),
                          passno=(1 if mount == "/" else 2) if to == "ext4" else 0)
+        # The subvolume MOUNT was (the source's mount root, /@): GRUB's paths
+        # on the btrfs began with it, the new type's begin at MOUNT's root.
+        sub = next((m.get("root") for m in ss.get("mounts") or [] if m.get("device") == dev and m.get("target") == mount), None)
         # The running mounts and what a backup of the restored system would take.
         for key, field in (("mounts", "target"), ("backup_sources", "path")):
             if isinstance(ss.get(key), list):
@@ -1974,6 +1977,36 @@ def reformat_expect(src, dst, reforms):
             holders = [e.get("file") for e in ss.get("fstab") or [] if e.get("type") != "swap" and isinstance(e.get("file"), str) and e["file"].startswith("/") and _under(gdir, e["file"])]
             if holders and max(holders, key=len) == mount:
                 notes.append(f"--reformat {mount}={to}: {gdir}/grubenv's env_block={env.pop('env_block')} taken out (rewrite.rs)")
+        # The kernels on this btrfs, in subvolume SUB (BigLinux's /@/boot): GRUB
+        # named them by the subvolume's path, /@/boot/vmlinuz-*, and the boot
+        # stage's grub-mkconfig on the new type names them /boot/vmlinuz-*:
+        # grub.cfg's default entry and the BOOT_IMAGE= it boots with.
+        kholders = [e.get("file") for e in ss.get("fstab") or [] if e.get("type") != "swap" and isinstance(e.get("file"), str) and e["file"].startswith("/") and _under("/boot", e["file"])]
+        if frm == "btrfs" and to != "btrfs" and isinstance(sub, str) and sub.strip("/") and kholders and max(kholders, key=len) == mount:
+            pat = re.compile(r"(?<![^\s=])" + re.escape(sub.rstrip("/")) + r"(?=/)")
+            def unsub(v):
+                if isinstance(v, str):
+                    return pat.sub("", v)
+                if isinstance(v, list):
+                    return [unsub(x) for x in v]
+                if isinstance(v, dict):
+                    return {k: unsub(x) for k, x in v.items()}
+                return v
+            boot = src.get("boot") or {}
+            hit = False
+            if isinstance(boot.get("cmdline"), dict):
+                new = unsub(boot["cmdline"])
+                hit |= new != boot["cmdline"]
+                boot["cmdline"] = new
+            g = (boot.get("grub") or {}).get("grub_cfg")
+            if isinstance(g, dict):
+                for k in ("default_linux", "default_initrd"):
+                    if isinstance(g.get(k), str):
+                        new = unsub(g[k])
+                        hit |= new != g[k]
+                        g[k] = new
+            if hit:
+                notes.append(f"--reformat {mount}={to}: GRUB names the kernels without the subvolume's {sub.rstrip('/')} now")
         if mount != "/":
             continue
         # The root's kernel command lines, wherever the dump found one.

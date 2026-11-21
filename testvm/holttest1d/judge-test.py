@@ -2283,6 +2283,34 @@ class Reformat(unittest.TestCase):
         dst["boot"]["grub"]["grubenv"] = {}
         self.assertIn("DIFF boot.grub.grubenv.env_block", self.bad(src, dst, "--reformat", "/=ext4"))
 
+    def test_grub_kernel_paths_lose_the_subvolume(self):
+        """biglinux /=ext4 (bugbrf, 2026-11-21): /boot on the btrfs root's @, so GRUB
+        named the kernel /@/boot/vmlinuz-7; on ext4 it's /boot/vmlinuz-7.  With an
+        ext4 /boot of its own (the fixture's) nothing changes."""
+        def sub_paths(d, pre):
+            b = d["boot"]
+            b["cmdline"]["raw"] = b["cmdline"]["raw"].replace("BOOT_IMAGE=/vmlinuz-7", f"BOOT_IMAGE={pre}/boot/vmlinuz-7")
+            b["cmdline"]["words"][0] = f"BOOT_IMAGE={pre}/boot/vmlinuz-7"
+            b["cmdline"]["storage"]["BOOT_IMAGE"] = f"{pre}/boot/vmlinuz-7"
+            g = b["grub"]["grub_cfg"]
+            g["default_linux"] = g["default_linux"].replace("/vmlinuz-7", f"{pre}/boot/vmlinuz-7", 1)
+            g["default_initrd"] = f"{pre}/boot/initramfs-7.img"
+        src = btrfs_root_guest()
+        src["storage"]["fstab"] = [e for e in src["storage"]["fstab"] if e["file"] != "/boot"]
+        sub_paths(src, "/@")
+        dst = reformatted(src)
+        sub_paths(dst, "")
+        self.assertIn("GRUB names the kernels without the subvolume's /@ now", self.good(src, dst, "--reformat", "/=ext4"))
+        # A loader still naming the subvolume's path is a difference.
+        sub_paths(dst, "/@")
+        self.assertIn("DIFF boot.grub.grub_cfg.default_initrd", self.bad(src, dst, "--reformat", "/=ext4"))
+        # The kernels on the ext4 /boot: GRUB's paths are compared as they are.
+        src = btrfs_root_guest()
+        sub_paths(src, "/@")
+        dst = reformatted(src)
+        sub_paths(dst, "")
+        self.assertIn("DIFF boot.grub.grub_cfg.default_initrd", self.bad(src, dst, "--reformat", "/=ext4"))
+
     def test_grub_module_kept_while_another_btrfs_needs_it(self):
         """Another btrfs is still mounted: its insmod btrfs stays, compared as it is."""
         src = btrfs_root_guest()

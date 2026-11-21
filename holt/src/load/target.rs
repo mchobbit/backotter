@@ -740,6 +740,9 @@ pub fn prepare<'a>(layout: &'a Layout, opts: &Options, sys: &Sys) -> Prepared<'a
     }
     let system = scan(sys, &o2, &layout_pools(src));
     let mut mapping = map_disks(src, &o2, &system, sys);
+    // NetBSD: a disk that isn't a target with a target partition's wedge name.
+    let clashes = crate::other::load::wedge_clashes(src, &mapping.pairs, sys);
+    mapping.problems.extend(clashes);
     // A filesystem bigger than its device: the dump is inconsistent, and
     // nothing is planned to fit it (sizes.rs).  Checked on the source's
     // sizes, before --fit-largest changes them.

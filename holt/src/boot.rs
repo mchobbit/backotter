@@ -1236,7 +1236,19 @@ pub fn detect_loader_on(e: &Evidence, n: &crate::arch::Names) -> Value {
                 why.push(format!("that is clr-boot-manager's shim ({CBM_SHIM}), which loads systemd-boot as {CBM_SD_BOOT}"));
             } else if u.contains("SHIM") {
                 shim = true;
-                name = Some("grub");
+                // Shim in another loader's own directory loads that loader
+                // (refind-install --shim: rEFInd as grubx64.efi beside it in
+                // EFI/refind); elsewhere it loads GRUB.
+                name = Some(if u.contains("\\REFIND\\") {
+                    "refind"
+                } else if u.contains("\\LIMINE\\") {
+                    "limine"
+                } else {
+                    "grub"
+                });
+                if let Some(l) = name.filter(|&l| l != "grub") {
+                    why.push(format!("that is shim in {l}'s own directory, which loads {l}"));
+                }
             } else if u.contains("GRUB") {
                 name = Some("grub");
             } else if u.contains("SYSTEMD-BOOT") || u.contains("\\EFI\\SYSTEMD\\") {
@@ -2330,6 +2342,27 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         let mut e = base(true);
         e.current_file = Some("\\EFI\\refind\\refind_x64.efi".into());
         assert_eq!(detect_loader(&e).get("name").and_then(Value::as_str), Some("refind"));
+        // rEFInd through shim (refind-install --shim: shim in EFI/refind,
+        // rEFInd as grubx64.efi beside it), with GRUB's signed package
+        // installed too: rEFInd, via shim, not GRUB (RustAudit1 H4-01).
+        let mut e = base(true);
+        e.current_file = Some("\\EFI\\refind\\shimx64.efi".into());
+        e.esp_files = vec!["EFI/refind/shimx64.efi".into(), "EFI/refind/grubx64.efi".into(), "EFI/refind/refind.conf".into()];
+        let p = pk(&["refind", "shim-signed", "grub-efi-amd64-signed"]);
+        e.packages = &p;
+        let v = detect_loader(&e);
+        assert_eq!(v.get("name").and_then(Value::as_str), Some("refind"));
+        assert_eq!(v.get("via_shim"), Some(&Value::Bool(true)));
+        assert_eq!(v.get("package").and_then(Value::as_str), Some("refind"));
+        assert_eq!(v.get("shim_package").and_then(Value::as_str), Some("shim-signed"));
+        assert!(v.get("evidence").unwrap().compact().contains("shim in refind's own directory"));
+        // Limine's the same; shim anywhere else still loads GRUB.
+        e.current_file = Some("\\EFI\\limine\\shimx64.efi".into());
+        assert_eq!(detect_loader(&e).get("name").and_then(Value::as_str), Some("limine"));
+        e.current_file = Some("\\EFI\\ubuntu\\shimx64.efi".into());
+        let v = detect_loader(&e);
+        assert_eq!(v.get("name").and_then(Value::as_str), Some("grub"));
+        assert!(!v.get("evidence").unwrap().compact().contains("own directory"));
         // BIOS: the MBR decides.
         let mut e = base(false);
         e.mbr_codes = vec![("vda".into(), "grub2".into()), ("vdb".into(), "none".into())];

@@ -34,7 +34,22 @@ pub fn probe_size(path: &std::path::Path) -> Option<u64> {
     Some((lo + 1) * 512)
 }
 
-/// Every whole disk: /dev/disk/BUS/.../raw, but RAM disks.
+/// Where Haiku publishes disks that are no disk of this machine's: RAM
+/// disks (ram_disk.h's RAM_DISK_RAW_DEVICE_BASE_NAME, "disk/virtual/ram")
+/// and disk images registered as devices (KFileDiskDevice.cpp's
+/// kFileDevicesDir, "/dev/disk/virtual/files").  The rest of
+/// /dev/disk/virtual is disks: virtio-blk's, at
+/// /dev/disk/virtual/virtio_block/N/raw (virtio_block.cpp), and the
+/// network disks' (nbd, remote_disk), as Linux lists its nbd devices.
+const NOT_DISKS: [&str; 2] = ["/dev/disk/virtual/ram", "/dev/disk/virtual/files"];
+
+/// The components of /dev/disk paths with an underscore in them, which
+/// name_of's underscores don't take apart again: virtio-blk's and
+/// remote_disk's directories.
+const UNDERSCORED: [&str; 2] = ["virtio_block", "remote_disk"];
+
+/// Every whole disk: /dev/disk/BUS/.../raw, but RAM disks and disk images
+/// (NOT_DISKS).
 pub fn disks(sys: &Sys) -> Vec<RawDisk> {
     fn walk(sys: &Sys, dir: &str, depth: usize, out: &mut Vec<String>) {
         if depth > 6 {
@@ -44,7 +59,7 @@ pub fn disks(sys: &Sys) -> Vec<RawDisk> {
             let p = format!("{dir}/{e}");
             if e == "raw" {
                 out.push(dir.to_string());
-            } else if sys.is_dir(&p) && e != "virtual" {
+            } else if sys.is_dir(&p) && !NOT_DISKS.contains(&p.as_str()) {
                 walk(sys, &p, depth + 1, out);
             }
         }
@@ -66,9 +81,15 @@ pub fn name_of(dir: &str) -> String {
     dir.trim_start_matches("/dev/disk/").replace('/', "_")
 }
 
-/// /dev/disk/scsi/2/0/0 for "scsi_2_0_0".
+/// /dev/disk/scsi/2/0/0 for "scsi_2_0_0", and
+/// /dev/disk/virtual/virtio_block/0 for "virtual_virtio_block_0" (the
+/// UNDERSCORED components kept whole).
 pub fn dir_of(name: &str) -> String {
-    format!("/dev/disk/{}", name.replace('_', "/"))
+    let mut path = name.replace('_', "/");
+    for c in UNDERSCORED {
+        path = path.replace(&c.replace('_', "/"), c);
+    }
+    format!("/dev/disk/{path}")
 }
 
 /// Partition `n` (1-based, as the table numbers it) of a disk: Haiku numbers
@@ -173,5 +194,26 @@ mod tests {
         assert_eq!(part_path("scsi_3_0_0", 1), "/dev/disk/scsi/3/0/0/0");
         let t = "\u{1b}[1mVolume\u{1b}[0m\n Type        Total      Free      Flags   Used%  Device\n----------- ---------- --------- ------- ------ -------------------\n\u{1b}[1m/boot             \u{1b}[0m\n        bfs   16.0 GiB  13.4 GiB QAM-P-W    16% /dev/disk/scsi/2/0/0/0  \n\u{1b}[1m/boot/system      \u{1b}[0m\n  packagefs          0         0 QAM-P--   100%                         \n";
         assert_eq!(parse_df(t), vec![("/boot".into(), "bfs".into(), "/dev/disk/scsi/2/0/0/0".into())]);
+    }
+
+    /// RustAudit1 H9-01: a virtio-blk disk (/dev/disk/virtual/virtio_block/
+    /// N/raw) is a disk, its name goes back to its directory, and its
+    /// partitions are its own; RAM disks and registered disk images under
+    /// /dev/disk/virtual still aren't disks.
+    #[test]
+    fn virtio_disks_are_disks() {
+        let t = crate::testutil::Tree::new("haiku-virtio");
+        let disk = vec![0u8; 8192];
+        for d in ["ata/0/master", "virtual/virtio_block/0", "virtual/virtio_block/1", "virtual/ram/0", "virtual/files/0"] {
+            t.file(&format!("/dev/disk/{d}/raw"), disk.clone());
+        }
+        t.file("/dev/disk/virtual/ram/control", "");
+        let sys = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true);
+        let names: Vec<String> = disks(&sys).into_iter().map(|d| d.name).collect();
+        assert_eq!(names, ["ata_0_master", "virtual_virtio_block_0", "virtual_virtio_block_1"]);
+        assert_eq!(dir_of("virtual_virtio_block_0"), "/dev/disk/virtual/virtio_block/0");
+        assert_eq!(dir_of(&name_of("/dev/disk/virtual/remote_disk/0")), "/dev/disk/virtual/remote_disk/0");
+        assert_eq!(part_path("virtual_virtio_block_1", 2), "/dev/disk/virtual/virtio_block/1/1");
+        assert_eq!(dir_of("ata_0_master"), "/dev/disk/ata/0/master");
     }
 }

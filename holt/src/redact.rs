@@ -381,6 +381,16 @@ impl Collector {
         self.corpus.push('\n');
     }
 
+    /// Free text that goes into a report (error output, a log, a path):
+    /// `see_text`, and the identifiers a dump's strings are scanned for
+    /// (user names in /home paths and USERDATA datasets, UUIDs, LVM and md
+    /// UUIDs, MACs, by-id serials).  A bare name with nothing around it to
+    /// say what it is stays as it is (RustAudit1 H5-01).
+    pub fn learn_text(&mut self, s: &str) {
+        self.see_text(s);
+        self.scan(s);
+    }
+
     fn walk(&mut self, v: &Value, key: &str, parent: &str) {
         match v {
             Value::Obj(kv) => {
@@ -902,7 +912,11 @@ impl Sealer {
                 }
             }
             Kind::User => {
-                self.sub(format!("/home/{orig}"), format!("/home/{pseudo}"), Edge::Word);
+                // Edge::Right: a home directory inside another path too (a
+                // ZFS dataset rpool/home/USER or zroot/home/USER, FreeBSD's
+                // /usr/home/USER), where a name too short to be wordy has
+                // no other sub (RustAudit1 H5-02).
+                self.sub(format!("/home/{orig}"), format!("/home/{pseudo}"), Edge::Right);
                 self.sub(format!("USERDATA/{orig}_"), format!("USERDATA/{pseudo}_"), Edge::Any);
             }
             _ => {}
@@ -2011,5 +2025,31 @@ mod tests {
         assert!(!c.contains("alicebank") && c.contains("qubes_dom0"), "{c}");
         assert!(generic_qube("debian-13-xfce") && generic_qube("fedora-45-minimal") && generic_qube("sys-net-dm") && !generic_qube("fedora-work"));
         assert!(release_label("qubes-r4-3-2-x86-64"));
+    }
+
+    /// A user name too short to be wordy is still redacted in a home
+    /// directory inside another path: OpenZFS's rpool/home/USER dataset,
+    /// FreeBSD's zroot/home/USER and /usr/home/USER (RustAudit1 H5-02).
+    /// Checked directly: leaks() only tests the forms the subs know.
+    #[test]
+    fn short_user_in_a_home_dataset() {
+        let d = parse(
+            r#"{"os": {"id": "debian"}, "storage": {"zfs": {"pools": [{"name": "rpool", "datasets": [{"name": "rpool/home/bob", "mountpoint": "/home/bob"}, {"name": "zroot/home/bob", "mountpoint": "/usr/home/bob"}]}]},
+                "mounts": [{"source": "rpool/home/bob", "target": "/home/bob"}]},
+                "plan": "zfs create rpool/home/bob; zfs create -o mountpoint=/home/bob/Photos rpool/home/bob/Photos"}"#,
+        )
+        .unwrap();
+        let (r, red) = redact(&d);
+        let c = r.pretty();
+        assert!(!c.contains("bob"), "{c}");
+        assert_eq!(r.at(&["storage", "mounts", "0", "source"]).and_then(Value::as_str), Some("rpool/home/user1"));
+        assert_eq!(r.at(&["storage", "zfs", "pools", "0", "datasets", "1", "mountpoint"]).and_then(Value::as_str), Some("/usr/home/user1"));
+        assert_eq!(red.unredact_value(&r).compact(), d.compact());
+        assert!(red.leaks(&c).is_empty());
+        // Not inside a longer name: bobby is another user, not learned here.
+        let d = parse(r#"{"os": {"id": "debian"}, "a": "/home/bob", "b": "rpool/home/bobby", "c": "rpool/home/bob2"}"#).unwrap();
+        let (r, _) = redact(&d);
+        assert_eq!(r.get("b").and_then(Value::as_str), Some("rpool/home/bobby"));
+        assert_eq!(r.get("c").and_then(Value::as_str), Some("rpool/home/bob2"));
     }
 }

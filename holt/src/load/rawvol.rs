@@ -74,6 +74,25 @@ fn dump_argv(prefix: &[String], archiver: &str, snapshot: &str, path: &str) -> V
     a
 }
 
+/// The raw-write stage's `sh -c` script: the archiver's DUMP (its argv)
+/// piped to `EXE raw-write` on DEV, failing when the dump did.  Every value
+/// is shell-quoted: IMAGE comes from the layout, in the failure message
+/// too (RustAudit1 H7-02).
+fn raw_write_script(dump: &[String], exe: &str, dev: &str, bytes: u64, chunk: u64, image: &str) -> String {
+    let dump = dump.iter().map(|w| shell_quote(w)).collect::<Vec<_>>().join(" ");
+    let st = format!("{RUN_DIR}/raw-dump.status");
+    // IMAGE within the message's double quotes: shell_quote leaves a plain
+    // one as it is, which is literal there (as is an empty one); any other
+    // ends the double quotes for its single-quoted word.
+    let q = shell_quote(image);
+    let shown = if q == image || image.is_empty() { image.to_string() } else { format!("\"{q}\"") };
+    format!(
+        "rm -f {st}; udevadm settle; {{ {dump}; echo $? > {st}; }} | {} raw-write --size {bytes} --chunk {chunk} {}; w=$?; [ \"$(cat {st} 2>/dev/null)\" = 0 ] || {{ echo \"the archiver's dump of {shown} failed\" >&2; exit 1; }}; exit $w",
+        shell_quote(exe),
+        shell_quote(dev)
+    )
+}
+
 impl Builder<'_> {
     /// The dm devices the dump took as raw volumes (raw_volume set).
     fn raw_dms(&self) -> Vec<Value> {
@@ -118,13 +137,8 @@ impl Builder<'_> {
         let write = |dm: &Value, dev: &str, bytes: u64, chunk: u64| -> Cmd {
             let r = dm.get("raw_volume").cloned().unwrap_or(Value::Null);
             let image = s(&r, "image").unwrap_or_default();
-            let dump = dump_argv(prefix, &self.opts.archiver, &self.opts.snapshot, &image).iter().map(|w| shell_quote(w)).collect::<Vec<_>>().join(" ");
-            let st = format!("{RUN_DIR}/raw-dump.status");
-            let script = format!(
-                "rm -f {st}; udevadm settle; {{ {dump}; echo $? > {st}; }} | {} raw-write --size {bytes} --chunk {chunk} {}; w=$?; [ \"$(cat {st} 2>/dev/null)\" = 0 ] || {{ echo \"the archiver's dump of {image} failed\" >&2; exit 1; }}; exit $w",
-                shell_quote(&exe),
-                shell_quote(dev)
-            );
+            let dump = dump_argv(prefix, &self.opts.archiver, &self.opts.snapshot, &image);
+            let script = raw_write_script(&dump, &exe, dev, bytes, chunk, &image);
             let why = s(&r, "why").unwrap_or_default();
             Cmd::new(&["sh", "-c", &script]).why(format!("{image} written to {dev}, only the chunks that differ from what it holds ({why})"))
         };
@@ -451,5 +465,38 @@ mod tests {
         let r = dump_argv(&pre, "/usr/bin/restic-bko", "latest", "/x.img");
         assert_eq!(&r[3..], ["dump", "latest", "/x.img"]);
         assert_eq!(mapper_name("qubes_dom0", "vm-work-private"), "qubes_dom0-vm--work--private");
+    }
+
+    /// RustAudit1 H7-02: the raw-write script quotes the layout's image in
+    /// its failure message too.  A plain image's script is as before; a
+    /// hostile one's parses (`sh -n`), and its message runs nothing and
+    /// prints the image as it is.
+    #[test]
+    fn raw_write_script_quotes_the_image() {
+        let pre = vec!["rustic-bko".to_string(), "--repository".into(), "/r".into()];
+        let script = |image: &str| raw_write_script(&dump_argv(&pre, "rustic-bko", "latest", image), "/usr/bin/bko-holt", "/dev/mapper/vg-lv", 1 << 20, 65536, image);
+        let plain = "/.bko-holt/raw/vg/lv.img";
+        assert_eq!(
+            script(plain),
+            format!("rm -f {RUN_DIR}/raw-dump.status; udevadm settle; {{ rustic-bko --repository /r dump latest:{plain}; echo $? > {RUN_DIR}/raw-dump.status; }} | /usr/bin/bko-holt raw-write --size 1048576 --chunk 65536 /dev/mapper/vg-lv; w=$?; [ \"$(cat {RUN_DIR}/raw-dump.status 2>/dev/null)\" = 0 ] || {{ echo \"the archiver's dump of {plain} failed\" >&2; exit 1; }}; exit $w")
+        );
+        let mark = std::env::temp_dir().join(format!("bko-h7-02-{}", std::process::id()));
+        let m = mark.display();
+        for image in [
+            format!("/.bko-holt/raw/vg/$(touch {m}).img"),
+            format!("/.bko-holt/raw/vg/`touch {m}`.img"),
+            format!("/.bko-holt/raw/vg/a\"; touch {m}; echo \".img"),
+            format!("/.bko-holt/raw/vg/it's $HOME \\ ${{x}} !.img"),
+            String::new(),
+        ] {
+            let sc = script(&image);
+            let ok = std::process::Command::new("sh").args(["-n", "-c", &sc]).status().unwrap();
+            assert!(ok.success(), "sh -n: {sc}");
+            // The message alone, run: it prints the image and runs nothing.
+            let (from, to) = (sc.find("echo \"the archiver's").unwrap(), sc.find(" >&2; exit 1;").unwrap());
+            let out = std::process::Command::new("sh").args(["-c", &sc[from..to]]).output().unwrap();
+            assert_eq!(String::from_utf8(out.stdout).unwrap(), format!("the archiver's dump of {image} failed\n"), "{sc}");
+            assert!(!mark.exists(), "{sc}");
+        }
     }
 }

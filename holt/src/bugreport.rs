@@ -42,12 +42,15 @@ an issue at https://github.com/mchobbit/backotter/issues/new/choose :
     `restic-bko backup ... 2> backup-errors.txt`
 
 GitHub issues are public, so by default every hostname, machine-id, UUID,
-serial number, label, user name, key-file path, MAC address, repository and
-password-file path gets a pseudonym (host-1, label2, bc000000-...-0003),
-the same one everywhere in the file, so references still resolve.  Sizes,
-offsets, feature flags, types and the device topology stay as they are.
-It prints what it redacted, what it kept, and the file's path.  Read the
-file before you attach it: it is plain text.
+serial number, label, user name (from /home paths and Ubuntu's USERDATA
+datasets, in the dump, the logs and the error output alike), key-file path,
+MAC address, repository and password-file path gets a pseudonym (host-1,
+label2, bc000000-...-0003), the same one everywhere in the file, so
+references still resolve.  Sizes, offsets, feature flags, types and the
+device topology stay as they are.  It prints what it redacted, what it
+kept, and the file's path.  Read the file before you attach it: it is
+plain text, and a user name that is in no home directory's path (the
+\"by USER\" of restic's lock message) stays as it is.
 
   --output FILE   write the report here (default: bko-report-DATE.txt in
                   the current directory)
@@ -332,6 +335,9 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
     // The last load run, its layout, plan and status.
     let mut layout: Option<(String, Value, String)> = None;
     let mut run_opts: Option<Options> = None;
+    // The run's free text, learned after the dumps so that what they hold
+    // keeps the pseudonyms it gets without it (RustAudit1 H5-01).
+    let mut run_text: Vec<String> = Vec::new();
     let run = last_run(sys, a);
     match &run {
         None => parts.push(Part {
@@ -340,16 +346,19 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
         }),
         Some(r) => {
             let mut t = format!("from {}{}\n", r.source, r.time.as_ref().map(|t| format!(", {t}")).unwrap_or_default());
-            t += &format!("command: bko-holt load {}\n", r.args.iter().map(|x| load::shell_quote(x)).collect::<Vec<_>>().join(" "));
+            let command = r.args.iter().map(|x| load::shell_quote(x)).collect::<Vec<_>>().join(" ");
+            t += &format!("command: bko-holt load {command}\n");
+            run_text.push(command);
             if let Some(cwd) = &r.cwd {
                 t += &format!("in: {cwd}\n");
+                run_text.push(cwd.clone());
             }
             if let Some(e) = r.exit {
                 t += &format!("exit status: {e}\n");
             }
             if let Some(err) = &r.stderr {
                 t += &format!("---- its error output\n{}", if err.is_empty() { "(none)\n".to_string() } else { err.clone() });
-                c.see_text(err);
+                run_text.push(err.clone());
             }
             parts.push(Part { title: "last bko-holt load run".into(), body: Body::Text(t) });
             match load::parse_args(&plan_args(&r.args)) {
@@ -359,6 +368,7 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
                             o.layout = format!("{}/{}", cwd.trim_end_matches('/'), o.layout);
                         }
                     }
+                    run_text.push(o.layout.clone());
                     match read_any(sys, &o.layout) {
                         Some(text) => match crate::json::parse(&text) {
                             Ok(v) => layout = Some((o.layout.clone(), v, text)),
@@ -392,6 +402,9 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
     if let Some((_, v, _)) = &layout {
         c.learn(v);
     }
+    for t in &run_text {
+        c.learn_text(t);
+    }
 
     // Logs.
     let mut logs: Vec<(String, String)> = Vec::new();
@@ -403,7 +416,7 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
     }
     for p in log_paths {
         if let Some(t) = sys.read(&p) {
-            c.see_text(&t);
+            c.learn_text(&t);
             logs.push((p, tail(&t, LOG_LINES)));
         }
     }
@@ -412,7 +425,8 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
         match std::fs::read(p) {
             Ok(b) => {
                 let t = String::from_utf8_lossy(&b).into_owned();
-                c.see_text(&t);
+                c.learn_text(p);
+                c.learn_text(&t);
                 saved.push((p.clone(), tail(&t, LOG_LINES)));
             }
             Err(e) => notes.push(format!("--stderr {p}: {e}")),
@@ -693,6 +707,40 @@ mod tests {
         let b = build(&sys, &a, "2026-11-07T03:42:00Z");
         assert!(b.text.contains("alice-pc") && b.text.contains("NOT redacted"));
         assert!(!b.text.contains("==== redaction"));
+    }
+
+    /// Free text is scanned as the dump is: a user name, a UUID and a MAC
+    /// that are only in load's error output, its log, a --stderr file or
+    /// the run's cwd get pseudonyms too (RustAudit1 H5-01).
+    #[test]
+    fn identifiers_only_in_free_text() {
+        let t = Tree::new("report-bug-text");
+        t.debian13();
+        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "33554432\n");
+        t.file("/home/bob/layout.json", crate::load::layout::sample::bios_mbr());
+        let last = Obj::new()
+            .set("cwd", "/home/bob")
+            .set("args", Value::Arr(s(&["layout.json", "--map", "vda=vdb"]).into_iter().map(Value::Str).collect()))
+            .set("exit", 1u64)
+            .set("stderr", "bko-holt load: 5d1c0e9a-7b3f-4c2e-9a1d-0e4f3b2a1c9d is busy\n")
+            .build();
+        t.file(&format!("{RUN_DIR}/{LAST_RUN}"), last.pretty());
+        t.file(&format!("{RUN_DIR}/log/load.log"), "link up on 52:54:00:9c:4e:17\n");
+        let errs = t.root().join("backup-errors.txt");
+        std::fs::write(&errs, "error: lstat /home/bob/.cache/x: permission denied\n").unwrap();
+        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-30-generic #30 SMP x86_64\n")), true);
+        let a = Args { stderr: vec![errs.display().to_string()], ..Args::default() };
+        let b = build(&sys, &a, "2026-11-07T03:42:00Z");
+        let txt = &b.text;
+        for gone in ["/home/bob", "5d1c0e9a", "52:54:00:9c:4e:17"] {
+            assert!(!txt.contains(gone), "{gone} in:\n{txt}");
+        }
+        assert!(txt.contains("in: /home/user1\n"), "{txt}");
+        assert!(txt.contains("==== plan for that run, of /home/user1/layout.json"), "{txt}");
+        assert!(txt.contains("error: lstat /home/user1/.cache/x: permission denied"), "{txt}");
+        assert!(txt.contains("(checked: the plan of the redacted layout is the original's"), "{txt}");
+        assert!(b.terminal.contains("bob -> user1"), "{}", b.terminal);
     }
 
     #[test]

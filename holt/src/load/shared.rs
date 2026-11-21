@@ -111,12 +111,33 @@ impl Plan {
     /// metadata a backup of `/` holds only there) and below a shared
     /// snapshot's directory (which stays, empty: the backup has it).  A
     /// glob excludes only what it matches, not what is below it: hence
-    /// `/**`.
+    /// `/**`.  Each path is escaped (glob_literal), so that one holding a
+    /// glob metacharacter is matched as itself.
     pub fn globs(&self) -> Vec<String> {
-        let mut g: Vec<String> = self.aliases.iter().map(|a| format!("!{a}/**")).collect();
-        g.extend(self.shared.iter().map(|s| format!("!{}/**", s.backup)));
+        let mut g: Vec<String> = self.aliases.iter().map(|a| format!("!{}/**", glob_literal(a))).collect();
+        g.extend(self.shared.iter().map(|s| format!("!{}/**", glob_literal(&s.backup))));
         g
     }
+}
+
+/// PATH as a `--glob-file` pattern that matches only itself.  rustic-bko
+/// reads each line of the file with the ignore crate's OverrideBuilder
+/// (rustic_core's blob/tree/excludes.rs): gitignore syntax, compiled by
+/// globset with backslash escapes on, where `\` before any character makes
+/// it literal.  `*`, `?`, `[`, `]`, `{`, `}` (and `\` itself) are special
+/// there; `,` is only within `{}`, `!` and `^` only within `[]`, and a
+/// line's leading `!`/`#` and trailing spaces don't arise in the middle of
+/// a `!PATH/**` line.  A newline can't be written: the file is read by
+/// lines.
+pub(crate) fn glob_literal(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for c in path.chars() {
+        if matches!(c, '\\' | '*' | '?' | '[' | ']' | '{' | '}') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// `inner` is `outer` or below it (`""` is the top level, above all).
@@ -436,6 +457,46 @@ mod tests {
         assert_eq!(p.shared.len(), 1);
         assert_eq!((p.shared[0].backup.as_str(), p.shared[0].base.as_str()), ("/backups/2026", "@"));
         assert_eq!(p.shared[0].clone_from, Some(("/".into(), "@".into())));
+    }
+
+    /// RustAudit1 H7-01: a path holding a glob metacharacter is excluded
+    /// as itself.  A plain snapshot @/backups/pre[1] and an alias of
+    /// @data[2024] under the mounted top level: their lines escape each
+    /// metacharacter, where `!/backups/pre[1]/**` would have matched
+    /// /backups/pre1 and not the snapshot's own directory.
+    #[test]
+    fn globs_escape_metacharacters() {
+        let subs = vec![sub("@", 256, "a", None, false), sub("@data[2024]", 257, "d", None, false), sub("@/backups/pre[1]", 258, "b", Some("a"), true)];
+        let p = plan(&subs, &[m("/", "@"), m("/data", "@data[2024]"), m("/mnt/top", "")]);
+        assert_eq!(p.shared.len(), 1);
+        assert_eq!(p.shared[0].backup, "/backups/pre[1]");
+        assert_eq!(p.aliases, vec!["/mnt/top/@".to_string(), "/mnt/top/@data[2024]".into()]);
+        assert_eq!(p.globs(), vec!["!/mnt/top/@/**".to_string(), "!/mnt/top/@data\\[2024\\]/**".into(), "!/backups/pre\\[1\\]/**".into()]);
+        // Each metacharacter, and the backslash itself.
+        for (path, want) in [
+            ("/b/pre[1]", "/b/pre\\[1\\]"),
+            ("/b/a*b", "/b/a\\*b"),
+            ("/b/a?b", "/b/a\\?b"),
+            ("/b/{x,y}", "/b/\\{x,y\\}"),
+            ("/b/a\\b", "/b/a\\\\b"),
+            ("/b/[!^]-,~#! ", "/b/\\[!^\\]-,~#! "),
+        ] {
+            assert_eq!(glob_literal(path), want, "{path}");
+        }
+        // Ordinary paths are unchanged, so are their plans.
+        assert_eq!(glob_literal("/.snapshots/1/snapshot"), "/.snapshots/1/snapshot");
+        assert_eq!(glob_literal("/home/über café/x-y_z.@+%"), "/home/über café/x-y_z.@+%");
+        // globset's reading of a backslash escape (any character after it is
+        // literal) gives the path back, and no metacharacter is left bare.
+        for path in ["/a[b]c*d?e{f,g}h\\i", "/[[]]**??{{}}\\\\", "/plain"] {
+            let g = glob_literal(path);
+            let (mut back, mut it) = (String::new(), g.chars());
+            while let Some(c) = it.next() {
+                assert!(!"*?[]{}".contains(c), "{g}: bare {c}");
+                back.push(if c == '\\' { it.next().expect("a dangling escape") } else { c });
+            }
+            assert_eq!(back, path);
+        }
     }
 
     #[test]

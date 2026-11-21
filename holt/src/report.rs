@@ -229,7 +229,24 @@ impl Ctx<'_> {
     /// The kernel name of the device an fstab/crypttab spec or a mount
     /// source names.
     fn resolve(&self, sys: &Sys, spec: &str) -> Option<String> {
-        let (key, val) = spec.split_once('=').unwrap_or(("", spec));
+        // A device path first: udev keeps '=' in link names
+        // (/dev/disk/by-label/data=1), so it mustn't be split as a tag.
+        let path = spec.trim_matches('"');
+        if path.starts_with("/dev/") {
+            // Follow /dev/mapper/x, /dev/disk/by-*/x, /dev/vg/lv links.
+            let canon = std::fs::canonicalize(sys.p(path)).ok();
+            let name = canon.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned());
+            let name = name.unwrap_or_else(|| path.trim_start_matches("/dev/").to_string());
+            let mapper = match &canon {
+                Some(c) => c.parent().and_then(|p| p.file_name()).is_some_and(|d| d == "mapper").then_some(name.as_str()),
+                None => path.strip_prefix("/dev/mapper/"),
+            };
+            return self.dev(&name).or_else(|| self.dm_named(mapper?)).map(|d| d.b.name.clone()).or_else(|| {
+                // A link udev knows of, though not on this root's /dev.
+                self.devs.iter().find(|d| d.b.udev.links.iter().any(|l| l == path)).map(|d| d.b.name.clone())
+            });
+        }
+        let (key, val) = spec.split_once('=')?;
         let val = val.trim_matches('"');
         // Two devices can hold one filesystem UUID or label (a thin
         // snapshot of an LV, docs/design/qubes.md): the one mounted wins.
@@ -248,20 +265,6 @@ impl Ctx<'_> {
             "LABEL" => pick(&|d: &Dev| d.fs_label().as_deref() == Some(val)),
             "PARTUUID" => self.devs.iter().find(|d| self.partition_uuid(d).is_some_and(|u| u.eq_ignore_ascii_case(val))),
             "PARTLABEL" => self.devs.iter().find(|d| self.partition_label(d).as_deref() == Some(val)),
-            "" if val.starts_with("/dev/") => {
-                // Follow /dev/mapper/x, /dev/disk/by-*/x, /dev/vg/lv links.
-                let canon = std::fs::canonicalize(sys.p(val)).ok();
-                let name = canon.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned());
-                let name = name.unwrap_or_else(|| val.trim_start_matches("/dev/").to_string());
-                let mapper = match &canon {
-                    Some(c) => c.parent().and_then(|p| p.file_name()).is_some_and(|d| d == "mapper").then_some(name.as_str()),
-                    None => val.strip_prefix("/dev/mapper/"),
-                };
-                return self.dev(&name).or_else(|| self.dm_named(mapper?)).map(|d| d.b.name.clone()).or_else(|| {
-                    // A link udev knows of, though not on this root's /dev.
-                    self.devs.iter().find(|d| d.b.udev.links.iter().any(|l| l == val)).map(|d| d.b.name.clone())
-                });
-            }
             _ => None,
         };
         found.map(|d| d.b.name.clone())
@@ -1864,6 +1867,26 @@ mod tests {
         assert_eq!(unknown_disk(&s, &["nvme0n1".to_string()]), None);
         // A partition isn't a whole disk.
         assert_eq!(unknown_disk(&s, &["sda1".to_string()]).as_deref(), Some("sda1"));
+    }
+
+    /// A device path with '=' in it (udev keeps it in by-label links) is a
+    /// path, not a TAG=value spec: fstab's /dev/disk/by-label/data=1
+    /// resolves through the link on /dev, or through udev's own links
+    /// when /dev hasn't it (RustAudit1 H3-01).
+    #[test]
+    fn resolve_device_path_with_equals() {
+        let t = crate::testutil::Tree::new("resolve-eq");
+        t.disk("sda", "8:0", &[0u8; 4096], 512).partition("sda", "sda1", "8:1", 1, 2, 2, &[0u8; 4096]).partition("sda", "sda2", "8:2", 2, 4, 2, &[0u8; 4096]);
+        t.symlink("/dev/disk/by-label/data=1", "../../sda1").file("/run/udev/data/b8:2", "S:disk/by-label/home=2\n");
+        t.file("/etc/fstab", "/dev/disk/by-label/data=1 /data ext4 defaults 0 2\n/dev/disk/by-label/home=2 /home ext4 defaults 0 2\n/dev/sda1 /x ext4 defaults 0 2\nLABEL=a=b /y ext4 defaults 0 2\n");
+        t.file("/proc/self/mountinfo", "");
+        let s = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true);
+        let v = build_only(&s, None, "2026-11-21T00:00:00Z", &[]);
+        let to = |i: &str| v.at(&["storage", "fstab", i, "resolves_to"]).and_then(Value::as_str).map(str::to_string);
+        assert_eq!(to("0").as_deref(), Some("sda1"));
+        assert_eq!(to("1").as_deref(), Some("sda2"));
+        assert_eq!(to("2").as_deref(), Some("sda1"));
+        assert_eq!(to("3"), None);
     }
 
     /// Alpine's mdev (the Thinkpad, 2026-11-21): /dev/mapper/root is a block

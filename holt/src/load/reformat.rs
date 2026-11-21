@@ -168,7 +168,9 @@ pub fn holds(v: &Value, c: &Change, path: &str) -> bool {
 /// from the default subvolume.  The fstab mount of it whose subvolume is
 /// the deepest above the path holds it, and the new filesystem (C's
 /// mount) has it at that mount's place below C's: AnduinOS's ESP stub
-/// prefix /@root/boot/grub is /boot/grub on the new ext4.
+/// prefix /@root/boot/grub is /boot/grub on the new ext4.  A path in none
+/// of its subvolumes is None, the new filesystem's already: a stub
+/// rewritten once, or written fresh, stays as it is.
 pub fn grub_path(v: &Value, c: &Change, path: &str, relative: bool) -> Option<String> {
     if c.from != "btrfs" || !path.starts_with('/') {
         return None;
@@ -187,6 +189,16 @@ pub fn grub_path(v: &Value, c: &Change, path: &str, relative: bool) -> Option<St
         }
     }
     let inside = |sv: &str| sv.is_empty() || p == sv || p.starts_with(&format!("{sv}/"));
+    // Only a path inside one of its subvolumes is the old btrfs's: any
+    // other (/boot/grub, /EFI/...) is the new filesystem's already (the
+    // stub after the rewrite, or one grub-install wrote fresh), which a
+    // mount of the top level (subvolid=5 at /mnt/top, /.btrfsroot) would
+    // otherwise take to /mnt/top/boot/grub: GRUB at the grub> prompt.
+    let mut subs: Vec<String> = arr(&fs, &["subvolumes"]).iter().filter_map(|x| s(x, "path")).map(|x| x.trim_start_matches("<FS_TREE>/").trim_matches('/').to_string()).collect();
+    subs.extend(mounts.iter().map(|(_, sv)| sv.clone()));
+    if !subs.iter().any(|sv| !sv.is_empty() && inside(sv)) {
+        return None;
+    }
     let (at, sv) = mounts.iter().filter(|(_, sv)| inside(sv)).max_by_key(|(_, sv)| sv.len())?;
     let rest = if sv.is_empty() { p.as_str() } else { p[sv.len()..].trim_start_matches('/') };
     let restored = match (at.as_str(), rest) {
@@ -826,6 +838,34 @@ mod tests {
         let ext4 = crate::json::parse(&v.compact().replace(r#""type":"btrfs","uuid":"1b64"#, r#""type":"ext4","uuid":"1b64"#).replace(r#""file":"/","type":"btrfs""#, r#""file":"/","type":"ext4""#)).unwrap();
         let c2 = work_out(&ext4, &re(&[("/", "btrfs")])).changes.remove(0);
         assert_eq!(grub_path(&ext4, &c2, "/boot/grub", false), None);
+    }
+
+    /// The top level mounted beside the subvolumes (btrbk's subvolid=5 at
+    /// /mnt/top): only a path in a subvolume is the old btrfs's; the new
+    /// filesystem's /boot/grub, or the ESP's /EFI/..., is left as it is,
+    /// so grub_path of its own answer is None.
+    #[test]
+    fn grub_paths_with_the_top_level_mounted() {
+        let top = r#"{"spec": "UUID=1b64a017-659b-4484-bf36-b97f639c3c35", "file": "/mnt/top", "type": "btrfs", "options": "subvolid=5,noatime", "passno": 0, "resolves_to": "nvme0n1p2"},"#;
+        let v = crate::json::parse(&eos().compact().replacen(r#""fstab":["#, &format!(r#""fstab":[{top}"#), 1)).unwrap();
+        let r = work_out(&v, &re(&[("/", "ext4")]));
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let c = &r.changes[0];
+        assert!(c.folded.iter().any(|f| f == "/mnt/top"), "{:?}", c.folded);
+        let g = |p: &str| grub_path(&v, c, p, false);
+        assert_eq!(g("/@/boot/grub").as_deref(), Some("/boot/grub"));
+        assert_eq!(g("/@home/u").as_deref(), Some("/home/u"));
+        assert_eq!(g("/boot/grub"), None);
+        assert_eq!(g("/boot/grub/grub.cfg"), None);
+        assert_eq!(g("/EFI/BOOT/fbx64.efi"), None);
+        assert_eq!(g("/"), None);
+        assert_eq!(grub_path(&v, c, "/boot/grub", true), None);
+        // A subvolume only the top level's mount holds is there.
+        assert_eq!(g("/@snapshots/1").as_deref(), Some("/mnt/top/@snapshots/1"));
+        // The top level at / (Void's subvol=/): nothing moves.
+        let void = crate::json::parse(&eos().compact().replace("subvol=/@,", "subvol=/,")).unwrap();
+        let cv = work_out(&void, &re(&[("/", "ext4")])).changes.remove(0);
+        assert_eq!(grub_path(&void, &cv, "/boot/grub", false), None);
     }
 
     #[test]

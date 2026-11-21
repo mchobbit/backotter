@@ -917,6 +917,20 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
     /// read GRUB's directory from the old @root, then from the new root.
     #[test]
     fn anduinos_esp_stubs() {
+        anduinos_stubs(None);
+    }
+
+    /// The same with the top level mounted too (subvolid=5 at /mnt/top,
+    /// btrbk's; subvol=/ at /.btrfsroot, snapper-rollback's): a path not
+    /// in a subvolume (/boot/grub after the rewrite, the ESP's own) isn't
+    /// the old btrfs's, so the check passes and a second rewrite leaves it.
+    #[test]
+    fn anduinos_esp_stubs_top_level_mounted() {
+        anduinos_stubs(Some(("/mnt/top", "subvolid=5,noatime")));
+        anduinos_stubs(Some(("/.btrfsroot", "subvol=/,noatime")));
+    }
+
+    fn anduinos_stubs(top: Option<(&str, &str)>) {
         let t = crate::testutil::TempDir::new("rewrite-stub");
         let root = t.path().to_string_lossy().into_owned();
         let w = |p: &str, s: &str| {
@@ -925,7 +939,12 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
             std::fs::write(f, s).unwrap();
         };
         let u = ANDUINOS_UUID;
-        let fstab = format!("UUID={u} / btrfs defaults,subvol=@root,compress=zstd:3,noatime 0 0\nUUID={u} /home btrfs defaults,subvol=@home,compress=zstd:3,noatime 0 0\nUUID=34CD-367E /boot/efi vfat defaults,noatime 0 1\n");
+        let mut fstab = format!("UUID={u} / btrfs defaults,subvol=@root,compress=zstd:3,noatime 0 0\nUUID={u} /home btrfs defaults,subvol=@home,compress=zstd:3,noatime 0 0\nUUID=34CD-367E /boot/efi vfat defaults,noatime 0 1\n");
+        let mut extra = String::new();
+        if let Some((at, o)) = top {
+            fstab += &format!("UUID={u} {at} btrfs {o} 0 0\n");
+            extra = format!(r#", {{"file": "{at}", "type": "btrfs", "options": "{o}", "resolves_to": "vda4"}}"#);
+        }
         let layout = crate::json::parse(&format!(
             r#"{{"os": {{"id": "anduinos"}},
   "boot": {{"esps": [{{"device": "vda2", "mounted_at": "/boot/efi"}}], "kernels": {{"installed": [{{"version": "7.0.0-43-generic"}}]}}, "packages": {{"e2fsprogs": "1.47.2-3"}}}},
@@ -933,7 +952,7 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
     "btrfs": [{{"uuid": "{u}", "devices": ["vda4"], "default_subvolume": {{"id": 5}}, "subvolumes": [{{"id": 256, "path": "<FS_TREE>/@root"}}, {{"id": 257, "path": "<FS_TREE>/@home"}}]}}],
     "fstab": [{{"file": "/", "type": "btrfs", "options": "defaults,subvol=@root,compress=zstd:3,noatime", "resolves_to": "vda4"}},
               {{"file": "/home", "type": "btrfs", "options": "defaults,subvol=@home,compress=zstd:3,noatime", "resolves_to": "vda4"}},
-              {{"file": "/boot/efi", "type": "vfat", "options": "defaults,noatime", "resolves_to": "vda2"}}]}}}}"#
+              {{"file": "/boot/efi", "type": "vfat", "options": "defaults,noatime", "resolves_to": "vda2"}}{extra}]}}}}"#
         ))
         .unwrap();
         let r = reformat::work_out(&layout, &[("/".to_string(), "ext4".to_string())]);
@@ -963,6 +982,18 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         run.log.clear();
         run.rewrite(c, &layout, false);
         assert!(run.errors.is_empty() && run.log.is_empty(), "{:?} {}", run.errors, run.log);
+        for d in ["AnduinOS", "BOOT"] {
+            assert_eq!(std::fs::read_to_string(format!("{root}/boot/efi/EFI/{d}/grub.cfg")).unwrap(), want);
+        }
+        // A stub grub-install wrote fresh (the new filesystem's paths), and
+        // one with the ESP's own: the check passes, the rewrite leaves them.
+        let fresh = format!("search.fs_uuid {u} root hd0,gpt4\nset prefix=($root)'/boot/grub'\nconfigfile ($root)/boot/grub/grub.cfg\nchainloader ($esp)/EFI/BOOT/fbx64.efi\n");
+        w("/boot/efi/EFI/AnduinOS/grub.cfg", &fresh);
+        run.check_grub_stubs(c, &layout);
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        run.rewrite(c, &layout, false);
+        assert!(run.errors.is_empty() && run.log.is_empty(), "{:?} {}", run.errors, run.log);
+        assert_eq!(std::fs::read_to_string(format!("{root}/boot/efi/EFI/AnduinOS/grub.cfg")).unwrap(), fresh);
     }
 
     #[test]

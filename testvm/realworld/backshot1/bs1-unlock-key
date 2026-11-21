@@ -18,6 +18,9 @@
 #   none).  Where it took the place of Debian's decrypt_keyctl (MX Linux's
 #   installer), a typed boot asks for each volume: decrypt_keyctl's one
 #   passphrase kept for every volume is gone while BackShot1's is there.
+#   Once a boot found no drive (or no key on it), the next volume asks at
+#   once, without waiting again: /run, with its mark, carries over from the
+#   initramfs to cryptdisks-early.
 #
 #   unlock-key --to FILE (mkinitcpio's bs1key hook, before encrypt): writes
 #   the key to FILE (/crypto_keyfile.bin), which encrypt then tries before
@@ -213,13 +216,15 @@ if [ $mode = to ]; then
 fi
 
 name=${CRYPTTAB_NAME:-unknown}
-if [ "${CRYPTTAB_TRIED:-0}" = 0 ]; then
+if [ "${CRYPTTAB_TRIED:-0}" = 0 ] && [ ! -e "$NODRIVE" ]; then
     tmp=$R/run/backshot1-key.$$
     if fetch "$tmp"; then
         cat "$tmp"
         rc=$?
         rm -f "$tmp"
         [ $rc -eq 0 ] && mark "$name" drive && exit 0
+    else
+        : >"$NODRIVE"
     fi
     rm -f "$tmp"
 fi

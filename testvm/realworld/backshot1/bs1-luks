@@ -30,7 +30,8 @@
 #      /run/cryptsetup-keys.d/keystore-POOL.key first (below, "Ubuntu's ZFS
 #      keystore").
 #   D  initramfs-tools' cryptroot: keyscript=/usr/local/lib/backshot1/unlock-key
-#      (bs1-unlock-key), the key field left as it was (none).  A volume with
+#      (bs1-unlock-key), the key field left as it was (none, or
+#      decrypt_keyctl's cache ID, which ours ignores).  A volume with
 #      Debian's own keyscript=decrypt_keyctl (MX Linux's installer: it only
 #      keeps one typed passphrase for every volume) gets ours instead; any
 #      other keyscript is attended.  On sysvinit, a volume the booted system
@@ -328,7 +329,8 @@ lk_cryptdisks() {
     for f in $LK_CRYPTDISKS; do [[ -x $f ]] && on=yes; done
     [[ $on == yes ]] || return 1
     # shellcheck disable=SC1090
-    ! (CRYPTDISKS_ENABLE=Yes; . "$LK_CRYPTDISKS_DEFAULT" 2>/dev/null; [[ ${CRYPTDISKS_ENABLE,,} == no ]])
+    # Off as the scripts read it: any value starting N or n.
+    ! (CRYPTDISKS_ENABLE=Yes; . "$LK_CRYPTDISKS_DEFAULT" 2>/dev/null; [[ $CRYPTDISKS_ENABLE == [Nn]* ]])
 }
 
 # lk_on_root PATH: PATH (or its nearest directory that's there) is on the
@@ -886,7 +888,7 @@ lk_grub_luks() {
 
 # luks_adopt: the step itself.  False, having changed nothing, if it can't.
 luks_adopt() {
-    local disk key fstype gen family='' reason='' cmdline vols dev uuid name line k o how
+    local disk key fstype gen family='' reason='' cmdline vols dev uuid name line k o how kf
     local vol_list=() own_list=() edits_tab=() edits_ini=() edits_bls=() unhandled=() early hooks='' files='' cd cdname fix re f
     local xl_vols=() xl_files=() xl_dir='' xl_kind xl_rest xl_o i e n why
     if [[ ${BS1_LUKS:-yes} == no ]]; then lk_say "skipped (BS1_LUKS=no)"; return 0; fi
@@ -1021,9 +1023,15 @@ luks_adopt() {
         else line=$(lk_tab_line "$LK_TAB" "$name" "$dev" "$uuid")
         fi
         k=${line%% *} o=${line#* }
+        # Family D's crypttab key field is the keyscript's argument, not a
+        # key file, when the keyscript is decrypt_keyctl (its cache ID:
+        # "home UUID=x shared_pw luks,keyscript=decrypt_keyctl") or ours,
+        # which D put there keeping the field as written.
+        kf=yes
+        [[ $family == D && -n $(lk_keyscript "$o") ]] && lk_ks_ours "$o" && kf=no
         # Own: a key file in crypttab (not ours), a token, or (busybox
         # encrypt, Alpine's mkinitfs) a key file built into the initramfs.
-        if [[ -n $line && $k != none && $k != - && $k != "$LK_KEYSPEC" ]] ||
+        if [[ -n $line && $kf == yes && $k != none && $k != - && $k != "$LK_KEYSPEC" ]] ||
            [[ -n $line && ($o == *tpm2-device=* || $o == *fido2-device=* || $o == *pkcs11-uri=*) ]] ||
            { [[ $early == yes ]] && { [[ $cmdline =~ $re_cryptkey ]] || [[ " $files " == *" /crypto_keyfile.bin "* ]]; }; }; then
             own_list+=("$name:$uuid")

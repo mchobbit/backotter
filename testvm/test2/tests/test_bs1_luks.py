@@ -183,6 +183,31 @@ class UnlockKey(Tmp):
         self.assertEqual(r.stdout, "typed-pass")
         self.assertEqual(self.marks(), ["root typed"])
 
+    def test_keyscript_waits_once_a_boot(self):
+        # No drive for root (the initramfs): the mark in run/ makes /home
+        # (cryptdisks-early) ask at once, and a fresh boot looks again.
+        r = self.run_key("none", CRYPTTAB_NAME="root", CRYPTTAB_TRIED="0")
+        self.assertIn("waiting up to 2 s", r.stderr)
+        self.assertTrue((self.root / "run/backshot1-nodrive").exists())
+        self.plug()
+        r = self.run_key("none", CRYPTTAB_NAME="home", CRYPTTAB_TRIED="0")
+        self.assertEqual((r.returncode, r.stdout), (0, "typed-pass"), r.stderr)
+        self.assertNotIn("waiting", r.stderr)
+        self.assertIn("ASKED: Please unlock disk home: ", r.stderr)
+        self.assertFalse((self.t / "mounts").exists(), "no second look for the drive this boot")
+        self.assertEqual(self.marks(), ["root typed", "home typed"])
+        (self.root / "run/backshot1-nodrive").unlink()
+        r = self.run_key("none", CRYPTTAB_NAME="root", CRYPTTAB_TRIED="0")
+        self.assertEqual(r.stdout, "s3cret", r.stderr)
+
+    def test_keyscript_with_the_drive_leaves_no_nodrive_mark(self):
+        self.plug()
+        for n in ("root", "home"):
+            r = self.run_key("none", CRYPTTAB_NAME=n, CRYPTTAB_TRIED="0")
+            self.assertEqual(r.stdout, "s3cret", r.stderr)
+        self.assertFalse((self.root / "run/backshot1-nodrive").exists())
+        self.assertEqual(self.marks(), ["root drive", "home drive"])
+
     def test_keyscript_without_a_record_asks(self):
         (self.root / "etc/backshot1/luks-unlock").unlink()
         r = self.run_key("none", CRYPTTAB_NAME="root", CRYPTTAB_TRIED="0")
@@ -2380,8 +2405,55 @@ class AdoptD(Tmp):
         self.assertTrue((self.t / "usr/local/lib/backshot1/unlock-key").exists())
 
     def test_cryptdisks_turned_off_is_attended(self):
-        (self.t / "etc/default/cryptdisks").write_text("CRYPTDISKS_ENABLE=No\n")
-        self.attended(f"luks-{MX_HOME} is opened after the initramfs, without systemd")
+        # Off as cryptdisks-early reads it: [Nn]*.
+        for v in ("No", "no", "N", "n", "Never", "NO"):
+            with self.subTest(CRYPTDISKS_ENABLE=v):
+                shutil.rmtree(self.t / "etc/backshot1", ignore_errors=True)
+                (self.t / "etc/default/cryptdisks").write_text(f"CRYPTDISKS_ENABLE={v}\n")
+                self.attended(f"luks-{MX_HOME} is opened after the initramfs, without systemd")
+
+    def test_cryptdisks_on_values(self):
+        for v in ("Yes", "yes", "y", "1", ""):
+            with self.subTest(CRYPTDISKS_ENABLE=v):
+                shutil.rmtree(self.t / "etc/backshot1", ignore_errors=True)
+                (self.t / "crypttab").write_text(self.tab)
+                (self.t / "etc/default/cryptdisks").write_text(f"CRYPTDISKS_ENABLE={v}\n")
+                self.assertIn(f"luks-{MX_HOME}:{MX_HOME}:D", self.adopt())
+
+    def test_decrypt_keyctl_cache_id_is_no_key_file(self):
+        # Debian's "home UUID=x shared_pw luks,keyscript=decrypt_keyctl":
+        # the key field is decrypt_keyctl's cache ID, so D, not own; the
+        # field stays, and a second run (ours with the ID) is D still.
+        t = self.t
+        self.tab = self.tab.replace(f"UUID={MX_ROOT} none ", f"UUID={MX_ROOT} mx_pw ").replace(f"UUID={MX_HOME} none ", f"UUID={MX_HOME} mx_pw ")
+        (t / "crypttab").write_text(self.tab)
+        out = self.adopt()
+        self.assertIn(f"family D (initramfs: initramfs-tools): luks-{MX_ROOT}:{MX_ROOT}:D luks-{MX_HOME}:{MX_HOME}:D", out)
+        self.assertNotIn("own=", self.rec().replace("own=''", ""))
+        ks = f"{t}/usr/local/lib/backshot1/unlock-key"
+        for n, u in ((MX_ROOT, MX_ROOT), (MX_HOME, MX_HOME)):
+            self.assertIn(f"luks-{n}\tUUID={u}\tmx_pw\tluks,no-read-workqueue,no-write-workqueue,discard,keyscript={ks}\n",
+                          (t / "crypttab").read_text())
+        out = self.adopt()
+        self.assertIn(f"luks-{MX_ROOT}:{MX_ROOT}:D luks-{MX_HOME}:{MX_HOME}:D", out)
+        self.assertIn("unchanged; the initramfs isn't remade", out)
+        self.adopt("luks_off")
+        self.assertEqual((t / "crypttab").read_text(), self.tab)
+
+    def test_a_key_file_without_a_keyscript_is_still_own(self):
+        self.tab = self.tab.replace(f"UUID={MX_HOME} none {MX_OPTS}", f"UUID={MX_HOME} /etc/keys/home.key luks,discard")
+        (self.t / "crypttab").write_text(self.tab)
+        out = self.adopt()
+        self.assertIn(f"luks-{MX_ROOT}:{MX_ROOT}:D", out)
+        self.assertNotIn(f"luks-{MX_HOME}:{MX_HOME}:D", out)
+        self.assertIn(f"luks-{MX_HOME}:{MX_HOME}", self.rec().split("own=")[1].splitlines()[0])
+        self.assertIn(f"UUID={MX_HOME} /etc/keys/home.key luks,discard\n", (self.t / "crypttab").read_text())
+
+    def test_an_unknown_keyscript_with_a_key_field_is_not_d(self):
+        self.tab = self.tab.replace(f"UUID={MX_ROOT} none {MX_OPTS}", f"UUID={MX_ROOT} /dev/sdz1:/k luks,keyscript=passdev")
+        (self.t / "crypttab").write_text(self.tab)
+        out = self.adopt()
+        self.assertNotIn(f"luks-{MX_ROOT}:{MX_ROOT}:D", out)
 
     def test_no_cryptdisks_scripts_is_attended(self):
         (self.t / "etc/init.d/cryptdisks").unlink()

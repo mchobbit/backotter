@@ -1964,6 +1964,16 @@ def reformat_expect(src, dst, reforms):
                     mods.append(m)
             g["modules"] = mods
             notes.append(f"--reformat {mount}={to}: GRUB's grub.cfg loads {new} where it loaded {old}")
+        # A grubenv on a btrfs points at the block btrfs keeps in its first
+        # MiB (env_block=); off btrfs rewrite.rs takes the line out (XH1-01),
+        # the block's variables written into the file in its place.
+        gd = (src.get("boot") or {}).get("grub") or {}
+        env = gd.get("grubenv")
+        if frm == "btrfs" and to != "btrfs" and isinstance(env, dict) and "env_block" in env:
+            gdir = gd.get("dir") or "/boot/grub"
+            holders = [e.get("file") for e in ss.get("fstab") or [] if e.get("type") != "swap" and isinstance(e.get("file"), str) and e["file"].startswith("/") and _under(gdir, e["file"])]
+            if holders and max(holders, key=len) == mount:
+                notes.append(f"--reformat {mount}={to}: {gdir}/grubenv's env_block={env.pop('env_block')} taken out (rewrite.rs)")
         if mount != "/":
             continue
         # The root's kernel command lines, wherever the dump found one.

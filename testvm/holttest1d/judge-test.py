@@ -2264,6 +2264,25 @@ class Reformat(unittest.TestCase):
         dst["boot"]["grub"]["grub_cfg"]["modules"] = ["part_msdos", "btrfs", "gfxterm", "ext2"]
         self.bad(src, dst, "--reformat", "/=ext4")
 
+    def test_grubenv_env_block_taken_out(self):
+        """leap16 /=ext4 (rel11rf, 2026-11-21): rewrite.rs takes env_block= out of a
+        grubenv on the reformatted btrfs (XH1-01); one on another filesystem keeps it."""
+        src = btrfs_root_guest()
+        st = src["storage"]
+        st["fstab"] = [e for e in st["fstab"] if e["file"] != "/boot"]
+        src["boot"]["grub"].update(dir="/boot/grub2", grubenv={"env_block": "512+1"})
+        dst = reformatted(src)
+        dst["boot"]["grub"]["grubenv"] = {}
+        self.assertIn("grubenv's env_block=512+1 taken out", self.good(src, dst, "--reformat", "/=ext4"))
+        dst["boot"]["grub"]["grubenv"] = {"env_block": "512+1"}
+        self.assertIn("DIFF boot.grub.grubenv.env_block", self.bad(src, dst, "--reformat", "/=ext4"))
+        # GRUB's directory on the ext4 /boot: nothing of it changes.
+        src = btrfs_root_guest()
+        src["boot"]["grub"].update(dir="/boot/grub2", grubenv={"env_block": "512+1"})
+        dst = reformatted(src)
+        dst["boot"]["grub"]["grubenv"] = {}
+        self.assertIn("DIFF boot.grub.grubenv.env_block", self.bad(src, dst, "--reformat", "/=ext4"))
+
     def test_grub_module_kept_while_another_btrfs_needs_it(self):
         """Another btrfs is still mounted: its insmod btrfs stays, compared as it is."""
         src = btrfs_root_guest()

@@ -1812,6 +1812,8 @@ def judge_esp(esp_dir):
 # reformat::work_out and rewrite.rs work it out), and the rest to the
 # source's as ever: reformat_expect edits the source's dump into that.
 REFORMAT_TYPES = ("ext4", "xfs", "btrfs")
+# GRUB's module for each type (grub-mkconfig's insmod; ext2 reads ext2-4).
+GRUB_FS_MODULE = {"ext2": "ext2", "ext3": "ext2", "ext4": "ext2", "xfs": "xfs", "btrfs": "btrfs"}
 # reformat.rs's GENERIC_OPTIONS: what an fstab entry and rootflags= keep.
 REFORMAT_GENERIC = {"defaults", "ro", "rw", "noatime", "relatime", "strictatime", "lazytime", "nolazytime", "nodiratime", "diratime",
                     "nodev", "dev", "nosuid", "suid", "noexec", "exec", "nofail", "noauto", "auto", "sync"}
@@ -1945,6 +1947,23 @@ def reformat_expect(src, dst, reforms):
                             m["root"] = "/"
                     elif st is ss:
                         m["subvol"] = None
+        # grub-mkconfig's grub.cfg loads the module of each filesystem it reads:
+        # its own directory's, and the root's for a font or theme under /usr
+        # (Void's insmod btrfs before gfxterm, with an ext4 /boot).  The boot
+        # stage's grub-mkconfig writes the new type's (ext2 for ext2-4) where
+        # the old one was, when no other filesystem of the old module's type
+        # is left to need it.  Its modules are deduplicated, the first kept
+        # (boot.rs parse_grub_cfg).
+        g = ((src.get("boot") or {}).get("grub") or {}).get("grub_cfg")
+        old, new = GRUB_FS_MODULE.get(frm), GRUB_FS_MODULE.get(to)
+        others = {GRUB_FS_MODULE.get(e.get("type")) for e in ss.get("fstab") or [] if e is not entry}
+        if isinstance(g, dict) and isinstance(g.get("modules"), list) and old and new and old != new and old in g["modules"] and old not in others:
+            mods = []
+            for m in (new if m == old else m for m in g["modules"]):
+                if m not in mods:
+                    mods.append(m)
+            g["modules"] = mods
+            notes.append(f"--reformat {mount}={to}: GRUB's grub.cfg loads {new} where it loaded {old}")
         if mount != "/":
             continue
         # The root's kernel command lines, wherever the dump found one.
@@ -1996,8 +2015,12 @@ REFORMAT_FILES = (r"^etc/(fstab|kernel/cmdline|cmdline\.d/[^/]+|default/grub|def
 # btrfs's inode flags no other type keeps: no-copy-on-write (C), compress (c), no-compress.
 BTRFS_ONLY_FLAGS = 0x00800000 | 0x4 | 0x400
 # A snapper snapshot (and the root's own alias among them): left out of a
-# restore onto another type, its .snapshots/N directory kept, empty.
-LEFT_OUT_SNAPSHOT = re.compile(r"(^|/)\.snapshots/\d+/snapshot(/|$)")
+# restore onto another type, its .snapshots/N directory kept, empty.  So too
+# AnduinOS's snapshot manager's read-only snapshots, a deployment's root
+# (deployments/ID/root) and a personal snapshot's (personal/snapshots/ID/NAME):
+# load leaves out every btrfs snapshot (its "left out of the restore
+# (--reformat)" excludes), the directory it was mounted on kept.
+LEFT_OUT_SNAPSHOT = re.compile(r"(^|/)\.snapshots/(\d+/snapshot|anduinos-btrfs-snapshots-manager/(deployments/[^/]+/root|personal/snapshots/[^/]+/[^/]+))(/|$)")
 # XFS keeps each POSIX ACL under its own trusted.SGI_ACL_* name as well.
 XFS_ACL_COPY = {"trusted.SGI_ACL_FILE": "system.posix_acl_access", "trusted.SGI_ACL_DEFAULT": "system.posix_acl_default"}
 
@@ -2014,7 +2037,7 @@ def reformat_why(kind, p, before, after, reforms):
         if kind == "extra" and to == "ext4" and p == (rel + "/" if rel else "") + "lost+found":
             return "--reformat onto ext4: mke2fs's lost+found"
         if kind == "missing" and LEFT_OUT_SNAPSHOT.search(p):
-            return "--reformat: a btrfs snapshot (snapper's, or the root's alias at .snapshots/N/snapshot) isn't restored onto another type (docs/design/reformat.md)"
+            return "--reformat: a btrfs snapshot (snapper's, the root's alias at .snapshots/N/snapshot, or AnduinOS's snapshot manager's) isn't restored onto another type (docs/design/reformat.md)"
         if kind == "hard links":
             def kept(links):
                 left = [x for x in links or [] if not LEFT_OUT_SNAPSHOT.search(x)]

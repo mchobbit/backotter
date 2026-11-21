@@ -2247,6 +2247,34 @@ class Reformat(unittest.TestCase):
         dst["boot"]["grub"]["grub_cfg"]["entries"].append("Advanced options")
         self.bad(src, dst, "--reformat", "/=ext4")
 
+    def test_grub_module_of_the_new_type(self):
+        """void-musl /=xfs (rel11rf, 2026-11-21): grub-mkconfig's insmod btrfs (the
+        root's, for its font, beside an ext4 /boot) becomes insmod xfs."""
+        src = btrfs_root_guest()
+        src["boot"]["grub"]["grub_cfg"]["modules"] = ["part_msdos", "btrfs", "gfxterm", "ext2"]
+        dst = reformatted(src, "xfs")
+        dst["boot"]["grub"]["grub_cfg"]["modules"] = ["part_msdos", "xfs", "gfxterm", "ext2"]
+        self.assertIn("grub.cfg loads xfs where it loaded btrfs", self.good(src, dst, "--reformat", "/=xfs"))
+        self.assertIn("DIFF boot.grub.grub_cfg.modules.1", self.bad(src, dst))
+        # Onto ext4 the module is ext2, listed once (the first insmod's place).
+        dst = reformatted(src)
+        dst["boot"]["grub"]["grub_cfg"]["modules"] = ["part_msdos", "ext2", "gfxterm"]
+        self.good(src, dst, "--reformat", "/=ext4")
+        # A module that stayed btrfs is still a difference.
+        dst["boot"]["grub"]["grub_cfg"]["modules"] = ["part_msdos", "btrfs", "gfxterm", "ext2"]
+        self.bad(src, dst, "--reformat", "/=ext4")
+
+    def test_grub_module_kept_while_another_btrfs_needs_it(self):
+        """Another btrfs is still mounted: its insmod btrfs stays, compared as it is."""
+        src = btrfs_root_guest()
+        src["storage"]["fstab"].append({"spec": "UUID=99999999-9999-4999-8999-999999999999", "file": "/srv", "type": "btrfs",
+                                        "options": "defaults", "freq": 0, "passno": 0, "resolves_to": "vdb1"})
+        src["boot"]["grub"]["grub_cfg"]["modules"] = ["part_gpt", "btrfs", "ext2"]
+        dst = reformatted(src, "xfs")
+        self.good(src, dst, "--reformat", "/=xfs")
+        dst["boot"]["grub"]["grub_cfg"]["modules"] = ["part_gpt", "xfs", "ext2"]
+        self.assertIn("DIFF boot.grub.grub_cfg.modules.1", self.bad(src, dst, "--reformat", "/=xfs"))
+
 
 class FsReformat(unittest.TestCase):
     """judge.py fs --reformat: the restored files after a btrfs root became ext4 or XFS."""
@@ -2337,6 +2365,24 @@ class FsReformat(unittest.TestCase):
         out = self.judge(before, after, "--reformat", "/home=ext4")[1]
         self.assertIn("DIFF extra: 1: lost+found", out)
         self.assertIn("DIFF inode flags", out)
+
+    def test_anduinos_snapshot_manager_left_out(self):
+        """anduinos2 /=ext4 (rel11rf, 2026-11-21): load leaves out the snapshot
+        manager's read-only snapshots, a deployment's root and a personal
+        snapshot's home, their directories kept; anything else under them counts."""
+        before, after = self.restored("ext4")
+        m = ".snapshots/anduinos-btrfs-snapshots-manager"
+        dep, per = f"{m}/deployments/e707f13a/root", f"{m}/personal/snapshots/275f6e22/home"
+        for p in (m, f"{m}/deployments", f"{m}/deployments/e707f13a", dep, f"{m}/personal", f"{m}/personal/snapshots", f"{m}/personal/snapshots/275f6e22", per):
+            before[p] = meta("dir")
+            after[p] = meta("dir")
+        for p in (f"{dep}/bin", f"{dep}/etc/passwd", f"{per}/m/.bashrc"):
+            before[p] = meta("file")
+        rc, out = self.judge(before, after, "--reformat", "/=ext4")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("AnduinOS's snapshot manager's", out)
+        before[f"{m}/deployments/e707f13a/state.json"] = meta("file")
+        self.assertIn(f"DIFF missing: 1: {m}/deployments/e707f13a/state.json", self.judge(before, after, "--reformat", "/=ext4")[1])
 
 
 

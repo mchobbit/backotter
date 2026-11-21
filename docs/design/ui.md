@@ -2,8 +2,11 @@
 
 Status: draft for discussion.  Nothing here is built.  It proposes what
 bko-holt has to change so a UI can drive it, and a Whiptail-style 80x24
-terminal UI for the rescue sticks (decided 2026-11-09).  A graphical UI is for
-the backup side, later.  Open questions are at the end.
+terminal UI for the rescue sticks (decided 2026-11-09), the default on all
+seven.  The Linux stick also gets a full-screen web UI on localhost, from its
+own boot entry (decided 2026-11-19; see "The graphical UI on the Linux
+stick").  A UI reached over the network, and the backup side's UI, come
+later.  Open questions are at the end.
 
 ## Goal
 
@@ -17,7 +20,10 @@ does.
 
 Non-goals for version 1:
 
-- A graphical UI on the rescue sticks (see "Why not a GUI on the stick").
+- A graphical UI on the rescue sticks other than Linux's, or by default on
+  Linux's (see "The graphical UI on the Linux stick").  The terminal UI comes
+  first; the Linux graphical UI follows it.
+- Driving a restore from another device over the network (see "Later").
 - A UI for the backup side.  The backup tool (`backotter`, which
   `stick-config.md` refers to) isn't built yet; its UI is designed with it.
 - Languages other than English.  Strings are kept in one place so that
@@ -46,7 +52,62 @@ There are two places, with very different limits:
 Any of them may also be reached over ssh, when someone rescues a headless
 server from another machine.
 
-### Why not a GUI on the stick
+### The graphical UI on the Linux stick
+
+Decided 2026-11-19: the terminal UI is the default on every stick, and the
+Linux stick also offers a graphical UI from its own GRUB entry.  The menu
+`stick/make-img.sh` writes gets a fourth entry:
+
+```
+BackOtter rescue                        (default: the terminal UI)
+BackOtter rescue (graphical)            (new)
+BackOtter rescue (safe graphics)        (nomodeset)
+BackOtter rescue (serial console ttyS0)
+```
+
+- **What it is:** cage (a Wayland compositor that runs one program
+  full-screen) runs a small browser, WPE WebKit's `cog`, on a page that
+  `bko-rescue` serves on localhost.  The page drives the same steps as the
+  terminal UI, through the same bko-holt protocol.
+- **Localhost only.**  The server listens on 127.0.0.1 or a Unix socket,
+  never on the network, so there's no pairing or encryption to design.
+  Opening it to the network is the later step in "Later".
+- **Its own casper layer.**  The entry's `layerfs-path=` loads a second
+  squashfs with the compositor, Mesa, the browser and fonts.  The image file
+  grows, but RAM is used only when someone picks the entry, and the default
+  boot stays as slim as today.  The entry passes `bko.ui=gui`, which tells
+  the console launcher to start cage instead of the terminal UI.
+- **Failure is a reboot.**  The black screen that sank the 2026-11-09 idea
+  can't be detected from software, but with the terminal UI as the default,
+  recovering is just rebooting and taking the default.  The terminal UI stays
+  on another VT (Ctrl+Alt+F2) while the graphical one runs.  There's no
+  graphical variant of the safe-graphics entry.
+- **Linux only.**  The BSDs, illumos and Haiku have their own boot loaders,
+  and Wayland on them is far more work.  Their sticks keep the terminal UI.
+- **HTML rather than a native toolkit or a framebuffer GUI,** so that the
+  same page later serves a phone or laptop over the network.  A framebuffer
+  GUI (DRM/KMS buffers, through Slint or our own drawing) would be a few MB
+  instead of an estimated 200 to 400 MB and depend less on the GPU, but it
+  would be a second UI used only on this screen.  *Check* the layer's size,
+  and whether cog needs Mesa's software GL where no GPU driver attaches.
+
+- **Plain HTML, CSS and JavaScript** (decided 2026-11-19): no framework
+  (React and the like), no npm, no bundler, no build step.  The files ship on
+  the image as written, in keeping with the no-crates rule on the Rust side.
+  JavaScript does what a static page can't: it holds a connection to
+  `bko-rescue` (Server-Sent Events or `fetch`) and updates the progress and
+  stage ticks as bko-holt's events arrive.  It targets current WebKit (cog)
+  only; the later network UI adds Safari, Chrome and Firefox, which handle
+  the same plain modern JavaScript.  An estimated few hundred to a couple of
+  thousand lines in all.  On the Rust side, `bko-rescue` gets a small
+  HTTP/1.1 server (est. 300 to 500 lines) that serves the files, takes the
+  answers and passes on the events, so the page and the terminal UI share
+  the same logic underneath.
+
+It comes after the terminal UI: both need bko-holt's `--json` protocol, and
+the terminal UI's screens prove the flow first.
+
+#### The 2026-11-09 decision, for the record
 
 A framebuffer GUI by default, with this terminal UI as its fallback, was
 looked at and turned down on 2026-11-09.  Drawing straight to the framebuffer
@@ -65,8 +126,10 @@ needs no display server and adds only a few MB, so size isn't the reason:
 - It costs far more: an estimated 4,000 to 6,500 lines beyond this UI, and
   testing that needs real GPUs, because QEMU can't stand in for their drivers.
 
-So the stick's UI is a terminal UI, the same on every platform.  Haiku runs
-it in a Terminal window.
+So the stick's default UI is a terminal UI, the same on every platform.
+Haiku runs it in a Terminal window.  What changed on 2026-11-19 is the
+default: as an opt-in boot entry, the black screen costs a reboot rather
+than the restore.
 
 ## bko-holt stays a CLI; the UI is a separate program
 
@@ -220,7 +283,7 @@ Haiku it isn't: `RUN_DIR`'s comment notes Haiku's `/var` is the boot
 volume's, and Haiku's stick is read-write BFS, so a password file there
 would be written to the stick.  The Haiku build of `bko-rescue` has to make
 a RAM file system for these first, or pass the repository password another
-way (see open question 5).  Haiku has no LUKS or ZFS keys to worry about,
+way (see open question 4).  Haiku has no LUKS or ZFS keys to worry about,
 only the repository password.
 
 ## The stick's restore program
@@ -242,7 +305,7 @@ one), and a shell script around them can't follow `load`'s events well.
 
 - **80×24.**  Every screen is laid out for that size, and scrolls rather
   than cuts off.  A bigger terminal gets the same box, centred.  It redraws
-  when the terminal is resized (SIGWINCH), for ssh and Haiku's Terminal.
+  when the terminal is resized (see "Toolkit"), for ssh and Haiku's Terminal.
   Where the console can load a bigger font, the launcher picks the largest
   that still leaves 80×24, so the text is readable on a high-resolution
   screen.
@@ -253,9 +316,13 @@ one), and a shell script around them can't follow `load`'s events well.
 - **Colour never carries meaning alone.**  What will be erased says
   ERASES in words.  Some consoles map colours oddly, and a serial log has
   none.
-- **Line drawing, with an ASCII fallback** (`+-|`), picked by locale and
-  `TERM`.  Serial consoles (`vt100`, `vt220`), syscons, tem and wscons get
-  ASCII unless they show they can do UTF-8.  A setting forces either.
+- **Line drawing, with an ASCII fallback** (`+-|`), picked per console:
+  UTF-8 box characters on the Linux VT, FreeBSD vt(4), Haiku's Terminal
+  and illumos's framebuffer tem (its Terminus fonts carry them); DEC
+  special graphics (`ESC ( 0`) on NetBSD and OpenBSD wscons; ASCII on
+  DragonFly's syscons, illumos in VGA text mode, and serial consoles
+  (`vt100`, `vt220`).  Over ssh, the locale decides between UTF-8 and
+  ASCII.  A setting forces any of the three.
 - **Keyboard only, with a small set of keys**: arrows, Tab, Enter, Esc,
   Space, Backspace, letters.  No function keys or Alt combinations, which
   serial consoles and some ssh clients don't pass through.  Each screen shows
@@ -286,7 +353,7 @@ already says what's chosen and confirmed.  Each step can go back.
 3. **Network**, only when the repository isn't local and there's no
    working route to it.  Wired DHCP is tried before this screen.  The
    screen lists interfaces, and Wi-Fi networks where the platform can join
-   them (see open question 4).
+   them (see open question 3).
 4. **Repository.**  The repository password, then the snapshot list from
    rustic-bko (`snapshots --json`), newest first.  It checks that the
    repository's ID matches the stick's (`stick-config.md`, "Which copy wins").
@@ -366,26 +433,72 @@ screen), for administrators who'd rather type `bko-holt load` themselves.
 
 ### Toolkit
 
-The needs are modest: the dialog widgets above, on screens that redraw on
-resize.  It has to build
-with Rust 1.85 on all seven platforms, offline (vendored), and run on a
-VT100.  Two candidates:
+Decided 2026-11-19: **our own small layer, with no crates.**  It is
+termios raw mode, the window size, `poll` on standard input and a handful
+of VT100 escape sequences, with the widgets above on top: about 1,400 to
+1,900 lines.  It uses hand-written `extern "C"` declarations the way
+`holt/src/sys.rs` does, so bko-rescue keeps bko-holt's rules (no
+dependencies, Debian 13's cargo, one file) and builds the way
+`testvm/holttest1d/build-holt.sh` builds bko-holt.
 
-- **ratatui** with **crossterm** or **termion**, vendored with `cargo
-  vendor`.  Good widgets and well known.  Unknowns: whether crossterm
-  builds and behaves on illumos and Haiku.  ratatui 0.30 needs Rust 1.86, so
-  it would have to be 0.29.  termion is plain termios, which the BSDs and illumos
-  have, but it's less maintained.
-- **Our own small layer**: termios raw mode and a handful of VT100 escape
-  sequences, with the widgets above on top.  Perhaps 1500 lines.  No
-  dependencies, so it keeps bko-holt's rules, and it supports exactly the
-  terminals in the table and no more.
+Why not a library (researched 2026-11-19, each claim checked against
+crate and kernel source):
 
-Settle it with a spike before building screens: build a ratatui "hello,
-list and password field" with each backend on all seven platforms, the way
-`testvm/holttest1d/build-holt.sh` builds bko-holt.  Then run it on each
-platform's text console and over serial.  If one backend passes everywhere,
-use it.  Otherwise write our own layer.
+- **The Rust terminal crates send the wrong colour codes.**  crossterm and
+  termion write even the 8 basic colours as 256-colour codes
+  (`ESC[38;5;Nm`, `ESC[48;5;Nm`), with no way to ask for SGR 30–37/40–47.
+  OpenBSD's wscons and DragonFly's syscons have no case for 38 and 48, so
+  they read the numbers that follow as blink, underline and reverse, which
+  also corrupts the reverse-video focus mark.  NetBSD's wscons drops the
+  colour on a screen without 256 colours (VGA text).  The Linux VT,
+  FreeBSD's teken and illumos's tem cope.
+- **ratatui 0.29** (0.30 needs Rust 1.86) builds with Rust 1.85 once
+  `instability` is held at 0.3.10, and crossterm 0.28 is in the ports of
+  helix or television on Haiku, OmniOS and all four BSDs.  But it is only
+  usable with a backend of our own, which is the hard half of our own layer
+  anyway, plus 37 to 52 vendored crates.  termion has no resize handling;
+  termwiz doesn't build on Haiku or DragonFly and needs terminfo.
+- **cursive** has the closest widgets and a Whiptail-like theme, but the
+  same colour codes, Unicode box characters with no ASCII fallback, and
+  about 60 crates.  Its Dialog, SelectView and EditView are the model for
+  ours.
+- **curses**, through declarations of our own: NetBSD's curses has its own
+  constants (attribute bits, ACS, key codes), so one set of declarations
+  doesn't fit all seven, and curses brings back terminfo.  The images show
+  why that matters: FreeBSD has only termcap.db, and DragonFly's serial
+  console sets `TERM=dialup`, which its ncurses can't fall back from.
+- **Running whiptail, dialog or bsddialog**: none ships on all seven, and
+  one process per screen can't follow load's events.
+- **Other languages**: Go doesn't run on Haiku without forks, Python is
+  only on Linux and Haiku, and newt, CDK, notcurses and termbox2 each miss
+  several platforms or need terminfo.  termbox2, bsddialog, OmniOS kayak's
+  `dialog.rc` and DragonFly's `dfuife_curses` are useful reference code.
+
+What the layer has to get right per platform:
+
+- **Each platform's `struct termios`, `TCSA*`, `TIOCGWINSZ` and
+  `SIGWINCH`**, in four families of `cfg` constants copied from the `libc`
+  crate.  Except Haiku: libc has the layout from before R1/beta6, so ours
+  comes from beta6's `termios.h`, and settings are only ever changed by
+  reading them, editing and writing them back.
+- **`poll`'s `nfds_t`** is an unsigned long on Linux, illumos and Haiku and
+  an unsigned int on the four BSDs.
+- **illumos has no `cfmakeraw`**, so raw mode clears the flags by hand on
+  every platform.
+- **Serial consoles report a 0×0 window.**  The launcher sets 80×24 with
+  `stty` before drawing.
+- **illumos's tem prints an escape sequence it doesn't know**, so
+  `ESC ( 0` shows as `(0` there.  The layer sends only the sequences each
+  console is known to take.
+- **The terminal is put back on a panic** as well as on exit.
+- **Resizes are noticed by `poll` timing out** and asking for the window
+  size again, rather than in a signal handler.
+
+Before building screens, a spike checks the consoles rather than choosing
+a library: draw a box, a list, a gauge and a password field on every
+platform's text console and over serial, OpenBSD and DragonFly first.  A
+test in each guest compares our struct sizes and field offsets with the C
+headers.
 
 ## Testing
 
@@ -402,6 +515,25 @@ use it.  Otherwise write our own layer.
   real console gets exercised, in plain mode and full-screen mode.
 
 ## Later
+
+### Restoring from another device
+
+Postponed on 2026-11-19, for a later discussion: the same web UI, reached
+from a phone or laptop over the network, from any platform's stick.  Notes
+so far:
+
+- The terminal UI brings the network up first, then offers "continue on
+  another device", showing the URL and a one-time pairing code.  A version 2
+  QR code (25×25 modules, about 29 columns by 15 rows in half-block
+  characters) fits on 80×24 where the console can draw `▀▄█`.
+- One controller at a time; the terminal UI shows who is connected and can
+  take control back.
+- Passwords would cross the network, so it needs TLS (a crate, or an
+  external program) or a private link: USB tethering from the phone, or the
+  stick as a Wi-Fi access point.
+- It reopens the 2026-11-08 decision to keep the images wired only.
+- A login secret on the config partition would let a machine with no screen
+  be restored from a laptop.
 
 ### The backup side
 
@@ -426,15 +558,22 @@ Whichever it is, it drives the backup tool through a protocol like
 1. **Who is the target user** for version 1: administrators who'd like a
    friendlier restore, or anyone at all?  This sets how much the screens
    explain, and how soon the backup side's GUI matters.
-2. **Does the no-dependencies rule extend to `bko-rescue`?**  If it does,
-   the toolkit is our own layer and the spike only confirms the terminals.
-3. **The name**: `bko-rescue`, or something else?
-4. **Wi-Fi on the stick.**  Each platform has its own tools (iwd or
+2. **The name**: `bko-rescue`, or something else?
+3. **Wi-Fi on the stick.**  Each platform has its own tools (iwd or
    wpa_supplicant on Linux, wpa_supplicant and ifconfig on the BSDs, nothing
    much on illumos).  Version 1 could support wired networks only, and say
    so on the Network screen.
-5. **The repository password on Haiku**: a RAM file system made by
+4. **The repository password on Haiku**: a RAM file system made by
    `bko-rescue`, or a way to pass it to rustic-bko other than a file?
    rustic's options for that need checking against our fork.
-6. **Progress from rustic-bko**: does upstream rustic already print restore
-   progress as JSON, or do we add it in our fork?
+
+Answered:
+
+- **Does the no-dependencies rule extend to `bko-rescue`?**  Yes, in
+  effect: the toolkit is our own layer (see "Toolkit"), 2026-11-19.
+- **Progress from rustic-bko**: upstream rustic has printed it as JSON
+  since v0.11.3 (`--json-progress`, one NDJSON status line per interval on
+  standard output: percent, bytes done and total, seconds elapsed and
+  remaining).  It carries no phase name or schema version, and errors stay
+  text on standard error, so bko-holt reads it and re-emits it as its own
+  versioned `progress` events.  Front ends never parse rustic-bko.

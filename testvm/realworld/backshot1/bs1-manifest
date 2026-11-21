@@ -116,6 +116,11 @@ EXPECTED = [
     "etc/bigbacklight", "etc/bigbacklight/*",
     "etc/printcap",
     "home/*/.big_preload",
+    # dbus-x11's dbus-launch (Xsession.d's 75dbus_dbus-launch) writes the
+    # session bus's address, PID and window ID to
+    # ~/.dbus/session-bus/MACHINE-ID-DISPLAY at every X login, so other bytes
+    # each time (MX Linux 25.3, debian-13-20261121-065025).
+    "home/*/.dbus/session-bus/*",
     "swap.img", "swapfile", "swap/*", "mnt/bs1-backup",
     # systemd-swap's swapFC files (BigLinux: its own @swapfile subvolume,
     # mounted at /swapfile), in use at backup time and written anew by
@@ -239,6 +244,18 @@ QOL_EXPECTED = ["etc/group", "etc/group-", "etc/gshadow", "etc/gshadow-", QOL_TR
 # config.db with its WAL is under var/lib/*.
 PROXMOX_SOURCE = "usr/bin/pvebanner"
 PROXMOX_REMADE = ["etc/issue", "etc/kernel/proxmox-boot-uuids", "etc/apt/apt.conf.d/76pveconf"]
+
+# MX Linux (desktop-defaults-mx-common, mx-goodies), by what wrote each: the
+# same bytes again at every boot and login, so new mtimes, but the same
+# otherwise (Thinkpad debian-13-20261121-065025; the baseline's copies are
+# from the source's own login 30 s before its backup).  lightdm's
+# display-setup-script, MX's /usr/bin/early-bg, runs feh --bg-scale on the
+# greeter's background as root with / as HOME, and feh saves the command in
+# /.fehbg.  mx-goodies diverts xdg-user-dirs-update to a wrapper, run by the
+# session's xdg-user-dirs autostart, whose sed -i quoting $LESS in
+# ~/.bashrc writes the file again even when it has nothing to change.
+MX_REMADE = {"usr/bin/early-bg": [".fehbg"],
+             "usr/bin/xdg-user-dirs-update.real": ["home/*/.bashrc"]}
 
 
 def present_same(a, b):
@@ -690,7 +707,10 @@ def compare(old_path, new_path, reformatted=False):
     pve = PROXMOX_REMADE if PROXMOX_SOURCE in old else []
     if pve:
         print(f"Proxmox VE: written again by a boot or the restore, so with new mtimes, but the same otherwise: {' '.join(p for p in pve if p in old)}")
-    changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], store, odef, apre, pve))
+    mx = [pat for src, pats in MX_REMADE.items() if src in old for pat in pats]
+    if mx:
+        print(f"MX Linux: written again at a boot or login, so with new mtimes, but the same otherwise: {' '.join(mx)}")
+    changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], store, odef, apre, pve + mx))
     both = [p for p in set(old) & set(new) if len(old[p]) > 6 and len(new[p]) > 6]
     relabeled = sorted(p for p in both if old[p][6] != new[p][6])
     if not both:

@@ -161,6 +161,49 @@ pub fn holds(v: &Value, c: &Change, path: &str) -> bool {
     owner.is_some_and(|o| o == c.mount || c.folded.contains(&o))
 }
 
+/// Where GRUB's PATH on C's old btrfs is on the new filesystem, from its
+/// root; None when it's the same there, or isn't in what the restore
+/// brings back.  GRUB names a btrfs path from the top level, subvolume
+/// and all (/@root/boot/grub), or with btrfs_relative_path (RELATIVE)
+/// from the default subvolume.  The fstab mount of it whose subvolume is
+/// the deepest above the path holds it, and the new filesystem (C's
+/// mount) has it at that mount's place below C's: AnduinOS's ESP stub
+/// prefix /@root/boot/grub is /boot/grub on the new ext4.
+pub fn grub_path(v: &Value, c: &Change, path: &str, relative: bool) -> Option<String> {
+    if c.from != "btrfs" || !path.starts_with('/') {
+        return None;
+    }
+    let fs = arr(v, &["storage", "btrfs"]).iter().find(|f| s(f, "uuid").as_deref() == Some(c.uuid.as_str())).cloned().unwrap_or(Value::Null);
+    let mounts: Vec<(String, String)> = arr(v, &["storage", "fstab"])
+        .iter()
+        .filter(|e| s(e, "resolves_to").as_deref() == Some(c.src.as_str()) && s(e, "type").as_deref() != Some("swap"))
+        .filter_map(|e| Some((s(e, "file")?, mounted_subvolume(&s(e, "options").unwrap_or_default(), &fs))))
+        .collect();
+    let mut p = path.trim_matches('/').to_string();
+    if relative {
+        let def = mounted_subvolume("", &fs);
+        if !def.is_empty() {
+            p = if p.is_empty() { def } else { format!("{def}/{p}") };
+        }
+    }
+    let inside = |sv: &str| sv.is_empty() || p == sv || p.starts_with(&format!("{sv}/"));
+    let (at, sv) = mounts.iter().filter(|(_, sv)| inside(sv)).max_by_key(|(_, sv)| sv.len())?;
+    let rest = if sv.is_empty() { p.as_str() } else { p[sv.len()..].trim_start_matches('/') };
+    let restored = match (at.as_str(), rest) {
+        (a, "") => a.to_string(),
+        ("/", r) => format!("/{r}"),
+        (a, r) => format!("{a}/{r}"),
+    };
+    // Another mount of it below that one hides it there: not restored.
+    if mounts.iter().any(|(t, _)| t != at && under(t, at) && under(&restored, t)) || !under(&restored, &c.mount) {
+        return None;
+    }
+    let new = if c.mount == "/" { restored } else { restored[c.mount.len()..].to_string() };
+    let new = if new.is_empty() { "/".to_string() } else { new };
+    let new = if path.len() > 1 && path.ends_with('/') && !new.ends_with('/') { format!("{new}/") } else { new };
+    (new != path).then_some(new)
+}
+
 /// The options of a reformatted filesystem's fstab entry: the generic ones
 /// kept, the rest dropped (and returned).
 pub fn generic_options(o: &str) -> (String, Vec<String>) {
@@ -753,6 +796,36 @@ mod tests {
         // Which files are on it: / and what it folds, not the ESP.
         assert!(holds(&with, c, "/boot/grub/grubenv") && holds(&with, c, "/var/log/x") && holds(&with, c, "/home"));
         assert!(!holds(&with, c, "/efi/grub/grubenv") && !holds(&with, c, "/efi"));
+    }
+
+    /// GRUB's paths on the old btrfs, from its top level, as the new
+    /// filesystem has them (the ESP stub's prefix=($root)'/@/boot/grub').
+    #[test]
+    fn grub_paths_out_of_the_subvolumes() {
+        let v = eos();
+        let c = work_out(&v, &re(&[("/", "ext4")])).changes.remove(0);
+        let g = |p: &str| grub_path(&v, &c, p, false);
+        assert_eq!(g("/@/boot/grub").as_deref(), Some("/boot/grub"));
+        assert_eq!(g("/@/boot/grub/grub.cfg").as_deref(), Some("/boot/grub/grub.cfg"));
+        assert_eq!(g("/@home/u/x").as_deref(), Some("/home/u/x"));
+        assert_eq!(g("/@log").as_deref(), Some("/var/log"));
+        assert_eq!(g("/@/").as_deref(), Some("/"));
+        // A nested subvolume is a directory of its mount's.
+        assert_eq!(g("/@/var/lib/portables/p").as_deref(), Some("/var/lib/portables/p"));
+        // The top level isn't mounted; @snapshots isn't; @home's mount hides @/home.
+        assert_eq!(g("/boot/grub"), None);
+        assert_eq!(g("/@snapshots/1"), None);
+        assert_eq!(g("/@/home/u"), None);
+        assert_eq!(g("@/boot/grub"), None);
+        // btrfs_relative_path: from the default subvolume (the top level here).
+        assert_eq!(grub_path(&v, &c, "/@/boot/grub", true).as_deref(), Some("/boot/grub"));
+        let def = crate::json::parse(&v.compact().replace(r#""default_subvolume":{"id":5}"#, r#""default_subvolume":{"id":256}"#)).unwrap();
+        assert_eq!(grub_path(&def, &c, "/boot/grub2", true), None);
+        assert_eq!(grub_path(&def, &c, "/boot/grub2", false), None);
+        // Off ext4 or XFS, nothing moves.
+        let ext4 = crate::json::parse(&v.compact().replace(r#""type":"btrfs","uuid":"1b64"#, r#""type":"ext4","uuid":"1b64"#).replace(r#""file":"/","type":"btrfs""#, r#""file":"/","type":"ext4""#)).unwrap();
+        let c2 = work_out(&ext4, &re(&[("/", "btrfs")])).changes.remove(0);
+        assert_eq!(grub_path(&ext4, &c2, "/boot/grub", false), None);
     }
 
     #[test]

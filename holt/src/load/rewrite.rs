@@ -7,8 +7,9 @@
 //! the lines it removes and adds: fstab, the kernel command lines
 //! (/etc/kernel/cmdline, /etc/cmdline.d, BLS entries, grubenv,
 //! /etc/default/grub, limine.conf and /etc/default/limine, rEFInd's
-//! refind_linux.conf and refind.conf), systemd mount units, and
-//! mkinitcpio's btrfs.  A file that
+//! refind_linux.conf and refind.conf), systemd mount units,
+//! mkinitcpio's btrfs, and the ESPs' GRUB stubs (EFI/*/grub.cfg, whose
+//! prefix named a path inside a btrfs subvolume).  A file that
 //! isn't as expected stops it, rather than being edited by guesswork.
 //!
 //! With --check, after the boot stage made the initramfs and the loader:
@@ -265,6 +266,72 @@ pub fn mkinitcpio(text: &str) -> String {
         .collect()
 }
 
+/// An ESP's GRUB stub (EFI/ID/grub.cfg: grub-install --uefi-secure-boot's
+/// `search.fs_uuid UUID root`, `set prefix=($root)'/@root/boot/grub'`,
+/// `configfile $prefix/grub.cfg`; Fedora's `search ... --fs-uuid
+/// --set=dev UUID`, `set prefix=($dev)/root/boot/grub2`) that finds the
+/// reformatted filesystem by UUID: each path on a GRUB device,
+/// `(DEV)/PATH` or `(DEV)'PATH'`, through MAP (reformat::grub_path,
+/// whose bool says btrfs_relative_path is set), so a path inside a
+/// subvolume names where the new filesystem has it.  The signed GRUB
+/// behind shim reads the stub and isn't installed again (AnduinOS's, the
+/// grub2 distributions'), and Debian's grub-install remakes only its own
+/// EFI/ID one, not the fallback EFI/BOOT copy.  A file not naming UUID
+/// is left as it is.
+pub fn grub_stub(text: &str, uuid: &str, map: impl Fn(&str, bool) -> Option<String>) -> String {
+    if uuid.is_empty() || !text.to_ascii_lowercase().contains(&uuid.to_ascii_lowercase()) {
+        return text.to_string();
+    }
+    let relative = text.lines().any(|l| {
+        let t = l.trim();
+        let t = t.strip_prefix("set ").map(str::trim_start).unwrap_or(t);
+        t.strip_prefix("btrfs_relative_path=").is_some_and(|v| matches!(v.trim().trim_matches(['"', '\'']), "y" | "yes" | "1"))
+    });
+    text.split_inclusive('\n')
+        .map(|l| {
+            if l.trim_start().starts_with('#') {
+                return l.to_string();
+            }
+            let mut out = String::new();
+            let mut rest = l;
+            while let Some(open) = rest.find('(') {
+                let Some(close) = rest[open..].find(')').map(|c| open + c) else { break };
+                if rest[open + 1..close].contains(char::is_whitespace) {
+                    out += &rest[..=open];
+                    rest = &rest[open + 1..];
+                    continue;
+                }
+                out += &rest[..=close];
+                rest = &rest[close + 1..];
+                let quote = rest.chars().next().filter(|q| *q == '\'' || *q == '"');
+                let body = &rest[quote.map_or(0, char::len_utf8)..];
+                if !body.starts_with('/') {
+                    continue;
+                }
+                let end = match quote {
+                    Some(q) => body.find(q).unwrap_or(body.len()),
+                    None => body.find(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '\'' | '"' | '}' | ')')).unwrap_or(body.len()),
+                };
+                let path = &body[..end];
+                if let Some(q) = quote {
+                    out.push(q);
+                }
+                out += &map(path, relative).unwrap_or_else(|| path.to_string());
+                rest = &body[end..];
+            }
+            out + rest
+        })
+        .collect()
+}
+
+/// The ESPs' GRUB stubs: each EFI/*/grub.cfg on a boot directory.
+fn grub_stubs(run: &Run, layout: &Value) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = boot_dirs(layout).iter().flat_map(|d| read_dir(&run.at(&format!("{d}/EFI")))).filter(|p| is_dir(p)).map(|p| p.join("grub.cfg")).filter(|p| is_file(p)).collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
 /// A systemd mount unit for the kept mount: Type= and Options= as fstab's.
 pub fn mount_unit(text: &str, c: &Change) -> String {
     let wher = text.lines().find_map(|l| l.trim().strip_prefix("Where=")).map(str::trim);
@@ -413,6 +480,12 @@ impl Run<'_> {
                 }
             }
         }
+        // The ESPs' GRUB stubs: their prefix out of the subvolume.
+        if c.from == "btrfs" {
+            for p in grub_stubs(self, layout) {
+                self.edit(&p, |t| Ok(grub_stub(t, &c.uuid, |x, rel| reformat::grub_path(layout, c, x, rel))));
+            }
+        }
         for u in read_dir(&self.at("/etc/systemd/system")).into_iter().filter(|p| p.extension().is_some_and(|x| x == "mount")) {
             self.edit(&u, |t| Ok(mount_unit(t, c)));
         }
@@ -421,6 +494,24 @@ impl Run<'_> {
             confs.extend(read_dir(&self.at("/etc/mkinitcpio.conf.d")).into_iter().filter(|p| p.extension().is_some_and(|x| x == "conf")));
             for p in confs {
                 self.edit(&p, |t| Ok(mkinitcpio(t)));
+            }
+        }
+    }
+
+    /// An ESP's GRUB stub that still names a path inside the old btrfs's
+    /// subvolumes (a form grub_stub doesn't know): its GRUB would stop at
+    /// the grub> prompt.
+    fn check_grub_stubs(&mut self, c: &Change, layout: &Value) {
+        if c.from != "btrfs" {
+            return;
+        }
+        for p in grub_stubs(self, layout) {
+            let Ok(t) = std::fs::read_to_string(&p) else { continue };
+            let new = grub_stub(&t, &c.uuid, |x, rel| reformat::grub_path(layout, c, x, rel));
+            if new != t {
+                let name = p.to_string_lossy().trim_start_matches(self.t).to_string();
+                let lines: Vec<&str> = t.lines().filter(|l| !new.lines().any(|n| n == *l)).map(str::trim).collect();
+                self.errors.push(format!("{name}: GRUB's stub still reads from inside the old btrfs's subvolumes: {}", lines.join("; ")));
             }
         }
     }
@@ -622,6 +713,7 @@ pub fn main(args: &[String]) -> u8 {
         if check {
             run.check_initramfs(c, &layout);
             run.leftovers(c, &layout);
+            run.check_grub_stubs(c, &layout);
         } else {
             run.rewrite(c, &layout, btrfs_left);
         }
@@ -789,6 +881,88 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         let unit = "[Mount]\nWhat=/dev/disk/by-uuid/1b64\nWhere=/\nType=btrfs\nOptions=subvol=@,noatime\n";
         assert_eq!(mount_unit(unit, &c), "[Mount]\nWhat=/dev/disk/by-uuid/1b64\nWhere=/\nType=xfs\nOptions=noatime\n");
         assert_eq!(mount_unit("[Mount]\nWhere=/srv\nType=btrfs\n", &c), "[Mount]\nWhere=/srv\nType=btrfs\n");
+    }
+
+    const ANDUINOS_UUID: &str = "6952b714-eb5b-4747-a32b-95b6fa1f800a";
+
+    /// The GRUB stubs' forms: grub-install --uefi-secure-boot's (Debian,
+    /// Ubuntu, AnduinOS), Fedora's grub2, openSUSE's relative one.
+    #[test]
+    fn grub_stubs_out_of_the_subvolume() {
+        let map = |p: &str, rel: bool| match (p, rel) {
+            ("/@root/boot/grub", false) => Some("/boot/grub".to_string()),
+            ("/@root/boot/grub/grub.cfg", false) => Some("/boot/grub/grub.cfg".to_string()),
+            ("/root/boot/grub2", false) => Some("/boot/grub2".to_string()),
+            ("/boot/grub2", true) => Some("/relative".to_string()),
+            _ => None,
+        };
+        let u = ANDUINOS_UUID;
+        let anduinos = format!("search.fs_uuid {u} root \nset prefix=($root)'/@root/boot/grub'\nconfigfile $prefix/grub.cfg\n");
+        assert_eq!(grub_stub(&anduinos, u, map), format!("search.fs_uuid {u} root \nset prefix=($root)'/boot/grub'\nconfigfile $prefix/grub.cfg\n"));
+        // The UUID in capitals, a hint, a direct configfile, a comment.
+        let other = format!("search.fs_uuid {} root hd0,gpt4\n# set prefix=($root)'/@root/boot/grub'\nconfigfile (${{root}})/@root/boot/grub/grub.cfg\n", u.to_uppercase());
+        assert_eq!(grub_stub(&other, u, map), format!("search.fs_uuid {} root hd0,gpt4\n# set prefix=($root)'/@root/boot/grub'\nconfigfile (${{root}})/boot/grub/grub.cfg\n", u.to_uppercase()));
+        let fedora = format!("search --no-floppy --root-dev-only --fs-uuid --set=dev {u}\nset prefix=($dev)/root/boot/grub2\nexport $prefix\nconfigfile $prefix/grub.cfg\n");
+        assert_eq!(grub_stub(&fedora, u, map), fedora.replace("($dev)/root/boot/grub2", "($dev)/boot/grub2"));
+        let suse = format!("set btrfs_relative_path=\"yes\"\nsearch --fs-uuid --set=root {u}\nset prefix=(${{root}})/boot/grub2\nsource \"${{prefix}}/grub.cfg\"\n");
+        assert_eq!(grub_stub(&suse, u, map), suse.replace("(${root})/boot/grub2", "(${root})/relative"));
+        // Another filesystem's stub, or the ESP's own paths: as they were.
+        assert_eq!(grub_stub(&anduinos.replace(u, "34CD-367E"), u, map), anduinos.replace(u, "34CD-367E"));
+        let esp = format!("search.fs_uuid {u} root\nchainloader ($root)/EFI/x.efi (hd0) ( a b )\n");
+        assert_eq!(grub_stub(&esp, u, map), esp);
+        assert_eq!(grub_stub(&anduinos, "", map), anduinos);
+    }
+
+    /// AnduinOS's / onto ext4 (HoltTest1 HT_REFORMAT=/=ext4): both ESP stubs
+    /// read GRUB's directory from the old @root, then from the new root.
+    #[test]
+    fn anduinos_esp_stubs() {
+        let t = crate::testutil::TempDir::new("rewrite-stub");
+        let root = t.path().to_string_lossy().into_owned();
+        let w = |p: &str, s: &str| {
+            let f = format!("{root}{p}");
+            std::fs::create_dir_all(Path::new(&f).parent().unwrap()).unwrap();
+            std::fs::write(f, s).unwrap();
+        };
+        let u = ANDUINOS_UUID;
+        let fstab = format!("UUID={u} / btrfs defaults,subvol=@root,compress=zstd:3,noatime 0 0\nUUID={u} /home btrfs defaults,subvol=@home,compress=zstd:3,noatime 0 0\nUUID=34CD-367E /boot/efi vfat defaults,noatime 0 1\n");
+        let layout = crate::json::parse(&format!(
+            r#"{{"os": {{"id": "anduinos"}},
+  "boot": {{"esps": [{{"device": "vda2", "mounted_at": "/boot/efi"}}], "kernels": {{"installed": [{{"version": "7.0.0-43-generic"}}]}}, "packages": {{"e2fsprogs": "1.47.2-3"}}}},
+  "storage": {{"disks": [{{"name": "vda", "partitions": [{{"name": "vda2", "content": {{"type": "vfat", "uuid": "34CD-367E"}}}}, {{"name": "vda4", "content": {{"type": "btrfs", "uuid": "{u}"}}}}]}}],
+    "btrfs": [{{"uuid": "{u}", "devices": ["vda4"], "default_subvolume": {{"id": 5}}, "subvolumes": [{{"id": 256, "path": "<FS_TREE>/@root"}}, {{"id": 257, "path": "<FS_TREE>/@home"}}]}}],
+    "fstab": [{{"file": "/", "type": "btrfs", "options": "defaults,subvol=@root,compress=zstd:3,noatime", "resolves_to": "vda4"}},
+              {{"file": "/home", "type": "btrfs", "options": "defaults,subvol=@home,compress=zstd:3,noatime", "resolves_to": "vda4"}},
+              {{"file": "/boot/efi", "type": "vfat", "options": "defaults,noatime", "resolves_to": "vda2"}}]}}}}"#
+        ))
+        .unwrap();
+        let r = reformat::work_out(&layout, &[("/".to_string(), "ext4".to_string())]);
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let c = &r.changes[0];
+        let stub = format!("search.fs_uuid {u} root \nset prefix=($root)'/@root/boot/grub'\nconfigfile $prefix/grub.cfg\n");
+        w("/etc/fstab", &fstab);
+        w("/boot/efi/EFI/AnduinOS/grub.cfg", &stub);
+        w("/boot/efi/EFI/BOOT/grub.cfg", &stub);
+        w("/boot/efi/EFI/BOOT/BOOTX64.CSV", "shimx64.efi,AnduinOS,,\n");
+        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        // Before the rewrite, the check stops on both.
+        run.check_grub_stubs(c, &layout);
+        assert_eq!(run.errors.len(), 2, "{:?}", run.errors);
+        assert!(run.errors[0].starts_with("/boot/efi/EFI/AnduinOS/grub.cfg: GRUB's stub still reads from inside the old btrfs's subvolumes: set prefix=($root)'/@root/boot/grub'"), "{:?}", run.errors);
+        run.errors.clear();
+        run.rewrite(c, &layout, false);
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        let want = stub.replace("'/@root/boot/grub'", "'/boot/grub'");
+        for d in ["AnduinOS", "BOOT"] {
+            assert_eq!(std::fs::read_to_string(format!("{root}/boot/efi/EFI/{d}/grub.cfg")).unwrap(), want);
+        }
+        assert!(run.log.contains("/boot/efi/EFI/BOOT/grub.cfg:\n    - set prefix=($root)'/@root/boot/grub'\n    + set prefix=($root)'/boot/grub'\n"), "{}", run.log);
+        run.check_grub_stubs(c, &layout);
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        // Run again: nothing left to change.
+        run.log.clear();
+        run.rewrite(c, &layout, false);
+        assert!(run.errors.is_empty() && run.log.is_empty(), "{:?} {}", run.errors, run.log);
     }
 
     #[test]

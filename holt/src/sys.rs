@@ -106,10 +106,11 @@ impl RealRunner {
         // Read stdout on a thread so a chatty command can't block on a full
         // pipe while we wait for it.
         let mut stdout = child.stdout.take()?;
-        let reader = std::thread::spawn(move || {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
             let mut buf = Vec::new();
             let _ = stdout.read_to_end(&mut buf);
-            buf
+            let _ = tx.send(buf);
         });
         let start = Instant::now();
         let status = loop {
@@ -117,17 +118,32 @@ impl RealRunner {
                 Ok(Some(s)) => break Some(s),
                 Ok(None) if start.elapsed() < self.timeout => std::thread::sleep(Duration::from_millis(20)),
                 _ => {
+                    // A process asleep in the kernel outlives SIGKILL until
+                    // it wakes, maybe never (illumos' diskinfo -Hp in the
+                    // rescuer, cinqcent 2026-11-21: two hours, until the
+                    // test's own time limit): waited for a moment only, and
+                    // left behind.  Its reader thread is left too.
                     let _ = child.kill();
-                    let _ = child.wait();
+                    let gone = Instant::now();
+                    while !matches!(child.try_wait(), Ok(Some(_))) && gone.elapsed() < KILL_GRACE {
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
                     break None;
                 }
             }
         };
-        let out = reader.join().ok()?;
         let ok = status?.success();
+        // Its output ends when the pipe closes: a process it left in the
+        // background with the pipe open (or one stuck as above) gets what's
+        // left of the time limit, then the command counts as timed out.
+        let out = rx.recv_timeout(self.timeout.saturating_sub(start.elapsed()).max(KILL_GRACE)).ok()?;
         Some((String::from_utf8_lossy(&out).into_owned(), ok))
     }
 }
+
+/// How long a command killed for running out of time, or its output, is
+/// waited for before `RealRunner` gives up on it.
+const KILL_GRACE: Duration = Duration::from_secs(2);
 
 /// Answers from a table, for tests: key "prog arg1 arg2".  A command it
 /// has no answer for fails; a program named by `without` isn't installed.
@@ -493,6 +509,15 @@ mod tests {
         let t = Instant::now();
         assert_eq!(quick.run("sleep", &["10"]), None);
         assert!(t.elapsed() < Duration::from_secs(5));
+        // A process left holding its output open doesn't hold up the run
+        // past the time limit (and a grace), whether the command ran out of
+        // time or exited.
+        let t = Instant::now();
+        assert_eq!(quick.run("sh", &["-c", "sleep 9 & exec sleep 9"]), None);
+        assert_eq!(quick.run("sh", &["-c", "sleep 9 & echo hi"]), None);
+        assert!(t.elapsed() < Duration::from_secs(7), "{:?}", t.elapsed());
+        // One that ends within the limit is waited for.
+        assert_eq!(r.run("sh", &["-c", "(sleep 1; echo late) & echo early"]).as_deref(), Some("early\nlate\n"));
         // A big output doesn't deadlock on the pipe.
         let big = r.run("head", &["-c", "1000000", "/dev/zero"]).unwrap();
         assert_eq!(big.len(), 1_000_000);

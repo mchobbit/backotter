@@ -478,6 +478,42 @@ pub fn sfdisk_script(d: &Disk, target: &str, same_size: bool) -> Result<String, 
 pub const ZERO_HEAD: u64 = 4 << 20;
 pub const ZERO_TAIL: u64 = 1 << 20;
 
+/// What DRACUT_EACH_KERNEL and DRACUT_ONE_IMAGE read from the restored
+/// image, as sh, one copy for both (RustAudit1 XH3-01): `l` lsinitrd's
+/// listing of the image `lsinitrd LS` names, `m` its kernel modules still
+/// in the tree, and with dracut's resume module `a=resume` and `f` a
+/// temporary copy of its 95resume.conf (`lsinitrd LSF`), for
+/// dracut_keep_args! and dracut_keep_done!.
+macro_rules! dracut_keep_read {
+    ($ls:literal, $lsf:literal) => {
+        concat!(
+            "l=$(lsinitrd ",
+            $ls,
+            " 2>/dev/null); m=; ",
+            "for p in $(printf '%s\\n' \"$l\" | sed -n 's|^.* \\(\\(usr/\\)*lib/modules/[^ ]*\\.ko[.a-z0-9]*\\)$|\\1|p'); do [ -e \"/$p\" ] && b=${p##*/} && m=\"$m ${b%%.ko*}\"; done; ",
+            "a=; f=; if printf '%s\\n' \"$l\" | sed -n '/^dracut modules:$/,/^=/p' | grep -qx resume; then a=resume; r=$(lsinitrd ",
+            $lsf,
+            " 2>/dev/null); ",
+            "[ -z \"$r\" ] || { f=$(mktemp) && printf '%s\\n' \"$r\" > \"$f\"; } || exit; fi; "
+        )
+    };
+}
+
+/// dracut's arguments for what dracut_keep_read! found.
+macro_rules! dracut_keep_args {
+    () => {
+        "${m:+--add-drivers \"$m\"} ${a:+--add \"$a\"} ${f:+--include \"$f\" /etc/cmdline.d/95resume.conf}"
+    };
+}
+
+/// Right after dracut: `s` its status, and dracut_keep_read!'s temporary
+/// file removed.
+macro_rules! dracut_keep_done {
+    () => {
+        "s=$?; [ -z \"$f\" ] || rm -f \"$f\"; "
+    };
+}
+
 /// The boot stage's dracut, in the restored system's chroot: each installed
 /// kernel's initramfs remade (not --regenerate-all: it takes every
 /// directory in /lib/modules, and a removed kernel can leave one behind
@@ -509,11 +545,15 @@ pub const ZERO_TAIL: u64 = 1 << 20;
 /// had (etc/cmdline.d/95resume.conf, from the source's swap) by
 /// --include.  Without them the restored machine can't resume from
 /// hibernation (docs/design/leap16.md).
-pub(crate) const DRACUT_EACH_KERNEL: &str = "n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; l=$(lsinitrd -k \"${k##*/}\" 2>/dev/null); m=; \
-for p in $(printf '%s\\n' \"$l\" | sed -n 's|^.* \\(\\(usr/\\)*lib/modules/[^ ]*\\.ko[.a-z0-9]*\\)$|\\1|p'); do [ -e \"/$p\" ] && b=${p##*/} && m=\"$m ${b%%.ko*}\"; done; \
-a=; f=; if printf '%s\\n' \"$l\" | sed -n '/^dracut modules:$/,/^=/p' | grep -qx resume; then a=resume; r=$(lsinitrd -k \"${k##*/}\" -f etc/cmdline.d/95resume.conf 2>/dev/null); \
-[ -z \"$r\" ] || { f=$(mktemp) && printf '%s\\n' \"$r\" > \"$f\"; } || exit; fi; \
-dracut --force --kver \"${k##*/}\" ${m:+--add-drivers \"$m\"} ${a:+--add \"$a\"} ${f:+--include \"$f\" /etc/cmdline.d/95resume.conf}; s=$?; [ -z \"$f\" ] || rm -f \"$f\"; [ \"$s\" -eq 0 ] || exit \"$s\"; n=$((n + 1)); done; [ \"$n\" -gt 0 ]";
+pub(crate) const DRACUT_EACH_KERNEL: &str = concat!(
+    "n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; ",
+    dracut_keep_read!("-k \"${k##*/}\"", "-k \"${k##*/}\" -f etc/cmdline.d/95resume.conf"),
+    "dracut --force --kver \"${k##*/}\" ",
+    dracut_keep_args!(),
+    "; ",
+    dracut_keep_done!(),
+    "[ \"$s\" -eq 0 ] || exit \"$s\"; n=$((n + 1)); done; [ \"$n\" -gt 0 ]"
+);
 
 /// DRACUT_EACH_KERNEL's dracut for one kernel and one image, both named:
 /// `sh -c DRACUT_ONE_IMAGE sh KVER IMAGE`.  Gentoo's (gentoo_initramfs):
@@ -522,11 +562,15 @@ dracut --force --kver \"${k##*/}\" ${m:+--add-drivers \"$m\"} ${a:+--add \"$a\"}
 /// modules still in the tree, its resume module and its 95resume.conf, as
 /// DRACUT_EACH_KERNEL's restored images do.  With no image lsinitrd can
 /// read, it is plain `dracut --force IMAGE KVER`.
-pub(crate) const DRACUT_ONE_IMAGE: &str = "k=$1; i=$2; l=$(lsinitrd \"$i\" 2>/dev/null); m=; \
-for p in $(printf '%s\\n' \"$l\" | sed -n 's|^.* \\(\\(usr/\\)*lib/modules/[^ ]*\\.ko[.a-z0-9]*\\)$|\\1|p'); do [ -e \"/$p\" ] && b=${p##*/} && m=\"$m ${b%%.ko*}\"; done; \
-a=; f=; if printf '%s\\n' \"$l\" | sed -n '/^dracut modules:$/,/^=/p' | grep -qx resume; then a=resume; r=$(lsinitrd -f etc/cmdline.d/95resume.conf \"$i\" 2>/dev/null); \
-[ -z \"$r\" ] || { f=$(mktemp) && printf '%s\\n' \"$r\" > \"$f\"; } || exit; fi; \
-dracut --force ${m:+--add-drivers \"$m\"} ${a:+--add \"$a\"} ${f:+--include \"$f\" /etc/cmdline.d/95resume.conf} \"$i\" \"$k\"; s=$?; [ -z \"$f\" ] || rm -f \"$f\"; exit \"$s\"";
+pub(crate) const DRACUT_ONE_IMAGE: &str = concat!(
+    "k=$1; i=$2; ",
+    dracut_keep_read!("\"$i\"", "-f etc/cmdline.d/95resume.conf \"$i\""),
+    "dracut --force ",
+    dracut_keep_args!(),
+    " \"$i\" \"$k\"; ",
+    dracut_keep_done!(),
+    "exit \"$s\""
+);
 
 /// EndeavourOS's and Garuda's dracut-rebuild (host-only images, then
 /// non-host-only fallbacks), with dracut's resume module kept as

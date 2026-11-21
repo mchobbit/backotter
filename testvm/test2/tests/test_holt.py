@@ -433,6 +433,15 @@ class U51RowsHolt(RecordsMixin, unittest.TestCase):
         self.assertNotIn("phases", self.build(os.path.dirname(rep), "debian13-nearfull")["note"] or "")
         self.assertEqual(rows_holt.cell_of("debian13-nearfull"), "holt:debian13+nearfull")
 
+    def test_reformat(self):
+        """HT_REFORMAT: a +reformat-TYPE cell's own /=TYPE counts (ht1.sh sets it from HT_VARIANT);
+        on a plain run, or another than its cell's, it is a by-hand run's, which never counts."""
+        self.assertTrue(self.build(self.k("linux-pass"), "debian13")["valid"])
+        row = self.build(self.k("linux-pass", env={"HT_REFORMAT": "/=ext4"}), "debian13")
+        self.assertFalse(row["valid"])
+        self.assertIn("HT_REFORMAT=/=ext4", row["note"])
+        self.assertEqual(rows_holt.cell_of("debian13-reformat-ext4", "reformat-ext4"), "holt:debian13+reformat-ext4")
+
     def test_nvram_and_boot_each_disk(self):
         """HT_NVRAM=1 loads without --no-nvram (proxmox.md P6's pve6-6..9): debug.  HT_BOOT_EACH_DISK=0
         drops a check, so it is too; =1 only adds one, so that row counts."""
@@ -585,6 +594,11 @@ class U52Todo(unittest.TestCase):
             self.assertEqual(rows_holt.gv_of(cell), gv)
             self.assertEqual(rows_holt.cell_of(gv), cell)
         self.assertEqual(rows_holt.cell_of("debian13-oneshot", "oneshot"), "holt:debian13+oneshot")
+        for cell, gv in (("holt:debian13+reformat-ext4", "debian13-reformat-ext4"),
+                         ("holt:void-musl+reformat-xfs", "void-musl-reformat-xfs")):
+            self.assertEqual(rows_holt.gv_of(cell), gv)
+            self.assertEqual(rows_holt.cell_of(gv), cell)
+            self.assertEqual(rows_holt.cell_of(gv, cell.partition("+")[2]), cell)
         self.assertEqual(holt.todo_line("holt:debian13-stack+bigger"), "debian13-stack+bigger")
         self.assertEqual(holt.base_guest("holt:debian13-stack+bigger"), "debian13-stack")
 

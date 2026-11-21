@@ -18,7 +18,8 @@ Check `t2 batch status` before starting heavy work: a running batch holds whole 
 | `GateTest2All [ROUND]` | every layer, fresh | runs them all anyway |
 | `SticTest2 [ROUND] [GUEST...] [stale]` | the due SticTest checks on ROUND's binaries | one line |
 | `SticTest2All [ROUND]` | all 47 checks, fresh (SticTest1's scope) | runs them all anyway |
-| `HoltTest2 [GUEST[+VARIANT]...] [stale] [+bigger] [+oneshot] [+degraded] [+img]` | the due HoltTest cells | one line |
+| `HoltTest2 [GUEST[+VARIANT]...] [stale] [+bigger] [+oneshot] [+degraded] [+img] [+reformat]` | the due HoltTest cells | one line |
+| `HoltTest2 G+reformat-TYPE`, `HoltTest2 +reformat` | the `load --reformat /=TYPE` round trips (classes.json `holt.variants`: 6 cells, one per boot family), fresh; `+reformat` alone: all of them | runs them anyway |
 | `HoltTest2X [X...]`, X in D A M U Z F C V BSD H I G Obscure | that family's guests, fresh (HoltTest1's letters) | runs them anyway |
 | `HoltTest2All` | all 87 sources and their 9 variant cells, fresh (no `+img` cells) | runs them all anyway |
 | `HoltTest2 G+img`, `HoltTest2 +img` | those cells fresh, a real rescue image as rescuer; `+img` alone: all 14 | runs them anyway |
@@ -190,7 +191,12 @@ current holt key) all 87 run (`holt:code`), as for any other code change (the st
 for M1's module map).  A rustic-bko-only change runs that platform's rustic panel and
 carries the rest; a rescuer change runs its rescuer panel; a guest's new generation
 runs it and its variants; a driver change runs that driver's guests; a judge change
-follows `policy.judge_change`.
+follows `policy.judge_change`.  A `+reformat-TYPE` cell (ht1.sh's `HT_VARIANT=reformat-TYPE`:
+`HT_REFORMAT=/=TYPE`, judged by `judge.py --reformat`) follows a code change as its guest's
+plain cell does, since load's reformat and the boot stage's rewriting show in no plan; its
+own golden plan (`holt/tests/corpus/GUEST/plan+reformat-TYPE.txt`), else its guest's, decides
+a plan-visible change.  ht1.sh's lines for it are `# t2-only: reformat-*` blocks, which only
+those cells key (`keys.only_text`): a change to them re-keys no other cell.
 
 **The carry rule** (`t2lib/carry.py`), for each changed binary: version-only (the
 forks' diff changes only `*.md` and version lines), affected-v1

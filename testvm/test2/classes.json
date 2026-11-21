@@ -57,8 +57,11 @@
     "variants": {
       "bigger": ["debian13-stack", "aerynos", "mint22"],
       "oneshot": ["debian13", "mint22", "arch", "alpine324"],
-      "degraded": ["debian13-stack", "ubuntu26-raid"]
+      "degraded": ["debian13-stack", "ubuntu26-raid"],
+      "reformat-ext4": ["debian13", "leap16", "anduinos2", "biglinux"],
+      "reformat-xfs": ["fedora44", "void-musl"]
     },
+    "variants_why": "reformat-TYPE: ht1.sh's HT_VARIANT=reformat-TYPE, HT_REFORMAT=/=TYPE (bko-holt load --reformat /=TYPE, docs/design/reformat.md) judged by judge.py --reformat; one guest per boot family: debian13 GRUB BIOS off ext4, fedora44 BLS off btrfs, void-musl GRUB with an ext4 /boot, leap16 Secure Boot and SELinux off btrfs with snapper, anduinos2 the ESP's GRUB stubs off btrfs, biglinux grub-btrfs's menu off btrfs. Unlike bigger and oneshot, a holt code change makes them due as it does a plain cell (plan.py holt_code_rule), and their golden plans (holt/tests/corpus GUEST/plan+reformat-TYPE.txt) count as the cell's",
     "variant_stages": ["partition", "assemble", "close"],
     "pins": {"openbsd8": "chopin", "dragonfly6": "cinqcent", "redox": "cinqcent"},
     "pins_why": "README Queues ONLY_ELSEWHERE: openbsd8's one-time rescuer is on Chopin, dragonfly6's on Cinqcent; redox's tools are on Cinqcent only (ht1-queue.sh:169)",

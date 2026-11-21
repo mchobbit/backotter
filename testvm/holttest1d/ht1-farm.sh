@@ -85,7 +85,7 @@ REMOTE=${BKO_WORK_REMOTE:-backotter-work}
 L=/bkoscratch/holttest1d
 BASEPORT=2600
 # A todo line, as ht1-queue.sh's LINE_RE takes it.
-LINE_RE='^[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse|img))?(=[0-9.]+)?(%[0-9.]+)?$'
+LINE_RE='^[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse|img|reformat-[a-z0-9]+))?(=[0-9.]+)?(%[0-9.]+)?$'
 # The settings a runner may have from here (ht1-queue.sh refuses any other HT_ one).
 # Only what ht1-queue.sh itself reads: NODISK_POLLS is cmp-run.sh's queue worker's,
 # which a HoltTest1 runner never is (it reserves room with --reserve), and nothing

@@ -101,6 +101,22 @@ class Forms(unittest.TestCase):
         w = P("HoltTest2 +oneshot")
         self.assertEqual((w.form, w.variants), ("bare", ["oneshot"]))
 
+    def test_holt_reformat_cells(self):
+        k = {**KNOWN, "holt": {**KNOWN["holt"], "variants": {**KNOWN["holt"]["variants"],
+                                                            "reformat-ext4": ["debian13"], "reformat-xfs": ["mint22"]}}}
+        w = words.parse("HoltTest2 debian13+reformat-ext4 mint22+reformat-xfs".split(), k)
+        self.assertEqual(w.names, ["holt:debian13+reformat-ext4", "holt:mint22+reformat-xfs"])
+        w = words.parse("HoltTest2 +reformat".split(), k)
+        self.assertEqual((w.form, w.variants), ("bare", ["reformat"]))
+        with self.assertRaises(words.Refused):
+            words.parse("HoltTest2 debian13+reformat-xfs".split(), k)   # not in holt.variants
+        with self.assertRaises(words.Refused):
+            words.parse("HoltTest2 debian13+reformat".split(), k)
+        with self.assertRaises(words.Refused):
+            words.parse("HoltTest2 debian13+reformat-Ext4!".split(), k)
+        self.assertTrue(words.is_reformat("reformat-ext4"))
+        self.assertFalse(words.is_reformat("reformat") or words.is_reformat("bigger") or words.is_reformat(None))
+
     def test_gate_layers_and_prefixes(self):
         w = P("GateTest2 holt")
         self.assertEqual(w.names, ["gate:holt"])

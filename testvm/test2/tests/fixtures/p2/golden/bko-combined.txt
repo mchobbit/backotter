@@ -98,7 +98,7 @@ current: 0
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written
 HoltTest2 plan: bko-holt code 5db6749 (not built), rustic-bko bko-bin, base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 96 of 96 cells, est. 511.0 gm, ~N wall, 28.9 GB (chopin 28.9, cinqcent 0.0)
+due: 102 of 102 cells, est. 552.4 gm, ~N wall, 28.9 GB (chopin 28.9, cinqcent 0.0)
   holt:aerynos                  any      holt:new  no PASS yet  6.0 gm  tsv
   holt:alpine324                any      holt:new  no PASS yet  1.9 gm  tsv
   holt:alpinebsd                any      holt:new  no PASS yet  3.7 gm  tsv
@@ -195,6 +195,12 @@ due: 96 of 96 cells, est. 511.0 gm, ~N wall, 28.9 GB (chopin 28.9, cinqcent 0.0)
   holt:alpine324+oneshot        any      holt:new  no PASS yet  3.0 gm  tsv
   holt:debian13-stack+degraded  any      holt:new  no PASS yet  4.7 gm  tsv
   holt:ubuntu26-raid+degraded   any      holt:new  no PASS yet  4.7 gm  tsv
+  holt:debian13+reformat-ext4   any      holt:new  no PASS yet  2.0 gm  tsv
+  holt:leap16+reformat-ext4     any      holt:new  no PASS yet  14.1 gm  tsv
+  holt:anduinos2+reformat-ext4  any      holt:new  no PASS yet  10.0 gm  tsv
+  holt:biglinux+reformat-ext4   any      holt:new  no PASS yet  10.0 gm  tsv
+  holt:fedora44+reformat-xfs    any      holt:new  no PASS yet  3.5 gm  tsv
+  holt:void-musl+reformat-xfs   any      holt:new  no PASS yet  1.9 gm  tsv
 current: 0
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written
@@ -305,4 +311,4 @@ not runnable: img:dragonfly (dragonfly/bko-holt 29a491194633: no PASS at its dig
 not runnable: img:illumos (illumos/bko-holt 9f334a07f8e8: no PASS at its digest; run t2 HoltTest2 omnios58; illumos/restic-bko 0d82a9690d13: no PASS at its digest; run t2 SticTest2 ROUND omnios58; illumos/rustic-bko 5a87834d6355: no PASS at its digest; run t2 SticTest2 ROUND omnios58)
 not runnable: img:haiku (haiku/bko-holt bb9e1e37dcbe: no PASS at its digest; run t2 HoltTest2 haiku6; haiku/rustic-bko f0ca9138481d: no PASS at its digest; run t2 SticTest2 ROUND haiku6)
 sweep: SweepTest2 never ran, due now
-combined: 277 due, 1425.6 gm, 15558 s wall, 30.6 GB, ['gate:selftest'] left over
+combined: 283 due, 1467.1 gm, 15975 s wall, 30.6 GB, ['gate:selftest'] left over

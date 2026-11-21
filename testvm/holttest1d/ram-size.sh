@@ -50,7 +50,7 @@ while [[ ${1:-} == --* ]]; do
     shift 2
 done
 if [[ -n $BIG ]]; then [[ $# -eq 0 ]] || usage; else [[ $# -gt 0 ]] || usage; fi
-name='^[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse|img))?$'
+name='^[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse|img|reformat-[a-z0-9]+))?$'
 for n; do [[ $n =~ $name ]] || { echo "ram-size.sh: not GUEST[+VARIANT]: $n" >&2; exit 2; }; done
 [[ -r $TABLE && ! -d $TABLE ]] || { echo "ram-size.sh: no table $TABLE" >&2; exit 2; }
 [[ -r $PEAKS && ! -d $PEAKS ]] || PEAKS=/dev/null   # no run logged yet
@@ -127,7 +127,7 @@ awk -F'\t' -v host="$HOST" -v cls="$CLASS" -v big="$BIG" -v names="$*" '
         if ($cg == "" || $cd !~ /^[0-9]+$/ || ph != "source,backup,rebuild,verify" || $cr != "PASS" || (cs && $cs != "0")) next
         gv = $cg; k = np[gv]++ % 3
         pd[gv, k] = $cd + 0; pa[gv, k] = ($ca ~ /^[0-9]+$/) ? $ca + 0 : -1   # anon "-": none
-        n = gv; if (match(n, /-(bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse|img)$/)) n = substr(n, 1, RSTART - 1) "+" substr(n, RSTART + 1)
+        n = gv; if (match(n, /-(bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse|img|reformat-[a-z0-9]+)$/)) n = substr(n, 1, RSTART - 1) "+" substr(n, RSTART + 1)
         known[n] = 1
     }
     END {

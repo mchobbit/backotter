@@ -3068,6 +3068,198 @@
    "running": null,
    "status": "due",
    "via": null
+  },
+  {
+   "cell": "holt:debian13+reformat-ext4",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "ff8da39ce2e6b03c0c9ac07489e228522a20634d23b352c272b17ee238f74d2b",
+   "keys": {
+    "chopin": "ff8da39ce2e6b03c0c9ac07489e228522a20634d23b352c272b17ee238f74d2b",
+    "cinqcent": "ff8da39ce2e6b03c0c9ac07489e228522a20634d23b352c272b17ee238f74d2b"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000336Z-000000d8",
+    "key": "3d94b7ff1ba903b1ffb3eb91e0fb2824f0b59e48f5b3327a0cb7b46c2a8f8783",
+    "t": "2026-11-07T00:03:36Z"
+   },
+   "part": null,
+   "reasons": [
+    "plan-visible change; its golden plans are unchanged"
+   ],
+   "rep": null,
+   "rule": "carry:plan-diff",
+   "running": null,
+   "status": "carried",
+   "via": "chopin-20261107T000336Z-000000d8"
+  },
+  {
+   "cell": "holt:leap16+reformat-ext4",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "bec784b43d092df957e1abf58722c4ed299f669485d9c044605f300ed1d0139b",
+   "keys": {
+    "chopin": "bec784b43d092df957e1abf58722c4ed299f669485d9c044605f300ed1d0139b",
+    "cinqcent": "bec784b43d092df957e1abf58722c4ed299f669485d9c044605f300ed1d0139b"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000337Z-000000d9",
+    "key": "9db43ef4a63142f19ecb24377d94b872a5484b5a500b143e6e914c7b7f30a34a",
+    "t": "2026-11-07T00:03:37Z"
+   },
+   "part": null,
+   "reasons": [
+    "plan-visible change; its golden plans are unchanged"
+   ],
+   "rep": null,
+   "rule": "carry:plan-diff",
+   "running": null,
+   "status": "carried",
+   "via": "chopin-20261107T000337Z-000000d9"
+  },
+  {
+   "cell": "holt:anduinos2+reformat-ext4",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "fa791a5136a62c9a34979e7e3c8f866e035067320c7f21848c0846bc3bdecfb6",
+   "keys": {
+    "chopin": "fa791a5136a62c9a34979e7e3c8f866e035067320c7f21848c0846bc3bdecfb6",
+    "cinqcent": "fa791a5136a62c9a34979e7e3c8f866e035067320c7f21848c0846bc3bdecfb6"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000338Z-000000da",
+    "key": "29dc0453f071dd5afee53c70ccf5f80c69d44685263ec3b90d823c987c5ca3bd",
+    "t": "2026-11-07T00:03:38Z"
+   },
+   "part": null,
+   "reasons": [
+    "plan-visible change; its golden plans are unchanged"
+   ],
+   "rep": null,
+   "rule": "carry:plan-diff",
+   "running": null,
+   "status": "carried",
+   "via": "chopin-20261107T000338Z-000000da"
+  },
+  {
+   "cell": "holt:biglinux+reformat-ext4",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "c5731e6dfee90a7c78575596e77fed443f10bb995231a011fa3f80fed0cd7ee2",
+   "keys": {
+    "chopin": "c5731e6dfee90a7c78575596e77fed443f10bb995231a011fa3f80fed0cd7ee2",
+    "cinqcent": "c5731e6dfee90a7c78575596e77fed443f10bb995231a011fa3f80fed0cd7ee2"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000339Z-000000db",
+    "key": "90622bcb0ffafbff087dd3120ec426bc462250a8a615b7b9c983897dbed82a42",
+    "t": "2026-11-07T00:03:39Z"
+   },
+   "part": null,
+   "reasons": [
+    "plan-visible change; its golden plans are unchanged"
+   ],
+   "rep": null,
+   "rule": "carry:plan-diff",
+   "running": null,
+   "status": "carried",
+   "via": "chopin-20261107T000339Z-000000db"
+  },
+  {
+   "cell": "holt:fedora44+reformat-xfs",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "08167ec48f123de76ec8deba6ee0e8add4807e19890e051aa383595997c81088",
+   "keys": {
+    "chopin": "08167ec48f123de76ec8deba6ee0e8add4807e19890e051aa383595997c81088",
+    "cinqcent": "08167ec48f123de76ec8deba6ee0e8add4807e19890e051aa383595997c81088"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000340Z-000000dc",
+    "key": "b638ee7008e5c6e1cdfa75b9f808a76e1cf639e105f3bcd0280d70cebd128ce5",
+    "t": "2026-11-07T00:03:40Z"
+   },
+   "part": null,
+   "reasons": [
+    "plan-visible change; its golden plans are unchanged"
+   ],
+   "rep": null,
+   "rule": "carry:plan-diff",
+   "running": null,
+   "status": "carried",
+   "via": "chopin-20261107T000340Z-000000dc"
+  },
+  {
+   "cell": "holt:void-musl+reformat-xfs",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "ec9ddc39fe6b9505f03596a03a416f9980c4687596dd1d6aedc8e6646ca9b530",
+   "keys": {
+    "chopin": "ec9ddc39fe6b9505f03596a03a416f9980c4687596dd1d6aedc8e6646ca9b530",
+    "cinqcent": "ec9ddc39fe6b9505f03596a03a416f9980c4687596dd1d6aedc8e6646ca9b530"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000341Z-000000dd",
+    "key": "263a1c23146edbaf485b64989e660df0b8aee52604f6e9434de21ac31a089cd9",
+    "t": "2026-11-07T00:03:41Z"
+   },
+   "part": null,
+   "reasons": [
+    "plan-visible change; its golden plans are unchanged"
+   ],
+   "rep": null,
+   "rule": "carry:plan-diff",
+   "running": null,
+   "status": "carried",
+   "via": "chopin-20261107T000341Z-000000dd"
   }
  ],
  "classes": [],
@@ -3079,7 +3271,7 @@
    "chopin": "2026-11-08T05:00:00Z",
    "cinqcent": "2026-11-08T05:00:00Z"
   },
-  "ledger_rows": 110,
+  "ledger_rows": 116,
   "pulled": {
    "chopin": null,
    "cinqcent": null
@@ -3095,11 +3287,11 @@
   "name": "bko-bin"
  },
  "totals": {
-  "cells": 96,
+  "cells": 102,
   "counts": {
    "awaiting-canaries": 0,
    "canary-verified": 0,
-   "carried": 90,
+   "carried": 96,
    "class-pending": 0,
    "current": 0,
    "due": 6,

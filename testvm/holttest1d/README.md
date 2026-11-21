@@ -643,7 +643,11 @@ options and the new pass, and the root's kernel command lines without
 `lost+found`, btrfs's inode flags and snapshots left out, and XFS's own
 copies of the ACLs.  The btrfs read-only snapshot check takes a snapshot
 missing after the restore as left out.  The boot, boot state and every
-other check hold as for any run.
+other check hold as for any run.  `HT_VARIANT=reformat-TYPE` is such a run
+with `HT_REFORMAT=/=TYPE`, in `RUN/GUEST-reformat-TYPE`: HoltTest2's
+`GUEST+reformat-TYPE` cells (classes.json `holt.variants`), and a queue
+line `GUEST+reformat-TYPE`; ram-sizes.tsv has their rows.  A run with any
+other `HT_REFORMAT` writes a row that never counts.
 
 The plan's variants are chosen with `HT_VARIANT`, each in a directory of
 its own (`RUN/GUEST-VARIANT`): `oneshot` runs the rebuild as one

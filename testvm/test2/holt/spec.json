@@ -3,6 +3,7 @@
   "family": "holt",
   "about": "What a HoltTest cell's key covers (contract 1.3, rulings R5, R14, R17). keys.py reads it: an entry (holt:GUEST[+VARIANT] is entries[GUEST]) merges over kinds[its kind], lists adding up; PLAT in a path is the entry's plat. A kind is the driver ht1.sh hands the guest to (ht1.sh:70-76); 'driver' names it and 'variants_run' the HT_VARIANT values it takes as Test2 cells (ht1.sh's fitting variants, smaller, fitbigger, nearfull and refuse, are HoltTest1's only). Variants have no inputs of their own: the cell name is in the key. Pins and family lists are classes.json's (holt.pins, holt.families). The floor is ht_manifest's list (ht1-lib.sh's manifest.txt): the driver, ht1-lib.sh, judge.py, fsmeta.py, vm-run, vm-mount, the rescuer image, bin/'s debs and bcachefs, bko-holt, rustic-bko and the guest's disks.",
   "notes": [
+    "reformat-TYPE: ht1.sh's HT_VARIANT=reformat-TYPE, a plain run with HT_REFORMAT=/=TYPE (load --reformat /=TYPE, judge.py --reformat) in GUEST-reformat-TYPE; it has no inputs of its own but ht1.sh's '# t2-only: reformat-*' blocks, which only these cells key (keys.py only_text), so adding or changing them re-keys no other cell. classes.json holt.variants names the cells.",
     "harness: what runs the round trip or makes its records. ht1.sh is in every kind's: the queue runs ht1.sh GUEST RUN, which hands BSD, illumos, Haiku, Redox and Sculpt guests to ht1-bsd.sh or ht1-offline.sh (ht1.sh:70-76). compare/fsmeta.py records the files, so it is harness, not judge (R5 (d)).",
     "judge: holttest1d/judge.py alone (it reads the dumps and fsmeta's records).",
     "plumbing: the write path and the queue (ht1-lib.sh, ht1-queue.sh, ram-size.sh, ram-sizes.tsv), vm-run and the shared cmp-run.sh and iolog.sh: a change makes the four canaries due (classes.json holt.canaries), the rest canary-verified.",
@@ -24,7 +25,7 @@
   "kinds": {
     "linux": {
       "driver": "testvm/holttest1d/ht1.sh",
-      "variants_run": ["bigger", "oneshot", "degraded", "img"],
+      "variants_run": ["bigger", "oneshot", "degraded", "img", "reformat-ext4", "reformat-xfs"],
       "plat": "linux",
       "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
       "harness": ["testvm/holttest1d/ht1.sh", "testvm/holttest1d/ht1-tu.sh", "testvm/vm-mount", "testvm/vm-umount", "testvm/ostree_paths.py", "testvm/compare/fsmeta.py"],

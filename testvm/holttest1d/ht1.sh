@@ -164,6 +164,22 @@ HOLT=""; [[ ${HT_VARIANT:-} == img ]] || ht_holt_pick "$PLAT"
 # largest partition is a stack load won't fit, and both check that plan
 # refuses and writes nothing, so neither backs up or restores anything.
 VARIANT=${HT_VARIANT:-}
+# t2-only: reformat-*
+# "reformat-TYPE" (HoltTest2's GUEST+reformat-TYPE cells) is a plain run with
+# HT_REFORMAT="/=TYPE" (HT_REFORMAT's above; one set too must say just that),
+# in a directory of its own, GUEST-reformat-TYPE; judge.py gets the
+# --reformat as under HT_REFORMAT.  (A t2-only block: only those cells key
+# these lines, testvm/test2/t2lib/keys.py only_text, so it must do nothing in
+# any other run.)
+RF_VARIANT=""
+if [[ $VARIANT == reformat-* ]]; then
+    [[ $VARIANT =~ ^reformat-[a-z0-9]+$ ]] || { echo "HT_VARIANT=reformat-TYPE, TYPE a filesystem type: not $VARIANT" >&2; exit 2; }
+    [[ -z ${HT_REFORMAT:-} || $HT_REFORMAT == "/=${VARIANT#reformat-}" ]] ||
+        { echo "HT_VARIANT=$VARIANT is HT_REFORMAT=/=${VARIANT#reformat-}, not HT_REFORMAT=$HT_REFORMAT" >&2; exit 2; }
+    export HT_REFORMAT=/=${VARIANT#reformat-}
+    RF_VARIANT=$VARIANT VARIANT=""
+fi
+# t2-only-end
 case $VARIANT in ""|bigger|oneshot|degraded|img|smaller|fitbigger|nearfull|refuse|bs2) ;;
     *) echo "HT_VARIANT: bigger, oneshot, degraded, img, smaller, fitbigger, nearfull, refuse or bs2" >&2; exit 2 ;;
 esac
@@ -194,6 +210,9 @@ else
     [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source backup rebuild verify)
 fi
 GV=$G${VARIANT:+-$VARIANT}
+# t2-only: reformat-*
+[[ -z $RF_VARIANT ]] || GV=$G-$RF_VARIANT
+# t2-only-end
 # bs2: a BackShot2 case (testvm/backshot2/ht1-bs2.sh: its hooks, and GV the case's name).
 BS2_FLAGS=() BS2_VFW=() BS2_FSJUDGE=() BS2_FSMETA=()
 # shellcheck source=../backshot2/ht1-bs2.sh

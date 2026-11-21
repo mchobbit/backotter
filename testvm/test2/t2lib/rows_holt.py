@@ -53,6 +53,8 @@ HOLT_BIN = "/bkoscratch/holttest1d/bin"
 RESCUERS = "/bkoscratch/holttest1d/rescuer"
 DRIVERS = {"ht1.sh": "linux", "ht1-bsd.sh": "bsd", "ht1-offline.sh": "offline"}
 VARIANTS = ("bigger", "oneshot", "degraded", "img", "smaller", "fitbigger", "nearfull", "refuse")
+# ht1.sh's HT_VARIANT=reformat-TYPE (HoltTest2's +reformat-TYPE cells): HT_REFORMAT=/=TYPE.
+REFORMAT_SUFFIX = re.compile(r"(.+)-(reformat-[a-z0-9]+)\Z")
 # HoltTest1's refusal variants (ht1.sh, ht1-offline.sh): source and rebuild are the whole run.
 REFUSALS = ("nearfull", "refuse")
 ALL_PHASES = ["source", "backup", "rebuild", "verify"]
@@ -136,6 +138,9 @@ def cell_of(gv, variant=None):
     for v in VARIANTS:
         if gv.endswith("-" + v):
             return f"holt:{gv[:-len(v) - 1]}+{v}"
+    m = REFORMAT_SUFFIX.match(gv)
+    if m:
+        return f"holt:{m.group(1)}+{m.group(2)}"
     return f"holt:{gv}"
 
 
@@ -784,7 +789,9 @@ def build(argv, hostctx=None):
         if rel:
             for g in ("harness", "judge", "plumbing"):
                 v = (inputs.get(g) or {}).get(rel)
-                if v and v.startswith("sha256:") and v[7:] != h:
+                # (the file's bytes now: a key's value may leave out other variants' t2-only
+                # blocks, keys.only_text, and the manifest has every byte)
+                if v and v.startswith("sha256:") and (src.sha256(rel) or v[7:]) != h:
                     changed.append(rel)
         elif p.startswith(HOLT_BIN + "/") and (p.endswith(".deb") or p.endswith("/bcachefs")):
             v = (inputs.get("rescuer") or {}).get("bin/" + os.path.basename(p))
@@ -833,6 +840,13 @@ def build(argv, hostctx=None):
     dbg = [k for k in DEBUG_ENV if env.get(k)] + [k for k, vs in DEBUG_ENV_VALUES.items() if env.get(k) in vs]
     if dbg:
         invalid.append("set for debugging or tests: " + " ".join(f"{k}={env[k]}" for k in dbg))
+    # HT_REFORMAT is a +reformat-TYPE cell's own /=TYPE (ht1.sh sets it so); any other is a
+    # by-hand run, which judges another layout than its cell's.
+    rv = cell.partition("+")[2]
+    want_rf = "/=" + rv[len("reformat-"):] if rv.startswith("reformat-") else ""
+    if (env.get("HT_REFORMAT") or "") != want_rf:
+        invalid.append(f"set for debugging or tests: HT_REFORMAT={env.get('HT_REFORMAT') or ''}"
+                       + (f" (its cell's is {want_rf})" if want_rf else ""))
     if man["seeded"]:
         invalid.append("its state came from an earlier attempt (" + man["seeded"] + ")")
     # The tree's commit as the run began (its manifest's tree line: the copy's COMMIT, or a

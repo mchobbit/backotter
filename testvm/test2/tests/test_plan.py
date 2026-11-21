@@ -29,7 +29,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 STIC = [g for g in world.stic_guests() if not g.endswith("-arm64")]
 N_STIC = len(STIC)
 N_STIC_LINUX = sum(1 for g in STIC if g not in world.STIC_OS)
-N_HOLT = 96     # 87 sources and their 9 variant cells
+N_HOLT = 102    # 87 sources, their 9 variant cells and the 6 +reformat-TYPE cells
 
 
 def by(p):
@@ -298,7 +298,7 @@ class Scenarios(WorldCase):
         p = self.w.plan("SticTest2 rel4 plan", self.r_stic, facts=f)
         self.assertEqual(st(p, "stic:debian13"), ("due", "changed:guest"))
         p = self.w.plan("HoltTest2 plan", self.r_holt, facts=f)
-        self.assertEqual({c.cell for c in p.due()}, {"holt:debian13", "holt:debian13+oneshot"})
+        self.assertEqual({c.cell for c in p.due()}, {"holt:debian13", "holt:debian13+oneshot", "holt:debian13+reformat-ext4"})
         self.assertTrue(all(c.rule == "holt:guest-update" for c in p.due()))
 
     def test_gate_unchanged_and_changed(self):
@@ -427,7 +427,7 @@ class Holt(WorldCase):
         p = self.w.plan("HoltTest2 plan", rows)
         self.assertEqual({c.cell for c in p.due()},
                          {"holt:debian13", "holt:debian13-zfs", "holt:debian13-stack", "holt:debian13-stack+bigger",
-                          "holt:debian13+oneshot", "holt:debian13-stack+degraded"})
+                          "holt:debian13+oneshot", "holt:debian13-stack+degraded", "holt:debian13+reformat-ext4"})
         self.assertTrue(all(c.rule == "holt:new" for c in p.due()))
 
     def test_harness_change_selects_that_kind(self):
@@ -652,7 +652,7 @@ class Estimates(unittest.TestCase):
             self.assertAlmostEqual(tsv[f"holt:{g}"]["gm"], round(r["sec"] / 60, 2), places=2)
         fam = collections.defaultdict(float)
         for c, e in tsv.items():
-            if not c.endswith("+img") and c not in ("holt:endeavouros", "holt:endeavouros-grub", "holt:manjaro",
+            if not c.endswith("+img") and "+reformat-" not in c and c not in ("holt:endeavouros", "holt:endeavouros-grub", "holt:manjaro",
                                                    "holt:ubuntu26-luks", "holt:chimera", "holt:kinoite44",
                                                    "holt:chimera-uefi", "holt:chimera-zfs", "holt:gentoo", "holt:gentoo-systemd",
                                                    "holt:cachyos-zfs", "holt:anduinos2", "holt:neon24", "holt:garuda", "holt:biglinux", "holt:proxmox9", "holt:proxmox9-mirror",
@@ -670,8 +670,9 @@ class Estimates(unittest.TestCase):
         self.assertAlmostEqual(sum(e["gm"] for c, e in tsv.items() if c.startswith("stic:") and c[5:] in marked), 281.9, delta=0.1)
         self.assertAlmostEqual(fam["holt"], 246.7, delta=0.5)     # test2.md: HoltTest2All ~247 gm
         # 87 sources and 9 variants, and the five arm64 guests' (docs/design/arm64.md A6), but
-        # slackware15 and slackware15-uefi's, which have no row before their first runs
-        self.assertEqual(sum(1 for c in tsv if c.startswith("holt:") and not c.endswith("+img")), 99)
+        # slackware15 and slackware15-uefi's, which have no row before their first runs, and the 6
+        # +reformat-TYPE cells' (rel11rf's HT_REFORMAT runs, 2026-11-21)
+        self.assertEqual(sum(1 for c in tsv if c.startswith("holt:") and not c.endswith("+img")), 105)
         self.assertEqual(sum(1 for c in tsv if c.startswith("gate:")), 13)
 
     def test_pack_and_gate_wall(self):
@@ -1588,7 +1589,8 @@ class ClassTable(unittest.TestCase):
         h = ctx.classes["holt"]
         src = {g for f in h["families"].values() for g in f} | set(h["no_family"])
         self.assertEqual(len(src), 87)
-        self.assertEqual(sum(len(v) for v in h["variants"].values()), 9)
+        self.assertEqual(sum(len(v) for k, v in h["variants"].items() if not k.startswith("reformat-")), 9)
+        self.assertEqual(sum(len(v) for k, v in h["variants"].items() if k.startswith("reformat-")), 6)
         self.assertEqual(sorted(set(world.GUESTS) - src), sorted(["aeon", "freebsd15-builder", "freebsd15-ufs"] + list(world.GUEST_ONLY)))
 
     def test_check_catches_errors(self):

@@ -686,6 +686,41 @@ class NewForms(unittest.TestCase):
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 
 
+class OnlyBlocks(unittest.TestCase):
+    """A harness file's "# t2-only: GLOB" blocks key only the cells whose variant GLOB matches."""
+    OLD = "a\nb\n"
+    NEW = "a\n# t2-only: reformat-*\nrf\n# t2-only-end\nb\n"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = os.path.join(_tmp, "onlyblocks")
+        make_repo(cls.root, {"testvm/holttest1d/ht1.sh": cls.NEW, "testvm/plumb.sh": cls.NEW})
+        cls.src = keys.TreeSource(cls.root)
+        cls.specs = keys.Specs(cls.src, overrides={"holt": {"v": 1, "family": "holt", "plumbing": ["testvm/plumb.sh"],
+                                                            "entries": {"g1": {"harness": ["testvm/holttest1d/ht1.sh"]}}}})
+
+    def test_only_text(self):
+        new = self.NEW.encode()
+        self.assertEqual(keys.only_text(new, None), self.OLD.encode())
+        self.assertEqual(keys.only_text(new, "bigger"), self.OLD.encode())
+        self.assertEqual(keys.only_text(new, "reformat-ext4"), new)
+        self.assertEqual(keys.only_text(b"no blocks\n", None), b"no blocks\n")
+        # malformed: the whole file, never less than it holds
+        for bad in (b"a\n# t2-only: x\nb\n", b"a\n# t2-only-end\n", b"# t2-only: x\n# t2-only: y\n# t2-only-end\n"):
+            self.assertEqual(keys.only_text(bad, None), bad)
+
+    def test_cells(self):
+        facts = {"host": "h", "versions": {}, "guests": {"g1": {"generation": "e" * 64, "files": {}}},
+                 "rescuers": {"images": {}, "bin": {}}}
+        plain = keys.resolve("holt:g1", self.src, facts, self.specs)
+        rf = keys.resolve("holt:g1+reformat-xfs", self.src, facts, self.specs)
+        self.assertEqual(plain.inputs["harness"]["testvm/holttest1d/ht1.sh"], "sha256:" + sha(self.OLD))
+        self.assertEqual(rf.inputs["harness"]["testvm/holttest1d/ht1.sh"], "sha256:" + sha(self.NEW))
+        # plumbing keys every byte for every cell (the canaries' digest is the cells')
+        self.assertEqual(plain.inputs["plumbing"]["testvm/plumb.sh"], "sha256:" + sha(self.NEW))
+        self.assertEqual(rf.inputs["plumbing"]["testvm/plumb.sh"], "sha256:" + sha(self.NEW))
+
+
 class PyCode(unittest.TestCase):
     """pycode:PATH (GuestTest2's vm-update): comments and unread docstrings key nothing; every
     byte of code and of every other string does."""

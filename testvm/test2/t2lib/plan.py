@@ -32,7 +32,7 @@ DECISIVE_VERDICTS = ("PASS", "FAIL", "FLAKY-FAIL")
 WATCH_ROOTS = ("testvm", "stick", "holt")
 RAM_SIZE = "testvm/holttest1d/ram-size.sh"
 # ram-size.sh's GUEST[+VARIANT] (a name it refuses would fail the whole call)
-RAM_SIZE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse|img))?\Z")
+RAM_SIZE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse|img|reformat-[a-z0-9]+))?\Z")
 # The gate layers when the gate spec is missing: the per-host loops on gate_hosts() (the default hosts).
 GATE_FALLBACK = (("holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic", "bin:abi",
                   "bin:static", "bin:version")
@@ -2235,6 +2235,9 @@ class Planner:
         mine = golden.get(v.name if v.variant is None else f"{v.name}+{v.variant}")
         base = golden.get(v.name)
         vst = set(self.cls["holt"].get("variant_stages", ()))
+        # (a +reformat-TYPE cell is judged as its guest's plain one: load's reformat and the boot
+        # stage's rewriting are code no plan shows, classes.json holt.variants_why)
+        plain = v.variant is None or words.is_reformat(v.variant)
         if vis_paths and all(p in visible for p in vis_paths):
             if not known:
                 return self.holt_all(v, "plan diff not known: the fast holt gate runs first")
@@ -2246,12 +2249,14 @@ class Planner:
                     return "due", "holt:variants", "plan-visible change; its degraded source dump isn't in the corpus"
                 if mine is not None:
                     return "due", "holt:plan-diff", f"golden plan {v.name}+{v.variant} changed ({', '.join(mine)})"
+                if base is not None and plain and not self.has_golden(v):   # (no plan+reformat-TYPE.txt of its own)
+                    return "due", "holt:variants", f"{v.name}'s golden plan changed ({', '.join(base) or 'stages unknown'})"
                 if base is not None and (not base or set(base) & vst):
                     return "due", "holt:variants", (f"{v.name}'s golden plan changed in "
                                                     f"{', '.join(sorted(set(base) & vst)) or 'stages unknown'}")
             return "carry", "carry:plan-diff", "plan-visible change; its golden plans are unchanged"
         why = "holt code changed: " + ", ".join(paths[:4]) + (" ..." if len(paths) > 4 else "")
-        if v.variant is None:
+        if plain:
             r = self.holt_all(v, why)
             if mine is not None:
                 r = (r[0], r[1], r[2] + f"; holt:plan-diff ({', '.join(mine) or 'stages unknown'})")
@@ -2263,8 +2268,12 @@ class Planner:
             return "due", "holt:variants", f"{v.name}'s golden plan changed in {', '.join(sorted(set(base) & vst)) or 'stages unknown'}"
         return "none", None, why + "; the variant's plans are unchanged"
 
+    def has_golden(self, v):
+        """Whether the corpus keeps v's own golden plan, GUEST/plan+VARIANT.txt (golden_plans.rs)."""
+        return os.path.isfile(os.path.join(self.ctx.checkout, "holt", "tests", "corpus", v.name, f"plan+{v.variant}.txt"))
+
     def holt_all(self, v, why):
-        if v.variant is None:
+        if v.variant is None or words.is_reformat(v.variant):   # (+reformat-TYPE: as its guest's plain cell)
             return "due", "holt:code", why
         return "none", None, why + " (a variant runs on its plan diff)"
 
@@ -2279,7 +2288,7 @@ class Planner:
         ch = self.changed_paths(old_commit, old_dirty, ("holt/tests/corpus",))
         blessed = False
         for p in ch:
-            m = re.match(r"holt/tests/corpus/([^/]+)/plan(\+bigger)?\.txt\Z", p)
+            m = re.match(r"holt/tests/corpus/([^/]+)/plan(\+bigger|\+reformat-[a-z0-9]+)?\.txt\Z", p)
             if not m:
                 continue
             blessed = True
@@ -2454,18 +2463,20 @@ class Planner:
                     self.notes.append("debian13+oneshot runs once (HoltTest1D ran it on each host)")
             variants = dict(h["variants"], img=[c[5:].split("+")[0] for c in self.img_cells()])
             for var in w.variants:
-                gs = variants.get(var, ())
+                # (+reformat: every +reformat-TYPE cell)
+                gvs = [(g, x) for x in ([y for y in variants if words.is_reformat(y)] if var == "reformat" else [var])
+                       for g in variants.get(x, ())]
                 if w.names or w.letters:
                     base = {}   # a guest is selected by any of its cells, variant cells too
                     for c, (r, _) in out.items():
                         base.setdefault(c[5:].split("+")[0], r)
-                    for g in gs:
-                        if g in base and f"holt:{g}+{var}" in cs:
-                            out.setdefault(f"holt:{g}+{var}", (base[g], [f"+{var}"]))
+                    for g, x in gvs:
+                        if g in base and f"holt:{g}+{x}" in cs:
+                            out.setdefault(f"holt:{g}+{x}", (base[g], [f"+{var}"]))
                 else:
-                    for g in gs:
-                        if f"holt:{g}+{var}" in cs:
-                            out.setdefault(f"holt:{g}+{var}", (f"fresh:variant:{var}", [f"+{var}"]))
+                    for g, x in gvs:
+                        if f"holt:{g}+{x}" in cs:
+                            out.setdefault(f"holt:{g}+{x}", (f"fresh:variant:{var}", [f"+{var}"]))
         return out
 
     def build(self):

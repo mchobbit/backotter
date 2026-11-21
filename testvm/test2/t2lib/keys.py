@@ -69,7 +69,12 @@ is Linux).  In strings, the path segments GUEST, PLAT and KIND (or {guest}, {pla
                  the whole file when it doesn't parse; "tree:GLOB": every file GLOB matches as one
                  input (dir:), so a growing set (gate:selftest's unit tests and fixtures) keeps
                  the row's size; a file a tree: item covers is in no other glob's hits there;
-    judge        "?PATH" for an optional one; "entry:FILE#KEY" (R3); "shared:PATH"
+                 a file's "# t2-only: GLOB" ... "# t2-only-end" blocks (markers included) count
+                 only in the cells whose variant GLOB matches (only_text): the lines a variant
+                 adds to a shared driver (ht1.sh's +reformat-TYPE) re-key that variant's cells
+                 alone, so a block must do nothing in any other cell's run
+    judge        "?PATH" for an optional one; "entry:FILE#KEY" (R3); "shared:PATH"; t2-only
+                 blocks as in harness
     guest_files  the guest's files (default vm-run-options, ssh-user,
                  console-passphrase, luks-passphrase, zfs-passphrase, no-ssh): GUEST:FILE
     guests       more guests the cell boots (their generation and files)
@@ -101,6 +106,7 @@ A facts dict is one host's facts_host.py output.  Options (opts) a caller can gi
 """
 
 import ast
+import fnmatch
 import io
 import json
 import os
@@ -131,6 +137,9 @@ VALUE_RE = re.compile(r"(sha256:[0-9a-f]{64}|gen:[0-9a-f]{64}|img:([0-9a-f]{64}|
 UNKNOWN_IMG = "img:unknown"
 HEX64_RE = re.compile(r"[0-9a-f]{64}\Z")
 SECTION_RE = re.compile(rb"^[ \t]*#[ \t]*t2-section:[ \t]*(\S+)[ \t]*$")
+ONLY_RE = re.compile(rb"^[ \t]*#[ \t]*t2-only:[ \t]*(\S+)[ \t]*$")
+ONLY_END_RE = re.compile(rb"^[ \t]*#[ \t]*t2-only-end[ \t]*$")
+ONLY_GROUPS = ("harness", "judge")
 
 
 # --- values ---------------------------------------------------------------------
@@ -691,6 +700,53 @@ def _guest_identity(r, facts, guest, group, family=None):
     return g
 
 
+def only_text(data, variant):
+    """DATA less its "# t2-only: GLOB" ... "# t2-only-end" blocks, markers included, whose GLOB
+    doesn't match VARIANT (a cell's +VARIANT, None for a plain cell): what a harness or judge
+    file keys in that cell.  A file without blocks, and a matching cell, key every byte, so
+    adding a block re-keys only the cells it matches.  A block left open, one inside another
+    or an end with no block: the whole file (never less than it holds)."""
+    if b"t2-only" not in data:
+        return data
+    out, glob, keep = [], None, True
+    for line in data.splitlines(keepends=True):
+        s = line.rstrip(b"\r\n")
+        if ONLY_RE.match(s):
+            if glob is not None:
+                return data
+            glob = ONLY_RE.match(s).group(1).decode("utf-8", "replace")
+            keep = bool(variant) and fnmatch.fnmatchcase(variant, glob)
+        elif ONLY_END_RE.match(s):
+            if glob is None:
+                return data
+            if keep:
+                out.append(line)
+            glob, keep = None, True
+            continue
+        if keep:
+            out.append(line)
+    return data if glob is not None else b"".join(out)
+
+
+def _only_sha256(src, path, variant):
+    """src.sha256(PATH), less the t2-only blocks VARIANT's cell doesn't key (only_text), cached
+    on SRC per path and variant (a file with no block: its sha256 as ever)."""
+    h = src.sha256(path)
+    if not h:
+        return h
+    cache = src.__dict__.setdefault("_t2_only", {})
+    if path not in cache:
+        data = src.read(path)
+        cache[path] = {} if data is not None and b"t2-only" in data else None
+    per = cache[path]
+    if per is None:
+        return h
+    if variant not in per:
+        data = src.read(path)
+        per[variant] = None if data is None else sha256_hex(only_text(data, variant))
+    return per[variant]
+
+
 def _file_input(r, group, src, specs, item, guest, plat, kind, facts):
     item = _subst(item, guest, plat, kind)
     optional = item.startswith("?")
@@ -736,9 +792,16 @@ def _file_input(r, group, src, specs, item, guest, plat, kind, facts):
         trees = r.trees.get(group) or ()
         for p in hits:
             if not any(t.match(p) for t in trees):     # keyed once, in its tree: input
-                r.put(group, p, sha(src.sha256(p)))
+                r.put(group, p, sha(_file_sha256(r, group, src, p)))
         return
-    r.put(group, item, sha(src.sha256(item), optional))
+    r.put(group, item, sha(_file_sha256(r, group, src, item), optional))
+
+
+def _file_sha256(r, group, src, path):
+    """A file input's sha256: a harness or judge file's less the t2-only blocks of other variants."""
+    if group in ONLY_GROUPS:
+        return _only_sha256(src, path, Cell(r.cell).variant)
+    return src.sha256(path)
 
 
 def tree_globs(items, guest=None, plat=None, kind=None):

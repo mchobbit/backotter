@@ -3,7 +3,7 @@
     GateTest2 [ROUND] [LAYER...] [stale] [plan]      GateTest2All [ROUND] [plan]
     SticTest2 [ROUND] [GUEST...] [stale] [plan]      SticTest2All [ROUND] [plan]
     (WORD All is the same as WORDAll)
-    HoltTest2 [GUEST[+VARIANT]...] [stale] [plan] [+bigger] [+oneshot] [+degraded] [+img]
+    HoltTest2 [GUEST[+VARIANT]...] [stale] [plan] [+bigger] [+oneshot] [+degraded] [+img] [+reformat]
     HoltTest2X [X...] [...]  for X in D A M U Z F C V BSD H I G Obscure ARM  HoltTest2All [plan]
     GuestTest2 [GUEST...] [stale] [plan]             GuestTest2All [plan]
     GuestTest2 update [GUEST...] [plan]              the real update round
@@ -23,6 +23,10 @@ HOLT_LETTERS = ("D", "A", "M", "U", "Z", "F", "C", "V", "BSD", "H", "I", "G", "O
 # (ARM: the arm64 guests, classes.json's arm64 block, a family only for a run whose --hosts has
 # an arm64 host: docs/design/arm64.md A6.)
 VARIANTS = ("bigger", "oneshot", "degraded", "img")
+# A cell's +reformat-TYPE (bko-holt load --reformat /=TYPE: classes.json holt.variants); the
+# word +reformat is every such cell.
+REFORMAT = re.compile(r"reformat-[a-z0-9]+\Z")
+VARIANT_WORDS = VARIANTS + ("reformat",)
 REFUSED_VARIANTS = {"close": "+close waits for H3 (throttled closes under load)"}
 PLATS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "haiku")
 KEYWORDS = ("plan", "stale")
@@ -166,6 +170,11 @@ def _stic(w, args, known):
             _round(w, tok, "SticTest check")
 
 
+def is_reformat(variant):
+    """A +reformat-TYPE variant (reformat-ext4, reformat-xfs, ...)."""
+    return bool(variant) and bool(REFORMAT.match(variant))
+
+
 def _holt(w, args, known):
     k = known.get("holt") or {}
     sources = set(k.get("sources") or ())
@@ -179,8 +188,8 @@ def _holt(w, args, known):
             v = t[1:].lower()
             if v in REFUSED_VARIANTS:
                 raise Refused(REFUSED_VARIANTS[v])
-            if v not in VARIANTS:
-                raise Refused(f"no variant {t!r}: +bigger, +oneshot, +degraded or +img (+smaller, +fitbigger, +nearfull and +refuse are HoltTest1's: ht1-queue.sh todo lines)")
+            if v not in VARIANT_WORDS:
+                raise Refused(f"no variant {t!r}: +bigger, +oneshot, +degraded, +img or +reformat (+smaller, +fitbigger, +nearfull and +refuse are HoltTest1's: ht1-queue.sh todo lines)")
             if w.all:
                 raise Refused("HoltTest2 +img runs the image cells; HoltTest2All has none" if v == "img"
                               else "HoltTest2All already runs every variant cell")
@@ -200,8 +209,8 @@ def _holt(w, args, known):
             vl = v.lower()
             if vl in REFUSED_VARIANTS:
                 raise Refused(REFUSED_VARIANTS[vl])
-            if vl not in VARIANTS:
-                raise Refused(f"no variant +{v} (in {tok!r}): +bigger, +oneshot, +degraded or +img")
+            if vl not in VARIANTS and not is_reformat(vl):
+                raise Refused(f"no variant +{v} (in {tok!r}): +bigger, +oneshot, +degraded, +img or +reformat-TYPE")
         if g in refused:
             raise Refused(f"{g} is no HoltTest2 source: {refused[g]}")
         if g not in sources:

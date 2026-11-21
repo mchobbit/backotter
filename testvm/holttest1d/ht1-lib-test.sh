@@ -77,13 +77,24 @@ if [[ ${1:-} == run ]]; then
             (exec -a "$T/vm-mount" bash -c 'sleep 8; : >"$1"' _ "$R/logs/mount-done")
             rm -f "$R/big"
         fi
-        [[ ${T1_SLEEP:-} != "$1" ]] || sleep 120   # until the test signals it
+        [[ ${T1_SLEEP:-} != "$1" ]] || sleep 120   # until the test signals it (or the watchdog stops it)
+        # The watchdog's cases (53-55): a log written every 3 s, CPU used in
+        # a child with no file written, a load stage's ssh that hangs.
+        if [[ ${T1_TRICKLE:-} == "$1" ]]; then
+            for ((i = 0; i < ${T1_TRICKLES:-10}; i++)); do echo "line $i" >>"$R/logs/trickle.log"; sleep 3; done
+        fi
+        [[ ${T1_BUSY:-} != "$1" ]] || (end=$((SECONDS + ${T1_BUSYS:-30})); while ((SECONDS < end)); do :; done)
+        if [[ ${T1_IDLEW:-} == "$1" ]]; then   # a rescuer's own disk written every 3 s, nothing else
+            for ((i = 0; i < 10; i++)); do echo "w $i" >>"$R/$T1_IDLEF"; sleep 3; done
+        fi
+        [[ ${T1_LOADHANG:-} != "$1" ]] || ht_load_try "$R/logs/rebuild-restore.out" "$R/logs/rebuild-restore.err" t1_hang
         # The same in a function call whose stdio is in R, as sshk ... >"$R/logs/X" is.
         [[ ${T1_REDIR:-} != "$1" ]] || t1_wait >"$R/logs/redir.out" 2>"$R/logs/redir.err" <"$R/logs/source-bootstate.txt"
         # shellcheck disable=SC2154  # unset on purpose: set -u ends the driver here
         [[ ${T1_UNBOUND:-} != "$1" ]] || echo "$t1_unset"
     }
     t1_wait() { sleep 120; }
+    t1_hang() { echo "$HT_STARTED"; sleep 120; }   # a load stage's ssh that started and hangs
     phase_source() {
         say "== source: $G (fake)"
         qemu-img create -q -f qcow2 "$R/src-0.qcow2" 1M
@@ -355,7 +366,8 @@ kept_ls="dst-meta.json.zst dumps logs report.txt src-meta.json.zst "
 # 44 a full RAM disk stops only a run over its reservation; 45 an earlier attempt's VM still up on K's
 # files (a run from source on /bkoscratch refuses); 46 a vm-mount someone else made of a file in R stays up;
 # 47-49 Test2's ledger rows (ht_t2_row): which runs get one and what it says, a missing, failing or hanging
-# t2-host changing nothing, and none in the default ledger.
+# t2-host changing nothing, and none in the default ledger; 50-52 the variant names, ht1-bsd-test.sh and
+# ht_load_try; 53-55 the no-progress watchdog.
 
 drive c1 source bogus
 chk "exit 2, not $rc" same "$rc" 2
@@ -1299,6 +1311,66 @@ chk "  1 call, OUT all of it, ERR CMD's alone" eval 'same "$(cat "$FX/lt-n")" 1 
 lt 0 4 1; rc=$?
 chk "a stage that answered: its 4, ERR CMD's alone (no blank line)" eval 'same "$rc" 4 && same "$(cat "$FX/lt.err")" "said 1" && same "$(wc -l <"$FX/lt.err")" 1'
 verdict 52 "ht_load_try: an ssh 255 before the stage started is tried again, after it not; ERR says which" "$FX/lt.err" "$FX/lt.note"
+
+# The no-progress watchdog (ht_sampler, ht_stall_sec), with a 12 s limit
+# looked at every 2 s (the sampler's 5 s, in effect).  53: a phase that
+# writes nothing and uses no CPU is stopped as a FAIL that names it, all
+# kept, its Test2 row a FAIL; a load stage's hang names the load stage.
+HT_STALL_SEC=12 HT_STALL_TICK=2 T1_SLEEP=rebuild drive c53
+k=$HT_RECORDS/c53/fake
+chk "exit 1, not $rc" same "$rc" 1
+chk "stopped soon (wall $(pk c53 wall_s) s, not 120+)" awk -v w="$(pk c53 wall_s)" 'BEGIN { exit !(w ~ /^[0-9]+$/ && w < 60) }'
+chk "a FAIL line names the stage and the limit" hasre "$k/report.txt" \
+    '^FAIL stage rebuild made no progress for 12 s \(nothing changed since [0-9TZ:-]+: .*; the last progress: [^;]+; HT_STALL_MIN=N sets the limit; logs/stalled\.txt\): the run was stopped in its rebuild phase$'
+chk "the RESULT line last, not '$(tail -n 1 "$k/report.txt")'" same "$(tail -n 1 "$k/report.txt")" \
+    "RESULT: FAIL (1; stage rebuild made no progress for 12 s; stopped before its RESULT, exit 1)"
+chk "kept.txt: fail, everything kept" hasre "$k/logs/kept.txt" '^fail: everything kept \(exit 1; stage rebuild made no progress for 12 s\), [0-9TZ:-]+$'
+chk "K holds everything" there "$k" dst-0.qcow2 rescuer.qcow2 decoy.qcow2 share/repo/pack src-meta.json logs/stalled.txt
+chk "logs/stalled.txt: the reason, and the driver's sleep it waited on" eval 'hasre "$k/logs/stalled.txt" "^stage rebuild made no progress for 12 s$" && hasre "$k/logs/stalled.txt" " sleep 120$"'
+chk "no verify" lacks "$k/report.txt" "== verify (fake)"
+chk "peaks row: FAIL, rc 1" same "$(pk c53 result) $(pk c53 rc)" "FAIL 1"
+r53=$(lrows c53)
+chk "Test2 row: FAIL, class fail, the stall its FAIL" eval '[[ $(col "$r53" 2) == FAIL && $(col "$r53" 3) == fail && $(col "$r53" 10) == *"stage rebuild made no progress for 12 s"* ]]'
+chk "the run lock is free, R gone" eval 'unlocked c53 && gone "$HT_WORK/c53"'
+HT_STALL_SEC=12 HT_STALL_TICK=2 T1_LOADHANG=rebuild drive c53b
+k=$HT_RECORDS/c53b/fake
+chk "a load stage's hang: exit 1, not $rc, the FAIL names load restore" eval 'same "$rc" 1 && hasre "$k/report.txt" "^FAIL stage load restore made no progress for 12 s \(.*\): the run was stopped in its rebuild phase\$"'
+r53=$(lrows c53b)
+chk "  its Test2 row: FAIL, the restore stage's need" eval '[[ $(col "$r53" 2) == FAIL && $(col "$r53" 10) == *"stage load restore made no progress"* ]]'
+verdict 53 "the watchdog: a phase, or a load stage, with no progress for HT_STALL_SEC is stopped, a FAIL that names it, all kept" "$FX/out-c53.$((nrun - 1))" "$out"
+
+# 54: slow but working is never stopped: a log line every 3 s for 30 s, and
+# 30 s of CPU in a child that writes nothing, each 2.5 times the limit.
+HT_STALL_SEC=12 HT_STALL_TICK=2 T1_TRICKLE=backup drive c54a source backup; rca=$rc oa=$out
+HT_STALL_SEC=12 HT_STALL_TICK=2 HT_STALL_CPU=2 T1_BUSY=backup drive c54b source backup; rcb=$rc ob=$out
+# (The control: the same CPU under a threshold it never reaches is stopped.)
+HT_STALL_SEC=12 HT_STALL_TICK=2 HT_STALL_CPU=100000 T1_BUSY=backup drive c54c source backup; rcc=$rc oc=$out
+chk "a log that grows: exit 0, not $rca" same "$rca" 0
+chk "  RESULT: PASS" same "$(tail -n 1 "$HT_RECORDS/c54a/fake/report.txt")" "RESULT: PASS"
+chk "  it ran its 30 s (wall $(pk c54a wall_s) s)" awk -v w="$(pk c54a wall_s)" 'BEGIN { exit !(w >= 30) }'
+chk "CPU at work, no file written: exit 0, not $rcb" same "$rcb" 0
+chk "  RESULT: PASS" same "$(tail -n 1 "$HT_RECORDS/c54b/fake/report.txt")" "RESULT: PASS"
+chk "  it ran its 30 s (wall $(pk c54b wall_s) s)" awk -v w="$(pk c54b wall_s)" 'BEGIN { exit !(w >= 30) }'
+chk "the control (HT_STALL_CPU=100000): exit 1, not $rcc, stopped in backup" eval 'same "$rcc" 1 && hasre "$HT_RECORDS/c54c/fake/report.txt" "^FAIL stage backup made no progress for 12 s "'
+# The rescuer's own disks (HT_STALL_IDLE): progress in backup (ht1-bsd.sh
+# writes the repository there), none in rebuild (an idle rescuer's journal).
+HT_STALL_SEC=12 HT_STALL_TICK=2 T1_IDLEW=backup T1_IDLEF=rescuer-try.qcow2 drive c54d source backup; rcd=$rc od=$out
+HT_STALL_SEC=12 HT_STALL_TICK=2 T1_IDLEW=rebuild T1_IDLEF=rescuer.qcow2 drive c54e; rce=$rc oe=$out
+chk "rescuer-try.qcow2 written in backup: exit 0, not $rcd" same "$rcd" 0
+chk "rescuer.qcow2 written in rebuild, nothing else: exit 1, not $rce, stopped in rebuild" eval 'same "$rce" 1 && hasre "$HT_RECORDS/c54e/fake/report.txt" "^FAIL stage rebuild made no progress for 12 s "'
+verdict 54 "the watchdog: a stage slower than the limit that writes, or uses CPU, goes on; a rescuer's own disk counts in backup only" "$oa" "$ob" "$oc" "$od" "$oe"
+
+# 55: the limits (ht_stall_sec): 30 min, 45 for a load restore or oneshot,
+# HT_STALL_MIN for every stage (0: never); a bad HT_STALL_MIN is refused.
+lim=$(unset HT_STALL_SEC HT_STALL_MIN; . "$HERE/ht1-lib.sh"
+      echo "$(ht_stall_sec 'load restore') $(ht_stall_sec 'load oneshot') $(ht_stall_sec rebuild) $(ht_stall_sec 'load boot')" \
+           "$(HT_STALL_MIN=0 ht_stall_sec 'load restore') $(HT_STALL_MIN=7 ht_stall_sec 'load restore') $(HT_STALL_MIN=7 ht_stall_sec verify)" \
+           "$(ht_dur 2700) $(ht_dur 12)")
+chk "the limits: '$lim'" same "$lim" "2700 2700 1800 1800 0 420 420 45 min 12 s"
+HT_STALL_MIN=x drive c55
+chk "HT_STALL_MIN=x: exit 2, not $rc, saying why" eval 'same "$rc" 2 && grep -q "HT_STALL_MIN=x: whole minutes" "$out"'
+chk "  nothing under either root for it" gone "$HT_WORK/c55" "$HT_RECORDS/c55"
+verdict 55 "the watchdog's limits, and HT_STALL_MIN's refusal" "$out"
 
 if ((nfail == 0)); then echo "ht1-lib-test: all $ncase cases ok"; exit 0; fi
 echo "ht1-lib-test: $nfail of $ncase cases FAIL"

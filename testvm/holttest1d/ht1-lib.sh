@@ -12,6 +12,10 @@
 #     HT_RECORDS/peaks.tsv) and stops a run in RAM that outgrows or outlives
 #     its reservation, records the binaries (logs/manifest.txt), and gives a
 #     rerun from a later phase a failure's state back from K.
+#   - A stage that makes no progress for HT_STALL_MIN minutes (none of R's
+#     files changes, no QEMU of the run writes, its own tools use no CPU) is
+#     stopped: a FAIL that names the stage, everything kept ("The
+#     no-progress watchdog", above ht_stall_sec).
 #
 # The driver sets G RUN GV VARIANT PHASES PORT W HERE T, fails=0, say ok bad,
 # imgs and HOLT (ht_holt_pick PLAT; and PLAT, ht1-bsd.sh) before ht_paths,
@@ -46,10 +50,15 @@
 # (the ledger PID of a reservation that outlives the run, read instead of the
 # ancestors'), HT_KEEP, HT_RUSTIC, HT_ROUND, HT_BKO_BIN, HT_FAIL_AT (a test
 # hook: a FAIL after that phase); tests only: HT_WORK, HT_RECORDS,
-# HT_LIMIT_KIB (the use past which a run in RAM is stopped) and HT_FREE_KIB
-# (the RAM disk's free KiB, as the sampler sees it), the last two refused
-# with the default HT_WORK.
-# Exit codes: 0 PASS; 1 FAIL, ended early, or stopped over its reservation;
+# HT_STALL_MIN (minutes of no progress that stop a stage; 0: never;
+# unset: ht_stall_sec's defaults); tests only: HT_WORK, HT_RECORDS,
+# HT_LIMIT_KIB (the use past which a run in RAM is stopped), HT_FREE_KIB
+# (the RAM disk's free KiB, as the sampler sees it), HT_STALL_SEC,
+# HT_STALL_TICK and HT_STALL_CPU (the watchdog's limit and check interval in
+# seconds, and its CPU threshold in CPU seconds), the last five refused with
+# the default HT_WORK.
+# Exit codes: 0 PASS; 1 FAIL, ended early, stopped over its reservation or
+# for making no progress;
 # 2 refused before any phase, R removed; 129, 130, 143 ended by HUP, INT, TERM.
 #
 # Test2's ledger (README "Where a run works, and what it keeps"): ht_end
@@ -64,7 +73,8 @@
 # R/.ht is the lib's: pid (the driver), k (K), seeding (a seed not finished),
 # moved (R is in K), held (left on purpose: the reservation PID that holds it),
 # summed, overrun and lowfree (ht_summary's and the sampler's; a dead run's go
-# when a rerun takes R).
+# when a rerun takes R); stage (the stage the run is in, for the watchdog),
+# progress (its last look at R) and stalled (why it stopped the run).
 #
 #   ht1-lib.sh --sweep [HT_WORK]   (root; ht1-queue.sh runs it) moves each run
 #       in HT_WORK that the lib made and that died (its lock free, its .ht/pid
@@ -84,6 +94,7 @@ HT_NAME='^[A-Za-z0-9][A-Za-z0-9._-]*$'            # RUN and GV: plain names (R a
 HT_STARTED=0 HT_MADE_R=0 HT_SUMMED=0 HT_SAMPLER="" HT_LOCKER="" HT_SIG="" HT_NOTE="" HT_SEEDED="" HT_ROTATED="" HT_SEED_NEW=0
 HT_FD1="" HT_FD2=""
 HT_WHERE=""   # the phase the run is in or after, for ht_end's FAIL line
+HT_PHASE=""   # the phase the run is in, for ht_stage
 HT_PEAK=0 HT_PEAK_ANON=- HT_CG="" HT_T0=0 HT_P0=0 HT_PLAT=linux HT_RESERVE_ROW=""
 HT_RUSTIC_REC="" HT_RUSTIC_SRC="" HT_RUSTIC_SHA="" HT_MODE="" RESERVED=0
 HT_BULK=() HT_ZIP=()
@@ -141,10 +152,13 @@ ht_status_read() {
 # which of the two, and how many seconds in (the driver's ConnectTimeout:
 # sshd never got as far as the login; 45 or so: ssh's ServerAlive gave up
 # on a guest gone quiet; 0: sshd closed at once), so a FAIL's text tells an
-# ssh that never got in from bko-holt cut off.
+# ssh that never got in from bko-holt cut off.  While it runs, the
+# watchdog's stage is "load NAME" (OUT's name: rebuild-NAME.out), the
+# phase's again after it.
 HT_STARTED=HT1-LOAD-STARTED
 ht_load_try() {
-    local out=$1 err=$2 i rc t0 notes=(); shift 2
+    local out=$1 err=$2 i rc t0 notes=() st=${1##*/}; shift 2
+    st=${st%.out}; ht_stage "load ${st#rebuild-}"
     for i in 1 2 3; do
         [[ $i == 1 ]] || { echo "${0##*/}: no answer starting ${out##*/} (exit $rc), try $i of 3" >&2; sleep 3; }
         t0=$SECONDS
@@ -153,6 +167,7 @@ ht_load_try() {
             tail -n +2 "$out.raw" > "$out"; rm -f "$out.raw"
             [[ $rc != 255 ]] || notes+=("ht1: ssh exit 255 $((SECONDS - t0)) s in, after the stage started: the connection was lost, bko-holt's own exit unknown")
             ((${#notes[@]} == 0)) || printf '%s\n' "${notes[@]}" >> "$err"
+            ht_stage "$HT_PHASE"
             return $rc
         fi
         [[ $rc == 255 ]] || break
@@ -160,11 +175,15 @@ ht_load_try() {
     done
     mv -f "$out.raw" "$out"
     ((${#notes[@]} == 0)) || printf '%s\n' "${notes[@]}" >> "$err"
+    ht_stage "$HT_PHASE"
     return $rc
 }
+# ht_stage NAME: the stage the watchdog names (R/.ht/stage: NAME, then the
+# phase); a new one is progress.  Nothing outside a run's R (ht_load_try's own self-test).
+ht_stage() { [[ -n ${R:-} && -d $R/.ht ]] && printf '%s\n%s\n' "${1:-start}" "$HT_PHASE" >"$R/.ht/stage"; return 0; }
 # R is this driver's, for K: a dead run's markers of its attempt go (seeding
 # is ht_seed's, and held stays: the sweep and the queue read its PID).
-ht_mark() { mkdir -p "$R/.ht" && rm -f "$R/.ht/summed" "$R/.ht/overrun" "$R/.ht/lowfree" "$R/.ht/moved" && echo $$ >"$R/.ht/pid" && echo "$K" >"$R/.ht/k"; }
+ht_mark() { mkdir -p "$R/.ht" && rm -f "$R/.ht/summed" "$R/.ht/overrun" "$R/.ht/lowfree" "$R/.ht/moved" "$R/.ht/stalled" "$R/.ht/stage" "$R/.ht/progress" && echo $$ >"$R/.ht/pid" && echo "$K" >"$R/.ht/k"; }
 
 # The cmp-run.sh --reserve row the run holds, as "PID DISK": HT_RESERVE_PID's,
 # else the nearest ancestor's.  cmp-run.sh's reserving PID execs sudo (the
@@ -210,6 +229,12 @@ ht_paths() {
         [[ -z ${!p:-} ]] || [[ ${!p} =~ ^[0-9]+$ && $HT_WORK != "$HT_WORK_DEFAULT" ]] ||
             ht_die "$p=${!p}: a number of KiB, for tests (with their own HT_WORK) only"
     done
+    for p in HT_STALL_SEC HT_STALL_TICK HT_STALL_CPU; do
+        [[ -z ${!p:-} ]] || [[ ${!p} =~ ^[0-9]+$ && $HT_WORK != "$HT_WORK_DEFAULT" ]] ||
+            ht_die "$p=${!p}: a number of seconds, for tests (with their own HT_WORK) only"
+    done
+    [[ -z ${HT_STALL_MIN:-} || $HT_STALL_MIN =~ ^[0-9]+$ ]] ||
+        ht_die "HT_STALL_MIN=$HT_STALL_MIN: whole minutes of no progress that stop a stage (0: never)"
     K=$HT_RECORDS/$RUN/$GV
     row=$(ht_reserve_row); HT_RESERVE_ROW=${row%% *} RESERVED=${row#* }; RESERVED=${RESERVED:-0}
     case ${HT_RAM:-} in
@@ -498,14 +523,88 @@ ht_limit_kib() {  # RESERVED: the use past which a run in RAM is stopped, RESERV
     if [[ -n ${HT_LIMIT_KIB:-} ]]; then echo "$HT_LIMIT_KIB"; return; fi
     awk -v r="$1" 'BEGIN { m = r * 0.1; if (m < 1) m = 1; printf "%d", (r + m) * 1048576 }'
 }
+# The no-progress watchdog (the sampler's): a run is stopped when the stage
+# it is in (R/.ht/stage: the phase, or ht_load_try's "load NAME") has made
+# no progress for ht_stall_sec's limit.  Progress is any of: a new stage; a
+# file in R (but .ht) new, gone, or of another size or mtime (logs, serial
+# consoles, disks QEMU writes, the repository, dumps), but for the
+# rescuer's own disks (HT_STALL_IDLE) outside the backup phase; a deleted file in R
+# that a QEMU holds open (its -snapshot overlay) of another size or mtime;
+# or HT_STALL_CPU (10) CPU seconds used by the driver and its own
+# processes (theirs and their reaped children's, a QEMU's not), since the
+# last progress: fsmeta.py or judge.py at work on a big tree, a sha256sum,
+# a host-side rustic-bko.  A guest that hangs with a command (bko-holt in
+# the rescuer, its ssh waiting) changes none of them; one that keeps
+# writing to its console or disk counts as progressing, so a stage is only
+# ever stopped later than it would be with less to look at.  The rescuer's
+# own disks are left out but in the backup phase (ht1-bsd.sh's backup goes
+# into rescuer-try.qcow2): an idle Debian rescuer writes its journal, btrfs
+# commits and its timers' work there every minute or two (chopin
+# 2026-11-21, alpine324 with a bko-holt that hung in its restore), while a
+# stage's own work goes to the targets, the share or the driver's logs.
+# The limits:
+# measured 2026-11-21 over every HoltTest1/HoltTest2 and BackShot2 PASS on
+# the six hosts since 2026-11-01 (1212 HoltTest runs, 5200 BackShot2
+# cases), the longest gap between two changes of the run's kept files was
+# 912 s (a garuda load restore, chopin), 734 s in a backup (dragonfly6,
+# cinqcent), 467 s in verify and 223 s in source; FAILs that were slow,
+# not hung, reached 624 s (truenas25's source).  So 30 min for every stage
+# and 45 min for a load restore or oneshot (a big tree's writes), 2 to 3
+# times the longest seen.  HT_STALL_MIN=N takes N minutes for every stage
+# (0: no watchdog); HT_STALL_SEC (tests) the same in seconds.
+ht_stall_sec() {  # STAGE: the seconds of no progress that stop the run in it (0: never)
+    local m
+    if [[ -n ${HT_STALL_SEC:-} ]]; then echo "$HT_STALL_SEC"; return; fi
+    if [[ -n ${HT_STALL_MIN:-} ]]; then m=$HT_STALL_MIN
+    else case $1 in "load restore"|"load oneshot") m=45 ;; *) m=30 ;; esac; fi
+    echo $((m * 60))
+}
+ht_dur() { if (($1 % 60)); then echo "$1 s"; else echo "$(($1 / 60)) min"; fi; }   # SECONDS: "N min", else "N s"
+# R's progress signals in PHASE, one line each (LC_ALL=C sorted): a file's
+# path, size and mtime (HT_STALL_IDLE's but in backup); a deleted file a
+# QEMU holds open in R, its size and mtime.
+HT_STALL_IDLE=(rescuer.qcow2 rescuer-try.qcow2 img.qcow2)   # (ht1-bsd.sh's +img: the image's overlay)
+ht_progress() {  # PHASE
+    local q f l x=()
+    [[ $1 == backup ]] || for f in "${HT_STALL_IDLE[@]}"; do x+=(! -path "$R/$f"); done
+    {
+        find "$R" -xdev -path "$R/.ht" -prune -o -type f "${x[@]}" -printf '%P %s %T@\n' 2>/dev/null
+        for q in $(pgrep '^qemu-system'); do
+            for f in /proc/"$q"/fd/*; do
+                l=$(readlink "$f" 2>/dev/null)
+                [[ $l == "$R/"*" (deleted)" ]] && echo "${l#"$R/"} $(stat -L -c '%s %Y' "$f" 2>/dev/null)"
+            done
+        done
+    } | LC_ALL=C sort
+}
+# The CPU clock ticks used by PID and what it runs, and their reaped
+# children: utime + stime + cutime + cstime, less the SKIPs' (and theirs)
+# and any QEMU's (an idle guest's CPU is no progress).
+ht_cpu_ticks() {  # PID [SKIP...]
+    local t=0 c s ln="" fld=()
+    read -r ln 2>/dev/null </proc/"$1"/comm
+    if [[ $ln != qemu-system* ]] && read -r ln 2>/dev/null </proc/"$1"/stat; then
+        read -ra fld <<<"${ln##*) }"
+        ((${#fld[@]} > 14)) && t=$((fld[11] + fld[12] + fld[13] + fld[14]))
+    fi
+    for c in $(pgrep -P "$1"); do
+        for s in "${@:2}"; do [[ $c == "$s" ]] && continue 2; done
+        t=$((t + $(ht_cpu_ticks "$c" "${@:2}")))
+    done
+    echo "$t"
+}
 # Every 5 s while the driver lives: the running maxima in R/.ht/peak and
 # peak-anon.  In RAM, it also stops a run that outgrows its reservation
 # (past ht_limit_kib's limit; or past the reservation itself while the RAM
 # disk has under 1 GiB free), or outlives it (no live ledger row:
-# cmp-run.sh hands its room out again): the reason in R/.ht/overrun, the
-# run's own QEMU killed (ht_qemus: so a foreground ssh returns), then TERM
-# to the driver and what it runs (rustic's backup, qemu-img convert), so
-# the driver's trap runs now.  Not to a vm-mount or vm-umount at work, which
+# cmp-run.sh hands its room out again): the reason in R/.ht/overrun.  In
+# RAM or not, every HT_STALL_TICK (60) s it looks for progress, and stops
+# a run whose stage made none for ht_stall_sec's limit (the watchdog,
+# above): the reason in R/.ht/stalled, and what the run's processes were
+# doing in logs/stalled.txt.  Either stop: the run's own QEMU killed
+# (ht_qemus: so a foreground ssh returns), then TERM to the driver and
+# what it runs (rustic's backup, qemu-img convert), so the driver's trap
+# runs now.  Not to a vm-mount or vm-umount at work, which
 # finishes first (ht_desc), nor to what else holds R: vm-mount's qemu-nbd
 # serves a mounted disk, and ht_end's ht_free takes vm-mount's states down
 # before it kills R's other holders.  A run within its reservation goes on
@@ -515,38 +614,80 @@ ht_limit_kib() {  # RESERVED: the use past which a run in RAM is stopped, RESERV
 # ENOSPC is an ordinary FAIL.  HT_FREE_KIB (tests) stands in for df's free.
 ht_sampler() {
     local k a s="" lim rk free why miss=0 me=$BASHPID
+    local hz tick=${HT_STALL_TICK:-60} cpus=${HT_STALL_CPU:-10} now next=0 mark=0 st ph st0="" cpu cpu0=0 last="" stall="" sl l
     trap '[[ -z ${s:-} ]] || kill "$s" 2>/dev/null; exit 0' TERM
     cd / || :
     lim=$(ht_limit_kib "$RESERVED")
     rk=$(awk -v r="$RESERVED" 'BEGIN { printf "%d", r * 1048576 }')   # the reservation itself, KiB (RESERVED may be 2.5)
+    hz=$(getconf CLK_TCK 2>/dev/null); [[ $hz =~ ^[1-9][0-9]*$ ]] || hz=100
     while kill -0 $$ 2>/dev/null; do
         sleep 5 & s=$!
         wait "$s"; s=""
         read -r k a < <(ht_measure)
         ht_max "$R/.ht/peak" "$k"
         [[ $a == - ]] || ht_max "$R/.ht/peak-anon" "$a"
-        [[ $HT_MODE == ram && ! -e $R/.ht/summed ]] || continue
-        free=${HT_FREE_KIB:-$(df -Pk /mnt/bko-ram 2>/dev/null | awk 'NR == 2 { print $4 }')} why=""
-        # (Gone twice in a row: cmp-run.sh rewrites the ledger in place.)
-        if [[ -n $(ht_reserve_row) ]]; then miss=0; else miss=$((miss + 1)); fi
-        if ((k > lim)); then
-            why="over its reservation: $(ht_gib "$k") GiB, past the limit of $(ht_gib "$lim") GiB ($RESERVED GiB reserved)"
-        elif [[ $free =~ ^[0-9]+$ ]] && ((free < 1048576 && k > rk)); then
-            why="the RAM disk has under 1 GiB free ($(ht_gib "$free") GiB), the run over its reservation at $(awk -v k="$k" 'BEGIN { printf "%.2f", k / 1048576 }') GiB of $RESERVED GiB reserved"
-        elif ((miss >= 2)); then
-            why="its reservation ended (no live ledger row, pid ${HT_RESERVE_ROW:-?})"
+        [[ ! -e $R/.ht/summed ]] || continue
+        why=""
+        printf -v now '%(%s)T' -1
+        if ((now >= next)); then
+            next=$((now + tick)) st=start ph=""
+            { IFS= read -r st; IFS= read -r ph; } 2>/dev/null <"$R/.ht/stage"; [[ -n $st ]] || st=start
+            ht_progress "$ph" >"$R/.ht/progress.new"
+            cpu=$(ht_cpu_ticks $$ "$me" "$HT_LOCKER")
+            l=""
+            if [[ $st != "$st0" ]]; then
+                l="the stage $st began"
+            elif ! cmp -s "$R/.ht/progress" "$R/.ht/progress.new"; then
+                l=$(LC_ALL=C comm -3 "$R/.ht/progress" "$R/.ht/progress.new" | head -n 1); l=${l#$'\t'}; l="${l% * *} changed"
+            elif ((cpu - cpu0 >= cpus * hz)); then
+                l="the run's own processes used $(((cpu - cpu0) / hz)) s of CPU"
+            elif ((cpu < cpu0)); then
+                cpu0=$cpu   # (a process went, its count with it: counted from here)
+            fi
+            [[ -z $l ]] || { mark=$now cpu0=$cpu st0=$st last=$l; }
+            mv -f "$R/.ht/progress.new" "$R/.ht/progress"
+            sl=$(ht_stall_sec "$st")
+            if ((sl > 0 && now - mark >= sl)); then
+                stall="stage $st made no progress for $(ht_dur "$sl")"
+                printf '%s\n%s\n' "$stall" "nothing changed since $(date -u -d "@$mark" +%FT%TZ): no file in R, no write of its QEMU, under $cpus s of CPU of its own processes; the last progress: $last; HT_STALL_MIN=N sets the limit" >"$R/.ht/stalled"
+            fi
         fi
-        if [[ -z $why ]]; then
-            [[ $free =~ ^[0-9]+$ ]] && ((free < 1048576)) && [[ ! -e $R/.ht/lowfree ]] && echo "$free $k" >"$R/.ht/lowfree"
-            continue
+        if [[ -z $stall && $HT_MODE == ram ]]; then
+            free=${HT_FREE_KIB:-$(df -Pk /mnt/bko-ram 2>/dev/null | awk 'NR == 2 { print $4 }')}
+            # (Gone twice in a row: cmp-run.sh rewrites the ledger in place.)
+            if [[ -n $(ht_reserve_row) ]]; then miss=0; else miss=$((miss + 1)); fi
+            if ((k > lim)); then
+                why="over its reservation: $(ht_gib "$k") GiB, past the limit of $(ht_gib "$lim") GiB ($RESERVED GiB reserved)"
+            elif [[ $free =~ ^[0-9]+$ ]] && ((free < 1048576 && k > rk)); then
+                why="the RAM disk has under 1 GiB free ($(ht_gib "$free") GiB), the run over its reservation at $(awk -v k="$k" 'BEGIN { printf "%.2f", k / 1048576 }') GiB of $RESERVED GiB reserved"
+            elif ((miss >= 2)); then
+                why="its reservation ended (no live ledger row, pid ${HT_RESERVE_ROW:-?})"
+            fi
+            [[ -n $why ]] || { [[ $free =~ ^[0-9]+$ ]] && ((free < 1048576)) && [[ ! -e $R/.ht/lowfree ]] && echo "$free $k" >"$R/.ht/lowfree"; }
         fi
-        echo "$why" >"$R/.ht/overrun"
+        [[ -n $why || -n $stall ]] || continue
+        if [[ -n $why ]]; then
+            echo "$why" >"$R/.ht/overrun"
+        else
+            # What the run was at: its processes and its QEMU (ps), for the FAIL's records.
+            l=$(ht_qemus "$R" | paste -sd, -)
+            { cat "$R/.ht/stalled"; echo; ps -ww -o pid,ppid,etimes,time,stat,args -p "$(ht_tree $$ "$me" | paste -sd, -)"
+              [[ -z $l ]] || { echo; ps -ww -o pid,etimes,time,stat,args -p "$l"; }; } >"$R/logs/stalled.txt" 2>&1
+        fi
         # shellcheck disable=SC2046  # PIDs
         kill $(ht_qemus "$R") 2>/dev/null
         kill -TERM $$
         # shellcheck disable=SC2046  # PIDs
         kill $(ht_desc $$ "$me" "$HT_LOCKER") 2>/dev/null
         exit 0
+    done
+}
+ht_tree() {  # PID [SKIP...]: PID and all below it, less the SKIPs and theirs
+    local c s
+    echo "$1"
+    for c in $(pgrep -P "$1"); do
+        for s in "${@:2}"; do [[ $c == "$s" ]] && continue 2; done
+        ht_tree "$c" "${@:2}"
     done
 }
 # PID's descendants, less the SKIPs, a vm-mount or vm-umount at work, and
@@ -565,7 +706,8 @@ ht_desc() {  # PID [SKIP...]
 ht_mounting() { tr '\0' ' ' 2>/dev/null <"/proc/$1/cmdline" | grep -qE '(^|/)vm-u?mount '; }   # PID: a vm-mount or vm-umount
 
 ht_phase_start() {  # P
-    HT_STARTED=1 HT_P0=$(date +%s) HT_WHERE="in its $1 phase"
+    HT_STARTED=1 HT_P0=$(date +%s) HT_WHERE="in its $1 phase" HT_PHASE=$1
+    ht_stage "$1"
     echo 0 >"$R/.ht/peak"; echo 0 >"$R/.ht/peak-anon"
 }
 
@@ -911,7 +1053,7 @@ ht_end() {  # RC
     # an unbound variable can't cut it short; cp and zstd inherit the ignored
     # signals (rsync doesn't: ht_rsync).
     trap '' TERM INT HUP PIPE QUIT
-    local rc=$1 code=1 m="" f pat over="" kept last="" said=0 zipped=() x=() what="" placed="" msg="" keepmark="" kb=""
+    local rc=$1 code=1 m="" f pat over="" stall="" stalls="" kept last="" said=0 zipped=() x=() what="" placed="" msg="" keepmark="" kb=""
     set +eu
     trap - EXIT
     # The driver's own stdio again (ht_begin's copies): a signal that came
@@ -926,6 +1068,12 @@ ht_end() {  # RC
     m=""; read -r m 2>/dev/null <"$R/.ht/peak-anon"
     [[ $HT_PEAK_ANON != - && $m =~ ^[0-9]+$ ]] && ((m > HT_PEAK_ANON)) && HT_PEAK_ANON=$m
     read -r over 2>/dev/null <"$R/.ht/overrun"
+    # The watchdog's stop (an overrun's wins): its TERM is the run's own
+    # stop, not a signal from outside, so the run ends as a FAIL, exit 1.
+    if [[ -z $over && -s $R/.ht/stalled ]]; then
+        { IFS= read -r stall; IFS= read -r stalls; } 2>/dev/null <"$R/.ht/stalled"
+        [[ $HT_SIG != TERM ]] || { HT_SIG=""; rc=1; }
+    fi
 
     # Refused before any phase: nothing is kept, and nothing reaches K.  An R
     # in RAM that was there (a dead run's) keeps its .ht, a dead run's again,
@@ -951,6 +1099,8 @@ ht_end() {  # RC
         local where=${HT_WHERE:-before its first phase}
         if [[ -n $over ]]; then
             say "FAIL harness: $over: the run was stopped $where"
+        elif [[ -n $stall ]]; then
+            say "FAIL $stall ($stalls; logs/stalled.txt): the run was stopped $where"
         elif [[ -n $HT_SIG ]]; then
             say "FAIL the run was ended by SIG$HT_SIG $where (exit $rc)"
         else
@@ -960,6 +1110,8 @@ ht_end() {  # RC
         ((HT_SUMMED)) || ht_summary
         if [[ -n $over ]]; then
             say "RESULT: FAIL ($fails; harness: $over; stopped before its RESULT, exit $rc)"
+        elif [[ -n $stall ]]; then
+            say "RESULT: FAIL ($fails; $stall; stopped before its RESULT, exit $rc)"
         else
             say "RESULT: FAIL ($fails; ended ${HT_SIG:+by SIG$HT_SIG }before its RESULT, exit $rc)"
         fi
@@ -968,6 +1120,9 @@ ht_end() {  # RC
     elif [[ -n $over ]]; then
         # (Stopped just after its RESULT line: that verdict stands.)
         say "note: harness: $over (after the RESULT line): the run keeps its records only"
+        ((fails == 0)) && code=0
+    elif [[ -n $stall ]]; then
+        say "note: $stall (after the RESULT line, which stands)"
         ((fails == 0)) && code=0
     elif [[ $last == "RESULT: PASS" ]] && ((fails == 0)) && { ((rc == 0)) || [[ -n $HT_SIG ]]; }; then
         code=0
@@ -1007,7 +1162,7 @@ ht_end() {  # RC
         [[ -z $over ]] || kept="overrun: records only, $(date -u +%FT%TZ); harness: $over"
         echo "$kept; deleted ${HT_BULK[*]:-nothing}; zstd ${zipped[*]:-nothing}" >"$R/logs/kept.txt"
     else
-        echo "fail: everything kept (exit $rc${HT_SIG:+, SIG$HT_SIG}$( ((code == 0)) && echo ", no ${HT_DONE_PHASE:-verify}")), $(date -u +%FT%TZ)" >"$R/logs/kept.txt"
+        echo "fail: everything kept (exit $rc${HT_SIG:+, SIG$HT_SIG}$( ((code == 0)) && echo ", no ${HT_DONE_PHASE:-verify}")${stall:+; $stall}), $(date -u +%FT%TZ)" >"$R/logs/kept.txt"
         # The move below is evidence kept (Test2's design: a failed run's
         # state moves to /bkoscratch): its bytes go to the job's keep= in the
         # wear log, which the write stop rule leaves out (iolog.sh --keep-since).

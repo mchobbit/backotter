@@ -1071,6 +1071,41 @@ All three drivers write the same way, through `ht1-lib.sh`:
   reservation ended`).  That is the harness's stop, not a check, and the
   run keeps its records only: for its size, reserve more (or raise the
   guest's row in `ram-sizes.tsv`) and run it again.
+- **The no-progress watchdog.** In RAM or on /bkoscratch, every 60 s the
+  run looks for progress in the stage it is in (the phase, or within
+  rebuild the load stage, `load restore`, ...): a new stage, a file in R
+  new, gone or of another size or mtime (its logs and serial consoles,
+  the disks its QEMU writes, the repository, dumps), a deleted file in R a
+  QEMU of the run holds open (a `-snapshot` overlay), or 10 s of CPU used
+  by the driver and what it runs (a QEMU's not).  The rescuer's own disks
+  (`rescuer.qcow2`, `rescuer-try.qcow2`, ht1-bsd.sh's `+img` overlay
+  `img.qcow2`) count in the backup phase only,
+  where ht1-bsd.sh writes the repository: elsewhere an idle Debian rescuer
+  writes its journal, btrfs commits and timers' work there every minute or
+  two.  A stage with none of these for 30 minutes (45 for `load restore`
+  and `load oneshot`) is stopped as the overrun stop does, and the report
+  ends `FAIL stage load restore made no progress for 45 min (nothing
+  changed since T: …; the last progress: …; logs/stalled.txt): the run
+  was stopped in its rebuild phase` and `RESULT: FAIL (…; stage load
+  restore made no progress for 45 min; stopped before its RESULT, exit
+  1)`.  It is a FAIL, not the harness's stop: everything is kept, exit 1,
+  and Test2's row is a FAIL (need `stage:restore` for a load stage).
+  `logs/stalled.txt` holds the reason and `ps` of the driver's processes
+  and its QEMU at the stop: what it was waiting on.  The limits come from
+  every PASS since 2026-11-01 on the six hosts (1212 HoltTest runs, 5200
+  BackShot2 cases, 2026-11-21): the longest gap between two changes of a
+  run's kept files was 912 s, in a garuda load restore (chopin), 734 s in
+  a backup (dragonfly6, cinqcent), 467 s in verify and 223 s in source;
+  slow FAILs that weren't hung reached 624 s (truenas25's source).  A guest
+  that keeps writing to its console or disk while hung counts as working,
+  so a hang is only ever stopped later, never a slow stage sooner.
+  `HT_STALL_MIN=N` sets N minutes for every stage, `HT_STALL_MIN=0` turns
+  the watchdog off (both in the manifest's env lines); `HT_STALL_SEC`,
+  `HT_STALL_TICK` and `HT_STALL_CPU` are ht1-lib-test.sh's (refused with
+  the default `HT_WORK`).  Before it, a hang waited out the stage's
+  `timeout` (3600 s for a load stage, 7200 s in ht1-bsd.sh) and then the
+  cell's: an omnios58+img restore sat 2 h in a hung `diskinfo` (cinqcent,
+  2026-11-21).
 - **A full RAM disk** doesn't stop a run within its reservation: the
   room is others' (cmp-run.sh admits reservations up to the disk's size
   less 1 GiB, and a run may pass its own by the margin above before it is
@@ -1119,8 +1154,9 @@ All three drivers write the same way, through `ht1-lib.sh`:
   set, or `HT_RUSTIC`'s file), not in the set's `SHA256SUMS`, or doesn't
   match it; a rerun on a
   records-only record; `HT_LIMIT_KIB` or `HT_FREE_KIB` (ht1-lib-test.sh's
-  stand-ins for the limit and the RAM disk's free space) without a test's
-  own `HT_WORK`; and
+  stand-ins for the limit and the RAM disk's free space), or
+  `HT_STALL_SEC`, `HT_STALL_TICK` or `HT_STALL_CPU`, without a test's
+  own `HT_WORK`; an `HT_STALL_MIN` that isn't whole minutes; and
   the drivers' own (a bad `HT_VARIANT`, `degraded` on one disk, redox
   without its tools).  A dead run's R that a refused run had taken stays
   as it was, for the sweep.

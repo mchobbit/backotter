@@ -601,6 +601,22 @@ class Pool(unittest.TestCase):
         self.assertEqual(guest.reserve_for([over, dict(rerun, run="t2v-b")], "guest:x", {}, pol)[0], 4.1)
         # other HARNESS rows still count not at all
         self.assertEqual(guest.reserve_for([row("4", 12.0, verdict="HARNESS")], "guest:x", {}, pol)[0], 8.0)
+        # a HARNESS row t2 stopped in the update (no end, net stall) is a floor: guix15's 5.03 GiB on
+        # czerny, then a run still at 4.6 overran at 5.79 (t2v-20261121T1624-bd34)
+        measure = row("1", 4.12, verdict="PASS", needs={"try": "PASS"}, phase="done")
+        timed_out = row("2", 5.03, verdict="HARNESS", phase="update")
+        self.assertEqual(guest.reserve_for([measure], "guest:x", {}, pol)[0], 4.8)
+        self.assertEqual(guest.reserve_for([timed_out, measure], "guest:x", {}, pol)[0], 5.8)   # 1.1 x 5.03 + 0.25
+        self.assertEqual(guest.reserve_for([timed_out], "guest:x", {"ram_gib": 3}, pol)[0], 5.8)
+        # ... only while newer than the newest measure (or in its run), and only once it reached the update
+        self.assertEqual(guest.reserve_for([dict(timed_out, t="0"), measure], "guest:x", {}, pol)[0], 4.8)
+        self.assertEqual(guest.reserve_for([dict(timed_out, t="0", run="t2v-a"), dict(measure, run="t2v-a")],
+                                           "guest:x", {}, pol)[0], 5.8)
+        self.assertEqual(guest.reserve_for([row("2", 5.03, verdict="HARNESS", phase="boot"), measure], "guest:x", {}, pol)[0], 4.8)
+        self.assertEqual(guest.reserve_for([dict(timed_out, verdict="LOST"), measure], "guest:x", {}, pol)[0], 4.8)
+        # ... and never pushes a measure out of the last 3
+        stops = [row(str(5 + i), 1.0, verdict="HARNESS", phase="update") for i in range(3)]
+        self.assertEqual(guest.reserve_for(stops + [measure], "guest:x", {}, pol)[0], 4.8)
 
     def test_the_job_is_guest_job_sh_under_its_reservation(self):
         jobs, io = FakeJobs(), FakeIO()

@@ -92,6 +92,8 @@ def mode_of(entry, update=False):
 # vm-update's phases from the update's end on (result.json's "phase" where it stopped): a job that
 # failed in one of these had run its whole update, so its RAM peak measures what the update needs.
 UPDATE_ENDED = ("reboot", "snapd", "after-hook", "gate", "dump", "trim", "poweroff", "ship", "done")
+# ... and the phases of a job that got as far as running its update (reserve_for's HARNESS floors).
+UPDATE_REACHED = ("update", "reboot-first") + UPDATE_ENDED
 _PHASE_RE = re.compile(r"\bin phase (\S+)")
 
 
@@ -123,7 +125,11 @@ def reserve_for(rows, cell, entry, policy, update=False):
     aside: that is the same day's update again, whose peak varies (zorin18's NILFS2 root grows
     its overlay with the run's length, not the update's size: 4.54 GiB at the overrun of a slow-
     mirror attempt, 3.5 at its rerun's end, t2v-20261118T1426-76be), so the larger counts.
-    HARNESS and LOST rows other than overruns count not at all (the job never got far)."""
+    A HARNESS row that got as far as the update (extra.phase "update" or later: t2 stopped it
+    at its timeout or on a net stall) is a floor the same way, from its own last 3 (guix15's
+    5.03 GiB at a 7200 s stop on czerny was left out, and its next run, still at 4.6, overran
+    at 5.79 GiB, t2v-20261121T1624-bd34).  Other HARNESS rows and LOST rows count not at all
+    (the job never got far)."""
     mine = sorted((r for r in rows or () if r.get("cell") == cell and r.get("kind") == "run"
                    and (r.get("verdict") not in ("HARNESS", "LOST") or (r.get("extra") or {}).get("overrun"))
                    and isinstance(r.get("ram_peak_kib"), int) and r["ram_peak_kib"] > 0),
@@ -132,8 +138,14 @@ def reserve_for(rows, cell, entry, policy, update=False):
     measured = [r for r in mine if not _cut_short(r)]
     newest = (measured[0].get("t") or "", measured[0].get("id") or "") if measured else None
     same_run = measured[0].get("run") if measured else None
-    floors = [r for r in mine if _cut_short(r) and (newest is None or (r.get("t") or "", r.get("id") or "") > newest
-                                                     or (same_run and r.get("run") == same_run))]
+    stopped = sorted((r for r in rows or () if r.get("cell") == cell and r.get("kind") == "run"
+                      and r.get("verdict") == "HARNESS" and not (r.get("extra") or {}).get("overrun")
+                      and (r.get("extra") or {}).get("phase") in UPDATE_REACHED
+                      and isinstance(r.get("ram_peak_kib"), int) and r["ram_peak_kib"] > 0),
+                     key=lambda r: (r.get("t") or "", r.get("id") or ""), reverse=True)[:3]
+    floors = [r for r in [r for r in mine if _cut_short(r)] + stopped
+              if newest is None or (r.get("t") or "", r.get("id") or "") > newest
+              or (same_run and r.get("run") == same_run)]
     if measured:
         d = round(1.1 * max(r["ram_peak_kib"] for r in measured) / 1048576 + 0.25, 1)
     elif entry.get("ram_gib"):

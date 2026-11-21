@@ -6,7 +6,8 @@
 # stick doesn't boot, the laptop comes back up as it was.  Nothing on the internal
 # disk changes.  By efibootmgr, or without it (AerynOS packages none) by bs1-efi,
 # through efivarfs, with the same bytes; BS1_EFI=efivarfs takes bs1-efi's way
-# where efibootmgr is there too.
+# where efibootmgr is there too.  First, it stops unless the stick has the SSH
+# keys that make it start sshd (check_stick_keys).
 
 # shellcheck disable=SC1091
 . "$(dirname "$(readlink -f "$0")")/bs1-common"
@@ -23,6 +24,65 @@ disk=$(disk_of "$config")
 [[ -n $disk && $(lsblk -dno TRAN "/dev/$disk") == usb ]] || die "BACKOTTER is on $config, which isn't a USB disk"
 internal=$(internal_disk) || die "no single disk has serial $INTERNAL_SERIAL"
 [[ $disk != "$internal" ]] || die "the stick can't be the internal disk"
+
+# The stick starts sshd only if its BACKOTTER partition lets a key in
+# (stick/layer/usr/lib/backotter/key-access, which is silent without one).
+# A reflashed stick has neither file, and booted it shows its menu with SSH
+# off: the controller waited 7 min for nothing, twice (2026-11-21).  So both
+# are checked before any boot variable changes: backotter/authorized_keys with
+# a key line, as key-access reads it, and backotter/ssh_host_ed25519_key; and,
+# where the drive has the ones bs1-adopt installs (backshot1/keys/, from
+# `backshot1 stage`), that the controller's key is among them and the host
+# key is the one the controller pins.
+KEY_LINE='^(ssh-(ed25519|rsa)|ecdsa-sha2-[a-z0-9-]+|sk-[a-z0-9@.-]+) '
+check_stick_keys() {
+    local kt cfg fix why=() pub
+    fix="on the Mac: stick/add-ssh-key.sh --host-key ~/.ssh/backshot1/ssh_host_ed25519_key /dev/<stick> ~/.ssh/backshot1/id_ed25519.pub (the stick, unmounted, as the Mac names it; here it's /dev/$disk), or copy id_ed25519.pub to BACKOTTER/backotter/authorized_keys and ssh_host_ed25519_key beside it"
+    kt=$(mktemp -d) || die "can't make a temporary directory"
+    mkdir "$kt/mnt"
+    # Never rm -r: $kt/mnt may still be the stick.
+    trap 'umount "$kt/mnt" 2>/dev/null; rmdir "$kt/mnt" 2>/dev/null; rm -f "$kt/keys" "$kt/want" "$kt/host"; rmdir "$kt" 2>/dev/null' EXIT
+    mount -t vfat -o ro "$config" "$kt/mnt" || die "can't mount $config, the stick's BACKOTTER partition"
+    cfg=$kt/mnt/backotter
+    # FAT, perhaps edited on Windows: no carriage returns.
+    tr -d '\r' 2>/dev/null <"$cfg/authorized_keys" | grep -E "$KEY_LINE" | cut -d' ' -f1,2 | sort -u >"$kt/keys"
+    if [[ ! -s $kt/keys ]]; then
+        why+=("no backotter/authorized_keys with a public key in it")
+    elif [[ -s $HERE/keys/authorized_keys ]]; then
+        tr -d '\r' <"$HERE/keys/authorized_keys" | grep -E "$KEY_LINE" | cut -d' ' -f1,2 | sort -u >"$kt/want"
+        grep -qxFf "$kt/want" "$kt/keys" || why+=("backotter/authorized_keys hasn't the controller's key (the drive's backshot1/keys/authorized_keys)")
+    else
+        say "no backshot1/keys/authorized_keys on the drive: not checking that the stick lets the controller's key in"
+    fi
+    if ! grep -qs 'BEGIN OPENSSH PRIVATE KEY' "$cfg/ssh_host_ed25519_key"; then
+        why+=("no backotter/ssh_host_ed25519_key holding an OpenSSH private key")
+    elif [[ ! -s $HERE/keys/ssh_host_ed25519_key.pub ]]; then
+        say "no backshot1/keys/ssh_host_ed25519_key.pub on the drive: not checking the stick's host key against the pinned one"
+    elif ! command -v ssh-keygen >/dev/null; then
+        say "no ssh-keygen here: not checking the stick's host key against the pinned one"
+    else
+        # ssh-keygen won't read a private key others may read, as FAT's are.
+        (umask 077; tr -d '\r' <"$cfg/ssh_host_ed25519_key" >"$kt/host")
+        pub=$(ssh-keygen -y -P '' -f "$kt/host" 2>/dev/null </dev/null | cut -d' ' -f1,2)
+        if [[ -z $pub ]]; then
+            why+=("backotter/ssh_host_ed25519_key isn't a key ssh-keygen can read")
+        elif [[ $pub != "$(tr -d '\r' <"$HERE/keys/ssh_host_ed25519_key.pub" | cut -d' ' -f1,2)" ]]; then
+            why+=("backotter/ssh_host_ed25519_key isn't the host key the controller pins (the drive's backshot1/keys/ssh_host_ed25519_key)")
+        fi
+    fi
+    umount "$kt/mnt" || die "can't unmount $config"
+    rmdir "$kt/mnt"
+    rm -f "$kt/keys" "$kt/want" "$kt/host"
+    rmdir "$kt"
+    trap - EXIT
+    if [[ ${#why[@]} -gt 0 ]]; then
+        local w
+        for w in "${why[@]}"; do say "the stick's BACKOTTER ($config): $w"; done
+        die "the stick would boot with SSH off, so BootNext is left alone.  A reflashed stick needs its keys again: $fix"
+    fi
+    say "the stick's BACKOTTER ($config) has the SSH keys"
+}
+check_stick_keys
 
 esp=$(lsblk -lnpo NAME,FSTYPE,LABEL "/dev/$disk" | awk '$2 == "vfat" && $3 == "ESP" { print $1; exit }')
 [[ -n $esp ]] || die "/dev/$disk has no vfat partition labelled ESP"

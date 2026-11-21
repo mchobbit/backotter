@@ -43,7 +43,12 @@ caught at different moments; `bs1-manifest` tells those from real differences.
       stick/add-ssh-key.sh --host-key ~/.ssh/backshot1/ssh_host_ed25519_key IMG ~/.ssh/backshot1/id_ed25519.pub
 
   With them on the stick, it starts SSH at boot and lets the key in as
-  `backotter`, with sudo.  Nobody types a password anywhere.
+  `backotter`, with sudo.  Nobody types a password anywhere.  The keys
+  live in the stick's BACKOTTER partition (`backotter/authorized_keys`,
+  `backotter/ssh_host_ed25519_key`), so a reflashed stick has none: run
+  `add-ssh-key.sh` on it again (IMG is then the stick's `/dev` name on the
+  Mac, unmounted).  Without them the stick boots to its menu with SSH off;
+  `to-stick` checks first (below).
 - After each OS install, once, on the Thinkpad, from the backup drive:
 
       sudo sh /PATH/TO/mybig512/backshot1/bs1-adopt
@@ -91,6 +96,16 @@ the backup drive stay plugged in.
 
     backshot1 to-stick            reboots into the stick, once, by BootNext,
                                   waits for it (7 min) and runs find-rescue
+
+Before it changes any boot variable, `bs1-to-stick` mounts the stick's
+BACKOTTER partition read-only and stops, naming the `add-ssh-key.sh` line
+above, unless `backotter/authorized_keys` has a key line (as `key-access`
+reads it) and `backotter/ssh_host_ed25519_key` is an OpenSSH private key; and,
+where the drive has `backshot1/keys/` from `stage`, unless the first holds the
+controller's key and the second is the pinned host key (`ssh-keygen -y`;
+without `ssh-keygen` that comparison is skipped, and it says so).  A
+reflashed stick without its keys cost two 7-min waits before this
+(2026-11-21).
 
 If that doesn't work, the laptop comes back up as it was, and the person boots the
 stick by hand, then runs `find-rescue`.  It needs a UEFI system.  Where

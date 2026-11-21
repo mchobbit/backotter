@@ -952,6 +952,38 @@ EOF
             [ "$(flatpak list --system --columns=ref,active 2>/dev/null)" = "$fl0" ] ||
                 step "flatpaks updated, unused runtimes removed"
         fi
+        # grub-pc's postinst installs GRUB on the disks debconf's
+        # grub-pc/install_devices names; with none named (and the empty
+        # answer not confirmed, grub-pc/install_devices_empty), it asks, and
+        # under DEBIAN_FRONTEND=noninteractive fails the upgrade instead:
+        # "You must correct your GRUB install devices before proceeding"
+        # (mx25, grub-pc 2.12-9+deb13u4, GuestTest2 t2v-20261121T1316-3466).
+        # make-from-live.sh's BIOS guests (mint22, zorin18, mx25) have it
+        # empty, as their installers leave it (they run grub-install
+        # themselves), and bko-holt reads that case (the disk whose MBR holds
+        # GRUB), so the image keeps it: for the upgrade only, debconf names
+        # the disk a user would pick there, the one under /boot/grub's file
+        # system whose first sector is GRUB's boot.img (as Linux.pacman's
+        # GRUB finds it), and the postinst installs the new GRUB on it, as it
+        # does on debian13.  The empty answer goes back after the upgrade.
+        # Only when the upgrade takes a new grub-pc: nothing else runs that
+        # postinst.
+        # grubpc_q QUESTION: debconf's "0 VALUE" for it.
+        grubpc_q() { echo "get $1" | debconf-communicate grub-pc 2>/dev/null; }
+        grubpc_dev=
+        if [ ! -d /sys/firmware/efi ] && [ -d /boot/grub/i386-pc ] &&
+            apt list --upgradable 2>/dev/null | grep -q '^grub-pc/' &&
+            v=$(grubpc_q grub-pc/install_devices) && [ "${v% }" = 0 ] && [ "$(grubpc_q grub-pc/install_devices_empty)" != "0 true" ]; then
+            gs=$(findmnt -no SOURCE -T /boot/grub 2>/dev/null | sed 's/\[.*//')
+            gd=$(lsblk -lnps -o NAME,TYPE "$gs" 2>/dev/null | awk '$2 == "disk" { print $1 }' | sort -u)
+            if [ -n "$gd" ] && [ "$(echo "$gd" | wc -l)" -eq 1 ] && head -c 512 "$gd" | grep -aq GRUB; then
+                grubpc_dev=$gd
+                echo "grub-pc grub-pc/install_devices multiselect $grubpc_dev" | debconf-set-selections || exit 1
+                say "grub-pc's install device for this update: $grubpc_dev (debconf names none)"
+            else
+                say "warning: debconf names no install device for grub-pc, and no one disk under /boot/grub's file system ($gs) starts with GRUB's boot code: $(echo ${gd:-none})"
+            fi
+        fi
         apt-mark showhold >/run/bko-held || exit 1
         set -- $(apt list --upgradable 2>/dev/null | sed -n 's|/.*||p' | grep -vxF -f /run/bko-held)
         order=$(deps_first "$@"); [ -z "$order" ] || set -- $order
@@ -962,6 +994,9 @@ EOF
             reclaim
         done
         fetched $apt dist-upgrade && $apt autoremove --purge && fetched $apt clean || exit 1
+        if [ -n "$grubpc_dev" ]; then
+            echo "grub-pc grub-pc/install_devices multiselect" | debconf-set-selections || exit 1
+        fi
         if [ -n "$snapd" ]; then
             snap_settle
             # Run again while the store or its CDN fails in transit, up to 10

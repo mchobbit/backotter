@@ -879,6 +879,76 @@ class TestInGuest(unittest.TestCase):
             "bash", "libpcre2-8-0", "libffi8", "libglib2.0-0t64", "unlisted", "gcc-16-base",
             "libgcc-s1", "cyc-b", "cyc-a", "rc=0", "rc=0"], r.stderr)
 
+    def run_grubpc(self, devices="0", empty="0", upgradable=True, efi=False, mbr=b"\xebc\x90" + b"\0" * 381 + b"GRUB \0Geom",
+                   disks="vda disk"):
+        """Linux.apt's grub-pc install-device block, with debconf, apt, findmnt and lsblk stand-ins:
+        DEVICES and EMPTY are debconf-communicate's answers for grub-pc/install_devices and
+        grub-pc/install_devices_empty, MBR the disk's first bytes, DISKS lsblk's NAME TYPE lines
+        (the scratch folder before each name).  Returns (stdout, the selections set, $grubpc_dev)."""
+        apt = self.sections()["Linux.apt"]
+        m = re.search(r"^( *)grubpc_q\(\) \{.*?\n\1grubpc_dev=\n\1if .*?^\1fi\n", apt, re.M | re.S)
+        self.assertIsNotNone(m)
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "boot/grub/i386-pc").mkdir(parents=True)
+            if efi:
+                Path(d, "sys/firmware/efi").mkdir(parents=True)
+            Path(d, "vda").write_bytes(mbr)
+            block = textwrap.dedent(m[0]).replace("/sys/firmware/efi", f"{d}/sys/firmware/efi") \
+                .replace("[ -d /boot/grub/i386-pc ]", f"[ -d {d}/boot/grub/i386-pc ]")
+            lsblk = "\n".join(f"{d}/{x}" for x in disks.splitlines())
+            script = textwrap.dedent(f"""\
+                say() {{ echo "in-guest: $*"; }}
+                apt() {{ [ "$*" = "list --upgradable" ] || return 2; echo "Listing..."; {"echo 'grub-pc/stable-security 2.12-9+deb13u4 amd64 [upgradable from: 2.12-9+deb13u2]'" if upgradable else ":"}; }}
+                findmnt() {{ [ "$*" = "-no SOURCE -T /boot/grub" ] && echo "/dev/vda1[/boot]"; }}
+                lsblk() {{ [ "$*" = "-lnps -o NAME,TYPE /dev/vda1" ] && printf '%s\\n' "/dev/vda1 part" "$(cat {d}/lsblk)"; }}
+                """) + block + 'echo "dev=$grubpc_dev"\n'
+            Path(d, "lsblk").write_text(lsblk + "\n")
+            bin_ = Path(d, "bin")
+            bin_.mkdir()
+            Path(bin_, "debconf-communicate").write_text(textwrap.dedent(f"""\
+                #!/bin/sh
+                [ "$1" = grub-pc ] || exit 2
+                read q n
+                case $n in grub-pc/install_devices) echo '{devices}' ;; grub-pc/install_devices_empty) echo '{empty}' ;; *) echo "10 $n doesn't exist"; exit 10 ;; esac
+                """))
+            Path(bin_, "debconf-set-selections").write_text(f"#!/bin/sh\ncat >>{d}/set\n")
+            for f in bin_.iterdir():
+                f.chmod(0o755)
+            env = dict(os.environ, PATH=f"{bin_}:{os.environ['PATH']}")
+            r = subprocess.run(["sh", "-c", script], capture_output=True, text=True, env=env)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            sel = Path(d, "set").read_text().replace(d, "D") if Path(d, "set").exists() else ""
+            out = r.stdout.replace(d, "D")
+        return out.splitlines()[:-1], sel, out.splitlines()[-1][len("dev="):]
+
+    def test_grub_pc_with_no_install_device_is_given_the_grub_disk_for_the_upgrade(self):
+        """grub-pc's postinst under noninteractive debconf fails the upgrade when
+        grub-pc/install_devices is empty (mx25, grub-pc 2.12-9+deb13u4, GuestTest2
+        t2v-20261121T1316-3466): for the upgrade, debconf names the one disk under /boot/grub
+        whose first sector is GRUB's, and the empty answer is put back after the upgrade."""
+        out, sel, dev = self.run_grubpc()
+        self.assertEqual(out, ["in-guest: grub-pc's install device for this update: D/vda (debconf names none)"])
+        self.assertEqual(sel, "grub-pc grub-pc/install_devices multiselect D/vda\n")
+        self.assertEqual(dev, "D/vda")
+        for devices in ("0 ",):
+            self.assertEqual(self.run_grubpc(devices=devices)[2], "D/vda")
+        apt = self.sections()["Linux.apt"]
+        self.assertRegex(apt, r"fetched \$apt dist-upgrade .*\|\| exit 1\n *if \[ -n \"\$grubpc_dev\" \]; then\n"
+                              r" *echo \"grub-pc grub-pc/install_devices multiselect\" \| debconf-set-selections \|\| exit 1\n")
+        self.assertLess(apt.index("grubpc_dev="), apt.index("apt-mark showhold >/run/bko-held"))
+        # left alone: a device named, the empty answer confirmed, no new grub-pc, booted by UEFI
+        for kw in ({"devices": "0 /dev/vda"}, {"devices": "10 grub-pc/install_devices doesn't exist"},
+                   {"empty": "0 true"}, {"upgradable": False}, {"efi": True}):
+            with self.subTest(**kw):
+                self.assertEqual(self.run_grubpc(**kw), ([], "", ""))
+        # no GRUB disk to name: a warning, nothing set (the postinst then fails as before)
+        for kw in ({"mbr": b"\0" * 512}, {"disks": "vda disk\nvdb disk"}, {"disks": ""}):
+            with self.subTest(**kw):
+                out, sel, dev = self.run_grubpc(**kw)
+                self.assertEqual((sel, dev), ("", ""))
+                self.assertEqual(len(out), 1)
+                self.assertTrue(out[0].startswith("in-guest: warning: debconf names no install device for grub-pc"), out)
+
     # oi2610's pkg update when pkg.openindiana.org stalled (GuestTest2 t2v-20261118T2305-edbb):
     # a warning, "No updates available" and exit 4, as with nothing to update.
     IPS_STALL = textwrap.dedent("""\

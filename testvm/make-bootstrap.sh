@@ -322,6 +322,8 @@ case $script in
         done <"$work/www/pkglist.txt"
         echo "Slackware: $(wc -l <"$work/www/pkglist.txt") packages checked"
         ln -s "$tree" "$work/www/tree"
+        # The key, by its fingerprint, for slackpkg's keyring in the guest.
+        cp slackware-key.gpg "$work/www/slackware-key.gpg"
         ;;
 esac
 

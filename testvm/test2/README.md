@@ -24,7 +24,7 @@ Check `t2 batch status` before starting heavy work: a running batch holds whole 
 | `HoltTest2All` | all 87 sources and their 9 variant cells, fresh (no `+img` cells) | runs them all anyway |
 | `HoltTest2 G+img`, `HoltTest2 +img` | those cells fresh, a real rescue image as rescuer; `+img` alone: all 14 | runs them anyway |
 | `GuestTest2 [GUEST...] [stale]` | the due guests, or those guests fresh: identity, image checks, a `--try` in RAM, the checks after it, the log sweep | the guests whose last `--try` is over 7 days old; else one line |
-| `GuestTest2All` | the graded audit: all 92 guests fresh, sha256 identity | runs them all anyway |
+| `GuestTest2All` | the graded audit: all 94 guests fresh, sha256 identity | runs them all anyway |
 | `GuestTest2 update [GUEST...]` | the real update round (merges; sculpt2610 by `testvm/sculpt-update`); never with `stale` or All | a bare round needs a `--try` PASS within 7 days (not sculpt2610, which has no `--try`) |
 | `ImgTest2 [PLAT...] [release] [stale]` | images built since their PASS and owed panels, or those platforms fresh; `release` requires the panel | one line |
 | `ImgTest2All [release]` | every current image, its panel included | runs them all anyway |

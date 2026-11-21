@@ -294,6 +294,11 @@ efivarfs bound in):
      /boot/booster.img-K` for each kernel that had one, host-only as the
      source's were, without Pika's `update-initramfs` wrapper; the
      `.dpkg-bak` and `.bak` copies come back as they were;
+   - mkinitrd (Slackware's generic kernel, docs/design/slackware.md;
+     `boot.initramfs.mkinitrd`): the source's own command again, from
+     `/boot/initrd-tree/command_line` (else mkinitrd.conf, read with -F),
+     for each kernel, `-o` as recorded; the huge kernel has no initrd
+     (`none`);
    - nothing where the image is prebuilt with the kernel (AerynOS; Solus,
      whose `initrd-com.solus-project.*` come built in the kernel's package), comes
      with the image (ostree) or is in the store (NixOS, Guix System: each
@@ -335,6 +340,19 @@ efivarfs bound in):
      `grub-install --target=i386-pc` on each disk whose BIOS boot partition
      held GRUB's core in the dump, before `update-grub`.
    - systemd-boot: `bootctl install`.
+   - LILO (Slackware on BIOS, `boot.lilo`): `lilo -t -v`, then `lilo -v`,
+     in the chroot, on a copy of lilo.conf (`/etc/lilo.conf.bko-holt`,
+     removed after) in which each image whose root= is a /dev/ path gets
+     `root=PATH` last in its append=: lilo stores root= as the device's
+     number under the running kernel, and virtio_blk's major is dynamic
+     (254 under the rescue, 253 under Slackware's huge kernel), so the
+     kernel finds root by name instead.  The user's lilo.conf is kept as it
+     was.  Only boot= a whole disk, by kernel name.
+   - ELILO (Slackware on UEFI, `boot.elilo`): nothing installed; after the
+     mkinitrd step the new initrd is copied over each ESP copy of it
+     (`EFI/Slackware`, `EFI/BOOT`), and the "Slackware" NVRAM entry for
+     `\EFI\Slackware\elilo.efi` is made (an older copy of it deleted
+     first, efi-dedupe).
    - clr-boot-manager (Solus, docs/design/solus.md; `os.id` solus and
      `boot.loader.manager` clr-boot-manager, before the systemd-boot arm):
      nothing runs in the chroot.  The restored ESP (mounted at `/boot`

@@ -5199,8 +5199,17 @@ impl Builder<'_> {
         if let Some(p) = self.layout.str_at(&["boot", "initramfs", "mkinitrd", "resumedev"]) {
             push("mkinitrd's -h (the initrd's resume device)".into(), p);
         }
+        // A noauto line on a device that isn't one of the source's disks
+        // or partitions (Slackware's stock /dev/fd0 /mnt/floppy, a CD
+        // drive) isn't mounted at boot and isn't restored: the line is kept
+        // as it is, and the mount stage notes it.  A nofail line still
+        // mounts at boot, so it is checked like any other.
         for e in self.layout.arr(&["storage", "fstab"]) {
             if let (Some(spec), Some(_)) = (s(e, "spec"), s(e, "resolves_to")) {
+                let noauto = s(e, "options").unwrap_or_default().split(',').any(|o| o == "noauto");
+                if noauto && self.names.src_of_path(&md_name(&spec)).or_else(|| self.names.src_of_path(&spec)).is_none() {
+                    continue;
+                }
                 push(format!("fstab's {}", s(e, "file").unwrap_or_default()), &spec);
             }
         }

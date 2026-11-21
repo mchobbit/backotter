@@ -9,3 +9,6 @@ vms/G/update.log files, read in place on 2026-11-10 and copied by hand with gene
 hook-*.out here are complete hook outputs for one PASSing debian12 run (test_guest.py).
 solus49-before.out is the before hook (RULES="S-eopkg L-cbm K-cbm B-lin M-lin") run on solus49
 on Chopin, 2026-11-14, from a --snapshot boot (test_guest_judge.py's Solus class).
+slackware15-before.out and slackware15-uefi-before.out are the before hook (RULES="S-slackpkg
+L-lilo K-slackware B-lin M-lin", and L-elilo for -uefi) run on each guest on Chopin, 2026-11-15,
+from a --snapshot boot (test_guest_judge.py's Slackware class); they hold no UUID, MAC or address.

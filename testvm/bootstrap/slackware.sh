@@ -22,6 +22,8 @@ KERNEL='@KERNEL@'
 # /sbin and /usr/sbin, which the Arch live system's PATH lacks.
 in_slk() { arch-chroot /mnt env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "$@"; }
 MIRROR=https://slackware.osuosl.org/slackware64-15.0/
+# Slackware Linux Project's key (make-bootstrap.sh's SLACKWARE_KEY).
+SLACKWARE_KEY=EC5649DA401E22ABFA6736EF6A4463C040102233
 
 # / as Slackware's setup makes it, with its own tools' defaults: the live
 # system's mkfs is newer and turns on features Slackware 15 can't use
@@ -74,6 +76,17 @@ kver=$(ls /mnt/lib/modules)
 # What setup's final steps run (setup's "SeTconfig" phase, the
 # non-interactive part).
 in_slk /sbin/ldconfig
+# The packages' doinst.sh ran from /mnt (installpkg --root: "cd $ROOT; sh
+# doinst.sh"), so those that run a tool by absolute path only "if [ -x
+# /usr/...]" found the live system's, or skipped it (ca-certificates'
+# update-ca-certificates: no CA bundle, no https).  setup's SeTconfig then
+# runs the packages' setup scripts in var/log/setup from the new root, the
+# same "chroot ." way: these four are the ones that ask nothing.
+for s in setup.07.update-desktop-database setup.07.update-mime-database setup.08.gtk-update-icon-cache setup.11.cacerts; do
+    [[ -f /mnt/var/log/setup/$s ]] || { echo "no var/log/setup/$s"; false; }
+    (cd /mnt && sh "var/log/setup/$s" /mnt "$ROOT_PART")
+done
+[[ -s /mnt/etc/ssl/certs/ca-certificates.crt ]] || { echo "setup.11.cacerts made no /etc/ssl/certs/ca-certificates.crt"; false; }
 
 # fstab, as setup's SeTpartitions and SeTswap write it: device names.
 {
@@ -108,10 +121,19 @@ printf 'root:%s\n' "$ROOT_PASSWORD_HASH" | in_slk chpasswd -e
 install_ssh_key /mnt
 echo 's0:12345:respawn:/sbin/agetty -L ttyS0 115200 vt100' >>/mnt/etc/inittab
 
-# slackpkg: one official mirror, and Slackware's key for it.
+# slackpkg: one official mirror, and Slackware's key for it in root's
+# keyring, as slackpkg's import_gpg_key imports it (gpg --import).  The
+# key is the one make-bootstrap.sh fetched by its fingerprint and checked
+# the tree with: "slackpkg update gpg" fetches it from www.slackware.com
+# and hides every failure (in the chroot its import failed unseen).
 cp /etc/resolv.conf /mnt/etc/resolv.conf
 echo "$MIRROR" >>/mnt/etc/slackpkg/mirrors
-in_slk slackpkg -batch=on -default_answer=y update gpg
+# (Not in /tmp: arch-chroot mounts a tmpfs of its own there.)
+curl -fsS -o /mnt/root/slackware-key.gpg "$SERVER/slackware-key.gpg"
+in_slk env HOME=/root gpg --batch --import /root/slackware-key.gpg
+rm /mnt/root/slackware-key.gpg
+in_slk env HOME=/root gpg --batch --with-colons --fingerprint --list-keys "$SLACKWARE_KEY" | grep -q "^fpr:*$SLACKWARE_KEY:" ||
+    { echo "Slackware's key $SLACKWARE_KEY is not in root's keyring"; false; }
 
 if [[ $KERNEL == huge ]]; then
     # liloconfig's "simple" mode, MBR target, as lilo 24.2's sbin/liloconfig

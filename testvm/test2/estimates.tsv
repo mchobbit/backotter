@@ -141,6 +141,8 @@ holt	holt:pikaos4	6.18	371	0.00	-	chopin p6-4 PASS 2026-11-14, its phases 371 s 
 holt	holt:pikaos4-luks	6.27	376	0.00	-	chopin p6-6 PASS 2026-11-14, its phases 376 s (source 47, backup 57, rebuild 177, verify 95; cinqcent's p6-7 341 s), ht1.sh in RAM (pikaos.md P6)
 holt	holt:microos	11.90	714	0.00	-	cinqcent aeon2c PASS 2026-11-14, a whole run from source 714 s (source 191 with the prep, backup 53, rebuild 142, verify 327), ht1.sh in RAM, RAM-disk peak 2.7 GiB (aeon.md M5)
 holt	holt:solus49	5.98	359	0.00	15.16	solus.md S3: as holt:aerynos (r3all chopin: UEFI), until measured (est.); S5's s5-3 cinqcent and s5-4 chopin PASS 2026-11-14 in RAM, RAM-disk peak 14.1 GiB (ram-sizes.tsv): gb_disk that peak, 15,164,915,712 bytes
+holt	holt:slackware15	6.00	360	0.00	14.60	slackware.md S4: no HoltTest1 run yet (est.): the ~8.9 GB image is several times devuan6's and debian13's (2.65 and 2.72 gm, r3all) and near solus49's (5.98 gm, 14.1 GiB peak), so solus49's figure rounded; gb_disk ram-sizes.tsv's estimated peak, 13.6 GiB
+holt	holt:slackware15-uefi	6.00	360	0.00	14.60	slackware.md S4: as holt:slackware15 (the same package set; XFS /, the ESP and mkinitrd add little), no run yet (est.)
 holt	holt:debian13-stack+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
 holt	holt:aerynos+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
 holt	holt:mint22+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
@@ -245,6 +247,8 @@ guest	guest:rocky10-lvm	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 fo
 guest	guest:rocky10-raid5	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:sculpt2610	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:solus49	2.00	120	0.00	-	solus.md S1: vm-update --try 51 s on chopin (0.85, nothing to upgrade) + 0.5 for checks + ~0.65 toward a new guest's smoke backup, until measured (est.)
+guest	guest:slackware15	12.00	720	0.00	-	slackware.md S4: no vm-update --try yet (est.): slackpkg's first upgrade-all takes 15.0's patches since 2022, a kernel among them (~10 min, gentoo's 283 s --try doubled), + 0.5 for checks + 1.5 for a new guest's smoke backup
+guest	guest:slackware15-uefi	12.00	720	0.00	-	slackware.md S4: as guest:slackware15 (mkinitrd and the ESP copies add seconds), no --try yet (est.)
 guest	guest:tumbleweed	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ubuntu24	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ubuntu26-raid	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup

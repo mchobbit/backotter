@@ -3,7 +3,10 @@
 2026-11-14. Asked for by the user: support Slackware 15, the oldest
 maintained Linux distribution, as AnduinOS, KDE neon, elementary, PikaOS,
 BigLinux and Garuda were added (1edb4b5). **Status: approved 2026-11-14 by
-the user with every recommended decision (the last section).**
+the user with every recommended decision (the last section). 2026-11-18:
+S1, S2, S4 and S7 done and the S5/S6 rigs registered; the user's runs of
+SticTest1, HoltTest1 1Obscure and vm-update (S3), and S8, are left (the
+user runs the tests later).**
 
 **Conventions.** est. marks an estimate. *Check* marks a fact the sources
 don't settle. It is settled on the first guest (S1), before the code that
@@ -132,6 +135,10 @@ yet. Code references are to local `main` at 1edb4b5.
   against the target's devices. When the target disk keeps the source's
   name (vda to vda, as in HoltTest1), it is a note. When it doesn't (sda to
   nvme0n1), it is a problem: Decision 5 says whether load rewrites them.
+  A `noauto` fstab line on a device that isn't one of the source's disks
+  or partitions (the stock `/dev/fd0 /mnt/floppy`, a CD drive) isn't
+  checked: it isn't mounted at boot, the line is kept as it is and the
+  mount stage notes it (2026-11-18; a `nofail` line is still checked).
 - **mkinitrd:** the image is remade for each kernel that had one, by the
   source's own command (`command_line`, with `-k K` for each kernel), or
   by `mkinitrd -F` when `/etc/mkinitrd.conf` exists. Then, on ELILO, it is
@@ -246,6 +253,44 @@ Linux branches since a full Slackware has rpm as a tool):
   Without slackpkg the branch says `no package manager found`, as it does
   today.
 
+## What S1 found
+
+Settled on the guests, 2026-11-14 to 2026-11-18:
+
+- os-release as assumed (`ID=slackware`, `VERSION_ID=15.0`); eth0 by DHCP
+  from rc.inet1; runlevel 3; SSH in about 25 s on both guests.
+- **LILO's root= is a number.** lilo stores `root = /dev/vda2` as the
+  device's number under the kernel lilo runs on (lilo 24.2 bsect.c,
+  `dev_number`), and virtio_blk's major is dynamic: 254 under the Arch live
+  system and the rescue, 253 under the huge kernel, which then panics on
+  `unknown-block(254,2)`.  The installer and bko-holt load both run lilo
+  with `-C` on a copy of lilo.conf whose append= ends in `root=/dev/vda2`
+  (the kernel takes the last root=, by name); lilo.conf itself is
+  liloconfig's.  A user's later `lilo` writes the stock numeric form again,
+  right for that kernel.
+- **The live system's mkfs is too new.** e2fsprogs 1.47's ext4 has
+  orphan_file, which Slackware's e2fsck 1.46.5 refuses at boot; xfsprogs
+  6's XFS has nrext64 and exchange, which 5.15 won't mount.  The installer
+  makes / with the tree's own mke2fs.conf and xfsprogs' `lts_5.10.conf`
+  profile (xfsprogs 5.13's defaults).  bko-holt load recreates the
+  source's feature sets (HoltTest1 will show it for these two).
+- **installpkg --root doesn't chroot doinst.sh**, so a package's
+  `if [ -x /usr/...]` step found the live system's tool or none:
+  ca-certificates' bundle was never made (no https, so no slackpkg).  The
+  installer runs setup's four non-interactive `var/log/setup` scripts
+  (desktop and MIME databases, icon cache, CA certificates) from the new
+  root, as SeTconfig does.
+- **Slackware's key.** `slackpkg update gpg` hides its failures and pings
+  www.slackware.com first (QEMU's user network passes no ICMP, and its
+  fallback question reads stdin); the installer imports the key the builder
+  checked by fingerprint, and in-guest.sh fetches the mirror's GPG-KEY
+  when it is missing, held to EC5649DA401E22ABFA6736EF6A4463C040102233.
+  Slackware's `gpg` is GnuPG 1.4 (`gpg2` is 2.2).
+- The stock fstab's noauto `/dev/fd0` resolves to a real floppy on the
+  i440fx guest; load no longer checks a noauto line off the source's disks.
+- vm-mount maps fstab's `/dev/vdXN` to partition N of the image's disk X
+  (it skipped them, and slackware15-uefi's ESP with them).
+
 ## Tests
 
 **SticTest1** (`testvm/stictest1/slackware15`, `slackware15-uefi`):
@@ -313,7 +358,7 @@ reach it by address). `bs1-common`'s `package_list` reads pkgtools.
 | S1 | Fetch the 15.0 tree (series a, ap, d, l, n; ~2.5 GB est.) or the DVD ISO into rebuild-inputs on Chopin, with the user's OK (Decision 4), and check it against Slackware's key. Write `bootstrap/slackware.sh` and the two make-bootstrap.sh cases. Build both guests in /mnt/bko-ram, move them to disk, copy to Cinqcent (the same SHA-256), `rebuild-one.sh`. Settle every *check* and write "What S1 found" here. Done when both boot alone on both hosts (LILO from the MBR, ELILO from NVRAM) and SSH answers | 1.25 d |
 | S2 | bko-holt (High-effort subagent): `SUPPORTED` and tests (15.0 accepted, -current and 14.2 refused); `pkgtools_packages()` and `PACKAGES`; the `none`/`mkinitrd` generator with evidence; `detect_loader`'s `lilo` and `elilo` with `boot.lilo`/`boot.elilo`; `init` = `slackware-rc` and `rc_enabled`; fstab `/dev/` sources in the mount stage; load's LILO arm (`lilo -t`, `lilo -v`), ELILO arm (keep, copy the initrd, entry, `--removable`), mkinitrd replay, the root=/device-name check; fake trees for both guests in `scenarios.rs`. Done when `cargo test` passes and both scenarios' plans have the right boot stage, with no grub-* | 1.25 d |
 | S3 | vm-update: `Linux.slackpkg` in in-guest.sh with the kernel step; `fingerprint.py`; `vm-update --try` on both guests on Chopin, then a real update ([[update-guests-not-copy]]: in a `--keep` overlay, shipping the overlay) | 0.35 d |
-| S4 | Golden plans and the Test2 registrations (as AnduinOS's A3) | 0.4 d |
+| S4 | Golden plans and the Test2 registrations (as AnduinOS's A3). **Registrations done 2026-11-18** (HoltTest2 sources in 75bd471; GuestTest2 entries, limits.json for the stock fstab's /dev/fd0 line and the second devpts, estimates as est., fixtures from the before hook on Chopin). **Golden plans done 2026-11-18**: live dumps (run `s4`, Chopin, of the 2026-11-15 images, since rebuilt with only the CA-bundle and GPG-key fixes), two identical corpus builds, scans 0 on chopin, cinqcent and the Mac, no other plan changed; each plan lists the device-name Problems of Decision 5 against the corpus's sdq, and slackware15's also the stock `/dev/fd0` line (gone since 2026-11-18: a noauto line off the source's disks isn't checked) | 0.4 d |
 | S5 | SticTest1 entries and runs, both archivers, both hosts, 0 FAIL | 0.4 d |
 | S6 | HoltTest1 1Obscure runs on both hosts: the boot-state arm, the judge rules, the LILO and ELILO checks; RAM peaks in `ram-sizes.tsv`; GuestTest1 grades | 0.5 d |
 | S7 | Docs: holt/README.md's supported list, `osrel.rs`'s comment, the 1Obscure row and HoltTest1All, the SticTest1 and Test2 READMEs, `layload.md`'s boot stage (LILO and ELILO arms), memory (holttest1d index, a slackware-support note) | 0.1 d |

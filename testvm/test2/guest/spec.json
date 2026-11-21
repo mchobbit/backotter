@@ -2152,6 +2152,58 @@
     "established": false
    }
   },
+  "slackware15": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-bootstrap.sh",
+    "testvm/bootstrap/**",
+    "testvm/update/in-guest.sh#Linux.slackpkg",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#slackpkg"
+   ],
+   "checks": {
+    "pm": "slackpkg",
+    "rules": {
+     "source": "S-slackpkg",
+     "loader": "L-lilo",
+     "kernel": "K-slackware",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": false
+   }
+  },
+  "slackware15-uefi": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-bootstrap.sh",
+    "testvm/bootstrap/**",
+    "testvm/update/in-guest.sh#Linux.slackpkg",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#slackpkg"
+   ],
+   "checks": {
+    "pm": "slackpkg",
+    "rules": {
+     "source": "S-slackpkg",
+     "loader": "L-elilo",
+     "kernel": "K-slackware",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false
+   }
+  },
   "tumbleweed": {
    "kind": "ssh",
    "plat": "linux",

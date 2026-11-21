@@ -566,6 +566,33 @@ argon2id cost (1004442 KiB, 4 iterations, where ubuntu26-luks has 97932
 and 59), then `cryptsetup open ... dm_crypt-0` and `vgcfgrestore`, and both
 keep GRUB and shim (`grub-install --no-nvram`, `update-grub`, the `Ubuntu`
 entry for `\EFI\ubuntu\shimx64.efi`).
+slackware15 (`make-bootstrap.sh slackware`: Slackware 15.0, BIOS, an MBR
+with swap on vda1 and ext4 / on vda2, LILO in the MBR, the huge kernel with
+no initrd, fstab and lilo.conf by device name) and slackware15-uefi
+(`make-bootstrap.sh slackware-uefi`: UEFI without Secure Boot, GPT with the
+ESP at /boot/efi, swap and XFS /, ELILO in EFI/Slackware and its fallback
+copy in EFI/BOOT, the generic kernel with mkinitrd's initrd;
+docs/design/slackware.md) were added on 2026-11-18 from dumps of the live
+guests on chopin (run `s4`, 2026-11-15, the static bko-holt 0.2.6 built
+from 039ca25, each guest under `vm-run --snapshot` with its own
+vm-run-options, the image's sha256 the same before and after: `4486e177...`
+and `d4a0947a...`; their provenance.tsv written by hand).  Those are the
+2026-11-15 images, since rebuilt with only the CA-bundle and GPG-key fixes
+of testvm/bootstrap/slackware.sh.  Theirs are the first golden plans with
+Problems that come from the corpus's own disk names: Slackware names its
+devices (fstab, lilo.conf's boot=, disk= and root=, elilo.conf's root=,
+mkinitrd's -r), the fake rescue system's disk is sdq where the source's was
+vda, and load doesn't rewrite the names (slackware.md, Decision 5), so each
+plan lists six.  slackware15's sixth is the stock fstab's `/dev/fd0`
+floppy line (noauto), which slackware15-uefi's plan only notes.  At boot,
+slackware15's plan writes `/etc/lilo.conf.bko-holt` (lilo.conf with
+`root=/dev/vda2` added to the image's append=, since lilo would record
+root= as the rescue kernel's major:minor), runs `lilo -C` on it with `-t`
+and then for real (the MBR and /boot/map), and removes it; nothing else is
+made (no initrd).  slackware15-uefi's reruns the source's mkinitrd command
+(`/boot/initrd-tree/command_line`, with `-k 5.15.19`), copies the new
+`/boot/initrd.gz` over the ESP's EFI/BOOT and EFI/Slackware copies, and
+makes the `Slackware` NVRAM entry for `\EFI\Slackware\elilo.efi`.
 The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
@@ -808,7 +835,12 @@ directory on chopin (/bkoscratch, its warm holt build at
 (ubuntu24-luks's console-passphrase among them) and the raw dumps'
 identifiers, cinqcent with 111 of its 117, the Mac with the git e-mail, 0
 findings (their plans scanned too), the same sha256 from both builds
-(src.json `adbecc72...` and `9cffbfc9...`, index.tsv `1a433419...`).
+(src.json `adbecc72...` and `9cffbfc9...`, index.tsv `1a433419...`).  So did slackware15 and slackware15-uefi (2026-11-18), built from a
+private directory on chopin (/bkoscratch, the warm holt build at
+/bkoscratch/holt-warm/slackware): chopin with 111 of its 116 strings and
+the raw dumps' identifiers, cinqcent with 115 of its 121, the Mac with the
+git e-mail, 0 findings (their plans scanned too), the same sha256 from both
+builds (src.json `4650fa0f...` and `4adb565c...`, index.tsv `5025f770...`).
 
 ## The golden plans
 

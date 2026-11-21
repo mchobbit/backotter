@@ -59,6 +59,26 @@
    "why": "PikaOS is Debian sid rebuilt: its one apt source is ppa.pika-os.com's rolling suite pika (system.sources), which carries the security fixes too; there is no -security suite to point at (docs/design/pikaos.md, P1's --try)"
   }
  },
+ "slackware15": {
+  "after:shadow": {
+   "lines": ["/dev/pts is shadowed by a later mount on /dev/pts"],
+   "why": "a second devpts is mounted over /dev/pts late in each boot of the stock guest (the boot's own devpts, then fstab's devpts line again; the cause not traced further), both guests alike; harmless, as both are the same devpts options (docs/design/slackware.md S4: the before hook on Chopin, 2026-11-15)"
+  },
+  "after:fstab": {
+   "lines": ["findmnt --verify failed", "findmnt: [E] cannot detect on-disk filesystem type"],
+   "why": "Slackware's stock fstab keeps setup's /dev/fd0 /mnt/floppy auto noauto line; the guest has no floppy, so findmnt --verify can't detect that source's file system. Every boot, before and after an update alike (docs/design/slackware.md S4: the before hook on Chopin, 2026-11-15)"
+  }
+ },
+ "slackware15-uefi": {
+  "after:shadow": {
+   "lines": ["/dev/pts is shadowed by a later mount on /dev/pts"],
+   "why": "a second devpts is mounted over /dev/pts late in each boot of the stock guest (the boot's own devpts, then fstab's devpts line again; the cause not traced further), both guests alike; harmless, as both are the same devpts options (docs/design/slackware.md S4: the before hook on Chopin, 2026-11-15)"
+  },
+  "after:fstab": {
+   "lines": ["findmnt --verify failed", "findmnt: [E] cannot detect on-disk filesystem type"],
+   "why": "Slackware's stock fstab keeps setup's /dev/fd0 /mnt/floppy auto noauto line; the guest has no floppy, so findmnt --verify can't detect that source's file system. Every boot, before and after an update alike (docs/design/slackware.md S4: the before hook on Chopin, 2026-11-15)"
+  }
+ },
  "vanilla3": {
   "after:boot-state": {
    "lines": ["state degraded"],

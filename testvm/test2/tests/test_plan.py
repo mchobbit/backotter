@@ -662,17 +662,17 @@ class Estimates(unittest.TestCase):
                                                    "holt:ubuntu24-uefi", "holt:ubuntu24-luks", "stic:ubuntu24-uefi",
                                                    "holt:elementary8", "holt:elementary8-luks", "holt:void-zbm", "holt:void-zbm-enc",
                                                    "holt:freebsd15-geli-bios", "holt:freebsd15-geli-ufs",
-                                                   "holt:hardenedbsd15-zfs", "holt:microos", "holt:solus49",
+                                                   "holt:hardenedbsd15-zfs", "holt:microos", "holt:solus49", "holt:slackware15", "holt:slackware15-uefi",
                                                    "holt:alpine324-arm64", "holt:debian13-arm64", "holt:debian13-zfs-arm64",
                                                    "holt:fedora44-arm64", "holt:ubuntu26-arm64"):
                 fam[c.split(":")[0]] += e["gm"]     # (test2.md's figures are of the 45 sources)
         # test2.md: SticTest2All 282 gm, the checks of st1_marks.tsv (the later ones' rows are their own runs')
         self.assertAlmostEqual(sum(e["gm"] for c, e in tsv.items() if c.startswith("stic:") and c[5:] in marked), 281.9, delta=0.1)
         self.assertAlmostEqual(fam["holt"], 246.7, delta=0.5)     # test2.md: HoltTest2All ~247 gm
-        # 87 sources and 9 variants, and the five arm64 guests' (docs/design/arm64.md A6), but
-        # slackware15 and slackware15-uefi's, which have no row before their first runs, and the 6
-        # +reformat-TYPE cells' (rel11rf's HT_REFORMAT runs, 2026-11-21)
-        self.assertEqual(sum(1 for c in tsv if c.startswith("holt:") and not c.endswith("+img")), 105)
+        # 87 sources and 9 variants, and the five arm64 guests' (docs/design/arm64.md A6), and the 6
+        # +reformat-TYPE cells' (rel11rf's HT_REFORMAT runs, 2026-11-21);
+        # slackware15's and slackware15-uefi's are estimates until their first runs (slackware.md S4)
+        self.assertEqual(sum(1 for c in tsv if c.startswith("holt:") and not c.endswith("+img")), 107)
         self.assertEqual(sum(1 for c in tsv if c.startswith("gate:")), 13)
 
     def test_pack_and_gate_wall(self):
@@ -806,15 +806,15 @@ class Guests(GuestCase):
         return out + self.w.seed(_only(self.p_guest, cell), age={cell: (days - 1) * 24}, extra={"try_ran": True},
                                  needs={"identity": "PASS"})
 
-    def test_new_guests_ninety_two_cells(self):
-        self.assertEqual(self.p_guest.totals["cells"], 92)
-        self.assertEqual(by(self.p_guest), {("due", "new"): 92})
+    def test_new_guests_ninety_four_cells(self):
+        self.assertEqual(self.p_guest.totals["cells"], 94)
+        self.assertEqual(by(self.p_guest), {("due", "new"): 94})
         self.assertNotIn("freebsd15-builder", {c.cell[6:] for c in self.p_guest.cells})
 
     def test_nothing_due_after_a_pass(self):
         p = self.plan()
         self.assertEqual(p.totals["due"], 0)
-        self.assertEqual(p.totals["counts"]["current"], 92)
+        self.assertEqual(p.totals["counts"]["current"], 94)
 
     def test_not_in_any_spec(self):
         f = self.w.facts()
@@ -872,7 +872,7 @@ class Guests(GuestCase):
         pc = p.cell("guest:debian13")
         self.assertEqual((pc.status, pc.rule), ("due", "changed:host"))
         self.assertEqual(pc.host, "chopin")
-        self.assertEqual(p.totals["due"], 92)
+        self.assertEqual(p.totals["due"], 94)
 
     def test_one_section_selects_only_its_guests(self):
         text = self.w.read("testvm/update/in-guest.sh").replace("update with moss", "update with moss, changed")
@@ -998,14 +998,14 @@ class Guests(GuestCase):
         self.assertEqual(st(p, "guest:arch"), ("due", "fresh:names"))
         self.assertEqual(len(p.cells), 1)
         p = self.plan(text="GuestTest2All plan")
-        self.assertEqual(by(p), {("due", "fresh:All"): 92})
+        self.assertEqual(by(p), {("due", "fresh:All"): 94})
 
     def test_sweep_child(self):
         ctx = self.w.ctx(self.r_guest)
         w = self.w.word("GuestTest2All plan", ctx)
         w.sweep = True
         p = plan.make(w, ctx)
-        self.assertEqual(by(p), {("due", "fresh:Sweep"): 92})
+        self.assertEqual(by(p), {("due", "fresh:Sweep"): 94})
 
     def test_a_disk_changed_behind_its_generation(self):
         f = self.w.facts()
@@ -1585,7 +1585,7 @@ class Named(WorldCase):
 class ClassTable(unittest.TestCase):
     def test_the_real_class_table(self):
         ctx = plan.Ctx(REPO, hosts=[], options={})
-        self.assertEqual(plan.check_classes(ctx, holt_names=world.GUESTS + world.HOLT_ONLY), [])
+        self.assertEqual(plan.check_classes(ctx, holt_names=world.GUESTS), [])
         h = ctx.classes["holt"]
         src = {g for f in h["families"].values() for g in f} | set(h["no_family"])
         self.assertEqual(len(src), 87)

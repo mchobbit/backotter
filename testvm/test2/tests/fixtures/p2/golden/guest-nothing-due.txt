@@ -1,3 +1,3 @@
-GuestTest2: nothing due (92 current); base BASE
-note: not in any spec: qubes43, slackware15, slackware15-uefi
+GuestTest2: nothing due (94 current); base BASE
+note: not in any spec: qubes43
 sweep: SweepTest2 never ran, due now

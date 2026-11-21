@@ -4968,6 +4968,28 @@ fn slackware15_lilo_links() {
     }
 }
 
+/// Slackware's stock fstab line `/dev/fd0 /mnt/floppy auto noauto,owner`
+/// on a source with a floppy drive (fd0 an other_device, the line
+/// resolved): noauto, on no disk of the source's, so no Problem, only the
+/// mount stage's note; without noauto it would be mounted at boot, and it
+/// is refused.  The vda lines are a note on disks with the same names.
+#[test]
+fn slackware15_fstab_floppy() {
+    let t = slackware15();
+    t.disk("fd0", "2:0", &[0u8; 4096], 512);
+    let (v, b) = slackware_plan(&t, "vda", &[]);
+    assert_eq!(s(&v, &["storage", "fstab", "2", "file"]), "/mnt/floppy");
+    assert_eq!(s(&v, &["storage", "fstab", "2", "resolves_to"]), "fd0");
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    assert!(b.notes.iter().any(|n| n == "fstab's /mnt/floppy is on fd0, which isn't restored"), "{:?}", b.notes);
+    assert!(b.notes.iter().any(|n| n.starts_with("Slackware: lilo.conf, elilo.conf and fstab name devices by their kernel names (/dev/vda, /dev/vda2, /dev/vda1)")), "{:?}", b.notes);
+
+    let fstab = std::fs::read_to_string(t.p("/etc/fstab")).unwrap();
+    t.file("/etc/fstab", fstab.replace("noauto,owner", "owner"));
+    let (_, b) = slackware_plan(&t, "vda", &[]);
+    assert_eq!(b.problems, ["Slackware: fstab's /mnt/floppy names /dev/fd0, which isn't on the layout's disks, so the restored system couldn't find it at boot"], "{:?}", b.problems);
+}
+
 /// mkinitrd with -C (LUKS, out of scope) is refused by name, as is a root
 /// on /dev/mapper; -h's resume device is checked as -r's root is.
 #[test]

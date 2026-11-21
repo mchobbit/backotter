@@ -54,8 +54,8 @@ class Spec(unittest.TestCase):
     def setUp(self):
         self.sf = rows_guest.load_spec(REPO)
 
-    def test_ninety_two_guests_and_the_exclusion(self):
-        self.assertEqual(len(self.sf.names()), 97)   # 92, and A6's five arm64 guests
+    def test_ninety_four_guests_and_the_exclusion(self):
+        self.assertEqual(len(self.sf.names()), 99)   # 94, and A6's five arm64 guests
         self.assertNotIn("freebsd15-builder", self.sf.names())
         self.assertEqual(self.sf.data["excluded"], {"freebsd15-builder": "a build helper"})
 
@@ -82,7 +82,7 @@ class Spec(unittest.TestCase):
                                       "chimera-uefi", "chimera-zfs", "gentoo", "gentoo-systemd", "cachyos-zfs", "anduinos2", "neon24", "garuda", "biglinux", "vanilla3",
                                       "oi2610", "oi2610-bios", "pikaos4", "pikaos4-luks", "proxmox9", "proxmox9-mirror",
                                       "microos", "aeon", "ubuntu24-uefi", "ubuntu24-luks", "elementary8", "elementary8-luks",
-                                      "void-zbm", "void-zbm-enc", "freebsd15-geli-bios", "freebsd15-geli-ufs",
+                                      "void-zbm", "void-zbm-enc", "freebsd15-geli-bios", "freebsd15-geli-ufs", "slackware15", "slackware15-uefi",
                                       "alpine324-arm64", "debian13-arm64", "debian13-zfs-arm64", "fedora44-arm64", "ubuntu26-arm64"]))
         for n in new:
             self.assertIn("testvm/test2/guest/new-guest.sh", self.sf.entry(n)["harness"], n)
@@ -127,7 +127,7 @@ class Spec(unittest.TestCase):
         with open(os.path.join(REPO, "testvm/test2/guest/limits.json"), encoding="utf-8") as f:
             d = json.load(f)
         self.assertEqual(sorted(d), ["ghostbsd26-zfs", "kali", "kinoite44", "microos", "omnios58", "omnios58-mirror", "pikaos4", "pikaos4-luks",
-                                     "vanilla3"])
+                                     "slackware15", "slackware15-uefi", "vanilla3"])
         self.assertEqual(sorted(d["kinoite44"]), ["after:boot-state", "after:failed-units", "after:fstab", "image:free"])
         # PikaOS (pikaos.md): its one apt suite, pika, is rolling (sid's), with no -security suite
         for g in ("pikaos4", "pikaos4-luks"):
@@ -142,6 +142,11 @@ class Spec(unittest.TestCase):
         for g in ("omnios58", "omnios58-mirror"):
             self.assertEqual(sorted(d[g]), ["after:boot-state"])
             self.assertEqual(d[g]["after:boot-state"]["lines"], [f"down svc:/system/cloud-init:{s}" for s in ("final", "init", "modules")])
+        # Slackware (slackware.md S4): the stock fstab's /dev/fd0 line findmnt --verify can't type,
+        # and a second devpts over /dev/pts, every boot of both guests
+        for g in ("slackware15", "slackware15-uefi"):
+            self.assertEqual(sorted(d[g]), ["after:fstab", "after:shadow"])
+            self.assertEqual(d[g]["after:shadow"]["lines"], ["/dev/pts is shadowed by a later mount on /dev/pts"])
         # Kali (kali.md, What K1 found): its one apt suite, kali-rolling, has no -security suite either
         self.assertEqual(sorted(d["kali"]), ["image:sources"])
         self.assertEqual(d["kali"]["image:sources"]["lines"], ["no -security suite in apt's sources"])

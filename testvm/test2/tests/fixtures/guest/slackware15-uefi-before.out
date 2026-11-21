@@ -1,0 +1,102 @@
+=== cmd image-rules
+S-slackpkg L-elilo K-slackware B-lin M-lin
+=== file /etc/os-release
+NAME=Slackware
+VERSION="15.0"
+ID=slackware
+VERSION_ID=15.0
+PRETTY_NAME="Slackware 15.0 x86_64"
+ANSI_COLOR="0;34"
+CPE_NAME="cpe:/o:slackware:slackware_linux:15.0"
+HOME_URL="http://slackware.com/"
+SUPPORT_URL="http://www.linuxquestions.org/questions/slackware-14/"
+BUG_REPORT_URL="http://www.linuxquestions.org/questions/slackware-14/"
+VERSION_CODENAME=stable
+
+=== cmd slackpkg-mirrors
+https://slackware.osuosl.org/slackware64-15.0/
+=== cmd slackpkg-conf
+CHECKMD5=on
+CHECKGPG=on
+=== cmd elilo-esp
+fstab-root /dev/vda3
+sha256 ae96e0caaa10f367e2f53a9a2e306f3718b8674dce0114b239bf89694ee588ce EFI/Slackware/elilo.conf
+sha256 07236a989be357e31941374157360c6d9a6c493da6f3b8a81d73de8e4855491d EFI/Slackware/elilo.efi
+sha256 834680138163dbe09edfb2d99f3d138c1dbf88101c5a71addd4ed6802d611be7 EFI/Slackware/initrd.gz
+sha256 41a1eb3cf8ab261bcac4e8be67d32a8eb766847257886fcb8b4153ebc654639a EFI/Slackware/vmlinuz
+sha256 07236a989be357e31941374157360c6d9a6c493da6f3b8a81d73de8e4855491d EFI/BOOT/BOOTX64.EFI
+sha256 ae96e0caaa10f367e2f53a9a2e306f3718b8674dce0114b239bf89694ee588ce EFI/BOOT/elilo.conf
+sha256 834680138163dbe09edfb2d99f3d138c1dbf88101c5a71addd4ed6802d611be7 EFI/BOOT/initrd.gz
+sha256 41a1eb3cf8ab261bcac4e8be67d32a8eb766847257886fcb8b4153ebc654639a EFI/BOOT/vmlinuz
+conf chooser=simple
+conf delay=1
+conf timeout=1
+conf #
+conf image=vmlinuz
+conf         label=vmlinuz
+conf         initrd=initrd.gz
+conf         read-only
+conf         append="root=/dev/vda3 vga=normal ro console=tty0 console=ttyS0,115200n8"
+=== cmd df
+Filesystem     1024-blocks    Used Available Capacity Mounted on
+tmpfs                32768     960     31808       3% /run
+devtmpfs              8192       0      8192       0% /dev
+/dev/vda3         18282496 8529992   9752504      47% /
+tmpfs              1013132       0   1013132       0% /dev/shm
+cgroup_root           8192       0      8192       0% /sys/fs/cgroup
+/dev/vda1           523244   34144    489100       7% /boot/efi
+tmpfs               202624       0    202624       0% /run/user/0
+=== cmd kernels
+/boot/vmlinuz-generic-5.15.19
+=== cmd slackware-boot
+kernel vmlinuz-generic-5.15.19 1643789186 41a1eb3cf8ab261bcac4e8be67d32a8eb766847257886fcb8b4153ebc654639a
+esp-image vmlinuz 41a1eb3cf8ab261bcac4e8be67d32a8eb766847257886fcb8b4153ebc654639a
+=== cmd after-rules
+S-slackpkg L-elilo K-slackware B-lin M-lin
+=== cmd boot-state
+init slackware-rc
+state running
+service rc.acpid up
+service rc.atd up
+service rc.crond up
+service rc.elogind up
+service rc.inet1 up
+service rc.messagebus up
+service rc.sshd up
+service rc.syslog up
+service rc.udev up
+=== cmd fstab-check
+findmnt --verify failed
+findmnt: [E] cannot detect on-disk filesystem type
+ok 5 fstab mounts mounted
+=== cmd mounts
+format mountinfo
+22 26 0:21 / /proc rw,relatime - proc proc rw
+23 26 0:22 / /sys rw,relatime - sysfs sysfs rw
+24 26 0:23 / /run rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,size=32768k,mode=755,inode64
+25 26 0:5 / /dev rw,relatime - devtmpfs devtmpfs rw,size=8192k,nr_inodes=251171,mode=755,inode64
+26 1 252:3 / / rw,relatime - xfs /dev/vda3 rw,attr2,inode64,logbufs=8,logbsize=32k,noquota
+27 25 0:24 / /dev/pts rw,relatime - devpts devpts rw,gid=5,mode=620,ptmxmode=000
+28 25 0:25 / /dev/shm rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,inode64
+29 23 0:26 / /sys/fs/cgroup rw,relatime - tmpfs cgroup_root rw,size=8192k,mode=755,inode64
+30 29 0:27 / /sys/fs/cgroup/cpuset rw,relatime - cgroup cpuset rw,cpuset
+31 29 0:28 / /sys/fs/cgroup/cpu rw,relatime - cgroup cpu rw,cpu
+32 29 0:29 / /sys/fs/cgroup/cpuacct rw,relatime - cgroup cpuacct rw,cpuacct
+33 29 0:30 / /sys/fs/cgroup/blkio rw,relatime - cgroup blkio rw,blkio
+34 29 0:31 / /sys/fs/cgroup/memory rw,relatime - cgroup memory rw,memory
+35 29 0:32 / /sys/fs/cgroup/devices rw,relatime - cgroup devices rw,devices
+36 29 0:33 / /sys/fs/cgroup/freezer rw,relatime - cgroup freezer rw,freezer
+37 29 0:34 / /sys/fs/cgroup/net_cls rw,relatime - cgroup net_cls rw,net_cls
+38 29 0:35 / /sys/fs/cgroup/perf_event rw,relatime - cgroup perf_event rw,perf_event
+39 29 0:36 / /sys/fs/cgroup/net_prio rw,relatime - cgroup net_prio rw,net_prio
+40 29 0:37 / /sys/fs/cgroup/pids rw,relatime - cgroup pids rw,pids
+41 29 0:38 / /sys/fs/cgroup/misc rw,relatime - cgroup misc rw,misc
+42 26 252:1 / /boot/efi rw,relatime - vfat /dev/vda1 rw,fmask=0022,dmask=0022,codepage=437,iocharset=iso8859-1,shortname=mixed,utf8,errors=remount-ro
+43 23 0:39 / /sys/firmware/efi/efivars rw,nosuid,nodev,noexec,relatime - efivarfs efivarfs rw
+44 29 0:40 / /sys/fs/cgroup/elogind rw,nosuid,nodev,noexec,relatime - cgroup cgroup rw,xattr,release_agent=/lib64/elogind/elogind-cgroups-agent,name=elogind
+45 27 0:41 / /dev/pts rw,relatime - devpts devpts rw,gid=5,mode=620,ptmxmode=000
+46 24 0:42 / /run/user/0 rw,nosuid,nodev,relatime - tmpfs tmpfs rw,size=202624k,nr_inodes=50656,mode=700,inode64
+=== cmd kernel
+running 5.15.19
+installed 5.15.19
+=== end

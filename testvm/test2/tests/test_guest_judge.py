@@ -1407,6 +1407,101 @@ class Solus(unittest.TestCase):
         self.assertEqual(lines("running 7.3.4-373.current"), ["kernel unverified: no running or installed kernel listed"])
 
 
+class Slackware(unittest.TestCase):
+    """Slackware (slackware.md, GuestTest2's new rules): S-slackpkg, L-lilo, L-elilo and
+    K-slackware.  slackware15-before.out and slackware15-uefi-before.out are the before hook
+    (check-image.sh, boot-state.sh, check-after.sh with RULES="S-slackpkg L-lilo|L-elilo
+    K-slackware B-lin M-lin") run on each guest on Chopin, 2026-11-15 (a --snapshot boot); the
+    failures are that output edited."""
+    RULES = {"source": "S-slackpkg", "kernel": "K-slackware", "boot": "B-lin", "mounts": "M-lin"}
+    BIOS = {"pm": "slackpkg", "fw": "bios", "established": True, "rules": dict(RULES, loader="L-lilo")}
+    UEFI = {"pm": "slackpkg", "fw": "uefi", "established": True, "rules": dict(RULES, loader="L-elilo")}
+    # The stock guests' standing lines, which guest/limits.json classes.
+    STANDING = {"after:fstab": ["findmnt --verify failed", "findmnt: [E] cannot detect on-disk filesystem type"],
+                "after:shadow": ["/dev/pts is shadowed by a later mount on /dev/pts"]}
+
+    def setUp(self):
+        self.bios, self.uefi = fx("slackware15-before.out"), fx("slackware15-uefi-before.out")
+
+    @staticmethod
+    def edit(text, old, new, count=1):
+        assert text.count(old) == count, (old, text.count(old))
+        return text.replace(old, new)
+
+    def test_the_real_guests_pass(self):
+        with open(os.path.join(REPO, "testvm", "test2", "guest", "limits.json"), encoding="utf-8") as f:
+            limits = json.load(f)
+        for name, text, checks in (("slackware15", self.bios, self.BIOS), ("slackware15-uefi", self.uefi, self.UEFI)):
+            s = J.parse_sections(text)
+            self.assertEqual(J.check_hook(s, J.required_image(checks) + J.required_after(checks)), (True, None), name)
+            img = J.judge_image(s, checks, POLICY, updates=1)
+            self.assertEqual({n: v.v for n, v in img.items()},
+                             {"image:sources": "PASS", "image:loader": "PASS", "image:free": "PASS", "image:kernels": "PASS"}, name)
+            self.assertEqual(img["image:kernels"].why, "1 kernel")
+            after = J.judge_after(s, s, checks)
+            self.assertEqual({n: v.v for n, v in after.items()},
+                             {"after:boot-state": "PASS", "after:failed-units": "PASS", "after:fstab": "LIMIT",
+                              "after:shadow": "LIMIT", "after:newest-kernel": "PASS"}, name)
+            for need, lines in self.STANDING.items():
+                self.assertEqual(after[need].lines, lines, (name, need))
+                self.assertEqual(limits[name][need]["lines"], lines, (name, need))
+
+    def test_slackpkg_mirror(self):
+        def lines(text):
+            return J.s_slackpkg(J.parse_sections(text))
+        mirror = "https://slackware.osuosl.org/slackware64-15.0/"
+        self.assertEqual(lines(self.bios), [])
+        self.assertEqual(lines(self.edit(self.bios, mirror + "\n", "")), [J.SLACKPKG_NO_MIRROR])
+        self.assertEqual(lines(self.edit(self.bios, mirror, mirror + "\nhttps://mirrors.kernel.org/slackware/slackware64-15.0/")),
+                         [J.SLACKPKG_MIRRORS])
+        self.assertEqual(lines(self.edit(self.bios, mirror, "https://slackware.osuosl.org/slackware64-current/")),
+                         [J.SLACKPKG_NOT_RELEASE])
+        self.assertEqual(lines(self.edit(self.bios, "CHECKGPG=on", "CHECKGPG=off")), [J.SLACKPKG_NO_GPG])
+        self.assertEqual(lines(self.edit(self.bios, "CHECKMD5=on", "CHECKMD5=off")), [J.SLACKPKG_NO_MD5])
+
+    def test_lilo(self):
+        def lines(text):
+            return J.l_lilo(J.parse_sections(text))
+        self.assertEqual(lines(self.bios), [])
+        self.assertEqual(lines(self.edit(self.bios, "mbr lilo", "mbr other")), [J.LILO_NO_MBR])
+        self.assertEqual(lines(self.edit(self.bios, "map yes", "map no")), [J.LILO_NO_MAP])
+        self.assertEqual(lines(self.edit(self.bios, "image /boot/vmlinuz yes", "image /boot/vmlinuz no")), [J.LILO_IMAGE_MISSING])
+        self.assertEqual(lines(self.edit(self.bios, "fstab-root /dev/vda2", "fstab-root /dev/nvme0n1p2")), [J.SLACK_ROOT])
+        self.assertEqual(lines(self.edit(self.bios, "boot = /dev/vda\n", "")), [J.LILO_NO_BOOT])
+        self.assertEqual(lines(self.edit(self.bios, "=== file /etc/lilo.conf", "=== file /etc/lilo.conf.gone")), [J.LILO_NO_CONF])
+
+    def test_elilo(self):
+        def lines(text):
+            return J.l_elilo(J.parse_sections(text))
+        self.assertEqual(lines(self.uefi), [])
+        fallback = [x for x in self.uefi.splitlines() if x.endswith(" EFI/BOOT/BOOTX64.EFI")][0]
+        self.assertEqual(lines(self.edit(self.uefi, fallback + "\n", "")), [J.ELILO_NO_FALLBACK])
+        initrd = [x for x in self.uefi.splitlines() if x.endswith(" EFI/BOOT/initrd.gz")][0]
+        self.assertEqual(lines(self.edit(self.uefi, initrd, "0" * 64 + " EFI/BOOT/initrd.gz")), [J.ELILO_FALLBACK_DIFFERS])
+        kernel = [x for x in self.uefi.splitlines() if x.endswith(" EFI/Slackware/vmlinuz")][0]
+        self.assertEqual(lines(self.edit(self.uefi, kernel + "\n", "")), [J.ELILO_FILE_MISSING])
+        self.assertEqual(lines(self.edit(self.uefi, "fstab-root /dev/vda3", "fstab-root /dev/vda2")), [J.SLACK_ROOT])
+        self.assertEqual(lines(self.edit(self.uefi, "fstab-root /dev/vda3\n", "fstab-root /dev/vda3\nesp unmounted\n")), [J.ELILO_NO_ESP])
+
+    def test_the_loader_boots_the_newest_kernel(self):
+        def kern(text, checks):
+            return J.judge_kernels(J.parse_sections(text), checks)
+        self.assertEqual(kern(self.bios, self.BIOS).v, "PASS")
+        self.assertEqual(kern(self.uefi, self.UEFI).v, "PASS")
+        # a newer kernel lilo wasn't run for (its mtime after the map's)
+        newer = self.edit(self.bios, "/boot/vmlinuz-huge-5.15.19\n=== cmd slackware-boot\n",
+                          "/boot/vmlinuz-huge-5.15.19\n/boot/vmlinuz-huge-5.15.193\n=== cmd slackware-boot\n"
+                          "kernel vmlinuz-huge-5.15.193 1894710739 " + "b" * 64 + "\n")
+        self.assertEqual(kern(newer, self.BIOS).lines, [J.SLACK_MAP_STALE])
+        # an upgraded kernel not copied to ELILO's ESP
+        k = "41a1eb3cf8ab261bcac4e8be67d32a8eb766847257886fcb8b4153ebc654639a"
+        stale = self.edit(self.uefi, "kernel vmlinuz-generic-5.15.19 1643789186 " + k,
+                          "kernel vmlinuz-generic-5.15.193 1643789186 " + "c" * 64)
+        self.assertEqual(kern(stale, self.UEFI).lines, [J.SLACK_ESP_STALE])
+        self.assertEqual(kern(self.edit(self.uefi, "esp-image vmlinuz " + k, "esp-image vmlinuz missing"), self.UEFI).lines,
+                         [J.SLACK_ESP_MISSING])
+
+
 class Shadow(unittest.TestCase):
     def test_the_corpus_has_one_hit(self):
         hits = {}

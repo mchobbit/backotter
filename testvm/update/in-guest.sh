@@ -224,6 +224,29 @@ if [ "$(uname)" = Linux ] && [ -e /etc/slackware-version ] && has slackpkg; then
     kernels() { ls /var/lib/pkgtools/packages | grep '^kernel-\(huge\|generic\)-' | sort; }
     before=$(kernels)
     sp() { slackpkg -batch=on -default_answer=y "$@"; }
+    # Slackware's key in root's keyring, which slackpkg checks every file
+    # list and package against.  Images built before 2026-11-18 lack it
+    # (the build's "slackpkg update gpg" failed unseen).  Not "slackpkg
+    # update gpg" here: it pings www.slackware.com first, QEMU's user
+    # network passes no ICMP, and its fallback question would read this
+    # script's own lines from stdin (sh -s).  So its other path, the
+    # mirror's GPG-KEY, held to Slackware's fingerprint (by gpg2: gpg is
+    # GnuPG 1.4 on Slackware 15, without --import-options show-only) before
+    # gpg, slackpkg's, imports it as slackpkg does.
+    slk_key=EC5649DA401E22ABFA6736EF6A4463C040102233
+    has_key() { HOME=/root gpg --batch --with-colons --fingerprint --list-keys "$slk_key" 2>/dev/null | grep -q "^fpr:*$slk_key:"; }
+    if ! has_key; then
+        mirror=$(grep -v '^[[:space:]]*#' /etc/slackpkg/mirrors | grep -m 1 .)
+        say "Slackware's key isn't in root's keyring: ${mirror}GPG-KEY, held to $slk_key"
+        kd=$(mktemp -d)
+        wget -q -O "$kd/GPG-KEY" "${mirror}GPG-KEY" </dev/null || { say "could not fetch ${mirror}GPG-KEY"; rm -rf "$kd"; exit 1; }
+        fprs=$(GNUPGHOME=$kd gpg2 --batch --with-colons --import-options show-only --import "$kd/GPG-KEY" 2>/dev/null | awk -F: '$1 == "pub" { p = 1; next } p && $1 == "fpr" { print $10; p = 0 }')
+        [ "$fprs" = "$slk_key" ] || { say "${mirror}GPG-KEY holds $(echo $fprs), not Slackware's $slk_key"; rm -rf "$kd"; exit 1; }
+        mkdir -p /root/.gnupg && chmod 700 /root/.gnupg
+        HOME=/root gpg --batch --import "$kd/GPG-KEY" </dev/null 2>/dev/null
+        rm -rf "$kd"
+        has_key || { say "gpg --import didn't add Slackware's key ($slk_key)"; exit 1; }
+    fi
     sp update || exit 1
     # 20: nothing to upgrade.  50: slackpkg upgraded itself, and is run again.
     for i in 1 2; do

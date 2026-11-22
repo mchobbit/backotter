@@ -553,10 +553,14 @@ pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
 impl Reformat {
     /// The restore's exclusions, as --glob-file lines (shared::Plan::globs).
     pub fn restore_globs(&self) -> Vec<String> {
+        // Bug: restore_globs() and left_out_pool_globs() wrote raw paths into
+        // rustic-bko --glob-file without glob_literal() escaping. Paths with
+        // [, ], *, ?, {, }, or \ broke globset parsing or acted as wildcards,
+        // failing to exclude snapshots/pools and silently skipping user files.
         let mut g = Vec::new();
         for c in &self.changes {
-            g.extend(c.aliases.iter().map(|a| format!("!{a}/**")));
-            g.extend(c.snapshots.iter().map(|(_, b)| format!("!{b}/**")));
+            g.extend(c.aliases.iter().map(|a| format!("!{}/**", shared::glob_literal(a))));
+            g.extend(c.snapshots.iter().map(|(_, b)| format!("!{}/**", shared::glob_literal(b))));
         }
         g
     }

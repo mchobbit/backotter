@@ -269,6 +269,10 @@ impl Builder<'_> {
     /// their disks, which aren't made, so their files would land in the
     /// restored tree's own.
     pub(crate) fn left_out_pool_globs(&self) -> Vec<String> {
-        self.layout.arr(&["storage", "zfs", "left_out_paths"]).iter().filter_map(|p| p.as_str().map(|p| format!("!{}/**", p.trim_end_matches('/')))).collect()
+        self.layout
+            .arr(&["storage", "zfs", "left_out_paths"])
+            .iter()
+            .filter_map(|p| p.as_str().map(|p| format!("!{}/**", super::shared::glob_literal(p.trim_end_matches('/')))))
+            .collect()
     }
 }

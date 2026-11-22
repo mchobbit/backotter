@@ -74,14 +74,6 @@ fn uuid_at(sys: &Sys, fam: Option<Family>, node: &str) -> Option<String> {
     crate::probe::probe_all(&src).into_iter().find_map(|c| c.uuid).map(|u| u.to_ascii_lowercase())
 }
 
-/// Whether a pool's vdev device DEV is one of TARGETS or a partition of
-/// one, or FreeBSD's GELI provider (DEV.eli) on one: assemble attaches the
-/// provider on the target partition and makes the pool on that.
-fn on_target_disks(disks: &[target::TargetDisk], targets: &[&str], dev: &str) -> bool {
-    let dev = dev.strip_suffix(".eli").unwrap_or(dev);
-    disks.iter().any(|d| targets.contains(&d.b.name.as_str()) && (d.b.name == dev || d.parts.iter().any(|p| p.name == dev)))
-}
-
 /// The mount points of the tree still to mount, of UNMOUNTED (those not
 /// mounted now): the inactive boot environments' under T/run/bko-be
 /// (load/zfs_be.rs) are the restore's only, and the boot stage unmounts
@@ -134,7 +126,7 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     // A pool counts when it's imported from the target disks; the system
     // load runs on may have one of the same name of its own.
     let targets: Vec<&str> = mapping.pairs.iter().map(|(_, t)| t.as_str()).collect();
-    let on_targets = |dev: &str| on_target_disks(&system.disks, &targets, dev);
+    let on_targets = |dev: &str| target::vdev_on_targets(&system, &targets, dev);
     let imported: Vec<String> = system.pools.iter().filter(|p| !p.devices.is_empty() && p.devices.iter().all(|d| on_targets(d))).map(|p| p.name.clone()).collect();
     let mut missing: Vec<String> = built.made.iter().filter(|(_, node)| !sys.exists(&crate::other::node_path(sys, node))).map(|(_, n)| n.clone()).collect();
     missing.extend(built.pools.iter().filter(|p| !imported.contains(p)).map(|p| format!("pool {p}")));
@@ -431,9 +423,25 @@ mod tests {
             holds_root: false,
         };
         let disks = vec![disk("vtbd0", vec![]), disk("vtbd1", vec![part("vtbd1p1"), part("vtbd1p3")])];
+        let sys_bsd = target::System { disks, mounts: vec![], pools: vec![], pvs: vec![], devs: vec![], swaps: vec![] };
         for (dev, want) in [("vtbd1p3.eli", true), ("vtbd1p3", true), ("vtbd1", true), ("vtbd1p2.eli", false), ("vtbd0p3.eli", false), ("vtbd0", false)] {
-            assert_eq!(on_target_disks(&disks, &["vtbd1"], dev), want, "{dev}");
+            assert_eq!(target::vdev_on_targets(&sys_bsd, &["vtbd1"], dev), want, "{dev}");
         }
+        // Linux ZFS on LUKS/MD and sda vs sdaa1 prefix collision.
+        let sda = disk("sda", vec![BlockDev { name: "sda2".into(), kind: Kind::Partition, parent: Some("sda".into()), ..BlockDev::default() }]);
+        let sdaa = disk("sdaa", vec![BlockDev { name: "sdaa1".into(), kind: Kind::Partition, parent: Some("sdaa".into()), ..BlockDev::default() }]);
+        let devs = vec![
+            sda.b.clone(),
+            sda.parts[0].clone(),
+            sdaa.b.clone(),
+            sdaa.parts[0].clone(),
+            BlockDev { name: "dm-0".into(), kind: Kind::Dm, slaves: vec!["sda2".into()], ..BlockDev::default() },
+            BlockDev { name: "dm-1".into(), kind: Kind::Dm, slaves: vec!["sda2".into(), "sdaa1".into()], ..BlockDev::default() },
+        ];
+        let sys_linux = target::System { disks: vec![sda, sdaa], mounts: vec![], pools: vec![], pvs: vec![], devs, swaps: vec![] };
+        assert!(target::vdev_on_targets(&sys_linux, &["sda"], "dm-0"));
+        assert!(!target::vdev_on_targets(&sys_linux, &["sda"], "dm-1"));
+        assert!(!target::vdev_on_targets(&sys_linux, &["sda"], "sdaa1"));
     }
 
     /// tn6-3: the boot stage unmounts the inactive BEs it restored; after

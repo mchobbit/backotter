@@ -435,9 +435,13 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
             ));
         }
     }
+    // A pool with no vdev devices read (zpool status unparsed) can't be
+    // shown to be on the targets, so it's renamed too: before, an empty
+    // list passed (all() of nothing) and the layout's pool kept its name.
+    let target_refs: Vec<&str> = targets.iter().map(String::as_str).collect();
     for n in layout.v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(crate::json::Value::as_array).into_iter().flatten().filter_map(|p| p.get("name").and_then(crate::json::Value::as_str)) {
         if let Some(ip) = system.pools.iter().find(|ip| ip.name == n) {
-            if !ip.devices.iter().all(|d| targets.iter().any(|t| d.starts_with(t.as_str()))) {
+            if ip.devices.is_empty() || !ip.devices.iter().all(|d| vdev_on_targets(system, &target_refs, d)) {
                 m.pool_names.push((n.to_string(), temp_pool_name(n)));
                 m.notes.push(format!("ZFS pool {n}: a pool of that name is imported here, so it's {} here until close exports it", temp_pool_name(n)));
             }
@@ -450,6 +454,31 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
         }
     }
     m
+}
+
+/// Whether a pool's vdev device `dev` sits exclusively on `targets`: a target
+/// whole disk, one of its partitions (or FreeBSD `.eli` provider on one), or a
+/// Linux md/dm stack whose underlying whole disks are all in `targets`.
+/// Names match exactly: sdaa1 isn't on sda.  illumos' slices (c3t0d0s1)
+/// are its disks' parts (other/load.rs names EFI label entries so).
+pub fn vdev_on_targets(system: &System, targets: &[&str], dev: &str) -> bool {
+    let raw = dev.strip_suffix(".eli").unwrap_or(dev);
+    if system.disks.iter().any(|d| targets.contains(&d.b.name.as_str()) && (d.b.name == raw || d.parts.iter().any(|p| p.name == raw))) {
+        return true;
+    }
+    if system.devs.is_empty() {
+        return false;
+    }
+    // Under mdev (Alpine) /dev/mapper/NAME is a node of its own, not a link
+    // to dm-N, so resolve_name gives the mapper name: its kernel name is the
+    // device whose dm/name that is.
+    let raw = if system.devs.iter().any(|b| b.name == raw) {
+        raw
+    } else {
+        system.devs.iter().find(|b| b.dm_name.as_deref() == Some(raw)).map_or(raw, |b| b.name.as_str())
+    };
+    let bs = super::release::bases(&system.devs, raw);
+    !bs.is_empty() && bs.iter().all(|b| system.disks.iter().any(|d| d.b.name == *b && targets.contains(&d.b.name.as_str())))
 }
 
 /// Whether T holds D's partition table as the partition stage writes it, by
@@ -896,6 +925,66 @@ mod tests {
         let m = map(&layout(), &o, &system, &s);
         assert_eq!(m.pairs, vec![("vda".to_string(), "vdb".to_string())]);
         assert!(m.problems.is_empty(), "{:?}", m.problems);
+    }
+
+    /// A pool of the layout's name imported here keeps it only when every
+    /// vdev is on the targets: exactly (sdaa1 isn't sda's), or through the
+    /// dm/md devices over them.
+    #[test]
+    fn a_same_named_pool_off_the_targets_is_renamed() {
+        use crate::blockdev::{BlockDev, Kind};
+        let t = tree();
+        let s = sys(&t);
+        let base = scan(&s, &opts(&["--map", "vda=vdb"]), &[]).disks.into_iter().find(|d| d.b.name == "vdb").unwrap();
+        let part = |n: &str, d: &str| BlockDev { name: n.into(), kind: Kind::Partition, parent: Some(d.into()), ..BlockDev::default() };
+        let disk = |n: &str, p: &str| TargetDisk { b: BlockDev { name: n.into(), ..base.b.clone() }, parts: vec![part(p, n)], table: None, signatures: vec![], uuids: vec![], in_use: vec![], hard_use: vec![], boot_medium: false, holds_root: false };
+        let (sda, sdaa) = (disk("sda", "sda2"), disk("sdaa", "sdaa1"));
+        let dm = |n: &str, dm: &str, slaves: &[&str]| BlockDev { name: n.into(), kind: Kind::Dm, dm_name: Some(dm.into()), slaves: slaves.iter().map(|x| x.to_string()).collect(), ..BlockDev::default() };
+        let devs = vec![sda.b.clone(), sda.parts[0].clone(), sdaa.b.clone(), sdaa.parts[0].clone(), dm("dm-0", "luks-a", &["sda2"]), dm("dm-1", "luks-b", &["sda2", "sdaa1"])];
+        let j = sample::bios_mbr().replace(
+            "\"zfs\": {\"pools_from_labels\": [], \"tools\": null}",
+            "\"zfs\": {\"pools_from_labels\": [], \"tools\": {\"imported_pools\": [{\"name\": \"rpool\", \"vdevs\": {}}], \"datasets\": []}}",
+        );
+        let l = Layout::from_json(crate::json::parse(&j).unwrap()).unwrap();
+        let o = opts(&["--map", "vda=sda"]);
+        let renamed = |devices: &[&str]| {
+            let pools = vec![ImportedPool { name: "rpool".into(), altroot: "-".into(), devices: devices.iter().map(|x| x.to_string()).collect() }];
+            let system = System { disks: vec![disk("sda", "sda2"), disk("sdaa", "sdaa1")], mounts: vec![], pools, pvs: vec![], devs: devs.clone(), swaps: vec![] };
+            let m = map_disks(&l, &o, &system, &s);
+            assert_eq!(m.pairs, vec![("vda".to_string(), "sda".to_string())]);
+            let r = m.pool_names == vec![("rpool".to_string(), temp_pool_name("rpool"))];
+            assert_eq!(r, m.notes.iter().any(|n| n.contains("a pool of that name is imported here")), "{:?}", m.notes);
+            assert!(r || m.pool_names.is_empty(), "{:?}", m.pool_names);
+            r
+        };
+        assert!(renamed(&["sdaa1"]), "sdaa1 isn't on sda");
+        assert!(!renamed(&["sda2"]));
+        assert!(!renamed(&["dm-0"]), "dm-0 is over sda2");
+        assert!(!renamed(&["luks-a"]), "mdev: /dev/mapper/luks-a resolves to its dm name");
+        assert!(renamed(&["dm-1"]), "dm-1 is over sdaa1 too");
+        assert!(renamed(&[]), "no vdevs read: not shown to be on the targets");
+    }
+
+    /// illumos' zpool names a vdev by slice (c3t0d0s1); scan names its
+    /// disks' EFI label entries so (omnios58's dump: c3t0d0s0, s1, s8).
+    #[test]
+    fn an_illumos_slice_vdev_is_on_its_disk() {
+        use crate::blockdev::{BlockDev, Kind};
+        let disk = |n: &str| TargetDisk {
+            b: BlockDev { name: n.into(), kind: Kind::Disk, ..BlockDev::default() },
+            parts: [1, 2, 9].iter().map(|&i| BlockDev { name: crate::other::illumos::slice_name(n, i), kind: Kind::Partition, parent: Some(n.into()), ..BlockDev::default() }).collect(),
+            table: None,
+            signatures: vec![],
+            uuids: vec![],
+            in_use: vec![],
+            hard_use: vec![],
+            boot_medium: false,
+            holds_root: false,
+        };
+        let system = System { disks: vec![disk("c3t0d0"), disk("c3t0d01")], mounts: vec![], pools: vec![], pvs: vec![], devs: vec![], swaps: vec![] };
+        for (dev, want) in [("c3t0d0s1", true), ("c3t0d0s8", true), ("c3t0d0", true), ("c3t0d0s3", false), ("c3t0d01s1", false), ("c3t0d0s10", false)] {
+            assert_eq!(vdev_on_targets(&system, &["c3t0d0"], dev), want, "{dev}");
+        }
     }
 
     #[test]

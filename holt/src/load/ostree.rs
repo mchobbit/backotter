@@ -157,15 +157,22 @@ impl Builder<'_> {
 
     /// Where the restored system's /var is: fstab's /var, or else the
     /// stateroot's own var, which ostree binds there at boot.
-    fn ostree_var(&self, o: &Value) -> Option<String> {
+    fn ostree_var(&mut self, o: &Value) -> Option<String> {
         let t = &self.opts.target;
         if self.layout.arr(&["storage", "fstab"]).iter().any(|e| e.get("file").and_then(Value::as_str) == Some("/var")) {
             return Some(format!("{t}/var"));
         }
-        let stateroot = o.get("stateroot").and_then(Value::as_str).map(str::to_string).or_else(|| {
+        let Some(stateroot) = o.get("stateroot").and_then(Value::as_str).map(str::to_string).or_else(|| {
             let deps = o.get("deployments").and_then(Value::as_array).cloned().unwrap_or_default();
             deps.iter().find(|d| d.get("booted") == Some(&Value::Bool(true))).or(deps.first()).and_then(|d| d.get("stateroot")).and_then(Value::as_str).map(str::to_string)
-        })?;
+        }) else {
+            self.problems.push("ostree: neither fstab's /var nor a stateroot in boot.ostree: nowhere to write the restore's log".into());
+            return None;
+        };
+        if stateroot.is_empty() || matches!(stateroot.as_str(), "." | "..") || stateroot.contains(['/', '\0']) {
+            self.problems.push(format!("ostree: invalid stateroot {stateroot:?} in boot.ostree"));
+            return None;
+        }
         Some(format!("{t}/ostree/deploy/{stateroot}/var"))
     }
 
@@ -186,14 +193,11 @@ impl Builder<'_> {
         if self.layout.uefi() && !self.opts.no_nvram {
             out.extend(self.efi_entries());
         }
-        match self.ostree_var(o) {
-            Some(var) => {
-                let log = format!("{var}/log/bko-holt");
-                out.push(Cmd::new(&["mkdir", "-p", &log]));
-                out.push(Cmd::new(&["cp", "-a", &format!("{RUN_DIR}/log/."), &format!("{log}/")]).why("this restore's log, on the restored system"));
-                out.push(Cmd::new(&["python3", "-c", LABEL_PY, "security.selinux", &format!("{var}/log"), &log]).why("the log's SELinux label: /var/log's (every other file kept its own from the backup; no relabel)"));
-            }
-            None => self.problems.push("ostree: neither fstab's /var nor a stateroot in boot.ostree: nowhere to write the restore's log".into()),
+        if let Some(var) = self.ostree_var(o) {
+            let log = format!("{var}/log/bko-holt");
+            out.push(Cmd::new(&["mkdir", "-p", &log]));
+            out.push(Cmd::new(&["cp", "-a", &format!("{RUN_DIR}/log/."), &format!("{log}/")]).why("this restore's log, on the restored system"));
+            out.push(Cmd::new(&["python3", "-c", LABEL_PY, "security.selinux", &format!("{var}/log"), &log]).why("the log's SELinux label: /var/log's (every other file kept its own from the backup; no relabel)"));
         }
         out.extend(self.boot_tail(&t));
         out
@@ -309,6 +313,10 @@ mod tests {
         let v = with(&v, &["boot", "ostree", "deployments"], Value::Arr(vec![]));
         let b = plan(&v, &[]);
         assert!(b.problems.iter().any(|p| p.contains("nowhere to write the restore's log")), "{:?}", b.problems);
+        for bad in ["../etc", "a/b", "..", ".", ""] {
+            let b = plan(&with(&v, &["boot", "ostree", "stateroot"], Value::Str(bad.into())), &[]);
+            assert!(b.problems.iter().any(|p| p.contains("invalid stateroot")), "{bad}: {:?}", b.problems);
+        }
     }
 
     #[test]
@@ -382,6 +390,7 @@ mod tests {
     /// A restored kinoite44 tree under T, as the restore leaves it:
     /// /boot/loader -> loader.1 with ostree-1.conf (.0) and ostree-2.conf
     /// (.1, the default), the kernel and initramfs, the boot.1 chain.
+    #[cfg(target_os = "linux")]
     fn restored(t: &crate::testutil::TempDir) -> String {
         let root = t.path().to_str().unwrap().to_string();
         let c = "10e6a37fe91449ab0256dc707f50023505f76d29b6d34844b63843d0950f7de6";
@@ -415,6 +424,7 @@ mod tests {
         root
     }
 
+    #[cfg(target_os = "linux")]
     fn sh(script: &str) -> (bool, String, String) {
         let out = std::process::Command::new("sh").args(["-c", script]).env("LC_ALL", "C").output().unwrap();
         (out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
@@ -423,6 +433,7 @@ mod tests {
     /// The consistency check, run by sh on restored trees: whole, and with
     /// each thing it looks for broken.
     #[test]
+    #[cfg(target_os = "linux")]
     fn consistency_check_runs() {
         let c = "10e6a37fe91449ab0256dc707f50023505f76d29b6d34844b63843d0950f7de6";
         let b = "1cc099369334fad8952283b3221e6d78fd79263e6dedc35ce40302458681d413";
@@ -497,6 +508,7 @@ mod tests {
     /// The labeller, with a user attribute in place of security.selinux
     /// (which needs root): copied onto the directory and all below it.
     #[test]
+    #[cfg(target_os = "linux")]
     fn label_copies_the_attribute() {
         let d = crate::testutil::TempDir::new("ostree-label");
         let r = d.path().to_str().unwrap();

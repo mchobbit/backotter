@@ -64,9 +64,11 @@ pub fn udev_decode(s: &str) -> String {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'\\' && b.get(i + 1) == Some(&b'x') && i + 4 <= b.len() && b[i + 2..i + 4].iter().all(u8::is_ascii_hexdigit) {
-            out.push(u8::from_str_radix(&s[i + 2..i + 4], 16).unwrap());
-            i += 4;
-            continue;
+            if let Ok(byte) = u8::from_str_radix(&s[i + 2..i + 4], 16) {
+                out.push(byte);
+                i += 4;
+                continue;
+            }
         }
         out.push(b[i]);
         i += 1;

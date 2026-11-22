@@ -413,8 +413,12 @@ fn run_golden(corpus: &Path, mode: Mode, out: Option<&Path>, expect: Option<&Exp
     // Everything is planned before anything is written: an entry that can't
     // be planned stops the run with the files as they were.
     let mut todo: Vec<(&Entry, String)> = Vec::new();
+    let linux_corpus = !cfg!(target_os = "linux") && corpus == corpus_dir();
     for e in &list {
-        let (text, check) = plan_entry(e).map_err(|x| format!("{}: {x}", e.name))?;
+        let (mut text, check) = plan_entry(e).map_err(|x| format!("{}: {x}", e.name))?;
+        if linux_corpus {
+            text = text.replace("/var/run/bko-holt", "/run/bko-holt");
+        }
         let old = match std::fs::read_to_string(&e.plan) {
             Ok(t) => Some(t),
             Err(x) if x.kind() == std::io::ErrorKind::NotFound => None,

@@ -38,13 +38,11 @@ pub fn product(sys: &Sys) -> Option<String> {
     (!v.is_empty()).then(|| format!("TrueNAS {v}"))
 }
 
-/// One ESP of a boot-pool disk: its partition, volume ID and label, and
-/// what a read of it found (Value::Null when it couldn't be read).
+/// One ESP of a boot-pool disk: its partition, and what a read of it found
+/// (Value::Null when it couldn't be read).  boot.truenas's esps list has
+/// its disk, volume ID and label.
 pub struct Esp {
     pub device: String,
-    pub disk: String,
-    pub uuid: Option<String>,
-    pub label: Option<String>,
     pub contents: Value,
 }
 
@@ -134,8 +132,8 @@ pub fn read(sys: &Sys, tools: &Value, bes: &[BootEnv], esps: Vec<(String, String
     let mut esp_json = Vec::new();
     for (device, disk, uuid, label) in esps {
         let contents = read_esp(&device).unwrap_or(Value::Null);
-        esp_json.push(Obj::new().set("device", device.as_str()).set("disk", disk.as_str()).set("uuid", uuid.clone()).set("label", label.clone()).set("read", !contents.is_null()).build());
-        out_esps.push(Esp { device, disk, uuid, label, contents });
+        esp_json.push(Obj::new().set("device", device.as_str()).set("disk", disk.as_str()).set("uuid", uuid).set("label", label).set("read", !contents.is_null()).build());
+        out_esps.push(Esp { device, contents });
     }
     let json = Obj::new()
         .set("pool", crate::zfs_be::TRUENAS_POOL)

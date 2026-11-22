@@ -1177,7 +1177,7 @@ mod tests {
             let m = run(a);
             assert!(m.problems.is_empty(), "{a:?}: {:?}", m.problems);
             assert_eq!(m.release.iter().map(|x| &x.action).collect::<Vec<_>>(), vec![&lvm], "{a:?}");
-            assert!(m.notes.iter().any(|n| n.starts_with(note) && n.contains("/run/bko-holt/partitioned/vdb")), "{a:?}: {:?}", m.notes);
+            assert!(m.notes.iter().any(|n| n.starts_with(note) && n.contains(&format!("{RUN_DIR}/partitioned/vdb"))), "{a:?}: {:?}", m.notes);
             let b = super::super::commands::build(&l, &opts(a), &m);
             let text: String = b.stage(Stage::Partition).iter().map(|c| c.shell()).collect();
             let at = |x: &str| text.find(x).unwrap_or_else(|| panic!("no {x:?} in\n{text}"));
@@ -1330,7 +1330,7 @@ mod tests {
         assert_eq!(row(&l, &erase, &s, Stage::Partition).0, State::NotDone);
         assert_eq!(runs(&through), vec![lvm.clone()]);
         let records = prepare(&l, &opts(&erase), &s).mapping.records;
-        assert_eq!(records.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), vec!["/run/bko-holt/partitioned/vdb", "/run/bko-holt/partitioned/vdc"]);
+        assert_eq!(records.iter().map(|r| r.0.clone()).collect::<Vec<_>>(), vec![format!("{RUN_DIR}/partitioned/vdb"), format!("{RUN_DIR}/partitioned/vdc")]);
         // vdb's alone: vdc still unrecorded, so the stage still runs.
         t.file(&records[0].0, records[0].1.as_str());
         let (st, why) = row(&l, &erase, &s, Stage::Partition);

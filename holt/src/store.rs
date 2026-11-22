@@ -30,7 +30,9 @@ pub struct StoreSystem {
     /// What the plan calls the store.
     pub store_name: &'static str,
     /// The current system's tool directories (sys.rs's SYSTEM_PATH holds
-    /// them, so the dump runs btrfs, cryptsetup and efibootmgr from there).
+    /// them, so the dump runs btrfs, cryptsetup and efibootmgr from there;
+    /// the test that says so is what reads this).
+    #[cfg(test)]
     pub profile_bins: &'static [&'static str],
     /// BIOS GRUB: grub-install's path in a GRUB store item (NixOS's store
     /// keeps the GRUB it installed with), or None, where the store has no
@@ -56,6 +58,7 @@ pub const SYSTEMS: &[StoreSystem] = &[
         name: "NixOS",
         store: "/nix/store",
         store_name: "the Nix store",
+        #[cfg(test)]
         profile_bins: &["/run/current-system/sw/sbin", "/run/current-system/sw/bin"],
         grub_install: Some("bin/grub-install"),
         initramfs_uefi: "NixOS: each generation's kernel and initrd came back with the restore, where its boot loader's entries name them; nothing to rebuild",
@@ -69,6 +72,7 @@ pub const SYSTEMS: &[StoreSystem] = &[
         name: "Guix System",
         store: "/gnu/store",
         store_name: "the Guix store",
+        #[cfg(test)]
         profile_bins: &["/run/current-system/profile/sbin", "/run/current-system/profile/bin"],
         grub_install: None,
         initramfs_uefi: GUIX_INITRAMFS,
@@ -96,9 +100,16 @@ impl StoreSystem {
     /// harmless with one GRUB).
     pub fn bios_grub_pick(&self, t: &str) -> String {
         let (st, name) = (self.store, self.store_name);
-        format!(
-            "g=$(for d in {t}{st}/*-grub-2.*/lib/grub/i386-pc; do d=${{d%/lib/grub/i386-pc}}; echo \"${{d#*-}} ${{d#{t}}}\"; done | sort -V | tail -n 1 | cut -d' ' -f2); [ -n \"$g\" ] || {{ echo 'no BIOS GRUB in {name}' >&2; exit 1; }}"
-        )
+        let qt = crate::load::shell_quote(t);
+        if qt == t {
+            format!(
+                "g=$(for d in {t}{st}/*-grub-2.*/lib/grub/i386-pc; do d=${{d%/lib/grub/i386-pc}}; echo \"${{d#*-}} ${{d#{t}}}\"; done | sort -V | tail -n 1 | cut -d' ' -f2); [ -n \"$g\" ] || {{ echo 'no BIOS GRUB in {name}' >&2; exit 1; }}"
+            )
+        } else {
+            format!(
+                "t={qt}; g=$(for d in \"$t\"{st}/*-grub-2.*/lib/grub/i386-pc; do d=${{d%/lib/grub/i386-pc}}; echo \"${{d#*-}} ${{d#\"$t\"}}\"; done | sort -V | tail -n 1 | cut -d' ' -f2); [ -n \"$g\" ] || {{ echo 'no BIOS GRUB in {name}' >&2; exit 1; }}"
+            )
+        }
     }
 }
 
@@ -121,12 +132,6 @@ impl Sx {
     pub fn list(&self) -> Option<&[Sx]> {
         match self {
             Sx::List(l) => Some(l),
-            _ => None,
-        }
-    }
-    pub fn str(&self) -> Option<&str> {
-        match self {
-            Sx::Str(s) => Some(s),
             _ => None,
         }
     }
@@ -725,6 +730,13 @@ mod tests {
                 assert!(crate::sys::SYSTEM_PATH.split(':').any(|p| p == *d), "{d} isn't on the dump's PATH");
             }
         }
+        let nix = system(Some("nixos")).unwrap();
+        let plain = nix.bios_grub_pick("/mnt/bko-target");
+        assert!(plain.starts_with("g=$(for d in /mnt/bko-target/nix/store/"), "{plain}");
+        let hostile = "/mnt/new d'isk\"$HOME`id`\nz";
+        let quoted = nix.bios_grub_pick(hostile);
+        assert!(!quoted.contains(hostile), "{quoted}");
+        assert!(std::process::Command::new("sh").args(["-n", "-c", &quoted]).status().unwrap().success(), "{quoted}");
     }
 
     /// The profile chain resolved under the dump's root (absolute links

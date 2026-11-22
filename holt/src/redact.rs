@@ -482,8 +482,9 @@ impl Collector {
             }
         } else if key == "machine_id" {
             if t.len() == 32 && t.bytes().all(is_hex) {
-                let b = hex_bytes(&t.to_ascii_lowercase());
-                self.add(Ident::Uuid(b.try_into().unwrap(), Kind::MachineId));
+                if let Ok(arr) = <[u8; 16]>::try_from(hex_bytes(&t.to_ascii_lowercase())) {
+                    self.add(Ident::Uuid(arr, Kind::MachineId));
+                }
             }
         } else if SERIAL_KEYS.contains(&key) && !t.is_empty() {
             self.add(Ident::Name(Kind::Serial, t.to_string()));
@@ -555,12 +556,15 @@ impl Collector {
         }
         for (a, b) in uuid_spans(s) {
             let u = s[a..b].to_ascii_lowercase();
-            let bytes: Vec<u8> = hex_bytes(&u.replace('-', ""));
-            self.add(Ident::Uuid(bytes.try_into().unwrap(), Kind::Uuid));
+            if let Ok(arr) = <[u8; 16]>::try_from(hex_bytes(&u.replace('-', ""))) {
+                self.add(Ident::Uuid(arr, Kind::Uuid));
+            }
         }
         for (a, b) in md_spans(s) {
             let u = s[a..b].to_ascii_lowercase().replace(':', "");
-            self.add(Ident::Uuid(hex_bytes(&u).try_into().unwrap(), Kind::Uuid));
+            if let Ok(arr) = <[u8; 16]>::try_from(hex_bytes(&u)) {
+                self.add(Ident::Uuid(arr, Kind::Uuid));
+            }
         }
         for (a, b) in lvm_spans(s) {
             self.add(Ident::Lvm(s[a..b].replace('-', "")));
@@ -1089,7 +1093,7 @@ impl Sealer {
                     break f;
                 }
             };
-            forms[0].parse::<u64>().unwrap()
+            forms[0].parse::<u64>().unwrap_or(n)
         } else {
             n
         };

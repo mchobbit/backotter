@@ -119,7 +119,9 @@ pub fn main(args: &[String]) -> ExitCode {
     let now = crate::timestamp();
     let b = build(&sys, &a, &now);
     let path = a.output.clone().unwrap_or_else(|| format!("bko-report-{}.txt", now.replace(['-', ':'], "").replace('T', "-").trim_end_matches('Z')));
-    if let Err(e) = std::fs::write(&path, &b.text) {
+    // 0600, and under sudo the invoking user's: they can attach it, no one
+    // else can read it (a --no-redact one holds what redaction would hide).
+    if let Err(e) = write_report(&path, &b.text) {
         eprintln!("bko-holt report-bug: {path}: {e}");
         return ExitCode::from(1);
     }
@@ -162,13 +164,15 @@ struct Run {
     time: Option<String>,
 }
 
-fn read_any(sys: &Sys, path: &str) -> Option<String> {
-    if path.starts_with('/') {
-        sys.read(path)
-    } else {
-        std::fs::read_to_string(path).ok()
-    }
+/// The layout at PATH: under SYS's root when it's absolute, else from here.
+fn read_any(sys: &Sys, path: &str) -> std::io::Result<String> {
+    let p = if path.starts_with('/') { sys.p(path) } else { std::path::PathBuf::from(path) };
+    crate::bytes::read_bounded(&p, crate::LAYOUT_MAX).map(|b| String::from_utf8_lossy(&b).into_owned())
 }
+
+/// How much of the end of a --stderr file is read: far more than its last
+/// LOG_LINES lines, which are what the report keeps.
+const STDERR_TAIL_MAX: u64 = 16 << 20;
 
 fn tail(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
@@ -222,8 +226,65 @@ pub fn record_load_run(args: &[String], exit: u8, stderr: &str) {
         .set("exit", u64::from(exit))
         .set("stderr", err)
         .build();
-    let _ = std::fs::create_dir_all(RUN_DIR);
-    let _ = std::fs::write(format!("{RUN_DIR}/{LAST_RUN}"), v.pretty());
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(RUN_DIR);
+        let _ = std::fs::set_permissions(RUN_DIR, std::fs::Permissions::from_mode(0o700));
+    }
+    let _ = write_private_file(&format!("{RUN_DIR}/{LAST_RUN}"), &v.pretty());
+}
+
+/// TEXT in the file at PATH, 0600; a PATH that isn't a regular file (a
+/// device) keeps its mode.
+fn write_private_file(path: &str, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+    if f.metadata()?.is_file() {
+        let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
+    }
+    f.write_all(text.as_bytes())
+}
+
+/// The report's TEXT in the file at PATH.  A file this makes is 0600 and,
+/// when root runs it under sudo, the invoking user's (SUDO_UID and
+/// SUDO_GID), so they can attach it and no one else can read it.  A
+/// regular file already there is made 0600 but keeps its owner: handing
+/// root's existing files to the sudo user (--output /etc/passwd) would be
+/// a way past sudo's rules.  A PATH that isn't a regular file (a device,
+/// a FIFO) is written to as it is.
+fn write_report(path: &str, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    // O_EXCL first, which also refuses a symlink in PATH's last place:
+    // whether this run made the file decides whether it may be chowned.
+    let (mut f, created) = match std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path) {
+        Ok(f) => (f, true),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (std::fs::OpenOptions::new().write(true).truncate(true).open(path)?, false),
+        Err(e) => return Err(e),
+    };
+    if f.metadata()?.is_file() {
+        // Someone else's file, writable by us: it keeps its mode.
+        let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
+        let (uid, gid) = (std::env::var("SUDO_UID").ok(), std::env::var("SUDO_GID").ok());
+        if let Some((u, g)) = report_owner(created, crate::sys::euid(), uid.as_deref(), gid.as_deref()) {
+            if let Err(e) = std::os::unix::fs::fchown(&f, Some(u), g) {
+                eprintln!("bko-holt report-bug: {path}: can't give it to uid {u} ({e}): it stays root's");
+            }
+        }
+    }
+    f.write_all(text.as_bytes())
+}
+
+/// Who a report file is handed to: under sudo (root, SUDO_UID a user's
+/// uid), that user and SUDO_GID's group, for a file this run made only.
+/// None: it stays whose it is.
+fn report_owner(created: bool, euid: u32, sudo_uid: Option<&str>, sudo_gid: Option<&str>) -> Option<(u32, Option<u32>)> {
+    if !created || euid != 0 {
+        return None;
+    }
+    let uid: u32 = sudo_uid?.trim().parse().ok().filter(|&u| u != 0)?;
+    Some((uid, sudo_gid.and_then(|g| g.trim().parse().ok())))
 }
 
 /// Above this many base64 characters, a dump's boot-area or ESP image is
@@ -370,11 +431,12 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
                     }
                     run_text.push(o.layout.clone());
                     match read_any(sys, &o.layout) {
-                        Some(text) => match crate::json::parse(&text) {
+                        Ok(text) => match crate::json::parse(&text) {
                             Ok(v) => layout = Some((o.layout.clone(), v, text)),
                             Err(e) => notes.push(format!("{}: not JSON ({}); its plan isn't in the report", o.layout, e.message)),
                         },
-                        None => notes.push(format!("{}: can't read it; its plan isn't in the report", o.layout)),
+                        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => notes.push(format!("{}: bigger than load reads ({} bytes); its plan isn't in the report", o.layout, crate::LAYOUT_MAX)),
+                        Err(_) => notes.push(format!("{}: can't read it; its plan isn't in the report", o.layout)),
                     }
                     for (_, f) in &o.key_files {
                         c.learn_key_file(f);
@@ -422,7 +484,7 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
     }
     let mut saved: Vec<(String, String)> = Vec::new();
     for p in &a.stderr {
-        match std::fs::read(p) {
+        match crate::bytes::read_tail(std::path::Path::new(p), STDERR_TAIL_MAX) {
             Ok(b) => {
                 let t = String::from_utf8_lossy(&b).into_owned();
                 c.learn_text(p);
@@ -443,7 +505,8 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
         let red_text = red.pretty();
         let ro = redacted_opts(o, &r);
         let (code, out, err) = load::run(&ro, &red_text, sys);
-        let mut body = format!("bko-holt load {} -- exit {code}\n", plan_args(&run.as_ref().unwrap().args).iter().map(|x| load::shell_quote(x)).collect::<Vec<_>>().join(" "));
+        let shown_args = run.as_ref().map(|x| plan_args(&x.args)).unwrap_or_default();
+        let mut body = format!("bko-holt load {} -- exit {code}\n", shown_args.iter().map(|x| load::shell_quote(x)).collect::<Vec<_>>().join(" "));
         let (code0, out0, err0) = if a.no_redact { (code, out.clone(), err.clone()) } else { load::run(o, text, sys) };
         if a.no_redact {
             body += &(out + &err);
@@ -662,6 +725,40 @@ mod tests {
     /// A rescue system that ran `load` on a layout and failed: the bundle
     /// has every section, redacted, and finds the run by itself.
     #[test]
+    fn report_owner_only_for_sudo_and_new_files() {
+        assert_eq!(report_owner(true, 0, Some("1000"), Some("1000")), Some((1000, Some(1000))));
+        assert_eq!(report_owner(true, 0, Some("1000"), None), Some((1000, None)));
+        assert_eq!(report_owner(true, 0, Some("1000"), Some("x")), Some((1000, None)));
+        // Not root, not under sudo, root's own sudo, or a file already there.
+        assert_eq!(report_owner(true, 1000, Some("1000"), Some("1000")), None);
+        assert_eq!(report_owner(true, 0, None, Some("1000")), None);
+        assert_eq!(report_owner(true, 0, Some("0"), Some("0")), None);
+        assert_eq!(report_owner(true, 0, Some("alice"), None), None);
+        assert_eq!(report_owner(false, 0, Some("1000"), Some("1000")), None);
+    }
+
+    #[test]
+    fn write_report_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = Tree::new("bugreport-write");
+        let new = t.root().join("new.txt");
+        write_report(new.to_str().unwrap(), "one").unwrap();
+        assert_eq!(std::fs::read_to_string(&new).unwrap(), "one");
+        assert_eq!(std::fs::metadata(&new).unwrap().permissions().mode() & 0o777, 0o600);
+        // A regular file already there: rewritten and made 0600.
+        let old = t.root().join("old.txt");
+        std::fs::write(&old, "a much longer old text").unwrap();
+        std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_report(old.to_str().unwrap(), "two").unwrap();
+        assert_eq!(std::fs::read_to_string(&old).unwrap(), "two");
+        assert_eq!(std::fs::metadata(&old).unwrap().permissions().mode() & 0o777, 0o600);
+        // Not a regular file: written to, its mode left alone.
+        let before = std::fs::metadata("/dev/null").unwrap().permissions().mode();
+        write_report("/dev/null", "three").unwrap();
+        assert_eq!(std::fs::metadata("/dev/null").unwrap().permissions().mode(), before);
+    }
+
+    #[test]
     fn bundle_from_a_failed_run() {
         let t = Tree::new("report-bug");
         t.debian13();
@@ -683,9 +780,10 @@ mod tests {
         let a = Args::default();
         let b = build(&sys, &a, "2026-11-07T03:42:00Z");
         let txt = &b.text;
+        let log_hdr = format!("==== log: {RUN_DIR}/log/load.log");
         for sect in [
             "==== versions", "==== last bko-holt load run", "==== plan for that run, of /srv/alice/layout.json", "==== status of the target disks",
-            "==== layout: /srv/alice/layout.json", "==== dump of this system", "==== log: /run/bko-holt/log/load.log", "==== redaction", "==== end",
+            "==== layout: /srv/alice/layout.json", "==== dump of this system", log_hdr.as_str(), "==== redaction", "==== end",
         ] {
             assert!(txt.contains(sect), "no {sect:?} in:\n{txt}");
         }

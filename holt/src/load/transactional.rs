@@ -803,7 +803,7 @@ mod tests {
         let label_mps = pos(&bt, &format!("{t}/@/.snapshots/2/snapshot /mnt/bko-target /.snapshots /boot/efi /boot/grub2/i386-pc /boot/grub2/x86_64-efi /boot/writable /home /opt /root /srv /usr/local /var\n"));
         let umount = pos(&bt, &format!("umount {t}\n"));
         assert!(hc < label_mps && label_mps < umount, "{bt}");
-        let log = pos(&bt, "cp -a /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/\n");
+        let log = pos(&bt, &format!("cp -a {RUN_DIR}/log/. /mnt/bko-target/var/log/bko-holt/\n"));
         let label = pos(&bt, "security.selinux /mnt/bko-target/var/log /mnt/bko-target/var/log/bko-holt\n");
         let back = pos(&bt, "atimes.after");
         let ro = pos(&bt, &format!("btrfs property set -ts {t}/@/.snapshots/2/snapshot ro true\n"));
@@ -869,7 +869,7 @@ mod tests {
         assert!(b.notes.iter().any(|n| n.ends_with("@/.snapshots/1/snapshot/etc: ID 268 on the source, 274 here (a subvolume made after it on the source is made first here)")), "{:?}", b.notes);
         let r = text(b.stage(Stage::Restore));
         assert!(r.contains("!/.snapshots/2/snapshot/**\n!/.snapshots/1/snapshot/**\n"), "{r}");
-        let main = pos(&r, "--glob-file /run/bko-holt/restore.globs latest /mnt/bko-target\n");
+        let main = pos(&r, &format!("--glob-file {RUN_DIR}/restore.globs latest /mnt/bko-target\n"));
         let slot = pos(&r, &format!("btrfs subvolume snapshot {t}/@/.snapshots/2/snapshot \"$d\" && "));
         let gone = pos(&r, "rm -rf -- \"$d\"/etc && mkdir -p \"$(dirname \"$d\"/etc)\" && ");
         let child = pos(&r, &format!("btrfs subvolume snapshot {t}/@/.snapshots/2/snapshot/etc \"$d\"/etc && "));

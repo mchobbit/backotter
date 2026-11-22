@@ -73,7 +73,7 @@ mkdir -p /mnt/bko-target/boot
 mount -t ext4 -o data=ordered /dev/sdq1 /mnt/bko-target/boot
 
 # ---- restore ----
-mkdir -p /run/bko-holt
+mkdir -p -m 700 /run/bko-holt
 # left out of the restore (--reformat): btrfs subvolumes mounted elsewhere, seen again (aliases), and btrfs snapshots, which the new type can't hold as snapshots
 cat > /run/bko-holt/restore.globs <<'EOF'
 !/.snapshots/1/snapshot/**
@@ -82,14 +82,14 @@ EOF
 # snapshot latest of /srv/bko-repo, with BackOtter's restore flags
 RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id --glob-file /run/bko-holt/restore.globs latest /mnt/bko-target
 # the atimes the restore set, for boot to put back after its reads
-sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
+sh -c 'mkdir -p -m 700 /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
 
 # ---- boot ----
 # refuses to start unless /mnt/bko-target/etc/fstab is the restored system's (its / matches the layout's)
 # / with the source's atime options (rw,relatime), for host-only dracut's rootflags=
 mount -o remount,atime,relatime /mnt/bko-target
 # the restored atimes (the restore stage lists them), to put back after this stage's reads
-sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
+sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p -m 700 /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
 # --reformat: fstab and the kernel command lines for the new filesystem
 bko-holt rewrite layout.json /mnt/bko-target --reformat /=ext4
 # the restored LVM devices file, kept

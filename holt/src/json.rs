@@ -86,6 +86,38 @@ impl Value {
         matches!(self, Value::Null)
     }
 
+    pub fn get_str(&self, key: &str) -> Option<&str> {
+        self.get(key).and_then(Value::as_str)
+    }
+
+    pub fn get_u64(&self, key: &str) -> Option<u64> {
+        self.get(key).and_then(Value::as_u64)
+    }
+
+    pub fn get_bool(&self, key: &str) -> Option<bool> {
+        self.get(key).and_then(Value::as_bool)
+    }
+
+    pub fn get_arr(&self, key: &str) -> Option<&Vec<Value>> {
+        self.get(key).and_then(Value::as_array)
+    }
+
+    pub fn str_at(&self, path: &[&str]) -> Option<&str> {
+        self.at(path).and_then(Value::as_str)
+    }
+
+    pub fn u64_at(&self, path: &[&str]) -> Option<u64> {
+        self.at(path).and_then(Value::as_u64)
+    }
+
+    pub fn bool_at(&self, path: &[&str]) -> Option<bool> {
+        self.at(path).and_then(Value::as_bool)
+    }
+
+    pub fn arr_at(&self, path: &[&str]) -> &[Value] {
+        self.at(path).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
+    }
+
     /// The report's layout: two-space indents, and arrays of scalars that fit
     /// on one line kept on one line.
     pub fn pretty(&self) -> String {
@@ -243,7 +275,7 @@ fn write_scalar(v: &Value, out: &mut String) {
             }
         }
         Value::Str(s) => escape(s, out),
-        Value::Arr(_) | Value::Obj(_) => unreachable!("not a scalar"),
+        Value::Arr(_) | Value::Obj(_) => write_compact(v, out),
     }
 }
 
@@ -555,7 +587,7 @@ impl Parser<'_> {
                 return Err(self.err("expected exponent digits"));
             }
         }
-        let text = std::str::from_utf8(&self.s[start..self.i]).unwrap();
+        let text = std::str::from_utf8(&self.s[start..self.i]).map_err(|_| self.err("bad number"))?;
         if !float {
             if let Ok(n) = text.parse::<u64>() {
                 return Ok(Value::UInt(n));

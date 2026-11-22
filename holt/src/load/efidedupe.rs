@@ -153,7 +153,7 @@ fn efivars_entries(dir: &Path) -> Vec<Entry> {
     names
         .iter()
         .filter_map(|n| {
-            let b = std::fs::read(dir.join(format!("Boot{n}{suffix}"))).ok()?;
+            let b = crate::bytes::read_bounded(&dir.join(format!("Boot{n}{suffix}")), 1 << 20).ok()?;
             from_load_option(n, b.get(4..)?)
         })
         .collect()
@@ -164,7 +164,9 @@ fn efivars_entries(dir: &Path) -> Vec<Entry> {
 fn target_disk(dev: &str, part: u32) -> Result<Disk, String> {
     let src = FileSource::open(Path::new(dev)).map_err(|e| format!("{dev}: {e}"))?;
     let name = dev.rsplit('/').next().unwrap_or(dev);
-    let lbs = std::fs::read_to_string(format!("/sys/class/block/{name}/queue/logical_block_size")).ok().and_then(|s| s.trim().parse::<u64>().ok());
+    let lbs = crate::bytes::read_to_string_bounded(Path::new(&format!("/sys/class/block/{name}/queue/logical_block_size")), 4096)
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok());
     let sizes: Vec<u64> = match lbs {
         Some(n) if n >= 512 => vec![n],
         _ => vec![512, 4096],

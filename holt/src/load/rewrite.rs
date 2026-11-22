@@ -369,6 +369,101 @@ fn is_dir(p: &Path) -> bool {
     std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir())
 }
 
+/// The largest file rewrite reads or edits: configuration files, GRUB's
+/// grub.cfg and modules.builtin are far smaller.
+const EDIT_MAX: u64 = 16 << 20;
+
+fn safe_subpath(p: &str) -> bool {
+    p.starts_with('/') && !p.contains('\0') && !p.split('/').any(|c| c == "..")
+}
+
+/// The most symlinks `resolve_in_target` follows for one path (Linux's
+/// own limit), so a loop ends.
+const MAX_LINKS: u32 = 40;
+
+/// PATH, which must lie under TARGET, with every symlink below TARGET
+/// followed as a chroot at TARGET would: an absolute link from the target
+/// root, a relative one from its directory (RHEL 8's /boot/grub2/grubenv
+/// -> ../efi/EFI/redhat/grubenv), and a link's `..` at the target root
+/// staying there, as `/..` is `/`.  Ok(None): it isn't there, or a
+/// component on the way isn't a directory.  Refused: a `..` in PATH
+/// itself, and a loop.  The rescue system's own files are never reached
+/// through the restored tree.
+fn resolve_in_target(target: &str, path: &Path) -> Result<Option<PathBuf>, String> {
+    use std::ffi::OsString;
+    use std::path::Component;
+    let root = Path::new(target);
+    let Ok(rel) = path.strip_prefix(root) else {
+        return Err(format!("{}: outside target {target}", path.display()));
+    };
+    // Still to walk, last first; and the walked ones below the root.
+    let mut todo: Vec<OsString> = Vec::new();
+    for comp in rel.components() {
+        match comp {
+            Component::Normal(n) => todo.push(n.to_os_string()),
+            Component::CurDir => {}
+            _ => return Err(format!("{}: unsafe path traversal refused", path.display())),
+        }
+    }
+    todo.reverse();
+    let mut cur: Vec<OsString> = Vec::new();
+    let mut links = 0;
+    while let Some(c) = todo.pop() {
+        if c == ".." {
+            // At the root already: it stays the root.
+            cur.pop();
+            continue;
+        }
+        let here: PathBuf = std::iter::once(root.as_os_str()).chain(cur.iter().map(OsString::as_os_str)).chain(std::iter::once(c.as_os_str())).collect();
+        match std::fs::symlink_metadata(&here) {
+            Ok(m) if m.file_type().is_symlink() => {
+                links += 1;
+                if links > MAX_LINKS {
+                    return Err(format!("{}: too many symlinks", path.display()));
+                }
+                let to = std::fs::read_link(&here).map_err(|e| format!("{}: {e}", here.display()))?;
+                if to.is_absolute() {
+                    cur.clear();
+                }
+                for comp in to.components().rev() {
+                    match comp {
+                        Component::Normal(n) => todo.push(n.to_os_string()),
+                        Component::ParentDir => todo.push("..".into()),
+                        _ => {}
+                    }
+                }
+            }
+            Ok(m) if todo.is_empty() || m.is_dir() => cur.push(c),
+            Ok(_) => return Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("{}: {e}", here.display())),
+        }
+    }
+    Ok(Some(std::iter::once(root.as_os_str()).chain(cur.iter().map(OsString::as_os_str)).collect()))
+}
+
+/// CONTENT written over the regular file at PATH, in place: the same
+/// inode, so its owner, mode, ACLs, SELinux label and other xattrs (the
+/// restore's) stay, whatever the umask.  The file opened must be the one
+/// PATH named before (not a symlink swapped in since): nothing is written
+/// otherwise.
+fn write_in_place(path: &Path, content: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::MetadataExt;
+    let before = std::fs::symlink_metadata(path)?;
+    if !before.is_file() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a regular file"));
+    }
+    let mut f = std::fs::OpenOptions::new().write(true).open(path)?;
+    let opened = f.metadata()?;
+    if (opened.dev(), opened.ino()) != (before.dev(), before.ino()) {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "changed while it was being edited"));
+    }
+    f.write_all(content.as_bytes())?;
+    f.set_len(content.len() as u64)?;
+    f.sync_all()
+}
+
 /// The lines OLD has that NEW doesn't, then the reverse, for the log.
 fn changed_lines(old: &str, new: &str) -> String {
     let (o, n): (Vec<&str>, Vec<&str>) = (old.lines().collect(), new.lines().collect());
@@ -384,7 +479,13 @@ fn changed_lines(old: &str, new: &str) -> String {
 
 /// The ESPs' mount points the layout records, and /boot.
 fn boot_dirs(layout: &Value) -> Vec<String> {
-    let mut v: Vec<String> = layout.at(&["boot", "esps"]).and_then(Value::as_array).into_iter().flatten().filter_map(|e| e.get("mounted_at").and_then(Value::as_str).map(str::to_string)).collect();
+    let mut v: Vec<String> = layout
+        .at(&["boot", "esps"])
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.get("mounted_at").and_then(Value::as_str).filter(|m| safe_subpath(m)).map(str::to_string))
+        .collect();
     for d in ["/boot", "/boot/efi", "/efi"] {
         if !v.iter().any(|x| x == d) {
             v.push(d.to_string());
@@ -404,12 +505,39 @@ impl Run<'_> {
         PathBuf::from(format!("{}{p}", self.t))
     }
 
-    /// PATH through F, written back and logged when F changed it; whether
-    /// it did.  A file that isn't there is left alone.
+    /// The text of the file at PATH in the target, its symlinks followed
+    /// inside it (resolve_in_target); None if it isn't there or a link
+    /// leads out.
+    fn read_confined(&self, path: &Path) -> Option<String> {
+        let p = resolve_in_target(self.t, path).ok()??;
+        if !is_file(&p) {
+            return None;
+        }
+        crate::bytes::read_to_string_bounded(&p, EDIT_MAX).ok()
+    }
+
+    /// PATH through F, written back in place and logged when F changed it;
+    /// whether it did.  A file that isn't there is left alone; a symlink is
+    /// followed inside the target, and one leading out of it is refused.
     fn edit(&mut self, path: &Path, f: impl Fn(&str) -> Result<String, String>) -> bool {
-        let Ok(old) = std::fs::read_to_string(path) else { return false };
+        let real = match resolve_in_target(self.t, path) {
+            Ok(Some(p)) if is_file(&p) => p,
+            Ok(_) => return false,
+            Err(e) => {
+                self.errors.push(e);
+                return false;
+            }
+        };
+        let old = match crate::bytes::read_to_string_bounded(&real, EDIT_MAX) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+            Err(e) => {
+                self.errors.push(format!("{}: {e}", path.display()));
+                return false;
+            }
+        };
         match f(&old) {
-            Ok(new) if new != old => match std::fs::write(path, &new) {
+            Ok(new) if new != old => match write_in_place(&real, &new) {
                 Ok(()) => {
                     self.log += &format!("bko-holt rewrite: {}:\n{}", path.display(), changed_lines(&old, &new));
                     return true;
@@ -424,9 +552,16 @@ impl Run<'_> {
 
     fn rewrite(&mut self, c: &Change, layout: &Value, btrfs_left: bool) {
         let fstab_path = self.at("/etc/fstab");
-        if !is_file(&fstab_path) {
-            self.errors.push(format!("{}: not there", fstab_path.display()));
-            return;
+        match resolve_in_target(self.t, &fstab_path) {
+            Ok(Some(p)) if is_file(&p) => {}
+            Ok(_) => {
+                self.errors.push(format!("{}: not there", fstab_path.display()));
+                return;
+            }
+            Err(e) => {
+                self.errors.push(e);
+                return;
+            }
         }
         self.edit(&fstab_path, |t| fstab(t, c));
         if c.mount == "/" {
@@ -486,7 +621,7 @@ impl Run<'_> {
                 self.edit(&p, |t| Ok(grub_stub(t, &c.uuid, |x, rel| reformat::grub_path(layout, c, x, rel))));
             }
         }
-        for u in read_dir(&self.at("/etc/systemd/system")).into_iter().filter(|p| p.extension().is_some_and(|x| x == "mount")) {
+        for u in read_dir(&self.at("/etc/systemd/system")).into_iter().filter(|p| is_file(p) && p.extension().is_some_and(|x| x == "mount")) {
             self.edit(&u, |t| Ok(mount_unit(t, c)));
         }
         if c.from == "btrfs" && !btrfs_left {
@@ -506,7 +641,7 @@ impl Run<'_> {
             return;
         }
         for p in grub_stubs(self, layout) {
-            let Ok(t) = std::fs::read_to_string(&p) else { continue };
+            let Some(t) = self.read_confined(&p) else { continue };
             let new = grub_stub(&t, &c.uuid, |x, rel| reformat::grub_path(layout, c, x, rel));
             if new != t {
                 let name = p.to_string_lossy().trim_start_matches(self.t).to_string();
@@ -576,7 +711,7 @@ impl Run<'_> {
             }
             let kver = text.lines().find_map(|l| l.split_once("lib/modules/").and_then(|(_, r)| r.split('/').next()).filter(|k| !k.is_empty()).map(str::to_string));
             let builtin = kver.as_ref().is_some_and(|k| {
-                ["/usr/lib/modules", "/lib/modules"].iter().any(|m| std::fs::read_to_string(self.at(&format!("{m}/{k}/modules.builtin"))).is_ok_and(|b| b.lines().any(|l| format!("/{l}").starts_with(&module))))
+                ["/usr/lib/modules", "/lib/modules"].iter().any(|m| self.read_confined(&self.at(&format!("{m}/{k}/modules.builtin"))).is_some_and(|b| b.lines().any(|l| format!("/{l}").starts_with(&module))))
             });
             if builtin {
                 self.log += &format!("bko-holt rewrite: {inside}: {} is built into {}\n", c.to, kver.unwrap_or_default());
@@ -594,7 +729,7 @@ impl Run<'_> {
             cfgs.push(self.at(&format!("{d}/grub/grub.cfg")));
             cfgs.push(self.at(&format!("{d}/grub2/grub.cfg")));
         }
-        cfgs.iter().any(|g| std::fs::read_to_string(g).is_ok_and(|t| t.lines().any(|l| !l.trim_start().starts_with('#') && l.contains(name))))
+        cfgs.iter().any(|g| self.read_confined(g).is_some_and(|t| t.lines().any(|l| !l.trim_start().starts_with('#') && l.contains(name))))
     }
 
     /// What's left of the old type: a command line still asking for a
@@ -616,7 +751,7 @@ impl Run<'_> {
                     continue;
                 }
                 seen.insert(p.clone());
-                let Ok(bytes) = std::fs::read(&p) else { continue };
+                let Ok(bytes) = crate::bytes::read_bounded(&p, 1 << 20) else { continue };
                 if bytes.iter().take(8192).any(|b| *b == 0) {
                     continue;
                 }
@@ -661,7 +796,7 @@ impl Run<'_> {
                     }
                 }
             }
-            if std::fs::read_to_string(self.at("/etc/timeshift/timeshift.json")).is_ok_and(|t| t.replace(' ', "").contains("\"btrfs_mode\":\"true\"")) {
+            if self.read_confined(&self.at("/etc/timeshift/timeshift.json")).is_some_and(|t| t.replace(' ', "").contains("\"btrfs_mode\":\"true\"")) {
                 tools.push("Timeshift in btrfs mode".into());
             }
             for x in tools {
@@ -692,7 +827,7 @@ pub fn main(args: &[String]) -> u8 {
         eprintln!("{usage}");
         return 2;
     };
-    let layout = match std::fs::read_to_string(layout_path).map_err(|e| e.to_string()).and_then(|t| crate::json::parse(&t).map_err(|e| e.message.to_string())) {
+    let layout = match crate::bytes::read_to_string_bounded(Path::new(layout_path), crate::LAYOUT_MAX).map_err(|e| e.to_string()).and_then(|t| crate::json::parse(&t).map_err(|e| e.message.to_string())) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("bko-holt rewrite: {layout_path}: {e}");
@@ -1078,5 +1213,118 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         w("/efi/loader/entries/other.conf", "options root=UUID=x rootflags=subvol=@\n");
         run.leftovers(&change(), &layout);
         assert!(run.errors.iter().any(|e| e.contains("other.conf:1: a kernel command line still asks for a subvolume")), "{:?}", run.errors);
+    }
+
+    /// A symlink is followed as in a chroot at the target: an absolute one
+    /// from the target root, never onto the rescue system's own files; a
+    /// `..` past the target root stays at it, so the rescue system's file
+    /// it would have reached is left alone.
+    #[test]
+    fn symlinks_stay_in_the_target() {
+        let host = crate::testutil::TempDir::new("rewrite-host");
+        let victim = host.path().join("victim");
+        let orig = "GRUB_CMDLINE_LINUX=\"rootflags=subvol=@ rw\"\n";
+        std::fs::write(&victim, orig).unwrap();
+        let t = crate::testutil::TempDir::new("rewrite-sym");
+        let root = t.path().to_string_lossy().into_owned();
+        std::fs::create_dir_all(format!("{root}/etc/default")).unwrap();
+        std::fs::write(format!("{root}/etc/fstab"), EOS_FSTAB).unwrap();
+        // Absolute: the target's own path of that name, which isn't there.
+        std::os::unix::fs::symlink(&victim, format!("{root}/etc/default/grub")).unwrap();
+        let bad_layout = crate::json::parse(r#"{"boot": {"esps": [{"mounted_at": "/../../etc"}]}}"#).unwrap();
+        assert!(!boot_dirs(&bad_layout).iter().any(|d| d.contains("..")));
+        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        run.rewrite(&change(), &bad_layout, false);
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), orig);
+        // Relative, climbing past the root: it stays at the target root,
+        // where the victim's path isn't there.
+        std::fs::remove_file(format!("{root}/etc/default/grub")).unwrap();
+        std::os::unix::fs::symlink(format!("{}{}", "../".repeat(64), victim.display()), format!("{root}/etc/default/grub")).unwrap();
+        std::fs::write(format!("{root}/etc/fstab"), EOS_FSTAB).unwrap();
+        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        run.rewrite(&change(), &bad_layout, false);
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), orig);
+        assert_eq!(resolve_in_target(&root, Path::new(&format!("{root}/etc/default/grub"))), Ok(None));
+        // One `..` too many, as a chroot sees it: the target's own file.
+        std::fs::remove_file(format!("{root}/etc/default/grub")).unwrap();
+        std::os::unix::fs::symlink("../../../etc/real-grub", format!("{root}/etc/default/grub")).unwrap();
+        std::fs::write(format!("{root}/etc/real-grub"), orig).unwrap();
+        assert_eq!(resolve_in_target(&root, Path::new(&format!("{root}/etc/default/grub"))), Ok(Some(PathBuf::from(format!("{root}/etc/real-grub")))));
+        std::fs::write(format!("{root}/etc/fstab"), EOS_FSTAB).unwrap();
+        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        run.rewrite(&change(), &bad_layout, false);
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        assert!(std::fs::symlink_metadata(format!("{root}/etc/default/grub")).unwrap().file_type().is_symlink());
+        assert_ne!(std::fs::read_to_string(format!("{root}/etc/real-grub")).unwrap(), orig, "the target's file is the one rewritten");
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), orig);
+        assert_eq!(resolve_in_target(&root, Path::new(&format!("{root}/etc/../etc/fstab"))).map(|_| ()), Err(format!("{root}/etc/../etc/fstab: unsafe path traversal refused")));
+        // A loop ends.
+        std::os::unix::fs::symlink("loop2", format!("{root}/etc/loop1")).unwrap();
+        std::os::unix::fs::symlink("loop1", format!("{root}/etc/loop2")).unwrap();
+        assert!(resolve_in_target(&root, Path::new(&format!("{root}/etc/loop1"))).is_err_and(|e| e.contains("too many symlinks")));
+    }
+
+    /// RHEL 8 UEFI (and Fedora to 33): /boot/grub2/grubenv is a relative
+    /// link to the ESP's ../efi/EFI/redhat/grubenv.  It's followed inside
+    /// the target and the ESP's file edited; the link stays a link.  An
+    /// absolute link inside the target is followed from the target root.
+    #[test]
+    fn symlinks_inside_the_target_are_followed() {
+        let t = crate::testutil::TempDir::new("rewrite-el8");
+        let root = t.path().to_string_lossy().into_owned();
+        std::fs::create_dir_all(format!("{root}/boot/grub2")).unwrap();
+        std::fs::create_dir_all(format!("{root}/boot/efi/EFI/redhat")).unwrap();
+        std::fs::create_dir_all(format!("{root}/etc/default")).unwrap();
+        std::fs::create_dir_all(format!("{root}/usr/share/fstab")).unwrap();
+        std::fs::write(format!("{root}/usr/share/fstab/fstab"), EOS_FSTAB).unwrap();
+        std::os::unix::fs::symlink("/usr/share/fstab/fstab", format!("{root}/etc/fstab")).unwrap();
+        let mut env = "# GRUB Environment Block\nsaved_entry=x\nkernelopts=root=UUID=1b64a017-659b-4484-bf36-b97f639c3c35 ro rootflags=subvol=@ rhgb quiet\n".to_string();
+        env += &"#".repeat(1024 - env.len());
+        std::fs::write(format!("{root}/boot/efi/EFI/redhat/grubenv"), &env).unwrap();
+        std::os::unix::fs::symlink("../efi/EFI/redhat/grubenv", format!("{root}/boot/grub2/grubenv")).unwrap();
+        let layout = crate::json::parse(r#"{"boot": {"esps": [{"mounted_at": "/boot/efi"}]}}"#).unwrap();
+        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        run.rewrite(&change(), &layout, false);
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        let out = std::fs::read_to_string(format!("{root}/boot/efi/EFI/redhat/grubenv")).unwrap();
+        assert!(out.contains("kernelopts=root=UUID=1b64a017-659b-4484-bf36-b97f639c3c35 ro rhgb quiet\n"), "{out}");
+        assert_eq!(out.len(), 1024);
+        assert!(std::fs::symlink_metadata(format!("{root}/boot/grub2/grubenv")).unwrap().file_type().is_symlink());
+        assert!(std::fs::symlink_metadata(format!("{root}/etc/fstab")).unwrap().file_type().is_symlink());
+        let fstab = std::fs::read_to_string(format!("{root}/usr/share/fstab/fstab")).unwrap();
+        assert!(fstab.contains("\txfs\tnoatime\t") && !fstab.contains("@home"), "{fstab}");
+    }
+
+    /// An edited file is written in place: the same inode, so the
+    /// restore's owner, mode, ACLs, SELinux label and other xattrs stay;
+    /// its mode doesn't depend on the umask.
+    #[test]
+    fn edits_keep_the_inode_mode_and_xattrs() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let t = crate::testutil::TempDir::new("rewrite-inode");
+        let root = t.path().to_string_lossy().into_owned();
+        std::fs::create_dir_all(format!("{root}/etc")).unwrap();
+        let fstab = format!("{root}/etc/fstab");
+        std::fs::write(&fstab, EOS_FSTAB).unwrap();
+        std::fs::set_permissions(&fstab, std::fs::Permissions::from_mode(0o640)).unwrap();
+        // An xattr where the filesystem and tools allow one (tmpfs since
+        // Linux 6.6, ext4, xfs, btrfs); the inode check below stands alone.
+        let xattr = std::process::Command::new("setfattr").args(["-n", "user.bko-test", "-v", "kept"]).arg(&fstab).status().is_ok_and(|s| s.success());
+        let before = std::fs::metadata(&fstab).unwrap();
+        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        run.rewrite(&change(), &Value::Null, false);
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        let after = std::fs::metadata(&fstab).unwrap();
+        assert!(std::fs::read_to_string(&fstab).unwrap().contains("\txfs\t"));
+        assert_eq!((after.dev(), after.ino(), after.uid(), after.gid()), (before.dev(), before.ino(), before.uid(), before.gid()));
+        assert_eq!(after.permissions().mode() & 0o7777, 0o640);
+        if xattr {
+            let out = std::process::Command::new("getfattr").args(["--only-values", "-n", "user.bko-test"]).arg(&fstab).output().unwrap();
+            assert_eq!(String::from_utf8_lossy(&out.stdout), "kept");
+        }
+        // No temporary file left beside it.
+        assert_eq!(std::fs::read_dir(format!("{root}/etc")).unwrap().count(), 1);
     }
 }

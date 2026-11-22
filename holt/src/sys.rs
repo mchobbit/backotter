@@ -104,12 +104,13 @@ impl RealRunner {
             .spawn()
             .ok()?;
         // Read stdout on a thread so a chatty command can't block on a full
-        // pipe while we wait for it.
-        let mut stdout = child.stdout.take()?;
+        // pipe while we wait for it, capped so a runaway tool cannot OOM:
+        // a byte past the cap, so output cut short is known as such.
+        let stdout = child.stdout.take()?;
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut buf = Vec::new();
-            let _ = stdout.read_to_end(&mut buf);
+            let _ = stdout.take(MAX_STDOUT + 1).read_to_end(&mut buf);
             let _ = tx.send(buf);
         });
         let start = Instant::now();
@@ -137,8 +138,35 @@ impl RealRunner {
         // background with the pipe open (or one stuck as above) gets what's
         // left of the time limit, then the command counts as timed out.
         let out = rx.recv_timeout(self.timeout.saturating_sub(start.elapsed()).max(KILL_GRACE)).ok()?;
+        // More than the cap: the command fails, rather than give a listing
+        // cut short as if it were whole.
+        if out.len() as u64 > MAX_STDOUT {
+            return None;
+        }
         Some((String::from_utf8_lossy(&out).into_owned(), ok))
     }
+}
+
+/// The most standard output `RealRunner` takes from a command: one that
+/// prints more fails.
+const MAX_STDOUT: u64 = 64 << 20;
+
+/// The largest file `Sys::read_bytes` (and `read`) reads whole.
+pub const READ_MAX: u64 = 128 << 20;
+
+/// BUF filled from R as far as it goes; how much was read (less only at
+/// the end).
+fn fill(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut n = 0;
+    while n < buf.len() {
+        match r.read(&mut buf[n..]) {
+            Ok(0) => break,
+            Ok(k) => n += k,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(n)
 }
 
 /// How long a command killed for running out of time, or its output, is
@@ -208,8 +236,38 @@ impl Sys {
         self.root.join(abs.trim_start_matches('/'))
     }
 
+    /// The file's bytes; None if it can't be read.  One larger than
+    /// READ_MAX isn't read either, and that's said in the dump's warnings
+    /// rather than passed off as a missing file.
     pub fn read_bytes(&self, abs: &str) -> Option<Vec<u8>> {
-        std::fs::read(self.p(abs)).ok()
+        match crate::bytes::read_bounded(&self.p(abs), READ_MAX) {
+            Ok(b) => Some(b),
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                self.warn(format!("{abs}: larger than {READ_MAX} bytes, so not read"));
+                None
+            }
+            Err(_) => None,
+        }
+    }
+
+    /// Whether the files at A and B hold the same bytes, read a piece at a
+    /// time whatever their size; None if either can't be read.
+    pub fn same_bytes(&self, a: &str, b: &str) -> Option<bool> {
+        let (mut fa, mut fb) = (std::fs::File::open(self.p(a)).ok()?, std::fs::File::open(self.p(b)).ok()?);
+        if fa.metadata().ok()?.len() != fb.metadata().ok()?.len() {
+            return Some(false);
+        }
+        let (mut ba, mut bb) = (vec![0u8; 1 << 20], vec![0u8; 1 << 20]);
+        loop {
+            let n = fill(&mut fa, &mut ba).ok()?;
+            let m = fill(&mut fb, &mut bb).ok()?;
+            if n != m || ba[..n] != bb[..m] {
+                return Some(false);
+            }
+            if n == 0 {
+                return Some(true);
+            }
+        }
     }
 
     pub fn read(&self, abs: &str) -> Option<String> {
@@ -316,8 +374,28 @@ impl Sys {
     }
 
     /// Size, free and available bytes of the filesystem mounted at `abs`.
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     pub fn statvfs(&self, abs: &str) -> Option<(u64, u64, u64)> {
         statvfs(&self.p(abs))
+    }
+
+    /// Size, free and available bytes of the filesystem mounted at `abs`:
+    /// elsewhere (32-bit Linux), from `df -Pk`.
+    #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
+    pub fn statvfs(&self, abs: &str) -> Option<(u64, u64, u64)> {
+        self.df_usage(abs)
+    }
+
+    /// `df -Pk`'s size, free and available bytes for `abs`, run through the
+    /// runner like every other tool: from the system directories, with its
+    /// time limit, so a hung NFS or FUSE mount can't hang the dump.  No
+    /// test of `path.exists()` first: that stat would hang on such a mount
+    /// with no time limit, and df fails on a missing path anyway.
+    #[cfg_attr(all(target_os = "linux", target_pointer_width = "64"), allow(dead_code))]
+    fn df_usage(&self, abs: &str) -> Option<(u64, u64, u64)> {
+        let path = self.p(abs);
+        let out = self.run("df", &["-Pk", path.to_str()?])?;
+        parse_df_pk(&out)
     }
 }
 
@@ -354,13 +432,15 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
-extern "C" {
-    fn geteuid() -> u32;
+// SAFETY: geteuid(2) has this signature on every target holt builds for,
+// takes no arguments, has no preconditions and cannot fail, so it is safe
+// to call.
+unsafe extern "C" {
+    safe fn geteuid() -> u32;
 }
 
 pub fn euid() -> u32 {
-    // SAFETY: geteuid has no preconditions and cannot fail.
-    unsafe { geteuid() }
+    geteuid()
 }
 
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
@@ -369,7 +449,9 @@ fn statvfs(path: &Path) -> Option<(u64, u64, u64)> {
     use std::os::raw::{c_char, c_int};
     use std::os::unix::ffi::OsStrExt;
 
-    // glibc's struct statvfs on 64-bit Linux (unsigned long is 64 bits).
+    // 64-bit Linux struct statvfs (glibc and musl share the same 112-byte
+    // prefix through f_spare/__f_spare; extra trailing padding guards against
+    // any libc variant with additional reserved words).
     #[repr(C)]
     struct StatVfs {
         f_bsize: u64,
@@ -384,19 +466,23 @@ fn statvfs(path: &Path) -> Option<(u64, u64, u64)> {
         f_flag: u64,
         f_namemax: u64,
         f_spare: [c_int; 6],
+        _pad: [u64; 4],
     }
-    extern "C" {
+    // SAFETY: the declaration matches libc's statvfs(3) on 64-bit Linux;
+    // the call site upholds its pointer requirements.
+    unsafe extern "C" {
         fn statvfs(path: *const c_char, buf: *mut StatVfs) -> c_int;
     }
     let c = CString::new(path.as_os_str().as_bytes()).ok()?;
     let mut buf = std::mem::MaybeUninit::<StatVfs>::zeroed();
-    // SAFETY: c is a valid NUL-terminated path and buf is large enough for
-    // glibc's struct statvfs, which statvfs fills on success.
+    // SAFETY: c is a valid NUL-terminated path and buf is zero-initialized
+    // and at least as large as 64-bit Linux libc's struct statvfs.
     let rc = unsafe { statvfs(c.as_ptr(), buf.as_mut_ptr()) };
     if rc != 0 {
         return None;
     }
-    // SAFETY: statvfs returned 0, so it initialised buf.
+    // SAFETY: buf was zero-initialized (valid for all integer fields) and
+    // statvfs succeeded.
     let s = unsafe { buf.assume_init() };
     usage_bytes(s.f_blocks, s.f_bfree, s.f_bavail, s.f_frsize)
 }
@@ -415,9 +501,24 @@ fn usage_bytes(blocks: u64, bfree: u64, bavail: u64, frsize: u64) -> Option<(u64
     Some((blocks.checked_mul(frsize)?, bfree.checked_mul(frsize)?, bavail.checked_mul(frsize)?))
 }
 
-#[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
-fn statvfs(_: &Path) -> Option<(u64, u64, u64)> {
-    None
+/// Size, free and available bytes from POSIX `df -Pk` output ("Filesystem
+/// 1024-blocks Used Available Capacity Mounted on" and one line), or None
+/// when it doesn't say or can't be a filesystem's.  The numbers are the
+/// three before the first "NN%" column that follows three numbers, so a
+/// filesystem name or mount point with spaces in it doesn't shift them.
+#[cfg_attr(all(target_os = "linux", target_pointer_width = "64"), allow(dead_code))]
+fn parse_df_pk(text: &str) -> Option<(u64, u64, u64)> {
+    let body: Vec<&str> = text.lines().skip(1).flat_map(str::split_whitespace).collect();
+    let i = (3..body.len()).find(|&i| {
+        body[i].len() > 1 && body[i].ends_with('%') && body[i][..body[i].len() - 1].bytes().all(|b| b.is_ascii_digit()) && body[i - 3..i].iter().all(|c| c.parse::<u64>().is_ok())
+    })?;
+    let total_k: u64 = body[i - 3].parse().ok()?;
+    let used_k: u64 = body[i - 2].parse().ok()?;
+    let avail_k: u64 = body[i - 1].parse().ok()?;
+    let total = total_k.checked_mul(1024)?;
+    let avail = avail_k.checked_mul(1024)?;
+    let free = total.saturating_sub(used_k.saturating_mul(1024)).max(avail);
+    (avail <= free && free <= total).then_some((total, free, avail))
 }
 
 #[cfg(test)]
@@ -521,14 +622,76 @@ mod tests {
         // A big output doesn't deadlock on the pipe.
         let big = r.run("head", &["-c", "1000000", "/dev/zero"]).unwrap();
         assert_eq!(big.len(), 1_000_000);
+        // Output past the cap fails, even when the command exits 0 (here
+        // the part past the cap fits the pipe): never a listing cut short.
+        let cap = MAX_STDOUT.to_string();
+        assert_eq!(r.run("head", &["-c", &cap, "/dev/zero"]).map(|o| o.len() as u64), Some(MAX_STDOUT));
+        let over = (MAX_STDOUT + 100).to_string();
+        assert_eq!(r.run("head", &["-c", &over, "/dev/zero"]), None);
+        assert_eq!(r.run_any("head", &["-c", &over, "/dev/zero"]), None);
+    }
+
+    /// A file over READ_MAX isn't read, and the dump says so; same_bytes
+    /// compares files of any size.
+    #[test]
+    fn read_cap_warns_and_same_bytes() {
+        let t = crate::testutil::Tree::new("sys-read-cap");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let big = t.root().join("big");
+        std::fs::File::create(&big).unwrap().set_len(READ_MAX + 1).unwrap();
+        assert_eq!(s.read_bytes("/big"), None);
+        assert_eq!(s.read_bytes("/missing"), None);
+        assert_eq!(s.warnings(), vec![format!("/big: larger than {READ_MAX} bytes, so not read")]);
+        let twin = t.root().join("twin");
+        std::fs::File::create(&twin).unwrap().set_len(READ_MAX + 1).unwrap();
+        assert_eq!(s.same_bytes("/big", "/twin"), Some(true));
+        t.file("/a", "abc").file("/b", "abd").file("/c", "abc");
+        assert_eq!((s.same_bytes("/a", "/b"), s.same_bytes("/a", "/c"), s.same_bytes("/a", "/big"), s.same_bytes("/a", "/missing")), (Some(false), Some(true), Some(false), None));
     }
 
     #[test]
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     fn statvfs_of_root() {
         let s = Sys::new("/", Box::new(FakeRunner::default()), false);
         let (total, free, avail) = s.statvfs("/").expect("statvfs /");
         assert!(total > 0 && free <= total && avail <= free);
         assert_eq!(s.statvfs("/no/such/dir"), None);
+    }
+
+    #[test]
+    fn df_usage_runs_df_through_the_runner() {
+        let out = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/ada0p2 1000 400 500 45% /mnt/data\n";
+        let s = Sys::new("/", Box::new(FakeRunner::default().with("df -Pk /mnt/data", out)), false);
+        assert_eq!(s.df_usage("/mnt/data"), Some((1_024_000, 614_400, 512_000)));
+        // No answer (df failed, timed out, or isn't installed): no usage.
+        assert_eq!(s.df_usage("/mnt/other"), None);
+        let none = Sys::new("/", Box::new(FakeRunner::default().with("df -Pk /mnt/data", out).without("df")), false);
+        assert_eq!(none.df_usage("/mnt/data"), None);
+        // Under a test root, df is asked about the tree's own directory.
+        let t = Tree::new("sys-df");
+        t.file("/mnt/data/x", "");
+        let path = t.root().join("mnt/data");
+        let r = FakeRunner::default().with(&format!("df -Pk {}", path.display()), out);
+        let rooted = Sys::new(t.root(), Box::new(r), false);
+        assert_eq!(rooted.df_usage("/mnt/data"), Some((1_024_000, 614_400, 512_000)));
+    }
+
+    #[test]
+    fn parse_df_pk_reads_posix_output() {
+        let head = "Filesystem 1024-blocks Used Available Capacity Mounted on\n";
+        assert_eq!(parse_df_pk(&format!("{head}/dev/ada0p2 1000 400 500 45% /")), Some((1_024_000, 614_400, 512_000)));
+        // Spaces in the mount point and the filesystem's name.
+        assert_eq!(parse_df_pk(&format!("{head}my pool/ds 1000 400 500 45% /mnt/my disk")), Some((1_024_000, 614_400, 512_000)));
+        // A reserve: free (size - used) is more than available.
+        assert_eq!(parse_df_pk(&format!("{head}/dev/sda1 1000 100 850 11% /")), Some((1_024_000, 921_600, 870_400)));
+        // A long name on its own line (a df without -P's no-wrap).
+        assert_eq!(parse_df_pk(&format!("{head}/dev/mapper/a-very-long-name\n 1000 400 500 45% /")), Some((1_024_000, 614_400, 512_000)));
+        // No numbers, no data line, or numbers that can't be a filesystem's.
+        assert_eq!(parse_df_pk(&format!("{head}proc - - - - /proc")), None);
+        assert_eq!(parse_df_pk(head), None);
+        assert_eq!(parse_df_pk(""), None);
+        assert_eq!(parse_df_pk(&format!("{head}x 1000 400 2000 45% /")), None);
+        assert_eq!(parse_df_pk(&format!("{head}x {} 0 0 0% /", u64::MAX)), None);
     }
 
     #[test]

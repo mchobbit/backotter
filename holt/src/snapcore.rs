@@ -716,24 +716,34 @@ pub fn recovery_key_main(args: &[String]) -> u8 {
             .output();
         eprintln!();
         match r {
-            Ok(o) if o.status.success() => text = String::from_utf8_lossy(&o.stdout).into_owned(),
-            _ => {
+            Ok(mut o) if o.status.success() => {
+                text = String::from_utf8_lossy(&o.stdout).into_owned();
+                crate::recovery::zeroize_bytes(&mut o.stdout);
+            }
+            Ok(mut o) => {
+                crate::recovery::zeroize_bytes(&mut o.stdout);
+                eprintln!("bko-holt recovery-key-file: couldn't read the key");
+                return 1;
+            }
+            Err(_) => {
                 eprintln!("bko-holt recovery-key-file: couldn't read the key");
                 return 1;
             }
         }
     } else if std::io::stdin().take(4096).read_to_string(&mut text).is_err() {
+        crate::recovery::zeroize_string(&mut text);
         eprintln!("bko-holt recovery-key-file: couldn't read the key from standard input");
         return 1;
     }
-    let key = match recovery_key_bytes(&text) {
+    let mut key = match recovery_key_bytes(&text) {
         Ok(k) => k,
         Err(e) => {
+            crate::recovery::zeroize_string(&mut text);
             eprintln!("bko-holt recovery-key-file: {e}");
             return 1;
         }
     };
-    text.clear();
+    crate::recovery::zeroize_string(&mut text);
     let write = || -> std::io::Result<()> {
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
         let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&out)?;
@@ -742,10 +752,13 @@ pub fn recovery_key_main(args: &[String]) -> u8 {
         f.sync_all()
     };
     if let Err(e) = write() {
+        crate::recovery::zeroize_bytes(&mut key);
         eprintln!("bko-holt recovery-key-file: {out}: {e}");
         return 1;
     }
-    println!("wrote {out}: 16 bytes, sha256 {}...", &crate::bytes::sha256_hex(&key)[..12]);
+    let digest = crate::bytes::sha256_hex(&key);
+    crate::recovery::zeroize_bytes(&mut key);
+    println!("wrote {out}: 16 bytes, sha256 {}...", &digest[..12]);
     0
 }
 

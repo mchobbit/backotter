@@ -61,7 +61,7 @@ zfs mount zroot/var/mail
 zfs mount zroot/var/tmp
 
 # ---- restore ----
-mkdir -p /run/bko-holt
+mkdir -p -m 700 /run/bko-holt
 # the restore errors msdosfs's mount roots give, and only those, let pass
 cat > /run/bko-holt/restore.fatroots <<'EOF'
 [WARN] restore boot/efi: setting UID/GID failed.

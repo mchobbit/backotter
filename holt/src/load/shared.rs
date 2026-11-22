@@ -14,7 +14,7 @@ pub struct Sub {
     pub id: Option<u64>,
     /// The generation it was last written in: a snapshot's creation, for
     /// one never written after (snapper's read-only ones).
-    pub gen: Option<u64>,
+    pub generation: Option<u64>,
     pub uuid: Option<String>,
     pub parent_uuid: Option<String>,
     pub readonly: bool,
@@ -237,7 +237,7 @@ pub fn plan(subs: &[Sub], mounts: &[Mount]) -> Plan {
     // In the order their contents were last written: a chain from one to
     // the next changes least.  It is the ID order but after a rollback,
     // where snapper's old root (1) was written last of all.
-    cands.sort_by_key(|s| (s.gen.unwrap_or(u64::MAX), s.id.unwrap_or(u64::MAX), s.path.clone()));
+    cands.sort_by_key(|s| (s.generation.unwrap_or(u64::MAX), s.id.unwrap_or(u64::MAX), s.path.clone()));
     let cand_paths: BTreeSet<String> = cands.iter().map(|s| s.path.clone()).collect();
     let mut accepted: Vec<(String, Shared)> = Vec::new(); // (family, shared)
     for s in cands {
@@ -327,7 +327,7 @@ mod tests {
     use super::*;
 
     fn sub(path: &str, id: u64, uuid: &str, parent: Option<&str>, ro: bool) -> Sub {
-        Sub { path: path.into(), id: Some(id), gen: Some(id), uuid: Some(uuid.into()), parent_uuid: parent.map(str::to_string), readonly: ro }
+        Sub { path: path.into(), id: Some(id), generation: Some(id), uuid: Some(uuid.into()), parent_uuid: parent.map(str::to_string), readonly: ro }
     }
 
     fn m(target: &str, subvol: &str) -> Mount {
@@ -396,7 +396,7 @@ mod tests {
             sub("@/.snapshots/3/snapshot", 266, "u266", Some("u264"), true),
             sub("@/.snapshots/4/snapshot", 267, "u267", Some("u265"), false),
         ]);
-        subs.iter_mut().find(|s| s.id == Some(264)).unwrap().gen = Some(266);
+        subs.iter_mut().find(|s| s.id == Some(264)).unwrap().generation = Some(266);
         let p = plan(&subs, &suse_mounts("@/.snapshots/4/snapshot"));
         assert_eq!(p.aliases, vec!["/.snapshots/4/snapshot".to_string()]);
         let got: Vec<(&str, &str, u64)> = p.shared.iter().map(|s| (s.path.as_str(), s.base.as_str(), s.new_id)).collect();
@@ -529,8 +529,8 @@ mod tests {
         ];
         // gen as on the guest: 1 written last at 29, its /etc at 45, 2 at 47,
         // 2's /etc (the live one) after everything.
-        for (id, gen) in [(258, 29), (268, 45), (269, 47), (270, 87)] {
-            v.iter_mut().find(|s| s.id == Some(id)).unwrap().gen = Some(gen);
+        for (id, generation) in [(258, 29), (268, 45), (269, 47), (270, 87)] {
+            v.iter_mut().find(|s| s.id == Some(id)).unwrap().generation = Some(generation);
         }
         v.extend_from_slice(extra);
         v

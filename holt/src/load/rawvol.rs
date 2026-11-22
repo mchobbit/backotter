@@ -152,7 +152,7 @@ impl Builder<'_> {
             }
         }
         if !raw.is_empty() {
-            out.push(Cmd::new(&["mkdir", "-p", RUN_DIR]));
+            out.push(Cmd::new(&["mkdir", "-p", "-m", "700", RUN_DIR]));
         }
         for dm in &raw {
             let (vg, lv) = (dm.at(&["dm", "vg"]).and_then(Value::as_str).unwrap_or_default().to_string(), dm.at(&["dm", "lv"]).and_then(Value::as_str).unwrap_or_default().to_string());
@@ -219,8 +219,8 @@ impl Builder<'_> {
                             self.closers.push(Cmd::new(&lvm_argv("lvchange", &devices, &["--permission", "r", &full])).why(format!("{full}: read-only, as on the source")));
                         }
                     }
-                    if is_raw {
-                        out.push(write(dm.as_ref().expect("a raw volume's dm device"), &dev, l.bytes, chunk));
+                    if let Some(dm_val) = dm.as_ref().filter(|_| is_raw) {
+                        out.push(write(dm_val, &dev, l.bytes, chunk));
                     } else if l.name.ends_with("-volatile") {
                         self.notes.push(format!("{full}: Qubes's volatile volume, made empty (Qubes makes it again at each start of its qube)"));
                     }

@@ -115,6 +115,7 @@ fn sysroot_dump_is_json() {
 /// next time, a real disagreement every time.  A dump that fails fails at
 /// once.
 #[test]
+#[cfg(target_os = "linux")]
 fn live_host_matches_lsblk() {
     let mut errors = Vec::new();
     for attempt in 1..=3 {
@@ -146,6 +147,7 @@ fn live_host_matches_lsblk() {
 
 /// The devices of lsblk's tree LS checked against the dump V: the number
 /// checked, or the first disagreement.
+#[cfg(target_os = "linux")]
 fn compare_with_lsblk(v: &Value, ls: &Value, privileged: bool) -> Result<usize, String> {
     macro_rules! check_eq {
         ($a:expr, $b:expr, $($m:tt)+) => {{

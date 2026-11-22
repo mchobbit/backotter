@@ -196,7 +196,9 @@ pub fn parse_master(text: &str) -> (Option<String>, Vec<Entry>) {
             }
             continue;
         }
-        let e = entries.last_mut().expect("inside an entry");
+        let Some(e) = entries.last_mut() else {
+            continue;
+        };
         if let Some(v) = l.strip_prefix("set root=") {
             e.root = Some(unquote(v));
         } else if let Some(v) = l.strip_prefix("configfile ") {

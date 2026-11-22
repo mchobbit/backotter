@@ -46,7 +46,7 @@ EOF
 udevadm settle
 
 # ---- assemble ----
-mkdir -p /run/bko-holt/lvm
+mkdir -p -m 700 /run/bko-holt/lvm
 # volume group vos-root: its metadata, for pvcreate and vgcfgrestore
 cat > /run/bko-holt/lvm/vos-root.vg <<'EOF'
 vos-root {
@@ -104,7 +104,7 @@ lvcreate --devicesfile '' --devices /dev/sdq3 --yes --type thin-pool -n root -L 
 lvcreate --devicesfile '' --devices /dev/sdq3 --type thin -V 19456m -n root-a --thinpool root vos-root
 # thin LV vos-root/root-b: 19 GiB virtual, device id 2 on the source
 lvcreate --devicesfile '' --devices /dev/sdq3 --type thin -V 19456m -n root-b --thinpool root vos-root
-mkdir -p /run/bko-holt/lvm
+mkdir -p -m 700 /run/bko-holt/lvm
 # volume group vos-var: its metadata, for pvcreate and vgcfgrestore
 cat > /run/bko-holt/lvm/vos-var.vg <<'EOF'
 vos-var {
@@ -199,12 +199,12 @@ mount -t ext4 -o defaults /dev/mapper/vos--root-init /mnt/bko-target/boot/init
 # snapshot latest of /srv/bko-repo, with BackOtter's restore flags
 RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
 # the atimes the restore set, for boot to put back after its reads
-sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
+sh -c 'mkdir -p -m 700 /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
 
 # ---- boot ----
 # refuses to start unless /mnt/bko-target/abimage.abr is there: the restored present root
 # the restored atimes (the restore stage lists them), to put back after this stage's reads
-sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
+sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p -m 700 /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
 # ABRoot: /boot (the master grub.cfg), the ESP, the init LV and both roots are restored as they were; no initramfs, no grub-install, no update-grub (a failing stub on Vanilla OS), no chroot
 # the master grub.cfg's default entry leads to the dump's root, and each root's abroot.cfg to its kernel, initramfs and filesystem, in the restored tree
 sh -c 't=$(readlink -f /mnt/bko-target) || exit 1; want=vos-b; ilv=vos--root-init; iuuid=bc000000-0000-4000-8000-000000000008; errs=; nbad=0

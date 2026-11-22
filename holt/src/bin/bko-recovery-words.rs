@@ -69,17 +69,22 @@ fn new() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    print!("{}", show_new(&w));
+    let mut shown = show_new(&w);
+    print!("{shown}");
+    recovery::zeroize_string(&mut shown);
     ExitCode::SUCCESS
 }
 
 fn show_new(w: &Words) -> String {
     let words = w.words();
-    let mut s = format!("Recovery key: {}\n\n", recovery::password(w));
+    let mut pw = recovery::password(w);
+    let mut s = format!("Recovery key: {pw}\n\n");
+    recovery::zeroize_string(&mut pw);
     for row in words.chunks(4).enumerate() {
-        let line: String = row.1.iter().enumerate().map(|(i, x)| format!("{:>4} {:<10}", 4 * row.0 + i + 1, x)).collect();
+        let mut line: String = row.1.iter().enumerate().map(|(i, x)| format!("{:>4} {:<10}", 4 * row.0 + i + 1, x)).collect();
         s += line.trim_end();
         s.push('\n');
+        recovery::zeroize_string(&mut line);
     }
     s += "\nWrite them down in this order.  Typed back, the first 4 letters of each\nword are enough.  Keep them as safe as the passphrase: they open the\nrepository without it.\n";
     s
@@ -100,22 +105,31 @@ fn check(args: &[String]) -> ExitCode {
                 Ok(0) => break,
                 Ok(_) => {}
                 Err(_) => {
+                    recovery::zeroize_string(&mut line);
+                    recovery::zeroize_string(&mut text);
                     eprintln!("bko-recovery-words: couldn't read the words");
                     return ExitCode::from(1);
                 }
             }
             text += &line;
-            if line.trim().is_empty() || recovery::typed_count(&text) >= recovery::COUNT {
+            let stop = line.trim().is_empty() || recovery::typed_count(&text) >= recovery::COUNT;
+            recovery::zeroize_string(&mut line);
+            if stop {
                 break;
             }
         }
     } else if std::io::stdin().take(64 * 1024).read_to_string(&mut text).is_err() {
+        recovery::zeroize_string(&mut text);
         eprintln!("bko-recovery-words: couldn't read the words from standard input");
         return ExitCode::from(1);
     }
-    match recovery::check(&text) {
+    let res = recovery::check(&text);
+    recovery::zeroize_string(&mut text);
+    match res {
         Ok(w) => {
-            println!("OK: {}", recovery::password(&w));
+            let mut pw = recovery::password(&w);
+            println!("OK: {pw}");
+            recovery::zeroize_string(&mut pw);
             ExitCode::SUCCESS
         }
         Err(p) => {

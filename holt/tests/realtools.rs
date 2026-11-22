@@ -7,6 +7,8 @@
 //! else, and a missing tool fails its test (install the packages listed in
 //! holt/README.md) unless BKO_HOLT_ALLOW_MISSING_TOOLS=1.
 
+#![cfg(target_os = "linux")]
+
 use bko_holt::bytes::FileSource;
 use bko_holt::json::{self, Value};
 use bko_holt::parttable::{self, Table};

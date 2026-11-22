@@ -152,7 +152,7 @@ struct Native<'a> {
 impl Native<'_> {
     fn n<const N: usize>(&self, o: usize) -> Result<[u8; N], String> {
         let s = self.b.get(o..o.checked_add(N).ok_or("bad offset")?).ok_or("nvlist truncated")?;
-        let mut a: [u8; N] = s.try_into().unwrap();
+        let mut a: [u8; N] = s.try_into().map_err(|_| "nvlist truncated".to_string())?;
         if !self.little {
             a.reverse();
         }

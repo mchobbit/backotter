@@ -1,7 +1,7 @@
 [package]
 name = "bko-holt"
 version = "0.2.6"
-edition = "2021"
+edition = "2024"
 rust-version = "1.85"
 # `cargo run` without --bin: bko-holt, as before there were two.
 default-run = "bko-holt"
@@ -30,3 +30,12 @@ path = "src/bin/bko-recovery-words.rs"
 [profile.release]
 lto = true
 strip = true
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"

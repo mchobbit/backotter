@@ -436,7 +436,7 @@ fn main_inner(args: &[String]) -> (u8, String) {
         Ok(Parsed::Run(o)) => o,
         Err(e) => return (EXIT_BAD_ARGS, format!("bko-holt load: {e}\n\n{USAGE}")),
     };
-    let text = match std::fs::read_to_string(&opts.layout) {
+    let text = match crate::bytes::read_to_string_bounded(std::path::Path::new(&opts.layout), crate::LAYOUT_MAX) {
         Ok(t) => t,
         Err(e) => return (EXIT_BAD_ARGS, format!("bko-holt load: {}: {e}\n", opts.layout)),
     };

@@ -60,6 +60,9 @@ pub struct Cmd {
     /// Whether the terminal sees its stderr's `warning:` lines when it
     /// succeeds (the log has all its output either way).
     pub warns: bool,
+    /// For a file to write outside RUN_DIR: whether it's made 0600, as
+    /// RUN_DIR's own are (a copy of a file that can hold a password).
+    pub private: bool,
 }
 
 impl Cmd {
@@ -73,6 +76,13 @@ impl Cmd {
 
     pub fn write_file(path: &str, contents: String) -> Cmd {
         Cmd { write: Some(path.to_string()), stdin: Some(contents), ..Cmd::default() }
+    }
+
+    /// The file it writes is 0600 (`write_file`): a copy of a file that can
+    /// hold a password.
+    pub fn private(mut self) -> Cmd {
+        self.private = true;
+        self
     }
 
     /// The read-back of DEV, just made from the source's CONTENT.
@@ -118,26 +128,77 @@ impl Cmd {
         }
         let line = match &self.write {
             Some(p) => format!("cat > {}", shell_quote(p)),
-            None => self
+            None if self.env.iter().all(|(k, _)| valid_env_key(k)) => self
                 .env
                 .iter()
                 .map(|(k, v)| format!("{k}={}", shell_quote(v)))
                 .chain(self.argv.iter().map(|a| shell_quote(a)))
                 .collect::<Vec<_>>()
                 .join(" "),
+            None => std::iter::once("env".to_string())
+                .chain(self.env.iter().filter(|(k, _)| !k.is_empty() && !k.contains('=')).map(|(k, v)| shell_quote(&format!("{k}={v}"))))
+                .chain(self.argv.iter().map(|a| shell_quote(a)))
+                .collect::<Vec<_>>()
+                .join(" "),
         };
         match &self.stdin {
             Some(s) => {
-                out += &format!("{line} <<'EOF'\n{s}");
+                let mut eof = String::from("EOF");
+                let mut n = 1u32;
+                while s.lines().any(|l| l == eof) {
+                    eof = format!("EOF_{n}");
+                    n += 1;
+                }
+                out += &format!("{line} <<'{eof}'\n{s}");
                 if !s.ends_with('\n') {
                     out.push('\n');
                 }
-                out += "EOF\n";
+                out += &format!("{eof}\n");
             }
             None => out += &format!("{line}\n"),
         }
         out
     }
+}
+
+pub(crate) fn safe_target_subpath(p: &str) -> bool {
+    p.starts_with('/') && !p.contains('\0') && !p.split('/').any(|c| c == "..")
+}
+
+/// Whether crypttab's key field names a file the restore brings back: an
+/// absolute path in the restored tree, not systemd's path:device form, a
+/// raw key device or a USB stick under /dev, or /proc, /sys or /run.
+fn restorable_key_file(k: &str) -> bool {
+    !k.contains(':') && safe_target_subpath(k) && !["/dev/", "/proc/", "/sys/", "/run/"].iter().any(|d| k.starts_with(d))
+}
+
+/// The plan problem for a LUKS container whose key file the restore can't
+/// bring back and no --key-file covers.
+fn needs_key_file(open_as: &str, k: &str) -> String {
+    format!("{open_as}: crypttab's key {k:?} isn't a file the restore brings back (it's on another device, or not a path in the restored tree): give --key-file {open_as}=FILE")
+}
+
+/// The file name of a container's temporary key under RUN_DIR/keys, the
+/// same in the format and the boot stage; None for a name that can't be one.
+fn temp_key_name(open_as: &str) -> Option<String> {
+    let n = open_as.replace('/', "_");
+    (!n.is_empty() && !matches!(n.as_str(), "." | "..") && !n.contains('\0')).then_some(n)
+}
+
+fn valid_env_key(k: &str) -> bool {
+    let mut b = k.bytes();
+    b.next().is_some_and(|c| c.is_ascii_alphabetic() || c == b'_') && b.all(|c| c.is_ascii_alphanumeric() || c == b'_')
+}
+
+fn dq_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(c, '\\' | '"' | '$' | '`') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 pub struct Built {
@@ -749,15 +810,16 @@ impl Builder<'_> {
             }
             // A protective MBR marked active (Anaconda does so on BIOS, for
             // firmware that boots only an active partition); sfdisk's isn't.
+            let qdev = shell_quote(&dev);
             let pmbr_active = self.layout.device(&src).and_then(|v| v.at(&["partition_table", "protective_mbr", "entries", "0", "bootable"])).and_then(Value::as_bool) == Some(true);
             if pmbr_active {
-                out.push(Cmd::new(&["sh", "-c", &format!("printf '\\200' | dd of={dev} bs=1 seek=446 count=1 conv=notrunc status=none")]).why("the protective MBR's entry active, as the source's"));
+                out.push(Cmd::new(&["sh", "-c", &format!("printf '\\200' | dd of={qdev} bs=1 seek=446 count=1 conv=notrunc status=none")]).why("the protective MBR's entry active, as the source's"));
             }
             // A protective MBR with a disk signature (KIWI's images, MicroOS's:
             // bytes 440-443); sfdisk writes a GPT's as zero.
             if let Some(sig) = pmbr_signature(self.layout.device(&src)) {
                 let oct: String = sig.to_le_bytes().iter().map(|b| format!("\\{b:03o}")).collect();
-                out.push(Cmd::new(&["sh", "-c", &format!("printf '{oct}' | dd of={dev} bs=1 seek=440 count=4 conv=notrunc status=none")]).why(format!("the protective MBR's disk signature, {sig:08x}, as the source's")));
+                out.push(Cmd::new(&["sh", "-c", &format!("printf '{oct}' | dd of={qdev} bs=1 seek=440 count=4 conv=notrunc status=none")]).why(format!("the protective MBR's disk signature, {sig:08x}, as the source's")));
             }
             if d.parts.iter().any(|p| p.extended) {
                 self.notes.push(format!("{src}: the extended partition and its EBRs are made by sfdisk; logical partitions keep their starts"));
@@ -1249,6 +1311,14 @@ pub fn vg_metadata(vg: &Value) -> Result<String, String> {
 }
 
 impl Builder<'_> {
+    /// A plan problem, unless it's listed already (two stages that check
+    /// the same thing).
+    pub(crate) fn problem_once(&mut self, p: String) {
+        if !self.problems.contains(&p) {
+            self.problems.push(p);
+        }
+    }
+
     fn items(&mut self) -> Vec<Planned> {
         let mut items = Vec::new();
         for md in self.layout.arr(&["storage", "md_arrays"]) {
@@ -1499,8 +1569,19 @@ impl Builder<'_> {
         let tab_key = self.layout.crypttab_entry(&open_as, s(&c, "uuid").as_deref()).and_then(|e| s(e, "key_file")).filter(|k| !matches!(k.as_str(), "none" | "-" | ""));
         let key = match (self.opts.key_file(&open_as), &tab_key) {
             (Some(f), _) => Some(f.to_string()),
+            // A key the restore doesn't bring back (on another device, or
+            // not a path in the restored tree): the temporary key would be
+            // the container's only one, lost when the rescue system stops.
+            (None, Some(k)) if !restorable_key_file(k) => {
+                self.problem_once(needs_key_file(&open_as, k));
+                None
+            }
+            (None, Some(_)) if temp_key_name(&open_as).is_none() => {
+                self.problem_once(format!("{open_as}: a LUKS name bko-holt can't keep a temporary key under: give --key-file {open_as}=FILE"));
+                None
+            }
             (None, Some(k)) => {
-                let tmp = format!("{RUN_DIR}/keys/{open_as}");
+                let tmp = format!("{RUN_DIR}/keys/{}", temp_key_name(&open_as).unwrap_or_default());
                 out.push(Cmd::new(&["mkdir", "-p", "-m", "700", &format!("{RUN_DIR}/keys")]));
                 out.push(Cmd::new(&["dd", "if=/dev/urandom", &format!("of={tmp}"), "bs=64", "count=1", "status=none"]).why(format!(
                     "{open_as} unlocks with the key file {k} on the restored system; until that's restored, a temporary key"
@@ -1586,7 +1667,7 @@ impl Builder<'_> {
             }
         };
         let file = format!("{RUN_DIR}/lvm/{name}.vg");
-        out.push(Cmd::new(&["mkdir", "-p", &format!("{RUN_DIR}/lvm")]));
+        out.push(Cmd::new(&["mkdir", "-p", "-m", "700", &format!("{RUN_DIR}/lvm")]));
         out.push(Cmd::write_file(&file, text).why(format!("volume group {name}: its metadata, for pvcreate and vgcfgrestore")));
         // LVM sees the group's own PVs only (--devices, and no devices file):
         // a group of the same name elsewhere on this system, or a PV of
@@ -1798,7 +1879,8 @@ impl Builder<'_> {
         }
         // zpool create mounts the pool's own dataset (FreeBSD's zroot, at
         // /zroot) at once; mount mounts it again in its place, after /.
-        out.push(Cmd::new(&["sh", "-c", &format!("[ \"$(zfs get -H -o value mounted {here})\" != yes ] || zfs unmount {here}")]).why("mount mounts every dataset in order"));
+        let qhere = shell_quote(&here);
+        out.push(Cmd::new(&["sh", "-c", &format!("[ \"$(zfs get -H -o value mounted {qhere})\" != yes ] || zfs unmount {qhere}")]).why("mount mounts every dataset in order"));
         // (On Linux, udev and its workers' mount namespaces can keep the
         // pool busy for a moment after the last unmount.)
         let export = ["zpool", "export", here.as_str()];
@@ -1854,10 +1936,16 @@ impl Builder<'_> {
         if s(ds, "encryptionroot").as_deref() != Some(name.as_str()) || self.opts.key_file(&name).is_some() || !matches!(fmt.as_str(), "raw" | "hex") {
             return;
         }
-        let key = format!("{RUN_DIR}/keys/{}", name.replace('/', "_"));
+        let key_name = name.replace('/', "_");
+        if key_name.is_empty() || matches!(key_name.as_str(), "." | "..") || key_name.contains('\0') {
+            self.problems.push(format!("ZFS encryption root {name:?}: invalid dataset name"));
+            return;
+        }
+        let key = format!("{RUN_DIR}/keys/{key_name}");
+        let qkey = shell_quote(&key);
         out.push(Cmd::new(&["mkdir", "-p", "-m", "700", &format!("{RUN_DIR}/keys")]));
-        let gen = if fmt == "raw" { format!("head -c 32 /dev/urandom > {key}") } else { format!("od -An -tx1 -N32 /dev/urandom | tr -d ' \\n' > {key}") };
-        out.push(Cmd::new(&["sh", "-c", &format!("umask 077; {gen}")]).why(format!("ZFS encryption root {name}: a new {fmt} key (the data is all rewritten by the restore)")));
+        let make_key = if fmt == "raw" { format!("head -c 32 /dev/urandom > {qkey}") } else { format!("od -An -tx1 -N32 /dev/urandom | tr -d ' \\n' > {qkey}") };
+        out.push(Cmd::new(&["sh", "-c", &format!("umask 077; {make_key}")]).why(format!("ZFS encryption root {name}: a new {fmt} key (the data is all rewritten by the restore)")));
     }
 
     fn dataset(&self, name: &str) -> Option<Value> {
@@ -2359,7 +2447,8 @@ pub fn jfs_tune(dev: &str, c: &Value) -> Option<Vec<String>> {
 /// field is their fifth byte).  A version-1 superblock still has its UUID
 /// field: mkfs.jfs writes one there.
 pub fn jfs_version1(dev: &str) -> Vec<String> {
-    let w = |off: u32| format!("printf '\\001' | dd of={dev} bs=1 seek={off} count=1 conv=notrunc status=none");
+    let qdev = shell_quote(dev);
+    let w = |off: u32| format!("printf '\\001' | dd of={qdev} bs=1 seek={off} count=1 conv=notrunc status=none");
     vec!["sh".to_string(), "-c".into(), format!("{} && {}", w(0x8000 + 4), w(0xF000 + 4))]
 }
 
@@ -2848,7 +2937,7 @@ impl Builder<'_> {
                     Some(Sub {
                         path: strip(&s(v, "path")?),
                         id: v.get("id").and_then(Value::as_u64),
-                        gen: v.get("gen").and_then(Value::as_u64),
+                        generation: v.get("gen").and_then(Value::as_u64),
                         uuid: s(v, "uuid"),
                         parent_uuid: s(v, "parent_uuid"),
                         readonly: v.get("readonly").and_then(Value::as_bool) == Some(true),
@@ -2993,7 +3082,8 @@ impl Builder<'_> {
             // illumos' zfs create has no -u: what it mounted, unmounted
             // (mount mounts every dataset in order).
             if self.fam == Some(crate::other::Family::Illumos) && s(&ds, "type").as_deref() != Some("volume") {
-                out.push(Cmd::new(&["sh", "-c", &format!("[ \"$(zfs get -H -o value mounted {here})\" != yes ] || zfs unmount {here}")]));
+                let qhere = shell_quote(&here);
+                out.push(Cmd::new(&["sh", "-c", &format!("[ \"$(zfs get -H -o value mounted {qhere})\" != yes ] || zfs unmount {qhere}")]));
             }
             self.datasets.push(here);
         }
@@ -3052,6 +3142,10 @@ impl Builder<'_> {
             if ty == "swap" || !file.starts_with('/') {
                 continue;
             }
+            if !safe_target_subpath(&file) {
+                self.problems.push(format!("fstab's {file:?} isn't a safe mount path under the target"));
+                continue;
+            }
             let Some(src) = s(e, "resolves_to") else {
                 // A legacy ZFS dataset fstab mounts (TrueNAS's boot-pool/grub,
                 // perhaps): load/zfs_be.rs's legacy mounts mount it, as the
@@ -3086,7 +3180,8 @@ impl Builder<'_> {
             // background once the tree is up).
             if ty == "redoxfs" {
                 // Its daemon would hold load's output pipe open: its own log.
-                let script = format!("redoxfs {dev} {dir} >{RUN_DIR}/redoxfs.log 2>&1 </dev/null; i=0; until mountpoint -q {dir}; do i=$((i + 1)); [ $i -lt 60 ] || {{ cat {RUN_DIR}/redoxfs.log; exit 1; }}; sleep 1; done");
+                let (qdev, qdir) = (shell_quote(&dev), shell_quote(&dir));
+                let script = format!("redoxfs {qdev} {qdir} >{RUN_DIR}/redoxfs.log 2>&1 </dev/null; i=0; until mountpoint -q {qdir}; do i=$((i + 1)); [ $i -lt 60 ] || {{ cat {RUN_DIR}/redoxfs.log; exit 1; }}; sleep 1; done");
                 ms.push((file.clone(), Cmd::new(&["sh", "-c", &script])));
                 out_mkdir.push(dir.clone());
                 continue;
@@ -3234,7 +3329,7 @@ impl Builder<'_> {
         if !need.is_empty() {
             let arch = shell_quote(&self.opts.archiver);
             let checks: Vec<String> = need.iter().map(|f| format!("grep -q -- '{f}' {RUN_DIR}/restore.help")).collect();
-            pre.push(Cmd::new(&["mkdir", "-p", RUN_DIR]));
+            pre.push(Cmd::new(&["mkdir", "-p", "-m", "700", RUN_DIR]));
             pre.push(
                 Cmd::new(&[
                     "sh",
@@ -3254,7 +3349,7 @@ impl Builder<'_> {
         if !globs.is_empty() {
             let file = format!("{RUN_DIR}/restore.globs");
             if need.is_empty() {
-                pre.push(Cmd::new(&["mkdir", "-p", RUN_DIR]));
+                pre.push(Cmd::new(&["mkdir", "-p", "-m", "700", RUN_DIR]));
             }
             let why = if only_raw {
                 "left out of the restore: the raw volumes' images, written to their LVs after it"
@@ -3320,16 +3415,19 @@ impl Builder<'_> {
             .flat_map(|r| ["setting UID/GID failed", "setting User/Group failed", "chmod failed", "setting file times failed"].map(|w| format!("[WARN] restore {r}: {w}.\n")))
             .collect();
         let err = format!("{RUN_DIR}/restore.err");
+        let msg = shell_quote(&format!(
+            "bko-holt: the restore set no owner, mode or times on the root of {}: msdosfs keeps none there",
+            roots.iter().map(|r| format!("/{r}")).collect::<Vec<_>>().join(", ")
+        ));
         let script = format!(
             "\"$@\" 2>{err}; s=$?; cat {err} >&2; [ $s -eq 1 ] || exit $s; e=$(printf '\\033'); sed -e \"s/$e\\[[0-9;]*m//g\" -e 's/[[:space:]]*$//' {err} > {err}.plain; \
              n=$(sed -n 's/^error: There were \\([0-9][0-9]*\\) errors.*/\\1/p' {err}.plain); k=$(grep -cxF -f {allowed} {err}.plain); \
-             [ -n \"$n\" ] && [ \"$n\" = \"$k\" ] || exit 1; echo 'bko-holt: the restore set no owner, mode or times on the root of {}: msdosfs keeps none there' >&2",
-            roots.iter().map(|r| format!("/{r}")).collect::<Vec<_>>().join(", ")
+             [ -n \"$n\" ] && [ \"$n\" = \"$k\" ] || exit 1; echo {msg} >&2"
         );
         let mut argv = vec!["sh".to_string(), "-c".into(), script, "sh".into()];
         argv.extend(restore.argv);
         vec![
-            Cmd::new(&["mkdir", "-p", RUN_DIR]),
+            Cmd::new(&["mkdir", "-p", "-m", "700", RUN_DIR]),
             Cmd::write_file(&allowed, lines).why("the restore errors msdosfs's mount roots give, and only those, let pass"),
             Cmd { argv, ..restore },
         ]
@@ -3364,7 +3462,7 @@ impl Builder<'_> {
                 let (id, path) = snapshot_path(&self.opts.snapshot, &x.backup);
                 r.extend([format!("{id}:{path}"), d.clone()]);
                 let r = r.iter().map(|w| shell_quote(w)).collect::<Vec<_>>().join(" ");
-                let (qd, qb, qp, qpath) = (shell_quote(&d), shell_quote(&format!("{top}/{}", x.base)), shell_quote(&parent), x.path.replace('"', ""));
+                let (qd, qb, qp, qpath) = (shell_quote(&d), shell_quote(&format!("{top}/{}", x.base)), shell_quote(&parent), dq_escape(&x.path));
                 let id = x.new_id;
                 // Its children (each slot's /etc on transactional-update):
                 // made in it once it's made, where its snapshot has an empty
@@ -3385,7 +3483,7 @@ impl Builder<'_> {
                     };
                     kids_snap += &format!("{ph}rm -rf -- {qc} && mkdir -p \"$(dirname {qc})\" && {make} && ");
                     kids_empty += &format!("{ph}mkdir -p \"$(dirname {qc})\" && btrfs subvolume create {qc} && ");
-                    let (cp, cid) = (c.path.replace('"', ""), c.new_id);
+                    let (cp, cid) = (dq_escape(&c.path), c.new_id);
                     kids_ids += &format!("; cid=$(btrfs inspect-internal rootid {qc}) && [ \"$cid\" = {cid} ] || echo \"{cp}: ID $cid here, {cid} in the plan\"");
                 }
                 // The directory it's in keeps its times (snapper's N/, with
@@ -3473,15 +3571,28 @@ pub(crate) fn atimes_cmd(t: &str, what: &str, prune: &[String]) -> String {
 /// of T/run: Ubuntu Core's whole tree is there (load/snapcore.rs).
 pub(crate) fn atimes_cmd_in(t: &str, what: &str, prune: &[String], run_mnt: bool) -> String {
     let more: String = prune.iter().map(|p| format!(" -o -path {}", shell_quote(p))).collect();
-    let run = if run_mnt { format!("\\( -path '{t}/run/*' ! -path {t}/run/mnt ! -path '{t}/run/mnt/*' \\)") } else { format!("-path {t}/run") };
+    let qt = shell_quote(t);
+    let run = if run_mnt {
+        format!(
+            "\\( -path {} ! -path {} ! -path {} \\)",
+            shell_quote(&format!("{t}/run/*")),
+            shell_quote(&format!("{t}/run/mnt")),
+            shell_quote(&format!("{t}/run/mnt/*"))
+        )
+    } else {
+        format!("-path {}", shell_quote(&format!("{t}/run")))
+    };
     let list = format!(
-        "find {t} \\( -path {t}/dev -o -path {t}/proc -o -path {t}/sys -o {run}{more} \\) -prune -o -printf '%A@\\t%p\\0' | LC_ALL=C sort -z"
+        "find {qt} \\( -path {} -o -path {} -o -path {} -o {run}{more} \\) -prune -o -printf '%A@\\t%p\\0' | LC_ALL=C sort -z",
+        shell_quote(&format!("{t}/dev")),
+        shell_quote(&format!("{t}/proc")),
+        shell_quote(&format!("{t}/sys"))
     );
     let b = format!("{RUN_DIR}/atimes.before");
     if what == "before" {
-        format!("mkdir -p {RUN_DIR} && {list} > {b}")
+        format!("mkdir -p -m 700 {RUN_DIR} && {list} > {b}")
     } else if what == "if-missing" {
-        format!("[ -s {b} ] || {{ mkdir -p {RUN_DIR} && {list} > {b}; }}")
+        format!("[ -s {b} ] || {{ mkdir -p -m 700 {RUN_DIR} && {list} > {b}; }}")
     } else {
         format!(
             "{list} > {RUN_DIR}/atimes.after && LC_ALL=C comm -z -23 {b} {RUN_DIR}/atimes.after | \\
@@ -3552,9 +3663,10 @@ impl Builder<'_> {
         // would record the rescue system's names for the PVs in it; it's
         // put back as restored when the chroot's work is done.
         let devdir = format!("{t}/etc/lvm/devices");
-        out.push(Cmd::new(&["sh", "-c", &format!("rm -rf {RUN_DIR}/lvm-devices; [ ! -d {devdir} ] || {{ cp -a {devdir} {RUN_DIR}/lvm-devices && touch -r {t}/etc/lvm {RUN_DIR}/lvm-devices.parent; }}")]).why("the restored LVM devices file, kept"));
+        let (qdevdir, qlvm) = (shell_quote(&devdir), shell_quote(&format!("{t}/etc/lvm")));
+        out.push(Cmd::new(&["sh", "-c", &format!("rm -rf {RUN_DIR}/lvm-devices; [ ! -d {qdevdir} ] || {{ cp -a {qdevdir} {RUN_DIR}/lvm-devices && touch -r {qlvm} {RUN_DIR}/lvm-devices.parent; }}")]).why("the restored LVM devices file, kept"));
         let lvm_devices_back =
-            Cmd::new(&["sh", "-c", &format!("[ ! -d {RUN_DIR}/lvm-devices ] || {{ rm -rf {devdir} && cp -a {RUN_DIR}/lvm-devices {devdir} && touch -r {RUN_DIR}/lvm-devices.parent {t}/etc/lvm; }}")]).why("the restored LVM devices file, put back");
+            Cmd::new(&["sh", "-c", &format!("[ ! -d {RUN_DIR}/lvm-devices ] || {{ rm -rf {qdevdir} && cp -a {RUN_DIR}/lvm-devices {qdevdir} && touch -r {RUN_DIR}/lvm-devices.parent {qlvm}; }}")]).why("the restored LVM devices file, put back");
         for d in ["dev", "proc", "sys", "run"] {
             out.push(Cmd::new(&["mount", "--rbind", "--make-rslave", &format!("/{d}"), &format!("{t}/{d}")]));
         }
@@ -3649,17 +3761,18 @@ impl Builder<'_> {
             // /boot/grub/i386-pc and the restore brought back, are written
             // to each disk by the rescue system's grub-bios-setup, outside
             // the chroot, which patches their sector addresses for it.
-            ("grub", false) if store.is_some() => {
-                let st = store.expect("a store system");
+            ("grub", false) if store.is_some() => if let Some(st) = store {
                 let devs = self.grub_bios_devices();
                 if devs.is_empty() {
                     self.problems.push("BIOS GRUB: no disk's MBR holds GRUB".into());
                 }
+                let qt = shell_quote(&t);
                 match st.grub_install {
                     Some(install) => {
                         let pick = st.bios_grub_pick(&t);
                         for d in devs {
-                            out.push(Cmd::new(&["sh", "-c", &format!("{pick}; chroot {t} \"$g/{install}\" --target=i386-pc --boot-directory=/boot {d}")]).why(format!("{}'s GRUB; the restored grub.cfg stays", st.store_name)));
+                            let qd = shell_quote(&d);
+                            out.push(Cmd::new(&["sh", "-c", &format!("{pick}; chroot {qt} \"$g/{install}\" --target=i386-pc --boot-directory=/boot {qd}")]).why(format!("{}'s GRUB; the restored grub.cfg stays", st.store_name)));
                         }
                     }
                     None => {
@@ -3675,11 +3788,12 @@ impl Builder<'_> {
                         }
                         let q = shell_quote(&dir);
                         for d in devs {
+                            let (qd, ed) = (shell_quote(&d), dq_escape(&d));
                             out.push(
                                 Cmd::new(&[
                                     "sh",
                                     "-c",
-                                    &format!("d={q}; [ -f \"$d/boot.img\" ] && [ -f \"$d/core.img\" ] || {{ echo \"$d: no boot.img or core.img (the source's, restored with /boot/grub) to write to {d}\" >&2; exit 1; }}; grub-bios-setup --directory=\"$d\" {d}"),
+                                    &format!("d={q}; [ -f \"$d/boot.img\" ] && [ -f \"$d/core.img\" ] || {{ echo \"$d: no boot.img or core.img (the source's, restored with /boot/grub) to write to {ed}\" >&2; exit 1; }}; grub-bios-setup --directory=\"$d\" {qd}"),
                                 ])
                                 .why(format!("{}'s own boot.img and core.img, restored in {}/i386-pc; the rescue's grub-bios-setup writes them to the new disk", st.name, self.grub_dir())),
                             );
@@ -3745,8 +3859,7 @@ impl Builder<'_> {
             // filesystem's UUID, which the new one keeps (as BIOS GRUB's
             // grub.cfg does, above).  Only the boot entry is made
             // (efi_entries, below).
-            ("grub", true) if store.is_some() => {
-                let st = store.expect("a store system");
+            ("grub", true) if store.is_some() => if let Some(st) = store {
                 self.notes.push(st.uefi_grub.into());
                 let g = self.boot_names().grub;
                 let img = self.esp_file(&format!("/{g}")).unwrap_or_else(|| format!("EFI/{}/{g}", self.bootloader_id()));
@@ -3754,7 +3867,7 @@ impl Builder<'_> {
                 self.check_store_grub_cfg(st);
             }
             ("grub", true) => {
-                let esp = self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).unwrap_or("/boot/efi").to_string();
+                let esp = self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).filter(|m| safe_target_subpath(m)).unwrap_or("/boot/efi").to_string();
                 let id = self.bootloader_id();
                 let n = self.boot_names();
                 let mut a = vec!["chroot".to_string(), t.clone(), "grub-install".into(), format!("--target={}", n.grub_efi_target), format!("--efi-directory={esp}"), format!("--bootloader-id={id}"), "--no-nvram".into()];
@@ -3778,14 +3891,15 @@ impl Builder<'_> {
                 // when the restored files compare equal.  (FAT finds EFI/BOOT
                 // in any case.)
                 let (fallback, loader) = (format!("{t}{esp}/{}", n.fallback), format!("{t}{esp}/EFI/{id}/{}", n.grub));
+                let (qfb, qld) = (shell_quote(&fallback), shell_quote(&loader));
                 let copy = !self.opts.removable && self.fallback_is_grub_copy(&id);
                 let renew = !self.opts.reformats.is_empty() && !self.opts.removable && !copy;
                 if renew {
-                    out.push(Cmd::new(&["sh", "-c", &format!("rm -f {RUN_DIR}/fallback-is-grub; [ ! -f {fallback} ] || ! cmp -s {fallback} {loader} || touch {RUN_DIR}/fallback-is-grub")]).why("--reformat: is the fallback loader a copy of GRUB?"));
+                    out.push(Cmd::new(&["sh", "-c", &format!("rm -f {RUN_DIR}/fallback-is-grub; [ ! -f {qfb} ] || ! cmp -s {qfb} {qld} || touch {RUN_DIR}/fallback-is-grub")]).why("--reformat: is the fallback loader a copy of GRUB?"));
                 }
                 out.push(Cmd { argv: a, ..Cmd::default() });
                 if renew {
-                    out.push(Cmd::new(&["sh", "-c", &format!("[ ! -e {RUN_DIR}/fallback-is-grub ] || cp {loader} {fallback}")]).why("--reformat: the fallback loader, a copy of GRUB, renewed with it"));
+                    out.push(Cmd::new(&["sh", "-c", &format!("[ ! -e {RUN_DIR}/fallback-is-grub ] || cp {qld} {qfb}")]).why("--reformat: the fallback loader, a copy of GRUB, renewed with it"));
                 }
                 if copy {
                     out.push(Cmd::new(&["cp", &loader, &fallback]).why(format!("the fallback loader, {}, a copy of GRUB on the source, renewed with it: the old one names /boot's partition as it was", n.fallback)));
@@ -3998,7 +4112,14 @@ impl Builder<'_> {
                 .collect();
             let new_slice: String = slice.iter().map(|(n, v)| format!(" --new-{n}={}", shell_quote(v))).collect();
             if let Some(given) = self.opts.key_file(&open_as) {
+                // Not a file in the restored tree (Debian's keyscript=
+                // takes a name in the key field, decrypt_derived's or
+                // decrypt_keyctl's): --key-file's keyslot is the one.
                 if k.contains(':') || !k.starts_with('/') || ["/dev/", "/proc/", "/sys/", "/run/"].iter().any(|d| k.starts_with(d)) {
+                    continue;
+                }
+                if !safe_target_subpath(&k) {
+                    self.problem_once(format!("{open_as}: crypttab key file {k:?} isn't a path under the target"));
                     continue;
                 }
                 let (r, g, u) = (shell_quote(&format!("{t}{k}")), shell_quote(given), shell_quote(&under));
@@ -4009,7 +4130,18 @@ impl Builder<'_> {
                 );
                 continue;
             }
-            let tmp = format!("{RUN_DIR}/keys/{open_as}");
+            // The format stage made the container with a temporary key and
+            // refused these already (luks): said again in case its crypttab
+            // lookup differs, never skipped with the temporary key the only one.
+            if !restorable_key_file(&k) {
+                self.problem_once(needs_key_file(&open_as, &k));
+                continue;
+            }
+            let Some(safe_open) = temp_key_name(&open_as) else {
+                self.problem_once(format!("{open_as}: a LUKS name bko-holt can't keep a temporary key under: give --key-file {open_as}=FILE"));
+                continue;
+            };
+            let tmp = format!("{RUN_DIR}/keys/{safe_open}");
             let mut add = vec!["cryptsetup".to_string(), "luksAddKey".into(), format!("--key-file={tmp}")];
             add.extend(slice.iter().map(|(n, v)| format!("--new-{n}={v}")));
             add.extend([under.clone(), format!("{t}{k}")]);
@@ -4098,10 +4230,10 @@ impl Builder<'_> {
     /// grub.cfg remade with os-prober out of the way: in the rescue system
     /// it would find the rescue system's own disks and list them.
     pub(crate) fn remake_grub_cfg(&self, t: &str, out: &mut Vec<Cmd>) {
-        let p = format!("{t}/usr/bin/os-prober");
-        out.push(Cmd::new(&["sh", "-c", &format!("[ ! -e {p} ] || mount --bind {t}/usr/bin/true {p}")]).why("os-prober off: it would list the rescue system's disks"));
+        let (off, on) = super::qubes::os_prober_off(t);
+        out.push(Cmd::new(&["sh", "-c", &off]).why("os-prober off: it would list the rescue system's disks"));
         out.push(self.update_grub(t));
-        out.push(Cmd::new(&["sh", "-c", &format!("! grep -q ' {p} ' /proc/self/mountinfo || umount {p}")]));
+        out.push(Cmd::new(&["sh", "-c", &on]));
     }
 
     /// The type of the filesystem fstab mounts `dir` (an absolute path) on:
@@ -4557,7 +4689,7 @@ impl Builder<'_> {
         if !self.opts.removable {
             return Vec::new();
         }
-        let esp = format!("{}{}", self.opts.target, self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).unwrap_or("/boot").trim_end_matches('/'));
+        let esp = format!("{}{}", self.opts.target, self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).filter(|m| safe_target_subpath(m)).unwrap_or("/boot").trim_end_matches('/'));
         let (src, dir) = (shell_quote(&format!("{esp}/{img}")), shell_quote(&format!("{esp}/EFI/BOOT")));
         let f = self.boot_names().fallback_file;
         vec![Cmd::new(&["sh", "-c", &format!("[ -e {dir}/{f} ] || {{ mkdir -p {dir} && cp {src} {dir}/{f}; }}")]).why("--removable: the ESP's loader at the fallback path too")]
@@ -4688,9 +4820,11 @@ impl Builder<'_> {
             match efi_optional_data(e) {
                 Some(OptionalData::Text(text)) => a.extend(["--unicode".to_string(), text]),
                 Some(OptionalData::Bytes(b)) => {
-                    let f = format!("{RUN_DIR}/efi-optional-data-{}", s(e, "number").unwrap_or_default());
+                    let num_tok: String = s(e, "number").unwrap_or_default().chars().filter(char::is_ascii_alphanumeric).collect();
+                    let f = format!("{RUN_DIR}/efi-optional-data-{num_tok}");
+                    let qf = shell_quote(&f);
                     let octal: String = b.iter().map(|c| format!("\\{c:03o}")).collect();
-                    out.push(Cmd::new(&["sh", "-c", &format!("printf '{octal}' > {f}")]).why(format!("UEFI entry {desc:?}: its optional data, {} bytes, as the source had it", b.len())));
+                    out.push(Cmd::new(&["sh", "-c", &format!("printf '{octal}' > {qf}")]).why(format!("UEFI entry {desc:?}: its optional data, {} bytes, as the source had it", b.len())));
                     a.extend(["--append-binary-args".to_string(), f]);
                 }
                 None => {}
@@ -4844,27 +4978,39 @@ impl Builder<'_> {
         // the target there, which umount's propagation can't take away.
         // A snap's namespace has the target under /var/lib/snapd/hostfs as
         // well: every mount point whose path ends in the target's goes.
-        out.push(
-            Cmd::new(&[
-                "sh",
-                "-c",
-                &format!(
-                    "me=$(readlink /proc/self/ns/mnt); seen=\" $me \"; \
-                     at() {{ awk -v t={t} '{{ m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }}'; }}; \
-                     for f in /proc/[0-9]*/mountinfo; do grep -q '{t}[ /]' \"$f\" 2>/dev/null || continue; \
-                     p=${{f#/proc/}}; p=${{p%/mountinfo}}; ns=$(readlink /proc/$p/ns/mnt) || continue; \
-                     case $seen in *\" $ns \"*) continue;; esac; seen=\"$seen$ns \"; \
-                     echo \"unmounting {t} in $ns (pid $p, $(cat /proc/$p/comm))\"; \
-                     for m in $(at <\"$f\"); do nsenter -t \"$p\" -m umount --recursive \"$m\" || true; done; done; \
-                     awk '{{ for (i = 7; i < NF; i++) if ($i == \"-\") {{ if ($(i + 1) == \"nsfs\" && $4 ~ /^mnt:\\[/) print $4, $5; break }} }}' /proc/self/mountinfo | \
-                     while read -r ns b; do case $seen in *\" $ns \"*) continue;; esac; seen=\"$seen$ns \"; \
-                     ms=$(nsenter --mount=\"$b\" cat /proc/self/mountinfo | at); [ -n \"$ms\" ] || continue; \
-                     echo \"unmounting {t} in $ns (bound at $b)\"; \
-                     for m in $ms; do nsenter --mount=\"$b\" umount --recursive \"$m\" || true; done; done"
-                ),
-            ])
-            .why("other mount namespaces' copies of the target's mounts"),
-        );
+        let qt = shell_quote(t);
+        let ns_script = if qt == *t && !t.bytes().any(|b| matches!(b, b'.' | b'^')) {
+            format!(
+                "me=$(readlink /proc/self/ns/mnt); seen=\" $me \"; \
+                 at() {{ awk -v t={t} '{{ m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }}'; }}; \
+                 for f in /proc/[0-9]*/mountinfo; do grep -q '{t}[ /]' \"$f\" 2>/dev/null || continue; \
+                 p=${{f#/proc/}}; p=${{p%/mountinfo}}; ns=$(readlink /proc/$p/ns/mnt) || continue; \
+                 case $seen in *\" $ns \"*) continue;; esac; seen=\"$seen$ns \"; \
+                 echo \"unmounting {t} in $ns (pid $p, $(cat /proc/$p/comm))\"; \
+                 for m in $(at <\"$f\"); do nsenter -t \"$p\" -m umount --recursive \"$m\" || true; done; done; \
+                 awk '{{ for (i = 7; i < NF; i++) if ($i == \"-\") {{ if ($(i + 1) == \"nsfs\" && $4 ~ /^mnt:\\[/) print $4, $5; break }} }}' /proc/self/mountinfo | \
+                 while read -r ns b; do case $seen in *\" $ns \"*) continue;; esac; seen=\"$seen$ns \"; \
+                 ms=$(nsenter --mount=\"$b\" cat /proc/self/mountinfo | at); [ -n \"$ms\" ] || continue; \
+                 echo \"unmounting {t} in $ns (bound at $b)\"; \
+                 for m in $ms; do nsenter --mount=\"$b\" umount --recursive \"$m\" || true; done; done"
+            )
+        } else {
+            format!(
+                "t={qt}; me=$(readlink /proc/self/ns/mnt); seen=\" $me \"; \
+                 at() {{ T=\"$t\" awk 'BEGIN {{ t = ENVIRON[\"T\"] }} {{ m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }}'; }}; \
+                 for f in /proc/[0-9]*/mountinfo; do grep -Fq -- \"$t\" \"$f\" 2>/dev/null || continue; \
+                 p=${{f#/proc/}}; p=${{p%/mountinfo}}; ns=$(readlink /proc/$p/ns/mnt) || continue; \
+                 case $seen in *\" $ns \"*) continue;; esac; seen=\"$seen$ns \"; \
+                 echo \"unmounting $t in $ns (pid $p, $(cat /proc/$p/comm))\"; \
+                 at <\"$f\" | while IFS= read -r m; do nsenter -t \"$p\" -m umount --recursive \"$m\" || true; done; done; \
+                 awk '{{ for (i = 7; i < NF; i++) if ($i == \"-\") {{ if ($(i + 1) == \"nsfs\" && $4 ~ /^mnt:\\[/) print $4, $5; break }} }}' /proc/self/mountinfo | \
+                 while read -r ns b; do case $seen in *\" $ns \"*) continue;; esac; seen=\"$seen$ns \"; \
+                 ms=$(nsenter --mount=\"$b\" cat /proc/self/mountinfo | at); [ -n \"$ms\" ] || continue; \
+                 echo \"unmounting $t in $ns (bound at $b)\"; \
+                 printf '%s\\n' \"$ms\" | while IFS= read -r m; do nsenter --mount=\"$b\" umount --recursive \"$m\" || true; done; done"
+            )
+        };
+        out.push(Cmd::new(&["sh", "-c", &ns_script]).why("other mount namespaces' copies of the target's mounts"));
         out.extend(self.closers.iter().rev().cloned());
         // Stopped, each md member gets back the source's logical block size
         // field: the rescue system's kernel may have written one the
@@ -5283,7 +5429,8 @@ impl Builder<'_> {
             Ok(Some((text, added))) => {
                 let copy = format!("{conf}{LILO_COPY_SUFFIX}");
                 vec![
-                    Cmd::write_file(&format!("{t}{copy}"), text).why(format!(
+                    // 0600: lilo.conf can hold password=.
+                    Cmd::write_file(&format!("{t}{copy}"), text).private().why(format!(
                         "LILO: {conf} copied with root= by name at the end of append= ({}): lilo writes root=/dev/... as the major:minor the rescue kernel gives it, and virtio_blk's major is dynamic, so the restored kernel would look for another device; {conf} stays as restored",
                         added.join(", ")
                     )),
@@ -5313,7 +5460,7 @@ impl Builder<'_> {
             .then(|| self.layout.str_at(&["boot", "initramfs", "mkinitrd", "output"]).unwrap_or(crate::boot::MKINITRD_OUTPUT).to_string());
         let mut out = Vec::new();
         for c in &confs {
-            let mnt = s(c, "mounted_at").unwrap_or_else(|| "/boot/efi".into());
+            let mnt = s(c, "mounted_at").filter(|m| safe_target_subpath(m)).unwrap_or_else(|| "/boot/efi".into());
             let conf = s(c, "conf").unwrap_or_default();
             for img in c.get("images").and_then(Value::as_array).into_iter().flatten() {
                 let file = s(img, "file").unwrap_or_default();
@@ -5338,7 +5485,7 @@ impl Builder<'_> {
             let main = confs.iter().find(|c| s(c, "dir").is_some_and(|d| !d.eq_ignore_ascii_case("EFI/BOOT")) && s(c, "loader").is_some());
             match main {
                 Some(c) => {
-                    let mnt = s(c, "mounted_at").unwrap_or_else(|| "/boot/efi".into());
+                    let mnt = s(c, "mounted_at").filter(|m| safe_target_subpath(m)).unwrap_or_else(|| "/boot/efi".into());
                     let esp = format!("{t}{}", mnt.trim_end_matches('/'));
                     let dir = s(c, "dir").unwrap_or_default();
                     let loader = s(c, "loader").unwrap_or_default();
@@ -5646,7 +5793,8 @@ mod tests {
         let r = t.path().join("root");
         touch(&r, &["boot/initrd.img-6.12.48+deb13-amd64".into(), "boot/initrd.img-6.12.57+deb13-amd64".into(), "etc/initramfs-tools/conf.d/.keep".into()]);
         // The older image's resume hook found no swap; the newer's did.
-        let unmk = "case $1 in *48*) x=$2/conf/conf.d; mkdir -p $x; echo 'RESUME=' > $x/zz-resume-auto ;; \
+        // By the image's own name: the temporary directory's can hold "48".
+        let unmk = "case ${1##*/} in *48*) x=$2/conf/conf.d; mkdir -p $x; echo 'RESUME=' > $x/zz-resume-auto ;; \
                     *57*) x=$2/main/conf/conf.d; mkdir -p $x $2/early; echo 'RESUME=UUID=bc000000-0000-4000-8000-000000000003' > $x/zz-resume-auto ;; esac\n".to_string();
         let update = "echo \"update-initramfs $*\"; cat \"$R\"/etc/initramfs-tools/conf.d/* 2>/dev/null; :\n".to_string();
         let bin = fakes(t.path(), &[("unmkinitramfs", unmk.clone()), ("update-initramfs", update.clone())]);
@@ -5758,7 +5906,7 @@ mod tests {
         assert!(fmt(&["--repo", "/r", "--btrfs-snapshots", "copy"]).contains("@/.snapshots/2/snapshot"));
         let r = text(built_from(&j, &["--repo", "/r", "--snapshot", "latest:/mnt/src"]).stage(Stage::Restore));
         assert!(r.contains("latest:/mnt/src/.snapshots/2/snapshot "), "{r}");
-        assert!(r.contains("--clone-from /mnt/src=/run/bko-holt/btrfs/"), "{r}");
+        assert!(r.contains(&format!("--clone-from /mnt/src={RUN_DIR}/btrfs/")), "{r}");
     }
 
     #[test]
@@ -5922,12 +6070,15 @@ mod tests {
         };
         let s = script("ext4");
         assert!(s.starts_with(SELINUX_SETFILES_GATE), "{s}");
-        let want = concat!(
-            r#"r=/run/bko-holt/mount-points; mkdir -p "$r" && mount --bind / "$r" || exit 1; setfiles -r "$r" "$f" "$r"/boot "$r"/usr/local "$r"/var; s=$?; umount "$r"; [ $s = 0 ] || exit $s"#,
-            r#"; mkdir -p "$r"/boot && mount --bind /boot "$r"/boot || exit 1; setfiles -r "$r" "$f" "$r"/boot/grub; s=$?; umount "$r"/boot; [ $s = 0 ] || exit $s"#,
-            r#"; mkdir -p "$r"/var && mount --bind /var "$r"/var || exit 1; setfiles -r "$r" "$f" "$r"/var/lib/x; s=$?; umount "$r"/var; [ $s = 0 ] || exit $s"#,
+        let want = format!(
+            "r={RUN_DIR}/mount-points; {}",
+            concat!(
+                r#"mkdir -p "$r" && mount --bind / "$r" || exit 1; setfiles -r "$r" "$f" "$r"/boot "$r"/usr/local "$r"/var; s=$?; umount "$r"; [ $s = 0 ] || exit $s"#,
+                r#"; mkdir -p "$r"/boot && mount --bind /boot "$r"/boot || exit 1; setfiles -r "$r" "$f" "$r"/boot/grub; s=$?; umount "$r"/boot; [ $s = 0 ] || exit $s"#,
+                r#"; mkdir -p "$r"/var && mount --bind /var "$r"/var || exit 1; setfiles -r "$r" "$f" "$r"/var/lib/x; s=$?; umount "$r"/var; [ $s = 0 ] || exit $s"#,
+            )
         );
-        assert!(s.ends_with(want), "{s}");
+        assert!(s.ends_with(&want), "{s}");
         assert!(!s.contains("--rbind") && !s.contains(" -R") && !s.contains("/run/x"), "{s}");
         // /boot an ESP (vfat): /boot itself is labelled on /, nothing under it.
         let s = script("vfat");
@@ -6187,8 +6338,8 @@ mod tests {
         assert!(!t.contains(" -m 5"), "{t}");
         assert!(t.contains("mkswap -U 5e5e5e5e-0000-4000-8000-000000000002 --pagesize 4096 /dev/vdb2"), "{t}");
         assert!(t.contains("mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U b7b7b7b7-0000-4000-8000-000000000003 --csum crc32c -n 16384 -s 4096 -d single -m dup /dev/vdb3"), "{t}");
-        assert!(t.contains("btrfs subvolume create /run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003/@rootfs"), "{t}");
-        assert!(t.contains("btrfs property set /run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003/@rootfs compression zstd"), "{t}");
+        assert!(t.contains(&format!("btrfs subvolume create {RUN_DIR}/btrfs/b7b7b7b7-0000-4000-8000-000000000003/@rootfs")), "{t}");
+        assert!(t.contains(&format!("btrfs property set {RUN_DIR}/btrfs/b7b7b7b7-0000-4000-8000-000000000003/@rootfs compression zstd")), "{t}");
         assert!(b.problems.is_empty(), "{:?}", b.problems);
     }
 
@@ -6273,7 +6424,7 @@ mod tests {
         let b = built_from(&nixos_top_level(&format!("[{}]", list.join(", "))), &["--repo", "/srv/repo", "--password-file", "/run/pw"]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let f = text(b.stage(Stage::Format));
-        let top = "/run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003";
+        let top = format!("{RUN_DIR}/btrfs/b7b7b7b7-0000-4000-8000-000000000003");
         let at = |l: &str| f.find(&format!("{l}\n")).unwrap_or_else(|| panic!("{l} not in\n{f}"));
         let mut prev = at(&format!("mount -t btrfs -o subvolid=5 /dev/vdb3 {top}"));
         assert!(at("mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U b7b7b7b7-0000-4000-8000-000000000003 --csum crc32c -n 16384 -s 4096 -d single -m dup /dev/vdb3") < prev);
@@ -6309,7 +6460,7 @@ mod tests {
         let b = built_from(&nixos_top_level("null"), &[]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let f = text(b.stage(Stage::Format));
-        let top = "/run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003";
+        let top = format!("{RUN_DIR}/btrfs/b7b7b7b7-0000-4000-8000-000000000003");
         let mnt = f.find(&format!("mount -t btrfs -o subvolid=5 /dev/vdb3 {top}\n")).expect(&f);
         let home = f.find(&format!("btrfs subvolume create {top}/home\n")).expect(&f);
         let nix = f.find(&format!("btrfs subvolume create {top}/nix\n")).expect(&f);
@@ -6326,7 +6477,7 @@ mod tests {
     fn named_subvolumes_parents_first() {
         let j = nixos_top_level("null").replace(r#""options": "subvol=home""#, r#""options": "subvol=/@/home""#).replace(r#""options": "subvol=nix,noatime""#, r#""options": "subvol=<FS_TREE>/@,noatime""#);
         let f = text(built_from(&j, &[]).stage(Stage::Format));
-        let top = "/run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003";
+        let top = format!("{RUN_DIR}/btrfs/b7b7b7b7-0000-4000-8000-000000000003");
         // fstab's and those mounted at the dump: a parent before what's in it.
         let order: Vec<usize> = ["@", "@/home", "home", "nix"].iter().map(|p| f.find(&format!("btrfs subvolume create {top}/{p}\n")).expect(&f)).collect();
         assert!(order.windows(2).all(|w| w[0] < w[1]), "{f}");
@@ -6391,7 +6542,7 @@ mod tests {
         let b = built_from(&j, &["--repo", "/srv/repo", "--password-file", "/run/pw"]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let f = text(b.stage(Stage::Format));
-        let top = "/run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003";
+        let top = format!("{RUN_DIR}/btrfs/b7b7b7b7-0000-4000-8000-000000000003");
         for p in ["@rootfs", "@snapshots", "timeshift-btrfs/snapshots/2026-11-01_00-00-01/@", "@var"] {
             assert!(f.contains(&format!("btrfs subvolume create {top}/{p}\n")), "{p} not made in\n{f}");
         }
@@ -6446,7 +6597,7 @@ mod tests {
     /// flag, nothing; with another default, only that subvolume's.
     #[test]
     fn default_subvol_flag_kept() {
-        let top = "/run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003";
+        let top = format!("{RUN_DIR}/btrfs/b7b7b7b7-0000-4000-8000-000000000003");
         let plain = r#""default_subvolume": {"id": 5}, "quota_enabled": false"#;
         let flagged = sample::bios_mbr().replace(plain, &format!(r#""features": ["mixed_backref", "default_subvol", "extended_iref"], {plain}"#));
         assert_ne!(flagged, sample::bios_mbr());
@@ -7023,10 +7174,10 @@ mod tests {
         let b = built_from(&sd, &[]);
         let st = text(b.stage(Stage::Boot));
         assert!(b.problems.is_empty(), "{:?}", b.problems);
-        let gen = "chroot /mnt/bko-target sh -c 'gen-systemd-boot; r=$?; [ \"$r\" -ne 1 ] || { echo '\\''gen-systemd-boot: warning: it made no entries (disabled, or bootctl says systemd-boot is not installed); the restored ones stay'\\'' >&2; r=0; }; exit \"$r\"'\n";
+        let gen_sd = "chroot /mnt/bko-target sh -c 'gen-systemd-boot; r=$?; [ \"$r\" -ne 1 ] || { echo '\\''gen-systemd-boot: warning: it made no entries (disabled, or bootctl says systemd-boot is not installed); the restored ones stay'\\'' >&2; r=0; }; exit \"$r\"'\n";
         let initramfs = st.find(initramfs.as_str()).expect(&st);
         let bootctl = st.find("chroot /mnt/bko-target bootctl install --no-variables\n").expect(&st);
-        let made = st.find(gen).expect(&st);
+        let made = st.find(gen_sd).expect(&st);
         assert!(initramfs < made && bootctl < made, "{st}");
         assert_eq!(st.matches("gen-systemd-boot;").count(), 1, "{st}");
         assert!(!st.contains("grub"), "{st}");
@@ -7098,7 +7249,7 @@ mod tests {
         let props = b.ds_props(&root, true);
         assert!(props.contains(&("encryption".into(), "aes-256-gcm".into())), "{props:?}");
         assert!(props.contains(&("keyformat".into(), "raw".into())), "{props:?}");
-        assert!(props.contains(&("keylocation".into(), "file:///run/bko-holt/keys/rpool".into())), "{props:?}");
+        assert!(props.contains(&("keylocation".into(), format!("file://{RUN_DIR}/keys/rpool"))), "{props:?}");
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let keystore = crate::json::parse(r#"{"name": "rpool/keystore", "type": "volume", "encryption": "off", "volsize": 20971520, "properties": {}}"#).unwrap();
         let props = b.ds_props(&keystore, false);
@@ -7408,5 +7559,30 @@ mod tests {
         assert!(e.starts_with("/etc/lilo.conf's message=$HOME/m has a quote, backslash or $"), "{e}");
         let e = lilo_root_copy(&crate::json::Obj::new().set("conf", "/etc/lilo.conf").build()).unwrap_err();
         assert!(e.starts_with("the dump's boot.lilo doesn't keep /etc/lilo.conf's items"), "{e}");
+    }
+
+    #[test]
+    fn shell_heredoc_and_hostile_targets_are_quoted() {
+        let mut c = Cmd::new(&["sfdisk", "/dev/vdb"]).input("label: gpt\nEOF\nEOF_1\n".into());
+        c.env.push(("BAD;KEY".into(), "val".into()));
+        let s = c.shell();
+        assert!(s.starts_with("env 'BAD;KEY=val' sfdisk /dev/vdb <<'EOF_2'\n"), "{s}");
+        assert!(s.ends_with("\nEOF_2\n"), "{s}");
+        assert!(std::process::Command::new("sh").args(["-n", "-c", &s]).status().unwrap().success(), "{s}");
+
+        let hostile = "/mnt/new d'isk\"$HOME`id`\nz";
+        let l = Layout::from_json(crate::json::parse(&crate::load::layout::sample::bios_mbr()).unwrap()).unwrap();
+        let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".into(), "--target".into(), hostile.into()]) else { unreachable!() };
+        let b = build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Default::default() });
+        for st in Stage::ALL {
+            for cmd in b.stage(st).iter().filter(|c| c.argv.len() > 2 && matches!(c.argv[0].as_str(), "sh" | "bash") && c.argv[1] == "-c") {
+                let script = &cmd.argv[2];
+                assert!(!script.contains(hostile), "{} unquoted: {script}", st.name());
+                assert!(std::process::Command::new("sh").args(["-n", "-c", script]).status().unwrap().success(), "{} syntax: {script}", st.name());
+            }
+        }
+        assert!(!safe_target_subpath("/../../etc"));
+        assert!(!safe_target_subpath("relative/path"));
+        assert!(safe_target_subpath("/boot/efi"));
     }
 }

@@ -266,9 +266,16 @@ pub fn image_b64(src: &dyn ByteSource) -> String {
     crate::bytes::base64(&b[..end.min(b.len())])
 }
 
+/// The most raw bytes of one unmounted ESP a dump keeps (esp_image).
+pub const ESP_IMAGE_MAX: usize = 64 << 20;
+
+// A layout with ten ESP images at the cap, as base64 with each chunk's
+// JSON around it, still loads (crate::LAYOUT_MAX).
+const _: () = assert!(10 * (ESP_IMAGE_MAX as u64) * 3 / 2 < crate::LAYOUT_MAX);
+
 /// An EFI system partition that isn't mounted (so isn't in the backup):
 /// its non-zero 512-byte runs, as (offset, base64) chunks, for load to
-/// write back as they were.  At most 64 MiB of them.
+/// write back as they were.  At most ESP_IMAGE_MAX of them.
 pub fn esp_image(disk: &dyn ByteSource, f: &Found, mounted_at: &[String], extra: &mut Obj) {
     let ty = f.json.0.iter().find(|(k, _)| k == "type").and_then(|(_, v)| v.as_str()).unwrap_or("").to_ascii_lowercase();
     if !mounted_at.is_empty() || !(ty == crate::parttable::ESP || ty == "0xef") || f.size > (4 << 30) {
@@ -299,7 +306,7 @@ pub fn esp_image(disk: &dyn ByteSource, f: &Found, mounted_at: &[String], extra:
             chunks.push(Obj::new().set("offset", off + start as u64).set("b64", crate::bytes::base64(run)).build());
         }
         off += step;
-        if total > 64 << 20 {
+        if total > ESP_IMAGE_MAX {
             extra.put("esp_image_too_big", true);
             return;
         }

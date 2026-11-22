@@ -6,41 +6,51 @@
 //! parsers: `load` checks every stage by reading the disks back with them.
 
 
-pub mod abroot;
-pub mod arch;
-pub mod blockdev;
-pub mod boot;
-pub mod bootcode;
+#![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
+
+pub(crate) mod abroot;
+pub(crate) mod arch;
+pub(crate) mod blockdev;
+pub(crate) mod boot;
+pub(crate) mod bootcode;
 pub mod bugreport;
 pub mod bytes;
-pub mod efi;
+pub(crate) mod efi;
 pub mod json;
 pub mod load;
 pub mod luksheader;
 pub mod mdsb;
 pub mod mounts;
 pub mod osrel;
-pub mod ostree;
+pub(crate) mod ostree;
 pub mod other;
 pub mod parttable;
 pub mod probe;
-pub mod qubes;
+pub(crate) mod qubes;
 pub mod recovery;
 pub mod redact;
 pub mod report;
 #[cfg(test)]
 mod scenarios;
 pub mod snapcore;
-pub mod store;
+pub(crate) mod store;
 pub mod sys;
 #[doc(hidden)]
 pub mod testutil;
-pub mod transactional;
-pub mod truenas;
-pub mod zfs_be;
-pub mod zfsbootmenu;
+pub(crate) mod transactional;
+pub(crate) mod truenas;
+pub(crate) mod zfs_be;
+pub(crate) mod zfsbootmenu;
 
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// The largest layout (a dump's JSON) bko-holt writes, and so the largest
+/// load, write-table, rewrite and report-bug read.  What makes a layout big
+/// is its unmounted ESPs' images (other::ESP_IMAGE_MAX of raw bytes each,
+/// about 1.4 times that as base64 in JSON chunks) and boot areas (2 MiB
+/// each): this holds ten such ESPs with room to spare, and a dump that
+/// would be bigger fails rather than writing what load would refuse.
+pub const LAYOUT_MAX: u64 = 1 << 30;
 
 /// The report's timestamp: now, or SOURCE_DATE_EPOCH when set (for
 /// reproducible output).

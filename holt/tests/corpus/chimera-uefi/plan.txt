@@ -40,7 +40,7 @@ dd if=/dev/urandom of=/run/bko-holt/keys/cryptroot bs=64 count=1 status=none
 # LUKS2 on /dev/sdq2
 cryptsetup luksFormat --batch-mode --type=luks2 --cipher=aes-xts-plain64 --key-size=512 --sector-size=512 --offset=32768 --pbkdf=argon2id --pbkdf-memory=1048576 --pbkdf-parallel=4 --pbkdf-force-iterations=8 --hash=sha256 --luks2-metadata-size=16384 --luks2-keyslots-size=16744448 --uuid=bc000000-0000-4000-8000-000000000004 --key-file=/run/bko-holt/keys/cryptroot /dev/sdq2
 cryptsetup open --key-file=/run/bko-holt/keys/cryptroot /dev/sdq2 cryptroot
-mkdir -p /run/bko-holt/lvm
+mkdir -p -m 700 /run/bko-holt/lvm
 # volume group vg0: its metadata, for pvcreate and vgcfgrestore
 cat > /run/bko-holt/lvm/vg0.vg <<'EOF'
 vg0 {
@@ -129,7 +129,7 @@ mount -t vfat -o rw,relatime,fmask=0077,dmask=0077,codepage=437,iocharset=ascii,
 # snapshot latest of /srv/bko-repo, with BackOtter's restore flags
 RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
 # the atimes the restore set, for boot to put back after its reads
-sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
+sh -c 'mkdir -p -m 700 /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
 
 # ---- boot ----
 # refuses to start unless /mnt/bko-target/etc/fstab is the restored system's (its / matches the layout's)
@@ -137,7 +137,7 @@ sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/d
 cryptsetup luksAddKey --key-file=/run/bko-holt/keys/cryptroot /dev/sdq2 /mnt/bko-target/etc/cryptsetup-keys.d/keyfile1.key
 cryptsetup luksRemoveKey /dev/sdq2 /run/bko-holt/keys/cryptroot
 # the restored atimes (the restore stage lists them), to put back after this stage's reads
-sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
+sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p -m 700 /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
 # the restored LVM devices file, kept
 sh -c 'rm -rf /run/bko-holt/lvm-devices; [ ! -d /mnt/bko-target/etc/lvm/devices ] || { cp -a /mnt/bko-target/etc/lvm/devices /run/bko-holt/lvm-devices && touch -r /mnt/bko-target/etc/lvm /run/bko-holt/lvm-devices.parent; }'
 mount --rbind --make-rslave /dev /mnt/bko-target/dev

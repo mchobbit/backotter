@@ -51,7 +51,7 @@ fn mbr_entry(e: &mut [u8], boot: bool, ptype: u8, start: u64, sectors: u64) {
     e[0] = if boot { 0x80 } else { 0 };
     e[1..4].copy_from_slice(&chs(start));
     e[4] = ptype;
-    e[5..8].copy_from_slice(&chs(start + sectors.saturating_sub(1)));
+    e[5..8].copy_from_slice(&chs(start.saturating_add(sectors.saturating_sub(1))));
     e[8..12].copy_from_slice(&(start.min(u64::from(u32::MAX)) as u32).to_le_bytes());
     e[12..16].copy_from_slice(&(sectors.min(u64::from(u32::MAX)) as u32).to_le_bytes());
 }
@@ -67,7 +67,13 @@ fn mbr_type(t: &str) -> Option<u8> {
 pub fn plan(disk: &Value, size: u64) -> Result<Vec<(u64, Vec<u8>)>, String> {
     let t = disk.get("partition_table").filter(|t| !t.is_null()).ok_or("the disk has no partition table")?;
     let ss = u(t, "sector_size").unwrap_or(512);
+    if !(512..=65536).contains(&ss) || !ss.is_power_of_two() {
+        return Err(format!("sector size {ss} isn't a power of two in 512..=65536"));
+    }
     let total = size / ss;
+    if total == 0 {
+        return Err(format!("the device ({size} bytes) holds no {ss}-byte sectors"));
+    }
     let src_total = u(disk, "size_bytes").unwrap_or(size) / ss;
     let parts: Vec<&Value> = disk.get("partitions").and_then(Value::as_array).map(|a| a.iter().collect()).unwrap_or_default();
     let code = disk.at(&["boot_code", "code_b64"]).and_then(Value::as_str).and_then(unbase64).unwrap_or_default();
@@ -79,20 +85,42 @@ pub fn plan(disk: &Value, size: u64) -> Result<Vec<(u64, Vec<u8>)>, String> {
     match s(t, "type").as_deref() {
         Some("gpt") => {
             let disk_guid = guid_bytes(&s(t, "disk_guid").ok_or("no disk GUID")?).ok_or("a bad disk GUID")?;
-            let n = u(t, "entry_count").unwrap_or(128) as usize;
-            let esz = u(t, "entry_size").unwrap_or(128) as usize;
-            let entry_sectors = (n * esz).div_ceil(ss as usize) as u64;
+            let n_u64 = u(t, "entry_count").unwrap_or(128);
+            let esz_u64 = u(t, "entry_size").unwrap_or(128);
+            if !(1..=4096).contains(&n_u64) {
+                return Err(format!("GPT entry_count {n_u64} is out of range (1..=4096)"));
+            }
+            if !(128..=4096).contains(&esz_u64) || !esz_u64.is_power_of_two() {
+                return Err(format!("GPT entry_size {esz_u64} isn't a power of two in 128..=4096"));
+            }
+            let (n, esz) = (n_u64 as usize, esz_u64 as usize);
+            let table_bytes = n.checked_mul(esz).filter(|&b| b <= (16 << 20)).ok_or("GPT entry table is too large")?;
+            let entry_sectors = table_bytes.div_ceil(ss as usize) as u64;
+            let min_sectors = entry_sectors.checked_mul(2).and_then(|x| x.checked_add(3)).ok_or("GPT entry table overflows LBA")?;
+            if total < src_total {
+                return Err(format!("the device ({total} sectors) is smaller than the source disk ({src_total})"));
+            }
+            if src_total < min_sectors || total < min_sectors {
+                return Err(format!("the device ({total} sectors) is too small for a GPT with {n} entries (needs at least {min_sectors} sectors)"));
+            }
+            let max_last = total - 2 - entry_sectors;
             let first = u(t, "first_usable_lba").unwrap_or(2 + entry_sectors);
             // Same size: the source's last usable LBA; bigger: as far as
             // the new backup allows.
             let src_last = u(t, "last_usable_lba").unwrap_or(src_total - 2 - entry_sectors);
-            let last = if total > src_total { total - 2 - entry_sectors } else { src_last };
-            if total < src_total || last > total - 2 - entry_sectors {
+            let last = if total > src_total { max_last } else { src_last };
+            if last > max_last {
                 return Err(format!("the device ({total} sectors) is smaller than the source disk ({src_total})"));
             }
-            let mut entries = vec![0u8; n * esz];
+            if first < 2 + entry_sectors || first > last {
+                return Err(format!("GPT usable LBA range {first}..={last} is invalid"));
+            }
+            let mut entries = vec![0u8; table_bytes];
             for p in &parts {
-                let num = u(p, "number").ok_or("a partition without a number")? as usize;
+                let num_u64 = u(p, "number").ok_or("a partition without a number")?;
+                let Ok(num) = usize::try_from(num_u64) else {
+                    return Err(format!("partition {num_u64} is past the table's {n} entries"));
+                };
                 if num == 0 || num > n {
                     return Err(format!("partition {num} is past the table's {n} entries"));
                 }
@@ -100,7 +128,19 @@ pub fn plan(disk: &Value, size: u64) -> Result<Vec<(u64, Vec<u8>)>, String> {
                 e[0..16].copy_from_slice(&guid_bytes(&s(p, "type").unwrap_or_default()).ok_or(format!("partition {num}: a bad type GUID"))?);
                 e[16..32].copy_from_slice(&guid_bytes(&s(p, "uuid").unwrap_or_default()).ok_or(format!("partition {num}: a bad GUID"))?);
                 let start = u(p, "start_lba").ok_or("no start_lba")?;
-                let end = u(p, "end_lba").unwrap_or(start + u(p, "sectors").unwrap_or(1) - 1);
+                let end = match u(p, "end_lba") {
+                    Some(end) => end,
+                    None => {
+                        let secs = u(p, "sectors").unwrap_or(1);
+                        if secs == 0 {
+                            return Err(format!("partition {num}: zero sectors"));
+                        }
+                        start.checked_add(secs - 1).ok_or_else(|| format!("partition {num}: end LBA overflows"))?
+                    }
+                };
+                if start < 2 + entry_sectors || end < start || end > max_last {
+                    return Err(format!("partition {num} ({start}..={end}) overlaps GPT metadata or exceeds device"));
+                }
                 e[32..40].copy_from_slice(&start.to_le_bytes());
                 e[40..48].copy_from_slice(&end.to_le_bytes());
                 e[48..56].copy_from_slice(&u(p, "attributes").unwrap_or(0).to_le_bytes());
@@ -139,8 +179,8 @@ pub fn plan(disk: &Value, size: u64) -> Result<Vec<(u64, Vec<u8>)>, String> {
                 let ty = s(e, "type").and_then(|t| mbr_type(&t)).unwrap_or(0xee);
                 let start = u(e, "start_lba").unwrap_or(1);
                 let mut len = u(e, "sectors").unwrap_or(total - 1);
-                if ty == 0xee && start + len >= src_total.min(1 << 32) {
-                    len = (total - start).min(u64::from(u32::MAX));
+                if ty == 0xee && start.saturating_add(len) >= src_total.min(1 << 32) {
+                    len = total.saturating_sub(start).min(u64::from(u32::MAX));
                 }
                 mbr_entry(&mut mbr[446 + 16 * i..462 + 16 * i], e.get("bootable").and_then(Value::as_bool) == Some(true), ty, start, len);
             }
@@ -148,25 +188,35 @@ pub fn plan(disk: &Value, size: u64) -> Result<Vec<(u64, Vec<u8>)>, String> {
             // a raw disk device takes only whole sectors).
             let mut entries = entries;
             entries.resize(entry_sectors as usize * ss as usize, 0);
+            let primary_entries_off = 2u64.checked_mul(ss).ok_or("primary GPT offset overflows")?;
+            let backup_entries_off = (total - 1 - entry_sectors).checked_mul(ss).ok_or("backup GPT entries offset overflows")?;
+            let backup_hdr_off = (total - 1).checked_mul(ss).ok_or("backup GPT header offset overflows")?;
             out.push((0, mbr));
             out.push((ss, header(1, total - 1, 2)));
-            out.push((2 * ss, entries.clone()));
-            out.push(((total - 1 - entry_sectors) * ss, entries));
-            out.push(((total - 1) * ss, header(total - 1, 1, total - 1 - entry_sectors)));
+            out.push((primary_entries_off, entries.clone()));
+            out.push((backup_entries_off, entries));
+            out.push((backup_hdr_off, header(total - 1, 1, total - 1 - entry_sectors)));
         }
         Some("dos" | "mbr") => {
+            if total < src_total {
+                return Err(format!("the device ({total} sectors) is smaller than the source disk ({src_total})"));
+            }
             let sig = s(t, "disk_signature").and_then(|x| u32::from_str_radix(x.trim_start_matches("0x"), 16).ok()).unwrap_or(0);
             mbr[440..444].copy_from_slice(&sig.to_le_bytes());
             for p in &parts {
                 if p.get("logical").and_then(Value::as_bool) == Some(true) || p.get("extended").and_then(Value::as_bool) == Some(true) {
                     return Err("extended and logical partitions aren't written by write-table".into());
                 }
-                let num = u(p, "number").ok_or("a partition without a number")? as usize;
+                let num_u64 = u(p, "number").ok_or("a partition without a number")?;
+                let Ok(num) = usize::try_from(num_u64) else {
+                    return Err(format!("MBR partition {num_u64} isn't a primary one"));
+                };
                 if !(1..=4).contains(&num) {
                     return Err(format!("MBR partition {num} isn't a primary one"));
                 }
                 let ty = s(p, "type").and_then(|t| mbr_type(&t)).ok_or(format!("partition {num}: a bad type"))?;
-                mbr_entry(&mut mbr[446 + 16 * (num - 1)..462 + 16 * (num - 1)], p.get("bootable").and_then(Value::as_bool) == Some(true), ty, u(p, "start_lba").unwrap_or(0), u(p, "sectors").unwrap_or(0));
+                let (start, secs) = (u(p, "start_lba").unwrap_or(0), u(p, "sectors").unwrap_or(0));
+                mbr_entry(&mut mbr[446 + 16 * (num - 1)..462 + 16 * (num - 1)], p.get("bootable").and_then(Value::as_bool) == Some(true), ty, start, secs);
             }
             out.push((0, mbr));
         }
@@ -174,26 +224,52 @@ pub fn plan(disk: &Value, size: u64) -> Result<Vec<(u64, Vec<u8>)>, String> {
     }
     // GRUB's core.img in an MBR disk's gap (offline.rs's gap_b64).
     if let Some(g) = disk.at(&["boot_code", "gap_b64"]).and_then(Value::as_str).and_then(unbase64).filter(|b| !b.is_empty()) {
+        let gap_end = ss.checked_add(g.len() as u64).ok_or("MBR boot gap overflows offset")?;
+        if gap_end > size {
+            return Err("MBR boot gap exceeds device size".into());
+        }
+        if let Some(min_start) = parts.iter().filter_map(|p| u(p, "start_lba")).filter(|&l| l > 0).min() {
+            if let Some(part_byte) = min_start.checked_mul(ss) {
+                if gap_end > part_byte {
+                    return Err(format!("MBR boot gap ({} bytes) overlaps first partition at LBA {min_start}", g.len()));
+                }
+            }
+        }
         out.push((ss, g));
     }
     // An unmounted ESP's bytes (other/'s esp_image), where they were.
     for p in &parts {
-        let start = u(p, "start_lba").unwrap_or(0) * ss;
+        let start = u(p, "start_lba").unwrap_or(0).checked_mul(ss).ok_or("ESP start_lba overflows byte offset")?;
+        let part_bytes = u(p, "size_bytes").or_else(|| u(p, "sectors").and_then(|n| n.checked_mul(ss)));
         for c in p.get("esp_image").and_then(Value::as_array).into_iter().flatten() {
             let (Some(off), Some(b)) = (u(c, "offset"), c.get("b64").and_then(Value::as_str).and_then(unbase64)) else { continue };
-            out.push((start + off, b));
+            let end_in_part = off.checked_add(b.len() as u64).ok_or("ESP image chunk overflows offset")?;
+            if let Some(plen) = part_bytes {
+                if end_in_part > plen {
+                    return Err(format!("partition {}'s esp_image exceeds partition size", u(p, "number").unwrap_or(0)));
+                }
+            }
+            let abs_off = start.checked_add(off).ok_or("ESP image offset overflows")?;
+            if abs_off.checked_add(b.len() as u64).is_none_or(|end| end > size) {
+                return Err(format!("partition {}'s esp_image exceeds device size", u(p, "number").unwrap_or(0)));
+            }
+            out.push((abs_off, b));
         }
     }
     // Boot areas the partitions held, back where they were.
     for p in &parts {
         if let Some(img) = p.at(&["boot_code", "image_b64"]).and_then(Value::as_str).and_then(unbase64).filter(|b| !b.is_empty()) {
-            let start = u(p, "start_lba").unwrap_or(0) * ss;
-            let len = u(p, "size_bytes").unwrap_or(0);
-            if img.len() as u64 > len {
+            let start = u(p, "start_lba").unwrap_or(0).checked_mul(ss).ok_or("boot_code start_lba overflows")?;
+            let len = u(p, "size_bytes").or_else(|| u(p, "sectors").and_then(|n| n.checked_mul(ss))).unwrap_or(0);
+            let padded_u64 = (img.len() as u64).div_ceil(ss).checked_mul(ss).ok_or("boot_code padded size overflows")?;
+            if img.len() as u64 > len || padded_u64 > len {
                 return Err(format!("partition {}'s boot code is bigger than the partition", u(p, "number").unwrap_or(0)));
             }
+            if start.checked_add(padded_u64).is_none_or(|end| end > size) {
+                return Err(format!("partition {}'s boot code exceeds device size", u(p, "number").unwrap_or(0)));
+            }
             let mut b = img;
-            b.resize(b.len().div_ceil(ss as usize) * ss as usize, 0);
+            b.resize(padded_u64 as usize, 0);
             out.push((start, b));
         }
     }
@@ -206,7 +282,7 @@ pub fn main(args: &[String]) -> u8 {
         return 2;
     };
     let run = || -> Result<(), String> {
-        let text = std::fs::read_to_string(layout).map_err(|e| format!("{layout}: {e}"))?;
+        let text = crate::bytes::read_to_string_bounded(std::path::Path::new(layout), crate::LAYOUT_MAX).map_err(|e| format!("{layout}: {e}"))?;
         let v = crate::json::parse(&text).map_err(|e| format!("{layout}: {e:?}"))?;
         let d = v.at(&["storage", "disks"]).and_then(Value::as_array).and_then(|a| a.iter().find(|x| s(x, "name").as_deref() == Some(disk.as_str()))).ok_or(format!("the layout has no disk {disk}"))?;
         // auto: found by reading (Haiku's raw disks report no size).
@@ -291,5 +367,22 @@ mod tests {
         assert_eq!(m.disk_signature, 0x1234abcd);
         assert_eq!(m.parts.iter().map(|p| (p.number, p.ptype, p.start, p.sectors, p.boot_flag)).collect::<Vec<_>>(), vec![(1, 0xa6, 63, 16321, 0x80), (4, 0x83, 16384, 8, 0)]);
         assert_eq!(guid_bytes("c12a7328-f81f-11d2-ba4b-00a0c93ec93b").unwrap()[..4], [0x28, 0x73, 0x2a, 0xc1]);
+    }
+
+    #[test]
+    fn hostile_and_malformed_tables_return_err_without_panic() {
+        for (js, sz) in [
+            (r#"{"partition_table": {"type": "gpt", "sector_size": 0, "disk_guid": "d837c5f1-d686-11f1-83e1-03e680c1a8f0"}}"#, 1 << 20),
+            (r#"{"partition_table": {"type": "gpt", "sector_size": 513, "disk_guid": "d837c5f1-d686-11f1-83e1-03e680c1a8f0"}}"#, 1 << 20),
+            (r#"{"partition_table": {"type": "gpt", "sector_size": 512, "disk_guid": "d837c5f1-d686-11f1-83e1-03e680c1a8f0", "entry_count": 1000000000}}"#, 1 << 20),
+            (r#"{"partition_table": {"type": "gpt", "sector_size": 512, "disk_guid": "d837c5f1-d686-11f1-83e1-03e680c1a8f0", "entry_size": 24}}"#, 1 << 20),
+            (r#"{"size_bytes": 1024, "partition_table": {"type": "gpt", "sector_size": 512, "disk_guid": "d837c5f1-d686-11f1-83e1-03e680c1a8f0"}}"#, 1024),
+            (r#"{"size_bytes": 1048576, "partition_table": {"type": "gpt", "sector_size": 512, "disk_guid": "d837c5f1-d686-11f1-83e1-03e680c1a8f0"}, "partitions": [{"number": 1, "start_lba": 0, "sectors": 0, "type": "83bd6b9d-7f41-11dc-be0b-001560b84f0f", "uuid": "d837c62b-d686-11f1-83e1-03e680c1a8f0"}]}"#, 1048576),
+            (r#"{"size_bytes": 8192, "partition_table": {"type": "dos", "sector_size": 512}, "boot_code": {"gap_b64": "QlRY"}, "partitions": [{"number": 1, "start_lba": 1, "sectors": 8, "type": "0x83"}]}"#, 8192),
+            (r#"{"size_bytes": 8192, "partition_table": {"type": "dos", "sector_size": 512}, "partitions": [{"number": 1, "start_lba": 1, "sectors": 2, "size_bytes": 1024, "type": "0xef", "esp_image": [{"offset": 2048, "b64": "QlRY"}]}]}"#, 8192),
+        ] {
+            let v = crate::json::parse(js).unwrap();
+            assert!(plan(&v, sz).is_err(), "accepted: {js}");
+        }
     }
 }

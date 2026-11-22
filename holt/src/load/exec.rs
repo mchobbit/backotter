@@ -37,10 +37,7 @@ fn run_cmd(c: &Cmd, log: &mut Option<std::fs::File>, sys: &Sys) -> Result<Vec<St
         return Ok(Vec::new());
     }
     if let Some(path) = &c.write {
-        if let Some(dir) = std::path::Path::new(path).parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        }
-        return std::fs::write(path, c.stdin.as_deref().unwrap_or("")).map(|_| Vec::new()).map_err(|e| format!("{path}: {e}"));
+        return write_file(path, c.stdin.as_deref().unwrap_or(""), c.private).map(|()| Vec::new());
     }
     let mut cmd = Command::new(&c.argv[0]);
     cmd.args(&c.argv[1..]).env("LC_ALL", "C").envs(c.env.iter().map(|(k, v)| (k, v))).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -85,8 +82,12 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
     }
     let mut log = None;
     if opts.commit {
-        let _ = std::fs::create_dir_all(format!("{RUN_DIR}/log"));
-        log = std::fs::OpenOptions::new().create(true).append(true).open(format!("{RUN_DIR}/log/load.log")).ok();
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let _ = mkdir_private(std::path::Path::new(RUN_DIR));
+        let _ = mkdir_private(std::path::Path::new(&format!("{RUN_DIR}/log")));
+        let log_path = format!("{RUN_DIR}/log/load.log");
+        log = std::fs::OpenOptions::new().create(true).append(true).mode(0o600).open(&log_path).ok();
+        let _ = std::fs::set_permissions(&log_path, std::fs::Permissions::from_mode(0o600));
         log_line(&mut log, &format!("==== bko-holt load {} {:?}", env!("CARGO_PKG_VERSION"), std::env::args().collect::<Vec<_>>()));
     }
     // Once the partition stage runs on disks named with --erase, no later
@@ -172,13 +173,44 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
     (EXIT_OK, out, err)
 }
 
+fn mkdir_private(dir: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+    if dir.starts_with(RUN_DIR) {
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
+    Ok(())
+}
+
+fn write_private(path: &str, text: &str) -> std::io::Result<()> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+    let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
+    f.write_all(text.as_bytes())
+}
+
+/// A file a step writes.  Under RUN_DIR (bko-holt's own: keys, LVM
+/// metadata, lists) it's private, 0600 in 0700 directories.  Anywhere else
+/// it's the restored system's (Proxmox's /etc/kernel/proxmox-boot-uuids):
+/// written as before, an existing file keeping its mode and owner, a new
+/// one and its directories made under the umask; but one the step says is
+/// PRIVATE (LILO's copy of lilo.conf, which can hold password=) is 0600,
+/// in directories made under the umask.
+fn write_file(path: &str, text: &str, private: bool) -> Result<(), String> {
+    let p = std::path::Path::new(path);
+    let ours = p.starts_with(RUN_DIR);
+    if let Some(dir) = p.parent() {
+        let made = if ours { mkdir_private(dir) } else { std::fs::create_dir_all(dir) };
+        made.map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let written = if ours || private { write_private(path, text) } else { std::fs::write(path, text) };
+    written.map_err(|e| format!("{path}: {e}"))
+}
+
 /// The partition stage's record of each table it wrote (target::table_record).
 fn write_records(records: &[(String, String)]) -> Result<(), String> {
     for (path, text) in records {
-        if let Some(dir) = std::path::Path::new(path).parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        }
-        std::fs::write(path, text).map_err(|e| format!("{path}: {e}"))?;
+        write_file(path, text, false)?;
     }
     Ok(())
 }
@@ -196,6 +228,35 @@ fn st_word(s: State) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file written into the restored system (Proxmox's
+    /// /etc/kernel/proxmox-boot-uuids, rewritten after proxmox-boot-tool
+    /// init) keeps the mode it has; only RUN_DIR's own files are made 0600.
+    #[test]
+    fn write_file_keeps_a_target_files_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = crate::testutil::Tree::new("load-exec-write-mode");
+        let f = t.root().join("etc/kernel/proxmox-boot-uuids");
+        t.file("/etc/kernel/proxmox-boot-uuids", "OLD\n");
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let c = Cmd::write_file(&f.to_string_lossy(), "1234-ABCD\n".to_string());
+        assert_eq!(run_cmd(&c, &mut None, &Sys::host()), Ok(Vec::new()));
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "1234-ABCD\n");
+        assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o7777, 0o644);
+        // A new one, in a directory that isn't there yet, is made too.
+        let n = t.root().join("etc/new/dir/file");
+        assert_eq!(run_cmd(&Cmd::write_file(&n.to_string_lossy(), "x".to_string()), &mut None, &Sys::host()), Ok(Vec::new()));
+        assert_eq!(std::fs::read_to_string(&n).unwrap(), "x");
+        // One the step says is private (LILO's copy of lilo.conf): 0600,
+        // new or not.
+        let l = t.root().join("etc/lilo.conf.bko-holt");
+        assert_eq!(run_cmd(&Cmd::write_file(&l.to_string_lossy(), "password=x\n".to_string()).private(), &mut None, &Sys::host()), Ok(Vec::new()));
+        assert_eq!(std::fs::metadata(&l).unwrap().permissions().mode() & 0o7777, 0o600);
+        std::fs::set_permissions(&l, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(run_cmd(&Cmd::write_file(&l.to_string_lossy(), "password=y\n".to_string()).private(), &mut None, &Sys::host()), Ok(Vec::new()));
+        assert_eq!(std::fs::read_to_string(&l).unwrap(), "password=y\n");
+        assert_eq!(std::fs::metadata(&l).unwrap().permissions().mode() & 0o7777, 0o600);
+    }
 
     /// A command that `warns` gives back its stderr's warning lines when it
     /// succeeds; one that doesn't gives back nothing; a failure ends with

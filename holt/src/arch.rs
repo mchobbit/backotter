@@ -29,6 +29,8 @@ pub enum Arch {
 /// One architecture's names.
 #[derive(Debug)]
 pub struct Names {
+    /// Which it is: the tests hold the names to Arch::parse with it.
+    #[cfg(test)]
     pub arch: Arch,
     /// `uname -m`'s name.
     pub machine: &'static str,
@@ -70,6 +72,7 @@ pub struct Names {
 /// x86_64: the names bko-holt has always used (grub-efi-arm64 is in its
 /// UEFI GRUB list as it was before A3).
 pub const X86_64: Names = Names {
+    #[cfg(test)]
     arch: Arch::X86_64,
     machine: "x86_64",
     debian: "amd64",
@@ -93,6 +96,7 @@ pub const X86_64: Names = Names {
 /// shim-signed, Fedora's grub2-efi-aa64 and shim-aa64, Chimera's and Void's
 /// grub-arm64-efi.
 pub const AARCH64: Names = Names {
+    #[cfg(test)]
     arch: Arch::Aarch64,
     machine: "aarch64",
     debian: "arm64",

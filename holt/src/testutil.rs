@@ -2,6 +2,10 @@
 //! cleans itself up, and a builder for fake system trees (a root with its own
 //! /sys, /proc, /dev, /etc and /run) that `Sys` reads instead of the host's.
 
+// Test-only code, public for the integration tests (so not cfg(test)): a
+// failure to set up a fixture should panic the test there and then.
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test fixtures: a setup failure fails the test")]
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 

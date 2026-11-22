@@ -360,10 +360,19 @@ pub(crate) fn fstab_src(layout: &Layout, entry: &Value, src: String) -> String {
     }
 }
 
+fn safe_run_token(s: &str) -> String {
+    let out: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' }).collect();
+    if out.is_empty() || out.trim_matches('.').is_empty() { "prov".into() } else { out }
+}
+
+fn safe_keyfile_subpath(p: &str) -> bool {
+    p.starts_with('/') && !p.contains('\0') && !p.split('/').any(|c| c == "..")
+}
+
 /// The file the passphrase load asks for once (D3) is kept in: mode 600, in
 /// RAM, removed after its last use and at close.
 fn pass_file(src: &str) -> String {
-    format!("{RUN_DIR}/keys/{}.pass", src.replace('/', "_"))
+    format!("{RUN_DIR}/keys/{}.pass", safe_run_token(src))
 }
 
 /// Reads a new passphrase from the terminal without echo, into `file`.
@@ -379,7 +388,7 @@ fn prompt(src: &str, file: &str) -> Cmd {
 }
 
 fn tmp_key(src: &str) -> String {
-    format!("{RUN_DIR}/keys/{}.key", src.replace('/', "_"))
+    format!("{RUN_DIR}/keys/{}.key", safe_run_token(src))
 }
 
 impl Builder<'_> {
@@ -550,6 +559,14 @@ impl Builder<'_> {
         if p.keyed_by() == "keyfile" && p.keyfiles().is_empty() && self.geli_key(p, 0).is_none() {
             self.problems.push(format!("{src}: a GELI key file unlocks it, and the dump doesn't say which (loader.conf, rc.conf); give it with --key-file {src}=FILE"));
         }
+        let uses_restored_keys = p.keyed_by() == "both" || (p.keyed_by() == "keyfile" && self.geli_key(p, 0).is_none());
+        if uses_restored_keys {
+            for k in p.keyfiles() {
+                if !safe_keyfile_subpath(&k) {
+                    self.problems.push(format!("{src}: GELI key file path {k:?} isn't an absolute path under the target"));
+                }
+            }
+        }
         self.problems.len() == before
     }
 
@@ -565,7 +582,7 @@ impl Builder<'_> {
                 continue;
             }
             let keyed = p.keyed_by().to_string();
-            if keyed == "both" || (keyed == "keyfile" && self.geli_key(&p, 0).is_none()) {
+            if (keyed == "both" || (keyed == "keyfile" && self.geli_key(&p, 0).is_none())) && p.keyfiles().iter().all(|k| safe_keyfile_subpath(k)) {
                 let mut a: Vec<String> = vec!["geli".into(), "setkey".into(), "-n".into(), "0".into()];
                 for k in p.keyfiles() {
                     a.extend(["-K".into(), format!("{t}{k}")]);
@@ -1149,5 +1166,13 @@ mod tests {
         let b = plan(zfs_on_geli(|_| {}), &["--repo", "/root/repo", "--archiver", "/root/rustic-bko", "--snapshot", "latest"]);
         let r: Vec<_> = b.stage(Stage::Restore).iter().filter(|c| !c.is_note()).collect();
         assert_eq!((r.len(), r[0].argv[0].as_str()), (1, "/root/rustic-bko"));
+        for bad in ["/../etc/master.passwd", "relative/key", ""] {
+            let b = plan(ufs_on_geli(|r| {
+                put(r, "keyed_by", Value::from("keyfile"));
+                put(r, "keyfiles", Value::from(vec![bad]));
+                put(r, "iterations", Value::from(-1i64));
+            }), &[]);
+            assert!(b.problems.iter().any(|p| p.contains("GELI key file path")), "{bad}: {:?}", b.problems);
+        }
     }
 }

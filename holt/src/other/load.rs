@@ -329,6 +329,65 @@ pub(super) fn newfs_sector(layout: &Layout, src: &str, rec: &Value) -> u64 {
 /// newfs must not be given more than the device holds.  `words` is the
 /// command, changed in place; the answer is what to say in the Cmd's `why`,
 /// and None where there was nothing to change.
+fn safe_run_token(s: &str) -> String {
+    let out: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' }).collect();
+    if out.is_empty() || out.trim_matches('.').is_empty() { "disk".into() } else { out }
+}
+
+/// Validates a `dumpfs -m` / `labelled` `newfs` command from a layout JSON:
+/// must invoke `newfs` with known UFS/FFS option flags and end with a single
+/// `DEVICE` placeholder, never an empty command, another binary, `-N`, or an
+/// extra positional device.
+fn valid_newfs_words(raw: &[&str]) -> bool {
+    if raw.len() < 2 || raw[0] != "newfs" || raw.last() != Some(&"DEVICE") {
+        return false;
+    }
+    let args = &raw[1..raw.len() - 1];
+    let mut i = 0;
+    while i < args.len() {
+        let w = args[i];
+        if w == "DEVICE" || w.contains('\0') {
+            return false;
+        }
+        match w {
+            "-E" | "-J" | "-j" | "-l" | "-t" | "-U" | "-X" => i += 1,
+            "-n" => {
+                if args.get(i + 1).is_some_and(|v| v.parse::<u64>().is_ok()) {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "-O" => {
+                if !args.get(i + 1).is_some_and(|v| matches!(*v, "0" | "1" | "2" | "2ea")) {
+                    return false;
+                }
+                i += 2;
+            }
+            "-o" => {
+                if !args.get(i + 1).is_some_and(|v| matches!(*v, "time" | "space")) {
+                    return false;
+                }
+                i += 2;
+            }
+            "-L" => {
+                if !args.get(i + 1).is_some_and(|v| !v.is_empty() && *v != "DEVICE" && !v.contains('\0')) {
+                    return false;
+                }
+                i += 2;
+            }
+            "-a" | "-b" | "-c" | "-d" | "-e" | "-f" | "-g" | "-h" | "-i" | "-k" | "-m" | "-p" | "-r" | "-s" | "-S" | "-v" => {
+                if args.get(i + 1).is_none_or(|v| v.parse::<u64>().is_err()) {
+                    return false;
+                }
+                i += 2;
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
 fn newfs_size_in_sectors(words: &mut [String], sector: u64) -> Option<String> {
     if sector <= 512 {
         return None;
@@ -410,7 +469,7 @@ impl Builder<'_> {
                     // rescue system's, the same release's).
                     for l in self.layout.device(&src).and_then(|v| v.get("disklabels64")).and_then(Value::as_array).cloned().unwrap_or_default() {
                         let (Some(n), Some(text)) = (l.get("slice").and_then(Value::as_u64), s(&l, "text")) else { continue };
-                        let proto = format!("{RUN_DIR}/{src}s{n}.disklabel64");
+                        let proto = format!("{RUN_DIR}/{}s{n}.disklabel64", safe_run_token(&src));
                         out.push(Cmd::write_file(&proto, text));
                         out.push(Cmd::new(&["disklabel64", "-R", "-B", &format!("{tgt}s{n}"), &proto]).why(format!("{src}s{n}'s disklabel64, and DragonFly's boot1/boot2")));
                     }
@@ -421,7 +480,7 @@ impl Builder<'_> {
                         (_, Some(text)) => {
                             // The source's disklabel, as disklabel printed
                             // it (OpenBSD's DUID line included).
-                            let proto = format!("{RUN_DIR}/{src}.disklabel");
+                            let proto = format!("{RUN_DIR}/{}.disklabel", safe_run_token(&src));
                             out.push(Cmd::write_file(&proto, text));
                             out.push(Cmd::new(&["disklabel", "-R", &tgt, &proto]).why(format!("{src}'s disklabel")));
                             // disklabel -R makes a DUID of its own; fstab names the source's.
@@ -449,6 +508,11 @@ impl Builder<'_> {
             self.problems.push(format!("{src}: UFS, but the dump has no newfs command for it (dumpfs -m)"));
             return vec![];
         };
+        let raw: Vec<&str> = cmd.split_whitespace().collect();
+        if !valid_newfs_words(&raw) {
+            self.problems.push(format!("{src}: UFS newfs command {cmd:?} isn't a valid dumpfs -m command"));
+            return vec![];
+        }
         // On the partition itself, -s (the source's size) and all: a GEOM
         // label, labelled after, takes its last sector (GhostBSD's
         // installer makes the filesystem first, so that it spans it).
@@ -457,7 +521,7 @@ impl Builder<'_> {
             Some(Family::NetBsd | Family::OpenBsd) if dev.starts_with("/dev/") => dev.replacen("/dev/", "/dev/r", 1),
             _ => dev.to_string(),
         };
-        let mut words: Vec<String> = cmd.split_whitespace().map(|w| if w == "DEVICE" { node.clone() } else { w.to_string() }).collect();
+        let mut words: Vec<String> = raw.into_iter().map(|w| if w == "DEVICE" { node.clone() } else { w.to_string() }).collect();
         let mut why = format!("{src}: UFS as the source's (dumpfs -m)");
         // DragonFly's dumpfs -m gives -s in fragments, newfs takes sectors:
         // the whole partition (what made it) instead.
@@ -551,6 +615,9 @@ impl Builder<'_> {
         // gets none.
         for e in self.layout.arr(&["storage", "fstab"]).to_vec() {
             let (Some(file), Some(src)) = (s(&e, "file"), s(&e, "resolves_to")) else { continue };
+            if !crate::load::commands::safe_target_subpath(&file) {
+                continue;
+            }
             if self.layout.device(&src).and_then(|v| v.get("snap_dir")).and_then(Value::as_bool) == Some(false) {
                 let top = format!("{t}{}", if file == "/" { "" } else { file.as_str() });
                 let (snap, top) = (q(&format!("{top}/.snap")), q(&top));
@@ -1007,5 +1074,33 @@ mod tests {
         let img = dragonfly_stick();
         assert_eq!(label64_name(&MemSource(img[64 * 512..1088 * 512].to_vec())).as_deref(), Some(L64_NAME));
         assert_eq!(label64_name(&MemSource(vec![0u8; 8192])), None);
+    }
+
+    #[test]
+    fn newfs_rejects_arbitrary_or_empty_commands() {
+        for ok in [
+            "newfs -O 2 -U -a 32 -b 32768 -d 32768 -e 4096 -f 4096 -g 16384 -h 64 -i 8192 -j -k 6400 -m 8 -o time -s 29359024 -t DEVICE",
+            "newfs -O 2ea -b 16384 -f 2048 -n 1654272 -m 5 -o time DEVICE",
+            "newfs -O 2 -U -n -L rootfs DEVICE",
+        ] {
+            let raw: Vec<&str> = ok.split_whitespace().collect();
+            assert!(valid_newfs_words(&raw), "{ok}");
+        }
+        for bad in [
+            "",
+            "   ",
+            "sh -c id DEVICE",
+            "/sbin/newfs -O 2 DEVICE",
+            "newfs",
+            "newfs -O 2",
+            "newfs -N DEVICE",
+            "newfs /dev/sda1 DEVICE",
+            "newfs DEVICE DEVICE",
+            "newfs -s DEVICE",
+            "newfs -o fast DEVICE",
+        ] {
+            let raw: Vec<&str> = bad.split_whitespace().collect();
+            assert!(!valid_newfs_words(&raw), "{bad}");
+        }
     }
 }

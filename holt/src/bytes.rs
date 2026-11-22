@@ -5,9 +5,42 @@
 
 use std::cell::OnceCell;
 use std::fs::File;
-use std::io::{Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::FileExt;
 use std::path::Path;
+
+/// Reads at most `max` bytes from `path`, failing if the file is larger.
+pub fn read_bounded(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    let f = File::open(path)?;
+    let mut buf = Vec::new();
+    f.take(max.saturating_add(1)).read_to_end(&mut buf)?;
+    if buf.len() as u64 > max {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{} exceeds {max} byte limit", path.display()),
+        ));
+    }
+    Ok(buf)
+}
+
+/// The last `max` bytes of the file at `path` (all of it when it's no
+/// bigger): for a log, whose end is what's wanted.
+pub fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    let mut f = File::open(path)?;
+    let len = f.metadata()?.len();
+    if len > max {
+        f.seek(SeekFrom::Start(len - max))?;
+    }
+    let mut buf = Vec::new();
+    f.take(max).read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+/// Reads at most `max` bytes of UTF-8 text from `path`, failing if larger or invalid UTF-8.
+pub fn read_to_string_bounded(path: &Path, max: u64) -> std::io::Result<String> {
+    let b = read_bounded(path, max)?;
+    String::from_utf8(b).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}
 
 /// Something that can be read at an offset: a block device, an image, or a
 /// buffer in a test.
@@ -155,7 +188,7 @@ impl MemSource {
 }
 
 fn arr<const N: usize>(b: &[u8], o: usize) -> Option<[u8; N]> {
-    b.get(o..o.checked_add(N)?).map(|s| s.try_into().unwrap())
+    b.get(o..o.checked_add(N)?).and_then(|s| s.try_into().ok())
 }
 
 pub fn le16(b: &[u8], o: usize) -> u16 {
@@ -284,6 +317,20 @@ const CRC_TABLE: [u32; 256] = {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// read_bounded refuses a file over its limit; read_tail keeps its end.
+    #[test]
+    fn bounded_and_tail_reads() {
+        let t = crate::testutil::TempDir::new("bytes-bounded");
+        let p = t.path().join("f");
+        std::fs::write(&p, b"0123456789").unwrap();
+        assert_eq!(read_bounded(&p, 10).unwrap(), b"0123456789");
+        assert_eq!(read_bounded(&p, 9).unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(read_tail(&p, 4).unwrap(), b"6789");
+        assert_eq!(read_tail(&p, 10).unwrap(), b"0123456789");
+        assert_eq!(read_tail(&p, 99).unwrap(), b"0123456789");
+        assert!(read_tail(&t.path().join("missing"), 4).is_err());
+    }
 
     #[test]
     fn crc32_check_values() {

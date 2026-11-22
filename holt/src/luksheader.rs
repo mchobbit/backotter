@@ -17,6 +17,12 @@ use crate::sys::Sys;
 /// RAM, never in a backup's tree.
 pub const DEFAULT_DIR: &str = "/run/bko-holt/luks-headers";
 
+/// The largest header backup dump keeps and load reads back: a LUKS2
+/// header is two metadata copies of at most 4 MiB each and a keyslots area
+/// of at most 128 MiB (cryptsetup's --luks2-metadata-size and
+/// --luks2-keyslots-size), 136 MiB in all; the rest is room.
+pub const HEADER_MAX: u64 = 256 << 20;
+
 /// dump's options for them.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Options {
@@ -98,10 +104,15 @@ pub fn capture(sys: &Sys, sections: &[&[Value]], want: &[String], opts: &Options
         }
         let file = file_name(uuid, &n);
         let path = format!("{}/{file}", dir.trim_end_matches('/'));
-        let made = std::fs::create_dir_all(sys.p(&dir)).and_then(|_| {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(sys.p(&dir), std::fs::Permissions::from_mode(0o700))
-        });
+        let made = {
+            use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+            let p = sys.p(&dir);
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(&p)
+                .and_then(|()| std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700)))
+        };
         if let Err(e) = made {
             sys.warn(format!("{n}: can't make {dir} for its LUKS2 header ({e}): load can't keep it"));
             continue;
@@ -109,7 +120,15 @@ pub fn capture(sys: &Sys, sections: &[&[Value]], want: &[String], opts: &Options
         // cryptsetup won't write over a file.
         let _ = std::fs::remove_file(sys.p(&path));
         let ran = sys.run("cryptsetup", &["luksHeaderBackup", node, "--header-backup-file", &path]);
-        let bytes = sys.read_bytes(&path);
+        let bytes = match crate::bytes::read_bounded(&sys.p(&path), HEADER_MAX) {
+            Ok(b) => Some(b),
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                let _ = std::fs::remove_file(sys.p(&path));
+                sys.warn(format!("{n}: `cryptsetup luksHeaderBackup` wrote more than {HEADER_MAX} bytes, more than a LUKS2 header can be: not kept, so load can't restore this layout"));
+                continue;
+            }
+            Err(_) => None,
+        };
         let ok = |b: &Vec<u8>| b.starts_with(b"LUKS\xba\xbe") && hdr_and_areas(c).is_none_or(|need| b.len() as u64 >= need);
         match (ran, bytes) {
             (Some(_), Some(b)) if ok(&b) => out.push(
@@ -155,7 +174,7 @@ pub fn path_at_load(dir: Option<&str>, layout_path: &str, file: &str) -> String 
 /// None when it is, else why not.
 pub fn check_file(path: &str, h: &Value) -> Option<String> {
     let want = h.get("sha256").and_then(Value::as_str).unwrap_or("");
-    match std::fs::read(path) {
+    match crate::bytes::read_bounded(std::path::Path::new(path), HEADER_MAX) {
         Err(e) => Some(format!("{path}: {e}")),
         Ok(b) if crate::bytes::sha256_hex(&b) != want => Some(format!("{path} isn't the header the dump kept (its SHA-256 differs)")),
         Ok(_) => None,

@@ -7,6 +7,7 @@
 
 use crate::bootcode::samples as grub;
 use crate::json::Value;
+use crate::load::RUN_DIR;
 use crate::parttable::build::{mbr_entry, write_gpt, GptSpec};
 use crate::parttable::{BIOS_BOOT, ESP};
 use crate::probe::{btrfs, ext, fat, luks, lvm, md, misc, zfs};
@@ -759,8 +760,8 @@ fn thin_lvm() {
     let asm: String = b.stage(Stage::Assemble).iter().map(commands::Cmd::shell).collect();
     let lvm = |rest: &str| format!("--devicesfile '' --devices /dev/vdb3 {rest}\n");
     let lines = [
-        format!("pvcreate {}", lvm("--uuid Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff --restorefile /run/bko-holt/lvm/vos-root.vg /dev/vdb3")),
-        format!("vgcfgrestore {}", lvm("--file /run/bko-holt/lvm/vos-root.vg vos-root")),
+        format!("pvcreate {}", lvm(&format!("--uuid Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff --restorefile {RUN_DIR}/lvm/vos-root.vg /dev/vdb3"))),
+        format!("vgcfgrestore {}", lvm(&format!("--file {RUN_DIR}/lvm/vos-root.vg vos-root"))),
         format!("vgchange {}", lvm("--activate y vos-root")),
         format!("lvcreate {}", lvm("--yes --type thin-pool -n root -L 19456m --poolmetadatasize 1024m --chunksize 64k --discards passdown --zero y --poolmetadataspare y vos-root")),
         format!("lvcreate {}", lvm("--type thin -V 19456m -n root-a --thinpool root vos-root")),
@@ -1143,14 +1144,14 @@ fn vanilla_guest() {
     // Assemble: both VGs, the thin pool and its thin LVs by lvcreate.
     let asm = text(Stage::Assemble);
     for l in [
-        "vgcfgrestore --devicesfile '' --devices /dev/vdb3 --file /run/bko-holt/lvm/vos-root.vg vos-root\n",
-        "lvcreate --devicesfile '' --devices /dev/vdb3 --yes --type thin-pool -n root -L 19456m --poolmetadatasize 1024m --chunksize 64k --discards passdown --zero y --poolmetadataspare y vos-root\n",
-        "lvcreate --devicesfile '' --devices /dev/vdb3 --type thin -V 19456m -n root-a --thinpool root vos-root\n",
-        "lvcreate --devicesfile '' --devices /dev/vdb3 --type thin -V 19456m -n root-b --thinpool root vos-root\n",
-        "pvcreate --devicesfile '' --devices /dev/vdb4 --uuid VaRpv0-aaaa-bbbb-cccc-dddd-eeee-ffffff --restorefile /run/bko-holt/lvm/vos-var.vg /dev/vdb4\n",
-        "vgcfgrestore --devicesfile '' --devices /dev/vdb4 --file /run/bko-holt/lvm/vos-var.vg vos-var\n",
+        format!("vgcfgrestore --devicesfile '' --devices /dev/vdb3 --file {RUN_DIR}/lvm/vos-root.vg vos-root\n"),
+        "lvcreate --devicesfile '' --devices /dev/vdb3 --yes --type thin-pool -n root -L 19456m --poolmetadatasize 1024m --chunksize 64k --discards passdown --zero y --poolmetadataspare y vos-root\n".into(),
+        "lvcreate --devicesfile '' --devices /dev/vdb3 --type thin -V 19456m -n root-a --thinpool root vos-root\n".into(),
+        "lvcreate --devicesfile '' --devices /dev/vdb3 --type thin -V 19456m -n root-b --thinpool root vos-root\n".into(),
+        format!("pvcreate --devicesfile '' --devices /dev/vdb4 --uuid VaRpv0-aaaa-bbbb-cccc-dddd-eeee-ffffff --restorefile {RUN_DIR}/lvm/vos-var.vg /dev/vdb4\n"),
+        format!("vgcfgrestore --devicesfile '' --devices /dev/vdb4 --file {RUN_DIR}/lvm/vos-var.vg vos-var\n"),
     ] {
-        assert!(asm.contains(l), "{l}: {asm}");
+        assert!(asm.contains(&l), "{l}: {asm}");
     }
     // Format: every filesystem with its label and UUID.
     let fmt = text(Stage::Format);
@@ -2364,12 +2365,12 @@ fn gentoo_generator_without_installkernel() {
     let k = GENTOO_KV;
     let t = gentoo_thinkpad();
     std::fs::remove_file(t.p("/usr/lib/kernel/install.conf")).unwrap();
-    let gen = |t: &Tree| {
+    let detect = |t: &Tree| {
         let v = run(t, true, FakeRunner::default());
         let i = v.at(&["boot", "initramfs"]).unwrap().clone();
         (s(&i, &["generator"]).to_string(), arr(&i, &["evidence"]).iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>(), i.get("installkernel").unwrap().is_null(), v)
     };
-    let (g, ev, no_ik, _) = gen(&t);
+    let (g, ev, no_ik, _) = detect(&t);
     assert_eq!(g, "dracut");
     assert!(no_ik);
     assert_eq!(ev[0], "no installkernel configuration (/etc/kernel/install.conf, /usr/lib/kernel/install.conf)");
@@ -2377,7 +2378,7 @@ fn gentoo_generator_without_installkernel() {
     // An install.conf that names no initrd_generator: the /boot rules
     // decide, and the file is kept as evidence.
     t.file("/usr/lib/kernel/install.conf", "layout=grub\n");
-    let (g, ev, no_ik, v) = gen(&t);
+    let (g, ev, no_ik, v) = detect(&t);
     assert_eq!(g, "dracut");
     assert!(!no_ik);
     assert_eq!(s(&v, &["boot", "initramfs", "installkernel", "layout"]), "grub");
@@ -2385,12 +2386,12 @@ fn gentoo_generator_without_installkernel() {
     assert_eq!(ev[..2], ["/usr/lib/kernel/install.conf names no initrd_generator".to_string(), "/boot has initramfs-* and genkernel isn't installed".to_string()]);
     std::fs::remove_file(t.p("/usr/lib/kernel/install.conf")).unwrap();
     t.file("/var/db/pkg/sys-kernel/genkernel-4.3.17/PF", "genkernel-4.3.17\n");
-    assert_eq!(gen(&t).0, "genkernel");
+    assert_eq!(detect(&t).0, "genkernel");
     for f in [format!("/boot/initramfs-{k}.img"), format!("/boot/initramfs-{k}.img.old")] {
         std::fs::remove_file(t.p(&f)).unwrap();
     }
     std::fs::write(t.p("/var/db/pkg/sys-kernel/gentoo-kernel-bin-6.18.63/USE"), "abi_x86_64 amd64 elibc_glibc kernel_linux\n").unwrap();
-    let (g, ev, _, v) = gen(&t);
+    let (g, ev, _, v) = detect(&t);
     assert_eq!(g, "none");
     assert_eq!(ev[1..], ["/boot has no initramfs-*".to_string(), "gentoo-kernel-bin-6.18.63 is built without USE=initramfs".to_string()]);
     use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
@@ -2402,7 +2403,7 @@ fn gentoo_generator_without_installkernel() {
     assert!(!bt.contains("dracut") && !bt.contains("update-initramfs") && bt.contains("grub-install"), "{bt}");
     // installkernel's install.conf in /etc wins over /usr/lib's.
     t.file("/etc/kernel/install.conf", "layout=compat\ninitrd_generator=ugrd\nuki_generator=none\n");
-    let (g, ev, _, _) = gen(&t);
+    let (g, ev, _, _) = detect(&t);
     assert_eq!(g, "ugrd");
     assert_eq!(ev[0], "/etc/kernel/install.conf says initrd_generator=ugrd");
 }
@@ -2761,7 +2762,7 @@ fn biglinux_guest() {
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let all: String = [Stage::Partition, Stage::Assemble, Stage::Format, Stage::Mount, Stage::Restore, Stage::Boot, Stage::Close].iter().flat_map(|st| b.stage(*st)).map(commands::Cmd::shell).collect();
     let f: String = b.stage(Stage::Format).iter().map(commands::Cmd::shell).collect();
-    let top = format!("/run/bko-holt/btrfs/{}", "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf");
+    let top = format!("{RUN_DIR}/btrfs/{}", "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf");
     assert!(f.contains(&format!("btrfs subvolume create {top}/@\n")) && f.contains(&format!("btrfs subvolume create {top}/@home\n")), "{f}");
     assert!(!all.contains("timeshift-btrfs"), "{all}");
     assert!(!all.lines().any(|l| l.contains("subvolume snapshot")), "{all}");
@@ -2894,14 +2895,14 @@ fn garuda() -> Tree {
 fn garuda_runner() -> FakeRunner {
     let u = |n: u32| format!("9a2d5b00-0000-4000-8000-000000000{n}");
     let mut list = String::new();
-    for (sv, _, id, gen) in GARUDA_SUBVOLS {
-        list.push_str(&format!("ID {id} gen {gen} parent 5 top level 5 parent_uuid - uuid {} path <FS_TREE>/{sv}\n", u(id)));
+    for (sv, _, id, generation) in GARUDA_SUBVOLS {
+        list.push_str(&format!("ID {id} gen {generation} parent 5 top level 5 parent_uuid - uuid {} path <FS_TREE>/{sv}\n", u(id)));
     }
     list.push_str(&format!("ID 263 gen 156 parent 256 top level 256 parent_uuid - uuid {} path @/.snapshots\n", u(263)));
     let mut ro = String::new();
-    for (n, id, gen) in GARUDA_SNAPSHOTS {
-        list.push_str(&format!("ID {id} gen {gen} parent 263 top level 263 parent_uuid {} uuid {} path <FS_TREE>/@/.snapshots/{n}/snapshot\n", u(256), u(id)));
-        ro.push_str(&format!("ID {id} gen {gen} top level 263 path <FS_TREE>/@/.snapshots/{n}/snapshot\n"));
+    for (n, id, generation) in GARUDA_SNAPSHOTS {
+        list.push_str(&format!("ID {id} gen {generation} parent 263 top level 263 parent_uuid {} uuid {} path <FS_TREE>/@/.snapshots/{n}/snapshot\n", u(256), u(id)));
+        ro.push_str(&format!("ID {id} gen {generation} top level 263 path <FS_TREE>/@/.snapshots/{n}/snapshot\n"));
     }
     let mut r = FakeRunner::default()
         .with("btrfs subvolume list -a -p -u -q /", &list)
@@ -2961,7 +2962,7 @@ fn garuda_guest() {
     let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string(), "--repo".into(), "/srv/repo".into(), "--password-file".into(), "/run/pw".into()]) else { unreachable!() };
     let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    let top = format!("/run/bko-holt/btrfs/{GARUDA_ROOT}");
+    let top = format!("{RUN_DIR}/btrfs/{GARUDA_ROOT}");
     // The seven subvolumes in the top level, then .snapshots in @; the
     // snapshots themselves wait for the restore.
     let f: String = b.stage(Stage::Format).iter().map(commands::Cmd::shell).collect();
@@ -3220,7 +3221,7 @@ fn anduinos_guest() {
 
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
-    let top = format!("/run/bko-holt/btrfs/{ANDUINOS_ROOT}");
+    let top = format!("{RUN_DIR}/btrfs/{ANDUINOS_ROOT}");
     for (sv, _) in ANDUINOS_SUBVOLS {
         assert!(f.contains(&format!("btrfs subvolume create {top}/{sv}\n")), "{sv}: {f}");
     }
@@ -3945,8 +3946,8 @@ fn elementary_guest() {
         let pv = if luks { "/dev/mapper/cryptdata" } else { "/dev/vdb2" };
         let lvm = |rest: &str| format!("--devicesfile '' --devices {pv} {rest}\n");
         let lines = [
-            format!("pvcreate {}", lvm(&format!("--uuid Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff --restorefile /run/bko-holt/lvm/data.vg {pv}"))),
-            format!("vgcfgrestore {}", lvm("--file /run/bko-holt/lvm/data.vg data")),
+            format!("pvcreate {}", lvm(&format!("--uuid Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff --restorefile {RUN_DIR}/lvm/data.vg {pv}"))),
+            format!("vgcfgrestore {}", lvm(&format!("--file {RUN_DIR}/lvm/data.vg data"))),
             format!("vgchange {}", lvm("--activate y data")),
         ];
         let mut at = 0;
@@ -4001,13 +4002,13 @@ fn luks_restored_key_file_with_and_without_key_file() {
     let initramfs = format!("chroot /mnt/bko-target sh -c {}\n", crate::load::shell_quote(commands::UPDATE_INITRAMFS_RESUME));
     // No --key-file: the temporary key, replaced.
     let (asm, bt) = plan("/crypto_keyfile.bin", "luks", &[]);
-    assert!(asm.contains("dd if=/dev/urandom of=/run/bko-holt/keys/cryptdata bs=64 count=1 status=none\n"), "{asm}");
-    assert!(asm.contains(" --key-file=/run/bko-holt/keys/cryptdata /dev/vdb3\n"), "{asm}");
-    let add = bt.find("# cryptdata: the restored key file /crypto_keyfile.bin\ncryptsetup luksAddKey --key-file=/run/bko-holt/keys/cryptdata /dev/vdb3 /mnt/bko-target/crypto_keyfile.bin\ncryptsetup luksRemoveKey /dev/vdb3 /run/bko-holt/keys/cryptdata\n").expect(&bt);
+    assert!(asm.contains(&format!("dd if=/dev/urandom of={RUN_DIR}/keys/cryptdata bs=64 count=1 status=none\n")), "{asm}");
+    assert!(asm.contains(&format!(" --key-file={RUN_DIR}/keys/cryptdata /dev/vdb3\n")), "{asm}");
+    let add = bt.find(&format!("# cryptdata: the restored key file /crypto_keyfile.bin\ncryptsetup luksAddKey --key-file={RUN_DIR}/keys/cryptdata /dev/vdb3 /mnt/bko-target/crypto_keyfile.bin\ncryptsetup luksRemoveKey /dev/vdb3 {RUN_DIR}/keys/cryptdata\n")).expect(&bt);
     assert!(add < bt.find(&initramfs).expect(&bt), "{bt}");
     // --key-file: its key made it and stays; the restored key file joins it.
     let (asm, bt) = plan("/crypto_keyfile.bin", "luks", &["--key-file", "cryptdata=/root/disk-passphrase"]);
-    assert!(!asm.contains("/dev/urandom") && !asm.contains("/run/bko-holt/keys/"), "{asm}");
+    assert!(!asm.contains("/dev/urandom") && !asm.contains(&format!("{RUN_DIR}/keys/")), "{asm}");
     assert!(asm.contains(" --key-file=/root/disk-passphrase /dev/vdb3\n") && asm.contains("cryptsetup open --key-file=/root/disk-passphrase /dev/vdb3 cryptdata\n"), "{asm}");
     let add = bt
         .find(
@@ -4026,12 +4027,48 @@ fn luks_restored_key_file_with_and_without_key_file() {
     assert!(!bt.contains("luksAddKey") && !bt.contains("--test-passphrase"), "{bt}");
     // keyfile-offset= and keyfile-size=: the keyslot is those bytes, both ways.
     let (_, bt) = plan("/etc/keys/root.key", "luks,keyfile-offset=512,keyfile-size=4096", &[]);
-    assert!(bt.contains("cryptsetup luksAddKey --key-file=/run/bko-holt/keys/cryptdata --new-keyfile-offset=512 --new-keyfile-size=4096 /dev/vdb3 /mnt/bko-target/etc/keys/root.key\n"), "{bt}");
+    assert!(bt.contains(&format!("cryptsetup luksAddKey --key-file={RUN_DIR}/keys/cryptdata --new-keyfile-offset=512 --new-keyfile-size=4096 /dev/vdb3 /mnt/bko-target/etc/keys/root.key\n")), "{bt}");
     let (_, bt) = plan("/etc/keys/root.key", "luks,keyfile-offset=512,keyfile-size=4096", &["--key-file", "cryptdata=/root/disk-passphrase"]);
     assert!(
         bt.contains("sh -c 'cryptsetup open --test-passphrase --key-file=/mnt/bko-target/etc/keys/root.key --keyfile-offset=512 --keyfile-size=4096 /dev/vdb3 2>/dev/null || cryptsetup luksAddKey --key-file=/root/disk-passphrase --new-keyfile-offset=512 --new-keyfile-size=4096 /dev/vdb3 /mnt/bko-target/etc/keys/root.key'\n"),
         "{bt}"
     );
+}
+
+/// A crypttab key the restore doesn't bring back (systemd's path:device
+/// form, a key device under /dev, Debian keyscript='s name in the key
+/// field) and no --key-file: refused at plan time, never a container whose
+/// only keyslot is the temporary key.  With --key-file, or Debian's
+/// keyscript name beside it, the plan goes ahead as before.
+#[test]
+fn luks_key_not_restored_needs_key_file() {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    let plan = |key: &str, opts: &str, extra: &[&str]| {
+        let t = elementary(true);
+        t.file("/etc/crypttab", format!("cryptdata UUID=e1e01005-6b0a-4d6c-9a2e-8f7e1d2c3b4a {key} {opts}\n"));
+        let v = run(&t, true, FakeRunner::default());
+        let l = Layout::from_json(v).unwrap();
+        let args: Vec<String> = ["l.json"].iter().chain(extra).map(|a| a.to_string()).collect();
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&args) else { unreachable!() };
+        let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+        (b.problems.clone(), plan_text_of(b.stage(Stage::Assemble)), plan_text_of(b.stage(Stage::Boot)))
+    };
+    for key in ["/backshot1/keys/disk-passphrase:LABEL=BKOBACKUP", "/dev/disk/by-id/usb-Stick_0001-0:0", "/dev/disk/by-label/KEYSTICK", "cryptroot"] {
+        let (problems, asm, bt) = plan(key, "luks", &[]);
+        assert_eq!(problems, vec![format!("cryptdata: crypttab's key {key:?} isn't a file the restore brings back (it's on another device, or not a path in the restored tree): give --key-file cryptdata=FILE")], "{key}");
+        assert!(!asm.contains("/dev/urandom") && !asm.contains(&format!("{RUN_DIR}/keys/")), "{key}: no temporary key: {asm}");
+        assert!(!bt.contains("luksAddKey") && !bt.contains("luksRemoveKey"), "{bt}");
+    }
+    // A path that climbs out of the target: refused too.
+    let (problems, _, _) = plan("/etc/../../root.key", "luks", &[]);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    let (problems, _, _) = plan("/etc/../../root.key", "luks", &["--key-file", "cryptdata=/root/disk-passphrase"]);
+    assert_eq!(problems, vec!["cryptdata: crypttab key file \"/etc/../../root.key\" isn't a path under the target".to_string()]);
+    // Debian's keyscript=decrypt_keyctl: a name, not a file; --key-file's
+    // keyslot opens it, nothing added, no problem (as before).
+    let (problems, _, bt) = plan("cryptroot", "luks,keyscript=decrypt_keyctl", &["--key-file", "cryptdata=/root/disk-passphrase"]);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert!(!bt.contains("luksAddKey") && !bt.contains("--test-passphrase"), "{bt}");
 }
 
 fn plan_text_of(cmds: &[crate::load::commands::Cmd]) -> String {
@@ -4679,7 +4716,7 @@ fn guix_bios_guest() {
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
     for sv in ["@", "@home", "@gnu"] {
-        assert!(f.contains(&format!("btrfs subvolume create /run/bko-holt/btrfs/b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf/{sv}\n")), "{sv}: {f}");
+        assert!(f.contains(&format!("btrfs subvolume create {RUN_DIR}/btrfs/b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf/{sv}\n")), "{sv}: {f}");
     }
     assert_eq!(f.matches("btrfs subvolume create").count(), 3, "{f}");
     assert!(f.contains(&format!("mkfs.btrfs")) && f.contains(&format!("-L {GUIX_LABEL}")), "{f}");
@@ -4932,6 +4969,8 @@ fn slackware15_guest() {
     let w = bt.find("chroot /mnt/bko-target lilo -C /etc/lilo.conf.bko-holt -v\n").expect(&bt);
     let r = bt.find("rm -f /mnt/bko-target/etc/lilo.conf.bko-holt\n").expect(&bt);
     assert!(c < t && t < w && w < r, "{bt}");
+    // The copy is 0600 when written: lilo.conf can hold password=.
+    assert!(b.stage(Stage::Boot).iter().any(|c| c.write.as_deref() == Some("/mnt/bko-target/etc/lilo.conf.bko-holt") && c.private), "{bt}");
     assert!(bt.contains("\nimage=\"/boot/vmlinuz\"\n  root=\"/dev/vda2\"\n  label=\"Linux\"\n  read-only\n  append=\" vt.default_utf8=0 root=/dev/vda2\"\nEOF\n"), "{bt}");
     assert!(bt.contains("\nappend=\" vt.default_utf8=0\"\nboot=\"/dev/vda\"\nmessage=\"/boot/boot_message.txt\"\nprompt\ntimeout=\"50\"\nchange-rules\nreset\nvga=\"normal\"\nimage="), "{bt}");
     assert!(!bt.contains("cat > /mnt/bko-target/etc/lilo.conf <<") && !bt.contains("lilo -t -v\n"), "{bt}");
@@ -5894,7 +5933,7 @@ fn truenas_mirror_guest() {
     assert!(!all.lines().any(|l| l.starts_with("zfs create") && l.contains(" tank")), "{all}");
     assert!(!all.contains("mount -t zfs tank/.system"), "{all}");
     let rs = text(&b, Stage::Restore);
-    assert!(rs.contains("!/mnt/tank/**\n") && rs.contains("!/var/db/system/**\n") && rs.contains("--glob-file /run/bko-holt/restore.globs"), "{rs}");
+    assert!(rs.contains("!/mnt/tank/**\n") && rs.contains("!/var/db/system/**\n") && rs.contains(&format!("--glob-file {RUN_DIR}/restore.globs")), "{rs}");
     let (tr, runner) = truenas(true);
     let l = crate::load::layout::Layout::from_json(run(&tr, true, runner)).unwrap();
     let only = l.only_pools(&["boot-pool".to_string()]);
@@ -6307,7 +6346,8 @@ fn freebsd_pools_glob_file() {
     let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string(), "--repo".into(), "/r".into()]) else { unreachable!() };
     let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vtbd0".into(), "vtbd0".into())], ..Default::default() });
     let rs = b.stage(Stage::Restore);
-    let w = rs.iter().position(|c| c.write.as_deref() == Some("/run/bko-holt/restore.globs")).expect("the glob file is written");
+    let want_globs = format!("{RUN_DIR}/restore.globs");
+    let w = rs.iter().position(|c| c.write.as_deref() == Some(want_globs.as_str())).expect("the glob file is written");
     assert_eq!(rs[w].stdin.as_deref(), Some("!/data/**\n"));
     let r = rs.iter().position(|c| c.argv.iter().any(|a| a.ends_with("restore.globs")) && c.write.is_none()).expect("the restore names it");
     assert!(w < r, "{}", rs.iter().map(Cmd::shell).collect::<String>());

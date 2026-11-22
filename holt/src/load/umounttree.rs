@@ -60,7 +60,7 @@ pub fn main(args: &[String]) -> u8 {
         eprintln!("usage: bko-holt umount-tree TARGET");
         return 2;
     };
-    let read = || std::fs::read_to_string("/proc/self/mountinfo").map_err(|e| format!("/proc/self/mountinfo: {e}"));
+    let read = || crate::bytes::read_to_string_bounded(std::path::Path::new("/proc/self/mountinfo"), 16 << 20).map_err(|e| format!("/proc/self/mountinfo: {e}"));
     let umount = |p: &str| {
         println!("umount {}", super::shell_quote(p));
         let o = std::process::Command::new("umount").arg(p).env("LC_ALL", "C").output().map_err(|e| format!("umount: {e}"))?;

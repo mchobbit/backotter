@@ -50,10 +50,37 @@ fn list() -> &'static [&'static str] {
     })
 }
 
+/// Overwrites sensitive byte buffers in place without allowing dead-store
+/// elimination to elide the wipe.
+pub fn zeroize_bytes(buf: &mut [u8]) {
+    buf.fill(0);
+    std::hint::black_box(&mut *buf);
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Overwrites a `String`'s UTF-8 buffer with NUL bytes and clears it.
+pub fn zeroize_string(s: &mut String) {
+    // SAFETY: 0x00 is valid UTF-8, preserving String's UTF-8 invariant.
+    zeroize_bytes(unsafe { s.as_bytes_mut() });
+    s.clear();
+}
+
+fn zeroize_u16(buf: &mut [u16]) {
+    buf.fill(0);
+    std::hint::black_box(&mut *buf);
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+}
+
 /// A recovery key: twelve words of the list whose checksum is right.  Its
-/// Debug doesn't show them.
+/// Debug doesn't show them, and its Drop wipes the word indices.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Words([u16; COUNT]);
+
+impl Drop for Words {
+    fn drop(&mut self) {
+        zeroize_u16(&mut self.0);
+    }
+}
 
 impl Words {
     /// The twelve words, in order, in full, in lower case.
@@ -167,7 +194,10 @@ impl std::error::Error for Problem {}
 /// Fails, saying why, when it can't read them or they don't look random;
 /// it never makes do with another source.
 pub fn generate() -> Result<Words, String> {
-    random_bytes(RANDOM_DEVICE).map(|e| from_entropy(&e))
+    let mut e = random_bytes(RANDOM_DEVICE)?;
+    let w = from_entropy(&e);
+    zeroize_bytes(&mut e);
+    Ok(w)
 }
 
 /// Where `generate` reads.  Linux: /dev/random, which since Linux 5.6 waits
@@ -217,7 +247,10 @@ pub fn from_entropy(entropy: &[u8; 16]) -> Words {
             *x = (*x << 1) | u16::from((bits[k / 8] >> (7 - k % 8)) & 1);
         }
     }
-    Words(w)
+    zeroize_bytes(&mut bits);
+    let out = Words(w);
+    zeroize_u16(&mut w);
+    out
 }
 
 /// The 128 bits twelve word numbers hold, and whether the checksum they
@@ -235,13 +268,14 @@ fn decode(w: &[u16; COUNT]) -> ([u8; 16], bool) {
     let mut e = [0u8; 16];
     e.copy_from_slice(&bits[..16]);
     let ok = bits[16] >> 4 == checksum(&e);
+    zeroize_bytes(&mut bits);
     (e, ok)
 }
 
 /// BIP39's checksum of 128 bits: the first 4 bits of their SHA-256.
 fn checksum(entropy: &[u8; 16]) -> u8 {
     let hex = crate::bytes::sha256_hex(entropy);
-    u8::from_str_radix(&hex[..1], 16).expect("sha256_hex is hex")
+    u8::from_str_radix(&hex[..1], 16).unwrap_or(0)
 }
 
 /// The words in TEXT, as someone would type them: in any case; between
@@ -253,7 +287,7 @@ pub fn check(text: &str) -> Result<Words, Problem> {
     let mut found: Vec<u16> = Vec::new();
     let mut unknown: Vec<Unknown> = Vec::new();
     for t in typed(text) {
-        let lower = t.to_lowercase();
+        let mut lower = t.to_lowercase();
         match lookup(&lower) {
             Some(i) => found.push(i),
             None => unknown.push(Unknown {
@@ -264,18 +298,29 @@ pub fn check(text: &str) -> Result<Words, Problem> {
                 suggestions: if unknown.len() < COUNT { near(&lower) } else { Vec::new() },
             }),
         }
+        zeroize_string(&mut lower);
     }
     let count = found.len() + unknown.len();
     if !unknown.is_empty() {
+        zeroize_u16(&mut found);
         return Err(Problem::Unknown { words: unknown, count });
     }
-    let Ok(w) = <[u16; COUNT]>::try_from(found) else {
+    if found.len() != COUNT {
+        zeroize_u16(&mut found);
         return Err(Problem::Count(count));
-    };
-    if !decode(&w).1 {
+    }
+    let mut w = [0u16; COUNT];
+    w.copy_from_slice(&found);
+    zeroize_u16(&mut found);
+    let (mut ent, ok) = decode(&w);
+    zeroize_bytes(&mut ent);
+    if !ok {
+        zeroize_u16(&mut w);
         return Err(Problem::Checksum);
     }
-    Ok(Words(w))
+    let out = Words(w);
+    zeroize_u16(&mut w);
+    Ok(out)
 }
 
 /// How many words `check` would see in TEXT, right or wrong (numbers left

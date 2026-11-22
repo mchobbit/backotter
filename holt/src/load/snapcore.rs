@@ -283,7 +283,7 @@ pub fn boot_areas_main(args: &[String]) -> u8 {
         return 2;
     };
     let run = || -> Result<String, String> {
-        let text = std::fs::read_to_string(layout).map_err(|e| format!("{layout}: {e}"))?;
+        let text = crate::bytes::read_to_string_bounded(std::path::Path::new(layout), crate::LAYOUT_MAX).map_err(|e| format!("{layout}: {e}"))?;
         let v = crate::json::parse(&text).map_err(|e| format!("{layout}: {e:?}"))?;
         let writes = boot_area_writes(&v, disk)?;
         let f = std::fs::OpenOptions::new().write(true).open(dev).map_err(|e| format!("{dev}: {e}"))?;
@@ -434,12 +434,15 @@ mod tests {
     /// Ubuntu Core's atimes list covers run/mnt (its whole tree), and
     /// still leaves the rest of run/ out.
     #[test]
+    #[cfg(target_os = "linux")]
     fn atimes_cover_run_mnt() {
         let t = Tree::new("snapcore-atimes");
         t.file("/run/mnt/data/system-data/var/lib/snapd/modeenv", "m").file("/run/other/x", "x").file("/etc/x", "x");
         let root = t.root().to_string_lossy().into_owned();
         let list = |run_mnt: bool| {
-            let cmd = super::super::commands::atimes_cmd_in(&root, "before", &[], run_mnt).replace("/run/bko-holt/atimes.before", &format!("{root}/list")).replace("mkdir -p /run/bko-holt && ", "");
+            let cmd = super::super::commands::atimes_cmd_in(&root, "before", &[], run_mnt)
+                .replace(&format!("{RUN_DIR}/atimes.before"), &format!("{root}/list"))
+                .replace(&format!("mkdir -p -m 700 {RUN_DIR} && "), "");
             assert!(run(&cmd).0, "{cmd}");
             std::fs::read(t.p("/list")).unwrap().split(|&b| b == 0).map(|e| String::from_utf8_lossy(e).into_owned()).collect::<Vec<_>>().join("\n")
         };

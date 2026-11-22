@@ -98,11 +98,6 @@ impl BootEnv {
         self.mountpoint == "legacy"
     }
 
-    /// The BE's own datasets, root first.
-    pub fn datasets(&self) -> Vec<&str> {
-        std::iter::once(self.dataset.as_str()).chain(self.children.iter().map(|c| c.dataset.as_str())).collect()
-    }
-
     /// Whether DS is the BE's root or one of its descendants.
     pub fn holds(&self, ds: &str) -> bool {
         ds == self.dataset || ds.starts_with(&format!("{}/", self.dataset))
@@ -187,7 +182,9 @@ pub fn list(tools: &Value) -> Vec<BootEnv> {
     let count = |f: &dyn Fn(&str) -> String, x: &str| roots.iter().filter(|(n, _)| f(n) == f(x)).count();
     let mut out = Vec::new();
     for (name, rule) in &roots {
-        let d = by_name.iter().find(|(n, _)| n == name).map(|(_, d)| *d).expect("a listed dataset");
+        let Some(d) = by_name.iter().find(|(n, _)| n == name).map(|(_, d)| *d) else {
+            continue;
+        };
         let pool = pool_of(name);
         let be = last(name);
         let pooled = |n: &str| format!("{}/{}", pool_of(n), last(n));
@@ -234,6 +231,7 @@ pub fn list(tools: &Value) -> Vec<BootEnv> {
 }
 
 /// The inactive BEs of `tools` (list, less the booted ones).
+#[cfg(test)]
 pub fn inactive(tools: &Value) -> Vec<BootEnv> {
     list(tools).into_iter().filter(BootEnv::inactive).collect()
 }

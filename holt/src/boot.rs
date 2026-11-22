@@ -438,7 +438,11 @@ pub fn shell_words(line: &str) -> Vec<String> {
                 while let Some(d) = it.next() {
                     match d {
                         '"' => break,
-                        '\\' if matches!(it.peek(), Some('"' | '\\' | '$' | '`')) => cur.push(it.next().unwrap()),
+                        '\\' if matches!(it.peek(), Some('"' | '\\' | '$' | '`')) => {
+                            if let Some(esc) = it.next() {
+                                cur.push(esc);
+                            }
+                        }
                         d => cur.push(d),
                     }
                 }
@@ -1206,7 +1210,8 @@ pub struct Evidence<'a> {
     pub zbm_images: Vec<String>,
 }
 
-/// The loader on x86_64 (crate::arch::X86_64's names).
+/// The loader on x86_64 (crate::arch::X86_64's names), for the tests.
+#[cfg(test)]
 pub fn detect_loader(e: &Evidence) -> Value {
     detect_loader_on(e, &crate::arch::X86_64)
 }
@@ -1822,8 +1827,7 @@ fn boot_files(sys: &Sys, pick: &dyn Fn(&str) -> bool) -> Vec<(String, u64)> {
 /// The first of `candidates` that `path` is a byte copy of.
 fn same_file(sys: &Sys, path: &str, candidates: &[(String, u64)]) -> Option<String> {
     let size = sys.file_size(path)?;
-    let mine = candidates.iter().any(|(_, n)| *n == size).then(|| sys.read_bytes(path)).flatten()?;
-    candidates.iter().filter(|(_, n)| *n == size).find(|(p, _)| sys.read_bytes(p).as_ref() == Some(&mine)).map(|(p, _)| p.clone())
+    candidates.iter().filter(|(_, n)| *n == size).find(|(p, _)| sys.same_bytes(path, p) == Some(true)).map(|(p, _)| p.clone())
 }
 
 /// An elilo.conf on a mounted ESP.
@@ -2873,11 +2877,11 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             .file(MKINITRD_COMMAND_LINE, "/sbin/mkinitrd -c -k 5.15.161 -r /dev/vda3 -h /dev/vda2 -o initrd.gz\n")
             .file("/boot/initrd-tree/initrd-name", "/root/initrd.gz\n");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
-        let gen = || {
+        let generate = || {
             let (g, f) = slackware_initramfs(&s, &[]);
             (g.unwrap(), f.into_iter().find(|(k, _)| *k == "mkinitrd").map(|(_, v)| v).unwrap())
         };
-        let (g, m) = gen();
+        let (g, m) = generate();
         assert_eq!(g, "mkinitrd");
         assert_eq!(m.at(&["kernels", "0"]).and_then(Value::as_str), Some("5.15.161"));
         assert_eq!(m.get("rootdev").and_then(Value::as_str), Some("/dev/vda3"));
@@ -2886,10 +2890,10 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(m.get("output").and_then(Value::as_str), Some("/root/initrd.gz"));
         // Without initrd-name, a relative -o is /boot's.
         std::fs::remove_file(t.p("/boot/initrd-tree/initrd-name")).unwrap();
-        assert_eq!(gen().1.get("output").and_then(Value::as_str), Some("/boot/initrd.gz"));
+        assert_eq!(generate().1.get("output").and_then(Value::as_str), Some("/boot/initrd.gz"));
         // With -F (and -C), the conf counts where the command line is silent.
         t.file(MKINITRD_COMMAND_LINE, "mkinitrd -F -C /dev/vda3\n");
-        let (_, m) = gen();
+        let (_, m) = generate();
         assert_eq!(m.get("rootdev").and_then(Value::as_str), Some("/dev/sdz9"));
         assert_eq!(m.get("output").and_then(Value::as_str), Some("/boot/stale.gz"));
         assert_eq!(m.get("luksdev").and_then(Value::as_str), Some("/dev/vda3"));

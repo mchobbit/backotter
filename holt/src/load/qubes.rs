@@ -141,7 +141,7 @@ impl Builder<'_> {
 /// The `sh -c` scripts that turn os-prober off under target T for
 /// grub2-mkconfig (true bound over it) and on again; T and the paths in it
 /// shell-quoted (a word with nothing to quote stays bare).
-fn os_prober_off(t: &str) -> (String, String) {
+pub(crate) fn os_prober_off(t: &str) -> (String, String) {
     let q = super::shell_quote;
     let p = format!("{t}/usr/bin/os-prober");
     let qp = q(&p);

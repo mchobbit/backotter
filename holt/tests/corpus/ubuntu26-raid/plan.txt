@@ -117,7 +117,7 @@ udevadm settle
 # ---- assemble ----
 # md array md0 (raid10)
 mdadm --create /dev/md/0 --run --assume-clean --metadata=1.2 --level=raid10 --raid-devices=4 --chunk=512K --layout=n2 --uuid=bc000000:00004000:80000000:00000004 --homehost=ubuntu-server --name=0 --data-offset=9216K --bitmap=none /dev/sdq2 /dev/sdr2 /dev/sds2 /dev/sdt2
-mkdir -p /run/bko-holt/lvm
+mkdir -p -m 700 /run/bko-holt/lvm
 # volume group ubuntu-vg: its metadata, for pvcreate and vgcfgrestore
 cat > /run/bko-holt/lvm/ubuntu-vg.vg <<'EOF'
 ubuntu-vg {
@@ -215,14 +215,14 @@ mount -t vfat -o defaults /dev/sdq1 /mnt/bko-target/boot/efi
 # snapshot latest of /srv/bko-repo, with BackOtter's restore flags
 RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
 # the atimes the restore set, for boot to put back after its reads
-sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
+sh -c 'mkdir -p -m 700 /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
 
 # ---- boot ----
 # refuses to start unless /mnt/bko-target/etc/fstab is the restored system's (its / matches the layout's)
 # / with the source's atime options (rw,relatime), for host-only dracut's rootflags=
 mount -o remount,atime,relatime /mnt/bko-target
 # the restored atimes (the restore stage lists them), to put back after this stage's reads
-sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
+sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p -m 700 /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
 # the restored LVM devices file, kept
 sh -c 'rm -rf /run/bko-holt/lvm-devices; [ ! -d /mnt/bko-target/etc/lvm/devices ] || { cp -a /mnt/bko-target/etc/lvm/devices /run/bko-holt/lvm-devices && touch -r /mnt/bko-target/etc/lvm /run/bko-holt/lvm-devices.parent; }'
 mount --rbind --make-rslave /dev /mnt/bko-target/dev

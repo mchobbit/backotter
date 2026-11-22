@@ -255,15 +255,28 @@ pub(crate) fn leaves(layout: &Layout) -> Vec<(String, Value)> {
 /// A shell prefix that sets $v to the softraid volume whose chunk is
 /// `chunk` (sd2a), from `bioctl softraid0`'s Device column, or stops.
 fn find_volume(chunk: &str) -> String {
-    format!(
-        "v=$(bioctl softraid0 2>/dev/null | awk '{{ for (i = 1; i <= NF; i++) if ($i ~ /^sd[0-9]+$/) d = $i }} index($0, \"<{chunk}>\") {{ print d; exit }}'); [ -n \"$v\" ] || {{ echo 'no softraid volume on {chunk}' >&2; exit 1; }}; "
-    )
+    let qc = crate::load::shell_quote(chunk);
+    if qc == chunk {
+        format!(
+            "v=$(bioctl softraid0 2>/dev/null | awk '{{ for (i = 1; i <= NF; i++) if ($i ~ /^sd[0-9]+$/) d = $i }} index($0, \"<{chunk}>\") {{ print d; exit }}'); [ -n \"$v\" ] || {{ echo 'no softraid volume on {chunk}' >&2; exit 1; }}; "
+        )
+    } else {
+        let msg = crate::load::shell_quote(&format!("no softraid volume on {chunk}"));
+        format!(
+            "v=$(bioctl softraid0 2>/dev/null | C={qc} awk '{{ for (i = 1; i <= NF; i++) if ($i ~ /^sd[0-9]+$/) d = $i }} index($0, \"<\" ENVIRON[\"C\"] \">\") {{ print d; exit }}'); [ -n \"$v\" ] || {{ echo {msg} >&2; exit 1; }}; "
+        )
+    }
+}
+
+fn safe_run_token(s: &str) -> String {
+    let out: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' }).collect();
+    if out.is_empty() || out.trim_matches('.').is_empty() { "vol".into() } else { out }
 }
 
 /// The passphrase file bioctl -p reads: a copy of --key-file's, owned by
 /// root and mode 600, as bioctl wants it.
 fn pass_file(name: &str) -> String {
-    format!("{RUN_DIR}/keys/{name}.pass")
+    format!("{RUN_DIR}/keys/{}.pass", safe_run_token(name))
 }
 
 /// The shell command that copies --key-file's FILE to `to` for bioctl -p:
@@ -390,7 +403,7 @@ impl Builder<'_> {
                 }
                 out.push(Cmd::new(&["sh", "-c", &format!("{find}fdisk -iy \"$v\"")]).why(format!("{shown}: the new volume, bioctl softraid0's Device for <{at}>; its own MBR, as the source's")));
             }
-            let proto = format!("{RUN_DIR}/{}.disklabel", v.name);
+            let proto = format!("{RUN_DIR}/{}.disklabel", safe_run_token(&v.name));
             out.push(Cmd::write_file(&proto, label));
             out.push(Cmd::new(&["sh", "-c", &format!("{find}disklabel -R \"$v\" {}", crate::load::shell_quote(&proto))]).why(format!("{}'s disklabel, on {shown}", v.name)));
             out.push(Cmd::new(&["sh", "-c", &format!("{find}printf 'i\\n%s\\nw\\nq\\n' {} | disklabel -E \"$v\" >/dev/null", crate::load::shell_quote(&duid))]).why(format!("{}'s disklabel UID, {duid}: its partitions are {duid}.a and so on from here", v.name)));
@@ -517,6 +530,10 @@ mod tests {
         let o = run("sd2a");
         assert!(!o.status.success());
         assert_eq!(String::from_utf8_lossy(&o.stderr), "no softraid volume on sd2a\n");
+        let bad = "sd0a'\"; id #";
+        let o = run(bad);
+        assert!(!o.status.success());
+        assert_eq!(String::from_utf8_lossy(&o.stderr), format!("no softraid volume on {bad}\n"));
     }
 
     /// The openbsd8-crypt guest, shrunk: sd0's MBR (slot 3, OpenBSD) and the

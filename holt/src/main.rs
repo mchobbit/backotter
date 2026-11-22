@@ -209,6 +209,11 @@ fn dump(args: &[String]) -> ExitCode {
     let text = if compact { report.compact() + "\n" } else { report.pretty() };
     // Never a recovery key, whatever a file the dump read held.
     let text = bko_holt::redact::scrub_recovery_keys(&text);
+    if text.len() as u64 > bko_holt::LAYOUT_MAX {
+        eprintln!("bko-holt dump: the layout is {} bytes, more than load reads ({}): not written", text.len(), bko_holt::LAYOUT_MAX);
+        eprint!("{}", report_hint());
+        return ExitCode::from(3);
+    }
     let mut out = std::io::stdout().lock();
     if out.write_all(text.as_bytes()).and_then(|_| out.flush()).is_err() {
         return ExitCode::from(1);

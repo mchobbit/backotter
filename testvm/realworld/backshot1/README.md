@@ -362,58 +362,102 @@ bootstrap in QEMU under Secure Boot: a blank NVMe, the ISO on a USB drive,
 then the disk alone by the NVRAM entry, with grub.cfg checked for other
 disks' systems.  Written 2026-11-15, not yet run.
 
-## Slackware 15.0: installpkg and ELILO, from the stick
+## Slackware (15.0 or pinned -current): installpkg and ELILO, from the stick
 
 Slackware's setup is a dialog-driven ramdisk with no answer file.
 `slackware-bootstrap.sh` installs it from the stick the way the
 `slackware15-uefi` guest is built (`make-bootstrap.sh slackware-uefi`,
-`bootstrap/slackware.sh`; docs/design/slackware.md):
+`bootstrap/slackware.sh`; docs/design/slackware.md).  The Thinkpad runs
+slackware64-current since 2026-11-22, from one pinned tree:
 
     sudo bash /mnt/bs1-backup/backshot1/slackware/slackware-bootstrap.sh SERIAL \
-        /mnt/bs1-backup/backshot1/keys thinkpad /mnt/bs1-backup/slackware-cache
+        /mnt/bs1-backup/backshot1/keys thinkpad /mnt/bs1-backup/slackware-cache current-20261121
 
-(`testvm/realworld/slackware-bootstrap.sh`).  First it fetches what the
-cache lacks of the 15.0 tree from slackware.osuosl.org.  That is
-CHECKSUMS.md5, checked with gpgv against Slackware's key (pinned by
-fingerprint), then the 809 packages of series a, ap, d, l and n (all but
-kernel-huge), each checked against its MD5 and its own .asc.  Only then
-does it erase the disk with that serial, which must be an NVMe disk:
-fstab and root= name the root by device, as setup writes them, and a SATA
-disk is sdb beside the stick but sda without it.  It lays the
-disk out as GPT: a 512 MiB ESP at /boot/efi and ext4 / for the rest, with
-no swap.  / is made with the tree's own mke2fs.conf, so it gets no
-orphan_file.  Then it installs every package with Slackware's own
-`installpkg --root`, running the doinst.sh scripts under bash.  After that
-it writes what setup's configuration steps write: fstab and root= by
-device name, `thinkpad.localdomain`, Europe/Paris, and DHCP on eth0-eth2.
-The machine's wired adapters are pinned to those names in
-`70-persistent-net.rules`, onboard first.  It builds mkinitrd's initrd
-from `mkinitrd_command_generator.sh`'s command and puts ELILO's four files
-in `EFI/Slackware` (and `EFI/BOOT`).  The NVRAM entry "Slackware" goes
-first, and is also set as BootNext.  The disk's old entries are removed.
-sshd is on, root logs in by key only (its password field is `*`), and the
-fixed host key is installed.  Slackware's key goes into root's keyring for
-slackpkg.  There is a user `m` with no password: set one with
-`passwd m`.  Slackware 15.0 has no avahi, so `thinkpad.local` doesn't
-resolve: find the address by the MAC (`arp -an` on the Mac).  The tree is
-15.0 as released (kernel 5.15.19); `slackpkg update && slackpkg
-upgrade-all` brings in patches/.  That includes kernel-generic and
+Leave out the last argument (RELEASE) for 15.0.
+(`testvm/realworld/slackware-bootstrap.sh`; the copy on the backup drive
+is in `backshot1/slackware/`, with `slackware-pin.sh` and the runs' logs.)
+
+**The pin.**  -current changes daily, so every install and restore test of
+the -current Thinkpad uses the tree `slackware-pin.sh` fetched on
+2026-11-22: `slackware-cache/current-20261121` on mybig512, the ChangeLog
+entry of Sat Nov 21 23:11:21 UTC 2026, CHECKSUMS.md5 SHA-256
+`9418aee6...eb9917`, 3049 files (999 packages of a, ap, d, l and n, the
+top-level files, `slackware64/`'s FILE_LIST and MANIFEST.bz2), 2.9 GB, from
+slackware.osuosl.org.  It is read-only (`chmod -R a-w`) and has a
+`PINNED.txt`; `testvm/realworld/slackware-current.pin` documents it in the
+repo.  slackware-pin.sh checks CHECKSUMS.md5 with gpgv against Slackware's
+key (the tree's GPG-KEY, held to its fingerprint), every file against its
+MD5, and every package against its .asc; run again, it checks the pin
+instead of fetching.  slackware-bootstrap.sh never fetches into a pin: it
+holds CHECKSUMS.md5 to the SHA-256 in its `PINS` table, then checks each
+package as for 15.0, and stops if one is missing or fails.  A new pin
+means a new `current-DATE` and a new `PINS` row.
+
+For 15.0 it first fetches what the cache lacks of the 15.0 tree from
+slackware.osuosl.org: CHECKSUMS.md5, checked with gpgv against Slackware's
+key (pinned by fingerprint), then the 809 packages of series a, ap, d, l
+and n (all but kernel-huge), each checked against its MD5 and its own .asc.
+Only then does it erase the disk with that serial, which must be an NVMe
+disk: fstab and root= name the root by device, as setup writes them, and a
+SATA disk is sdb beside the stick but sda without it.  It lays the disk out
+as GPT: a 512 MiB ESP at /boot/efi and ext4 / for the rest, with no swap.
+/ is made with the tree's own mke2fs.conf (15.0's has no orphan_file, which
+its e2fsck refuses; -current's e2fsprogs 1.47.4 has it).  Then it installs
+every package with Slackware's own `installpkg --root`, running the
+doinst.sh scripts under bash.  After that it writes what setup's
+configuration steps write: fstab and root= by device name,
+`thinkpad.localdomain`, Europe/Paris, and DHCP on eth0-eth2.  The machine's
+wired adapters are pinned to those names in `70-persistent-net.rules`,
+onboard first.  The initrd is mkinitrd's: for 15.0 from
+`mkinitrd_command_generator.sh`'s command, for -current by `geninitrd`
+(setup's `setup.01.mkinitrd`, GENERATOR=mkinitrd, which runs the same
+generator) into `/boot/initrd-VERSION.img`.  ELILO's four files go in
+`EFI/Slackware` (and `EFI/BOOT`).  The NVRAM entry "Slackware" goes first,
+and is also set as BootNext.  The disk's old entries are removed.  sshd is
+on, root logs in by key only (its password field is `*`), and the fixed
+host key is installed.  Slackware's key goes into root's keyring for
+slackpkg.  There is a user `m` with no password: set one with `passwd m`.
+-current has avahi and nss-mdns (series l and n): avahi-daemon runs
+(`rc.avahidaemon`) and nsswitch.conf asks `mdns4_minimal` first, as
+shipped, so `thinkpad.local` resolves.  Slackware 15.0 has no avahi: find
+its address by the MAC (`arp -an` on the Mac).
+
+-current, kernel-generic 7.3.5 (modules bundled; it has had no kernel-huge
+or kernel-modules since 2024): two things differ from setup.
+`/etc/default/geninitrd` gets `AUTO_UPDATE_GRUB=false`: ELILO boots the
+machine, and update-grub's os-prober mounted the stick's and the backup
+drive's partitions on the first run.  And the chroot's gpg (2.4) left
+keyboxd and gpg-agent running there, which kept the target busy, so they
+are stopped (`gpgconf --kill all`).  The ESP keeps a copy of the kernel and
+initrd (ELILO boots `EFI/Slackware`'s, not /boot's), so after a kernel
+upgrade run `eliloconfig` (or copy `/boot/vmlinuz-generic` and
+`/boot/initrd-generic.img` to `EFI/Slackware/vmlinuz` and `initrd.gz`).
+geninitrd makes the initrd itself when the kernel package is installed.
+slackpkg's mirror is osuosl's slackware64-current, which isn't the pin: an
+`upgrade-all` leaves it.
+
+15.0: the tree is 15.0 as released (kernel 5.15.19); `slackpkg update &&
+slackpkg upgrade-all` brings in patches/.  That includes kernel-generic and
 kernel-modules, but the ESP keeps the old `vmlinuz` and `initrd.gz` in
-`EFI/Slackware` (ELILO boots those, not /boot's), and the old
-/lib/modules is gone: the machine would boot the old kernel without its
-modules, so without its network driver.  Before rebooting, make the new
-kernel's initrd and copy both to `EFI/Slackware`: yes at slackpkg's kernel
-prompts, or by hand, mkinitrd with the command
+`EFI/Slackware`, and the old /lib/modules is gone: the machine would boot
+the old kernel without its modules, so without its network driver.  Before
+rebooting, make the new kernel's initrd and copy both to `EFI/Slackware`:
+yes at slackpkg's kernel prompts, or by hand, mkinitrd with the command
 `/usr/share/mkinitrd/mkinitrd_command_generator.sh -r -k NEW_VERSION`
 prints, then `eliloconfig`.  (`EFI/BOOT`, the fallback, keeps the old
 pair.)  `bs1-adopt` has no Slackware arm yet.
+
 The stick isn't setup's ramdisk, so installpkg runs with Slackware's own
 tar, `--numeric-owner`, and bash as `sh`.  The doinst.sh scripts that
-chown by name run a second time in the chroot.  Ubuntu's tar 1.35 dropped
-every `var/log/setup` file (it won't extract through a symlink), and names
-map to Ubuntu's IDs.  Run on the Thinkpad 2026-11-22: about 9 minutes
-with the cache full.  It booted by the NVRAM entry, and root SSH answered
-at 192.168.68.67 68 s after the reboot.
+chown by name run a second time in the chroot.  Ubuntu's tar 1.35 drops
+every `var/log/setup` file (it won't extract through a symlink; -current's
+own tar 1.35 does, tried 2026-11-22), and names map to Ubuntu's IDs.  All
+four are still needed for -current.  Run on the Thinkpad: 15.0 on
+2026-11-22, about 9 minutes with the cache full, root SSH at
+192.168.68.67 68 s after the reboot.  -current (pin current-20261121) the
+same day, about 11 minutes: it booted kernel 7.3.5 by the NVRAM entry, and
+`ssh root@thinkpad.local` answered 72 s after the reboot (by address too,
+192.168.68.65); mybig512 mounts there (`mount -L mybig512 /mnt/bs1-backup`).
 
 ## Void musl on encrypted ZFS, ZFSBootMenu (family Z)
 

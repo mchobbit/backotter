@@ -1,64 +1,94 @@
 #!/bin/bash
-# Install Slackware 15.0 on a real machine from another running Linux (the
-# BackOtter rescue stick), the way the slackware15-uefi test guest is built
-# (testvm/make-bootstrap.sh slackware-uefi, testvm/bootstrap/slackware.sh):
-# Slackware's own installpkg --root of the series a, ap, d, l and n (less
-# kernel-huge) in setup's order, from the 15.0 tree checked against
-# Slackware's key, then the files setup's configuration steps write, the
-# generic kernel with mkinitrd's initrd, and ELILO in EFI/Slackware with its
-# NVRAM entry, as eliloconfig makes it.  For BackShot1
-# (docs/design/slackware.md, S8).  As root, on the rescue:
+# Install Slackware (15.0, or a pinned slackware64-current) on a real
+# machine from another running Linux (the BackOtter rescue stick), the way
+# the slackware15-uefi test guest is built (testvm/make-bootstrap.sh
+# slackware-uefi, testvm/bootstrap/slackware.sh): Slackware's own installpkg
+# --root of the series a, ap, d, l and n (less kernel-huge, where there is
+# one) in setup's order, from a tree checked against Slackware's key, then
+# the files setup's configuration steps write, the generic kernel with
+# mkinitrd's initrd, and ELILO in EFI/Slackware with its NVRAM entry, as
+# eliloconfig makes it.  For BackShot1 (docs/design/slackware.md, S8).  As
+# root, on the rescue:
 #
-#   slackware-bootstrap.sh SERIAL KEYS_DIR HOSTNAME CACHE_DIR
+#   slackware-bootstrap.sh SERIAL KEYS_DIR HOSTNAME CACHE_DIR [RELEASE]
 #
 #   SERIAL     the one disk to ERASE, by serial number (lsblk -dno SERIAL)
 #   KEYS_DIR   authorized_keys (root's login) and ssh_host_ed25519_key{,.pub}
 #              (the fixed host key), BackShot1's keys/ on the backup drive
 #   HOSTNAME   the installed system's host name (BackShot1's: thinkpad)
-#   CACHE_DIR  where the tree is kept between runs (slackware64-15.0/ and the
-#              key), on a disk other than SERIAL's: on the backup drive,
-#              /mnt/bs1-backup/slackware-cache
+#   CACHE_DIR  where the trees are kept (slackware64-15.0/, the pins
+#              current-DATE/, and the key), on a disk other than SERIAL's: on
+#              the backup drive, /mnt/bs1-backup/slackware-cache
+#   RELEASE    15.0 (the default), or current-DATE: the slackware64-current
+#              tree slackware-pin.sh pinned in CACHE_DIR/current-DATE
+#              (current-20261121, the ChangeLog entry of Sat Nov 21 23:11:21
+#              UTC 2026; testvm/realworld/slackware-current.pin)
 #
-# The tree comes from MIRROR into CACHE_DIR (only what is missing):
+# 15.0: the tree comes from MIRROR into CACHE_DIR (only what is missing):
 # CHECKSUMS.md5 and its .asc, checked with gpgv against Slackware's key (the
 # mirror's GPG-KEY, held to SLACKWARE_KEY's fingerprint), then each package
 # of the list against its MD5 there and its own .asc, as make-bootstrap.sh
 # checks it; a cached package that fails is fetched again once, with its
-# .asc.  All before the disk is touched.
+# .asc.  A pin is never fetched or changed (it is read-only): its
+# CHECKSUMS.md5 is held to the SHA-256 PINS has for it below, then checked
+# the same way, with the key from its own GPG-KEY (fingerprint held too); a
+# package missing or failing stops the run.  All before the disk is
+# touched.
 #
 # Layout (UEFI, GPT): a 512 MiB ESP (vfat) at /boot/efi and ext4 / for the
-# rest, made with the tree's own mke2fs.conf (e2fsprogs 1.46.5's e2fsck
-# refuses the live system's orphan_file); no swap.  fstab and root= by
+# rest, made with the tree's own mke2fs.conf (15.0's e2fsprogs 1.46.5's
+# e2fsck refuses the live system's orphan_file; -current's 1.47.4 has
+# orphan_file in its own mke2fs.conf); no swap.  fstab and root= by
 # device name, as setup writes them, so an NVMe disk only: its name is the
 # same with the stick plugged in or not (a SATA disk is sdb beside the
-# stick, sda without it).  The generic kernel, mkinitrd's initrd
-# from the command mkinitrd_command_generator.sh prints, ELILO's four files
-# in EFI/Slackware (and EFI/BOOT, as the guest has them), its NVRAM entry
-# "Slackware" first in BootOrder and as BootNext.  NVRAM entries for the
-# disk's old ESP go.  Then: the host name (HOSTNAME.localdomain), DHCP from
-# rc.inet1 on eth0-eth2 with the machine's wired adapters pinned to those
-# names (70-persistent-net.rules, the onboard ones first), Europe/Paris,
-# sshd on, root by key only (PermitRootLogin prohibit-password; root's
-# password field "*"), the fixed host key, slackpkg's mirror and Slackware's
-# key in root's keyring, and a user m with no password (locked: the person
-# sets one).  No password is set anywhere.  Slackware 15.0 has no avahi:
-# the machine answers by address, not HOSTNAME.local.
+# stick, sda without it).  The generic kernel, mkinitrd's initrd (15.0: from
+# the command mkinitrd_command_generator.sh prints; -current: geninitrd,
+# setup's setup.01.mkinitrd, which runs that generator itself), ELILO's four
+# files in EFI/Slackware (and EFI/BOOT, as the guest has them), its NVRAM
+# entry "Slackware" first in BootOrder and as BootNext.  NVRAM entries for
+# the disk's old ESP go.  Then: the host name (HOSTNAME.localdomain), DHCP
+# from rc.inet1 on eth0-eth2 with the machine's wired adapters pinned to
+# those names (70-persistent-net.rules, the onboard ones first),
+# Europe/Paris, sshd on, root by key only (PermitRootLogin
+# prohibit-password; root's password field "*"), the fixed host key,
+# slackpkg's mirror and Slackware's key in root's keyring, and a user m with
+# no password (locked: the person sets one).  No password is set anywhere.
+# Slackware 15.0 has no avahi: the machine answers by address, not
+# HOSTNAME.local.  -current has l/avahi and n/nss-mdns: avahi-daemon is on
+# (rc.avahidaemon) and nsswitch.conf asks mdns4_minimal, so HOSTNAME.local
+# answers.
 #
-# Where the rescue (Ubuntu) isn't setup's ramdisk: installpkg runs with Slackware's own tar, with
-# --numeric-owner, and bash as sh; the doinst.sh scripts that chown by name
-# run once more in the chroot; mkinitrd's NVMe driver is the kernel's own
-# (built in), not a module.  Each is said where it's done.
+# Where the rescue (Ubuntu) isn't setup's ramdisk: installpkg runs with
+# Slackware's own tar, with --numeric-owner, and bash as sh; the doinst.sh
+# scripts that chown by name run once more in the chroot; mkinitrd's NVMe
+# driver is the kernel's own (built in), not a module.  Each is said where
+# it's done; all four are still needed for -current (2026-11-22).
 # Prints BKO-SLACKWARE-INSTALL-OK.
 
 set -eEuo pipefail
 main_pid=$$
 trap '[[ $BASHPID == "$main_pid" ]] && echo "slackware-bootstrap: failed at line $LINENO: $BASH_COMMAND" >&2' ERR
-SERIAL=${1:?usage: slackware-bootstrap.sh SERIAL KEYS_DIR HOSTNAME CACHE_DIR}
-KEYS=${2:?usage: slackware-bootstrap.sh SERIAL KEYS_DIR HOSTNAME CACHE_DIR}
-HOST=${3:?usage: slackware-bootstrap.sh SERIAL KEYS_DIR HOSTNAME CACHE_DIR}
-CACHE=${4:?usage: slackware-bootstrap.sh SERIAL KEYS_DIR HOSTNAME CACHE_DIR}
+usage="usage: slackware-bootstrap.sh SERIAL KEYS_DIR HOSTNAME CACHE_DIR [RELEASE]"
+SERIAL=${1:?$usage}
+KEYS=${2:?$usage}
+HOST=${3:?$usage}
+CACHE=${4:?$usage}
+RELEASE=${5:-15.0}
+# The pins of slackware64-current (slackware-pin.sh): each one's
+# CHECKSUMS.md5, by SHA-256.  testvm/realworld/slackware-current.pin.
+declare -A PINS=(
+    [current-20261121]=9418aee6f8c5a06d1b051c2d25064d468cc0b19946912fc2898a949ee7fb9917
+)
 # make-bootstrap.sh's SLACKWARE_MIRROR, SLACKWARE_KEY and SLACKWARE_SERIES.
-MIRROR=https://slackware.osuosl.org/slackware64-15.0
+# For a pin, MIRROR is only slackpkg's (the installed system's): the tree
+# itself is the pin.
+case $RELEASE in
+15.0) MIRROR=https://slackware.osuosl.org/slackware64-15.0 PIN_SHA= ;;
+current-*)
+    [[ -n ${PINS[$RELEASE]:-} ]] || { echo "slackware-bootstrap: no pin $RELEASE (pins: ${!PINS[*]})" >&2; exit 1; }
+    MIRROR=https://slackware.osuosl.org/slackware64-current PIN_SHA=${PINS[$RELEASE]} ;;
+*) echo "slackware-bootstrap: RELEASE is 15.0 or current-DATE (pins: ${!PINS[*]}), not \"$RELEASE\"" >&2; exit 1 ;;
+esac
 SLACKWARE_KEY=EC5649DA401E22ABFA6736EF6A4463C040102233
 SLACKWARE_SERIES="a ap d l n"
 KERNEL=generic OTHER_KERNEL=huge
@@ -74,12 +104,18 @@ step() { echo "== $(date +%T) $*"; }
 [[ $EUID -eq 0 ]] || die "run it as root"
 [[ -d /sys/firmware/efi/efivars ]] || die "this system wasn't booted by UEFI (this installs ELILO)"
 for f in authorized_keys ssh_host_ed25519_key ssh_host_ed25519_key.pub; do [[ -s $KEYS/$f ]] || die "no $KEYS/$f"; done
-for t in curl gpg gpgv md5sum xz tar sfdisk wipefs mkfs.fat mkfs.ext4 dumpe2fs blkid blockdev udevadm chroot efibootmgr lsblk findmnt xargs; do
+for t in curl gpg gpgv md5sum sha256sum xz tar sfdisk wipefs mkfs.fat mkfs.ext4 dumpe2fs blkid blockdev udevadm chroot efibootmgr lsblk findmnt xargs; do
     command -v $t >/dev/null || die "this system has no $t"
 done
 [[ $HOST =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "HOSTNAME \"$HOST\" isn't a plain host name"
 [[ -d $CACHE ]] || die "no $CACHE"
 CACHE=$(realpath "$CACHE")
+if [[ -n $PIN_SHA ]]; then
+    tree=$CACHE/$RELEASE
+    [[ -s $tree/CHECKSUMS.md5 && -s $tree/PINNED.txt ]] || die "no pinned tree $tree (slackware-pin.sh makes it)"
+else
+    tree=$CACHE/slackware64-15.0
+fi
 
 # The disk, by serial and nothing else.
 mapfile -t disks < <(lsblk -dnpo NAME,SERIAL | awk -v s="$SERIAL" '$2 == s { print $1 }')
@@ -130,43 +166,58 @@ cleanup() {
 trap cleanup EXIT
 
 # --- The tree, checked (make-bootstrap.sh's "slackware" case) ------------------------
-step "Slackware's key and the tree's CHECKSUMS.md5, in $CACHE"
-tree=$CACHE/slackware64-15.0
-mkdir -p "$tree"
-keyring=$CACHE/slackware-key.gpg
-if [[ ! -s $keyring ]]; then
-    # The mirror's GPG-KEY, but only the key with SLACKWARE_KEY's fingerprint
-    # out of it (as in-guest.sh fetches it when slackpkg's keyring lacks it).
-    curl -fsS --retry 3 -o "$tmp/GPG-KEY" "$MIRROR/GPG-KEY"
+step "Slackware's key and the tree's CHECKSUMS.md5, in $tree"
+# key_from GPG-KEY OUT: the key with SLACKWARE_KEY's fingerprint out of a
+# GPG-KEY file (as in-guest.sh fetches it when slackpkg's keyring lacks it).
+key_from() {
     mkdir -m 700 "$tmp/gnupg"
-    GNUPGHOME=$tmp/gnupg gpg -q --batch --import "$tmp/GPG-KEY"
+    GNUPGHOME=$tmp/gnupg gpg -q --batch --import "$1"
     GNUPGHOME=$tmp/gnupg gpg --batch --with-colons --fingerprint --list-keys "$SLACKWARE_KEY" | grep -q "^fpr:*$SLACKWARE_KEY:" ||
-        die "the mirror's GPG-KEY is not Slackware's key $SLACKWARE_KEY"
-    GNUPGHOME=$tmp/gnupg gpg -q --batch --export "$SLACKWARE_KEY" >"$keyring.part"
+        die "$1 is not Slackware's key $SLACKWARE_KEY"
+    GNUPGHOME=$tmp/gnupg gpg -q --batch --export "$SLACKWARE_KEY" >"$2.part"
     # Its keyboxd or agent would keep $tmp busy.
     gpgconf --homedir "$tmp/gnupg" --kill all 2>/dev/null || true
-    mv "$keyring.part" "$keyring"
-fi
-if [[ ! -s $tree/CHECKSUMS.md5.asc ]] || ! gpgv --keyring "$keyring" "$tree/CHECKSUMS.md5.asc" "$tree/CHECKSUMS.md5" 2>/dev/null; then
-    curl -fsS --retry 3 -o "$tree/CHECKSUMS.md5" "$MIRROR/CHECKSUMS.md5"
-    curl -fsS --retry 3 -o "$tree/CHECKSUMS.md5.asc" "$MIRROR/CHECKSUMS.md5.asc"
+    rm -rf "$tmp/gnupg"
+    mv "$2.part" "$2"
+}
+if [[ -n $PIN_SHA ]]; then
+    # The pin's own GPG-KEY; nothing written to the pin.
+    keyring=$tmp/slackware-key.gpg
+    key_from "$tree/GPG-KEY" "$keyring"
+    got=$(sha256sum <"$tree/CHECKSUMS.md5" | cut -d' ' -f1)
+    [[ $got == "$PIN_SHA" ]] || die "$tree/CHECKSUMS.md5 is not the pinned one (sha256 $got, pinned $PIN_SHA)"
+    sed -n 's/^CHANGELOG_FIRST_ENTRY=/pinned slackware64-current: ChangeLog of /p' "$tree/PINNED.txt"
+else
+    mkdir -p "$tree"
+    keyring=$CACHE/slackware-key.gpg
+    if [[ ! -s $keyring ]]; then
+        curl -fsS --retry 3 -o "$tmp/GPG-KEY" "$MIRROR/GPG-KEY"
+        key_from "$tmp/GPG-KEY" "$keyring"
+    fi
+    if [[ ! -s $tree/CHECKSUMS.md5.asc ]] || ! gpgv --keyring "$keyring" "$tree/CHECKSUMS.md5.asc" "$tree/CHECKSUMS.md5" 2>/dev/null; then
+        curl -fsS --retry 3 -o "$tree/CHECKSUMS.md5" "$MIRROR/CHECKSUMS.md5"
+        curl -fsS --retry 3 -o "$tree/CHECKSUMS.md5.asc" "$MIRROR/CHECKSUMS.md5.asc"
+    fi
 fi
 gpgv --keyring "$keyring" "$tree/CHECKSUMS.md5.asc" "$tree/CHECKSUMS.md5" 2>/dev/null ||
     die "$tree/CHECKSUMS.md5 is not signed by Slackware's key"
 
 # setup's order: by series as listed, by name within one; the other kernel
-# left out.  The same list make-bootstrap.sh builds for slackware15-uefi.
+# left out (15.0's kernel-huge; -current has none since 2024-09-13, its
+# kernel-generic holding the modules, and no kernel-modules either).  The
+# same list make-bootstrap.sh builds for slackware15-uefi.
 series_re=$(tr ' ' '|' <<<"$SLACKWARE_SERIES")
 grep -E "  \./slackware64/($series_re)/[^/]+\.txz\$" "$tree/CHECKSUMS.md5" | sed 's|  \./|  |' >"$tmp/sums"
 [[ -s $tmp/sums ]] || die "CHECKSUMS.md5 lists no packages in series $SLACKWARE_SERIES"
 for sr in $SLACKWARE_SERIES; do
     awk -v s="slackware64/$sr/" 'index($2, s) == 1 { print $2 }' "$tmp/sums" | sort
 done | grep -v "/kernel-$OTHER_KERNEL-[^/]*\.txz\$" >"$tmp/pkglist.txt"
-cp "$tmp/pkglist.txt" "$CACHE/pkglist.txt"
+if [[ -n $PIN_SHA ]]; then cp "$tmp/pkglist.txt" "$CACHE/pkglist-$RELEASE.txt"; else cp "$tmp/pkglist.txt" "$CACHE/pkglist.txt"; fi
 npkg=$(wc -l <"$tmp/pkglist.txt")
 
 step "fetching what the cache lacks of $npkg packages"
 missing=$(cd "$tree" && while read -r p; do [[ -f $p && -f $p.asc ]] || echo "$p"; done <"$tmp/pkglist.txt")
+[[ -z $PIN_SHA || -z $missing ]] || die "the pin $tree lacks $(wc -l <<<"$missing") packages (or their .asc), as $(head -n 1 <<<"$missing")"
 if [[ -n $missing ]]; then
     echo "downloading $(wc -l <<<"$missing") packages and their .ascs from $MIRROR"
     # One file a curl, six at a time; each lands under its .part name first.
@@ -187,6 +238,7 @@ pkg_ok() {
 refetched=0
 while read -r p; do
     pkg_ok "$p" && continue
+    [[ -z $PIN_SHA ]] || die "$tree/$p, pinned, doesn't match CHECKSUMS.md5 or isn't signed by Slackware's key"
     echo "$tree/$p: its MD5 or .asc doesn't check; fetching both again"
     rm -f "$tree/$p" "$tree/$p.asc"
     for f in "$p" "$p.asc"; do
@@ -238,6 +290,9 @@ for p in "$ESP" "$ROOT"; do dd if=/dev/zero of="$p" bs=1M count=4 conv=fsync sta
 
 step "file systems, with Slackware's own mke2fs.conf"
 # bootstrap/slackware.sh's ext4 arm: the tree's e2fsprogs's mke2fs.conf.
+# 15.0's (1.46.5) has no orphan_file, which its e2fsck refuses and the
+# rescue's (1.47.4) would add; -current's e2fsprogs is the rescue's 1.47.4,
+# whose mke2fs.conf has it.  The tree's either way, as setup makes it.
 e2p=$(pkg_file e2fsprogs)
 tar -xJOf "$tree/$e2p" etc/mke2fs.conf.new >"$tmp/slk-mke2fs.conf"
 grep -q '^[[:space:]]*ext4 = {' "$tmp/slk-mke2fs.conf" || die "no ext4 in $e2p's mke2fs.conf"
@@ -245,7 +300,9 @@ mkfs.fat -F 32 -n EFI "$ESP" >/dev/null
 MKE2FS_CONFIG=$tmp/slk-mke2fs.conf mkfs.ext4 -q -F "$ROOT"
 features=$(dumpe2fs -h "$ROOT" 2>/dev/null | sed -n 's/^Filesystem features:[[:space:]]*//p')
 echo "ext4 features: $features"
-[[ " $features " != *" orphan_file "* ]] || die "/ has orphan_file, which Slackware 15's e2fsck refuses"
+case $e2p in
+*/e2fsprogs-1.4[0-6].*) [[ " $features " != *" orphan_file "* ]] || die "/ has orphan_file, which ${e2p##*/}'s e2fsck refuses" ;;
+esac
 udevadm settle
 mount -t ext4 "$ROOT" "$T"
 mkdir -p "$T/boot/efi"
@@ -254,11 +311,12 @@ mount -t vfat "$ESP" "$T/boot/efi"
 # --- The packages (bootstrap/slackware.sh) ----------------------------------------------
 step "installpkg --root of $npkg packages"
 # Slackware's pkgtools, unpacked beside the rescue's own tools, with
-# Slackware's tar (1.34) for it: Ubuntu 26.10's tar 1.35 won't extract
-# through a symbolic link to a directory even with --keep-directory-symlink
-# ("Cannot open: Invalid cross-device link"), so every package's
-# var/log/setup/ files (var/log/setup -> ../lib/pkgtools/setup) were lost,
-# unseen: installpkg drops tar's errors.  And installpkg runs each doinst.sh
+# Slackware's tar for it (15.0's 1.34, -current's 1.35): Ubuntu 26.10's tar
+# 1.35 won't extract through a symbolic link to a directory even with
+# --keep-directory-symlink ("Cannot open: Invalid cross-device link"), so
+# every package's var/log/setup/ files (var/log/setup ->
+# ../lib/pkgtools/setup) were lost, unseen: installpkg drops tar's errors.
+# Slackware's own 1.35 extracts them (tried on the stick, 2026-11-22).  And installpkg runs each doinst.sh
 # with "sh" from PATH: Slackware's (and the Arch live system's, where the
 # guests are built) is bash; the rescue's is dash.
 pkgtools=$(pkg_file pkgtools) slktar=$(pkg_file tar)
@@ -274,12 +332,14 @@ ln -s "$(command -v bash)" "$tmp/bin/sh"
 # after installpkg's own arguments: its "tar tf -" needs tf first.
 printf '#!/bin/sh\nexec %q "$@" --numeric-owner\n' "$tmp/pkgtools/bin/tar" >"$tmp/bin/tar"
 chmod 755 "$tmp/bin/tar"
-PATH=$tmp/bin:$PATH tar --version | head -n 1 | grep -q ' 1\.34$' || die "Slackware's tar ($slktar) doesn't run here"
+tarver=${slktar##*/tar-} tarver=${tarver%%-*}
+PATH=$tmp/bin:$PATH tar --version | head -n 1 | grep -qF " $tarver" || die "Slackware's tar ($slktar) doesn't run here"
 t0=$(date +%s)
 n=0
 while read -r p; do
-    # --terse: one line a package, as setup's "terse" mode.
-    PATH=$tmp/bin:$PATH "$installpkg" --root "$T" --terse "$tree/$p" </dev/null
+    # --terse: one line a package, as setup's "terse" mode.  Its line is
+    # "tput cols" wide: TERM=dumb's 80, whatever (or no) terminal this runs on.
+    TERM=dumb PATH=$tmp/bin:$PATH "$installpkg" --root "$T" --terse "$tree/$p" </dev/null
     n=$((n + 1))
 done <"$tmp/pkglist.txt"
 echo "installed $n packages in $(( $(date +%s) - t0 )) s"
@@ -293,7 +353,13 @@ lost=$(sort -u <<<"$lost" | grep -v '^lib64/incoming/' || true)
 ! grep -q '^var/log/setup/' <<<"$lost" || die "setup's scripts in var/log/setup weren't installed"
 kver=$(ls "$T/lib/modules")
 [[ $(wc -w <<<"$kver") -eq 1 ]] || die "expected one kernel in /lib/modules, found: $kver"
-[[ -e $T/boot/vmlinuz-$KERNEL-$kver ]] || { ls -l "$T/boot"; die "no /boot/vmlinuz-$KERNEL-$kver"; }
+# 15.0's kernel-generic has /boot/vmlinuz-generic-VERSION; -current's has
+# /boot/vmlinuz-VERSION, and its doinst.sh points /boot/vmlinuz-generic at it.
+kfile=
+for k in "boot/vmlinuz-$KERNEL-$kver" "boot/vmlinuz-$kver"; do [[ -e $T/$k ]] && { kfile=$k; break; }; done
+[[ -n $kfile ]] || { ls -l "$T/boot"; die "no /boot/vmlinuz-$KERNEL-$kver or /boot/vmlinuz-$kver"; }
+[[ $(readlink -f "$T/boot/vmlinuz-$KERNEL") == "$(readlink -f "$T/$kfile")" ]] || { ls -l "$T/boot"; die "/boot/vmlinuz-$KERNEL isn't /$kfile"; }
+echo "kernel: /$kfile ($kver)"
 
 # Commands in the new system, with Slackware's PATH; a chroot with the
 # rescue's /dev, /proc, /sys and /run (arch-chroot's, by hand).  Each bind
@@ -415,6 +481,25 @@ in_slk /usr/bin/passwd -S root
 in_slk /usr/bin/passwd -S "$USER_NAME"
 in_slk /usr/sbin/sshd -t
 
+if [[ -n $PIN_SHA ]]; then
+    step "mDNS: avahi-daemon and nss-mdns, so $HOST.local answers"
+    # -current's l/avahi and n/nss-mdns (installed with their series), its
+    # etc's avahi user and group, and its nsswitch.conf, which asks
+    # mdns4_minimal before DNS as shipped; rc.M starts rc.avahidaemon (after
+    # rc.messagebus) when it's executable, as avahi ships it.  Made sure of.
+    for f in usr/sbin/avahi-daemon usr/lib64/libnss_mdns4_minimal.so.2 etc/rc.d/rc.avahidaemon etc/rc.d/rc.messagebus; do
+        [[ -e $T/$f ]] || die "no /$f (avahi, nss-mdns, dbus)"
+    done
+    grep -q '^avahi:' "$T/etc/passwd" && grep -q '^avahi:' "$T/etc/group" || die "no avahi user or group in /etc/passwd, /etc/group"
+    grep -q 'rc\.avahidaemon' "$T/etc/rc.d/rc.M" || die "rc.M doesn't start rc.avahidaemon"
+    chmod 755 "$T/etc/rc.d/rc.avahidaemon" "$T/etc/rc.d/rc.messagebus"
+    if ! grep -qE '^hosts:.*[[:space:]]mdns4_minimal[[:space:]]' "$T/etc/nsswitch.conf"; then
+        sed -i 's/^hosts:.*/hosts:          files mdns4_minimal [NOTFOUND=return] dns mdns4/' "$T/etc/nsswitch.conf"
+    fi
+    grep '^hosts:' "$T/etc/nsswitch.conf"
+    in_slk /usr/bin/getent passwd avahi
+fi
+
 step "slackpkg: the mirror and Slackware's key"
 # bootstrap/slackware.sh: the key the tree was checked with, in root's
 # keyring as slackpkg's import_gpg_key imports it.
@@ -424,16 +509,42 @@ in_slk gpg --batch --import /root/slackware-key.gpg
 rm "$T/root/slackware-key.gpg"
 in_slk gpg --batch --with-colons --fingerprint --list-keys "$SLACKWARE_KEY" | grep -q "^fpr:*$SLACKWARE_KEY:" ||
     die "Slackware's key $SLACKWARE_KEY is not in root's keyring"
+# -current's gnupg (2.4+) leaves keyboxd and gpg-agent running in the
+# chroot, holding /dev and the target busy (its first run's umount -R).
+in_slk gpgconf --kill all
 
 step "mkinitrd and ELILO"
-# mkinitrd as setup's "generate an initrd" step makes it: the command
-# mkinitrd_command_generator.sh prints for this root, run.
-cmd=$(in_slk /usr/share/mkinitrd/mkinitrd_command_generator.sh -r -k "$kver" | grep '^mkinitrd ')
-echo "mkinitrd command: $cmd"
-[[ $cmd == *ext4* ]] || die "the generated mkinitrd command has no ext4"
-in_slk sh -c "$cmd"
-[[ -s $T/boot/initrd.gz ]] || die "mkinitrd made no /boot/initrd.gz"
-listing=$(in_slk sh -c 'zcat /boot/initrd.gz | cpio -it --quiet')
+if [[ -n $PIN_SHA ]]; then
+    # -current's setup makes the initrd with setup.01.mkinitrd, which
+    # geninitrd runs: with no /etc/mkinitrd.conf, the command
+    # mkinitrd_command_generator.sh prints for the kernel /boot/vmlinuz-generic
+    # names, run, into /boot/initrd-VERSION.img, then /boot/initrd-generic.img
+    # and /boot/initrd.gz pointing at it (/etc/default/geninitrd's
+    # GENERATOR=mkinitrd, not dracut).  The kernel's own doinst.sh would have
+    # run it, but installpkg put the kernel in before mkinitrd (by name).
+    # Not setup's: AUTO_UPDATE_GRUB=false in /etc/default/geninitrd.  ELILO
+    # boots this machine, so update-grub's grub.cfg is never read, and its
+    # os-prober mounts every other disk's partitions to look for systems
+    # (the stick's and the backup drive's, here and at every kernel
+    # upgrade: the first run's did).
+    sed -i 's/^AUTO_UPDATE_GRUB=.*/AUTO_UPDATE_GRUB=false/' "$T/etc/default/geninitrd"
+    grep -qx 'AUTO_UPDATE_GRUB=false' "$T/etc/default/geninitrd" || die "/etc/default/geninitrd has no AUTO_UPDATE_GRUB"
+    in_slk sh -c 'cd / && /usr/sbin/geninitrd' </dev/null
+    [[ ! -e $T/boot/grub/grub.cfg ]] || die "geninitrd ran update-grub after all"
+    initrd=boot/initrd-$kver.img
+    [[ -s $T/$initrd ]] || { ls -l "$T/boot"; die "geninitrd made no /$initrd"; }
+    [[ $(readlink -f "$T/boot/initrd-$KERNEL.img") == "$T/$initrd" ]] || die "/boot/initrd-$KERNEL.img doesn't point at /$initrd"
+else
+    # mkinitrd as setup's "generate an initrd" step makes it: the command
+    # mkinitrd_command_generator.sh prints for this root, run.
+    cmd=$(in_slk /usr/share/mkinitrd/mkinitrd_command_generator.sh -r -k "$kver" | grep '^mkinitrd ')
+    echo "mkinitrd command: $cmd"
+    [[ $cmd == *ext4* ]] || die "the generated mkinitrd command has no ext4"
+    in_slk sh -c "$cmd"
+    initrd=boot/initrd.gz
+    [[ -s $T/$initrd ]] || die "mkinitrd made no /$initrd"
+fi
+listing=$(in_slk sh -c "zcat /$initrd | cpio -it --quiet")
 # The root disk's driver (nvme: only an NVMe disk gets this far) and ext4,
 # each in the initrd or built into the kernel (the generic kernel has nvme
 # and nvme-core built in).
@@ -454,10 +565,10 @@ for d in Slackware BOOT; do
     else
         cp -a "$T/boot/elilo-x86_64.efi" "$e/elilo.efi"
     fi
-    cp "$T/boot/vmlinuz-$KERNEL-$kver" "$e/vmlinuz"
-    touch -r "$T/boot/vmlinuz-$KERNEL-$kver" "$e/vmlinuz"
-    cp "$T/boot/initrd.gz" "$e/initrd.gz"
-    touch -r "$T/boot/initrd.gz" "$e/initrd.gz"
+    cp "$T/$kfile" "$e/vmlinuz"
+    touch -r "$T/$kfile" "$e/vmlinuz"
+    cp "$T/$initrd" "$e/initrd.gz"
+    touch -r "$T/$initrd" "$e/initrd.gz"
     cat >"$e/elilo.conf" <<EOF
 chooser=simple
 delay=1
@@ -505,7 +616,7 @@ cat "$T/etc/slackware-version"
 echo "kernel: $kver ($KERNEL); $(ls "$T/var/lib/pkgtools/packages" | wc -l) packages in /var/lib/pkgtools/packages"
 cat "$T/boot/efi/EFI/Slackware/elilo.conf"
 find "$T/boot/efi" -type f | sed "s|^$T||" | sort
-grep -E '/(nvme|ext4|jbd2|mbcache|crc32c)[^/]*\.ko' <<<"$listing" | sed 's|^|    initrd: |'
+{ grep -E '/(nvme|ext4|jbd2|mbcache|crc32c)[^/]*\.ko' <<<"$listing" || echo "(none of nvme, ext4, jbd2, mbcache, crc32c: built in)"; } | sed 's|^|    initrd: |'
 efibootmgr | grep -E '^Boot(Current|Next|Order)|Slackware'
 ls -l "$T"/etc/rc.d/rc.* | awk '$1 ~ /x/ { print "    on: " $NF }' | sed "s|$T||"
 grep -E '^USE_DHCP\[' "$T/etc/rc.d/rc.inet1.conf"

@@ -1,0 +1,39 @@
+# The Thinkpad's slackware64-current, pinned 2026-11-22 (BackShot1).
+# Every later install and restore test of the -current Thinkpad uses this
+# one tree, not whatever -current has become.  Made by slackware-pin.sh,
+# kept read-only on the backup drive (mybig512) at
+# slackware-cache/current-20261121, with its PINNED.txt; installed by
+#   slackware-bootstrap.sh SERIAL KEYS_DIR thinkpad CACHE_DIR current-20261121
+# which holds CHECKSUMS.md5 to the SHA-256 below (its PINS table).
+
+PIN=current-20261121
+TREE=slackware64-current
+MIRROR=https://slackware.osuosl.org/slackware64-current
+FETCHED=2026-11-22T06:32:37Z
+SERIES=a ap d l n
+FILES=3049
+PACKAGES=999
+BYTES=2911055642
+GPG_KEY_FINGERPRINT=EC5649DA401E22ABFA6736EF6A4463C040102233
+CHECKSUMS_MD5_SHA256=9418aee6f8c5a06d1b051c2d25064d468cc0b19946912fc2898a949ee7fb9917
+CHECKSUMS_MD5_ASC_SHA256=1569feb7e38445ec22cba0485f37e312b16acd5ad6d51ace956708424c12a04e
+CHANGELOG_SHA256=362508cfa59116bbe01c75e9be3669a98f168e6a1e16aa49732c39cf5eb9f2fd
+GPG_KEY_SHA256=82af92f3a9abdae815534912e7c438f1bad50b8516bb8d75fe9e08444f727daf
+CHANGELOG_FIRST_ENTRY=Sat Nov 21 23:11:21 UTC 2026
+
+# What the tree's release looks like (the installed system's):
+# kernel-generic 7.3.5 (modules bundled; no kernel-huge, no kernel-modules),
+# mkinitrd 1.4.11-81 (geninitrd, GENERATOR=mkinitrd), elilo 3.16-19,
+# e2fsprogs 1.47.4 (orphan_file in mke2fs.conf), pkgtools 16.0-4, tar 1.35,
+# aaa_base/etc 16.0, glibc 2.44, openssh 10.6p2, avahi 0.9_rc5,
+# nss-mdns 0.15.1, eudev 3.3.0.
+
+# The ChangeLog's header (its first entry's time and note; the entry itself
+# goes on with 491 kde/ and 27 l/ "Rebuilt." lines):
+#
+#   Sat Nov 21 23:11:21 UTC 2026
+#   Upgraded to qt-6.12.0 and the standalone qtwebengine-6.140.0.
+#   Initally there were some issues running the old qt-linked binaries
+#   against this, so all the KDE packages and most of the other qt-linked
+#   packages were recompiled, and everything seems good after that.
+#   Enjoy. :-)

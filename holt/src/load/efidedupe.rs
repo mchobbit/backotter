@@ -77,10 +77,16 @@ fn path_after(rest: &str) -> Option<String> {
     if !rest.starts_with(['\\', '/']) {
         return None;
     }
+    // Bug: path_after() used `low.find(".efi")` across the full unwrapped UEFI
+    // path, so a directory containing `.efi` (e.g. `\EFI\systemd.efi.d\...`)
+    // truncated at the directory instead of the loader filename's `.efi`
+    // extension, preventing efi-dedupe from deleting duplicate NVRAM entries.
+    // Match the last `.efi` inside the final path component only.
     let tok = rest.split(char::is_whitespace).next().unwrap_or("");
-    let low = tok.to_ascii_lowercase();
-    let tok = match low.find(".efi") {
-        Some(i) => &tok[..i + 4],
+    let base = tok.rfind(['\\', '/']).map_or(0, |i| i + 1);
+    let low = tok[base..].to_ascii_lowercase();
+    let tok = match low.rfind(".efi") {
+        Some(i) => &tok[..base + i + 4],
         None => tok,
     };
     (!tok.is_empty()).then(|| tok.to_string())

@@ -1635,6 +1635,16 @@ pub const MKINITRD_CONF: &str = "/etc/mkinitrd.conf";
 pub const MKINITRD_COMMAND_LINE: &str = "/boot/initrd-tree/command_line";
 /// mkinitrd's image when nothing names another.
 pub const MKINITRD_OUTPUT: &str = "/boot/initrd.gz";
+/// -current's initrd maker (mkinitrd's package since 1.4.11-58 or so):
+/// runs setup.01.mkinitrd, which makes /boot/initrd-VERSION.img.
+pub const GENINITRD: &str = "/usr/sbin/geninitrd";
+/// geninitrd's settings (GENERATOR, KERNEL, the symlinks, ...).
+pub const GENINITRD_DEFAULT: &str = "/etc/default/geninitrd";
+/// The script geninitrd runs unless GENINITRD_OVERRIDE_SCRIPT names another.
+pub const GENINITRD_SETUP: &str = "/var/lib/pkgtools/setup/setup.01.mkinitrd";
+/// mkinitrd's command generator, which prints a mkinitrd command for the
+/// running system's root and storage drivers.
+pub const MKINITRD_GENERATOR: &str = "/usr/share/mkinitrd/mkinitrd_command_generator.sh";
 /// ELILO's EFI binary as the elilo package installs it, which eliloconfig
 /// copies to the ESP's EFI/Slackware/elilo.efi.
 pub const ELILO_EFI: &str = "/boot/elilo-x86_64.efi";
@@ -1887,7 +1897,8 @@ pub fn elilo_json(sys: &Sys, esps: &[(String, String)]) -> Option<Value> {
         return None;
     }
     let kernels = boot_files(sys, &|f| f.starts_with("vmlinuz"));
-    let initrds = boot_files(sys, &|f| f.starts_with("initrd") && f.ends_with(".gz"));
+    // mkinitrd's initrd.gz, and geninitrd's initrd-VERSION.img (-current).
+    let initrds = boot_files(sys, &|f| f.starts_with("initrd") && (f.ends_with(".gz") || f.ends_with(".img")));
     let elilo = sys.read_bytes(ELILO_EFI);
     let mut list = Vec::new();
     for e in &confs {
@@ -1927,15 +1938,31 @@ fn executable(sys: &Sys, abs: &str) -> bool {
     std::fs::metadata(sys.p(abs)).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
-/// Slackware's kernels in /boot: vmlinuz-FLAVOR-VERSION files (huge,
-/// generic), not the links to them (vmlinuz, vmlinuz-huge).
+/// Slackware's kernels in /boot: vmlinuz-FLAVOR-VERSION files (15.0's huge,
+/// generic), or vmlinuz-VERSION (-current's, its flavor the vmlinuz-FLAVOR
+/// link to it: vmlinuz-generic, else ""), not the links to them (vmlinuz,
+/// vmlinuz-huge).
 pub fn slackware_kernels(sys: &Sys) -> Vec<(String, String, String)> {
+    let digit = |s: &str| s.starts_with(|c: char| c.is_ascii_digit());
+    let links: Vec<(String, String)> = sys
+        .list("/boot")
+        .into_iter()
+        .filter_map(|f| {
+            let flavor = f.strip_prefix("vmlinuz-").filter(|fl| !fl.is_empty() && !digit(fl))?.to_string();
+            sys.readlink(&format!("/boot/{f}")).map(|t| (flavor, t.trim_start_matches("/boot/").to_string()))
+        })
+        .collect();
     let mut out: Vec<(String, String, String)> = boot_files(sys, &|f| f.starts_with("vmlinuz-"))
         .into_iter()
         .filter_map(|(p, _)| {
             let f = p.trim_start_matches("/boot/").to_string();
-            let (flavor, ver) = f.strip_prefix("vmlinuz-")?.split_once('-')?;
-            ver.starts_with(|c: char| c.is_ascii_digit()).then(|| (f.clone(), flavor.to_string(), ver.to_string()))
+            let rest = f.strip_prefix("vmlinuz-")?;
+            if digit(rest) {
+                let flavor = links.iter().find(|(_, t)| *t == f).map(|(fl, _)| fl.clone()).unwrap_or_default();
+                return Some((f.clone(), flavor, rest.to_string()));
+            }
+            let (flavor, ver) = rest.split_once('-')?;
+            digit(ver).then(|| (f.clone(), flavor.to_string(), ver.to_string()))
         })
         .collect();
     out.sort();
@@ -2012,6 +2039,11 @@ fn slackware_initramfs(sys: &Sys, esps: &[(String, String)]) -> (Option<String>,
             note(&f, items, &mut why);
         }
     }
+    // -current: geninitrd's images, before initrd.gz (which it makes a link
+    // to them, or not, as GENINITRD_INITRD_GZ_SYMLINK says).
+    if let Some(g) = geninitrd_json(sys, &mut why) {
+        return (Some("geninitrd".into()), vec![("evidence", why.into()), ("geninitrd", g)]);
+    }
     let gz = sys.is_file(MKINITRD_OUTPUT);
     why.push(if gz { format!("{MKINITRD_OUTPUT} exists") } else { format!("no {MKINITRD_OUTPUT}") });
     if named == 0 && !gz {
@@ -2072,6 +2104,109 @@ fn slackware_initramfs(sys: &Sys, esps: &[(String, String)]) -> (Option<String>,
         .set("resumedev", resumedev)
         .build();
     (Some("mkinitrd".into()), vec![("evidence", why.into()), ("mkinitrd", m)])
+}
+
+/// Whether a kernel version is one geninitrd would name an image after
+/// and a restore can give a shell: digits first, then letters, digits and
+/// `.`, `_`, `+`, `-`.
+pub fn kernel_version_word(v: &str) -> bool {
+    v.starts_with(|c: char| c.is_ascii_digit()) && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
+}
+
+/// Slackware -current's geninitrd (docs/design/slackware.md, "Slackware
+/// -current"): None unless /usr/sbin/geninitrd is there and /boot has an
+/// image it made (a regular file initrd-VERSION.img).  Else boot.initramfs's
+/// `geninitrd`: default (/etc/default/geninitrd or null), its settings as
+/// setup.01.mkinitrd reads them (kernel, generator, dracut_opts,
+/// override_script, post_install_script, named_symlink, initrd_gz_symlink,
+/// each null when unset, or setup.01.mkinitrd's own default for the
+/// generator and the two symlinks), `runs` (what setup.01.mkinitrd would
+/// run: `override` for an executable GENINITRD_OVERRIDE_SCRIPT, `mkinitrd`
+/// for GENERATOR=mkinitrd with /etc/mkinitrd.conf, `mkinitrd_command_generator.sh`
+/// for it without one or by name, `dracut`, else the generator as given),
+/// conf (/etc/mkinitrd.conf or null), luksdev and rootdev from it when it
+/// is read, images (each file, version, kernel: /boot/vmlinuz-VERSION or
+/// null, modules_installed) and links (each /boot initrd*.img or
+/// initrd.gz link, to its target).  Evidence lines go to `why`.
+fn geninitrd_json(sys: &Sys, why: &mut Vec<String>) -> Option<Value> {
+    if !sys.is_file(GENINITRD) {
+        return None;
+    }
+    let images: Vec<(String, String)> = boot_files(sys, &|f| f.starts_with("initrd-") && f.ends_with(".img"))
+        .into_iter()
+        .filter_map(|(p, _)| {
+            let v = p.strip_prefix("/boot/initrd-")?.strip_suffix(".img")?.to_string();
+            kernel_version_word(&v).then_some((p, v))
+        })
+        .collect();
+    if images.is_empty() {
+        why.push(format!("{GENINITRD} exists, but /boot has no initrd-VERSION.img it made"));
+        return None;
+    }
+    why.push(format!("{GENINITRD} exists"));
+    let default = sys.read(GENINITRD_DEFAULT).map(|t| parse_shell_assignments(&t));
+    let key = |k: &str| default.as_ref().and_then(|c| c.iter().rev().find(|(key, _)| key == k).map(|(_, v)| v.clone()));
+    let flag = |k: &str| key(k).map(|v| Value::from(v == "true")).unwrap_or(Value::from(true));
+    let generator = key("GENERATOR").filter(|g| !g.is_empty()).unwrap_or_else(|| "mkinitrd".into());
+    let conf = sys.read(MKINITRD_CONF).map(|t| parse_shell_assignments(&t));
+    let override_script = key("GENINITRD_OVERRIDE_SCRIPT").filter(|o| !o.is_empty());
+    let override_runs = override_script.as_deref().is_some_and(|o| o.starts_with('/') && executable(sys, o));
+    let runs = if override_runs {
+        "override".to_string()
+    } else {
+        match generator.as_str() {
+            "mkinitrd" if conf.is_some() => "mkinitrd".into(),
+            "mkinitrd" | "mkinitrd_command_generator.sh" => "mkinitrd_command_generator.sh".into(),
+            g => g.to_string(),
+        }
+    };
+    why.push(match &default {
+        Some(_) => format!("{GENINITRD_DEFAULT} says GENERATOR={}", key("GENERATOR").unwrap_or_default()),
+        None => format!("no {GENINITRD_DEFAULT} (setup.01.mkinitrd's GENERATOR=mkinitrd)"),
+    });
+    why.push(match runs.as_str() {
+        "override" => format!("GENINITRD_OVERRIDE_SCRIPT={} runs instead of {GENINITRD_SETUP}", override_script.as_deref().unwrap_or("")),
+        "mkinitrd" => format!("{MKINITRD_CONF} exists, so {GENINITRD_SETUP} runs mkinitrd -F"),
+        "mkinitrd_command_generator.sh" if conf.is_none() && generator == "mkinitrd" => format!("no {MKINITRD_CONF}, so {GENINITRD_SETUP} runs {MKINITRD_GENERATOR}'s command"),
+        r => format!("{GENINITRD_SETUP} runs {r}"),
+    });
+    let ckey = |k: &str| conf.as_ref().filter(|_| runs == "mkinitrd").and_then(|c| c.iter().rev().find(|(key, _)| key == k).map(|(_, v)| v.clone())).filter(|v| !v.is_empty());
+    let list: Vec<Value> = images
+        .iter()
+        .map(|(p, v)| {
+            let kernel = format!("/boot/vmlinuz-{v}");
+            let has_kernel = sys.is_file(&kernel);
+            let modules = sys.is_dir(&format!("/lib/modules/{v}"));
+            why.push(format!("{p} is geninitrd's image for kernel {v}{}", if has_kernel { "" } else { ", which has no /boot/vmlinuz-VERSION" }));
+            Obj::new().set("file", p.as_str()).set("version", v.as_str()).set("kernel", has_kernel.then_some(kernel)).set("modules_installed", modules).build()
+        })
+        .collect();
+    let mut links = Obj::new();
+    for f in sys.list("/boot").into_iter().filter(|f| f == "initrd.gz" || (f.starts_with("initrd-") && f.ends_with(".img"))) {
+        let l = format!("/boot/{f}");
+        if let Some(t) = sys.readlink(&l) {
+            why.push(format!("{l} -> {t}"));
+            links.put(&l, t);
+        }
+    }
+    Some(
+        Obj::new()
+            .set("default", default.is_some().then_some(GENINITRD_DEFAULT))
+            .set("kernel", key("KERNEL"))
+            .set("generator", generator.as_str())
+            .set("dracut_opts", key("DRACUT_OPTS"))
+            .set("override_script", override_script)
+            .set("post_install_script", key("POST_INSTALL_SCRIPT").filter(|o| !o.is_empty()))
+            .set("named_symlink", flag("GENINITRD_NAMED_SYMLINK"))
+            .set("initrd_gz_symlink", flag("GENINITRD_INITRD_GZ_SYMLINK"))
+            .set("runs", runs.as_str())
+            .set("conf", conf.is_some().then_some(MKINITRD_CONF))
+            .set("luksdev", ckey("LUKSDEV"))
+            .set("rootdev", ckey("ROOTDEV"))
+            .set("images", list)
+            .set("links", links.build())
+            .build(),
+    )
 }
 
 /// The source's mkinitrd command line (/boot/initrd-tree/command_line, its
@@ -2861,6 +2996,54 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert!(mkinitrd_replay("", &k, "/boot/initrd.gz").is_none());
         // A relative -o is given absolute: in the chroot it would be from /.
         assert_eq!(mkinitrd_replay("./mkinitrd -c -o initrd-custom.gz", &k, "/boot/initrd-custom.gz").unwrap(), ["mkinitrd", "-c", "-o", "/boot/initrd-custom.gz", "-k", "5.15.161"]);
+    }
+
+    /// -current's kernels are /boot/vmlinuz-VERSION, their flavor the
+    /// vmlinuz-FLAVOR link to them (or none); 15.0's vmlinuz-FLAVOR-VERSION
+    /// still read as before.  geninitrd's images by their names only.
+    #[test]
+    fn slackware_current_kernels() {
+        let t = Tree::new("slk-current-kernels");
+        t.file("/boot/vmlinuz-7.3.5", "k")
+            .file("/boot/vmlinuz-7.2.9-rc1", "old")
+            .file("/boot/vmlinuz-generic-5.15.161", "15")
+            .symlink("/boot/vmlinuz-generic", "vmlinuz-7.3.5")
+            .symlink("/boot/vmlinuz", "vmlinuz-7.3.5");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        assert_eq!(
+            slackware_kernels(&s),
+            vec![
+                ("vmlinuz-7.2.9-rc1".into(), String::new(), "7.2.9-rc1".into()),
+                ("vmlinuz-7.3.5".into(), "generic".into(), "7.3.5".into()),
+                ("vmlinuz-generic-5.15.161".into(), "generic".into(), "5.15.161".into()),
+            ]
+        );
+        assert!(kernel_version_word("7.3.5") && kernel_version_word("6.12.1-rc2+") && kernel_version_word("5.15.161_x"));
+        assert!(!kernel_version_word("generic") && !kernel_version_word("") && !kernel_version_word("7.3.5 x") && !kernel_version_word("7.3'5") && !kernel_version_word("7.3.5$x"));
+        // No geninitrd, or no image it made: not geninitrd's.
+        let mut why = Vec::new();
+        assert!(geninitrd_json(&s, &mut why).is_none() && why.is_empty());
+        t.file(GENINITRD, "#!/bin/bash\n").file("/boot/initrd.gz", "15.0's");
+        assert!(geninitrd_json(&s, &mut why).is_none());
+        assert_eq!(why, ["/usr/sbin/geninitrd exists, but /boot has no initrd-VERSION.img it made"]);
+        // An image with no /etc/default/geninitrd: setup.01.mkinitrd's defaults.
+        t.file("/boot/initrd-7.3.5.img", "i").file("/boot/initrd-x y.img", "not a version");
+        let mut why = Vec::new();
+        let g = geninitrd_json(&s, &mut why).unwrap();
+        assert_eq!(g.get("generator").and_then(Value::as_str), Some("mkinitrd"));
+        assert_eq!(g.get("runs").and_then(Value::as_str), Some("mkinitrd_command_generator.sh"));
+        assert!(g.get("default").unwrap().is_null() && g.get("kernel").unwrap().is_null());
+        assert_eq!(g.get("named_symlink"), Some(&Value::Bool(true)));
+        assert_eq!(g.at(&["images"]).and_then(Value::as_array).map(Vec::len), Some(1));
+        assert_eq!(g.at(&["images", "0", "kernel"]).and_then(Value::as_str), Some("/boot/vmlinuz-7.3.5"));
+        assert_eq!(g.at(&["images", "0", "modules_installed"]), Some(&Value::Bool(false)));
+        assert!(why.contains(&"no /etc/default/geninitrd (setup.01.mkinitrd's GENERATOR=mkinitrd)".to_string()), "{why:?}");
+        // A set but not executable override script isn't run.
+        t.file(GENINITRD_DEFAULT, "GENERATOR=mkinitrd_command_generator.sh\nGENINITRD_OVERRIDE_SCRIPT=/usr/local/sbin/x\nGENINITRD_INITRD_GZ_SYMLINK=false\n").file("/usr/local/sbin/x", "");
+        let g = geninitrd_json(&s, &mut Vec::new()).unwrap();
+        assert_eq!(g.get("runs").and_then(Value::as_str), Some("mkinitrd_command_generator.sh"));
+        assert_eq!(g.get("override_script").and_then(Value::as_str), Some("/usr/local/sbin/x"));
+        assert_eq!(g.get("initrd_gz_symlink"), Some(&Value::Bool(false)));
     }
 
     /// mkinitrd.conf counts for -F only (or with no command line); a

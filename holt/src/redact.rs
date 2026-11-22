@@ -289,6 +289,44 @@ fn mac_spans(s: &str) -> Vec<(usize, usize)> {
     out
 }
 
+/// The MAC addresses in an EFI load option (load_option_hex: attributes,
+/// the device path's length, the description in UTF-16 to its NUL, then
+/// the device path): each MAC() node's (type 3, subtype 11) first six
+/// bytes, as 12 lower-case hex digits, none all zero or all ff.  A load
+/// option that doesn't parse gives what was read before it stopped.
+fn load_option_macs(h: &str) -> Vec<String> {
+    let h = h.trim();
+    if h.len() % 2 != 0 || !h.bytes().all(is_hex) {
+        return Vec::new();
+    }
+    let b = hex_bytes(&h.to_ascii_lowercase());
+    if b.len() < 6 {
+        return Vec::new();
+    }
+    let path_len = usize::from(u16::from_le_bytes([b[4], b[5]]));
+    let mut i = 6;
+    while i + 1 < b.len() && (b[i], b[i + 1]) != (0, 0) {
+        i += 2;
+    }
+    i += 2;
+    let end = i.saturating_add(path_len).min(b.len());
+    let mut out = Vec::new();
+    while i + 4 <= end {
+        let (ty, sub, len) = (b[i], b[i + 1], usize::from(u16::from_le_bytes([b[i + 2], b[i + 3]])));
+        if len < 4 || i + len > end || (ty, sub) == (0x7f, 0xff) {
+            break;
+        }
+        if (ty, sub) == (3, 11) && len >= 10 {
+            let mac: String = b[i + 4..i + 10].iter().map(|x| format!("{x:02x}")).collect();
+            if mac.bytes().any(|c| c != b'0') && mac != "ffffffffffff" && !out.contains(&mac) {
+                out.push(mac);
+            }
+        }
+        i += len;
+    }
+    out
+}
+
 fn pattern_spans(s: &str, groups: &[usize], sep: u8, ok: fn(u8) -> bool) -> Vec<(usize, usize)> {
     let b = s.as_bytes();
     let len: usize = groups.iter().sum::<usize>() + groups.len() - 1;
@@ -452,6 +490,17 @@ impl Collector {
     }
 
     fn string(&mut self, s: &str, key: &str, parent: &str) {
+        // A PXE entry names its NIC by a MAC() node in its device path,
+        // which only some firmware also puts in the description (QEMU's
+        // "MAC:5254..."; the Lenovo A100's says only "Realtek PCIe GBE
+        // Family Controller"): learned from the load option itself.
+        if key == "load_option_hex" {
+            for d in load_option_macs(s) {
+                if !self.idents.iter().any(|i| matches!(i, Ident::Hex(x, _, _) if *x == d)) {
+                    self.add(Ident::Hex(d.clone(), d, Kind::Mac));
+                }
+            }
+        }
         if is_blob_key(key) {
             return;
         }
@@ -1570,6 +1619,17 @@ mod tests {
         let ser = s(&["storage", "disks", "0", "serial"]);
         assert_eq!(s(&["storage", "disks", "0", "links", "2"]), format!("/dev/diskid/DISK-{ser}p1"));
         assert_eq!(s(&["storage", "disks", "0", "links", "0"]), format!("/dev/disk/by-id/ata-Samsung_SSD_870_EVO_500GB_{ser}"));
+        // A PXE entry whose description names no MAC (the Lenovo A100's):
+        // its device path's MAC() node is learned and goes all the same.
+        let lo = "0100000058005500450046004900200050005800450020004900500076003400000002010c00d041030a0000000001010600001c010106000000030b25001c8341e8f738000000000000000000000000000000000000000000000000000000030c1b0000000000000000000000000000000000000000000000000000007fff0400";
+        assert_eq!(load_option_macs(lo), ["1c8341e8f738"]);
+        assert!(load_option_macs("zz").is_empty() && load_option_macs("0100").is_empty() && load_option_macs("").is_empty());
+        let pxe = parse(&format!(r#"{{"os": {{"id": "slackware"}}, "boot": {{"efi": {{"entries": [{{"description": "UEFI: PXE IPv4 Realtek PCIe GBE Family Controller", "load_option_hex": "{lo}"}}]}}}}}}"#)).unwrap();
+        let (r, red) = redact(&pxe);
+        let t = text(&r);
+        assert!(!t.contains("1c8341e8f738") && !t.to_ascii_lowercase().contains("1c8341e8f738"), "{t}");
+        assert!(red.leaks(&t).is_empty(), "{:?}", red.leaks(&t));
+        assert_eq!(r.at(&["boot", "efi", "entries", "0", "load_option_hex"]).and_then(Value::as_str).map(str::len), Some(lo.len()));
         // A CD drive's serial is only in its by-id link.
         let cd = parse(r#"{"os": {"id": "debian"}, "other_devices": [{"name": "sr0", "serial": null, "links": ["/dev/disk/by-id/ata-QEMU_DVD-ROM_QM00003"]}]}"#).unwrap();
         let (r, _) = redact(&cd);

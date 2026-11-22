@@ -299,6 +299,13 @@ efivarfs bound in):
      `/boot/initrd-tree/command_line` (else mkinitrd.conf, read with -F),
      for each kernel, `-o` as recorded; the huge kernel has no initrd
      (`none`);
+   - geninitrd (Slackware -current, docs/design/slackware.md;
+     `boot.initramfs.geninitrd`): each `/boot/initrd-VERSION.img` made
+     again by what geninitrd's setup.01.mkinitrd runs for that kernel
+     (`mkinitrd -F /etc/mkinitrd.conf -k V -o IMAGE` with a mkinitrd.conf,
+     else mkinitrd_command_generator.sh's command with `-L -R -o IMAGE`,
+     run), not geninitrd itself; dracut and an override script leave the
+     restored images as they are, with a note;
    - nothing where the image is prebuilt with the kernel (AerynOS; Solus,
      whose `initrd-com.solus-project.*` come built in the kernel's package), comes
      with the image (ostree) or is in the store (NixOS, Guix System: each

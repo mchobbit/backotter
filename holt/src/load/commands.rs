@@ -5244,6 +5244,10 @@ fn lilo_root_copy(lilo: &Value) -> Result<Option<(String, Vec<String>)>, String>
     Ok(Some((text, added)))
 }
 
+/// geninitrd_steps' result: (image, the command remaking it) for each image
+/// remade, and notes on those that stay as restored.
+type GeninitrdSteps = (Vec<(String, Cmd)>, Vec<String>);
+
 impl Builder<'_> {
     /// Slackware's mkinitrd step, as the dump read it
     /// (boot.initramfs.mkinitrd): the source's own command
@@ -5269,11 +5273,86 @@ impl Builder<'_> {
         Err(format!("mkinitrd's command can't be found (no {} or {}), so the restored {output} stays", crate::boot::MKINITRD_COMMAND_LINE, crate::boot::MKINITRD_CONF))
     }
 
+    /// -current's geninitrd step, as the dump read it
+    /// (boot.initramfs.geninitrd): each image geninitrd made
+    /// (/boot/initrd-VERSION.img, for a kernel /boot and /lib/modules still
+    /// have) made again by what its setup.01.mkinitrd runs for that kernel,
+    /// in the chroot: `mkinitrd -F /etc/mkinitrd.conf -k V -o IMAGE` with a
+    /// mkinitrd.conf, else mkinitrd_command_generator.sh's command for this
+    /// machine's root and storage drivers, with setup.01.mkinitrd's `-L -R
+    /// -o IMAGE`, run.  Only that: not geninitrd itself, whose pre- and
+    /// post-install scripts (DKMS builds, lilo), orphan removal and
+    /// update-grub aren't the restore's.  The links to the images
+    /// (initrd-generic.img, initrd.gz) came back with /boot and still point
+    /// at them.  Ok((image, command) for each remade, notes on the images
+    /// that stay), or Err(why) when every restored image stays.
+    fn geninitrd_steps(&self, t: &str) -> Result<GeninitrdSteps, String> {
+        let g = self.layout.v.at(&["boot", "initramfs", "geninitrd"]).cloned().unwrap_or(Value::Null);
+        let runs = s(&g, "runs").unwrap_or_default();
+        let setup = crate::boot::GENINITRD_SETUP;
+        match runs.as_str() {
+            "mkinitrd" | "mkinitrd_command_generator.sh" => {}
+            "override" => {
+                return Err(format!(
+                    "geninitrd runs GENINITRD_OVERRIDE_SCRIPT={} in place of {setup}, which bko-holt load doesn't run, so the restored initrd images stay",
+                    s(&g, "override_script").unwrap_or_default()
+                ))
+            }
+            other => return Err(format!("geninitrd's GENERATOR={} ({setup} runs {other}) isn't one bko-holt load runs (only mkinitrd), so the restored initrd images stay", s(&g, "generator").unwrap_or_default())),
+        }
+        let mut steps = Vec::new();
+        let mut notes = Vec::new();
+        for img in g.get("images").and_then(Value::as_array).into_iter().flatten() {
+            let (Some(file), Some(v)) = (s(img, "file"), s(img, "version")) else { continue };
+            if !crate::boot::kernel_version_word(&v) || file != format!("/boot/initrd-{v}.img") {
+                notes.push(format!("{file} isn't named as geninitrd names its images (/boot/initrd-VERSION.img), so it stays as restored"));
+                continue;
+            }
+            if s(img, "kernel").is_none() {
+                notes.push(format!("{file} is for kernel {v}, which has no /boot/vmlinuz-{v}, so it stays as restored"));
+                continue;
+            }
+            if img.get("modules_installed").and_then(Value::as_bool) != Some(true) {
+                notes.push(format!("{file} is for kernel {v}, which has no /lib/modules/{v}, so it stays as restored"));
+                continue;
+            }
+            let cmd = if runs == "mkinitrd" {
+                Cmd::new(&["chroot", t, "/sbin/mkinitrd", "-F", crate::boot::MKINITRD_CONF, "-k", &v, "-o", &file])
+                    .why(format!("the initrd for kernel {v}, as geninitrd makes it ({setup}: GENERATOR=mkinitrd with {})", crate::boot::MKINITRD_CONF))
+            } else {
+                let generator = crate::boot::MKINITRD_GENERATOR;
+                // `file` is /boot/initrd-V.img with V a kernel_version_word: no
+                // quote or $ to escape.
+                let line = format!("set -o pipefail; {generator} -k {v} -a \"-L -R -o {file}\" | bash");
+                Cmd::new(&["chroot", t, "/bin/bash", "-c", &line]).why(format!(
+                    "the initrd for kernel {v}, as geninitrd makes it ({setup}: the mkinitrd command {generator} prints for this machine's root and storage drivers, with -L -R -o {file}, run)"
+                ))
+            };
+            steps.push((file, cmd));
+        }
+        if steps.is_empty() && notes.is_empty() {
+            return Err("geninitrd's dump lists no image, so nothing is made again".into());
+        }
+        Ok((steps, notes))
+    }
+
+    /// The initrd images the Slackware initrd step makes again (mkinitrd's
+    /// output, or geninitrd's images), for ELILO's copies on the ESP.
+    fn slackware_remade(&self, t: &str) -> Vec<String> {
+        match self.layout.str_at(&["boot", "initramfs", "generator"]) {
+            Some("mkinitrd") if self.mkinitrd_cmd(t).is_ok() => vec![self.layout.str_at(&["boot", "initramfs", "mkinitrd", "output"]).unwrap_or(crate::boot::MKINITRD_OUTPUT).to_string()],
+            Some("geninitrd") => self.geninitrd_steps(t).map(|(st, _)| st.into_iter().map(|(f, _)| f).collect()).unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Slackware's initrd step (docs/design/slackware.md): mkinitrd's image
-    /// remade (mkinitrd_cmd), or nothing when there is none (the huge
-    /// kernel); any other generator is refused.
+    /// remade (mkinitrd_cmd), -current's geninitrd images remade
+    /// (geninitrd_steps), or nothing when there is none (the huge kernel);
+    /// any other generator is refused.
     fn slackware_initramfs(&mut self, t: &str) -> Vec<Cmd> {
         let generator = self.layout.str_at(&["boot", "initramfs", "generator"]).unwrap_or("unknown").to_string();
+        let root_mapped = self.layout.arr(&["storage", "fstab"]).iter().any(|e| s(e, "file").as_deref() == Some("/") && s(e, "spec").is_some_and(|p| p.starts_with("/dev/mapper/")));
         match generator.as_str() {
             "none" => self.notes.push("Slackware: no initrd (no loader configuration names one, and there is no /boot/initrd.gz): nothing is made, and the kernel boots without one, as on the source".into()),
             // LUKS (mkinitrd -C, or a root on /dev/mapper) is out of
@@ -5286,7 +5365,20 @@ impl Builder<'_> {
                 Ok(c) => return vec![c],
                 Err(why) => self.notes.push(format!("Slackware: {why}")),
             },
-            other => self.problems.push(format!("Slackware: initramfs generator {other} isn't one bko-holt load can run (only mkinitrd, or none)")),
+            // LUKS again: mkinitrd.conf's LUKSDEV, or a root that the
+            // command generator would find on dm-crypt.
+            "geninitrd" if self.layout.str_at(&["boot", "initramfs", "geninitrd", "luksdev"]).is_some() || root_mapped => {
+                let luks = self.layout.str_at(&["boot", "initramfs", "geninitrd", "luksdev"]).map(|l| format!("{} has LUKSDEV={l}", crate::boot::MKINITRD_CONF)).unwrap_or_else(|| "fstab's / is on /dev/mapper".into());
+                self.problems.push(format!("Slackware: geninitrd's initrd unlocks LUKS ({luks}); bko-holt load doesn't support Slackware on LUKS in this release"));
+            }
+            "geninitrd" => match self.geninitrd_steps(t) {
+                Ok((steps, notes)) => {
+                    self.notes.extend(notes.into_iter().map(|n| format!("Slackware: {n}")));
+                    return steps.into_iter().map(|(_, c)| c).collect();
+                }
+                Err(why) => self.notes.push(format!("Slackware: {why}")),
+            },
+            other => self.problems.push(format!("Slackware: initramfs generator {other} isn't one bko-holt load can run (only mkinitrd, geninitrd, or none)")),
         }
         Vec::new()
     }
@@ -5455,9 +5547,8 @@ impl Builder<'_> {
             return Vec::new();
         }
         self.notes.push("ELILO: elilo.efi, elilo.conf, the kernel and the initrd came back with the ESP; nothing to install".into());
-        // The image the initrd step remade, if it did.
-        let remade = (self.layout.str_at(&["boot", "initramfs", "generator"]) == Some("mkinitrd") && self.mkinitrd_cmd(t).is_ok())
-            .then(|| self.layout.str_at(&["boot", "initramfs", "mkinitrd", "output"]).unwrap_or(crate::boot::MKINITRD_OUTPUT).to_string());
+        // The images the initrd step remade, if it did.
+        let remade = self.slackware_remade(t);
         let mut out = Vec::new();
         for c in &confs {
             let mnt = s(c, "mounted_at").filter(|m| safe_target_subpath(m)).unwrap_or_else(|| "/boot/efi".into());
@@ -5471,11 +5562,14 @@ impl Builder<'_> {
                     ));
                     continue;
                 }
-                let (Some(ifile), Some(new)) = (s(img, "initrd_file"), remade.as_deref()) else { continue };
-                if s(img, "initrd_same_as").as_deref() != Some(new) {
-                    self.notes.push(format!("ELILO: {ifile} on the ESP wasn't a copy of {new} on the source; it stays as restored"));
+                let Some(ifile) = s(img, "initrd_file") else { continue };
+                if remade.is_empty() {
                     continue;
                 }
+                let Some(new) = s(img, "initrd_same_as").filter(|i| remade.contains(i)) else {
+                    self.notes.push(format!("ELILO: {ifile} on the ESP wasn't a copy of {} on the source; it stays as restored", remade.join(" or ")));
+                    continue;
+                };
                 let (src, dst) = (format!("{t}{new}"), format!("{t}{}/{ifile}", mnt.trim_end_matches('/')));
                 out.push(Cmd::new(&["cp", &src, &dst]).why(format!("ELILO: the remade {new} over the ESP's {ifile}, as eliloconfig copies it")));
                 out.push(Cmd::new(&["touch", "-r", &src, &dst]));

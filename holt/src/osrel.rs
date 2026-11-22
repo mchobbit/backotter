@@ -226,8 +226,9 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     // Slackware 15.0 (VERSION_ID=15.0, unquoted; no ID_LIKE): LILO or
     // ELILO, the huge kernel or generic with mkinitrd, pkgtools
     // (docs/design/slackware.md).  By the major, so a 15.1 would pass: it's
-    // checked before it's claimed.  -current says 15.0 too, and is refused
-    // by its VERSION_CODENAME (check_supported, decision 7).
+    // checked before it's claimed.  -current (VERSION_CODENAME=current) is
+    // taken by check_supported, not by this row: the Thinkpad runs a pinned
+    // -current snapshot (docs/design/slackware.md, "Slackware -current").
     ("slackware", "15", "Slackware 15"),
     // Rolling: Chimera's os-release has no VERSION_ID at all (only its image
     // names carry the snapshot's date).  "*" rather than "", as for
@@ -275,6 +276,16 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("ubuntu-core", "24", "Ubuntu Core 24"),
 ];
 
+/// The VERSION_ID majors Slackware -current's os-release has carried
+/// (VERSION_CODENAME=current): 15 before aaa_base 16.0, 16 since.
+pub const SLACKWARE_CURRENT_MAJORS: [&str; 2] = ["15", "16"];
+
+/// Whether ID, VERSION_ID and VERSION_CODENAME are Slackware -current at a
+/// VERSION_ID it has carried (check_supported; load's layout check too).
+pub fn slackware_current(id: &str, version_id: &str, codename: Option<&str>) -> bool {
+    id == "slackware" && codename == Some("current") && SLACKWARE_CURRENT_MAJORS.contains(&version_id.split('.').next().unwrap_or(""))
+}
+
 /// Whether ID and VERSION_ID name a supported system: the same major version
 /// ("22.3" is Mint 22).  Derivatives don't count by their ID_LIKE.
 pub fn supported(id: &str, version_id: &str) -> bool {
@@ -298,15 +309,29 @@ pub fn check_supported(os: Option<&OsRelease>) -> Result<(), String> {
     };
     let id = os.get("ID").unwrap_or("");
     let ver = os.get("VERSION_ID").unwrap_or("");
-    // Slackware -current keeps the last release's VERSION_ID (15.0) and says
-    // what it is by VERSION_CODENAME=current (and VERSION="15.0+"): a
-    // rolling tree whose loader and initrd tools are changing, refused by
-    // name (docs/design/slackware.md, decision 7).
-    if id == "slackware" && (os.get("VERSION_CODENAME") == Some("current") || os.get("VERSION").is_some_and(|v| v.ends_with('+'))) {
-        return Err(format!(
-            "this is Slackware -current (ID=slackware, VERSION_ID={ver}, VERSION_CODENAME={}), and bko-holt dump supports only the Slackware 15.0 release, not -current",
-            os.get("VERSION_CODENAME").unwrap_or("")
-        ));
+    // Slackware -current says what it is by VERSION_CODENAME=current, with
+    // VERSION_ID the release it leads to: 15.0 (VERSION="15.0+") until
+    // aaa_base 16.0, 16.0 since (VERSION="16.0", PRETTY_NAME "... (post 15.0
+    // -current)").  Supported by that codename (docs/design/slackware.md,
+    // "Slackware -current"), at those two only; a VERSION ending in "+"
+    // under any other codename, or -current at another VERSION_ID, isn't
+    // one bko-holt knows.
+    if id == "slackware" {
+        let codename = os.get("VERSION_CODENAME").unwrap_or("");
+        if codename == "current" {
+            if slackware_current(id, ver, Some(codename)) {
+                return Ok(());
+            }
+            return Err(format!(
+                "this is Slackware -current (ID=slackware, VERSION_ID={ver}, VERSION_CODENAME=current), and bko-holt dump supports -current only at VERSION_ID 15.0 or 16.0, which -current's os-release has carried so far"
+            ));
+        }
+        if os.get("VERSION").is_some_and(|v| v.ends_with('+')) {
+            return Err(format!(
+                "this is a Slackware development tree (ID=slackware, VERSION_ID={ver}, VERSION={}, VERSION_CODENAME={codename}), and bko-holt dump supports only the Slackware 15.0 release and -current (VERSION_CODENAME=current)",
+                os.get("VERSION").unwrap_or("")
+            ));
+        }
     }
     // Qubes OS: 4.3 and later (its row takes the major); 4.2's support
     // ended 2026-06-21, and its volumes and boot differ.
@@ -637,6 +662,10 @@ pub(crate) mod tests {
     /// no ID_LIKE, VERSION_CODENAME=stable.
     const SLACKWARE: &str = "NAME=Slackware\nVERSION=\"15.0\"\nID=slackware\nVERSION_ID=15.0\nPRETTY_NAME=\"Slackware 15.0 x86_64\"\nANSI_COLOR=\"0;34\"\nCPE_NAME=\"cpe:/o:slackware:slackware_linux:15.0\"\nHOME_URL=\"http://slackware.com/\"\nSUPPORT_URL=\"http://www.linuxquestions.org/questions/slackware-14/\"\nBUG_REPORT_URL=\"http://www.linuxquestions.org/questions/slackware-14/\"\nVERSION_CODENAME=stable\n";
 
+    /// Slackware64-current's /etc/os-release since aaa_base 16.0, as the
+    /// Thinkpad's pinned current-20261121 has it.
+    const SLACKWARE_CURRENT: &str = "NAME=Slackware\nVERSION=\"16.0\"\nID=slackware\nVERSION_ID=16.0\nPRETTY_NAME=\"Slackware 15.0 x86_64 (post 15.0 -current)\"\nANSI_COLOR=\"0;34\"\nCPE_NAME=\"cpe:/o:slackware:slackware_linux:15.0\"\nHOME_URL=\"http://slackware.com/\"\nSUPPORT_URL=\"http://www.linuxquestions.org/questions/slackware-14/\"\nBUG_REPORT_URL=\"http://www.linuxquestions.org/questions/slackware-14/\"\nVERSION_CODENAME=current\n";
+
     #[test]
     fn slackware() {
         let o = parse(SLACKWARE);
@@ -650,13 +679,29 @@ pub(crate) mod tests {
         // 14.2 isn't 15.
         let e = check_supported(Some(&parse(&SLACKWARE.replace("15.0", "14.2")))).unwrap_err();
         assert!(e.contains("(ID=slackware, VERSION_ID=14.2)") && e.contains("Slackware 15,"), "{e}");
-        // -current: the same VERSION_ID, refused by its codename, or by
-        // VERSION's "+" alone.
+        // -current before aaa_base 16.0: VERSION="15.0+", the codename.
         let current = SLACKWARE.replace("VERSION=\"15.0\"", "VERSION=\"15.0+\"").replace("VERSION_CODENAME=stable", "VERSION_CODENAME=current");
-        let e = check_supported(Some(&parse(&current))).unwrap_err();
-        assert!(e.contains("Slackware -current") && e.contains("VERSION_CODENAME=current"), "{e}");
-        assert!(check_supported(Some(&parse(&SLACKWARE.replace("VERSION_CODENAME=stable", "VERSION_CODENAME=current")))).is_err());
-        assert!(check_supported(Some(&parse(&SLACKWARE.replace("VERSION=\"15.0\"", "VERSION=\"15.0+\"")))).is_err());
+        assert!(check_supported(Some(&parse(&current))).is_ok());
+        assert!(check_supported(Some(&parse(&SLACKWARE.replace("VERSION_CODENAME=stable", "VERSION_CODENAME=current")))).is_ok());
+        // VERSION's "+" under any other codename is no tree bko-holt knows.
+        let e = check_supported(Some(&parse(&SLACKWARE.replace("VERSION=\"15.0\"", "VERSION=\"15.0+\"")))).unwrap_err();
+        assert!(e.contains("Slackware development tree") && e.contains("VERSION=15.0+") && e.contains("VERSION_CODENAME=stable"), "{e}");
+        assert!(check_supported(Some(&parse(&SLACKWARE.replace("VERSION=\"15.0\"", "VERSION=\"15.0+\"").replace("VERSION_CODENAME=stable\n", "")))).is_err());
+        // -current since aaa_base 16.0 (the Thinkpad's, 2026-11-22).
+        let o = parse(SLACKWARE_CURRENT);
+        assert_eq!((o.get("VERSION_ID"), o.get("VERSION_CODENAME")), (Some("16.0"), Some("current")));
+        assert!(check_supported(Some(&o)).is_ok());
+        // The 16.0 release, or a -current at a VERSION_ID it hasn't had, isn't.
+        let e = check_supported(Some(&parse(&SLACKWARE_CURRENT.replace("VERSION_CODENAME=current", "VERSION_CODENAME=stable")))).unwrap_err();
+        assert!(e.contains("(ID=slackware, VERSION_ID=16.0)") && e.contains("Slackware 15,"), "{e}");
+        assert!(check_supported(Some(&parse(&SLACKWARE_CURRENT.replace("VERSION_CODENAME=current\n", "")))).is_err());
+        let e = check_supported(Some(&parse(&SLACKWARE_CURRENT.replace("16.0", "17.0")))).unwrap_err();
+        assert!(e.contains("Slackware -current (ID=slackware, VERSION_ID=17.0, VERSION_CODENAME=current)") && e.contains("only at VERSION_ID 15.0 or 16.0"), "{e}");
+        assert!(check_supported(Some(&parse(&SLACKWARE.replace("15.0", "14.2").replace("VERSION_CODENAME=stable", "VERSION_CODENAME=current")))).is_err());
+        assert!(slackware_current("slackware", "16.0", Some("current")) && slackware_current("slackware", "15.0", Some("current")));
+        assert!(!slackware_current("slackware", "16.0", Some("stable")) && !slackware_current("slackware", "16.0", None) && !slackware_current("slackware", "17.0", Some("current")) && !slackware_current("salix", "16.0", Some("current")));
+        // A derivative's -current is still not Slackware's.
+        assert!(check_supported(Some(&parse("ID=salix\nID_LIKE=slackware\nVERSION_ID=16.0\nVERSION_CODENAME=current\n"))).is_err());
         // A 15.1 passes by the major (the row's comment).
         assert!(supported("slackware", "15.1"));
         // Not by its likeness: a derivative claiming 15.0 isn't Slackware.

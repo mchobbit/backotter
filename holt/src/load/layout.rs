@@ -155,7 +155,9 @@ impl Layout {
         }
         let id = v.at(&["os", "id"]).and_then(Value::as_str).unwrap_or("");
         let ver = v.at(&["os", "version_id"]).and_then(Value::as_str).unwrap_or("");
-        if !crate::osrel::supported(id, ver) {
+        // Slackware -current by its codename (osrel::check_supported).
+        let codename = v.at(&["os", "version_codename"]).and_then(Value::as_str);
+        if !crate::osrel::supported(id, ver) && !crate::osrel::slackware_current(id, ver, codename) {
             return Err(format!("the source system is {id} {ver}; bko-holt load supports only {}", crate::osrel::supported_names()));
         }
         if v.get("privileged").and_then(Value::as_bool) == Some(false) {

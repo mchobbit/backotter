@@ -6,7 +6,9 @@ BigLinux and Garuda were added (1edb4b5). **Status: approved 2026-11-14 by
 the user with every recommended decision (the last section). 2026-11-18:
 S1, S2, S4 and S7 done and the S5/S6 rigs registered; the user's runs of
 SticTest1, HoltTest1 1Obscure and vm-update (S3), and S8, are left (the
-user runs the tests later).**
+user runs the tests later). 2026-11-22: Decision 7 changed by the user:
+-current is supported too, for the Thinkpad's pinned -current snapshot
+("Slackware -current", below).**
 
 **Conventions.** est. marks an estimate. *Check* marks a fact the sources
 don't settle. It is settled on the first guest (S1), before the code that
@@ -66,7 +68,7 @@ yet. Code references are to local `main` at 1edb4b5.
 | | Slackware 15.0 (x86_64) | Nearest supported system |
 |---|---|---|
 | Release | 15.0, 2022-02-02. Security and bug fixes since then are in `patches/packages/` (including kernel updates: 15.0 shipped 5.15.19, and patches carry newer 5.15.y). -current is the development tree, with package names at 15.1 but no release | Debian 12 (an old stable) |
-| os-release | `NAME=Slackware`, `ID=slackware`, `VERSION_ID="15.0"`, `VERSION="15.0"`, `PRETTY_NAME="Slackware 15.0 x86_64"`, `VERSION_CODENAME=stable`, no ID_LIKE. -current says `VERSION="15.0+"` and `VERSION_CODENAME=current` (*check* both, and -current's VERSION_ID) | Gentoo (no ID_LIKE) |
+| os-release | `NAME=Slackware`, `ID=slackware`, `VERSION_ID="15.0"`, `VERSION="15.0"`, `PRETTY_NAME="Slackware 15.0 x86_64"`, `VERSION_CODENAME=stable`, no ID_LIKE. -current says `VERSION_CODENAME=current`: with `VERSION="15.0+"` and VERSION_ID 15.0 before aaa_base 16.0, `VERSION="16.0"`, `VERSION_ID=16.0` and `PRETTY_NAME="Slackware 15.0 x86_64 (post 15.0 -current)"` since (settled on the Thinkpad, 2026-11-22) | Gentoo (no ID_LIKE) |
 | Packages | pkgtools: `installpkg`, `upgradepkg`, `removepkg`, with **no dependency resolution**: a full install is the supported one. Each installed package is a file `/var/lib/pkgtools/packages/NAME-VERSION-ARCH-BUILD` (`/var/log/packages` links to it), with `PACKAGE NAME:`, sizes, a description and the file list. `slackpkg` downloads and upgrades from one mirror, checking GPG signatures | Portage (one entry per package) |
 | Package set | Series `a` (base), `ap`, `d` (development: perl, python3), `e`, `f`, `k` (kernel source), `kde`, `l` (libraries), `n` (network), `t`, `tcl`, `x`, `xap`, `xfce`, `y`. A full install is ~15 GB | none |
 | Init | sysvinit with `/etc/inittab` (default runlevel 3) and BSD-style scripts: `rc.S` (single-user setup), `rc.M` (multi-user), `rc.inet1` (network, `rc.inet1.conf`), `rc.local`; `rc.M` starts each `rc.X` that is executable (`rc.sshd`, `rc.syslog`, ...). eudev and elogind, no systemd | Devuan (sysvinit), Alpine (OpenRC) |
@@ -291,6 +293,108 @@ Settled on the guests, 2026-11-14 to 2026-11-18:
 - vm-mount maps fstab's `/dev/vdXN` to partition N of the image's disk X
   (it skipped them, and slackware15-uefi's ESP with them).
 
+## Slackware -current
+
+2026-11-22. The Thinkpad runs Slackware64-current, pinned at the snapshot
+`current-20261121` (testvm/realworld/slackware-current.pin; the tree on
+mybig512 at `slackware-cache/current-20261121`, slackpkg's only mirror), and
+the user asked for it to be supported for dump and load as 15.0 is. That
+changes Decision 7 for -current only: 14.2, a 16.0 release and the
+derivatives are still refused.
+
+**What -current is, as found on the Thinkpad (read-only):**
+
+- os-release: `ID=slackware`, `VERSION="16.0"`, `VERSION_ID=16.0`,
+  `VERSION_CODENAME=current`, `PRETTY_NAME="Slackware 15.0 x86_64 (post
+  15.0 -current)"`; `/etc/slackware-version` says `Slackware 15.0+`.
+  aaa_base 16.0-3, pkgtools 16.0.
+- No kernel-huge and no kernel-modules: `kernel-generic-7.3.5-x86_64-2`
+  (modules bundled) as `/boot/vmlinuz-7.3.5`, with `vmlinuz` and
+  `vmlinuz-generic` links to it, `System.map-7.3.5`, `config-7.3.5.x64`.
+- The initrd is **geninitrd**'s (mkinitrd 1.4.11-81): `/usr/sbin/geninitrd`
+  runs `/var/lib/pkgtools/setup/setup.01.mkinitrd`, which reads
+  `/etc/default/geninitrd` (`KERNEL=/boot/vmlinuz-generic`,
+  `GENERATOR=mkinitrd`, the two symlink switches, `AUTO_REMOVE_INITRD_TREE`,
+  `AUTO_UPDATE_GRUB`, which the installer set to false) and, with
+  `GENERATOR=mkinitrd` and no `/etc/mkinitrd.conf`, pipes
+  `mkinitrd_command_generator.sh -k V -a "-L -R -o /boot/initrd-V.img"` into
+  bash: the command it prints for the running system's root (fstab's) and
+  storage drivers (from /sys). Then it makes `/boot/initrd-generic.img` and
+  `/boot/initrd.gz` links to `/boot/initrd-7.3.5.img`, removes orphaned
+  initrds and `/boot/initrd-tree` (so there is no `command_line` to replay),
+  and runs the executable scripts in `/etc/geninitrd.d/pre-install` (DKMS)
+  and `post-install` (`lilo-reinstall.sh`).
+- dracut 112 is installed (series a) but unused (`GENERATOR=mkinitrd`).
+- ELILO 3.16-19 as on 15.0: `EFI/Slackware/{elilo.efi,elilo.conf,vmlinuz,initrd.gz}`
+  and the same in `EFI/BOOT` (`BOOTX64.EFI`), the ESP's kernel and initrd
+  byte copies of `/boot/vmlinuz-7.3.5` and `/boot/initrd-7.3.5.img`;
+  `append="root=/dev/nvme0n1p2 vga=normal ro"`; the NVRAM entry
+  `Slackware` for `\EFI\Slackware\elilo.efi` is BootCurrent.
+- fstab by device name (`/dev/nvme0n1p2 /`, `/dev/nvme0n1p1 /boot/efi`),
+  plain ext4 root, vfat ESP, no swap.
+
+**bko-holt dump:**
+
+- `osrel::check_supported` takes `ID=slackware` with
+  `VERSION_CODENAME=current` at VERSION_ID 15.x or 16.x (what -current's
+  os-release has carried: `SLACKWARE_CURRENT_MAJORS`), and load's layout
+  check takes the same dump by `os.version_codename`. A VERSION ending in
+  `+` under any other codename, -current at another VERSION_ID, and a 16.0
+  release (`VERSION_CODENAME=stable`) are refused.
+- `boot.slackware.kernels` reads `vmlinuz-VERSION` too, its flavor the
+  `vmlinuz-FLAVOR` link to it (`generic`), else empty.
+- `boot.initramfs.generator` is `geninitrd` when `/usr/sbin/geninitrd` is
+  there and `/boot` has an image it made (a regular file
+  `initrd-VERSION.img`), with `boot.initramfs.geninitrd`: its settings as
+  setup.01.mkinitrd reads them, `runs` (`mkinitrd_command_generator.sh`,
+  `mkinitrd` with a mkinitrd.conf, `dracut`, or `override` for an
+  executable `GENINITRD_OVERRIDE_SCRIPT`), mkinitrd.conf's LUKSDEV and
+  ROOTDEV when it is read, each image (file, version, kernel, whether
+  `/lib/modules/VERSION` is there) and the initrd links. Without such an
+  image the 15.0 arms (`none`, `mkinitrd`) read it as before, with an
+  evidence line.
+- `boot.elilo`'s `initrd_same_as` matches `/boot/initrd*.img` as well as
+  `initrd*.gz`, so the ESP's copy is known to be geninitrd's image.
+
+**bko-holt load** (the boot stage), as for 15.0's mkinitrd:
+
+- For each geninitrd image whose kernel and modules came back, the command
+  setup.01.mkinitrd would run for it, in the chroot: `chroot T /bin/bash -c
+  'set -o pipefail; /usr/share/mkinitrd/mkinitrd_command_generator.sh -k V
+  -a "-L -R -o /boot/initrd-V.img" | bash'`, or `chroot T /sbin/mkinitrd -F
+  /etc/mkinitrd.conf -k V -o /boot/initrd-V.img` with a mkinitrd.conf. On
+  the restore the generator sees the target's own root and drivers, as
+  geninitrd would after a kernel upgrade. geninitrd itself isn't run: its
+  DKMS and lilo scripts, orphan removal and update-grub aren't the
+  restore's. The links came back with /boot and still name the image.
+- `GENERATOR=dracut`, an override script, or a kernel whose modules are
+  gone: the restored image stays, with a note (15.0's "the restored
+  initrd.gz stays" when mkinitrd's command can't be found). LUKS (LUKSDEV,
+  or `/` on /dev/mapper) is refused, as on 15.0.
+- ELILO as on 15.0: the remade image is copied over each ESP `initrd.gz`
+  that was its copy (EFI/Slackware and EFI/BOOT), nothing is installed, and
+  the NVRAM entries are made again (the source's `Slackware` among them).
+- Device names: as Decision 5 (the problems when the target's disk is named
+  otherwise). The kernel has an initrd on -current, but mkinitrd's command
+  takes fstab's `/dev/nvme0n1p2` as its root, so the names still have to
+  hold.
+
+**Tests:** `osrel`'s `slackware` test (16.0 and the older 15.0+ -current
+accepted, a 16.0 release, -current at 17.0, `+` without the codename and a
+derivative refused); `boot`'s `slackware_current_kernels`; the
+`slackware_current_thinkpad` scenario (the Thinkpad in small: the dump's
+fields, the plan's boot stage, and the mkinitrd.conf, LUKSDEV, dracut,
+override, missing-modules, 15.0-style and other-disk variants); and the
+corpus dump `bs1-slackware-current` (the Thinkpad's own `bko-holt dump
+--only-disk nvme0n1`, 2026-11-22) with its golden plan. Building it found a
+redaction gap, fixed in redact.rs first: the A100's PXE entries name its
+NIC's MAC only in their device path's `MAC()` node, not in the description,
+so it was never learned (bs1-ubuntu2610-zfsenc, made from the same machine
+on 2026-11-18, has it in its `load_option_hex`). BackShot1 preflight on the
+Thinkpad passes with this bko-holt (`UNLOCK=none`). Not yet run: a restore
+(BackShot1 phase 2), so the generator's command in the restore's chroot is
+untested on hardware.
+
 ## Tests
 
 **SticTest1** (`testvm/stictest1/slackware15`, `slackware15-uefi`):
@@ -401,8 +505,9 @@ user's time but the OKs, until S8.
 
 ## Out of scope
 
-- Slackware -current and 14.2 (refused by version), 32-bit `slackware`,
-  ARM (`slackwarearm`).
+- Slackware 14.2 and a 16.0 release (refused by version), -current at a
+  VERSION_ID it hasn't carried, 32-bit `slackware`, ARM (`slackwarearm`).
+  -current itself is supported since 2026-11-22 ("Slackware -current").
 - Derivatives (Salix, Slackel, Porteus, Slax): other IDs, refused.
 - Third-party package tools (slackpkg+, sbopkg, slpkg, SlackBuilds) beyond
   what pkgtools records.
@@ -455,6 +560,9 @@ user's time but the OKs, until S8.
    `VERSION_CODENAME=current`, *check*) and 14.2 refused (recommended:
    15.0 is the only release). Or -current too (a rolling tree whose loader
    and initrd tools are changing: a guest of its own, est. +0.75 d).
+   **Changed 2026-11-22 by the user:** -current is supported as well, by
+   `VERSION_CODENAME=current`, for the Thinkpad's pinned snapshot, with no
+   guest of its own ("Slackware -current").
 8. **BackShot1 on the Thinkpad (S8):** later, as its own step after S1-S7
    pass (recommended: it needs the Thinkpad reinstalled by hand, about an
    hour of the user's time, and the Thinkpad is in use for BackShot1All).

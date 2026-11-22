@@ -5176,6 +5176,266 @@ fn slackware15_uefi_guest() {
     }
 }
 
+// ---- Slackware -current ---------------------------------------------------
+
+const SLACK_CUR_KV: &str = "7.3.5";
+/// Slackware64-current's /etc/os-release since aaa_base 16.0 (the
+/// Thinkpad's pinned current-20261121).
+const SLACK_CURRENT_OS_RELEASE: &str = "NAME=Slackware\nVERSION=\"16.0\"\nID=slackware\nVERSION_ID=16.0\nPRETTY_NAME=\"Slackware 15.0 x86_64 (post 15.0 -current)\"\nANSI_COLOR=\"0;34\"\nCPE_NAME=\"cpe:/o:slackware:slackware_linux:15.0\"\nHOME_URL=\"http://slackware.com/\"\nVERSION_CODENAME=current\n";
+const SLACK_CUR_ESP: &str = "51ac0000-0000-4000-8000-0000000c0001";
+/// /etc/default/geninitrd as mkinitrd 1.4.11-81 installs it (comments
+/// left out), with the Thinkpad installer's AUTO_UPDATE_GRUB=false.
+const GENINITRD_DEFAULT: &str = "# Default options for /usr/sbin/geninitrd:\n#GENINITRD_OVERRIDE_SCRIPT=/usr/local/sbin/geninitrd-custom\nKERNEL=/boot/vmlinuz-generic\nGENINITRD_NAMED_SYMLINK=true\nGENINITRD_INITRD_GZ_SYMLINK=true\nGENERATOR=mkinitrd\nDRACUT_OPTS=\"--force --hostonly --verbose\"\nAUTOGENERATE_INITRD=true\nAUTO_REMOVE_ORPHANED_INITRDS=true\nAUTO_REMOVE_INITRD_TREE=true\nAUTO_UPDATE_GRUB=false\nGENINITRD_DIALOG=false\nGENINITRD_COMMAND_OUTPUT=true\n#POST_INSTALL_SCRIPT=/usr/local/sbin/geninitrd-post-install\n";
+
+/// The Thinkpad on Slackware64-current (docs/design/slackware.md,
+/// "Slackware -current"), in small: GPT on nvme0n1 with p1 the ESP at
+/// /boot/efi and p2 ext4 /; kernel-generic 7.3.5 as /boot/vmlinuz-7.3.5
+/// (vmlinuz and vmlinuz-generic links to it, no huge kernel), geninitrd's
+/// /boot/initrd-7.3.5.img (initrd-generic.img and initrd.gz links to it; no
+/// initrd-tree, which geninitrd removes, and no mkinitrd.conf);
+/// eliloconfig's EFI/Slackware and its copy in EFI/BOOT, the kernel and the
+/// initrd copies of /boot's, booted by the Slackware NVRAM entry; dracut
+/// installed but unused.
+fn slackware_current() -> Tree {
+    use crate::efi::GLOBAL;
+    let t = Tree::new("scn-slackware-current");
+    let k = SLACK_CUR_KV;
+    let mut img = vec![0u8; 48 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec { disk_guid: "51ac0000-0000-4000-8000-0000000cd15c", parts: vec![(ESP, SLACK_CUR_ESP, 2048, 34815, 0, ""), (LINUX, "51ac0000-0000-4000-8000-0000000c0002", 34816, 98270, 0, "")] },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(32768, 0x51ac_00c1, ""));
+    put(&mut img, 34816, &ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, ""));
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    let (elilo, kernel, initrd) = (vec![5u8; 300], b"generic 7.3.5 kernel".to_vec(), b"geninitrd's initrd".to_vec());
+    let conf = "chooser=simple\ndelay=1\ntimeout=1\n#\nimage=vmlinuz\n        label=vmlinuz\n        initrd=initrd.gz\n        read-only\n        append=\"root=/dev/nvme0n1p2 vga=normal ro\"\n";
+    t.disk("nvme0n1", "259:0", &img, 512)
+        .partition("nvme0n1", "nvme0n1p1", "259:1", 1, 2048, 32768, &img)
+        .partition("nvme0n1", "nvme0n1p2", "259:2", 2, 34816, 63455, &img)
+        .file("/sys/block/nvme0n1/device/model", "SAMPLE NVME\n")
+        .symlink(&format!("/dev/disk/by-partuuid/{SLACK_CUR_ESP}"), "../../nvme0n1p1")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&var("Boot0019"), efi_load_option("Slackware", 1, 2048, 32768, SLACK_CUR_ESP, "\\EFI\\Slackware\\elilo.efi"))
+        .file(&var("Boot001E"), efi_load_option("UEFI OS", 1, 2048, 32768, SLACK_CUR_ESP, "\\EFI\\BOOT\\BOOTX64.EFI"))
+        .file(&var("BootOrder"), [7u8, 0, 0, 0, 0x19, 0, 0x1e, 0])
+        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 0x19, 0])
+        .file(&var("SecureBoot"), [6u8, 0, 0, 0, 0])
+        .file("/proc/self/mountinfo", "26 1 259:2 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw\n27 26 259:1 / /boot/efi rw,relatime shared:2 - vfat /dev/nvme0n1p1 rw,fmask=0022,dmask=0022\n")
+        .file("/proc/swaps", "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n")
+        .file("/proc/cmdline", "BOOT_IMAGE=dev002:\\EFI\\Slackware\\vmlinuz  root=/dev/nvme0n1p2 vga=normal ro ro\n")
+        .file("/etc/os-release", SLACK_CURRENT_OS_RELEASE)
+        .file("/etc/slackware-version", "Slackware 15.0+\n")
+        .file(
+            "/etc/fstab",
+            "/dev/nvme0n1p2   /                ext4        defaults         1   1\n/dev/nvme0n1p1   /boot/efi        vfat        defaults         1   0\n#/dev/cdrom      /mnt/cdrom       auto        noauto,owner,ro,comment=x-gvfs-show 0   0\n/dev/fd0         /mnt/floppy      auto        noauto,owner     0   0\ndevpts           /dev/pts         devpts      gid=5,mode=620   0   0\nproc             /proc            proc        defaults         0   0\ntmpfs            /dev/shm         tmpfs       nosuid,nodev,noexec 0   0\n",
+        )
+        .file("/etc/inittab", "id:3:initdefault:\nsi:S:sysinit:/etc/rc.d/rc.S\nrc:2345:wait:/etc/rc.d/rc.M\n")
+        .file("/sbin/init", "sysvinit")
+        .file(crate::boot::ELILO_EFI, &elilo)
+        .file(&format!("/boot/vmlinuz-{k}"), &kernel)
+        .file(&format!("/boot/System.map-{k}"), "")
+        .file(&format!("/boot/config-{k}.x64"), "")
+        .file(&format!("/boot/initrd-{k}.img"), &initrd)
+        .symlink("/boot/vmlinuz", &format!("vmlinuz-{k}"))
+        .symlink("/boot/vmlinuz-generic", &format!("vmlinuz-{k}"))
+        .symlink("/boot/System.map", &format!("System.map-{k}"))
+        .symlink("/boot/config", &format!("config-{k}.x64"))
+        .symlink("/boot/initrd-generic.img", &format!("initrd-{k}.img"))
+        .symlink("/boot/initrd.gz", &format!("initrd-{k}.img"))
+        .symlink("/boot/README.initrd", "/usr/doc/mkinitrd-1.4.11/README.initrd")
+        .file(crate::boot::GENINITRD, "#!/bin/bash\n")
+        .file(crate::boot::GENINITRD_SETUP, "#!/bin/bash\n")
+        .file(crate::boot::MKINITRD_GENERATOR, "#!/bin/bash\n")
+        .file("/etc/default/geninitrd", GENINITRD_DEFAULT)
+        .file("/etc/mkinitrd.conf.sample", "#MODULE_LIST=\"ext4\"\n")
+        .dir(&format!("/lib/modules/{k}/kernel"))
+        .file("/proc/sys/kernel/osrelease", format!("{k}\n"))
+        .file("/proc/sys/kernel/hostname", "thinkpad\n");
+    for d in ["Slackware", "BOOT"] {
+        let efi = if d == "BOOT" { "BOOTX64.EFI" } else { "elilo.efi" };
+        t.file(&format!("/boot/efi/EFI/{d}/{efi}"), &elilo)
+            .file(&format!("/boot/efi/EFI/{d}/elilo.conf"), conf)
+            .file(&format!("/boot/efi/EFI/{d}/vmlinuz"), &kernel)
+            .file(&format!("/boot/efi/EFI/{d}/initrd.gz"), &initrd);
+    }
+    for f in ["rc.S", "rc.M", "rc.inet1", "rc.sshd", "rc.bind"] {
+        t.file(&format!("/etc/rc.d/{f}"), "#!/bin/sh\n");
+        let mode = if f == "rc.bind" { 0o644 } else { 0o755 };
+        std::fs::set_permissions(t.p(&format!("/etc/rc.d/{f}")), <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(mode)).unwrap();
+    }
+    for p in [
+        "aaa_base-16.0-x86_64-3",
+        "lilo-24.2-x86_64-17",
+        "elilo-3.16-x86_64-19",
+        "mkinitrd-1.4.11-x86_64-81",
+        "dracut-112-x86_64-2",
+        "kernel-generic-7.3.5-x86_64-2",
+        "kernel-firmware-20261117_6e26a24-noarch-1",
+        "sysvinit-3.18-x86_64-3",
+        "efibootmgr-18-x86_64-2",
+        "grub-2.16-x86_64-5",
+        "slackpkg-16.0.1-noarch-3",
+        "e2fsprogs-1.47.4-x86_64-1",
+        "dosfstools-4.2-x86_64-3",
+    ] {
+        t.file(&format!("/var/lib/pkgtools/packages/{p}"), format!("PACKAGE NAME:     {p}\n"));
+    }
+    t.symlink("/var/log/packages", "../lib/pkgtools/packages");
+    t
+}
+
+/// A Slackware plan of `t`, its disk `from` going to `to`, with load's `args`.
+fn slackware_plan_from(t: &Tree, from: &str, to: &str, args: &[&str]) -> (Value, crate::load::commands::Built) {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let v = run(t, true, FakeRunner::default());
+    let l = Layout::from_json(v.clone()).unwrap();
+    let mut a = vec!["l.json".to_string()];
+    a.extend(args.iter().map(|x| x.to_string()));
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
+    (v, commands::build(&l, &o, &Mapping { pairs: vec![(from.into(), to.into())], ..Mapping::default() }))
+}
+
+/// The -current Thinkpad read back: os-release's codename, the kernel by
+/// its version with its flavor from vmlinuz-generic, geninitrd's image and
+/// links, ELILO's copies of /boot's kernel and image.  load remakes the
+/// image as geninitrd's setup.01.mkinitrd would (no mkinitrd.conf: the
+/// command generator's command, run), copies it over both ESP copies,
+/// installs nothing, and makes the NVRAM entries again (the source's
+/// Slackware entry among them, so not a second one).
+#[test]
+fn slackware_current_thinkpad() {
+    use crate::load::{commands::Cmd, Stage};
+    let (v, b) = slackware_plan_from(&slackware_current(), "nvme0n1", "nvme0n1", &[]);
+    assert_eq!(s(&v, &["os", "id"]), "slackware");
+    assert_eq!(s(&v, &["os", "version_id"]), "16.0");
+    assert_eq!(s(&v, &["os", "version_codename"]), "current");
+    assert_eq!(s(&v, &["boot", "loader", "name"]), "elilo");
+    let sl = v.at(&["boot", "slackware"]).unwrap();
+    assert_eq!(s(sl, &["version"]), "Slackware 15.0+");
+    assert_eq!(s(sl, &["init"]), "slackware-rc");
+    assert_eq!(arr(sl, &["kernels"]).len(), 1, "{sl:?}");
+    assert_eq!((s(sl, &["kernels", "0", "file"]), s(sl, &["kernels", "0", "flavor"]), s(sl, &["kernels", "0", "version"])), ("vmlinuz-7.3.5", "generic", "7.3.5"));
+    assert_eq!(sl.at(&["kernels", "0", "modules_installed"]), Some(&Value::Bool(true)));
+    let ini = v.at(&["boot", "initramfs"]).unwrap();
+    assert_eq!(s(ini, &["generator"]), "geninitrd");
+    assert!(ini.at(&["mkinitrd"]).is_none());
+    let ev: Vec<&str> = arr(ini, &["evidence"]).iter().filter_map(Value::as_str).collect();
+    for want in [
+        "EFI/Slackware/elilo.conf has initrd=initrd.gz",
+        "/usr/sbin/geninitrd exists",
+        "/etc/default/geninitrd says GENERATOR=mkinitrd",
+        "no /etc/mkinitrd.conf, so /var/lib/pkgtools/setup/setup.01.mkinitrd runs /usr/share/mkinitrd/mkinitrd_command_generator.sh's command",
+        "/boot/initrd-7.3.5.img is geninitrd's image for kernel 7.3.5",
+        "/boot/initrd.gz -> initrd-7.3.5.img",
+    ] {
+        assert!(ev.contains(&want), "{want}: {ev:?}");
+    }
+    let g = ini.at(&["geninitrd"]).unwrap();
+    assert_eq!(s(g, &["default"]), "/etc/default/geninitrd");
+    assert_eq!(s(g, &["kernel"]), "/boot/vmlinuz-generic");
+    assert_eq!(s(g, &["generator"]), "mkinitrd");
+    assert_eq!(s(g, &["runs"]), "mkinitrd_command_generator.sh");
+    assert_eq!(s(g, &["dracut_opts"]), "--force --hostonly --verbose");
+    assert!(g.at(&["conf"]).unwrap().is_null() && g.at(&["override_script"]).unwrap().is_null() && g.at(&["post_install_script"]).unwrap().is_null());
+    assert_eq!((g.get("named_symlink"), g.get("initrd_gz_symlink")), (Some(&Value::Bool(true)), Some(&Value::Bool(true))));
+    assert_eq!(arr(g, &["images"]).len(), 1);
+    assert_eq!(s(g, &["images", "0", "file"]), "/boot/initrd-7.3.5.img");
+    assert_eq!(s(g, &["images", "0", "version"]), "7.3.5");
+    assert_eq!(s(g, &["images", "0", "kernel"]), "/boot/vmlinuz-7.3.5");
+    assert_eq!(s(g, &["links", "/boot/initrd.gz"]), "initrd-7.3.5.img");
+    assert_eq!(s(g, &["links", "/boot/initrd-generic.img"]), "initrd-7.3.5.img");
+    let confs = arr(&v, &["boot", "elilo", "configs"]);
+    assert_eq!(confs.len(), 2);
+    for c in confs {
+        assert_eq!(s(c, &["images", "0", "same_as"]), "/boot/vmlinuz-7.3.5");
+        assert_eq!(s(c, &["images", "0", "initrd_same_as"]), "/boot/initrd-7.3.5.img");
+    }
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    let mk = bt
+        .find("chroot /mnt/bko-target /bin/bash -c 'set -o pipefail; /usr/share/mkinitrd/mkinitrd_command_generator.sh -k 7.3.5 -a \"-L -R -o /boot/initrd-7.3.5.img\" | bash'\n")
+        .expect(&bt);
+    let c1 = bt.find("cp /mnt/bko-target/boot/initrd-7.3.5.img /mnt/bko-target/boot/efi/EFI/BOOT/initrd.gz\ntouch -r /mnt/bko-target/boot/initrd-7.3.5.img /mnt/bko-target/boot/efi/EFI/BOOT/initrd.gz\n").expect(&bt);
+    let c2 = bt.find("cp /mnt/bko-target/boot/initrd-7.3.5.img /mnt/bko-target/boot/efi/EFI/Slackware/initrd.gz\n").expect(&bt);
+    let sl = bt.find("efibootmgr --quiet --create --disk /dev/nvme0n1 --part 1 --label Slackware --loader '\\EFI\\Slackware\\elilo.efi'\n").expect(&bt);
+    assert!(mk < c1 && c1 < c2 && c2 < sl, "{bt}");
+    assert_eq!(bt.matches("--label Slackware").count(), 1, "{bt}");
+    assert_eq!(bt.matches("chroot /mnt/bko-target /bin/bash -c").count(), 1, "{bt}");
+    // geninitrd itself (its DKMS and lilo scripts, orphan removal,
+    // update-grub) isn't run: only the command it would make the image with.
+    let run_lines: String = bt.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n");
+    assert!(!run_lines.contains("geninitrd") && !run_lines.contains("setup.01") && !run_lines.contains("grub-") && !run_lines.contains(" lilo") && !run_lines.contains("dracut") && !run_lines.contains("update-grub") && !run_lines.contains("remove-orphaned"), "{bt}");
+    assert!(b.notes.iter().any(|n| n.starts_with("ELILO: elilo.efi, elilo.conf, the kernel and the initrd came back with the ESP")), "{:?}", b.notes);
+    assert!(b.notes.iter().any(|n| n.contains("kernel names (/dev/nvme0n1p2, /dev/nvme0n1p1)")), "{:?}", b.notes);
+
+    // With an /etc/mkinitrd.conf, setup.01.mkinitrd runs mkinitrd -F.
+    let t = slackware_current();
+    t.file("/etc/mkinitrd.conf", "MODULE_LIST=\"ext4:nvme\"\nROOTDEV=\"/dev/nvme0n1p2\"\n");
+    let (v, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
+    assert_eq!(s(&v, &["boot", "initramfs", "geninitrd", "runs"]), "mkinitrd");
+    assert_eq!(s(&v, &["boot", "initramfs", "geninitrd", "rootdev"]), "/dev/nvme0n1p2");
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("chroot /mnt/bko-target /sbin/mkinitrd -F /etc/mkinitrd.conf -k 7.3.5 -o /boot/initrd-7.3.5.img\n") && bt.contains("EFI/Slackware/initrd.gz"), "{bt}");
+    assert!(!bt.contains("mkinitrd_command_generator"), "{bt}");
+    // ... and with LUKSDEV in it, the restore is refused (out of scope).
+    t.file("/etc/mkinitrd.conf", "LUKSDEV=\"/dev/nvme0n1p2\"\nROOTDEV=\"/dev/mapper/cryptroot\"\n");
+    let (_, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
+    assert!(b.problems.iter().any(|p| p.starts_with("Slackware: geninitrd's initrd unlocks LUKS (/etc/mkinitrd.conf has LUKSDEV=/dev/nvme0n1p2)")), "{:?}", b.problems);
+
+    // GENERATOR=dracut: not run; the restored images stay, and so do the
+    // ESP's copies.
+    let t = slackware_current();
+    t.file("/etc/default/geninitrd", GENINITRD_DEFAULT.replace("GENERATOR=mkinitrd", "GENERATOR=dracut"));
+    let (v, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
+    assert_eq!(s(&v, &["boot", "initramfs", "geninitrd", "runs"]), "dracut");
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(!bt.contains("dracut") && !bt.contains("mkinitrd") && !bt.contains("EFI/Slackware/initrd.gz"), "{bt}");
+    assert!(b.notes.iter().any(|n| n.starts_with("Slackware: geninitrd's GENERATOR=dracut (/var/lib/pkgtools/setup/setup.01.mkinitrd runs dracut) isn't one bko-holt load runs")), "{:?}", b.notes);
+
+    // An executable override script runs in setup.01.mkinitrd's place: not
+    // run here either.
+    let t = slackware_current();
+    t.file("/etc/default/geninitrd", format!("{GENINITRD_DEFAULT}GENINITRD_OVERRIDE_SCRIPT=/usr/local/sbin/geninitrd-custom\n")).file("/usr/local/sbin/geninitrd-custom", "#!/bin/sh\n");
+    std::fs::set_permissions(t.p("/usr/local/sbin/geninitrd-custom"), <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755)).unwrap();
+    let (v, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
+    assert_eq!(s(&v, &["boot", "initramfs", "geninitrd", "runs"]), "override");
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(!bt.contains("mkinitrd") && !bt.contains("EFI/BOOT/initrd.gz"), "{bt}");
+    assert!(b.notes.iter().any(|n| n.starts_with("Slackware: geninitrd runs GENINITRD_OVERRIDE_SCRIPT=/usr/local/sbin/geninitrd-custom")), "{:?}", b.notes);
+
+    // A kernel whose modules are gone: its image stays.
+    let t = slackware_current();
+    std::fs::remove_dir_all(t.p("/lib/modules/7.3.5")).unwrap();
+    let (_, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(!bt.contains("mkinitrd") && !bt.contains("EFI/BOOT/initrd.gz"), "{bt}");
+    assert!(b.notes.iter().any(|n| n == "Slackware: /boot/initrd-7.3.5.img is for kernel 7.3.5, which has no /lib/modules/7.3.5, so it stays as restored"), "{:?}", b.notes);
+
+    // Without geninitrd's image (a 15.0-style /boot/initrd.gz only), the
+    // mkinitrd arm reads it, as on 15.0.
+    let t = slackware_current();
+    std::fs::remove_file(t.p("/boot/initrd.gz")).unwrap();
+    std::fs::rename(t.p("/boot/initrd-7.3.5.img"), t.p("/boot/initrd.gz")).unwrap();
+    std::fs::remove_file(t.p("/boot/initrd-generic.img")).unwrap();
+    let (v, _) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
+    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "mkinitrd");
+    let ev: Vec<&str> = arr(&v, &["boot", "initramfs", "evidence"]).iter().filter_map(Value::as_str).collect();
+    assert!(ev.contains(&"/usr/sbin/geninitrd exists, but /boot has no initrd-VERSION.img it made"), "{ev:?}");
+
+    // Onto a disk named otherwise: elilo.conf's root= and fstab's names
+    // are problems, as on 15.0 (Decision 5).
+    let (_, b) = slackware_plan_from(&slackware_current(), "nvme0n1", "sda", &[]);
+    for want in ["EFI/Slackware/elilo.conf's root= in append= names /dev/nvme0n1p2, which is /dev/sda2 here", "fstab's /boot/efi names /dev/nvme0n1p1, which is /dev/sda1 here"] {
+        assert!(b.problems.iter().any(|p| p.contains(want)), "{want}: {:?}", b.problems);
+    }
+}
+
 /// Every scenario's dump, by name, for tests that must hold over all of
 /// them (load's fit.rs).  Each tree is built, dumped and dropped before the
 /// next: held all at once they were ~3.5 GiB of tmpfs.
@@ -5212,6 +5472,7 @@ const DUMPS: &[Dump] = &[
     ("elementary_luks", || run(&elementary(true), true, FakeRunner::default())),
     ("slackware15", || run(&slackware15(), true, FakeRunner::default())),
     ("slackware15_uefi", || run(&slackware15_uefi(), true, FakeRunner::default())),
+    ("slackware_current", || run(&slackware_current(), true, FakeRunner::default())),
     ("proxmox", || { let (t, r) = proxmox(false); run(&t, true, r) }),
     ("proxmox_mirror", || { let (t, r) = proxmox(true); run(&t, true, r) }),
     ("guix_uefi", || run(&guix_uefi(), true, FakeRunner::default())),

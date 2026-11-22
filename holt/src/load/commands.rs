@@ -7624,14 +7624,61 @@ mod tests {
         assert!(t.contains("\t\t\tsegment_count = 1\n\t\t\tsegment1 {\n\t\t\t\tstart_extent = 0\n"), "{t}");
         assert!(t.contains("stripes = [\"pv0\", 0]"), "{t}");
         assert!(t.contains("contents = \"Text Format Volume Group\"\nversion = 1\n"), "{t}");
-        let ro_skip = crate::json::parse(
-            &vg.compact()
-                .replace("\"status\":[\"READ\",\"WRITE\",\"VISIBLE\"]", "\"status\":[\"READ\",\"VISIBLE\"]")
-                .replace("\"flags\":[]", "\"flags\":[\"ACTIVATION_SKIP\"]"),
-        )
-        .unwrap();
+        // A read-only LV with ACTIVATION_SKIP (the LV's own status and
+        // flags only, not the group's "flags": []): vgcfgrestore makes it
+        // writable and active, for format and restore ...
+        let c = vg.compact();
+        let lv_from = "\"status\":[\"READ\",\"WRITE\",\"VISIBLE\"],\"flags\":[]";
+        let changed = c.replacen(lv_from, "\"status\":[\"READ\",\"VISIBLE\"],\"flags\":[\"ACTIVATION_SKIP\"]", 1);
+        assert_ne!(changed, c, "{lv_from}");
+        let ro_skip = crate::json::parse(&changed).unwrap();
+        assert_eq!(LvAttrs::of(&ro_skip.get("logical_volumes").and_then(Value::as_array).unwrap()[0]), LvAttrs { tags: vec![], activation_skip: true, read_only: true });
         let rt = vg_metadata(&ro_skip).unwrap();
-        assert!(rt.contains("status = [\"READ\", \"WRITE\", \"VISIBLE\"]") && !rt.contains("ACTIVATION_SKIP"), "{rt}");
+        assert!(rt.contains("\t\troot {\n\t\t\tid = \"LLLL\"\n\t\t\tstatus = [\"READ\", \"WRITE\", \"VISIBLE\"]\n\t\t\tflags = []\n"), "{rt}");
+        assert!(!rt.contains("ACTIVATION_SKIP"), "{rt}");
+        // ... and close sets both again, before the group's vgchange -an
+        // (closers run last first).
+        let closers = |vg: &Value| {
+            let j = sample::bios_mbr();
+            let l = Layout::from_json(crate::json::parse(&j).unwrap()).unwrap();
+            let o = match crate::load::parse_args(&["l.json".to_string()]).unwrap() {
+                crate::load::Parsed::Run(o) => o,
+                _ => unreachable!(),
+            };
+            let m = Mapping::default();
+            let mut b = Builder {
+                layout: &l,
+                opts: &o,
+                names: Names { layout: &l, mapping: &m, made: BTreeMap::new() },
+                problems: vec![],
+                notes: vec![],
+                closers: vec![],
+                pools: vec![],
+                filesystems: vec![],
+                datasets: vec![],
+                mount_points: vec![],
+                fam: None,
+                btrfs: BTreeMap::new(),
+                timeshift: BTreeMap::new(),
+                readonly_later: vec![],
+                be_mounts: vec![],
+                be_restored: vec![],
+            };
+            let mut out = vec![];
+            b.vg(vg, &mut out);
+            assert!(b.problems.is_empty(), "{:?}", b.problems);
+            b.closers.iter().map(|c| c.argv.join(" ")).collect::<Vec<_>>()
+        };
+        let cl = closers(&ro_skip);
+        let at = |w: &str| cl.iter().position(|c| c.contains(w)).unwrap_or_else(|| panic!("{w}: {cl:?}"));
+        let (an, skip, ro) = (at("vgchange --devicesfile"), at(" --setactivationskip y vg0/root"), at(" --permission r vg0/root"));
+        assert!(cl[skip].starts_with("lvchange --devicesfile ") && cl[ro].starts_with("lvchange --devicesfile "), "{cl:?}");
+        assert!(cl[an].contains(" --activate n vg0"), "{cl:?}");
+        assert!(an < skip && an < ro, "{cl:?}");
+        assert_eq!(cl.len(), 3, "{cl:?}");
+        // A writable LV without the flag: no lvchange.
+        let cl = closers(&vg);
+        assert!(!cl.iter().any(|c| c.contains("lvchange")), "{cl:?}");
     }
 
     /// Vanilla OS's vos-root: vgcfgrestore's file has the PV, the group and

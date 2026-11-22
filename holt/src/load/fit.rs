@@ -678,6 +678,21 @@ impl One<'_> {
         if s(&c, "type").as_deref() != Some("crypto_LUKS") {
             return self.resize_content(&p.name, &c, &at, old, new, pct);
         }
+        // Bug: resize_inside resized LUKS2 containers even when the dump kept
+        // the raw LUKS2 header (luksHeaderRestore). A restored header with a
+        // fixed (non-"dynamic") segment size ignores the new partition size,
+        // desynchronizing dm_devices.size_bytes and inner filesystems or failing
+        // assemble; shrinking into 2*header_size + keyslots_size also corrupts
+        // dynamic kept headers. Guard both when luksheader::kept() is present.
+        if crate::luksheader::kept(self.v, &p.name).is_some() {
+            if c.at(&["segments", "0"]).and_then(|x| s(x, "size")).as_deref() != Some("dynamic") {
+                return Err(format!("--fit-largest: {} keeps its LUKS2 header with a fixed segment size, so it cannot be resized", p.name));
+            }
+            let hdr_end = u(&c, "header_size").and_then(|h| h.checked_mul(2)).and_then(|h| h.checked_add(u(&c, "keyslots_size")?));
+            if hdr_end.is_some_and(|e| new <= e) {
+                return Err(format!("--fit-largest: {} would be smaller than its kept LUKS2 header and keyslots area", p.name));
+            }
+        }
         let off = u(&c, "data_offset_bytes")
             .or_else(|| c.at(&["segments", "0"]).and_then(|x| u(x, "offset")))
             .ok_or_else(|| format!("--fit-largest: the dump doesn't give the LUKS payload offset on {}", p.name))?;

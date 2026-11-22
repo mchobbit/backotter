@@ -611,8 +611,8 @@ impl Builder<'_> {
         out.extend(self.restored_key_files(&t));
         out.push(Cmd::new(&["sh", "-c", &atimes_cmd(&t, "if-missing", &self.ro_shared())]).why("the restored atimes (the restore stage lists them), to put back after this stage's reads"));
         out.push(Cmd::note("transactional-update: no initramfs, grub2-mkconfig, grub2-install, shim-install, sdbootutil or relabel of the root, and no chroot"));
-        let fs = self.layout.arr(&["storage", "btrfs"]).iter().find(|f| s(f, "uuid").as_deref() == Some(uuid.as_str())).cloned();
-        let dev = fs.as_ref().and_then(|f| f.at(&["devices", "0"]).and_then(Value::as_str).map(str::to_string)).and_then(|d| self.names.dev(&d)).unwrap_or_default();
+        let fs = self.layout.arr(&["storage", "btrfs"]).iter().find(|f| s(f, "uuid").is_some_and(|u| u.eq_ignore_ascii_case(&uuid))).cloned();
+        let Some(dev) = self.btrfs_dev(&uuid, fs.as_ref()) else { return out };
         let top = format!("{RUN_DIR}/btrfs/{uuid}");
         out.push(Cmd::new(&["mkdir", "-p", &top]));
         out.push(Cmd::new(&["mount", "-t", "btrfs", "-o", "subvolid=5,noatime", &dev, &top]).why(format!("btrfs {uuid}: its subvolumes, by path, for the checks and health-checker's ID")));

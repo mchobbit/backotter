@@ -3542,11 +3542,40 @@ impl Builder<'_> {
     /// source's ID order, each a snapshot of its base, then made exact from
     /// the backup (rustic-bko restore --exact); then the read-only flags,
     /// the default subvolume if it's one, and quotas.
+    // Bug: unlike format(), shared_snapshots(), boot_tail(), and
+    // transactional_boot() read only storage.btrfs[].devices[0] with
+    // unwrap_or_default(). When that array is empty/missing (dumps without btrfs
+    // tools) or its disk is unmapped, they emitted `mount -t btrfs ... '' ...`
+    // with an empty device argument instead of falling back to btrfs leaves or
+    // reporting a layout problem.
+    pub(crate) fn btrfs_dev(&mut self, uuid: &str, fs: Option<&Value>) -> Option<String> {
+        if let Some(dev) = fs
+            .and_then(|f| f.get("devices"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|d| d.as_str().and_then(|n| self.names.dev(n)))
+            .next()
+        {
+            return Some(dev);
+        }
+        if let Some(dev) = self
+            .leaves()
+            .into_iter()
+            .find(|(_, c)| s(c, "type").as_deref() == Some("btrfs") && s(c, "uuid").is_some_and(|u| u.eq_ignore_ascii_case(uuid)))
+            .and_then(|(src, _)| self.names.dev(&src))
+        {
+            return Some(dev);
+        }
+        self.problem_once(format!("btrfs {uuid}: no target device in this layout"));
+        None
+    }
+
     fn shared_snapshots(&mut self, prefix: &[String], out: &mut Vec<Cmd>) {
         for fs in self.layout.arr(&["storage", "btrfs"]).to_vec() {
             let uuid = s(&fs, "uuid").unwrap_or_default();
             let Some(plan) = self.btrfs.get(&uuid).cloned().filter(|p| !p.shared.is_empty()) else { continue };
-            let dev = fs.at(&["devices", "0"]).and_then(Value::as_str).and_then(|d| self.names.dev(d)).unwrap_or_default();
+            let Some(dev) = self.btrfs_dev(&uuid, Some(&fs)) else { continue };
             let top = format!("{RUN_DIR}/btrfs/{uuid}");
             out.push(Cmd::new(&["mkdir", "-p", &top]));
             out.push(Cmd::new(&["mount", "-t", "btrfs", "-o", "subvolid=5,noatime", &dev, &top]).why(format!("btrfs {uuid}: its shared snapshots (noatime: reading them changes nothing)")));
@@ -4313,7 +4342,7 @@ impl Builder<'_> {
             if ro.is_empty() {
                 continue;
             }
-            let dev = fs.at(&["devices", "0"]).and_then(Value::as_str).and_then(|d| self.names.dev(d)).unwrap_or_default();
+            let Some(dev) = self.btrfs_dev(&uuid, Some(&fs)) else { continue };
             let top = format!("{RUN_DIR}/btrfs/{uuid}");
             out.push(Cmd::new(&["mount", "-t", "btrfs", "-o", "subvolid=5", &dev, &top]));
             for p in ro {

@@ -10,7 +10,7 @@ themselves (never into `~/backotter-work/testvm` or `stick`, which belong to
 
 | Script | What it does |
 |---|---|
-| `stock-baseline.sh [--force] [--restic-host H] [--host H] [NAME ...]` | Builds and tests stock restic 0.19.1, rustic_core 0.13.0 and rustic 0.11.4 (`audit-lib.sh`'s `STOCK`: the forks' merge-bases with upstream) once, keeps the results on the host, copies them to the Mac and writes `stock-baseline.txt`; a baseline already there is skipped unless `--force` |
+| `stock-baseline.sh [--force] [--restic-host H] [--host H] [NAME ...]` | Builds and tests stock restic 0.20.0, rustic_core 0.14.0 and rustic 0.12.0 (`audit-lib.sh`'s `STOCK`: the forks' merge-bases with upstream) once, keeps the results on the host, copies them to the Mac and writes `stock-baseline.txt`; a baseline already there is skipped unless `--force` |
 | `fork-tests.sh [--force] [--restic-host H] [--rustic-host H] [NAME[=REV] ...]` | Builds and tests the forks (default: the Mac's `backotter` branches) the same way and compares them test by test with the baseline: fork-only failures (with their output), failing build targets, skips of tests stock passes, tests missing, tests added, stock's known failures; exit 1 on any fork-only failure, 2 if a run didn't complete |
 | `to-audit.sh [NAME ...]`, `to-audit.sh --mark [--what TEXT] [NAME[=REV] ...]` | Per fork, the commits and diffstat from its last audited commit (`audited-heads`) to its branch head; after a rebase, the range-diff instead.  `--mark` moves the lines on after an audit (commit `audited-heads` then) |
 | `audit-host.sh NAME:SRC:OUT[:CORE] ...` | The host part: builds and tests the trees one after another (its header lists the exact commands and what `OUT` holds) |
@@ -104,13 +104,14 @@ Chopin when Cinqcent can't.  Commands follow the projects' CI
   `go test -count=1 -json -p 8 ./...`, and `go build ./cmd/restic` with
   `CGO_ENABLED=0` for windows/amd64 darwin/arm64 freebsd/amd64 openbsd/amd64
   netbsd/amd64 solaris/amd64 aix/ppc64 linux/386 linux/arm linux/s390x
-  dragonfly/amd64.  Go is `~/sdk/go1.25.10` (go.mod's toolchain line),
-  `GOTOOLCHAIN=local`.
+  dragonfly/amd64.  Go is `~/sdk/goVERSION` for go.mod's toolchain line, else its `go`
+  line (restic 0.20.0: `go 1.26.10`, no toolchain line, so
+  `~/sdk/go1.26.10`), `GOTOOLCHAIN=local`.
 - rustic_core: `cargo test --all-targets --all-features --workspace
   --examples --no-fail-fast`, and the same with `--doc`.
 - rustic: `cargo test --locked --all-targets --features release --workspace
-  --no-fail-fast`, and `--doc`.  Stock takes rustic_core 0.13.0 from
-  crates.io by its own Cargo.lock (the release of rustic_core's 1030be4, the
+  --no-fail-fast`, and `--doc`.  Stock takes rustic_core 0.14.0 from
+  crates.io by its own Cargo.lock (the release of rustic_core's bf1de63, the
   rustic_core fork's merge-base); the fork is pointed at the rustic_core fork
   tree of the same run with `stick/prep-rustic-src.sh`, as `build-round.sh`
   builds rustic-bko.
@@ -244,3 +245,12 @@ After a fork is rebased onto a new release: update `STOCK` in
 `stock-baseline.txt`; `fork-tests.sh` warns when a fork isn't based on its
 `STOCK` commit.  `to-audit.sh` then shows the range-diff of the fork's
 commits and the upstream range taken in.
+
+When the new release's go.mod asks for a Go the hosts don't have, install
+it as `~/sdk/goVERSION` on every host first: `audit-host.sh`, `fork-root.sh`
+and `build-round.sh` (the newest `~/sdk/go*`) find it there.  restic 0.20.0
+asks for `go 1.26.10` (no toolchain line); on 2026-11-22 it went to
+`~/sdk/go1.26.10` on chopin, cinqcent, copland, cage, czerny and choubox,
+unzipped from the toolchain module
+`golang.org/toolchain@v0.0.1-go1.26.10.linux-amd64` (its h1 hash checked
+against sum.golang.org).

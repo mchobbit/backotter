@@ -62,7 +62,7 @@
 # Needs: Go (restic), rustup (rustic_core, rustic), python3, flock.
 #
 # Examples:
-#   audit-host.sh restic:/bkoscratch/bko-audit/src/restic-6aa3a516ce65:$HOME/backotter-work/bko-audit/stock/restic-0.19.1
+#   audit-host.sh restic:/bkoscratch/bko-audit/src/restic-9c88ff768f10:$HOME/backotter-work/bko-audit/stock/restic-0.20.0
 #   audit-host.sh rustic:/bkoscratch/bko-audit/src/rustic-f989942cfd3e:$HOME/backotter-work/bko-audit/fork/rustic-f989942cfd3e+core-6e8b00983d33:/bkoscratch/bko-audit/src/rustic_core-6e8b00983d33
 
 set -u

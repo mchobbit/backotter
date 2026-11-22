@@ -16,11 +16,11 @@
 #   BKO_WEAR_TAG     the jobs' WEAR_TAG in the wear log (default audit:TAG)
 
 # Stock: what the forks are based on (their merge-bases with upstream).
-# NAME VERSION COMMIT; rustic_core 0.13.0 is the crates.io release stock
-# rustic 0.11.4's Cargo.lock takes.
-STOCK="restic 0.19.1 6aa3a516ce654808a1f28f9fa21e9b7c8e6e90bf
-rustic_core 0.13.0 1030be4568e5f83ddf9a1d5354479adc57dce227
-rustic 0.11.4 6b96f976ff437a0528a4742358b172b32c3e3932"
+# NAME VERSION COMMIT; rustic_core 0.14.0 is the crates.io release stock
+# rustic 0.12.0's Cargo.lock takes.
+STOCK="restic 0.20.0 9c88ff768f10c192dc6a87619a65a16374080e33
+rustic_core 0.14.0 bf1de630bd2e9b3bc82b0b481c12a009f9e07874
+rustic 0.12.0 c4ce22f5b22074fc5a30838580a846cfdbab0782"
 
 BKO_GIT=${BKO_GIT:-$HOME/git}
 LOCAL=${BKO_AUDIT_LOCAL:-${TMPDIR:-/tmp}/bko-audit}

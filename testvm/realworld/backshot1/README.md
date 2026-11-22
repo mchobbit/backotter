@@ -377,7 +377,9 @@ cache lacks of the 15.0 tree from slackware.osuosl.org.  That is
 CHECKSUMS.md5, checked with gpgv against Slackware's key (pinned by
 fingerprint), then the 809 packages of series a, ap, d, l and n (all but
 kernel-huge), each checked against its MD5 and its own .asc.  Only then
-does it erase the disk with that serial (never a USB disk).  It lays the
+does it erase the disk with that serial, which must be an NVMe disk:
+fstab and root= name the root by device, as setup writes them, and a SATA
+disk is sdb beside the stick but sda without it.  It lays the
 disk out as GPT: a 512 MiB ESP at /boot/efi and ext4 / for the rest, with
 no swap.  / is made with the tree's own mke2fs.conf, so it gets no
 orphan_file.  Then it installs every package with Slackware's own
@@ -395,7 +397,16 @@ slackpkg.  There is a user `m` with no password: set one with
 `passwd m`.  Slackware 15.0 has no avahi, so `thinkpad.local` doesn't
 resolve: find the address by the MAC (`arp -an` on the Mac).  The tree is
 15.0 as released (kernel 5.15.19); `slackpkg update && slackpkg
-upgrade-all` brings in patches/.  `bs1-adopt` has no Slackware arm yet.
+upgrade-all` brings in patches/.  That includes kernel-generic and
+kernel-modules, but the ESP keeps the old `vmlinuz` and `initrd.gz` in
+`EFI/Slackware` (ELILO boots those, not /boot's), and the old
+/lib/modules is gone: the machine would boot the old kernel without its
+modules, so without its network driver.  Before rebooting, make the new
+kernel's initrd and copy both to `EFI/Slackware`: yes at slackpkg's kernel
+prompts, or by hand, mkinitrd with the command
+`/usr/share/mkinitrd/mkinitrd_command_generator.sh -r -k NEW_VERSION`
+prints, then `eliloconfig`.  (`EFI/BOOT`, the fallback, keeps the old
+pair.)  `bs1-adopt` has no Slackware arm yet.
 The stick isn't setup's ramdisk, so installpkg runs with Slackware's own
 tar, `--numeric-owner`, and bash as `sh`.  The doinst.sh scripts that
 chown by name run a second time in the chroot.  Ubuntu's tar 1.35 dropped

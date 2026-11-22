@@ -23,12 +23,15 @@
 # CHECKSUMS.md5 and its .asc, checked with gpgv against Slackware's key (the
 # mirror's GPG-KEY, held to SLACKWARE_KEY's fingerprint), then each package
 # of the list against its MD5 there and its own .asc, as make-bootstrap.sh
-# checks it.  All before the disk is touched.
+# checks it; a cached package that fails is fetched again once, with its
+# .asc.  All before the disk is touched.
 #
 # Layout (UEFI, GPT): a 512 MiB ESP (vfat) at /boot/efi and ext4 / for the
 # rest, made with the tree's own mke2fs.conf (e2fsprogs 1.46.5's e2fsck
 # refuses the live system's orphan_file); no swap.  fstab and root= by
-# device name, as setup writes them.  The generic kernel, mkinitrd's initrd
+# device name, as setup writes them, so an NVMe disk only: its name is the
+# same with the stick plugged in or not (a SATA disk is sdb beside the
+# stick, sda without it).  The generic kernel, mkinitrd's initrd
 # from the command mkinitrd_command_generator.sh prints, ELILO's four files
 # in EFI/Slackware (and EFI/BOOT, as the guest has them), its NVRAM entry
 # "Slackware" first in BootOrder and as BootNext.  NVRAM entries for the
@@ -82,7 +85,14 @@ CACHE=$(realpath "$CACHE")
 mapfile -t disks < <(lsblk -dnpo NAME,SERIAL | awk -v s="$SERIAL" '$2 == s { print $1 }')
 [[ ${#disks[@]} -eq 1 ]] || die "${#disks[@]} disks have serial $SERIAL"
 DISK=${disks[0]}
-[[ $(lsblk -dno TRAN "$DISK") != usb ]] || die "$DISK is a USB disk"
+tran=$(lsblk -dno TRAN "$DISK")
+[[ $tran != usb ]] || die "$DISK is a USB disk"
+# fstab, root= and mkinitrd's -r name the root by device, as setup writes
+# them; the rescue's name for a SATA disk (sdb, the stick being sda) isn't
+# the installed system's (sda), an NVMe disk's is.  (UUID= would do for
+# SATA, but setup never writes it.)  So NVMe only, whose driver the generic
+# kernel has built in (checked below with the initrd).
+[[ $tran == nvme ]] || die "$DISK is not an NVMe disk (transport \"$tran\"): this names the root by device, as setup does, and only an NVMe disk's name stays the same without the stick"
 if lsblk -nro MOUNTPOINTS "$DISK" | grep -q .; then die "something on $DISK is mounted"; fi
 cache_dev=$(findmnt -nro SOURCE -T "$CACHE")
 if lsblk -lnpo NAME "$DISK" | grep -qxF "$cache_dev"; then die "$CACHE is on $DISK, the disk to erase"; fi
@@ -99,9 +109,18 @@ mount -t tmpfs -o size=1G,mode=0700 bko-slackware "$tmp"
 mount --make-private "$tmp"
 T=$tmp/target
 mkdir "$T"
+# The target and everything below it: umount -R, or, when something there
+# is busy (a process still in the chroot), lazily, said so.
+unmount_target() {
+    mountpoint -q "$T" || return 0
+    umount -R "$T" && return 0
+    echo "slackware-bootstrap: umount -R $T failed; still mounted: $(findmnt -Rrno TARGET "$T" | paste -sd ' ' -)" >&2
+    echo "slackware-bootstrap: detaching them lazily (umount -R -l): $ROOT stays mounted until nothing uses it; reboot before touching $DISK again" >&2
+    umount -R -l "$T"
+}
 cleanup() {
     set +e
-    if mountpoint -q "$T"; then umount -R "$T" 2>/dev/null || umount -R -l "$T"; fi
+    unmount_target
     if findmnt -rno TARGET | grep -q "^$tmp/"; then
         echo "slackware-bootstrap: $tmp still has mounts; left in place" >&2
     else
@@ -157,12 +176,27 @@ if [[ -n $missing ]]; then
         die "could not download Slackware's packages"
 fi
 step "checking $npkg packages (MD5 from CHECKSUMS.md5, then each .asc)"
-(cd "$tree" && grep -F -f "$tmp/pkglist.txt" "$tmp/sums" | md5sum -c --quiet -) ||
-    die "Slackware's packages don't match CHECKSUMS.md5"
+declare -A want_md5
+while read -r h p; do want_md5[$p]=$h; done <"$tmp/sums"
+pkg_ok() {
+    [[ $(md5sum <"$tree/$1") == "${want_md5[$1]}  -" ]] && gpgv --keyring "$keyring" "$tree/$1.asc" "$tree/$1" 2>/dev/null
+}
+# A cached package that fails (a download cut short, the backup drive's bad
+# sector) would fail every later run: it and its .asc are fetched again,
+# once, and checked again.
+refetched=0
 while read -r p; do
-    gpgv --keyring "$keyring" "$tree/$p.asc" "$tree/$p" 2>/dev/null || die "$p is not signed by Slackware's key"
+    pkg_ok "$p" && continue
+    echo "$tree/$p: its MD5 or .asc doesn't check; fetching both again"
+    rm -f "$tree/$p" "$tree/$p.asc"
+    for f in "$p" "$p.asc"; do
+        curl -fsS --retry 3 -o "$tree/$f.part" "$MIRROR/$f" </dev/null || die "could not download $MIRROR/$f"
+        mv "$tree/$f.part" "$tree/$f"
+    done
+    pkg_ok "$p" || die "$tree/$p, fetched again, doesn't match CHECKSUMS.md5 or isn't signed by Slackware's key"
+    refetched=$((refetched + 1))
 done <"$tmp/pkglist.txt"
-echo "Slackware: $npkg packages checked"
+echo "Slackware: $npkg packages checked ($refetched fetched again)"
 pkg_file() { grep -m1 "/$1-[^/]*\.txz\$" "$tmp/pkglist.txt"; }
 
 # --- The disk ---------------------------------------------------------------------------
@@ -171,10 +205,18 @@ pkg_file() { grep -m1 "/$1-[^/]*\.txz\$" "$tmp/pkglist.txt"; }
 mapfile -t old_partuuids < <(lsblk -lnpo NAME "$DISK" | tail -n +2 | xargs -r -n1 blkid -s PARTUUID -o value | tr 'A-Z' 'a-z')
 step "erasing $DISK ($SERIAL, $(lsblk -dno SIZE,MODEL "$DISK"))"
 lsblk -o NAME,SIZE,FSTYPE,LABEL,PARTUUID "$DISK"
-# Anything still open on it: LUKS mappings, LVM, swap.
-for m in $(lsblk -lnpo NAME,TYPE "$DISK" | awk '$2 == "crypt" { print $1 }'); do cryptsetup close "$m"; done
-for vg in $(lsblk -lnpo NAME "$DISK" | xargs -r pvs --noheadings -o vg_name 2>/dev/null | sort -u); do vgchange -an "$vg"; done
-for s in $(lsblk -lnpo NAME "$DISK"); do swapoff "$s" 2>/dev/null || true; done
+# Anything still open on it, from the top down (active swap is a mount
+# point, refused above): first LVM's VGs on any of its nodes (a partition,
+# or a LUKS mapping: LVM on LUKS), then the LUKS mappings, deepest first
+# (lsblk lists a parent before its children), then the VGs once more, for
+# LVM below LUKS, whose first vgchange its open mapping refused.  Then
+# nothing but the disk and its partitions.
+vgs_on_disk() { lsblk -lnpo NAME "$DISK" | xargs -r pvs --noheadings -o vg_name 2>/dev/null | awk 'NF { print $1 }' | sort -u; }
+for vg in $(vgs_on_disk); do vgchange -an "$vg" || echo "$vg: again once the LUKS mappings are closed"; done
+for m in $(lsblk -lnpo NAME,TYPE "$DISK" | awk '$2 == "crypt" && !seen[$1]++ { print $1 }' | tac); do cryptsetup close "$m"; done
+for vg in $(vgs_on_disk); do vgchange -an "$vg"; done
+left=$(lsblk -lnpo NAME,TYPE "$DISK" | awk -v d="$DISK" '$1 != d && $2 != "part" { print $1 }' | sort -u | paste -sd ' ' -)
+[[ -z $left ]] || die "still open on $DISK: $left"
 mapfile -t nodes < <(lsblk -lnpo NAME "$DISK" | sort -r)
 wipefs -q -a "${nodes[@]}"
 # Zero the first 4 MiB and the last 1 MiB (old GPT backup header, signatures).
@@ -254,8 +296,17 @@ kver=$(ls "$T/lib/modules")
 [[ -e $T/boot/vmlinuz-$KERNEL-$kver ]] || { ls -l "$T/boot"; die "no /boot/vmlinuz-$KERNEL-$kver"; }
 
 # Commands in the new system, with Slackware's PATH; a chroot with the
-# rescue's /dev, /proc, /sys and /run (arch-chroot's, by hand).
-for d in dev dev/pts proc sys run; do mkdir -p "$T/$d"; mount --bind "/$d" "$T/$d"; done
+# rescue's /dev, /proc, /sys and /run (arch-chroot's, by hand).  Each bind
+# made a slave at once: a bind of the rescue's shared /dev is itself shared,
+# in /dev's peer group, private tmpfs or not, so the dev/pts bind below it
+# would show up on the rescue's /dev/pts as well (and a pty an SSH login
+# got from that copy keeps umount -R busy).  A slave takes the rescue's
+# mounts and unmounts but sends nothing back.
+for d in dev dev/pts proc sys run; do
+    mkdir -p "$T/$d"
+    mount --bind "/$d" "$T/$d"
+    mount --make-rslave "$T/$d"
+done
 in_slk() { chroot "$T" /usr/bin/env -i HOME=/root TERM=dumb PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "$@"; }
 
 step "setup's SeTconfig, the part that asks nothing"
@@ -383,8 +434,9 @@ echo "mkinitrd command: $cmd"
 in_slk sh -c "$cmd"
 [[ -s $T/boot/initrd.gz ]] || die "mkinitrd made no /boot/initrd.gz"
 listing=$(in_slk sh -c 'zcat /boot/initrd.gz | cpio -it --quiet')
-# The root disk's driver and ext4, each in the initrd or built into the
-# kernel (the generic kernel has nvme and nvme-core built in).
+# The root disk's driver (nvme: only an NVMe disk gets this far) and ext4,
+# each in the initrd or built into the kernel (the generic kernel has nvme
+# and nvme-core built in).
 for m in nvme ext4; do
     if grep -q "/$m\.ko" <<<"$listing"; then echo "$m: in the initrd"
     elif grep -q "/$m\.ko\$" "$T/lib/modules/$kver/modules.builtin"; then echo "$m: built into the kernel"
@@ -464,7 +516,7 @@ df -h "$T" "$T/boot/efi"
 
 step "unmounting"
 trap - EXIT
-umount -R "$T"
+unmount_target
 umount "$tmp"
 rmdir "$tmp"
 sync

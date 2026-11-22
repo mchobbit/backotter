@@ -1,10 +1,11 @@
 # UPS-driven shutdowns (plan)
 
-Status (2026-11-22): **UPS-C has no data link.** GMKThree moved to its own
-new UPS, UPS-D (a Green Cell on its USB, `[greencell]`, nutdrv_qx), on
-2026-11-22; UPS-C's Eaton still powers the farm hosts, Coventry and Choubox
-but is plugged into no computer, so those seven are unprotected until it is
-(see "UPS-D and UPS-C, 2026-11-22" below). UPS-A and UPS-B are unchanged.
+Status (2026-11-22): **UPS-C is read by Bigfoot.** GMKThree and
+GmkThreePool moved to their own new UPS, UPS-D (a Green Cell on GMKThree's
+USB, `[greencell]`, nutdrv_qx). UPS-C's Eaton now feeds Bigfoot, the five
+farm hosts, Coventry and Choubox, and its USB is on Bigfoot, which is its
+primary (see "UPS-D and UPS-C, 2026-11-22" below). Bigfoot is no longer on
+UPS-A, so UPS-A feeds GMKOne alone. UPS-B is unchanged.
 Before that (2026-11-17) every machine was set up; still open from then: T4
 for Bigfoot and the user's T5 pull-the-plug tests. Each config change left a
 dated `.bak-*` copy beside the file in `/etc/nut`.
@@ -13,9 +14,9 @@ dated `.bak-*` copy beside the file in `/etc/nut`.
 
 | UPS | Plugged into (USB) | On low battery it shuts down |
 |-----|--------------------|------------------------------|
-| UPS-A | GMKOne | Bigfoot, then GMKOne |
+| UPS-A | GMKOne | GMKOne (Bigfoot until 2026-11-22) |
 | UPS-B | GMKTwo | GMKTwo |
-| UPS-C | none since 2026-11-22 (was GMKThree) | Cinqcent, Chopin, Cage, Copland, Czerny, Coventry, Choubox (unprotected until UPS-C is plugged in) |
+| UPS-C | Bigfoot (since 2026-11-22; GMKThree before) | Cinqcent, Chopin, Cage, Copland, Czerny, Coventry, Choubox, then Bigfoot |
 | UPS-D | GMKThree (since 2026-11-22) | GMKThree |
 
 ## What exists today (surveyed read-only 2026-11-15, ~20:55)
@@ -313,10 +314,26 @@ bridges), GmkTwoPool and GmkThreePool (each on a JMS578 bridge).
   wait for secondaries). `MODE=netserver` and the `[upssecondary]` user are
   kept for whichever host takes UPS-C. Backups: `ups.conf` and
   `upsmon.conf.bak-upsd-20261122`.
-- **UPS-C's secondaries** still `MONITOR eaton@gmkthree.local`, which no
-  longer exists: they log `ERR UNKNOWN-UPS` and never shut down. When UPS-C's
-  USB goes into a host, that host gets the old `[eaton]` section and
-  ups-primary-halt for the others, and the six repoint their MONITOR.
+- **UPS-C on Bigfoot (same day).** UPS-C's USB went into Bigfoot, which the
+  user's records put on UPS-C's power too (not UPS-A, as this doc had it).
+  GMKThree's 5-disk GmkThreePool on UPS-C had been most of its old 157-179 W;
+  without it, UPS-C read 13 % load (farm idle), 100 %, ~38 min.
+  - Bigfoot: `MODE=netserver`; ups.conf `[eaton]` usbhid-ups with
+    GMKThree's old UPS-C settings (`ignorelb`, charge.low 30, runtime.low
+    420, offdelay 60, ondelay 120); `LISTEN 0.0.0.0 3493`; upsd.users gained
+    GMKThree's `[upssecondary]` stanza (same password, so the secondaries
+    needed only their host changed).
+  - Bigfoot's upsmon: `MONITOR eaton@localhost 1 monmaster <pw> primary` in
+    place of its UPS-A secondary line, and
+    `SHUTDOWNCMD "UPS_WAIT_MAX=180 UPS_THEN=/usr/local/sbin/bigfoot-ups-halt
+    /usr/local/sbin/ups-primary-halt chopin.local cinqcent.local cage.local
+    copland.local czerny.local coventry.local choubox.local"`: the
+    secondaries first, then Bigfoot's own service stops and poweroff.
+  - The seven secondaries: `MONITOR eaton@bigfoot.local ...`; all read OL and
+    show in `upsc -c` on Bigfoot.
+  - Backups: `*.bak-upsc-20261122` on Bigfoot and the seven.
+  - Open: GMKOne's SHUTDOWNCMD still waits up to 300 s for bigfoot.local,
+    which UPS-A no longer feeds (a UPS-A change, the user's to OK).
 
 ### Applied so far (2026-11-16, morning)
 

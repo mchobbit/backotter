@@ -4,6 +4,7 @@
 #
 # Usage (as root, from upsmon.conf on the UPS's master):
 #   SHUTDOWNCMD "/usr/local/sbin/ups-primary-halt HOST..."
+#   SHUTDOWNCMD "UPS_THEN=/usr/local/sbin/bigfoot-ups-halt /usr/local/sbin/ups-primary-halt HOST..."
 #   ups-primary-halt --dry-run HOST...
 #
 # On FSD, upsmon's primary waits only until its secondaries' upsmon log out
@@ -17,17 +18,26 @@
 # in the cache file (the user's decision, 2026-11-16).  POWERDOWNFLAG and
 # Debian's nutshutdown hook then tell the UPS to cut and restore power.
 #
-# Everything goes to syslog (logger -t ups) and to stderr.  Any trouble
-# here (a bad UPS_WAIT_MAX, no ping, no hosts) is logged and the host still
-# powers off: a SHUTDOWNCMD that gives up would leave it to the dead battery.
+# UPS_THEN, if set, is one command (an absolute path, no arguments) to exec
+# after the wait instead of `systemctl poweroff`, for a primary with its own
+# halt script (Bigfoot, UPS-C: /usr/local/sbin/bigfoot-ups-halt), which must
+# then power the host off itself.  If it isn't an executable file, or the
+# exec fails, that is logged and this powers off as usual.
 #
-#   --dry-run   ping each HOST once, print who answers, change nothing (no
+# Everything goes to syslog (logger -t ups) and to stderr.  Any trouble
+# here (a bad UPS_WAIT_MAX or UPS_THEN, no ping, no hosts) is logged and the
+# host still powers off: a SHUTDOWNCMD that gives up would leave it to the
+# dead battery.
+#
+#   --dry-run   ping each HOST once, print who answers and what it would
+#               run after the wait (UPS_THEN or poweroff), change nothing (no
 #               syslog, no poweroff)
 #
 # Installs as /usr/local/sbin/ups-primary-halt (testvm/ups/README.md).
 # Needs: bash 4.4+, ping (iputils), logger, systemctl.
 
 set -euo pipefail
+shopt -s execfail   # a failed exec of UPS_THEN returns here instead of exiting
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 dry=0
@@ -66,20 +76,33 @@ every=${UPS_PING_EVERY:-5}
 [[ $max =~ ^[0-9]+$ ]] || { log "UPS_WAIT_MAX=$max is not a number of seconds, using 300"; max=300; }
 [[ $every =~ ^[1-9][0-9]*$ ]] || { log "UPS_PING_EVERY=$every is not a number of seconds, using 5"; every=5; }
 
+# What to run after the wait: UPS_THEN if it is an absolute path to an
+# executable file, else (logged) our own poweroff.
+then_cmd=${UPS_THEN:-}
+if [ -n "$then_cmd" ]; then
+    if [[ $then_cmd != /* ]]; then
+        log "UPS_THEN=$then_cmd is not an absolute path, will use systemctl poweroff"
+        then_cmd=
+    elif [ ! -f "$then_cmd" ] || [ ! -x "$then_cmd" ]; then
+        log "UPS_THEN=$then_cmd is not an executable file, will use systemctl poweroff"
+        then_cmd=
+    fi
+fi
+
 if ! command -v ping >/dev/null 2>&1; then
     log "no ping here: not waiting for ${hosts[*]:-anyone}"
     hosts=()
 fi
 
 if [ $dry = 1 ]; then
-    [ ${#hosts[@]} -gt 0 ] || { log "no hosts given"; exit 0; }
+    [ ${#hosts[@]} -gt 0 ] || { log "no hosts given, would run ${then_cmd:-systemctl poweroff}"; exit 0; }
     mapfile -t up < <(answering "${hosts[@]}")
     for h in "${hosts[@]}"; do
         s=down
         for u in "${up[@]}"; do [ "$u" = "$h" ] && s=up; done
         log "$h: $s"
     done
-    log "would wait up to ${max}s (pinging every ${every}s) for ${#up[@]} of ${#hosts[@]} host(s), then systemctl poweroff"
+    log "would wait up to ${max}s (pinging every ${every}s) for ${#up[@]} of ${#hosts[@]} host(s), then ${then_cmd:-systemctl poweroff}"
     exit 0
 fi
 
@@ -101,6 +124,11 @@ while [ ${#hosts[@]} -gt 0 ]; do
     left=$((max - (SECONDS - start)))
     sleep $((left < every ? left : every))
 done
+
+if [ -n "$then_cmd" ]; then
+    log "exec $then_cmd"
+    exec "$then_cmd" || log "exec $then_cmd failed ($?), powering off instead"
+fi
 
 log "systemctl poweroff"
 systemctl poweroff || { log "systemctl poweroff failed ($?), trying shutdown -h now"; shutdown -h now; }

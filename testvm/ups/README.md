@@ -6,7 +6,7 @@ on which UPS, is in `docs/design/ups-shutdown.md`.
 
 | script | runs on | what it does |
 |---|---|---|
-| `ups-primary-halt HOST...` | each UPS's master (GMKOne, GMKThree) | pings each HOST every 5 s until none answers, or for at most `UPS_WAIT_MAX` seconds (default 300), logs who was still up, then `systemctl poweroff` (D4) |
+| `ups-primary-halt HOST...` | each UPS's master (GMKOne, GMKThree) | pings each HOST every 5 s until none answers, or for at most `UPS_WAIT_MAX` seconds (default 300), logs who was still up, then `systemctl poweroff`, or execs `UPS_THEN` if set (D4) |
 | `bko-ups-farm-halt` | chopin, cinqcent, cage, copland, czerny | touches `~m/backotter-work/cmp-logs/*/stop`, SIGTERMs every `run-p*-i*.scope` and `bko-*.scope` (cmp-run.sh's), waits up to 45 s for them, then `systemctl poweroff` |
 | `bigfoot-ups-halt` | Bigfoot | stops deluged, deluge-web, smbd, nmbd, nfs-server and vncserver@:1, each under a 60 s timeout, then `systemctl poweroff`. No `zpool export`, ever |
 
@@ -77,6 +77,7 @@ Bigfoot (`MODE=netclient`, after the disk move):
 |---|---|---|
 | `UPS_WAIT_MAX` | ups-primary-halt | 300 (seconds to wait for the secondaries) |
 | `UPS_PING_EVERY` | ups-primary-halt | 5 (seconds between ping rounds) |
+| `UPS_THEN` | ups-primary-halt | unset: `systemctl poweroff`. An absolute path to exec after the wait instead (no arguments; it must power off itself), e.g. `/usr/local/sbin/bigfoot-ups-halt`; not an executable file, or a failed exec, falls back to poweroff |
 | `BKO_USER` | bko-ups-farm-halt | m (whose `backotter-work/cmp-logs`) |
 | `UPS_SCOPES` | bko-ups-farm-halt | `run-p*-i*.scope bko-*.scope` |
 | `UPS_SCOPE_WAIT` | bko-ups-farm-halt | 45 |

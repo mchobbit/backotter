@@ -14,9 +14,14 @@
 #       STOCK) to REV touches, when `git blame -w -M -C --line-porcelain REV`
 #       gives it to a commit whose subject starts "backotter:" (so the
 #       upstream fixes cherry-picked onto the fork are not ours, nor
-#       upstream lines we only moved or re-indented); a file added since the
-#       stock tag by a "backotter:" commit is ours whole (one added by any
-#       other commit is blamed like the rest)
+#       upstream lines we only moved or re-indented); and a line the diff
+#       adds (git diff -w) that plain `git blame -w` gives to a "backotter:"
+#       commit, unless a line the diff removes reads the same (whitespace
+#       aside: one we moved), since -M -C gives a line we changed to an
+#       identical upstream line nearby (modification.rs's set_atime default,
+#       ForkAudit1 F3-05); a file added since the stock tag by a "backotter:"
+#       commit is ours whole (one added by any other commit is blamed like
+#       the rest)
 #   vendor/walkdir (rustic_core)  the diff from the crates.io release it
 #       vendors (its Cargo.toml's version; the .crate fetched from
 #       static.crates.io into a fresh directory and checked against stock
@@ -142,7 +147,9 @@ scope_fork() {
         echo "# rust-scope.sh: the lines of $name that are BackOtter's own (RustAudit1, RA0)"
         echo "# name=$name commit=$c stock=$tag $stock date=$(date '+%F %T %z')"
         echo "# rule: in files stock..commit touches, lines git blame -w -M -C gives to a commit whose subject"
-        echo "#   starts \"backotter:\"; files a backotter: commit added, whole; vendor/walkdir: the diff from crates.io"
+        echo "#   starts \"backotter:\", and lines the diff adds that plain git blame -w gives to one, but for those"
+        echo "#   that read as a line the diff removes; files a backotter: commit added, whole; vendor/walkdir: the"
+        echo "#   diff from crates.io"
         echo "# upstream commits in stock..commit (not ours): $(git -C "$g" log --format=%s "$stock..$c" | grep -vc '^backotter:' || true)"
         echo "# PATH START-END, relative to the repository root"
     } >"$tmp/head"
@@ -168,10 +175,20 @@ scope_fork() {
         fi
     done < <(git -C "$g" diff --name-status -M "$stock" "$c")
 
-    # Blame in parallel, one porcelain file per path (/ as %).
+    # What the diff removes, whitespace aside (a line we moved reads so).
+    git -C "$g" diff -w -U0 --no-color -M "$stock" "$c" -- . ':!vendor/walkdir' |
+        awk '/^diff --git / { h = 0; next } /^@@ / { h = 1; next }
+            h && /^-/ { l = substr($0, 2); gsub(/[ \t\r]/, "", l); print l }' | sort -u >"$tmp/removed"
+    # Blame in parallel, one porcelain file per path (/ as %), with -M -C
+    # and plain (.plain), and the diff's added lines (.plus: "LINE").
     tr '\n' '\0' <"$tmp/blame-list" | xargs -0 -n 1 -P "$JOBS" sh -c \
-        'git -C "$1" blame -w -M -C --line-porcelain "$2" -- "$4" >"$3/$(printf %s "$4" | tr / %)"' \
-        _ "$g" "$c" "$tmp/blame" 2>"$tmp/blame.err" || die "git blame failed: $(head -3 "$tmp/blame.err")"
+        'b="$3/$(printf %s "$5" | tr / %)"
+        git -C "$1" blame -w -M -C --line-porcelain "$2" -- "$5" >"$b" &&
+        git -C "$1" blame -w --line-porcelain "$2" -- "$5" >"$b.plain" &&
+        git -C "$1" diff -w -U0 --no-color "$4" "$2" -- "$5" | awk "/^@@ / {
+            split(\$3, a, \",\"); s = substr(a[1], 2); c = (2 in a) ? a[2] : 1
+            for (i = 0; i < c; i++) print s + i }" >"$b.plus"' \
+        _ "$g" "$c" "$tmp/blame" "$stock" 2>"$tmp/blame.err" || die "git blame failed: $(head -3 "$tmp/blame.err")"
     while IFS= read -r path; do
         local bf=$tmp/blame/$(printf %s "$path" | tr / %)
         # Each line: a "SHA ORIG FINAL [N]" header, its fields (summary
@@ -179,7 +196,15 @@ scope_fork() {
         awk 'length($1) == 40 && $1 ~ /^[0-9a-f]+$/ && $3 ~ /^[0-9]+$/ { ln = $3; next }
             /^summary / { s = substr($0, 9); next }
             /^\t/ { total++; if (s ~ /^backotter:/) print ln }
-            END { print "total", total > "/dev/stderr" }' "$bf" 2>"$bf.total" | ranges >"$bf.ranges"
+            END { print "total", total > "/dev/stderr" }' "$bf" 2>"$bf.total" >"$bf.lines"
+        # The diff's added lines plain blame gives to us, but for moved ones.
+        awk 'FILENAME == ARGV[1] { gone[$0] = 1; next } FILENAME == ARGV[2] { plus[$1] = 1; next }
+            length($1) == 40 && $1 ~ /^[0-9a-f]+$/ && $3 ~ /^[0-9]+$/ { ln = $3; next }
+            /^summary / { s = substr($0, 9); next }
+            /^\t/ { l = substr($0, 2); gsub(/[ \t\r]/, "", l)
+                if ((ln in plus) && s ~ /^backotter:/ && !(l in gone)) print ln }' \
+            "$tmp/removed" "$bf.plus" "$bf.plain" >>"$bf.lines"
+        ranges <"$bf.lines" >"$bf.ranges"
         n=$(awk '{ split($1, a, "-"); s += a[2] - a[1] + 1 } END { print s + 0 }' "$bf.ranges")
         sed "s|^|$path |" "$bf.ranges" >>"$tmp/body"
         printf '# lines %6d %6d blame %s\n' "$n" "$(awk '{ print $2 }' "$bf.total")" "$path" >>"$tmp/sum"

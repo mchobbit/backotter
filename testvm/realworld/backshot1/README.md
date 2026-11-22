@@ -445,7 +445,42 @@ rebooting, make the new kernel's initrd and copy both to `EFI/Slackware`:
 yes at slackpkg's kernel prompts, or by hand, mkinitrd with the command
 `/usr/share/mkinitrd/mkinitrd_command_generator.sh -r -k NEW_VERSION`
 prints, then `eliloconfig`.  (`EFI/BOOT`, the fallback, keeps the old
-pair.)  `bs1-adopt` has no Slackware arm yet.
+pair.)
+
+**bs1-adopt on Slackware** (2026-11-22).  Its PID 1 is sysvinit's, but
+the services are rc.d's: adopt makes `/etc/rc.d/rc.NAME` executable (so
+rc.M, or rc.inet2 for sshd, starts it at boot) and runs `rc.NAME restart`,
+or `start` when that fails (`rc.sshd restart` stops only the listener, so
+the controller's session stays; its start makes the RSA and ECDSA host keys
+again, which adopt removed: harmless, the controller pins the ed25519 one).
+`/etc/HOSTNAME` keeps its fully qualified form, the domain as it was
+(`thinkpad.localdomain`), because rc.M gives the kernel that name; bs1-common's
+`this_host` reads the kernel's name up to its first dot.  avahi: the avahi
+user and group, `rc.messagebus` and `rc.avahidaemon` executable, and
+`mdns4_minimal` in nsswitch.conf (all as -current ships them).  The
+sleep.conf drop-in goes in `/etc/elogind/sleep.conf.d`, and elogind honours
+it (`CanSuspend` said `no` after adopt).  The package list is pkgtools'
+(`/var/lib/pkgtools/packages`), not Slackware's rpm.  Packages are never
+pulled with slackpkg, whose mirror is live -current: a missing one is
+installed with `installpkg`, by name, from the tree on mybig512 the system
+was installed from (`slackware-cache/current-DATE` or `slackware64-15.0`),
+the one tree whose packages are exactly the installed ones, each file held to
+its CHECKSUMS.md5.  A system that took a package from anywhere else matches
+no tree, and adopt stops and says to install it by hand.  A full install
+(series a, ap, d, l and n, as `slackware-bootstrap.sh` makes it) lacks
+nothing.  bs1-verify waits for rc.M to finish (sshd is up before it is).
+bs1-manifest's Slackware churn (a reboot of the -current Thinkpad,
+2026-11-22): rc.M's cache updates at every boot (all of `usr/share/mime`,
+gschemas.compiled, intent.cache, gdk-pixbuf's loaders.cache), rc.udev's
+hwdb.bin and dhcpcd's ntp.conf come back with the same bytes; `etc/adjtime`
+(rc.6's hwclock) and `etc/resolv.conf.bak` may differ.
+
+**bko-holt refuses -current**: `bko-holt dump` says it "supports only the
+Slackware 15.0 release, not -current" (holt/src/osrel.rs), so on the
+-current Thinkpad the preflight stops there, after its own checks pass.
+BackShot1 needs bko-holt's -current support first (os-release
+`VERSION_ID=16.0`, `VERSION_CODENAME=current`; kernel-generic as
+`/boot/vmlinuz-VERSION`; geninitrd's `/boot/initrd-VERSION.img`).
 
 The stick isn't setup's ramdisk, so installpkg runs with Slackware's own
 tar, `--numeric-owner`, and bash as `sh`.  The doinst.sh scripts that

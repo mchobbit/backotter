@@ -144,5 +144,72 @@ class Churn(unittest.TestCase):
         self.assertIn("changed: home/m/.dbus/other", out)
 
 
+
+class SlackwareChurn(unittest.TestCase):
+    """Slackware's boot: rc.M's caches, rc.udev's hwdb and dhcpcd's ntp.conf
+    the same bytes again (new mtimes), adjtime and resolv.conf.bak other
+    bytes; only on a Slackware baseline (the Thinkpad's -current,
+    2026-11-22: a reboot, 952 paths apart)."""
+
+    REMADE = ["usr/share/mime/aliases", "usr/share/mime/application/pdf.xml", "usr/share/glib-2.0/schemas/gschemas.compiled",
+              "usr/share/applications/intent.cache", "usr/lib64/gdk-pixbuf-2.0/2.10.0/loaders.cache", "etc/udev/hwdb.bin",
+              "etc/ntp.conf"]
+
+    def setUp(self):
+        self.t = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.t)
+        self.root = self.t / "root"
+        put(self.root, "etc/slackware-version", "Slackware 15.0+\n")
+        for rel in self.REMADE + ["etc/resolv.conf.bak", "etc/rc.d/rc.local"]:
+            put(self.root, rel, f"{rel}\n")
+
+    def compare(self, change):
+        a = self.t / "a.tsv"
+        b = self.t / "b.tsv"
+        with mock.patch.object(M, "xattrs", lambda p: "-"):
+            M.write(str(self.root), str(a))
+            change()
+            M.write(str(self.root), str(b))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = M.compare(str(a), str(b))
+        return rc, buf.getvalue()
+
+    def touch(self, rel, content=None):
+        p = self.root / rel
+        if content is not None:
+            p.write_text(content)
+        t = time.time() + 100
+        os.utime(p, (t, t))
+
+    def boot(self):
+        for rel in self.REMADE:
+            self.touch(rel)
+        self.touch("etc/resolv.conf.bak", "nameserver 192.168.68.1\n")
+        put(self.root, "etc/adjtime", "0.0 1795332742 0.0\n")
+
+    def test_a_boot(self):
+        rc, out = self.compare(self.boot)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Slackware: written again at every boot", out)
+
+    def test_remade_must_keep_its_bytes(self):
+        rc, out = self.compare(lambda: self.touch("usr/share/mime/aliases", "other\n"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("changed: usr/share/mime/aliases", out)
+
+    def test_the_rest_is_held(self):
+        rc, out = self.compare(lambda: self.touch("etc/rc.d/rc.local"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("changed: etc/rc.d/rc.local", out)
+
+    def test_not_slackware(self):
+        (self.root / "etc/slackware-version").unlink()
+        rc, out = self.compare(self.boot)
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn("Slackware", out)
+        self.assertIn("changed: usr/share/mime/aliases", out)
+        self.assertIn("added: etc/adjtime", out)
+
 if __name__ == "__main__":
     unittest.main()

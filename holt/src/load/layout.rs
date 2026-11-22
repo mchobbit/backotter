@@ -363,8 +363,14 @@ impl Layout {
         let pool_of = |c: &Value| (s(c, "type").as_deref() == Some("zfs_member")).then(|| s(c, "pool_name").or_else(|| s(c, "label"))).flatten();
         let mut out_disks: Vec<String> = Vec::new();
         let mut on: Vec<(String, Vec<String>)> = left.iter().map(|n| (n.clone(), Vec::new())).collect();
+        // Bug: only_pools (--pools) missed GELI-backed ZFS vdevs and kept
+        // storage.md_arrays, dm_devices, lvm.volume_groups, btrfs, and
+        // xfs_external_logs referencing out_disks, making assemble() and
+        // format() fail with missing-device errors on partial pool restores.
+        // Inspect GELI inner content, refuse split containers, and prune them.
         for d in &self.disks {
-            let pools: Vec<String> = std::iter::once(&d.content).chain(d.parts.iter().map(|p| &p.content)).filter_map(pool_of).collect();
+            let geli_c = std::iter::once(d.name.as_str()).chain(d.parts.iter().map(|p| p.name.as_str())).filter_map(|n| self.device(n)?.at(&["geli", "content"]));
+            let pools: Vec<String> = std::iter::once(&d.content).chain(d.parts.iter().map(|p| &p.content)).chain(geli_c).filter_map(pool_of).collect();
             let gone: Vec<&String> = pools.iter().filter(|p| left.contains(p)).collect();
             if gone.is_empty() {
                 continue;
@@ -426,6 +432,48 @@ impl Layout {
             notes.push(format!("--pools: the left-out disks also hold {}, which aren't made or restored either", others.join(", ")));
         }
         let guids: Vec<(String, String)> = left_json.iter().filter_map(|p| Some((s(p, "name")?, s(p, "guid")?.to_ascii_lowercase()))).collect();
+        let kept_disks: Vec<String> = self.disks.iter().map(|d| d.name.clone()).filter(|n| !out_disks.contains(n)).collect();
+        let mut check_split = |what: &str, name: &str, devs: &[String]| -> bool {
+            let has_out = devs.iter().any(|d| on_disks(self, d, &out_disks, 0));
+            if has_out && devs.iter().any(|d| on_disks(self, d, &kept_disks, 0)) {
+                problems.push(format!("--pools: {what} {name} spans kept and left-out disks; bko-holt load can't do half of it"));
+            }
+            has_out
+        };
+        if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "md_arrays"]) {
+            a.retain(|m| {
+                let mems: Vec<String> = m.at(&["md", "members"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| s(x, "device")).collect();
+                !check_split("md array", &s(m, "name").unwrap_or_default(), &mems)
+            });
+        }
+        let mut out_vgs: Vec<String> = Vec::new();
+        if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "lvm", "volume_groups"]) {
+            a.retain(|vg| {
+                let pvs: Vec<String> = vg.get("physical_volumes").and_then(Value::as_array).into_iter().flatten().filter_map(|p| s(p, "device")).collect();
+                let vn = s(vg, "name").unwrap_or_default();
+                let drop_vg = check_split("volume group", &vn, &pvs);
+                if drop_vg {
+                    out_vgs.push(vn);
+                }
+                !drop_vg
+            });
+        }
+        if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "dm_devices"]) {
+            a.retain(|d| {
+                let in_out_vg = d.at(&["dm", "vg"]).and_then(Value::as_str).is_some_and(|g| out_vgs.iter().any(|x| x == g));
+                let sl: Vec<String> = d.get("slaves").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
+                !in_out_vg && !check_split("device-mapper device", &s(d, "name").unwrap_or_default(), &sl)
+            });
+        }
+        if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "btrfs"]) {
+            a.retain(|fs| {
+                let devs: Vec<String> = fs.get("devices").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
+                !check_split("btrfs filesystem", &s(fs, "uuid").unwrap_or_default(), &devs)
+            });
+        }
+        if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "xfs_external_logs"]) {
+            a.retain(|l| !s(l, "log_device").is_some_and(|ld| on_disks(self, &ld, &out_disks, 0)));
+        }
         if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "disks"]) {
             a.retain(|d| !s(d, "name").is_some_and(|n| out_disks.contains(&n)));
         }

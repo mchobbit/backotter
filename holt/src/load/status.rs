@@ -199,24 +199,52 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     let open = unmounted_all.len() < total
         || built.made.iter().any(|(_, n)| !crate::other::softraid::is_volume_node(n) && sys.exists(&crate::other::node_path(sys, n)))
         || built.pools.iter().any(|p| imported.contains(p));
+    // Bug: status::rows checked only partitioned disks (`d.parts`), skipped
+    // whole-disk filesystems/containers (`table: null`) and non-UUID leaves, and
+    // required Stage::Partition == Done for Stage::Close. On whole-disk layouts,
+    // `--erase` reported every stage done right after partition wiped the disk,
+    // while without `--erase` Partition is Nothing so Close stayed NotDone
+    // forever and failed exec's post-stage check. Probe whole-disk and non-UUID
+    // leaves too, and accept Partition == Nothing once signatures are verified.
     let mut unsigned = vec![];
-    for (src, tgt) in &mapping.pairs {
-        let Some(d) = layout.disk(src) else { continue };
-        for p in &d.parts {
-            let ty = layout.content(&p.name).and_then(|c| c.get("type")).and_then(|t| t.as_str());
-            // illumos can't give a pool the source's GUID.
-            let illumos = crate::other::Family::of_layout(&layout.v) == Some(crate::other::Family::Illumos);
-            if matches!(ty, Some("ufs" | "hammer2" | "befs" | "redoxfs")) || (illumos && ty == Some("zfs_member")) {
-                continue;
-            }
-            let Some(want) = layout.content(&p.name).and_then(|c| c.get("uuid")).and_then(|u| u.as_str().map(str::to_string).or_else(|| u.as_u64().map(|n| n.to_string()))) else { continue };
-            let node = commands::part_node(layout, d, tgt, p.number);
-            if uuid_at(sys, fam, &node) != Some(want.to_ascii_lowercase()) {
+    let mut checked = 0usize;
+    let illumos = fam == Some(Family::Illumos);
+    let mut check_raw = |name: &str, node: String| {
+        let ty = layout.content(name).and_then(|c| c.get("type")).and_then(|t| t.as_str());
+        if matches!(ty, Some("ufs" | "hammer2" | "befs" | "redoxfs")) {
+            checked += 1;
+            if kind_at(sys, fam, &node).as_deref() != ty {
                 unsigned.push(node);
             }
+            return;
+        }
+        if illumos && ty == Some("zfs_member") {
+            checked += 1;
+            if kind_at(sys, fam, &node).as_deref() != Some("zfs_member") {
+                unsigned.push(node);
+            }
+            return;
+        }
+        let Some(want) = layout.content(name).and_then(|c| c.get("uuid")).and_then(|u| u.as_str().map(str::to_string).or_else(|| u.as_u64().map(|n| n.to_string()))) else { return };
+        checked += 1;
+        if uuid_at(sys, fam, &node) != Some(want.to_ascii_lowercase()) {
+            unsigned.push(node);
+        }
+    };
+    for (src, tgt) in &mapping.pairs {
+        let Some(d) = layout.disk(src) else { continue };
+        if d.table.is_none() && !d.content.is_null() {
+            let node = if illumos { format!("/dev/dsk/{tgt}") } else { format!("/dev/{tgt}") };
+            check_raw(&d.name, node);
+        }
+        for p in &d.parts {
+            check_raw(&p.name, commands::part_node(layout, d, tgt, p.number));
         }
     }
-    let partitioned = out.iter().find(|r| r.0 == Stage::Partition).is_some_and(|r| r.1 == State::Done);
+    let partitioned = out
+        .iter()
+        .find(|r| r.0 == Stage::Partition)
+        .is_some_and(|r| r.1 == State::Done || (r.1 == State::Nothing && sys.privileged && checked > 0));
     let closed = partitioned && unsigned.is_empty() && !open;
     let why = if closed || !partitioned {
         String::new()

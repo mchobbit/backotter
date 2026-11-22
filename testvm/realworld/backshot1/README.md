@@ -362,6 +362,48 @@ bootstrap in QEMU under Secure Boot: a blank NVMe, the ISO on a USB drive,
 then the disk alone by the NVRAM entry, with grub.cfg checked for other
 disks' systems.  Written 2026-11-15, not yet run.
 
+## Slackware 15.0: installpkg and ELILO, from the stick
+
+Slackware's setup is a dialog-driven ramdisk with no answer file.
+`slackware-bootstrap.sh` installs it from the stick the way the
+`slackware15-uefi` guest is built (`make-bootstrap.sh slackware-uefi`,
+`bootstrap/slackware.sh`; docs/design/slackware.md):
+
+    sudo bash /mnt/bs1-backup/backshot1/slackware/slackware-bootstrap.sh SERIAL \
+        /mnt/bs1-backup/backshot1/keys thinkpad /mnt/bs1-backup/slackware-cache
+
+(`testvm/realworld/slackware-bootstrap.sh`).  First it fetches what the
+cache lacks of the 15.0 tree from slackware.osuosl.org.  That is
+CHECKSUMS.md5, checked with gpgv against Slackware's key (pinned by
+fingerprint), then the 809 packages of series a, ap, d, l and n (all but
+kernel-huge), each checked against its MD5 and its own .asc.  Only then
+does it erase the disk with that serial (never a USB disk).  It lays the
+disk out as GPT: a 512 MiB ESP at /boot/efi and ext4 / for the rest, with
+no swap.  / is made with the tree's own mke2fs.conf, so it gets no
+orphan_file.  Then it installs every package with Slackware's own
+`installpkg --root`, running the doinst.sh scripts under bash.  After that
+it writes what setup's configuration steps write: fstab and root= by
+device name, `thinkpad.localdomain`, Europe/Paris, and DHCP on eth0-eth2.
+The machine's wired adapters are pinned to those names in
+`70-persistent-net.rules`, onboard first.  It builds mkinitrd's initrd
+from `mkinitrd_command_generator.sh`'s command and puts ELILO's four files
+in `EFI/Slackware` (and `EFI/BOOT`).  The NVRAM entry "Slackware" goes
+first, and is also set as BootNext.  The disk's old entries are removed.
+sshd is on, root logs in by key only (its password field is `*`), and the
+fixed host key is installed.  Slackware's key goes into root's keyring for
+slackpkg.  There is a user `m` with no password: set one with
+`passwd m`.  Slackware 15.0 has no avahi, so `thinkpad.local` doesn't
+resolve: find the address by the MAC (`arp -an` on the Mac).  The tree is
+15.0 as released (kernel 5.15.19); `slackpkg update && slackpkg
+upgrade-all` brings in patches/.  `bs1-adopt` has no Slackware arm yet.
+The stick isn't setup's ramdisk, so installpkg runs with Slackware's own
+tar, `--numeric-owner`, and bash as `sh`.  The doinst.sh scripts that
+chown by name run a second time in the chroot.  Ubuntu's tar 1.35 dropped
+every `var/log/setup` file (it won't extract through a symlink), and names
+map to Ubuntu's IDs.  Run on the Thinkpad 2026-11-22: about 9 minutes
+with the cache full.  It booted by the NVRAM entry, and root SSH answered
+at 192.168.68.67 68 s after the reboot.
+
 ## Void musl on encrypted ZFS, ZFSBootMenu (family Z)
 
 Void Linux (musl) with its root on a natively encrypted ZFS pool, booted by

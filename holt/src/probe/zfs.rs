@@ -167,8 +167,8 @@ impl Native<'_> {
     fn u64(&self, o: usize) -> Result<u64, String> {
         self.n::<8>(o).map(u64::from_le_bytes)
     }
-    fn cstr(&self, o: usize) -> Result<String, String> {
-        let rest = self.b.get(o..).ok_or("nvlist truncated")?;
+    fn cstr_until(&self, o: usize, limit: usize) -> Result<String, String> {
+        let rest = self.b.get(o..limit).ok_or("nvlist truncated")?;
         let end = rest.iter().position(|&c| c == 0).ok_or("unterminated string")?;
         Ok(String::from_utf8_lossy(&rest[..end]).into_owned())
     }
@@ -188,16 +188,27 @@ impl Native<'_> {
             let name_len = self.u16(start + 4)? as usize;
             let nelem = self.u32(start + 8)?;
             let typ = self.u32(start + 12)? as i32;
-            if size < 16 + name_len || start + size > self.b.len() || nelem > MAX_ELEMENTS {
+            // Bug: Native::list neither checked that 8-byte value alignment (v)
+            // stayed within start + size nor bounded strings and 1-byte reads
+            // (u8_at returns 0 out of bounds) to the nvpair, reading past pair
+            // boundaries or fabricating up to MAX_ELEMENTS zero bytes on corrupt
+            // zpool.cache inputs. Bound every field, string, and array to end.
+            let end = start.checked_add(size).filter(|&e| e <= self.b.len()).ok_or("bad nvpair size")?;
+            let voff = (16usize.saturating_add(name_len) + 7) & !7;
+            if name_len == 0 || size < voff || nelem > MAX_ELEMENTS {
                 return Err("bad nvpair size".into());
             }
-            let name = self.cstr(start + 16)?;
+            let name = self.cstr_until(start + 16, start + 16 + name_len)?;
             // The value is 8-aligned from the pair's start (pairs themselves
             // start at 12 in the file, so not from the file's).
-            let v = start + ((16 + name_len + 7) & !7);
+            let v = start + voff;
+            let check_end = |p: usize, len: usize| -> Result<(), String> {
+                p.checked_add(len).filter(|&e| e <= end).map(|_| ()).ok_or_else(|| "nvlist truncated".into())
+            };
             let scalar = |w: usize, signed: bool| -> Result<Value, String> {
+                check_end(v, w)?;
                 let raw = match w {
-                    1 => crate::bytes::u8_at(self.b, v) as u64,
+                    1 => self.n::<1>(v)?[0] as u64,
                     2 => self.u16(v)? as u64,
                     4 => self.u32(v)? as u64,
                     _ => self.u64(v)?,
@@ -210,9 +221,10 @@ impl Native<'_> {
                 })
             };
             let elem = |k: usize, w: usize, signed: bool| -> Result<Value, String> {
-                let p = v + k * w;
+                let p = v.checked_add(k.checked_mul(w).ok_or("bad offset")?).ok_or("bad offset")?;
+                check_end(p, w)?;
                 let raw = match w {
-                    1 => crate::bytes::u8_at(self.b, p) as u64,
+                    1 => self.n::<1>(p)?[0] as u64,
                     2 => self.u16(p)? as u64,
                     4 => self.u32(p)? as u64,
                     _ => self.u64(p)?,
@@ -232,11 +244,17 @@ impl Native<'_> {
                 4 => scalar(2, false)?,
                 5 => scalar(4, true)?,
                 6 => scalar(4, false)?,
-                21 => Value::Bool(self.u32(v)? != 0),
+                21 => {
+                    check_end(v, 4)?;
+                    Value::Bool(self.u32(v)? != 0)
+                }
                 7 => scalar(8, true)?,
                 8 | 18 => scalar(8, false)?,
-                9 => Value::Str(self.cstr(v)?),
-                10 => Value::Str(crate::bytes::hex(self.b.get(v..v + nelem as usize).ok_or("nvlist truncated")?)),
+                9 => Value::Str(self.cstr_until(v, end)?),
+                10 => {
+                    check_end(v, nelem as usize)?;
+                    Value::Str(crate::bytes::hex(&self.b[v..v + nelem as usize]))
+                }
                 11..=16 | 24..=26 => {
                     let (w, signed) = match typ {
                         11 => (2, true),
@@ -258,10 +276,12 @@ impl Native<'_> {
                 }
                 17 => {
                     // nelem pointers, then the strings one after another.
-                    let mut p = v + 8 * nelem as usize;
+                    let ptrs = (nelem as usize).checked_mul(8).ok_or("bad nvpair size")?;
+                    check_end(v, ptrs)?;
+                    let mut p = v + ptrs;
                     let mut a = Vec::new();
                     for _ in 0..nelem {
-                        let s = self.cstr(p)?;
+                        let s = self.cstr_until(p, end)?;
                         p += s.len() + 1;
                         a.push(Value::Str(s));
                     }

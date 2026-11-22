@@ -160,6 +160,12 @@ impl Layout {
         if !crate::osrel::supported(id, ver) && !crate::osrel::slackware_current(id, ver, codename) {
             return Err(format!("the source system is {id} {ver}; bko-holt load supports only {}", crate::osrel::supported_names()));
         }
+        // -current on x86_64 only (osrel::check_slackware_current_machine);
+        // a dump with no os.machine is from before A3, so x86_64.
+        let machine = v.at(&["os", "machine"]).and_then(Value::as_str).unwrap_or("x86_64");
+        if crate::osrel::slackware_current(id, ver, codename) && machine != "x86_64" {
+            return Err(format!("the source system is Slackware -current on {machine}; bko-holt load supports -current on x86_64 (Slackware64-current) only"));
+        }
         if v.get("privileged").and_then(Value::as_bool) == Some(false) {
             return Err("the dump wasn't made as root, so it has udev's view of the disks only; dump again as root".into());
         }

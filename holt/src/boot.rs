@@ -1631,6 +1631,8 @@ pub fn refind_json(sys: &Sys) -> Option<Value> {
 pub const LILO_CONF: &str = "/etc/lilo.conf";
 /// mkinitrd's configuration, when the owner wrote one (`mkinitrd -F`).
 pub const MKINITRD_CONF: &str = "/etc/mkinitrd.conf";
+/// mkinitrd's source tree (its -s default), which `mkinitrd -c` builds.
+pub const INITRD_TREE: &str = "/boot/initrd-tree";
 /// The command mkinitrd last ran as (its `$0 $*`), kept in its tree.
 pub const MKINITRD_COMMAND_LINE: &str = "/boot/initrd-tree/command_line";
 /// mkinitrd's image when nothing names another.
@@ -2120,12 +2122,14 @@ pub fn kernel_version_word(v: &str) -> bool {
 /// setup.01.mkinitrd reads them (kernel, generator, dracut_opts,
 /// override_script, post_install_script, named_symlink, initrd_gz_symlink,
 /// each null when unset, or setup.01.mkinitrd's own default for the
-/// generator and the two symlinks), `runs` (what setup.01.mkinitrd would
+/// generator, the two symlinks and auto_remove_initrd_tree), initrd_tree
+/// (whether /boot/initrd-tree is there: setup.01.mkinitrd removes the one
+/// mkinitrd leaves when AUTO_REMOVE_INITRD_TREE=true), `runs` (what setup.01.mkinitrd would
 /// run: `override` for an executable GENINITRD_OVERRIDE_SCRIPT, `mkinitrd`
 /// for GENERATOR=mkinitrd with /etc/mkinitrd.conf, `mkinitrd_command_generator.sh`
 /// for it without one or by name, `dracut`, else the generator as given),
-/// conf (/etc/mkinitrd.conf or null), luksdev and rootdev from it when it
-/// is read, images (each file, version, kernel: /boot/vmlinuz-VERSION or
+/// conf (/etc/mkinitrd.conf or null), luksdev, rootdev and resumedev from
+/// it when it is read, images (each file, version, kernel: /boot/vmlinuz-VERSION or
 /// null, modules_installed) and links (each /boot initrd*.img or
 /// initrd.gz link, to its target).  Evidence lines go to `why`.
 fn geninitrd_json(sys: &Sys, why: &mut Vec<String>) -> Option<Value> {
@@ -2199,10 +2203,13 @@ fn geninitrd_json(sys: &Sys, why: &mut Vec<String>) -> Option<Value> {
             .set("post_install_script", key("POST_INSTALL_SCRIPT").filter(|o| !o.is_empty()))
             .set("named_symlink", flag("GENINITRD_NAMED_SYMLINK"))
             .set("initrd_gz_symlink", flag("GENINITRD_INITRD_GZ_SYMLINK"))
+            .set("auto_remove_initrd_tree", flag("AUTO_REMOVE_INITRD_TREE"))
+            .set("initrd_tree", sys.is_dir(INITRD_TREE))
             .set("runs", runs.as_str())
             .set("conf", conf.is_some().then_some(MKINITRD_CONF))
             .set("luksdev", ckey("LUKSDEV"))
             .set("rootdev", ckey("ROOTDEV"))
+            .set("resumedev", ckey("RESUMEDEV"))
             .set("images", list)
             .set("links", links.build())
             .build(),
@@ -3034,16 +3041,21 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(g.get("runs").and_then(Value::as_str), Some("mkinitrd_command_generator.sh"));
         assert!(g.get("default").unwrap().is_null() && g.get("kernel").unwrap().is_null());
         assert_eq!(g.get("named_symlink"), Some(&Value::Bool(true)));
+        assert_eq!((g.get("auto_remove_initrd_tree"), g.get("initrd_tree")), (Some(&Value::Bool(true)), Some(&Value::Bool(false))));
         assert_eq!(g.at(&["images"]).and_then(Value::as_array).map(Vec::len), Some(1));
         assert_eq!(g.at(&["images", "0", "kernel"]).and_then(Value::as_str), Some("/boot/vmlinuz-7.3.5"));
         assert_eq!(g.at(&["images", "0", "modules_installed"]), Some(&Value::Bool(false)));
         assert!(why.contains(&"no /etc/default/geninitrd (setup.01.mkinitrd's GENERATOR=mkinitrd)".to_string()), "{why:?}");
         // A set but not executable override script isn't run.
-        t.file(GENINITRD_DEFAULT, "GENERATOR=mkinitrd_command_generator.sh\nGENINITRD_OVERRIDE_SCRIPT=/usr/local/sbin/x\nGENINITRD_INITRD_GZ_SYMLINK=false\n").file("/usr/local/sbin/x", "");
+        t.file(GENINITRD_DEFAULT, "GENERATOR=mkinitrd_command_generator.sh\nGENINITRD_OVERRIDE_SCRIPT=/usr/local/sbin/x\nGENINITRD_INITRD_GZ_SYMLINK=false\nAUTO_REMOVE_INITRD_TREE=false\n").file("/usr/local/sbin/x", "").dir("/boot/initrd-tree");
         let g = geninitrd_json(&s, &mut Vec::new()).unwrap();
         assert_eq!(g.get("runs").and_then(Value::as_str), Some("mkinitrd_command_generator.sh"));
         assert_eq!(g.get("override_script").and_then(Value::as_str), Some("/usr/local/sbin/x"));
         assert_eq!(g.get("initrd_gz_symlink"), Some(&Value::Bool(false)));
+        assert_eq!((g.get("auto_remove_initrd_tree"), g.get("initrd_tree")), (Some(&Value::Bool(false)), Some(&Value::Bool(true))));
+        // mkinitrd.conf's names are read only when it is what runs: no
+        // RESUMEDEV here, as no ROOTDEV.
+        assert!(g.get("resumedev").unwrap().is_null() && g.get("rootdev").unwrap().is_null());
     }
 
     /// mkinitrd.conf counts for -F only (or with no command line); a

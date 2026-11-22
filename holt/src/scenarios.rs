@@ -5288,13 +5288,25 @@ fn slackware_current() -> Tree {
 
 /// A Slackware plan of `t`, its disk `from` going to `to`, with load's `args`.
 fn slackware_plan_from(t: &Tree, from: &str, to: &str, args: &[&str]) -> (Value, crate::load::commands::Built) {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
     let v = run(t, true, FakeRunner::default());
-    let l = Layout::from_json(v.clone()).unwrap();
+    (v.clone(), slackware_plan_of(v, from, to, args))
+}
+
+/// A Slackware plan of the dump `v`, as slackware_plan_from's.
+fn slackware_plan_of(v: Value, from: &str, to: &str, args: &[&str]) -> crate::load::commands::Built {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let l = Layout::from_json(v).unwrap();
     let mut a = vec!["l.json".to_string()];
     a.extend(args.iter().map(|x| x.to_string()));
     let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
-    (v, commands::build(&l, &o, &Mapping { pairs: vec![(from.into(), to.into())], ..Mapping::default() }))
+    commands::build(&l, &o, &Mapping { pairs: vec![(from.into(), to.into())], ..Mapping::default() })
+}
+
+/// `v`'s storage.KEY array with FROM replaced by TO in its JSON (once).
+fn storage_edit(v: &mut Value, key: &str, from: &str, to: &str) {
+    let text = v.at(&["storage", key]).unwrap().compact();
+    assert_eq!(text.matches(from).count(), 1, "{from} in {text}");
+    set_at(v, &["storage", key], crate::json::parse(&text.replace(from, to)).unwrap());
 }
 
 /// The -current Thinkpad read back: os-release's codename, the kernel by
@@ -5359,10 +5371,15 @@ fn slackware_current_thinkpad() {
     let mk = bt
         .find("chroot /mnt/bko-target /bin/bash -c 'set -o pipefail; /usr/share/mkinitrd/mkinitrd_command_generator.sh -k 7.3.5 -a \"-L -R -o /boot/initrd-7.3.5.img\" | bash'\n")
         .expect(&bt);
+    // setup.01.mkinitrd's AUTO_REMOVE_INITRD_TREE=true: the tree mkinitrd
+    // built goes, as on the source (whose /boot has none).
+    let rm = bt.find("rm -rf /mnt/bko-target/boot/initrd-tree\n").expect(&bt);
     let c1 = bt.find("cp /mnt/bko-target/boot/initrd-7.3.5.img /mnt/bko-target/boot/efi/EFI/BOOT/initrd.gz\ntouch -r /mnt/bko-target/boot/initrd-7.3.5.img /mnt/bko-target/boot/efi/EFI/BOOT/initrd.gz\n").expect(&bt);
     let c2 = bt.find("cp /mnt/bko-target/boot/initrd-7.3.5.img /mnt/bko-target/boot/efi/EFI/Slackware/initrd.gz\n").expect(&bt);
     let sl = bt.find("efibootmgr --quiet --create --disk /dev/nvme0n1 --part 1 --label Slackware --loader '\\EFI\\Slackware\\elilo.efi'\n").expect(&bt);
-    assert!(mk < c1 && c1 < c2 && c2 < sl, "{bt}");
+    assert!(mk < rm && rm < c1 && c1 < c2 && c2 < sl, "{bt}");
+    assert_eq!(bt.matches("rm -rf /mnt/bko-target/boot/initrd-tree").count(), 1, "{bt}");
+    assert_eq!((g.get("auto_remove_initrd_tree"), g.get("initrd_tree")), (Some(&Value::Bool(true)), Some(&Value::Bool(false))));
     assert_eq!(bt.matches("--label Slackware").count(), 1, "{bt}");
     assert_eq!(bt.matches("chroot /mnt/bko-target /bin/bash -c").count(), 1, "{bt}");
     // geninitrd itself (its DKMS and lilo scripts, orphan removal,
@@ -5382,10 +5399,70 @@ fn slackware_current_thinkpad() {
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     assert!(bt.contains("chroot /mnt/bko-target /sbin/mkinitrd -F /etc/mkinitrd.conf -k 7.3.5 -o /boot/initrd-7.3.5.img\n") && bt.contains("EFI/Slackware/initrd.gz"), "{bt}");
     assert!(!bt.contains("mkinitrd_command_generator"), "{bt}");
+    assert!(bt.find("/sbin/mkinitrd -F").unwrap() < bt.find("rm -rf /mnt/bko-target/boot/initrd-tree\n").expect(&bt), "{bt}");
+    // ... onto a disk named otherwise, mkinitrd.conf's ROOTDEV and
+    // RESUMEDEV are problems too (the remade initrd would have them).
+    t.file("/etc/mkinitrd.conf", "MODULE_LIST=\"ext4:nvme\"\nROOTDEV=\"/dev/nvme0n1p2\"\nRESUMEDEV=\"/dev/nvme0n1p1\"\n");
+    let (v, b) = slackware_plan_from(&t, "nvme0n1", "sda", &[]);
+    assert_eq!(s(&v, &["boot", "initramfs", "geninitrd", "resumedev"]), "/dev/nvme0n1p1");
+    for want in [
+        "Slackware: /etc/mkinitrd.conf's ROOTDEV (the initrd's root) names /dev/nvme0n1p2, which is /dev/sda2 here; the restored initrd mounts / by that name (mkinitrd's -r, or the kernel's root=)",
+        "Slackware: /etc/mkinitrd.conf's RESUMEDEV (the initrd's resume device) names /dev/nvme0n1p1, which is /dev/sda1 here",
+    ] {
+        assert!(b.problems.iter().any(|p| p.starts_with(want)), "{want}: {:?}", b.problems);
+    }
     // ... and with LUKSDEV in it, the restore is refused (out of scope).
     t.file("/etc/mkinitrd.conf", "LUKSDEV=\"/dev/nvme0n1p2\"\nROOTDEV=\"/dev/mapper/cryptroot\"\n");
     let (_, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
     assert!(b.problems.iter().any(|p| p.starts_with("Slackware: geninitrd's initrd unlocks LUKS (/etc/mkinitrd.conf has LUKSDEV=/dev/nvme0n1p2)")), "{:?}", b.problems);
+
+    // README_CRYPT's LVM on LUKS with no mkinitrd.conf: fstab's
+    // /dev/cryptvg/root is an LV on a dm-crypt PV, which the command
+    // generator would find and give -C for: refused by the stack under /.
+    let mut v = run(&slackware_current(), true, FakeRunner::default());
+    storage_edit(&mut v, "fstab", r#""spec":"/dev/nvme0n1p2","file":"/""#, r#""spec":"/dev/cryptvg/root","file":"/""#);
+    storage_edit(&mut v, "fstab", r#""resolves_to":"nvme0n1p2""#, r#""resolves_to":"dm-1""#);
+    storage_edit(
+        &mut v,
+        "dm_devices",
+        "[]",
+        r#"[{"name":"dm-0","kind":"dm","slaves":["nvme0n1p2"],"dm":{"dm_name":"luksnvme0n1p2","target":"crypt"}},{"name":"dm-1","kind":"dm","slaves":["dm-0"],"dm":{"dm_name":"cryptvg-root","target":"linear"}}]"#,
+    );
+    let b = slackware_plan_of(v.clone(), "nvme0n1", "nvme0n1", &[]);
+    assert!(b.problems.iter().any(|p| p.starts_with("Slackware: geninitrd's initrd unlocks LUKS (fstab's / (/dev/cryptvg/root) is on dm-crypt luksnvme0n1p2)")), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(!bt.contains("mkinitrd_command_generator"), "{bt}");
+    // ... the same stack on 15.0's mkinitrd arm (no -C recorded) too.
+    let mut w = v.clone();
+    set_at(&mut w, &["boot", "initramfs", "generator"], Value::from("mkinitrd"));
+    let b = slackware_plan_of(w, "nvme0n1", "nvme0n1", &[]);
+    assert!(b.problems.iter().any(|p| p.starts_with("Slackware: mkinitrd's initrd unlocks LUKS (fstab's / (/dev/cryptvg/root) is on dm-crypt luksnvme0n1p2)")), "{:?}", b.problems);
+    // An LV with no dm-crypt under it isn't LUKS.
+    storage_edit(&mut v, "dm_devices", r#""target":"crypt""#, r#""target":"linear""#);
+    let b = slackware_plan_of(v, "nvme0n1", "nvme0n1", &[]);
+    assert!(!b.problems.iter().any(|p| p.contains("LUKS")), "{:?}", b.problems);
+    // fstab's / on /dev/mapper with nothing resolving it (no device in
+    // fstab's line or the mounts): refused by the name.
+    let mut v = run(&slackware_current(), true, FakeRunner::default());
+    storage_edit(&mut v, "fstab", r#""spec":"/dev/nvme0n1p2","file":"/""#, r#""spec":"/dev/mapper/cryptroot","file":"/""#);
+    storage_edit(&mut v, "fstab", r#""resolves_to":"nvme0n1p2""#, r#""resolves_to":null"#);
+    set_at(&mut v, &["storage", "mounts"], Value::Arr(Vec::new()));
+    let b = slackware_plan_of(v, "nvme0n1", "nvme0n1", &[]);
+    assert!(b.problems.iter().any(|p| p.starts_with("Slackware: geninitrd's initrd unlocks LUKS (fstab's / is /dev/mapper/cryptroot, on /dev/mapper)")), "{:?}", b.problems);
+
+    // AUTO_REMOVE_INITRD_TREE=false, or a source that kept a tree: not
+    // removed.
+    let t = slackware_current();
+    t.file("/etc/default/geninitrd", GENINITRD_DEFAULT.replace("AUTO_REMOVE_INITRD_TREE=true", "AUTO_REMOVE_INITRD_TREE=false"));
+    let (_, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("mkinitrd_command_generator.sh -k 7.3.5") && !bt.contains("rm -rf /mnt/bko-target/boot/initrd-tree"), "{bt}");
+    let t = slackware_current();
+    t.file("/boot/initrd-tree/command_line", "mkinitrd -c -k 7.3.5 -o /boot/initrd-7.3.5.img\n");
+    let (v, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
+    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "geninitrd");
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("mkinitrd_command_generator.sh -k 7.3.5") && !bt.contains("rm -rf /mnt/bko-target/boot/initrd-tree"), "{bt}");
 
     // GENERATOR=dracut: not run; the restored images stay, and so do the
     // ESP's copies.
@@ -5434,6 +5511,9 @@ fn slackware_current_thinkpad() {
     for want in ["EFI/Slackware/elilo.conf's root= in append= names /dev/nvme0n1p2, which is /dev/sda2 here", "fstab's /boot/efi names /dev/nvme0n1p1, which is /dev/sda1 here"] {
         assert!(b.problems.iter().any(|p| p.contains(want)), "{want}: {:?}", b.problems);
     }
+    // -current boots with geninitrd's initrd, which mounts / by the name
+    // it was made with: the problem says so, not "no initrd".
+    assert!(b.problems.iter().all(|p| !p.contains("it has no initrd")) && b.problems.iter().any(|p| p.contains("the restored initrd mounts / by that name")), "{:?}", b.problems);
 }
 
 /// Every scenario's dump, by name, for tests that must hold over all of

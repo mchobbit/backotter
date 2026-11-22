@@ -286,6 +286,19 @@ pub fn slackware_current(id: &str, version_id: &str, codename: Option<&str>) -> 
     id == "slackware" && codename == Some("current") && SLACKWARE_CURRENT_MAJORS.contains(&version_id.split('.').next().unwrap_or(""))
 }
 
+/// Ok unless this is Slackware -current on a MACHINE (`uname -m`) other
+/// than x86_64: -current's support was built and checked on
+/// Slackware64-current (ELILO and LILO, x86_64 kernels) only, and Slackware
+/// AArch64, -current only, says it is -current the same way.
+pub fn check_slackware_current_machine(os: Option<&OsRelease>, machine: &str) -> Result<(), String> {
+    let Some(os) = os else { return Ok(()) };
+    let (id, ver) = (os.get("ID").unwrap_or(""), os.get("VERSION_ID").unwrap_or(""));
+    if slackware_current(id, ver, os.get("VERSION_CODENAME")) && machine != "x86_64" {
+        return Err(format!("this is Slackware -current on {machine}, and bko-holt supports -current on x86_64 (Slackware64-current) only"));
+    }
+    Ok(())
+}
+
 /// Whether ID and VERSION_ID name a supported system: the same major version
 /// ("22.3" is Mint 22).  Derivatives don't count by their ID_LIKE.
 pub fn supported(id: &str, version_id: &str) -> bool {
@@ -699,6 +712,11 @@ pub(crate) mod tests {
         assert!(e.contains("Slackware -current (ID=slackware, VERSION_ID=17.0, VERSION_CODENAME=current)") && e.contains("only at VERSION_ID 15.0 or 16.0"), "{e}");
         assert!(check_supported(Some(&parse(&SLACKWARE.replace("15.0", "14.2").replace("VERSION_CODENAME=stable", "VERSION_CODENAME=current")))).is_err());
         assert!(slackware_current("slackware", "16.0", Some("current")) && slackware_current("slackware", "15.0", Some("current")));
+        // -current on x86_64 only (Slackware AArch64 is -current too).
+        assert!(check_slackware_current_machine(Some(&o), "x86_64").is_ok());
+        let e = check_slackware_current_machine(Some(&o), "aarch64").unwrap_err();
+        assert!(e.contains("Slackware -current on aarch64") && e.contains("x86_64 (Slackware64-current) only"), "{e}");
+        assert!(check_slackware_current_machine(Some(&parse(SLACKWARE)), "aarch64").is_ok() && check_slackware_current_machine(None, "aarch64").is_ok());
         assert!(!slackware_current("slackware", "16.0", Some("stable")) && !slackware_current("slackware", "16.0", None) && !slackware_current("slackware", "17.0", Some("current")) && !slackware_current("salix", "16.0", Some("current")));
         // A derivative's -current is still not Slackware's.
         assert!(check_supported(Some(&parse("ID=salix\nID_LIKE=slackware\nVERSION_ID=16.0\nVERSION_CODENAME=current\n"))).is_err());

@@ -569,8 +569,10 @@ tree: the A100's PXE entries name the onboard NIC's MAC only in their
 device path's MAC() node (their descriptions have none), so redact.rs
 never learned it; it now reads the MAC() nodes of every
 `load_option_hex`.  bs1-ubuntu2610-zfsenc, from the same machine, was built
-before the fix and still has that MAC in its two PXE entries'
-`load_option_hex` (its raw dump is gone, so it wasn't rebuilt).
+before the fix and had that MAC in its two PXE entries' `load_option_hex`;
+its raw dump is gone, so on 2026-11-22 the MAC was replaced there by hand
+with this dump's placeholder for it (`bc0000000003`), same length, its
+golden plan unchanged (the plan never named it).
 ubuntu24-uefi (`make-ubuntu.sh --uefi`, 24.04.5: Subiquity's default, GPT
 with an ESP at /boot/efi and one ext4 /, UEFI under Secure Boot) and
 ubuntu24-luks (`--uefi --luks`: ubuntu26-luks's guided LVM on LUKS2 on

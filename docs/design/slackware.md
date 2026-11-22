@@ -340,7 +340,10 @@ derivatives are still refused.
   os-release has carried: `SLACKWARE_CURRENT_MAJORS`), and load's layout
   check takes the same dump by `os.version_codename`. A VERSION ending in
   `+` under any other codename, -current at another VERSION_ID, and a 16.0
-  release (`VERSION_CODENAME=stable`) are refused.
+  release (`VERSION_CODENAME=stable`) are refused. -current is taken on
+  x86_64 only (`check_slackware_current_machine` in dump, `os.machine` in
+  load): Slackware AArch64 is -current only and may say so the same way,
+  but its boot was never looked at.
 - `boot.slackware.kernels` reads `vmlinuz-VERSION` too, its flavor the
   `vmlinuz-FLAVOR` link to it (`generic`), else empty.
 - `boot.initramfs.generator` is `geninitrd` when `/usr/sbin/geninitrd` is
@@ -348,8 +351,10 @@ derivatives are still refused.
   `initrd-VERSION.img`), with `boot.initramfs.geninitrd`: its settings as
   setup.01.mkinitrd reads them, `runs` (`mkinitrd_command_generator.sh`,
   `mkinitrd` with a mkinitrd.conf, `dracut`, or `override` for an
-  executable `GENINITRD_OVERRIDE_SCRIPT`), mkinitrd.conf's LUKSDEV and
-  ROOTDEV when it is read, each image (file, version, kernel, whether
+  executable `GENINITRD_OVERRIDE_SCRIPT`), `auto_remove_initrd_tree`
+  (`AUTO_REMOVE_INITRD_TREE`, default true) and `initrd_tree` (whether
+  `/boot/initrd-tree` is there), mkinitrd.conf's LUKSDEV, ROOTDEV and
+  RESUMEDEV when it is read, each image (file, version, kernel, whether
   `/lib/modules/VERSION` is there) and the initrd links. Without such an
   image the 15.0 arms (`none`, `mkinitrd`) read it as before, with an
   evidence line.
@@ -367,30 +372,49 @@ derivatives are still refused.
   geninitrd would after a kernel upgrade. geninitrd itself isn't run: its
   DKMS and lilo scripts, orphan removal and update-grub aren't the
   restore's. The links came back with /boot and still name the image.
+  After each, `rm -rf T/boot/initrd-tree`, as setup.01.mkinitrd removes
+  the tree mkinitrd built, when `AUTO_REMOVE_INITRD_TREE` is true and the
+  source had no tree (the Thinkpad's /boot has none).
 - `GENERATOR=dracut`, an override script, or a kernel whose modules are
   gone: the restored image stays, with a note (15.0's "the restored
-  initrd.gz stays" when mkinitrd's command can't be found). LUKS (LUKSDEV,
-  or `/` on /dev/mapper) is refused, as on 15.0.
+  initrd.gz stays" when mkinitrd's command can't be found). LUKS is
+  refused, as on 15.0: mkinitrd.conf's LUKSDEV, or a dm-crypt device
+  anywhere in the stack under fstab's `/` (through LVM, md and dm layers:
+  README_CRYPT's `/dev/cryptvg/root`, LVM on LUKS, which the command
+  generator would find and give `-C` for), or, when nothing resolves `/`
+  to a device, `/` on /dev/mapper. The stack check holds on 15.0's
+  mkinitrd arm too.
 - ELILO as on 15.0: the remade image is copied over each ESP `initrd.gz`
   that was its copy (EFI/Slackware and EFI/BOOT), nothing is installed, and
   the NVRAM entries are made again (the source's `Slackware` among them).
 - Device names: as Decision 5 (the problems when the target's disk is named
-  otherwise). The kernel has an initrd on -current, but mkinitrd's command
-  takes fstab's `/dev/nvme0n1p2` as its root, so the names still have to
-  hold.
+  otherwise), with mkinitrd.conf's ROOTDEV and RESUMEDEV among them when
+  geninitrd runs `mkinitrd -F`. The kernel has an initrd on -current, but
+  mkinitrd's command takes fstab's `/dev/nvme0n1p2` as its root, so the
+  names still have to hold; with an initrd (15.0's mkinitrd or geninitrd)
+  the problem says the initrd mounts `/` by that name (mkinitrd's `-r`, or
+  the kernel's root=), without one that the kernel finds it by root=.
 
 **Tests:** `osrel`'s `slackware` test (16.0 and the older 15.0+ -current
 accepted, a 16.0 release, -current at 17.0, `+` without the codename and a
-derivative refused); `boot`'s `slackware_current_kernels`; the
+derivative refused, -current on aarch64 refused); `boot`'s
+`slackware_current_kernels`; the
 `slackware_current_thinkpad` scenario (the Thinkpad in small: the dump's
-fields, the plan's boot stage, and the mkinitrd.conf, LUKSDEV, dracut,
-override, missing-modules, 15.0-style and other-disk variants); and the
+fields, the plan's boot stage with the initrd-tree removal, and the
+mkinitrd.conf, mkinitrd.conf ROOTDEV/RESUMEDEV on another disk, LUKSDEV,
+LVM on LUKS (on both arms; plain LVM not refused), `/` on /dev/mapper,
+AUTO_REMOVE_INITRD_TREE=false, a kept tree, dracut, override,
+missing-modules, 15.0-style and other-disk variants); and the
 corpus dump `bs1-slackware-current` (the Thinkpad's own `bko-holt dump
 --only-disk nvme0n1`, 2026-11-22) with its golden plan. Building it found a
 redaction gap, fixed in redact.rs first: the A100's PXE entries name its
 NIC's MAC only in their device path's `MAC()` node, not in the description,
 so it was never learned (bs1-ubuntu2610-zfsenc, made from the same machine
-on 2026-11-18, has it in its `load_option_hex`). BackShot1 preflight on the
+on 2026-11-18, had it in its `load_option_hex`; replaced there by hand with
+the placeholder `bc0000000003` on 2026-11-22). The corpus dump predates
+the `auto_remove_initrd_tree`, `initrd_tree` and `resumedev` fields; load
+reads their absence as setup.01.mkinitrd's default and no tree, which is
+the Thinkpad's. BackShot1 preflight on the
 Thinkpad passes with this bko-holt (`UNLOCK=none`). Not yet run: a restore
 (BackShot1 phase 2), so the generator's command in the restore's chroot is
 untested on hardware.

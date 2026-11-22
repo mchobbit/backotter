@@ -5244,9 +5244,9 @@ fn lilo_root_copy(lilo: &Value) -> Result<Option<(String, Vec<String>)>, String>
     Ok(Some((text, added)))
 }
 
-/// geninitrd_steps' result: (image, the command remaking it) for each image
-/// remade, and notes on those that stay as restored.
-type GeninitrdSteps = (Vec<(String, Cmd)>, Vec<String>);
+/// geninitrd_steps' result: (image, the commands remaking it) for each
+/// image remade, and notes on those that stay as restored.
+type GeninitrdSteps = (Vec<(String, Vec<Cmd>)>, Vec<String>);
 
 impl Builder<'_> {
     /// Slackware's mkinitrd step, as the dump read it
@@ -5284,8 +5284,11 @@ impl Builder<'_> {
     /// post-install scripts (DKMS builds, lilo), orphan removal and
     /// update-grub aren't the restore's.  The links to the images
     /// (initrd-generic.img, initrd.gz) came back with /boot and still point
-    /// at them.  Ok((image, command) for each remade, notes on the images
-    /// that stay), or Err(why) when every restored image stays.
+    /// at them.  After each, /boot/initrd-tree (which mkinitrd builds) is
+    /// removed as setup.01.mkinitrd removes it, when AUTO_REMOVE_INITRD_TREE
+    /// is true (its default) and the source had none.  Ok((image, commands)
+    /// for each remade, notes on the images that stay), or Err(why) when
+    /// every restored image stays.
     fn geninitrd_steps(&self, t: &str) -> Result<GeninitrdSteps, String> {
         let g = self.layout.v.at(&["boot", "initramfs", "geninitrd"]).cloned().unwrap_or(Value::Null);
         let runs = s(&g, "runs").unwrap_or_default();
@@ -5300,6 +5303,9 @@ impl Builder<'_> {
             }
             other => return Err(format!("geninitrd's GENERATOR={} ({setup} runs {other}) isn't one bko-holt load runs (only mkinitrd), so the restored initrd images stay", s(&g, "generator").unwrap_or_default())),
         }
+        // A dump before these were read: setup.01.mkinitrd's default, and
+        // no tree on the source (geninitrd's default leaves none).
+        let remove_tree = g.get("auto_remove_initrd_tree").and_then(Value::as_bool) != Some(false) && g.get("initrd_tree").and_then(Value::as_bool) != Some(true);
         let mut steps = Vec::new();
         let mut notes = Vec::new();
         for img in g.get("images").and_then(Value::as_array).into_iter().flatten() {
@@ -5328,12 +5334,49 @@ impl Builder<'_> {
                     "the initrd for kernel {v}, as geninitrd makes it ({setup}: the mkinitrd command {generator} prints for this machine's root and storage drivers, with -L -R -o {file}, run)"
                 ))
             };
-            steps.push((file, cmd));
+            let mut cmds = vec![cmd];
+            if remove_tree {
+                let tree = crate::boot::INITRD_TREE;
+                cmds.push(Cmd::new(&["rm", "-rf", &format!("{t}{tree}")]).why(format!("{tree}, which mkinitrd built, removed as {setup} removes it (AUTO_REMOVE_INITRD_TREE=true; the source had none)")));
+            }
+            steps.push((file, cmds));
         }
         if steps.is_empty() && notes.is_empty() {
             return Err("geninitrd's dump lists no image, so nothing is made again".into());
         }
         Ok((steps, notes))
+    }
+
+    /// Why the source's / is on dm-crypt, or None: a crypt target anywhere
+    /// in the stack under it (fstab's / by the device it resolves to, else
+    /// the mount's), through LVM, md and other dm layers, which
+    /// mkinitrd_command_generator.sh would find and give mkinitrd -C for
+    /// (Slackware's README_CRYPT LVM on LUKS, /dev/cryptvg/root, among
+    /// them); or, when neither names a device, fstab's / on /dev/mapper.
+    fn slackware_root_crypt(&self) -> Option<String> {
+        let fstab = self.layout.arr(&["storage", "fstab"]).iter().find(|e| s(e, "file").as_deref() == Some("/"));
+        let spec = fstab.and_then(|e| s(e, "spec")).unwrap_or_default();
+        let dev = fstab
+            .and_then(|e| s(e, "resolves_to"))
+            .or_else(|| self.layout.arr(&["storage", "mounts"]).iter().find(|m| s(m, "target").as_deref() == Some("/")).and_then(|m| s(m, "device")));
+        let Some(dev) = dev else {
+            return spec.starts_with("/dev/mapper/").then(|| format!("fstab's / is {spec}, on /dev/mapper"));
+        };
+        let stack: Vec<&Value> = self.layout.arr(&["storage", "dm_devices"]).iter().chain(self.layout.arr(&["storage", "md_arrays"])).collect();
+        let (mut todo, mut seen) = (vec![dev.clone()], Vec::new());
+        while let Some(n) = todo.pop() {
+            if seen.contains(&n) {
+                continue;
+            }
+            seen.push(n.clone());
+            let Some(d) = stack.iter().find(|d| s(d, "name").as_deref() == Some(n.as_str())) else { continue };
+            if d.at(&["dm", "target"]).and_then(Value::as_str) == Some("crypt") {
+                let name = d.at(&["dm", "dm_name"]).and_then(Value::as_str).unwrap_or(&n);
+                return Some(format!("fstab's / ({spec}) is on dm-crypt {name}"));
+            }
+            todo.extend(d.get("slaves").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)));
+        }
+        None
     }
 
     /// The initrd images the Slackware initrd step makes again (mkinitrd's
@@ -5352,14 +5395,19 @@ impl Builder<'_> {
     /// any other generator is refused.
     fn slackware_initramfs(&mut self, t: &str) -> Vec<Cmd> {
         let generator = self.layout.str_at(&["boot", "initramfs", "generator"]).unwrap_or("unknown").to_string();
-        let root_mapped = self.layout.arr(&["storage", "fstab"]).iter().any(|e| s(e, "file").as_deref() == Some("/") && s(e, "spec").is_some_and(|p| p.starts_with("/dev/mapper/")));
+        let root_crypt = self.slackware_root_crypt();
         match generator.as_str() {
             "none" => self.notes.push("Slackware: no initrd (no loader configuration names one, and there is no /boot/initrd.gz): nothing is made, and the kernel boots without one, as on the source".into()),
             // LUKS (mkinitrd -C, or a root on /dev/mapper) is out of
             // scope (docs/design/slackware.md): refused, not replayed.
-            "mkinitrd" if self.layout.str_at(&["boot", "initramfs", "mkinitrd", "luksdev"]).is_some() || self.layout.str_at(&["boot", "initramfs", "mkinitrd", "rootdev"]).is_some_and(|r| r.starts_with("/dev/mapper/")) => {
-                let m = |k: &str| self.layout.str_at(&["boot", "initramfs", "mkinitrd", k]).unwrap_or("").to_string();
-                self.problems.push(format!("Slackware: mkinitrd's initrd unlocks LUKS (-C {}, root {}); bko-holt load doesn't support Slackware on LUKS in this release", m("luksdev"), m("rootdev")));
+            "mkinitrd" if self.layout.str_at(&["boot", "initramfs", "mkinitrd", "luksdev"]).is_some() || self.layout.str_at(&["boot", "initramfs", "mkinitrd", "rootdev"]).is_some_and(|r| r.starts_with("/dev/mapper/")) || root_crypt.is_some() => {
+                let m = |k: &str| self.layout.str_at(&["boot", "initramfs", "mkinitrd", k]).map(str::to_string);
+                let why = match (m("luksdev"), m("rootdev")) {
+                    (Some(l), r) => format!("-C {l}, root {}", r.unwrap_or_default()),
+                    (None, Some(r)) if r.starts_with("/dev/mapper/") => format!("root {r}"),
+                    _ => root_crypt.clone().unwrap_or_default(),
+                };
+                self.problems.push(format!("Slackware: mkinitrd's initrd unlocks LUKS ({why}); bko-holt load doesn't support Slackware on LUKS in this release"));
             }
             "mkinitrd" => match self.mkinitrd_cmd(t) {
                 Ok(c) => return vec![c],
@@ -5367,14 +5415,14 @@ impl Builder<'_> {
             },
             // LUKS again: mkinitrd.conf's LUKSDEV, or a root that the
             // command generator would find on dm-crypt.
-            "geninitrd" if self.layout.str_at(&["boot", "initramfs", "geninitrd", "luksdev"]).is_some() || root_mapped => {
-                let luks = self.layout.str_at(&["boot", "initramfs", "geninitrd", "luksdev"]).map(|l| format!("{} has LUKSDEV={l}", crate::boot::MKINITRD_CONF)).unwrap_or_else(|| "fstab's / is on /dev/mapper".into());
+            "geninitrd" if self.layout.str_at(&["boot", "initramfs", "geninitrd", "luksdev"]).is_some() || root_crypt.is_some() => {
+                let luks = self.layout.str_at(&["boot", "initramfs", "geninitrd", "luksdev"]).map(|l| format!("{} has LUKSDEV={l}", crate::boot::MKINITRD_CONF)).or(root_crypt).unwrap_or_default();
                 self.problems.push(format!("Slackware: geninitrd's initrd unlocks LUKS ({luks}); bko-holt load doesn't support Slackware on LUKS in this release"));
             }
             "geninitrd" => match self.geninitrd_steps(t) {
                 Ok((steps, notes)) => {
                     self.notes.extend(notes.into_iter().map(|n| format!("Slackware: {n}")));
-                    return steps.into_iter().map(|(_, c)| c).collect();
+                    return steps.into_iter().flat_map(|(_, c)| c).collect();
                 }
                 Err(why) => self.notes.push(format!("Slackware: {why}")),
             },
@@ -5437,6 +5485,13 @@ impl Builder<'_> {
         if let Some(p) = self.layout.str_at(&["boot", "initramfs", "mkinitrd", "resumedev"]) {
             push("mkinitrd's -h (the initrd's resume device)".into(), p);
         }
+        // -current's mkinitrd.conf, when geninitrd runs mkinitrd -F with it.
+        if let Some(p) = self.layout.str_at(&["boot", "initramfs", "geninitrd", "rootdev"]) {
+            push(format!("{}'s ROOTDEV (the initrd's root)", crate::boot::MKINITRD_CONF), p);
+        }
+        if let Some(p) = self.layout.str_at(&["boot", "initramfs", "geninitrd", "resumedev"]) {
+            push(format!("{}'s RESUMEDEV (the initrd's resume device)", crate::boot::MKINITRD_CONF), p);
+        }
         // A noauto line on a device that isn't one of the source's disks
         // or partitions (Slackware's stock /dev/fd0 /mnt/floppy, a CD
         // drive) isn't mounted at boot and isn't restored: the line is kept
@@ -5451,6 +5506,13 @@ impl Builder<'_> {
                 push(format!("fstab's {}", s(e, "file").unwrap_or_default()), &spec);
             }
         }
+        // How the restored system finds / by a name: the huge kernel by
+        // root= alone; mkinitrd's initrd (15.0's or geninitrd's) mounts the
+        // root it was made with (-r, ROOTDEV) unless root= says another.
+        let finds = match self.layout.str_at(&["boot", "initramfs", "generator"]) {
+            Some("mkinitrd" | "geninitrd") => "the restored initrd mounts / by that name (mkinitrd's -r, or the kernel's root=)",
+            _ => "the restored kernel finds / by that name (it has no initrd to find a UUID)",
+        };
         let mut same: Vec<String> = Vec::new();
         for (what, p) in refs {
             let src = self.names.src_of_path(&md_name(&p)).or_else(|| self.names.src_of_path(&p));
@@ -5461,7 +5523,7 @@ impl Builder<'_> {
                     }
                 }
                 Some(t) => self.problems.push(format!(
-                    "Slackware: {what} names {p}, which is {t} here; the restored kernel finds / by that name (it has no initrd to find a UUID) and fstab mounts by device names, and bko-holt load doesn't rewrite them: restore onto disks that keep the source's names"
+                    "Slackware: {what} names {p}, which is {t} here; {finds} and fstab mounts by device names, and bko-holt load doesn't rewrite them: restore onto disks that keep the source's names"
                 )),
                 None => self.problems.push(format!("Slackware: {what} names {p}, which isn't on the layout's disks, so the restored system couldn't find it at boot")),
             }

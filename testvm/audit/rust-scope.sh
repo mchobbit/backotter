@@ -12,16 +12,18 @@
 # (this checkout's, committed lines only).  A line is ours:
 #   rustic_core, rustic  in a file the diff from the stock tag (audit-lib.sh's
 #       STOCK) to REV touches, when `git blame -w -M -C --line-porcelain REV`
-#       gives it to a commit whose subject starts "backotter:" (so the
-#       upstream fixes cherry-picked onto the fork are not ours, nor
-#       upstream lines we only moved or re-indented); and a line the diff
-#       adds (git diff -w) that plain `git blame -w` gives to a "backotter:"
-#       commit, unless a line the diff removes reads the same (whitespace
-#       aside: one we moved), since -M -C gives a line we changed to an
-#       identical upstream line nearby (modification.rs's set_atime default,
-#       ForkAudit1 F3-05); a file added since the stock tag by a "backotter:"
-#       commit is ours whole (one added by any other commit is blamed like
-#       the rest)
+#       gives it to one of our commits (so the upstream fixes
+#       cherry-picked onto the fork are not ours, nor upstream lines we only
+#       moved or re-indented); and a line the diff adds (git diff -w) that
+#       plain `git blame -w` gives to one of ours, unless a line the diff
+#       removes reads the same (whitespace aside: one we moved), since -M -C
+#       gives a line we changed to an identical upstream line nearby (modification.rs's set_atime default,
+#       ForkAudit1 F3-05); a file added since the stock tag by one of ours
+#       is ours whole (one added by any other commit is blamed like the
+#       rest).  Our commits: those in stock..REV whose subject starts
+#       "backotter:", and any other without a "(cherry picked from commit"
+#       line (3027d2b, say): one of ours that lacks the prefix, which the
+#       scope file's header and stderr name (ForkAudit1 F9-09)
 #   vendor/walkdir (rustic_core)  the diff from the crates.io release it
 #       vendors (its Cargo.toml's version; the .crate fetched from
 #       static.crates.io into a fresh directory and checked against stock
@@ -143,14 +145,29 @@ scope_fork() {
     [[ -n $tag ]] || tag=$(stock_field "$name" 2)
     git -C "$g" merge-base --is-ancestor "$stock" "$c" ||
         echo "warning: $name ${c:0:12} isn't based on stock $tag ($stock)" >&2
+    # Our commits (full SHAs): "backotter:" ones, and any other that isn't
+    # a cherry-pick (-x): one of ours without the prefix (ForkAudit1 F9-09).
+    : >"$tmp/ours"; : >"$tmp/unprefixed"
+    while read -r h subj; do
+        if [[ $subj == backotter:* ]]; then
+            echo "$h" >>"$tmp/ours"
+        elif ! git -C "$g" log -1 --format=%b "$h" | grep -qF '(cherry picked from commit'; then
+            echo "$h" >>"$tmp/ours"
+            echo "${h:0:7} $subj" >>"$tmp/unprefixed"
+        fi
+    done < <(git -C "$g" log --format='%H %s' "$stock..$c")
+    if [[ -s $tmp/unprefixed ]]; then
+        sed "s/^/warning: $name: ours without the backotter: prefix: /" "$tmp/unprefixed" >&2
+    fi
     {
         echo "# rust-scope.sh: the lines of $name that are BackOtter's own (RustAudit1, RA0)"
         echo "# name=$name commit=$c stock=$tag $stock date=$(date '+%F %T %z')"
-        echo "# rule: in files stock..commit touches, lines git blame -w -M -C gives to a commit whose subject"
-        echo "#   starts \"backotter:\", and lines the diff adds that plain git blame -w gives to one, but for those"
-        echo "#   that read as a line the diff removes; files a backotter: commit added, whole; vendor/walkdir: the"
-        echo "#   diff from crates.io"
-        echo "# upstream commits in stock..commit (not ours): $(git -C "$g" log --format=%s "$stock..$c" | grep -vc '^backotter:' || true)"
+        echo "# rule: in files stock..commit touches, lines git blame -w -M -C gives to one of our commits (subject"
+        echo "#   \"backotter:\", or no cherry-pick line), and lines the diff adds that plain git blame -w gives to"
+        echo "#   one, but for those that read as a line the diff removes; files one of ours added, whole;"
+        echo "#   vendor/walkdir: the diff from crates.io"
+        echo "# upstream commits in stock..commit (not ours): $(( $(git -C "$g" rev-list --count "$stock..$c") - $(wc -l <"$tmp/ours") ))"
+        sed 's/^/# ours without the backotter: prefix: /' "$tmp/unprefixed"
         echo "# PATH START-END, relative to the repository root"
     } >"$tmp/head"
     : >"$tmp/body"; : >"$tmp/sum"; : >"$tmp/walkdir"; : >"$tmp/blame-list"
@@ -163,8 +180,8 @@ scope_fork() {
         LC_ALL=C grep -qI '' "$tmp/blob" || continue   # binary or empty
         how=blame
         if [[ $st == A ]]; then
-            subj=$(git -C "$g" log --diff-filter=A --format=%s "$stock..$c" -- "$path" | tail -1)
-            [[ $subj == backotter:* ]] && how=added
+            first=$(git -C "$g" log --diff-filter=A --format=%H "$stock..$c" -- "$path" | tail -1)
+            [[ -n $first ]] && grep -qxF "$first" "$tmp/ours" && how=added
         fi
         if [[ $how == added ]]; then
             n=$(nlines <"$tmp/blob")
@@ -193,17 +210,17 @@ scope_fork() {
         local bf=$tmp/blame/$(printf %s "$path" | tr / %)
         # Each line: a "SHA ORIG FINAL [N]" header, its fields (summary
         # among them), then the line itself after a tab.
-        awk 'length($1) == 40 && $1 ~ /^[0-9a-f]+$/ && $3 ~ /^[0-9]+$/ { ln = $3; next }
-            /^summary / { s = substr($0, 9); next }
-            /^\t/ { total++; if (s ~ /^backotter:/) print ln }
-            END { print "total", total > "/dev/stderr" }' "$bf" 2>"$bf.total" >"$bf.lines"
+        awk 'FILENAME == ARGV[1] { ours[$1] = 1; next }
+            length($1) == 40 && $1 ~ /^[0-9a-f]+$/ && $3 ~ /^[0-9]+$/ { ln = $3; h = $1; next }
+            /^\t/ { total++; if (h in ours) print ln }
+            END { print "total", total > "/dev/stderr" }' "$tmp/ours" "$bf" 2>"$bf.total" >"$bf.lines"
         # The diff's added lines plain blame gives to us, but for moved ones.
         awk 'FILENAME == ARGV[1] { gone[$0] = 1; next } FILENAME == ARGV[2] { plus[$1] = 1; next }
-            length($1) == 40 && $1 ~ /^[0-9a-f]+$/ && $3 ~ /^[0-9]+$/ { ln = $3; next }
-            /^summary / { s = substr($0, 9); next }
+            FILENAME == ARGV[3] { ours[$1] = 1; next }
+            length($1) == 40 && $1 ~ /^[0-9a-f]+$/ && $3 ~ /^[0-9]+$/ { ln = $3; h = $1; next }
             /^\t/ { l = substr($0, 2); gsub(/[ \t\r]/, "", l)
-                if ((ln in plus) && s ~ /^backotter:/ && !(l in gone)) print ln }' \
-            "$tmp/removed" "$bf.plus" "$bf.plain" >>"$bf.lines"
+                if ((ln in plus) && (h in ours) && !(l in gone)) print ln }' \
+            "$tmp/removed" "$bf.plus" "$tmp/ours" "$bf.plain" >>"$bf.lines"
         ranges <"$bf.lines" >"$bf.ranges"
         n=$(awk '{ split($1, a, "-"); s += a[2] - a[1] + 1 } END { print s + 0 }' "$bf.ranges")
         sed "s|^|$path |" "$bf.ranges" >>"$tmp/body"

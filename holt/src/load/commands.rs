@@ -1390,7 +1390,7 @@ impl Builder<'_> {
             let mut leaves = vec![];
             let mut probs = vec![];
             vdev_words(&self.names, p.at(&["vdevs", "vdevs"]).and_then(|v| v.as_object()).and_then(|o| o.first()).and_then(|(_, root)| root.get("vdevs")).unwrap_or(&Value::Null), "", &mut words, &mut leaves, &mut probs);
-            let outs = self.zvols_of(&s(&p, "name").unwrap_or_default()).into_iter().map(|(src, ds)| (src, format!("/dev/zvol/{ds}"))).collect();
+            let outs = self.zvols_of(&s(&p, "name").unwrap_or_default()).into_iter().map(|(src, ds)| (src, format!("/dev/zvol/{}", self.zname(&ds)))).collect();
             items.push((Item::Pool(p), leaves, outs));
         }
         items
@@ -1940,7 +1940,7 @@ impl Builder<'_> {
                 p = parent;
             }
             for d in chain.into_iter().rev().chain([zv.clone()]) {
-                if let Some(ds) = self.dataset(&d).filter(|_| d != name && !self.datasets.contains(&d)) {
+                if let Some(ds) = self.dataset(&d).filter(|_| d != name && !self.datasets.contains(&self.zname(&d))) {
                     self.make_dataset(&ds, out);
                 }
             }
@@ -3736,18 +3736,25 @@ impl Builder<'_> {
         // A key file inside the restored tree must be the key the pool was
         // made with (load/zfsbootmenu.rs).
         out.extend(self.zfs_key_file_checks(&t));
+        // Bug: when the rescue host already imports a same-named ZFS pool,
+        // assemble creates the restored pool under self.zname() (e.g. rpool_bko),
+        // yet zvol nodes, zvol parent checks, keylocation, and cachefile still
+        // used the untranslated source name. That formatted host zvols, mutated
+        // the host pool's keylocation and cachefile, and left the restored pool
+        // unable to unlock or import at boot. Translate via self.zname().
         for ds in self.layout.v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).cloned().unwrap_or_default() {
             let name = s(&ds, "name").unwrap_or_default();
-            if s(&ds, "encryptionroot").as_deref() != Some(name.as_str()) {
+            let pool = name.split('/').next().unwrap_or("");
+            if s(&ds, "encryptionroot").as_deref() != Some(name.as_str()) || !self.pools.contains(&self.zname(pool)) {
                 continue;
             }
             let loc = s(&ds, "keylocation").unwrap_or("prompt".into());
-            out.push(Cmd::new(&["zfs", "set", &format!("keylocation={loc}"), &name]).why(format!("{name}: unlocks as the source did")));
+            out.push(Cmd::new(&["zfs", "set", &format!("keylocation={loc}"), &self.zname(&name)]).why(format!("{name}: unlocks as the source did")));
         }
         for p in self.layout.v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(Value::as_array).into_iter().flatten() {
-            let n = s(p, "name").unwrap_or_default();
-            if !self.layout.v.at(&["storage", "zfs", "zpool_cache"]).is_none_or(Value::is_null) {
-                out.push(Cmd::new(&["zpool", "set", &format!("cachefile={t}/etc/zfs/zpool.cache"), &n]).why("the restored system's zpool.cache names the new pool"));
+            let here = self.zname(&s(p, "name").unwrap_or_default());
+            if self.pools.contains(&here) && !self.layout.v.at(&["storage", "zfs", "zpool_cache"]).is_none_or(Value::is_null) {
+                out.push(Cmd::new(&["zpool", "set", &format!("cachefile={t}/etc/zfs/zpool.cache"), &here]).why("the restored system's zpool.cache names the new pool"));
             }
         }
         // The target is mounted with the source's own options (dracut

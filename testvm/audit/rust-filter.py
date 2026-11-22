@@ -439,7 +439,7 @@ SHORT_TARGETS = {
     "x86_64-unknown-openbsd": "openbsd", "x86_64-unknown-dragonfly": "dragonfly",
     "x86_64-unknown-haiku": "haiku", "any": "any",
 }
-TOOL_ORDER = ("fmt", "clippy", "clippy-parser", "doc")
+TOOL_ORDER = ("fmt", "clippy", "clippy-parser", "doc", "walkdir")
 
 
 def read_kv(path):
@@ -539,7 +539,7 @@ def run_summarize(d):
     for k in sorted(docs, key=order):
         doc = docs[k]
         n, t, tool = k
-        if tool == "fmt":
+        if tool in ("fmt", "walkdir-fmt"):
             fm = doc.get("fmt", {})
             ours = f"{doc['ours']}"
             tail = f"   hunks; -{fm.get('minus', 0)} +{fm.get('plus', 0)} lines"
@@ -554,7 +554,7 @@ def run_summarize(d):
             continue
         n, t, tool = k
         w(f"== {n} {SHORT_TARGETS.get(t, t)} {tool}: {doc['ours']} on our lines")
-        if tool == "fmt":
+        if tool in ("fmt", "walkdir-fmt"):
             byf = doc.get("fmt", {}).get("by_file", {})
             w("   files (hunks): " + top({p: v[0] for p, v in byf.items()}, 8))
             continue

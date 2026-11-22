@@ -186,7 +186,7 @@ flist=$(awk '/^\[/ { on = ($0 == "[parser-files]"); next } on && !/^#/ && NF { p
 for n in "${names[@]}"; do
     root=$(sed -n "s/^root_$n=//p" "$L/raw/info.txt" | tail -1)
     [[ -n $root ]] || { echo "$n: no root in the host's info.txt: it didn't run" >&2; incomplete=1; continue; }
-    for f in "$L/raw/$n"/*.json "$L/raw/$n"/*.fmt.txt; do
+    for f in "$L/raw/$n"/*.json "$L/raw/$n"/*.fmt.txt "$L/raw/$n"/*.walkdir-fmt.txt; do
         [[ -f $f ]] || continue
         b=$(basename "$f"); t=${b%%.*}; tool=${b#*.}; tool=${tool%.json}; tool=${tool%.txt}
         groups=$L/raw/lint-groups.txt

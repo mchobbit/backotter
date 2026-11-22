@@ -32,7 +32,11 @@
 #   rustic_core  fmt (--all); clippy --workspace --all-targets --all-features
 #                (linux), clippy -p rustic_core --lib --all-features (other
 #                targets), upstream's lints and FORK_FLAGS; doc --workspace
-#                --all-features
+#                --all-features; vendor/walkdir, which the workspace excludes,
+#                on its own: walkdir-fmt (cargo fmt --check, its rustfmt.toml)
+#                and walkdir-clippy per target (--all-targets on linux, --lib
+#                elsewhere; clippy's defaults, walkdir has no [lints], and
+#                FORK_FLAGS), its JSON paths made the tree's (vendor/walkdir/)
 #   rustic       fmt; clippy --locked --all-targets --features release, with
 #                FORK_FLAGS (linux only); doc --features release
 # JSON is cargo's --message-format=json (with the lints' names), .txt fmt's
@@ -220,6 +224,21 @@ run_rustic_core() {
     done
     step rustic_core "$HOST_TARGET" doc "$D/$HOST_TARGET.doc.json" 0 \
         cargo +"$TOOLCHAIN" doc --workspace --no-deps --document-private-items --all-features --message-format=json
+    # vendor/walkdir: excluded from the workspace (Cargo.toml), so neither
+    # fmt --all nor clippy --workspace reaches it (ForkAudit1 F7-03,
+    # RustAudit1 R8-01).  Its clippy paths are relative to it.
+    cd vendor/walkdir || { echo "no vendor/walkdir in $ROOT" >&2; fail=1; return; }
+    step rustic_core any walkdir-fmt "$D/any.walkdir-fmt.txt" "0 1" cargo +"$TOOLCHAIN" fmt --check -- --color=never
+    for t in $targets; do
+        [[ $t == *-linux-musl ]] && continue
+        clippy_cmd "$t"
+        local which=(--lib)
+        [[ $t == "$HOST_TARGET" ]] && which=(--all-targets)
+        step rustic_core "$t" walkdir-clippy "$D/$t.walkdir-clippy.json" 0 "${CMD[@]}" "${which[@]}" \
+            --message-format=json -- "${ff[@]}"
+        sed -i 's#"file_name":"src/#"file_name":"vendor/walkdir/src/#g' "$D/$t.walkdir-clippy.json"
+    done
+    cd "$ROOT" || fail=1
 }
 
 run_rustic() {

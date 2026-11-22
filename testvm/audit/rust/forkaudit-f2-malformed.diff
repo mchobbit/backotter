@@ -1,0 +1,829 @@
+diff --git a/crates/core/src/backend/node/generic_attributes.rs b/crates/core/src/backend/node/generic_attributes.rs
+index 801984b..9b78d47 100644
+--- a/crates/core/src/backend/node/generic_attributes.rs
++++ b/crates/core/src/backend/node/generic_attributes.rs
+@@ -520,4 +520,126 @@ mod tests {
+                 .unwrap();
+         assert!(!node.meta.generic_attributes.is_true(UNIX_SPARSE));
+     }
++
++    /// BackOtter (ForkAudit1 F2): a node with every generic attribute,
++    /// cut short or with any bit flipped: refused, or read into attributes
++    /// that each reader takes without a panic, and that write back as read.
++    #[test]
++    fn node_with_every_attribute_malformed() {
++        use crate::backend::osattrs::malformed::{EVERY_ATTRIBUTE_NODE, every_json_mutation};
++
++        let node: Node = serde_json::from_str(EVERY_ATTRIBUTE_NODE).unwrap();
++        for name in KNOWN {
++            assert!(
++                node.meta.generic_attributes.value(name).is_some()
++                    || name.starts_with("windows.")
++                    || name.starts_with("netbsd.")
++                    || *name == FREEBSD_ACL_DEFAULT,
++                "{name} not in the sample"
++            );
++        }
++        _ = every_json_mutation::<Node>("node", EVERY_ATTRIBUTE_NODE, |node| {
++            let a = &node.meta.generic_attributes;
++            for name in a.names().chain(KNOWN.iter().copied()) {
++                _ = (
++                    a.number(name),
++                    a.number_u64(name),
++                    a.is_true(name),
++                    a.timestamp(name),
++                );
++                _ = a.decoded::<XfsOptions>(name);
++                _ = a.get::<serde_json::Value>(name);
++            }
++            let json = serde_json::to_string(node).map_err(|e| e.to_string())?;
++            // A time before the system's zone had standard time is written
++            // at the zone's local mean time, whose offset has seconds that
++            // RFC 3339 drops (Europe/Paris before 1891: +00:09:21 written
++            // as +00:09), and reads back up to 59 s off: upstream's
++            // RusticTime, not compared here (ForkAudit1 F2's report).
++            let before_1900 =
++                |t: Option<Timestamp>| t.is_some_and(|t| t.as_second() < -2_208_988_800);
++            match serde_json::from_str::<Node>(&json) {
++                Ok(mut again) => {
++                    let m = &node.meta;
++                    for (a, b) in [
++                        (&mut again.meta.mtime, m.mtime),
++                        (&mut again.meta.atime, m.atime),
++                        (&mut again.meta.ctime, m.ctime),
++                    ] {
++                        if before_1900(b) && a.is_some() {
++                            *a = b;
++                        }
++                    }
++                    if again == *node {
++                        Ok(())
++                    } else {
++                        Err(format!("written as {json}, read back as {again:?}"))
++                    }
++                }
++                Err(err) => Err(format!("written as {json}, not read back: {err}")),
++            }
++        });
++    }
++
++    /// BackOtter (ForkAudit1 F2): every attribute BackOtter knows, with a
++    /// value of each JSON type and the edges of each number and time: each
++    /// reader gives a value only for one in its range, and none panics.
++    #[test]
++    fn every_attribute_with_odd_values() {
++        let odd = [
++            "null",
++            "true",
++            "false",
++            "0",
++            "-1",
++            "4294967295",
++            "4294967296",
++            "18446744073709551615",
++            "18446744073709551616",
++            "1e3",
++            "1.5",
++            "-0",
++            "\"\"",
++            "\"16\"",
++            "[]",
++            "[16]",
++            "{}",
++            r#"{"xflags":-1}"#,
++            r#"{"xflags":1,"extsize":4294967296}"#,
++            "\"9999-12-31T23:59:59.999999999Z\"",
++            "\"-009999-01-01T00:00:00Z\"",
++            "\"0000-01-01T00:00:00Z\"",
++            "\"1969-12-31T23:59:59.999999999Z\"",
++            "\"2001-09-09T01:46:40.5+25:00\"",
++            "\"2001-02-29T00:00:00Z\"",
++            "\"1970-01-01T00:00:60Z\"",
++        ];
++        for name in KNOWN {
++            for v in odd {
++                let attrs: GenericAttributes =
++                    serde_json::from_str(&format!(r#"{{"{name}":{v}}}"#)).unwrap();
++                let n = attrs.number(name);
++                let n64 = attrs.number_u64(name);
++                let b = attrs.is_true(name);
++                let t = attrs.timestamp(name);
++                _ = attrs.decoded::<XfsOptions>(name);
++                let num: Option<u64> = v.parse().ok();
++                assert_eq!(
++                    n,
++                    num.and_then(|n| u32::try_from(n).ok()),
++                    "{name}={v} as u32"
++                );
++                assert_eq!(n64, num, "{name}={v} as u64");
++                assert_eq!(b, v == "true", "{name}={v} as bool");
++                if let Some(t) = t {
++                    // A time read is written back as one that reads the same.
++                    let mut again = GenericAttributes::default();
++                    again.set_timestamp(name, t);
++                    if let Some(back) = again.timestamp(name) {
++                        assert_eq!(back, t, "{name}={v}");
++                    }
++                }
++            }
++        }
++    }
+ }
+diff --git a/crates/core/src/backend/osattrs.rs b/crates/core/src/backend/osattrs.rs
+index f201813..48dc38e 100644
+--- a/crates/core/src/backend/osattrs.rs
++++ b/crates/core/src/backend/osattrs.rs
+@@ -67,6 +67,8 @@ mod illumos_idmap;
+ mod illumos_project;
+ mod illumos_sysattr;
+ mod illumos_xattrmeta;
++#[cfg(test)]
++pub(crate) mod malformed;
+ #[cfg(unix)]
+ mod sparse;
+ 
+@@ -2192,4 +2194,74 @@ mod tests {
+         let unsupported = err.get_ref().unwrap().downcast_ref::<Unsupported>().unwrap();
+         assert_eq!(unsupported.kind(), "x.flags");
+     }
++
++    /// BackOtter (ForkAudit1 F2): what the restore asks of a node with every
++    /// generic attribute, cut short or with any bit flipped, answered
++    /// without a panic.
++    #[test]
++    fn node_readers_malformed() {
++        use malformed::{EVERY_ATTRIBUTE_NODE, every_json_mutation};
++
++        _ = every_json_mutation::<Node>("node readers", EVERY_ATTRIBUTE_NODE, |node| {
++            _ = (
++                is_sparse(node),
++                file_flags(node),
++                zfs_dos_flags(node),
++                fat_attrs(node),
++            );
++            _ = (xfs_options(node), is_quarantined(node), unread_size(node));
++            _ = (
++                takes_nothing_before_data(node),
++                node_flags(node, true),
++                node_flags(node, false),
++            );
++            _ = (node_sets_flags(node, true), flags_xattrs(node));
++            if let Some(t) = node.meta.generic_attributes.timestamp(UNIX_BIRTHTIME) {
++                _ = (birthtime_first(node, t), unix_time(t));
++            }
++            warn_unknown(node);
++            Ok(())
++        });
++    }
++
++    /// BackOtter (ForkAudit1 F2): the same nodes restored onto a file of
++    /// their own type: each step succeeds or fails, and none panics.
++    #[cfg(target_os = "linux")]
++    #[cfg_attr(miri, ignore = "system calls")]
++    #[test]
++    fn node_restore_malformed() {
++        use malformed::{EVERY_ATTRIBUTE_NODE, every_json_mutation};
++
++        let dir = tempfile::tempdir().unwrap();
++        let file = dir.path().join("f");
++        let sub = dir.path().join("d");
++        _ = every_json_mutation::<Node>("node restore", EVERY_ATTRIBUTE_NODE, |node| {
++            let path = if node.is_dir() {
++                _ = std::fs::create_dir(&sub);
++                &sub
++            } else {
++                _ = std::fs::write(&file, b"x");
++                &file
++            };
++            let typ = &node.node_type;
++            _ = prepare_file(path, node);
++            if let Some(f) = file_flags(node) {
++                _ = restore_file_flags(path, typ, f, &flags_xattrs(node));
++            }
++            if let Some(f) = zfs_dos_flags(node) {
++                _ = restore_zfs_dos_flags(path, typ, f);
++            }
++            if let Some(a) = fat_attrs(node) {
++                _ = restore_fat_attrs(path, typ, a);
++            }
++            if let Some(o) = xfs_options(node) {
++                _ = restore_xfs_options(path, typ, &o);
++            }
++            _ = restore_attributes(path, node, true);
++            _ = restore_acls(path, node);
++            _ = restore_birthtime(path, node);
++            clear_restricting_flags(path);
++            Ok(())
++        });
++    }
+ }
+diff --git a/crates/core/src/backend/osattrs/bsd_extattr.rs b/crates/core/src/backend/osattrs/bsd_extattr.rs
+index 948c93e..1e828ad 100644
+--- a/crates/core/src/backend/osattrs/bsd_extattr.rs
++++ b/crates/core/src/backend/osattrs/bsd_extattr.rs
+@@ -81,4 +81,30 @@ mod tests {
+         );
+         assert_eq!(node_name(b"plain"), "plain");
+     }
++
++    /// BackOtter (ForkAudit1 F2): a list cut short gives the names before
++    /// the cut, never one cut short; with any bit flipped, names that fit in
++    /// it, a length byte each. Neither panics.
++    #[test]
++    fn list_names_malformed() {
++        use crate::backend::osattrs::malformed::{Found, every_mutation};
++
++        let list = b"\x01\xff\x03abc\x00\x10security.selinux\x05user1\x02\xc3\xa9";
++        let full = list_names(list);
++        assert_eq!(full.len(), 6);
++        _ = every_mutation("extattr list", list, |input, cut| {
++            let names = list_names(input);
++            let bytes: usize = names.iter().map(|n| n.len() + 1).sum();
++            if bytes > input.len() {
++                Found::Wrong(format!(
++                    "{bytes} bytes of names in a list of {}",
++                    input.len()
++                ))
++            } else if cut && full.get(..names.len()) != Some(&names[..]) {
++                Found::Wrong(format!("not the names before the cut: {names:?}"))
++            } else {
++                Found::Decoded
++            }
++        });
++    }
+ }
+diff --git a/crates/core/src/backend/osattrs/freebsd_acl.rs b/crates/core/src/backend/osattrs/freebsd_acl.rs
+index ec94e13..fa801e0 100644
+--- a/crates/core/src/backend/osattrs/freebsd_acl.rs
++++ b/crates/core/src/backend/osattrs/freebsd_acl.rs
+@@ -423,4 +423,44 @@ mod tests {
+             r#"[{"tag":1,"id":4294967295,"perm":6},{"tag":2,"id":1001,"perm":24,"type":256}]"#
+         );
+     }
++
++    /// BackOtter (ForkAudit1 F2): FreeBSD's and NetBSD's ACLs from another
++    /// machine, cut short or with any bit flipped: refused, or read into
++    /// entries that the mode and triviality rules take without a panic, and
++    /// that keep_acl keeps as they are.
++    #[test]
++    fn acls_malformed() {
++        use crate::backend::osattrs::malformed::every_json_mutation;
++
++        for (what, json) in [
++            (
++                "acl_nfs4",
++                r#"[{"tag":1,"id":4294967295,"perm":1,"type":256},{"tag":2,"id":1001,"perm":24,"type":512,"flags":8},{"tag":64,"id":4294967295,"perm":7,"type":256}]"#,
++            ),
++            (
++                "acl_access",
++                r#"[{"tag":1,"id":4294967295,"perm":6},{"tag":2,"id":1001,"perm":7},{"tag":4,"id":4294967295,"perm":4},{"tag":16,"id":4294967295,"perm":5},{"tag":32,"id":4294967295,"perm":4}]"#,
++            ),
++        ] {
++            _ = every_json_mutation::<Vec<AclEntry>>(what, json, |acl| {
++                _ = nfs4_mode_from_acl(acl);
++                _ = nfs4_is_trivial(acl);
++                if let Some(p) = posix_owning_group_perms(acl)
++                    && p > POSIX_PERMS
++                {
++                    return Err(format!("owning group perms {p:#o}"));
++                }
++                for typ in [AclType::Access, AclType::Default, AclType::Nfs4] {
++                    let mut attrs = GenericAttributes::default();
++                    keep_acl(&FREEBSD, &mut attrs, typ, acl).map_err(|e| e.to_string())?;
++                    if let Some(kept) = attrs.get::<Vec<AclEntry>>(FREEBSD.attribute(typ))
++                        && kept.as_deref().ok() != Some(&acl[..])
++                    {
++                        return Err(format!("{typ:?} kept as {kept:?}"));
++                    }
++                }
++                Ok(())
++            });
++        }
++    }
+ }
+diff --git a/crates/core/src/backend/osattrs/haiku_attrs.rs b/crates/core/src/backend/osattrs/haiku_attrs.rs
+index 6dbb5d8..3261df8 100644
+--- a/crates/core/src/backend/osattrs/haiku_attrs.rs
++++ b/crates/core/src/backend/osattrs/haiku_attrs.rs
+@@ -818,4 +818,51 @@ mod tests {
+         // No zeros left behind.
+         assert!(fs.0.get(b"e").is_none());
+     }
++
++    /// BackOtter (ForkAudit1 F2): `haiku.attributes` from another machine,
++    /// cut short or with any bit flipped: refused, or read and restored onto
++    /// a file with attributes of both kinds without a panic. A restore that
++    /// succeeds leaves the file's attributes other than its extended
++    /// attributes exactly those wanted, and its extended attributes alone.
++    #[test]
++    fn attrs_malformed() {
++        use crate::backend::osattrs::malformed::every_json_mutation;
++
++        let json = concat!(
++            r#"{"BEOS:TYPE":{"type":1296649555,"value":"dGV4dC9wbGFpbgA="},"#,
++            r#""empty":{"type":1380013908,"value":""},"#,
++            r#""big":{"type":1380013908,"value":"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB"},"#,
++            r#""an xattr":{"type":1480676434,"value":"eA=="}}"#
++        );
++        let before: &[(&[u8], Attr)] = &[
++            (b"BEOS:TYPE", attr(MIMS, b"application/octet-stream\0")),
++            (b"old", attr(RAWT, b"old")),
++            (b"user.kept", attr(XATTR_TYPE, b"kept")),
++            (b"\xff not UTF-8", attr(RAWT, b"kept too")),
++        ];
++        _ = every_json_mutation::<Attrs>("haiku.attributes", json, |attrs| {
++            let (want, rejected) = typed(attrs.clone());
++            if rejected.iter().any(|n| attrs.0[n].type_code != XATTR_TYPE) {
++                return Err(format!("rejected {rejected:?}"));
++            }
++            let bfs = FakeBfs::with(before);
++            if apply(&bfs, &want, false).is_err() {
++                return Ok(());
++            }
++            let have: BTreeMap<_, _> = bfs
++                .attrs
++                .borrow()
++                .iter()
++                .filter(|(_, a)| a.attr.type_code != XATTR_TYPE)
++                .filter_map(|(n, a)| Some((String::from_utf8(n.clone()).ok()?, a.attr.clone())))
++                .collect();
++            if have != want {
++                return Err(format!("restored as {have:?}"));
++            }
++            if bfs.get(b"user.kept").map(|a| a.attr) != Some(attr(XATTR_TYPE, b"kept")) {
++                return Err("an extended attribute changed".to_string());
++            }
++            Ok(())
++        });
++    }
+ }
+diff --git a/crates/core/src/backend/osattrs/illumos_acl.rs b/crates/core/src/backend/osattrs/illumos_acl.rs
+index 0e54f4e..5c2e6f0 100644
+--- a/crates/core/src/backend/osattrs/illumos_acl.rs
++++ b/crates/core/src/backend/osattrs/illumos_acl.rs
+@@ -253,4 +253,43 @@ mod tests {
+             assert_eq!(split_sid(sid), None, "malformed SID {sid:?} split");
+         }
+     }
++
++    /// BackOtter (ForkAudit1 F2): `illumos.acl` from another machine, cut
++    /// short or with any bit flipped, and SIDs cut short or flipped: refused,
++    /// or read, without a panic; a SID split only into a prefix starting
++    /// `S-` and a RID of digits.
++    #[test]
++    fn acl_and_sids_malformed() {
++        use crate::backend::osattrs::malformed::{Found, every_json_mutation, every_mutation};
++
++        let json = concat!(
++            r#"[{"who":2147483650,"mask":1,"sid":"S-1-5-21-1111-2222-3333-1004"},"#,
++            r#"{"who":2147483651,"mask":2,"flags":64,"type":1,"sid":"S-1-5-21-1111-2222-3333-1005"},"#,
++            r#"{"who":4294967295,"mask":1966495,"flags":4096},{"who":60001,"mask":1}]"#
++        );
++        _ = every_json_mutation::<Vec<AceEntry>>("illumos.acl", json, |acl| {
++            _ = is_trivial(acl);
++            for e in acl {
++                _ = (names_sid(e), is_group(e), e.sid.as_deref().map(split_sid));
++            }
++            Ok(())
++        });
++        let sid = "S-1-5-21-1111-2222-3333-1001";
++        _ = every_mutation("SID", sid.as_bytes(), |input, _| {
++            let Ok(s) = std::str::from_utf8(input) else {
++                return Found::Refused;
++            };
++            match split_sid(s) {
++                None => Found::Refused,
++                Some((prefix, rid))
++                    if prefix.starts_with("S-")
++                        && s == format!("{prefix}-{}", &s[prefix.len() + 1..])
++                        && s[prefix.len() + 1..].parse() == Ok(rid) =>
++                {
++                    Found::Decoded
++                }
++                Some(split) => Found::Wrong(format!("split as {split:?}")),
++            }
++        });
++    }
+ }
+diff --git a/crates/core/src/backend/osattrs/illumos_project.rs b/crates/core/src/backend/osattrs/illumos_project.rs
+index 3fb1a61..01b4c60 100644
+--- a/crates/core/src/backend/osattrs/illumos_project.rs
++++ b/crates/core/src/backend/osattrs/illumos_project.rs
+@@ -75,4 +75,26 @@ mod tests {
+         assert_eq!(p(5, false).xflags(0x2000_0008), 0x8);
+         assert_eq!(p(5, true).xflags(0x8), 0x2000_0008);
+     }
++
++    /// BackOtter (ForkAudit1 F2): a project from another machine, cut short
++    /// or with any bit flipped: refused, or read into one whose xflags keep
++    /// every flag but inheritance as they are.
++    #[test]
++    fn project_malformed() {
++        use crate::backend::osattrs::malformed::every_json_mutation;
++
++        _ = every_json_mutation::<ZfsProject>(
++            "zfs_project",
++            r#"{"id":4294967294,"inherit":true}"#,
++            |p| {
++                let x = p.xflags(0x8000_0008);
++                if x & !PROJ_INHERIT != 0x8000_0008 & !PROJ_INHERIT
++                    || (x & PROJ_INHERIT != 0) != p.inherit
++                {
++                    return Err(format!("xflags {x:#x}"));
++                }
++                Ok(())
++            },
++        );
++    }
+ }
+diff --git a/crates/core/src/backend/osattrs/illumos_sysattr.rs b/crates/core/src/backend/osattrs/illumos_sysattr.rs
+index 0681f19..44598e9 100644
+--- a/crates/core/src/backend/osattrs/illumos_sysattr.rs
++++ b/crates/core/src/backend/osattrs/illumos_sysattr.rs
+@@ -473,4 +473,52 @@ mod tests {
+         assert_eq!(buf[44..60], unhex("ffffffff fffffffe 00000000 3b9ac9ff"));
+         assert_eq!(View::parse(&buf).unwrap().crtime(), Some(t));
+     }
++
++    /// BackOtter (ForkAudit1 F2): a view cut short is refused (it has lost
++    /// its end); one with any bit flipped is refused or read, and what is
++    /// read gives a mask, a creation time and an nvlist that reads back as
++    /// the mask, without a panic.
++    #[test]
++    fn views_malformed() {
++        use crate::backend::osattrs::malformed::{Found, every_mutation};
++
++        for (what, view) in [
++            ("SUNWattr_rw", SUNWATTR_RW),
++            ("crtime", NVLIST_CRTIME),
++            ("hidden", NVLIST_HIDDEN),
++            ("owner SID", NVLIST_OWNER_SID),
++            ("plain", SUNWATTR_PLAIN),
++            ("SID", SUNWATTR_SID),
++        ] {
++            let buf = unhex(view);
++            _ = every_mutation(what, &buf, |input, cut| {
++                let Ok(view) = View::parse(input) else {
++                    return Found::Refused;
++                };
++                if cut {
++                    return Found::Wrong(format!("a view cut short at {} read", input.len()));
++                }
++                let mask = view.mask();
++                _ = view.kept_mask();
++                _ = view.crtime();
++                let have = BITS
++                    .iter()
++                    .filter(|(name, _)| view.has_boolean(name))
++                    .fold(0, |m, (_, bit)| m | bit);
++                for want in [0, mask, !mask, u32::MAX] {
++                    let nv = view.mask_nvlist(want);
++                    match View::parse(&nv) {
++                        Ok(back) if back.mask() == want & have => {}
++                        other => {
++                            return Found::Wrong(format!(
++                                "mask {want:#x}'s nvlist reads back as {:?}",
++                                other.map(|b| b.mask())
++                            ));
++                        }
++                    }
++                }
++                Found::Decoded
++            });
++        }
++    }
+ }
+diff --git a/crates/core/src/backend/osattrs/illumos_xattrmeta.rs b/crates/core/src/backend/osattrs/illumos_xattrmeta.rs
+index 54a17ff..1b10b5d 100644
+--- a/crates/core/src/backend/osattrs/illumos_xattrmeta.rs
++++ b/crates/core/src/backend/osattrs/illumos_xattrmeta.rs
+@@ -168,4 +168,54 @@ mod tests {
+         .unwrap();
+         assert_eq!(meta.mtime, t(1_000_000_000, 500_000_000));
+     }
++
++    /// BackOtter (ForkAudit1 F2): `illumos.xattr_meta` from another machine,
++    /// cut short or with any bit flipped: refused, or read into metadata
++    /// whose names are refused or are plain names of attribute files, and
++    /// whose ACL and times can be looked at, without a panic.
++    #[test]
++    fn xattr_meta_malformed() {
++        use crate::backend::osattrs::malformed::every_json_mutation;
++
++        let json = concat!(
++            r#"{"a name with spaces":{"uid":0,"gid":0,"mode":384,"#,
++            r#""mtime":"2001-09-09T01:46:40.000000005Z","atime":"2001-09-09T01:46:40.000000005Z"},"#,
++            r#""note":{"uid":1500,"gid":1501,"mode":416,"#,
++            r#""mtime":"2001-09-09T01:46:40.123456789Z","atime":"2001-09-09T01:46:40Z","#,
++            r#""acl":[{"who":60001,"mask":1},{"who":2147483650,"mask":2,"flags":64,"type":1,"sid":"S-1-5-21-1111-2222-3333-513"}]}}"#
++        );
++        _ = every_json_mutation::<BTreeMap<String, XattrMeta>>("xattr_meta", json, |metas| {
++            for (name, meta) in metas {
++                let refused = attr_name_refused(name).is_some();
++                let plain = !name.is_empty()
++                    && name != "."
++                    && name != ".."
++                    && !name.contains(['/', '\0'])
++                    && !SYSTEM_VIEWS.contains(&name.as_str());
++                if refused == plain {
++                    return Err(format!("{name:?}: refused {refused}"));
++                }
++                _ = super::super::illumos_acl::is_trivial(&meta.acl);
++                for e in &meta.acl {
++                    _ = e.sid.as_deref().map(super::super::illumos_acl::split_sid);
++                }
++                _ = super::super::unix_time(meta.mtime);
++                _ = super::super::unix_time(meta.atime);
++            }
++            Ok(())
++        });
++        for name in [
++            "",
++            ".",
++            "..",
++            "a/b",
++            "/",
++            "../x",
++            "a\0b",
++            "SUNWattr_rw",
++            "SUNWattr_ro",
++        ] {
++            assert!(attr_name_refused(name).is_some(), "{name:?} not refused");
++        }
++    }
+ }
+diff --git a/crates/core/src/backend/osattrs/malformed.rs b/crates/core/src/backend/osattrs/malformed.rs
+new file mode 100644
+index 0000000..59cd06a
+--- /dev/null
++++ b/crates/core/src/backend/osattrs/malformed.rs
+@@ -0,0 +1,136 @@
++//! BackOtter: malformed input for the tests of the decoders that read bytes
++//! another machine wrote (a snapshot's generic attributes) or a system
++//! handed over (attribute lists and views): each input cut short at every
++//! length, and with each of its bits flipped in turn. A decoder must give an
++//! error, or a value it can stand by, and never panic or hang. Under Miri
++//! some 200 lengths and bits are tried of each input, spread over all of
++//! it (every 13th at least), which keeps the run short.
++
++use std::panic::{AssertUnwindSafe, catch_unwind};
++
++/// How far apart the lengths and bits tried of `n` are.
++fn step(n: usize) -> usize {
++    if cfg!(miri) { (n / 200).max(13) } else { 1 }
++}
++
++/// `buf` cut short at every length from 0 to one short of its own.
++pub(crate) fn truncations(buf: &[u8]) -> impl Iterator<Item = &[u8]> {
++    (0..buf.len()).step_by(step(buf.len())).map(move |n| &buf[..n])
++}
++
++/// `buf` with one of its bits flipped, for each bit in turn.
++pub(crate) fn bit_flips(buf: &[u8]) -> impl Iterator<Item = Vec<u8>> + '_ {
++    (0..buf.len() * 8).step_by(step(buf.len() * 8)).map(move |bit| {
++        let mut b = buf.to_vec();
++        b[bit / 8] ^= 1 << (bit % 8);
++        b
++    })
++}
++
++/// What a check of one malformed input found.
++pub(crate) enum Found {
++    /// Refused, as it should be.
++    Refused,
++    /// Decoded to a value that is right for the input as it is.
++    Decoded,
++    /// A wrong answer: an `Ok` for an input that can't be right, or a value
++    /// that breaks a rule of the decoder's.
++    Wrong(String),
++}
++
++/// Every input of [`truncations`] and [`bit_flips`] of `buf`, given to
++/// `check` (with whether it was cut short). Panics after all of them if
++/// any check panicked (the decoder did) or found a wrong answer, with the
++/// first few of each and how many in all; returns how many were decoded and
++/// how many refused.
++pub(crate) fn every_mutation(
++    what: &str,
++    buf: &[u8],
++    mut check: impl FnMut(&[u8], bool) -> Found,
++) -> (usize, usize) {
++    let (mut panicked, mut wrong) = (Vec::new(), Vec::new());
++    let (mut decoded, mut refused) = (0, 0);
++    let mut run = |input: &[u8], cut: bool| {
++        let how = if cut { "cut" } else { "flipped" };
++        let shown = || format!("{how} {:?}", String::from_utf8_lossy(input));
++        match catch_unwind(AssertUnwindSafe(|| check(input, cut))) {
++            Ok(Found::Decoded) => decoded += 1,
++            Ok(Found::Refused) => refused += 1,
++            Ok(Found::Wrong(why)) => wrong.push(format!("{}: {why}", shown())),
++            Err(_) => panicked.push(shown()),
++        }
++    };
++    for t in truncations(buf) {
++        run(t, true);
++    }
++    for f in bit_flips(buf) {
++        run(&f, false);
++    }
++    let tried = decoded + refused + wrong.len() + panicked.len();
++    eprintln!(
++        "{what}: {tried} inputs: {decoded} decoded, {refused} refused, {} wrong, {} panicked",
++        wrong.len(),
++        panicked.len()
++    );
++    assert!(
++        panicked.is_empty() && wrong.is_empty(),
++        "{what}: of {tried} malformed inputs {} panicked, the first {:?}; {} answered wrong, the first {:?}",
++        panicked.len(),
++        &panicked[..panicked.len().min(3)],
++        wrong.len(),
++        &wrong[..wrong.len().min(3)],
++    );
++    (decoded, refused)
++}
++
++/// [`every_mutation`] for a JSON document `json` decoded as a `T`, then
++/// given to `check` when it decodes. A document cut short is never valid
++/// JSON (it ends in a `}` or `]`), so decoding one is a wrong answer.
++pub(crate) fn every_json_mutation<T: serde::de::DeserializeOwned>(
++    what: &str,
++    json: &str,
++    mut check: impl FnMut(&T) -> Result<(), String>,
++) -> (usize, usize) {
++    assert!(
++        serde_json::from_str::<T>(json).is_ok(),
++        "{what}: the sample doesn't decode"
++    );
++    every_mutation(
++        what,
++        json.as_bytes(),
++        |input, cut| match serde_json::from_slice::<T>(input) {
++            Err(_) => Found::Refused,
++            Ok(_) if cut && !input.trim_ascii().is_empty() => {
++                Found::Wrong("a document cut short decoded".to_string())
++            }
++            Ok(v) => match check(&v) {
++                Ok(()) => Found::Decoded,
++                Err(why) => Found::Wrong(why),
++            },
++        },
++    )
++}
++
++/// A regular file's node with every generic attribute the forks know, each
++/// in the form one of the tools writes it.
++pub(crate) const EVERY_ATTRIBUTE_NODE: &str = concat!(
++    r#"{"name":"f","type":"file","mode":420,"mtime":"2026-10-30T12:00:00Z","#,
++    r#""atime":"2026-10-30T12:00:00Z","ctime":"2026-10-30T12:00:00Z","uid":1000,"gid":1000,"#,
++    r#""user":"u","group":"g","inode":5,"device_id":64769,"size":4096,"links":1,"#,
++    r#""extended_attributes":[{"name":"user.a","value":"aGk="},{"name":"security.selinux","value":"c3lzdGVtX3U6b2JqZWN0X3I6dXNlcl9ob21lX3Q6czAA"}],"#,
++    r#""generic_attributes":{"#,
++    r#""windows.creation_time":"AAAAAAAAAAA=","windows.file_attributes":"IAAAAA==","#,
++    r#""linux.inode_flags":16,"linux.project_id":4242,"unix.sparse":true,"#,
++    r#""freebsd.file_flags":131072,"freebsd.system_extattrs":{"a":"aGk=","b":null},"#,
++    r#""freebsd.acl_access":[{"tag":1,"id":4294967295,"perm":6},{"tag":2,"id":1001,"perm":7},{"tag":4,"id":4294967295,"perm":4},{"tag":16,"id":4294967295,"perm":5},{"tag":32,"id":4294967295,"perm":4}],"#,
++    r#""freebsd.acl_nfs4":[{"tag":1,"id":4294967295,"perm":1,"type":256}],"#,
++    r#""illumos.acl":[{"who":2147483650,"mask":1,"sid":"S-1-5-21-1111-2222-3333-1004"},{"who":60001,"mask":1}],"#,
++    r#""illumos.system_attributes":33,"openbsd.file_flags":4,"netbsd.file_flags":8,"dragonfly.file_flags":2,"#,
++    r#""linux.zfs_dos_flags":52978421596160,"unix.birthtime":"2001-09-09T01:46:40.5Z","#,
++    r#""illumos.owner_sid":"S-1-5-21-1111-2222-3333-1001","illumos.group_sid":"S-1-5-21-1111-2222-3333-513","#,
++    r#""illumos.xattr_meta":{"note":{"uid":1500,"gid":1501,"mode":416,"mtime":"2001-09-09T01:46:40.123456789Z","atime":"2001-09-09T01:46:40Z"}},"#,
++    r#""illumos.zfs_project":{"id":5,"inherit":true},"freebsd.zfs_project":{"id":6},"illumos.unread_size":12345,"#,
++    r#""haiku.attributes":{"BEOS:TYPE":{"type":1296649555,"value":"dGV4dC9wbGFpbgA="}},"#,
++    r#""linux.fat_attrs":7,"linux.xfs_options":{"cowextsize":2097152,"extsize":1048576,"xflags":67584}},"#,
++    r#""content":[]}"#
++);
+diff --git a/crates/core/src/backend/osattrs/sparse.rs b/crates/core/src/backend/osattrs/sparse.rs
+index e9085e4..dbe7577 100644
+--- a/crates/core/src/backend/osattrs/sparse.rs
++++ b/crates/core/src/backend/osattrs/sparse.rs
+@@ -1885,4 +1885,128 @@ mod tests {
+             assert!(out.iter().all(|&b| [0, 7, 9].contains(&b)), "round {round}");
+         }
+     }
++
++    /// BackOtter (ForkAudit1 F2): a file whose `SEEK_DATA`, `SEEK_HOLE` and
++    /// size answer anything at all (a buggy or changing file system: before
++    /// or past the offset asked, past the end, errors), and whose reads give
++    /// its bytes: the reader ends, gives each byte as the file has it or as
++    /// a zero, no more bytes than the largest size it was told, and never
++    /// panics.
++    #[test]
++    #[allow(clippy::too_many_lines)]
++    fn hole_reader_any_answers() {
++        use std::io::Read;
++
++        struct Lying {
++            data: Vec<u8>,
++            x: u64,
++            biggest: u64,
++        }
++
++        impl Lying {
++            fn next(&mut self) -> u64 {
++                self.x ^= self.x << 13;
++                self.x ^= self.x >> 7;
++                self.x ^= self.x << 17;
++                self.x
++            }
++
++            /// An offset near `off`, the end or 0, or far off; or an error.
++            fn answer(&mut self, off: u64) -> io::Result<u64> {
++                let len = self.data.len() as u64;
++                let r = self.next();
++                let near = |d: u64| {
++                    [
++                        off.saturating_sub(d),
++                        off.saturating_add(d),
++                        len.saturating_sub(d),
++                        len + d,
++                        d,
++                    ]
++                };
++                Ok(match r % 16 {
++                    0 => return Err(io::Error::from_raw_os_error(libc::ENXIO)),
++                    1 => return Err(io::Error::from_raw_os_error(libc::EIO)),
++                    2 => u64::MAX - (r >> 60),
++                    3 => off,
++                    _ => near((r >> 8) % 600)[usize::try_from((r >> 32) % 5).unwrap()],
++                })
++            }
++        }
++
++        impl Extents for Lying {
++            fn seek_data(&mut self, off: u64) -> io::Result<u64> {
++                self.answer(off)
++            }
++
++            fn seek_hole(&mut self, off: u64) -> io::Result<u64> {
++                self.answer(off)
++            }
++
++            fn size(&mut self) -> io::Result<u64> {
++                let len = self.data.len() as u64;
++                let size = match self.next() % 8 {
++                    0 => return Err(io::Error::from_raw_os_error(libc::EIO)),
++                    1 => 0,
++                    2 => len / 2,
++                    3 => len * 2,
++                    _ => len,
++                };
++                self.biggest = self.biggest.max(size);
++                Ok(size)
++            }
++
++            fn read_at(&mut self, buf: &mut [u8], off: u64) -> io::Result<usize> {
++                let Some(rest) = usize::try_from(off)
++                    .ok()
++                    .and_then(|off| self.data.get(off..))
++                else {
++                    return Ok(0);
++                };
++                let n = rest.len().min(buf.len());
++                buf[..n].copy_from_slice(&rest[..n]);
++                Ok(n)
++            }
++        }
++
++        let seeds: u64 = if cfg!(miri) { 40 } else { 20_000 };
++        for seed in 1..=seeds {
++            let data: Vec<u8> = (0..1000_u32)
++                .map(|i| u8::try_from(i % 251 + 1).unwrap())
++                .collect();
++            let len = data.len() as u64;
++            let mut r = HoleReader::new(Lying {
++                data: data.clone(),
++                x: seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1,
++                biggest: 0,
++            });
++            let mut out = Vec::new();
++            let mut buf = [0_u8; 97];
++            let mut reads = 0;
++            loop {
++                reads += 1;
++                assert!(
++                    reads < 10_000,
++                    "seed {seed}: no end after {} bytes",
++                    out.len()
++                );
++                match r.read(&mut buf) {
++                    Ok(0) | Err(_) => break,
++                    Ok(n) => out.extend_from_slice(&buf[..n]),
++                }
++            }
++            let most = r.f.biggest.max(len);
++            assert!(
++                out.len() as u64 <= most,
++                "seed {seed}: {} bytes of a file of at most {most}",
++                out.len()
++            );
++            for (i, &b) in out.iter().enumerate() {
++                assert!(
++                    b == 0 || data.get(i) == Some(&b),
++                    "seed {seed}: byte {i} is {b}"
++                );
++            }
++        }
++    }
+ }

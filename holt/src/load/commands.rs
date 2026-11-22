@@ -5116,7 +5116,14 @@ impl Builder<'_> {
         // Core: the four partitions under run/mnt), `umount --recursive`
         // of it fails, "not mounted": umount-tree (umounttree.rs) takes
         // each mount under it off instead, read from mountinfo.
-        let mut out = vec![if self.mount_points.iter().any(|p| p == t) {
+        // Bug: when nothing is mounted at target t itself (Ubuntu Core mounts
+        // partitions under t/run/mnt/...), close() used umount-tree locally, but
+        // its cross-namespace sweep matched only mount points equal to or ending
+        // in t. Submounts like t/run/mnt/data in udevd or snapd namespaces were
+        // skipped, leaving LUKS devices busy so cryptsetup close failed. When
+        // !rooted, match submounts under t/ too, sorted deepest first.
+        let rooted = self.mount_points.iter().any(|p| p == t);
+        let mut out = vec![if rooted {
             Cmd::new(&["umount", "--recursive", t])
         } else {
             Cmd::new(&[exe.as_str(), "umount-tree", t]).why(format!("nothing is mounted at {t} itself: every mount under it, read from /proc/self/mountinfo, each before the one it's on"))
@@ -5132,11 +5139,18 @@ impl Builder<'_> {
         // the target there, which umount's propagation can't take away.
         // A snap's namespace has the target under /var/lib/snapd/hostfs as
         // well: every mount point whose path ends in the target's goes.
+        // With nothing mounted at the target itself, so too every mount
+        // under such a path, deepest first.
         let qt = shell_quote(t);
         let ns_script = if qt == *t && !t.bytes().any(|b| matches!(b, b'.' | b'^')) {
+            let at = if rooted {
+                format!("awk -v t={t} '{{ m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }}'")
+            } else {
+                format!("awk -v t={t} '{{ m = $5; i = index(m, t); if (i > 0 && (i + length(t) - 1 == length(m) || substr(m, i + length(t), 1) == \"/\")) print m }}' | LC_ALL=C sort -r")
+            };
             format!(
                 "me=$(readlink /proc/self/ns/mnt); seen=\" $me \"; \
-                 at() {{ awk -v t={t} '{{ m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }}'; }}; \
+                 at() {{ {at}; }}; \
                  for f in /proc/[0-9]*/mountinfo; do grep -q '{t}[ /]' \"$f\" 2>/dev/null || continue; \
                  p=${{f#/proc/}}; p=${{p%/mountinfo}}; ns=$(readlink /proc/$p/ns/mnt) || continue; \
                  case $seen in *\" $ns \"*) continue;; esac; seen=\"$seen$ns \"; \
@@ -5149,9 +5163,14 @@ impl Builder<'_> {
                  for m in $ms; do nsenter --mount=\"$b\" umount --recursive \"$m\" || true; done; done"
             )
         } else {
+            let at = if rooted {
+                "T=\"$t\" awk 'BEGIN { t = ENVIRON[\"T\"] } { m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }'"
+            } else {
+                "T=\"$t\" awk 'BEGIN { t = ENVIRON[\"T\"] } { m = $5; i = index(m, t); if (i > 0 && (i + length(t) - 1 == length(m) || substr(m, i + length(t), 1) == \"/\")) print m }' | LC_ALL=C sort -r"
+            };
             format!(
                 "t={qt}; me=$(readlink /proc/self/ns/mnt); seen=\" $me \"; \
-                 at() {{ T=\"$t\" awk 'BEGIN {{ t = ENVIRON[\"T\"] }} {{ m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }}'; }}; \
+                 at() {{ {at}; }}; \
                  for f in /proc/[0-9]*/mountinfo; do grep -Fq -- \"$t\" \"$f\" 2>/dev/null || continue; \
                  p=${{f#/proc/}}; p=${{p%/mountinfo}}; ns=$(readlink /proc/$p/ns/mnt) || continue; \
                  case $seen in *\" $ns \"*) continue;; esac; seen=\"$seen$ns \"; \

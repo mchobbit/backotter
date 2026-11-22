@@ -2736,13 +2736,23 @@ impl Builder<'_> {
     /// key then needs --key-file (refuse), and a given key or passphrase
     /// comes back with the restore, as backed up.
     fn keystores(&mut self, out: &mut Vec<Cmd>) {
+        // Bug: keystores() missed /run keystores mounted via /dev/vg/lv,
+        // /dev/md/NAME, /dev/zvol/..., /dev/disk/by-*, or mounts[].device, did
+        // not normalize trailing slashes on fstab/mount targets, and silently
+        // skipped installing --key-file onto an unmapped or unformatted block
+        // keystore while boot still set keylocation=file:///run/..., leaving the
+        // restored pool unbootable. Resolve via mounts[].device and src_of_path,
+        // normalize slashes, and require the keystore block device to be formatted.
+        fn trim(p: &str) -> &str {
+            if p == "/" { "/" } else { p.trim_end_matches('/') }
+        }
         let mounts = self.layout.arr(&["storage", "mounts"]).to_vec();
         let fstab_mounts: Vec<String> = self
             .layout
             .arr(&["storage", "fstab"])
             .iter()
             .filter(|e| s(e, "type").as_deref() != Some("swap"))
-            .filter_map(|e| s(e, "file"))
+            .filter_map(|e| s(e, "file").map(|f| trim(&f).to_string()))
             .collect();
         for ds in self.layout.v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).cloned().unwrap_or_default() {
             let name = s(&ds, "name").unwrap_or_default();
@@ -2765,46 +2775,49 @@ impl Builder<'_> {
                 refuse(self);
                 continue;
             };
-            // The mount holding the key file, deepest first.
             let Some(m) = mounts
                 .iter()
-                .filter_map(|m| Some((s(m, "target")?, s(m, "source")?)))
-                .filter(|(t, _)| t == "/" || path.starts_with(&format!("{}/", t.trim_end_matches('/'))))
-                .max_by_key(|(t, _)| t.len())
+                .filter_map(|m| Some((s(m, "target")?, s(m, "source")?, s(m, "device"))))
+                .filter(|(t, _, _)| t == "/" || path.starts_with(&format!("{}/", t.trim_end_matches('/'))))
+                .max_by_key(|(t, _, _)| trim(t).len())
             else {
                 refuse(self);
                 continue;
             };
-            if fstab_mounts.iter().any(|f| f == &m.0) {
+            let base = trim(&m.0);
+            if fstab_mounts.iter().any(|f| f == base) || (base != "/run" && !base.starts_with("/run/")) {
                 refuse(self);
                 continue;
             }
-            // Backed up (not under /run): the restore brings the old key back.
-            let base = m.0.trim_end_matches('/');
-            if base != "/run" && !base.starts_with("/run/") {
-                refuse(self);
-                continue;
-            }
-            // Its device, as this layout makes it.
-            let src_dev = self
-                .layout
-                .arr(&["storage", "dm_devices"])
-                .iter()
-                .chain(self.layout.arr(&["storage", "md_arrays"]))
-                .chain(self.layout.arr(&["storage", "disks"]))
-                .find_map(|d| {
-                    let n = s(d, "name")?;
-                    let mapper = d.at(&["dm", "mapper_path"]).and_then(Value::as_str);
-                    if m.1 == format!("/dev/{n}") || Some(m.1.as_str()) == mapper {
-                        return Some(n);
-                    }
-                    d.get("partitions").and_then(Value::as_array).into_iter().flatten().find_map(|p| {
-                        let pn = s(p, "name")?;
-                        (m.1 == format!("/dev/{pn}")).then_some(pn)
-                    })
+            let src_dev = m
+                .2
+                .clone()
+                .filter(|n| self.names.dev(n).is_some())
+                .or_else(|| self.names.src_of_path(&m.1))
+                .or_else(|| {
+                    self.layout
+                        .arr(&["storage", "dm_devices"])
+                        .iter()
+                        .chain(self.layout.arr(&["storage", "md_arrays"]))
+                        .chain(self.layout.arr(&["storage", "disks"]))
+                        .find_map(|d| {
+                            let n = s(d, "name")?;
+                            let mapper = d.at(&["dm", "mapper_path"]).and_then(Value::as_str);
+                            if m.1 == format!("/dev/{n}") || Some(m.1.as_str()) == mapper {
+                                return Some(n);
+                            }
+                            d.get("partitions").and_then(Value::as_array).into_iter().flatten().find_map(|p| {
+                                let pn = s(p, "name")?;
+                                (m.1 == format!("/dev/{pn}")).then_some(pn)
+                            })
+                        })
                 });
-            let Some(dev) = src_dev.and_then(|n| self.names.dev(&n)) else {
-                refuse(self);
+            let Some(dev) = src_dev.and_then(|n| self.names.dev(&n)).filter(|d| self.filesystems.iter().any(|(f, _, _)| f == d)) else {
+                if m.1.starts_with("/dev/") || m.2.is_some() {
+                    self.problem_once(format!("ZFS encryption root {name}: its key file {path} lives on {}, which this layout doesn't format", m.1));
+                } else {
+                    refuse(self);
+                }
                 continue;
             };
             let key = match self.opts.key_file(&name) {

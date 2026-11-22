@@ -1165,13 +1165,19 @@ pub fn unmatched_fstab(sources: &[BackupSource], fstab: &[(&mounts::FstabEntry, 
 ///     kept disk (its device isn't in the dump: the backup drive, a USB
 ///     stick), as BackShot1's own tree (bs1-common internal_mounts) leaves
 ///     them out;
-///   - a store of ZFS key files that fstab doesn't mount (Ubuntu's
-///     keystore, LUKS on the zvol POOL/keystore, which the initramfs mounts
-///     at /run/keystore/POOL): an encryption root's file:// keylocation is
-///     on it, and load writes a new key there (load/commands.rs
+///   - a runtime store of ZFS raw/hex key files under /run that fstab
+///     doesn't mount (Ubuntu's keystore, LUKS on the zvol POOL/keystore,
+///     which the initramfs mounts at /run/keystore/POOL): it is the deepest
+///     mount above an encryption root's file:// keylocation, its device is in
+///     the dump, and load writes a new key there (load/commands.rs
 ///     keystores()), so the old key isn't backed up, nor restored into the
 ///     root's /run.
 pub fn not_backed_up(sources: &mut Vec<BackupSource>, only_disk: bool, zfs_tools: &Value, fstab: &[(&mounts::FstabEntry, Option<String>)]) {
+    fn trim_slash(p: &str) -> &str {
+        let t = p.trim_end_matches('/');
+        if t.is_empty() && p.starts_with('/') { "/" } else { t }
+    }
+    let all_paths: Vec<String> = sources.iter().map(|s| trim_slash(&s.path).to_string()).collect();
     if only_disk {
         sources.retain(|s| s.device.is_some() || !s.source.starts_with("/dev/"));
     }
@@ -1180,11 +1186,33 @@ pub fn not_backed_up(sources: &mut Vec<BackupSource>, only_disk: bool, zfs_tools
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter(|d| d.get("encryptionroot").is_some() && d.get("encryptionroot") == d.get("name"))
-        .filter_map(|d| d.get("keylocation")?.as_str()?.strip_prefix("file://").map(str::to_string))
+        .filter(|d| {
+            d.get("encryptionroot").is_some()
+                && d.get("encryptionroot") == d.get("name")
+                && matches!(d.get("keyformat").and_then(Value::as_str), Some("raw" | "hex") | None)
+        })
+        .filter_map(|d| d.get("keylocation")?.as_str()?.strip_prefix("file://"))
+        .filter(|k| k.starts_with('/') && !k.contains('\0') && !k.split('/').any(|c| c == ".."))
+        .map(str::to_string)
         .collect();
-    let in_fstab = |p: &str| fstab.iter().any(|(e, _)| e.file.trim_end_matches('/') == p.trim_end_matches('/'));
-    sources.retain(|s| s.fstype == "zfs" || s.path == "/" || in_fstab(&s.path) || !keys.iter().any(|k| k.starts_with(&format!("{}/", s.path.trim_end_matches('/')))));
+    let keystore_mounts: Vec<&str> = keys
+        .iter()
+        .filter_map(|k| {
+            all_paths
+                .iter()
+                .map(String::as_str)
+                .filter(|&p| p == "/" || k.starts_with(&format!("{p}/")))
+                .max_by_key(|p| p.len())
+        })
+        .collect();
+    let in_fstab = |p: &str| fstab.iter().any(|(e, _)| trim_slash(&e.file) == trim_slash(p));
+    sources.retain(|s| {
+        let p = trim_slash(&s.path);
+        let is_runtime_keystore = s.device.is_some()
+            && (p == "/run" || p.starts_with("/run/"))
+            && keystore_mounts.iter().any(|&m| m == p);
+        s.fstype == "zfs" || p == "/" || in_fstab(p) || !is_runtime_keystore
+    });
 }
 
 /// A ZFS dataset mounted at more than one path, its whole tree each time
@@ -2000,6 +2028,34 @@ mod tests {
         };
         assert_eq!(paths(true), ["/", "/boot", "/etc/zfs/keys", "/srv/nfs"]);
         assert_eq!(paths(false), ["/", "/boot", "/etc/zfs/keys", "/run/media/m/mybig512", "/srv/nfs"]);
+
+        // Ancestor mounts, persistent non-/run mounts, passphrase key stores,
+        // and unbacked/network mounts stay in backup_sources.
+        let mut edge = vec![
+            src("/", None, "zfs", "rpool/ROOT/ubuntu"),
+            src("/boot", Some("nvme0n1p1"), "vfat", "/dev/nvme0n1p1"),
+            src("/var", Some("nvme0n1p3"), "ext4", "/dev/nvme0n1p3"),
+            src("/var/keys", Some("nvme0n1p4"), "ext4", "/dev/nvme0n1p4"),
+            src("/run/parent", Some("dm-1"), "ext4", "/dev/mapper/parent"),
+            src("/run/parent/usb", None, "ext4", "/dev/sdb1"),
+            src("/run/keystore/pass", Some("dm-2"), "ext4", "/dev/mapper/pass"),
+            src("/run/nfs-keys", None, "nfs4", "server:/keys"),
+        ];
+        let edge_tools = crate::json::parse(
+            r#"{"datasets": [
+                {"name": "bpool", "encryptionroot": "bpool", "keyformat": "raw", "keylocation": "file:///boot/zfs.key"},
+                {"name": "vpool", "encryptionroot": "vpool", "keyformat": "raw", "keylocation": "file:///var/keys/vpool.key"},
+                {"name": "upool", "encryptionroot": "upool", "keyformat": "hex", "keylocation": "file:///run/parent/usb/upool.key"},
+                {"name": "ppool", "encryptionroot": "ppool", "keyformat": "passphrase", "keylocation": "file:///run/keystore/pass/ppool.key"},
+                {"name": "npool", "encryptionroot": "npool", "keyformat": "raw", "keylocation": "file:///run/nfs-keys/npool.key"}
+            ]}"#,
+        )
+        .unwrap();
+        let edge_fstab_e = crate::mounts::parse_fstab("UUID=k /var/keys ext4 defaults 0 2\n");
+        let edge_fstab: Vec<(&crate::mounts::FstabEntry, Option<String>)> = edge_fstab_e.iter().map(|e| (e, None)).collect();
+        not_backed_up(&mut edge, true, &edge_tools, &edge_fstab);
+        let edge_paths: Vec<String> = edge.into_iter().map(|s| s.path).collect();
+        assert_eq!(edge_paths, ["/", "/boot", "/var", "/var/keys", "/run/parent", "/run/keystore/pass", "/run/nfs-keys"]);
     }
 
     #[test]

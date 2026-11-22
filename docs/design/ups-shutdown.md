@@ -332,8 +332,9 @@ bridges), GmkTwoPool and GmkThreePool (each on a JMS578 bridge).
   - The seven secondaries: `MONITOR eaton@bigfoot.local ...`; all read OL and
     show in `upsc -c` on Bigfoot.
   - Backups: `*.bak-upsc-20261122` on Bigfoot and the seven.
-  - Open: GMKOne's SHUTDOWNCMD still waits up to 300 s for bigfoot.local,
-    which UPS-A no longer feeds (a UPS-A change, the user's to OK).
+  - GMKOne (UPS-A, the user's OK): `SHUTDOWNCMD "/sbin/shutdown -h +0"`, no
+    longer waiting for bigfoot.local; backup `upsmon.conf.bak-nobigfoot-20261122`.
+    Its runtime.low 480 s still has the old 300 s wait's margin in it.
 
 ### Applied so far (2026-11-16, morning)
 

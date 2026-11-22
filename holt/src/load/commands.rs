@@ -2724,31 +2724,83 @@ impl Builder<'_> {
     /// system finds it where the source's was.
     fn keystores(&mut self, out: &mut Vec<Cmd>) {
         let mounts = self.layout.arr(&["storage", "mounts"]).to_vec();
+        let fstab_mounts: Vec<String> = self
+            .layout
+            .arr(&["storage", "fstab"])
+            .iter()
+            .filter(|e| s(e, "type").as_deref() != Some("swap"))
+            .filter_map(|e| s(e, "file"))
+            .collect();
         for ds in self.layout.v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).cloned().unwrap_or_default() {
             let name = s(&ds, "name").unwrap_or_default();
-            let Some(path) = s(&ds, "keylocation").and_then(|l| l.strip_prefix("file://").map(str::to_string)) else { continue };
             if s(&ds, "encryptionroot").as_deref() != Some(name.as_str()) {
                 continue;
             }
+            let pool = name.split('/').next().unwrap_or("");
+            if !self.pools.contains(&self.zname(pool)) {
+                continue;
+            }
+            let fmt = s(&ds, "keyformat").unwrap_or_default();
+            let need_random = self.opts.key_file(&name).is_none() && matches!(fmt.as_str(), "raw" | "hex");
+            let refuse = |this: &mut Self| {
+                if need_random {
+                    let kept = this.key_file_in_tree(&ds).map(|p| format!(" (the source keeps its {fmt} key in {p}, inside the encrypted datasets: give that key)")).unwrap_or_default();
+                    this.problem_once(format!("ZFS encryption root {name}: give its new key with --key-file {name}=FILE{kept}"));
+                }
+            };
+            let Some(path) = s(&ds, "keylocation").and_then(|l| l.strip_prefix("file://").map(str::to_string)).filter(|p| safe_target_subpath(p)) else {
+                refuse(self);
+                continue;
+            };
             // The mount holding the key file, deepest first.
             let Some(m) = mounts
                 .iter()
                 .filter_map(|m| Some((s(m, "target")?, s(m, "source")?)))
-                .filter(|(t, _)| path.starts_with(&format!("{t}/")))
+                .filter(|(t, _)| t == "/" || path.starts_with(&format!("{}/", t.trim_end_matches('/'))))
                 .max_by_key(|(t, _)| t.len())
             else {
+                refuse(self);
                 continue;
             };
+            if fstab_mounts.iter().any(|f| f == &m.0) {
+                refuse(self);
+                continue;
+            }
             // Its device, as this layout makes it.
-            let src_dev = self.layout.arr(&["storage", "dm_devices"]).iter().chain(self.layout.arr(&["storage", "disks"])).find_map(|d| {
-                let n = s(d, "name")?;
-                let mapper = d.at(&["dm", "mapper_path"]).and_then(Value::as_str);
-                (m.1 == format!("/dev/{n}") || Some(m.1.as_str()) == mapper).then_some(n)
-            });
-            let Some(dev) = src_dev.and_then(|n| self.names.dev(&n)) else { continue };
-            let key = self.opts.key_file(&name).map(str::to_string).unwrap_or_else(|| format!("{RUN_DIR}/keys/{}", name.replace('/', "_")));
+            let src_dev = self
+                .layout
+                .arr(&["storage", "dm_devices"])
+                .iter()
+                .chain(self.layout.arr(&["storage", "md_arrays"]))
+                .chain(self.layout.arr(&["storage", "disks"]))
+                .find_map(|d| {
+                    let n = s(d, "name")?;
+                    let mapper = d.at(&["dm", "mapper_path"]).and_then(Value::as_str);
+                    if m.1 == format!("/dev/{n}") || Some(m.1.as_str()) == mapper {
+                        return Some(n);
+                    }
+                    d.get("partitions").and_then(Value::as_array).into_iter().flatten().find_map(|p| {
+                        let pn = s(p, "name")?;
+                        (m.1 == format!("/dev/{pn}")).then_some(pn)
+                    })
+                });
+            let Some(dev) = src_dev.and_then(|n| self.names.dev(&n)) else {
+                refuse(self);
+                continue;
+            };
+            let key = match self.opts.key_file(&name) {
+                Some(f) => f.to_string(),
+                None => match temp_key_name(&name) {
+                    Some(k) => format!("{RUN_DIR}/keys/{k}"),
+                    None => {
+                        refuse(self);
+                        continue;
+                    }
+                },
+            };
             let mnt = format!("{RUN_DIR}/keystore");
-            let rel = &path[m.0.len()..];
+            let base = m.0.trim_end_matches('/');
+            let rel = &path[base.len()..];
             let dest = format!("{mnt}{rel}");
             let dir = dest.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or(mnt.clone());
             out.push(Cmd::new(&["mkdir", "-p", &mnt]));

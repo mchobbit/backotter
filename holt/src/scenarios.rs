@@ -6627,6 +6627,20 @@ fn zfsbootmenu_encrypted() {
     assert!(bt.find("umount /mnt/bko-target/run/bko-be/void-6.12'\n").unwrap() < check && check < loc && loc < dracut, "{bt}");
     assert_eq!(bt.matches("cmp -s").count(), 3, "{bt}");
     assert!(!bt.contains("> /mnt/bko-target/etc/zfs/zroot.key") && !bt.contains("install -m 400 /root/zroot-passphrase"), "the restored key file is never rewritten: {bt}");
+    // A raw or hex key without a separate keystore still requires --key-file,
+    // rather than encrypting the pool with an unpersisted ephemeral RAM key.
+    for fmt in ["raw", "hex"] {
+        let (_, b) = zbm_plan(true, &[], |v| {
+            let Some(Value::Arr(mut ds)) = v.at(&["storage", "zfs", "tools", "datasets"]).cloned() else { panic!() };
+            set_at(&mut ds[0], &["keyformat"], Value::from(fmt));
+            set_at(v, &["storage", "zfs", "tools", "datasets"], Value::Arr(ds));
+        });
+        assert!(
+            b.problems.iter().any(|p| p == &format!("ZFS encryption root zroot: give its new key with --key-file zroot=FILE (the source keeps its {fmt} key in /etc/zfs/zroot.key, inside the encrypted datasets: give that key)")),
+            "{fmt}: {:?}",
+            b.problems
+        );
+    }
     // A raw key is read whole: byte for byte only.
     let (_, b) = zbm_plan(true, &["--key-file", "zroot=/root/zroot-key"], |v| {
         let Some(Value::Arr(mut ds)) = v.at(&["storage", "zfs", "tools", "datasets"]).cloned() else { panic!() };

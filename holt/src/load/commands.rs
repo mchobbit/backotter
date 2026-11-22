@@ -2574,7 +2574,14 @@ impl Builder<'_> {
             // An ESP written byte for byte by the partition stage (esp_image)
             // isn't format's.
             let imaged = self.layout.device(&src).is_some_and(|v| v.get("esp_image").is_some());
-            if !imaged && matches!(ty.as_str(), "ext2" | "ext3" | "ext4" | "xfs" | "btrfs" | "f2fs" | "nilfs2" | "jfs" | "vfat" | "msdos" | "swap") {
+            // Bug: format() omitted bcachefs from self.filesystems (so status
+            // ignored bcachefs and --through skipped formatting BIOS bcachefs
+            // roots) and pushed before checking rejected bcachefs/jfs options
+            // or unformatted non-Linux swap. Push only for formatted targets.
+            let non_linux_swap = ty == "swap" && self.fam.is_some_and(|f| !f.on_linux());
+            let bad_fs = (ty == "bcachefs" && (c.get("encrypted").and_then(Value::as_bool) == Some(true) || num(&c, "nr_devices").unwrap_or(1) > 1))
+                || (ty == "jfs" && c.get("external_log").and_then(Value::as_bool) == Some(true));
+            if !imaged && !non_linux_swap && !bad_fs && matches!(ty.as_str(), "ext2" | "ext3" | "ext4" | "xfs" | "btrfs" | "f2fs" | "bcachefs" | "nilfs2" | "jfs" | "vfat" | "msdos" | "swap") {
                 self.filesystems.push((dev.clone(), ty.clone(), s(&c, "uuid")));
             }
             // plan's check 4: a feature the probes can't name is one load

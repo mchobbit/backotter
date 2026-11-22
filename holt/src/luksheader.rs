@@ -41,14 +41,21 @@ pub fn file_name(uuid: Option<&str>, dev: &str) -> String {
     }
 }
 
-/// Every device in the dump that holds LUKS: (name, node, content).
-fn luks_devices(sections: &[&[Value]]) -> Vec<(String, String, Value)> {
+/// Every device in the dump that holds LUKS: (name, node, aliases, content).
+fn luks_devices(sections: &[&[Value]]) -> Vec<(String, String, Vec<String>, Value)> {
     let mut out = Vec::new();
     let mut add = |x: &Value| {
         if x.at(&["content", "type"]).and_then(Value::as_str) == Some("crypto_LUKS") {
             let name = x.get("name").and_then(Value::as_str).unwrap_or("").to_string();
             let node = x.get("path").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("/dev/{name}"));
-            out.push((name, node, x.get("content").cloned().unwrap_or(Value::Null)));
+            let mut aliases: Vec<String> = x.get("links").and_then(Value::as_array).into_iter().flatten().filter_map(|l| l.as_str().map(str::to_string)).collect();
+            if let Some(mp) = x.at(&["dm", "mapper_path"]).and_then(Value::as_str) {
+                aliases.push(mp.to_string());
+            }
+            if let (Some(vg), Some(lv)) = (x.at(&["dm", "vg"]).and_then(Value::as_str), x.at(&["dm", "lv"]).and_then(Value::as_str)) {
+                aliases.push(format!("/dev/{vg}/{lv}"));
+            }
+            out.push((name, node, aliases, x.get("content").cloned().unwrap_or(Value::Null)));
         }
     };
     for sect in sections {
@@ -66,8 +73,27 @@ fn luks_devices(sections: &[&[Value]]) -> Vec<(String, String, Value)> {
 /// their JSON areas, and the keyslots area (cryptsetup's
 /// LUKS2_hdr_and_areas_size).
 fn hdr_and_areas(c: &Value) -> Option<u64> {
+    // Bug: capture() matched --keep-luks-header arguments only against bare
+    // kernel names, rejecting /dev/disk/by-*, /dev/mapper/*, /dev/vg/lv, and
+    // symlinked device paths; hdr_and_areas() also computed 2 * header_size +
+    // keyslots_size without checked arithmetic, risking u64 overflow. Match
+    // layout aliases and canonicalized paths, and use checked_mul/checked_add.
     let n = |k: &str| c.get(k).and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())));
-    Some(2 * n("header_size")? + n("keyslots_size")?)
+    n("header_size")?.checked_mul(2)?.checked_add(n("keyslots_size")?)
+}
+
+fn resolve_luks_arg<'a>(sys: &Sys, all: &'a [(String, String, Vec<String>, Value)], k: &str) -> Option<&'a str> {
+    let bare = k.trim_start_matches("/dev/");
+    if let Some((name, _, _, _)) = all.iter().find(|(name, node, aliases, _)| {
+        name == bare || node == k || aliases.iter().any(|a| a == k || a.trim_start_matches("/dev/") == bare)
+    }) {
+        return Some(name.as_str());
+    }
+    let kp = if k.starts_with('/') { sys.p(k) } else { sys.p(&format!("/dev/{k}")) };
+    let canon = std::fs::canonicalize(kp).ok()?;
+    all.iter()
+        .find(|(_, node, _, _)| std::fs::canonicalize(sys.p(node)).ok().as_ref() == Some(&canon))
+        .map(|(name, _, _, _)| name.as_str())
 }
 
 /// Saves the headers of WANT (device names; and those --keep-luks-header
@@ -77,11 +103,10 @@ pub fn capture(sys: &Sys, sections: &[&[Value]], want: &[String], opts: &Options
     let all = luks_devices(sections);
     let mut names: Vec<String> = want.to_vec();
     for k in &opts.keep {
-        let n = k.trim_start_matches("/dev/").to_string();
-        if !all.iter().any(|(name, _, _)| *name == n) {
-            sys.warn(format!("--keep-luks-header {k}: no LUKS container is on {n} in this dump"));
+        let Some(n) = resolve_luks_arg(sys, &all, k).map(str::to_string) else {
+            sys.warn(format!("--keep-luks-header {k}: no LUKS container is on {} in this dump", k.trim_start_matches("/dev/")));
             continue;
-        }
+        };
         if !names.contains(&n) {
             names.push(n);
         }
@@ -92,7 +117,7 @@ pub fn capture(sys: &Sys, sections: &[&[Value]], want: &[String], opts: &Options
     let dir = opts.dir.clone().unwrap_or_else(|| DEFAULT_DIR.to_string());
     let mut out = Vec::new();
     for n in names {
-        let Some((_, node, c)) = all.iter().find(|(x, _, _)| *x == n) else { continue };
+        let Some((_, node, _, c)) = all.iter().find(|(x, _, _, _)| *x == n) else { continue };
         let uuid = c.get("uuid").and_then(Value::as_str);
         if c.get("version").and_then(Value::as_str) != Some("2") {
             sys.warn(format!("{n}: its LUKS header is LUKS{}, not LUKS2: not kept (load keeps LUKS2 headers only)", c.get("version").and_then(Value::as_str).unwrap_or("?")));

@@ -1619,15 +1619,16 @@ mod tests {
         let ser = s(&["storage", "disks", "0", "serial"]);
         assert_eq!(s(&["storage", "disks", "0", "links", "2"]), format!("/dev/diskid/DISK-{ser}p1"));
         assert_eq!(s(&["storage", "disks", "0", "links", "0"]), format!("/dev/disk/by-id/ata-Samsung_SSD_870_EVO_500GB_{ser}"));
-        // A PXE entry whose description names no MAC (the Lenovo A100's):
-        // its device path's MAC() node is learned and goes all the same.
-        let lo = "0100000058005500450046004900200050005800450020004900500076003400000002010c00d041030a0000000001010600001c010106000000030b25001c8341e8f738000000000000000000000000000000000000000000000000000000030c1b0000000000000000000000000000000000000000000000000000007fff0400";
-        assert_eq!(load_option_macs(lo), ["1c8341e8f738"]);
+        // A PXE entry whose description names no MAC (as the Lenovo A100's,
+        // with a made-up MAC): its device path's MAC() node is learned and
+        // goes all the same.
+        let lo = "0100000058005500450046004900200050005800450020004900500076003400000002010c00d041030a0000000001010600001c010106000000030b250002a1b2c3d4e5000000000000000000000000000000000000000000000000000000030c1b0000000000000000000000000000000000000000000000000000007fff0400";
+        assert_eq!(load_option_macs(lo), ["02a1b2c3d4e5"]);
         assert!(load_option_macs("zz").is_empty() && load_option_macs("0100").is_empty() && load_option_macs("").is_empty());
         let pxe = parse(&format!(r#"{{"os": {{"id": "slackware"}}, "boot": {{"efi": {{"entries": [{{"description": "UEFI: PXE IPv4 Realtek PCIe GBE Family Controller", "load_option_hex": "{lo}"}}]}}}}}}"#)).unwrap();
         let (r, red) = redact(&pxe);
         let t = text(&r);
-        assert!(!t.contains("1c8341e8f738") && !t.to_ascii_lowercase().contains("1c8341e8f738"), "{t}");
+        assert!(!t.contains("02a1b2c3d4e5") && !t.to_ascii_lowercase().contains("02a1b2c3d4e5"), "{t}");
         assert!(red.leaks(&t).is_empty(), "{:?}", red.leaks(&t));
         assert_eq!(r.at(&["boot", "efi", "entries", "0", "load_option_hex"]).and_then(Value::as_str).map(str::len), Some(lo.len()));
         // A CD drive's serial is only in its by-id link.

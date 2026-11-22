@@ -1170,8 +1170,10 @@ pub fn unmatched_fstab(sources: &[BackupSource], fstab: &[(&mounts::FstabEntry, 
 ///     which the initramfs mounts at /run/keystore/POOL): it is the deepest
 ///     mount above an encryption root's file:// keylocation, its device is in
 ///     the dump, and load writes a new key there (load/commands.rs
-///     keystores()), so the old key isn't backed up, nor restored into the
-///     root's /run.
+///     keystores(), which writes keys only where this leaves the mount
+///     out, and otherwise asks for --key-file), so the old key isn't backed
+///     up, nor restored into the root's /run.  Such a mount anywhere else
+///     (a .mount unit at /keys) is backed up.
 pub fn not_backed_up(sources: &mut Vec<BackupSource>, only_disk: bool, zfs_tools: &Value, fstab: &[(&mounts::FstabEntry, Option<String>)]) {
     fn trim_slash(p: &str) -> &str {
         let t = p.trim_end_matches('/');

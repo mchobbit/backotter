@@ -2721,7 +2721,13 @@ impl Builder<'_> {
     /// An encryption root whose key file lives on a filesystem this layout
     /// makes (Ubuntu's keystore: /run/keystore/rpool/system.key on LUKS on
     /// the zvol rpool/keystore): its new key goes there, so the restored
-    /// system finds it where the source's was.
+    /// system finds it where the source's was.  Only a mount that the dump
+    /// leaves out of the backup is written: the deepest device-backed mount
+    /// above the key file, not in fstab, at /run or under it (report.rs
+    /// not_backed_up()'s rule).  Any other mount is backed up, so the
+    /// restore would write the old key over the new one: a random raw/hex
+    /// key then needs --key-file (refuse), and a given key or passphrase
+    /// comes back with the restore, as backed up.
     fn keystores(&mut self, out: &mut Vec<Cmd>) {
         let mounts = self.layout.arr(&["storage", "mounts"]).to_vec();
         let fstab_mounts: Vec<String> = self
@@ -2763,6 +2769,12 @@ impl Builder<'_> {
                 continue;
             };
             if fstab_mounts.iter().any(|f| f == &m.0) {
+                refuse(self);
+                continue;
+            }
+            // Backed up (not under /run): the restore brings the old key back.
+            let base = m.0.trim_end_matches('/');
+            if base != "/run" && !base.starts_with("/run/") {
                 refuse(self);
                 continue;
             }
@@ -7496,6 +7508,37 @@ mod tests {
         let keystore = crate::json::parse(r#"{"name": "rpool/keystore", "type": "volume", "encryption": "off", "volsize": 20971520, "properties": {}}"#).unwrap();
         let props = b.ds_props(&keystore, false);
         assert!(props.contains(&("encryption".into(), "off".into())), "{props:?}");
+    }
+
+    /// keystores() writes a random raw key only into a mount the dump left
+    /// out of the backup (report.rs not_backed_up(): not in fstab, at /run
+    /// or under it): Ubuntu's /run/keystore/rpool gets rpool's new key.  The
+    /// same keystore mounted at /keys (a .mount unit) is backed up, so the
+    /// restore would write the old key over the new one: load asks for
+    /// --key-file, and given one writes nothing there.
+    #[test]
+    fn keystore_only_where_the_backup_leaves_it_out() {
+        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/bs1-ubuntu2610-zfsenc/src.json")).unwrap();
+        let plan = |json: &str, extra: &[&str]| {
+            let l = Layout::from_json(crate::json::parse(json).unwrap()).unwrap();
+            let mut a = vec!["l.json".to_string()];
+            a.extend(extra.iter().map(|s| s.to_string()));
+            let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
+            build(&l, &o, &Mapping { pairs: vec![("nvme0n1".into(), "sdq".into())], ..Mapping::default() })
+        };
+        let need = "ZFS encryption root rpool: give its new key with --key-file rpool=FILE".to_string();
+        let b = plan(&j, &[]);
+        let fmt = text(b.stage(Stage::Format));
+        assert!(fmt.contains("mount /dev/mapper/keystore-rpool /run/bko-holt/keystore\n"), "{fmt}");
+        assert!(fmt.contains("install -m 400 /run/bko-holt/keys/rpool /run/bko-holt/keystore/system.key\n"), "{fmt}");
+        assert!(!b.problems.contains(&need), "{:?}", b.problems);
+        let keys = j.replace("/run/keystore/rpool", "/keys");
+        let k = plan(&keys, &[]);
+        assert!(k.problems.contains(&need), "{:?}", k.problems);
+        assert!(!text(k.stage(Stage::Format)).contains("/run/bko-holt/keystore"));
+        let k = plan(&keys, &["--key-file", "rpool=/root/rpool.key"]);
+        assert!(!text(k.stage(Stage::Format)).contains("/run/bko-holt/keystore"));
+        assert_eq!(k.problems, b.problems);
     }
 
     #[test]

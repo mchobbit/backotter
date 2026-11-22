@@ -1,0 +1,834 @@
+# ForkAudit1 F1 (docs/design/fork-audit.md): clippy, rustdoc and rustfmt on target openbsd, filtered to
+# our lines (testvm/audit/rust-filter.py over scope-rustic_core.txt at ead8a632a500 and
+# scope-rustic.txt at 3853eb3c274b).  Uncommitted working output, 2026-11-22.  Raw and filtered outputs (Mac, session scratch,
+# not kept): /private/tmp/claude-501/-Users-mchobbit-git-backotter/fbac8b1f-8f61-4216-bf95-431973e8cc08/scratchpad/f1/{res,filtered,audit}.
+
+target   openbsd
+where    copland: native, in a throwaway copy of the openbsd8 build image (vms-bko-build/openbsd8-rust.qcow2, 8 CPUs, 6 GiB); rust-clippy and rust-rustfmt added by pkg_add in the throwaway copy only
+sources  rustic_core ead8a63 (0.13.0+backotter.22), rustic 3853eb3 (0.11.4+backotter.22), git archive,
+         rustic pointed at that rustic_core by stick/prep-rustic-src.sh
+lints    upstream's [workspace.lints] (rustic_core) and rustic's own [lints], as they are, plus
+         -W clippy::undocumented_unsafe_blocks -W clippy::multiple_unsafe_ops_per_block (RustAudit1's FORK_FLAGS)
+commands rustic_core: cargo clippy --workspace --all-targets --all-features --keep-going
+         rustic_core: RUSTDOCFLAGS='-D rustdoc::broken_intra_doc_links' cargo doc --workspace --no-deps
+                      --document-private-items --all-features --keep-going
+         rustic_core: cargo fmt --all --check
+         vendor/walkdir (excluded from the workspace, so clippy never lints it from there): cargo clippy --all-targets
+         rustic: cargo clippy --locked --all-targets (default features, as the native build); cargo doc as above; cargo fmt --check
+
+toolchain:
+  OpenBSD obsd8.my.domain 8.0 GENERIC.MP#2 amd64
+  rustc 1.98.1 (48a229cea 2026-09-01) (built from a source tarball)
+  binary: rustc
+  commit-hash: 48a229ceaefd4985c50990b14116b6d856af0985
+  commit-date: 2026-09-01
+  host: x86_64-unknown-openbsd
+  release: 1.98.1
+  LLVM version: 22.1.8
+  cargo 1.98.1 (797e8a9bc 2026-08-05) (built from a source tarball)
+  clippy 0.1.98
+  rustfmt 1.9.0
+
+steps (name, exit, seconds; doc exits 101 when -D broken_intra_doc_links fires anywhere, upstream lines included;
+fmt exits 1 when any file of the crate differs):
+  core-clippy 0 309
+  core-doc 101 34
+  core-fmt 1 2
+  walkdir-clippy 0 1
+  rustic-clippy 0 105
+  rustic-doc 101 29
+  rustic-fmt 1 1
+
+Counts on our lines (rust-filter.py; upstream = upstream lines of files we touched, untouched = files we never touched, outside = outside the tree)
+  crate        tool              ours errors upstream untouched outside
+  rustic_core  clippy             302      0        2         0       0
+  rustic_core  doc                  8      6        6         4       0
+  rustic_core  fmt                403      0        2         0       0   hunks; -586 +2161 lines
+  rustic_core  walkdir-clippy       0      0       11         3       0
+  rustic       clippy              19      0        1         0       2
+  rustic       doc                  0      0        3         5       2
+  rustic       fmt                  2      0        0         0       0   hunks; -5 +21 lines
+
+Per unit (F0's table): tool, lint, level, count on our lines
+== F3: 247
+     161  fmt              warning  rustfmt
+      69  clippy           warning  clippy::doc_markdown
+       4  doc              error    rustdoc::broken_intra_doc_links
+       3  clippy           warning  clippy::unnecessary_wraps
+       2  clippy           warning  clippy::bad_bit_mask
+       2  clippy           warning  clippy::doc_lazy_continuation
+       2  clippy           warning  dead_code
+       2  doc              warning  dead_code
+       1  clippy           warning  clippy::option_if_let_else
+       1  clippy           warning  clippy::unnecessary_fallible_conversions
+== F4: 59
+      35  fmt              warning  rustfmt
+      14  clippy           warning  clippy::doc_markdown
+       8  clippy           warning  clippy::unnecessary_wraps
+       1  clippy           warning  clippy::multiple_unsafe_ops_per_block
+       1  clippy           warning  clippy::useless_conversion
+== F5: 46
+      40  fmt              warning  rustfmt
+       6  clippy           warning  clippy::doc_markdown
+== F6: 234
+     122  fmt              warning  rustfmt
+     109  clippy           warning  clippy::doc_markdown
+       1  clippy           warning  clippy::too_long_first_doc_paragraph
+       1  clippy           warning  clippy::too_many_lines
+       1  doc              error    rustdoc::broken_intra_doc_links
+== F7: 42
+      22  fmt              warning  rustfmt
+      20  clippy           warning  clippy::doc_markdown
+== F8: 85
+      54  clippy           warning  clippy::doc_markdown
+      23  fmt              warning  rustfmt
+       5  clippy           warning  clippy::manual_assert_eq
+       1  clippy           warning  clippy::collapsible_if
+       1  clippy           warning  clippy::unnecessary_wraps
+       1  doc              error    rustdoc::broken_intra_doc_links
+== F9: 21
+      19  clippy           warning  clippy::doc_markdown
+       2  fmt              warning  rustfmt
+
+Every diagnostic on our lines, by unit
+== F3
+   [clippy] crates/core/src/backend/node/generic_attributes.rs:3:24: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/node/generic_attributes.rs:4:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/node/generic_attributes.rs:32:15: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/node/generic_attributes.rs:48:14: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/node/generic_attributes.rs:50:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/node/generic_attributes.rs:91:39: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/node/generic_attributes.rs:132:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/node/generic_attributes.rs:171:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/node/generic_attributes.rs:303:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/node/modification.rs:185:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/node/modification.rs:186:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:7:13: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:9:62: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:122:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:143:35: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:212:44: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:314:5: warning[clippy::doc_lazy_continuation]: doc list item without indentation
+   [clippy] crates/core/src/backend/osattrs.rs:314:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:315:5: warning[clippy::doc_lazy_continuation]: doc list item without indentation
+   [clippy] crates/core/src/backend/osattrs.rs:336:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:340:49: warning[clippy::bad_bit_mask]: &-masking with zero
+   [clippy] crates/core/src/backend/osattrs.rs:355:24: warning[clippy::bad_bit_mask]: &-masking with zero
+   [clippy] crates/core/src/backend/osattrs.rs:377:57: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:386:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:388:14: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:395:17: warning[clippy::option_if_let_else]: use Option::map_or instead of an if let/else
+   [clippy] crates/core/src/backend/osattrs.rs:405:42: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:430:22: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:443:56: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:462:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:570:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:576:20: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:675:1: warning[clippy::unnecessary_wraps]: this function's return value is unnecessary
+   [clippy] crates/core/src/backend/osattrs.rs:716:1: warning[clippy::unnecessary_wraps]: this function's return value is unnecessary
+   [clippy] crates/core/src/backend/osattrs.rs:792:1: warning[clippy::unnecessary_wraps]: this function's return value is unnecessary
+   [clippy] crates/core/src/backend/osattrs.rs:816:8: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:834:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:847:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:900:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:944:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:978:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:981:20: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:988:17: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:995:19: warning[dead_code]: method `counts` is never used
+   [clippy] crates/core/src/backend/osattrs.rs:1021:41: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1023:15: warning[dead_code]: function `xattr_unsupported` is never used
+   [clippy] crates/core/src/backend/osattrs.rs:1064:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1078:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1079:26: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1103:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1123:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1232:65: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1249:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1414:32: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1530:48: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1535:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1535:66: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1537:28: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1539:34: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1548:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1548:20: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1553:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1553:44: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1555:11: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1558:66: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1579:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1579:28: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1633:69: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1682:25: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1859:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1860:25: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1886:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1913:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1914:23: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs.rs:1932:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/sparse.rs:27:24: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/sparse.rs:159:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/sparse.rs:274:26: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/sparse.rs:312:5: warning[clippy::unnecessary_fallible_conversions]: use of a fallible conversion when an infallible one could be used
+   [doc] crates/core/src/backend/osattrs.rs:995:19: warning[dead_code]: method `counts` is never used
+   [doc] crates/core/src/backend/osattrs.rs:1023:15: warning[dead_code]: function `xattr_unsupported` is never used
+   [doc] crates/core/src/backend/osattrs/sparse.rs:35:33: error[rustdoc::broken_intra_doc_links]: unresolved link to `GENERIC_SEEK_HOLE`
+   [doc] crates/core/src/backend/osattrs/sparse.rs:69:8: error[rustdoc::broken_intra_doc_links]: unresolved link to `generic_seek_hole`
+   [doc] crates/core/src/backend/osattrs/sparse.rs:350:28: error[rustdoc::broken_intra_doc_links]: unresolved link to `HoleReader`
+   [doc] crates/core/src/backend/osattrs/sparse.rs:351:8: error[rustdoc::broken_intra_doc_links]: unresolved link to `holes_now`
+   [fmt] crates/core/src/backend/node.rs:22:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:177:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:188:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:303:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:319:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:357:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:369:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:379:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:389:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:399:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:407:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:422:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:431:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:447:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:457:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:466:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:484:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:506:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/node/generic_attributes.rs:515:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:126:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:175:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:290:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:516:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:537:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:860:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1123:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1175:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1184:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1197:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1296:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1385:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1470:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1491:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1513:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1538:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1558:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1567:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1580:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1593:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1600:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1606:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1614:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1621:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1639:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1939:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:1998:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:2008:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:2014:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:2034:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:2050:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:2078:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:2085:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:2108:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:2115:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:2144:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:2153:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:2160:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:2169:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:2184:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs.rs:2191:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:172:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:196:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:299:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:334:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:379:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:404:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:419:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:440:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:453:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:490:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:499:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:516:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:545:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:588:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:642:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:659:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:763:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1079:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1183:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1191:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1198:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1236:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1275:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1295:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1308:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1320:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1369:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1376:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1399:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1415:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1427:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1450:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1484:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1497:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1501:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1507:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1514:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1522:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1542:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1569:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1576:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1588:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1609:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1630:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1637:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1651:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1658:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1687:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1716:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1723:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1736:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1745:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1751:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1805:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1827:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1928:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1942:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:1969:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:2087:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:2151:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:2171:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:2204:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:2217:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:2234:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:2252:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:2262:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/linux.rs:2269:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/other.rs:13:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/other.rs:73:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/other.rs:81:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/other.rs:88:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:395:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:463:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:474:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:740:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:803:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:820:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:881:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:888:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1001:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1040:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1066:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1083:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1091:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1098:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1123:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1138:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1218:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1292:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1350:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1390:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1403:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1440:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1458:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1475:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1544:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1600:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1615:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1630:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1694:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/sparse.rs:1814:1: warning[rustfmt]: not formatted
+== F4
+   [clippy] crates/core/src/backend/osattrs/bsd_flags.rs:1:61: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/bsd_flags.rs:62:42: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/bsd_flags.rs:81:23: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/bsd_held.rs:1:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/bsd_held.rs:2:17: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/bsd_held.rs:7:25: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/bsd_held.rs:46:50: warning[clippy::useless_conversion]: useless conversion to the same type: `u32`
+   [clippy] crates/core/src/backend/osattrs/freebsd_acl.rs:2:60: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/freebsd_acl.rs:33:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/freebsd_acl.rs:69:37: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/freebsd_acl.rs:76:40: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/freebsd_acl.rs:148:57: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/freebsd_acl.rs:162:35: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/freebsd_acl.rs:200:41: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/freebsd_acl.rs:248:16: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/openbsd.rs:44:1: warning[clippy::unnecessary_wraps]: this function's return value is unnecessarily wrapped by `Result`
+   [clippy] crates/core/src/backend/osattrs/openbsd.rs:53:1: warning[clippy::unnecessary_wraps]: this function's return value is unnecessary
+   [clippy] crates/core/src/backend/osattrs/openbsd.rs:61:1: warning[clippy::unnecessary_wraps]: this function's return value is unnecessary
+   [clippy] crates/core/src/backend/osattrs/openbsd.rs:65:1: warning[clippy::unnecessary_wraps]: this function's return value is unnecessary
+   [clippy] crates/core/src/backend/osattrs/openbsd.rs:79:17: warning[clippy::multiple_unsafe_ops_per_block]: this `unsafe` block contains 2 unsafe operations, expected only one
+   [clippy] crates/core/src/backend/osattrs/openbsd.rs:90:1: warning[clippy::unnecessary_wraps]: this function's return value is unnecessary
+   [clippy] crates/core/src/backend/osattrs/openbsd.rs:116:1: warning[clippy::unnecessary_wraps]: this function's return value is unnecessary
+   [clippy] crates/core/src/backend/osattrs/openbsd.rs:120:1: warning[clippy::unnecessary_wraps]: this function's return value is unnecessary
+   [clippy] crates/core/src/backend/osattrs/openbsd.rs:124:1: warning[clippy::unnecessary_wraps]: this function's return value is unnecessary
+   [fmt] crates/core/src/backend/osattrs/bsd_flags.rs:55:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/bsd_held.rs:53:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/bsd_held.rs:60:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/dragonfly.rs:111:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/dragonfly.rs:119:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/dragonfly.rs:126:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd.rs:21:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd.rs:131:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd.rs:148:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd.rs:176:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd.rs:311:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd.rs:318:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd_acl.rs:5:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd_acl.rs:305:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd_acl.rs:325:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd_acl.rs:334:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd_acl.rs:341:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd_acl.rs:401:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd_netbsd.rs:213:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd_netbsd.rs:248:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd_netbsd.rs:266:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd_netbsd.rs:275:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd_netbsd.rs:295:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd_netbsd.rs:392:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd_netbsd.rs:401:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/freebsd_netbsd.rs:434:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/netbsd.rs:9:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/netbsd.rs:95:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/netbsd.rs:130:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/netbsd.rs:137:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/openbsd.rs:74:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/openbsd.rs:110:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/openbsd.rs:131:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/openbsd.rs:139:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/openbsd.rs:146:1: warning[rustfmt]: not formatted
+== F5
+   [clippy] crates/core/src/backend/osattrs/illumos_acl.rs:44:45: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/illumos_sysattr.rs:18:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/illumos_sysattr.rs:151:27: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/illumos_sysattr.rs:283:54: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/illumos_sysattr.rs:284:56: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/osattrs/illumos_sysattr.rs:285:41: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [fmt] crates/core/src/backend/osattrs/haiku.rs:234:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/haiku.rs:328:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:32:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:217:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:262:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:298:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:383:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:430:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:448:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:483:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:498:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:530:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:577:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:596:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:719:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:823:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:879:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos.rs:931:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_acl.rs:135:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_acl.rs:142:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_acl.rs:150:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_acl.rs:157:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_acl.rs:161:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_acl.rs:207:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_acl.rs:214:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_idmap.rs:61:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_idmap.rs:126:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_idmap.rs:133:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_idmap.rs:160:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_idmap.rs:167:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_idmap.rs:172:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_project.rs:4:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_project.rs:68:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_sysattr.rs:104:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_sysattr.rs:173:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_sysattr.rs:188:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_sysattr.rs:387:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_sysattr.rs:429:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_sysattr.rs:461:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/osattrs/illumos_xattrmeta.rs:150:1: warning[rustfmt]: not formatted
+== F6
+   [clippy] crates/core/src/commands/restore.rs:43:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:46:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:116:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:119:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:134:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:139:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:175:23: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:183:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:190:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:211:18: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:224:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:276:55: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:318:8: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:326:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:345:36: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:381:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:384:45: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:391:1: warning[clippy::too_long_first_doc_paragraph]: first doc comment paragraph is too long
+   [clippy] crates/core/src/commands/restore.rs:391:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:393:29: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:400:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:401:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:476:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1239:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1268:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1268:55: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1481:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1490:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1493:6: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1497:19: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1550:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1570:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1575:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1583:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1585:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1595:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1607:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1617:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1621:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1657:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1658:41: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1660:13: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1767:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:1873:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2074:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2088:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2155:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2160:45: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2206:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2210:39: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2246:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2253:30: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2257:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2275:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2308:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2335:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2376:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2388:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2408:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2462:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2465:40: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2508:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2515:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2521:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2553:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2562:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2568:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2574:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2583:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2602:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2610:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2645:62: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2856:57: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2896:58: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore.rs:2921:5: warning[clippy::too_many_lines]: this function has too many lines (110/100)
+   [clippy] crates/core/src/commands/restore.rs:3261:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/exact.rs:1:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/exact.rs:82:19: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/exact.rs:105:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/exact.rs:143:42: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/exact.rs:373:8: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/exact.rs:452:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/exact.rs:479:17: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/exact.rs:480:65: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/exact.rs:503:66: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/exact.rs:624:22: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/exact.rs:624:53: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/files_writer.rs:1:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/files_writer.rs:11:18: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/files_writer.rs:11:38: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/files_writer.rs:34:8: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/files_writer.rs:41:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/files_writer.rs:50:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/restore/files_writer.rs:149:19: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:97:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:109:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:132:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:179:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:410:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:468:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:470:34: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:731:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:803:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:817:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:836:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:855:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:893:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:932:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:974:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:1149:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/restore.rs:1229:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [doc] crates/core/src/commands/restore/exact.rs:389:14: error[rustdoc::broken_intra_doc_links]: unresolved link to `osattrs::set_atime`
+   [fmt] crates/core/src/commands/restore.rs:79:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:758:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:775:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:856:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:887:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:922:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:944:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:974:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:1012:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:1066:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:1197:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:1204:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:1297:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:1309:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:1395:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:1512:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:1719:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2088:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2099:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2106:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2117:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2133:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2147:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2231:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2440:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2515:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2527:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2538:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2803:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2810:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2907:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:2949:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:3090:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:3198:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:3211:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:3248:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:3279:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore.rs:3306:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:153:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:172:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:190:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:251:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:453:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:482:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:536:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:561:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:596:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:603:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:613:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:628:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:635:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:641:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:651:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:658:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:676:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:720:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:729:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/exact.rs:821:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/files_writer.rs:281:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/restore/files_writer.rs:489:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:103:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:123:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:212:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:230:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:260:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:267:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:357:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:364:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:369:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:379:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:395:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:419:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:426:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:432:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:459:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:519:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:567:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:574:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:601:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:618:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:625:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:631:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:657:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:664:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:670:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:685:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:707:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:714:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:743:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:750:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:756:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:783:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:794:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:847:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:881:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:918:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:963:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1045:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1116:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1135:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1142:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1146:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1201:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1208:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1215:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1223:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1264:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1301:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1312:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1348:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1371:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1378:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1393:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1409:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1419:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1426:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1436:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1440:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1461:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1473:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1480:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/restore.rs:1493:1: warning[rustfmt]: not formatted
+== F7
+   [clippy] crates/core/src/backend/local_destination.rs:153:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:159:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:167:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:258:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:500:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:551:31: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:608:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:608:59: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:696:22: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:710:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:716:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:747:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:985:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:995:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1264:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1265:34: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1291:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1322:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1329:60: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1337:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [fmt] crates/core/src/backend/local_destination.rs:166:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:213:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:604:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:635:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:666:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:683:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1067:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1080:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1114:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1135:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1148:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1170:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1202:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1253:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1355:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1408:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1562:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1569:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1576:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1674:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1692:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/local_destination.rs:1790:1: warning[rustfmt]: not formatted
+== F8
+   [clippy] crates/core/src/archiver/file_archiver.rs:194:34: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/archiver/parent.rs:35:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/archiver/parent.rs:37:23: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/archiver/parent.rs:126:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/archiver/tree.rs:28:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/archiver/tree.rs:47:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend.rs:575:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend.rs:582:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/decrypt.rs:819:25: warning[clippy::manual_assert_eq]: used `assert!` with an equality comparison
+   [clippy] crates/core/src/backend/decrypt.rs:820:25: warning[clippy::manual_assert_eq]: used `assert!` with an equality comparison
+   [clippy] crates/core/src/backend/decrypt.rs:832:13: warning[clippy::manual_assert_eq]: used `assert!` with an equality comparison
+   [clippy] crates/core/src/backend/ignore.rs:60:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:85:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:87:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:269:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:275:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:310:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:312:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:370:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:412:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:420:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:424:48: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:452:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:455:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:548:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:576:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore/mapper.rs:91:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore/mapper.rs:93:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore/mapper.rs:121:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore/mapper.rs:257:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore/mapper.rs:397:5: warning[clippy::unnecessary_wraps]: this function's return value is unnecessarily wrapped by `Result`
+   [clippy] crates/core/src/backend/ignore/mapper/nix_mapper.rs:113:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore/mapper/nix_mapper.rs:138:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/blob/tree.rs:480:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/blob/tree.rs:518:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/blob/tree.rs:521:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/blob/tree.rs:525:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/chunker.rs:110:13: warning[clippy::manual_assert_eq]: used `assert!` with an equality comparison
+   [clippy] crates/core/src/chunker.rs:111:13: warning[clippy::manual_assert_eq]: used `assert!` with an equality comparison
+   [clippy] crates/core/src/commands/merge.rs:21:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/merge.rs:21:56: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/merge.rs:24:34: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/merge.rs:34:53: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/commands/merge.rs:36:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/repofile.rs:141:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/repofile/snapshotfile.rs:251:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/repofile/snapshotfile.rs:253:12: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/repository.rs:1595:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/repository.rs:1613:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/repository.rs:1615:44: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/repository.rs:1821:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/repository.rs:1850:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/repository.rs:1873:13: warning[clippy::collapsible_if]: this `if` statement can be collapsed
+   [clippy] crates/core/src/repository.rs:1979:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/backup.rs:313:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/backup.rs:313:52: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/backup.rs:372:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/backup.rs:375:47: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/ls.rs:72:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/merge.rs:1:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/merge.rs:13:26: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [doc] crates/core/src/archiver/tree.rs:47:25: error[rustdoc::broken_intra_doc_links]: unresolved link to `TreeIterator::new`
+   [fmt] crates/core/src/archiver.rs:165:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/archiver/file_archiver.rs:196:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/archiver/file_archiver.rs:212:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/archiver/file_archiver.rs:221:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/ignore/mapper.rs:11:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/ignore/mapper.rs:18:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/ignore/mapper.rs:241:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/ignore/mapper.rs:473:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/backend/ignore/mapper.rs:541:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/blob/tree.rs:652:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/chunker/rabin.rs:432:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/merge.rs:11:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/merge.rs:26:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/merge.rs:55:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/commands/merge.rs:182:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/repofile.rs:190:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/repofile.rs:197:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/repository.rs:1860:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/repository.rs:1872:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/repository.rs:2007:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/src/repository.rs:2015:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/backup.rs:358:1: warning[rustfmt]: not formatted
+   [fmt] crates/core/tests/integration/merge.rs:25:1: warning[rustfmt]: not formatted
+== F9
+   [clippy] src/application.rs:22:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/application.rs:27:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/application.rs:31:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/application.rs:36:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/application.rs:38:21: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/application.rs:43:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/application.rs:46:29: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/application.rs:56:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/application.rs:58:60: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/application.rs:69:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/commands/backup.rs:429:68: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/commands/backup.rs:537:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/commands/backup.rs:539:66: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/commands/diff.rs:221:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/commands/diff.rs:636:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/config.rs:263:17: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/config.rs:265:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/config/hooks.rs:106:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/config/logging.rs:154:18: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [fmt] src/application.rs:220:1: warning[rustfmt]: not formatted
+   [fmt] src/commands/restore.rs:114:1: warning[rustfmt]: not formatted

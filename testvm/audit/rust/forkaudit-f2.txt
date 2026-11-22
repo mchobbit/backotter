@@ -1,0 +1,299 @@
+ForkAudit1 F2: dynamic checks of rustic-bko's patches (docs/design/fork-audit.md)
+Run 2026-11-22 04:10-06:55 CET.  Nothing committed; nothing pushed.
+
+Trees: rustic_core ead8a63 (0.13.0+backotter.22) and rustic 3853eb3
+(0.11.4+backotter.22), copied from the Mac's local repos with git archive into
+/bkoscratch/forkaudit-f2 on Chopin and Cinqcent (removed afterwards).
+restic-bko: rel11 bko-bin, 0.19.1+backotter.12 (restic 12a275f),
+sha256 3ba414df64d58eb1b21ea46a12213735b1cc0e78a6c8a690564ce2761def0c47, the
+same file on both hosts.  rustic-bko .22: built on Chopin from those trees
+(prep-rustic-src.sh, then build-backotter.sh x86_64-unknown-linux-musl, static).
+
+Hosts and toolchains
+- Chopin: Miri, and rustfmt/clippy of the test patch.  Toolchain change: the
+  miri component was missing from nightly-2026-10-31; added with
+  `rustup component add miri --toolchain nightly-2026-10-31`.  (Miri also
+  built its sysroot in ~/.cache/miri.)
+- Cinqcent: the native malformed-input runs, the sanitizers and the parity
+  runs.  The sanitizers were meant for Chopin, but Chopin's memory was held by
+  another session's F1 guest builds (cmp-run.sh --free 5 GiB) and Cinqcent
+  had the same nightly-2026-10-31.  Toolchain change: its nightly lacked
+  rust-src (needed by -Zbuild-std); added with
+  `rustup component add rust-src --toolchain nightly-2026-10-31`.
+- Every job ran under cmp-run.sh --reserve with WEAR_TAG audit:forkaudit-f2:*;
+  t2 batch status was "No batch is running" at the start.
+
+== (a) Miri (nightly-2026-10-31, MIRIFLAGS=-Zmiri-disable-isolation) ==
+
+rustic_core's lib tests in our modules, one Miri process per test (an
+unsupported operation ends the whole process), 3 at a time, 30-min timeout
+each: backend::osattrs::*, backend::node::generic_attributes,
+backend::node::modification, commands::restore{,::exact,::files_writer},
+backend::local_destination, backend::ignore{,::mapper}.  This was the tree
+with the F2 malformed-input tests in it.
+
+  184 tests: 141 pass, 0 Undefined Behavior, 33 unsupported (FFI Miri can't
+  run), 9 timeout, 1 ignored (node_restore_malformed is
+  cfg_attr(miri, ignore): system calls).
+
+  Passes by module: osattrs::linux 23, osattrs::sparse 19, osattrs (top) 15,
+  haiku_attrs 14, generic_attributes 10, commands::restore 9, restore::exact 7,
+  local_destination 12 (tests 6, path_tests 5, sparse_tests 1), bsd_flags 6,
+  freebsd_acl 6, illumos_sysattr 5, illumos_acl 4, bsd_extattr 3,
+  illumos_xattrmeta 3, illumos_project 2, ignore::mapper 2, modification 1.
+
+  Second pass (the final patch, whose Miri sampling takes ~200 lengths and
+  bits spread over each input): the 11 malformed-input tests under Stacked
+  Borrows and Tree Borrows (21 runs): 20 pass, 0 UB;
+  node_with_every_attribute_malformed under Tree Borrows timed out (40 min).
+
+  walkdir (vendor/walkdir, its own crate): the whole-binary run aborted at the
+  first test that spawns a process (posix_spawnattr_init); run test by test,
+  longpath:: and noatime:: (9 tests): 1 pass (short_paths_are_given_as_they_are),
+  8 unsupported (mkdirat x4, posix_spawn x3, open flag O_NOATIME 0x40000).
+  These are covered by ASan instead (b).
+
+  Skipped (not run to the end by Miri), and why:
+  backend::ignore::mapper::nix_mapper::tests::unknown_ids_looked_up_once	unsupported: can't call foreign function `getpwuid_r` on OS `linux`
+  backend::ignore::mapper::tests::atime_is_mtime_by_default	unsupported: can't call foreign function `getpwuid_r` on OS `linux`
+  backend::ignore::mapper::tests::xattrs_sorted	unsupported: can't call foreign function `lsetxattr` on OS `linux`
+  backend::ignore::tests::device_id_only_for_hard_links	unsupported: can't call foreign function `mkfifo` on OS `linux`
+  backend::ignore::tests::dir_node_is_the_directory_s_own	unsupported: can't call foreign function `getpwuid_r` on OS `linux`
+  backend::ignore::tests::skipped_types	unsupported: socket: domain 0x1 is unsupported, only AF_INET and AF_INET6 are allowed.
+  backend::ignore::tests::sockets_are_skipped	unsupported: socket: domain 0x1 is unsupported, only AF_INET and AF_INET6 are allowed.
+  backend::local_destination::sparse_tests::sparse_writes_give_the_data	timeout
+  backend::local_destination::tests::chown_refused_quiet_only_not_root	unsupported: can't call foreign function `fchownat` on OS `linux`
+  backend::local_destination::tests::selinux_label_never_removed	unsupported: can't call foreign function `lsetxattr` on OS `linux`
+  backend::local_destination::tests::verify_read_keeps_atime	unsupported: fcntl: file is not supported for F_SETFL
+  backend::local_destination::tests::write_sparse_leaves_zero_blocks_unwritten	unsupported: can't call foreign function `fstatfs` on OS `linux`
+  backend::local_destination::tests::xattr_not_settable_first	unsupported: can't call foreign function `lsetxattr` on OS `linux`
+  backend::node::generic_attributes::tests::node_with_every_attribute_malformed	timeout
+  backend::osattrs::linux::tests::clear_restricting_flags_clears_i_and_a_only	unsupported: open: unsupported flags: 0x900
+  backend::osattrs::linux::tests::fat_attrs_and_xfs_options_elsewhere_are_unsupported	unsupported: can't call foreign function `fstatfs` on OS `linux`
+  backend::osattrs::linux::tests::no_options_early_off_bcachefs	unsupported: can't call foreign function `statfs` on OS `linux`
+  backend::osattrs::linux::tests::no_project_id_no_attribute	unsupported: open: unsupported flags: 0x900
+  backend::osattrs::linux::tests::open_for_attrs_checks_the_file	unsupported: open: unsupported flags: 0x900
+  backend::osattrs::linux::tests::project_id_0_is_left_alone	unsupported: can't call foreign function `statfs` on OS `linux`
+  backend::osattrs::linux::tests::restricting_flags_held_go_back_on_other_names	unsupported: open: unsupported flags: 0x900
+  backend::osattrs::linux::tests::xattr_values_are_read_whole	unsupported: can't call foreign function `lgetxattr` on OS `linux`
+  backend::osattrs::linux::tests::zfs_dos_flags_round_trip	unsupported: open: unsupported flags: 0x900
+  backend::osattrs::sparse::tests::fill_holes_only_where_there_are_holes	unsupported: can't call foreign function `fstatfs` on OS `linux`
+  backend::osattrs::sparse::tests::has_holes_finds_holes	unsupported: can't call foreign function `fstatfs` on OS `linux`
+  backend::osattrs::sparse::tests::hole_block_size_at_least_512	unsupported: can't call foreign function `fstatfs` on OS `linux`
+  backend::osattrs::sparse::tests::hole_reader_concurrent_writer	timeout
+  backend::osattrs::sparse::tests::hole_reader_gives_the_bytes	timeout
+  backend::osattrs::sparse::tests::hole_reader_real_files	timeout
+  backend::osattrs::sparse::tests::hole_reader_real_random_layouts	timeout
+  backend::osattrs::tests::node_restore_malformed	ignored
+  commands::restore::exact::tests::break_link_leaves_other_entries	unsupported: open: unsupported flags: 0x900
+  commands::restore::exact::tests::clone_file_never_onto_its_source	unsupported: open: unsupported flags: 0x900
+  commands::restore::exact::tests::clone_over_a_new_temporary_file	unsupported: open: unsupported flags: 0x100
+  commands::restore::exact::tests::clone_source_regular_only	unsupported: can't call foreign function `mkfifo` on OS `linux`
+  commands::restore::files_writer::tests::each_file_opened_once	unsupported: can't call foreign function `fstatfs` on OS `linux`
+  commands::restore::files_writer::tests::failed_file_skipped	unsupported: can't call foreign function `fstatfs` on OS `linux`
+  commands::restore::files_writer::tests::interleaved_writes_with_evictions	unsupported: can't call foreign function `fstatfs` on OS `linux`
+  commands::restore::files_writer::tests::no_handle_left_open	timeout
+  commands::restore::files_writer::tests::sparse_files_keep_holes	timeout
+  commands::restore::tests::no_entry_after_put_back	unsupported: can't call foreign function `posix_spawnattr_init` on OS `linux`
+  commands::restore::tests::removal_past_path_max_names_the_long_path	unsupported: can't call foreign function `atexit` on OS `linux`
+  commands::restore::tests::target_fresh_only_when_new_or_empty	timeout
+  (open flags Miri refuses: 0x900 = O_NOCTTY|O_NONBLOCK, 0x100 = O_NOCTTY;
+  the timeouts are tests that write or read many MiB of real files, which
+  Miri interprets instruction by instruction.)
+
+== (b) Sanitizers (nightly-2026-10-31, -Zbuild-std, x86_64-unknown-linux-gnu) ==
+
+-Zsanitizer=undefined does not exist for Rust: rustc answers "incorrect value
+`undefined` for unstable option `sanitizer`" and lists address, cfi,
+dataflow, hwaddress, kcfi, kernel-address, kernel-hwaddress, leak, memory,
+memtag, safestack, shadow-call-stack, thread, realtime.  So: AddressSanitizer
+(with LeakSanitizer, detect_leaks=1) and ThreadSanitizer.  MemorySanitizer not
+run: it needs every C dependency (zstd-sys and the rest) built with it too,
+or it reports false positives on their memory.  UB checks: Miri (a).
+
+Binaries: rustic_core's lib tests (388, our malformed tests included) and
+tests/integration.rs (84: restore, merge, backup, ls, ...).  TMPDIR on tmpfs
+and on ext4 (project,quota), xfs and btrfs loop images in RAM; each as m and
+as root (sudo -E; the root-only tests, e.g. xfs_options_on_xfs mounting its
+own file systems, checked to run, not skip).  RUST_TEST_THREADS=6.
+
+  ASan, 4 file systems x {m, root} x {lib, integration}: 0 AddressSanitizer
+    and 0 LeakSanitizer reports.  lib: 387 pass, 1 fail everywhere
+    (acl_and_sids_malformed: the split_sid defect below, F5).  integration:
+    84 pass, except xfs as m: 83 + repair_snapshots.
+  TSan, tmpfs x {m, root} x {lib, integration}: 0 ThreadSanitizer reports.
+    lib 387 + the same 1; integration as m 83 + repair_snapshots.
+  walkdir's own 58 tests (longpath, noatime, upstream's walk tests) under
+    ASan with TMPDIR on tmpfs, ext4, xfs, btrfs: 58 pass each, 0 reports.
+
+  integration::repair_snapshots::test_repair_snapshots fails whenever it runs
+  alone or before some other test (assert at repair_snapshots.rs:35, check
+  still reports an error after the repair), in plain, ASan and TSan builds.
+  Stock rustic_core 0.13.0 (rustic_core-v0.13.0) fails the same way run
+  alone, 3 of 3: upstream, order-dependent, not ours.
+
+== (c) Malformed input (patch: testvm/audit/rust/forkaudit-f2-malformed.diff) ==
+
+Ordinary #[cfg(test)] tests, no fuzzing crate, in the files they test, plus
+one helper module (osattrs/malformed.rs, cfg(test)).  Applies to ead8a63
+(git apply --check); 11 files, +723 lines, rustfmt-clean (1.94.1, edition
+2024) and clippy-clean in its own lines but for doc_markdown on the words
+"BackOtter"/"ForkAudit1" that the existing tests' docs share.  Not committed
+(F11 commits them).  Each input is cut at every length and has each bit
+flipped in turn; a check records a panic, a hang (the HoleReader test counts
+reads) or a wrong Ok (a cut JSON document or nvlist that decodes, a value that
+breaks a rule of the decoder), and reports all at the end.
+
+  decoder (test)                              inputs  decoded refused wrong panic
+  generic attributes, whole node with every
+    attribute (node_with_every_attribute_malformed)  15147   7053   8094    0     0
+  the restore's readers of those nodes
+    (node_readers_malformed)                  15147   7053   8094    0     0
+  those nodes restored onto a file on Linux
+    (node_restore_malformed: flags, ZFS DOS,
+    FAT, XFS options, project ID, ACLs, birth) 15147   7053   8094    0     0
+  every KNOWN attribute x 26 odd JSON values
+    (every_attribute_with_odd_values)         31x26 readers match the value's range, 0 panics
+  BSD extattr list (list_names_malformed)       297    297      0    0     0
+  FreeBSD/NetBSD ACLs, nfs4 + access          2853    335   2518    0     0
+  illumos SUNWattr_rw views, 6 samples       16776  11973   4803    0     0
+    (every cut view refused; flipped ones' mask, crtime and mask_nvlist
+    read back right)
+  illumos.xattr_meta                          3258    793   2465    0     0
+  illumos.acl                                 1989    611   1378    0     0
+  SIDs (split_sid)                             252    181     70    1     0
+  ZFS project (illumos/freebsd)                288     65    223    0     0
+  haiku.attributes, restored onto a fake BFS  2070    764   1306    0     0
+    (a restore that succeeds leaves exactly the wanted attributes)
+  HoleReader with SEEK_DATA/SEEK_HOLE/size
+    answering anything (hole_reader_any_answers)  20000 seeds: no panic, every
+    read ends, every byte the file's or a zero, no more bytes than the
+    largest size reported
+
+  Not covered on Linux: freebsd_netbsd.rs (SystemExtattrs, the BSD ACL and
+  extattr system calls) compiles on FreeBSD/NetBSD only; haiku.rs and
+  illumos.rs (parse_view's wrapper, read_xattr_meta) on their OS only.  The
+  decoders they call are the portable ones above.
+
+== (d) Parity: restic-bko rel11 and rustic-bko .22 ==
+
+testvm/compare/fs_roundtrip.py (HEAD's copy) on Cinqcent, as root, in RAM,
+BKO_FSRT_PREFIX=forkaudit-f2: torture.sh's tree plus fs_roundtrip's extras on
+a fresh file system, the four directions (restic-bko, rustic-bko,
+restic-to-rustic, rustic-to-restic), a restore over a changed tree, and the
+snapshots' nodes compared across the tools.  Judged by verdict.py judge fsrt.
+
+  ext4 (project, quota, casefold): PASS x 5 rows
+  xfs:                             PASS x 5 rows
+  btrfs:                           PASS x 5 rows
+  On all three: snapshot_node_diff (restic-bko vs rustic-bko) {} (no node
+  differs, generic attributes included); blocks_mismatch none; xattr order
+  sorted in all four; sparse_marked the same 5 files; every restore exit 0;
+  only difference from the source the socket, as both tools skip sockets.
+  Coverage per fs: ACLs 3, project IDs 4 (ext4/xfs), casefold 2 (ext4),
+  immutable 3, append 1, nodump 2, nocow 3 (btrfs), capability 1, user and
+  trusted xattrs, holes 5, hard links, devices, fifo, setuid/sticky.
+
+  BSD and illumos guests: this run did not run them.  The second F2 copy did,
+  and both passed: FreeBSD 15 4/4 and OmniOS r58 8/8, all PASS.  See the
+  addendum at the end.
+
+  Extra, by hand: a file with mtime 1850-06-01 12:00:00 UTC, on Cinqcent
+  (Europe/Paris), backed up and restored in all four directions: every
+  restore gives 12:00:21 (see F8 below).  The tools agree (parity holds);
+  both are wrong.
+
+== Defects, by unit ==
+
+F3  none.  (One overflow was in the new test itself, fixed before the runs.)
+F4  none.
+F5  S3, crates/core/src/backend/osattrs/illumos_acl.rs:82 split_sid: a wrong
+    Ok.  It checks that the whole SID starts with "S-", not that the prefix
+    does, so "S-1" splits as ("S", 1).  idmap_sid_to_id (illumos_idmap.rs:167)
+    then hands libidmap the prefix "S" for a SID from a snapshot, instead of
+    refusing it as "malformed SID".  Evidence: acl_and_sids_malformed,
+    'cut "S-1": split as ("S", 1)' (Cinqcent native, and every ASan/TSan
+    lib run).  Fix: test prefix.starts_with("S-") (or require a digit
+    after "S-" and at least one more '-').  The test fails until it is fixed.
+F6  none.  ASan/TSan clean over the restore unit and integration tests on
+    four file systems; parity PASS.
+F7  none.  ASan clean over local_destination's tests and walkdir's longpath
+    and noatime tests with TMPDIR on tmpfs, ext4, xfs, btrfs; Miri can't run
+    them (mkdirat, O_NOATIME, statfs).
+F8  none in our lines.  Upstream, inherited, noted: a node time before the
+    host zone's standard time is written with the zone's local-mean-time
+    offset, whose seconds RFC 3339 drops.  Europe/Paris before 1891 is
+    +00:09:21, so the time is written as "1850-06-01T12:09:21+00:09" and
+    reads back 21 s late.  It drifts again each time a node is rewritten
+    (rewrite, copy, merge, repair).  rustic_core's RusticTime
+    (repofile.rs:131) passes TimeZone::system()'s offset.  Our hunk
+    timestamp_to_string (repofile.rs:137-148, ef1dab5) only adds "Z" for UTC
+    and keeps that.  restic-bko does the same.  Writing UTC whenever the
+    offset has seconds would fix both, but it changes tree bytes and needs
+    the user's decision (D3).
+    Evidence: the node test's first run (3 wrong: mtime/atime/ctime "0026-"
+    read back 21 s off) and the by-hand 1850 run above.
+F9  none from F2: the rustic CLI was exercised only as rustic-bko in the
+    parity runs.
+Upstream, out of scope: repair_snapshots' order dependence (above).
+
+== Incident: a shared scratch directory ==
+
+Another agent used the same scratch path, /bkoscratch/forkaudit-f2, on
+Cinqcent.  It was most likely a second copy of this F2 step.  The wear log
+shows jobs there that this run didn't start:
+- f2-repair.sh, tag audit:forkaudit-f2:repair, 05:16-05:36 UTC;
+- f2-guest-parity.sh freebsd15 2950 freebsd (tag audit:forkaudit-f2:rt-freebsd15)
+  and omnios58 2960 illumos (rt-omnios58), started about 05:47 UTC.
+This run's cleanup, at about 05:48 UTC, removed /bkoscratch/forkaudit-f2 and
+/mnt/bko-ram/forkaudit-f2* on Cinqcent, the other agent's files with them.
+Both guest-parity jobs ended at that moment.  No VM was left on ports
+2950/2960.  Cinqcent's /mnt/bko-ram/.reserve still holds their two rows,
+for pids 1258057 and 1258058; they are not this run's, and were left alone.
+Chopin's wear log shows only this run's jobs.
+
+== Addendum: the second F2 copy (the "other agent" above), 06:12-07:25 CET ==
+
+A resumed copy of this step ran at the same time as the first.  It found the
+first copy's jobs still running and did not rerun them.  It added three
+things.
+
+1. repair_snapshots, run alone many times.  Cinqcent, stable 1.94.1, the
+   integration binary of each tree, the one test run with --exact 300 times,
+   4 at a time, TMPDIR in RAM:
+     fork ead8a63:                   300 of 300 fail (repair_snapshots.rs:35)
+     stock 1030be4 (rustic_core-v0.13.0): 300 of 300 fail, the same assert
+   It fails every time it runs alone, so it is not timing.  It passes only
+   when some other test runs first.  This is upstream, not ours, as above.
+
+2. A .22 rustic-bko for FreeBSD and illumos.  `stick/build-round.sh --hosts
+   cinqcent --only freebsd,illumos fa22` built from the Mac's clean checkouts
+   (rustic 3853eb3, rustic_core ead8a63), natively in freebsd14 (658 s) and
+   omnios58 (745 s).  Both passed SMOKE-OK.  The Mac lost its ssh to
+   Cinqcent at 06:26, so the round was never gathered or given a
+   SHA256SUMS, and it was used here only.  The round was not promoted and
+   is gone: ~/backotter-work/roundfa22 was removed on Cinqcent, and on
+   Chopin, where the dry run had synced its src.
+
+3. The BSD and illumos parity, run with testvm/compare/run-guest-rt.sh:
+   restic-bko from rel11 bko-bin/OS against rustic-bko .22 (fa22), in the
+   four directions, each in a throwaway --ram copy of the guest.  It ran on
+   Cinqcent under cmp-run.sh --reserve 4 6, with WEAR_TAG
+   audit:forkaudit-f2g:rt-GUEST.  The first try, in /bkoscratch/forkaudit-f2,
+   died when the first copy's cleanup removed that directory.  The rerun was
+   in /bkoscratch/forkaudit-f2g, which has since been removed.
+     freebsd15 (UFS + an NFSv4-ACL UFS): PASS restic->restic, rustic->rustic,
+       restic->rustic, rustic->restic.  This covers extattrs, the system
+       namespace among them, xattr order, flags, ACLs, and a restore over an
+       existing tree.
+     omnios58: PASS all four directions and their "-again" restores (8/8):
+       each repository was restored again in a fresh boot, where the SIDs'
+       ephemeral ids are new.  This covers illumos.xattr_meta (owner, mode,
+       mtime, ACL and atime of attribute files) and a restore over an
+       existing tree.
+   These two backends are exactly what .21 to .22 changed (3027d2b:
+   bsd_extattr.rs, freebsd_netbsd.rs, illumos.rs, illumos_xattrmeta.rs).
+   No node differences and no failed check.  NetBSD, OpenBSD, DragonFly and
+   Haiku were not run.
+
+   The defects by unit above are unchanged: this copy found no new one.

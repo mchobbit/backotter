@@ -1,10 +1,10 @@
 # rust-scope.sh: the lines of rustic that are BackOtter's own (RustAudit1, RA0)
-# name=rustic commit=2c3b2370fec5a789a35e44a704691e0d44001256 stock=v0.11.4 6b96f976ff437a0528a4742358b172b32c3e3932 date=2026-11-20 20:04:08 +0100
+# name=rustic commit=3853eb3c274bb46a9452d1f9165048c938dfb58f stock=v0.11.4 6b96f976ff437a0528a4742358b172b32c3e3932 date=2026-11-22 04:01:16 +0100
 # rule: in files stock..commit touches, lines git blame -w -M -C gives to a commit whose subject
 #   starts "backotter:"; files a backotter: commit added, whole; vendor/walkdir: the diff from crates.io
 # upstream commits in stock..commit (not ours): 1
 # PATH START-END, relative to the repository root
-BACKOTTER.md 1-445
+BACKOTTER.md 1-503
 build-backotter.sh 1-84
 .gitignore 14-14
 Cargo.lock 789-789
@@ -108,7 +108,7 @@ tests/backup_restore.rs 232-279
 tests/snapshots/show_config__show_config_passes.snap 14-14
 # per file: lines OURS TOTAL HOW PATH (HOW: added = a file a backotter: commit added, whole;
 #   blame = git blame; walkdir = the diff from crates.io; whole = holt)
-# lines    445    445 added BACKOTTER.md
+# lines    503    503 added BACKOTTER.md
 # lines     84     84 added build-backotter.sh
 # lines      1     14 blame .gitignore
 # lines     42   8102 blame Cargo.lock
@@ -136,4 +136,4 @@ tests/snapshots/show_config__show_config_passes.snap 14-14
 # lines      1    108 blame src/snapshots/rustic_rs__config__tests__global_env_roundtrip_passes.snap
 # lines     54    279 blame tests/backup_restore.rs
 # lines      1     98 blame tests/snapshots/show_config__show_config_passes.snap
-# total: 1035 of 14786 lines ours in 28 files; .rs: 444 of 4386 in 15 files
+# total: 1093 of 14844 lines ours in 28 files; .rs: 444 of 4386 in 15 files

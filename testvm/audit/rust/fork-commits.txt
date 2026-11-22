@@ -1,0 +1,3218 @@
+# fork-commits.txt: every backotter: commit on the forks' backotter branches, oldest first, with the reason its
+# message gives (the body, Co-Authored-By lines dropped). ForkAudit1 F0, for F9 (docs/design/fork-audit.md).
+# generated 2026-11-22 04:04:53 +0100. 'lines blamed to it at head': git blame -w -M -C over the files stock..head
+# touches (vendor/walkdir included); 0 means every line it wrote has since been rewritten, moved under another
+# commit or deleted.
+
+################################################################################
+# rustic_core: ead8a63 (backotter: 0.13.0+backotter.22: RustAudit1's osattrs fixes in the BSD extattr an)
+# stock 1030be4; 98 commits of ours, 19 upstream commits cherry-picked (listed at the end)
+################################################################################
+
+[rustic_core 1] 661b47a 2026-10-30 11:10
+subject: backotter: version 0.13.0+backotter.1
+diff: 3 files changed, 36 insertions(+), 2 deletions(-); lines blamed to it at head: 22
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+reason:
+  | BACKOTTER.md says what this branch is for, what it will carry (the
+  | metadata BackOtter's restic keeps as generic attributes, under the same
+  | names) and how it moves to a new rustic_core release.
+
+[rustic_core 2] fcac5fa 2026-10-30 14:32
+subject: backotter: file flags, ACLs and other metadata, as BackOtter's restic keeps them
+diff: 29 files changed, 2385 insertions(+), 43 deletions(-); lines blamed to it at head: 2011
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: crates/core/Cargo.toml
+  file: crates/core/src/archiver.rs
+  file: crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex.snap
+  file: crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_relative.snap
+  file: crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_root.snap
+  file: crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple.snap
+  file: crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple_relative.snap
+  file: crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple_root.snap
+  file: crates/core/src/backend.rs
+  file: crates/core/src/backend/ignore.rs
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/node.rs
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/freebsd.rs
+  file: crates/core/src/backend/osattrs/freebsd_acl.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/backend/osattrs/illumos_acl.rs
+  file: crates/core/src/backend/osattrs/illumos_sysattr.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+  file: crates/core/src/backend/osattrs/openbsd.rs
+  file: crates/core/src/backend/osattrs/other.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/tests/snapshots/integration__ls-nix.snap
+  file: crates/core/tests/snapshots/integration__rewrite-nodes-nix.snap
+reason:
+  | A node's Metadata carries restic's generic attributes, which stock rustic
+  | drops without a word, and backend/osattrs fills and restores the ones
+  | BackOtter's restic writes, under the same names and in the same form:
+  | linux.inode_flags, freebsd.file_flags, freebsd.acl_access/acl_default/
+  | acl_nfs4, freebsd.system_extattrs, illumos.acl, illumos.system_attributes
+  | and openbsd.file_flags. A restore sets ACLs after the mode and file flags
+  | after everything else, once per hard-linked file; btrfs's no-copy-on-write
+  | goes on while a new file is still empty. On FreeBSD a symlink keeps its
+  | own mode.
+  | 
+  | Extended attributes: restic's names on FreeBSD (the user namespace, bare),
+  | listed directly, since the xattr crate names the last system attribute as
+  | a user one; illumos' named attribute files, which the xattr crate doesn't
+  | support; none rather than a warning where a file can't have any.
+  | 
+  | A backup keeps the metadata of the directory it backs up, for a restore of
+  | SNAP:path to give the destination; and a regular file without a mode is
+  | restored as 0000, as restic leaves a mode of 0 out.
+  | 
+  | The system calls need unsafe: the workspace lints deny it rather than
+  | forbid it, and backend/osattrs.rs allows it. BACKOTTER.md has the details.
+
+[rustic_core 3] ca2c82d 2026-10-30 15:08
+subject: backotter: BackOtter's restic keeps illumos extended attributes too
+diff: 1 file changed, 1 insertion(+), 1 deletion(-); lines blamed to it at head: 0
+  file: BACKOTTER.md
+reason: (no body; the subject is the reason)
+
+[rustic_core 4] 7821230 2026-10-30 21:18
+subject: backotter: batch 1 - atime, sparse marks, project IDs, casefold (unreviewed)
+diff: 14 files changed, 616 insertions(+), 57 deletions(-); lines blamed to it at head: 567
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/freebsd.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+  file: crates/core/src/backend/osattrs/openbsd.rs
+  file: crates/core/src/backend/osattrs/other.rs
+  file: crates/core/src/backend/osattrs/sparse.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/tests/integration/restore.rs
+reason:
+  | Work in progress, committed as it stood when its review began:
+  | - atime is stored by default
+  | - "unix.sparse" marks files with real holes; restores make holes only
+  |   for marked files or with --sparse, and allocate everything else
+  | - linux.project_id (FS_IOC_FSGETXATTR / FSSETXATTR)
+  | - FS_CASEFOLD_FL kept and set on directories while they are empty
+  | - the Linux SETFLAGS call is skipped when the flags are unchanged
+  | 
+  | Known problems from the review are fixed in the following commits.
+
+[rustic_core 5] 06f4d9c 2026-10-30 22:44
+subject: backotter: vendor walkdir 2.5.0, listing directories without changing their atimes
+diff: 19 files changed, 3717 insertions(+), 2 deletions(-); lines blamed to it at head: 3703
+  file: Cargo.lock
+  file: Cargo.toml
+  file: vendor/walkdir/.gitignore
+  file: vendor/walkdir/COPYING
+  file: vendor/walkdir/Cargo.toml
+  file: vendor/walkdir/LICENSE-MIT
+  file: vendor/walkdir/README.md
+  file: vendor/walkdir/UNLICENSE
+  file: vendor/walkdir/compare/nftw.c
+  file: vendor/walkdir/compare/walk.py
+  file: vendor/walkdir/rustfmt.toml
+  file: vendor/walkdir/src/dent.rs
+  file: vendor/walkdir/src/error.rs
+  file: vendor/walkdir/src/lib.rs
+  file: vendor/walkdir/src/noatime.rs
+  file: vendor/walkdir/src/tests/mod.rs
+  file: vendor/walkdir/src/tests/recursive.rs
+  file: vendor/walkdir/src/tests/util.rs
+  file: vendor/walkdir/src/util.rs
+reason:
+  | A backup keeps access times, and must not change those it saves. On
+  | Linux and Android, std::fs::read_dir can't open a directory with
+  | O_NOATIME, so listing one updates its access time (on relatime, when it
+  | is older than its mtime or a day old). walkdir 2.5.0 is vendored in
+  | vendor/walkdir and swapped in through [patch.crates-io], which reaches the
+  | ignore crate's walker that a backup lists directories with too. There it
+  | reads directories with open(2) with O_NOATIME (retrying without it on
+  | EPERM: neither the owner nor CAP_FOWNER), fdopendir(3) and readdir(3), as
+  | BackOtter's restic does. Everything else is walkdir as released; each
+  | change is marked "BackOtter:", and vendor/walkdir/README.md says so.
+  | 
+  | rustic gets it through its own [patch.crates-io] entry, once this branch
+  | is pushed (see rustic's BACKOTTER.md).
+
+[rustic_core 6] 6ff672d 2026-10-30 22:44
+subject: backotter: batch 1 fixes - sparse rule, one open, atimes, casefold, warnings once
+diff: 18 files changed, 1562 insertions(+), 311 deletions(-); lines blamed to it at head: 1381
+  file: BACKOTTER.md
+  file: crates/core/src/backend/ignore.rs
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/node/modification.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/freebsd.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+  file: crates/core/src/backend/osattrs/openbsd.rs
+  file: crates/core/src/backend/osattrs/other.rs
+  file: crates/core/src/backend/osattrs/sparse.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/src/lib.rs
+  file: crates/core/src/repository.rs
+  file: crates/core/tests/integration.rs
+  file: crates/core/tests/integration/backup.rs
+  file: crates/core/tests/integration/restore.rs
+reason:
+  | The rustic_core side of the Batch 1 review's fix plan, so that rustic and
+  | BackOtter's restic keep and restore the same metadata the same way:
+  | 
+  | - unix.sparse follows one rule in both tools (sparse.rs decide()): blocks
+  |   for the whole size, no holes; no SEEK_HOLE probe (now NetBSD, OpenBSD,
+  |   DragonFly, Solaris), holes; EINVAL/ENOTSUP/EOPNOTSUPP/ENOTTY, holes; any
+  |   other error, none. Its table test has restic's TestHasHoles cases.
+  | - On Linux each regular file and directory is opened once
+  |   (open_for_attrs), O_NOCTTY too, and checked to be the file the lstat
+  |   saw, for its flags, project ID and the SEEK_HOLE probe. Elsewhere the
+  |   probe's open gets the same check.
+  | - Source files are read with O_NOATIME on Linux (retrying without it on
+  |   EPERM), and rewrite keeps saved access times by default.
+  | - A file is restored sparse only into a new, empty file, checked on disk
+  |   (not by what the walk of the destination saw, which misses files below
+  |   a symlinked directory), each blob's zero prefix left as a hole, as
+  |   restic does; it is emptied first if it isn't empty after all. Every
+  |   other file is preallocated (fallocate, F_PREALLOCATE), and an existing
+  |   file left as it is has its holes allocated (Linux, macOS).
+  | - Casefolding (F) is made to match the node on every directory the
+  |   restore creates or finds empty, cleared as well as set, and the late
+  |   flag pass leaves it alone, warning where it still differs. No
+  |   FS_IOC_SETFLAGS when nothing changes; on btrfs, immutable and append-only
+  |   go on through FS_IOC_FSSETXATTR after btrfs.compression is set again,
+  |   since FS_IOC_SETFLAGS rewrites it (checked on chopin's 6.12 kernel).
+  | - Flags, casefolding and project IDs the file system doesn't support get
+  |   one warning per kind and a count at the end; malformed known generic
+  |   attributes one warning per name. A project ID of 0 is left alone.
+  | - restore --ownership-by-name, restic's name for --by-name.
+  | - SparseRestore is exported, for library users of --sparse.
+  | - Tests for all of it; the stock tar tests, dry run and rewrite pass on
+  |   default options again (their fixture keeps symlinks' access times
+  |   recent: readlink(2) updates them, which nothing can avoid).
+  | - BACKOTTER.md states the shared rules.
+
+[rustic_core 7] 337df0a 2026-10-31 01:07
+subject: backotter: NetBSD and DragonFly file flags, NetBSD ACLs, BSD symlink modes
+diff: 11 files changed, 955 insertions(+), 394 deletions(-); lines blamed to it at head: 561
+  file: BACKOTTER.md
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/bsd_flags.rs
+  file: crates/core/src/backend/osattrs/dragonfly.rs
+  file: crates/core/src/backend/osattrs/freebsd.rs
+  file: crates/core/src/backend/osattrs/freebsd_acl.rs
+  file: crates/core/src/backend/osattrs/freebsd_netbsd.rs
+  file: crates/core/src/backend/osattrs/netbsd.rs
+  file: crates/core/src/backend/osattrs/openbsd.rs
+reason:
+  | - netbsd.file_flags (st_flags & 0xff1fffff: not SF_SNAPSHOT, SF_LOG or
+  |   SF_SNAPINVAL) and dragonfly.file_flags (all 32 bits), restored last
+  |   with lchflags, best effort.
+  | - netbsd.acl_access, acl_default, acl_nfs4 and system_extattrs, in the
+  |   FreeBSD forms: the ACL and extended attribute code of freebsd.rs moves
+  |   to freebsd_netbsd.rs, shared by both, with NetBSD's syscall numbers
+  |   (487, 488, 499) and pathconf names (14, 17); NetBSD symlinks have
+  |   ACLs of their own. The user namespace is listed directly on NetBSD
+  |   too (xattr 1.6 misnames a system attribute as a user one).
+  | - Symlink modes on OpenBSD, NetBSD and DragonFly through fchmodat with
+  |   AT_SYMLINK_NOFOLLOW.
+  | - DragonFly's dev_t is a u32: create_special converts, so rustic_core
+  |   builds for x86_64-unknown-dragonfly.
+
+[rustic_core 8] 02b3f90 2026-10-31 02:09
+subject: backotter: ZFS DOS flags on Linux (linux.zfs_dos_flags)
+diff: 11 files changed, 511 insertions(+), 25 deletions(-); lines blamed to it at head: 445
+  file: BACKOTTER.md
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/dragonfly.rs
+  file: crates/core/src/backend/osattrs/freebsd.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+  file: crates/core/src/backend/osattrs/netbsd.rs
+  file: crates/core/src/backend/osattrs/openbsd.rs
+  file: crates/core/src/backend/osattrs/other.rs
+  file: crates/core/src/commands/restore.rs
+reason:
+  | On ZFS (statfs type 0x2fc12fc1), a backup records the DOS flags
+  | (ZFS_IOC_GETDOSFLAGS) of regular files and directories masked with
+  | 0x302f00000000 (read-only, hidden, system, archive, nounlink, offline,
+  | sparse) as a 64-bit number, unless they are archive alone, and 0 too.
+  | The restore sets them in the late pass, once per inode, just before the
+  | inode flags, by reading the file's flags and replacing only the kept
+  | ones; elsewhere it warns once that the file system isn't ZFS.
+  | 
+  | set_flags_best_effort takes 64-bit flags too, and no longer passes over
+  | a refused mask of 0 without an error.
+
+[rustic_core 9] cb3a66b 2026-10-31 02:40
+subject: backotter: birth times, and minimal nvlists for illumos system attributes
+diff: 12 files changed, 750 insertions(+), 123 deletions(-); lines blamed to it at head: 638
+  file: BACKOTTER.md
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/dragonfly.rs
+  file: crates/core/src/backend/osattrs/freebsd.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/backend/osattrs/illumos_sysattr.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+  file: crates/core/src/backend/osattrs/netbsd.rs
+  file: crates/core/src/backend/osattrs/openbsd.rs
+  file: crates/core/src/backend/osattrs/other.rs
+  file: crates/core/src/commands/restore.rs
+reason:
+  | A restored file's birth time was the time of the restore (illumos) or its
+  | mtime (FreeBSD, NetBSD).
+  | 
+  | - unix.birthtime is the birth time as a string in the form of a node's
+  |   mtime, as Go writes it: RFC 3339 in UTC with every nanosecond and no
+  |   trailing zeros ("2001-09-09T01:46:40.123456789Z", "2001-09-09T01:46:40Z");
+  |   any offset is read (GenericAttributes::timestamp/set_timestamp, with
+  |   jiff).  It is written on FreeBSD and NetBSD from st_birthtim
+  |   (Metadata::created(), every type of file), and on illumos from crtime in
+  |   the SUNWattr_rw view, which open_for_attrs now opens once for the system
+  |   attributes and the creation time (files and directories), but not when
+  |   tv_sec is 0 or -1.  Not on Linux, which can't set one, OpenBSD or
+  |   DragonFly.
+  | - It is restored in set_metadata just before set_times
+  |   (osattrs::restore_birthtime, a new function in every OS module).  FreeBSD
+  |   and NetBSD lower a birth time to any earlier mtime set, so one earlier
+  |   than the mtime is first set as the mtime with libc::utimensat (UTIME_OMIT
+  |   atime, AT_SYMLINK_NOFOLLOW, nanoseconds; filetime would go through
+  |   utimes(2) on some BSDs), and the final times leave it; one that isn't
+  |   earlier comes back as the mtime.  illumos writes an nvlist of crtime
+  |   alone to the view, before the late flags pass, since an immutable file
+  |   refuses it.  Elsewhere, and where the file system has no view, only the
+  |   debug log notes it; failures are warned about as the times' are.
+  | - The illumos flags pass writes an nvlist of the attributes' booleans alone,
+  |   instead of the whole view it read, which set crtime too.  The nvlist code
+  |   gets an XDR encoder (booleans, uint64 arrays; uint32, strings and nested
+  |   nvlists for the tests), and its parser returns every top-level pair,
+  |   skipping nested ones whole; both are tested against nvlist_pack's output
+  |   from OmniOS (SPEC2 8.1 vectors, the same as BackOtter's restic).
+  | 
+  | Tested in throwaway guests, rustic-bko alone and with BackOtter's restic in
+  | both directions: on FreeBSD 15.1 (ZFS and UFS2) and NetBSD 11 (FFSv2)
+  | files, a directory, a symlink, a FIFO and a hard link come back with their
+  | birth times to the nanosecond, and a birth time not earlier than the mtime
+  | as the mtime.  On OmniOS r151058 crtime comes back to the nanosecond for
+  | files and a directory, one later than the mtime and an immutable file
+  | included, and immutable and hidden+nodump come back through the minimal
+  | nvlist.
+
+[rustic_core 10] 2c52ef2 2026-10-31 03:53
+subject: backotter: illumos SID owners, extended attributes' metadata, ZFS projects
+diff: 17 files changed, 1281 insertions(+), 96 deletions(-); lines blamed to it at head: 1236
+  file: BACKOTTER.md
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/dragonfly.rs
+  file: crates/core/src/backend/osattrs/freebsd.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/backend/osattrs/illumos_acl.rs
+  file: crates/core/src/backend/osattrs/illumos_idmap.rs
+  file: crates/core/src/backend/osattrs/illumos_project.rs
+  file: crates/core/src/backend/osattrs/illumos_sysattr.rs
+  file: crates/core/src/backend/osattrs/illumos_xattrmeta.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+  file: crates/core/src/backend/osattrs/netbsd.rs
+  file: crates/core/src/backend/osattrs/openbsd.rs
+  file: crates/core/src/backend/osattrs/other.rs
+  file: crates/core/src/commands/restore.rs
+reason:
+  | A file owned by a SID came back owned by nobody after a reboot, an
+  | attribute file owned by root with mode 0644 and the time of the restore, a
+  | ZFS project as 0, and a system attribute mask of archive or av_modified
+  | cleared as both set.  Same names, JSON and rules as BackOtter's restic.
+  | 
+  | - illumos.owner_sid and illumos.group_sid hold the SID of an ephemeral uid
+  |   or gid (above MAXUID), and an illumos.acl entry for one (not owner@,
+  |   group@ or everyone@) gets "sid", which older readers ignore (AceEntry
+  |   loses Copy).  Backup asks libidmap for them and warns once per backup
+  |   when idmap gives none ("idmap offline: SID owners not kept"); restore
+  |   asks it for the ids the SIDs have now: a second lchown right after the
+  |   numeric one (osattrs::restore_owner, a new function in every OS module,
+  |   a no-op but on illumos), before the mode, and ACL entries before
+  |   ACE_SETACL.  A SID idmap can't map gets 60001, not the stored number,
+  |   with an osattrs::SidUnmapped warning that warn_restore gives once per
+  |   attribute and counts by file, as Unsupported; ACL errors now go through
+  |   warn_restore too.
+  | - libidmap is private (no idmap.h), so illumos_idmap.rs opens
+  |   libidmap.so.1 with dlopen once and calls idmap_get_create,
+  |   _sidbyuid/_sidbygid, _uidbysid/_gidbysid, _get_mappings and
+  |   _get_destroy; answers are kept for the run.
+  | - illumos.xattr_meta holds each attribute file's uid, gid, mode, times and
+  |   non-trivial ACL (with SIDs), by name, read with fstatat and facl on the
+  |   attribute directory before the values: the mapper now reads a node's
+  |   extended attributes after osattrs::fill, which gets whether they are
+  |   kept (--set-xattrs).  Restored in restore_attributes, after the values,
+  |   with fchownat, fchmodat, facl and utimensat.  Attribute files are
+  |   created 0600.
+  | - illumos.zfs_project holds {"id", "inherit"} from ZFS's ioctls 'X' 31/32
+  |   (8-byte struct: xflags, projid; inherit 0x20000000, as probed on OmniOS
+  |   r151058), and is restored as each node's own, before the flags; ENOTTY
+  |   is an Unsupported warning.
+  | - illumos.system_attributes is kept whenever the mask differs from the
+  |   automatic archive|av_modified the view has, 0 included (View::kept_mask).
+  | - The SUNWattr_rw view is read in one read(2) of fstat's size + 4096:
+  |   illumos packs it afresh from the start for every read, whatever the
+  |   offset.
+  | 
+  | Tests: SID JSON with and without "sid" and an old reader, split_sid,
+  | xattr_meta JSON (spaces, non-ASCII names, offsets), ZFS project JSON and
+  | xflags merge, kept_mask.  Round trips on omnios58, all four directions
+  | with restic-bko, identical generic attributes from both backups, and in a
+  | second boot with the ephemeral ids handed to other SIDs first.
+
+[rustic_core 11] 9065113 2026-10-31 05:33
+subject: backotter: a hard link replaces what has its name already
+diff: 3 files changed, 30 insertions(+); lines blamed to it at head: 12
+  file: BACKOTTER.md
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/tests/integration/restore.rs
+reason:
+  | A restore run again over its own result found the hard link it was to make
+  | already there, failed with EEXIST and stopped before the late flags pass:
+  | on ZFS a file whose archive bit the restore had set again kept it. As
+  | BackOtter's restic does, whatever is at the link's name is removed first.
+
+[rustic_core 12] d5ef444 2026-10-31 06:23
+subject: backotter: stock tar tests store atimes as mtimes, as on strictatime they must
+diff: 3 files changed, 33 insertions(+), 27 deletions(-); lines blamed to it at head: 5
+  file: crates/core/tests/integration.rs
+  file: crates/core/tests/integration/backup.rs
+  file: crates/core/tests/integration/rewrite.rs
+reason:
+  | test_backup_with_tar_gz_passes, test_backup_dry_run_with_tar_gz_passes and
+  | test_rewrite back up the tar fixture more than once and expect the same
+  | trees. With real atimes (Batch 1's default) that can't hold where the file
+  | system updates atimes on every access (strictatime, as Debian mounts its
+  | tmpfs /tmp, TMPDIR's default): reading a symlink (readlink(2)) updates its
+  | atime, which no O_NOATIME avoids, so every backup saw new atimes on the
+  | fixture's symlinks and saved new trees for the four directories above them
+  | (dirs_changed: 4, tree_blobs: 4 in the second backup's summary). 6ff672d's
+  | fixture gave the symlinks recent atimes, which only helps under relatime.
+  | 
+  | These stock tests now back up with --set-atime mtime, as stock rustic does,
+  | and the fixture is upstream's again. The snapshots stay as they were.
+  | test_backup_keeps_access_times, which checks real atimes, now also checks
+  | that a second backup on Linux saves the same trees (O_NOATIME for files and
+  | directories), which strictatime makes a real test.
+
+[rustic_core 13] 87f308e 2026-10-31 07:28
+subject: backotter: round 3 in progress - FreeBSD ZFS archive flag, DragonFly ns times, one osattrs function set
+diff: 12 files changed, 308 insertions(+), 85 deletions(-); lines blamed to it at head: 249
+  file: BACKOTTER.md
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/bsd_flags.rs
+  file: crates/core/src/backend/osattrs/dragonfly.rs
+  file: crates/core/src/backend/osattrs/freebsd.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+  file: crates/core/src/backend/osattrs/netbsd.rs
+  file: crates/core/src/backend/osattrs/openbsd.rs
+  file: crates/core/src/backend/osattrs/other.rs
+reason:
+  | Work in progress, committed at the user's request while its agent was
+  | still checking it (clippy, guest runs); later commits finish it.
+
+[rustic_core 14] c2c4d14 2026-10-31 07:57
+subject: backotter: round 3 in progress - BSD flag notes and docs
+diff: 2 files changed, 11 insertions(+), 14 deletions(-); lines blamed to it at head: 11
+  file: BACKOTTER.md
+  file: crates/core/src/backend/osattrs/bsd_flags.rs
+reason:
+  | The rest of round 3's rustic_core work as its agent left it when the
+  | user stopped it; not built or tested yet.
+
+[rustic_core 15] 06cd6ac 2026-10-31 11:56
+subject: backotter: round 3 finished - FreeBSD flag rule tests; round 3 checked
+diff: 2 files changed, 15 insertions(+); lines blamed to it at head: 12
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/osattrs/bsd_flags.rs
+reason:
+  | Round 3's work (87f308e, c2c4d14), reviewed and checked on Chopin: clippy
+  | --all-targets, the tests, cargo check for FreeBSD, NetBSD, illumos, macOS,
+  | Windows and (nightly, build-std) DragonFly. It stands as committed:
+  | 
+  | - freebsd.file_flags: on ZFS the attribute is written whenever the kept
+  |   flags aren't uarch alone, 0 included (archive cleared); elsewhere
+  |   whenever they aren't 0, so that uarch alone on UFS is kept. The restore
+  |   sets whatever is there. As BackOtter's restic decides it.
+  | - DragonFly restores atimes and mtimes with utimensat(2), to the
+  |   nanosecond (filetime takes utimes(2) there; every other BSD, illumos
+  |   and Linux go through utimensat(2) already).
+  | - Every osattrs module defines other.rs's function set.
+  | - unix.sparse on DragonFly is decided by the blocks alone, in both tools
+  |   (HAMMER2's small inline files included), as BACKOTTER.md says.
+  | 
+  | Added: the UFS case of uarch alone and of a snapshot flag alone, and a
+  | JSON test that a 0 freebsd.file_flags is written and read back.
+
+[rustic_core 16] e863825 2026-10-31 13:27
+subject: backotter: a restore replaces what is in the way; special nodes as restic stores them
+diff: 15 files changed, 128 insertions(+), 25 deletions(-); lines blamed to it at head: 95
+  file: BACKOTTER.md
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/ignore/mapper/nix_mapper.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/tests/integration/restore.rs
+  file: crates/core/tests/snapshots/integration__backup-tar-groups-nix.snap
+  file: crates/core/tests/snapshots/integration__backup-tar-matching-snaps-nix.snap
+  file: crates/core/tests/snapshots/integration__backup-tar-summary-second-nix.snap
+  file: crates/core/tests/snapshots/integration__backup-tar-summary-third-nix.snap
+  file: crates/core/tests/snapshots/integration__backup-tar-tree-nix.snap
+  file: crates/core/tests/snapshots/integration__dryrun-tar-summary-second-nix.snap
+  file: crates/core/tests/snapshots/integration__dryrun-tar-tree-nix.snap
+  file: crates/core/tests/snapshots/integration__ls-nix.snap
+  file: crates/core/tests/snapshots/integration__rewrite-nodes-nix.snap
+  file: crates/core/tests/snapshots/integration__vfs-nix.snap
+reason:
+  | A restore over an existing tree removes what has a node's name but another
+  | type, with or without --delete, as BackOtter's restic does: a symlink where
+  | the snapshot has a directory became the place the directory's files were
+  | written through, wherever it pointed. Special files are made anew, and one
+  | that can't be made gets one warning and no further metadata steps.
+  | 
+  | A character device's mode now has both Go type bits (the two constants were
+  | ANDed, to 0), only regular files store a size, and FIFOs and sockets no link
+  | count, so both tools write the same nodes. Symlink atimes moved by
+  | readlink(2) are documented.
+
+[rustic_core 17] ef1dab5 2026-10-31 14:47
+subject: backotter: extended attributes that can't be set don't stop the rest; Z for UTC node times
+diff: 13 files changed, 325 insertions(+), 123 deletions(-); lines blamed to it at head: 295
+  file: BACKOTTER.md
+  file: crates/core/src/backend/ignore/mapper/nix_mapper.rs
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/dragonfly.rs
+  file: crates/core/src/backend/osattrs/freebsd.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+  file: crates/core/src/backend/osattrs/netbsd.rs
+  file: crates/core/src/backend/osattrs/openbsd.rs
+  file: crates/core/src/backend/osattrs/other.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/src/repofile.rs
+reason:
+  | - A restore sets every extended attribute it can and removes those the
+  |   node hasn't, even where one can't be set (trusted.* not as root, a
+  |   name the file system refuses), as BackOtter's restic does; stock rustic
+  |   stopped at the first.  Each file gets one warning naming every
+  |   attribute not set, with its error (osattrs::XattrErrors), on illumos
+  |   too.  A test sets an unsettable attribute first.
+  | - illumos stores extended attributes in name order, as restic does.
+  | - uid/gid and name lookups cache "not found" too (cached 2 stopped
+  |   caching None): without /etc/passwd and /etc/group a backup warned for
+  |   every file, now once per id.  The by-name warning names the saved-id
+  |   fallback, not UID 0.
+  | - Node times in UTC are written with "Z", as Go writes them, not
+  |   "+00:00".
+  | - BACKOTTER.md: the above; directories above the backed-up path get
+  |   rustic's synthesized nodes (upstream, kept); a special file that can't
+  |   be made is an error in restic, not "as in restic"; the illumos rescue
+  |   system should run svcadm enable -s idmap.
+
+[rustic_core 18] eb6371b 2026-10-31 17:15
+subject: backotter: xattrs sorted everywhere; flags set from what a file has; each unmapped SID and unsupported xattr named; bcachefs project IDs
+diff: 10 files changed, 364 insertions(+), 77 deletions(-); lines blamed to it at head: 328
+  file: BACKOTTER.md
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/dragonfly.rs
+  file: crates/core/src/backend/osattrs/freebsd.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+  file: crates/core/src/backend/osattrs/netbsd.rs
+  file: crates/core/src/backend/osattrs/openbsd.rs
+reason:
+  | - A backup stores extended attributes in the byte order of their names on
+  |   every system, as BackOtter's restic does (da85b5108), not only on
+  |   illumos; BACKOTTER.md no longer says both keep the system's order.
+  | - set_flags_best_effort takes what the file has: when the whole mask is
+  |   refused, it changes the flags from there one bit at a time, so that as
+  |   the owner on illumos (every SUNWattr_rw write names every attribute)
+  |   hidden and archive come back beside an immutable it can't set, and
+  |   archive is cleared where av_modified can't be; the warning names the
+  |   bits not set and not cleared.  FreeBSD, NetBSD, Linux and illumos pass
+  |   the file's flags; DragonFly and OpenBSD start from none, as before.
+  | - illumos restore_owner reports the owner's and the group's unmapped SIDs
+  |   both (RestoreErrors), a warning for each attribute.
+  | - On a file system without extended attributes (NetBSD FFSv1, plain
+  |   FFSv2; illumos without an attribute directory) the restore's warning
+  |   names each attribute.
+  | - bcachefs_effective.* aren't kept, set or removed (derived; setting one
+  |   does nothing).  On bcachefs the project ID is read from
+  |   bcachefs_effective.project: FS_IOC_FSGETXATTR gives the ID the inode had
+  |   when it was read in (0 after chattr -p until a remount, Linux 6.12).
+  | - BACKOTTER.md: av_quarantined files are left out of a backup (no one can
+  |   open them), accepted.
+
+[rustic_core 19] 1a2a4a4 2026-10-31 21:05
+subject: backotter: sockets skipped at backup and restore, as restic skips them
+diff: 3 files changed, 103 insertions(+), 5 deletions(-); lines blamed to it at head: 111
+  file: BACKOTTER.md
+  file: crates/core/src/backend/ignore.rs
+  file: crates/core/src/commands/restore.rs
+reason:
+  | A socket is only the name a running program listens on; the program makes
+  | it again when it starts, and a restored one has nobody listening. Stock
+  | rustic stored socket nodes and made them with mknod (Linux only); now a
+  | backup leaves sockets out, and a restore leaves out the socket nodes of
+  | older snapshots, so both BackOtter tools write the same snapshots.
+
+[rustic_core 20] 364f4d5 2026-10-31 20:14
+subject: backotter: keep the node of a file illumos quarantined (av_quarantined), without its contents: illumos.unread_size, a warning, restored empty
+diff: 8 files changed, 219 insertions(+), 15 deletions(-); lines blamed to it at head: 198
+  file: BACKOTTER.md
+  file: crates/core/src/archiver/file_archiver.rs
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/backend/osattrs/illumos_sysattr.rs
+  file: crates/core/src/commands/restore.rs
+reason: (no body; the subject is the reason)
+
+[rustic_core 21] 8f01e49 2026-10-31 21:37
+subject: backotter: a file whose contents weren't backed up is restored into a new, empty file, as in BackOtter's restic
+diff: 2 files changed, 21 insertions(+), 9 deletions(-); lines blamed to it at head: 15
+  file: BACKOTTER.md
+  file: crates/core/src/commands/restore.rs
+reason: (no body; the subject is the reason)
+
+[rustic_core 22] 8955dee 2026-10-31 22:04
+subject: backotter: files with holes read by their data extents; restored with holes per file system block
+diff: 10 files changed, 1088 insertions(+), 42 deletions(-); lines blamed to it at head: 872
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+  file: crates/core/src/archiver/file_archiver.rs
+  file: crates/core/src/backend/ignore.rs
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/sparse.rs
+  file: crates/core/src/commands/restore.rs
+reason:
+  | A backup reads a regular file marked unix.sparse, where the backup probes
+  | for holes (Linux and Android, FreeBSD, macOS, illumos), with SEEK_DATA and
+  | SEEK_HOLE: only the data is read, and the chunker gets zeros for the holes
+  | without their being read. The bytes are those plain reading gives, so the
+  | chunks, blob IDs, trees and snapshots are the same bit for bit (property
+  | tests over random layouts, seek failures, files that grow or shrink while
+  | read, and the chunker's output). Reads fill the chunker's buffer across
+  | extents. All-zero chunks are hashed once per file and length.
+  | 
+  | A file restored sparse (marked, or --sparse by-content, into a new file) is
+  | written but for the all-zero blocks of the file system's block size
+  | (f_bsize of fstatfs, fstatvfs on NetBSD and illumos, else st_blksize; at
+  | least 4096) that lie wholly inside a blob, as BackOtter's restic does;
+  | this replaces leaving each blob's longest all-zero prefix unwritten.
+  | 
+  | Version 0.13.0+backotter.3.
+
+[rustic_core 23] b7649a7 2026-10-31 23:26
+subject: backotter: a sparse restore writes only the non-zero part of each block a blob reaches into; a hole ends at the size now; ENXIO a hole only where SEEK_HOLE agrees; 64-bit lseek
+diff: 7 files changed, 636 insertions(+), 158 deletions(-); lines blamed to it at head: 530
+  file: BACKOTTER.md
+  file: crates/core/src/backend/ignore.rs
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/osattrs/sparse.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/tests/integration/restore.rs
+reason:
+  | Restore (SPEC3 section 3 as revised in round 9, as BackOtter's restic):
+  | a file restored sparse is sized with ftruncate, and of each block of the
+  | file system's block size, aligned to the file's offsets, that a blob
+  | reaches into, the part inside the blob is written unless it is all
+  | zeros; nothing outside the blob is written. A block is allocated only if
+  | some blob put a byte other than zero in it (measured on ext4, XFS and
+  | ZFS: the source's blocks), where writing the partial blocks at a blob's
+  | ends gave up to a block more per blob boundary. The tests check that the
+  | writes give the blob on a background of zeros and touch exactly the
+  | blocks with a byte other than zero. An all-zero blob is looked at once,
+  | not once per place it goes, which keeps the restore at the old rule's
+  | speed. A file whose contents weren't backed up (illumos.unread_size)
+  | still restores empty: it has no blobs, only set_length(0).
+  | 
+  | Backup: the file marked unix.sparse is read by its data extents only if
+  | SEEK_HOLE on the opened file still finds a hole before its end (the file
+  | listed may have been replaced or compressed since), else plainly, from
+  | offset 0 again. macOS answers ENXIO to SEEK_DATA and SEEK_HOLE at every
+  | offset of a file its file system compresses (decmpfs): ENXIO from
+  | SEEK_DATA gives a trailing hole only where SEEK_HOLE finds the hole at
+  | that offset, else the rest is read plainly. The hole before data found
+  | by SEEK_DATA ends at the size before it at most, and further into a
+  | hole each buffer of zeros ends at the size fstat gives then: a file cut
+  | short inside a hole gives what plain reading gives, not zeros up to the
+  | old end. EINTR is retried within a read, so the chunker's buffer doesn't
+  | shrink. SEEK_DATA and SEEK_HOLE use lseek64 on Linux (glibc, musl) and
+  | Android, so that a 32-bit system's files past 2 GiB are marked and read
+  | by their extents.
+  | 
+  | Tests: ENXIO at every offset, data past the end of file, EINTR, and
+  | files changed between two system calls or two reads (a cut inside a
+  | hole gives exactly what plain reading gives; these fail without the
+  | fix); random layouts of real files; a 6 GiB file with data across 4 GiB
+  | and past 5 GiB, the same length and SHA-256 as read plainly; a real
+  | concurrent writer. has_holes_finds_holes and preallocated_has_no_holes
+  | allow for ZFS (zeros written become holes with compression; fallocate
+  | allocates nothing). The sparse tests pass on tmpfs, ext4, XFS and ZFS
+  | (compression off and lz4). windows-gnu warnings in ignore.rs and
+  | mapper.rs fixed.
+
+[rustic_core 24] 9f88530 2026-11-01 04:01
+subject: backotter: the chunker hashes all 64 bytes before a chunk's minimum size, as restic's does, and cuts where restic does
+diff: 2 files changed, 72 insertions(+), 3 deletions(-); lines blamed to it at head: 72
+  file: BACKOTTER.md
+  file: crates/core/src/chunker/rabin.rs
+reason: (no body; the subject is the reason)
+
+[rustic_core 25] e8cbde9 2026-11-01 09:32
+subject: backotter: a file's size is the bytes the backup read, as restic's is, not what lstat gave
+diff: 3 files changed, 13 insertions(+); lines blamed to it at head: 13
+  file: BACKOTTER.md
+  file: crates/core/src/archiver/file_archiver.rs
+  file: crates/core/tests/integration/backup.rs
+reason: (no body; the subject is the reason)
+
+[rustic_core 26] ad1635e 2026-11-01 11:44
+subject: backotter: notes: on JFS and nilfs2 SEEK_HOLE finds no hole, so files with holes there aren't marked sparse, in both tools alike
+diff: 1 file changed, 7 insertions(+); lines blamed to it at head: 0
+  file: BACKOTTER.md
+reason: (no body; the subject is the reason)
+
+[rustic_core 27] 5eba94f 2026-11-01 15:56
+subject: backotter: Haiku, from branch haiku-attrs
+diff: 8 files changed, 1473 insertions(+), 48 deletions(-); lines blamed to it at head: 1467
+  file: BACKOTTER.md
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/haiku.rs
+  file: crates/core/src/backend/osattrs/haiku_attrs.rs
+  file: crates/core/src/commands/restore.rs
+reason:
+  | rustic_core builds for Haiku, and keeps BFS's typed file attributes:
+  | those of type B_XATTR_TYPE as extended attributes, the rest as
+  | haiku.attributes (osattrs/haiku.rs, osattrs/haiku_attrs.rs), restored
+  | before the mode, since BFS wants write access to write them.
+  | 
+  | Squashed from haiku-attrs (817230c, 5d8b5c7, e4a2c74, 2cec51a) onto
+  | backotter: illumos_xattrs and set_illumos_xattrs are native_xattrs and
+  | set_native_xattrs, for illumos and Haiku, with backotter's per-attribute
+  | XattrErrors; Haiku gets the per-OS functions added since batch 1
+  | (restore_owner, restore_zfs_dos_flags, restore_birthtime and
+  | fill_xattr_meta, all no-ops; no birth times on Haiku).
+  | 
+  | Not built or tested after the merge.
+
+[rustic_core 28] dd432d2 2026-11-01 16:19
+subject: backotter: on JFS and nilfs2 the blocks decide which files have holes
+diff: 2 files changed, 105 insertions(+), 19 deletions(-); lines blamed to it at head: 82
+  file: BACKOTTER.md
+  file: crates/core/src/backend/osattrs/sparse.rs
+reason:
+  | As BackOtter's restic since 6d21bd8ad: their SEEK_HOLE is the kernel's
+  | generic one, which answers the size, so the probe left every file with
+  | holes there unmarked, and it came back fully allocated.  Neither
+  | compresses nor keeps data in the inode, so on Linux, when the blocks
+  | leave room for a hole and fstatfs's f_type is JFS (0x3153464a) or nilfs2
+  | (0x3434), the probe isn't made and the blocks decide, as when SEEK_HOLE
+  | can't answer (EOPNOTSUPP).  The backup still reads such a file plainly:
+  | SEEK_HOLE gives the size.  BACKOTTER.md says so, in place of ad1635e's
+  | note that no file there is marked.
+  | 
+  | Tested on Cinqcent (Linux 6.17): JFS and nilfs2 loop images, a 32 MiB
+  | file with holes and a dense one, backed up by round 10's restic-bko and
+  | this rustic-bko: the same unix.sparse on both nodes (none from round 10's
+  | rustic-bko); each tool restored both snapshots with the holes (264 and
+  | 272 blocks) and the same contents.  The Haiku merge (5eba94f) checks,
+  | passes clippy without new warnings and passes the workspace's tests on
+  | Linux.
+
+[rustic_core 29] ccc68a2 2026-11-01 18:33
+subject: backotter: directory atimes from before listing, restores over immutable files, FreeBSD ZFS projects
+diff: 19 files changed, 600 insertions(+), 56 deletions(-); lines blamed to it at head: 461
+  file: BACKOTTER.md
+  file: crates/core/src/archiver.rs
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/bsd_flags.rs
+  file: crates/core/src/backend/osattrs/dragonfly.rs
+  file: crates/core/src/backend/osattrs/freebsd.rs
+  file: crates/core/src/backend/osattrs/haiku.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/backend/osattrs/illumos_project.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+  file: crates/core/src/backend/osattrs/netbsd.rs
+  file: crates/core/src/backend/osattrs/openbsd.rs
+  file: crates/core/src/backend/osattrs/other.rs
+  file: crates/core/src/commands/restore.rs
+  file: vendor/walkdir/README.md
+  file: vendor/walkdir/src/dent.rs
+  file: vendor/walkdir/src/lib.rs
+  file: vendor/walkdir/src/tests/recursive.rs
+reason:
+  | From freebsd15 (round 11), three needs met in step with BackOtter's restic:
+  | 
+  | - Directory atimes where there is no O_NOATIME (FreeBSD and the other
+  |   BSDs, illumos, Haiku). Listing a directory moves its atime there, and
+  |   the walker took a directory's metadata after it had read it, the
+  |   backup's root too: every directory was saved with the listing's time.
+  |   The vendored walkdir now takes a directory's metadata before it opens it
+  |   (DirEntry::keep_metadata) and gives that from then on. The size scan,
+  |   which lists directories beside the backup, doesn't run there
+  |   (osattrs::LISTING_KEEPS_ATIMES), as restic's scanner doesn't now either.
+  | 
+  | - A restore over an existing file with schg or sappnd (FreeBSD's libc,
+  |   ld-elf.so.1, init, su) panicked: set_length(...).unwrap() in
+  |   restore_contents got EPERM, and every file still pending stayed stale.
+  |   The restore now clears the flags that refuse it on whatever it finds at a
+  |   node's path (osattrs::clear_restricting_flags: immutable, append-only,
+  |   undeletable on the BSDs, FreeBSD's urdonly, Linux's i and a through
+  |   FS_IOC_FSSETXATTR), the late flag pass sets the node's, and a file whose
+  |   contents still can't be written is reported once and fails the restore
+  |   (exit 1) after everything else is restored, as restic exits 1.
+  | 
+  | - freebsd.zfs_project: ZFS project IDs and inheritance on FreeBSD (zfs
+  |   project), as illumos.zfs_project, through OpenZFS's 28-byte fsxattr and
+  |   ioctls 0x401c581f and 0x801c5820 (truss of zfs project on FreeBSD 15.1),
+  |   restored with the system extended attributes before the flags.
+
+[rustic_core 30] ff155a7 2026-11-01 20:00
+subject: backotter: bcachefs directory options and project IDs before entries; bcachefs.project not kept
+diff: 3 files changed, 218 insertions(+), 12 deletions(-); lines blamed to it at head: 190
+  file: BACKOTTER.md
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+reason:
+  | On bcachefs a directory passes its options and project ID only to the
+  | entries created after they are set. Every directory the restore creates,
+  | or finds empty, now gets its own bcachefs.* options and its project ID (0
+  | where the node has none) at once, before anything goes in
+  | (osattrs::prepare_dir, beside casefolding), so restored entries inherit
+  | compression, replicas, targets, nocow and the project ID as in the
+  | original. No file is given a project ID it has already, so an inherited
+  | one stays inherited; on bcachefs a node without linux.project_id gets 0
+  | where the file inherited another.
+  | 
+  | bcachefs.project (listed by bcachefs 1.39 for a project ID set rather
+  | than inherited) is neither backed up nor set or removed by a restore:
+  | linux.project_id carries the ID, and bcachefs refuses the attribute
+  | (EINVAL), which made restores of directories with a project ID warn. As
+  | BackOtter's restic.
+
+[rustic_core 31] 038c398 2026-11-01 20:39
+subject: backotter: notes: a node without an mtime sets no times at restore, in either tool
+diff: 1 file changed, 6 insertions(+), 2 deletions(-); lines blamed to it at head: 0
+  file: BACKOTTER.md
+reason: (no body; the subject is the reason)
+
+[rustic_core 32] be96479 2026-11-02 09:20
+subject: backotter: directories above the backed-up path keep their own metadata; no device 0 in nodes
+diff: 7 files changed, 250 insertions(+), 43 deletions(-); lines blamed to it at head: 222
+  file: BACKOTTER.md
+  file: crates/core/src/archiver.rs
+  file: crates/core/src/archiver/tree.rs
+  file: crates/core/src/backend.rs
+  file: crates/core/src/backend/ignore.rs
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/node.rs
+reason:
+  | A backup stores the directories above the backed-up path (/home in a
+  | backup of /home/m) with their own lstat, as restic does: ReadSource gets
+  | dir_node, which LocalSource answers as it maps a walked entry
+  | (LocalSourceSaveOptions::map_path), and TreeIterator asks it for each
+  | missing directory. Stock rustic's 0755 placeholders remain for --as-path,
+  | stdin, and a directory that can't be read (with a warning). A whole-snapshot
+  | restore of a rustic-bko snapshot now gives those directories their own
+  | mode, owner, times, xattrs, ACLs and flags, in either tool.
+  | 
+  | A block or character device whose device number is 0 has no "device"
+  | field in its node, as restic leaves it out (Go's omitempty); it still
+  | reads as 0.
+
+[rustic_core 33] 44e1b03 2026-11-02 11:09
+subject: backotter: large xattrs read whole, mode 0 left out, SELinux labels stay, append-only clears on ZFS, doors skipped
+diff: 8 files changed, 398 insertions(+), 28 deletions(-); lines blamed to it at head: 383
+  file: BACKOTTER.md
+  file: crates/core/src/backend/ignore.rs
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/node.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+reason:
+  | From SticTest1 fix batch 5 (rocky10, cachyos, tumbleweed, ubuntu24,
+  | omnios58), in step with BackOtter's restic:
+  | 
+  | - Extended attributes are read whole on Linux (osattrs::xattr_get and
+  |   xattr_list, lgetxattr(2)/llistxattr(2) with the size they give, again on
+  |   ERANGE). The xattr crate 1.6 on rustix 1.1 read every value over 4 KiB
+  |   as empty: it asks rustix for the size with an empty buffer, which rustix
+  |   1.1's lgetxattr answers with 0. A 60000-byte user.* (rocky10, XFS) and a
+  |   15000-byte one (tumbleweed, btrfs) were backed up empty.
+  | 
+  | - A regular file whose mode is 0 (/etc/shadow on Rocky) has no "mode" in
+  |   its node, as restic leaves it out (Go's omitempty); a restore gives a
+  |   file without one 0000, as before.
+  | 
+  | - A restore never removes security.selinux from a file whose node has
+  |   none (osattrs::xattr_never_removed): SELinux refuses it to root too
+  |   (EACCES), and rustic warned for each such file onto Rocky and openSUSE.
+  | 
+  | - clear_restricting_flags checks FS_IOC_GETFLAGS after FS_IOC_FSSETXATTR
+  |   and clears what is left with FS_IOC_SETFLAGS (clear_restricting_with):
+  |   on Ubuntu 24.04's OpenZFS (2.2) FS_IOC_FSSETXATTR cleared immutable but
+  |   left append-only, so a restore over an append-only file couldn't change
+  |   it.
+  | 
+  | - illumos doors are skipped at backup, quietly, as sockets are
+  |   (skipped_type: any file of none of a node's types). rustic took one for
+  |   a regular file, couldn't read it (ENOSYS) and warned about its directory.
+  | 
+  | - illumos tmpfs refuses a crtime in its SUNWattr_rw view with EINVAL: no
+  |   birth time, debug log only, as on UFS; it was a warning per file.
+
+[rustic_core 34] 9387171 2026-11-02 12:41
+subject: backotter: a restore not running as root says nothing about owners it can't set
+diff: 3 files changed, 81 insertions(+), 3 deletions(-); lines blamed to it at head: 70
+  file: BACKOTTER.md
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/commands/restore.rs
+reason:
+  | As restic does (and cp -a, rsync -a): a change of owner refused with EPERM
+  | or EACCES to a restore not running as root is only noted in the debug log.
+  | rustic warned "setting UID/GID failed" for each such file, as for the
+  | root-owned directories above the restored path that the snapshots now
+  | store (cachyos non-root restore), where restic-bko said nothing. Any other
+  | failure, and every one as root, is still a warning. Unit test as user and
+  | as root.
+  | 
+  | BACKOTTER.md: also illumos NFSv4 ACLs tmpfs and UFS refuse (ENOSYS) are a
+  | warning per file in both tools now, and restic-bko restores a changed
+  | hard-linked file whole, as rustic did.
+
+[rustic_core 35] 393cf55 2026-11-02 14:33
+subject: backotter: FAT attributes and XFS options kept and restored on Linux
+diff: 5 files changed, 743 insertions(+), 18 deletions(-); lines blamed to it at head: 644
+  file: BACKOTTER.md
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+  file: crates/core/src/commands/restore.rs
+reason:
+  | linux.fat_attrs: the attributes of a regular file or directory on FAT
+  | (vfat, msdos; FAT_IOCTL_GET_ATTRIBUTES): read-only, hidden, system and
+  | archive, when they aren't what a new one gets anyway (archive alone for a
+  | file, its read-only being in its mode; none for a directory); 0 is kept.
+  | linux.xfs_options: a file's XFS options that the inode flags and project
+  | ID don't carry (nosymlinks, extent size hint and its inheritance,
+  | nodefrag, filestream, copy-on-write extent size hint, with the hints'
+  | sizes), as {"cowextsize":..,"extsize":..,"xflags":..}, the sizes left out
+  | when 0, the same JSON BackOtter's restic writes. Neither tool kept them:
+  | a FAT file's hidden, system or cleared archive came back as archive
+  | alone, and XFS's hints were lost.
+  | 
+  | The restore sets both in the late pass, before the file flags (a write
+  | sets FAT's archive again), changing only what differs; a regular file's
+  | XFS options also go on when the restore creates it, while it is empty
+  | (XFS takes an extent size hint on no file with data). Onto another file
+  | system they are one warning per restore, as unsupported. XFS's
+  | preallocated flag isn't kept: a dense restore preallocates (S5).
+  | 
+  | Tests: JSON forms, the kept/merge rules, unsupported elsewhere, and with
+  | root on loop vfat and XFS file systems.
+
+[rustic_core 36] eea4762 2026-11-02 19:23
+subject: backotter: bcachefs.casefold refusal a warning; holes down to 512-byte blocks
+diff: 4 files changed, 133 insertions(+), 21 deletions(-); lines blamed to it at head: 121
+  file: BACKOTTER.md
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/sparse.rs
+reason:
+  | Round 23, nixos2605 (bcachefs, block_size 512), as BackOtter's restic:
+  | - bcachefs refusing to set or remove bcachefs.casefold on a directory with
+  |   entries (ENOTEMPTY: one restored over) is a warning, "casefolding
+  |   (bcachefs.casefold) not restored on DIR: directory not empty", as for
+  |   chattr's F, not one of the file's errors.  An extended attribute with
+  |   the right value already is left alone, as before.
+  | - A file restored sparse has its holes in blocks of the file system's own
+  |   size down to 512 bytes (4096 where it isn't known), no longer at least
+  |   4096: a file with 512-byte holes on bcachefs with 512-byte blocks comes
+  |   back with them, not dense.  The repository and snapshots don't change.
+  | - Tests: hole_block_rule, hole_block_size_at_least_512,
+  |   casefold_not_empty_is_bcachefs_casefold_refused.  BACKOTTER.md.
+
+[rustic_core 37] 27c5a12 2026-11-02 20:38
+subject: backotter: tests for bcachefs.casefold refused (ENOTEMPTY) as a warning
+diff: 1 file changed, 255 insertions(+), 85 deletions(-); lines blamed to it at head: 173
+  file: crates/core/src/backend/local_destination.rs
+reason:
+  | LocalDestination::set_extended_attributes now hands the work to
+  | set_xattrs_with, which makes its calls (list, get, set, remove, and the
+  | casefold warning) through XattrCalls: the system's (SystemXattrs) or a
+  | test's. Two tests with an in-memory file: ENOTEMPTY setting or removing
+  | bcachefs.casefold is a warning and the other attributes are still set and
+  | removed; ENOTEMPTY for any other attribute stays an error, naming it.
+
+[rustic_core 38] 39b4368 2026-11-02 20:38
+subject: backotter: no device ID for a FIFO; device IDs as BackOtter's restic now stores them
+diff: 3 files changed, 64 insertions(+), 1 deletion(-); lines blamed to it at head: 49
+  file: BACKOTTER.md
+  file: crates/core/src/backend/ignore.rs
+  file: crates/core/src/backend/ignore/mapper.rs
+reason:
+  | By default (--set-devid hardlink) a node has a device ID only where it
+  | has more than one link. A FIFO's or socket's link count isn't stored, so it
+  | has none now either, hard-linked or not, as BackOtter's restic, which now
+  | stores device IDs by this same rule (restic's device-id-for-hardlinks,
+  | turned on there): the two tools' snapshots of one tree have the same nodes,
+  | and the same tree IDs in one repository. Restores use device IDs only for
+  | nodes with more than one link, as before. A test backs up a file, a
+  | hard-linked file, a directory and a hard-linked FIFO.
+
+[rustic_core 39] 8386562 2026-11-02 20:43
+subject: backotter: zstd contexts and Rabin tables kept per thread
+diff: 3 files changed, 229 insertions(+), 5 deletions(-); lines blamed to it at head: 229
+  file: BACKOTTER.md
+  file: crates/core/src/backend/decrypt.rs
+  file: crates/core/src/chunker.rs
+reason:
+  | backend/decrypt.rs: compressing and decompressing blobs (and repository
+  | files) use one zstd context of each kind per thread, kept from call to
+  | call, instead of a new one per call as zstd::stream's encode_all,
+  | copy_encode and decode_all make. zstd allocates its workspace (3.5 MiB to
+  | compress at level 3, 2.4 MiB to decompress) with the C library's malloc,
+  | and musl's, in the static Linux build, mapped and unmapped it for every
+  | blob, which is compressed and then decompressed again to verify it: about
+  | 106,000 mmap/munmap pairs and their page faults for a Debian system's
+  | backup. Each context is reset to zstd's defaults and given the level before
+  | use, so the output is the same bytes; a test checks it against zstd's
+  | functions at several levels, with reuse, and that decoding takes several
+  | frames and fails as zstd's does.
+  | 
+  | chunker.rs: the Rabin64 tables for the repository's polynomial (2 x 256
+  | entries by polynomial division, about 0.2 ms, 15% of a backup's CPU time
+  | over small files) are computed once per thread and cloned for each file; a
+  | test checks that the chunks are the same.
+  | 
+  | A backup of a 35,000-path, 1.4 GB Debian tree (musl, mimalloc, release
+  | build, on Chopin) took 13.5 s and takes 4.0 s, with the same tree IDs.
+
+[rustic_core 40] 7138097 2026-11-02 20:55
+subject: backotter: illumos restore leaves an extended attribute with the right value alone
+diff: 2 files changed, 109 insertions(+), 9 deletions(-); lines blamed to it at head: 109
+  file: BACKOTTER.md
+  file: crates/core/src/backend/osattrs/illumos.rs
+reason:
+  | osattrs/illumos.rs set_xattrs truncated and rewrote every attribute file.
+  | Now an attribute the file has already, with its node's value, is left as
+  | it is (read and compared first; only one of the same size is read; one
+  | that can't be read is written), as on every other system and in
+  | BackOtter's restic (node_xattr.go, which illumos builds too), so that
+  | "both tools leave equal attributes alone" holds everywhere. A test (run on
+  | illumos) checks that an equal attribute file isn't written again, a
+  | different one is, and those the node hasn't got go.
+
+[rustic_core 41] 941e6c1 2026-11-02 21:20
+subject: backotter: notes: the two tools' tree IDs differ (accepted difference)
+diff: 1 file changed, 15 insertions(+), 3 deletions(-); lines blamed to it at head: 15
+  file: BACKOTTER.md
+reason:
+  | The device-ID note said that rustic-bko's and restic-bko's snapshots of one
+  | tree have the same tree IDs in one repository, as 39b4368's message did
+  | too. They have the same nodes, but not the same trees' bytes: rustic writes
+  | linktarget, linktarget_raw and device right after type (serde's flatten of
+  | NodeType), while restic writes them after links, in its Node struct's
+  | order; and Go's json.Marshal escapes <, > and & in names, which serde_json
+  | doesn't. A directory holding a symlink, a device or such a name, and every
+  | directory above it, gets a different tree in each tool. Now an accepted
+  | difference, in both forks' notes.
+
+[rustic_core 42] 05a201a 2026-11-03 08:34
+subject: backotter: no step back from stock for users who aren't BackOtter
+diff: 16 files changed, 976 insertions(+), 268 deletions(-); lines blamed to it at head: 824
+  file: BACKOTTER.md
+  file: crates/core/src/archiver.rs
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/node.rs
+  file: crates/core/src/backend/node/modification.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+  file: crates/core/src/backend/osattrs/sparse.rs
+  file: crates/core/src/commands/backup.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/src/lib.rs
+  file: crates/core/tests/integration.rs
+  file: crates/core/tests/integration/backup.rs
+  file: crates/core/tests/integration/restore.rs
+  file: crates/core/tests/integration/rewrite.rs
+reason:
+  | What a node's missing attributes mean now depends on what wrote the
+  | snapshot (SnapshotOrigin, from program_version, passed in
+  | RestoreOptions::origin; the default is stock rustic's behaviour): in a
+  | snapshot of BackOtter's restic or rustic (+backotter) they were zero or
+  | absent at backup; in any other they are unknown, and the restore leaves
+  | the destination as stock rustic does.
+  | 
+  | - A regular file without a mode gets 0000 only from a Unix file system
+  |   (an inode number) in a restic or BackOtter snapshot: stdin dumps and
+  |   Windows-made files keep their creation mode, as in stock rustic.
+  | - A file left as it is gets its holes filled only in BackOtter snapshots,
+  |   unmarked, without --sparse by-content; it is looked at read-only first
+  |   and opened for writing only when it has holes; macOS writes zeros into
+  |   them (F_PREALLOCATE doesn't fill holes); a failure is a warning, and a
+  |   filled file counts as modified.
+  | - restore_target_is_fresh: SNAP:subfolder gives DEST its metadata only
+  |   when the restore creates DEST or finds it empty (lost+found counts).
+  | - Restricting flags are cleared only where the node says which flags the
+  |   file had (it has flags, or the snapshot is BackOtter's); never on what
+  |   --delete removes, or below a directory replaced by another type.
+  | - Directories without flags or a project ID in other snapshots keep what
+  |   they inherited (casefolding, bcachefs project IDs).
+  | - FreeBSD/NetBSD: stock rustic's user./system. xattr names in other
+  |   snapshots are restored under their namespace, and not removed.
+  | - A file node's mode is written when 0 ("mode":0), as stock rustic does.
+  | - Stock defaults: --set-atime mtime (backup and rewrite), owners by name
+  |   (--numeric-id works again, --by-name stays); the size scan is skipped
+  |   only with --set-atime yes where listing moves atimes. The upstream
+  |   tests edited to hide the atime default are stock again.
+
+[rustic_core 43] 22a997e 2026-11-03 09:37
+subject: backotter: a bare-metal root is fresh; no hole filling on ZFS; restic before 0.16 is restic
+diff: 3 files changed, 304 insertions(+), 32 deletions(-); lines blamed to it at head: 182
+  file: BACKOTTER.md
+  file: crates/core/src/backend/osattrs/sparse.rs
+  file: crates/core/src/commands/restore.rs
+reason:
+  | - restore_target_is_fresh: DEST is fresh when it holds nothing but
+  |   directories, at any depth, and what a file system makes itself
+  |   (lost+found and UFS's .snap directories, a .sujournal file; not looked
+  |   into), in at most 4096 directories: a new root with /boot, /boot/efi,
+  |   /home, ZFS datasets or btrfs subvolumes mounted below it gets the
+  |   subfolder's metadata (and its SELinux label), as in BackOtter's restic.
+  |   A symlink, a file or a device anywhere still means not fresh.
+  | - Holes of a file left as it is are never filled on ZFS (fstatfs of the
+  |   read-only probe: f_type 0x2fc12fc1; "zfs" on macOS), where fallocate
+  |   allocates nothing and compression keeps written zeros as holes, so the
+  |   file is no longer opened for writing at every restore. fallocate's
+  |   EOPNOTSUPP or ENOSYS is nothing to do, not a warning. As restic's
+  |   fileHoles and FillHoles.
+  | - A snapshot without a program version is restic's before 0.16: a
+  |   regular file of a Unix file system without a mode had mode 0 there
+  |   (/etc/shadow comes back 0000, not 0644).
+
+[rustic_core 44] 71b02d3 2026-11-03 10:50
+subject: backotter: fresh restore targets by mount points; holes Linux only; merge known-bko only if all are
+diff: 8 files changed, 438 insertions(+), 208 deletions(-); lines blamed to it at head: 391
+  file: BACKOTTER.md
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/sparse.rs
+  file: crates/core/src/commands/merge.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/tests/integration.rs
+  file: crates/core/tests/integration/merge.rs
+  file: crates/core/tests/integration/restore.rs
+reason:
+  | restore_target_is_fresh: DEST is fresh when it doesn't exist, or every
+  | entry in it (no symlink followed) is an entry mkfs makes (lost+found,
+  | UFS's .snap and .sujournal, not looked into), a mount point (st_dev
+  | differs from its parent's: also ZFS datasets and btrfs subvolumes),
+  | walked again relative to it, or a directory on the path to one; at most
+  | 4096 directories. A plain directory on DEST's own file system, even an
+  | empty one, makes it not fresh: a freshly booted /tmp holding only empty
+  | .X11-unix, .ICE-unix and systemd-private-*/tmp keeps its sticky bit,
+  | owner, xattrs and ACL, as in stock rustic.
+  | 
+  | Holes of a file left as it is are filled on Linux only (fallocate, not
+  | on ZFS); macOS no longer gets zeros written into a file whose contents
+  | already match, as BackOtter's restic. The test of that code goes with it
+  | (it also failed on ZFS, whose compression keeps written zeros as holes).
+  | --dry-run counts a file whose holes would be filled as one to modify, as
+  | restic-bko reports it as updated (holes_to_fill, looked at read-only).
+  | 
+  | merge: the new snapshot keeps "+backotter" in its program version only if
+  | every snapshot merged is BackOtter's; otherwise each word is cut there
+  | ("rustic 0.11.4+backotter.3" -> "rustic 0.11.4").
+
+[rustic_core 45] 9e78ecf 2026-11-03 11:15
+subject: backotter: a sticky or world-writable restore target is never fresh
+diff: 1 file changed, 54 insertions(+), 5 deletions(-); lines blamed to it at head: 55
+  file: crates/core/src/commands/restore.rs
+reason:
+  | An existing empty destination counted as fresh, so restore SNAP:subfolder
+  | into an empty /tmp or /dev/shm (1777) replaced its mode, owner, xattrs and
+  | ACLs with the subfolder's. An existing destination with mode bit 01000 or
+  | 0002 is now never fresh, even empty; mkfs, newfs, zfs create and btrfs
+  | subvolume create never make such a root. As BackOtter's restic.
+
+[rustic_core 46] 6093877 2026-11-03 16:17
+subject: backotter: a new nilfs2 root with its empty .nilfs is fresh
+diff: 2 files changed, 91 insertions(+), 8 deletions(-); lines blamed to it at head: 77
+  file: BACKOTTER.md
+  file: crates/core/src/commands/restore.rs
+reason:
+  | mkfs.nilfs2 2.0.0 to 2.2.9 (Ubuntu 24.04, so Zorin 18) leave an empty
+  | regular file .nilfs in the new root, so restore SNAP:subfolder onto a new
+  | nilfs2 file system didn't give it the subfolder's metadata.
+  | made_by_file_system now also takes .nilfs, a regular file of size 0
+  | (lstat), beside lost+found and .snap (directories) and .sujournal (a
+  | regular file), as BackOtter's restic. A .nilfs with data, or of another
+  | type, is not fresh.
+
+[rustic_core 47] 6e8b009 2026-11-03 17:05
+subject: backotter: the .nilfs symlink test points at an empty file; docs say a shared DEST isn't fresh
+diff: 2 files changed, 9 insertions(+), 3 deletions(-); lines blamed to it at head: 9
+  file: BACKOTTER.md
+  file: crates/core/src/commands/restore.rs
+reason:
+  | target_fresh_with_nilfs_entry linked .nilfs to /dev/null, a character
+  | device, so made_by_file_system following the link would still have been
+  | refused and the test would not catch it. It now links to an empty
+  | regular file, as BackOtter's restic test does, and checks
+  | restore_target_is_fresh too. BACKOTTER.md's summary of the fresh rule now
+  | says an existing sticky or world-writable destination never is.
+
+[rustic_core 48] 0d38e2e 2026-11-05 07:15
+subject: backotter: Cargo.lock takes the patched zstd, rustls, rustls-webpki, ctutils
+diff: 1 file changed, 13 insertions(+), 13 deletions(-); lines blamed to it at head: 12
+  file: Cargo.lock
+reason:
+  | RustSec advisories against crates that rustic-bko ships, each moved to
+  | its first patched release, semver-compatible (cargo update -p ...
+  | --precise), no manifest change:
+  | 
+  | - zstd 0.13.3 -> 0.13.4, zstd-safe 7.2.4 -> 7.4.0, zstd-sys 2.0.16 ->
+  |   2.1.2 (RUSTSEC-2026-0391, -0398, -0403, -0410, and the unsound
+  |   -0395..-0406); still libzstd 1.5.7, so compressed bytes are unchanged.
+  |   Upstream's #629 moved to zstd 0.14.3 instead, a breaking bump.
+  | - rustls 0.23.43 -> 0.23.46 (RUSTSEC-2026-0285, -0346, -0348, -0349)
+  | - rustls-webpki 0.103.14 -> 0.103.16 (RUSTSEC-2026-0382)
+  | - ctutils 0.4.2 -> 0.4.4 (RUSTSEC-2026-0385)
+  | 
+  | All need Rust 1.87 at most (rust-version stays 1.91).
+
+[rustic_core 49] 6c1cdad 2026-11-05 07:15
+subject: backotter: version 0.13.0+backotter.4, with upstream's fixes since 0.13.0
+diff: 3 files changed, 75 insertions(+), 2 deletions(-); lines blamed to it at head: 67
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+reason:
+  | BACKOTTER.md lists the upstream commits cherry-picked since 0.13.0 (and
+  | how the two that conflicted were resolved), the dependency bumps and the
+  | advisories left, and the upstream commits deliberately not ported, each
+  | with its reason.
+
+[rustic_core 50] 1cd8fd5 2026-11-05 07:55
+subject: backotter: Cargo.lock takes chacha20 0.10.2 (0.10.1 is yanked)
+diff: 2 files changed, 12 insertions(+), 8 deletions(-); lines blamed to it at head: 11
+  file: BACKOTTER.md
+  file: Cargo.lock
+reason:
+  | chacha20 0.10.1, which rand 0.10's StdRng/ThreadRng uses, is yanked:
+  | its SSE2 backend's rng_inner, chosen whenever AVX2 is missing, calls
+  | SSE4.1's _mm_extract_epi32 under #[target_feature(enable = "sse2")]
+  | (UB; RustCrypto/stream-ciphers#579, fixed by #580 in 0.10.2).
+  | rustic_core takes rand::rng() for every encryption nonce, Id::random
+  | and key salts, so on an x86_64 CPU with neither AVX2 nor SSE4.1 (AMD
+  | K8/K10, Core 2 Merom/Conroe) the first init or backup can die with
+  | SIGILL. 0.10.2 is semver-compatible (cargo update -p chacha20 --precise
+  | 0.10.2), same dependencies, rust-version 1.85. Not a regression of the
+  | port: 0.10.1 was in the lock before it.
+
+[rustic_core 51] 9c28b43 2026-11-05 08:44
+subject: backotter: notes after the upstream port; tempfile back on getrandom 0.4.3
+diff: 2 files changed, 9 insertions(+), 6 deletions(-); lines blamed to it at head: 9
+  file: BACKOTTER.md
+  file: Cargo.lock
+reason:
+  | The advisory bump (0d38e2e) moved tempfile from getrandom 0.4.3 to 0.3.4
+  | as a side effect; it is back on 0.4.3, as before it and as in rustic's
+  | Cargo.lock. BACKOTTER.md's hard-link bullet now says what #634 does (a
+  | right link left alone, another file or a symlink replaced, a directory
+  | an error), and quick-xml 0.38 joins the advisories left as they are
+  | (only rustic's self-update takes it).
+
+[rustic_core 52] ed28fe0 2026-11-05 23:57
+subject: backotter: no preallocation on btrfs or bcachefs, but for NOCOW files
+diff: 1 file changed, 26 insertions(+); lines blamed to it at head: 2
+  file: crates/core/src/backend/osattrs.rs
+reason:
+  | fallocate(2)'s extents are never compressed there, so a restore onto a
+  | compressing mount (compress=zstd) needed every file's full size and
+  | could run out of space where the source fit (Omarchy, 13.4 GiB into a
+  | 14 GiB btrfs).  A NOCOW file (a swap file) is still preallocated: it
+  | isn't compressed anyway, and must have no holes.
+
+[rustic_core 53] bb7fba0 2026-11-06 07:40
+subject: backotter: 0.13.0+backotter.5; BACKOTTER.md names btrfs's preallocation rule
+diff: 3 files changed, 11 insertions(+), 4 deletions(-); lines blamed to it at head: 2
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+reason:
+  | ed28fe0 changed restores on btrfs and bcachefs (only a NOCOW file is
+  | preallocated, or has its holes filled), so its builds get their own
+  | version. BACKOTTER.md says so where it describes preallocation and hole
+  | filling.
+
+[rustic_core 54] dd1a67b 2026-11-06 07:58
+subject: backotter: btrfs/bcachefs rule shared by preallocation and hole filling
+diff: 3 files changed, 140 insertions(+), 39 deletions(-); lines blamed to it at head: 125
+  file: BACKOTTER.md
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/sparse.rs
+reason:
+  | ed28fe0's check lived only in os_preallocate, so on btrfs a non-NOCOW file
+  | with holes still passed file_holes(): --dry-run counted it as modified, and
+  | the restore opened it for writing at every run (close-write events,
+  | ETXTBSY warnings) to allocate nothing. sparse::allocates_type now decides
+  | for both, and fills_holes_on takes it, next to ZFS.
+  | 
+  | bcachefs never preallocates: its no-copy-on-write is an inode option that
+  | FS_IOC_GETFLAGS doesn't show, and it has no swap files. libc's
+  | FS_IOC_GETFLAGS replaces a constant right only on 64-bit targets.
+  | Tests: allocates_types, and btrfs_allocates_only_nocow on a btrfs named by
+  | BKO_TEST_BTRFS_DIR (passed on a loop btrfs, compress=zstd).
+
+[rustic_core 55] ad341b9 2026-11-06 08:06
+subject: backotter: fs_type keeps f_type's low 32 bits; BACKOTTER.md on rewritten files
+diff: 2 files changed, 12 insertions(+), 2 deletions(-); lines blamed to it at head: 12
+  file: BACKOTTER.md
+  file: crates/core/src/backend/osattrs/sparse.rs
+reason:
+  | u32::try_from dropped a negative f_type, which 32-bit glibc gives btrfs and
+  | bcachefs (bit 31 set), so the btrfs/bcachefs rule fell back to allocating
+  | there; ed28fe0 had masked it. BACKOTTER.md: a file the restore writes into
+  | may keep holes that blobs of zeros already matched, now that nothing
+  | allocates it on btrfs or bcachefs.
+
+[rustic_core 56] 487ec7c 2026-11-06 09:45
+subject: backotter: BACKOTTER.md lists upstream's #640 (taken) and #642 (not ported)
+diff: 1 file changed, 6 insertions(+); lines blamed to it at head: 6
+  file: BACKOTTER.md
+reason:
+  | 01fe284 (#640) is cherry-picked in the previous commit. It changes only
+  | crates/backend, which rustic-bko doesn't build, so the version stays
+  | 0.13.0+backotter.5. 18fa55c (#642), an HTTP connect timeout, is a
+  | feature and isn't ported.
+
+[rustic_core 57] 47294be 2026-11-07 19:02
+subject: backotter: on Haiku a volume root with Tracker's empty trash is a fresh restore target
+diff: 2 files changed, 75 insertions(+), 3 deletions(-); lines blamed to it at head: 66
+  file: BACKOTTER.md
+  file: crates/core/src/commands/restore.rs
+reason:
+  | Haiku's Tracker puts an empty `trash` directory on every BFS volume as
+  | soon as it is mounted, a new one too: restore_target_is_fresh then
+  | refused the new root, so `restore SNAP:path` left it mkfs's metadata
+  | and the time its last entry was made (HoltTest1H's root mtime). On Haiku
+  | an empty `trash` directory counts as one the file system made, like
+  | lost+found.
+
+[rustic_core 58] 96596bb 2026-11-07 20:35
+subject: backotter: 0.13.0+backotter.6: Haiku's Tracker trash in a fresh restore target
+diff: 2 files changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 0
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+reason: (no body; the subject is the reason)
+
+[rustic_core 59] b4337fa 2026-11-10 07:54
+subject: backotter: 0.13.0+backotter.7: counts for --strict-exit; per-xattr reads; rewrite keeps atimes; partial-restore parents
+diff: 21 files changed, 1173 insertions(+), 171 deletions(-); lines blamed to it at head: 1097
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+  file: crates/core/src/archiver.rs
+  file: crates/core/src/archiver/parent.rs
+  file: crates/core/src/backend.rs
+  file: crates/core/src/backend/ignore.rs
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/node/modification.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/freebsd_netbsd.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/blob/tree.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/src/lib.rs
+  file: crates/core/src/repofile/snapshotfile.rs
+  file: crates/core/src/repository.rs
+  file: crates/core/tests/integration/backup.rs
+  file: crates/core/tests/integration/ls.rs
+  file: crates/core/tests/integration/restore.rs
+reason:
+  | - Backup: SnapshotSummary::items_incomplete (serde skip) counts entries and
+  |   metadata left out because they couldn't be read, as restic-bko's exit 3
+  |   counts them: walker and file errors, parent trees that can't be loaded,
+  |   unchanged files whose blobs are missing, metadata the source left out.
+  |   Entries that vanish below a backed-up path don't count, as in restic.
+  | - Restore: RestoreStats::errors and Repository::restore's RestoreOutcome
+  |   count the failures restic-bko treats as errors (S10); unsupported
+  |   metadata and a non-root restore's forgiven failures don't.
+  | - One extended attribute that can't be read is skipped with a warning; the
+  |   file's others are kept (stock dropped them all). ENODATA/ENOATTR are
+  |   taken as unsupported, as restic's handleXattrErr does.
+  | - rewrite keeps stored atimes by default (S1).
+  | - TreeStreamerOptions::with_parents: a partial restore gives the unmatched
+  |   parents of its matches their metadata and casefolding.
+  | - A symlinked directory above the backed-up path is stored as its target.
+
+[rustic_core 60] 979248b 2026-11-10 19:23
+subject: backotter: 0.13.0+backotter.8: restore --exact and clone sources
+diff: 7 files changed, 469 insertions(+), 17 deletions(-); lines blamed to it at head: 344
+  file: crates/core/Cargo.toml
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/src/commands/restore/exact.rs
+  file: crates/core/src/lib.rs
+  file: crates/core/src/repository.rs
+reason:
+  | --exact makes a destination that is there already exactly the node tree,
+  | writing only what differs: it implies --delete and --verify-existing; a
+  | file with other names gets a name of its own first (a reflink clone of
+  | itself, or removed); a special file that is the same stays; an entry whose
+  | metadata a backup would record the same is left untouched, so that a btrfs
+  | snapshot keeps sharing it.  Repository::clone_sources and
+  | LocalDestination::with_clone_sources give it files restored elsewhere, by
+  | their contents, cloned whole (FICLONE) instead of written.  For bko-holt
+  | load's shared btrfs snapshots (backotter docs/design/btrfs-snapshots.md).
+
+[rustic_core 61] 2fcfef2 2026-11-10 19:52
+subject: backotter: clone sources only where they are; a failed clone that touched nothing keeps what matched
+diff: 3 files changed, 38 insertions(+), 12 deletions(-); lines blamed to it at head: 11
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/src/commands/restore/exact.rs
+  file: crates/core/src/repository.rs
+reason:
+  | Repository::clone_sources lists only files that are under DIR, of their
+  | size: the backup's tree below a path holds other subvolumes' mount points
+  | and aliases, which DIR doesn't.  A clone that fails before the target is
+  | opened leaves its matching blobs matched (exact-rt.sh: every file whose
+  | contents were in such a path was written whole).
+
+[rustic_core 62] 7ce9438 2026-11-10 20:39
+subject: backotter: restore --exact removes an SELinux label the node doesn't have
+diff: 2 files changed, 42 insertions(+), 3 deletions(-); lines blamed to it at head: 25
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/commands/restore.rs
+reason:
+  | A btrfs snapshot made exact inherits its base's labels; the snapshot
+  | restored may have none (Tumbleweed's snapper snapshots).  Elsewhere the
+  | label stays, as before.
+
+[rustic_core 63] 0ac038a 2026-11-10 20:39
+subject: backotter: set_extended_attributes and set_xattrs_with, the tests' since --exact
+diff: 1 file changed, 2 insertions(+); lines blamed to it at head: 2
+  file: crates/core/src/backend/local_destination.rs
+reason: (no body; the subject is the reason)
+
+[rustic_core 64] aa78f29 2026-11-12 15:26
+subject: backotter: 0.13.0+backotter.9: XFS realtime inheritance kept on directories
+diff: 4 files changed, 89 insertions(+), 51 deletions(-); lines blamed to it at head: 81
+  file: BACKOTTER.md
+  file: crates/core/Cargo.toml
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+reason:
+  | linux.xfs_options keeps FS_XFLAG_RTINHERIT (t, 0x100) on directories:
+  | XFS takes it on a directory without a realtime device, and gives a
+  | regular file none, so backup records it only for a directory and restore
+  | sets it only on one (a file's is left out, no error). Realtime (r, 0x1),
+  | which only a file on a realtime device has, DAX and preallocated stay
+  | out. A directory's options still go on in the last pass, so the entries
+  | restored in it inherit nothing. Same JSON as BackOtter's restic.
+  | 
+  | Tested on chopin: rustic_core's tests, the root loop-XFS test
+  | (xfs_options_on_xfs, chattr +St on a directory), and a rustic round trip
+  | on loop XFS (directory t restored, its children without it).
+
+[rustic_core 65] 841a6ab 2026-11-12 15:52
+subject: backotter: XFS options: an existing directory's off before its entries; rtinherit refused alone
+diff: 5 files changed, 257 insertions(+), 28 deletions(-); lines blamed to it at head: 226
+  file: BACKOTTER.md
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/tests/integration/restore.rs
+reason:
+  | Restoring over a tree that has a directory's XFS options already (an
+  | earlier restore's), the entries the restore made in it inherited them:
+  | realtime inheritance would make new regular files realtime on an XFS with
+  | a realtime device, for good once they have data. Such a directory now
+  | loses its kept options in the collect phase (clear_dir_xfs_options,
+  | RestorePlan's xfs_cleared) and gets back in the late pass its node's, or
+  | those it had where its node has none, also when --exact finds it matching.
+  | 
+  | XFS refuses (EINVAL) a directory realtime inheritance along with an
+  | extent size hint's inheritance whose size isn't a multiple of the realtime
+  | extent size: the directory then gets the rest, and only t is unsupported
+  | (linux.xfs_options 0x100), where it lost every kept option before.
+  | 
+  | BACKOTTER.md says so, and that a snapshot from before 0.13.0+backotter.9
+  | or BackOtter's restic 0.19.1+backotter.6, which has no t, takes t off a
+  | directory it is restored over where the node has XFS options: an accepted
+  | difference, in both tools. As in BackOtter's restic.
+  | 
+  | Tested on chopin: rustic_core's lib and integration tests, a FreeBSD
+  | cargo check, and as root on loop XFS xfs_options_on_xfs (clear and put
+  | back), xfs_rtinherit_refused_alone (mkfs -r extsize=64k) and the new
+  | restore-level test_restore_xfs_options: a directory's t and E/S go on
+  | last, its file and directory get none, and restored again over that tree
+  | neither do the entries made anew (fails without the change).
+
+[rustic_core 66] 2cd21d4 2026-11-12 17:50
+subject: backotter: XFS options cleared for a restore go back on every exit, the destination's too
+diff: 4 files changed, 285 insertions(+), 53 deletions(-); lines blamed to it at head: 228
+  file: BACKOTTER.md
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/src/lib.rs
+  file: crates/core/tests/integration/restore.rs
+reason:
+  | 841a6ab takes an existing directory's XFS options off in the collect
+  | phase and kept them only in RestorePlan's xfs_cleared, for the late pass.
+  | Any earlier exit lost them: an error in collect_and_prepare, warm_up_wait
+  | or restore_contents, restore_metadata's node stream or hard links, a plan
+  | never restored (rustic's --dry-run-warmup without --dry-run), or an
+  | interrupt. Where the node has none, a re-run can't give them back.
+  | 
+  | xfs_cleared is now an XfsCleared that keeps each directory until the late
+  | pass sets its options, puts back those it had for every one left at the
+  | end of the late pass, and when dropped before (an error, a plan not
+  | restored), best effort with warnings. An interrupt exits without dropping
+  | it: every XfsCleared's targets are also in a process-wide registry, which
+  | the new put_back_xfs_options() puts back, for a program to call before it
+  | exits (rustic-bko does on SIGINT/SIGTERM/SIGHUP); no directory loses its
+  | options after that.
+  | 
+  | The destination itself, when it keeps its own metadata (no "" node: a
+  | whole snapshot, or SNAP:subfolder into one that isn't fresh, without
+  | --exact or --target-metadata), was never cleared, so the entries made in
+  | it inherited its options. collect_and_prepare now clears it first, and it
+  | gets them back at the end of the late pass. BACKOTTER.md says so.
+  | 
+  | Tested on chopin: rustic_core's lib and integration tests, and as root on
+  | loop XFS test_restore_xfs_options and the new
+  | test_restore_xfs_options_stopped (a plan dropped, a restore whose node
+  | stream fails) and test_restore_xfs_options_destination, which both fail
+  | on 841a6ab's restore.rs; and rustic-bko built with it, interrupted
+  | (SIGINT) while writing a 1.5 GB file: the three cleared directories (t)
+  | were 0 during the restore and 0x100 again after it.
+
+[rustic_core 67] fb55116 2026-11-12 20:08
+subject: backotter: after an interrupt's XFS put-back, a restore makes no entry; RestorePlan's docs back on it
+diff: 4 files changed, 107 insertions(+), 32 deletions(-); lines blamed to it at head: 98
+  file: BACKOTTER.md
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/src/commands/restore/exact.rs
+reason:
+  | 2cd21d4's put_back_xfs_options() gave the cleared directories their XFS
+  | options back, but rustic-bko calls it on its interrupt thread while the
+  | restore goes on: the main thread and the restore_contents pool kept making
+  | directories and files through the after/failed and finally hooks and
+  | until process::exit, in directories whose realtime and extent size hint
+  | inheritance were back, and XFS changes neither on a file with data
+  | (EINVAL), so a re-run can't fix them.
+  | 
+  | A process-wide RwLock (MAKING_ENTRIES) is now held shared by
+  | LocalDestination's create_dir, set_length, create_special, write_at,
+  | write_sparse_at and hard_link and by --clone-from's clone_file, and
+  | put_back_xfs_options() takes it for good (forgotten write guard) before it
+  | puts the options back: the entries being made finish first, and every
+  | later one waits for the exit. BACKOTTER.md says so.
+  | 
+  | 2cd21d4 also put XfsCleared between RestorePlan's doc comment and
+  | RestorePlan, leaving the public struct undocumented (missing_docs), and its
+  | `use std::path::Path` made 14 `std::path::Path` qualifications in
+  | restore.rs unnecessary (unused_qualifications). The XfsCleared block now
+  | sits above RestorePlan's docs, and the qualifications are `Path`.
+  | 
+  | Tested on chopin: rustic_core's lib tests (353, with the new
+  | no_entry_after_put_back, run in a child of the test binary, as the put-back
+  | holds the process for good) and integration tests (72); as root on loop
+  | XFS test_restore_xfs_options, _stopped and _destination; clippy
+  | --all-targets and a FreeBSD cargo check: missing_docs and the 14
+  | unnecessary qualifications gone, nothing new but three doc_markdown on
+  | "BackOtter:", as everywhere. And rustic-bko built with it, restoring 40000
+  | 8 KiB files into an existing directory with an inherited 1 MiB extent size
+  | hint, SIGINT after 1 s, a 5 s after hook: 2780 files at exit, 2779 with the
+  | hint, with 2cd21d4; 3295 files, none with it, with this; the directory
+  | had its hint back both times.
+
+[rustic_core 68] 5270ff3 2026-11-12 21:38
+subject: backotter: the plan's early file creation waits too after an interrupt's XFS put-back
+diff: 2 files changed, 18 insertions(+); lines blamed to it at head: 18
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/commands/restore.rs
+reason:
+  | fb55116 made LocalDestination's entry makers and --clone-from's clone_file
+  | wait for the exit once put_back_xfs_options() ran, but not
+  | osattrs::prepare_file, which the plan walk calls on the main thread for a
+  | new file with a flag that goes on before the data (FS_NOCOW_FL, from a
+  | btrfs snapshot) or XFS options: prepare_file_for_flags and
+  | prepare_file_for_xfs create the empty file themselves (create_new). After
+  | the put-back XfsCleared::clear returns at once, so the walk could go on
+  | creating such files, in directories whose realtime and extent size hint
+  | inheritance were back, while the hooks ran; a re-run finds them there,
+  | writes their data, and XFS no longer changes the hint (EINVAL).
+  | 
+  | prepare_file now holds making_entries() too, which covers both. The test
+  | no_entry_after_put_back also calls prepare_file for a no-copy-on-write node
+  | after the put-back: it must block and create nothing.
+  | 
+  | Tested on chopin: rustic_core's lib tests (353) and integration tests
+  | (72); as root on loop XFS test_restore_xfs_options, _stopped and
+  | _destination; clippy --all-targets, nothing new; no_entry_after_put_back
+  | fails with the gate taken out of prepare_file, passes with it.
+
+[rustic_core 69] 3f2f3b2 2026-11-13 18:01
+subject: backotter: --clone-from never clones from inside the destination, nor a file onto itself
+diff: 4 files changed, 169 insertions(+), 10 deletions(-); lines blamed to it at head: 152
+  file: crates/core/Cargo.toml
+  file: crates/core/src/commands/restore/exact.rs
+  file: crates/core/src/repository.rs
+  file: crates/core/tests/integration/restore.rs
+reason:
+  | bko-holt restores each snapper snapshot @/.snapshots/N/snapshot, seeded
+  | from @ by a btrfs snapshot, with restore --exact --clone-from /=<top>/@.
+  | clone_sources walked the whole of "/", .snapshots/N/snapshot/** too, and
+  | offered every file there of the right size: the destination's seed. The
+  | first path offered for some contents wins, and ".snapshots" sorts before
+  | "etc", so contents that only snapshot N has got its own seeded file as
+  | the source. add_file then called clone_file(src = dst): opening dst with
+  | truncate emptied the source, FICLONE of 0 bytes succeeded on btrfs and
+  | XFS, and the late pass set the backup's mtime. A seeded file of the
+  | snapshot's size and other contents came back as 0 bytes with the right
+  | mtime, and no error (the Thinkpad's CachyOS BackShot1: etc/passwd-,
+  | limine-entry-tool, lastlog2.db, random-seed in .snapshots/1).
+  | 
+  | - Repository::clone_sources takes the destination and offers nothing at
+  |   or below it when it is inside the directory cloned from (compared as
+  |   both resolve, else as written), before the first-wins insert, so a
+  |   file elsewhere with those contents is still offered.
+  | - exact::clone_file refuses, untouched, a destination that is the source
+  |   (by any name), so a self-clone falls back to writing and can never
+  |   empty a file.
+  | 
+  | Tests: clone_file_never_onto_its_source, path_below_dir, and the
+  | integration test test_restore_clone_from_holding_the_destination (the
+  | CachyOS layout; with TMPDIR on XFS it failed before with a 0-byte file).
+  | Version 0.13.0+backotter.10.
+
+[rustic_core 70] 3bb01f1 2026-11-14 00:14
+subject: backotter: a restore holds at most 256 MiB of pack data; fewer readers on a small machine
+diff: 4 files changed, 106 insertions(+), 4 deletions(-); lines blamed to it at head: 104
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+  file: crates/core/src/commands/restore.rs
+reason:
+  | rustic-bko's restore grew to ~1.7 GB and was killed in the OpenBSD rescue
+  | image, which has 3 GiB and no swap. restore_contents spawned a task for
+  | every coalesced pack read at once, and its 20 readers each held a read of
+  | up to 40 MiB and its decrypted blobs while the write tasks they spawned
+  | waited, so pack bytes piled up.
+  | 
+  | - A byte budget (ByteBudget, constants::MAX_RESTORE_BYTES_IN_FLIGHT,
+  |   256 MiB): before a pack's reader task is spawned, the thread running the
+  |   in_place_scope closure takes its cost, the read plus its blobs'
+  |   decrypted lengths (or the existing file's part for a from_file read),
+  |   waiting on a Condvar until it is free. An Arc'd guard, held by the
+  |   reader task and every write task it spawns, gives it back on drop when
+  |   the last is done (a panic too). Only that thread waits, never a pool
+  |   worker: the pool's tasks give the bytes back and must be free to run. A
+  |   cost over the whole budget takes the whole budget, so it goes alone
+  |   rather than never.
+  | - The pool has 4 threads per CPU (available_parallelism), at most
+  |   MAX_READER_THREADS_NUM (20), and 20 if the count is unknown.
+  | 
+  | BACKOTTER.md says so. Version 0.13.0+backotter.11 (Cargo.lock's entry,
+  | left at .7, too).
+  | 
+  | Tested on cinqcent (12 threads), cargo 1.94.1, TMPDIR on XFS: the
+  | workspace's tests all pass (backend 37; core lib 355+1, integration 73,
+  | command_input 6, errors 4, keys 7, warm_up 28, doc 4); clippy
+  | --all-targets on rustic_core: nothing new but three doc_markdown on
+  | "BackOtter:", as everywhere. rustic built with 3f2f3b2 and with this
+  | (release, no LTO), restoring a 3.5 GiB, 20010-file snapshot (2.4 GiB of
+  | random data, 600 MiB of base64 text, 20000 small files; compression 3),
+  | alternating order: before 5.30 s / 1.82 GB and 5.11 s / 1.54 GB max
+  | RSS, after 4.94 s / 410 MB and 4.90 s / 393 MB; pinned to 2 CPUs
+  | (8 threads after) 7.74 s / 1.72 GB before, 7.29 s / 359 MB after. Every
+  | restore identical to the source.
+
+[rustic_core 71] 6f223a2 2026-11-14 11:54
+subject: backotter: a restore writes each file through one handle, so ext4 keeps it in few extents
+diff: 3 files changed, 741 insertions(+), 112 deletions(-); lines blamed to it at head: 722
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/src/commands/restore/files_writer.rs
+reason:
+  | Opening and closing the file for every blob made ext4 drop the inode's
+  | preallocation on each close; a large parallel restore then left a file in
+  | 5+ extents, and the extent-tree block pushed st_blocks past the size of a
+  | file with a sub-block tail hole (Kali K4, restic->rustic, vmlinuz).
+  | 
+  | FilesWriter (restic-bko's fileswriter.go design) keeps one handle per file
+  | while it has writes to come, at most threads + 50 idle handles, and closes
+  | each file after its last write. LocalDestination gains open_for_write and
+  | positioned write_at/write_sparse_at on a &File.
+
+[rustic_core 72] fd7062d 2026-11-14 12:37
+subject: backotter: 0.13.0+backotter.12; BACKOTTER.md on writing each file through one handle
+diff: 3 files changed, 15 insertions(+), 2 deletions(-); lines blamed to it at head: 13
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+reason:
+  | 6f223a2 changed how a restore writes file contents (FilesWriter, one
+  | handle per file while it has writes to come, at most threads + 50 idle
+  | handles, restic-bko's fileswriter.go design), so its builds get their own
+  | version. Stock rustic opened and closed the file for each blob write; ext4
+  | drops an inode's preallocation when the last writer closes, so a big
+  | parallel restore left files in 5+ extents, and the extent-tree block
+  | pushed st_blocks past the size of a file with a sub-block tail hole: Kali
+  | K4, restic->rustic, vmlinuz, where BackOtter's judge saw "holes lost".
+  | BACKOTTER.md says so. Version 0.13.0+backotter.12 (Cargo.lock's entry
+  | too).
+  | 
+  | Tested in a Kali guest, 8 copies of vmlinuz written in restic's blob
+  | ranges with a sync every 3-20 ms: per-blob open/close left 43 of 320
+  | files past their size, up to 8 extents; one handle, 0 of 320, at most 2
+  | extents. SticTest1 kali: 35 PASS / 4 LIMIT / 0 FAIL on Chopin (twice)
+  | and on Cinqcent.
+
+[rustic_core 73] b660a71 2026-11-14 20:31
+subject: backotter: restore --exact as restic-bko 0.19.1+backotter.12: temp-file clones, unbroken links left alone, kept link groups, flags cleared only for changes and put back held
+diff: 8 files changed, 2225 insertions(+), 374 deletions(-); lines blamed to it at head: 1998
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/node/generic_attributes.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/bsd_held.rs
+  file: crates/core/src/backend/osattrs/linux.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/src/commands/restore/exact.rs
+  file: crates/core/tests/integration/restore.rs
+reason:
+  | The audit of rustic_core fd7062d against restic-bko's fixes .8-.12:
+  | 
+  | - D1, D3, D5, E2 (exact.rs): a clone goes into a new temporary file in
+  |   the file's directory, `.bko-exact-` and random digits, made O_EXCL and
+  |   O_NOFOLLOW, and is renamed over the file only once it worked. The old
+  |   fixed name `.bko-exact-NAME`, opened create+truncate, followed a
+  |   symlink of that name (truncating what it pointed at, outside the
+  |   destination too) and truncated, renamed over or removed a snapshot
+  |   entry of that name. A failed clone now leaves the file as it was, so the
+  |   blobs that matched stay (and stay shared); one whose temporary file
+  |   can't be removed is an error naming it, and break_link then leaves the
+  |   file as it is. The source is opened O_RDONLY|O_NOFOLLOW|O_NONBLOCK and
+  |   checked with fstat (regular, its size). Off Linux nothing is tried.
+  | - D2, E1: a file whose hard link --exact can't break is an error and is
+  |   left exactly as it is (no contents, holes, metadata), the snapshot's
+  |   other names for it not linked to it (an error each). A hard link the
+  |   metadata pass can't make is an error of its own and the restore goes
+  |   on; a failing node stream stops it only after the late flags pass.
+  | - D4: a hard-link group whose names in the destination are exactly the
+  |   snapshot's (LinkGroup::kept, decided after the walk) keeps its inode.
+  | - D6, D7: what the restore removes the name of, or renames over, loses
+  |   its restricting flags held (osattrs::clear_restricting_flags_held,
+  |   osattrs/bsd_held.rs on the BSDs, the Linux ioctls through the held fd)
+  |   and they go back on the old file, so its other names keep them. Such
+  |   files are noted by dev+ino; --delete runs after the walk, removes an
+  |   unexpected name of one held, goes on past failures, and says how much
+  |   of a directory it removed. Hard-link names in the way of the metadata
+  |   pass's links go between, held.
+  | - D8: restricting flags and XFS options come off only for what the
+  |   restore changes (DirChanges for directories; before a write, clone,
+  |   hole fill or metadata set for files); a matching immutable entry keeps
+  |   its ctime.
+  | - D9: same_metadata compares the mtime for a missing atime, skips
+  |   unix.sparse, compares birth times as a restore can set them, and
+  |   ignores generic attributes a node of a snapshot not BackOtter's lacks;
+  |   owners are compared only as root. A verified file (and a blob read from
+  |   one) is read with O_NOATIME and O_NOFOLLOW.
+  | - D11: SELinux label removals refused with EACCES are one error for the
+  |   whole restore, with a count.
+  | 
+  | Tests: exact.rs units (temp file, failed clones, TempLeft, FIFO/symlink
+  | sources, metadata comparison), linux.rs held put-back, the SELinux fold,
+  | the verify read's atime, and integration tests for each defect (the
+  | root-only ones need a file system with chattr in TMPDIR); the new
+  | integration tests fail on fd7062d. test_restore_xfs_options_stopped now
+  | makes an entry in `plain`, which is what clears its options.
+
+[rustic_core 74] ba93d6e 2026-11-14 20:31
+subject: backotter: 0.13.0+backotter.13; BACKOTTER.md on restore --exact, --clone-from, flags held and --delete
+diff: 3 files changed, 158 insertions(+), 8 deletions(-); lines blamed to it at head: 152
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+reason:
+  | The previous commit changes what restore --exact and --delete do, so its
+  | builds get their own version (Cargo.lock's entry too). BACKOTTER.md now
+  | describes --exact and --clone-from as restic-bko's BACKOTTER.md does,
+  | with the same known limits, the flags cleared only for what the restore
+  | changes and put back through a held descriptor, --delete after the walk,
+  | and what .13 fixed. One difference from restic-bko is written down: a
+  | kept hard-link group whose contents differ is written in place rather
+  | than broken.
+
+[rustic_core 75] ad51297 2026-11-15 05:17
+subject: backotter: restore --exact fix round in progress (restore.rs, files_writer.rs, tests)
+diff: 6 files changed, 472 insertions(+), 41 deletions(-); lines blamed to it at head: 386
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/src/commands/restore/files_writer.rs
+  file: crates/core/tests/integration/restore.rs
+reason:
+  | Committed as found in the working tree at the user's request ("commit
+  | all"); the restic-parity fix round may still be mid-edit and finishes
+  | it in later commits.
+
+[rustic_core 76] e66975f 2026-11-15 06:25
+subject: backotter: test_restore_sparse on btrfs and bcachefs: files over holes keep matched zeros' holes
+diff: 1 file changed, 80 insertions(+), 10 deletions(-); lines blamed to it at head: 75
+  file: crates/core/tests/integration/restore.rs
+reason:
+  | The restore over existing files expected an unmarked file over a file of
+  | holes, and one of zeros left as it is, to come back allocated. Where the
+  | restore allocates nothing (btrfs but for a no-copy-on-write file,
+  | bcachefs, ZFS) only what differs is written, so both keep the holes their
+  | zero blobs matched, as BACKOTTER.md says and as BackOtter's restic does
+  | (its fill-holes test skips there). The test now takes that from the file
+  | system (fstatfs, FS_IOC_GETFLAGS), expects no hole to fill under
+  | --dry-run there, and checks with SEEK_HOLE that the files written in full
+  | (new ones, one over other contents) have no hole before their end.
+
+[rustic_core 77] e21b85b 2026-11-15 08:21
+subject: backotter: 0.13.0+backotter.15: restore --exact on NetBSD puts back an atime its own reads moved alone, leaving the ctime
+diff: 7 files changed, 142 insertions(+), 22 deletions(-); lines blamed to it at head: 127
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/src/commands/restore/exact.rs
+  file: crates/core/tests/integration/restore.rs
+reason:
+  | NetBSD's FFS (as installed: log, with atimes, and no O_NOATIME) moves a
+  | file's atime on any read, so the reads that verify a file's contents made
+  | every compared file differ in its atime alone, and the metadata pass set
+  | everything again (fchownat, chmod, utimensat), moving its ctime on every
+  | --exact run: test_restore_exact_twice_changes_nothing failed there.  An
+  | atime-only utimensat (mtime UTIME_OMIT) moves no ctime on NetBSD's FFS, so
+  | on NetBSD an entry whose metadata match but for the atime
+  | (exact::atime_alone_differs) gets that back alone
+  | (exact::atime_put_back, osattrs::set_atime); one where that fails gets
+  | its metadata whole.  Elsewhere nothing changes.
+
+[rustic_core 78] 3fd3921 2026-11-15 08:41
+subject: backotter: BACKOTTER.md on restore --exact's atimes: NetBSD noatime, FreeBSD's reads, the test's and the put-back's limits
+diff: 1 file changed, 23 insertions(+), 7 deletions(-); lines blamed to it at head: 23
+  file: BACKOTTER.md
+reason:
+  | The review of 0.13.0+backotter.15 found: a NetBSD FFS mounted noatime
+  | takes no atime from utimensat (alone or with the mtime; it returns 0), so
+  | every restored atime is lost there silently and atime_put_back, which
+  | doesn't read it again, logs the entry as matching (BACKOTTER.md advised
+  | noatime: not on NetBSD now); FreeBSD 15's UFS does move atimes on reads,
+  | all but a read of exactly the file's size from pages in memory, which is
+  | what lets test_restore_exact_twice_changes_nothing pass there, and an
+  | atime-only utimensat moves the ctime there; the test checks inodes and
+  | ctimes, not that the atimes are the snapshot's again; and on NetBSD an
+  | entry that doesn't match is looked at twice.  Documentation only; the
+  | version stays 0.13.0+backotter.15 (unpushed).
+
+[rustic_core 79] 695d676 2026-11-20 16:30
+subject: backotter: 0.13.0+backotter.16: backup and restore paths past PATH_MAX (BackShot2 fail-001)
+diff: 16 files changed, 609 insertions(+), 50 deletions(-); lines blamed to it at head: 539
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+  file: crates/core/src/backend/ignore.rs
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/src/commands/restore/exact.rs
+  file: crates/core/tests/integration/restore.rs
+  file: vendor/walkdir/README.md
+  file: vendor/walkdir/src/dent.rs
+  file: vendor/walkdir/src/lib.rs
+  file: vendor/walkdir/src/longpath.rs
+  file: vendor/walkdir/src/noatime.rs
+  file: vendor/walkdir/src/util.rs
+reason:
+  | A tree deeper than a path a system call takes (PATH_MAX, 4096 bytes on
+  | Linux) was left out of a backup past that depth, warning "File name too
+  | long" and exiting 0 without --strict-exit, and couldn't be restored
+  | (ENAMETOOLONG).  BackShot2's corpus case fail-001 plants one.
+  | 
+  | The vendored walkdir gains short_path (src/longpath.rs): for a path of
+  | PATH_MAX bytes or more, a shorter one to the same file, through a symbolic
+  | link to a directory at a prefix of it (at most 2048 bytes), links to links
+  | for longer ones, made in a 0700 directory of the process's own in
+  | $TMPDIR, removed at exit.  Links are followed by name, as the long path's
+  | components are, and each prefix has one, so a path always gets the same
+  | short path.  Linux and Android only; elsewhere the path is unchanged.
+  | 
+  | Only system calls take short paths: walkdir's listing and lstat, the
+  | backup's metadata, contents and exclude-if checks, every osattrs function
+  | taking a path, LocalDestination's calls (sys_path), and the restore's own
+  | lstat, removals and --exact helpers.  Walk entries, the restore's merge with
+  | the destination, aliases and messages keep the long paths.  --delete's
+  | alias check, which has no canonical path past PATH_MAX, looks at each
+  | directory below the destination (no_symlink_below).
+  | 
+  | test_backup_restore_past_path_max (4.9 KB paths: modes, mtimes, a user
+  | xattr, contents, a symlink; restored, again, and with --delete) and
+  | walkdir's longpath tests fail before this and pass after.
+
+[rustic_core 80] f6293c2 2026-11-21 00:23
+subject: backotter: read dirent names through the entry pointer, not libc's d_name array (RustAudit1 R4-02)
+diff: 3 files changed, 31 insertions(+), 14 deletions(-); lines blamed to it at head: 31
+  file: crates/core/src/backend/osattrs/haiku.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: vendor/walkdir/src/noatime.rs
+reason:
+  | illumos' attr_names took CStr::from_ptr((*e).d_name.as_ptr()): .as_ptr()
+  | borrows libc's d_name, declared [c_char; 3] on illumos, and the name was
+  | then read past that 3-byte borrow, which is undefined behaviour for any
+  | name of 3 bytes or more (every real extended attribute).  The same pattern
+  | was in Haiku's fs_read_attr_dir loop (libc declares 1024 bytes, Haiku's
+  | record is only as long as its name) and in the vendored walkdir's noatime
+  | readdir, which made a reference to the whole dirent64 (the record is
+  | d_reclen long).  Each now takes the name pointer with &raw const /
+  | addr_of! from the entry pointer itself and reads d_type and d_ino as
+  | fields through it, as std's readdir does; one unsafe operation per block,
+  | each with its SAFETY comment.  No change in what is read.
+
+[rustic_core 81] 555955e 2026-11-21 00:23
+subject: backotter: restore_flags_with checks i/a after FS_IOC_FSSETXATTR, as put_back_restricting_with (RustAudit1 R2-01)
+diff: 1 file changed, 120 insertions(+), 8 deletions(-); lines blamed to it at head: 97
+  file: crates/core/src/backend/osattrs/linux.rs
+reason:
+  | A node with btrfs.compression and chattr +i/+a takes the compression path
+  | on any target: the flags but i and a through FS_IOC_SETFLAGS, the property,
+  | then i and a added through FS_IOC_FSSETXATTR, whose result was never read
+  | back.  On OpenZFS 2.2, which reads fsx_xflags as FS_IOC_GETFLAGS's flags,
+  | FS_XFLAG_APPEND (0x10) is FS_IMMUTABLE_FL: such a file came back immutable,
+  | not append-only, without a word; FS_XFLAG_IMMUTABLE (0x8, FS_SYNC_FL there)
+  | was refused, dropping both with an Unsupported warning.
+  | 
+  | Now the flags are read back (FS_IOC_GETFLAGS) after FS_IOC_FSSETXATTR:
+  | where i and a aren't exactly what was asked, or the ioctl is unsupported,
+  | set_all_late gives the file all its kept flags through FS_IOC_SETFLAGS
+  | (set_flags_best_effort, as the plain path), as put_back_restricting_with
+  | does.  btrfs, the only file system with the property, has the ioctl and
+  | maps the two, so it never gets there.  Messages and exit codes unchanged;
+  | only the restored flags in the failure case.
+  | 
+  | restore_flags_compression_on_zfs_xflags models btrfs, OpenZFS 2.2 (a, i,
+  | i+a) and a file system without FS_IOC_FSSETXATTR; restore_flags_calls'
+  | mock now keeps the flags so the read-back sees them.
+
+[rustic_core 82] 6b1e432 2026-11-21 00:26
+subject: backotter: 0.13.0+backotter.17; BACKOTTER.md on the btrfs-compression flags' read-back (RustAudit1 R2-01, R4-02)
+diff: 3 files changed, 9 insertions(+), 3 deletions(-); lines blamed to it at head: 7
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+reason: (no body; the subject is the reason)
+
+[rustic_core 83] ccbffc1 2026-11-21 00:40
+subject: backotter: FreeBSD/NetBSD extended attributes are read by their names' bytes, kept by lossy names (RustAudit1 R3-01)
+diff: 3 files changed, 101 insertions(+), 27 deletions(-); lines blamed to it at head: 92
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/backend/osattrs/bsd_extattr.rs
+  file: crates/core/src/backend/osattrs/freebsd_netbsd.rs
+reason:
+  | list_extattrs made each name lossy UTF-8 before its value was read, so a
+  | non-UTF-8 name read a name that doesn't exist: a user attribute kept no
+  | value, a system one was dropped. The names stay bytes now; a node keeps
+  | them lossy, as a Linux name and restic-bko's JSON.
+
+[rustic_core 84] c442156 2026-11-21 00:40
+subject: backotter: illumos refuses a snapshot's attribute names that aren't attribute files: '', '.', '..', '/', NUL, the system views (RustAudit1 R4-01)
+diff: 2 files changed, 80 insertions(+), 6 deletions(-); lines blamed to it at head: 69
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/backend/osattrs/illumos_xattrmeta.rs
+reason:
+  | An attribute's name is a path relative to the attribute directory, where
+  | '..' is the file itself (fsattr(7)): set_xattrs truncated and wrote the
+  | file, restore_one_xattr_meta chowned and chmodded it, and a '/' led out of
+  | the attribute directory. Each such name is now a warning, and skipped.
+
+[rustic_core 85] f2428c3 2026-11-21 00:41
+subject: backotter: 0.13.0+backotter.18; BACKOTTER.md on BSD extattr names' bytes and illumos' refused attribute names (RustAudit1 R3-01, R4-01)
+diff: 3 files changed, 14 insertions(+), 4 deletions(-); lines blamed to it at head: 12
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+reason: (no body; the subject is the reason)
+
+[rustic_core 86] 81ed0b5 2026-11-21 02:56
+subject: backotter: 0.13.0+backotter.19: short_path's links lead to prefixes of at most 1000 bytes, which XFS takes (BackShot2 fail-001)
+diff: 4 files changed, 69 insertions(+), 15 deletions(-); lines blamed to it at head: 18
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+  file: vendor/walkdir/src/longpath.rs
+reason:
+  | short_path reached a path past PATH_MAX through symbolic links to its
+  | prefixes of up to PATH_MAX / 2 = 2048 bytes, made in a directory in
+  | $TMPDIR.  XFS refuses a link's target over 1024 bytes (XFS_SYMLINK_MAXLEN,
+  | ENAMETOOLONG), as ext2/3/4 on 1 KiB blocks do over 1023: with $TMPDIR on
+  | XFS, 0.13.0+backotter.16 to .18 still left the long paths out of a backup
+  | ("File name too long") and couldn't restore them.  A prefix is now at most
+  | 1000 bytes (CHUNK), still ending at a component.
+  | 
+  | Each round still shortens the path: the prefix ends at the last '/' in the
+  | first 1001 bytes, past byte 745 (a name is at most 255 bytes), and a link's
+  | path is under $TMPDIR + 50 bytes, with $TMPDIR at most 500 (TMP_MAX, CHUNK
+  | / 2 as before; a const assert keeps the two apart).  A longer $TMPDIR makes
+  | no links, and a long path fails as before.
+  | 
+  | Tests: every link's target is at most 1024 bytes, and a tree of 255-byte
+  | names (a '/' only every 256 bytes) is reached past PATH_MAX too.
+
+[rustic_core 87] a5785e7 2026-11-21 03:58
+subject: backotter: 0.13.0+backotter.20: short_path keeps 2048-byte prefixes where the links' file system takes them, 1000 where it doesn't (XFS)
+diff: 4 files changed, 240 insertions(+), 94 deletions(-); lines blamed to it at head: 190
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+  file: vendor/walkdir/src/longpath.rs
+reason:
+  | 0.13.0+backotter.19 cut every prefix short_path links to at most 1000
+  | bytes, on every file system, for XFS's 1024-byte link targets
+  | (XFS_SYMLINK_MAXLEN; ext2/3/4 and minix on 1 KiB blocks, 1023).  A short
+  | path made in k rounds follows k links, and a lookup follows at most 40
+  | (MAXSYMLINKS, ELOOP past it), so the deepest path reached fell from about
+  | 82 KB to about 42 KB everywhere (36 KB with 200-byte names, 14 KB with
+  | 255-byte names under a 495-byte $TMPDIR).
+  | 
+  | A process now decides once, before its first link: the links' directory
+  | gets a link to a 2048-byte target (probe), and a prefix is at most 2048
+  | bytes (LONG, as in .16 to .18) when it is made and reads back whole, else
+  | 1000 (SHORT: ENAMETOOLONG, or any other failure).  The chunk is fixed with
+  | the directory, under the LINKS lock, so a prefix is always cut at the same
+  | place and has one link; the probe is in the process's own new 0700
+  | directory, so nothing else can be there.  Each round still shortens the
+  | path with either chunk (TMP_MAX = SHORT / 2; the const asserts cover
+  | SHORT, and SHORT < LONG < PATH_MAX).  The links and their chunk are a
+  | Links value, so a test can make its own with the short chunk.
+  | 
+  | longpath.rs and BACKOTTER.md document the 40-link depth limit and the
+  | approximate depths for each chunk.
+  | 
+  | Tests: the_short_chunk_reaches_the_same_file forces the 1000-byte chunk
+  | (40- and 255-byte names; every target at most 1024 bytes, one link per
+  | prefix); the others check every target is within the process's chunk, and
+  | at most 1024 bytes with the short one, and that the chunk is the short one
+  | exactly where the temporary directory refuses a target over 1024 bytes.
+  | The vendored walkdir's tests pass on Linux with $TMPDIR on XFS (chunk 1000)
+  | and on tmpfs (chunk 2048).  Assert messages give their values as
+  | arguments (walkdir is edition 2018).
+
+[rustic_core 88] 040b5ae 2026-11-21 06:25
+subject: backotter: a backup warns about ignore files past PATH_MAX it can't read, and counts them as incomplete (RustAudit1 XR1-01)
+diff: 3 files changed, 128 insertions(+), 7 deletions(-); lines blamed to it at head: 108
+  file: BACKOTTER.md
+  file: crates/core/src/backend/ignore.rs
+  file: crates/core/tests/integration/restore.rs
+reason:
+  | Since 0.13.0+backotter.16 the walk goes past PATH_MAX (walkdir::short_path),
+  | but the ignore crate (0.4.33, upstream) still looks for each directory's
+  | custom ignore files, .gitignore and .git by their paths (Path::exists,
+  | metadata), which fail there with ENAMETOOLONG as if there were none, with
+  | no error.  So with --custom-ignorefile or --git-ignore, an ignore file 4 KB
+  | deep was skipped without a word and what it excludes was backed up; before
+  | .16 the whole subtree was left out with a warning.
+  | 
+  | LocalSourceWalker now looks, for each directory it gives, at the names the
+  | ignore crate reads there (the custom ignore files; with --git-ignore
+  | .gitignore, .git and .git/info/exclude) whose paths are PATH_MAX bytes or
+  | more, through short paths (unread_ignore_files, Linux and Android, where
+  | the walk goes that deep).  A directory with any is warned about, naming
+  | them, and counted as incomplete, so --strict-exit exits 3.  Their rules
+  | still aren't applied.  BACKOTTER.md said ignore files past PATH_MAX fail
+  | "as before"; it now says what happens.
+  | 
+  | test_backup_past_path_max_ignorefile (a .rusticignore 4.9 KB deep that
+  | excludes secret.key; one at the top applied as ever) fails before this
+  | (secret.key backed up, 0 incomplete) and passes after.
+
+[rustic_core 89] d1dc78d 2026-11-21 06:29
+subject: backotter: messages past PATH_MAX name the long path, not the short one in $TMPDIR (RustAudit1 XR1-02)
+diff: 5 files changed, 120 insertions(+), 43 deletions(-); lines blamed to it at head: 115
+  file: BACKOTTER.md
+  file: crates/core/src/backend/ignore/mapper.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: crates/core/src/commands/restore.rs
+  file: crates/core/src/commands/restore/exact.rs
+reason:
+  | 0.13.0+backotter.16 to .20 rebound several functions' path to its short
+  | one (walkdir::short_path, under $TMPDIR/.bko-longpath-PID-N, gone at exit)
+  | before they warned or made an error, so those messages named a path the
+  | user can't find: osattrs::fill's "ignoring file flags/attributes of",
+  | clear_restricting_flags' debug, map_path (given the short path by
+  | map_entry_counted: "ignoring extended attribute ... of", ErrorLink and
+  | ErrorXattr), remove_held (so remove_tree's "N entries not removed, the
+  | first ..." under --delete), exact::clone_file and break_link ("isn't N
+  | bytes", "is ... itself", and the temporary file TempLeft names), and the
+  | held flags' put_back on Linux.  BACKOTTER.md said every message keeps the
+  | long path.
+  | 
+  | Each now keeps the caller's path for its messages and takes the short one
+  | only for its system calls: fill binds it as sys; keep_unread makes no call;
+  | map_entry_counted gives map_path the long path (every call map_path makes
+  | shortens its own: osattrs' xattr_list/xattr_get/fill, and read_link in
+  | to_node); remove_held passes the long path to its remove closures, which
+  | shorten for remove_file/remove_dir (remove_tree walks the long one);
+  | clone_file and break_link_with clone onto the short dst and name a
+  | temporary file left by dst's own path (CloneFailed::beside); Linux's
+  | HeldFlags::Held keeps the long path, which put_back only names.
+  | BACKOTTER.md now says which messages still name the short one:
+  | LocalDestination's own calls' errors (sys_path) and those osattrs/linux.rs
+  | makes of its calls' errors (ioctl errors naming the file, debug messages).
+  | 
+  | removal_past_path_max_names_the_long_path (remove_held over remove_tree,
+  | a file it can't remove 4.5 KB deep) fails before this ("the first
+  | /tmp/.bko-longpath-.../d049...") and passes after.
+
+[rustic_core 90] 90035f1 2026-11-21 06:32
+subject: backotter: why a path past PATH_MAX can't be shortened is warned about, once (RustAudit1 XR1-03)
+diff: 6 files changed, 181 insertions(+), 19 deletions(-); lines blamed to it at head: 168
+  file: BACKOTTER.md
+  file: crates/core/src/backend/ignore.rs
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/backend/osattrs.rs
+  file: vendor/walkdir/src/lib.rs
+  file: vendor/walkdir/src/longpath.rs
+reason:
+  | walkdir::short_path threw away the error from imp::shorten (map_or) and
+  | gave the long path back, whose system call then failed with ENAMETOOLONG:
+  | "File name too long" for each such path, and nothing saying why ($TMPDIR
+  | missing or read-only, over 500 bytes, symlink(2) refused).  That is how
+  | .16 to .18's XFS failure (XFS_SYMLINK_MAXLEN, fixed in .19) stayed hidden.
+  | A directory for the links that couldn't be made was also tried again for
+  | every long path.
+  | 
+  | walkdir (vendored, our longpath.rs):
+  | - try_short_path returns the error; short_path, whose signature walkdir's
+  |   own callers keep, gives the path back as before and sends the error, the
+  |   first time in the process, to the fn given to report_short_path_errors
+  |   (walkdir has no logger).
+  | - Each error says what failed and where: the temporary directory not
+  |   absolute or too long, "no directory .../.bko-longpath-PID-N made for
+  |   links: ...", "no link ... made: ...", a path with no '/' to cut at, no
+  |   current directory for a relative path.
+  | - A directory for the links that couldn't be made is the process's for
+  |   good (FAILED): later calls give its error again without trying again.
+  | 
+  | rustic_core: osattrs::warn_on_short_path_errors registers a warning ("paths
+  | of PATH_MAX bytes or more can't be reached, and fail as "File name too
+  | long": ..."), from LocalSource::new and LocalDestination::new.
+  | BACKOTTER.md says so.
+  | 
+  | Test: a_link_directory_not_made_is_reported (in a child process, with
+  | $TMPDIR missing): try_short_path's error is NotFound and names the
+  | directory, comes again once the directory is there without making
+  | anything in it, and short_path gives the path as it is and reports once.
+
+[rustic_core 91] 4c4b462 2026-11-21 06:33
+subject: backotter: short_path's links are made in $TMPDIR's canonical path, so a symlink there is followed once, not each round (RustAudit1 XR2-01)
+diff: 2 files changed, 50 insertions(+), 5 deletions(-); lines blamed to it at head: 42
+  file: BACKOTTER.md
+  file: vendor/walkdir/src/longpath.rs
+reason:
+  | make_dir used std::env::temp_dir() as given, so every link's path was
+  | spelled through $TMPDIR, and each link's target starts with the link
+  | before's path.  A symbolic link in $TMPDIR was then followed again in every
+  | round, and a lookup follows at most 40 links in all (MAXSYMLINKS): with one
+  | there (an ostree system's /home -> var/home, a TMPDIR under $HOME) a short
+  | path made in 20 rounds or more failed with ELOOP, half the documented reach
+  | (about 41 KB with 2048-byte prefixes, 21 KB with 1000).  The docs read the
+  | links in $TMPDIR as a one-time cost.
+  | 
+  | make_dir now canonicalizes the temporary directory (as given if that
+  | fails, which then fails to make the directory and says so), and its
+  | length bound is checked on the canonical path.  longpath.rs's depth
+  | paragraph and BACKOTTER.md say the links' directory is canonical, and that
+  | symbolic links in the long path's first prefix count once.
+  | 
+  | Test: a_symlink_in_the_temporary_directory_is_followed_once (in a child
+  | process, $TMPDIR a symlink to a directory): the links' directory is under
+  | the canonical path, and a 28.7 KB path shortened in 28 rounds with the
+  | short chunk reaches its file.  Before this it failed with "Too many levels
+  | of symbolic links" (28 links); long_paths_reach_the_same_file checks the
+  | links' directory against the canonical temporary directory.
+
+[rustic_core 92] 495b9d7 2026-11-21 06:34
+subject: backotter: longpath's test asks what probe asks (a 2048-byte target); docs name ext2/3/4 on 2 KiB blocks (RustAudit1 XR2-02)
+diff: 2 files changed, 20 insertions(+), 12 deletions(-); lines blamed to it at head: 19
+  file: BACKOTTER.md
+  file: vendor/walkdir/src/longpath.rs
+reason:
+  | long_paths_reach_the_same_file expected the long chunk wherever a link to
+  | a 1025-byte target could be made, but probe asks for a 2048-byte one.  On a
+  | file system whose limit is between them (ext2/3/4 and minix take a block
+  | less its NUL: 2047 bytes on 2 KiB blocks) probe rightly chose the short
+  | chunk and the test failed.  The docs named only XFS and 1 KiB blocks as
+  | short-chunk cases.
+  | 
+  | takes_long_targets now makes a link to a LONG-byte target and reads it back
+  | whole, as probe does.  The module doc, SHORT's and probe's docs and
+  | BACKOTTER.md name 2 KiB-block ext2/3/4 (2047) too.
+  | 
+  | With $TMPDIR on a 2 KiB-block ext4 (loop image, Chopin), the vendored
+  | walkdir's longpath tests failed before this (chunk 1000, "a target over
+  | 1024 bytes taken: true", left 1000 right 2048) and pass after.
+
+[rustic_core 93] b4fbcd6 2026-11-21 06:36
+subject: backotter: a $TMPDIR of 501-1024 bytes serves paths past PATH_MAX again where links take 2048-byte prefixes (RustAudit1 XR2-03)
+diff: 2 files changed, 80 insertions(+), 17 deletions(-); lines blamed to it at head: 63
+  file: BACKOTTER.md
+  file: vendor/walkdir/src/longpath.rs
+reason:
+  | Since 0.13.0+backotter.19, make_dir refused a temporary directory of over
+  | TMP_MAX = SHORT / 2 = 500 bytes, before probe chose the chunk.  So with
+  | $TMPDIR of 501-1024 bytes no link was made even on tmpfs, btrfs or 4 KiB
+  | ext4, where probe chooses 2048-byte prefixes and each round still shortens
+  | the path (the link's path, $TMPDIR and under 50 bytes, is shorter than the
+  | 2048 - 255 bytes a round cuts at least): every path past PATH_MAX failed as
+  | "File name too long", where .16 to .18 reached it.
+  | 
+  | The bound is now per chunk, tmp_max(chunk) = chunk / 2, with a const assert
+  | for each chunk: make_dir takes a temporary directory of up to tmp_max(LONG)
+  | = 1024 bytes, and Links::for_process, after probe, refuses one over
+  | tmp_max(SHORT) = 500 where the chunk is SHORT, removing the new directory
+  | and saying why ("... is over 500 bytes, where links lead to 1000 at
+  | most").  The process's DIR and atexit are set only once that passes.  The
+  | short_path doc and BACKOTTER.md say so, and the depth figures give the new
+  | worst case (255-byte names under a 1024-byte $TMPDIR, about 35 KB with
+  | 2048-byte prefixes).
+  | 
+  | Test: a_long_temporary_directory_serves_the_long_chunk (in a child process,
+  | a 700-byte $TMPDIR): where a link to 2048 bytes is taken, a 330-deep path
+  | is shortened with the long chunk and reaches its directory; where it isn't
+  | (XFS), try_short_path refuses it naming the 500-byte bound, and leaves
+  | nothing in $TMPDIR.  With $TMPDIR on tmpfs it failed before this
+  | (make_dir: "the temporary directory ... is over 500 bytes").
+
+[rustic_core 94] 7c98b57 2026-11-21 06:36
+subject: backotter: short_path's doc and BACKOTTER.md list every way a long path is given back, and the ELOOP case (RustAudit1 XR2-04)
+diff: 2 files changed, 27 insertions(+), 16 deletions(-); lines blamed to it at head: 27
+  file: BACKOTTER.md
+  file: vendor/walkdir/src/longpath.rs
+reason:
+  | short_path's doc broke a line in mid-sentence ("`path` as" / "it is") and
+  | named only "no temporary directory, or one of over 500 bytes" as the cases
+  | that give `path` back.  Every failure to make a link ends that way:
+  | symlink(2) refused (ENOSPC, EDQUOT, EPERM on a file system without
+  | symbolic links), a path with no '/' to cut at, all 1000 directory names
+  | taken.  A path that takes more than 40 links is another case: it gets a
+  | short path, which fails with ELOOP, not ENAMETOOLONG; BACKOTTER.md said it
+  | fails "as before".
+  | 
+  | The doc now says, rewrapped: where a link can't be made (the errors
+  | try_short_path lists) `path` comes back and fails as before
+  | (ENAMETOOLONG), the reason going to report_short_path_errors' function;
+  | a path past 40 links gets a short path that fails with ELOOP ("Too many
+  | levels of symbolic links").  try_short_path's # Errors and BACKOTTER.md
+  | list the same failures.  Docs only.
+
+[rustic_core 95] 4f68d6a 2026-11-21 06:39
+subject: backotter: longpath.rs: clippy's default lints on the lines RustAudit1 XR1-03, XR2-02 and XR2-03 added
+diff: 1 file changed, 4 insertions(+), 5 deletions(-); lines blamed to it at head: 4
+  file: vendor/walkdir/src/longpath.rs
+reason:
+  | inspect_err for recording why the links' directory wasn't made (XR1-03),
+  | is_ok_and in takes_long_targets (XR2-02), an array, not a borrowed one, for
+  | the child process's arguments (XR1-03), RangeInclusive::contains for the
+  | link count (XR2-01's test).  No change in what the code does; the vendored
+  | walkdir's longpath tests pass as before.
+
+[rustic_core 96] a04257f 2026-11-21 06:39
+subject: backotter: 0.13.0+backotter.21: paths past PATH_MAX, re-audited (RustAudit1 XR1-01..03, XR2-01..04)
+diff: 2 files changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 0
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+reason:
+  | The RustAudit1 re-audit of .16 to .20's paths past PATH_MAX, fixed in the
+  | commits before this, each with its BACKOTTER.md text:
+  | - XR1-01: a backup warns about custom ignore files, .gitignore and .git
+  |   past PATH_MAX that the ignore crate can't read, and counts them as
+  |   incomplete (--strict-exit), instead of silently backing up what they
+  |   exclude.
+  | - XR1-02: messages name the long path, not the short one in
+  |   $TMPDIR/.bko-longpath-PID-N.
+  | - XR1-03: why a path can't be shortened is warned about, once
+  |   (walkdir::try_short_path, report_short_path_errors), and a links'
+  |   directory that couldn't be made isn't tried again for each path.
+  | - XR2-01: the links are made in $TMPDIR's canonical path, so a symlink
+  |   there is followed once, not in every round (ELOOP at half the depth).
+  | - XR2-02: the longpath test asks what probe asks; ext2/3/4 on 2 KiB blocks
+  |   documented.
+  | - XR2-03: a $TMPDIR of 501-1024 bytes is served again where links take
+  |   2048-byte prefixes.
+  | - XR2-04: short_path's doc lists every way a path is given back, and the
+  |   ELOOP case.
+
+[rustic_core 97] 3027d2b 2026-11-21 21:47
+subject: osattrs: RustAudit1 fixes in the BSD extattr and illumos xattr backends (another session's uncommitted work, committed on request)
+NOTE: ours (author MC Hobbit) but the subject lacks "backotter:", so rust-scope.sh counts it upstream; its 4 files were added by backotter: commits and are in scope whole, so the scope is unchanged
+diff: 4 files changed, 40 insertions(+), 8 deletions(-); lines blamed to it at head: 40
+  file: crates/core/src/backend/osattrs/bsd_extattr.rs
+  file: crates/core/src/backend/osattrs/freebsd_netbsd.rs
+  file: crates/core/src/backend/osattrs/illumos.rs
+  file: crates/core/src/backend/osattrs/illumos_xattrmeta.rs
+reason: (no body; the subject is the reason)
+
+[rustic_core 98] ead8a63 2026-11-22 03:21
+subject: backotter: 0.13.0+backotter.22: RustAudit1's osattrs fixes in the BSD extattr and illumos xattr backends
+diff: 2 files changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 2
+  file: Cargo.lock
+  file: crates/core/Cargo.toml
+reason:
+  | The version for rel12's binaries, over 3027d2b (RustAudit1 fixes in
+  | osattrs: bsd_extattr.rs, freebsd_netbsd.rs, illumos.rs and
+  | illumos_xattrmeta.rs, formatted as rustfmt has them; the doc names
+  | restic-bko). No change in behaviour from .21.
+
+# rustic_core: upstream commits cherry-picked onto backotter (not ours; check they still apply and no hunk of ours undoes them)
+#   6bf2e4d 2026-08-21 fix: protect cache backend with locks (#544)
+#   6d4999a 2026-08-26 fix: include path in canonicalization errors (#548)
+#   15e6b47 2026-08-27 fix: run delete hook when replacing a file (#547)
+#   910461e 2026-08-27 fix: stop tree workers after receiver closes (#546)
+#   f888865 2026-10-30 fix: don't underflow in BlobLocation::data_length (#585)
+#   161d2bf 2026-10-30 fix(repair): safely handle file nodes with missing content in repair snapshots (#586)
+#   d361884 2026-10-30 fix(tree): safely handle directory nodes without subtree in NodeStreamer and merge_nodes (#588)
+#   cf06e90 2026-10-30 fix: don't overflow in BlobLocations::can_coalesce (#589)
+#   cc61ded 2026-10-30 fix(packer): validate blob offsets and bounds in BlobCopier (#591)
+#   0f30270 2026-10-30 fix: reject key files with invalid or excessive scrypt parameters (#592)
+#   076d507 2026-10-30 fix: join tree loader threads before releasing the index (#607)
+#   a45dc6f 2026-10-30 fix(restore): prevent path traversal in LocalDestination (#590)
+#   a2445d6 2026-10-30 test: compare the Debug form of the path in the sanitize error (#630)
+#   ba4a628 2026-10-31 fix(prune): safely handle directory nodes without subtree in find_used_blobs (#587)
+#   c631116 2026-10-31 fix(forget): count minutes within the same hour for keep-minutely (#633)
+#   9d7eb59 2026-10-31 fix(backup): compare inodes unless ignore_inode is set (#632)
+#   bfa2f3a 2026-10-31 fix(restore): replace an entry that sits where a hardlink belongs (#634)
+#   17cf76f 2026-10-31 fix: set is_hot from the repository in init_with_config (#602)
+#   1237ddc 2026-11-05 fix(backend): propagate opendal errors when checking for config (#640)
+
+################################################################################
+# rustic: 3853eb3 (backotter: Cargo.lock takes rustic_core ead8a63 (0.13.0+backotter.22): RustAudit)
+# stock 6b96f97; 64 commits of ours, 1 upstream commits cherry-picked (listed at the end)
+################################################################################
+
+[rustic 1] 0569d8f 2026-10-30 11:17
+subject: backotter: BackOtter's rustic_core, version 0.11.4+backotter.1
+diff: 5 files changed, 76 insertions(+), 12 deletions(-); lines blamed to it at head: 59
+  file: .gitignore
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | Cargo.toml's [patch.crates-io] swaps crates.io's rustic_core for the
+  | backotter branch of github.com/mchobbit/rustic_core; Cargo.lock pins its
+  | commit. build-backotter.sh builds with the default features, which leave
+  | out self-update, so there is no command to swap the build for stock
+  | rustic, and the version suffix makes "rustic --version" and each
+  | snapshot's program version name the build. BACKOTTER.md says what this
+  | branch is and how it moves to a new rustic release.
+
+[rustic 2] 07fb9f1 2026-10-30 14:38
+subject: backotter: SNAP:subfolder restores give the destination its metadata
+diff: 3 files changed, 31 insertions(+), 11 deletions(-); lines blamed to it at head: 10
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: src/commands/restore.rs
+reason:
+  | Restoring "SNAP:subfolder" streams the subfolder's own node first, as the
+  | destination itself, so the destination gets its owner, mode, times,
+  | extended attributes, ACLs and flags, as everything below it gets its own.
+  | Without it a restored file system's root keeps mkfs's mode and has no
+  | SELinux label. A whole snapshot has no node of its own and leaves the
+  | destination as it is.
+  | 
+  | Cargo.lock moves to rustic_core's backotter branch with BackOtter's
+  | metadata (file flags, ACLs, ...), and BACKOTTER.md says which options
+  | make a backup and restore match BackOtter's restic: backup --set-atime
+  | yes, restore --numeric-id.
+
+[rustic 3] dc4844e 2026-10-30 21:18
+subject: backotter: batch 1 - version 0.11.4+backotter.2, numeric ids and atime by default (unreviewed)
+diff: 3 files changed, 14 insertions(+), 6 deletions(-); lines blamed to it at head: 1
+  file: BACKOTTER.md
+  file: Cargo.toml
+  file: config/full.toml
+reason:
+  | Work in progress, committed as it stood when its review began. Cargo.lock
+  | is not yet updated for the new version or rustic_core.
+
+[rustic 4] 70acebc 2026-10-30 22:55
+subject: backotter: lock records 0.11.4+backotter.2; build guard; docs for batch 1 fixes
+diff: 4 files changed, 55 insertions(+), 8 deletions(-); lines blamed to it at head: 30
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: build-backotter.sh
+  file: config/README.md
+reason:
+  | Cargo.lock records rustic-rs 0.11.4+backotter.2, so that builds with
+  | --locked work again. It still pins rustic_core fcac5fa (backotter.1):
+  | the rustic_core with the Batch 1 changes, and its vendored walkdir, can
+  | only be locked once rustic_core's backotter branch is pushed.
+  | build-backotter.sh now refuses to build until then: it checks that
+  | Cargo.lock pins rustic_core at bko_core (0.13.0+backotter.2) and a
+  | walkdir that isn't crates.io's. BACKOTTER.md's "Building" section lists
+  | the steps after the push, and how to build against a local rustic_core.
+  | 
+  | BACKOTTER.md also says that files are only restored sparse into new
+  | files, all others allocated in full, that backups don't change access
+  | times on Linux and rewrite keeps them, and names --ownership-by-name.
+  | config/README.md lists set-atime (default "yes"), set-ctime, set-devid
+  | and set-xattrs in place of the stale with-atime and with-devid rows.
+
+[rustic 5] 215ebd3 2026-10-31 01:07
+subject: backotter: rustix 1.1.6, which builds for DragonFly
+diff: 2 files changed, 13 insertions(+), 5 deletions(-); lines blamed to it at head: 13
+  file: BACKOTTER.md
+  file: Cargo.lock
+reason:
+  | rustix 1.1.4 enables source-specific multicast socket options for
+  | DragonFly that libc doesn't define there. Only rustix's entry in
+  | Cargo.lock changes.
+
+[rustic 6] 90b6fea 2026-10-31 07:28
+subject: backotter: round 3 in progress - quieter time-zone fallback
+diff: 3 files changed, 67 insertions(+), 1 deletion(-); lines blamed to it at head: 47
+  file: BACKOTTER.md
+  file: src/commands.rs
+  file: src/config/logging.rs
+reason:
+  | Work in progress, committed at the user's request while its agent was
+  | still checking it; later commits finish it.
+
+[rustic 7] 8063521 2026-10-31 07:57
+subject: backotter: round 3 in progress - time-zone fallback, docs
+diff: 2 files changed, 35 insertions(+), 22 deletions(-); lines blamed to it at head: 29
+  file: BACKOTTER.md
+  file: src/config/logging.rs
+reason:
+  | The rest of round 3's rustic work as its agent left it when the user
+  | stopped it; not built or tested yet.
+
+[rustic 8] fedf26e 2026-10-31 11:56
+subject: backotter: round 3 finished - time-zone fallback checked
+diff: none; lines blamed to it at head: 0
+reason:
+  | Round 3's rustic work (90b6fea, 8063521) stands as committed, checked on
+  | Chopin (clippy --all-targets, build, the logging test, DragonFly check)
+  | and with the binary: TZ unset and no /etc/localtime (a mount namespace
+  | with an empty /etc) gives no warning, only the debug line; a TZ jiff
+  | can't read gives one warning for a whole backup; jiff's own messages come
+  | back with --log-level-dependencies info or above. No change needed.
+
+[rustic 9] 5196b81 2026-10-31 13:27
+subject: backotter: notes on restore over a symlinked directory and symlink atimes
+diff: 1 file changed, 7 insertions(+), 2 deletions(-); lines blamed to it at head: 4
+  file: BACKOTTER.md
+reason: (no body; the subject is the reason)
+
+[rustic 10] c7477ad 2026-10-31 22:04
+subject: backotter: notes on reading files with holes, sparse restore by block and skipped sockets
+diff: 4 files changed, 15 insertions(+), 8 deletions(-); lines blamed to it at head: 6
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | BACKOTTER.md names rustic_core's rules: backup reads files with holes by
+  | their data extents, restore leaves a sparse file's all-zero file system
+  | blocks unwritten, sockets are skipped. Version 0.11.4+backotter.3, for
+  | rustic_core 0.13.0+backotter.3.
+
+[rustic 11] 2f9c59b 2026-11-01 02:44
+subject: backotter: notes: a sparse restore writes only the non-zero part of each block a blob reaches into
+diff: 1 file changed, 7 insertions(+), 5 deletions(-); lines blamed to it at head: 5
+  file: BACKOTTER.md
+reason:
+  | BACKOTTER.md follows rustic_core's revised rule (SPEC3 section 3, round
+  | 9): of each file system block a blob reaches into, the part inside the
+  | blob is written only if it isn't all zeros, so a block is allocated only
+  | where the file has data, as in BackOtter's restic.
+
+[rustic 12] eeb8b4b 2026-11-01 11:44
+subject: backotter: notes: files with holes on JFS and nilfs2 come back allocated in full, in both tools alike
+diff: 1 file changed, 3 insertions(+), 1 deletion(-); lines blamed to it at head: 0
+  file: BACKOTTER.md
+reason: (no body; the subject is the reason)
+
+[rustic 13] 9750401 2026-11-01 16:24
+subject: backotter: notes: on JFS and nilfs2 the blocks decide which files have holes, as in BackOtter's restic
+diff: 1 file changed, 4 insertions(+), 3 deletions(-); lines blamed to it at head: 4
+  file: BACKOTTER.md
+reason:
+  | rustic_core dd432d2 follows restic's 6d21bd8ad: such a file is marked
+  | unix.sparse, backed up by plain reading and restored sparse.  Replaces
+  | eeb8b4b's note that it comes back allocated in full.
+
+[rustic 14] ed2d30d 2026-11-01 16:24
+subject: backotter: Cargo.lock pins rustic_core dd432d2 and its walkdir
+diff: 4 files changed, 21 insertions(+), 24 deletions(-); lines blamed to it at head: 10
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | [patch.crates-io] takes walkdir from rustic_core's backotter branch too,
+  | now that it has it, and cargo update -p rustic_core -p walkdir moves the
+  | lock from fcac5fa (0.13.0+backotter.1) to dd432d2 (0.13.0+backotter.3):
+  | a plain build from GitHub gets the current rustic_core, and
+  | build-backotter.sh's check passes.  BACKOTTER.md's "Building" says what
+  | to do when the branch moves.  Built --locked on Cinqcent from the
+  | GitHub sources; prep-rustic-src.sh still swaps both for paths.
+
+[rustic 15] ece6d81 2026-11-01 18:33
+subject: backotter: notes on directory atimes, restores over immutable files and FreeBSD ZFS projects; Cargo.lock pins rustic_core ccc68a2
+diff: 2 files changed, 17 insertions(+), 3 deletions(-); lines blamed to it at head: 8
+  file: BACKOTTER.md
+  file: Cargo.lock
+reason:
+  | rustic_core ccc68a2: on systems without O_NOATIME a directory's metadata
+  | is taken before it is listed and the size scan doesn't run; a restore
+  | clears the flags that refuse it on what it finds (schg, sappnd, ..., Linux's
+  | i and a) and no longer panics on a file it can't write (exit 1, as restic);
+  | FreeBSD's ZFS project IDs are kept (freebsd.zfs_project).
+
+[rustic 16] feae912 2026-11-01 20:00
+subject: backotter: Linux builds linked statically; Cargo.lock pins rustic_core ff155a7
+diff: 3 files changed, 27 insertions(+), 3 deletions(-); lines blamed to it at head: 6
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: build-backotter.sh
+reason:
+  | build-backotter.sh links *-linux-gnu targets with +crt-static (a static
+  | PIE, as restic-bko is static) and refuses a binary that still has a
+  | program interpreter: the dynamic build didn't start on NixOS, whose
+  | /lib64/ld-linux-x86-64.so.2 is a stub. BACKOTTER.md says what static glibc
+  | still resolves (files and dns) and what it doesn't (NSS modules).
+  | 
+  | rustic_core ff155a7: on bcachefs a directory gets its options and
+  | project ID before its entries, which inherit them; bcachefs.project is no
+  | longer kept or restored (EINVAL).
+
+[rustic 17] 79bf2fc 2026-11-02 07:24
+subject: backotter: Linux builds for x86_64-unknown-linux-musl, with mimalloc
+diff: 2 files changed, 28 insertions(+), 18 deletions(-); lines blamed to it at head: 23
+  file: BACKOTTER.md
+  file: build-backotter.sh
+reason:
+  | A static glibc rustic-bko (feae912) still loads NSS modules for names it
+  | doesn't find in the files, and died of SIGFPE inside libnss_systemd.so.2
+  | when a file's owner had no name on a host with systemd in nsswitch.conf.
+  | musl, like restic's Go without cgo, reads /etc/passwd, /etc/group and
+  | /etc/hosts itself and loads no modules.  build-backotter.sh builds
+  | *-linux-musl targets with rustic's mimalloc feature (musl's malloc is slow
+  | with many threads) and refuses any Linux binary with a program interpreter.
+
+[rustic 18] 38fa50b 2026-11-02 09:20
+subject: backotter: notes: directories above the backed-up path keep their metadata, no device 0; Cargo.lock pins rustic_core be96479
+diff: 2 files changed, 8 insertions(+), 2 deletions(-); lines blamed to it at head: 6
+  file: BACKOTTER.md
+  file: Cargo.lock
+reason: (no body; the subject is the reason)
+
+[rustic 19] 0a29f57 2026-11-02 11:10
+subject: backotter: no warning for an /etc/localtime that links to nothing; notes; Cargo.lock pins rustic_core 44e1b03
+diff: 3 files changed, 20 insertions(+), 6 deletions(-); lines blamed to it at head: 14
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: src/config/logging.rs
+reason:
+  | On Alpine without tzdata, /etc/localtime links to the missing
+  | /usr/share/zoneinfo/UTC, and every command warned "/etc/localtime not
+  | understood, times are in UTC" (alpine324). That is UTC, as Alpine's own
+  | tools and restic-bko take it: debug log only, as without /etc/localtime.
+  | A TZ, or an /etc/localtime there is, that jiff can't read still warns.
+  | 
+  | BACKOTTER.md: mode 0 left out, illumos doors skipped, large xattrs read
+  | whole, SELinux labels never removed, append-only cleared on ZFS, no birth
+  | time on illumos tmpfs (rustic_core 44e1b03).
+
+[rustic 20] b057ada 2026-11-02 12:41
+subject: backotter: notes: no warning for owners a non-root restore can't set, illumos tmpfs ACLs; Cargo.lock pins rustic_core 9387171
+diff: 2 files changed, 8 insertions(+), 5 deletions(-); lines blamed to it at head: 3
+  file: BACKOTTER.md
+  file: Cargo.lock
+reason:
+  | BACKOTTER.md: a restore not running as root says nothing about an owner it
+  | can't set, as restic; an NFSv4 ACL illumos tmpfs or UFS refuses (ENOSYS) is
+  | a warning and the restore exits 0, in both tools (rustic_core 9387171).
+
+[rustic 21] 10990c3 2026-11-02 14:33
+subject: backotter: notes: FAT attributes and XFS options kept; Cargo.lock pins rustic_core 393cf55
+diff: 2 files changed, 11 insertions(+), 2 deletions(-); lines blamed to it at head: 4
+  file: BACKOTTER.md
+  file: Cargo.lock
+reason:
+  | BACKOTTER.md: backup keeps the attributes of files on FAT
+  | (linux.fat_attrs) and the options of files on XFS (linux.xfs_options) on
+  | Linux, as restic does, and restore puts them back last, before the file
+  | flags (an extent size hint also while the new file is empty); a dense
+  | restore leaves XFS's preallocated flag on (rustic_core 393cf55).
+
+[rustic 22] 971b756 2026-11-02 19:23
+subject: backotter: notes: bcachefs.casefold and 512-byte holes; Cargo.lock pins rustic_core eea4762
+diff: 2 files changed, 15 insertions(+), 2 deletions(-); lines blamed to it at head: 13
+  file: BACKOTTER.md
+  file: Cargo.lock
+reason:
+  | BACKOTTER.md: restore keeps holes in blocks of the destination file
+  | system's own size down to 512 bytes (4096 where it isn't known), so a
+  | file with 512-byte holes on bcachefs with 512-byte blocks comes back with
+  | them; bcachefs refusing bcachefs.casefold on a directory with entries is a
+  | warning in both tools, and BackOtter's restic now leaves an extended
+  | attribute with the right value alone too (rustic_core eea4762).
+
+[rustic 23] a2f28c5 2026-11-02 20:55
+subject: backotter: notes: speed, mimalloc measured, device IDs, illumos xattrs; Cargo.lock pins rustic_core 7138097
+diff: 3 files changed, 34 insertions(+), 4 deletions(-); lines blamed to it at head: 31
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: build-backotter.sh
+reason:
+  | BACKOTTER.md and build-backotter.sh: musl builds keep mimalloc, measured
+  | in round 23 after rustic_core's speed fix (zstd contexts and Rabin tables
+  | per thread): a backup of a 35,000-path, 1.4 GB tree took 13.5 s before
+  | and takes 4.0 s with mimalloc, 5.1 s (26% longer) with musl's malloc,
+  | whose peak memory is 0.2 GB instead of 1.2 GB. BackOtter's restic now
+  | stores device IDs by rustic's default rule, and rustic-bko gives a
+  | hard-linked FIFO none; illumos restores leave extended attributes with the
+  | right value alone (rustic_core 27c5a12, 39b4368, 8386562, 7138097).
+
+[rustic 24] 21c7087 2026-11-02 21:20
+subject: backotter: Cargo.lock pins rustic_core 941e6c1 (notes: the two tools' tree IDs differ)
+diff: 1 file changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 0
+  file: Cargo.lock
+reason: (no body; the subject is the reason)
+
+[rustic 25] 28bcd87 2026-11-03 08:48
+subject: backotter: stock defaults for users who aren't BackOtter; Cargo.lock pins rustic_core 05a201a
+diff: 8 files changed, 126 insertions(+), 52 deletions(-); lines blamed to it at head: 95
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: build-backotter.sh
+  file: config/README.md
+  file: config/full.toml
+  file: src/commands/restore.rs
+  file: src/commands/tui/ls.rs
+  file: src/commands/tui/restore.rs
+reason:
+  | - restore passes the snapshot's origin (its program version) to
+  |   rustic_core, which leaves the destination as stock rustic does where a
+  |   stock snapshot's node says nothing (mode, holes, flags, casefolding,
+  |   project IDs, FreeBSD/NetBSD xattr names); the TUI's restore too.
+  | - restore SNAP:subfolder gives DEST the subfolder's metadata only when
+  |   the restore creates DEST or finds it empty (lost+found alone counts as
+  |   empty): /tmp keeps 1777.
+  | - Stock defaults again: backup --set-atime mtime (config/full.toml,
+  |   config/README.md), restore by name with --numeric-id working; BackOtter
+  |   passes --set-atime yes and --numeric-id.
+  | - build-backotter.sh: with no target on a glibc Linux it builds
+  |   <arch>-unknown-linux-musl, and it refuses a *-linux-gnu target, saying
+  |   why (a static glibc build dies with SIGFPE in NSS).
+
+[rustic 26] 2fbb56b 2026-11-03 09:38
+subject: backotter: a bare-metal root is fresh for SNAP:subfolder; Cargo.lock pins rustic_core 22a997e
+diff: 3 files changed, 19 insertions(+), 9 deletions(-); lines blamed to it at head: 2
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: src/commands/restore.rs
+reason:
+  | restore SNAP:subfolder DEST gives DEST the subfolder's metadata when DEST
+  | holds nothing but directories, at any depth, and what a file system makes
+  | itself (lost+found, UFS's .snap and .sujournal), in at most 4096
+  | directories: a new root with the system's other file systems mounted below
+  | it, as in BackOtter's restic. rustic_core 22a997e also leaves files on ZFS
+  | alone when filling holes, and takes a snapshot without a program version
+  | for restic's (before 0.16).
+
+[rustic 27] 60526d0 2026-11-03 10:51
+subject: backotter: fresh SNAP:subfolder targets by mount points; musl ABI targets; Cargo.lock pins rustic_core 71b02d3
+diff: 5 files changed, 69 insertions(+), 30 deletions(-); lines blamed to it at head: 52
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: build-backotter.sh
+  file: src/commands/merge.rs
+  file: src/commands/restore.rs
+reason:
+  | restore SNAP:subfolder DEST gives DEST the subfolder's metadata only when
+  | DEST is fresh: new, or holding only what mkfs makes (lost+found, .snap,
+  | .sujournal), mount points and the directories on the path to them. A
+  | freshly booted /tmp of empty directories keeps its sticky bit, as in
+  | stock rustic. rustic_core 71b02d3 also fills holes on Linux only, counts
+  | a file whose holes would be filled as one to modify under --dry-run, and
+  | keeps "+backotter" in a merged snapshot's program version only if every
+  | snapshot merged is BackOtter's.
+  | 
+  | build-backotter.sh: on a glibc host the default target is the musl one of
+  | the same name, ABI suffix kept (armv7-unknown-linux-gnueabihf ->
+  | armv7-unknown-linux-musleabihf, *-gnueabi -> *-musleabi), refused with a
+  | clear message where rustc has no such target.
+
+[rustic 28] 2bfebfb 2026-11-03 11:27
+subject: backotter: a sticky or world-writable restore target is never fresh
+diff: 3 files changed, 17 insertions(+), 11 deletions(-); lines blamed to it at head: 14
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: src/commands/restore.rs
+reason:
+  | rustic_core 9e78ecf: restore SNAP:subfolder into an existing destination
+  | with mode bit 01000 or 0002 (an empty /tmp or /dev/shm) leaves it as it
+  | is, as stock rustic does, even when it is empty. As BackOtter's restic.
+
+[rustic 29] 627f131 2026-11-03 16:17
+subject: backotter: a new nilfs2 root is fresh for SNAP:subfolder; Cargo.lock pins rustic_core 6093877
+diff: 3 files changed, 10 insertions(+), 7 deletions(-); lines blamed to it at head: 6
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: src/commands/restore.rs
+reason:
+  | rustic_core 6093877: restore SNAP:subfolder onto a new nilfs2 file system
+  | whose root holds the empty regular file .nilfs (mkfs.nilfs2 2.0.0 to
+  | 2.2.9, as in Ubuntu 24.04 and Zorin 18) gives it the subfolder's
+  | metadata. As BackOtter's restic.
+
+[rustic 30] f989942 2026-11-03 17:06
+subject: backotter: BACKOTTER.md names what isn't fresh; Cargo.lock pins rustic_core 6e8b009
+diff: 2 files changed, 10 insertions(+), 3 deletions(-); lines blamed to it at head: 8
+  file: BACKOTTER.md
+  file: Cargo.lock
+reason:
+  | A new nilfs2 made by mkfs.nilfs2 before 2.0.22 (an empty .sketch beside
+  | .nilfs) and a ZFS dataset with snapdir=visible (its .zfs listed) are not
+  | fresh SNAP:subfolder destinations; say so, and name the file systems
+  | that make no entries, as BackOtter's restic does. rustic_core 6e8b009
+  | changes a test and its BACKOTTER.md only.
+
+[rustic 31] 21688bf 2026-11-05 07:17
+subject: backotter: version 0.11.4+backotter.4 on rustic_core 0.13.0+backotter.4
+diff: 4 files changed, 84 insertions(+), 19 deletions(-); lines blamed to it at head: 65
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | rustic_core 0.13.0+backotter.4 (6c1cdad) has upstream's fixes from
+  | after 0.13.0 cherry-picked; BACKOTTER.md lists them, the ones not
+  | ported and why, and the dependency advisories. Cargo.lock pins that
+  | commit (unpushed as yet), takes its new dependencies (lockable,
+  | same-file), and the first patched zstd, zstd-safe, zstd-sys, rustls,
+  | rustls-webpki and ctutils; build-backotter.sh expects the new
+  | rustic_core version.
+
+[rustic 32] 3034635 2026-11-05 07:56
+subject: backotter: Cargo.lock takes chacha20 0.10.2, rustic_core 1cd8fd5
+diff: 2 files changed, 17 insertions(+), 13 deletions(-); lines blamed to it at head: 14
+  file: BACKOTTER.md
+  file: Cargo.lock
+reason:
+  | chacha20 0.10.1 is yanked: its SSE2 backend (chosen without AVX2) runs
+  | SSE4.1's _mm_extract_epi32 in the RNG rand::rng() gives, which
+  | rustic_core takes for every nonce and Id::random; SIGILL on x86_64 CPUs
+  | with neither (AMD K8/K10, Core 2 Merom/Conroe).
+  | RustCrypto/stream-ciphers#579, fixed in 0.10.2 (semver-compatible, same
+  | dependencies, rust-version 1.85). rustic_core 1cd8fd5 takes the same
+  | bump; the pin moves to it.
+
+[rustic 33] 2d74e29 2026-11-05 08:44
+subject: backotter: quick-xml 0.38.4 among the advisories left as they are
+diff: 1 file changed, 3 insertions(+), 1 deletion(-); lines blamed to it at head: 3
+  file: BACKOTTER.md
+reason:
+  | Only self-update takes it (the release feature, not built); this build
+  | has quick-xml 0.41.0.
+
+[rustic 34] 77a296d 2026-11-06 00:02
+subject: backotter: Cargo.lock takes rustic_core ed28fe0 (no preallocation on btrfs/bcachefs but for NOCOW files)
+diff: 1 file changed, 9 insertions(+), 9 deletions(-); lines blamed to it at head: 0
+  file: Cargo.lock
+reason: (no body; the subject is the reason)
+
+[rustic 35] 6e8001a 2026-11-06 07:41
+subject: backotter: 0.11.4+backotter.5 on rustic_core bb7fba0 (0.13.0+backotter.5)
+diff: 4 files changed, 8 insertions(+), 8 deletions(-); lines blamed to it at head: 0
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | rustic_core's ed28fe0 preallocates on btrfs and bcachefs only a NOCOW
+  | file (a swap file), so that a restore onto a compressing mount fits where
+  | the source did; this build gets its own version.
+
+[rustic 36] 42a7f4c 2026-11-06 07:58
+subject: backotter: Cargo.lock takes rustic_core dd1a67b
+diff: 1 file changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 0
+  file: Cargo.lock
+reason:
+  | rustic_core's btrfs/bcachefs rule now also keeps hole filling from opening
+  | a file it wouldn't allocate.
+
+[rustic 37] 6a92bd7 2026-11-06 08:06
+subject: backotter: Cargo.lock takes rustic_core ad341b9; BACKOTTER.md names btrfs's rule
+diff: 2 files changed, 8 insertions(+), 4 deletions(-); lines blamed to it at head: 6
+  file: BACKOTTER.md
+  file: Cargo.lock
+reason:
+  | Holes are filled, and files preallocated, on btrfs only for a NOCOW file and
+  | never on bcachefs, as in rustic_core and BackOtter's restic.
+
+[rustic 38] b518f42 2026-11-06 09:48
+subject: backotter: 0.11.4+backotter.6: upstream's #1898; Cargo.lock takes rustic_core 487ec7c
+diff: 3 files changed, 24 insertions(+), 13 deletions(-); lines blamed to it at head: 20
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+reason:
+  | 8e5d8af (#1898), cherry-picked in the previous commit: docs prints the URL
+  | before it tries to open it. rustic_core 487ec7c adds upstream's #640, in
+  | crates/backend, which this build doesn't use, so the core version stays
+  | 0.13.0+backotter.5. BACKOTTER.md lists both, and #1907 and #642 as not
+  | ported (features).
+
+[rustic 39] 6ccec58 2026-11-07 20:35
+subject: backotter: 0.11.4+backotter.7: Cargo.lock takes rustic_core 96596bb (Haiku's Tracker trash)
+diff: 5 files changed, 14 insertions(+), 9 deletions(-); lines blamed to it at head: 7
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+  file: src/commands/restore.rs
+reason: (no body; the subject is the reason)
+
+[rustic 40] ea519cc 2026-11-10 07:54
+subject: backotter: 0.11.4+backotter.8: --strict-exit; diff without a phantom top directory
+diff: 23 files changed, 335 insertions(+), 40 deletions(-); lines blamed to it at head: 312
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+  file: config/README.md
+  file: config/full.toml
+  file: src/application.rs
+  file: src/commands.rs
+  file: src/commands/backup.rs
+  file: src/commands/diff.rs
+  file: src/commands/mount.rs
+  file: src/commands/restore.rs
+  file: src/commands/tui/restore.rs
+  file: src/commands/webdav.rs
+  file: src/config.rs
+  file: src/config/hooks.rs
+  file: src/snapshots/rustic_rs__config__tests__default_config_display_passes.snap
+  file: src/snapshots/rustic_rs__config__tests__default_config_passes.snap
+  file: src/snapshots/rustic_rs__config__tests__global_env_roundtrip_passes-2.snap
+  file: src/snapshots/rustic_rs__config__tests__global_env_roundtrip_passes-3.snap
+  file: src/snapshots/rustic_rs__config__tests__global_env_roundtrip_passes.snap
+  file: tests/backup_restore.rs
+  file: tests/snapshots/show_config__show_config_passes.snap
+reason:
+  | - --strict-exit (RUSTIC_STRICT_EXIT, [global] strict-exit), off by default:
+  |   exit as restic-bko does, 3 for an incomplete backup, 1 for a restore with
+  |   errors, 130 for an interrupt (SIGINT, SIGTERM, SIGHUP), which then runs
+  |   the failed hooks, not the after hooks; mount and webdav, which an
+  |   interrupt ends as meant, still exit 0. Without it nothing changes.
+  | - restore streams the unmatched parents of partial-restore matches.
+  | - diff SNAP:PATH LOCALDIR no longer reports the local top directory as
+  |   added (a regression from the fork's LocalSource).
+  | - Cargo.lock still pins the previous rustic_core commit: refresh it with
+  |   cargo update -p rustic_core once rustic_core is pushed.
+
+[rustic 41] 46f51d9 2026-11-10 09:07
+subject: backotter: Cargo.lock takes rustic_core b4337fa (0.13.0+backotter.7)
+diff: 1 file changed, 3 insertions(+), 3 deletions(-); lines blamed to it at head: 0
+  file: Cargo.lock
+reason: (no body; the subject is the reason)
+
+[rustic 42] 5bae0a6 2026-11-10 19:23
+subject: backotter: 0.11.4+backotter.9: restore --clone-from; --exact restores the destination's own metadata
+diff: 2 files changed, 27 insertions(+), 3 deletions(-); lines blamed to it at head: 23
+  file: Cargo.toml
+  file: src/commands/restore.rs
+reason:
+  | restore --clone-from PATH=DIR (with --exact): files whose contents the
+  | snapshot's PATH has, restored at DIR, are cloned from there instead of
+  | written.  Under --exact the destination always gets the subfolder's own
+  | metadata (set only where it differs).  Needs rustic_core
+  | 0.13.0+backotter.8 (Cargo.lock still pins .7 until it is pushed).
+
+[rustic 43] fa75dd1 2026-11-10 20:39
+subject: backotter: restore --target-metadata
+diff: 1 file changed, 8 insertions(+), 1 deletion(-); lines blamed to it at head: 8
+  file: src/commands/restore.rs
+reason:
+  | The destination gets the subfolder's own metadata, set last, even when it
+  | isn't empty: bko-holt's main restore, whose target holds other subvolumes,
+  | and whose root's metadata the backup held only through an alias it now
+  | leaves out.
+
+[rustic 44] 758c062 2026-11-10 20:52
+subject: backotter: Cargo.lock takes rustic_core 0ac038a (0.13.0+backotter.8)
+diff: 1 file changed, 4 insertions(+), 4 deletions(-); lines blamed to it at head: 0
+  file: Cargo.lock
+reason: (no body; the subject is the reason)
+
+[rustic 45] 052b76f 2026-11-11 15:52
+subject: backotter: build-backotter.sh expects rustic_core 0.13.0+backotter.8
+diff: 2 files changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 0
+  file: BACKOTTER.md
+  file: build-backotter.sh
+reason:
+  | Cargo.lock has pinned rustic_core 0ac038a (0.13.0+backotter.8) since
+  | 758c062; bko_core and BACKOTTER.md's "Building" now name it too.
+
+[rustic 46] f11ecd1 2026-11-12 15:26
+subject: backotter: 0.11.4+backotter.10: a directory's XFS realtime inheritance; expects rustic_core 0.13.0+backotter.9
+diff: 4 files changed, 6 insertions(+), 5 deletions(-); lines blamed to it at head: 2
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | rustic_core 0.13.0+backotter.9 (aa78f29) keeps realtime inheritance (t)
+  | in linux.xfs_options on directories, which take it without a realtime
+  | device. BACKOTTER.md says so; build-backotter.sh and "Building" expect
+  | that rustic_core. Cargo.lock still pins rustic_core 0ac038a
+  | (0.13.0+backotter.8) until aa78f29 is pushed and
+  | cargo update -p rustic_core -p walkdir runs; build-backotter.sh refuses
+  | to build until then.
+
+[rustic 47] 740285b 2026-11-12 15:52
+subject: backotter: BACKOTTER.md: a directory there loses its XFS options until the last pass
+diff: 1 file changed, 6 insertions(+), 4 deletions(-); lines blamed to it at head: 4
+  file: BACKOTTER.md
+reason:
+  | Restoring over an existing tree, rustic_core now takes a directory's XFS
+  | options off before its entries are made, so that they inherit none, and
+  | puts them back last. Cargo.lock still pins rustic_core 0ac038a; it takes
+  | the commit with this once that is pushed.
+
+[rustic 48] a026bee 2026-11-12 17:50
+subject: backotter: an interrupt puts back cleared XFS options; --dry-run-warmup plans as --dry-run
+diff: 3 files changed, 15 insertions(+), 4 deletions(-); lines blamed to it at head: 14
+  file: BACKOTTER.md
+  file: src/application.rs
+  file: src/commands/restore.rs
+reason:
+  | rustic_core now takes an existing directory's XFS options off for the
+  | restore, and puts them back on every exit it sees; an interrupt exits from
+  | its own thread without unwinding the restore, so shutdown_on_interrupt
+  | calls rustic_core::put_back_xfs_options() first.
+  | 
+  | --dry-run-warmup without --dry-run restores nothing, yet planned with
+  | dry_run false: it made directories, removed files under --delete and
+  | cleared XFS options in the destination. It now plans as --dry-run does.
+  | 
+  | BACKOTTER.md says so. Needs rustic_core's commit with
+  | put_back_xfs_options; Cargo.lock still pins 0ac038a until rustic_core is
+  | pushed (rounds build through prep-rustic-src.sh). Tested on chopin: a
+  | release build against the local rustic_core, and an interrupted restore
+  | over XFS (see rustic_core's commit).
+
+[rustic 49] f20880e 2026-11-12 20:08
+subject: backotter: an interrupt's XFS put-back stops the restore making entries (rustic_core fb55116)
+diff: 1 file changed, 3 insertions(+), 1 deletion(-); lines blamed to it at head: 3
+  file: src/application.rs
+reason:
+  | shutdown_on_interrupt calls rustic_core::put_back_xfs_options() first and
+  | then runs the hooks; the restore went on meanwhile, making entries that
+  | inherited the options put back. With rustic_core fb55116 the put-back
+  | also holds every entry the restore would make after it until the exit;
+  | the comment says so. Nothing else changes here: Cargo.lock still pins
+  | rustic_core 0ac038a, and builds take the local rustic_core
+  | (prep-rustic-src.sh).
+  | 
+  | Tested on chopin with rustic_core fb55116: release build, cargo test
+  | (test_backup_and_check_passes fails as it does on a026bee with 2cd21d4:
+  | the second backup's "Added to the repo: 0 B" when run beside the other
+  | tests; it passes alone), and an interrupted restore over XFS with a 5 s
+  | after hook, where no file got the directory's inherited extent size hint
+  | (2779 of 2780 did before).
+
+[rustic 50] ea44449 2026-11-13 02:10
+subject: backotter: Cargo.lock takes rustic_core 5270ff3 (0.13.0+backotter.9)
+diff: 1 file changed, 3 insertions(+), 3 deletions(-); lines blamed to it at head: 0
+  file: Cargo.lock
+reason: (no body; the subject is the reason)
+
+[rustic 51] a1ec9bf 2026-11-13 18:16
+subject: backotter: --clone-from offers nothing inside the destination (rustic_core 3f2f3b2, 0.13.0+backotter.10)
+diff: 5 files changed, 17 insertions(+), 9 deletions(-); lines blamed to it at head: 10
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+  file: src/commands/restore.rs
+reason:
+  | bko-holt restores a snapper snapshot @/.snapshots/N/snapshot, seeded
+  | from @, with --exact --clone-from /=<top>/@: the destination is inside
+  | the directory cloned from. Its seeded files were offered as clone
+  | sources, a file was cloned onto itself, and on btrfs and XFS a seeded
+  | file of the snapshot's size and other contents came back empty, with
+  | the right mtime and exit 0 (the Thinkpad's CachyOS BackShot1).
+  | 
+  | restore now passes the destination to Repository::clone_sources, which
+  | leaves out everything at or below it; rustic_core 3f2f3b2 also refuses
+  | to clone a file onto itself. Cargo.lock takes 3f2f3b2; version
+  | 0.11.4+backotter.11; build-backotter.sh wants 0.13.0+backotter.10.
+
+[rustic 52] 99b9b56 2026-11-14 00:15
+subject: backotter: Cargo.lock takes rustic_core 3bb01f1 (0.13.0+backotter.11): a restore's memory is bounded
+diff: 3 files changed, 6 insertions(+), 6 deletions(-); lines blamed to it at head: 0
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | rustic_core 3bb01f1 caps the pack data a restore holds at 256 MiB and
+  | uses 4 reader threads per CPU (at most 20): rustic-bko's restore had
+  | grown to ~1.7 GB and was killed in the 3 GiB, no-swap OpenBSD rescue
+  | image. Version 0.11.4+backotter.12; build-backotter.sh wants
+  | 0.13.0+backotter.11.
+
+[rustic 53] a63bf7b 2026-11-14 12:38
+subject: backotter: Cargo.lock takes rustic_core fd7062d (0.13.0+backotter.12): a restore writes each file through one handle
+diff: 3 files changed, 6 insertions(+), 6 deletions(-); lines blamed to it at head: 0
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | rustic_core 6f223a2 (version in fd7062d) writes each restored file
+  | through one handle while it has writes to come, at most threads + 50 idle
+  | handles (restic-bko's fileswriter.go design): opened and closed for each
+  | blob, a file on ext4 lost its preallocation at every close and came out
+  | of a big parallel restore in 5+ extents, and the extent-tree block pushed
+  | st_blocks past the size of a file with a sub-block tail hole (Kali K4,
+  | restic->rustic, vmlinuz: "holes lost"). Version 0.11.4+backotter.13;
+  | build-backotter.sh wants 0.13.0+backotter.12.
+
+[rustic 54] dc98aeb 2026-11-14 15:02
+subject: backotter: test_backup_and_check_passes backs up as /src, not under /tmp's live metadata
+diff: 1 file changed, 6 insertions(+); lines blamed to it at head: 6
+  file: tests/backup_restore.rs
+reason:
+  | The fork keeps the real metadata of the directories above the backed-up
+  | path (rustic_core be96479), so /tmp's mtime is in the snapshot. Tests
+  | running alongside make tempdirs in /tmp, and the second backup then saw
+  | "Dirs: 0 new, 2 changed" and added 234 B instead of 0 B: the test failed
+  | under the default parallel cargo test and passed alone. With --as-path
+  | /src no real ancestor is recorded (Archiver::archive skips dir_node), so
+  | the assertion holds however /tmp changes. Test only.
+
+[rustic 55] c517a69 2026-11-14 20:44
+subject: backotter: Cargo.lock takes rustic_core ba93d6e (0.13.0+backotter.13): restore --exact as restic-bko 0.19.1+backotter.12
+diff: 4 files changed, 19 insertions(+), 7 deletions(-); lines blamed to it at head: 12
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | rustic_core b660a71 (version in ba93d6e) fixes restore --exact and
+  | --delete after the review against restic-bko .8-.12: clones and broken
+  | hard links go into a new O_EXCL temporary file renamed over the file
+  | (the fixed `.bko-exact-NAME` followed symlinks and clobbered a snapshot
+  | entry of that name), a failed clone leaves the file as it was, a file
+  | whose link can't be broken is left alone with an error, a hard-link group
+  | already exactly the snapshot's keeps its inode, restricting flags come off
+  | only for what the restore changes and go back on a replaced file's other
+  | names through a held descriptor, --delete runs after the walk, metadata
+  | comparisons match what a restore sets, a failed hard link no longer
+  | aborts the restore, and SELinux EACCES refusals are one error. Version
+  | 0.11.4+backotter.14; build-backotter.sh wants 0.13.0+backotter.13;
+  | BACKOTTER.md says so.
+  | 
+  | Cargo.lock records the commit as the git source will resolve it once
+  | rustic_core's backotter branch is pushed; until then `cargo build
+  | --locked` can't fetch it. Built and tested against a local path copy of
+  | rustic_core: cargo test passes, exact-rt.sh PASS.
+
+[rustic 56] 7625a3c 2026-11-15 05:17
+subject: backotter: work in progress (BACKOTTER.md, Cargo.toml, build-backotter.sh)
+diff: 3 files changed, 11 insertions(+), 3 deletions(-); lines blamed to it at head: 8
+  file: BACKOTTER.md
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | Committed as found in the working tree at the user's request ("commit
+  | all"), alongside rustic_core's in-progress restore --exact fix round.
+
+[rustic 57] a1f210b 2026-11-15 06:51
+subject: backotter: Cargo.lock takes rustic_core e66975f (0.13.0+backotter.14): restore --delete's case variants and a kept group's later names
+diff: 1 file changed, 4 insertions(+), 4 deletions(-); lines blamed to it at head: 0
+  file: Cargo.lock
+reason: (no body; the subject is the reason)
+
+[rustic 58] ea4ee26 2026-11-15 08:22
+subject: backotter: Cargo.lock takes rustic_core e21b85b (0.13.0+backotter.15): restore --exact on NetBSD puts back an atime its own reads moved alone
+diff: 4 files changed, 13 insertions(+), 7 deletions(-); lines blamed to it at head: 5
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | Version 0.11.4+backotter.16; build-backotter.sh wants rustic_core
+  | 0.13.0+backotter.15; BACKOTTER.md on the NetBSD fix.  Cargo.lock: only
+  | the rustic-rs and rustic_core versions and the rustic_core and walkdir
+  | pins changed (cargo metadata --locked leaves it as it is).
+
+[rustic 59] 2c3b237 2026-11-15 08:45
+subject: backotter: Cargo.lock takes rustic_core 3fd3921 (0.13.0+backotter.15): BACKOTTER.md on restore --exact's atimes
+diff: 2 files changed, 5 insertions(+), 3 deletions(-); lines blamed to it at head: 3
+  file: BACKOTTER.md
+  file: Cargo.lock
+reason:
+  | rustic_core 3fd3921 changes only its BACKOTTER.md over e21b85b (the
+  | review of .15: a NetBSD destination mounted noatime keeps no restored
+  | atime, FreeBSD's reads, the test's and the put-back's limits).  Here
+  | BACKOTTER.md says not to mount a NetBSD destination noatime.  Version
+  | stays 0.11.4+backotter.16 (unpushed).  Cargo.lock: only the rustic_core
+  | and walkdir pins moved, by hand; cargo metadata --locked (against a
+  | bundle of 3fd3921) leaves it as it is.
+
+[rustic 60] fb9d3d1 2026-11-21 00:50
+subject: backotter: Cargo.lock takes rustic_core 6b1e432 (0.13.0+backotter.17): paths past PATH_MAX (BackShot2 fail-001), RustAudit1 R2-01 and R4-02
+diff: 4 files changed, 23 insertions(+), 7 deletions(-); lines blamed to it at head: 15
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | Version 0.11.4+backotter.17; build-backotter.sh wants rustic_core
+  | 0.13.0+backotter.17; BACKOTTER.md on what it takes.  rustic_core is
+  | pinned at 6b1e432, not its branch head f2428c3 (0.13.0+backotter.18,
+  | RustAudit1 R3-01 and R4-01, not tested yet).  Cargo.lock: only the
+  | rustic-rs and rustic_core versions and the rustic_core and walkdir pins
+  | changed (cargo update -p rustic_core --precise 6b1e432 gave those pins;
+  | cargo update --workspace also re-resolved windows-sys and getrandom, left
+  | out; cargo metadata --locked leaves it as it is).
+
+[rustic 61] 1dede29 2026-11-21 03:09
+subject: backotter: Cargo.lock takes rustic_core 81ed0b5 (0.13.0+backotter.19): paths past PATH_MAX with $TMPDIR on XFS (BackShot2 fail-001), RustAudit1 R3-01 and R4-01
+diff: 4 files changed, 18 insertions(+), 7 deletions(-); lines blamed to it at head: 11
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | Version 0.11.4+backotter.19; build-backotter.sh wants rustic_core
+  | 0.13.0+backotter.19; BACKOTTER.md on what it takes.  rustic_core
+  | 0.13.0+backotter.19 makes walkdir::short_path's links lead to prefixes of
+  | at most 1000 bytes, not 2048, which XFS refuses as a link's target (with
+  | $TMPDIR on XFS, 0.11.4+backotter.17 still left the long paths out); it
+  | sits on 0.13.0+backotter.18, RustAudit1 R3-01 and R4-01, taken with it.
+  | Cargo.lock: only the rustic-rs and rustic_core versions and the
+  | rustic_core and walkdir pins changed (cargo update -p rustic_core
+  | --precise 81ed0b5 gave those pins; it also re-resolved windows-sys and
+  | getrandom, left out; cargo metadata --locked leaves it as it is).
+
+[rustic 62] 19fef3d 2026-11-21 04:00
+subject: backotter: Cargo.lock takes rustic_core a5785e7 (0.13.0+backotter.20): 2048-byte short_path prefixes again where $TMPDIR takes them, 1000 on XFS
+diff: 4 files changed, 21 insertions(+), 8 deletions(-); lines blamed to it at head: 14
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | Version 0.11.4+backotter.20; build-backotter.sh wants rustic_core
+  | 0.13.0+backotter.20; BACKOTTER.md on what it takes.  rustic_core
+  | 0.13.0+backotter.19 cut walkdir::short_path's prefixes to 1000 bytes on
+  | every file system, for XFS; a lookup follows at most 40 links (ELOOP), so
+  | the deepest path kept fell from about 80 KB to about 40 KB everywhere.
+  | 0.13.0+backotter.20 decides once per run: 2048-byte prefixes where
+  | $TMPDIR's file system takes a link to 2048 bytes, 1000 where it doesn't
+  | (XFS, ext2/3/4 on 1 KiB blocks).  BACKOTTER.md also says the .17 bullet's
+  | rustic_core 0.13.0+backotter.18 was taken in .19 (review nit P1).
+  | Cargo.lock: only the rustic-rs and rustic_core versions and the
+  | rustic_core and walkdir pins changed (cargo update -p rustic_core
+  | --precise a5785e7 gave those pins; it also re-resolved windows-sys and
+  | getrandom, left out; cargo metadata --locked leaves it as it is).
+
+[rustic 63] 9ddbbaf 2026-11-21 06:41
+subject: backotter: Cargo.lock takes rustic_core a04257f (0.13.0+backotter.21): paths past PATH_MAX re-audited (RustAudit1 XR1-01..XR2-04)
+diff: 4 files changed, 21 insertions(+), 7 deletions(-); lines blamed to it at head: 14
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | Version 0.11.4+backotter.21; build-backotter.sh wants rustic_core
+  | 0.13.0+backotter.21; BACKOTTER.md on what it takes.  rustic_core .21: a
+  | backup warns about a custom ignore file, .gitignore or .git past PATH_MAX
+  | that the ignore crate can't read, and counts it as incomplete
+  | (--strict-exit), where .16 to .20 backed up what it excludes without a
+  | word; messages name the long path, not the short one under
+  | $TMPDIR/.bko-longpath-PID-N; why a long path can't be reached is warned
+  | about once; the links are made in $TMPDIR's canonical path (a symlink in
+  | $TMPDIR halved the depth reached); a $TMPDIR of 501-1024 bytes is served
+  | again where it takes links to 2048 bytes.
+  | Cargo.lock: only the rustic-rs and rustic_core versions and the
+  | rustic_core and walkdir pins changed (cargo update -p rustic_core
+  | --precise a04257f gave those pins; it also re-resolved windows-sys and
+  | getrandom, left out; cargo metadata --locked leaves it as it is).
+
+[rustic 64] 3853eb3 2026-11-22 03:22
+subject: backotter: Cargo.lock takes rustic_core ead8a63 (0.13.0+backotter.22): RustAudit1's osattrs fixes (BSD extattr, illumos xattr meta)
+diff: 4 files changed, 11 insertions(+), 7 deletions(-); lines blamed to it at head: 11
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+reason:
+  | Version 0.11.4+backotter.22; build-backotter.sh wants rustic_core
+  | 0.13.0+backotter.22; BACKOTTER.md on what it takes. rustic_core .22 is
+  | .21 with RustAudit1's fixes in the FreeBSD/NetBSD extattr and illumos
+  | xattr backends (3027d2b: formatting and doc wording), the version for
+  | rel12's binaries.
+  | Cargo.lock: only the rustic-rs and rustic_core versions and the
+  | rustic_core and walkdir pins changed (cargo update -p rustic_core
+  | --precise ead8a63 gave those pins; it also re-resolved windows-sys and
+  | getrandom, left out; cargo metadata --locked leaves it as it is).
+
+# rustic: upstream commits cherry-picked onto backotter (not ours; check they still apply and no hunk of ours undoes them)
+#   d00e3a7 2026-08-28 fix: Print url first in docs command (#1898)
+

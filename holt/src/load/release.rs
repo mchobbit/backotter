@@ -60,7 +60,12 @@ pub struct Release {
 /// device-mapper (its slaves, all the way down).
 pub fn bases(all: &[BlockDev], name: &str) -> Vec<String> {
     fn walk(all: &[BlockDev], name: &str, depth: usize, out: &mut Vec<String>) {
-        let Some(b) = all.iter().find(|b| b.name == name) else {
+        // Bug: under mdev (/dev/mapper/<dm_name> not symlinked to dm-N),
+        // resolve_name returns dm_name while sysfs names the block device dm-N.
+        // Match dm_name in bases() and plan() so --erase catches ZFS-on-LUKS
+        // pools, active mapper swap or mounts, dm open counts, and multi-disk
+        // stacks instead of closing live containers.
+        let Some(b) = all.iter().find(|b| b.name == name || b.dm_name.as_deref() == Some(name)) else {
             if !out.iter().any(|o| o == name) {
                 out.push(name.to_string());
             }
@@ -155,8 +160,9 @@ pub fn plan(sys: &Sys, system: &System, held: &[String], erased: &[String]) -> R
                     queue.push(h.clone());
                 }
             }
+            let on_b = |x: &str| x == b.name || b.dm_name.as_deref() == Some(x);
             // Pools take no holders: each one with a vdev here is on top.
-            for p in system.pools.iter().filter(|p| p.devices.contains(&name)) {
+            for p in system.pools.iter().filter(|p| p.devices.iter().any(|d| on_b(d))) {
                 let key = format!("pool:{}", p.name);
                 if !mine.iter().any(|(k, ..)| *k == key) {
                     let mut ok = true;
@@ -182,10 +188,10 @@ pub fn plan(sys: &Sys, system: &System, held: &[String], erased: &[String]) -> R
             }
             // A holder: never mounted, swap or open, and only on erased disks.
             let d = describe(b);
-            for m in system.mounts.iter().filter(|m| m.devno == b.devno || resolve_name(sys, &m.source) == b.name) {
+            for m in system.mounts.iter().filter(|m| m.devno == b.devno || on_b(&resolve_name(sys, &m.source))) {
                 why.push(format!("{d} is mounted at {}", m.target));
             }
-            if system.swaps.contains(&b.name) {
+            if system.swaps.iter().any(|s| on_b(s)) {
                 why.push(format!("{d} is in use as swap"));
             }
             let other = not_erased(&bases(all, &b.name));
@@ -195,7 +201,7 @@ pub fn plan(sys: &Sys, system: &System, held: &[String], erased: &[String]) -> R
             if b.kind == Kind::Dm {
                 let counts = open.get_or_insert_with(|| dm_open_counts(sys));
                 if let (Some(counts), Some(n)) = (counts.as_ref(), b.dm_name.as_ref()) {
-                    let pools = system.pools.iter().filter(|p| p.devices.contains(&b.name)).count();
+                    let pools = system.pools.iter().filter(|p| p.devices.iter().any(|d| on_b(d))).count();
                     if let Some((_, c)) = counts.iter().find(|(x, _)| x == n) {
                         if *c as usize > b.holders.len() + pools {
                             why.push(format!("{d} is open (open count {c}, of which what's stacked on it accounts for {})", b.holders.len() + pools));

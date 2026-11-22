@@ -614,15 +614,21 @@ fn partition_runs(layout: &Layout, opts: &Options, system: &System, sys: &Sys, m
 /// stage's), or one of the layout's pools imported there (assemble's).
 /// Neither let go of nor refused (layload.md, "Safety", rule 4).
 fn loads_own(sys: &Sys, system: &System, opts: &Options, pools: &[String], disk: &str) -> bool {
+    // Bug: under mdev (Alpine), /dev/mapper/<dm_name> is a standalone block node
+    // rather than a symlink to /dev/dm-N, while `stack` stores kernel names
+    // (dm-N) and btrfs mounts report anonymous 0:N devnos. loads_own missed
+    // active mounts and ZFS-on-LUKS pools under --target, allowing --erase to
+    // wipe open target stacks without requiring `--only close` first.
     let stack = super::release::stack(&system.devs, disk);
-    let under = |t: &str| t == opts.target || t.starts_with(&format!("{}/", opts.target));
+    let in_stack = |x: &str| stack.iter().any(|n| n == x || system.devs.iter().any(|b| b.name == *n && b.dm_name.as_deref() == Some(x)));
+    let under = |t: &str| t == opts.target || t.starts_with(&format!("{}/", opts.target.trim_end_matches('/')));
     let devno = |n: &str| system.devs.iter().find(|b| b.name == n).map(|b| b.devno.clone());
     let mounted = system
         .mounts
         .iter()
         .filter(|m| under(&m.target))
-        .any(|m| stack.iter().any(|n| devno(n).as_deref() == Some(m.devno.as_str()) || resolve_name(sys, &m.source) == *n));
-    mounted || system.pools.iter().any(|p| p.is_ours(pools, &opts.target) && p.devices.iter().any(|d| stack.contains(d)))
+        .any(|m| stack.iter().any(|n| devno(n).as_deref() == Some(m.devno.as_str())) || in_stack(&resolve_name(sys, &m.source)));
+    mounted || system.pools.iter().any(|p| p.is_ours(pools, &opts.target) && p.devices.iter().any(|d| in_stack(d)))
 }
 
 /// What holds the targets named with --erase, let go of at the start of the

@@ -44,6 +44,11 @@ here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 # shellcheck disable=SC1091
 . "$here/bs1.conf"
 keys=$here/keys
+# Slackware's service scripts, and the trees on this drive it is installed
+# from (slk_install, below).
+RC_D=/etc/rc.d
+SLK_CACHE=$here/../slackware-cache
+SLK_PKGS=/var/lib/pkgtools/packages
 
 # This testbed never sleeps.  GNOME's idle auto-suspend (15 min after the
 # last input, at GDM too) suspended the Thinkpad during a phase 1, and the
@@ -119,12 +124,24 @@ done
 
 distro=$(. /etc/os-release; echo "${ID:-}")
 
-init=$(cat /proc/1/comm)
-case $init in
-    systemd | dinit | runit) ;;
-    s6-svscan) init=s6 ;;
-    *) if command -v rc-service >/dev/null; then init=openrc; else init=sysv; fi ;;
-esac
+# init_system COMM: the init system, by PID 1's name and the distro.
+# Slackware's PID 1 is sysvinit's, but its services aren't in /etc/init.d
+# (a link to an empty rc.d/init.d): rc.M, rc.inet2 and the rest start each
+# /etc/rc.d/rc.NAME that is executable, and there is no update-rc.d or
+# service.
+init_system() {
+    case $1 in
+    systemd | dinit | runit) echo "$1" ;;
+    s6-svscan) echo s6 ;;
+    *)
+        if [[ $distro == slackware ]]; then echo rc.d
+        elif command -v rc-service >/dev/null; then echo openrc
+        else echo sysv
+        fi
+        ;;
+    esac
+}
+init=$(init_system "$(cat /proc/1/comm)")
 echo "== $distro, under $init"
 echo "== sleep: never, on this testbed"
 no_sleep
@@ -132,7 +149,7 @@ no_sleep
 # Artix packages each service's init script apart, per init system.
 with_script() { if [[ $distro == artix ]]; then echo "$1 $1-$init"; else echo "$1"; fi; }
 
-pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS CHIMERA GENTOO SOLUS, each one or more names
+pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS CHIMERA GENTOO SOLUS SLACKWARE, each one or more names
     # An ostree system's /usr is its image's, read-only: nothing is installed
     # here.  Everything this installs is something BackShot1 needs, so it
     # stops and names it (Fedora's names: Bazzite, Silverblue and Kinoite
@@ -150,6 +167,8 @@ pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS CH
     # shellcheck disable=SC2086
     if [[ $distro == gentoo ]]; then emerge --ask=n --getbinpkg --noreplace $9
     elif [[ $distro == solus ]]; then eopkg_add ${10}
+    # Slackware by os-release too: it ships rpm, as a tool.
+    elif [[ $distro == slackware ]]; then slk_install ${11}
     elif command -v apt-get >/dev/null; then
         export DEBIAN_FRONTEND=noninteractive
         apt-get install -y $1 || { apt-get update && apt-get install -y $1; }
@@ -216,6 +235,84 @@ solus_qol() {
     echo "qol-assist migrate ran; nothing is pending for the next boot"
 }
 
+# Slackware: installpkg, by name, from the tree on this backup drive that this
+# system was installed from (slackware-bootstrap.sh's CACHE_DIR, SLK_CACHE:
+# slackware64-15.0, or a pin of -current, current-DATE), never slackpkg.
+# slackpkg's mirror is live slackware64-current (or 15.0's patches), and one
+# package from there would unpin a system installed from a pin: every
+# install and restore test of the -current Thinkpad runs on the pinned tree
+# (README.md, "The pin").  The tree is the one whose packages are the ones
+# installed here: each installed package it has (series of slackware64/ only,
+# not patches/, extra/, pasture/ or testing/) must be at its version, arch
+# and build, so a system that took any package from elsewhere (an upgrade
+# from the live mirror, 15.0's patches) matches no tree, and adopt stops and
+# names it.  Each file is held to the tree's CHECKSUMS.md5 (slackware-pin.sh
+# and slackware-bootstrap.sh checked the tree's signatures when they fetched
+# it).  installpkg resolves no dependencies, so each name list below has
+# them.  A full install (series a, ap, d, l and n, as slackware-bootstrap.sh
+# makes it) has everything BackShot1 needs, so this runs only on a smaller
+# one.
+slk_tree() {
+    local t why
+    for t in "$SLK_CACHE"/*/; do
+        t=${t%/}
+        [[ -s $t/CHECKSUMS.md5 ]] || continue
+        if why=$(slk_mismatch "$t"); then
+            echo "$t"
+            return 0
+        fi
+        echo "bs1-adopt: not $t: $why" >&2
+    done
+    echo "bs1-adopt: no tree in $SLK_CACHE has this system's packages" >&2
+    return 1
+}
+# slk_mismatch TREE: true if every installed package TREE has is at TREE's
+# version, arch and build; else says the first that isn't, and false.
+slk_mismatch() {
+    (cd "$SLK_PKGS" && printf '%s\n' *) | awk -v sums="$1/CHECKSUMS.md5" '
+        function name(p) { sub(/-[^-]*-[^-]*-[^-]*$/, "", p); return p }
+        BEGIN {
+            while ((getline l < sums) > 0) {
+                k = split(l, f, " ")
+                p = f[k]
+                if (p !~ /^\.\/slackware64\/[^\/]+\/[^\/]+\.t[gxlb]z$/) continue
+                sub(/.*\//, "", p)
+                sub(/\.t[gxlb]z$/, "", p)
+                tree[name(p)] = p
+                any = 1
+            }
+            if (!any) { print "its CHECKSUMS.md5 lists no packages"; bad = 1; exit 1 }
+        }
+        name($0) in tree {
+            same++
+            if (tree[name($0)] != $0) { print "this system has " $0 ", the tree " tree[name($0)]; bad = 1; exit 1 }
+        }
+        END {
+            if (bad) exit 1
+            if (!same) { print "none of its packages is installed here"; exit 1 }
+        }'
+}
+slk_install() {     # slk_install NAME...: those not installed, from the tree
+    local tree n line sum path f missing=()
+    for n in "$@"; do
+        (cd "$SLK_PKGS" && printf '%s\n' *) | awk -v n="$n" '{ p = $0; sub(/-[^-]*-[^-]*-[^-]*$/, "", p) } p == n { f = 1 } END { exit !f }' ||
+            missing+=("$n")
+    done
+    [[ ${#missing[@]} -gt 0 ]] || return 0
+    tree=$(slk_tree) || { echo "bs1-adopt: install ${missing[*]} by hand (installpkg, from the tree this system came from; not slackpkg, if it is a pin)" >&2; return 1; }
+    echo "bs1-adopt: installing ${missing[*]} from $tree"
+    for n in "${missing[@]}"; do
+        line=$(awk -v n="$n" '{ p = $NF; sub(/.*\//, "", p); sub(/-[^-]*-[^-]*-[^-]*\.t[gxlb]z$/, "", p) }
+            p == n && $NF ~ /^\.\/slackware64\/[^\/]+\/[^\/]+\.t[gxlb]z$/ { print $1, $NF; exit }' "$tree/CHECKSUMS.md5")
+        [[ -n $line ]] || { echo "bs1-adopt: $tree has no package $n" >&2; return 1; }
+        read -r sum path <<<"$line"
+        f=$tree/${path#./}
+        [[ -f $f ]] || { echo "bs1-adopt: $tree lacks $path (a series it didn't fetch?)" >&2; return 1; }
+        [[ $(md5sum <"$f" | awk '{ print $1 }') == "$sum" ]] || { echo "bs1-adopt: $f doesn't match $tree/CHECKSUMS.md5" >&2; return 1; }
+        installpkg "$f" || return 1
+    done
+}
+
 start_runit() {     # start_runit NAME: a service just linked in takes runsvdir a few seconds to notice
     local dir=/etc/sv live=/var/service i
     if [[ -d /etc/runit/sv ]]; then dir=/etc/runit/sv live=/run/runit/service; fi   # Artix
@@ -278,6 +375,15 @@ start_service() {   # start_service NAME...: the first name this system knows
                 [[ $(dinit_pid "$s") == "$pid" ]] && return 0
             done
             ;;
+        rc.d)
+            # Executable, so that rc.M (rc.inet2, for sshd) starts it at boot.
+            # rc.sshd restart stops only the listener, so the sessions stay,
+            # and fails when none runs: then start.
+            [[ -e $RC_D/rc.$s ]] || continue
+            chmod 755 "$RC_D/rc.$s"
+            "$RC_D/rc.$s" restart || "$RC_D/rc.$s" start || continue
+            return 0
+            ;;
         s6)
             [[ -d /etc/s6/sv/$s-srv ]] || continue
             s6 repository sync
@@ -300,15 +406,40 @@ set_hostname() {
         hostnamectl set-hostname "$SOURCE_HOST"
         return
     fi
+    if [[ $distro == slackware ]]; then
+        slk_hostname
+        return
+    fi
     echo "$SOURCE_HOST" >/etc/hostname
     echo "$SOURCE_HOST" >/proc/sys/kernel/hostname
     # OpenRC's own place for it, on Artix.
     if [[ -f /etc/conf.d/hostname ]]; then sed -i "s/^hostname=.*/hostname=\"$SOURCE_HOST\"/" /etc/conf.d/hostname; fi
 }
 
+# Slackware's rc.M sets the host name from /etc/HOSTNAME, a fully qualified
+# one (thinkpad.localdomain), and that is what the kernel then has;
+# bs1-common's this_host reads it up to the first dot.  The domain stays
+# what it was (setup's netconfig, or slackware-bootstrap.sh's localdomain),
+# and the name goes into /etc/hosts if it isn't there, as netconfig puts it.
+# /etc/hostname is a link to HOSTNAME on -current; a file of its own gets
+# the short name, as elsewhere.
+slk_hostname() {
+    local old dom=localdomain fqdn
+    old=$(head -n 1 /etc/HOSTNAME 2>/dev/null) || old=
+    [[ $old != *.* ]] || dom=${old#*.}
+    fqdn=$SOURCE_HOST.$dom
+    [[ $old == "$fqdn" ]] || echo "$fqdn" >/etc/HOSTNAME
+    [[ -L /etc/hostname || $(cat /etc/hostname 2>/dev/null) == "$SOURCE_HOST" ]] || echo "$SOURCE_HOST" >/etc/hostname
+    echo "$fqdn" >/proc/sys/kernel/hostname
+    if ! awk -v n="$fqdn" '!/^[[:space:]]*#/ { for (i = 2; i <= NF; i++) if ($i == n) f = 1 } END { exit !f }' /etc/hosts 2>/dev/null; then
+        printf '127.0.0.1\t\t%s %s\n' "$fqdn" "$SOURCE_HOST" >>/etc/hosts
+    fi
+    echo "/etc/HOSTNAME: $fqdn"
+}
+
 install_tools() {
     command -v sshd >/dev/null || [[ -x /usr/sbin/sshd ]] ||
-        pkg_install openssh-server openssh-server openssh "$(with_script openssh)" openssh openssh openssh-server openssh net-misc/openssh openssh-server
+        pkg_install openssh-server openssh-server openssh "$(with_script openssh)" openssh openssh openssh-server openssh net-misc/openssh openssh-server openssh
     # BusyBox's df, umount and blkid lack options the scripts use, and it has no
     # findmnt, lsblk or sfdisk.  Alpine's names; Chimera has no BusyBox, and
     # an apk on Gentoo is a tool, not its package manager.
@@ -321,9 +452,9 @@ install_tools() {
         grep -qx xfs /etc/modules 2>/dev/null || echo xfs >>/etc/modules
     fi
     # Chimera's python package gives the python3 command; it has no python3 package.
-    command -v python3 >/dev/null || pkg_install python3 python3 python3 python python3 python3 python python dev-lang/python python3
+    command -v python3 >/dev/null || pkg_install python3 python3 python3 python python3 python3 python python dev-lang/python python3 python3
     if ! command -v findmnt >/dev/null || ! command -v lsblk >/dev/null; then
-        pkg_install util-linux util-linux util-linux util-linux util-linux-misc util-linux util-linux util-linux sys-apps/util-linux util-linux
+        pkg_install util-linux util-linux util-linux util-linux util-linux-misc util-linux util-linux util-linux sys-apps/util-linux util-linux util-linux
     fi
     # bs1-to-stick's BootNext needs it, and a Chimera install with systemd-boot
     # (bootctl) can lack it, as can a Gentoo one (it is no part of @system).
@@ -339,6 +470,7 @@ install_tools() {
             gentoo) emerge --ask=n --getbinpkg --noreplace sys-boot/efibootmgr ;;
             pika) DEBIAN_FRONTEND=noninteractive apt-get install -y efibootmgr ;;
             solus) eopkg_add efibootmgr ;;
+            slackware) slk_install efibootmgr efivar popt ;;
         esac
     fi
     # Solus 4.9 ships without diffutils (no cmp or diff; comm is coreutils').
@@ -365,20 +497,43 @@ allow_root_key_login() {
 }
 
 start_mdns() {
-    command -v avahi-daemon >/dev/null ||
-        pkg_install avahi-daemon avahi avahi "$(with_script avahi)" "avahi dbus" "avahi dbus" avahi avahi "net-dns/avahi sys-apps/dbus" avahi
+    command -v avahi-daemon >/dev/null || [[ -x /usr/sbin/avahi-daemon ]] ||
+        pkg_install avahi-daemon avahi avahi "$(with_script avahi)" "avahi dbus" "avahi dbus" avahi avahi "net-dns/avahi sys-apps/dbus" avahi \
+            "avahi libdaemon nss-mdns dbus"
+    [[ $distro != slackware ]] || slk_mdns
     if [[ $init == s6 ]]; then
         s6 repository sync
         s6 set enable dbus
     elif ! running 'dbus-(daemon|broker.*)'; then
-        start_service dbus
+        # Slackware's is rc.messagebus.
+        start_service dbus messagebus
     fi
     # A running dbus-daemon needn't read the policy avahi's install just added
     # (Chimera's doesn't), and without it avahi-daemon may not own its name.
     if running 'dbus-(daemon|broker.*)' && command -v dbus-send >/dev/null; then
         dbus-send --system --print-reply --dest=org.freedesktop.DBus / org.freedesktop.DBus.ReloadConfig >/dev/null || true
     fi
-    start_service avahi-daemon
+    start_service avahi-daemon avahidaemon
+}
+
+# What -current's avahi and nss-mdns need besides (slackware-bootstrap.sh
+# checks the same of a fresh install): the avahi user and group (in
+# aaa_base's /etc/passwd since avahi joined series l, UID and GID 214, as
+# Slackware's UID list has them), D-Bus started at boot (rc.M starts
+# rc.messagebus, then rc.avahidaemon, if executable), and nsswitch.conf
+# asking mdns4_minimal, as nss-mdns ships it.  15.0 has no avahi.
+slk_mdns() {
+    if ! grep -q '^avahi:' /etc/group; then groupadd -g 214 avahi; fi
+    if ! grep -q '^avahi:' /etc/passwd; then useradd -u 214 -g avahi -d /dev/null -s /bin/false -c 'User for avahi' avahi; fi
+    [[ ! -e $RC_D/rc.messagebus ]] || chmod 755 "$RC_D/rc.messagebus"
+    # Written back into the file itself, as allow_root_key_login does.
+    local ns=/etc/nsswitch.conf
+    if [[ -e $ns ]] && ! grep -qE '^hosts:.*[[:space:]]mdns4_minimal([[:space:]]|$)' "$ns"; then
+        awk '/^hosts:/ { $0 = "hosts:          files mdns4_minimal [NOTFOUND=return] dns mdns4" } { print }' "$ns" >"$ns.bs1"
+        cat "$ns.bs1" >"$ns"
+        rm -f "$ns.bs1"
+        echo "nsswitch.conf: $(grep '^hosts:' "$ns")"
+    fi
 }
 
 # An active firewall must let ssh and the mDNS answers through: EndeavourOS's

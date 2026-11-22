@@ -73,8 +73,22 @@ check() {       # check WHAT COMMAND...
 }
 trap drop_tree EXIT
 
+# Slackware's sshd starts (rc.inet2) before rc.M is through, and rc.M goes
+# on to write files the manifest compares: the boot is finished when no
+# rc.M runs.  Its dots escaped, so that grep's own command line, with the
+# pattern in it, doesn't match.
+rc_m_running() { grep -qsE -e "${RC_M//./\\.}" /proc/[0-9]*/cmdline; }
+RC_M=/etc/rc.d/rc.M
 system_settled() {
     local s= i
+    if ! command -v systemctl >/dev/null && [[ -e $RC_M ]]; then
+        for i in $(seq 60); do
+            rc_m_running || { echo rc.M-finished; return 0; }
+            sleep 5
+        done
+        echo unknown
+        return 1
+    fi
     command -v systemctl >/dev/null || { echo no-systemd; return 0; }
     for i in $(seq 60); do
         s=$(systemctl is-system-running 2>/dev/null)

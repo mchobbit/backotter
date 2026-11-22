@@ -40,8 +40,10 @@ must() { run "$@" || die "this failed: $*"; }
 
 [[ $EUID -eq 0 ]] || { echo "$0: run it as root" >&2; exit 2; }
 
-# Artix has no hostname command.
-this_host() { cat /proc/sys/kernel/hostname; }
+# Artix has no hostname command.  Up to the first dot: Slackware's rc.M sets
+# the kernel's host name to /etc/HOSTNAME's, fully qualified
+# (thinkpad.localdomain).
+this_host() { local h; h=$(cat /proc/sys/kernel/hostname); printf '%s\n' "${h%%.*}"; }
 
 # The one disk with INTERNAL_SERIAL, by name.
 internal_disk() {
@@ -341,6 +343,9 @@ package_list() {
     # Solus's eopkg: its database's directories, NAME-VERSION-RELEASE, one a
     # line (docs/design/solus.md, What S1 found), as bko-holt reads them.
     elif [[ -d /var/lib/eopkg/package ]]; then (cd /var/lib/eopkg/package && printf '%s\n' *)
+    # Slackware's pkgtools: one file a package, NAME-VERSION-ARCH-BUILD.  Before
+    # rpm, which Slackware ships as a tool, with an empty database.
+    elif [[ -d /var/lib/pkgtools/packages ]]; then (cd /var/lib/pkgtools/packages && printf '%s\n' *)
     elif command -v dpkg-query >/dev/null; then dpkg-query -W -f '${Package}\t${Version}\n'
     elif command -v rpm >/dev/null; then rpm -qa
     elif command -v pacman >/dev/null; then pacman -Q

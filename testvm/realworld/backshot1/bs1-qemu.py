@@ -475,7 +475,9 @@ def main():
             vm.stop()
             sys.exit("the source guest, its key file out, never answered with the passphrase typed")
     _, host = root.run("cat /proc/sys/kernel/hostname")
-    host = host.strip().splitlines()[-1]
+    # Up to the first dot, as bs1-common's this_host reads it: Slackware's
+    # rc.M gives the kernel /etc/HOSTNAME's fully qualified name.
+    host = host.strip().splitlines()[-1].split(".")[0]
     rc, _ = root.show(f"{mount_drive} && mkdir -p /mnt/bs1-backup/backshot1/bin /mnt/bs1-backup/backshot1/runs; rc=$?; . /etc/os-release; echo $PRETTY_NAME; exit $rc")
     check(rc == 0, "the source guest mounts the backup drive")
     if fails:

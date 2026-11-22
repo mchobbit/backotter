@@ -246,11 +246,16 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
                 }
             }
         }
-        // A slice or disklabel partition of this disk (ld1a, sd1a, vtbd0s2a)
-        // is it too.  NetBSD's wedges (dkN) aren't named after their disk,
-        // so a mount of one isn't tied to it here: a NetBSD stick is known
-        // by its config partition (boot_medium, below).
-        let mine = |n: &str| n == d.name || found.iter().any(|f| f.name == n) || (n.starts_with(&d.name) && n[d.name.len()..].starts_with(|c: char| !c.is_ascii_digit()));
+        // Bug: NetBSD GPT partitions attach as dkN wedges not prefixed with the
+        // parent disk name, and scan() never ran dkctl listwedges. Consequently
+        // mine() missed every GPT wedge, leaving holds_root false and in_use
+        // empty on NetBSD disks with mounted GPT filesystems, ZFS vdevs, or swap.
+        let wedges: Vec<String> = if fam == Family::NetBsd {
+            super::labelled::parse_wedges(&sys.run("dkctl", &[&d.name, "listwedges"]).unwrap_or_default()).into_iter().map(|(dk, _, _)| dk).collect()
+        } else {
+            Vec::new()
+        };
+        let mine = |n: &str| n == d.name || found.iter().any(|f| f.name == n) || wedges.iter().any(|w| w == n) || (n.starts_with(&d.name) && n[d.name.len()..].starts_with(|c: char| !c.is_ascii_digit()));
         let mut in_use = Vec::new();
         let mut holds_root = false;
         for m in mount_list.iter().map(|m| {

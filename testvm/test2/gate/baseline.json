@@ -3,7 +3,43 @@
  "notes": "GateTest2's classed exceptions (t2lib/gate.py). fork.NAME: fork-only failures of testvm/audit/fork-tests.sh's NAME.report that the fork layer gives as a LIMIT with its reason instead of a FAIL (suite: the report's SUITE, test: its TEST; build targets: suite #build, #cross or #vet and test the target). bin.version-agree: a binary of the set that comes from another commit than the rest of its tool's, a LIMIT for gate:bin:version's agree only while it is that very binary (sha256). Never GLIBC, NSS or ABI failures. Classing a new one means adding it here, with its reason and where it was seen.",
  "fork": {
   "restic": [],
-  "rustic_core": [],
+  "rustic_core": [
+   {
+    "suite": "src/lib.rs [rustic_core]",
+    "test": "backend::local_destination::tests::hard_link_keeps_the_file_when_a_symlinked_directory_makes_both_paths_one",
+    "why": "not missing, renamed: the fork's local_destination.rs has a Linux-only mod tests of its own, so upstream's mod tests (#590, #634) is mod path_tests there (since 7400e82); backend::local_destination::path_tests::hard_link_keeps_the_file_when_a_symlinked_directory_makes_both_paths_one runs and passes. Stock 0.13.0 had no such tests, so it shows only since stock 0.14.0",
+    "ref": "testvm/audit/fork-tests.sh rustic_core.report, 2026-11-22 (the rel13 proof)",
+    "seen": ["rustic_core f0d01fd (0.14.0+backotter.1) vs stock 0.14.0 bf1de63: fork-tests.sh on cinqcent and GateTest2 in t2s-20261122T0927-ca64 (2026-11-22)"]
+   },
+   {
+    "suite": "src/lib.rs [rustic_core]",
+    "test": "backend::local_destination::tests::hard_link_leaves_a_directory_in_place",
+    "why": "not missing, renamed: the fork's local_destination.rs has a Linux-only mod tests of its own, so upstream's mod tests (#590, #634) is mod path_tests there (since 7400e82); backend::local_destination::path_tests::hard_link_leaves_a_directory_in_place runs and passes. Stock 0.13.0 had no such tests, so it shows only since stock 0.14.0",
+    "ref": "testvm/audit/fork-tests.sh rustic_core.report, 2026-11-22 (the rel13 proof)",
+    "seen": ["rustic_core f0d01fd (0.14.0+backotter.1) vs stock 0.14.0 bf1de63: fork-tests.sh on cinqcent and GateTest2 in t2s-20261122T0927-ca64 (2026-11-22)"]
+   },
+   {
+    "suite": "src/lib.rs [rustic_core]",
+    "test": "backend::local_destination::tests::hard_link_replaces_a_symlink_to_the_canonical_file",
+    "why": "not missing, renamed: the fork's local_destination.rs has a Linux-only mod tests of its own, so upstream's mod tests (#590, #634) is mod path_tests there (since 7400e82); backend::local_destination::path_tests::hard_link_replaces_a_symlink_to_the_canonical_file runs and passes. Stock 0.13.0 had no such tests, so it shows only since stock 0.14.0",
+    "ref": "testvm/audit/fork-tests.sh rustic_core.report, 2026-11-22 (the rel13 proof)",
+    "seen": ["rustic_core f0d01fd (0.14.0+backotter.1) vs stock 0.14.0 bf1de63: fork-tests.sh on cinqcent and GateTest2 in t2s-20261122T0927-ca64 (2026-11-22)"]
+   },
+   {
+    "suite": "src/lib.rs [rustic_core]",
+    "test": "backend::local_destination::tests::test_operations_reject_traversal",
+    "why": "not missing, renamed: the fork's local_destination.rs has a Linux-only mod tests of its own, so upstream's mod tests (#590, #634) is mod path_tests there (since 7400e82); backend::local_destination::path_tests::test_operations_reject_traversal runs and passes. Stock 0.13.0 had no such tests, so it shows only since stock 0.14.0",
+    "ref": "testvm/audit/fork-tests.sh rustic_core.report, 2026-11-22 (the rel13 proof)",
+    "seen": ["rustic_core f0d01fd (0.14.0+backotter.1) vs stock 0.14.0 bf1de63: fork-tests.sh on cinqcent and GateTest2 in t2s-20261122T0927-ca64 (2026-11-22)"]
+   },
+   {
+    "suite": "src/lib.rs [rustic_core]",
+    "test": "backend::local_destination::tests::test_path_sanitization",
+    "why": "not missing, renamed: the fork's local_destination.rs has a Linux-only mod tests of its own, so upstream's mod tests (#590, #634) is mod path_tests there (since 7400e82); backend::local_destination::path_tests::test_path_sanitization runs and passes. Stock 0.13.0 had no such tests, so it shows only since stock 0.14.0",
+    "ref": "testvm/audit/fork-tests.sh rustic_core.report, 2026-11-22 (the rel13 proof)",
+    "seen": ["rustic_core f0d01fd (0.14.0+backotter.1) vs stock 0.14.0 bf1de63: fork-tests.sh on cinqcent and GateTest2 in t2s-20261122T0927-ca64 (2026-11-22)"]
+   }
+  ],
   "rustic": [
    {
     "suite": "tests/backup_restore.rs [backup_restore]",

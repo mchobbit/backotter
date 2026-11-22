@@ -547,6 +547,30 @@ raw key there, then at boot sets rpool's keylocation back, runs dracut,
 `grub-install --bootloader-id=ubuntu --no-nvram` and `update-grub`, and
 makes the `Ubuntu` entry for `\EFI\ubuntu\shimx64.efi`.  The redaction
 named `dm_crypt-0` `label-1` (it is also the swap's label).
+bs1-slackware-current is the second dump of the real Thinkpad (the Lenovo
+A100), on Slackware64-current pinned at current-20261121
+(docs/design/slackware.md, "Slackware -current"): `bko-holt dump
+--only-disk nvme0n1` by the bko-holt built from this tree for -current
+(0.2.6), run by hand over SSH on 2026-11-22, its output piped straight into
+a private directory on cinqcent (never on the Mac); GPT with a 512 MiB ESP
+at /boot/efi and ext4 / on nvme0n1, fstab and elilo.conf by device name,
+kernel-generic 7.3.5 with geninitrd's `/boot/initrd-7.3.5.img`, ELILO in
+EFI/Slackware and EFI/BOOT.  Its provenance.tsv was written by hand: host
+`realworld`, run `slk-current`, result `dump`, generation and image `-`.  It
+is in the corpus before it is any HoltTest2 source, so golden_plans.rs
+notes it.  Its golden plan lists four Problems, Decision 5's device names
+against the corpus's sdq (elilo.conf's root= twice, fstab's / and
+/boot/efi), as slackware15's do; at boot it runs the command geninitrd's
+setup.01.mkinitrd would (mkinitrd_command_generator.sh's, `-L -R -o
+/boot/initrd-7.3.5.img`) in the chroot, copies the image over both ESP
+`initrd.gz` copies, and makes the `UEFI OS` and `Slackware` NVRAM entries.
+Building it found a redaction gap, fixed in redact.rs before it entered the
+tree: the A100's PXE entries name the onboard NIC's MAC only in their
+device path's MAC() node (their descriptions have none), so redact.rs
+never learned it; it now reads the MAC() nodes of every
+`load_option_hex`.  bs1-ubuntu2610-zfsenc, from the same machine, was built
+before the fix and still has that MAC in its two PXE entries'
+`load_option_hex` (its raw dump is gone, so it wasn't rebuilt).
 ubuntu24-uefi (`make-ubuntu.sh --uefi`, 24.04.5: Subiquity's default, GPT
 with an ESP at /boot/efi and one ext4 /, UEFI under Secure Boot) and
 ubuntu24-luks (`--uefi --luks`: ubuntu26-luks's guided LVM on LUKS2 on
@@ -841,6 +865,17 @@ private directory on chopin (/bkoscratch, the warm holt build at
 the raw dumps' identifiers, cinqcent with 115 of its 121, the Mac with the
 git e-mail, 0 findings (their plans scanned too), the same sha256 from both
 builds (src.json `4650fa0f...` and `4adb565c...`, index.tsv `5025f770...`).
+So did bs1-slackware-current (2026-11-22), built twice from a private
+directory on cinqcent (/bkoscratch/holt-warm/slk-current-raw, deleted
+after; the warm holt build beside it at /bkoscratch/holt-warm/slk-current):
+cinqcent with 115 of its 121 strings and the raw dump's identifiers, chopin
+with 112 of its 117, the Mac with the git e-mail, 0 findings (its plan
+scanned too), and a check of the src.json for the machine's disk serial,
+NIC MAC, machine-id, DMI UUID, partition UUIDs and host name: none; the same
+sha256 from both builds (src.json `ea6d6111...`).  The first two builds,
+before redact.rs's MAC() fix, had the NIC's MAC in two load options, which
+none of the scans flagged (no host string names it, and the raw dump's
+identifiers didn't either); they never left cinqcent.
 
 ## The golden plans
 

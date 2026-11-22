@@ -1,0 +1,1491 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.6"
+  },
+  "generated": "2026-11-22T08:19:11Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host1",
+    "machine_id": "bd000000000040008000000000000001",
+    "dmi": {
+      "sys_vendor": "LENOVO",
+      "product_name": "F0J6006UFR",
+      "product_version": "Lenovo A100",
+      "board_vendor": "LENOVO",
+      "board_name": "3790",
+      "bios_vendor": "LENOVO",
+      "bios_version": "O6MKT0DA",
+      "bios_date": "12/16/2024",
+      "product_uuid": "bc000000-0000-4000-8000-000000000001",
+      "chassis_type": "13"
+    },
+    "virtualization": null
+  },
+  "os": {
+    "id": "slackware",
+    "version_id": "16.0",
+    "version_codename": "current",
+    "pretty_name": "Slackware 15.0 x86_64 (post 15.0 -current)",
+    "debian_version": null,
+    "kernel_release": "7.3.5",
+    "kernel_version": "#1 SMP PREEMPT_DYNAMIC Wed Nov 18 07:04:33 CST 2026",
+    "architecture": "x86_64",
+    "machine": "x86_64"
+  },
+  "firmware": {
+    "mode": "uefi",
+    "platform_size": 64,
+    "efi_arch": "x64",
+    "secure_boot": false,
+    "setup_mode": false,
+    "efivars_readable": true
+  },
+  "storage": {
+    "topology": {
+      "nvme0n1 (disk, 477 GiB, gpt)": {
+        "nvme0n1p1 (partition, 512 MiB) vfat \"EFI\" on /boot/efi": {},
+        "nvme0n1p2 (partition, 476 GiB) ext4 on /": {}
+      }
+    },
+    "disks": [
+      {
+        "name": "nvme0n1",
+        "path": "/dev/nvme0n1",
+        "kind": "disk",
+        "devno": "259:0",
+        "size_bytes": 512110190592,
+        "size": "477 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": "SAMSUNG MZVL8512HFLU-00BLL",
+        "vendor": null,
+        "serial": "SERIAL1",
+        "wwid": "serial2",
+        "firmware_revision": "4L2QKXF7",
+        "transport": "nvme",
+        "rotational": false,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/17",
+          "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1",
+          "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1_1",
+          "/dev/disk/by-id/nvme-serial2",
+          "/dev/disk/by-path/pci-0000:03:00.0-nvme-1"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "bc000000-0000-4000-8000-000000000002",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 2048,
+          "last_usable_lba": 1000215182,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 1000215215,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 1000215215,
+                "start_bytes": 512,
+                "size_bytes": 512110190080,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "nvme0n1p1",
+            "path": "/dev/nvme0n1p1",
+            "devno": "259:1",
+            "number": 1,
+            "start_lba": 2048,
+            "end_lba": 1050623,
+            "sectors": 1048576,
+            "start_bytes": 1048576,
+            "size_bytes": 536870912,
+            "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "type_name": "EFI System",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/17-part1",
+              "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1-part1",
+              "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1_1-part1",
+              "/dev/disk/by-id/nvme-serial2-part1",
+              "/dev/disk/by-label/EFI",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-label/EFI",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-partnum/1",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-partuuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-uuid/BC00-0002",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part1",
+              "/dev/disk/by-uuid/BC00-0002"
+            ],
+            "holders": [],
+            "content": {
+              "type": "vfat",
+              "usage": "filesystem",
+              "uuid": "BC00-0002",
+              "label": "EFI",
+              "version": "FAT32",
+              "fat_bits": 32,
+              "bytes_per_sector": 512,
+              "sectors_per_cluster": 8,
+              "cluster_size": 4096,
+              "reserved_sectors": 32,
+              "fats": 2,
+              "fat_sectors": 1024,
+              "total_sectors": 1048576,
+              "size_bytes": 536870912,
+              "clusters": 130812,
+              "hidden_sectors": 2048,
+              "media": "0xf8",
+              "oem_name": "mkfs.fat",
+              "root_cluster": 2,
+              "fsinfo_sector": 1,
+              "backup_boot_sector": 6,
+              "boot_sector_label": "EFI"
+            },
+            "mounted_at": ["/boot/efi"]
+          },
+          {
+            "name": "nvme0n1p2",
+            "path": "/dev/nvme0n1p2",
+            "devno": "259:2",
+            "number": 2,
+            "start_lba": 1050624,
+            "end_lba": 1000214527,
+            "sectors": 999163904,
+            "start_bytes": 537919488,
+            "size_bytes": 511571918848,
+            "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+            "type_name": "Linux filesystem",
+            "uuid": "bc000000-0000-4000-8000-000000000004",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/17-part2",
+              "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1-part2",
+              "/dev/disk/by-id/nvme-SAMSUNG_MZVL8512HFLU-00BLL_SERIAL1_1-part2",
+              "/dev/disk/by-id/nvme-serial2-part2",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000004",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-partnum/2",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-partuuid/bc000000-0000-4000-8000-000000000004",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part/by-uuid/bc000000-0000-4000-8000-000000000005",
+              "/dev/disk/by-path/pci-0000:03:00.0-nvme-1-part2",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000005"
+            ],
+            "holders": [],
+            "content": {
+              "type": "ext4",
+              "usage": "filesystem",
+              "uuid": "bc000000-0000-4000-8000-000000000005",
+              "label": null,
+              "version": "1.0",
+              "block_size": 4096,
+              "blocks": 124895488,
+              "size_bytes": 511571918848,
+              "free_blocks": 118545209,
+              "reserved_blocks": 6244774,
+              "inodes": 31227904,
+              "free_inodes": 30856346,
+              "inode_size": 256,
+              "inodes_per_group": 8192,
+              "blocks_per_group": 32768,
+              "first_data_block": 0,
+              "revision": 1,
+              "features": [
+                "has_journal",
+                "ext_attr",
+                "resize_inode",
+                "dir_index",
+                "orphan_file",
+                "filetype",
+                "needs_recovery",
+                "extent",
+                "flex_bg",
+                "metadata_csum_seed",
+                "sparse_super",
+                "large_file",
+                "huge_file",
+                "dir_nlink",
+                "extra_isize",
+                "metadata_csum",
+                "orphan_present"
+              ],
+              "state": "clean",
+              "has_errors": false,
+              "errors_behavior": "continue",
+              "creator_os": "Linux",
+              "reserved_gdt_blocks": 994,
+              "default_hash": "half_md4",
+              "hash_seed": "bc000000-0000-4000-8000-000000000006",
+              "mkfs_time": 1795329977,
+              "last_mounted_on": "/",
+              "flex_bg_size": 16,
+              "min_extra_isize": 32,
+              "want_extra_isize": 32,
+              "journal_inode": 8
+            },
+            "mounted_at": ["/"]
+          }
+        ],
+        "boot_code": {
+          "kind": "none",
+          "first_bytes": "00000000000000000000000000000000",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 2
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [],
+    "loop_devices": [],
+    "other_devices": [
+      {
+        "name": "zram0",
+        "path": "/dev/zram0",
+        "kind": "zram",
+        "devno": "251:0",
+        "size_bytes": 16416866304,
+        "size": "15.3 GiB",
+        "logical_sector_size": 4096,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": ["/dev/disk/by-diskseq/28", "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000007"],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "swap",
+          "usage": "other",
+          "uuid": "bc000000-0000-4000-8000-000000000007",
+          "label": null,
+          "version": "1",
+          "page_size": 4096,
+          "last_page": 4008023,
+          "size_bytes": 16416866304,
+          "bad_pages": 0
+        },
+        "mounted_at": []
+      }
+    ],
+    "lvm": {
+      "volume_groups": []
+    },
+    "zfs": {
+      "pools_from_labels": [],
+      "zpool_cache": null,
+      "tools": null
+    },
+    "btrfs": [],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "/dev/nvme0n1p2",
+        "fstype": "ext4",
+        "devno": "259:2",
+        "device": "nvme0n1p2",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw",
+        "size_bytes": 502397034496,
+        "used_bytes": 16832987136,
+        "available_bytes": 459968675840
+      },
+      {
+        "target": "/boot/efi",
+        "source": "/dev/nvme0n1p1",
+        "fstype": "vfat",
+        "devno": "259:1",
+        "device": "nvme0n1p1",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,fmask=0022,dmask=0022,codepage=437,iocharset=iso8859-1,shortname=mixed,utf8,errors=remount-ro",
+        "size_bytes": 535805952,
+        "used_bytes": 65748992,
+        "available_bytes": 470056960
+      },
+      {
+        "target": "/mnt/bs1-backup",
+        "source": "/dev/sdb1",
+        "fstype": "xfs",
+        "devno": "8:17",
+        "device": null,
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,inode64,logbufs=8,logbsize=32k,noquota",
+        "size_bytes": 511858737152,
+        "used_bytes": 184368017408,
+        "available_bytes": 327490719744
+      }
+    ],
+    "physical_root": "/",
+    "backup_sources": [
+      {
+        "path": "/",
+        "from": "/",
+        "device": "nvme0n1p2",
+        "fstype": "ext4",
+        "source": "/dev/nvme0n1p2",
+        "subvol": null
+      },
+      {
+        "path": "/boot/efi",
+        "from": "/boot/efi",
+        "device": "nvme0n1p1",
+        "fstype": "vfat",
+        "source": "/dev/nvme0n1p1",
+        "subvol": null
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/zram0",
+        "type": "partition",
+        "size_bytes": 16416862208,
+        "used_bytes": 0,
+        "priority": 100,
+        "device": "zram0"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "/dev/nvme0n1p2",
+        "file": "/",
+        "type": "ext4",
+        "options": "defaults",
+        "freq": 1,
+        "passno": 1,
+        "resolves_to": "nvme0n1p2"
+      },
+      {
+        "spec": "/dev/nvme0n1p1",
+        "file": "/boot/efi",
+        "type": "vfat",
+        "options": "defaults",
+        "freq": 1,
+        "passno": 0,
+        "resolves_to": "nvme0n1p1"
+      },
+      {
+        "spec": "/dev/fd0",
+        "file": "/mnt/floppy",
+        "type": "auto",
+        "options": "noauto,owner",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "devpts",
+        "file": "/dev/pts",
+        "type": "devpts",
+        "options": "gid=5,mode=620",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "proc",
+        "file": "/proc",
+        "type": "proc",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "tmpfs",
+        "file": "/dev/shm",
+        "type": "tmpfs",
+        "options": "nosuid,nodev,noexec",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      }
+    ],
+    "crypttab": [],
+    "mdadm_conf": {
+      "arrays": [],
+      "settings": {}
+    }
+  },
+  "boot": {
+    "loader": {
+      "name": "elilo",
+      "firmware": "uefi",
+      "via_shim": false,
+      "package": "elilo",
+      "evidence": ["firmware booted \\EFI\\Slackware\\elilo.efi", "package elilo is installed"]
+    },
+    "efi": {
+      "boot_current": "0019",
+      "boot_next": null,
+      "boot_order": [
+        "0019",
+        "001E",
+        "001D",
+        "0002",
+        "0001",
+        "000A",
+        "000F",
+        "000C",
+        "0018",
+        "0016",
+        "0000",
+        "0010",
+        "0017",
+        "0004",
+        "0006",
+        "0014",
+        "001A",
+        "0007",
+        "000B",
+        "001B",
+        "0003",
+        "000D",
+        "0009",
+        "0008",
+        "0012",
+        "0013",
+        "000E",
+        "0015",
+        "0011"
+      ],
+      "timeout_seconds": 1,
+      "entries": [
+        {
+          "number": "0000",
+          "load_option_hex": "090000008c00570069006e0064006f0077007300200042006f006f00740020004d0061006e006100670065007200000001041400000000bc0000004080000000000000087fff040004012a000100000000080000000000000020080000000000000000bc0000004080000000000000090202040446005c004500460049005c004d006900630072006f0073006f00660074005c0042006f006f0074005c0062006f006f0074006d006700660077002e0065006600690000007fff040057494e444f5753000100000088000000780000004200430044004f0042004a004500430054003d007b00390064006500610038003600320063002d0035006300640064002d0034006500370030002d0061006300630031002d006600330032006200330034003400640034003700390035007d00000000770100000010000000040000007fff0400",
+          "description": "Windows Boot Manager",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 10,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000009,0x800,0x82000)/File(\\EFI\\Microsoft\\Boot\\bootmgfw.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000009",
+            "start_lba": 2048,
+            "sectors": 532480,
+            "device": null
+          },
+          "file": "\\EFI\\Microsoft\\Boot\\bootmgfw.efi",
+          "optional_data_bytes": 136
+        },
+        {
+          "number": "0001",
+          "load_option_hex": "01000000cc0055004500460049003a0020005000580045002000490050007600340020005200650061006c00740065006b002000500043004900650020004700420045002000460061006d0069006c007900200043006f006e00740072006f006c006c0065007200000002010c00d041030a0000000001010600001c010106000000030b2500bc0000000003000000000000000000000000000000000000000000000000000000030c1b0000000000000000000000000000000000000000000000007fff040001046c00000000bc00000040800000000000000a5000580045002000490050007600340020005200650061006c00740065006b002000500043004900650020004700420045002000460061006d0069006c007900200043006f006e00740072006f006c006c006500720000007fff04000000424f",
+          "description": "UEFI: PXE IPv4 Realtek PCIe GBE Family Controller",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 4,
+          "device_path": [
+            "PciRoot(0x0)/Pci(0x1c,0x0)/Pci(0x0,0x0)/MAC()/IPv4()",
+            "VenHw(bc000000-0000-4000-8000-00000000000a)"
+          ],
+          "file": null,
+          "optional_data_bytes": 4
+        },
+        {
+          "number": "0002",
+          "load_option_hex": "01000000ed0055004500460049003a0020005000580045002000490050007600360020005200650061006c00740065006b002000500043004900650020004700420045002000460061006d0069006c007900200043006f006e00740072006f006c006c0065007200000002010c00d041030a0000000001010600001c010106000000030b2500bc0000000003000000000000000000000000000000000000000000000000000000030d3c0000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000007fff040001046c00000000bc00000040800000000000000a5000580045002000490050007600360020005200650061006c00740065006b002000500043004900650020004700420045002000460061006d0069006c007900200043006f006e00740072006f006c006c006500720000007fff04000000424f",
+          "description": "UEFI: PXE IPv6 Realtek PCIe GBE Family Controller",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 3,
+          "device_path": [
+            "PciRoot(0x0)/Pci(0x1c,0x0)/Pci(0x0,0x0)/MAC()/IPv6()",
+            "VenHw(bc000000-0000-4000-8000-00000000000a)"
+          ],
+          "file": null,
+          "optional_data_bytes": 4
+        },
+        {
+          "number": "0003",
+          "load_option_hex": "090000007a0065006c0065006d0065006e00740061007200790020004f00530020003800000001041400000000bc0000004080000000000000087fff040004012a00010000000010000000000000f738080000000000000000bc00000040800000000000000b0202040434005c004500460049005c007500620075006e00740075005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "elementary OS 8",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 20,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-00000000000b,0x1000,0x838f7)/File(\\EFI\\ubuntu\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000000b",
+            "start_lba": 4096,
+            "sectors": 538871,
+            "device": null
+          },
+          "file": "\\EFI\\ubuntu\\shimx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0004",
+          "load_option_hex": "090000007a00640065006200690061006e00000001041400000000bc0000004080000000000000087fff040004012a000100000000080000000000000000100000000000000000bc00000040800000000000000c0202040434005c004500460049005c00640065006200690061006e005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "debian",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 13,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-00000000000c,0x800,0x100000)/File(\\EFI\\debian\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000000c",
+            "start_lba": 2048,
+            "sectors": 1048576,
+            "device": null
+          },
+          "file": "\\EFI\\debian\\shimx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0005",
+          "load_option_hex": "010000005e0042004b004f002000720065007300630075006500000004012a0002000000acd71d00000000003828000000000000000000bc00000040800000000000000d0202040430005c004500460049005c0062006f006f0074005c0062006f006f0074007800360034002e0065006600690000007fff0400",
+          "description": "BKO rescue",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": null,
+          "device_path": [
+            "HD(2,GPT,bc000000-0000-4000-8000-00000000000d,0x1dd7ac,0x2838)/File(\\EFI\\boot\\bootx64.efi)"
+          ],
+          "partition": {
+            "number": 2,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000000d",
+            "start_lba": 1955756,
+            "sectors": 10296,
+            "device": null
+          },
+          "file": "\\EFI\\boot\\bootx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0006",
+          "load_option_hex": "090000007a00420061007a007a00690074006500000001041400000000bc0000004080000000000000087fff040004012a0001000000000800000000000000c0120000000000000000bc00000040800000000000000e0202040434005c004500460049005c006600650064006f00720061005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "Bazzite",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 14,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-00000000000e,0x800,0x12c000)/File(\\EFI\\fedora\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000000e",
+            "start_lba": 2048,
+            "sectors": 1228800,
+            "device": null
+          },
+          "file": "\\EFI\\fedora\\shimx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0007",
+          "load_option_hex": "0900000076004b004400450020006e0065006f006e002000540065007300740069006e0067002000450064006900740069006f006e00000001041400000000bc0000004080000000000000087fff040004012a000100000000100000000000000060090000000000000000bc00000040800000000000000f0202040430005c004500460049005c006e0065006f006e005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "KDE neon Testing Edition",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 17,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-00000000000f,0x1000,0x96000)/File(\\EFI\\neon\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000000f",
+            "start_lba": 4096,
+            "sectors": 614400,
+            "device": null
+          },
+          "file": "\\EFI\\neon\\shimx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0008",
+          "load_option_hex": "09000000800072004500460049006e006400200042006f006f00740020004d0061006e006100670065007200000001041400000000bc0000004080000000000000087fff040004012a0001000000000800000000000000980f0000000000000000bc000000408000000000000010020204043a005c004500460049005c0072006500660069006e0064005c0072006500660069006e0064005f007800360034002e0065006600690000007fff0400",
+          "description": "rEFInd Boot Manager",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 23,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000010,0x800,0xf9800)/File(\\EFI\\refind\\refind_x64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000010",
+            "start_lba": 2048,
+            "sectors": 1021952,
+            "device": null
+          },
+          "file": "\\EFI\\refind\\refind_x64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0009",
+          "load_option_hex": "0900000076006f00700065006e005300550053004500200042006f006f00740020004d0061006e00610067006500720020002800730079007300740065006d0064002d0062006f006f0074002900000001041400000000bc0000004080000000000000087fff040004012a000100000000080000000000000000200000000000000000bc0000004080000000000000110202040430005c004500460049005c00730079007300740065006d0064005c007300680069006d002e0065006600690000007fff0400",
+          "description": "openSUSE Boot Manager (systemd-boot)",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 22,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000011,0x800,0x200000)/File(\\EFI\\systemd\\shim.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000011",
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "device": null
+          },
+          "file": "\\EFI\\systemd\\shim.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "000A",
+          "load_option_hex": "090000007a005500620075006e0074007500000001041400000000bc0000004080000000000000087fff040004012a000100000000080000000000000000100000000000000000bc0000004080000000000000120202040434005c004500460049005c007500620075006e00740075005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "Ubuntu",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 5,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000012,0x800,0x100000)/File(\\EFI\\ubuntu\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000012",
+            "start_lba": 2048,
+            "sectors": 1048576,
+            "device": null
+          },
+          "file": "\\EFI\\ubuntu\\shimx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "000B",
+          "load_option_hex": "090000008c004c0069006e0075007800200042006f006f00740020004d0061006e006100670065007200000001041400000000bc0000004080000000000000087fff040004012a000100000000080000000000000000200000000000000000bc0000004080000000000000130202040446005c004500460049005c00730079007300740065006d0064005c00730079007300740065006d0064002d0062006f006f0074007800360034002e0065006600690000007fff0400",
+          "description": "Linux Boot Manager",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 18,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000013,0x800,0x200000)/File(\\EFI\\systemd\\systemd-bootx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000013",
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "device": null
+          },
+          "file": "\\EFI\\systemd\\systemd-bootx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "000C",
+          "load_option_hex": "09000000780061007200740069007800000001041400000000bc0000004080000000000000087fff040004012a000100000000080000000000000000200000000000000000bc0000004080000000000000140202040432005c004500460049005c00610072007400690078005c0067007200750062007800360034002e0065006600690000007fff0400",
+          "description": "artix",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 7,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000014,0x800,0x200000)/File(\\EFI\\artix\\grubx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000014",
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "device": null
+          },
+          "file": "\\EFI\\artix\\grubx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "000D",
+          "load_option_hex": "090000007a00470061007200750064006100000001041400000000bc0000004080000000000000087fff040004012a000100000000100000000000000060090000000000000000bc0000004080000000000000150202040434005c004500460049005c004700610072007500640061005c0067007200750062007800360034002e0065006600690000007fff0400",
+          "description": "Garuda",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 21,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000015,0x1000,0x96000)/File(\\EFI\\Garuda\\grubx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000015",
+            "start_lba": 4096,
+            "sectors": 614400,
+            "device": null
+          },
+          "file": "\\EFI\\Garuda\\grubx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "000E",
+          "load_option_hex": "0900000082005a004600530042006f006f0074004d0065006e007500200028004200610063006b00750070002900000001041400000000bc0000004080000000000000087fff040004012a000100000000080000000000000000200000000000000000bc000000408000000000000016020204043c005c004500460049005c005a0042004d005c0056004d004c0049004e0055005a002d004200410043004b00550050002e0045004600490000007fff0400",
+          "description": "ZFSBootMenu (Backup)",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 26,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000016,0x800,0x200000)/File(\\EFI\\ZBM\\VMLINUZ-BACKUP.EFI)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000016",
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "device": null
+          },
+          "file": "\\EFI\\ZBM\\VMLINUZ-BACKUP.EFI",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "000F",
+          "load_option_hex": "090000008c004c0069006e0075007800200042006f006f00740020004d0061006e006100670065007200000001041400000000bc0000004080000000000000087fff040004012a000100000000080000000000000000200000000000000000bc0000004080000000000000170202040446005c004500460049005c00730079007300740065006d0064005c00730079007300740065006d0064002d0062006f006f0074007800360034002e0065006600690000007fff0400",
+          "description": "Linux Boot Manager",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 6,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000017,0x800,0x200000)/File(\\EFI\\systemd\\systemd-bootx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000017",
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "device": null
+          },
+          "file": "\\EFI\\systemd\\systemd-bootx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0010",
+          "load_option_hex": "090000008c004c0069006e0075007800200042006f006f00740020004d0061006e006100670065007200000001041400000000bc0000004080000000000000087fff040004012a000200000000080000000000000000200000000000000000bc0000004080000000000000180202040446005c004500460049005c00730079007300740065006d0064005c00730079007300740065006d0064002d0062006f006f0074007800360034002e0065006600690000007fff0400",
+          "description": "Linux Boot Manager",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 11,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(2,GPT,bc000000-0000-4000-8000-000000000018,0x800,0x200000)/File(\\EFI\\systemd\\systemd-bootx64.efi)"
+          ],
+          "partition": {
+            "number": 2,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000018",
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "device": null
+          },
+          "file": "\\EFI\\systemd\\systemd-bootx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0011",
+          "load_option_hex": "090000008c004c0069006e0075007800200042006f006f00740020004d0061006e006100670065007200000001041400000000bc0000004080000000000000087fff040004012a000200000000080000000000000000200000000000000000bc0000004080000000000000190202040446005c004500460049005c00730079007300740065006d0064005c00730079007300740065006d0064002d0062006f006f0074007800360034002e0065006600690000007fff0400",
+          "description": "Linux Boot Manager",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 28,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(2,GPT,bc000000-0000-4000-8000-000000000019,0x800,0x200000)/File(\\EFI\\systemd\\systemd-bootx64.efi)"
+          ],
+          "partition": {
+            "number": 2,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000019",
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "device": null
+          },
+          "file": "\\EFI\\systemd\\systemd-bootx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0012",
+          "load_option_hex": "0900000074005a004600530042006f006f0074004d0065006e007500000001041400000000bc0000004080000000000000087fff040004012a000100000000080000000000000000200000000000000000bc000000408000000000000016020204042e005c004500460049005c005a0042004d005c0056004d004c0049004e0055005a002e0045004600490000007fff0400",
+          "description": "ZFSBootMenu",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 24,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000016,0x800,0x200000)/File(\\EFI\\ZBM\\VMLINUZ.EFI)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000016",
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "device": null
+          },
+          "file": "\\EFI\\ZBM\\VMLINUZ.EFI",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0013",
+          "load_option_hex": "0900000078006f00700065006e0073007500730065002d0073006500630075007200650062006f006f007400000001041400000000bc0000004080000000000000087fff040004012a000100000000080000000000000000100000000000000000bc00000040800000000000001a0202040432005c004500460049005c006f00700065006e0073007500730065005c007300680069006d002e0065006600690000007fff0400",
+          "description": "opensuse-secureboot",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 25,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-00000000001a,0x800,0x100000)/File(\\EFI\\opensuse\\shim.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000001a",
+            "start_lba": 2048,
+            "sectors": 1048576,
+            "device": null
+          },
+          "file": "\\EFI\\opensuse\\shim.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0014",
+          "load_option_hex": "09000000780052006f0063006b00790020004c0069006e007500780020004d0069006e0069006d0061006c00000001041400000000bc0000004080000000000000087fff040004012a0001000000000800000000000000c0120000000000000000bc00000040800000000000001b0202040432005c004500460049005c0072006f0063006b0079005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "Rocky Linux Minimal",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 15,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-00000000001b,0x800,0x12c000)/File(\\EFI\\rocky\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000001b",
+            "start_lba": 2048,
+            "sectors": 1228800,
+            "device": null
+          },
+          "file": "\\EFI\\rocky\\shimx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0015",
+          "load_option_hex": "090000007a004600650064006f0072006100000001041400000000bc0000004080000000000000087fff040004012a0001000000000800000000000000c0120000000000000000bc00000040800000000000001c0202040434005c004500460049005c006600650064006f00720061005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "Fedora",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 27,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-00000000001c,0x800,0x12c000)/File(\\EFI\\fedora\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000001c",
+            "start_lba": 2048,
+            "sectors": 1228800,
+            "device": null
+          },
+          "file": "\\EFI\\fedora\\shimx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0016",
+          "load_option_hex": "090000008c004c0069006e0075007800200042006f006f00740020004d0061006e006100670065007200000001041400000000bc0000004080000000000000087fff040004012a000100000000100000000000000000400000000000000000bc00000040800000000000001d0202040446005c004500460049005c00730079007300740065006d0064005c00730079007300740065006d0064002d0062006f006f0074007800360034002e0065006600690000007fff0400",
+          "description": "Linux Boot Manager",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 9,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-00000000001d,0x1000,0x400000)/File(\\EFI\\systemd\\systemd-bootx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000001d",
+            "start_lba": 4096,
+            "sectors": 4194304,
+            "device": null
+          },
+          "file": "\\EFI\\systemd\\systemd-bootx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0017",
+          "load_option_hex": "090000007c004d0061006e006a00610072006f00000001041400000000bc0000004080000000000000087fff040004012a000100000000100000000000000060090000000000000000bc00000040800000000000001e0202040436005c004500460049005c004d0061006e006a00610072006f005c0067007200750062007800360034002e0065006600690000007fff0400",
+          "description": "Manjaro",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 12,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-00000000001e,0x1000,0x96000)/File(\\EFI\\Manjaro\\grubx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000001e",
+            "start_lba": 4096,
+            "sectors": 614400,
+            "device": null
+          },
+          "file": "\\EFI\\Manjaro\\grubx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0018",
+          "load_option_hex": "090000009e00460061006c006c006200610063006b0020004c0069006e0075007800200042006f006f00740020004d0061006e006100670065007200000001041400000000bc0000004080000000000000087fff040004012a000100000000100000000000000000400000000000000000bc00000040800000000000001d0202040458005c004500460049005c00730079007300740065006d0064005c00730079007300740065006d0064002d0062006f006f0074002d00660061006c006c006200610063006b007800360034002e0065006600690000007fff0400",
+          "description": "Fallback Linux Boot Manager",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 8,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-00000000001d,0x1000,0x400000)/File(\\EFI\\systemd\\systemd-boot-fallbackx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000001d",
+            "start_lba": 4096,
+            "sectors": 4194304,
+            "device": null
+          },
+          "file": "\\EFI\\systemd\\systemd-boot-fallbackx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0019",
+          "load_option_hex": "01000000640053006c00610063006b007700610072006500000004012a000100000000080000000000000000100000000000000000bc0000004080000000000000030202040436005c004500460049005c0053006c00610063006b0077006100720065005c0065006c0069006c006f002e0065006600690000007fff0400",
+          "description": "Slackware",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 0,
+          "device_path": [
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000003,0x800,0x100000)/File(\\EFI\\Slackware\\elilo.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "start_lba": 2048,
+            "sectors": 1048576,
+            "device": "nvme0n1p1"
+          },
+          "file": "\\EFI\\Slackware\\elilo.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "001A",
+          "load_option_hex": "0900000072004d00580020004c0069006e0075007800000001041400000000bc0000004080000000000000087fff040004012a000100000000080000000000000000080000000000000000bc00000040800000000000001f020204042c005c004500460049005c004d0058005c007300680069006d007800360034002e0065006600690000007fff0400",
+          "description": "MX Linux",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 16,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-00000000001f,0x800,0x80000)/File(\\EFI\\MX\\shimx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000001f",
+            "start_lba": 2048,
+            "sectors": 524288,
+            "device": null
+          },
+          "file": "\\EFI\\MX\\shimx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "001B",
+          "load_option_hex": "0900000076006b0061006c006900000001041400000000bc0000004080000000000000087fff040004012a0001000000000800000000000000801e0000000000000000bc0000004080000000000000200202040430005c004500460049005c006b0061006c0069005c0067007200750062007800360034002e0065006600690000007fff0400",
+          "description": "kali",
+          "active": true,
+          "hidden": true,
+          "category": "boot",
+          "in_boot_order": 19,
+          "device_path": [
+            "VenHw(bc000000-0000-4000-8000-000000000008)",
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000020,0x800,0x1e8000)/File(\\EFI\\kali\\grubx64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000020",
+            "start_lba": 2048,
+            "sectors": 1998848,
+            "device": null
+          },
+          "file": "\\EFI\\kali\\grubx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "001D",
+          "load_option_hex": "01000000860055004500460049003a00200050004e0059002000550053004200200032002e003000200046004400200050004d00410050002c00200050006100720074006900740069006f006e0020003200000002010c00d041030a0000000001010600001403050600030003050600010004012a0002000000acd71d00000000003828000000000000000000bc00000040800000000000000d02027fff040001043600000000bc00000040800000000000000a300037003100390039003400300044004100380032004100330044003400340000007fff04000000424f",
+          "description": "UEFI: PNY USB 2.0 FD PMAP, Partition 2",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 2,
+          "device_path": [
+            "PciRoot(0x0)/Pci(0x14,0x0)/USB(0x3,0x0)/USB(0x1,0x0)/HD(2,GPT,bc000000-0000-4000-8000-00000000000d,0x1dd7ac,0x2838)",
+            "VenHw(bc000000-0000-4000-8000-00000000000a)"
+          ],
+          "partition": {
+            "number": 2,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-00000000000d",
+            "start_lba": 1955756,
+            "sectors": 10296,
+            "device": null
+          },
+          "file": null,
+          "optional_data_bytes": 4
+        },
+        {
+          "number": "001E",
+          "load_option_hex": "010000005e00550045004600490020004f005300000004012a000100000000080000000000000000100000000000000000bc0000004080000000000000030202040430005c004500460049005c0042004f004f0054005c0042004f004f0054005800360034002e0045004600490000007fff04000000424f",
+          "description": "UEFI OS",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 1,
+          "device_path": [
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000003,0x800,0x100000)/File(\\EFI\\BOOT\\BOOTX64.EFI)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "start_lba": 2048,
+            "sectors": 1048576,
+            "device": "nvme0n1p1"
+          },
+          "file": "\\EFI\\BOOT\\BOOTX64.EFI",
+          "optional_data_bytes": 4
+        }
+      ],
+      "loader_interface": {
+        "loader_info": null,
+        "loader_device_partuuid": null,
+        "loader_image_identifier": null,
+        "loader_entry_selected": null,
+        "loader_entry_default": null,
+        "stub_info": null
+      },
+      "shim_variables": []
+    },
+    "esps": [
+      {
+        "device": "nvme0n1p1",
+        "mounted_at": "/boot/efi",
+        "contents": {
+          "files": [
+            {
+              "path": "EFI/BOOT/BOOTX64.EFI",
+              "size": 239734,
+              "same_as": "EFI/Slackware/elilo.efi"
+            },
+            {
+              "path": "EFI/BOOT/elilo.conf",
+              "size": 165
+            },
+            {
+              "path": "EFI/BOOT/initrd.gz",
+              "size": 17003755
+            },
+            {
+              "path": "EFI/BOOT/vmlinuz",
+              "size": 15610368
+            },
+            {
+              "path": "EFI/Slackware/elilo.conf",
+              "size": 165
+            },
+            {
+              "path": "EFI/Slackware/elilo.efi",
+              "size": 239734,
+              "same_as": "EFI/BOOT/BOOTX64.EFI"
+            },
+            {
+              "path": "EFI/Slackware/initrd.gz",
+              "size": 17003755
+            },
+            {
+              "path": "EFI/Slackware/vmlinuz",
+              "size": 15610368
+            }
+          ],
+          "debian_grub_stub": null
+        }
+      }
+    ],
+    "grub": {
+      "dir": "/boot/grub",
+      "installed_platforms": [],
+      "grub_cfg": null,
+      "grubenv": null,
+      "default_grub": {
+        "GRUB_DEFAULT": "0",
+        "GRUB_HIDDEN_TIMEOUT_QUIET": "false",
+        "GRUB_TIMEOUT": "10",
+        "GRUB_CMDLINE_LINUX_DEFAULT": "",
+        "GRUB_CMDLINE_LINUX": "",
+        "GRUB_DISTRIBUTOR": "Slackware",
+        "GRUB_TERMINAL": "console",
+        "GRUB_GFXMODE": "0x0",
+        "GRUB_FONT": "/boot/grub/fonts/spleen.pf2",
+        "GRUB_GFXPAYLOAD_LINUX": "keep",
+        "GRUB_DISABLE_RECOVERY": "true",
+        "GRUB_DISABLE_BOOTNEXT": "true",
+        "GRUB_DISABLE_OS_PROBER": "false",
+        "GRUB_DISABLE_SUBMENU": "true",
+        "GRUB_DISPLAY_KERNEL_FILETYPES": "both",
+        "GRUB_INSTALL_SCRIPT": "boot/grub/grub-install-slackware.sh"
+      },
+      "debconf": null
+    },
+    "systemd_boot": null,
+    "kernels": {
+      "installed": [
+        {
+          "version": "7.3.5",
+          "vmlinuz_bytes": 15610368,
+          "initrd_bytes": null,
+          "config": false,
+          "running": true,
+          "modules_installed": true
+        },
+        {
+          "version": "7.3.5.x64",
+          "vmlinuz_bytes": null,
+          "initrd_bytes": null,
+          "config": true,
+          "running": false,
+          "modules_installed": false
+        },
+        {
+          "version": "generic",
+          "vmlinuz_bytes": 15610368,
+          "initrd_bytes": null,
+          "config": false,
+          "running": false,
+          "modules_installed": false
+        }
+      ],
+      "symlinks": {
+        "/boot/vmlinuz": "vmlinuz-7.3.5"
+      }
+    },
+    "cmdline": {
+      "raw": "BOOT_IMAGE=dev002:\\EFI\\Slackware\\vmlinuz  root=/dev/nvme0n1p2 vga=normal ro ro",
+      "words": ["BOOT_IMAGE=dev002:EFISlackwarevmlinuz", "root=/dev/nvme0n1p2", "vga=normal", "ro", "ro\n"],
+      "storage": {
+        "BOOT_IMAGE": "dev002:EFISlackwarevmlinuz",
+        "root": "/dev/nvme0n1p2",
+        "ro": ""
+      }
+    },
+    "kernel_cmdline_file": null,
+    "initramfs": {
+      "generator": "geninitrd",
+      "modules": null,
+      "compress": null,
+      "resume": null,
+      "crypttab_in_initramfs": true,
+      "evidence": [
+        "EFI/BOOT/elilo.conf has initrd=initrd.gz",
+        "EFI/Slackware/elilo.conf has initrd=initrd.gz",
+        "/usr/sbin/geninitrd exists",
+        "/etc/default/geninitrd says GENERATOR=mkinitrd",
+        "no /etc/mkinitrd.conf, so /var/lib/pkgtools/setup/setup.01.mkinitrd runs /usr/share/mkinitrd/mkinitrd_command_generator.sh's command",
+        "/boot/initrd-7.3.5.img is geninitrd's image for kernel 7.3.5",
+        "/boot/initrd-generic.img -> initrd-7.3.5.img",
+        "/boot/initrd.gz -> initrd-7.3.5.img"
+      ],
+      "geninitrd": {
+        "default": "/etc/default/geninitrd",
+        "kernel": "/boot/vmlinuz-generic",
+        "generator": "mkinitrd",
+        "dracut_opts": "--force --hostonly --verbose",
+        "override_script": null,
+        "post_install_script": null,
+        "named_symlink": true,
+        "initrd_gz_symlink": true,
+        "runs": "mkinitrd_command_generator.sh",
+        "conf": null,
+        "luksdev": null,
+        "rootdev": null,
+        "images": [
+          {
+            "file": "/boot/initrd-7.3.5.img",
+            "version": "7.3.5",
+            "kernel": "/boot/vmlinuz-7.3.5",
+            "modules_installed": true
+          }
+        ],
+        "links": {
+          "/boot/initrd-generic.img": "initrd-7.3.5.img",
+          "/boot/initrd.gz": "initrd-7.3.5.img"
+        }
+      }
+    },
+    "packages": {
+      "efibootmgr": "18-2",
+      "syslinux": "4.07-5",
+      "os-prober": "1.85-2",
+      "dracut": "112-2",
+      "mdadm": "4.6-2",
+      "lvm2": "2.03.44-1",
+      "thin-provisioning-tools": "1.3.4-1",
+      "cryptsetup": "2.8.8-2",
+      "btrfs-progs": "7.3-2",
+      "xfsprogs": "7.3.0-1",
+      "e2fsprogs": "1.47.4-2",
+      "dosfstools": "4.2-3",
+      "exfatprogs": "1.4.5-1",
+      "ntfs-3g": "2026.9.28-1",
+      "jfsutils": "1.1.15-5",
+      "f2fs-tools": "1.17.0-1",
+      "bcachefs-tools": "1.39.7-1",
+      "grub": "2.16-5",
+      "nvme-cli": "3.2-1",
+      "lilo": "24.2-17",
+      "elilo": "3.16-19",
+      "mkinitrd": "1.4.11-81",
+      "kernel-generic": "7.3.5-2",
+      "slackpkg": "16.0.1-3"
+    },
+    "elilo": {
+      "configs": [
+        {
+          "device": "nvme0n1p1",
+          "mounted_at": "/boot/efi",
+          "dir": "EFI/BOOT",
+          "conf": "EFI/BOOT/elilo.conf",
+          "loader": "EFI/BOOT/BOOTX64.EFI",
+          "loader_is_boot_elilo": true,
+          "boot": null,
+          "map": null,
+          "root": null,
+          "append": null,
+          "initrd": null,
+          "default": null,
+          "options": ["chooser=simple", "delay=1", "timeout=1"],
+          "images": [
+            {
+              "kind": "image",
+              "path": "vmlinuz",
+              "label": "label1",
+              "root": null,
+              "initrd": "initrd.gz",
+              "append": "root=/dev/nvme0n1p2 vga=normal ro",
+              "addappend": null,
+              "read_only": true,
+              "options": [
+                "label=label1",
+                "initrd=initrd.gz",
+                "read-only",
+                "append=root=/dev/nvme0n1p2 vga=normal ro"
+              ],
+              "file": "EFI/BOOT/vmlinuz",
+              "same_as": "/boot/vmlinuz-7.3.5",
+              "initrd_file": "EFI/BOOT/initrd.gz",
+              "initrd_same_as": "/boot/initrd-7.3.5.img"
+            }
+          ]
+        },
+        {
+          "device": "nvme0n1p1",
+          "mounted_at": "/boot/efi",
+          "dir": "EFI/Slackware",
+          "conf": "EFI/Slackware/elilo.conf",
+          "loader": "EFI/Slackware/elilo.efi",
+          "loader_is_boot_elilo": true,
+          "boot": null,
+          "map": null,
+          "root": null,
+          "append": null,
+          "initrd": null,
+          "default": null,
+          "options": ["chooser=simple", "delay=1", "timeout=1"],
+          "images": [
+            {
+              "kind": "image",
+              "path": "vmlinuz",
+              "label": "label1",
+              "root": null,
+              "initrd": "initrd.gz",
+              "append": "root=/dev/nvme0n1p2 vga=normal ro",
+              "addappend": null,
+              "read_only": true,
+              "options": [
+                "label=label1",
+                "initrd=initrd.gz",
+                "read-only",
+                "append=root=/dev/nvme0n1p2 vga=normal ro"
+              ],
+              "file": "EFI/Slackware/vmlinuz",
+              "same_as": "/boot/vmlinuz-7.3.5",
+              "initrd_file": "EFI/Slackware/initrd.gz",
+              "initrd_same_as": "/boot/initrd-7.3.5.img"
+            }
+          ]
+        }
+      ]
+    },
+    "slackware": {
+      "version": "Slackware 15.0+",
+      "init": "slackware-rc",
+      "rc_enabled": [
+        "rc.0",
+        "rc.4",
+        "rc.6",
+        "rc.K",
+        "rc.M",
+        "rc.S",
+        "rc.acpid",
+        "rc.atd",
+        "rc.avahidaemon",
+        "rc.avahidnsconfd",
+        "rc.bluetooth",
+        "rc.cpufreq",
+        "rc.crond",
+        "rc.elogind",
+        "rc.font",
+        "rc.fuse",
+        "rc.fuse3",
+        "rc.haveged",
+        "rc.inet1",
+        "rc.inet2",
+        "rc.local",
+        "rc.loop",
+        "rc.luks",
+        "rc.mcelog",
+        "rc.messagebus",
+        "rc.modules",
+        "rc.modules.local",
+        "rc.setterm",
+        "rc.sshd",
+        "rc.syslog",
+        "rc.sysvinit",
+        "rc.udev",
+        "rc.ulogd",
+        "rc.wireless",
+        "rc.wsdd2"
+      ],
+      "kernels": [
+        {
+          "file": "vmlinuz-7.3.5",
+          "flavor": "generic",
+          "modules_installed": true,
+          "version": "7.3.5"
+        }
+      ],
+      "links": {
+        "/boot/vmlinuz": "vmlinuz-7.3.5",
+        "/boot/vmlinuz-generic": "vmlinuz-7.3.5",
+        "/boot/System.map": "System.map-7.3.5",
+        "/boot/config": "config-7.3.5.x64"
+      }
+    }
+  },
+  "warnings": []
+}

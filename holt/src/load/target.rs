@@ -282,6 +282,27 @@ pub fn scan(sys: &Sys, opts: &Options, ours: &[String]) -> System {
                 boot_medium = true;
             }
         }
+        // Bug: scan checked mounts, boot-medium labels, and ZFS root pools only
+        // on the raw disk and its partitions, missing md, LUKS, and LVM holders
+        // above them (plus mdev /dev/mapper/<dm_name> nodes). A disk backing /
+        // or the live medium through LVM, LUKS, md, or ZFS-on-LUKS left
+        // holds_root and boot_medium false instead of refusing the disk.
+        for name in super::release::stack(&all, &b.name) {
+            let Some(d) = all.iter().find(|x| x.name == name) else { continue };
+            let matches_dev = |x: &str| x == d.name || d.dm_name.as_deref() == Some(x);
+            for m in mounts.iter().filter(|m| m.devno == d.devno || matches_dev(&resolve_name(sys, &m.source))) {
+                holds_root |= m.target == "/";
+                boot_medium |= MEDIUM_MOUNTS.contains(&m.target.as_str());
+            }
+            if d.udev.get("ID_FS_LABEL") == Some(STICK_CONFIG_LABEL) {
+                boot_medium = true;
+            }
+            for p in pools.iter().filter(|p| p.devices.iter().any(|x| matches_dev(x))) {
+                if mounts.iter().any(|m| m.target == "/" && m.fstype == "zfs" && m.source.split('/').next() == Some(p.name.as_str())) {
+                    holds_root = true;
+                }
+            }
+        }
         if signatures.iter().any(|s| s.contains(&format!("LABEL={STICK_CONFIG_LABEL}"))) {
             boot_medium = true;
         }

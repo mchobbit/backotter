@@ -4,7 +4,12 @@
 # kept read-only on the backup drive (mybig512) at
 # slackware-cache/current-20261121, with its PINNED.txt; installed by
 #   slackware-bootstrap.sh SERIAL KEYS_DIR thinkpad CACHE_DIR current-20261121
-# which holds CHECKSUMS.md5 to the SHA-256 below (its PINS table).
+# which holds CHECKSUMS.md5 to the SHA-256 below (its PINS table; also
+# slackware-pin.sh's PINS and bs1-adopt's slk_pin_sha), and makes the pin
+# itself slackpkg's mirror on the installed system
+# (file:///mnt/bs1-backup/slackware-cache/current-20261121/), never live
+# -current.  Checked again, offline:
+#   slackware-pin.sh CACHE_DIR --check current-20261121
 
 PIN=current-20261121
 TREE=slackware64-current

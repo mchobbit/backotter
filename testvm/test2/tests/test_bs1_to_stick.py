@@ -5,15 +5,29 @@ booted with SSH off, and the controller waited 7 min for nothing, twice
 (2026-11-21).  No root, no firmware: the whole script runs against a fake
 bs1-common, /sys under a temporary directory, and fake blkid, lsblk, mount,
 umount, efibootmgr and python3 (for bs1-efi).  Needs bash (3.2, the Mac's,
-will do) and ssh-keygen."""
+will do) and ssh-keygen.  Its reboot can't reach the machine: it runs in the
+background, after the script has exited, so the copy here calls the fake
+systemctl and reboot by path, PATH has no directory of the system's (only
+the fakes, and the system's tools less every one that reboots, halts or
+powers off), and each test waits for it before its fakes go (it rebooted
+the Thinkpad, run as root there, 2026-11-22; no bs1 test runs as root
+now)."""
 
 import os
 import shutil
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
+
+if os.geteuid() == 0:
+    # These run BackShot1's scripts against fakes.  As root, on a real
+    # machine, one slip reaches its disks, its firmware or its reboot: a
+    # background reboot outlived test_bs1_to_stick's fakes and rebooted the
+    # Thinkpad (2026-11-22).
+    raise unittest.SkipTest("BackShot1's tests don't run as root")
 
 TESTS = Path(__file__).resolve().parent
 BS1 = TESTS.parent.parent / "realworld" / "backshot1"
@@ -35,6 +49,25 @@ def newest_bash():
 
 BASH = newest_bash()
 KEYGEN = shutil.which("ssh-keygen")
+# What the script could reboot, halt or power off with; never on its PATH.
+NEVER = {"systemctl", "reboot", "shutdown", "halt", "poweroff", "init", "telinit", "kexec", "loginctl",
+         "efibootmgr", "launchctl", "pmset"}
+REBOOT = "(sleep 2; systemctl reboot -i || reboot) >/dev/null 2>&1 </dev/null &"
+
+
+def system_tools(into):
+    """INTO: a link to each of the system's tools, but none of NEVER."""
+    into.mkdir()
+    for d in ("/usr/sbin", "/usr/bin", "/sbin", "/bin"):
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for n in names:
+            src = os.path.join(d, n)
+            if n in NEVER or (into / n).exists() or not os.access(src, os.X_OK) or os.path.isdir(src):
+                continue
+            os.symlink(src, into / n)
 
 
 def exe(path, text):
@@ -64,7 +97,15 @@ class ToStick(unittest.TestCase):
         shutil.copy(self.ctl / "id_ed25519.pub", self.here / "keys" / "authorized_keys")
         shutil.copy(self.ctl / "ssh_host_ed25519_key", self.here / "keys")
         shutil.copy(self.ctl / "ssh_host_ed25519_key.pub", self.here / "keys")
+        b = self.bin = t / "bin"
+        b.mkdir()
+        self.sys_bin = t / "sysbin"
+        system_tools(self.sys_bin)
         text = (BS1 / "bs1-to-stick").read_text().replace("/sys/", f"{t}/sys/")
+        # The reboot, by the fakes' paths: gone with them, it is "not found".
+        self.assertIn(REBOOT, text)
+        text = text.replace(REBOOT, REBOOT.replace("systemctl reboot", f"{b}/systemctl reboot")
+                            .replace("|| reboot", f"|| {b}/reboot"))
         exe(self.here / "bs1-to-stick", text)
         (self.here / "bs1-common").write_text(f"""set -uo pipefail
 HERE={self.here}
@@ -82,8 +123,6 @@ disk_of() {{ echo sdz; }}
         self.part.mkdir(parents=True)
         (self.part / "settings.toml").write_text("")
         (t / "tmp").mkdir()
-        b = self.bin = t / "bin"
-        b.mkdir()
         exe(b / "blkid", '#!/bin/sh\n[ "$*" = "-L BACKOTTER" ] && echo /dev/sdz3\n')
         exe(b / "lsblk", """#!/bin/sh
 case "$*" in
@@ -127,7 +166,7 @@ echo "Boot0001* Linux"
 [ ! -e {t}/created ] || echo "Boot0002* BKO rescue"
 """)
         for stub in ("systemctl", "reboot", "sleep"):
-            exe(b / stub, "#!/bin/sh\nexit 0\n")
+            exe(b / stub, f'#!/bin/sh\necho "{stub} $*" >>{t}/reboot.log\n')
 
     def stick_keys(self, auth=True, host=True, auth_text=None, host_from=None):
         if auth:
@@ -139,10 +178,21 @@ echo "Boot0001* Linux"
             os.chmod(self.part / "ssh_host_ed25519_key", 0o644)
 
     def run_it(self, **extra):
-        env = {"PATH": f"{self.bin}:/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C", "TMPDIR": str(self.t / "tmp"),
-               **extra}
-        return subprocess.run([BASH, str(self.here / "bs1-to-stick")], capture_output=True, text=True,
-                              timeout=30, env=env)
+        env = {"PATH": f"{self.bin}:{self.sys_bin}", "LC_ALL": "C", "TMPDIR": str(self.t / "tmp"), **extra}
+        r = subprocess.run([BASH, str(self.here / "bs1-to-stick")], capture_output=True, text=True,
+                           timeout=30, env=env)
+        if "rebooting into the stick" in r.stdout:
+            # The background reboot: waited for, so it runs while the fakes are here.
+            for _ in range(100):
+                if "systemctl reboot -i" in self.reboots():
+                    break
+                time.sleep(0.1)
+            self.assertIn("systemctl reboot -i", self.reboots(), "the reboot never ran")
+        return r
+
+    def reboots(self):
+        p = self.t / "reboot.log"
+        return p.read_text() if p.exists() else ""
 
     def efi_calls(self, log="efi.log"):
         p = self.t / log

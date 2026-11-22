@@ -52,7 +52,11 @@
 # Europe/Paris, sshd on, root by key only (PermitRootLogin
 # prohibit-password; root's password field "*"), the fixed host key,
 # slackpkg's mirror and Slackware's key in root's keyring, and a user m with
-# no password (locked: the person sets one).  No password is set anywhere.
+# no password (locked: the person sets one).  slackpkg's mirror is 15.0's on
+# osuosl for 15.0; for a pin it is the pin itself, file://CACHE_DIR/RELEASE/
+# (the backup drive, mounted where it is now: BackShot1's /mnt/bs1-backup),
+# never live -current, so slackpkg can't take the machine off its pin; with
+# the drive not mounted there, slackpkg finds no mirror and stops.  No password is set anywhere.
 # Slackware 15.0 has no avahi: the machine answers by address, not
 # HOSTNAME.local.  -current has l/avahi and n/nss-mdns: avahi-daemon is on
 # (rc.avahidaemon) and nsswitch.conf asks mdns4_minimal, so HOSTNAME.local
@@ -80,13 +84,13 @@ declare -A PINS=(
     [current-20261121]=9418aee6f8c5a06d1b051c2d25064d468cc0b19946912fc2898a949ee7fb9917
 )
 # make-bootstrap.sh's SLACKWARE_MIRROR, SLACKWARE_KEY and SLACKWARE_SERIES.
-# For a pin, MIRROR is only slackpkg's (the installed system's): the tree
-# itself is the pin.
+# A pin is never fetched: it has no MIRROR, and slackpkg's mirror (the
+# installed system's, SLACKPKG_MIRROR, set below) is the pin itself.
 case $RELEASE in
 15.0) MIRROR=https://slackware.osuosl.org/slackware64-15.0 PIN_SHA= ;;
 current-*)
     [[ -n ${PINS[$RELEASE]:-} ]] || { echo "slackware-bootstrap: no pin $RELEASE (pins: ${!PINS[*]})" >&2; exit 1; }
-    MIRROR=https://slackware.osuosl.org/slackware64-current PIN_SHA=${PINS[$RELEASE]} ;;
+    MIRROR= PIN_SHA=${PINS[$RELEASE]} ;;
 *) echo "slackware-bootstrap: RELEASE is 15.0 or current-DATE (pins: ${!PINS[*]}), not \"$RELEASE\"" >&2; exit 1 ;;
 esac
 SLACKWARE_KEY=EC5649DA401E22ABFA6736EF6A4463C040102233
@@ -113,8 +117,10 @@ CACHE=$(realpath "$CACHE")
 if [[ -n $PIN_SHA ]]; then
     tree=$CACHE/$RELEASE
     [[ -s $tree/CHECKSUMS.md5 && -s $tree/PINNED.txt ]] || die "no pinned tree $tree (slackware-pin.sh makes it)"
+    SLACKPKG_MIRROR=file://$tree/
 else
     tree=$CACHE/slackware64-15.0
+    SLACKPKG_MIRROR=$MIRROR/
 fi
 
 # The disk, by serial and nothing else.
@@ -500,10 +506,12 @@ if [[ -n $PIN_SHA ]]; then
     in_slk /usr/bin/getent passwd avahi
 fi
 
-step "slackpkg: the mirror and Slackware's key"
+step "slackpkg: the mirror ($SLACKPKG_MIRROR) and Slackware's key"
 # bootstrap/slackware.sh: the key the tree was checked with, in root's
-# keyring as slackpkg's import_gpg_key imports it.
-echo "$MIRROR/" >>"$T/etc/slackpkg/mirrors"
+# keyring as slackpkg's import_gpg_key imports it.  The mirror: the one line
+# not commented out (the file as shipped has none).
+grep -v '^[[:space:]]*\(#\|$\)' "$T/etc/slackpkg/mirrors" | grep -q . && die "$T/etc/slackpkg/mirrors names a mirror already"
+echo "$SLACKPKG_MIRROR" >>"$T/etc/slackpkg/mirrors"
 cp "$keyring" "$T/root/slackware-key.gpg"
 in_slk gpg --batch --import /root/slackware-key.gpg
 rm "$T/root/slackware-key.gpg"

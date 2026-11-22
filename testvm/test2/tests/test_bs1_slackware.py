@@ -1,6 +1,6 @@
 """BackShot1 on Slackware (the Thinkpad on a pinned slackware64-current,
 2026-11-22): bs1-adopt's Slackware arms (rc.d services, installpkg from the
-pinned tree on the backup drive, /etc/HOSTNAME, avahi's needs), bs1-common's
+checked, pinned tree on the backup drive, /etc/HOSTNAME, avahi's needs), bs1-common's
 this_host and pkgtools package list, and bs1-verify's wait for rc.M.  No
 root, no Slackware: each function runs from the script's own text, with its
 absolute paths moved under a temporary directory and fakes for the tools it
@@ -16,6 +16,13 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+
+if os.geteuid() == 0:
+    # These run BackShot1's scripts against fakes.  As root, on a real
+    # machine, one slip reaches its disks, its firmware or its reboot: a
+    # background reboot outlived test_bs1_to_stick's fakes and rebooted the
+    # Thinkpad (2026-11-22).
+    raise unittest.SkipTest("BackShot1's tests don't run as root")
 
 TESTS = Path(__file__).resolve().parent
 BS1 = TESTS.parent.parent / "realworld" / "backshot1"
@@ -169,7 +176,12 @@ pkg_install a b c d e f g h i j "avahi libdaemon nss-mdns dbus"
 @unittest.skipUnless(BASH and shutil.which("python3"), "needs bash and python3")
 class SlkInstall(Base):
     """installpkg from the tree this system was installed from, never
-    slackpkg: the tree whose every package installed here is at its version."""
+    slackpkg: of the trees checked as slackware-bootstrap.sh checks them (a
+    pin bs1-adopt knows, its PINNED.txt, CHECKSUMS.md5 signed by Slackware's
+    key), the one whose every package installed here is at its version; each
+    package held to its MD5 and its .asc.  gpg and gpgv are fakes: a
+    signature is the SHA-256 of what it signs, a key "KEY" and its
+    fingerprint."""
 
     PIN = {"a": ["aaa_base-15.1-x86_64-3", "dbus-1.16.4-x86_64-1"],
            "l": ["avahi-0.9_rc5-x86_64-1", "libdaemon-0.14-x86_64-2"],
@@ -178,9 +190,46 @@ class SlkInstall(Base):
            "n": ["openssh-8.8p1-x86_64-6"]}
     INSTALLED = ["aaa_base-15.1-x86_64-3", "dbus-1.16.4-x86_64-1", "libdaemon-0.14-x86_64-2",
                  "openssh-10.6p2-x86_64-1", "mytool-1.0-x86_64-1_SBo"]
+    KEY = "EC5649DA401E22ABFA6736EF6A4463C040102233"
+    REAL_PIN_SHA = "9418aee6f8c5a06d1b051c2d25064d468cc0b19946912fc2898a949ee7fb9917"
 
     def setUp(self):
         super().setUp()
+        for tool in ("sed", "mktemp"):
+            os.symlink(shutil.which(tool), self.bin / tool)
+        py = shutil.which("python3")
+        exe(self.bin / "sha256sum", f"""#!{py} -I
+import hashlib, sys
+print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest() + "  -")
+""")
+        # gpg: --import keeps the file as the home's key; --list-keys FPR
+        # gives its fingerprint if the key is "KEY FPR"; --export prints it.
+        exe(self.bin / "gpg", f"""#!{py} -I
+import os, sys
+home, a = os.environ["GNUPGHOME"], sys.argv[1:]
+k = os.path.join(home, "key")
+if "--import" in a:
+    data = open(a[-1], "rb").read()
+    if not data.startswith(b"KEY "):
+        sys.exit(2)
+    open(k, "wb").write(data)
+elif "--list-keys" in a:
+    key = open(k).read().split() if os.path.exists(k) else []
+    if key[1:2] != [a[-1]]:
+        sys.exit(2)
+    print("pub:u:4096:1:6A4463C040102233:")
+    print(f"fpr:::::::::{{key[1]}}:")
+elif "--export" in a:
+    sys.stdout.write(open(k).read())
+""")
+        exe(self.bin / "gpgv", f"""#!{py} -I
+import hashlib, sys
+a = sys.argv[1:]
+key, sig, data = a[a.index("--keyring") + 1], a[-2], a[-1]
+ok = (open(key).read().split()[:2] == ["KEY", "{self.KEY}"]
+      and open(sig).read().strip() == hashlib.sha256(open(data, "rb").read()).hexdigest())
+sys.exit(0 if ok else 1)
+""")
         self.cache = self.t / "slackware-cache"
         self.pkgs = self.t / "pkgtools" / "packages"
         self.pkgs.mkdir(parents=True)
@@ -188,9 +237,18 @@ class SlkInstall(Base):
             (self.pkgs / p).write_text("PACKAGE NAME: " + p + "\n")
         self.pin = self.tree("current-20261121", self.PIN)
         self.old = self.tree("slackware64-15.0", self.OLD)
+        (self.cache / "slackware-key.gpg").write_text(f"KEY {self.KEY}\n")
+        self.pin_sha = self.sha(self.pin / "CHECKSUMS.md5")
         self.log = self.t / "installpkg.log"
         exe(self.bin / "installpkg", f'#!/bin/sh\necho "$@" >>"{self.log}"\n')
         exe(self.bin / "slackpkg", f'#!/bin/sh\necho "slackpkg $*" >>"{self.log}"\nexit 1\n')
+
+    @staticmethod
+    def sha(path):
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+    def sign(self, path):
+        Path(f"{path}.asc").write_text(self.sha(path) + "\n")
 
     def tree(self, name, series, extra=True):
         t = self.cache / name
@@ -201,22 +259,36 @@ class SlkInstall(Base):
             for p in pkgs:
                 f = d / f"{p}.txz"
                 f.write_bytes(p.encode())
+                self.sign(f)
                 lines.append(f"{hashlib.md5(p.encode()).hexdigest()}  ./slackware64/{s}/{p}.txz")
-                lines.append(f"{hashlib.md5(b'asc').hexdigest()}  ./slackware64/{s}/{p}.txz.asc")
+                lines.append(f"{hashlib.md5(Path(f'{f}.asc').read_bytes()).hexdigest()}  ./slackware64/{s}/{p}.txz.asc")
         if extra:
             # Other versions out of slackware64/: never the tree's.
             lines.append(f"{'0' * 32}  ./pasture/openssh-9.0p1-x86_64-1.txz")
             lines.append(f"{'0' * 32}  ./patches/packages/dbus-1.12.28-x86_64-1_slack15.0.txz")
             lines.append(f"{'0' * 32}  ./extra/avahi-0.1-x86_64-1.txz")
         (t / "CHECKSUMS.md5").write_text("\n".join(lines) + "\n")
+        self.sign(t / "CHECKSUMS.md5")
+        if name.startswith("current-"):
+            (t / "GPG-KEY").write_text(f"KEY {self.KEY}\n")
+            (t / "PINNED.txt").write_text(f"PIN={name}\nCHECKSUMS_MD5_SHA256={self.sha(t / 'CHECKSUMS.md5')}\n")
         return t
 
-    def install(self, *names):
-        lib = "\n".join(function(ADOPT, n) for n in ("slk_tree", "slk_mismatch", "slk_install"))
-        return self.bash(f'SLK_CACHE="{self.cache}"\nSLK_PKGS="{self.pkgs}"\n{lib}\nslk_install {" ".join(names)}\n')
+    def install(self, *names, pin_sha=None):
+        pin = function(ADOPT, "slk_pin_sha", [(self.REAL_PIN_SHA, pin_sha or self.pin_sha)])
+        lib = "\n".join(function(ADOPT, n) for n in ("slk_keyring", "slk_checked", "slk_tree", "slk_mismatch",
+                                                      "slk_install"))
+        return self.bash(f'SLK_CACHE="{self.cache}"\nSLK_PKGS="{self.pkgs}"\nSLK_KEY={self.KEY}\n'
+                         f'{pin}\n{lib}\nslk_install {" ".join(names)}\n')
 
     def installed(self):
         return self.log.read_text().splitlines() if self.log.exists() else []
+
+    def assert_none_installed(self, r, *why):
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        for w in why:
+            self.assertIn(w, r.stderr)
+        self.assertEqual(self.installed(), [], "installpkg or slackpkg ran")
 
     def test_from_the_pin_only_what_is_missing(self):
         r = self.install("avahi", "libdaemon", "nss-mdns", "dbus")
@@ -224,6 +296,12 @@ class SlkInstall(Base):
         self.assertEqual(self.installed(), [f"{self.pin}/slackware64/l/avahi-0.9_rc5-x86_64-1.txz",
                                             f"{self.pin}/slackware64/n/nss-mdns-0.15.1-x86_64-2.txz"])
         self.assertIn(f"installing avahi nss-mdns from {self.pin}", r.stdout)
+
+    def test_the_real_pin_is_slackware_bootstraps(self):
+        boot = (BS1.parent / "slackware-bootstrap.sh").read_text()
+        self.assertIn(f"[current-20261121]={self.REAL_PIN_SHA}", boot)
+        self.assertIn(f"CHECKSUMS_MD5_SHA256={self.REAL_PIN_SHA}", (BS1.parent / "slackware-current.pin").read_text())
+        self.assertIn(f"SLK_KEY={self.KEY}", ADOPT.read_text())
 
     def test_the_tree_it_came_from(self):
         # A 15.0 install: the pin, looked at first, is passed over, saying why.
@@ -245,19 +323,58 @@ class SlkInstall(Base):
     def test_a_package_from_elsewhere_matches_no_tree(self):
         # An upgrade from the live mirror: the system is off its pin.
         (self.pkgs / "openssh-10.6p2-x86_64-1").rename(self.pkgs / "openssh-10.7p1-x86_64-1")
+        self.assert_none_installed(self.install("avahi"),
+                                   "this system has openssh-10.7p1-x86_64-1, the tree openssh-10.6p2-x86_64-1",
+                                   "no checked tree in", "by hand")
+
+    def test_an_unfinished_pin_is_passed_over(self):
+        # slackware-pin.sh cut short: its .part has CHECKSUMS.md5 first, and
+        # would match this system as well as the pin does; it sorts first.
+        shutil.copytree(self.pin, self.cache / "current-20261121.part")
+        shutil.rmtree(self.pin)
         r = self.install("avahi")
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("this system has openssh-10.7p1-x86_64-1, the tree openssh-10.6p2-x86_64-1", r.stderr)
-        self.assertIn("no tree in", r.stderr)
-        self.assertIn("by hand", r.stderr)
-        self.assertEqual(self.installed(), [], "installpkg or slackpkg ran")
+        self.assert_none_installed(r, "current-20261121.part: a pin slackware-pin.sh didn't finish")
+
+    def test_a_pin_bs1_adopt_doesnt_know_is_passed_over(self):
+        newer = self.tree("current-20261130", {"l": ["avahi-0.9_rc6-x86_64-1"]})
+        shutil.rmtree(self.pin)
+        self.assert_none_installed(self.install("avahi"), f"not {newer}: not a pin bs1-adopt knows")
+
+    def test_a_pin_without_pinned_txt(self):
+        os.chmod(self.pin, 0o755)
+        (self.pin / "PINNED.txt").unlink()
+        self.assert_none_installed(self.install("avahi"), f"not {self.pin}: it has no PINNED.txt")
+
+    def test_a_pin_whose_checksums_changed(self):
+        self.assert_none_installed(self.install("avahi", pin_sha="0" * 64), "isn't the pinned one")
+
+    def test_checksums_not_signed(self):
+        (self.pin / "CHECKSUMS.md5.asc").write_text("forged\n")
+        self.assert_none_installed(self.install("avahi"), f"not {self.pin}: its CHECKSUMS.md5 isn't signed")
+
+    def test_a_pin_whose_key_isnt_slackwares(self):
+        (self.pin / "GPG-KEY").write_text("KEY 0123456789ABCDEF0123456789ABCDEF01234567\n")
+        self.assert_none_installed(self.install("avahi"), "GPG-KEY is not Slackware's key")
+
+    def test_no_gpg_installs_nothing(self):
+        (self.bin / "gpgv").unlink()
+        self.assert_none_installed(self.install("avahi"), "no gpg and gpgv")
+
+    def test_a_package_whose_asc_fails(self):
+        (self.pin / "slackware64/l/avahi-0.9_rc5-x86_64-1.txz.asc").write_text("forged\n")
+        self.assert_none_installed(self.install("avahi"), "isn't signed by Slackware's key (its .asc)")
+
+    def test_two_trees_that_match_are_not_guessed_between(self):
+        for p in self.pkgs.iterdir():
+            p.unlink()
+        (self.pkgs / "openssh-10.6p2-x86_64-1").write_text("")
+        shutil.rmtree(self.old)
+        self.old = self.tree("slackware64-15.0", {"n": ["openssh-10.6p2-x86_64-1", "nss-mdns-0.14-x86_64-1"]})
+        self.assert_none_installed(self.install("nss-mdns"), "more than one tree")
 
     def test_a_file_that_fails_its_md5(self):
         (self.pin / "slackware64/l/avahi-0.9_rc5-x86_64-1.txz").write_bytes(b"cut short")
-        r = self.install("avahi")
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("doesn't match", r.stderr)
-        self.assertEqual(self.installed(), [])
+        self.assert_none_installed(self.install("avahi"), "doesn't match")
 
     def test_a_series_not_fetched(self):
         (self.pin / "slackware64/n/nss-mdns-0.15.1-x86_64-2.txz").unlink()

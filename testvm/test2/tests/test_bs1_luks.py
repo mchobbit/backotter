@@ -17,6 +17,13 @@ import textwrap
 import unittest
 from pathlib import Path
 
+if os.geteuid() == 0:
+    # These run BackShot1's scripts against fakes.  As root, on a real
+    # machine, one slip reaches its disks, its firmware or its reboot: a
+    # background reboot outlived test_bs1_to_stick's fakes and rebooted the
+    # Thinkpad (2026-11-22).
+    raise unittest.SkipTest("BackShot1's tests don't run as root")
+
 TESTS = Path(__file__).resolve().parent
 BS1 = TESTS.parent.parent / "realworld" / "backshot1"
 KEYSPEC = "/backshot1/keys/disk-passphrase:LABEL=mybig512"

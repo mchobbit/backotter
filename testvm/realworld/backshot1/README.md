@@ -387,11 +387,23 @@ slackware.osuosl.org.  It is read-only (`chmod -R a-w`) and has a
 `PINNED.txt`; `testvm/realworld/slackware-current.pin` documents it in the
 repo.  slackware-pin.sh checks CHECKSUMS.md5 with gpgv against Slackware's
 key (the tree's GPG-KEY, held to its fingerprint), every file against its
-MD5, and every package against its .asc; run again, it checks the pin
-instead of fetching.  slackware-bootstrap.sh never fetches into a pin: it
-holds CHECKSUMS.md5 to the SHA-256 in its `PINS` table, then checks each
-package as for 15.0, and stops if one is missing or fails.  A new pin
-means a new `current-DATE` and a new `PINS` row.
+MD5, and every package against its .asc.  To check the pin again, offline:
+
+    bash /mnt/bs1-backup/backshot1/slackware/slackware-pin.sh \
+        /mnt/bs1-backup/slackware-cache --check current-20261121
+
+It fetches nothing: the pin's own GPG-KEY (held to the fingerprint), its
+CHECKSUMS.md5 against its signature, PINNED.txt and the `PINS` table, every
+file, every package's .asc, and that it is still read-only (2026-11-22, on
+the -current Thinkpad: PASS, 83 s).  A run without `--check` pins what the
+mirror has now, so on any later day it makes a new pin; with a pin in the
+cache already it stops and asks for `--new` (or `--check PIN`), and when
+the mirror is still at a pin it checks that one instead.
+slackware-bootstrap.sh never fetches into a pin: it holds CHECKSUMS.md5 to
+the SHA-256 in its `PINS` table, then checks each package as for 15.0, and
+stops if one is missing or fails.  A new pin means a new `current-DATE` and
+a new row in `PINS` (slackware-bootstrap.sh and slackware-pin.sh) and in
+bs1-adopt's `slk_pin_sha`.
 
 For 15.0 it first fetches what the cache lacks of the 15.0 tree from
 slackware.osuosl.org: CHECKSUMS.md5, checked with gpgv against Slackware's
@@ -433,8 +445,15 @@ initrd (ELILO boots `EFI/Slackware`'s, not /boot's), so after a kernel
 upgrade run `eliloconfig` (or copy `/boot/vmlinuz-generic` and
 `/boot/initrd-generic.img` to `EFI/Slackware/vmlinuz` and `initrd.gz`).
 geninitrd makes the initrd itself when the kernel package is installed.
-slackpkg's mirror is osuosl's slackware64-current, which isn't the pin: an
-`upgrade-all` leaves it.
+slackpkg's mirror is the pin itself,
+`file:///mnt/bs1-backup/slackware-cache/current-20261121/`, never live
+-current, so `slackpkg update` and `upgrade-all` keep the machine on its
+pin (with mybig512 mounted at /mnt/bs1-backup; without it slackpkg finds no
+mirror and stops).  Only series a, ap, d, l and n are in the pin, so
+`slackpkg install` of anything else fails.  (Until 2026-11-22 the bootstrap
+wrote osuosl's slackware64-current there; the Thinkpad's
+`/etc/slackpkg/mirrors` was changed by hand, and `slackpkg update` against
+the pin works.)
 
 15.0: the tree is 15.0 as released (kernel 5.15.19); `slackpkg update &&
 slackpkg upgrade-all` brings in patches/.  That includes kernel-generic and
@@ -461,12 +480,18 @@ user and group, `rc.messagebus` and `rc.avahidaemon` executable, and
 sleep.conf drop-in goes in `/etc/elogind/sleep.conf.d`, and elogind honours
 it (`CanSuspend` said `no` after adopt).  The package list is pkgtools'
 (`/var/lib/pkgtools/packages`), not Slackware's rpm.  Packages are never
-pulled with slackpkg, whose mirror is live -current: a missing one is
-installed with `installpkg`, by name, from the tree on mybig512 the system
-was installed from (`slackware-cache/current-DATE` or `slackware64-15.0`),
-the one tree whose packages are exactly the installed ones, each file held to
-its CHECKSUMS.md5.  A system that took a package from anywhere else matches
-no tree, and adopt stops and says to install it by hand.  A full install
+pulled with slackpkg: a missing one is installed with `installpkg`, by
+name, from the tree on mybig512 the system was installed from
+(`slackware-cache/current-DATE` or `slackware64-15.0`), the one tree whose
+packages are exactly the installed ones.  Only trees checked as
+slackware-bootstrap.sh checks them count: `slackware64-15.0`, or a pin
+bs1-adopt knows (`slk_pin_sha`, the `PINS` SHA-256, also its PINNED.txt's;
+never a `.part` slackware-pin.sh left), with CHECKSUMS.md5 signed by
+Slackware's key (the pin's GPG-KEY, or `slackware-key.gpg` for 15.0, held
+to the fingerprint); each package is held to its MD5 there and to its own
+.asc before installpkg.  A system that took a package from anywhere else
+matches no tree, and two trees that both match aren't guessed between:
+adopt stops and says to install it by hand.  A full install
 (series a, ap, d, l and n, as `slackware-bootstrap.sh` makes it) lacks
 nothing.  bs1-verify waits for rc.M to finish (sshd is up before it is).
 bs1-manifest's Slackware churn (a reboot of the -current Thinkpad,

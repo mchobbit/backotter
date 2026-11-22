@@ -238,32 +238,109 @@ solus_qol() {
 # Slackware: installpkg, by name, from the tree on this backup drive that this
 # system was installed from (slackware-bootstrap.sh's CACHE_DIR, SLK_CACHE:
 # slackware64-15.0, or a pin of -current, current-DATE), never slackpkg.
-# slackpkg's mirror is live slackware64-current (or 15.0's patches), and one
-# package from there would unpin a system installed from a pin: every
-# install and restore test of the -current Thinkpad runs on the pinned tree
-# (README.md, "The pin").  The tree is the one whose packages are the ones
-# installed here: each installed package it has (series of slackware64/ only,
-# not patches/, extra/, pasture/ or testing/) must be at its version, arch
-# and build, so a system that took any package from elsewhere (an upgrade
-# from the live mirror, 15.0's patches) matches no tree, and adopt stops and
-# names it.  Each file is held to the tree's CHECKSUMS.md5 (slackware-pin.sh
-# and slackware-bootstrap.sh checked the tree's signatures when they fetched
-# it).  installpkg resolves no dependencies, so each name list below has
-# them.  A full install (series a, ap, d, l and n, as slackware-bootstrap.sh
-# makes it) has everything BackShot1 needs, so this runs only on a smaller
-# one.
+# One package from live -current would unpin a system installed from a pin:
+# every install and restore test of the -current Thinkpad runs on the pinned
+# tree (README.md, "The pin").  A tree counts only if it is checked as
+# slackware-bootstrap.sh checks it: slackware64-15.0, or a pin slk_pin_sha
+# knows (not a .part slackware-pin.sh left, nor a current-DATE pinned since)
+# whose CHECKSUMS.md5 has that SHA-256 and the SHA-256 its PINNED.txt
+# names; and its CHECKSUMS.md5 signed by Slackware's key (a pin's own
+# GPG-KEY, 15.0's slackware-key.gpg beside the trees, either held to
+# SLK_KEY's fingerprint).  Of those, the tree is the one whose packages are
+# the ones installed here: each installed package it has (series of
+# slackware64/ only, not patches/, extra/, pasture/ or testing/) must be at
+# its version, arch and build, so a system that took any package from
+# elsewhere (an upgrade from the live mirror, 15.0's patches) matches no
+# tree, and adopt stops and names it; two trees that both match are not
+# guessed between either.  Each package is held to the tree's CHECKSUMS.md5
+# and to its own .asc before installpkg.  installpkg resolves no
+# dependencies, so each name list below has them.  A full install (series
+# a, ap, d, l and n, as slackware-bootstrap.sh makes it) has everything
+# BackShot1 needs, so this runs only on a smaller one.
+SLK_KEY=EC5649DA401E22ABFA6736EF6A4463C040102233
+# slk_pin_sha PIN: its CHECKSUMS.md5's SHA-256, as slackware-bootstrap.sh's
+# PINS has it (testvm/realworld/slackware-current.pin); a new pin, a new line
+# in both.
+slk_pin_sha() {
+    case $1 in
+    current-20261121) echo 9418aee6f8c5a06d1b051c2d25064d468cc0b19946912fc2898a949ee7fb9917 ;;
+    *) return 1 ;;
+    esac
+}
+# slk_keyring TREE OUT: Slackware's key for TREE's signatures into OUT (a
+# keyring gpgv reads), by fingerprint; else says why, and false.
+slk_keyring() {
+    local src home fpr rc=0
+    case ${1##*/} in
+    current-*) src=$1/GPG-KEY ;;
+    *) src=$SLK_CACHE/slackware-key.gpg ;;
+    esac
+    [[ -s $src ]] || { echo "there is no $src to check it with"; return 1; }
+    command -v gpg >/dev/null && command -v gpgv >/dev/null || { echo "this system has no gpg and gpgv to check it with (n/gnupg2)"; return 1; }
+    home=$(mktemp -d) || return 1
+    if ! GNUPGHOME=$home gpg -q --batch --import "$src" 2>/dev/null; then
+        echo "$src isn't a key gpg imports"; rc=1
+    else
+        fpr=$(GNUPGHOME=$home gpg --batch --with-colons --fingerprint --list-keys "$SLK_KEY" 2>/dev/null || true)
+        if ! grep -q "^fpr:*$SLK_KEY:" <<<"$fpr"; then
+            echo "$src is not Slackware's key $SLK_KEY"; rc=1
+        elif ! GNUPGHOME=$home gpg -q --batch --export "$SLK_KEY" >"$2" || [[ ! -s $2 ]]; then
+            echo "can't export Slackware's key from $src"; rc=1
+        fi
+    fi
+    gpgconf --homedir "$home" --kill all >/dev/null 2>&1 || true
+    rm -rf "$home"
+    return "$rc"
+}
+# slk_checked TREE: true if TREE is a tree slackware-bootstrap.sh installs
+# from and its CHECKSUMS.md5 checks; else says why, and false.
+slk_checked() {
+    local n=${1##*/} want got pinned key rc=0
+    case $n in
+    *.part) echo "a pin slackware-pin.sh didn't finish"; return 1 ;;
+    slackware64-15.0) ;;
+    current-*)
+        want=$(slk_pin_sha "$n") || { echo "not a pin bs1-adopt knows (slk_pin_sha)"; return 1; }
+        [[ -s $1/PINNED.txt ]] || { echo "it has no PINNED.txt"; return 1; }
+        got=$(sha256sum <"$1/CHECKSUMS.md5" | awk '{ print $1 }')
+        [[ $got == "$want" ]] || { echo "its CHECKSUMS.md5 isn't the pinned one (sha256 $got, pinned $want)"; return 1; }
+        pinned=$(sed -n 's/^CHECKSUMS_MD5_SHA256=//p' "$1/PINNED.txt")
+        [[ $pinned == "$want" ]] || { echo "its PINNED.txt names another CHECKSUMS.md5 ($pinned)"; return 1; }
+        ;;
+    *) echo "not a tree slackware-bootstrap.sh installs from"; return 1 ;;
+    esac
+    [[ -s $1/CHECKSUMS.md5.asc ]] || { echo "it has no CHECKSUMS.md5.asc"; return 1; }
+    key=$(mktemp) || return 1
+    if ! slk_keyring "$1" "$key"; then
+        rc=1
+    elif ! gpgv --keyring "$key" "$1/CHECKSUMS.md5.asc" "$1/CHECKSUMS.md5" >/dev/null 2>&1; then
+        echo "its CHECKSUMS.md5 isn't signed by Slackware's key"; rc=1
+    fi
+    rm -f "$key"
+    return "$rc"
+}
 slk_tree() {
-    local t why
+    local t why found=()
     for t in "$SLK_CACHE"/*/; do
         t=${t%/}
         [[ -s $t/CHECKSUMS.md5 ]] || continue
-        if why=$(slk_mismatch "$t"); then
-            echo "$t"
-            return 0
+        if ! why=$(slk_checked "$t"); then
+            echo "bs1-adopt: not $t: $why" >&2
+        elif why=$(slk_mismatch "$t"); then
+            found+=("$t")
+        else
+            echo "bs1-adopt: not $t: $why" >&2
         fi
-        echo "bs1-adopt: not $t: $why" >&2
     done
-    echo "bs1-adopt: no tree in $SLK_CACHE has this system's packages" >&2
+    if [[ ${#found[@]} -eq 1 ]]; then
+        echo "${found[0]}"
+        return 0
+    fi
+    if [[ ${#found[@]} -gt 1 ]]; then
+        echo "bs1-adopt: more than one tree in $SLK_CACHE has this system's packages (${found[*]}): which it came from is not guessed" >&2
+    else
+        echo "bs1-adopt: no checked tree in $SLK_CACHE has this system's packages" >&2
+    fi
     return 1
 }
 # slk_mismatch TREE: true if every installed package TREE has is at TREE's
@@ -293,24 +370,29 @@ slk_mismatch() {
         }'
 }
 slk_install() {     # slk_install NAME...: those not installed, from the tree
-    local tree n line sum path f missing=()
+    local tree n line sum path f key why missing=()
     for n in "$@"; do
         (cd "$SLK_PKGS" && printf '%s\n' *) | awk -v n="$n" '{ p = $0; sub(/-[^-]*-[^-]*-[^-]*$/, "", p) } p == n { f = 1 } END { exit !f }' ||
             missing+=("$n")
     done
     [[ ${#missing[@]} -gt 0 ]] || return 0
     tree=$(slk_tree) || { echo "bs1-adopt: install ${missing[*]} by hand (installpkg, from the tree this system came from; not slackpkg, if it is a pin)" >&2; return 1; }
+    key=$(mktemp) || return 1
+    why=$(slk_keyring "$tree" "$key") || { echo "bs1-adopt: $why" >&2; rm -f "$key"; return 1; }
     echo "bs1-adopt: installing ${missing[*]} from $tree"
     for n in "${missing[@]}"; do
         line=$(awk -v n="$n" '{ p = $NF; sub(/.*\//, "", p); sub(/-[^-]*-[^-]*-[^-]*\.t[gxlb]z$/, "", p) }
             p == n && $NF ~ /^\.\/slackware64\/[^\/]+\/[^\/]+\.t[gxlb]z$/ { print $1, $NF; exit }' "$tree/CHECKSUMS.md5")
-        [[ -n $line ]] || { echo "bs1-adopt: $tree has no package $n" >&2; return 1; }
+        [[ -n $line ]] || { echo "bs1-adopt: $tree has no package $n" >&2; rm -f "$key"; return 1; }
         read -r sum path <<<"$line"
         f=$tree/${path#./}
-        [[ -f $f ]] || { echo "bs1-adopt: $tree lacks $path (a series it didn't fetch?)" >&2; return 1; }
-        [[ $(md5sum <"$f" | awk '{ print $1 }') == "$sum" ]] || { echo "bs1-adopt: $f doesn't match $tree/CHECKSUMS.md5" >&2; return 1; }
-        installpkg "$f" || return 1
+        [[ -f $f ]] || { echo "bs1-adopt: $tree lacks $path (a series it didn't fetch?)" >&2; rm -f "$key"; return 1; }
+        [[ $(md5sum <"$f" | awk '{ print $1 }') == "$sum" ]] || { echo "bs1-adopt: $f doesn't match $tree/CHECKSUMS.md5" >&2; rm -f "$key"; return 1; }
+        gpgv --keyring "$key" "$f.asc" "$f" >/dev/null 2>&1 ||
+            { echo "bs1-adopt: $f isn't signed by Slackware's key (its .asc)" >&2; rm -f "$key"; return 1; }
+        installpkg "$f" || { rm -f "$key"; return 1; }
     done
+    rm -f "$key"
 }
 
 start_runit() {     # start_runit NAME: a service just linked in takes runsvdir a few seconds to notice

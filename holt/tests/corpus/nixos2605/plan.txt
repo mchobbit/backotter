@@ -97,6 +97,7 @@ sh -c 'me=$(readlink /proc/self/ns/mnt); seen=" $me "; at() { awk -v t=/mnt/bko-
 # Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
 # golden_plans.rs: status filesystem /dev/sdq1 ext4 bc000000-0000-4000-8000-000000000001
 # golden_plans.rs: status filesystem /dev/sdq2 swap bc000000-0000-4000-8000-000000000003
+# golden_plans.rs: status filesystem /dev/sdq3 bcachefs bc000000-0000-4000-8000-000000000004
 # golden_plans.rs: status mount /mnt/bko-target
 # golden_plans.rs: status mount /mnt/bko-target/boot
 # golden_plans.rs: exit 0, nothing on stderr

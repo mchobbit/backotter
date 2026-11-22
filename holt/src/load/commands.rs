@@ -1273,10 +1273,30 @@ pub fn vg_metadata(vg: &Value) -> Result<String, String> {
                 return Err(format!("LV {name}/{ln} has a {ty} segment; version 1 makes linear and striped LVs only"));
             }
         }
+        let mut status: Vec<Value> = lv
+            .get("status")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|x| x.as_str() != Some("ACTIVATION_SKIP"))
+            .collect();
+        if lv.get("status").is_some() && !status.iter().any(|x| x.as_str() == Some("WRITE")) {
+            let idx = status.iter().position(|x| x.as_str() == Some("READ")).map_or(0, |i| i + 1);
+            status.insert(idx, Value::Str("WRITE".into()));
+        }
+        let flags: Vec<Value> = lv
+            .get("flags")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|x| x.as_str() != Some("ACTIVATION_SKIP"))
+            .collect();
         let mut o = Obj::new()
             .set("id", lv.get("id").cloned().unwrap_or(Value::Null))
-            .set("status", lv.get("status").cloned().unwrap_or(Value::Arr(vec![])))
-            .set("flags", lv.get("flags").cloned().unwrap_or(Value::Arr(vec![])))
+            .set("status", Value::Arr(status))
+            .set("flags", Value::Arr(flags))
             .set("creation_host", lv.get("creation_host").cloned().unwrap_or(Value::Null))
             .set("creation_time", lv.get("creation_time").cloned().unwrap_or(Value::Null))
             .set("segment_count", segs.len() as u64);
@@ -1712,6 +1732,20 @@ impl Builder<'_> {
                 later.push(Cmd::new(&lvm_argv("lvchange", &devices, &["--permission", "r", &full])).why(format!("{full}: read-only, as on the source")));
             }
         };
+        for lv in vg.get("logical_volumes").and_then(Value::as_array).into_iter().flatten() {
+            let ln = s(lv, "name").unwrap_or_default();
+            if ln.is_empty() || thin.dropped.contains(&ln) {
+                continue;
+            }
+            let at = LvAttrs::of(lv);
+            let full = format!("{name}/{ln}");
+            if at.activation_skip {
+                later.push(Cmd::new(&lvm_argv("lvchange", &devices, &["--setactivationskip", "y", &full])).why(format!("{full}: ACTIVATION_SKIP, as on the source")));
+            }
+            if at.read_only {
+                later.push(Cmd::new(&lvm_argv("lvchange", &devices, &["--permission", "r", &full])).why(format!("{full}: read-only, as on the source")));
+            }
+        }
         for p in &thin.pools {
             let (data, meta) = (lvm_size(p.data_bytes), lvm_size(p.meta_bytes));
             let mut a: Vec<String> = ["--yes", "--type", "thin-pool", "-n", &p.name, "-L", &data, "--poolmetadatasize", &meta].iter().map(|x| x.to_string()).collect();
@@ -7495,6 +7529,14 @@ mod tests {
         assert!(t.contains("\t\t\tsegment_count = 1\n\t\t\tsegment1 {\n\t\t\t\tstart_extent = 0\n"), "{t}");
         assert!(t.contains("stripes = [\"pv0\", 0]"), "{t}");
         assert!(t.contains("contents = \"Text Format Volume Group\"\nversion = 1\n"), "{t}");
+        let ro_skip = crate::json::parse(
+            &vg.compact()
+                .replace("\"status\":[\"READ\",\"WRITE\",\"VISIBLE\"]", "\"status\":[\"READ\",\"VISIBLE\"]")
+                .replace("\"flags\":[]", "\"flags\":[\"ACTIVATION_SKIP\"]"),
+        )
+        .unwrap();
+        let rt = vg_metadata(&ro_skip).unwrap();
+        assert!(rt.contains("status = [\"READ\", \"WRITE\", \"VISIBLE\"]") && !rt.contains("ACTIVATION_SKIP"), "{rt}");
     }
 
     /// Vanilla OS's vos-root: vgcfgrestore's file has the PV, the group and

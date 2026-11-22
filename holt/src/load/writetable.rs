@@ -203,6 +203,11 @@ pub fn plan(disk: &Value, size: u64) -> Result<Vec<(u64, Vec<u8>)>, String> {
             }
             let sig = s(t, "disk_signature").and_then(|x| u32::from_str_radix(x.trim_start_matches("0x"), 16).ok()).unwrap_or(0);
             mbr[440..444].copy_from_slice(&sig.to_le_bytes());
+            // Bug: MBR write-table never checked start_lba == 0, zero sectors,
+            // duplicate/overlapping primary slots, target disk bounds, or >32-bit
+            // LBA values that mbr_entry silently clamped to u32::MAX, writing
+            // corrupt or truncated partition tables. Validate every MBR entry.
+            let mut spans: Vec<(usize, u64, u64)> = Vec::new();
             for p in &parts {
                 if p.get("logical").and_then(Value::as_bool) == Some(true) || p.get("extended").and_then(Value::as_bool) == Some(true) {
                     return Err("extended and logical partitions aren't written by write-table".into());
@@ -214,8 +219,19 @@ pub fn plan(disk: &Value, size: u64) -> Result<Vec<(u64, Vec<u8>)>, String> {
                 if !(1..=4).contains(&num) {
                     return Err(format!("MBR partition {num} isn't a primary one"));
                 }
+                if spans.iter().any(|(n, _, _)| *n == num) {
+                    return Err(format!("MBR partition {num} is listed twice"));
+                }
                 let ty = s(p, "type").and_then(|t| mbr_type(&t)).ok_or(format!("partition {num}: a bad type"))?;
                 let (start, secs) = (u(p, "start_lba").unwrap_or(0), u(p, "sectors").unwrap_or(0));
+                let end = start.checked_add(secs).ok_or_else(|| format!("partition {num}: end LBA overflows"))?;
+                if start == 0 || secs == 0 || start > u64::from(u32::MAX) || secs > u64::from(u32::MAX) || end > total {
+                    return Err(format!("partition {num} ({start}+{secs} sectors) overlaps MBR, overflows 32-bit LBA, or exceeds device"));
+                }
+                if let Some((other, _, _)) = spans.iter().find(|(_, s, e)| start < *e && *s < end) {
+                    return Err(format!("MBR partitions {other} and {num} overlap"));
+                }
+                spans.push((num, start, end));
                 mbr_entry(&mut mbr[446 + 16 * (num - 1)..462 + 16 * (num - 1)], p.get("bootable").and_then(Value::as_bool) == Some(true), ty, start, secs);
             }
             out.push((0, mbr));
@@ -360,9 +376,9 @@ mod tests {
 
     #[test]
     fn mbr_round_trip() {
-        let d = crate::json::parse(r#"{"name": "wd0", "size_bytes": 8388608, "partition_table": {"type": "dos", "sector_size": 512, "disk_signature": "1234abcd"},
+        let d = crate::json::parse(r#"{"name": "wd0", "size_bytes": 8392704, "partition_table": {"type": "dos", "sector_size": 512, "disk_signature": "1234abcd"},
           "partitions": [{"number": 1, "start_lba": 63, "sectors": 16321, "type": "0xa6", "bootable": true}, {"number": 4, "start_lba": 16384, "sectors": 8, "type": "0x83"}]}"#).unwrap();
-        let img = apply(&plan(&d, 8388608).unwrap(), 8388608);
+        let img = apply(&plan(&d, 8392704).unwrap(), 8392704);
         let Some(Table::Mbr(m)) = read_table(&MemSource(img), 512) else { panic!("no MBR") };
         assert_eq!(m.disk_signature, 0x1234abcd);
         assert_eq!(m.parts.iter().map(|p| (p.number, p.ptype, p.start, p.sectors, p.boot_flag)).collect::<Vec<_>>(), vec![(1, 0xa6, 63, 16321, 0x80), (4, 0x83, 16384, 8, 0)]);

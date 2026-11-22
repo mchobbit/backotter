@@ -1,11 +1,13 @@
 # UPS-driven shutdowns (plan)
 
-Status (2026-11-17): **applied on every machine.** UPS-A (GMKOne and
-Bigfoot), UPS-B (GMKTwo) and UPS-C (GMKThree and all seven of its
-secondaries) are all set up (Czerny joined UPS-C 2026-11-19). Still open: T4 for Bigfoot, after the disk
-move and in a window the user picks, and the user's T5 pull-the-plug
-tests. See "Applied so far" under the apply order. Each config change
-left a dated `.bak-*` copy beside the file in `/etc/nut`.
+Status (2026-11-22): **UPS-C has no data link.** GMKThree moved to its own
+new UPS, UPS-D (a Green Cell on its USB, `[greencell]`, nutdrv_qx), on
+2026-11-22; UPS-C's Eaton still powers the farm hosts, Coventry and Choubox
+but is plugged into no computer, so those seven are unprotected until it is
+(see "UPS-D and UPS-C, 2026-11-22" below). UPS-A and UPS-B are unchanged.
+Before that (2026-11-17) every machine was set up; still open from then: T4
+for Bigfoot and the user's T5 pull-the-plug tests. Each config change left a
+dated `.bak-*` copy beside the file in `/etc/nut`.
 
 ## Goal (the user's checklist)
 
@@ -13,7 +15,8 @@ left a dated `.bak-*` copy beside the file in `/etc/nut`.
 |-----|--------------------|------------------------------|
 | UPS-A | GMKOne | Bigfoot, then GMKOne |
 | UPS-B | GMKTwo | GMKTwo |
-| UPS-C | GMKThree | Cinqcent, Chopin, Cage, Copland, Czerny, Coventry, Choubox, then GMKThree |
+| UPS-C | none since 2026-11-22 (was GMKThree) | Cinqcent, Chopin, Cage, Copland, Czerny, Coventry, Choubox (unprotected until UPS-C is plugged in) |
+| UPS-D | GMKThree (since 2026-11-22) | GMKThree |
 
 ## What exists today (surveyed read-only 2026-11-15, ~20:55)
 
@@ -295,6 +298,25 @@ bridges), GmkTwoPool and GmkThreePool (each on a JMS578 bridge).
 4. UPS-A: GMKOne netserver, then Bigfoot (both done; Bigfoot joined 2026-11-17, before the disk move). Then T2, T3
    and T4 for Bigfoot.
 5. T5, the user's pull-the-plug tests.
+
+### UPS-D and UPS-C, 2026-11-22
+
+- **GMKThree is on UPS-D**, a Green Cell (USB `0001:0000` MEC0003, Q1
+  protocol, offline/line-interactive), as primary of `[greencell]`:
+  `driver = nutdrv_qx`, the same section as the 2026-11-15 Greencell backup.
+  It reports only `battery.voltage` (13.7 V, one 12 V battery), no charge or
+  runtime, so the shutdown comes from the UPS's own LB flag (no `ignorelb`,
+  no overrides). `ups.delay.shutdown` 30 and `ups.delay.start` 180 are the
+  driver's defaults. Load 10 %, OL.
+- upsmon: `MONITOR greencell@localhost 1 monmaster <pw> primary`,
+  `SHUTDOWNCMD "/sbin/shutdown -h +0"` (UPS-D feeds GMKThree alone, so no
+  wait for secondaries). `MODE=netserver` and the `[upssecondary]` user are
+  kept for whichever host takes UPS-C. Backups: `ups.conf` and
+  `upsmon.conf.bak-upsd-20261122`.
+- **UPS-C's secondaries** still `MONITOR eaton@gmkthree.local`, which no
+  longer exists: they log `ERR UNKNOWN-UPS` and never shut down. When UPS-C's
+  USB goes into a host, that host gets the old `[eaton]` section and
+  ups-primary-halt for the others, and the six repoint their MONITOR.
 
 ### Applied so far (2026-11-16, morning)
 

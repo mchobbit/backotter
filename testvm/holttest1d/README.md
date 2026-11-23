@@ -694,6 +694,19 @@ Each run also checks, as the plan asks:
   crypttab volume open (in the `degraded` variant an array may be
   degraded too), and load's log kept.  The same checks run on the
   source; one that fails there too isn't counted.
+- the boot state: the init system's overall state (systemd's
+  `is-system-running --wait`) and each failed unit or service that isn't
+  up; the restored boot may have no line its source's lacked.  ht1.sh's
+  `FLAKY_UNITS` leaves out, guest by guest, a unit that fails on some
+  boots and not others whatever the restore did
+  (`logs/bootstate-raw.txt` has each boot as it was): `vanilla3`'s
+  `systemd-networkd-wait-online.service`, and `shadow.service` on
+  `endeavouros` and `endeavouros-grub`.  EndeavourOS's installer leaves
+  six groups out of /etc/gshadow, so `grpck -r` exits 2 in the guests' own
+  images and the unit fails whenever its daily timer starts it: on the
+  restored boot alone when the guest's midnight (UTC) falls between the
+  source's boot, which makes the timer's stamp, and the restored one
+  (run `t2h-20261122T2116-b591` on Chopin, 2026-11-23).
 - on an ostree source, its two deployments booted in turn, on the source
   first and then on the restored disk, which must show what the source's
   boots did ("The ostree guest" above).

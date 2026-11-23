@@ -625,6 +625,16 @@ case $G in
     # V1 of docs/design/vanillaos.md: networkd's wait-online fails on some
     # boots of the guest (QEMU's user network), on the source as well.
     vanilla3*) FLAKY_UNITS="systemd-networkd-wait-online.service" ;;
+    # EndeavourOS's installer leaves six of /etc/group's groups (adm, wheel,
+    # uucp, nopasswdlogin, rfkill, sys) out of /etc/gshadow, so shadow.service
+    # (pwck -qr, then grpck -r) fails whenever shadow.timer starts it: grpck
+    # -r exits 2 in both guests' own images.  The timer is daily and
+    # Persistent with no random delay, and the image has no stamp of it: the
+    # source's boot makes one, the backup holds it, and a restored boot past
+    # the guest's next midnight (UTC) starts the unit at once, where the
+    # source's boot never did (run t2h-20261122T2116-b591: the source up at
+    # 23:57 UTC, the restored disk at 00:02, "degraded shadow.service").
+    endeavouros*) FLAKY_UNITS="shadow.service" ;;
 esac
 # TrueNAS (docs/design/truenas.md): its middleware wants more than vm-run's
 # 2 GiB, so the source's and the restored boots get 4 GiB (the spec's T6;

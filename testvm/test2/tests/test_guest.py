@@ -262,32 +262,150 @@ class CheckAfterBsdServices(unittest.TestCase):
 
 class CheckAfterIllumosServices(unittest.TestCase):
     """check-after.sh's B-ill boot-state: legacy_run is a legacy rc script SMF ran at boot (lrc:),
-    not a service down; offline and maintenance are."""
+    not a service down; offline and maintenance are.  The reading waits while a service is in
+    transition or offline with SMF still to start it, not for one held for good."""
 
     # omnios58's svcs -H -o state,fmri after the update (t2v-20261117T1639-dc6b), cut down
     SVCS = ("legacy_run     lrc:/etc/rc2_d/S20sysetup\nlegacy_run     lrc:/etc/rc2_d/S81dodatadm_udaplt\n"
             "legacy_run     lrc:/etc/rc2_d/S89PRESERVE\nonline         svc:/network/ssh:default\n"
             "disabled       svc:/network/smtp:sendmail\noffline        svc:/system/cloud-init:init\n"
             "maintenance    svc:/system/fmd:default\n")
+    # svcs -l's dependency lines, as omnios58 and oi2610 print them (probes of 2026-11-23)
+    DEPS = {
+        "svc:/system/cloud-init:init": (
+            "fmri         svc:/system/cloud-init:init\nenabled      true\nstate        offline\n"
+            "dependency   require_all/none svc:/system/cloud-init:initlocal (disabled)\n"
+            "dependency   optional_all/error svc:/milestone/network (online)\n"
+            "dependency   require_any/error svc:/network/loopback (online)\n"
+            "dependency   require_all/none svc:/system/filesystem/local:default (online)\n"),
+        "svc:/system/cloud-init:modules": (
+            "fmri         svc:/system/cloud-init:modules\nstate        offline\n"
+            "dependency   require_all/none svc:/system/cloud-init:init (offline)\n"
+            "dependency   require_any/error svc:/network/loopback (online)\n"
+            "dependency   require_all/none svc:/system/filesystem/local:default (online)\n"),
+        "svc:/system/cloud-init:final": (
+            "fmri         svc:/system/cloud-init:final\nstate        offline\n"
+            "dependency   require_all/none svc:/system/cloud-init:modules (offline)\n"
+            "dependency   optional_all/error svc:/network/ssh:default (online)\n"
+            "dependency   require_all/none svc:/system/filesystem/local:default (online)\n"),
+        "svc:/milestone/network:default": (
+            "fmri         svc:/milestone/network:default\nenabled      true\nstate        offline\n"
+            "dependency   require_all/none svc:/network/loopback (online)\n"
+            "dependency   require_all/none svc:/network/physical (multiple)\n"
+            "dependency   optional_all/none svc:/network/ipsec/policy (disabled)\n"
+            "dependency   optional_all/restart svc:/network/ipfilter (disabled)\n"),
+        # it requires the milestone, which is offline but on its way: so is this
+        "svc:/system/filesystem/autofs:default": (
+            "dependency   require_all/restart svc:/milestone/network (offline)\n"
+            "dependency   require_all/none svc:/system/filesystem/local (online)\n"),
+        # two dependencies on one line, the second in maintenance
+        "svc:/site/two:default": (
+            "dependency   require_all/none svc:/network/loopback (online) svc:/system/fmd:default (maintenance)\n"),
+        "svc:/site/gone:default": "dependency   require_all/none svc:/site/nothing (absent)\n",
+    }
 
-    def test_legacy_run_is_not_down(self):
+    def reading(self, readings, deps=None):
+        """The B-ill block's (output lines, sleeps) over READINGS, the texts `svcs -H -o state,fmri`
+        prints one call after the other (the last one for every further call); `svcs -l FMRI`
+        prints DEPS' text for it, or nothing."""
         import subprocess
         with open(os.path.join(REPO, "testvm/test2/guest/check-after.sh"), encoding="utf-8") as f:
             text = f.read()
         block = text[text.index("elif has_rule B-ill; then"):]
         block = block[:block.index("\nelif has_rule B-alpbsd")]
         d = tempfile.mkdtemp(prefix="t2-ill-", dir=_tmp)
-        with open(os.path.join(d, "states"), "w", encoding="utf-8") as f:
-            f.write(self.SVCS)
+        for i, r in enumerate(readings, 1):
+            with open(os.path.join(d, f"states.{i}"), "w", encoding="utf-8") as f:
+                f.write(r)
+        for i, (fmri, lines) in enumerate((self.DEPS if deps is None else deps).items()):
+            with open(os.path.join(d, f"dep.{i}"), "w", encoding="utf-8") as f:
+                f.write(fmri + "\n" + lines)
         with open(os.path.join(d, "svcs"), "w", encoding="utf-8") as f:
-            # -H -o state, or -H -o state,fmri
-            f.write(f"#!/bin/sh\ncase $3 in state) awk '{{print $1}}' {d}/states ;; *) cat {d}/states ;; esac\n")
-        os.chmod(os.path.join(d, "svcs"), 0o755)
+            f.write(f"""#!/bin/sh
+d={d}
+if [ "$1" = -l ]; then
+    for f in "$d"/dep.*; do
+        [ -e "$f" ] && [ "$(head -n 1 "$f")" = "$2" ] && sed 1d "$f"
+    done
+    exit 0
+fi
+[ "$1 $2 $3" = "-H -o state,fmri" ] || {{ echo "svcs: unexpected $*" >&2; exit 2; }}
+n=$(($(cat "$d/calls" 2>/dev/null || echo 0) + 1)); echo $n > "$d/calls"
+[ -e "$d/states.$n" ] || n={len(readings)}
+cat "$d/states.$n"
+""")
+        with open(os.path.join(d, "sleep"), "w", encoding="utf-8") as f:
+            f.write(f"#!/bin/sh\necho \"$1\" >> {d}/sleeps\n")
+        for n in ("svcs", "sleep"):
+            os.chmod(os.path.join(d, n), 0o755)
         code = "has_rule() { return 0; }\ncmd() { echo \"=== cmd $1\"; }\nif false; then :\n" + block + "\nfi\n"
         env = dict(os.environ, PATH=d + os.pathsep + os.environ.get("PATH", ""))
-        out = subprocess.run(["sh", "-c", code], env=env, capture_output=True, text=True, check=True).stdout.splitlines()
+        p = subprocess.run(["sh", "-c", code], env=env, capture_output=True, text=True, check=True)
+        self.assertEqual(p.stderr, "")
+        sleeps = 0
+        if os.path.exists(os.path.join(d, "sleeps")):
+            with open(os.path.join(d, "sleeps"), encoding="utf-8") as f:
+                sleeps = len(f.read().split())
+        return p.stdout.splitlines(), sleeps
+
+    def test_legacy_run_is_not_down(self):
+        out, sleeps = self.reading([self.SVCS])
         self.assertEqual(out, ["=== cmd boot-state", "down svc:/system/cloud-init:init", "down svc:/system/fmd:default",
                                "ok 7 services checked"])
+        self.assertEqual(sleeps, 0)
+
+    NET = "svc:/milestone/network:default"
+    UP = "online         svc:/network/ssh:default\nonline         svc:/network/loopback:default\n"
+
+    def test_waits_for_an_offline_service_on_its_way(self):
+        """oi2610, t2v-20261123T1729-550e: sshd up, NWAM's location change had stopped
+        milestone/network, offline with nothing in transition; SMF starts it again."""
+        down = self.UP + f"offline        {self.NET}\n"
+        out, sleeps = self.reading([down, down, self.UP + f"online         {self.NET}\n"])
+        self.assertEqual(out, ["=== cmd boot-state", "ok 3 services checked"])
+        self.assertEqual(sleeps, 2)
+
+    def test_waits_for_what_requires_a_service_on_its_way(self):
+        both = self.UP + f"offline        {self.NET}\noffline        svc:/system/filesystem/autofs:default\n"
+        out, sleeps = self.reading([both, self.UP + f"online         {self.NET}\nonline         svc:/system/filesystem/autofs:default\n"])
+        self.assertEqual(out, ["=== cmd boot-state", "ok 4 services checked"])
+        self.assertEqual(sleeps, 1)
+
+    def test_waits_while_in_transition(self):
+        out, sleeps = self.reading([self.UP + "offline*       svc:/system/fmd:default\n", self.UP + "online         svc:/system/fmd:default\n"])
+        self.assertEqual(out, ["=== cmd boot-state", "ok 3 services checked"])
+        self.assertEqual(sleeps, 1)
+
+    def test_held_for_good_is_not_waited_for(self):
+        """omnios58: cloud-init's stages behind the disabled initlocal, each requiring the one
+        before (limits.json's standing lines); and a dependency in maintenance or absent."""
+        held = "".join(f"offline        svc:/system/cloud-init:{x}\n" for x in ("modules", "init", "final"))
+        out, sleeps = self.reading([self.UP + held + "offline        svc:/site/two:default\noffline        svc:/site/gone:default\n"])
+        self.assertEqual(out, ["=== cmd boot-state", "down svc:/site/gone:default", "down svc:/site/two:default",
+                               "down svc:/system/cloud-init:final", "down svc:/system/cloud-init:init",
+                               "down svc:/system/cloud-init:modules", "ok 7 services checked"])
+        self.assertEqual(sleeps, 0)
+
+    def test_held_ones_don_t_end_the_wait_for_another(self):
+        held = "offline        svc:/system/cloud-init:init\n"
+        out, sleeps = self.reading([self.UP + held + f"offline        {self.NET}\n", self.UP + held + f"online         {self.NET}\n"])
+        self.assertEqual(out, ["=== cmd boot-state", "down svc:/system/cloud-init:init", "ok 4 services checked"])
+        self.assertEqual(sleeps, 1)
+
+    def test_gives_up_after_120_s_and_names_it(self):
+        out, sleeps = self.reading([self.UP + f"offline        {self.NET}\n"])
+        self.assertEqual(out, ["=== cmd boot-state", f"down {self.NET}", "ok 3 services checked"])
+        self.assertEqual(sleeps, 60)
+
+    def test_what_svcs_l_doesn_t_say_counts_as_on_its_way(self):
+        out, sleeps = self.reading([self.UP + "offline        svc:/site/unknown:default\n", self.UP], deps={})
+        self.assertEqual(out, ["=== cmd boot-state", "ok 2 services checked"])
+        self.assertEqual(sleeps, 1)
+
+    def test_no_listing_is_an_error(self):
+        out, sleeps = self.reading([""])
+        self.assertEqual(out, ["=== cmd boot-state", "error svcs lists nothing"])
+        self.assertEqual(sleeps, 0)
 
 
 class CheckAfterOstree(unittest.TestCase):

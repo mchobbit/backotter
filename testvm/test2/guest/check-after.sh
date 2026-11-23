@@ -41,12 +41,63 @@ elif has_rule B-obsd; then
     if [ "$n" -gt 0 ]; then echo "ok $n daemons checked"; else echo "error rcctl lists no daemon"; fi
 elif has_rule B-ill; then
     cmd boot-state
+    # Settled: nothing in transition (a * after its state) and nothing offline that SMF may
+    # yet start, or 120 s.  Offline with no * is a service waiting on its dependencies, and
+    # sshd answers before NWAM is done: each of its location changes (NoNet, then Automatic
+    # once DHCP has answered) restarts ipfilter, which stops milestone/network (it depends on
+    # ipfilter optional_all/restart) until SMF starts it again, 10 s later on a quiet host
+    # and more on a busy one, with nothing in transition meanwhile (oi2610's "down
+    # svc:/milestone/network:default", t2v-20261123T1729-550e; ht1-bsd.sh's BOOTSTATE waits
+    # for the same reason).  The listing is the reading that passed, not one taken after it.
+    # ill_coming FMRI...: of these offline services, the ones SMF may yet start, one a line.
+    # Not one held for good: it requires (require_all) a service that is disabled, in
+    # maintenance or absent, or one so held, as omnios58's cloud-init:init, modules and final
+    # do behind initlocal (limits.json), which would cost 120 s at every reading.  What
+    # svcs -l doesn't say counts as coming.
+    ill_coming() {
+        for f in "$@"; do
+            echo "F $f"
+            svcs -l "$f" 2>/dev/null |
+                awk '$1 == "dependency" && $2 ~ /^require_all\// { for (k = 3; k < NF; k += 2) print "D", $k, $(k + 1) }'
+        done | awk '
+            $1 == "F" { cur = $2; name[++nf] = cur; next }
+            $1 == "D" { k = ++nd[cur]; dep[cur, k] = $2; st[cur, k] = $3 }
+            END {
+                more = 1
+                while (more) {
+                    more = 0
+                    for (j = 1; j <= nf; j++) {
+                        f = name[j]
+                        if (f in held) continue
+                        for (k = 1; k <= nd[f]; k++) {
+                            s = st[f, k]
+                            if (s == "(disabled)" || s == "(maintenance)" || s == "(absent)" ||
+                                (s == "(offline)" && (dep[f, k] in held))) {
+                                # a dependency may name the service alone: svc:/system/cloud-init
+                                g = f; sub(/:[^:\/]*$/, "", g)
+                                held[f] = 1; held[g] = 1; more = 1
+                                break
+                            }
+                        }
+                    }
+                }
+                for (j = 1; j <= nf; j++) if (!(name[j] in held)) print name[j]
+            }'
+    }
     i=0
-    while svcs -H -o state | grep -q '\*' && [ $i -lt 60 ]; do sleep 2; i=$((i + 1)); done
+    while :; do
+        s=$(svcs -H -o state,fmri 2>/dev/null)
+        case $s in
+        *'*'*) w=transition ;;
+        *) w=$(ill_coming $(printf '%s\n' "$s" | awk '$1 == "offline" { print $2 }')) ;;
+        esac
+        [ -n "$w" ] && [ $i -lt 60 ] || break
+        sleep 2; i=$((i + 1))
+    done
     # legacy_run is an /etc/rc?.d script SMF ran at boot (an lrc: FMRI): ran is all a legacy
     # script can be, as illumos' own S20sysetup, S81dodatadm_udaplt and S89PRESERVE are
-    svcs -H -o state,fmri | awk '$1 != "online" && $1 != "disabled" && $1 != "legacy_run" { print "down " $2 }' | sort
-    n=$(($(svcs -H -o state 2>/dev/null | wc -l)))
+    printf '%s\n' "$s" | awk 'NF && $1 != "online" && $1 != "disabled" && $1 != "legacy_run" { print "down " $2 }' | sort
+    n=$(($(printf '%s\n' "$s" | grep -c .)))
     if [ "$n" -gt 0 ]; then echo "ok $n services checked"; else echo "error svcs lists nothing"; fi
 elif has_rule B-alpbsd; then
     # AlpineBSD has s6, not rc.d's service(8): what the default bundle wants and isn't up.

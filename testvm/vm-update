@@ -38,8 +38,10 @@ GUEST, vm-update
      repositories; as root, or as the user named in vms/GUEST/ssh-user
      (Haiku's "user", which is uid 0: Haiku has no root);
   4. reboots it and waits for SSH again, so a broken kernel or boot loader
-     stops here, and lists the packages again.  The merge rule: there is an
-     update to merge when the two listings differ, or in-guest.sh printed a
+     stops here (a kernel that panicked into its debugger, ddb's prompt the
+     console's last word, fails the run at once with its panic's line, not
+     after the wait for SSH), and lists the packages again.  The merge rule:
+     there is an update to merge when the two listings differ, or in-guest.sh printed a
      "step:" line (a fix no package shows), or either listing is unknown.
      With nothing to merge, the guest is powered off and its overlay thrown
      away: no trim, no new generation.  With --merge-gate, its command then
@@ -520,6 +522,16 @@ ANSI = re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]")
 PROMPT = re.compile(rb"(?i)(enter passphrase[^\n]*|please unlock disk [^\n]*:\s*|geli passphrase for \S+\s*|(?:^|\n)passphrase:\s*)$")
 # Typed with no console output at all for this long: one Enter more.
 NUDGE_S = 30
+# A kernel that stopped in its debugger and waits there for a key: ddb's
+# prompt (FreeBSD's and DragonFly's "db> ", NetBSD's "db{0}> ", OpenBSD's
+# "ddb> " and "ddb{0}> ") as the console's last output for DEBUGGER_S.  Such a
+# guest never answers again on its own (hardenedbsd15, GuestTest2
+# t2v-20261123T1729-550e: "panic: softdep_waitidle: work added after flush"
+# in the last unmount of the reboot after hbsd-update, then 900 s of waiting
+# for its SSH).
+DEBUGGER = re.compile(rb"(?:^|[\r\n])d?db(?:\{\d+\})?> $")
+DEBUGGER_S = 10
+PANIC = re.compile(rb"(?:^|[\r\n])panic: ([^\r\n]+)")
 KEPT = re.compile(r"vm-run: kept this run's writes to (\S+) in (\S+) \(")
 # Root's PATH over SSH lacks /sbin on some guests (NetBSD).
 SBIN = "PATH=/sbin:/usr/sbin:/bin:/usr/bin:$PATH; export PATH\n"
@@ -803,6 +815,9 @@ class VM:
     A thread keeps the peak of what the folder holds, and with VM_UPDATE_RAM
     stops a VM that outgrows its reservation."""
 
+    # The console's last output (4 KiB of it, ANSI sequences taken out) and when it came.
+    console: tuple[bytes, float | None] = (b"", None)
+
     def __init__(self, g: Guest, memory: int | None, cpus: int | None = None):
         if memory:
             mb = memory
@@ -931,6 +946,7 @@ class VM:
             except ValueError:                 # closed: the run is over
                 pass
             buf = (buf + ANSI.sub(b"", chunk))[-4096:]
+            self.console = (buf, time.monotonic())
             if self.passphrase and PROMPT.search(buf) and time.monotonic() - self.typed["last"] > 5:
                 time.sleep(1)
                 if not self._send(self.passphrase + b"\r", 0.05):
@@ -1072,11 +1088,31 @@ class VM:
         d, h, mi, sec = (int(x or 0) for x in m.groups())
         return ((d * 24 + h) * 60 + mi) * 60 + sec
 
+    def debugger(self) -> str | None:
+        """debugger_why of the console as it has stood for DEBUGGER_S or more
+        (a prompt with nothing after it for that long is waited at, not passed
+        by); the panic's line from serial.log's last 64 KiB when the console's
+        last 4 KiB no longer hold it."""
+        tail, at = self.console
+        if at is None or time.monotonic() - at < DEBUGGER_S or not DEBUGGER.search(tail):
+            return None
+        log = b""
+        if not PANIC.search(tail):
+            try:
+                with open(self.g.serial_path, "rb") as f:
+                    f.seek(max(0, os.fstat(f.fileno()).st_size - 65536))
+                    log = ANSI.sub(b"", f.read())
+            except OSError:
+                pass
+        return debugger_why(tail, log)
+
     def wait_ssh(self, rebooting: bool = False) -> None:
         """Wait until the guest answers on SSH, twice in a row (an sshd that
         starts before the network is done can lose its connections);
         REBOOTING, until it has stopped answering first.  (Not by a boot id:
-        the BSDs' kern.boottime moves when ntpd steps the clock.)"""
+        the BSDs' kern.boottime moves when ntpd steps the clock.)  A guest
+        whose kernel waits in its debugger (VM.debugger) fails at once, with
+        its panic in the message: it would only be waited out."""
         began = time.monotonic()
         deadline = began + SSH_UP_TIMEOUT
         down, answers = not rebooting, 0
@@ -1104,6 +1140,9 @@ class VM:
                         return
             else:
                 down, answers = True, 0
+                if why := self.debugger():
+                    self.g.note(f"console: {why}")
+                    raise Failed(f"{why}; see {self.g.serial_path}")
             time.sleep(2 if not down else 5)
         raise Failed(f"no SSH as {self.g.user} within {SSH_UP_TIMEOUT} s; see {self.g.serial_path}")
 
@@ -1167,6 +1206,8 @@ class VM:
                 self.proc.wait(timeout=30 if r.returncode == 255 else max(1, deadline - time.monotonic()))
                 break
             except subprocess.TimeoutExpired:
+                if why := self.debugger():   # (the same last unmount as a reboot's)
+                    raise Failed(f"{why}; see {self.g.serial_path}")
                 if time.monotonic() >= deadline:
                     raise Failed(f"the guest didn't power off within {POWEROFF_TIMEOUT} s")
         running.discard(self)              # off: from here on, stopping waits for the merge
@@ -1908,6 +1949,19 @@ def reboot_guest(vm, g) -> None:
         raise Failed(f"the reboot command failed; see {g.log.name}")
     vm.type_passphrase()
     vm.wait_ssh(rebooting=True)
+
+
+def debugger_why(tail: bytes, log: bytes = b"") -> str | None:
+    """Why a guest whose console ends in TAIL never answers again: its kernel
+    waits at its debugger's prompt (DEBUGGER), with the panic that took it
+    there (the last one in TAIL, else in LOG, more of the console); else None."""
+    if not DEBUGGER.search(tail):
+        return None
+    said = PANIC.findall(tail) or PANIC.findall(log)
+    if not said:
+        return "the guest's kernel stopped in its debugger and waits there"
+    return ("the guest's kernel panicked and waits in its debugger (panic: "
+            + said[-1].decode(errors="replace").strip()[:200] + ")")
 
 
 def parse_steps(stdout: str) -> list[str]:

@@ -3539,6 +3539,170 @@ class TestSshConnectTimeout(unittest.TestCase):
         self.assertEqual(cts, [3, 3])
 
 
+class TestDebugger(unittest.TestCase):
+    """A guest whose kernel waits at its debugger's prompt never answers again: wait_ssh says so
+    at once, with the panic, where it waited 900 s for SSH (hardenedbsd15, GuestTest2
+    t2v-20261123T1729-550e: the 15.1-STABLE-HBSD kernel panicked in the last unmount of the reboot
+    after hbsd-update and sat in ddb)."""
+
+    # that run's serial.log from the reboot on, the backtrace's middle left out
+    HBSD = b"\r\n".join([
+        b"FreeBSD/amd64 (hbsd15) (ttyu0)", b"", b"login: Nov 23 19:21:33 hbsd15 reboot[14878]: rebooted by root",
+        b"Nov 23 19:21:33 hbsd15 syslogd: exiting on signal 15\r",
+        b"Waiting (max 60 seconds) for system process `vnlru' to stop... done",
+        b"Waiting (max 60 seconds) for system process `syncer' to stop... ",
+        b"Syncing disks, vnodes remaining... 16 0 done", b"All buffers synced.",
+        b"panic: softdep_waitidle: work added after flush", b"cpuid = 0", b"time = 1795461709",
+        b"__HardenedBSD_version = 1500001 __FreeBSD_version = 1501503",
+        b"version = FreeBSD 15.1-STABLE-HBSD  HARDENEDBSD", b"KDB: stack backtrace:",
+        b"db_trace_self_wrapper() at db_trace_self_wrapper+0x36/frame 0xfffffe005437f9c0",
+        b"vpanic() at vpanic+0x14e/frame 0xfffffe005437faf0", b"panic() at panic+0x43/frame 0xfffffe005437fb50",
+        b"softdep_flushfiles() at softdep_flushfiles+0x495/frame 0xfffffe005437fc00",
+        b"ffs_unmount() at ffs_unmount+0x66/frame 0xfffffe005437fc60",
+        b"kern_reboot() at kern_reboot+0x723/frame 0xfffffe005437fda0",
+        b"--- syscall (55, FreeBSD ELF64, reboot), rip = 0x2d49b4a146a, rsp = 0x6aa432b503f8, rbp = 0x6aa432b504a0 ---",
+        b"KDB: enter: panic", b"[ thread pid 14878 tid 100217 ]",
+        b"Stopped at      kdb_enter+0x33: movq    $0,0x11adbb2(%rip)", b"db> "])
+    WHY = "the guest's kernel panicked and waits in its debugger (panic: softdep_waitidle: work added after flush)"
+
+    def test_the_prompt_as_the_consoles_last_output(self):
+        self.assertEqual(VU.debugger_why(self.HBSD), self.WHY)
+        # the other BSDs' ddb prompts, and a panic the console's tail no longer holds
+        for prompt in (b"db> ", b"db{0}> ", b"ddb> ", b"ddb{1}> "):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(VU.debugger_why(b"Stopped at  x\r\n" + prompt, b"\npanic: kernel diagnostic assertion\r\nmore\r\n"),
+                                 "the guest's kernel panicked and waits in its debugger (panic: kernel diagnostic assertion)")
+        # the last panic counts, the tail's before the log's; none: only that it stopped there
+        self.assertIn("(panic: second)", VU.debugger_why(b"panic: first\r\npanic: second\r\ndb> ", b"\npanic: old\n"))
+        self.assertEqual(VU.debugger_why(b"KDB: enter: Break to debugger\r\ndb> "),
+                         "the guest's kernel stopped in its debugger and waits there")
+
+    def test_what_is_no_prompt(self):
+        for tail in (b"", b"login: ", self.HBSD + b"reset\r\n", self.HBSD[:-4], b"panic: x\r\nRebooting...\r\n",
+                     b"\r\nmariadb> ", b"\r\ndb>", b"psql (17)\r\nmydb> ", b"Kernel panic - not syncing: x\r\n"):
+            with self.subTest(tail=tail[-30:]):
+                self.assertIsNone(VU.debugger_why(tail))
+
+    def vm(self, console, serial=None):
+        v = VU.VM.__new__(VU.VM)
+        v.g = VU.Guest.__new__(VU.Guest)
+        v.g.dir, v.g.user, v.g.serial_path = Path("/g"), "root", Path(serial or "/nonexistent/serial.log")
+        v.notes = []
+        v.g.log, v.g.note = io.StringIO(), v.notes.append
+        v.port, v.console = 2222, console
+        v.proc = types.SimpleNamespace(poll=lambda: None)
+        v.stop_typing = lambda: None
+        return v
+
+    def test_only_a_prompt_that_has_stood(self):
+        clock = [100.0]
+        with mock.patch.object(VU, "time", types.SimpleNamespace(monotonic=lambda: clock[0])):
+            self.assertIsNone(self.vm((self.HBSD, 95.0)).debugger())           # 5 s: may be passing by
+            self.assertEqual(self.vm((self.HBSD, 90.0)).debugger(), self.WHY)
+            self.assertIsNone(self.vm((b"login: ", 0.0)).debugger())
+            self.assertIsNone(VU.VM.__new__(VU.VM).debugger())                 # no console output yet
+
+    def test_the_panic_from_serial_log_when_the_tail_lost_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            serial = Path(d) / "serial.log"
+            serial.write_bytes(self.HBSD[:-4] + b"\x1b[0mframe\r\n" * 400 + b"db> ")
+            tail = serial.read_bytes()[-4096:]
+            self.assertNotIn(b"panic: softdep", tail)
+            with mock.patch.object(VU, "time", types.SimpleNamespace(monotonic=lambda: 100.0)):
+                self.assertEqual(self.vm((tail, 0.0), serial).debugger(), self.WHY)
+                self.assertEqual(self.vm((tail, 0.0)).debugger(),               # no serial.log to read
+                                 "the guest's kernel stopped in its debugger and waits there")
+
+    def wait(self, v, console_at, rebooting=True, up_after=None):
+        """wait_ssh under a clock of its own: the console's last output came at CONSOLE_AT (a
+        function of the clock), SSH answers from UP_AFTER on; (how long it took, the tries)."""
+        clock, tries = [0.0], []
+
+        def ssh(script, timeout, log=True, connect_timeout=None):
+            tries.append(clock[0])
+            clock[0] += 1
+            if not tries[1:]:                                   # the reboot's first try: still up
+                return subprocess.CompletedProcess([], 0, "up\n", "")
+            v.console = console_at(clock[0])
+            up = up_after is not None and clock[0] >= up_after
+            return subprocess.CompletedProcess([], 0 if up else 255, "up\n" if up else "", "")
+        v.ssh = ssh
+        fake = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda s: clock.__setitem__(0, clock[0] + s))
+        with mock.patch.object(VU, "time", fake):
+            v.wait_ssh(rebooting=rebooting)
+        return clock[0], tries
+
+    def test_wait_ssh_fails_at_once_and_names_the_panic(self):
+        v = self.vm((b"", None))
+        with self.assertRaises(VU.Failed) as c:
+            self.wait(v, lambda now: (self.HBSD, 3.0))          # the panic 3 s into the reboot
+        self.assertEqual(str(c.exception), self.WHY + "; see /nonexistent/serial.log")
+        self.assertEqual(v.notes, ["console: " + self.WHY])
+        # and flakes.json knows this panic, and only this one
+        flakes = json.loads((T2 / "guest" / "flakes.json").read_text())
+        if str(T2) not in sys.path:
+            sys.path.insert(0, str(T2))
+            self.addCleanup(sys.path.remove, str(T2))
+        from t2lib import guest_judge as J
+        f = J.match_flake("hardenedbsd15", [str(c.exception)], flakes)
+        self.assertIsNotNone(f)
+        self.assertIn("softdep_waitidle", f["pattern"])
+        for other in ("the guest's kernel panicked and waits in its debugger (panic: page fault); see /x/serial.log",
+                      "the guest's kernel stopped in its debugger and waits there; see /x/serial.log",
+                      "no SSH as root within 900 s; see /x/serial.log",
+                      "panic: softdep_waitidle: work added after flush"):
+            self.assertIsNone(J.match_flake("hardenedbsd15", [other], flakes), other)
+
+    def test_wait_ssh_takes_seconds_not_the_whole_timeout(self):
+        clock = [0.0]
+        v = self.vm((b"", None))
+
+        def ssh(script, timeout, log=True, connect_timeout=None):
+            clock[0] += 1
+            if clock[0] < 2:
+                return subprocess.CompletedProcess([], 0, "up\n", "")
+            v.console = (self.HBSD, 3.0)
+            return subprocess.CompletedProcess([], 255, "", "")
+        v.ssh = ssh
+        fake = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda s: clock.__setitem__(0, clock[0] + s))
+        with mock.patch.object(VU, "time", fake), self.assertRaisesRegex(VU.Failed, "waits in its debugger"):
+            v.wait_ssh(rebooting=True)
+        self.assertLess(clock[0], 60)
+        self.assertLess(clock[0], VU.SSH_UP_TIMEOUT / 10)
+
+    def test_wait_ssh_waits_on_while_the_console_moves(self):
+        """A prompt-like tail that more output follows within DEBUGGER_S (never seen, but then it
+        is no kernel waiting), and a guest that simply boots: waited for as before."""
+        v = self.vm((b"", None))
+        took, tries = self.wait(v, lambda now: (b"booting\r\ndb> ", now - 2), up_after=120)
+        self.assertGreaterEqual(took, 120)
+        v = self.vm((b"", None))
+        took, tries = self.wait(v, lambda now: (b"Starting sshd.\r\n", 5.0), up_after=40)
+        self.assertGreaterEqual(took, 40)
+
+    def test_the_console_thread_keeps_its_tail(self):
+        v = VU.VM.__new__(VU.VM)
+        v.passphrase, v.serial = None, io.BytesIO()
+        chunks = [b"\x1b[1mKDB: enter: panic\x1b[0m\r\n", b"db> ", b""]
+        v.proc = types.SimpleNamespace(stdout=types.SimpleNamespace(read1=lambda n: chunks.pop(0)))
+        with mock.patch.object(VU, "time", types.SimpleNamespace(monotonic=lambda: 7.0)):
+            v._console()
+        self.assertEqual(v.console, (b"KDB: enter: panic\r\ndb> ", 7.0))
+        self.assertEqual(v.serial.getvalue(), b"\x1b[1mKDB: enter: panic\x1b[0m\r\ndb> ")
+
+    def test_poweroff_names_it_too(self):
+        v = self.vm((self.HBSD, 0.0))
+        v.save_journal = lambda: None
+        v.ssh = lambda script, timeout, **kw: subprocess.CompletedProcess([], 255, "", "")
+
+        def wait(timeout=None):
+            raise subprocess.TimeoutExpired("vm-run", timeout)
+        v.proc = types.SimpleNamespace(wait=wait, poll=lambda: None)
+        with mock.patch.object(VU, "time", types.SimpleNamespace(monotonic=lambda: 50.0)):
+            with self.assertRaisesRegex(VU.Failed, r"panic: softdep_waitidle: work added after flush\); see "):
+                v.poweroff()
+
+
 class TestJournal(TempDir):
     """GuestTest2's log sweep reads a systemd guest's journal.log in place of its serial.log: where
     it begins (JOURNAL_SINCE), how it is read (journal_script) and kept (save_journal)."""

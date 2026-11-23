@@ -166,8 +166,10 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("fedora", "44", "Fedora 44"),
     ("fedora", "45", "Fedora 45"),
     ("alpine", "3", "Alpine Linux 3"),
-    // Rolling, like Arch.
-    ("artix", "", "Artix Linux"),
+    // Rolling, like Arch.  Older installs have no VERSION_ID; ISOs from
+    // late 2026 write the snapshot's date (VERSION_ID=20261102, with
+    // BUILD_ID=rolling), so "*" takes either.
+    ("artix", "*", "Artix Linux"),
     // Rolling: VERSION_ID is the snapshot's year and month (2026.11).
     ("aerynos", "*", "AerynOS"),
     // Solus (no ID_LIKE): eopkg, clr-boot-manager with shim and systemd-boot,
@@ -438,6 +440,8 @@ pub(crate) mod tests {
         }
         assert!(check_supported(Some(&parse("ID=alpine\nVERSION_ID=3.24.3\n"))).is_ok());
         assert!(check_supported(Some(&parse("ID=artix\nNAME=\"Artix Linux\"\n"))).is_ok());
+        // A real xfce-dinit install from artix-xfce-dinit-20261102.
+        assert!(check_supported(Some(&parse("NAME=\"Artix Linux\"\nID=artix\nBUILD_ID=rolling\nVERSION_ID=20261102\nVARIANT=xfce-dinit\n"))).is_ok());
         assert!(check_supported(Some(&parse("NAME=\"EndeavourOS\"\nID=\"endeavouros\"\nID_LIKE=\"arch\"\nBUILD_ID=rolling\n"))).is_ok());
         assert!(check_supported(Some(&parse("NAME=\"Manjaro Linux\"\nID=manjaro\nID_LIKE=arch\nBUILD_ID=rolling\n"))).is_ok());
         // Garuda's real os-release (read 2026-11-14 from its ISO).

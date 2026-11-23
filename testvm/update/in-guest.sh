@@ -1347,11 +1347,6 @@ EOF
         # pacman upgrade (for "omarchy update", which is interactive) unless
         # told this is meant.
         export OMARCHY_ALLOW_DIRECT_PACMAN=1
-        # EndeavourOS's live image has plasma-x11-session, which Plasma 6.8
-        # conflicts with; --noconfirm answers no to removing it, and stops.
-        if grep -qs '^ID="*endeavouros' /etc/os-release && pacman -Qq plasma-x11-session >/dev/null 2>&1; then
-            pacman -Rdd --noconfirm plasma-x11-session || exit 1
-        fi
         keyrings=$(pacman -Qq archlinux-keyring artix-keyring biglinux-keyring cachyos-keyring chaotic-keyring endeavouros-keyring manjaro-keyring omarchy-keyring 2>/dev/null)
         # fetched CMD...: a pacman that downloads, run again while it fails
         # at a download, up to 10 times 30 s apart (a mirror that stalled
@@ -1498,6 +1493,23 @@ EOF
         fetched pacman -Sy --noconfirm || exit 1
         up=
         [ -z "$keyrings" ] || up=$(pacman -Qqu $keyrings)
+        # Plasma 6.8 has no X11 session: its plasma-workspace conflicts with
+        # plasma-x11-session (6.7's, in no repository any more) and replaces
+        # nothing.  pacman asks "Remove plasma-x11-session? [y/N]",
+        # --noconfirm answers no, and the upgrade stops: "error: unresolvable
+        # package conflicts detected" (EndeavourOS's live image; BigLinux
+        # once its stable branch took 6.8.2, GuestTest2 t2v-20261123T2125-d754).
+        # So it goes first, on any distribution, but only once the
+        # repositories' plasma-workspace names it: a guest whose branch is
+        # still at 6.7 keeps its X11 session.  -Rdd: nothing else goes with
+        # it (BigLinux keeps 6.7.5's kwin-x11 beside kwin 6.8.2), and a
+        # package that still needs it is the upgrade's to settle.
+        if pacman -Qq plasma-x11-session >/dev/null 2>&1 &&
+            LC_ALL=C pacman -Si plasma-workspace 2>/dev/null | awk '
+                /^Conflicts With/ { for (i = 4; i <= NF; i++) { sub(/[<>=].*/, "", $i); if ($i == "plasma-x11-session") f = 1 } }
+                END { exit !f }'; then
+            pacman -Rdd --noconfirm plasma-x11-session || exit 1
+        fi
         # TRIM while pacman unpacks: vm-update's overlay (vm-run --ram
         # --discard, in the host's RAM disk) keeps every block the guest
         # writes until a TRIM hands it back, and trim.sh's comes only after

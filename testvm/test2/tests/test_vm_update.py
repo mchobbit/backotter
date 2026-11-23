@@ -1677,43 +1677,116 @@ esac
         self.assertEqual((rc, lst, calls), (1, "old\n", ["--status"]), out)
         self.assertIn("in-guest: pacman-mirrors --status exited 2", out)
 
-    def run_keyrings(self, keyrings, newer):
+    def run_keyrings(self, keyrings, newer, x11=False, si=None, rdd_rc=0, rc=0):
         """Linux.pacman's -Sy, keyring and -Su lines under a stub pacman whose -Qqu names those
         of its arguments in NEWER (with none, every upgrade), and a fetched() that just runs.
-        The pacman calls."""
+        X11: plasma-x11-session is installed (-Qq); SI: what -Si plasma-workspace prints (None:
+        "was not found", exit 1); -Rdd exits RDD_RC.  The block must exit RC.  The pacman calls."""
         d = Path(tempfile.mkdtemp(prefix="t2-keyrings-"))
         self.addCleanup(shutil.rmtree, d, True)
         (d / "bin").mkdir()
+        if si is not None:
+            (d / "si").write_text(si)
         (d / "bin" / "pacman").write_text(f"""#!/bin/sh
 echo "$*" >>{d}/calls
-if [ "$1" = -Qqu ]; then
+case $1 in
+-Qqu)
     shift; [ $# -gt 0 ] || {{ echo everything; exit 0; }}
     r=1
     for p; do case " {" ".join(newer)} " in *" $p "*) echo $p; r=0 ;; esac; done
-    exit $r
-fi
+    exit $r ;;
+-Qq)
+    [ "$2" = plasma-x11-session ] && [ {int(x11)} = 1 ] && {{ echo $2; exit 0; }}
+    echo "error: package '$2' was not found" >&2; exit 1 ;;
+-Si)
+    [ "$LC_ALL" = C ] || {{ echo "Em conflito com : plasma-x11-session"; exit 0; }}
+    [ -f {d}/si ] && {{ cat {d}/si; exit 0; }}
+    echo "error: package '$2' was not found" >&2; exit 1 ;;
+-Rdd)
+    echo "removing $3..."; exit {rdd_rc} ;;
+esac
 """)
         (d / "bin" / "pacman").chmod(0o755)
+        for name in ("awk", "cat"):
+            os.symlink(shutil.which(name), d / "bin" / name)
         sec = self.sections()["Linux.pacman"]
         start = sec.index("        fetched pacman -Sy --noconfirm || exit 1")
         end = sec.index("|| exit 1\n", sec.index("fetched pacman -Su --noconfirm", start)) + len("|| exit 1\n")
-        code = (f'keyrings="{" ".join(keyrings)}"\nfetched() {{ "$@"; }}\n' + textwrap.dedent(sec[start:end])
+        code = (f'keyrings="{" ".join(keyrings)}"\nfetched() {{ "$@"; }}\nhas() {{ return 1; }}\n' + textwrap.dedent(sec[start:end])
                 + "echo fell-through\n")
         r = subprocess.run(["/bin/sh", "-c", code], capture_output=True, text=True, env={"PATH": str(d / "bin")})
-        self.assertEqual((r.returncode, r.stdout), (0, "fell-through\n"), r.stderr)
+        self.assertEqual((r.returncode, "fell-through" in r.stdout.splitlines()), (rc, rc == 0), r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "")
         return (d / "calls").read_text().splitlines()
+
+    X11 = "-Qq plasma-x11-session"
 
     def test_only_newer_keyrings_are_installed(self):
         """pacman -S of a keyring the repositories have older downgrades it, --needed or not
         (manjaro's June databases: archlinux-keyring 20260727 -> 20260612, 2026-11-17)."""
         k = ["archlinux-keyring", "manjaro-keyring"]
         self.assertEqual(self.run_keyrings(k, ["manjaro-keyring"]),
-                         ["-Sy --noconfirm", "-Qqu archlinux-keyring manjaro-keyring",
+                         ["-Sy --noconfirm", "-Qqu archlinux-keyring manjaro-keyring", self.X11,
                           "-S --noconfirm --needed manjaro-keyring", "-Su --noconfirm"])
         self.assertEqual(self.run_keyrings(k, []),
-                         ["-Sy --noconfirm", "-Qqu archlinux-keyring manjaro-keyring", "-Su --noconfirm"])
+                         ["-Sy --noconfirm", "-Qqu archlinux-keyring manjaro-keyring", self.X11, "-Su --noconfirm"])
         # No keyring installed: -Qqu with no names would list every upgrade, so it doesn't run.
-        self.assertEqual(self.run_keyrings([], []), ["-Sy --noconfirm", "-Su --noconfirm"])
+        self.assertEqual(self.run_keyrings([], []), ["-Sy --noconfirm", self.X11, "-Su --noconfirm"])
+
+    # pacman -Si plasma-workspace on biglinux, 2026-11-24 (its Depends On line cut short)
+    SI_68 = textwrap.dedent("""\
+        Repository      : extra
+        Name            : plasma-workspace
+        Version         : 6.8.2-1
+        Description     : KDE Plasma Workspace
+        Groups          : plasma
+        Provides        : None
+        Depends On      : accountsservice  kwin  xorg-xwayland  zlib  plasma-integration
+        Optional Deps   : appmenu-gtk-module: global menu support for some GTK3 applications
+                          plasma-x11-session: not a line of conflicts
+        Conflicts With  : plasma-wayland-session  plasma-x11-session
+        Replaces        : None
+        Download Size   : 21.45 MiB
+
+        """)
+
+    def test_plasma_x11_session_goes_before_a_plasma_that_conflicts_with_it(self):
+        """Plasma 6.8's plasma-workspace conflicts with plasma-x11-session and replaces nothing:
+        `pacman -Su --noconfirm` answers no to "Remove plasma-x11-session? [y/N]" and stops,
+        "error: unresolvable package conflicts detected" (biglinux, GuestTest2
+        t2v-20261123T2125-d754, both attempts; EndeavourOS's live image before it).  So it is
+        removed first, on any distribution, after -Sy and only when the repositories'
+        plasma-workspace names it."""
+        rm = "-Rdd --noconfirm plasma-x11-session"
+        si = "-Si plasma-workspace"
+        self.assertEqual(self.run_keyrings([], [], x11=True, si=self.SI_68),
+                         ["-Sy --noconfirm", self.X11, si, rm, "-Su --noconfirm"])
+        k = ["biglinux-keyring"]
+        self.assertEqual(self.run_keyrings(k, k, x11=True, si=self.SI_68),
+                         ["-Sy --noconfirm", "-Qqu biglinux-keyring", self.X11, si, rm,
+                          "-S --noconfirm --needed biglinux-keyring", "-Su --noconfirm"])
+        conflicts = "Conflicts With  : plasma-wayland-session  plasma-x11-session\n"
+        for what, text, removed in (
+                ("a version with it", self.SI_68.replace("plasma-x11-session\nReplaces", "plasma-x11-session<6.8\nReplaces"), True),
+                ("the only conflict", self.SI_68.replace(conflicts, "Conflicts With  : plasma-x11-session\n"), True),
+                ("two repositories, the second's", self.SI_68.replace(conflicts, "Conflicts With  : None\n") + self.SI_68, True),
+                ("Plasma 6.7", self.SI_68.replace(conflicts, "Conflicts With  : plasma-wayland-session\n"), False),
+                ("no conflicts", self.SI_68.replace(conflicts, "Conflicts With  : None\n"), False),
+                ("another package's name", self.SI_68.replace(conflicts, "Conflicts With  : plasma-x11-session-git  xplasma-x11-session\n"), False),
+                ("no plasma-workspace in the repositories", None, False)):
+            with self.subTest(what=what):
+                self.assertNotEqual(text, self.SI_68)
+                self.assertEqual(self.run_keyrings([], [], x11=True, si=text),
+                                 ["-Sy --noconfirm", self.X11, si] + [rm] * removed + ["-Su --noconfirm"])
+        # Not installed: the repositories aren't asked, and nothing is removed.
+        self.assertEqual(self.run_keyrings([], [], x11=False, si=self.SI_68), ["-Sy --noconfirm", self.X11, "-Su --noconfirm"])
+        # A removal that fails stops the update before the upgrade.
+        self.assertEqual(self.run_keyrings([], [], x11=True, si=self.SI_68, rdd_rc=1, rc=1),
+                         ["-Sy --noconfirm", self.X11, si, rm])
+        # No distribution is named: endeavouros alone was, and biglinux failed.
+        sec = self.sections()["Linux.pacman"]
+        a = sec.index("if pacman -Qq plasma-x11-session")
+        self.assertNotIn("os-release", sec[sec.rindex("\n        fi\n", 0, a):sec.index("\n        fi\n", a)])
 
     def run_grub(self, was="grub 2:2.12-3", now="grub 2:2.14-1", efi=True, esps=None, mounted=None,
                  i386=False, disks=None, hook=False, install_rc=0):

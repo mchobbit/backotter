@@ -153,21 +153,22 @@ class Churn(unittest.TestCase):
 
 
 class SlackwareChurn(unittest.TestCase):
-    """Slackware's boot: rc.M's caches, rc.udev's hwdb and dhcpcd's ntp.conf
-    the same bytes again (new mtimes), adjtime and resolv.conf.bak other
-    bytes; only on a Slackware baseline (the Thinkpad's -current,
-    2026-11-22: a reboot, 952 paths apart)."""
+    """Slackware's boot: rc.M's caches and rc.udev's hwdb the same bytes
+    again (new mtimes), adjtime and resolv.conf.bak other bytes, and
+    ntp.conf other bytes where dhcpcd's ntp hook writes it; only on a
+    Slackware baseline (the Thinkpad's -current, 2026-11-22: a reboot, 952
+    paths apart; 2026-11-23: the lease's NTP server changed)."""
 
     REMADE = ["usr/share/mime/aliases", "usr/share/mime/application/pdf.xml", "usr/share/glib-2.0/schemas/gschemas.compiled",
-              "usr/share/applications/intent.cache", "usr/lib64/gdk-pixbuf-2.0/2.10.0/loaders.cache", "etc/udev/hwdb.bin",
-              "etc/ntp.conf"]
+              "usr/share/applications/intent.cache", "usr/lib64/gdk-pixbuf-2.0/2.10.0/loaders.cache", "etc/udev/hwdb.bin"]
+    NTP_HOOK = "lib/dhcpcd/dhcpcd-hooks/50-ntp.conf"
 
     def setUp(self):
         self.t = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.t)
         self.root = self.t / "root"
         put(self.root, "etc/slackware-version", "Slackware 15.0+\n")
-        for rel in self.REMADE + ["etc/resolv.conf.bak", "etc/rc.d/rc.local"]:
+        for rel in self.REMADE + ["etc/resolv.conf.bak", "etc/rc.d/rc.local", "etc/ntp.conf", self.NTP_HOOK]:
             put(self.root, rel, f"{rel}\n")
 
     def compare(self, change):
@@ -199,6 +200,17 @@ class SlackwareChurn(unittest.TestCase):
         rc, out = self.compare(self.boot)
         self.assertEqual(rc, 0, out)
         self.assertIn("Slackware: written again at every boot", out)
+
+    def test_ntp_conf_with_dhcpcd_hook(self):
+        rc, out = self.compare(lambda: self.touch("etc/ntp.conf", "server 172.232.44.156\n"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("other bytes expected: etc/adjtime etc/resolv.conf.bak boot/initrd.gz etc/ntp.conf", out)
+
+    def test_ntp_conf_without_the_hook_is_held(self):
+        (self.root / self.NTP_HOOK).unlink()
+        rc, out = self.compare(lambda: self.touch("etc/ntp.conf", "server 172.232.44.156\n"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("changed: etc/ntp.conf", out)
 
     def test_remade_must_keep_its_bytes(self):
         rc, out = self.compare(lambda: self.touch("usr/share/mime/aliases", "other\n"))

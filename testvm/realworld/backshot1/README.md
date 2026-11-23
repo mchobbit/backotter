@@ -497,15 +497,15 @@ nothing.  bs1-verify waits for rc.M to finish (sshd is up before it is).
 bs1-manifest's Slackware churn (a reboot of the -current Thinkpad,
 2026-11-22): rc.M's cache updates at every boot (all of `usr/share/mime`,
 gschemas.compiled, intent.cache, gdk-pixbuf's loaders.cache), rc.udev's
-hwdb.bin and dhcpcd's ntp.conf come back with the same bytes; `etc/adjtime`
-(rc.6's hwclock) and `etc/resolv.conf.bak` may differ.
+hwdb.bin come back with the same bytes; `etc/adjtime` (rc.6's hwclock) and
+`etc/resolv.conf.bak` may differ, and so may `etc/ntp.conf` where dhcpcd's
+ntp hook is installed: it writes the lease's NTP servers at every lease, and
+a router may hand out another one (the Thinkpad's did, 2026-11-23).
 
-**bko-holt refuses -current**: `bko-holt dump` says it "supports only the
-Slackware 15.0 release, not -current" (holt/src/osrel.rs), so on the
--current Thinkpad the preflight stops there, after its own checks pass.
-BackShot1 needs bko-holt's -current support first (os-release
-`VERSION_ID=16.0`, `VERSION_CODENAME=current`; kernel-generic as
-`/boot/vmlinuz-VERSION`; geninitrd's `/boot/initrd-VERSION.img`).
+**bko-holt takes the pinned -current** since 24d0f28 (dump and load:
+geninitrd's initrd, the kernel at `/boot/vmlinuz-VERSION`, ELILO).  The
+Thinkpad's first BackShot1 on it, slackware-16.0-20261123-042127: 379,312
+files, the restored system up by itself, no unit failed.
 
 The stick isn't setup's ramdisk, so installpkg runs with Slackware's own
 tar, `--numeric-owner`, and bash as `sh`.  The doinst.sh scripts that

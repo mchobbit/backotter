@@ -531,7 +531,9 @@ NUDGE_S = 30
 # for its SSH).
 DEBUGGER = re.compile(rb"(?:^|[\r\n])d?db(?:\{\d+\})?> $")
 DEBUGGER_S = 10
-PANIC = re.compile(rb"(?:^|[\r\n])panic: ([^\r\n]+)")
+# The panic's line, wherever on its line it starts: after getty's "login: "
+# (a panic with the system up), or NetBSD's "[  12.3456789] ".
+PANIC = re.compile(rb"(?<![\w.])panic: ([^\r\n]+)")
 KEPT = re.compile(r"vm-run: kept this run's writes to (\S+) in (\S+) \(")
 # Root's PATH over SSH lacks /sbin on some guests (NetBSD).
 SBIN = "PATH=/sbin:/usr/sbin:/bin:/usr/bin:$PATH; export PATH\n"

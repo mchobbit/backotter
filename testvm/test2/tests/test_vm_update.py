@@ -3572,6 +3572,14 @@ class TestDebugger(unittest.TestCase):
             with self.subTest(prompt=prompt):
                 self.assertEqual(VU.debugger_why(b"Stopped at  x\r\n" + prompt, b"\npanic: kernel diagnostic assertion\r\nmore\r\n"),
                                  "the guest's kernel panicked and waits in its debugger (panic: kernel diagnostic assertion)")
+        # a panic with the system up comes after getty's prompt (the stage test of this rule on
+        # hardenedbsd15: sysctl debug.kdb.panic=1), NetBSD's after the kernel's time stamp
+        for line in (b"FreeBSD/amd64 (hbsd15) (ttyu0)\r\r\n\r\r\nlogin: panic: kdb_sysctl_panic\r\ncpuid = 0\r\n",
+                     b"[  12.3456789] panic: kdb_sysctl_panic\r\n"):
+            self.assertEqual(VU.debugger_why(line + b"KDB: enter: panic\r\ndb> "),
+                             "the guest's kernel panicked and waits in its debugger (panic: kdb_sysctl_panic)")
+        # a function's name that ends so is no panic's line
+        self.assertEqual(VU.debugger_why(b"db_panic: x\r\nvm.panic: 1\r\ndb> "), "the guest's kernel stopped in its debugger and waits there")
         # the last panic counts, the tail's before the log's; none: only that it stopped there
         self.assertIn("(panic: second)", VU.debugger_why(b"panic: first\r\npanic: second\r\ndb> ", b"\npanic: old\n"))
         self.assertEqual(VU.debugger_why(b"KDB: enter: Break to debugger\r\ndb> "),

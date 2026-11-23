@@ -16,9 +16,11 @@
         enters no key, and run.log and the report say "harness stop: N (override; policy P)"
         --lock-wait T (90m, 2h, 45s; a bare number is seconds): a run another run's lock would
         refuse (exit 2, "holds its lock") waits up to T for that run to end, then starts with a
-        fresh pull and facts: the family's lock, and for HoltTest2 words a cell another live run
-        holds (without it that cell is planned not-runnable).  BkoTest2, SweepTest2 and
-        `GuestTest2 update` wait before they start only.  Not in a batch entry (the batch waits)
+        fresh pull and facts: the family's lock, and for a HoltTest2 word that names its cells
+        (guests, family letters) a cell another live run holds (without it that cell is planned
+        not-runnable; HoltTest2All and bare HoltTest2 start beside that run all the same).
+        BkoTest2, SweepTest2 and `GuestTest2 update` wait before they start only.  Not in a
+        batch entry (the batch waits)
   t2 plan WORD [ARG...]                  the same as WORD ... plan
   t2 pull                                each host's ledger mirrored, then the wear join
   t2 ledger show [--cell C] [--last N] [--json]

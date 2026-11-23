@@ -488,9 +488,16 @@ def still_busy(busy, mac_root=None, shared=()):
     return lock_busy([busy.name], mac_root, shared)
 
 
-def taken_cell(plan, running, family, mac_root=None):
+def taken_cell(plan, running, family, mac_root=None, form="names"):
     """A Busy for the first cell of PLAN (a CELL_LOCKED family's run's own, made with running_skip)
-    that isn't due because another live run holds it or the +img pins; None when there is none."""
+    that isn't due because another live run holds it or the +img pins, when waiting for it is the
+    alternative to losing it; None when there is none, or when the run starts without it.
+    FORM (the word's): names (cells, family letters) waits for each one, the word asked for
+    these; All only when nothing at all is due (that word refuses); bare never (its plan is
+    whatever is due, and the other run is judging that cell).  So HoltTest2All and bare HoltTest2
+    still go side by side with a run over one cell, as without --lock-wait."""
+    if form == "bare" or (form != "names" and plan.totals.get("due")):
+        return None
     for pc in plan.cells:
         if pc.status == "not-runnable" and getattr(pc, "running", None) \
                 and any(str(r).startswith("running in ") for r in pc.reasons):
@@ -530,8 +537,10 @@ def with_lock_wait(word, wait, attempt, mac_root=None, out=print, poll=None, clo
     made once the locks WORD takes are free (R21 refuses; this waits, up to WAIT seconds, for a
     fixer's run of the family or the cycle's).  ATTEMPT(True) makes its ctx (pull and facts: fresh
     after a wait) and runs lifecycle or resume with busy_raises, so a lock lost in the meantime (to
-    another waiter), or a holt cell another run holds, comes back here as a Busy and is waited
-    for in its turn.  WAIT 0, or the wait run out: R21's refusal in its own words (exit 2)."""
+    another waiter), or a holt cell the word names that another run holds (taken_cell: never a
+    cell of a bare word's plan, nor of an All word's with others due), comes back here as a Busy
+    and is waited for in its turn.  WAIT 0, or the wait run out: R21's refusal in its own words
+    (exit 2)."""
     if not wait or wait <= 0:
         return attempt(False)
     t0 = clock()
@@ -2046,7 +2055,8 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, sh
     With SHARED (a composite's child) it takes no lock, refreshes no rows, runs neither the runner's
     pre_plan nor its preflight, and uses the composite's stamp, copy and (when given) plan.
     BUSY_RAISES (with_lock_wait): a held lock is a Busy raised, not a refusal said, and so is a cell
-    of a CELL_LOCKED family's plan that another live run holds (without it: planned not-runnable)."""
+    of a CELL_LOCKED family's plan that another live run holds when the word names it, or when it
+    leaves an All word nothing due (taken_cell; else, and without it: planned not-runnable)."""
     fam = word.family
     mod = runner(fam)
     if pull is not None:
@@ -2123,7 +2133,7 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, sh
                     raise
                 out(f"t2: {e}")
                 return EXIT_REFUSED
-            taken = taken_cell(plan, ctx.options.get("running"), fam, mac_root) if busy_raises else None
+            taken = taken_cell(plan, ctx.options.get("running"), fam, mac_root, word.form) if busy_raises else None
             if taken is not None:
                 raise taken     # (nothing began: the finally lets go of what this holds)
         if not plan.totals.get("due"):

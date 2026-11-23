@@ -106,6 +106,36 @@ class Probes(unittest.TestCase):
         fam.release()
         self.assertIsNone(run.still_busy(gb, self.mac))
 
+    def test_taken_cell_waits_only_where_the_word_would_lose_the_cell(self):
+        """(review of 5377660: any HoltTest2 word waited for ONE held cell, HoltTest2All too)"""
+        def pc(cell, status, running=None, reasons=()):
+            return types.SimpleNamespace(cell=cell, status=status, running=running, reasons=list(reasons))
+
+        def plan(*cells):
+            return types.SimpleNamespace(cells=list(cells), totals={"due": sum(c.status == "due" for c in cells)})
+
+        held = pc("holt:debian12", "not-runnable", OTHER, ["fresh", "running in " + OTHER])
+        pins = pc("holt:arch+img", "not-runnable", OTHER, ["running in " + OTHER + " (it holds the +img pins)"])
+        due = pc("holt:arch", "due")
+        other = pc("holt:redox", "not-runnable", None, ["no host has its guest"])
+        running = {"holt:debian12": OTHER, "+img": OTHER}
+        cells = self.take(run.CellLocks("holt", self.mac).hold(["holt:debian12"], OTHER))
+        # names (cells, family letters): each held cell is waited for, others due or not
+        b = run.taken_cell(plan(due, held), running, "holt", self.mac, "names")
+        self.assertEqual((b.name, b.what, b.holder["run"]), ("holt", "holt:debian12", OTHER))
+        self.assertEqual(run.taken_cell(plan(held), running, "holt", self.mac).what, "holt:debian12")   # (the default)
+        self.assertEqual(run.taken_cell(plan(due, pins), running, "holt", self.mac, "names").what, run.IMG_UNIT)
+        # All: the run starts beside the other one while anything is due; with nothing due it would refuse
+        self.assertIsNone(run.taken_cell(plan(due, held, pins), running, "holt", self.mac, "All"))
+        self.assertEqual(run.taken_cell(plan(other, held), running, "holt", self.mac, "All").what, "holt:debian12")
+        # bare: never (nothing due is "nothing due", exit 0, with the option as without)
+        self.assertIsNone(run.taken_cell(plan(due, held), running, "holt", self.mac, "bare"))
+        self.assertIsNone(run.taken_cell(plan(held), running, "holt", self.mac, "bare"))
+        # and a cell that can't run for a reason of its own is nobody's to wait for
+        self.assertIsNone(run.taken_cell(plan(other), running, "holt", self.mac, "names"))
+        self.assertIsNone(run.taken_cell(plan(other), running, "holt", self.mac, "All"))
+        cells.release()
+
     def test_fmt_wait(self):
         self.assertEqual([run.fmt_wait(s) for s in (0, 20, 90, 3600, 5400, 7200)],
                          ["0 s", "20 s", "2 min", "1 h 00 min", "1 h 30 min", "2 h 00 min"])
@@ -331,6 +361,80 @@ class Lifecycle(unittest.TestCase):
         rc = self.waited("HoltTest2 arch", 3600, ck)
         self.assertNotEqual(rc, run.EXIT_REFUSED, self.said)
         self.assertEqual((self.seen, ck.sleeps), ([["holt:arch"]], []))
+
+    def beside(self, cell="holt:debian12"):
+        """Another live holt run (host work begun) over CELL."""
+        fam = run.FamilyLock("holt", self.mac).acquire(OTHER, shared=True)
+        cells = run.CellLocks("holt", self.mac).hold([cell], OTHER)
+        self.addCleanup(fam.release)
+        self.addCleanup(cells.release)
+        run.write_json(os.path.join(run.run_dir(OTHER, self.mac), "plan.json"), {"family": "holt", "cells": []})
+        return fam, cells
+
+    def test_holttest2all_runs_beside_a_run_over_one_cell(self):
+        """A cycle's `t2 HoltTest2All --lock-wait 2h` and a fixer's one cell: the rest runs now, as
+        without the option (5377660 waited for the cell, then for the next fixer's, and when T
+        ran out refused having run nothing)."""
+        self.beside()
+        ck = Clock()
+        rc = self.waited("HoltTest2All", 7200, ck)
+        self.assertNotEqual(rc, run.EXIT_REFUSED, self.said)
+        self.assertEqual((len(self.seen), ck.sleeps), (1, []), self.said)
+        self.assertGreater(len(self.seen[0]), 50)
+        self.assertIn("holt:arch", self.seen[0])
+        self.assertNotIn("holt:debian12", self.seen[0])
+        self.assertFalse([s for s in self.said if "waiting for it to end" in s], self.said)
+        self.assertEqual(run.CellLocks.held_by("holt", self.mac), {"holt:debian12": OTHER})   # ours let go, its kept
+
+    def test_bare_holttest2_runs_beside_a_run_over_one_cell(self):
+        self.beside()
+        ck = Clock()
+        rc = self.waited("HoltTest2", 7200, ck)
+        self.assertNotEqual(rc, run.EXIT_REFUSED, self.said)
+        self.assertEqual((len(self.seen), ck.sleeps), (1, []), self.said)
+        self.assertIn("holt:arch", self.seen[0])
+        self.assertNotIn("holt:debian12", self.seen[0])
+
+    def test_the_option_changes_nothing_of_an_all_or_bare_holt_plan(self):
+        """The same due cells with busy_raises as without, one cell held elsewhere."""
+        for text in ("HoltTest2All", "HoltTest2"):
+            with self.subTest(word=text):
+                mac, said, seen = self.mac, self.said, self.seen
+                got = []
+                for raises in (False, True):
+                    self.mac = tempfile.mkdtemp(prefix="mac-", dir=self.tmp)
+                    os.environ["T2_MAC_ROOT"] = self.mac
+                    self.said, self.seen = [], []
+                    self.beside()
+                    self.assertNotEqual(self.life(text, raises), run.EXIT_REFUSED, self.said)
+                    got.append(self.seen)
+                    self.doCleanups()
+                self.mac, self.said, self.seen = mac, said, seen
+                self.assertEqual(got[0], got[1])
+                self.assertEqual(len(got[0]), 1)
+                self.assertNotIn("holt:debian12", got[0][0])
+
+    def test_a_family_letters_held_cell_is_waited_for(self):
+        """(names form: HoltTest2D asked for its cells fresh, and would drop this one unsaid)"""
+        ctx = self.w.ctx([])
+        d = sorted(pc.cell for pc in run.planmod.make(self.w.word("HoltTest2D", ctx), ctx).due())
+        self.assertGreater(len(d), 1, d)
+        fam, cells = self.beside(d[0])
+        with self.assertRaises(run.Busy) as cm:
+            self.life("HoltTest2D", raises=True)
+        self.assertEqual((cm.exception.what, cm.exception.holder["run"]), (d[0], OTHER))
+        self.assertEqual(self.seen, [])
+
+        def end():
+            cells.release()
+            fam.release()
+            run.write_json(os.path.join(run.run_dir(OTHER, self.mac), "report.json"), {})
+            open(os.path.join(run.run_dir(OTHER, self.mac), "report.txt"), "w").close()
+
+        ck = Clock({2: end})
+        rc = self.waited("HoltTest2D", 3600, ck)
+        self.assertNotEqual(rc, run.EXIT_REFUSED, self.said)
+        self.assertEqual((self.seen, len(ck.sleeps)), ([d], 2))
 
     def test_resume_raises_a_held_lock_for_the_wait(self):
         self.assertNotEqual(self.life("GuestTest2 garuda"), run.EXIT_REFUSED, self.said)

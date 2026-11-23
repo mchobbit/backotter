@@ -278,9 +278,13 @@ RUN --lock-wait 2h`; 90m, 2h, 45s, a bare number is seconds) waits instead, up t
 run that holds it to end (one "waiting for it to end" line per holder, a look every 5 s), and
 only then pulls, reads the facts and starts; when T runs out it refuses in the same words.
 It waits for the family's lock (GuestTest2, GateTest2, SticTest2, ImgTest2: one run at a
-time) and, for a HoltTest2 word, for a cell (or the `+img` pins) another live run holds,
-which without it is planned not-runnable; a lock lost to another waiter in the meantime is
-waited for again.  BkoTest2, SweepTest2 and `GuestTest2 update` wait before they start only
+time) and, for a HoltTest2 word that names its cells (guests, cells, family letters), for a
+cell (or the `+img` pins) another live run holds, which without it is planned not-runnable
+and so dropped.  HoltTest2All and bare HoltTest2 don't wait for a cell: they start beside
+the other run with that cell not-runnable, with the option as without (HoltTest2All waits
+only when the other runs hold all it has due, where it would refuse), so a loop's
+`t2 HoltTest2All --lock-wait 2h` isn't held up by each fixer's one cell.  A lock lost to
+another waiter in the meantime is waited for again.  BkoTest2, SweepTest2 and `GuestTest2 update` wait before they start only
 (a lock lost after that refuses), a composite's resume doesn't take it, and a batch entry
 can't carry it (the batch has its own `lock-wait`).  Use it wherever two sessions may run
 one family: a test loop's own step and a fixer's rerun of a cell (OtterGrind1 round 3: the

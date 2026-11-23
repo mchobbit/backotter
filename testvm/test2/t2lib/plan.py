@@ -1216,12 +1216,15 @@ class Planner:
         not checked): a host short of free SSD keeps the cell's D held to its RAM-disk ceiling.
         With mode ssd every cell is the SSD's.  With overflow a cell that fits the RAM-disk
         ceiling is the RAM disk's, whatever its size (RAM first: ht1-queue.sh's place puts it
-        on the SSD only when the RAM disk has no room for it as it starts; no size cutoff)."""
+        in an SSD slot only when no RAM slot is free or the RAM disk has no room for it as it
+        starts; no size cutoff).  The mode is the runner's own (hosts.holt_scratch): overflow
+        with no SSD slot is ram, with no RAM slot ssd.  How many jobs run at once is holt_jobs,
+        whatever the slots (the estimate's packing, estimates.pack)."""
         n = self.holt_need(v, h)
         if n is None or v.variant == "img":
             return n
         lim = hosts_table.limits(h)
-        mode = lim["scratch_mode"]
+        mode = hosts_table.holt_scratch(h)
         if mode == "ram" and not lim["holt_disk_mode"]:
             return n
         f = self.ctx.facts.get(h)

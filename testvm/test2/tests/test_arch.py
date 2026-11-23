@@ -73,7 +73,10 @@ class Table(unittest.TestCase):
             self.assertNotIn("bigfoot", H.with_role(role), role)
         self.assertEqual(H.with_role("build-arm64"), ("bigfoot",))   # A2: its one role
         self.assertNotIn("bigfoot", H.defaults())
-        self.assertEqual(H.limits("bigfoot"), dict(H.LIMITS, stic_slots=2, holt_jobs=1, base_gib=4, bs2_slots=2))
+        # (its class's slot of each kind, which its mode ram doesn't count: holt-slots says "ram 1 1")
+        self.assertEqual(H.limits("bigfoot"), dict(H.LIMITS, stic_slots=2, holt_jobs=1, base_gib=4, bs2_slots=2,
+                                                   holt_ram_slots=1, holt_ssd_slots=1))
+        self.assertEqual((H.holt_scratch("bigfoot"), H.holt_slots("bigfoot")), ("ram", (1, 1)))
 
     def test_arch_defaults_to_amd64(self):
         self.assertEqual({h: H.host_arch(h) for h in H.names(all_=True)},

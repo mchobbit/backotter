@@ -1336,7 +1336,11 @@ as root, no RAM disk) says why in its `.out` file only: its log,
   30 minutes gets a warning in the runner's log, every 30 minutes, but
   keeps its place.  Guests whose D is `BIG_GIB` (13) or more run one at a
   time per host.  `HT_RAM=0` on the runner reserves nothing and works on
-  /bkoscratch.
+  /bkoscratch.  On a host whose `scratch_mode` is `overflow` (the six test
+  hosts since 2026-11-23) a line takes a RAM slot when one is free and its D
+  fits the RAM disk now, else an SSD slot (`cmp-run.sh --reserve-ssd D M`,
+  on /bkoscratch), else it stays in the todo; the slots replace the big
+  guests' turns there (testvm/HOSTS.md, "Slots").
 - **Ports.** The queue hands out 2600-2689 on every host (below each host's
   guest-slot range, testvm/HOSTS.md), and by-hand runs take 2690-2699;
   BASEPORT is always 2600 (the runner refuses another).  A

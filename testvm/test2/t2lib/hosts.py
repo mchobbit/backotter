@@ -47,7 +47,16 @@ gets the defaults):
     stic_slots       3     SticTest's checks of ours at once there (drive.py --slots)
     guest_slots      3     guest slots drive.py counts as there (1-3: every check.sh takes
                            slot_take 3 on the host's range, so more could never be had)
-    holt_jobs        3     HoltTest jobs at once there (ht1-queue.sh's MAXJOBS)
+    holt_jobs        3     HoltTest jobs at once there (ht1-queue.sh's MAXJOBS): the total,
+                           whatever holt_ram_slots and holt_ssd_slots add up to
+    holt_ram_slots   null  with scratch_mode "overflow": HoltTest jobs at once there whose
+                           scratch is in the RAM disk (0 to 16; null: no cap but holt_jobs)
+    holt_ssd_slots   null  the same for jobs whose scratch is on the SSD.  A line takes a
+                           RAM slot when one is free and its D fits the RAM disk right now,
+                           else an SSD slot when one is free and the SSD has room, else it
+                           waits (ht1-queue.sh's place; holt_slots()).  The modes "ram" and
+                           "ssd" count no slots: "overflow" with 0 SSD slots is "ram", with
+                           0 RAM slots "ssd" (holt_scratch())
     base_gib         6     cmp-run.sh's BASE_GIB there, the GiB kept for the system
                            (BASE_GIB in the environment still wins)
     holt_disk_mode   false true: a holt line over the host's RAM-disk ceiling (its D) whose
@@ -97,6 +106,8 @@ Command line (what hosts.sh wraps; exit 0 ok, 1 no such host, 2 usage or a bad t
                               no row)
     hosts.py limit NAME FIELD  NAME's limit FIELD (limits above; a name not in the table: the
                               default), for cmp-run.sh's BASE_GIB
+    hosts.py holt-slots NAME  "MODE RAM SSD": NAME's holt_scratch and holt_slots, for
+                              ht1-queue.sh (a name not in the table: ram 3 3)
     hosts.py check            the table checks: prints its path
 """
 
@@ -114,7 +125,8 @@ REQUIRED = ("name", "ssh", "slot_range", "stic_ports", "class", "roles", "defaul
 # A host's limits and their defaults (the docstring): optional row fields, and the fields of
 # the table's class_limits {CLASS: {FIELD: VALUE}}.
 LIMITS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False, "bs2_slots": 3,
-          "max_wall_x": None, "scratch_mode": "ram", "ssd_floor_gib": 80}
+          "max_wall_x": None, "scratch_mode": "ram", "ssd_floor_gib": 80, "holt_ram_slots": None,
+          "holt_ssd_slots": None}
 SCRATCH_MODES = ("ram", "overflow", "ssd")
 FIELDS += tuple(LIMITS)
 # A host's architecture (its row's arch, else DEFAULT_ARCH), Debian's names; MACHINES maps
@@ -165,6 +177,8 @@ def limit_error(k, v):
         return None if type(v) is bool else "true or false"
     if k == "scratch_mode":
         return None if type(v) is str and v in SCRATCH_MODES else "one of " + ", ".join(SCRATCH_MODES)
+    if k in ("holt_ram_slots", "holt_ssd_slots"):
+        return None if v is None or (type(v) is int and 0 <= v <= 16) else "null, or a whole number, 0 to 16"
     if k == "ssd_floor_gib":
         return None if type(v) in (int, float) and 0 <= v <= 4096 else "a number of GiB, 0 to 4096"
     if k == "base_gib":
@@ -394,11 +408,29 @@ def scratch_mode(name, table=None):
     return limit(name, "scratch_mode", table)
 
 
-def disk_scratch(name, table=None):
-    """Whether a job on NAME may put its scratch on the SSD: its scratch_mode is not "ram", or
-    its holt_disk_mode is on (a line over the RAM-disk ceiling, the older rule)."""
+def holt_slots(name, table=None):
+    """(RAM, SSD): NAME's HoltTest slots, the jobs at once whose scratch is in the RAM disk and
+    on the SSD in mode overflow: its holt_ram_slots and holt_ssd_slots, each holt_jobs when it
+    is null and never more than holt_jobs (the total is holt_jobs's alone)."""
     lim = limits(name, table)
-    return lim["scratch_mode"] != "ram" or lim["holt_disk_mode"] is True
+    n = int(lim["holt_jobs"])
+    return tuple(n if lim[k] is None else min(int(lim[k]), n) for k in ("holt_ram_slots", "holt_ssd_slots"))
+
+
+def holt_scratch(name, table=None):
+    """NAME's scratch mode as ht1-queue.sh takes it (SCRATCH_MODES): its scratch_mode, but an
+    "overflow" with no SSD slot is "ram" and one with no RAM slot is "ssd" (neither: "ram")."""
+    mode = limit(name, "scratch_mode", table)
+    if mode == "overflow":
+        r, s = holt_slots(name, table)
+        return "ram" if s == 0 else "ssd" if r == 0 else mode
+    return mode
+
+
+def disk_scratch(name, table=None):
+    """Whether a job on NAME may put its scratch on the SSD: its mode (holt_scratch) is not
+    "ram", or its holt_disk_mode is on (a line over the RAM-disk ceiling, the older rule)."""
+    return holt_scratch(name, table) != "ram" or limits(name, table)["holt_disk_mode"] is True
 
 
 def class_rank(name, table=None):
@@ -519,7 +551,7 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     usage = ("usage: hosts.py names [--all] [--default] [--role R] [--class C] [--arch A] [--field F] | "
              "get NAME FIELD [--all] | limit NAME FIELD | phrase [--all] | arch NAME | guest-arch GUEST | "
-             "job-prefix NAME [USER] | rust-env NAME | check")
+             "job-prefix NAME [USER] | rust-env NAME | holt-slots NAME | check")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -581,6 +613,9 @@ def main(argv=None):
                 print(f"hosts.py: no such limit {pos[1]} (limits: {', '.join(LIMITS)})", file=sys.stderr)
                 return 2
             print(_value(limit(pos[0], pos[1], t)))
+            return 0
+        if word == "holt-slots" and len(pos) == 1 and not opts:
+            print(holt_scratch(pos[0], t), *holt_slots(pos[0], t))
             return 0
         if word == "phrase" and not pos:
             print(phrase(names(opts.get("--all", False), table=t)))

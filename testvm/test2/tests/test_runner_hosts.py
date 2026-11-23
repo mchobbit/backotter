@@ -273,7 +273,7 @@ class QueueLaunchBackstop(unittest.TestCase):
                   "say() { echo \"SAY $*\"; }\n"
                   "cant_why() { WHYNOT=$T_WHY; return 0; }\n"
                   f"give_back() {{ echo \"BACK $1: $2\"; return {back_rc}; }}\n"
-                  + shell_line(QUEUE, "NUM_RE=") + shell_funcs(QUEUE, "ge", "ssd_why", "place", "done_row", "launch")
+                  + shell_line(QUEUE, "NUM_RE=") + shell_funcs(QUEUE, "ram_room", "place_lines", "place", "done_row", "launch")
                   + "launch freebsd14+img=6%4; echo \"rc=$? cant=${CANT[*]} broke=$BROKE\"\n")
         p = subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=60,
                            env=dict(os.environ, T_WHY=why))
@@ -304,7 +304,8 @@ class QueueLaunchPlace(unittest.TestCase):
     RAM-disk ceiling.  cmp-run.sh is a stand-in that answers --ssd-free and --free as told and
     writes down what a job was started with; setsid one that runs its command."""
 
-    def launch(self, line, mode="overflow", ceil="29.0 23.2", ssd="184.0", after="29.0 23.2", disk_over=None, back_rc=0):
+    def launch(self, line, mode="overflow", ceil="29.0 23.2", ssd="184.0", after="29.0 23.2", disk_over=None, back_rc=0,
+               rs=1, ss=1):
         t = tempfile.mkdtemp(prefix="t2-place-")
         self.addCleanup(shutil.rmtree, t, True)
         os.makedirs(os.path.join(t, "bin"))
@@ -321,12 +322,12 @@ class QueueLaunchPlace(unittest.TestCase):
             os.chmod(os.path.join(t, "bin", name), 0o755)
         over = (0 if mode == "ram" else 1) if disk_over is None else disk_over
         script = (f"Q={t} L={t}/l W=/w H=cinqcent HERE=/copy/testvm/holttest1d RUN=r1 RAM=1 DISK_OVER={over} MODE={mode} "
-                  f"CEIL='{ceil}' CMP_RUN={t}/bin/cmp-run.sh NEWPORT=2600 NEWLK='' BROKE='' t=40 f=200; CANT=()\n"
+                  f"CEIL='{ceil}' CMP_RUN={t}/bin/cmp-run.sh NEWPORT=2600 NEWLK='' BROKE='' t=40 f=200 RSFREE={rs} SSFREE={ss}; CANT=()\n"
                   "say() { echo \"SAY $*\"; }\n"
                   "close_locks() { :; }\n"
                   "cant_why() { [ \"$3\" = img ] && [ \"${4%.*}\" -gt \"${CEIL%%.*}\" ] && { WHYNOT=over; return 0; }; return 1; }\n"
                   f"give_back() {{ echo \"BACK $1: $2\"; return {back_rc}; }}\n"
-                  + shell_line(QUEUE, "NUM_RE=") + shell_funcs(QUEUE, "ge", "ssd_why", "place", "done_row", "launch")
+                  + shell_line(QUEUE, "NUM_RE=") + shell_funcs(QUEUE, "ram_room", "place_lines", "place", "done_row", "launch")
                   + f"launch '{line}'; rc=$?; wait; echo \"rc=$rc d=${{JD[0]:-}} jr=${{JR[0]:-}} gv=${{GVS[0]:-}}\"\n")
         p = subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=60,
                            env=dict(os.environ, PATH=os.path.join(t, "bin") + os.pathsep + os.environ["PATH"]))
@@ -341,9 +342,9 @@ class QueueLaunchPlace(unittest.TestCase):
         t2h-20261123T1713-3cd9 put on the SSD for the cutoff of 12 alone."""
         job, last, said = self.launch("truenas25=27%4")
         self.assertEqual(job, f"HT_RAM=1 WEAR_TAG=ht1:r1:truenas25 HT_VARIANT= --reserve 27 4 {self.JOB} truenas25 r1")
-        self.assertEqual(last, "rc=0 d=27 jr=1 gv=truenas25", "D 27 in the RAM disk: a big one, one at a time (nobig)")
+        self.assertEqual(last, "rc=0 d=27 jr=1 gv=truenas25", "a RAM job: JR 1, which slots_now counts as a RAM slot's")
         self.assertEqual(said, ["SAY slot 0: truenas25=27%4 on port 2600 (pid " + said[0].split("(pid ")[1].split(")")[0]
-                                + "), --reserve 27 4, 40 C, 200 GB free"])
+                                + "), --reserve 27 4, a RAM slot, 40 C, 200 GB free"])
         job, last, _ = self.launch("pop24+bigger=20%4", after="20.0 23.2")
         self.assertEqual(job, f"HT_RAM=1 WEAR_TAG=ht1:r1:pop24-bigger HT_VARIANT=bigger --reserve 20 4 {self.JOB} pop24 r1")
         job, _, _ = self.launch("mint22=13%4", after="13.0 4.0")
@@ -352,9 +353,9 @@ class QueueLaunchPlace(unittest.TestCase):
     def test_the_ram_disk_is_full_on_the_ssd(self):
         job, last, said = self.launch("neon24=15%4", after="2.0 19.2")   # (truenas25 holds 27 of 29)
         self.assertEqual(job, f"HT_RAM=0 WEAR_TAG=ht1:r1:neon24 HT_VARIANT= --reserve-ssd 15 4 {self.JOB} neon24 r1")
-        self.assertEqual(last, "rc=0 d=0 jr=0 gv=neon24", "on the SSD: not a big one of the RAM disk's")
-        self.assertIn("--reserve-ssd 15 4, on /bkoscratch (overflow: the RAM disk has room for 2.0 GiB now, not its 15), 40 C",
-                      said[0])
+        self.assertEqual(last, "rc=0 d=0 jr=0 gv=neon24", "an SSD job: JR 0, an SSD slot's")
+        self.assertIn("--reserve-ssd 15 4, on /bkoscratch (overflow: the RAM disk has room for 2.0 GiB now, not its 15), "
+                      "an SSD slot, 40 C", said[0])
         job, _, _ = self.launch("debian13=4%4", after="2.0 19.2")
         self.assertIn("HT_RAM=0 ", job)
         self.assertIn(" --reserve-ssd 4 4 ", job)
@@ -380,6 +381,37 @@ class QueueLaunchPlace(unittest.TestCase):
         self.assertEqual(said, ["BACK mint22=17%4: not started here: its D 17 is over the RAM-disk ceiling 9.0 10.1, and "
                                 "/bkoscratch has room for 14.5 GiB of scratch now"])
 
+    def test_slots(self):
+        """The slot model: the RAM slot taken, on the SSD though the RAM disk has room; the SSD
+        slots full and a RAM slot free, in RAM when it fits; no slot it can take, back to the
+        todo and nothing started."""
+        job, last, said = self.launch("debian13=4%4", rs=0)
+        self.assertEqual(job, f"HT_RAM=0 WEAR_TAG=ht1:r1:debian13 HT_VARIANT= --reserve-ssd 4 4 {self.JOB} debian13 r1")
+        self.assertIn("--reserve-ssd 4 4, on /bkoscratch (no RAM slot free), an SSD slot, 40 C", said[0])
+        job, last, _ = self.launch("truenas25=27%4", ss=0)
+        self.assertIn(" --reserve 27 4 ", job)
+        self.assertEqual(last, "rc=0 d=27 jr=1 gv=truenas25")
+        job, last, said = self.launch("debian13=4%4", rs=0, ss=0)
+        self.assertIsNone(job)
+        self.assertEqual((last, said), ("rc=1 d= jr= gv=", ["BACK debian13=4%4: not started now: no slot free"]))
+        job, last, said = self.launch("vanilla3=30%4", ss=0)
+        self.assertIsNone(job, "over the ceiling: an SSD slot only")
+        self.assertEqual(said, ["BACK vanilla3=30%4: not started now: no SSD slot free (its D is over the RAM-disk ceiling "
+                                "29.0 23.2)"])
+        job, last, said = self.launch("debian13+img=4%4", rs=0)
+        self.assertIsNone(job, "+img: a RAM slot only")
+        self.assertEqual(said, ["BACK debian13+img=4%4: not started now: no RAM slot free (+img works only in the RAM disk)"])
+        # one that can't go back stays taken with its done row, as any line given back
+        job, last, said = self.launch("debian13=4%4", rs=0, ss=0, back_rc=1)
+        self.assertIsNone(job)
+        self.assertEqual(last, "rc=1 d= jr= gv=")
+        # modes ram and ssd count no slots
+        job, _, said = self.launch("neon24=15%4", mode="ram", rs=0, ss=0)
+        self.assertIn(" --reserve 15 4 ", job)
+        self.assertNotIn("slot,", said[0])
+        job, _, _ = self.launch("alpine324=2%4", mode="ssd", rs=0, ss=0)
+        self.assertIn(" --reserve-ssd 2 4 ", job)
+
     def test_the_rest_is_kept(self):
         """+img only in the RAM disk; mode ssd every line; mode ram none, but holt_disk_mode's
         line over the ceiling under --reserve 0 M as before 2026-11-23."""
@@ -395,6 +427,44 @@ class QueueLaunchPlace(unittest.TestCase):
         self.assertIn(" --reserve 15 4 ", job)
         job, _, _ = self.launch("vanilla3=30%4", mode="ram", disk_over=1)
         self.assertEqual(job, f"HT_RAM=0 WEAR_TAG=ht1:r1:vanilla3 HT_VARIANT= --reserve 0 4 {self.JOB} vanilla3 r1")
+
+
+@unittest.skipUnless(BASH, "no bash")
+class QueueSlots(unittest.TestCase):
+    """slots_now: this runner's free RAM and SSD slots, from its jobs' JR (1: a RAM job, 0: an
+    SSD job), and IDLE.  Slots count in mode overflow only; holt_jobs (MAXJOBS) is the total."""
+
+    def slots(self, jr, mode="overflow", rslots=2, sslots=2):
+        script = (f"MODE={mode} RAM=1 RSLOTS={rslots} SSLOTS={sslots}; JOB=(); JR=()\n"
+                  + "".join(f"JOB[{i}]=1{i}; JR[{i}]={r}\n" for i, r in enumerate(jr))
+                  + shell_funcs(QUEUE, "slots_now") + 'slots_now; echo "$RSFREE $SSFREE $IDLE"\n')
+        p = subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.stderr, "")
+        return p.stdout.strip()
+
+    def test_a_big_host_s_two_and_two(self):
+        self.assertEqual(self.slots([]), "1 1 1")
+        self.assertEqual(self.slots([1]), "1 1 0")
+        self.assertEqual(self.slots([1, 1]), "0 1 0", "both RAM slots taken")
+        self.assertEqual(self.slots([1, 1, 0]), "0 1 0")
+        self.assertEqual(self.slots([0, 0]), "1 0 0", "both SSD slots taken")
+        self.assertEqual(self.slots([1, 0, 1, 0]), "0 0 0")
+
+    def test_a_small_host_s_one_and_one(self):
+        self.assertEqual(self.slots([1], rslots=1, sslots=1), "0 1 0")
+        self.assertEqual(self.slots([0], rslots=1, sslots=1), "1 0 0")
+        self.assertEqual(self.slots([1, 0], rslots=1, sslots=1), "0 0 0")
+
+    def test_the_other_modes_count_none(self):
+        self.assertEqual(self.slots([1, 1, 1], mode="ram", rslots=1, sslots=0), "1 1 0")
+        self.assertEqual(self.slots([0, 0, 0], mode="ssd", rslots=0, sslots=1), "1 1 0")
+
+    def test_the_loop_asks_them(self):
+        q = rd(QUEUE)
+        self.assertIn('elif slots_now; ((RSFREE + SSFREE == 0)); then waiting slots ""', q)
+        self.assertIn("done | INLINE=$IDLE place_lines)", q, "the scan: a line with no place now is skipped by the pop")
+        self.assertLess(q.index("elif ((${#JOB[@]} >= MAX)); then waiting full"), q.index("elif slots_now;"),
+                        "holt_jobs stays the total")
 
 
 @unittest.skipUnless(BASH, "no bash")

@@ -14,6 +14,7 @@
 #   hosts_limit NAME LIMIT
 #                         one of NAME's limits (stic_slots, guest_slots,
 #                         holt_jobs, base_gib, holt_disk_mode, scratch_mode,
+#                         holt_ram_slots, holt_ssd_slots,
 #                         ...: hosts.py's LIMITS): its row's,
 #                         else its class's, else the default (a name in no
 #                         row: the default)

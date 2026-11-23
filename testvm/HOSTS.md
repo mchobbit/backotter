@@ -214,7 +214,7 @@ and the gate's scratch is in the RAM disk as before, since their scripts name
 | `scratch_mode` | A HoltTest line works |
 |---|---|
 | `ram` | in the RAM disk, waiting for its room there, as before 2026-11-23 |
-| `overflow` | RAM first: in the RAM disk whenever its reservation D fits there right now (and its memory fits), whatever its size; on `/bkoscratch` only when it doesn't, instead of waiting: the RAM disk has no room for its D now, or its D is over the host's RAM-disk ceiling and can never fit |
+| `overflow` | by slots, RAM first: in a RAM slot when one is free and its reservation D fits the RAM disk right now, whatever its size; else in an SSD slot (`/bkoscratch`) when one is free and the SSD has room for its D; else not now: it stays in the todo, for the other hosts or for later, and the next line that can start is taken |
 | `ssd` | always on `/bkoscratch` |
 
 No size alone sends a line to the SSD. Until 2026-11-23 evening a cutoff did
@@ -226,9 +226,50 @@ chopin's 29.0, and the other 7 on chopin and cinqcent (D 15 to 27) fitted the
 29.0 ceiling, cinqcent's RAM disk standing empty, and went to the SSD for the
 cutoff alone. The cutoff is gone from `ht1-queue.sh` (`place`), the planner and
 the table. What still puts a line on the SSD on a big host is the room in the
-RAM disk as it starts: beside truenas25's 27 GiB little else fits. A line of
-13 GiB or more that works in the RAM disk is a big one as before (`BIG_GIB`:
-one at a time per host; one on the SSD isn't counted).
+RAM disk as it starts (beside truenas25's 27 GiB little else fits), or a host
+with no RAM slot free.
+
+**Slots** (the user's choice, 2026-11-23 evening). In mode `overflow` a host has
+RAM slots and SSD slots for its HoltTest jobs, `holt_ram_slots` and
+`holt_ssd_slots` in the table; `holt_jobs` stays the total:
+
+| host | `holt_ram_slots` | `holt_ssd_slots` | `holt_jobs` |
+|---|---|---|---|
+| chopin, cinqcent | 2 | 2 | 4 |
+| copland, cage, czerny | 1 | 1 | 2 |
+| choubox | 1 | 1 | 1: one job, a RAM job or an SSD job |
+| bigfoot (mode `ram`) | not counted | none | 1 |
+
+A job of ours, running or waiting in cmp-run.sh's line, holds a slot of the kind
+its scratch is. As a line is taken (`ht1-queue.sh`, `place`):
+
+1. a RAM slot is free and its D fits the RAM disk right now (`cmp-run.sh
+   --free`'s "after" room): it works in the RAM disk;
+2. else an SSD slot is free and `/bkoscratch` has room for its D
+   (`--ssd-free`): it works there, though the RAM disk may have room when it
+   is the RAM slots that are taken;
+3. else it is not started now. It stays in the todo, for the other hosts or
+   for later here; the runner skips it this time and takes the next line that
+   can start.
+
+A line whose D is over the host's RAM-disk ceiling takes an SSD slot only, a
+`+img` line a RAM slot only. Memory is needed wherever the scratch is, so a
+line with a free slot whose memory alone is short starts and waits for it in
+cmp-run.sh's line, as every HoltTest job always has (the queue keeps its place
+there beside SticTest's and GuestTest's jobs); so does a line with room nowhere
+when no job of ours is on the host. The modes `ram` and `ssd` count no slots
+(`holt_jobs` alone); `overflow` with 0 SSD slots is `ram`, with 0 RAM slots
+`ssd`. `hosts.py holt-slots HOST` prints what the runner reads, `MODE RAM SSD`.
+
+The big guests' turns (`BIG_GIB`: a line of 13 GiB or more one at a time per
+host) are not kept in mode `overflow`: the slots replace them. The turns never
+guarded the RAM disk; the ledger does (a `--reserve D M` is admitted only when
+D fits beside every other reservation and what the tmpfs holds). They kept a
+second big line from sitting in cmp-run.sh's line, where it held up every other
+start of the runner's. In mode `overflow` a line enters a RAM slot only when
+its D fits right now by those same figures, so two big lines never wait on each
+other, and the RAM slots say how many jobs work in the RAM disk at once. Mode
+`ram`, where a line still waits for its room, keeps the turns.
 
 A `+img` line is never moved (ht1.sh runs it only in the RAM disk). A line on
 `/bkoscratch` runs as ht1.sh's disk mode always has (`HT_RAM=0`: it works in its

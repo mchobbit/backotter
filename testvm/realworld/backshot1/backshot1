@@ -60,8 +60,12 @@ on_rescue() {
     ssh "${OPTS[@]}" "backotter@$(cat "$STATE/rescue-ip")" "$@"
 }
 
-# Prints the drive's mount point on the machine, mounting it if nothing has.
-DRIVE="d=\$(findmnt -nro TARGET -S LABEL=$BACKUP_LABEL | head -n 1); if [ -z \"\$d\" ]; then mkdir -p /mnt/bs1-backup; modprobe -q xfs 2>/dev/null; mount LABEL=$BACKUP_LABEL /mnt/bs1-backup || exit 1; d=/mnt/bs1-backup; fi"
+# Sets d to the drive's mount point on the machine, mounting it if nothing
+# has: at /mnt/bs1-backup, or at /run/bs1-backup where that can't be made
+# (openSUSE Aeon and MicroOS: /mnt is on the read-only root; "mkdir: cannot
+# create directory '/mnt/bs1-backup': Read-only file system", 2026-11-23).
+# No single quote in it: run_on_drive passes it to the stick inside a pair.
+DRIVE="d=\$(findmnt -nro TARGET -S LABEL=$BACKUP_LABEL | head -n 1); if [ -z \"\$d\" ]; then d=/mnt/bs1-backup; mkdir -p \$d 2>/dev/null || { d=/run/bs1-backup; mkdir -p \$d || exit 1; }; modprobe -q xfs 2>/dev/null; mount LABEL=$BACKUP_LABEL \$d || exit 1; fi"
 
 # run_on_drive SCRIPT ARGS...: on the installed system or the stick, whichever is up.
 run_on_drive() {

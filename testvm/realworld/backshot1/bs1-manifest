@@ -403,7 +403,9 @@ def logical(rel, ostree=None, abroot=None):
 # whose udisks had the drive at /run/media/...: run
 # nixos-26.05-20261113-095929) comes back with mnt added.  Where /mnt was
 # there, the mkdir only moves its mtime, and a directory's mtime isn't
-# compared (same()).  mnt/bs1-backup itself is in EXPECTED.
+# compared (same()).  mnt/bs1-backup itself is in EXPECTED.  DRIVE's other
+# mount point, /run/bs1-backup (a read-only root: Aeon, MicroOS), is on
+# /run's tmpfs, so never in the tree.
 ADDED = ["mnt",
          # abroot status (verify runs it) makes ABRoot's package lists, empty,
          # in the present root's /etc upper when they aren't there.

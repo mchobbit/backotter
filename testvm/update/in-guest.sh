@@ -780,6 +780,15 @@ Linux)
         # GuestTest2 t2v-20261118T0617-4a11, attempt 1 on choubox).  So
         # exit 4 with "reboot first": vm-update reboots the guest and runs
         # this script again, which then finds bko-kho.cfg and goes on.
+        # Proxmox VE's kernel is Ubuntu's, KHO and all, but on a ZFS root
+        # booted by UEFI without Secure Boot it starts through systemd-boot,
+        # whose entries proxmox-boot-tool writes with /etc/kernel/cmdline's
+        # one line: GRUB's drop-in changed nothing there, and proxmox9 went
+        # on updating with the scratch area reserved after its "reboot
+        # first" ("Memory: 1225704K/2090728K available", 857 MB reserved;
+        # 1885596K and 197 MB with kho=off).  So that line gets kho=off too,
+        # and the ESPs their entries again (proxmox-boot-tool refresh).
+        kho=
         if grep -qs '^CONFIG_KEXEC_HANDOVER_ENABLE_DEFAULT=y' "/boot/config-$(uname -r)" &&
             ! grep -qw 'kho=off' /proc/cmdline && [ -f /etc/default/grub ] && has update-grub &&
             [ ! -f /etc/default/grub.d/bko-kho.cfg ]; then
@@ -787,10 +796,47 @@ Linux)
             mkdir -p /etc/default/grub.d &&
                 echo 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT kho=off"' >/etc/default/grub.d/bko-kho.cfg &&
                 update-grub || exit 1
-            if [ -d /sys/module/zfs ]; then
-                say "reboot first: kho=off, before ZFS's ARC runs the update short of kernel memory"
-                exit 4
-            fi
+            kho=new
+        fi
+        if grep -qs '^CONFIG_KEXEC_HANDOVER_ENABLE_DEFAULT=y' "/boot/config-$(uname -r)" &&
+            ! grep -qw 'kho=off' /proc/cmdline && has proxmox-boot-tool && [ -s /etc/kernel/proxmox-boot-uuids ] &&
+            [ -s /etc/kernel/cmdline ] && ! grep -qw 'kho=off' /etc/kernel/cmdline; then
+            step "kernel command line: kho=off in /etc/kernel/cmdline too (proxmox-boot-tool's systemd-boot entries)"
+            sed '1s/[[:space:]]*$/ kho=off/' /etc/kernel/cmdline >/etc/kernel/cmdline.bko &&
+                grep -qw 'kho=off' /etc/kernel/cmdline.bko && mv /etc/kernel/cmdline.bko /etc/kernel/cmdline &&
+                proxmox-boot-tool refresh || exit 1
+            kho=new
+        fi
+        if [ -n "$kho" ] && [ -d /sys/module/zfs ]; then
+            say "reboot first: kho=off, before ZFS's ARC runs the update short of kernel memory"
+            exit 4
+        fi
+        # Proxmox VE: watchdog-mux (a static unit that pve-ha-lrm and
+        # pve-ha-crm want) arms the kernel's software watchdog at boot, HA in
+        # use or not, with a 10 s timeout, and feeds it once a second.  When
+        # it doesn't get to run for 10 s, softdog resets the machine there and
+        # then, with no line on the console: proxmox9 was reset in the
+        # update's last step, pve-ha-manager's triggers (they restart the two
+        # HA daemons, 240 MB each at their peak, on a 2 GiB guest with no
+        # swap, short of memory as above): SSH "closed by remote host", the
+        # console's next line the firmware's, the journal's file "uncleanly
+        # shut down" (GuestTest2 t2v-20261123T1729-550e, attempt 1 on czerny;
+        # a watchdog-mux held with kill -STOP in a throwaway boot gave the
+        # same reset 10 s on).  A test VM on a busy host, in the middle of an
+        # upgrade, can't promise it those 10 s.  Stopped with no HA client
+        # (/run/watchdog-mux.active, its own note of one: none on a guest
+        # with no HA resource), it disarms the watchdog as it goes; masked
+        # for this boot (in /run), the upgrade's restarts of the HA daemons
+        # don't start it again.  The reboot after the update starts it as
+        # ever.
+        if [ -d /run/systemd/system ] && [ -x /usr/sbin/watchdog-mux ] && [ ! -e /run/watchdog-mux.active ] &&
+            systemctl -q is-active watchdog-mux.service; then
+            systemctl mask --runtime --now watchdog-mux.service >/dev/null 2>&1
+            for w in /sys/class/watchdog/watchdog*/state; do
+                if [ -f "$w" ] && [ "$(cat "$w")" = active ]; then
+                    say "warning: ${w%/state} is still armed after watchdog-mux was stopped"
+                fi
+            done
         fi
         # snapd (Ubuntu): the image's refresh hold has lapsed and it has never
         # refreshed, so the upgrade's new snapd (its postinst restarts it)

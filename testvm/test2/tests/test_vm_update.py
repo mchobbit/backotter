@@ -1107,6 +1107,166 @@ class TestInGuest(unittest.TestCase):
                 self.assertEqual(len(out), 1)
                 self.assertTrue(out[0].startswith("in-guest: warning: debconf names no install device for grub-pc"), out)
 
+    def run_kho(self, config=True, booted="root=ZFS=rpool/ROOT/pve-1 boot=zfs", grub=True, grub_cfg=False,
+                pbt=True, uuids="06D4-31B8\n", kernel_cmdline="root=ZFS=rpool/ROOT/pve-1 boot=zfs console=ttyS0,115200n8\n",
+                zfs=True, refresh_rc=0):
+        """Linux.apt's kho=off blocks in a scratch root D, with update-grub and proxmox-boot-tool
+        stand-ins (PBT: the tool is there; UUIDS and KERNEL_CMDLINE its two files, None for no
+        file).  Returns (exit status, stdout, the stand-ins' calls, /etc/kernel/cmdline after or
+        None, whether GRUB's drop-in is there after)."""
+        apt = self.sections()["Linux.apt"]
+        m = re.search(r"^( *)kho=\n\1if grep -qs '\^CONFIG_KEXEC_HANDOVER_ENABLE_DEFAULT=y'.*?\n\1    exit 4\n\1fi\n", apt, re.M | re.S)
+        self.assertIsNotNone(m)
+        with tempfile.TemporaryDirectory() as d:
+            for sub in ("boot", "proc", "etc/default", "etc/kernel", "sys/module", "bin"):
+                Path(d, sub).mkdir(parents=True)
+            if config:
+                Path(d, "boot/config-7.0.14-28-pve").write_text("CONFIG_KEXEC_HANDOVER=y\nCONFIG_KEXEC_HANDOVER_ENABLE_DEFAULT=y\n")
+            Path(d, "proc/cmdline").write_text(booted + "\n")
+            if grub:
+                Path(d, "etc/default/grub").write_text('GRUB_CMDLINE_LINUX_DEFAULT="quiet"\n')
+                Path(d, "bin/update-grub").write_text(f"#!/bin/sh\necho update-grub >>{d}/calls\n")
+            if grub_cfg:
+                Path(d, "etc/default/grub.d").mkdir()
+                Path(d, "etc/default/grub.d/bko-kho.cfg").write_text("x\n")
+            if pbt:
+                Path(d, "bin/proxmox-boot-tool").write_text(f'#!/bin/sh\necho "proxmox-boot-tool $*" >>{d}/calls\nexit {refresh_rc}\n')
+            if uuids is not None:
+                Path(d, "etc/kernel/proxmox-boot-uuids").write_text(uuids)
+            if kernel_cmdline is not None:
+                Path(d, "etc/kernel/cmdline").write_text(kernel_cmdline)
+            if zfs:
+                Path(d, "sys/module/zfs").mkdir()
+            Path(d, "bin/uname").write_text("#!/bin/sh\necho 7.0.14-28-pve\n")
+            for f in Path(d, "bin").iterdir():
+                f.chmod(0o755)
+            block = textwrap.dedent(m[0])
+            for p in ("/boot/config-", "/proc/cmdline", "/etc/default/grub", "/etc/kernel/", "/sys/module/zfs"):
+                block = block.replace(p, d + p)
+            script = textwrap.dedent("""\
+                has() { command -v "$1" >/dev/null 2>&1; }
+                say() { echo "in-guest: $*"; }
+                step() { echo "in-guest: step: $*"; }
+                """) + block + 'echo "went on"\n'
+            env = dict(os.environ, PATH=f"{d}/bin:{os.environ['PATH']}")
+            r = subprocess.run(["sh", "-c", script], capture_output=True, text=True, env=env)
+            self.assertEqual(r.stderr, "")
+            calls = Path(d, "calls").read_text().splitlines() if Path(d, "calls").exists() else []
+            after = Path(d, "etc/kernel/cmdline").read_text() if Path(d, "etc/kernel/cmdline").exists() else None
+            return (r.returncode, r.stdout.replace(d, "").splitlines(), calls, after,
+                    Path(d, "etc/default/grub.d/bko-kho.cfg").exists())
+
+    KHO_GRUB = "in-guest: step: kernel command line: kho=off (kexec handover's scratch area took most of RAM)"
+    KHO_PBT = "in-guest: step: kernel command line: kho=off in /etc/kernel/cmdline too (proxmox-boot-tool's systemd-boot entries)"
+    KHO_REBOOT = "in-guest: reboot first: kho=off, before ZFS's ARC runs the update short of kernel memory"
+
+    def test_kho_off_reaches_proxmox_boot_tools_systemd_boot_entries(self):
+        """proxmox9 boots through systemd-boot, whose entries proxmox-boot-tool writes from
+        /etc/kernel/cmdline: GRUB's drop-in alone left KHO's scratch area reserved, and the guest
+        was reset in the update's last step (GuestTest2 t2v-20261123T1729-550e).  The line gets
+        kho=off, the ESPs are written again, and one reboot follows both changes."""
+        rc, out, calls, after, cfg = self.run_kho()
+        self.assertEqual((rc, out), (4, [self.KHO_GRUB, self.KHO_PBT, self.KHO_REBOOT]))
+        self.assertEqual(calls, ["update-grub", "proxmox-boot-tool refresh"])
+        self.assertEqual(after, "root=ZFS=rpool/ROOT/pve-1 boot=zfs console=ttyS0,115200n8 kho=off\n")
+        self.assertTrue(cfg)
+        self.assertRegex(VU.REBOOT_FIRST.search("\n".join(out))[1], "^kho=off, before ZFS")
+        # the boot after: kho=off on the command line, nothing more to do
+        rc, out, calls, again, cfg = self.run_kho(booted="root=ZFS=rpool/ROOT/pve-1 boot=zfs kho=off", grub_cfg=True, kernel_cmdline=after)
+        self.assertEqual((rc, out, calls, again), (0, ["went on"], [], after))
+        # an image that has GRUB's drop-in already (an earlier update's) and still boots with KHO
+        rc, out, calls, after, cfg = self.run_kho(grub_cfg=True, kernel_cmdline="root=ZFS=rpool/ROOT/pve-1 boot=zfs  \n")
+        self.assertEqual((rc, out), (4, [self.KHO_PBT, self.KHO_REBOOT]))
+        self.assertEqual((calls, after), (["proxmox-boot-tool refresh"], "root=ZFS=rpool/ROOT/pve-1 boot=zfs kho=off\n"))
+        # no newline at its end (GNU sed adds none, BSD sed one)
+        self.assertEqual(self.run_kho(kernel_cmdline="root=/dev/x")[3].rstrip("\n"), "root=/dev/x kho=off")
+        # both changed already and the boot still has no kho=off: no second reboot, no loop
+        rc, out, calls, after, cfg = self.run_kho(grub_cfg=True, kernel_cmdline="root=ZFS=rpool/ROOT/pve-1 kho=off\n")
+        self.assertEqual((rc, out, calls), (0, ["went on"], []))
+        # a refresh that fails stops the update
+        rc, out, calls, after, cfg = self.run_kho(refresh_rc=1)
+        self.assertEqual((rc, out), (1, [self.KHO_GRUB, self.KHO_PBT]))
+        # no ZFS: both changes, and the update goes on without a reboot first
+        self.assertEqual(self.run_kho(zfs=False)[:2], (0, [self.KHO_GRUB, self.KHO_PBT, "went on"]))
+
+    def test_kho_off_elsewhere_is_grubs_drop_in_alone(self):
+        """A guest with no proxmox-boot-tool, or one whose ESPs it doesn't keep (no
+        proxmox-boot-uuids: an LVM install), keeps GRUB's drop-in alone, as before; no
+        /etc/kernel/cmdline is made or changed.  A kernel without KHO by default changes nothing."""
+        line = "root=ZFS=rpool/ROOT/pve-1 boot=zfs console=ttyS0,115200n8\n"
+        for kw in ({"pbt": False, "uuids": None, "kernel_cmdline": None}, {"pbt": False}, {"uuids": None}, {"uuids": ""},
+                   {"kernel_cmdline": None}, {"kernel_cmdline": ""}):
+            with self.subTest(**kw):
+                rc, out, calls, after, cfg = self.run_kho(**kw)
+                self.assertEqual((rc, out, calls, cfg), (4, [self.KHO_GRUB, self.KHO_REBOOT], ["update-grub"], True))
+                self.assertEqual(after, kw.get("kernel_cmdline", line))
+        rc, out, calls, after, cfg = self.run_kho(config=False)
+        self.assertEqual((rc, out, calls, after, cfg), (0, ["went on"], [], line, False))
+        # systemd-boot alone (no GRUB to configure): the tool's line still gets it
+        rc, out, calls, after, cfg = self.run_kho(grub=False)
+        self.assertEqual((rc, out, calls, cfg), (4, [self.KHO_PBT, self.KHO_REBOOT], ["proxmox-boot-tool refresh"], False))
+
+    WATCHDOG_BLOCK = r"^( *)if \[ -d /run/systemd/system \] && \[ -x /usr/sbin/watchdog-mux \].*?\n\1fi\n"
+
+    def run_watchdog(self, mux=True, active=True, client=False, states=("inactive",), systemd=True):
+        """Linux.apt's watchdog-mux block in a scratch root, with a systemctl stand-in:
+        watchdog-mux.service is ACTIVE, has an HA CLIENT (its /run/watchdog-mux.active), and
+        STATES are the watchdog devices' states once it is stopped.  Returns (stdout,
+        systemctl's calls)."""
+        m = re.search(self.WATCHDOG_BLOCK, self.sections()["Linux.apt"], re.M | re.S)
+        self.assertIsNotNone(m)
+        with tempfile.TemporaryDirectory() as d:
+            for sub in ("run", "usr/sbin", "sys/class/watchdog"):
+                Path(d, sub).mkdir(parents=True)
+            if systemd:
+                Path(d, "run/systemd/system").mkdir(parents=True)
+            if mux:
+                Path(d, "usr/sbin/watchdog-mux").write_text("#!/bin/sh\n")
+                Path(d, "usr/sbin/watchdog-mux").chmod(0o755)
+            if client:
+                Path(d, "run/watchdog-mux.active").mkdir()
+            for i, s in enumerate(states):
+                Path(d, f"sys/class/watchdog/watchdog{i}").mkdir()
+                Path(d, f"sys/class/watchdog/watchdog{i}/state").write_text(s + "\n")
+            block = textwrap.dedent(m[0])
+            for p in ("/run/systemd/system", "/usr/sbin/watchdog-mux", "/run/watchdog-mux.active", "/sys/class/watchdog/"):
+                block = block.replace(p, d + p)
+            script = textwrap.dedent(f"""\
+                say() {{ echo "in-guest: $*"; }}
+                systemctl() {{
+                    echo "$*" >>{d}/calls
+                    case "$*" in "-q is-active watchdog-mux.service") return {0 if active else 3} ;; esac
+                    echo "Created symlink"
+                }}
+                """) + block
+            r = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+            self.assertEqual((r.returncode, r.stderr), (0, ""))
+            calls = Path(d, "calls").read_text().splitlines() if Path(d, "calls").exists() else []
+            return r.stdout.replace(d, "D").splitlines(), calls
+
+    def test_proxmox_watchdog_mux_is_stopped_and_masked_for_the_update(self):
+        """watchdog-mux arms softdog with a 10 s timeout on every Proxmox VE boot: a guest that
+        stalls that long in an upgrade is reset with no console line (proxmox9, GuestTest2
+        t2v-20261123T1729-550e).  With no HA client it is stopped, which disarms the watchdog,
+        and masked in /run, so that pve-ha-manager's restarts don't start it again; nothing is
+        printed, and no step: the reboot after the update starts it as ever."""
+        asked = "-q is-active watchdog-mux.service"
+        self.assertEqual(self.run_watchdog(), ([], [asked, "mask --runtime --now watchdog-mux.service"]))
+        self.assertEqual(self.run_watchdog(states=())[0], [])
+        # left alone: not Proxmox VE, not running, an HA client connected (stopping it then
+        # would leave the watchdog armed and unfed), no systemd
+        self.assertEqual(self.run_watchdog(mux=False), ([], []))
+        self.assertEqual(self.run_watchdog(active=False), ([], [asked]))
+        self.assertEqual(self.run_watchdog(client=True), ([], []))
+        self.assertEqual(self.run_watchdog(systemd=False), ([], []))
+        # a watchdog still armed afterwards is said, for the log of the reset that follows
+        out, calls = self.run_watchdog(states=("inactive", "active"))
+        self.assertEqual(out, ["in-guest: warning: D/sys/class/watchdog/watchdog1 is still armed after watchdog-mux was stopped"])
+        apt = self.sections()["Linux.apt"]
+        self.assertNotRegex(re.search(self.WATCHDOG_BLOCK, apt, re.M | re.S)[0], r"\bstep ")
+        # after the reboot-first exit: the boot that runs the update is the one it is masked on
+        self.assertLess(apt.index("exit 4"), apt.index("[ -x /usr/sbin/watchdog-mux ]"))
+
     # oi2610's pkg update when pkg.openindiana.org stalled (GuestTest2 t2v-20261118T2305-edbb):
     # a warning, "No updates available" and exit 4, as with nothing to update.
     IPS_STALL = textwrap.dedent("""\

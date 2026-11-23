@@ -31,6 +31,11 @@ came back unlinked from its deployments, or lost a flag, shows; a gained
 FS_NOCOMP_FL alone is btrfs's own, set as the restore writes data that won't
 compress (B5, B6).  A file with several links is read once.
 
+Every other regular file has the two columns too, with "-" for the link
+count: its flags are recorded but not compared (ext4's and f2fs's own bits
+would show), and only say whether a gained btrfs.compression property is the
+kernel's (compress_property, below).
+
 On ABRoot (ROOT is the present root with the other at part-future and the
 init LV at boot/init: docs/design/vanillaos.md), the first row names the
 present root ("/abroot-present"), and only its /etc upper
@@ -445,7 +450,11 @@ STORE_REMADE = {"nixos": NIXOS_REMADE, "guix": GUIX_REMADE}
 
 
 FS_IOC_GETFLAGS = 0x80086601
+FS_COMPR_FL = 0x4
 FS_NOCOMP_FL = 0x400
+# What btrfs's compress flag makes of the mount's algorithm, as the property.
+BTRFS_COMPRESSION = "btrfs.compression"
+BTRFS_ALGORITHMS = (b"zstd", b"zlib", b"lzo")
 
 
 def digest(path, flags=False):
@@ -506,18 +515,20 @@ def write(root, out):
                     elif stat.S_ISREG(st.st_mode):
                         key = (st.st_dev, st.st_ino)
                         extra, fl = digests.get(key, (None, None))
-                        if extra is None or (under and fl is None):
-                            extra, fl = digest(p, under)
+                        if extra is None:
+                            # The flags from the descriptor the hash reads.
+                            extra, fl = digest(p, True)
                             if st.st_nlink > 1:
                                 digests[key] = (extra, fl)
-                        if under:
-                            links = [str(st.st_nlink), fl]
+                        # The link count only under ostree/: elsewhere "-",
+                        # and the flags aren't compared (links_same).
+                        links = [str(st.st_nlink) if under else "-", fl]
                     elif stat.S_ISCHR(st.st_mode) or stat.S_ISBLK(st.st_mode):
                         extra = f"dev:{os.major(st.st_rdev)}:{os.minor(st.st_rdev)}"
                 except OSError as e:
                     extra = f"unreadable:{e.errno}"
-                if under and stat.S_ISREG(st.st_mode) and links is None:
-                    links = [str(st.st_nlink), "-"]
+                if stat.S_ISREG(st.st_mode) and links is None:
+                    links = [str(st.st_nlink) if under else "-", "-"]
                 f.write("\t".join([rel, oct(st.st_mode), str(st.st_uid), str(st.st_gid), str(st.st_size), str(st.st_mtime_ns), extra, xattrs(p)] + (links or [])) + "\n")
             dirs[:] = [n for n in dirs if n not in again]
 
@@ -568,10 +579,18 @@ def flags_same(a, b):
 
 def links_same(a, b, flags=True):
     """A regular file under ostree/: its link count and flags, where both
-    rows have them (a baseline from before has neither)."""
-    if len(a) < 9 or len(b) < 9:
+    rows have them (a baseline from before has neither).  A file outside
+    ostree/ has "-" for its link count, and neither is compared: its flags
+    are the filesystem's as much as the file's (ext4's extents and inline
+    data, f2fs's, btrfs's FS_NOCOMP_FL)."""
+    if len(a) < 9 or len(b) < 9 or a[7] == "-" or b[7] == "-":
         return True
     return a[7] == b[7] and (not flags or flags_same(a[8], b[8]))
+
+
+def linked(row):
+    """Whether ROW has a link count: a regular file under ostree/."""
+    return len(row) > 8 and row[7] != "-"
 
 
 def same(rel, a, b, store, ostree=None, abroot=None, remade_also=()):
@@ -636,6 +655,36 @@ def relabeled_boot(rel, a, b):
         return False
     x, y = parse_xattrs(a[6]), parse_xattrs(b[6])
     return {k for k in set(x) | set(y) if x.get(k) != y.get(k)} == {"security.selinux"}
+
+
+def compress_property(a, b):
+    """Whether a regular file's extended attributes differ only in a
+    btrfs.compression property it gained, with the compress flag
+    (FS_COMPR_FL, lsattr's c) set before and after.
+
+    mkfs.btrfs --rootdir --compress (systemd-repart: openSUSE Aeon's
+    installer) leaves its files with the flag and no property, which no
+    mounted btrfs can make: the kernel writes the property, the mount's
+    algorithm, whenever FS_IOC_SETFLAGS sets the flag, and removing the
+    property clears the flag.  So the flag with the property is the nearest
+    a restore gets (aeon-20261121-20261123-131915: 12,115 files).  Not
+    without the baseline's flag: that file would have picked compression up
+    from somewhere it shouldn't.  A baseline with no flags column says
+    nothing, and the difference stays."""
+    if len(a) < 9 or len(b) < 9 or not (stat.S_ISREG(int(a[0], 8)) and stat.S_ISREG(int(b[0], 8))):
+        return False
+    try:
+        if not int(a[8], 16) & int(b[8], 16) & FS_COMPR_FL:
+            return False
+    except ValueError:              # "-": no flags to read
+        return False
+    x, y = parse_xattrs(a[6]), parse_xattrs(b[6])
+    if {k for k in set(x) | set(y) if x.get(k) != y.get(k)} != {BTRFS_COMPRESSION} or BTRFS_COMPRESSION in x:
+        return False
+    try:
+        return base64.b64decode(y[BTRFS_COMPRESSION], validate=True) in BTRFS_ALGORITHMS
+    except ValueError:
+        return False
 
 
 def snapshot_of(rel):
@@ -745,6 +794,10 @@ def compare(old_path, new_path, reformatted=False):
     relabeled = sorted(p for p in both if old[p][6] != new[p][6])
     if not both:
         print("xattrs: this baseline has none, so they weren't compared")
+    compressed = {p for p in relabeled if not kept(p, held) and compress_property(old[p], new[p])}
+    if compressed:
+        print(f"btrfs: {len(compressed)} regular files with the compress flag and no {BTRFS_COMPRESSION} property came back with the flag "
+              "and the property, which the kernel writes whenever the flag is set: expected")
     bad = [f"Solus: the baseline lacks {p} (was its ESP mounted at /boot?)" for p in lacks]
     for label, paths in (("missing", missing), ("added", added), ("changed", changed), ("xattrs", relabeled)):
         unexpected = [p for p in paths if kept(p, held) and not held_ok(label, p, old, new, present)]
@@ -752,12 +805,12 @@ def compare(old_path, new_path, reformatted=False):
                        and p not in qol
                        and not any(fnmatch.fnmatch(p, pat) for pat in slk_expected)
                        and not (reformatted and any(fnmatch.fnmatch(p, pat) for pat in REFORMAT_EXPECTED))
-                       and not (label == "xattrs" and relabeled_boot(p, old[p], new[p]))]
+                       and not (label == "xattrs" and (relabeled_boot(p, old[p], new[p]) or p in compressed))]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")
         bad += [f"{label}: {p}" + (f" ({xattr_diff(old[p], new[p])})" if label == "xattrs" else "") for p in unexpected]
-    linked = sum(1 for p in set(old) & set(new) if len(old[p]) > 8 and len(new[p]) > 8)
-    if linked:
-        print(f"ostree: link counts and inode flags compared for {linked} regular files under ostree/")
+    counted = sum(1 for p in set(old) & set(new) if linked(old[p]) and linked(new[p]))
+    if counted:
+        print(f"ostree: link counts and inode flags compared for {counted} regular files under ostree/")
     print(f"files compared: {len(old)}")
     for line in bad:
         print(line)

@@ -245,8 +245,8 @@ are left out: their files are in the physical root already.
   `lsattr -d` of each deployment root, `ostree admin status`), `links.txt`
   (per filesystem, the regular files with more than one link, and how many
   paths have each link count) and `space.txt` (each btrfs filesystem's bytes
-  in use).  The manifest adds each regular file's link count and inode flags
-  under `ostree/`.
+  in use).  The manifest compares each regular file's link count and inode
+  flags under `ostree/`.
 - **What verify adds,** after holding the updaters off and checking that
   rpm-ostree shows no staged or new deployment, then the manifest:
   - the booted deployment is the baseline's, checksum *and* serial (the
@@ -1068,6 +1068,20 @@ kernel) the whole ESP at `/boot`.  A snapshot that only one side has is expected
 AnduinOS's Disk Snapshots Manager's (its scheduler runs 2 min after every
 boot), and with the manager's, its records' changes too; phase 1 and
 `verify` hold both schedulers for their boot.
+
+The manifest has every regular file's inode flags (`FS_IOC_GETFLAGS`), but
+compares them only under `ostree/`: elsewhere they are the filesystem's as
+much as the file's.  They decide one thing there.  `mkfs.btrfs --rootdir
+--compress` (systemd-repart, so openSUSE Aeon's installer) leaves its files
+with the compress flag (`lsattr`'s `c`) and no `btrfs.compression` property,
+a state no mounted btrfs can make: the kernel writes the property, with the
+mount's algorithm, whenever `FS_IOC_SETFLAGS` sets the flag, and removing
+the property clears the flag.  So a regular file that had the flag and comes
+back with the flag and a `btrfs.compression` of `zstd`, `zlib` or `lzo`, and
+no other attribute changed, is expected (12,115 files on Aeon,
+aeon-20261121-20261123-131915), and the comparison says how many there
+were.  A file that gained the property without having had the flag is not,
+nor is any against a baseline from before the flags were recorded.
 
 Where GRUB's core image names /boot/grub's LV by UUID,
 `(lvmid/VG-UUID/LV-UUID)` (Gentoo with / on LVM, as on the Thinkpad),

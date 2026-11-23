@@ -1,10 +1,14 @@
 """bs1-manifest's boot and login churn on fake trees: MX Linux's (lightdm's
 early-bg /.fehbg and mx-goodies' xdg-user-dirs-update rewriting ~/.bashrc,
 held to the same bytes and only on an MX baseline) and dbus-launch's
-~/.dbus/session-bus file (BackShot1 debian-13-20261121-065025).  No root, no
-VM."""
+~/.dbus/session-bus file (BackShot1 debian-13-20261121-065025); and the
+inode flags of every regular file, with the btrfs.compression property the
+kernel writes for a restored compress flag (openSUSE Aeon,
+aeon-20261121-20261123-131915).  No root, no VM."""
 
+import base64
 import contextlib
+import hashlib
 import importlib.machinery
 import importlib.util
 import io
@@ -229,6 +233,210 @@ class SlackwareChurn(unittest.TestCase):
         self.assertNotIn("Slackware", out)
         self.assertIn("changed: usr/share/mime/aliases", out)
         self.assertIn("added: etc/adjtime", out)
+
+
+SELINUX = {"security.selinux": b"system_u:object_r:usr_t:s0\x00"}
+
+
+class CompressProperty(unittest.TestCase):
+    """mkfs.btrfs --rootdir --compress leaves files with the compress flag
+    (0x4) and no btrfs.compression property; restoring the flag makes the
+    kernel write the property.  Expected only so: a regular file, the flag
+    before and after, that one attribute gained, an algorithm's name.  The
+    flags and attributes are faked per path, so this runs anywhere."""
+
+    FILES = ["usr/bin/a", "usr/bin/b", "usr/lib/c", "etc/d"]
+
+    def setUp(self):
+        self.t = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.t)
+        self.root = self.t / "root"
+        for rel in self.FILES:
+            put(self.root, rel, f"{rel}\n")
+
+    def manifest(self, name, flags=None, xattrs=None):
+        """The tree's manifest, with FLAGS ({rel: "0x.."}, else "0x0") and
+        XATTRS ({rel: {name: bytes}}, else the SELinux label) as its files'."""
+        flags, xattrs = flags or {}, xattrs or {}
+        rel = lambda p: os.path.relpath(p, self.root)
+
+        def digest(p, want=False):
+            return hashlib.sha256(Path(p).read_bytes()).hexdigest(), flags.get(rel(p), "0x0") if want else None
+
+        def field(p):
+            x = {**SELINUX, **xattrs.get(rel(p), {})}
+            return ",".join(f"{k}={base64.b64encode(v).decode()}" for k, v in sorted(x.items()))
+
+        out = self.t / name
+        with mock.patch.object(M, "digest", digest), mock.patch.object(M, "xattrs", field):
+            M.write(str(self.root), str(out))
+        return out
+
+    def compare(self, a, b):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = M.compare(str(a), str(b))
+        return rc, buf.getvalue()
+
+    def rows(self, path):
+        return {ln.split("\t")[0]: ln.split("\t") for ln in path.read_text().splitlines()}
+
+    def old_format(self, path):
+        """As written before the flags were recorded outside ostree/."""
+        path.write_text("".join("\t".join(ln.split("\t")[:8]) + "\n" for ln in path.read_text().splitlines()))
+        return path
+
+    def test_flags_recorded_for_every_regular_file(self):
+        rows = self.rows(self.manifest("a.tsv", flags={"usr/bin/a": "0x4"}))
+        self.assertEqual(rows["usr/bin/a"][8:], ["-", "0x4"])
+        self.assertEqual(rows["etc/d"][8:], ["-", "0x0"])
+        self.assertEqual(len(rows["usr/bin"]), 8)              # a directory
+
+    def test_real_flags_or_none(self):
+        # The real ioctl: a number on Linux, "-" where there are no flags to
+        # read (macOS, vfat), never a crash.
+        out = self.t / "real.tsv"
+        with mock.patch.object(M, "xattrs", lambda p: "-"):
+            M.write(str(self.root), str(out))
+        for rel in self.FILES:
+            link, fl = self.rows(out)[rel][8:]
+            self.assertEqual(link, "-")
+            self.assertTrue(fl == "-" or int(fl, 16) >= 0, fl)
+
+    def test_unreadable_file_has_no_flags(self):
+        def digest(p, want=False):
+            raise PermissionError(13, "Permission denied")
+        out = self.t / "a.tsv"
+        with mock.patch.object(M, "digest", digest), mock.patch.object(M, "xattrs", lambda p: "-"):
+            M.write(str(self.root), str(out))
+        self.assertEqual(self.rows(out)["etc/d"][6:], ["unreadable:13", "-", "-", "-"])
+
+    def test_flag_kept_and_property_gained(self):
+        flagged = {"usr/bin/a": "0x4", "usr/bin/b": "0x4", "usr/lib/c": "0x4"}
+        a = self.manifest("a.tsv", flags=flagged)
+        b = self.manifest("b.tsv", flags=flagged, xattrs={
+            "usr/bin/a": {"btrfs.compression": b"zstd"}, "usr/bin/b": {"btrfs.compression": b"zlib"},
+            "usr/lib/c": {"btrfs.compression": b"lzo"}})
+        rc, out = self.compare(a, b)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("btrfs: 3 regular files with the compress flag and no btrfs.compression property came back with the flag and the property", out)
+        self.assertIn("xattrs: 3, of which unexpected: 0", out)
+        self.assertNotIn("ostree:", out)
+
+    def test_other_flag_bits_beside_the_compress_flag(self):
+        # btrfs's own FS_NOCOMP_FL beside it, after: still the flag, both sides.
+        a = self.manifest("a.tsv", flags={"usr/bin/a": "0x4"})
+        b = self.manifest("b.tsv", flags={"usr/bin/a": "0x404"}, xattrs={"usr/bin/a": {"btrfs.compression": b"zstd"}})
+        rc, out = self.compare(a, b)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("btrfs: 1 regular files", out)
+
+    def rejected(self, a, b, rel="usr/bin/a"):
+        rc, out = self.compare(a, b)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"xattrs: {rel} (", out)
+        self.assertIn("xattrs: 1, of which unexpected: 1", out)
+        self.assertNotIn("btrfs:", out)
+        return out
+
+    def test_no_flag_in_the_baseline(self):
+        # A file that inherited compression it never had.
+        a = self.manifest("a.tsv")
+        b = self.manifest("b.tsv", flags={"usr/bin/a": "0x4"}, xattrs={"usr/bin/a": {"btrfs.compression": b"zstd"}})
+        out = self.rejected(a, b)
+        self.assertIn("btrfs.compression: (none) -> b'zstd'", out)
+
+    def test_no_flag_after(self):
+        a = self.manifest("a.tsv", flags={"usr/bin/a": "0x4"})
+        b = self.manifest("b.tsv", xattrs={"usr/bin/a": {"btrfs.compression": b"zstd"}})
+        self.rejected(a, b)
+
+    def test_no_flags_to_read(self):
+        a = self.manifest("a.tsv", flags={"usr/bin/a": "-"})
+        b = self.manifest("b.tsv", flags={"usr/bin/a": "-"}, xattrs={"usr/bin/a": {"btrfs.compression": b"zstd"}})
+        self.rejected(a, b)
+
+    def test_another_attribute_differs_too(self):
+        a = self.manifest("a.tsv", flags={"usr/bin/a": "0x4"})
+        b = self.manifest("b.tsv", flags={"usr/bin/a": "0x4"}, xattrs={
+            "usr/bin/a": {"btrfs.compression": b"zstd", "security.selinux": b"system_u:object_r:unlabeled_t:s0\x00"}})
+        self.rejected(a, b)
+        b = self.manifest("c.tsv", flags={"usr/bin/a": "0x4"}, xattrs={
+            "usr/bin/a": {"btrfs.compression": b"zstd", "user.new": b"1"}})
+        self.rejected(a, b)
+
+    def test_value_is_no_algorithm(self):
+        a = self.manifest("a.tsv", flags={"usr/bin/a": "0x4"})
+        for i, value in enumerate((b"none", b"", b"zstd:3", b"ZSTD")):
+            b = self.manifest(f"b{i}.tsv", flags={"usr/bin/a": "0x4"}, xattrs={"usr/bin/a": {"btrfs.compression": value}})
+            self.rejected(a, b)
+
+    def test_property_was_there_before(self):
+        # Changed, not gained: another algorithm than the source's.
+        a = self.manifest("a.tsv", flags={"usr/bin/a": "0x4"}, xattrs={"usr/bin/a": {"btrfs.compression": b"zlib"}})
+        b = self.manifest("b.tsv", flags={"usr/bin/a": "0x4"}, xattrs={"usr/bin/a": {"btrfs.compression": b"zstd"}})
+        self.rejected(a, b)
+        # And lost.
+        self.rejected(b, self.manifest("c.tsv", flags={"usr/bin/a": "0x4"}))
+
+    def test_directory(self):
+        # A directory has no flags in the manifest, so nothing vouches for it.
+        a = self.manifest("a.tsv")
+        b = self.manifest("b.tsv", xattrs={"usr/bin": {"btrfs.compression": b"zstd"}})
+        self.rejected(a, b, "usr/bin")
+        # Nor would a row that had them.
+        d = ["0o40755", "0", "0", "0", "1", "-", "-", "-", "0x4"]
+        f = ["0o100644"] + d[1:]
+        gained = f"btrfs.compression={base64.b64encode(b'zstd').decode()}"
+        self.assertTrue(M.compress_property(f, f[:6] + [gained] + f[7:]))
+        self.assertFalse(M.compress_property(d, d[:6] + [gained] + d[7:]))
+        self.assertFalse(M.compress_property(d, f[:6] + [gained] + f[7:]))
+
+    def test_old_format_baseline(self):
+        # No flags column in the baseline: the difference stays unexpected,
+        # against an after in the new format, and nothing crashes.
+        flagged = {"usr/bin/a": "0x4"}
+        a = self.old_format(self.manifest("a.tsv", flags=flagged))
+        b = self.manifest("b.tsv", flags=flagged, xattrs={"usr/bin/a": {"btrfs.compression": b"zstd"}})
+        self.rejected(a, b)
+        # Both old: as before.
+        self.rejected(a, self.old_format(b))
+        # Nothing else differs between an old baseline and a new after.
+        rc, out = self.compare(a, self.manifest("c.tsv", flags={rel: "0x80000" for rel in self.FILES}))
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("ostree:", out)
+
+    def test_flag_differences_alone_are_not_reported(self):
+        # Outside ostree/ the flags are the filesystem's: gained, lost,
+        # unreadable, none of it is a change.
+        a = self.manifest("a.tsv", flags={"usr/bin/a": "0x4", "usr/bin/b": "0x80000", "usr/lib/c": "0x0", "etc/d": "0x10"})
+        b = self.manifest("b.tsv", flags={"usr/bin/a": "0x0", "usr/bin/b": "0x0", "usr/lib/c": "0x10000004", "etc/d": "-"})
+        rc, out = self.compare(a, b)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("changed: 0, of which unexpected: 0", out)
+        self.assertIn("xattrs: 0, of which unexpected: 0", out)
+        # No link counts here to have compared.
+        self.assertNotIn("ostree:", out)
+        self.assertNotIn("btrfs:", out)
+
+    def test_held_path_gets_no_exception(self):
+        # rEFInd's files are held as the ESP brought them back.
+        put(self.root, "boot/efi/EFI/refind/refind.conf", "timeout 5\n")
+        rel = "boot/efi/EFI/refind/refind.conf"
+        a = self.manifest("a.tsv", flags={rel: "0x4"})
+        b = self.manifest("b.tsv", flags={rel: "0x4"}, xattrs={rel: {"btrfs.compression": b"zstd"}})
+        self.rejected(a, b, rel)
+
+    def test_a_changed_file_is_still_a_change(self):
+        # The exception is the attribute's alone.
+        a = self.manifest("a.tsv", flags={"usr/bin/a": "0x4"})
+        (self.root / "usr/bin/a").write_text("other\n")
+        b = self.manifest("b.tsv", flags={"usr/bin/a": "0x4"}, xattrs={"usr/bin/a": {"btrfs.compression": b"zstd"}})
+        rc, out = self.compare(a, b)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("changed: usr/bin/a", out)
+        self.assertIn("xattrs: 1, of which unexpected: 0", out)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -453,15 +453,28 @@ class TestManifest(unittest.TestCase):
         (self.root / "boot" / "vmlinuz").write_text("k\n")
         return obj
 
-    def test_link_and_flag_columns_under_ostree_only(self):
+    def test_link_counts_under_ostree_only(self):
         self.objects()
         rows = {ln.split("\t")[0]: ln.split("\t") for ln in self.manifest("a.tsv").read_text().splitlines()}
         obj = rows["ostree/repo/objects/ab/cdef.file"]
         self.assertEqual(len(obj), 10)
         self.assertEqual(obj[8], "3")
         self.assertEqual(rows[f"{DEP1}/usr/bash"][8], "3")
-        self.assertEqual(len(rows["boot/vmlinuz"]), 8)
+        # Outside ostree/: the flags, and "-" for the link count.
+        self.assertEqual(len(rows["boot/vmlinuz"]), 10)
+        self.assertEqual(rows["boot/vmlinuz"][8], "-")
         self.assertEqual(len(rows[f"{DEP1}/usr"]), 8)          # a directory
+
+    def test_only_ostree_rows_counted_as_compared(self):
+        self.objects()
+        a = self.manifest("a.tsv")
+        under = sum(1 for d, _, files in os.walk(self.root / "ostree") for n in files if not os.path.islink(os.path.join(d, n)))
+        outside = sum(1 for d, _, files in os.walk(self.root) for n in files if not os.path.islink(os.path.join(d, n))) - under
+        self.assertGreater(under, 0)
+        self.assertGreater(outside, 0)
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"ostree: link counts and inode flags compared for {under} regular files under ostree/\n", out)
 
     def test_unlinked_object_is_a_change(self):
         obj = self.objects()

@@ -108,7 +108,11 @@ Chopin when Cinqcent can't.  Commands follow the projects' CI
   line (restic 0.20.0: `go 1.26.10`, no toolchain line, so
   `~/sdk/go1.26.10`), `GOTOOLCHAIN=local`.
 - rustic_core: `cargo test --all-targets --all-features --workspace
-  --examples --no-fail-fast`, and the same with `--doc`.
+  --examples --no-fail-fast`, and the same with `--doc`.  The fork's patched
+  walkdir (`vendor/walkdir`: `longpath.rs`, `noatime.rs`) is excluded from
+  the workspace, so a tree that has it also gets `cargo test --manifest-path
+  vendor/walkdir/Cargo.toml --no-fail-fast` (`walkdir.log`; its rows are
+  "added by the fork", stock having none).
 - rustic: `cargo test --locked --all-targets --features release --workspace
   --no-fail-fast`, and `--doc`.  Stock takes rustic_core 0.14.0 from
   crates.io by its own Cargo.lock (the release of rustic_core's bf1de63, the

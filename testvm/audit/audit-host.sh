@@ -22,7 +22,11 @@
 #                go test -count=1 -json -p 8 ./...; and go build ./cmd/restic
 #                with CGO_ENABLED=0 for each of CROSS (below)
 #   rustic_core  cargo test --all-targets --all-features --workspace
-#                --examples --no-fail-fast; the same with --doc
+#                --examples --no-fail-fast; the same with --doc; and, in a
+#                tree with vendor/walkdir (the fork: its patched walkdir is
+#                excluded from the workspace, so --workspace runs none of
+#                its tests), cargo test --manifest-path
+#                vendor/walkdir/Cargo.toml --no-fail-fast (walkdir.log)
 #   rustic       cargo test --locked --all-targets --features release
 #                --workspace --no-fail-fast; the same with --doc;
 #                target/debug/rustic to OUT/bin/rustic
@@ -185,6 +189,14 @@ run_rustic_core() {
         --workspace --examples --no-fail-fast
     step "cargo test --doc" "$OUT/doctest.log" cargo "${CARGO_CFG[@]}" test --doc --all-features \
         --workspace --no-fail-fast
+    # The fork's vendored walkdir (longpath.rs, noatime.rs and its hunks in
+    # upstream's tests) is excluded from the workspace: its tests are a step
+    # of their own (ForkAudit1 G7-07).  Stock has no vendor/walkdir, so its
+    # baseline has none of these rows and the fork's show as added.
+    if [[ -f vendor/walkdir/Cargo.toml ]]; then
+        step "cargo test walkdir" "$OUT/walkdir.log" cargo "${CARGO_CFG[@]}" test \
+            --manifest-path vendor/walkdir/Cargo.toml --no-fail-fast
+    fi
     python3 "$here/results.py" cargo "$OUT"
 }
 

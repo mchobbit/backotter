@@ -6,8 +6,9 @@ Usage:
   results.py go OUT        parse OUT/test.json (go test -json), vet.txt,
                            cross/ and steps.tsv into OUT/results.tsv,
                            details.json and summary.txt (audit-host.sh)
-  results.py cargo OUT     the same from OUT/test.log and doctest.log
-                           (cargo test's text output)
+  results.py cargo OUT     the same from OUT/test.log, doctest.log and
+                           walkdir.log, where there is one (cargo test's
+                           text output)
   results.py summary OUT   print OUT/summary.txt's counts line
   results.py compare STOCK FORK
                            compare two OUT directories; print the fork's
@@ -171,7 +172,10 @@ NOCOMPILE = re.compile(r"^error: could not compile `([^`]+)`(?: \(([^)]*)\))?")
 def parse_cargo(out):
     rows, details = {}, {}
     rcs = dict((label, rc) for label, rc, _ in steps(out))
-    for logname in ("test.log", "doctest.log"):
+    # walkdir.log: the fork's vendored walkdir, outside the workspace.
+    labels = {"test.log": "cargo test", "doctest.log": "cargo test --doc",
+              "walkdir.log": "cargo test walkdir"}
+    for logname in ("test.log", "doctest.log", "walkdir.log"):
         p = os.path.join(out, logname)
         if not os.path.exists(p):
             continue
@@ -266,7 +270,7 @@ def parse_cargo(out):
         # The step as a build: every crate it needed compiled, or not; and a
         # step that failed with no failing row from its log (a --locked or
         # resolver error, a crash) fails as a build too.
-        label = "cargo test" + (" --doc" if logname == "doctest.log" else "")
+        label = labels[logname]
         k = ("#build", label)
         failed_rows = sum(1 for v in rows.values() if v == "fail") > before
         if nocompile or (rcs.get(label, 0) != 0 and not failed_rows):

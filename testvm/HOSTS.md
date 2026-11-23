@@ -235,8 +235,8 @@ RAM slots and SSD slots for its HoltTest jobs, `holt_ram_slots` and
 
 | host | `holt_ram_slots` | `holt_ssd_slots` | `holt_jobs` |
 |---|---|---|---|
-| chopin, cinqcent | 2 | 2 | 4 |
-| copland, cage, czerny | 1 | 1 | 2 |
+| chopin, cinqcent | 2 | 4 | 4 |
+| copland, cage, czerny | 1 | 2 | 2 |
 | choubox | 1 | 1 | 1: one job, a RAM job or an SSD job |
 | bigfoot (mode `ram`) | not counted | none | 1 |
 

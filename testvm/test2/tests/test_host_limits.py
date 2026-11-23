@@ -115,13 +115,13 @@ class Limits(AltTable):
         with scratch off the RAM disk the holt jobs at once went from 3 to 4 on the big hosts and
         from 1 to 2 on the M900s; choubox keeps its 1, and bigfoot (not a test host of the six)
         stays as it was: scratch_mode ram, 1 holt job, in its row.
-        Slots (the user's choice, 2026-11-23 evening): a big host has 2 RAM slots and 2 SSD
-        slots (holt_jobs 4), a small one 1 and 1 (holt_jobs 2); choubox's holt_jobs 1 is one
+        Slots (the user's choice, 2026-11-23 evening): a big host has 2 RAM slots and 4 SSD
+        slots (holt_jobs 4), a small one 1 and 2 (holt_jobs 2; the SSD slots equal holt_jobs since later that evening); choubox's holt_jobs 1 is one
         job, a RAM job or an SSD job (its class's slot of each); bigfoot's mode ram counts none."""
         small = dict(DEFAULTS, stic_slots=2, holt_jobs=2, base_gib=4, bs2_slots=2, scratch_mode="overflow",
-                     holt_ram_slots=1, holt_ssd_slots=1)
+                     holt_ram_slots=1, holt_ssd_slots=2)
         big = dict(DEFAULTS, bs2_slots=5, holt_disk_mode=True, holt_jobs=4, scratch_mode="overflow",
-                   holt_ram_slots=2, holt_ssd_slots=2)
+                   holt_ram_slots=2, holt_ssd_slots=4)
         choubox = dict(small, stic_slots=1, holt_jobs=1, base_gib=3, bs2_slots=1, max_wall_x=2)
         bigfoot = dict(small, holt_jobs=1, scratch_mode="ram")
         own = {"chopin": {"holt_disk_mode"}, "cinqcent": {"holt_disk_mode"},
@@ -133,8 +133,8 @@ class Limits(AltTable):
         self.assertEqual({h: H.limit(h, "holt_jobs") for h in H.names(all_=True)},
                          {"chopin": 4, "cinqcent": 4, "copland": 2, "cage": 2, "czerny": 2, "choubox": 1, "bigfoot": 1})
         self.assertEqual({h: (H.holt_scratch(h),) + H.holt_slots(h) for h in H.names(all_=True)},
-                         {"chopin": ("overflow", 2, 2), "cinqcent": ("overflow", 2, 2), "copland": ("overflow", 1, 1),
-                          "cage": ("overflow", 1, 1), "czerny": ("overflow", 1, 1), "choubox": ("overflow", 1, 1),
+                         {"chopin": ("overflow", 2, 4), "cinqcent": ("overflow", 2, 4), "copland": ("overflow", 1, 2),
+                          "cage": ("overflow", 1, 2), "czerny": ("overflow", 1, 2), "choubox": ("overflow", 1, 1),
                           "bigfoot": ("ram", 1, 1)}, "MODE, RAM slots, SSD slots, as ht1-queue.sh reads them")
         for h in H.names(all_=True):   # (never more of a kind than the total; the six can run a job of either kind)
             self.assertLessEqual(max(H.holt_slots(h)), H.limit(h, "holt_jobs"), h)
@@ -146,9 +146,9 @@ class Limits(AltTable):
         self.assertEqual(H.limits("nosuch"), DEFAULTS)
         self.assertEqual(H.load()["class_limits"],
                          {"big": {"bs2_slots": 5, "holt_jobs": 4, "scratch_mode": "overflow", "holt_ram_slots": 2,
-                                  "holt_ssd_slots": 2},
+                                  "holt_ssd_slots": 4},
                           "small": {"stic_slots": 2, "holt_jobs": 2, "base_gib": 4, "bs2_slots": 2, "scratch_mode": "overflow",
-                                    "holt_ram_slots": 1, "holt_ssd_slots": 1}})
+                                    "holt_ram_slots": 1, "holt_ssd_slots": 2}})
         self.assertEqual(set(H.load()["limits"]), set(H.LIMITS), "hosts.json's limits describe each one")
 
     def test_row_then_class_then_default(self):

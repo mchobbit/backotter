@@ -253,6 +253,114 @@ class TestInGuest(unittest.TestCase):
         r = subprocess.run(["sh", "-c", script], input=plan, capture_output=True, text=True)
         self.assertEqual(r.stdout.split(), ["dev-libs/font-adobe-100dpi", "dev-lang/rust"], r.stderr)
 
+    def run_portage_plan(self, first, err, second=""):
+        """The Portage section's plan loop over a stand-in emerge, whose plan is FIRST with ERR on
+        stderr, and SECOND once it is given an --exclude: (exit status, its output, each emerge's
+        arguments, $hold).  /run is a scratch folder, which the loop must leave empty."""
+        sec = self.sections()["Linux.portage"]
+        m = re.search(r'^    hold=""\n.*?^    done\n    rm -f /run/bko-plan\.err\n', sec, re.M | re.S)
+        self.assertIsNotNone(m)
+        ok = re.search(r'SOURCE_OK="([^"]*)"', sec)[1]
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "first").write_text(textwrap.dedent(first))
+            Path(d, "second").write_text(textwrap.dedent(second))
+            Path(d, "err").write_text(textwrap.dedent(err))
+            os.mkdir(f"{d}/run")
+            script = textwrap.dedent(f"""\
+                say() {{ echo "in-guest: $*"; }}
+                emerge() {{
+                    echo "$*" >>{d}/calls
+                    case " $* " in *" --exclude="*) cat {d}/second ;; *) cat {d}/first; cat {d}/err >&2 ;; esac
+                }}
+                SOURCE_OK="{ok}"
+                o="--color=n --nospinner"
+                """) + textwrap.dedent(m[0]).replace("/run/", f"{d}/run/") + 'echo "hold=$hold"\n'
+            r = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+            self.assertEqual(os.listdir(f"{d}/run"), [], "the plan loop leaves its file behind")
+            calls = Path(d, "calls").read_text().splitlines()
+        hold = [l[5:].split() for l in r.stdout.splitlines() if l.startswith("hold=")]
+        return r.returncode, r.stdout, calls, hold[0] if hold else None
+
+    IGNORED = """\
+
+        !!! The following binary packages have been ignored due to non matching USE:
+
+            =sys-boot/grub-2.16-r1 grub_platforms_pc sdl truetype
+            =dev-python/charset-normalizer-3.5.2 native-extensions
+            =dev-python/pygments-2.21.0 python_targets_python3_13
+            =dev-libs/glib-networking-2.80.1 gnome
+
+        NOTE: The --binpkg-respect-use=n option will prevent emerge
+              from ignoring these binary packages if possible.
+        """
+
+    def test_portage_holds_back_what_the_binhost_lags_on(self):
+        """An upgrade outside the allowlist with no build on the binhost (emerge -p's stderr doesn't
+        name it as ignored for its USE flags) is held back: the plan is made again with --exclude
+        for it, which also drops what only its source build needed (t2v-20261122T2116-b591's gentoo:
+        glib 2.88.4, an hour and a half before the binhost built it, and pygments for its docutils)."""
+        first = """\
+            [binary  N g   ] dev-python/docutils-0.23-4  PYTHON_TARGETS="python3_14 -python3_13"
+            [ebuild  N     ] dev-python/pygments-2.21.0  USE="-test" PYTHON_TARGETS="python3_14 -python3_13"
+            [ebuild     U  ] dev-python/charset-normalizer-3.5.2 [3.5.1]
+            [ebuild     U  ] sys-boot/grub-2.16-r1 [2.14-r5]
+            [ebuild     U  ] dev-libs/glib-2.88.4 [2.88.2]
+            [binary    gU  ] sys-apps/openrc-0.64.1-r1-1 [0.63.3]
+            """
+        second = """\
+            [ebuild     U  ] dev-python/charset-normalizer-3.5.2 [3.5.1]
+            [ebuild     U  ] sys-boot/grub-2.16-r1 [2.14-r5]
+            [binary    gU  ] sys-apps/openrc-0.64.1-r1-1 [0.63.3]
+            """
+        rc, out, calls, hold = self.run_portage_plan(first, self.IGNORED, second)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(hold, ["--exclude=dev-libs/glib"])
+        self.assertEqual(calls, ["-puDN --color=n --nospinner @world",
+                                 "-puDN --color=n --nospinner --exclude=dev-libs/glib @world"])
+        self.assertIn("in-guest: held back, no build on the binhost yet: dev-libs/glib-2.88.4\n", out)
+        self.assertNotIn("outside the allowlist", out)
+        # nothing outside the allowlist: one plan, nothing held
+        rc, out, calls, hold = self.run_portage_plan(second, self.IGNORED)
+        self.assertEqual((rc, hold, len(calls)), (0, [], 1), out)
+        self.assertNotIn("held back", out)
+        # several, with a slot and a repository on the line, as emerge -pv prints them
+        first = """\
+            [ebuild     U  ] app-crypt/gpgme-2.3.1:1/45::gentoo [2.2.0:1/45::gentoo] 0 KiB
+            [ebuild     UD ] dev-python/platformdirs-4.13.5::gentoo [4.14.0::gentoo] 0 KiB
+            """
+        rc, out, calls, hold = self.run_portage_plan(first, "", "")
+        self.assertEqual((rc, hold), (0, ["--exclude=app-crypt/gpgme", "--exclude=dev-python/platformdirs"]), out)
+        self.assertIn("yet: app-crypt/gpgme-2.3.1 dev-python/platformdirs-4.13.5\n", out)
+
+    def test_portage_still_stops_on_what_no_wait_brings(self):
+        """Not held back, and named as before: a build the binhost has only with other USE flags, a
+        new package, a rebuild, and whatever the second plan still builds outside the allowlist."""
+        stop = "in-guest: source builds outside the allowlist: "
+        # the binhost has glib-networking 2.80.1, with USE=gnome: not glib's line, though it starts with its name
+        first = "[ebuild     U  ] dev-libs/glib-networking-2.80.1 [2.80.0]\n"
+        rc, out, calls, hold = self.run_portage_plan(first, self.IGNORED)
+        self.assertEqual((rc, len(calls)), (1, 1), out)
+        self.assertIn(stop + "dev-libs/glib-networking\n", out)
+        self.assertNotIn("held back", out)
+        for line in ("[ebuild  N     ] dev-lang/rust-1.91.0  USE=\"-doc\"\n", "[ebuild   R    ] dev-lang/rust-1.91.0  USE=\"doc*\"\n",
+                     "[ebuild  NS    ] dev-lang/rust-1.91.0 [1.90.0]\n"):
+            rc, out, calls, hold = self.run_portage_plan(line, "")
+            self.assertEqual((rc, len(calls)), (1, 1), out)
+            self.assertIn(stop + "dev-lang/rust\n", out)
+        # glib is held back, and glib-networking stops the update at the second plan
+        first = """\
+            [ebuild     U  ] dev-libs/glib-2.88.4 [2.88.2]
+            [ebuild     U  ] dev-libs/glib-networking-2.80.1 [2.80.0]
+            """
+        second = "[ebuild     U  ] dev-libs/glib-networking-2.80.1 [2.80.0]\n"
+        rc, out, calls, hold = self.run_portage_plan(first, self.IGNORED, second)
+        self.assertEqual((rc, len(calls)), (1, 2), out)
+        self.assertIn("yet: dev-libs/glib-2.88.4\n", out)
+        self.assertIn(stop + "dev-libs/glib-networking\n", out)
+        # a plan that fails is the old failure, its stderr shown
+        sec = self.sections()["Linux.portage"]
+        self.assertIn('say "emerge -puDN @world failed"; exit 1', sec)
+
     def run_fetched(self, section, fails, error, rc=100):
         """SECTION's fetched() around a command that fails FAILS times printing ERROR and
         exiting RC, then succeeds: (exit status, how many times it ran, the output).  /run is a

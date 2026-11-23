@@ -222,9 +222,10 @@
   "^(Warning: os-prober will not be executed to detect other bootable partitions\\.|Systems on them will not be added to the GRUB boot configuration\\.|Check GRUB_DISABLE_OS_PROBER documentation entry\\.)$",
   "^Warning: os-prober is not installed; EFI BootNext entries will not be filtered against detected OSes, so non-OS entries \\(e\\.g\\. firmware updaters\\) may appear in the menu\\.$",
   "^!!! The following binary packages have been ignored due to non matching USE:$",
-  "^=[a-z0-9]+(-[a-z0-9]+)*/\\S+( -?[a-z0-9_+-]+)*$",
+  "^=[a-z0-9]+(-[a-z0-9]+)*/\\S+( -?[a-zN0-9_+-]+)*$",
   "^(NOTE: The --binpkg-respect-use=n option will prevent emerge|from ignoring these binary packages if possible\\.|Using --binpkg-respect-use=y will silence this warning\\.)$",
-  "^in-guest: emerge --sync failed: again in N s \\(N of N\\): "
+  "^in-guest: emerge --sync failed: again in N s \\(N of N\\): ",
+  "^in-guest: held back, no build on the binhost yet:( [a-z0-9]+(-[a-z0-9]+)*/\\S+)+$"
  ],
  "apk": [
   "^\\( ?N/N\\) (Upgrading|Installing|Purging|Replacing|Downgrading)",

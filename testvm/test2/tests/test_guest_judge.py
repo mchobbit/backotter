@@ -819,6 +819,11 @@ class RealLogLines(unittest.TestCase):
                     "  4050K .......... ..........100% 8.43M=0.3s",
                     "!!! The following binary packages have been ignored due to non matching USE:",
                     "    =net-libs/nghttp2-1.70.0 -systemd xml", "      Using --binpkg-respect-use=y will silence this warning.",
+                    # a USE flag with a number in it (GuestTest2 t2v-20261122T2116-b591's gentoo)
+                    "    =dev-python/pygments-2.21.0 python_targets_python3_13",
+                    # in-guest.sh's Linux.portage: upgrades the binhost has no build of yet, left for the next update
+                    "in-guest: held back, no build on the binhost yet: dev-libs/glib-2.88.4",
+                    "in-guest: held back, no build on the binhost yet: app-crypt/gpgme-2.3.1 dev-python/platformdirs-4.13.5",
                     # sys-boot/grub's pkg_postinst on an upgrade: in-guest.sh's Linux.portage does
                     # both (GuestTest2 t2v-20261118T0027-d7c8, grub 2.14-r5 -> 2.16-r1)
                     " * For information on how to configure GRUB2 please refer to the guide:",

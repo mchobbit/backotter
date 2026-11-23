@@ -149,18 +149,54 @@ if [ "$(uname)" = Linux ] && [ -e /etc/gentoo-release ] && has emerge; then
     done
     cat /run/bko-sync.out; cat /run/bko-sync.err >&2
     rm -f /run/bko-sync.out /run/bko-sync.err
-    plan=$(emerge -puDN $o @world) || { printf '%s\n' "$plan"; say "emerge -puDN @world failed"; exit 1; }
-    printf '%s\n' "$plan"
-    # CATEGORY/NAME of each "[ebuild" line: the version is the last
-    # -VERSION[-rN] of the name.
-    bad=$(printf '%s\n' "$plan" | sed -n 's/^\[ebuild[^]]*\] *\([^ ]*\).*/\1/p' |
-        sed -E 's/:.*//; s/-[0-9]+(\.[0-9]+)*[a-z]?(_(alpha|beta|pre|rc|p)[0-9]*)*(-r[0-9]+)?$//' |
-        grep -vxF "$(printf '%s\n' $SOURCE_OK)")
-    [ -z "$bad" ] || { say "source builds outside the allowlist:" $bad; exit 1; }
+    # The binhost builds a version some hours to a day after the tree has it
+    # (gpgme, platformdirs and setuptools on 2026-11-21, glib 2.88.4 on
+    # 2026-11-22, zlib 1.4 on 2026-11-23: GuestTest2's gentoo try stopped on
+    # each, twice a night).
+    # So an upgrade outside the allowlist that the binhost has no build of at
+    # all is held back, as apt keeps a package back: the plan is made again
+    # with --exclude for it, the installed version stays, and the next update
+    # takes the binhost's build.  With it go the packages only its source
+    # build needed (glib's docutils and pygments).  Only an upgrade ("U": a
+    # new package has no version to stay at), and only one that emerge -p's
+    # stderr doesn't name among the binary packages "ignored due to non
+    # matching USE": that one the binhost will never have for this guest, and
+    # it stops the update as before, by name, for the allowlist or a USE flag
+    # (docs/design/gentoo.md, Risks).  Held back once: what the second plan
+    # still builds outside the allowlist stops the update too.
+    hold=""
+    while :; do
+        plan=$(emerge -puDN $o $hold @world 2>/run/bko-plan.err) || {
+            printf '%s\n' "$plan"; cat /run/bko-plan.err >&2; rm -f /run/bko-plan.err
+            say "emerge -puDN @world failed"; exit 1
+        }
+        printf '%s\n' "$plan"; cat /run/bko-plan.err >&2
+        # CATEGORY/NAME of each "[ebuild" line: the version is the last
+        # -VERSION[-rN] of the name.
+        bad=$(printf '%s\n' "$plan" | sed -n 's/^\[ebuild[^]]*\] *\([^ ]*\).*/\1/p' |
+            sed -E 's/:.*//; s/-[0-9]+(\.[0-9]+)*[a-z]?(_(alpha|beta|pre|rc|p)[0-9]*)*(-r[0-9]+)?$//' |
+            grep -vxF "$(printf '%s\n' $SOURCE_OK)")
+        [ -n "$bad" ] || break
+        held=""
+        if [ -z "$hold" ]; then
+            for p in $bad; do
+                # CATEGORY/NAME-VERSION of its line, when the line is an upgrade
+                v=$(printf '%s\n' "$plan" | awk -v p="$p" '
+                    /^\[ebuild[^]]*U[^]]*\]/ { sub(/^[^]]*\] */, ""); sub(/[ :].*/, "")
+                        if (substr($0, 1, length(p) + 1) == p "-" && substr($0, length(p) + 2, 1) ~ /[0-9]/) print }')
+                [ -n "$v" ] || continue
+                awk -v v="=$v" '$1 == v { f = 1 } END { exit !f }' /run/bko-plan.err && continue
+                hold="$hold --exclude=$p"; held="$held $v"
+            done
+        fi
+        [ -n "$held" ] || { rm -f /run/bko-plan.err; say "source builds outside the allowlist:" $bad; exit 1; }
+        say "held back, no build on the binhost yet:$held"
+    done
+    rm -f /run/bko-plan.err
     # sys-boot/grub's COUNTER: Portage's merge counter, new on every merge of it.
     grubc() { cat /var/db/pkg/sys-boot/grub-[0-9]*/COUNTER 2>/dev/null; }
     grub_was=$(grubc)
-    emerge -uDNg $o --quiet-build=y @world && emerge --depclean $o || exit 1
+    emerge -uDNg $o $hold --quiet-build=y @world && emerge --depclean $o || exit 1
     # CONFIG_PROTECT's ._cfgNNNN_NAME files: a package's new default for a
     # config file the image changed (Portage replaces one the image left as
     # it was).  The image's file stays, as apt's --force-confold keeps it,

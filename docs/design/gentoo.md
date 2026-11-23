@@ -222,7 +222,8 @@ Each one gets: `rebuild-one.sh` lines, the SticTest1 entry,
 vm-update's Portage branch: `in-guest.sh`'s `# t2-section: Linux.portage`
 (`emerge --sync`, then `emerge -puDN @world` through the same allowlist,
 then `emerge -uDNg @world`, `emerge --depclean`, caches emptied); a source
-build outside the allowlist fails the update and names the package, and an
+build outside the allowlist fails the update and names the package (an
+upgrade the binhost has no build of yet is held back instead: Risks), and an
 allowlisted one costs ~2-5 min. Also `pkgset.sh`'s `base pm portage`,
 `fingerprint.py`'s `LINUX_KINDS`, and the `vm-update` header. GuestTest2
 needs a `portage` section in `guest/known-lines.json`, plus `S-portage` and
@@ -448,6 +449,17 @@ the user says so.
   build the allowlist doesn't have. It stops and names the package; it is
   added to the allowlist, or its USE flags are changed to match a binpkg.
   A rebuild gets newer packages than the last ([[images-take-os-updates]]).
+  Not so, since 2026-11-23, an update's upgrade that the binhost only lags
+  on: it builds a version hours to a day after the tree has it, and
+  GuestTest2's `gentoo` try stopped there two nights running (gpgme,
+  platformdirs and setuptools on 2026-11-21; glib 2.88.4 on 2026-11-22, 90
+  minutes before the binhost had it, with pygments for its source build's
+  docutils; zlib 1.4 the morning after). `in-guest.sh` holds such an upgrade back, as apt keeps a package
+  back: when `emerge -p` doesn't name it among the binary packages "ignored
+  due to non matching USE", the plan is made again with `--exclude` for it,
+  the installed version stays, a `held back` line names it, and the next
+  update takes the binhost's build. A new package, a rebuild, and a version
+  the binhost has only with other USE flags still stop the update by name.
 - **Stage3 pruning.** A guest whose rebuild inputs were lost can't be
   rebuilt at its pinned date. The fallback is the newest stage3, with a new
   pin.

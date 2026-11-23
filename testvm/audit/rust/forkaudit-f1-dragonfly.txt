@@ -1,12 +1,13 @@
-# ForkAudit1 F1 (docs/design/fork-audit.md): clippy, rustdoc and rustfmt on target dragonfly, filtered to
-# our lines (testvm/audit/rust-filter.py over scope-rustic_core.txt at ead8a632a500 and
-# scope-rustic.txt at 3853eb3c274b).  Uncommitted working output, 2026-11-22.  Raw and filtered outputs (Mac, session scratch,
-# not kept): /private/tmp/claude-501/-Users-mchobbit-git-backotter/fbac8b1f-8f61-4216-bf95-431973e8cc08/scratchpad/f1/{res,filtered,audit}.
+# ForkAudit1 re-run, G1 (docs/design/fork-audit.md's F1 at the rebased heads): clippy, rustdoc and rustfmt on
+# target dragonfly, filtered to our lines (testvm/audit/rust-filter.py over scope-rustic_core.txt at f0d01fd09d1d and
+# scope-rustic.txt at fe54e513b907).  Uncommitted working output, 2026-11-23; it replaces the first run's file of
+# this name (ead8a63 / 3853eb3, 2026-11-22).  Raw and filtered outputs (Mac, session scratch, not kept):
+# /private/tmp/claude-501/-Users-mchobbit-git-backotter/fbac8b1f-8f61-4216-bf95-431973e8cc08/scratchpad/g1/{res,filtered,audit}.
 
 target   dragonfly
 where    chopin: cross, as build-round builds it (stick/dragonfly/build-rustic.sh): nightly-2026-10-31 with -Zbuild-std=std,panic_abort --target x86_64-unknown-dragonfly, build scripts' C through the dragonfly-cross cache's dfly-cc/dfly-c++ (clang against the dragonfly6 sysroot; read only, own CARGO_TARGET_DIR); no DragonFly guest is booted by build-round
-sources  rustic_core ead8a63 (0.13.0+backotter.22), rustic 3853eb3 (0.11.4+backotter.22), git archive,
-         rustic pointed at that rustic_core by stick/prep-rustic-src.sh
+sources  rustic_core f0d01fd (0.14.0+backotter.1, on rustic_core-v0.14.0), rustic fe54e51 (0.12.0+backotter.1, on v0.12.0),
+         git archive, rustic pointed at that rustic_core by stick/prep-rustic-src.sh
 lints    upstream's [workspace.lints] (rustic_core) and rustic's own [lints], as they are, plus
          -W clippy::undocumented_unsafe_blocks -W clippy::multiple_unsafe_ops_per_block (RustAudit1's FORK_FLAGS)
 commands rustic_core: cargo clippy --workspace --all-targets --all-features --keep-going
@@ -15,8 +16,11 @@ commands rustic_core: cargo clippy --workspace --all-targets --all-features --ke
          rustic_core: cargo fmt --all --check
          vendor/walkdir (excluded from the workspace, so clippy never lints it from there): cargo clippy --all-targets
          rustic: cargo clippy --locked --all-targets (default features, as the native build); cargo doc as above; cargo fmt --check
-note     rustic_core's Cargo.lock: rustix bumped 1.1.4 -> 1.1.6 in the scratch copy only (see steps)
+note     rustic_core's own Cargo.lock compiles for DragonFly now (rustix 1.1.6 in 0.14.0's lock); the first run had to bump rustix 1.1.4 -> 1.1.6 in its scratch copy
 note     no rustfmt step here: fmt is target-independent (see forkaudit-f1-linux.txt)
+note     against the first run (ead8a63 / 3853eb3): the same diagnostics on our lines, line numbers aside, but for
+         crates/core/src/archiver/file_archiver.rs (ours 50 -> 9 lines, upstream took the patch: its 1 doc_markdown gone)
+         and crates/core/src/backend/local_destination.rs:1051 (2 doc_markdown more, on a doc line the rebase made ours)
 
 toolchain:
   Debian clang version 19.1.7 (3+b1)
@@ -34,24 +38,22 @@ toolchain:
 
 steps (name, exit, seconds; doc exits 101 when -D broken_intra_doc_links fires anywhere, upstream lines included;
 fmt exits 1 when any file of the crate differs):
-  first run (rustic_core's own Cargo.lock): core-clippy 101 271;core-clippy-core 101 2;core-doc 101 32; rustix 1.1.4 does not compile for DragonFly (E0425 IP_ADD_SOURCE_MEMBERSHIP, ip_mreq_source missing from libc 0.2.189), pulled by --all-features through opendal-service-ftp -> suppaftp -> async-std -> async-io; nothing of rustic_core itself was linted
-  rerun with rustix 1.1.4 -> 1.1.6 in the scratch copy's Cargo.lock only (the version rustic's Cargo.lock already takes):
-    core-clippy 0 16
-    core-doc 101 7
-  walkdir-clippy 0 25
-  rustic-clippy 0 79
-  rustic-doc 101 26
+  core-clippy 0 391
+  core-doc 101 41
+  walkdir-clippy 0 31
+  rustic-clippy 0 99
+  rustic-doc 101 36
 
 Counts on our lines (rust-filter.py; upstream = upstream lines of files we touched, untouched = files we never touched, outside = outside the tree)
   crate        tool              ours errors upstream untouched outside
-  rustic_core  clippy             332      0        8         1       0
+  rustic_core  clippy             333      0        3         3       0
   rustic_core  doc                  6      6        7         4       0
   rustic_core  walkdir-clippy       0      0       12         3       0
-  rustic       clippy              19      0        1         1       1
-  rustic       doc                  0      0        3         6       1
+  rustic       clippy              19      0        1         0       1
+  rustic       doc                  0      0        3         5       1
 
-Per unit (F0's table): tool, lint, level, count on our lines
-== F3: 86
+Per unit (G0's table, forkaudit-g0-units.tsv; G3-G9 are F3-F9's units): tool, lint, level, count on our lines
+== G3: 86
       72  clippy           warning  clippy::doc_markdown
        4  doc              error    rustdoc::broken_intra_doc_links
        3  clippy           warning  clippy::unnecessary_wraps
@@ -60,32 +62,33 @@ Per unit (F0's table): tool, lint, level, count on our lines
        1  clippy           warning  clippy::assert_is_empty
        1  clippy           warning  clippy::option_if_let_else
        1  clippy           warning  clippy::redundant_clone
-== F4: 24
+== G4: 24
       15  clippy           warning  clippy::doc_markdown
        8  clippy           warning  clippy::unnecessary_wraps
        1  clippy           warning  clippy::assert_is_empty
-== F5: 6
+== G5: 6
        6  clippy           warning  clippy::doc_markdown
-== F6: 114
+== G6: 114
      109  clippy           warning  clippy::doc_markdown
        2  clippy           warning  clippy::assert_is_empty
        1  clippy           warning  clippy::too_long_first_doc_paragraph
        1  clippy           warning  clippy::too_many_lines
        1  doc              error    rustdoc::broken_intra_doc_links
-== F7: 42
-      34  clippy           warning  clippy::doc_markdown
+== G7: 44
+      36  clippy           warning  clippy::doc_markdown
        7  clippy           warning  clippy::assert_is_empty
        1  clippy           warning  dead_code
-== F8: 66
-      62  clippy           warning  clippy::doc_markdown
+== G8: 65
+      61  clippy           warning  clippy::doc_markdown
        2  clippy           warning  clippy::manual_assert_eq
        1  clippy           warning  clippy::collapsible_if
        1  doc              error    rustdoc::broken_intra_doc_links
-== F9: 19
+== G9: 19
       19  clippy           warning  clippy::doc_markdown
+== G?: 0
 
 Every diagnostic on our lines, by unit
-== F3
+== G3
    [clippy] crates/core/src/backend/node/generic_attributes.rs:3:24: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/node/generic_attributes.rs:4:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/node/generic_attributes.rs:32:15: warning[clippy::doc_markdown]: item in documentation is missing backticks
@@ -172,7 +175,7 @@ Every diagnostic on our lines, by unit
    [doc] crates/core/src/backend/osattrs/sparse.rs:69:8: error[rustdoc::broken_intra_doc_links]: unresolved link to `generic_seek_hole`
    [doc] crates/core/src/backend/osattrs/sparse.rs:350:28: error[rustdoc::broken_intra_doc_links]: unresolved link to `HoleReader`
    [doc] crates/core/src/backend/osattrs/sparse.rs:351:8: error[rustdoc::broken_intra_doc_links]: unresolved link to `holes_now`
-== F4
+== G4
    [clippy] crates/core/src/backend/osattrs/bsd_extattr.rs:68:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
    [clippy] crates/core/src/backend/osattrs/bsd_flags.rs:1:61: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/osattrs/bsd_flags.rs:62:42: warning[clippy::doc_markdown]: item in documentation is missing backticks
@@ -197,14 +200,14 @@ Every diagnostic on our lines, by unit
    [clippy] crates/core/src/backend/osattrs/freebsd_acl.rs:162:35: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/osattrs/freebsd_acl.rs:200:41: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/osattrs/freebsd_acl.rs:248:16: warning[clippy::doc_markdown]: item in documentation is missing backticks
-== F5
+== G5
    [clippy] crates/core/src/backend/osattrs/illumos_acl.rs:44:45: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/osattrs/illumos_sysattr.rs:18:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/osattrs/illumos_sysattr.rs:151:27: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/osattrs/illumos_sysattr.rs:283:54: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/osattrs/illumos_sysattr.rs:284:56: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/osattrs/illumos_sysattr.rs:285:41: warning[clippy::doc_markdown]: item in documentation is missing backticks
-== F6
+== G6
    [clippy] crates/core/src/commands/restore.rs:43:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/commands/restore.rs:46:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/commands/restore.rs:116:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
@@ -319,51 +322,52 @@ Every diagnostic on our lines, by unit
    [clippy] crates/core/tests/integration/restore.rs:1149:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/tests/integration/restore.rs:1229:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [doc] crates/core/src/commands/restore/exact.rs:389:14: error[rustdoc::broken_intra_doc_links]: unresolved link to `osattrs::set_atime`
-== F7
-   [clippy] crates/core/src/backend/local_destination.rs:153:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:159:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:167:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:258:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:500:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:551:31: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:645:27: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:647:24: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:651:11: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:654:11: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:670:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:671:33: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:696:22: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:710:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:716:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:747:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:985:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:995:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1067:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1081:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1105:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1110:57: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1112:16: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1130:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1140:4: warning[dead_code]: function `set_xattrs_with` is never used
-   [clippy] crates/core/src/backend/local_destination.rs:1149:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1149:61: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1253:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1255:43: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1264:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1265:34: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1291:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1322:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1329:60: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1337:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/local_destination.rs:1443:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
-   [clippy] crates/core/src/backend/local_destination.rs:1444:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
-   [clippy] crates/core/src/backend/local_destination.rs:1445:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
-   [clippy] crates/core/src/backend/local_destination.rs:1446:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
-   [clippy] crates/core/src/backend/local_destination.rs:1447:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
-   [clippy] crates/core/src/backend/local_destination.rs:1448:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
-   [clippy] crates/core/src/backend/local_destination.rs:1476:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
-== F8
-   [clippy] crates/core/src/archiver/file_archiver.rs:194:34: warning[clippy::doc_markdown]: item in documentation is missing backticks
+== G7
+   [clippy] crates/core/src/backend/local_destination.rs:154:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:160:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:168:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:259:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:501:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:552:31: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:646:27: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:648:24: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:652:11: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:655:11: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:671:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:672:33: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:697:22: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:711:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:717:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:748:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:998:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1008:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1051:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1051:26: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1080:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1094:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1118:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1123:57: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1125:16: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1143:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1153:4: warning[dead_code]: function `set_xattrs_with` is never used
+   [clippy] crates/core/src/backend/local_destination.rs:1162:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1162:61: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1266:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1268:43: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1277:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1278:34: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1304:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1335:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1342:60: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1350:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/local_destination.rs:1456:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
+   [clippy] crates/core/src/backend/local_destination.rs:1457:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
+   [clippy] crates/core/src/backend/local_destination.rs:1458:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
+   [clippy] crates/core/src/backend/local_destination.rs:1459:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
+   [clippy] crates/core/src/backend/local_destination.rs:1460:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
+   [clippy] crates/core/src/backend/local_destination.rs:1461:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
+   [clippy] crates/core/src/backend/local_destination.rs:1489:9: warning[clippy::assert_is_empty]: used `assert!` to check that a value is empty
+== G8
    [clippy] crates/core/src/archiver/parent.rs:35:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/archiver/parent.rs:37:23: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/archiver/parent.rs:126:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
@@ -380,12 +384,12 @@ Every diagnostic on our lines, by unit
    [clippy] crates/core/src/backend/ignore.rs:312:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/ignore.rs:370:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/ignore.rs:412:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/ignore.rs:420:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/ignore.rs:424:48: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/ignore.rs:452:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/ignore.rs:455:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/ignore.rs:548:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/backend/ignore.rs:576:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:431:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:435:48: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:463:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:466:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:572:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/backend/ignore.rs:600:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/ignore/mapper.rs:91:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/ignore/mapper.rs:93:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/backend/ignore/mapper.rs:121:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
@@ -404,16 +408,16 @@ Every diagnostic on our lines, by unit
    [clippy] crates/core/src/blob/tree.rs:518:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/blob/tree.rs:521:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/blob/tree.rs:525:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/chunker.rs:110:13: warning[clippy::manual_assert_eq]: used `assert!` with an equality comparison
-   [clippy] crates/core/src/chunker.rs:111:13: warning[clippy::manual_assert_eq]: used `assert!` with an equality comparison
+   [clippy] crates/core/src/chunker.rs:119:13: warning[clippy::manual_assert_eq]: used `assert!` with an equality comparison
+   [clippy] crates/core/src/chunker.rs:120:13: warning[clippy::manual_assert_eq]: used `assert!` with an equality comparison
    [clippy] crates/core/src/commands/merge.rs:21:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/commands/merge.rs:21:56: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/commands/merge.rs:24:34: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/commands/merge.rs:34:53: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/commands/merge.rs:36:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/repofile.rs:141:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/repofile/snapshotfile.rs:251:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/src/repofile/snapshotfile.rs:253:12: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/repofile/snapshotfile.rs:257:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/src/repofile/snapshotfile.rs:259:12: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/repository.rs:1595:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/repository.rs:1613:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/repository.rs:1615:44: warning[clippy::doc_markdown]: item in documentation is missing backticks
@@ -421,15 +425,15 @@ Every diagnostic on our lines, by unit
    [clippy] crates/core/src/repository.rs:1850:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/src/repository.rs:1873:13: warning[clippy::collapsible_if]: this `if` statement can be collapsed
    [clippy] crates/core/src/repository.rs:1979:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/tests/integration/backup.rs:313:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/tests/integration/backup.rs:313:52: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/tests/integration/backup.rs:372:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] crates/core/tests/integration/backup.rs:375:47: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/backup.rs:355:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/backup.rs:355:52: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/backup.rs:414:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] crates/core/tests/integration/backup.rs:417:47: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/tests/integration/ls.rs:72:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/tests/integration/merge.rs:1:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] crates/core/tests/integration/merge.rs:13:26: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [doc] crates/core/src/archiver/tree.rs:47:25: error[rustdoc::broken_intra_doc_links]: unresolved link to `TreeIterator::new`
-== F9
+== G9
    [clippy] src/application.rs:22:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] src/application.rs:27:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] src/application.rs:31:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
@@ -440,12 +444,12 @@ Every diagnostic on our lines, by unit
    [clippy] src/application.rs:56:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] src/application.rs:58:60: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] src/application.rs:69:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] src/commands/backup.rs:429:68: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] src/commands/backup.rs:537:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] src/commands/backup.rs:539:66: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/commands/backup.rs:464:27: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/commands/backup.rs:574:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/commands/backup.rs:576:66: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] src/commands/diff.rs:221:5: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] src/commands/diff.rs:636:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] src/config.rs:263:17: warning[clippy::doc_markdown]: item in documentation is missing backticks
-   [clippy] src/config.rs:265:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/config.rs:267:17: warning[clippy::doc_markdown]: item in documentation is missing backticks
+   [clippy] src/config.rs:269:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] src/config/hooks.rs:106:9: warning[clippy::doc_markdown]: item in documentation is missing backticks
    [clippy] src/config/logging.rs:154:18: warning[clippy::doc_markdown]: item in documentation is missing backticks

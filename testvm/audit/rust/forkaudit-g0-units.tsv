@@ -1,0 +1,133 @@
+# ForkAudit1 re-run, G0: every file with a change of ours at rustic_core f0d01fd (on rustic_core-v0.14.0) and
+# rustic fe54e51 (on v0.12.0), and the one unit G3-G9 that reads it (units as F3-F9 in docs/design/fork-audit.md).
+# From scope-rustic_core.txt and scope-rustic.txt beside this file (rust-scope.sh); OURS/TOTAL in lines; HOW as there.
+# "ours N before the rebase": the same rule at the pre-rebase tips (rustic_core afc4ffc, rustic 6cfea22).
+# G9 also reads fork-commits.txt.  generated 2026-11-23 05:28:29 +0100
+unit	repo	path	ours	total	how	note
+G3	rustic_core	crates/core/src/backend/node.rs	71	702	blame	
+G3	rustic_core	crates/core/src/backend/node/generic_attributes.rs	523	523	added	
+G3	rustic_core	crates/core/src/backend/node/modification.rs	32	198	blame	
+G3	rustic_core	crates/core/src/backend/osattrs.rs	2195	2195	added	
+G3	rustic_core	crates/core/src/backend/osattrs/linux.rs	2272	2272	added	
+G3	rustic_core	crates/core/src/backend/osattrs/other.rs	90	90	added	
+G3	rustic_core	crates/core/src/backend/osattrs/sparse.rs	1888	1888	added	
+G4	rustic_core	crates/core/src/backend/osattrs/bsd_extattr.rs	84	84	added	
+G4	rustic_core	crates/core/src/backend/osattrs/bsd_flags.rs	149	149	added	
+G4	rustic_core	crates/core/src/backend/osattrs/bsd_held.rs	123	123	added	
+G4	rustic_core	crates/core/src/backend/osattrs/dragonfly.rs	128	128	added	
+G4	rustic_core	crates/core/src/backend/osattrs/freebsd.rs	320	320	added	
+G4	rustic_core	crates/core/src/backend/osattrs/freebsd_acl.rs	426	426	added	
+G4	rustic_core	crates/core/src/backend/osattrs/freebsd_netbsd.rs	442	442	added	
+G4	rustic_core	crates/core/src/backend/osattrs/netbsd.rs	139	139	added	
+G4	rustic_core	crates/core/src/backend/osattrs/openbsd.rs	148	148	added	
+G5	rustic_core	crates/core/src/backend/osattrs/haiku.rs	527	527	added	
+G5	rustic_core	crates/core/src/backend/osattrs/haiku_attrs.rs	821	821	added	
+G5	rustic_core	crates/core/src/backend/osattrs/illumos.rs	1097	1097	added	
+G5	rustic_core	crates/core/src/backend/osattrs/illumos_acl.rs	256	256	added	
+G5	rustic_core	crates/core/src/backend/osattrs/illumos_idmap.rs	182	182	added	
+G5	rustic_core	crates/core/src/backend/osattrs/illumos_project.rs	78	78	added	
+G5	rustic_core	crates/core/src/backend/osattrs/illumos_sysattr.rs	476	476	added	
+G5	rustic_core	crates/core/src/backend/osattrs/illumos_xattrmeta.rs	171	171	added	
+G6	rustic_core	crates/core/src/commands/restore.rs	2620	3350	blame	ours 2599 before the rebase; 8 deletion-only hunks (11 upstream lines removed, no line of ours to show it)
+G6	rustic_core	crates/core/src/commands/restore/exact.rs	838	838	added	
+G6	rustic_core	crates/core/src/commands/restore/files_writer.rs	626	626	added	
+G6	rustic_core	crates/core/tests/integration/restore.rs	1431	1502	blame	ours 1432 before the rebase
+G7	rustic_core	crates/core/src/backend/local_destination.rs	1098	1988	blame	ours 1080 before the rebase; 2 deletion-only hunks (4 upstream lines removed, no line of ours to show it)
+G7	rustic_core	vendor/walkdir/Cargo.toml	5	54	walkdir	
+G7	rustic_core	vendor/walkdir/README.md	17	156	walkdir	
+G7	rustic_core	vendor/walkdir/src/dent.rs	95	442	walkdir	
+G7	rustic_core	vendor/walkdir/src/lib.rs	26	1215	walkdir	
+G7	rustic_core	vendor/walkdir/src/longpath.rs	691	691	walkdir	
+G7	rustic_core	vendor/walkdir/src/noatime.rs	176	176	walkdir	
+G7	rustic_core	vendor/walkdir/src/tests/recursive.rs	38	1130	walkdir	
+G7	rustic_core	vendor/walkdir/src/util.rs	2	26	walkdir	
+G8	rustic_core	Cargo.lock	4	5720	blame	ours 18 before the rebase; 1 deletion-only hunk (2 upstream lines removed, no line of ours to show it)
+G8	rustic_core	Cargo.toml	10	139	blame	
+G8	rustic_core	crates/core/Cargo.toml	5	137	blame	
+G8	rustic_core	crates/core/src/archiver.rs	35	271	blame	ours 36 before the rebase
+G8	rustic_core	crates/core/src/archiver/file_archiver.rs	9	228	blame	ours 50 before the rebase
+G8	rustic_core	crates/core/src/archiver/parent.rs	22	373	blame	
+G8	rustic_core	crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex.snap	15	163	blame	
+G8	rustic_core	crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_relative.snap	15	163	blame	
+G8	rustic_core	crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#complex_root.snap	15	163	blame	
+G8	rustic_core	crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple.snap	9	99	blame	
+G8	rustic_core	crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple_relative.snap	9	99	blame	
+G8	rustic_core	crates/core/src/archiver/snapshots/rustic_core__archiver__tree__tests__tree_iter#simple_root.snap	9	99	blame	
+G8	rustic_core	crates/core/src/archiver/tree.rs	72	238	blame	
+G8	rustic_core	crates/core/src/backend.rs	22	632	blame	
+G8	rustic_core	crates/core/src/backend/decrypt.rs	152	921	blame	1 deletion-only hunk (1 upstream line removed, no line of ours to show it)
+G8	rustic_core	crates/core/src/backend/ignore.rs	420	751	blame	ours 419 before the rebase
+G8	rustic_core	crates/core/src/backend/ignore/mapper.rs	331	574	blame	1 deletion-only hunk (1 upstream line removed, no line of ours to show it)
+G8	rustic_core	crates/core/src/backend/ignore/mapper/nix_mapper.rs	38	177	blame	
+G8	rustic_core	crates/core/src/blob/tree.rs	51	1084	blame	
+G8	rustic_core	crates/core/src/chunker.rs	62	127	blame	
+G8	rustic_core	crates/core/src/chunker/rabin.rs	53	494	blame	ours 61 before the rebase
+G8	rustic_core	crates/core/src/commands/backup.rs	16	372	blame	
+G8	rustic_core	crates/core/src/commands/merge.rs	43	188	blame	
+G8	rustic_core	crates/core/src/lib.rs	4	186	blame	
+G8	rustic_core	crates/core/src/repofile.rs	35	202	blame	
+G8	rustic_core	crates/core/src/repofile/snapshotfile.rs	8	1641	blame	
+G8	rustic_core	crates/core/src/repository.rs	111	2020	blame	
+G8	rustic_core	crates/core/tests/integration.rs	3	247	blame	
+G8	rustic_core	crates/core/tests/integration/backup.rs	107	457	blame	
+G8	rustic_core	crates/core/tests/integration/ls.rs	44	115	blame	
+G8	rustic_core	crates/core/tests/integration/merge.rs	57	57	added	
+G8	rustic_core	crates/core/tests/snapshots/integration__backup-tar-groups-nix.snap	2	150	blame	
+G8	rustic_core	crates/core/tests/snapshots/integration__backup-tar-matching-snaps-nix.snap	1	51	blame	
+G8	rustic_core	crates/core/tests/snapshots/integration__backup-tar-summary-second-nix.snap	1	45	blame	
+G8	rustic_core	crates/core/tests/snapshots/integration__backup-tar-summary-third-nix.snap	1	48	blame	
+G8	rustic_core	crates/core/tests/snapshots/integration__backup-tar-tree-nix.snap	0	77	blame	1 deletion-only hunk (1 upstream line removed, no line of ours to show it)
+G8	rustic_core	crates/core/tests/snapshots/integration__dryrun-tar-summary-second-nix.snap	1	44	blame	
+G8	rustic_core	crates/core/tests/snapshots/integration__dryrun-tar-tree-nix.snap	0	77	blame	1 deletion-only hunk (1 upstream line removed, no line of ours to show it)
+G8	rustic_core	crates/core/tests/snapshots/integration__ls-nix.snap	8	1392	blame	1 deletion-only hunk (1 upstream line removed, no line of ours to show it)
+G8	rustic_core	crates/core/tests/snapshots/integration__rewrite-nodes-nix.snap	8	1212	blame	1 deletion-only hunk (1 upstream line removed, no line of ours to show it)
+G8	rustic_core	crates/core/tests/snapshots/integration__vfs-nix.snap	0	75	blame	1 deletion-only hunk (1 upstream line removed, no line of ours to show it)
+G9	rustic_core	BACKOTTER.md	1598	1598	added	ours 1551 before the rebase
+G9	rustic	.gitignore	1	14	blame	
+G9	rustic	BACKOTTER.md	532	532	added	ours 546 before the rebase
+G9	rustic	Cargo.lock	6	7851	blame	ours 42 before the rebase
+G9	rustic	Cargo.toml	6	222	blame	
+G9	rustic	build-backotter.sh	95	95	added	
+G9	rustic	config/README.md	6	389	blame	
+G9	rustic	config/full.toml	2	288	blame	
+G9	rustic	src/application.rs	88	229	blame	
+G9	rustic	src/commands.rs	6	330	blame	
+G9	rustic	src/commands/backup.rs	48	854	blame	ours 37 before the rebase
+G9	rustic	src/commands/diff.rs	45	650	blame	
+G9	rustic	src/commands/merge.rs	2	87	blame	
+G9	rustic	src/commands/mount.rs	2	190	blame	
+G9	rustic	src/commands/restore.rs	94	201	blame	
+G9	rustic	src/commands/tui/ls.rs	2	554	blame	
+G9	rustic	src/commands/tui/restore.rs	16	169	blame	
+G9	rustic	src/commands/webdav.rs	2	171	blame	
+G9	rustic	src/config.rs	17	428	blame	ours 15 before the rebase
+G9	rustic	src/config/hooks.rs	11	140	blame	1 deletion-only hunk (5 upstream lines removed, no line of ours to show it)
+G9	rustic	src/config/logging.rs	74	216	blame	
+G9	rustic	src/snapshots/rustic_rs__config__tests__default_config_display_passes.snap	1	100	blame	
+G9	rustic	src/snapshots/rustic_rs__config__tests__default_config_passes.snap	1	260	blame	
+G9	rustic	src/snapshots/rustic_rs__config__tests__global_env_roundtrip_passes-2.snap	1	110	blame	
+G9	rustic	src/snapshots/rustic_rs__config__tests__global_env_roundtrip_passes-3.snap	1	271	blame	
+G9	rustic	src/snapshots/rustic_rs__config__tests__global_env_roundtrip_passes.snap	1	110	blame	
+G9	rustic	tests/backup_restore.rs	60	474	blame	ours 54 before the rebase
+G9	rustic	tests/snapshots/show_config__show_config_passes.snap	1	100	blame	
+# per unit: files, lines of ours; of them .rs files, .rs lines of ours
+# G3	7 files	7071 lines	7 .rs files	7071 .rs lines
+# G4	9 files	1959 lines	9 .rs files	1959 .rs lines
+# G5	8 files	3608 lines	8 .rs files	3608 .rs lines
+# G6	4 files	5515 lines	4 .rs files	5515 .rs lines
+# G7	9 files	2148 lines	7 .rs files	2126 .rs lines
+# G8	41 files	1808 lines	22 .rs files	1695 .rs lines
+# G9	28 files	2719 lines	14 .rs files	467 .rs lines
+# all	106 files	24828 lines
+# gone from the diff with the rebase (rustic_core; ours 0 before): crates/backend/src/local.rs
+# gone from the diff with the rebase (rustic_core; ours 0 before): crates/backend/src/opendal.rs
+# gone from the diff with the rebase (rustic_core; ours 0 before): crates/core/src/backend/cache.rs
+# gone from the diff with the rebase (rustic_core; ours 0 before): crates/core/src/blob.rs
+# gone from the diff with the rebase (rustic_core; ours 0 before): crates/core/src/blob/packer.rs
+# gone from the diff with the rebase (rustic_core; ours 0 before): crates/core/src/commands/forget.rs
+# gone from the diff with the rebase (rustic_core; ours 0 before): crates/core/src/commands/prune.rs
+# gone from the diff with the rebase (rustic_core; ours 0 before): crates/core/src/commands/repair/snapshots.rs
+# gone from the diff with the rebase (rustic_core; ours 0 before): crates/core/src/repofile/keyfile.rs
+# gone from the diff with the rebase (rustic_core; ours 0 before): crates/core/tests/integration/hotcold.rs
+# gone from the diff with the rebase (rustic_core; ours 0 before): crates/core/tests/keys.rs
+# gone from the diff with the rebase (rustic; ours 0 before): src/commands/docs.rs

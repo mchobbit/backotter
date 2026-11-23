@@ -1,49 +1,25 @@
 # rust-scope.sh: the lines of rustic that are BackOtter's own (RustAudit1, RA0)
-# name=rustic commit=3853eb3c274bb46a9452d1f9165048c938dfb58f stock=v0.11.4 6b96f976ff437a0528a4742358b172b32c3e3932 date=2026-11-22 04:01:16 +0100
-# rule: in files stock..commit touches, lines git blame -w -M -C gives to a commit whose subject
-#   starts "backotter:"; files a backotter: commit added, whole; vendor/walkdir: the diff from crates.io
-# upstream commits in stock..commit (not ours): 1
+# name=rustic commit=fe54e513b90743c2c6af92477d1421bea14f4d65 stock=v0.12.0 c4ce22f5b22074fc5a30838580a846cfdbab0782 date=2026-11-23 05:20:35 +0100
+# rule: in files stock..commit touches, lines git blame -w -M -C gives to one of our commits (subject
+#   "backotter:", or no cherry-pick line), and lines the diff adds that plain git blame -w gives to
+#   one, but for those that read as a line the diff removes; files one of ours added, whole;
+#   vendor/walkdir: the diff from crates.io
+# upstream commits in stock..commit (not ours): 0
 # PATH START-END, relative to the repository root
-BACKOTTER.md 1-503
-build-backotter.sh 1-84
+BACKOTTER.md 1-532
+build-backotter.sh 1-95
 .gitignore 14-14
-Cargo.lock 789-789
-Cargo.lock 791-791
-Cargo.lock 1257-1257
-Cargo.lock 1259-1259
-Cargo.lock 1855-1855
-Cargo.lock 3198-3200
-Cargo.lock 3202-3209
-Cargo.lock 5012-5012
-Cargo.lock 5692-5692
-Cargo.lock 5805-5806
-Cargo.lock 5833-5834
-Cargo.lock 5844-5844
-Cargo.lock 5876-5876
-Cargo.lock 5878-5878
-Cargo.lock 5884-5884
-Cargo.lock 5889-5889
-Cargo.lock 5891-5891
-Cargo.lock 5943-5943
-Cargo.lock 5954-5954
-Cargo.lock 5956-5956
-Cargo.lock 6683-6683
-Cargo.lock 6686-6686
-Cargo.lock 7424-7424
-Cargo.lock 7426-7426
-Cargo.lock 7655-7655
-Cargo.lock 8078-8078
-Cargo.lock 8080-8080
-Cargo.lock 8087-8087
-Cargo.lock 8089-8089
-Cargo.lock 8096-8096
-Cargo.lock 8098-8098
+Cargo.lock 5421-5421
+Cargo.lock 5536-5537
+Cargo.lock 5564-5564
+Cargo.lock 7153-7153
+Cargo.lock 7155-7155
 Cargo.toml 3-3
 Cargo.toml 218-222
-config/README.md 98-98
-config/README.md 260-263
+config/README.md 99-99
+config/README.md 291-295
 config/full.toml 25-25
-config/full.toml 140-140
+config/full.toml 159-159
 src/application.rs 2-5
 src/application.rs 22-83
 src/application.rs 194-201
@@ -51,16 +27,13 @@ src/application.rs 216-229
 src/commands.rs 202-205
 src/commands.rs 210-210
 src/commands.rs 304-304
-src/commands/backup.rs 222-226
-src/commands/backup.rs 267-268
-src/commands/backup.rs 270-272
-src/commands/backup.rs 277-277
-src/commands/backup.rs 280-281
-src/commands/backup.rs 428-431
-src/commands/backup.rs 533-534
-src/commands/backup.rs 536-544
-src/commands/backup.rs 546-550
-src/commands/backup.rs 552-554
+src/commands/backup.rs 243-255
+src/commands/backup.rs 298-299
+src/commands/backup.rs 302-305
+src/commands/backup.rs 314-315
+src/commands/backup.rs 462-465
+src/commands/backup.rs 567-587
+src/commands/backup.rs 591-592
 src/commands/diff.rs 187-190
 src/commands/diff.rs 192-193
 src/commands/diff.rs 221-235
@@ -79,14 +52,12 @@ src/commands/restore.rs 170-175
 src/commands/restore.rs 186-187
 src/commands/restore.rs 195-198
 src/commands/tui/ls.rs 10-10
-src/commands/tui/ls.rs 369-369
+src/commands/tui/ls.rs 372-372
 src/commands/tui/restore.rs 4-6
-src/commands/tui/restore.rs 36-37
-src/commands/tui/restore.rs 40-45
+src/commands/tui/restore.rs 36-45
 src/commands/tui/restore.rs 92-94
 src/commands/webdav.rs 156-157
-src/config.rs 262-274
-src/config.rs 276-276
+src/config.rs 266-282
 src/config/hooks.rs 105-108
 src/config/hooks.rs 110-110
 src/config/hooks.rs 112-115
@@ -104,36 +75,35 @@ src/snapshots/rustic_rs__config__tests__global_env_roundtrip_passes.snap 14-14
 tests/backup_restore.rs 56-59
 tests/backup_restore.rs 66-66
 tests/backup_restore.rs 86-86
-tests/backup_restore.rs 232-279
+tests/backup_restore.rs 421-474
 tests/snapshots/show_config__show_config_passes.snap 14-14
 # per file: lines OURS TOTAL HOW PATH (HOW: added = a file a backotter: commit added, whole;
 #   blame = git blame; walkdir = the diff from crates.io; whole = holt)
-# lines    503    503 added BACKOTTER.md
-# lines     84     84 added build-backotter.sh
+# lines    532    532 added BACKOTTER.md
+# lines     95     95 added build-backotter.sh
 # lines      1     14 blame .gitignore
-# lines     42   8102 blame Cargo.lock
+# lines      6   7851 blame Cargo.lock
 # lines      6    222 blame Cargo.toml
-# lines      5    357 blame config/README.md
-# lines      2    269 blame config/full.toml
+# lines      6    389 blame config/README.md
+# lines      2    288 blame config/full.toml
 # lines     88    229 blame src/application.rs
 # lines      6    330 blame src/commands.rs
-# lines     36    799 blame src/commands/backup.rs
+# lines     48    854 blame src/commands/backup.rs
 # lines     45    650 blame src/commands/diff.rs
-# lines      0     59 blame src/commands/docs.rs
 # lines      2     87 blame src/commands/merge.rs
 # lines      2    190 blame src/commands/mount.rs
 # lines     94    201 blame src/commands/restore.rs
-# lines      2    444 blame src/commands/tui/ls.rs
-# lines     14    169 blame src/commands/tui/restore.rs
+# lines      2    554 blame src/commands/tui/ls.rs
+# lines     16    169 blame src/commands/tui/restore.rs
 # lines      2    171 blame src/commands/webdav.rs
-# lines     14    422 blame src/config.rs
+# lines     17    428 blame src/config.rs
 # lines     11    140 blame src/config/hooks.rs
 # lines     74    216 blame src/config/logging.rs
-# lines      1     98 blame src/snapshots/rustic_rs__config__tests__default_config_display_passes.snap
-# lines      1    242 blame src/snapshots/rustic_rs__config__tests__default_config_passes.snap
-# lines      1    108 blame src/snapshots/rustic_rs__config__tests__global_env_roundtrip_passes-2.snap
-# lines      1    253 blame src/snapshots/rustic_rs__config__tests__global_env_roundtrip_passes-3.snap
-# lines      1    108 blame src/snapshots/rustic_rs__config__tests__global_env_roundtrip_passes.snap
-# lines     54    279 blame tests/backup_restore.rs
-# lines      1     98 blame tests/snapshots/show_config__show_config_passes.snap
-# total: 1093 of 14844 lines ours in 28 files; .rs: 444 of 4386 in 15 files
+# lines      1    100 blame src/snapshots/rustic_rs__config__tests__default_config_display_passes.snap
+# lines      1    260 blame src/snapshots/rustic_rs__config__tests__default_config_passes.snap
+# lines      1    110 blame src/snapshots/rustic_rs__config__tests__global_env_roundtrip_passes-2.snap
+# lines      1    271 blame src/snapshots/rustic_rs__config__tests__global_env_roundtrip_passes-3.snap
+# lines      1    110 blame src/snapshots/rustic_rs__config__tests__global_env_roundtrip_passes.snap
+# lines     60    474 blame tests/backup_restore.rs
+# lines      1    100 blame tests/snapshots/show_config__show_config_passes.snap
+# total: 1121 of 15035 lines ours in 27 files; .rs: 467 of 4693 in 14 files

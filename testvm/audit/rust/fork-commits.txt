@@ -1,17 +1,22 @@
-# fork-commits.txt: every backotter: commit on the forks' backotter branches, oldest first, with the reason its
-# message gives (the body, Co-Authored-By lines dropped). ForkAudit1 F0, for F9 (docs/design/fork-audit.md).
-# generated 2026-11-22 04:04:53 +0100. 'lines blamed to it at head': git blame -w -M -C over the files stock..head
-# touches (vendor/walkdir included); 0 means every line it wrote has since been rewritten, moved under another
-# commit or deleted.
+# fork-commits.txt: every commit of ours on the forks' backotter branches, oldest first, with the reason its
+# message gives (the body, Co-Authored-By lines dropped). ForkAudit1's re-run at the rebased heads, G0, for G9
+# (docs/design/fork-audit.md). generated 2026-11-23 05:25:59 +0100.
+# 'lines blamed to it at head': git blame -w -M -C over the files stock..head touches (vendor/walkdir
+# included); 0 means every line it wrote has since been rewritten, moved under another commit or deleted.
+# 'rebase:': the commit against the old line the first run audited (plus the F9 commits landed before the
+# rebase), by git patch-id, then by subject: 'the same patch' (context too), 'changed lines the same', 'PATCH
+# CHANGED' (a conflict resolved or a port: read it again) or 'NEW on this base'.
 
 ################################################################################
-# rustic_core: ead8a63 (backotter: 0.13.0+backotter.22: RustAudit1's osattrs fixes in the BSD extattr an)
-# stock 1030be4; 98 commits of ours, 19 upstream commits cherry-picked (listed at the end)
+# rustic_core: f0d01fd (backotter: 0.14.0+backotter.1: on rustic_core 0.14.0; BACKOTTER.md on the rebase)
+# stock bf1de63 (rustic_core-v0.14.0); 101 commits of ours, 0 upstream commits cherry-picked (listed at the end)
+# old line (the first ForkAudit1 run's): 1030be4..afc4ffc, 118 commits
 ################################################################################
 
-[rustic_core 1] 661b47a 2026-10-30 11:10
+[rustic_core 1] 7a10fee 2026-10-30 11:10
 subject: backotter: version 0.13.0+backotter.1
 diff: 3 files changed, 36 insertions(+), 2 deletions(-); lines blamed to it at head: 22
+rebase: PATCH CHANGED against 661b47a on the old line: 4 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
@@ -20,9 +25,10 @@ reason:
   | metadata BackOtter's restic keeps as generic attributes, under the same
   | names) and how it moves to a new rustic_core release.
 
-[rustic_core 2] fcac5fa 2026-10-30 14:32
+[rustic_core 2] 62af33f 2026-10-30 14:32
 subject: backotter: file flags, ACLs and other metadata, as BackOtter's restic keeps them
-diff: 29 files changed, 2385 insertions(+), 43 deletions(-); lines blamed to it at head: 2011
+diff: 29 files changed, 2385 insertions(+), 43 deletions(-); lines blamed to it at head: 2012
+rebase: as fcac5fa on the old line, changed lines the same (context only moved)
   file: BACKOTTER.md
   file: Cargo.lock
   file: Cargo.toml
@@ -75,15 +81,17 @@ reason:
   | The system calls need unsafe: the workspace lints deny it rather than
   | forbid it, and backend/osattrs.rs allows it. BACKOTTER.md has the details.
 
-[rustic_core 3] ca2c82d 2026-10-30 15:08
+[rustic_core 3] 3f26894 2026-10-30 15:08
 subject: backotter: BackOtter's restic keeps illumos extended attributes too
 diff: 1 file changed, 1 insertion(+), 1 deletion(-); lines blamed to it at head: 0
+rebase: the same patch as ca2c82d on the old line
   file: BACKOTTER.md
 reason: (no body; the subject is the reason)
 
-[rustic_core 4] 7821230 2026-10-30 21:18
+[rustic_core 4] 69ba9dc 2026-10-30 21:18
 subject: backotter: batch 1 - atime, sparse marks, project IDs, casefold (unreviewed)
 diff: 14 files changed, 616 insertions(+), 57 deletions(-); lines blamed to it at head: 567
+rebase: PATCH CHANGED against 7821230 on the old line: 4 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
@@ -109,9 +117,10 @@ reason:
   | 
   | Known problems from the review are fixed in the following commits.
 
-[rustic_core 5] 06f4d9c 2026-10-30 22:44
+[rustic_core 5] bb9d5cf 2026-10-30 22:44
 subject: backotter: vendor walkdir 2.5.0, listing directories without changing their atimes
 diff: 19 files changed, 3717 insertions(+), 2 deletions(-); lines blamed to it at head: 3703
+rebase: the same patch as 06f4d9c on the old line
   file: Cargo.lock
   file: Cargo.toml
   file: vendor/walkdir/.gitignore
@@ -146,9 +155,10 @@ reason:
   | rustic gets it through its own [patch.crates-io] entry, once this branch
   | is pushed (see rustic's BACKOTTER.md).
 
-[rustic_core 6] 6ff672d 2026-10-30 22:44
+[rustic_core 6] 057ecfc 2026-10-30 22:44
 subject: backotter: batch 1 fixes - sparse rule, one open, atimes, casefold, warnings once
-diff: 18 files changed, 1562 insertions(+), 311 deletions(-); lines blamed to it at head: 1381
+diff: 18 files changed, 1563 insertions(+), 312 deletions(-); lines blamed to it at head: 1380
+rebase: PATCH CHANGED against 6ff672d on the old line: 3 changed lines gone, 5 new
   file: BACKOTTER.md
   file: crates/core/src/backend/ignore.rs
   file: crates/core/src/backend/local_destination.rs
@@ -203,9 +213,10 @@ reason:
   |   recent: readlink(2) updates them, which nothing can avoid).
   | - BACKOTTER.md states the shared rules.
 
-[rustic_core 7] 337df0a 2026-10-31 01:07
+[rustic_core 7] 1b9abcb 2026-10-31 01:07
 subject: backotter: NetBSD and DragonFly file flags, NetBSD ACLs, BSD symlink modes
 diff: 11 files changed, 955 insertions(+), 394 deletions(-); lines blamed to it at head: 561
+rebase: as 337df0a on the old line, changed lines the same (context only moved)
   file: BACKOTTER.md
   file: crates/core/src/backend/local_destination.rs
   file: crates/core/src/backend/node/generic_attributes.rs
@@ -232,9 +243,10 @@ reason:
   | - DragonFly's dev_t is a u32: create_special converts, so rustic_core
   |   builds for x86_64-unknown-dragonfly.
 
-[rustic_core 8] 02b3f90 2026-10-31 02:09
+[rustic_core 8] 176323b 2026-10-31 02:09
 subject: backotter: ZFS DOS flags on Linux (linux.zfs_dos_flags)
 diff: 11 files changed, 511 insertions(+), 25 deletions(-); lines blamed to it at head: 445
+rebase: the same patch as 02b3f90 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/node/generic_attributes.rs
   file: crates/core/src/backend/osattrs.rs
@@ -258,9 +270,10 @@ reason:
   | set_flags_best_effort takes 64-bit flags too, and no longer passes over
   | a refused mask of 0 without an error.
 
-[rustic_core 9] cb3a66b 2026-10-31 02:40
+[rustic_core 9] c002865 2026-10-31 02:40
 subject: backotter: birth times, and minimal nvlists for illumos system attributes
 diff: 12 files changed, 750 insertions(+), 123 deletions(-); lines blamed to it at head: 638
+rebase: the same patch as cb3a66b on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/node/generic_attributes.rs
   file: crates/core/src/backend/osattrs.rs
@@ -313,9 +326,10 @@ reason:
   | included, and immutable and hidden+nodump come back through the minimal
   | nvlist.
 
-[rustic_core 10] 2c52ef2 2026-10-31 03:53
+[rustic_core 10] 5fbfbe8 2026-10-31 03:53
 subject: backotter: illumos SID owners, extended attributes' metadata, ZFS projects
 diff: 17 files changed, 1281 insertions(+), 96 deletions(-); lines blamed to it at head: 1236
+rebase: the same patch as 2c52ef2 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/ignore/mapper.rs
   file: crates/core/src/backend/node/generic_attributes.rs
@@ -378,9 +392,10 @@ reason:
   | with restic-bko, identical generic attributes from both backups, and in a
   | second boot with the ephemeral ids handed to other SIDs first.
 
-[rustic_core 11] 9065113 2026-10-31 05:33
+[rustic_core 11] afb30e2 2026-10-31 05:33
 subject: backotter: a hard link replaces what has its name already
-diff: 3 files changed, 30 insertions(+); lines blamed to it at head: 12
+diff: 3 files changed, 24 insertions(+); lines blamed to it at head: 10
+rebase: PATCH CHANGED against 9065113 on the old line: 6 changed lines gone, 0 new
   file: BACKOTTER.md
   file: crates/core/src/backend/local_destination.rs
   file: crates/core/tests/integration/restore.rs
@@ -390,9 +405,10 @@ reason:
   | on ZFS a file whose archive bit the restore had set again kept it. As
   | BackOtter's restic does, whatever is at the link's name is removed first.
 
-[rustic_core 12] d5ef444 2026-10-31 06:23
+[rustic_core 12] 4876e5e 2026-10-31 06:23
 subject: backotter: stock tar tests store atimes as mtimes, as on strictatime they must
 diff: 3 files changed, 33 insertions(+), 27 deletions(-); lines blamed to it at head: 5
+rebase: the same patch as d5ef444 on the old line
   file: crates/core/tests/integration.rs
   file: crates/core/tests/integration/backup.rs
   file: crates/core/tests/integration/rewrite.rs
@@ -413,9 +429,10 @@ reason:
   | that a second backup on Linux saves the same trees (O_NOATIME for files and
   | directories), which strictatime makes a real test.
 
-[rustic_core 13] 87f308e 2026-10-31 07:28
+[rustic_core 13] 5b3e56c 2026-10-31 07:28
 subject: backotter: round 3 in progress - FreeBSD ZFS archive flag, DragonFly ns times, one osattrs function set
 diff: 12 files changed, 308 insertions(+), 85 deletions(-); lines blamed to it at head: 249
+rebase: as 87f308e on the old line, changed lines the same (context only moved)
   file: BACKOTTER.md
   file: crates/core/src/backend/local_destination.rs
   file: crates/core/src/backend/node/generic_attributes.rs
@@ -432,18 +449,20 @@ reason:
   | Work in progress, committed at the user's request while its agent was
   | still checking it (clippy, guest runs); later commits finish it.
 
-[rustic_core 14] c2c4d14 2026-10-31 07:57
+[rustic_core 14] c4a16c6 2026-10-31 07:57
 subject: backotter: round 3 in progress - BSD flag notes and docs
 diff: 2 files changed, 11 insertions(+), 14 deletions(-); lines blamed to it at head: 11
+rebase: the same patch as c2c4d14 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/osattrs/bsd_flags.rs
 reason:
   | The rest of round 3's rustic_core work as its agent left it when the
   | user stopped it; not built or tested yet.
 
-[rustic_core 15] 06cd6ac 2026-10-31 11:56
+[rustic_core 15] 7b4b492 2026-10-31 11:56
 subject: backotter: round 3 finished - FreeBSD flag rule tests; round 3 checked
 diff: 2 files changed, 15 insertions(+); lines blamed to it at head: 12
+rebase: the same patch as 06cd6ac on the old line
   file: crates/core/src/backend/node/generic_attributes.rs
   file: crates/core/src/backend/osattrs/bsd_flags.rs
 reason:
@@ -465,9 +484,10 @@ reason:
   | Added: the UFS case of uarch alone and of a snapshot flag alone, and a
   | JSON test that a 0 freebsd.file_flags is written and read back.
 
-[rustic_core 16] e863825 2026-10-31 13:27
+[rustic_core 16] 291ae3a 2026-10-31 13:27
 subject: backotter: a restore replaces what is in the way; special nodes as restic stores them
 diff: 15 files changed, 128 insertions(+), 25 deletions(-); lines blamed to it at head: 95
+rebase: as e863825 on the old line, changed lines the same (context only moved)
   file: BACKOTTER.md
   file: crates/core/src/backend/ignore/mapper.rs
   file: crates/core/src/backend/ignore/mapper/nix_mapper.rs
@@ -495,9 +515,10 @@ reason:
   | count, so both tools write the same nodes. Symlink atimes moved by
   | readlink(2) are documented.
 
-[rustic_core 17] ef1dab5 2026-10-31 14:47
+[rustic_core 17] 7400e82 2026-10-31 14:47
 subject: backotter: extended attributes that can't be set don't stop the rest; Z for UTC node times
-diff: 13 files changed, 325 insertions(+), 123 deletions(-); lines blamed to it at head: 295
+diff: 13 files changed, 326 insertions(+), 124 deletions(-); lines blamed to it at head: 296
+rebase: PATCH CHANGED against ef1dab5 on the old line: 3 changed lines gone, 5 new
   file: BACKOTTER.md
   file: crates/core/src/backend/ignore/mapper/nix_mapper.rs
   file: crates/core/src/backend/local_destination.rs
@@ -530,9 +551,10 @@ reason:
   |   be made is an error in restic, not "as in restic"; the illumos rescue
   |   system should run svcadm enable -s idmap.
 
-[rustic_core 18] eb6371b 2026-10-31 17:15
+[rustic_core 18] ff2efba 2026-10-31 17:15
 subject: backotter: xattrs sorted everywhere; flags set from what a file has; each unmapped SID and unsupported xattr named; bcachefs project IDs
 diff: 10 files changed, 364 insertions(+), 77 deletions(-); lines blamed to it at head: 328
+rebase: the same patch as eb6371b on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/ignore/mapper.rs
   file: crates/core/src/backend/local_destination.rs
@@ -566,9 +588,10 @@ reason:
   | - BACKOTTER.md: av_quarantined files are left out of a backup (no one can
   |   open them), accepted.
 
-[rustic_core 19] 1a2a4a4 2026-10-31 21:05
+[rustic_core 19] 78bec0f 2026-10-31 21:05
 subject: backotter: sockets skipped at backup and restore, as restic skips them
 diff: 3 files changed, 103 insertions(+), 5 deletions(-); lines blamed to it at head: 111
+rebase: as 1a2a4a4 on the old line, changed lines the same (context only moved)
   file: BACKOTTER.md
   file: crates/core/src/backend/ignore.rs
   file: crates/core/src/commands/restore.rs
@@ -579,9 +602,10 @@ reason:
   | backup leaves sockets out, and a restore leaves out the socket nodes of
   | older snapshots, so both BackOtter tools write the same snapshots.
 
-[rustic_core 20] 364f4d5 2026-10-31 20:14
+[rustic_core 20] 27beda3 2026-10-31 20:14
 subject: backotter: keep the node of a file illumos quarantined (av_quarantined), without its contents: illumos.unread_size, a warning, restored empty
 diff: 8 files changed, 219 insertions(+), 15 deletions(-); lines blamed to it at head: 198
+rebase: the same patch as 364f4d5 on the old line
   file: BACKOTTER.md
   file: crates/core/src/archiver/file_archiver.rs
   file: crates/core/src/backend/ignore/mapper.rs
@@ -592,20 +616,21 @@ diff: 8 files changed, 219 insertions(+), 15 deletions(-); lines blamed to it at
   file: crates/core/src/commands/restore.rs
 reason: (no body; the subject is the reason)
 
-[rustic_core 21] 8f01e49 2026-10-31 21:37
+[rustic_core 21] 87d5a6e 2026-10-31 21:37
 subject: backotter: a file whose contents weren't backed up is restored into a new, empty file, as in BackOtter's restic
 diff: 2 files changed, 21 insertions(+), 9 deletions(-); lines blamed to it at head: 15
+rebase: the same patch as 8f01e49 on the old line
   file: BACKOTTER.md
   file: crates/core/src/commands/restore.rs
 reason: (no body; the subject is the reason)
 
-[rustic_core 22] 8955dee 2026-10-31 22:04
+[rustic_core 22] 6722b73 2026-10-31 22:04
 subject: backotter: files with holes read by their data extents; restored with holes per file system block
-diff: 10 files changed, 1088 insertions(+), 42 deletions(-); lines blamed to it at head: 872
+diff: 9 files changed, 1047 insertions(+), 40 deletions(-); lines blamed to it at head: 832
+rebase: PATCH CHANGED against 8955dee on the old line: 47 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
-  file: crates/core/src/archiver/file_archiver.rs
   file: crates/core/src/backend/ignore.rs
   file: crates/core/src/backend/ignore/mapper.rs
   file: crates/core/src/backend/local_destination.rs
@@ -630,9 +655,10 @@ reason:
   | 
   | Version 0.13.0+backotter.3.
 
-[rustic_core 23] b7649a7 2026-10-31 23:26
+[rustic_core 23] 3318ad7 2026-10-31 23:26
 subject: backotter: a sparse restore writes only the non-zero part of each block a blob reaches into; a hole ends at the size now; ENXIO a hole only where SEEK_HOLE agrees; 64-bit lseek
 diff: 7 files changed, 636 insertions(+), 158 deletions(-); lines blamed to it at head: 530
+rebase: as b7649a7 on the old line, changed lines the same (context only moved)
   file: BACKOTTER.md
   file: crates/core/src/backend/ignore.rs
   file: crates/core/src/backend/ignore/mapper.rs
@@ -681,30 +707,38 @@ reason:
   | (compression off and lz4). windows-gnu warnings in ignore.rs and
   | mapper.rs fixed.
 
-[rustic_core 24] 9f88530 2026-11-01 04:01
-subject: backotter: the chunker hashes all 64 bytes before a chunk's minimum size, as restic's does, and cuts where restic does
-diff: 2 files changed, 72 insertions(+), 3 deletions(-); lines blamed to it at head: 72
+[rustic_core 24] ef3378d 2026-11-01 04:01
+subject: backotter: chunk_like_restic: the chunker cuts where restic's does
+diff: 2 files changed, 64 insertions(+); lines blamed to it at head: 63
+rebase: NEW on this base (no commit of this subject on the old line)
   file: BACKOTTER.md
   file: crates/core/src/chunker/rabin.rs
-reason: (no body; the subject is the reason)
+reason:
+  | rustic_core 0.13.0 hashed only 63 of the 64 bytes before a chunk's
+  | minimum size. The fork's fix (all 64 bytes hashed) was dropped in the
+  | rebase onto 0.14.0, which has upstream's 43740bf (#638) doing the same;
+  | the test, with lengths from restic's chunker, stays.
 
-[rustic_core 25] e8cbde9 2026-11-01 09:32
+[rustic_core 25] a67dc33 2026-11-01 09:32
 subject: backotter: a file's size is the bytes the backup read, as restic's is, not what lstat gave
 diff: 3 files changed, 13 insertions(+); lines blamed to it at head: 13
+rebase: as e8cbde9 on the old line, changed lines the same (context only moved)
   file: BACKOTTER.md
   file: crates/core/src/archiver/file_archiver.rs
   file: crates/core/tests/integration/backup.rs
 reason: (no body; the subject is the reason)
 
-[rustic_core 26] ad1635e 2026-11-01 11:44
+[rustic_core 26] e0fca49 2026-11-01 11:44
 subject: backotter: notes: on JFS and nilfs2 SEEK_HOLE finds no hole, so files with holes there aren't marked sparse, in both tools alike
 diff: 1 file changed, 7 insertions(+); lines blamed to it at head: 0
+rebase: the same patch as ad1635e on the old line
   file: BACKOTTER.md
 reason: (no body; the subject is the reason)
 
-[rustic_core 27] 5eba94f 2026-11-01 15:56
+[rustic_core 27] c7b3863 2026-11-01 15:56
 subject: backotter: Haiku, from branch haiku-attrs
-diff: 8 files changed, 1473 insertions(+), 48 deletions(-); lines blamed to it at head: 1467
+diff: 8 files changed, 1483 insertions(+), 48 deletions(-); lines blamed to it at head: 1469
+rebase: PATCH CHANGED against 5eba94f on the old line: 4 changed lines gone, 14 new
   file: BACKOTTER.md
   file: crates/core/src/backend/ignore/mapper.rs
   file: crates/core/src/backend/local_destination.rs
@@ -728,9 +762,10 @@ reason:
   | 
   | Not built or tested after the merge.
 
-[rustic_core 28] dd432d2 2026-11-01 16:19
+[rustic_core 28] d2c1950 2026-11-01 16:19
 subject: backotter: on JFS and nilfs2 the blocks decide which files have holes
-diff: 2 files changed, 105 insertions(+), 19 deletions(-); lines blamed to it at head: 82
+diff: 2 files changed, 105 insertions(+), 19 deletions(-); lines blamed to it at head: 79
+rebase: the same patch as dd432d2 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/osattrs/sparse.rs
 reason:
@@ -752,9 +787,10 @@ reason:
   | passes clippy without new warnings and passes the workspace's tests on
   | Linux.
 
-[rustic_core 29] ccc68a2 2026-11-01 18:33
+[rustic_core 29] d26df1a 2026-11-01 18:33
 subject: backotter: directory atimes from before listing, restores over immutable files, FreeBSD ZFS projects
 diff: 19 files changed, 600 insertions(+), 56 deletions(-); lines blamed to it at head: 461
+rebase: as ccc68a2 on the old line, changed lines the same (context only moved)
   file: BACKOTTER.md
   file: crates/core/src/archiver.rs
   file: crates/core/src/backend/node/generic_attributes.rs
@@ -801,9 +837,10 @@ reason:
   |   ioctls 0x401c581f and 0x801c5820 (truss of zfs project on FreeBSD 15.1),
   |   restored with the system extended attributes before the flags.
 
-[rustic_core 30] ff155a7 2026-11-01 20:00
+[rustic_core 30] af38ef4 2026-11-01 20:00
 subject: backotter: bcachefs directory options and project IDs before entries; bcachefs.project not kept
 diff: 3 files changed, 218 insertions(+), 12 deletions(-); lines blamed to it at head: 190
+rebase: the same patch as ff155a7 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/osattrs.rs
   file: crates/core/src/backend/osattrs/linux.rs
@@ -824,15 +861,17 @@ reason:
   | (EINVAL), which made restores of directories with a project ID warn. As
   | BackOtter's restic.
 
-[rustic_core 31] 038c398 2026-11-01 20:39
+[rustic_core 31] a7a384a 2026-11-01 20:39
 subject: backotter: notes: a node without an mtime sets no times at restore, in either tool
 diff: 1 file changed, 6 insertions(+), 2 deletions(-); lines blamed to it at head: 0
+rebase: the same patch as 038c398 on the old line
   file: BACKOTTER.md
 reason: (no body; the subject is the reason)
 
-[rustic_core 32] be96479 2026-11-02 09:20
+[rustic_core 32] 66d95b2 2026-11-02 09:20
 subject: backotter: directories above the backed-up path keep their own metadata; no device 0 in nodes
 diff: 7 files changed, 250 insertions(+), 43 deletions(-); lines blamed to it at head: 222
+rebase: as be96479 on the old line, changed lines the same (context only moved)
   file: BACKOTTER.md
   file: crates/core/src/archiver.rs
   file: crates/core/src/archiver/tree.rs
@@ -854,9 +893,10 @@ reason:
   | field in its node, as restic leaves it out (Go's omitempty); it still
   | reads as 0.
 
-[rustic_core 33] 44e1b03 2026-11-02 11:09
+[rustic_core 33] 3e2a5c9 2026-11-02 11:09
 subject: backotter: large xattrs read whole, mode 0 left out, SELinux labels stay, append-only clears on ZFS, doors skipped
 diff: 8 files changed, 398 insertions(+), 28 deletions(-); lines blamed to it at head: 383
+rebase: the same patch as 44e1b03 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/ignore.rs
   file: crates/core/src/backend/ignore/mapper.rs
@@ -897,9 +937,10 @@ reason:
   | - illumos tmpfs refuses a crtime in its SUNWattr_rw view with EINVAL: no
   |   birth time, debug log only, as on UFS; it was a warning per file.
 
-[rustic_core 34] 9387171 2026-11-02 12:41
+[rustic_core 34] 33d9f76 2026-11-02 12:41
 subject: backotter: a restore not running as root says nothing about owners it can't set
 diff: 3 files changed, 81 insertions(+), 3 deletions(-); lines blamed to it at head: 70
+rebase: the same patch as 9387171 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/local_destination.rs
   file: crates/core/src/commands/restore.rs
@@ -916,9 +957,10 @@ reason:
   | warning per file in both tools now, and restic-bko restores a changed
   | hard-linked file whole, as rustic did.
 
-[rustic_core 35] 393cf55 2026-11-02 14:33
+[rustic_core 35] 498d7b6 2026-11-02 14:33
 subject: backotter: FAT attributes and XFS options kept and restored on Linux
 diff: 5 files changed, 743 insertions(+), 18 deletions(-); lines blamed to it at head: 644
+rebase: the same patch as 393cf55 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/node/generic_attributes.rs
   file: crates/core/src/backend/osattrs.rs
@@ -947,9 +989,10 @@ reason:
   | Tests: JSON forms, the kept/merge rules, unsupported elsewhere, and with
   | root on loop vfat and XFS file systems.
 
-[rustic_core 36] eea4762 2026-11-02 19:23
+[rustic_core 36] 9a8342c 2026-11-02 19:23
 subject: backotter: bcachefs.casefold refusal a warning; holes down to 512-byte blocks
 diff: 4 files changed, 133 insertions(+), 21 deletions(-); lines blamed to it at head: 121
+rebase: the same patch as eea4762 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/local_destination.rs
   file: crates/core/src/backend/osattrs.rs
@@ -968,9 +1011,10 @@ reason:
   | - Tests: hole_block_rule, hole_block_size_at_least_512,
   |   casefold_not_empty_is_bcachefs_casefold_refused.  BACKOTTER.md.
 
-[rustic_core 37] 27c5a12 2026-11-02 20:38
+[rustic_core 37] 4d81dcb 2026-11-02 20:38
 subject: backotter: tests for bcachefs.casefold refused (ENOTEMPTY) as a warning
-diff: 1 file changed, 255 insertions(+), 85 deletions(-); lines blamed to it at head: 173
+diff: 1 file changed, 255 insertions(+), 85 deletions(-); lines blamed to it at head: 172
+rebase: the same patch as 27c5a12 on the old line
   file: crates/core/src/backend/local_destination.rs
 reason:
   | LocalDestination::set_extended_attributes now hands the work to
@@ -980,9 +1024,10 @@ reason:
   | bcachefs.casefold is a warning and the other attributes are still set and
   | removed; ENOTEMPTY for any other attribute stays an error, naming it.
 
-[rustic_core 38] 39b4368 2026-11-02 20:38
+[rustic_core 38] ccd957e 2026-11-02 20:38
 subject: backotter: no device ID for a FIFO; device IDs as BackOtter's restic now stores them
 diff: 3 files changed, 64 insertions(+), 1 deletion(-); lines blamed to it at head: 49
+rebase: the same patch as 39b4368 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/ignore.rs
   file: crates/core/src/backend/ignore/mapper.rs
@@ -996,9 +1041,10 @@ reason:
   | nodes with more than one link, as before. A test backs up a file, a
   | hard-linked file, a directory and a hard-linked FIFO.
 
-[rustic_core 39] 8386562 2026-11-02 20:43
+[rustic_core 39] 4d0369f 2026-11-02 20:43
 subject: backotter: zstd contexts and Rabin tables kept per thread
 diff: 3 files changed, 229 insertions(+), 5 deletions(-); lines blamed to it at head: 229
+rebase: as 8386562 on the old line, changed lines the same (context only moved)
   file: BACKOTTER.md
   file: crates/core/src/backend/decrypt.rs
   file: crates/core/src/chunker.rs
@@ -1024,9 +1070,10 @@ reason:
   | A backup of a 35,000-path, 1.4 GB Debian tree (musl, mimalloc, release
   | build, on Chopin) took 13.5 s and takes 4.0 s, with the same tree IDs.
 
-[rustic_core 40] 7138097 2026-11-02 20:55
+[rustic_core 40] 7196a61 2026-11-02 20:55
 subject: backotter: illumos restore leaves an extended attribute with the right value alone
 diff: 2 files changed, 109 insertions(+), 9 deletions(-); lines blamed to it at head: 109
+rebase: the same patch as 7138097 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/osattrs/illumos.rs
 reason:
@@ -1039,9 +1086,10 @@ reason:
   | illumos) checks that an equal attribute file isn't written again, a
   | different one is, and those the node hasn't got go.
 
-[rustic_core 41] 941e6c1 2026-11-02 21:20
+[rustic_core 41] 7f7e767 2026-11-02 21:20
 subject: backotter: notes: the two tools' tree IDs differ (accepted difference)
 diff: 1 file changed, 15 insertions(+), 3 deletions(-); lines blamed to it at head: 15
+rebase: the same patch as 941e6c1 on the old line
   file: BACKOTTER.md
 reason:
   | The device-ID note said that rustic-bko's and restic-bko's snapshots of one
@@ -1054,9 +1102,10 @@ reason:
   | directory above it, gets a different tree in each tool. Now an accepted
   | difference, in both forks' notes.
 
-[rustic_core 42] 05a201a 2026-11-03 08:34
+[rustic_core 42] 898b8ba 2026-11-03 08:34
 subject: backotter: no step back from stock for users who aren't BackOtter
-diff: 16 files changed, 976 insertions(+), 268 deletions(-); lines blamed to it at head: 824
+diff: 16 files changed, 976 insertions(+), 268 deletions(-); lines blamed to it at head: 825
+rebase: as 05a201a on the old line, changed lines the same (context only moved)
   file: BACKOTTER.md
   file: crates/core/src/archiver.rs
   file: crates/core/src/backend/ignore/mapper.rs
@@ -1104,9 +1153,10 @@ reason:
   |   only with --set-atime yes where listing moves atimes. The upstream
   |   tests edited to hide the atime default are stock again.
 
-[rustic_core 43] 22a997e 2026-11-03 09:37
+[rustic_core 43] a98cdad 2026-11-03 09:37
 subject: backotter: a bare-metal root is fresh; no hole filling on ZFS; restic before 0.16 is restic
 diff: 3 files changed, 304 insertions(+), 32 deletions(-); lines blamed to it at head: 182
+rebase: the same patch as 22a997e on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/osattrs/sparse.rs
   file: crates/core/src/commands/restore.rs
@@ -1128,9 +1178,10 @@ reason:
   |   regular file of a Unix file system without a mode had mode 0 there
   |   (/etc/shadow comes back 0000, not 0644).
 
-[rustic_core 44] 71b02d3 2026-11-03 10:50
+[rustic_core 44] 7b79f82 2026-11-03 10:50
 subject: backotter: fresh restore targets by mount points; holes Linux only; merge known-bko only if all are
-diff: 8 files changed, 438 insertions(+), 208 deletions(-); lines blamed to it at head: 391
+diff: 8 files changed, 438 insertions(+), 208 deletions(-); lines blamed to it at head: 390
+rebase: the same patch as 71b02d3 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/osattrs.rs
   file: crates/core/src/backend/osattrs/sparse.rs
@@ -1161,9 +1212,10 @@ reason:
   | every snapshot merged is BackOtter's; otherwise each word is cut there
   | ("rustic 0.11.4+backotter.3" -> "rustic 0.11.4").
 
-[rustic_core 45] 9e78ecf 2026-11-03 11:15
+[rustic_core 45] 6a3e9ee 2026-11-03 11:15
 subject: backotter: a sticky or world-writable restore target is never fresh
 diff: 1 file changed, 54 insertions(+), 5 deletions(-); lines blamed to it at head: 55
+rebase: the same patch as 9e78ecf on the old line
   file: crates/core/src/commands/restore.rs
 reason:
   | An existing empty destination counted as fresh, so restore SNAP:subfolder
@@ -1172,9 +1224,10 @@ reason:
   | 0002 is now never fresh, even empty; mkfs, newfs, zfs create and btrfs
   | subvolume create never make such a root. As BackOtter's restic.
 
-[rustic_core 46] 6093877 2026-11-03 16:17
+[rustic_core 46] 4cb4f9f 2026-11-03 16:17
 subject: backotter: a new nilfs2 root with its empty .nilfs is fresh
 diff: 2 files changed, 91 insertions(+), 8 deletions(-); lines blamed to it at head: 77
+rebase: the same patch as 6093877 on the old line
   file: BACKOTTER.md
   file: crates/core/src/commands/restore.rs
 reason:
@@ -1186,9 +1239,10 @@ reason:
   | regular file), as BackOtter's restic. A .nilfs with data, or of another
   | type, is not fresh.
 
-[rustic_core 47] 6e8b009 2026-11-03 17:05
+[rustic_core 47] c497fa7 2026-11-03 17:05
 subject: backotter: the .nilfs symlink test points at an empty file; docs say a shared DEST isn't fresh
 diff: 2 files changed, 9 insertions(+), 3 deletions(-); lines blamed to it at head: 9
+rebase: the same patch as 6e8b009 on the old line
   file: BACKOTTER.md
   file: crates/core/src/commands/restore.rs
 reason:
@@ -1199,28 +1253,41 @@ reason:
   | restore_target_is_fresh too. BACKOTTER.md's summary of the fresh rule now
   | says an existing sticky or world-writable destination never is.
 
-[rustic_core 48] 0d38e2e 2026-11-05 07:15
-subject: backotter: Cargo.lock takes the patched zstd, rustls, rustls-webpki, ctutils
-diff: 1 file changed, 13 insertions(+), 13 deletions(-); lines blamed to it at head: 12
-  file: Cargo.lock
+[rustic_core 48] f6bfc1a 2026-10-30 21:49
+subject: backotter: the fork's own restore paths are checked as upstream's #590 checks LocalDestination's
+NOTE: git author is Huge (committer MC Hobbit): what is left of the fork's cherry-pick of an upstream commit, reworded as ours in the rebase; the lines are ours by the scope's rule (the subject)
+diff: 2 files changed, 31 insertions(+), 18 deletions(-); lines blamed to it at head: 21
+rebase: NEW on this base (no commit of this subject on the old line)
+  file: crates/core/src/backend/local_destination.rs
+  file: crates/core/src/commands/restore.rs
 reason:
-  | RustSec advisories against crates that rustic-bko ships, each moved to
-  | its first patched release, semver-compatible (cargo update -p ...
-  | --precise), no manifest change:
-  | 
-  | - zstd 0.13.3 -> 0.13.4, zstd-safe 7.2.4 -> 7.4.0, zstd-sys 2.0.16 ->
-  |   2.1.2 (RUSTSEC-2026-0391, -0398, -0403, -0410, and the unsound
-  |   -0395..-0406); still libzstd 1.5.7, so compressed bytes are unchanged.
-  |   Upstream's #629 moved to zstd 0.14.3 instead, a breaking bump.
-  | - rustls 0.23.43 -> 0.23.46 (RUSTSEC-2026-0285, -0346, -0348, -0349)
-  | - rustls-webpki 0.103.14 -> 0.103.16 (RUSTSEC-2026-0382)
-  | - ctutils 0.4.2 -> 0.4.4 (RUSTSEC-2026-0385)
-  | 
-  | All need Rust 1.87 at most (rust-version stays 1.91).
+  | Upstream's b77ecc8 (#590, in 0.14.0) makes LocalDestination::path refuse
+  | a node path that leaves the destination. This was the fork's cherry-pick
+  | of it (a45dc6f on 0.13.0); on 0.14.0 what stays is the fork's part: the
+  | paths its own code touches (write_sparse_at, illumos' and Haiku's
+  | extended attributes, and in restore.rs prepare_dir, prepare_file, a
+  | quarantined file's removal, hole filling, set_metadata's osattrs calls
+  | and the late flags) take the checked path, through one target_of in
+  | collect_and_prepare.
 
-[rustic_core 49] 6c1cdad 2026-11-05 07:15
+[rustic_core 49] 3f6a52c 2026-10-31 11:10
+subject: backotter: hard_link's notes: upstream's #634 leaves the right link as it is
+NOTE: git author is Akayashuu (committer MC Hobbit): what is left of the fork's cherry-pick of an upstream commit, reworded as ours in the rebase; the lines are ours by the scope's rule (the subject)
+diff: 1 file changed, 5 insertions(+), 3 deletions(-); lines blamed to it at head: 5
+rebase: NEW on this base (no commit of this subject on the old line)
+  file: crates/core/src/backend/local_destination.rs
+reason:
+  | Upstream's 506a1da (#634, in 0.14.0) makes LocalDestination::hard_link
+  | replace an entry already at the link's name, but leave the right link as
+  | it is, which also keeps the file when a symlinked directory makes both
+  | names one. This was the fork's cherry-pick of it (bfa2f3a on 0.13.0),
+  | which replaced the fork's own remove-then-link; on 0.14.0 what stays is
+  | the fork's note on hard_link, against BackOtter's restic.
+
+[rustic_core 50] bb2dd4d 2026-11-05 07:15
 subject: backotter: version 0.13.0+backotter.4, with upstream's fixes since 0.13.0
-diff: 3 files changed, 75 insertions(+), 2 deletions(-); lines blamed to it at head: 67
+diff: 3 files changed, 75 insertions(+), 2 deletions(-); lines blamed to it at head: 61
+rebase: PATCH CHANGED against 6c1cdad on the old line: 4 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
@@ -1230,11 +1297,11 @@ reason:
   | advisories left, and the upstream commits deliberately not ported, each
   | with its reason.
 
-[rustic_core 50] 1cd8fd5 2026-11-05 07:55
+[rustic_core 51] f3a4403 2026-11-05 07:55
 subject: backotter: Cargo.lock takes chacha20 0.10.2 (0.10.1 is yanked)
-diff: 2 files changed, 12 insertions(+), 8 deletions(-); lines blamed to it at head: 11
+diff: 1 file changed, 10 insertions(+), 6 deletions(-); lines blamed to it at head: 4
+rebase: PATCH CHANGED against 1cd8fd5 on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
 reason:
   | chacha20 0.10.1, which rand 0.10's StdRng/ThreadRng uses, is yanked:
   | its SSE2 backend's rng_inner, chosen whenever AVX2 is missing, calls
@@ -1247,9 +1314,10 @@ reason:
   | 0.10.2), same dependencies, rust-version 1.85. Not a regression of the
   | port: 0.10.1 was in the lock before it.
 
-[rustic_core 51] 9c28b43 2026-11-05 08:44
+[rustic_core 52] 708f1c9 2026-11-05 08:44
 subject: backotter: notes after the upstream port; tempfile back on getrandom 0.4.3
-diff: 2 files changed, 9 insertions(+), 6 deletions(-); lines blamed to it at head: 9
+diff: 2 files changed, 9 insertions(+), 6 deletions(-); lines blamed to it at head: 6
+rebase: the same patch as 9c28b43 on the old line
   file: BACKOTTER.md
   file: Cargo.lock
 reason:
@@ -1260,9 +1328,10 @@ reason:
   | an error), and quick-xml 0.38 joins the advisories left as they are
   | (only rustic's self-update takes it).
 
-[rustic_core 52] ed28fe0 2026-11-05 23:57
+[rustic_core 53] 2f9eeec 2026-11-05 23:57
 subject: backotter: no preallocation on btrfs or bcachefs, but for NOCOW files
 diff: 1 file changed, 26 insertions(+); lines blamed to it at head: 2
+rebase: the same patch as ed28fe0 on the old line
   file: crates/core/src/backend/osattrs.rs
 reason:
   | fallocate(2)'s extents are never compressed there, so a restore onto a
@@ -1271,9 +1340,10 @@ reason:
   | 14 GiB btrfs).  A NOCOW file (a swap file) is still preallocated: it
   | isn't compressed anyway, and must have no holes.
 
-[rustic_core 53] bb7fba0 2026-11-06 07:40
+[rustic_core 54] 6af76a0 2026-11-06 07:40
 subject: backotter: 0.13.0+backotter.5; BACKOTTER.md names btrfs's preallocation rule
 diff: 3 files changed, 11 insertions(+), 4 deletions(-); lines blamed to it at head: 2
+rebase: PATCH CHANGED against bb7fba0 on the old line: 4 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
@@ -1283,9 +1353,10 @@ reason:
   | version. BACKOTTER.md says so where it describes preallocation and hole
   | filling.
 
-[rustic_core 54] dd1a67b 2026-11-06 07:58
+[rustic_core 55] 911f44c 2026-11-06 07:58
 subject: backotter: btrfs/bcachefs rule shared by preallocation and hole filling
 diff: 3 files changed, 140 insertions(+), 39 deletions(-); lines blamed to it at head: 125
+rebase: the same patch as dd1a67b on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/osattrs.rs
   file: crates/core/src/backend/osattrs/sparse.rs
@@ -1302,9 +1373,10 @@ reason:
   | Tests: allocates_types, and btrfs_allocates_only_nocow on a btrfs named by
   | BKO_TEST_BTRFS_DIR (passed on a loop btrfs, compress=zstd).
 
-[rustic_core 55] ad341b9 2026-11-06 08:06
+[rustic_core 56] 8919856 2026-11-06 08:06
 subject: backotter: fs_type keeps f_type's low 32 bits; BACKOTTER.md on rewritten files
 diff: 2 files changed, 12 insertions(+), 2 deletions(-); lines blamed to it at head: 12
+rebase: the same patch as ad341b9 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/osattrs/sparse.rs
 reason:
@@ -1314,9 +1386,10 @@ reason:
   | may keep holes that blobs of zeros already matched, now that nothing
   | allocates it on btrfs or bcachefs.
 
-[rustic_core 56] 487ec7c 2026-11-06 09:45
+[rustic_core 57] 8fad950 2026-11-06 09:45
 subject: backotter: BACKOTTER.md lists upstream's #640 (taken) and #642 (not ported)
 diff: 1 file changed, 6 insertions(+); lines blamed to it at head: 6
+rebase: the same patch as 487ec7c on the old line
   file: BACKOTTER.md
 reason:
   | 01fe284 (#640) is cherry-picked in the previous commit. It changes only
@@ -1324,9 +1397,10 @@ reason:
   | 0.13.0+backotter.5. 18fa55c (#642), an HTTP connect timeout, is a
   | feature and isn't ported.
 
-[rustic_core 57] 47294be 2026-11-07 19:02
+[rustic_core 58] 3ed8dff 2026-11-07 19:02
 subject: backotter: on Haiku a volume root with Tracker's empty trash is a fresh restore target
 diff: 2 files changed, 75 insertions(+), 3 deletions(-); lines blamed to it at head: 66
+rebase: the same patch as 47294be on the old line
   file: BACKOTTER.md
   file: crates/core/src/commands/restore.rs
 reason:
@@ -1337,16 +1411,18 @@ reason:
   | an empty `trash` directory counts as one the file system made, like
   | lost+found.
 
-[rustic_core 58] 96596bb 2026-11-07 20:35
+[rustic_core 59] b5e05f1 2026-11-07 20:35
 subject: backotter: 0.13.0+backotter.6: Haiku's Tracker trash in a fresh restore target
 diff: 2 files changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 0
+rebase: PATCH CHANGED against 96596bb on the old line: 4 changed lines gone, 4 new
   file: Cargo.lock
   file: crates/core/Cargo.toml
 reason: (no body; the subject is the reason)
 
-[rustic_core 59] b4337fa 2026-11-10 07:54
+[rustic_core 60] b171e50 2026-11-10 07:54
 subject: backotter: 0.13.0+backotter.7: counts for --strict-exit; per-xattr reads; rewrite keeps atimes; partial-restore parents
-diff: 21 files changed, 1173 insertions(+), 171 deletions(-); lines blamed to it at head: 1097
+diff: 21 files changed, 1191 insertions(+), 189 deletions(-); lines blamed to it at head: 1098
+rebase: PATCH CHANGED against b4337fa on the old line: 22 changed lines gone, 58 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
@@ -1385,9 +1461,10 @@ reason:
   |   parents of its matches their metadata and casefolding.
   | - A symlinked directory above the backed-up path is stored as its target.
 
-[rustic_core 60] 979248b 2026-11-10 19:23
+[rustic_core 61] e79e45a 2026-11-10 19:23
 subject: backotter: 0.13.0+backotter.8: restore --exact and clone sources
 diff: 7 files changed, 469 insertions(+), 17 deletions(-); lines blamed to it at head: 344
+rebase: PATCH CHANGED against 979248b on the old line: 2 changed lines gone, 2 new
   file: crates/core/Cargo.toml
   file: crates/core/src/backend/local_destination.rs
   file: crates/core/src/backend/osattrs.rs
@@ -1406,9 +1483,10 @@ reason:
   | their contents, cloned whole (FICLONE) instead of written.  For bko-holt
   | load's shared btrfs snapshots (backotter docs/design/btrfs-snapshots.md).
 
-[rustic_core 61] 2fcfef2 2026-11-10 19:52
+[rustic_core 62] f1782be 2026-11-10 19:52
 subject: backotter: clone sources only where they are; a failed clone that touched nothing keeps what matched
 diff: 3 files changed, 38 insertions(+), 12 deletions(-); lines blamed to it at head: 11
+rebase: the same patch as 2fcfef2 on the old line
   file: crates/core/src/commands/restore.rs
   file: crates/core/src/commands/restore/exact.rs
   file: crates/core/src/repository.rs
@@ -1419,9 +1497,10 @@ reason:
   | opened leaves its matching blobs matched (exact-rt.sh: every file whose
   | contents were in such a path was written whole).
 
-[rustic_core 62] 7ce9438 2026-11-10 20:39
+[rustic_core 63] 9b69467 2026-11-10 20:39
 subject: backotter: restore --exact removes an SELinux label the node doesn't have
 diff: 2 files changed, 42 insertions(+), 3 deletions(-); lines blamed to it at head: 25
+rebase: the same patch as 7ce9438 on the old line
   file: crates/core/src/backend/local_destination.rs
   file: crates/core/src/commands/restore.rs
 reason:
@@ -1429,15 +1508,17 @@ reason:
   | restored may have none (Tumbleweed's snapper snapshots).  Elsewhere the
   | label stays, as before.
 
-[rustic_core 63] 0ac038a 2026-11-10 20:39
+[rustic_core 64] 1cbed1f 2026-11-10 20:39
 subject: backotter: set_extended_attributes and set_xattrs_with, the tests' since --exact
 diff: 1 file changed, 2 insertions(+); lines blamed to it at head: 2
+rebase: the same patch as 0ac038a on the old line
   file: crates/core/src/backend/local_destination.rs
 reason: (no body; the subject is the reason)
 
-[rustic_core 64] aa78f29 2026-11-12 15:26
+[rustic_core 65] c74f7b0 2026-11-12 15:26
 subject: backotter: 0.13.0+backotter.9: XFS realtime inheritance kept on directories
 diff: 4 files changed, 89 insertions(+), 51 deletions(-); lines blamed to it at head: 81
+rebase: PATCH CHANGED against aa78f29 on the old line: 2 changed lines gone, 2 new
   file: BACKOTTER.md
   file: crates/core/Cargo.toml
   file: crates/core/src/backend/node/generic_attributes.rs
@@ -1455,9 +1536,10 @@ reason:
   | (xfs_options_on_xfs, chattr +St on a directory), and a rustic round trip
   | on loop XFS (directory t restored, its children without it).
 
-[rustic_core 65] 841a6ab 2026-11-12 15:52
+[rustic_core 66] 0ed2bd3 2026-11-12 15:52
 subject: backotter: XFS options: an existing directory's off before its entries; rtinherit refused alone
 diff: 5 files changed, 257 insertions(+), 28 deletions(-); lines blamed to it at head: 226
+rebase: the same patch as 841a6ab on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/osattrs.rs
   file: crates/core/src/backend/osattrs/linux.rs
@@ -1489,9 +1571,10 @@ reason:
   | last, its file and directory get none, and restored again over that tree
   | neither do the entries made anew (fails without the change).
 
-[rustic_core 66] 2cd21d4 2026-11-12 17:50
+[rustic_core 67] ff3c799 2026-11-12 17:50
 subject: backotter: XFS options cleared for a restore go back on every exit, the destination's too
 diff: 4 files changed, 285 insertions(+), 53 deletions(-); lines blamed to it at head: 228
+rebase: the same patch as 2cd21d4 on the old line
   file: BACKOTTER.md
   file: crates/core/src/commands/restore.rs
   file: crates/core/src/lib.rs
@@ -1527,9 +1610,10 @@ reason:
   | (SIGINT) while writing a 1.5 GB file: the three cleared directories (t)
   | were 0 during the restore and 0x100 again after it.
 
-[rustic_core 67] fb55116 2026-11-12 20:08
+[rustic_core 68] 48a9182 2026-11-12 20:08
 subject: backotter: after an interrupt's XFS put-back, a restore makes no entry; RestorePlan's docs back on it
 diff: 4 files changed, 107 insertions(+), 32 deletions(-); lines blamed to it at head: 98
+rebase: the same patch as fb55116 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/local_destination.rs
   file: crates/core/src/commands/restore.rs
@@ -1568,9 +1652,10 @@ reason:
   | hint, with 2cd21d4; 3295 files, none with it, with this; the directory
   | had its hint back both times.
 
-[rustic_core 68] 5270ff3 2026-11-12 21:38
+[rustic_core 69] aa63cdb 2026-11-12 21:38
 subject: backotter: the plan's early file creation waits too after an interrupt's XFS put-back
 diff: 2 files changed, 18 insertions(+); lines blamed to it at head: 18
+rebase: the same patch as 5270ff3 on the old line
   file: crates/core/src/backend/osattrs.rs
   file: crates/core/src/commands/restore.rs
 reason:
@@ -1594,9 +1679,10 @@ reason:
   | _destination; clippy --all-targets, nothing new; no_entry_after_put_back
   | fails with the gate taken out of prepare_file, passes with it.
 
-[rustic_core 69] 3f2f3b2 2026-11-13 18:01
+[rustic_core 70] 3e6fe2c 2026-11-13 18:01
 subject: backotter: --clone-from never clones from inside the destination, nor a file onto itself
 diff: 4 files changed, 169 insertions(+), 10 deletions(-); lines blamed to it at head: 152
+rebase: PATCH CHANGED against 3f2f3b2 on the old line: 2 changed lines gone, 2 new
   file: crates/core/Cargo.toml
   file: crates/core/src/commands/restore/exact.rs
   file: crates/core/src/repository.rs
@@ -1628,9 +1714,10 @@ reason:
   | CachyOS layout; with TMPDIR on XFS it failed before with a 0-byte file).
   | Version 0.13.0+backotter.10.
 
-[rustic_core 70] 3bb01f1 2026-11-14 00:14
+[rustic_core 71] 0f0ffc2 2026-11-14 00:14
 subject: backotter: a restore holds at most 256 MiB of pack data; fewer readers on a small machine
 diff: 4 files changed, 106 insertions(+), 4 deletions(-); lines blamed to it at head: 104
+rebase: PATCH CHANGED against 3bb01f1 on the old line: 4 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
@@ -1670,9 +1757,10 @@ reason:
   | (8 threads after) 7.74 s / 1.72 GB before, 7.29 s / 359 MB after. Every
   | restore identical to the source.
 
-[rustic_core 71] 6f223a2 2026-11-14 11:54
+[rustic_core 72] 5cdeae7 2026-11-14 11:54
 subject: backotter: a restore writes each file through one handle, so ext4 keeps it in few extents
 diff: 3 files changed, 741 insertions(+), 112 deletions(-); lines blamed to it at head: 722
+rebase: the same patch as 6f223a2 on the old line
   file: crates/core/src/backend/local_destination.rs
   file: crates/core/src/commands/restore.rs
   file: crates/core/src/commands/restore/files_writer.rs
@@ -1687,9 +1775,10 @@ reason:
   | each file after its last write. LocalDestination gains open_for_write and
   | positioned write_at/write_sparse_at on a &File.
 
-[rustic_core 72] fd7062d 2026-11-14 12:37
+[rustic_core 73] 5af6726 2026-11-14 12:37
 subject: backotter: 0.13.0+backotter.12; BACKOTTER.md on writing each file through one handle
 diff: 3 files changed, 15 insertions(+), 2 deletions(-); lines blamed to it at head: 13
+rebase: PATCH CHANGED against fd7062d on the old line: 4 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
@@ -1711,9 +1800,10 @@ reason:
   | extents. SticTest1 kali: 35 PASS / 4 LIMIT / 0 FAIL on Chopin (twice)
   | and on Cinqcent.
 
-[rustic_core 73] b660a71 2026-11-14 20:31
+[rustic_core 74] 83061ea 2026-11-14 20:31
 subject: backotter: restore --exact as restic-bko 0.19.1+backotter.12: temp-file clones, unbroken links left alone, kept link groups, flags cleared only for changes and put back held
 diff: 8 files changed, 2225 insertions(+), 374 deletions(-); lines blamed to it at head: 1998
+rebase: the same patch as b660a71 on the old line
   file: crates/core/src/backend/local_destination.rs
   file: crates/core/src/backend/node/generic_attributes.rs
   file: crates/core/src/backend/osattrs.rs
@@ -1770,9 +1860,10 @@ reason:
   | integration tests fail on fd7062d. test_restore_xfs_options_stopped now
   | makes an entry in `plain`, which is what clears its options.
 
-[rustic_core 74] ba93d6e 2026-11-14 20:31
+[rustic_core 75] 726eeb3 2026-11-14 20:31
 subject: backotter: 0.13.0+backotter.13; BACKOTTER.md on restore --exact, --clone-from, flags held and --delete
 diff: 3 files changed, 158 insertions(+), 8 deletions(-); lines blamed to it at head: 152
+rebase: PATCH CHANGED against ba93d6e on the old line: 4 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
@@ -1786,9 +1877,10 @@ reason:
   | kept hard-link group whose contents differ is written in place rather
   | than broken.
 
-[rustic_core 75] ad51297 2026-11-15 05:17
+[rustic_core 76] 609a352 2026-11-15 05:17
 subject: backotter: restore --exact fix round in progress (restore.rs, files_writer.rs, tests)
 diff: 6 files changed, 472 insertions(+), 41 deletions(-); lines blamed to it at head: 386
+rebase: PATCH CHANGED against ad51297 on the old line: 4 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
@@ -1800,9 +1892,10 @@ reason:
   | all"); the restic-parity fix round may still be mid-edit and finishes
   | it in later commits.
 
-[rustic_core 76] e66975f 2026-11-15 06:25
+[rustic_core 77] 8fbb39f 2026-11-15 06:25
 subject: backotter: test_restore_sparse on btrfs and bcachefs: files over holes keep matched zeros' holes
 diff: 1 file changed, 80 insertions(+), 10 deletions(-); lines blamed to it at head: 75
+rebase: the same patch as e66975f on the old line
   file: crates/core/tests/integration/restore.rs
 reason:
   | The restore over existing files expected an unmarked file over a file of
@@ -1815,9 +1908,10 @@ reason:
   | --dry-run there, and checks with SEEK_HOLE that the files written in full
   | (new ones, one over other contents) have no hole before their end.
 
-[rustic_core 77] e21b85b 2026-11-15 08:21
+[rustic_core 78] 0f64de6 2026-11-15 08:21
 subject: backotter: 0.13.0+backotter.15: restore --exact on NetBSD puts back an atime its own reads moved alone, leaving the ctime
 diff: 7 files changed, 142 insertions(+), 22 deletions(-); lines blamed to it at head: 127
+rebase: PATCH CHANGED against e21b85b on the old line: 4 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
@@ -1837,9 +1931,10 @@ reason:
   | (exact::atime_put_back, osattrs::set_atime); one where that fails gets
   | its metadata whole.  Elsewhere nothing changes.
 
-[rustic_core 78] 3fd3921 2026-11-15 08:41
+[rustic_core 79] 36f8e25 2026-11-15 08:41
 subject: backotter: BACKOTTER.md on restore --exact's atimes: NetBSD noatime, FreeBSD's reads, the test's and the put-back's limits
 diff: 1 file changed, 23 insertions(+), 7 deletions(-); lines blamed to it at head: 23
+rebase: the same patch as 3fd3921 on the old line
   file: BACKOTTER.md
 reason:
   | The review of 0.13.0+backotter.15 found: a NetBSD FFS mounted noatime
@@ -1854,9 +1949,10 @@ reason:
   | entry that doesn't match is looked at twice.  Documentation only; the
   | version stays 0.13.0+backotter.15 (unpushed).
 
-[rustic_core 79] 695d676 2026-11-20 16:30
+[rustic_core 80] ccdcee8 2026-11-20 16:30
 subject: backotter: 0.13.0+backotter.16: backup and restore paths past PATH_MAX (BackShot2 fail-001)
 diff: 16 files changed, 609 insertions(+), 50 deletions(-); lines blamed to it at head: 539
+rebase: PATCH CHANGED against 695d676 on the old line: 4 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
@@ -1899,9 +1995,10 @@ reason:
   | xattr, contents, a symlink; restored, again, and with --delete) and
   | walkdir's longpath tests fail before this and pass after.
 
-[rustic_core 80] f6293c2 2026-11-21 00:23
+[rustic_core 81] b719d32 2026-11-21 00:23
 subject: backotter: read dirent names through the entry pointer, not libc's d_name array (RustAudit1 R4-02)
 diff: 3 files changed, 31 insertions(+), 14 deletions(-); lines blamed to it at head: 31
+rebase: the same patch as f6293c2 on the old line
   file: crates/core/src/backend/osattrs/haiku.rs
   file: crates/core/src/backend/osattrs/illumos.rs
   file: vendor/walkdir/src/noatime.rs
@@ -1918,9 +2015,10 @@ reason:
   | fields through it, as std's readdir does; one unsafe operation per block,
   | each with its SAFETY comment.  No change in what is read.
 
-[rustic_core 81] 555955e 2026-11-21 00:23
+[rustic_core 82] fb98d2c 2026-11-21 00:23
 subject: backotter: restore_flags_with checks i/a after FS_IOC_FSSETXATTR, as put_back_restricting_with (RustAudit1 R2-01)
 diff: 1 file changed, 120 insertions(+), 8 deletions(-); lines blamed to it at head: 97
+rebase: the same patch as 555955e on the old line
   file: crates/core/src/backend/osattrs/linux.rs
 reason:
   | A node with btrfs.compression and chattr +i/+a takes the compression path
@@ -1943,17 +2041,19 @@ reason:
   | i+a) and a file system without FS_IOC_FSSETXATTR; restore_flags_calls'
   | mock now keeps the flags so the read-back sees them.
 
-[rustic_core 82] 6b1e432 2026-11-21 00:26
+[rustic_core 83] 5e02e24 2026-11-21 00:26
 subject: backotter: 0.13.0+backotter.17; BACKOTTER.md on the btrfs-compression flags' read-back (RustAudit1 R2-01, R4-02)
 diff: 3 files changed, 9 insertions(+), 3 deletions(-); lines blamed to it at head: 7
+rebase: PATCH CHANGED against 6b1e432 on the old line: 4 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
 reason: (no body; the subject is the reason)
 
-[rustic_core 83] ccbffc1 2026-11-21 00:40
+[rustic_core 84] a4bff00 2026-11-21 00:40
 subject: backotter: FreeBSD/NetBSD extended attributes are read by their names' bytes, kept by lossy names (RustAudit1 R3-01)
 diff: 3 files changed, 101 insertions(+), 27 deletions(-); lines blamed to it at head: 92
+rebase: the same patch as ccbffc1 on the old line
   file: crates/core/src/backend/osattrs.rs
   file: crates/core/src/backend/osattrs/bsd_extattr.rs
   file: crates/core/src/backend/osattrs/freebsd_netbsd.rs
@@ -1963,9 +2063,10 @@ reason:
   | value, a system one was dropped. The names stay bytes now; a node keeps
   | them lossy, as a Linux name and restic-bko's JSON.
 
-[rustic_core 84] c442156 2026-11-21 00:40
+[rustic_core 85] 9f973dc 2026-11-21 00:40
 subject: backotter: illumos refuses a snapshot's attribute names that aren't attribute files: '', '.', '..', '/', NUL, the system views (RustAudit1 R4-01)
 diff: 2 files changed, 80 insertions(+), 6 deletions(-); lines blamed to it at head: 69
+rebase: the same patch as c442156 on the old line
   file: crates/core/src/backend/osattrs/illumos.rs
   file: crates/core/src/backend/osattrs/illumos_xattrmeta.rs
 reason:
@@ -1974,17 +2075,19 @@ reason:
   | file, restore_one_xattr_meta chowned and chmodded it, and a '/' led out of
   | the attribute directory. Each such name is now a warning, and skipped.
 
-[rustic_core 85] f2428c3 2026-11-21 00:41
+[rustic_core 86] 6cc86d2 2026-11-21 00:41
 subject: backotter: 0.13.0+backotter.18; BACKOTTER.md on BSD extattr names' bytes and illumos' refused attribute names (RustAudit1 R3-01, R4-01)
 diff: 3 files changed, 14 insertions(+), 4 deletions(-); lines blamed to it at head: 12
+rebase: PATCH CHANGED against f2428c3 on the old line: 4 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
 reason: (no body; the subject is the reason)
 
-[rustic_core 86] 81ed0b5 2026-11-21 02:56
+[rustic_core 87] 014e99b 2026-11-21 02:56
 subject: backotter: 0.13.0+backotter.19: short_path's links lead to prefixes of at most 1000 bytes, which XFS takes (BackShot2 fail-001)
 diff: 4 files changed, 69 insertions(+), 15 deletions(-); lines blamed to it at head: 18
+rebase: PATCH CHANGED against 81ed0b5 on the old line: 4 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
@@ -2007,9 +2110,10 @@ reason:
   | Tests: every link's target is at most 1024 bytes, and a tree of 255-byte
   | names (a '/' only every 256 bytes) is reached past PATH_MAX too.
 
-[rustic_core 87] a5785e7 2026-11-21 03:58
+[rustic_core 88] 0e72ba1 2026-11-21 03:58
 subject: backotter: 0.13.0+backotter.20: short_path keeps 2048-byte prefixes where the links' file system takes them, 1000 where it doesn't (XFS)
 diff: 4 files changed, 240 insertions(+), 94 deletions(-); lines blamed to it at head: 190
+rebase: PATCH CHANGED against a5785e7 on the old line: 4 changed lines gone, 4 new
   file: BACKOTTER.md
   file: Cargo.lock
   file: crates/core/Cargo.toml
@@ -2046,9 +2150,10 @@ reason:
   | and on tmpfs (chunk 2048).  Assert messages give their values as
   | arguments (walkdir is edition 2018).
 
-[rustic_core 88] 040b5ae 2026-11-21 06:25
+[rustic_core 89] 7eb9991 2026-11-21 06:25
 subject: backotter: a backup warns about ignore files past PATH_MAX it can't read, and counts them as incomplete (RustAudit1 XR1-01)
 diff: 3 files changed, 128 insertions(+), 7 deletions(-); lines blamed to it at head: 108
+rebase: the same patch as 040b5ae on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/ignore.rs
   file: crates/core/tests/integration/restore.rs
@@ -2074,9 +2179,10 @@ reason:
   | excludes secret.key; one at the top applied as ever) fails before this
   | (secret.key backed up, 0 incomplete) and passes after.
 
-[rustic_core 89] d1dc78d 2026-11-21 06:29
+[rustic_core 90] d161fb4 2026-11-21 06:29
 subject: backotter: messages past PATH_MAX name the long path, not the short one in $TMPDIR (RustAudit1 XR1-02)
 diff: 5 files changed, 120 insertions(+), 43 deletions(-); lines blamed to it at head: 115
+rebase: the same patch as d1dc78d on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/ignore/mapper.rs
   file: crates/core/src/backend/osattrs.rs
@@ -2112,9 +2218,10 @@ reason:
   | a file it can't remove 4.5 KB deep) fails before this ("the first
   | /tmp/.bko-longpath-.../d049...") and passes after.
 
-[rustic_core 90] 90035f1 2026-11-21 06:32
+[rustic_core 91] 4110ddd 2026-11-21 06:32
 subject: backotter: why a path past PATH_MAX can't be shortened is warned about, once (RustAudit1 XR1-03)
 diff: 6 files changed, 181 insertions(+), 19 deletions(-); lines blamed to it at head: 168
+rebase: the same patch as 90035f1 on the old line
   file: BACKOTTER.md
   file: crates/core/src/backend/ignore.rs
   file: crates/core/src/backend/local_destination.rs
@@ -2152,9 +2259,10 @@ reason:
   | directory, comes again once the directory is there without making
   | anything in it, and short_path gives the path as it is and reports once.
 
-[rustic_core 91] 4c4b462 2026-11-21 06:33
+[rustic_core 92] c5e86ff 2026-11-21 06:33
 subject: backotter: short_path's links are made in $TMPDIR's canonical path, so a symlink there is followed once, not each round (RustAudit1 XR2-01)
 diff: 2 files changed, 50 insertions(+), 5 deletions(-); lines blamed to it at head: 42
+rebase: the same patch as 4c4b462 on the old line
   file: BACKOTTER.md
   file: vendor/walkdir/src/longpath.rs
 reason:
@@ -2180,9 +2288,10 @@ reason:
   | of symbolic links" (28 links); long_paths_reach_the_same_file checks the
   | links' directory against the canonical temporary directory.
 
-[rustic_core 92] 495b9d7 2026-11-21 06:34
+[rustic_core 93] d77c6ce 2026-11-21 06:34
 subject: backotter: longpath's test asks what probe asks (a 2048-byte target); docs name ext2/3/4 on 2 KiB blocks (RustAudit1 XR2-02)
 diff: 2 files changed, 20 insertions(+), 12 deletions(-); lines blamed to it at head: 19
+rebase: the same patch as 495b9d7 on the old line
   file: BACKOTTER.md
   file: vendor/walkdir/src/longpath.rs
 reason:
@@ -2201,9 +2310,10 @@ reason:
   | walkdir's longpath tests failed before this (chunk 1000, "a target over
   | 1024 bytes taken: true", left 1000 right 2048) and pass after.
 
-[rustic_core 93] b4fbcd6 2026-11-21 06:36
+[rustic_core 94] 2314d58 2026-11-21 06:36
 subject: backotter: a $TMPDIR of 501-1024 bytes serves paths past PATH_MAX again where links take 2048-byte prefixes (RustAudit1 XR2-03)
 diff: 2 files changed, 80 insertions(+), 17 deletions(-); lines blamed to it at head: 63
+rebase: the same patch as b4fbcd6 on the old line
   file: BACKOTTER.md
   file: vendor/walkdir/src/longpath.rs
 reason:
@@ -2232,9 +2342,10 @@ reason:
   | nothing in $TMPDIR.  With $TMPDIR on tmpfs it failed before this
   | (make_dir: "the temporary directory ... is over 500 bytes").
 
-[rustic_core 94] 7c98b57 2026-11-21 06:36
+[rustic_core 95] 547cc41 2026-11-21 06:36
 subject: backotter: short_path's doc and BACKOTTER.md list every way a long path is given back, and the ELOOP case (RustAudit1 XR2-04)
 diff: 2 files changed, 27 insertions(+), 16 deletions(-); lines blamed to it at head: 27
+rebase: the same patch as 7c98b57 on the old line
   file: BACKOTTER.md
   file: vendor/walkdir/src/longpath.rs
 reason:
@@ -2254,9 +2365,10 @@ reason:
   | levels of symbolic links").  try_short_path's # Errors and BACKOTTER.md
   | list the same failures.  Docs only.
 
-[rustic_core 95] 4f68d6a 2026-11-21 06:39
+[rustic_core 96] 0b16ec8 2026-11-21 06:39
 subject: backotter: longpath.rs: clippy's default lints on the lines RustAudit1 XR1-03, XR2-02 and XR2-03 added
 diff: 1 file changed, 4 insertions(+), 5 deletions(-); lines blamed to it at head: 4
+rebase: the same patch as 4f68d6a on the old line
   file: vendor/walkdir/src/longpath.rs
 reason:
   | inspect_err for recording why the links' directory wasn't made (XR1-03),
@@ -2265,9 +2377,10 @@ reason:
   | link count (XR2-01's test).  No change in what the code does; the vendored
   | walkdir's longpath tests pass as before.
 
-[rustic_core 96] a04257f 2026-11-21 06:39
+[rustic_core 97] 1758deb 2026-11-21 06:39
 subject: backotter: 0.13.0+backotter.21: paths past PATH_MAX, re-audited (RustAudit1 XR1-01..03, XR2-01..04)
 diff: 2 files changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 0
+rebase: PATCH CHANGED against a04257f on the old line: 4 changed lines gone, 4 new
   file: Cargo.lock
   file: crates/core/Cargo.toml
 reason:
@@ -2291,19 +2404,21 @@ reason:
   | - XR2-04: short_path's doc lists every way a path is given back, and the
   |   ELOOP case.
 
-[rustic_core 97] 3027d2b 2026-11-21 21:47
+[rustic_core 98] 1dd42a7 2026-11-21 21:47
 subject: osattrs: RustAudit1 fixes in the BSD extattr and illumos xattr backends (another session's uncommitted work, committed on request)
-NOTE: ours (author MC Hobbit) but the subject lacks "backotter:", so rust-scope.sh counts it upstream; its 4 files were added by backotter: commits and are in scope whole, so the scope is unchanged
+NOTE: ours without the "backotter:" prefix (not a cherry-pick); rust-scope.sh counts it as ours since c6feb3b (ForkAudit1 F9-09)
 diff: 4 files changed, 40 insertions(+), 8 deletions(-); lines blamed to it at head: 40
+rebase: the same patch as 3027d2b on the old line
   file: crates/core/src/backend/osattrs/bsd_extattr.rs
   file: crates/core/src/backend/osattrs/freebsd_netbsd.rs
   file: crates/core/src/backend/osattrs/illumos.rs
   file: crates/core/src/backend/osattrs/illumos_xattrmeta.rs
 reason: (no body; the subject is the reason)
 
-[rustic_core 98] ead8a63 2026-11-22 03:21
+[rustic_core 99] 1b369dd 2026-11-22 03:21
 subject: backotter: 0.13.0+backotter.22: RustAudit1's osattrs fixes in the BSD extattr and illumos xattr backends
-diff: 2 files changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 2
+diff: 2 files changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 0
+rebase: PATCH CHANGED against ead8a63 on the old line: 4 changed lines gone, 4 new
   file: Cargo.lock
   file: crates/core/Cargo.toml
 reason:
@@ -2312,38 +2427,79 @@ reason:
   | illumos_xattrmeta.rs, formatted as rustfmt has them; the doc names
   | restic-bko). No change in behaviour from .21.
 
-# rustic_core: upstream commits cherry-picked onto backotter (not ours; check they still apply and no hunk of ours undoes them)
-#   6bf2e4d 2026-08-21 fix: protect cache backend with locks (#544)
-#   6d4999a 2026-08-26 fix: include path in canonicalization errors (#548)
-#   15e6b47 2026-08-27 fix: run delete hook when replacing a file (#547)
-#   910461e 2026-08-27 fix: stop tree workers after receiver closes (#546)
-#   f888865 2026-10-30 fix: don't underflow in BlobLocation::data_length (#585)
-#   161d2bf 2026-10-30 fix(repair): safely handle file nodes with missing content in repair snapshots (#586)
-#   d361884 2026-10-30 fix(tree): safely handle directory nodes without subtree in NodeStreamer and merge_nodes (#588)
-#   cf06e90 2026-10-30 fix: don't overflow in BlobLocations::can_coalesce (#589)
-#   cc61ded 2026-10-30 fix(packer): validate blob offsets and bounds in BlobCopier (#591)
-#   0f30270 2026-10-30 fix: reject key files with invalid or excessive scrypt parameters (#592)
-#   076d507 2026-10-30 fix: join tree loader threads before releasing the index (#607)
-#   a45dc6f 2026-10-30 fix(restore): prevent path traversal in LocalDestination (#590)
-#   a2445d6 2026-10-30 test: compare the Debug form of the path in the sanitize error (#630)
-#   ba4a628 2026-10-31 fix(prune): safely handle directory nodes without subtree in find_used_blobs (#587)
-#   c631116 2026-10-31 fix(forget): count minutes within the same hour for keep-minutely (#633)
-#   9d7eb59 2026-10-31 fix(backup): compare inodes unless ignore_inode is set (#632)
-#   bfa2f3a 2026-10-31 fix(restore): replace an entry that sits where a hardlink belongs (#634)
-#   17cf76f 2026-10-31 fix: set is_hot from the repository in init_with_config (#602)
-#   1237ddc 2026-11-05 fix(backend): propagate opendal errors when checking for config (#640)
+[rustic_core 100] 006b0b9 2026-11-22 07:34
+subject: backotter: BACKOTTER.md lists upstream's commits after 2026-11-05 (rustic_core 0.14.0, rustic_backend 0.8.0), with #638 and #611 against our chunker and zero-chunk patches (ForkAudit1 F9-01, F9-03, F9-04)
+diff: 1 file changed, 33 insertions(+), 2 deletions(-); lines blamed to it at head: 17
+rebase: PATCH CHANGED against afc4ffc on the old line: 1 changed lines gone, 0 new
+  file: BACKOTTER.md
+reason:
+  | Upstream released rustic_core 0.14.0 and rustic_backend 0.8.0 (bf1de63)
+  | on 2026-11-17; "Not ported" stopped at #640/#642.  Now each later commit
+  | is listed with why it isn't taken: #638 (whole hash window prefilled:
+  | 9f88530 here does the same), #611 (zero chunks: chunk_id/zero_ids here
+  | do the same per file), #637 (chunker below a 4 KiB minimum), #639
+  | (prune, breaking), #653, #648.  The chunker and hole-reader paragraphs
+  | point at #638 and #611.  suppaftp 10 now comes through rustic_backend
+  | 0.8.0, which needs rustic_core 0.14.0.  The rebase onto 0.14.0 is
+  | recorded as pending, the user's decision; dropping our patches is D4's.
+  | Documentation only.
 
-################################################################################
-# rustic: 3853eb3 (backotter: Cargo.lock takes rustic_core ead8a63 (0.13.0+backotter.22): RustAudit)
-# stock 6b96f97; 64 commits of ours, 1 upstream commits cherry-picked (listed at the end)
-################################################################################
-
-[rustic 1] 0569d8f 2026-10-30 11:17
-subject: backotter: BackOtter's rustic_core, version 0.11.4+backotter.1
-diff: 5 files changed, 76 insertions(+), 12 deletions(-); lines blamed to it at head: 59
-  file: .gitignore
+[rustic_core 101] f0d01fd 2026-11-22 08:36
+subject: backotter: 0.14.0+backotter.1: on rustic_core 0.14.0; BACKOTTER.md on the rebase
+diff: 3 files changed, 83 insertions(+), 35 deletions(-); lines blamed to it at head: 83
+rebase: NEW on this base (no commit of this subject on the old line)
   file: BACKOTTER.md
   file: Cargo.lock
+  file: crates/core/Cargo.toml
+reason:
+  | The branch is rebased onto rustic_core-v0.14.0 (bf1de63, with
+  | rustic_backend-v0.8.0). Dropped in the rebase: the cherry-picks of
+  | upstream's fixes after 0.13.0, all in 0.14.0, and the Cargo.lock pins;
+  | 9f88530's chunker change (upstream's 43740bf, #638, does the same; its
+  | chunk_like_restic test stays); and 8955dee's per-file zero-chunk IDs
+  | (upstream's 0abb59f, #611). Of the #590 and #634 picks the fork's own
+  | parts stay.
+  | 
+  | BACKOTTER.md: the new base, what the rebase dropped and why, #561's
+  | error_count beside items_incomplete, and the upstream lists as history.
+
+# rustic_core: upstream commits cherry-picked onto backotter (not ours; check they still apply and no hunk of ours undoes them)
+#   none at this head: the base has them all
+# rustic_core: commits of the old line that are not on this one (by subject), and where they went
+#   9f88530 backotter: the chunker hashes all 64 bytes before a chunk's minimum size, as restic's does, and cuts where restic does  -> dropped, folded or reworded in the rebase
+#   6bf2e4d fix: protect cache backend with locks (#544)  -> in the base as 52a1839
+#   6d4999a fix: include path in canonicalization errors (#548)  -> in the base as c4059e3
+#   15e6b47 fix: run delete hook when replacing a file (#547)  -> in the base as 35aef00
+#   910461e fix: stop tree workers after receiver closes (#546)  -> in the base as 9d9e478
+#   f888865 fix: don't underflow in BlobLocation::data_length (#585)  -> in the base as d7e097c
+#   161d2bf fix(repair): safely handle file nodes with missing content in repair snapshots (#586)  -> in the base as 4589ea7
+#   d361884 fix(tree): safely handle directory nodes without subtree in NodeStreamer and merge_nodes (#588)  -> in the base as be62e24
+#   cf06e90 fix: don't overflow in BlobLocations::can_coalesce (#589)  -> in the base as 459bb53
+#   cc61ded fix(packer): validate blob offsets and bounds in BlobCopier (#591)  -> in the base as f5b8fd6
+#   0f30270 fix: reject key files with invalid or excessive scrypt parameters (#592)  -> in the base as 82b81d2
+#   076d507 fix: join tree loader threads before releasing the index (#607)  -> in the base as 0db92b6
+#   a45dc6f fix(restore): prevent path traversal in LocalDestination (#590)  -> in the base as b77ecc8
+#   a2445d6 test: compare the Debug form of the path in the sanitize error (#630)  -> in the base as d56cc4a
+#   ba4a628 fix(prune): safely handle directory nodes without subtree in find_used_blobs (#587)  -> in the base as fba52fa
+#   c631116 fix(forget): count minutes within the same hour for keep-minutely (#633)  -> in the base as 4c3d6fa
+#   9d7eb59 fix(backup): compare inodes unless ignore_inode is set (#632)  -> in the base as 00bd025
+#   bfa2f3a fix(restore): replace an entry that sits where a hardlink belongs (#634)  -> in the base as 506a1da
+#   17cf76f fix: set is_hot from the repository in init_with_config (#602)  -> in the base as b583e92
+#   0d38e2e backotter: Cargo.lock takes the patched zstd, rustls, rustls-webpki, ctutils  -> dropped, folded or reworded in the rebase
+#   1237ddc fix(backend): propagate opendal errors when checking for config (#640)  -> in the base as 01fe284
+
+################################################################################
+# rustic: fe54e51 (backotter: 0.12.0+backotter.1: on rustic v0.12.0 and rustic_core 0.14.0+backotte)
+# stock c4ce22f (v0.12.0); 62 commits of ours, 0 upstream commits cherry-picked (listed at the end)
+# old line (the first ForkAudit1 run's): 6b96f97..6cfea22, 69 commits
+################################################################################
+
+[rustic 1] 66a9b80 2026-10-30 11:17
+subject: backotter: BackOtter's rustic_core, version 0.11.4+backotter.1
+diff: 4 files changed, 66 insertions(+), 1 deletion(-); lines blamed to it at head: 58
+rebase: PATCH CHANGED against 0569d8f on the old line: 23 changed lines gone, 2 new
+  file: .gitignore
+  file: BACKOTTER.md
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -2355,11 +2511,11 @@ reason:
   | snapshot's program version name the build. BACKOTTER.md says what this
   | branch is and how it moves to a new rustic release.
 
-[rustic 2] 07fb9f1 2026-10-30 14:38
+[rustic 2] 4f50548 2026-10-30 14:38
 subject: backotter: SNAP:subfolder restores give the destination its metadata
-diff: 3 files changed, 31 insertions(+), 11 deletions(-); lines blamed to it at head: 10
+diff: 2 files changed, 22 insertions(+), 3 deletions(-); lines blamed to it at head: 9
+rebase: PATCH CHANGED against 07fb9f1 on the old line: 17 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: src/commands/restore.rs
 reason:
   | Restoring "SNAP:subfolder" streams the subfolder's own node first, as the
@@ -2374,9 +2530,10 @@ reason:
   | make a backup and restore match BackOtter's restic: backup --set-atime
   | yes, restore --numeric-id.
 
-[rustic 3] dc4844e 2026-10-30 21:18
+[rustic 3] abfc326 2026-10-30 21:18
 subject: backotter: batch 1 - version 0.11.4+backotter.2, numeric ids and atime by default (unreviewed)
 diff: 3 files changed, 14 insertions(+), 6 deletions(-); lines blamed to it at head: 1
+rebase: PATCH CHANGED against dc4844e on the old line: 2 changed lines gone, 2 new
   file: BACKOTTER.md
   file: Cargo.toml
   file: config/full.toml
@@ -2384,11 +2541,11 @@ reason:
   | Work in progress, committed as it stood when its review began. Cargo.lock
   | is not yet updated for the new version or rustic_core.
 
-[rustic 4] 70acebc 2026-10-30 22:55
+[rustic 4] a9b1f5d 2026-10-30 22:55
 subject: backotter: lock records 0.11.4+backotter.2; build guard; docs for batch 1 fixes
-diff: 4 files changed, 55 insertions(+), 8 deletions(-); lines blamed to it at head: 30
+diff: 3 files changed, 54 insertions(+), 7 deletions(-); lines blamed to it at head: 29
+rebase: PATCH CHANGED against 70acebc on the old line: 2 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: build-backotter.sh
   file: config/README.md
 reason:
@@ -2407,19 +2564,20 @@ reason:
   | config/README.md lists set-atime (default "yes"), set-ctime, set-devid
   | and set-xattrs in place of the stale with-atime and with-devid rows.
 
-[rustic 5] 215ebd3 2026-10-31 01:07
+[rustic 5] d48bdc0 2026-10-31 01:07
 subject: backotter: rustix 1.1.6, which builds for DragonFly
-diff: 2 files changed, 13 insertions(+), 5 deletions(-); lines blamed to it at head: 13
+diff: 1 file changed, 11 insertions(+), 3 deletions(-); lines blamed to it at head: 11
+rebase: PATCH CHANGED against 215ebd3 on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
 reason:
   | rustix 1.1.4 enables source-specific multicast socket options for
   | DragonFly that libc doesn't define there. Only rustix's entry in
   | Cargo.lock changes.
 
-[rustic 6] 90b6fea 2026-10-31 07:28
+[rustic 6] 9a917b2 2026-10-31 07:28
 subject: backotter: round 3 in progress - quieter time-zone fallback
 diff: 3 files changed, 67 insertions(+), 1 deletion(-); lines blamed to it at head: 47
+rebase: the same patch as 90b6fea on the old line
   file: BACKOTTER.md
   file: src/commands.rs
   file: src/config/logging.rs
@@ -2427,18 +2585,20 @@ reason:
   | Work in progress, committed at the user's request while its agent was
   | still checking it; later commits finish it.
 
-[rustic 7] 8063521 2026-10-31 07:57
+[rustic 7] 00fad3b 2026-10-31 07:57
 subject: backotter: round 3 in progress - time-zone fallback, docs
 diff: 2 files changed, 35 insertions(+), 22 deletions(-); lines blamed to it at head: 29
+rebase: the same patch as 8063521 on the old line
   file: BACKOTTER.md
   file: src/config/logging.rs
 reason:
   | The rest of round 3's rustic work as its agent left it when the user
   | stopped it; not built or tested yet.
 
-[rustic 8] fedf26e 2026-10-31 11:56
+[rustic 8] d315fd6 2026-10-31 11:56
 subject: backotter: round 3 finished - time-zone fallback checked
 diff: none; lines blamed to it at head: 0
+rebase: the same patch as fedf26e on the old line
 reason:
   | Round 3's rustic work (90b6fea, 8063521) stands as committed, checked on
   | Chopin (clippy --all-targets, build, the logging test, DragonFly check)
@@ -2447,17 +2607,18 @@ reason:
   | can't read gives one warning for a whole backup; jiff's own messages come
   | back with --log-level-dependencies info or above. No change needed.
 
-[rustic 9] 5196b81 2026-10-31 13:27
+[rustic 9] 58d614b 2026-10-31 13:27
 subject: backotter: notes on restore over a symlinked directory and symlink atimes
 diff: 1 file changed, 7 insertions(+), 2 deletions(-); lines blamed to it at head: 4
+rebase: the same patch as 5196b81 on the old line
   file: BACKOTTER.md
 reason: (no body; the subject is the reason)
 
-[rustic 10] c7477ad 2026-10-31 22:04
+[rustic 10] 4cd5453 2026-10-31 22:04
 subject: backotter: notes on reading files with holes, sparse restore by block and skipped sockets
-diff: 4 files changed, 15 insertions(+), 8 deletions(-); lines blamed to it at head: 6
+diff: 3 files changed, 14 insertions(+), 7 deletions(-); lines blamed to it at head: 6
+rebase: PATCH CHANGED against c7477ad on the old line: 4 changed lines gone, 2 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -2466,9 +2627,10 @@ reason:
   | blocks unwritten, sockets are skipped. Version 0.11.4+backotter.3, for
   | rustic_core 0.13.0+backotter.3.
 
-[rustic 11] 2f9c59b 2026-11-01 02:44
+[rustic 11] 83f03aa 2026-11-01 02:44
 subject: backotter: notes: a sparse restore writes only the non-zero part of each block a blob reaches into
 diff: 1 file changed, 7 insertions(+), 5 deletions(-); lines blamed to it at head: 5
+rebase: the same patch as 2f9c59b on the old line
   file: BACKOTTER.md
 reason:
   | BACKOTTER.md follows rustic_core's revised rule (SPEC3 section 3, round
@@ -2476,26 +2638,28 @@ reason:
   | blob is written only if it isn't all zeros, so a block is allocated only
   | where the file has data, as in BackOtter's restic.
 
-[rustic 12] eeb8b4b 2026-11-01 11:44
+[rustic 12] 81acddd 2026-11-01 11:44
 subject: backotter: notes: files with holes on JFS and nilfs2 come back allocated in full, in both tools alike
 diff: 1 file changed, 3 insertions(+), 1 deletion(-); lines blamed to it at head: 0
+rebase: the same patch as eeb8b4b on the old line
   file: BACKOTTER.md
 reason: (no body; the subject is the reason)
 
-[rustic 13] 9750401 2026-11-01 16:24
+[rustic 13] 4af5223 2026-11-01 16:24
 subject: backotter: notes: on JFS and nilfs2 the blocks decide which files have holes, as in BackOtter's restic
 diff: 1 file changed, 4 insertions(+), 3 deletions(-); lines blamed to it at head: 4
+rebase: the same patch as 9750401 on the old line
   file: BACKOTTER.md
 reason:
   | rustic_core dd432d2 follows restic's 6d21bd8ad: such a file is marked
   | unix.sparse, backed up by plain reading and restored sparse.  Replaces
   | eeb8b4b's note that it comes back allocated in full.
 
-[rustic 14] ed2d30d 2026-11-01 16:24
+[rustic 14] 274e4a2 2026-11-01 16:24
 subject: backotter: Cargo.lock pins rustic_core dd432d2 and its walkdir
-diff: 4 files changed, 21 insertions(+), 24 deletions(-); lines blamed to it at head: 10
+diff: 3 files changed, 10 insertions(+), 13 deletions(-); lines blamed to it at head: 5
+rebase: PATCH CHANGED against ed2d30d on the old line: 22 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -2507,11 +2671,11 @@ reason:
   | to do when the branch moves.  Built --locked on Cinqcent from the
   | GitHub sources; prep-rustic-src.sh still swaps both for paths.
 
-[rustic 15] ece6d81 2026-11-01 18:33
+[rustic 15] a29a697 2026-11-01 18:33
 subject: backotter: notes on directory atimes, restores over immutable files and FreeBSD ZFS projects; Cargo.lock pins rustic_core ccc68a2
-diff: 2 files changed, 17 insertions(+), 3 deletions(-); lines blamed to it at head: 8
+diff: 1 file changed, 15 insertions(+), 1 deletion(-); lines blamed to it at head: 8
+rebase: PATCH CHANGED against ece6d81 on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
 reason:
   | rustic_core ccc68a2: on systems without O_NOATIME a directory's metadata
   | is taken before it is listed and the size scan doesn't run; a restore
@@ -2519,11 +2683,11 @@ reason:
   | i and a) and no longer panics on a file it can't write (exit 1, as restic);
   | FreeBSD's ZFS project IDs are kept (freebsd.zfs_project).
 
-[rustic 16] feae912 2026-11-01 20:00
+[rustic 16] f8402ed 2026-11-01 20:00
 subject: backotter: Linux builds linked statically; Cargo.lock pins rustic_core ff155a7
-diff: 3 files changed, 27 insertions(+), 3 deletions(-); lines blamed to it at head: 6
+diff: 2 files changed, 25 insertions(+), 1 deletion(-); lines blamed to it at head: 6
+rebase: PATCH CHANGED against feae912 on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: build-backotter.sh
 reason:
   | build-backotter.sh links *-linux-gnu targets with +crt-static (a static
@@ -2536,9 +2700,10 @@ reason:
   | project ID before its entries, which inherit them; bcachefs.project is no
   | longer kept or restored (EINVAL).
 
-[rustic 17] 79bf2fc 2026-11-02 07:24
+[rustic 17] 86977d9 2026-11-02 07:24
 subject: backotter: Linux builds for x86_64-unknown-linux-musl, with mimalloc
-diff: 2 files changed, 28 insertions(+), 18 deletions(-); lines blamed to it at head: 23
+diff: 2 files changed, 28 insertions(+), 18 deletions(-); lines blamed to it at head: 22
+rebase: the same patch as 79bf2fc on the old line
   file: BACKOTTER.md
   file: build-backotter.sh
 reason:
@@ -2550,18 +2715,18 @@ reason:
   | *-linux-musl targets with rustic's mimalloc feature (musl's malloc is slow
   | with many threads) and refuses any Linux binary with a program interpreter.
 
-[rustic 18] 38fa50b 2026-11-02 09:20
+[rustic 18] 34b70f9 2026-11-02 09:20
 subject: backotter: notes: directories above the backed-up path keep their metadata, no device 0; Cargo.lock pins rustic_core be96479
-diff: 2 files changed, 8 insertions(+), 2 deletions(-); lines blamed to it at head: 6
+diff: 1 file changed, 6 insertions(+); lines blamed to it at head: 6
+rebase: PATCH CHANGED against 38fa50b on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
 reason: (no body; the subject is the reason)
 
-[rustic 19] 0a29f57 2026-11-02 11:10
+[rustic 19] 582976f 2026-11-02 11:10
 subject: backotter: no warning for an /etc/localtime that links to nothing; notes; Cargo.lock pins rustic_core 44e1b03
-diff: 3 files changed, 20 insertions(+), 6 deletions(-); lines blamed to it at head: 14
+diff: 2 files changed, 18 insertions(+), 4 deletions(-); lines blamed to it at head: 14
+rebase: PATCH CHANGED against 0a29f57 on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: src/config/logging.rs
 reason:
   | On Alpine without tzdata, /etc/localtime links to the missing
@@ -2574,21 +2739,21 @@ reason:
   | whole, SELinux labels never removed, append-only cleared on ZFS, no birth
   | time on illumos tmpfs (rustic_core 44e1b03).
 
-[rustic 20] b057ada 2026-11-02 12:41
+[rustic 20] 8aaf698 2026-11-02 12:41
 subject: backotter: notes: no warning for owners a non-root restore can't set, illumos tmpfs ACLs; Cargo.lock pins rustic_core 9387171
-diff: 2 files changed, 8 insertions(+), 5 deletions(-); lines blamed to it at head: 3
+diff: 1 file changed, 6 insertions(+), 3 deletions(-); lines blamed to it at head: 3
+rebase: PATCH CHANGED against b057ada on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
 reason:
   | BACKOTTER.md: a restore not running as root says nothing about an owner it
   | can't set, as restic; an NFSv4 ACL illumos tmpfs or UFS refuses (ENOSYS) is
   | a warning and the restore exits 0, in both tools (rustic_core 9387171).
 
-[rustic 21] 10990c3 2026-11-02 14:33
+[rustic 21] 50902b0 2026-11-02 14:33
 subject: backotter: notes: FAT attributes and XFS options kept; Cargo.lock pins rustic_core 393cf55
-diff: 2 files changed, 11 insertions(+), 2 deletions(-); lines blamed to it at head: 4
+diff: 1 file changed, 9 insertions(+); lines blamed to it at head: 4
+rebase: PATCH CHANGED against 10990c3 on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
 reason:
   | BACKOTTER.md: backup keeps the attributes of files on FAT
   | (linux.fat_attrs) and the options of files on XFS (linux.xfs_options) on
@@ -2596,11 +2761,11 @@ reason:
   | flags (an extent size hint also while the new file is empty); a dense
   | restore leaves XFS's preallocated flag on (rustic_core 393cf55).
 
-[rustic 22] 971b756 2026-11-02 19:23
+[rustic 22] a9b6a46 2026-11-02 19:23
 subject: backotter: notes: bcachefs.casefold and 512-byte holes; Cargo.lock pins rustic_core eea4762
-diff: 2 files changed, 15 insertions(+), 2 deletions(-); lines blamed to it at head: 13
+diff: 1 file changed, 13 insertions(+); lines blamed to it at head: 13
+rebase: PATCH CHANGED against 971b756 on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
 reason:
   | BACKOTTER.md: restore keeps holes in blocks of the destination file
   | system's own size down to 512 bytes (4096 where it isn't known), so a
@@ -2609,11 +2774,11 @@ reason:
   | warning in both tools, and BackOtter's restic now leaves an extended
   | attribute with the right value alone too (rustic_core eea4762).
 
-[rustic 23] a2f28c5 2026-11-02 20:55
+[rustic 23] 5f9942a 2026-11-02 20:55
 subject: backotter: notes: speed, mimalloc measured, device IDs, illumos xattrs; Cargo.lock pins rustic_core 7138097
-diff: 3 files changed, 34 insertions(+), 4 deletions(-); lines blamed to it at head: 31
+diff: 2 files changed, 32 insertions(+), 2 deletions(-); lines blamed to it at head: 31
+rebase: PATCH CHANGED against a2f28c5 on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: build-backotter.sh
 reason:
   | BACKOTTER.md and build-backotter.sh: musl builds keep mimalloc, measured
@@ -2625,17 +2790,11 @@ reason:
   | hard-linked FIFO none; illumos restores leave extended attributes with the
   | right value alone (rustic_core 27c5a12, 39b4368, 8386562, 7138097).
 
-[rustic 24] 21c7087 2026-11-02 21:20
-subject: backotter: Cargo.lock pins rustic_core 941e6c1 (notes: the two tools' tree IDs differ)
-diff: 1 file changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 0
-  file: Cargo.lock
-reason: (no body; the subject is the reason)
-
-[rustic 25] 28bcd87 2026-11-03 08:48
+[rustic 24] 8ea6ac3 2026-11-03 08:48
 subject: backotter: stock defaults for users who aren't BackOtter; Cargo.lock pins rustic_core 05a201a
-diff: 8 files changed, 126 insertions(+), 52 deletions(-); lines blamed to it at head: 95
+diff: 7 files changed, 124 insertions(+), 50 deletions(-); lines blamed to it at head: 94
+rebase: PATCH CHANGED against 28bcd87 on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: build-backotter.sh
   file: config/README.md
   file: config/full.toml
@@ -2657,11 +2816,11 @@ reason:
   |   <arch>-unknown-linux-musl, and it refuses a *-linux-gnu target, saying
   |   why (a static glibc build dies with SIGFPE in NSS).
 
-[rustic 26] 2fbb56b 2026-11-03 09:38
+[rustic 25] ef63cad 2026-11-03 09:38
 subject: backotter: a bare-metal root is fresh for SNAP:subfolder; Cargo.lock pins rustic_core 22a997e
-diff: 3 files changed, 19 insertions(+), 9 deletions(-); lines blamed to it at head: 2
+diff: 2 files changed, 17 insertions(+), 7 deletions(-); lines blamed to it at head: 2
+rebase: PATCH CHANGED against 2fbb56b on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: src/commands/restore.rs
 reason:
   | restore SNAP:subfolder DEST gives DEST the subfolder's metadata when DEST
@@ -2672,11 +2831,11 @@ reason:
   | alone when filling holes, and takes a snapshot without a program version
   | for restic's (before 0.16).
 
-[rustic 27] 60526d0 2026-11-03 10:51
+[rustic 26] ab9d022 2026-11-03 10:51
 subject: backotter: fresh SNAP:subfolder targets by mount points; musl ABI targets; Cargo.lock pins rustic_core 71b02d3
-diff: 5 files changed, 69 insertions(+), 30 deletions(-); lines blamed to it at head: 52
+diff: 4 files changed, 67 insertions(+), 28 deletions(-); lines blamed to it at head: 51
+rebase: PATCH CHANGED against 60526d0 on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: build-backotter.sh
   file: src/commands/merge.rs
   file: src/commands/restore.rs
@@ -2695,22 +2854,22 @@ reason:
   | armv7-unknown-linux-musleabihf, *-gnueabi -> *-musleabi), refused with a
   | clear message where rustc has no such target.
 
-[rustic 28] 2bfebfb 2026-11-03 11:27
+[rustic 27] 2214e16 2026-11-03 11:27
 subject: backotter: a sticky or world-writable restore target is never fresh
-diff: 3 files changed, 17 insertions(+), 11 deletions(-); lines blamed to it at head: 14
+diff: 2 files changed, 15 insertions(+), 9 deletions(-); lines blamed to it at head: 14
+rebase: PATCH CHANGED against 2bfebfb on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: src/commands/restore.rs
 reason:
   | rustic_core 9e78ecf: restore SNAP:subfolder into an existing destination
   | with mode bit 01000 or 0002 (an empty /tmp or /dev/shm) leaves it as it
   | is, as stock rustic does, even when it is empty. As BackOtter's restic.
 
-[rustic 29] 627f131 2026-11-03 16:17
+[rustic 28] c65a50c 2026-11-03 16:17
 subject: backotter: a new nilfs2 root is fresh for SNAP:subfolder; Cargo.lock pins rustic_core 6093877
-diff: 3 files changed, 10 insertions(+), 7 deletions(-); lines blamed to it at head: 6
+diff: 2 files changed, 8 insertions(+), 5 deletions(-); lines blamed to it at head: 6
+rebase: PATCH CHANGED against 627f131 on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: src/commands/restore.rs
 reason:
   | rustic_core 6093877: restore SNAP:subfolder onto a new nilfs2 file system
@@ -2718,11 +2877,11 @@ reason:
   | 2.2.9, as in Ubuntu 24.04 and Zorin 18) gives it the subfolder's
   | metadata. As BackOtter's restic.
 
-[rustic 30] f989942 2026-11-03 17:06
+[rustic 29] aa15fe7 2026-11-03 17:06
 subject: backotter: BACKOTTER.md names what isn't fresh; Cargo.lock pins rustic_core 6e8b009
-diff: 2 files changed, 10 insertions(+), 3 deletions(-); lines blamed to it at head: 8
+diff: 1 file changed, 8 insertions(+), 1 deletion(-); lines blamed to it at head: 8
+rebase: PATCH CHANGED against f989942 on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
 reason:
   | A new nilfs2 made by mkfs.nilfs2 before 2.0.22 (an empty .sketch beside
   | .nilfs) and a ZFS dataset with snapdir=visible (its .zfs listed) are not
@@ -2730,11 +2889,11 @@ reason:
   | that make no entries, as BackOtter's restic does. rustic_core 6e8b009
   | changes a test and its BACKOTTER.md only.
 
-[rustic 31] 21688bf 2026-11-05 07:17
+[rustic 30] 1ff47aa 2026-11-05 07:17
 subject: backotter: version 0.11.4+backotter.4 on rustic_core 0.13.0+backotter.4
-diff: 4 files changed, 84 insertions(+), 19 deletions(-); lines blamed to it at head: 65
+diff: 3 files changed, 54 insertions(+), 3 deletions(-); lines blamed to it at head: 4
+rebase: PATCH CHANGED against 21688bf on the old line: 48 changed lines gone, 2 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -2746,11 +2905,11 @@ reason:
   | rustls-webpki and ctutils; build-backotter.sh expects the new
   | rustic_core version.
 
-[rustic 32] 3034635 2026-11-05 07:56
+[rustic 31] 7516977 2026-11-05 07:56
 subject: backotter: Cargo.lock takes chacha20 0.10.2, rustic_core 1cd8fd5
-diff: 2 files changed, 17 insertions(+), 13 deletions(-); lines blamed to it at head: 14
+diff: 1 file changed, 13 insertions(+), 9 deletions(-); lines blamed to it at head: 0
+rebase: PATCH CHANGED against 3034635 on the old line: 8 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
 reason:
   | chacha20 0.10.1 is yanked: its SSE2 backend (chosen without AVX2) runs
   | SSE4.1's _mm_extract_epi32 in the RNG rand::rng() gives, which
@@ -2760,25 +2919,20 @@ reason:
   | dependencies, rust-version 1.85). rustic_core 1cd8fd5 takes the same
   | bump; the pin moves to it.
 
-[rustic 33] 2d74e29 2026-11-05 08:44
+[rustic 32] 7702b17 2026-11-05 08:44
 subject: backotter: quick-xml 0.38.4 among the advisories left as they are
-diff: 1 file changed, 3 insertions(+), 1 deletion(-); lines blamed to it at head: 3
+diff: 1 file changed, 3 insertions(+), 1 deletion(-); lines blamed to it at head: 0
+rebase: the same patch as 2d74e29 on the old line
   file: BACKOTTER.md
 reason:
   | Only self-update takes it (the release feature, not built); this build
   | has quick-xml 0.41.0.
 
-[rustic 34] 77a296d 2026-11-06 00:02
-subject: backotter: Cargo.lock takes rustic_core ed28fe0 (no preallocation on btrfs/bcachefs but for NOCOW files)
-diff: 1 file changed, 9 insertions(+), 9 deletions(-); lines blamed to it at head: 0
-  file: Cargo.lock
-reason: (no body; the subject is the reason)
-
-[rustic 35] 6e8001a 2026-11-06 07:41
+[rustic 33] 1114b62 2026-11-06 07:41
 subject: backotter: 0.11.4+backotter.5 on rustic_core bb7fba0 (0.13.0+backotter.5)
-diff: 4 files changed, 8 insertions(+), 8 deletions(-); lines blamed to it at head: 0
+diff: 3 files changed, 4 insertions(+), 4 deletions(-); lines blamed to it at head: 0
+rebase: PATCH CHANGED against 6e8001a on the old line: 10 changed lines gone, 2 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -2786,28 +2940,20 @@ reason:
   | file (a swap file), so that a restore onto a compressing mount fits where
   | the source did; this build gets its own version.
 
-[rustic 36] 42a7f4c 2026-11-06 07:58
-subject: backotter: Cargo.lock takes rustic_core dd1a67b
-diff: 1 file changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 0
-  file: Cargo.lock
-reason:
-  | rustic_core's btrfs/bcachefs rule now also keeps hole filling from opening
-  | a file it wouldn't allocate.
-
-[rustic 37] 6a92bd7 2026-11-06 08:06
+[rustic 34] f67c0bf 2026-11-06 08:06
 subject: backotter: Cargo.lock takes rustic_core ad341b9; BACKOTTER.md names btrfs's rule
-diff: 2 files changed, 8 insertions(+), 4 deletions(-); lines blamed to it at head: 6
+diff: 1 file changed, 6 insertions(+), 2 deletions(-); lines blamed to it at head: 6
+rebase: PATCH CHANGED against 6a92bd7 on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
 reason:
   | Holes are filled, and files preallocated, on btrfs only for a NOCOW file and
   | never on bcachefs, as in rustic_core and BackOtter's restic.
 
-[rustic 38] b518f42 2026-11-06 09:48
+[rustic 35] ac66b10 2026-11-06 09:48
 subject: backotter: 0.11.4+backotter.6: upstream's #1898; Cargo.lock takes rustic_core 487ec7c
-diff: 3 files changed, 24 insertions(+), 13 deletions(-); lines blamed to it at head: 20
+diff: 2 files changed, 14 insertions(+), 3 deletions(-); lines blamed to it at head: 2
+rebase: PATCH CHANGED against b518f42 on the old line: 22 changed lines gone, 2 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
 reason:
   | 8e5d8af (#1898), cherry-picked in the previous commit: docs prints the URL
@@ -2816,21 +2962,21 @@ reason:
   | 0.13.0+backotter.5. BACKOTTER.md lists both, and #1907 and #642 as not
   | ported (features).
 
-[rustic 39] 6ccec58 2026-11-07 20:35
+[rustic 36] 7befc4b 2026-11-07 20:35
 subject: backotter: 0.11.4+backotter.7: Cargo.lock takes rustic_core 96596bb (Haiku's Tracker trash)
-diff: 5 files changed, 14 insertions(+), 9 deletions(-); lines blamed to it at head: 7
+diff: 4 files changed, 10 insertions(+), 5 deletions(-); lines blamed to it at head: 4
+rebase: PATCH CHANGED against 6ccec58 on the old line: 10 changed lines gone, 2 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
   file: src/commands/restore.rs
 reason: (no body; the subject is the reason)
 
-[rustic 40] ea519cc 2026-11-10 07:54
+[rustic 37] bc733f2 2026-11-10 07:54
 subject: backotter: 0.11.4+backotter.8: --strict-exit; diff without a phantom top directory
-diff: 23 files changed, 335 insertions(+), 40 deletions(-); lines blamed to it at head: 312
+diff: 22 files changed, 353 insertions(+), 37 deletions(-); lines blamed to it at head: 318
+rebase: PATCH CHANGED against ea519cc on the old line: 33 changed lines gone, 48 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
   file: config/README.md
@@ -2864,15 +3010,10 @@ reason:
   | - Cargo.lock still pins the previous rustic_core commit: refresh it with
   |   cargo update -p rustic_core once rustic_core is pushed.
 
-[rustic 41] 46f51d9 2026-11-10 09:07
-subject: backotter: Cargo.lock takes rustic_core b4337fa (0.13.0+backotter.7)
-diff: 1 file changed, 3 insertions(+), 3 deletions(-); lines blamed to it at head: 0
-  file: Cargo.lock
-reason: (no body; the subject is the reason)
-
-[rustic 42] 5bae0a6 2026-11-10 19:23
+[rustic 38] 02d1320 2026-11-10 19:23
 subject: backotter: 0.11.4+backotter.9: restore --clone-from; --exact restores the destination's own metadata
 diff: 2 files changed, 27 insertions(+), 3 deletions(-); lines blamed to it at head: 23
+rebase: PATCH CHANGED against 5bae0a6 on the old line: 2 changed lines gone, 2 new
   file: Cargo.toml
   file: src/commands/restore.rs
 reason:
@@ -2882,9 +3023,10 @@ reason:
   | metadata (set only where it differs).  Needs rustic_core
   | 0.13.0+backotter.8 (Cargo.lock still pins .7 until it is pushed).
 
-[rustic 43] fa75dd1 2026-11-10 20:39
+[rustic 39] c4f1a3a 2026-11-10 20:39
 subject: backotter: restore --target-metadata
 diff: 1 file changed, 8 insertions(+), 1 deletion(-); lines blamed to it at head: 8
+rebase: the same patch as fa75dd1 on the old line
   file: src/commands/restore.rs
 reason:
   | The destination gets the subfolder's own metadata, set last, even when it
@@ -2892,26 +3034,21 @@ reason:
   | and whose root's metadata the backup held only through an alias it now
   | leaves out.
 
-[rustic 44] 758c062 2026-11-10 20:52
-subject: backotter: Cargo.lock takes rustic_core 0ac038a (0.13.0+backotter.8)
-diff: 1 file changed, 4 insertions(+), 4 deletions(-); lines blamed to it at head: 0
-  file: Cargo.lock
-reason: (no body; the subject is the reason)
-
-[rustic 45] 052b76f 2026-11-11 15:52
+[rustic 40] 9bce8c7 2026-11-11 15:52
 subject: backotter: build-backotter.sh expects rustic_core 0.13.0+backotter.8
 diff: 2 files changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 0
+rebase: the same patch as 052b76f on the old line
   file: BACKOTTER.md
   file: build-backotter.sh
 reason:
   | Cargo.lock has pinned rustic_core 0ac038a (0.13.0+backotter.8) since
   | 758c062; bko_core and BACKOTTER.md's "Building" now name it too.
 
-[rustic 46] f11ecd1 2026-11-12 15:26
+[rustic 41] eb3aab1 2026-11-12 15:26
 subject: backotter: 0.11.4+backotter.10: a directory's XFS realtime inheritance; expects rustic_core 0.13.0+backotter.9
-diff: 4 files changed, 6 insertions(+), 5 deletions(-); lines blamed to it at head: 2
+diff: 3 files changed, 5 insertions(+), 4 deletions(-); lines blamed to it at head: 2
+rebase: PATCH CHANGED against f11ecd1 on the old line: 4 changed lines gone, 2 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -2923,9 +3060,10 @@ reason:
   | cargo update -p rustic_core -p walkdir runs; build-backotter.sh refuses
   | to build until then.
 
-[rustic 47] 740285b 2026-11-12 15:52
+[rustic 42] 414d826 2026-11-12 15:52
 subject: backotter: BACKOTTER.md: a directory there loses its XFS options until the last pass
 diff: 1 file changed, 6 insertions(+), 4 deletions(-); lines blamed to it at head: 4
+rebase: the same patch as 740285b on the old line
   file: BACKOTTER.md
 reason:
   | Restoring over an existing tree, rustic_core now takes a directory's XFS
@@ -2933,9 +3071,10 @@ reason:
   | puts them back last. Cargo.lock still pins rustic_core 0ac038a; it takes
   | the commit with this once that is pushed.
 
-[rustic 48] a026bee 2026-11-12 17:50
+[rustic 43] d4c567c 2026-11-12 17:50
 subject: backotter: an interrupt puts back cleared XFS options; --dry-run-warmup plans as --dry-run
 diff: 3 files changed, 15 insertions(+), 4 deletions(-); lines blamed to it at head: 14
+rebase: the same patch as a026bee on the old line
   file: BACKOTTER.md
   file: src/application.rs
   file: src/commands/restore.rs
@@ -2955,9 +3094,10 @@ reason:
   | release build against the local rustic_core, and an interrupted restore
   | over XFS (see rustic_core's commit).
 
-[rustic 49] f20880e 2026-11-12 20:08
+[rustic 44] 0adb9c0 2026-11-12 20:08
 subject: backotter: an interrupt's XFS put-back stops the restore making entries (rustic_core fb55116)
 diff: 1 file changed, 3 insertions(+), 1 deletion(-); lines blamed to it at head: 3
+rebase: the same patch as f20880e on the old line
   file: src/application.rs
 reason:
   | shutdown_on_interrupt calls rustic_core::put_back_xfs_options() first and
@@ -2975,17 +3115,11 @@ reason:
   | after hook, where no file got the directory's inherited extent size hint
   | (2779 of 2780 did before).
 
-[rustic 50] ea44449 2026-11-13 02:10
-subject: backotter: Cargo.lock takes rustic_core 5270ff3 (0.13.0+backotter.9)
-diff: 1 file changed, 3 insertions(+), 3 deletions(-); lines blamed to it at head: 0
-  file: Cargo.lock
-reason: (no body; the subject is the reason)
-
-[rustic 51] a1ec9bf 2026-11-13 18:16
+[rustic 45] 273c632 2026-11-13 18:16
 subject: backotter: --clone-from offers nothing inside the destination (rustic_core 3f2f3b2, 0.13.0+backotter.10)
-diff: 5 files changed, 17 insertions(+), 9 deletions(-); lines blamed to it at head: 10
+diff: 4 files changed, 13 insertions(+), 5 deletions(-); lines blamed to it at head: 10
+rebase: PATCH CHANGED against a1ec9bf on the old line: 10 changed lines gone, 2 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
   file: src/commands/restore.rs
@@ -3002,10 +3136,10 @@ reason:
   | to clone a file onto itself. Cargo.lock takes 3f2f3b2; version
   | 0.11.4+backotter.11; build-backotter.sh wants 0.13.0+backotter.10.
 
-[rustic 52] 99b9b56 2026-11-14 00:15
+[rustic 46] 3556be9 2026-11-14 00:15
 subject: backotter: Cargo.lock takes rustic_core 3bb01f1 (0.13.0+backotter.11): a restore's memory is bounded
-diff: 3 files changed, 6 insertions(+), 6 deletions(-); lines blamed to it at head: 0
-  file: Cargo.lock
+diff: 2 files changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 0
+rebase: PATCH CHANGED against 99b9b56 on the old line: 10 changed lines gone, 2 new
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -3015,10 +3149,10 @@ reason:
   | image. Version 0.11.4+backotter.12; build-backotter.sh wants
   | 0.13.0+backotter.11.
 
-[rustic 53] a63bf7b 2026-11-14 12:38
+[rustic 47] e92833d 2026-11-14 12:38
 subject: backotter: Cargo.lock takes rustic_core fd7062d (0.13.0+backotter.12): a restore writes each file through one handle
-diff: 3 files changed, 6 insertions(+), 6 deletions(-); lines blamed to it at head: 0
-  file: Cargo.lock
+diff: 2 files changed, 2 insertions(+), 2 deletions(-); lines blamed to it at head: 0
+rebase: PATCH CHANGED against a63bf7b on the old line: 10 changed lines gone, 2 new
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -3031,9 +3165,10 @@ reason:
   | restic->rustic, vmlinuz: "holes lost"). Version 0.11.4+backotter.13;
   | build-backotter.sh wants 0.13.0+backotter.12.
 
-[rustic 54] dc98aeb 2026-11-14 15:02
+[rustic 48] 27c3759 2026-11-14 15:02
 subject: backotter: test_backup_and_check_passes backs up as /src, not under /tmp's live metadata
 diff: 1 file changed, 6 insertions(+); lines blamed to it at head: 6
+rebase: the same patch as dc98aeb on the old line
   file: tests/backup_restore.rs
 reason:
   | The fork keeps the real metadata of the directories above the backed-up
@@ -3044,11 +3179,11 @@ reason:
   | /src no real ancestor is recorded (Archiver::archive skips dir_node), so
   | the assertion holds however /tmp changes. Test only.
 
-[rustic 55] c517a69 2026-11-14 20:44
+[rustic 49] ea1b082 2026-11-14 20:44
 subject: backotter: Cargo.lock takes rustic_core ba93d6e (0.13.0+backotter.13): restore --exact as restic-bko 0.19.1+backotter.12
-diff: 4 files changed, 19 insertions(+), 7 deletions(-); lines blamed to it at head: 12
+diff: 3 files changed, 15 insertions(+), 3 deletions(-); lines blamed to it at head: 12
+rebase: PATCH CHANGED against c517a69 on the old line: 10 changed lines gone, 2 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -3071,9 +3206,10 @@ reason:
   | --locked` can't fetch it. Built and tested against a local path copy of
   | rustic_core: cargo test passes, exact-rt.sh PASS.
 
-[rustic 56] 7625a3c 2026-11-15 05:17
+[rustic 50] 179b646 2026-11-15 05:17
 subject: backotter: work in progress (BACKOTTER.md, Cargo.toml, build-backotter.sh)
 diff: 3 files changed, 11 insertions(+), 3 deletions(-); lines blamed to it at head: 8
+rebase: PATCH CHANGED against 7625a3c on the old line: 2 changed lines gone, 2 new
   file: BACKOTTER.md
   file: Cargo.toml
   file: build-backotter.sh
@@ -3081,17 +3217,11 @@ reason:
   | Committed as found in the working tree at the user's request ("commit
   | all"), alongside rustic_core's in-progress restore --exact fix round.
 
-[rustic 57] a1f210b 2026-11-15 06:51
-subject: backotter: Cargo.lock takes rustic_core e66975f (0.13.0+backotter.14): restore --delete's case variants and a kept group's later names
-diff: 1 file changed, 4 insertions(+), 4 deletions(-); lines blamed to it at head: 0
-  file: Cargo.lock
-reason: (no body; the subject is the reason)
-
-[rustic 58] ea4ee26 2026-11-15 08:22
+[rustic 51] 9180d49 2026-11-15 08:22
 subject: backotter: Cargo.lock takes rustic_core e21b85b (0.13.0+backotter.15): restore --exact on NetBSD puts back an atime its own reads moved alone
-diff: 4 files changed, 13 insertions(+), 7 deletions(-); lines blamed to it at head: 5
+diff: 3 files changed, 9 insertions(+), 3 deletions(-); lines blamed to it at head: 5
+rebase: PATCH CHANGED against ea4ee26 on the old line: 10 changed lines gone, 2 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -3100,11 +3230,11 @@ reason:
   | the rustic-rs and rustic_core versions and the rustic_core and walkdir
   | pins changed (cargo metadata --locked leaves it as it is).
 
-[rustic 59] 2c3b237 2026-11-15 08:45
+[rustic 52] a9ed1f7 2026-11-15 08:45
 subject: backotter: Cargo.lock takes rustic_core 3fd3921 (0.13.0+backotter.15): BACKOTTER.md on restore --exact's atimes
-diff: 2 files changed, 5 insertions(+), 3 deletions(-); lines blamed to it at head: 3
+diff: 1 file changed, 3 insertions(+), 1 deletion(-); lines blamed to it at head: 3
+rebase: PATCH CHANGED against 2c3b237 on the old line: 4 changed lines gone, 0 new
   file: BACKOTTER.md
-  file: Cargo.lock
 reason:
   | rustic_core 3fd3921 changes only its BACKOTTER.md over e21b85b (the
   | review of .15: a NetBSD destination mounted noatime keeps no restored
@@ -3114,11 +3244,11 @@ reason:
   | and walkdir pins moved, by hand; cargo metadata --locked (against a
   | bundle of 3fd3921) leaves it as it is.
 
-[rustic 60] fb9d3d1 2026-11-21 00:50
+[rustic 53] 2183ef4 2026-11-21 00:50
 subject: backotter: Cargo.lock takes rustic_core 6b1e432 (0.13.0+backotter.17): paths past PATH_MAX (BackShot2 fail-001), RustAudit1 R2-01 and R4-02
-diff: 4 files changed, 23 insertions(+), 7 deletions(-); lines blamed to it at head: 15
+diff: 3 files changed, 19 insertions(+), 3 deletions(-); lines blamed to it at head: 15
+rebase: PATCH CHANGED against fb9d3d1 on the old line: 10 changed lines gone, 2 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -3131,11 +3261,11 @@ reason:
   | cargo update --workspace also re-resolved windows-sys and getrandom, left
   | out; cargo metadata --locked leaves it as it is).
 
-[rustic 61] 1dede29 2026-11-21 03:09
+[rustic 54] 63d8e0c 2026-11-21 03:09
 subject: backotter: Cargo.lock takes rustic_core 81ed0b5 (0.13.0+backotter.19): paths past PATH_MAX with $TMPDIR on XFS (BackShot2 fail-001), RustAudit1 R3-01 and R4-01
-diff: 4 files changed, 18 insertions(+), 7 deletions(-); lines blamed to it at head: 11
+diff: 3 files changed, 14 insertions(+), 3 deletions(-); lines blamed to it at head: 11
+rebase: PATCH CHANGED against 1dede29 on the old line: 10 changed lines gone, 2 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -3150,11 +3280,11 @@ reason:
   | --precise 81ed0b5 gave those pins; it also re-resolved windows-sys and
   | getrandom, left out; cargo metadata --locked leaves it as it is).
 
-[rustic 62] 19fef3d 2026-11-21 04:00
+[rustic 55] 540ccc1 2026-11-21 04:00
 subject: backotter: Cargo.lock takes rustic_core a5785e7 (0.13.0+backotter.20): 2048-byte short_path prefixes again where $TMPDIR takes them, 1000 on XFS
-diff: 4 files changed, 21 insertions(+), 8 deletions(-); lines blamed to it at head: 14
+diff: 3 files changed, 17 insertions(+), 4 deletions(-); lines blamed to it at head: 14
+rebase: PATCH CHANGED against 19fef3d on the old line: 10 changed lines gone, 2 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -3172,11 +3302,11 @@ reason:
   | --precise a5785e7 gave those pins; it also re-resolved windows-sys and
   | getrandom, left out; cargo metadata --locked leaves it as it is).
 
-[rustic 63] 9ddbbaf 2026-11-21 06:41
+[rustic 56] bf4e904 2026-11-21 06:41
 subject: backotter: Cargo.lock takes rustic_core a04257f (0.13.0+backotter.21): paths past PATH_MAX re-audited (RustAudit1 XR1-01..XR2-04)
-diff: 4 files changed, 21 insertions(+), 7 deletions(-); lines blamed to it at head: 14
+diff: 3 files changed, 17 insertions(+), 3 deletions(-); lines blamed to it at head: 14
+rebase: PATCH CHANGED against 9ddbbaf on the old line: 10 changed lines gone, 2 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -3195,11 +3325,11 @@ reason:
   | --precise a04257f gave those pins; it also re-resolved windows-sys and
   | getrandom, left out; cargo metadata --locked leaves it as it is).
 
-[rustic 64] 3853eb3 2026-11-22 03:22
+[rustic 57] 0f4762b 2026-11-22 03:22
 subject: backotter: Cargo.lock takes rustic_core ead8a63 (0.13.0+backotter.22): RustAudit1's osattrs fixes (BSD extattr, illumos xattr meta)
-diff: 4 files changed, 11 insertions(+), 7 deletions(-); lines blamed to it at head: 11
+diff: 3 files changed, 7 insertions(+), 3 deletions(-); lines blamed to it at head: 4
+rebase: PATCH CHANGED against 3853eb3 on the old line: 10 changed lines gone, 2 new
   file: BACKOTTER.md
-  file: Cargo.lock
   file: Cargo.toml
   file: build-backotter.sh
 reason:
@@ -3213,6 +3343,105 @@ reason:
   | --precise ead8a63 gave those pins; it also re-resolved windows-sys and
   | getrandom, left out; cargo metadata --locked leaves it as it is).
 
+[rustic 58] 3051eb5 2026-11-22 07:28
+subject: backotter: build-backotter.sh stops without readelf instead of shipping an unchecked Linux binary (ForkAudit1 F9-07)
+diff: 2 files changed, 16 insertions(+), 4 deletions(-); lines blamed to it at head: 14
+rebase: the same patch as 627e720 on the old line
+  file: BACKOTTER.md
+  file: build-backotter.sh
+reason:
+  | The static check was `if [[ $t == *-linux-* ]] && readelf -l ... | grep -q
+  | 'program interpreter'; then`: where readelf (binutils) is missing, or
+  | fails, the pipeline fails inside the if, set -e doesn't fire, and a
+  | dynamically linked binary went to dist/.  Now a Linux target is refused
+  | before the build when readelf isn't on PATH, and the check reads
+  | readelf's output by an assignment (a failure stops the script) and
+  | matches it in bash, so neither a failed readelf nor one cut off by grep
+  | -q's early exit under pipefail lets the binary through.  BACKOTTER.md
+  | says so.  Output of the binary unchanged.
+
+[rustic 59] 6e7487c 2026-11-22 07:28
+subject: backotter: config/README.md lists set-blockdev with the other set-* backup options (ForkAudit1 F9-08)
+diff: 1 file changed, 1 insertion(+); lines blamed to it at head: 1
+rebase: the same patch as cd50197 on the old line
+  file: config/README.md
+reason:
+  | Our rows replaced the stale with-atime/with-devid rows with set-atime,
+  | set-ctime, set-devid and set-xattrs, but left out set-blockdev,
+  | rustic_core's LocalSourceSaveOptions::set_blockdev ("special", the
+  | default, or "file").  Documentation only.
+
+[rustic 60] 0804a3b 2026-11-22 07:34
+subject: backotter: BACKOTTER.md lists upstream's commits after 2026-11-05 (rustic v0.12.0, rustic_core 0.14.0) and the suppaftp fix in rustic_backend 0.8.0 (ForkAudit1 F9-01)
+diff: 1 file changed, 32 insertions(+), 2 deletions(-); lines blamed to it at head: 0
+rebase: the same patch as 363997e on the old line
+  file: BACKOTTER.md
+reason:
+  | Upstream released rustic v0.12.0 (c4ce22f), rustic_core 0.14.0 and
+  | rustic_backend 0.8.0 (bf1de63) on 2026-11-17; "Not ported" stopped at
+  | #640/#642.  Now each later rustic commit is listed with why it isn't
+  | taken: #1937 (TUI ls panic), #1950 (copy's exit status), #1908 (exit 3,
+  | overlaps --strict-exit), #1938 (mount, not built), #1952, #1963, #1990,
+  | #1997, #1920, #1881; rustic_core's are listed in BACKOTTER.md there.
+  | suppaftp 10 (RUSTSEC-2026-0271) now exists through rustic_backend 0.8.0,
+  | which needs rustic_core 0.14.0.  The rebase onto v0.12.0/0.14.0 is
+  | recorded as pending, the user's decision.  Documentation only.
+
+[rustic 61] 338eb28 2026-11-22 07:34
+subject: backotter: BACKOTTER.md and build-backotter.sh say to take rustic_core by cargo update --precise, and to revert other re-resolutions (ForkAudit1 F9-10, RustAudit1 R9-05)
+diff: 2 files changed, 18 insertions(+), 6 deletions(-); lines blamed to it at head: 17
+rebase: the same patch as 6cfea22 on the old line
+  file: BACKOTTER.md
+  file: build-backotter.sh
+reason:
+  | "Building" said to run cargo update -p rustic_core -p walkdir after
+  | rustic_core's branch moves, which takes the branch's tip on GitHub, not
+  | a commit not pushed yet; the lock commits since .19 used cargo update -p
+  | rustic_core --precise SHA and reverted the windows-sys and getrandom
+  | re-resolution it also makes.  Now "Building" says so, how to let git
+  | fetch unpushed commits from a local clone (CARGO_NET_GIT_FETCH_WITH_CLI
+  | and GIT_CONFIG_* insteadOf), and to check git diff Cargo.lock and cargo
+  | metadata --locked.  "Moving to a new rustic release" takes --precise and
+  | changes bko_core too (R9-05).  build-backotter.sh's comment and its
+  | bko_core message name the same command instead of "push rustic_core".
+  | Documentation and a build-script message only.
+  | 
+  | Tested on Cinqcent: with 9ddbbaf's lock, cargo update -p rustic_core
+  | --precise ead8a63 through a local clone moved rustic_core and walkdir to
+  | ead8a63 and, as before, windows-sys and getrandom (reverted in 3853eb3).
+
+[rustic 62] fe54e51 2026-11-22 09:38
+subject: backotter: 0.12.0+backotter.1: on rustic v0.12.0 and rustic_core 0.14.0+backotter.1
+diff: 6 files changed, 105 insertions(+), 121 deletions(-); lines blamed to it at head: 105
+rebase: NEW on this base (no commit of this subject on the old line)
+  file: BACKOTTER.md
+  file: Cargo.lock
+  file: Cargo.toml
+  file: build-backotter.sh
+  file: src/commands/backup.rs
+  file: src/config.rs
+reason:
+  | Rebased from v0.11.4 onto v0.12.0 (c4ce22f). Cargo.lock pins rustic_core
+  | f0d01fd (0.14.0+backotter.1) and its walkdir; the windows-sys and getrandom
+  | re-resolutions cargo made beside them are reverted. build-backotter.sh
+  | expects rustic_core 0.14.0+backotter.1.
+  | 
+  | Backup exit status: upstream's ed88576 (#1908) exits 3 for a backup whose
+  | error_count (rustic_core #561) isn't 0, gracefully, without --strict-exit
+  | too. --strict-exit keeps its own path: exit 3 as a failure on
+  | items_incomplete (also metadata), now with upstream's JSON exit_error under
+  | --json/--json-progress. BACKOTTER.md and --strict-exit's help say so, and
+  | "Base: rustic v0.12.0" lists what the rebase dropped and what came with it.
+
 # rustic: upstream commits cherry-picked onto backotter (not ours; check they still apply and no hunk of ours undoes them)
-#   d00e3a7 2026-08-28 fix: Print url first in docs command (#1898)
+#   none at this head: the base has them all
+# rustic: commits of the old line that are not on this one (by subject), and where they went
+#   21c7087 backotter: Cargo.lock pins rustic_core 941e6c1 (notes: the two tools' tree IDs differ)  -> dropped, folded or reworded in the rebase
+#   77a296d backotter: Cargo.lock takes rustic_core ed28fe0 (no preallocation on btrfs/bcachefs but for NOCOW files)  -> dropped, folded or reworded in the rebase
+#   42a7f4c backotter: Cargo.lock takes rustic_core dd1a67b  -> dropped, folded or reworded in the rebase
+#   d00e3a7 fix: Print url first in docs command (#1898)  -> in the base as 8e5d8af
+#   46f51d9 backotter: Cargo.lock takes rustic_core b4337fa (0.13.0+backotter.7)  -> dropped, folded or reworded in the rebase
+#   758c062 backotter: Cargo.lock takes rustic_core 0ac038a (0.13.0+backotter.8)  -> dropped, folded or reworded in the rebase
+#   ea44449 backotter: Cargo.lock takes rustic_core 5270ff3 (0.13.0+backotter.9)  -> dropped, folded or reworded in the rebase
+#   a1f210b backotter: Cargo.lock takes rustic_core e66975f (0.13.0+backotter.14): restore --delete's case variants and a kept group's later names  -> dropped, folded or reworded in the rebase
 

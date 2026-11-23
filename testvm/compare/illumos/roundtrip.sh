@@ -21,6 +21,8 @@
 # the backup, on a dataset with aclmode=passthrough, gone after a restore
 # in place, and nothing left for a second --exact to set (G5-02); system
 # attributes and a ZFS project given after the backup likewise (G5-08).
+# A rustic-bko from before the fixes (by its version: up to
+# 0.12.0+backotter.1, which is told apart by what it does) is skipped too.
 #
 # Then (not --again), as on Linux (fs_roundtrip.py): a restore over the
 # restored tree after changing it (rt-common.sh's rt_over), compared again
@@ -377,7 +379,7 @@ compare_all() {  # X
     if is_rustic $RR && grep -q '"owner_sid"' /tmp/bko-rt.xattr-sid.kept 2>/dev/null; then
         check "an attribute file's SID owner and group (illumos.xattr_meta owner_sid, group_sid)$x" xattr-sid
     else
-        echo "== an attribute file's SID owner and group$x: skipped (kept by rustic-bko alone, ForkAudit1 G5-03; restic-bko keeps the number)"
+        echo "== an attribute file's SID owner and group$x: skipped (the snapshot keeps no SID for it: that is rustic-bko's alone, since ForkAudit1 G5-03; restic-bko keeps the number)"
     fi
     check "system attributes off by default (illumos.system_attributes)$x" defaults
     check "ZFS project IDs (illumos.zfs_project, SPEC2 5.4)$x" project
@@ -450,9 +452,25 @@ if [ -z "$again" ]; then
         /usr/bin/ls -ldn "$1" | awk '{ print "file", $3 ":" $4 }'
         runat "$1" 'for a in *; do case $a in SUNWattr_r[ow]) ;; *) /usr/bin/ls -ln "$a" | awk "{ print \$9, \$3 \":\" \$4 }" ;; esac; done'
     }
+    # Which rustic-bko has the fixes: every version after 0.12.0+backotter.1
+    # (rel13's is the first), none before it; 0.12.0+backotter.1 itself is
+    # the rebase, built with them or without, and is told apart by what its
+    # --no-ownership restore does (g5=probe).  One without them is skipped,
+    # saying so, not failed: rel11's and rel12's are as they were.
+    g5=fixed g5v=""
+    if is_rustic $RR; then
+        g5v=$($RR --version 2>/dev/null | awk '{ print $2 }')
+        case $g5v in
+            0.12.0+backotter.1) g5=probe ;;
+            0.[0-9].*|0.1[01].*|0.12.0) g5=old ;;
+        esac
+    fi
+    g5_old="skipped: this rustic-bko ($g5v) is from before ForkAudit1's G5 fixes"
     t="extended attributes' owners as the restore sets owners: none under --no-ownership, by name with their file (ForkAudit1 G5-01)"
     echo "== $t"
-    if is_rustic $RR; then
+    if is_rustic $RR && [ $g5 = old ]; then
+        echo "$g5_old"
+    elif is_rustic $RR; then
         ok=1
         userdel bkoown 2>/dev/null; userdel bkoelse 2>/dev/null
         { useradd -u 1700 bkoown >/dev/null && mkdir -p $G/own && echo data >$G/own/f &&
@@ -462,21 +480,28 @@ if [ -z "$again" ]; then
         rt_backup $R $G/own-repo $G/own >/tmp/bko-rt.g5.backup 2>&1 || { cat /tmp/bko-rt.g5.backup; ok=""; }
         g5_restore $G/own-repo --no-ownership "latest:$G/own" $G/own-none; status=$?
         g5_owners $G/own-none/f | tee /tmp/bko-rt.g5.none | sed 's/^/  --no-ownership: /'
-        [ $status -eq 0 ] && [ "$(tr '\n' ' ' </tmp/bko-rt.g5.none)" = "file 0:0 mine 0:0 other 0:0 " ] || ok=""
+        g5none=$(tr '\n' ' ' </tmp/bko-rt.g5.none)
+        # The rebase's version without the fixes: the snapshot's numbers.
+        [ $g5 = probe ] && [ "$g5none" = "file 0:0 mine 1700:1701 other 1702:1701 " ] && g5=old
+        [ $status -eq 0 ] && [ "$g5none" = "file 0:0 mine 0:0 other 0:0 " ] || ok=""
         # The user 1700 was at backup is 1750 here, and 1700 someone else.
         userdel bkoown; useradd -u 1750 bkoown >/dev/null; useradd -u 1700 bkoelse >/dev/null
         g5_restore $G/own-repo "latest:$G/own" $G/own-name; status=$?
         g5_owners $G/own-name/f | tee /tmp/bko-rt.g5.name | sed 's/^/  by name: /'
         [ $status -eq 0 ] && [ "$(tr '\n' ' ' </tmp/bko-rt.g5.name)" = "file 1750:1701 mine 1750:1701 other 1702:1701 " ] || ok=""
         userdel bkoown; userdel bkoelse
-        [ -n "$ok" ] && echo "yes" || failed="$failed; $t"
+        if [ $g5 = old ]; then echo "$g5_old"
+        elif [ -n "$ok" ]; then echo "yes"
+        else failed="$failed; $t"; fi
     else
         echo "skipped: restic-bko gives each attribute the snapshot's uid and gid in every mode"
     fi
 
     t="an ACL entry, system attributes and a ZFS project given after the backup are gone after a restore in place (aclmode=passthrough), and a second --exact sets nothing (ForkAudit1 G5-02, G5-08)"
     echo "== $t"
-    if is_rustic $RR; then
+    if is_rustic $RR && [ $g5 = old ]; then
+        echo "$g5_old"
+    elif is_rustic $RR; then
         ok=1
         g5pool=$(zfs list -H -o name /root | cut -d/ -f1)
         zfs create -o atime=off -o aclmode=passthrough -o mountpoint=$G/reset $g5pool/bko-rt-g5 || { echo "can't make the dataset"; ok=""; }
@@ -650,11 +675,12 @@ if [ -z "$again" ]; then
     [ "$(grep -c -e 'user:nobody:r-*:-*:allow' -e 'group:nobody:-w-*:-*:deny' /tmp/bko-rt.noidmap.list)" = 2 ] || ok=""
     w=$(grep -ci -e idmap -e 'S-1-' /tmp/bko-rt.noidmap.msgs.f)
     # Both BACKOTTER.md files: a warning once per attribute, and sid/ has
-    # all three (owner_sid, group_sid, acl), each once.  Where the tree has
-    # the attribute file a SID owns (rustic-bko alone), illumos.xattr_meta
-    # is a fourth, and the attribute goes to nobody too.
+    # all three (owner_sid, group_sid, acl), each once.  Where the snapshot
+    # keeps the SID of the attribute file a SID owns (rustic-bko's, with
+    # ForkAudit1's G5-03), illumos.xattr_meta is a fourth, and the attribute
+    # goes to nobody too.
     wants=3 wattrs="illumos.owner_sid illumos.group_sid illumos.acl" wwhat="owner, group, ACL entries"
-    if [ -f $SRC/sid/xattr-owner ]; then
+    if grep -q '"owner_sid"' /tmp/bko-rt.xattr-sid.kept 2>/dev/null; then
         wants=4 wattrs="$wattrs illumos.xattr_meta" wwhat="$wwhat, an attribute file's owner"
         o=$(runat /root/bko-rt-noidmap/xattr-owner '/usr/bin/ls -ln stream' | awk '{ print $3, $4 }')
         echo "  xattr-owner@stream: $o"

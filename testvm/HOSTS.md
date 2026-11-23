@@ -477,6 +477,13 @@ other sessions' runs.
      whose `vm-run-options` enroll a MOK (anduinos2, solus49) don't boot
      without it. Choubox lacked it at its join (GuestTest2All
      t2v-20261117T1501-13fa: anduinos2 HARNESS in phase boot).
+   - sbsigntool (`sbverify`), for HoltTest's verify phase: it holds those
+     same guests' restored `grubx64.efi` to the source's MOK with it
+     (`sudo apt-get install -y --no-install-recommends sbsigntool`). On a
+     host without it ht1-queue.sh leaves their lines for the other hosts,
+     and its start line says `sbverify no`. Choubox lacked it until
+     2026-11-23 (HoltTest2 t2h-20261123T1801-d49a: anduinos2+reformat-ext4
+     FAIL at "MOK signature", the first MOK line it ever took).
    - jq isn't needed.
    - `hostname -s` must print the row's name.
 2. **SSH.**

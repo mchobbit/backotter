@@ -1,7 +1,7 @@
 """The runners on hosts that can't run everything (gaps P2, P5, P6, the runner side):
 cmp-run.sh --ceiling (read-only), ht1-queue.sh's per-host skip set (a line over this host's
 ceiling, a guest whose image is missing here, a ZFS source on a host without zpool, a Linux
-line without the rescuer or the debs), its --pop =LINE entries and --putback, a refused
+line without the rescuer or the debs, a MOK guest on a host without sbverify), its --pop =LINE entries and --putback, a refused
 --reserve that never counts as a quick failure, and ht1.sh refusing a missing rescuer or debs
 instead of falling back to the debian13 guest.  drive.py's side (its probe's VM lines, pick's
 novm) is drive.py --self-test's, run here too.  No host needed: the parts that need bash 4
@@ -118,7 +118,7 @@ class CmpRunCeiling(unittest.TestCase):
 class QueueCantWhy(unittest.TestCase):
     """ht1-queue.sh's cant_why: why this host can never run a todo line (bash 3.2 does)."""
 
-    FUNCS = ("guest_arch", "has_image", "needs_zfs", "has_debs", "ceil_now", "over_ceil", "fits_ceil", "cant_why")
+    FUNCS = ("guest_arch", "has_image", "needs_zfs", "has_debs", "has_mok", "ceil_now", "over_ceil", "fits_ceil", "cant_why")
 
     def setUp(self):
         self.t = tempfile.mkdtemp(prefix="t2-cantwhy-")
@@ -131,6 +131,10 @@ class QueueCantWhy(unittest.TestCase):
         wr(os.path.join(self.t, "cached.qcow2"), "")
         os.makedirs(os.path.join(self.w, "vms", "kinoite44"))         # a link into the cache that resolves
         os.symlink(os.path.join(self.t, "cached.qcow2"), os.path.join(self.w, "vms", "kinoite44", "kinoite44.qcow2"))
+        for g, opts in (("anduinos2", "--uefi --mok\n"), ("solus49", "--mok --uefi"), ("leap16", "--uefi\n"),
+                        ("mokless", "--uefi --mokutil --disk x--mok.qcow2\n")):
+            wr(os.path.join(self.w, "vms", g, g + ".qcow2"), "")
+            wr(os.path.join(self.w, "vms", g, "vm-run-options"), opts)
         self.rescuer(True)
         self.debs(True)
 
@@ -149,10 +153,10 @@ class QueueCantWhy(unittest.TestCase):
             elif os.path.exists(p):
                 os.remove(p)
 
-    def why(self, nm, d="6", m="4", over=None, ceil="9.0 9.2", zfs=0, rimg="", arch="amd64"):
+    def why(self, nm, d="6", m="4", over=None, ceil="9.0 9.2", zfs=0, rimg="", arch="amd64", sbv=1):
         g = re.sub(r"[+=%].*", "", nm)
         v = nm.split("+", 1)[1] if "+" in nm else ""
-        script = (f"W={self.w} L={self.l} CEIL='{ceil}' HOSTZFS={zfs} HOSTARCH={arch}; zfs_list=(debian13-zfs ubuntu24)\n"
+        script = (f"W={self.w} L={self.l} CEIL='{ceil}' HOSTZFS={zfs} HOSTSBV={sbv} HOSTARCH={arch}; zfs_list=(debian13-zfs ubuntu24)\n"
                   + (f"HT_RESCUER_IMG={rimg}\n" if rimg else "unset HT_RESCUER_IMG\n")
                   + shell_funcs(QUEUE, *self.FUNCS)
                   + f"cant_why {nm} {g} '{v}' '{d}' '{m}' {over if over is not None else ''}; echo \"rc=$? $WHYNOT\"\n")
@@ -234,6 +238,33 @@ class QueueCantWhy(unittest.TestCase):
         self.assertEqual(self.why("debian13-zfs+refuse"), w)   # every variant, as placement keeps them
         self.assertIsNone(self.why("debian13-zfs", zfs=1))
         self.assertIsNone(self.why("debian13"))
+
+    def test_mok(self):
+        """A guest whose vm-run-options enroll a MOK (--mok, ht1.sh's mok) is left for the others,
+        every variant, on a host without sbverify (sbsigntool): ht1.sh's verify checks the restored
+        GRUB's signature with it, and without it gave bko-holt a FAIL for the host's missing tool
+        (choubox, t2h-20261123T1801-d49a, holt:anduinos2+reformat-ext4)."""
+        w = ("boots with a MOK (vm-run-options --mok), and this host has no sbverify "
+             "(apt-get install -y sbsigntool) to check the restored GRUB's signature with")
+        for nm in ("anduinos2", "anduinos2+reformat-ext4", "anduinos2+img", "solus49"):   # (no newline at solus49's end)
+            self.assertEqual(self.why(nm, sbv=0), w, nm)
+            self.assertIsNone(self.why(nm), nm)
+        for nm in ("leap16", "mokless", "debian13", "freebsd15", "redox"):   # Secure Boot without a MOK; a word like it; no options
+            self.assertIsNone(self.why(nm, sbv=0), nm)
+        self.rescuer(False)   # (the rescuer first, as for any Linux line)
+        self.assertEqual(self.why("anduinos2", sbv=0), f"no rescuer {self.l}/rescuer/rescuer.qcow2 here")
+
+    def test_mok_is_ht1s(self):
+        """has_mok reads vm-run-options as ht1.sh does (its first line's words, --mok among the
+        firmware options), HOSTSBV is sbverify where root's PATH has it, and the runner's start
+        line says which."""
+        q, h = rd(QUEUE), rd(os.path.join(HT, "ht1.sh"))
+        self.assertIn('read -ra o < "$W/vms/$G/vm-run-options"', h)
+        self.assertIn('mok=0; [[ " ${fw[*]} " == *" --mok "* ]] && mok=1', h)
+        self.assertIn('sbverify --cert "$pem" "$f"', h)
+        self.assertIn('read -ra o < "$W/vms/$1/vm-run-options"; [[ " ${o[*]-} " == *" --mok "* ]]', q)
+        self.assertRegex(q, r"(?m)^HOSTSBV=0\nfor p in (/\S+/sbverify ?){6}; do \[\[ -f \$p && -x \$p \]\] && HOSTSBV=1; done$")
+        self.assertIn('sbverify $( ((HOSTSBV)) && echo yes || echo "no (the MOK guests are left for others', q)
 
     def test_ceiling(self):
         self.assertEqual(self.why("mint22", "17", "4"), "--reserve 17 4 over this host's ceiling 9.0 9.2")
@@ -547,19 +578,20 @@ class QueueShell(unittest.TestCase):
         """cant_scan's world: W's images, L's rescuer and debs, a fake ram-size.sh (6 4 for every
         name) and a cmp-run.sh whose ceiling is 9.0 9.2."""
         w, l, fake = (os.path.join(self.t, x) for x in ("w", "l", "fake"))
-        for g in ("debian13", "mint22", "debian13-zfs", "redox", "freebsd15", "freebsd15-ufs", "netbsd10"):
+        for g in ("debian13", "mint22", "debian13-zfs", "redox", "freebsd15", "freebsd15-ufs", "netbsd10", "anduinos2"):
             wr(os.path.join(w, "vms", g, g + ".qcow2"), "")
+        wr(os.path.join(w, "vms", "anduinos2", "vm-run-options"), "--uefi --mok\n")   # a MOK guest, and no sbverify here
         wr(os.path.join(l, "rescuer", "rescuer.qcow2"), "")
         for n in ("f2fs-tools_1_amd64.deb", "jfsutils_1_amd64.deb"):
             wr(os.path.join(l, "bin", n), "")
         wr(os.path.join(fake, "ram-size.sh"), '#!/bin/sh\nfor n; do echo "$n 6 4 table"; done\n', 0o755)
         wr(os.path.join(fake, "cmp-run.sh"), '#!/bin/sh\n[ "$1" = --ceiling ] && echo "9.0 9.2"\n', 0o755)
         wr(os.path.join(self.q, "todo"), "# the queue\ndebian13\nmint22=17%4\nmint22+bigger=8%4\ngentoo\n"
-                                        "debian13-zfs\nredox\nfreebsd15\nnetbsd10\ndebian13+img\nbad line!\n")
+                                        "debian13-zfs\nredox\nfreebsd15\nnetbsd10\ndebian13+img\nanduinos2+reformat-ext4\nbad line!\n")
         return (shell_line(QUEUE, "LINE_RE=")
-                + f"W={w} L={l} Q={self.q} QHOST='' HERE={fake} CMP_RUN={fake}/cmp-run.sh RAM=1 HOSTZFS=0\n"
+                + f"W={w} L={l} Q={self.q} QHOST='' HERE={fake} CMP_RUN={fake}/cmp-run.sh RAM=1 MODE=ram HOSTZFS=0 HOSTSBV=0 HOSTARCH=amd64\n"
                 + "zfs_list=(debian13-zfs); CANT=() CANTWHY=''; declare -A PLK=(); NEWLK=''; unset HT_RESCUER_IMG\n"
-                + shell_funcs(QUEUE, "has_image", "needs_zfs", "has_debs", "ceil_now", "over_ceil", "fits_ceil",
+                + shell_funcs(QUEUE, "guest_arch", "has_image", "needs_zfs", "has_debs", "has_mok", "ceil_now", "over_ceil", "fits_ceil",
                               "cant_why", "todo_text", "cant_scan", "close_locks")
                 + body)
 
@@ -572,10 +604,12 @@ class QueueShell(unittest.TestCase):
             capture_output=True, text=True, timeout=120)
         self.assertEqual(p.stderr, "")
         first, why, second, third = p.stdout.split("--\n")
-        self.assertEqual(first.splitlines(), ["=mint22=17%4", "gentoo", "=debian13-zfs", "netbsd10"])   # no netbsd11
+        self.assertEqual(first.splitlines(), ["=mint22=17%4", "gentoo", "=debian13-zfs", "netbsd10",   # no netbsd11
+                                              "=anduinos2+reformat-ext4"])   # a MOK guest, no sbverify: the line
         self.assertIn("mint22=17%4 (--reserve 17 4 over this host's ceiling 9.0 9.2); gentoo (no ", why)
         self.assertEqual(second.splitlines(), ["=debian13", "=mint22=17%4", "=mint22+bigger=8%4", "gentoo",
-                                               "=debian13-zfs", "=redox", "netbsd10"])   # not freebsd15, not +img
+                                               "=debian13-zfs", "=redox", "netbsd10",   # not freebsd15, not +img
+                                               "=anduinos2+reformat-ext4"])   # (its missing rescuer says so first)
         self.assertEqual(third.splitlines(), second.splitlines(), "an unreadable todo keeps the last skip set")
 
     def test_refused_reserve_is_no_quick_failure(self):

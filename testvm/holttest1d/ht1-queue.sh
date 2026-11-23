@@ -82,7 +82,10 @@
 # (space-separated; default Test2's classes.json holt.needs_host_zfs, the
 # Linux guests with a ZFS pool, which ht1.sh's backup and verify mount here)
 # on a host without OpenZFS's zpool (vm-mount's need; the module alone isn't
-# enough), every variant, as Test2's placement keeps them off it; a
+# enough), every variant, as Test2's placement keeps them off it; a guest
+# whose vm-run-options enroll a MOK (--mok: anduinos2, solus49), every
+# variant, on a host without sbverify (sbsigntool), with which ht1.sh's
+# verify checks the restored GRUB's signature; a
 # Linux line (ht1.sh's, not +img) without the rescuer (HT_RESCUER_IMG's, else
 # /bkoscratch/holttest1d/rescuer/rescuer.qcow2) or bin/'s f2fs-tools and
 # jfsutils debs, a Redox or Sculpt one without the rescuer (a Qubes OS one
@@ -355,6 +358,12 @@ read -ra zfs_list <<<"$NEEDS_ZFS"
 HOSTZFS=0   # zpool where root's PATH has it (facts_host.py's caps.zfs)
 for p in /usr/sbin/zpool /sbin/zpool /usr/local/sbin/zpool /usr/bin/zpool /bin/zpool; do [[ -f $p && -x $p ]] && HOSTZFS=1; done
 ((HOSTZFS)) || ! command -v zpool >/dev/null 2>&1 || HOSTZFS=1
+# sbverify (sbsigntool), where root's PATH has it: ht1.sh's verify (mok_check)
+# holds a MOK guest's restored grubx64.efi to the source's MOK with it.  A
+# host without it would give bko-holt a FAIL for its own missing tool
+# (choubox, t2h-20261123T1801-d49a), so such a guest is left for the others.
+HOSTSBV=0
+for p in /usr/local/sbin/sbverify /usr/local/bin/sbverify /usr/sbin/sbverify /usr/bin/sbverify /sbin/sbverify /bin/sbverify; do [[ -f $p && -x $p ]] && HOSTSBV=1; done
 CANT=() REFUSED=() NOTNOW=() CANTWHY="" CANTSAID="" CEIL="" WHYNOT="" SSDROOM="" RAMROOM="" RSFREE=1 SSFREE=1 IDLE=1
 # This host's architecture and a guest's (hosts.py's guest_arch: *-arm64 is
 # arm64, every other amd64): a line of another architecture's guest is never run here.
@@ -363,6 +372,8 @@ guest_arch() { if [[ $1 == *-arm64 ]]; then echo arm64; else echo amd64; fi; }  
 has_image() { local f; for f in "$W/vms/$1/"*.qcow2; do [[ -f $f ]] && return 0; done; return 1; }   # GUEST
 needs_zfs() { local z; for z in "${zfs_list[@]}"; do [[ $z == "$1" ]] && return 0; done; return 1; }   # GUEST
 has_debs() { compgen -G "$L/bin/f2fs-tools_*.deb" >/dev/null && compgen -G "$L/bin/jfsutils_*.deb" >/dev/null; }
+# ht1.sh's mok: the guest's vm-run-options (its first line's words) have --mok.
+has_mok() { local o=(); [[ -f $W/vms/$1/vm-run-options ]] && read -ra o < "$W/vms/$1/vm-run-options"; [[ " ${o[*]-} " == *" --mok "* ]]; }   # GUEST
 # cmp-run.sh's ceiling(), "DISK MEM" (CEIL), or "" when it can't say: then no
 # line is held to it here (cmp-run.sh still refuses one over it).
 ceil_now() { CEIL=$("$CMP_RUN" --ceiling 2>/dev/null) && [[ $CEIL =~ ^[0-9.]+\ -?[0-9.]+$ ]] || CEIL=""; }
@@ -397,6 +408,8 @@ cant_why() {  # NM GUEST VARIANT D M [OVER]
     elif [[ $drv == linux && $v != img && $g != *-arm64 ]] && ! has_debs; then WHYNOT="no f2fs-tools and jfsutils debs in $L/bin here"
     elif ((HOSTZFS == 0)) && needs_zfs "$g"; then
         WHYNOT="needs OpenZFS here (NEEDS_ZFS), and this host has no zpool"
+    elif [[ $drv == linux ]] && ((HOSTSBV == 0)) && has_mok "$g"; then
+        WHYNOT="boots with a MOK (vm-run-options --mok), and this host has no sbverify (apt-get install -y sbsigntool) to check the restored GRUB's signature with"
     elif [[ $g == qubes* ]] && ! grep -qs '[1Y]' /sys/module/kvm_amd/parameters/nested /sys/module/kvm_intel/parameters/nested; then
         WHYNOT="runs Xen nested (Qubes OS), and this host has no kvm_amd/kvm_intel nested=1"
     elif if [[ -n ${6:-} ]]; then ((${6})); else over_ceil "$4" "$5"; fi; then
@@ -591,7 +604,7 @@ if [[ $MODE == overflow ]]; then say "big (D >= $BIG_GIB GiB): no turns in mode 
 else say "big (D >= $BIG_GIB GiB; one at a time here): ${BIGNAMES//,/ }"; fi
 ((${#skip[@]})) && say "left for other hosts: ${skip[*]}"
 ceil_now
-say "this host: ceiling ${CEIL:-not known (cmp-run.sh --ceiling)}, OpenZFS $( ((HOSTZFS)) && echo yes || echo "no (left for others: $NEEDS_ZFS)"), rescuer $([[ -f ${HT_RESCUER_IMG:-$L/rescuer/rescuer.qcow2} ]] && echo yes || echo no) (${HT_RESCUER_IMG:-$L/rescuer/rescuer.qcow2}), bin/ debs $(has_debs && echo yes || echo no)"
+say "this host: ceiling ${CEIL:-not known (cmp-run.sh --ceiling)}, OpenZFS $( ((HOSTZFS)) && echo yes || echo "no (left for others: $NEEDS_ZFS)"), rescuer $([[ -f ${HT_RESCUER_IMG:-$L/rescuer/rescuer.qcow2} ]] && echo yes || echo no) (${HT_RESCUER_IMG:-$L/rescuer/rescuer.qcow2}), bin/ debs $(has_debs && echo yes || echo no), sbverify $( ((HOSTSBV)) && echo yes || echo "no (the MOK guests are left for others: apt-get install -y sbsigntool)")"
 SWEPT=""; sweep
 for d in "$WORK"/*/*; do
     [[ -d $d ]] || continue

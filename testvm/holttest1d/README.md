@@ -1413,14 +1413,19 @@ as root, no RAM disk) says why in its `.out` file only: its log,
   small host's cache holds the published guests only); a guest of
   `NEEDS_ZFS` (default `classes.json` `holt.needs_host_zfs`: chimera-zfs,
   debian13-zfs, ubuntu24, ubuntu26-zfs, ubuntu26-zfsmirror), every variant,
-  on a host without OpenZFS's `zpool`; a Linux line (not `+img`) without
+  on a host without OpenZFS's `zpool`; a guest whose `vm-run-options`
+  enroll a MOK (`--mok`: `anduinos2`, `solus49`), every variant, on a host
+  without `sbverify` (sbsigntool), which the verify phase checks the
+  restored GRUB's signature with (without it the check failed as if the
+  signature were bad: choubox, 2026-11-23); a Linux line (not `+img`) without
   the rescuer or bin/'s f2fs-tools and jfsutils debs; a Redox or Sculpt
   line without the rescuer.  The runner logs that list when it changes,
-  and its start line records the ceiling, zpool, rescuer and debs.  These
+  and its start line records the ceiling, zpool, rescuer, debs and
+  sbverify.  These
   are the checks Test2's placement makes from the host's facts
-  (testvm/HOSTS.md).  A line taken that turns out so anyway (the todo
-  changed, or cmp-run.sh refused its `--reserve` as one that can never fit
-  here) goes back on top of the todo instead of running, and never counts
+  (testvm/HOSTS.md), but sbverify's, which only the runner makes.  A line
+  taken that turns out so anyway (the todo changed, or cmp-run.sh refused
+  its `--reserve` as one that can never fit here) goes back on top of the todo instead of running, and never counts
   toward the 3-quick-failures stop; such a refusal also keeps that line off
   this host for the rest of the run.  `ht1-queue.sh --putback Q LINE HOST`
   is that step by hand (the queue host's half): LINE goes back on top and

@@ -66,14 +66,15 @@ gets the defaults):
     scratch_mode     "ram" where a job that can work on either puts its scratch (HoltTest's
                            lines: ht1-queue.sh; every other job's is in the RAM disk as ever):
                            "ram": in the RAM disk, /mnt/bko-ram, waiting for room there, as
-                           every host did before 2026-11-23; "overflow": in the RAM disk when
-                           its reservation fits there now, else on the host's SSD
-                           (/bkoscratch) instead of waiting, and straight on the SSD when it
-                           is over ssd_cutoff_gib; "ssd": always on the SSD.  Not a +img line
-                           (ht1.sh runs it only in the RAM disk).  A mode other than "ram"
-                           also does what holt_disk_mode does
-    ssd_cutoff_gib   12    with scratch_mode "overflow": a job whose scratch reservation is
-                           over this many GiB goes straight to the SSD
+                           every host did before 2026-11-23; "overflow": RAM first: in the
+                           RAM disk whenever its reservation fits there now, whatever its
+                           size, and on the host's SSD (/bkoscratch) only when it doesn't
+                           (the RAM disk has no room for it now, or it is over the RAM-disk
+                           ceiling and never fits), instead of waiting; "ssd": always on the
+                           SSD.  Not a +img line (ht1.sh runs it only in the RAM disk).  A
+                           mode other than "ram" also does what holt_disk_mode does.  (No
+                           size cutoff: ssd_cutoff_gib, 12, sent every job over it straight
+                           to the SSD beside an empty RAM disk, and went the day it came.)
     ssd_floor_gib    80    the GiB of /bkoscratch that jobs' scratch never takes: cmp-run.sh
                            gives a --reserve-ssd its room only from the free space above it
                            (less what the other SSD jobs hold), so a host short of free SSD
@@ -113,7 +114,7 @@ REQUIRED = ("name", "ssh", "slot_range", "stic_ports", "class", "roles", "defaul
 # A host's limits and their defaults (the docstring): optional row fields, and the fields of
 # the table's class_limits {CLASS: {FIELD: VALUE}}.
 LIMITS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False, "bs2_slots": 3,
-          "max_wall_x": None, "scratch_mode": "ram", "ssd_cutoff_gib": 12, "ssd_floor_gib": 80}
+          "max_wall_x": None, "scratch_mode": "ram", "ssd_floor_gib": 80}
 SCRATCH_MODES = ("ram", "overflow", "ssd")
 FIELDS += tuple(LIMITS)
 # A host's architecture (its row's arch, else DEFAULT_ARCH), Debian's names; MACHINES maps
@@ -164,7 +165,7 @@ def limit_error(k, v):
         return None if type(v) is bool else "true or false"
     if k == "scratch_mode":
         return None if type(v) is str and v in SCRATCH_MODES else "one of " + ", ".join(SCRATCH_MODES)
-    if k in ("ssd_cutoff_gib", "ssd_floor_gib"):
+    if k == "ssd_floor_gib":
         return None if type(v) in (int, float) and 0 <= v <= 4096 else "a number of GiB, 0 to 4096"
     if k == "base_gib":
         return None if type(v) in (int, float) and 0 <= v <= 64 else "a number of GiB, 0 to 64"

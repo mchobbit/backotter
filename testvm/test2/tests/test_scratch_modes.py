@@ -1,11 +1,12 @@
 """RAM first, the SSD for overflow (the user's choice, 2026-11-23; the host table's
-scratch_mode, ssd_cutoff_gib and ssd_floor_gib).  What can run on the Mac:
+scratch_mode and ssd_floor_gib).  What can run on the Mac:
 
 - cmp-run.sh's ssd_room(), cut out of the script as facts_host.py cuts ceiling(): the SSD's
   free space above the floor, less what the --reserve-ssd rows hold; an older cmp-run.sh's
   rows and an empty ledger hold nothing; no room at all unless the host's mode is overflow or
   ssd; and --reserve-ssd's refusals;
-- ht1-queue.sh's ssd_why(), cut out the same way: which lines leave the RAM disk, and why;
+- ht1-queue.sh's ssd_why() and place(), cut out the same way: which lines leave the RAM disk,
+  and why (RAM first: only one that can't be in the RAM disk now; no size cutoff);
 - wear.py: a job whose wear line says scratch=ssd is left out of the write stop rule, whole.
 
 The table's own values and the planner's placement are in test_host_limits.py and
@@ -165,9 +166,10 @@ class SsdRoom(Fakes):
 
 
 class SsdWhy(Fakes):
-    """ht1-queue.sh's ssd_why D M, with a cmp-run.sh that answers --ssd-free and --free as told."""
+    """ht1-queue.sh's ssd_why D M and place D M VARIANT, with a cmp-run.sh that answers --ssd-free
+    and --free as told ("after": the room a new --reserve would be offered now, DISK MEM)."""
 
-    def why(self, d, m, mode="overflow", cutoff="12", ssd="156.0", after="5.0 6.1", free_rc=0):
+    def cmp_run(self, ssd, after, free_rc):
         fake = os.path.join(self.t, "cmp-run.sh")
         with open(fake, "w") as f:
             f.write("#!/bin/sh\ncase $1 in\n"
@@ -175,31 +177,95 @@ class SsdWhy(Fakes):
                     f"--free) echo '9.0 10.1'; echo 'waiting 0'; echo 'after {after}'; exit {free_rc} ;;\n"
                     "esac\n")
         os.chmod(fake, 0o755)
+        return fake
+
+    def why(self, d, m, mode="overflow", ssd="156.0", after="5.0 6.1", free_rc=0):
+        fake = self.cmp_run(ssd, after, free_rc)
         cmd = ('eval "$(sed -n "/^ssd_why()/,/^}/p; /^ge()/p" "$1")"; NUM_RE="^[0-9]+([.][0-9]+)?$"; '
-               'CMP_RUN=$2 MODE=$3 CUTOFF=$4; ssd_why "$5" "$6"')
-        p = subprocess.run([BASH, "-c", cmd, "-", QUEUE, fake, mode, cutoff, str(d), str(m)], capture_output=True,
+               'CMP_RUN=$2 MODE=$3; ssd_why "$4" "$5"')
+        p = subprocess.run([BASH, "-c", cmd, "-", QUEUE, fake, mode, str(d), str(m)], capture_output=True,
                            text=True, env=self.env, timeout=60)
         self.assertEqual(p.stderr, "")
         return p.returncode, p.stdout.strip()
+
+    def place(self, d, m, variant="", mode="overflow", ceil="29.0 23.2", ssd="184.0", after="29.0 23.2", free_rc=0,
+              ram=1, disk_over=None):
+        """place's answer: "ram", "ssd WHY" or "none ROOM".  DISK_OVER as the runner sets it: 1 in a
+        mode other than ram, else as given (the host's holt_disk_mode)."""
+        fake = self.cmp_run(ssd, after, free_rc)
+        over = (0 if mode == "ram" else 1) if disk_over is None else disk_over
+        cmd = ('eval "$(sed -n "/^place()/,/^}/p; /^ssd_why()/,/^}/p; /^ge()/p" "$1")"; NUM_RE="^[0-9]+([.][0-9]+)?$"; '
+               'CMP_RUN=$2 MODE=$3 CEIL=$4 RAM=$5 DISK_OVER=$6; place "$7" "$8" "$9"')
+        p = subprocess.run([BASH, "-c", cmd, "-", QUEUE, fake, mode, ceil, str(ram), str(over), str(d), str(m), variant],
+                           capture_output=True, text=True, env=self.env, timeout=60)
+        self.assertEqual((p.stderr, p.returncode), ("", 0))
+        return p.stdout.strip()
 
     def test_overflow(self):
         self.assertEqual(self.why(4, 4), (1, ""), "it fits the RAM disk now: in RAM")
         self.assertEqual(self.why(5, 4), (1, ""))
         self.assertEqual(self.why(6, 4), (0, "overflow: the RAM disk has room for 5.0 GiB now, not its 6"))
         self.assertEqual(self.why(6, 7), (1, ""), "its memory is what it would wait for: no use leaving the RAM disk")
-        self.assertEqual(self.why(13, 4), (0, "over ssd_cutoff_gib 12"))
-        self.assertEqual(self.why(12, 4, after="20.0 9.0"), (1, ""), "at the cutoff, and room: in RAM")
-        self.assertEqual(self.why(27, 4, after="29.0 9.0"), (0, "over ssd_cutoff_gib 12"),
-                         "truenas25 on a big host: off the RAM disk though it would fit")
-        self.assertEqual(self.why(8, 4, cutoff="6"), (0, "over ssd_cutoff_gib 6"), "the host's own cutoff")
+        self.assertEqual(self.why(13, 4, after="20.0 9.0"), (1, ""), "over 12 GiB, and room: in RAM (no size cutoff)")
+        self.assertEqual(self.why(27, 4, after="29.0 9.0"), (1, ""), "truenas25 on a big host with an empty RAM disk: in RAM")
+        self.assertEqual(self.why(27, 4, after="26.9 9.0"),
+                         (0, "overflow: the RAM disk has room for 26.9 GiB now, not its 27"))
+        self.assertEqual(self.why(13, 4), (0, "overflow: the RAM disk has room for 5.0 GiB now, not its 13"))
         self.assertEqual(self.why(6, 4, free_rc=1), (1, ""), "no answer from --free: in RAM")
         self.assertEqual(self.why(6, 4, after="x y"), (1, ""))
+
+    def test_ram_first(self):
+        """The user's rule (2026-11-23): in the RAM disk whenever its D fits there right now (and
+        its memory fits); on the SSD only when it doesn't: the RAM disk is full, or its D is
+        over the host's RAM-disk ceiling and can never fit.  A big host (ceiling 29.0 23.2) with
+        an empty RAM disk, then one that truenas25 holds, then a small host (9.0 10.1)."""
+        # t2h-20261123T1713-3cd9's lines on chopin and cinqcent, which the cutoff of 12 sent to the SSD
+        for gv, d in (("truenas25", 27), ("pop24", 20), ("pikaos4-luks", 16), ("mint22+bigger", 16),
+                      ("solus49", 16), ("neon24", 15), ("debian13", 4)):
+            self.assertEqual(self.place(d, 4), "ram", f"{gv}: D {d} fits the empty RAM disk")
+        self.assertEqual(self.place(30, 4), "ssd DISK_OVER: over the RAM-disk ceiling 29.0 23.2", "vanilla3: never fits")
+        # the RAM disk full (truenas25's 27 of 29 held): what doesn't fit now overflows, what does stays
+        self.assertEqual(self.place(15, 4, after="2.0 19.2"),
+                         "ssd overflow: the RAM disk has room for 2.0 GiB now, not its 15")
+        self.assertEqual(self.place(3, 4, after="2.0 19.2"),
+                         "ssd overflow: the RAM disk has room for 2.0 GiB now, not its 3")
+        self.assertEqual(self.place(2, 4, after="2.0 19.2"), "ram")
+        self.assertEqual(self.place(15, 4, after="0.0 19.2"),
+                         "ssd overflow: the RAM disk has room for 0.0 GiB now, not its 15")
+        self.assertEqual(self.place(15, 4, after="2.0 3.9"), "ram", "its memory is what it waits for: no use leaving RAM")
+        # a small host: over its ceiling of 9.0 is the SSD's, under it the RAM disk's while there is room
+        small = dict(ceil="9.0 10.1", ssd="156.0")
+        self.assertEqual(self.place(17, 4, after="9.0 10.1", **small), "ssd DISK_OVER: over the RAM-disk ceiling 9.0 10.1")
+        self.assertEqual(self.place(9, 4, after="9.0 10.1", **small), "ram")
+        self.assertEqual(self.place(9.1, 4, after="9.0 10.1", **small), "ssd DISK_OVER: over the RAM-disk ceiling 9.0 10.1")
+        self.assertEqual(self.place(6, 4, after="5.0 6.1", **small),
+                         "ssd overflow: the RAM disk has room for 5.0 GiB now, not its 6")
+
+    def test_place_keeps_the_rest(self):
+        """+img only in the RAM disk; a host short of free SSD; the modes ssd and ram; HT_RAM=0."""
+        self.assertEqual(self.place(30, 4, "img"), "ram", "+img: the RAM disk's (cant_why gives one over the ceiling back)")
+        self.assertEqual(self.place(15, 4, "img", after="2.0 19.2"), "ram")
+        self.assertEqual(self.place(15, 4, "bigger", after="2.0 19.2"),
+                         "ssd overflow: the RAM disk has room for 2.0 GiB now, not its 15")
+        # over the ceiling with no room for its D on the SSD now: nowhere here
+        self.assertEqual(self.place(17, 4, ceil="9.0 10.1", ssd="15.0"), "none 15.0")
+        self.assertEqual(self.place(17, 4, ceil="9.0 10.1", ssd=None), "none no")
+        self.assertEqual(self.place(6, 4, ceil="9.0 10.1", ssd="5.0", after="5.0 6.1"), "ram", "no room on the SSD: it waits in RAM")
+        self.assertEqual(self.place(2, 4, mode="ssd"), "ssd scratch_mode ssd")
+        self.assertEqual(self.place(2, 4, "img", mode="ssd"), "ram")
+        self.assertEqual(self.place(30, 4, mode="ssd"), "ssd DISK_OVER: over the RAM-disk ceiling 29.0 23.2")
+        self.assertEqual(self.place(15, 4, mode="ram", after="2.0 19.2"), "ram", "mode ram: it waits for its room")
+        self.assertEqual(self.place(30, 4, mode="ram"), "ram", "mode ram without holt_disk_mode: cant_why's")
+        self.assertEqual(self.place(30, 4, mode="ram", disk_over=1, ssd="0.0"),
+                         "ssd DISK_OVER: over the RAM-disk ceiling 29.0 23.2", "holt_disk_mode, as before 2026-11-23: --reserve 0 M")
+        self.assertEqual(self.place(0, 4, mode="ram", ram=0), "ram", "HT_RAM=0: every line on /bkoscratch under --reserve 0 M")
+        self.assertEqual(self.place(17, 4, ceil=""), "ram", "no ceiling known: the RAM disk's while there is room")
 
     def test_no_room_on_the_ssd_no_overflow(self):
         """cinqcent's fast disk at 98%, choubox's 15 GiB: a host short of free SSD keeps its lines in RAM."""
         self.assertEqual(self.why(6, 4, ssd="0.0"), (1, ""))
         self.assertEqual(self.why(27, 4, ssd="15.0"), (1, ""))
-        self.assertEqual(self.why(13, 4, ssd="15.0"), (0, "over ssd_cutoff_gib 12"))
+        self.assertEqual(self.why(13, 4, ssd="15.0"), (0, "overflow: the RAM disk has room for 5.0 GiB now, not its 13"))
         self.assertEqual(self.why(6, 4, ssd=None), (1, ""), "no answer from --ssd-free")
         self.assertEqual(self.why(6, 4, mode="ssd", ssd="5.0"), (1, ""))
 
@@ -215,7 +281,11 @@ class SsdWhy(Fakes):
         self.assertIn("[[ $MODE == ram ]] || DISK_OVER=1", q)
         self.assertIn('res=(--reserve "$d" "$m"); [[ $MODE == ram || -z $ssd ]] || res=(--reserve-ssd "$ssd" "$m")', q)
         self.assertIn("! grep -q -- '--reserve-ssd' \"$CMP_RUN\"", q, "an older shared cmp-run.sh: mode ram")
-        self.assertIn('elif ((RAM)) && [[ $MODE != ram && $v != img ]] && pwhy=$(ssd_why "$d" "$m"); then', q, "never +img")
+        self.assertIn('((RAM)) && [[ $3 != img ]] || { echo ram; return 0; }', q, "never +img")
+        self.assertIn('pl=$(place "$d" "$m" "$v")', q)
+        self.assertIn('"ssd "*) ssd=$d pwhy=${pl#ssd } d=0 jram=0 ;;', q)
+        self.assertNotIn("CUTOFF", q, "no size sends a line to the SSD")
+        self.assertNotIn("ssd_cutoff_gib", q)
         code = [l for l in q.split("\n") if not l.lstrip().startswith("#")]
         for h in ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox"):
             self.assertFalse([l for l in code if h in l], f"{h} named in ht1-queue.sh's code")

@@ -1214,7 +1214,9 @@ class Planner:
         does the same, under cmp-run.sh --reserve-ssd D M, and so only with room for the cell's D
         on its SSD (the facts' free space of /bkoscratch above the host's ssd_floor_gib; unknown:
         not checked): a host short of free SSD keeps the cell's D held to its RAM-disk ceiling.
-        There a cell over ssd_cutoff_gib (overflow) and every cell (ssd) is the SSD's as well."""
+        With mode ssd every cell is the SSD's.  With overflow a cell that fits the RAM-disk
+        ceiling is the RAM disk's, whatever its size (RAM first: ht1-queue.sh's place puts it
+        on the SSD only when the RAM disk has no room for it as it starts; no size cutoff)."""
         n = self.holt_need(v, h)
         if n is None or v.variant == "img":
             return n
@@ -1227,7 +1229,7 @@ class Planner:
             free = ((f or {}).get("preflight") or {}).get("scratch_free_gb")
             if isinstance(free, (int, float)) and n[0] > free * 1e9 / 2 ** 30 - lim["ssd_floor_gib"] + 1e-9:
                 return n
-            if mode == "ssd" or n[0] > lim["ssd_cutoff_gib"] + 1e-9:
+            if mode == "ssd":
                 return (0.0, n[1])
         c = factsmod.ceiling(f)
         if c is not None and n[0] > c[0] + 1e-9:

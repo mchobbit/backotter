@@ -214,8 +214,21 @@ and the gate's scratch is in the RAM disk as before, since their scripts name
 | `scratch_mode` | A HoltTest line works |
 |---|---|
 | `ram` | in the RAM disk, waiting for its room there, as before 2026-11-23 |
-| `overflow` | in the RAM disk when its reservation fits there now; on `/bkoscratch` instead of waiting when it doesn't; straight on `/bkoscratch` when its D is over `ssd_cutoff_gib` (12) or over the RAM-disk ceiling |
+| `overflow` | RAM first: in the RAM disk whenever its reservation D fits there right now (and its memory fits), whatever its size; on `/bkoscratch` only when it doesn't, instead of waiting: the RAM disk has no room for its D now, or its D is over the host's RAM-disk ceiling and can never fit |
 | `ssd` | always on `/bkoscratch` |
+
+No size alone sends a line to the SSD. Until 2026-11-23 evening a cutoff did
+(`ssd_cutoff_gib`, 12 GiB: a line over it went straight to `/bkoscratch`), and
+in the first run under it, t2h-20261123T1713-3cd9, none of the 17 jobs that
+started worked in RAM: 9 on the small hosts were over their RAM-disk ceilings
+(D 14 to 24 GiB against 9.0, and 3.0 on choubox), vanilla3 (30) was over
+chopin's 29.0, and the other 7 on chopin and cinqcent (D 15 to 27) fitted the
+29.0 ceiling, cinqcent's RAM disk standing empty, and went to the SSD for the
+cutoff alone. The cutoff is gone from `ht1-queue.sh` (`place`), the planner and
+the table. What still puts a line on the SSD on a big host is the room in the
+RAM disk as it starts: beside truenas25's 27 GiB little else fits. A line of
+13 GiB or more that works in the RAM disk is a big one as before (`BIG_GIB`:
+one at a time per host; one on the SSD isn't counted).
 
 A `+img` line is never moved (ht1.sh runs it only in the RAM disk). A line on
 `/bkoscratch` runs as ht1.sh's disk mode always has (`HT_RAM=0`: it works in its

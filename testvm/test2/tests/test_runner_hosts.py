@@ -269,11 +269,11 @@ class QueueLaunchBackstop(unittest.TestCase):
     def run_launch(self, back_rc, why):
         t = tempfile.mkdtemp(prefix="t2-launch-")
         self.addCleanup(shutil.rmtree, t, True)
-        script = (f"Q={t} W=/w H=copland RAM=1 DISK_OVER=0 CEIL='9.0 9.2' NEWPORT=3081 BROKE=''; CANT=()\n"
+        script = (f"Q={t} W=/w H=copland RAM=1 DISK_OVER=0 MODE=ram CEIL='9.0 9.2' NEWPORT=3081 BROKE=''; CANT=()\n"
                   "say() { echo \"SAY $*\"; }\n"
                   "cant_why() { WHYNOT=$T_WHY; return 0; }\n"
                   f"give_back() {{ echo \"BACK $1: $2\"; return {back_rc}; }}\n"
-                  + shell_funcs(QUEUE, "done_row", "launch")
+                  + shell_line(QUEUE, "NUM_RE=") + shell_funcs(QUEUE, "ge", "ssd_why", "place", "done_row", "launch")
                   + "launch freebsd14+img=6%4; echo \"rc=$? cant=${CANT[*]} broke=$BROKE\"\n")
         p = subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=60,
                            env=dict(os.environ, T_WHY=why))
@@ -293,6 +293,108 @@ class QueueLaunchBackstop(unittest.TestCase):
         self.assertEqual(done[0].split("\t"), ["end_utc", "host", "gv", "rc", "d_gib", "m_gib", "port", "wait_s", "run_s"])
         self.assertEqual(done[1].split("\t")[1:], ["copland", "freebsd14-img", "1", "6", "4", "3081", "0", "-"])
         self.assertEqual(len(done), 2)
+
+
+@unittest.skipUnless(BASH, "no bash")
+class QueueLaunchPlace(unittest.TestCase):
+    """launch() itself, to the job it starts: RAM first, the SSD for overflow (the user's rule,
+    2026-11-23).  In mode overflow a line works in the RAM disk whenever its D fits there right
+    now, whatever its size (--reserve D M, HT_RAM=1); on /bkoscratch (--reserve-ssd D M,
+    HT_RAM=0) only when the RAM disk has no room for it now, or its D is over this host's
+    RAM-disk ceiling.  cmp-run.sh is a stand-in that answers --ssd-free and --free as told and
+    writes down what a job was started with; setsid one that runs its command."""
+
+    def launch(self, line, mode="overflow", ceil="29.0 23.2", ssd="184.0", after="29.0 23.2", disk_over=None, back_rc=0):
+        t = tempfile.mkdtemp(prefix="t2-place-")
+        self.addCleanup(shutil.rmtree, t, True)
+        os.makedirs(os.path.join(t, "bin"))
+        os.makedirs(os.path.join(t, "l"))
+        got = os.path.join(t, "job")
+        for name, text in (("setsid", 'exec "$@"\n'),
+                           ("cmp-run.sh", "case $1 in\n"
+                                          f"--ssd-free) {'echo ' + ssd if ssd is not None else 'exit 1'} ;;\n"
+                                          f"--free) echo '9.0 10.1'; echo 'waiting 0'; echo 'after {after}' ;;\n"
+                                          f"*) echo \"HT_RAM=$HT_RAM WEAR_TAG=$WEAR_TAG HT_VARIANT=$HT_VARIANT $*\" > {got} ;;\n"
+                                          "esac\n")):
+            with open(os.path.join(t, "bin", name), "w") as f:
+                f.write("#!/bin/sh\n" + text)
+            os.chmod(os.path.join(t, "bin", name), 0o755)
+        over = (0 if mode == "ram" else 1) if disk_over is None else disk_over
+        script = (f"Q={t} L={t}/l W=/w H=cinqcent HERE=/copy/testvm/holttest1d RUN=r1 RAM=1 DISK_OVER={over} MODE={mode} "
+                  f"CEIL='{ceil}' CMP_RUN={t}/bin/cmp-run.sh NEWPORT=2600 NEWLK='' BROKE='' t=40 f=200; CANT=()\n"
+                  "say() { echo \"SAY $*\"; }\n"
+                  "close_locks() { :; }\n"
+                  "cant_why() { [ \"$3\" = img ] && [ \"${4%.*}\" -gt \"${CEIL%%.*}\" ] && { WHYNOT=over; return 0; }; return 1; }\n"
+                  f"give_back() {{ echo \"BACK $1: $2\"; return {back_rc}; }}\n"
+                  + shell_line(QUEUE, "NUM_RE=") + shell_funcs(QUEUE, "ge", "ssd_why", "place", "done_row", "launch")
+                  + f"launch '{line}'; rc=$?; wait; echo \"rc=$rc d=${{JD[0]:-}} jr=${{JR[0]:-}} gv=${{GVS[0]:-}}\"\n")
+        p = subprocess.run([BASH, "-c", script], capture_output=True, text=True, timeout=60,
+                           env=dict(os.environ, PATH=os.path.join(t, "bin") + os.pathsep + os.environ["PATH"]))
+        self.assertEqual(p.stderr, "")
+        out = p.stdout.splitlines()
+        return (rd(got).strip() if os.path.exists(got) else None), out[-1], [x for x in out if not x.startswith("rc=")]
+
+    JOB = "sudo -E /copy/testvm/holttest1d/ht1.sh"
+
+    def test_it_fits_the_ram_disk_now_in_ram_though_over_12(self):
+        """truenas25 (27 GiB) and pop24 (20) on a big host with an empty RAM disk: the lines
+        t2h-20261123T1713-3cd9 put on the SSD for the cutoff of 12 alone."""
+        job, last, said = self.launch("truenas25=27%4")
+        self.assertEqual(job, f"HT_RAM=1 WEAR_TAG=ht1:r1:truenas25 HT_VARIANT= --reserve 27 4 {self.JOB} truenas25 r1")
+        self.assertEqual(last, "rc=0 d=27 jr=1 gv=truenas25", "D 27 in the RAM disk: a big one, one at a time (nobig)")
+        self.assertEqual(said, ["SAY slot 0: truenas25=27%4 on port 2600 (pid " + said[0].split("(pid ")[1].split(")")[0]
+                                + "), --reserve 27 4, 40 C, 200 GB free"])
+        job, last, _ = self.launch("pop24+bigger=20%4", after="20.0 23.2")
+        self.assertEqual(job, f"HT_RAM=1 WEAR_TAG=ht1:r1:pop24-bigger HT_VARIANT=bigger --reserve 20 4 {self.JOB} pop24 r1")
+        job, _, _ = self.launch("mint22=13%4", after="13.0 4.0")
+        self.assertIn(" --reserve 13 4 ", job)
+
+    def test_the_ram_disk_is_full_on_the_ssd(self):
+        job, last, said = self.launch("neon24=15%4", after="2.0 19.2")   # (truenas25 holds 27 of 29)
+        self.assertEqual(job, f"HT_RAM=0 WEAR_TAG=ht1:r1:neon24 HT_VARIANT= --reserve-ssd 15 4 {self.JOB} neon24 r1")
+        self.assertEqual(last, "rc=0 d=0 jr=0 gv=neon24", "on the SSD: not a big one of the RAM disk's")
+        self.assertIn("--reserve-ssd 15 4, on /bkoscratch (overflow: the RAM disk has room for 2.0 GiB now, not its 15), 40 C",
+                      said[0])
+        job, _, _ = self.launch("debian13=4%4", after="2.0 19.2")
+        self.assertIn("HT_RAM=0 ", job)
+        self.assertIn(" --reserve-ssd 4 4 ", job)
+        job, _, _ = self.launch("alpine324=2%4", after="2.0 19.2")
+        self.assertIn(" --reserve 2 4 ", job, "what still fits stays in RAM")
+        # the SSD short of room too: it waits for the RAM disk, as in mode ram
+        job, _, _ = self.launch("neon24=15%4", after="2.0 19.2", ssd="14.0")
+        self.assertIn("HT_RAM=1 ", job)
+        self.assertIn(" --reserve 15 4 ", job)
+
+    def test_over_the_ceiling_on_the_ssd(self):
+        job, last, said = self.launch("vanilla3=30%4")
+        self.assertEqual(job, f"HT_RAM=0 WEAR_TAG=ht1:r1:vanilla3 HT_VARIANT= --reserve-ssd 30 4 {self.JOB} vanilla3 r1")
+        self.assertIn("on /bkoscratch (DISK_OVER: over the RAM-disk ceiling 29.0 23.2)", said[0])
+        job, _, _ = self.launch("mint22=17%4", ceil="9.0 10.1", after="9.0 10.1", ssd="156.0")   # a small host
+        self.assertIn(" --reserve-ssd 17 4 ", job)
+        job, _, _ = self.launch("debian13=9%4", ceil="9.0 10.1", after="9.0 10.1", ssd="156.0")
+        self.assertIn(" --reserve 9 4 ", job)
+        # no room for it on the SSD now: back to the todo for the other hosts, nothing started
+        job, last, said = self.launch("mint22=17%4", ceil="9.0 10.1", ssd="14.5")
+        self.assertIsNone(job)
+        self.assertEqual(last, "rc=1 d= jr= gv=")
+        self.assertEqual(said, ["BACK mint22=17%4: not started here: its D 17 is over the RAM-disk ceiling 9.0 10.1, and "
+                                "/bkoscratch has room for 14.5 GiB of scratch now"])
+
+    def test_the_rest_is_kept(self):
+        """+img only in the RAM disk; mode ssd every line; mode ram none, but holt_disk_mode's
+        line over the ceiling under --reserve 0 M as before 2026-11-23."""
+        job, _, _ = self.launch("debian13+img=15%4", after="2.0 19.2")
+        self.assertEqual(job, f"HT_RAM=1 WEAR_TAG=ht1:r1:debian13-img HT_VARIANT=img --reserve 15 4 {self.JOB} debian13 r1")
+        job, last, said = self.launch("vanilla3+img=30%4")
+        self.assertIsNone(job, "cant_why's: back to the others")
+        self.assertEqual(said, ["BACK vanilla3+img=30%4: not started here: over"])
+        job, _, _ = self.launch("alpine324=2%4", mode="ssd")
+        self.assertIn("HT_RAM=0 ", job)
+        self.assertIn(" --reserve-ssd 2 4 ", job)
+        job, _, _ = self.launch("neon24=15%4", mode="ram", after="2.0 19.2")
+        self.assertIn(" --reserve 15 4 ", job)
+        job, _, _ = self.launch("vanilla3=30%4", mode="ram", disk_over=1)
+        self.assertEqual(job, f"HT_RAM=0 WEAR_TAG=ht1:r1:vanilla3 HT_VARIANT= --reserve 0 4 {self.JOB} vanilla3 r1")
 
 
 @unittest.skipUnless(BASH, "no bash")

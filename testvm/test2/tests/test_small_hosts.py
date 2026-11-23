@@ -7,6 +7,7 @@ cell no host of the run fits is not runnable, with its needs and the ceilings; d
 SticTest2's report name a guest over every host's ceiling as too big.  Old facts have no
 ceiling: nothing is checked.  No host needed."""
 
+import contextlib
 import json
 import os
 import shutil
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEST2 = os.path.dirname(HERE)
@@ -29,6 +31,24 @@ import test_stic as TS  # noqa: E402
 import world  # noqa: E402
 
 SMALL, BIG = [9.0, 9.2], [29.0, 20.1]
+
+
+@contextlib.contextmanager
+def scratch_mode(mode, **limits):
+    """The real host table with every class's scratch_mode MODE (and LIMITS in both classes),
+    for the block: "ram" is every host as it was before 2026-11-23."""
+    with open(os.path.join(REPO, "testvm", "hosts.json")) as f:
+        t = json.load(f)
+    for c in t["class_limits"].values():
+        c.update(scratch_mode=mode, **limits)
+    d = tempfile.mkdtemp(prefix="t2-small-table-")
+    try:
+        with open(os.path.join(d, "hosts.json"), "w") as f:
+            json.dump(t, f)
+        with mock.patch.dict(os.environ, {hosts_table.ENV: os.path.join(d, "hosts.json")}):
+            yield
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 FACTS = os.path.join(TEST2, "t2lib", "facts_host.py")
 
 
@@ -161,11 +181,32 @@ class Placement(unittest.TestCase):
         self.assertEqual(sorted(p.cell("stic:ubuntu24").keys), ["chopin", "copland"])   # copland's ceiling unknown
 
     def test_holt_cells_by_ram_size(self):
-        p = self.plan("HoltTest2 mint22 debian13 plan", ["copland"], {"copland": SMALL})
+        with scratch_mode("ram"):   # every line in the RAM disk, as before 2026-11-23
+            p = self.plan("HoltTest2 mint22 debian13 plan", ["copland"], {"copland": SMALL})
+            m, d = p.cell("holt:mint22"), p.cell("holt:debian13")
+            self.assertEqual((m.status, m.reasons), ("not-runnable", ["over copland's ceiling 9.0 9.2: needs 17 4"]))
+            self.assertEqual((d.status, sorted(d.keys)), ("due", ["copland"]))
+            self.assertEqual([c.cell for c in p.due()], ["holt:debian13"])   # nothing of mint22's is queued
+
+    def test_holt_cells_over_the_ram_disk_go_to_the_ssd(self):
+        """RAM first, the SSD for overflow (the table's scratch_mode, 2026-11-23): a holt cell over
+        a host's RAM-disk ceiling works on /bkoscratch there (ht1-queue.sh, under cmp-run.sh
+        --reserve-ssd D M), so only its memory is held to the ceiling; with too little free SSD
+        above the host's ssd_floor_gib it is held to the RAM disk as before."""
+        self.assertEqual(hosts_table.limit("copland", "scratch_mode"), "overflow")
+        p = self.plan("HoltTest2 mint22 debian13 plan", ["copland"], {"copland": SMALL})   # 900 GB free there
         m, d = p.cell("holt:mint22"), p.cell("holt:debian13")
-        self.assertEqual((m.status, m.reasons), ("not-runnable", ["over copland's ceiling 9.0 9.2: needs 17 4"]))
+        self.assertEqual((m.status, sorted(m.keys)), ("due", ["copland"]))
         self.assertEqual((d.status, sorted(d.keys)), ("due", ["copland"]))
-        self.assertEqual([c.cell for c in p.due()], ["holt:debian13"])   # nothing of mint22's is queued
+        fx = self.facts(["copland"], {"copland": SMALL})
+        fx["copland"]["preflight"]["scratch_free_gb"] = 100.0   # 93.1 GiB: 13.1 above the floor of 80, under its 17
+        p = self.w.plan("HoltTest2 mint22 debian13 plan", facts=fx, hosts=["copland"])
+        m = p.cell("holt:mint22")
+        self.assertEqual((m.status, m.reasons), ("not-runnable", ["over copland's ceiling 9.0 9.2: needs 17 4"]))
+        self.assertEqual(p.cell("holt:debian13").status, "due")
+        with scratch_mode("overflow", ssd_floor_gib=70):   # the floor is the host's own
+            p = self.w.plan("HoltTest2 mint22 plan", facts=fx, hosts=["copland"])
+            self.assertEqual(p.cell("holt:mint22").status, "due")
 
     def test_a_default_run_holds_the_small_hosts_and_keeps_the_big_work_big(self):
         """Six amd64 hosts are default (copland and cage since 2026-11-14, choubox
@@ -198,12 +239,17 @@ class Placement(unittest.TestCase):
         self.assertEqual({h: oe[h] for h in small}, {h: ["ubuntu24"] for h in small})
 
     def test_holt_only_elsewhere_from_ceilings(self):
+        with scratch_mode("ram"):
+            p = self.plan("HoltTest2 mint22 debian13 plan", ["chopin", "copland"], {"chopin": BIG, "copland": SMALL})
+            m = p.cell("holt:mint22")
+            self.assertEqual((m.status, sorted(m.keys)), ("due", ["chopin"]))
+            self.assertIn("too big for copland (ceiling 9.0 9.2): needs 17 4", m.reasons)
+            oe = holt.only_elsewhere(p.due(), ["chopin", "copland"], {})
+            self.assertEqual(oe, {"chopin": [], "copland": ["mint22"]})
+        # with the SSD for overflow the small host takes it too (on /bkoscratch), and nothing is left to the others
         p = self.plan("HoltTest2 mint22 debian13 plan", ["chopin", "copland"], {"chopin": BIG, "copland": SMALL})
-        m = p.cell("holt:mint22")
-        self.assertEqual((m.status, sorted(m.keys)), ("due", ["chopin"]))
-        self.assertIn("too big for copland (ceiling 9.0 9.2): needs 17 4", m.reasons)
-        oe = holt.only_elsewhere(p.due(), ["chopin", "copland"], {})
-        self.assertEqual(oe, {"chopin": [], "copland": ["mint22"]})
+        self.assertEqual(sorted(p.cell("holt:mint22").keys), ["chopin", "copland"])
+        self.assertEqual(holt.only_elsewhere(p.due(), ["chopin", "copland"], {}), {"chopin": [], "copland": []})
 
     def test_holt_only_elsewhere_names_a_variant(self):
         """A base guest that fits with a variant that doesn't: the variant alone is left to the others."""

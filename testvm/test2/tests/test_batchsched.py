@@ -37,8 +37,10 @@ def table(holt_jobs_small=None):
     names = [r["name"] for r in t["hosts"]]
     for n in HOSTS + ["czerny", "bigfoot"]:
         assert n in names, n
-    if holt_jobs_small is not None:
-        t["class_limits"]["small"]["holt_jobs"] = holt_jobs_small
+    # The scheduler's sums below are worked out for 3 holt jobs on a big host and 1 on a small
+    # one, the table's own until 2026-11-23 (4 and 2 since: RAM first, the SSD for overflow).
+    t["class_limits"]["big"]["holt_jobs"] = 3
+    t["class_limits"]["small"]["holt_jobs"] = 1 if holt_jobs_small is None else holt_jobs_small
     return t
 
 

@@ -1,6 +1,7 @@
 """The hosts' limits in the host table (gaps P13, P14, P15): stic_slots, guest_slots, holt_jobs,
-base_gib, holt_disk_mode, bs2_slots and max_wall_x, each a row's field, else the table's class_limits,
-else the default (3, 3, 3, 6, false, 3, null).  With the table as it is every host has the defaults, and the planners give
+base_gib, holt_disk_mode, bs2_slots, max_wall_x, scratch_mode, ssd_cutoff_gib and ssd_floor_gib, each a
+row's field, else the table's class_limits, else the default (3, 3, 3, 6, false, 3, null, ram, 12, 80).
+With a table of defaults every host has them, and the planners give
 the plans they gave before (estimates.pack and drive.simulate against the code of 602922f, the
 commit before the limits).  An alternative table (BKO_HOSTS_JSON) shows the consumers follow
 it: drive.py's --slots and guest slots, the big-first preference, pack's per-host slots,
@@ -40,7 +41,7 @@ DRIVE_PY = os.path.join(TESTVM, "stictest1", "drive.py")
 BEFORE = "602922f"   # the commit before the limits
 BASH = shutil.which("bash")
 DEFAULTS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False, "bs2_slots": 3,
-            "max_wall_x": None}
+            "max_wall_x": None, "scratch_mode": "ram", "ssd_cutoff_gib": 12, "ssd_floor_gib": 80}
 
 
 def load_module(name, path):
@@ -107,21 +108,33 @@ class Limits(AltTable):
         2 on a small one. The rows that set a limit of their own: chopin's and cinqcent's
         holt_disk_mode (the user's choice, 2026-11-14, for vanilla3's 30 GiB disk) and
         choubox's smaller own four (2026-11-17: the smallest host, 1 of each and BASE_GIB 3) and
-        its max_wall_x 2 (2026-11-18: the long and the slow cells left to the other hosts)."""
-        small = dict(DEFAULTS, stic_slots=2, holt_jobs=1, base_gib=4, bs2_slots=2)
-        big = dict(DEFAULTS, bs2_slots=5, holt_disk_mode=True)
+        its max_wall_x 2 (2026-11-18: the long and the slow cells left to the other hosts).
+        RAM first, the SSD for overflow (the user's choice, 2026-11-23): both classes set
+        scratch_mode overflow, the cutoff and the floor at their defaults (12 and 80 GiB), and
+        with scratch off the RAM disk the holt jobs at once went from 3 to 4 on the big hosts and
+        from 1 to 2 on the M900s; choubox keeps its 1, and bigfoot (not a test host of the six)
+        stays as it was: scratch_mode ram, 1 holt job, in its row."""
+        small = dict(DEFAULTS, stic_slots=2, holt_jobs=2, base_gib=4, bs2_slots=2, scratch_mode="overflow")
+        big = dict(DEFAULTS, bs2_slots=5, holt_disk_mode=True, holt_jobs=4, scratch_mode="overflow")
         choubox = dict(small, stic_slots=1, holt_jobs=1, base_gib=3, bs2_slots=1, max_wall_x=2)
+        bigfoot = dict(small, holt_jobs=1, scratch_mode="ram")
         own = {"chopin": {"holt_disk_mode"}, "cinqcent": {"holt_disk_mode"},
-               "choubox": {"stic_slots", "holt_jobs", "base_gib", "bs2_slots", "max_wall_x"}}
+               "choubox": {"stic_slots", "holt_jobs", "base_gib", "bs2_slots", "max_wall_x"},
+               "bigfoot": {"holt_jobs", "scratch_mode"}}
         self.assertEqual(H.LIMITS, DEFAULTS)
+        self.assertEqual([h for h in H.names(all_=True) if H.limit(h, "scratch_mode") == "overflow"],
+                         ["chopin", "cinqcent", "copland", "cage", "czerny", "choubox"], "the six test hosts")
+        self.assertEqual({h: H.limit(h, "holt_jobs") for h in H.names(all_=True)},
+                         {"chopin": 4, "cinqcent": 4, "copland": 2, "cage": 2, "czerny": 2, "choubox": 1, "bigfoot": 1})
         for r in H.rows(all_=True):
-            want = choubox if r["name"] == "choubox" else (small if r["class"] == "small" else big)
+            want = {"choubox": choubox, "bigfoot": bigfoot}.get(r["name"], small if r["class"] == "small" else big)
             self.assertEqual(H.limits(r["name"]), want, r["name"])
             self.assertEqual(set(H.LIMITS) & set(r), own.get(r["name"], set()),
                              f"{r['name']}: a limit set in its row")
         self.assertEqual(H.limits("nosuch"), DEFAULTS)
-        self.assertEqual(H.load()["class_limits"], {"big": {"bs2_slots": 5},
-                                                    "small": {"stic_slots": 2, "holt_jobs": 1, "base_gib": 4, "bs2_slots": 2}})
+        self.assertEqual(H.load()["class_limits"],
+                         {"big": {"bs2_slots": 5, "holt_jobs": 4, "scratch_mode": "overflow"},
+                          "small": {"stic_slots": 2, "holt_jobs": 2, "base_gib": 4, "bs2_slots": 2, "scratch_mode": "overflow"}})
         self.assertEqual(set(H.load()["limits"]), set(H.LIMITS), "hosts.json's limits describe each one")
 
     def test_row_then_class_then_default(self):
@@ -145,14 +158,20 @@ class Limits(AltTable):
                dict(class_limits={"small": {"nope": 1}}), dict(class_limits={"small": {"holt_jobs": 0}}),
                dict(class_limits={"small": 3}), dict(class_limits=[]), dict(cage={"bs2_slots": 7}),
                dict(cage={"bs2_slots": 0}), dict(cage={"max_wall_x": 0.4}), dict(cage={"max_wall_x": 11}),
-               dict(cage={"max_wall_x": "2"}), dict(cage={"max_wall_x": True})]
+               dict(cage={"max_wall_x": "2"}), dict(cage={"max_wall_x": True}),
+               dict(cage={"scratch_mode": "disk"}), dict(cage={"scratch_mode": True}), dict(cage={"scratch_mode": None}),
+               dict(cage={"ssd_cutoff_gib": -1}), dict(cage={"ssd_cutoff_gib": "12"}), dict(cage={"ssd_floor_gib": True}),
+               dict(class_limits={"small": {"scratch_mode": "all-ssd"}})]
         for i, e in enumerate(bad):
             with self.subTest(e=e):
                 with self.assertRaises(H.TableError):
                     H.load(self.use_table(table(**e), f"bad{i}.json"))
         ok = table(class_limits={"small": {"base_gib": 4.5, "guest_slots": 1, "max_wall_x": 1.5}},
-                   cage={"base_gib": 0, "max_wall_x": None}, copland={"max_wall_x": 2})
+                   cage={"base_gib": 0, "max_wall_x": None, "scratch_mode": "ssd", "ssd_cutoff_gib": 0, "ssd_floor_gib": 99.5},
+                   copland={"max_wall_x": 2, "scratch_mode": "overflow"})
         H.load(self.use_table(ok, "ok.json"))
+        self.assertEqual([H.scratch_mode(h) for h in ("cage", "copland", "chopin", "nosuch")], ["ssd", "overflow", "ram", "ram"])
+        self.assertEqual([H.disk_scratch(h) for h in ("cage", "copland", "chopin", "nosuch")], [True, True, False, False])
 
     def test_class_rank(self):
         self.assertEqual([H.class_rank(h) for h in ("chopin", "cinqcent", "copland", "cage", "czerny", "nosuch")],
@@ -275,7 +294,7 @@ class Pack(unittest.TestCase):
         rng = random.Random(7)
         hosts = ["chopin", "cinqcent"]
         ranks = {h: H.class_rank(h) for h in hosts}
-        slots = {h: H.limit(h, "holt_jobs") for h in hosts}
+        slots = {h: H.LIMITS["holt_jobs"] for h in hosts}   # (the defaults: the real table's are 4 since 2026-11-23)
         for _ in range(200):
             jobs = random_jobs(rng, hosts, rng.randint(0, 14))
             want = old.pack(jobs, hosts)
@@ -372,11 +391,44 @@ class DiskMode(AltTable):
         p.fit_ceilings(v, lambda h: p.holt_need_here(v, h))
         return v
 
-    def test_off_today(self):
+    def test_off_by_default(self):
+        self.use_table(table())
         v = self.place((17.0, 4.0))
         self.assertEqual(v.hosts, ["chopin"])
         self.assertIn("cage", " ".join(v.pc.reasons_extra))
         self.assertEqual(holt.disk_mode("cage"), False)
+
+    def test_scratch_modes(self):
+        """RAM first, the SSD for overflow (2026-11-23).  overflow: a cell over the RAM-disk
+        ceiling, or over ssd_cutoff_gib, is the SSD's (only its memory is held to the ceiling);
+        one that fits both stays the RAM disk's.  ssd: every cell.  ram: none.  Never +img, and
+        only with room for the cell's D above the host's ssd_floor_gib (the facts' free space)."""
+        facts = {h: dict(f, preflight=dict(f["preflight"], scratch_free_gb=300.0)) for h, f in self.FACTS.items()}
+        self.use_table(table(class_limits={"big": {"scratch_mode": "overflow"}, "small": {"scratch_mode": "overflow"}},
+                             copland={"scratch_mode": "ram"}))
+        v = view(["chopin", "cage", "copland"])
+
+        def need(d, m, h, f=facts, variant=None):
+            return fake_planner(f, (d, m)).holt_need_here(view(["chopin", "cage", "copland"], variant), h)
+        self.assertEqual(need(17.0, 4.0, "cage"), (0.0, 4.0), "over cage's RAM disk")
+        self.assertEqual(need(17.0, 4.0, "chopin"), (0.0, 4.0), "under chopin's ceiling, over the cutoff of 12")
+        self.assertEqual(need(12.0, 4.0, "chopin"), (12.0, 4.0), "at the cutoff: the RAM disk's")
+        self.assertEqual(need(6.0, 4.0, "cage"), (6.0, 4.0))
+        self.assertEqual(need(17.0, 4.0, "copland"), (17.0, 4.0), "copland put back to ram: as before")
+        self.assertEqual(need(17.0, 4.0, "cage", variant="img"), (17.0, 4.0), "+img: only in the RAM disk")
+        p = fake_planner(facts, (17.0, 4.0))
+        p.fit_ceilings(v, lambda h: p.holt_need_here(v, h))
+        self.assertEqual(v.hosts, ["chopin", "cage"])
+        # a host short of free SSD gets no overflow: 100 GB is 93.1 GiB, 13.1 above the floor of 80
+        short = dict(facts, cage=dict(facts["cage"], preflight=dict(facts["cage"]["preflight"], scratch_free_gb=100.0)))
+        self.assertEqual(need(17.0, 4.0, "cage", short), (17.0, 4.0))
+        self.assertEqual(need(13.0, 4.0, "cage", short), (0.0, 4.0))
+        self.assertEqual(need(17.0, 4.0, "cage", self.FACTS), (0.0, 4.0), "free space not known: not checked")
+        self.use_table(table(cage={"scratch_mode": "ssd", "ssd_cutoff_gib": 4}, chopin={"scratch_mode": "overflow", "ssd_cutoff_gib": 4}), "t2.json")
+        self.assertEqual(need(2.0, 4.0, "cage"), (0.0, 4.0), "ssd: every cell")
+        self.assertEqual(need(2.0, 4.0, "cage", variant="img"), (2.0, 4.0))
+        self.assertEqual(need(5.0, 4.0, "chopin"), (0.0, 4.0), "the host's own cutoff")
+        self.assertEqual(need(4.0, 4.0, "chopin"), (4.0, 4.0))
 
     def test_on_for_a_host_its_memory_only(self):
         self.use_table(table(cage={"holt_disk_mode": True}))

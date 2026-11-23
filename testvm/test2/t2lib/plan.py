@@ -1209,11 +1209,27 @@ class Planner:
         """holt_need on H as H's runner reserves it: on a host whose holt_disk_mode is on (the
         host table), a cell over H's RAM-disk ceiling (its D) runs on /bkoscratch there
         (ht1-queue.sh's DISK_OVER: --reserve 0 M), so only its memory is held to the ceiling.
-        Not a +img cell: ht1.sh runs +img only in the RAM disk, so its D stays held to the ceiling."""
+        Not a +img cell: ht1.sh runs +img only in the RAM disk, so its D stays held to the ceiling.
+        A host whose scratch_mode is overflow or ssd (RAM first, the SSD for overflow, 2026-11-23)
+        does the same, under cmp-run.sh --reserve-ssd D M, and so only with room for the cell's D
+        on its SSD (the facts' free space of /bkoscratch above the host's ssd_floor_gib; unknown:
+        not checked): a host short of free SSD keeps the cell's D held to its RAM-disk ceiling.
+        There a cell over ssd_cutoff_gib (overflow) and every cell (ssd) is the SSD's as well."""
         n = self.holt_need(v, h)
-        if n is None or v.variant == "img" or not hosts_table.limit(h, "holt_disk_mode"):
+        if n is None or v.variant == "img":
             return n
-        c = factsmod.ceiling(self.ctx.facts.get(h))
+        lim = hosts_table.limits(h)
+        mode = lim["scratch_mode"]
+        if mode == "ram" and not lim["holt_disk_mode"]:
+            return n
+        f = self.ctx.facts.get(h)
+        if mode != "ram":
+            free = ((f or {}).get("preflight") or {}).get("scratch_free_gb")
+            if isinstance(free, (int, float)) and n[0] > free * 1e9 / 2 ** 30 - lim["ssd_floor_gib"] + 1e-9:
+                return n
+            if mode == "ssd" or n[0] > lim["ssd_cutoff_gib"] + 1e-9:
+                return (0.0, n[1])
+        c = factsmod.ceiling(f)
         if c is not None and n[0] > c[0] + 1e-9:
             return (0.0, n[1])
         return n

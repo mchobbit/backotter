@@ -35,7 +35,7 @@ from pathlib import Path
 GB = 1e9
 STAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
 VIRTUAL = re.compile(r"(zram|loop|nbd|md|ram|sr|zd)\d+|dm-\d+")
-EXTRA = {"tag", "serial", "swpeak", "mpeak", "host_dswap", "host_zram"}
+EXTRA = {"tag", "serial", "swpeak", "mpeak", "host_dswap", "host_zram", "scratch"}
 # A --reserve job's WHAT is "reserve CMD...": its wrappers, options, numbers
 # and VAR=VALUE words are skipped, and the command's name gives the family.
 WRAP = {"sudo", "env", "timeout", "nice", "ionice", "setsid", "setpriv", "bash", "sh", "python3", "stdbuf", "exec"}

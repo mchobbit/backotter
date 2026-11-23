@@ -16,6 +16,25 @@
 # and --reserve 0 M for that job alone, NVMe wear under its WEAR_TAG); the
 # others stay in RAM, and so does a +img line (ht1.sh runs +img only in RAM:
 # one over the ceiling is left for another host).
+# RAM first, the SSD for overflow (the host table's scratch_mode for this host,
+# read from the hosts.json of this script's copy; SCRATCH_MODE in the
+# environment instead, and SSD_CUTOFF_GIB for its ssd_cutoff_gib, default 12).
+# With HT_RAM=1, each line's place is picked as it is launched:
+#   ram       every line in the RAM disk, waiting for its room there, as before
+#             2026-11-23 (DISK_OVER as given);
+#   overflow  DISK_OVER=1, and a line also works on /bkoscratch when its D is
+#             over the cutoff, or when the RAM disk has no room for its D right
+#             now while its M fits (cmp-run.sh --free's "after" figures): it
+#             starts there instead of waiting;
+#   ssd       DISK_OVER=1, and every line works on /bkoscratch.
+# Never a +img line.  A line that works on /bkoscratch in a mode other than ram
+# runs under `cmp-run.sh --reserve-ssd D M` (its D held against the SSD's free
+# space above the host's ssd_floor_gib, the wear log's scratch=ssd; one in the
+# RAM disk has scratch=ram), and only when cmp-run.sh --ssd-free has room for
+# its D now: with none (a host short of free SSD), the cutoff and the overflow
+# leave it in the RAM disk as in mode ram, and a line that fits nowhere but the
+# SSD waits there in cmp-run.sh's line.  With a cmp-run.sh that has no
+# --reserve-ssd (a host not synced yet) the mode is ram, DISK_OVER=1 kept.
 # Big guests (D of BIG_GIB or more, default 13) take turns: one HoltTest run
 # per host, running or waiting, ours or not; so do a guest and its variants.
 # Nothing new starts while a job of ours waits for its room, so ours wait in
@@ -222,6 +241,14 @@ MAX=$((10#$MAX))
 MINFREE_GB=${MINFREE_GB:-80} BIG_GIB=${BIG_GIB:-13} RAM=${HT_RAM:-1} ONLY_ELSEWHERE=${ONLY_ELSEWHERE:-}
 DISK_OVER=${DISK_OVER:-0}
 [[ $DISK_OVER == [01] ]] || die "DISK_OVER: 0 (the default) or 1 (a line over the RAM disk works on /bkoscratch)"
+# The host's scratch_mode and cutoff (the header); a table that can't say: ram, 12.
+HOSTS_PY=$(dirname "$HERE")/test2/t2lib/hosts.py
+MODE=${SCRATCH_MODE:-$(python3 -I -B "$HOSTS_PY" limit "$H" scratch_mode 2>/dev/null)}
+[[ -n $MODE ]] || MODE=ram
+[[ $MODE == ram || $MODE == overflow || $MODE == ssd ]] || die "SCRATCH_MODE: ram, overflow or ssd"
+CUTOFF=${SSD_CUTOFF_GIB:-$(python3 -I -B "$HOSTS_PY" limit "$H" ssd_cutoff_gib 2>/dev/null)}
+[[ -n $CUTOFF ]] || CUTOFF=12
+[[ $CUTOFF =~ $NUM_RE ]] || die "SSD_CUTOFF_GIB: a number of GiB"
 [[ $MINFREE_GB =~ ^[0-9]+$ ]] || die "MINFREE_GB: a number of GB"
 MINFREE_GB=$((10#$MINFREE_GB))
 [[ $BIG_GIB =~ $NUM_RE ]] || die "BIG_GIB: a number of GiB"
@@ -259,6 +286,17 @@ n=${WORK#/mnt/bko-ram/}
 [[ -z ${HT_RECORDS+set} ]] || export HT_RECORDS=$RECS
 mountpoint -q /mnt/bko-ram || die "no RAM disk at /mnt/bko-ram (cmp-run.sh needs it, with HT_RAM=0 too)"
 for f in "$HERE/ht1.sh" "$HERE/ht1-lib.sh" "$HERE/ram-size.sh" "$CMP_RUN"; do [[ -x $f ]] || die "no $f"; done
+# (HT_RAM=0: every line on /bkoscratch already, under --reserve 0 M as ever.)
+((RAM)) || MODE=ram
+# A mode other than ram does what DISK_OVER does (the plan places a cell over
+# the RAM-disk ceiling here on that), also with a cmp-run.sh from before
+# --reserve-ssd (the shared one, not synced yet): then the mode is ram, and
+# such a line runs under --reserve 0 M, as DISK_OVER's always did.
+[[ $MODE == ram ]] || DISK_OVER=1
+MODE_WHY=""
+if [[ $MODE != ram ]] && ! grep -q -- '--reserve-ssd' "$CMP_RUN"; then
+    MODE_WHY=" (the host table says $MODE, but $CMP_RUN has no --reserve-ssd yet)"; MODE=ram
+fi
 # The binaries every job restores with (ht1-lib.sh's ht_rustic_take), pinned.
 if [[ -n ${HT_RUSTIC:-} ]]; then
     binfile=$HT_RUSTIC bins="HT_RUSTIC $HT_RUSTIC, no set"
@@ -287,7 +325,7 @@ read -ra zfs_list <<<"$NEEDS_ZFS"
 HOSTZFS=0   # zpool where root's PATH has it (facts_host.py's caps.zfs)
 for p in /usr/sbin/zpool /sbin/zpool /usr/local/sbin/zpool /usr/bin/zpool /bin/zpool; do [[ -f $p && -x $p ]] && HOSTZFS=1; done
 ((HOSTZFS)) || ! command -v zpool >/dev/null 2>&1 || HOSTZFS=1
-CANT=() REFUSED=() CANTWHY="" CANTSAID="" CEIL="" WHYNOT=""
+CANT=() REFUSED=() CANTWHY="" CANTSAID="" CEIL="" WHYNOT="" SSDROOM=""
 # This host's architecture and a guest's (hosts.py's guest_arch: *-arm64 is
 # arm64, every other amd64): a line of another architecture's guest is never run here.
 HOSTARCH=amd64; [[ $(uname -m) == aarch64 ]] && HOSTARCH=arm64
@@ -332,7 +370,7 @@ cant_why() {  # NM GUEST VARIANT D M [OVER]
     elif [[ $g == qubes* ]] && ! grep -qs '[1Y]' /sys/module/kvm_amd/parameters/nested /sys/module/kvm_intel/parameters/nested; then
         WHYNOT="runs Xen nested (Qubes OS), and this host has no kvm_amd/kvm_intel nested=1"
     elif if [[ -n ${6:-} ]]; then ((${6})); else over_ceil "$4" "$5"; fi; then
-        WHYNOT="--reserve $4 $5 over this host's ceiling $CEIL"
+        WHYNOT="--reserve $4 $5 over this host's ceiling $CEIL${SSDROOM:+ (and /bkoscratch has room for $SSDROOM GiB of scratch now)}"
     fi
     [[ -n $WHYNOT ]]
 }
@@ -351,6 +389,7 @@ cant_scan() {  # -> CANT and CANTWHY ("ENTRY (WHY); ..."), from the todo's good 
     local -a todo=() names=()
     local -A szd=() szm=() seen=() ov=()
     ceil_now
+    SSDROOM=""; [[ $MODE == ram ]] || { SSDROOM=$("$CMP_RUN" --ssd-free 2>/dev/null) && [[ $SSDROOM =~ $NUM_RE ]] || SSDROOM=0; }
     text=$(close_locks; todo_text) && [[ $text == END || $text == *$'\n'END ]] || return 0   # (a child: the runner keeps the port locks)
     CANT=() CANTWHY=""
     while IFS= read -r l; do
@@ -372,8 +411,11 @@ cant_scan() {  # -> CANT and CANTWHY ("ENTRY (WHY); ..."), from the todo's good 
                 [[ $s =~ %([0-9.]+) ]] && m=${BASH_REMATCH[1]}
                 d=${d:-${szd[$nm]:-}} m=${m:-${szm[$nm]:-}}; ((RAM)) || d=0
                 [[ -n $d && -n $m ]] && echo "$((k++)) $d $m $([[ $nm == *+img ]] && echo 1 || echo 0)"
-            done | awk -v c="$CEIL" -v dov="${DISK_OVER:-0}" 'BEGIN { split(c, x, " ") }
-                { d = $2 + 0; if (dov + 0 && !($4 + 0) && d > x[1] + 0) d = 0   # DISK_OVER: on /bkoscratch, --reserve 0 M (not +img: ht1.sh runs it only in RAM)
+            done | awk -v c="$CEIL" -v dov="${DISK_OVER:-0}" -v lim="$([[ $MODE == ram ]] && echo 0 || echo 1)" -v room="${SSDROOM:-0}" '
+                BEGIN { split(c, x, " ") }
+                # DISK_OVER: on /bkoscratch, --reserve 0 M (not +img: ht1.sh runs it only in RAM); in a
+                # mode other than ram under --reserve-ssd D M, so only with room for its D on the SSD now
+                { d = $2 + 0; if (dov + 0 && !($4 + 0) && d > x[1] + 0 && !(lim + 0 && d > room + 0)) d = 0
                   print $1, ((d > x[1] + 0 || $3 + 0 > x[2] + 0) ? 1 : 0) }')
     fi
     k=0
@@ -494,8 +536,10 @@ sweep() {  # runs that died in RAM: their records to /bkoscratch, R deleted (as 
 
 where="in RAM"; ((RAM)) || where="on /bkoscratch (HT_RAM=0)"
 ((RAM && DISK_OVER)) && where+=", a line over this host's RAM-disk ceiling on /bkoscratch (DISK_OVER=1)"
+((RAM)) && where+=", scratch_mode $MODE$MODE_WHY"
+((RAM)) && [[ $MODE == overflow ]] && where+=" (a line over $CUTOFF GiB, or with no room in the RAM disk now, on /bkoscratch)"
 say "start: run $RUN, ports $BASE-$((BASE + 89)), at most $MAX, queue ${QHOST:-here}, $HERE/ht1.sh, $where"
-say "env: $(env | grep -E '^(HT_[A-Za-z0-9_]*|T2_[A-Za-z0-9_]*|BIG_GIB|MINFREE_GB|ONLY_ELSEWHERE|NEEDS_ZFS|CMP_RUN|DISK_OVER)=' | sort | tr '\n' ' ')"
+say "env: $(env | grep -E '^(HT_[A-Za-z0-9_]*|T2_[A-Za-z0-9_]*|BIG_GIB|MINFREE_GB|ONLY_ELSEWHERE|NEEDS_ZFS|CMP_RUN|DISK_OVER|SCRATCH_MODE|SSD_CUTOFF_GIB)=' | sort | tr '\n' ' ')"
 say "binaries: $bins (sha256 ${BINSUM:0:12} of $binfile${hsums:+ and $hsums}); bko-holt $HOLT12 ($HOLTP)"
 echo "ht1-queue: bko-holt $HOLT12 ($HOLTP); log $LOG"
 say "big (D >= $BIG_GIB GiB; one at a time here): ${BIGNAMES//,/ }"
@@ -563,8 +607,24 @@ pop() {  # NOBIG RUNS -> a todo line, @SKIPPED or @EMPTY; anything else is a fai
         -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPath=none "m@$QHOST" \
         "$(printf '%q ' "$HERE/ht1-queue.sh" --pop "${a[@]}")"
 }
+# Why a line that could work in the RAM disk works on /bkoscratch instead (the
+# header: the mode ssd, the cutoff, no room in the RAM disk right now), on
+# stdout; rc 1: it doesn't (mode ram, no room for its D on the SSD now, or the
+# RAM disk has room, or its memory is what it would wait for).
+ssd_why() {  # D M
+    local room fr ad am
+    room=$("$CMP_RUN" --ssd-free 2>/dev/null) && [[ $room =~ $NUM_RE ]] && ge "$room" "$1" || return 1
+    if [[ $MODE == ssd ]]; then echo "scratch_mode ssd"; return 0; fi
+    [[ $MODE == overflow ]] || return 1
+    if ! ge "$CUTOFF" "$1"; then echo "over ssd_cutoff_gib $CUTOFF"; return 0; fi
+    fr=$("$CMP_RUN" --free 2>/dev/null) || return 1
+    read -r _ ad am < <(sed -n '3p' <<<"$fr")
+    [[ ${ad:-} =~ $NUM_RE && ${am:-} =~ $NUM_RE ]] || return 1
+    if ! ge "$ad" "$1" && ge "$am" "$2"; then echo "overflow: the RAM disk has room for $ad GiB now, not its $1"; return 0; fi
+    return 1
+}
 launch() {  # LINE: its job in the lowest free slot, on NEWPORT
-    local line=$1 nm d="" m="" g v="" sz="" sd sm s jram=$RAM
+    local line=$1 nm d="" m="" g v="" sz="" sd sm s jram=$RAM ssd="" pwhy="" res
     nm=${line%%[=%]*} g=${line%%[+=%]*}
     [[ $nm == *+* ]] && v=${nm#*+}
     [[ $line =~ =([0-9.]+) ]] && d=${BASH_REMATCH[1]}
@@ -578,9 +638,19 @@ launch() {  # LINE: its job in the lowest free slot, on NEWPORT
     ((RAM)) || d=0
     # DISK_OVER: a line over the RAM disk works on /bkoscratch (cant_scan's CEIL),
     # but not +img (ht1.sh runs it only in the RAM disk): cant_why gives it back.
+    # The mode's own reasons (the header) need room on the SSD now.
     if ((RAM && DISK_OVER)) && [[ $v != img ]] && [[ -n $CEIL ]] &&
             ! awk -v c="$CEIL" -v d="$d" 'BEGIN { split(c, x, " "); exit !(d + 0 <= x[1] + 0) }'; then
-        d=0 jram=0
+        # (No room for it on the SSD now: back to the others, as cant_scan leaves it.)
+        if [[ $MODE != ram ]] && ! { ssd=$("$CMP_RUN" --ssd-free 2>/dev/null) && [[ $ssd =~ $NUM_RE ]] && ge "$ssd" "$d"; }; then
+            CANT+=("=$line")
+            give_back "$line" "not started here: its D $d is over the RAM-disk ceiling $CEIL, and /bkoscratch has room for ${ssd:-no} GiB of scratch now" ||
+                done_row "$g${v:+-$v}" 1 "$d" "$m" "$NEWPORT" 0 -
+            return 1
+        fi
+        ssd=$d pwhy="DISK_OVER: over the RAM-disk ceiling $CEIL" d=0 jram=0
+    elif ((RAM)) && [[ $MODE != ram && $v != img ]] && pwhy=$(ssd_why "$d" "$m"); then
+        ssd=$d d=0 jram=0
     fi
     # The backstop to cant_scan (the todo may have changed since): a line this
     # host can never run goes back to the others.
@@ -596,12 +666,14 @@ launch() {  # LINE: its job in the lowest free slot, on NEWPORT
     GVS[$s]=$g${v:+-$v}
     # env and setsid exec in place (not a group leader): $! is cmp-run.sh's,
     # which becomes the ledger row's sudo.  The job keeps its own port's lock.
+    # On /bkoscratch in a mode other than ram: its D against the SSD's room.
+    res=(--reserve "$d" "$m"); [[ $MODE == ram || -z $ssd ]] || res=(--reserve-ssd "$ssd" "$m")
     ( close_locks keep
       exec env WEAR_TAG="ht1:$RUN:${GVS[$s]}" HT_RAM="$jram" HT_PORT="$NEWPORT" HT_VARIANT="$v" \
-          setsid "$CMP_RUN" --reserve "$d" "$m" sudo -E "$HERE/ht1.sh" "$g" "$RUN"
+          setsid "$CMP_RUN" "${res[@]}" sudo -E "$HERE/ht1.sh" "$g" "$RUN"
     ) > "$L/$RUN-${GVS[$s]}.log" 2>&1 < /dev/null &
     JOB[$s]=$! BASEG[$s]=$g PORT_OF[$s]=$NEWPORT PLK[$s]=$NEWLK JD[$s]=$d JM[$s]=$m T0[$s]=$(date +%s) TA[$s]="" WARN[$s]="" SIG[$s]="" LINE_OF[$s]=$line JR[$s]=$jram
-    say "slot $s: $line on port $NEWPORT (pid ${JOB[$s]}), --reserve $d $m${sz:+ (ram-size.sh: ${sz#* })}$( ((jram < RAM)) && echo ", on /bkoscratch (DISK_OVER: over the RAM-disk ceiling $CEIL)"), ${t} C, ${f} GB free"
+    say "slot $s: $line on port $NEWPORT (pid ${JOB[$s]}), ${res[*]}${sz:+ (ram-size.sh: ${sz#* })}$( ((jram < RAM)) && echo ", on /bkoscratch ($pwhy)"), ${t} C, ${f} GB free"
 }
 # A taken line back on top of the todo (the queue host's --putback), with
 # WHY in the log; rc 1 when it stays taken (in todo.taken).
@@ -632,7 +704,7 @@ reap() {  # a job whose PID is gone: its exit status to done, its port freed
         # cmp-run.sh refused its --reserve as one that can never fit here (the
         # ceiling moved since cant_why): not a job that ran, nor a failure.
         # Back to the todo, never again here; its done row only when it stays taken.
-        if ((rc == 1)) && [[ -z ${TA[$s]} ]] && grep -q -- '^--reserve .* can never fit here' "$L/$RUN-${GVS[$s]}.log" 2>/dev/null; then
+        if ((rc == 1)) && [[ -z ${TA[$s]} ]] && grep -qE -- '^--reserve(-ssd)? .* can never fit here' "$L/$RUN-${GVS[$s]}.log" 2>/dev/null; then
             REFUSED+=("=${LINE_OF[$s]}")
             if give_back "${LINE_OF[$s]}" "slot $s: cmp-run.sh refused --reserve ${JD[$s]} ${JM[$s]} here (can never fit; not a failure)"; then
                 unset "JOB[$s]" "GVS[$s]" "BASEG[$s]" "PORT_OF[$s]" "PLK[$s]" "JD[$s]" "JM[$s]" "T0[$s]" "TA[$s]" "WARN[$s]" "SIG[$s]" "LINE_OF[$s]" "JR[$s]"

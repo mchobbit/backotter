@@ -144,7 +144,7 @@ class HostScripts(unittest.TestCase):
         self.assertEqual(sda["kept_bytes"], UC24_KEPT)
         self.assertEqual(got["local"]["nvme0n1"]["kept_bytes"], 1000)   # (the -r2 attempt's, its own at most)
         lines = report.wear_lines(got)
-        self.assertIn("our jobs 4.20 GB (wear tags; 4.17 GB of it a failed run's state kept), today ? (SMART)",
+        self.assertIn("our jobs 4.20 GB (wear tags; 4.17 GB of it a failed run's state kept or a job's SSD scratch), today ? (SMART)",
                       [x for x in lines if " sda " in x][0])
         del got["local"]["sda"]["kept_bytes"]
         self.assertIn("our jobs 4.20 GB (wear tags), today", report.wear_lines(got)[1])
@@ -181,7 +181,7 @@ class Guards(unittest.TestCase):
                 self.assertEqual(s.feed_host("cinqcent", ours_bytes=UC24_TOTAL + int(4.1e9), kept=UC24_KEPT),
                                  "stop-starts")
                 why = s.stops[-1]
-                self.assertIn("wrote 8.29 GB (4.17 GB of it a failed run's state kept on /bkoscratch, not counted; "
+                self.assertIn("wrote 8.29 GB (4.17 GB of it a failed run's kept state or a job's SSD scratch on /bkoscratch, not counted; "
                               "4.12 GB counted), over 2 x the 2 GB budget", why)
 
     def test_kept_never_more_than_the_total(self):
@@ -198,7 +198,7 @@ class Guards(unittest.TestCase):
                                  "ok")
                 self.assertEqual(s.feed_host("chopin", ours_bytes=int(38e9), allowed={v3: int(30e9)}, kept=int(3e9)),
                                  "stop-starts")
-                self.assertIn("wrote 38.00 GB (3.00 GB of it a failed run's state kept on /bkoscratch; 30.00 GB of it "
+                self.assertIn("wrote 38.00 GB (3.00 GB of it a failed run's kept state or a job's SSD scratch on /bkoscratch; 30.00 GB of it "
                               "within the write allowance of holt:vanilla3, not counted; 5.00 GB counted)", s.stops[-1])
 
     def test_the_bound_budget_counts_it_out_too(self):
@@ -217,7 +217,7 @@ class Guards(unittest.TestCase):
         self.assertIsNone(g.feed_host("guest", "cinqcent", ours_bytes=int(1e9), kept=int(0.9e9)))
         self.assertIsNone(g.feed_host("stic", "cinqcent", ours_bytes=int(3.8e9)))
         self.assertIsNotNone(g.feed_host("stic", "cinqcent", ours_bytes=int(3.9e9)))   # 0.02 + 0.1 + 3.9 > 4
-        self.assertIn("5.07 GB of it a failed run's state kept", g.why()[0])
+        self.assertIn("5.07 GB of it a failed run's kept state or a job's SSD scratch on /bkoscratch", g.why()[0])
 
     def test_json_keeps_the_kept(self):
         g = run.RunGuards(POL)
@@ -299,7 +299,7 @@ class HoltHostChecks(unittest.TestCase):
                         {"cinqcent": {f"{PREFIX}:uc24": UC24_KEPT}})
         r.host_checks(RUN)
         self.assertEqual(r.acted[0], "stop-starts")
-        self.assertIn("wrote 8.29 GB (4.17 GB of it a failed run's state kept on /bkoscratch, not counted; "
+        self.assertIn("wrote 8.29 GB (4.17 GB of it a failed run's kept state or a job's SSD scratch on /bkoscratch, not counted; "
                       "4.12 GB counted)", r.rs.stops.stops[0])
 
     def test_kept_isn_t_excused_twice_by_a_write_allowance(self):
@@ -309,7 +309,7 @@ class HoltHostChecks(unittest.TestCase):
         r = self.runner(["holt:vanilla3"], {"chopin": {v3: int(71e9)}}, {"chopin": {v3: int(30e9)}})
         r.host_checks(RUN)
         self.assertEqual(r.acted, ["ok", "stop-starts"])
-        self.assertIn("30.00 GB of it a failed run's state kept on /bkoscratch; 36.00 GB of it within the write "
+        self.assertIn("30.00 GB of it a failed run's kept state or a job's SSD scratch on /bkoscratch; 36.00 GB of it within the write "
                       "allowance of holt:vanilla3, not counted; 5.00 GB counted", r.rs.stops.stops[0])
         self.assertEqual(r.allowed, {"chopin": {"holt:vanilla3": int(36e9)}})
         r = self.runner(["holt:vanilla3"], {"chopin": {v3: int(40e9)}}, {"chopin": {v3: int(30e9)}})
@@ -325,7 +325,7 @@ class HoltHostChecks(unittest.TestCase):
               "write_kept": dict(r.kept)}
         b = report.budget_lines(rr, POL, now=1795034220)
         self.assertEqual(b, ["budget: cinqcent wrote 4.21 GB in this run's jobs, over 2 GB (warn only (bind_from not "
-                             "set)); 4.17 GB of it a failed run's state kept on /bkoscratch, which the stop rule doesn't "
+                             "set)); 4.17 GB of it a failed run's kept state or a job's SSD scratch on /bkoscratch, which the stop rule doesn't "
                              "count"])
         self.assertEqual(report.budget_lines({"run": RUN, "cells": rr["cells"]}, POL, now=1795034220),
                          ["budget: cinqcent wrote 4.21 GB in this run's jobs, over 2 GB (warn only (bind_from not set))"])

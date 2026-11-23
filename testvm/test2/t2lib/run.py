@@ -699,7 +699,7 @@ def allowed_note(allowed, counted, kept=0):
     ex = sum(v for v in (allowed or {}).values() if v)
     parts = []
     if kept and kept > 0:
-        parts.append(f"{kept / 1e9:.2f} GB of it a failed run's state kept on /bkoscratch")
+        parts.append(f"{kept / 1e9:.2f} GB of it a failed run's kept state or a job's SSD scratch on /bkoscratch")
     if ex > 0:
         parts.append(f"{ex / 1e9:.2f} GB of it within the write allowance of {', '.join(sorted(allowed))}")
     if not parts:

@@ -63,6 +63,21 @@ gets the defaults):
                            estimate) is over max_wall_x times its family's median wall there,
                            while another host of the cell's is left (plan.Planner.fit_wall):
                            a slow host takes the short cells and leaves the long ones
+    scratch_mode     "ram" where a job that can work on either puts its scratch (HoltTest's
+                           lines: ht1-queue.sh; every other job's is in the RAM disk as ever):
+                           "ram": in the RAM disk, /mnt/bko-ram, waiting for room there, as
+                           every host did before 2026-11-23; "overflow": in the RAM disk when
+                           its reservation fits there now, else on the host's SSD
+                           (/bkoscratch) instead of waiting, and straight on the SSD when it
+                           is over ssd_cutoff_gib; "ssd": always on the SSD.  Not a +img line
+                           (ht1.sh runs it only in the RAM disk).  A mode other than "ram"
+                           also does what holt_disk_mode does
+    ssd_cutoff_gib   12    with scratch_mode "overflow": a job whose scratch reservation is
+                           over this many GiB goes straight to the SSD
+    ssd_floor_gib    80    the GiB of /bkoscratch that jobs' scratch never takes: cmp-run.sh
+                           gives a --reserve-ssd its room only from the free space above it
+                           (less what the other SSD jobs hold), so a host short of free SSD
+                           gets no overflow (Test2 starts nothing under 80 GB free there)
 The defaults are what every host had before the table had limits.
 
 Command line (what hosts.sh wraps; exit 0 ok, 1 no such host, 2 usage or a bad table):
@@ -98,7 +113,8 @@ REQUIRED = ("name", "ssh", "slot_range", "stic_ports", "class", "roles", "defaul
 # A host's limits and their defaults (the docstring): optional row fields, and the fields of
 # the table's class_limits {CLASS: {FIELD: VALUE}}.
 LIMITS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False, "bs2_slots": 3,
-          "max_wall_x": None}
+          "max_wall_x": None, "scratch_mode": "ram", "ssd_cutoff_gib": 12, "ssd_floor_gib": 80}
+SCRATCH_MODES = ("ram", "overflow", "ssd")
 FIELDS += tuple(LIMITS)
 # A host's architecture (its row's arch, else DEFAULT_ARCH), Debian's names; MACHINES maps
 # uname -m's to them.  A guest's is in its name (guest_arch): GUEST_ARCH_SUFFIXES.
@@ -146,6 +162,10 @@ def limit_error(k, v):
     """Why V can't be limit K's value (a string), or None: it can."""
     if k == "holt_disk_mode":
         return None if type(v) is bool else "true or false"
+    if k == "scratch_mode":
+        return None if type(v) is str and v in SCRATCH_MODES else "one of " + ", ".join(SCRATCH_MODES)
+    if k in ("ssd_cutoff_gib", "ssd_floor_gib"):
+        return None if type(v) in (int, float) and 0 <= v <= 4096 else "a number of GiB, 0 to 4096"
     if k == "base_gib":
         return None if type(v) in (int, float) and 0 <= v <= 64 else "a number of GiB, 0 to 64"
     if k == "guest_slots":
@@ -366,6 +386,18 @@ def limit(name, field, table=None):
     if field not in LIMITS:
         raise HostsError(f"no such limit {field} (limits: {', '.join(LIMITS)})")
     return limits(name, table)[field]
+
+
+def scratch_mode(name, table=None):
+    """NAME's scratch_mode (SCRATCH_MODES); "ram" for a name in no row."""
+    return limit(name, "scratch_mode", table)
+
+
+def disk_scratch(name, table=None):
+    """Whether a job on NAME may put its scratch on the SSD: its scratch_mode is not "ram", or
+    its holt_disk_mode is on (a line over the RAM-disk ceiling, the older rule)."""
+    lim = limits(name, table)
+    return lim["scratch_mode"] != "ram" or lim["holt_disk_mode"] is True
 
 
 def class_rank(name, table=None):

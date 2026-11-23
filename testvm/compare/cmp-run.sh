@@ -14,6 +14,14 @@
 #       works on that host's queue (over ssh), so both hosts share one;
 #   cmp-run.sh --reserve DISK_GIB MEM_GIB CMD ...
 #       runs CMD once its room is free, holding the room meanwhile;
+#   cmp-run.sh --reserve-ssd SSD_GIB MEM_GIB CMD ...
+#       the same for a CMD whose scratch is on the host's SSD (/bkoscratch),
+#       not in the RAM disk: it holds MEM_GIB of memory, none of the RAM disk,
+#       and SSD_GIB of the SSD's room (below: "The SSD's room");
+#   cmp-run.sh --ssd-free
+#       prints that room now, one figure in GiB (0.0: none, and always on a
+#       host whose scratch_mode is not overflow or ssd), and writes nothing,
+#       as --free;
 #   cmp-run.sh --ceiling
 #       prints "DISK MEM", the most one job could ever get on this host
 #       (ceiling(): a --reserve or a queue line over it is refused at once),
@@ -77,6 +85,28 @@
 #     cap: not the whole cap (zfs_arc_max, 8 GiB on the big hosts), which only
 #     the host's small throwaway test pools ever use, and the ARC gives memory
 #     back under pressure.  A host without ZFS (the small ones) has no ARC: 0.
+# The SSD's room (RAM first, the SSD for overflow: the user's choice,
+#   2026-11-23).  A job that can work on either (a HoltTest line: ht1-queue.sh
+#   decides, by the host's scratch_mode in the host table) takes a plain
+#   --reserve when its scratch fits in the RAM disk now, and a --reserve-ssd
+#   when it doesn't, or is too big for it, so that it need not wait for the RAM
+#   disk.  ssd_room(): the free space of /bkoscratch (df, so whatever anyone
+#   has written counts), less SSD_FLOOR_GIB (the environment's, else the
+#   host's ssd_floor_gib in the host table, else 80: Test2 starts nothing
+#   under 80 GB free there), less the SSD_GIB of every --reserve-ssd running
+#   (all of it, though part is written and off the free space already: counted
+#   twice, never too little).  A --reserve-ssd starts when its memory fits as
+#   any job's must (budget(), the line, the heat) and its SSD_GIB is within
+#   that room; else it waits in the same line, with its memory.  One that
+#   could never have its SSD_GIB (over the whole file system less the floor)
+#   or its memory is refused at once.  Its ledger row is PID 0 MEM - reserve
+#   ssd=SSD_GIB CMD...: a row every reader of the ledger takes as it is (no
+#   RAM disk, MEM of memory; ht1-lib.sh, an older cmp-run.sh), and a row
+#   without ssd= holds none of the SSD, so an older cmp-run.sh's rows and an
+#   empty ledger read as before.  The wear log says where a job's scratch was:
+#   scratch=ssd for a --reserve-ssd, scratch=ram for a --reserve of some RAM
+#   disk (WEAR_SCRATCH in the environment names it instead, for a caller that
+#   knows better: a --reserve 0 MEM whose CMD works on /bkoscratch).
 # Every figure is GiB floored to a tenth, and EPS_GIB (0.001, a MiB) is added
 # before the floor: fl() in ceiling(), budget() and free_now(), and the same
 # tolerance in fits(), the admission comparison.  Without it the bookkeeping's
@@ -154,7 +184,8 @@
 # m's with O_CREAT (so no >, >> or touch). So they are made 666 when missing,
 # then only opened without O_CREAT and rewritten in place (ledger_files, put,
 # rewrite, add). CMP_LEDGER_DIR (default /mnt/bko-ram) is for tests only
-# (cmp-run-test.sh): a ledger of its own, beside the real one.
+# (cmp-run-test.sh): a ledger of its own, beside the real one; CMP_SSD_DIR
+# (default /bkoscratch) likewise: the directory whose file system is the SSD.
 set -u
 HERE=$(dirname "$(realpath "${BASH_SOURCE[0]}")")   # before the cd: $0 may be relative
 cd ~/backotter-work
@@ -177,10 +208,11 @@ rewrite() {  # FILE CMD...: FILE's content becomes CMD's output (CMD reads FILE)
     c=$("$@"; rc=$?; echo .; exit $rc) || return; put "$f" "${c%.}"
 }
 add() { printf '%s\n' "$2" | dd of="$1" conv=nocreat,notrunc oflag=append status=none; }   # FILE LINE
-# --ceiling and --free write nothing at all, so that anyone (pick-host over
-# ssh) may ask a host what room it has without touching its ledger.
+SSD=${CMP_SSD_DIR:-/bkoscratch}
+# --ceiling, --free and --ssd-free write nothing at all, so that anyone
+# (pick-host over ssh) may ask a host what room it has without touching its ledger.
 case ${1:-} in
---ceiling|--free) ;;
+--ceiling|--free|--ssd-free) ;;
 *) ledger_files; chmod 666 $LEDGER $LEDGER.lock $WAITS 2>/dev/null ;;
 esac
 H=$(hostname -s)
@@ -270,6 +302,26 @@ budget() {  # [ROWS] -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked;
             live = memavail - avail - arcroom - (swt - swf) - 2 - unused
             if (live < mem) mem = live
             printf "%.1f %.1f\n", fl(disk), fl(mem)
+        }' <<<"$rows"
+}
+ssd_room() {  # [ROWS] -> "ROOM MOST" in GiB: what one more --reserve-ssd could get of the
+    # SSD now, floored at 0, and the most one could ever get, the file system less the
+    # floor; both 0 unless the host's scratch_mode is overflow or ssd (ram, or a table
+    # that can't say: no job's scratch goes to the SSD here), or with no answer from df
+    # (ROWS default the ledger's live rows; nothing is written)
+    local rows floor=${SSD_FLOOR_GIB:-} mode size avail py=${BKO_HOSTS_PY:-$HOME/backotter-work/testvm/test2/t2lib/hosts.py}
+    rows=${1-$(live_rows)}
+    [ -n "$floor" ] || floor=$(python3 -I -B "$py" limit "$(hostname -s)" ssd_floor_gib 2>/dev/null)
+    [[ $floor =~ ^[0-9]+([.][0-9]+)?$ ]] || floor=80
+    mode=${SCRATCH_MODE:-$(python3 -I -B "$py" limit "$(hostname -s)" scratch_mode 2>/dev/null)}
+    read -r size avail < <(df -Pk "$SSD" 2>/dev/null | awk 'NR == 2 { print $2, $4 }')
+    awk -v floor="$floor" -v mode="$mode" -v size_k="${size:-0}" -v avail_k="${avail:-0}" '
+        function fl(x) { x = int((x + 0.001) * 10 + (x < 0 ? -1 : 0)) / 10; return x < 0 ? 0 : x }
+        $5 == "reserve" && $6 ~ /^ssd=[0-9]+([.][0-9]+)?$/ { held += substr($6, 5) }   # the rows, on stdin
+        END {
+            room = avail_k / 1048576 - floor - held; most = size_k / 1048576 - floor
+            if (size_k + 0 == 0 || (mode != "overflow" && mode != "ssd")) room = most = 0
+            printf "%.1f %.1f\n", fl(room), fl(most)
         }' <<<"$rows"
 }
 prune() {  # [PID]: drop rows (ledger and line) whose holder is gone, or PID's (ledger locked)
@@ -414,20 +466,46 @@ if [ "${1:-}" = --free ]; then
     exit 0
 fi
 
-if [ "${1:-}" = --reserve ]; then
-    d=$2 m=$3; shift 3
+if [ "${1:-}" = --ssd-free ]; then
+    [ $# -eq 1 ] || { echo "usage: cmp-run.sh --ssd-free" >&2; exit 2; }
+    read -r sr _ < <(ssd_room) && [ -n "$sr" ] || { echo "cmp-run.sh --ssd-free: can't tell what room $SSD has" >&2; exit 1; }
+    echo "$sr"; exit 0
+fi
+
+if [ "${1:-}" = --reserve ] || [ "${1:-}" = --reserve-ssd ]; then
+    # s: the SSD GiB of a --reserve-ssd (its row's ssd=), which holds no RAM disk.
+    s=""
+    if [ "$1" = --reserve-ssd ]; then
+        [ $# -ge 4 ] && [[ $2 =~ ^[0-9]+([.][0-9]+)?$ && $3 =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+            { echo "usage: cmp-run.sh --reserve-ssd SSD_GIB MEM_GIB CMD ..." >&2; exit 2; }
+        s=$2 d=0 m=$3
+    else
+        d=$2 m=$3
+    fi
+    shift 3
     read -r cd cm < <(ceiling)
-    fits "$cd" "$d" "$cm" "$m" || { echo "--reserve $d $m can never fit here (at most $cd $cm)" >&2; exit 1; }
+    if [ -n "$s" ]; then
+        read -r _ smax < <(ssd_room "")
+        fits "${smax:-0}" "$s" "$cm" "$m" ||
+            { echo "--reserve-ssd $s $m can never fit here (at most ${smax:-0} of $SSD, $cm of memory; 0.0: this host's scratch_mode gives the SSD no scratch)" >&2; exit 1; }
+    else
+        fits "$cd" "$d" "$cm" "$m" || { echo "--reserve $d $m can never fit here (at most $cd $cm)" >&2; exit 1; }
+    fi
     while :; do
         lock || { sleep 30; continue; }
         prune
         if read -r maxd maxm < <(budget) && read -r maxd maxm _ hotc < <(after_line $$ "$maxd" "$maxm") &&
-                ! hot "$hotc" && fits "$maxd" "$d" "$maxm" "$m"; then
-            add $LEDGER "$$ $d $m - reserve $*"; leave_line $$; unlock; break
+                ! hot "$hotc" && fits "$maxd" "$d" "$maxm" "$m" &&
+                { [ -z "$s" ] || { read -r sr _ < <(ssd_room) && fits "${sr:-0}" "$s" 0 0; }; }; then
+            add $LEDGER "$$ $d $m - reserve ${s:+ssd=$s }$*"; leave_line $$; unlock; break
         fi
-        queue_up $$ "$d" "$m" reserve "$@"
+        queue_up $$ "$d" "$m" reserve ${s:+"ssd=$s"} "$@"
         unlock; sleep 30
     done
+    # Where the job's scratch is, for the wear log (iolog.sh's scratch=): the
+    # caller's word, else ssd for a --reserve-ssd and ram for some RAM disk.
+    ws=${WEAR_SCRATCH:-}
+    [ -n "$ws" ] || { if [ -n "$s" ]; then ws=ssd; elif awk -v d="$d" 'BEGIN { exit !(d + 0 > 0) }'; then ws=ram; fi; }
     # In a scope of its own, as m still, so that iolog.sh can count what it
     # writes to disk (the wear log; WEAR_LOG=off: not). exec keeps $$, so the
     # reservation lasts as long as CMD.  setpriv --init-groups, not
@@ -444,7 +522,7 @@ if [ "${1:-}" = --reserve ]; then
     fi
     exec sudo -E systemd-run --quiet --scope --collect ${JOB_SLICE:+--slice="$JOB_SLICE"} -p IOAccounting=yes \
         setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
-        env PATH="$PATH" WEAR_TAG="${WEAR_TAG:-}" "$IOLOG" "reserve $*" -- "$@"
+        env PATH="$PATH" WEAR_TAG="${WEAR_TAG:-}" WEAR_SCRATCH="$ws" "$IOLOG" "reserve $*" -- "$@"
 fi
 
 tag=$1 slots=$2; shift 2

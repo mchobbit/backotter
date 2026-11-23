@@ -227,7 +227,7 @@ def wear_lines(wear):
                 return f"{v / GB:.2f} GB" if isinstance(v, (int, float)) else "?"
             model = f" ({x['model']})" if x.get("model") else ""
             kb = x.get("kept_bytes")
-            kept = f"; {kb / GB:.2f} GB of it a failed run's state kept" if isinstance(kb, (int, float)) and kb > 0 else ""
+            kept = f"; {kb / GB:.2f} GB of it a failed run's state kept or a job's SSD scratch" if isinstance(kb, (int, float)) and kb > 0 else ""
             out.append(f"{h} {d}{model}: run window {g('window_bytes')} (diskstats, all writers), our jobs "
                        f"{g('ours_bytes')} (wear tags{kept}), today {g('today_bytes')} (SMART)")
     return out or ["wear: no disk figures (facts or wear logs unreachable)"]
@@ -355,7 +355,7 @@ def budget_lines(rr, policy, sweep=False, ledger=(), now=None, update=False):
             line = f"budget: {h} wrote {x:.2f} GB in this run's jobs, over {run_gb} GB ({mode})"
             kb = kept.get(h)
             if isinstance(kb, (int, float)) and kb > 0:
-                line += (f"; {min(kb / GB, x):.2f} GB of it a failed run's state kept on /bkoscratch, "
+                line += (f"; {min(kb / GB, x):.2f} GB of it a failed run's kept state or a job's SSD scratch on /bkoscratch, "
                          "which the stop rule doesn't count")
             mine = {c: v for c, v in (allowed.get(h) or {}).items() if isinstance(v, (int, float)) and v > 0}
             if mine:

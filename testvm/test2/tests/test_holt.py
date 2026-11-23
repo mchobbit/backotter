@@ -846,7 +846,7 @@ class FakeRemote:
         if m:
             env = dict(re.findall(r"(\w+)=(\S+)", cmd))
             return self._new(host, {"kind": "build", "plat": m.group(2), "env": env})
-        m = re.search(r"ht1-queue\.sh (\S+) 2600 3", cmd)
+        m = re.search(r"ht1-queue\.sh (\S+) 2600 [1-9]", cmd)   # (MAXJOBS: the host's holt_jobs)
         if m:
             oe = re.search(r"ONLY_ELSEWHERE='([^']*)'", cmd)
             return self._new(host, {"kind": "queue", "qrun": m.group(1),
@@ -1031,7 +1031,8 @@ class U53HoltRun(unittest.TestCase):
         self.assertEqual(todo, ["redox", "openbsd8", "mint22", "freebsd15", "debian13+oneshot", "debian13"])
         qs = [c[0] for h, c in starts if "ht1-queue.sh" in c[0]]
         self.assertEqual(len(qs), 4)   # attempt 1 and the rerun, on both hosts
-        q1 = [c for c in qs if " t2h-20261108T0300-abcd 2600 3" in c]
+        q1 = [c for c in qs if f" t2h-20261108T0300-abcd 2600 {holt.max_jobs('chopin')}" in c]
+        self.assertEqual(len(q1), 2, "both hosts' runners at their holt_jobs (the big hosts')")
         self.assertTrue(all(f"HT_HOLT_BIN={hb}" in c and "HT_RAM=1" in c and "T2_RUN=t2h-20261108T0300-abcd" in c
                             and "T2_CELLS=/bkoscratch/t2test/runs/t2h-20261108T0300-abcd/cells.json" in c for c in q1))
         self.assertIn("ONLY_ELSEWHERE=redox", q1[0])

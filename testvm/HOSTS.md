@@ -205,6 +205,62 @@ have now, then by load; `--json` shows the whole probe and why each host was
 dropped. `testvm/holttest1d/ht1-farm.sh RUN GUEST...` starts one HoltTest1
 queue over every default host in one command (README "Queues").
 
+**RAM first, the SSD for overflow** (the user's choice, 2026-11-23). Each host's
+`scratch_mode` in the table says where a job that can work on either puts its
+scratch. Today that is a HoltTest line (`ht1-queue.sh`); SticTest's, GuestTest's
+and the gate's scratch is in the RAM disk as before, since their scripts name
+`/mnt/bko-ram` themselves.
+
+| `scratch_mode` | A HoltTest line works |
+|---|---|
+| `ram` | in the RAM disk, waiting for its room there, as before 2026-11-23 |
+| `overflow` | in the RAM disk when its reservation fits there now; on `/bkoscratch` instead of waiting when it doesn't; straight on `/bkoscratch` when its D is over `ssd_cutoff_gib` (12) or over the RAM-disk ceiling |
+| `ssd` | always on `/bkoscratch` |
+
+A `+img` line is never moved (ht1.sh runs it only in the RAM disk). A line on
+`/bkoscratch` runs as ht1.sh's disk mode always has (`HT_RAM=0`: it works in its
+records directory, a pass deletes the bulk and keeps the records, a failure
+keeps everything in place), under `cmp-run.sh --reserve-ssd D M`: its M counts
+against the memory as any job's, and its D against the SSD's room, the free
+space of `/bkoscratch` above `ssd_floor_gib` (80) less what the other SSD jobs
+hold. A host short of free SSD gets no overflow: its lines stay in the RAM disk.
+`cmp-run.sh --ssd-free` prints the room. The ledger row is `PID 0 M - reserve
+ssd=D CMD`, which an older reader takes as a job with no RAM disk.
+
+With scratch off the RAM disk, memory is the limit, so `holt_jobs` rose as far
+as the memory pool carries (MemTotal less the whole tmpfs, the ARC's GiB and
+`base_gib`; a HoltTest job reserves 4 GiB of it, and SticTest and GuestTest
+share it):
+
+| host | mode | `holt_jobs` | memory pool (ceiling) | threads | `/bkoscratch` free, 2026-11-23 | SSD room |
+|---|---|---|---|---|---|---|
+| chopin | overflow | 4 (was 3) | 25.2 GiB (23.2) | 12 | 347 GiB | 267 |
+| cinqcent | overflow | 4 (was 3) | 25.2 GiB (23.2) | 12 | 264 GiB (sda2, SATA) | 184 |
+| copland, cage, czerny | overflow | 2 (was 1) | 12.1 GiB (10.1) | 16 | 236, 221, 354 GiB | 156, 141, 274 |
+| choubox | overflow | 1 | 8.0 GiB (6.0) | 4 | 95 GiB | 15 |
+| bigfoot | ram | 1 | | | | none |
+
+Four, not five or six, on the big hosts: five jobs would leave 5 GiB of the pool
+for everything else, and Cinqcent was held for swap-out the day this was set.
+Two on the M900s: three would take the whole pool. Cage is the host to watch:
+its SN770 has dropped off PCIe under heavy I/O.
+
+Test2's write stop rule leaves an SSD job's bytes out (its wear line says
+`scratch=ssd`; a RAM-disk job's says `scratch=ram` and is held to the budget as
+before); the report's totals still count them.
+
+To put a host back: `"scratch_mode": "ram"` in its row of `testvm/hosts.json`
+(every host: in both `class_limits`), and `holt_jobs` back to 3 (big) or 1
+(small) beside it, then `testvm/sync-hosts.sh` when no run is live. The next
+run's runners read the table as they start.
+
+After a cycle, `t2 pull`, then `testvm/test2/host-rates.py --since UTC` prints
+per host and family the cells an hour, the jobs at once, the median wall and
+the GB written, with HoltTest's RAM and SSD jobs on lines of their own and, per
+host, the cells that passed both ways (the SSD wall against the RAM wall).
+`--cut UTC` puts the rows before and since a time side by side. On a host,
+`testvm/compare/wear-report.py --tag ht1` sums the wear log by tag.
+
 **Placing work by hand: always ask, never name two hosts.** Every session that
 starts its own job (`ht1.sh`, `make-*.sh`, a guest boot, a compare run) asks
 `testvm/pick-host` for the host, with the job's `--reserve` and guest, and runs

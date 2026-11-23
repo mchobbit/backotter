@@ -278,7 +278,8 @@ exit 0
         self.assertIn("cage's runner of r1 still runs: left as it is", r.stdout)
         started = [c for c in calls if "setsid" in c[1]]
         self.assertEqual([c[0] for c in started], [H.ssh("copland")], calls)
-        self.assertIn(" r1 2600 1 ", started[0][1] + " ")
+        self.assertIn(f" r1 2600 {H.limit('copland', 'holt_jobs')} ", started[0][1] + " ")   # its holt_jobs: 2 since 2026-11-23
+        self.assertEqual(H.limit("copland", "holt_jobs"), 2)
         self.assertIn(H.row("chopin").get("host_key_alias") or "chopin", started[0][1])   # the queue host's address
         r, calls = self.farm("r1", "--join", "--queue-host", "chopin", "--hosts", "cage", running=H.ssh("cage"))
         self.assertEqual(r.returncode, 0, r.stderr)

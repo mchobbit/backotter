@@ -327,9 +327,12 @@ class QueueRefusedReserve(unittest.TestCase):
         """reap's grep matches what cmp-run.sh says when a --reserve can never fit."""
         say = re.search(r'echo "(--reserve \$d \$m can never fit here[^"]*)"', rd(CMP_RUN)).group(1)
         line = say.replace("$d", "17").replace("$m", "4").replace("$cd", "9.0").replace("$cm", "9.2")
-        pat = re.search(r"grep -q -- '([^']+)' \"\$L/\$RUN-", rd(QUEUE)).group(1)
+        pat = re.search(r"grep -qE -- '([^']+)' \"\$L/\$RUN-", rd(QUEUE)).group(1)
         self.assertRegex(line, pat.replace(".*", ".*"))
         self.assertNotRegex("--reserve 7 4 can't fit now", pat)
+        # ... and a --reserve-ssd's too (a line on /bkoscratch: RAM first, the SSD for overflow)
+        say = re.search(r'echo "(--reserve-ssd \$s \$m can never fit here[^"]*)"', rd(CMP_RUN)).group(1)
+        self.assertRegex(say.replace("$s", "900").replace("$m", "4"), pat)
 
 
 def flock_bash():

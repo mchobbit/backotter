@@ -33,6 +33,10 @@
 # means unknown:
 #   tag=TAG           WEAR_TAG, FAMILY:RUN[:CELL] (ht1:r4all:pop24), with
 #                     characters other than A-Za-z0-9._:+@- made _, cut at 160
+#   scratch=ram|ssd   WEAR_SCRATCH: where the job's scratch was, the RAM disk or
+#                     the host's SSD (cmp-run.sh: a --reserve of some RAM disk,
+#                     a --reserve-ssd); none: not known (a job from before
+#                     2026-11-23, one with no scratch)
 #   serial=DISK:SERIAL,...  the physical disks' serials (Chopin's NVMe names
 #                     swap between boots)
 #   swpeak=BYTES      the most swap, zram and disk, the cgroup held at once
@@ -48,6 +52,8 @@
 # wear-report.py adds it to its job's.  WEAR_LOG=off logs nothing.
 set -u
 tag=${WEAR_TAG:-}; tag=${tag//[!A-Za-z0-9._:+@-]/_}; tag=${tag:0:160}; s0="" keepf="" keepd=""
+# This job's alone: CMD and what it starts (a --reserve of its own) don't inherit it.
+scratch=${WEAR_SCRATCH:-}; unset WEAR_SCRATCH
 
 wbytes() {  # CGROUP_DIR -> DISK=BYTES,...: what the cgroup has written, every device io.stat names
     local mm rest w dev out=""
@@ -84,6 +90,7 @@ line() {  # CGROUP_DIR RC SECONDS WHAT
         [ -n "$w" ] && ser+="${ser:+,}$name:$w"
     done <"$cg/io.stat"
     [ -n "$tag" ] && x+=$'\t'"tag=$tag"
+    case $scratch in ram|ssd) x+=$'\t'"scratch=$scratch" ;; esac
     [ -n "$ser" ] && x+=$'\t'"serial=$ser"
     if [ -n "$keepf" ] && [ -s "$keepf" ]; then
         w=$(awk -F= 'NF == 2 && $1 ~ /^[A-Za-z0-9._-]+$/ && $2 ~ /^[0-9]+$/ { s[$1] += $2 }

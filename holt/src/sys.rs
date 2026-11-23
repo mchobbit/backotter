@@ -216,16 +216,36 @@ pub struct Sys {
     /// Whether we may read block devices and root-only files (euid 0).
     pub privileged: bool,
     warnings: RefCell<Vec<String>>,
+    /// The kernel's time zone (sys_tz's tz_minuteswest, minutes west of
+    /// UTC) when this is the running system: Linux's vfat reads and writes
+    /// FAT's local-time stamps through it (crate::report records it, load
+    /// mounts the FAT targets with it).  None for a --sysroot or a test.
+    sys_tz: Option<i32>,
 }
 
 impl Sys {
     pub fn new(root: impl Into<PathBuf>, runner: Box<dyn Runner>, privileged: bool) -> Sys {
-        Sys { root: root.into(), runner, privileged, warnings: RefCell::new(Vec::new()) }
+        Sys { root: root.into(), runner, privileged, warnings: RefCell::new(Vec::new()), sys_tz: None }
     }
 
     /// The running system, as whoever we are.
     pub fn host() -> Sys {
-        Sys::new("/", Box::new(RealRunner { timeout: Duration::from_secs(30) }), euid() == 0)
+        let mut s = Sys::new("/", Box::new(RealRunner { timeout: Duration::from_secs(30) }), euid() == 0);
+        s.sys_tz = kernel_sys_tz();
+        s
+    }
+
+    /// As though the kernel's sys_tz were `minuteswest` (tests).
+    pub fn with_sys_tz(mut self, minuteswest: Option<i32>) -> Sys {
+        self.sys_tz = minuteswest;
+        self
+    }
+
+    /// The running kernel's sys_tz minutes west of UTC (`hwclock --systz`
+    /// sets it, Artix's dinit at every boot): None off Linux, for a
+    /// --sysroot, or where it couldn't be read.
+    pub fn sys_tz_minuteswest(&self) -> Option<i32> {
+        self.sys_tz
     }
 
     pub fn root(&self) -> &Path {
@@ -443,6 +463,51 @@ pub fn euid() -> u32 {
     geteuid()
 }
 
+/// The gettimeofday(2) syscall's number, where holt is built for that
+/// architecture (none on the others: sys_tz is then not read).
+#[cfg(target_os = "linux")]
+const SYS_GETTIMEOFDAY: Option<std::os::raw::c_long> = if cfg!(target_arch = "x86_64") {
+    Some(96)
+} else if cfg!(any(target_arch = "aarch64", target_arch = "riscv64")) {
+    Some(169)
+} else if cfg!(any(target_arch = "x86", target_arch = "arm")) {
+    Some(78)
+} else {
+    None
+};
+
+/// The kernel's sys_tz.tz_minuteswest, by the raw gettimeofday syscall:
+/// glibc (2.31 on) zeroes the timezone it's given and musl ignores it, so
+/// libc's gettimeofday can't say.  None when the call fails or answers
+/// what settimeofday(2) would refuse (beyond 15 hours).
+#[cfg(target_os = "linux")]
+fn kernel_sys_tz() -> Option<i32> {
+    use std::os::raw::{c_int, c_long};
+    #[repr(C)]
+    struct Timezone {
+        tz_minuteswest: c_int,
+        tz_dsttime: c_int,
+    }
+    // SAFETY: syscall(2) is variadic, long-numbered and returns long in
+    // every Linux libc.
+    unsafe extern "C" {
+        fn syscall(n: c_long, ...) -> c_long;
+    }
+    let nr = SYS_GETTIMEOFDAY?;
+    let mut tz = Timezone { tz_minuteswest: 0, tz_dsttime: 0 };
+    // SAFETY: gettimeofday(NULL, &tz): the kernel skips a NULL timeval and
+    // writes only a struct timezone (two ints) through the second pointer,
+    // which points at one that lives for the call.
+    let rc = unsafe { syscall(nr, std::ptr::null_mut::<u8>(), &mut tz as *mut Timezone) };
+    let _ = tz.tz_dsttime;
+    (rc == 0 && tz.tz_minuteswest.abs() <= 15 * 60).then_some(tz.tz_minuteswest)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn kernel_sys_tz() -> Option<i32> {
+    None
+}
+
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 fn statvfs(path: &Path) -> Option<(u64, u64, u64)> {
     use std::ffi::CString;
@@ -656,6 +721,19 @@ mod tests {
         let (total, free, avail) = s.statvfs("/").expect("statvfs /");
         assert!(total > 0 && free <= total && avail <= free);
         assert_eq!(s.statvfs("/no/such/dir"), None);
+    }
+
+    /// sys_tz: read off the running kernel for the host only, never for a
+    /// --sysroot (Sys::new) unless a test says so.
+    #[test]
+    fn sys_tz_is_the_hosts_only() {
+        assert_eq!(Sys::new("/", Box::new(FakeRunner::default()), false).sys_tz_minuteswest(), None);
+        assert_eq!(Sys::new("/", Box::new(FakeRunner::default()), false).with_sys_tz(Some(-60)).sys_tz_minuteswest(), Some(-60));
+        if cfg!(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))) {
+            let tz = kernel_sys_tz().expect("gettimeofday's timezone");
+            assert!(tz.abs() <= 15 * 60, "{tz}");
+            assert_eq!(Sys::host().sys_tz_minuteswest(), Some(tz));
+        }
     }
 
     #[test]

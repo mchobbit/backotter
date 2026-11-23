@@ -157,6 +157,15 @@ hand, then `--only boot`.
 - `storage.mounts`, `swaps`, `fstab`, `crypttab`, `mdadm_conf`, each entry
   resolved to the device it names; a mount that is a directory of another
   mount of the same filesystem (a bind) says which (`alias_of`).
+- `storage.sys_tz_minuteswest` (Linux, the running system only): the
+  kernel's time zone, minutes west of UTC, as `hwclock --systz` set it.
+  Linux's vfat keeps FAT's local-time stamps through it unless the mount
+  says `tz=UTC` or `time_offset=`, so load mounts a restored vfat/msdos
+  filesystem with the source mount's own `tz=`/`time_offset=`, else with
+  `time_offset=` from this (`tz=UTC` when it is 0, whatever the rescue's
+  own time zone), and its files come back with the source's on-disk
+  stamps. An older dump without it: nothing added. fstab's `auto` counts
+  when the source had vfat/msdos mounted there.
 - `storage.backup_sources`: the filesystems a whole-system backup reads,
   each at the path fstab mounts it (`path`) and where the running system
   has it (`from`), aliases left out; `storage.physical_root` is the one at

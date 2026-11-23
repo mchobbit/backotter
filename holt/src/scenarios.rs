@@ -25,7 +25,12 @@ fn put(img: &mut [u8], at_sector: usize, data: &[u8]) {
 }
 
 fn run(t: &Tree, privileged: bool, runner: FakeRunner) -> Value {
-    let sys = Sys::new(t.root(), Box::new(runner), privileged);
+    run_tz(t, privileged, runner, None)
+}
+
+/// run, with the kernel's sys_tz as `sys_tz` (Sys::with_sys_tz).
+fn run_tz(t: &Tree, privileged: bool, runner: FakeRunner, sys_tz: Option<i32>) -> Value {
+    let sys = Sys::new(t.root(), Box::new(runner), privileged).with_sys_tz(sys_tz);
     let os = crate::osrel::read(&sys);
     crate::osrel::check_supported(os.as_ref()).unwrap();
     let v = crate::report::build(&sys, os.as_ref(), "2026-11-04T00:00:00Z");
@@ -538,6 +543,21 @@ fn uefi_gpt_nvme_shim() {
     assert_eq!(s(esp0, &["contents", "debian_grub_stub", "search_uuids", "0"]), "10111213-1415-1617-1819-1a1b1c1d1e1f");
     assert_eq!(arr(&v, &["boot", "grub", "installed_platforms"])[0].as_str(), Some("x86_64-efi"));
     assert_eq!(s(&v, &["boot", "packages", "shim-signed"]), "1.47+15.8-1");
+}
+
+/// The kernel's sys_tz (Artix's hwclock --systz in Europe/Paris: -60) in
+/// storage.sys_tz_minuteswest, and none where it wasn't read (a
+/// --sysroot); it survives redaction (load::commands's fat_time_options
+/// has the ESP mount that uses it).
+#[test]
+fn sys_tz_recorded() {
+    let t = uefi_shim();
+    let v = run_tz(&t, true, FakeRunner::default(), Some(-60));
+    assert_eq!(v.at(&["storage", "sys_tz_minuteswest"]).and_then(Value::as_i64), Some(-60));
+    let (red, _) = crate::redact::redact(&v);
+    assert_eq!(red.at(&["storage", "sys_tz_minuteswest"]).and_then(Value::as_i64), Some(-60));
+    let v = run(&t, true, FakeRunner::default());
+    assert_eq!(v.at(&["storage", "sys_tz_minuteswest"]), None);
 }
 
 /// Debian's "Guided - use entire disk and set up encrypted LVM": GPT with

@@ -1677,6 +1677,11 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         .set("fstab", fstab)
         .set("crypttab", crypttab)
         .set("mdadm_conf", mdadm_conf)
+        // The kernel's sys_tz, which the source's vfat mounts without tz=
+        // or time_offset= read and wrote FAT's local-time stamps through:
+        // load mounts the restored FAT filesystems with it
+        // (load::commands::fat_time_option).
+        .set_some("sys_tz_minuteswest", sys.sys_tz_minuteswest())
         .set_some("luks_headers", (!luks_headers.is_empty()).then_some(luks_headers))
         .set_some("qubes", qubes);
     let ostree_json = ostree.then(|| crate::ostree::json(sys, physical_root.as_deref().unwrap_or(crate::ostree::SYSROOT)));

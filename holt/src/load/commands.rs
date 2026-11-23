@@ -3245,7 +3245,69 @@ fn mount_options(o: &str) -> String {
     if keep.is_empty() { "defaults".to_string() } else { keep.join(",") }
 }
 
+/// The option a FAT filesystem's mount for the restore needs so that the
+/// files load writes onto it (the restore's, and the boot stage's, which
+/// writes through the same mount) get the stamps the source's had on disk.
+/// FAT keeps local time, and Linux's vfat converts with the mount's
+/// tz=UTC or time_offset= (minutes east of UTC), else with the kernel's
+/// sys_tz: on the source `hwclock --systz` may have set that (Artix's
+/// dinit does at every boot: Europe/Paris in winter is tz_minuteswest
+/// -60, so time_offset=60), where the rescue's is 0.  `opts` is the
+/// mount's own option list (it already says, if it names either);
+/// `source` the source's running mount's options, whose tz=/time_offset=
+/// is reproduced (fstab may not have had it); else the dump's sys_tz
+/// (storage.sys_tz_minuteswest): time_offset= when it isn't 0, tz=UTC
+/// when it is (so a rescue whose own sys_tz isn't 0, live media that ran
+/// hwclock --systz, doesn't shift the stamps).  None: nothing to add (an
+/// older dump without sys_tz: the rescue's own, 0 on our images).
+pub(crate) fn fat_time_option(opts: &str, source: Option<&str>, sys_tz_minuteswest: Option<i64>) -> Option<String> {
+    let named = |o: &str| o.split(',').find(|x| x.starts_with("tz=") || x.starts_with("time_offset=")).map(str::to_string);
+    if named(opts).is_some() {
+        return None;
+    }
+    if let Some(o) = source.and_then(named) {
+        return Some(o);
+    }
+    // vfat refuses a time_offset beyond a day.
+    sys_tz_minuteswest.filter(|&m| m.abs() <= 24 * 60).map(|m| if m == 0 { "tz=UTC".to_string() } else { format!("time_offset={}", -m) })
+}
+
 impl Builder<'_> {
+    /// A Linux vfat/msdos mount of the mount stage (`mount -t TYPE -o OPTS
+    /// DEV DIR`, at `at` in the restored system; an fstab `auto` one too
+    /// when the source had a vfat/msdos filesystem mounted there) with
+    /// fat_time_option's option added, and the plan saying why.
+    fn fat_time(&self, at: &str, c: &mut Cmd) {
+        if self.fam.is_some() || c.argv.len() != 7 || c.argv[0] != "mount" || c.argv[1] != "-t" || c.argv[3] != "-o" || !matches!(c.argv[2].as_str(), "vfat" | "msdos" | "auto") {
+            return;
+        }
+        let source: Option<String> = self
+            .layout
+            .arr(&["storage", "mounts"])
+            .iter()
+            .find(|m| s(m, "target").as_deref() == Some(at) && s(m, "fstype").is_some_and(|t| matches!(t.as_str(), "vfat" | "msdos")))
+            .map(|m| format!("{},{}", s(m, "options").unwrap_or_default(), s(m, "super_options").unwrap_or_default()));
+        if c.argv[2] == "auto" && source.is_none() {
+            return;
+        }
+        let tz = self.layout.v.at(&["storage", "sys_tz_minuteswest"]).and_then(Value::as_i64);
+        let Some(add) = fat_time_option(&c.argv[4], source.as_deref(), tz) else {
+            return;
+        };
+        let why = if source.as_deref().is_some_and(|o| o.split(',').any(|x| x == add)) {
+            format!("{add}: as the source's {at} was mounted, so FAT's local-time stamps are written as its were")
+        } else if add == "tz=UTC" {
+            format!("{add}: the source's vfat kept {at}'s FAT local-time stamps as UTC (sys_tz tz_minuteswest 0), whatever the rescue's kernel time zone; the restore and the boot stage write through this mount")
+        } else {
+            format!("{add}: the source's vfat kept {at}'s FAT local-time stamps by its kernel time zone (sys_tz tz_minuteswest {}), not the rescue's; the restore and the boot stage write through this mount", tz.unwrap_or(0))
+        };
+        c.argv[4] = if c.argv[4] == "defaults" { add } else { format!("{},{add}", c.argv[4]) };
+        c.why = Some(match c.why.take() {
+            Some(w) => format!("{w}; {why}"),
+            None => why,
+        });
+    }
+
     fn mount(&mut self) -> Vec<Cmd> {
         let target = self.opts.target.clone();
         // (mount point in the restored system, command)
@@ -3390,8 +3452,9 @@ impl Builder<'_> {
             self.problems.push("nothing in fstab or the ZFS datasets mounts /".into());
         }
         let mut out = Vec::new();
-        for (p, c) in ms {
+        for (p, mut c) in ms {
             let dir = if p == "/" { target.clone() } else { format!("{target}{p}") };
+            self.fat_time(&p, &mut c);
             self.mount_points.push(dir.clone());
             if c.argv[0] == "mount" || out_mkdir.contains(&dir) {
                 out.push(Cmd::new(&["mkdir", "-p", &dir]));
@@ -6412,6 +6475,55 @@ mod tests {
         // /boot an ESP (vfat): /boot itself is labelled on /, nothing under it.
         let s = script("vfat");
         assert!(s.contains(r#"setfiles -r "$r" "$f" "$r"/boot "$r"/usr/local "$r"/var;"#) && !s.contains("/boot/grub") && !s.contains("mount --bind /boot"), "{s}");
+    }
+
+    /// FAT's local-time stamps (BackShot1 artix-20261123-102328: Artix's
+    /// hwclock --systz left sys_tz at -60, and boot/intel-ucode.img came
+    /// back an hour early): the dump's sys_tz as time_offset=, or the
+    /// source mount's own tz=/time_offset=, never over fstab's own.
+    #[test]
+    fn fat_time_options() {
+        assert_eq!(fat_time_option("defaults", None, None), None);
+        assert_eq!(fat_time_option("defaults", None, Some(0)).as_deref(), Some("tz=UTC"));
+        assert_eq!(fat_time_option("umask=0077", None, Some(-60)).as_deref(), Some("time_offset=60"));
+        assert_eq!(fat_time_option("defaults", Some("rw,relatime,rw,fmask=0022,dmask=0022,codepage=437"), Some(300)).as_deref(), Some("time_offset=-300"));
+        assert_eq!(fat_time_option("defaults", Some("rw,relatime,rw,fmask=0022,tz=UTC,errors=remount-ro"), Some(-60)).as_deref(), Some("tz=UTC"));
+        assert_eq!(fat_time_option("defaults", Some("rw,relatime,rw,time_offset=-120,errors=remount-ro"), None).as_deref(), Some("time_offset=-120"));
+        assert_eq!(fat_time_option("umask=0077,tz=UTC", Some("rw,tz=UTC"), Some(-60)), None);
+        assert_eq!(fat_time_option("time_offset=30", None, Some(-60)), None);
+        // More than a day: vfat would refuse the mount.
+        assert_eq!(fat_time_option("defaults", None, Some(-1500)), None);
+
+        // fstab's type for /boot, the source's running /boot's fstype.
+        let plan_ty = |ty: &str, live_ty: &str, sys_tz: Option<i64>, live: &str| {
+            let mut j = sample::bios_mbr()
+                .replace(r#""file": "/boot", "type": "ext4", "options": "defaults""#, &format!(r#""file": "/boot", "type": "{ty}", "options": "umask=0077""#))
+                .replace(r#""mounts": [],"#, &format!(r#""mounts": [{{"target": "/boot", "source": "/dev/vda1", "fstype": "{live_ty}", "root": "/", "options": "rw,relatime", "super_options": "{live}"}}],"#));
+            if let Some(m) = sys_tz {
+                j = j.replace(r#""crypttab": null,"#, &format!(r#""crypttab": null, "sys_tz_minuteswest": {m},"#));
+            }
+            let b = built_from(&j, &[]);
+            let c = b.stage(Stage::Mount).iter().find(|c| c.argv.first().map(String::as_str) == Some("mount") && c.argv.last().map(String::as_str) == Some("/mnt/bko-target/boot")).cloned().expect("the /boot mount");
+            (c.argv[2..5].join(" "), c.why.unwrap_or_default())
+        };
+        let plan = |sys_tz: Option<i64>, live: &str| plan_ty("vfat", "vfat", sys_tz, live);
+        let plain = "rw,fmask=0022,dmask=0022,codepage=437,iocharset=ascii,shortname=mixed,utf8,errors=remount-ro";
+        assert_eq!(plan(None, plain).0, "vfat -o umask=0077");
+        let (o, why) = plan(Some(0), plain);
+        assert_eq!(o, "vfat -o umask=0077,tz=UTC");
+        assert!(why.contains("whatever the rescue's kernel time zone"), "{why}");
+        let (o, why) = plan(Some(-60), plain);
+        assert_eq!(o, "vfat -o umask=0077,time_offset=60");
+        assert!(why.contains("sys_tz tz_minuteswest -60"), "{why}");
+        assert_eq!(plan(Some(300), plain).0, "vfat -o umask=0077,time_offset=-300");
+        let (o, why) = plan(Some(-60), "rw,fmask=0022,tz=UTC");
+        assert_eq!(o, "vfat -o umask=0077,tz=UTC");
+        assert!(why.contains("as the source's /boot was mounted"), "{why}");
+        assert_eq!(plan(None, "rw,time_offset=120").0, "vfat -o umask=0077,time_offset=120");
+        // fstab's auto: by what the source had mounted there.
+        assert_eq!(plan_ty("auto", "vfat", Some(-60), plain).0, "auto -o umask=0077,time_offset=60");
+        assert_eq!(plan_ty("auto", "ext4", Some(-60), "rw").0, "auto -o umask=0077");
+        assert_eq!(plan_ty("ext4", "ext4", Some(-60), "rw").0, "ext4 -o umask=0077");
     }
 
     /// PikaOS (docs/design/pikaos.md): booster's image remade for each

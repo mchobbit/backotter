@@ -9,7 +9,18 @@
 # creation times (crtime), the attribute files' own owner, mode, times and
 # ACL, owners and ACL entries that are Windows SIDs (idmap's ephemeral ids),
 # system attributes cleared from a new file's default (noarchive,
-# noav_modified), and ZFS project IDs.
+# noav_modified), and ZFS project IDs.  An attribute file owned by a SID
+# (sid/xattr-owner@stream) is made, and compared by its owner's names, when
+# both tools are BackOtter's rustic: restic-bko keeps its number alone
+# (ForkAudit1 G5-03).
+#
+# Then (not --again), where rustic restores, what ForkAudit1's unit G5 fixed
+# in it (restic-bko has these still, so with it they are skipped, each
+# saying so): the extended attributes' owners under --no-ownership and by
+# name (G5-01); a named ACL entry added to a file and its attribute after
+# the backup, on a dataset with aclmode=passthrough, gone after a restore
+# in place, and nothing left for a second --exact to set (G5-02); system
+# attributes and a ZFS project given after the backup likewise (G5-08).
 #
 # Then (not --again), as on Linux (fs_roundtrip.py): a restore over the
 # restored tree after changing it (rt-common.sh's rt_over), compared again
@@ -184,6 +195,16 @@ echo owner >sid/owner
 /usr/bin/chown $(sid_uid S-1-5-21-1111-2222-3333-1001):$(sid_gid S-1-5-21-1111-2222-3333-513) sid/owner
 echo acl >sid/acl
 /usr/bin/chmod A+usersid:S-1-5-21-1111-2222-3333-1004:read_data:allow,groupsid:S-1-5-21-1111-2222-3333-1005:write_data:deny sid/acl
+# An attribute file owned by a SID, as an SMB client's alternate data stream
+# is (xattr_sid_listing, compared on its own).  Only where rustic-bko does
+# both: it keeps the SID in illumos.xattr_meta (owner_sid, group_sid), which
+# restic-bko doesn't yet (ForkAudit1 G5-03), so with restic-bko the two
+# tools' nodes of it would differ, and its number restored in another boot
+# is someone else's.
+if is_rustic $R && is_rustic $RR; then
+    echo stream >sid/xattr-owner
+    runat sid/xattr-owner "echo data >stream; /usr/bin/chown $(sid_uid S-1-5-21-1111-2222-3333-1007):$(sid_gid S-1-5-21-1111-2222-3333-514) stream"
+fi
 
 # System attributes off that a new file has on (defaults/, compared on its
 # own): a restore that writes the file sets archive and av_modified.
@@ -254,6 +275,12 @@ xattr_atimes() {  # DIR
 sid_listing() {  # DIR
     (cd "$1" && for p in sid/*; do /usr/bin/ls -l "$p" | awk '{ print $9, $3, $4 }'; /usr/bin/ls -V "$p" | tail -n +2; done)
 }
+# The owner and group of the attribute file a SID owns, as names (nothing
+# where the tree has none: with restic-bko).
+xattr_sid_listing() {  # DIR
+    [ -f "$1/sid/xattr-owner" ] || return 0
+    runat "$1/sid/xattr-owner" '/usr/bin/ls -l stream' | awk '{ print "sid/xattr-owner@" $9, $3, $4 }'
+}
 # The listings of the checks on their own, one file each.
 listings() {  # DIR OUT-PREFIX
     case $2 in *.before) ;; *) xattr_atimes "$1" >$2.xattr-atime ;; esac
@@ -261,13 +288,17 @@ listings() {  # DIR OUT-PREFIX
     case $2 in *.before) xattr_atimes "$1" >$2.xattr-atime ;; esac
     crtime list "$1" >$2.crtime
     cd "$1" || exit 1
-    # Not the atimes: the main listing has just read the values.
+    # Not the atimes: the main listing has just read the values.  Not sid/'s:
+    # an attribute a SID owns has another number in each boot
+    # (xattr_sid_listing).
     find . \( -type f -o -type d \) | sort | while IFS= read -r p; do
+        case $p in ./sid/*) continue ;; esac
         runat "$p" 'for a in *; do case $a in SUNWattr_r[ow]) ;; *) [ -f "$a" ] &&
             stat -c "%n uid=%u gid=%g mode=%a mtime=%.9Y" "$a" && /usr/bin/ls -V "$a" | tail -n +2 ;; esac; done' |
             sed "s|^|$p: |"
     done >$2.xattr-meta 2>/dev/null
     sid_listing "$1" >$2.sid
+    xattr_sid_listing "$1" >$2.xattr-sid 2>&1
     for p in defaults/*; do echo "$p"; /usr/bin/ls -/v "$p" | tail -n +2; done >$2.defaults
     # By name: zfs project -r opens the FIFO too, and waits for a writer.
     { zfs project -d project; zfs project project/inherited project-file; } >$2.project 2>&1
@@ -318,6 +349,9 @@ if [ -z "$again" ]; then
         echo "can't decode the snapshot"; failed="$failed; $t"
     fi
 fi
+# Whether the snapshot keeps the SID of the attribute a SID owns (a backup
+# by rustic-bko): its node says, in --again too.
+rt_nodes "$(rt_restic $R $RR)" $RESTIC_REPOSITORY $SRC/sid 2>/dev/null | grep '^xattr-owner	' >/tmp/bko-rt.xattr-sid.kept
 echo "== restore"
 bko_restore "latest:$SRC" $DST; status=$?
 echo "exit $status"
@@ -338,6 +372,13 @@ compare_all() {  # X
     sid_listing $DST >$after.sid-restart
     cp /tmp/bko-rt.before.sid /tmp/bko-rt.before.sid-restart
     check "SID owners and ACL entries after svcadm restart idmap$x" sid-restart
+    # restic-bko keeps the number of an attribute's owner alone, which in
+    # another boot is another SID's, or nobody: compared for rustic alone.
+    if is_rustic $RR && grep -q '"owner_sid"' /tmp/bko-rt.xattr-sid.kept 2>/dev/null; then
+        check "an attribute file's SID owner and group (illumos.xattr_meta owner_sid, group_sid)$x" xattr-sid
+    else
+        echo "== an attribute file's SID owner and group$x: skipped (kept by rustic-bko alone, ForkAudit1 G5-03; restic-bko keeps the number)"
+    fi
     check "system attributes off by default (illumos.system_attributes)$x" defaults
     check "ZFS project IDs (illumos.zfs_project, SPEC2 5.4)$x" project
     t="hard links (one inode for all three)$x"
@@ -395,6 +436,78 @@ if [ -z "$again" ]; then
     cmp_listing=rt_nodot_diff
     compare_all " (over an existing tree)"
     cmp_listing=diff
+
+    # ForkAudit1's unit G5, where rustic restores (restic-bko restores as
+    # rustic-bko did before it: ~/git/backotter testvm/audit/rust/findings.tsv
+    # says what it would need).  Trees and repositories of their own.
+    G=/root/bko-rt-g5
+    mkdir -p $G
+    g5_restore() {  # REPO ARGS...: a rustic restore, its messages kept
+        g5repo=$1; shift
+        (export RUSTIC_REPOSITORY=$g5repo; keep_msgs $RR --no-progress --no-cache restore "$@")
+    }
+    g5_owners() {  # FILE: the file's owner and group, and each attribute's
+        /usr/bin/ls -ldn "$1" | awk '{ print "file", $3 ":" $4 }'
+        runat "$1" 'for a in *; do case $a in SUNWattr_r[ow]) ;; *) /usr/bin/ls -ln "$a" | awk "{ print \$9, \$3 \":\" \$4 }" ;; esac; done'
+    }
+    t="extended attributes' owners as the restore sets owners: none under --no-ownership, by name with their file (ForkAudit1 G5-01)"
+    echo "== $t"
+    if is_rustic $RR; then
+        ok=1
+        userdel bkoown 2>/dev/null; userdel bkoelse 2>/dev/null
+        { useradd -u 1700 bkoown >/dev/null && mkdir -p $G/own && echo data >$G/own/f &&
+            /usr/bin/chown 1700:1701 $G/own/f && /usr/bin/chmod 600 $G/own/f &&
+            runat $G/own/f 'echo mine >mine; echo other >other; /usr/bin/chown 1700:1701 mine; /usr/bin/chown 1702:1701 other; /usr/bin/chmod 600 mine other' &&
+            touch -d '2001-02-03 04:05:06' $G/own; } || { echo "can't make $G/own"; ok=""; }
+        rt_backup $R $G/own-repo $G/own >/tmp/bko-rt.g5.backup 2>&1 || { cat /tmp/bko-rt.g5.backup; ok=""; }
+        g5_restore $G/own-repo --no-ownership "latest:$G/own" $G/own-none; status=$?
+        g5_owners $G/own-none/f | tee /tmp/bko-rt.g5.none | sed 's/^/  --no-ownership: /'
+        [ $status -eq 0 ] && [ "$(tr '\n' ' ' </tmp/bko-rt.g5.none)" = "file 0:0 mine 0:0 other 0:0 " ] || ok=""
+        # The user 1700 was at backup is 1750 here, and 1700 someone else.
+        userdel bkoown; useradd -u 1750 bkoown >/dev/null; useradd -u 1700 bkoelse >/dev/null
+        g5_restore $G/own-repo "latest:$G/own" $G/own-name; status=$?
+        g5_owners $G/own-name/f | tee /tmp/bko-rt.g5.name | sed 's/^/  by name: /'
+        [ $status -eq 0 ] && [ "$(tr '\n' ' ' </tmp/bko-rt.g5.name)" = "file 1750:1701 mine 1750:1701 other 1702:1701 " ] || ok=""
+        userdel bkoown; userdel bkoelse
+        [ -n "$ok" ] && echo "yes" || failed="$failed; $t"
+    else
+        echo "skipped: restic-bko gives each attribute the snapshot's uid and gid in every mode"
+    fi
+
+    t="an ACL entry, system attributes and a ZFS project given after the backup are gone after a restore in place (aclmode=passthrough), and a second --exact sets nothing (ForkAudit1 G5-02, G5-08)"
+    echo "== $t"
+    if is_rustic $RR; then
+        ok=1
+        g5pool=$(zfs list -H -o name /root | cut -d/ -f1)
+        zfs create -o atime=off -o aclmode=passthrough -o mountpoint=$G/reset $g5pool/bko-rt-g5 || { echo "can't make the dataset"; ok=""; }
+        { mkdir $G/reset/t && echo secret >$G/reset/t/f && /usr/bin/chmod 600 $G/reset/t/f &&
+            runat $G/reset/t/f 'echo n >note; /usr/bin/chmod 600 note' && mkdir $G/reset/t/d &&
+            touch -d '2001-02-03 04:05:06' $G/reset/t/d $G/reset/t; } || { echo "can't make $G/reset/t"; ok=""; }
+        g5_state() {  # the ACLs, system attributes and projects of the tree
+            (cd $G/reset/t && /usr/bin/ls -V f | tail -n +2 && runat f '/usr/bin/ls -V note' | tail -n +2 &&
+                /usr/bin/ls -d/c f d | tr -d ' \t' && zfs project f && zfs project -d d)
+        }
+        g5_state >/tmp/bko-rt.g5.before
+        rt_backup $R $G/reset-repo $G/reset/t >/tmp/bko-rt.g5.backup 2>&1 || { cat /tmp/bko-rt.g5.backup; ok=""; }
+        { /usr/bin/chmod A+user:nobody:read_data:allow $G/reset/t/f &&
+            runat $G/reset/t/f '/usr/bin/chmod A+user:nobody:read_data:allow note' &&
+            /usr/bin/chmod S+v'{hidden,nodump}' $G/reset/t/f && /usr/bin/chmod S+vhidden $G/reset/t/d &&
+            zfs project -p 77 $G/reset/t/f >/dev/null && zfs project -p 78 -s $G/reset/t/d >/dev/null; } || { echo "can't change $G/reset/t"; ok=""; }
+        g5_state >/tmp/bko-rt.g5.changed
+        cmp -s /tmp/bko-rt.g5.before /tmp/bko-rt.g5.changed && { echo "the tree didn't change"; ok=""; }
+        g5_restore $G/reset-repo --exact --numeric-id "latest:$G/reset/t" $G/reset/t; status=$?
+        echo "exit $status"; [ $status -eq 0 ] || ok=""
+        g5_state >/tmp/bko-rt.g5.after
+        diff /tmp/bko-rt.g5.before /tmp/bko-rt.g5.after && echo "  as at backup ($(wc -l </tmp/bko-rt.g5.before | tr -d ' ') lines)" || ok=""
+        c1=$(stat -c '%n %.9Z' $G/reset/t/f $G/reset/t/d)
+        g5_restore $G/reset-repo --exact --numeric-id "latest:$G/reset/t" $G/reset/t; status=$?
+        c2=$(stat -c '%n %.9Z' $G/reset/t/f $G/reset/t/d)
+        [ $status -eq 0 ] && [ "$c1" = "$c2" ] && echo "  the second --exact set nothing (change times as they were)" ||
+            { echo "the second --exact changed: $c1 -> $c2"; ok=""; }
+        [ -n "$ok" ] && echo "yes" || failed="$failed; $t"
+    else
+        echo "skipped: restic-bko leaves what a node without the attribute doesn't name"
+    fi
 
     # av_quarantined: no one may open such a file, root included (EACCES),
     # nor its attribute directory, nor rename it; stat, ls -/ v, utimes,
@@ -537,10 +650,19 @@ if [ -z "$again" ]; then
     [ "$(grep -c -e 'user:nobody:r-*:-*:allow' -e 'group:nobody:-w-*:-*:deny' /tmp/bko-rt.noidmap.list)" = 2 ] || ok=""
     w=$(grep -ci -e idmap -e 'S-1-' /tmp/bko-rt.noidmap.msgs.f)
     # Both BACKOTTER.md files: a warning once per attribute, and sid/ has
-    # all three (owner_sid, group_sid, acl), each once.
-    echo "$w message lines name idmap or a SID (one per attribute: owner, group, ACL entries)"
-    [ "$w" = 3 ] || ok=""
-    for a in illumos.owner_sid illumos.group_sid illumos.acl; do
+    # all three (owner_sid, group_sid, acl), each once.  Where the tree has
+    # the attribute file a SID owns (rustic-bko alone), illumos.xattr_meta
+    # is a fourth, and the attribute goes to nobody too.
+    wants=3 wattrs="illumos.owner_sid illumos.group_sid illumos.acl" wwhat="owner, group, ACL entries"
+    if [ -f $SRC/sid/xattr-owner ]; then
+        wants=4 wattrs="$wattrs illumos.xattr_meta" wwhat="$wwhat, an attribute file's owner"
+        o=$(runat /root/bko-rt-noidmap/xattr-owner '/usr/bin/ls -ln stream' | awk '{ print $3, $4 }')
+        echo "  xattr-owner@stream: $o"
+        [ "$o" = "60001 60001" ] || ok=""
+    fi
+    echo "$w message lines name idmap or a SID (one per attribute: $wwhat)"
+    [ "$w" = $wants ] || ok=""
+    for a in $wattrs; do
         n=$(grep -c "$a[: ]" /tmp/bko-rt.noidmap.msgs.f)
         echo "  $a: $n"
         [ "$n" = 1 ] || ok=""

@@ -150,6 +150,149 @@ class HostScripts(unittest.TestCase):
         self.assertIn("our jobs 4.20 GB (wear tags), today", report.wear_lines(got)[1])
 
 
+# The lines copland's jobs.log had from t2h-20261123T1713-3cd9 (2026-11-23, the first run after RAM
+# first, the SSD for overflow): three HoltTest lines whose scratch was on the SSD, 50.1 GB.
+OG_RUN = "t2h-20261123T1713-3cd9"
+OG_PREFIX = f"ht1:{OG_RUN}"
+
+
+def og_line(end, disks, gv, scratch="ssd", keep=None, host="copland"):
+    x = f"\ttag={OG_PREFIX}:{gv}" + (f"\tscratch={scratch}" if scratch else "") + "\tserial=nvme0n1:NOT-A-REAL-SERIAL"
+    x += (f"\tkeep={keep}" if keep else "") + "\tswpeak=4292608\tmpeak=16529907712\thost_dswap=0\thost_zram=50737152"
+    return (f"{end}\t{host}\trun-p2006774-i2002936.scope\t0\t254\t{disks}\t"
+            f"reserve sudo -E /home/m/backotter-work/t2/copy/55f8008/testvm/holttest1d/ht1.sh {gv} {OG_RUN}{x}\n")
+
+
+OG_JOBS = (og_line("2026-11-23T17:19:58Z", "zram0=4259840,nvme0n1=15241217024", "endeavouros")
+           + og_line("2026-11-23T17:21:37Z", "zram0=6758400,nvme0n1=21398901248", "biglinux-reformat-ext4")
+           + og_line("2026-11-23T17:26:08Z", "nvme0n1=13465824256", "mx25"))
+OG_SSD = 15241217024 + 21398901248 + 13465824256
+
+
+class SsdScratch(unittest.TestCase):
+    """A job whose scratch was on the SSD (jobs.log's scratch=ssd, cmp-run.sh --reserve-ssd) and
+    the write stop rule's own readers.  55f8008 taught wear.Job.kept_disks (the report's figures)
+    to leave such a line out whole, but not the two scripts the stop rule's feeds run on a host
+    (holt.Remote.tag_bytes, hostjob.TAG_SCRIPT): t2h-20261123T1713-3cd9 stopped 7 minutes in on
+    "copland: this run's jobs wrote 15.24 GB, over 2 x the 2 GB budget", its first SSD job's
+    bytes, with 17 cells run (all PASS) and 24 due cells never started."""
+
+    def setUp(self):
+        self.log = os.path.join(tmpdir(self), "jobs.log")
+
+    def put(self, text):
+        with open(self.log, "w") as f:
+            f.write(text)
+
+    def remote(self):
+        r = holt.Remote()
+        log = self.log
+
+        class H:
+            rq = staticmethod(hostrun.rq)
+
+            @staticmethod
+            def ssh(host, cmd=None, script=None, args=(), timeout=60, **k):
+                return hostrun.ssh(hostrun.LOCAL, script=local_script(script, log), args=args, timeout=timeout)
+        r.h = H
+        return r
+
+    def io(self, prefix):
+        script = local_script(hostjob.TAG_SCRIPT, self.log)
+
+        class IO:
+            def sh(self, host, cmd, timeout=60, input=None):
+                p = subprocess.run([sys.executable, "-I", "-B", "-", prefix, "0"], input=script.encode(),
+                                   capture_output=True, timeout=60)
+                return p.returncode, p.stdout.decode(), p.stderr.decode()
+        return IO()
+
+    def test_the_three_readers_agree(self):
+        """wear.Job (the report), holt.Remote.tag_bytes and hostjob.TAG_SCRIPT (the stop rule's
+        feeds) on one log: SSD scratch whole, a RAM job's keep= alone, a plain line nothing."""
+        text = (OG_JOBS + og_line("2026-11-23T17:30:00Z", "nvme0n1=30000000", "debian13", scratch="ram")
+                + og_line("2026-11-23T17:31:00Z", "nvme0n1=4000000000", "uc24", scratch="ram", keep="nvme0n1=3900000000")
+                # scratch=ssd with a keep= too (a failed SSD job): the line once, never more than it wrote
+                + og_line("2026-11-23T17:32:00Z", "nvme0n1=5000000000,dm-0=7", "kali", keep="nvme0n1=4000000000")
+                + og_line("2026-11-23T17:33:00Z", "nvme0n1=50000000", "arch", scratch=None))
+        self.put(text)
+        jobs = wear.parse_jobs(text)
+        total, kept = sum(j.physical_bytes() for j in jobs), sum(j.kept_bytes() for j in jobs)
+        self.assertEqual((total, kept), (OG_SSD + 30000000 + 4000000000 + 5000000000 + 50000000,
+                                         OG_SSD + 3900000000 + 5000000000))
+        self.assertEqual(hostjob.tag_bytes_kept(self.io(OG_PREFIX), "copland", OG_PREFIX, 0), (total, kept))
+        r = self.remote()
+        self.assertEqual(r.tag_bytes("copland", OG_PREFIX, 0, kept=True), (total, kept))
+        by, kb = r.tag_bytes("copland", OG_PREFIX, 0, by_tag=True, kept=True)
+        self.assertEqual(by, {j.tag: j.physical_bytes() for j in jobs})
+        self.assertEqual(kb, {j.tag: j.kept_bytes() for j in jobs if j.kept_bytes()})
+        self.assertEqual(r.tag_bytes("copland", OG_PREFIX, 0), total, "the plain sum keeps every byte")
+
+    def runner(self, hosts=("copland",)):
+        tmp = tmpdir(self)
+        r = holt.Runner.__new__(holt.Runner)
+        r.run_id, r.hosts, r.t0, r.swap0, r.sf = OG_RUN, list(hosts), 1000.0, {}, SF
+        r.plan = types.SimpleNamespace(cells=[types.SimpleNamespace(cell=c) for c in ("holt:endeavouros", "holt:mx25")])
+        real = self.remote()
+        # (the real tag_bytes and its host script; no look at the host: these hosts aren't there)
+        r.remote = types.SimpleNamespace(tag_bytes=real.tag_bytes, pswpout=lambda host: 0, touched=[])
+        r.remote.touch = lambda h, path: r.remote.touched.append((h, path))
+        r.state = holt.State(os.path.join(tmp, "holt.json"))
+        r.state["queues"] = {OG_RUN: {}}
+        r.allowed, r.kept, r.stops, r.logged = {}, {}, [], []
+        r.log = r.logged.append
+        r.rs = types.SimpleNamespace(stops=run.StopEngine("holt", POL, guards=run.RunGuards(POL)))
+        return r
+
+    def test_copland_s_ssd_jobs_stop_nothing(self):
+        """The run's own lines through the real host script and host_checks: 50.1 GB, none counted."""
+        self.put(OG_JOBS)
+        r = self.runner()
+        r.host_checks(OG_RUN)
+        r.check_guards(OG_RUN)
+        self.assertEqual((r.stops, r.rs.stops.stops, r.remote.touched), ([], [], []))
+        self.assertFalse(r.rs.stops.guards.tripped())
+        self.assertTrue(r.rs.stops.may_start())
+        self.assertEqual(r.state["write_kept"], {"copland": OG_SSD})
+        rr = {"run": OG_RUN, "cells": [{"cell": "holt:endeavouros", "host": "copland", "gb": OG_SSD / 1e9}],
+              "write_kept": dict(r.kept)}
+        self.assertEqual(report.budget_lines(rr, POL, now=1795034220)[0],
+                         "budget: copland wrote 50.11 GB in this run's jobs, over 2 GB (warn only (bind_from not set)); "
+                         "50.11 GB of it a failed run's kept state or a job's SSD scratch on /bkoscratch, which the stop "
+                         "rule doesn't count")
+
+    def test_a_ram_job_s_bytes_still_count_beside_them(self):
+        """The rule is still there for what it is for: 4.1 GB of a RAM job's own writes to the SSD."""
+        self.put(OG_JOBS + og_line("2026-11-23T17:30:00Z", "nvme0n1=4100000000", "debian13", scratch="ram"))
+        r = self.runner()
+        r.host_checks(OG_RUN)
+        self.assertEqual(r.rs.stops.stops, [
+            "stop-starts: copland: this run's jobs wrote 54.21 GB (50.11 GB of it a failed run's kept state or a job's "
+            "SSD scratch on /bkoscratch, not counted; 4.10 GB counted), over 2 x the 2 GB budget"])
+
+    def test_the_stop_names_its_rule(self):
+        """What the run log said on 2026-11-23 was "stop-starts: nothing more starts", then "a
+        run-wide stop rule tripped: nothing more starts": no rule named.  Both say it now, and
+        so does the report's stop."""
+        self.put(og_line("2026-11-23T17:19:58Z", "nvme0n1=15241217024", "endeavouros", scratch="ram"))
+        r = self.runner(hosts=("copland", "cage"))
+        r.host_checks(OG_RUN)
+        why = "copland: this run's jobs wrote 15.24 GB, over 2 x the 2 GB budget"
+        q = f"/bkoscratch/holttest1d/queue/{OG_RUN}/stop"
+        self.assertEqual(r.logged, [f"queue {OG_RUN}: stop-starts: {why}: nothing more starts"])
+        self.assertEqual(r.stops, [f"stop-starts: touched {q} on copland, cage ({why})"])
+        self.assertEqual(r.remote.touched, [("copland", q), ("cage", q)])
+        r.logged.clear()
+        r.check_guards(OG_RUN)   # (another family's queue of the composite: the guards' own words)
+        self.assertEqual(r.logged, [f"queue {OG_RUN}: a run-wide stop rule tripped ({why}): nothing more starts"])
+        self.assertEqual(r.stops[-1], f"stop-starts: a run-wide stop rule tripped ({why}): touched {q} on copland, cage")
+        self.assertEqual(r.stop_why("stop-run"), why, "no stop of that kind: the guards' reasons")
+        r.rs = types.SimpleNamespace(stops=types.SimpleNamespace(stops=[]))
+        self.assertEqual(r.stop_why("stop-starts"), "")
+        r.act(OG_RUN, "stop-family")
+        self.assertEqual(r.logged[-1], f"queue {OG_RUN}: stop-family: the stop rules gave no reason: nothing more starts")
+
+
 class Guards(unittest.TestCase):
     """RunGuards, StopEngine with and without guards, bko.Guards: KEPT isn't counted."""
 

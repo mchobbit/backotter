@@ -536,7 +536,11 @@ with open(todo + ".lock", "a") as lk:
         with PREFIX and that ended at or after SINCE, epoch), R22: never the whole disk's.
         BY_TAG: {tag: bytes} instead (the write allowances' share, allowed_bytes).  KEPT:
         (that, the same of the part a failed run's state wrote as it was kept: the lines'
-        keep=, iolog.sh --keep-since), which the write stop rule doesn't count."""
+        keep=, iolog.sh --keep-since), which the write stop rule doesn't count; and every
+        byte of a line whose scratch was on the SSD (its scratch=ssd: cmp-run.sh
+        --reserve-ssd, RAM first and the SSD for overflow), which it doesn't count either
+        (wear.Job.kept_disks says the same of the report's figures: test_kept_state.py
+        holds the three readers to one answer)."""
         script = r'''
 import json, re, sys, time, calendar
 prefix, since = sys.argv[1], float(sys.argv[2])
@@ -570,6 +574,11 @@ for l in lines:
     n = sum(disks.values())
     total += n
     sums[tag] = sums.get(tag, 0) + n
+    if "scratch=ssd" in f[7:]:
+        # its scratch was on the SSD (cmp-run.sh --reserve-ssd): every byte of it, as wear.Job.kept_disks
+        if n:
+            kept[tag] = kept.get(tag, 0) + n
+        continue
     for part in next((x[5:] for x in f[6:] if x.startswith("keep=")), "").split(","):
         k, _, v = part.partition("=")
         if v.isdigit() and disks.get(k):
@@ -1498,8 +1507,23 @@ class Runner:
         elif what in STOPPING:
             for h in self.hosts:
                 self.remote.touch(h, f"{QUEUE}/{qrun}/stop")
-            self.stops.append(f"{what}: touched {QUEUE}/{qrun}/stop on {', '.join(self.hosts)}")
-            self.log(f"queue {qrun}: {what}: nothing more starts")
+            why = self.stop_why(what)   # (the rule that fired, in the log and the stop: never a stop with no cause named)
+            self.stops.append(f"{what}: touched {QUEUE}/{qrun}/stop on {', '.join(self.hosts)}"
+                              + (f" ({why})" if why else ""))
+            self.log(f"queue {qrun}: {what}: {why or 'the stop rules gave no reason'}: nothing more starts")
+
+    def stop_why(self, what):
+        """The stop engine's own words for its latest WHAT (the last of its stops that begins
+        "WHAT: "), else the run-wide guards' reasons, else ''."""
+        try:
+            for s in reversed(list(getattr(self.rs.stops, "stops", None) or [])):
+                if isinstance(s, str) and s.startswith(what + ": "):
+                    return s[len(what) + 2:]
+            from . import hostjob
+            g = hostjob.guards_of(self.rs)
+            return "; ".join(g.why()) if g is not None else ""
+        except Exception:   # noqa: BLE001 - only the words
+            return ""
 
     def said_end(self, qrun, h):
         """The runner's log ends as ht1-queue.sh ends: queue done, stopped or aborted."""
@@ -1611,9 +1635,14 @@ class Runner:
             self.state.save()
             for h in self.hosts:
                 self.remote.touch(h, f"{QUEUE}/{qrun}/stop")
-            self.stops.append(f"stop-starts: a run-wide stop rule tripped: touched {QUEUE}/{qrun}/stop on "
+            try:
+                why = "; ".join(hostjob.guards_of(self.rs).why())
+            except Exception:   # noqa: BLE001 - only the words
+                why = ""
+            why = f" ({why})" if why else ""
+            self.stops.append(f"stop-starts: a run-wide stop rule tripped{why}: touched {QUEUE}/{qrun}/stop on "
                               f"{', '.join(self.hosts)}")
-            self.log(f"queue {qrun}: a run-wide stop rule tripped: nothing more starts")
+            self.log(f"queue {qrun}: a run-wide stop rule tripped{why}: nothing more starts")
 
     def write_allows(self):
         """{gv: (cell, bytes)}: the plan's cells with a write allowance (write_allow_bytes)."""

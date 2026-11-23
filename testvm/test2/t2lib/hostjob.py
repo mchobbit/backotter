@@ -483,7 +483,7 @@ try:
         lines = f.read().splitlines()
 except OSError:
     lines = []
-# TIME HOST SCOPE RC SECS DISK=BYTES[,DISK=BYTES] WHAT tag=TAG serial=... keep=DISK=BYTES,... (tab-separated)
+# TIME HOST SCOPE RC SECS DISK=BYTES[,DISK=BYTES] WHAT tag=TAG [scratch=ram|ssd] serial=... keep=DISK=BYTES,... (tab-separated)
 for l in lines:
     f = l.split("\t")
     tag = next((x[4:] for x in f if x.startswith("tag=")), "")
@@ -501,6 +501,10 @@ for l in lines:
         if v.isdigit() and k and not virt.match(k):
             disks[k] = disks.get(k, 0) + int(v)
     total += sum(disks.values())
+    if "scratch=ssd" in f[7:]:
+        # its scratch was on the SSD (cmp-run.sh --reserve-ssd): every byte of it, as wear.Job.kept_disks
+        kept += sum(disks.values())
+        continue
     # keep=: the part a failed run's state wrote as it was kept (iolog.sh --keep-since)
     for part in next((x[5:] for x in f[6:] if x.startswith("keep=")), "").split(","):
         k, _, v = part.partition("=")
@@ -658,7 +662,8 @@ def tag_bytes_kept(io, host, prefix, since):
     """(bytes, kept): the bytes the jobs tagged PREFIX (and PREFIX-rN) wrote to HOST's physical
     disks, from the jobs.log lines ending at or after SINCE (R22: never the whole disk's), and
     the part of them a failed run's state wrote as it was kept (the lines' keep=, 0 from a
-    script that gives none); (None, None) when they can't be read."""
+    script that gives none) with every byte of a line whose scratch was on the SSD (its
+    scratch=ssd); (None, None) when they can't be read."""
     rc, out, _ = io.sh(host, f"python3 -I -B - {shlex.quote(prefix)} {since:.0f}", input=TAG_SCRIPT.encode(), timeout=60)
     try:
         f = out.split() if rc == 0 else []

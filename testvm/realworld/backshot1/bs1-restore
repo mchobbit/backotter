@@ -269,19 +269,17 @@ if layout_is_uefi "$RUN/layout.json"; then
     # VMLINUZ-BACKUP.EFI, the backup made first and so numbered lower) the
     # lowest number isn't the system's own way in (void-zbm-enc family Z: the
     # backup image has no BackShot1 hooks and asks).
+    # On a dos disk too (Artix by Calamares on the X13: ESP type c, the entry
+    # HD(1,MBR,0xe30bd8c7,0x1000,0x96000)): disk_esps names each ESP as the
+    # entries do.
     entry=
     nv=$(efibootmgr -v)
-    while read -r espdev; do
-        guid=$(blkid -p -o value -s PART_ENTRY_UUID "$espdev")
-        entry=$(awk -v g="$guid" '
-            /^BootOrder:/ { n = split($2, ord, ",") }
-            tolower($0) ~ tolower(g) && /^Boot[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]/ { k = toupper(substr($1, 5, 4)); has[k] = 1; if (first == "") first = substr($1, 5, 4) }
-            END {
-                for (i = 1; i <= n; i++) if (toupper(ord[i]) in has) { print ord[i]; exit }
-                if (first != "") print first
-            }' <<<"$nv")
-        [[ -z $entry ]] || break
-    done < <(lsblk -lnpo NAME,PARTTYPE "/dev/$disk" | awk -v t="$ESP_TYPE" 'tolower($2) == t { print $1 }')
+    esps=$(disk_esps "$disk") || die "can't tell $disk's ESPs (partition table, sysfs)"
+    while read -r espdev key; do
+        [[ -n $key ]] || continue
+        entry=$(boot_entry_for "$key" <<<"$nv")
+        [[ -z $entry ]] || { say "$espdev ($key) is Boot$entry's"; break; }
+    done <<<"$esps"
     if [[ -n $entry ]]; then
         must efibootmgr --bootnext "$entry"
     else
@@ -290,15 +288,9 @@ if layout_is_uefi "$RUN/layout.json"; then
         # Left to choose, a firmware that prefers a plugged-in stick boots the
         # stick again, so BootNext names that loader, once, by an entry left
         # out of BootOrder, as bs1-to-stick's is.
-        esp=$(lsblk -lnpo NAME,PARTTYPE "/dev/$disk" | awk -v t="$ESP_TYPE" 'tolower($2) == t { print $1; exit }')
-        [[ -n $esp ]] || die "no boot entry names a restored ESP, and $disk has none"
-        tmp=$(mktemp -d)
-        mount -o ro "$esp" "$tmp" || die "can't mount $esp"
-        found=$(find "$tmp" -maxdepth 3 -ipath "$tmp/efi/boot/bootx64.efi" | head -n 1)
-        umount "$tmp"
-        rmdir "$tmp"
-        [[ -n $found ]] || die "no boot entry names a restored ESP, and $esp has no EFI/BOOT/BOOTX64.EFI"
-        loader=${found#"$tmp"}
+        [[ -n $esps ]] || die "no boot entry names a restored ESP, and $disk has none"
+        read -r esp loader < <(removable_loader "$disk") ||
+            die "no boot entry names a restored ESP, and no ESP of $disk has EFI/BOOT/BOOTX64.EFI: ${esps//$'\n'/; }"
         say "no boot entry names a restored ESP: BootNext is a one-shot \"BKO restored\" for $esp's $loader"
         must python3 "$HERE/bs1-efi" oneshot "BKO restored" "$esp" "${loader//\//\\}"
     fi

@@ -74,6 +74,85 @@ backup_disk() {
 REAL_FS='ext2|ext3|ext4|xfs|btrfs|vfat|f2fs|jfs|nilfs2|bcachefs|zfs'
 ESP_TYPE=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
 
+# disk_esps DISK: the disk's ESPs, best first, one "DEVICE KEY" line each.  KEY
+# is how a boot entry's HD() node names the partition, in lower case: on GPT the
+# partition's GUID; on a dos (MBR) disk mbr,0xSIG,0xSTART, the disk's signature
+# (PTUUID, sfdisk's label-id) and the partition's first logical block, in hex
+# with no leading zeros, as efibootmgr -v prints them:
+# HD(1,MBR,0xe30bd8c7,0x1000,0x96000).  On GPT an ESP is a partition of the ESP
+# type; on dos a vfat one of type 0xef, then vfat ones of the FAT types 0x0b,
+# 0x0c and 0x0e, which UEFI firmware boots too: Calamares gave Artix's ESP on
+# the X13's dos disk type c (artix-20261102-20261123-092557).
+disk_esps() {
+    local pt sig lbs name start uuid
+    read -r pt sig < <(lsblk -dno PTTYPE,PTUUID "/dev/$1" 2>/dev/null)
+    case ${pt:-} in
+        gpt)
+            # The table itself first (just restored, udev's copy may lag),
+            # then udev's.
+            while read -r name uuid; do
+                sig=$(blkid -p -o value -s PART_ENTRY_UUID "$name" 2>/dev/null) || sig=
+                sig=${sig:-$uuid}
+                [[ -z $sig ]] || printf '%s %s\n' "$name" "$(tr 'A-F' 'a-f' <<<"$sig")"
+            done < <(lsblk -lnpo NAME,PARTTYPE,PARTUUID "/dev/$1" | awk -v t="$ESP_TYPE" 'tolower($2) == t { print $1, $3 }')
+            ;;
+        dos)
+            [[ ${sig:-} =~ ^[0-9a-fA-F]{1,8}$ ]] || return 1
+            lbs=$(cat "/sys/class/block/$1/queue/logical_block_size") || return 1
+            while read -r name; do
+                start=$(cat "/sys/class/block/${name##*/}/start") || return 1
+                # sysfs counts 512-byte sectors, the HD() node logical blocks.
+                printf '%s mbr,0x%x,0x%x\n' "$name" "$((16#$sig))" "$((start * 512 / lbs))"
+            done < <(lsblk -lnpo NAME,PARTTYPE,FSTYPE "/dev/$1" | awk '
+                $3 == "vfat" { t = tolower($2); sub(/^0x0*/, "", t)
+                    if (t == "ef") print $1; else if (t == "b" || t == "c" || t == "e") fat[n++] = $1 }
+                END { for (i = 0; i < n; i++) print fat[i] }')
+            ;;
+    esac
+}
+
+# boot_entry_for KEY: from efibootmgr -v (or bs1-efi list) on stdin, the
+# number of the first entry in BootOrder whose HD() node names KEY
+# (disk_esps'), else the first such entry listed, else nothing.  Leading zeros
+# in the entries' hex are dropped first, so 0x0abc and 0xabc are one.
+boot_entry_for() {
+    awk -v k="$1" '
+        /^BootOrder:/ { n = split($2, ord, ",") }
+        /^Boot[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]/ {
+            l = tolower($0)
+            while (match(l, /0x0[0-9a-f]/)) l = substr(l, 1, RSTART + 1) substr(l, RSTART + 3)
+            if (index(l, k ",")) { e = toupper(substr($1, 5, 4)); has[e] = 1; if (first == "") first = e }
+        }
+        END {
+            for (i = 1; i <= n; i++) if (toupper(ord[i]) in has) { print toupper(ord[i]); exit }
+            if (first != "") print first
+        }'
+}
+
+# removable_loader DISK: "DEVICE LOADER" for the first of the disk's ESPs, in
+# disk_esps' order, with the removable-media loader, EFI/BOOT/BOOTX64.EFI in
+# any case, LOADER its path there as the ESP's own spelling has it (/EFI/BOOT/BOOTX64.EFI).
+removable_loader() {
+    local esp key tmp found
+    while read -r esp key; do
+        [[ -n $esp ]] || continue
+        tmp=$(mktemp -d) || return 1
+        if mount -o ro "$esp" "$tmp"; then
+            found=$(find "$tmp" -maxdepth 3 -ipath "$tmp/efi/boot/bootx64.efi" | head -n 1)
+            umount "$tmp"
+        else
+            found=
+            say "can't mount $esp" >&2
+        fi
+        rmdir "$tmp"
+        if [[ -n $found ]]; then
+            printf '%s %s\n' "$esp" "${found#"$tmp"}"
+            return 0
+        fi
+    done < <(disk_esps "$1")
+    return 1
+}
+
 # An ostree system (Bazzite, Silverblue, Kinoite): its / is a composefs
 # overlay, and the physical root, fstab's /, is at /sysroot
 # (docs/design/bazzite.md).

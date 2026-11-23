@@ -443,6 +443,10 @@ if [ -z "$again" ]; then
     # rustic-bko did before it: ~/git/backotter testvm/audit/rust/findings.tsv
     # says what it would need).  Trees and repositories of their own.
     G=/root/bko-rt-g5
+    # A run before this one in the same guest (SticTest's other directions)
+    # left its trees, repositories and dataset here: this run makes its own.
+    zfs destroy -r "$(zfs list -H -o name /root | cut -d/ -f1)/bko-rt-g5" 2>/dev/null
+    rm -rf /root/bko-rt-g5
     mkdir -p $G
     g5_restore() {  # REPO ARGS...: a rustic restore, its messages kept
         g5repo=$1; shift

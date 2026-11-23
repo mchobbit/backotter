@@ -149,21 +149,31 @@ if [ "$(uname)" = Linux ] && [ -e /etc/gentoo-release ] && has emerge; then
     done
     cat /run/bko-sync.out; cat /run/bko-sync.err >&2
     rm -f /run/bko-sync.out /run/bko-sync.err
-    # The binhost builds a version some hours to a day after the tree has it
-    # (gpgme, platformdirs and setuptools on 2026-11-21, glib 2.88.4 on
-    # 2026-11-22, zlib 1.4 on 2026-11-23: GuestTest2's gentoo try stopped on
-    # each, twice a night).
-    # So an upgrade outside the allowlist that the binhost has no build of at
-    # all is held back, as apt keeps a package back: the plan is made again
-    # with --exclude for it, the installed version stays, and the next update
-    # takes the binhost's build.  With it go the packages only its source
-    # build needed (glib's docutils and pygments).  Only an upgrade ("U": a
-    # new package has no version to stay at), and only one that emerge -p's
-    # stderr doesn't name among the binary packages "ignored due to non
-    # matching USE": that one the binhost will never have for this guest, and
-    # it stops the update as before, by name, for the allowlist or a USE flag
-    # (docs/design/gentoo.md, Risks).  Held back once: what the second plan
-    # still builds outside the allowlist stops the update too.
+    # The binhost builds a version some hours after the tree has it, and its
+    # builds with other USE flags over a day or two (glib 2.88.2's five on
+    # 2026-11-11 from 09:25 to 13:10 UTC, this guest's the fourth, and one
+    # more on 11-13).  GuestTest2's gentoo try stopped on that three days
+    # running, twice each: gpgme, platformdirs and setuptools on 2026-11-21;
+    # glib 2.88.4 on 2026-11-22, minutes after its first build and before
+    # the mirror had it; zlib 1.4 on 2026-11-23, and glib again, built by then
+    # with USE=dbus only.
+    # So an upgrade outside the allowlist that the binhost has no build of
+    # for this guest yet is held back, as apt keeps a package back: the plan
+    # is made again with --exclude for it, the installed version stays, and
+    # the next update takes the binhost's build.  With it go the packages
+    # only its source build needed (glib's docutils and pygments).  Only an
+    # upgrade ("U": a new package has no version to stay at).  And only
+    # while the binhost may still build it: no build of that version at all,
+    # or (emerge -p's stderr names it among the binary packages "ignored due
+    # to non matching USE") builds the newest of which is under HOLD_DAYS
+    # old, by its BUILD_TIME in Portage's copy of the binhost's index.  Older
+    # than that, the binhost won't have it for this guest
+    # (charset-normalizer 3.5.2, USE=native-extensions only since
+    # 2026-11-15), and it stops the update as before, by name, for the
+    # allowlist or a USE flag (docs/design/gentoo.md, Risks).  Held back once:
+    # what the second plan still builds outside the allowlist stops the update
+    # too.
+    HOLD_DAYS=3
     hold=""
     while :; do
         plan=$(emerge -puDN $o $hold @world 2>/run/bko-plan.err) || {
@@ -185,12 +195,23 @@ if [ "$(uname)" = Linux ] && [ -e /etc/gentoo-release ] && has emerge; then
                     /^\[ebuild[^]]*U[^]]*\]/ { sub(/^[^]]*\] */, ""); sub(/[ :].*/, "")
                         if (substr($0, 1, length(p) + 1) == p "-" && substr($0, length(p) + 2, 1) ~ /[0-9]/) print }')
                 [ -n "$v" ] || continue
-                awk -v v="=$v" '$1 == v { f = 1 } END { exit !f }' /run/bko-plan.err && continue
+                if awk -v v="=$v" '$1 == v { f = 1 } END { exit !f }' /run/bko-plan.err; then
+                    # the newest BUILD_TIME of its builds (0: no index, so no wait)
+                    t=$(find /var/cache/edb/binhost -name Packages -exec cat {} + 2>/dev/null |
+                        awk -v v="$v" 'BEGIN { RS = ""; FS = "\n" }
+                            { c = 0; t = 0
+                              for (i = 1; i <= NF; i++) {
+                                  if ($i == "CPV: " v) c = 1
+                                  if ($i ~ /^BUILD_TIME: /) t = substr($i, 13) + 0 }
+                              if (c && t > m) m = t }
+                            END { printf "%d\n", m }')
+                    [ $(($(date +%s) - t)) -lt $((HOLD_DAYS * 86400)) ] || continue
+                fi
                 hold="$hold --exclude=$p"; held="$held $v"
             done
         fi
         [ -n "$held" ] || { rm -f /run/bko-plan.err; say "source builds outside the allowlist:" $bad; exit 1; }
-        say "held back, no build on the binhost yet:$held"
+        say "held back, no build for this guest on the binhost yet:$held"
     done
     rm -f /run/bko-plan.err
     # sys-boot/grub's COUNTER: Portage's merge counter, new on every merge of it.

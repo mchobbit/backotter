@@ -225,7 +225,7 @@
   "^=[a-z0-9]+(-[a-z0-9]+)*/\\S+( -?[a-zN0-9_+-]+)*$",
   "^(NOTE: The --binpkg-respect-use=n option will prevent emerge|from ignoring these binary packages if possible\\.|Using --binpkg-respect-use=y will silence this warning\\.)$",
   "^in-guest: emerge --sync failed: again in N s \\(N of N\\): ",
-  "^in-guest: held back, no build on the binhost yet:( [a-z0-9]+(-[a-z0-9]+)*/\\S+)+$"
+  "^in-guest: held back, no build for this guest on the binhost yet:( [a-z0-9]+(-[a-z0-9]+)*/\\S+)+$"
  ],
  "apk": [
   "^\\( ?N/N\\) (Upgrading|Installing|Purging|Replacing|Downgrading)",

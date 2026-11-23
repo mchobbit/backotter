@@ -450,16 +450,24 @@ the user says so.
   added to the allowlist, or its USE flags are changed to match a binpkg.
   A rebuild gets newer packages than the last ([[images-take-os-updates]]).
   Not so, since 2026-11-23, an update's upgrade that the binhost only lags
-  on: it builds a version hours to a day after the tree has it, and
-  GuestTest2's `gentoo` try stopped there two nights running (gpgme,
-  platformdirs and setuptools on 2026-11-21; glib 2.88.4 on 2026-11-22, 90
-  minutes before the binhost had it, with pygments for its source build's
-  docutils; zlib 1.4 the morning after). `in-guest.sh` holds such an upgrade back, as apt keeps a package
-  back: when `emerge -p` doesn't name it among the binary packages "ignored
-  due to non matching USE", the plan is made again with `--exclude` for it,
-  the installed version stays, a `held back` line names it, and the next
-  update takes the binhost's build. A new package, a rebuild, and a version
-  the binhost has only with other USE flags still stop the update by name.
+  on. It builds a version some hours after the tree has it, and its builds
+  with other USE flags over a day or two (glib 2.88.2's five on 2026-11-11
+  from 09:25 to 13:10 UTC, this guest's the fourth, and one more on 11-13),
+  and GuestTest2's `gentoo` try stopped there three days running: gpgme,
+  platformdirs and setuptools on 2026-11-21; glib 2.88.4 on 2026-11-22,
+  minutes after its first build, with pygments for its source build's
+  docutils; zlib 1.4 on 2026-11-23, and glib again, built by then with
+  USE=dbus only. `in-guest.sh` holds such an upgrade back, as apt keeps a
+  package back: the plan is made again with `--exclude` for it, the installed
+  version stays, a `held back` line names it, and the next update takes the
+  binhost's build. That is an upgrade the binhost has no build of at all, or
+  one that `emerge -p` names among the binary packages "ignored due to non
+  matching USE" while the newest of those builds is under 3 days old
+  (`HOLD_DAYS`, by `BUILD_TIME` in Portage's copy of the binhost's index).
+  A new package, a rebuild, and a version whose builds have had other USE
+  flags for 3 days (charset-normalizer 3.5.2) still stop the update by name.
+  Not covered: a package the binhost stops building altogether is held back
+  on every update, and only the `held back` line says so.
 - **Stage3 pruning.** A guest whose rebuild inputs were lost can't be
   rebuilt at its pinned date. The fallback is the newest stage3, with a new
   pin.

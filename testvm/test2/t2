@@ -14,13 +14,20 @@
         --harness-stop N (or T2_HARNESS_STOP=N): N harness-class results stop the run, in place
         of classes.json's policy.stop.harness_results, for every family and composite child; it
         enters no key, and run.log and the report say "harness stop: N (override; policy P)"
+        --lock-wait T (90m, 2h, 45s; a bare number is seconds): a run another run's lock would
+        refuse (exit 2, "holds its lock") waits up to T for that run to end, then starts with a
+        fresh pull and facts: the family's lock, and for HoltTest2 words a cell another live run
+        holds (without it that cell is planned not-runnable).  BkoTest2, SweepTest2 and
+        `GuestTest2 update` wait before they start only.  Not in a batch entry (the batch waits)
   t2 plan WORD [ARG...]                  the same as WORD ... plan
   t2 pull                                each host's ledger mirrored, then the wear join
   t2 ledger show [--cell C] [--last N] [--json]
   t2 explain CELL [--hosts H,H] [--round R]
                                          its inputs against its last PASS, group by group
   t2 copy [--hosts H,H] [--gc]           the private copy of this checkout on the hosts
-  t2 resume RUN [--harness-stop N]       a run picked up again (R10); t2b-/t2w-: the composite
+  t2 resume RUN [--harness-stop N] [--lock-wait T]
+                                         a run picked up again (R10); t2b-/t2w-: the composite
+                                         (no --lock-wait)
   t2 guest-lines RUN [--show [GUEST]] [--accept GUEST...|--accept-all]
                                          a GuestTest2 run's new log lines, and accepting them
   t2 guest-fingerprints [GUEST...] [--reproject]
@@ -251,10 +258,21 @@ def full_ctx(word, hosts, universe=None, do_pull=True, holt_bin=None):
 
 # --- commands ------------------------------------------------------------------------------------
 
+def lock_wait_opt(opts):
+    """--lock-wait T: seconds (batchfile.parse_duration's forms), 0 without it."""
+    if "--lock-wait" not in opts:
+        return 0
+    try:
+        return importlib.import_module("t2lib.batchfile").parse_duration(opts["--lock-wait"])
+    except ValueError as e:
+        raise Usage(f"--lock-wait: {e}")
+
+
 def cmd_word(argv):
     opts, rest = take_opts(argv, {"--json": False, "--hosts": True, "--universe": True, "--holt-bin": True,
-                                  "--harness-stop": True})
+                                  "--harness-stop": True, "--lock-wait": True})
     harness_stop_opt(opts)
+    lock_wait = lock_wait_opt(opts)
     rest = words.split_plan_form(rest)
     hosts = hosts_opt(opts)
     lc = light_ctx(hosts)
@@ -275,10 +293,17 @@ def cmd_word(argv):
             err(f"{w.word} is not built (t2lib/bko.py)")
             return 2
         w.universe = universe       # (--universe, test only: the conductor cuts each child's cells down to these)
+        if lock_wait and not w.plan:
+            # (before it starts only: the conductor takes its locks itself, and refuses a lost race)
+            names = runmod.family_locks(w)
+            b = runmod.wait_unlocked(lambda: runmod.lock_busy(names), time.time() + lock_wait, out=say)
+            if b is not None:
+                err(f"{b} (--lock-wait {runmod.fmt_wait(lock_wait)} ran out)")
+                return 2
         return bko.conduct(w, hosts, CHECKOUT, out=say)
     t0 = time.time()
-    ctx = full_ctx(w, hosts, universe, holt_bin=holt_bin)
     if w.plan:
+        ctx = full_ctx(w, hosts, universe, holt_bin=holt_bin)
         try:
             p = planmod.make(w, ctx)
         except planmod.PlanError as e:
@@ -291,13 +316,21 @@ def cmd_word(argv):
         if os.environ.get("T2_TIMING"):
             err(f"plan took {time.time() - t0:.1f} s")
         return 0
-    pull = lambda: pull_rows(hosts)[0]   # noqa: E731
-    ctx.options["pull"] = pull
-    try:
-        return runmod.lifecycle(w, ctx, out=say, pull=pull)
-    except (planmod.PlanError, runmod.Refused) as e:
-        err(str(e))
-        return 2
+
+    def attempt(raises):
+        # (pull and facts each time: a --lock-wait run starts from what is true after its wait)
+        ctx = full_ctx(w, hosts, universe, holt_bin=holt_bin)
+        pull = lambda: pull_rows(hosts)[0]   # noqa: E731
+        ctx.options["pull"] = pull
+        try:
+            return runmod.lifecycle(w, ctx, out=say, pull=pull, busy_raises=raises)
+        except (planmod.PlanError, runmod.Refused) as e:
+            if raises and isinstance(e, runmod.Busy):
+                raise
+            err(str(e))
+            return 2
+
+    return runmod.with_lock_wait(w, lock_wait, attempt, out=say)
 
 
 def cmd_pull(argv):
@@ -421,16 +454,19 @@ def cmd_copy(argv):
 
 
 def cmd_resume(argv):
-    opts, rest = take_opts(argv, {"--hosts": True, "--harness-stop": True})
+    opts, rest = take_opts(argv, {"--hosts": True, "--harness-stop": True, "--lock-wait": True})
     harness_stop_opt(opts)
+    lock_wait = lock_wait_opt(opts)
     if len(rest) != 1:
-        raise Usage("t2 resume RUN [--harness-stop N]")
+        raise Usage("t2 resume RUN [--harness-stop N] [--lock-wait T]")
     if rest[0].startswith(("t2b-", "t2w-")):
         try:
             bko = importlib.import_module("t2lib.bko")
         except ImportError:
             err("BkoTest2 is not built (t2lib/bko.py)")
             return 2
+        if lock_wait:
+            raise Usage("--lock-wait: not with a composite's resume (t2b-, t2w-)")
         return bko.resume(rest[0], hosts_opt(opts), out=say)
     pj = runmod.read_json(os.path.join(runmod.run_dir(rest[0]), "plan.json"))
     if not pj:
@@ -447,14 +483,18 @@ def cmd_resume(argv):
         setattr(w, k, bool((pj.get("word") or {}).get(k)))
     universe = [c["cell"] for c in pj.get("cells") or [] if c.get("cell")] or None
     holt_bin = (pj.get("set") or {}).get("holt_bin")
-    try:
-        ctx = full_ctx(w, hosts, universe, holt_bin=holt_bin)
-    except planmod.PlanError as e:
-        err(f"{e}; resuming without its universe")
-        ctx = full_ctx(w, hosts, holt_bin=holt_bin)
-    pull = lambda: pull_rows(hosts)[0]   # noqa: E731
-    ctx.options["pull"] = pull
-    return runmod.resume(rest[0], ctx, out=say, pull=pull)
+
+    def attempt(raises):
+        try:
+            ctx = full_ctx(w, hosts, universe, holt_bin=holt_bin)
+        except planmod.PlanError as e:
+            err(f"{e}; resuming without its universe")
+            ctx = full_ctx(w, hosts, holt_bin=holt_bin)
+        pull = lambda: pull_rows(hosts)[0]   # noqa: E731
+        ctx.options["pull"] = pull
+        return runmod.resume(rest[0], ctx, out=say, pull=pull, busy_raises=raises)
+
+    return runmod.with_lock_wait(w, lock_wait, attempt, out=say)
 
 
 def cmd_seed(argv):

@@ -11,6 +11,7 @@ module's RunState as ctx.run):
     new_run_id(family, stamp, suffix)   t2g-/t2s-/t2h-/t2v-/t2i-/t2b-/t2w-YYYYMMDDTHHMM-XXXX[-img]
     family_locks(word), last_sweep(mac_root)
     FamilyLock, CellLocks       R21: a family's lock; a holt run's cells under it shared (CELL_LOCKED)
+    with_lock_wait(word, wait, attempt)   --lock-wait: R21's refusal waited out (lock_busy, wait_unlocked)
     Shared, RunGuards           what a composite (BkoTest2, SweepTest2) hands its children
     RunState                    the run id, its directories, the copy, cells.json writing,
                                 record_made(), the StopEngine, limits and flakes
@@ -62,6 +63,7 @@ class Busy(Refused):
         super().__init__(f"another {name} run holds its lock{on}: run {h.get('run', '?')}, pid {h.get('pid', '?')}, "
                          f"started {h.get('start', '?')}")
         self.holder = holder
+        self.name = name
         self.what = what
 
 
@@ -224,13 +226,14 @@ def _try_flock(fd, how, wait):
             time.sleep(0.05)
 
 
-def _probe(path):
-    """True when another open file holds PATH's flock (tested without taking it for long)."""
+def _probe(path, shared=False):
+    """True when another open file holds PATH's flock (tested without taking it for long); SHARED:
+    when one holds it exclusive, which is what refuses a shared holder."""
     if not os.path.exists(path):
         return False
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
         fcntl.flock(fd, fcntl.LOCK_UN)
         return False
     except OSError as e:
@@ -459,6 +462,98 @@ def acquire_locks(names, run, mac_root=None, wait=1.0, shared=()):
             lk.release()
         raise
     return held
+
+
+# --- --lock-wait: a run that waits for the locks it would be refused at -------------------------
+
+LOCK_POLL_S = 5.0     # between two looks at a held lock
+
+
+def lock_busy(names, mac_root=None, shared=()):
+    """The Busy acquire_locks(NAMES, shared=SHARED) would raise now, or None (probed: nothing is
+    held for long)."""
+    for n in names:
+        lk = FamilyLock(n, mac_root)
+        if _probe(lk.path, shared=n in shared):
+            return Busy(lk.holder(), n)
+    return None
+
+
+def still_busy(busy, mac_root=None, shared=()):
+    """BUSY's lock as it is now: a Busy while another run holds it (its cell's, when it names
+    one: Busy.what), else None."""
+    if busy.what:
+        path = CellLocks(busy.name, mac_root).path(busy.what)
+        return Busy(read_json(path + ".json"), busy.name, busy.what) if _probe(path) else None
+    return lock_busy([busy.name], mac_root, shared)
+
+
+def taken_cell(plan, running, family, mac_root=None):
+    """A Busy for the first cell of PLAN (a CELL_LOCKED family's run's own, made with running_skip)
+    that isn't due because another live run holds it or the +img pins; None when there is none."""
+    for pc in plan.cells:
+        if pc.status == "not-runnable" and getattr(pc, "running", None) \
+                and any(str(r).startswith("running in ") for r in pc.reasons):
+            unit = pc.cell if pc.cell in (running or {}) else IMG_UNIT
+            holder = read_json(CellLocks(family, mac_root).path(unit) + ".json")
+            return Busy(holder or {"run": pc.running}, family, unit)
+    return None
+
+
+def fmt_wait(s):
+    """5400 -> "1 h 30 min", 90 -> "2 min", 20 -> "20 s"."""
+    s = max(0, int(round(s)))
+    if s < 60:
+        return f"{s} s"
+    m = (s + 59) // 60
+    return f"{m} min" if m < 60 else f"{m // 60} h {m % 60:02d} min"
+
+
+def wait_unlocked(look, deadline, out=print, poll=None, clock=time.time, sleep=time.sleep, said=None):
+    """Wait until LOOK() (a Busy, or None) finds nothing held, or DEADLINE (CLOCK's): None once
+    free, else the last Busy.  Each holder gets one line (SAID: the one it has had)."""
+    while True:
+        b = look()
+        if b is None:
+            return None
+        left = deadline - clock()
+        if left <= 0:
+            return b
+        if str(b) != said:
+            said = str(b)
+            out(f"t2: {b}: waiting for it to end (--lock-wait, {fmt_wait(left)} left)")
+        sleep(min(LOCK_POLL_S if poll is None else poll, left))
+
+
+def with_lock_wait(word, wait, attempt, mac_root=None, out=print, poll=None, clock=time.time, sleep=time.sleep):
+    """`t2 WORD --lock-wait T` and `t2 resume RUN --lock-wait T`: ATTEMPT(raises) -> the exit code,
+    made once the locks WORD takes are free (R21 refuses; this waits, up to WAIT seconds, for a
+    fixer's run of the family or the cycle's).  ATTEMPT(True) makes its ctx (pull and facts: fresh
+    after a wait) and runs lifecycle or resume with busy_raises, so a lock lost in the meantime (to
+    another waiter), or a holt cell another run holds, comes back here as a Busy and is waited
+    for in its turn.  WAIT 0, or the wait run out: R21's refusal in its own words (exit 2)."""
+    if not wait or wait <= 0:
+        return attempt(False)
+    t0 = clock()
+    deadline = t0 + wait
+    names = family_locks(word)
+    shared = (word.family,) if cell_locked(word) else ()
+    step = LOCK_POLL_S if poll is None else poll
+    b = wait_unlocked(lambda: lock_busy(names, mac_root, shared), deadline, out, poll, clock, sleep)
+    while b is None:
+        try:
+            return attempt(True)
+        except Busy as e:
+            b = e
+        left = deadline - clock()
+        if left <= 0:
+            break
+        out(f"t2: {b}: waiting for it to end (--lock-wait, {fmt_wait(left)} left)")
+        sleep(min(step, left))     # (at least one step: a look that finds it free at once mustn't spin)
+        b = wait_unlocked(lambda e=b: still_busy(e, mac_root, shared) or lock_busy(names, mac_root, shared),
+                          deadline, out, poll, clock, sleep, said=str(b))
+    out(f"t2: {b} (--lock-wait {fmt_wait(wait)} ran out)")
+    return EXIT_REFUSED
 
 
 def held_runs(mac_root=None):
@@ -1946,10 +2041,12 @@ def refresh_rows(ctx, pull, out):
         ctx.ledger = list(rows)
 
 
-def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, shared=None):
+def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, shared=None, busy_raises=False):
     """Run WORD (not `plan`).  ctx has pulled rows and fresh facts (steps 1-2).  Returns the exit code.
     With SHARED (a composite's child) it takes no lock, refreshes no rows, runs neither the runner's
-    pre_plan nor its preflight, and uses the composite's stamp, copy and (when given) plan."""
+    pre_plan nor its preflight, and uses the composite's stamp, copy and (when given) plan.
+    BUSY_RAISES (with_lock_wait): a held lock is a Busy raised, not a refusal said, and so is a cell
+    of a CELL_LOCKED family's plan that another live run holds (without it: planned not-runnable)."""
     fam = word.family
     mod = runner(fam)
     if pull is not None:
@@ -1961,6 +2058,8 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, sh
         try:
             locks = acquire_locks(family_locks(word), "pending", mac_root, shared=(fam,) if by_cell else ())
         except Busy as e:
+            if busy_raises:
+                raise
             out(f"t2: {e}")
             return EXIT_REFUSED
     try:
@@ -2020,8 +2119,13 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, sh
             try:
                 plan = hold_due(cells_lk, plan, word, ctx, run, mac_root)
             except Busy as e:
+                if busy_raises:
+                    raise
                 out(f"t2: {e}")
                 return EXIT_REFUSED
+            taken = taken_cell(plan, ctx.options.get("running"), fam, mac_root) if busy_raises else None
+            if taken is not None:
+                raise taken     # (nothing began: the finally lets go of what this holds)
         if not plan.totals.get("due"):
             nr = plan.by_status("not-runnable")
             if word.form != "bare" and nr:
@@ -2304,10 +2408,11 @@ def restore_word(w, pj, ctx):
     return w
 
 
-def resume(run, ctx, mac_root=None, out=print, pull=None, shared=None):
+def resume(run, ctx, mac_root=None, out=print, pull=None, shared=None, busy_raises=False):
     """R10: pick RUN up again: its plan.json, the hosts' cells.json, the runner's resume().
     ctx must be made for the run's own hosts (run_hosts); preflight runs again.  With SHARED
-    (a composite's resume, under its locks) it takes no lock and refreshes no rows."""
+    (a composite's resume, under its locks) it takes no lock and refreshes no rows.
+    BUSY_RAISES (with_lock_wait): a held lock is a Busy raised, not a refusal said."""
     if not RUN_RE.match(run):
         out(f"t2: not a run id: {run}")
         return EXIT_REFUSED
@@ -2343,6 +2448,8 @@ def resume(run, ctx, mac_root=None, out=print, pull=None, shared=None):
     except Busy as e:
         for lk in reversed(locks):
             lk.release()
+        if busy_raises:
+            raise
         out(f"t2: {e}")
         return EXIT_REFUSED
     try:

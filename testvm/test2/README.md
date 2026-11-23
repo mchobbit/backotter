@@ -272,6 +272,22 @@ still refused while any holt run holds it.  One run at a time builds and ships a
 CODE (`.lock-holt-bin-CODE16`, waited for, not refused).  `t2 batch` still runs its holt
 entries one at a time.
 
+A held lock refuses (exit 2, "another FAMILY run holds its lock: run RUN, pid P, started T"):
+nothing ran, and nothing is queued.  `--lock-wait T` (`t2 WORD ... --lock-wait 2h`, `t2 resume
+RUN --lock-wait 2h`; 90m, 2h, 45s, a bare number is seconds) waits instead, up to T, for the
+run that holds it to end (one "waiting for it to end" line per holder, a look every 5 s), and
+only then pulls, reads the facts and starts; when T runs out it refuses in the same words.
+It waits for the family's lock (GuestTest2, GateTest2, SticTest2, ImgTest2: one run at a
+time) and, for a HoltTest2 word, for a cell (or the `+img` pins) another live run holds,
+which without it is planned not-runnable; a lock lost to another waiter in the meantime is
+waited for again.  BkoTest2, SweepTest2 and `GuestTest2 update` wait before they start only
+(a lock lost after that refuses), a composite's resume doesn't take it, and a batch entry
+can't carry it (the batch has its own `lock-wait`).  Use it wherever two sessions may run
+one family: a test loop's own step and a fixer's rerun of a cell (OtterGrind1 round 3: the
+cycle's `t2 GuestTest2 garuda ...` was refused by a fixer's `t2 GuestTest2 oi2610 omnios58`
+six minutes into its 20 and ran nothing).  It waits for locks only: an unfinished run
+(a report missing) still refuses.
+
 The Mac tree.  What a run runs on the Mac, gate:selftest (`t2 self-test` and drive.py
 --self-test, keyed on the Mac) and the fork layers' fork-tests.sh, runs from
 `MAC_ROOT/trees/RUN` (`copies.make_tree`, `run.make_mac_tree`): a detached, locked git

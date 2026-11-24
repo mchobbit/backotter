@@ -284,9 +284,11 @@ pub fn elilo_json(sys: &Sys, esps: &[(String, String)]) -> Option<Value> {
     for e in &confs {
         let full = format!("{}/{}", e.mount, e.dir);
         let efis: Vec<String> = sys.list(&full).into_iter().filter(|f| f.to_ascii_lowercase().ends_with(".efi")).collect();
-        // Not byte_copy_of: these reads say in the dump's warnings when an
-        // .efi here (or /boot's) is over READ_MAX, whatever its size, and a
-        // size-first compare would drop that warning.
+        // Not byte_copy_of: these whole-file reads put a warning in the dump
+        // for /boot's ELILO_EFI, or for each .efi here up to the copy, that is
+        // over READ_MAX, whether or not its size matches; a size-first
+        // compare would drop those warnings (an output change, RustAudit1
+        // rule 5).
         let copy = elilo.as_ref().and_then(|b| efis.iter().find(|f| sys.read_bytes(&format!("{full}/{f}")).as_ref() == Some(b)));
         let loader = copy.or_else(|| efis.iter().find(|f| f.eq_ignore_ascii_case("elilo.efi"))).map(|f| format!("{}/{f}", e.dir));
         let extra = |path: &str, items: &[LiloItem]| {

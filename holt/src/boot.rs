@@ -336,8 +336,9 @@ pub fn esp_inventory(sys: &Sys, mount: &str) -> Value {
 /// The first of `candidates` (a path under `under`, or an absolute path when
 /// `under` is empty, and its size) that the file at `path`, of `size` bytes,
 /// is a byte copy of.  Only a candidate of the same size is compared, a MiB
-/// at a time (Sys::same_bytes), so none is read whole and `path` is never
-/// held in memory.
+/// at a time (Sys::same_bytes) and stopping at the first MiB that differs,
+/// so neither file is ever held in memory whole and a different one is
+/// seldom read past its first MiB.
 fn byte_copy_of<'a>(sys: &Sys, path: &str, size: u64, candidates: impl IntoIterator<Item = (&'a str, u64)>, under: &str) -> Option<&'a str> {
     candidates.into_iter().filter(|&(_, n)| n == size).map(|(p, _)| p).find(|p| {
         let full = if under.is_empty() { (*p).to_string() } else { format!("{under}/{p}") };

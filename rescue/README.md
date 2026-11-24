@@ -6,11 +6,13 @@ DragonFly, illumos, Haiku), in Rust, with its own small terminal layer.
 The plan is `docs/design/rescue-tui.md`; the screens are
 `docs/design/rescue-screens.md`.
 
-Status: RT1, RT2 and RT4-RT7.  The crate, the FFI and its header test,
+Status: RT1, RT2 and RT4-RT8.  The crate, the FFI and its header test,
 the terminal layer (profiles, keys, events, restore), the sanitiser, the
 screen buffer with diffed redraw, the golden-screen and byte-stream
 harnesses, the console spike, the widgets with the `Ui` trait and the
-full-screen runner, `Secret`, and plain mode; `--demo` shows every widget.
+full-screen runner, `Secret`, and plain mode; `--demo` shows every widget
+and, with `--holt` naming the fake bko-holt, follows its events; the pty
+harness (`testvm/rescue/`: `screen.py`, `drive.py`, `fake-bko-holt`).
 RT3 (the spike on every console) hasn't run, so the profile table is
 provisional.  No restore screens yet: `bko-rescue` with no hidden option
 says so and exits 2.
@@ -35,16 +37,22 @@ rsync -aR --delete rescue holt/src/json.rs HOST:backotter-work/rescue-build/
 ssh HOST 'cd ~/backotter-work/rescue-build/rescue &&
   cargo build --locked --offline && cargo test --locked --offline &&
   sh abi/check.sh target/debug/bko-rescue &&
-  python3 ../testvm/rescue/pty-test.py target/debug/bko-rescue'
+  python3 ../testvm/rescue/pty-test.py target/debug/bko-rescue &&
+  python3 ../testvm/rescue/demo-test.py target/debug/bko-rescue'
 ```
 
-(add `testvm/rescue` to the rsync for the pty test).
+(add `testvm/rescue` to the rsync for the pty tests).  `demo-test.py`
+drives `--demo` through every widget with `drive.py`, in full screen
+(UTF-8 colour, DEC mono, ASCII) and plain mode, against the fake
+bko-holt; its golden screens are `testvm/rescue/screens/`, under the
+same `BKO_RESCUE_GOLDEN`.
 
 - `BKO_RESCUE_GOLDEN=check` (the default), `report` or `bless`: what a
   difference from a golden file in `tests/screens/` or `tests/bytes/`
   does.  Bless on the farm and copy the files back to commit them.
 - `BKO_RESCUE_FUZZ=N`: cases for each fuzz-style test (default 100,000;
-  `cargo test --release` for long runs).
+  `cargo test --release` for long runs, as
+  `BKO_RESCUE_FUZZ=5000000 cargo test --release --locked --offline`).
 
 ## Options
 
@@ -62,7 +70,7 @@ which a launcher sets.  Hidden, for tests and checks:
 | `--check-tty` | raw mode set, read back, put back and read back; exit 0 when every field is as expected (for checks.sh) |
 | `--profile` | which console this is and what it gets, and why: `os`, `tty`, `term`, `locale`, `size`, `mode`, `rule`, `lines`, `colour`, `caps`, `esc`, `refresh` |
 | `--spike` | the four spike cards (box, list, gauge, password); `--spike panic` panics after the first frame; `--spike linger` waits 5 s after `q`, for the signal test |
-| `--demo` | every widget in a row, in full screen or plain mode as the profile says (`--plain` forces it); RT8 adds the fake bko-holt |
+| `--demo` | every widget in a row, in full screen or plain mode as the profile says (`--plain` forces it); with `--holt testvm/rescue/fake-bko-holt`, its restore page hands a typed passphrase to the fake as a key file and follows its events with the gauge (without `--holt` it runs nothing) |
 
 In the spike, `1`-`4` and `n` change card, `l` the line style, `c`
 colour, `j` joined SGR parameters, `h` cursor hiding, `e` clearing with
@@ -109,3 +117,7 @@ glibc).
 | `tests/byte_streams.rs`, `tests/bytes/` | each profile's bytes, the sequence checker, the byte budgets, random walks |
 | `abi/` | the header test's C side and its script |
 | `../testvm/rescue/pty-test.py` | the layer on a real pty |
+| `../testvm/rescue/screen.py` | a terminal that takes exactly what bko-rescue sends, and dumps the screen in the golden form |
+| `../testvm/rescue/drive.py` | bko-rescue on a pty of a set size: keys in, waits on screen text; a script runner |
+| `../testvm/rescue/fake-bko-holt`, `scenarios/` | replays a scenario (argv to stdout, events, stderr, exit) and checks the key files it is given |
+| `../testvm/rescue/demo-test.py`, `screens/` | `--demo` through every widget, both modes, with the fake |

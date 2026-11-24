@@ -1,6 +1,6 @@
 # bko-rescue: the terminal layer and its widgets
 
-Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"); RT3 and RT8 on are not.
+Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"), RT8 after those (see "What RT8 found"); RT3 and RT9 on are not.
 
 An implementation plan for the stick's terminal UI that `ui.md` describes and
 the user decided on 2026-11-19: one Whiptail-style 80x24 program,
@@ -1005,6 +1005,55 @@ in full screen and in plain mode.
 - Not built: a way for the runner to hand the terminal to a shell and
   take it back (`Answer::Shell` is the app's, RT11), and the dry-run
   banner (RT12).
+- Still no clippy on czerny, so none ran.
+
+## What RT8 found
+
+Built 2026-11-24 on czerny (Rust 1.85.1, Python 3.13).  Tested by `cargo
+test` (177 tests), `pty-test.py`, and `demo-test.py`, which drives
+`--demo` through every widget with `drive.py` in full screen (UTF-8
+colour, DEC mono, ASCII on `vt220`) and plain mode, against the fake
+bko-holt, with 36 golden screens in `testvm/rescue/screens/`.  The long
+fuzz runs: every fuzz-style test at `BKO_RESCUE_FUZZ=5000000` and at
+`50000000` in release (5 min on czerny), with no failure.
+
+- **`screen.py`** is `testkit::Checker` again in Python, for a real pty's
+  bytes: a sequence or a UTF-8 character may be split across reads, so
+  it waits for the rest.  `drive.py` runs `--profile` first, with the
+  same options, environment and pty size, and holds the screen to that
+  profile's line style, colour and caps.
+- **Its dump** is `Canvas::dump`'s form, but a space that isn't reverse
+  takes the plain letter for its background (`b`, `d`, `s`, `p`).  The
+  diffed redraw doesn't resend a space whose foreground or bold alone
+  differ, so those depend on what was drawn before; comparing them would
+  make the goldens depend on the order of frames.  The terminal's last
+  cell is never written, so it dumps as `p`.
+- **The fake's events** are ui.md's form, written by hand and marked
+  provisional, in four scenarios: a whole restore, a failed boot stage,
+  one that stops for a minute (Cancel and signals), and a schema 2
+  `start`.  They are to be recorded again from real runs after RT10.
+- **The fake checks** each `--key-file`/`--password-file`: an absolute
+  path to a regular file, 0600, ours, in our own 0700 directory, not
+  empty, at most 1 KiB, no newline, its text in neither argv nor the
+  environment; and it refuses `--commit` under `BKO_HOLT_NO_COMMIT=1`.
+  A watcher it leaves behind logs whether each key file is removed after
+  it exits.  Its log has a key's SHA-256, never its text.
+- **`--demo` runs nothing without `--holt`:** its restore page then says
+  so.  With `--holt`, it runs that program with `load demo-system.json
+  --json --through close --key-file sda3_crypt=FILE`, never `--commit`,
+  and with `BKO_HOLT_NO_COMMIT=1`.  A `start` of an unknown format or
+  schema, a `start` with `commit: true`, or events that don't parse stop
+  the fake at once.
+- **The demo's key directory** is a new one under `$TMPDIR`
+  (`bko-rescue-demo-PID-N`), made by bko-rescue itself with mode 0700,
+  never one already there: `secret::ram_dir` accepts an existing 0700
+  directory without checking its owner, which is safe in root's
+  `/run/bko-rescue` but not in `/tmp`.  RT12 should check the owner too
+  (one `geteuid` for the FFI table) or make the directory fresh.
+- **The demo follows the events file** as RT12 will: stdout to a file,
+  read each tick, stderr to a second file for Raw output.  The fake is
+  a child here (killed on Cancel, a signal or a panic); RT12's load is
+  detached.  The key file goes as soon as the child is reaped.
 - Still no clippy on czerny, so none ran.
 
 ## The app on top (later)

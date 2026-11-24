@@ -1,0 +1,51 @@
+ BackOtter rescue                                                         Review
+  +------------------------ Every command, in order -------------------------+  
+  | # == partition (2 disks)                                                 |  
+  | # GPT, 4 partitions, as lovelace's sda                                   |  
+  | sfdisk --wipe always --wipe-partitions always /dev/nvme0n1 <<'EOF'       |  
+  | /dev/nvme0n1p1 : start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B> |  
+  | line 0 of the plan ?[31m(an escape, cleaned)                             |  
+  | line 1 of the plan ?[31m(an escape, cleaned)                             |  
+  | line 2 of the plan ?[31m(an escape, cleaned)                             |  
+  | line 3 of the plan ?[31m(an escape, cleaned)                             |  
+  | line 4 of the plan ?[31m(an escape, cleaned)                             |  
+  | line 5 of the plan ?[31m(an escape, cleaned)                             |  
+  | line 6 of the plan ?[31m(an escape, cleaned)                             |  
+  | line 7 of the plan ?[31m(an escape, cleaned)                             |  
+  | line 8 of the plan ?[31m(an escape, cleaned)                             |  
+  | line 9 of the plan ?[31m(an escape, cleaned)                             |  
+  | line 10 of the plan ?[31m(an escape, cleaned)                            |  
+  | line 11 of the plan ?[31m(an escape, cleaned)                            |  
+  | v more below                                                             |  
+  |                                                                          |  
+  |                          < Close >    < Back >                           |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+ Arrows: line | Left/Right: sideways | Space: page | Enter: Close | Esc: back   
+
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+
+p 0

@@ -1,0 +1,2 @@
+grub-install: error: EFI variables are not supported on this system.
+bko-holt: load: the boot stage failed; see /run/bko-holt/log/load.log

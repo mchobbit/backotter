@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""A fake bko-holt for bko-rescue's pty runs (rescue-tui.md, RT8): it
+replays a scenario directory, and checks the key files it is handed.
+
+The scenario is $FAKE_BKO_HOLT_SCENARIO, else scenarios/demo beside this
+file.  Each subdirectory is one call, tried in name order; the first
+whose `argv` matches answers:
+
+    argv     the arguments after the program's name, one a line, each an
+             fnmatch pattern (`sda3_crypt=*`); the whole argv must match
+    stdout   written first, as it is (a plan --json, a status --json)
+    events   streamed line by line to stdout, each flushed: one JSON
+             object a line, as `load --json` writes them; `sleep SECS`
+             waits, `delay SECS` sets the wait after each event (default
+             0.05), and `#` lines are comments
+    stderr   written after the events
+    exit     the exit status (default 0)
+
+The events are ui.md's "`--json` for load" form.  PROVISIONAL: bko-holt's
+--json protocol is RT10's and isn't built; these fixtures are written by
+hand from ui.md and are to be recorded again from real runs once it is.
+
+Before it answers, it checks each `--key-file NAME=PATH` and
+`--password-file PATH`: an absolute path to a regular file (not a
+symlink), mode 0600, ours, in a directory that is ours with mode 0700, not
+empty, at most 1 KiB, with no newline, and with its text nowhere in argv
+or the environment.  With BKO_HOLT_NO_COMMIT=1, `--commit` is refused
+(exit 2), as bko-holt will (D14).  A failed check is exit 97 and a line on
+stderr; no call matching is exit 98.
+
+It then leaves a watcher behind that waits for this process to be gone
+and checks each key file is removed within $FAKE_BKO_HOLT_REMOVE_SECS
+(default 10).  Everything goes to $FAKE_BKO_HOLT_LOG, if set, a JSON
+object a line: {"call", "argv", "keys": [{"path", "bytes", "sha256"}],
+"checks": [...], "ok"}, then {"removed": PATH, "secs"} or {"left": PATH}
+for each key.  A key's text is never written there, only its hash.
+
+Python's stdlib only.
+"""
+
+import fnmatch
+import hashlib
+import json
+import os
+import stat
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+KEY_MAX = 1024
+
+
+def log(obj):
+    path = os.environ.get("FAKE_BKO_HOLT_LOG")
+    if not path:
+        return
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.write(fd, (json.dumps(obj, sort_keys=True) + "\n").encode())
+    finally:
+        os.close(fd)
+
+
+def key_paths(argv):
+    """The files a key or password was handed on in."""
+    out = []
+    for i, a in enumerate(argv):
+        for flag in ("--key-file", "--password-file"):
+            v = None
+            if a == flag and i + 1 < len(argv):
+                v = argv[i + 1]
+            elif a.startswith(flag + "="):
+                v = a[len(flag) + 1:]
+            if v is None:
+                continue
+            if flag == "--key-file":
+                if "=" not in v:
+                    out.append((flag, v, None))
+                    continue
+                v = v.split("=", 1)[1]
+            out.append((flag, v, v))
+    return out
+
+
+def check_key(path, argv):
+    """What's wrong with one key file, in words; [] when nothing is."""
+    bad = []
+    if not os.path.isabs(path):
+        return ["%s: not an absolute path" % path]
+    try:
+        st = os.lstat(path)
+    except OSError as e:
+        return ["%s: %s" % (path, e.strerror)]
+    if not stat.S_ISREG(st.st_mode):
+        return ["%s: not a regular file (a symlink or other)" % path]
+    if stat.S_IMODE(st.st_mode) != 0o600:
+        bad.append("%s: mode %o, not 0600" % (path, stat.S_IMODE(st.st_mode)))
+    if st.st_uid != os.geteuid():
+        bad.append("%s: owned by uid %d, not us" % (path, st.st_uid))
+    d = os.path.dirname(path)
+    dst = os.lstat(d)
+    if not stat.S_ISDIR(dst.st_mode):
+        bad.append("%s: not a directory" % d)
+    if stat.S_IMODE(dst.st_mode) != 0o700:
+        bad.append("%s: mode %o, not 0700" % (d, stat.S_IMODE(dst.st_mode)))
+    if dst.st_uid != os.geteuid():
+        bad.append("%s: owned by uid %d, not us" % (d, dst.st_uid))
+    with open(path, "rb") as f:
+        b = f.read(KEY_MAX + 1)
+    if not b:
+        bad.append("%s: empty" % path)
+    if len(b) > KEY_MAX:
+        bad.append("%s: over %d bytes" % (path, KEY_MAX))
+    if b"\n" in b or b"\r" in b:
+        bad.append("%s: holds a newline" % path)
+    if b:
+        if any(b in a.encode(errors="surrogateescape") for a in argv):
+            bad.append("%s: its text is in argv" % path)
+        if any(b in v.encode(errors="surrogateescape") for v in os.environ.values()):
+            bad.append("%s: its text is in the environment" % path)
+    return bad, len(b), hashlib.sha256(b).hexdigest()
+
+
+def watch(paths, pid):
+    """In a child of our own, detached: wait for `pid` to be gone, then
+    for each path to be removed."""
+    if not paths or os.fork():
+        return
+    os.setsid()
+    if os.fork():
+        os._exit(0)
+    null = os.open(os.devnull, os.O_RDWR)
+    for fd in (0, 1, 2):
+        os.dup2(null, fd)
+    secs = float(os.environ.get("FAKE_BKO_HOLT_REMOVE_SECS", "10"))
+    end = time.time() + 600
+    while time.time() < end:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        except PermissionError:
+            pass
+        time.sleep(0.02)
+    gone_at = time.time()
+    left = list(paths)
+    while left and time.time() < gone_at + secs:
+        for p in list(left):
+            if not os.path.lexists(p):
+                log({"removed": p, "secs": round(time.time() - gone_at, 3)})
+                left.remove(p)
+        time.sleep(0.02)
+    for p in left:
+        log({"left": p})
+    os._exit(0)
+
+
+def match(call_dir, argv):
+    try:
+        with open(os.path.join(call_dir, "argv")) as f:
+            pats = [l.rstrip("\n") for l in f if l.rstrip("\n") != ""]
+    except FileNotFoundError:
+        return False
+    return len(pats) == len(argv) and all(fnmatch.fnmatchcase(a, p) for a, p in zip(argv, pats))
+
+
+def read(call_dir, name):
+    try:
+        with open(os.path.join(call_dir, name), "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+
+
+def stream(events):
+    delay = 0.05
+    for raw in events.decode().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        w = line.split()
+        if w[0] == "sleep":
+            time.sleep(float(w[1]))
+            continue
+        if w[0] == "delay":
+            delay = float(w[1])
+            continue
+        json.loads(line)          # a fixture's typo fails here, not in bko-rescue
+        sys.stdout.write(line + "\n")
+        sys.stdout.flush()
+        time.sleep(delay)
+
+
+def main():
+    argv = sys.argv[1:]
+    scen = os.environ.get("FAKE_BKO_HOLT_SCENARIO") or os.path.join(HERE, "scenarios", "demo")
+    entry = {"argv": argv, "scenario": scen, "no_commit_env": os.environ.get("BKO_HOLT_NO_COMMIT")}
+    checks, keys, watched = [], [], []
+    for flag, given, path in key_paths(argv):
+        if path is None:
+            checks.append("%s %s: not NAME=PATH" % (flag, given))
+            continue
+        r = check_key(path, argv)
+        if isinstance(r, list):
+            checks.extend(r)
+            continue
+        bad, n, digest = r
+        checks.extend(bad)
+        keys.append({"path": path, "bytes": n, "sha256": digest})
+        watched.append(path)
+    if os.environ.get("BKO_HOLT_NO_COMMIT") == "1" and "--commit" in argv:
+        entry.update(call=None, checks=checks, keys=keys, ok=False, refused="--commit")
+        log(entry)
+        print("bko-holt: BKO_HOLT_NO_COMMIT is set, so --commit is refused", file=sys.stderr)
+        return 2
+    entry.update(checks=checks, keys=keys)
+    if checks:
+        entry.update(call=None, ok=False)
+        log(entry)
+        for c in checks:
+            print("fake-bko-holt: CHECK FAILED: %s" % c, file=sys.stderr)
+        return 97
+    calls = sorted(d for d in os.listdir(scen) if os.path.isdir(os.path.join(scen, d))) if os.path.isdir(scen) else []
+    call = next((c for c in calls if match(os.path.join(scen, c), argv)), None)
+    entry.update(call=call, ok=call is not None)
+    log(entry)
+    if call is None:
+        print("fake-bko-holt: no call in %s matches %r" % (scen, argv), file=sys.stderr)
+        return 98
+    watch(watched, os.getpid())
+    d = os.path.join(scen, call)
+    out = read(d, "stdout")
+    if out:
+        sys.stdout.buffer.write(out)
+        sys.stdout.flush()
+    ev = read(d, "events")
+    if ev:
+        stream(ev)
+    err = read(d, "stderr")
+    if err:
+        sys.stderr.buffer.write(err)
+        sys.stderr.flush()
+    code = read(d, "exit")
+    return int(code.decode().strip()) if code else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -4,7 +4,8 @@
 with every byte it sends checked against the sequences it may send.  And
 the widgets (RT6, RT7): --demo through every page in full screen and in
 plain mode, P and the too-small notice going on in plain mode, and the
-password read with echo off, and SIGTERM there.
+password read with echo off, and SIGTERM there.  demo-test.py drives
+--demo through every widget with drive.py and the fake bko-holt (RT8).
 
     testvm/rescue/pty-test.py PATH/TO/bko-rescue
 
@@ -357,6 +358,8 @@ def test_demo_plain():
     check(wait_for(t, b"(an escape, cleaned)") and wait_for(t, b"Choose [o, b]: "), "plain demo: the view")
     t.send(b"o\n")
     check(wait_for(t, b"    100 %: 61.2 of 61.2 GB", 8), "plain demo: the gauge as percentage lines")
+    check(wait_for(t, b"Nothing to run"), "plain demo: no fake, nothing run")
+    t.send(b"o\n")
     check(wait_for(t, b"a password of 6 characters") and wait_for(t, b"\nsftp://nas/x\r\n"), "plain demo: the answers")
     t.send(b"o\n")
     code, err = t.wait()
@@ -409,6 +412,8 @@ def test_demo_full():
     t.send(b"\x1b[C")
     t.send(b"\r")
     check(wait_for(t, b"Restoring lovelace"), "full demo: the gauge")
+    check(wait_for(t, b"Nothing to run", 8), "full demo: no fake, nothing run")
+    t.send(b"\r")
     check(wait_for(t, b"a password of 2 characters", 8), "full demo: the answers")
     t.send(b"\r")
     code, err = t.wait()

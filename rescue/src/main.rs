@@ -41,7 +41,8 @@ struct Opts {
     plain: bool,
     lines: Option<Lines>,
     colour: Option<bool>,
-    holt: String,
+    /// `--holt`; None is bko-holt on PATH (and, for --demo, no fake).
+    holt: Option<String>,
     rustic: String,
     dry_run: bool,
 }
@@ -56,7 +57,7 @@ fn parse(args: &[String]) -> Result<Opts, String> {
         plain: false,
         lines: None,
         colour: None,
-        holt: "bko-holt".to_string(),
+        holt: None,
         rustic: "rustic-bko".to_string(),
         dry_run: false,
     };
@@ -91,7 +92,7 @@ fn parse(args: &[String]) -> Result<Opts, String> {
                 let v = value("on or off")?;
                 o.colour = Some(profile::parse_colour(&v).ok_or_else(|| format!("--colour {v}: on or off"))?);
             }
-            "--holt" => o.holt = value("a path")?,
+            "--holt" => o.holt = Some(value("a path")?),
             "--rustic" => o.rustic = value("a path")?,
             "--abi" => mode(Mode::Abi, &mut o),
             "--check-tty" => mode(Mode::CheckTty, &mut o),
@@ -177,7 +178,7 @@ fn main() {
         }
         Mode::Demo => {
             let f = Facts::gather(o.plain, o.lines, o.colour);
-            demo::run(&profile::decide(&f))
+            demo::run(&profile::decide(&f), o.holt.as_deref())
         }
         Mode::App => {
             let _ = (&o.holt, &o.rustic, o.dry_run);
@@ -204,7 +205,7 @@ mod tests {
     fn options() {
         let o = p(&["--plain", "--lines", "dec", "--colour=off", "--holt", "/x/bko-holt", "--dry-run"]).unwrap();
         assert!(o.plain && o.dry_run);
-        assert_eq!((o.lines, o.colour, o.holt.as_str()), (Some(Lines::Dec), Some(false), "/x/bko-holt"));
+        assert_eq!((o.lines, o.colour, o.holt.as_deref()), (Some(Lines::Dec), Some(false), Some("/x/bko-holt")));
         assert_eq!(o.mode, Mode::App);
         assert_eq!(p(&["--spike", "panic"]).unwrap().mode, Mode::Spike(spike::End::Panic));
         assert_eq!(p(&["--spike=panic"]).unwrap().mode, Mode::Spike(spike::End::Panic));

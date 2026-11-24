@@ -1,0 +1,51 @@
+ BackOtter rescue                                                         Review
+  ┌──────────────────────── Every command, in order ─────────────────────────┐  
+  │ ^ more above                                                             │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ <f the plan ?[31m(an escape, cleaned)                                    │  
+  │ v more below                                                             │  
+  │                                                                          │  
+  │                          < Close >    < Back >                           │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+ Arrows: line | Left/Right: sideways | Space: page | Enter: Close | Esc: back   
+
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+
+p 0

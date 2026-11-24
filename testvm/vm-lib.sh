@@ -30,7 +30,8 @@
 #             query goes through QEMU's DNS to the host's nameserver on the
 #             internet, and one lost answer costs the guest's resolver 5 s
 #             (two, 15 s).  At 5 s a lost answer was a failed connection,
-#             and -q keeps ssh from saying why.
+#             and -q kept ssh from saying why: LogLevel=ERROR now, so a
+#             failed connection's reason goes to stderr.
 #   vm_sh SCRIPT
 #             Run SCRIPT, any number of lines, with the guest's /bin/sh (fed
 #             on stdin, so not for commands that read stdin themselves).
@@ -167,7 +168,10 @@ vm_qemu_below() {
 vm_ssh() {
     local sq="'"
     local q=${1//$sq/$sq\\$sq$sq}
-    timeout "${T:-3600}" ssh -q -i "$VM_KEY" -p "$VM_PORT" -o BatchMode=yes \
+    # LogLevel=ERROR, not -q: as quiet on success (no "Permanently added"
+    # warning, no banner), but ssh's own failure (its 255) says why on
+    # stderr: refused, timed out at the banner, closed preauth.
+    timeout "${T:-3600}" ssh -o LogLevel=ERROR -i "$VM_KEY" -p "$VM_PORT" -o BatchMode=yes \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout="${VM_SSH_CONNECT_TIMEOUT:-30}" \
         -o ServerAliveInterval=30 "${VM_USER:-root}@127.0.0.1" "/bin/sh -c '$q'"
 }

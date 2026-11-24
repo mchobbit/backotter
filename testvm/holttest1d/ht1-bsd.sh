@@ -183,7 +183,14 @@ rescuer_ready() {
     RR_WHY=""
     # NetBSD's heartbeat(9) panics a CPU whose clock didn't move in 15 s of
     # its own ticks, as a vCPU's beside a starved one on a loaded host
-    # (resc_up): off in the rescuer for the rest of its run.
+    # (resc_up): off in the rescuer for the rest of its run.  (Nothing the
+    # rig passes turns it off sooner: kern.heartbeat.max_period is a sysctl
+    # only, its 15 s default a kernel option, and boot.cfg sets neither.
+    # The one place earlier is the rescuer guest's own /etc/sysctl.conf,
+    # which rc.d/sysctl reads before the network: netbsd11 2026-11-18
+    # panicked after it, at "Building databases", the "[ 2.36]" stamps
+    # being that stalled clock's, not 2 s of boot.  That is an image change,
+    # so a panic before SSH answers is resc_up's one boot again.)
     [[ $PLAT == netbsd ]] && sshk "$rkey" 'sysctl -w kern.heartbeat.max_period=0' >/dev/null 2>&1
     if [[ $PLAT == illumos ]]; then
         # (A disk attached at boot can be late into /dev and into iostat's
@@ -483,7 +490,18 @@ size_of() { qemu-img info --output=json "$1" | python3 -c 'import json,sys; prin
 sshk() { local key=$1; shift; printf 'PATH=%s; export PATH\n%s\n' "$GPATH" "$*" | timeout "${TMO:-600}" ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_CTO -o ServerAliveInterval=15 "$GUSER@127.0.0.1" "/bin/sh -s"; }
 # A script on stdin, for anything longer than a line.
 shk() { local key=$1; { printf 'PATH=%s; export PATH\n' "$GPATH"; cat; } | timeout "${TMO:-600}" ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_CTO -o ServerAliveInterval=15 "$GUSER@127.0.0.1" "/bin/sh -s"; }
-put() { local key=$1 file=$2 dest=$3; timeout 600 ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$GUSER@127.0.0.1" "cat > '$dest' && chmod 755 '$dest'" < "$file"; }
+# put KEY FILE DEST: FILE copied to DEST (mode 755), with sshk's
+# ConnectTimeout, and once more after 3 s if ssh itself failed (255: no
+# answer in time, or a session cut off: the second cat > replaces whatever
+# the first wrote).
+put() { local key=$1 file=$2 dest=$3 i rc
+    for i in 1 2; do
+        [[ $i == 1 ]] || { echo "ht1-bsd: put $(basename "$file") to $dest: ssh failed (255), once more" >&2; sleep 3; }
+        timeout 600 ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=$SSH_CTO "$GUSER@127.0.0.1" "cat > '$dest' && chmod 755 '$dest'" < "$file"; rc=$?
+        ((rc == 255)) || return $rc
+    done
+    return $rc
+}
 # edges_read KEY CMD FILE WANT: the disks' first and last MiB (CMD, which only
 # reads) into FILE, WANT lines, one a disk.  sshk waits SSH_CTO seconds for the
 # sshd to answer, and on a loaded host a slow one answers nothing at all, so an
@@ -515,6 +533,9 @@ head_written() {
 # (Without ht_begin's copies of the caller's stdout and stderr: a rescuer
 # HT_KEEP keeps up outlives the run, and its caller's ssh or pipe.)
 vm_up() { local image=$1 log=$2; shift 2
+    # (A console left from an earlier try, until QEMU or the console's
+    # reader opens LOG anew, would be read by vm_wait's log_panicked.)
+    rm -f "$log"
     if [[ -n ${IMG_BOOT:-} ]]; then
         # The rescue image (+img): img-boot.py logs its console and starts sshd with the run's key.
         setsid -f python3 -B "$HERE/img-boot.py" "$log" "$PLAT" "$R/img-key.pub" -- \
@@ -545,8 +566,14 @@ vm_wait() { local key=$1 log=${2:-}
 # start (FreeBSD, OpenBSD, DragonFly; NetBSD's after its "[ 2.36] "
 # timestamp), illumos' "panic[cpu1]/thread=ADDR: ".  Not "ddb.onpanic: "
 # nor savecore's "reboot after panic: ", which come after a line's start.
+# Haiku's: its kernel debugger's "Welcome to Kernel Debugging Land..." (after
+# a "PANIC: " line, or any other way into KDL), where it then waits.
 log_panicked() { # LOG
-    [[ -f $1 ]] && tr -d '\r' < "$1" | grep -aqE '^(\[ *[0-9.]+\] )?panic(\[cpu[0-9]+\]/thread=[0-9a-fx]+)?: '
+    [[ -f $1 ]] && tr -d '\r' < "$1" | grep -aqE '^(\[ *[0-9.]+\] )?panic(\[cpu[0-9]+\]/thread=[0-9a-fx]+)?: |^Welcome to Kernel Debugging Land'
+}
+# wait_why RC: what a FAIL line says of vm_wait's RC (1 or 2).
+wait_why() {
+    if (($1 == 2)); then echo "its kernel panicked before SSH answered"; else echo "no SSH"; fi
 }
 # A rescuer's boot: vm_up IMAGE LOG ARGS... and vm_wait KEY, once more when
 # its kernel panicked before sshd answered (the first console kept as
@@ -561,7 +588,7 @@ resc_up() { local key=$1 image=$2 log=$3 rc; shift 3
     vm_up "$image" "$log" "$@"
     vm_wait "$key" "$log"; rc=$?
     ((rc == 2)) || return $rc
-    ht_note "the rescuer's kernel panicked at boot, booted again ($(basename "$log").panic-1: $(tr -d '\r' < "$log" | grep -aE -m 1 '^(\[ *[0-9.]+\] )?panic' | sed 's/^\[ *[0-9.]*\] //' | cut -c1-120))"
+    ht_note "the rescuer's kernel panicked at boot, booted again ($(basename "$log").panic-1: $(tr -d '\r' < "$log" | grep -aiE -m 1 '^(\[ *[0-9.]+\] )?panic' | sed 's/^\[ *[0-9.]*\] //' | cut -c1-120))"
     # shellcheck disable=SC2046  # PIDs
     kill $(ht_qemus "$R") 2>/dev/null
     for _ in $(seq 12); do [[ -n $(ht_qemus "$R") ]] || break; sleep 5; done
@@ -1031,7 +1058,8 @@ phase_source() {
         rm -f "${src[i]}"; qemu-img create -q -f qcow2 -b "${imgs[i]}" -F qcow2 "${src[i]}"
     done
     CONSOLE_KEY=$gpass vm_up "$SRC" "$R/logs/source-serial.log" "${fw[@]}" "${s_guest[@]}" "${src_more[@]}"
-    vm_wait "$gkey" || { bad "source boots (no SSH)"; vm_down "$gkey"; return; }
+    local wrc; vm_wait "$gkey" "$R/logs/source-serial.log"; wrc=$?
+    ((wrc == 0)) || { bad "source boots ($(wait_why $wrc); logs/source-serial.log)"; vm_down "$gkey"; return; }
     ok "source boots"
     sshk "$gkey" "$BOOTSTATE" > "$R/logs/source-bootstate.txt" 2>&1
     sshk "$gkey" "$HEALTH" 2>&1 | grep -v 'bko-holt/load.log' > "$R/logs/source-health.txt"
@@ -1045,13 +1073,25 @@ phase_source() {
     vm_down "$gkey"
 }
 
+# BACKUP_STATE: "failed" from the backup phase's start until rustic-bko's
+# backup made the repository ("ok"); empty when this run has no backup phase
+# (a rerun from rebuild or verify uses the last run's).  Without the
+# repository the rebuild and the verify would only add FAILs of their own
+# to the backup's, so they say they weren't run instead (a note: the
+# backup's FAIL lines stay the run's only ones, and its RESULT a FAIL).
+BACKUP_STATE=""
+backup_failed() { # PHASE
+    [[ $BACKUP_STATE == failed ]] || return 1
+    say "note: $1 not run: the backup failed (its FAIL lines above)"
+}
 phase_backup() {
     say "== backup"
+    BACKUP_STATE=failed
     rm -f "$RESC"; qemu-img create -q -f qcow2 -b "$rimg" -F qcow2 "$RESC"
     qemu-img resize -q "$RESC" +8G 2>/dev/null || true
     # GELI: the rescuer's loader probes every disk's partitions for a pool,
-    # and may ask for a GELIBOOT provider's passphrase too (not yet seen), so
-    # it boots through console-boot.py when the source has one.
+    # and may ask for a GELIBOOT provider's passphrase too (seen: run geli1,
+    # 2026-11-14), so it boots through console-boot.py when the source has one.
     # So too for a softraid CRYPTO volume (OpenBSD's /boot probes every
     # disk's softraid metadata), and the mount script attaches it with the
     # passphrase.
@@ -1094,6 +1134,7 @@ phase_backup() {
     done <<<"$geli"
     if TMO=7200 sshk "$rkey" "R=\"$RH/rustic-bko -r $RH/repo --password-file $RH/repo-password --no-progress --no-cache\"; rm -rf $RH/repo; \$R init && \$R backup --set-atime yes /mnt/src" > "$R/logs/backup.log" 2>&1; then
         ok "rustic-bko backup ($(sshk "$rkey" "du -sh $RH/repo" | cut -f1))"
+        BACKUP_STATE=ok
     else
         bad "rustic-bko backup (logs/backup.log)"
     fi
@@ -1185,6 +1226,7 @@ load_step() { local want=$1 name=$2; shift 2
 
 phase_rebuild() {
     say "== rebuild"
+    backup_failed rebuild && return
     local fails0=$fails
     [[ -f $RESC ]] || { bad "no rescuer with the backup (run the backup phase)"; return; }
     # A rescuer HT_KEEP left up from the last try.
@@ -1353,13 +1395,17 @@ phase_rebuild() {
         TMO=7200 load_step 0 "$s" "${map[@]}" "${extra[@]}" "${how[@]}" --commit || {
             sshk "$rkey" "cat /var/run/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
             sshk "$rkey" "set -x; mount; df; fstat | awk -v m=/mnt/bko-target 'NR == 1 { print; next } { for (i = 5; i <= NF; i++) if (\$i == m) { print; next } }'; gpart show; disklabel ${RN[1]}; dkctl ${RN[1]} listwedges; zpool status; zpool list -v; zfs list -o name,mounted,mountpoint,canmount; glabel status; swapctl -l" > "$R/logs/rebuild-failed-state.txt" 2>&1
+            # (The rescuer's sshd log, as the rebuild's end keeps it below.)
+            sshk "$rkey" "cat /var/log/auth.log /var/log/authlog 2>/dev/null; true" > "$R/logs/rebuild-auth.log" 2>&1
             kept_or_down; return; }
         [[ $PLAT == haiku ]] && sshk "$rkey" "echo $s \$(stat -c %Y.%y /mnt/bko-target 2>&1)" >> "$R/logs/haiku-root-mtime.txt" 2>&1
         # Haiku publishes a new table's partitions only at boot.
         if [[ $PLAT == haiku && $s == partition ]]; then
             TMO=20 sshk "$rkey" "shutdown -r -q" >/dev/null 2>&1
             sleep 20
-            vm_wait "$rkey" || { bad "the rescuer's restart after partition"; vm_down "$rkey"; return; }
+            # (The same QEMU: its console still goes to rescuer-serial.log.)
+            local wrc; vm_wait "$rkey" "$R/logs/rescuer-serial.log"; wrc=$?
+            ((wrc == 0)) || { bad "the rescuer's restart after partition ($(wait_why $wrc); logs/rescuer-serial.log)"; vm_down "$rkey"; return; }
             rescuer_ready $((n + 2 + IMG)) || { harness "the rescuer's restart after partition (its disks: $RR_WHY)"; vm_down "$rkey"; return; }
             if ((IMG)); then
                 # (img-boot.py started sshd again at the image's menu.)
@@ -1418,6 +1464,7 @@ phase_verify() {
     # A rescuer HT_KEEP left up has the targets open.
     [[ -z $(ht_qemus "$R") ]] || vm_down "$rkey"
     say "== verify"
+    backup_failed verify && return
     # GELI, as the backup's: the rescuer boots through console-boot.py and
     # attaches the restored providers with the passphrase load gave them.
     # load rewrites /var/backups/PROVIDER.eli for the new provider and
@@ -1487,7 +1534,8 @@ phase_verify() {
     # (GELI: SSH answering means the loader took the passphrase load gave
     # the restored provider, and the kernel mounted the pool inside it.)
     CONSOLE_KEY=$gpass vm_up "$DST" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${s_guest[@]}" "${dst_more[@]}"
-    if ! vm_wait "$gkey"; then bad "the restored disk boots by itself (no SSH; logs/restored-serial.log)"; vm_down "$gkey"; return; fi
+    local wrc; vm_wait "$gkey" "$R/logs/restored-serial.log"; wrc=$?
+    if ((wrc != 0)); then bad "the restored disk boots by itself ($(wait_why $wrc); logs/restored-serial.log)"; vm_down "$gkey"; return; fi
     ok "the restored disk boots by itself, SSH with the guest's key"
     # (softraid: SSH answering means /boot took the passphrase load gave the
     # volume.)  Each volume as the source had it: its device, CRYPTO, on its

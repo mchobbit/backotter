@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 TESTS = os.path.dirname(os.path.abspath(__file__))
 T2 = os.path.dirname(TESTS)
@@ -35,6 +36,19 @@ def load_module(name, path):
 CM = load_module("check_manifests", os.path.join(T2, "stic", "check-manifests.py"))
 DRIVE = load_module("st1_drive_test", os.path.join(REPO, "testvm", "stictest1", "drive.py"))
 MARK = "t2s-20261108T0315-4f2a"
+# stic/flakes.json's BSD entries as they were until 2026-11-24 (removed: no ledger row ever
+# matched one, and their cause, a silent ssh -q, is fixed): the matcher's cases.
+OLD_FLAKES = [
+    {"guest": "ghostbsd26-zfs",
+     "pattern": "^FAIL Backup and restore exit 0: restic-restic:no-verdict rustic-rustic:no-verdict restic-rustic:no-verdict rustic-restic:no-verdict$",
+     "fails": "(?:: (?:(?:restic|rustic)-(?:restic|rustic):no-verdict ?){4}$|: (?:[a-z0-9-]+: no result ?)+$|: see rt-restic-rustic\\.log/rt-rustic-restic\\.log$|\\\"checks\\\": \\[\\\"no log)",
+     "over": "fails", "why": "ssh exit 255 right after the boot", "evidence": "derived", "ref": "5918ec2"},
+    {"guest": "ghostbsd26",
+     "pattern": "^FAIL roundtrip-rustic->restic: no verdict \\(",
+     "fails": "^FAIL (?:roundtrip-rustic->restic: no verdict|snapshot-identity-torture-rustic-restic: not identical or not run) \\(",
+     "over": "fails", "why": "the rustic->restic direction ends with no verdict (ST2R)", "evidence": "log",
+     "ref": "chopin:~/backotter-work/stictest1/ghostbsd26/logs/gt1-fix4/run.out"},
+]
 H64 = lambda c: c * 64
 
 
@@ -458,10 +472,18 @@ class TestRowsStic(unittest.TestCase):
 
     def test_flake(self):
         w = World(self.tmp, "ghostbsd26", fixture("ghostbsd26-flake.out"), code=1)
-        r = checked(w.build(cells=w.cells()))
+        fl = OLD_FLAKES[1]
+        real = keys.Specs.json
+        with mock.patch.object(keys.Specs, "json",
+                               lambda me, path: (OLD_FLAKES, None) if path == rows_stic.FLAKES else real(me, path)):
+            r = checked(w.build(cells=w.cells()))
         self.assertEqual(r["verdict"], "FAIL")
         self.assertEqual(r["extra"]["flake"]["guest"], "ghostbsd26")
-        fl = load_json(os.path.join(T2, "stic", "flakes.json"))[2]
+        # flakes.json's own entries are gone (none ever matched a row, their cause fixed):
+        # the same run is a plain FAIL, with no flake.
+        r0 = checked(w.build(cells=w.cells()))
+        self.assertEqual(r0["verdict"], "FAIL")
+        self.assertIsNone((r0.get("extra") or {}).get("flake"))
         shutil.rmtree(os.path.dirname(w.L))
         os.makedirs(os.path.join(self.tmp, "b"))
         w2 = World(os.path.join(self.tmp, "b"), "ghostbsd26", "PASS roundtrip-rustic->restic: ok\n")
@@ -474,8 +496,9 @@ class TestRowsStic(unittest.TestCase):
     def test_ssh255_flake_is_ghostbsd26_zfs_only(self):
         t = fixture("ghostbsd26-zfs-ssh255.out")
         fails = [f"FAIL {n}: {d}" for v, n, d in rows_stic.parse_lines(t) if v == "FAIL"]
-        fl = load_json(os.path.join(T2, "stic", "flakes.json"))
+        fl = OLD_FLAKES
         self.assertEqual(rows_stic.known_flake(fl, "ghostbsd26-zfs", fails, t)["guest"], "ghostbsd26-zfs")
+        self.assertIsNone(rows_stic.known_flake(load_json(os.path.join(T2, "stic", "flakes.json")), "ghostbsd26-zfs", fails, t))
         self.assertIsNone(rows_stic.known_flake(fl, "freebsd15", fails, t))
         self.assertIsNone(rows_stic.known_flake(fl, "ghostbsd26-zfs", fails[:3] + ["FAIL Sparse files: holes"], t))
 

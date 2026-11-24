@@ -19,7 +19,7 @@ BSD=$HERE/ht1-bsd.sh
 
 # The functions under test, by name: each from its "name() {" to the next
 # line that is a "}" of its own (none of their heredocs has one).
-want=(geli_provs sr_vols geli_fstab_mp onetime_swaps geli_files_list geli_slot1_script mount_script umount_script log_panicked vm_wait resc_up)
+want=(geli_provs sr_vols geli_fstab_mp onetime_swaps geli_files_list geli_slot1_script mount_script umount_script log_panicked wait_why vm_wait resc_up backup_failed put)
 src=""
 for f in "${want[@]}"; do
     one=$(sed -n "/^$f() {/,/^}$/p" "$BSD")
@@ -276,6 +276,12 @@ chk "log_panicked: illumos' panic[cpuN]/thread=" log_panicked "$T/il-panic.log"
 chk "log_panicked: FreeBSD's panic: at a line's start" log_panicked "$T/fb-panic.log"
 chk "log_panicked: not ddb.onpanic, savecore's or a poweroff" eval '! log_panicked "$T/nb-fine.log"'
 chk "log_panicked: not a console that isn't there" eval '! log_panicked "$T/none.log"'
+printf '%s\r\n' "PANIC: vm_page_fault: unhandled page fault in kernel space" "Welcome to Kernel Debugging Land..." "Thread 1 \"main thread\" running on CPU 0" > "$T/hk-panic.log"
+printf '%s\n' "KERN: Welcome to Haiku" "kdl: not the debugger's banner" > "$T/hk-fine.log"
+chk "log_panicked: Haiku's kernel debugger" log_panicked "$T/hk-panic.log"
+chk "log_panicked: not a Haiku boot that didn't enter it" eval '! log_panicked "$T/hk-fine.log"'
+chk "wait_why: 2 is a panic" eval '[[ $(wait_why 2) == *"kernel panicked"* ]]'
+chk "wait_why: 1 is no SSH" eval '[[ $(wait_why 1) == "no SSH" ]]'
 
 R=$T/run BOOTS=0 UP_AT=1 PANICS=0 HT_NOTE=""
 mkdir -p "$R"
@@ -303,6 +309,54 @@ rm -f "$R/ups" "$R/c.log.panic-1"; BOOTS=0 UP_AT=9 PANICS=9 HT_NOTE=""
 CONSOLE_KEY= resc_up key "$R/img" "$R/c.log" > "$T/resc3.out" 2>&1; rc=$?
 chk "resc_up: a panic on the second boot too is a failure (2), with no third" eval '((rc == 2 && BOOTS == 2))'
 chk "resc_up: and says so" has "$T/resc3.out" "panicked at boot again"
+
+# vm_wait with the console (the source's, the restored disk's, Haiku's
+# restart): a panic on it ends the wait at once (2), and without one, or
+# without LOG, it waits its whole 120 tries (1).
+BOOTS=0 UP_AT=1
+vm_wait key "$T/nb-panic.log"; rc=$?
+chk "vm_wait: a panicked console is 2" eval '((rc == 2))'
+NPOLL=0
+# shellcheck disable=SC2329,SC2317
+sshk() { NPOLL=$((NPOLL + 1)); ((BOOTS >= UP_AT)); }
+vm_wait key "$T/nb-fine.log"; rc=$?
+chk "vm_wait: a console with no panic waits it out (1)" eval '((rc == 1 && NPOLL == 120))'
+NPOLL=0; vm_wait key; rc=$?
+chk "vm_wait: no LOG waits it out (1)" eval '((rc == 1 && NPOLL == 120))'
+BOOTS=1; vm_wait key "$T/nb-panic.log"; rc=$?
+chk "vm_wait: SSH answering is 0, whatever the console" eval '((rc == 0))'
+
+# backup_failed: the rebuild and the verify after a backup with no
+# repository are a note, not FAILs of their own.
+# shellcheck disable=SC2329,SC2317
+say() { echo "$*" >> "$R/report.txt"; }
+: > "$R/report.txt"
+BACKUP_STATE=failed
+chk "backup_failed: after a failed backup, 0" backup_failed rebuild
+chk "backup_failed: and a note line, no FAIL" eval '[[ $(cat "$R/report.txt") == "note: rebuild not run: the backup failed (its FAIL lines above)" ]]'
+: > "$R/report.txt"
+BACKUP_STATE=ok
+chk "backup_failed: after a backup that made the repository, 1" eval '! backup_failed rebuild'
+BACKUP_STATE=""
+chk "backup_failed: with no backup phase in this run, 1" eval '! backup_failed verify'
+chk "backup_failed: and says nothing then" eval '[[ ! -s $R/report.txt ]]'
+
+# put: ssh (stubbed, as timeout) with sshk's ConnectTimeout, once more on
+# ssh's own 255 only.
+PORT=2690 GUSER=root SSH_CTO=30 SSH_RCS=() NSSH=0
+# shellcheck disable=SC2329,SC2317
+timeout() { shift; "$@"; }
+# shellcheck disable=SC2329,SC2317
+ssh() { NSSH=$((NSSH + 1)); echo "$*" > "$R/ssh-args"; cat > /dev/null; return "${SSH_RCS[NSSH - 1]:-0}"; }
+echo x > "$T/f"
+SSH_RCS=(255 0) NSSH=0; put key "$T/f" /root/f 2>"$T/put.err"; rc=$?
+chk "put: a 255 is tried once more, and that one counts" eval '((rc == 0 && NSSH == 2))'
+chk "put: and says so" has "$T/put.err" "ssh failed \(255\), once more"
+chk "put: ConnectTimeout=SSH_CTO" has "$R/ssh-args" " ConnectTimeout=30 "
+SSH_RCS=(1) NSSH=0; put key "$T/f" /root/f 2>/dev/null; rc=$?
+chk "put: the remote's own failure isn't tried again" eval '((rc == 1 && NSSH == 1))'
+SSH_RCS=(255 255 0) NSSH=0; put key "$T/f" /root/f 2>/dev/null; rc=$?
+chk "put: two 255s are a 255, with no third" eval '((rc == 255 && NSSH == 2))'
 
 if ((nfail == 0)); then echo "ht1-bsd-test: all $ncase cases ok"; exit 0; fi
 echo "ht1-bsd-test: $nfail of $ncase cases FAIL"

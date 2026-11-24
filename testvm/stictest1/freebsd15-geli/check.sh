@@ -40,19 +40,22 @@ if [[ ${1:-} == --inner ]]; then
            for m in $(mdconfig -l); do mdconfig -d -u $m; done; chflags -R 0 /root/bko-rt* 2>/dev/null;
            rm -rf /root/bko-rt /root/bko-rt-restored /root/bko-rt-noacl /root/bko-rt-repo /root/bko-rt-repo-2 /tmp/bko-rt*'
     for d in restic-restic rustic-rustic restic-rustic rustic-restic; do
-        vm_sh "$clean" >/dev/null 2>&1
-        T=420 vm_ssh "cd /root/st1 && ./roundtrip.sh /root/st1/${d%-*}-bko /root/st1/${d#*-}-bko 2>&1" >$L/rt-$d.log 2>&1
+        # A failed vm_sh says so in the direction's log: the roundtrip that
+        # follows it runs over the last one's tree and repository.
+        { vm_sh "$clean" >/dev/null 2>&1 || echo "check.sh: the clean-up before $d failed (ssh exit $?)"
+          T=420 vm_ssh "cd /root/st1 && ./roundtrip.sh /root/st1/${d%-*}-bko /root/st1/${d#*-}-bko 2>&1"; } >$L/rt-$d.log 2>&1
     done
-    vm_sh "$clean" >/dev/null 2>&1
     # extra.sh once the guest answers SSH again, and once more if it gave
     # no result: on Cage, right after the last roundtrip's clean-up (2 GiB
     # freed on ZFS over GELI), the guest once took more than vm_ssh's
     # 5 s ConnectTimeout to answer, and extra.sh never ran (an empty
     # extra.log, every one of its checks "no result").
     ssh_ready() { local i; for i in 1 2 3 4 5 6 7 8 9 10 11 12; do T=30 vm_ssh true && return 0; sleep 5; done; return 1; }
+    cfail=""; vm_sh "$clean" >/dev/null 2>&1 || cfail="check.sh: the clean-up before extra.sh failed (ssh exit $?)"
     for try in 1 2; do
         ssh_ready
-        T=420 vm_ssh 'sh /root/st1/extra.sh /root/st1 2>&1' >$L/extra.log 2>&1
+        { [[ -z $cfail ]] || echo "$cfail"
+          T=420 vm_ssh 'sh /root/st1/extra.sh /root/st1 2>&1'; } >$L/extra.log 2>&1
         grep -aq '^R ' $L/extra.log && break
         cp $L/extra.log $L/extra-try$try.log
     done
@@ -60,7 +63,8 @@ if [[ ${1:-} == --inner ]]; then
     vm_sh 'zfs create -o mountpoint=/bkonr -o atime=off zroot/bkonr && pw groupadd bkonr -g 4321 &&
            pw useradd bkonr -u 4321 -g 4321 -s /bin/sh -d /nonexistent && chmod 755 /bkonr &&
            cp /root/st1/restic-bko /root/st1/rustic-bko /bkonr/ && cp /root/st1/rt-common.sh /root/rt-common.sh &&
-           cp /root/st1/nonroot-inner.sh /root/nonroot-inner.sh' >$L/nonroot-setup.log 2>&1
+           cp /root/st1/nonroot-inner.sh /root/nonroot-inner.sh' >$L/nonroot-setup.log 2>&1 ||
+        echo "check.sh: the non-root setup failed (ssh exit $?)" >>$L/nonroot-setup.log
     { echo "######## $GUEST: $(vm_ssh '/bkonr/restic-bko version' | head -n 1), $(vm_ssh '/bkonr/rustic-bko --version')"
       T=420 vm_ssh 'sh /root/nonroot-inner.sh /bkonr/t /bkonr/restic-bko /bkonr/rustic-bko 2>&1' 2>&1; } >$L/nonroot.log 2>&1
     vm_halt

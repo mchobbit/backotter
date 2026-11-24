@@ -78,21 +78,29 @@ if [[ $guest == alpinebsd && ! ( -x $tools/mtree && -x $tools/nc ) ]]; then
 fi
 
 # DIRECTION AGAIN: one run; AGAIN restores the repository saved by the
-# run before, in a fresh boot.  Its output goes to the log.
+# run before, in a fresh boot.  Its output goes to the log, and a step that
+# failed before the round trip says which, with its exit status (the
+# summary's "no verdict" shows the log's tail).
+step_failed() {  # WHAT RC: 1, said
+    echo "run-guest-rt: $1 failed (exit $2)"
+    return 1
+}
 one() {
-    local dir=$1 again=$2 b r f
+    local dir=$1 again=$2 b r f rc
     b=${dir%-*} r=${dir#*-}
-    boot "$guest" || return 1
-    vm_put "$restic" /root/restic-bko && vm_put "$rustic" /root/rustic-bko || return 1
-    for f in "${files[@]}"; do vm_put "$f" "/root/$(basename "$f")" || return 1; done
+    boot "$guest" || { rc=$?; step_failed "the boot of $guest" $rc; return; }
+    vm_put "$restic" /root/restic-bko || { rc=$?; step_failed "vm_put $restic" $rc; return; }
+    vm_put "$rustic" /root/rustic-bko || { rc=$?; step_failed "vm_put $rustic" $rc; return; }
+    for f in "${files[@]}"; do vm_put "$f" "/root/$(basename "$f")" || { rc=$?; step_failed "vm_put $f" $rc; return; }; done
     if [[ $guest == alpinebsd ]]; then
-        tar -C "$tools" -cf - . | T=600 vm_ssh 'mkdir -p /root/nbtools && cd /root/nbtools && tar -xf -' || return 1
+        tar -C "$tools" -cf - . | T=600 vm_ssh 'mkdir -p /root/nbtools && cd /root/nbtools && tar -xf -' ||
+            { rc=$?; step_failed "NetBSD's tools into /root/nbtools (tar | ssh)" $rc; return; }
     fi
     vm_ssh "/root/restic-bko version; /root/rustic-bko --version" 2>&1
     # The scripts' stderr joins stdout in the guest: ssh would mix the two
     # out of order.
     if [[ -n $again ]]; then
-        T=600 vm_ssh 'cd / && tar -xf -' <"$logs/$dir.tar" || return 1
+        T=600 vm_ssh 'cd / && tar -xf -' <"$logs/$dir.tar" || { rc=$?; step_failed "the repository $logs/$dir.tar into the guest (ssh tar)" $rc; return; }
         # The source tree isn't there: only the restore and the comparison.
         T=${RT_TIMEOUT:-3600} vm_ssh "cd /root && ./roundtrip.sh --again /root/$r-bko 2>&1" 2>&1
     else

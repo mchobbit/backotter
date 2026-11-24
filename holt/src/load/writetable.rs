@@ -24,10 +24,14 @@ fn u(v: &Value, k: &str) -> Option<u64> {
 }
 
 /// "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" to GPT's on-disk bytes (the first
-/// three fields little-endian).
+/// three fields little-endian).  None for anything but 32 hex digits and
+/// dashes: the digits are checked before the string is cut in pairs, so a
+/// multibyte character (32 bytes, fewer chars) or a '+' (which
+/// from_str_radix takes as a sign) is no GUID rather than a panic or a
+/// wrong byte.
 pub fn guid_bytes(g: &str) -> Option<[u8; 16]> {
     let h: String = g.chars().filter(|c| *c != '-').collect();
-    if h.len() != 32 {
+    if h.len() != 32 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     let mut b = [0u8; 16];
@@ -400,5 +404,22 @@ mod tests {
             let v = crate::json::parse(js).unwrap();
             assert!(plan(&v, sz).is_err(), "accepted: {js}");
         }
+    }
+
+    /// RustAudit1 H7-10: a GUID of 32 bytes that aren't 32 hex digits (a
+    /// multibyte character cut mid-way, a sign) is None, and plan() says
+    /// which partition's GUID is bad instead of panicking.
+    #[test]
+    fn a_guid_with_multibyte_or_sign_characters_is_rejected() {
+        let wide = format!("a{}a", "\u{e9}".repeat(15));
+        assert_eq!(wide.len(), 32);
+        assert_eq!(guid_bytes(&wide), None);
+        assert_eq!(guid_bytes("+c12a7328f81f11d2ba4b00a0c93ec93"), None);
+        assert_eq!(guid_bytes("c12a7328-f81f-11d2-ba4b-00a0c93ec93g"), None);
+        assert!(guid_bytes("C12A7328-F81F-11D2-BA4B-00A0C93EC93B").is_some());
+        let js = GPT.replace("83bd6b9d-7f41-11dc-be0b-001560b84f0f", &wide);
+        assert_eq!(plan(&crate::json::parse(&js).unwrap(), 16777216).unwrap_err(), "partition 1: a bad type GUID");
+        let js = GPT.replace("d837c62b-d686-11f1-83e1-03e680c1a8f0", &wide);
+        assert_eq!(plan(&crate::json::parse(&js).unwrap(), 16777216).unwrap_err(), "partition 1: a bad GUID");
     }
 }

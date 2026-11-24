@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """BackShot2 from the Mac (docs/design/backshot2.md, "Words"): runs bs2-host
 on the test hosts over SSH, from a private copy of this worktree's testvm/
-and holt/ in ~/backotter-work/bs2-wt (never the shared testvm/).
+and holt/ in ~/backotter-work/bs2-wt (never the shared testvm/; BS2_WT=NAME-wt
+names another, so two sessions' runs never share a copy).
 
   bs2 BackShot2Alpine [N] [plan]    N new cases (default 200) from each Alpine source,
                                     through tier 0, then tier 1, then tier 2 for the UEFI
                                     sources' cases that touch an ESP or the NVRAM (30 in all),
                                     then the corpus
-  bs2 BackShot2 [SOURCE...] [N] [plan]   the same over the named sources (only Alpine's exist)
+  bs2 BackShot2 [SOURCE...] [N] [plan]   the same over the named sources (Alpine's four, guix15,
+                                    guix15-bios); --sweep N: N tier 0 cases a source (default
+                                    5 x N), --tier2 N: N tier 2 cases a UEFI source
   bs2 BackShot2 corpus [plan]       the corpus alone, at tier 0 (tier 1 with --tier 1)
   bs2 replay CASE [--tier N]        one case again, exactly
   bs2 shrink CASE [--tier N]        a failing case down to its smallest; saved in the corpus
@@ -67,10 +70,20 @@ import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-# BackShot2's Linux sources (B11 will add the rest).  Each one's lead draws its cases,
-# runs its tier 0, and is where replay, shrink and the corpus run; HOME deals them in
-# even turns over the lead hosts, two each today.
-SOURCES = ("alpine324", "alpine324-uefi", "alpine324-lvm", "alpine324-luks")
+# BackShot2's Linux sources (A2 will add the rest): BackShot2Alpine's four, and Guix
+# System's (bs2lib/families/guix.py).  Each one's lead draws its cases, runs its tier 0,
+# and is where replay, shrink and the corpus run; HOME deals each group in even turns
+# over the lead hosts (Alpine's as before Guix's: two each), group by group.
+ALPINE_SOURCES = ("alpine324", "alpine324-uefi", "alpine324-lvm", "alpine324-luks")
+GUIX_SOURCES = ("guix15", "guix15-bios")
+SOURCES = ALPINE_SOURCES + GUIX_SOURCES
+# The UEFI sources, whose cases that touch an ESP or the NVRAM go to tier 2 too.
+UEFI = {"alpine324-uefi", "alpine324-lvm", "alpine324-luks", "guix15"}
+# The tree on the hosts that bs2 copies testvm/ and holt/ to and runs bs2-host from:
+# ~/backotter-work/BS2_WT (default bs2-wt), so two sessions' runs never share one.
+WT = os.environ.get("BS2_WT") or "bs2-wt"
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*-wt", WT):
+    sys.exit(f"bs2: BS2_WT={WT!r}: a name ending in -wt, of letters, digits, '.', '_' and '-'")
 
 
 def _host_table():
@@ -105,12 +118,13 @@ def deal(sources, hosts):
     return {s: hosts[min(i // share, len(hosts) - 1)] for i, s in enumerate(sources)}
 
 
-HOME = deal(SOURCES, LEAD_HOSTS)
+HOME = dict(deal(ALPINE_SOURCES, LEAD_HOSTS), **deal(GUIX_SOURCES, LEAD_HOSTS))
 CHOSEN = False   # --hosts given: replay and the corpus go only where vms/SOURCE is
-ALPINE = list(HOME)
+ALPINE = list(ALPINE_SOURCES)
 ROOT = "/bkoscratch/backshot2"
-HOST_BS2 = "~/backotter-work/bs2-wt/testvm/backshot2/bs2-host"
-HOST_IOLOG = "~/backotter-work/bs2-wt/testvm/compare/iolog.sh"   # (light()'s wear-log line)
+HOST_WT = f"~/backotter-work/{WT}"
+HOST_BS2 = f"{HOST_WT}/testvm/backshot2/bs2-host"
+HOST_IOLOG = f"{HOST_WT}/testvm/compare/iolog.sh"   # (light()'s wear-log line)
 ROOT_SBIN = "/usr/local/sbin:/usr/sbin:/sbin"   # (light()'s PATH: root's, before m's)
 # Seconds a case, per tier.  Tier 1 measured 2026-11-11 on cinqcent (400 cases, 3 slots,
 # phases.tsv): ~155 s (source 21, backup 4-14, rebuild ~95, verify ~26), ~50 s of it the
@@ -125,6 +139,7 @@ SECS = {0: 0.3, 1: 65, 2: 95}
 MAX_SLOTS = 6     # bs2-host queue's ports, 2943-2948 (2949: by hand)
 SWEEP = 5         # tier 0's sweep: N * SWEEP new cases a source, on its lead
 TIER2 = 30        # tier 2 cases in all, shared by the UEFI sources
+COUNTS = {}       # --sweep N (tier 0 cases a source), --tier2 N (tier 2 cases a UEFI source): main()
 
 
 def use_hosts(arg):
@@ -178,8 +193,15 @@ def leads(can):
 
 
 def tier2_each(sources):
-    """Tier 2 cases a source: TIER2 shared by the UEFI sources (every one but alpine324)."""
-    return max(1, TIER2 // max(1, len([s for s in sources if s != "alpine324"])))
+    """Tier 2 cases a UEFI source: --tier2's, else TIER2 shared by the UEFI sources (UEFI)."""
+    if COUNTS.get("tier2") is not None:
+        return COUNTS["tier2"]
+    return max(1, TIER2 // max(1, len([s for s in sources if s in UEFI])))
+
+
+def sweep_n(n):
+    """Tier 0 cases a source's sweep draws: --sweep's, else N * SWEEP."""
+    return COUNTS["sweep"] if COUNTS.get("sweep") is not None else n * SWEEP
 
 
 def jobs_of(sources, n):
@@ -187,7 +209,7 @@ def jobs_of(sources, n):
     out = []
     for s in sources:
         out += [(s, 1, i) for i in range(n)]
-        if s != "alpine324":
+        if s in UEFI and tier2_each(sources):
             out += [(s, 2, i) for i in range(tier2_each(sources))]
     return out
 
@@ -196,7 +218,7 @@ def sweep_secs(sources, n, lead):
     """{host: seconds}: the tier 0 sweeps each lead runs before its queue."""
     out = {}
     for s in sources:
-        out[lead[s]] = out.get(lead[s], 0) + n * SWEEP * SECS[0]
+        out[lead[s]] = out.get(lead[s], 0) + sweep_n(n) * SECS[0]
     return out
 
 
@@ -257,7 +279,7 @@ def par(cmds):
 def sync(hosts=None):
     for h in hosts or RUN_HOSTS:
         subprocess.run(["rsync", "-a", "--delete", "--exclude", "target", "--exclude", "__pycache__",
-                        f"{REPO}/holt", f"{REPO}/testvm", f"{RUN_HOSTS.get(h) or HOSTS_TABLE.ssh(h)}:backotter-work/bs2-wt/"],
+                        f"{REPO}/holt", f"{REPO}/testvm", f"{RUN_HOSTS.get(h) or HOSTS_TABLE.ssh(h)}:backotter-work/{WT}/"],
                        check=True)
 
 
@@ -273,9 +295,10 @@ def reuse_env():
 
 def reserve_tier1(case):
     """The start of CASE's tier 1 by hand (replay, soak, the corpus), in ~/backotter-work: as
-    root under a cmp-run.sh --reserve of the RAM disk bs2-host reserve gives it (its inode
-    tables on LUKS: bs2lib/case.py disk_gib) and 3 GiB of memory; the --tier and the rest follow."""
-    return (f"D=$({HOST_BS2} reserve {case}) && {reuse_env()}./cmp-run.sh --reserve \"$D\" 3 "
+    root under a cmp-run.sh --reserve of the RAM disk and memory bs2-host reserve gives it
+    (its inode tables on LUKS: bs2lib/case.py disk_gib; its source's room, bs2lib/room.py,
+    at least 3 GiB of memory); the --tier and the rest follow."""
+    return (f"R=$({HOST_BS2} reserve {case} --mem 3) && {reuse_env()}./cmp-run.sh --reserve $R "
             f"sudo -E {HOST_BS2} tier1 {case}")
 
 
@@ -297,10 +320,10 @@ def placement(sources, n):
 
 def plan_words(sources, n):
     can, lead, parts, start = placement(sources, n)
-    t2 = {s: (tier2_each(sources) if s != "alpine324" else 0) for s in sources}
+    t2 = {s: (tier2_each(sources) if s in UEFI else 0) for s in sources}
     print(f"{'source':16} {'lead':9} {'tier0':>6} {'tier1':>6} {'tier2':>6}  hosts")
     for s in sources:
-        print(f"{s:16} {lead[s]:9} {n * SWEEP:6} {n:6} {t2[s]:6}  {', '.join(can[s])}")
+        print(f"{s:16} {lead[s]:9} {sweep_n(n):6} {n:6} {t2[s]:6}  {', '.join(can[s])}")
     longest = 0
     for h, js in parts.items():
         if not js:
@@ -379,9 +402,16 @@ def prep_cmd(h, ss, run):
     # (The RAM disk's dir as m: made first by a root job after a reboot, it was
     # root's, and tier 0, which runs as m, couldn't write there.)
     c = [f"mkdir -p {ROOT}/logs {ROOT}/runs /mnt/bko-ram/backshot2"]
-    c += [root(f"{HOST_BS2} source {s} --port 2949", "2 3", f"bs2:{run}:source-{s}") for s in ss]
+    c += [root(f"{HOST_BS2} source {s} --port 2949", prep_room(s), f"bs2:{run}:source-{s}") for s in ss]
     c += [f'echo "gen {s} $(cat {ROOT}/sources/{s}/gen)"' for s in ss]
     return " && ".join(c)
+
+
+def prep_room(source):
+    """A preparation's --reserve: 2 GiB of the RAM disk (it works on /bkoscratch), and the
+    source's memory (bs2lib/room.py: 3 GiB, or HoltTest1's for its guest if more)."""
+    from bs2lib import room as RM
+    return f"2 {max(3, RM.of(source)[1])}"
 
 
 def prepare_one(h, ss, run):
@@ -404,7 +434,7 @@ def draw_cmd(lead_host, ss, sources, n, run):
     for s in ss:
         c.append(light(lead_host, f"{HOST_BS2} enqueue {s} {n} --tier 1 --run {run} --to {rd}/pick-{s}-t1.txt",
                        f"bs2:{run}:pick"))
-        if s != "alpine324":
+        if s in UEFI and tier2_each(sources):
             c.append(light(lead_host, f"{HOST_BS2} enqueue {s} {tier2_each(sources)} --tier 2 --run {run} --from 500000"
                                       f" --to {rd}/pick-{s}-t2.txt", f"bs2:{run}:pick"))
     c += [f"sudo mkdir -p {rd}-t0", f"sudo chown -R m: {rd} {rd}-t0",
@@ -458,8 +488,8 @@ def launch(h, js, sweeps, n, run):
     reservations) of SWEEPS, the sources it leads, then its queue of JS.  (A sweep that
     fails is in the log; the host's cases run regardless.)  False: nothing to start."""
     rd = f"{ROOT}/runs/{run}"
-    c = [f"{{ {light(h, f'{HOST_BS2} tier0 {s} {n * SWEEP} --run {run}-t0 --keep-passes 50', f'bs2:{run}:tier0')}; }}"
-         for s in sweeps]
+    c = [f"{{ {light(h, f'{HOST_BS2} tier0 {s} {sweep_n(n)} --run {run}-t0 --keep-passes 50', f'bs2:{run}:tier0')}; }}"
+         for s in sweeps if sweep_n(n)]
     if sweeps:
         c.append(f"sudo chown -R m: {rd}-t0")
     if js:
@@ -652,7 +682,7 @@ def corpus(plan, tier):
     sync(sorted(set(where.values())))
     by = {}
     for f in cases:
-        by.setdefault(where[srcs[f]], []).append(f"~/backotter-work/bs2-wt/testvm/backshot2/cases/{f}")
+        by.setdefault(where[srcs[f]], []).append(f"{HOST_WT}/testvm/backshot2/cases/{f}")
     stamp = time.strftime("corpus-%Y%m%d-%H%M")
     for h, fs in by.items():
         if tier == 0:
@@ -705,6 +735,13 @@ def main():
         sys.exit(__doc__)
     plan = "plan" in a
     a = [x for x in a if x != "plan"]
+    for flag, key in (("--sweep", "sweep"), ("--tier2", "tier2")):
+        if flag in a:
+            i = a.index(flag)
+            if i + 1 >= len(a) or not a[i + 1].isdigit():
+                sys.exit(f"bs2: {flag} N")
+            COUNTS[key] = int(a[i + 1])
+            del a[i:i + 2]
     tier = 0
     if "--tier" in a:
         i = a.index("--tier")
@@ -727,7 +764,7 @@ def main():
         sources = [x for x in rest if not x.isdigit()] or ALPINE
         bad = [s for s in sources if s not in HOME]
         if bad:
-            sys.exit(f"bs2: no source {bad} (BackShot2's Linux sources other than Alpine's are B11, not built)")
+            sys.exit(f"bs2: no source {bad} (BackShot2's sources are {', '.join(SOURCES)}; the other Linux ones are A2's, not built)")
         if plan:
             return plan_words(sources, n)
         run_words(sources, n, time.strftime("bs2a-%Y%m%d-%H%M"))
@@ -749,7 +786,7 @@ def main():
             c = json.load(f)
         src = c["source"].split("@")[0]
         h = assign([src], have=held([src]) if CHOSEN else None)[src]
-        rp = f"~/backotter-work/bs2-wt/testvm/backshot2/{os.path.relpath(os.path.abspath(path), HERE)}"
+        rp = f"{HOST_WT}/testvm/backshot2/{os.path.relpath(os.path.abspath(path), HERE)}"
         stamp = time.strftime(f"{w}-%Y%m%d-%H%M")
         if plan:
             n = int(a[2]) if w == "soak" else 1

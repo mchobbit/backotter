@@ -98,9 +98,56 @@ class Split(unittest.TestCase):
             B.split([("alpine324-lvm", 1, 0)], {"alpine324-lvm": ["copland"]}, {"cage": 2})
 
 
+class GuixSources(unittest.TestCase):
+    """Guix System's two sources beside Alpine's: their own HOME deal (Alpine's kept as it
+    was), tier 2 for the UEFI one only, and --sweep and --tier2's counts."""
+
+    def tearDown(self):
+        B.COUNTS.clear()
+
+    def test_home_and_firmware(self):
+        self.assertEqual(B.ALPINE, list(B.ALPINE_SOURCES))
+        self.assertEqual({s: B.HOME[s] for s in B.GUIX_SOURCES}, dict(zip(B.GUIX_SOURCES, B.LEAD_HOSTS[:2] * 2)))
+        self.assertEqual(B.deal(B.ALPINE_SOURCES, B.LEAD_HOSTS), {s: B.HOME[s] for s in B.ALPINE})
+        self.assertIn("guix15", B.UEFI)
+        self.assertNotIn("guix15-bios", B.UEFI)
+        self.assertNotIn("alpine324", B.UEFI)
+
+    def test_counts(self):
+        g = list(B.GUIX_SOURCES)
+        self.assertEqual(B.tier2_each(g), B.TIER2)   # one UEFI source of the two
+        jobs = B.jobs_of(g, 10)
+        self.assertEqual(sum(1 for s, t, _ in jobs if s == "guix15-bios" and t == 2), 0)
+        self.assertEqual(sum(1 for s, t, _ in jobs if s == "guix15" and t == 2), B.TIER2)
+        self.assertEqual(B.sweep_n(10), 50)
+        B.COUNTS.update(sweep=200, tier2=3)
+        jobs = B.jobs_of(g, 10)
+        self.assertEqual([(s, t) for s, t, _ in jobs].count(("guix15", 2)), 3)
+        self.assertEqual([(s, t) for s, t, _ in jobs].count(("guix15-bios", 1)), 10)
+        self.assertEqual(B.sweep_n(10), 200)
+        self.assertEqual(B.sweep_secs(g, 10, {"guix15": "chopin", "guix15-bios": "cinqcent"}),
+                         {"chopin": 200 * B.SECS[0], "cinqcent": 200 * B.SECS[0]})
+        B.COUNTS.update(tier2=0)
+        self.assertFalse(any(t == 2 for _, t, _ in B.jobs_of(g, 10)))
+
+    def test_rooms(self):
+        from bs2lib import room as RM
+        self.assertEqual(B.prep_room("alpine324"), "2 3")
+        self.assertEqual(RM.of("alpine324"), (2, 3))   # bs2's own figures, not HoltTest1's MEM 4
+        self.assertEqual(RM.of("guix15"), (7, 4))      # ram-sizes.tsv's
+        self.assertEqual(RM.of("guix15-bios"), (6, 4))
+        self.assertEqual(RM.of("no-such-guest"), (2, 3))
+        self.assertEqual(B.prep_room("guix15"), "2 4")
+        self.assertIn("reserve /x.case --mem 3) &&", B.reserve_tier1("/x.case"))
+
+    def test_tree_name(self):
+        self.assertEqual(B.WT, os.environ.get("BS2_WT") or "bs2-wt")
+        self.assertTrue(B.HOST_BS2.startswith(f"~/backotter-work/{B.WT}/"))
+
+
 class Leads(unittest.TestCase):
     def test_home_when_held_else_the_first(self):
-        self.assertEqual(B.leads(can_of(HELD)), B.HOME)
+        self.assertEqual(B.leads(can_of(HELD)), {s: B.HOME[s] for s in B.ALPINE})
         self.assertEqual(B.leads({"alpine324": ["copland", "cage"], "alpine324-lvm": ["copland"]}),
                          {"alpine324": "copland", "alpine324-lvm": "copland"})
 

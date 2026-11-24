@@ -146,5 +146,33 @@ class TestToolsPath(unittest.TestCase):
         self.assertEqual(tier0.PATH[:4], ("/usr/sbin", "/usr/bin", "/sbin", "/bin"))
 
 
+class TestRoom(unittest.TestCase):
+    """bs2-host reserve: a Guix case reserves its source's room (HoltTest1's D and MEM),
+    an Alpine case bs2's own, as before."""
+
+    def reserve(self, source, *extra):
+        import json
+        import shutil
+        import subprocess
+        import sys
+        from bs2lib import case as C
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t)
+        os.makedirs(f"{t}/sources/{source}")
+        shutil.copy(os.path.join(K.CORPUS, source, "src.json"), f"{t}/sources/{source}/src.json")
+        c = K.cases(source)[0]
+        p = f"{t}/x.case"
+        C.write(p, dict(c, name="x"))
+        r = subprocess.run([sys.executable, os.path.join(K.BS2, "bs2-host"), "reserve", p, *extra],
+                           capture_output=True, text=True, env=dict(os.environ, BS2_ROOT=t), cwd=t)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.split()
+
+    def test_reserve(self):
+        self.assertEqual(self.reserve("guix15", "--mem", "3"), ["7", "4"])
+        self.assertEqual(self.reserve("guix15-bios"), ["6"])
+        self.assertEqual(self.reserve("alpine324", "--mem", "3"), ["2", "3"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,441 @@
+{
+  "format": "bko-holt-plan",
+  "schema": 1,
+  "version": "VERSION",
+  "generated": "GENERATED",
+  "dry_run": false,
+  "ok": false,
+  "exit": 4,
+  "plan_sha256": "PLAN_SHA256",
+  "layout": {
+    "path": "layout.json",
+    "sha256": "fcc3784ba49ae0c14a87c7ff2065e45b0892ae25731e9689d9f4ae4c300b1de4"
+  },
+  "args": ["load", "layout.json", "--map", "vtbd0=sdq", "--repo", "/srv/bko-repo", "--json"],
+  "source": {
+    "hostname": "host1",
+    "os": {
+      "id": "ghostbsd",
+      "version_id": "26.2",
+      "name": "GhostBSD 26.2-R15.1p6"
+    },
+    "family": "freebsd",
+    "arch": "x86_64",
+    "boot_mode": "bios",
+    "loader": "freebsd",
+    "generated": "2026-11-08T02:46:48Z",
+    "dmi_uuid": null,
+    "reformat_possible": false
+  },
+  "here": {
+    "dmi_uuid": null,
+    "boot_mode": "bios",
+    "efivars": false,
+    "arch": "x86_64",
+    "privileged": true,
+    "same_machine": false
+  },
+  "disks": [
+    {
+      "source": {
+        "name": "vtbd0",
+        "size_bytes": 17179869184,
+        "model": null,
+        "serial": null,
+        "wwid": null,
+        "sector": 512,
+        "table": "gpt",
+        "mounts": ["/"],
+        "largest": {
+          "partition": "vtbd0p2",
+          "size_bytes": 15027142656,
+          "holds": "ufs",
+          "mount": "/",
+          "used_bytes": null
+        }
+      },
+      "target": {
+        "node": "sdq",
+        "path": "/dev/sdq",
+        "by_id": null,
+        "size_bytes": 17179869184,
+        "model": null,
+        "serial": null,
+        "wwid": null,
+        "sector": 512,
+        "transport": null,
+        "removable": false,
+        "matched_by": "map",
+        "same_identity": false,
+        "blank": true,
+        "contents": [],
+        "ours": false,
+        "recorded": false,
+        "erase": false,
+        "will_erase": true,
+        "writes": ["partition", "format"],
+        "size": null
+      }
+    }
+  ],
+  "candidates": [
+    {
+      "node": "sdq",
+      "path": "/dev/sdq",
+      "by_id": null,
+      "size_bytes": 17179869184,
+      "model": null,
+      "serial": null,
+      "wwid": null,
+      "sector": 512,
+      "transport": null,
+      "removable": false,
+      "serial_shared": false,
+      "target_of": "vtbd0",
+      "ours": false,
+      "blank": true,
+      "contents": [],
+      "refused": null,
+      "erase_needed": false,
+      "sizes": [
+        {
+          "source": "vtbd0",
+          "verdict": "same",
+          "fit_pct": null,
+          "change_pct": null,
+          "partition": "vtbd0p2",
+          "mount": "/",
+          "old_bytes": 15027142656,
+          "new_bytes": null,
+          "used_bytes": null,
+          "margin_bytes": null,
+          "needed_bytes": null,
+          "most_bytes": null,
+          "data_fits": null,
+          "reason": null,
+          "grow": null,
+          "why": null
+        }
+      ]
+    }
+  ],
+  "erase": [],
+  "keys": [],
+  "tokens": [],
+  "reformat": [],
+  "fit": [],
+  "problems": [
+    {
+      "code": "password_needed",
+      "text": "--repo: give the repository's password with --password-file FILE (under --json nothing asks for it)"
+    }
+  ],
+  "notes": [
+    {
+      "code": "other",
+      "text": "fstab's /proc (procfs) isn't on the layout's disks; not mounted"
+    },
+    {
+      "code": "other",
+      "text": "fstab's /compat/linux/proc (linprocfs) isn't on the layout's disks; not mounted"
+    },
+    {
+      "code": "other",
+      "text": "fstab's /tmp (tmpfs) isn't on the layout's disks; not mounted"
+    },
+    {
+      "code": "other",
+      "text": "fstab's /compat/linux/sys (linsysfs) isn't on the layout's disks; not mounted"
+    },
+    {
+      "code": "other",
+      "text": "fstab's /dev/fd (fdescfs) isn't on the layout's disks; not mounted"
+    }
+  ],
+  "stages": [
+    {
+      "name": "partition",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "bko-holt write-table layout.json vtbd0 /dev/sdq $(diskinfo /dev/sdq | cut -f3)"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vtbd0 -> /dev/sdq: the source's table, GUIDs and boot code exactly",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["gpart", "show", "sdq"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "assemble",
+      "commands": []
+    },
+    {
+      "name": "format",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": [
+            "newfs",
+            "-O",
+            "2",
+            "-U",
+            "-a",
+            "32",
+            "-b",
+            "32768",
+            "-d",
+            "32768",
+            "-e",
+            "4096",
+            "-f",
+            "4096",
+            "-g",
+            "16384",
+            "-h",
+            "64",
+            "-i",
+            "8192",
+            "-k",
+            "6400",
+            "-m",
+            "8",
+            "-o",
+            "time",
+            "-s",
+            "29349888",
+            "-t",
+            "/dev/sdqp2"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vtbd0p2: UFS as the source's (dumpfs -m)",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["glabel", "label", "rootfs0", "/dev/sdqp2"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vtbd0p2: GEOM label rootfs0, as the source's",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["glabel", "label", "swap0", "/dev/sdqp3"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vtbd0p3: GEOM label swap0, as the source's",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "mount",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "/mnt/bko-target"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mount", "-t", "ufs", "-o", "rw,noatime", "/dev/sdqp2", "/mnt/bko-target"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "restore",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": [
+            "rustic-bko",
+            "--repository",
+            "/srv/bko-repo",
+            "--json-progress",
+            "--progress-interval",
+            "1s",
+            "restore",
+            "--numeric-id",
+            "latest",
+            "/mnt/bko-target"
+          ],
+          "env": [
+            ["LC_ALL", "C"],
+            ["RUSTIC_STRICT_EXIT", "true"]
+          ],
+          "why": "snapshot latest of /srv/bko-repo, with BackOtter's restore flags",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": true
+        }
+      ]
+    },
+    {
+      "name": "boot",
+      "commands": [
+        {
+          "kind": "note",
+          "argv": [],
+          "env": [],
+          "why": "the boot code (MBR, freebsd-boot) was written with the partition table",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "[ ! -d /mnt/bko-target/.snap ] || { touch -r /mnt/bko-target /run/bko-holt/snapref && rmdir /mnt/bko-target/.snap && touch -r /run/bko-holt/snapref /mnt/bko-target; }"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "/ had no .snap on the source (its directory's times kept)",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "/mnt/bko-target/var/log/bko-holt"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["cp", "-Rp", "/run/bko-holt/log/.", "/mnt/bko-target/var/log/bko-holt/"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "this restore's log, on the restored system",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "close",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "mount -p | awk '{ print $2 }' | awk '$0 == \"/mnt/bko-target\" || index($0, \"/mnt/bko-target/\") == 1' | sort -r | while read -r m; do umount \"$m\" || exit; done"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "everything under the target, deepest first",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    }
+  ],
+  "text": "# bko-holt load plan for layout.json\n# Source: host1, GhostBSD 26.2-R15.1p6, BIOS boot with freebsd, dumped 2026-11-08T02:46:48Z\n#\n# Disks:\n#   vtbd0 (16 GiB) -> /dev/sdq\n#\n# Notes:\n#   - fstab's /proc (procfs) isn't on the layout's disks; not mounted\n#   - fstab's /compat/linux/proc (linprocfs) isn't on the layout's disks; not mounted\n#   - fstab's /tmp (tmpfs) isn't on the layout's disks; not mounted\n#   - fstab's /compat/linux/sys (linsysfs) isn't on the layout's disks; not mounted\n#   - fstab's /dev/fd (fdescfs) isn't on the layout's disks; not mounted\n\n# ---- partition ----\n# vtbd0 -> /dev/sdq: the source's table, GUIDs and boot code exactly\nsh -c 'bko-holt write-table layout.json vtbd0 /dev/sdq $(diskinfo /dev/sdq | cut -f3)'\ngpart show sdq\n\n# ---- assemble ----\n# (nothing to do)\n\n# ---- format ----\n# vtbd0p2: UFS as the source's (dumpfs -m)\nnewfs -O 2 -U -a 32 -b 32768 -d 32768 -e 4096 -f 4096 -g 16384 -h 64 -i 8192 -k 6400 -m 8 -o time -s 29349888 -t /dev/sdqp2\n# vtbd0p2: GEOM label rootfs0, as the source's\nglabel label rootfs0 /dev/sdqp2\n# vtbd0p3: GEOM label swap0, as the source's\nglabel label swap0 /dev/sdqp3\n\n# ---- mount ----\nmkdir -p /mnt/bko-target\nmount -t ufs -o rw,noatime /dev/sdqp2 /mnt/bko-target\n\n# ---- restore ----\n# snapshot latest of /srv/bko-repo, with BackOtter's restore flags\nRUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target\n\n# ---- boot ----\n# the boot code (MBR, freebsd-boot) was written with the partition table\n# / had no .snap on the source (its directory's times kept)\nsh -c '[ ! -d /mnt/bko-target/.snap ] || { touch -r /mnt/bko-target /run/bko-holt/snapref && rmdir /mnt/bko-target/.snap && touch -r /run/bko-holt/snapref /mnt/bko-target; }'\nmkdir -p /mnt/bko-target/var/log/bko-holt\n# this restore's log, on the restored system\ncp -Rp /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/\n\n# ---- close ----\n# everything under the target, deepest first\nsh -c 'mount -p | awk '\\''{ print $2 }'\\'' | awk '\\''$0 == \"/mnt/bko-target\" || index($0, \"/mnt/bko-target/\") == 1'\\'' | sort -r | while read -r m; do umount \"$m\" || exit; done'\n\n# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit\n"
+}
+

@@ -173,7 +173,11 @@ pub fn plan_onto(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, extra: &
     // path where it says, a name in /usr/sbin.
     let mut res = run(&opts, layout_text, &sys());
     for _ in 0..4 {
-        let missing: Vec<String> = res.1.lines().filter_map(|l| l.trim_start_matches("#   - ").split_once(" isn't installed here").map(|(p, _)| p.to_string())).collect();
+        // A --json plan (plan_json.rs): its document's text, which is text
+        // mode's plan of the same arguments.
+        let doc = if res.1.starts_with('{') { json::parse(&res.1).ok() } else { None };
+        let text = doc.as_ref().and_then(|d| d.get("text")).and_then(Value::as_str).unwrap_or(&res.1);
+        let missing: Vec<String> = text.lines().filter_map(|l| l.trim_start_matches("#   - ").split_once(" isn't installed here").map(|(p, _)| p.to_string())).collect();
         if missing.is_empty() {
             break;
         }

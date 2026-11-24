@@ -1,0 +1,412 @@
+{
+  "format": "bko-holt-plan",
+  "schema": 1,
+  "version": "VERSION",
+  "generated": "GENERATED",
+  "dry_run": false,
+  "ok": false,
+  "exit": 4,
+  "plan_sha256": "PLAN_SHA256",
+  "layout": {
+    "path": "layout.json",
+    "sha256": "237a6723eb972183b890963d5e75c02149094ced2e9630820a109308f20acf5f"
+  },
+  "args": ["load", "layout.json", "--map", "vdb=sdq", "--repo", "/srv/bko-repo", "--json"],
+  "source": {
+    "hostname": null,
+    "os": {
+      "id": "redox",
+      "version_id": null,
+      "name": "Redox"
+    },
+    "family": "redox",
+    "arch": "x86_64",
+    "boot_mode": "bios",
+    "loader": "redox",
+    "generated": "2026-11-08T02:53:51Z",
+    "dmi_uuid": null,
+    "reformat_possible": false
+  },
+  "here": {
+    "dmi_uuid": null,
+    "boot_mode": "bios",
+    "efivars": false,
+    "arch": "x86_64",
+    "privileged": true,
+    "same_machine": false
+  },
+  "disks": [
+    {
+      "source": {
+        "name": "vdb",
+        "size_bytes": 17179869184,
+        "model": null,
+        "serial": null,
+        "wwid": null,
+        "sector": 512,
+        "table": "gpt",
+        "mounts": ["/"],
+        "largest": {
+          "partition": "vdb3",
+          "size_bytes": 15029239808,
+          "holds": "redoxfs",
+          "mount": null,
+          "used_bytes": null
+        }
+      },
+      "target": {
+        "node": "sdq",
+        "path": "/dev/sdq",
+        "by_id": null,
+        "size_bytes": 17179869184,
+        "model": null,
+        "serial": null,
+        "wwid": null,
+        "sector": 512,
+        "transport": null,
+        "removable": false,
+        "matched_by": "map",
+        "same_identity": false,
+        "blank": true,
+        "contents": [],
+        "ours": false,
+        "recorded": false,
+        "erase": false,
+        "will_erase": true,
+        "writes": ["partition", "format"],
+        "size": null
+      }
+    }
+  ],
+  "candidates": [
+    {
+      "node": "sdq",
+      "path": "/dev/sdq",
+      "by_id": null,
+      "size_bytes": 17179869184,
+      "model": null,
+      "serial": null,
+      "wwid": null,
+      "sector": 512,
+      "transport": null,
+      "removable": false,
+      "serial_shared": false,
+      "target_of": "vdb",
+      "ours": false,
+      "blank": true,
+      "contents": [],
+      "refused": null,
+      "erase_needed": false,
+      "sizes": [
+        {
+          "source": "vdb",
+          "verdict": "same",
+          "fit_pct": null,
+          "change_pct": null,
+          "partition": "vdb3",
+          "mount": null,
+          "old_bytes": 15029239808,
+          "new_bytes": null,
+          "used_bytes": null,
+          "margin_bytes": null,
+          "needed_bytes": null,
+          "most_bytes": null,
+          "data_fits": null,
+          "reason": null,
+          "grow": null,
+          "why": null
+        }
+      ]
+    }
+  ],
+  "erase": [],
+  "keys": [],
+  "tokens": [],
+  "reformat": [],
+  "fit": [],
+  "problems": [
+    {
+      "code": "password_needed",
+      "text": "--repo: give the repository's password with --password-file FILE (under --json nothing asks for it)"
+    }
+  ],
+  "notes": [
+    {
+      "code": "other",
+      "text": "vdb2: the ESP, written as the source's with the partition table"
+    }
+  ],
+  "stages": [
+    {
+      "name": "partition",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": ["wipefs", "--all", "/dev/sdq"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vdb -> /dev/sdq: clear the old table and signatures",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "bko-holt write-table layout.json vdb /dev/sdq $(blockdev --getsize64 /dev/sdq)"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vdb -> /dev/sdq: the source's table, GUIDs and boot code exactly",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["partx", "-u", "/dev/sdq"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "the kernel reads the new table",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["udevadm", "settle"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "assemble",
+      "commands": []
+    },
+    {
+      "name": "format",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": ["redoxfs-mkfs", "/dev/sdq3"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vdb3: RedoxFS",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "mkswap",
+            "-U",
+            "bc000000-0000-4000-8000-000000000007",
+            "-L",
+            "swap",
+            "--pagesize",
+            "4096",
+            "/dev/sdq4"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vdb4: swap \"swap\"",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "check",
+          "argv": [],
+          "env": [],
+          "why": null,
+          "path": null,
+          "dev": "/dev/sdq4",
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "mount",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "/mnt/bko-target"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "redoxfs /dev/sdq3 /mnt/bko-target >/run/bko-holt/redoxfs.log 2>&1 </dev/null; i=0; until mountpoint -q /mnt/bko-target; do i=$((i + 1)); [ $i -lt 60 ] || { cat /run/bko-holt/redoxfs.log; exit 1; }; sleep 1; done"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "restore",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": [
+            "rustic-bko",
+            "--repository",
+            "/srv/bko-repo",
+            "--json-progress",
+            "--progress-interval",
+            "1s",
+            "restore",
+            "--numeric-id",
+            "latest",
+            "/mnt/bko-target"
+          ],
+          "env": [
+            ["LC_ALL", "C"],
+            ["RUSTIC_STRICT_EXIT", "true"]
+          ],
+          "why": "snapshot latest of /srv/bko-repo, with BackOtter's restore flags",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": true
+        }
+      ]
+    },
+    {
+      "name": "boot",
+      "commands": [
+        {
+          "kind": "note",
+          "argv": [],
+          "env": [],
+          "why": "the boot code (MBR, freebsd-boot) was written with the partition table",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "/mnt/bko-target/var/log/bko-holt"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["cp", "-Rp", "/run/bko-holt/log/.", "/mnt/bko-target/var/log/bko-holt/"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "this restore's log, on the restored system",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "close",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": ["umount", "--recursive", "/mnt/bko-target"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "the restored tree",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    }
+  ],
+  "text": "# bko-holt load plan for layout.json\n# Source: ?, Redox, BIOS boot with redox, dumped 2026-11-08T02:53:51Z\n#\n# Disks:\n#   vdb (16 GiB) -> /dev/sdq\n#\n# Notes:\n#   - vdb2: the ESP, written as the source's with the partition table\n\n# ---- partition ----\n# vdb -> /dev/sdq: clear the old table and signatures\nwipefs --all /dev/sdq\n# vdb -> /dev/sdq: the source's table, GUIDs and boot code exactly\nsh -c 'bko-holt write-table layout.json vdb /dev/sdq $(blockdev --getsize64 /dev/sdq)'\n# the kernel reads the new table\npartx -u /dev/sdq\nudevadm settle\n\n# ---- assemble ----\n# (nothing to do)\n\n# ---- format ----\n# vdb3: RedoxFS\nredoxfs-mkfs /dev/sdq3\n# vdb4: swap \"swap\"\nmkswap -U bc000000-0000-4000-8000-000000000007 -L swap --pagesize 4096 /dev/sdq4\n# check: /dev/sdq4 is swap with the source's UUID, label and page size (read back by bko-holt's own probe)\n\n# ---- mount ----\nmkdir -p /mnt/bko-target\nsh -c 'redoxfs /dev/sdq3 /mnt/bko-target >/run/bko-holt/redoxfs.log 2>&1 </dev/null; i=0; until mountpoint -q /mnt/bko-target; do i=$((i + 1)); [ $i -lt 60 ] || { cat /run/bko-holt/redoxfs.log; exit 1; }; sleep 1; done'\n\n# ---- restore ----\n# snapshot latest of /srv/bko-repo, with BackOtter's restore flags\nRUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target\n\n# ---- boot ----\n# the boot code (MBR, freebsd-boot) was written with the partition table\nmkdir -p /mnt/bko-target/var/log/bko-holt\n# this restore's log, on the restored system\ncp -Rp /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/\n\n# ---- close ----\n# the restored tree\numount --recursive /mnt/bko-target\n\n# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit\n"
+}
+

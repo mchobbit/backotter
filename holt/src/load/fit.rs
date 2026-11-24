@@ -210,6 +210,9 @@ pub struct DiskFit {
     pub notes: Vec<String>,
     /// What the fit changes in the dump: a path and its new value.
     pub edits: Vec<(Vec<String>, Value)>,
+    /// On a bigger target, the room past the last partition (whole MiB)
+    /// the fit leaves unused: 0 when the largest takes it all.
+    pub unused_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -229,6 +232,8 @@ pub struct DataFit {
     /// The device as the source named it (vda3, dm-1).
     pub dev: String,
     pub kind: String,
+    /// The filesystem's size, before the shrink.
+    pub size: u64,
     pub shrink: u64,
     pub used: u64,
     pub free: u64,
@@ -390,6 +395,319 @@ pub fn wrote(v: &Value, t: &Target, have: &[(u32, u64, u64)]) -> Option<(u32, i6
     None
 }
 
+/// A source device's entry in V by its kernel name: a disk, a partition,
+/// a device-mapper device or an md array.
+fn device<'a>(v: &'a Value, name: &str) -> Option<&'a Value> {
+    for sect in ["disks", "dm_devices", "md_arrays"] {
+        for d in v.at(&["storage", sect]).and_then(Value::as_array).into_iter().flatten() {
+            if s(d, "name").as_deref() == Some(name) {
+                return Some(d);
+            }
+            if let Some(p) = d.get("partitions").and_then(Value::as_array).into_iter().flatten().find(|p| s(p, "name").as_deref() == Some(name)) {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// The devices that sit on any of DEVS: device-mapper devices by their
+/// slaves, md arrays by their members.
+fn above(v: &Value, devs: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for d in v.at(&["storage", "dm_devices"]).and_then(Value::as_array).into_iter().flatten() {
+        if d.get("slaves").and_then(Value::as_array).is_some_and(|sl| sl.iter().any(|x| x.as_str().is_some_and(|x| devs.iter().any(|d| d == x)))) {
+            out.extend(s(d, "name"));
+        }
+    }
+    for d in v.at(&["storage", "md_arrays"]).and_then(Value::as_array).into_iter().flatten() {
+        if d.at(&["md", "members"]).and_then(Value::as_array).is_some_and(|m| m.iter().any(|x| x.get("device").and_then(Value::as_str).is_some_and(|x| devs.iter().any(|d| d == x)))) {
+            out.extend(s(d, "name"));
+        }
+    }
+    out
+}
+
+/// The dump's mount of what's on source device DEV (vda3), or else of what
+/// sits on it (a LUKS mapping, an LV, an array), nearest first and the
+/// shortest mount point of those: None where nothing on it was mounted.
+fn mount_entry<'a>(v: &'a Value, dev: &str) -> Option<&'a Value> {
+    let mounts: Vec<&Value> = v.at(&["storage", "mounts"]).and_then(Value::as_array).into_iter().flatten().collect();
+    let mut level = vec![dev.to_string()];
+    for _ in 0..5 {
+        let here = mounts.iter().filter(|m| s(m, "device").is_some_and(|d| level.contains(&d))).min_by_key(|m| s(m, "target").map_or(usize::MAX, |t| t.len()));
+        if let Some(m) = here {
+            return Some(m);
+        }
+        level = above(v, &level);
+        if level.is_empty() {
+            break;
+        }
+    }
+    None
+}
+
+/// Where what's on source device DEV was mounted (mount_entry).
+pub fn mount_of(v: &Value, dev: &str) -> Option<String> {
+    mount_entry(v, dev).and_then(|m| s(m, "target"))
+}
+
+/// What source device DEV holds, as the plan document says it: its
+/// content and what's inside it ("LUKS2, ext4", "LVM", "btrfs").
+pub fn holds(v: &Value, dev: &str) -> Option<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = dev.to_string();
+    for _ in 0..5 {
+        let Some(c) = device(v, &cur).and_then(|d| d.get("content")).filter(|c| !c.is_null()) else { break };
+        let kind = s(c, "type").unwrap_or_default();
+        match kind.as_str() {
+            "crypto_LUKS" => {
+                out.push(format!("LUKS{}", s(c, "version").unwrap_or_default()));
+                match above(v, std::slice::from_ref(&cur)).into_iter().next() {
+                    Some(n) => cur = n,
+                    None => break,
+                }
+            }
+            "LVM2_member" => {
+                out.push("LVM".into());
+                break;
+            }
+            "" => break,
+            k => {
+                out.push(k.to_string());
+                break;
+            }
+        }
+    }
+    (!out.is_empty()).then(|| out.join(", "))
+}
+
+/// The partition fit would change on source disk DISK: the largest that
+/// isn't an MBR extended container (one() chooses it so), its number and
+/// size in bytes; None where there's no one largest (no table, no
+/// partition, a tie).
+pub fn largest(v: &Value, disk: &str) -> Option<(String, u32, u64)> {
+    let d = v.at(&["storage", "disks"]).and_then(Value::as_array)?.iter().find(|x| s(x, "name").as_deref() == Some(disk))?;
+    d.get("partition_table").filter(|t| !t.is_null())?;
+    let sector = u(d, "logical_sector_size").unwrap_or(512).max(512);
+    let mut parts: Vec<(String, u32, u64)> = Vec::new();
+    for p in d.get("partitions").and_then(Value::as_array).into_iter().flatten() {
+        if p.get("extended").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        let sectors = u(p, "sectors").or_else(|| u(p, "size_bytes").map(|b| b / sector))?;
+        parts.push((s(p, "name").unwrap_or_default(), u(p, "number")? as u32, sectors * sector));
+    }
+    let most = parts.iter().map(|p| p.2).max()?;
+    let mut big = parts.into_iter().filter(|p| p.2 == most);
+    let first = big.next()?;
+    big.next().is_none().then_some(first)
+}
+
+/// The size verdicts search to this percentage: RT10n's --fit takes up to
+/// 99; a disk a shrink of more than that would fit is no fit at all.
+pub const VERDICT_PCT_MAX: u64 = 99;
+
+/// What a source disk would make of a disk of another size (holt-json.md,
+/// "Disks of another size"): fit's own outcome for the pair, at the least
+/// percentage that works, with fit's own figures.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Verdict {
+    pub source: String,
+    /// same, smaller_slack, smaller, bigger, data_wont_fit, cant_resize,
+    /// beyond_limit.
+    pub verdict: &'static str,
+    pub fit_pct: Option<u64>,
+    pub change_pct: Option<f64>,
+    pub partition: Option<String>,
+    pub mount: Option<String>,
+    pub old_bytes: Option<u64>,
+    pub new_bytes: Option<u64>,
+    pub used_bytes: Option<u64>,
+    pub margin_bytes: Option<u64>,
+    pub needed_bytes: Option<u64>,
+    pub most_bytes: Option<u64>,
+    pub data_fits: Option<bool>,
+    pub reason: Option<String>,
+    pub why: Option<String>,
+}
+
+impl Verdict {
+    pub fn to_json(&self) -> Value {
+        crate::json::Obj::new()
+            .set("source", self.source.as_str())
+            .set("verdict", self.verdict)
+            .set("fit_pct", self.fit_pct)
+            .set("change_pct", self.change_pct)
+            .set("partition", self.partition.clone())
+            .set("mount", self.mount.clone())
+            .set("old_bytes", self.old_bytes)
+            .set("new_bytes", self.new_bytes)
+            .set("used_bytes", self.used_bytes)
+            .set("margin_bytes", self.margin_bytes)
+            .set("needed_bytes", self.needed_bytes)
+            .set("most_bytes", self.most_bytes)
+            .set("data_fits", self.data_fits)
+            .set("reason", self.reason.clone())
+            // --fit SRC=fill's figures (RT10n): not in this bko-holt.
+            .set("grow", Value::Null)
+            .set("why", self.why.clone())
+            .build()
+    }
+}
+
+/// How much a partition of OLD bytes changes to be NEW: a percentage of
+/// OLD, to one decimal.
+fn change_pct(old: u64, new: u64) -> Option<f64> {
+    (old > 0).then(|| ((old.abs_diff(new) as f64) * 1000.0 / old as f64).round() / 10.0)
+}
+
+/// The verdict for source disk DISK of V onto a disk NODE of SIZE_BYTES
+/// bytes: one() for the single pair at increasing percentages (fit's own
+/// rule, so the plan that follows agrees), the figures fit computes.
+pub fn verdict(v: &Value, disk: &str, node: &str, size_bytes: u64) -> Verdict {
+    let t = Target { disk: disk.to_string(), path: format!("/dev/{node}"), size_bytes };
+    let d = v.at(&["storage", "disks"]).and_then(Value::as_array).into_iter().flatten().find(|x| s(x, "name").as_deref() == Some(disk));
+    let sector = d.and_then(|d| u(d, "logical_sector_size")).unwrap_or(512).max(512);
+    let (src, new) = (source_size(v, disk), size_bytes - size_bytes % sector);
+    let big = largest(v, disk);
+    let at = big.as_ref().and_then(|(n, _, _)| mount_entry(v, n));
+    let mut out = Verdict {
+        source: disk.to_string(),
+        verdict: "same",
+        fit_pct: None,
+        change_pct: None,
+        partition: big.as_ref().map(|b| b.0.clone()),
+        mount: at.and_then(|m| s(m, "target")),
+        old_bytes: big.as_ref().map(|b| b.2),
+        new_bytes: None,
+        used_bytes: at.and_then(|m| u(m, "used_bytes")),
+        margin_bytes: None,
+        needed_bytes: None,
+        most_bytes: None,
+        data_fits: None,
+        reason: None,
+        why: None,
+    };
+    if new == src {
+        return out;
+    }
+    // A shrinking filesystem's figures, fit's: the room it wants beside the
+    // data, the least it may shrink to, and the most it gets here.
+    let figures = |out: &mut Verdict, f: &DataFit| {
+        let margin = f.need - f.shrink;
+        out.used_bytes = Some(f.used);
+        out.margin_bytes = Some(margin);
+        out.needed_bytes = Some(f.size.saturating_sub(f.free) + margin);
+        out.most_bytes = Some(f.size - f.shrink);
+    };
+    let part_figures = |out: &mut Verdict, d: &DiskFit| {
+        if let Some(p) = &d.part {
+            out.new_bytes = Some(p.new_sectors * d.sector);
+            out.change_pct = change_pct(p.old_sectors * d.sector, p.new_sectors * d.sector);
+        }
+    };
+    if new > src {
+        out.verdict = "bigger";
+        out.data_fits = Some(true);
+        // The least percentage that has the largest take the whole extra.
+        for pct in 1..=super::FIT_MAX {
+            match one(v, &t, pct) {
+                Ok(Outcome::Fitted(d)) if d.part.is_none() => break,
+                Ok(Outcome::Fitted(d)) if d.unused_bytes == 0 => {
+                    out.fit_pct = Some(pct);
+                    part_figures(&mut out, &d);
+                    break;
+                }
+                Ok(Outcome::Fitted(_)) => {}
+                _ => break,
+            }
+        }
+        return out;
+    }
+    // Smaller: the least percentage fit takes.  Only a percentage too
+    // small (fit_over_pct) depends on it; any other refusal is the pair's.
+    let mut last = Vec::new();
+    for pct in 1..=VERDICT_PCT_MAX {
+        match one(v, &t, pct) {
+            Ok(Outcome::Fitted(d)) => {
+                out.fit_pct = Some(pct);
+                out.data_fits = Some(true);
+                match &d.part {
+                    None => {
+                        out.verdict = "smaller_slack";
+                        out.new_bytes = out.old_bytes;
+                        out.change_pct = out.old_bytes.map(|_| 0.0);
+                    }
+                    Some(_) => {
+                        out.verdict = if pct <= super::FIT_MAX { "smaller" } else { "beyond_limit" };
+                        part_figures(&mut out, &d);
+                        if let Some(f) = d.fits.first() {
+                            figures(&mut out, f);
+                        }
+                        if pct > super::FIT_MAX {
+                            out.why = Some(format!(
+                                "{} would shrink by {}%, more than --fit-largest's {}% takes",
+                                out.partition.as_deref().unwrap_or("the largest partition"),
+                                out.change_pct.unwrap_or(0.0),
+                                super::FIT_MAX
+                            ));
+                        }
+                    }
+                }
+                return out;
+            }
+            Ok(_) => return out,
+            Err(e) => {
+                let over = e.iter().all(|p| p.code == ProblemCode::FitOverPct);
+                last = e;
+                if !over {
+                    break;
+                }
+            }
+        }
+    }
+    // No percentage fits.  The figures as fit would have them with the
+    // data test only recorded (one_lax), at the most there is.
+    let lax = one_lax(v, &t, 100);
+    if let Ok(Outcome::Fitted(d)) = &lax {
+        part_figures(&mut out, d);
+        if let Some(f) = d.fits.first() {
+            figures(&mut out, f);
+        }
+    }
+    let Some(p) = last.first() else { return out };
+    out.why = Some(p.text.clone());
+    match p.code {
+        ProblemCode::DataWontFit => {
+            out.verdict = "data_wont_fit";
+            out.data_fits = Some(false);
+            out.reason = Some("data".into());
+            let n = |k: &str| p.field(k).and_then(Value::as_u64);
+            out.used_bytes = n("used_bytes").or(out.used_bytes);
+            out.margin_bytes = n("margin_bytes").or(out.margin_bytes);
+            out.needed_bytes = n("needed_bytes").or(out.needed_bytes);
+            out.most_bytes = n("most_bytes").or(out.most_bytes);
+        }
+        ProblemCode::FitOverPct => {
+            // More than VERDICT_PCT_MAX: whether the data would fit even so.
+            let fits = matches!(&lax, Ok(Outcome::Fitted(d)) if d.fits.iter().all(|f| f.free >= f.need));
+            out.verdict = if fits { "beyond_limit" } else { "data_wont_fit" };
+            out.data_fits = Some(fits);
+            out.reason = (!fits).then(|| "data".to_string());
+        }
+        ProblemCode::DataUnknown => {
+            out.verdict = "cant_resize";
+            out.reason = Some("no_usage".into());
+        }
+        _ => {
+            out.verdict = "cant_resize";
+            out.reason = Some(p.str_field("reason").unwrap_or("other").to_string());
+        }
+    }
+    out
+}
+
 /// Every partition of DISK in V, as (number, start, sectors).
 fn geometry(v: &Value, disk: &str) -> Option<Vec<(u32, u64, u64)>> {
     let d = v.at(&["storage", "disks"]).and_then(Value::as_array)?.iter().find(|x| s(x, "name").as_deref() == Some(disk))?;
@@ -405,7 +723,8 @@ fn geometry(v: &Value, disk: &str) -> Option<Vec<(u32, u64, u64)>> {
     Some(out)
 }
 
-enum Outcome {
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum Outcome {
     /// The target is the same size: nothing to do, and nothing to say.
     Same,
     /// Nothing changes but where the table ends.
@@ -447,9 +766,27 @@ struct One<'a> {
     edits: Vec<(Vec<String>, Value)>,
     notes: Vec<String>,
     fits: Vec<DataFit>,
+    /// Whether a filesystem whose data wouldn't fit refuses the fit (as
+    /// always), or only records its figures (`one_lax`: the size verdicts'
+    /// figures for a disk the data doesn't fit).
+    strict: bool,
+    /// Bigger: the room left unused (DiskFit's unused_bytes).
+    unused: u64,
 }
 
-fn one(v: &Value, t: &Target, pct: u64) -> Result<Outcome, Vec<Problem>> {
+/// One disk's fit (fit's own, per pair): its outcome, or the problems that
+/// refuse it.
+pub(crate) fn one(v: &Value, t: &Target, pct: u64) -> Result<Outcome, Vec<Problem>> {
+    one_with(v, t, pct, true)
+}
+
+/// one(), where data that wouldn't fit refuses nothing: its DataFit says
+/// so.  For the size verdicts' figures only; never a plan's.
+fn one_lax(v: &Value, t: &Target, pct: u64) -> Result<Outcome, Vec<Problem>> {
+    one_with(v, t, pct, false)
+}
+
+fn one_with(v: &Value, t: &Target, pct: u64, strict: bool) -> Result<Outcome, Vec<Problem>> {
     let who = format!("{} -> {}", t.disk, t.path);
     let no = |w: Why| -> Result<Outcome, Vec<Problem>> { Err(vec![w.problem(&who, t)]) };
     let disks = v.at(&["storage", "disks"]).and_then(Value::as_array);
@@ -532,6 +869,8 @@ fn one(v: &Value, t: &Target, pct: u64) -> Result<Outcome, Vec<Problem>> {
         edits: vec![],
         notes: vec![],
         fits: vec![],
+        strict,
+        unused: 0,
     };
     let mib = (MIB / sector).max(1);
     let last_end = parts.iter().map(P::end).max().unwrap_or(0);
@@ -608,7 +947,10 @@ fn one(v: &Value, t: &Target, pct: u64) -> Result<Outcome, Vec<Problem>> {
     // does without the flag (check_target's own note).  Under a MiB there
     // was never anything the fit could have done with it.
     let unused = match (bigger, new_last.saturating_sub(last_end + grow) / mib * mib * sector) {
-        (true, n) if n > 0 => Some(format!("the target is bigger; the extra {} stays unused", human(n))),
+        (true, n) if n > 0 => {
+            o.unused = n;
+            Some(format!("the target is bigger; the extra {} stays unused", human(n)))
+        }
         _ => None,
     };
     if bigger && grow == 0 {
@@ -719,6 +1061,7 @@ impl One<'_> {
             fits: self.fits,
             notes: self.notes,
             edits: self.edits,
+            unused_bytes: self.unused,
         })
     }
 
@@ -920,8 +1263,8 @@ impl One<'_> {
             return Err(Why::coded(ProblemCode::DataUnknown, text).with("dev", dev));
         };
         let need = shrink + SPARE_BYTES.max(used * SPARE_PCT / 100);
-        self.fits.push(DataFit { dev: dev.to_string(), kind: kind.to_string(), shrink, used, free, need });
-        if free < need {
+        self.fits.push(DataFit { dev: dev.to_string(), kind: kind.to_string(), size, shrink, used, free, need });
+        if free < need && self.strict {
             let text = format!(
                 "--fit-largest: {dev} ({kind}) holds {} of {} and would shrink by {}; that leaves less than the {} free it needs (the shrink and {} to spare)",
                 human(used),
@@ -931,15 +1274,16 @@ impl One<'_> {
                 human(need - shrink)
             );
             // needed_bytes: the least the filesystem may shrink to, by
-            // this same test (its size less what's free, and the margin).
-            // The mount and the most come at RT10d: null till then.
+            // this same test (its size less what's free, and the margin);
+            // most_bytes: what it would get on this disk, its size less
+            // the shrink.  The test is needed_bytes <= most_bytes.
             return Err(Why::coded(ProblemCode::DataWontFit, text)
                 .with("dev", dev)
-                .with("mount", Value::Null)
+                .with("mount", mount_of(self.v, dev))
                 .with("used_bytes", used)
                 .with("margin_bytes", need - shrink)
                 .with("needed_bytes", size.saturating_sub(free) + (need - shrink))
-                .with("most_bytes", Value::Null));
+                .with("most_bytes", size - shrink));
         }
         Ok(())
     }
@@ -1256,7 +1600,7 @@ impl One<'_> {
                 .with("used_bytes", used)
                 .with("margin_bytes", 0u64)
                 .with("needed_bytes", used)
-                .with("most_bytes", Value::Null));
+                .with("most_bytes", left));
         }
         Ok(())
     }
@@ -1608,12 +1952,16 @@ mod tests {
         // The figure the test decides by: the 20 GiB filesystem less its
         // 2 GiB free, and the GiB to spare.
         assert_eq!(n("needed_bytes"), Some(19 * GIB));
-        // Every field of the table, in its order; RT10d's two null so far.
+        // Every field of the table, in its order: its mount (the dump's,
+        // /m0), and the most it would get, its 20 GiB less the 2 GiB shrink
+        // (RT10d).  The test: needed_bytes <= most_bytes, which fails.
         let keys: Vec<(&str, bool)> = p.fields.iter().map(|(k, v)| (k.as_str(), v.is_null())).collect();
         assert_eq!(
             keys,
-            [("disk", false), ("target", false), ("dev", false), ("mount", true), ("used_bytes", false), ("margin_bytes", false), ("needed_bytes", false), ("most_bytes", true)]
+            [("disk", false), ("target", false), ("dev", false), ("mount", false), ("used_bytes", false), ("margin_bytes", false), ("needed_bytes", false), ("most_bytes", false)]
         );
+        assert_eq!((p.str_field("mount"), n("most_bytes")), (Some("/m0"), Some(18 * GIB)));
+        assert!(n("needed_bytes") > n("most_bytes"));
     }
 
     fn one_target(size: u64) -> Vec<Target> {
@@ -2142,7 +2490,7 @@ mod tests {
         assert!(why.contains("1 GiB to spare"), "{why}");
         // A GiB of it: that fits, with the GiB to spare.
         let (_, f) = fitted(&d.build(), (total - G) * 512, 50);
-        assert_eq!(f.disks[0].fits[0], DataFit { dev: "vda1".into(), kind: "ext4".into(), shrink: GIB, used: 18 * GIB, free: 2 * GIB, need: 2 * GIB });
+        assert_eq!(f.disks[0].fits[0], DataFit { dev: "vda1".into(), kind: "ext4".into(), size: 20 * GIB, shrink: GIB, used: 18 * GIB, free: 2 * GIB, need: 2 * GIB });
         // 5% of what's used, where that's more than a GiB: 120 GiB used of
         // 200, so a 76 GiB shrink needs 82 GiB free and has 80.
         let big = 200 * G;
@@ -2230,7 +2578,7 @@ mod tests {
                 ("used_bytes", (19 * GIB).to_string()),
                 ("margin_bytes", "0".to_string()),
                 ("needed_bytes", (19 * GIB).to_string()),
-                ("most_bytes", "null".to_string()),
+                ("most_bytes", (4607 * EXT).to_string()),
             ]
         );
     }

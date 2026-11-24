@@ -157,6 +157,11 @@ pub struct Options {
     /// --json: the run writes bko-rescue's documents on standard output
     /// instead of text (docs/design/holt-json.md; jsonout.rs).
     pub json: bool,
+    /// --expect-plan SHA256 (--json only): the plan document's plan_sha256
+    /// this run must have, or it's a plan problem (J20).
+    pub expect_plan: Option<String>,
+    /// load's arguments as given, for the plan document's `args`.
+    pub argv: Vec<String>,
 }
 
 impl Options {
@@ -185,6 +190,8 @@ impl Options {
             luks_header_dir: None,
             sysroot: None,
             json: false,
+            expect_plan: None,
+            argv: vec![],
         }
     }
 
@@ -315,6 +322,7 @@ pub const VALUE_FLAGS: &[&str] = &[
     "--pools",
     "--luks-header-dir",
     "--sysroot",
+    "--expect-plan",
 ];
 
 // Parsed once per run, so Options' size doesn't matter.
@@ -425,6 +433,13 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
             "--new-machine" => o.new_machine = true,
             "--luks-header-dir" => o.luks_header_dir = Some(value(&mut it, a)?),
             "--sysroot" => o.sysroot = Some(value(&mut it, a)?),
+            "--expect-plan" => {
+                let v = value(&mut it, a)?;
+                if v.len() != 64 || !v.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+                    return Err(format!("--expect-plan {v}: give the plan document's plan_sha256 (64 lower-case hex digits)"));
+                }
+                o.expect_plan = Some(v);
+            }
             s if jsonout::is_json_flag(s) => {
                 // A schema this bko-holt doesn't write: refused once every
                 // argument is read, so a --help after it is still the help.
@@ -448,6 +463,10 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
     if o.through.is_some() && o.only.is_some() {
         return Err("--through and --only don't go together".into());
     }
+    if o.expect_plan.is_some() && !o.json {
+        return Err("--expect-plan is for --json runs: it checks the plan document's plan_sha256".into());
+    }
+    o.argv = args.to_vec();
     if o.repo.is_none() && (o.password_file.is_some() || o.snapshot != DEFAULT_SNAPSHOT || o.archiver != DEFAULT_ARCHIVER) {
         return Err("--password-file, --snapshot and --archiver are for restore; give --repo too".into());
     }
@@ -550,15 +569,14 @@ pub fn run(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
     }
     let stages = opts.stages();
     if opts.json {
-        // The plan (RT10c), status (RT10e) and event (RT10f) documents
-        // aren't built yet: refused, before anything is read or run, so a
-        // reader never gets text where it wants JSON.
-        let what = match stages.as_slice() {
-            [Stage::Plan] => "plan",
-            [Stage::Status] => "status",
-            _ => "the writing stages",
-        };
-        return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::JsonNotHere, format!("bko-holt load: --json isn't built for {what} in this bko-holt; run it without --json"));
+        // The status (RT10e) and event (RT10f) documents aren't built yet:
+        // refused, before anything is read or run, so a reader never gets
+        // text where it wants JSON.
+        match stages.as_slice() {
+            [Stage::Plan] => return plan::json_run(&layout, opts, sys, layout_text),
+            [Stage::Status] => return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::JsonNotHere, "bko-holt load: --json isn't built for status in this bko-holt; run it without --json".into()),
+            _ => return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::JsonNotHere, "bko-holt load: --json isn't built for the writing stages in this bko-holt; run it without --json".into()),
+        }
     }
     match stages.as_slice() {
         [Stage::Plan] => plan::run(&layout, opts, sys),
@@ -743,9 +761,9 @@ mod tests {
         let (code, out, _) = run(&opts(&["l.json", "--json"]), r#"{"format": "x"}"#, &s);
         assert_eq!(code, EXIT_UNSUPPORTED);
         assert_eq!(doc(&out).get_str("code"), Some("layout_refused"));
-        // Plan, status and the writing stages: not built yet, refused
-        // before any check runs.
-        for a in [&["l.json", "--json"][..], &["l.json", "--json", "--only", "status"], &["l.json", "--json", "--through", "mount", "--commit"]] {
+        // Status and the writing stages: not built yet, refused before any
+        // check runs.
+        for a in [&["l.json", "--json", "--only", "status"][..], &["l.json", "--json", "--through", "mount", "--commit"]] {
             let (code, out, err) = run(&opts(a), layout, &s);
             assert_eq!(code, EXIT_BAD_ARGS, "{a:?}");
             assert_eq!(doc(&out).get_str("code"), Some("json_not_here"), "{a:?}");

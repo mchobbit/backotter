@@ -64,6 +64,10 @@ pub struct Cmd {
     /// For a file to write outside RUN_DIR: whether it's made 0600, as
     /// RUN_DIR's own are (a copy of a file that can hold a password).
     pub private: bool,
+    /// Whether it runs the archiver, itself or inside a script: the
+    /// restore, the msdosfs roots' wrapper, each shared snapshot's script
+    /// (holt-json.md: the plan's `archiver`, the stop's SIGINT).
+    pub archiver: bool,
 }
 
 impl Cmd {
@@ -106,6 +110,23 @@ impl Cmd {
     pub fn input(mut self, s: String) -> Cmd {
         self.stdin = Some(s);
         self
+    }
+
+    /// It runs the archiver (`archiver`).
+    pub fn archiver(mut self) -> Cmd {
+        self.archiver = true;
+        self
+    }
+
+    /// shell(), with a private write's text (`private`) left out: in its
+    /// heredoc's place, `# (N bytes, private: not shown)` (holt-json.md,
+    /// "Common rules": the plan document's `text`).  Any other step is
+    /// shell()'s.
+    pub fn shell_elided(&self) -> String {
+        match (&self.write, &self.stdin) {
+            (Some(_), Some(text)) if self.private => Cmd { stdin: Some(format!("# ({} bytes, private: not shown)\n", text.len())), ..self.clone() }.shell(),
+            _ => self.shell(),
+        }
     }
 
     pub fn is_note(&self) -> bool {
@@ -203,6 +224,35 @@ fn dq_escape(s: &str) -> String {
     out
 }
 
+/// One question a person answers for a key (holt-json.md, the plan's
+/// `keys`): a LUKS container, a kept LUKS2 header, a GELI provider (and its
+/// key slot 1), a softraid CRYPTO volume, as the builders meet them.  ZFS's
+/// encryption roots are the layout's datasets (jsonout.rs reads them).
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeyAsk {
+    /// luks, luks_kept_header, geli, softraid.
+    pub kind: &'static str,
+    /// The group it is asked in: the first name of the containers the
+    /// source unlocked with one passphrase (crypttab's
+    /// keyscript=decrypt_keyctl with one key name), else its own first.
+    pub group: String,
+    /// Each NAME `--key-file NAME=FILE` takes for it, the one the plan's
+    /// messages name first.
+    pub names: Vec<String>,
+    /// The source devices it sits on.
+    pub devices: Vec<String>,
+    /// The source devices it gives (the LUKS mapping, the GELI provider,
+    /// the softraid volume): a mount on them, or above them, is under it.
+    pub provides: Vec<String>,
+    /// passphrase, old_passphrase, temporary, key_file_elsewhere.
+    pub unlock: &'static str,
+    /// A --key-file covers it.
+    pub given: bool,
+    /// What the tool takes and the restored system's prompt takes back.
+    pub min_bytes: u64,
+    pub max_bytes: u64,
+}
+
 pub struct Built {
     pub stages: Vec<(Stage, Vec<Cmd>)>,
     pub problems: Vec<String>,
@@ -220,6 +270,8 @@ pub struct Built {
     pub filesystems: Vec<(String, String, Option<String>)>,
     pub datasets: Vec<String>,
     pub mount_points: Vec<String>,
+    /// The keys it asks for (KeyAsk), in the order it meets them.
+    pub keys: Vec<KeyAsk>,
 }
 
 impl Built {
@@ -368,6 +420,7 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
         readonly_later: vec![],
         be_mounts: vec![],
         be_restored: vec![],
+        key_asks: vec![],
     };
     b.be_mounts = b.find_be_mounts();
     b.be_restored = b.find_restored_bes();
@@ -428,6 +481,7 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
         filesystems: b.filesystems,
         datasets: b.datasets,
         mount_points: b.mount_points,
+        keys: b.key_asks,
     }
 }
 
@@ -460,6 +514,8 @@ pub(crate) struct Builder<'a> {
     /// sources for, and those BEs (load/zfs_be.rs), worked out once.
     pub(crate) be_mounts: Vec<super::zfs_be::BeMount>,
     pub(crate) be_restored: Vec<crate::zfs_be::BootEnv>,
+    /// Built's keys.
+    pub(crate) key_asks: Vec<KeyAsk>,
 }
 
 // ---- partition ----------------------------------------------------------
@@ -1382,6 +1438,33 @@ impl Builder<'_> {
         }
     }
 
+    /// The key group of the LUKS container OPEN_AS (holt-json.md, the
+    /// plan's keys): the source asked once at boot for every container
+    /// whose crypttab line has keyscript=decrypt_keyctl and the same key
+    /// name, so they're one group, named by the first of them met; any
+    /// other container is a group of its own.
+    pub(crate) fn key_group(&self, open_as: &str, uuid: Option<&str>) -> String {
+        let Some(mine) = self.layout.crypttab_entry(open_as, uuid).and_then(Self::keyctl_key) else { return open_as.to_string() };
+        for k in self.key_asks.iter().filter(|k| k.kind == "luks") {
+            let Some(name) = k.names.first() else { continue };
+            if self.layout.crypttab_entry(name, None).and_then(Self::keyctl_key).as_deref() == Some(mine.as_str()) {
+                return k.group.clone();
+            }
+        }
+        open_as.to_string()
+    }
+
+    /// crypttab line E's key field when it has keyscript=decrypt_keyctl
+    /// (the name the key is kept under at boot), else None.
+    fn keyctl_key(e: &Value) -> Option<String> {
+        let opts: Vec<&str> = match e.get("options") {
+            Some(Value::Arr(a)) => a.iter().filter_map(Value::as_str).collect(),
+            Some(Value::Str(o)) => o.split(',').collect(),
+            _ => Vec::new(),
+        };
+        opts.iter().any(|o| o.trim() == "keyscript=decrypt_keyctl").then(|| s(e, "key_file").unwrap_or_default())
+    }
+
     /// A coded note.
     pub(crate) fn coded_note(&mut self, n: Note) {
         self.notes.push(n.text.clone());
@@ -1669,6 +1752,43 @@ impl Builder<'_> {
         // restored key file, when it's in the restored tree
         // (restored_key_files).
         let tab_key = self.layout.crypttab_entry(&open_as, s(&c, "uuid").as_deref()).and_then(|e| s(e, "key_file")).filter(|k| !matches!(k.as_str(), "none" | "-" | ""));
+        // The question this container is (holt-json.md, the plan's keys):
+        // what unlocks it, given a --key-file or not.
+        // A passphrase the source asked for once at boot for a group
+        // (keyscript=decrypt_keyctl: the key field is the key's name, not a
+        // file) is a passphrase still, given by --key-file.
+        let group = self.key_group(&open_as, s(&c, "uuid").as_deref());
+        let keyctl = group != open_as || self.layout.crypttab_entry(&open_as, s(&c, "uuid").as_deref()).is_some_and(|e| Self::keyctl_key(e).is_some());
+        let unlock = match &tab_key {
+            None => "passphrase",
+            Some(_) if keyctl => "passphrase",
+            Some(k) if !restorable_key_file(k) || temp_key_name(&open_as).is_none() => "key_file_elsewhere",
+            Some(_) => "temporary",
+        };
+        let given = self.opts.key_file(&open_as).is_some();
+        self.key_asks.push(KeyAsk {
+            kind: "luks",
+            group: group.clone(),
+            names: vec![open_as.clone()],
+            devices: vec![under.clone()],
+            provides: vec![name.clone()],
+            unlock,
+            given,
+            min_bytes: 1,
+            max_bytes: 512,
+        });
+        // Under --json nothing prompts: a new passphrase nobody gives is a
+        // problem instead (holt-json.md, "What differs under --json" 3).
+        // A keyctl name in crypttab's key field asks for --key-file already
+        // (key_file_unrestorable).
+        if self.opts.json && tab_key.is_none() && !given {
+            self.coded(
+                Problem::new(ProblemCode::KeyNeeded, format!("{open_as}: give its new passphrase with --key-file {open_as}=FILE"))
+                    .with("name", &open_as)
+                    .with("group", &group)
+                    .with("kind", "luks"),
+            );
+        }
         let key = match (self.opts.key_file(&open_as), &tab_key) {
             (Some(f), _) => Some(f.to_string()),
             // A key the restore doesn't bring back (on another device, or
@@ -1749,6 +1869,28 @@ impl Builder<'_> {
             }
         }
         let key = self.opts.key_file(open_as).or_else(|| label.as_deref().and_then(|l| self.opts.key_file(l))).or_else(|| self.opts.key_file(under)).map(str::to_string);
+        // The question it is: a key it already has (holt-json.md, the plan's
+        // keys: old_passphrase, no new one).  --key-file takes any of its
+        // three names; the messages name its label first.
+        let first = label.clone().unwrap_or_else(|| open_as.to_string());
+        let mut names = vec![first.clone()];
+        for n in [open_as, under] {
+            if !names.iter().any(|x| x == n) {
+                names.push(n.to_string());
+            }
+        }
+        let provides = self.layout.arr(&["storage", "dm_devices"]).iter().filter(|d| d.at(&["dm", "dm_name"]).and_then(Value::as_str) == Some(open_as)).filter_map(|d| s(d, "name")).collect();
+        self.key_asks.push(KeyAsk {
+            kind: "luks_kept_header",
+            group: first,
+            names,
+            devices: vec![under.to_string()],
+            provides,
+            unlock: "old_passphrase",
+            given: key.is_some(),
+            min_bytes: 1,
+            max_bytes: 512,
+        });
         let Some(key) = key else {
             let name = label.clone().unwrap_or_else(|| open_as.to_string());
             let text = format!(
@@ -3565,7 +3707,18 @@ impl Builder<'_> {
         if let Some(p) = &self.opts.password_file {
             a.extend(["--password-file".into(), p.clone()]);
         }
-        a.push("--no-progress".into());
+        // The raw volumes' dumps (rawvol.rs) write the image on standard
+        // output, so they never take --json-progress: their prefix keeps
+        // --no-progress.  The restores do under --json (holt-json.md, "What
+        // differs under --json" 1): rustic-bko's status lines for the
+        // events' progress, once a second.
+        let mut dump_prefix = a.clone();
+        dump_prefix.push("--no-progress".into());
+        if self.opts.json {
+            a.extend(["--json-progress".into(), "--progress-interval".into(), "1s".into()]);
+        } else {
+            a.push("--no-progress".into());
+        }
         let prefix = a.clone();
         a.extend(["restore".into(), "--numeric-id".into()]);
         // Aliases and shared snapshots left out of the main restore, the
@@ -3645,15 +3798,15 @@ impl Builder<'_> {
             // The boot stage there reads nothing of the restored tree.  The
             // glob file (--pools) is written first there too.
             let mut out = pre;
-            out.extend(self.msdosfs_roots_spared(Cmd { argv: a, why, env, ..Cmd::default() }));
+            out.extend(self.msdosfs_roots_spared(Cmd { argv: a, why, env, archiver: true, ..Cmd::default() }));
             return out;
         }
         let mut out = pre;
-        out.push(Cmd { argv: a, why, env, ..Cmd::default() });
+        out.push(Cmd { argv: a, why, env, archiver: true, ..Cmd::default() });
         self.shared_snapshots(&prefix, &mut out);
         // Thin snapshots and raw volumes (load/rawvol.rs), once their
         // origins' content is restored.
-        self.thin_restore(&prefix, &mut out);
+        self.thin_restore(&dump_prefix, &mut out);
         out.push(Cmd::new(&["sh", "-c", &self.atimes(&self.opts.target, "before")]).why("the atimes the restore set, for boot to put back after its reads"));
         out
     }
@@ -3807,7 +3960,9 @@ impl Builder<'_> {
                     };
                     why += &format!("; {} nested in it before the restore ({from}, {ids})", c.rest);
                 }
-                out.push(Cmd::new(&["sh", "-c", &script]).why(why));
+                // It runs the archiver on one branch only: tagged all the
+                // same (holt-json.md: archiver.parts is an upper bound).
+                out.push(Cmd::new(&["sh", "-c", &script]).why(why).archiver());
             }
             if !placeholders.is_empty() {
                 let mut a = vec!["btrfs".to_string(), "subvolume".into(), "delete".into(), "--commit-after".into()];
@@ -7504,6 +7659,7 @@ mod tests {
             readonly_later: vec![],
             be_mounts: vec![],
             be_restored: vec![],
+            key_asks: vec![],
         };
         assert_eq!(b.bootloader_id(), "opensuse");
         assert_eq!((b.grub_tool("install"), b.grub_tool("mkconfig")), ("grub2-install", "grub2-mkconfig"));
@@ -7956,6 +8112,7 @@ mod tests {
             readonly_later: vec![],
             be_mounts: vec![],
             be_restored: vec![],
+            key_asks: vec![],
         };
         let props = b.ds_props(&ds, false);
         assert!(props.contains(&("normalization".into(), "formD".into())), "{props:?}");
@@ -8131,6 +8288,7 @@ mod tests {
                 readonly_later: vec![],
                 be_mounts: vec![],
                 be_restored: vec![],
+                key_asks: vec![],
             };
             let mut out = vec![];
             b.vg(vg, &mut out);

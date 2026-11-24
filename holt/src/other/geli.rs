@@ -387,6 +387,11 @@ fn prompt(src: &str, file: &str) -> Cmd {
     Cmd::new(&["sh", "-c", &script]).why(format!("GELI on {src}: asks for the new passphrase, once (not echoed; kept in {file}, mode 600, until it's used)"))
 }
 
+/// The longest GELI passphrase the restored system's boot prompt takes
+/// back: the loader's geliboot and the kernel's g_eli prompt read into a
+/// 256-byte buffer with its NUL (FreeBSD's GELI_PW_MAXLEN).
+const GELI_PASS_MAX: u64 = 255;
+
 fn tmp_key(src: &str) -> String {
     format!("{RUN_DIR}/keys/{}.key", safe_run_token(src))
 }
@@ -442,8 +447,55 @@ impl Builder<'_> {
             // restored key file in boot.
             let keyed = p.keyed_by().to_string();
             let given = self.geli_key(&p, 0);
+            // The questions it is (holt-json.md, the plan's keys): slot 0's,
+            // and slot 1's where the source used it.
+            let unlock = match keyed.as_str() {
+                "passphrase" => "passphrase",
+                "keyfile" if p.keyfiles().is_empty() => "key_file_elsewhere",
+                _ => "temporary",
+            };
+            self.key_asks.push(crate::load::commands::KeyAsk {
+                kind: "geli",
+                group: p.names.first().cloned().unwrap_or_else(|| p.src.clone()),
+                names: p.names.clone(),
+                devices: vec![p.src.clone()],
+                provides: vec![p.provider.clone()],
+                unlock,
+                given: given.is_some(),
+                min_bytes: 1,
+                max_bytes: GELI_PASS_MAX,
+            });
+            if m.slots().contains(&1) {
+                let names: Vec<String> = p.names.iter().map(|n| format!("{n}:1")).collect();
+                self.key_asks.push(crate::load::commands::KeyAsk {
+                    kind: "geli",
+                    group: names.first().cloned().unwrap_or_else(|| format!("{}:1", p.src)),
+                    names,
+                    devices: vec![p.src.clone()],
+                    provides: vec![p.provider.clone()],
+                    unlock: "passphrase",
+                    given: self.geli_key(&p, 1).is_some(),
+                    min_bytes: 1,
+                    max_bytes: GELI_PASS_MAX,
+                });
+            }
+            // Under --json nothing prompts (holt-json.md): no /dev/tty
+            // question is built, and the passphrase nobody gave is a problem.
+            if self.opts.json && keyed == "passphrase" && given.is_none() {
+                let name = p.names.first().cloned().unwrap_or_else(|| p.src.clone());
+                self.coded(
+                    crate::load::codes::Problem::new(crate::load::codes::ProblemCode::KeyNeeded, format!("{}: give its new GELI passphrase with --key-file {name}=FILE", p.src))
+                        .with("name", name.as_str())
+                        .with("group", name.as_str())
+                        .with("kind", "geli"),
+                );
+            }
             let (init_key, attach_key, pass_made): (Vec<String>, Vec<String>, Option<String>) = match (keyed.as_str(), &given) {
                 ("passphrase", Some(f)) => (vec!["-J".into(), f.clone()], vec!["-j".into(), f.clone()], None),
+                ("passphrase", None) if self.opts.json => {
+                    let f = pass_file(&p.src);
+                    (vec!["-J".into(), f.clone()], vec!["-j".into(), f], None)
+                }
                 ("passphrase", None) => {
                     let f = pass_file(&p.src);
                     out.push(prompt(&p.src, &f));
@@ -943,6 +995,33 @@ mod tests {
         assert!(bk.contains("for n in vtbd0p3; do [ ! -f /mnt/bko-target/var/backups/$n.eli ] || f=1; done"), "{bk}");
         assert!(bk.contains("geli backup /dev/vtbd1p3 /mnt/bko-target/var/backups/vtbd1p3.eli) && for n in vtbd0p3; do [ $n = vtbd1p3 ] || rm -f"), "{bk}");
         assert!(!bt.iter().any(|x| x.contains("setkey")));
+    }
+
+    /// Under --json nothing prompts (holt-json.md): no /dev/tty question
+    /// is built, and the passphrase nobody gave is key_needed; the question
+    /// is in the plan's keys either way.  Text mode asks as before.
+    #[test]
+    fn json_asks_no_passphrase_on_the_terminal() {
+        use crate::load::codes::ProblemCode;
+        use crate::load::Stage;
+        let b = plan(zfs_on_geli(|_| {}), &["--json"]);
+        let p = b.coded_problems();
+        let k = p.iter().find(|x| x.code == ProblemCode::KeyNeeded).unwrap_or_else(|| panic!("{p:?}"));
+        assert_eq!(k.text, "vtbd0p3: give its new GELI passphrase with --key-file vtbd0p3=FILE");
+        assert_eq!((k.str_field("name"), k.str_field("group"), k.str_field("kind")), (Some("vtbd0p3"), Some("vtbd0p3"), Some("geli")));
+        let a = stage(&b, Stage::Assemble);
+        assert!(!a.iter().any(|x| x.contains("/dev/tty")), "{a:?}");
+        assert_eq!(b.keys.len(), 1);
+        let q = &b.keys[0];
+        assert_eq!((q.kind, q.unlock, q.given, q.max_bytes), ("geli", "passphrase", false, 255));
+        assert_eq!((q.names.clone(), q.devices.clone(), q.provides.clone()), (vec!["vtbd0p3".to_string(), "gpt/zfs0".into()], vec!["vtbd0p3".to_string()], vec!["vtbd0p3.eli".to_string()]));
+        // Given, no problem; and text mode as before, the question asked.
+        let b = plan(zfs_on_geli(|_| {}), &["--json", "--key-file", "gpt/zfs0=/k/0"]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        assert!(b.keys[0].given);
+        let b = plan(zfs_on_geli(|_| {}), &[]);
+        assert!(b.problems.is_empty() && stage(&b, Stage::Assemble)[0].contains("/dev/tty"), "{:?}", b.problems);
+        assert_eq!(b.keys[0].unlock, "passphrase");
     }
 
     #[test]

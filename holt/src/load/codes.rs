@@ -123,6 +123,36 @@ codes! {
     }
 }
 
+/// Why a candidate disk can never be a target (holt-json.md, the plan's
+/// `candidates[].refused`): its code, beside the text.  A held disk or one
+/// that isn't blank isn't refused (`erase_needed` says so), nor one of
+/// another size (`sizes`).  A reader refuses the disk on a code it doesn't
+/// know.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefusalCode {
+    BootDisk,
+    RunningRoot,
+    InUse,
+    BackupDrive,
+    ReadOnly,
+    SectorSize,
+}
+
+impl RefusalCode {
+    pub const ALL: [RefusalCode; 6] = [RefusalCode::BootDisk, RefusalCode::RunningRoot, RefusalCode::InUse, RefusalCode::BackupDrive, RefusalCode::ReadOnly, RefusalCode::SectorSize];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RefusalCode::BootDisk => "boot_disk",
+            RefusalCode::RunningRoot => "running_root",
+            RefusalCode::InUse => "in_use",
+            RefusalCode::BackupDrive => "backup_drive",
+            RefusalCode::ReadOnly => "read_only",
+            RefusalCode::SectorSize => "sector_size",
+        }
+    }
+}
+
 /// fit_refused's `reason` (holt-json.md's table): why fit can't change
 /// this layout for that disk.  `other` and any value a reader doesn't know
 /// show the text.
@@ -435,6 +465,12 @@ mod tests {
         }
         for r in REFORMAT_REASONS {
             assert!(ref_row.contains(&format!("`{r}`")), "{r}");
+        }
+        // The candidates' refusals, as the plan document's field list
+        // gives them.
+        let refused = section("`refused` is null, or a code and text:", "`sizes` has one verdict");
+        for c in RefusalCode::ALL {
+            assert!(refused.contains(&format!("`{}`", c.as_str())), "{c:?} isn't in holt-json.md's candidates' refusals");
         }
     }
 

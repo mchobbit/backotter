@@ -215,6 +215,141 @@ pub struct Planned {
     pub notes: Notes,
     /// What --fit-largest changed, if anything (fit.rs).
     pub fit: super::fit::Fit,
+    /// The disks here, as target::prepare read them.
+    pub system: target::System,
+    /// Under --json, what the plan document says of the run that only the
+    /// layout the stages build from can say (JsonFacts).
+    pub json: Option<JsonFacts>,
+}
+
+/// What a --json plan works out with the layout the stages build from
+/// (--fit-largest's, --pools'), for the plan document.
+#[derive(Debug, Default)]
+pub struct JsonFacts {
+    /// The run bound to what was reviewed (J20): jsonout::plan_sha256.
+    pub plan_sha256: String,
+    /// The targets this session's partition stage recorded
+    /// (target::load_wrote).
+    pub recorded: Vec<String>,
+    /// Whether this run's partition stage runs, wiping every target
+    /// (target::partition_runs).
+    pub partition_runs: bool,
+    /// Per target, the stages that would make something anew on it, as
+    /// exec would run them (with --through close when the run names no
+    /// stage).
+    pub writes: Vec<(String, Vec<&'static str>)>,
+}
+
+/// Whether the argument ARG names the device /dev/NODE or one of its
+/// partitions or slices (/dev/sdb2, /dev/nvme0n1p3, /dev/vtbd0p3,
+/// /dev/dsk/c1t0d0s0), and not another disk (/dev/sdbb1).
+fn names_node(arg: &str, node: &str) -> bool {
+    ["/dev/", "/dev/dsk/", "/dev/rdsk/", "/dev/r"].iter().any(|pre| {
+        let Some(rest) = arg.strip_prefix(pre).and_then(|r| r.strip_prefix(node)) else { return false };
+        let rest = rest.strip_prefix(['p', 's']).unwrap_or(rest);
+        rest.is_empty() || rest.starts_with(|c: char| c.is_ascii_digit()) || (rest.len() == 1 && rest.as_bytes()[0].is_ascii_lowercase())
+    })
+}
+
+/// Whether the commands CMDS make something on target NODE: one names it
+/// (names_node), or this layout has that one target only.
+fn touches(cmds: &[commands::Cmd], node: &str, only_target: bool) -> bool {
+    let run = |c: &&commands::Cmd| !c.is_note() && c.check.is_none();
+    if only_target {
+        return cmds.iter().any(|c| run(&c));
+    }
+    cmds.iter().filter(run).any(|c| c.argv.iter().chain(c.write.iter()).any(|a| a.split(['=', ',']).any(|w| names_node(w, node))))
+}
+
+/// The --json run's checks of its own arguments (holt-json.md, "Secrets"):
+/// no prompt, so a repository without --password-file is a problem; a
+/// password in the repository's URL never reaches argv or the log; and
+/// every key file and the password file are bko-rescue's own, private.
+fn json_problems(layout: &Layout, opts: &Options, sys: &Sys, built: &Built) -> Vec<Problem> {
+    let mut out = Vec::new();
+    if let Some(repo) = &opts.repo {
+        if repo_has_password(repo) {
+            out.push(Problem::new(ProblemCode::RepoHasPassword, "--repo: the repository's URL holds a password; under --json it goes in --password-file FILE, never on the command line"));
+        }
+        if opts.password_file.is_none() {
+            out.push(Problem::new(ProblemCode::PasswordNeeded, "--repo: give the repository's password with --password-file FILE (under --json nothing asks for it)"));
+        }
+    }
+    // The keys whose files hold a passphrase as typed: none may end in a
+    // newline, which cryptsetup and geli would take as part of it.
+    let mut passphrase: Vec<String> = built.keys.iter().filter(|k| k.unlock == "passphrase").flat_map(|k| k.names.iter().cloned()).collect();
+    for ds in layout.arr(&["storage", "zfs", "tools", "datasets"]) {
+        let name = ds.get("name").and_then(crate::json::Value::as_str).unwrap_or_default();
+        if ds.get("encryptionroot").and_then(crate::json::Value::as_str) == Some(name) && ds.get("keyformat").and_then(crate::json::Value::as_str) == Some("passphrase") {
+            passphrase.push(name.to_string());
+        }
+    }
+    let files = opts.key_files.iter().map(|(n, f)| (Some(n.as_str()), f.as_str())).chain(opts.password_file.iter().map(|f| (None, f.as_str())));
+    for (name, path) in files {
+        let typed = name.is_some_and(|n| passphrase.iter().any(|p| p == n));
+        if let Some((check, why)) = key_file_unsafe(sys, path, typed) {
+            let flag = match name {
+                Some(n) => format!("--key-file {n}={path}"),
+                None => format!("--password-file {path}"),
+            };
+            out.push(Problem::new(ProblemCode::KeyFileUnsafe, format!("{flag}: {why}; under --json a key file must be a private file of bko-holt's own user")).with("name", name).with("path", path).with("check", check));
+        }
+    }
+    out
+}
+
+/// Whether a repository's URL holds a password: `SCHEME://USER:PASS@...`,
+/// rest:'s too (`rest:https://user:pass@host/`).
+pub fn repo_has_password(repo: &str) -> bool {
+    let Some((_, rest)) = repo.split_once("://") else { return false };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    authority.rsplit_once('@').is_some_and(|(userinfo, _)| userinfo.contains(':'))
+}
+
+/// The first of the key-file checks PATH fails (holt-json.md, "Secrets"
+/// 4): its name and why, or None.  Never reads the key, but for the last
+/// byte of one a passphrase is TYPED into (a newline there).
+fn key_file_unsafe(sys: &Sys, path: &str, typed: bool) -> Option<(&'static str, String)> {
+    use std::os::unix::fs::{FileExt, MetadataExt};
+    if !path.starts_with('/') {
+        return Some(("absolute", "not an absolute path".into()));
+    }
+    let real = sys.p(path);
+    let Ok(m) = std::fs::symlink_metadata(&real) else { return Some(("missing", "isn't there".into())) };
+    if !m.file_type().is_file() {
+        return Some(("regular", "isn't a regular file (a symbolic link is refused)".into()));
+    }
+    let me = crate::sys::euid();
+    if m.uid() != me {
+        return Some(("owner", format!("is owned by uid {}, not bko-holt's {me}", m.uid())));
+    }
+    if m.mode() & 0o077 != 0 {
+        return Some(("mode", format!("has mode {:o}: group or others may read it", m.mode() & 0o7777)));
+    }
+    let dir = real.parent().map(std::fs::symlink_metadata);
+    match dir {
+        Some(Ok(d)) if d.uid() != me => return Some(("dir_owner", format!("is in a directory owned by uid {}, not bko-holt's {me}", d.uid()))),
+        Some(Ok(d)) if d.mode() & 0o077 != 0 => return Some(("dir_mode", format!("is in a directory of mode {:o}: group or others may reach it", d.mode() & 0o7777))),
+        Some(Ok(_)) => {}
+        _ => return Some(("dir_owner", "its directory can't be read".into())),
+    }
+    if m.len() == 0 {
+        return Some(("empty", "is empty".into()));
+    }
+    if m.len() > 8 << 20 {
+        return Some(("too_big", format!("is {} bytes, more than 8 MiB", m.len())));
+    }
+    if typed {
+        let mut last = [0u8];
+        let read = std::fs::File::open(&real).and_then(|f| f.read_exact_at(&mut last, m.len() - 1));
+        if read.is_err() {
+            return Some(("missing", "can't be read".into()));
+        }
+        if last[0] == b'\n' {
+            return Some(("newline", "ends in a newline, which would be part of the passphrase".into()));
+        }
+    }
+    None
 }
 
 /// Every check `plan` makes; the writing stages make them again first.
@@ -222,7 +357,8 @@ pub fn check(layout: &Layout, opts: &Options, sys: &Sys) -> Planned {
     // A layout not yet edited for --reformat (a caller other than load::run).
     let edited = super::reformat::edited(layout, &opts.reformats);
     let layout = edited.as_ref().unwrap_or(layout);
-    let target::Prepared { mapping, layout, fit, .. } = target::prepare(layout, opts, sys);
+    let given = layout;
+    let target::Prepared { mapping, layout, fit, system } = target::prepare(layout, opts, sys);
     let layout = &*layout;
     let built = commands::build(layout, opts, &mapping);
     let mut problems = mapping.problems.clone();
@@ -243,11 +379,85 @@ pub fn check(layout: &Layout, opts: &Options, sys: &Sys) -> Planned {
     }
     let mut notes = mapping.notes.clone();
     notes.extend(built.coded_notes());
-    Planned { mapping, built, problems, notes, fit }
+    // Under --json (holt-json.md, J19, J20 and "Secrets"): the erase gate,
+    // the run's own arguments, and the plan's hash.  Text mode never comes
+    // here.
+    let json = opts.json.then(|| {
+        problems.extend(target::erase_gate(layout, opts, &system, sys, &mapping));
+        problems.extend(json_problems(layout, opts, sys, &built));
+        let plan_sha256 = super::jsonout::plan_sha256(&built, &mapping, &system, sys);
+        if let Some(want) = opts.expect_plan.as_deref().filter(|w| **w != plan_sha256) {
+            problems.push(
+                Problem::new(ProblemCode::PlanChanged, format!("--expect-plan {want}: this run's plan is {plan_sha256}: a command or a disk's identity changed since the plan was reviewed"))
+                    .with("expected", want)
+                    .with("got", plan_sha256.as_str())
+                    // Which disk moved can't be read from a hash alone.
+                    .with("targets", crate::json::Value::Null),
+            );
+        }
+        let recorded = mapping
+            .pairs
+            .iter()
+            .filter(|(s, t)| matches!((layout.disk(s), system.disk(t)), (Some(d), Some(t)) if target::load_wrote(layout, d, t, sys)))
+            .map(|(_, t)| t.clone())
+            .collect();
+        // As exec runs them: --only its one stage, else every writing stage
+        // (--through close), each skipped as status shows it.
+        let only = opts.only.filter(|s| s.writes());
+        let runs_stage = |s: Stage| only.is_none_or(|o| o == s);
+        let partition_runs = runs_stage(Stage::Partition) && (only.is_some() || target::partition_runs(layout, opts, &system, sys, &mapping));
+        let wiped = partition_runs && !opts.erase.is_empty();
+        let rows = if only.is_none() { super::status::rows(given, opts, sys).0 } else { Vec::new() };
+        let skipped = |s: Stage| {
+            only.is_none() && rows.iter().find(|r| r.0 == s).is_some_and(|r| r.1 == super::status::State::Nothing || (r.1 == super::status::State::Done && !wiped))
+        };
+        let one = mapping.pairs.len() == 1;
+        let writes = mapping
+            .pairs
+            .iter()
+            .map(|(_, t)| {
+                let mut w = Vec::new();
+                if partition_runs {
+                    w.push("partition");
+                }
+                for s in [Stage::Assemble, Stage::Format] {
+                    if runs_stage(s) && !skipped(s) && touches(built.stage(s), t, one) {
+                        w.push(s.name());
+                    }
+                }
+                (t.clone(), w)
+            })
+            .collect();
+        JsonFacts { plan_sha256, recorded, partition_runs, writes }
+    });
+    Planned { mapping, built, problems, notes, fit, system, json }
 }
 
 pub fn run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, String) {
     let p = check(layout, opts, sys);
+    render(layout, opts, &p, false)
+}
+
+/// `load LAYOUT --json` (holt-json.md, "bko-holt-plan"): the plan document,
+/// made of the --json run's checks, with in its `text` what text mode
+/// prints for the same arguments (J18), a private write's text left out.
+/// Standard error is text mode's line for problems, if any.
+pub fn json_run(layout: &Layout, opts: &Options, sys: &Sys, layout_text: &str) -> (u8, String, String) {
+    let p = check(layout, opts, sys);
+    let mut text_opts = opts.clone();
+    text_opts.json = false;
+    text_opts.expect_plan = None;
+    let tp = check(layout, &text_opts, sys);
+    let (_, text, _) = render(layout, &text_opts, &tp, true);
+    let code = if p.problems.is_empty() { EXIT_OK } else { EXIT_PLAN_PROBLEMS };
+    let doc = super::jsonout::plan_doc(layout, opts, sys, layout_text, &p, code, &text);
+    let err = if p.problems.is_empty() { String::new() } else { format!("bko-holt load: plan found {} problem(s); the plan document lists them\n", p.problems.len()) };
+    (code, doc, err)
+}
+
+/// The text plan of P: what `bko-holt load LAYOUT` prints, with ELIDE a
+/// private write's text left out (Cmd::shell_elided).
+fn render(layout: &Layout, opts: &Options, p: &Planned, elide: bool) -> (u8, String, String) {
     let mut out = String::new();
     out += &format!("# bko-holt load plan for {}\n", opts.layout);
     out += &format!(
@@ -291,7 +501,7 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, String) {
             out += "# (nothing to do)\n";
         }
         for c in cmds {
-            out += &c.shell();
+            out += &if elide { c.shell_elided() } else { c.shell() };
         }
     }
     out += "\n# Nothing was written.";

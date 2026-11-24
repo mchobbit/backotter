@@ -1,0 +1,750 @@
+{
+  "format": "bko-holt-plan",
+  "schema": 1,
+  "version": "VERSION",
+  "generated": "GENERATED",
+  "dry_run": false,
+  "ok": false,
+  "exit": 4,
+  "plan_sha256": "PLAN_SHA256",
+  "layout": {
+    "path": "layout.json",
+    "sha256": "83ba4bc6d77e874af1c73779fc7e31a67d8ffe3076caab17046ba9174366a40c"
+  },
+  "args": ["load", "layout.json", "--map", "vtbd0=sdq", "--repo", "/srv/bko-repo", "--json"],
+  "source": {
+    "hostname": "host-1",
+    "os": {
+      "id": "freebsd",
+      "version_id": "15.1",
+      "name": "FreeBSD 15.1-RELEASE-p7"
+    },
+    "family": "freebsd",
+    "arch": "x86_64",
+    "boot_mode": "uefi",
+    "loader": "freebsd",
+    "generated": "2026-11-17T23:19:46Z",
+    "dmi_uuid": null,
+    "reformat_possible": false
+  },
+  "here": {
+    "dmi_uuid": null,
+    "boot_mode": "bios",
+    "efivars": false,
+    "arch": "x86_64",
+    "privileged": true,
+    "same_machine": false
+  },
+  "disks": [
+    {
+      "source": {
+        "name": "vtbd0",
+        "size_bytes": 17179869184,
+        "model": null,
+        "serial": null,
+        "wwid": null,
+        "sector": 512,
+        "table": "gpt",
+        "mounts": ["/", "/boot/efi", "/data"],
+        "largest": {
+          "partition": "vtbd0p3",
+          "size_bytes": 14755561472,
+          "holds": "geli",
+          "mount": "/",
+          "used_bytes": null
+        }
+      },
+      "target": {
+        "node": "sdq",
+        "path": "/dev/sdq",
+        "by_id": null,
+        "size_bytes": 17179869184,
+        "model": null,
+        "serial": null,
+        "wwid": null,
+        "sector": 512,
+        "transport": null,
+        "removable": false,
+        "matched_by": "map",
+        "same_identity": false,
+        "blank": true,
+        "contents": [],
+        "ours": false,
+        "recorded": false,
+        "erase": false,
+        "will_erase": true,
+        "writes": ["partition", "assemble", "format"],
+        "size": null
+      }
+    }
+  ],
+  "candidates": [
+    {
+      "node": "sdq",
+      "path": "/dev/sdq",
+      "by_id": null,
+      "size_bytes": 17179869184,
+      "model": null,
+      "serial": null,
+      "wwid": null,
+      "sector": 512,
+      "transport": null,
+      "removable": false,
+      "serial_shared": false,
+      "target_of": "vtbd0",
+      "ours": false,
+      "blank": true,
+      "contents": [],
+      "refused": null,
+      "erase_needed": false,
+      "sizes": [
+        {
+          "source": "vtbd0",
+          "verdict": "same",
+          "fit_pct": null,
+          "change_pct": null,
+          "partition": "vtbd0p3",
+          "mount": "/",
+          "old_bytes": 14755561472,
+          "new_bytes": null,
+          "used_bytes": null,
+          "margin_bytes": null,
+          "needed_bytes": null,
+          "most_bytes": null,
+          "data_fits": null,
+          "reason": null,
+          "grow": null,
+          "why": null
+        }
+      ]
+    }
+  ],
+  "erase": [],
+  "keys": [
+    {
+      "group": "vtbd0p4",
+      "kind": "geli",
+      "names": ["vtbd0p4", "gpt/data0"],
+      "devices": ["vtbd0p4"],
+      "holds": [],
+      "unlock": "temporary",
+      "given": false,
+      "new_ok": true,
+      "min_bytes": 1,
+      "max_bytes": 255,
+      "shared_at_boot": false
+    }
+  ],
+  "tokens": [],
+  "reformat": [],
+  "fit": [],
+  "problems": [
+    {
+      "code": "other",
+      "text": "vtbd0p3: the source's GELI key slot 1 is in use; give its passphrase with --key-file vtbd0p3:1=FILE, or the restored system loses that way in"
+    },
+    {
+      "code": "password_needed",
+      "text": "--repo: give the repository's password with --password-file FILE (under --json nothing asks for it)"
+    }
+  ],
+  "notes": [
+    {
+      "code": "other",
+      "text": "GELI on vtbd0p4: --key-file takes vtbd0p4, gpt/data0"
+    }
+  ],
+  "stages": [
+    {
+      "name": "partition",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "bko-holt write-table layout.json vtbd0 /dev/sdq $(diskinfo /dev/sdq | cut -f3)"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vtbd0 -> /dev/sdq: the source's table, GUIDs and boot code exactly",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["gpart", "show", "sdq"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "assemble",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "-m", "700", "/run/bko-holt/keys"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "dd",
+            "if=/dev/urandom",
+            "of=/run/bko-holt/keys/vtbd0p4.key",
+            "bs=64",
+            "count=1",
+            "status=none"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "GELI on vtbd0p4 unlocks with /etc/geli/keyfile1.key on the restored system; until that's restored, a temporary key",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "geli",
+            "init",
+            "-a",
+            "HMAC/SHA256",
+            "-e",
+            "AES-XTS",
+            "-l",
+            "128",
+            "-s",
+            "512",
+            "-V",
+            "7",
+            "-P",
+            "-K",
+            "/run/bko-holt/keys/vtbd0p4.key",
+            "-B",
+            "none",
+            "/dev/sdqp4"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "GELI on /dev/sdqp4 (vtbd0p4): AES-XTS 128-bit, 512-byte sectors, version 7, as the source's",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["geli", "attach", "-p", "-k", "/run/bko-holt/keys/vtbd0p4.key", "/dev/sdqp4"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "n=$(diskinfo /dev/sdqp4.eli | cut -f3); m=$((n / 1048576)); dd if=/dev/zero of=/dev/sdqp4.eli bs=1m count=$m status=none && r=$(((n - m * 1048576) / 512)) && { [ $r -eq 0 ] || dd if=/dev/zero of=/dev/sdqp4.eli bs=512 seek=$((m * 1048576 / 512)) count=$r status=none; }"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "/dev/sdqp4.eli is authenticated (HMAC/SHA256): every sector's checksum is written once, all 1 GiB of it (about a minute at 100 MB/s)",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "format",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": ["newfs_msdos", "-F", "32", "-I", "0xBC000001", "-c", "1", "/dev/sdqp1"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vtbd0p1: FAT, as the source's",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "newfs",
+            "-O",
+            "2",
+            "-U",
+            "-a",
+            "32",
+            "-b",
+            "32768",
+            "-d",
+            "32768",
+            "-e",
+            "4096",
+            "-f",
+            "4096",
+            "-g",
+            "16384",
+            "-h",
+            "64",
+            "-i",
+            "8192",
+            "-j",
+            "-k",
+            "6400",
+            "-m",
+            "8",
+            "-o",
+            "time",
+            "-s",
+            "3602431",
+            "/dev/sdqp3.eli"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vtbd0p3.eli: UFS as the source's (dumpfs -m); dumpfs's -s 28819448 is in 512-byte units, and newfs counts this device's 4096-byte sectors: -s 3602431",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "newfs",
+            "-O",
+            "2",
+            "-U",
+            "-a",
+            "32",
+            "-b",
+            "32768",
+            "-d",
+            "32768",
+            "-e",
+            "4096",
+            "-f",
+            "4096",
+            "-g",
+            "16384",
+            "-h",
+            "64",
+            "-i",
+            "8192",
+            "-k",
+            "1312",
+            "-m",
+            "8",
+            "-o",
+            "time",
+            "-s",
+            "1050616",
+            "/dev/sdqp4.eli"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vtbd0p4.eli: UFS as the source's (dumpfs -m)",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "mount",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "/mnt/bko-target"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mount", "-t", "ufs", "-o", "rw", "/dev/sdqp3.eli", "/mnt/bko-target"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "/mnt/bko-target/data"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mount", "-t", "ufs", "-o", "rw", "/dev/sdqp4.eli", "/mnt/bko-target/data"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "/mnt/bko-target/boot/efi"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mount", "-t", "msdosfs", "-o", "rw", "/dev/sdqp1", "/mnt/bko-target/boot/efi"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "restore",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "-m", "700", "/run/bko-holt"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "write",
+          "argv": [],
+          "env": [],
+          "why": "the restore errors msdosfs's mount roots give, and only those, let pass",
+          "path": "/run/bko-holt/restore.fatroots",
+          "dev": null,
+          "stdin": "[WARN] restore boot/efi: setting UID/GID failed.\n[WARN] restore boot/efi: setting User/Group failed.\n[WARN] restore boot/efi: chmod failed.\n[WARN] restore boot/efi: setting file times failed.\n",
+          "stdin_bytes": 192,
+          "stdin_sha256": "57918981f46807a324e7ed5518720df2d819ac10eb8d7380284bbe1dbc397631",
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "\"$@\" 2>/run/bko-holt/restore.err; s=$?; cat /run/bko-holt/restore.err >&2; [ $s -eq 1 ] || exit $s; e=$(printf '\\033'); sed -e \"s/$e\\[[0-9;]*m//g\" -e 's/[[:space:]]*$//' /run/bko-holt/restore.err > /run/bko-holt/restore.err.plain; n=$(sed -n 's/^error: There were \\([0-9][0-9]*\\) errors.*/\\1/p' /run/bko-holt/restore.err.plain); k=$(grep -cxF -f /run/bko-holt/restore.fatroots /run/bko-holt/restore.err.plain); [ -n \"$n\" ] && [ \"$n\" = \"$k\" ] || exit 1; echo 'bko-holt: the restore set no owner, mode or times on the root of /boot/efi: msdosfs keeps none there' >&2",
+            "sh",
+            "rustic-bko",
+            "--repository",
+            "/srv/bko-repo",
+            "--json-progress",
+            "--progress-interval",
+            "1s",
+            "restore",
+            "--numeric-id",
+            "latest",
+            "/mnt/bko-target"
+          ],
+          "env": [
+            ["LC_ALL", "C"],
+            ["RUSTIC_STRICT_EXIT", "true"]
+          ],
+          "why": "snapshot latest of /srv/bko-repo, with BackOtter's restore flags",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": true
+        }
+      ]
+    },
+    {
+      "name": "boot",
+      "commands": [
+        {
+          "kind": "note",
+          "argv": [],
+          "env": [],
+          "why": "the boot code (MBR, freebsd-boot) was written with the partition table",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "f=; for n in vtbd0p3; do [ ! -f /mnt/bko-target/var/backups/$n.eli ] || f=1; done; [ -z \"$f\" ] || { (umask 077; geli backup /dev/sdqp3 /mnt/bko-target/var/backups/sdqp3.eli) && for n in vtbd0p3; do [ $n = sdqp3 ] || rm -f /mnt/bko-target/var/backups/$n.eli; done; }"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vtbd0p3: /var/backups' GELI metadata backup, written again for the new provider (the restored one is the old provider's)",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["geli", "setkey", "-n", "0", "-K", "/mnt/bko-target/etc/geli/keyfile1.key", "-P", "/dev/sdqp4"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vtbd0p4: the restored key file /etc/geli/keyfile1.key",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["rm", "-f", "/run/bko-holt/keys/vtbd0p4.key"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "f=; for n in vtbd0p4; do [ ! -f /mnt/bko-target/var/backups/$n.eli ] || f=1; done; [ -z \"$f\" ] || { (umask 077; geli backup /dev/sdqp4 /mnt/bko-target/var/backups/sdqp4.eli) && for n in vtbd0p4; do [ $n = sdqp4 ] || rm -f /mnt/bko-target/var/backups/$n.eli; done; }"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vtbd0p4: /var/backups' GELI metadata backup, written again for the new provider (the restored one is the old provider's)",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "/mnt/bko-target/var/log/bko-holt"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["cp", "-Rp", "/run/bko-holt/log/.", "/mnt/bko-target/var/log/bko-holt/"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "this restore's log, on the restored system",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "close",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "mount -p | awk '{ print $2 }' | awk '$0 == \"/mnt/bko-target\" || index($0, \"/mnt/bko-target/\") == 1' | sort -r | while read -r m; do umount \"$m\" || exit; done"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "everything under the target, deepest first",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["geli", "detach", "/dev/sdqp4.eli"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["rm", "-f", "/run/bko-holt/keys/vtbd0p4.key"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    }
+  ],
+  "text": "# bko-holt load plan for layout.json\n# Source: host-1, FreeBSD 15.1-RELEASE-p7, UEFI boot with freebsd, dumped 2026-11-17T23:19:46Z\n#\n# Disks:\n#   vtbd0 (16 GiB) -> /dev/sdq\n#\n# Problems (1): nothing can be written until they're fixed\n#   - vtbd0p3: the source's GELI key slot 1 is in use; give its passphrase with --key-file vtbd0p3:1=FILE, or the restored system loses that way in\n#\n# Notes:\n#   - GELI on vtbd0p4: --key-file takes vtbd0p4, gpt/data0\n\n# ---- partition ----\n# vtbd0 -> /dev/sdq: the source's table, GUIDs and boot code exactly\nsh -c 'bko-holt write-table layout.json vtbd0 /dev/sdq $(diskinfo /dev/sdq | cut -f3)'\ngpart show sdq\n\n# ---- assemble ----\nmkdir -p -m 700 /run/bko-holt/keys\n# GELI on vtbd0p4 unlocks with /etc/geli/keyfile1.key on the restored system; until that's restored, a temporary key\ndd if=/dev/urandom of=/run/bko-holt/keys/vtbd0p4.key bs=64 count=1 status=none\n# GELI on /dev/sdqp4 (vtbd0p4): AES-XTS 128-bit, 512-byte sectors, version 7, as the source's\ngeli init -a HMAC/SHA256 -e AES-XTS -l 128 -s 512 -V 7 -P -K /run/bko-holt/keys/vtbd0p4.key -B none /dev/sdqp4\ngeli attach -p -k /run/bko-holt/keys/vtbd0p4.key /dev/sdqp4\n# /dev/sdqp4.eli is authenticated (HMAC/SHA256): every sector's checksum is written once, all 1 GiB of it (about a minute at 100 MB/s)\nsh -c 'n=$(diskinfo /dev/sdqp4.eli | cut -f3); m=$((n / 1048576)); dd if=/dev/zero of=/dev/sdqp4.eli bs=1m count=$m status=none && r=$(((n - m * 1048576) / 512)) && { [ $r -eq 0 ] || dd if=/dev/zero of=/dev/sdqp4.eli bs=512 seek=$((m * 1048576 / 512)) count=$r status=none; }'\n\n# ---- format ----\n# vtbd0p1: FAT, as the source's\nnewfs_msdos -F 32 -I 0xBC000001 -c 1 /dev/sdqp1\n# vtbd0p3.eli: UFS as the source's (dumpfs -m); dumpfs's -s 28819448 is in 512-byte units, and newfs counts this device's 4096-byte sectors: -s 3602431\nnewfs -O 2 -U -a 32 -b 32768 -d 32768 -e 4096 -f 4096 -g 16384 -h 64 -i 8192 -j -k 6400 -m 8 -o time -s 3602431 /dev/sdqp3.eli\n# vtbd0p4.eli: UFS as the source's (dumpfs -m)\nnewfs -O 2 -U -a 32 -b 32768 -d 32768 -e 4096 -f 4096 -g 16384 -h 64 -i 8192 -k 1312 -m 8 -o time -s 1050616 /dev/sdqp4.eli\n\n# ---- mount ----\nmkdir -p /mnt/bko-target\nmount -t ufs -o rw /dev/sdqp3.eli /mnt/bko-target\nmkdir -p /mnt/bko-target/data\nmount -t ufs -o rw /dev/sdqp4.eli /mnt/bko-target/data\nmkdir -p /mnt/bko-target/boot/efi\nmount -t msdosfs -o rw /dev/sdqp1 /mnt/bko-target/boot/efi\n\n# ---- restore ----\nmkdir -p -m 700 /run/bko-holt\n# the restore errors msdosfs's mount roots give, and only those, let pass\ncat > /run/bko-holt/restore.fatroots <<'EOF'\n[WARN] restore boot/efi: setting UID/GID failed.\n[WARN] restore boot/efi: setting User/Group failed.\n[WARN] restore boot/efi: chmod failed.\n[WARN] restore boot/efi: setting file times failed.\nEOF\n# snapshot latest of /srv/bko-repo, with BackOtter's restore flags\nRUSTIC_STRICT_EXIT=true sh -c '\"$@\" 2>/run/bko-holt/restore.err; s=$?; cat /run/bko-holt/restore.err >&2; [ $s -eq 1 ] || exit $s; e=$(printf '\\''\\033'\\''); sed -e \"s/$e\\[[0-9;]*m//g\" -e '\\''s/[[:space:]]*$//'\\'' /run/bko-holt/restore.err > /run/bko-holt/restore.err.plain; n=$(sed -n '\\''s/^error: There were \\([0-9][0-9]*\\) errors.*/\\1/p'\\'' /run/bko-holt/restore.err.plain); k=$(grep -cxF -f /run/bko-holt/restore.fatroots /run/bko-holt/restore.err.plain); [ -n \"$n\" ] && [ \"$n\" = \"$k\" ] || exit 1; echo '\\''bko-holt: the restore set no owner, mode or times on the root of /boot/efi: msdosfs keeps none there'\\'' >&2' sh rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target\n\n# ---- boot ----\n# the boot code (MBR, freebsd-boot) was written with the partition table\n# vtbd0p3: /var/backups' GELI metadata backup, written again for the new provider (the restored one is the old provider's)\nsh -c 'f=; for n in vtbd0p3; do [ ! -f /mnt/bko-target/var/backups/$n.eli ] || f=1; done; [ -z \"$f\" ] || { (umask 077; geli backup /dev/sdqp3 /mnt/bko-target/var/backups/sdqp3.eli) && for n in vtbd0p3; do [ $n = sdqp3 ] || rm -f /mnt/bko-target/var/backups/$n.eli; done; }'\n# vtbd0p4: the restored key file /etc/geli/keyfile1.key\ngeli setkey -n 0 -K /mnt/bko-target/etc/geli/keyfile1.key -P /dev/sdqp4\nrm -f /run/bko-holt/keys/vtbd0p4.key\n# vtbd0p4: /var/backups' GELI metadata backup, written again for the new provider (the restored one is the old provider's)\nsh -c 'f=; for n in vtbd0p4; do [ ! -f /mnt/bko-target/var/backups/$n.eli ] || f=1; done; [ -z \"$f\" ] || { (umask 077; geli backup /dev/sdqp4 /mnt/bko-target/var/backups/sdqp4.eli) && for n in vtbd0p4; do [ $n = sdqp4 ] || rm -f /mnt/bko-target/var/backups/$n.eli; done; }'\nmkdir -p /mnt/bko-target/var/log/bko-holt\n# this restore's log, on the restored system\ncp -Rp /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/\n\n# ---- close ----\n# everything under the target, deepest first\nsh -c 'mount -p | awk '\\''{ print $2 }'\\'' | awk '\\''$0 == \"/mnt/bko-target\" || index($0, \"/mnt/bko-target/\") == 1'\\'' | sort -r | while read -r m; do umount \"$m\" || exit; done'\ngeli detach /dev/sdqp4.eli\nrm -f /run/bko-holt/keys/vtbd0p4.key\n\n# Nothing was written.\n"
+}
+

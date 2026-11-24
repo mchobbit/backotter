@@ -159,8 +159,8 @@ fn load_refusals_are_error_documents() {
     assert_error(&run(&["load", "--frob", "--json=2", "--sysroot", &root], &[], None), 2, "schema_unknown");
     // Beside a good --json, after it too.
     assert_error(&run(&["load", &layout, "--json", "--json=2", "--sysroot", &root], &[], None), 2, "schema_unknown");
-    // The documents RT10c, RT10e and RT10f build: refused, nothing run.
-    for (extra, what) in [(&[][..], "plan"), (&["--only", "status"][..], "status"), (&["--through", "mount"][..], "the writing stages")] {
+    // The documents RT10e and RT10f build: refused, nothing run.
+    for (extra, what) in [(&["--only", "status"][..], "status"), (&["--through", "mount"][..], "the writing stages")] {
         let mut a = vec!["load", layout.as_str(), "--sysroot", &root, "--map", "vda=vdb", "--json"];
         a.extend_from_slice(extra);
         let v = assert_error(&run(&a, &[], None), 2, "json_not_here");
@@ -172,6 +172,30 @@ fn load_refusals_are_error_documents() {
         assert_eq!(o.status.code(), Some(0), "{args:?}");
         assert!(out(&o).starts_with("Usage: bko-holt load LAYOUT.json"), "{args:?}: {}", out(&o));
     }
+}
+
+/// The plan under --json (RT10c): one bko-holt-plan document, its text
+/// what text mode prints, its problems coded; the exit as the plan's.
+#[test]
+fn plan_is_a_document() {
+    let (_t, layout, root) = setup();
+    let o = run(&["load", &layout, "--sysroot", &root, "--map", "vda=vdb", "--json"], &[], None);
+    let text = run(&["load", &layout, "--sysroot", &root, "--map", "vda=vdb"], &[], None);
+    assert_eq!(o.status.code(), text.status.code(), "{}", err(&o));
+    assert_eq!(o.status.code(), Some(4));
+    let v = doc(&o);
+    assert_eq!(v.get_str("format"), Some("bko-holt-plan"));
+    assert_eq!((v.get_bool("ok"), v.get_u64("exit")), (Some(false), Some(4)));
+    assert_eq!(v.get_str("text"), Some(out(&text).as_str()));
+    assert!(v.get_arr("problems").unwrap().iter().all(|p| p.get_str("code").is_some() && p.get_str("text").is_some()));
+    assert_eq!(v.str_at(&["disks", "0", "target", "node"]), Some("vdb"));
+    assert!(v.get_arr("candidates").unwrap().iter().any(|c| c.get_str("node") == Some("vdb")));
+    assert!(err(&o).starts_with("bko-holt load: plan found "), "{}", err(&o));
+    // --expect-plan wants --json, and a SHA-256.
+    let o = run(&["load", &layout, "--sysroot", &root, "--expect-plan", &"0".repeat(64)], &[], None);
+    assert_eq!(o.status.code(), Some(2));
+    assert!(err(&o).contains("--expect-plan is for --json runs"), "{}", err(&o));
+    assert_error(&run(&["load", &layout, "--sysroot", &root, "--json", "--expect-plan", "xyz"], &[], None), 2, "bad_args");
 }
 
 #[test]

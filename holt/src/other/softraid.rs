@@ -273,6 +273,11 @@ fn safe_run_token(s: &str) -> String {
     if out.is_empty() || out.trim_matches('.').is_empty() { "vol".into() } else { out }
 }
 
+/// The longest softraid passphrase the restored system's boot prompt takes
+/// back: OpenBSD's boot loader reads it into a 1024-byte buffer with its
+/// NUL, as bioctl's readpassphrase does.
+const SOFTRAID_PASS_MAX: u64 = 1023;
+
 /// The passphrase file bioctl -p reads: a copy of --key-file's, owned by
 /// root and mode 600, as bioctl wants it.
 fn pass_file(name: &str) -> String {
@@ -359,6 +364,27 @@ impl Builder<'_> {
             let shown = format!("<volume of {at}>");
             self.notes.push(format!("softraid CRYPTO volume {} (on {}): --key-file takes {}, {duid}; it is {shown} until bioctl makes it", v.name, chunks[0], v.name));
             let given = self.opts.key_file(&v.name).or_else(|| self.opts.key_file(&duid)).map(str::to_string);
+            // The question it is (holt-json.md, the plan's keys), and under
+            // --json, where nothing prompts, a problem when nobody gave it.
+            self.key_asks.push(crate::load::commands::KeyAsk {
+                kind: "softraid",
+                group: v.name.clone(),
+                names: vec![v.name.clone(), duid.clone()],
+                devices: chunks.clone(),
+                provides: vec![v.name.clone()],
+                unlock: "passphrase",
+                given: given.is_some(),
+                min_bytes: 1,
+                max_bytes: SOFTRAID_PASS_MAX,
+            });
+            if self.opts.json && given.is_none() {
+                self.coded(
+                    crate::load::codes::Problem::new(crate::load::codes::ProblemCode::KeyNeeded, format!("{}: give the softraid CRYPTO volume's new passphrase with --key-file {}=FILE", v.name, v.name))
+                        .with("name", v.name.as_str())
+                        .with("group", v.name.as_str())
+                        .with("kind", "softraid"),
+                );
+            }
             let mut a: Vec<String> = ["bioctl", "-C", "force", "-c", "C", "-l", &node].iter().map(|x| x.to_string()).collect();
             let rounds = v.sr.get("kdf_rounds").and_then(Value::as_u64);
             let kdf = match (v.str("kdf").as_str(), rounds) {
@@ -737,6 +763,24 @@ mod tests {
         assert!(c[0].contains("umount"), "{c:?}");
         assert!(!c.iter().any(|x| x.contains("bioctl")), "{c:?}");
         assert!(b.stage(Stage::Close).iter().any(|x| x.is_note() && x.why.as_deref().is_some_and(|w| w.contains("<volume of sd2a>, the softraid volume, stays attached"))), "{:?}", b.stage(Stage::Close));
+    }
+
+    /// Under --json bioctl's question is key_needed (holt-json.md); the
+    /// volume is in the plan's keys, by its name and its DUID.
+    #[test]
+    fn json_asks_for_the_volumes_passphrase() {
+        use crate::load::codes::ProblemCode;
+        let b = plan(dump(), &["--json"]);
+        let p = b.coded_problems();
+        let k = p.iter().find(|x| x.code == ProblemCode::KeyNeeded).unwrap_or_else(|| panic!("{p:?}"));
+        assert_eq!((k.str_field("kind"), k.str_field("name")), (Some("softraid"), k.str_field("group")));
+        assert_eq!(b.keys.len(), 1);
+        let q = &b.keys[0];
+        assert_eq!((q.kind, q.unlock, q.given, q.names.len(), q.max_bytes), ("softraid", "passphrase", false, 2, 1023));
+        assert!(plan(dump(), &[]).problems.is_empty());
+        let name = q.names[0].clone();
+        let b = plan(dump(), &["--json", "--key-file", &format!("{name}=/k/0")]);
+        assert!(b.problems.is_empty() && b.keys[0].given, "{:?}", b.problems);
     }
 
     #[test]

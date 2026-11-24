@@ -363,7 +363,7 @@ impl Mapping {
     }
 }
 
-fn same_identity(src: &Disk, t: &BlockDev) -> bool {
+pub(crate) fn same_identity(src: &Disk, t: &BlockDev) -> bool {
     match (&src.wwid, &t.wwid) {
         (Some(a), Some(b)) if !a.is_empty() => return a == b,
         _ => {}
@@ -617,7 +617,7 @@ pub fn unrecorded(layout: &Layout, d: &Disk, t: &TargetDisk, opts: &Options, sys
 /// Whether this run's partition stage wipes the targets: --only partition
 /// does; --through (and the plan, which ends in the --through command to
 /// run) skips it once status shows it done on every target, as exec does.
-fn partition_runs(layout: &Layout, opts: &Options, system: &System, sys: &Sys, m: &Mapping) -> bool {
+pub(crate) fn partition_runs(layout: &Layout, opts: &Options, system: &System, sys: &Sys, m: &Mapping) -> bool {
     if let Some(s) = opts.only {
         return s == Stage::Partition;
     }
@@ -735,6 +735,165 @@ fn release_holders(layout: &Layout, opts: &Options, system: &System, sys: &Sys, 
 
 pub fn is_erased(opts: &Options, t: &TargetDisk) -> bool {
     opts.erase.iter().any(|e| e == &t.path() || e == &t.b.name || resolve_tail(e) == t.b.name)
+}
+
+/// A disk's most stable /dev/disk/by-id link (holt-json.md, the plan's
+/// `by_id`): its WWN's first, then one its serial names, then any other
+/// by-id link of the whole disk.  Linux only (udev's); None elsewhere, or
+/// where udev gives none.
+pub fn by_id(t: &TargetDisk) -> Option<String> {
+    let links: Vec<&String> = t.b.udev.links.iter().filter(|l| l.starts_with("/dev/disk/by-id/") && !l.contains("-part")).collect();
+    let tail = |l: &str| l.trim_start_matches("/dev/disk/by-id/").to_string();
+    if let Some(l) = links.iter().find(|l| tail(l).starts_with("wwn-")) {
+        return Some(l.to_string());
+    }
+    if let Some(sn) = t.b.serial.as_deref().filter(|s| !s.is_empty()) {
+        if let Some(l) = links.iter().find(|l| tail(l).contains(sn)) {
+            return Some(l.to_string());
+        }
+    }
+    links.first().map(|l| l.to_string())
+}
+
+/// What the probes find on T (holt-json.md, the plan's `contents`): per
+/// signature its device, type and label, the device's size, and the space
+/// used where the superblock says it without mounting (ext's and XFS's free
+/// blocks, btrfs's bytes used), else null.  Read as scan read them: the
+/// whole disk when it has no table, and each partition.  A device that
+/// can't be opened here (off Linux, not root) has what scan found of it.
+pub fn contents(sys: &Sys, t: &TargetDisk) -> Vec<crate::json::Value> {
+    use crate::json::{Obj, Value};
+    let mut out = Vec::new();
+    let devs: Vec<&BlockDev> = if t.table.is_none() { std::iter::once(&t.b).chain(t.parts.iter()).collect() } else { t.parts.iter().collect() };
+    let u = |c: &Value, k: &str| c.get(k).and_then(Value::as_u64);
+    for d in devs {
+        let Some(src) = sys.open_dev(&d.dev_path()) else {
+            // scan's own words for it: "vdb1: ext4 UUID=... LABEL=...".
+            for sig in t.signatures.iter().filter_map(|x| x.strip_prefix(&format!("{}: ", d.name))) {
+                let sig = sig.strip_suffix(" (from udev)").unwrap_or(sig);
+                let (rest, label) = match sig.split_once(" LABEL=") {
+                    Some((r, l)) => (r, Some(l.to_string())),
+                    None => (sig, None),
+                };
+                let kind = rest.split(' ').next().unwrap_or(rest);
+                out.push(Obj::new().set("dev", d.name.as_str()).set("type", kind).set("label", label).set("size_bytes", d.size_bytes).set("used_bytes", Value::Null).build());
+            }
+            continue;
+        };
+        for c in crate::probe::probe_all(&src) {
+            let j = c.to_json();
+            let used = match c.kind.as_str() {
+                "ext2" | "ext3" | "ext4" | "xfs" => match (u(&j, "blocks"), u(&j, "free_blocks"), u(&j, "block_size")) {
+                    (Some(b), Some(f), Some(bs)) => Some(b.saturating_sub(f) * bs),
+                    _ => None,
+                },
+                "btrfs" => u(&j, "bytes_used"),
+                _ => None,
+            };
+            out.push(Obj::new().set("dev", d.name.as_str()).set("type", c.kind.as_str()).set("label", c.label.clone()).set("size_bytes", d.size_bytes).set("used_bytes", used).build());
+        }
+    }
+    out
+}
+
+/// Whether the mount at MOUNT_POINT is of something on T: one of its
+/// devices or what's stacked on them (LUKS, LVM, md), as scan reads mounts.
+fn holds_mount(sys: &Sys, system: &System, t: &TargetDisk, mount_point: &str) -> bool {
+    let Some(m) = system.mounts.iter().find(|m| m.target == mount_point) else { return false };
+    let mut names: Vec<String> = std::iter::once(t.b.name.clone()).chain(t.parts.iter().map(|p| p.name.clone())).collect();
+    names.extend(super::release::stack(&system.devs, &t.b.name));
+    let src = resolve_name(sys, &m.source);
+    names.iter().any(|n| {
+        let b = system.devs.iter().find(|b| b.name == *n);
+        *n == src || b.is_some_and(|b| b.devno == m.devno || b.dm_name.as_deref() == Some(src.as_str()))
+    }) || std::iter::once(&t.b).chain(t.parts.iter()).any(|b| b.devno == m.devno)
+}
+
+/// The mount point a local --repo is under: the longest mount here that
+/// holds it.  None for a repository that isn't a local path.
+fn repo_mount(system: &System, opts: &Options) -> Option<String> {
+    let repo = opts.repo.as_deref().filter(|r| r.starts_with('/'))?;
+    system
+        .mounts
+        .iter()
+        .map(|m| m.target.as_str())
+        .filter(|t| *t == "/" || repo == *t || repo.starts_with(&format!("{}/", t.trim_end_matches('/'))))
+        .max_by_key(|t| t.len())
+        .map(str::to_string)
+}
+
+/// Why T can never be a target of LAYOUT here, or None (holt-json.md, the
+/// plan's `candidates[].refused`): the stick, the running system's disk,
+/// the disk the local --repo is on, one mounted or in use as swap, a
+/// read-only one, one whose sector size no source disk has.  A held disk,
+/// one that isn't blank and one of another size aren't refused.
+pub fn refusal(layout: &Layout, opts: &Options, system: &System, sys: &Sys, t: &TargetDisk) -> Option<(super::codes::RefusalCode, String)> {
+    use super::codes::RefusalCode as R;
+    let p = t.path();
+    if t.boot_medium {
+        return Some((R::BootDisk, format!("{} is the disk this system booted from; never a target", t.b.name)));
+    }
+    if t.holds_root {
+        return Some((R::RunningRoot, format!("{} holds the running system's /; never a target", t.b.name)));
+    }
+    if let Some(mp) = repo_mount(system, opts).filter(|mp| mp != "/" && holds_mount(sys, system, t, mp)) {
+        return Some((R::BackupDrive, format!("{p} holds {mp}, where the repository {} is; never a target", opts.repo.as_deref().unwrap_or_default())));
+    }
+    if !t.hard_use.is_empty() {
+        return Some((R::InUse, format!("{p} is in use ({}); refused even with --erase", t.in_use.join("; "))));
+    }
+    if t.b.read_only == Some(true) {
+        return Some((R::ReadOnly, format!("{p} is read-only")));
+    }
+    let here = t.b.logical_block_size.max(512);
+    let used: Vec<&Disk> = layout.disks.iter().filter(|d| d.used).collect();
+    if !used.is_empty() && used.iter().all(|d| d.sector_size != here) {
+        return Some((R::SectorSize, format!("{p}: logical sector size {here} here, and no source disk has it")));
+    }
+    None
+}
+
+/// Whether this session's partition stage wrote T for one of LAYOUT's used
+/// disks (load_wrote, for any of them): a candidate that isn't a target
+/// has no source of its own.
+pub fn recorded_for_any(layout: &Layout, t: &TargetDisk, sys: &Sys) -> bool {
+    layout.disks.iter().filter(|d| d.used).any(|d| load_wrote(layout, d, t, sys))
+}
+
+/// Never over the old system (holt-json.md, J19; under --json only): every
+/// target that isn't blank must be named with --erase, or have this
+/// session's partition record.  TargetDisk::is_ours is no exception: the
+/// source machine's own disk as found carries the layout's identifiers
+/// too.  A target the mapping refused already (not_blank, held, in_use)
+/// isn't refused twice.
+pub fn erase_gate(layout: &Layout, opts: &Options, system: &System, sys: &Sys, m: &Mapping) -> Vec<Problem> {
+    let ours = layout_uuids(layout);
+    let mut out = Vec::new();
+    for (src, tgt) in &m.pairs {
+        let (Some(d), Some(t)) = (layout.disk(src), system.disk(tgt)) else { continue };
+        if t.blank() || is_erased(opts, t) || load_wrote(layout, d, t, sys) {
+            continue;
+        }
+        let refused = m.problems.iter().any(|p| p.str_field("target") == Some(tgt.as_str()) && matches!(p.code, ProblemCode::NotBlank | ProblemCode::Held | ProblemCode::InUse));
+        if refused {
+            continue;
+        }
+        let same = same_identity(d, &t.b);
+        let is_ours = t.is_ours(d, &ours);
+        let what = if is_ours {
+            "it carries this layout's own identifiers (an earlier restore's, or the source's own disk as found), and this session has no record that load wrote it"
+        } else {
+            "it isn't blank, and this session has no record that load wrote it"
+        };
+        out.push(
+            Problem::new(ProblemCode::EraseRequired, format!("{src} -> {}: {what}; give --erase {} to wipe it", t.path(), t.path()))
+                .with("disk", src)
+                .with("target", tgt)
+                .with("ours", is_ours)
+                .with("same_identity", same),
+        );
+    }
+    out
 }
 
 fn names(layout: &Layout) -> String {

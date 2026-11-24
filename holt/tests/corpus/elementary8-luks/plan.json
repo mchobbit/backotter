@@ -1,0 +1,1418 @@
+{
+  "format": "bko-holt-plan",
+  "schema": 1,
+  "version": "VERSION",
+  "generated": "GENERATED",
+  "dry_run": false,
+  "ok": false,
+  "exit": 4,
+  "plan_sha256": "PLAN_SHA256",
+  "layout": {
+    "path": "layout.json",
+    "sha256": "1b38135bb8b0763f702f6a12f05b7e6dda5713a4497aa3629716b748d451c9aa"
+  },
+  "args": ["load", "layout.json", "--map", "vda=sdq", "--repo", "/srv/bko-repo", "--json"],
+  "source": {
+    "hostname": "host-1",
+    "os": {
+      "id": "elementary",
+      "version_id": "8",
+      "name": "elementary OS 8"
+    },
+    "family": "linux",
+    "arch": "x86_64",
+    "boot_mode": "uefi",
+    "loader": "grub",
+    "generated": "2026-11-15T03:06:38Z",
+    "dmi_uuid": null,
+    "reformat_possible": true
+  },
+  "here": {
+    "dmi_uuid": null,
+    "boot_mode": "bios",
+    "efivars": false,
+    "arch": "x86_64",
+    "privileged": true,
+    "same_machine": false
+  },
+  "disks": [
+    {
+      "source": {
+        "name": "vda",
+        "size_bytes": 21474836480,
+        "model": null,
+        "serial": null,
+        "wwid": null,
+        "sector": 512,
+        "table": "gpt",
+        "mounts": ["/", "/boot", "/boot/efi"],
+        "largest": {
+          "partition": "vda3",
+          "size_bytes": 20107493376,
+          "holds": "LUKS2, LVM",
+          "mount": "/",
+          "used_bytes": 8176963584
+        }
+      },
+      "target": {
+        "node": "sdq",
+        "path": "/dev/sdq",
+        "by_id": null,
+        "size_bytes": 21474836480,
+        "model": null,
+        "serial": null,
+        "wwid": null,
+        "sector": 512,
+        "transport": null,
+        "removable": false,
+        "matched_by": "map",
+        "same_identity": false,
+        "blank": true,
+        "contents": [],
+        "ours": false,
+        "recorded": false,
+        "erase": false,
+        "will_erase": true,
+        "writes": ["partition", "assemble", "format"],
+        "size": null
+      }
+    }
+  ],
+  "candidates": [
+    {
+      "node": "sdq",
+      "path": "/dev/sdq",
+      "by_id": null,
+      "size_bytes": 21474836480,
+      "model": null,
+      "serial": null,
+      "wwid": null,
+      "sector": 512,
+      "transport": null,
+      "removable": false,
+      "serial_shared": false,
+      "target_of": "vda",
+      "ours": false,
+      "blank": true,
+      "contents": [],
+      "refused": null,
+      "erase_needed": false,
+      "sizes": [
+        {
+          "source": "vda",
+          "verdict": "same",
+          "fit_pct": null,
+          "change_pct": null,
+          "partition": "vda3",
+          "mount": "/",
+          "old_bytes": 20107493376,
+          "new_bytes": null,
+          "used_bytes": 8176963584,
+          "margin_bytes": null,
+          "needed_bytes": null,
+          "most_bytes": null,
+          "data_fits": null,
+          "reason": null,
+          "grow": null,
+          "why": null
+        }
+      ]
+    }
+  ],
+  "erase": [],
+  "keys": [
+    {
+      "group": "cryptdata",
+      "kind": "luks",
+      "names": ["cryptdata"],
+      "devices": ["vda3"],
+      "holds": ["/"],
+      "unlock": "passphrase",
+      "given": false,
+      "new_ok": true,
+      "min_bytes": 1,
+      "max_bytes": 512,
+      "shared_at_boot": false
+    }
+  ],
+  "tokens": [],
+  "reformat": [
+    {
+      "mount": "/",
+      "type": "ext4",
+      "to": {
+        "xfs": {
+          "code": "reformat_refused",
+          "reason": "no_fsck",
+          "text": "--reformat /=xfs: the source doesn't have xfsprogs installed; install it there and back up again, or the restored system has no fsck or repair for xfs"
+        },
+        "btrfs": {
+          "code": "reformat_refused",
+          "reason": "no_fsck",
+          "text": "--reformat /=btrfs: the source doesn't have btrfs-progs installed; install it there and back up again, or the restored system has no fsck or repair for btrfs"
+        }
+      }
+    },
+    {
+      "mount": "/boot",
+      "type": "ext4",
+      "to": {
+        "xfs": {
+          "code": "reformat_refused",
+          "reason": "grub_reads",
+          "text": "--reformat /boot=xfs: GRUB reads /boot from it; under GRUB, --reformat makes ext4 only"
+        },
+        "btrfs": {
+          "code": "reformat_refused",
+          "reason": "grub_reads",
+          "text": "--reformat /boot=btrfs: GRUB reads /boot from it; under GRUB, --reformat makes ext4 only"
+        }
+      }
+    }
+  ],
+  "fit": [],
+  "problems": [
+    {
+      "code": "key_needed",
+      "text": "cryptdata: give its new passphrase with --key-file cryptdata=FILE",
+      "name": "cryptdata",
+      "group": "cryptdata",
+      "kind": "luks"
+    },
+    {
+      "code": "password_needed",
+      "text": "--repo: give the repository's password with --password-file FILE (under --json nothing asks for it)"
+    }
+  ],
+  "notes": [],
+  "stages": [
+    {
+      "name": "partition",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": ["wipefs", "--all", "/dev/sdq"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vda -> /dev/sdq: clear the old table and signatures",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["dd", "if=/dev/zero", "of=/dev/sdq", "bs=1M", "count=4", "conv=fsync"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "/dev/sdq: its first 4 MiB zeroed, and its last 1 MiB (a GPT's backup, md 0.90/1.0 superblocks, ZFS's end labels)",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "n=$(blockdev --getsz /dev/sdq) && dd if=/dev/zero of=/dev/sdq bs=512 seek=$((n - 2048)) count=2048 conv=fsync"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "note",
+          "argv": [],
+          "env": [],
+          "why": "the new partitions' old content zeroed through /dev/sdq, before its table names them (blocks of 512 bytes, at their start= sectors)",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["dd", "if=/dev/zero", "of=/dev/sdq", "bs=512", "seek=2048", "count=8192", "conv=fsync"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vda1: its first 4 MiB and its last 1 MiB",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["dd", "if=/dev/zero", "of=/dev/sdq", "bs=512", "seek=569344", "count=2048", "conv=fsync"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["dd", "if=/dev/zero", "of=/dev/sdq", "bs=512", "seek=571392", "count=8192", "conv=fsync"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vda2: its first 4 MiB and its last 1 MiB",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["dd", "if=/dev/zero", "of=/dev/sdq", "bs=512", "seek=2666496", "count=2048", "conv=fsync"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["dd", "if=/dev/zero", "of=/dev/sdq", "bs=512", "seek=2668544", "count=8192", "conv=fsync"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vda3: its first 4 MiB and its last 1 MiB",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["dd", "if=/dev/zero", "of=/dev/sdq", "bs=512", "seek=41938944", "count=2048", "conv=fsync"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["udevadm", "settle"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "udev done with /dev/sdq before sfdisk takes it",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["sfdisk", "--wipe", "always", "--wipe-partitions", "always", "/dev/sdq"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": "label: gpt\nlabel-id: bc000000-0000-4000-8000-000000000001\nunit: sectors\nsector-size: 512\ntable-length: 128\nfirst-lba: 2048\nlast-lba: 41943006\n\n/dev/sdq1 : start=2048, size=569344, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=BC000000-0000-4000-8000-000000000002\n/dev/sdq2 : start=571392, size=2097152, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=BC000000-0000-4000-8000-000000000003\n/dev/sdq3 : start=2668544, size=39272448, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=BC000000-0000-4000-8000-000000000006\n",
+          "stdin_bytes": 517,
+          "stdin_sha256": "af527eca1bd8dd85ff89548c881edcdfb58f03741810b0fcd5c43683bf969a7b",
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["udevadm", "settle"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "assemble",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": [
+            "cryptsetup",
+            "luksFormat",
+            "--batch-mode",
+            "--type=luks2",
+            "--cipher=aes-xts-plain64",
+            "--key-size=512",
+            "--sector-size=512",
+            "--offset=32768",
+            "--pbkdf=argon2id",
+            "--pbkdf-memory=262144",
+            "--pbkdf-parallel=4",
+            "--pbkdf-force-iterations=39",
+            "--hash=sha256",
+            "--luks2-metadata-size=16384",
+            "--luks2-keyslots-size=16744448",
+            "--uuid=bc000000-0000-4000-8000-000000000007",
+            "/dev/sdq3"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "LUKS2 on /dev/sdq3: asks for the new passphrase",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["cryptsetup", "open", "/dev/sdq3", "cryptdata"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "-m", "700", "/run/bko-holt/lvm"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "write",
+          "argv": [],
+          "env": [],
+          "why": "volume group data: its metadata, for pvcreate and vgcfgrestore",
+          "path": "/run/bko-holt/lvm/data.vg",
+          "dev": null,
+          "stdin": "data {\n\tid = \"bkoLVM-0000-0000-0000-0000-0000-000002\"\n\tseqno = 3\n\tformat = \"lvm2\"\n\tstatus = [\"RESIZEABLE\", \"READ\", \"WRITE\"]\n\tflags = []\n\textent_size = 8192\n\tmax_lv = 0\n\tmax_pv = 0\n\tmetadata_copies = 0\n\tphysical_volumes {\n\t\tpv0 {\n\t\t\tid = \"bkoLVM-0000-0000-0000-0000-0000-000001\"\n\t\t\tdevice = \"/dev/mapper/cryptdata\"\n\t\t\tstatus = [\"ALLOCATABLE\"]\n\t\t\tflags = []\n\t\t\tdev_size = 39239680\n\t\t\tpe_start = 2048\n\t\t\tpe_count = 4789\n\t\t}\n\t}\n\tlogical_volumes {\n\t\troot {\n\t\t\tid = \"bkoLVM-0000-0000-0000-0000-0000-000003\"\n\t\t\tstatus = [\"READ\", \"WRITE\", \"VISIBLE\"]\n\t\t\tflags = []\n\t\t\tcreation_host = \"host2\"\n\t\t\tcreation_time = 1794710879\n\t\t\tsegment_count = 1\n\t\t\tsegment1 {\n\t\t\t\tstart_extent = 0\n\t\t\t\textent_count = 3765\n\t\t\t\ttype = \"striped\"\n\t\t\t\tstripe_count = 1\n\t\t\t\tstripes = [\"pv0\", 0]\n\t\t\t}\n\t\t}\n\t\tswap {\n\t\t\tid = \"bkoLVM-0000-0000-0000-0000-0000-000004\"\n\t\t\tstatus = [\"READ\", \"WRITE\", \"VISIBLE\"]\n\t\t\tflags = []\n\t\t\tcreation_host = \"host2\"\n\t\t\tcreation_time = 1794710879\n\t\t\tsegment_count = 1\n\t\t\tsegment1 {\n\t\t\t\tstart_extent = 0\n\t\t\t\textent_count = 1024\n\t\t\t\ttype = \"striped\"\n\t\t\t\tstripe_count = 1\n\t\t\t\tstripes = [\"pv0\", 3765]\n\t\t\t}\n\t\t}\n\t}\n}\ncontents = \"Text Format Volume Group\"\nversion = 1\ndescription = \"made by bko-holt load from a bko-holt dump\"\ncreation_host = \"host2\"\ncreation_time = 1794710879\n",
+          "stdin_bytes": 1263,
+          "stdin_sha256": "b2ae9112daa2f93e6a1381da66579ab216cf6af6f585727f74f69782b59ebece",
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "pvcreate",
+            "--devicesfile",
+            "",
+            "--devices",
+            "/dev/mapper/cryptdata",
+            "--uuid",
+            "bkoLVM-0000-0000-0000-0000-0000-000001",
+            "--restorefile",
+            "/run/bko-holt/lvm/data.vg",
+            "/dev/mapper/cryptdata"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "vgcfgrestore",
+            "--devicesfile",
+            "",
+            "--devices",
+            "/dev/mapper/cryptdata",
+            "--file",
+            "/run/bko-holt/lvm/data.vg",
+            "data"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "vgchange",
+            "--devicesfile",
+            "",
+            "--devices",
+            "/dev/mapper/cryptdata",
+            "--activate",
+            "y",
+            "data"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "format",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": [
+            "mkfs.fat",
+            "-F",
+            "32",
+            "-i",
+            "BC000001",
+            "-n",
+            "EFI",
+            "-S",
+            "512",
+            "-s",
+            "8",
+            "-f",
+            "2",
+            "-R",
+            "32",
+            "-h",
+            "2048",
+            "/dev/sdq1"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vda1: vfat \"EFI\"",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "check",
+          "argv": [],
+          "env": [],
+          "why": null,
+          "path": null,
+          "dev": "/dev/sdq1",
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "mke2fs",
+            "-F",
+            "-q",
+            "-t",
+            "ext4",
+            "-O",
+            "none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum",
+            "-U",
+            "bc000000-0000-4000-8000-000000000004",
+            "-b",
+            "4096",
+            "-I",
+            "256",
+            "-N",
+            "65536",
+            "-g",
+            "32768",
+            "-G",
+            "16",
+            "-E",
+            "hash_seed=bc000000-0000-4000-8000-000000000005,desc_size=64,resize=268435456",
+            "/dev/sdq2",
+            "1048576k"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "vda2: ext4",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["tune2fs", "-r", "13107", "/dev/sdq2"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "check",
+          "argv": [],
+          "env": [],
+          "why": null,
+          "path": null,
+          "dev": "/dev/sdq2",
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "mke2fs",
+            "-F",
+            "-q",
+            "-t",
+            "ext4",
+            "-O",
+            "none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum",
+            "-U",
+            "bc000000-0000-4000-8000-000000000008",
+            "-b",
+            "4096",
+            "-I",
+            "256",
+            "-N",
+            "964768",
+            "-g",
+            "32768",
+            "-G",
+            "16",
+            "-E",
+            "hash_seed=bc000000-0000-4000-8000-000000000009,desc_size=64,resize=2151677952",
+            "/dev/mapper/data-root",
+            "15421440k"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "dm-1: ext4",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["tune2fs", "-r", "192768", "/dev/mapper/data-root"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "check",
+          "argv": [],
+          "env": [],
+          "why": null,
+          "path": null,
+          "dev": "/dev/mapper/data-root",
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "mkswap",
+            "-U",
+            "bc000000-0000-4000-8000-00000000000a",
+            "--pagesize",
+            "4096",
+            "/dev/mapper/data-swap"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "dm-2: swap",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "check",
+          "argv": [],
+          "env": [],
+          "why": null,
+          "path": null,
+          "dev": "/dev/mapper/data-swap",
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "mount",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "/mnt/bko-target"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mount", "-t", "ext4", "-o", "defaults", "/dev/mapper/data-root", "/mnt/bko-target"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "/mnt/bko-target/boot"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mount", "-t", "ext4", "-o", "defaults", "/dev/sdq2", "/mnt/bko-target/boot"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "/mnt/bko-target/boot/efi"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mount", "-t", "vfat", "-o", "umask=0077", "/dev/sdq1", "/mnt/bko-target/boot/efi"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "restore",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": [
+            "rustic-bko",
+            "--repository",
+            "/srv/bko-repo",
+            "--json-progress",
+            "--progress-interval",
+            "1s",
+            "restore",
+            "--numeric-id",
+            "latest",
+            "/mnt/bko-target"
+          ],
+          "env": [
+            ["LC_ALL", "C"],
+            ["RUSTIC_STRICT_EXIT", "true"]
+          ],
+          "why": "snapshot latest of /srv/bko-repo, with BackOtter's restore flags",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": true
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "mkdir -p -m 700 /run/bko-holt && find /mnt/bko-target \\( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \\) -prune -o -printf '%A@\\t%p\\0' | LC_ALL=C sort -z > /run/bko-holt/atimes.before"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "the atimes the restore set, for boot to put back after its reads",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "boot",
+      "commands": [
+        {
+          "kind": "note",
+          "argv": [],
+          "env": [],
+          "why": "refuses to start unless /mnt/bko-target/etc/fstab is the restored system's (its / matches the layout's)",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "[ -s /run/bko-holt/atimes.before ] || { mkdir -p -m 700 /run/bko-holt && find /mnt/bko-target \\( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \\) -prune -o -printf '%A@\\t%p\\0' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "the restored atimes (the restore stage lists them), to put back after this stage's reads",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "rm -rf /run/bko-holt/lvm-devices; [ ! -d /mnt/bko-target/etc/lvm/devices ] || { cp -a /mnt/bko-target/etc/lvm/devices /run/bko-holt/lvm-devices && touch -r /mnt/bko-target/etc/lvm /run/bko-holt/lvm-devices.parent; }"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "the restored LVM devices file, kept",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mount", "--rbind", "--make-rslave", "/dev", "/mnt/bko-target/dev"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mount", "--rbind", "--make-rslave", "/proc", "/mnt/bko-target/proc"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mount", "--rbind", "--make-rslave", "/sys", "/mnt/bko-target/sys"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mount", "--rbind", "--make-rslave", "/run", "/mnt/bko-target/run"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "chroot",
+            "/mnt/bko-target",
+            "sh",
+            "-c",
+            "c=/etc/initramfs-tools/conf.d/zz-resume-auto; r=; w=; if [ ! -e \"$c\" ] && command -v unmkinitramfs >/dev/null; then for i in /boot/initrd.img-*; do [ -f \"$i\" ] || continue; d=$(mktemp -d) || exit; unmkinitramfs \"$i\" \"$d\" 2>/dev/null; r=$(cat \"$d/conf/conf.d/zz-resume-auto\" \"$d/main/conf/conf.d/zz-resume-auto\" 2>/dev/null | sed -n 's/^RESUME=//p' | head -n 1); rm -rf \"$d\"; [ -z \"$r\" ] || break; done; fi; [ -z \"$r\" ] || { w=$(mktemp) && touch -r \"${c%/*}\" \"$w\" && printf 'RESUME=%s\\n' \"$r\" > \"$c\"; } || exit; update-initramfs -u -k all; s=$?; [ -z \"$w\" ] || { rm -f \"$c\" && touch -r \"$w\" \"${c%/*}\" && rm -f \"$w\"; } || [ \"$s\" -ne 0 ] || s=1; exit \"$s\""
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "chroot",
+            "/mnt/bko-target",
+            "grub-install",
+            "--target=x86_64-efi",
+            "--efi-directory=/boot/efi",
+            "--bootloader-id=ubuntu",
+            "--no-nvram"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "os-prober off: it would list the rescue system's disks",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["chroot", "/mnt/bko-target", "env", "LANG=en_US.UTF-8", "update-grub"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "! grep -q ' /mnt/bko-target/usr/bin/os-prober ' /proc/self/mountinfo || umount /mnt/bko-target/usr/bin/os-prober"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["bko-holt", "efi-dedupe", "/dev/sdq", "1", "\\EFI\\ubuntu\\shimx64.efi"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "NVRAM's entries for this partition and loader, from an earlier restore here, deleted",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "efibootmgr",
+            "--quiet",
+            "--create",
+            "--disk",
+            "/dev/sdq",
+            "--part",
+            "1",
+            "--label",
+            "elementary OS 8",
+            "--loader",
+            "\\EFI\\ubuntu\\shimx64.efi"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["mkdir", "-p", "/mnt/bko-target/var/log/bko-holt"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["cp", "-a", "/run/bko-holt/log/.", "/mnt/bko-target/var/log/bko-holt/"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "this restore's log, on the restored system",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "chroot",
+            "/mnt/bko-target",
+            "sh",
+            "-c",
+            "[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ \"${SELINUX:-disabled}\" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ ! -f \"$f\" ] || ! command -v setfiles >/dev/null || { [ ! -d /etc/kernel ] || set -- /etc/kernel; setfiles \"$f\" /boot /var/log/bko-holt \"$@\"; }"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "SELinux labels for the files the boot stage wrote",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "chroot",
+            "/mnt/bko-target",
+            "sh",
+            "-c",
+            "[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ \"${SELINUX:-disabled}\" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ -f \"$f\" ] && command -v setfiles >/dev/null || exit 0; r=/run/bko-holt/mount-points; mkdir -p \"$r\" && mount --bind / \"$r\" || exit 1; setfiles -r \"$r\" \"$f\" \"$r\"/boot; s=$?; umount \"$r\"; [ $s = 0 ] || exit $s; mkdir -p \"$r\"/boot && mount --bind /boot \"$r\"/boot || exit 1; setfiles -r \"$r\" \"$f\" \"$r\"/boot/efi; s=$?; umount \"$r\"/boot; [ $s = 0 ] || exit $s"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "SELinux labels for the mount points load made, which the mounts hide from the restore",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["umount", "--recursive", "/mnt/bko-target/run"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["umount", "--recursive", "/mnt/bko-target/sys"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["umount", "--recursive", "/mnt/bko-target/proc"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": ["umount", "--recursive", "/mnt/bko-target/dev"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "[ ! -d /run/bko-holt/lvm-devices ] || { rm -rf /mnt/bko-target/etc/lvm/devices && cp -a /run/bko-holt/lvm-devices /mnt/bko-target/etc/lvm/devices && touch -r /run/bko-holt/lvm-devices.parent /mnt/bko-target/etc/lvm; }"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "the restored LVM devices file, put back",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "bash",
+            "-c",
+            "find /mnt/bko-target \\( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \\) -prune -o -printf '%A@\\t%p\\0' | LC_ALL=C sort -z > /run/bko-holt/atimes.after && LC_ALL=C comm -z -23 /run/bko-holt/atimes.before /run/bko-holt/atimes.after | \\\n             while IFS=$'\\t' read -r -d '' a p; do [ -L \"$p\" ] || [ -e \"$p\" ] || continue; touch -a -h -d \"@$a\" -- \"$p\" 2>/dev/null || { [ ! -L \"$p\" ] && lsattr -d -- \"$p\" 2>/dev/null | cut -d' ' -f1 | grep -q i && { chattr -i -- \"$p\"; touch -a -h -d \"@$a\" -- \"$p\"; chattr +i -- \"$p\"; }; }; done"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "the atimes this stage's reads changed, put back",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    },
+    {
+      "name": "close",
+      "commands": [
+        {
+          "kind": "run",
+          "argv": ["umount", "--recursive", "/mnt/bko-target"],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "me=$(readlink /proc/self/ns/mnt); seen=\" $me \"; at() { awk -v t=/mnt/bko-target '{ m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }'; }; for f in /proc/[0-9]*/mountinfo; do grep -q '/mnt/bko-target[ /]' \"$f\" 2>/dev/null || continue; p=${f#/proc/}; p=${p%/mountinfo}; ns=$(readlink /proc/$p/ns/mnt) || continue; case $seen in *\" $ns \"*) continue;; esac; seen=\"$seen$ns \"; echo \"unmounting /mnt/bko-target in $ns (pid $p, $(cat /proc/$p/comm))\"; for m in $(at <\"$f\"); do nsenter -t \"$p\" -m umount --recursive \"$m\" || true; done; done; awk '{ for (i = 7; i < NF; i++) if ($i == \"-\") { if ($(i + 1) == \"nsfs\" && $4 ~ /^mnt:\\[/) print $4, $5; break } }' /proc/self/mountinfo | while read -r ns b; do case $seen in *\" $ns \"*) continue;; esac; seen=\"$seen$ns \"; ms=$(nsenter --mount=\"$b\" cat /proc/self/mountinfo | at); [ -n \"$ms\" ] || continue; echo \"unmounting /mnt/bko-target in $ns (bound at $b)\"; for m in $ms; do nsenter --mount=\"$b\" umount --recursive \"$m\" || true; done; done"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": "other mount namespaces' copies of the target's mounts",
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "i=0; until udevadm settle; vgchange --devicesfile '' --devices /dev/mapper/cryptdata --activate n data; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        },
+        {
+          "kind": "run",
+          "argv": [
+            "sh",
+            "-c",
+            "i=0; until udevadm settle; cryptsetup close cryptdata; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done"
+          ],
+          "env": [
+            ["LC_ALL", "C"]
+          ],
+          "why": null,
+          "path": null,
+          "dev": null,
+          "stdin": null,
+          "stdin_bytes": null,
+          "stdin_sha256": null,
+          "private": false,
+          "archiver": false
+        }
+      ]
+    }
+  ],
+  "text": "# bko-holt load plan for layout.json\n# Source: host-1, elementary OS 8, UEFI boot with grub, dumped 2026-11-15T03:06:38Z\n#\n# Disks:\n#   vda (20 GiB) -> /dev/sdq\n\n# ---- partition ----\n# vda -> /dev/sdq: clear the old table and signatures\nwipefs --all /dev/sdq\n# /dev/sdq: its first 4 MiB zeroed, and its last 1 MiB (a GPT's backup, md 0.90/1.0 superblocks, ZFS's end labels)\ndd if=/dev/zero of=/dev/sdq bs=1M count=4 conv=fsync\nsh -c 'n=$(blockdev --getsz /dev/sdq) && dd if=/dev/zero of=/dev/sdq bs=512 seek=$((n - 2048)) count=2048 conv=fsync'\n# the new partitions' old content zeroed through /dev/sdq, before its table names them (blocks of 512 bytes, at their start= sectors)\n# vda1: its first 4 MiB and its last 1 MiB\ndd if=/dev/zero of=/dev/sdq bs=512 seek=2048 count=8192 conv=fsync\ndd if=/dev/zero of=/dev/sdq bs=512 seek=569344 count=2048 conv=fsync\n# vda2: its first 4 MiB and its last 1 MiB\ndd if=/dev/zero of=/dev/sdq bs=512 seek=571392 count=8192 conv=fsync\ndd if=/dev/zero of=/dev/sdq bs=512 seek=2666496 count=2048 conv=fsync\n# vda3: its first 4 MiB and its last 1 MiB\ndd if=/dev/zero of=/dev/sdq bs=512 seek=2668544 count=8192 conv=fsync\ndd if=/dev/zero of=/dev/sdq bs=512 seek=41938944 count=2048 conv=fsync\n# udev done with /dev/sdq before sfdisk takes it\nudevadm settle\nsfdisk --wipe always --wipe-partitions always /dev/sdq <<'EOF'\nlabel: gpt\nlabel-id: bc000000-0000-4000-8000-000000000001\nunit: sectors\nsector-size: 512\ntable-length: 128\nfirst-lba: 2048\nlast-lba: 41943006\n\n/dev/sdq1 : start=2048, size=569344, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=BC000000-0000-4000-8000-000000000002\n/dev/sdq2 : start=571392, size=2097152, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=BC000000-0000-4000-8000-000000000003\n/dev/sdq3 : start=2668544, size=39272448, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=BC000000-0000-4000-8000-000000000006\nEOF\nudevadm settle\n\n# ---- assemble ----\n# LUKS2 on /dev/sdq3: asks for the new passphrase\ncryptsetup luksFormat --batch-mode --type=luks2 --cipher=aes-xts-plain64 --key-size=512 --sector-size=512 --offset=32768 --pbkdf=argon2id --pbkdf-memory=262144 --pbkdf-parallel=4 --pbkdf-force-iterations=39 --hash=sha256 --luks2-metadata-size=16384 --luks2-keyslots-size=16744448 --uuid=bc000000-0000-4000-8000-000000000007 /dev/sdq3\ncryptsetup open /dev/sdq3 cryptdata\nmkdir -p -m 700 /run/bko-holt/lvm\n# volume group data: its metadata, for pvcreate and vgcfgrestore\ncat > /run/bko-holt/lvm/data.vg <<'EOF'\ndata {\n\tid = \"bkoLVM-0000-0000-0000-0000-0000-000002\"\n\tseqno = 3\n\tformat = \"lvm2\"\n\tstatus = [\"RESIZEABLE\", \"READ\", \"WRITE\"]\n\tflags = []\n\textent_size = 8192\n\tmax_lv = 0\n\tmax_pv = 0\n\tmetadata_copies = 0\n\tphysical_volumes {\n\t\tpv0 {\n\t\t\tid = \"bkoLVM-0000-0000-0000-0000-0000-000001\"\n\t\t\tdevice = \"/dev/mapper/cryptdata\"\n\t\t\tstatus = [\"ALLOCATABLE\"]\n\t\t\tflags = []\n\t\t\tdev_size = 39239680\n\t\t\tpe_start = 2048\n\t\t\tpe_count = 4789\n\t\t}\n\t}\n\tlogical_volumes {\n\t\troot {\n\t\t\tid = \"bkoLVM-0000-0000-0000-0000-0000-000003\"\n\t\t\tstatus = [\"READ\", \"WRITE\", \"VISIBLE\"]\n\t\t\tflags = []\n\t\t\tcreation_host = \"host2\"\n\t\t\tcreation_time = 1794710879\n\t\t\tsegment_count = 1\n\t\t\tsegment1 {\n\t\t\t\tstart_extent = 0\n\t\t\t\textent_count = 3765\n\t\t\t\ttype = \"striped\"\n\t\t\t\tstripe_count = 1\n\t\t\t\tstripes = [\"pv0\", 0]\n\t\t\t}\n\t\t}\n\t\tswap {\n\t\t\tid = \"bkoLVM-0000-0000-0000-0000-0000-000004\"\n\t\t\tstatus = [\"READ\", \"WRITE\", \"VISIBLE\"]\n\t\t\tflags = []\n\t\t\tcreation_host = \"host2\"\n\t\t\tcreation_time = 1794710879\n\t\t\tsegment_count = 1\n\t\t\tsegment1 {\n\t\t\t\tstart_extent = 0\n\t\t\t\textent_count = 1024\n\t\t\t\ttype = \"striped\"\n\t\t\t\tstripe_count = 1\n\t\t\t\tstripes = [\"pv0\", 3765]\n\t\t\t}\n\t\t}\n\t}\n}\ncontents = \"Text Format Volume Group\"\nversion = 1\ndescription = \"made by bko-holt load from a bko-holt dump\"\ncreation_host = \"host2\"\ncreation_time = 1794710879\nEOF\npvcreate --devicesfile '' --devices /dev/mapper/cryptdata --uuid bkoLVM-0000-0000-0000-0000-0000-000001 --restorefile /run/bko-holt/lvm/data.vg /dev/mapper/cryptdata\nvgcfgrestore --devicesfile '' --devices /dev/mapper/cryptdata --file /run/bko-holt/lvm/data.vg data\nvgchange --devicesfile '' --devices /dev/mapper/cryptdata --activate y data\n\n# ---- format ----\n# vda1: vfat \"EFI\"\nmkfs.fat -F 32 -i BC000001 -n EFI -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdq1\n# check: /dev/sdq1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)\n# vda2: ext4\nmke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000004 -b 4096 -I 256 -N 65536 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000005,desc_size=64,resize=268435456 /dev/sdq2 1048576k\ntune2fs -r 13107 /dev/sdq2\n# check: /dev/sdq2 is ext4 with the source's features (read back by bko-holt's own probe)\n# dm-1: ext4\nmke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000008 -b 4096 -I 256 -N 964768 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000009,desc_size=64,resize=2151677952 /dev/mapper/data-root 15421440k\ntune2fs -r 192768 /dev/mapper/data-root\n# check: /dev/mapper/data-root is ext4 with the source's features (read back by bko-holt's own probe)\n# dm-2: swap\nmkswap -U bc000000-0000-4000-8000-00000000000a --pagesize 4096 /dev/mapper/data-swap\n# check: /dev/mapper/data-swap is swap with the source's UUID, label and page size (read back by bko-holt's own probe)\n\n# ---- mount ----\nmkdir -p /mnt/bko-target\nmount -t ext4 -o defaults /dev/mapper/data-root /mnt/bko-target\nmkdir -p /mnt/bko-target/boot\nmount -t ext4 -o defaults /dev/sdq2 /mnt/bko-target/boot\nmkdir -p /mnt/bko-target/boot/efi\nmount -t vfat -o umask=0077 /dev/sdq1 /mnt/bko-target/boot/efi\n\n# ---- restore ----\n# snapshot latest of /srv/bko-repo, with BackOtter's restore flags\nRUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target\n# the atimes the restore set, for boot to put back after its reads\nsh -c 'mkdir -p -m 700 /run/bko-holt && find /mnt/bko-target \\( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \\) -prune -o -printf '\\''%A@\\t%p\\0'\\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'\n\n# ---- boot ----\n# refuses to start unless /mnt/bko-target/etc/fstab is the restored system's (its / matches the layout's)\n# the restored atimes (the restore stage lists them), to put back after this stage's reads\nsh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p -m 700 /run/bko-holt && find /mnt/bko-target \\( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \\) -prune -o -printf '\\''%A@\\t%p\\0'\\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'\n# the restored LVM devices file, kept\nsh -c 'rm -rf /run/bko-holt/lvm-devices; [ ! -d /mnt/bko-target/etc/lvm/devices ] || { cp -a /mnt/bko-target/etc/lvm/devices /run/bko-holt/lvm-devices && touch -r /mnt/bko-target/etc/lvm /run/bko-holt/lvm-devices.parent; }'\nmount --rbind --make-rslave /dev /mnt/bko-target/dev\nmount --rbind --make-rslave /proc /mnt/bko-target/proc\nmount --rbind --make-rslave /sys /mnt/bko-target/sys\nmount --rbind --make-rslave /run /mnt/bko-target/run\nchroot /mnt/bko-target sh -c 'c=/etc/initramfs-tools/conf.d/zz-resume-auto; r=; w=; if [ ! -e \"$c\" ] && command -v unmkinitramfs >/dev/null; then for i in /boot/initrd.img-*; do [ -f \"$i\" ] || continue; d=$(mktemp -d) || exit; unmkinitramfs \"$i\" \"$d\" 2>/dev/null; r=$(cat \"$d/conf/conf.d/zz-resume-auto\" \"$d/main/conf/conf.d/zz-resume-auto\" 2>/dev/null | sed -n '\\''s/^RESUME=//p'\\'' | head -n 1); rm -rf \"$d\"; [ -z \"$r\" ] || break; done; fi; [ -z \"$r\" ] || { w=$(mktemp) && touch -r \"${c%/*}\" \"$w\" && printf '\\''RESUME=%s\\n'\\'' \"$r\" > \"$c\"; } || exit; update-initramfs -u -k all; s=$?; [ -z \"$w\" ] || { rm -f \"$c\" && touch -r \"$w\" \"${c%/*}\" && rm -f \"$w\"; } || [ \"$s\" -ne 0 ] || s=1; exit \"$s\"'\nchroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=ubuntu --no-nvram\n# os-prober off: it would list the rescue system's disks\nsh -c '[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober'\nchroot /mnt/bko-target env LANG=en_US.UTF-8 update-grub\nsh -c '! grep -q '\\'' /mnt/bko-target/usr/bin/os-prober '\\'' /proc/self/mountinfo || umount /mnt/bko-target/usr/bin/os-prober'\n# NVRAM's entries for this partition and loader, from an earlier restore here, deleted\nbko-holt efi-dedupe /dev/sdq 1 '\\EFI\\ubuntu\\shimx64.efi'\nefibootmgr --quiet --create --disk /dev/sdq --part 1 --label 'elementary OS 8' --loader '\\EFI\\ubuntu\\shimx64.efi'\nmkdir -p /mnt/bko-target/var/log/bko-holt\n# this restore's log, on the restored system\ncp -a /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/\n# SELinux labels for the files the boot stage wrote\nchroot /mnt/bko-target sh -c '[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ \"${SELINUX:-disabled}\" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ ! -f \"$f\" ] || ! command -v setfiles >/dev/null || { [ ! -d /etc/kernel ] || set -- /etc/kernel; setfiles \"$f\" /boot /var/log/bko-holt \"$@\"; }'\n# SELinux labels for the mount points load made, which the mounts hide from the restore\nchroot /mnt/bko-target sh -c '[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ \"${SELINUX:-disabled}\" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ -f \"$f\" ] && command -v setfiles >/dev/null || exit 0; r=/run/bko-holt/mount-points; mkdir -p \"$r\" && mount --bind / \"$r\" || exit 1; setfiles -r \"$r\" \"$f\" \"$r\"/boot; s=$?; umount \"$r\"; [ $s = 0 ] || exit $s; mkdir -p \"$r\"/boot && mount --bind /boot \"$r\"/boot || exit 1; setfiles -r \"$r\" \"$f\" \"$r\"/boot/efi; s=$?; umount \"$r\"/boot; [ $s = 0 ] || exit $s'\numount --recursive /mnt/bko-target/run\numount --recursive /mnt/bko-target/sys\numount --recursive /mnt/bko-target/proc\numount --recursive /mnt/bko-target/dev\n# the restored LVM devices file, put back\nsh -c '[ ! -d /run/bko-holt/lvm-devices ] || { rm -rf /mnt/bko-target/etc/lvm/devices && cp -a /run/bko-holt/lvm-devices /mnt/bko-target/etc/lvm/devices && touch -r /run/bko-holt/lvm-devices.parent /mnt/bko-target/etc/lvm; }'\n# the atimes this stage's reads changed, put back\nbash -c 'find /mnt/bko-target \\( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \\) -prune -o -printf '\\''%A@\\t%p\\0'\\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.after && LC_ALL=C comm -z -23 /run/bko-holt/atimes.before /run/bko-holt/atimes.after | \\\n             while IFS=$'\\''\\t'\\'' read -r -d '\\'''\\'' a p; do [ -L \"$p\" ] || [ -e \"$p\" ] || continue; touch -a -h -d \"@$a\" -- \"$p\" 2>/dev/null || { [ ! -L \"$p\" ] && lsattr -d -- \"$p\" 2>/dev/null | cut -d'\\'' '\\'' -f1 | grep -q i && { chattr -i -- \"$p\"; touch -a -h -d \"@$a\" -- \"$p\"; chattr +i -- \"$p\"; }; }; done'\n\n# ---- close ----\numount --recursive /mnt/bko-target\n# other mount namespaces' copies of the target's mounts\nsh -c 'me=$(readlink /proc/self/ns/mnt); seen=\" $me \"; at() { awk -v t=/mnt/bko-target '\\''{ m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }'\\''; }; for f in /proc/[0-9]*/mountinfo; do grep -q '\\''/mnt/bko-target[ /]'\\'' \"$f\" 2>/dev/null || continue; p=${f#/proc/}; p=${p%/mountinfo}; ns=$(readlink /proc/$p/ns/mnt) || continue; case $seen in *\" $ns \"*) continue;; esac; seen=\"$seen$ns \"; echo \"unmounting /mnt/bko-target in $ns (pid $p, $(cat /proc/$p/comm))\"; for m in $(at <\"$f\"); do nsenter -t \"$p\" -m umount --recursive \"$m\" || true; done; done; awk '\\''{ for (i = 7; i < NF; i++) if ($i == \"-\") { if ($(i + 1) == \"nsfs\" && $4 ~ /^mnt:\\[/) print $4, $5; break } }'\\'' /proc/self/mountinfo | while read -r ns b; do case $seen in *\" $ns \"*) continue;; esac; seen=\"$seen$ns \"; ms=$(nsenter --mount=\"$b\" cat /proc/self/mountinfo | at); [ -n \"$ms\" ] || continue; echo \"unmounting /mnt/bko-target in $ns (bound at $b)\"; for m in $ms; do nsenter --mount=\"$b\" umount --recursive \"$m\" || true; done; done'\nsh -c 'i=0; until udevadm settle; vgchange --devicesfile '\\'''\\'' --devices /dev/mapper/cryptdata --activate n data; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done'\nsh -c 'i=0; until udevadm settle; cryptsetup close cryptdata; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done'\n\n# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit\n"
+}
+

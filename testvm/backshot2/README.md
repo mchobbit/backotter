@@ -190,7 +190,7 @@ load itself.
 | B6 shrinker, corpus | `bs2lib/shrink.py`, `cases/` |
 | B7 the Alpine sources | `testvm/make-bootstrap.sh alpine-uefi|alpine-lvm|alpine-luks` |
 | B8 content drift | `bs2lib/content.py` |
-| B9 option sweep | `bs2lib/sweep.py`; judge.py `--new-uuids`, `--removable`, `--nvram-kept`; bs1-restore and bs1-verify (below) |
+| B9 option sweep | `bs2lib/sweep.py`; judge.py `--new-uuids`, `--removable`, `--nvram-kept`, `--disk-ports`; bs1-restore and bs1-verify (below) |
 | ledger | `bs2lib/ledger.py`: Test2's ledger, family `bs2` |
 | A1 the family interface (BackShot2All) | `bs2lib/families/` (registry `__init__.py`, `base.py`, one module per family or trait); `tests/test_families.py` (registry, goldens `tests/golden/FAMILY.json`, smoke over every Linux corpus dump), `tests/test_family_*.py` |
 | A2 every built Linux source at tiers 1 and 2 | `bs2lib/sources.py` (the source table), `bs2lib/room.py` (`scratch()`: RAM or SSD), bs2-host's queue (the SSD lane), `tests/test_bs2_sources.py`, `tests/test_bs2_placement.py` |
@@ -377,7 +377,12 @@ BackShot2's say `BackShot2`.
    in both boots: the firmware walks a port's bus at the port, before the
    rescuer's disk, which Linux probes first (bs2a-20261114-0655: with the
    target on pcie.0 after the rescuer's disk, the restored boot ended in
-   the shell).
+   the shell).  The source was dumped with its disks on pcie.0, so the
+   restored dump's `/dev/disk/by-path/` links name other PCI addresses:
+   tier 2 judges with `--nvram-kept --disk-ports`, and `--disk-ports`
+   lets a by-path link differ in its leading `pci-`/`virtio-pci-` address
+   alone (the rest of the link the source's, one new address for each old
+   one); any other link change is a DIFF (bs2a-20261124-1738).
 5. A FAIL is shrunk (`bs2-host shrink`) and copied into `cases/` as
    `fail-NNN-NAME.case`, with its check and excerpt; "finding" says whose.
    Run the shrink itself without `cmp-run.sh --reserve`: each of its

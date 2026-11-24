@@ -3,7 +3,7 @@
 copy's after it booted.  Prints one DIFF line per field that differs, and
 exits 1 if any field outside IGNORED differs.
 
-Usage: judge.py [--expect] [--new-uuids] [--removable] [--nvram-kept] [--reformat MOUNT=TYPE]...
+Usage: judge.py [--expect] [--new-uuids] [--removable] [--nvram-kept] [--disk-ports] [--reformat MOUNT=TYPE]...
                 [--grow BYTES | --fit BYTES [--fit-pct PCT] | --degraded] SRC.json DST.json
        judge.py fs FSMETA.py SRC-META.json DST-META.json [--no-atime] [--new-uuids] [--reformat MOUNT=TYPE]...
        judge.py esp DIR
@@ -72,6 +72,12 @@ BackShot2's option sweep (B9) adds what each of load's flags changes on purpose:
                its shim's fallback adds one), and the boot order and current
                entry are the rescue session's; the entries on the machine's
                disks (HD(), a partition the dump found) are compared, as a set
+--disk-ports   tier 2's restored boot put each disk behind a PCIe root port of
+               its own (vm-run --disk-ports), where the source's boot had it on
+               pcie.0: a /dev/disk/by-path/ link may name another PCI address
+               (pci-DDDD:BB:SS.F, virtio-pci-...), one new address for each old
+               one, if all after the address is the source's (-partN,
+               -part/by-partuuid/UUID ...); the same links, as many, else a DIFF
 
 IGNORED lists what may differ between two boots of the same machine, or can't
 be kept by a restore, each with why.  judge.py prints which of them did differ,
@@ -189,6 +195,33 @@ def drop_removable(d):
             for f in e["contents"]["files"]:
                 if str(f.get("same_as", "")).upper().startswith("EFI/BOOT/"):
                     f.pop("same_as")
+
+
+# --disk-ports: a by-path link's leading PCI address, and what follows it.
+BY_PATH_PCI = re.compile(r"^/dev/disk/by-path/((?:virtio-)?pci-)([0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7])((?:-.*)?)$")
+
+
+def disk_port_move(k, va, vb):
+    """--disk-ports: (old, new) PCI address when field K is a links entry under
+    /dev/disk/by-path/ whose values VA and VB differ in that address alone
+    (the same pci- or virtio-pci- form, the same rest); None otherwise."""
+    if not re.search(r"(^|\.)links\.\d+$", k) or not (isinstance(va, str) and isinstance(vb, str)):
+        return None
+    ma, mb = BY_PATH_PCI.match(va), BY_PATH_PCI.match(vb)
+    if not (ma and mb) or ma.group(1) != mb.group(1) or ma.group(3) != mb.group(3) or ma.group(2) == mb.group(2):
+        return None
+    return ma.group(2), mb.group(2)
+
+
+def disk_port_problems(moves):
+    """--disk-ports: the moves {(old, new)} that aren't one new address for each old one."""
+    out = []
+    for i, what in ((0, "moved to"), (1, "moved from")):
+        seen = {}
+        for m in moves:
+            seen.setdefault(m[i], set()).add(m[1 - i])
+        out += [f"by-path address {x} {what} {', '.join(sorted(ys))}" for x, ys in sorted(seen.items()) if len(ys) > 1]
+    return out
 
 
 def nvram_kept(d):
@@ -2615,8 +2648,8 @@ def main():
     grow, fit, pct, plan_only = 0, None, None, None
     flags = set()
     reforms = []
-    while sys.argv[1] in ("--expect", "--new-uuids", "--removable", "--nvram-kept", "--grow", "--fit", "--fit-pct", "--fit-plan", "--reformat"):
-        if sys.argv[1] in ("--expect", "--new-uuids", "--removable", "--nvram-kept"):
+    while sys.argv[1] in ("--expect", "--new-uuids", "--removable", "--nvram-kept", "--disk-ports", "--grow", "--fit", "--fit-pct", "--fit-plan", "--reformat"):
+        if sys.argv[1] in ("--expect", "--new-uuids", "--removable", "--nvram-kept", "--disk-ports"):
             flags.add(sys.argv.pop(1))
             continue
         if sys.argv[1] == "--reformat":
@@ -2693,6 +2726,7 @@ def main():
             if k.endswith(".md.array_state") and v in ("active", "clean", "active-idle"):
                 m[k] = "clean (or active)"
     real, ignored = [], {}
+    port_moves = set()
     geli = geli_records(src)
     for k in sorted(set(a) | set(b)):
         if a.get(k, "<absent>") == b.get(k, "<absent>"):
@@ -2746,6 +2780,11 @@ def main():
             why = "a ZFS clone (a boot environment) comes back as a plain dataset: its origin snapshot isn't in the backup"
         if not why and all(isinstance(v, str) and v.startswith("/dev/disk/by-diskseq/") for v in (va, vb)):
             why = "by-diskseq links count the disks the kernel has seen since it booted"
+        mv = disk_port_move(k, va, vb) if "--disk-ports" in flags else None
+        if not why and mv:
+            port_moves.add(mv)
+            why = ("by-path links name the disk's PCI address, the virtual machine's: tier 2's restored boot puts each disk "
+                   "behind a PCIe root port of its own (vm-run --disk-ports), the source's was on pcie.0; nothing load restores")
         # Thin pools and their LVs, made anew by lvcreate (lvcreate_made).
         m = re.match(r"^(storage\.lvm\.volume_groups\.\d+)\.logical_volumes\.(\d+)\.(.+)$", k)
         if not why and m:
@@ -2786,6 +2825,9 @@ def main():
     for x in idbad:
         real.append("new-uuids")
         print(f"DIFF new-uuids: {x}")
+    for x in disk_port_problems(port_moves):
+        real.append("disk-ports")
+        print(f"DIFF disk-ports: {x}")
     if degraded:
         # Both dumps' arrays with empty slots: name -> the slots filled, of
         # how many.  (The fields themselves are compared above.)

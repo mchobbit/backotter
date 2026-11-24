@@ -726,6 +726,92 @@ class TestJudgeExpect(unittest.TestCase):
             dump(dst, b)
             self.assertEqual(self.judge("--expect", "--grow", "0", "--removable", "--nvram-kept", a, b).returncode, 1)
 
+    @staticmethod
+    def moved(d, moves):
+        """D's by-path links with each PCI address in MOVES {old: new} replaced, as tier 2's root ports leave them."""
+        d = copy.deepcopy(d)
+
+        def links(x):
+            x["links"] = [next((l.replace(o, n, 1) for o, n in moves.items() if l.startswith("/dev/disk/by-path/")
+                                and o in l), l) for l in x.get("links") or []]
+        for dk in d["storage"]["disks"]:
+            links(dk)
+            for p in dk["partitions"]:
+                links(p)
+        return d
+
+    def judge_dumps(self, src, dst, *flags):
+        with tempfile.TemporaryDirectory() as t:
+            a, b = os.path.join(t, "a.json"), os.path.join(t, "b.json")
+            dump(src, a)
+            dump(dst, b)
+            return self.judge("--expect", "--nvram-kept", *flags, a, b)
+
+    def test_disk_ports_move_by_path_links(self):
+        # bs2a-20261124-1738: fedora44-uefi (cage) and aerynos (czerny), dumped on pcie.0 slot 3
+        # and restored behind a root port, failed on their by-path links alone.
+        for name in ("fedora44-uefi", "aerynos"):
+            src = corpus(name)
+            dst = self.moved(src, {"0000:00:03.0": "0000:01:00.0"})
+            self.assertIn("/dev/disk/by-path/pci-0000:01:00.0", dst["storage"]["disks"][0]["links"])
+            self.assertIn("/dev/disk/by-path/virtio-pci-0000:01:00.0", dst["storage"]["disks"][0]["links"])
+            p1 = dst["storage"]["disks"][0]["partitions"][0]["links"]
+            for x in ("pci-0000:01:00.0-part1", "virtio-pci-0000:01:00.0-part1", "pci-0000:01:00.0-part/by-partnum/1",
+                      "pci-0000:01:00.0-part/by-partuuid/bc000000-0000-4000-8000-000000000002"):
+                self.assertIn("/dev/disk/by-path/" + x, p1)
+            r = self.judge_dumps(src, dst)
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn('DIFF storage.disks.0.links.1: "/dev/disk/by-path/pci-0000:00:03.0" -> "/dev/disk/by-path/pci-0000:01:00.0"', r.stdout)
+            r = self.judge_dumps(src, dst, "--disk-ports")
+            self.assertEqual(r.returncode, 0, r.stdout)
+            self.assertNotIn("DIFF", r.stdout)
+            self.assertRegex(r.stdout, r"ignored \(by-path links name the disk's PCI address, .* nothing load restores\): \d+: storage\.disks\.0\.links\.1, ")
+
+    def test_disk_ports_keeps_the_rest_of_a_link(self):
+        src = corpus("fedora44-uefi")
+
+        def at(d):
+            return d["storage"]["disks"][0]["partitions"][0]["links"]
+        for old, new in (("pci-0000:01:00.0-part/by-partnum/1", "pci-0000:01:00.0-part/by-partnum/2"),
+                         ("pci-0000:01:00.0-part1", "pci-0000:01:00.0-part2"),
+                         ("pci-0000:01:00.0-part/by-partuuid/bc000000-0000-4000-8000-000000000002",
+                          "pci-0000:01:00.0-part/by-partuuid/bc000000-0000-4000-8000-0000000000ff"),
+                         ("virtio-pci-0000:01:00.0-part1", "pci-0000:01:00.0-part1")):
+            dst = self.moved(src, {"0000:00:03.0": "0000:01:00.0"})
+            ls = at(dst)
+            ls[ls.index("/dev/disk/by-path/" + old)] = "/dev/disk/by-path/" + new
+            r = self.judge_dumps(src, dst, "--disk-ports")
+            self.assertEqual(r.returncode, 1, (old, r.stdout))
+            self.assertIn(f'-> "/dev/disk/by-path/{new}"', r.stdout)
+        # A link other than by-path, or one the restored machine lacks, still counts.
+        dst = self.moved(src, {"0000:00:03.0": "0000:01:00.0"})
+        at(dst).remove("/dev/disk/by-path/pci-0000:01:00.0-part/by-partnum/1")
+        r = self.judge_dumps(src, dst, "--disk-ports")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        dst = self.moved(src, {"0000:00:03.0": "0000:01:00.0"})
+        ls = at(dst)
+        ls[ls.index("/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000002")] = "/dev/disk/by-partuuid/bc000000-0000-4000-8000-0000000000ff"
+        self.assertEqual(self.judge_dumps(src, dst, "--disk-ports").returncode, 1)
+
+    def test_disk_ports_one_new_address_for_each_old(self):
+        src = corpus("fedora44-raid")   # two disks, on pcie.0 slots 3 and 4
+        r = self.judge_dumps(src, self.moved(src, {"0000:00:03.0": "0000:01:00.0", "0000:00:04.0": "0000:02:00.0"}), "--disk-ports")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        r = self.judge_dumps(src, self.moved(src, {"0000:00:03.0": "0000:01:00.0", "0000:00:04.0": "0000:01:00.0"}), "--disk-ports")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("DIFF disk-ports: by-path address 0000:01:00.0 moved from 0000:00:03.0, 0000:00:04.0", r.stdout)
+
+    def test_tier2_judges_with_disk_ports(self):
+        host = os.path.join(BS2, "bs2-host")
+        with tempfile.TemporaryDirectory() as t:
+            src, p = f"{t}/src.json", f"{t}/c.case"
+            dump(ALPINE, src)
+            C.write(p, {"source": "alpine324", "edits": [], "load_options": []})
+            for tier, want in ((1, "BS2_JUDGE=(--expect)"), (2, "BS2_JUDGE=(--expect --nvram-kept --disk-ports)")):
+                r = subprocess.run([sys.executable, host, "apply", p, src, f"{t}/out.json", "--tier", str(tier)], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn(want, r.stdout.splitlines())
+
 
 VM_MOUNT = os.path.join(BS2, "..", "vm-mount")
 

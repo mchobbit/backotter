@@ -466,7 +466,8 @@ def cmd_apply(a):
     if ex["removable"]:
         judge.append("--removable")
     if a.tier == 2:
-        judge.append("--nvram-kept")
+        # One NVRAM with the rescuer, and the restored boot's disks behind root ports (ht1-bs2.sh's bs2_setup).
+        judge += ["--nvram-kept", "--disk-ports"]
     snaps = c.get("snapshots") or {}
     print(f"BS2_EDITS={len(c.get('edits') or [])}")
     print("BS2_TARGETS=(" + " ".join(q(targets[n]) for n in order) + ")")

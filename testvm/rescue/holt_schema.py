@@ -350,6 +350,7 @@ def check_stream(lines, where):
     seen = set()
     ended = False
     problems = False
+    commit = None       # start's
     for i, (n, e) in enumerate(evs):
         at = "%s:%d" % (where, n)
         if not isinstance(e, dict) or not isinstance(e.get("event"), str):
@@ -384,6 +385,7 @@ def check_stream(lines, where):
             if vt is not None and vt < MIN_VERSION:
                 errs.append("%s: version %s, older than %s, the first to write schema %d" % (at, e["version"], ".".join(map(str, MIN_VERSION)), SCHEMA))
             stages = e["stages"] or None
+            commit = e["commit"]
             for s in e["stages"]:
                 if s not in STAGES:
                     errs.append("%s: start names a stage %s" % (at, json.dumps(s)))
@@ -391,6 +393,8 @@ def check_stream(lines, where):
         if name in ("stage", "skip") and stages is not None and st not in stages:
             errs.append("%s: %s %s, not one of start's stages" % (at, name, json.dumps(st)))
         if name in ("stage", "skip"):
+            if problems:
+                errs.append("%s: %s %s after problems, when nothing runs" % (at, name, st))
             if open_stage is not None:
                 errs.append("%s: %s while %s is still going" % (at, name, open_stage))
             if st in seen:
@@ -413,6 +417,10 @@ def check_stream(lines, where):
                 errs.append("%s: end %d after problems, not 4" % (at, e["exit"]))
             if e["stopped"] and e["exit"] != 5:
                 errs.append("%s: stopped, but exit %d, not 5" % (at, e["exit"]))
+            if e["exit"] == 5 and not e["stopped"]:
+                errs.append("%s: exit 5, but not stopped" % at)
+            if e["exit"] == 0 and open_stage is not None:
+                errs.append("%s: end 0 while %s is still going" % (at, open_stage))
             continue
         if name == "failed":
             if st is not None and open_stage is not None and st != open_stage:
@@ -429,6 +437,8 @@ def check_stream(lines, where):
             if not 1 <= e["n"] <= e["of"] or e["n"] <= last_n:
                 errs.append("%s: cmd %d of %d after %d" % (at, e["n"], e["of"], last_n))
             last_n = e["n"]
+            if commit is False and not e["would"]:
+                errs.append("%s: cmd %d runs, but start says the run doesn't commit" % (at, e["n"]))
             pending = None if e["would"] else e["n"]
         elif name in ("progress", "warning"):
             if e["n"] != last_n:

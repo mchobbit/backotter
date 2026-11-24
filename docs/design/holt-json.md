@@ -1386,7 +1386,10 @@ once.
   this a report would show them.  *Check* at RT10i what report-bug's
   target-disk status already collects.
 - `report-bug --strip-file FILE` (new): a file of strings, one a line,
-  the Redactor replaces wherever they appear, as "other identifiers".
+  the Redactor replaces wherever they appear, as "other identifiers"
+  (in values and text, never in a JSON section's object keys, which are
+  bko-holt's own words: a hint "boot" mustn't leave the layout no
+  layout; the summary counts them on a line of their own).
   bko-rescue writes it in its `k/` directory with the repository
   password hint and anything else the user typed that isn't a secret
   (a location name), and removes it with the keys.

@@ -103,6 +103,10 @@ struct Sub {
     from: String,
     to: String,
     edge: Edge,
+    /// Whether it applies in JSON object keys too.  A string to strip
+    /// doesn't: one that is a word bko-holt's documents use as a key
+    /// ("disks", "boot") would leave the report's JSON no layout.
+    in_keys: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -798,7 +802,7 @@ impl Sealer {
         if from.is_empty() || from == to || self.r.subs.iter().any(|s| s.from == from && s.to == to && s.edge == edge) {
             return;
         }
-        self.r.subs.push(Sub { from, to, edge });
+        self.r.subs.push(Sub { from, to, edge, in_keys: true });
     }
 
     /// Only as the whole value of one of `kind`'s keys (a short label, a
@@ -1035,7 +1039,12 @@ impl Sealer {
         }
         let p = self.next("stripped", |n| vec![format!("stripped{n}")])[0].clone();
         self.entry(Kind::Id, orig, &p);
-        self.sub(orig, &p, Edge::Any);
+        self.r.stripped.push(p.clone());
+        // In values and text wherever it is, but never in an object key:
+        // bko-holt's keys are its own words, not the user's.
+        if !self.r.subs.iter().any(|s| s.from == orig) {
+            self.r.subs.push(Sub { from: orig.to_string(), to: p, edge: Edge::Any, in_keys: false });
+        }
     }
 
     fn uuid(&mut self, b: [u8; 16], kind: Kind) {
@@ -1253,6 +1262,9 @@ pub struct Redactor {
     whole: HashMap<String, Vec<(Kind, String)>>,
     back: Vec<(String, String)>,
     back_first: HashMap<u8, Vec<usize>>,
+    /// The pseudonyms of report-bug's stripped strings (Kind::Id entries
+    /// the summary counts on their own line).
+    stripped: Vec<String>,
 }
 
 impl Redactor {
@@ -1291,17 +1303,18 @@ impl Redactor {
 
     /// `s` with every identifier replaced.
     pub fn text(&self, s: &str) -> String {
-        self.text_with(s, true)
+        self.text_with(s, true, false)
     }
 
     /// An object key (the topology's are text; EFI variables' hold GUIDs).
     /// Names that are words the dump uses as keys ("data") have no word
     /// substitution, so "data_offset" stays.
+    /// A string to strip is left out of keys (Sub::in_keys).
     fn key(&self, s: &str) -> String {
-        self.text_with(s, true)
+        self.text_with(s, true, true)
     }
 
-    fn text_with(&self, s: &str, words: bool) -> String {
+    fn text_with(&self, s: &str, words: bool, key: bool) -> String {
         let s = &scrub_recovery_keys(s);
         let b = s.as_bytes();
         let mut out: Vec<u8> = Vec::with_capacity(b.len());
@@ -1311,12 +1324,10 @@ impl Redactor {
                 for &k in cands {
                     let sub = &self.subs[k];
                     let f = sub.from.as_bytes();
-                    if b[i..].starts_with(f) && (words || sub.edge != Edge::Word) {
-                        if sub.edge.fits(b, i, f.len()) {
-                            out.extend_from_slice(sub.to.as_bytes());
-                            i += f.len();
-                            continue 'outer;
-                        }
+                    if b[i..].starts_with(f) && (words || sub.edge != Edge::Word) && (sub.in_keys || !key) && sub.edge.fits(b, i, f.len()) {
+                        out.extend_from_slice(sub.to.as_bytes());
+                        i += f.len();
+                        continue 'outer;
                     }
                 }
             }
@@ -1511,6 +1522,15 @@ impl Redactor {
         } else {
             s += "Redacted (each replaced by the same pseudonym everywhere in the file):\n";
             for (k, es) in &by {
+                // Stripped strings are other identifiers, but none of those
+                // the plural names: a line of their own, never shown.
+                let (es, stripped): (Vec<&Entry>, Vec<&Entry>) = es.iter().copied().partition(|e| *k != Kind::Id || !self.stripped.contains(&e.pseudonym));
+                if !stripped.is_empty() {
+                    s += &format!("  {} strings given to strip (--strip-file)\n", stripped.len());
+                }
+                if es.is_empty() {
+                    continue;
+                }
                 s += &format!("  {} {}", es.len(), k.plural());
                 if originals && k.shown() {
                     let list: Vec<String> = es.iter().take(8).map(|e| format!("{} -> {}", e.original, e.pseudonym)).collect();
@@ -1617,6 +1637,20 @@ mod tests {
         assert!(ids.iter().all(|e| e.kind == Kind::Id));
         let shown = r.summary(true);
         assert!(!shown.contains("Mittens") && !shown.contains("attic"), "{shown}");
+        // Counted on a line of their own, not as GUIDs or hostids.
+        assert!(shown.contains("  2 strings given to strip (--strip-file)\n"), "{shown}");
+        let ids = r.entries.iter().filter(|e| e.kind == Kind::Id && !e.pseudonym.starts_with("stripped")).count();
+        assert_eq!(shown.contains(&format!("  {ids} other identifiers (")), ids > 0, "{shown}");
+        assert_eq!(shown.contains("other identifiers"), ids > 0, "{shown}");
+        // A string that is one of bko-holt's keys: values and text lose
+        // it, keys keep it, so the report's JSON is still a layout.
+        let mut c = Collector::new();
+        assert!(c.learn_strip("disk") && c.learn_strip("boot"));
+        let r = c.seal();
+        let v = parse(r#"{"storage":{"disks":[{"name":"vda","boot":true,"mounts":["/boot"],"note":"disk of mine"}]},"boot":{"disk":"vda"}}"#).unwrap();
+        assert_eq!(r.value(&v).compact(), r#"{"storage":{"disks":[{"name":"vda","boot":true,"mounts":["/stripped2"],"note":"stripped1 of mine"}]},"boot":{"disk":"vda"}}"#);
+        assert_eq!(r.unredact_value(&r.value(&v)).compact(), v.compact());
+        assert_eq!(r.summary(false).lines().nth(1), Some("  2 strings given to strip (--strip-file)"));
         // Every kind, once each, in ALL.
         for k in Kind::ALL {
             assert_eq!(Kind::ALL.iter().filter(|x| **x == k).count(), 1);

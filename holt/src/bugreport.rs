@@ -464,6 +464,76 @@ fn attached_values(text: &str) -> Vec<Value> {
         .collect()
 }
 
+/// The flags whose value is a repository or a password file: load's own
+/// (a plan document's `args`) and the archiver's (its argv in a plan's
+/// stages, in `cmd` and `failed` events, in a log's command lines).
+const SECRET_FLAGS: [&str; 3] = ["--repo", "--repository", "--password-file"];
+
+/// What FLAG's VALUE teaches the Collector: a repository or a password
+/// file (Kind::Secret), or --key-file NAME=FILE's FILE.  A value that is
+/// itself a flag is a flag with its value missing.
+fn learn_flag(c: &mut Collector, flag: &str, value: &str) {
+    if value.starts_with("--") {
+        return;
+    }
+    if SECRET_FLAGS.contains(&flag) {
+        c.learn_secret(value);
+    } else if flag == "--key-file" {
+        c.learn_key_file(value.split_once('=').map_or(value, |(_, f)| f));
+    }
+}
+
+/// The repositories, password files and key files named in a document's
+/// or an event's argument lists, at any depth.  Neither the dump nor this
+/// machine holds them, and the recorded run (last-load.json) may be none
+/// or another's: under --json, plan and status runs record nothing.
+fn learn_argv_values(c: &mut Collector, v: &Value) {
+    match v {
+        Value::Arr(a) => {
+            for (i, x) in a.iter().enumerate() {
+                match (x.as_str(), a.get(i + 1).and_then(Value::as_str)) {
+                    (Some(f), Some(val)) => learn_flag(c, f, val),
+                    (None, _) => learn_argv_values(c, x),
+                    _ => {}
+                }
+            }
+        }
+        Value::Obj(kv) => kv.iter().for_each(|(_, x)| learn_argv_values(c, x)),
+        _ => {}
+    }
+}
+
+/// The same in free text (a log's or error output's command lines): each
+/// flag's next word, shell quotes and a JSON string's escapes taken off.
+/// A word in capitals is help's placeholder ("--password-file FILE",
+/// "--key-file NAME=FILE"), not a value.
+fn learn_text_flags(c: &mut Collector, text: &str) {
+    let placeholder = |v: &str| v.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b"_-.=".contains(&b));
+    let words: Vec<&str> = text.split_whitespace().collect();
+    for w in words.windows(2) {
+        let f = w[0].trim_start_matches(['\'', '"']);
+        if !(SECRET_FLAGS.contains(&f) || f == "--key-file") {
+            continue;
+        }
+        let v = w[1].split('\\').next().unwrap_or("").trim_matches(['\'', '"', ',', ';', ')', '`']);
+        if !placeholder(v) && !placeholder(v.split_once('=').map_or(v, |(_, x)| x)) {
+            learn_flag(c, f, v);
+        }
+    }
+}
+
+/// What report-bug learns from an attached file's TEXT (`--attach`): the
+/// text, the flags' values in it, and each bko-holt document or event in
+/// it, its argument lists' too.
+pub fn learn_attachment(c: &mut Collector, text: &str) {
+    learn_text_flags(c, text);
+    c.learn_text(text);
+    for v in attached_values(text) {
+        learn_argv_values(c, &v);
+        c.learn(&v);
+    }
+}
+
 /// The `--no-redact` report's first line: every Kind the redaction would
 /// have replaced, from Kind::plural (its first words, without what a
 /// parenthesis adds), so it can't drift.
@@ -576,6 +646,7 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
     }
     for p in log_paths {
         if let Some(t) = sys.read(&p) {
+            learn_text_flags(&mut c, &t);
             c.learn_text(&t);
             logs.push((p, tail(&t, LOG_LINES)));
         }
@@ -586,6 +657,7 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
             Ok(b) => {
                 let t = String::from_utf8_lossy(&b).into_owned();
                 c.learn_text(p);
+                learn_text_flags(&mut c, &t);
                 c.learn_text(&t);
                 saved.push((p.clone(), tail(&t, LOG_LINES)));
             }
@@ -598,10 +670,7 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
             Ok(b) => {
                 let t = String::from_utf8_lossy(&b).into_owned();
                 c.learn_text(p);
-                c.learn_text(&t);
-                for v in attached_values(&t) {
-                    c.learn(&v);
-                }
+                learn_attachment(&mut c, &t);
                 attached.push((p.clone(), tail(&t, LOG_LINES)));
             }
             Err(e) => notes.push(format!("--attach {p}: {e}")),
@@ -1047,6 +1116,52 @@ mod tests {
         }
         assert!(first.ends_with("other identifiers, repositories and password-file paths, as they are."), "{first}");
         assert!(b.notes.iter().any(|n| n.contains("--strip-file is ignored with --no-redact")), "{:?}", b.notes);
+    }
+
+    /// RT10i review: the repository, the password file and the key files
+    /// an attached document names are learned from it, with no
+    /// last-load.json (a --json plan run records none): a plan's `args`
+    /// and its archiver argv, a `cmd` and a `failed` event's argv, a log's
+    /// command line.  Help's placeholders ("--password-file FILE") stay.
+    #[test]
+    fn attached_documents_repository_learned() {
+        let t = Tree::new("report-bug-attach-repo");
+        t.debian13();
+        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        let repo = "sftp://zelda@zeldas-nas.example.org/srv/bko/zelda";
+        let (pw, key) = ("/run/bko-rescue/k/1", "/run/bko-rescue/k/0");
+        let args: Vec<Value> = ["load", "layout.json", "--map", "vda=vdb", "--repo", repo, "--password-file", pw, "--key-file", &format!("cryptroot={key}"), "--json"].iter().map(|x| Value::Str(x.to_string())).collect();
+        let argv = |r: &str| -> Value { Value::Arr(["rustic-bko", "--repository", r, "--password-file", pw, "restore", "latest", "/mnt/bko-target"].iter().map(|x| Value::Str(x.to_string())).collect()) };
+        let cmd = Obj::new().set("kind", "run").set("argv", argv(repo)).set("archiver", true).build();
+        let plan = Obj::new()
+            .set("format", "bko-holt-plan")
+            .set("schema", 1u64)
+            .set("args", Value::Arr(args))
+            .set("stages", vec![Obj::new().set("name", "restore").set("commands", vec![cmd]).build()])
+            .set("problems", vec![Obj::new().set("code", "password_needed").set("text", "--repo: give the repository's password with --password-file FILE").build()])
+            .set("text", "# --password-file FILE\n")
+            .build();
+        // Each document on its own: the events name another repository.
+        let other = "rest:https://nas.zelda.example.org:8000/zelda";
+        let ev = [Obj::new().set("event", "cmd").set("stage", "restore").set("argv", argv(other)).build(), Obj::new().set("event", "failed").set("stage", "restore").set("argv", argv("/media/zelda/bko-repo")).build()];
+        let plan_path = t.root().join("plan.json");
+        std::fs::write(&plan_path, plan.pretty()).unwrap();
+        let ev_path = t.root().join("events");
+        std::fs::write(&ev_path, ev.iter().map(|v| v.compact() + "\n").collect::<String>()).unwrap();
+        let log_path = t.root().join("rescue.log");
+        std::fs::write(&log_path, "ran: bko-holt load /run/bko-rescue/layout.json --repo 's3:https://s3.zelda.example.org/bucket' --password-file FILE\n").unwrap();
+        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-30-generic #30 SMP x86_64\n")), true);
+        let path = |p: &std::path::Path| p.display().to_string();
+        let a = Args { attach: vec![path(&plan_path), path(&ev_path), path(&log_path)], ..Args::default() };
+        let b = build(&sys, &a, "2026-11-24T12:00:00Z");
+        let txt = &b.text;
+        assert!(txt.contains("none recorded"), "{txt}");
+        for gone in [repo, pw, key, other, "/media/zelda/bko-repo", "s3:https://s3.zelda.example.org/bucket", "zelda"] {
+            assert!(!txt.contains(gone), "{gone} in:\n{txt}");
+        }
+        assert!(txt.contains("/run/bko-rescue/k/keyfile1"), "{txt}");
+        assert!(txt.contains("--password-file FILE"), "help's placeholder is kept: {txt}");
+        assert!(txt.contains("REDACTED1") && txt.contains("REDACTED5"), "{txt}");
     }
 
     #[test]

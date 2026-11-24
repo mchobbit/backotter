@@ -484,6 +484,30 @@ pub struct Outcome {
     pub raw: Vec<Clean>,
 }
 
+/// Overwrites PATH with zeros to its length, then unlinks it (holt-json.md,
+/// Secrets 6).  Only a regular file (lstat) is overwritten: anything else
+/// in its place is only unlinked.
+fn wipe_file(path: &Path) {
+    use std::io::Write as _;
+    if let Ok(m) = fs::symlink_metadata(path) {
+        if m.is_file() {
+            if let Ok(mut f) = OpenOptions::new().write(true).open(path) {
+                let zeros = [0u8; 4096];
+                let mut left = m.len();
+                while left > 0 {
+                    let n = left.min(zeros.len() as u64) as usize;
+                    if f.write_all(&zeros[..n]).is_err() {
+                        break;
+                    }
+                    left -= n as u64;
+                }
+                let _ = f.sync_data();
+            }
+        }
+    }
+    let _ = fs::remove_file(path);
+}
+
 /// The fake bko-holt running, its key file, events and stderr, all in
 /// one new 0700 directory.  Dropping it stops the fake if it still runs
 /// and removes the files and the directory.
@@ -619,7 +643,7 @@ impl Run {
 
     fn remove_key(&mut self) {
         for k in [self.key.take(), self.password.take()].into_iter().flatten() {
-            let _ = fs::remove_file(k);
+            wipe_file(&k);
         }
     }
 
@@ -783,6 +807,14 @@ pub fn judge(f: &Follow, status: Option<ExitStatus>, raw: Vec<Clean>, stopped: b
             format!("bko-holt ended with exit status 0, but it skipped a stage for a reason this bko-rescue doesn't know, so the disks' status would have to be read first.  {safe}"),
             "unclear: a stage skipped for an unknown reason".to_string(),
         ),
+        (None, Some(0)) if code == Some(0) && f.unfinished().is_some() => {
+            let (name, why) = f.unfinished().unwrap_or_default();
+            mk(
+                "Problem: the restore can't be called done",
+                format!("bko-holt ended with exit status 0, but stage {name} {why}, so the disks' status would have to be read first.  {safe}"),
+                format!("unclear: stage {name} {why}"),
+            )
+        }
         (None, Some(0)) if code == Some(0) => {
             let dry = if f.would > 0 {
                 format!("  It was a dry run: {} commands would have run, and none did.", f.would)
@@ -873,11 +905,13 @@ pub struct Stage {
     pub took_ms: Option<u64>,
     /// Its commands that would run.
     pub would: usize,
+    /// Its commands, as `start.stage_commands` counts them.
+    pub commands: Option<u64>,
 }
 
 impl Stage {
     fn new(name: &str) -> Stage {
-        Stage { name: Clean::line(name, 32), state: State::Waiting, from_ms: 0, took_ms: None, would: 0 }
+        Stage { name: Clean::line(name, 32), state: State::Waiting, from_ms: 0, took_ms: None, would: 0, commands: None }
     }
 }
 
@@ -969,6 +1003,11 @@ pub struct Follow {
     /// Events read, and those skipped as unknown.
     pub events: usize,
     pub unknown: usize,
+    /// The last `cmd` was one that would run (it has no `cmd_done`).
+    would_pending: bool,
+    /// `start` named the run's stages (else the list is holt-json.md's,
+    /// and which the run asked for isn't known).
+    stages_named: bool,
     partial: Vec<u8>,
 }
 
@@ -1052,6 +1091,27 @@ impl Follow {
         if self.error.is_none() {
             self.error = Some(Clean::line(&why, cap::LINE));
         }
+    }
+
+    /// A stage `start` named that the events don't show through (Principle
+    /// 6: a stage not known to be done isn't done): its name and why.  A
+    /// dry run's stage is through when all its commands would run.  None
+    /// when start named no stages.
+    pub fn unfinished(&self) -> Option<(String, String)> {
+        self.stages.iter().filter(|_| self.stages_named).find_map(|s| {
+            let why = match s.state {
+                // An unknown skip has its own words (odd_skip).
+                State::Done | State::Skipped | State::SkippedWhy => return None,
+                State::Would => match s.commands {
+                    Some(n) if n != s.would as u64 => format!("showed {} of its {n} commands", s.would),
+                    _ => return None,
+                },
+                State::Waiting => "never began".to_string(),
+                State::Running => "never finished".to_string(),
+                State::Failed => "failed".to_string(),
+            };
+            Some((s.name.as_str().to_string(), why))
+        })
     }
 
     /// Why this run isn't the dry run the demo asked for, once `start` is
@@ -1170,6 +1230,11 @@ impl Follow {
                     // A panic before the stages were known names none.
                     if !a.is_empty() {
                         self.stages = a.iter().filter_map(Value::as_str).map(Stage::new).collect();
+                        self.stages_named = true;
+                    }
+                    let counts = v.get("stage_commands");
+                    for s in &mut self.stages {
+                        s.commands = counts.and_then(|c| c.get_u64(s.name.as_str()));
                     }
                 }
             }
@@ -1211,6 +1276,7 @@ impl Follow {
             }
             "cmd" => {
                 let would = v.get_bool("would") == Some(true);
+                self.would_pending = would;
                 if would {
                     self.would += 1;
                     if let Some(s) = self.stage_mut(&v) {
@@ -1241,7 +1307,12 @@ impl Follow {
                     self.total = None;
                 }
             }
-            "cmd_done" => {}
+            // A dry run's commands have none: one after them means it ran.
+            "cmd_done" => {
+                if std::mem::take(&mut self.would_pending) {
+                    self.ran += 1;
+                }
+            }
             "progress" => {
                 if let Some(b) = v.get_u64("bytes") {
                     self.bytes = Some(b);
@@ -1485,6 +1556,29 @@ mod tests {
         assert_eq!(f.error.as_ref().map(Clean::as_str), Some("an event after end"));
     }
 
+    /// The key and password files are zeroed, then unlinked (holt-json.md,
+    /// Secrets 6): a second link to one sees only zeros.
+    #[test]
+    fn key_files_are_zeroed_then_unlinked() {
+        let dir = std::env::temp_dir().join(format!("bko-demo-wipe-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir(&dir).unwrap();
+        let (k, other) = (dir.join("0"), dir.join("seen"));
+        fs::write(&k, "correct horse battery staple".repeat(300)).unwrap();
+        fs::hard_link(&k, &other).unwrap();
+        wipe_file(&k);
+        assert!(fs::symlink_metadata(&k).is_err(), "unlinked");
+        let left = fs::read(&other).unwrap();
+        assert!(left.len() == 28 * 300 && left.iter().all(|&b| b == 0), "zeroed to its length");
+        // A symlink in its place is unlinked, its target untouched.
+        std::os::unix::fs::symlink(&other, &k).unwrap();
+        fs::write(&other, "kept").unwrap();
+        wipe_file(&k);
+        assert!(fs::symlink_metadata(&k).is_err());
+        assert_eq!(fs::read(&other).unwrap(), b"kept");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// How each kind of ending reads (holt-json.md, demo.rs's changes 4-8).
     #[test]
     fn every_ending() {
@@ -1506,6 +1600,30 @@ mod tests {
         let o = run(r#"{"event":"skip","stage":"partition","state":"would_need_restore","why":""}
 {"event":"end","exit":0,"stopped":false}"#, 0);
         assert_eq!(o.short, "unclear: a stage skipped for an unknown reason");
+        // Principle 6: a stage not seen through isn't done, end 0 or not.
+        let o = run(r#"{"event":"stage","stage":"partition","commands":1}
+{"event":"end","exit":0,"stopped":false}"#, 0);
+        assert_eq!((o.title.as_str(), o.short.as_str()), ("Problem: the restore can't be called done", "unclear: stage partition never finished"));
+        let o = run(r#"{"event":"skip","stage":"partition","state":"done","why":""}
+{"event":"end","exit":0,"stopped":false}"#, 0);
+        assert_eq!(o.short, "unclear: stage boot never began");
+        // Nor a dry run's stage that showed fewer commands than start counted.
+        let counted = start.replace("\"dry_run\":true", "\"dry_run\":true,\"stage_commands\":{\"partition\":2,\"boot\":0}");
+        let f = fed(&format!("{counted}\n{}\n", r#"{"event":"stage","stage":"partition","commands":2}
+{"event":"cmd","stage":"partition","n":1,"of":2,"argv":["sfdisk"],"would":true}
+{"event":"stage_done","stage":"partition","checked":false}
+{"event":"stage","stage":"boot","commands":0}
+{"event":"stage_done","stage":"boot","checked":false}
+{"event":"end","exit":0,"stopped":false}"#));
+        assert_eq!(judge(&f, exit(0), Vec::new(), false).short, "unclear: stage partition showed 1 of its 2 commands");
+        let f = fed(&format!("{counted}\n{}\n", r#"{"event":"stage","stage":"partition","commands":2}
+{"event":"cmd","stage":"partition","n":1,"of":2,"argv":["wipefs"],"would":true}
+{"event":"cmd","stage":"partition","n":2,"of":2,"argv":["sfdisk"],"would":true}
+{"event":"stage_done","stage":"partition","checked":false}
+{"event":"stage","stage":"boot","commands":0}
+{"event":"stage_done","stage":"boot","checked":false}
+{"event":"end","exit":0,"stopped":false}"#));
+        assert_eq!(judge(&f, exit(0), Vec::new(), false).short, "done");
         let f = fed(&format!("{start}\n{{\"event\":\"skip\",\"stage\":\"boot\",\"state\":\"frob\"}}\n"));
         assert!(f.text(0).as_str().contains("[-] Make it bootable          skipped, why unknown"), "{}", f.text(0).as_str());
         // Problems: the run blocked, nothing ran.
@@ -1564,6 +1682,12 @@ mod tests {
         assert_eq!((f.ran, f.not_dry()), (1, Some(NotDry::Ran)));
         let o = judge(&f, None, Vec::new(), true);
         assert_eq!(o.short, "stopped: a command ran", "Cancel or not, the reason is the run's");
+        // A cmd_done after one that would run: it ran after all.
+        let mut f = fed(&st(",\"commit\":false,\"dry_run\":true"));
+        f.feed(b"{\"event\":\"stage\",\"stage\":\"partition\"}\n{\"event\":\"cmd\",\"stage\":\"partition\",\"n\":1,\"of\":1,\"argv\":[\"wipefs\"],\"would\":true}\n", 0);
+        assert_eq!(f.not_dry(), None);
+        f.feed(b"{\"event\":\"cmd_done\",\"stage\":\"partition\",\"n\":1,\"exit\":0}\n", 0);
+        assert_eq!((f.ran, f.not_dry()), (1, Some(NotDry::Ran)));
         assert_eq!(Follow::new().not_dry(), None, "nothing to say before start");
     }
 

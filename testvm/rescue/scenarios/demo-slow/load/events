@@ -26,4 +26,13 @@ delay 0.15
 {"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":12240600000,"total_bytes":61203000000,"secs":16,"errors":0}
 {"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":18360900000,"total_bytes":61203000000,"secs":24,"errors":0}
 sleep 60
+{"event":"stage_done","stage":"restore","secs":0.01,"checked":false}
+{"event":"stage","stage":"boot","commands":2}
+{"event":"cmd","stage":"boot","n":1,"of":2,"kind":"run","argv":["chroot","/mnt/bko-target","grub-install","--target=x86_64-efi","--efi-directory=/boot/efi","--bootloader-id=debian"],"env":[["LC_ALL","C"]],"why":"the boot loader, as the source's","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":true}
+{"event":"cmd","stage":"boot","n":2,"of":2,"kind":"run","argv":["chroot","/mnt/bko-target","update-grub"],"env":[["LC_ALL","C"]],"why":"its menu","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":true}
+{"event":"stage_done","stage":"boot","secs":0.01,"checked":false}
+{"event":"stage","stage":"close","commands":2}
+{"event":"cmd","stage":"close","n":1,"of":2,"kind":"run","argv":["umount","-R","/mnt/bko-target"],"env":[["LC_ALL","C"]],"why":"done with the tree","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":true}
+{"event":"cmd","stage":"close","n":2,"of":2,"kind":"run","argv":["cryptsetup","close","sda3_crypt"],"env":[["LC_ALL","C"]],"why":"sda3_crypt closed","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":true}
+{"event":"stage_done","stage":"close","secs":0.01,"checked":false}
 {"event":"end","exit":0,"stopped":false,"secs":0.6}

@@ -490,6 +490,10 @@ def test_schema_checker():
         "an event it doesn't know": good[:2] + ['{"event":"wobble"}'] + good[2:],
         "an old version": [good[0].replace('"version":"0.2.6"', '"version":"0.2.5"')] + good[1:],
         "a line after an error document": ['{"format":"bko-holt-error","schema":1,"version":"0.2.6","generated":"2026-11-24T10:00:00Z","dry_run":true,"exit":2,"code":"no_commit","text":"x"}', good[0]],
+        "end 0 with a stage still going": good[:4] + [good[-1]],
+        "exit 5 without stopped": good[:-1] + [good[-1].replace('"exit":0', '"exit":5')],
+        "a stage after problems": good[:1] + ['{"event":"problems","problems":[{"code":"not_root","text":"x"}],"exit":4}'] + good[1:5] + ['{"event":"end","exit":4,"stopped":false,"secs":0.1}'],
+        "a command run in a run that doesn't commit": good[:2] + [good[2].replace('"would":true', '"would":false'), '{"event":"cmd_done","stage":"partition","n":1,"status":0,"signal":null,"secs":0.1}'] + good[3:],
     }
     for what, lines in bad_cases.items():
         path = os.path.join(TMP, "bad.events")

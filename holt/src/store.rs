@@ -175,7 +175,7 @@ impl Sx {
 /// deeper than 256 (`MAX_DEPTH`) doesn't read either, so a crafted or damaged
 /// file can't overflow the stack.
 pub fn parse_sexps(text: &str) -> Vec<Sx> {
-    let mut r = Reader { b: text.as_bytes(), i: 0, depth: 0 };
+    let mut r = Reader { b: text.as_bytes(), i: 0, depth: 0, too_deep: false };
     let mut out = Vec::new();
     while let Some(d) = r.datum() {
         out.push(d);
@@ -192,6 +192,9 @@ struct Reader<'a> {
     i: usize,
     /// The `datum` calls open now.
     depth: usize,
+    /// Set for good when a datum would nest past [`MAX_DEPTH`]: the read
+    /// ends there.
+    too_deep: bool,
 }
 
 impl Reader<'_> {
@@ -256,11 +259,20 @@ impl Reader<'_> {
     /// (lists, quotes, `#;`) comes back through here, so the count holds.
     fn datum(&mut self) -> Option<Sx> {
         if self.depth >= MAX_DEPTH {
+            self.too_deep = true;
+        }
+        if self.too_deep {
             return None;
         }
         self.depth += 1;
         let d = self.datum_at_depth();
         self.depth -= 1;
+        // skip_space's `#;` drops what its datum returns, so a limit hit
+        // there would otherwise read the commented-out datum's text as the
+        // next one: once hit, no enclosing datum reads either.
+        if self.too_deep {
+            return None;
+        }
         d
     }
 
@@ -672,6 +684,18 @@ mod tests {
         assert_eq!(parse_sexps(&deep(MAX_DEPTH - 1)).len(), 1);
         assert!(parse_sexps(&deep(MAX_DEPTH)).is_empty());
         assert_eq!(parse_sexps(&format!("(a) {}", deep(1 << 16))), vec![Sx::List(vec![Sx::Sym("a".into())])]);
+        // A `#;` whose datum would be the one too deep (after a quote, the
+        // datum's own skip_space meets it) ends the read too: it doesn't
+        // read the commented-out `a` as the quoted datum.
+        let commented = |n: usize| format!("{}'#;a b{}", "(".repeat(n), ")".repeat(n));
+        assert!(parse_sexps(&commented(MAX_DEPTH - 2)).is_empty());
+        // Nor when nothing reads after it: `'#;a)` quotes nothing.
+        assert!(parse_sexps(&format!("{}'#;a{}", "(".repeat(MAX_DEPTH - 2), ")".repeat(MAX_DEPTH - 2))).is_empty());
+        let mut want = Sx::List(vec![Sx::Sym("quote".into()), Sx::Sym("b".into())]);
+        for _ in 0..MAX_DEPTH - 3 {
+            want = Sx::List(vec![want]);
+        }
+        assert_eq!(parse_sexps(&commented(MAX_DEPTH - 3)), vec![want]);
     }
 
     pub(crate) const MANIFEST: &str = r#";; This file was automatically generated.

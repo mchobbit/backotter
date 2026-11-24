@@ -8,6 +8,11 @@ unchanged case at an unchanged key needn't run again (done() says).
 Verdicts map onto the ledger's: PASS, FAIL and HARNESS as they are; INVALID
 (the generator's fault) and UNSUPPORTED (a flag the build hasn't got) are
 HARNESS rows with extra.bs2 saying which, never a FAIL.
+
+A row's word is the bs2 word whose run made it: the writer's WORD, else
+BS2_WORD in the environment (bs2 sets it to the word it runs and passes it on
+to the hosts with the rest of PASS_VARS: BackShot2Alpine, BackShot2 or
+BackShot2All), else BackShot2Alpine (a case run by hand on a host).
 """
 
 import glob
@@ -36,14 +41,24 @@ def cell(source, case_hash, tier):
     return f"bs2:{source.replace('run:', 'run-')}/{case_hash}@t{tier}"
 
 
+WORD_ENV = "BS2_WORD"
+DEFAULT_WORD = "BackShot2Alpine"
+
+
+def word_of(word=None):
+    """The word a row names: WORD, else $BS2_WORD, else DEFAULT_WORD."""
+    return word or os.environ.get(WORD_ENV) or DEFAULT_WORD
+
+
 def inputs(source, gen, bins):
     g = gen if gen and (gen.startswith("gen:") or gen.startswith("img:")) else f"ver:{gen or source}"
     return {"bin": dict(bins), "guest": {source: g}, "harness": harness()}
 
 
-def rows(run, source, gen, results, tier, wall, bins, word="BackShot2Alpine"):
+def rows(run, source, gen, results, tier, wall, bins, word=None):
     from t2lib import ledger, utc_now
     from bs2lib import case as C
+    word = word_of(word)
     inp = inputs(source, gen, bins)
     out = []
     per = int(wall / max(1, len(results)))
@@ -62,7 +77,7 @@ def rows(run, source, gen, results, tier, wall, bins, word="BackShot2Alpine"):
     return out
 
 
-def write_rows(run, source, gen, results, tier, wall, bins, word="BackShot2Alpine"):
+def write_rows(run, source, gen, results, tier, wall, bins, word=None):
     """Appends the rows; best effort (a ledger problem is noted, never fatal)."""
     if os.environ.get("BS2_NO_LEDGER"):
         return

@@ -63,7 +63,7 @@ state, and quits in place of poweroffs.  BS2_REUSE_SOURCE, BS2_REUSE_BACKUP,
 BS2_RESCUER_STATE and BS2_FAST_DOWN set to 0 here turn each off on the hosts.
 
 Results: each host's /bkoscratch/backshot2/runs/RUN/ and Test2's ledger
-(family bs2).  "plan" prints the cases, tiers, each host's share and time, and runs nothing.
+(family bs2, word the run's: BS2_WORD).  "plan" prints the cases, tiers, each host's share and time, and runs nothing.
 bs2-host takes ports 2943-2949 on whichever host runs it (the queue's slots the
 first of 2943-2948, a source's preparing and a tier 1 by hand 2949): keep them free on
 every host.
@@ -395,8 +395,11 @@ def sync(hosts=None):
 # hosts' cases (the queue, replay, soak, the corpus) so a run can compare.
 REUSE_VARS = ("BS2_REUSE_SOURCE", "BS2_REUSE_BACKUP", "BS2_RESCUER_STATE", "BS2_FAST_DOWN")
 # Passed on the same way: BS2_HOLT, the bko-holt a case runs (a path on the hosts; bs2-host's
-# default is /bkoscratch/backshot2/bin/bko-holt), so a fix can be run before it is in bin/.
-PASS_VARS = REUSE_VARS + ("BS2_HOLT",)
+# default is /bkoscratch/backshot2/bin/bko-holt), so a fix can be run before it is in bin/;
+# and BS2_WORD, the word of the run (main() sets it), which each case's ledger rows name
+# (bs2lib/ledger.py word_of(): through light()'s draws and sweeps, the queue's cmp-run.sh and
+# sudo -E, to bs2-host tier1 and tier0's write_rows).
+PASS_VARS = REUSE_VARS + ("BS2_HOLT", "BS2_WORD")
 
 
 def reuse_env():
@@ -912,6 +915,7 @@ def main():
             sys.exit("bs2: bin FROM")
         bin_words(a[1])
     elif w in ("BackShot2Alpine", "BackShot2"):
+        os.environ["BS2_WORD"] = w   # (its cases' ledger rows' word: PASS_VARS)
         rest = a[1:]
         if rest[:1] == ["corpus"]:
             return corpus(plan, tier)

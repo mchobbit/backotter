@@ -4663,12 +4663,29 @@ fn guix_uefi_guest() {
     assert!(!bt.contains("grub-install"), "{bt}");
     assert!(!b.stage(Stage::Boot).iter().any(|c| c.argv.first().map(String::as_str) == Some("chroot") && c.argv.get(2).is_some_and(|x| x.contains("grub"))), "{bt}");
     // The image's prefix, "(,gpt3)/boot/grub" on guix15, set to /'s partition
-    // by its number in the layout (load/grubprefix.rs), the fallback's too: a
-    // no-op here, where / is partition 2 still.
+    // by its number in the layout (load/grubprefix.rs): a no-op here, where /
+    // is partition 2 still.  This ESP has no fallback loader: only the image.
     let pfx: Vec<&Cmd> = b.stage(Stage::Boot).iter().filter(|c| c.argv.get(1).map(String::as_str) == Some("grub-prefix")).collect();
     assert_eq!(pfx.len(), 1, "{bt}");
-    assert_eq!(pfx[0].argv[2..], ["gpt2", "/mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi", "/mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI"], "{bt}");
+    assert_eq!(pfx[0].argv[2..], ["gpt2", "/mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi"], "{bt}");
     assert!(pfx[0].why.as_deref().unwrap_or("").contains("by number"), "{:?}", pfx[0].why);
+    // The fallback loader too when the dump says it is a copy of the image
+    // (guix15's, made by grub-install's removable copy); never when it is
+    // another file: on an ESP shared with another system it can be that
+    // system's GRUB, whose prefix names its own partition (the review of
+    // e8cbfd4).
+    let pfx_of = |fallback: Vec<u8>| -> Vec<String> {
+        let t = guix_uefi();
+        t.file("/boot/efi/EFI/BOOT/BOOTX64.EFI", fallback);
+        let v = run(&t, true, FakeRunner::default());
+        let b = guix_plan(&v, &[]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let p: Vec<&Cmd> = b.stage(Stage::Boot).iter().filter(|c| c.argv.get(1).map(String::as_str) == Some("grub-prefix")).collect();
+        assert_eq!(p.len(), 1);
+        p[0].argv[2..].to_vec()
+    };
+    assert_eq!(pfx_of(vec![2u8; 400]), ["gpt2", "/mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi", "/mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI"]);
+    assert_eq!(pfx_of(vec![3u8; 400]), ["gpt2", "/mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi"]);
     // / renumbered (BackShot2's guix15 cases): the new number.
     let ren = crate::json::parse(&v.compact().replace("\"vda2\"", "\"vda7\"").replace("/dev/vda2", "/dev/vda7")).unwrap();
     let mut ren = ren;

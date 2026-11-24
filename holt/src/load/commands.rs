@@ -4878,11 +4878,18 @@ impl Builder<'_> {
     /// found: either way round, or both naming a third).
     fn fallback_is_grub_copy(&self, id: &str) -> bool {
         let n = self.boot_names();
+        self.esp_files_same(n.fallback, &format!("EFI/{id}/{}", n.grub))
+    }
+
+    /// Whether the source's ESP held A and B (paths on it, any case) as
+    /// byte copies of each other, as the dump's ESP inventory says (its
+    /// same_as: either way round, or both naming a third).
+    fn esp_files_same(&self, a: &str, b: &str) -> bool {
         let files = self.layout.arr(&["boot", "esps", "0", "contents", "files"]);
         let find = |p: &str| files.iter().find(|f| s(f, "path").is_some_and(|x| x.eq_ignore_ascii_case(p)));
-        let (Some(fb), Some(grub)) = (find(n.fallback), find(&format!("EFI/{id}/{}", n.grub))) else { return false };
-        let names = |a: &Value, b: &Value| s(a, "same_as").zip(s(b, "path")).is_some_and(|(x, y)| x.eq_ignore_ascii_case(&y));
-        names(fb, grub) || names(grub, fb) || s(fb, "same_as").zip(s(grub, "same_as")).is_some_and(|(x, y)| x.eq_ignore_ascii_case(&y))
+        let (Some(fa), Some(fb)) = (find(a), find(b)) else { return false };
+        let names = |x: &Value, y: &Value| s(x, "same_as").zip(s(y, "path")).is_some_and(|(x, y)| x.eq_ignore_ascii_case(&y));
+        names(fa, fb) || names(fb, fa) || s(fa, "same_as").zip(s(fb, "same_as")).is_some_and(|(x, y)| x.eq_ignore_ascii_case(&y))
     }
 
     /// --removable for upstream GRUB, whose grub-install has no
@@ -4911,10 +4918,13 @@ impl Builder<'_> {
     /// grub-install, with the ESP on /boot's disk, named that partition by
     /// number in the image ("(,gpt3)/boot/grub", Guix's), and a layout
     /// that numbers it otherwise would leave GRUB in rescue mode
-    /// (BackShot2's guix15 cases).  Both IMG and the fallback loader (a copy
-    /// of it, or --removable's, made after this); each is left as it is when
-    /// it names the same number already, names no partition by number, or
-    /// isn't GRUB.  Nothing when /boot isn't a partition on the ESP's disk
+    /// (BackShot2's guix15 cases).  IMG, and the fallback loader only when
+    /// the dump's ESP inventory says it is a copy of IMG (same_as): on a
+    /// shared ESP the fallback can be another system's GRUB, whose prefix
+    /// names that system's partition, and is left as restored.  (Without
+    /// one, --removable copies IMG there after this.)  Each is left as it is
+    /// when it names the same number already, names no partition by number,
+    /// or isn't GRUB.  Nothing when /boot isn't a partition on the ESP's disk
     /// (LUKS, LVM, RAID: grub-install searched for it instead).
     fn store_grub_prefix(&mut self, img: &str) -> Vec<Cmd> {
         let mounts = self.layout.arr(&["storage", "mounts"]).to_vec();
@@ -4933,9 +4943,15 @@ impl Builder<'_> {
         };
         let esp = format!("{}{}", self.opts.target, self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).filter(|m| safe_target_subpath(m)).unwrap_or("/boot").trim_end_matches('/'));
         let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
-        let f = self.boot_names().fallback_file;
+        let n = self.boot_names();
         let at = format!("{kind}{}", part.number);
-        vec![Cmd::new(&[exe.as_str(), "grub-prefix", at.as_str(), &format!("{esp}/{img}"), &format!("{esp}/EFI/BOOT/{f}")]).why(format!(
+        let mut argv = vec![exe, "grub-prefix".into(), at.clone(), format!("{esp}/{img}")];
+        let copy = self.esp_files_same(n.fallback, img);
+        if copy {
+            argv.push(format!("{esp}/{}", n.fallback));
+        }
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        vec![Cmd::new(&argv).why(format!(
             "the restored GRUB image's prefix names /boot/grub's partition by number (it was made on the ESP's own disk): set to {dev}'s, ({at}); left as it is where it names that already"
         ))]
     }

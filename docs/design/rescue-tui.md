@@ -499,7 +499,8 @@ row by locale): "What RT3 found" and `profile.rs` have the rows as built.
   `sshd_config` has `AcceptEnv LANG LC_*` (*Check* on the slim image).  D13.
 - **The first screen** shows `L: line style  C: colour` on its keys line.
   That line is ASCII text in every profile, so it stays readable when the
-  boxes don't.  `L` cycles UTF-8, DEC, ASCII; `C` toggles colour (D4).
+  boxes don't.  `L` cycles UTF-8, DEC, ASCII, skipping the styles the
+  console doesn't draw (RT3: each row's `draws`); `C` toggles colour (D4).
 - `bko-rescue --profile` prints what it decided and why (OS, tty, TERM,
   locale, size), for checks.sh and for bug reports.
 

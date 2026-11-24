@@ -14,8 +14,11 @@ fn exe() -> String {
 }
 
 /// bko-holt ARGS with ENV added and BKO_HOLT_NO_COMMIT removed unless ENV
-/// sets it; STDIN piped in when given, else none.
+/// sets it; STDIN piped in when given, else none.  A load run names
+/// --sysroot (or asks for the help), as load_cli.rs's do: without it, load
+/// records RUN_DIR/last-load.json on the test host.
 fn run(args: &[&str], env: &[(&str, &str)], stdin: Option<&str>) -> Output {
+    assert!(args.first() != Some(&"load") || args.iter().any(|a| matches!(*a, "--sysroot" | "-h" | "--help")), "{args:?}: give --sysroot");
     let mut c = Command::new(exe());
     c.args(args).env_remove("BKO_HOLT_NO_COMMIT").stdout(Stdio::piped()).stderr(Stdio::piped());
     for (k, v) in env {
@@ -128,16 +131,16 @@ fn load_refusals_are_error_documents() {
     let (t, layout, root) = setup();
     // Bad arguments: the document, and on standard error text mode's line
     // and usage.
-    let o = run(&["load", "--json"], &[], None);
+    let o = run(&["load", "--json", "--sysroot", &root], &[], None);
     let v = assert_error(&o, 2, "bad_args");
     assert_eq!(v.get_str("text"), Some("bko-holt load: which layout? Give the JSON file bko-holt dump wrote"));
     assert!(err(&o).contains("\n\nUsage: bko-holt load LAYOUT.json"), "{}", err(&o));
-    let v = assert_error(&run(&["load", "--frob", "--json"], &[], None), 2, "bad_args");
+    let v = assert_error(&run(&["load", "--frob", "--json", "--sysroot", &root], &[], None), 2, "bad_args");
     assert_eq!(v.get_str("text"), Some("bko-holt load: unknown argument \"--frob\""));
-    assert_error(&run(&["load", "x.json", "--through", "boot", "--json"], &[], None), 2, "bad_args");
+    assert_error(&run(&["load", "x.json", "--through", "boot", "--json", "--sysroot", &root], &[], None), 2, "bad_args");
     assert_error(&run(&["load", &layout, "--json", "--sysroot", "/nonexistent/tree"], &[], None), 2, "bad_args");
     // The layout.
-    assert_error(&run(&["load", "/nonexistent/layout.json", "--json"], &[], None), 2, "layout_unreadable");
+    assert_error(&run(&["load", "/nonexistent/layout.json", "--json", "--sysroot", &root], &[], None), 2, "layout_unreadable");
     std::fs::write(t.p("/not.json"), "{not json").unwrap();
     let nj = t.p("/not.json").to_string_lossy().into_owned();
     assert_error(&run(&["load", &nj, "--sysroot", &root, "--json"], &[], None), 3, "layout_not_json");
@@ -153,7 +156,9 @@ fn load_refusals_are_error_documents() {
     assert_error(&run(&["load", &rv, "--sysroot", &root, "--json"], &[], None), 3, "arch_mismatch");
     // A schema this bko-holt doesn't write, before any other argument's
     // complaint.
-    assert_error(&run(&["load", "--frob", "--json=2"], &[], None), 2, "schema_unknown");
+    assert_error(&run(&["load", "--frob", "--json=2", "--sysroot", &root], &[], None), 2, "schema_unknown");
+    // Beside a good --json, after it too.
+    assert_error(&run(&["load", &layout, "--json", "--json=2", "--sysroot", &root], &[], None), 2, "schema_unknown");
     // The documents RT10c, RT10e and RT10f build: refused, nothing run.
     for (extra, what) in [(&[][..], "plan"), (&["--only", "status"][..], "status"), (&["--through", "mount"][..], "the writing stages")] {
         let mut a = vec!["load", layout.as_str(), "--sysroot", &root, "--map", "vda=vdb", "--json"];
@@ -162,9 +167,11 @@ fn load_refusals_are_error_documents() {
         assert!(v.get_str("text").unwrap().contains(what), "{}", out(&run(&a, &[], None)));
     }
     // --help is for people, --json or not.
-    let o = run(&["load", "--json", "--help"], &[], None);
-    assert_eq!(o.status.code(), Some(0));
-    assert!(out(&o).starts_with("Usage: bko-holt load LAYOUT.json"));
+    for args in [&["load", "--json", "--help"][..], &["load", "--json=2", "--help"], &["load", "-h", "--json=2"]] {
+        let o = run(args, &[], None);
+        assert_eq!(o.status.code(), Some(0), "{args:?}");
+        assert!(out(&o).starts_with("Usage: bko-holt load LAYOUT.json"), "{args:?}: {}", out(&o));
+    }
 }
 
 #[test]
@@ -172,12 +179,12 @@ fn json_counts_only_in_a_flags_place() {
     // --snapshot --json names a snapshot called --json: a text-mode run,
     // whose unreadable layout is text on standard error and nothing on
     // standard output.
-    let o = run(&["load", "/nonexistent/layout.json", "--repo", "/r", "--snapshot", "--json"], &[], None);
+    let o = run(&["load", "/nonexistent/layout.json", "--repo", "/r", "--snapshot", "--json", "--sysroot", "/nonexistent/sysroot"], &[], None);
     assert_eq!(o.status.code(), Some(2));
     assert!(out(&o).is_empty(), "{}", out(&o));
     assert!(err(&o).starts_with("bko-holt load: /nonexistent/layout.json: "), "{}", err(&o));
     // --through --json: no stage of that name, a text-mode error.
-    let o = run(&["load", "x.json", "--through", "--json"], &[], None);
+    let o = run(&["load", "x.json", "--through", "--json", "--sysroot", "/nonexistent/sysroot"], &[], None);
     assert_eq!(o.status.code(), Some(2));
     assert!(out(&o).is_empty());
     assert!(err(&o).starts_with("bko-holt load: --through: no stage called \"--json\""), "{}", err(&o));
@@ -190,7 +197,7 @@ fn text_mode_is_unchanged() {
     let o = run(&["load", &layout, "--sysroot", &root, "--map", "vda=vdb"], &[], None);
     assert_eq!(o.status.code(), Some(4));
     assert!(out(&o).starts_with("# bko-holt load plan"), "{}", out(&o));
-    let o = run(&["load", "--frob"], &[], None);
+    let o = run(&["load", "--frob", "--sysroot", &root], &[], None);
     assert_eq!(o.status.code(), Some(2));
     assert!(out(&o).is_empty());
     assert!(err(&o).starts_with("bko-holt load: unknown argument \"--frob\"\n\nUsage: bko-holt load"), "{}", err(&o));
@@ -214,7 +221,7 @@ fn no_commit_refuses_commit() {
         assert_eq!(v.get_bool("dry_run"), Some(true));
     }
     // Before the layout is read.
-    let o = run(&["load", "/nonexistent/layout.json", "--commit"], &[("BKO_HOLT_NO_COMMIT", "1")], None);
+    let o = run(&["load", "/nonexistent/layout.json", "--commit", "--sysroot", &root], &[("BKO_HOLT_NO_COMMIT", "1")], None);
     assert_eq!(o.status.code(), Some(2));
     assert!(err(&o).contains("so --commit is refused"), "{}", err(&o));
     // Not in force: the run goes on to its checks (no tools in the fake
@@ -247,7 +254,7 @@ fn no_commit_stops_the_writing_helpers() {
 
 #[test]
 fn json_is_refused_on_dump_and_report_bug() {
-    for args in [vec!["dump", "--json"], vec!["dump", "--compact", "--json=1"], vec!["dump", "--json", "--help"]] {
+    for args in [vec!["dump", "--json"], vec!["dump", "--compact", "--json=1"]] {
         let v = assert_error(&run(&args, &[], None), 2, "json_not_here");
         assert!(v.get_str("text").unwrap().starts_with("bko-holt dump: --json"), "{args:?}");
     }
@@ -259,6 +266,19 @@ fn json_is_refused_on_dump_and_report_bug() {
     }
     let v = assert_error(&run(&["report-bug", "--json"], &[], None), 2, "json_not_here");
     assert!(v.get_str("text").unwrap().starts_with("bko-holt report-bug: --json"));
+    // --help is for people, --json or not, wherever it stands.
+    for (args, usage) in [
+        (&["dump", "--json", "--help"][..], "Usage: bko-holt dump "),
+        (&["dump", "-h", "--json=2"], "Usage: bko-holt dump "),
+        (&["report-bug", "--json", "--help"], "Usage: bko-holt report-bug "),
+        (&["report-bug", "-h", "--json"], "Usage: bko-holt report-bug "),
+    ] {
+        let o = run(args, &[], None);
+        assert_eq!(o.status.code(), Some(0), "{args:?}: {}", err(&o));
+        assert!(out(&o).starts_with(usage), "{args:?}: {}", out(&o));
+    }
+    // A --help that is a flag's value isn't the help.
+    assert_error(&run(&["report-bug", "--stderr", "--help", "--json"], &[], None), 2, "json_not_here");
     for f in ["--output", "-o", "--stderr", "--sysroot"] {
         let o = run(&["report-bug", f, "--json", "--frob"], &[], None);
         assert_eq!(o.status.code(), Some(2), "{f}");

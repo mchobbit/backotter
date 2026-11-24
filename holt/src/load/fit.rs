@@ -932,11 +932,14 @@ impl One<'_> {
             );
             // needed_bytes: the least the filesystem may shrink to, by
             // this same test (its size less what's free, and the margin).
+            // The mount and the most come at RT10d: null till then.
             return Err(Why::coded(ProblemCode::DataWontFit, text)
                 .with("dev", dev)
+                .with("mount", Value::Null)
                 .with("used_bytes", used)
                 .with("margin_bytes", need - shrink)
-                .with("needed_bytes", size.saturating_sub(free) + (need - shrink)));
+                .with("needed_bytes", size.saturating_sub(free) + (need - shrink))
+                .with("most_bytes", Value::Null));
         }
         Ok(())
     }
@@ -1244,7 +1247,16 @@ impl One<'_> {
         let left = (extents - need) * extent;
         if left < used {
             let text = format!("--fit-largest: thin pool {vg}/{pn} would shrink to {}, below the {} of data its source had in use", human(left), human(used));
-            return Err(Why::coded(ProblemCode::DataWontFit, text).with("dev", format!("{vg}/{pn}")).with("used_bytes", used).with("needed_bytes", used));
+            // The same figures as a filesystem's: a pool may shrink to the
+            // data in use and no further, with no margin, so that is the
+            // least it may shrink to; it has no mount.
+            return Err(Why::coded(ProblemCode::DataWontFit, text)
+                .with("dev", format!("{vg}/{pn}"))
+                .with("mount", Value::Null)
+                .with("used_bytes", used)
+                .with("margin_bytes", 0u64)
+                .with("needed_bytes", used)
+                .with("most_bytes", Value::Null));
         }
         Ok(())
     }
@@ -1596,6 +1608,12 @@ mod tests {
         // The figure the test decides by: the 20 GiB filesystem less its
         // 2 GiB free, and the GiB to spare.
         assert_eq!(n("needed_bytes"), Some(19 * GIB));
+        // Every field of the table, in its order; RT10d's two null so far.
+        let keys: Vec<(&str, bool)> = p.fields.iter().map(|(k, v)| (k.as_str(), v.is_null())).collect();
+        assert_eq!(
+            keys,
+            [("disk", false), ("target", false), ("dev", false), ("mount", true), ("used_bytes", false), ("margin_bytes", false), ("needed_bytes", false), ("most_bytes", true)]
+        );
     }
 
     fn one_target(size: u64) -> Vec<Target> {
@@ -2181,6 +2199,41 @@ mod tests {
 
     /// The 20 GiB LVM disk's size in sectors.
     const LVM_TOTAL: u64 = 2048 + 20 * G + 34;
+
+    /// A thin pool's data LV the largest: it may shrink only down to the
+    /// data the pool had in use, and data_wont_fit says so with a
+    /// filesystem's figures (no margin, no mount).
+    #[test]
+    fn thin_pool_data_wont_fit_carries_its_figures() {
+        let data = 5119 - 256;
+        let g = vg("vda1", 20 * G * 512, 5119, &[("pool_tdata", data, vec![0]), ("swap_1", 256, vec![data])]);
+        let with_used = |used: u64| {
+            let pool = format!(
+                r#", {{"name": "pool", "id": "bkoLVM-0000-0000-0000-0000-0000-000009", "status": ["READ", "WRITE", "VISIBLE"], "flags": [], "size_bytes": {},
+                     "segments": [{{"start_extent": 0, "extent_count": {data}, "type": "thin-pool", "pool": "pool_tdata"}}], "data_used_bytes": {used}}}]}}"#,
+                data * EXT
+            );
+            D::gpt(LVM_TOTAL).part(1, 2048, 20 * G, &pv(), "").vg(format!("{}{pool}", g.strip_suffix("]}").unwrap())).dm(lv_dm("dm-1", "swap_1", "vda1", 256 * EXT, &swap())).build()
+        };
+        // A GiB has to go: 256 extents, leaving the pool 4607 (18 GiB).
+        let r = refused(&with_used(19 * GIB), (LVM_TOTAL - G) * 512, 10).is("data_wont_fit");
+        assert!(r.contains("thin pool vg0/pool would shrink to ") && r.contains(" of data its source had in use"), "{}", &*r);
+        let p = &r.first;
+        let keys: Vec<(&str, String)> = p.fields.iter().map(|(k, v)| (k.as_str(), v.compact())).collect();
+        assert_eq!(
+            keys,
+            [
+                ("disk", "\"vda\"".to_string()),
+                ("target", "\"sdb\"".to_string()),
+                ("dev", "\"vg0/pool\"".to_string()),
+                ("mount", "null".to_string()),
+                ("used_bytes", (19 * GIB).to_string()),
+                ("margin_bytes", "0".to_string()),
+                ("needed_bytes", (19 * GIB).to_string()),
+                ("most_bytes", "null".to_string()),
+            ]
+        );
+    }
 
     #[test]
     fn lvm_gives_up_free_extents_first() {

@@ -105,8 +105,12 @@ pub fn parse_args(args: &[String]) -> Result<Option<Args>, String> {
 
 pub fn main(args: &[String]) -> ExitCode {
     // The report is text for people: --json is refused, as a document
-    // (holt-json.md, "Commands and flags").
+    // (holt-json.md, "Commands and flags"); beside --help, the help.
     if let Some(flag) = load::jsonout::find_json_flag(args, VALUE_FLAGS) {
+        if load::jsonout::asks_for_help(args, VALUE_FLAGS) {
+            print!("{USAGE}");
+            return ExitCode::SUCCESS;
+        }
         let line = format!("bko-holt report-bug: {flag}: the report is text for people; run it without --json");
         load::jsonout::write_stdout(&load::jsonout::error_doc(2, load::jsonout::ErrorCode::JsonNotHere, &line));
         eprintln!("{line}");

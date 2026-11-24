@@ -147,7 +147,10 @@ pub const FIT_REASONS: &[&str] = &[
     "other",
 ];
 
-/// reformat_refused's `reason` (holt-json.md's table).
+/// reformat_refused's `reason` (holt-json.md's table): `other` where the
+/// mount isn't one --reformat can find (no fstab entry, not on the
+/// layout's disks, no filesystem), which bko-rescue never offers; a reader
+/// shows the text.
 pub const REFORMAT_REASONS: &[&str] = &[
     "not_linux",
     "own_tools",
@@ -162,6 +165,7 @@ pub const REFORMAT_REASONS: &[&str] = &[
     "no_uuid",
     "twice",
     "edited",
+    "other",
 ];
 
 /// A problem or a note: its code, today's text, and the fields about its
@@ -431,6 +435,27 @@ mod tests {
         }
         for r in REFORMAT_REASONS {
             assert!(ref_row.contains(&format!("`{r}`")), "{r}");
+        }
+    }
+
+    /// Every reason fit.rs and reformat.rs give by name is in their list
+    /// (and so in the spec's row, above): a new one can't drift past both.
+    #[test]
+    fn every_reason_given_is_listed() {
+        let given = |src: &str, call: &str| -> Vec<String> {
+            src.match_indices(call)
+                .filter(|(i, _)| !src[..*i].ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '.'))
+                .filter_map(|(i, _)| src[i + call.len()..].split_once('"').map(|(r, _)| r.to_string()))
+                .collect()
+        };
+        let fit = given(include_str!("fit.rs"), "why(\"");
+        let reformat = given(include_str!("reformat.rs"), "refused(\"");
+        assert!(fit.len() > 20 && reformat.len() > 10, "{fit:?} {reformat:?}");
+        for r in &fit {
+            assert!(FIT_REASONS.contains(&r.as_str()), "fit.rs gives {r:?}, not in FIT_REASONS");
+        }
+        for r in &reformat {
+            assert!(REFORMAT_REASONS.contains(&r.as_str()), "reformat.rs gives {r:?}, not in REFORMAT_REASONS");
         }
     }
 

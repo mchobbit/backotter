@@ -335,6 +335,7 @@ fn pair(flag: &str, v: &str) -> Result<(String, String), String> {
 pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
     let mut layout: Option<String> = None;
     let mut o = Options::new("");
+    let mut schema: Option<String> = None;
     let mut it = args.iter();
     let value = |it: &mut std::slice::Iter<String>, flag: &str| {
         debug_assert!(VALUE_FLAGS.contains(&flag), "{flag} takes a value: add it to VALUE_FLAGS");
@@ -425,7 +426,11 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
             "--luks-header-dir" => o.luks_header_dir = Some(value(&mut it, a)?),
             "--sysroot" => o.sysroot = Some(value(&mut it, a)?),
             s if jsonout::is_json_flag(s) => {
-                jsonout::check_schema(s)?;
+                // A schema this bko-holt doesn't write: refused once every
+                // argument is read, so a --help after it is still the help.
+                if let Err(e) = jsonout::check_schema(s) {
+                    schema.get_or_insert(e);
+                }
                 o.json = true;
             }
             s if s.starts_with('-') => return Err(format!("unknown argument {s:?}")),
@@ -436,6 +441,9 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
                 layout = Some(s.to_string());
             }
         }
+    }
+    if let Some(e) = schema {
+        return Err(e);
     }
     if o.through.is_some() && o.only.is_some() {
         return Err("--through and --only don't go together".into());
@@ -484,7 +492,7 @@ fn main_inner(args: &[String]) -> (u8, String) {
         print!("{USAGE}");
         return (EXIT_OK, String::new());
     }
-    if let Some(Err(e)) = json.map(jsonout::check_schema) {
+    if let Some(e) = jsonout::schema_error(args, VALUE_FLAGS) {
         return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::SchemaUnknown, format!("bko-holt load: {e}"), &format!("\n{USAGE}"));
     }
     let opts = match parsed {
@@ -700,6 +708,9 @@ mod tests {
         assert_eq!(o.snapshot, "--json");
         assert_eq!(jsonout::find_json_flag(&args(&["l", "--repo", "/r", "--snapshot", "--json"]), VALUE_FLAGS), None);
         assert_eq!(parse_args(&args(&["l", "--json", "--help"])).unwrap(), Parsed::Help);
+        // The help wherever it stands, a bad schema too.
+        assert_eq!(parse_args(&args(&["l", "--json=2", "--help"])).unwrap(), Parsed::Help);
+        assert!(err(&["l", "--json", "--json=2"]).contains("writes schema 1"));
     }
 
     #[test]

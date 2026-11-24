@@ -490,7 +490,7 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
     for e in &opts.erase {
         let name = resolve_name(sys, e);
         if !m.pairs.iter().any(|(_, t)| *t == name) {
-            m.problems.push(Problem::new(ProblemCode::EraseNotTarget, format!("--erase {e}: that isn't a target of this layout, so it isn't erased")).with("target", e));
+            m.problems.push(Problem::new(ProblemCode::EraseNotTarget, format!("--erase {e}: that isn't a target of this layout, so it isn't erased")).with("target", &name));
         }
     }
     m
@@ -912,7 +912,8 @@ pub fn left_out_pool_problems(opts: &Options, only: &crate::load::layout::OnlyPo
     let mut out = Vec::new();
     for (src, dst) in &opts.maps {
         if only.disks.contains(src) {
-            out.push(Problem::new(ProblemCode::PoolLeftOut, format!("--map {src}={dst}: {src} holds a pool --pools leaves untouched, so it has no target")).with("disk", src));
+            // Which of the left-out pools isn't known here: null.
+            out.push(Problem::new(ProblemCode::PoolLeftOut, format!("--map {src}={dst}: {src} holds a pool --pools leaves untouched, so it has no target")).with("disk", src).with("pool", crate::json::Value::Null));
         }
     }
     for (src, tgt) in &m.pairs {
@@ -1170,6 +1171,9 @@ mod tests {
         assert_eq!((p.text.as_str(), p.str_field("disk"), p.str_field("target")), ("--map vda=vdq: no whole disk vdq here", Some("vda"), Some("vdq")));
         let p = one(&m(&["--map", "vda=vdb", "--erase", "vdc"]), C::EraseNotTarget);
         assert_eq!((p.text.as_str(), p.str_field("target")), ("--erase vdc: that isn't a target of this layout, so it isn't erased", Some("vdc")));
+        // A path: the text as given, the target its disk's name.
+        let p = one(&m(&["--map", "vda=vdb", "--erase", "/dev/vdc"]), C::EraseNotTarget);
+        assert_eq!((p.text.as_str(), p.str_field("target")), ("--erase /dev/vdc: that isn't a target of this layout, so it isn't erased", Some("vdc")));
         // The rescue system's /, a 4 KiB-sector disk, a read-only one, a
         // bigger one and one with someone else's table.
         t.disk("vde", "253:64", &[], 4096).file("/sys/block/vde/size", format!("{}

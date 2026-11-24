@@ -93,16 +93,11 @@ pub struct Reformat {
 }
 
 /// reformat_refused for REASON (codes::REFORMAT_REASONS; `other` where
-/// the table has none), about MOUNT made as TYPE when they're known.
+/// the table has none), about MOUNT made as TYPE, each null when the
+/// refusal isn't about one (holt-json.md: a field not known is null).
 fn refused(reason: &str, mount: Option<&str>, to: Option<&str>, text: String) -> Problem {
-    let mut p = Problem::new(ProblemCode::ReformatRefused, text);
-    if let Some(m) = mount {
-        p = p.with("mount", m);
-    }
-    if let Some(t) = to {
-        p = p.with("type", t);
-    }
-    p.with("reason", reason)
+    debug_assert!(crate::load::codes::REFORMAT_REASONS.contains(&reason), "{reason}: not in codes::REFORMAT_REASONS");
+    Problem::new(ProblemCode::ReformatRefused, text).with("mount", mount).with("type", to).with("reason", reason)
 }
 
 fn s(v: &Value, k: &str) -> Option<String> {
@@ -804,6 +799,9 @@ mod tests {
         let nixos = crate::json::parse(&eos().compact().replace(r#""id":"endeavouros""#, r#""id":"nixos""#)).unwrap();
         let (r, m, ..) = one(&nixos, &[("/", "xfs")]);
         assert_eq!((r.as_str(), m), ("own_tools", None));
+        // Not about one mount: mount and type are there, null.
+        let p = &work_out(&nixos, &re(&[("/", "xfs")])).problems[0];
+        assert_eq!(p.fields.iter().map(|(k, v)| (k.as_str(), v.is_null())).collect::<Vec<_>>(), [("mount", true), ("type", true), ("reason", false)]);
         let bsd = crate::json::parse(&eos().compact().replace(r#""os":{"#, r#""os":{"family":"freebsd","#)).unwrap();
         assert_eq!(one(&bsd, &[("/", "xfs")]).0, "not_linux");
         // The change's note, and the trip through the edited layout.

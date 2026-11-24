@@ -4056,6 +4056,46 @@ fn luks_restored_key_file_with_and_without_key_file() {
     );
 }
 
+/// A LUKS name bko-holt can't keep a temporary key under (`..`) and a
+/// crypttab key file, no --key-file: refused, key_name_unusable with the
+/// name, and no temporary key made; at the format stage (the container's
+/// own name) and at boot's restored key files (crypttab's name for it)
+/// alike.  With --key-file, no problem.
+#[test]
+fn luks_name_without_a_temporary_key_is_refused() {
+    use crate::load::{codes::ProblemCode, commands, layout::Layout, target::Mapping, Parsed, Stage};
+    let plan = |v: &Value, extra: &[&str]| {
+        let l = Layout::from_json(v.clone()).unwrap();
+        let args: Vec<String> = ["l.json"].iter().chain(extra).map(|a| a.to_string()).collect();
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&args) else { unreachable!() };
+        let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+        (b.coded_problems(), plan_text_of(b.stage(Stage::Assemble)))
+    };
+    let t = elementary(true);
+    t.file("/etc/crypttab", "cryptdata UUID=e1e01005-6b0a-4d6c-9a2e-8f7e1d2c3b4a /etc/keys/root.key luks\n");
+    let v = run(&t, true, FakeRunner::default());
+    let want = "..: a LUKS name bko-holt can't keep a temporary key under: give --key-file ..=FILE";
+    let check = |problems: &[crate::load::codes::Problem]| {
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert_eq!((problems[0].code, problems[0].text.as_str(), problems[0].str_field("name")), (ProblemCode::KeyNameUnusable, want, Some("..")));
+    };
+    // The container opened as `..`: the format stage refuses its temporary key.
+    let dotdot = crate::json::parse(&v.compact().replace("cryptdata", "..")).unwrap();
+    let (problems, asm) = plan(&dotdot, &[]);
+    check(&problems);
+    assert!(!asm.contains("/dev/urandom") && !asm.contains(&format!("{RUN_DIR}/keys/")), "no temporary key: {asm}");
+    // crypttab's name for it `..` (found by its UUID): boot's restored key
+    // file can't be added in the temporary key's place.
+    let mut tab = v.clone();
+    set_in(&mut tab, &["storage", "crypttab", "0", "name"], Value::from(".."));
+    let (problems, _) = plan(&tab, &[]);
+    check(&problems);
+    // --key-file: nothing temporary, nothing refused.
+    let (problems, asm) = plan(&dotdot, &["--key-file", "..=/root/disk-passphrase"]);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert!(asm.contains(" --key-file=/root/disk-passphrase "), "{asm}");
+}
+
 /// A crypttab key the restore doesn't bring back (systemd's path:device
 /// form, a key device under /dev, Debian keyscript='s name in the key
 /// field) and no --key-file: refused at plan time, never a container whose
@@ -6389,6 +6429,8 @@ fn truenas_mirror_guest() {
     let sys = crate::load::target::System { disks: vec![], mounts: vec![], pools: vec![], pvs: vec![], devs: vec![], swaps: vec![] };
     let p = crate::load::target::left_out_pool_problems(&o, &only, &crate::load::target::Mapping::default(), &sys);
     assert_eq!(p, vec!["--map vdc=/dev/sdc: vdc holds a pool --pools leaves untouched, so it has no target".to_string()]);
+    // pool_left_out, about vdc; which pool isn't known here: null.
+    assert_eq!((p[0].code, p[0].str_field("disk"), p[0].field("pool").map(crate::json::Value::is_null)), (crate::load::codes::ProblemCode::PoolLeftOut, Some("vdc"), Some(true)));
     // A name the layout hasn't.
     assert_eq!(l.only_pools(&["boot".to_string()]).problems[0], "--pools boot: the layout has no ZFS pool boot (it has boot-pool, tank)");
 }

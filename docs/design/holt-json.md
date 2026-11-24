@@ -1026,7 +1026,7 @@ lists every one.
 | `thin_unsupported` | plan.rs `thin_problems` | `why` | a newer image |
 | `zfs_feature_unknown` | plan.rs `zfs_problems` | `pool`, `features` | a newer image |
 | `zfs_compat_missing` | plan.rs `zfs_problems` | `pool`, `file` | a newer image |
-| `reformat_refused` | reformat.rs | `mount`, `type`, `reason` (`not_linux`, `own_tools`, `grub_reads`, `not_convertible`, `same_type`, `multi_device`, `mounted_elsewhere`, `no_fsck`, `old_kernel`, `hibernation`, `no_uuid`, `twice`, `edited`) | Advanced |
+| `reformat_refused` | reformat.rs | `mount`, `type`, `reason` (`not_linux`, `own_tools`, `grub_reads`, `not_convertible`, `same_type`, `multi_device`, `mounted_elsewhere`, `no_fsck`, `old_kernel`, `hibernation`, `no_uuid`, `twice`, `edited`, `other`: the mount isn't one --reformat finds, never offered by bko-rescue) | Advanced |
 | `from_bug_report` | plan.rs | | restore from the dump itself |
 | `not_root` | plan.rs | | internal |
 | `unsupported` | commands.rs and the families: a layout feature load doesn't build | `what` | report |

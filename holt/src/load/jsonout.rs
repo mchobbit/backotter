@@ -109,20 +109,38 @@ pub fn exists_refusal(command: &str, path: &str) -> String {
 /// which the arguments are another command's (report-bug's load
 /// arguments).
 pub fn find_json_flag<'a>(args: &'a [String], value_flags: &[&str]) -> Option<&'a str> {
+    in_flag_place(args, value_flags).into_iter().find(|a| is_json_flag(a))
+}
+
+/// The first `--json=N` in a flag's place (as find_json_flag finds them)
+/// that asks for a schema this bko-holt doesn't write, as check_schema
+/// says it: wherever it stands, beside a good `--json` too.
+pub fn schema_error(args: &[String], value_flags: &[&str]) -> Option<String> {
+    in_flag_place(args, value_flags).into_iter().filter(|a| is_json_flag(a)).find_map(|a| check_schema(a).err())
+}
+
+/// Whether ARGS ask for the help (`-h` or `--help` in a flag's place): it
+/// is for people, so `--json` beside it, wherever, prints the text help.
+pub fn asks_for_help(args: &[String], value_flags: &[&str]) -> bool {
+    in_flag_place(args, value_flags).into_iter().any(|a| a == "-h" || a == "--help")
+}
+
+/// Every argument of ARGS in a flag's place, up to `--`: an argument that
+/// is the value of one of VALUE_FLAGS isn't one.
+fn in_flag_place<'a>(args: &'a [String], value_flags: &[&str]) -> Vec<&'a str> {
+    let mut out = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let a = a.as_str();
         if a == "--" {
-            return None;
-        }
-        if is_json_flag(a) {
-            return Some(a);
+            break;
         }
         if value_flags.contains(&a) {
             it.next();
         }
+        out.push(a);
     }
-    None
+    out
 }
 
 /// Whether A is `--json` or `--json=N`.
@@ -230,6 +248,13 @@ mod tests {
         assert_eq!(find_json_flag(&s(&["--jsonx", "--JSON"]), vf), None);
         assert_eq!(find_json_flag(&s(&["l.json", "--snapshot"]), vf), None);
         assert_eq!(find_json_flag(&s(&[]), vf), None);
+        // A bad schema wherever it stands; the help in a flag's place only.
+        assert_eq!(schema_error(&s(&["l.json", "--json", "--json=2"]), vf).as_deref(), Some("--json=2: this bko-holt writes schema 1 of its JSON documents only"));
+        assert_eq!(schema_error(&s(&["--json=1", "l.json", "--json"]), vf), None);
+        assert_eq!(schema_error(&s(&["--snapshot", "--json=2", "--json"]), vf), None);
+        assert_eq!(schema_error(&s(&["--", "--json=2"]), vf), None);
+        assert!(asks_for_help(&s(&["--json=2", "--help"]), vf) && asks_for_help(&s(&["-h", "--json"]), vf));
+        assert!(!asks_for_help(&s(&["--snapshot", "--help", "--json"]), vf) && !asks_for_help(&s(&["--json", "--", "-h"]), vf));
     }
 
     #[test]

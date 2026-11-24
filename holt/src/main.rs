@@ -157,8 +157,13 @@ fn report_hint() -> String {
 }
 
 fn dump(args: &[String]) -> ExitCode {
-    // dump writes JSON already: --json is refused, as a document.
+    // dump writes JSON already: --json is refused, as a document; beside
+    // --help, the help, which is for people.
     if let Some(flag) = jsonout::find_json_flag(args, DUMP_VALUE_FLAGS) {
+        if jsonout::asks_for_help(args, DUMP_VALUE_FLAGS) {
+            print!("{DUMP_USAGE}");
+            return ExitCode::SUCCESS;
+        }
         let line = format!("bko-holt dump: {flag}: dump writes JSON already; run it without --json");
         jsonout::write_stdout(&jsonout::error_doc(2, jsonout::ErrorCode::JsonNotHere, &line));
         eprintln!("{line}");

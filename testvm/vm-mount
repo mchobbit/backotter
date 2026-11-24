@@ -1152,6 +1152,11 @@ fi
 [[ -n $ostree_dep || -n $abroot_present || -n $snapcore ]] || fstab_file=${fstab_copy:-$(guest_file "$mp" /etc/fstab)}
 [[ -z $abroot_present ]] || fstab_file=/dev/null     # mount_abroot mounted the tree
 [[ -z $snapcore ]] || fstab_file=/dev/null           # mount_snapcore did: Ubuntu Core has no fstab of them
+# The spec fstab gives /: whatever else it names is on the root's device,
+# whatever resolve makes of the name (Guix's installer names every
+# subvolume of a LUKS volume /dev/mapper/cryptroot, a name from its
+# config.scm that no crypttab records and open_luks doesn't give: guix15-luks).
+root_spec=$(awk '!/^[[:space:]]*(#|$)/ && $2 == "/" { print $1; exit }' "$fstab_file" 2>/dev/null || true)
 while read -r spec target type options; do
     [[ $target == / || $type == swap || $target != /* || ,$options, == *,noauto,* ]] && continue
     if [[ -n $legacy_root && $type == zfs ]]; then
@@ -1164,7 +1169,8 @@ while read -r spec target type options; do
         if [[ $ro == yes ]]; then mount -t zfs -o ro "$ds" "$mp$target"; else mount -t zfs "$ds" "$mp$target"; fi
         continue
     fi
-    p=$(resolve "$spec") || { echo "vm-mount: skipping $target: $spec is not on this image" >&2; continue; }
+    p=$(resolve "$spec") || { [[ -n $root_spec && $spec == "$root_spec" ]] && p=$root; } ||
+        { echo "vm-mount: skipping $target: $spec is not on this image" >&2; continue; }
     mount_fs "$p" "$mp$target" "$(subvol_opts <<<"$options")"
 done < <(awk '!/^[[:space:]]*(#|$)/ { print $1, $2, $3, $4 }' "$fstab_file" |
     awk '{ print gsub("/", "/", $2), $0 }' | sort -n | cut -d' ' -f2-)

@@ -128,6 +128,12 @@ pub fn restore() {
 /// time, straight into a `Secret`, and are never shown.  Ctrl-C then
 /// comes as a byte, which plain mode takes as quitting.  Put back when
 /// dropped, a panic's unwinding included.
+///
+/// While quiet, SIGHUP and SIGTERM only set the flag (`signalled`), so
+/// they can't end the program with echo off.  The reader gives up when
+/// one came; dropping puts the settings back first, then the signal
+/// ends the program as it would have (`ffi::default_hup_term`).  Plain
+/// mode only: the full screen's `Term` has its own handlers.
 pub struct Quiet {
     saved: TermiosBuf,
 }
@@ -140,14 +146,27 @@ impl Quiet {
         q.t.c_lflag &= !(ffi::ECHO | ffi::ECHONL | ffi::ICANON | ffi::ISIG | ffi::IEXTEN);
         q.t.c_cc[ffi::VMIN] = 1;
         q.t.c_cc[ffi::VTIME] = 0;
-        ffi::set_attr(0, ffi::TCSADRAIN, &q)?;
+        // Caught before echo goes off, so no moment is left uncovered.
+        ffi::catch_hup_term();
+        if let Err(e) = ffi::set_attr(0, ffi::TCSADRAIN, &q) {
+            let _ = ffi::set_attr(0, ffi::TCSADRAIN, &saved);
+            ffi::default_hup_term();
+            return Err(e);
+        }
         Ok(Quiet { saved })
+    }
+
+    /// Whether SIGHUP or SIGTERM came while quiet.
+    pub fn signalled() -> bool {
+        ffi::signal_pending()
     }
 }
 
 impl Drop for Quiet {
     fn drop(&mut self) {
         let _ = ffi::set_attr(0, ffi::TCSADRAIN, &self.saved);
+        // Echo is back: a signal that came now ends the program.
+        ffi::default_hup_term();
     }
 }
 

@@ -4,7 +4,7 @@
 with every byte it sends checked against the sequences it may send.  And
 the widgets (RT6, RT7): --demo through every page in full screen and in
 plain mode, P and the too-small notice going on in plain mode, and the
-password read with echo off.
+password read with echo off, and SIGTERM there.
 
     testvm/rescue/pty-test.py PATH/TO/bko-rescue
 
@@ -369,6 +369,26 @@ def test_demo_plain():
     t.close()
 
 
+def test_plain_password_sigterm():
+    """SIGTERM with echo off: the settings go back first, then the
+    signal ends it (a shell sees 143)."""
+    t = Pty(["--demo", "--plain"])
+    wait_for(t, b"Choose [1-3, s]: ")
+    t.send(b"2\n")
+    wait_for(t, b"> ")
+    mark = len(t.out)
+    t.send(b"sftp://nas/x\n")
+    check(wait_for(t, b"Each key shows", since=mark) and wait_for(t, b"> ", since=mark), "plain SIGTERM: the password asked")
+    a = t.attrs()
+    check(a[3] & termios.ECHO == 0, "plain SIGTERM: echo off for the password")
+    t.send(b"half")
+    t.p.send_signal(signal.SIGTERM)
+    code, _ = t.wait(4)
+    check(code == -signal.SIGTERM, "plain SIGTERM: ended by SIGTERM (%d)" % code)
+    check(t.attrs() == t.before, "plain SIGTERM: settings put back")
+    t.close()
+
+
 def test_demo_full():
     t = Pty(["--demo"])
     check(wait_for(t, b"Which machine is this?"), "full demo: the first screen")
@@ -429,8 +449,8 @@ def test_demo_to_plain():
 
 
 for f in (test_check_tty, test_profile, test_spike, test_spike_fallbacks, test_spike_panic_and_signals,
-          test_resize_and_small, test_no_tty, test_abi_and_options, test_demo_plain, test_demo_full,
-          test_demo_to_plain):
+          test_resize_and_small, test_no_tty, test_abi_and_options, test_demo_plain, test_plain_password_sigterm,
+          test_demo_full, test_demo_to_plain):
     print("==", f.__name__)
     f()
 print("%d failed" % len(FAILS))

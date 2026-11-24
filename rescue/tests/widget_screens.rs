@@ -2,7 +2,7 @@
 //! and mono, one file a widget in tests/screens/w-*.txt; the too-small
 //! notice at 60x14 in tests/screens/too-small.*.txt.  And each widget's
 //! bytes in every profile: only allowed sequences, the frame budgets, a
-//! list move under 200 bytes, a gauge step under 40.
+//! list move under 200 bytes (1200 when it scrolls), a gauge step under 40.
 //! BKO_RESCUE_GOLDEN=check (the default), report or bless.
 
 mod common;
@@ -179,15 +179,21 @@ fn moving_in_a_list_or_a_view_is_small() {
             let mut scr = Screen::new(lines, colour, caps, S80);
             let mut ck = Checker::new(rules(lines, colour, caps));
             ck.feed(&scr.frame(&d.canvas()));
+            let mut scrolled = 0;
             for k in ks {
+                let top = d.list().map(|l| l.top());
                 d.key(k);
                 let f = scr.frame(&d.canvas());
-                // Scrolling a list moves every row; a step of the focus
-                // moves two.
-                let budget = if name == "menu" { 1200 } else { 200 };
+                // A step of the focus redraws two rows: under 200 bytes.
+                // Scrolling by a row redraws every row, under 1200
+                // (rescue-tui.md, "What RT6 and RT7 found").
+                let scrolls = d.list().map(|l| l.top()) != top;
+                scrolled += usize::from(scrolls);
+                let budget = if scrolls { 1200 } else { 200 };
                 assert!(f.len() < budget, "{name} {pn} {k:?}: {} bytes", f.len());
                 ck.feed(&f);
             }
+            assert_eq!(scrolled > 0, name == "menu", "{name}: only the menu scrolls here");
             assert_eq!(ck.result(), Ok(()), "{name} {pn}");
         }
     }

@@ -11,7 +11,8 @@
 //! - A password is read with echo, line editing and ISIG off
 //!   (`tty::Quiet`), byte by byte into the `Secret`, never through a
 //!   `String`: Backspace takes a character off, Ctrl-U empties it,
-//!   Ctrl-C quits.  Nothing typed is shown.
+//!   Ctrl-C quits.  Nothing typed is shown.  A SIGHUP or SIGTERM then
+//!   ends the program only once echo is back on.
 //! - An empty line where text is typed shows the other choices, so no
 //!   text or password can be taken for a command.
 //! - Progress is one line per change of the text above the gauge, and a
@@ -82,6 +83,9 @@ impl Line for StdLine {
     }
 
     fn read(&mut self, timeout_ms: Option<u64>) -> io::Result<Byte> {
+        if self.quiet.is_some() {
+            return self.read_quiet(timeout_ms);
+        }
         if let Some(t) = timeout_ms {
             match ffi::poll_in(0, i32::try_from(t).unwrap_or(i32::MAX)) {
                 Ok(true) => {}
@@ -90,17 +94,7 @@ impl Line for StdLine {
                 Err(e) => return Err(e),
             }
         }
-        let mut b = [0u8; 1];
-        loop {
-            return match self.input.read(&mut b) {
-                Ok(0) => Ok(Byte::Eof),
-                Ok(_) => Ok(Byte::Got(b[0])),
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                // EIO: the terminal went away.
-                Err(e) if e.raw_os_error() == Some(5) => Ok(Byte::Eof),
-                Err(e) => Err(e),
-            };
-        }
+        self.read_byte()
     }
 
     fn quiet(&mut self, on: bool) -> io::Result<()> {
@@ -115,6 +109,51 @@ impl Line for StdLine {
 
     fn now_ms(&mut self) -> u64 {
         u64::try_from(self.start.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+}
+
+impl StdLine {
+    /// Echo off: wait in poll a second at a time, never in read, which
+    /// glibc's signal() (SA_RESTART) would restart after a SIGTERM.  A
+    /// SIGHUP or SIGTERM is the end of input here; the caller turns echo
+    /// back on, and then the signal ends the program (`tty::Quiet`).
+    fn read_quiet(&mut self, timeout_ms: Option<u64>) -> io::Result<Byte> {
+        let start = self.now_ms();
+        loop {
+            if tty::Quiet::signalled() {
+                return Ok(Byte::Eof);
+            }
+            let wait = match timeout_ms {
+                Some(t) => {
+                    let gone = self.now_ms().saturating_sub(start);
+                    if gone >= t {
+                        return Ok(Byte::Timeout);
+                    }
+                    (t - gone).min(1000)
+                }
+                None => 1000,
+            };
+            match ffi::poll_in(0, i32::try_from(wait).unwrap_or(1000)) {
+                Ok(true) => return self.read_byte(),
+                Ok(false) => {}
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    fn read_byte(&mut self) -> io::Result<Byte> {
+        let mut b = [0u8; 1];
+        loop {
+            return match self.input.read(&mut b) {
+                Ok(0) => Ok(Byte::Eof),
+                Ok(_) => Ok(Byte::Got(b[0])),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                // EIO: the terminal went away.
+                Err(e) if e.raw_os_error() == Some(5) => Ok(Byte::Eof),
+                Err(e) => Err(e),
+            };
+        }
     }
 }
 

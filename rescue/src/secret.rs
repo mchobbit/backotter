@@ -12,7 +12,7 @@
 //!   argv, the environment or a log.
 
 use std::fs::{self, OpenOptions, Permissions};
-use std::io::{self, Write as _};
+use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{compiler_fence, Ordering};
@@ -21,7 +21,7 @@ use std::sync::atomic::{compiler_fence, Ordering};
 pub const CAP: usize = 1024;
 
 /// Zero `buf` so the compiler can't leave the writes out.
-fn wipe(buf: &mut [u8]) {
+pub(crate) fn wipe(buf: &mut [u8]) {
     for b in buf.iter_mut() {
         // SAFETY: `b` is a unique reference to one initialised byte of
         // `buf`, so the pointer is valid, aligned and writable.
@@ -164,11 +164,14 @@ impl Secret {
         }
         check_dir(dir)?;
         let path = dir.join(name);
-        let mut f = OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path)?;
+        let f = OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path)?;
         // The umask can only take bits away; set exactly 0600 anyway.
-        f.set_permissions(Permissions::from_mode(0o600))?;
-        f.write_all(self.expose())?;
-        f.flush()?;
+        if let Err(e) = f.set_permissions(Permissions::from_mode(0o600)) {
+            drop(f);
+            let _ = fs::remove_file(&path);
+            return Err(e);
+        }
+        write_or_remove(&path, f, self.expose())?;
         Ok(path)
     }
 
@@ -189,6 +192,18 @@ impl Drop for Secret {
         }
         let _ = len;
     }
+}
+
+/// Write `bytes` to `w`, the new file at `path`.  If that fails (ENOSPC
+/// on a small tmpfs, EIO), the file is removed: no part of a secret is
+/// left behind where the caller can't find it.
+fn write_or_remove(path: &Path, mut w: impl Write, bytes: &[u8]) -> io::Result<()> {
+    let r = w.write_all(bytes).and_then(|()| w.flush());
+    if r.is_err() {
+        drop(w);
+        let _ = fs::remove_file(path);
+    }
+    r
 }
 
 /// A key file's name: 1-64 of letters, digits, `.`, `_` and `-`, not
@@ -345,6 +360,39 @@ mod tests {
         for bad in ["", "../x", "a/b", ".hidden", &"x".repeat(65)] {
             assert!(s.write_file(&d, bad).is_err(), "{bad:?}");
         }
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Takes `room` bytes, then fails as a full disk does.
+    struct Full {
+        room: usize,
+    }
+
+    impl Write for Full {
+        fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+            if self.room == 0 {
+                return Err(io::Error::other("no space left on device"));
+            }
+            let n = b.len().min(self.room);
+            self.room -= n;
+            Ok(n)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_failed_write_leaves_no_file() {
+        let d = scratch("full");
+        ram_dir(&d).unwrap();
+        let p = d.join("k");
+        fs::write(&p, b"pass").unwrap();
+        assert!(write_or_remove(&p, Full { room: 4 }, b"pass phrase").is_err());
+        assert!(!p.exists(), "the part written is gone");
+        fs::write(&p, b"").unwrap();
+        assert!(write_or_remove(&p, Full { room: 64 }, b"pass phrase").is_ok());
+        assert!(p.exists(), "kept when the write worked");
         fs::remove_dir_all(&d).unwrap();
     }
 

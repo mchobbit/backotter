@@ -85,6 +85,11 @@ impl List {
         self.rows.is_empty()
     }
 
+    /// The first row shown: it changes only when the list scrolls.
+    pub fn top(&self) -> usize {
+        self.top
+    }
+
     /// Up and Down; true when the focus moved.  With nothing chosen
     /// either arrow lands on the first row.
     pub fn key(&mut self, k: Key) -> bool {

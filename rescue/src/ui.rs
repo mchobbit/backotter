@@ -294,8 +294,9 @@ pub trait Ui {
     fn progress(&mut self, d: &Progress, tick: &mut dyn FnMut() -> Tick) -> Answer<()>;
 }
 
-/// A reply the scripted Ui gives.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A reply the scripted Ui gives.  Its Debug never shows a secret's
+/// bytes, only how many.
+#[derive(Clone, PartialEq, Eq)]
 pub enum Reply {
     /// A menu's or radio list's row.
     Pick(usize),
@@ -310,6 +311,24 @@ pub enum Reply {
     Button(usize),
     Plain,
     Quit,
+}
+
+impl std::fmt::Debug for Reply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Reply::Pick(i) => write!(f, "Pick({i})"),
+            Reply::Text(s) => write!(f, "Text({s:?})"),
+            Reply::Secret(b) => write!(f, "Secret(<{} bytes>)", b.len()),
+            Reply::Yes => f.write_str("Yes"),
+            Reply::No => f.write_str("No"),
+            Reply::Ok => f.write_str("Ok"),
+            Reply::Back => f.write_str("Back"),
+            Reply::Shell => f.write_str("Shell"),
+            Reply::Button(n) => write!(f, "Button({n})"),
+            Reply::Plain => f.write_str("Plain"),
+            Reply::Quit => f.write_str("Quit"),
+        }
+    }
 }
 
 /// The Ui for the app's tests: each dialog takes the next reply, and is
@@ -376,7 +395,11 @@ impl Ui for Scripted {
 
     fn password(&mut self, d: &Password) -> Answer<Secret> {
         self.next("password", &d.chrome, |r| match r {
-            Reply::Secret(b) => Some(Secret::from_bytes(&b)),
+            Reply::Secret(mut b) => {
+                let s = Secret::from_bytes(&b);
+                crate::secret::wipe(&mut b);
+                Some(s)
+            }
             _ => None,
         })
     }
@@ -462,6 +485,18 @@ mod tests {
     #[should_panic(expected = "no reply left")]
     fn running_out_fails_the_test() {
         Scripted::default().message(&Message::new(Chrome::ours("a", "b"), Clean::ours("")));
+    }
+
+    #[test]
+    fn a_secret_reply_never_shows_its_bytes() {
+        let r = Reply::Secret(b"hunter2".to_vec());
+        assert_eq!(format!("{r:?}"), "Secret(<7 bytes>)");
+        let mut ui = Scripted::new([r]);
+        let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ui.yes_no(&Question::new(Chrome::ours("a", "b"), Clean::ours("")));
+        }));
+        let msg = got.err().and_then(|e| e.downcast::<String>().ok()).map(|s| *s).unwrap_or_default();
+        assert!(msg.contains("isn't a reply to") && !msg.contains("hunter2"), "{msg}");
     }
 
     #[test]

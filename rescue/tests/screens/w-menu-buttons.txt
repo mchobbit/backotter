@@ -22,7 +22,7 @@
                                                                                 
                                                                                 
                                                                                 
- Arrows: move | Tab: next | Enter: OK | s: shell | Esc: back                    
+ Arrows: move | Tab: next | Enter: Back | s: shell | Esc: back                  
 
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -78,7 +78,7 @@ s 0;40
                                                                                 
                                                                                 
                                                                                 
- Arrows: move | Tab: next | Enter: OK | s: shell | Esc: back                    
+ Arrows: move | Tab: next | Enter: Back | s: shell | Esc: back                  
 
 pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
 pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
@@ -132,7 +132,7 @@ p 0
                                                                                 
                                                                                 
                                                                                 
- Arrows: move | Tab: next | Enter: OK | s: shell | Esc: back                    
+ Arrows: move | Tab: next | Enter: Back | s: shell | Esc: back                  
 
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -188,7 +188,7 @@ s 0;40
                                                                                 
                                                                                 
                                                                                 
- Arrows: move | Tab: next | Enter: OK | s: shell | Esc: back                    
+ Arrows: move | Tab: next | Enter: Back | s: shell | Esc: back                  
 
 pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
 pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
@@ -242,7 +242,7 @@ p 0
                                                                                 
                                                                                 
                                                                                 
- Arrows: move | Tab: next | Enter: OK | s: shell | Esc: back                    
+ Arrows: move | Tab: next | Enter: Back | s: shell | Esc: back                  
 
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -298,7 +298,7 @@ s 0;40
                                                                                 
                                                                                 
                                                                                 
- Arrows: move | Tab: next | Enter: OK | s: shell | Esc: back                    
+ Arrows: move | Tab: next | Enter: Back | s: shell | Esc: back                  
 
 pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
 pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp

@@ -956,7 +956,20 @@ in full screen and in plain mode.
 - **The key line** is made from the dialog when the caller gives none:
   the arrows, Tab, Enter's button, each button's letter, Esc, and the
   first screen's `L`, `C` and `P`.  Too long for the row, the arrows'
-  words go, then Tab's.
+  words go, then Tab's.  "Enter:" names what Enter presses now: the
+  focused button, or the dialog's OK from a list, field or view.  So
+  "Stop the restore?" with the focus on < Keep going > says "Enter: Keep
+  going", and it follows Tab, Left and Right.
+- **The layout** keeps each list's and the view's least rows (3, or
+  fewer when shorter) before text gets any.  Text past what is left is
+  cut, its last line ending in `>`.  So a long problem text above a list
+  never pushes the list over the buttons, the border or the key line.
+- **Scrolling a list by a row** redraws every row: under 1200 bytes, not
+  the 200 that "Screen buffer" plans for a move.  A move that doesn't
+  scroll stays under 200, and the test checks both.  At 9600 baud
+  (DragonFly's serial line) a scrolling step is about 1.25 s.  Kept as
+  Whiptail does it, a row at a time; paging instead is the fix if RT3's
+  serial runs find it too slow.
 - **The insertion point** in a text or password box is one cell left
   out of the focus's reverse video, so it shows where the console hides
   the cursor too; where it can't, the cursor is parked there.
@@ -974,10 +987,15 @@ in full screen and in plain mode.
   and a fence (the only unsafe code outside ffi.rs).  A test checks it
   has no Debug.  `write_file` makes a 0600 file with O_EXCL, no newline,
   in a directory `ram_dir` made 0700 (an existing one with group or other
-  bits, or a symlink, is refused).
+  bits, or a symlink, is refused).  A write that fails removes the
+  file.  The scripted Ui's `Reply::Secret` prints as `Secret(<n
+  bytes>)`, and its bytes are wiped once copied into the `Secret`.
 - **Plain mode** reads a password with echo, ICANON and ISIG off
   (`tty::Quiet`), byte by byte into the `Secret`: Backspace, Ctrl-U and
-  Ctrl-C (quit) are its own.  Elsewhere ISIG stays on.  An empty line
+  Ctrl-C (quit) are its own.  Elsewhere ISIG stays on.  While echo is
+  off, SIGHUP and SIGTERM are caught: the read gives up, the settings go
+  back, and then the signal ends the program (a shell sees 143).  The pty
+  test sends SIGTERM at the password prompt.  An empty line
   where text is typed shows the other choices and `t) type it again`.
   Buttons get their letter, else b, s or o, else the first free letter
   of the label.

@@ -28,7 +28,7 @@ pub use run::{FullScreen, Io};
 use crate::screen::{Canvas, BACKGROUND, COLS, DIALOG, ROWS};
 use crate::term::keys::Key;
 use crate::term::out::Attr;
-use crate::text::{self, Clean};
+use crate::text::{self, Clean, CUT};
 use crate::ui::{self, Act, Button, Chrome};
 
 use field::Field;
@@ -208,43 +208,70 @@ impl Dialog {
         matches!(self.parts.first(), Some(Part::View(_)))
     }
 
-    /// Give each part its rows: text and gaps first, then lists and the
-    /// view share what is left.  Text past MAX_BODY is cut.
+    /// Give each part its rows.  Gaps, fields, gauges and the lists'
+    /// frames are fixed.  Each list and the view keep their least rows (3,
+    /// or fewer when shorter); text takes what is left, in order, and text
+    /// past that is cut.  Then the lists and the view share the rest.  So
+    /// the parts never take more than MAX_BODY rows, and a list's focused
+    /// row is never under the buttons.
     fn layout(&mut self) {
+        let lines = |t: &Clean| u16::try_from(text::wrap(t, usize::from(TEXT_W)).len()).unwrap_or(u16::MAX);
+        let len = |n: usize| u16::try_from(n).unwrap_or(u16::MAX);
+        let least = |n: u16| n.clamp(1, 3);
         let mut fixed = 0u16;
+        let mut text_want = 0u16;
+        let mut flex_least = 0u16;
         let mut flexible = 0u16;
         for p in &self.parts {
             match p {
-                Part::Text(t) => fixed += text::wrap(t, usize::from(TEXT_W)).len() as u16,
-                Part::Gap(n) => fixed += n,
-                Part::Field(_) => fixed += 1,
-                Part::Gauge(_) => fixed += 2,
-                Part::List(_) => {
-                    fixed += 2;
+                Part::Text(t) => text_want = text_want.saturating_add(lines(t)),
+                Part::Gap(n) => fixed = fixed.saturating_add(*n),
+                Part::Field(_) => fixed = fixed.saturating_add(1),
+                Part::Gauge(_) => fixed = fixed.saturating_add(2),
+                Part::List(l) => {
+                    fixed = fixed.saturating_add(2);
                     flexible += 1;
+                    flex_least += least(len(l.len()));
                 }
-                Part::View(_) => flexible += 1,
+                Part::View(v) => {
+                    flexible += 1;
+                    flex_least += least(len(v.len()));
+                }
             }
         }
-        let mut left = MAX_BODY.saturating_sub(fixed);
+        let mut text_room = MAX_BODY.saturating_sub(fixed.saturating_add(flex_least));
+        let text_used = text_want.min(text_room);
+        let mut left = MAX_BODY.saturating_sub(fixed.saturating_add(text_used));
         let share = left.checked_div(flexible).unwrap_or(0);
+        // The least rows of the lists and view still to come: what one
+        // may take never eats into theirs.
+        let mut least_after = flex_least;
+        let mut give = |n: u16, left: &mut u16| {
+            let min = least(n);
+            least_after -= min;
+            let room = left.saturating_sub(least_after);
+            let rows = n.min(share.max(1)).min(room).max(min);
+            *left = left.saturating_sub(rows);
+            rows
+        };
         let mut heights = Vec::new();
         for p in &mut self.parts {
             let h = match p {
-                Part::Text(t) => text::wrap(t, usize::from(TEXT_W)).len() as u16,
+                Part::Text(t) => {
+                    let h = lines(t).min(text_room);
+                    text_room -= h;
+                    h
+                }
                 Part::Gap(n) => *n,
                 Part::Field(_) => 1,
                 Part::Gauge(_) => 2,
                 Part::List(l) => {
-                    let rows = (l.len() as u16).min(share.max(1)).min(left.max(1)).max(1);
-                    let rows = if (l.len() as u16) > rows { rows.max(3) } else { rows };
-                    left = left.saturating_sub(rows);
+                    let rows = give(len(l.len()), &mut left);
                     l.window = rows;
                     rows + 2
                 }
                 Part::View(v) => {
-                    let rows = (v.len() as u16).min(share.max(1)).max(1);
-                    left = left.saturating_sub(rows);
+                    let rows = give(len(v.len()), &mut left);
                     v.window = rows;
                     rows
                 }
@@ -291,12 +318,20 @@ impl Dialog {
             let focused = self.focus == Focus::Part(i);
             match p {
                 Part::Text(t) => {
-                    for (k, l) in text::wrap(t, usize::from(TEXT_W)).iter().enumerate() {
+                    let w = text::wrap(t, usize::from(TEXT_W));
+                    let shown = usize::from(ph).min(w.len());
+                    for (k, l) in w.iter().take(shown).enumerate() {
                         let r = row + k as u16;
                         if r >= bottom {
                             break;
                         }
-                        c.text(r, TEXT_COL, l, DIALOG);
+                        // Text cut by the layout ends in CUT.
+                        if k + 1 == shown && shown < w.len() {
+                            let cut = l.truncate(usize::from(TEXT_W) - 2).join(" ", &Clean::ours(&CUT.to_string()));
+                            c.text(r, TEXT_COL, &cut, DIALOG);
+                        } else {
+                            c.text(r, TEXT_COL, l, DIALOG);
+                        }
                     }
                 }
                 Part::Gap(_) => {}
@@ -373,10 +408,14 @@ impl Dialog {
         if !lists && self.buttons.len() > 1 && self.parts.iter().all(|p| !p.takes_focus()) {
             k.push("Left/Right: button".into());
         }
-        if let Some(d) = self.default_button() {
-            if self.focus != Focus::None {
-                k.push(format!("Enter: {}", self.buttons[d].label.as_str()));
-            }
+        // Enter presses the focused button, or the dialog's OK from a part.
+        let enter = match self.focus {
+            Focus::Button(i) => Some(i),
+            Focus::Part(_) => self.default_button(),
+            Focus::None => None,
+        };
+        if let Some(b) = enter.and_then(|i| self.buttons.get(i)) {
+            k.push(format!("Enter: {}", b.label.as_str()));
         }
         for b in &self.buttons {
             if let Some(l) = b.key {
@@ -642,6 +681,58 @@ mod tests {
         assert_eq!(d.focus, Focus::Button(1));
         assert_eq!(d.key(Key::Enter), Did::Press(1));
         assert_eq!(d.buttons[1].act, Act::Other(NO));
+    }
+
+    #[test]
+    fn the_key_line_names_what_enter_presses() {
+        let enter = |d: &Dialog| {
+            let k = d.key_line();
+            k.as_str().split(" | ").find(|s| s.starts_with("Enter: ")).map(str::to_string)
+        };
+        let mut q = Question::new(Chrome::ours("a", "b"), o("Sure?"));
+        assert_eq!(enter(&Dialog::question(&q)).as_deref(), Some("Enter: Yes"));
+        q.no_first = true;
+        let mut d = Dialog::question(&q);
+        assert_eq!(enter(&d).as_deref(), Some("Enter: No"), "the focus is on No");
+        d.key(Key::Left);
+        assert_eq!(enter(&d).as_deref(), Some("Enter: Yes"), "it follows Left and Right");
+        let r = rows(&d.canvas());
+        assert!(r[23].contains("Enter: Yes"), "and the canvas's key line: {:?}", r[23]);
+        let mut d = Dialog::menu(&Menu::new(Chrome::ours("a", "b"), o("x"), items(3)));
+        assert_eq!(enter(&d).as_deref(), Some("Enter: OK"), "from the list, the dialog's OK");
+        d.key(Key::Tab);
+        assert_eq!(enter(&d).as_deref(), Some("Enter: OK"));
+        d.key(Key::Tab);
+        assert_eq!(enter(&d).as_deref(), Some("Enter: Back"));
+        let p = Progress::new(Chrome::ours("Restore", "Restoring"), o("stages"));
+        assert_eq!(enter(&Dialog::progress(&p)), None, "no focus: Enter does nothing");
+    }
+
+    #[test]
+    fn long_text_gives_way_to_the_list() {
+        // A problem's text may be 2 KiB: here it wraps to well over 15
+        // lines, above a radio list of 6 disks.
+        let long = o(&"The disk you picked is smaller than the one it was backed up from.  ".repeat(16));
+        let disks: Vec<Clean> = (0..6).map(|i| o(&format!("disk{i}  500 GB"))).collect();
+        let mut r = Radio::new(Chrome::ours("Disks", "Which disk?"), long, disks, Some(0));
+        r.buttons.push(Button::shell());
+        let mut d = Dialog::radio(&r);
+        for down in 0..=5 {
+            let rs = rows(&d.canvas());
+            let bottom = rs.iter().position(|l| l.starts_with("  └")).expect("the bottom border");
+            assert!(rs[bottom].trim_end().ends_with('┘'), "the border is whole: {:?}", rs[bottom]);
+            assert!(rs[bottom - 1].contains("<  OK  >    < Back >    < Shell >"), "{:?}", rs[bottom - 1]);
+            let notice: String = rs[bottom - 2].chars().skip(3).collect();
+            assert!(rs[bottom - 2].starts_with("  │") && notice.trim() == "│", "the notice row is clear: {:?}", rs[bottom - 2]);
+            assert!(rs[23].starts_with(" Arrows: choose"), "the key line: {:?}", rs[23]);
+            let chosen = format!("(*) disk{down}");
+            let at = rs.iter().position(|l| l.contains(&chosen)).expect("the chosen row shows");
+            assert!(at < bottom - 2, "above the buttons: row {at}");
+            let cut = |l: &String| l.chars().skip(usize::from(TEXT_COL)).take(usize::from(TEXT_W)).collect::<String>().trim_end().ends_with(" >");
+            assert!(rs.iter().any(cut), "the text is cut with >");
+            assert!(d.heights.iter().sum::<u16>() <= MAX_BODY);
+            d.key(Key::Down);
+        }
     }
 
     #[test]

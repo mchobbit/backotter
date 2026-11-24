@@ -440,6 +440,11 @@ pub fn default_hup_term() {
     }
 }
 
+/// Whether a caught signal is waiting, without taking it.
+pub fn signal_pending() -> bool {
+    SIGNALLED.load(Ordering::SeqCst) != 0
+}
+
 /// The last signal caught, once.
 pub fn take_signal() -> Option<c_int> {
     match SIGNALLED.swap(0, Ordering::SeqCst) {

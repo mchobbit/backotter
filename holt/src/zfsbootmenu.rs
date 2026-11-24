@@ -36,13 +36,10 @@
 //! already warns of it, and its entry says `read: false`.
 
 use crate::json::{Obj, Value};
-use crate::sys::Sys;
+use crate::sys::{safe_name, RoMountWords, Sys, RUN_DIR};
 use crate::zfs_be::{BootEnv, Rule};
 use std::io::{Read, Seek, SeekFrom};
 
-/// Where dump mounts an inactive BE, read-only, to list its /boot:
-/// `/run/bko-holt/zbm-be-NAME`.
-const READ_AT: &str = "/run/bko-holt";
 /// ZFSBootMenu's per-BE kernel command line (user property).
 pub const COMMANDLINE: &str = "org.zfsbootmenu:commandline";
 
@@ -283,38 +280,26 @@ fn boot_files(sys: &Sys, dir: &str) -> (Vec<String>, Vec<String>) {
     (kernels, initramfs)
 }
 
-fn safe(name: &str) -> bool {
-    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'+'))
-}
-
 /// An inactive BE's /boot listing: its dataset (or the child mounted at
 /// /boot) mounted read-only under dump's run directory, read, unmounted at
 /// once.  None (said) when it can't be.
 fn inactive_boot(sys: &Sys, be: &BootEnv) -> Option<(Vec<String>, Vec<String>)> {
-    if !sys.privileged || !safe(&be.name) {
+    if !sys.privileged || !safe_name(&be.name, b"-_.+") {
         return None;
     }
     let (ds, legacy, rel) = match be.children.iter().find(|c| c.mountpoint == "/boot") {
         Some(c) => (c.dataset.as_str(), c.legacy(), ""),
         None => (be.dataset.as_str(), be.legacy(), "/boot"),
     };
-    let at = format!("{READ_AT}/zbm-be-{}", be.name);
-    if let Err(e) = std::fs::create_dir_all(sys.p(&at)) {
-        sys.warn(format!("ZFSBootMenu: can't make {at} to read boot environment {}'s /boot: {e}", be.name));
-        return None;
-    }
-    if sys.run("mount", &["-t", "zfs", "-o", &crate::zfs_be::ro_options(legacy), ds, &at]).is_none() {
-        sys.warn(format!("ZFSBootMenu: a read-only mount of {ds} at {at} failed, so boot.zfsbootmenu doesn't list boot environment {}'s kernels", be.name));
-        let _ = std::fs::remove_dir(sys.p(&at));
-        return None;
-    }
-    let files = boot_files(sys, &format!("{at}{rel}"));
-    if sys.run("umount", &[&at]).is_some() {
-        let _ = std::fs::remove_dir(sys.p(&at));
-    } else {
-        sys.warn(format!("ZFSBootMenu: {ds} is still mounted read-only at {at}; `umount {at}` when this dump is done"));
-    }
-    Some(files)
+    // Where dump mounts the inactive BE, read-only, to list its /boot:
+    // `/run/bko-holt/zbm-be-NAME`.
+    let at = format!("{RUN_DIR}/zbm-be-{}", be.name);
+    let words = RoMountWords {
+        cant_make: format!("ZFSBootMenu: can't make {at} to read boot environment {}'s /boot", be.name),
+        mount_failed: format!("ZFSBootMenu: a read-only mount of {ds} at {at} failed, so boot.zfsbootmenu doesn't list boot environment {}'s kernels", be.name),
+        still_mounted: format!("ZFSBootMenu: {ds} is still mounted read-only at {at}; `umount {at}` when this dump is done"),
+    };
+    sys.with_ro_mount("zfs", &crate::zfs_be::ro_options(legacy), ds, &at, &words, |at| boot_files(sys, &format!("{at}{rel}")))
 }
 
 /// A dataset's local or inherited user property K, from the dump's

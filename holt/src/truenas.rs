@@ -12,7 +12,7 @@
 //! one through a private read-only mount, as Proxmox's (crate::boot).
 
 use crate::json::{Obj, Value};
-use crate::sys::Sys;
+use crate::sys::{safe_name, RoMountWords, Sys, RUN_DIR};
 use crate::zfs_be::{BootEnv, Rule};
 
 /// The middleware's config database and TrueNAS's GRUB helper: both there
@@ -20,9 +20,6 @@ use crate::zfs_be::{BootEnv, Rule};
 pub const MARKS: [&str; 2] = ["/data/freenas-v1.db", "/usr/local/bin/truenas-grub.py"];
 /// The product version (`25.10.8`).
 pub const VERSION: &str = "/etc/version";
-/// dump's own read-only mounts of an inactive BE's `etc` dataset, to read
-/// its /etc/version: `/run/bko-holt/truenas-be-NAME`.
-const READ_AT: &str = "/run/bko-holt";
 pub const KERNEL_PROP: &str = "truenas:kernel_version";
 pub const KEEP_PROP: &str = "zectl:keep";
 
@@ -52,10 +49,6 @@ pub struct TrueNas {
     pub esps: Vec<Esp>,
 }
 
-fn safe(name: &str) -> bool {
-    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'+'))
-}
-
 /// A dataset's local user property K, from the dump's tools.datasets.
 fn user_prop(tools: &Value, ds: &str, k: &str) -> Option<String> {
     tools
@@ -73,26 +66,20 @@ fn user_prop(tools: &Value, ds: &str, k: &str) -> Option<String> {
 /// can't be.
 fn be_version(sys: &Sys, be: &BootEnv) -> Option<String> {
     let etc = be.children.iter().find(|c| c.mountpoint == "/etc" || c.dataset == format!("{}/etc", be.dataset))?;
-    if !sys.privileged || !safe(&be.name) {
+    if !sys.privileged || !safe_name(&be.name, b"-_.+") {
         return None;
     }
-    let at = format!("{READ_AT}/truenas-be-{}", be.name);
-    if let Err(e) = std::fs::create_dir_all(sys.p(&at)) {
-        sys.warn(format!("TrueNAS: can't make {at} to read boot environment {}'s /etc/version: {e}", be.name));
-        return None;
-    }
-    if sys.run("mount", &["-t", "zfs", "-o", &crate::zfs_be::ro_options(etc.legacy()), &etc.dataset, &at]).is_none() {
-        sys.warn(format!("TrueNAS: a read-only mount of {} at {at} failed, so boot.truenas doesn't say boot environment {}'s version", etc.dataset, be.name));
-        let _ = std::fs::remove_dir(sys.p(&at));
-        return None;
-    }
-    let v = sys.read_trim(&format!("{at}/version")).map(|v| v.lines().next().unwrap_or("").trim().to_string()).filter(|v| !v.is_empty());
-    if sys.run("umount", &[&at]).is_some() {
-        let _ = std::fs::remove_dir(sys.p(&at));
-    } else {
-        sys.warn(format!("TrueNAS: {} is still mounted read-only at {at}; `umount {at}` when this dump is done", etc.dataset));
-    }
-    v
+    // dump's own read-only mount of the BE's `etc` dataset:
+    // `/run/bko-holt/truenas-be-NAME`.
+    let at = format!("{RUN_DIR}/truenas-be-{}", be.name);
+    let words = RoMountWords {
+        cant_make: format!("TrueNAS: can't make {at} to read boot environment {}'s /etc/version", be.name),
+        mount_failed: format!("TrueNAS: a read-only mount of {} at {at} failed, so boot.truenas doesn't say boot environment {}'s version", etc.dataset, be.name),
+        still_mounted: format!("TrueNAS: {} is still mounted read-only at {at}; `umount {at}` when this dump is done", etc.dataset),
+    };
+    sys.with_ro_mount("zfs", &crate::zfs_be::ro_options(etc.legacy()), &etc.dataset, &at, &words, |at| {
+        sys.read_trim(&format!("{at}/version")).map(|v| v.lines().next().unwrap_or("").trim().to_string()).filter(|v| !v.is_empty())
+    })?
 }
 
 /// boot.truenas for a TrueNAS system: its BEs (`bes`, crate::zfs_be::list

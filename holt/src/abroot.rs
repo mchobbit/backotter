@@ -18,7 +18,7 @@
 
 use crate::json::{Obj, Value};
 use crate::report::{BackupSource, MountHint};
-use crate::sys::Sys;
+use crate::sys::{safe_name, RoMountWords, Sys, RUN_DIR};
 
 /// abroot.json: the image's, then /etc's, merged (viper's MergeInConfig:
 /// a key in the later file wins).
@@ -33,8 +33,6 @@ pub const LOCK: &str = "/run/abroot/operation.lock";
 /// backup tree has them.
 pub const INIT_AT: &str = "/boot/init";
 pub const FUTURE_AT: &str = "/part-future";
-/// dump's own read-only mounts: `/run/bko-holt/abroot-LABEL`.
-const READ_AT: &str = "/run/bko-holt";
 /// The options of dump's read-only mounts of a filesystem of type TY, and
 /// of those backup_sources asks a backup to make: `ro` alone still replays
 /// a dirty ext4 journal or a btrfs log tree (a write to the source disk
@@ -269,11 +267,6 @@ pub struct Dump {
 const ROOT_NOTE: &str = "ABRoot's present root: its /etc is an overlay (upper /var/lib/abroot/etc/LABEL), so read / through a non-recursive bind mount (mount --bind / DIR) to back up the raw lower /etc, the tree load restores";
 const HINT_NOTE: &str = "not mounted on the running system: a backup mounts it read-only here as `mount` says, reads it, and unmounts it";
 
-/// A label safe in a path of dump's run directory.
-fn safe(label: &str) -> bool {
-    !label.is_empty() && label.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
-}
-
 /// F(BASE) with FS readable at BASE: where the running system mounts it,
 /// else a read-only mount of dump's own (unless MAY_MOUNT is false: an
 /// upgrade is running), removed after.  None when it can't be read (not
@@ -283,26 +276,18 @@ fn with_mounted<R>(sys: &Sys, fs: &Fs, may_mount: bool, f: impl FnOnce(&str) -> 
         return Some(f(m));
     }
     let ty = fs.fstype.clone()?;
-    if !may_mount || !sys.privileged || !safe(&fs.label) {
+    // A label safe in a path of dump's run directory ('+' isn't).
+    if !may_mount || !sys.privileged || !safe_name(&fs.label, b"-_.") {
         return None;
     }
-    let at = format!("{READ_AT}/abroot-{}", fs.label);
-    if let Err(e) = std::fs::create_dir_all(sys.p(&at)) {
-        sys.warn(format!("ABRoot: can't make {at} to read {} ({}): {e}", fs.label, fs.dev));
-        return None;
-    }
-    if sys.run("mount", &["-t", &ty, "-o", &ro_options(&ty), &fs.node(), &at]).is_none() {
-        sys.warn(format!("ABRoot: a read-only mount of {} ({}) at {at} failed, so boot.abroot doesn't say what it holds", fs.label, fs.node()));
-        let _ = std::fs::remove_dir(sys.p(&at));
-        return None;
-    }
-    let r = f(&at);
-    if sys.run("umount", &[&at]).is_some() {
-        let _ = std::fs::remove_dir(sys.p(&at));
-    } else {
-        sys.warn(format!("ABRoot: {} is still mounted read-only at {at}; `umount {at}` when this dump is done", fs.label));
-    }
-    Some(r)
+    // dump's own read-only mount: `/run/bko-holt/abroot-LABEL`.
+    let at = format!("{RUN_DIR}/abroot-{}", fs.label);
+    let words = RoMountWords {
+        cant_make: format!("ABRoot: can't make {at} to read {} ({})", fs.label, fs.dev),
+        mount_failed: format!("ABRoot: a read-only mount of {} ({}) at {at} failed, so boot.abroot doesn't say what it holds", fs.label, fs.node()),
+        still_mounted: format!("ABRoot: {} is still mounted read-only at {at}; `umount {at}` when this dump is done", fs.label),
+    };
+    sys.with_ro_mount(&ty, &ro_options(&ty), &fs.node(), &at, &words, f)
 }
 
 /// What `init/LABEL/` holds, read at BASE (init's mount): its files, the

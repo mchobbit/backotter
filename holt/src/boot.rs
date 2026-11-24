@@ -393,7 +393,7 @@ pub fn systemd_boot_json(sys: &Sys, mount: &str) -> Option<Value> {
 /// proxmox-boot-tool's list of the ESPs it keeps, one vfat volume ID a line.
 pub const PROXMOX_BOOT_UUIDS: &str = "/etc/kernel/proxmox-boot-uuids";
 /// Where dump mounts each of those ESPs, read-only, while it reads it.
-pub const UNMOUNTED_ESP_MOUNTS: &str = "/run/bko-holt";
+pub const UNMOUNTED_ESP_MOUNTS: &str = crate::sys::RUN_DIR;
 
 /// One ESP proxmox-boot-tool keeps: its volume ID, the partition it is
 /// (None: nothing has that ID), and what a read of it found (`mode` is
@@ -445,22 +445,12 @@ fn proxmox_mode(sys: &Sys, mount: &str, contents: &Value) -> Option<&'static str
 /// when it can't be mounted, said with WHO (how the warnings name the ESP)
 /// and WHAT (what the dump then lacks).
 pub fn read_unmounted_esp<R>(sys: &Sys, who: &str, dev: &str, at: &str, what: &str, f: impl FnOnce(&str) -> R) -> Option<R> {
-    if let Err(err) = std::fs::create_dir_all(sys.p(at)) {
-        sys.warn(format!("ESP {who}: can't make {at} to read it: {err}"));
-        return None;
-    }
-    if sys.run("mount", &["-t", "vfat", "-o", "ro,noexec,nodev,nosuid", &format!("/dev/{dev}"), at]).is_none() {
-        sys.warn(format!("ESP {who}: a read-only mount at {at} failed, so {what} aren't in this dump"));
-        let _ = std::fs::remove_dir(sys.p(at));
-        return None;
-    }
-    let r = f(at);
-    if sys.run("umount", &[at]).is_some() {
-        let _ = std::fs::remove_dir(sys.p(at));
-    } else {
-        sys.warn(format!("ESP {who}: still mounted read-only at {at}; `umount {at}` when this dump is done"));
-    }
-    Some(r)
+    let words = crate::sys::RoMountWords {
+        cant_make: format!("ESP {who}: can't make {at} to read it"),
+        mount_failed: format!("ESP {who}: a read-only mount at {at} failed, so {what} aren't in this dump"),
+        still_mounted: format!("ESP {who}: still mounted read-only at {at}; `umount {at}` when this dump is done"),
+    };
+    sys.with_ro_mount("vfat", "ro,noexec,nodev,nosuid", &format!("/dev/{dev}"), at, &words, f)
 }
 
 /// boot.proxmox_boot (docs/design/proxmox.md): on Proxmox VE with

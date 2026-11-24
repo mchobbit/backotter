@@ -169,6 +169,26 @@ const MAX_STDOUT: u64 = 64 << 20;
 /// The largest file `Sys::read_bytes` (and `read`) reads whole.
 pub const READ_MAX: u64 = 128 << 20;
 
+/// Dump's run directory: Sys::with_ro_mount's mounts are made under it.
+pub const RUN_DIR: &str = "/run/bko-holt";
+
+/// The warnings of a Sys::with_ro_mount, verbatim as each caller words
+/// them.
+pub struct RoMountWords {
+    /// When AT can't be made: ": " and the error follow it.
+    pub cant_make: String,
+    /// When the mount fails.
+    pub mount_failed: String,
+    /// When the umount fails (AT is left mounted).
+    pub still_mounted: String,
+}
+
+/// Whether NAME is safe as one path component under RUN_DIR: not empty,
+/// and only ASCII letters, digits and the bytes in EXTRA.
+pub fn safe_name(name: &str, extra: &[u8]) -> bool {
+    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || extra.contains(&b))
+}
+
 /// BUF filled from R as far as it goes; how much was read (less only at
 /// the end).
 fn fill(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -406,6 +426,33 @@ impl Sys {
 
     pub fn warnings(&self) -> Vec<String> {
         self.warnings.borrow().clone()
+    }
+
+    /// F(AT) with DEV (as `mount` takes it) mounted read-only at AT, a
+    /// directory dump makes under its run directory (RUN_DIR) and removes
+    /// after: the one way dump reads a filesystem the running system
+    /// doesn't mount (an unmounted ESP, an inactive boot environment, an
+    /// ABRoot root), unmounted at once.  TY and OPTS are `mount`'s -t and
+    /// -o.  None when AT can't be made or the mount fails, each said in
+    /// the caller's WORDS; an umount that fails is said too, and AT is
+    /// then left in place.
+    pub fn with_ro_mount<R>(&self, ty: &str, opts: &str, dev: &str, at: &str, words: &RoMountWords, f: impl FnOnce(&str) -> R) -> Option<R> {
+        if let Err(e) = std::fs::create_dir_all(self.p(at)) {
+            self.warn(format!("{}: {e}", words.cant_make));
+            return None;
+        }
+        if self.run("mount", &["-t", ty, "-o", opts, dev, at]).is_none() {
+            self.warn(words.mount_failed.as_str());
+            let _ = std::fs::remove_dir(self.p(at));
+            return None;
+        }
+        let r = f(at);
+        if self.run("umount", &[at]).is_some() {
+            let _ = std::fs::remove_dir(self.p(at));
+        } else {
+            self.warn(words.still_mounted.as_str());
+        }
+        Some(r)
     }
 
     /// Size, free and available bytes of the filesystem mounted at `abs`,
@@ -809,6 +856,43 @@ mod tests {
         assert_eq!(natural_cmp("", "a"), Ordering::Less);
         assert_eq!(natural_cmp("b", ""), Ordering::Greater);
         assert_eq!(natural_cmp("a99999999999999999999999", "a100000000000000000000000"), Ordering::Less);
+    }
+
+    #[test]
+    fn ro_mount_sequence() {
+        let words = |at: &str| RoMountWords { cant_make: format!("X: can't make {at}"), mount_failed: format!("X: mount at {at} failed"), still_mounted: format!("X: still at {at}") };
+        // Mounted, read, unmounted: AT is removed after.
+        let t = Tree::new("romount");
+        let r = FakeRunner::default().with("mount -t vfat -o ro,nodev /dev/sda1 /run/bko-holt/a", "").with("umount /run/bko-holt/a", "");
+        let s = Sys::new(t.root(), Box::new(r), true);
+        assert_eq!(s.with_ro_mount("vfat", "ro,nodev", "/dev/sda1", "/run/bko-holt/a", &words("/run/bko-holt/a"), |at| at.to_string()).as_deref(), Some("/run/bko-holt/a"));
+        assert!(!s.exists("/run/bko-holt/a"));
+        assert!(s.warnings().is_empty());
+        // The mount fails: said, AT removed, F not called.
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        assert_eq!(s.with_ro_mount("zfs", "ro", "p/b", "/run/bko-holt/b", &words("/run/bko-holt/b"), |_| unreachable!()), None::<()>);
+        assert!(!s.exists("/run/bko-holt/b"));
+        assert_eq!(s.warnings(), vec!["X: mount at /run/bko-holt/b failed"]);
+        // The umount fails: said, AT kept.
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default().with("mount -t zfs -o ro p/c /run/bko-holt/c", "")), true);
+        assert_eq!(s.with_ro_mount("zfs", "ro", "p/c", "/run/bko-holt/c", &words("/run/bko-holt/c"), |_| 7), Some(7));
+        assert!(s.is_dir("/run/bko-holt/c"));
+        assert_eq!(s.warnings(), vec!["X: still at /run/bko-holt/c"]);
+        // AT can't be made (a file is in the way): said with the error.
+        t.file("/run/f", "");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        assert_eq!(s.with_ro_mount("zfs", "ro", "p/d", "/run/f/d", &words("/run/f/d"), |_| ()), None);
+        assert!(s.warnings()[0].starts_with("X: can't make /run/f/d: "), "{:?}", s.warnings());
+    }
+
+    #[test]
+    fn safe_names() {
+        assert!(safe_name("a-b_c.1", b"-_."));
+        assert!(!safe_name("a+b", b"-_."));
+        assert!(safe_name("a+b", b"-_.+"));
+        assert!(!safe_name("", b"-_.+"));
+        assert!(!safe_name("a/b", b"-_.+"));
+        assert!(!safe_name("..", b"-_"));
     }
 
     #[test]

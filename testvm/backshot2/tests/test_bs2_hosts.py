@@ -141,12 +141,13 @@ class GuixSources(unittest.TestCase):
         self.assertEqual(RM.of("guix15-bios"), (6, 4))
         self.assertEqual(RM.of("no-such-guest"), (2, 3))
         self.assertEqual(B.prep_room("guix15"), "2 4")
-        self.assertIn("reserve /x.case --mem 3 --words) && ./cmp-run.sh $R sudo -E", B.reserve_tier1("/x.case"))
+        self.assertIn(f"reserve /x.case --mem 3 --words) && {B.HOST_BS2} lane /x.case -- ./cmp-run.sh $R sudo -E",
+                      B.reserve_tier1("/x.case"))
 
     def test_holt_passed_on(self):
         with mock.patch.dict(os.environ, {"BS2_HOLT": "/bkoscratch/x/bko-holt", "BS2_FAST_DOWN": "0"}):
             self.assertEqual(B.reuse_env(), "BS2_FAST_DOWN=0 BS2_HOLT=/bkoscratch/x/bko-holt ")
-            self.assertIn("BS2_HOLT=/bkoscratch/x/bko-holt ./cmp-run.sh", B.reserve_tier1("/x.case"))
+            self.assertIn(f"BS2_HOLT=/bkoscratch/x/bko-holt {B.HOST_BS2} lane /x.case -- ./cmp-run.sh", B.reserve_tier1("/x.case"))
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("BS2_HOLT", None)
             self.assertNotIn("BS2_HOLT", B.reuse_env())

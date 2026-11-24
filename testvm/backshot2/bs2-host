@@ -26,6 +26,9 @@ never the shared ~/backotter-work/testvm.
                                          inode tables on LUKS past the source's (case.disk_gib);
                                          --words: the whole reservation, --reserve D M or, for a
                                          source over this host's RAM disk, --reserve-ssd D M
+  bs2-host lane CASE -- CMD...           CMD (cmp-run.sh ... tier1 CASE) holding this host's SSD lane when
+                                         CASE is an SSD case here (one at a time, taken before CMD's
+                                         reservation); else CMD as it is
   bs2-host gen SOURCE SEED              print the case SEED gives (no run)
   bs2-host caps                          what the bko-holt under test supports (--new-uuids)
 
@@ -553,8 +556,15 @@ def cmd_tier1(a):
     src = C.source_name(c)
     gen, dump = load_source(src)
     scratch = case_scratch(a.case) if a.scratch == "auto" else a.scratch
-    # (A tier1 by hand takes the SSD lane itself, held until it exits; a queue's worker holds it for its case.)
-    _lane = ssd_token() if scratch == "ssd" and not os.environ.get("BS2_SSD_HELD") else None  # noqa: F841
+    # (The SSD lane is taken outside cmp-run.sh, before its reservation: by the queue's worker, shrink, or
+    # bs2-host lane for a tier1 by hand, each saying so with BS2_SSD_HELD.  A tier1 without it tries the lane
+    # once, never waiting under a reservation, held until it exits.)
+    _lane = None
+    if scratch == "ssd" and not os.environ.get("BS2_SSD_HELD"):
+        _lane = ssd_token(wait=False)
+        if _lane is None:
+            die(f"{name}: an SSD case, and this host's SSD lane is busy ({ROOT}/ssd.lock): run it as "
+                f"bs2-host lane {a.case} -- cmp-run.sh ... tier1 (bs2's replay, soak and corpus do)", 2)
     rc = T1.run(c, name, src, gen, dump, a.tier, a.run, a.port, HERE, TESTVM, ROOT, holt_bin(), bins(), scratch=scratch)
     sys.exit(rc)
 
@@ -607,41 +617,46 @@ def disk_ok():
 # worker holds it and says so to its case (BS2_SSD_HELD=1); shrink and a tier1 by hand take
 # it themselves, waiting.
 def ssd_token(wait=True):
-    """The SSD lane's token: an open file holding the flock (close it to give it back), or
-    None when WAIT is false and another case has it."""
+    """The SSD lane's token: an open file holding the flock (close it to give it back; a
+    child given its fd, pass_fds, holds the lane on until it exits too), or None when WAIT
+    is false and another case has it, or when the lock file can't be opened at all (a
+    warning on stderr: the lane counts as busy)."""
     import fcntl
-    os.makedirs(ROOT, exist_ok=True)
-    try:   # (m's queue and root's tier1 both take it: made a+rw, else opened read-only)
-        f = os.fdopen(os.open(f"{ROOT}/ssd.lock", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o666), "a")
-        try:
-            os.fchmod(f.fileno(), 0o666)
-        except OSError:
-            pass
-    except PermissionError:
-        f = open(f"{ROOT}/ssd.lock")
+    try:
+        os.makedirs(ROOT, exist_ok=True)
+        try:   # (m's queue and root's tier1 both take it: made a+rw, else opened read-only)
+            f = os.fdopen(os.open(f"{ROOT}/ssd.lock", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o666), "a")
+            try:
+                os.fchmod(f.fileno(), 0o666)
+            except OSError:
+                pass
+        except PermissionError:
+            f = open(f"{ROOT}/ssd.lock")
+    except OSError as e:
+        print(f"bs2-host: the SSD lane's lock {ROOT}/ssd.lock: {e}: taken as busy", file=sys.stderr)
+        return None
     try:
         fcntl.flock(f, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
-    except BlockingIOError:
+    except OSError:   # (BlockingIOError: another holds it)
         f.close()
         return None
     return f
 
 
 def pick(lines, taken, ssd_of, token):
-    """The index of the next line of LINES (queue.txt's, split) to take, not in TAKEN, in
-    order: a RAM case at once; an SSD case (SSD_OF(path)) only when TOKEN() hands the lane's
-    token (else it is passed over for now, and the next RAM case is taken).  (index,
-    token or None), or (None, None) when none can start now."""
-    for i, w in enumerate(lines):
-        if i in taken:
-            continue
-        if ssd_of(w[1]):
-            t = token()
-            if t is None:
-                continue
-            return i, t
-        return i, None
-    return None, None
+    """The index of the next line of LINES (queue.txt's, split) to take, not in TAKEN: the
+    earliest SSD case (SSD_OF(path)) whenever TOKEN() hands the lane's token, before any RAM
+    case, so the lane runs from the queue's start as split() and wall() plan it (vanilla3's
+    cases sit late in queue.txt); else the earliest RAM case.  (index, token or None), or
+    (None, None) when none can start now (only SSD cases left, the lane busy)."""
+    left = [i for i in range(len(lines)) if i not in taken]
+    ssd = [i for i in left if ssd_of(lines[i][1])]
+    if ssd:
+        t = token()
+        if t is not None:
+            return ssd[0], t
+    ram = [i for i in left if i not in ssd]
+    return (ram[0], None) if ram else (None, None)
 
 
 def case_scratch(path):
@@ -840,9 +855,11 @@ def cmd_shrink(a):
         C.write(p, dict(case, name=nm))
         res, where = reserve_words(p)
         tok = ssd_token() if where == "ssd" else None
+        if where == "ssd" and tok is None:
+            return "HARNESS", None, [f"the SSD lane's lock {ROOT}/ssd.lock couldn't be taken"]
         r = subprocess.run([f"{WORK}/cmp-run.sh"] + res + ["sudo", "-E", "BS2_NO_LEDGER=1", os.path.join(HERE, "bs2-host"), "tier1", p,
                             "--tier", str(a.tier), "--run", work_run, "--port", str(a.port), "--scratch", where], cwd=WORK,
-                           capture_output=True, text=True,
+                           capture_output=True, text=True, pass_fds=(tok.fileno(),) if tok else (),
                            env=dict(os.environ, **({"WEAR_SCRATCH": "ssd", "BS2_SSD_HELD": "1"} if where == "ssd" else {})))
         if tok:
             tok.close()
@@ -944,6 +961,24 @@ def unrowed(rd, tier, path, rc, err):
     return row
 
 
+def cmd_lane(a):
+    """CMD (a cmp-run.sh with a tier1 of CASE) holding this host's SSD lane when CASE is an
+    SSD case here, taken before CMD's reservation, waiting (ssd_token); its fd passed on, so
+    the lane is held while CMD runs even if this process dies; BS2_SSD_HELD=1 tells the
+    tier1.  A RAM case: CMD as it is.  Exits with CMD's status."""
+    cmd = a.command[1:] if a.command[:1] == ["--"] else a.command
+    if not cmd:
+        die("lane CASE -- CMD...")
+    tok = ssd_token() if case_scratch(a.case) == "ssd" else None
+    env = dict(os.environ)
+    if case_scratch(a.case) == "ssd":
+        if tok is None:
+            die(f"the SSD lane's lock {ROOT}/ssd.lock couldn't be taken", 1)
+        env.update(BS2_SSD_HELD="1", WEAR_SCRATCH="ssd")
+    r = subprocess.run(cmd, env=env, pass_fds=(tok.fileno(),) if tok else ())
+    sys.exit(r.returncode)
+
+
 SSD_POLL_S = 30   # a queue worker's wait while only SSD cases are left and the lane is busy
 
 
@@ -986,8 +1021,9 @@ def cmd_queue(a):
                 i, tok = pick(lines, taken, lambda p: case_scratch(p) == "ssd", lambda: ssd_token(wait=False))
                 if i is not None:
                     taken.add(i)
-                    with open(f"{rd}/queue.taken", "w") as t:
+                    with open(f"{rd}/queue.taken.new", "w") as t:   # (a torn queue.taken would rerun every case)
                         t.write(" ".join(str(x) for x in sorted(taken)) + "\n")
+                    os.replace(f"{rd}/queue.taken.new", f"{rd}/queue.taken")
                     f.seek(0)
                     f.truncate()
                     f.write(str(len(taken)))
@@ -995,6 +1031,12 @@ def cmd_queue(a):
             time.sleep(SSD_POLL_S)
 
     def worker(port):
+        try:
+            work(port)
+        except Exception as e:   # (a worker's death is said, never silent)
+            print(f"bs2-host queue: the worker on port {port} stopped: {type(e).__name__}: {e}", file=sys.stderr)
+
+    def work(port):
         while True:
             job, tok = take()
             if not job:
@@ -1008,7 +1050,7 @@ def cmd_queue(a):
                     env.update(WEAR_SCRATCH="ssd", BS2_SSD_HELD="1" if tok else "")
                 r = subprocess.run([f"{WORK}/cmp-run.sh"] + res + ["sudo", "-E", os.path.join(HERE, "bs2-host"), "tier1", path,
                                     "--tier", tier, "--run", a.run, "--port", str(port), "--scratch", where],
-                                   env=env, cwd=WORK,
+                                   env=env, cwd=WORK, pass_fds=(tok.fileno(),) if tok else (),
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
                                    errors="replace")
                 unrowed(rd, tier, path, r.returncode, r.stderr)
@@ -1113,6 +1155,9 @@ def main():
     x.add_argument("--disk", default=str(C.DISK_GIB), help="the source's own cases' room, GiB")
     x.add_argument("--mem", default=None, help="print the memory too: this, or the source's room if more, GiB")
     x.add_argument("--words", action="store_true", help="print the whole cmp-run.sh reservation (reserve_words)")
+    x = s.add_parser("lane")
+    x.add_argument("case")
+    x.add_argument("command", nargs=argparse.REMAINDER)
     x = s.add_parser("gen")
     x.add_argument("source")
     x.add_argument("seed", type=int)
@@ -1120,7 +1165,7 @@ def main():
     x.add_argument("source", nargs="?", default="alpine324")
     a = p.parse_args()
     {"source": cmd_source, "prepared": cmd_prepared, "rescuer-key": cmd_rescuer_key, "tier0": cmd_tier0, "tier0-cases": cmd_tier0_cases, "gen": cmd_gen, "caps": cmd_caps,
-     "tier1": cmd_tier1, "leftovers": cmd_leftovers, "apply": cmd_apply, "plant": cmd_plant, "change": cmd_change, "deep": cmd_deep, "enqueue": cmd_enqueue, "queue": cmd_queue, "shrink": cmd_shrink, "reserve": cmd_reserve}[a.cmd](a)
+     "tier1": cmd_tier1, "leftovers": cmd_leftovers, "apply": cmd_apply, "plant": cmd_plant, "change": cmd_change, "deep": cmd_deep, "enqueue": cmd_enqueue, "queue": cmd_queue, "shrink": cmd_shrink, "reserve": cmd_reserve, "lane": cmd_lane}[a.cmd](a)
 
 
 if __name__ == "__main__":

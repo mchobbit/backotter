@@ -458,8 +458,9 @@ def reserve_tier1(case):
     RAM disk and memory: its inode tables on LUKS, bs2lib/case.py disk_gib; its source's
     room, bs2lib/room.py, at least 3 GiB of memory; or --reserve-ssd for a source whose room
     is over the host's RAM disk, which bs2-host tier1 then runs on /bkoscratch, room.py
-    scratch()); the --tier and the rest follow."""
-    return (f"R=$({HOST_BS2} reserve {case} --mem 3 --words) && {reuse_env()}./cmp-run.sh $R "
+    scratch(), one at a time: bs2-host lane takes the host's SSD lane before cmp-run.sh's
+    reservation, and holds it while the case runs); the --tier and the rest follow."""
+    return (f"R=$({HOST_BS2} reserve {case} --mem 3 --words) && {reuse_env()}{HOST_BS2} lane {case} -- ./cmp-run.sh $R "
             f"sudo -E {HOST_BS2} tier1 {case}")
 
 

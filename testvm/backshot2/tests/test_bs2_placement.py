@@ -239,8 +239,11 @@ class HostReservation(unittest.TestCase):
             f.write(f"1 {self.cases['vanilla3']}\n2 {self.cases['alpine324']}\n")
         calls = []
 
+        kws = []
+
         def run(cmd, **kw):
             calls.append((cmd, kw.get("env") or {}))
+            kws.append(kw)
             return subprocess.CompletedProcess(cmd, 0, "", "")
         args = type("A", (), {"run": "r", "ports": "2943-2948", "slots": 1, "disk": "2", "mem": "3"})()
         with mock.patch.object(H, "ROOT", self.d), mock.patch.object(H, "ceiling", lambda: (29.0, 23.2)), \
@@ -252,6 +255,11 @@ class HostReservation(unittest.TestCase):
         self.assertEqual(c1[1:4], ["--reserve-ssd", "30", "4"])
         self.assertEqual(c1[-2:], ["--scratch", "ssd"])
         self.assertEqual((e1.get("WEAR_SCRATCH"), e1.get("BS2_SSD_HELD")), ("ssd", "1"))
+        self.assertEqual(len(kws[0]["pass_fds"]), 1)   # (the lane's fd: held by the case, should the queue die)
+        self.assertEqual(kws[1]["pass_fds"], ())
+        self.assertFalse(os.path.exists(f"{rd}/queue.taken.new"))
+        with open(f"{rd}/queue.taken") as f:
+            self.assertEqual(f.read().split(), ["0", "1"])
         self.assertEqual(c2[1:4], ["--reserve", "2", "3"])
         self.assertEqual(c2[-2:], ["--scratch", "ram"])
         self.assertNotIn("WEAR_SCRATCH", {k: v for k, v in e2.items() if k not in os.environ})
@@ -264,6 +272,44 @@ class HostReservation(unittest.TestCase):
         self.assertEqual(H.pick(lines, {0, 2, 3}, ssd, lambda: None), (None, None))   # only SSD left, lane busy: wait
         self.assertEqual(H.pick(lines, {0, 2, 3}, ssd, lambda: "T"), (1, "T"))
         self.assertEqual(H.pick(lines, {0, 1, 2, 3}, ssd, lambda: "T"), (None, None))
+        # The lane free: its earliest case first, wherever it is in queue.txt (vanilla3's sit late),
+        # as split() and wall() plan the lane from the start.
+        late = [["1", "c"], ["1", "d"], ["1", "e"], ["1", "a.ssd"], ["2", "b.ssd"]]
+        self.assertEqual(H.pick(late, set(), ssd, lambda: "T"), (3, "T"))
+        self.assertEqual(H.pick(late, {3}, ssd, lambda: "T"), (4, "T"))
+        self.assertEqual(H.pick(late, {3}, ssd, lambda: None), (0, None))
+        asked = []
+        self.assertEqual(H.pick([["1", "c"]], set(), ssd, lambda: asked.append(1)), (0, None))
+        self.assertEqual(asked, [], "no SSD case left: the lane isn't asked for")
+
+    def test_the_lane_lock_unopenable_is_busy(self):
+        with mock.patch.object(H, "ROOT", "/nonexistent/no/such"), contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertIsNone(H.ssd_token(wait=False))
+            self.assertIsNone(H.ssd_token(wait=True))
+        self.assertIn("taken as busy", err.getvalue())
+
+    def test_lane_takes_it_before_the_command(self):
+        """bs2-host lane (bs2's replay, soak and corpus): the lane taken outside cmp-run.sh,
+        its fd passed on, BS2_SSD_HELD set; a RAM case's command runs as it is."""
+        seen = []
+
+        def run(cmd, env=None, pass_fds=()):
+            seen.append((cmd, env, pass_fds, H.ssd_token(wait=False)))
+            return subprocess.CompletedProcess(cmd, 4)
+        with mock.patch.object(H, "ROOT", self.d), mock.patch.object(H, "case_scratch", lambda p: "ssd"), \
+                mock.patch.object(H.subprocess, "run", run), self.assertRaises(SystemExit) as cm:
+            H.cmd_lane(type("A", (), {"case": self.cases["vanilla3"], "command": ["--", "./cmp-run.sh", "x"]})())
+        self.assertEqual(cm.exception.code, 4)
+        cmd, env, fds, other = seen[0]
+        self.assertEqual(cmd, ["./cmp-run.sh", "x"])
+        self.assertEqual((env["BS2_SSD_HELD"], len(fds)), ("1", 1))
+        self.assertIsNone(other, "the lane was held while the command ran")
+        with mock.patch.object(H, "ROOT", self.d), mock.patch.object(H, "case_scratch", lambda p: "ram"), \
+                mock.patch.object(H.subprocess, "run", run), self.assertRaises(SystemExit):
+            H.cmd_lane(type("A", (), {"case": self.cases["alpine324"], "command": ["--", "true"]})())
+        self.assertEqual((seen[1][2], "BS2_SSD_HELD" in seen[1][1] and seen[1][1]["BS2_SSD_HELD"] == "1"), ((), False))
+        if seen[1][3]:
+            seen[1][3].close()
 
     def test_one_ssd_case_at_a_time_ram_cases_beside_it(self):
         """Two vanilla3 cases and an alpine324 one on 2 slots: the second vanilla3 case waits for

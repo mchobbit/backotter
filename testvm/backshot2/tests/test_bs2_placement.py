@@ -353,6 +353,37 @@ class HostReservation(unittest.TestCase):
             t.close()
 
 
+class Plant(unittest.TestCase):
+    """bs2-host plant asks the filesystem that really holds content.DIR (content.real_dir:
+    vanilla3's /srv is a link to var/srv, so /var's), and a DIR it can't reach is a planting
+    failure that says why."""
+
+    def test_the_real_dirs_filesystem(self):
+        from bs2lib import content as CT
+        seen = {}
+        with tempfile.TemporaryDirectory() as d:
+            case = f"{d}/c.case"
+            C.write(case, {"name": "x", "source": "vanilla3@g", "seed": 1, "edits": [], "load_options": [], "content": {}})
+            a = type("A", (), {"case": case, "root": f"{d}/root", "layout": None})()
+            with mock.patch.object(CT, "real_dir", lambda root: d), \
+                    mock.patch.object(H, "_content_fs", lambda at: seen.setdefault("fs_at", at) and "btrfs"), \
+                    mock.patch.object(CT, "plan", lambda content, fs, symlink_max=None: seen.update(fs=fs, lim=symlink_max) or []), \
+                    mock.patch.object(CT, "plant", lambda root, entries: []), contextlib.redirect_stdout(io.StringIO()), \
+                    self.assertRaises(SystemExit) as cm:
+                H.cmd_plant(a)
+            self.assertEqual(cm.exception.code, 0)
+            self.assertEqual((seen["fs_at"], seen["fs"]), (d, "btrfs"))
+
+            def refuse(root):
+                raise OSError(18, "Invalid cross-device link")
+            out = io.StringIO()
+            with mock.patch.object(CT, "real_dir", refuse), contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+                H.cmd_plant(a)
+            self.assertEqual(cm.exception.code, 1)
+            self.assertIn("could not plant: /srv/bs2 under", out.getvalue())
+            self.assertIn("an absolute /srv link", out.getvalue())
+
+
 class Tier1Scratch(unittest.TestCase):
     def test_env(self):
         self.assertEqual(T1.env_of("ram", "/bkoscratch/backshot2"), {"HT_WORK": "/mnt/bko-ram/backshot2"})

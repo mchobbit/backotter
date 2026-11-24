@@ -556,17 +556,39 @@ pub fn table_record(tgt: &str) -> String {
 /// with the same size and kernel serial and the table load wrote, is the
 /// one case the record can't tell; the table check makes it a clone of the
 /// target load wrote, and a hot-swap mid-restore isn't one load supports.
+/// Off Linux, which has no sysfs, the serial and WWID are the scan's
+/// (kernel_identity), so a disk swapped in under the same node and size
+/// there is told apart by them too.
 pub fn table_record_text(layout: &Layout, d: &Disk, t: &TargetDisk, sys: &Sys) -> String {
+    record_text(layout, d, t, &kernel_identity(sys, t))
+}
+
+/// What target T's kernel identity is, as its partition record
+/// (table_record_text) names it: (serial, WWID).  On Linux, what its
+/// driver gives in sysfs (device/serial, device/wwid), empty when it gives
+/// none; off Linux, the scan's (other/load.rs), empty when it found none.
+pub fn kernel_identity(sys: &Sys, t: &TargetDisk) -> (String, String) {
+    identity_on(crate::other::Family::current(), sys, t)
+}
+
+/// kernel_identity as it is on FAM (None: Linux).
+fn identity_on(fam: Option<crate::other::Family>, sys: &Sys, t: &TargetDisk) -> (String, String) {
+    if fam.is_some() {
+        return (t.b.serial.clone().unwrap_or_default(), t.b.wwid.clone().unwrap_or_default());
+    }
     let attr = |a: &str| sys.read_trim(&format!("/sys/block/{}/device/{a}", t.b.name)).unwrap_or_default();
+    (attr("serial"), attr("wwid"))
+}
+
+/// The record of D on T, T's kernel identity being (SERIAL, WWID).
+fn record_text(layout: &Layout, d: &Disk, t: &TargetDisk, (serial, wwid): &(String, String)) -> String {
     let mut s = format!(
-        "layout {} {}\nsource {}\ntarget {} size={} serial={} wwid={}\n",
+        "layout {} {}\nsource {}\ntarget {} size={} serial={serial} wwid={wwid}\n",
         layout.hostname(),
         layout.str_at(&["generated"]).unwrap_or("-"),
         d.name,
         t.b.name,
         t.b.size_bytes,
-        attr("serial"),
-        attr("wwid")
     );
     match &d.table {
         Some(tb) => s += &format!("table {}\n", tb.id.as_deref().unwrap_or("-")),
@@ -1182,6 +1204,45 @@ mod tests {
         let m = map(&layout(), &o, &system, &s);
         assert_eq!(m.pairs, vec![("vda".to_string(), "vdb".to_string())]);
         assert!(m.problems.is_empty(), "{:?}", m.problems);
+    }
+
+    /// RustAudit1 HD2-04: off Linux the partition record names the target
+    /// by the scan's serial and WWID (there is no sysfs), so a disk swapped
+    /// in under the same node and size has another record and load_wrote
+    /// doesn't take it for the one load wrote; on Linux, sysfs's, as ever.
+    #[test]
+    fn the_record_names_the_scans_serial_off_linux() {
+        use crate::blockdev::BlockDev;
+        let t = tree();
+        t.file("/sys/block/vdb/device/serial", "SYSFS-1\n");
+        let s = sys(&t);
+        let l = layout();
+        let d = l.disk("vda").unwrap();
+        let base = scan(&s, &opts(&["--map", "vda=vdb"]), &[]).disks.into_iter().find(|d| d.b.name == "vdb").unwrap();
+        let with = |serial: &str, wwid: Option<&str>| TargetDisk {
+            b: BlockDev { serial: Some(serial.into()), wwid: wwid.map(str::to_string), ..base.b.clone() },
+            parts: base.parts.clone(),
+            table: None,
+            signatures: vec![],
+            uuids: vec![],
+            in_use: vec![],
+            hard_use: vec![],
+            boot_medium: false,
+            holds_root: false,
+        };
+        let (old, new) = (with("OLD-1", None), with("NEW-2", Some("naa.5000c500a1b2c3d4")));
+        let bsd = Some(crate::other::Family::FreeBsd);
+        assert_eq!(identity_on(bsd, &s, &old), ("OLD-1".to_string(), String::new()));
+        assert_eq!(identity_on(bsd, &s, &new), ("NEW-2".to_string(), "naa.5000c500a1b2c3d4".to_string()));
+        let rec = |x: &TargetDisk| record_text(&l, d, x, &identity_on(bsd, &s, x));
+        assert!(rec(&old).contains(&format!("\ntarget vdb size={} serial=OLD-1 wwid=\n", base.b.size_bytes)), "{}", rec(&old));
+        assert_ne!(rec(&old), rec(&new));
+        // Linux: sysfs's, whatever the scan found.
+        assert_eq!(identity_on(None, &s, &old), ("SYSFS-1".to_string(), String::new()));
+        assert_eq!(table_record_text(&l, d, &old, &s), record_text(&l, d, &old, &kernel_identity(&s, &old)));
+        if crate::other::Family::current().is_none() {
+            assert_eq!(table_record_text(&l, d, &old, &s), table_record_text(&l, d, &new, &s));
+        }
     }
 
     /// A pool of the layout's name imported here keeps it only when every

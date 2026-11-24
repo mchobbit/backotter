@@ -6,12 +6,14 @@ DragonFly, illumos, Haiku), in Rust, with its own small terminal layer.
 The plan is `docs/design/rescue-tui.md`; the screens are
 `docs/design/rescue-screens.md`.
 
-Status: RT1, RT2, RT4 and RT5.  The crate, the FFI and its header test,
+Status: RT1, RT2 and RT4-RT7.  The crate, the FFI and its header test,
 the terminal layer (profiles, keys, events, restore), the sanitiser, the
-screen buffer with diffed redraw, and the golden-screen and byte-stream
-harnesses; the console spike.  RT3 (the spike on every console) hasn't
-run, so the profile table is provisional.  No widgets or restore screens
-yet: `bko-rescue` with no hidden option says so and exits 2.
+screen buffer with diffed redraw, the golden-screen and byte-stream
+harnesses, the console spike, the widgets with the `Ui` trait and the
+full-screen runner, `Secret`, and plain mode; `--demo` shows every widget.
+RT3 (the spike on every console) hasn't run, so the profile table is
+provisional.  No restore screens yet: `bko-rescue` with no hidden option
+says so and exits 2.
 
 ## Rules
 
@@ -20,7 +22,7 @@ yet: `bko-rescue` with no hidden option says so and exits 2.
 - `src/json.rs` is holt's, `holt/src/json.rs`, included by `#[path]`.
   Build from a repo-shaped tree: `rescue/` and `holt/src/json.rs`.
 - Unsafe code only in `src/term/ffi.rs`, in small safe wrappers, each with
-  a `// SAFETY:` comment.
+  a `// SAFETY:` comment, and the volatile wipe in `src/secret.rs`.
 - Only SGR 0, 1, 7, 30-37 and 40-47; never `38;5` or `48;5`.  The terminal
   is put back on exit, on a panic and on SIGHUP and SIGTERM.
 
@@ -60,7 +62,7 @@ which a launcher sets.  Hidden, for tests and checks:
 | `--check-tty` | raw mode set, read back, put back and read back; exit 0 when every field is as expected (for checks.sh) |
 | `--profile` | which console this is and what it gets, and why: `os`, `tty`, `term`, `locale`, `size`, `mode`, `rule`, `lines`, `colour`, `caps`, `esc`, `refresh` |
 | `--spike` | the four spike cards (box, list, gauge, password); `--spike panic` panics after the first frame; `--spike linger` waits 5 s after `q`, for the signal test |
-| `--demo` | RT8; not built |
+| `--demo` | every widget in a row, in full screen or plain mode as the profile says (`--plain` forces it); RT8 adds the fake bko-holt |
 
 In the spike, `1`-`4` and `n` change card, `l` the line style, `c`
 colour, `j` joined SGR parameters, `h` cursor hiding, `e` clearing with
@@ -97,6 +99,12 @@ glibc).
 | `src/screen.rs` | cells, the canvas, diffed redraw, the golden dump |
 | `src/testkit.rs` | for the tests: a generator, golden files, the byte checker |
 | `src/spike.rs` | the spike's cards |
+| `src/ui.rs` | the `Ui` trait, what each dialog shows, `Answer`, `Tick`, and `Scripted` for the app's tests |
+| `src/widgets/` | the dialog (layout, focus, buttons, key line), list, field, view, gauge, the too-small notice, and `FullScreen`, the runner |
+| `src/secret.rs` | `Secret`, the password buffer: fixed, wiped, no Debug; 0600 key files in a 0700 directory |
+| `src/plain.rs` | plain mode: numbered questions, one line at a time |
+| `src/demo.rs` | `--demo` |
+| `tests/widget_screens.rs`, `tests/screens/w-*.txt` | every widget in every line style, colour and mono; their bytes in every profile; random keys |
 | `tests/golden_screens.rs`, `tests/screens/` | golden screens of a sample, every line style, colour and mono |
 | `tests/byte_streams.rs`, `tests/bytes/` | each profile's bytes, the sequence checker, the byte budgets, random walks |
 | `abi/` | the header test's C side and its script |

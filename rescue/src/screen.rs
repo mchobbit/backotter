@@ -349,6 +349,12 @@ impl Screen {
         self.wipe = true;
     }
 
+    /// Whether the next frame is a full one (the runner's periodic
+    /// redraw counts from it).
+    pub fn pending_full(&self) -> bool {
+        self.full || self.shown.is_none()
+    }
+
     /// Whether a canvas of `rows` x `cols` fits the terminal.
     pub fn fits(&self, rows: u16, cols: u16) -> bool {
         self.term.rows >= rows && self.term.cols >= cols

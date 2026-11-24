@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """bko-rescue's terminal layer on a real pty (RT2, RT4): raw mode on and back,
 --check-tty, --profile, and the spike driven by keys in each line style,
-with every byte it sends checked against the sequences it may send.
+with every byte it sends checked against the sequences it may send.  And
+the widgets (RT6, RT7): --demo through every page in full screen and in
+plain mode, P and the too-small notice going on in plain mode, and the
+password read with echo off.
 
     testvm/rescue/pty-test.py PATH/TO/bko-rescue
 
@@ -326,8 +329,108 @@ def test_abi_and_options():
     check(p.returncode == 2 and b"\x1b" not in p.stderr, "an option's escape isn't echoed")
 
 
+def wait_for(t, pat, secs=5, since=0):
+    """Read until `pat` shows in the output after `since`."""
+    end = time.time() + secs
+    while pat not in t.out[since:] and time.time() < end:
+        t.read(0.05)
+    return pat in t.out[since:]
+
+
+def test_demo_plain():
+    t = Pty(["--demo", "--plain"])
+    ok = wait_for(t, b"Choose [1-3, s]: ")
+    check(ok and t.out.startswith(b"BackOtter rescue (plain mode)"), "plain demo: the header and the first question")
+    t.send(b"2\n")
+    check(wait_for(t, b"> "), "plain demo: the address asked")
+    mark = len(t.out)
+    t.send(b"sftp://nas/x\n")
+    check(wait_for(t, b"Each key shows", since=mark) and wait_for(t, b"> ", since=mark), "plain demo: the password asked")
+    a = t.attrs()
+    check(a[3] & termios.ECHO == 0 and a[3] & termios.ICANON == 0, "plain demo: echo and line editing off for the password")
+    t.send(b"s3cretX\x7f\r")
+    check(wait_for(t, b"Choose [1-5, b]: "), "plain demo: the menu after the password")
+    check(t.attrs() == t.before, "plain demo: echo back on after the password")
+    t.send(b"1\n")
+    check(wait_for(t, b"Choose [y, n, b]: "), "plain demo: yes or no")
+    t.send(b"y\n")
+    check(wait_for(t, b"(an escape, cleaned)") and wait_for(t, b"Choose [o, b]: "), "plain demo: the view")
+    t.send(b"o\n")
+    check(wait_for(t, b"    100 %: 61.2 of 61.2 GB", 8), "plain demo: the gauge as percentage lines")
+    check(wait_for(t, b"a password of 6 characters") and wait_for(t, b"\nsftp://nas/x\r\n"), "plain demo: the answers")
+    t.send(b"o\n")
+    code, err = t.wait()
+    check(code == 0, "plain demo: exit 0 (%d %s)" % (code, err.strip()))
+    check(b"s3cret" not in t.out, "plain demo: the password never shown")
+    check(b"\x1b" not in t.out, "plain demo: no escape sequences at all")
+    pct = re.findall(rb"\n    (\d+) %", t.out)
+    check(len(pct) == 11, "plain demo: a percentage line each 10 %% (%d)" % len(pct))
+    check(t.attrs() == t.before, "plain demo: settings put back")
+    t.close()
+
+
+def test_demo_full():
+    t = Pty(["--demo"])
+    check(wait_for(t, b"Which machine is this?"), "full demo: the first screen")
+    check(raw_flags_off(t.attrs()), "full demo: raw mode on")
+    t.send(b"\r")
+    check(wait_for(t, b"Pick a machine first"), "full demo: OK with nothing chosen says why")
+    t.send(b"\x1b[B")
+    t.send(b"\r")
+    check(wait_for(t, b"Where is the backup?"), "full demo: the address")
+    t.send(b"abc\r")
+    check(wait_for(t, b"The backup password"), "full demo: the password")
+    t.send(b"pw\r")
+    check(wait_for(t, b"What now?"), "full demo: the menu")
+    t.send(b"\r")
+    check(wait_for(t, b"Restore now?"), "full demo: yes or no")
+    t.send(b"\r")
+    check(wait_for(t, b"Every command, in order"), "full demo: the view")
+    t.send(b"\x1b[C")
+    t.send(b"\r")
+    check(wait_for(t, b"Restoring lovelace"), "full demo: the gauge")
+    check(wait_for(t, b"a password of 2 characters", 8), "full demo: the answers")
+    t.send(b"\r")
+    code, err = t.wait()
+    check(code == 0, "full demo: exit 0 (%d %s)" % (code, err.strip()))
+    check(t.attrs() == t.before, "full demo: settings put back")
+    check(b"pw" not in t.out.replace(b"password", b""), "full demo: the password never drawn")
+    bad = bad_sequences(t.out, True)
+    check(not bad, "full demo: only allowed sequences (%r)" % bad[:5])
+    t.close()
+
+
+def test_demo_to_plain():
+    t = Pty(["--demo"])
+    check(wait_for(t, b"L: lines | C: colour | P: plain"), "P to plain: the first screen says it")
+    mark = len(t.out)
+    t.send(b"P")
+    check(wait_for(t, b"Choose [1-3, s]: ", since=mark), "P to plain: plain mode at the same page")
+    check(t.attrs() == t.before, "P to plain: the terminal put back for plain mode")
+    t.send(b"\x04")
+    code, _ = t.wait()
+    head = t.out.find(b"BackOtter rescue (plain mode)")
+    check(code == 0 and head > 0 and b"\x1b" not in t.out[head:], "P to plain: ^D ends it, no escapes in plain mode")
+    t.close()
+    t = Pty(["--demo"], rows=14, cols=60)
+    check(wait_for(t, b"This window is too small") and wait_for(t, b"60 columns and 14 rows"), "too small: the notice")
+    t.send(b"p")
+    check(wait_for(t, b"Choose [1-3, s]: "), "too small: p goes on in plain mode")
+    t.send(b"\x04")
+    code, _ = t.wait()
+    check(code == 0 and t.attrs() == t.before, "too small: settings put back")
+    t.close()
+    t = Pty(["--demo"])
+    wait_for(t, b"Which machine is this?")
+    t.p.send_signal(signal.SIGTERM)
+    code, _ = t.wait(3)
+    check(code == 128 + signal.SIGTERM and t.attrs() == t.before, "demo SIGTERM: exit 143, settings put back (%d)" % code)
+    t.close()
+
+
 for f in (test_check_tty, test_profile, test_spike, test_spike_fallbacks, test_spike_panic_and_signals,
-          test_resize_and_small, test_no_tty, test_abi_and_options):
+          test_resize_and_small, test_no_tty, test_abi_and_options, test_demo_plain, test_demo_full,
+          test_demo_to_plain):
     print("==", f.__name__)
     f()
 print("%d failed" % len(FAILS))

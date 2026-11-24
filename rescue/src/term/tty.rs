@@ -123,6 +123,34 @@ pub fn restore() {
     }
 }
 
+/// Plain mode's password reading: echo, line editing and ISIG off on
+/// fd 0 (read-modify-write, as raw mode), so the bytes come one at a
+/// time, straight into a `Secret`, and are never shown.  Ctrl-C then
+/// comes as a byte, which plain mode takes as quitting.  Put back when
+/// dropped, a panic's unwinding included.
+pub struct Quiet {
+    saved: TermiosBuf,
+}
+
+impl Quiet {
+    pub fn enter() -> io::Result<Quiet> {
+        let mut saved = TermiosBuf::new(0);
+        ffi::get_attr(0, &mut saved)?;
+        let mut q = saved;
+        q.t.c_lflag &= !(ffi::ECHO | ffi::ECHONL | ffi::ICANON | ffi::ISIG | ffi::IEXTEN);
+        q.t.c_cc[ffi::VMIN] = 1;
+        q.t.c_cc[ffi::VTIME] = 0;
+        ffi::set_attr(0, ffi::TCSADRAIN, &q)?;
+        Ok(Quiet { saved })
+    }
+}
+
+impl Drop for Quiet {
+    fn drop(&mut self) {
+        let _ = ffi::set_attr(0, ffi::TCSADRAIN, &self.saved);
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Size {
     pub rows: u16,

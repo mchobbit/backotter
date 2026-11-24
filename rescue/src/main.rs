@@ -1,6 +1,7 @@
 //! bko-rescue's command line.  The restore screens come in RT11 and RT12;
 //! until then the hidden options are what it does.
 
+use bko_rescue::demo;
 use bko_rescue::spike;
 use bko_rescue::term::ffi;
 use bko_rescue::term::out::Lines;
@@ -175,14 +176,14 @@ fn main() {
             }
         }
         Mode::Demo => {
-            eprintln!("bko-rescue: --demo isn't built yet (RT8)");
-            2
+            let f = Facts::gather(o.plain, o.lines, o.colour);
+            demo::run(&profile::decide(&f))
         }
         Mode::App => {
             let _ = (&o.holt, &o.rustic, o.dry_run);
             eprintln!(
                 "bko-rescue: the restore screens aren't built yet (RT11, RT12){}; \
-                 --spike shows the terminal layer",
+                 --demo shows the widgets, --spike the terminal layer",
                 if o.dry_run { ", nor --dry-run" } else { "" }
             );
             2

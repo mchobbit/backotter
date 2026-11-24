@@ -1,6 +1,6 @@
 # bko-rescue: the terminal layer and its widgets
 
-Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"); RT3 and RT6 on are not.
+Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"); RT3 and RT8 on are not.
 
 An implementation plan for the stick's terminal UI that `ui.md` describes and
 the user decided on 2026-11-19: one Whiptail-style 80x24 program,
@@ -929,6 +929,65 @@ pty test and the header test.
   word longer than the line every line's width, so a serial or a path is
   shown whole.
 - Still no clippy on czerny, so none ran; the lints are in Cargo.toml.
+
+## What RT6 and RT7 found
+
+Built 2026-11-24 on czerny (Rust 1.85.1).  Tested by `cargo test` (164
+tests: goldens of every widget in every line style, colour and mono, in
+`tests/screens/w-*.txt`; each widget's bytes in all 12 profiles; key
+handling per widget and through the runner on a fake terminal; random
+keys into every widget and random bytes into plain mode; `Secret`'s
+zeroing), and the pty test, which now runs `--demo` through every page
+in full screen and in plain mode.
+
+- **The `Answer` enum grew** two cases beside Ok, Back, Shell and Quit:
+  `Button(n)` for a dialog's other buttons (< Type a location >, <
+  Keyboard >, < Cancel >), each with its letter, and `Plain` for `P` on
+  the first screen and `p` on the too-small notice.  Each dialog takes a
+  `Vec<Button>`; a button's `Act` is Ok, Back, Shell or Other(n).
+- **Letters are commands only,** as rescue-screens.md's Conventions say:
+  the menu's "a letter jumps to the next item" (the Widgets table) isn't
+  built.  The radio list's choice follows the focus; Space does nothing.
+  A radio list can start with nothing chosen, and OK then says why on
+  the notice row above the buttons, each time it is pressed.
+- **Esc** is Back only where there is a Back button, and closes a text
+  view.  Enter on a list, field or view presses the dialog's OK.  Left
+  and Right move between buttons when one has the focus.
+- **The key line** is made from the dialog when the caller gives none:
+  the arrows, Tab, Enter's button, each button's letter, Esc, and the
+  first screen's `L`, `C` and `P`.  Too long for the row, the arrows'
+  words go, then Tab's.
+- **The insertion point** in a text or password box is one cell left
+  out of the focus's reverse video, so it shows where the console hides
+  the cursor too; where it can't, the cursor is parked there.
+- **The gauge's bar is 40 cells,** not the mock's 62: with one SGR
+  parameter each (the fallback profile) a 5 % step of a 62-cell bar took
+  40 bytes, over the budget.  At 40 cells every step is under 40 bytes in
+  all 12 profiles, the first one under 50.  The timer beside its line
+  adds a few bytes once a second.
+- **The runner** takes events through an `Io` trait (`Term`, or a fake
+  in the tests).  It redraws in full at each new dialog and every
+  `refresh_s` while one waits, and draws the too-small notice (D10)
+  whenever the terminal is under 80x24; Enter there measures again.
+- **`Secret`** is 1 KiB in one box, never grown; Backspace takes a whole
+  UTF-8 character and zeroes it; drop zeroes it all with volatile writes
+  and a fence (the only unsafe code outside ffi.rs).  A test checks it
+  has no Debug.  `write_file` makes a 0600 file with O_EXCL, no newline,
+  in a directory `ram_dir` made 0700 (an existing one with group or other
+  bits, or a symlink, is refused).
+- **Plain mode** reads a password with echo, ICANON and ISIG off
+  (`tty::Quiet`), byte by byte into the `Secret`: Backspace, Ctrl-U and
+  Ctrl-C (quit) are its own.  Elsewhere ISIG stays on.  An empty line
+  where text is typed shows the other choices and `t) type it again`.
+  Buttons get their letter, else b, s or o, else the first free letter
+  of the label.
+- **`--demo` is a first cut** (RT8's file, `src/demo.rs`): every widget
+  in a row, Back a page back, `P` or the too-small notice's `p` going on
+  in plain mode at the same page.  RT8 adds the fake bko-holt.
+- Not built: a way for the runner to hand the terminal to a shell and
+  take it back (`Answer::Shell` is the app's, RT11), and the dry-run
+  banner (RT12).
+- Still no clippy on czerny, so none ran.
 
 ## The app on top (later)
 

@@ -81,29 +81,8 @@ impl Place {
     }
 }
 
-/// Which of `n` items show in `h` rows with `sel` selected, `top` the
-/// first shown before: (first, how many, "^ more above", "v more below").
-/// The markers take a row each, only when there is more that way.
-pub fn list_window(n: usize, h: usize, sel: usize, top: usize) -> (usize, usize, bool, bool) {
-    if n <= h {
-        return (0, n, false, false);
-    }
-    let h = h.max(3);
-    let mut top = top.min(sel);
-    loop {
-        let above = top > 0;
-        let mut avail = h - usize::from(above);
-        let below = top + avail < n;
-        if below {
-            avail -= 1;
-        }
-        if sel >= top + avail {
-            top += 1;
-            continue;
-        }
-        return (top, avail, above, below);
-    }
-}
+/// The list window, now the widgets' own (RT6).
+pub use crate::widgets::list::list_window;
 
 /// One gauge update, from `from` steps to `to` (of GAUGE_STEPS): the
 /// figures first, then only the bar's new cells, then the attributes back.

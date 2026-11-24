@@ -1,0 +1,318 @@
+== utf8 colour ==
+ BackOtter rescue                                                         Review
+  ┌──────────────────────── Every command, in order ─────────────────────────┐  
+  │ ^ more above                                                             │  
+  │ <start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, u> │  
+  │ <-key-file /run/bko-rescue/k/0 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/1 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/2 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/3 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/4 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/5 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/6 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/7 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/8 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/9 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/10 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ <-key-file /run/bko-rescue/k/11 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ <-key-file /run/bko-rescue/k/12 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ <-key-file /run/bko-rescue/k/13 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ v more below                                                             │  
+  │                                                                          │  
+  │                               <  Close  >                                │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+ Arrows: line | Left/Right: sideways | Space: page | Tab: next | Enter: Close   
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+b 0;37;44
+d 0;30;47
+s 0;40
+== utf8 mono ==
+ BackOtter rescue                                                         Review
+  ┌──────────────────────── Every command, in order ─────────────────────────┐  
+  │ ^ more above                                                             │  
+  │ <start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, u> │  
+  │ <-key-file /run/bko-rescue/k/0 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/1 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/2 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/3 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/4 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/5 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/6 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/7 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/8 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/9 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/10 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ <-key-file /run/bko-rescue/k/11 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ <-key-file /run/bko-rescue/k/12 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ <-key-file /run/bko-rescue/k/13 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ v more below                                                             │  
+  │                                                                          │  
+  │                               <  Close  >                                │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+ Arrows: line | Left/Right: sideways | Space: page | Tab: next | Enter: Close   
+
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+
+p 0
+== dec colour ==
+ BackOtter rescue                                                         Review
+  ┌──────────────────────── Every command, in order ─────────────────────────┐  
+  │ ^ more above                                                             │  
+  │ <start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, u> │  
+  │ <-key-file /run/bko-rescue/k/0 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/1 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/2 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/3 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/4 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/5 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/6 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/7 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/8 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/9 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/10 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ <-key-file /run/bko-rescue/k/11 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ <-key-file /run/bko-rescue/k/12 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ <-key-file /run/bko-rescue/k/13 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ v more below                                                             │  
+  │                                                                          │  
+  │                               <  Close  >                                │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+ Arrows: line | Left/Right: sideways | Space: page | Tab: next | Enter: Close   
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+b 0;37;44
+d 0;30;47
+s 0;40
+== dec mono ==
+ BackOtter rescue                                                         Review
+  ┌──────────────────────── Every command, in order ─────────────────────────┐  
+  │ ^ more above                                                             │  
+  │ <start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, u> │  
+  │ <-key-file /run/bko-rescue/k/0 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/1 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/2 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/3 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/4 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/5 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/6 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/7 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/8 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/9 /dev/nvme0n1p3 cryptroot ?[31mred         │  
+  │ <-key-file /run/bko-rescue/k/10 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ <-key-file /run/bko-rescue/k/11 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ <-key-file /run/bko-rescue/k/12 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ <-key-file /run/bko-rescue/k/13 /dev/nvme0n1p3 cryptroot ?[31mred        │  
+  │ v more below                                                             │  
+  │                                                                          │  
+  │                               <  Close  >                                │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+ Arrows: line | Left/Right: sideways | Space: page | Tab: next | Enter: Close   
+
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+
+p 0
+== ascii colour ==
+ BackOtter rescue                                                         Review
+  +------------------------ Every command, in order -------------------------+  
+  | ^ more above                                                             |  
+  | <start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, u> |  
+  | <-key-file /run/bko-rescue/k/0 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/1 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/2 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/3 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/4 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/5 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/6 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/7 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/8 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/9 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/10 /dev/nvme0n1p3 cryptroot ?[31mred        |  
+  | <-key-file /run/bko-rescue/k/11 /dev/nvme0n1p3 cryptroot ?[31mred        |  
+  | <-key-file /run/bko-rescue/k/12 /dev/nvme0n1p3 cryptroot ?[31mred        |  
+  | <-key-file /run/bko-rescue/k/13 /dev/nvme0n1p3 cryptroot ?[31mred        |  
+  | v more below                                                             |  
+  |                                                                          |  
+  |                               <  Close  >                                |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+ Arrows: line | Left/Right: sideways | Space: page | Tab: next | Enter: Close   
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+b 0;37;44
+d 0;30;47
+s 0;40
+== ascii mono ==
+ BackOtter rescue                                                         Review
+  +------------------------ Every command, in order -------------------------+  
+  | ^ more above                                                             |  
+  | <start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, u> |  
+  | <-key-file /run/bko-rescue/k/0 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/1 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/2 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/3 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/4 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/5 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/6 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/7 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/8 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/9 /dev/nvme0n1p3 cryptroot ?[31mred         |  
+  | <-key-file /run/bko-rescue/k/10 /dev/nvme0n1p3 cryptroot ?[31mred        |  
+  | <-key-file /run/bko-rescue/k/11 /dev/nvme0n1p3 cryptroot ?[31mred        |  
+  | <-key-file /run/bko-rescue/k/12 /dev/nvme0n1p3 cryptroot ?[31mred        |  
+  | <-key-file /run/bko-rescue/k/13 /dev/nvme0n1p3 cryptroot ?[31mred        |  
+  | v more below                                                             |  
+  |                                                                          |  
+  |                               <  Close  >                                |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+ Arrows: line | Left/Right: sideways | Space: page | Tab: next | Enter: Close   
+
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+
+p 0

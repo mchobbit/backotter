@@ -250,6 +250,19 @@ guix15 case ~235 s at tier 1 and ~230 s at tier 2, a guix15-bios case
 ~153 s; peaks 5.3-5.8 GiB of RAM disk (guix15) and 4.6-4.8 (guix15-bios),
 within room.py's 7 and 6.
 
+`guix15-luks` (Guix's own encrypted layout: LUKS1 `cryptroot` holding the
+Btrfs, GRUB opening it; docs/design/guix.md "guix15-luks") is not one of
+bs2's sources yet, on purpose (2026-11-24).  Taking it is real new work,
+not a list entry: bs2's LUKS model is LUKS2's only (`edits.LuksGeometry`
+and `geometry.luks2` refuse LUKS1, so its header could never drift, and
+nothing models a LUKS1 payload offset or what load's new `luks1-digest`
+step keeps); the Guix family's fixtures and golden (`tests/corpus_cases.py`
+AS_RUN, `tests/golden/guix.json`) would need its third shape; HOME's
+assignment would change (Test2's `test_split_hosts` holds it); and its
+tier 0 to 2 runs (each boot typing the passphrase at GRUB and the initrd)
+would need their first round.  About half a day, for a later lane.
+HoltTest1 and HoltTest2 cover its restore meanwhile.
+
 Two more traits came with Vanilla OS (`vanilla3`): `abroot` (the master
 grub.cfg's entries and each root's abroot.cfg as rule 3 texts; load
 restores both roots, the init LV and /boot as they were) and `lvm-thin`

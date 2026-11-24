@@ -422,6 +422,101 @@ restored system must too.
   (`save_env` to a 1 KiB environment block on the ESP), which
   `bs1-verify --unlock` reads.
 
+## What guix15-luks found (2026-11-24)
+
+The guest, its Test2 registration and BackShot1's family G, built and
+tested on 2026-11-24.  What the runs found, in order:
+
+- **vm-mount lost /gnu and /home** (HoltTest1 `glk1`, Chopin): every
+  fstab line is `/dev/mapper/cryptroot`, the root's own device, which
+  vm-mount didn't take for the root's, so it mounted / alone and the
+  backup had no store; the restored GRUB stopped at "file not found".
+  Fixed in 4b66165 (an fstab spec equal to /'s is on the root's device).
+- **LUKS1's volume key digest iterations** (`glk3` Cinqcent, `glk4`
+  Chopin, each one judged field): the header's `mkDigestIterations`
+  came back 1000, not the source's 394795.  luksFormat sets that count
+  itself (1000 whenever `--pbkdf-force-iterations` is given, which
+  11e57a1 gives LUKS1 for the keyslot) and no option names it.  Fixed in
+  c2e9302: load gives luksFormat a volume key of its own
+  (`--volume-key-file`, in its run directory) and `bko-holt luks1-digest`
+  sets the count and a PBKDF2-HMAC-SHA-256 digest to match, after
+  checking the key against the header; the key file goes before `open`.
+  SHA-256 headers only (another hash keeps cryptsetup's count, with a
+  note).  HoltTest1 `glk5` Cinqcent and `glk6` Chopin then PASS: both
+  generations booted on each side, 0 differences.
+- **Harness, Test2:** Shepherd lists `sshd-N`, one finished connection of
+  the inetd-style sshd, as stopped, which ht1.sh read as a down service
+  (HoltTest2 t2h-20261124T1449-d9fd's first attempt; 752fa85 leaves them
+  out); the shared SticTest1 inner.sh printed guix15-bios's BIOS
+  whole-system LIMIT on this UEFI guest (LIMIT-NEW; 752fa85).
+  GuestTest2's first runs classed the guest's new boot and update lines
+  (LUKS prompts, Btrfs on dm-N, Shepherd's shutdown), read one by one.
+- **BackShot1 family G** (`bs1-qemu.py --virtio --luks-typed`, Cinqcent):
+  five rehearsals failed before the PASS (`guix-20261124-154640`), each at
+  a different step:
+  1. the LUKS step's `guix repl` stopped with "record ABI mismatch":
+     `load` takes a compiled copy of `/etc/config.scm` from Guile's cache
+     (`~/.cache/guile/ccache`) while it is newer than the file, and that
+     copy was another Guix's.  `system.scm` and the LUKS step now use
+     `primitive-load` (bs1-adopt, bs1-luks).  The same could have stopped
+     a guix15 reconfigure after a `guix pull`;
+  2. the second reconfigure built `cryptsetup-static` and the build
+     failed: bs1-common's PATH took the system profile's `guix` (the guix
+     package of whatever Guix built the system, an older pinned commit),
+     so the first reconfigure downgraded the system and the next had no
+     substitutes.  bs1-common now puts root's own `guix` (the pulled one)
+     first;
+  3. adopt's initrd check said the key's name wasn't in the initrd when
+     it was: `gzip -dc | grep -q` under `pipefail`, gzip killed by SIGPIPE
+     (now `grep -c`; `unlock_how G`'s `tr | grep -q` too);
+  4. `grub-mkimage` makes an image with a memdisk say prefix
+     `(memdisk)/boot/grub`, whatever `-p` says (GRUB 2.12, checked on
+     Debian's too), so the second adopt found no `(cryptouuid/...)` prefix
+     in BackShot1's own image, and the image would have looked for
+     `grub.cfg` in the memdisk.  The memdisk script now sets the prefix
+     to Guix's own before `configfile` (normal reloads its module lists
+     on a prefix change), and adopt reads it back from there;
+  5. GRUB didn't find the drive at all ("search --label: no such
+     device"): OVMF connects only the devices QEMU's bootorder names, and
+     only the internal disk had a bootindex.  The rehearsal now gives the
+     drive the last bootindex on those boots (a laptop's firmware connects
+     its USB disks); on real firmware with a fast boot that skips USB
+     storage, GRUB would ask instead, as without the drive.
+  Then: the source unlocked by the drive with nothing typed (GRUB with the
+  drive's key, the initrd with the cpio's), asked once without it, backed
+  up, restored from the stick, booted from NVRAM unlocked by the drive,
+  and asked once without it.  The real Thinkpad wasn't touched.
+- **The image:** `bko-holt` in the Linux rescue image must carry 11e57a1
+  and c2e9302 for a LUKS1 restore to keep both iteration counts; the
+  image of 2026-11-24 (d001100) has neither.  `HoltTest2 guix15-luks+img`
+  on it (t2h-20261124T1616-385b, Cinqcent, from a copy with guix15-luks
+  added to `holt.img_panel.linux`; both attempts) failed on that alone:
+  `mk_iterations` 394795 -> 432580 and 425558, the image's cryptsetup
+  benchmark.  So guix15-luks is not in ImgTest2's panel yet: it joins
+  (classes.json, estimates, test2.md, README, test_plan's count, as
+  cbd6ec6 did for guix15 and guix15-bios) once an image built from
+  c2e9302 or later passes it.
+- **Runs that passed** (2026-11-24): HoltTest1 `glk5` Cinqcent, `glk6`
+  Chopin; HoltTest2 t2h-20261124T1548-1919 Chopin (with guix15 and
+  guix15-bios, re-keyed by 332e612, 4b66165 and 752fa85: both PASS) and
+  t2h-20261124T1604-3d90 Cinqcent; SticTest2 rel14
+  t2s-20261124T1521-bb61 Chopin (with guix15 and guix15-bios) and
+  t2s-20261124T1541-4c77 Cinqcent; GuestTest2 t2v-20261124T1449-a1fd
+  Copland and t2v-20261124T1521-79fd Cage (each a PASS once its new log
+  lines were read and classed); BackShot1 rehearsals
+  `guix-20261124-154640` (guix15-luks) and `guix-20261124-155839`
+  (guix15), Cinqcent.
+- **BackShot2 leaves it out, for now.**  bs2's LUKS model is LUKS2's only
+  (`edits.LuksGeometry` and `geometry.luks2` refuse LUKS1: its header
+  could never drift, and nothing models a LUKS1 payload offset or what
+  `luks1-digest` keeps), and taking a third Guix source means its shape in
+  the family's fixtures and golden (`tests/corpus_cases.py`,
+  `tests/golden/guix.json`), HOME's host assignment (Test2's
+  `test_split_hosts` holds it), and a first round of tier 0 to 2 runs that
+  type the passphrase at each boot: about half a day, real new work, for
+  a later lane (testvm/backshot2/README.md).  HoltTest1 and HoltTest2
+  cover its restore meanwhile.
+
 ## What already works, and what doesn't
 
 **bko-holt `dump`:**

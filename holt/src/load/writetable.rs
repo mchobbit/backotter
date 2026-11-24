@@ -297,9 +297,12 @@ pub fn plan(disk: &Value, size: u64) -> Result<Vec<(u64, Vec<u8>)>, String> {
 
 /// Whether E, from fsync on the device, says only that the device takes no
 /// fsync: POSIX's EINVAL ("not a file on which this operation is
-/// possible") or ENOSYS/ENOTSUP, which a raw disk device on some systems
-/// may give.  Its writes are done (write_all_at returned), so that one is
-/// let go; any other error (EIO) is the table not reaching the disk.
+/// possible") or ENOSYS, which a raw disk device on some systems may give
+/// (std's InvalidInput and Unsupported).  ENOTSUP/EOPNOTSUPP is Unsupported
+/// too from std 1.94.1, but Uncategorized from 1.85.1 (the floor), so a
+/// floor build fails on it.  Its writes are done (write_all_at returned),
+/// so that one is let go; any other error (EIO) is the table not reaching
+/// the disk.
 fn sync_unsupported(e: &std::io::Error) -> bool {
     matches!(e.kind(), std::io::ErrorKind::InvalidInput | std::io::ErrorKind::Unsupported)
 }
@@ -431,6 +434,7 @@ mod tests {
         {
             assert!(!sync_unsupported(&Error::from_raw_os_error(5)), "EIO");
             assert!(sync_unsupported(&Error::from_raw_os_error(22)), "EINVAL");
+            assert!(sync_unsupported(&Error::from_raw_os_error(38)), "ENOSYS");
         }
     }
 

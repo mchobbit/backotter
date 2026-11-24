@@ -307,7 +307,7 @@ class Start(unittest.TestCase):
                 mock.patch.dict(B.CEILINGS, clear=True), mock.patch.dict(B.COUNTS, {"sweep": AR.T0}), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             B.all_start()
-        self.assertRegex(got["run"], r"^bs2all-\d{8}-\d{4}$")
+        self.assertRegex(got["run"], r"^bs2all-\d{8}-\d{6}$")
         m = got["manifest"]
         self.assertEqual(m["planned"]["alpine324-luks"], [1000, 200, 10])
         self.assertEqual(m["planned"]["kali"], [1000, 20, 5 if S.uefi("kali") else 0])
@@ -451,6 +451,95 @@ class Corpus(unittest.TestCase):
         self.assertEqual(len(sent), 1)
         self.assertIn(sent[0][0], [h for h in have if cs[0][2] in have[h]])
         self.assertRegex(sent[0][1], r"tier1 \S+/cases/" + re.escape(cs[0][0]) + r" --tier 1 --run bs2all-x-corpus --port 2949")
+
+
+class Manifest(unittest.TestCase):
+    def test_written_to_every_host_then_refused_naming_each(self):
+        tried = []
+
+        def ssh(h, c, check=True, capture=False, input=None):
+            tried.append(h)
+            self.assertFalse(check)
+            self.assertEqual(json.loads(input)["run"], "bs2all-x")
+            self.assertIn("then echo \"/bkoscratch/backshot2/runs/bs2all-x is there already\"; exit 3", c)
+            return mock.Mock(returncode={"cinqcent": 3, "cage": 255}.get(h, 0),
+                             stdout="/bkoscratch/backshot2/runs/bs2all-x is there already" if h == "cinqcent" else "",
+                             stderr="ssh: connect to host cage port 22: timed out" if h == "cage" else "")
+        with mock.patch.object(B, "ssh", ssh):
+            with self.assertRaises(SystemExit) as e:
+                B.write_manifest({"run": "bs2all-x"}, list(HOSTS), "bs2all-x")
+        self.assertEqual(tried, list(HOSTS), "every host tried before failing")
+        t = str(e.exception)
+        self.assertIn("not written on 2 of 4 hosts", t)
+        self.assertIn("cinqcent: exit 3: /bkoscratch/backshot2/runs/bs2all-x is there already", t)
+        self.assertIn("cage: exit 255: ssh: connect to host cage port 22: timed out", t)
+        tried.clear()
+        with mock.patch.object(B, "ssh", lambda h, c, check=True, capture=False, input=None:
+                               tried.append(h) or mock.Mock(returncode=0, stdout="", stderr="")):
+            B.write_manifest({"run": "bs2all-x"}, list(HOSTS), "bs2all-x")
+        self.assertEqual(tried, list(HOSTS))
+
+    def test_run_words_writes_it_to_every_host_in_use_before_any_starts(self):
+        ev = []
+        parts = {"chopin": [("debian13", 1, 0)], "cage": [("debian13", 1, 1)], "copland": []}
+        with mock.patch.object(B, "placement", lambda s, n, have=None: ({"debian13": ["chopin", "cage"]},
+                                                                        {"debian13": "chopin"}, parts, {})), \
+                mock.patch.object(B, "preflight", lambda hs: ev.append(("preflight", tuple(hs)))), \
+                mock.patch.object(B, "sync", lambda hs: ev.append(("sync", tuple(hs)))), \
+                mock.patch.object(B, "write_manifest", lambda m, hs, run: ev.append(("manifest", tuple(hs), tuple(m["hosts"])))), \
+                mock.patch.object(B, "start_hosts", lambda *a: ev.append(("start",)) or {}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            B.run_words(["debian13"], {"debian13": 20}, "bs2all-x", have={}, manifest={"run": "bs2all-x"})
+        self.assertEqual(ev, [("preflight", ("chopin", "cage")), ("sync", ("chopin", "cage")),
+                              ("manifest", ("chopin", "cage"), ("chopin", "cage")), ("start",)])
+        ev.clear()
+        with mock.patch.object(B, "placement", lambda s, n, have=None: ({"debian13": ["chopin"]}, {"debian13": "chopin"},
+                                                                        {"chopin": [("debian13", 1, 0)]}, {})), \
+                mock.patch.object(B, "preflight", lambda hs: None), mock.patch.object(B, "sync", lambda hs: None), \
+                mock.patch.object(B, "write_manifest", mock.Mock(side_effect=SystemExit("bs2: not written"))), \
+                mock.patch.object(B, "start_hosts", lambda *a: ev.append("start") or {}):
+            with self.assertRaises(SystemExit):
+                B.run_words(["debian13"], {"debian13": 20}, "bs2all-x", have={}, manifest={"run": "bs2all-x"})
+        self.assertEqual(ev, [], "no host started")
+
+
+class ReportMore(unittest.TestCase):
+    def test_a_host_that_doesnt_answer(self):
+        m = {"run": "bs2all-x", "hosts": ["chopin", "cage"], "planned": {"debian13": [1, 1, 0]}, "skipped": [],
+             "corpus": [], "leftovers": {"steps": 0, "host": None}}
+        ok = "".join(f"@file {f}\n" for f in AR.FILES)
+        ok = ok.replace("@file -t0/tier0.jsonl\n", "@file -t0/tier0.jsonl\n" + json.dumps(row("debian13", 0, i=1)) + "\n"
+                        + json.dumps(row("debian13", 0, i=2)) + "\n")
+        ok = ok.replace("@file /tier1.jsonl\n", "@file /tier1.jsonl\n" + json.dumps(row("debian13", 1, i=2)) + "\n")
+
+        def par(cmds):
+            if all("@file" not in c for c in cmds.values()):
+                return {h: (0, json.dumps(m), "") for h in cmds}
+            return {h: (0, ok, "") if h == "chopin" else (255, "", "ssh: connect to host cage port 22: timed out")
+                    for h in cmds}
+        out = io.StringIO()
+        with mock.patch.object(B, "RUN_HOSTS", dict(RUN_HOSTS)), mock.patch.object(B, "CHOSEN", False), \
+                mock.patch.object(B, "par", par), contextlib.redirect_stdout(out):
+            rc = B.all_report("bs2all-x")
+        self.assertEqual(rc, 1)
+        t = out.getvalue()
+        self.assertIn("still to run: cage didn't answer (ssh: connect to host cage port 22: timed out): its rows aren't counted", t)
+        self.assertIn("verdict: INCOMPLETE", t)
+
+    def test_queue_rows_through_parse_files(self):
+        q = {"case": "debian13-000000000000000a", "source": "debian13", "tier": 1, "verdict": "HARNESS",
+             "check": "the queue's cmp-run.sh exited 1 with no row from the case", "why": ["exit 1"], "attempt": 0}
+        text = ("@file /tier1.jsonl\n@file /tier1-queue.jsonl\n" + json.dumps(q) + "\n@file /tier2-queue.jsonl\n"
+                "@file /queue.txt\n1 /r/cases/debian13-000000000000000a.case\n")
+        f = AR.parse_files(text)
+        self.assertEqual(f["/tier1-queue.jsonl"], [q])
+        rows = [r for k in AR.ROW_FILES for r in f.get(k, [])]
+        m = {"run": "R", "planned": {"debian13": [0, 1, 0]}, "skipped": [], "corpus": [], "leftovers": {}}
+        sm = AR.summary(m, rows, f["/queue.txt"], [], [])
+        self.assertEqual(sm["sources"]["debian13"][1]["HARNESS"], 1)
+        self.assertEqual(sm["pending"], [], "the queue's row is the case's row: not still to run")
+        self.assertEqual(sm["no_verdict"], ["debian13 tier 1: 1 HARNESS"])
+        self.assertEqual(sm["verdict"], "INCOMPLETE")
 
 
 if __name__ == "__main__":

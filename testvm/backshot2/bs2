@@ -17,7 +17,7 @@ names another, so two sessions' runs never share a copy).
   bs2 BackShot2 corpus [plan]       the corpus alone, at tier 0 (tier 1 with --tier 1)
   bs2 BackShot2All [plan]           every built source (bs2lib/sources.py built()) a host of the run
                                     holds, fresh (no ledger row excuses a case: the draws never read
-                                    it), as bs2all-YYYYMMDD-HHMM: 1,000 tier 0, 20 tier 1 and 5 tier 2
+                                    it), as bs2all-YYYYMMDD-HHMMSS: 1,000 tier 0, 20 tier 1 and 5 tier 2
                                     (UEFI) a source, Alpine's four as BackShot2Alpine (200 tier 1
                                     each, its 30 tier 2); every unbuilt source and tier 3 SKIPPED,
                                     naming the piece that builds it (bs2lib/allrun.py), and a built
@@ -1062,7 +1062,7 @@ def all_plan():
 
 
 def all_start():
-    """Starts a BackShot2All run, bs2all-YYYYMMDD-HHMM: its manifest (bs2all.json: what it
+    """Starts a BackShot2All run, bs2all-YYYYMMDD-HHMMSS: its manifest (bs2all.json: what it
     planned and SKIPPED) on each of its hosts, then run_words(); prints what is left to run
     once its queues finish (all_then())."""
     have = held_briefly(SOURCES)
@@ -1070,7 +1070,7 @@ def all_start():
     if not run:
         sys.exit("bs2: BackShot2All: no host of the run holds any built source")
     n = all_counts(run)
-    name = time.strftime("bs2all-%Y%m%d-%H%M")
+    name = time.strftime("bs2all-%Y%m%d-%H%M%S")   # (seconds: two starts a minute never share a name)
     cs, out, lo_host, steps = all_later(have)
     if not lo_host:
         sk = sk + [{"name": "leftovers", "piece": "missing", "why": "no host of the run holds the set's sources"}]
@@ -1086,10 +1086,20 @@ def all_start():
 
 
 def write_manifest(m, hosts, run):
-    """M as ROOT/runs/RUN/bs2all.json on each of HOSTS (one line of JSON)."""
+    """M as ROOT/runs/RUN/bs2all.json on each of HOSTS (one line of JSON), RUN made anew:
+    a host where RUN is there already (another run's) keeps it.  Every host is tried; then,
+    if any failed, sys.exit naming each (no host has started anything yet)."""
     rd = f"{ROOT}/runs/{run}"
+    bad = []
     for h in hosts:
-        ssh(h, f"mkdir -p {rd} && cat > {rd}/bs2all.json", input=json.dumps(m) + "\n")
+        r = ssh(h, f'if [ -e {rd} ]; then echo "{rd} is there already"; exit 3; fi; '
+                   f"mkdir -p {ROOT}/runs && mkdir {rd} && cat > {rd}/bs2all.json",
+                check=False, capture=True, input=json.dumps(m) + "\n")
+        if r.returncode:
+            bad.append(f"{h}: exit {r.returncode}: {((r.stdout or '') + (r.stderr or '')).strip()[-200:]}")
+    if bad:
+        sys.exit(f"bs2: run {run}: not started, its manifest ({rd}/bs2all.json) not written on {len(bad)} of "
+                 f"{len(hosts)} hosts:\n  " + "\n  ".join(bad))
 
 
 def read_manifest(run):
@@ -1225,7 +1235,7 @@ def main():
         rest = a[1:]
         if rest[:1] and rest[0] in ("corpus", "leftovers", "report"):
             if len(rest) != 2 or not RUN_NAME.fullmatch(rest[1]):
-                sys.exit(f"bs2: BackShot2All {rest[0]} RUN (a run's name, bs2all-YYYYMMDD-HHMM)")
+                sys.exit(f"bs2: BackShot2All {rest[0]} RUN (a run's name, bs2all-YYYYMMDD-HHMMSS)")
             if rest[0] == "report":
                 sys.exit(all_report(rest[1], as_json))
             return all_corpus(rest[1]) if rest[0] == "corpus" else all_leftovers(rest[1])

@@ -146,6 +146,22 @@ disks being full):
   `core.img` (the rescue's Ubuntu 26.04 base has it), which writes Guix's
   own GRUB at the new disk's sector addresses; a dump without them is a
   plan problem. NixOS's arm is unchanged.
+- **BIOS: / keeps its partition number** (a limit for users, found
+  2026-11-24 by BackShot2's review). Guix's BIOS `core.img`, as
+  grub-install made it with `/` a plain partition, finds `/boot/grub` by
+  that partition's number: guix15-bios's prefix is `(,gpt3)/@/boot/grub`.
+  It is in the LZMA-compressed kernel and modules, followed by
+  Reed-Solomon redundancy, and load can't remake it (the store's GRUB is
+  gone; grub-bios-setup patches only its sector addresses). So a restore
+  onto a layout that numbers `/` (or `/boot`) otherwise would stop in
+  `grub rescue`. Since 2026-11-24 `bko-holt dump` decodes the prefix
+  (`load/grubprefix.rs` `core_prefix`, `lzma.rs`) and records the number
+  as `boot.store.core_img_part` (`"gpt3"`; null when the prefix searches
+  instead, or there is no core.img), and load refuses, as a plan
+  problem, a layout whose `/boot` (else `/`) partition has another
+  number. A dump from before has no `core_img_part`, and load can't
+  check it. UEFI has no such limit (load renumbers grubx64.efi's prefix,
+  above).
 - Shepherd's `herd status` sections: `Started:`, `Stopped:`, `Failed:`,
   `Running timers:`, `One-shot:`, one ` X NAME` line each.
 - 28,503 store files with nlink > 1 (deduplication), as expected.
@@ -358,9 +374,12 @@ KEYS_DIR HOSTNAME`). CachyOS before it is in the library
   `(,gpt3)/boot/grub`, the partition by number, since grub-install ran
   with the ESP on `/`'s disk. A layout that numbers `/` otherwise ended
   in grub rescue, BackShot2's `fail-006`; load now sets the prefix's
-  partition to `/`'s in the image and its EFI/BOOT copy, `bko-holt
+  partition to `/`'s in the image, and in its EFI/BOOT copy when the
+  dump's ESP inventory says that is a copy (`same_as`; on a shared ESP
+  the fallback can be another system's GRUB, left as restored), `bko-holt
   grub-prefix`, `load/grubprefix.rs`. On BIOS the same prefix is in
-  core.img, compressed, and isn't renumbered.) Only the NVRAM entry is made (`efi_entries`), plus
+  core.img, compressed, and isn't renumbered: see "BIOS: / keeps its
+  partition number" below.) Only the NVRAM entry is made (`efi_entries`), plus
   `nixos_removable`'s copy to `EFI/BOOT/BOOTX64.EFI` under `--removable`.
   This is NixOS's arm (`:2716`).
 - **BIOS GRUB:** the boot code is installed from the store's own GRUB, as

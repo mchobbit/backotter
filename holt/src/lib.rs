@@ -19,6 +19,7 @@ pub(crate) mod efi;
 pub mod json;
 pub mod load;
 pub mod luksheader;
+pub mod lzma;
 pub mod mdsb;
 pub mod mounts;
 pub mod osrel;

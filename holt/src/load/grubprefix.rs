@@ -78,7 +78,14 @@ pub fn efi_prefix(b: &[u8]) -> Result<Option<(usize, usize, String)>, String> {
     if end > raw_end {
         return Err(format!("the modules ({size} bytes) run past the mods section ({raw_size} bytes)"));
     }
-    let mut p = raw.checked_add(usize::try_from(off).map_err(|_| "the modules' offset is past this machine's")?).ok_or("the modules' offset overflows")?;
+    let p = raw.checked_add(usize::try_from(off).map_err(|_| "the modules' offset is past this machine's")?).ok_or("the modules' offset overflows")?;
+    module_prefix(b, p, end)
+}
+
+/// The prefix module among the modules of B from P to END (module headers:
+/// type, size, both u32s, the size counting the header): (the offset of
+/// its string, its room with the NUL padding, the string), or None.
+fn module_prefix(b: &[u8], mut p: usize, end: usize) -> Result<Option<(usize, usize, String)>, String> {
     while p + 8 <= end {
         let (Some(t), Some(sz)) = (u32_at(b, p), u32_at(b, p + 4)) else { break };
         let sz = sz as usize;
@@ -94,6 +101,58 @@ pub fn efi_prefix(b: &[u8]) -> Result<Option<(usize, usize, String)>, String> {
         p += sz;
     }
     Ok(None)
+}
+
+// GRUB's i386-pc core.img (include/grub/offsets.h): diskboot.img's sector,
+// then lzma_decompress.img, whose header has these fields; the kernel and
+// modules after it, LZMA-compressed; then the Reed-Solomon redundancy.
+const CORE_DISKBOOT: usize = 512;
+const CORE_COMPRESSED_SIZE: usize = 0x08;
+const CORE_UNCOMPRESSED_SIZE: usize = 0x0c;
+const CORE_RS_REDUNDANCY: usize = 0x10;
+const MAX_CORE: usize = 16 << 20;
+
+/// The prefix of GRUB's i386-pc core.img B (what grub-install wrote to
+/// /boot/grub/i386-pc/core.img and the BIOS boot partition): its kernel and
+/// modules are LZMA-compressed (lc=3 lp=0 pb=2, grub-mkimage's), so they
+/// are decoded (lzma.rs) and the module info sought in them ("mimg" with
+/// the 32-bit layout, ending within them: the kernel's code holds the magic
+/// too).  The compressed part starts at the file's end less its size and
+/// the redundancy, so B must be the whole file.  Ok(None): decoded, and no
+/// prefix module.  Err: B isn't such a core.img.
+pub fn core_prefix(b: &[u8]) -> Result<Option<String>, String> {
+    let h = CORE_DISKBOOT;
+    let (Some(comp), Some(unc), Some(red)) = (u32_at(b, h + CORE_COMPRESSED_SIZE), u32_at(b, h + CORE_UNCOMPRESSED_SIZE), u32_at(b, h + CORE_RS_REDUNDANCY)) else {
+        return Err(format!("{} bytes: too short for a GRUB i386-pc core.img", b.len()));
+    };
+    let (comp, unc, red) = (comp as usize, unc as usize, red as usize);
+    let start = b.len().checked_sub(comp).and_then(|x| x.checked_sub(red)).filter(|s| *s >= h + 0x20 && comp > 0 && unc > 0 && unc <= MAX_CORE);
+    let Some(start) = start else {
+        return Err(format!("not a GRUB i386-pc core.img: its header's sizes (compressed {comp}, uncompressed {unc}, redundancy {red}) don't fit its {} bytes", b.len()));
+    };
+    let out = crate::lzma::decode(&b[start..start + comp], 3, 0, 2, unc).map_err(|e| format!("its compressed kernel and modules: {e}"))?;
+    let mut i = 0;
+    while let Some(k) = out.get(i..).and_then(|r| r.windows(4).position(|w| w == MAGIC.to_le_bytes())) {
+        let at = i + k;
+        i = at + 1;
+        let (Some(off), Some(size)) = (u32_at(&out, at + 4), u32_at(&out, at + 8)) else { continue };
+        let (off, size) = (off as usize, size as usize);
+        let Some(end) = at.checked_add(size).filter(|e| *e <= out.len() && off >= 12 && off <= size) else { continue };
+        if let Ok(Some((_, _, p))) = module_prefix(&out, at + off, end) {
+            return Ok(Some(p));
+        }
+    }
+    Ok(None)
+}
+
+/// The partition PREFIX names by number ("gpt3" of "(,gpt3)/@/boot/grub"),
+/// as with_partition reads it; None for "($root)/...", nested partitions
+/// and the like.
+pub fn numbered_partition(prefix: &str) -> Option<String> {
+    let inner = prefix.strip_prefix('(')?;
+    let drive = &inner[..inner.find(')')?];
+    let (_, p) = drive.split_once(',')?;
+    with_partition(prefix, "gpt1").map(|_| p.to_string())
 }
 
 /// PREFIX with its drive's partition set to PART ("gpt5"): Some when its
@@ -268,6 +327,38 @@ mod tests {
         let (at, _, _) = efi_prefix(&b).unwrap().unwrap();
         b[at - 4..at].copy_from_slice(&4000u32.to_le_bytes());
         assert!(efi_prefix(&b).unwrap_err().contains("past the modules' end"));
+    }
+
+    const CORE_GPT3: &[u8] = include_bytes!("../../tests/fixtures/lzma/core-gpt3.img");
+    const CORE_ROOT: &[u8] = include_bytes!("../../tests/fixtures/lzma/core-root.img");
+
+    #[test]
+    fn reads_a_core_img_prefix() {
+        assert_eq!(core_prefix(CORE_GPT3).unwrap().as_deref(), Some("(,gpt3)/@/boot/grub"));
+        assert_eq!(core_prefix(CORE_ROOT).unwrap().as_deref(), Some("($root)/boot/grub"));
+        // Not the whole file (the compressed part is found from its end), or not a core.img.
+        assert!(core_prefix(&CORE_GPT3[..CORE_GPT3.len() - 1]).is_err());
+        assert!(core_prefix(b"short").unwrap_err().contains("too short"));
+        assert!(core_prefix(&[0u8; 4096]).is_err());
+        let mut b = CORE_GPT3.to_vec();
+        b[CORE_DISKBOOT + CORE_UNCOMPRESSED_SIZE..CORE_DISKBOOT + CORE_UNCOMPRESSED_SIZE + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(core_prefix(&b).is_err());
+        assert_eq!(numbered_partition("(,gpt3)/@/boot/grub").as_deref(), Some("gpt3"));
+        assert_eq!(numbered_partition("(hd0,msdos12)/boot/grub").as_deref(), Some("msdos12"));
+        assert_eq!(numbered_partition("($root)/boot/grub"), None);
+        assert_eq!(numbered_partition("(,msdos1,bsd1)/boot/grub"), None);
+        assert_eq!(numbered_partition("/boot/grub"), None);
+    }
+
+    /// guix15-bios's real core.img (GRUB 2.12 from Guix 1.5.0), not kept in
+    /// the tree: `BKO_CORE_IMG=PATH cargo test real_core_img -- --ignored`.
+    #[test]
+    #[ignore]
+    fn real_core_img() {
+        let p = std::env::var("BKO_CORE_IMG").expect("BKO_CORE_IMG");
+        let b = std::fs::read(&p).unwrap();
+        let want = std::env::var("BKO_CORE_PREFIX").unwrap_or_else(|_| "(,gpt3)/@/boot/grub".into());
+        assert_eq!(core_prefix(&b).unwrap().as_deref(), Some(want.as_str()));
     }
 
     #[test]

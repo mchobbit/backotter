@@ -54,9 +54,12 @@ What isn't excluded, on purpose:
   EFI/BOOT copy (`bko-holt grub-prefix`, holt/src/load/grubprefix.rs).
 - On BIOS the same prefix is in core.img ("(,gpt3)/@/boot/grub", inside
   its LZMA-compressed part), which load writes back with grub-bios-setup
-  and can't renumber: a bko-holt limit, open.  Renumbering /boot/grub's
-  partition is refused there by the generic rule 3 already (grub.cfg has
-  no search UUIDs: guix15-bios searches by label), so it isn't drawn.
+  and can't renumber: a bko-holt limit for users too (docs/design/guix.md,
+  "BIOS: / keeps its partition number"); since 2026-11-24 the dump records
+  the number (boot.store.core_img_part) and load refuses a layout that
+  changes it.  Renumbering /boot/grub's partition is refused here by the
+  generic rule 3 already (grub.cfg has no search UUIDs: guix15-bios
+  searches by label), so it isn't drawn.
 
 - Content drift: recipe guix-small-1 (alpine-small-1's shape: hard links,
   sparse files, nodes, xattrs, ACLs, a deep tree past PATH_MAX) on / at

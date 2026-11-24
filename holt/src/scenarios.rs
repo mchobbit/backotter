@@ -4567,7 +4567,7 @@ fn guix_bios() -> Tree {
         .file("/etc/fstab", fstab)
         .file("/boot/grub/i386-pc/normal.mod", "x")
         .file("/boot/grub/i386-pc/boot.img", vec![0u8; 512])
-        .file("/boot/grub/i386-pc/core.img", vec![0u8; 73151])
+        .file("/boot/grub/i386-pc/core.img", include_bytes!("../tests/fixtures/lzma/core-gpt3.img"))
         .dir("/gnu/store/llllllllllllllllllllllllllllllll-grub-locales")
         .file("/gnu/store/gggggggggggggggggggggggggggggggg-grub-image.png", "png")
         .file("/proc/sys/kernel/hostname", "guix15-bios\n");
@@ -4760,6 +4760,8 @@ fn guix_bios_guest() {
     assert!(st.get("grub").unwrap().is_null());
     assert_eq!(st.get("boot_img"), Some(&Value::Bool(true)));
     assert_eq!(st.get("core_img"), Some(&Value::Bool(true)));
+    // core.img's prefix, "(,gpt3)/@/boot/grub" (load/grubprefix.rs core_prefix).
+    assert_eq!(s(st, &["core_img_part"]), "gpt3");
     for g in 0..2 {
         let g = &arr(st, &["generations"])[g];
         assert_eq!(s(g, &["root_device", "kind"]), "label");
@@ -4815,6 +4817,43 @@ fn guix_bios_guest() {
     let mut w = v.clone();
     set_at(&mut w, &["boot", "store", "grub_cfg", "searches"], crate::json::parse(r#"[{"kind": "label", "value": "other-root"}]"#).unwrap());
     assert_eq!(guix_plan(&w, &[]).problems, vec!["Guix System: /boot/grub/grub.cfg searches --label other-root, which no file system in the layout has; the restored GRUB couldn't find it"]);
+    // core.img names / by its number, gpt3, and load writes it back as it
+    // is: a layout that renumbers / is refused (it would stop in grub
+    // rescue), whether the layout or the core.img moved.
+    let ren = crate::json::parse(&v.compact().replace("\"vda3\"", "\"vda5\"").replace("/dev/vda3", "/dev/vda5")).unwrap();
+    let mut ren = ren;
+    let Some(Value::Arr(disks)) = ren.at(&["storage", "disks"]).cloned() else { panic!() };
+    let mut disks = disks;
+    for d in disks.iter_mut() {
+        let Some(Value::Arr(ps)) = d.get("partitions").cloned() else { continue };
+        let ps: Vec<Value> = ps.into_iter().map(|mut p| { if p.get("name").and_then(Value::as_str) == Some("vda5") { set_at(&mut p, &["number"], 5u64.into()); } p }).collect();
+        set_at(d, &["partitions"], Value::Arr(ps));
+    }
+    set_at(&mut ren, &["storage", "disks"], Value::Arr(disks));
+    let want = "Guix System: the source's BIOS core.img, which bko-holt load writes back as it is (the store has no GRUB to make another), finds /boot/grub by partition number, (,gpt3), and this layout makes /'s file system vda5, gpt5: GRUB would stop in grub rescue. Keep it gpt3; bko-holt load can't remake a Guix core.img";
+    assert_eq!(guix_plan(&ren, &[]).problems, vec![want.to_string()]);
+    let mut w = v.clone();
+    set_at(&mut w, &["boot", "store", "core_img_part"], "msdos3".into());
+    assert_eq!(guix_plan(&w, &[]).problems.len(), 1, "a GPT partition isn't msdos3");
+    // An older dump (no core_img_part), or a prefix by search: no refusal.
+    for x in [Value::Null, Value::Str("gpt3".into())] {
+        let mut w = ren.clone();
+        set_at(&mut w, &["boot", "store", "core_img_part"], x.clone());
+        let p = guix_plan(&w, &[]).problems;
+        assert_eq!(p.is_empty(), x.is_null(), "{p:?}");
+    }
+    // A core.img whose prefix names no partition by number: none recorded.
+    let t = guix_bios();
+    t.file("/boot/grub/i386-pc/core.img", include_bytes!("../tests/fixtures/lzma/core-root.img"));
+    let x = run(&t, true, guix_bios_runner());
+    assert!(x.at(&["boot", "store", "core_img_part"]).unwrap().is_null());
+    assert!(guix_plan(&x, &[]).problems.is_empty());
+    // One that isn't GRUB's: none, and a warning.
+    let t = guix_bios();
+    t.file("/boot/grub/i386-pc/core.img", vec![0u8; 4096]);
+    let x = run(&t, true, guix_bios_runner());
+    assert!(x.at(&["boot", "store", "core_img_part"]).unwrap().is_null());
+    assert!(arr(&x, &["warnings"]).iter().any(|w| w.as_str().unwrap_or("").starts_with("Guix: /boot/grub/i386-pc/core.img: ")), "{:?}", x.get("warnings"));
 }
 
 const SLACK_KV: &str = "5.15.161";

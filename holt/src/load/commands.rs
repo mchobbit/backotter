@@ -4003,6 +4003,9 @@ impl Builder<'_> {
                                 missing.iter().map(|k| k.replace('_', ".")).collect::<Vec<_>>().join(" or ")
                             ));
                         }
+                        if let Some(why) = self.store_core_img_moved(st) {
+                            self.problems.push(why);
+                        }
                         let q = shell_quote(&dir);
                         for d in devs {
                             let (qd, ed) = (shell_quote(&d), dq_escape(&d));
@@ -4954,6 +4957,35 @@ impl Builder<'_> {
         vec![Cmd::new(&argv).why(format!(
             "the restored GRUB image's prefix names /boot/grub's partition by number (it was made on the ESP's own disk): set to {dev}'s, ({at}); left as it is where it names that already"
         ))]
+    }
+
+    /// Why the source's BIOS core.img, which a store system without GRUB
+    /// in its store (Guix) gets back as it is (grub-bios-setup writes it
+    /// unchanged but for its sector addresses), wouldn't find /boot/grub on
+    /// this layout: the dump's boot.store.core_img_part is the partition its
+    /// prefix names by number ("gpt3" of "(,gpt3)/@/boot/grub"), and the
+    /// layout numbers /boot's file system (/'s, without a /boot) otherwise.
+    /// Its prefix is in the LZMA-compressed part, which load can't rebuild
+    /// (grub-mkimage with the store's GRUB, gone; and the Reed-Solomon
+    /// redundancy after it): GRUB would stop in grub rescue, so load
+    /// refuses.  None when the numbers agree, or the dump doesn't say.
+    fn store_core_img_moved(&self, st: &crate::store::StoreSystem) -> Option<String> {
+        let want = self.layout.str_at(&["boot", "store", "core_img_part"])?.to_string();
+        let mounts = self.layout.arr(&["storage", "mounts"]).to_vec();
+        let (target, dev) = ["/boot", "/"].iter().find_map(|t| mounts.iter().find(|m| s(m, "target").as_deref() == Some(*t)).and_then(|m| s(m, "device")).map(|d| (*t, d)))?;
+        let (disk, part) = self.layout.disks.iter().find_map(|d| d.parts.iter().find(|p| p.name == dev).map(|p| (d, p)))?;
+        let kind = match disk.table.as_ref().map(|t| &t.kind) {
+            Some(super::layout::TableKind::Gpt) => "gpt",
+            Some(super::layout::TableKind::Mbr) => "msdos",
+            None => return None,
+        };
+        let at = format!("{kind}{}", part.number);
+        (at != want).then(|| {
+            format!(
+                "{}: the source's BIOS core.img, which bko-holt load writes back as it is (the store has no GRUB to make another), finds /boot/grub by partition number, (,{want}), and this layout makes {target}'s file system {dev}, {at}: GRUB would stop in grub rescue. Keep it {want}; bko-holt load can't remake a Guix core.img",
+                st.name
+            )
+        })
     }
 
     fn store_removable(&self, img: &str) -> Vec<Cmd> {

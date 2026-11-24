@@ -534,6 +534,26 @@ pub fn root_arg(a: &str) -> Option<&str> {
 /// /boot/grub/i386-pc holds the boot.img and core.img grub-install wrote
 /// there (what load's grub-bios-setup writes to the new disk), and
 /// /boot/grub/grub.cfg's searches and the roots its `linux` lines name.
+/// The partition grub-install's BIOS core.img (/boot/grub/i386-pc/core.img)
+/// names by number in its prefix ("gpt3" of "(,gpt3)/@/boot/grub",
+/// load/grubprefix.rs core_prefix): load writes that core.img back as it
+/// is (the store holds no GRUB), so a layout that numbers /boot/grub's
+/// partition otherwise would stop in grub rescue, and load refuses it
+/// (load/commands.rs, the store BIOS arm).  None without a core.img, or
+/// when its prefix names no partition by number ("($root)/...", after a
+/// search); one that can't be read as GRUB's is a warning.
+fn core_img_part(sys: &Sys) -> Option<String> {
+    let path = "/boot/grub/i386-pc/core.img";
+    let b = sys.read_bytes(path)?;
+    match crate::load::grubprefix::core_prefix(&b) {
+        Ok(p) => p.as_deref().and_then(crate::load::grubprefix::numbered_partition),
+        Err(e) => {
+            sys.warn(format!("Guix: {path}: {e}"));
+            None
+        }
+    }
+}
+
 pub fn guix_json(sys: &Sys) -> Option<Value> {
     if !is_guix(sys) {
         return None;
@@ -579,6 +599,7 @@ pub fn guix_json(sys: &Sys) -> Option<Value> {
             .set("grub", grub)
             .set("boot_img", sys.is_file("/boot/grub/i386-pc/boot.img"))
             .set("core_img", sys.is_file("/boot/grub/i386-pc/core.img"))
+            .set("core_img_part", core_img_part(sys))
             .set("grub_cfg", grub_cfg)
             .build(),
     )

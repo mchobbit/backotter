@@ -10,7 +10,6 @@
 
 use crate::bytes::{crc32, unbase64};
 use crate::json::Value;
-use std::io::Write;
 
 fn s(v: &Value, k: &str) -> Option<String> {
     v.get(k).and_then(Value::as_str).map(str::to_string)
@@ -296,6 +295,15 @@ pub fn plan(disk: &Value, size: u64) -> Result<Vec<(u64, Vec<u8>)>, String> {
     Ok(out)
 }
 
+/// Whether E, from fsync on the device, says only that the device takes no
+/// fsync: POSIX's EINVAL ("not a file on which this operation is
+/// possible") or ENOSYS/ENOTSUP, which a raw disk device on some systems
+/// may give.  Its writes are done (write_all_at returned), so that one is
+/// let go; any other error (EIO) is the table not reaching the disk.
+fn sync_unsupported(e: &std::io::Error) -> bool {
+    matches!(e.kind(), std::io::ErrorKind::InvalidInput | std::io::ErrorKind::Unsupported)
+}
+
 pub fn main(args: &[String]) -> u8 {
     let [layout, disk, dev, size] = args else {
         eprintln!("usage: bko-holt write-table LAYOUT DISK DEVICE SIZE_BYTES");
@@ -312,14 +320,18 @@ pub fn main(args: &[String]) -> u8 {
             size.parse().map_err(|_| format!("SIZE_BYTES {size:?} isn't a number"))?
         };
         let writes = plan(d, size)?;
-        let mut f = std::fs::OpenOptions::new().write(true).open(dev).map_err(|e| format!("{dev}: {e}"))?;
+        let f = std::fs::OpenOptions::new().write(true).open(dev).map_err(|e| format!("{dev}: {e}"))?;
         for (off, b) in writes {
             use std::os::unix::fs::FileExt;
             f.write_all_at(&b, off).map_err(|e| format!("{dev}: writing {} bytes at {off}: {e}", b.len()))?;
         }
-        f.flush().map_err(|e| format!("{dev}: {e}"))?;
-        f.sync_all().ok();
-        Ok(())
+        // File's flush does nothing: sync_all is what puts the table on
+        // the disk, so its error is the write's (the cache took the writes,
+        // the disk failed them), and the partition stage mustn't go on.
+        match f.sync_all() {
+            Err(e) if !sync_unsupported(&e) => Err(format!("{dev}: sync: {e}")),
+            _ => Ok(()),
+        }
     };
     match run() {
         Ok(()) => 0,
@@ -403,6 +415,22 @@ mod tests {
         ] {
             let v = crate::json::parse(js).unwrap();
             assert!(plan(&v, sz).is_err(), "accepted: {js}");
+        }
+    }
+
+    /// RustAudit1 H7-11: an fsync error is write-table's, except one that
+    /// says the device takes no fsync.
+    #[test]
+    fn only_an_unsupported_sync_is_let_go() {
+        use std::io::{Error, ErrorKind};
+        assert!(sync_unsupported(&Error::from(ErrorKind::InvalidInput)));
+        assert!(sync_unsupported(&Error::from(ErrorKind::Unsupported)));
+        assert!(!sync_unsupported(&Error::other("EIO")));
+        assert!(!sync_unsupported(&Error::from(ErrorKind::PermissionDenied)));
+        #[cfg(target_os = "linux")]
+        {
+            assert!(!sync_unsupported(&Error::from_raw_os_error(5)), "EIO");
+            assert!(sync_unsupported(&Error::from_raw_os_error(22)), "EINVAL");
         }
     }
 

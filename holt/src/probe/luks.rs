@@ -22,20 +22,28 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
 }
 
 fn luks1(b: &[u8]) -> Content {
+    // Eight key slots of 48 bytes from offset 208: active (0x00ac71f3),
+    // PBKDF2 iterations, salt, key material offset, stripes.
     let mut active = 0;
+    let mut first_iterations = None;
     for i in 0..8 {
         if be32(b, 208 + 48 * i) == 0x00ac_71f3 {
             active += 1;
+            first_iterations.get_or_insert(be32(b, 212 + 48 * i) as u64);
         }
     }
     let payload_sectors = be32(b, 104) as u64;
-    let d = Obj::new()
+    let mut d = Obj::new()
         .set("cipher", format!("{}-{}", crate::bytes::cstr(sub(b, 8, 32)), crate::bytes::cstr(sub(b, 40, 32))))
         .set("hash", crate::bytes::cstr(sub(b, 72, 32)))
         .set("key_bits", be32(b, 108) as u64 * 8)
         .set("data_offset_bytes", payload_sectors * 512)
         .set("keyslots_active", active)
         .set("mk_iterations", be32(b, 164));
+    // The first active slot's PBKDF2 iterations: what a passphrase costs to
+    // try, and what GRUB's cryptomount spends opening it (Guix's installer
+    // makes LUKS1 that GRUB opens, docs/design/guix.md "guix15-luks").
+    d.put_some("keyslot_iterations", first_iterations);
     Content {
         kind: "crypto_LUKS".into(),
         usage: "crypto",
@@ -233,7 +241,10 @@ mod tests {
         b[168..168 + U.len()].copy_from_slice(U.as_bytes());
         b[208..212].copy_from_slice(&0x00ac_71f3u32.to_be_bytes());
         b[208 + 48 * 3..212 + 48 * 3].copy_from_slice(&0x00ac_71f3u32.to_be_bytes());
+        b[212..216].copy_from_slice(&6_297_752u32.to_be_bytes());
+        b[212 + 48 * 3..216 + 48 * 3].copy_from_slice(&2_000_000u32.to_be_bytes());
         b[208 + 48..212 + 48].copy_from_slice(&0x0000_deadu32.to_be_bytes());
+        b[212 + 48..216 + 48].copy_from_slice(&42u32.to_be_bytes());
         let c = probe(&MemSource(b.clone())).unwrap();
         assert_eq!(c.version.as_deref(), Some("1"));
         assert_eq!(c.uuid.as_deref(), Some(U));
@@ -242,6 +253,17 @@ mod tests {
         assert_eq!(d.get("key_bits").and_then(Value::as_u64), Some(512));
         assert_eq!(d.get("data_offset_bytes").and_then(Value::as_u64), Some(4096 * 512));
         assert_eq!(d.get("keyslots_active").and_then(Value::as_u64), Some(2));
+        // The first active slot's (0), not an inactive one's (1) nor a later one's (3).
+        assert_eq!(d.get("keyslot_iterations").and_then(Value::as_u64), Some(6_297_752));
+        let mut later = b.clone();
+        later[208..212].copy_from_slice(&0u32.to_be_bytes());
+        assert_eq!(probe(&MemSource(later)).unwrap().details.build().get("keyslot_iterations").and_then(Value::as_u64), Some(2_000_000));
+        // No active slot: no figure.
+        let mut none = b.clone();
+        for i in 0..8 {
+            none[208 + 48 * i..212 + 48 * i].copy_from_slice(&0u32.to_be_bytes());
+        }
+        assert_eq!(probe(&MemSource(none)).unwrap().details.build().get("keyslot_iterations"), None);
         b[7] = 3;
         assert!(probe(&MemSource(b)).is_none());
         assert!(probe(&MemSource(vec![0u8; 4096])).is_none());

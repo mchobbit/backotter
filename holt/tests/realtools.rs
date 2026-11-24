@@ -420,6 +420,9 @@ fn luks_matches_blkid_and_dump() {
             assert_eq!(d.get("hash").and_then(Value::as_str).unwrap(), field("Hash spec:"));
             assert_eq!(d.get("data_offset_bytes").and_then(Value::as_u64).unwrap(), field("Payload offset:").parse::<u64>().unwrap() * 512);
             assert_eq!(d.get("keyslots_active").and_then(Value::as_u64), Some(1));
+            // Key Slot 0's "\tIterations: N", the first active slot's.
+            let iters = dump.lines().find_map(|l| l.trim_start().strip_prefix("Iterations:")).map(|v| v.trim().parse::<u64>().unwrap()).unwrap();
+            assert_eq!(d.get("keyslot_iterations").and_then(Value::as_u64), Some(iters), "case {i}");
         }
     }
 }

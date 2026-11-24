@@ -1521,6 +1521,13 @@ impl Builder<'_> {
             if let Some(o) = num(&c, "data_offset_bytes") {
                 a.push(format!("--offset={}", o / 512));
             }
+            // The passphrase's keyslot costs what the source's first did
+            // (no benchmark), as LUKS2's below: GRUB's cryptomount (Guix,
+            // whose installer makes LUKS1) takes as long to open it as it
+            // did there.
+            if let Some(t) = num(&c, "keyslot_iterations").filter(|&t| t > 0) {
+                a.push(format!("--pbkdf-force-iterations={t}"));
+            }
         } else {
             let seg = c.at(&["segments", "0"]).cloned().unwrap_or(Value::Null);
             // The PBKDF the new passphrase's keyslot takes: the first source
@@ -6917,6 +6924,54 @@ mod tests {
         assert!(b.problems.iter().any(|p| p == "dm-0: vda2 doesn't hold a LUKS header in the dump (plain dm-crypt isn't supported)"), "{:?}", b.problems);
         let b = built_from(&layout("/dev/urandom", "LUKS2"), &[]);
         assert!(b.problems.iter().any(|p| p.contains("doesn't hold a LUKS header")), "{:?}", b.problems);
+    }
+
+    /// LUKS1, as Guix's installer makes it (Guix's cryptsetup is built
+    /// --with-default-luks-format=LUKS1, and Guix's GRUB opens it: docs/
+    /// design/guix.md "guix15-luks"): made again with the dump's cipher, key
+    /// size, hash, offset and UUID, and the passphrase's keyslot with the
+    /// source's first active slot's PBKDF2 iterations, not a benchmark in the
+    /// rescue system, so GRUB's cryptomount costs what it did.  A dump from
+    /// before keyslot_iterations (or with none: 0) gets the benchmark, as
+    /// before.
+    #[test]
+    fn luks1_keeps_cipher_uuid_and_the_keyslot_iterations() {
+        let layout = |iters: &str| {
+            sample::bios_mbr()
+                .replace(
+                    r#""content": {"type": "swap", "usage": "other", "uuid": "5e5e5e5e-0000-4000-8000-000000000002", "label": null, "page_size": 4096}"#,
+                    &format!(
+                        r#""content": {{"type": "crypto_LUKS", "usage": "crypto", "uuid": "a8aa9f20-5064-4dfd-b286-07e35e0767b0", "label": null, "version": "1", "cipher": "aes-xts-plain64", "hash": "sha256", "key_bits": 512, "data_offset_bytes": 2097152, "keyslots_active": 1, "mk_iterations": 394795{iters}}}"#
+                    ),
+                )
+                .replace(
+                    r#""dm_devices": []"#,
+                    r#""dm_devices": [{"name": "dm-0", "kind": "dm", "size_bytes": 1997537280, "slaves": ["vda2"], "holders": [],
+                        "content": {"type": "swap", "usage": "other", "uuid": "5e5e5e5e-0000-4000-8000-000000000002", "label": null, "page_size": 4096},
+                        "dm": {"dm_name": "cryptswap", "dm_uuid": "CRYPT-LUKS1-a8aa9f2050644dfdb28607e35e0767b0-cryptswap", "mapper_path": "/dev/mapper/cryptswap", "target": "crypt", "crypt_type": "LUKS1", "luks_uuid": "a8aa9f20-5064-4dfd-b286-07e35e0767b0"}}]"#,
+                )
+                .replace(
+                    r#"{"spec": "UUID=5e5e5e5e-0000-4000-8000-000000000002", "file": "none", "type": "swap", "options": "sw", "freq": 0, "passno": 0, "resolves_to": "vda2"}"#,
+                    r#"{"spec": "/dev/mapper/cryptswap", "file": "none", "type": "swap", "options": "sw", "freq": 0, "passno": 0, "resolves_to": "dm-0"}"#,
+                )
+        };
+        let j = layout(r#", "keyslot_iterations": 6297752"#);
+        assert!(j.contains("crypto_LUKS") && j.contains("CRYPT-LUKS1") && j.contains("\"resolves_to\": \"dm-0\""), "the sample changed: {j}");
+        let b = built_from(&j, &["--key-file", "cryptswap=/root/k"]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let asm = text(b.stage(Stage::Assemble));
+        assert!(
+            asm.contains("cryptsetup luksFormat --batch-mode --type=luks1 --cipher=aes-xts-plain64 --key-size=512 --hash=sha256 --offset=4096 --pbkdf-force-iterations=6297752 --uuid=a8aa9f20-5064-4dfd-b286-07e35e0767b0 --key-file=/root/k /dev/vdb2\n"),
+            "{asm}"
+        );
+        assert!(asm.contains("cryptsetup open --key-file=/root/k /dev/vdb2 cryptswap\n"), "{asm}");
+        // No figure (an older dump), or 0: cryptsetup's benchmark, as before.
+        for none in ["", r#", "keyslot_iterations": 0"#] {
+            let b = built_from(&layout(none), &["--key-file", "cryptswap=/root/k"]);
+            assert!(b.problems.is_empty(), "{:?}", b.problems);
+            let asm = text(b.stage(Stage::Assemble));
+            assert!(asm.contains("--type=luks1 ") && !asm.contains("--pbkdf-force-iterations"), "{asm}");
+        }
     }
 
     /// NixOS's graphical installer (BackShot1's Thinkpad, NixOS 26.05): /

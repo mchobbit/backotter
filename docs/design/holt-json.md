@@ -310,7 +310,11 @@ keeps today's behaviour.
    process_group(0)`), so the stop can signal the archiver inside an `sh
    -c` (J7).
 5. **The restore stage is done only with its mark** (`restore.done`), in
-   status's row and in `--through`'s skip (J10).
+   status's row and in `--through`'s skip (J10).  The copy marks are
+   written in text mode too, where nothing reads them; under `--json` a
+   mark that can't be written fails the run (exit 1), where text mode
+   goes on without it.  A partition stage that runs removes both marks in
+   either mode, and under `--json` `boot.done` as well (J10).
 6. **A dry run's `boot` and `close`** print their commands instead of
    refusing `boot` for want of a restored tree (J11).
 7. **The log** leaves out the archiver's progress lines (the last one
@@ -726,7 +730,7 @@ names resolve): `status::rows`, structured.
  "targets": [{"source": "sda", "node": "nvme0n1", "ours": true, "same_identity": false, "recorded": true}],
  "temporary_keys": [{"name": "cryptsrv", "kept": true}],
  "resume": {"go_on": false, "why": ["assemble would make cryptroot anew: the open stage isn't in this bko-holt"]},
- "open": {"containers": [], "pools": [], "mounted": []},
+ "open": {"containers": [{"source": "dm-1", "node": "/dev/mapper/cryptsrv"}], "pools": [], "mounted": []},
  "problems": []}
 ```
 
@@ -756,6 +760,10 @@ names resolve): `status::rows`, structured.
   itself.
 - `open`: what of the layout is open now (containers, imported pools,
   mounts under the target), for Resume and for "Shell" on Failure.
+  `containers`: `{source, node}` objects, each device assemble makes
+  (its name in the layout, `dm-1`) and the node it's open as here
+  (`/dev/mapper/cryptsrv`); `pools` and `mounted`: strings (pool names,
+  mount points).
 - `problems`: the mapping problems status reports today (not-blank left
   out, as now); with any, exit 4 and `stages` empty, as text mode prints
   no rows.

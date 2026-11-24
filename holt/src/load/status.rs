@@ -67,11 +67,13 @@ fn restore_complete(layout: &Layout, mapping: &target::Mapping, sys: &Sys) -> bo
 
 /// The file a container's temporary key is in (KeyAsk's `temporary`: the
 /// source unlocked it with a key file the restore brings back), as the
-/// builders name it.
+/// builders name it.  A ZFS encryption root's is load's random key, named
+/// as Builder::new_key and the keylocation name it.
 fn temporary_key(k: &commands::KeyAsk) -> Option<String> {
     match k.kind {
         "luks" => commands::temp_key_name(k.names.first()?).map(|n| format!("{RUN_DIR}/keys/{n}")),
         "geli" => Some(crate::other::geli::tmp_key(k.devices.first()?)),
+        "zfs" => Some(format!("{RUN_DIR}/keys/{}", k.names.first()?.replace('/', "_"))),
         _ => None,
     }
 }
@@ -427,6 +429,33 @@ pub fn json_run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, Stri
     (code, super::jsonout::line(&doc), err)
 }
 
+/// The status document's `temporary_keys`: the builders' asks and each
+/// ZFS encryption root's (as the plan's `keys` gives them) whose only key
+/// is load's, with whether its file is still there; and, when LOST_MATTERS
+/// (the copy began or they're open, and boot hasn't run), why each gone
+/// one is no Go on.
+fn temporary_keys(opts: &Options, r: &Reading, sys: &Sys, lost_matters: bool) -> (Vec<Value>, Vec<String>) {
+    let zfs = super::jsonout::zfs_key_asks(&r.layout, opts, &r.built, &r.problems);
+    let mut why = Vec::new();
+    let keys = r
+        .built
+        .keys
+        .iter()
+        .chain(&zfs)
+        .filter(|k| k.unlock == "temporary" && !k.given)
+        .filter_map(|k| {
+            let path = temporary_key(k)?;
+            let name = k.names.first().cloned().unwrap_or_default();
+            let kept = sys.exists(&path);
+            if !kept && lost_matters {
+                why.push(format!("{name}: its temporary key {path} is gone, and boot hasn't added the restored key file, so it can't be opened again"));
+            }
+            Some(Obj::new().set("name", name).set("kept", kept).build())
+        })
+        .collect();
+    (keys, why)
+}
+
 fn status_doc(given: &Layout, opts: &Options, sys: &Sys) -> Value {
     let r = read(given, opts, sys);
     let layout = &*r.layout;
@@ -466,23 +495,8 @@ fn status_doc(given: &Layout, opts: &Options, sys: &Sys) -> Value {
     // The containers whose only key is one load made: lost (gone before
     // boot added the restored key file) once the copy began on them or
     // they're open, since then a rerun can't make them anew.
-    let mut why: Vec<String> = Vec::new();
     let assembled = matches!(row(Stage::Assemble), Some(State::Done | State::Partly));
-    let temporary: Vec<Value> = r
-        .built
-        .keys
-        .iter()
-        .filter(|k| k.unlock == "temporary" && !k.given)
-        .filter_map(|k| {
-            let path = temporary_key(k)?;
-            let name = k.names.first().cloned().unwrap_or_default();
-            let kept = sys.exists(&path);
-            if !kept && !booted && (started || assembled) {
-                why.push(format!("{name}: its temporary key {path} is gone, and boot hasn't added the restored key file, so it can't be opened again"));
-            }
-            Some(Obj::new().set("name", name).set("kept", kept).build())
-        })
-        .collect();
+    let (temporary, mut why) = temporary_keys(opts, &r, sys, !booted && (started || assembled));
 
     // Whether "Go on" (--through close as it stands) is safe: only on
     // disks this session's partition stage wrote (the old system's own
@@ -1050,6 +1064,66 @@ mod tests {
         let mut k = a.to_vec();
         k.extend(["--key-file", "cryptroot=/k/pw"]);
         assert!(doc_of(&l, &k, &s).1.arr_at(&["temporary_keys"]).is_empty());
+    }
+
+    /// A ZFS encryption root keyed by a raw file (Ubuntu's rpool, its key
+    /// in the keystore) and no --key-file: load's random key at
+    /// RUN_DIR/keys/rpool is its only one, so it's listed, and a lost one
+    /// is no Go on; with --key-file rpool=FILE there's none.
+    #[test]
+    fn a_zfs_encryption_roots_temporary_key() {
+        let t = Tree::new("status-json-zfskey");
+        for (d, n) in [("sdq", "65:0"), ("sdr", "65:16")] {
+            t.disk(d, n, &[], 512).file(&format!("/sys/block/{d}/size"), "33554432\n");
+        }
+        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let text = std::fs::read_to_string(format!("{}/tests/corpus/ubuntu26-zfsmirror/src.json", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let l = Layout::from_json(crate::json::parse(&text).unwrap()).unwrap();
+        let a = ["--map", "vda=sdq", "--map", "vdb=sdr", "--only", "status", "--json"];
+        let keys = |extra: &[&str], lost_matters: bool| {
+            let o = opts_j(&[&a[..], extra].concat());
+            let (k, why) = super::temporary_keys(&o, &read(&l, &o, &s), &s, lost_matters);
+            (Value::Arr(k).compact(), why)
+        };
+        let key = format!("{RUN_DIR}/keys/rpool");
+        assert_eq!(keys(&[], false), (r#"[{"name":"rpool","kept":false}]"#.to_string(), vec![]));
+        assert_eq!(keys(&[], true).1, [format!("rpool: its temporary key {key} is gone, and boot hasn't added the restored key file, so it can't be opened again")]);
+        t.file(&key, "k");
+        assert_eq!(keys(&[], true), (r#"[{"name":"rpool","kept":true}]"#.to_string(), vec![]));
+        assert_eq!(keys(&["--key-file", "rpool=/k/rpool.key"], true), ("[]".to_string(), vec![]));
+    }
+
+    /// A copy that stopped (the archiver killed, the rescue system still
+    /// up): every stage before restore done, the start mark and no
+    /// complete one.  Restore is next and partly, and Go on is offered:
+    /// --through close skips what's done, so nothing is made anew over it.
+    #[test]
+    fn a_stopped_copy_goes_on() {
+        let t = rescue_j("status-json-stopped", &source_mbr());
+        let s = sys_j(&t, FakeRunner::default());
+        let l = sample::bios_mbr();
+        record(&t, &l, &s);
+        mounted(&t);
+        // format's filesystems, each with the source's UUID.
+        let with_uuid = |mut img: Vec<u8>, at: usize, uuid: &str| {
+            let hex: String = uuid.chars().filter(|c| *c != '-').collect();
+            for i in 0..16 {
+                img[at + i] = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap();
+            }
+            img
+        };
+        t.file("/dev/vdb1", with_uuid(crate::probe::ext::sample::image(0, 0, 0, ""), 1024 + 104, "0b0e2c6e-1111-4222-8333-444455556666"));
+        t.file("/dev/vdb2", with_uuid(crate::probe::misc::sample::swap(16, ""), 1036, "5e5e5e5e-0000-4000-8000-000000000002"));
+        t.file("/dev/vdb3", with_uuid(crate::probe::btrfs::sample::image("", 0), 0x10020, "b7b7b7b7-0000-4000-8000-000000000003"));
+        t.file(&restore_started_marker(), mark(&l, &s));
+        let (code, v, _) = doc_of(&l, &["--map", "vda=vdb", "--repo", "/srv/r", "--password-file", "/k/pw", "--only", "status", "--json"], &s);
+        assert_eq!(code, EXIT_OK);
+        let states: Vec<String> = v.arr_at(&["stages"]).iter().map(|r| format!("{} {}", r.get_str("name").unwrap(), r.get_str("state").unwrap())).collect();
+        assert_eq!(states, ["partition done", "assemble nothing", "format done", "mount done", "restore partly", "boot not_done", "close not_done"], "{:?}", v.get("stages"));
+        assert_eq!(v.get_str("next"), Some("restore"));
+        assert_eq!(v.at(&["marks"]).unwrap().compact(), r#"{"partitioned":["vdb"],"restore_started":true,"restore_complete":false,"boot":false}"#);
+        assert_eq!(v.at(&["resume"]).unwrap().compact(), r#"{"go_on":true,"why":[]}"#);
     }
 
     /// remake_after_restore (J19): once a restore began on a target, a run

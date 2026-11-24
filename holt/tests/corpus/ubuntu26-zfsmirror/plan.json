@@ -249,6 +249,19 @@
       "min_bytes": 1,
       "max_bytes": 512,
       "shared_at_boot": false
+    },
+    {
+      "group": "rpool",
+      "kind": "zfs",
+      "names": ["rpool"],
+      "devices": ["vda3", "vdb3"],
+      "holds": ["/"],
+      "unlock": "temporary",
+      "given": false,
+      "new_ok": true,
+      "min_bytes": 32,
+      "max_bytes": 32,
+      "shared_at_boot": false
     }
   ],
   "tokens": [],

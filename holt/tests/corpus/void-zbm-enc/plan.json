@@ -130,7 +130,21 @@
     }
   ],
   "erase": [],
-  "keys": [],
+  "keys": [
+    {
+      "group": "zroot",
+      "kind": "zfs",
+      "names": ["zroot"],
+      "devices": ["vda2"],
+      "holds": ["/", "/home"],
+      "unlock": "passphrase",
+      "given": true,
+      "new_ok": true,
+      "min_bytes": 8,
+      "max_bytes": 512,
+      "shared_at_boot": false
+    }
+  ],
   "tokens": [],
   "reformat": [],
   "fit": [],

@@ -431,39 +431,7 @@ fn mounts_on(layout: &Layout, devs: &[String]) -> Vec<String> {
 /// encryption root the plan makes.
 fn keys_json(layout: &Layout, opts: &Options, p: &Planned) -> Value {
     let mut asks: Vec<KeyAsk> = p.built.keys.clone();
-    for ds in layout.arr(&["storage", "zfs", "tools", "datasets"]) {
-        let Some(name) = ds.get_str("name") else { continue };
-        if ds.get_str("encryptionroot") != Some(name) {
-            continue;
-        }
-        let pool = name.split('/').next().unwrap_or(name);
-        let here = |n: &str| p.built.datasets.iter().any(|d| d == n);
-        let renamed = format!("{}{}", target::temp_pool_name(pool), &name[pool.len()..]);
-        if !here(name) && !here(&renamed) {
-            continue;
-        }
-        let fmt = ds.get_str("keyformat").unwrap_or_default();
-        let refused = p.problems.iter().any(|x| x.code == super::codes::ProblemCode::KeyNeeded && x.str_field("name") == Some(name));
-        let unlock = match fmt {
-            "passphrase" => "passphrase",
-            _ if refused => "key_file_elsewhere",
-            _ => "temporary",
-        };
-        let (min, max) = match fmt {
-            "raw" => (32, 32),
-            "hex" => (64, 64),
-            _ => (8, 512),
-        };
-        let mut devices = Vec::new();
-        for d in &layout.disks {
-            for (dev, c) in std::iter::once((&d.name, &d.content)).chain(d.parts.iter().map(|x| (&x.name, &x.content))) {
-                if c.get_str("type") == Some("zfs_member") && c.get_str("label") == Some(pool) {
-                    devices.push(dev.clone());
-                }
-            }
-        }
-        asks.push(KeyAsk { kind: "zfs", group: name.to_string(), names: vec![name.to_string()], devices, provides: Vec::new(), unlock, given: opts.key_file(name).is_some(), min_bytes: min, max_bytes: max });
-    }
+    asks.extend(zfs_key_asks(layout, opts, &p.built, &p.problems));
     let mut groups: Vec<(String, Vec<&KeyAsk>)> = Vec::new();
     for a in &asks {
         match groups.iter_mut().find(|(g, members)| *g == a.group && members.first().is_some_and(|m| m.kind == a.kind)) {
@@ -492,11 +460,19 @@ fn keys_json(layout: &Layout, opts: &Options, p: &Planned) -> Value {
             }
             let provides: Vec<String> = members.iter().flat_map(|m| m.provides.iter().cloned()).collect();
             let holds: Vec<String> = if first.kind == "zfs" {
-                datasets
+                // Each mount point once, of the datasets that mount (a
+                // pool's own dataset at / with canmount=off holds nothing).
+                let mut holds: Vec<String> = Vec::new();
+                for m in datasets
                     .iter()
-                    .filter(|d| d.get_str("name").is_some_and(|n| n == g || n.starts_with(&format!("{g}/"))))
-                    .filter_map(|d| d.get_str("mountpoint").filter(|m| m.starts_with('/')).map(str::to_string))
-                    .collect()
+                    .filter(|d| d.get_str("name").is_some_and(|n| n == g || n.starts_with(&format!("{g}/"))) && d.get_str("canmount") != Some("off"))
+                    .filter_map(|d| d.get_str("mountpoint").filter(|m| m.starts_with('/')))
+                {
+                    if !holds.iter().any(|h| h == m) {
+                        holds.push(m.to_string());
+                    }
+                }
+                holds
             } else {
                 mounts_on(layout, &provides)
             };
@@ -517,6 +493,50 @@ fn keys_json(layout: &Layout, opts: &Options, p: &Planned) -> Value {
         })
         .collect();
     Value::Arr(out)
+}
+
+/// Each ZFS encryption root the plan makes, as a key ask (the plan's
+/// `keys`; status's `temporary_keys` too): keyformat passphrase asks for
+/// one, raw or hex without --key-file is load's random key at
+/// RUN_DIR/keys/NAME (commands.rs, Builder::new_key), `temporary`.
+pub(crate) fn zfs_key_asks(layout: &Layout, opts: &Options, built: &super::commands::Built, problems: &super::codes::Problems) -> Vec<KeyAsk> {
+    let mut asks = Vec::new();
+    for ds in layout.arr(&["storage", "zfs", "tools", "datasets"]) {
+        let Some(name) = ds.get_str("name") else { continue };
+        if ds.get_str("encryptionroot") != Some(name) {
+            continue;
+        }
+        let pool = name.split('/').next().unwrap_or(name);
+        // A pool's own dataset (rpool, the usual encryption root) is made
+        // by zpool create: it's in `pools`, not `datasets`.
+        let here = |n: &str| built.datasets.iter().chain(&built.pools).any(|d| d == n);
+        let renamed = format!("{}{}", target::temp_pool_name(pool), &name[pool.len()..]);
+        if !here(name) && !here(&renamed) {
+            continue;
+        }
+        let fmt = ds.get_str("keyformat").unwrap_or_default();
+        let refused = problems.iter().any(|x| x.code == super::codes::ProblemCode::KeyNeeded && x.str_field("name") == Some(name));
+        let unlock = match fmt {
+            "passphrase" => "passphrase",
+            _ if refused => "key_file_elsewhere",
+            _ => "temporary",
+        };
+        let (min, max) = match fmt {
+            "raw" => (32, 32),
+            "hex" => (64, 64),
+            _ => (8, 512),
+        };
+        let mut devices = Vec::new();
+        for d in &layout.disks {
+            for (dev, c) in std::iter::once((&d.name, &d.content)).chain(d.parts.iter().map(|x| (&x.name, &x.content))) {
+                if c.get_str("type") == Some("zfs_member") && c.get_str("label") == Some(pool) {
+                    devices.push(dev.clone());
+                }
+            }
+        }
+        asks.push(KeyAsk { kind: "zfs", group: name.to_string(), names: vec![name.to_string()], devices, provides: Vec::new(), unlock, given: opts.key_file(name).is_some(), min_bytes: min, max_bytes: max });
+    }
+    asks
 }
 
 /// The LUKS2 tokens the restore doesn't bring back (TPM2, FIDO2, a

@@ -133,6 +133,36 @@
       "min_bytes": 1,
       "max_bytes": 512,
       "shared_at_boot": false
+    },
+    {
+      "group": "rpool",
+      "kind": "zfs",
+      "names": ["rpool"],
+      "devices": ["nvme0n1p4"],
+      "holds": [
+        "/",
+        "/srv",
+        "/usr/local",
+        "/var/games",
+        "/var/lib",
+        "/var/lib/AccountsService",
+        "/var/lib/NetworkManager",
+        "/var/lib/apt",
+        "/var/lib/dpkg",
+        "/var/log",
+        "/var/mail",
+        "/var/snap",
+        "/var/spool",
+        "/var/www",
+        "/home",
+        "/root"
+      ],
+      "unlock": "temporary",
+      "given": false,
+      "new_ok": true,
+      "min_bytes": 32,
+      "max_bytes": 32,
+      "shared_at_boot": false
     }
   ],
   "tokens": [],

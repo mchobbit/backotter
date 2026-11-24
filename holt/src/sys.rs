@@ -429,17 +429,24 @@ impl Sys {
         let spawned = std::thread::Builder::new().name("bko-holt-statvfs".into()).spawn(move || {
             let _ = tx.send(probe(&theirs));
         });
-        if spawned.is_err() {
+        let Ok(handle) = spawned else {
             // No thread to be had: asked here, with no time limit, as
             // before there was one.
             return probe(&path);
-        }
+        };
         match rx.recv_timeout(limit) {
             Ok(usage) => usage,
-            Err(_) => {
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 self.warn(format!("{abs}: no answer from statvfs in {} s (a hung NFS or FUSE mount?); its usage is left out", limit.as_secs()));
                 None
             }
+            // The probe panicked (a bug, not a slow mount): the panic goes
+            // on here, as it did when the probe ran on this thread, and the
+            // dump doesn't claim the mount didn't answer.
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => match handle.join() {
+                Err(panic) => std::panic::resume_unwind(panic),
+                Ok(()) => None,
+            },
         }
     }
 
@@ -941,6 +948,23 @@ mod tests {
         assert!(s.warnings().is_empty());
         assert_eq!(FakeRunner::default().time_limit(), TIME_LIMIT);
         assert_eq!(RealRunner { timeout: Duration::from_millis(7) }.time_limit(), Duration::from_millis(7));
+    }
+
+    #[test]
+    fn usage_within_passes_a_probe_panic_on() {
+        // A probe that panics is a bug: the panic reaches the caller, as
+        // when the probe ran on the caller's thread, and no "no answer"
+        // warning is made up for it.
+        fn broken(_: &Path) -> Option<(u64, u64, u64)> {
+            panic!("probe bug")
+        }
+        let s = Sys::new("/fake-root", Box::new(FakeRunner::default()), false);
+        let start = Instant::now();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.usage_within("/mnt/x", Duration::from_secs(5), broken)));
+        let panic = r.expect_err("the probe's panic");
+        assert_eq!(panic.downcast_ref::<&str>(), Some(&"probe bug"));
+        assert!(start.elapsed() < Duration::from_secs(4), "waited {:?}", start.elapsed());
+        assert!(s.warnings().is_empty(), "{:?}", s.warnings());
     }
 
     #[test]

@@ -3,9 +3,10 @@
 
 use bko_rescue::spike;
 use bko_rescue::term::ffi;
-use bko_rescue::term::out::{self, Lines};
+use bko_rescue::term::out::Lines;
 use bko_rescue::term::profile::{self, Facts};
 use bko_rescue::term::tty;
+use bko_rescue::text;
 
 const USAGE: &str = "\
 usage: bko-rescue [--plain] [--lines utf8|dec|ascii] [--colour on|off]
@@ -120,7 +121,7 @@ fn main() {
         Ok(o) => o,
         Err(e) => {
             // The error quotes argv, which may hold anything.
-            eprintln!("bko-rescue: {}\n{USAGE}", out::clean(&e));
+            eprintln!("bko-rescue: {}\n{USAGE}", text::ascii(&e));
             std::process::exit(2);
         }
     };

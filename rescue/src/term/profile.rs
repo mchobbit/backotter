@@ -11,11 +11,25 @@
 //! 4. the platform and the tty's name;
 //! 5. anything else: ASCII, no colour.
 //!
-//! This is RT2's first table.  RT3's spike on every console corrects it.
+//! The table is data (`TABLE`), one row a console, so each of RT3's
+//! findings is a one-row change.  It is provisional until RT3's spike has
+//! run on every console: DragonFly's syscons and illumos's tem get every
+//! fallback until then, and the Esc timeouts are estimates.
 
 use super::ffi;
-use super::out::{self, Caps, Lines};
+use super::out::{Caps, Lines};
 use super::tty::Size;
+use crate::text;
+
+/// How long a lone ESC waits for more before it is Esc, on a screen's
+/// console and over ssh (est.; RT3 measures it).
+pub const ESC_MS: u64 = 100;
+/// The same on a serial line, where an `ESC [ A` can arrive split (est.).
+pub const ESC_MS_SERIAL: u64 = 250;
+/// A full redraw while a dialog waits, to heal kernel messages.
+pub const REFRESH_S: u64 = 60;
+/// The same at 9600 baud, where a full frame takes 3-4 s.
+pub const REFRESH_S_SLOW: u64 = 300;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Os {
@@ -134,6 +148,12 @@ pub struct Profile {
     pub lines: Lines,
     pub colour: bool,
     pub caps: Caps,
+    /// How long a lone ESC waits for more.
+    pub esc_ms: u64,
+    /// How often a waiting dialog is redrawn in full.
+    pub refresh_s: u64,
+    /// A serial console (by the table), whatever the overrides say.
+    pub serial: bool,
     /// Which rule decided, in words.
     pub rule: String,
     pub lines_why: String,
@@ -166,13 +186,109 @@ fn linux_vt(tty: &str) -> bool {
         .is_some_and(|n| (1..=63).contains(&n))
 }
 
-/// Rules 3 to 5: lines, colour, caps, and the rule's words.
-fn table(f: &Facts) -> (Lines, bool, Caps, String) {
+/// Which ttys a row is for.
+#[derive(Clone, Copy, Debug)]
+pub enum TtyIs {
+    /// `tty1` to `tty63`.
+    LinuxVt,
+    /// Starts with any of these.
+    Prefix(&'static [&'static str]),
+    /// Exactly this, or starts with the second.
+    OneOr(&'static str, &'static str),
+    Any,
+}
+
+/// What TERM has to be for a row.
+#[derive(Clone, Copy, Debug)]
+pub enum TermIs {
+    Any,
+    Prefix(&'static str),
+}
+
+/// One console: where it is, what it gets.
+#[derive(Clone, Copy, Debug)]
+pub struct Row {
+    pub os: Os,
+    pub tty: TtyIs,
+    pub term: TermIs,
+    pub serial: bool,
+    pub lines: Lines,
+    pub colour: bool,
+    pub caps: Caps,
+    pub esc_ms: u64,
+    pub refresh_s: u64,
+    pub what: &'static str,
+}
+
+const fn screen(os: Os, tty: TtyIs, term: TermIs, lines: Lines, caps: Caps, what: &'static str) -> Row {
+    Row { os, tty, term, serial: false, lines, colour: true, caps, esc_ms: ESC_MS, refresh_s: REFRESH_S, what }
+}
+
+/// A serial console: ASCII, no colour (D3), the longer Esc timeout.
+const fn serial(os: Os, tty: TtyIs, term: TermIs, refresh_s: u64, what: &'static str) -> Row {
+    Row {
+        os,
+        tty,
+        term,
+        serial: true,
+        lines: Lines::Ascii,
+        colour: false,
+        caps: Caps::ALL,
+        esc_ms: ESC_MS_SERIAL,
+        refresh_s,
+        what,
+    }
+}
+
+use Lines::{Ascii, Dec, Utf8};
+use Os::*;
+
+/// Rule 4, first match wins (docs/design/rescue-tui.md, "Console
+/// profiles").  Provisional until RT3.
+pub const TABLE: &[Row] = &[
+    screen(Linux, TtyIs::LinuxVt, TermIs::Any, Utf8, Caps::ALL, "the Linux VT"),
+    serial(Linux, TtyIs::Prefix(&["ttyS", "ttyAMA", "ttyUSB", "hvc"]), TermIs::Any, REFRESH_S, "a Linux serial console"),
+    screen(FreeBsd, TtyIs::Prefix(&["ttyv"]), TermIs::Any, Utf8, Caps::ALL, "FreeBSD's vt(4)"),
+    serial(FreeBsd, TtyIs::Prefix(&["ttyu"]), TermIs::Any, REFRESH_S, "a FreeBSD serial console"),
+    screen(NetBsd, TtyIs::Prefix(&["ttyE"]), TermIs::Any, Dec, Caps::ALL, "NetBSD's wscons"),
+    serial(NetBsd, TtyIs::Prefix(&["tty0"]), TermIs::Any, REFRESH_S, "a NetBSD serial console"),
+    screen(OpenBsd, TtyIs::Prefix(&["ttyC"]), TermIs::Any, Dec, Caps::ALL, "OpenBSD's wscons"),
+    serial(OpenBsd, TtyIs::Prefix(&["tty0"]), TermIs::Any, REFRESH_S, "an OpenBSD serial console"),
+    // syscons: joined SGR, cursor hiding and clear are RT3's to check.
+    screen(DragonFly, TtyIs::Prefix(&["ttyv"]), TermIs::Any, Ascii, Caps::NONE, "DragonFly's syscons (sequences unchecked, RT3)"),
+    // 9600 baud (gettytab bko.9600): a full frame is 3-4 s.
+    serial(DragonFly, TtyIs::Prefix(&["ttyd"]), TermIs::Any, REFRESH_S_SLOW, "DragonFly's serial console, 9600 baud"),
+    // The screen's console has TERM sun-color; on-tty gives a serial one
+    // vt100.  Which tem mode (VGA text or framebuffer) is RT3's to find a
+    // sign for: until then ASCII, with --lines utf8 to force.
+    screen(Illumos, TtyIs::OneOr("console", "vt/"), TermIs::Prefix("sun"), Ascii, Caps::NONE, "illumos's tem (mode unknown until RT3: ASCII)"),
+    serial(Illumos, TtyIs::OneOr("console", "term/"), TermIs::Any, REFRESH_S, "an illumos serial console"),
+    // Both of Haiku's consoles are ptys; only TERM tells them apart.
+    screen(Haiku, TtyIs::Any, TermIs::Prefix("xterm"), Utf8, Caps::ALL, "Haiku's Terminal"),
+    serial(Haiku, TtyIs::Any, TermIs::Any, REFRESH_S, "Haiku's serial console (TERM not xterm)"),
+];
+
+impl Row {
+    fn matches(&self, os: Os, tty: &str, term: &str) -> bool {
+        let tty_ok = match self.tty {
+            TtyIs::LinuxVt => linux_vt(tty),
+            TtyIs::Prefix(ps) => ps.iter().any(|p| tty.starts_with(p)),
+            TtyIs::OneOr(one, prefix) => tty == one || tty.starts_with(prefix),
+            TtyIs::Any => true,
+        };
+        let term_ok = match self.term {
+            TermIs::Any => true,
+            TermIs::Prefix(p) => term.starts_with(p),
+        };
+        self.os == os && tty_ok && term_ok
+    }
+}
+
+/// Rules 3 to 5: the row that decides, made up for rules 3 and 5, and
+/// the rule's words.
+fn table(f: &Facts) -> (Row, String) {
     let tty = f.tty.as_deref().unwrap_or("");
     let term = f.term.as_deref().unwrap_or("");
-    let serial = |what: &str| {
-        (Lines::Ascii, false, Caps::ALL, format!("{what}: a serial console, ASCII, no colour (D3)"))
-    };
     if f.os != Os::Haiku && is_pty(f.os, tty) {
         let utf = locale_utf8(f);
         let colour = !matches!(term, "vt100" | "vt102" | "vt220");
@@ -181,43 +297,42 @@ fn table(f: &Facts) -> (Lines, bool, Caps, String) {
             if utf { "UTF-8" } else { "not UTF-8" },
             if colour { "allows" } else { "has no" }
         );
-        return (if utf { Lines::Utf8 } else { Lines::Ascii }, colour, Caps::ALL, what);
+        let row = Row {
+            os: f.os,
+            tty: TtyIs::Any,
+            term: TermIs::Any,
+            serial: false,
+            lines: if utf { Utf8 } else { Ascii },
+            colour,
+            caps: Caps::ALL,
+            esc_ms: ESC_MS,
+            refresh_s: REFRESH_S,
+            what: "ssh",
+        };
+        return (row, what);
     }
-    let screen = |lines: Lines, caps: Caps, what: &str| (lines, true, caps, what.to_string());
-    match f.os {
-        Os::Linux if linux_vt(tty) => screen(Lines::Utf8, Caps::ALL, "the Linux VT"),
-        Os::Linux
-            if ["ttyS", "ttyAMA", "ttyUSB", "hvc"].iter().any(|p| tty.starts_with(p)) =>
-        {
-            serial(tty)
-        }
-        Os::FreeBsd if tty.starts_with("ttyv") => screen(Lines::Utf8, Caps::ALL, "FreeBSD's vt(4)"),
-        Os::FreeBsd if tty.starts_with("ttyu") => serial(tty),
-        Os::NetBsd if tty.starts_with("ttyE") => screen(Lines::Dec, Caps::ALL, "NetBSD's wscons"),
-        Os::NetBsd if tty.starts_with("tty0") => serial(tty),
-        Os::OpenBsd if tty.starts_with("ttyC") => screen(Lines::Dec, Caps::ALL, "OpenBSD's wscons"),
-        Os::OpenBsd if tty.starts_with("tty0") => serial(tty),
-        // syscons: joined SGR, cursor hiding and clear are RT3's to check.
-        Os::DragonFly if tty.starts_with("ttyv") => {
-            screen(Lines::Ascii, Caps::NONE, "DragonFly's syscons (sequences unchecked, RT3)")
-        }
-        Os::DragonFly if tty.starts_with("ttyd") => serial(tty),
-        // The screen's console has TERM sun-color; on-tty gives a serial
-        // one vt100.  Which tem mode (VGA text or framebuffer) is RT3's to
-        // find a sign for: until then ASCII, with --lines utf8 to force.
-        Os::Illumos if (tty == "console" || tty.starts_with("vt/")) && term.starts_with("sun") => {
-            screen(Lines::Ascii, Caps::NONE, "illumos's tem (mode unknown until RT3: ASCII)")
-        }
-        Os::Illumos if tty == "console" || tty.starts_with("term/") => serial(tty),
-        Os::Haiku if term.starts_with("xterm") => screen(Lines::Utf8, Caps::ALL, "Haiku's Terminal"),
-        Os::Haiku => serial("Haiku, TERM not xterm"),
-        _ => (
-            Lines::Ascii,
-            false,
-            Caps::ALL,
-            format!("an unknown console ({}): ASCII, no colour", if tty.is_empty() { "no tty" } else { tty }),
-        ),
+    if let Some(row) = TABLE.iter().find(|r| r.matches(f.os, tty, term)) {
+        let what = if row.serial {
+            format!("{}: {tty}, ASCII, no colour (D3)", row.what)
+        } else {
+            row.what.to_string()
+        };
+        return (*row, what);
     }
+    let row = Row {
+        os: f.os,
+        tty: TtyIs::Any,
+        term: TermIs::Any,
+        serial: false,
+        lines: Ascii,
+        colour: false,
+        caps: Caps::ALL,
+        esc_ms: ESC_MS_SERIAL,
+        refresh_s: REFRESH_S,
+        what: "unknown",
+    };
+    let what = format!("an unknown console ({}): ASCII, no colour", if tty.is_empty() { "no tty" } else { tty });
+    (row, what)
 }
 
 pub fn decide(f: &Facts) -> Profile {
@@ -235,7 +350,8 @@ pub fn decide(f: &Facts) -> Profile {
     } else {
         None
     };
-    let (mut lines, mut colour, caps, rule) = table(f);
+    let (row, rule) = table(f);
+    let (mut lines, mut colour, caps) = (row.lines, row.colour, row.caps);
     let mut lines_why = "the rule".to_string();
     let mut colour_why = "the rule".to_string();
     if let Some((l, from)) = &f.lines {
@@ -246,7 +362,18 @@ pub fn decide(f: &Facts) -> Profile {
         colour = *c;
         colour_why = from.clone();
     }
-    Profile { plain, lines, colour, caps, rule, lines_why, colour_why }
+    Profile {
+        plain,
+        lines,
+        colour,
+        caps,
+        esc_ms: row.esc_ms,
+        refresh_s: row.refresh_s,
+        serial: row.serial,
+        rule,
+        lines_why,
+        colour_why,
+    }
 }
 
 /// `bko-rescue --profile`: what was decided and why, one `key value` a
@@ -281,13 +408,15 @@ pub fn describe(f: &Facts, p: &Profile, size: Size) -> Vec<String> {
             if p.caps.hide_cursor { "hide" } else { "park" },
             if p.caps.clear { "2J" } else { "spaces" }
         ),
+        format!("esc {}ms", p.esc_ms),
+        format!("refresh {}s", p.refresh_s),
     ];
     for i in &f.ignored {
         v.push(format!("ignored {i} (not understood)"));
     }
     // TERM, the locale, the tty's name and the ignored values come from
     // outside, and this goes to a console.
-    v.into_iter().map(|l| out::clean(&l)).collect()
+    v.into_iter().map(|l| text::ascii(&l)).collect()
 }
 
 #[cfg(test)]
@@ -351,6 +480,41 @@ mod tests {
     }
 
     #[test]
+    fn serial_lines_wait_longer_for_esc_and_9600_redraws_less() {
+        let p = decide(&facts(Os::Linux, "ttyS0", "vt220", ""));
+        assert_eq!((p.esc_ms, p.refresh_s, p.serial), (ESC_MS_SERIAL, REFRESH_S, true));
+        let p = decide(&facts(Os::DragonFly, "ttyd0", "dialup", ""));
+        assert_eq!((p.esc_ms, p.refresh_s), (ESC_MS_SERIAL, REFRESH_S_SLOW));
+        let p = decide(&facts(Os::Linux, "tty1", "linux", ""));
+        assert_eq!((p.esc_ms, p.refresh_s, p.serial), (ESC_MS, REFRESH_S, false));
+        let p = decide(&facts(Os::Linux, "pts/0", "xterm", "C.UTF-8"));
+        assert_eq!((p.esc_ms, p.serial), (ESC_MS, false));
+    }
+
+    /// Every row can be reached: none is hidden by one above it.
+    #[test]
+    fn every_row_is_reachable() {
+        let sample = |r: &Row| -> (String, String) {
+            let tty = match r.tty {
+                TtyIs::LinuxVt => "tty2".to_string(),
+                TtyIs::Prefix(ps) => format!("{}0", ps[0]),
+                TtyIs::OneOr(one, _) => one.to_string(),
+                TtyIs::Any => "tt/p0".to_string(),
+            };
+            let term = match r.term {
+                TermIs::Any => "vt100".to_string(),
+                TermIs::Prefix(p) => format!("{p}-x"),
+            };
+            (tty, term)
+        };
+        for (i, row) in TABLE.iter().enumerate() {
+            let (tty, term) = sample(row);
+            let first = TABLE.iter().position(|r| r.matches(row.os, &tty, &term));
+            assert_eq!(first, Some(i), "{}: {tty} {term}", row.what);
+        }
+    }
+
+    #[test]
     fn syscons_and_tem_get_the_fallbacks() {
         assert_eq!(decide(&facts(Os::DragonFly, "ttyv0", "cons25", "")).caps, Caps::NONE);
         assert_eq!(decide(&facts(Os::Illumos, "console", "sun-color", "")).caps, Caps::NONE);
@@ -390,6 +554,8 @@ mod tests {
         assert!(lines.iter().any(|l| l.starts_with("size 80x24 (0x0")));
         assert!(lines.iter().any(|l| l == "lines ascii (the rule)"));
         assert!(lines.iter().any(|l| l == "colour off (the rule)"));
+        assert!(lines.iter().any(|l| l == "esc 250ms"));
+        assert!(lines.iter().any(|l| l == "refresh 60s"));
     }
 
     #[test]

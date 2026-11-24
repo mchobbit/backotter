@@ -1,0 +1,33 @@
+ BackOtter rescue                                           
+                                                            
+  ┌────────────── This window is too small ──────────────┐  
+  │                                                      │  
+  │ bko-rescue needs 80 columns and 24 rows.             │  
+  │ This one has 60 columns and 14 rows.                 │  
+  │                                                      │  
+  │ Make the window bigger, or press p for plain mode:   │  
+  │ the same questions, one line at a time.              │  
+  │                                                      │  
+  │                                                      │  
+  └──────────────────────────────────────────────────────┘  
+                                                            
+ p: plain mode | s: shell | Enter: check again              
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+b 0;37;44
+d 0;30;47
+s 0;40

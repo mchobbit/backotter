@@ -1,0 +1,53 @@
+ BackOtter rescue                                                        Machine
+                                                                                
+  +------------------------- Which machine is this? -------------------------+  
+  |                                                                          |  
+  | The stick knows these machines.  None of them was backed up from this    |  
+  | computer.  Pick the one you are restoring.                               |  
+  |                                                                          |  
+  |  +--------------------------------------------------------------------+  |  
+  |  | (*) lovelace   Debian 13      newest backup 22 Nov 2026 02:00 CET  |  |  
+  |  | ( ) babbage    Fedora 45      newest backup 21 Nov 2026 03:00 EST  |  |  
+  |  | v more below                                                       |  |  
+  |  +--------------------------------------------------------------------+  |  
+  |                                                                          |  
+  |                                                                          |  
+  | Copying files back                                                       |  
+  | [                                        ]  40 %                         |  
+  |                                                                          |  
+  | This computer: ??d?-? ?(serial S7XMNF0Y787118)                           |  
+  |                                                                          |  
+  |                                                                          |  
+  |                           <  OK  >    < Back >                           |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+ Arrows | Enter: OK | s: shell | L: lines | C: colour | P: plain                
+
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppRRRRRRRRRRRRRRRRppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+ppppppppppppppppppppppppppppppPPPPPPPPpppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+
+P 0;1;7
+R 0;7
+p 0

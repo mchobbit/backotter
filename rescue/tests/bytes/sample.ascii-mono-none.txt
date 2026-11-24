@@ -1,0 +1,37 @@
+# bko-rescue's bytes for the sample screen at 80x24: lines ascii, colour off, caps none (one SGR parameter each, cursor parked, no clear)
+# (no focus for the gauge steps, as on the Restore screen; then the focus on the list)
+# full frame: 2114 bytes
+\e[1;1H\e[0m BackOtter rescue                                                        Machine
+\e[2;1H                                                                                
+\e[3;1H  +------------------------- Which machine is this? -------------------------+  
+\e[4;1H  |                                                                          |  
+\e[5;1H  | The stick knows these machines.  None of them was backed up from this    |  
+\e[6;1H  | computer.  Pick the one you are restoring.                               |  
+\e[7;1H  |                                                                          |  
+\e[8;1H  |  +--------------------------------------------------------------------+  |  
+\e[9;1H  |  | \e[1m\e[7m(*) lovelace   Debian 13      newest backup 22 Nov 2026 02:00 CET \e[0m |  |  
+\e[10;1H  |  | ( ) babbage    Fedora 45      newest backup 21 Nov 2026 03:00 EST  |  |  
+\e[11;1H  |  | v more below                                                       |  |  
+\e[12;1H  |  +--------------------------------------------------------------------+  |  
+\e[13;1H  |                                                                          |  
+\e[14;1H  |                                                                          |  
+\e[15;1H  | Copying files back                                                       |  
+\e[16;1H  | [\e[7m                \e[0m                        ]  40 %                         |  
+\e[17;1H  |                                                                          |  
+\e[18;1H  | This computer: ??d?-? ?(serial S7XMNF0Y787118)                           |  
+\e[19;1H  |                                                                          |  
+\e[20;1H  |                                                                          |  
+\e[21;1H  |                           \e[1m\e[7m<  OK  >\e[0m    < Back >                           |  
+\e[22;1H  +--------------------------------------------------------------------------+  
+\e[23;1H                                                                                
+\e[24;1H Arrows | Enter: OK | s: shell | L: lines | C: colour | P: plain               
+# the first gauge step, 40 % to 45 %: 27 bytes
+\e[16;22H\e[7m  
+\e[16;50H\e[0m5
+# the next gauge step, 45 % to 50 %: 28 bytes
+\e[16;24H\e[7m  
+\e[16;49H\e[0m50
+# the list's selection down one: 160 bytes
+\e[9;8H( ) lovelace   Debian 13      newest backup 22 Nov 2026 02:00 CET 
+\e[10;8H\e[1m\e[7m(*) babbage    Fedora 45      newest backup 21 Nov 2026 03:00 EST 
+\e[10;8H

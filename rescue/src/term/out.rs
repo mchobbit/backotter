@@ -1,9 +1,13 @@
 //! The escape sequences bko-rescue may send, and nothing else: move, clear,
 //! SGR 0, 1, 7, 30-37 and 40-47, cursor hide and show, and DEC line drawing
 //! on and off.  Never `38;5` or `48;5`, no queries, no `ESC [ K`.
+//! Text goes through `text::shown`, so nothing else can be sent.
 //!
-//! RT2's first cut: output isn't diffed yet (that is RT5's screen buffer).
-//! An `Out` builds one frame's bytes in a Vec for a single write.
+//! An `Out` builds one frame's bytes in a Vec for a single write, and
+//! keeps what the terminal's attributes and charset are, so it sends only
+//! changes.  `screen.rs` diffs frames on top of it.
+
+use crate::text::shown;
 
 /// How boxes are drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,9 +44,10 @@ impl Lines {
     }
 }
 
-/// What a console was seen to take (RT3 fills in the table).  Each has a
-/// fallback: one SGR parameter at a time, the cursor parked at the focus,
-/// and clearing with spaces.
+/// The capability flags: the sequences a console was seen to take (RT3
+/// fills in the table in profile.rs).  Each has a fallback: one SGR
+/// parameter at a time, the cursor parked at the focus, and clearing
+/// with spaces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Caps {
     pub joined_sgr: bool,
@@ -147,36 +152,6 @@ impl Glyph {
     }
 }
 
-/// A character as this profile may show it: control characters, and
-/// anything but a few width-1 scripts in UTF-8 (anything non-ASCII in DEC
-/// and ASCII), become `?`.  RT4's text.rs makes this the `Clean` type.
-pub fn shown(c: char, lines: Lines) -> char {
-    if c.is_control() {
-        return '?';
-    }
-    if c.is_ascii() {
-        return c;
-    }
-    let ok = lines == Lines::Utf8
-        && matches!(c as u32,
-            0xa0..=0x24f        // Latin-1, Latin Extended-A and -B
-            | 0x370..=0x3ff     // Greek
-            | 0x400..=0x482 | 0x48a..=0x4ff) // Cyrillic, less its combining marks
-        && c != '\u{ad}'; // soft hyphen: width 0 on some consoles
-    if ok {
-        c
-    } else {
-        '?'
-    }
-}
-
-/// A string from outside (argv, the environment, a tty's name) as it may
-/// be printed on any console: each character as `shown` lets it through
-/// in ASCII, so no control character or escape reaches the terminal.
-pub fn clean(s: &str) -> String {
-    s.chars().map(|c| shown(c, Lines::Ascii)).collect()
-}
-
 pub struct Out {
     pub buf: Vec<u8>,
     pub lines: Lines,
@@ -196,10 +171,29 @@ impl Out {
         std::mem::take(&mut self.buf)
     }
 
-    /// Forget what the terminal's attributes are, so the next `attr` sends
-    /// them in full.
+    /// Forget what the terminal's attributes and charset are (something
+    /// else may have written to it), so the next `attr` sends them in full
+    /// and the next glyph switches DEC on again.
     pub fn forget(&mut self) {
         self.cur = None;
+        if self.lines == Lines::Dec && self.dec_on {
+            self.buf.extend_from_slice(b"\x1b(B");
+        }
+        self.dec_on = false;
+    }
+
+    /// The attributes the terminal has now, as far as this Out knows.
+    pub fn current(&self) -> Option<Attr> {
+        self.cur
+    }
+
+    /// `a` as this profile sends it: without colours in mono.
+    pub fn effective(&self, a: Attr) -> Attr {
+        if self.colour {
+            a
+        } else {
+            Attr { fg: None, bg: None, ..a }
+        }
     }
 
     fn csi(&mut self) {
@@ -235,26 +229,34 @@ impl Out {
         }
     }
 
-    /// Set the attributes, sending only what changes: when only bold or
-    /// reverse are added, just those; else `0` and everything again.
+    /// Set the attributes, sending only what changes: bold or reverse
+    /// added, and colours changed, are sent alone; taking bold, reverse or
+    /// a colour away needs `0` and everything again (22, 27, 39 and 49
+    /// aren't in the set every console takes).
     pub fn attr(&mut self, a: Attr) {
-        let a = if self.colour { a } else { Attr { fg: None, bg: None, ..a } };
+        let a = self.effective(a);
         if self.cur == Some(a) {
             return;
         }
         let mut params: Vec<u8> = Vec::with_capacity(5);
         match self.cur {
             Some(c)
-                if c.fg == a.fg
-                    && c.bg == a.bg
-                    && (a.bold || !c.bold)
-                    && (a.reverse || !c.reverse) =>
+                if (a.bold || !c.bold)
+                    && (a.reverse || !c.reverse)
+                    && (a.fg.is_some() || c.fg.is_none())
+                    && (a.bg.is_some() || c.bg.is_none()) =>
             {
                 if a.bold && !c.bold {
                     params.push(1);
                 }
                 if a.reverse && !c.reverse {
                     params.push(7);
+                }
+                if let Some(f) = a.fg.filter(|_| a.fg != c.fg) {
+                    params.push(30 + f as u8);
+                }
+                if let Some(b) = a.bg.filter(|_| a.bg != c.bg) {
+                    params.push(40 + b as u8);
                 }
             }
             _ => {
@@ -295,19 +297,29 @@ impl Out {
         }
     }
 
-    /// Text, each character as `shown` lets it through.
+    /// Text, each character as `text::shown` lets it through for this
+    /// line style, so no control character or escape is ever sent.
     pub fn text(&mut self, s: &str) {
-        self.dec(false);
-        let lines = self.lines;
-        let mut tmp = [0u8; 4];
         for c in s.chars() {
-            let c = shown(c, lines);
-            self.buf.extend_from_slice(c.encode_utf8(&mut tmp).as_bytes());
+            self.char(c);
         }
     }
 
-    pub fn spaces(&mut self, n: usize) {
+    /// One character, as `text::shown` lets it through.  A space is a
+    /// space in DEC's line set too, so it leaves DEC as it is.
+    pub fn char(&mut self, c: char) {
+        if c == ' ' {
+            self.buf.push(b' ');
+            return;
+        }
         self.dec(false);
+        let mut tmp = [0u8; 4];
+        let c = shown(c, self.lines);
+        self.buf.extend_from_slice(c.encode_utf8(&mut tmp).as_bytes());
+    }
+
+    /// Spaces: they leave DEC as it is, as `char` does.
+    pub fn spaces(&mut self, n: usize) {
         self.buf.resize(self.buf.len() + n, b' ');
     }
 
@@ -381,7 +393,7 @@ mod tests {
         o.attr(BG);
         o.attr(BG);
         o.attr(DLG.focus());
-        assert_eq!(o.take(), b"\x1b[0;37;44m\x1b[0;1;7;30;47m");
+        assert_eq!(o.take(), b"\x1b[0;37;44m\x1b[1;7;30;47m");
         let mut o = out(Lines::Utf8, true, Caps::NONE);
         o.attr(DLG);
         assert_eq!(o.take(), b"\x1b[0m\x1b[30m\x1b[47m");
@@ -395,6 +407,18 @@ mod tests {
         o.attr(DLG.reverse());
         o.attr(DLG);
         assert_eq!(o.take(), b"\x1b[7m\x1b[0;30;47m");
+    }
+
+    #[test]
+    fn taking_away_resets_and_adding_doesnt() {
+        let mut o = out(Lines::Utf8, true, Caps::NONE);
+        o.attr(BG);
+        o.take();
+        o.attr(DLG);
+        o.attr(Attr::PLAIN);
+        o.attr(BG.focus());
+        o.attr(BG);
+        assert_eq!(o.take(), b"\x1b[30m\x1b[47m\x1b[0m\x1b[1m\x1b[7m\x1b[37m\x1b[44m\x1b[0m\x1b[37m\x1b[44m");
     }
 
     #[test]
@@ -434,6 +458,32 @@ mod tests {
     }
 
     #[test]
+    fn spaces_keep_dec_on() {
+        let mut o = out(Lines::Dec, true, Caps::ALL);
+        o.glyph(Glyph::Vert);
+        o.spaces(2);
+        o.char(' ');
+        o.glyph(Glyph::Vert);
+        o.char('a');
+        o.end();
+        assert_eq!(o.take(), b"\x1b(0x   x\x1b(Ba");
+    }
+
+    #[test]
+    fn forget_sends_everything_again() {
+        let mut o = out(Lines::Dec, true, Caps::ALL);
+        o.attr(BG);
+        o.glyph(Glyph::Horiz);
+        o.forget();
+        o.attr(BG);
+        o.glyph(Glyph::Horiz);
+        o.end();
+        assert_eq!(o.take(), b"\x1b[0;37;44m\x1b(0q\x1b(B\x1b[0;37;44m\x1b(0q\x1b(B");
+        assert_eq!(o.current(), Some(BG));
+        assert_eq!(out(Lines::Utf8, false, Caps::ALL).effective(BG.focus()), Attr::PLAIN.focus());
+    }
+
+    #[test]
     fn never_256_colours_or_bright() {
         let mut o = out(Lines::Dec, true, Caps::ALL);
         for fg in [Colour::Black, Colour::White, Colour::Cyan] {
@@ -456,11 +506,5 @@ mod tests {
         );
         let v = Out::reset_bytes(Lines::Utf8, Caps::NONE, 24, 80);
         assert_eq!(v.iter().filter(|&&b| b == b' ').count(), 24 * 80 - 1);
-    }
-
-    #[test]
-    fn clean_strips_escapes_and_controls() {
-        assert_eq!(clean("a\x1b[31mb\u{9b}1m\u{e9}\n"), "a?[31mb?1m??");
-        assert_eq!(clean("pts/3"), "pts/3");
     }
 }

@@ -1,5 +1,6 @@
-//! `bko-rescue --spike`: four cards drawn on RT2's first cut of the layer
-//! (real raw mode and FFI, output not diffed yet), for RT3 to run on every
+//! `bko-rescue --spike`: four cards drawn on the terminal layer (real raw
+//! mode, FFI and events; its output deliberately not diffed by screen.rs,
+//! so each card shows the sequences themselves), for RT3 to run on every
 //! console and see what it does:
 //!
 //! 1. a dialog box with a title, a shadow and two buttons, one focused;
@@ -17,17 +18,12 @@ use std::collections::VecDeque;
 use std::io::{self, Write as _};
 use std::time::{Duration, Instant};
 
-use crate::term::ffi;
-use crate::term::keys::{Decoder, Key};
+use crate::term::event::{Event, Term};
+use crate::term::keys::Key;
 use crate::term::out::{Attr, Caps, Colour, Glyph, Lines, Out};
 use crate::term::profile::Profile;
-use crate::term::tty::{self, Got, Input, RawMode, Size};
+use crate::term::tty::{self, RawMode, Size};
 
-/// How long a lone ESC waits for more before it is Esc.  RT3 measures it
-/// on serial lines and ssh.
-pub const ESC_TIMEOUT: Duration = Duration::from_millis(100);
-/// The poll timeout, when the size is read again.
-const TICK_MS: u64 = 250;
 const GAUGE_STEP: Duration = Duration::from_millis(500);
 const GAUGE_STEPS: u32 = 20;
 const BAR_COL: u16 = 16;
@@ -498,17 +494,12 @@ impl Spike {
         self.park(p);
     }
 
-    /// How long to wait in poll: the tick, the Esc timeout, the gauge.
-    fn timeout(&self, esc_since: Option<Instant>) -> Duration {
-        let mut t = Duration::from_millis(TICK_MS);
-        if let Some(e) = esc_since {
-            t = t.min(ESC_TIMEOUT.saturating_sub(e.elapsed()));
-        }
-        if self.card == 2 && self.gauge_shown < GAUGE_STEPS {
+    /// How long until the gauge's next step, while it runs.
+    fn gauge_wait(&self) -> Option<Duration> {
+        (self.card == 2 && self.gauge_shown < GAUGE_STEPS).then(|| {
             let next = self.gauge_start + GAUGE_STEP * (self.gauge_shown + 1);
-            t = t.min(next.saturating_duration_since(Instant::now()));
-        }
-        t
+            next.saturating_duration_since(Instant::now())
+        })
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -535,59 +526,45 @@ pub fn run(p: &Profile, panic_on_purpose: bool) -> i32 {
 }
 
 fn run_inner(p: &Profile, panic_on_purpose: bool) -> io::Result<i32> {
-    // The handlers first: they only set a flag, and a signal between raw
-    // mode and them would kill us with the terminal raw.
-    if !ffi::catch_hup_term() {
-        return Err(io::Error::other("can't catch SIGHUP and SIGTERM"));
-    }
-    let raw = RawMode::enter(p.lines, p.caps)?;
+    let mut term = Term::open(p)?;
     let mut s = Spike::new(p);
+    s.size = term.events.size();
     s.frame();
     s.flush()?;
     if panic_on_purpose {
         std::thread::sleep(Duration::from_secs(1));
         panic!("bko-rescue --spike panic: a panic on purpose, to see the terminal come back");
     }
-    let mut input = Input::new();
-    let mut dec = Decoder::new();
-    let mut buf = [0u8; 256];
-    let mut keys = Vec::new();
-    let mut esc_since: Option<Instant> = None;
     let mut code = 0;
-    'run: loop {
-        if let Some(sig) = ffi::take_signal() {
-            code = 128 + sig;
-            break;
-        }
-        let t = s.timeout(esc_since).as_millis() as i32;
-        match input.read(&mut buf, t)? {
-            Got::Bytes(n) => {
-                for &b in &buf[..n] {
-                    dec.feed(b, &mut keys);
+    let mut last_read = None;
+    loop {
+        let until = s.gauge_wait().map(|d| term.events.now_ms() + d.as_millis() as u64);
+        match term.events.next(until)? {
+            Event::Key(k, read) => {
+                // A new read is a new batch of keys.
+                if last_read != Some(read) {
+                    s.left_field = false;
+                    last_read = Some(read);
                 }
-                esc_since = dec.pending().then(Instant::now);
-            }
-            Got::Timeout => {
-                if esc_since.is_some_and(|e| e.elapsed() >= ESC_TIMEOUT) {
-                    dec.timeout(&mut keys);
-                    esc_since = None;
-                }
-                let now = tty::size();
-                if now != s.size {
-                    s.size = now;
-                    s.full = true;
+                if s.key(k, term.raw()) == Next::Quit {
+                    break;
                 }
             }
-            Got::Interrupted => continue,
-            Got::Eof => break,
-        }
-        for k in keys.drain(..) {
-            if s.key(k, &raw) == Next::Quit {
-                break 'run;
+            Event::Resize(size) => {
+                s.size = size;
+                s.full = true;
             }
+            Event::Tick => {}
+            Event::Signal(sig) => {
+                code = 128 + sig;
+                break;
+            }
+            Event::Hangup => break,
         }
-        // A new read is a new batch of keys.
-        s.left_field = false;
+        // Draw once the keys that came together are all handled.
+        if term.events.queued() {
+            continue;
+        }
         if s.full || s.card_dirty {
             s.frame();
         }
@@ -601,7 +578,7 @@ fn run_inner(p: &Profile, panic_on_purpose: bool) -> io::Result<i32> {
     }
     s.o.end();
     s.flush()?;
-    drop(raw);
+    drop(term);
     println!("bko-rescue --spike: done");
     Ok(code)
 }

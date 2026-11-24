@@ -1,6 +1,6 @@
 # bko-rescue: the terminal layer and its widgets
 
-Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"); RT3 on is not.
+Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"); RT3 and RT6 on are not.
 
 An implementation plan for the stick's terminal UI that `ui.md` describes and
 the user decided on 2026-11-19: one Whiptail-style 80x24 program,
@@ -228,9 +228,11 @@ rescue/
   src/term/ffi.rs           extern "C" and the four families' constants      120-180
   src/term/tty.rs           raw mode guard, size, read with timeout, restore  80-120
   src/term/keys.rs          bytes to keys: a pure state machine               100-150
+  src/term/event.rs         the poll loop: keys, Esc timeout, resize, signals (RT4)
   src/term/profile.rs       which console this is: lines, colour, caps        80-120
   src/term/out.rs           the escape sequences each profile may send        60-100
   src/text.rs               sanitise, width, wrap, truncate; the Clean type   100-150
+  src/testkit.rs            for the tests: generator, goldens, byte checker (RT5)
   src/screen.rs             cells, the 80x24 canvas, diffed redraw            200-300
   src/widgets/              dialog frame, buttons, menu, radio list, input,
                             password, yes/no and message, gauge, text view;
@@ -854,6 +856,66 @@ The other six families are only compiled declarations until RT3.
   spaces) until RT3 says what they take; illumos's tem is ASCII until a
   sign of the framebuffer is found.  An illumos `console` with TERM
   `sun-color` is the screen, any other TERM the serial console.
+
+## What RT4 and RT5 found
+
+Built 2026-11-24 on czerny (Rust 1.85.1), before RT3, so the profile
+table is still provisional.  Tested by `cargo test` (96 tests, the
+fuzz-style ones at 100,000 cases and once at 2,000,000 in release), the
+pty test and the header test.
+
+- **The table is data:** `profile::TABLE`, one row a console, each with
+  its line style, colour, capability flags, Esc timeout and redraw
+  period.  RT3's findings are one-row changes.  A test checks no row is
+  hidden by one above it.
+- **Esc timeouts (est., RT3 measures):** 100 ms on screens and over ssh,
+  250 ms on serial lines and unknown consoles.  The full redraw while a
+  dialog waits: 60 s, 300 s on DragonFly's 9600-baud line.  `--profile`
+  prints both (`esc`, `refresh`).
+- **A new file, `term/event.rs`:** the poll loop the plan gave the
+  widgets' runner.  It gives keys (a lone ESC as Esc after the timeout,
+  measured from the last byte), resizes (the size read every 250 ms even
+  while keys keep coming), ticks the caller asks for, signals and
+  hang-ups.  Each key carries the number of the read it came in, so a
+  widget can tell keys that came together (Alt+key, a paste); the spike's
+  password card needed that, and now runs on this loop.  `Term` bundles
+  the signal handlers, raw mode and the loop.
+- **The decoder** also takes SS3's old modifier form (`ESC O 5 A`) and
+  keypad Enter (`ESC O M`), for a keypad left in application mode.
+- **SGR is sent as changes:** adding bold or reverse, or changing a
+  colour, needs no `0`; only taking one away does (22, 27, 39 and 49
+  aren't in the set).  It saves 2 to 4 bytes a change.
+- **Diffs compare looks, not cells:** a space in another foreground or
+  in bold looks the same, so it isn't sent, and a space never switches
+  attributes for that alone.  Spaces leave DEC's charset on.
+- **Clearing:** at exactly 80x24 every cell is written anyway, so
+  `ESC [ 2 J` isn't sent.  On a bigger terminal it clears the margin
+  only when the margin is plain (mono); in colour the margin is written
+  as background spaces, since consoles clear in different colours.
+- **Budgets, the sample screen (title, box with shadow, wrapped text, a
+  framed list, a gauge, buttons, key line), all 12 profiles:** full
+  frames 2.1-3.4 KB (UTF-8 colour 3,368 bytes, 3.5 s at 9600 baud); a
+  gauge step 28-38 bytes; a move of the list's selection 151-160.  The
+  first gauge step after a full frame pays for one whole attribute
+  change, 27-47 bytes, so the 40-byte budget holds for the steps after
+  it, the first is held to 50.  The gauge budget assumes no cursor to
+  park: on a console that can't hide the cursor, a focus elsewhere costs
+  each step a move back (about 8 bytes, 45 in all).  rescue-screens.md's
+  Restore screen has no focus while the gauge runs, so RT6 keeps it so.
+- **The byte checker** (`testkit::Checker`) also keeps a model of the
+  screen.  Random walks of drawing, resizes and full redraws, in every
+  profile, check each frame's bytes are allowed and that the screen then
+  shows the canvas.
+- **The golden dump** has a legend after the attribute rows: fixed
+  letters for the palette (`b` background, `d` dialog, `D` its focus, `r`
+  reverse, `s` shadow, `p`/`P` plain), digits for any other attribute.
+- **`Clean`:** caps count characters (a problem's text is 2,048), and a
+  string cut by a cap or to fit ends in `>`.  `Clean::ours` is for our own
+  strings, checked unchanged in debug builds.  `wrap` keeps the spaces
+  between words on a line (two after a full stop stay two), and cuts a
+  word longer than the line every line's width, so a serial or a path is
+  shown whole.
+- Still no clippy on czerny, so none ran; the lints are in Cargo.toml.
 
 ## The app on top (later)
 

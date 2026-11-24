@@ -6,9 +6,12 @@ DragonFly, illumos, Haiku), in Rust, with its own small terminal layer.
 The plan is `docs/design/rescue-tui.md`; the screens are
 `docs/design/rescue-screens.md`.
 
-Status: RT1 and RT2.  The crate, the FFI and its header test, and the
-first cut of the terminal layer with the console spike.  No restore
-screens yet: `bko-rescue` with no hidden option says so and exits 2.
+Status: RT1, RT2, RT4 and RT5.  The crate, the FFI and its header test,
+the terminal layer (profiles, keys, events, restore), the sanitiser, the
+screen buffer with diffed redraw, and the golden-screen and byte-stream
+harnesses; the console spike.  RT3 (the spike on every console) hasn't
+run, so the profile table is provisional.  No widgets or restore screens
+yet: `bko-rescue` with no hidden option says so and exits 2.
 
 ## Rules
 
@@ -35,6 +38,12 @@ ssh HOST 'cd ~/backotter-work/rescue-build/rescue &&
 
 (add `testvm/rescue` to the rsync for the pty test).
 
+- `BKO_RESCUE_GOLDEN=check` (the default), `report` or `bless`: what a
+  difference from a golden file in `tests/screens/` or `tests/bytes/`
+  does.  Bless on the farm and copy the files back to commit them.
+- `BKO_RESCUE_FUZZ=N`: cases for each fuzz-style test (default 100,000;
+  `cargo test --release` for long runs).
+
 ## Options
 
 ```
@@ -49,7 +58,7 @@ which a launcher sets.  Hidden, for tests and checks:
 |---|---|
 | `--abi` | our view of the C ABI, one fact a line, for the header test |
 | `--check-tty` | raw mode set, read back, put back and read back; exit 0 when every field is as expected (for checks.sh) |
-| `--profile` | which console this is and what it gets, and why: `os`, `tty`, `term`, `locale`, `size`, `mode`, `rule`, `lines`, `colour`, `caps` |
+| `--profile` | which console this is and what it gets, and why: `os`, `tty`, `term`, `locale`, `size`, `mode`, `rule`, `lines`, `colour`, `caps`, `esc`, `refresh` |
 | `--spike` | the four spike cards (box, list, gauge, password); `--spike panic` panics after the first frame |
 | `--demo` | RT8; not built |
 
@@ -81,8 +90,14 @@ glibc).
 | `src/term/ffi.rs` | `extern "C"` and constants for the four families; `--abi` |
 | `src/term/tty.rs` | raw mode and its guard, the size, reads with a timeout, `--check-tty` |
 | `src/term/keys.rs` | bytes to keys, a pure state machine |
+| `src/term/event.rs` | the poll loop: keys with the Esc timeout, resizes, ticks, signals, hang-up; `Term` |
 | `src/term/out.rs` | the sequences each profile may send, line glyphs, attributes |
-| `src/term/profile.rs` | which console this is (the first table, before RT3) |
+| `src/term/profile.rs` | which console this is: the table as data, provisional until RT3 |
+| `src/text.rs` | the sanitiser: `Clean`, caps, width, wrap, truncate |
+| `src/screen.rs` | cells, the canvas, diffed redraw, the golden dump |
+| `src/testkit.rs` | for the tests: a generator, golden files, the byte checker |
 | `src/spike.rs` | the spike's cards |
+| `tests/golden_screens.rs`, `tests/screens/` | golden screens of a sample, every line style, colour and mono |
+| `tests/byte_streams.rs`, `tests/bytes/` | each profile's bytes, the sequence checker, the byte budgets, random walks |
 | `abi/` | the header test's C side and its script |
 | `../testvm/rescue/pty-test.py` | the layer on a real pty |

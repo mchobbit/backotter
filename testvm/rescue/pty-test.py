@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""bko-rescue's terminal layer on a real pty (RT2): raw mode on and back,
+"""bko-rescue's terminal layer on a real pty (RT2, RT4): raw mode on and back,
 --check-tty, --profile, and the spike driven by keys in each line style,
 with every byte it sends checked against the sequences it may send.
 
@@ -238,7 +238,9 @@ def test_spike_fallbacks():
 
 def test_spike():
     out = spike_run("utf8 colour", [], {}, True)
-    check("┌".encode() in out and b"\x1b[0;37;44m" in out, "utf8 colour: box glyphs and white on blue")
+    # White on blue, in full or as a change after a reset (out.rs sends
+    # only what changes).
+    check("┌".encode() in out and re.search(rb"\x1b\[(0;)?37;44m", out), "utf8 colour: box glyphs and white on blue")
     check(b"Up" in out or b"Down" in out, "utf8 colour: key log shows Down")
     out = spike_run("dec mono", ["--lines", "dec", "--colour", "off"], {}, False, dec=True)
     check(b"\x1b(0lq" in out and b"\x1b(B" in out, "dec mono: DEC glyphs")

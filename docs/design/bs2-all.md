@@ -1,7 +1,11 @@
 # BackShot2All: all of BackShot2, every OS family, fresh (plan, agreed)
 
-2026-11-14. Plan agreed with the user in conversation; nothing in it is built.
+2026-11-14. Plan agreed with the user in conversation.
 Revised the same day: parallel lanes, and the word runs early.
+**Status (2026-11-24):** A0, A1 and the Linux lane (A2, A7, A9) built; A3-A6
+and A8 not.  `bs2 BackShot2All` runs 54 Linux sources and lists 40 sources
+and tier 3 as SKIPPED: PARTIAL PASS at best ("The Linux lane, built" below).
+Not run yet.
 It fills in the word that `docs/design/backshot2.md` ("Words") reserved:
 "`BackShot2All` | reserved for all of BackShot2, fresh, later". est. marks an
 estimate. `backshot2.md` is `docs/design/backshot2.md`; its words (case,
@@ -293,6 +297,48 @@ run and its fix cycle, which is half a day to a day of wall clock.
 All six in parallel: about 1.5 days of wall clock to the first full
 `BackShot2All`, bounded by host time, not code. The full run's own length
 (about 15-16 h above) stands, at the contended rate.
+
+### The Linux lane, built (2026-11-24)
+
+A2, A7 and A9 in about 3 h of agent time against their ~4 h / 1 d (review
+and one smoke round included).  testvm/backshot2/README.md "BackShot2All"
+says how it works; in short:
+
+- **A2** (9ec34de, e3e00a1, ec57929, 045bc14): `bs2lib/sources.py` reads the
+  corpus at run time and classes each amd64 guest built (54: every one-disk
+  Linux source with a family) or SKIPPED by piece: A3 15 (ZFS, md, more
+  than one disk, from the dumps; includes ubuntu24, truenas25, void-zbm and
+  -enc), A4 14, A5 4, A6 3, A8 2 (the realworld dumps), later 2
+  (guix15-luks, LUKS1; uc24-fde).  UEFI from the dump; seconds a case
+  measured for Alpine and Guix, else 0.7 of HoltTest1's (est.).  vanilla3,
+  over every RAM ceiling, runs on `/bkoscratch` (`--reserve-ssd`, `HT_RAM=0`)
+  on the `holt_disk_mode` hosts only, one SSD case at a time per host.
+- **A7** (e50924c, 81d8fd5, f546085): GENERATOR 6, a content recipe per
+  filesystem holding `/srv/bs2`: ext2/3/4, XFS, btrfs, f2fs, JFS, NILFS2,
+  bcachefs (and 32-bit-time forms); ZFS with A3; FAT holds none; none for
+  ostree (kinoite44) and Ubuntu Core.  Alpine's and Guix's draws unchanged.
+  ABRoot's content lands in /var/srv (the `srv` hook); planting walks by fd
+  and never follows a link out of the source.
+- **A9** (cf78660, cfa8117, 2340354, 9539db4..d136502): `bs2 BackShot2All
+  [plan]`, then `corpus RUN`, `leftovers RUN` (not chained: both take port
+  2949) and `report RUN [--json]`: FAIL, INCOMPLETE, PARTIAL PASS or PASS;
+  ledger rows say word BackShot2All.  No whole-run ledger row.
+- **Smoke** (bs2a-20261124-1738, five hosts, nine sources over six
+  recipes, 2 tier 1 and 1 tier 2 each): tier 0 603 of 603 PASS; tier 1 18
+  of 18 PASS (content planted on ext-1, xfs-1, btrfs-1, f2fs-1, jfs-1,
+  bcachefs-1); tier 2 fedora44-uefi and aerynos FAILed on by-path links
+  only, a harness bug (tier 2's disk sits behind its own PCIe root port),
+  fixed in judge.py `--disk-ports` (d1c0974), both PASS on replay.
+  bs2a-20261124-1754: vanilla3 on chopin's SSD, tier 1 PASS in 810 s.  No
+  bko-holt finding.
+- **Time.** Measured tier 1 cases took 1.06 times sources.py's estimates
+  (vanilla3 0.71); tier 2 1.0-1.8 times its tier 1.  `bs2 BackShot2All plan`
+  says ~8.0 h (the queues ~7.3 h after the leads' ~135 min tier 0 sweeps,
+  then the corpus and leftovers ~45 min) on six free hosts; with the
+  measured ratios **~9 h on a quiet farm, ~12-13 h contended** (A0's 1.5
+  times), est.  Each further lane adds its sources (A3's big guests the
+  most).  Its SSD share: vanilla3's 25 cases, ~0.7 TB written on chopin and
+  cinqcent a run (est.).
 
 ## The family interface (A1)
 

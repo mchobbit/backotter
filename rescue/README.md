@@ -56,7 +56,9 @@ which a launcher sets.  Hidden, for tests and checks:
 In the spike, `1`-`4` and `n` change card, `l` the line style, `c`
 colour, `j` joined SGR parameters, `h` cursor hiding, `e` clearing with
 `ESC [ 2 J`, and `q` quits.  In the password field every key is typed;
-Esc or Tab leaves it.
+Esc or Tab leaves it.  Keys that came in the same read as that Esc or Tab
+(Alt+key, or an ESC in a fast passphrase) are shown as `*` and never run
+as commands.
 
 ## The header test
 

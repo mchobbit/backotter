@@ -85,15 +85,26 @@ SGR_OK = {0, 1, 7} | set(range(30, 38)) | set(range(40, 48))
 SEQ = re.compile(rb"\x1b(\[[0-9;?]*[ -/]*[@-~]|\(.|.)", re.S)
 
 
-def bad_sequences(out, utf8):
+def bad_sequences(out, utf8, dec=False, hide=True, clear=True, joined=True):
+    """What in `out` a profile may not send: DEC on and off only in the
+    DEC line style, cursor hiding only when it hides, ESC [ 2 J only when
+    it clears that way, one SGR parameter a sequence when not joined."""
     bad = []
     for m in SEQ.finditer(out):
         s = m.group(0)
-        if re.fullmatch(rb"\x1b\[\d+;\d+H|\x1b\[H|\x1b\[2J|\x1b\[\?25[lh]|\x1b\(0|\x1b\(B", s):
+        if re.fullmatch(rb"\x1b\[\d+;\d+H|\x1b\[H", s):
+            continue
+        if dec and re.fullmatch(rb"\x1b\(0|\x1b\(B", s):
+            continue
+        if hide and re.fullmatch(rb"\x1b\[\?25[lh]", s):
+            continue
+        if clear and s == b"\x1b[2J":
             continue
         g = re.fullmatch(rb"\x1b\[([0-9;]+)m", s)
-        if g and all(p and int(p) in SGR_OK for p in g.group(1).split(b";")):
-            continue
+        if g:
+            ps = g.group(1).split(b";")
+            if all(p and int(p) in SGR_OK for p in ps) and (joined or len(ps) == 1):
+                continue
         bad.append(s)
     rest = SEQ.sub(b"", out)
     for i, b in enumerate(rest):
@@ -151,7 +162,7 @@ def test_profile():
     check(d.get("mode", "").startswith("plain"), "TERM=dumb is plain mode")
 
 
-def spike_run(name, args, env, utf8):
+def spike_run(name, args, env, utf8, dec=False):
     t = Pty(["--spike"] + args, env=env)
     t.read(0.8)
     check(t.p.poll() is None and raw_flags_off(t.attrs()), name + ": raw mode on while running")
@@ -169,6 +180,9 @@ def spike_run(name, args, env, utf8):
     check(b"count typed: 3" in t.out, name + ": password count 3")
     check(b"4 * * * * BS Enter" in t.out and b"\xc3\xa9" not in t.out,
           name + ": the key log shows * for typed characters")
+    t.send(b"\x1bq")                      # Esc and q in one read (Alt+q)
+    check(t.p.poll() is None and b"Enter Esc *" in t.out,
+          name + ": Esc then q in one read: q logged as * and not run")
     t.send(b"\x1b", 0.35)                  # Esc alone leaves the field
     t.send(b"1")
     t.send(b"\t")
@@ -178,17 +192,55 @@ def spike_run(name, args, env, utf8):
     code, err = t.wait()
     check(code == 0, name + ": exit 0 (%d %s)" % (code, err.strip()))
     check(t.attrs() == t.before, name + ": settings put back")
-    bad = bad_sequences(t.out, utf8)
+    bad = bad_sequences(t.out, utf8, dec)
     check(not bad, name + ": only allowed sequences (%r)" % bad[:5])
     t.close()
     return t.out
+
+
+def test_spike_fallbacks():
+    """The fallback profile DragonFly's syscons and illumos's tem get: one
+    SGR parameter each, the cursor parked, clearing with spaces, ASCII.
+    The keys turn each on, then only the bytes after are checked, the
+    exit's blanking included."""
+    name = "fallbacks"
+    t = Pty(["--spike"])
+    t.read(0.8)
+    for k in b"llj":                       # utf8 -> dec -> ascii; sgr one-each
+        t.send(bytes([k]), 0.3)
+    t.send(b"h", 0.3)                      # the cursor parked (shows it first)
+    mark = len(t.out)
+    t.send(b"e", 0.4)                      # clear with spaces
+    check(b"sgr one-each | cursor park | clear spaces" in t.out[mark:],
+          name + ": the card says the fallback profile")
+    t.send(b"2")
+    t.send(b"\x1b[B")
+    t.send(b"\r")
+    t.send(b"3", 1.3)
+    t.send(b"4")
+    t.send(b"ab\r")
+    t.send(b"\x1b", 0.35)
+    t.send(b"1")
+    t.send(b"\t")
+    t.send(b"\r")
+    check(b"chose item 2" in t.out and b"count typed: 2" in t.out and b"pressed Back" in t.out,
+          name + ": the cards still work")
+    t.send(b"q")
+    code, err = t.wait()
+    check(code == 0 and t.attrs() == t.before, name + ": exit 0, settings put back (%d %s)" % (code, err.strip()))
+    tail = t.out[mark:]
+    bad = bad_sequences(tail, False, dec=False, hide=False, clear=False, joined=False)
+    check(not bad, name + ": only the fallback's sequences after the keys (%r)" % bad[:5])
+    check(b"\x1b[24;1H" + b" " * 79 + b"\x1b[H" in tail and tail.rstrip(b"\r\n").endswith(b"done"),
+          name + ": the exit blanks with spaces, the last cell left alone")
+    t.close()
 
 
 def test_spike():
     out = spike_run("utf8 colour", [], {}, True)
     check("┌".encode() in out and b"\x1b[0;37;44m" in out, "utf8 colour: box glyphs and white on blue")
     check(b"Up" in out or b"Down" in out, "utf8 colour: key log shows Down")
-    out = spike_run("dec mono", ["--lines", "dec", "--colour", "off"], {}, False)
+    out = spike_run("dec mono", ["--lines", "dec", "--colour", "off"], {}, False, dec=True)
     check(b"\x1b(0lq" in out and b"\x1b(B" in out, "dec mono: DEC glyphs")
     check(all(not re.search(rb"(^|;)[34]\d", m) for m in re.findall(rb"\x1b\[([0-9;]*)m", out)),
           "dec mono: no colour parameter anywhere")
@@ -214,6 +266,17 @@ def test_spike_panic_and_signals():
         check(code == 128 + sig, "%s: exit %d (%d)" % (sig.name, 128 + sig, code))
         check(t.attrs() == t.before, "%s: settings put back" % sig.name)
         t.close()
+    # Shutdown may send TERM twice: the second, in the cleanup, mustn't
+    # kill it with the default action (illumos's SysV signal()).
+    t = Pty(["--spike"])
+    t.read(0.5)
+    t.p.send_signal(signal.SIGTERM)
+    time.sleep(0.01)
+    t.p.send_signal(signal.SIGTERM)
+    code, err = t.wait(3)
+    check(code == 128 + signal.SIGTERM, "SIGTERM twice: exit %d (%d)" % (128 + signal.SIGTERM, code))
+    check(t.attrs() == t.before, "SIGTERM twice: settings put back")
+    t.close()
 
 
 def test_resize_and_small():
@@ -223,6 +286,10 @@ def test_resize_and_small():
     fcntl.ioctl(t.slave, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 60, 0, 0))
     t.read(0.6)
     check(b"needs 80x24; this terminal is 60x20" in t.out, "a resize to 60x20 noticed within 0.6 s")
+    t.send(b"x", 0.3)                      # one redraw for the key, then quiet
+    mark = len(t.out)
+    t.read(1.0)
+    check(len(t.out) == mark, "too small: no redraw on each tick after a key (%d bytes)" % (len(t.out) - mark))
     t.send(b"q")
     code, _ = t.wait()
     check(code == 0 and t.attrs() == t.before, "quit from the too-small screen")
@@ -239,9 +306,13 @@ def test_abi_and_options():
     check(p.returncode == 0 and b"size termios" in p.stdout, "--abi prints")
     p = subprocess.run([BIN, "--lines", "fancy"], capture_output=True)
     check(p.returncode == 2 and b"usage" in p.stderr, "a bad option is exit 2 with the usage")
+    p = subprocess.run([BIN, "--plain=no"], capture_output=True)
+    check(p.returncode == 2 and b"takes no value" in p.stderr, "--plain=no is an error")
+    p = subprocess.run([BIN, "--x\x1b[2J"], capture_output=True)
+    check(p.returncode == 2 and b"\x1b" not in p.stderr, "an option's escape isn't echoed")
 
 
-for f in (test_check_tty, test_profile, test_spike, test_spike_panic_and_signals,
+for f in (test_check_tty, test_profile, test_spike, test_spike_fallbacks, test_spike_panic_and_signals,
           test_resize_and_small, test_no_tty, test_abi_and_options):
     print("==", f.__name__)
     f()

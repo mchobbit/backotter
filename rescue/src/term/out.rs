@@ -170,6 +170,13 @@ pub fn shown(c: char, lines: Lines) -> char {
     }
 }
 
+/// A string from outside (argv, the environment, a tty's name) as it may
+/// be printed on any console: each character as `shown` lets it through
+/// in ASCII, so no control character or escape reaches the terminal.
+pub fn clean(s: &str) -> String {
+    s.chars().map(|c| shown(c, Lines::Ascii)).collect()
+}
+
 pub struct Out {
     pub buf: Vec<u8>,
     pub lines: Lines,
@@ -332,8 +339,10 @@ impl Out {
     }
 
     /// What puts the terminal back: attributes reset, DEC off, the cursor
-    /// shown, the screen cleared where it can be, the cursor home.
-    pub fn reset_bytes(lines: Lines, caps: Caps) -> Vec<u8> {
+    /// shown, the screen cleared, the cursor home.  Where `ESC [ 2 J` isn't
+    /// used, spaces over every row of a `rows` x `cols` screen, the last
+    /// row one cell short so nothing scrolls.
+    pub fn reset_bytes(lines: Lines, caps: Caps, rows: u16, cols: u16) -> Vec<u8> {
         let mut v = b"\x1b[0m".to_vec();
         if lines == Lines::Dec {
             v.extend_from_slice(b"\x1b(B");
@@ -343,6 +352,12 @@ impl Out {
         }
         if caps.clear {
             v.extend_from_slice(b"\x1b[2J");
+        } else {
+            for row in 1..=rows {
+                v.extend_from_slice(format!("\x1b[{row};1H").as_bytes());
+                let n = if row == rows { cols.saturating_sub(1) } else { cols };
+                v.resize(v.len() + usize::from(n), b' ');
+            }
         }
         v.extend_from_slice(b"\x1b[H");
         v
@@ -433,7 +448,19 @@ mod tests {
 
     #[test]
     fn reset_bytes_per_profile() {
-        assert_eq!(Out::reset_bytes(Lines::Dec, Caps::ALL), b"\x1b[0m\x1b(B\x1b[?25h\x1b[2J\x1b[H");
-        assert_eq!(Out::reset_bytes(Lines::Ascii, Caps::NONE), b"\x1b[0m\x1b[H");
+        assert_eq!(Out::reset_bytes(Lines::Dec, Caps::ALL, 24, 80), b"\x1b[0m\x1b(B\x1b[?25h\x1b[2J\x1b[H");
+        // The fallback blanks with spaces, the last cell left alone.
+        assert_eq!(
+            Out::reset_bytes(Lines::Ascii, Caps::NONE, 3, 4),
+            b"\x1b[0m\x1b[1;1H    \x1b[2;1H    \x1b[3;1H   \x1b[H"
+        );
+        let v = Out::reset_bytes(Lines::Utf8, Caps::NONE, 24, 80);
+        assert_eq!(v.iter().filter(|&&b| b == b' ').count(), 24 * 80 - 1);
+    }
+
+    #[test]
+    fn clean_strips_escapes_and_controls() {
+        assert_eq!(clean("a\x1b[31mb\u{9b}1m\u{e9}\n"), "a?[31mb?1m??");
+        assert_eq!(clean("pts/3"), "pts/3");
     }
 }

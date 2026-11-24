@@ -14,7 +14,7 @@
 //! This is RT2's first table.  RT3's spike on every console corrects it.
 
 use super::ffi;
-use super::out::{Caps, Lines};
+use super::out::{self, Caps, Lines};
 use super::tty::Size;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -285,7 +285,9 @@ pub fn describe(f: &Facts, p: &Profile, size: Size) -> Vec<String> {
     for i in &f.ignored {
         v.push(format!("ignored {i} (not understood)"));
     }
-    v
+    // TERM, the locale, the tty's name and the ignored values come from
+    // outside, and this goes to a console.
+    v.into_iter().map(|l| out::clean(&l)).collect()
 }
 
 #[cfg(test)]
@@ -388,5 +390,16 @@ mod tests {
         assert!(lines.iter().any(|l| l.starts_with("size 80x24 (0x0")));
         assert!(lines.iter().any(|l| l == "lines ascii (the rule)"));
         assert!(lines.iter().any(|l| l == "colour off (the rule)"));
+    }
+
+    #[test]
+    fn describe_cleans_what_came_from_outside() {
+        let mut f = facts(Os::Linux, "pts/0\x1b]0;x\x07", "xterm\x1b[2J", "C.UTF-8\u{9b}");
+        f.ignored.push("BKO_RESCUE_LINES=\x1b[31m".to_string());
+        let p = decide(&f);
+        let lines = describe(&f, &p, Size { rows: 24, cols: 80, assumed: false });
+        assert!(lines.iter().all(|l| l.chars().all(|c| c.is_ascii() && !c.is_control())), "{lines:?}");
+        assert!(lines.iter().any(|l| l == "term xterm?[2J"));
+        assert!(lines.iter().any(|l| l == "ignored BKO_RESCUE_LINES=?[31m (not understood)"));
     }
 }

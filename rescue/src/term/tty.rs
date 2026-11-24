@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, Once, OnceLock, TryLockError};
 
 use super::ffi::{self, Termios, TermiosBuf};
+use super::out::{Caps, Lines, Out};
 
 /// What raw mode clears and sets.  `c_cflag` (the line's speed and
 /// framing) and OPOST are left as the launcher set them.
@@ -35,7 +36,9 @@ pub fn is_raw(t: &Termios) -> bool {
 
 static ORIGINAL: OnceLock<TermiosBuf> = OnceLock::new();
 static RAW_ON: AtomicBool = AtomicBool::new(false);
-static RESET: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+/// The profile to reset the screen for; the bytes are made at restore
+/// time, for the size the terminal has then.
+static RESET: Mutex<Option<(Lines, Caps)>> = Mutex::new(None);
 static HOOK: Once = Once::new();
 
 /// Raw mode, put back when dropped, on a panic (before the message
@@ -45,15 +48,15 @@ pub struct RawMode {
 }
 
 impl RawMode {
-    /// Raw mode on fd 0.  `reset` is what to write to the screen when
-    /// putting it back (`Out::reset_bytes`).
-    pub fn enter(reset: Vec<u8>) -> io::Result<RawMode> {
+    /// Raw mode on fd 0.  `lines` and `caps` say how to reset the screen
+    /// when putting it back (`Out::reset_bytes`).
+    pub fn enter(lines: Lines, caps: Caps) -> io::Result<RawMode> {
         let mut orig = TermiosBuf::new(0);
         ffi::get_attr(0, &mut orig)?;
         // The first original is the one to go back to, if raw mode is
         // entered twice.
         let orig = *ORIGINAL.get_or_init(|| orig);
-        set_reset(reset);
+        set_reset(lines, caps);
         HOOK.call_once(|| {
             let prev = std::panic::take_hook();
             std::panic::set_hook(Box::new(move |info| {
@@ -74,16 +77,17 @@ impl RawMode {
         Ok(RawMode { _private: () })
     }
 
-    /// A new reset sequence, after the profile changed.
-    pub fn set_reset(&self, reset: Vec<u8>) {
-        set_reset(reset);
+    /// The profile to reset for, after it changed.
+    pub fn set_reset(&self, lines: Lines, caps: Caps) {
+        set_reset(lines, caps);
     }
 }
 
-fn set_reset(reset: Vec<u8>) {
+fn set_reset(lines: Lines, caps: Caps) {
+    let v = Some((lines, caps));
     match RESET.lock() {
-        Ok(mut g) => *g = reset,
-        Err(p) => *p.into_inner() = reset,
+        Ok(mut g) => *g = v,
+        Err(p) => *p.into_inner() = v,
     }
 }
 
@@ -99,10 +103,17 @@ pub fn restore() {
     if !RAW_ON.swap(false, Ordering::SeqCst) {
         return;
     }
-    let reset = match RESET.try_lock() {
-        Ok(g) => g.clone(),
-        Err(TryLockError::Poisoned(p)) => p.into_inner().clone(),
-        Err(TryLockError::WouldBlock) => b"\x1b[0m".to_vec(),
+    let prof = match RESET.try_lock() {
+        Ok(g) => *g,
+        Err(TryLockError::Poisoned(p)) => *p.into_inner(),
+        Err(TryLockError::WouldBlock) => None,
+    };
+    let reset = match prof {
+        Some((lines, caps)) => {
+            let s = size();
+            Out::reset_bytes(lines, caps, s.rows, s.cols)
+        }
+        None => b"\x1b[0m".to_vec(),
     };
     let mut out = io::stdout();
     let _ = out.write_all(&reset);

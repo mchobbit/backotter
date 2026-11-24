@@ -23,6 +23,10 @@
 #endif
 /* The brackets keep a function-like ioctl macro (Haiku's) from expanding. */
 int (ioctl)(int, BKO_IOCTL_REQ, ...);
+#if defined(__HAIKU__)
+/* What ffi.rs declares and calls on Haiku, where ioctl is a macro over it. */
+int __ioctl(int, BKO_IOCTL_REQ, void *, size_t);
+#endif
 
 #define XSTR(x) STR(x)
 #define STR(x) #x

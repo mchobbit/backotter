@@ -3,7 +3,7 @@
 
 use bko_rescue::spike;
 use bko_rescue::term::ffi;
-use bko_rescue::term::out::Lines;
+use bko_rescue::term::out::{self, Lines};
 use bko_rescue::term::profile::{self, Facts};
 use bko_rescue::term::tty;
 
@@ -44,6 +44,10 @@ struct Opts {
     dry_run: bool,
 }
 
+/// The options that take no value: `--plain=no` is an error, not plain.
+const NO_VALUE: &[&str] =
+    &["--plain", "--dry-run", "--abi", "--check-tty", "--profile", "--demo", "--version", "--help"];
+
 fn parse(args: &[String]) -> Result<Opts, String> {
     let mut o = Opts {
         mode: Mode::App,
@@ -67,6 +71,9 @@ fn parse(args: &[String]) -> Result<Opts, String> {
                 None => it.next().cloned().ok_or_else(|| format!("{name} needs {what}")),
             }
         };
+        if inline.is_some() && NO_VALUE.contains(&name) {
+            return Err(format!("{name} takes no value"));
+        }
         let mut mode = |m: Mode, o: &mut Opts| {
             o.mode = m;
             modes += 1;
@@ -112,7 +119,8 @@ fn main() {
     let o = match parse(&args) {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("bko-rescue: {e}\n{USAGE}");
+            // The error quotes argv, which may hold anything.
+            eprintln!("bko-rescue: {}\n{USAGE}", out::clean(&e));
             std::process::exit(2);
         }
     };
@@ -207,5 +215,10 @@ mod tests {
         assert!(p(&["--abi", "--profile"]).is_err());
         assert!(p(&["--spike=twice"]).is_err());
         assert!(p(&["-x"]).is_err());
+        assert_eq!(p(&["--plain=no"]), Err("--plain takes no value".to_string()));
+        assert_eq!(p(&["--dry-run=false"]), Err("--dry-run takes no value".to_string()));
+        assert!(p(&["--abi=x"]).is_err());
+        assert!(p(&["--check-tty=1"]).is_err());
+        assert!(p(&["--help="]).is_err());
     }
 }

@@ -147,6 +147,10 @@ struct Spike {
     /// Only a count: the spike keeps no typed character.
     pw_count: usize,
     pw_focus: bool,
+    /// The field was left by Esc or Tab in this read: the read's other
+    /// characters are taken as typed too late (Alt+key, or an ESC in a
+    /// fast passphrase), shown as `*` and never run as commands.
+    left_field: bool,
     full: bool,
     card_dirty: bool,
 }
@@ -168,6 +172,7 @@ impl Spike {
             gauge_most: 0,
             pw_count: 0,
             pw_focus: true,
+            left_field: false,
             full: true,
             card_dirty: false,
         }
@@ -194,19 +199,24 @@ impl Spike {
         let mut o = Out::new(lines, colour, caps);
         o.buf = self.o.take();
         self.o = o;
-        raw.set_reset(Out::reset_bytes(lines, caps));
+        raw.set_reset(lines, caps);
         self.full = true;
     }
 
     /// One key.  Letters are commands except in the password field.
     fn key(&mut self, k: Key, raw: &RawMode) -> Next {
         let in_field = self.card == 3 && self.pw_focus;
-        let secret = in_field && matches!(k, Key::Char(_) | Key::Space);
+        let typed = matches!(k, Key::Char(_) | Key::Space);
+        let secret = (in_field || self.left_field) && typed;
         self.keys.push_back(if secret { "*".to_string() } else { k.name() });
         while self.keys.len() > KEYS_KEPT {
             self.keys.pop_front();
         }
         self.card_dirty = true;
+        if secret && !in_field {
+            // Swallowed: neither typed nor a command.
+            return Next::Go;
+        }
         if in_field {
             match k {
                 Key::Char(_) | Key::Space => self.pw_count = (self.pw_count + 1).min(PW_MAX),
@@ -215,7 +225,10 @@ impl Spike {
                     self.note = format!("count typed: {}", self.pw_count);
                     self.pw_count = 0;
                 }
-                Key::Esc | Key::Tab => self.pw_focus = false,
+                Key::Esc | Key::Tab => {
+                    self.pw_focus = false;
+                    self.left_field = true;
+                }
                 _ => {}
             }
             return Next::Go;
@@ -283,6 +296,7 @@ impl Spike {
             self.o.move_to(2, 1);
             self.o.text("Make it bigger, or press q to quit.");
             self.full = false;
+            self.card_dirty = false;
             return;
         };
         if self.full {
@@ -521,10 +535,12 @@ pub fn run(p: &Profile, panic_on_purpose: bool) -> i32 {
 }
 
 fn run_inner(p: &Profile, panic_on_purpose: bool) -> io::Result<i32> {
-    let raw = RawMode::enter(Out::reset_bytes(p.lines, p.caps))?;
+    // The handlers first: they only set a flag, and a signal between raw
+    // mode and them would kill us with the terminal raw.
     if !ffi::catch_hup_term() {
         return Err(io::Error::other("can't catch SIGHUP and SIGTERM"));
     }
+    let raw = RawMode::enter(p.lines, p.caps)?;
     let mut s = Spike::new(p);
     s.frame();
     s.flush()?;
@@ -570,6 +586,8 @@ fn run_inner(p: &Profile, panic_on_purpose: bool) -> io::Result<i32> {
                 break 'run;
             }
         }
+        // A new read is a new batch of keys.
+        s.left_field = false;
         if s.full || s.card_dirty {
             s.frame();
         }

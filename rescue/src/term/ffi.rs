@@ -318,16 +318,24 @@ fn check(rc: c_int) -> io::Result<()> {
 
 /// tcgetattr into `buf`.
 pub fn get_attr(fd: c_int, buf: &mut TermiosBuf) -> io::Result<()> {
-    // SAFETY: buf is a valid, writable TermiosBuf: our struct plus SPARE
-    // bytes, more than any family's struct termios.
-    check(unsafe { tcgetattr(fd, &mut buf.t) })
+    // The pointer is made from the whole buffer, not from `buf.t`, so it
+    // covers the spare bytes too.  TermiosBuf is repr(C) with `t` first,
+    // so it is the same address.
+    let p = (buf as *mut TermiosBuf).cast::<Termios>();
+    // SAFETY: p points at a valid, writable TermiosBuf: our struct plus
+    // SPARE bytes, more than any family's struct termios, and p may reach
+    // all of it.
+    check(unsafe { tcgetattr(fd, p) })
 }
 
 /// tcsetattr from `buf`; `when` is TCSANOW or TCSADRAIN.
 pub fn set_attr(fd: c_int, when: c_int, buf: &TermiosBuf) -> io::Result<()> {
-    // SAFETY: buf holds a termios read by tcgetattr (and edited only in its
-    // named fields), followed by the spare bytes that read filled in too.
-    check(unsafe { tcsetattr(fd, when, &buf.t) })
+    // From the whole buffer, as in get_attr.
+    let p = (buf as *const TermiosBuf).cast::<Termios>();
+    // SAFETY: p points at a termios read by tcgetattr (and edited only in
+    // its named fields), followed by the spare bytes that read filled in
+    // too, and p may reach all of them.
+    check(unsafe { tcsetattr(fd, when, p) })
 }
 
 /// The window size, TIOCGWINSZ.
@@ -379,9 +387,25 @@ pub fn tty_name(fd: c_int) -> Option<String> {
 static SIGNALLED: AtomicI32 = AtomicI32::new(0);
 
 extern "C" fn on_signal(sig: c_int) {
-    // An atomic store is all a handler may safely do here.
+    // An atomic store is all a handler may safely do here, and on illumos
+    // signal() too.
     SIGNALLED.store(sig, Ordering::SeqCst);
+    rearm(sig);
 }
+
+/// illumos's signal() is SysV's: the handler goes back to SIG_DFL before
+/// it runs, so a second SIGTERM in the cleanup would kill us with the
+/// terminal still raw.  Set it again at once.  The others keep it.
+#[cfg(target_os = "illumos")]
+fn rearm(sig: c_int) {
+    let h = on_signal as extern "C" fn(c_int) as usize;
+    // SAFETY: signal() is async-signal-safe (POSIX), and on_signal is an
+    // extern "C" fn(int) that only does an atomic store and this.
+    unsafe { signal(sig, h) };
+}
+
+#[cfg(not(target_os = "illumos"))]
+fn rearm(_sig: c_int) {}
 
 /// SIGHUP and SIGTERM only set a flag, read by `take_signal`.  poll then
 /// returns early with EINTR.

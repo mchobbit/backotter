@@ -757,26 +757,11 @@ pub fn refusal(v: &Value) -> Option<String> {
     Some(format!("Solus keeps its ESP out of fstab, and nothing is mounted at /boot: run `clr-boot-manager mount-boot` (or {mount}) and dump again"))
 }
 
-pub fn build(sys: &Sys, os: Option<&OsRelease>, generated: &str) -> Value {
-    build_only(sys, os, generated, &[])
-}
-
-/// `build`, leaving out the whole disks not in `only`, and their partitions;
-/// everything else (loop devices, md, device-mapper) stays.  An empty `only`
-/// leaves nothing out.
-pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[String]) -> Value {
-    build_with(sys, os, generated, only, &crate::luksheader::Options::default())
-}
-
-/// `build_only`, keeping the LUKS2 headers LUKS asks for (dump's
-/// --keep-luks-header and --luks-header-dir: crate::luksheader).
-pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[String], luks: &crate::luksheader::Options) -> Value {
-    if !sys.privileged {
-        sys.warn("not running as root: partition tables, superblocks and LVM/ZFS labels were not read; device contents come from udev's database");
-    }
-    // LVs that vgchange -ay skips (activation skip), active read-only while
-    // the dump reads them (crate::qubes).
-    let activated = crate::qubes::activate_skipped(sys);
+/// Every block device, examined, in the kernel's order: less the whole
+/// disks not in `only` (--only-disk) and their partitions, when `only`
+/// isn't empty, but with the ZFS volumes of the kept disks' pools and
+/// what's on them.
+fn devices(sys: &Sys, only: &[String]) -> Vec<Dev> {
     let mut scanned = blockdev::scan(sys);
     // A ZFS volume (zdN) is a whole disk too; --only-disk keeps those of the
     // pools with a vdev on a kept disk, and what's on them (Ubuntu's
@@ -799,6 +784,81 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         // In the kernel's order, as without --only-disk.
         devs.sort_by_key(|d| order.iter().position(|n| *n == d.b.name).unwrap_or(usize::MAX));
     }
+    devs
+}
+
+/// storage.swaps: /proc/swaps, with each swap partition's device.
+fn swaps_json(sys: &Sys, ctx: &Ctx) -> Vec<Value> {
+    sys.read("/proc/swaps")
+        .map(|t| mounts::parse_swaps(&t))
+        .unwrap_or_default()
+        .iter()
+        .map(|s| {
+            Obj::new()
+                .set("file", s.file.as_str())
+                .set("type", s.kind.as_str())
+                .set("size_bytes", s.size_kib * 1024)
+                .set("used_bytes", s.used_kib * 1024)
+                .set("priority", s.priority)
+                .set("device", if s.kind == "partition" { ctx.resolve(sys, &s.file) } else { None })
+                .build()
+        })
+        .collect()
+}
+
+/// The mounted ESPs, as (device, mount point): vfat mounts of an ESP
+/// partition, or at /boot/efi or /efi.
+fn mounted_esps(ctx: &Ctx) -> Vec<(String, String)> {
+    ctx.mounts
+        .iter()
+        .filter(|m| m.fstype == "vfat")
+        .filter_map(|m| {
+            let name = ctx.by_devno(&m.devno).map(|d| d.b.name.clone())?;
+            let d = ctx.dev(&name)?;
+            (ctx.is_esp_partition(d) || matches!(m.target.as_str(), "/boot/efi" | "/efi")).then(|| (name, m.target.clone()))
+        })
+        .collect()
+}
+
+/// The dump's os: os-release's, with the product Proxmox VE's packages,
+/// TrueNAS (TRUENAS: it was detected) or Qubes name, the later winning.
+fn os_json(sys: &Sys, os: Option<&OsRelease>, packages: &[(String, String, String)], truenas: Option<&crate::truenas::TrueNas>) -> Value {
+    let mut os_json = crate::osrel::to_json(sys, os);
+    if let (Some(p), Value::Obj(o)) = (crate::boot::proxmox_product(packages), &mut os_json) {
+        o.push(("product".into(), Value::from(p)));
+    }
+    if let (Some(p), Value::Obj(o)) = (truenas.and_then(|_| crate::truenas::product(sys)), &mut os_json) {
+        o.retain(|(k, _)| k != "product");
+        o.push(("product".into(), Value::from(p)));
+    }
+    if let (Some(p), Value::Obj(o)) = (crate::qubes::product(os.and_then(|o| o.get("ID")), os.and_then(|o| o.get("VERSION_ID"))), &mut os_json) {
+        o.retain(|(k, _)| k != "product");
+        o.push(("product".into(), Value::from(p)));
+    }
+    os_json
+}
+
+pub fn build(sys: &Sys, os: Option<&OsRelease>, generated: &str) -> Value {
+    build_only(sys, os, generated, &[])
+}
+
+/// `build`, leaving out the whole disks not in `only`, and their partitions;
+/// everything else (loop devices, md, device-mapper) stays.  An empty `only`
+/// leaves nothing out.
+pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[String]) -> Value {
+    build_with(sys, os, generated, only, &crate::luksheader::Options::default())
+}
+
+/// `build_only`, keeping the LUKS2 headers LUKS asks for (dump's
+/// --keep-luks-header and --luks-header-dir: crate::luksheader).
+pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[String], luks: &crate::luksheader::Options) -> Value {
+    if !sys.privileged {
+        sys.warn("not running as root: partition tables, superblocks and LVM/ZFS labels were not read; device contents come from udev's database");
+    }
+    // LVs that vgchange -ay skips (activation skip), active read-only while
+    // the dump reads them (crate::qubes).
+    let activated = crate::qubes::activate_skipped(sys);
+    let devs = devices(sys, only);
     let mountinfo = sys.read("/proc/self/mountinfo").map(|t| mounts::parse_mountinfo(&t)).unwrap_or_default();
     let ctx = Ctx { devs: &devs, mounts: &mountinfo };
 
@@ -936,36 +996,13 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         Some(t) => Value::Arr(mounts::parse_crypttab(&t).iter().map(|e| e.to_json(ctx.resolve(sys, &e.device).as_deref())).collect()),
         None => Value::Null,
     };
-    let swaps: Vec<Value> = sys
-        .read("/proc/swaps")
-        .map(|t| mounts::parse_swaps(&t))
-        .unwrap_or_default()
-        .iter()
-        .map(|s| {
-            Obj::new()
-                .set("file", s.file.as_str())
-                .set("type", s.kind.as_str())
-                .set("size_bytes", s.size_kib * 1024)
-                .set("used_bytes", s.used_kib * 1024)
-                .set("priority", s.priority)
-                .set("device", if s.kind == "partition" { ctx.resolve(sys, &s.file) } else { None })
-                .build()
-        })
-        .collect();
+    let swaps = swaps_json(sys, &ctx);
     let mdadm_conf = sys.read("/etc/mdadm/mdadm.conf").or_else(|| sys.read("/etc/mdadm.conf")).map(|t| mounts::parse_mdadm_conf(&t));
 
     let packages = crate::boot::installed_packages(sys);
     let partuuid_to_dev = |u: &str| ctx.resolve(sys, &format!("PARTUUID={u}"));
     let efi_boot = crate::efi::boot_json(sys, &partuuid_to_dev);
-    let esps: Vec<(String, String)> = mountinfo
-        .iter()
-        .filter(|m| m.fstype == "vfat")
-        .filter_map(|m| {
-            let name = ctx.by_devno(&m.devno).map(|d| d.b.name.clone())?;
-            let d = ctx.dev(&name)?;
-            (ctx.is_esp_partition(d) || matches!(m.target.as_str(), "/boot/efi" | "/efi")).then(|| (name, m.target.clone()))
-        })
-        .collect();
+    let esps = mounted_esps(&ctx);
     let mbr_codes: Vec<(String, String)> =
         devs.iter().filter_map(|d| d.boot_code.as_ref().map(|bc| (d.b.name.clone(), bc.kind.to_string()))).collect();
 
@@ -1022,18 +1059,7 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     });
     let unmounted: Vec<(String, Value)> = truenas.iter().flat_map(|t| &t.esps).map(|e| (e.device.clone(), e.contents.clone())).collect();
     let boot = crate::boot::boot_json(sys, &packages, &esps, efi_boot, mbr_codes, ostree_json, proxmox, &unmounted, &zfs_tools);
-    let mut os_json = crate::osrel::to_json(sys, os);
-    if let (Some(p), Value::Obj(o)) = (crate::boot::proxmox_product(&packages), &mut os_json) {
-        o.push(("product".into(), Value::from(p)));
-    }
-    if let (Some(p), Value::Obj(o)) = (truenas.as_ref().and_then(|_| crate::truenas::product(sys)), &mut os_json) {
-        o.retain(|(k, _)| k != "product");
-        o.push(("product".into(), Value::from(p)));
-    }
-    if let (Some(p), Value::Obj(o)) = (crate::qubes::product(os.and_then(|o| o.get("ID")), os.and_then(|o| o.get("VERSION_ID"))), &mut os_json) {
-        o.retain(|(k, _)| k != "product");
-        o.push(("product".into(), Value::from(p)));
-    }
+    let os_json = os_json(sys, os, &packages, truenas.as_ref());
     let boot = crate::abroot::add_to_boot(boot, abroot.as_ref());
     let boot = crate::truenas::add_to_boot(boot, truenas.as_ref());
     let boot = crate::transactional::add_to_boot(boot, transactional);

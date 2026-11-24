@@ -315,16 +315,6 @@ impl Layout {
     }
 }
 
-/// The value at PATH in V, for writing (objects only).
-fn at_mut<'a>(v: &'a mut Value, path: &[&str]) -> Option<&'a mut Value> {
-    let mut cur = v;
-    for k in path {
-        let Value::Obj(kv) = cur else { return None };
-        cur = &mut kv.iter_mut().find(|(n, _)| n == k)?.1;
-    }
-    Some(cur)
-}
-
 /// What `--pools` makes of a layout (Layout::only_pools).
 pub struct OnlyPools {
     /// The layout without the pools left out and the disks they're on.
@@ -440,14 +430,14 @@ impl Layout {
             }
             has_out
         };
-        if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "md_arrays"]) {
+        if let Some(Value::Arr(a)) = v.at_mut(&["storage", "md_arrays"]) {
             a.retain(|m| {
                 let mems: Vec<String> = m.at(&["md", "members"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| s(x, "device")).collect();
                 !check_split("md array", &s(m, "name").unwrap_or_default(), &mems)
             });
         }
         let mut out_vgs: Vec<String> = Vec::new();
-        if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "lvm", "volume_groups"]) {
+        if let Some(Value::Arr(a)) = v.at_mut(&["storage", "lvm", "volume_groups"]) {
             a.retain(|vg| {
                 let pvs: Vec<String> = vg.get("physical_volumes").and_then(Value::as_array).into_iter().flatten().filter_map(|p| s(p, "device")).collect();
                 let vn = s(vg, "name").unwrap_or_default();
@@ -458,34 +448,34 @@ impl Layout {
                 !drop_vg
             });
         }
-        if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "dm_devices"]) {
+        if let Some(Value::Arr(a)) = v.at_mut(&["storage", "dm_devices"]) {
             a.retain(|d| {
                 let in_out_vg = d.at(&["dm", "vg"]).and_then(Value::as_str).is_some_and(|g| out_vgs.iter().any(|x| x == g));
                 let sl: Vec<String> = d.get("slaves").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
                 !in_out_vg && !check_split("device-mapper device", &s(d, "name").unwrap_or_default(), &sl)
             });
         }
-        if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "btrfs"]) {
+        if let Some(Value::Arr(a)) = v.at_mut(&["storage", "btrfs"]) {
             a.retain(|fs| {
                 let devs: Vec<String> = fs.get("devices").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
                 !check_split("btrfs filesystem", &s(fs, "uuid").unwrap_or_default(), &devs)
             });
         }
-        if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "xfs_external_logs"]) {
+        if let Some(Value::Arr(a)) = v.at_mut(&["storage", "xfs_external_logs"]) {
             a.retain(|l| !s(l, "log_device").is_some_and(|ld| on_disks(self, &ld, &out_disks, 0)));
         }
-        if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "disks"]) {
+        if let Some(Value::Arr(a)) = v.at_mut(&["storage", "disks"]) {
             a.retain(|d| !s(d, "name").is_some_and(|n| out_disks.contains(&n)));
         }
         for path in [&["storage", "zfs", "tools", "imported_pools"][..], &["storage", "zfs", "pools_from_labels"][..]] {
-            if let Some(Value::Arr(a)) = at_mut(&mut v, path) {
+            if let Some(Value::Arr(a)) = v.at_mut(path) {
                 a.retain(|p| !s(p, "name").is_some_and(|n| left.contains(&n)));
             }
         }
-        if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "zfs", "tools", "datasets"]) {
+        if let Some(Value::Arr(a)) = v.at_mut(&["storage", "zfs", "tools", "datasets"]) {
             a.retain(|d| !s(d, "name").is_some_and(|n| left.contains(&pool_part(&n))));
         }
-        if let Some(Value::Obj(z)) = at_mut(&mut v, &["storage", "zfs"]) {
+        if let Some(Value::Obj(z)) = v.at_mut(&["storage", "zfs"]) {
             z.retain(|(k, _)| k != "left_out_pools" && k != "left_out_paths");
             z.push(("left_out_pools".into(), Value::Arr(left_json)));
             z.push(("left_out_paths".into(), Value::Arr(all_paths.into_iter().map(Value::from).collect())));

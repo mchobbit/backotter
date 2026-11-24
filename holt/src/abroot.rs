@@ -465,23 +465,15 @@ pub fn read(sys: &Sys, cfg: &Config, fss: &[Fs]) -> Dump {
 
 /// BOOT (the dump's boot section) with boot.abroot in it and the init
 /// LV's kernels in boot.kernels.installed.
-pub fn add_to_boot(boot: Value, d: Option<&Dump>) -> Value {
-    let (Some(d), Value::Obj(mut o)) = (d, boot.clone()) else { return boot };
-    for (k, v) in o.iter_mut() {
-        if k == "kernels" {
-            if let Value::Obj(ko) = v {
-                for (kk, kv) in ko.iter_mut() {
-                    if kk == "installed" {
-                        if let Value::Arr(a) = kv {
-                            a.extend(d.kernels.iter().cloned());
-                        }
-                    }
-                }
-            }
-        }
+pub fn add_to_boot(mut boot: Value, d: Option<&Dump>) -> Value {
+    let Some(d) = d else { return boot };
+    if let Some(a) = boot.at_mut(&["kernels", "installed"]).and_then(Value::as_array_mut) {
+        a.extend(d.kernels.iter().cloned());
     }
-    o.push(("abroot".into(), d.json.clone()));
-    Value::Obj(o)
+    // boot has no abroot of its own (dump adds it here, once), so it goes
+    // at the end.
+    boot.put("abroot", d.json.clone());
+    boot
 }
 
 /// The installer's master grub.cfg, for other modules' tests.

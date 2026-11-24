@@ -59,6 +59,41 @@ impl Value {
         Some(v)
     }
 
+    /// `get`, for writing: the value of KEY (its first, as `get` reads)
+    /// when this is an object that has it.
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
+        match self {
+            Value::Obj(kv) => kv.iter_mut().find(|(k, _)| k == key).map(|(_, v)| v),
+            _ => None,
+        }
+    }
+
+    /// `at`, for writing: the value along PATH (keys and array indexes).
+    pub fn at_mut(&mut self, path: &[&str]) -> Option<&mut Value> {
+        let mut v = self;
+        for p in path {
+            v = match v {
+                Value::Arr(a) => a.get_mut(p.parse::<usize>().ok()?)?,
+                Value::Obj(_) => v.get_mut(p)?,
+                _ => return None,
+            };
+        }
+        Some(v)
+    }
+
+    /// Sets KEY of an object as `Obj::put` does: an earlier value of KEY is
+    /// replaced in place, else KEY is added at the end.  Nothing happens
+    /// to a value that isn't an object.
+    pub fn put(&mut self, key: &str, v: impl Into<Value>) {
+        if let Value::Obj(kv) = self {
+            let v = v.into();
+            match kv.iter_mut().find(|(k, _)| k == key) {
+                Some(slot) => slot.1 = v,
+                None => kv.push((key.to_string(), v)),
+            }
+        }
+    }
+
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Value::Str(s) => Some(s),
@@ -99,6 +134,13 @@ impl Value {
     pub fn as_object(&self) -> Option<&Vec<(String, Value)>> {
         match self {
             Value::Obj(o) => Some(o),
+            _ => None,
+        }
+    }
+
+    pub fn as_array_mut(&mut self) -> Option<&mut Vec<Value>> {
+        match self {
+            Value::Arr(a) => Some(a),
             _ => None,
         }
     }
@@ -682,6 +724,27 @@ mod tests {
         let p = v.pretty();
         assert!(p.starts_with("[\n  \"feature0\",\n"));
         assert_eq!(parse(&p).unwrap(), v);
+    }
+
+    #[test]
+    fn mutable_accessors() {
+        let mut v = parse(r#"{"a": {"b": [1, {"c": "x"}]}, "d": 2}"#).unwrap();
+        *v.at_mut(&["a", "b", "1", "c"]).unwrap() = Value::from("y");
+        assert_eq!(v.at(&["a", "b", "1", "c"]).and_then(Value::as_str), Some("y"));
+        assert!(v.at_mut(&["a", "b", "2"]).is_none());
+        assert!(v.at_mut(&["a", "b", "x"]).is_none());
+        assert!(v.at_mut(&["d", "e"]).is_none());
+        assert_eq!(v.at_mut(&[]).map(|x| x.compact()), Some(v.compact()));
+        v.get_mut("a").and_then(|a| a.get_mut("b")).and_then(Value::as_array_mut).unwrap().push(Value::Null);
+        assert_eq!(v.arr_at(&["a", "b"]).len(), 3);
+        // put replaces in place, else adds at the end; not an object: nothing.
+        v.put("a", 1u64);
+        v.put("e", "z");
+        assert_eq!(v.compact(), r#"{"a":1,"d":2,"e":"z"}"#);
+        let mut n = Value::from(3u64);
+        n.put("a", 1u64);
+        assert_eq!(n, Value::from(3u64));
+        assert!(n.get_mut("a").is_none() && n.as_array_mut().is_none());
     }
 
     #[test]

@@ -260,10 +260,8 @@ pub fn raw_volumes(dm: &mut [Value], lvm: &Value, qubes: Option<&Value>) -> Vec<
             r.put("qube", s(v, "qube"));
             r.put("volume", s(v, "volume"));
         }
-        if let Value::Obj(o) = d {
-            o.retain(|(k, _)| k != "raw_volume");
-            o.push(("raw_volume".into(), r.build()));
-        }
+        // dm_json has no raw_volume, so it goes at the end.
+        d.put("raw_volume", r.build());
         let source = format!("/dev/{vg}/{lv}");
         let note = format!(
             "a raw volume ({why}): the LV's bytes as a sparse image file at this path of the backup's tree, not a mount (e.g. `cp --sparse=always {source} TREE{image}`){}; load writes it back to {vg}/{lv}",
@@ -315,30 +313,22 @@ pub fn thin_usage(sys: &Sys, lvm: &mut Value, dm: &[Value]) {
             .find(|d| d.at(&["dm", "lv_uuid"]).and_then(Value::as_str) == Some(id) && d.at(&["dm", "lv_layer"]).and_then(Value::as_str) == layer)
             .and_then(|d| d.at(&["dm", "dm_name"]).and_then(Value::as_str).map(str::to_string))
     };
-    let Value::Obj(top) = lvm else { return };
-    for (k, vgs) in top.iter_mut() {
-        let (true, Value::Arr(vgs)) = (k == "volume_groups", vgs) else { continue };
-        for g in vgs.iter_mut() {
-            let Value::Obj(go) = g else { continue };
-            for (k, lvs) in go.iter_mut() {
-                let (true, Value::Arr(lvs)) = (k == "logical_volumes", lvs) else { continue };
-                for l in lvs.iter_mut() {
-                    let id = s(l, "id").unwrap_or_default();
-                    let ty = l.at(&["segments", "0", "type"]).and_then(Value::as_str).unwrap_or("").to_string();
-                    let chunk = l.at(&["segments", "0", "chunk_size"]).and_then(Value::as_u64).unwrap_or(0) * 512;
-                    let Value::Obj(lo) = l else { continue };
-                    if ty == "thin-pool" {
-                        let Some(n) = dm_name(&id, Some("tpool")) else { continue };
-                        if let Some(((mu, _), (du, _))) = sys.run("dmsetup", &["status", &n]).as_deref().and_then(parse_pool_status) {
-                            lo.push(("data_used_bytes".into(), Value::UInt(du * chunk)));
-                            lo.push(("metadata_used_bytes".into(), Value::UInt(mu * 4096)));
-                        }
-                    } else if ty == "thin" {
-                        let Some(n) = dm_name(&id, None) else { continue };
-                        if let Some(m) = sys.run("dmsetup", &["status", &n]).as_deref().and_then(parse_thin_status) {
-                            lo.push(("mapped_bytes".into(), Value::UInt(m * 512)));
-                        }
-                    }
+    // lvm_json's LVs have none of these keys, so each goes at the end.
+    for g in lvm.get_mut("volume_groups").and_then(Value::as_array_mut).into_iter().flatten() {
+        for l in g.get_mut("logical_volumes").and_then(Value::as_array_mut).into_iter().flatten() {
+            let id = s(l, "id").unwrap_or_default();
+            let ty = l.at(&["segments", "0", "type"]).and_then(Value::as_str).unwrap_or("").to_string();
+            let chunk = l.at(&["segments", "0", "chunk_size"]).and_then(Value::as_u64).unwrap_or(0) * 512;
+            if ty == "thin-pool" {
+                let Some(n) = dm_name(&id, Some("tpool")) else { continue };
+                if let Some(((mu, _), (du, _))) = sys.run("dmsetup", &["status", &n]).as_deref().and_then(parse_pool_status) {
+                    l.put("data_used_bytes", Value::UInt(du * chunk));
+                    l.put("metadata_used_bytes", Value::UInt(mu * 4096));
+                }
+            } else if ty == "thin" {
+                let Some(n) = dm_name(&id, None) else { continue };
+                if let Some(m) = sys.run("dmsetup", &["status", &n]).as_deref().and_then(parse_thin_status) {
+                    l.put("mapped_bytes", Value::UInt(m * 512));
                 }
             }
         }

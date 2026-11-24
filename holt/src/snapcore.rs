@@ -622,12 +622,8 @@ impl Dump {
         if !self.luks.is_empty() && missing.len() < self.luks.len() {
             sys.warn(format!("Ubuntu Core: the LUKS2 headers are files in {dir}{}: keep them with this dump, in the same directory as the layout (load looks there, or in its --luks-header-dir)", if dir == crate::luksheader::DEFAULT_DIR { " (RAM, gone at the next boot)" } else { "" }));
         }
-        if let Value::Obj(o) = &mut self.json {
-            for (k, v) in o.iter_mut() {
-                if k == "refusals" {
-                    *v = Value::from(self.refusals.clone());
-                }
-            }
+        if let Some(v) = self.json.get_mut("refusals") {
+            *v = Value::from(self.refusals.clone());
         }
     }
 }

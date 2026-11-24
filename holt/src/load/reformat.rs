@@ -653,33 +653,6 @@ impl Reformat {
     }
 }
 
-fn obj(v: &mut Value) -> Option<&mut Vec<(String, Value)>> {
-    match v {
-        Value::Obj(o) => Some(o),
-        _ => None,
-    }
-}
-
-fn get_mut<'a>(v: &'a mut Value, k: &str) -> Option<&'a mut Value> {
-    obj(v)?.iter_mut().find(|(n, _)| n == k).map(|(_, x)| x)
-}
-
-fn put(v: &mut Value, k: &str, x: Value) {
-    if let Some(o) = obj(v) {
-        match o.iter_mut().find(|(n, _)| n == k) {
-            Some(slot) => slot.1 = x,
-            None => o.push((k.to_string(), x)),
-        }
-    }
-}
-
-fn storage_list<'a>(v: &'a mut Value, k: &str) -> Option<&'a mut Vec<Value>> {
-    match get_mut(get_mut(v, "storage")?, k)? {
-        Value::Arr(a) => Some(a),
-        _ => None,
-    }
-}
-
 /// The new content of a reformatted device.
 fn content(c: &Change) -> Value {
     let mut o = Obj::new()
@@ -701,29 +674,29 @@ fn content(c: &Change) -> Value {
 pub fn apply(mut v: Value, r: &Reformat) -> Value {
     for c in &r.changes {
         for sect in ["disks", "md_arrays", "dm_devices"] {
-            for d in storage_list(&mut v, sect).into_iter().flatten() {
+            for d in v.at_mut(&["storage", sect]).and_then(Value::as_array_mut).into_iter().flatten() {
                 if d.get("name").and_then(Value::as_str) == Some(c.src.as_str()) {
-                    put(d, "content", content(c));
+                    d.put("content", content(c));
                 }
-                if let Some(Value::Arr(parts)) = get_mut(d, "partitions") {
+                if let Some(Value::Arr(parts)) = d.get_mut("partitions") {
                     for p in parts {
                         if p.get("name").and_then(Value::as_str) == Some(c.src.as_str()) {
-                            put(p, "content", content(c));
+                            p.put("content", content(c));
                         }
                     }
                 }
             }
         }
-        if let Some(list) = storage_list(&mut v, "btrfs") {
+        if let Some(list) = v.at_mut(&["storage", "btrfs"]).and_then(Value::as_array_mut) {
             list.retain(|f| f.get("uuid").and_then(Value::as_str) != Some(c.uuid.as_str()));
         }
-        if let Some(list) = storage_list(&mut v, "fstab") {
+        if let Some(list) = v.at_mut(&["storage", "fstab"]).and_then(Value::as_array_mut) {
             list.retain(|e| !(e.get("resolves_to").and_then(Value::as_str) == Some(c.src.as_str()) && e.get("file").and_then(Value::as_str).is_some_and(|f| c.folded.iter().any(|x| x == f))));
             for e in list.iter_mut() {
                 if e.get("resolves_to").and_then(Value::as_str) == Some(c.src.as_str()) && e.get("file").and_then(Value::as_str) == Some(c.mount.as_str()) {
-                    put(e, "type", Value::from(c.to.as_str()));
-                    put(e, "options", Value::from(c.options.as_str()));
-                    put(e, "passno", Value::Int(c.passno as i64));
+                    e.put("type", c.to.as_str());
+                    e.put("options", c.options.as_str());
+                    e.put("passno", Value::Int(c.passno as i64));
                 }
             }
         }
@@ -732,7 +705,7 @@ pub fn apply(mut v: Value, r: &Reformat) -> Value {
     // plan to take back (commands.rs, build).
     let problems: Vec<Value> = r.problems.iter().map(Problem::to_json).collect();
     let notes: Vec<Value> = r.notes.iter().map(Note::to_json).collect();
-    put(&mut v, "load_reformat", Obj::new().set("problems", problems).set("notes", notes).set("restore_globs", r.restore_globs()).build());
+    v.put("load_reformat", Obj::new().set("problems", problems).set("notes", notes).set("restore_globs", r.restore_globs()).build());
     v
 }
 

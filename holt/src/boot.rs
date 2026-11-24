@@ -922,6 +922,22 @@ pub fn proxmox_boot_json(sys: &Sys, packages: &[(String, String, String)], resol
 
 // --- Kernels -----------------------------------------------------------------------
 
+/// One kernel of boot.kernels (or of Solus's): its version, the directory
+/// it is in when that isn't /boot, its image's and initrd's sizes, whether
+/// it has a config, whether it is the running one and whether its modules
+/// are installed (/lib/modules/V or /usr/lib/modules/V), in that order.
+fn kernel_obj(sys: &Sys, v: &str, dir: Option<&str>, vmlinuz: Option<u64>, initrd: Option<u64>, config: bool, running: Option<&str>) -> Value {
+    Obj::new()
+        .set("version", v)
+        .set_some("dir", dir)
+        .set("vmlinuz_bytes", vmlinuz)
+        .set("initrd_bytes", initrd)
+        .set("config", config)
+        .set("running", running == Some(v))
+        .set("modules_installed", sys.is_dir(&format!("/lib/modules/{v}")) || sys.is_dir(&format!("/usr/lib/modules/{v}")))
+        .build()
+}
+
 pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
     let mut versions: Vec<String> = Vec::new();
     let files = sys.list("/boot");
@@ -956,20 +972,13 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
     let mut list: Vec<Value> = versions
         .iter()
         .map(|v| {
-            Obj::new()
-                .set("version", v.as_str())
-                .set("vmlinuz_bytes", sys.file_size(&format!("/boot/vmlinuz-{v}")).or_else(|| sys.file_size(&format!("/boot/kernel-{v}"))))
-                .set(
-                    "initrd_bytes",
-                    sys.file_size(&format!("/boot/initrd.img-{v}"))
-                        .or_else(|| sys.file_size(&format!("/boot/initramfs-{v}.img")))
-                        .or_else(|| sys.file_size(&format!("/boot/initramfs-{v}")))
-                        .or_else(|| sys.file_size(&format!("/boot/booster.img-{v}"))),
-                )
-                .set("config", sys.is_file(&format!("/boot/config-{v}")))
-                .set("running", running == Some(v.as_str()))
-                .set("modules_installed", sys.is_dir(&format!("/lib/modules/{v}")) || sys.is_dir(&format!("/usr/lib/modules/{v}")))
-                .build()
+            let vmlinuz = sys.file_size(&format!("/boot/vmlinuz-{v}")).or_else(|| sys.file_size(&format!("/boot/kernel-{v}")));
+            let initrd = sys
+                .file_size(&format!("/boot/initrd.img-{v}"))
+                .or_else(|| sys.file_size(&format!("/boot/initramfs-{v}.img")))
+                .or_else(|| sys.file_size(&format!("/boot/initramfs-{v}")))
+                .or_else(|| sys.file_size(&format!("/boot/booster.img-{v}")));
+            kernel_obj(sys, v, None, vmlinuz, initrd, sys.is_file(&format!("/boot/config-{v}")), running)
         })
         .collect();
     // ostree's: /boot/ostree/STATEROOT-BOOTCSUM/vmlinuz-V and
@@ -981,17 +990,8 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
         }
         for f in sys.list(&dir) {
             let Some(v) = f.strip_prefix("vmlinuz-") else { continue };
-            list.push(
-                Obj::new()
-                    .set("version", v)
-                    .set("dir", dir.as_str())
-                    .set("vmlinuz_bytes", sys.file_size(&format!("{dir}/{f}")))
-                    .set("initrd_bytes", sys.file_size(&format!("{dir}/initramfs-{v}.img")))
-                    .set("config", sys.is_file(&format!("{dir}/config-{v}")))
-                    .set("running", running == Some(v))
-                    .set("modules_installed", sys.is_dir(&format!("/lib/modules/{v}")) || sys.is_dir(&format!("/usr/lib/modules/{v}")))
-                    .build(),
-            );
+            let (vmlinuz, initrd) = (sys.file_size(&format!("{dir}/{f}")), sys.file_size(&format!("{dir}/initramfs-{v}.img")));
+            list.push(kernel_obj(sys, v, Some(&dir), vmlinuz, initrd, sys.is_file(&format!("{dir}/config-{v}")), running));
         }
     }
     let mut links = Obj::new();
@@ -1451,15 +1451,8 @@ pub fn solus_kernels(sys: &Sys, running: Option<&str>) -> (Vec<Value>, Vec<(Stri
     let list = kernels
         .iter()
         .map(|(v, f)| {
-            Obj::new()
-                .set("version", v.as_str())
-                .set("dir", dir)
-                .set("vmlinuz_bytes", sys.file_size(&format!("{dir}/{f}")))
-                .set("initrd_bytes", sys.file_size(&format!("{dir}/initrd-{f}")))
-                .set("config", sys.is_file(&format!("{dir}/config-{v}")))
-                .set("running", running == Some(v.as_str()))
-                .set("modules_installed", sys.is_dir(&format!("/lib/modules/{v}")) || sys.is_dir(&format!("/usr/lib/modules/{v}")))
-                .build()
+            let (vmlinuz, initrd) = (sys.file_size(&format!("{dir}/{f}")), sys.file_size(&format!("{dir}/initrd-{f}")));
+            kernel_obj(sys, v, Some(dir), vmlinuz, initrd, sys.is_file(&format!("{dir}/config-{v}")), running)
         })
         .collect();
     let links = files.iter().filter(|f| f.starts_with("default-")).filter_map(|f| sys.readlink(&format!("{dir}/{f}")).map(|t| (format!("{dir}/{f}"), t))).collect();
@@ -2612,6 +2605,26 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             refind_json(&s).unwrap().compact(),
             r#"{"linux_conf":{"path":"/boot/refind_linux.conf","lines":[{"title":"Boot with standard options","options":"rd.luks.name=1111aaaa-2222-4333-8444-555566667777=crypt_root rd.luks.options=discard nowatchdog root=UUID=a0a1 quiet splash ---"},{"title":"Boot with logging","options":"root=UUID=a0a1 ---"}]}}"#
         );
+    }
+
+    #[test]
+    fn kernel_record_keys() {
+        let t = Tree::new("kobj");
+        t.dir("/usr/lib/modules/6.12");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        let keys = |v: &Value| match v {
+            Value::Obj(o) => o.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        let boot = kernel_obj(&s, "6.12", None, Some(9), None, true, Some("6.12"));
+        assert_eq!(keys(&boot), ["version", "vmlinuz_bytes", "initrd_bytes", "config", "running", "modules_installed"]);
+        assert_eq!(boot.get("initrd_bytes"), Some(&Value::Null));
+        assert_eq!(boot.get("running"), Some(&Value::Bool(true)));
+        assert_eq!(boot.get("modules_installed"), Some(&Value::Bool(true)));
+        let ostree = kernel_obj(&s, "6.13", Some("/boot/ostree/x"), None, Some(3), false, Some("6.12"));
+        assert_eq!(keys(&ostree), ["version", "dir", "vmlinuz_bytes", "initrd_bytes", "config", "running", "modules_installed"]);
+        assert_eq!(ostree.get("running"), Some(&Value::Bool(false)));
+        assert_eq!(ostree.get("modules_installed"), Some(&Value::Bool(false)));
     }
 
     #[test]

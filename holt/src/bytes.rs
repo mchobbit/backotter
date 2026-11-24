@@ -530,6 +530,11 @@ const SHA256_K: [u32; 64] = [
 /// SHA-256 (FIPS 180-4), as `sha256sum` prints it: lower-case hex.  For a
 /// small file's fingerprint (a MOK certificate's), not for bulk data.
 pub fn sha256_hex(data: &[u8]) -> String {
+    hex(&sha256(data))
+}
+
+/// SHA-256 (FIPS 180-4) of DATA, the 32 bytes.
+pub fn sha256(data: &[u8]) -> [u8; 32] {
     let mut h: [u32; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
     let mut msg = data.to_vec();
     msg.push(0x80);
@@ -568,7 +573,11 @@ pub fn sha256_hex(data: &[u8]) -> String {
             *x = x.wrapping_add(y);
         }
     }
-    h.iter().map(|x| format!("{x:08x}")).collect()
+    let mut out = [0u8; 32];
+    for (o, x) in out.chunks_exact_mut(4).zip(h) {
+        o.copy_from_slice(&x.to_be_bytes());
+    }
+    out
 }
 
 #[cfg(test)]

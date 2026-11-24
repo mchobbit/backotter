@@ -372,6 +372,15 @@ our other guests have):
   --pbkdf-force-iterations`, as LUKS2's keyslot cost already was), not a
   count benchmarked in the rescuer: GRUB's cryptomount spends on it what it
   did on the source (since 2026-11-24; before, load gave LUKS1 no count).
+  So is the volume key digest's (the header's mkDigestIterations, the
+  dump's `mk_iterations`: 394795 on the guest): luksFormat sets it itself,
+  to 1000 whenever the keyslot's count is forced, and no option names it,
+  so load gives luksFormat a volume key of its own (`--volume-key-file`,
+  in its run directory) and then `bko-holt luks1-digest` sets the count
+  and a digest to match (PBKDF2-HMAC-SHA-256, the header's salt), checks
+  the key against the header first, and the key file goes (HoltTest1
+  glk3/glk4 found the 1000; SHA-256 headers only, another hash keeps
+  cryptsetup's count with a note).
 - **GRUB:** nothing to remake. `grubx64.efi`'s prefix names the volume
   (`(cryptouuid/HEX)/@/boot/grub`, HEX the LUKS UUID without dashes, read
   in the built guest's image), not a partition number, so

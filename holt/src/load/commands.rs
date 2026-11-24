@@ -1557,6 +1557,32 @@ impl Builder<'_> {
         }
         let version = s(&c, "version").unwrap_or("2".into());
         let mut a = vec!["cryptsetup".to_string(), "luksFormat".into(), "--batch-mode".into(), format!("--type=luks{version}")];
+        // LUKS1's volume key digest iterations, as the source's: luksFormat
+        // sets its own (1000 when the keyslot's count is forced, below), so
+        // load gives it a volume key of its own and then sets the count and
+        // the digest to match (`bko-holt luks1-digest`, load/luks1digest.rs),
+        // for SHA-256 headers.  (path, key bytes, iterations.)
+        let mut vk: Option<(String, u64, u64)> = None;
+        if version == "1" {
+            let mk = num(&c, "mk_iterations").filter(|&m| m >= 1000 && m <= u32::MAX as u64);
+            let bytes = num(&c, "key_bits").filter(|&k| k > 0 && k % 8 == 0 && k <= 4096).map(|k| k / 8);
+            match (mk, bytes, temp_key_name(&open_as)) {
+                (Some(m), Some(n), Some(t)) if s(&c, "hash").as_deref() == Some("sha256") => {
+                    let path = format!("{RUN_DIR}/keys/{t}.volume-key");
+                    out.push(Cmd::new(&["mkdir", "-p", "-m", "700", &format!("{RUN_DIR}/keys")]));
+                    out.push(Cmd::new(&["dd", "if=/dev/urandom", &format!("of={path}"), &format!("bs={n}"), "count=1", "status=none"]).why(format!(
+                        "LUKS1 on {dev}: a volume key for luksFormat, so that its digest can be made with the source's {m} iterations; removed once it is"
+                    )));
+                    a.push(format!("--volume-key-file={path}"));
+                    vk = Some((path, n, m));
+                }
+                (Some(m), _, _) => self.notes.push(format!(
+                    "LUKS1 on {dev}: its volume key digest gets cryptsetup's iterations, not the source's {m} (bko-holt sets them for a sha256 header only; this one's hash is {})",
+                    s(&c, "hash").unwrap_or("not recorded".into())
+                )),
+                _ => {}
+            }
+        }
         if version == "1" {
             if let Some(ci) = s(&c, "cipher") {
                 a.push(format!("--cipher={ci}"));
@@ -1672,6 +1698,11 @@ impl Builder<'_> {
         }
         a.push(dev.clone());
         out.push(Cmd { argv: a, why: Some(why), ..Cmd::default() });
+        if let Some((path, _, m)) = &vk {
+            let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
+            out.push(Cmd::new(&[exe.as_str(), "luks1-digest", dev.as_str(), path.as_str(), m.to_string().as_str()]).why(format!("LUKS1 on {dev}: the volume key digest with the source's {m} iterations (luksFormat's own count is 1000)")));
+            out.push(Cmd::new(&["rm", "-f", path]));
+        }
         let mut o = vec!["cryptsetup".to_string(), "open".into()];
         if let Some(k) = &key {
             o.push(format!("--key-file={k}"));
@@ -7030,17 +7061,45 @@ mod tests {
         let b = built_from(&j, &["--key-file", "cryptswap=/root/k"]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let asm = text(b.stage(Stage::Assemble));
+        let vk = format!("{RUN_DIR}/keys/cryptswap.volume-key");
         assert!(
-            asm.contains("cryptsetup luksFormat --batch-mode --type=luks1 --cipher=aes-xts-plain64 --key-size=512 --hash=sha256 --offset=4096 --pbkdf-force-iterations=6297752 --uuid=a8aa9f20-5064-4dfd-b286-07e35e0767b0 --key-file=/root/k /dev/vdb2\n"),
+            asm.contains(&format!("cryptsetup luksFormat --batch-mode --type=luks1 --volume-key-file={vk} --cipher=aes-xts-plain64 --key-size=512 --hash=sha256 --offset=4096 --pbkdf-force-iterations=6297752 --uuid=a8aa9f20-5064-4dfd-b286-07e35e0767b0 --key-file=/root/k /dev/vdb2\n")),
             "{asm}"
         );
         assert!(asm.contains("cryptsetup open --key-file=/root/k /dev/vdb2 cryptswap\n"), "{asm}");
+        // The volume key digest's iterations, the source's: a volume key of
+        // load's (64 bytes, the key's 512 bits), luksFormat, the digest made
+        // again, the key removed, then open.
+        let at = |needle: &str| asm.find(needle).unwrap_or_else(|| panic!("{needle} not in {asm}"));
+        let dd = at(&format!("dd if=/dev/urandom of={vk} bs=64 count=1 status=none\n"));
+        let fmt = at("cryptsetup luksFormat ");
+        let dig = at(&format!(" luks1-digest /dev/vdb2 {vk} 394795\n"));
+        let rm = at(&format!("rm -f {vk}\n"));
+        let open = at("cryptsetup open ");
+        assert!(dd < fmt && fmt < dig && dig < rm && rm < open, "{asm}");
         // No figure (an older dump), or 0: cryptsetup's benchmark, as before.
         for none in ["", r#", "keyslot_iterations": 0"#] {
             let b = built_from(&layout(none), &["--key-file", "cryptswap=/root/k"]);
             assert!(b.problems.is_empty(), "{:?}", b.problems);
             let asm = text(b.stage(Stage::Assemble));
             assert!(asm.contains("--type=luks1 ") && !asm.contains("--pbkdf-force-iterations"), "{asm}");
+            assert!(asm.contains(" luks1-digest /dev/vdb2 "), "{asm}");
+        }
+        // Another hash: cryptsetup's digest count, and a note says so; no
+        // mk_iterations (or under cryptsetup's least): nothing to set.
+        let sha1 = layout(r#", "keyslot_iterations": 6297752"#).replace(r#""hash": "sha256""#, r#""hash": "sha1""#);
+        let b = built_from(&sha1, &["--key-file", "cryptswap=/root/k"]);
+        let asm = text(b.stage(Stage::Assemble));
+        assert!(!asm.contains("luks1-digest") && !asm.contains("--volume-key-file"), "{asm}");
+        assert!(b.notes.iter().any(|n| n.contains("volume key digest gets cryptsetup's iterations, not the source's 394795") && n.contains("hash is sha1")), "{:?}", b.notes);
+        for mk in [r#", "mk_iterations": 394795"#] {
+            for to in ["", r#", "mk_iterations": 999"#] {
+                let j = layout(r#", "keyslot_iterations": 6297752"#).replace(mk, to);
+                let b = built_from(&j, &["--key-file", "cryptswap=/root/k"]);
+                let asm = text(b.stage(Stage::Assemble));
+                assert!(!asm.contains("luks1-digest") && !asm.contains("--volume-key-file") && !asm.contains("dd if="), "{asm}");
+                assert!(!b.notes.iter().any(|n| n.contains("volume key digest")), "{:?}", b.notes);
+            }
         }
     }
 

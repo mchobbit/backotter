@@ -21,6 +21,7 @@ pub mod fit;
 pub mod grubprefix;
 pub mod jsonout;
 pub mod layout;
+pub mod luks1digest;
 pub mod ostree;
 pub mod plan;
 pub mod qubes;

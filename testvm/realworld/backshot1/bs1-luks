@@ -60,14 +60,21 @@
 #      there, OPTIONS the ones in force (from the other cmdline.d files) and
 #      keyfile-timeout=WAITs; then moss boot sync, and the ESP's entries are
 #      checked.  A volume the booted system opens is S's.
+#   G  Guix System, whose GRUB opens /boot's LUKS volume before Linux, then
+#      its initrd again: a boot loader of BackShot1's in /etc/backshot1/
+#      luks.scm (system.scm applies it) writes EFI/Guix/grubx64.efi with a
+#      script that opens the volume with the drive's key (cryptomount -k),
+#      else asks, and an extra-initrd cpio with the key on the root, which
+#      each volume's #:key-file names; then guix system reconfigure (below,
+#      "Family G").
 #   Z  ZFSBootMenu, with ZFS native encryption and no LUKS: a load-key.d hook
 #      (bs1-unlock-key --zfs) and a boot-sel.d hook on the ESP, which
 #      zbm.hookroot= in VMLINUZ.EFI's embedded command line names (below,
 #      "Family Z").  ZFS encryption without ZFSBootMenu changes nothing and
 #      writes no record, as before: attended.
 #   A  attended: anything else (non-systemd dracut, mkinitfs, ostree), and
-#      any install whose GRUB reads /boot from a LUKS volume (it asks before
-#      Linux, whatever opens the volume after: lk_grub_luks).
+#      any install but Guix whose GRUB reads /boot from a LUKS volume (it
+#      asks before Linux, whatever opens the volume after: lk_grub_luks).
 #      Nothing changes; the record says why.
 # A volume that already unlocks with no one typing (a key file of its own,
 # TPM2, FIDO2) is left alone and recorded as own.
@@ -168,6 +175,8 @@ lk_generator() {
     if [[ -e /run/ostree-booted ]] || compgen -G '/usr/lib/kernel/*.initrd' >/dev/null; then echo prebuilt
     # NixOS builds its initrd with the system (bko-holt's dump names none).
     elif [[ -e /etc/NIXOS ]]; then echo nixos
+    # Guix System: its initrd is built with the system too (family G).
+    elif lk_is_guix; then echo guix
     elif command -v mkinitcpio >/dev/null; then echo mkinitcpio
     elif command -v dracut >/dev/null; then echo dracut
     elif command -v update-initramfs >/dev/null; then echo initramfs-tools
@@ -216,6 +225,8 @@ lk_remake() {
     # As adopt_nixos in bs1-adopt.  (bko-holt's restore runs nothing on a
     # NixOS UEFI system: it boots the initrd the backed-up ESP has.)
     nixos) nixos-rebuild switch ;;
+    # As adopt_guix: the system and its boot loader, from BackShot1's file.
+    guix) guix system reconfigure --allow-downgrades "$LK_GUIX_SYS" ;;
     *) return 1 ;;
     esac
 }
@@ -1027,6 +1038,10 @@ luks_adopt() {
         lk_nixos "$vols" "$fstype"
         return
     fi
+    if lk_is_guix; then
+        lk_guix "$vols" "$fstype"
+        return
+    fi
 
     gen=$(lk_generator)
     cmdline=$(cat "$LK_CMDLINE")
@@ -1743,6 +1758,402 @@ lk_nix_check() {
         fi
     done
     [[ $bad -eq 0 ]] && lk_say "  $initrd: ok"
+    [[ $bad -eq 0 ]]
+}
+
+# Family G, Guix System (docs/design/guix.md, "guix15-luks"): /boot and the
+# store are inside the LUKS volume, so GRUB opens it before Linux
+# (grub-install's GRUB_ENABLE_CRYPTODISK=y core image: `cryptomount -u
+# UUID`), and then the initrd opens it again (open-luks-device: a #:key-file
+# first, the prompt when that fails or there is none).  Both must take the
+# key with nobody typing:
+#   - GRUB: LK_GUIX_MOD, which /etc/backshot1/system.scm applies while it
+#     exists (bs1-adopt's adopt_guix), gives the configuration a boot loader
+#     inheriting grub-efi-bootloader whose installer runs Guix's own and then
+#     LK_GUIX_IMG_SH, which writes EFI/Guix/grubx64.efi again with the same
+#     GRUB's grub-mkimage: its embedded configuration starts normal mode on a
+#     memdisk script that looks for the drive by label, `cryptomount -k
+#     (DRIVE)/backshot1/keys/disk-passphrase -u UUID`, then Guix's own
+#     `cryptomount -u UUID` (the prompt, when the drive is missing or its key
+#     doesn't fit), records which in a GRUB environment block on the ESP
+#     (LK_GUIX_ENV, save_env), and reads Guix's grub.cfg from the prefix
+#     Guix's own image had.  Every reconfigure writes it again; the restore
+#     brings it back with the ESP (bko-holt load runs nothing in the chroot
+#     on Guix UEFI).
+#   - the initrd: `extra-initrd`, a cpio (LK_GUIX_CPIO, on the root, read
+#     by GRUB once the volume is open) holding LK_GUIX_KEYNAME, the same bytes
+#     as disk-passphrase, and each volume's #:key-file naming it.  The key is
+#     the passphrase's bytes, so the restore's new header (bko-holt load
+#     --key-file NAME=disk-passphrase: bs1-common's layout_keys) opens with it
+#     too: no keyslot of its own to keep.
+# Without the drive the passphrase is typed once, at GRUB.  UEFI GRUB
+# (grub-efi-bootloader) only; a volume the initrd doesn't open (Shepherd's,
+# after boot) is attended.
+LK_GUIX_SYS=$LUKS_DIR/system.scm
+LK_GUIX_CONF=/etc/config.scm
+LK_GUIX_MOD=$LUKS_DIR/luks.scm
+LK_GUIX_IMG_SH=$LUKS_DIR/grub-image
+LK_GUIX_CPIO=$LUKS_DIR/luks-key.cpio
+LK_GUIX_KEYNAME=/backshot1-luks.key
+LK_GUIX_IMG=EFI/Guix/grubx64.efi
+LK_GUIX_ENV=EFI/Guix/backshot1.env
+# The modules the image holds: what the memdisk script and the volume take
+# (normal's own dependencies come with it); grub.cfg's insmods load from the
+# prefix, the same GRUB's.
+LK_GUIX_GRUB_MODS="normal memdisk tar configfile echo test loadenv search search_label search_fs_uuid search_fs_file part_gpt part_msdos fat exfat ext2 xfs btrfs cryptodisk luks luks2 gcry_rijndael gcry_sha1 gcry_sha256 gcry_sha512 pbkdf2"
+
+# lk_is_guix: this is Guix System.
+lk_is_guix() { [[ -d ${LK_GUIX_PROFILES:-/var/guix/profiles} && -e ${LK_GUIX_CURRENT:-/run/current-system}/profile ]]; }
+
+# lk_guix_eval: /etc/config.scm's boot loader and mapped devices, as Guix
+# evaluates them: "bootloader NAME", "target DIR" for each target,
+# "extra-initrd FILE|-", then "md BOOT TYPE SOURCE TARGETS KEY-FILE" for each
+# mapped device (BOOT 1 when the initrd opens it, TYPE luks or other, SOURCE
+# its UUID or path, TARGETS comma-separated, KEY-FILE its #:key-file or -).
+lk_guix_eval() {
+    local f rc
+    f=$(mktemp --suffix=.scm) || return 1
+    cat >"$f" <<EOF
+(use-modules (gnu) (gnu system) (gnu system mapped-devices) (gnu system uuid)
+             (gnu bootloader) (ice-9 match))
+;; primitive-load: never a stale compiled copy from Guile's cache (bs1-adopt).
+(define os (primitive-load "$LK_GUIX_CONF"))
+(define boot (operating-system-boot-mapped-devices os))
+(define bl (operating-system-bootloader os))
+(define (key-file args)
+  (match args
+    ((#:key-file (? string? f) . _) f)
+    ((_ . rest) (key-file rest))
+    (_ "-")))
+(format #t "bootloader ~a~%" (bootloader-name (bootloader-configuration-bootloader bl)))
+(for-each (lambda (t) (format #t "target ~a~%" t)) (bootloader-configuration-targets bl))
+(format #t "extra-initrd ~a~%" (or (bootloader-configuration-extra-initrd bl) "-"))
+(for-each
+ (lambda (md)
+   (let ((src (mapped-device-source md)))
+     (format #t "md ~a ~a ~a ~a ~a~%"
+             (if (memq md boot) 1 0)
+             (if (eq? (mapped-device-type md) luks-device-mapping) "luks" "other")
+             (cond ((uuid? src) (uuid->string src)) ((string? src) src) (else "-"))
+             (string-join (mapped-device-targets md) ",")
+             (key-file (mapped-device-arguments md)))))
+ (operating-system-mapped-devices os))
+EOF
+    guix repl -q "$f"
+    rc=$?
+    rm -f "$f"
+    return $rc
+}
+
+# lk_guix_prefix IMAGE: the prefix Guix's grub-install gave IMAGE (a GRUB EFI
+# image: its "(cryptouuid/HEX)/PATH" string, NUL-terminated in the modules
+# section), or false.  On BackShot1's own image (LK_GUIX_IMG_SH's, after a
+# reconfigure) it is the memdisk script's "set prefix='...'": grub-mkimage
+# makes an image with a memdisk say "(memdisk)/boot/grub" whatever -p says.
+lk_guix_prefix() {
+    python3 - "$1" <<'PY'
+import re, sys
+b = open(sys.argv[1], "rb").read()
+m = re.search(rb"\(cryptouuid/[0-9a-f]+\)/[\x21-\x7e]*(?=\0)", b) or \
+    re.search(rb"(?<=\nset prefix=')\(cryptouuid/[0-9a-f]+\)/[\x21-\x26\x28-\x7e]*(?='\n)", b)
+if not m:
+    sys.exit(1)
+print(m.group(0).decode())
+PY
+}
+
+# lk_guix_cpio KEY OUT: a newc cpio holding KEY's bytes as LK_GUIX_KEYNAME
+# (mode 0400, root's, mtime 0), for the kernel to unpack beside the initrd's.
+lk_guix_cpio() {
+    python3 - "$1" "$2" "${LK_GUIX_KEYNAME#/}" <<'PY'
+import sys
+key, out, name = open(sys.argv[1], "rb").read(), sys.argv[2], sys.argv[3]
+def entry(ino, mode, name, data):
+    n = name.encode() + b"\0"
+    h = b"070701" + b"".join(b"%08X" % x for x in (ino, mode, 0, 0, 1, 0, len(data), 0, 0, 0, 0, len(n), 0))
+    b = h + n
+    b += b"\0" * (-len(b) % 4) + data
+    return b + b"\0" * (-len(b) % 4)
+blob = entry(1, 0o100400, name, key) + entry(0, 0, "TRAILER!!!", b"")
+open(out, "wb").write(blob + b"\0" * (-len(blob) % 512))
+PY
+}
+
+# lk_guix_env OUT: an empty GRUB environment block (1024 bytes), which
+# save_env fills in place.
+lk_guix_env() {
+    { printf '# GRUB Environment Block\n'; head -c 999 /dev/zero | tr '\0' '#'; } >"$1"
+}
+
+# lk_guix_image_sh PREFIX HEX...: LK_GUIX_IMG_SH's text, for the volumes
+# HEX... (LUKS UUIDs without dashes, as cryptomount -u and the prefix name
+# them), the drive LABEL=BACKUP_LABEL and the key at LK_PATH on it.
+lk_guix_image_sh() {
+    local prefix=$1 h opens='' saves=''
+    shift
+    for h in "$@"; do
+        opens+="set bs1_how_$h=typed
+if [ -n \"\$bs1_drive\" ]; then
+  if cryptomount -k \"(\$bs1_drive)$LK_PATH\" -u $h; then set bs1_how_$h=drive; fi
+fi
+cryptomount -u $h
+"
+        saves+=" bs1_how_$h"
+    done
+    cat <<EOF
+#!/bin/sh
+# BackShot1 (bs1-adopt): GRUB opens this system's LUKS volumes with the key
+# on the backup drive (LABEL=$BACKUP_LABEL, $LK_PATH), else asks.
+# TESTBED ONLY; bs1-adopt --luks-off removes it.  Run by the boot loader
+# installer of $LK_GUIX_MOD after Guix's own: grub-image GRUB ESP.
+set -eu
+grub=\$1 esp=\$2
+PATH=/run/current-system/profile/bin:/run/current-system/profile/sbin:\$PATH
+img=\$esp/$LK_GUIX_IMG env=\$esp/$LK_GUIX_ENV
+[ -f "\$img" ] || { echo "grub-image: no \$img" >&2; exit 1; }
+d=\$(mktemp -d)
+trap 'rm -rf "\$d"' EXIT
+cat >"\$d/backshot1.cfg" <<'CFG'
+# BackShot1 (bs1-adopt): the backup drive's key, else the prompt.  TESTBED ONLY.
+set bs1_drive=
+search --no-floppy --label --set=bs1_drive $BACKUP_LABEL
+${opens}save_env -f "\$cmdpath/${LK_GUIX_ENV##*/}"$saves
+set prefix='$prefix'
+configfile "\$prefix/grub.cfg"
+CFG
+printf 'normal (memdisk)/backshot1.cfg\n' >"\$d/embed.cfg"
+(cd "\$d" && tar -cf memdisk.tar backshot1.cfg)
+"\$grub/bin/grub-mkimage" -O x86_64-efi -d "\$grub/lib/grub/x86_64-efi" -p '$prefix' \\
+    -c "\$d/embed.cfg" -m "\$d/memdisk.tar" -o "\$d/grubx64.efi" $LK_GUIX_GRUB_MODS
+if [ ! -f "\$env" ]; then
+    { printf '# GRUB Environment Block\n'; head -c 999 /dev/zero | tr '\0' '#'; } >"\$env"
+fi
+cp "\$d/grubx64.efi" "\$img.bs1"
+mv -f "\$img.bs1" "\$img"
+sync
+EOF
+}
+
+# lk_guix_scm CPIO-ON-GRUB NAME...: LK_GUIX_MOD's text: a procedure from an
+# operating-system to the same with the boot loader above, extra-initrd
+# CPIO-ON-GRUB (the cpio's path as GRUB reads it on the store's file system)
+# and #:key-file LK_GUIX_KEYNAME on the LUKS mapped devices NAME... (each
+# file system's dependencies follow them).
+lk_guix_scm() {
+    local cpio=$1 n names=''
+    shift
+    for n in "$@"; do names+=" \"$n\""; done
+    cat <<EOF
+;; BackShot1 (bs1-adopt): this install's LUKS volumes unlock with the key on
+;; the backup drive, at GRUB and in the initrd.  TESTBED ONLY; bs1-adopt
+;; --luks-off removes this file.  $LK_GUIX_SYS applies it while it exists.
+(use-modules (gnu) (gnu bootloader) (gnu bootloader grub)
+             (gnu system mapped-devices) (gnu system file-systems)
+             (guix gexp) (srfi srfi-1))
+
+(define bs1-targets '(${names# }))
+
+;; Guix's GRUB, then $LK_GUIX_IMG_SH over EFI/Guix/grubx64.efi.
+(define bs1-grub-efi
+  (bootloader
+    (inherit grub-efi-bootloader)
+    (installer
+      #~(lambda (bootloader efi-dir mount-point)
+          (#\$(bootloader-installer grub-efi-bootloader) bootloader efi-dir mount-point)
+          (when efi-dir
+            (let ((esp (if (file-exists? (string-append mount-point efi-dir))
+                           (string-append mount-point efi-dir)
+                           efi-dir)))
+              (unless (zero? (system* "/bin/sh" "$LK_GUIX_IMG_SH" bootloader esp))
+                (error "BackShot1: $LK_GUIX_IMG_SH failed"))))))))
+
+(lambda (os)
+  (define (ours? md)
+    (and (eq? (mapped-device-type md) luks-device-mapping)
+         (any (lambda (t) (member t bs1-targets)) (mapped-device-targets md))))
+  (define new
+    (map (lambda (md)
+           (cons md (if (ours? md)
+                        (mapped-device
+                          (inherit md)
+                          (arguments (cons* #:key-file "$LK_GUIX_KEYNAME"
+                                            (mapped-device-arguments md))))
+                        md)))
+         (operating-system-mapped-devices os)))
+  (define (renew x) (or (assq-ref new x) x))
+  (operating-system
+    (inherit os)
+    (bootloader (bootloader-configuration
+                  (inherit (operating-system-bootloader os))
+                  (bootloader bs1-grub-efi)
+                  (extra-initrd "$cpio")))
+    (mapped-devices (map cdr new))
+    (file-systems (map (lambda (fs)
+                         (file-system
+                           (inherit fs)
+                           (dependencies (map renew (file-system-dependencies fs)))))
+                       (operating-system-file-systems os)))))
+EOF
+}
+
+# lk_put_bytes FILE MODE NEW: FILE made NEW's bytes, unless they are already
+# (MODE a new file's, - for none: the ESP's FAT).
+lk_put_bytes() {
+    local new=no
+    cmp -s "$1" "$3" && return 0
+    lk_save "$1" || return 1
+    mkdir -p "$(dirname "$1")" || return 1
+    [[ -e $1 ]] || new=yes
+    cat "$3" >"$1" || return 1
+    [[ $new == no || $2 == - ]] || chmod "$2" "$1"
+    LK_CHANGED=$((LK_CHANGED + 1))
+    lk_say "wrote $1"
+}
+
+# lk_guix_volsrc DIR: the device DIR's file system is on, without a Btrfs
+# subvolume's [/PATH].
+lk_guix_volsrc() { local s; s=$(findmnt -nro SOURCE -T "$1" 2>/dev/null | head -n 1); echo "${s%%\[*}"; }
+
+# lk_guix VOLS FSTYPE: luks_adopt's Guix System part, VOLS lk_luks_volumes's lines.
+lk_guix() {
+    local vols=$1 fstype=$2 cfg dev uuid name line kind boot type src tgt kf found bl='' extra='' esp='' img prefix
+    local family=G reason='' rootsrc storesrc fsroot cpio_grub hexes=() names=() gvols g h tmp
+    local vol_list=() own_list=() unhandled=()
+    [[ -s $LK_GUIX_SYS ]] || { lk_err "no $LK_GUIX_SYS: run all of bs1-adopt, not its LUKS step alone"; return 1; }
+    grep -qF "$LK_GUIX_MOD" "$LK_GUIX_SYS" || { lk_err "$LK_GUIX_SYS doesn't apply $LK_GUIX_MOD: run all of bs1-adopt, not its LUKS step alone"; return 1; }
+    if ! cfg=$(lk_guix_eval); then
+        lk_err "can't evaluate $LK_GUIX_CONF (guix repl)"
+        return 1
+    fi
+    while read -r kind line; do
+        case $kind in
+        bootloader) bl=$line ;;
+        target) [[ -n $esp ]] || esp=$line ;;
+        extra-initrd) extra=$line ;;
+        esac
+    done <<<"$cfg"
+    [[ $bl == grub-efi ]] || unhandled+=("the boot loader is ${bl:-unknown}, not grub-efi-bootloader (family G writes UEFI GRUB's image)")
+    [[ $extra == - ]] || unhandled+=("$LK_GUIX_CONF has an extra-initrd of its own ($extra)")
+    # The volumes GRUB opens: those /boot/grub and the store are on.
+    gvols=$( { lsblk -snlo NAME "$(lk_guix_volsrc /boot/grub)"; lsblk -snlo NAME "$(lk_guix_volsrc /gnu/store)"; } 2>/dev/null | LC_ALL=C sort -u)
+    while read -r dev uuid name; do
+        if [[ $name == - ]]; then unhandled+=("$dev isn't open, so it isn't in the backup"); continue; fi
+        found=
+        while read -r kind boot type src tgt kf; do
+            [[ $kind == md ]] || continue
+            if [[ ,$tgt, == *,"$name",* ]]; then found=yes; break; fi
+        done <<<"$cfg"
+        if [[ -z $found ]]; then unhandled+=("$name isn't one of $LK_GUIX_CONF's mapped-devices"); continue; fi
+        if [[ $type != luks ]]; then unhandled+=("$name isn't a luks-device-mapping in $LK_GUIX_CONF"); continue; fi
+        if [[ $kf != - && $kf != "$LK_GUIX_KEYNAME" ]]; then own_list+=("$name:$uuid"); continue; fi
+        if [[ $boot != 1 ]]; then unhandled+=("$name is opened after the initrd (no file system needed for boot is on it): its prompt is Shepherd's"); continue; fi
+        [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || { unhandled+=("$name has characters $LK_GUIX_MOD can't take"); continue; }
+        vol_list+=("$name:$uuid:G")
+        names+=("$name")
+        grep -qxF "$name" <<<"$gvols" && hexes+=("${uuid//-/}")
+    done <<<"$vols"
+    if [[ ${#vol_list[@]} -gt 0 ]]; then
+        # GRUB opens what /boot/grub and the store are on: each must be ours.
+        while read -r g; do
+            [[ -n $g ]] || continue
+            grep -qxF "$g" <<<"$(lsblk -lno NAME,TYPE 2>/dev/null | awk '$2 == "crypt" { print $1 }')" || continue
+            printf '%s\n' "${names[@]}" | grep -qxF "$g" || unhandled+=("GRUB opens $g, which isn't one of the volumes family G unlocks")
+        done <<<"$gvols"
+        [[ ${#hexes[@]} -gt 0 ]] || unhandled+=("neither /boot/grub nor the store is on a LUKS volume: GRUB opens none (family G is for GRUB inside LUKS)")
+        # The image Guix's grub-install wrote, and its prefix (the volume's
+        # UUID and /boot/grub's path in its file system).
+        img=$esp/$LK_GUIX_IMG
+        if [[ -z $esp || ! -f $img ]]; then unhandled+=("no $LK_GUIX_IMG on the boot loader's target ${esp:-?}")
+        elif ! prefix=$(lk_guix_prefix "$img"); then unhandled+=("$img has no (cryptouuid/...) prefix: GRUB doesn't read /boot/grub from a LUKS volume")
+        elif [[ ! ${prefix#(cryptouuid/} =~ ^[0-9a-f]+\)/[A-Za-z0-9@._/-]+$ ]]; then unhandled+=("$img's prefix $prefix has characters the image script can't take")
+        fi
+        # extra-initrd is read by GRUB from the store's file system (the
+        # menu entry's search), so the cpio must be on it, under /'s path there.
+        rootsrc=$(lk_guix_volsrc /) storesrc=$(lk_guix_volsrc /gnu/store)
+        fsroot=$(findmnt -nro FSROOT -T / 2>/dev/null | head -n 1)
+        if [[ -z $rootsrc || $rootsrc != "$storesrc" ]]; then unhandled+=("/ and the store aren't on one file system (${rootsrc:-?}, ${storesrc:-?}): GRUB reads extra-initrd from the store's")
+        elif [[ ! $fsroot =~ ^/[A-Za-z0-9@._/-]*$ ]]; then unhandled+=("/'s path in its file system, $fsroot, has characters $LK_GUIX_MOD can't take")
+        fi
+        cpio_grub=${fsroot%/}$LK_GUIX_CPIO
+    fi
+    if [[ ${#unhandled[@]} -gt 0 ]]; then
+        family=A reason=$(printf '%s\n' "${unhandled[@]}" | awk '!seen[$0]++' | paste -s -d ';' - | sed 's/;/; /g')
+    elif [[ ${#vol_list[@]} -eq 0 ]]; then
+        family=own
+    fi
+
+    mkdir -p "$LUKS_DIR"
+    if [[ $family == A || $family == own ]]; then
+        [[ $family == own ]] && reason="every LUKS volume unlocks with no one typing"
+        lk_say "$family: $reason; nothing else changes"
+        lk_put "$LUKS_REC" 644 "$(lk_record "$family" guix "$fstype" "" "${own_list[*]}" "$reason")" || return 1
+        return 0
+    fi
+    lk_say "family G (Guix: GRUB and the initrd): ${vol_list[*]}${own_list:+; own: ${own_list[*]}}"
+    lk_put "$LUKS_REC" 644 "$(lk_record G guix "$fstype" "${vol_list[*]}" "${own_list[*]}" "")
+esp=$(lk_q "$esp")" || return 1
+    tmp=$(mktemp -d) || return 1
+    # The environment block only when it's missing: GRUB writes it at each boot.
+    if ! lk_guix_cpio "$LK_KEY" "$tmp/cpio" || ! lk_put_bytes "$LK_GUIX_CPIO" 600 "$tmp/cpio" ||
+       { [[ ! -f $esp/$LK_GUIX_ENV ]] && { ! lk_guix_env "$tmp/env" || ! lk_put_bytes "$esp/$LK_GUIX_ENV" - "$tmp/env"; }; }; then
+        rm -rf "$tmp"
+        lk_err "couldn't write $LK_GUIX_CPIO or $esp/$LK_GUIX_ENV; putting everything back"
+        luks_off
+        return 1
+    fi
+    rm -rf "$tmp"
+    chmod 600 "$LK_GUIX_CPIO"
+    lk_put "$LK_GUIX_IMG_SH" 755 "$(lk_guix_image_sh "$prefix" "${hexes[@]}")" || return 1
+    lk_put "$LK_GUIX_MOD" 644 "$(lk_guix_scm "$cpio_grub" "${names[@]}")" || return 1
+    if [[ $LK_CHANGED -eq 0 ]] && lk_guix_check "$esp" "$cpio_grub" "${hexes[@]}" >/dev/null 2>&1; then
+        lk_say "unchanged; the initramfs isn't remade"
+        return 0
+    fi
+    lk_say "reconfiguring this Guix System ($LK_GUIX_SYS)"
+    if lk_remake guix && lk_guix_check "$esp" "$cpio_grub" "${hexes[@]}"; then
+        lk_say "done: reboot once with the drive plugged in, nothing typed, before the next backup (preflight wants a boot the drive unlocked)"
+        return 0
+    fi
+    lk_err "the reconfigure failed, or what it made lacks what unlocking from the drive needs; putting everything back"
+    luks_off
+    return 1
+}
+
+# lk_guix_check ESP CPIO-ON-GRUB HEX...: what the reconfigure made unlocks
+# from the drive: the ESP's image is BackShot1's for these volumes, every
+# grub.cfg menu entry's initrd line has the cpio, the cpio holds the key, and
+# the running system's initrd opens with LK_GUIX_KEYNAME.
+lk_guix_check() {
+    local esp=$1 cpio=$2 h bad=0 initrd
+    shift 2
+    python3 - "$esp/$LK_GUIX_IMG" "$BACKUP_LABEL" "$LK_PATH" "$@" <<'PY' || bad=1
+import sys
+img, label, path, hexes = open(sys.argv[1], "rb").read(), sys.argv[2], sys.argv[3], sys.argv[4:]
+want = [b"BackShot1 (bs1-adopt): the backup drive's key", ("--label --set=bs1_drive " + label).encode(), path.encode()]
+want += [("cryptomount -u " + h).encode() for h in hexes]
+miss = [w.decode() for w in want if w not in img]
+if miss:
+    print("bs1-adopt: " + sys.argv[1] + " isn't BackShot1's image for these volumes (no " + "; ".join(miss) + ")", file=sys.stderr)
+    sys.exit(1)
+PY
+    if ! awk -v c="$cpio" '$1 == "initrd" { n++; if (index($0, " " c " ")) k++ } END { exit !(n && n == k) }' /boot/grub/grub.cfg 2>/dev/null; then
+        lk_err "/boot/grub/grub.cfg's initrd lines don't all have $cpio"; bad=1
+    fi
+    python3 - "$LK_GUIX_CPIO" "${LK_GUIX_KEYNAME#/}" "$LK_KEY" <<'PY' || { lk_err "$LK_GUIX_CPIO doesn't hold the drive's key as $LK_GUIX_KEYNAME"; bad=1; }
+import sys
+b, name, key = open(sys.argv[1], "rb").read(), sys.argv[2].encode(), open(sys.argv[3], "rb").read()
+n, size = int(b[94:102], 16), int(b[54:62], 16)
+off = 110 + n
+off += -off % 4
+sys.exit(not (b[:6] == b"070701" and b[110:110 + n - 1] == name and b[off:off + size] == key))
+PY
+    initrd=$(readlink -f /run/current-system/initrd)
+    # grep -c, not -q: -q stops at the first match, gzip then dies of SIGPIPE,
+    # and pipefail (bs1-common) fails the test though the name is there.
+    if [[ $(gzip -dc "$initrd" 2>/dev/null | grep -acF "$LK_GUIX_KEYNAME") -eq 0 ]]; then
+        lk_err "the running system's initrd ($initrd) doesn't name $LK_GUIX_KEYNAME: it doesn't open the volume with the key"; bad=1
+    fi
+    [[ $bad -eq 0 ]] && lk_say "  $esp/$LK_GUIX_IMG, grub.cfg, $LK_GUIX_CPIO, $initrd: ok"
     [[ $bad -eq 0 ]]
 }
 

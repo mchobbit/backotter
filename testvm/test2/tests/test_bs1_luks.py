@@ -2749,6 +2749,179 @@ class AdoptSdbootutil(Tmp):
         self.assertEqual(self.calls("sdbootutil"), [])
 
 
+GUIX_UUID = "a8aa9f20-5064-4dfd-b286-07e35e0767b0"
+GUIX_HEX = GUIX_UUID.replace("-", "")
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class EvidenceGuix(GrubFakes):
+    """Family G (Guix System): GRUB itself opens /boot's volume, with the
+    drive's key by BackShot1's script, which writes how into the ESP's
+    environment block; unlock_mode takes that, not GRUB's prompt."""
+
+    def setUp(self):
+        super().setUp()
+        self.findmnt()
+        self.grub_on("/dev/mapper/cryptroot[/@]")
+        (self.lsblk / "cryptroot").write_text("cryptroot\nvda3\nvda\n")
+        (self.t / "etc/default/grub").unlink()
+        self.esp = self.t / "esp"
+        (self.esp / "EFI/Guix").mkdir(parents=True)
+        self.rec = self.t / "luks-unlock"
+        self.rec.write_text(f"family=G\ngenerator=guix\nvolumes='cryptroot:{GUIX_UUID}:G'\nown=''\nreason=''\nesp='{self.esp}'\n")
+
+    def env_block(self, *lines):
+        b = ("# GRUB Environment Block\n" + "".join(l + "\n" for l in lines)).encode()
+        (self.esp / "EFI/Guix/backshot1.env").write_bytes(b + b"#" * (1024 - len(b)))
+
+    def mode(self):
+        lib = functions(BS1 / "bs1-common", "luks_rec", "unlock_how", "grub_luks_boot", "grub_luks_reason", "unlock_mode")
+        script = (f'LUKS_REC="{self.rec}" UNLOCK_MARK="{self.t}/mark" GUIX_UNLOCK_ENV=EFI/Guix/backshot1.env {self.grub_vars()}\n{lib}\n'
+                  'luks_names() { printf "%s" cryptroot; }\nzfs_passphrase_roots() { :; }\nunlock_mode vda')
+        r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_drive(self):
+        self.env_block(f"bs1_how_{GUIX_HEX}=drive")
+        out = self.mode()
+        self.assertTrue(out.startswith("drive: the backup drive's key opened every typed volume at this boot (family G)"), out)
+        self.assertEqual(out.splitlines()[1:], ["  cryptroot drive"])
+
+    def test_typed_or_no_block(self):
+        self.env_block(f"bs1_how_{GUIX_HEX}=typed")
+        out = self.mode()
+        self.assertTrue(out.startswith("attended: cryptroot was typed at this boot"), out)
+        self.assertEqual(out.splitlines()[1:], ["  cryptroot typed"])
+        (self.esp / "EFI/Guix/backshot1.env").unlink()
+        self.assertEqual(self.mode().splitlines()[1:], ["  cryptroot typed"])
+        # Another volume's word doesn't count.
+        self.env_block("bs1_how_00000000000040008000000000000000=drive")
+        self.assertEqual(self.mode().splitlines()[1:], ["  cryptroot typed"])
+
+    def test_other_families_keep_grubs_prompt(self):
+        # The same GRUB with a record of another family: attended, as before.
+        self.env_block(f"bs1_how_{GUIX_HEX}=drive")
+        self.rec.write_text(self.rec.read_text().replace("family=G", "family=own"))
+        self.assertTrue(self.mode().startswith("attended: GRUB asks for the passphrase of cryptroot before Linux"))
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class GuixPieces(Tmp):
+    """Family G's pieces: the initrd's key cpio, the ESP's environment block,
+    the prefix read from Guix's image, the image script (run with a fake
+    grub-mkimage) and the configuration module."""
+
+    def sh(self, expr, rc=0):
+        script = f'here="{BS1}"; . "{BS1}/bs1-luks"\nBACKUP_LABEL=mybig512 LK_PATH=/backshot1/keys/disk-passphrase\n{expr}'
+        r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, rc, r.stderr + r.stdout)
+        return r.stdout
+
+    def test_cpio_holds_the_key(self):
+        key = self.t / "key"
+        key.write_bytes(b"Pass1234word")
+        self.sh(f'lk_guix_cpio "{key}" "{self.t}/k.cpio"')
+        b = (self.t / "k.cpio").read_bytes()
+        self.assertEqual(len(b) % 512, 0)
+        self.assertEqual(b[:6], b"070701")
+        n, size, mode = int(b[94:102], 16), int(b[54:62], 16), int(b[14:22], 16)
+        self.assertEqual(b[110:110 + n], b"backshot1-luks.key\0")
+        off = 110 + n + (-(110 + n) % 4)
+        self.assertEqual((b[off:off + size], mode), (b"Pass1234word", 0o100400))
+        self.assertIn(b"TRAILER!!!\0", b)
+        if shutil.which("cpio"):
+            r = subprocess.run(["cpio", "-it"], input=b, capture_output=True)
+            self.assertEqual(r.stdout.split(), [b"backshot1-luks.key"], r.stderr)
+
+    def test_env_block(self):
+        self.sh(f'lk_guix_env "{self.t}/e"')
+        b = (self.t / "e").read_bytes()
+        self.assertEqual(len(b), 1024)
+        self.assertTrue(b.startswith(b"# GRUB Environment Block\n#") and set(b[25:]) == {ord("#")})
+
+    def test_prefix(self):
+        img = self.t / "grubx64.efi"
+        img.write_bytes(b"MZ\0junk cryptomount -u " + GUIX_UUID.encode() + b"\0(cryptouuid/" + GUIX_HEX.encode() + b")/@/boot/grub\0\0tail")
+        self.assertEqual(self.sh(f'lk_guix_prefix "{img}"'), f"(cryptouuid/{GUIX_HEX})/@/boot/grub\n")
+        img.write_bytes(b"MZ\0(,gpt3)/boot/grub\0")
+        self.sh(f'lk_guix_prefix "{img}"', rc=1)
+        # BackShot1's own image: the memdisk script's line, its prefix module
+        # "(memdisk)/boot/grub" (and cryptodisk.mod's bare "cryptouuid/").
+        img.write_bytes(b"MZ\0cryptouuid/\0(memdisk)/boot/grub\0x\nset prefix='(cryptouuid/" + GUIX_HEX.encode() + b")/@/boot/grub'\nconfigfile")
+        self.assertEqual(self.sh(f'lk_guix_prefix "{img}"'), f"(cryptouuid/{GUIX_HEX})/@/boot/grub\n")
+        img.write_bytes(b"MZ\0(memdisk)/boot/grub\0")
+        self.sh(f'lk_guix_prefix "{img}"', rc=1)
+
+    def test_image_script(self):
+        prefix = f"(cryptouuid/{GUIX_HEX})/@/boot/grub"
+        text = self.sh(f'lk_guix_image_sh "{prefix}" {GUIX_HEX}')
+        (self.t / "grub-image").write_text(text)
+        self.assertEqual(subprocess.run(["sh", "-n", str(self.t / "grub-image")]).returncode, 0)
+        # A fake GRUB whose grub-mkimage puts its arguments, the embedded
+        # configuration and the memdisk's script into the "image".
+        grub = self.t / "grub"
+        (grub / "bin").mkdir(parents=True)
+        exe(grub / "bin/grub-mkimage", textwrap.dedent("""\
+            #!/bin/sh
+            o= c= m=; args="$*"
+            while [ $# -gt 0 ]; do case $1 in -o) o=$2; shift ;; -c) c=$2; shift ;; -m) m=$2; shift ;; esac; shift; done
+            { echo "ARGS $args"; cat "$c"; tar -xOf "$m" backshot1.cfg; } >"$o"
+            """))
+        esp = self.t / "esp"
+        (esp / "EFI/Guix").mkdir(parents=True)
+        (esp / "EFI/Guix/grubx64.efi").write_bytes(b"Guix's own")
+        r = subprocess.run(["sh", str(self.t / "grub-image"), str(grub), str(esp)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        img = (esp / "EFI/Guix/grubx64.efi").read_text()
+        self.assertIn(f"-p {prefix} ", img)
+        self.assertIn("-O x86_64-efi", img)
+        for mod in ("normal", "memdisk", "loadenv", "cryptodisk", "luks", "luks2", "xfs", "ext2", "search_label"):
+            self.assertIn(f" {mod} ", img + " ", mod)
+        self.assertIn("normal (memdisk)/backshot1.cfg\n", img)
+        cfg = img.split("normal (memdisk)/backshot1.cfg\n", 1)[1]
+        self.assertEqual(cfg.splitlines(), [
+            "# BackShot1 (bs1-adopt): the backup drive's key, else the prompt.  TESTBED ONLY.",
+            "set bs1_drive=",
+            "search --no-floppy --label --set=bs1_drive mybig512",
+            f"set bs1_how_{GUIX_HEX}=typed",
+            'if [ -n "$bs1_drive" ]; then',
+            f'  if cryptomount -k "($bs1_drive)/backshot1/keys/disk-passphrase" -u {GUIX_HEX}; then set bs1_how_{GUIX_HEX}=drive; fi',
+            "fi",
+            f"cryptomount -u {GUIX_HEX}",
+            f'save_env -f "$cmdpath/backshot1.env" bs1_how_{GUIX_HEX}',
+            # grub-mkimage's -p gives way to "(memdisk)/boot/grub" in an
+            # image with a memdisk (GRUB 2.12): the script sets the real one,
+            # which also makes normal read its module lists from it.
+            f"set prefix='{prefix}'",
+            'configfile "$prefix/grub.cfg"',
+        ])
+        # The second bs1-adopt reads the prefix back from this image.
+        (self.t / "ours.efi").write_bytes(b"MZ\0(memdisk)/boot/grub\0cryptouuid/\0" + img.encode())
+        self.assertEqual(self.sh(f'lk_guix_prefix "{self.t / "ours.efi"}"'), prefix + "\n")
+        env = (esp / "EFI/Guix/backshot1.env").read_bytes()
+        self.assertEqual((len(env), env[:24]), (1024, b"# GRUB Environment Block"))
+        # A second run keeps the block GRUB has written.
+        (esp / "EFI/Guix/backshot1.env").write_bytes(b"# GRUB Environment Block\nbs1_how_x=drive\n".ljust(1024, b"#"))
+        subprocess.run(["sh", str(self.t / "grub-image"), str(grub), str(esp)], check=True, capture_output=True)
+        self.assertIn(b"bs1_how_x=drive", (esp / "EFI/Guix/backshot1.env").read_bytes())
+        self.assertFalse((esp / "EFI/Guix/grubx64.efi.bs1").exists())
+        # No image to replace: it fails, and writes nothing.
+        (esp / "EFI/Guix/grubx64.efi").unlink()
+        self.assertNotEqual(subprocess.run(["sh", str(self.t / "grub-image"), str(grub), str(esp)], capture_output=True).returncode, 0)
+        self.assertFalse((esp / "EFI/Guix/grubx64.efi").exists())
+
+    def test_module(self):
+        scm = self.sh('lk_guix_scm /@/etc/backshot1/luks-key.cpio cryptroot crypthome')
+        self.assertIn("(define bs1-targets '(\"cryptroot\" \"crypthome\"))", scm)
+        self.assertIn('(extra-initrd "/@/etc/backshot1/luks-key.cpio")', scm)
+        self.assertIn('(arguments (cons* #:key-file "/backshot1-luks.key"', scm)
+        self.assertIn('(system* "/bin/sh" "/etc/backshot1/grub-image" bootloader esp)', scm)
+        self.assertIn("(#$(bootloader-installer grub-efi-bootloader) bootloader efi-dir mount-point)", scm)
+        code = "\n".join(l.split(";;")[0] for l in scm.splitlines())
+        self.assertEqual(code.count("("), code.count(")"))
+
+
 # pe()'s own source, for the fake objcopy.
 import inspect  # noqa: E402
 PE_SRC = "import struct\n" + inspect.getsource(pe)

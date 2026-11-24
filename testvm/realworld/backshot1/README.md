@@ -825,7 +825,8 @@ How depends on what opens the volume:
 | N | NixOS (systemd or scripted stage 1) | `/etc/nixos/backshot1-luks.nix`, imported by `backshot1.nix` while it exists, sets each typed `boot.initrd.luks.devices` volume's `keyFile`: systemd stage 1 the same `PATH:LABEL=` form and `keyFileTimeout = 30`; scripted stage 1 a copy its `preOpenCommands` take off the drive (mounted read-only, `norecovery` for xfs), with `fallbackToPassword`; then `nixos-rebuild switch` |
 | B | AerynOS: systemd in the initramfs that comes prebuilt with the kernel (it reads no crypttab of the system's), the kernel command line written by blsforme from `/etc/kernel/cmdline.d` | `/etc/kernel/cmdline.d/90-backshot1-luks.cmdline` gives each volume the initramfs opens `rd.luks.uuid=UUID rd.luks.key=UUID=/backshot1/keys/disk-passphrase:LABEL=mybig512 rd.luks.options=UUID=OPTIONS,keyfile-timeout=30s`, OPTIONS those the other `cmdline.d` files already give it (one `rd.luks.options=` for the volume, since the last wins); then `moss boot sync`, and every boot entry on the ESP must carry the key and those options as the last of each; a volume the booted system opens is S's |
 | Z | ZFSBootMenu with ZFS native encryption (passphrase) and no LUKS: `void-zbm-enc`, the ZFSBootMenu guide's install | ZFSBootMenu hooks on the ESP in `EFI/ZBM/backshot1/` (a `load-key.d` hook made from `bs1-unlock-key --zfs`, and a `boot-sel.d` hook), named by `zbm.hookroot=UUID=ESP//EFI/ZBM/backshot1 zbm.wait_for=UUID=ESP` added to `EFI/ZBM/VMLINUZ.EFI`'s embedded command line (below) |
-| A | non-systemd dracut, Alpine's mkinitfs, ostree; ZFS native encryption not booted by ZFSBootMenu (no record is written for it); GRUB reading /boot from LUKS, whatever the initramfs is (below) | nothing: the run is attended |
+| G | Guix System: GRUB opens /boot's and the store's LUKS1 volume, then the initrd opens it again (`guix15-luks`, Guix's installer's encrypted layout) | `/etc/backshot1/luks.scm`, applied by adopt's `system.scm` while it exists: a boot loader inheriting `grub-efi-bootloader` that writes `EFI/Guix/grubx64.efi` again with BackShot1's script (`cryptomount -k` with the drive's key, else the prompt), `extra-initrd` with the key in a cpio and each volume's `#:key-file`; then `guix system reconfigure` (below) |
+| A | non-systemd dracut, Alpine's mkinitfs, ostree; ZFS native encryption not booted by ZFSBootMenu (no record is written for it); GRUB reading /boot from LUKS, whatever the initramfs is, but on Guix System (G; below) | nothing: the run is attended |
 
 A volume that already opens with no one typing (a key file of its own in the
 initramfs, TPM2, FIDO2; on B an `rd.luks.key=` of its own in another
@@ -971,6 +972,39 @@ and keeps `/etc/backshot1` when a file can't be put back.  ZFS native
 encryption without ZFSBootMenu (the initramfs's own ZFS code asks) is
 attended, as before, and adopt writes no record for it.
 
+**G, Guix System** (docs/design/guix.md, "guix15-luks"): /boot and the
+store are inside the LUKS1 volume, so Guix's GRUB asks first and the initrd
+asks again.  Adopt:
+
+- writes `/etc/backshot1/luks.scm`, a procedure `system.scm` applies to the
+  configuration while the file exists: its boot loader inherits
+  `grub-efi-bootloader`, runs Guix's own installer and then
+  `/etc/backshot1/grub-image`, which writes `EFI/Guix/grubx64.efi` again
+  with the same GRUB's `grub-mkimage`: a memdisk script that searches for
+  the drive by label, `cryptomount -k (DRIVE)/backshot1/keys/disk-passphrase
+  -u UUID`, else `cryptomount -u UUID` (the prompt), records which in
+  `EFI/Guix/backshot1.env` (`save_env`: what `bs1-verify --unlock` reads),
+  sets the prefix to the one Guix's image had (`(cryptouuid/HEX)/@/boot/grub`:
+  an image with a memdisk says `(memdisk)/boot/grub` whatever `-p` says)
+  and reads Guix's `grub.cfg`;
+- puts the drive's key in `/etc/backshot1/luks-key.cpio` (mode 600), which
+  `extra-initrd` names, and gives each volume `#:key-file
+  "/backshot1-luks.key"`, so the initrd opens it with no prompt once GRUB
+  has (by the drive or typed);
+- reconfigures with root's own `guix` (the one `guix pull` updates, before
+  the system profile's: bs1-common), and checks the image, every
+  `grub.cfg` initrd line, the cpio and the running system's initrd.
+
+Without the drive the passphrase is typed once, at GRUB.  The restore
+brings the image back with the ESP and the cpio with /, and the new LUKS1
+header (made with `--key-file cryptroot=disk-passphrase`) opens with the
+same bytes, so nothing needs adopting again.  `system.scm` and the LUKS
+step load `/etc/config.scm` with `primitive-load`, never `load`, which
+takes a compiled copy from Guile's cache that another Guix may have made
+("record ABI mismatch").  A volume the initrd doesn't open, a boot loader
+other than `grub-efi-bootloader`, an `extra-initrd` of the configuration's
+own, or / and the store on different file systems are family A.
+
 **GRUB with /boot inside LUKS** (`GRUB_ENABLE_CRYPTODISK=y`, no separate
 unencrypted /boot: Manjaro's installer puts /boot on the LUKS1 root,
 2026-11-20).  GRUB itself asks for that volume's passphrase before Linux
@@ -1113,7 +1147,12 @@ asks (`gentoo-systemd`, `chimera-uefi`), and `--luks-off` checks that
 `bs1-adopt --luks-off` puts every file back.  A ZFS guest's `zfs-passphrase`
 counts too: family Z (`void-zbm-enc`) runs the same boots with
 `--luks-typed` (ZFSBootMenu asks at the source's first boot), and the files
-compared include the ESP's `EFI/ZBM`.
+compared include the ESP's `EFI/ZBM`.  Family G (`guix15-luks`, `--virtio --luks-typed`:
+Guix's GRUB asks at the source's first boot) too: OVMF connects only the
+devices QEMU's bootorder names, so on a boot that gives the internal disk
+a bootindex the drive gets the last one, as a laptop's firmware connects
+its USB disks; a boot by the NVRAM's entry has no bootindex and OVMF
+connects everything.
 
 Passed on 2026-11-09: Ubuntu 26.04 and Fedora 44 (UEFI), Devuan 6 (OpenRC, and
 `bs1-adopt` alone on plain sysvinit), Alpine 3.24, Artix (dinit and s6), Void
@@ -1138,7 +1177,12 @@ through `dracut-rebuild`, the source booted by the firmware's own entry for
 its fallback loader; on both hosts) and BigLinux (`biglinux`, `--virtio`,
 btrfs with Timeshift's snapshot left out and systemd-swap's `@swapfile`,
 booted by the `BigLinux` NVRAM entry a Calamares install leaves; on both
-hosts).
+hosts).  On 2026-11-24, Guix's encrypted layout (`guix15-luks`,
+family G, `--virtio --luks-typed`) on Cinqcent, run
+`guix-20261124-154640`: every boot with the drive was opened by GRUB with
+the drive's key and the initrd with the cpio's, nothing typed
+(`UNLOCK=drive`, the source's and the restored system's), and without the
+drive GRUB asked once.
 
 Every rehearsal also runs the preflight, and checks that the snapshot is named
 `/mnt/bs1-src` and keeps a file's real access time.  On an ostree guest

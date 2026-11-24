@@ -440,8 +440,11 @@ NIXOS_REMADE = ["etc/*", "bin/sh", "usr/bin/env"]
 # runtime state (udev's database, the setuid and privileged program links,
 # current-system, PID files) is on the root filesystem, so in the backup,
 # and each boot writes it again; nscd's caches too (guix-20261114-114854).
+# A LUKS install that unlocks from the drive (bs1-luks, family G): BackShot1's
+# GRUB script writes how it opened each volume into its environment block on
+# the ESP at every boot.
 GUIX_EXPECTED = ["etc/group", "etc/passwd", "etc/shadow", "etc/.pwd.lock", "var/guix/db/*", "var/guix/gcroots/*", "var/guix/temproots/*",
-                 "run/*", "var/run/*", "var/db/nscd/*"]
+                 "run/*", "var/run/*", "var/db/nscd/*", "boot/efi/EFI/Guix/backshot1.env"]
 GUIX_REMADE = ["etc/*", "bin/sh", "usr/bin/env"]
 
 # A store system's lists, by what compare() finds in the baseline.

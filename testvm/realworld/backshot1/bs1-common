@@ -6,6 +6,14 @@
 set -uo pipefail
 # Then NixOS's two, and Guix System's three: neither has any of the others.
 export LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/run/current-system/sw/bin:/run/wrappers/bin:/run/current-system/profile/sbin:/run/current-system/profile/bin:/run/privileged/bin
+# Guix System: root's own guix (the one `guix pull` updates, ~/.config/guix/
+# current) before the system profile's.  The system profile's is the guix
+# package of whatever Guix built the system, an older pinned commit: a
+# reconfigure with it downgrades the system, the next one with the guix it
+# installed builds what no substitute serves (cryptsetup-static, which
+# failed), and its `guix repl` reads what the other compiled (bs1-qemu
+# guix15-luks, 2026-11-24).  Only guix is in that directory.
+[[ ! -x /var/guix/profiles/per-user/root/current-guix/bin/guix ]] || PATH=/var/guix/profiles/per-user/root/current-guix/bin:$PATH
 # Our Python must leave no __pycache__ behind: on a fresh install (Debian 13)
 # the firmware check's imports were the first, and the manifest counted the
 # .pyc files they wrote into the restored system as added.
@@ -549,6 +557,9 @@ UNLOCK_MARK=/run/backshot1-unlock
 # Family Z: the booted kernel's command line, where ZFSBootMenu's boot-sel.d
 # hook leaves bs1.zbm=ROOT:HOW,... (bs1-luks).
 UNLOCK_CMDLINE=/proc/cmdline
+# Family G: the GRUB environment block BackShot1's GRUB script writes on the
+# ESP at each boot (bs1-luks's LK_GUIX_ENV).
+GUIX_UNLOCK_ENV=EFI/Guix/backshot1.env
 
 # luks_rec FIELD: a value from the record, or false without one.
 luks_rec() {
@@ -633,7 +644,7 @@ zfs_key_test() {
 }
 
 # unlock_how NAME HOW: how this boot opened the volume the record names, HOW
-# being the record's S, D, E, N, B, Z or K (family S's Ubuntu ZFS keystore):
+# being the record's S, D, E, N, B, Z, G or K (family S's Ubuntu ZFS keystore):
 # drive (the backup drive's key), typed, or fetched (E, K: the key was
 # copied, but couldn't be tested).
 unlock_how() {
@@ -666,6 +677,22 @@ unlock_how() {
         # command line, bs1.zbm=ROOT:HOW,...  No word for NAME: typed.
         tr -s '[:space:]' '\n' <"$UNLOCK_CMDLINE" 2>/dev/null | sed -n 's/^bs1\.zbm=//p' | tail -n 1 | tr ',' '\n' |
             awk -v n="$name" '{ i = index($0, ":") } i && substr($0, 1, i - 1) == n { h = substr($0, i + 1) } END { print (h == "drive" ? "drive" : "typed") }'
+        ;;
+    G)
+        # Guix System (bs1-luks, family G): GRUB opens the volume (its
+        # initrd then opens it with the key file GRUB loaded), and BackShot1's
+        # GRUB script writes bs1_how_HEX=drive or typed, HEX the volume's
+        # LUKS UUID without dashes, into the environment block it keeps on
+        # the ESP the record names, at every boot.
+        local uuid esp
+        uuid=$(tr ' ' '\n' <<<"$(luks_rec volumes)" | awk -F: -v n="$name" '$1 == n { print $2; exit }')
+        esp=$(luks_rec esp)
+        if [[ -n $uuid && -n $esp && -r $esp/$GUIX_UNLOCK_ENV ]] &&
+           grep -qxF "bs1_how_${uuid//-/}=drive" < <(tr -d '\0' <"$esp/$GUIX_UNLOCK_ENV"); then
+            echo drive
+        else
+            echo typed
+        fi
         ;;
     N)
         # NixOS: scripted stage 1's preOpenCommands leave the marker, as D
@@ -763,8 +790,9 @@ unlock_mode() {
     fi
     # GRUB's prompt comes before anything the record set up (a record from
     # before this check may say own: Manjaro's key file opens the volume a
-    # second time, in the initramfs).
-    if [[ -n $grub ]]; then
+    # second time, in the initramfs).  But on Guix System (family G) GRUB
+    # itself takes the drive's key: those volumes are the record's.
+    if [[ -n $grub && $(luks_rec family) != G ]]; then
         echo "attended: $(grub_luks_reason "$grub")"
         own=" $(luks_rec own) "
         for n in $names; do

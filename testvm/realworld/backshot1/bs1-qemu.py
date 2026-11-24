@@ -43,7 +43,8 @@ console-passphrase, luks-passphrase and zfs-passphrase, without a final
 newline) goes into keys/disk-passphrase.  When bs1-adopt sets the guest to
 unlock from the drive (docs/design/bs1-luks-unattended.md: families S, D, E
 and B; Z, ZFSBootMenu's hooks for ZFS native encryption: void-zbm-enc; S's
-Ubuntu ZFS keystore, dracut hooks around the zfs module's: ubuntu2610-zfsenc),
+Ubuntu ZFS keystore, dracut hooks around the zfs module's: ubuntu2610-zfsenc;
+G, Guix's GRUB and initrd: guix15-luks, with --virtio),
 the source also:
   (a) runs bs1-adopt again, which must change nothing and remake nothing;
   (b) boots with the drive and nothing typed: "bs1-verify --unlock" must say
@@ -175,7 +176,7 @@ LUKS_FILES = ("find /etc/backshot1 /etc/crypttab /etc/crypttab.initramfs /etc/dr
               "/boot/efi/EFI/ZBM /efi/EFI/ZBM -type f 2>/dev/null | LC_ALL=C sort | "
               "while read -r f; do echo \"$f $(sha256sum <\"$f\" | cut -c1-16)\"; done")
 # The families that unlock from the drive (bs1-luks).
-DRIVE_FAMILIES = ("S", "D", "E", "B", "Z")
+DRIVE_FAMILIES = ("S", "D", "E", "B", "Z", "G")
 fails = []
 
 
@@ -330,7 +331,18 @@ def main():
         return ["-drive", f"if=none,id=internal,format=qcow2,file={path}",
                 "-device", f"virtio-blk-pci,drive=internal,serial={SERIAL}" + (",bootindex=1" if boot else "")]
 
+    # Family G (Guix): GRUB reads the key from the drive, through the
+    # firmware's block devices.  OVMF connects only the devices QEMU's
+    # bootorder names when there is one (ConnectDevicesFromQemu), so a boot
+    # that gives the internal disk a bootindex gives the drive the last one
+    # too, as a laptop's firmware connects its USB disks; a boot with none
+    # (by the NVRAM's entry) has OVMF connect every device as it was.
+    drive_bootindex = {"on": False}
+
     def machine(name, disks):
+        if drive_bootindex["on"] and any("bootindex=" in x for d in disks for x in d):
+            disks = [[x + ",bootindex=9" if x.startswith("usb-storage,") and f"serial={LABEL}" in x and "bootindex=" not in x else x for x in d]
+                     for d in disks]
         cmd = rw1a.qemu(a.work, name, f"{a.work}/vars.fd", disks, a.port)
         if not a.bios:
             return cmd
@@ -506,6 +518,7 @@ def main():
     _, family = root.run(". /etc/backshot1/luks-unlock 2>/dev/null && echo \"$family\"", 30)
     family = family.strip()
     print(f"  (LUKS: {family or 'not adopted, or no LUKS'})", flush=True)
+    drive_bootindex["on"] = family == "G"
 
     def volumes(out):
         """bs1-verify --unlock's volume lines: {NAME: HOW}."""

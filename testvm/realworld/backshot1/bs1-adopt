@@ -684,11 +684,14 @@ EOF
 # operating-system expression, with no imports list to add to, so this writes
 # /etc/backshot1/system.scm, which loads /etc/config.scm and adds BackShot1's
 # settings to what it returns: the hostname, openssh (root by key only, the
-# drive's keys), avahi, and python, efibootmgr and btrfs-progs.  An openssh or
-# avahi service in /etc/config.scm gives way to these.  Then it reconfigures
-# from that file; a reconfigure from /etc/config.scm alone takes them away
-# again.  --allow-downgrades: after a `guix pull`, 1.5.0's own commit is not
-# an ancestor of the pulled one (What GX1-GX5 found).
+# drive's keys), avahi, and python, efibootmgr, btrfs-progs and cryptsetup
+# (the LUKS step's key test, and preflight's).  An openssh or avahi service in
+# /etc/config.scm gives way to these.  While /etc/backshot1/luks.scm exists
+# (bs1-luks, family G), the result goes through the procedure it returns.
+# Then it reconfigures from that file; a reconfigure from /etc/config.scm
+# alone takes them away again.  --allow-downgrades: after a `guix pull`,
+# 1.5.0's own commit is not an ancestor of the pulled one (What GX1-GX5
+# found).
 adopt_guix() {
     local conf=/etc/config.scm sys=/etc/backshot1/system.scm keys_scm= line
     [[ -s $conf ]] || { echo "bs1-adopt: no $conf: write this system's configuration there" >&2; return 1; }
@@ -705,14 +708,20 @@ adopt_guix() {
 (use-modules (gnu) (srfi srfi-1))
 (use-service-modules avahi ssh)
 
-(define %base (load "$conf"))
+;; primitive-load, not load: load takes a compiled copy of the file from
+;; Guile's cache (~/.cache/guile/ccache) while it is newer than the file,
+;; and one compiled by another Guix (a guix repl's, before a pull or a
+;; reconfigure) stops with "record ABI mismatch" (bs1-qemu guix15-luks,
+;; 2026-11-24).
+(define %base (primitive-load "$conf"))
 
-(operating-system
+(define %backshot1
+ (operating-system
   (inherit %base)
   (host-name "$SOURCE_HOST")
   (packages (delete-duplicates
               (append (map specification->package
-                           '("python" "efibootmgr" "btrfs-progs"))
+                           '("python" "efibootmgr" "btrfs-progs" "cryptsetup"))
                       (operating-system-packages %base))
               eq?))
   (services
@@ -725,7 +734,12 @@ adopt_guix() {
                   (service avahi-service-type))
             (remove (lambda (s)
                       (memq (service-kind s) (list openssh-service-type avahi-service-type)))
-                    (operating-system-user-services %base)))))
+                    (operating-system-user-services %base))))))
+
+;; bs1-luks's unlocking from the backup drive (family G), while it is there.
+(if (file-exists? "/etc/backshot1/luks.scm")
+    ((primitive-load "/etc/backshot1/luks.scm") %backshot1)
+    %backshot1)
 EOF
     guix system reconfigure --allow-downgrades "$sys"
 }

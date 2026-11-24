@@ -822,8 +822,9 @@ with its matching, refusals, size offers and problems.  It never writes:
   (`holt-json.md` found that "`--erase` is never passed" doesn't keep the
   machine's own disk safe today, since a disk with the layout's
   identifiers needs no `--erase`; its J6 and J19 propose passing `--erase`
-  in the dry run and gating `--commit` on it in bko-holt.  Pending the
-  user's decision.)
+  in the dry run and gating `--commit` on it in bko-holt.  The user
+  approved both 2026-11-24: lock 1 now reads "never adds `--commit`";
+  a dry run may pass `--erase`.)
 - **The archiver isn't run to restore,** since there's nothing to restore
   into.  `rustic-bko snapshots --json` and the repository checks are, since
   they only read.

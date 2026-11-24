@@ -336,6 +336,15 @@ SKIPPED: every run until A3-A6 and A8 are in) or PASS.  Its rows in Test2's
 ledger say word `BackShot2All` (`BS2_WORD`, passed on like `BS2_HOLT`);
 BackShot2's say `BackShot2`.
 
+First runs (2026-11-24, `BS2_WT=bs2all-wt`): bs2a-20261124-1738, nine
+sources on five hosts (debian13, fedora44-uefi, arch, rocky10, mint22,
+cachyos, nixos2605, zorin18, aerynos; 2 tier 1, 1 tier 2 a UEFI source):
+tier 0 653/653, tier 1 18/18 PASS (content on ext-1, xfs-1, btrfs-1,
+f2fs-1, jfs-1, bcachefs-1), tier 2 2 FAIL on by-path links alone, fixed in
+judge.py `--disk-ports` (d1c0974), PASS on replay; bs2a-20261124-1754,
+vanilla3 on chopin's SSD: tier 1 PASS, 810 s.  Measured tier 1 ran 1.06
+times `secs()`'s estimates.
+
 ## A case's life
 
 1. **Drawn** on a host, from the source's real dump (it holds identifiers, so

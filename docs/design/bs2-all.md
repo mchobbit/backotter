@@ -324,7 +324,7 @@ says how it works; in short:
   2949) and `report RUN [--json]`: FAIL, INCOMPLETE, PARTIAL PASS or PASS;
   ledger rows say word BackShot2All.  No whole-run ledger row.
 - **Smoke** (bs2a-20261124-1738, five hosts, nine sources over six
-  recipes, 2 tier 1 and 1 tier 2 each): tier 0 603 of 603 PASS; tier 1 18
+  recipes, 2 tier 1 and 1 tier 2 each): tier 0 653 of 653 PASS; tier 1 18
   of 18 PASS (content planted on ext-1, xfs-1, btrfs-1, f2fs-1, jfs-1,
   bcachefs-1); tier 2 fedora44-uefi and aerynos FAILed on by-path links
   only, a harness bug (tier 2's disk sits behind its own PCIe root port),

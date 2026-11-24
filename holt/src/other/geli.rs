@@ -403,19 +403,10 @@ pub(crate) fn fstab_src(layout: &Layout, entry: &Value, src: String) -> String {
     }
 }
 
-fn safe_run_token(s: &str) -> String {
-    let out: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' }).collect();
-    if out.is_empty() || out.trim_matches('.').is_empty() { "prov".into() } else { out }
-}
-
-fn safe_keyfile_subpath(p: &str) -> bool {
-    p.starts_with('/') && !p.contains('\0') && !p.split('/').any(|c| c == "..")
-}
-
 /// The file the passphrase load asks for once (D3) is kept in: mode 600, in
 /// RAM, removed after its last use and at close.
 fn pass_file(src: &str) -> String {
-    format!("{RUN_DIR}/keys/{}.pass", safe_run_token(src))
+    format!("{RUN_DIR}/keys/{}.pass", super::safe_run_token(src, "prov"))
 }
 
 /// Reads a new passphrase from the terminal without echo, into `file`.
@@ -438,7 +429,7 @@ fn prompt(src: &str, file: &str) -> Cmd {
 const GELI_PASS_MAX: u64 = 255;
 
 pub(crate) fn tmp_key(src: &str) -> String {
-    format!("{RUN_DIR}/keys/{}.key", safe_run_token(src))
+    format!("{RUN_DIR}/keys/{}.key", super::safe_run_token(src, "prov"))
 }
 
 impl Builder<'_> {
@@ -661,7 +652,7 @@ impl Builder<'_> {
         let uses_restored_keys = p.keyed_by() == KeyedBy::Both || (p.keyed_by() == KeyedBy::Keyfile && self.geli_key(p, 0).is_none());
         if uses_restored_keys {
             for k in p.keyfiles() {
-                if !safe_keyfile_subpath(&k) {
+                if !crate::load::commands::safe_target_subpath(&k) {
                     self.problems.push(format!("{src}: GELI key file path {k:?} isn't an absolute path under the target"));
                 }
             }
@@ -681,7 +672,7 @@ impl Builder<'_> {
                 continue;
             }
             let keyed = p.keyed_by();
-            if (keyed == KeyedBy::Both || (keyed == KeyedBy::Keyfile && self.geli_key(&p, 0).is_none())) && p.keyfiles().iter().all(|k| safe_keyfile_subpath(k)) {
+            if (keyed == KeyedBy::Both || (keyed == KeyedBy::Keyfile && self.geli_key(&p, 0).is_none())) && p.keyfiles().iter().all(|k| crate::load::commands::safe_target_subpath(k)) {
                 let mut a: Vec<String> = vec!["geli".into(), "setkey".into(), "-n".into(), "0".into()];
                 for k in p.keyfiles() {
                     a.extend(["-K".into(), format!("{t}{k}")]);

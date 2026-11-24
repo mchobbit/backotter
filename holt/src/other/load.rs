@@ -327,11 +327,6 @@ pub(super) fn newfs_sector(layout: &Layout, src: &str, rec: &Value) -> u64 {
 /// newfs must not be given more than the device holds.  `words` is the
 /// command, changed in place; the answer is what to say in the Cmd's `why`,
 /// and None where there was nothing to change.
-fn safe_run_token(s: &str) -> String {
-    let out: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' }).collect();
-    if out.is_empty() || out.trim_matches('.').is_empty() { "disk".into() } else { out }
-}
-
 /// Validates a `dumpfs -m` / `labelled` `newfs` command from a layout JSON:
 /// must invoke `newfs` with known UFS/FFS option flags and end with a single
 /// `DEVICE` placeholder, never an empty command, another binary, `-N`, or an
@@ -467,7 +462,7 @@ impl Builder<'_> {
                     // rescue system's, the same release's).
                     for l in self.layout.device(&src).and_then(|v| v.get("disklabels64")).and_then(Value::as_array).cloned().unwrap_or_default() {
                         let (Some(n), Some(text)) = (l.get("slice").and_then(Value::as_u64), s(&l, "text")) else { continue };
-                        let proto = format!("{RUN_DIR}/{}s{n}.disklabel64", safe_run_token(&src));
+                        let proto = format!("{RUN_DIR}/{}s{n}.disklabel64", super::safe_run_token(&src, "disk"));
                         out.push(Cmd::write_file(&proto, text));
                         out.push(Cmd::new(&["disklabel64", "-R", "-B", &format!("{tgt}s{n}"), &proto]).why(format!("{src}s{n}'s disklabel64, and DragonFly's boot1/boot2")));
                     }
@@ -478,7 +473,7 @@ impl Builder<'_> {
                         (_, Some(text)) => {
                             // The source's disklabel, as disklabel printed
                             // it (OpenBSD's DUID line included).
-                            let proto = format!("{RUN_DIR}/{}.disklabel", safe_run_token(&src));
+                            let proto = format!("{RUN_DIR}/{}.disklabel", super::safe_run_token(&src, "disk"));
                             out.push(Cmd::write_file(&proto, text));
                             out.push(Cmd::new(&["disklabel", "-R", &tgt, &proto]).why(format!("{src}'s disklabel")));
                             // disklabel -R makes a DUID of its own; fstab names the source's.

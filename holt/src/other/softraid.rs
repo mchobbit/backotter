@@ -269,11 +269,6 @@ fn find_volume(chunk: &str) -> String {
     }
 }
 
-fn safe_run_token(s: &str) -> String {
-    let out: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' }).collect();
-    if out.is_empty() || out.trim_matches('.').is_empty() { "vol".into() } else { out }
-}
-
 /// The longest softraid passphrase both bioctl -p and the restored system's
 /// boot prompt take: the boot loader's sr_crypto_passphrase_decrypt reads
 /// up to 1023 characters (PASSPHRASE_LENGTH 1024, with its NUL), but
@@ -286,7 +281,7 @@ const SOFTRAID_PASS_MAX: u64 = 1022;
 /// The passphrase file bioctl -p reads: a copy of --key-file's, owned by
 /// root and mode 600, as bioctl wants it.
 fn pass_file(name: &str) -> String {
-    format!("{RUN_DIR}/keys/{}.pass", safe_run_token(name))
+    format!("{RUN_DIR}/keys/{}.pass", super::safe_run_token(name, "vol"))
 }
 
 /// The shell command that copies --key-file's FILE to `to` for bioctl -p:
@@ -434,7 +429,7 @@ impl Builder<'_> {
                 }
                 out.push(Cmd::new(&["sh", "-c", &format!("{find}fdisk -iy \"$v\"")]).why(format!("{shown}: the new volume, bioctl softraid0's Device for <{at}>; its own MBR, as the source's")));
             }
-            let proto = format!("{RUN_DIR}/{}.disklabel", safe_run_token(&v.name));
+            let proto = format!("{RUN_DIR}/{}.disklabel", super::safe_run_token(&v.name, "vol"));
             out.push(Cmd::write_file(&proto, label));
             out.push(Cmd::new(&["sh", "-c", &format!("{find}disklabel -R \"$v\" {}", crate::load::shell_quote(&proto))]).why(format!("{}'s disklabel, on {shown}", v.name)));
             out.push(Cmd::new(&["sh", "-c", &format!("{find}printf 'i\\n%s\\nw\\nq\\n' {} | disklabel -E \"$v\" >/dev/null", crate::load::shell_quote(&duid))]).why(format!("{}'s disklabel UID, {duid}: its partitions are {duid}.a and so on from here", v.name)));

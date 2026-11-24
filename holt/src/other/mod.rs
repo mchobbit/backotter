@@ -164,6 +164,15 @@ pub fn swapctl_list(text: &str) -> Vec<(&str, u64)> {
         .collect()
 }
 
+/// A name from the layout made one file-name word for load's files under
+/// RUN_DIR: anything but ASCII letters, digits, '-', '_' and '.' becomes
+/// '_', and a word of dots only (or none) is `fallback` ("disk", "prov",
+/// "vol"), so it can't name a directory.
+pub(crate) fn safe_run_token(s: &str, fallback: &str) -> String {
+    let out: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' }).collect();
+    if out.is_empty() || out.trim_matches('.').is_empty() { fallback.into() } else { out }
+}
+
 /// "VALUE # description" lines, as FreeBSD's diskinfo -v prints them.
 pub fn parse_diskinfo_v(text: &str) -> Vec<(String, String)> {
     text.lines()
@@ -488,6 +497,16 @@ mod tests {
         assert_eq!(swapctl_list(nb), vec![("/dev/wd0b", 2097152 * 512)]);
         assert_eq!(swapctl_list("Device\n/dev/sd0b 1000 0 1000 0% 0\nbad line\n"), vec![("/dev/sd0b", 1000 * 512)]);
         assert_eq!(swapctl_list("Device 1024-blocks\n/dev/vbd0s1b 8 0\n"), vec![("/dev/vbd0s1b", 8 * 1024)]);
+    }
+
+    /// One safe_run_token for load, geli and softraid (RustAudit1 HD3-06).
+    #[test]
+    fn run_tokens() {
+        assert_eq!(safe_run_token("vtbd0p3", "prov"), "vtbd0p3");
+        assert_eq!(safe_run_token("gpt/zfs 0", "prov"), "gpt_zfs_0");
+        assert_eq!(safe_run_token("..", "disk"), "disk");
+        assert_eq!(safe_run_token("", "vol"), "vol");
+        assert_eq!(safe_run_token("../x", "vol"), ".._x");
     }
 
     #[test]

@@ -9,6 +9,9 @@ BackShot2Alpine (pieces B1-B9; B10, the Thinkpad's tier 3, isn't built).
 From the Mac, in a checkout of this branch:
 
     testvm/backshot2/bs2 BackShot2Alpine [N] [plan]   # N cases per source (200), tiers 0-2, then the corpus
+    testvm/backshot2/bs2 BackShot2 SOURCE... [N] [plan] [--sweep N] [--tier2 N]   # any built source (bs2lib/sources.py)
+    testvm/backshot2/bs2 BackShot2All [plan]           # every built source, fresh ("BackShot2All" below)
+    testvm/backshot2/bs2 BackShot2All corpus|leftovers|report RUN [--json]
     testvm/backshot2/bs2 BackShot2 corpus [--tier 1]
     testvm/backshot2/bs2 replay|shrink CASE [--tier N]
     testvm/backshot2/bs2 soak CASE N
@@ -190,6 +193,9 @@ load itself.
 | B9 option sweep | `bs2lib/sweep.py`; judge.py `--new-uuids`, `--removable`, `--nvram-kept`; bs1-restore and bs1-verify (below) |
 | ledger | `bs2lib/ledger.py`: Test2's ledger, family `bs2` |
 | A1 the family interface (BackShot2All) | `bs2lib/families/` (registry `__init__.py`, `base.py`, one module per family or trait); `tests/test_families.py` (registry, goldens `tests/golden/FAMILY.json`, smoke over every Linux corpus dump), `tests/test_family_*.py` |
+| A2 every built Linux source at tiers 1 and 2 | `bs2lib/sources.py` (the source table), `bs2lib/room.py` (`scratch()`: RAM or SSD), bs2-host's queue (the SSD lane), `tests/test_bs2_sources.py`, `tests/test_bs2_placement.py` |
+| A7 content recipes per filesystem | `bs2lib/content.py`, `bs2lib/families/linux.py` `choose()`, `tests/test_family_content.py` |
+| A9 the BackShot2All word | `bs2` (`BackShot2All`), `bs2lib/allrun.py` (counts, SKIPPED, report, verdict), `tests/test_bs2_all.py` |
 
 Unit tests: `python3 -m unittest discover -s testvm/backshot2/tests`
 (~80 s: the smoke test draws 300 cases from each Linux corpus dump).
@@ -206,7 +212,9 @@ that sources share (`dracut`, `mkinitcpio`, `booster`, `initramfs-tools`,
 `grub_upstream`, `proxmox-boot`).  Each module's docstring says what it
 refuses and why.  `families.hooks(source, dump)` merges them, once per
 case: rule 2's tables and versions, the quirks run after the three rules,
-rule 3's texts and patterns, the content recipe (Alpine's alone until A7),
+rule 3's texts and patterns, the content recipe (per filesystem since A7;
+Alpine and Guix have their own) and where `/srv` really is (`srv(dump)`:
+ABRoot's content lands in `/var/srv`),
 the sweep, the steer around known findings (`fail-003`'s for Alpine and
 every upstream UEFI GRUB, which runs only while `generate.KNOWN` names it:
 fixed since GENERATOR 5), and tier 0's mode (`chroot`; NixOS `plan`).  A
@@ -217,7 +225,17 @@ interface (`tests/golden/alpine.json`); each family's golden is rewritten
 only with a new `GENERATOR` (3, 2026-11-17: fail-004 and fail-005 back in
 the draws; 4, 2026-11-18: geometry edits and resizes keep the free inodes
 and blocks, and rule 1 checks a fitted ext's inodes as load does; 5,
-2026-11-21: fail-001, fail-002 and fail-003 fixed and back in the draws).
+2026-11-21: fail-001, fail-002 and fail-003 fixed and back in the draws;
+6, 2026-11-24 (A7): content drift on every Linux source, the recipe
+following the filesystem holding `/srv/bs2` (`content.RECIPES`: `ext-1`,
+`xfs-1`, `btrfs-1`, `f2fs-1`, `jfs-1`, `nilfs2-1`, `bcachefs-1`, and
+`ext-1-32bit`/`xfs-1-32bit` for an ext without extra_isize or an XFS
+without bigtime; `families/linux.py` `choose()`), None for ZFS (A3),
+ostree (kinoite44), Ubuntu Core and a `/srv` too small; Alpine's and
+Guix's draws unchanged apart from the generator field.  `plant()` and
+`change()` walk to `/srv/bs2` by fd, following only relative links that
+stay inside the source, so nothing is ever planted on the host).
+
 
 Guix System (`guix15`, `guix15-bios`) has a family of its own since
 2026-11-24 (`guix.py`; it was generic Linux before): its swap and its older
@@ -270,6 +288,53 @@ restores both roots, the init LV and /boot as they were) and `lvm-thin`
 spare LVs, which load's lvcreate sizes and places itself).  A guest new to
 the corpus joins its family's golden as one more entry under `guests` and
 `dumps`, drawn by the same `GENERATOR`, the others' left as they were.
+
+## BackShot2All
+
+`docs/design/bs2-all.md` is the plan; A2, A7 and A9 (the Linux lane) are
+built, A3-A6 and A8 not.
+
+**Sources** (`bs2lib/sources.py`, read at run time): every guest of
+`holt/tests/corpus/index.tsv` with a `src.json`, amd64 only.  `classify()`
+says "built" (bs2 runs it: today 54, every one-disk Linux source with a
+family, not ZFS or md) or SKIPPED with the piece that builds it: A3 (ZFS,
+md, more than one disk: derived from the dump), A4 (the BSDs), A5
+(illumos), A6 (Haiku, Redox, Sculpt OS), A8 (BackShot1's real machines),
+"later" (`EXCLUDE`: guix15-luks, LUKS1; uc24-fde, not a HoltTest2 source).
+`uefi()` comes from the dump (tier 2 for those only, on the cases that
+touch an ESP or the NVRAM, `case.touches_esp`); `secs(source, tier)` is a
+case's seconds: measured for Alpine's four and Guix's two, else 0.7 of
+HoltTest1's `wall_s` (`testvm/test2/estimates.tsv`), at least 120 s, est.
+Alpine's and Guix's HOME stay as they were; the rest are dealt over the
+lead hosts after them.
+
+**RAM or SSD** (`room.scratch()`): a source's cases work in the RAM disk on
+the hosts whose `cmp-run.sh --ceiling` holds its room (HoltTest1's D and
+MEM, `holttest1d/ram-sizes.tsv`), as ever.  Only a source over every RAM
+ceiling of the run (vanilla3, D 30 GiB) goes to `/bkoscratch`: on hosts
+with `holt_disk_mode` true (chopin and cinqcent), `cmp-run.sh --reserve-ssd
+D M`, `HT_RAM=0`, its rows `"scratch": "ssd"`, and one such case at a time
+per host (the SSD lane, a flock on `/bkoscratch/backshot2/ssd.lock`: the
+queue takes the earliest SSD case whenever the lane is free and RAM cases
+on its other slots; replay, soak and the corpus take the lane before their
+reservation, `bs2-host lane`).  A vanilla3 case writes up to ~29 GB.
+
+**The word**: `bs2 BackShot2All [plan]` runs, fresh (the ledger excuses no
+case), as `bs2all-YYYYMMDD-HHMM`, every built source a host holds: 1,000
+tier 0, 20 tier 1 and 5 tier 2 (UEFI) a source, Alpine's four as
+BackShot2Alpine (200 tier 1, 30 tier 2 shared); `RUN/bs2all.json` on each
+host records what it planned and SKIPPED.  Unbuilt sources and tier 3 are
+SKIPPED by piece; a built source no host of the run holds is SKIPPED "not
+on any host in this run".  The corpus and the leftovers set aren't chained
+(both take port 2949): once the queues are done, run `bs2 BackShot2All
+corpus RUN` (RUN-corpus), then `bs2 BackShot2All leftovers RUN` (RUN-lo).
+`bs2 BackShot2All report RUN [--json]` gathers every host's rows and says
+FAIL (any FAIL, the corpus's and leftovers' too), INCOMPLETE (rows short of
+the plan, a host that didn't answer, HARNESS, INVALID or UNSUPPORTED rows,
+the corpus or leftovers not run), PARTIAL PASS (all passed, something
+SKIPPED: every run until A3-A6 and A8 are in) or PASS.  Its rows in Test2's
+ledger say word `BackShot2All` (`BS2_WORD`, passed on like `BS2_HOLT`);
+BackShot2's say `BackShot2`.
 
 ## A case's life
 

@@ -1,0 +1,34 @@
+[package]
+name = "bko-rescue"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "BackOtter's restore program for the rescue stick: Whiptail-style screens on every console"
+license = "GPL-3.0-or-later"      # it includes holt's json.rs
+publish = false
+
+# No dependencies, as holt/'s: offline, with Debian's own cargo.  The
+# terminal layer is ours (docs/design/rescue-tui.md).
+[dependencies]
+
+[lib]
+name = "bko_rescue"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bko-rescue"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+strip = true
+
+# The same lints as holt/.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"

@@ -1,6 +1,6 @@
 # bko-rescue: the terminal layer and its widgets
 
-Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  Not built.
+Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"); RT3 on is not.
 
 An implementation plan for the stick's terminal UI that `ui.md` describes and
 the user decided on 2026-11-19: one Whiptail-style 80x24 program,
@@ -379,11 +379,11 @@ table is *Check* until RT1's header test passes in that family's guest.**
 | Item | Linux (glibc; x86_64, aarch64) | FreeBSD, NetBSD, OpenBSD, DragonFly | illumos | Haiku |
 |---|---|---|---|---|
 | `tcgetattr`, `tcsetattr` | functions | functions | functions | functions |
-| `struct termios`, expected size | 60 | 44 | 36 | beta6 header |
-| `TCSANOW`, `TCSADRAIN` | 0, 1 | 0, 1 | ioctl numbers (`TCSETS`, `TCSETSW`) | beta6 header |
+| `struct termios`, expected size | 60 | 44 | 36 | 30 (beta6 header, RT1) |
+| `TCSANOW`, `TCSADRAIN` | 0, 1 | 0, 1 | ioctl numbers (`TCSETS`, `TCSETSW`) | 1, 2 |
 | flag bits, `VMIN`/`VTIME` indices | libc crate | libc crate, per OS (expected equal) | libc crate | beta6 header |
 | `ioctl`'s request parameter | `unsigned long` | `unsigned long` | `int` | `unsigned long` *Check* |
-| `TIOCGWINSZ` | 0x5413 | 0x40087468 | 0x5468 | beta6 header |
+| `TIOCGWINSZ` | 0x5413 | 0x40087468 | 0x5468 | 0x800c (`TCGETA + 12`) |
 | `struct winsize` | four `unsigned short` | same | same | same |
 | `poll`, `nfds_t` | `unsigned long` | `unsigned int` | `unsigned long` | `unsigned long` |
 | `struct pollfd`, `POLLIN` | int, two shorts; 1 | same | same | same *Check* |
@@ -818,6 +818,42 @@ with its matching, refusals, size offers and problems.  It never writes:
   through the fake bko-holt and needs no real disks or repository.  It's the
   way to see every failure and help screen; `--dry-run` is the way to see
   one's own machine.
+
+## What RT1 and RT2 found
+
+Built 2026-11-24 and tested on czerny (Debian 13, glibc, Rust 1.85.1).
+The other six families are only compiled declarations until RT3.
+
+- **Linux's header test passes:** 45 facts and 6 symbols agree with the
+  glibc headers, for a debug and a stripped release build.  It catches a
+  wrong constant (a diff), a wrong ioctl request type (abi.c then fails to
+  build: it redeclares `ioctl` with ours) and a renamed symbol (`nm -P`).
+- **Haiku R1/beta6's termios**, read from its `headers/posix/termios.h` at
+  the `r1beta6` tag: `tcflag_t` is 16 bits, `speed_t` 32, and each speed
+  is split into 16-bit halves between the flags: `c_iflag, c_ispeed,
+  c_oflag, c_ospeed, c_cflag, c_ispeed_high, c_lflag, c_ospeed_high,
+  c_line`, two padding bytes, `c_cc[11]`: 30 bytes.  The flag offsets are
+  still 0, 4, 8 and 12.  TCSANOW is 1, TCSADRAIN 2, TIOCGWINSZ 0x800c,
+  VMIN 4, VTIME 5; `nfds_t` is `unsigned long`; SIGHUP 1, SIGTERM 15.
+- **Haiku's C `ioctl` is a macro** over `__ioctl(fd, cmd, arg, size)`
+  (size 0 for three arguments).  That is one of the shim's triggers, but a
+  declaration of `__ioctl` itself does it, so no shim: ffi.rs declares and
+  calls `__ioctl`, and `--abi` names it, so the header test checks it.
+- `poll` is never restarted by glibc's `signal()`: SIGTERM and SIGHUP end
+  the spike at once with 143 and 129, and the settings come back.  The
+  250 ms poll tick would notice the flag anyway, restarted or not.
+- An undiffed full frame is about 4 KB in UTF-8 colour (3.6 KB in DEC or
+  ASCII): the budget RT5's diffed redraw has to keep.  The gauge's own
+  updates are 29-39 bytes in every profile (figures first, then only the
+  bar's new cells, then the attributes back).
+- czerny has no clippy for any of its toolchains (1.85.1, 1.91.0, 1.94.1,
+  nightly), and no Debian cargo in `/usr/bin`; 1.85.1 is rustup's.  So
+  RT1-RT2 had no clippy run; the lints are in Cargo.toml for when one is.
+- The first profile table gives DragonFly's syscons and illumos's tem
+  every fallback (one SGR parameter each, the cursor parked, clearing with
+  spaces) until RT3 says what they take; illumos's tem is ASCII until a
+  sign of the framebuffer is found.  An illumos `console` with TERM
+  `sun-color` is the screen, any other TERM the serial console.
 
 ## The app on top (later)
 

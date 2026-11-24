@@ -320,7 +320,7 @@ on its other slots; replay, soak and the corpus take the lane before their
 reservation, `bs2-host lane`).  A vanilla3 case writes up to ~29 GB.
 
 **The word**: `bs2 BackShot2All [plan]` runs, fresh (the ledger excuses no
-case), as `bs2all-YYYYMMDD-HHMM`, every built source a host holds: 1,000
+case), as `bs2all-YYYYMMDD-HHMMSS`, every built source a host holds: 1,000
 tier 0, 20 tier 1 and 5 tier 2 (UEFI) a source, Alpine's four as
 BackShot2Alpine (200 tier 1, 30 tier 2 shared); `RUN/bs2all.json` on each
 host records what it planned and SKIPPED.  Unbuilt sources and tier 3 are

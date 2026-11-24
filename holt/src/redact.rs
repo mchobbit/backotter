@@ -37,6 +37,10 @@ pub enum Kind {
 }
 
 impl Kind {
+    /// Every kind, in the summary's order (report-bug's `--no-redact` line
+    /// names them all from here, so it can't drift).
+    pub const ALL: [Kind; 10] = [Kind::Hostname, Kind::MachineId, Kind::Uuid, Kind::Serial, Kind::Label, Kind::User, Kind::KeyFile, Kind::Mac, Kind::Id, Kind::Secret];
+
     pub fn plural(self) -> &'static str {
         match self {
             Kind::Hostname => "hostnames",
@@ -114,6 +118,9 @@ enum Ident {
     Dec(u64, usize),
     Name(Kind, String),
     Path(Kind, String),
+    /// A string given to be stripped (report-bug's `--strip-file`): replaced
+    /// wherever it appears, as an other identifier.
+    Strip(String),
 }
 
 const HOST_KEYS: [&str; 4] = ["hostname", "creation_host", "homehost", "nodename"];
@@ -208,6 +215,9 @@ fn generic_qube(q: &str) -> bool {
 /// Ubuntu names the datasets for /home and /root USERDATA/home_ID and
 /// USERDATA/root_ID.
 const GENERIC_USERS: [&str; 3] = ["root", "home", "lost+found"];
+
+/// The shortest string `Collector::learn_strip` takes.
+pub const STRIP_MIN: usize = 3;
 
 /// Learns what to redact.
 #[derive(Default)]
@@ -411,6 +421,21 @@ impl Collector {
     /// A key file named on the command line (--key-file NAME=FILE).
     pub fn learn_key_file(&mut self, path: &str) {
         self.key_path(path);
+    }
+
+    /// A string to strip (report-bug's `--strip-file`: a password hint,
+    /// a place's name the user typed): replaced wherever it appears, as an
+    /// other identifier, its original never printed.  False for one under
+    /// STRIP_MIN characters (after trimming), which is left as it is:
+    /// replacing it everywhere would take it out of words.
+    pub fn learn_strip(&mut self, s: &str) -> bool {
+        let t = s.trim();
+        if t.chars().count() < STRIP_MIN {
+            return false;
+        }
+        self.see_text(t);
+        self.add(Ident::Strip(t.to_string()));
+        true
     }
 
     /// Text that will be redacted too: pseudonyms must not collide with it.
@@ -855,6 +880,7 @@ impl Sealer {
                 Ident::Name(Kind::Serial, s) => self.name(Kind::Serial, &s, "serial"),
                 Ident::Name(k, s) => self.name(k, &s, "name"),
                 Ident::Path(k, p) => self.path(k, &p),
+                Ident::Strip(t) => self.strip(&t),
             }
         }
         // Longest first; ties in a stable order.
@@ -1000,6 +1026,16 @@ impl Sealer {
         };
         self.entry(kind, orig, &pseudo);
         self.sub(orig, &pseudo, Edge::Any);
+    }
+
+    /// A string to strip: `stripped1`, `stripped2`... anywhere it appears.
+    fn strip(&mut self, orig: &str) {
+        if self.r.entries.iter().any(|e| e.kind == Kind::Id && e.original == orig) {
+            return;
+        }
+        let p = self.next("stripped", |n| vec![format!("stripped{n}")])[0].clone();
+        self.entry(Kind::Id, orig, &p);
+        self.sub(orig, &p, Edge::Any);
     }
 
     fn uuid(&mut self, b: [u8; 16], kind: Kind) {
@@ -1560,6 +1596,34 @@ mod tests {
 
     fn text(v: &Value) -> String {
         v.pretty()
+    }
+
+    /// report-bug's --strip-file (RT10i): each string replaced wherever it
+    /// is, inside words too, as an other identifier whose original the
+    /// terminal's summary never shows; a short one is refused.
+    #[test]
+    fn stripped_strings() {
+        let mut c = Collector::new();
+        c.learn(&dump());
+        assert!(c.learn_strip("  Mittens the cat "));
+        assert!(c.learn_strip("attic"));
+        assert!(!c.learn_strip("ab") && !c.learn_strip("   "));
+        let r = c.seal();
+        let t = r.text("hint: Mittens the cat; in the atticroom; Grandma's attic; host alice-laptop\n");
+        assert_eq!(t, format!("hint: stripped1; in the stripped2room; Grandma's stripped2; host {}\n", r.text("alice-laptop")));
+        assert_eq!(r.unredact(&t), "hint: Mittens the cat; in the atticroom; Grandma's attic; host alice-laptop\n");
+        let ids: Vec<&Entry> = r.entries.iter().filter(|e| e.pseudonym.starts_with("stripped")).collect();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.iter().all(|e| e.kind == Kind::Id));
+        let shown = r.summary(true);
+        assert!(!shown.contains("Mittens") && !shown.contains("attic"), "{shown}");
+        // Every kind, once each, in ALL.
+        for k in Kind::ALL {
+            assert_eq!(Kind::ALL.iter().filter(|x| **x == k).count(), 1);
+            match k {
+                Kind::Hostname | Kind::MachineId | Kind::Uuid | Kind::Serial | Kind::Label | Kind::User | Kind::KeyFile | Kind::Mac | Kind::Id | Kind::Secret => {}
+            }
+        }
     }
 
     #[test]

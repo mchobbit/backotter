@@ -487,7 +487,7 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
 pub fn main(args: &[String]) -> u8 {
     let (code, err) = main_inner(args);
     eprint!("{err}");
-    if !matches!(parse_args(args), Ok(Parsed::Help)) {
+    if records_itself(args) {
         // Under --json a password in --repo's URL is refused and never
         // recorded (holt-json.md, "args"); text mode records ARGS as ever.
         if jsonout::find_json_flag(args, VALUE_FLAGS).is_some() {
@@ -497,6 +497,20 @@ pub fn main(args: &[String]) -> u8 {
         }
     }
     code
+}
+
+/// Whether a load run of ARGS records itself in RUN_DIR/last-load.json for
+/// report-bug: every run but --help in text mode, as ever; under --json,
+/// not a plan or a status run (holt-json.md, "Bug reports": the status
+/// bko-rescue reads right after a failed run mustn't take its place).  A
+/// --json run whose arguments don't parse records itself: it is no plan
+/// or status run that ran.
+fn records_itself(args: &[String]) -> bool {
+    match parse_args(args) {
+        Ok(Parsed::Help) => false,
+        Ok(Parsed::Run(o)) if o.json => !matches!(o.stages().as_slice(), [Stage::Plan] | [Stage::Status]),
+        _ => true,
+    }
 }
 
 /// The exit status and standard error; standard output is printed.
@@ -648,6 +662,26 @@ mod tests {
             Parsed::Run(o) => o,
             Parsed::Help => panic!("help"),
         }
+    }
+
+    /// RT10i: under --json, plan and status runs leave last-load.json to
+    /// the writing run before them; text mode records every run but
+    /// --help, as ever.
+    #[test]
+    fn which_runs_record_themselves() {
+        let rec = |a: &[&str]| records_itself(&args(a));
+        for a in [&["l.json"][..], &["l.json", "--only", "status"], &["l.json", "--through", "close"], &["l.json", "--through", "format", "--commit"], &["l.json", "--bogus"]] {
+            assert!(rec(a), "text mode: {a:?}");
+        }
+        assert!(!rec(&["l.json", "--help"]) && !rec(&["--json", "-h"]));
+        assert!(!rec(&["l.json", "--json"]), "a --json plan");
+        assert!(!rec(&["l.json", "--only", "status", "--json"]), "a --json status");
+        assert!(!rec(&["l.json", "--through", "plan", "--json"]), "--through plan is a plan");
+        assert!(rec(&["l.json", "--through", "close", "--json"]), "a --json writing run, --commit or not");
+        assert!(rec(&["l.json", "--only", "boot", "--json", "--commit"]));
+        assert!(rec(&["l.json", "--json", "--frob"]), "arguments that don't parse: no plan or status ran");
+        // `--json` as --snapshot's value is a text run's.
+        assert!(rec(&["l.json", "--repo", "/r", "--snapshot", "--json"]));
     }
 
     #[test]

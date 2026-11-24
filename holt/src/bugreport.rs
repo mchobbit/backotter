@@ -16,7 +16,9 @@ use crate::redact::{Collector, Redactor};
 use crate::sys::{FakeRunner, Sys};
 use std::process::ExitCode;
 
-pub const ISSUES: &str = "https://github.com/mchobbit/backotter/issues/new/choose";
+/// Where issues go: in the help, its last line and the report hint
+/// (main.rs) alike.
+pub const ISSUES: &str = "https://github.com/mchobbit/backotter/issues";
 
 /// Where `load` records its last run, for this command to find.
 pub const LAST_RUN: &str = "last-load.json";
@@ -24,11 +26,11 @@ pub const LAST_RUN: &str = "last-load.json";
 /// Lines kept from each log.
 const LOG_LINES: usize = 3000;
 
-pub const USAGE: &str = "Usage: bko-holt report-bug [--output FILE] [--stderr FILE]... [--no-redact]
-                          [-- LOAD-ARGUMENTS...]
+pub const USAGE: &str = "Usage: bko-holt report-bug [--output FILE] [--stderr FILE]... [--attach FILE]...
+                          [--strip-file FILE]... [--no-redact] [-- LOAD-ARGUMENTS...]
 
 Gathers what a BackOtter bug report needs into one text file to attach to
-an issue at https://github.com/mchobbit/backotter/issues/new/choose :
+an issue at https://github.com/mchobbit/backotter/issues :
 
   - the versions of bko-holt, restic-bko, rustic-bko, the rescue image, the
     operating system and the kernel
@@ -40,6 +42,8 @@ an issue at https://github.com/mchobbit/backotter/issues/new/choose :
   - bko-holt's logs: load.log in that directory's log/, and /var/log/bko-holt/
   - error output you saved (--stderr FILE), for example from
     `restic-bko backup ... 2> backup-errors.txt`
+  - other files you attach (--attach FILE): bko-rescue attaches its events
+    file, the last plan and status documents and its own log
 
 GitHub issues are public, so by default every hostname, machine-id, UUID,
 serial number, label, user name (from /home paths and Ubuntu's USERDATA
@@ -55,7 +59,16 @@ plain text, and a user name that is in no home directory's path (the
   --output FILE   write the report here (default: bko-report-DATE.txt in
                   the current directory)
   --stderr FILE   also include this file of error output (repeatable)
-  --no-redact     leave identifiers as they are (for a private report)
+  --attach FILE   also include this file, redacted as --stderr's are; a
+                  bko-holt plan or status document's disks are learned too
+                  (repeatable)
+  --strip-file FILE
+                  a file of strings, one a line, each replaced wherever it
+                  appears, as an other identifier: a password hint, a
+                  place's name (repeatable; a line under 3 characters is
+                  left as it is)
+  --no-redact     leave identifiers as they are (for a private report;
+                  --strip-file is ignored then)
   -- LOAD-ARGUMENTS
                   report this load run instead of the last one: the
                   arguments you gave `bko-holt load` (the layout and --map,
@@ -69,6 +82,11 @@ Exit status: 0 written, 1 it couldn't be written, 2 bad arguments.
 pub struct Args {
     pub output: Option<String>,
     pub stderr: Vec<String>,
+    /// --attach FILE: bko-rescue's files (its events, the last plan and
+    /// status documents, its log), included as --stderr's are.
+    pub attach: Vec<String>,
+    /// --strip-file FILE: strings, one a line, to strip wherever they are.
+    pub strip_files: Vec<String>,
     pub no_redact: bool,
     pub load_args: Option<Vec<String>>,
     /// For tests: read the system from this tree, running no commands.
@@ -77,7 +95,7 @@ pub struct Args {
 
 /// The flags parse_args takes a value after, for `--json`'s first pass
 /// (crate::load::jsonout::find_json_flag); parse_args asserts it.
-pub const VALUE_FLAGS: &[&str] = &["--output", "-o", "--stderr", "--sysroot"];
+pub const VALUE_FLAGS: &[&str] = &["--output", "-o", "--stderr", "--attach", "--strip-file", "--sysroot"];
 
 pub fn parse_args(args: &[String]) -> Result<Option<Args>, String> {
     let mut a = Args::default();
@@ -91,6 +109,8 @@ pub fn parse_args(args: &[String]) -> Result<Option<Args>, String> {
             "-h" | "--help" => return Ok(None),
             "--output" | "-o" => a.output = Some(value(x)?),
             "--stderr" => a.stderr.push(value(x)?),
+            "--attach" => a.attach.push(value(x)?),
+            "--strip-file" => a.strip_files.push(value(x)?),
             "--no-redact" => a.no_redact = true,
             "--sysroot" => a.sysroot = Some(value(x)?),
             "--" => {
@@ -389,20 +409,67 @@ fn versions(sys: &Sys) -> (String, Vec<String>) {
     (s, notes)
 }
 
-/// The plan stage of a load run's arguments (whatever stage it ran).
+/// The plan stage of a load run's arguments (whatever stage it ran), in
+/// text mode: without `--commit`, `--through`/`--only` and their stage,
+/// and a --json run's `--json` and `--expect-plan` (holt-json.md, "Bug
+/// reports"), so the report's plan and status read as they do for a text
+/// run.  A flag's value is kept as it is (`--snapshot --json` names a
+/// snapshot).
 fn plan_args(args: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--commit" => {}
-            "--through" | "--only" => {
+            j if load::jsonout::is_json_flag(j) => {}
+            "--through" | "--only" | "--expect-plan" => {
                 it.next();
+            }
+            f if load::VALUE_FLAGS.contains(&f) => {
+                out.push(a.clone());
+                if let Some(v) = it.next() {
+                    out.push(v.clone());
+                }
             }
             _ => out.push(a.clone()),
         }
     }
     out
+}
+
+/// The most of a --strip-file read: far more than the strings a person
+/// types (bko-rescue's hint and names).
+const STRIP_FILE_MAX: u64 = 1 << 20;
+
+/// The strings of a --strip-file, one a line (a trailing CR dropped),
+/// empty lines skipped.
+fn strip_lines(text: &str) -> Vec<String> {
+    text.lines().map(|l| l.strip_suffix('\r').unwrap_or(l)).filter(|l| !l.trim().is_empty()).map(str::to_string).collect()
+}
+
+/// What an attached file teaches the Collector beyond its text: a
+/// bko-holt document's disks (a plan's candidates and targets, a status's
+/// targets: serials, WWIDs, by-id links and labels of this machine's disks,
+/// which no dump may hold), and each event of an events file.
+fn attached_values(text: &str) -> Vec<Value> {
+    let ours = |v: &Value| v.get("format").and_then(Value::as_str).is_some_and(|f| f.starts_with("bko-holt-")) || v.get("event").is_some();
+    if let Ok(v) = crate::json::parse(text) {
+        return if ours(&v) { vec![v] } else { Vec::new() };
+    }
+    // Progress events hold figures only, and a long copy has thousands.
+    text.lines()
+        .filter(|l| l.trim_start().starts_with('{'))
+        .filter_map(|l| crate::json::parse(l).ok())
+        .filter(|v| ours(v) && v.get("event").and_then(Value::as_str) != Some("progress"))
+        .collect()
+}
+
+/// The `--no-redact` report's first line: every Kind the redaction would
+/// have replaced, from Kind::plural (its first words, without what a
+/// parenthesis adds), so it can't drift.
+fn not_redacted_line() -> String {
+    let kinds: Vec<&str> = crate::redact::Kind::ALL.iter().map(|k| k.plural().split(" (").next().unwrap_or("")).collect();
+    format!("NOT redacted: it holds this machine's {}, as they are.\n", kinds.join(", "))
 }
 
 /// Options with the names in --key-file NAME=FILE redacted, to run against
@@ -525,6 +592,36 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
             Err(e) => notes.push(format!("--stderr {p}: {e}")),
         }
     }
+    let mut attached: Vec<(String, String)> = Vec::new();
+    for p in &a.attach {
+        match crate::bytes::read_tail(std::path::Path::new(p), STDERR_TAIL_MAX) {
+            Ok(b) => {
+                let t = String::from_utf8_lossy(&b).into_owned();
+                c.learn_text(p);
+                c.learn_text(&t);
+                for v in attached_values(&t) {
+                    c.learn(&v);
+                }
+                attached.push((p.clone(), tail(&t, LOG_LINES)));
+            }
+            Err(e) => notes.push(format!("--attach {p}: {e}")),
+        }
+    }
+    if a.no_redact && !a.strip_files.is_empty() {
+        notes.push("--strip-file is ignored with --no-redact: nothing is replaced".into());
+    }
+    for p in a.strip_files.iter().filter(|_| !a.no_redact) {
+        match crate::bytes::read_bounded(std::path::Path::new(p), STRIP_FILE_MAX) {
+            Ok(b) => {
+                let short = strip_lines(&String::from_utf8_lossy(&b)).iter().filter(|l| !c.learn_strip(l)).count();
+                if short > 0 {
+                    notes.push(format!("--strip-file {p}: {short} line(s) under {} characters left as they are", crate::redact::STRIP_MIN));
+                }
+            }
+            // Never the file's text: only that it couldn't be read.
+            Err(e) => notes.push(format!("--strip-file {p}: {e}")),
+        }
+    }
 
     let r = if a.no_redact { Collector::new().seal() } else { c.seal() };
 
@@ -587,13 +684,16 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
     for (p, t) in saved {
         parts.push(Part { title: format!("saved error output: {p}"), body: Body::Text(t) });
     }
+    for (p, t) in attached {
+        parts.push(Part { title: format!("attached: {p}"), body: Body::Text(t) });
+    }
 
     let mut text = format!("BackOtter bug report, made by bko-holt report-bug {} at {now}\n", env!("CARGO_PKG_VERSION"));
-    text += if a.no_redact {
-        "NOT redacted: it holds this machine's hostnames, UUIDs, serials and labels.\n"
+    if a.no_redact {
+        text += &not_redacted_line();
     } else {
-        "Redacted: identifiers are replaced by pseudonyms (host-1, label2, bc000000-0000-4000-8000-000000000003),\nthe same one everywhere in this file; the last section says what was and wasn't.\n"
-    };
+        text += "Redacted: identifiers are replaced by pseudonyms (host-1, label2, bc000000-0000-4000-8000-000000000003),\nthe same one everywhere in this file; the last section says what was and wasn't.\n";
+    }
     text += "Sections start with \"==== \"; a JSON section is one document, for `bko-holt load` to plan (boot-area and\nESP images over 4 KiB are left out, as KEY_omitted with their size and CRC-32, so it won't write them).\n";
     for p in &parts {
         text += &format!("\n==== {}\n", r.text(&p.title));
@@ -887,6 +987,84 @@ mod tests {
         assert!(txt.contains("error: lstat /home/user1/.cache/x: permission denied"), "{txt}");
         assert!(txt.contains("(checked: the plan of the redacted layout is the original's"), "{txt}");
         assert!(b.terminal.contains("bob -> user1"), "{}", b.terminal);
+    }
+
+    /// RT10i: `--attach`, `--strip-file`, the plan document's disks learned,
+    /// a recorded --json run re-run in text mode, `ISSUES` and the
+    /// `--no-redact` line.
+    #[test]
+    fn rescue_attachments_and_stripped_strings() {
+        let a = parse_args(&s(&["--attach", "ev", "--attach", "plan.json", "--strip-file", "k/strip", "--strip-file", "k/more"])).unwrap().unwrap();
+        assert_eq!((a.attach.clone(), a.strip_files.clone()), (s(&["ev", "plan.json"]), s(&["k/strip", "k/more"])));
+        let t = Tree::new("report-bug-attach");
+        t.debian13();
+        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "33554432\n");
+        t.file("/srv/alice/layout.json", crate::load::layout::sample::bios_mbr());
+        // A --json writing run, recorded as load records one.
+        let last = Obj::new()
+            .set("cwd", "/srv/alice")
+            .set("args", Value::Arr(s(&["layout.json", "--map", "vda=vdb", "--through", "close", "--commit", "--json", "--expect-plan", &"a".repeat(64)]).into_iter().map(Value::Str).collect()))
+            .set("exit", 1u64)
+            .build();
+        t.file(&format!("{RUN_DIR}/{LAST_RUN}"), last.pretty());
+        // This machine's disks as a plan document has them, in no dump.
+        let plan = r##"{"format":"bko-holt-plan","schema":1,"candidates":[{"node":"sdc","by_id":"/dev/disk/by-id/usb-SanDisk_Ultra_4C530001150612110384-0:0","serial":"4C530001150612110384","wwid":null,"model":"SanDisk Ultra","contents":[{"dev":"sdc1","type":"ext4","label":"holiday-pics","size_bytes":1,"used_bytes":null}]},{"node":"sdd","by_id":"/dev/disk/by-id/wwn-0x5000c500a1b2c3d4","serial":"ZA1B2C3D","wwid":"naa.5000c500a1b2c3d4","model":"ST4000DM004"}],"text":"# sdd is ZA1B2C3D\n"}"##;
+        let plan_path = t.root().join("plan.json");
+        std::fs::write(&plan_path, format!("{plan}\n")).unwrap();
+        let ev_path = t.root().join("events");
+        std::fs::write(&ev_path, "{\"event\":\"start\",\"layout\":{\"hostname\":\"bobs-nas\"}}\n{\"event\":\"progress\",\"bytes\":1}\n{\"event\":\"warning\",\"text\":\"restore /srv/ZA1B2C3D.img: no xattrs\"}\n").unwrap();
+        let log_path = t.root().join("rescue.log");
+        std::fs::write(&log_path, "hint shown: Mittens the cat\nlocation: Grandma's attic\n").unwrap();
+        let strip = t.root().join("strip");
+        std::fs::write(&strip, "Mittens the cat\r\n\nGrandma's attic\nxy\n").unwrap();
+        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-30-generic #30 SMP x86_64\n")), true);
+        let path = |p: &std::path::Path| p.display().to_string();
+        let a = Args { attach: vec![path(&plan_path), path(&ev_path), path(&log_path)], strip_files: vec![path(&strip)], ..Args::default() };
+        let b = build(&sys, &a, "2026-11-24T12:00:00Z");
+        let txt = &b.text;
+        for p in [&plan_path, &ev_path, &log_path] {
+            assert!(txt.contains(&format!("==== attached: {}", path(p))), "{txt}");
+        }
+        for gone in ["4C530001150612110384", "holiday-pics", "ZA1B2C3D", "5000c500a1b2c3d4", "bobs-nas", "Mittens", "Grandma"] {
+            assert!(!txt.contains(gone), "{gone} in:\n{txt}");
+            assert!(!b.terminal.contains(gone) || !["Mittens", "Grandma"].contains(&gone), "{gone} on the terminal:\n{}", b.terminal);
+        }
+        assert!(txt.contains("hint shown: stripped1\n") && txt.contains("location: stripped2\n"), "{txt}");
+        assert!(txt.contains("model\":\"SanDisk Ultra"), "models are kept: {txt}");
+        assert!(b.notes.iter().any(|n| n.contains("1 line(s) under 3 characters")), "{:?}", b.notes);
+        // The --json run's plan is a text plan: no --json, no --expect-plan.
+        assert!(txt.contains("command: bko-holt load layout.json --map vda=vdb --through close --commit --json --expect-plan"), "{txt}");
+        assert!(txt.contains("bko-holt load layout.json --map vda=vdb -- exit "), "{txt}");
+        assert!(txt.contains("#   vda (16 GiB) -> /dev/vdb"), "{txt}");
+        // --no-redact: the line names every kind; --strip-file is ignored.
+        let a = Args { no_redact: true, strip_files: vec![path(&strip)], ..Args::default() };
+        let b = build(&sys, &a, "2026-11-24T12:00:00Z");
+        let first = b.text.lines().nth(1).unwrap();
+        assert!(first.starts_with("NOT redacted: it holds this machine's hostnames, machine-ids, UUIDs and GUIDs, "), "{first}");
+        for k in crate::redact::Kind::ALL {
+            assert!(first.contains(k.plural().split(" (").next().unwrap()), "{k:?} not in {first:?}");
+        }
+        assert!(first.ends_with("other identifiers, repositories and password-file paths, as they are."), "{first}");
+        assert!(b.notes.iter().any(|n| n.contains("--strip-file is ignored with --no-redact")), "{:?}", b.notes);
+    }
+
+    #[test]
+    fn plan_args_are_a_text_runs() {
+        let sha = "b".repeat(64);
+        assert_eq!(plan_args(&s(&["l", "--json", "--through", "close", "--commit", "--expect-plan", &sha, "--map", "a=b"])), s(&["l", "--map", "a=b"]));
+        assert_eq!(plan_args(&s(&["l", "--json=1", "--only", "status"])), s(&["l"]));
+        // A value is kept whatever it reads.
+        assert_eq!(plan_args(&s(&["l", "--repo", "/r", "--snapshot", "--json", "--key-file", "--commit"])), s(&["l", "--repo", "/r", "--snapshot", "--json", "--key-file", "--commit"]));
+    }
+
+    #[test]
+    fn issues_and_the_help() {
+        assert_eq!(ISSUES, "https://github.com/mchobbit/backotter/issues");
+        assert!(USAGE.contains(&format!("an issue at {ISSUES} :")) && !USAGE.contains("/new/choose"), "{USAGE}");
+        for f in ["--attach FILE", "--strip-file FILE"] {
+            assert!(USAGE.contains(f), "{f} not in the help");
+        }
     }
 
     #[test]

@@ -228,6 +228,7 @@ struct PollFd {
 
 const POLLIN: c_short = 1;
 pub const SIGHUP: c_int = 1;
+pub const SIGINT: c_int = 2;
 pub const SIGTERM: c_int = 15;
 /// `SIG_DFL`, a null handler in every family.
 const SIG_DFL: usize = 0;
@@ -411,17 +412,39 @@ fn rearm(sig: c_int) {
 #[cfg(not(target_os = "illumos"))]
 fn rearm(_sig: c_int) {}
 
-/// SIGHUP and SIGTERM only set a flag, read by `take_signal`.  poll then
-/// returns early with EINTR.
-pub fn catch_hup_term() -> bool {
+/// These signals only set a flag, read by `take_signal`.  poll then
+/// returns early with EINTR.  False if one couldn't be caught.
+pub fn catch(sigs: &[c_int]) -> bool {
     let h = on_signal as extern "C" fn(c_int) as usize;
     let mut ok = true;
-    for sig in [SIGHUP, SIGTERM] {
+    for &sig in sigs {
         // SAFETY: on_signal is an extern "C" fn(int) that only does an
         // atomic store, which is async-signal-safe.
         ok &= unsafe { signal(sig, h) } != usize::MAX;
     }
     ok
+}
+
+/// These signals back to their default action.
+pub fn default(sigs: &[c_int]) {
+    for &sig in sigs {
+        // SAFETY: SIG_DFL is a valid handler for any catchable signal.
+        unsafe { signal(sig, SIG_DFL) };
+    }
+}
+
+/// A signal that came and wasn't taken yet, raised again now that its
+/// action is the default, so it ends the program as it would have.
+pub fn raise_pending() {
+    if let Some(sig) = take_signal() {
+        // SAFETY: raise() takes any signal number; this is one we caught.
+        unsafe { raise(sig) };
+    }
+}
+
+/// SIGHUP and SIGTERM only set a flag (`catch`).
+pub fn catch_hup_term() -> bool {
+    catch(&[SIGHUP, SIGTERM])
 }
 
 /// SIGHUP and SIGTERM back to their default action, once the terminal is
@@ -430,14 +453,8 @@ pub fn catch_hup_term() -> bool {
 /// raised again, so it ends the program as it would have.  One the
 /// caller took (`Event::Signal`) is the caller's: it exits with 128 + it.
 pub fn default_hup_term() {
-    for sig in [SIGHUP, SIGTERM] {
-        // SAFETY: SIG_DFL is a valid handler for any catchable signal.
-        unsafe { signal(sig, SIG_DFL) };
-    }
-    if let Some(sig) = take_signal() {
-        // SAFETY: raise() takes any signal number; this is one we caught.
-        unsafe { raise(sig) };
-    }
+    default(&[SIGHUP, SIGTERM]);
+    raise_pending();
 }
 
 /// Whether a caught signal is waiting, without taking it.
@@ -526,6 +543,7 @@ pub fn abi_lines() -> Vec<String> {
     v.push(format!("offset pollfd.revents {}", offset_of!(PollFd, revents)));
     v.push(format!("const POLLIN {:#x}", POLLIN));
     v.push(format!("const SIGHUP {:#x}", SIGHUP));
+    v.push(format!("const SIGINT {:#x}", SIGINT));
     v.push(format!("const SIGTERM {:#x}", SIGTERM));
     v.push(format!("const SIG_DFL {:#x}", SIG_DFL));
     for (f, link) in SYMS {

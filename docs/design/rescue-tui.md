@@ -367,7 +367,10 @@ console is RT3's to confirm.
 - SIGTERM and SIGHUP get a handler that only sets an atomic flag; `poll`
   then returns `EINTR` (read through `std::io::Error::last_os_error`, so no
   errno FFI; *Check* on each family that `poll` isn't restarted) and the
-  main loop restores and exits.  No other signal handler.
+  main loop restores and exits.  The only other handler is the demo's
+  restore page's (RT8): while its child runs, SIGINT, and in plain mode
+  SIGHUP and SIGTERM, set the same flag, so the child is stopped and the
+  key file removed before the signal ends the program.
 - Nothing can catch SIGKILL, so the launcher runs `stty sane` after
   bko-rescue exits for any reason, before starting it again (RT13).
 - `read` returning 0 (the terminal hung up) ends the program cleanly.
@@ -389,7 +392,7 @@ table is *Check* until RT1's header test passes in that family's guest.**
 | `struct winsize` | four `unsigned short` | same | same | same |
 | `poll`, `nfds_t` | `unsigned long` | `unsigned int` | `unsigned long` | `unsigned long` |
 | `struct pollfd`, `POLLIN` | int, two shorts; 1 | same | same | same *Check* |
-| `signal`, `SIGHUP`, `SIGTERM` | 1, 15 | 1, 15 | 1, 15 | 1, 15 *Check* |
+| `signal`, `SIGHUP`, `SIGINT`, `SIGTERM` | 1, 2, 15 | 1, 2, 15 | 1, 2, 15 | 1, 2, 15 *Check* |
 | `raise`, `SIG_DFL` | function, 0 | function, 0 | function, 0 | function, 0 *Check* |
 | `ttyname` | function | function | function | function |
 | later (RT12): `setsid`, `kill` | functions | functions | functions | functions |
@@ -1051,9 +1054,30 @@ fuzz runs: every fuzz-style test at `BKO_RESCUE_FUZZ=5000000` and at
   `/run/bko-rescue` but not in `/tmp`.  RT12 should check the owner too
   (one `geteuid` for the FFI table) or make the directory fresh.
 - **The demo follows the events file** as RT12 will: stdout to a file,
-  read each tick, stderr to a second file for Raw output.  The fake is
-  a child here (killed on Cancel, a signal or a panic); RT12's load is
+  read each tick 64 KiB at a time and at most 4 MiB a tick, stderr to a
+  second file for Raw output.  The fake is a child here, in a process
+  group of its own, killed on Cancel, a signal or a panic; RT12's load is
   detached.  The key file goes as soon as the child is reaped.
+- **Signals while the fake runs** (review): in plain mode nothing caught
+  SIGHUP, SIGTERM or SIGINT, and ISIG is on, so any of them, Ctrl-C
+  included, ended bko-rescue at once and left the key file, the events
+  and the fake running.  The restore page now catches SIGINT, and in
+  plain mode SIGHUP and SIGTERM too, while the fake runs.  Plain mode's
+  reads wait in poll and give up when a caught signal is pending; the
+  page drops the Run (the fake killed, the files and directory gone),
+  then puts the default actions back and raises the signal again.  The
+  full screen's `Term` still takes SIGHUP and SIGTERM itself, and now
+  SIGINT from outside too while the fake runs.  `drive.py` and
+  `pty-test.py` make the pty the program's controlling terminal, so
+  Ctrl-C and a hang-up send real signals; `demo-test.py` checks SIGTERM,
+  Ctrl-C and a hang-up in plain mode against the fake's log.
+- **The fake's argv and environment check** looks for the key's text as
+  a whole argument, a NAME=PATH's PATH or a whole value, and inside
+  values only for keys of 8 bytes or more: "e" is in "--key-file" by
+  chance.
+- **Stop the restore?** takes Esc as Keep going (`Question::esc_no`,
+  shown as "Esc: keep going"), and a run that ended while it was asked
+  says how it ended rather than "Stopped".
 - Still no clippy on czerny, so none ran.
 
 ## The app on top (later)

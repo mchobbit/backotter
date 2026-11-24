@@ -3,8 +3,9 @@
 full screen (UTF-8 colour, DEC mono, ASCII) and in plain mode, with the
 fake bko-holt on the restore page: the passphrase handed on as a key file
 (the fake checks it), its events followed with the gauge, the key file
-removed after.  Also its failure, Cancel, an unknown schema, SIGTERM while
-it runs, L and C, P to plain, a resize, and too small a terminal.
+removed after.  Also its failure, Cancel, an unknown schema, a one-letter
+passphrase, SIGTERM while it runs (and in plain mode SIGTERM, Ctrl-C and a
+hang-up), L and C, P to plain, a resize, and too small a terminal.
 
     testvm/rescue/demo-test.py PATH/TO/bko-rescue [ONLY ...]
 
@@ -108,12 +109,19 @@ def check_fake_log(name, log, typed, removed_within=5):
     want = hashlib.sha256(typed.encode()).hexdigest()
     check(len(keys) == 1 and keys[0]["sha256"] == want and keys[0]["bytes"] == len(typed.encode()),
           "%s: the key file holds what was typed, no newline" % name)
-    check(all(typed not in a for a in c["argv"]), "%s: the passphrase isn't in argv" % name)
+    check(not in_values(typed, c["argv"]), "%s: the passphrase isn't in argv" % name)
     if keys:
         p = keys[0]["path"]
         gone = [l for l in ls if l.get("removed") == p]
         check(bool(gone), "%s: the key file removed after the fake exited (%s)" % (name, gone or "left"))
         check(not os.path.exists(os.path.dirname(p)), "%s: its directory removed too" % name)
+
+
+def in_values(typed, argv):
+    """The fake's rule: a whole argument or a NAME=PATH's PATH, or inside
+    one for 8 characters or more."""
+    vals = list(argv) + [a.split("=", 1)[1] for a in argv if "=" in a]
+    return any(v == typed or (len(typed) >= 8 and typed in v) for v in vals)
 
 
 def says(d, phrase):
@@ -356,6 +364,12 @@ def test_cancel():
         d.wait("Restoring lovelace")
         d.keys("Tab", "Enter")
         d.wait("Stop the restore?")
+        check("Esc: keep going" in d.screen.text(), name + ": the key line says Esc keeps going")
+        d.keys("Esc")
+        d.gone("Stop the restore?")
+        check("Restoring lovelace" in d.screen.text(), name + ": Esc keeps going")
+        d.keys("Tab", "Enter")
+        d.wait("Stop the restore?")
         d.keys("Left", "Enter")
         t = time.time()
         d.wait("The fake bko-holt was stopped", 5)
@@ -406,6 +420,89 @@ def test_sigterm_while_it_runs():
     except (drive.Failed, screen.Fault) as e:
         check(False, "%s: %s\n%s" % (name, e, d.dump()))
         d.close()
+
+
+def test_one_letter_passphrase():
+    """Any passphrase will do, the page says: one letter that is in
+    "--key-file" too."""
+    name = "one-letter passphrase"
+    env, log = fake_env()
+    d = start(["--demo", "--holt", FAKE], env)
+    try:
+        to_restore_page(d)
+        d.type("e")
+        d.keys("Enter")
+        d.wait("The fake restore went through every stage", 10)
+        d.keys("Enter")
+        d.wait("The end of the demo")
+        d.keys("Enter")
+        finish(d, name)
+        check_fake_log(name, log, "e")
+    except (drive.Failed, screen.Fault) as e:
+        check(False, "%s: %s\n%s" % (name, e, d.dump()))
+        d.close()
+
+
+def to_restore_page_plain(d):
+    """Pages 0-6 in plain mode, to the passphrase's prompt."""
+    d.wait("Choose [1-3, s]: ")
+    m = d.mark()
+    d.type("2", line=True)
+    d.wait("> ", since=m)
+    m = d.mark()
+    d.type("sftp://nas/plain", line=True)
+    d.wait("Each key shows", since=m)
+    d.wait("> ", since=m)
+    d.send(b"s3cret\r")
+    d.wait("Choose [1-5, b]: ")
+    d.type("4", line=True)
+    d.wait("Choose [y, n, b]: ")
+    d.type("n", line=True)
+    d.wait("Choose [o, b]: ")
+    m = d.mark()
+    d.type("o", line=True)
+    d.wait("Unlock sda3_crypt", 8, since=m)
+    d.wait("> ", since=m)
+
+
+def plain_signal(kind, sig):
+    """In plain mode, a signal while the fake runs: the fake stopped and
+    the key file removed before the signal ends bko-rescue."""
+    name = "plain, %s while the fake runs" % kind
+    env, log = fake_env("demo-slow")
+    d = start(["--demo", "--plain", "--holt", FAKE], env)
+    try:
+        to_restore_page_plain(d)
+        m = d.mark()
+        d.send(b"pw\r")
+        d.wait("GB of 61.2 GB", 8, since=m)
+        if kind == "Ctrl-C":
+            d.send(b"\x03", settle=False)
+        elif kind == "a hang-up":
+            d.hang_up()
+        else:
+            d.signal(sig)
+        got = d.exit()
+        check(got == -sig, "%s: ended by the signal, after cleaning up (%s %s)" % (name, got, d.err.strip()[-200:]))
+        if kind != "a hang-up":
+            check(d.settings_back(), "%s: the terminal's settings as they were" % name)
+        d.close()
+        check_fake_log(name, log, "pw")
+    except (drive.Failed, screen.Fault) as e:
+        check(False, "%s: %s\n%s" % (name, e, d.dump()[-3000:]))
+        d.close()
+
+
+def test_plain_sigterm():
+    plain_signal("SIGTERM", signal.SIGTERM)
+
+
+def test_plain_ctrl_c():
+    plain_signal("Ctrl-C", signal.SIGINT)
+
+
+def test_plain_hang_up():
+    plain_signal("a hang-up", signal.SIGHUP)
 
 
 def test_no_fake():
@@ -539,8 +636,34 @@ def test_screen_py_faults():
     check(not s.cursor_shown, "screen.py: the cursor hidden")
 
 
-TESTS = [test_screen_py_faults, test_script, test_full_utf8_colour, test_full_dec_mono, test_full_ascii_vt220,
-         test_plain, test_failure, test_cancel, test_unknown_schema, test_sigterm_while_it_runs, test_no_fake,
+def test_plain_check_faults():
+    """drive.py's plain-mode check refuses what bko-rescue never sends."""
+    R = screen.Rules
+    bad = [("utf8", b"a\xc2\x9b"), ("utf8", b"\xff"), ("utf8", b"a\x80b"), ("utf8", "\u4e2d".encode()),
+           ("utf8", b"\x1b[2J"), ("utf8", b"a\x07"), ("utf8", b"a\x7f"), ("ascii", "\u00e9".encode()),
+           ("utf8", b"ok\xc3")]
+    for lines, b in bad:
+        c = drive.PlainCheck(R(lines))
+        try:
+            c.feed(b)
+            c.end()
+            check(False, "plain check refuses %r (%s)" % (b, lines))
+        except screen.Fault:
+            pass
+    good = "\u0141\u00f3d\u017a ok\tx\r\n".encode()
+    c = drive.PlainCheck(R("utf8"))
+    try:
+        for i in range(len(good)):
+            c.feed(good[i:i + 1])
+        c.end()
+        check(True, "plain check: letters text.rs allows, split a byte a read, pass")
+    except screen.Fault as e:
+        check(False, "plain check: %s" % e)
+
+
+TESTS = [test_screen_py_faults, test_plain_check_faults, test_script, test_full_utf8_colour, test_full_dec_mono, test_full_ascii_vt220,
+         test_plain, test_failure, test_cancel, test_unknown_schema, test_sigterm_while_it_runs,
+         test_one_letter_passphrase, test_plain_sigterm, test_plain_ctrl_c, test_plain_hang_up, test_no_fake,
          test_lines_colour_and_plain, test_resize_and_small]
 
 for f in TESTS:

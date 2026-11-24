@@ -32,13 +32,18 @@ As a command, a script of steps (one a line, `#` comments):
     resize ROWS COLS
     plain              the program goes on in plain mode (after P or p)
     signal TERM|HUP
+    hangup             close the pty's master, as a terminal hanging up
     exit N             wait for it to end with N (a signal as -N)
+
+The pty is the program's controlling terminal, so Ctrl-C in cooked mode
+sends SIGINT and a hang-up sends SIGHUP, as on a console.
 
 Exit 0 when every step passes; else the step, the fault and the screen.
 Python's stdlib only.
 """
 
 import argparse
+import codecs
 import fcntl
 import os
 import re
@@ -75,21 +80,31 @@ def base_env(extra=None):
     return e
 
 
+def controlling_tty():
+    """In the child, after setsid: fd 0 (the slave) as its controlling
+    terminal, so ISIG keys and a hang-up send it signals."""
+    fcntl.ioctl(0, getattr(termios, "TIOCSCTTY", 0x540E), 0)
+
+
 class Pty:
-    """A program on a pty of a set size, its stderr to a pipe."""
+    """A program on a pty of a set size, its controlling terminal, its
+    stderr to a pipe."""
 
     def __init__(self, argv, rows, cols, env):
         self.master, self.slave = os.openpty()
         self.set_size(rows, cols)
         self.before = termios.tcgetattr(self.slave)
         self.p = subprocess.Popen(argv, stdin=self.slave, stdout=self.slave, stderr=subprocess.PIPE,
-                                  env=env, start_new_session=True)
+                                  env=env, start_new_session=True, preexec_fn=controlling_tty)
 
     def set_size(self, rows, cols):
         fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
     def read(self, secs):
         """Bytes that came within `secs`; b"" at none, None at hang-up."""
+        if self.master is None:
+            time.sleep(max(secs, 0))
+            return None
         r, _, _ = select.select([self.master], [], [], max(secs, 0))
         if not r:
             return b""
@@ -98,8 +113,17 @@ class Pty:
         except OSError:
             return None
 
+    def hang_up(self):
+        """Close the master: the kernel hangs the terminal up, and the
+        program's session gets SIGHUP."""
+        if self.master is not None:
+            os.close(self.master)
+            self.master = None
+
     def close(self):
         for fd in (self.master, self.slave):
+            if fd is None:
+                continue
             try:
                 os.close(fd)
             except OSError:
@@ -136,6 +160,39 @@ def profile(binary, args, rows, cols, env):
     return dict(l.split(" ", 1) for l in text.splitlines() if " " in l)
 
 
+class PlainCheck:
+    """Plain mode's bytes: no escape and no control byte but tab, CR and
+    LF; in a UTF-8 profile, strict UTF-8 (a character may be split
+    across reads) of only the characters text.rs allows; else ASCII."""
+
+    def __init__(self, rules):
+        self.rules = rules
+        self.n = 0
+        self.dec = codecs.getincrementaldecoder("utf-8")("strict")
+
+    def feed(self, data):
+        for i, b in enumerate(data):
+            if b == 0x1b or (b < 0x20 and b not in (0x09, 0x0a, 0x0d)) or b == 0x7f:
+                raise screen.Fault("plain mode, byte %d: 0x%02x" % (self.n + i, b))
+            if b >= 0x80 and self.rules.lines != "utf8":
+                raise screen.Fault("plain mode, byte %d: 0x%02x outside UTF-8" % (self.n + i, b))
+        try:
+            chars = self.dec.decode(data)
+        except UnicodeDecodeError as e:
+            raise screen.Fault("plain mode, near byte %d: not UTF-8 (%s)" % (self.n + e.start, e.reason))
+        for ch in chars:
+            if ch not in "\t\r\n" and not screen.allowed(ch):
+                raise screen.Fault("plain mode: U+%04X, a character bko-rescue never sends" % ord(ch))
+        self.n += len(data)
+
+    def end(self):
+        """No character left half sent."""
+        try:
+            self.dec.decode(b"", final=True)
+        except UnicodeDecodeError:
+            raise screen.Fault("plain mode: the output ends inside a UTF-8 character")
+
+
 class Drive:
     def __init__(self, binary, args, rows=24, cols=80, env=None, timeout=5):
         self.binary = os.path.abspath(binary)
@@ -149,6 +206,7 @@ class Drive:
         self.rules = caps
         self.screen = screen.Screen(rows, cols, caps)
         self.plain = mode.startswith("plain")
+        self.plain_check = PlainCheck(self.rules)
         self.to_plain_pending = False
         self.text = b""                 # what came in plain mode
         self.out = b""                  # every byte
@@ -171,19 +229,10 @@ class Drive:
             self.plain = True
             data = data[i:]
         if self.plain:
-            self.check_plain(data)
+            self.plain_check.feed(data)
             self.text += data
         else:
             self.screen.feed(data)
-
-    def check_plain(self, data):
-        """Plain mode sends no escape at all and no control byte but CR
-        and LF (and a tab); outside UTF-8, only ASCII."""
-        for i, b in enumerate(data):
-            if b == 0x1b or (b < 0x20 and b not in (0x09, 0x0a, 0x0d)) or b == 0x7f:
-                raise screen.Fault("plain mode, byte %d: 0x%02x" % (len(self.text) + i, b))
-            if b >= 0x80 and self.rules.lines != "utf8":
-                raise screen.Fault("plain mode, byte %d: 0x%02x outside UTF-8" % (len(self.text) + i, b))
 
     def pump(self, secs):
         """Read for `secs`, or until the program hangs up."""
@@ -296,19 +345,29 @@ class Drive:
     def signal(self, sig):
         self.t.p.send_signal(sig)
 
+    def hang_up(self):
+        self.quiet()
+        self.t.hang_up()
+        self.hung_up = True
+
     # ---- the end ----
 
     def exit(self, secs=5):
         """Wait for it to end: its exit code (a signal as -N)."""
         end = time.time() + secs
         while self.t.p.poll() is None and time.time() < end:
-            self.pump(0.05)
+            if self.hung_up:
+                time.sleep(0.02)
+            else:
+                self.pump(0.05)
         self.quiet(0.1, 1)
         if self.t.p.poll() is None:
             self.t.p.kill()
         self.code = self.t.p.wait()
         self.err = self.t.p.stderr.read().decode(errors="replace")
-        if not self.plain and not self.to_plain_pending:
+        if self.plain:
+            self.plain_check.end()
+        elif not self.to_plain_pending:
             self.screen.end()
         return self.code
 
@@ -377,11 +436,13 @@ def step(d, n, raw, dumps):
         d.to_plain()
     elif cmd == "signal":
         d.signal(getattr(signal, "SIG" + rest[0]))
+    elif cmd == "hangup":
+        d.hang_up()
     elif cmd == "exit":
         code = d.exit()
         if code != int(rest[0]):
             raise Failed("exit %d, not %s: %s" % (code, rest[0], d.err.strip()))
-        if not d.settings_back():
+        if d.t.master is not None and not d.settings_back():
             raise Failed("the terminal's settings weren't put back")
     else:
         raise Failed("line %d: no step %r" % (n, cmd))

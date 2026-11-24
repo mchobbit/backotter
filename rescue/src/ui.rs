@@ -214,12 +214,14 @@ pub struct Question {
     pub no: Clean,
     /// The focus starts on No.
     pub no_first: bool,
+    /// Esc presses No, where there is no Back button.
+    pub esc_no: bool,
     pub buttons: Vec<Button>,
 }
 
 impl Question {
     pub fn new(chrome: Chrome, text: Clean) -> Question {
-        Question { chrome, text, yes: Clean::ours("Yes"), no: Clean::ours("No"), no_first: false, buttons: Vec::new() }
+        Question { chrome, text, yes: Clean::ours("Yes"), no: Clean::ours("No"), no_first: false, esc_no: false, buttons: Vec::new() }
     }
 }
 

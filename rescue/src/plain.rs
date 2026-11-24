@@ -8,6 +8,9 @@
 //!   is UTF-8.  Text wraps at 72 columns.
 //! - Lines are read in cooked mode, at most 4 KiB each.  `ISIG` stays
 //!   on, so Ctrl-C ends bko-rescue (the launcher starts it again).
+//!   Reads wait in poll, so a signal caught meanwhile (`tty::Quiet`, or
+//!   a caller that catches SIGINT, SIGHUP and SIGTERM while a child
+//!   runs) ends the dialog with `Answer::Quit`.
 //! - A password is read with echo, line editing and ISIG off
 //!   (`tty::Quiet`), byte by byte into the `Secret`, never through a
 //!   `String`: Backspace takes a character off, Ctrl-U empties it,
@@ -43,6 +46,9 @@ pub enum Byte {
     Got(u8),
     Timeout,
     Eof,
+    /// A caught signal is waiting: the dialog ends, and what was typed
+    /// of a line is dropped.
+    Signal,
 }
 
 /// Where plain mode's lines go and its bytes come from.
@@ -83,18 +89,7 @@ impl Line for StdLine {
     }
 
     fn read(&mut self, timeout_ms: Option<u64>) -> io::Result<Byte> {
-        if self.quiet.is_some() {
-            return self.read_quiet(timeout_ms);
-        }
-        if let Some(t) = timeout_ms {
-            match ffi::poll_in(0, i32::try_from(t).unwrap_or(i32::MAX)) {
-                Ok(true) => {}
-                Ok(false) => return Ok(Byte::Timeout),
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => return Ok(Byte::Timeout),
-                Err(e) => return Err(e),
-            }
-        }
-        self.read_byte()
+        self.read_polled(timeout_ms)
     }
 
     fn quiet(&mut self, on: bool) -> io::Result<()> {
@@ -113,15 +108,18 @@ impl Line for StdLine {
 }
 
 impl StdLine {
-    /// Echo off: wait in poll a second at a time, never in read, which
-    /// glibc's signal() (SA_RESTART) would restart after a SIGTERM.  A
-    /// SIGHUP or SIGTERM is the end of input here; the caller turns echo
-    /// back on, and then the signal ends the program (`tty::Quiet`).
-    fn read_quiet(&mut self, timeout_ms: Option<u64>) -> io::Result<Byte> {
+    /// Wait in poll a second at a time, never in read, which glibc's
+    /// signal() (SA_RESTART) would restart after a caught signal.  A
+    /// caught signal waiting is `Byte::Signal`: with echo off the caller
+    /// turns echo back on, and then the signal ends the program
+    /// (`tty::Quiet`); the demo's restore page catches them while the
+    /// fake runs, and cleans up first.  With no handler, nothing is ever
+    /// pending: the signal has ended the program already.
+    fn read_polled(&mut self, timeout_ms: Option<u64>) -> io::Result<Byte> {
         let start = self.now_ms();
         loop {
-            if tty::Quiet::signalled() {
-                return Ok(Byte::Eof);
+            if ffi::signal_pending() {
+                return Ok(Byte::Signal);
             }
             let wait = match timeout_ms {
                 Some(t) => {
@@ -292,6 +290,11 @@ impl<L: Line> Plain<L> {
             let b = match self.line.read(timeout)? {
                 Byte::Got(b) => b,
                 Byte::Timeout => return Ok(Read::Timeout),
+                Byte::Signal => {
+                    self.pending.clear();
+                    self.overflow = false;
+                    return Ok(Read::Eof);
+                }
                 Byte::Eof if self.pending.is_empty() && !self.overflow => return Ok(Read::Eof),
                 // A last line with no newline.
                 Byte::Eof => b'\n',
@@ -457,7 +460,7 @@ impl<L: Line> Plain<L> {
             let b = match self.line.read(None)? {
                 Byte::Got(b) => b,
                 Byte::Timeout => continue,
-                Byte::Eof => return Ok(None),
+                Byte::Eof | Byte::Signal => return Ok(None),
             };
             if std::mem::take(&mut self.after_cr) && b == b'\n' {
                 continue;
@@ -961,6 +964,37 @@ pub(crate) mod tests {
             assert!(!f.out.contains('\u{9b}'));
             assert_eq!(f.quiet.iter().filter(|&&q| q).count(), f.quiet.iter().filter(|&&q| !q).count(), "echo always back on");
         }
+    }
+
+    /// Bytes, then a caught signal for every read after them.
+    struct SigLine(VecDeque<u8>);
+
+    impl Line for SigLine {
+        fn write(&mut self, _: &str) -> io::Result<()> {
+            Ok(())
+        }
+        fn read(&mut self, _: Option<u64>) -> io::Result<Byte> {
+            Ok(self.0.pop_front().map_or(Byte::Signal, Byte::Got))
+        }
+        fn quiet(&mut self, _: bool) -> io::Result<()> {
+            Ok(())
+        }
+        fn now_ms(&mut self) -> u64 {
+            0
+        }
+    }
+
+    #[test]
+    fn a_signal_quits_and_drops_a_half_typed_line() {
+        let mut p = Plain::new(SigLine(b"2".iter().copied().collect()), Lines::Utf8);
+        assert_eq!(p.menu(&machines()), Answer::Quit, "the 2 isn't taken as a line");
+        let mut p = Plain::new(SigLine(b"abc".iter().copied().collect()), Lines::Utf8);
+        assert!(matches!(p.password(&Password::new(Chrome::ours("a", "b"), o("x"))), Answer::Quit));
+        let mut d = Progress::new(Chrome::ours("a", "b"), o("x"));
+        d.buttons = vec![ui::Button::other("Cancel", Some('c'), 1)];
+        let mut forever = || Tick::At { text: None, pct: None, line: o("running"), next_ms: 1000 };
+        let mut p = Plain::new(SigLine(b"c".iter().copied().collect()), Lines::Utf8);
+        assert_eq!(p.progress(&d, &mut forever), Answer::Quit);
     }
 
     #[test]

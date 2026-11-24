@@ -14,6 +14,12 @@
 //! fake has exited.  Without `--holt` nothing is run: the demo never
 //! starts the real bko-holt by itself.
 //!
+//! While the fake runs, SIGINT is caught, and in plain mode SIGHUP and
+//! SIGTERM too (the full screen's `Term` catches those already).  The
+//! page then stops the fake and removes the key file before the signal
+//! ends the program.  The fake runs in a process group of its own, so a
+//! Ctrl-C on the terminal reaches only bko-rescue.
+//!
 //! The events are ui.md's "`--json` for load".  That protocol isn't
 //! built yet (RT10), so `Follow` reads a provisional form of it; RT12
 //! writes the real follower in `app/`.
@@ -22,6 +28,7 @@ use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
+use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::Instant;
@@ -29,6 +36,7 @@ use std::time::Instant;
 use crate::json::{self, Value};
 use crate::plain::{Plain, StdLine};
 use crate::secret::{self, Secret};
+use crate::term::ffi;
 use crate::term::profile::Profile;
 use crate::text::{cap, Clean};
 use crate::ui::{Answer, Button, Chrome, Input, Menu, Message, Password, Progress, Question, Radio, TextView, Tick, Ui};
@@ -46,6 +54,9 @@ pub struct Seen {
     pub run: Option<String>,
     /// `--holt PATH`: the fake bko-holt the restore page runs.
     pub holt: Option<String>,
+    /// The pages are in plain mode, where nothing else catches SIGHUP
+    /// and SIGTERM.
+    pub plain: bool,
 }
 
 pub const PAGES: usize = 9;
@@ -267,6 +278,7 @@ pub fn run(p: &Profile, holt: Option<&str>) -> i32 {
         // The terminal back as it was, then plain mode at the same page.
         drop(fs);
     }
+    seen.plain = true;
     let mut pl = Plain::new(StdLine::new(), p.lines);
     loop {
         let (n, a) = tour(&mut pl, at, &mut seen);
@@ -296,8 +308,44 @@ pub const STDERR_MAX: u64 = 64 * 1024;
 /// The most stages a start event may name.
 const STAGES_MAX: usize = 32;
 
+/// The events file is read this much at a time, and at most
+/// EVENTS_PER_POLL each look; the rest waits for the next.
+const EVENTS_CHUNK: usize = 64 * 1024;
+const EVENTS_PER_POLL: usize = 4 * 1024 * 1024;
+
 const CANCEL: usize = 0;
 const RAW: usize = 1;
+
+/// The signals the restore page catches while the fake runs: SIGINT,
+/// and in plain mode SIGHUP and SIGTERM.  Dropped after the `Run`, it
+/// puts their default action back.  In plain mode a signal that came is
+/// then raised again, so it ends the program once the fake is stopped
+/// and the key file gone.  In full screen it is `Term`'s to take, which
+/// puts the terminal back first.
+struct Caught {
+    plain: bool,
+}
+
+const PLAIN_SIGS: &[i32] = &[ffi::SIGINT, ffi::SIGHUP, ffi::SIGTERM];
+const FULL_SIGS: &[i32] = &[ffi::SIGINT];
+
+impl Caught {
+    fn new(plain: bool) -> Caught {
+        ffi::catch(if plain { PLAIN_SIGS } else { FULL_SIGS });
+        Caught { plain }
+    }
+}
+
+impl Drop for Caught {
+    fn drop(&mut self) {
+        if self.plain {
+            ffi::default(PLAIN_SIGS);
+            ffi::raise_pending();
+        } else {
+            ffi::default(FULL_SIGS);
+        }
+    }
+}
 
 /// The restore page: the passphrase, the run, then how it ended.
 fn restore(ui: &mut dyn Ui, holt: &str, seen: &mut Seen) -> Answer<()> {
@@ -310,6 +358,38 @@ fn restore(ui: &mut dyn Ui, holt: &str, seen: &mut Seen) -> Answer<()> {
         Answer::Ok(s) => s,
         a => return a.map(|_| ()),
     };
+    // Before the key file is written, and dropped only after the Run.
+    let caught = Caught::new(seen.plain);
+    let out = follow(ui, holt, secret, seen);
+    drop(caught);
+    let out = match out {
+        Ok(o) => o,
+        Err(a) => return a,
+    };
+    seen.run = Some(out.short.clone());
+    let mut m = Message::new(Chrome::new(o("Restore"), out.title.clone()), out.text.clone());
+    if !out.raw.is_empty() {
+        m.buttons.push(Button::other("Raw output", Some('o'), RAW));
+    }
+    loop {
+        match ui.message(&m) {
+            Answer::Button(RAW) => {
+                let mut v = TextView::new(Chrome::ours("Restore", "What the fake bko-holt wrote to stderr"), out.raw.clone());
+                v.buttons.push(Button::back());
+                if ui.view(&v) == Answer::Quit {
+                    return Answer::Quit;
+                }
+            }
+            a => return a,
+        }
+    }
+}
+
+/// Start the fake and follow it with the gauge, Cancel asking first.
+/// How it ended, or the answer that left the page (a signal, `p` on the
+/// too-small notice): the Run is dropped by then, so the fake is stopped
+/// and the key file gone.
+fn follow(ui: &mut dyn Ui, holt: &str, secret: Secret, seen: &mut Seen) -> Result<Outcome, Answer<()>> {
     let started = Run::start(holt, &secret, std::env::temp_dir().as_path());
     // The key file has it now: wiped.
     drop(secret);
@@ -318,7 +398,7 @@ fn restore(ui: &mut dyn Ui, holt: &str, seen: &mut Seen) -> Answer<()> {
         Err(e) => {
             let t = Clean::text(&format!("The fake bko-holt couldn't be started: {e}."), cap::PROBLEM);
             seen.run = Some("not started".to_string());
-            return ui.message(&Message::new(Chrome::ours("Restore", "Problem: nothing ran"), t));
+            return Err(ui.message(&Message::new(Chrome::ours("Restore", "Problem: nothing ran"), t)));
         }
     };
     let mut prog = Progress::new(Chrome::ours("Restore", "Restoring lovelace"), run.follow.text(0));
@@ -343,16 +423,25 @@ fn restore(ui: &mut dyn Ui, holt: &str, seen: &mut Seen) -> Answer<()> {
                 q.yes = o("Stop");
                 q.no = o("Keep going");
                 q.no_first = true;
+                q.esc_no = true;
                 match ui.yes_no(&q) {
-                    Answer::Ok(true) => break true,
-                    Answer::Quit => return Answer::Quit,
-                    _ => prog.text = run.follow.text(run.ms()),
+                    Answer::Ok(true) => {
+                        // It may have ended while the question was up:
+                        // then it wasn't stopped, and says how it ended.
+                        run.poll();
+                        if run.finished() {
+                            break false;
+                        }
+                        break true;
+                    }
+                    Answer::Ok(false) | Answer::Back | Answer::Button(_) => prog.text = run.follow.text(run.ms()),
+                    a => return Err(a.map(|_| ())),
                 }
             }
             // A signal, or `p` on the too-small notice (plain mode
             // starts this page again): the fake is stopped as the Run
             // goes.
-            a => return a,
+            a => return Err(a),
         }
     };
     if stopped {
@@ -360,24 +449,7 @@ fn restore(ui: &mut dyn Ui, holt: &str, seen: &mut Seen) -> Answer<()> {
     } else {
         run.wait();
     }
-    let out = run.outcome(stopped);
-    seen.run = Some(out.short.clone());
-    let mut m = Message::new(Chrome::new(o("Restore"), out.title.clone()), out.text.clone());
-    if !out.raw.is_empty() {
-        m.buttons.push(Button::other("Raw output", Some('o'), RAW));
-    }
-    loop {
-        match ui.message(&m) {
-            Answer::Button(RAW) => {
-                let mut v = TextView::new(Chrome::ours("Restore", "What the fake bko-holt wrote to stderr"), out.raw.clone());
-                v.buttons.push(Button::back());
-                if ui.view(&v) == Answer::Quit {
-                    return Answer::Quit;
-                }
-            }
-            a => return a,
-        }
-    }
+    Ok(run.outcome(stopped))
 }
 
 /// How a run ended, for its message.
@@ -400,6 +472,11 @@ pub struct Run {
     stderr: Option<PathBuf>,
     child: Option<Child>,
     status: Option<ExitStatus>,
+    /// Every event read: the fake has exited and the file is read to its
+    /// end, or the fake was stopped.
+    drained: bool,
+    /// EVENTS_CHUNK bytes, made once.
+    buf: Vec<u8>,
     started: Instant,
     pub follow: Follow,
 }
@@ -442,6 +519,8 @@ impl Run {
             stderr: None,
             child: None,
             status: None,
+            drained: false,
+            buf: vec![0u8; EVENTS_CHUNK],
             started: Instant::now(),
             follow: Follow::new(),
         };
@@ -464,6 +543,8 @@ impl Run {
             .stdin(Stdio::null())
             .stdout(out)
             .stderr(err)
+            // A group of its own: a Ctrl-C on the terminal is ours.
+            .process_group(0)
             .spawn()?;
         run.child = Some(child);
         run.started = Instant::now();
@@ -475,17 +556,30 @@ impl Run {
         u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
 
-    /// Read what's new in the events file.
-    fn read_events(&mut self) {
-        let mut buf = Vec::new();
-        if let Some(f) = &mut self.events {
+    /// Read what's new in the events file, EVENTS_CHUNK at a time and at
+    /// most EVENTS_PER_POLL.  True when it read to the end, or the events
+    /// stopped making sense.
+    fn read_events(&mut self) -> bool {
+        let ms = self.ms();
+        let Some(f) = self.events.as_mut() else { return true };
+        let buf = &mut self.buf;
+        let mut got = 0;
+        while got < EVENTS_PER_POLL {
+            if self.follow.error.is_some() {
+                return true;
+            }
             // A regular file: this never blocks.
-            let _ = f.read_to_end(&mut buf);
+            match f.read(buf) {
+                Ok(0) => return true,
+                Ok(n) => {
+                    got += n;
+                    self.follow.feed(&buf[..n], ms);
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => return true,
+            }
         }
-        if !buf.is_empty() {
-            let ms = self.ms();
-            self.follow.feed(&buf, ms);
-        }
+        self.follow.error.is_some()
     }
 
     /// The fake exited: take its status, then remove the key file at
@@ -494,7 +588,6 @@ impl Run {
         self.status = Some(st);
         self.child = None;
         self.remove_key();
-        self.read_events();
     }
 
     fn remove_key(&mut self) {
@@ -503,26 +596,30 @@ impl Run {
         }
     }
 
-    /// One look: new events, and whether the fake has exited.  Events
+    /// One look: whether the fake has exited, then new events.  Events
     /// that make no sense, or a run that says it commits, stop it.
     pub fn poll(&mut self) {
-        self.read_events();
-        if self.follow.error.is_some() || self.follow.commit == Some(true) {
-            self.stop();
-            return;
-        }
         if let Some(c) = &mut self.child {
             match c.try_wait() {
                 Ok(Some(st)) => self.exited(st),
                 Ok(None) => {}
-                Err(_) => self.stop(),
+                Err(_) => return self.stop(),
             }
+        }
+        // Read after the exit is seen, so a read to the end after it
+        // has every event.
+        let at_end = self.read_events();
+        if self.follow.error.is_some() || self.follow.commit == Some(true) {
+            return self.stop();
+        }
+        if self.child.is_none() && at_end {
+            self.drained = true;
         }
     }
 
     /// Whether the fake has exited and its events are all read.
     pub fn finished(&self) -> bool {
-        self.child.is_none()
+        self.child.is_none() && self.drained
     }
 
     /// Reap the fake, blocking.
@@ -550,12 +647,14 @@ impl Run {
         }
     }
 
-    /// Stop the fake (SIGKILL) and reap it.
+    /// Stop the fake (SIGKILL) and reap it.  Events it left unread
+    /// don't count then.
     pub fn stop(&mut self) {
         if let Some(c) = &mut self.child {
             let _ = c.kill();
         }
         self.reap();
+        self.drained = true;
     }
 
     /// The last 64 KiB of the fake's stderr, a line each.
@@ -945,7 +1044,7 @@ impl Follow {
 
     /// The bar, from `progress` events; None before any.
     pub fn pct(&self) -> Option<u8> {
-        self.bytes.map(|(b, t)| if t == 0 { 100 } else { (b.saturating_mul(100) / t).min(100) as u8 })
+        self.bytes.map(|(b, t)| if t == 0 { 100 } else { (u128::from(b) * 100 / u128::from(t)).min(100) as u8 })
     }
 
     /// The line under the bar: the figures, from `progress` events.
@@ -1106,6 +1205,11 @@ mod tests {
         assert_eq!(thousands(12), "12");
         assert_eq!(doing("/usr/sbin/mkfs.vfat"), "making a filesystem");
         assert_eq!(doing("frob\u{1b}[2J"), "running frob?[2J");
+        let mut f = Follow::new();
+        f.bytes = Some((u64::MAX, u64::MAX));
+        assert_eq!(f.pct(), Some(100), "no overflow near u64::MAX");
+        f.bytes = Some((u64::MAX / 2, u64::MAX));
+        assert_eq!(f.pct(), Some(49));
     }
 
     /// Random bytes, and good lines cut and changed, never panic, and
@@ -1221,6 +1325,93 @@ mod tests {
         let mut seen = Seen::default();
         assert_eq!(restore(&mut ui, "/nonexistent/fake", &mut seen), Answer::Ok(()));
         assert_eq!(seen.run.as_deref(), Some("not started"));
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Scripted, but each question waits a while first, as a person
+    /// would.
+    struct Slow(Scripted, u64);
+
+    impl Ui for Slow {
+        fn menu(&mut self, d: &Menu) -> Answer<usize> {
+            self.0.menu(d)
+        }
+        fn radio(&mut self, d: &Radio) -> Answer<usize> {
+            self.0.radio(d)
+        }
+        fn input(&mut self, d: &Input) -> Answer<String> {
+            self.0.input(d)
+        }
+        fn password(&mut self, d: &Password) -> Answer<Secret> {
+            self.0.password(d)
+        }
+        fn yes_no(&mut self, d: &Question) -> Answer<bool> {
+            std::thread::sleep(std::time::Duration::from_millis(self.1));
+            self.0.yes_no(d)
+        }
+        fn message(&mut self, d: &Message) -> Answer<()> {
+            self.0.message(d)
+        }
+        fn view(&mut self, d: &TextView) -> Answer<()> {
+            self.0.view(d)
+        }
+        fn progress(&mut self, d: &Progress, tick: &mut dyn FnMut() -> Tick) -> Answer<()> {
+            self.0.progress(d, tick)
+        }
+    }
+
+    #[test]
+    fn stop_after_it_ended_says_how_it_ended() {
+        let d = scratch("ended");
+        let ev = "{\"event\":\"start\",\"format\":\"bko-holt-events\",\"schema\":1,\"commit\":false}\n{\"event\":\"end\",\"exit\":0}";
+        let fake = sh_fake(&d, &format!("printf '%s\\n' '{}'", ev.replace('\n', "' '")));
+        // Cancel at the first tick; the fake ends while Stop is asked.
+        let r = [Reply::Secret(b"pw".to_vec()), Reply::Button(CANCEL), Reply::Yes, Reply::Ok];
+        let mut ui = Slow(Scripted::new(r), 1500);
+        let mut seen = Seen::default();
+        assert_eq!(restore(&mut ui, &fake, &mut seen), Answer::Ok(()));
+        assert_eq!(seen.run.as_deref(), Some("done"), "{:?}", ui.0.asked);
+        // Keep going (Back, as Esc gives) goes on following it.
+        let fake = sh_fake(&d, &format!("sleep 0.3\nprintf '%s\\n' '{}'", ev.replace('\n', "' '")));
+        let r = [Reply::Secret(b"pw".to_vec()), Reply::Button(CANCEL), Reply::Back, Reply::Ok, Reply::Ok];
+        let mut ui = Scripted::new(r);
+        let mut seen = Seen::default();
+        assert_eq!(restore(&mut ui, &fake, &mut seen), Answer::Ok(()));
+        assert_eq!(seen.run.as_deref(), Some("done"), "{:?}", ui.asked);
+        // Plain from the question leaves the page, the fake stopped.
+        let fake = sh_fake(&d, "exec sleep 30");
+        let _ = fs::remove_file(d.join("key-was"));
+        let mut ui = Slow(Scripted::new([Reply::Secret(b"pw".to_vec()), Reply::Button(CANCEL), Reply::Plain]), 700);
+        let t = Instant::now();
+        assert_eq!(restore(&mut ui, &fake, &mut seen), Answer::Plain);
+        assert!(t.elapsed().as_secs() < 20);
+        let key = fs::read_to_string(d.join("key-was")).unwrap();
+        assert!(!Path::new(key.trim()).exists(), "the key file is gone");
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// A big events file is read a few MiB a look, and all of it in the
+    /// end.
+    #[test]
+    fn a_big_events_file_is_read_in_pieces() {
+        let d = scratch("big");
+        let line = "{\"event\":\"progress\",\"stage\":\"restore\",\"files\":1,\"bytes\":1,\"total_bytes\":2}\n";
+        let n = 3 * EVENTS_PER_POLL / line.len();
+        let mut body = String::from("{\"event\":\"start\",\"format\":\"bko-holt-events\",\"schema\":1,\"commit\":false}\n");
+        body.push_str(&line.repeat(n));
+        body.push_str("{\"event\":\"end\",\"exit\":0}\n");
+        fs::write(d.join("events.txt"), &body).unwrap();
+        let fake = sh_fake(&d, &format!("cat '{}'", d.join("events.txt").display()));
+        let mut run = Run::start(&fake, &Secret::from_bytes(b"pw"), &d).unwrap();
+        let mut looks = 0;
+        while !run.finished() {
+            run.poll();
+            looks += 1;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(looks >= 4, "{looks} looks");
+        assert_eq!((run.follow.error.clone(), run.follow.ended, run.follow.events), (None, Some(0), n + 2));
+        drop(run);
         fs::remove_dir_all(&d).unwrap();
     }
 

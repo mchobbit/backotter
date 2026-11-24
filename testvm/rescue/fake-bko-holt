@@ -24,7 +24,9 @@ Before it answers, it checks each `--key-file NAME=PATH` and
 `--password-file PATH`: an absolute path to a regular file (not a
 symlink), mode 0600, ours, in a directory that is ours with mode 0700, not
 empty, at most 1 KiB, with no newline, and with its text nowhere in argv
-or the environment.  With BKO_HOLT_NO_COMMIT=1, `--commit` is refused
+or the environment: not a whole argument, the PATH of a NAME=PATH or a
+whole environment value, nor, for a key of 8 bytes or more, inside one
+(a short key is in many words by chance: "e" in "--key-file").  With BKO_HOLT_NO_COMMIT=1, `--commit` is refused
 (exit 2), as bko-holt will (D14).  A failed check is exit 97 and a line on
 stderr; no call matching is exit 98.
 
@@ -48,6 +50,18 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KEY_MAX = 1024
+# A key at least this long is looked for inside values too.
+INSIDE_MIN = 8
+
+
+def holds(key, values):
+    """Whether one of `values` is `key`, or has it inside when the key is
+    long enough that it isn't there by chance."""
+    for v in values:
+        v = v.encode(errors="surrogateescape")
+        if v == key or (len(key) >= INSIDE_MIN and key in v):
+            return True
+    return False
 
 
 def log(obj):
@@ -114,9 +128,10 @@ def check_key(path, argv):
     if b"\n" in b or b"\r" in b:
         bad.append("%s: holds a newline" % path)
     if b:
-        if any(b in a.encode(errors="surrogateescape") for a in argv):
+        args = list(argv) + [a.split("=", 1)[1] for a in argv if "=" in a]
+        if holds(b, args):
             bad.append("%s: its text is in argv" % path)
-        if any(b in v.encode(errors="surrogateescape") for v in os.environ.values()):
+        if holds(b, os.environ.values()):
             bad.append("%s: its text is in the environment" % path)
     return bad, len(b), hashlib.sha256(b).hexdigest()
 

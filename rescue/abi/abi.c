@@ -89,6 +89,7 @@ int main(int argc, char **argv)
 	OFF("pollfd", struct pollfd, revents);
 	CONST(POLLIN);
 	CONST(SIGHUP);
+	CONST(SIGINT);
 	CONST(SIGTERM);
 	CONST(SIG_DFL);
 

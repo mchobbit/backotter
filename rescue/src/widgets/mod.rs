@@ -99,6 +99,8 @@ pub struct Dialog {
     pub focus: Focus,
     /// A line above the buttons: why a button can't be pressed yet.
     pub notice: Option<Clean>,
+    /// The button Esc presses when there is no Back (a question's No).
+    pub esc: Option<usize>,
     /// Rows each part takes, from the last layout.
     heights: Vec<u16>,
 }
@@ -120,7 +122,7 @@ fn text_part(parts: &mut Vec<Part>, t: &Clean) {
 
 impl Dialog {
     pub fn new(chrome: Chrome, parts: Vec<Part>, buttons: Vec<Button>) -> Dialog {
-        let mut d = Dialog { chrome, parts, buttons, focus: Focus::None, notice: None, heights: Vec::new() };
+        let mut d = Dialog { chrome, parts, buttons, focus: Focus::None, notice: None, esc: None, heights: Vec::new() };
         // Trailing gaps would only push the buttons down.
         while matches!(d.parts.last(), Some(Part::Gap(_))) {
             d.parts.pop();
@@ -183,6 +185,9 @@ impl Dialog {
         buttons.extend(q.buttons.iter().cloned());
         let mut d = Dialog::new(q.chrome.clone(), vec![Part::Text(q.text.clone())], buttons);
         d.focus = Focus::Button(usize::from(q.no_first));
+        if q.esc_no {
+            d.esc = Some(1);
+        }
         d
     }
 
@@ -424,6 +429,8 @@ impl Dialog {
         }
         if self.back().is_some() {
             k.push("Esc: back".into());
+        } else if let Some(b) = self.esc.and_then(|i| self.buttons.get(i)) {
+            k.push(format!("Esc: {}", b.label.as_str().to_lowercase()));
         }
         if self.chrome.first {
             k.push("L: lines | C: colour | P: plain".into());
@@ -511,8 +518,9 @@ impl Dialog {
                 Focus::Part(_) => self.default_button().map_or(Did::Nothing, Did::Press),
                 Focus::None => Did::Nothing,
             },
-            // Esc is Back; in a text view with no Back, it closes.
-            Key::Esc => match self.back() {
+            // Esc is Back; with no Back, the button the dialog names (a
+            // question's No); in a text view with neither, it closes.
+            Key::Esc => match self.back().or(self.esc) {
                 Some(i) => Did::Press(i),
                 None if self.is_view() => self.default_button().map_or(Did::Nothing, Did::Press),
                 None => Did::Nothing,
@@ -681,6 +689,16 @@ mod tests {
         assert_eq!(d.focus, Focus::Button(1));
         assert_eq!(d.key(Key::Enter), Did::Press(1));
         assert_eq!(d.buttons[1].act, Act::Other(NO));
+        assert_eq!(d.key(Key::Esc), Did::Nothing, "Esc does nothing unless asked");
+        q.no = o("Keep going");
+        q.esc_no = true;
+        let mut d = Dialog::question(&q);
+        d.key(Key::Left);
+        assert_eq!(d.key(Key::Esc), Did::Press(1), "Esc is No wherever the focus is");
+        assert!(d.key_line().as_str().ends_with("Esc: keep going"), "{}", d.key_line().as_str());
+        q.buttons = vec![Button::back()];
+        let mut d = Dialog::question(&q);
+        assert_eq!(d.key(Key::Esc), Did::Press(2), "a Back button comes first");
     }
 
     #[test]

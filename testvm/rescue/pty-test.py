@@ -33,8 +33,15 @@ def check(ok, what):
         FAILS.append(what)
 
 
+def controlling_tty():
+    """In the child, after setsid: the pty as its controlling terminal, so
+    ISIG keys and a hang-up send it signals, as on a console."""
+    fcntl.ioctl(0, getattr(termios, "TIOCSCTTY", 0x540E), 0)
+
+
 class Pty:
-    """bko-rescue on a pty of a set size, its stderr to a pipe."""
+    """bko-rescue on a pty of a set size, its controlling terminal, its
+    stderr to a pipe."""
 
     def __init__(self, args, rows=24, cols=80, env=None):
         self.master, self.slave = os.openpty()
@@ -44,7 +51,7 @@ class Pty:
         self.before = termios.tcgetattr(self.slave)
         self.p = subprocess.Popen(
             [BIN] + args, stdin=self.slave, stdout=self.slave, stderr=subprocess.PIPE,
-            env=e, start_new_session=True)
+            env=e, start_new_session=True, preexec_fn=controlling_tty)
         self.out = b""
 
     def read(self, secs):

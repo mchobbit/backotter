@@ -415,8 +415,8 @@ pub struct ProxmoxBoot {
 }
 
 /// "Proxmox VE 9.2" from pve-manager's version (9.2.3), when it is installed.
-pub fn proxmox_product(packages: &[(String, String, String)]) -> Option<String> {
-    let (_, v, _) = packages.iter().find(|(n, _, _)| n == "pve-manager")?;
+pub fn proxmox_product(packages: &[Package]) -> Option<String> {
+    let v = &find_package(packages, "pve-manager")?.version;
     let nums: Vec<&str> = v.split(|c: char| !c.is_ascii_digit()).filter(|n| !n.is_empty()).take(2).collect();
     (!nums.is_empty()).then(|| format!("Proxmox VE {}", nums.join(".")))
 }
@@ -461,8 +461,8 @@ pub fn read_unmounted_esp<R>(sys: &Sys, who: &str, dev: &str, at: &str, what: &s
 /// (as proxmox-boot-tool itself mounts them); one already mounted
 /// (`mounted`, device and mount point) is read where it is.  None when the
 /// list or proxmox-kernel-helper isn't there.
-pub fn proxmox_boot_json(sys: &Sys, packages: &[(String, String, String)], resolve: &dyn Fn(&str) -> Option<String>, mounted: &[(String, String)]) -> Option<ProxmoxBoot> {
-    if !packages.iter().any(|(n, _, _)| n == "proxmox-kernel-helper") {
+pub fn proxmox_boot_json(sys: &Sys, packages: &[Package], resolve: &dyn Fn(&str) -> Option<String>, mounted: &[(String, String)]) -> Option<ProxmoxBoot> {
+    if !has_package(packages, "proxmox-kernel-helper") {
         return None;
     }
     let text = sys.read(PROXMOX_BOOT_UUIDS)?;
@@ -633,8 +633,8 @@ pub const INSTALL_CONF: &[&str] = &["/etc/kernel/install.conf", "/usr/lib/kernel
 /// boot.initramfs fields only Gentoo's dumps have: installkernel (the file
 /// and its three keys, or null), evidence, and lib_modules_initrd (the
 /// kernels with an image at /lib/modules/K/initrd, which load refuses).
-fn gentoo_initramfs(sys: &Sys, packages: &[(String, String, String)]) -> (Option<String>, Vec<(&'static str, Value)>) {
-    let has = |p: &str| packages.iter().any(|(n, _, _)| n == p);
+fn gentoo_initramfs(sys: &Sys, packages: &[Package]) -> (Option<String>, Vec<(&'static str, Value)>) {
+    let has = |p: &str| has_package(packages, p);
     let mut why: Vec<String> = Vec::new();
     let conf = INSTALL_CONF.iter().find(|p| sys.is_file(p)).map(|p| (*p, sys.read(p).map(|t| parse_shell_assignments(&t)).unwrap_or_default()));
     let key = |k: &str| conf.as_ref().and_then(|(_, a)| a.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone()));
@@ -681,14 +681,14 @@ fn gentoo_initramfs(sys: &Sys, packages: &[(String, String, String)]) -> (Option
 
 /// initramfs_json with no ESPs mounted, for the tests.
 #[cfg(test)]
-fn initramfs_json(sys: &Sys, packages: &[(String, String, String)], ostree: bool) -> Value {
+fn initramfs_json(sys: &Sys, packages: &[Package], ostree: bool) -> Value {
     initramfs_json_esps(sys, packages, ostree, &[])
 }
 
 /// boot.initramfs; `esps` (device, mount point) for Slackware's
 /// elilo.conf initrd= lines.
-fn initramfs_json_esps(sys: &Sys, packages: &[(String, String, String)], ostree: bool, esps: &[(String, String)]) -> Value {
-    let has = |p: &str| packages.iter().any(|(n, _, _)| n == p);
+fn initramfs_json_esps(sys: &Sys, packages: &[Package], ostree: bool, esps: &[(String, String)]) -> Value {
+    let has = |p: &str| has_package(packages, p);
     // Gentoo's and Slackware's generator is read from their own files,
     // with fields of their own beside it.
     let (gentoo_generator, gentoo) = if is_gentoo(sys) && !ostree {
@@ -810,7 +810,7 @@ pub struct Evidence<'a> {
     pub shim_variables: bool,
     /// (disk, boot code kind) for every disk.
     pub mbr_codes: Vec<(String, String)>,
-    pub packages: &'a [(String, String, String)],
+    pub packages: &'a [Package],
     pub esp_files: Vec<String>,
     /// The ESP file the fallback path (EFI/BOOT/BOOTX64.EFI, or ARM64's
     /// BOOTAA64.EFI) is a byte copy of, if any
@@ -830,7 +830,7 @@ pub fn detect_loader(e: &Evidence) -> Value {
 /// The loader, from E, on a machine whose boot files have N's names
 /// (crate::arch: grubx64.efi or grubaa64.efi, and so on).
 pub fn detect_loader_on(e: &Evidence, n: &crate::arch::Names) -> Value {
-    let has = |p: &str| e.packages.iter().any(|(n, _, _)| n == p);
+    let has = |p: &str| has_package(e.packages, p);
     let mut why: Vec<String> = Vec::new();
     let mut name: Option<&str> = None;
     let mut shim = false;
@@ -1058,8 +1058,8 @@ pub fn solus_kernels(sys: &Sys, running: Option<&str>) -> (Vec<Value>, Vec<(Stri
 /// boot.kernels with Solus's kernels (solus_kernels) added, when
 /// clr-boot-manager is installed: /boot is the ESP there, with no
 /// vmlinuz-V of its own.
-fn with_solus_kernels(mut kernels: Value, sys: &Sys, packages: &[(String, String, String)], running: Option<&str>) -> Value {
-    if !packages.iter().any(|(n, _, _)| n == CBM) {
+fn with_solus_kernels(mut kernels: Value, sys: &Sys, packages: &[Package], running: Option<&str>) -> Value {
+    if !has_package(packages, CBM) {
         return kernels;
     }
     let (list, links) = solus_kernels(sys, running);
@@ -1087,7 +1087,7 @@ fn with_solus_kernels(mut kernels: Value, sys: &Sys, packages: &[(String, String
 #[allow(clippy::too_many_arguments)]
 pub fn boot_json(
     sys: &Sys,
-    packages: &[(String, String, String)],
+    packages: &[Package],
     esps: &[(String, String)],
     efi_boot: Value,
     mbr_codes: Vec<(String, String)>,
@@ -1157,8 +1157,8 @@ pub fn boot_json(
     }
     let mut pk = Obj::new();
     for p in PACKAGES {
-        if let Some((_, v, _)) = packages.iter().find(|(n, _, _)| n == p) {
-            pk.put(p, v.as_str());
+        if let Some(found) = find_package(packages, p) {
+            pk.put(p, found.version.as_str());
         }
     }
     let is_ostree = ostree.is_some();
@@ -1199,8 +1199,8 @@ pub const ANDUINOS_MOK: &str = "/var/lib/shim-signed/mok/MOK.der";
 /// its MOK certificate there), the certificate and its SHA-256 fingerprint
 /// (of the DER file, as `openssl x509 -fingerprint -sha256` prints it), so
 /// a restore can say which key the firmware must hold.  None otherwise.
-pub fn mok_json(sys: &Sys, packages: &[(String, String, String)]) -> Option<Value> {
-    if !packages.iter().any(|(n, _, _)| n == "anduinos-grub") {
+pub fn mok_json(sys: &Sys, packages: &[Package]) -> Option<Value> {
+    if !has_package(packages, "anduinos-grub") {
         return None;
     }
     let der = sys.read_bytes(ANDUINOS_MOK)?;
@@ -1358,8 +1358,8 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(z.at(&["storage", "root"]).and_then(Value::as_str), Some("ZFS=rpool/ROOT/debian"));
     }
 
-    fn pk(names: &[&str]) -> Vec<(String, String, String)> {
-        names.iter().map(|n| (n.to_string(), "1".to_string(), "amd64".to_string())).collect()
+    fn pk(names: &[&str]) -> Vec<Package> {
+        names.iter().map(|n| Package::new(*n, "1", "amd64")).collect()
     }
 
     #[test]
@@ -1384,7 +1384,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
 
     #[test]
     fn loader_other_cases() {
-        let none: Vec<(String, String, String)> = vec![];
+        let none: Vec<Package> = vec![];
         let base = |uefi: bool| Evidence { uefi, current_file: None, loader_info: None, shim_variables: false, mbr_codes: vec![], packages: &none, esp_files: vec![], fallback_copy_of: None, zbm_images: vec![] };
         // systemd-boot by its path, then by LoaderInfo.
         let mut e = base(true);
@@ -1660,7 +1660,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         let apk = "C:Q1abc=\nP:mkinitfs\nV:3.12.0-r0\nA:x86_64\nS:1\n\nC:Q2\nP:grub-bios\nV:2.12-r9\nA:x86_64\n\n";
         assert_eq!(
             parse_apk_installed(apk),
-            vec![("grub-bios".into(), "2.12-r9".into(), "x86_64".into()), ("mkinitfs".into(), "3.12.0-r0".into(), "x86_64".into())]
+            vec![Package::new("grub-bios", "2.12-r9", "x86_64"), Package::new("mkinitfs", "3.12.0-r0", "x86_64")]
         );
         let t = Tree::new("alpine-kernels");
         t.file("/boot/vmlinuz-lts", vec![0u8; 10]).file("/boot/initramfs-lts", vec![0u8; 7]).file("/lib/apk/db/installed", apk);
@@ -1757,7 +1757,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             .file("/proc/sys/kernel/osrelease", format!("{v}\n"));
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         let p = installed_packages(&s);
-        let names: Vec<&str> = p.iter().map(|(n, _, _)| n.as_str()).collect();
+        let names: Vec<&str> = p.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, vec!["grub", "grub-i386-pc", "initramfs-tools", "linux-lts"]);
         let b = boot_json(&s, &p, &[], Value::Null, vec![("vda".into(), "grub2".into())], None, None, &[], &Value::Null);
         assert_eq!(b.at(&["loader", "name"]).and_then(Value::as_str), Some("grub"));
@@ -1932,7 +1932,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
     /// clr-boot-manager installed.
     #[test]
     fn loader_clr_boot_manager() {
-        fn base(p: &[(String, String, String)]) -> Evidence<'_> {
+        fn base(p: &[Package]) -> Evidence<'_> {
             let esp = ["EFI/BOOT/BOOTX64.EFI", "EFI/BOOT/fbx64.efi", "EFI/com.solus-project/bootloaderx64.efi", "EFI/com.solus-project/grubx64.efi", "EFI/com.solus-project/mmx64.efi", "loader/loader.conf"];
             Evidence { uefi: true, current_file: None, loader_info: None, shim_variables: false, mbr_codes: vec![], packages: p, esp_files: esp.iter().map(|f| f.to_string()).collect(), fallback_copy_of: None, zbm_images: vec![] }
         }

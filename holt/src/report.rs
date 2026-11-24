@@ -702,8 +702,8 @@ pub fn unknown_disk(sys: &Sys, only: &[String]) -> Option<String> {
 /// type on the root file system's disk (device null if none is).  dump
 /// refuses such a report (refusal): the backup would have none of the
 /// kernels, the loader or its entries.
-fn cbm_esps(mut boot: Value, ctx: &Ctx, sys: &Sys, packages: &[(String, String, String)], fstab: &[(&mounts::FstabEntry, Option<String>)]) -> Value {
-    if !packages.iter().any(|(n, _, _)| n == crate::boot::CBM) {
+fn cbm_esps(mut boot: Value, ctx: &Ctx, sys: &Sys, packages: &[crate::boot::Package], fstab: &[(&mounts::FstabEntry, Option<String>)]) -> Value {
+    if !crate::boot::has_package(packages, crate::boot::CBM) {
         return boot;
     }
     let unmounted = (!ctx.mounts.iter().any(|m| m.target == "/boot")).then(|| {
@@ -822,7 +822,7 @@ fn mounted_esps(ctx: &Ctx) -> Vec<(String, String)> {
 
 /// The dump's os: os-release's, with the product Proxmox VE's packages,
 /// TrueNAS (TRUENAS: it was detected) or Qubes name, the later winning.
-fn os_json(sys: &Sys, os: Option<&OsRelease>, packages: &[(String, String, String)], truenas: Option<&crate::truenas::TrueNas>) -> Value {
+fn os_json(sys: &Sys, os: Option<&OsRelease>, packages: &[crate::boot::Package], truenas: Option<&crate::truenas::TrueNas>) -> Value {
     let mut os_json = crate::osrel::to_json(sys, os);
     if let (Some(p), Value::Obj(o)) = (crate::boot::proxmox_product(packages), &mut os_json) {
         o.push(("product".into(), Value::from(p)));

@@ -1,7 +1,7 @@
 //! Slackware's boot setup: LILO, ELILO, mkinitrd and geninitrd, rc.d;
 //! part of crate::boot, which re-exports it.
 
-use super::{byte_copy_of, is_slackware, parse_shell_assignments};
+use super::{byte_copy_of, has_package, is_slackware, parse_shell_assignments, Package};
 use crate::json::{Obj, Value};
 use crate::sys::Sys;
 
@@ -360,11 +360,11 @@ pub fn slackware_kernels(sys: &Sys) -> Vec<(String, String, String)> {
 /// scripts that are on (rc_enabled: executable /etc/rc.d/rc.*); the
 /// kernels (slackware_kernels), each with its flavor, version and whether
 /// /lib/modules has it; and the /boot links that name the kernel.
-pub fn slackware_json(sys: &Sys, packages: &[(String, String, String)]) -> Option<Value> {
+pub fn slackware_json(sys: &Sys, packages: &[Package]) -> Option<Value> {
     if !is_slackware(sys) {
         return None;
     }
-    let sysvinit = packages.iter().any(|(n, _, _)| n == "sysvinit") && sys.is_file("/sbin/init") && sys.readlink("/sbin/init").is_none();
+    let sysvinit = has_package(packages, "sysvinit") && sys.is_file("/sbin/init") && sys.readlink("/sbin/init").is_none();
     let init = (sys.is_file("/etc/rc.d/rc.M") && sys.is_file("/etc/inittab") && sysvinit).then_some("slackware-rc");
     let mut rc: Vec<String> = sys.list("/etc/rc.d").into_iter().filter(|f| f.starts_with("rc.") && executable(sys, &format!("/etc/rc.d/{f}"))).collect();
     rc.sort();

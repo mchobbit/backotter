@@ -404,13 +404,13 @@ fn resolve(sys: &Sys, abs: &str) -> Option<String> {
 
 /// The current generation's packages, from its profile's manifest
 /// (/var/guix/profiles/system/profile/manifest, resolved under the dump's
-/// root, never through /run).  (name, version, ""): the profile has no
+/// root, never through /run).  Each with arch "": the profile has no
 /// architecture; an output other than "out" is NAME:OUTPUT, as `guix
 /// package -I` prints it.
-pub fn guix_packages(sys: &Sys) -> Vec<(String, String, String)> {
+pub fn guix_packages(sys: &Sys) -> Vec<crate::boot::Package> {
     let Some(m) = resolve(sys, &format!("{GUIX_SYSTEM_PROFILE}/profile/manifest")).and_then(|p| sys.read(&p)) else { return Vec::new() };
-    let mut out: Vec<(String, String, String)> =
-        parse_manifest(&m).into_iter().map(|(n, v, o, _)| (if o == "out" { n } else { format!("{n}:{o}") }, v, String::new())).collect();
+    let mut out: Vec<crate::boot::Package> =
+        parse_manifest(&m).into_iter().map(|(n, v, o, _)| crate::boot::Package::new(if o == "out" { n } else { format!("{n}:{o}") }, v, "")).collect();
     out.sort();
     out.dedup();
     out
@@ -850,8 +850,8 @@ mod tests {
         assert!(is_guix(&sys));
         let p = guix_packages(&sys);
         assert_eq!(p.len(), 4);
-        assert!(p.contains(&("glibc:debug".into(), "2.41".into(), String::new())));
-        assert!(p.contains(&("grub".into(), "2.12".into(), String::new())));
+        assert!(p.contains(&crate::boot::Package::new("glibc:debug", "2.41", "")));
+        assert!(p.contains(&crate::boot::Package::new("grub", "2.12", "")));
         let v = guix_json(&sys).unwrap();
         assert_eq!(v.at(&["current"]).and_then(Value::as_u64), Some(2));
         let g = v.at(&["generations"]).and_then(Value::as_array).unwrap();

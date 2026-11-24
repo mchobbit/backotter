@@ -5,8 +5,35 @@
 
 use crate::sys::Sys;
 
-/// Installed packages from /var/lib/dpkg/status: (name, version, arch).
-pub fn parse_dpkg_status(text: &str) -> Vec<(String, String, String)> {
+/// An installed package, as a system's package database lists it.  The
+/// fields' order is the sort order (name, then version, then arch), as the
+/// parsers sort their lists.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Package {
+    pub name: String,
+    pub version: String,
+    /// The architecture it's built for; "" where the database has none.
+    pub arch: String,
+}
+
+impl Package {
+    pub fn new(name: impl Into<String>, version: impl Into<String>, arch: impl Into<String>) -> Package {
+        Package { name: name.into(), version: version.into(), arch: arch.into() }
+    }
+}
+
+/// The package NAME among PACKAGES, when it is installed.
+pub fn find_package<'a>(packages: &'a [Package], name: &str) -> Option<&'a Package> {
+    packages.iter().find(|p| p.name == name)
+}
+
+/// Whether the package NAME is installed.
+pub fn has_package(packages: &[Package], name: &str) -> bool {
+    find_package(packages, name).is_some()
+}
+
+/// Installed packages from /var/lib/dpkg/status.
+pub fn parse_dpkg_status(text: &str) -> Vec<Package> {
     let mut out = Vec::new();
     for stanza in text.split("\n\n") {
         let (mut name, mut ver, mut arch, mut installed) = (None, None, None, false);
@@ -22,7 +49,7 @@ pub fn parse_dpkg_status(text: &str) -> Vec<(String, String, String)> {
             }
         }
         if let (Some(n), Some(v), true) = (name, ver, installed) {
-            out.push((n, v, arch.unwrap_or_default()));
+            out.push(Package::new(n, v, arch.unwrap_or_default()));
         }
     }
     out
@@ -30,7 +57,7 @@ pub fn parse_dpkg_status(text: &str) -> Vec<(String, String, String)> {
 
 /// Installed packages from pacman's local database (Arch): each
 /// /var/lib/pacman/local/NAME-VERSION/desc holds %NAME%, %VERSION%, %ARCH%.
-pub fn pacman_packages(sys: &Sys) -> Vec<(String, String, String)> {
+pub fn pacman_packages(sys: &Sys) -> Vec<Package> {
     let mut out = Vec::new();
     for d in sys.list("/var/lib/pacman/local") {
         let Some(t) = sys.read(&format!("/var/lib/pacman/local/{d}/desc")) else { continue };
@@ -40,7 +67,7 @@ pub fn pacman_packages(sys: &Sys) -> Vec<(String, String, String)> {
             it.next().map(|v| v.trim().to_string())
         };
         if let (Some(n), Some(v)) = (field("%NAME%"), field("%VERSION%")) {
-            out.push((n, v, field("%ARCH%").unwrap_or_default()));
+            out.push(Package::new(n, v, field("%ARCH%").unwrap_or_default()));
         }
     }
     out.sort();
@@ -49,12 +76,12 @@ pub fn pacman_packages(sys: &Sys) -> Vec<(String, String, String)> {
 
 /// Installed packages from apk's database (Alpine): blocks of `K:value`
 /// lines, P the name, V the version, A the architecture.
-pub fn parse_apk_installed(text: &str) -> Vec<(String, String, String)> {
+pub fn parse_apk_installed(text: &str) -> Vec<Package> {
     let mut out = Vec::new();
     for block in text.split("\n\n") {
         let f = |k: &str| block.lines().find_map(|l| l.strip_prefix(k)).map(|v| v.trim().to_string());
         if let (Some(n), Some(v)) = (f("P:"), f("V:")) {
-            out.push((n, v, f("A:").unwrap_or_default()));
+            out.push(Package::new(n, v, f("A:").unwrap_or_default()));
         }
     }
     out.sort();
@@ -63,13 +90,13 @@ pub fn parse_apk_installed(text: &str) -> Vec<(String, String, String)> {
 
 /// Installed packages from rpm (Fedora): its database is SQLite, so rpm
 /// itself reads it.
-pub fn rpm_packages(sys: &Sys) -> Vec<(String, String, String)> {
+pub fn rpm_packages(sys: &Sys) -> Vec<Package> {
     let Some(t) = sys.run("rpm", &["-qa", "--qf", "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"]) else { return Vec::new() };
-    let mut out: Vec<(String, String, String)> = t
+    let mut out: Vec<Package> = t
         .lines()
         .filter_map(|l| {
             let mut f = l.split('\t');
-            Some((f.next()?.to_string(), f.next()?.to_string(), f.next().unwrap_or("").to_string()))
+            Some(Package::new(f.next()?, f.next()?, f.next().unwrap_or("")))
         })
         .collect();
     out.sort();
@@ -79,7 +106,7 @@ pub fn rpm_packages(sys: &Sys) -> Vec<(String, String, String)> {
 /// Installed packages from xbps's database (Void): a property list whose
 /// top-level dict has a dict per package, with `pkgver` ("NAME-VERSION_REV")
 /// and `architecture`.
-pub fn parse_xbps_pkgdb(text: &str) -> Vec<(String, String, String)> {
+pub fn parse_xbps_pkgdb(text: &str) -> Vec<Package> {
     let mut out = Vec::new();
     let mut depth = 0usize;
     let (mut name, mut key) = (String::new(), String::new());
@@ -96,7 +123,7 @@ pub fn parse_xbps_pkgdb(text: &str) -> Vec<(String, String, String)> {
                 if depth == 2 {
                     if !ver.is_empty() {
                         let v = ver.strip_prefix(&format!("{name}-")).unwrap_or(&ver).to_string();
-                        out.push((name.clone(), v, arch.clone()));
+                        out.push(Package::new(name.clone(), v, arch.clone()));
                     }
                     name.clear();
                     ver.clear();
@@ -146,7 +173,7 @@ fn xml_text<'a>(xml: &'a str, after: &str, tag: &str) -> Option<&'a str> {
 /// <Name> is the <Source>'s, which a subpackage doesn't share) when the
 /// directory's name starts with it, the version the rest of the directory's
 /// name (split_eopkg, as vm-update lists it), the arch <Architecture>.
-pub fn eopkg_packages(sys: &Sys) -> Vec<(String, String, String)> {
+pub fn eopkg_packages(sys: &Sys) -> Vec<Package> {
     let mut out = Vec::new();
     for d in sys.list(EOPKG_PACKAGES) {
         if d.starts_with('.') {
@@ -155,7 +182,7 @@ pub fn eopkg_packages(sys: &Sys) -> Vec<(String, String, String)> {
         let meta = sys.read(&format!("{EOPKG_PACKAGES}/{d}/metadata.xml")).unwrap_or_default();
         let by_meta = xml_text(&meta, "<Package>", "Name").and_then(|n| d.strip_prefix(n)?.strip_prefix('-').filter(|v| split_eopkg(&format!("x-{v}")).is_some()).map(|v| (n, v)));
         let Some((n, v)) = by_meta.or_else(|| split_eopkg(&d)) else { continue };
-        out.push((n.to_string(), v.to_string(), xml_text(&meta, "<Package>", "Architecture").unwrap_or("").to_string()));
+        out.push(Package::new(n, v, xml_text(&meta, "<Package>", "Architecture").unwrap_or("")));
     }
     out.sort();
     out
@@ -202,7 +229,7 @@ pub fn split_pf(pf: &str) -> Option<(&str, &str)> {
 /// architecture).  Names are bare, without the category, as everywhere
 /// here (docs/design/gentoo.md, decision 4).  A merge under way
 /// (`-MERGING-PF`) isn't installed yet.
-pub fn portage_packages(sys: &Sys) -> Vec<(String, String, String)> {
+pub fn portage_packages(sys: &Sys) -> Vec<Package> {
     let mut out = Vec::new();
     for cat in sys.list("/var/db/pkg") {
         let cdir = format!("/var/db/pkg/{cat}");
@@ -216,7 +243,7 @@ pub fn portage_packages(sys: &Sys) -> Vec<(String, String, String)> {
             }
             let pf = sys.read_trim(&format!("{dir}/PF")).unwrap_or(d);
             let Some((n, v)) = split_pf(&pf) else { continue };
-            out.push((n.to_string(), v.to_string(), sys.read_trim(&format!("{dir}/CHOST")).unwrap_or_default()));
+            out.push(Package::new(n, v, sys.read_trim(&format!("{dir}/CHOST")).unwrap_or_default()));
         }
     }
     out.sort();
@@ -248,13 +275,13 @@ pub fn split_pkgtools(file: &str) -> Option<(&str, String, &str)> {
 
 /// Installed packages from pkgtools' database (Slackware): a file a
 /// package, named NAME-VERSION-ARCH-BUILD (split_pkgtools).
-pub fn pkgtools_packages(sys: &Sys) -> Vec<(String, String, String)> {
+pub fn pkgtools_packages(sys: &Sys) -> Vec<Package> {
     let Some(dir) = pkgtools_dir(sys) else { return Vec::new() };
-    let mut out: Vec<(String, String, String)> = sys
+    let mut out: Vec<Package> = sys
         .list(dir)
         .iter()
         .filter(|f| !f.starts_with('.'))
-        .filter_map(|f| split_pkgtools(f).map(|(n, v, a)| (n.to_string(), v, a.to_string())))
+        .filter_map(|f| split_pkgtools(f).map(|(n, v, a)| Package::new(n, v, a)))
         .collect();
     out.sort();
     out
@@ -262,7 +289,7 @@ pub fn pkgtools_packages(sys: &Sys) -> Vec<(String, String, String)> {
 
 /// The installed packages, from whichever package manager the system has.
 /// Portage first: a Gentoo can have dpkg or rpm emerged as tools.
-pub fn installed_packages(sys: &Sys) -> Vec<(String, String, String)> {
+pub fn installed_packages(sys: &Sys) -> Vec<Package> {
     if is_gentoo(sys) {
         return portage_packages(sys);
     }
@@ -434,13 +461,24 @@ Version: 1
 ";
 
     #[test]
+    fn package_order_and_lookup() {
+        // Sorted by name, then version, then arch, as the tuples were.
+        let mut p = vec![Package::new("b", "1", ""), Package::new("a", "2", "x"), Package::new("a", "10", "y"), Package::new("a", "2", "w")];
+        p.sort();
+        let t: Vec<(&str, &str, &str)> = p.iter().map(|p| (p.name.as_str(), p.version.as_str(), p.arch.as_str())).collect();
+        assert_eq!(t, [("a", "10", "y"), ("a", "2", "w"), ("a", "2", "x"), ("b", "1", "")]);
+        assert_eq!(find_package(&p, "a").map(|p| p.version.as_str()), Some("10"));
+        assert!(has_package(&p, "b") && !has_package(&p, "c") && !has_package(&[], "a"));
+    }
+
+    #[test]
     fn dpkg_status() {
         let p = parse_dpkg_status(DPKG);
         assert_eq!(
             p,
             vec![
-                ("grub-efi-amd64-signed".to_string(), "1+2.12+9+deb13u2".to_string(), "amd64".to_string()),
-                ("lvm2".to_string(), "2.03.31-2".to_string(), "amd64".to_string())
+                Package::new("grub-efi-amd64-signed", "1+2.12+9+deb13u2", "amd64"),
+                Package::new("lvm2", "2.03.31-2", "amd64")
             ]
         );
     }
@@ -463,7 +501,7 @@ Version: 1
         let db = "<?xml version=\"1.0\"?>\n<plist version=\"1.0\">\n<dict>\n\t<key>dracut</key>\n\t<dict>\n\t\t<key>architecture</key>\n\t\t<string>x86_64-musl</string>\n\t\t<key>pkgver</key>\n\t\t<string>dracut-105_1</string>\n\t\t<key>run_depends</key>\n\t\t<array>\n\t\t\t<string>bash&gt;=0</string>\n\t\t</array>\n\t\t<key>alternatives</key>\n\t\t<dict>\n\t\t\t<key>x</key>\n\t\t\t<array><string>a:b</string></array>\n\t\t</dict>\n\t</dict>\n\t<key>grub</key>\n\t<dict>\n\t\t<key>pkgver</key>\n\t\t<string>grub-2.12_3</string>\n\t\t<key>architecture</key>\n\t\t<string>x86_64-musl</string>\n\t</dict>\n\t<key>_XBPS_ALTERNATIVES_</key>\n\t<dict>\n\t\t<key>x</key>\n\t\t<array><string>dracut</string></array>\n\t</dict>\n</dict>\n</plist>\n";
         assert_eq!(
             parse_xbps_pkgdb(db),
-            vec![("dracut".into(), "105_1".into(), "x86_64-musl".into()), ("grub".into(), "2.12_3".into(), "x86_64-musl".into())]
+            vec![Package::new("dracut", "105_1", "x86_64-musl"), Package::new("grub", "2.12_3", "x86_64-musl")]
         );
     }
 
@@ -517,13 +555,13 @@ Version: 1
         assert_eq!(
             installed_packages(&s),
             vec![
-                ("dist-kernel".into(), "6.18.63".into(), String::new()),
-                ("dracut".into(), "112".into(), "x86_64-pc-linux-gnu".into()),
-                ("grub".into(), "2.16-r1".into(), "x86_64-pc-linux-gnu".into())
+                Package::new("dist-kernel", "6.18.63", ""),
+                Package::new("dracut", "112", "x86_64-pc-linux-gnu"),
+                Package::new("grub", "2.16-r1", "x86_64-pc-linux-gnu")
             ]
         );
         std::fs::remove_file(t.p("/etc/gentoo-release")).unwrap();
-        assert_eq!(installed_packages(&s), vec![("dpkg".into(), "1.22".into(), String::new())]);
+        assert_eq!(installed_packages(&s), vec![Package::new("dpkg", "1.22", "")]);
     }
 
     #[test]
@@ -543,12 +581,12 @@ Version: 1
             .dir("/var/lib/rpm");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         let p = installed_packages(&s);
-        assert_eq!(p, vec![("kernel-huge".into(), "5.15.161-1".into(), "x86_64".into()), ("lilo".into(), "24.2-6".into(), "x86_64".into())]);
+        assert_eq!(p, vec![Package::new("kernel-huge", "5.15.161-1", "x86_64"), Package::new("lilo", "24.2-6", "x86_64")]);
         // Before 15.0, /var/log/packages was the directory.
         let t = Tree::new("pkgtools-old");
         t.file("/etc/slackware-version", "Slackware 14.2\n").file("/var/log/packages/elilo-3.16-x86_64-1", "");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
-        assert_eq!(pkgtools_packages(&s), vec![("elilo".into(), "3.16-1".into(), "x86_64".into())]);
+        assert_eq!(pkgtools_packages(&s), vec![Package::new("elilo", "3.16-1", "x86_64")]);
     }
 
     /// Names from the Solus 4.9 ISO's eopkg database (eopkg 4.4.2): the
@@ -592,7 +630,7 @@ Version: 1
         // No metadata.xml: the directory's name alone.
         t.dir(&format!("{EOPKG_PACKAGES}/usysconf-epoch-1.0.0-26"));
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
-        let x = |n: &str, v: &str, a: &str| (n.to_string(), v.to_string(), a.to_string());
+        let x = |n: &str, v: &str, a: &str| Package::new(n, v, a);
         let want = vec![x("clr-boot-manager", "3.6.0-39", "x86_64"), x("linux-firmware-amdgpu", "20260309-103", "x86_64"), x("shim-signed", "15.8-7", "x86_64"), x("usysconf-epoch", "1.0.0-26", "")];
         assert_eq!(eopkg_packages(&s), want);
         assert_eq!(installed_packages(&s), want);

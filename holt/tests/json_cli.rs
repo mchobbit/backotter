@@ -159,12 +159,12 @@ fn load_refusals_are_error_documents() {
     assert_error(&run(&["load", "--frob", "--json=2", "--sysroot", &root], &[], None), 2, "schema_unknown");
     // Beside a good --json, after it too.
     assert_error(&run(&["load", &layout, "--json", "--json=2", "--sysroot", &root], &[], None), 2, "schema_unknown");
-    // The documents RT10e and RT10f build: refused, nothing run.
-    for (extra, what) in [(&["--only", "status"][..], "status"), (&["--through", "mount"][..], "the writing stages")] {
+    // The event stream RT10f builds: refused, nothing run.
+    for extra in [&["--through", "mount"][..], &["--only", "boot"]] {
         let mut a = vec!["load", layout.as_str(), "--sysroot", &root, "--map", "vda=vdb", "--json"];
         a.extend_from_slice(extra);
         let v = assert_error(&run(&a, &[], None), 2, "json_not_here");
-        assert!(v.get_str("text").unwrap().contains(what), "{}", out(&run(&a, &[], None)));
+        assert!(v.get_str("text").unwrap().contains("the writing stages"), "{}", out(&run(&a, &[], None)));
     }
     // --help is for people, --json or not.
     for args in [&["load", "--json", "--help"][..], &["load", "--json=2", "--help"], &["load", "-h", "--json=2"]] {
@@ -196,6 +196,38 @@ fn plan_is_a_document() {
     assert_eq!(o.status.code(), Some(2));
     assert!(err(&o).contains("--expect-plan is for --json runs"), "{}", err(&o));
     assert_error(&run(&["load", &layout, "--sysroot", &root, "--json", "--expect-plan", "xyz"], &[], None), 2, "bad_args");
+}
+
+/// Status under --json (RT10e): one bko-holt-status document, its rows
+/// text mode's, in snake case; the exit as text mode's.
+#[test]
+fn status_is_a_document() {
+    let (_t, layout, root) = setup();
+    let a = ["load", layout.as_str(), "--sysroot", &root, "--map", "vda=vdb", "--only", "status"];
+    let text = run(&a, &[], None);
+    let mut j = a.to_vec();
+    j.push("--json");
+    let o = run(&j, &[], None);
+    assert_eq!((o.status.code(), err(&o)), (text.status.code(), err(&text)));
+    let v = doc(&o);
+    assert_eq!(v.get_str("format"), Some("bko-holt-status"));
+    assert_eq!(v.get_u64("exit"), text.status.code().map(|c| c as u64));
+    // Each text row is "NAME (10) STATE (14) (WHY)".
+    let snake = |w: &str| match w {
+        "not done" => "not_done".to_string(),
+        "nothing to do" => "nothing".to_string(),
+        w => w.to_string(),
+    };
+    let rows: Vec<(String, String)> =
+        out(&text).lines().filter(|l| !l.starts_with('#') && !l.starts_with("next:")).map(|l| (l[..10].trim().to_string(), snake(l[11..].get(..14).unwrap_or(&l[11..]).trim()))).collect();
+    let got: Vec<(String, String)> = v.get_arr("stages").unwrap().iter().map(|s| (s.get_str("name").unwrap().to_string(), s.get_str("state").unwrap().to_string())).collect();
+    assert_eq!(got, rows, "{}", out(&o));
+    let next = out(&text).lines().find_map(|l| l.strip_prefix("next: ")).map(str::to_string);
+    assert_eq!(v.get_str("next").map(str::to_string), next);
+    assert_eq!(v.bool_at(&["resume", "go_on"]), Some(false));
+    // Allowed under the dry-run lock, which it reports.
+    let o = run(&j, &[("BKO_HOLT_NO_COMMIT", "1")], None);
+    assert_eq!(doc(&o).get_bool("dry_run"), Some(true));
 }
 
 #[test]

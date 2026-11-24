@@ -1,0 +1,75 @@
+{
+  "format": "bko-holt-status",
+  "schema": 1,
+  "version": "VERSION",
+  "generated": "GENERATED",
+  "dry_run": false,
+  "exit": 0,
+  "target": "/mnt/bko-target",
+  "stages": [
+    {
+      "name": "partition",
+      "state": "done",
+      "why": ""
+    },
+    {
+      "name": "assemble",
+      "state": "nothing",
+      "why": ""
+    },
+    {
+      "name": "format",
+      "state": "not_done",
+      "why": "not made yet: /dev/vdb1 (ext4), /dev/vdb2 (swap), /dev/vdb3 (btrfs)"
+    },
+    {
+      "name": "mount",
+      "state": "not_done",
+      "why": "not mounted: /mnt/bko-target, /mnt/bko-target/boot"
+    },
+    {
+      "name": "restore",
+      "state": "unknown",
+      "why": "the tree isn't mounted, so this can't be seen"
+    },
+    {
+      "name": "boot",
+      "state": "unknown",
+      "why": "the tree isn't mounted, so this can't be seen"
+    },
+    {
+      "name": "close",
+      "state": "not_done",
+      "why": "not made: /dev/vdb1, /dev/vdb2, /dev/vdb3"
+    }
+  ],
+  "next": "format",
+  "all_done": false,
+  "marks": {
+    "partitioned": ["vdb"],
+    "restore_started": false,
+    "restore_complete": false,
+    "boot": false
+  },
+  "targets": [
+    {
+      "source": "vda",
+      "node": "vdb",
+      "ours": true,
+      "same_identity": false,
+      "recorded": true
+    }
+  ],
+  "temporary_keys": [],
+  "resume": {
+    "go_on": true,
+    "why": []
+  },
+  "open": {
+    "containers": [],
+    "pools": [],
+    "mounted": []
+  },
+  "problems": []
+}
+

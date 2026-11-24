@@ -4,16 +4,76 @@
 //! from the one before the backup: it's a mark in RUN_DIR, so after the rescue
 //! system reboots the stage runs again, which is harmless.
 
+use super::codes::{Problem, ProblemCode, Problems};
 use super::commands;
 use super::layout::Layout;
 use super::target;
 use super::{Options, Stage, EXIT_OK, EXIT_PLAN_PROBLEMS, RUN_DIR};
+use crate::json::{Obj, Value};
 use crate::other::Family;
 use crate::sys::Sys;
+use std::borrow::Cow;
 
 /// Exists once the boot stage has run for the tree restored in this RUN_DIR.
 pub fn boot_marker() -> String {
     format!("{RUN_DIR}/boot.done")
+}
+
+/// The copy marks (holt-json.md, J10), beside boot.done and never in the
+/// restored tree: restore.started is written as the restore stage begins
+/// and restore.done after its last command and its read-back, both with
+/// restore_mark_text.  A partition stage that runs removes both (the disks
+/// are new again).  Written in text mode too, where nothing reads them, so
+/// a --json run after a text one sees the truth; under --json the restore
+/// row is done only with restore.done, so a stopped or failed copy always
+/// runs again.
+pub fn restore_started_marker() -> String {
+    format!("{RUN_DIR}/restore.started")
+}
+
+/// The copy's complete mark: see restore_started_marker.
+pub fn restore_done_marker() -> String {
+    format!("{RUN_DIR}/restore.done")
+}
+
+/// What the copy marks say: the layout (its host and dump time) and each
+/// source disk with the target it went to.
+pub fn restore_mark_text(layout: &Layout, mapping: &target::Mapping) -> String {
+    let mut s = format!("layout {} {}\n", layout.hostname(), layout.str_at(&["generated"]).unwrap_or("-"));
+    for (src, tgt) in &mapping.pairs {
+        s += &format!("target {src} {tgt}\n");
+    }
+    s
+}
+
+/// The targets restore.started names: a restore began on each in this
+/// session, whatever layout's.
+pub fn restore_started_on(sys: &Sys) -> Vec<String> {
+    let Some(text) = sys.read(&restore_started_marker()) else { return Vec::new() };
+    text.lines().filter_map(|l| l.strip_prefix("target ")).filter_map(|r| r.split_whitespace().nth(1)).map(str::to_string).collect()
+}
+
+/// Whether restore.started is this layout's.
+fn restore_started_here(layout: &Layout, sys: &Sys) -> bool {
+    let want = format!("layout {} {}", layout.hostname(), layout.str_at(&["generated"]).unwrap_or("-"));
+    sys.read(&restore_started_marker()).is_some_and(|t| t.lines().next() == Some(want.as_str()))
+}
+
+/// Whether restore.done says this layout's copy onto these targets ran to
+/// its end in this session.
+fn restore_complete(layout: &Layout, mapping: &target::Mapping, sys: &Sys) -> bool {
+    sys.read(&restore_done_marker()).is_some_and(|t| t == restore_mark_text(layout, mapping))
+}
+
+/// The file a container's temporary key is in (KeyAsk's `temporary`: the
+/// source unlocked it with a key file the restore brings back), as the
+/// builders name it.
+fn temporary_key(k: &commands::KeyAsk) -> Option<String> {
+    match k.kind {
+        "luks" => commands::temp_key_name(k.names.first()?).map(|n| format!("{RUN_DIR}/keys/{n}")),
+        "geli" => Some(crate::other::geli::tmp_key(k.devices.first()?)),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +94,17 @@ impl State {
             State::Partly => "partly",
             State::NotDone => "not done",
             State::Nothing => "nothing to do",
+            State::Unknown => "unknown",
+        }
+    }
+
+    /// The word the status document gives it: State::word in snake case.
+    pub fn json_word(self) -> &'static str {
+        match self {
+            State::Done => "done",
+            State::Partly => "partly",
+            State::NotDone => "not_done",
+            State::Nothing => "nothing",
             State::Unknown => "unknown",
         }
     }
@@ -84,10 +155,30 @@ fn tree_unmounted(unmounted: &[String], target: &str, boot_ran: bool) -> Vec<Str
 }
 
 pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, String)>, Vec<String>) {
+    let r = read(layout, opts, sys);
+    (r.rows, r.problems.texts())
+}
+
+/// What status reads, and what it read it against: the rows, the mapping's
+/// problems (not-blank left out), and the disks, mapping, layout and
+/// commands they come from, for the status document.
+pub(crate) struct Reading<'a> {
+    pub rows: Vec<(Stage, State, String)>,
+    pub problems: Problems,
+    pub system: target::System,
+    pub mapping: target::Mapping,
+    /// The layout as the stages build from it (--fit-largest's, --pools').
+    pub layout: Cow<'a, Layout>,
+    pub built: commands::Built,
+    /// The layout's pools imported from the target disks.
+    pub imported: Vec<String>,
+}
+
+pub(crate) fn read<'a>(given: &'a Layout, opts: &Options, sys: &Sys) -> Reading<'a> {
     // The disks hold what --fit-largest made of the layout, so that's the
     // one every row is read against (target::prepare, fit.rs).
-    let target::Prepared { system, mapping, layout, .. } = target::prepare(layout, opts, sys);
-    let layout = &*layout;
+    let target::Prepared { system, mapping, layout: prepared, .. } = target::prepare(given, opts, sys);
+    let layout = &*prepared;
     let built = commands::build(layout, opts, &mapping);
     let mut out = Vec::new();
 
@@ -181,7 +272,14 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     // restore's /var/log/bko-holt, so the log there says nothing about this one.
     let booted = tree_up && sys.exists(&boot_marker());
     let unseen = if tree_up { "" } else { "the tree isn't mounted, so this can't be seen" };
-    out.push((Stage::Restore, if restored { State::Done } else if tree_up { State::NotDone } else { State::Unknown }, if restored { String::new() } else { unseen.into() }));
+    // Under --json the tree's files aren't enough (a stopped copy has them,
+    // and so has the old system on its own disk): this session's complete
+    // mark is needed too (J10).  Text mode's row is as it was.
+    if opts.json && restored && !restore_complete(layout, &mapping, sys) {
+        out.push((Stage::Restore, State::Partly, "the copy didn't finish in this session".into()));
+    } else {
+        out.push((Stage::Restore, if restored { State::Done } else if tree_up { State::NotDone } else { State::Unknown }, if restored { String::new() } else { unseen.into() }));
+    }
     // Sculpt's boot stage has nothing to do: its boot areas came back with
     // the partition table.
     if crate::other::Family::of_layout(&layout.v) == Some(crate::other::Family::Genode) {
@@ -255,9 +353,19 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     };
     out.push((Stage::Close, if closed { State::Done } else { State::NotDone }, why));
 
-    let mut problems = mapping.problems;
+    let mut problems = mapping.problems.clone();
     problems.retain(|p| !p.contains("isn't blank"));
-    (out, problems.texts())
+    Reading { rows: out, problems, system, mapping, layout: prepared, built, imported }
+}
+
+/// The stage text mode names after `next:`: before close, the first one
+/// not done; once the tree's closed, close counts as the last one done,
+/// and there's none (None: "nothing; every stage is done").
+fn next_stage(rows: &[(Stage, State, String)]) -> Option<Stage> {
+    if rows.last().is_some_and(|r| r.1 == State::Done) {
+        return None;
+    }
+    Some(rows.iter().take_while(|r| r.0 != Stage::Close).find(|r| !matches!(r.1, State::Done | State::Nothing)).map_or(Stage::Close, |r| r.0))
 }
 
 pub fn run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, String) {
@@ -268,20 +376,159 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, String) {
         for p in &problems {
             out += &format!("#   - {p}\n");
         }
-        return (EXIT_PLAN_PROBLEMS, out, "bko-holt load: status: see the problems above\n".into());
+        return (EXIT_PLAN_PROBLEMS, out, STATUS_PROBLEMS.into());
     }
     for (stage, state, why) in &rows {
         out += &format!("{:<10} {:<14}{}\n", stage.name(), state.word(), if why.is_empty() { String::new() } else { format!(" ({why})") });
     }
-    // Before close, the next stage is the first one not done; once the
-    // tree's closed, close counts as the last one done.
-    let next = rows.iter().take_while(|r| r.0 != Stage::Close).find(|r| !matches!(r.1, State::Done | State::Nothing)).map(|r| r.0);
-    match next {
-        _ if rows.last().is_some_and(|r| r.1 == State::Done) => out += "next: nothing; every stage is done\n",
+    match next_stage(&rows) {
+        None => out += "next: nothing; every stage is done\n",
         Some(s) => out += &format!("next: {}\n", s.name()),
-        None => out += "next: close\n",
     }
     (EXIT_OK, out, String::new())
+}
+
+/// What status prints on standard error when the disks can't be matched.
+const STATUS_PROBLEMS: &str = "bko-holt load: status: see the problems above\n";
+
+/// Under --json, the restore that began on a target in this session
+/// (restore.started) is never made anew under (J19): a run in which
+/// assemble or format would run, with no partition stage of its own wiping
+/// the targets first, is refused on each target the restore began on, a
+/// `remake_after_restore` per stage.  WOULD is what the run would run
+/// (plan::would_run).
+pub(crate) fn remake_problems(mapping: &target::Mapping, system: &target::System, would: &super::plan::WouldRun, sys: &Sys) -> Vec<Problem> {
+    if would.partition || would.remaking.is_empty() {
+        return Vec::new();
+    }
+    let begun = restore_started_on(sys);
+    let mut out = Vec::new();
+    for (src, tgt) in mapping.pairs.iter().filter(|(_, t)| begun.contains(t)) {
+        let path = system.disk(tgt).map_or_else(|| format!("/dev/{tgt}"), |t| t.path());
+        for st in &would.remaking {
+            let text = format!(
+                "{src} -> {path}: {} would make what it makes anew there, over the copy this session's restore began on it; to start again, run --only partition with --erase {path}, which wipes it first",
+                st.name()
+            );
+            out.push(Problem::new(ProblemCode::RemakeAfterRestore, text).with("disk", src).with("target", tgt).with("stage", st.name()));
+        }
+    }
+    out
+}
+
+/// `load LAYOUT --only status --json` (holt-json.md, "bko-holt-status"):
+/// status's rows as a document, with the session's marks, each target's
+/// identity, the temporary keys, whether "Go on" can be offered, and
+/// what's open.  Standard error is text mode's for the same arguments.
+pub fn json_run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, String) {
+    let doc = status_doc(layout, opts, sys);
+    let code = doc.get_u64("exit").map_or(EXIT_PLAN_PROBLEMS, |c| c as u8);
+    let err = if code == EXIT_OK { String::new() } else { STATUS_PROBLEMS.to_string() };
+    (code, super::jsonout::line(&doc), err)
+}
+
+fn status_doc(given: &Layout, opts: &Options, sys: &Sys) -> Value {
+    let r = read(given, opts, sys);
+    let layout = &*r.layout;
+    let ok = r.problems.is_empty();
+    let row = |s: Stage| r.rows.iter().find(|x| x.0 == s).map(|x| x.1);
+    let uuids = target::layout_uuids(layout);
+    let pairs: Vec<(&super::layout::Disk, &target::TargetDisk)> = r.mapping.pairs.iter().filter_map(|(s, t)| Some((layout.disk(s)?, r.system.disk(t)?))).collect();
+    let recorded: Vec<&str> = pairs.iter().filter(|(d, t)| target::load_wrote(layout, d, t, sys)).map(|(_, t)| t.b.name.as_str()).collect();
+    let booted = sys.exists(&boot_marker());
+    let started = restore_started_here(layout, sys);
+
+    let stages: Vec<Value> = if ok {
+        r.rows.iter().map(|(s, st, why)| Obj::new().set("name", s.name()).set("state", st.json_word()).set("why", why.as_str()).build()).collect()
+    } else {
+        Vec::new()
+    };
+    let next = if ok { next_stage(&r.rows) } else { None };
+    let all_done = ok && next.is_none();
+    let marks = Obj::new()
+        .set("partitioned", recorded.clone())
+        .set("restore_started", started)
+        .set("restore_complete", restore_complete(layout, &r.mapping, sys))
+        .set("boot", booted);
+    let targets: Vec<Value> = pairs
+        .iter()
+        .map(|(d, t)| {
+            Obj::new()
+                .set("source", d.name.as_str())
+                .set("node", t.b.name.as_str())
+                .set("ours", t.is_ours(d, &uuids))
+                .set("same_identity", target::same_identity(d, &t.b))
+                .set("recorded", recorded.contains(&t.b.name.as_str()))
+                .build()
+        })
+        .collect();
+
+    // The containers whose only key is one load made: lost (gone before
+    // boot added the restored key file) once the copy began on them or
+    // they're open, since then a rerun can't make them anew.
+    let mut why: Vec<String> = Vec::new();
+    let assembled = matches!(row(Stage::Assemble), Some(State::Done | State::Partly));
+    let temporary: Vec<Value> = r
+        .built
+        .keys
+        .iter()
+        .filter(|k| k.unlock == "temporary" && !k.given)
+        .filter_map(|k| {
+            let path = temporary_key(k)?;
+            let name = k.names.first().cloned().unwrap_or_default();
+            let kept = sys.exists(&path);
+            if !kept && !booted && (started || assembled) {
+                why.push(format!("{name}: its temporary key {path} is gone, and boot hasn't added the restored key file, so it can't be opened again"));
+            }
+            Some(Obj::new().set("name", name).set("kept", kept).build())
+        })
+        .collect();
+
+    // Whether "Go on" (--through close as it stands) is safe: only on
+    // disks this session's partition stage wrote (the old system's own
+    // disk carries the layout's identifiers too, J19), no temporary key
+    // lost, and nothing made anew over this session's restore (J14).
+    if !ok {
+        why.insert(0, "the disks can't all be matched to the layout".into());
+    }
+    for (_, t) in pairs.iter().filter(|(_, t)| !recorded.contains(&t.b.name.as_str())) {
+        why.push(format!("{}: this session has no record that load's partition stage wrote it (a reboot forgets them), so what's there can't be told from the old system's", t.path()));
+    }
+    let mut through = opts.clone();
+    through.only = None;
+    through.through = Some(Stage::Close);
+    let would = super::plan::would_run(layout, &through, sys, &r.system, &r.mapping, &r.built, || r.rows.clone());
+    for p in remake_problems(&r.mapping, &r.system, &would, sys) {
+        why.push(format!("{}: the open stage isn't in this bko-holt", p.text));
+    }
+    let resume = Obj::new().set("go_on", why.is_empty()).set("why", why);
+
+    // What of the layout is open now (as close reads it).
+    let containers: Vec<Value> = r
+        .built
+        .made
+        .iter()
+        .filter(|(_, n)| !crate::other::softraid::is_volume_node(n) && sys.exists(&crate::other::node_path(sys, n)))
+        .map(|(src, node)| Obj::new().set("source", src.as_str()).set("node", node.as_str()).build())
+        .collect();
+    let pools: Vec<&str> = r.built.pools.iter().filter(|p| r.imported.contains(p)).map(String::as_str).collect();
+    let mounted_now: Vec<&str> = r.system.mounts.iter().map(|m| m.target.as_str()).collect();
+    let mounted: Vec<&str> = r.built.mount_points.iter().map(String::as_str).filter(|p| mounted_now.contains(p)).collect();
+    let open = Obj::new().set("containers", containers).set("pools", pools).set("mounted", mounted);
+
+    super::jsonout::header("bko-holt-status")
+        .set("exit", if ok { EXIT_OK } else { EXIT_PLAN_PROBLEMS })
+        .set("target", opts.target.as_str())
+        .set("stages", stages)
+        .set("next", next.map(Stage::name))
+        .set("all_done", all_done)
+        .set("marks", marks)
+        .set("targets", targets)
+        .set("temporary_keys", temporary)
+        .set("resume", resume)
+        .set("open", open)
+        .set("problems", r.problems.to_json())
+        .build()
 }
 
 #[cfg(test)]
@@ -489,5 +736,366 @@ mod tests {
         assert_eq!(tally(2, 2), State::Done);
         assert_eq!(tally(0, 2), State::NotDone);
         assert_eq!(tally(1, 2), State::Partly);
+    }
+
+    // ---- the status document and the copy marks (RT10e) -----------------
+
+    use crate::json::Value;
+
+    const TOOLS: [&str; 20] = [
+        "wipefs", "dd", "sfdisk", "udevadm", "mke2fs", "tune2fs", "mkswap", "mkfs.btrfs", "btrfs", "mkdir", "mount", "umount", "chroot", "cp", "sh", "bash", "cryptsetup", "grub-install", "update-grub", "rustic-bko",
+    ];
+
+    /// A rescue system: vdb 16 GiB (the sample's size) holding TABLE, every
+    /// tool, BackOtter's rustic-bko, and a private password file /k/pw.
+    fn rescue_j(name: &str, table: &[u8]) -> Tree {
+        let t = Tree::new(name);
+        t.disk("vdb", "253:16", table, 512).file("/sys/block/vdb/size", "33554432\n");
+        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        for p in TOOLS {
+            t.file(&format!("/usr/sbin/{p}"), "");
+        }
+        use std::os::unix::fs::PermissionsExt;
+        t.file("/k/pw", "pw");
+        std::fs::set_permissions(t.p("/k/pw"), std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::set_permissions(t.p("/k"), std::fs::Permissions::from_mode(0o700)).unwrap();
+        t
+    }
+
+    fn sys_j(t: &Tree, runner: FakeRunner) -> Sys {
+        Sys::new(t.root(), Box::new(runner.with("/usr/sbin/rustic-bko --version", "rustic 0.12.0+backotter.4\n")), true)
+    }
+
+    /// The sample layout's own MBR (its signature, its three partitions):
+    /// what the source's disk as found, or one load partitioned, holds.
+    fn source_mbr() -> Vec<u8> {
+        let mut table = vec![0u8; 512];
+        table[440..444].copy_from_slice(&0x1f2e_3d4cu32.to_le_bytes());
+        for (slot, start, n) in [(0, 2048, 1953792), (1, 1955840, 3905536), (2, 5861376, 27693056)] {
+            crate::parttable::build::mbr_entry(&mut table, slot, 0, 0x83, start, n);
+        }
+        table
+    }
+
+    fn opts_j(a: &[&str]) -> Options {
+        let mut v = vec!["l.json".to_string()];
+        v.extend(a.iter().map(|s| s.to_string()));
+        match parse_args(&v).unwrap() {
+            Parsed::Run(o) => o,
+            Parsed::Help => unreachable!(),
+        }
+    }
+
+    /// load::run with A: its exit, its standard output as one document,
+    /// its standard error.
+    fn doc_of(layout: &str, a: &[&str], s: &Sys) -> (u8, Value, String) {
+        let (code, out, err) = crate::load::run(&opts_j(a), layout, s);
+        assert!(out.ends_with('\n') && out.matches('\n').count() == 1, "not one line: {out}");
+        (code, crate::json::parse(&out).unwrap_or_else(|e| panic!("{}: {out}", e.message)), err)
+    }
+
+    fn strs(v: &Value, path: &[&str]) -> Vec<String> {
+        v.arr_at(path).iter().filter_map(|x| x.as_str().map(str::to_string)).collect()
+    }
+
+    /// This session's partition record of vdb, as the partition stage
+    /// writes it.
+    fn record(t: &Tree, l: &str, s: &Sys) {
+        let lay = Layout::from_json(crate::json::parse(l).unwrap()).unwrap();
+        let m = target::prepare(&lay, &opts_j(&["--map", "vda=vdb"]), s).mapping;
+        assert_eq!(m.records.len(), 1);
+        let (path, text) = &m.records[0];
+        t.file(path, text.as_str());
+    }
+
+    /// The copy marks' text for the sample layout onto vdb.
+    fn mark(l: &str, s: &Sys) -> String {
+        let lay = Layout::from_json(crate::json::parse(l).unwrap()).unwrap();
+        restore_mark_text(&lay, &target::prepare(&lay, &opts_j(&["--map", "vda=vdb"]), s).mapping)
+    }
+
+    /// The restored tree mounted: / and /boot under /mnt/bko-target, with
+    /// the files status takes for a restored Debian.
+    fn mounted(t: &Tree) {
+        t.file("/proc/self/mountinfo", "36 35 253:19 / /mnt/bko-target rw,relatime - btrfs /dev/vdb3 rw\n37 36 253:17 / /mnt/bko-target/boot rw,relatime - ext4 /dev/vdb1 rw\n");
+        t.file("/mnt/bko-target/etc/fstab", "").file("/mnt/bko-target/etc/os-release", "ID=debian\n");
+    }
+
+    /// The document as tests/fixtures/status-json/NAME.json keeps it: pretty,
+    /// its `generated` and `version` replaced.  BKO_HOLT_JSON_GOLDEN=bless
+    /// writes it again.
+    fn golden(name: &str, v: &Value) {
+        let mut v = v.clone();
+        if let Value::Obj(kv) = &mut v {
+            for (k, x) in kv.iter_mut() {
+                match k.as_str() {
+                    "generated" => *x = Value::from("GENERATED"),
+                    "version" => *x = Value::from("VERSION"),
+                    _ => {}
+                }
+            }
+        }
+        let text = v.pretty() + "\n";
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/status-json").join(format!("{name}.json"));
+        if std::env::var("BKO_HOLT_JSON_GOLDEN").as_deref() == Ok("bless") {
+            assert_eq!(RUN_DIR, "/run/bko-holt", "the goldens are Linux's");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, &text).unwrap();
+            return;
+        }
+        let want = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e} (BKO_HOLT_JSON_GOLDEN=bless writes it)", path.display()));
+        assert_eq!(text, want, "{}: the status document changed (BKO_HOLT_JSON_GOLDEN=bless writes it again)", path.display());
+    }
+
+    /// What each field of the status document is: the fields in the spec's
+    /// order, each of its type, and each stage's.
+    fn schema(v: &Value) {
+        let keys: Vec<&str> = v.as_object().unwrap().iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            keys,
+            ["format", "schema", "version", "generated", "dry_run", "exit", "target", "stages", "next", "all_done", "marks", "targets", "temporary_keys", "resume", "open", "problems"]
+        );
+        assert_eq!((v.get_str("format"), v.get_u64("schema")), (Some("bko-holt-status"), Some(1)));
+        assert!(v.get_str("generated").is_some_and(|g| g.ends_with('Z')) && v.get_bool("dry_run").is_some() && v.get_u64("exit").is_some());
+        assert!(v.get_str("target").is_some() && v.get("next").is_some_and(|n| n.is_null() || n.as_str().is_some()) && v.get_bool("all_done").is_some());
+        for s in v.arr_at(&["stages"]) {
+            assert!(s.get_str("name").is_some() && s.get_str("why").is_some(), "{s:?}");
+            assert!(["done", "partly", "not_done", "nothing", "unknown"].contains(&s.get_str("state").unwrap()), "{s:?}");
+        }
+        let m = v.get("marks").unwrap();
+        assert!(m.get_arr("partitioned").is_some() && m.get_bool("restore_started").is_some() && m.get_bool("restore_complete").is_some() && m.get_bool("boot").is_some(), "{m:?}");
+        for t in v.arr_at(&["targets"]) {
+            assert!(t.get_str("source").is_some() && t.get_str("node").is_some() && t.get_bool("ours").is_some() && t.get_bool("same_identity").is_some() && t.get_bool("recorded").is_some(), "{t:?}");
+        }
+        for k in v.arr_at(&["temporary_keys"]) {
+            assert!(k.get_str("name").is_some() && k.get_bool("kept").is_some(), "{k:?}");
+        }
+        assert!(v.bool_at(&["resume", "go_on"]).is_some() && v.at(&["resume", "why"]).and_then(Value::as_array).is_some());
+        assert_eq!(v.bool_at(&["resume", "go_on"]), Some(v.arr_at(&["resume", "why"]).is_empty()));
+        for k in ["containers", "pools", "mounted"] {
+            assert!(v.at(&["open", k]).and_then(Value::as_array).is_some(), "{k}");
+        }
+        assert!(v.arr_at(&["problems"]).iter().all(|p| p.get_str("code").is_some() && p.get_str("text").is_some()));
+    }
+
+    /// The rows of the document are text mode's: each stage's name, its
+    /// state's word in snake case, its why; next as text mode's.
+    fn as_text(v: &Value, text: &str) {
+        let rows: Vec<String> = v
+            .arr_at(&["stages"])
+            .iter()
+            .map(|s| {
+                let word = match s.get_str("state").unwrap() {
+                    "not_done" => "not done",
+                    "nothing" => "nothing to do",
+                    w => w,
+                };
+                let why = s.get_str("why").unwrap();
+                format!("{:<10} {:<14}{}\n", s.get_str("name").unwrap(), word, if why.is_empty() { String::new() } else { format!(" ({why})") })
+            })
+            .collect();
+        let want: Vec<String> = text.split_inclusive('\n').filter(|l| !l.starts_with('#') && !l.starts_with("next: ")).map(str::to_string).collect();
+        assert_eq!(rows, want, "{text}");
+        let next = text.lines().find_map(|l| l.strip_prefix("next: ")).unwrap();
+        match v.get_str("next") {
+            Some(n) => assert_eq!(n, next),
+            None => assert!(next.starts_with("nothing;") && v.get_bool("all_done") == Some(true), "{next}"),
+        }
+    }
+
+    /// The status document of a blank target: text mode's rows, nothing
+    /// recorded, nothing open, and no "Go on" (nothing load did is there).
+    #[test]
+    fn status_document() {
+        let t = rescue_j("status-json-blank", &[]);
+        let s = sys_j(&t, FakeRunner::default());
+        let l = sample::bios_mbr();
+        let a = ["--map", "vda=vdb", "--only", "status"];
+        let (code, v, err) = doc_of(&l, &[&a[..], &["--json"]].concat(), &s);
+        let (tcode, text, terr) = crate::load::run(&opts_j(&a), &l, &s);
+        assert_eq!((code, err.as_str()), (tcode, terr.as_str()));
+        assert_eq!(code, EXIT_OK);
+        schema(&v);
+        as_text(&v, &text);
+        assert_eq!(v.get_str("target"), Some("/mnt/bko-target"));
+        assert_eq!(v.get_str("next"), Some("partition"));
+        assert_eq!(v.at(&["marks"]).unwrap().compact(), r#"{"partitioned":[],"restore_started":false,"restore_complete":false,"boot":false}"#);
+        assert_eq!(v.at(&["targets"]).unwrap().compact(), r#"[{"source":"vda","node":"vdb","ours":false,"same_identity":false,"recorded":false}]"#);
+        assert_eq!(v.bool_at(&["resume", "go_on"]), Some(false));
+        assert_eq!(strs(&v, &["resume", "why"]), ["/dev/vdb: this session has no record that load's partition stage wrote it (a reboot forgets them), so what's there can't be told from the old system's"]);
+        assert_eq!(v.at(&["open"]).unwrap().compact(), r#"{"containers":[],"pools":[],"mounted":[]}"#);
+        golden("blank", &v);
+        // A disk that went away: the mapping's problem, exit 4, no rows,
+        // as text mode prints none.
+        let (code, v, err) = doc_of(&l, &["--map", "vda=vdz", "--only", "status", "--json"], &s);
+        assert_eq!((code, err.as_str()), (EXIT_PLAN_PROBLEMS, STATUS_PROBLEMS));
+        schema(&v);
+        assert!(v.arr_at(&["stages"]).is_empty() && v.get("next").is_some_and(Value::is_null) && v.get_bool("all_done") == Some(false));
+        assert_eq!(v.str_at(&["problems", "0", "code"]), Some("no_such_disk"), "{:?}", v.get("problems"));
+        assert_eq!(strs(&v, &["resume", "why"])[0], "the disks can't all be matched to the layout");
+    }
+
+    /// Under --json the restore row needs this session's complete mark
+    /// (J10): the tree's files alone are "partly" (a stopped copy has them,
+    /// and so has the old system), a mark of another mapping too; text
+    /// mode's row is as it was.  "Go on" only on recorded disks, and not
+    /// when it would make something anew over the copy (J14, J19).
+    #[test]
+    fn the_copy_marks() {
+        let t = rescue_j("status-json-marks", &source_mbr());
+        let s = sys_j(&t, FakeRunner::default());
+        let l = sample::bios_mbr();
+        let a = ["--map", "vda=vdb", "--only", "status"];
+        let restore = |v: &Value| v.arr_at(&["stages"]).iter().find(|r| r.get_str("name") == Some("restore")).map(|r| (r.get_str("state").unwrap().to_string(), r.get_str("why").unwrap().to_string())).unwrap();
+        let json = || doc_of(&l, &[&a[..], &["--json"]].concat(), &s).1;
+        // Recorded, nothing begun: Go on (partition is done, format next).
+        record(&t, &l, &s);
+        let v = json();
+        assert_eq!(strs(&v, &["marks", "partitioned"]), ["vdb"]);
+        assert_eq!(v.at(&["targets", "0"]).unwrap().compact(), r#"{"source":"vda","node":"vdb","ours":true,"same_identity":false,"recorded":true}"#);
+        assert_eq!((v.bool_at(&["resume", "go_on"]), v.get_str("next")), (Some(true), Some("format")), "{:?}", v.get("resume"));
+        golden("recorded", &v);
+        // The tree mounted with a system in it, no mark: partly under
+        // --json, done in text mode.
+        mounted(&t);
+        let (_, text, _) = crate::load::run(&opts_j(&a), &l, &s);
+        assert!(text.contains("restore    done"), "{text}");
+        let v = json();
+        assert_eq!(restore(&v), ("partly".to_string(), "the copy didn't finish in this session".to_string()));
+        assert_eq!(strs(&v, &["open", "mounted"]), ["/mnt/bko-target", "/mnt/bko-target/boot"]);
+        // The copy began here: its start mark.  --through close would make
+        // format's filesystems anew over it: no Go on.
+        t.file(&restore_started_marker(), mark(&l, &s));
+        let v = json();
+        assert_eq!((v.bool_at(&["marks", "restore_started"]), v.bool_at(&["marks", "restore_complete"])), (Some(true), Some(false)));
+        assert_eq!(restore(&v).0, "partly");
+        assert_eq!(v.bool_at(&["resume", "go_on"]), Some(false));
+        assert_eq!(
+            strs(&v, &["resume", "why"]),
+            ["vda -> /dev/vdb: format would make what it makes anew there, over the copy this session's restore began on it; to start again, run --only partition with --erase /dev/vdb, which wipes it first: the open stage isn't in this bko-holt"]
+        );
+        golden("copy-begun", &v);
+        // A complete mark of another copy (another target) isn't this one's.
+        t.file(&restore_done_marker(), mark(&l, &s).replace("target vda vdb", "target vda vdc"));
+        assert_eq!(restore(&json()).0, "partly");
+        // This one's: done.
+        t.file(&restore_done_marker(), mark(&l, &s));
+        let v = json();
+        assert_eq!(restore(&v), ("done".to_string(), String::new()));
+        assert_eq!(v.bool_at(&["marks", "restore_complete"]), Some(true));
+        golden("copy-done", &v);
+        // Text mode's rows never read the marks.
+        let (_, text2, _) = crate::load::run(&opts_j(&a), &l, &s);
+        assert_eq!(text, text2);
+        // Another layout's start mark: not this layout's copy, though it
+        // names vdb, so nothing is made anew over it either.
+        t.file(&restore_started_marker(), mark(&l, &s).replace("layout deb13", "layout other"));
+        let v = json();
+        assert_eq!(v.bool_at(&["marks", "restore_started"]), Some(false));
+        assert_eq!(v.bool_at(&["resume", "go_on"]), Some(false));
+    }
+
+    /// One LUKS container, cryptroot (vda3, holding /), that the source
+    /// unlocked with a key file the restore brings back: load makes it a
+    /// temporary key.
+    fn luks_keyfile() -> String {
+        sample::bios_mbr()
+            .replacen(
+                r#""content": {"type": "btrfs", "usage": "filesystem", "uuid": "b7b7b7b7-0000-4000-8000-000000000003""#,
+                r#""content": {"type": "crypto_LUKS", "usage": "crypto", "uuid": "a3a3a3a3-0000-4000-8000-000000000003", "label": null, "version": "2"}, "x": {"type": "btrfs", "usage": "filesystem", "uuid": "b7b7b7b7-0000-4000-8000-000000000003""#,
+                1,
+            )
+            .replace(
+                r#""dm_devices": []"#,
+                r#""dm_devices": [
+                  {"name": "dm-1", "kind": "dm", "size_bytes": 14178844672, "slaves": ["vda3"], "holders": [],
+                   "content": {"type": "btrfs", "usage": "filesystem", "uuid": "b7b7b7b7-0000-4000-8000-000000000003", "label": null, "node_size": 16384, "sector_size": 4096, "checksum": "crc32c", "devid": 1, "features": [], "compat_ro_features": []},
+                   "dm": {"dm_name": "cryptroot", "mapper_path": "/dev/mapper/cryptroot", "target": "crypt", "crypt_type": "LUKS2"}}]"#,
+            )
+            .replace(r#""devices": ["vda3"]"#, r#""devices": ["dm-1"]"#)
+            .replace(r#""resolves_to": "vda3""#, r#""resolves_to": "dm-1""#)
+            .replace(
+                r#""crypttab": null"#,
+                r#""crypttab": [{"name": "cryptroot", "device": "UUID=a3a3a3a3-0000-4000-8000-000000000003", "key_file": "/etc/keys/root.key", "options": ["luks"], "resolves_to": "vda3"}]"#,
+            )
+    }
+
+    /// The containers whose only key is load's temporary one, and whether
+    /// it's still there; once the copy began, a lost one is no Go on.
+    #[test]
+    fn temporary_keys() {
+        let t = rescue_j("status-json-keys", &source_mbr());
+        let s = sys_j(&t, FakeRunner::default());
+        let l = luks_keyfile();
+        let a = ["--map", "vda=vdb", "--only", "status", "--json"];
+        record(&t, &l, &s);
+        let v = doc_of(&l, &a, &s).1;
+        assert_eq!(v.at(&["temporary_keys"]).unwrap().compact(), r#"[{"name":"cryptroot","kept":false}]"#);
+        // Not begun, not open: a rerun makes it anew with a new key.
+        assert!(!strs(&v, &["resume", "why"]).iter().any(|w| w.contains("temporary key")), "{:?}", v.get("resume"));
+        // Begun: it can't be opened again.
+        t.file(&restore_started_marker(), mark(&l, &s));
+        let v = doc_of(&l, &a, &s).1;
+        let key = format!("{RUN_DIR}/keys/cryptroot");
+        assert!(strs(&v, &["resume", "why"]).contains(&format!("cryptroot: its temporary key {key} is gone, and boot hasn't added the restored key file, so it can't be opened again")), "{:?}", v.get("resume"));
+        // Kept, or boot ran: no matter.
+        t.file(&key, "k");
+        let v = doc_of(&l, &a, &s).1;
+        assert_eq!(v.at(&["temporary_keys"]).unwrap().compact(), r#"[{"name":"cryptroot","kept":true}]"#);
+        assert!(!strs(&v, &["resume", "why"]).iter().any(|w| w.contains("temporary key")));
+        std::fs::remove_file(t.p(&key)).unwrap();
+        t.file(&boot_marker(), "");
+        assert!(!strs(&doc_of(&l, &a, &s).1, &["resume", "why"]).iter().any(|w| w.contains("temporary key")));
+        // A --key-file given for it: no temporary key at all.
+        let mut k = a.to_vec();
+        k.extend(["--key-file", "cryptroot=/k/pw"]);
+        assert!(doc_of(&l, &k, &s).1.arr_at(&["temporary_keys"]).is_empty());
+    }
+
+    /// remake_after_restore (J19): once a restore began on a target, a run
+    /// that would make assemble's or format's anew there without its own
+    /// partition stage wiping it first is refused, in the plan and the
+    /// writing runs alike (a dry run's too); text mode doesn't refuse it.
+    #[test]
+    fn remake_after_restore() {
+        let t = rescue_j("status-json-remake", &source_mbr());
+        let s = sys_j(&t, FakeRunner::default());
+        let l = sample::bios_mbr();
+        let lay = Layout::from_json(crate::json::parse(&l).unwrap()).unwrap();
+        record(&t, &l, &s);
+        let base = ["--map", "vda=vdb", "--repo", "/srv/r", "--password-file", "/k/pw", "--json"];
+        let remakes = |v: &Value| v.arr_at(&["problems"]).iter().filter(|p| p.get_str("code") == Some("remake_after_restore")).cloned().collect::<Vec<_>>();
+        // A writing run without --commit, as exec runs it.
+        let writing = |extra: &[&str]| {
+            let o = opts_j(&[&base[..], extra].concat());
+            crate::load::exec::run(&lay, &o, &s, &o.stages())
+        };
+        let text = "vda -> /dev/vdb: format would make what it makes anew there, over the copy this session's restore began on it; to start again, run --only partition with --erase /dev/vdb, which wipes it first";
+        // Nothing begun: none.
+        let (code, v, _) = doc_of(&l, &base, &s);
+        assert!(remakes(&v).is_empty() && code == EXIT_OK, "{code} {:?}", v.get("problems"));
+        let (code, out, err) = writing(&["--only", "format"]);
+        assert_eq!(code, EXIT_OK, "{out}{err}");
+        t.file(&restore_started_marker(), mark(&l, &s));
+        // The plan (its run is --through close).
+        let (code, v, _) = doc_of(&l, &base, &s);
+        let r = remakes(&v);
+        assert_eq!((code, r.len()), (EXIT_PLAN_PROBLEMS, 1), "{:?}", v.get("problems"));
+        assert_eq!((r[0].get_str("disk"), r[0].get_str("target"), r[0].get_str("stage"), r[0].get_str("text")), (Some("vda"), Some("vdb"), Some("format"), Some(text)));
+        // The writing runs: nothing run.
+        for extra in [&["--only", "format"][..], &["--through", "close"]] {
+            let (code, out, err) = writing(extra);
+            assert_eq!(code, EXIT_PLAN_PROBLEMS, "{extra:?}: {out}{err}");
+            assert!(out.is_empty() && err.contains(text), "{extra:?}: {err}");
+        }
+        // The ways on: a run that wipes first, or one that makes nothing.
+        for extra in [&["--only", "partition", "--erase", "/dev/vdb"][..], &["--only", "mount"], &["--only", "restore"], &["--through", "partition"]] {
+            let (code, out, err) = writing(extra);
+            assert!(code == EXIT_OK && !err.contains("anew there"), "{extra:?}: {code} {out}{err}");
+        }
+        // Text mode: no such refusal.
+        let o = opts_j(&[&base[..6], &["--only", "format"]].concat());
+        let (code, out, err) = crate::load::exec::run(&lay, &o, &s, &o.stages());
+        assert!(code == EXIT_OK && !err.contains("anew there"), "{code}: {out}{err}");
     }
 }

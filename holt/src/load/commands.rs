@@ -203,7 +203,7 @@ fn needs_key_file(open_as: &str, k: &str) -> Problem {
 
 /// The file name of a container's temporary key under RUN_DIR/keys, the
 /// same in the format and the boot stage; None for a name that can't be one.
-fn temp_key_name(open_as: &str) -> Option<String> {
+pub(crate) fn temp_key_name(open_as: &str) -> Option<String> {
     let n = open_as.replace('/', "_");
     (!n.is_empty() && !matches!(n.as_str(), "." | "..") && !n.contains('\0')).then_some(n)
 }

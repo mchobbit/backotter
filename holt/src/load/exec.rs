@@ -96,6 +96,11 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
     // filesystems and files, still there).  A stage the layout needs
     // nothing from is still skipped, and without --erase nothing changes.
     let mut wiped = false;
+    // The copy marks' text (status::restore_mark_text), and the options
+    // the restore's read-back reads the tree with.
+    let mark = status::restore_mark_text(layout, &p.mapping);
+    let mut tree_opts = opts.clone();
+    tree_opts.json = false;
     for &s in stages {
         // --through skips what's done already; --only does what it's told.
         if opts.through.is_some() {
@@ -122,12 +127,28 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
         // A new tree needs its own boot stage.
         if s == Stage::Restore {
             let _ = std::fs::remove_file(status::boot_marker());
+            // The copy begins: not complete until the stage's end (J10).
+            let _ = std::fs::remove_file(sys.p(&status::restore_done_marker()));
+            if let Err(e) = write_mark(sys, &status::restore_started_marker(), &mark) {
+                if opts.json {
+                    log_line(&mut log, &format!("FAILED: {e}"));
+                    return (EXIT_FAILED, out, format!("bko-holt load: restore: {e}\n"));
+                }
+            }
         }
         // A table load wrote is recorded only once the stage has run: until
         // then, with --erase, a rerun takes the disk as it finds it.
         if s == Stage::Partition {
             for (path, _) in &p.mapping.records {
                 let _ = std::fs::remove_file(path);
+            }
+            // The disks are new again: no copy has begun on them, and
+            // under --json no boot stage has run for them either.
+            for m in [status::restore_started_marker(), status::restore_done_marker()] {
+                let _ = std::fs::remove_file(sys.p(&m));
+            }
+            if opts.json {
+                let _ = std::fs::remove_file(sys.p(&status::boot_marker()));
             }
         }
         for c in cmds {
@@ -157,12 +178,25 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
                 return (EXIT_FAILED, out, format!("bko-holt load: boot: {}: {e}\n", status::boot_marker()));
             }
         }
-        // Read the disks back: the stage must show as done.
-        let (st, why) = state_of(layout, opts, sys, s);
+        // Read the disks back: the stage must show as done.  The restore's
+        // by the tree alone, as text mode reads it: under --json its row
+        // needs the mark written next.
+        let (st, why) = if s == Stage::Restore && opts.json { state_of(layout, &tree_opts, sys, s) } else { state_of(layout, opts, sys, s) };
         if !matches!(st, State::Done | State::Nothing) {
             let msg = format!("{} ran, but the disks don't show it done: {}{}", s.name(), st_word(st), if why.is_empty() { String::new() } else { format!(" ({why})") });
             log_line(&mut log, &format!("FAILED: {msg}"));
             return (EXIT_FAILED, out, format!("bko-holt load: {msg}\n"));
+        }
+        // The copy is complete: after the stage's last command (the shared
+        // snapshots' flags, thin_restore, the atimes' capture all come
+        // after the archiver) and its read-back (J10).
+        if s == Stage::Restore {
+            if let Err(e) = write_mark(sys, &status::restore_done_marker(), &mark) {
+                if opts.json {
+                    log_line(&mut log, &format!("FAILED: {e}"));
+                    return (EXIT_FAILED, out, format!("bko-holt load: restore: {e}\n"));
+                }
+            }
         }
         out += &format!("# {} done\n", s.name());
         log_line(&mut log, &format!("==== stage {} done", s.name()));
@@ -205,6 +239,12 @@ fn write_file(path: &str, text: &str, private: bool) -> Result<(), String> {
     }
     let written = if ours || private { write_private(path, text) } else { std::fs::write(path, text) };
     written.map_err(|e| format!("{path}: {e}"))
+}
+
+/// A copy mark (status::restore_started_marker) at PATH, through SYS (the
+/// host's RUN_DIR, or a test's tree).
+fn write_mark(sys: &Sys, path: &str, text: &str) -> Result<(), String> {
+    write_file(&sys.p(path).to_string_lossy(), text, false)
 }
 
 /// The partition stage's record of each table it wrote (target::table_record).
@@ -412,5 +452,98 @@ mod tests {
         let (path, text) = &p.mapping.records[0];
         t.file(path, text.as_str());
         assert_eq!(heads(&erase), vec!["# ---- partition: done already", "# ---- assemble: nothing to do already", "# ---- format: done already"]);
+    }
+
+    // ---- the copy marks (RT10e, J10) --------------------------------------
+
+    /// The sample layout's source disk as load partitioned it in this
+    /// session (its table and this session's record), the tree mounted with
+    /// a restored Debian in it, a private password file, and SYS's archiver
+    /// answering as BackOtter's.
+    fn restored(name: &str, archiver: &str) -> (crate::testutil::Tree, Sys, String) {
+        use crate::load::layout::sample;
+        use crate::sys::FakeRunner;
+        use std::os::unix::fs::PermissionsExt;
+        let mut table = vec![0u8; 512];
+        table[440..444].copy_from_slice(&0x1f2e_3d4cu32.to_le_bytes());
+        for (slot, start, n) in [(0, 2048, 1953792), (1, 1955840, 3905536), (2, 5861376, 27693056)] {
+            crate::parttable::build::mbr_entry(&mut table, slot, 0, 0x83, start, n);
+        }
+        let t = rescue(name, &table);
+        t.file("/proc/self/mountinfo", "36 35 253:19 / /mnt/bko-target rw,relatime - btrfs /dev/vdb3 rw\n37 36 253:17 / /mnt/bko-target/boot rw,relatime - ext4 /dev/vdb1 rw\n");
+        t.file("/mnt/bko-target/etc/fstab", "").file("/mnt/bko-target/etc/os-release", "ID=debian\n");
+        t.file("/k/pw", "pw");
+        std::fs::set_permissions(t.p("/k/pw"), std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::set_permissions(t.p("/k"), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default().with(&format!("{archiver} --version"), "rustic 0.12.0+backotter.4\n")), true);
+        let l = sample::bios_mbr();
+        let lay = Layout::from_json(crate::json::parse(&l).unwrap()).unwrap();
+        let (path, text) = crate::load::target::prepare(&lay, &opts_of(&["--map", "vda=vdb"]), &s).mapping.records.remove(0);
+        t.file(&path, text);
+        (t, s, l)
+    }
+
+    /// Under --json, --through skips restore only with this session's
+    /// complete mark: the tree's files alone don't do; text mode skips by
+    /// the files, as before.
+    #[test]
+    fn through_skips_restore_by_its_mark_under_json() {
+        let (t, s, l) = restored("load-exec-marks", "/usr/sbin/rustic-bko");
+        t.file("/usr/sbin/rustic-bko", "");
+        let lay = Layout::from_json(crate::json::parse(&l).unwrap()).unwrap();
+        let a = ["--map", "vda=vdb", "--repo", "/srv/r", "--password-file", "/k/pw", "--through", "restore"];
+        let stages = [Stage::Partition, Stage::Assemble, Stage::Format, Stage::Mount, Stage::Restore];
+        let restore_head = |extra: &[&str]| {
+            let (code, out, err) = run(&lay, &opts_of(&[&a[..], extra].concat()), &s, &stages);
+            assert_eq!(code, EXIT_OK, "{extra:?}: {out}{err}");
+            out.lines().find(|l| l.starts_with("# ---- restore")).unwrap().to_string()
+        };
+        assert_eq!(restore_head(&[]), "# ---- restore: done already");
+        assert_eq!(restore_head(&["--json"]), "# ---- restore ----");
+        let m = crate::load::target::prepare(&lay, &opts_of(&["--map", "vda=vdb"]), &s).mapping;
+        t.file(&status::restore_done_marker(), status::restore_mark_text(&lay, &m));
+        assert_eq!(restore_head(&["--json"]), "# ---- restore: done already");
+        assert_eq!(restore_head(&[]), "# ---- restore: done already");
+    }
+
+    /// The restore stage writes its start mark as it begins (text mode
+    /// too) and removes the complete one: a copy that fails leaves none,
+    /// so under --json its row is partly and it runs again.
+    #[test]
+    fn a_failed_copy_leaves_no_complete_mark() {
+        let t0 = crate::testutil::Tree::new("load-exec-archiver");
+        // The archiver: a script that fails as rustic-bko would, here at a
+        // real path the run can start, and at the same path in the tree,
+        // where plan looks for it.
+        let archiver = t0.p("/fake-rustic").to_string_lossy().into_owned();
+        t0.file("/fake-rustic", "#!/bin/sh\necho 'error: the repository is gone' >&2\nexit 3\n");
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(t0.p("/fake-rustic"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let (t, s, l) = restored("load-exec-fail", &archiver);
+        t.file(&archiver, "");
+        let lay = Layout::from_json(crate::json::parse(&l).unwrap()).unwrap();
+        let m = crate::load::target::prepare(&lay, &opts_of(&["--map", "vda=vdb"]), &s).mapping;
+        let mark = status::restore_mark_text(&lay, &m);
+        assert_eq!(mark, "layout deb13 -\ntarget vda vdb\n");
+        let a = ["--map", "vda=vdb", "--repo", "/srv/r", "--password-file", "/k/pw", "--archiver", archiver.as_str(), "--only", "restore", "--commit"];
+        for json in [false, true] {
+            // A complete mark an earlier copy left.
+            t.file(&status::restore_done_marker(), mark.as_str());
+            let _ = std::fs::remove_file(t.p(&status::restore_started_marker()));
+            let extra: &[&str] = if json { &["--json"] } else { &[] };
+            let o = opts_of(&[&a[..], extra].concat());
+            let (code, _, err) = run(&lay, &o, &s, &[Stage::Restore]);
+            assert_eq!(code, EXIT_FAILED, "{json}: {err}");
+            assert!(err.contains("exit status: 3") && err.contains("the repository is gone"), "{json}: {err}");
+            assert_eq!(std::fs::read_to_string(t.p(&status::restore_started_marker())).ok().as_deref(), Some(mark.as_str()), "{json}");
+            assert!(!t.p(&status::restore_done_marker()).exists(), "{json}");
+        }
+        // Under --json its row is partly: --through runs it again.
+        let row = |json: bool| {
+            let mut o = opts_of(&["--map", "vda=vdb"]);
+            o.json = json;
+            status::rows(&lay, &o, &s).0.into_iter().find(|r| r.0 == Stage::Restore).map(|r| r.1).unwrap()
+        };
+        assert_eq!((row(false), row(true)), (State::Done, State::Partly));
     }
 }

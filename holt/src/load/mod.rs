@@ -575,12 +575,12 @@ pub fn run(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
     }
     let stages = opts.stages();
     if opts.json {
-        // The status (RT10e) and event (RT10f) documents aren't built yet:
+        // The event stream (RT10f) isn't built yet: the writing stages are
         // refused, before anything is read or run, so a reader never gets
         // text where it wants JSON.
         match stages.as_slice() {
             [Stage::Plan] => return plan::json_run(&layout, opts, sys, layout_text),
-            [Stage::Status] => return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::JsonNotHere, "bko-holt load: --json isn't built for status in this bko-holt; run it without --json".into()),
+            [Stage::Status] => return status::json_run(&layout, opts, sys),
             _ => return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::JsonNotHere, "bko-holt load: --json isn't built for the writing stages in this bko-holt; run it without --json".into()),
         }
     }
@@ -767,9 +767,8 @@ mod tests {
         let (code, out, _) = run(&opts(&["l.json", "--json"]), r#"{"format": "x"}"#, &s);
         assert_eq!(code, EXIT_UNSUPPORTED);
         assert_eq!(doc(&out).get_str("code"), Some("layout_refused"));
-        // Status and the writing stages: not built yet, refused before any
-        // check runs.
-        for a in [&["l.json", "--json", "--only", "status"][..], &["l.json", "--json", "--through", "mount", "--commit"]] {
+        // The writing stages: not built yet, refused before any check runs.
+        for a in [&["l.json", "--json", "--through", "mount", "--commit"][..], &["l.json", "--json", "--only", "boot"]] {
             let (code, out, err) = run(&opts(a), layout, &s);
             assert_eq!(code, EXIT_BAD_ARGS, "{a:?}");
             assert_eq!(doc(&out).get_str("code"), Some("json_not_here"), "{a:?}");

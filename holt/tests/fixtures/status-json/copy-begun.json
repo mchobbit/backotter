@@ -1,0 +1,77 @@
+{
+  "format": "bko-holt-status",
+  "schema": 1,
+  "version": "VERSION",
+  "generated": "GENERATED",
+  "dry_run": false,
+  "exit": 0,
+  "target": "/mnt/bko-target",
+  "stages": [
+    {
+      "name": "partition",
+      "state": "done",
+      "why": ""
+    },
+    {
+      "name": "assemble",
+      "state": "nothing",
+      "why": ""
+    },
+    {
+      "name": "format",
+      "state": "not_done",
+      "why": "not made yet: /dev/vdb1 (ext4), /dev/vdb2 (swap), /dev/vdb3 (btrfs)"
+    },
+    {
+      "name": "mount",
+      "state": "done",
+      "why": ""
+    },
+    {
+      "name": "restore",
+      "state": "partly",
+      "why": "the copy didn't finish in this session"
+    },
+    {
+      "name": "boot",
+      "state": "not_done",
+      "why": ""
+    },
+    {
+      "name": "close",
+      "state": "not_done",
+      "why": "still open"
+    }
+  ],
+  "next": "format",
+  "all_done": false,
+  "marks": {
+    "partitioned": ["vdb"],
+    "restore_started": true,
+    "restore_complete": false,
+    "boot": false
+  },
+  "targets": [
+    {
+      "source": "vda",
+      "node": "vdb",
+      "ours": true,
+      "same_identity": false,
+      "recorded": true
+    }
+  ],
+  "temporary_keys": [],
+  "resume": {
+    "go_on": false,
+    "why": [
+      "vda -> /dev/vdb: format would make what it makes anew there, over the copy this session's restore began on it; to start again, run --only partition with --erase /dev/vdb, which wipes it first: the open stage isn't in this bko-holt"
+    ]
+  },
+  "open": {
+    "containers": [],
+    "pools": [],
+    "mounted": ["/mnt/bko-target", "/mnt/bko-target/boot"]
+  },
+  "problems": []
+}
+

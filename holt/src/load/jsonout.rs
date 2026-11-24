@@ -6,8 +6,9 @@
 //! `bko-holt --version --json`'s `bko-holt-api` document, the dry-run lock,
 //! and writing a document on standard output without ever panicking
 //! (RT10a); the plan document and its hash (RT10c), with the size verdicts
-//! of each candidate (RT10d).  Text mode never comes here: everything is
-//! behind `--json` or the variable.
+//! of each candidate (RT10d).  The status document is status.rs's
+//! (RT10e), made with header and line here.  Text mode never comes here:
+//! everything is behind `--json` or the variable.
 
 use super::commands::{Cmd, KeyAsk};
 use super::layout::{Disk, Layout};
@@ -31,7 +32,7 @@ pub const FEATURES: &[&str] = &["no_commit_env", "candidates", "sizes"];
 
 /// The documents this bko-holt writes, each with the schemas it writes.
 /// Grows with RT10's steps (plan: RT10c, status: RT10e, events: RT10f).
-pub const DOCUMENTS: &[(&str, &[u64])] = &[("plan", &[SCHEMA]), ("error", &[SCHEMA])];
+pub const DOCUMENTS: &[(&str, &[u64])] = &[("plan", &[SCHEMA]), ("status", &[SCHEMA]), ("error", &[SCHEMA])];
 
 /// `bko-holt-error`'s codes (holt-json.md, "bko-holt-error").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

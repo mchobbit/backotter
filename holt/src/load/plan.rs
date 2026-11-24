@@ -437,36 +437,67 @@ pub fn check(layout: &Layout, opts: &Options, sys: &Sys) -> Planned {
             .filter(|(s, t)| matches!((layout.disk(s), system.disk(t)), (Some(d), Some(t)) if target::load_wrote(layout, d, t, sys)))
             .map(|(_, t)| t.clone())
             .collect();
-        // As exec runs them: --only its one stage, else every writing stage
-        // (--through close), each skipped as status shows it.
-        let only = opts.only.filter(|s| s.writes());
-        let runs_stage = |s: Stage| only.is_none_or(|o| o == s);
-        let partition_runs = runs_stage(Stage::Partition) && (only.is_some() || target::partition_runs(layout, opts, &system, sys, &mapping));
-        let wiped = partition_runs && !opts.erase.is_empty();
-        let rows = if only.is_none() { super::status::rows(given, opts, sys).0 } else { Vec::new() };
-        let skipped = |s: Stage| {
-            only.is_none() && rows.iter().find(|r| r.0 == s).is_some_and(|r| r.1 == super::status::State::Nothing || (r.1 == super::status::State::Done && !wiped))
-        };
-        let one = mapping.pairs.len() == 1;
-        let writes = mapping
-            .pairs
-            .iter()
-            .map(|(_, t)| {
-                let mut w = Vec::new();
-                if partition_runs {
-                    w.push("partition");
-                }
-                for s in [Stage::Assemble, Stage::Format] {
-                    if runs_stage(s) && !skipped(s) && touches(built.stage(s), t, one) {
-                        w.push(s.name());
-                    }
-                }
-                (t.clone(), w)
-            })
-            .collect();
-        JsonFacts { plan_sha256, recorded, partition_runs, writes }
+        let would = would_run(layout, opts, sys, &system, &mapping, &built, || super::status::rows(given, opts, sys).0);
+        // Nothing made anew over this session's restore (J19).
+        problems.extend(super::status::remake_problems(&mapping, &system, &would, sys));
+        JsonFacts { plan_sha256, recorded, partition_runs: would.partition, writes: would.writes }
     });
     Planned { mapping, built, problems, notes, fit, system, json }
+}
+
+/// What a writing run with OPTS would run, as exec runs it: --only its one
+/// stage; else every writing stage up to --through's (the plan's: up to
+/// close), each skipped as status's rows (ROWS, read only then) show it.
+#[derive(Debug, Default)]
+pub struct WouldRun {
+    /// Whether its partition stage runs, wiping every target
+    /// (target::partition_runs).
+    pub partition: bool,
+    /// Of assemble and format, the ones that run, with a command that
+    /// makes something.
+    pub remaking: Vec<Stage>,
+    /// Per target, the stages that would make something anew on it.
+    pub writes: Vec<(String, Vec<&'static str>)>,
+}
+
+pub(crate) fn would_run(
+    layout: &Layout,
+    opts: &Options,
+    sys: &Sys,
+    system: &target::System,
+    mapping: &Mapping,
+    built: &Built,
+    rows: impl FnOnce() -> Vec<(Stage, super::status::State, String)>,
+) -> WouldRun {
+    let only = opts.only.filter(|s| s.writes());
+    let through = opts.through.filter(|s| s.writes());
+    let runs_stage = |s: Stage| only.is_none_or(|o| o == s) && through.is_none_or(|t| s <= t);
+    let partition = runs_stage(Stage::Partition) && (only.is_some() || target::partition_runs(layout, opts, system, sys, mapping));
+    let wiped = partition && !opts.erase.is_empty();
+    let rows = if only.is_none() { rows() } else { Vec::new() };
+    let skipped = |s: Stage| {
+        only.is_none() && rows.iter().find(|r| r.0 == s).is_some_and(|r| r.1 == super::status::State::Nothing || (r.1 == super::status::State::Done && !wiped))
+    };
+    let makes = |c: &commands::Cmd| !c.is_note() && c.check.is_none();
+    let remaking = [Stage::Assemble, Stage::Format].into_iter().filter(|&s| runs_stage(s) && !skipped(s) && built.stage(s).iter().any(makes)).collect::<Vec<_>>();
+    let one = mapping.pairs.len() == 1;
+    let writes = mapping
+        .pairs
+        .iter()
+        .map(|(_, t)| {
+            let mut w = Vec::new();
+            if partition {
+                w.push("partition");
+            }
+            for &s in &remaking {
+                if touches(built.stage(s), t, one) {
+                    w.push(s.name());
+                }
+            }
+            (t.clone(), w)
+        })
+        .collect();
+    WouldRun { partition, remaking, writes }
 }
 
 pub fn run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, String) {

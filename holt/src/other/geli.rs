@@ -394,7 +394,7 @@ fn prompt(src: &str, file: &str) -> Cmd {
 /// itself takes 1023, checked 2026-11-24 for holt-json.md's RT10c Check).
 const GELI_PASS_MAX: u64 = 255;
 
-fn tmp_key(src: &str) -> String {
+pub(crate) fn tmp_key(src: &str) -> String {
     format!("{RUN_DIR}/keys/{}.key", safe_run_token(src))
 }
 

@@ -1,0 +1,77 @@
+{
+  "format": "bko-holt-status",
+  "schema": 1,
+  "version": "VERSION",
+  "generated": "GENERATED",
+  "dry_run": false,
+  "exit": 0,
+  "target": "/mnt/bko-target",
+  "stages": [
+    {
+      "name": "partition",
+      "state": "not_done",
+      "why": "/dev/vdb: no partition table"
+    },
+    {
+      "name": "assemble",
+      "state": "nothing",
+      "why": ""
+    },
+    {
+      "name": "format",
+      "state": "not_done",
+      "why": "not made yet: /dev/vdb1 (ext4), /dev/vdb2 (swap), /dev/vdb3 (btrfs)"
+    },
+    {
+      "name": "mount",
+      "state": "not_done",
+      "why": "not mounted: /mnt/bko-target, /mnt/bko-target/boot"
+    },
+    {
+      "name": "restore",
+      "state": "unknown",
+      "why": "the tree isn't mounted, so this can't be seen"
+    },
+    {
+      "name": "boot",
+      "state": "unknown",
+      "why": "the tree isn't mounted, so this can't be seen"
+    },
+    {
+      "name": "close",
+      "state": "not_done",
+      "why": ""
+    }
+  ],
+  "next": "partition",
+  "all_done": false,
+  "marks": {
+    "partitioned": [],
+    "restore_started": false,
+    "restore_complete": false,
+    "boot": false
+  },
+  "targets": [
+    {
+      "source": "vda",
+      "node": "vdb",
+      "ours": false,
+      "same_identity": false,
+      "recorded": false
+    }
+  ],
+  "temporary_keys": [],
+  "resume": {
+    "go_on": false,
+    "why": [
+      "/dev/vdb: this session has no record that load's partition stage wrote it (a reboot forgets them), so what's there can't be told from the old system's"
+    ]
+  },
+  "open": {
+    "containers": [],
+    "pools": [],
+    "mounted": []
+  },
+  "problems": []
+}
+

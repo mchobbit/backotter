@@ -20,7 +20,8 @@ A run's directories on a host (ROOT/runs/): RUN (tier1.jsonl, tier2.jsonl, the
 queue's tierN-queue.jsonl rows for cases that wrote none, queue.txt, and
 bs2all.json, the run's manifest: what it planned and SKIPPED), RUN-t0 (the
 sweeps' and the draws' tier 0 rows), RUN-corpus (the corpus at tier 1) and
-RUN-lo (the leftovers set: leftovers.jsonl).
+RUN-lo (the leftovers set: leftovers.jsonl) and RUN-lo-t0 (its steps' tier 0, run
+first: a step that doesn't pass there stops the set before a VM starts).
 """
 
 import json
@@ -49,7 +50,7 @@ TIER3 = {"name": "tier 3", "piece": "A8", "why": "the Thinkpad tier (B10's glue,
 VERDICTS = ("PASS", "FAIL", "HARNESS", "INVALID", "UNSUPPORTED")
 # A run's files on a host, after ROOT/runs/RUN (bs2's gather_cmd()); ROW_FILES are its cases' rows.
 ROW_FILES = ("/tier1.jsonl", "/tier2.jsonl", "/tier1-queue.jsonl", "/tier2-queue.jsonl", "-t0/tier0.jsonl")
-FILES = ROW_FILES + ("/queue.txt", "-corpus/tier1.jsonl", "-lo/leftovers.jsonl")
+FILES = ROW_FILES + ("/queue.txt", "-corpus/tier1.jsonl", "-lo/leftovers.jsonl", "-lo-t0/tier0.jsonl")
 CASE_RE = re.compile(r"^(.+)-([0-9a-f]{16})$")
 
 
@@ -212,12 +213,13 @@ def verdict(n_fail, incomplete, n_skipped):
     return "PASS"
 
 
-def summary(manifest, rows, queued, corpus_rows, leftovers_rows, unread=()):
+def summary(manifest, rows, queued, corpus_rows, leftovers_rows, unread=(), leftovers_t0=()):
     """The report of an All run, as a dict.  MANIFEST: the run's bs2all.json (run, hosts,
     planned {source: [t0, t1, t2]}, skipped [entry], corpus [case names], leftovers {steps,
     host}); ROWS: every host's tier 0, 1 and 2 rows (and the queue's) of the run, each with
     "host"; QUEUED: [(tier, case name)] of every host's queue.txt; CORPUS_ROWS: the corpus
-    run's tier 1 rows; LEFTOVERS_ROWS: leftovers.jsonl's rows; UNREAD: the hosts that didn't
+    run's tier 1 rows; LEFTOVERS_ROWS: leftovers.jsonl's rows; LEFTOVERS_T0: its steps' tier
+    0 rows (RUN-lo-t0: a FAIL there is the set's FAIL, and the set stops); UNREAD: the hosts that didn't
     answer, in words (each makes the run INCOMPLETE)."""
     planned = {s: tuple(v) for s, v in (manifest.get("planned") or {}).items()}
     sk = manifest.get("skipped") or []
@@ -267,7 +269,12 @@ def summary(manifest, rows, queued, corpus_rows, leftovers_rows, unread=()):
             lrows[r["id"]] = r
     left = {"planned": steps, "host": lo.get("host"),
             **{v: sum(1 for r in lrows.values() if r.get("verdict") == v) for v in VERDICTS}}
-    if steps and not lrows:
+    t0 = [r for r in last_rows(leftovers_t0) if r.get("verdict") != "PASS"]
+    t0_bad = [r["case"] for r in t0 if r.get("verdict") != "FAIL"]
+    if t0_bad:
+        incomplete.append(f"the leftovers set: tier 0 gave no verdict for {', '.join(t0_bad)}; the set stopped there")
+    fails += [dict(f, where="leftovers tier 0") for f in fails_of(t0)]
+    if steps and not lrows and not t0:
         incomplete.append(f"the leftovers set not run ({steps} steps: bs2 {WORD} leftovers {manifest.get('run')})")
     elif steps:
         if len(lrows) < steps:

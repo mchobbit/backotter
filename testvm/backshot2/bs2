@@ -918,9 +918,10 @@ def corpus(plan, tier, stamp=None, have=None, only=None):
 
 def leftovers_start(h, name, run):
     """The leftovers set NAME on H as RUN, detached (bs2-host leftovers: its rows in
-    RUN/leftovers.jsonl, its log in logs/RUN.log)."""
+    RUN/leftovers.jsonl, its log in logs/RUN.log), with PASS_VARS (reuse_env(): the
+    bko-holt under test, the reuse switches, the word) as every other case has them."""
     log = f"/bkoscratch/backshot2/logs/{run}.log"
-    ssh(h, f"mkdir -p /bkoscratch/backshot2/logs && cd ~/backotter-work && PYTHONUNBUFFERED=1 setsid -f "
+    ssh(h, f"mkdir -p /bkoscratch/backshot2/logs && cd ~/backotter-work && {reuse_env()}PYTHONUNBUFFERED=1 setsid -f "
            f"{HOST_BS2} leftovers {name} --run {run} --port 2949 > {log} 2>&1 < /dev/null")
     print(f"{h}: started the {name} set as {run} (log {log}; rows /bkoscratch/backshot2/runs/{run}/leftovers.jsonl)")
 
@@ -1147,7 +1148,7 @@ def all_report(run, as_json=False):
     for FAIL or INCOMPLETE."""
     m = read_manifest(run)
     got = par({h: gather_cmd(run) for h in RUN_HOSTS})
-    rows, queued, crows, lrows, unread = [], [], [], [], []
+    rows, queued, crows, lrows, lt0, unread = [], [], [], [], [], []
     for h, (rc, out, err) in got.items():
         if rc:
             unread.append(f"{h} didn't answer ({err.strip()[-120:]}): its rows aren't counted")
@@ -1157,7 +1158,8 @@ def all_report(run, as_json=False):
         queued += f.get("/queue.txt", [])
         crows += [dict(r, host=h) for r in f.get("-corpus/tier1.jsonl", [])]
         lrows += [dict(r, host=h) for r in f.get("-lo/leftovers.jsonl", [])]
-    sm = AR.summary(m, rows, queued, crows, lrows, unread)
+        lt0 += [dict(r, host=h) for r in f.get("-lo-t0/tier0.jsonl", [])]
+    sm = AR.summary(m, rows, queued, crows, lrows, unread, lt0)
     if as_json:
         print(json.dumps(sm, indent=1))
     else:

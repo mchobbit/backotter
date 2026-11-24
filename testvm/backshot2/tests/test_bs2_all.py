@@ -358,5 +358,49 @@ class Fresh(unittest.TestCase):
         self.assertTrue(all(re.match(r"1 .+/cases/debian13-[0-9a-f]{16}\.case$", x) for x in lines), lines)
 
 
+class Leftovers(unittest.TestCase):
+    M = {"run": "bs2all-20261124-150000", "hosts": ["chopin", "cage"], "planned": {}, "skipped": [], "corpus": [],
+         "leftovers": {"set": "leftovers", "steps": 9, "host": "chopin"}}
+
+    def test_a_tier_0_fail_is_the_sets_fail_not_not_run(self):
+        t0 = [{"case": "L1-plain-x", "source": "alpine324-uefi", "tier": 0, "verdict": "FAIL",
+               "why": ["vda3 ext4: load's mke2fs: blocks_per_group: layout 32768, made 32592"]}]
+        sm = AR.summary(self.M, [], [], [], [], leftovers_t0=t0)
+        self.assertEqual(sm["verdict"], "FAIL")
+        self.assertEqual(sm["fails"][0]["where"], "leftovers tier 0")
+        self.assertIn("blocks_per_group", sm["fails"][0]["check"])
+        self.assertFalse([x for x in sm["incomplete"] if "not run" in x], sm["incomplete"])
+        self.assertIn("-lo-t0/tier0.jsonl", AR.FILES)
+        sm = AR.summary(self.M, [], [], [], [], leftovers_t0=[dict(t0[0], verdict="INVALID")])
+        self.assertEqual(sm["verdict"], "INCOMPLETE")
+        self.assertFalse(sm["fails"])
+
+    def test_leftovers_start_passes_the_vars_and_takes_2949(self):
+        got = []
+        with mock.patch.object(B, "ssh", lambda h, c, check=True, capture=False, input=None: got.append((h, c))), \
+                mock.patch.dict(os.environ, {"BS2_WORD": "BackShot2All", "BS2_HOLT": "/x/bko-holt"}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            B.leftovers_start("chopin", "leftovers", "bs2all-x-lo")
+        h, c = got[0]
+        self.assertEqual(h, "chopin")
+        self.assertRegex(c, r"BS2_HOLT=/x/bko-holt BS2_WORD=BackShot2All PYTHONUNBUFFERED=1 setsid -f \S+/bs2-host "
+                            r"leftovers leftovers --run bs2all-x-lo --port 2949 > /bkoscratch/backshot2/logs/bs2all-x-lo.log")
+
+    def test_all_leftovers_on_the_manifests_host_as_run_lo(self):
+        got = {}
+        with mock.patch.object(B, "RUN_HOSTS", dict(RUN_HOSTS)), mock.patch.object(B, "CHOSEN", False), \
+                mock.patch.object(B, "par", lambda c: {h: (0, json.dumps(self.M), "") for h in c}), \
+                mock.patch.object(B, "sync", lambda hs: got.setdefault("sync", hs)), \
+                mock.patch.object(B, "leftovers_start", lambda h, name, run: got.update(h=h, name=name, run=run)):
+            B.all_leftovers("bs2all-20261124-150000")
+        self.assertEqual(got, {"sync": ["chopin"], "h": "chopin", "name": "leftovers", "run": "bs2all-20261124-150000-lo"})
+        with mock.patch.object(B, "RUN_HOSTS", dict(RUN_HOSTS)), mock.patch.object(B, "CHOSEN", False), \
+                mock.patch.object(B, "par", lambda c: {h: (0, json.dumps(dict(self.M, leftovers={"steps": 0, "host": None})), "")
+                                                        for h in c}):
+            with self.assertRaises(SystemExit) as e:
+                B.all_leftovers("bs2all-20261124-150000")
+        self.assertIn("no host for the leftovers set", str(e.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

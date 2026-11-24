@@ -978,6 +978,29 @@ class RealLogLines(unittest.TestCase):
         self.assertEqual(len(J.sweep_lines({"serial": self.GUIX_BIOS_CMDLINE + "\n"},
                                            J.known_filter(self.known, "apt"), [])), 1)
 
+    # guix gc and downloads name store items, and a package's name can hold an error word
+    # (rust-quick-error, guix15 t2v-20261124T0448-74bc): only a word of its own keeps a line judged.
+    def test_guix_error_words_in_store_names_go(self):
+        for x in ("[1.2 MiB] deleting '/gnu/store/i1zz2iqzp3v4c5li6z7xd8dsckx9-rust-quick-error-2.0.1.tar.gz.drv'",
+                  "[12.3 GiB] deleting '/gnu/store/i1zz2iqzp3v4c5li6z7xd8dsckx9-rust-quick-error-2.0.1.tar.gz.drv'",
+                  "substituting /gnu/store/i1zz2iqzp3v4c5li6z7xd8dsckx9-rust-quick-error-2.0.1...",
+                  "\x1b[K rust-quick-error-2.0.1                      1.0MiB/s 00:00 | 24KiB transferred",
+                  "building /gnu/store/i1zz2iqzp3v4c5li6z7xd8dsckx9-rust-error-chain-0.12.4.drv...",
+                  "building rust_failed_thing.cannot.Error-1.0..."):
+            self.assertEqual(self.left("guix", x), [], x)
+            self.assertEqual(self.guix_serial_left(x), [], x)
+
+    def test_guix_real_errors_stay_next_to_store_names(self):
+        for x in ("error: build of `/gnu/store/abc-rust-quick-error-2.0.1.drv' failed",
+                  "guix system: error: cannot open /gnu/store/abc-linux-libre-6.17.9/bzImage",
+                  "build of /gnu/store/abc-rust-quick-error-2.0.1.drv failed",
+                  "build of /gnu/store/abc-foo.drv failed.",
+                  "cannot build derivation `/gnu/store/abc-rust-quick-error-2.0.1.drv': 3 dependencies couldn't be built",
+                  "Error: /gnu/store/abc-foo is missing",
+                  "building profile failed...", "building error-chain: Error..."):
+            self.assertEqual(len(self.left("guix", x)), 1, x)
+            self.assertEqual(len(self.guix_serial_left(x)), 1, x)
+
     # in-guest.sh's retry loops (2026-11-20): a try tried again is one line, its retry line and
     # the line that made it one; the try's own lines never reach the log.
     RETRY_LINES = {

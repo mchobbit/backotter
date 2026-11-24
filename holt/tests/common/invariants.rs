@@ -1,5 +1,5 @@
 //! golden_plans.rs's five invariants (its header says what each holds), and
-//! how they read a plan: moved here from golden_plans.rs unchanged, so that
+//! how they read a plan: moved here from golden_plans.rs, so that
 //! BackShot2's tier 0 (bs2_plan.rs) holds a drifted layout's plan to the same
 //! ones.  Like the rest of common/, it uses only holt API as it was before
 //! 3671e96.
@@ -86,10 +86,87 @@ impl<'a> Sections<'a> {
     }
 }
 
-/// A command line's words, quotes and separators trimmed: good enough to
-/// find paths and names in it.
+/// A command line's words, as sh reads them (lex), split at `;`, `(` and
+/// `)` too: good enough to find paths and names in it.
 pub fn words(s: &str) -> Vec<String> {
-    s.split_whitespace().map(|w| w.trim_matches(|c| c == '\'' || c == '"' || c == ';' || c == '(' || c == ')').to_string()).filter(|w| !w.is_empty()).collect()
+    lex(s, &[';', '(', ')']).into_iter().flatten().map(|w| w.text).filter(|w| !w.is_empty()).collect()
+}
+
+/// One shell word: its text with its quotes and backslashes undone, and
+/// whether an unquoted `<` or `>` is in it (a redirection).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Word {
+    pub text: String,
+    pub redirect: bool,
+}
+
+/// S's words as sh splits and unquotes them, None at each unquoted
+/// separator (a character of SEPS, or `&&`).  Inside '...' every character
+/// is itself; inside "..." a backslash escapes only $ ` " \ and a newline;
+/// outside both a backslash escapes the next character.  So load's
+/// shell_quote reads back as what it quoted: `'/mnt/my data'` is one word,
+/// and `'\''` is a closing quote, a quote and an opening one.  A quote that
+/// never closes runs to the end.
+pub fn lex(s: &str, seps: &[char]) -> Vec<Option<Word>> {
+    fn word(cur: &mut Option<Word>) -> &mut Word {
+        cur.get_or_insert_with(|| Word { text: String::new(), redirect: false })
+    }
+    let mut out = Vec::new();
+    let mut cur: Option<Word> = None;
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        match c {
+            '\'' => {
+                let w = word(&mut cur);
+                for d in it.by_ref() {
+                    if d == '\'' {
+                        break;
+                    }
+                    w.text.push(d);
+                }
+            }
+            '"' => {
+                let w = word(&mut cur);
+                while let Some(d) = it.next() {
+                    match d {
+                        '"' => break,
+                        '\\' => match it.peek().copied() {
+                            Some('\n') => {
+                                it.next();
+                            }
+                            Some(e @ ('$' | '`' | '"' | '\\')) => {
+                                it.next();
+                                w.text.push(e);
+                            }
+                            _ => w.text.push('\\'),
+                        },
+                        _ => w.text.push(d),
+                    }
+                }
+            }
+            '\\' => match it.next() {
+                Some('\n') | None => {}
+                Some(d) => word(&mut cur).text.push(d),
+            },
+            '&' if it.peek() == Some(&'&') => {
+                it.next();
+                out.extend(cur.take().map(Some));
+                out.push(None);
+            }
+            c if seps.contains(&c) => {
+                out.extend(cur.take().map(Some));
+                out.push(None);
+            }
+            c if c.is_whitespace() => out.extend(cur.take().map(Some)),
+            c => {
+                let w = word(&mut cur);
+                w.redirect |= c == '<' || c == '>';
+                w.text.push(c);
+            }
+        }
+    }
+    out.extend(cur.take().map(Some));
+    out
 }
 
 /// A program's name: a word's last path part (/sbin/mount is mount).
@@ -101,13 +178,15 @@ pub fn prog(w: &str) -> &str {
 /// after them, without being a command themselves.
 pub const LEADERS: [&str; 18] = ["if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "!", "{", "}", "(", ")", "exec", "time", "command"];
 
-/// The simple commands of a plan line, each as its words with quotes
-/// trimmed and redirections (`>FILE`, `2>&1`, `> FILE`) left out: the line
+/// The simple commands of a plan line, each as its words (lex: quotes
+/// undone) with redirections (`>FILE`, `2>&1`, `> FILE`) left out: the line
 /// itself, or, for `sh -c 'SCRIPT'`, each command of SCRIPT.  Commands are
-/// split at ;, &&, ||, | and newlines, and lose a leading if, do, {, done and
-/// the like, and VAR=value assignments.  A `[VAR=value...] sh -c 'SCRIPT'
-/// NAME ARG...` whose SCRIPT runs `"$@"` (load's wrapper of a command, as
-/// the restore's on FreeBSD's msdosfs ESP) runs ARG... as a command too.
+/// split at ;, &&, ||, | and newlines outside quotes, and lose a leading if,
+/// do, {, done and the like, and VAR=value assignments.  A command that runs
+/// `sh -c SCRIPT` (as `chroot DIR sh -c SCRIPT` does) is followed by
+/// SCRIPT's own commands.  A `[VAR=value...] sh -c 'SCRIPT' NAME ARG...`
+/// whose SCRIPT runs `"$@"` (load's wrapper of a command, as the restore's
+/// on FreeBSD's msdosfs ESP) runs ARG... as a command too.
 pub fn commands(line: &str) -> Vec<Vec<String>> {
     let t = line.trim();
     let mut bare = t;
@@ -120,7 +199,8 @@ pub fn commands(line: &str) -> Vec<Vec<String>> {
     if let Some((script, args)) = bare.strip_prefix("sh -c '").and_then(quoted_script) {
         let mut out = script_commands(&script);
         if script.contains("\"$@\"") {
-            let mut w: Vec<String> = args.split_whitespace().skip(1).map(|x| x.trim_matches(|c| c == '\'' || c == '"').to_string()).filter(|x| !x.is_empty()).collect();
+            // ARGS is `NAME ARG...`: NAME is $0, ARG... the command.
+            let mut w: Vec<String> = script_commands(args).into_iter().next().unwrap_or_default().into_iter().skip(1).collect();
             while w.first().is_some_and(|x| LEADERS.contains(&x.as_str()) || is_assignment(x)) {
                 w.remove(0);
             }
@@ -130,11 +210,11 @@ pub fn commands(line: &str) -> Vec<Vec<String>> {
         }
         return out;
     }
-    let script = match t.strip_prefix("sh -c ") {
-        Some(rest) => rest.trim().replace("'\\''", "'"),
-        None => t.to_string(),
-    };
-    script_commands(&script)
+    match bare.strip_prefix("sh -c ") {
+        // SCRIPT in double quotes, or bare: its first word.
+        Some(rest) => script_commands(&lex(rest, &[]).into_iter().flatten().next().map(|w| w.text).unwrap_or_default()),
+        None => script_commands(t),
+    }
 }
 
 fn is_assignment(x: &str) -> bool {
@@ -163,32 +243,35 @@ fn quoted_script(q: &str) -> Option<(String, &str)> {
 }
 
 fn script_commands(script: &str) -> Vec<Vec<String>> {
-    let script = script.replace("&&", ";").replace("||", ";");
     let mut out = Vec::new();
-    for piece in script.split([';', '|', '\n']) {
-        let mut w: Vec<String> = Vec::new();
-        let mut file_next = false;
-        for x in piece.split_whitespace() {
-            if file_next {
-                file_next = false;
+    let mut w: Vec<String> = Vec::new();
+    let mut file_next = false;
+    // A None at the end closes the last command.
+    for t in lex(script, &[';', '|', '\n']).into_iter().chain([None]) {
+        let Some(x) = t else {
+            file_next = false;
+            while w.first().is_some_and(|x| LEADERS.contains(&x.as_str()) || is_assignment(x)) {
+                w.remove(0);
+            }
+            if w.is_empty() {
                 continue;
             }
-            let x = x.trim_matches(|c| c == '\'' || c == '"');
-            if x.is_empty() {
-                continue;
+            // `sh -c SCRIPT` inside it (chroot DIR sh -c SCRIPT): SCRIPT's
+            // commands too.
+            let inner = w.windows(3).find(|p| matches!(prog(&p[0]), "sh" | "bash") && p[1] == "-c").map(|p| p[2].clone());
+            out.push(std::mem::take(&mut w));
+            if let Some(s) = inner {
+                out.extend(script_commands(&s));
             }
-            if x.contains('>') || x.contains('<') {
-                // A redirection; `>` (`2>`, `&>`, `>>`, `<`) on its own takes the next word.
-                file_next = x.trim_start_matches(|c: char| c.is_ascii_digit() || c == '&').chars().all(|c| c == '>' || c == '<');
-                continue;
-            }
-            w.push(x.to_string());
-        }
-        while w.first().is_some_and(|x| LEADERS.contains(&x.as_str()) || is_assignment(x)) {
-            w.remove(0);
-        }
-        if !w.is_empty() {
-            out.push(w);
+            continue;
+        };
+        if file_next {
+            file_next = false;
+        } else if x.redirect {
+            // A redirection; `>` (`2>`, `&>`, `>>`, `<`) on its own takes the next word.
+            file_next = x.text.trim_start_matches(|c: char| c.is_ascii_digit() || c == '&').chars().all(|c| c == '>' || c == '<');
+        } else if !x.text.is_empty() {
+            w.push(x.text);
         }
     }
     out
@@ -281,19 +364,25 @@ pub const PSEUDO: [&str; 30] = [
 pub const NETWORK: [&str; 9] = ["nfs", "nfs4", "cifs", "smbfs", "smb3", "sshfs", "fuse.sshfs", "9p", "virtiofs"];
 pub const BIND: [&str; 2] = ["nullfs", "lofs"];
 
-/// fstab's octal escapes (\040 for a space).
+/// fstab's octal escapes (\040 for a space), undone as mounts::unescape
+/// undoes them: one past \377 isn't a byte, and stays as it is written.
+/// The fstab invariant doesn't use it: the dump's `file` is decoded already
+/// (mounts::parse_fstab).
 pub fn unescape(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'\\' && i + 4 <= b.len() && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c)) {
-            out.push((b[i + 1] - b'0') * 64 + (b[i + 2] - b'0') * 8 + (b[i + 3] - b'0'));
-            i += 4;
-        } else {
-            out.push(b[i]);
-            i += 1;
+            let v = b[i + 1..i + 4].iter().fold(0u32, |v, c| v * 8 + u32::from(c - b'0'));
+            if let Ok(byte) = u8::try_from(v) {
+                out.push(byte);
+                i += 4;
+                continue;
+            }
         }
+        out.push(b[i]);
+        i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
 }
@@ -306,7 +395,11 @@ pub fn fstab_planned_n(dump: &Value, sec: &Sections) -> (Vec<String>, Vec<String
     let ds = datasets(dump);
     for e in arr(dump, &["storage", "fstab"]) {
         let spec = str_at(e, "spec").unwrap_or("");
-        let file = unescape(str_at(e, "file").unwrap_or(""));
+        // As the dump has it: dump decoded fstab's octal escapes already
+        // (mounts::parse_fstab), and load mounts at TARGET plus it, quoted
+        // by shell_quote, which lex undoes.  Decoding it again would take a
+        // literal \040 in a mount point for a space.
+        let file = str_at(e, "file").unwrap_or("").to_string();
         let ty = str_at(e, "type").unwrap_or("");
         let opts: Vec<&str> = str_at(e, "options").unwrap_or("").split(',').collect();
         let what = format!("{file} ({spec}, {ty})");

@@ -278,6 +278,8 @@ holt	holt:rocky10-raid5+img	6.00	360	0.00	-	test2.md ImgTest2 Cost: the panel's 
 holt	holt:nixos2605+img	3.20	192	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:debian13-stack+img	3.40	204	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:aerynos+img	6.00	360	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:guix15+img	5.08	305	0.00	-	guix.md: holt:guix15's figure (gx6-14), until measured (est.)
+holt	holt:guix15-bios+img	4.02	241	0.00	-	guix.md: holt:guix15-bios's figure (gx6-15), until measured (est.)
 holt	holt:freebsd14+img	4.75	285	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:freebsd15-geli+img	5.60	336	0.00	-	geli.md G7/D6: holt:freebsd15-geli's figure (no +img run yet)
 holt	holt:netbsd11+img	4.18	250	0.00	-	test2.md ImgTest2 Cost: the panel's figure

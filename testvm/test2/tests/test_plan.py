@@ -1524,9 +1524,18 @@ class ImgCells(WorldCase):
         self.assertEqual([c.cell for c in p.cells], ["holt:debian12+img"])
         self.assertEqual(st(p, "holt:debian12+img"), ("due", "fresh:names"))
         p = self.w.plan("HoltTest2 +img plan")
-        self.assertEqual(len(p.cells), 14)     # freebsd15-geli joined the FreeBSD panel 2026-11-14 (geli.md D6), oi2610 the illumos one (openindiana.md)
+        self.assertEqual(len(p.cells), 16)     # freebsd15-geli joined the FreeBSD panel 2026-11-14 (geli.md D6), oi2610 the illumos one (openindiana.md), guix15 and guix15-bios the Linux one 2026-11-24 (guix.md)
         p = self.w.plan("HoltTest2 plan", universe=["holt:debian12+img"])
         self.assertEqual(st(p, "holt:debian12+img"), ("due", "img:panel"))
+
+    def test_guix_guests_are_in_the_linux_panel(self):
+        # 2026-11-24 (guix.md): the image's own grub-bios-setup writes guix15-bios's BIOS GRUB
+        cl = json.loads(self.w.read("testvm/test2/classes.json"))
+        self.assertEqual(cl["holt"]["img_panel"]["linux"]["guests"][-2:], ["guix15", "guix15-bios"])
+        p = self.w.plan("HoltTest2 guix15+img guix15-bios+img plan")
+        self.assertEqual(sorted(c.cell for c in p.cells), ["holt:guix15+img", "holt:guix15-bios+img"])
+        for c in ("holt:guix15+img", "holt:guix15-bios+img"):
+            self.assertEqual(st(p, c), ("due", "fresh:names"))
 
     def test_panel_is_due_when_a_hard_group_changes(self):
         p = self.w.plan("HoltTest2 debian12+img plan")

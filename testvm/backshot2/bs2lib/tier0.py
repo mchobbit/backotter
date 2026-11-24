@@ -135,6 +135,41 @@ def uuid_of(argv):
 
 # ---- the dry runs --------------------------------------------------------------------
 
+# The chroot's PATH: the usual directories, then a store system's profile
+# (Guix: /var/guix/profiles/system/profile, a chain of absolute links into
+# /gnu/store; families/guix.py), which a root without it doesn't have, so
+# every other source's dry runs find the same tools as before.
+PATH = ("/usr/sbin", "/usr/bin", "/sbin", "/bin",
+        "/var/guix/profiles/system/profile/sbin", "/var/guix/profiles/system/profile/bin")
+
+
+def in_root(root, path, depth=40):
+    """Whether PATH, resolved as inside ROOT (an absolute link is ROOT's, as
+    chroot sees it), is an existing file there."""
+    parts = [x for x in path.split("/") if x]
+    cur = ""
+    while parts:
+        if depth <= 0:
+            return False
+        x = parts.pop(0)
+        if x == ".":
+            continue
+        if x == "..":
+            cur = os.path.dirname(cur)
+            continue
+        nxt = f"{cur}/{x}"
+        full = f"{root}{nxt}"
+        if os.path.islink(full):
+            depth -= 1
+            t = os.readlink(full)
+            parts = [y for y in t.split("/") if y] + parts
+            cur = "" if t.startswith("/") else cur
+            continue
+        if not os.path.lexists(full):
+            return False
+        cur = nxt
+    return os.path.isfile(f"{root}{cur}")
+
 class Tools:
     """The source's own tools: a copy of its root at ROOT, run by chroot as
     root, with a scratch directory (in RAM) bound at ROOT/bs2-scratch."""
@@ -167,7 +202,7 @@ class Tools:
             pass
 
     def run(self, argv, stdin=None, timeout=120):
-        r = subprocess.run(["chroot", self.root, "/usr/bin/env", "PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C"] + argv,
+        r = subprocess.run(["chroot", self.root, "/usr/bin/env", "PATH=" + ":".join(PATH), "LC_ALL=C"] + argv,
                            input=stdin, capture_output=True, text=True, timeout=timeout)
         return r.returncode, r.stdout + r.stderr
 
@@ -178,7 +213,10 @@ class Tools:
         return f"{self.inside}/{name}", p
 
     def has(self, prog):
-        return any(os.path.exists(f"{self.root}{d}/{prog}") for d in ("/sbin", "/usr/sbin", "/bin", "/usr/bin"))
+        # (The usual directories as ever, by the host's lookup; a store profile's
+        # links are absolute into the root's own store, so resolved inside it.)
+        return (any(os.path.exists(f"{self.root}{d}/{prog}") for d in PATH[:4])
+                or any(in_root(self.root, f"{d}/{prog}") for d in PATH[4:]))
 
     def run_host_or_mine(self, argv, stdin=None):
         """ARGV in the source's tools when it has them, else the host's (on the scratch file's host path)."""

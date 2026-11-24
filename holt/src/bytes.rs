@@ -533,46 +533,73 @@ pub fn sha256_hex(data: &[u8]) -> String {
     hex(&sha256(data))
 }
 
+const SHA256_H0: [u32; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+
 /// SHA-256 (FIPS 180-4) of DATA, the 32 bytes.
 pub fn sha256(data: &[u8]) -> [u8; 32] {
-    let mut h: [u32; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    let mut h = SHA256_H0;
     let mut msg = data.to_vec();
     msg.push(0x80);
     while msg.len() % 64 != 56 {
         msg.push(0);
     }
     msg.extend(((data.len() as u64).wrapping_mul(8)).to_be_bytes());
+    let mut w = [0u32; 64];
     for block in msg.chunks_exact(64) {
-        let mut w = [0u32; 64];
-        for (i, c) in block.chunks_exact(4).enumerate() {
-            w[i] = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
-        }
-        for i in 16..64 {
-            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
-            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
-        }
-        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = h;
-        for i in 0..64 {
-            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-            let ch = (e & f) ^ (!e & g);
-            let t1 = hh.wrapping_add(s1).wrapping_add(ch).wrapping_add(SHA256_K[i]).wrapping_add(w[i]);
-            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-            let maj = (a & b) ^ (a & c) ^ (b & c);
-            let t2 = s0.wrapping_add(maj);
-            hh = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(t1);
-            d = c;
-            c = b;
-            b = a;
-            a = t1.wrapping_add(t2);
-        }
-        for (x, y) in h.iter_mut().zip([a, b, c, d, e, f, g, hh]) {
-            *x = x.wrapping_add(y);
-        }
+        sha256_compress(&mut h, block, &mut w);
     }
+    sha256_digest(h)
+}
+
+/// SHA-256 of DATA, at most 55 bytes (one block, checked at compile time),
+/// without a copy on the heap: for secrets (the recovery key's checksum).
+/// The padded block is built in BLOCK and the message schedule in W, which
+/// then still hold DATA's bytes: the caller wipes both.
+pub fn sha256_short<const N: usize>(data: &[u8; N], block: &mut [u8; 64], w: &mut [u32; 64]) -> [u8; 32] {
+    const { assert!(N <= 55, "sha256_short: more than one block") };
+    block.fill(0);
+    block[..N].copy_from_slice(data);
+    block[N] = 0x80;
+    block[56..].copy_from_slice(&((N as u64) * 8).to_be_bytes());
+    let mut h = SHA256_H0;
+    sha256_compress(&mut h, block, w);
+    sha256_digest(h)
+}
+
+/// One SHA-256 compression of a 64-byte BLOCK into the state H, W the
+/// message schedule (it is left holding the block's words).
+fn sha256_compress(h: &mut [u32; 8], block: &[u8], w: &mut [u32; 64]) {
+    for (i, c) in block.chunks_exact(4).enumerate() {
+        w[i] = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
+    }
+    for i in 16..64 {
+        let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+        let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+    }
+    let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = *h;
+    for i in 0..64 {
+        let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+        let ch = (e & f) ^ (!e & g);
+        let t1 = hh.wrapping_add(s1).wrapping_add(ch).wrapping_add(SHA256_K[i]).wrapping_add(w[i]);
+        let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+        let maj = (a & b) ^ (a & c) ^ (b & c);
+        let t2 = s0.wrapping_add(maj);
+        hh = g;
+        g = f;
+        f = e;
+        e = d.wrapping_add(t1);
+        d = c;
+        c = b;
+        b = a;
+        a = t1.wrapping_add(t2);
+    }
+    for (x, y) in h.iter_mut().zip([a, b, c, d, e, f, g, hh]) {
+        *x = x.wrapping_add(y);
+    }
+}
+
+fn sha256_digest(h: [u32; 8]) -> [u8; 32] {
     let mut out = [0u8; 32];
     for (o, x) in out.chunks_exact_mut(4).zip(h) {
         o.copy_from_slice(&x.to_be_bytes());
@@ -582,7 +609,29 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
 
 #[cfg(test)]
 mod sha256_tests {
-    use super::sha256_hex;
+    use super::{hex, sha256, sha256_hex, sha256_short};
+
+    /// The one-block form agrees with the general one at every length it
+    /// takes, and leaves its block padded as FIPS 180-4 pads it.
+    #[test]
+    fn short_matches() {
+        fn check<const N: usize>() {
+            let data: [u8; N] = std::array::from_fn(|i| (i as u8).wrapping_mul(37).wrapping_add(N as u8));
+            let (mut block, mut w) = ([0xaau8; 64], [7u32; 64]);
+            assert_eq!(sha256_short(&data, &mut block, &mut w), sha256(&data), "length {N}");
+            assert_eq!(&block[..N], &data[..]);
+            assert_eq!(block[N], 0x80);
+            assert_eq!(u64::from_be_bytes(block[56..].try_into().unwrap()), N as u64 * 8);
+        }
+        check::<0>();
+        check::<1>();
+        check::<16>();
+        check::<32>();
+        check::<54>();
+        check::<55>();
+        let (mut block, mut w) = ([0u8; 64], [0u32; 64]);
+        assert_eq!(hex(&sha256_short(b"abc", &mut block, &mut w)), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    }
 
     /// FIPS 180-4's examples, and lengths around the padding's block edge.
     #[test]

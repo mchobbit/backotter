@@ -71,6 +71,12 @@ fn zeroize_u16(buf: &mut [u16]) {
     std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 }
 
+fn zeroize_u32(buf: &mut [u32]) {
+    buf.fill(0);
+    std::hint::black_box(&mut *buf);
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+}
+
 /// A recovery key: twelve words of the list whose checksum is right.  Its
 /// Debug doesn't show them, and its Drop wipes the word indices.
 #[derive(Clone, PartialEq, Eq)]
@@ -272,10 +278,18 @@ fn decode(w: &[u16; COUNT]) -> ([u8; 16], bool) {
     (e, ok)
 }
 
-/// BIP39's checksum of 128 bits: the first 4 bits of their SHA-256.
+/// BIP39's checksum of 128 bits: the first 4 bits of their SHA-256.  Hashed
+/// in one block on the stack, never copied to the heap, and the block, the
+/// message schedule and the digest are wiped after.
 fn checksum(entropy: &[u8; 16]) -> u8 {
-    let hex = crate::bytes::sha256_hex(entropy);
-    u8::from_str_radix(&hex[..1], 16).unwrap_or(0)
+    let mut block = [0u8; 64];
+    let mut w = [0u32; 64];
+    let mut digest = crate::bytes::sha256_short(entropy, &mut block, &mut w);
+    let c = digest[0] >> 4;
+    zeroize_bytes(&mut block);
+    zeroize_u32(&mut w);
+    zeroize_bytes(&mut digest);
+    c
 }
 
 /// The words in TEXT, as someone would type them: in any case; between

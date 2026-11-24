@@ -1,6 +1,6 @@
 # bko-rescue: the terminal layer and its widgets
 
-Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"), RT8 after those (see "What RT8 found"), RT3 the same day on every console of the seven images, its findings folded into the table (see "What RT3 found"); RT9 on are not.
+Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"), RT8 after those (see "What RT8 found"), RT3 the same day on every console of the seven images, its findings folded into the table (see "What RT3 found"); RT9 on are not.  RT10's own spec (D12), `holt-json.md`, drafted and revised 2026-11-24, awaits approval.
 
 An implementation plan for the stick's terminal UI that `ui.md` describes and
 the user decided on 2026-11-19: one Whiptail-style 80x24 program,
@@ -53,8 +53,9 @@ Code references are to main at b9cacea plus the uncommitted tree, read
   the layer comes out a little bigger (440-670).  Plain mode is 250-350
   more.  Tests not counted.
 - **Time:** RT1-RT9, the TUI, ~8.5 d est.  RT10, the protocol in holt/,
-  3-4 d est. (its own spec, D12).  RT11-RT14, the screens, the launchers and
-  whole-machine runs, ~9.5 d est.  About 21-22 d in all.
+  3-4 d est. here; its own spec (D12, `holt-json.md`) counts ~8 d for the
+  core RT12 needs and ~16 d for all of it.  RT11-RT14, the screens, the
+  launchers and whole-machine runs, ~9.5 d est.  About 26-34 d in all.
 
 ## Why this order
 
@@ -818,6 +819,11 @@ with its matching, refusals, size offers and problems.  It never writes:
      bko-holt itself then refuses `--commit` with an error (exit 2) before
      doing anything, so the lock holds even if the first one has a bug.
      This is a small change in holt/, part of RT10.
+  (`holt-json.md` found that "`--erase` is never passed" doesn't keep the
+  machine's own disk safe today, since a disk with the layout's
+  identifiers needs no `--erase`; its J6 and J19 propose passing `--erase`
+  in the dry run and gating `--commit` on it in bko-holt.  Pending the
+  user's decision.)
 - **The archiver isn't run to restore,** since there's nothing to restore
   into.  `rustic-bko snapshots --json` and the repository checks are, since
   they only read.
@@ -1342,7 +1348,8 @@ Scoped here so the order is clear; each gets its design when it starts.
   writing to a sink, stable problem codes, `candidates` with their refusals,
   no prompts under `--json` (`key_needed`, `password_needed`), and
   rustic-bko's `--json-progress` read and sent on as `progress` events.  Its
-  own spec first (D12).  It can start any time and needs nothing from
+  own spec first (D12): `holt-json.md`, steps RT10a-RT10p, the core
+  RT10a-RT10j before RT12.  It can start any time and needs nothing from
   RT1-RT9.  It must land before RT12.
 - **RT11, the first screens:** the `Ui` trait's users, `app/strings.rs` (all
   strings in one place, for translation later).  Keyboard (each system's own
@@ -1378,7 +1385,7 @@ Scoped here so the order is clear; each gets its design when it starts.
 | RT7 | Plain mode | `src/plain.rs` | unit tests on a fake terminal; a pty run | 0.5 d (250-350) | RT6 |
 | RT8 | pty harness, fake bko-holt, `--demo` (every widget in a row, for the harness and later spikes; its last page hands a typed passphrase to the fake as a key file and follows the fake's events with the gauge), the long fuzz runs | `testvm/rescue/{screen,drive}.py`, `testvm/rescue/fake-bko-holt`, `src/demo.rs` | `--demo` driven through every widget in both modes; key files checked by the fake | 1 d (~450 Python) | RT6, RT7 |
 | RT9 | All seven and linux-arm64 built and pinned; on the images as a tool; checks and manifests; one image round's boot-tests | the RT9 table | boot-test on every image (BIOS and UEFI); `gate:bin` | 1 d, plus the image round's own time | RT4 (RT6-RT8 for a useful `--demo`) |
-| RT10 | bko-holt's `--json` protocol (own spec, D12); `BKO_HOLT_NO_COMMIT` (D14) | `holt/src/load/*` (json.rs's writer already does what it needs) | holt's unit tests on the fake rescue systems; events in order with `end` last; HoltTest2 unchanged | 3-4 d | its spec; nothing from RT1-RT9 |
+| RT10 | bko-holt's `--json` protocol, `BKO_HOLT_NO_COMMIT` (D14), the erase gate: spec `holt-json.md` (D12), steps RT10a-RT10p there | `holt/src/load/*`, `holt/src/{main,bugreport,snapcore,recovery}.rs` (json.rs's writer already does what it needs) | holt's unit tests on the fake rescue systems; golden `plan.json`; events in order with `end` last; HoltTest1 `HT_VARIANT=json`; HoltTest2 unchanged | ~8 d core (RT10a-RT10j), ~16 d all (holt-json.md; 3-4 d counted here first) | `holt-json.md` approved; nothing from RT1-RT9 |
 | RT11 | The app's first screens: Keyboard, Machine, Network notice, Repository; strings; the config reader (D11) | `src/app/` (and holt/ if D11) | scripted-Ui tests; pty scenarios with fixtures | 2.5 d | RT6, RT7, D11 |
 | RT12 | Disks, Passphrases, Review, Restore, Done; detached load and following; resume; restore logs; `--dry-run` and `holt_args.rs`'s test (D14) | `src/app/` | scripted tests; pty scenarios on fixtures recorded from RT10, failures included | 3.5 d | RT10, RT11 |
 | RT13 | Launchers on every image; test hooks; fonts; the dry-run GRUB entry (D14) | the RT13 table | boot-test reaching the shell through bko-rescue on every image; ImgTest2's `+img` cells unchanged | 1 d | RT12 (RT11 for a preview) |

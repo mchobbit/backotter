@@ -26,13 +26,19 @@
 #       prints "DISK MEM", the most one job could ever get on this host
 #       (ceiling(): a --reserve or a queue line over it is refused at once),
 #       floored to a tenth as budget()'s figures are, and writes nothing: not
-#       even the ledger's files.
+#       even the ledger's files.  Each figure is a limit of its own (D <= DISK
+#       and M <= MEM): MEM is what is left beside a job of the whole DISK,
+#       so any D and M within the two always fit an empty host.
 #   cmp-run.sh --free
 #       prints "DISK MEM", the room a new --reserve could get here now
-#       (free_now(): the smaller of the ceiling and budget()'s room for each,
-#       which is just what admission tests a --reserve against, so its live
+#       (free_now(): the smaller of the ceiling's and budget()'s RAM disk, and
+#       budget()'s memory within the ceiling's two figures together, which is
+#       just what admission tests a --reserve against, so its live
 #       MemAvailable and tmpfs checks and the ledger's rows all count),
-#       floored at 0; then "waiting N", how many jobs are in line (the WAITS
+#       floored at 0.  Here MEM is the memory for the job's D and M together
+#       (below: "memory, charged D + M"): a --reserve D M within the ceiling
+#       starts at once when D <= DISK and D + M <= MEM.  Then "waiting N", how
+#       many jobs are in line (the WAITS
 #       file); then "after DISK MEM", the room a new --reserve would be offered
 #       after the line (after_line(), on the same figures and the line's live
 #       rows, within the ceiling and floored at 0: a --reserve within it starts
@@ -70,17 +76,40 @@
 # Nothing starts unless it fits, so neither the RAM disk nor memory runs out:
 #   RAM disk: the DISK_GIB (default 8) of everything running stays within
 #     the tmpfs, less 1 GiB;
-#   memory, static: the MEM_GIB (default 5) of everything running fits in
-#     MemTotal after the whole tmpfs, the ARC and BASE_GIB for the system, as
-#     if the tmpfs were full.  BASE_GIB: the environment's, else this host's
-#     base_gib in the host table (testvm/hosts.json, by hostname -s; hosts.py
-#     limit, BKO_HOSTS_PY naming another hosts.py), else 6;
-#   memory, live (other sessions): MemAvailable, less the tmpfs's room to
-#     grow, the ARC's, swap in use, 2 GiB, and what running jobs have reserved
-#     but not touched yet (MEM_GIB less their cgroup's anon; for a --reserve,
-#     whose row names no cgroup, less the anon of CMD's process tree: a VM
-#     started with setsid -f, as HoltTest's are, has left that tree, so its
-#     memory counts twice, never too little), covers it.
+#   memory, charged D + M: a job's RAM disk is memory too (tmpfs pages), so
+#     the memory rules below count a new job's DISK_GIB and MEM_GIB together,
+#     and a running job's RAM disk as what it reserved.  Until 2026-11-24 the
+#     static rule charged the whole tmpfs, as if it were full, and each job's
+#     MEM_GIB on top: the RAM disk nobody had reserved (all of it, on a big
+#     host whose HoltTest jobs work on the SSD) was held as memory as well.
+#     On cage at 06:15Z that day it offered 1.3 GiB of memory with
+#     MemAvailable at 17 GiB and 0.7 of the 10 GiB RAM disk in use, and
+#     SticTest's driver logged "nothing fits" ~180 times on czerny and copland
+#     (t2s-20261124T0448-74bc);
+#   memory, static: the DISK_GIB + MEM_GIB of a new job fits in MemTotal after
+#     the RAM disk in use or reserved (the larger of the DISK_GIB of
+#     everything running and the tmpfs's used space: what is written outside
+#     any reservation, or past one, counts too), the MEM_GIB of everything
+#     running, the ARC and BASE_GIB for the system.  BASE_GIB: the
+#     environment's, else this host's base_gib in the host table
+#     (testvm/hosts.json, by hostname -s; hosts.py limit, BKO_HOSTS_PY naming
+#     another hosts.py), else 6;
+#   memory, live (other sessions): MemAvailable, less what the RAM disk's
+#     reservations may still write (their DISK_GIB less the tmpfs's used
+#     space, floored at 0: what is written is off MemAvailable already), the
+#     ARC's room to grow, swap in use, 2 GiB, and what running jobs have
+#     reserved but not touched yet (MEM_GIB less their cgroup's anon; for a
+#     --reserve, whose row names no cgroup, less the anon of CMD's process
+#     tree: a VM started with setsid -f, as HoltTest's are, has left that
+#     tree, so its memory counts twice, never too little), covers the new
+#     job's DISK_GIB + MEM_GIB.  It is the guard: whatever the ledger
+#     doesn't know of (another session, a job over its MEM_GIB, leftovers on
+#     the tmpfs) is off MemAvailable already.
+#   Neither rule admits less than the rules before 2026-11-24 did: a D within
+#     the RAM disk's room was charged at least that much of the tmpfs there.
+#     budget()'s MEM is this joint room (D + M <= MEM), and so are --free's,
+#     after_line()'s, cmp-pop.sh's and every reader's of them (drive.py,
+#     ht1-queue.sh, pick-host); ceiling()'s MEM is not (above).
 #   The ARC counts as its size now plus ARC_ROOM_GIB (default 1), within its
 #     cap: not the whole cap (zfs_arc_max, 8 GiB on the big hosts), which only
 #     the host's small throwaway test pools ever use, and the ARC gives memory
@@ -185,7 +214,9 @@
 # then only opened without O_CREAT and rewritten in place (ledger_files, put,
 # rewrite, add). CMP_LEDGER_DIR (default /mnt/bko-ram) is for tests only
 # (cmp-run-test.sh): a ledger of its own, beside the real one; CMP_SSD_DIR
-# (default /bkoscratch) likewise: the directory whose file system is the SSD.
+# (default /bkoscratch) likewise: the directory whose file system is the SSD;
+# and CMP_MEMINFO (default /proc/meminfo): the file budget() and ceiling() read
+# the memory from (test_runner_hosts.py's, on a Mac).
 set -u
 HERE=$(dirname "$(realpath "${BASH_SOURCE[0]}")")   # before the cd: $0 may be relative
 cd ~/backotter-work
@@ -254,7 +285,9 @@ live_rows() {  # [FILE] -> the rows of FILE (default the ledger) whose holder is
     printf '%s' "$out"
 }
 budget() {  # [ROWS] -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked; ROWS
-    # default the ledger's live rows, which is all it holds once prune has run)
+    # default the ledger's live rows, which is all it holds once prune has run).
+    # MAXMEM is for the job's DISK and MEM together (the header's "memory,
+    # charged D + M"): a job D M fits when D <= MAXDISK and D + M <= MAXMEM.
     local arc_max arc_size unused=0 pid d m scope rest anon trees base=${BASE_GIB:-} rows size avail
     rows=${1-$(live_rows)}
     [ -n "$base" ] || base=$(python3 -I -B "${BKO_HOSTS_PY:-$HOME/backotter-work/testvm/test2/t2lib/hosts.py}" \
@@ -277,7 +310,7 @@ budget() {  # [ROWS] -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked;
             'BEGIN { x = m - a / 1073741824; if (x < 0) x = 0; print u + x }')
     done <<<"$rows"
     awk -v size_k="${size:-0}" -v avail_k="${avail:-0}" -v arc_max="${arc_max:-0}" -v arc_size="${arc_size:-0}" \
-        -v base="$base" -v arc_room="${ARC_ROOM_GIB:-1}" -v unused="$unused" '
+        -v base="$base" -v arc_room="${ARC_ROOM_GIB:-1}" -v unused="$unused" -v meminfo="${CMP_MEMINFO:-/proc/meminfo}" '
         # Down to a tenth, a MiB of tolerance first (EPS_GIB; see the header):
         # the bookkeeping sits on this tmpfs, and 2.99999 is 3.0 of room.
         function fl(x) { return int((x + 0.001) * 10 + (x < 0 ? -1 : 0)) / 10 }
@@ -285,7 +318,7 @@ budget() {  # [ROWS] -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked;
         END {
             G = 1073741824
             size = size_k / 1048576; avail = avail_k / 1048576
-            while ((getline l < "/proc/meminfo") > 0) {
+            while ((getline l < meminfo) > 0) {
                 split(l, f, /[: ]+/)
                 if (f[1] == "MemTotal") total = f[2] / 1048576
                 if (f[1] == "MemAvailable") memavail = f[2] / 1048576
@@ -298,8 +331,16 @@ budget() {  # [ROWS] -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked;
             if (arcroom > arc_room) arcroom = arc_room
             arc = arc_size / G + arcroom
             disk = size - 1 - rd; if (avail - 1 < disk) disk = avail - 1
-            mem = total - size - arc - base - rm
-            live = memavail - avail - arcroom - (swt - swf) - 2 - unused
+            # The RAM disk as memory: the static rule charges what is reserved or
+            # written, whichever is more (writes outside the ledger, or past a
+            # reservation, count); the live one what reservations may still write,
+            # the rest being off MemAvailable already.  A new job asks MAXMEM for
+            # its own D too (D + M), so that is not here.
+            used = size - avail
+            ram = (rd > used) ? rd : used
+            togo = rd - used; if (togo < 0) togo = 0
+            mem = total - ram - arc - base - rm
+            live = memavail - togo - arcroom - (swt - swf) - 2 - unused
             if (live < mem) mem = live
             printf "%.1f %.1f\n", fl(disk), fl(mem)
         }' <<<"$rows"
@@ -346,6 +387,9 @@ after_line() {  # PID MAXDISK MAXMEM [LEDGER_ROWS WAIT_ROWS] -> "DISK MEM AHEAD 
     # MAXDISK/MAXMEM plus what the ledger's jobs hold are held back for. The figures
     # don't depend on PID's own needs: PID starts if they fit them. BACKFILL_MAX=0
     # holds back for everyone, as strict first come, first served does.
+    # MAXMEM, and the MEM printed, are budget()'s joint memory: a row's DISK MEM
+    # take its DISK of the RAM disk and its DISK + MEM of the memory, a waiter's
+    # and a ledger row's alike.
     # (In tenths of a GiB: the figures come rounded to them, so t() rounds to
     # the nearest tenth and nothing here needs fl()'s tolerance -- half a tenth
     # of slack is fifty times it.)
@@ -353,13 +397,14 @@ after_line() {  # PID MAXDISK MAXMEM [LEDGER_ROWS WAIT_ROWS] -> "DISK MEM AHEAD 
         -v max="${BACKFILL_MAX:-1800}" '
         function t(x) { return int(x * 10 + (x < 0 ? -0.5 : 0.5)) }
         BEGIN { d = t(d); m = t(m); pd = d; pm = m; max += 0 }
-        FILENAME == ARGV[1] { pd += t($2); pm += t($3); next }   # the ledger
+        FILENAME == ARGV[1] { pd += t($2); pm += t($2) + t($3); next }   # the ledger
         NF == 0 { next }
         $1 == me { exit }
         { n++; if ($4 + 0 > 0 && $4 + 0 < hot + 0) hot = $4 + 0
           since = ($5 ~ /^[0-9]+$/) ? $5 + 0 : 0
-          if ((t($2) <= d && t($3) <= m) || (t($2) <= pd && t($3) <= pm && now - since >= max)) {
-              d -= t($2); m -= t($3) } }
+          wd = t($2); wm = t($2) + t($3)
+          if ((wd <= d && wm <= m) || (wd <= pd && wm <= pm && now - since >= max)) {
+              d -= wd; m -= wm } }
         END { printf "%.1f %.1f %d %d\n", d / 10, m / 10, n, hot }' \
         <(if [ $# -ge 5 ]; then printf '%s\n' "$4"; else cat $LEDGER 2>/dev/null; fi) \
         <(if [ $# -ge 5 ]; then printf '%s\n' "$5"; else cat $WAITS 2>/dev/null; fi)
@@ -391,6 +436,10 @@ hot() {  # [HOT_C]: true while the CPU or an NVMe is too hot to start more
 # the figures are floored by (EPS_GIB; see the header), so that a --reserve of
 # exactly the room offered is let in whichever way the last bit rounded.
 fits() { awk -v a="$1" -v b="$2" -v c="$3" -v e="$4" 'BEGIN { exit !(b + 0 <= a + 0.001 && e + 0 <= c + 0.001) }'; }
+# MAXDISK D MAXMEM M: the same against budget()'s or after_line()'s room, whose
+# memory is for D + M (the header's "memory, charged D + M"); fits() is for
+# the ceiling's figures, each a limit of its own, and the SSD's.
+fits_room() { fits "$1" "$2" "$3" "$(awk -v d="$2" -v m="$4" 'BEGIN { print d + m }')"; }
 parse() {  # LINE -> globals g grow ondisk d m (suffixes only at the end, in order); rc 1: a ':' in g
     local s=$1
     m=5 d=8 grow=0 ondisk=""
@@ -410,7 +459,7 @@ ceiling() {  # -> "DISK MEM": the most one job could ever get on this host
     arc_max=$(awk '$1 == "c_max" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
     arc_size=$(awk '$1 == "size" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
     df -Pk $RAM | awk -v arc_max="${arc_max:-0}" -v arc_size="${arc_size:-0}" -v arc_room="${ARC_ROOM_GIB:-1}" \
-                      -v base="$base" '
+                      -v base="$base" -v meminfo="${CMP_MEMINFO:-/proc/meminfo}" '
         # Down to a tenth with a MiB of tolerance, exactly as budget() floors
         # its own figures (EPS_GIB; see the header): a ceiling rounded up to a
         # tenth budget() never reaches is a --reserve that waits for ever.
@@ -418,16 +467,18 @@ ceiling() {  # -> "DISK MEM": the most one job could ever get on this host
         NR == 2 { size = $2 / 1048576 }
         END { G = 1073741824
               arc = arc_size / G + arc_room; if (arc > arc_max / G) arc = arc_max / G   # as budget() counts it
-              while ((getline l < "/proc/meminfo") > 0) { split(l, f, /[: ]+/); if (f[1] == "MemTotal") t = f[2] / 1048576 }
+              while ((getline l < meminfo) > 0) { split(l, f, /[: ]+/); if (f[1] == "MemTotal") t = f[2] / 1048576 }
               printf "%.1f %.1f\n", fl(size - 1), fl(t - size - arc - base - 2) }'
 }
 free_now() {  # -> "DISK MEM": the room a new --reserve could get on this host now, floored
     # at 0, nothing written.  It is exactly what admission would let in: a --reserve D M
     # starts at once when fits() passes against the ceiling (D <= its DISK, M <= its MEM)
-    # and against budget() (the same, with budget()'s figures), so the room for each is
-    # the smaller of the two, min(ceiling, budget).  The ledger's live rows are already
-    # off budget()'s own figures (its disk = size - 1 - rd, its mem = total - size - arc
-    # - base - rm), which also bring the live checks (MemAvailable, the tmpfs's free
+    # and fits_room() against budget() (D <= its DISK, D + M <= its MEM), so the RAM
+    # disk is the smaller of the two DISKs, and the memory, for D + M as budget()'s is,
+    # the smaller of budget()'s and the most a job within the ceiling could take of it,
+    # the ceiling's DISK + MEM.  The ledger's live rows are already off budget()'s own
+    # figures (its disk = size - 1 - rd, its mem = total - the RAM disk reserved or used
+    # - arc - base - rm), which also bring the live checks (MemAvailable, the tmpfs's
     # space, the ARC, what reservations haven't touched yet); the ceiling is the most one
     # job could ever get and is tested against the bare --reserve, as here.  So the rows
     # count once, in the same place as in admission.  (Taking them off the ceiling as
@@ -448,7 +499,8 @@ free_now() {  # -> "DISK MEM": the room a new --reserve could get on this host n
     out=$(awk -v cd="$cd" -v cm="$cm" -v bd="$bd" -v bm="$bm" -v ad="$ad" -v am="$am" '
         function fl(x) { x = int((x + 0.001) * 10 + (x < 0 ? -1 : 0)) / 10; return x < 0 ? 0 : x }   # down (a MiB of tolerance), then 0
         function lo(a, b) { return a + 0 < b + 0 ? a + 0 : b + 0 }
-        BEGIN { printf "%.1f %.1f\n%.1f %.1f\n", fl(lo(cd, bd)), fl(lo(cm, bm)), fl(lo(cd, ad)), fl(lo(cm, am)) }') &&
+        BEGIN { cj = cd + cm   # the most of the joint memory a job within the ceiling takes
+                printf "%.1f %.1f\n%.1f %.1f\n", fl(lo(cd, bd)), fl(lo(cj, bm)), fl(lo(cd, ad)), fl(lo(cj, am)) }') &&
         [ -n "$out" ] || return 1
     FREE_AFTER=${out#*$'\n'}
     FREE_WAITING=$(awk 'NF { n++ } END { print n + 0 }' <<<"$waits")
@@ -495,7 +547,7 @@ if [ "${1:-}" = --reserve ] || [ "${1:-}" = --reserve-ssd ]; then
         lock || { sleep 30; continue; }
         prune
         if read -r maxd maxm < <(budget) && read -r maxd maxm _ hotc < <(after_line $$ "$maxd" "$maxm") &&
-                ! hot "$hotc" && fits "$maxd" "$d" "$maxm" "$m" &&
+                ! hot "$hotc" && fits_room "$maxd" "$d" "$maxm" "$m" &&
                 { [ -z "$s" ] || { read -r sr _ < <(ssd_room) && fits "${sr:-0}" "$s" 0 0; }; }; then
             add $LEDGER "$$ $d $m - reserve ${s:+ssd=$s }$*"; leave_line $$; unlock; break
         fi
@@ -601,7 +653,7 @@ worker() {  # SLOT
         else
             line=$(pop "$maxd" "$maxm"); rc=$?
             if [ $rc = 1 ]; then
-                why="nothing fits ${maxd}G RAM disk, ${maxm}G memory"
+                why="nothing fits ${maxd}G RAM disk, ${maxm}G memory (for D + M)"
                 [ "$ahead" -gt 0 ] && why+=" after $ahead before it in line"
                 if [[ $line == '! '* ]]; then
                     why="only \"!\" lines left ($(set -- $line; echo $2) of them), and no $DISKS_DIR here: they are for the other hosts"

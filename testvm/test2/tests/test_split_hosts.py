@@ -273,10 +273,18 @@ class CmpPop(unittest.TestCase):
 
     def test_nodisk_skips_bang_lines(self):
         q = ["fedora44!=4%5", "debian13:ext4@2!=3", "arch=4%5", "mint22"]
-        self.assertEqual(self.pop(q, "8", "8", "cage", "nodisk"), (0, "arch=4%5", ["fedora44!=4%5", "debian13:ext4@2!=3",
+        self.assertEqual(self.pop(q, "8", "13", "cage", "nodisk"), (0, "arch=4%5", ["fedora44!=4%5", "debian13:ext4@2!=3",
                                                                                    "mint22"]))
-        self.assertEqual(self.pop(q, "8", "8", "chopin"), (0, "fedora44!=4%5", q[1:]))   # as before
-        self.assertEqual(self.pop(q, "8", "8", "chopin", ""), (0, "fedora44!=4%5", q[1:]))
+        self.assertEqual(self.pop(q, "8", "13", "chopin"), (0, "fedora44!=4%5", q[1:]))   # as before
+        self.assertEqual(self.pop(q, "8", "13", "chopin", ""), (0, "fedora44!=4%5", q[1:]))
+
+    def test_the_memory_is_for_d_plus_m(self):
+        """MAXMEM is cmp-run.sh's budget(), which since 2026-11-24 is for a line's RAM disk and
+        memory together: =4%5 needs 4 of the RAM disk and 9 of the memory."""
+        self.assertEqual(self.pop(["arch=4%5"], "8", "8.9", "chopin")[:2], (1, "4 5"))
+        self.assertEqual(self.pop(["arch=4%5"], "8", "9", "chopin")[:2], (0, "arch=4%5"))
+        self.assertEqual(self.pop(["arch=4%5", "mint22=2.7%4"], "8", "6.7", "chopin")[:2], (0, "mint22=2.7%4"))
+        self.assertEqual(self.pop(["mint22"], "8", "12.9", "chopin")[:2], (1, "8 5"))   # the defaults, 8 and 5
 
     def test_nodisk_waits_with_the_first_line_it_may_take(self):
         rc, out, left = self.pop(["fedora44!=2%2", "arch=9%5"], "4", "8", "cage", "nodisk")
@@ -290,9 +298,9 @@ class CmpPop(unittest.TestCase):
         bang = ["fedora44!=2%2", "arch!"]
         self.assertEqual(self.pop(bang, "4", "8", "cage", "nodisk")[:2], (1, "! 2 0"))
         self.assertFalse(os.path.exists(self.q + ".disks"))   # nodisk leaves no mark
-        self.assertEqual(self.pop(["mint22"], "8", "8", "cage", "anydisk"), (0, "mint22", []))
+        self.assertEqual(self.pop(["mint22"], "8", "13", "cage", "anydisk"), (0, "mint22", []))
         self.assertFalse(os.path.exists(self.q + ".disks"))   # nor does anydisk
-        self.assertEqual(self.pop(["mint22"], "8", "8", "chopin"), (0, "mint22", []))
+        self.assertEqual(self.pop(["mint22"], "8", "13", "chopin"), (0, "mint22", []))
         self.assertTrue(os.path.exists(self.q + ".disks"))    # a worker that can: the mark
         self.assertEqual(self.pop(bang, "4", "8", "cage", "nodisk")[:2], (1, "! 2 1"))
 

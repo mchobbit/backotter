@@ -11,7 +11,7 @@
 # INVENTORY=1 runs inv.sh (the guest's inventory) first, in the same boot.
 #
 # Boots a throwaway overlay of ~/backotter-work/vms/pop24 (vm-run --snapshot,
-# overlay in RAM), within a guest slot and cmp-run.sh --reserve 3 6 (3 GiB guest), and runs
+# overlay in RAM), within a guest slot and cmp-run.sh --reserve 3 4 (3 GiB guest), and runs
 # inner.sh there: the fixture on fresh scratch file systems of the guest's own
 # types (ext4 made like the root, ext4 with project and casefold, tmpfs as
 # /run, on loop devices or tmpfs; then a vfat ESP holding a copy of /boot/efi,
@@ -38,7 +38,7 @@ if [[ ${STC_INNER:-} != "$PREFIX" ]]; then
     # shellcheck source=/dev/null
     . "$C/guest-slot.sh"
     slot_take 3 "$(slot_range_here)"
-    STC_INNER=$PREFIX HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 6 env STC_INNER="$PREFIX" "$HERE/$(basename "$0")" "$BIN" "$PORT" "$PREFIX" "$FILTER"
+    STC_INNER=$PREFIX HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 4 env STC_INNER="$PREFIX" "$HERE/$(basename "$0")" "$BIN" "$PORT" "$PREFIX" "$FILTER"
     rc=$?
     slot_give
     exit $rc

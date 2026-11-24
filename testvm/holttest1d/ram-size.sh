@@ -8,8 +8,15 @@
 #       peaks:N        its last N (at most 3) whole passes in peaks.tsv (result
 #                      PASS, all four phases, not seeded), when it has 2 or
 #                      more: D = 1.10 x their largest RAM-disk peak + 0.25 GiB,
-#                      M = 1.10 x their largest anon, rounded up; D at least 2
-#                      (3 for BSD, illumos and Haiku), M at least 4
+#                      M = 1.10 x their largest anon + 0.25 GiB, rounded up
+#                      to a tenth; D at least 2 (3 for BSD, illumos and
+#                      Haiku), M at least 3.5, and 4 when none of them has
+#                      an anon figure.  (M was 1.10 x the anon rounded up
+#                      to a whole GiB, at least 4, until 2026-11-24: 4 for
+#                      nearly every guest.  The 764 whole passes since
+#                      2026-11-20 peaked at 2.7 GiB anon (median), 3.2
+#                      (99th centile) and 3.9 (kinoite44), the rescuer's
+#                      3 GiB VM the most of it: about 3.6 now.)
 #       table+peaks:1  one such pass: the larger of its D and M and the table's
 #                      (the default's, without a row)
 #       table          its row in ram-sizes.tsv: this host's (--host H: H's),
@@ -73,6 +80,7 @@ awk -F'\t' -v host="$HOST" -v cls="$CLASS" -v big="$BIG" -v names="$*" '
         return 0
     }
     function up(x,   c) { c = int(x); if (c < x - 1e-9) c++; return c }   # rounded up (no float noise)
+    function up10(x) { return up(x * 10) / 10 }   # rounded up to a tenth
     function table(n, g) {   # -> "D M table", from the row of n, else of its guest; else "D M default"
         if (!(n in td)) n = g
         if (n in td) return td[n] " " tm[n] " table"
@@ -98,7 +106,7 @@ awk -F'\t' -v host="$HOST" -v cls="$CLASS" -v big="$BIG" -v names="$*" '
         }
         fl = fam(g) == 1 ? 3 : 2
         d = up(1.10 * p / 1048576 + 0.25); if (d < fl) d = fl
-        m = up(1.10 * a / 1048576); if (m < 4) m = 4
+        m = (a > 0) ? up10(1.10 * a / 1048576 + 0.25) : 4; if (m < 3.5) m = 3.5
         if (np[gv] >= 2) return d " " m " peaks:" (np[gv] < 3 ? np[gv] : 3)
         split(table(n, g), tb, " ")   # one pass only: never under the table
         return (tb[1] + 0 > d ? tb[1] : d) " " (tb[2] + 0 > m ? tb[2] : m) " table+peaks:1"

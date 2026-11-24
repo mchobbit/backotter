@@ -7,7 +7,7 @@
 #            ~/backotter-work/build-cache/store/rustic-netbsd (RUSTIC_BKO names
 #            another), said in the output.
 # One throwaway overlay (vm-run --snapshot, TMPDIR=/mnt/bko-ram/PREFIX), taken
-# through guest-slot.sh and cmp-run.sh --reserve 3 6.  In it:
+# through guest-slot.sh and cmp-run.sh --reserve 3 5.  In it:
 #   testvm/compare/netbsd/roundtrip.sh in all four directions (root FFSv2 +
 #   FFSv2ea posix1e/nfs4 images: file flags incl. SF_LOG, POSIX.1e and NFSv4
 #   ACLs, user/system extattrs incl. on symlinks, birth times, ns atimes/
@@ -40,7 +40,7 @@ if [[ ${1:-} != --inner && -z ${CHECK_INNER:-} ]]; then
     source "$CMP/guest-slot.sh"
     slot_take 3 "$(slot_range_here)"
     CHECK_INNER=1 CHECK_LOGS=$LOGS RUSTIC_BIN=$rustic HOT_C=90 \
-        "$WORK/cmp-run.sh" --reserve 3 6 timeout 1500 "$self" "$@" >"$LOGS/run.log" 2>&1
+        "$WORK/cmp-run.sh" --reserve 3 5 timeout 1500 "$self" "$@" >"$LOGS/run.log" 2>&1
     rc=$?
     slot_give
     rm -rf "$SCR"

@@ -29,7 +29,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 if [[ -z ${BKO_CHECK_ADMITTED:-} ]]; then
     source ${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh
     slot_take 3 "$(slot_range_here)"
-    BKO_CHECK_ADMITTED=1 HOT_C=90 $WORK/cmp-run.sh --reserve 3 6 "$HERE/$(basename "$0")" "$@"
+    BKO_CHECK_ADMITTED=1 HOT_C=90 $WORK/cmp-run.sh --reserve 3 5 "$HERE/$(basename "$0")" "$@"
     rc=$?; slot_give; exit $rc
 fi
 LOGS=${STC_LOGS:-$WORK/stictest1/$G/logs}/run-$(date +%Y%m%d-%H%M%S)

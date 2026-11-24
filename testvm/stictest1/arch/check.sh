@@ -55,7 +55,7 @@ echo "check.sh $GUEST: bin $BIN ($(cat "$BIN/restic-commit" 2>/dev/null | head -
 # --- guest phase, under a slot and a reservation ---------------------------------------
 . "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
 slot_take 3 "$(slot_range_here)"
-HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 6 "$here/check.sh" --guest-phase "$BIN" "$PORT" "$W" "$LOGS" \
+HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 5 "$here/check.sh" --guest-phase "$BIN" "$PORT" "$W" "$LOGS" \
     >"$LOGS/guest-phase.log" 2>&1
 gp=$?
 slot_give

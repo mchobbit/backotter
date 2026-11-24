@@ -1270,7 +1270,11 @@ with two or more, D is 1.10 × the largest peak of the last three, plus
 `ram-sizes.tsv` (r3all's sizes; the BSD rows are estimates), and a guest
 without a row gets a default.  A variant without a row of its own has its
 guest's, and `+nearfull` 4 GiB on top, for the free space that variant
-writes away in the source overlay.  Its header has the details.
+writes away in the source overlay.  M comes from the same passes: 1.10 × their
+largest anonymous memory plus 0.25 GiB, rounded up to a tenth, at least 3.5
+(about 3.6 for most guests: the rescuer's 3 GiB VM is most of it; until
+2026-11-24 it was rounded up to a whole GiB, at least 4), and 4 without them.
+Its header has the details.
 
 ## Queues: ht1-queue.sh
 

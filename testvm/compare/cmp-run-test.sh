@@ -15,7 +15,8 @@
 # a moment:
 #   0 --ceiling and --free with no ledger there at all: each prints its
 #     "DISK MEM" (--free also "waiting N" and "after DISK MEM", and never
-#     more than the ceiling), and neither makes a file, not even the
+#     more than the ceiling: its DISK within the ceiling's, its MEM, for a
+#     job's D + M, within the ceiling's two together), and neither makes a file, not even the
 #     ledger's; then 0b, --free against a ledger and a line that hold rows
 #     (one an older cmp-run.sh's, with no SINCE), 0c, which
 #     pins the one thing a huge row cannot: that a row within the 2 GiB of
@@ -88,7 +89,8 @@ inline() { awk -v d="$1" -v m="$2" '$2 == d && $3 == m && $5 ~ /^[0-9]+$/ && $6 
 alive() { kill -0 "$1" 2>/dev/null || sudo kill -0 "$1" 2>/dev/null; }
 gone() { ! alive "$1"; }
 
-# 0: --ceiling and --free write nothing, and --free stays within the ceiling.
+# 0: --ceiling and --free write nothing, and --free stays within the ceiling
+# (its MEM is for a job's D + M: within the ceiling's DISK + MEM).
 # (pick-host asks every host --free over ssh, so it may not touch the ledger.)
 sudo find "$D" -mindepth 1 -delete
 cf=$(CMP_LEDGER_DIR="$D" "$CMP_RUN" --ceiling 2>"$T/err.0")
@@ -101,7 +103,7 @@ check "0: --free prints DISK MEM, then waiting N, then after DISK MEM" \
 check "0: with nobody in line, after is the free room" \
     awk 'NR == 1 { r = $0 } NR == 3 { exit !("after " r == $0) }' <<<"$ff"
 check "0: --free is within the ceiling" \
-    awk -v c="$cf" 'NR == 1 { split(c, x, " "); exit !($1 + 0 <= x[1] + 0 && $2 + 0 <= x[2] + 0) }' <<<"$ff"
+    awk -v c="$cf" 'NR == 1 { split(c, x, " "); exit !($1 + 0 <= x[1] + 0 && $2 + 0 <= x[1] + x[2] + 0.001) }' <<<"$ff"
 check "0: neither made a file" test -z "$(sudo find "$D" -mindepth 1)"
 check "0: nothing on stderr" quiet "$T/err.0"
 
@@ -143,7 +145,10 @@ check "0: no temporary files left" no_leftovers
 # at once), so a 1.5 GiB memory row costs the figure nothing at all while the
 # ceiling is what binds, where the old formula always lost the whole 1.5.  A
 # 0-disk row keeps the disk out of it (budget() takes the rows off the disk,
-# there as in admission, so --free does lose that).
+# there as in admission, so --free does lose that).  Since 2026-11-24 --free's
+# memory is for a job's D + M, and what binds it is the ceiling's DISK + MEM
+# (cj below), which budget() is 3 GiB over with no rows here (the 2 GiB of
+# headroom and the RAM disk's 1 GiB): the row must cost --free nothing.
 #
 # The two formulas differ only while the ceiling binds and budget()'s live
 # memory check (MemAvailable and the rest) is above it, so BASE_GIB is used to
@@ -162,6 +167,8 @@ if [[ -z $B ]]; then
 else
     cm=$(BASE_GIB="$B" CMP_LEDGER_DIR="$D" "$CMP_RUN" --ceiling 2>>"$T/err.0c" |
              awk 'NR == 1 { print $2 + 0 }')
+    cj=$(BASE_GIB="$B" CMP_LEDGER_DIR="$D" "$CMP_RUN" --ceiling 2>>"$T/err.0c" |
+             awk 'NR == 1 { print $1 + $2 }')
     m0=$(BASE_GIB="$B" CMP_LEDGER_DIR="$D" "$CMP_RUN" --free 2>>"$T/err.0c" |
              awk 'NR == 1 { print $2 + 0 }')
     sleep 600 & hold1=$! pids+=("$hold1")
@@ -169,10 +176,10 @@ else
         dd of="$D/.reserve" conv=nocreat,notrunc oflag=append status=none
     m1=$(BASE_GIB="$B" CMP_LEDGER_DIR="$D" "$CMP_RUN" --free 2>>"$T/err.0c" |
              awk 'NR == 1 { print $2 + 0 }')
-    if awk -v cm="$cm" -v m0="$m0" 'BEGIN { exit !(cm >= 1.9 && m0 >= cm - 0.05) }'; then
-        # The old formula printed exactly cm - 1.5 here; this one prints cm.
+    if awk -v cm="$cm" -v cj="$cj" -v m0="$m0" 'BEGIN { exit !(cm >= 1.9 && m0 >= cj - 0.05) }'; then
+        # The old formula printed exactly cj - 1.5 here; this one prints cj.
         check "0: a row inside the ceiling's headroom comes off the memory once, not twice" \
-            awk -v cm="$cm" -v m1="$m1" 'BEGIN { exit !(m1 > cm - 1.45) }'
+            awk -v cj="$cj" -v m1="$m1" 'BEGIN { exit !(m1 > cj - 1.45) }'
     else
         ok "0: (this host's live memory check binds, not its ceiling: the headroom check is skipped)"
     fi
@@ -192,7 +199,8 @@ check "0: no temporary files left" no_leftovers
 # must be the ceiling's here, and such a --reserve must start at once.  Memory
 # and heat are kept out of it as 4-6 do; skipped when the RAM disk holds more
 # than EPS_GIB's worth of anything (half a MiB: then the room really is lower,
-# and must be) or has no memory room to give at all.
+# and must be) or has no memory room for that much RAM disk (a job's D is
+# memory too: the --reserve D 0 asks --free's MEM for D).
 B0=(env BASE_GIB=0 HOT_C=200 NVME_C=200 CMP_LEDGER_DIR="$D" WEAR_LOG=off)
 fresh m
 # A line of its own, so that the ledger certainly holds a page of the tmpfs
@@ -204,8 +212,8 @@ printf 'notapid 1 1 - junk, as a torn write leaves\n' |
 used_k=$(df -Pk /mnt/bko-ram | awk 'NR == 2 { print $3 }')
 c0=$("${B0[@]}" "$CMP_RUN" --ceiling 2>"$T/err.0d")
 f0=$("${B0[@]}" "$CMP_RUN" --free 2>>"$T/err.0d")
-if ! awk -v u="${used_k:-0}" -v m="$(awk 'NR == 1 { print $2 + 0 }' <<<"$f0")" \
-        'BEGIN { exit !(u > 0 && u <= 512 && m >= 0) }'; then
+if ! awk -v u="${used_k:-0}" -v m="$(awk 'NR == 1 { print $2 + 0 }' <<<"$f0")" -v d="${c0%% *}" \
+        'BEGIN { exit !(u > 0 && u <= 512 && m >= d + 0) }'; then
     ok "0: (the RAM disk holds more than the ledger's files (${used_k:-?} KiB), or no memory room with BASE_GIB=0: the ledger's-own-files check is skipped)"
 else
     check "0: the ledger's own files take nothing off the RAM disk room" \

@@ -366,12 +366,18 @@ class Simulate(unittest.TestCase):
                                    rng.choice([1, 1, 1, 3]), rng.random() > 0.1) for i in range(n)}
             est = {g: rng.choice([60, 300, 600, 900]) for g in spec}
             have = lambda: {f"{o}/{x}" for o in rng.sample(oses, rng.randint(1, 3)) for x in ("restic-bko", "rustic-bko")}
-            hosts = {h: dict(have=have(), slots_free=3, room=rng.choice([None, (26, 20), (12, 9)]),
+            # (Memory that never binds: since 2026-11-24 a room's memory is for D + M, which the old
+            # drive.py didn't know, so the old room's 1000 is the new one's D + 1000.)
+            hosts = {h: dict(have=have(), slots_free=3, room=rng.choice([None, (26, 1000), (12, 1000)]),
                              ceil=rng.choice([None, (29.0, 23.0)])) for h in ("chopin", "cinqcent")}
+            joint = copy.deepcopy(hosts)
+            for v in joint.values():
+                if v["room"]:
+                    v["room"] = (v["room"][0], v["room"][0] + v["room"][1])
             first = set(rng.sample(sorted(spec), rng.randint(0, min(2, n))))
             want = old.simulate(list(spec), spec, est, copy.deepcopy(hosts), 3, first)
-            self.assertEqual(DRIVE.simulate(list(spec), spec, est, copy.deepcopy(hosts), 3, first), want)
-            self.assertEqual(DRIVE.simulate(list(spec), spec, est, copy.deepcopy(hosts),
+            self.assertEqual(DRIVE.simulate(list(spec), spec, est, copy.deepcopy(joint), 3, first), want)
+            self.assertEqual(DRIVE.simulate(list(spec), spec, est, copy.deepcopy(joint),
                                             DRIVE.parse_slots([], list(hosts)), first), want)
 
     def test_stic_wall_per_host(self):

@@ -1,7 +1,8 @@
 #!/bin/sh
 # cmp-pop.sh QUEUE MAXDISK MAXMEM [WHO [nodisk|anydisk]]: print and remove the first line of QUEUE
 # whose needs fit: a trailing =N GiB of RAM disk (default 8) and %N GiB of
-# memory (default 5). nodisk (a worker without cmp-run.sh's DISKS_DIR): no
+# memory (default 5), D within MAXDISK and D + M within MAXMEM (cmp-run.sh's
+# budget(): its memory is for a job's RAM disk and memory together). nodisk (a worker without cmp-run.sh's DISKS_DIR): no
 # "!" line (GUEST...!=D%M, its restored disks on DISKS_DIR) fits, so that
 # one is left for a host that can run it. Without a fifth argument (a worker
 # that can take "!" lines) it also leaves QUEUE.disks, the mark that one has
@@ -39,7 +40,7 @@ line=$(awk -v d="$d" -v m="$m" -v nodisk="$nodisk" -v k="$k" -v new="$q.new" '
       if (nd == "") nd = 8; if (nm == "") nm = 5
       if (nodisk && s ~ /!$/) { bang++; print > new; next }   # restored disks on DISKS_DIR: not here
       if (first == "") first = nd " " nm
-      if (!got && nd + 0 <= d + 0 && nm + 0 <= m + 0) { got = 1; print; next }
+      if (!got && nd + 0 <= d + 0 && nd + nm <= m + 0.001) { got = 1; print; next }
       print > new }
     END { close(new); if (!got) { print (first != "" ? first : "! " bang " " k); exit 1 } }' "$q")
 rc=$?

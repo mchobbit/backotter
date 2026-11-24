@@ -34,7 +34,7 @@ if [[ ${1:-} != --guest && -z ${CHECK_INNER:-} ]]; then
     # shellcheck source=/dev/null
     source "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
     slot_take 3 "$(slot_range_here)"
-    cd "$WORK" && HOT_C=90 CHECK_INNER=1 CHECK_LOGS=$LOGS ./cmp-run.sh --reserve 3 6 \
+    cd "$WORK" && HOT_C=90 CHECK_INNER=1 CHECK_LOGS=$LOGS ./cmp-run.sh --reserve 3 4 \
         timeout 900 "$here/check.sh" "$BIN" "$PORT" "$PREFIX" "$FILTER" >"$LOGS/run.log" 2>&1
     st=$?
     slot_give

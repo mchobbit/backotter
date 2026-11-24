@@ -175,17 +175,17 @@ class Dropping(unittest.TestCase):
 
 class Ranking(unittest.TestCase):
     def test_room_now_comes_before_room_later(self):
-        ps = {"cage": probe(free=(9.0, 9.0), load=0.1),
-              "chopin": probe(host="chopin", free=(3.0, 2.5), ceiling=(29.0, 23.2), load=0.1)}
+        ps = {"cage": probe(free=(9.0, 18.0), load=0.1),
+              "chopin": probe(host="chopin", free=(3.0, 5.5), ceiling=(29.0, 23.2), load=0.1)}
         ranked, dropped = ph.rank(ps, reserve=(8, 5), rows=rows(cage={}, chopin={"roles": ["fleet"]}))
         self.assertEqual(dropped, {})
         self.assertEqual([x["host"] for x in ranked], ["cage", "chopin"])
         self.assertEqual([x["fits_now"] for x in ranked], [True, False])
 
     def test_then_the_roomiest_then_the_least_loaded(self):
-        ps = {"cage": probe(free=(9.0, 9.0), load=8.0), "copland": probe(host="copland", free=(16.0, 9.0), load=8.0)}
+        ps = {"cage": probe(free=(9.0, 18.0), load=8.0), "copland": probe(host="copland", free=(16.0, 25.0), load=8.0)}
         self.assertEqual([x["host"] for x in ph.rank(ps, reserve=(8, 5))[0]], ["copland", "cage"])
-        ps["copland"]["free"] = ps["copland"]["line_room"] = (9.0, 9.0)   # the same room: the quieter host
+        ps["copland"]["free"] = ps["copland"]["line_room"] = (9.0, 18.0)   # the same room: the quieter host
         ps["copland"]["load"] = 1.0
         self.assertEqual([x["host"] for x in ph.rank(ps, reserve=(8, 5))[0]], ["copland", "cage"])
         ps["copland"]["nproc"] = 4                              # load a core, not load
@@ -193,13 +193,13 @@ class Ranking(unittest.TestCase):
         self.assertEqual([x["host"] for x in ph.rank(ps, reserve=(8, 5))[0]], ["cage", "copland"])
 
     def test_the_shared_host_is_treated_as_busier(self):
-        ps = {"cage": probe(free=(9.0, 9.0), load=3.0, nproc=12),
-              "chopin": probe(host="chopin", free=(9.0, 9.0), load=3.0, nproc=12)}
+        ps = {"cage": probe(free=(9.0, 18.0), load=3.0, nproc=12),
+              "chopin": probe(host="chopin", free=(9.0, 18.0), load=3.0, nproc=12)}
         rs = rows(cage={}, chopin={"roles": ["build", "fleet", "store-mirror"]})
         self.assertEqual([x["host"] for x in ph.rank(ps, reserve=(8, 5), rows=rs)[0]], ["cage", "chopin"])
         self.assertAlmostEqual(ph.load_per_core(ps["chopin"], rs["chopin"]), (3.0 + ph.LOAD_PENALTY) / 12)
         self.assertAlmostEqual(ph.load_per_core(ps["cage"], rs["cage"]), 3.0 / 12)
-        ps["chopin"]["free"] = ps["chopin"]["line_room"] = (29.0, 20.0)   # room still wins over the penalty
+        ps["chopin"]["free"] = ps["chopin"]["line_room"] = (29.0, 49.0)   # room still wins over the penalty
         self.assertEqual([x["host"] for x in ph.rank(ps, reserve=(8, 5), rows=rs)[0]], ["chopin", "cage"])
 
     def test_without_a_reserve_the_roomiest_host_wins_and_a_full_one_does_not_fit(self):
@@ -231,8 +231,8 @@ class Ranking(unittest.TestCase):
         self.assertIn("--free failed (exit 3)", ph.rank(ps)[0][0]["note"])
 
     def test_the_figures_it_reports(self):
-        ranked, _ = ph.rank({"cage": probe(free=(9.0, 10.0), waiting=3)}, reserve=(3, 5))
-        self.assertEqual(ranked[0], {"host": "cage", "free": (9.0, 10.0), "line_room": (9.0, 10.0),
+        ranked, _ = ph.rank({"cage": probe(free=(9.0, 16.0), waiting=3)}, reserve=(3, 5))
+        self.assertEqual(ranked[0], {"host": "cage", "free": (9.0, 16.0), "line_room": (9.0, 16.0),
                                      "ceiling": (9.0, 11.2),
                                      "waiting": 3, "load": 1.0, "nproc": 16, "fits_now": True,
                                      "score": 2.0, "load_per_core": 0.06, "note": None})
@@ -241,22 +241,22 @@ class Ranking(unittest.TestCase):
         """Cage's free room holds the reserve, but a waiter it may not pass (one that has
         waited its BACKFILL_MAX) leaves a newcomer nothing: copland, with less free room
         and no such line, is the one where it starts now."""
-        ps = {"cage": probe(free=(6.8, 5.5), line_room=(0.0, 0.0), waiting=3, load=0.1),
-              "copland": probe(host="copland", free=(5.0, 5.0), load=4.0)}
+        ps = {"cage": probe(free=(6.8, 12.3), line_room=(0.0, 0.0), waiting=3, load=0.1),
+              "copland": probe(host="copland", free=(5.0, 9.0), load=4.0)}
         ranked, _ = ph.rank(ps, reserve=(4, 4))
         self.assertEqual([(x["host"], x["fits_now"]) for x in ranked], [("copland", True), ("cage", False)])
         self.assertEqual(ranked[1]["score"], 0.0)                 # the room after the line
-        self.assertEqual((ranked[1]["free"], ranked[1]["line_room"]), ((6.8, 5.5), (0.0, 0.0)))
+        self.assertEqual((ranked[1]["free"], ranked[1]["line_room"]), ((6.8, 12.3), (0.0, 0.0)))
 
     def test_a_young_head_that_does_not_fit_is_passed(self):
         """A waiter that can't start yet and hasn't waited long is passed: the room after
         the line is the free room, and the job fits now although someone waits."""
-        ps = {"cage": probe(free=(6.8, 5.5), line_room=(6.8, 5.5), waiting=1)}
+        ps = {"cage": probe(free=(6.8, 11.0), line_room=(6.8, 11.0), waiting=1)}
         ranked, _ = ph.rank(ps, reserve=(4, 4))
         self.assertTrue(ranked[0]["fits_now"])
         self.assertEqual(ranked[0]["score"], 1.38)
         # a waiter ahead that fits now takes its room first
-        ps["cage"]["line_room"] = (2.8, 1.5)
+        ps["cage"]["line_room"] = (2.8, 4.5)
         self.assertFalse(ph.rank(ps, reserve=(4, 4))[0][0]["fits_now"])
         self.assertTrue(ph.rank(ps, reserve=(2, 1))[0][0]["fits_now"])
 
@@ -268,7 +268,7 @@ class Ranking(unittest.TestCase):
         """A --free older than its "after" line: that cmp-run.sh serves its line strictly
         in order, so the host fits now only with nobody in line, by its free room, and
         its note says to sync testvm/ there."""
-        ps = {"cage": probe(free=(9.0, 9.0), line_room=None, waiting=0)}
+        ps = {"cage": probe(free=(9.0, 18.0), line_room=None, waiting=0)}
         ranked, _ = ph.rank(ps, reserve=(4, 4))
         self.assertTrue(ranked[0]["fits_now"])
         self.assertIsNone(ranked[0]["line_room"])
@@ -279,8 +279,8 @@ class Ranking(unittest.TestCase):
         self.assertEqual(ranked[0]["score"], 2.25)                # still ranked by its free room
         del ps["cage"]["waiting"]                                 # not known: not "nobody"
         self.assertFalse(ph.rank(ps, reserve=(4, 4))[0][0]["fits_now"])
-        ps = {"cage": probe(free=(9.0, 9.0), line_room=None, waiting=2, load=0.1),
-              "copland": probe(host="copland", free=(4.0, 4.0), load=8.0)}
+        ps = {"cage": probe(free=(9.0, 18.0), line_room=None, waiting=2, load=0.1),
+              "copland": probe(host="copland", free=(4.0, 8.0), load=8.0)}
         self.assertEqual([x["host"] for x in ph.rank(ps, reserve=(4, 4))[0]], ["copland", "cage"])
 
 
@@ -289,7 +289,14 @@ class Figures(unittest.TestCase):
         self.assertTrue(ph.fits((9.0, 9.2), (9.0, 9.2)))
         self.assertFalse(ph.fits((9.0, 9.2), (9.0, 9.3)))
         self.assertFalse(ph.fits(None, (0, 0)))
-        self.assertEqual(ph.score_of((9.0, 10.0), (3, 5)), 2.0)
+        # --free's memory is for D + M (cmp-run.sh's, since 2026-11-24); a ceiling's figures
+        # are each a limit of their own.
+        self.assertTrue(ph.fits_room((9.0, 9.2), (3.0, 6.2)))
+        self.assertFalse(ph.fits_room((9.0, 9.2), (3.0, 6.3)))
+        self.assertFalse(ph.fits_room((9.0, 20.0), (9.1, 1.0)))
+        self.assertFalse(ph.fits_room(None, (0, 0)))
+        self.assertTrue(ph.fits((9.0, 9.2), (3.0, 9.2)) and not ph.fits_room((9.0, 9.2), (3.0, 9.2)))
+        self.assertEqual(ph.score_of((9.0, 16.0), (3, 5)), 2.0)       # min(9 / 3, 16 / (3 + 5))
         self.assertEqual(ph.score_of((9.0, 10.0), (0, 5)), 2.0)      # a 0 asks for nothing
         self.assertEqual(ph.score_of((9.0, 10.0), (0, 0)), 0.0)
         self.assertEqual(ph.score_of(None, (1, 1)), 0.0)

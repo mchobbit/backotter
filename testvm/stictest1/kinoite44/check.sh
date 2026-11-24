@@ -29,7 +29,7 @@ if [[ -z ${BKST_INNER:-} ]]; then
     # shellcheck source=/dev/null
     . "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
     slot_take 3 "$(slot_range_here)"
-    BKST_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 4 6 "$here/check.sh" "$@"
+    BKST_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 4 5 "$here/check.sh" "$@"
     rc=$?
     slot_give
     exit $rc

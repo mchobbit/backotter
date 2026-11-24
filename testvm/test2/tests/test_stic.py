@@ -414,10 +414,11 @@ class TestRowsStic(unittest.TestCase):
         self.assertEqual(r["spec"]["path"], "testvm/test2/stic/manifests.json#debian12")
 
     def test_records_its_reserve(self):
-        # check.sh's cmp-run.sh --reserve 4 6, for the report's note on a RAM peak over it
+        # check.sh's cmp-run.sh --reserve 4 5 (4 6 until 2026-11-24), for the report's note on a
+        # RAM peak over it
         w = World(self.tmp, "debian12", fixture("debian12-pass.out"))
         r = checked(w.build(waits=17, cells=w.cells()))
-        self.assertEqual(r["extra"]["reserve_gib"], [4.0, 6.0])
+        self.assertEqual(r["extra"]["reserve_gib"], [4.0, 5.0])
 
     def test_check_reserve(self):
         cr = rows_stic.check_reserve

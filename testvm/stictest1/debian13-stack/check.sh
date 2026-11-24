@@ -69,7 +69,7 @@ OUT=$STC_LOGS/run-$(date +%Y%m%d-%H%M%S)
 mkdir -p "$OUT"
 . "$C/guest-slot.sh"
 slot_take 3 "$(slot_range_here)"
-HOT_C=90 "$WORK/cmp-run.sh" --reserve 7 5 timeout 1560 "$HERE/$(basename "$0")" --inner "$BIN" "$PORT" "$PFX" "$OUT" >"$OUT/run.log" 2>&1
+HOT_C=90 "$WORK/cmp-run.sh" --reserve 7 4 timeout 1560 "$HERE/$(basename "$0")" --inner "$BIN" "$PORT" "$PFX" "$OUT" >"$OUT/run.log" 2>&1
 rc=$?
 slot_give
 lines=$(grep -E '^(PASS|FAIL|LIMIT) ' "$OUT/guest.out" 2>/dev/null)

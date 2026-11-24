@@ -90,6 +90,14 @@ testvm/HOSTS.md has every host and what stays on the big ones):
 What the script does:
 
 - It takes a guest slot (guest-slot.sh) and room (cmp-run.sh --reserve) by itself.
+  Its `--reserve D M`: D GiB of the RAM disk for its overlays, M GiB of memory,
+  the guest's RAM plus 1 GiB (a 4096 MiB guest 5, a 3072 MiB one 4) since
+  2026-11-24, when most went from 6 to that: QEMU holds the guest's RAM and
+  little more, and every check's cgroup peak (iolog.sh's mpeak, its tmpfs pages
+  and page cache included) from 2026-11-20 on was within D + M.  guix15,
+  guix15-bios, nixos2605 and pikaos4 kept theirs (their peaks were over D + M,
+  page cache most likely, and that bound proves nothing there), and so did the
+  arm64 guests and slackware15, with no runs to measure.
 - It boots a throwaway `vm-run --snapshot` overlay, so it never writes the
   guest's own disk image.
 - It prints one line per checklist item: `PASS need: detail`, `FAIL need: detail`,

@@ -44,7 +44,9 @@ dropped, with a reason, when it
 
 The rest are ranked: the hosts where --reserve fits now come first, so a job
 that can start starts; then by capacity (how many times over the reserve
-fits, min(room disk / D, room memory / M)), then by the lowest load per core.
+fits, min(room disk / D, room memory / (D + M)): cmp-run.sh's memory room is for
+a job's RAM disk and memory together, since 2026-11-24), then by the lowest
+load per core.
 "Fits now" and the capacity go by the room the job would be offered after the
 host's cmp-run.sh line (--free's "after DISK MEM": the waiters it may not
 pass come off first, so a host whose line would hold the job back doesn't
@@ -317,19 +319,29 @@ def num(x):
 
 
 def fits(room, reserve):
-    """Whether a --reserve (D, M) fits in ROOM (D, M), as cmp-run.sh's fits() does
-    (EPS_GIB of tolerance and all: both figures are tenths of a GiB floored with it)."""
+    """Whether a --reserve (D, M) fits in a ceiling (D, M), each figure a limit of its own, as
+    cmp-run.sh's fits() does (EPS_GIB of tolerance and all: both figures are tenths of a GiB
+    floored with it)."""
     return (room is not None and room[0] + EPS_GIB >= reserve[0]
             and room[1] + EPS_GIB >= reserve[1])
 
 
+def fits_room(room, reserve):
+    """Whether a --reserve (D, M) fits in ROOM (D, M), --free's figures, as cmp-run.sh's
+    fits_room() does: D within its RAM disk and D + M within its memory, which since
+    2026-11-24 is for a job's RAM disk and memory together (the RAM disk is memory too)."""
+    return room is not None and fits(room, (reserve[0], reserve[0] + reserve[1]))
+
+
 def score_of(free, reserve):
-    """How many times over RESERVE fits in FREE: min(free D / D, free M / M), the capacity
-    to rank roomy hosts by.  A reserve figure of 0 doesn't bind (nothing of that is asked
-    for), and no free room at all scores 0."""
+    """How many times over RESERVE fits in FREE (--free's figures): min(free D / D, free M /
+    (D + M)), the capacity to rank roomy hosts by (the memory is for D + M, as fits_room
+    takes it).  A reserve figure of 0 doesn't bind (nothing of that is asked for), and no
+    free room at all scores 0."""
     if free is None:
         return 0.0
-    parts = [free[i] / reserve[i] for i in (0, 1) if reserve[i] > 0]
+    need = (reserve[0], reserve[0] + reserve[1])
+    parts = [free[i] / need[i] for i in (0, 1) if need[i] > 0]
     return min(parts) if parts else 0.0
 
 
@@ -392,7 +404,7 @@ def rank(probes, reserve=None, guests=(), needs=(), rows=None):
         ranked.append({"host": host, "free": free, "line_room": p.get("line_room"),
                        "ceiling": p.get("ceiling"),
                        "waiting": p.get("waiting"), "load": p.get("load"), "nproc": p.get("nproc"),
-                       "fits_now": fits(room, res) and not ahead, "score": round(score_of(room, res), 2),
+                       "fits_now": fits_room(room, res) and not ahead, "score": round(score_of(room, res), 2),
                        "load_per_core": round(load_per_core(p, rows.get(host) or {}), 2),
                        "note": note_of(p)})
     ranked.sort(key=lambda x: (not x["fits_now"], -x["score"], x["load_per_core"], x["host"]))

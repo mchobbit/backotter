@@ -31,7 +31,7 @@ if [[ -z ${CHECK_RESERVED:-} ]]; then
     # shellcheck source=/dev/null
     source "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
     slot_take 3 "$(slot_range_here)"
-    CHECK_RESERVED=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 2 6 "$HERE/check.sh" "$@"; rc=$?
+    CHECK_RESERVED=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 2 5 "$HERE/check.sh" "$@"; rc=$?
     slot_give
     exit $rc
 fi

@@ -28,7 +28,7 @@ if [[ -z ${CHECK_INNER:-} ]]; then
     # shellcheck source=/dev/null
     source "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
     slot_take 3 "$(slot_range_here)"
-    CHECK_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 2 5 env CHECK_INNER=1 BKO_GUEST_SLOT="$BKO_GUEST_SLOT" STC_LOGS="${STC_LOGS:-}" "$HERE/$(basename "$0")" "$@"
+    CHECK_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 2 4 env CHECK_INNER=1 BKO_GUEST_SLOT="$BKO_GUEST_SLOT" STC_LOGS="${STC_LOGS:-}" "$HERE/$(basename "$0")" "$@"
     rc=$?; slot_give; exit $rc
 fi
 # The scratch is made only here, once the reservation holds.

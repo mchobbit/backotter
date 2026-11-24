@@ -27,8 +27,9 @@
 #             and HOLT_SSD_SLOTS in the environment instead; MAXJOBS stays the
 #             total), a running or waiting job of ours holding one of the kind
 #             its scratch is.  A line takes a RAM slot when one is free and
-#             its D fits the RAM disk right now, whatever its size
-#             (cmp-run.sh --free's "after" figures); else an SSD slot when one
+#             its D fits the RAM disk right now, whatever its size, and its
+#             D + M the memory (cmp-run.sh --free's "after" figures, whose
+#             memory is for both since 2026-11-24); else an SSD slot when one
 #             is free and /bkoscratch has room for its D (a line whose D is
 #             over this host's RAM-disk ceiling never fits the RAM disk: an
 #             SSD slot only; a +img line: a RAM slot only); else it is not
@@ -704,14 +705,17 @@ slots_now() {
 # nowhere else to find: launch, and a runner with no job of ours; 0: such a
 # line waits in the todo while the others are tried).  Mode overflow:
 #   +img: a RAM slot only.  Over the ceiling: an SSD slot only.
-#   A RAM slot free: in RAM when its D fits the RAM disk now (or cmp-run.sh
-#   can't say, or its memory is what is short: it waits for that in cmp-run.sh's
-#   line wherever its scratch is); else in a free SSD slot with room for its D.
+#   A RAM slot free: in RAM when its D fits the RAM disk now and its D + M the
+#   memory (cmp-run.sh's memory room is for both, since 2026-11-24), or
+#   cmp-run.sh can't say, or even its M is short of the memory (it waits for
+#   that in cmp-run.sh's line wherever its scratch is); else in a free SSD slot
+#   with room for its D, where it needs M alone: a line whose D fits the RAM
+#   disk but whose D + M doesn't fit the memory goes there too.
 #   No RAM slot free: in a free SSD slot with room, though the RAM disk has room.
 place_lines() {
     awk -v mode="$MODE" -v ram="$RAM" -v dov="$DISK_OVER" -v ceil="$CEIL" -v rs="${RSFREE:-1}" -v ss="${SSFREE:-1}" \
         -v room="${RAMROOM:-}" -v ssd="${SSDROOM:-}" -v inl="${INLINE:-1}" '
-        function place(d, m, img,    over, sok, fits, mem, noroom) {
+        function place(d, m, img,    over, sok, fits, memr, mems, noroom, nomem) {
             if (!(ram + 0)) return "ram"
             over = (hc && d > c[1] + 0)
             sok = (hs && ssd + 0 >= d)
@@ -719,17 +723,20 @@ place_lines() {
             if (img && mode == "ssd") return "ram"
             if (!img && over && !sok) return "none " (hs ? ssd : "no")
             if (mode == "ssd") return over ? "ssd DISK_OVER: over the RAM-disk ceiling " ceil : sok ? "ssd scratch_mode ssd" : "ram"
-            fits = (kn && r[1] + 0 >= d); mem = (kn && r[2] + 0 >= m)
+            # The memory room is for D + M in the RAM disk (cmp-run.sh charges the
+            # RAM disk of a job as memory too), for M alone on the SSD.
+            fits = (kn && r[1] + 0 >= d); memr = (kn && r[2] + 0 >= d + m - 0.001); mems = (kn && r[2] + 0 >= m - 0.001)
             noroom = "the RAM disk has room for " r[1] " GiB now, not its " d
+            nomem = "the memory has room for " r[2] " GiB now, not its D + M " (d + m)
             if (img) {
                 if (!(rs + 0)) return "wait no RAM slot free (+img works only in the RAM disk)"
-                return (!kn || fits || !mem || inl + 0) ? "ram" : "wait " noroom " (+img works only in the RAM disk)"
+                return (!kn || fits || !memr || inl + 0) ? "ram" : "wait " noroom " (+img works only in the RAM disk)"
             }
             if (over) return (ss + 0) ? "ssd DISK_OVER: over the RAM-disk ceiling " ceil : "wait no SSD slot free (its D is over the RAM-disk ceiling " ceil ")"
             if (rs + 0) {
-                if (!kn || fits || !mem) return "ram"
-                if (sok && ss + 0) return "ssd overflow: " noroom
-                return (sok && !(inl + 0)) ? "wait " noroom ", and no SSD slot is free" : "ram"
+                if (!kn || (fits && memr) || !mems) return "ram"
+                if (sok && ss + 0) return "ssd overflow: " (fits ? nomem : noroom)
+                return (sok && !(inl + 0)) ? "wait " (fits ? nomem : noroom) ", and no SSD slot is free" : "ram"
             }
             if (!(ss + 0)) return "wait no slot free"
             return sok ? "ssd no RAM slot free" : "wait no RAM slot free, and /bkoscratch has room for " (hs ? ssd : "no") " GiB of scratch now"

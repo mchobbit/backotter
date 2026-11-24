@@ -59,7 +59,7 @@ if [[ -z ${BKST_INNER:-} ]]; then
     # 4 GiB: the fixture holds one kernel and initrd twice (the ESP's and
     # /usr/lib64/kernel's) and eopkg's DB, in the source and 4 targets; S4's
     # runs used 3.0 GiB (ram-used: 3010 MiB on Cinqcent, 3001 on Chopin).
-    BKST_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 4 5 "$here/check.sh" "$@"
+    BKST_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 4 4 "$here/check.sh" "$@"
     rc=$?
     slot_give
     exit $rc

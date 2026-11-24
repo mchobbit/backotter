@@ -29,7 +29,9 @@ a place frees, a host starts the first guest that fits there now:
   - the room cmp-run.sh would offer after its waiting line (budget() and
     after_line() of the host's ~/backotter-work/cmp-run.sh) holds the
     guest's check.sh --reserve figures, less what our started checks have
-    not reserved yet;
+    not reserved yet: D within its RAM disk, D + M within its memory (since
+    2026-11-24 cmp-run.sh charges a job's RAM disk as memory too, and the
+    memory room is for both);
   - Tctl (k10temp; coretemp's or zenpower's elsewhere) is at most --hot-c (or the lower HOT_C of someone in
     cmp-run.sh's line) and no NVMe is at 75 C (cmp-run.sh's NVME_C) or more;
   - the host has the guest's binaries and free ports of ours (Chopin
@@ -449,7 +451,7 @@ def pick(cands, spec, have, free_cap, free_slots, room, ceil, ports_fn=None, vms
             why.append(f"{g}:cap")
         elif s.slots > free_slots:
             why.append(f"{g}:slot")
-        elif room and (s.n * s.d > room[0] + 1e-9 or s.n * s.m > room[1] + 1e-9):
+        elif room and (s.n * s.d > room[0] + 1e-9 or s.n * (s.d + s.m) > room[1] + 1e-9):
             why.append(f"{g}:room")
         else:
             ports = ports_fn(g) if ports_fn else []
@@ -498,7 +500,7 @@ def simulate(guests, spec, est, hosts, cap, first=(), ranks=None):
             room = None
             if v["room"] is not None and not relax:
                 room = (v["room"][0] - sum(spec[g].n * spec[g].d for _, g in run[h]),
-                        v["room"][1] - sum(spec[g].n * spec[g].m for _, g in run[h]))
+                        v["room"][1] - sum(spec[g].n * (spec[g].d + spec[g].m) for _, g in run[h]))
             g, _, _ = pick(prefer(rem, h, able, ranks, first), spec, v["have"], free_cap, free_slots, room,
                            v["ceil"], vms=v.get("vms"))
             if g:
@@ -1350,7 +1352,7 @@ class Driver:
                     k = spec[g].n - self.jobs()[g]["seen_ledger"]
                     if k > 0:
                         room_d -= k * spec[g].d
-                        room_m -= k * spec[g].m
+                        room_m -= k * (spec[g].d + spec[g].m)   # the memory is for D + M
                 cands = prefer(order(self.remaining(), spec, self.est, a.first), host, self.able, ranks, a.first)
                 g, ports, why = pick(cands, spec, self.probes[host]["have"], free_cap, free_slots,
                                      (room_d, room_m), snap["ceil"], lambda g: self.ports(host, g, snap),
@@ -1583,7 +1585,10 @@ def dry_run(a, guests, spec, est, src, probes, wt, unrunnable):
             print(f"  checks in {disp(wt)}: " + ("same as this checkout for every guest" if not diff else
                   "DIFFER from this checkout for " + ", ".join(f"{g} ({n} files)" for g, n in sorted(diff.items()))
                   + (" (--private-copy would replace them)" if a.private_copy else "")))
-        hosts_v[h] = dict(have=p["have"], slots_free=guest_slots(h), room=snap["ceil"], ceil=snap["ceil"], vms=p.get("vms"))
+        # An idle host's room is its ceiling, the memory for D + M as pick() takes it (cmp-run.sh's
+        # --free: within the ceiling's DISK + MEM).
+        ceil_room = (snap["ceil"][0], snap["ceil"][0] + snap["ceil"][1]) if snap["ceil"] else None
+        hosts_v[h] = dict(have=p["have"], slots_free=guest_slots(h), room=ceil_room, ceil=snap["ceil"], vms=p.get("vms"))
         hosts_now[h] = dict(have=p["have"], vms=p.get("vms"), slots_free=guest_slots(h) - snap["slots_other"] - oq,
                             room=snap["room"][:2] if snap["room"] else (0, 0), ceil=snap["ceil"],
                             hot=(snap["temp"] or 0) > lim or any(t >= NVME_C for t in snap["nvme"]))
@@ -1632,7 +1637,7 @@ def dry_run(a, guests, spec, est, src, probes, wt, unrunnable):
             free_cap = slots_of(a.slots, h) - sum(spec[g].load for g in started)
             free_slots = v["slots_free"] - sum(spec[g].slots for g in started)
             room = (v["room"][0] - sum(spec[g].n * spec[g].d for g in started),
-                    v["room"][1] - sum(spec[g].n * spec[g].m for g in started))
+                    v["room"][1] - sum(spec[g].n * (spec[g].d + spec[g].m) for g in started))
             g, _, why = pick(prefer(rem, h, able_now, ranks, a.first), spec, v["have"], free_cap, free_slots, room,
                              v["ceil"], vms=v.get("vms"))
             if not g:
@@ -1704,6 +1709,11 @@ def self_test():
     have = {"linux/restic-bko", "linux/rustic-bko", "freebsd/restic-bko", "freebsd/rustic-bko"}
     g, _, why = pick(o, sp, have, 3, 3, (10, 12), None)
     check(g == "long" and "ufs:room" in why and "big:room" in why, f"a guest that doesn't fit is passed over: {g} {why}")
+    g, _, why = pick(["long", "short"], sp, have, 3, 3, (10, 8.9), None)
+    check(g == "short" and why == ["long:room"],
+          f"the room's memory is for D + M (cmp-run.sh's since 2026-11-24): 3 + 6 is over 8.9 ({g} {why})")
+    g, _, why = pick(["long"], sp, have, 3, 3, (3, 9.0), None)
+    check(g == "long", "D + M exactly the memory room, D exactly the RAM disk's: it fits")
     g, _, why = pick(["bsd", "short"], sp, have, 3, 3, (50, 50), None)
     check(g == "short" and "bsd:nobin" in why, "no binaries for its OS: not on this host")
     g, _, _ = pick(["ufs", "short"], sp, have, 2, 3, (50, 50), None)
@@ -1730,8 +1740,9 @@ def self_test():
     check(ports_for(3, 2780, 2799, {2781}, {2784}, set()) == [2785, 2786, 2787], "three in a row")
     check(ports_for(3, 2780, 2783, {2781}, set(), set()) is None, "none free")
     allhave = have | {"netbsd/restic-bko", "netbsd/rustic-bko"}
-    hosts = dict(a=dict(have=allhave, slots_free=3, room=(26, 20), ceil=None),
-                 b=dict(have=have, slots_free=3, room=(26, 20), ceil=None))
+    # (Rooms as cmp-run.sh gives them: the memory for D + M, 26 GiB of RAM disk beside 20 of memory.)
+    hosts = dict(a=dict(have=allhave, slots_free=3, room=(26, 46), ceil=None),
+                 b=dict(have=have, slots_free=3, room=(26, 46), ceil=None))
     rows, left = simulate(list(sp), sp, est, hosts, 3)
     check(not left and len(rows) == len(sp), f"plan places every guest: {[(r[0], r[1], int(r[2])) for r in rows]}")
     check(all(r[1] == "a" for r in rows if r[0] == "bsd"), "plan: a guest goes only where its binaries are")
@@ -1741,7 +1752,7 @@ def self_test():
             at = [r for r in rows if r[1] == h and r[2] <= t < r[3]]
             if sum(sp[r[0]].load for r in at) > 3 or any(r[4] for r in at) or \
                     sum(sp[r[0]].n * sp[r[0]].d for r in at) > 26 + 1e-9 or \
-                    sum(sp[r[0]].n * sp[r[0]].m for r in at) > 20 + 1e-9:
+                    sum(sp[r[0]].n * (sp[r[0]].d + sp[r[0]].m) for r in at) > 46 + 1e-9:
                 ok_cap = False
     check(ok_cap, "plan: never more than 3 places or the room on a host")
     hosts["a"]["room"] = hosts["b"]["room"] = (5, 5)
@@ -1810,7 +1821,7 @@ def self_test():
     check(g == "long", "images not known (vms None): not checked, as before")
     g, _, why = pick(["big", "long"], sp, have, 3, 3, (50, 50), (12, 40), vms={"big"})
     check(g is None and why == ["big:ceiling", "long:novm"], f"image and ceiling each checked ({why})")
-    imgs = dict(a=dict(hosts["a"], vms={"short", "bsd"}), b=dict(hosts["b"], room=(26, 20), vms={"short", "long"}))
+    imgs = dict(a=dict(hosts["a"], vms={"short", "bsd"}), b=dict(hosts["b"], room=(26, 46), vms={"short", "long"}))
     imgs["a"]["room"] = (26, 20)
     rows, left = simulate(["long", "short", "bsd"], sp, est, imgs, 3)
     check(not left and [r[1] for r in rows if r[0] == "long"] == ["b"] and [r[1] for r in rows if r[0] == "bsd"] == ["a"],
@@ -1898,7 +1909,7 @@ def self_test():
         started = []
         drv.launch = lambda host, g, ports: started.append(g) or drv.jobs().setdefault(
             g, drv.new_job(host, ports, time.time())) is not None
-        snap = dict(full=True, temp=50.0, nvme=[40.0], room=(26.0, 20.0, 0, 0), ceil=None, slots_other=0, qemu=[],
+        snap = dict(full=True, temp=50.0, nvme=[40.0], room=(26.0, 46.0, 0, 0), ceil=None, slots_other=0, qemu=[],
                     listen=set())
         drv.start_some({"chopin": snap}, time.time())
         check(started == [], f"stop file: start_some starts nothing ({started})")
@@ -2018,7 +2029,7 @@ def self_test():
             done = polls["n"] >= 2
             jobs = {"big": dict(start=1000, exit=0 if done else None, end=1900 if done else None, ports=[2780],
                                 alive=not done)}
-            return dict(full=full, temp=50.0, nvme=[], budget=None, room=(26.0, 20.0, 0, 0), ceil=None, noram=False,
+            return dict(full=full, temp=50.0, nvme=[], budget=None, room=(26.0, 46.0, 0, 0), ceil=None, noram=False,
                         ledger=[], waits=[], slots_other=0, slots_ours=[], qemu=[], listen=set(), jobs=jobs,
                         slotwait=[])
 
@@ -2076,7 +2087,7 @@ def self_test():
                 done = polls["n"] >= 3   # the second poll's reads (two hosts a poll)
                 jobs = {"short": dict(start=1000, exit=0 if done else None, end=1100 if done else None, ports=[2880],
                                       alive=not done)} if host == "copland" else {}
-                return dict(full=full, temp=50.0, nvme=[], budget=None, room=(9.0, 9.2, 0, 0), ceil=small,
+                return dict(full=full, temp=50.0, nvme=[], budget=None, room=(9.0, 18.2, 0, 0), ceil=small,
                             noram=False, ledger=[], waits=[], slots_other=0, slots_ours=[], qemu=[], listen=set(),
                             jobs=jobs, slotwait=[])
             globals().update(status=small_status)

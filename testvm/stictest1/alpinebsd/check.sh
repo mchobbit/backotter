@@ -9,7 +9,7 @@
 # One throwaway overlay (vm-run --snapshot, TMPDIR=/mnt/bko-ram/PREFIX), taken
 # through guest-slot.sh (slot_take 3 on slot_range_here: 2700-2799 on
 # Chopin, 2800-2899 on Copland, 2900-2999 on Cinqcent) and cmp-run.sh
-# --reserve 3 6.
+# --reserve 3 5.
 # NetBSD's mtree, stat, chflags, *facl, *extattr, touch, nc go in /root/nbtools
 # (AlpineBSD has none: busybox), from ~/backotter-work/netbsd-tools; a host
 # without them fetches them first from a throwaway netbsd11 on PORT (as
@@ -49,7 +49,7 @@ if [[ -z ${CHECK_INNER:-} ]]; then
     source "$CMP/guest-slot.sh"
     slot_take 3 "$(slot_range_here)"
     CHECK_INNER=1 CHECK_LOGS=$LOGS RUSTIC_BIN=$rustic HOT_C=90 \
-        "$WORK/cmp-run.sh" --reserve 3 6 timeout 900 "$self" "$@" >"$LOGS/run.log" 2>&1
+        "$WORK/cmp-run.sh" --reserve 3 5 timeout 900 "$self" "$@" >"$LOGS/run.log" 2>&1
     rc=$?
     slot_give
     rm -rf "$SCR"

@@ -187,12 +187,19 @@ hosts queued for hours while Copland and Cage idled, and what only a big host ca
 is kept there by each cell's ceiling and capabilities, never by a host's name.
 
 The ceiling is the most that one `cmp-run.sh --reserve` can ever get on a host.
-`cmp-run.sh --ceiling` prints it as `DISK MEM` and writes nothing.
-`cmp-run.sh --free` prints, as `DISK MEM` and then `waiting N`, what a new
-`--reserve` could get there now (the smaller of the ceiling and budget()'s
-room, which is just what admission tests a `--reserve` against, so the
-ledger's rows and the live memory check count once each) and how many jobs
-are in line; it writes nothing either, so anyone may ask. It reads the ledger
+`cmp-run.sh --ceiling` prints it as `DISK MEM` and writes nothing; each figure
+is a limit of its own. `cmp-run.sh --free` prints, as `DISK MEM` and then
+`waiting N`, what a new `--reserve` could get there now (the RAM disk: the
+smaller of the ceiling's and budget()'s; the memory: budget()'s, within the
+ceiling's two figures together, which is just what admission tests a
+`--reserve` against, so the ledger's rows and the live memory check count once
+each) and how many jobs are in line; it writes nothing either, so anyone may
+ask. Since 2026-11-24 the memory of `--free` (and of budget()) is for a job's
+D and M together: a `--reserve D M` within the ceiling starts when D fits the
+RAM disk and D + M the memory. A job's RAM disk is memory too, so the memory
+rules charge running jobs' RAM disk as reserved (or as written, when more),
+not the whole tmpfs as if it were full beside every job's M, which had held
+the unreserved RAM disk as memory too (testvm/compare/cmp-run.sh's header). It reads the ledger
 unlocked, so its figure is advice: only a `--reserve` holds room. `testvm/pick-host` asks every default host at once, over
 ssh, and prints the one to use for a job of your own:
 
@@ -282,8 +289,8 @@ hold. A host short of free SSD gets no overflow: its lines stay in the RAM disk.
 ssd=D CMD`, which an older reader takes as a job with no RAM disk.
 
 With scratch off the RAM disk, memory is the limit, so `holt_jobs` rose as far
-as the memory pool carries (MemTotal less the whole tmpfs, the ARC's GiB and
-`base_gib`; a HoltTest job reserves 4 GiB of it, and SticTest and GuestTest
+as the memory pool carried then (MemTotal less the whole tmpfs, the ARC's GiB and
+`base_gib`; a HoltTest job reserved 4 GiB of it, and SticTest and GuestTest
 share it):
 
 | host | mode | `holt_jobs` | memory pool (ceiling) | threads | `/bkoscratch` free, 2026-11-23 | SSD room |
@@ -298,6 +305,23 @@ Four, not five or six, on the big hosts: five jobs would leave 5 GiB of the pool
 for everything else, and Cinqcent was held for swap-out the day this was set.
 Two on the M900s: three would take the whole pool. Cage is the host to watch:
 its SN770 has dropped off PCIe under heavy I/O.
+
+Since 2026-11-24 the pool no longer loses the whole tmpfs: it is MemTotal less
+the ARC's GiB, `base_gib` and the RAM disk reserved (or written), and each job
+takes its D + M of it, so a job on the SSD (D 0) or with a small RAM disk
+leaves the rest of the RAM disk's memory to the others. With the RAM disk
+empty that is 55.2 GiB on the big hosts, 22.1 on the M900s and 12.0 on
+Choubox (against 25.2, 12.1 and 8.0 before); with the RAM disk all reserved it
+is what it was. The live check (MemAvailable less what reservations may still
+write and use, swap in use and 2 GiB) still guards it. The reservations were
+trimmed the same day: SticTest's M is the guest's RAM + 1 GiB (mostly 6 to 5;
+stictest1/README.md), and a HoltTest line's M from its peaks is 1.10 x its anon
++ 0.25 GiB to a tenth, at least 3.5 (ram-size.sh; about 3.6, was 4). The slots
+(`stic_slots`, `holt_jobs`) are as they were: what the pool gained lets them be
+filled beside one another (on an M900, two SticTest checks and a HoltTest job
+on the SSD: 2 x (3 + 5) + 3.6 = 19.6 of 22.1, where before 2 x 6 + 4 was over
+its 12.1), not more of them. Watch the swap rule's holds the first rounds after
+a sync: if they grow on a host, raise its `base_gib`.
 
 Test2's write stop rule leaves an SSD job's bytes out (its wear line says
 `scratch=ssd`; a RAM-disk job's says `scratch=ram` and is held to the budget as

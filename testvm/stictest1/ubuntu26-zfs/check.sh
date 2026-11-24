@@ -10,7 +10,7 @@
 #   NEED_FILTER  a regex: print only the needs it matches
 # In a throwaway overlay of ~/backotter-work/vms/ubuntu26-zfs (vm-run --snapshot,
 # its overlay in /mnt/bko-ram/PREFIX), taken through guest-slot.sh and
-# cmp-run.sh --reserve 13 6 (the overlay grows to about 12 GiB):
+# cmp-run.sh --reserve 13 5 (the overlay grows to about 12 GiB):
 #   1. fs_roundtrip.py zfs-ds (datasets in the guest's own root pool), zfs
 #      (pools on files) and ext4 (ubuntu24's /boot type; this guest's /boot
 #      is on bpool): torture.sh's tree
@@ -38,7 +38,7 @@ HERE=$(dirname "$SELF") STC_LOGS=${STC_LOGS:-$WORK/stictest1/$GUEST/logs}
 if [[ -z ${CHECK_RESERVED:-} ]]; then
     . ${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh
     slot_take 3 "$(slot_range_here)"
-    CHECK_RESERVED=1 HOT_C=90 $WORK/cmp-run.sh --reserve 13 6 "$SELF" "$BIN" "$PORT" "$PREFIX" "$FILTER"
+    CHECK_RESERVED=1 HOT_C=90 $WORK/cmp-run.sh --reserve 13 5 "$SELF" "$BIN" "$PORT" "$PREFIX" "$FILTER"
     rc=$?
     slot_give
     exit $rc

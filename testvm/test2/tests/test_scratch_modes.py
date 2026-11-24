@@ -184,7 +184,7 @@ class Place(Fakes):
 
     FUNCS = 'eval "$(sed -n "/^place()/,/^}/p; /^place_lines()/,/^}/p; /^ram_room()/,/^}/p" "$1")"; NUM_RE="^[0-9]+([.][0-9]+)?$"; '
 
-    def place(self, d, m, variant="", mode="overflow", ceil="29.0 23.2", ssd="184.0", after="29.0 23.2", free_rc=0,
+    def place(self, d, m, variant="", mode="overflow", ceil="29.0 23.2", ssd="184.0", after="29.0 52.2", free_rc=0,
               ram=1, disk_over=None, rs=1, ss=1):
         """place's answer: "ram", "ssd WHY", "none ROOM" or "wait WHY".  DISK_OVER as the runner
         sets it: 1 in a mode other than ram, else as given (the host's holt_disk_mode)."""
@@ -196,7 +196,7 @@ class Place(Fakes):
         self.assertEqual((p.stderr, p.returncode), ("", 0))
         return p.stdout.strip()
 
-    def lines(self, lines, room="29.0 23.2", ssd="184.0", ceil="29.0 23.2", rs=1, ss=1, inline=0, mode="overflow"):
+    def lines(self, lines, room="29.0 52.2", ssd="184.0", ceil="29.0 23.2", rs=1, ss=1, inline=0, mode="overflow"):
         """place_lines over "D M IMG" lines, as cant_scan asks it (INLINE 0 while a job of ours is here)."""
         text = "".join(f"{k} {x}\n" for k, x in enumerate(lines))
         cmd = self.FUNCS + 'MODE=$2 CEIL=$3 RAM=1 DISK_OVER=1 RSFREE=$4 SSFREE=$5 RAMROOM=$6 SSDROOM=$7 INLINE=$8; place_lines'
@@ -213,11 +213,25 @@ class Place(Fakes):
         for gv, d in (("truenas25", 27), ("pop24", 20), ("pikaos4-luks", 16), ("mint22+bigger", 16),
                       ("solus49", 16), ("neon24", 15), ("debian13", 4)):
             self.assertEqual(self.place(d, 4), "ram", f"{gv}: D {d} fits the empty RAM disk")
-        self.assertEqual(self.place(13, 4, after="20.0 9.0"), "ram", "over 12 GiB, and room: in RAM (no size cutoff)")
-        self.assertEqual(self.place(2, 4, after="2.0 19.2"), "ram")
-        self.assertEqual(self.place(9, 4, ceil="9.0 10.1", after="9.0 10.1", ssd="156.0"), "ram", "a small host")
+        self.assertEqual(self.place(13, 4, after="20.0 29.0"), "ram", "over 12 GiB, and room: in RAM (no size cutoff)")
+        self.assertEqual(self.place(2, 4, after="2.0 21.2"), "ram")
+        self.assertEqual(self.place(9, 4, ceil="9.0 10.1", after="9.0 19.1", ssd="156.0"), "ram", "a small host")
         self.assertEqual(self.place(27, 4, ss=0), "ram", "the SSD slots full, a RAM slot free and it fits: in RAM")
-        self.assertEqual(self.place(4, 4, ss=0, after="5.0 6.1"), "ram")
+        self.assertEqual(self.place(4, 4, ss=0, after="5.0 11.1"), "ram")
+
+    def test_the_memory_is_for_d_plus_m_in_ram(self):
+        """cmp-run.sh's memory room is for a job's D and M together since 2026-11-24 (its RAM disk
+        is memory too): a line whose D fits the RAM disk but whose D + M doesn't fit the memory
+        takes an SSD slot, where it needs its M alone; one whose M alone doesn't fit waits for that
+        in its RAM slot, as before."""
+        self.assertEqual(self.place(13, 4, after="20.0 17.0"), "ram", "13 + 4 within 17.0: in RAM")
+        self.assertEqual(self.place(13, 4, after="20.0 16.9"),
+                         "ssd overflow: the memory has room for 16.9 GiB now, not its D + M 17")
+        self.assertEqual(self.place(13, 4, after="20.0 16.9", ss=0, ssd="184.0"), "ram",
+                         "no SSD slot free, INLINE 1: it starts and waits for the memory in cmp-run.sh's line")
+        self.assertEqual(self.lines(["13 4 0"], room="20.0 16.9", ss=0),
+                         ["wait the memory has room for 16.9 GiB now, not its D + M 17, and no SSD slot is free"])
+        self.assertEqual(self.place(13, 4, after="20.0 3.9"), "ram", "even its M is short: it waits in its RAM slot")
 
     def test_the_ram_slot_taken_on_the_ssd_though_ram_has_room(self):
         self.assertEqual(self.place(4, 4, rs=0), "ssd no RAM slot free", "an empty RAM disk, but its RAM slots are taken")
@@ -238,20 +252,20 @@ class Place(Fakes):
 
     def test_the_ram_disk_full_on_the_ssd(self):
         """truenas25 holds 27 of the 29: what doesn't fit now takes an SSD slot, what does stays."""
-        self.assertEqual(self.place(15, 4, after="2.0 19.2"), "ssd overflow: " + self.NOROOM.format("2.0", 15))
-        self.assertEqual(self.place(3, 4, after="2.0 19.2"), "ssd overflow: " + self.NOROOM.format("2.0", 3))
+        self.assertEqual(self.place(15, 4, after="2.0 21.2"), "ssd overflow: " + self.NOROOM.format("2.0", 15))
+        self.assertEqual(self.place(3, 4, after="2.0 21.2"), "ssd overflow: " + self.NOROOM.format("2.0", 3))
         self.assertEqual(self.place(15, 4, after="0.0 19.2"), "ssd overflow: " + self.NOROOM.format("0.0", 15))
-        self.assertEqual(self.place(27, 4, after="26.9 9.0"), "ssd overflow: " + self.NOROOM.format("26.9", 27))
-        self.assertEqual(self.place(6, 4, ceil="9.0 10.1", after="5.0 6.1", ssd="156.0"),
+        self.assertEqual(self.place(27, 4, after="26.9 35.9"), "ssd overflow: " + self.NOROOM.format("26.9", 27))
+        self.assertEqual(self.place(6, 4, ceil="9.0 10.1", after="5.0 11.1", ssd="156.0"),
                          "ssd overflow: " + self.NOROOM.format("5.0", 6))
         self.assertEqual(self.place(15, 4, after="2.0 3.9"), "ram", "its memory is what it waits for: in its RAM slot")
-        self.assertEqual(self.place(6, 4, after="5.0 6.1", free_rc=1), "ram", "no answer from --free: in RAM")
+        self.assertEqual(self.place(6, 4, after="5.0 11.1", free_rc=1), "ram", "no answer from --free: in RAM")
         self.assertEqual(self.place(6, 4, after="x y"), "ram")
 
     def test_over_the_ceiling_an_ssd_slot_only(self):
         self.assertEqual(self.place(30, 4), "ssd DISK_OVER: over the RAM-disk ceiling 29.0 23.2", "vanilla3: never fits")
         self.assertEqual(self.place(30, 4, rs=0), "ssd DISK_OVER: over the RAM-disk ceiling 29.0 23.2")
-        small = dict(ceil="9.0 10.1", after="9.0 10.1", ssd="156.0")
+        small = dict(ceil="9.0 10.1", after="9.0 19.1", ssd="156.0")
         self.assertEqual(self.place(17, 4, **small), "ssd DISK_OVER: over the RAM-disk ceiling 9.0 10.1")
         self.assertEqual(self.place(9.1, 4, **small), "ssd DISK_OVER: over the RAM-disk ceiling 9.0 10.1")
         self.assertEqual(self.place(17, 4, ss=0, **small),
@@ -267,24 +281,24 @@ class Place(Fakes):
         While a job of ours is here (the scan's INLINE 0) the line waits in the todo and the next
         one is tried, when an SSD slot would take it; with none here, or with an SSD that never
         will, it starts and waits in cmp-run.sh's line as it always did (the queue's place there)."""
-        self.assertEqual(self.lines(["15 4 0", "2 4 0", "30 4 0", "15 4 1"], room="2.0 19.2", ss=0),
+        self.assertEqual(self.lines(["15 4 0", "2 4 0", "30 4 0", "15 4 1"], room="2.0 21.2", ss=0),
                          ["wait " + self.NOROOM.format("2.0", 15) + ", and no SSD slot is free", "ram",
                           "wait no SSD slot free (its D is over the RAM-disk ceiling 29.0 23.2)",
                           "wait " + self.NOROOM.format("2.0", 15) + " (+img works only in the RAM disk)"])
-        self.assertEqual(self.lines(["15 4 0", "15 4 1"], room="2.0 19.2", ss=0, inline=1), ["ram", "ram"])
-        self.assertEqual(self.place(15, 4, after="2.0 19.2", ss=0), "ram", "launch's own asking: INLINE 1")
+        self.assertEqual(self.lines(["15 4 0", "15 4 1"], room="2.0 21.2", ss=0, inline=1), ["ram", "ram"])
+        self.assertEqual(self.place(15, 4, after="2.0 21.2", ss=0), "ram", "launch's own asking: INLINE 1")
         # the SSD short of room (cinqcent's fast disk at 98%, choubox's 15 GiB): it waits for the RAM disk
-        self.assertEqual(self.lines(["6 4 0"], room="5.0 6.1", ssd="5.0", ceil="9.0 10.1"), ["ram"])
-        self.assertEqual(self.place(6, 4, ceil="9.0 10.1", ssd="5.0", after="5.0 6.1"), "ram")
-        self.assertEqual(self.place(6, 4, ceil="9.0 10.1", ssd=None, after="5.0 6.1"), "ram", "no answer from --ssd-free")
-        self.assertEqual(self.place(13, 4, ssd="15.0", after="5.0 6.1"), "ssd overflow: " + self.NOROOM.format("5.0", 13))
+        self.assertEqual(self.lines(["6 4 0"], room="5.0 11.1", ssd="5.0", ceil="9.0 10.1"), ["ram"])
+        self.assertEqual(self.place(6, 4, ceil="9.0 10.1", ssd="5.0", after="5.0 11.1"), "ram")
+        self.assertEqual(self.place(6, 4, ceil="9.0 10.1", ssd=None, after="5.0 11.1"), "ram", "no answer from --ssd-free")
+        self.assertEqual(self.place(13, 4, ssd="15.0", after="5.0 11.1"), "ssd overflow: " + self.NOROOM.format("5.0", 13))
         # memory short: nothing would start anywhere; it holds its slot in cmp-run.sh's line
         self.assertEqual(self.lines(["15 4 0", "15 4 1"], room="2.0 3.9", ss=0), ["ram", "ram"])
 
     def test_no_job_here_nothing_waits(self):
         """With no job of ours on the host both slots are free and INLINE is 1: no line waits in the
         todo (else an idle runner would take what is left for other hosts' and end)."""
-        for room in ("29.0 23.2", "2.0 19.2", "0.0 0.0", "2.0 3.9", ""):
+        for room in ("29.0 52.2", "2.0 21.2", "0.0 0.0", "2.0 3.9", ""):
             for ssd in ("184.0", "3.0", ""):
                 got = self.lines(["2 4 0", "15 4 0", "30 4 0", "2 4 1", "15 4 1", "30 4 1"], room=room, ssd=ssd, inline=1)
                 self.assertFalse([x for x in got if x.startswith("wait")], (room, ssd, got))
@@ -292,27 +306,27 @@ class Place(Fakes):
     def test_choubox_s_single_slot_either_way(self):
         """choubox: holt_jobs 1, a RAM slot and an SSD slot, a RAM-disk ceiling of 3.0 and 14.5 GiB
         of SSD room: its one job is a RAM job or an SSD job, and most of its lines are the SSD's."""
-        box = dict(ceil="3.0 6.0", ssd="14.5", after="3.0 6.0")
+        box = dict(ceil="3.0 6.0", ssd="14.5", after="3.0 9.0")
         self.assertEqual(self.place(2, 4, **box), "ram")
         self.assertEqual(self.place(3, 4, **box), "ram")
         self.assertEqual(self.place(4, 4, **box), "ssd DISK_OVER: over the RAM-disk ceiling 3.0 6.0")
         self.assertEqual(self.place(14, 4, **box), "ssd DISK_OVER: over the RAM-disk ceiling 3.0 6.0")
         self.assertEqual(self.place(16, 4, **box), "none 14.5", "left for the other hosts")
-        self.assertEqual(self.place(2, 4, **dict(box, after="0.4 5.0")), "ssd overflow: " + self.NOROOM.format("0.4", 2))
+        self.assertEqual(self.place(2, 4, **dict(box, after="0.4 5.4")), "ssd overflow: " + self.NOROOM.format("0.4", 2))
         self.assertEqual((H.holt_slots("choubox"), H.limit("choubox", "holt_jobs")), ((1, 1), 1))
 
     def test_img_and_the_other_modes(self):
         """+img only in the RAM disk; the modes ssd and ram count no slots; HT_RAM=0."""
         self.assertEqual(self.place(30, 4, "img"), "ram", "+img: the RAM disk's (cant_why gives one over the ceiling back)")
-        self.assertEqual(self.place(15, 4, "img", after="2.0 19.2"), "ram")
+        self.assertEqual(self.place(15, 4, "img", after="2.0 21.2"), "ram")
         self.assertEqual(self.place(15, 4, "img", ss=0), "ram")
-        self.assertEqual(self.place(15, 4, "bigger", after="2.0 19.2"), "ssd overflow: " + self.NOROOM.format("2.0", 15))
+        self.assertEqual(self.place(15, 4, "bigger", after="2.0 21.2"), "ssd overflow: " + self.NOROOM.format("2.0", 15))
         for rs, ss in ((1, 1), (0, 0)):
             self.assertEqual(self.place(2, 4, mode="ssd", rs=rs, ss=ss), "ssd scratch_mode ssd")
             self.assertEqual(self.place(2, 4, "img", mode="ssd", rs=rs, ss=ss), "ram")
             self.assertEqual(self.place(30, 4, mode="ssd", rs=rs, ss=ss), "ssd DISK_OVER: over the RAM-disk ceiling 29.0 23.2")
             self.assertEqual(self.place(6, 4, mode="ssd", ssd="5.0", rs=rs, ss=ss), "ram", "no room on the SSD: in RAM")
-            self.assertEqual(self.place(15, 4, mode="ram", after="2.0 19.2", rs=rs, ss=ss), "ram", "mode ram: it waits for its room")
+            self.assertEqual(self.place(15, 4, mode="ram", after="2.0 21.2", rs=rs, ss=ss), "ram", "mode ram: it waits for its room")
             self.assertEqual(self.place(30, 4, mode="ram", rs=rs, ss=ss), "ram", "mode ram without holt_disk_mode: cant_why's")
             self.assertEqual(self.place(30, 4, mode="ram", disk_over=1, ssd="0.0", rs=rs, ss=ss),
                              "ssd DISK_OVER: over the RAM-disk ceiling 29.0 23.2", "holt_disk_mode: --reserve 0 M, as before")

@@ -7,6 +7,7 @@ instead of falling back to the debian13 guest.  drive.py's side (its probe's VM 
 novm) is drive.py --self-test's, run here too.  No host needed: the parts that need bash 4
 and flock (the test hosts') are skipped without them."""
 
+import math
 import os
 import re
 import shutil
@@ -112,6 +113,118 @@ class CmpRunCeiling(unittest.TestCase):
         """facts_host.py and drive.py's status read it with sed /^ceiling()/,/^}/."""
         body = subprocess.run(["sed", "-n", "/^ceiling()/,/^}/p", CMP_RUN], capture_output=True, text=True).stdout
         self.assertTrue(body.startswith("ceiling() {") and body.rstrip().endswith("}") and "--ceiling" not in body)
+
+
+@unittest.skipUnless(BASH, "no bash")
+class CmpRunMemory(unittest.TestCase):
+    """budget(), after_line() and fits_room(), cut out of cmp-run.sh as drive.py and facts_host.py
+    cut them, on a fake tmpfs (df) and a fake /proc/meminfo (CMP_MEMINFO).  Since 2026-11-24 the
+    memory is for a job's D and M together, and the static rule charges the RAM disk reserved or
+    written, not the whole tmpfs: on cage at 06:15Z that day the old rule offered 1.3 GiB with
+    MemAvailable at 17 GiB and 0.7 of the 10 GiB RAM disk in use."""
+
+    G = 1048576   # KiB a GiB
+
+    def setUp(self):
+        self.t = tempfile.mkdtemp(prefix="t2-budget-")
+        self.addCleanup(shutil.rmtree, self.t, True)
+        self.bin = os.path.join(self.t, "bin")
+        wr(os.path.join(self.bin, "df"), "#!/bin/sh\necho 'Filesystem 1024-blocks Used Available Capacity Mounted on'\n"
+                                        "echo \"tmpfs $DF_SIZE_K $DF_USED_K $DF_AVAIL_K 0% /mnt/bko-ram\"\n", 0o755)
+        self.meminfo = os.path.join(self.t, "meminfo")
+
+    def budget(self, size, used, avail_mem, rows="", total_k=28476964, swap_used=0.0, base=4):
+        """budget ROWS's "DISK MEM" on a SIZE GiB tmpfs with USED GiB in it, MemAvailable AVAIL_MEM
+        GiB, MemTotal TOTAL_K KiB (an M900's) and SWAP_USED GiB of swap in use; no ZFS (no ARC)."""
+        g = self.G
+        wr(self.meminfo, f"MemTotal: {total_k} kB\nMemAvailable: {int(avail_mem * g)} kB\n"
+                         f"SwapTotal: {8 * g} kB\nSwapFree: {int((8 - swap_used) * g)} kB\n")
+        env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ["PATH"], CMP_MEMINFO=self.meminfo,
+                   DF_SIZE_K=str(int(size * g)), DF_USED_K=str(int(used * g)), DF_AVAIL_K=str(int((size - used) * g)))
+        sh = ('eval "$(sed -n "/^tree_anon()/,/^}/p; /^budget()/,/^}/p" "$1")"; '
+              'RAM=/mnt/bko-ram BASE_GIB=$2; budget "$3"')
+        p = subprocess.run([BASH, "-c", sh, "-", CMP_RUN, str(base), rows], capture_output=True, text=True, env=env,
+                           timeout=60)
+        self.assertEqual((p.returncode, p.stderr), (0, ""))
+        d, m = p.stdout.split()
+        return float(d), float(m)
+
+    # Rows whose PIDs aren't there: tree_anon finds no anon for them, so all of their MEM is
+    # "reserved but not touched yet" to the live rule.
+    def test_an_empty_ledger_charges_the_ram_disk_in_use_not_the_whole_tmpfs(self):
+        # static 27.16 - 0.7 - 4 = 22.4 (the old rule: 27.16 - 10 - 4 = 13.1); live 25 - 2 = 23
+        self.assertEqual(self.budget(10, 0.7, 25), (8.3, 22.4))
+
+    def test_reserved_more_than_written_charges_the_reservation(self):
+        # rd 6 of 0.7 written: static 27.16 - 6 - 4 - 2 = 15.1; live 25 - 5.3 - 2 - 2 = 15.7
+        self.assertEqual(self.budget(10, 0.7, 25, "999991 6 2 - reserve a"), (3.0, 15.1))
+
+    def test_written_past_the_reservations_charges_what_is_written(self):
+        # 5 GiB in the tmpfs, 1 reserved: static 27.16 - 5 - 4 - 2 = 16.1; nothing more to come
+        self.assertEqual(self.budget(10, 5, 25, "999991 1 2 - reserve a"), (4.0, 16.1))
+
+    def test_the_live_rule_still_guards(self):
+        # MemAvailable 10, 1 GiB of swap in use: live 10 - 1 - 2 = 7.0, under the static 22.4
+        self.assertEqual(self.budget(10, 0.7, 10, swap_used=1.0), (8.3, 7.0))
+
+    def test_cage_at_0615z(self):
+        """A SticTest check (3 6) and a HoltTest job on the SSD (0 4), neither touched yet: the
+        memory for one more job's D + M is the live rule's 17 - 2.3 - 2 - 10 = 2.7 GiB, where the
+        old rules' was 17 - 9.3 - 2 - 10, under nothing."""
+        self.assertEqual(self.budget(10, 0.7, 17, "999991 3 6 - reserve stic\n999992 0 4 - reserve ssd=3 holt"),
+                         (6.0, 2.7))
+
+    def test_never_less_than_the_old_rules_admitted(self):
+        """Any job (D, M) the old rules let in (D within the RAM disk, M within the memory, which
+        charged the whole tmpfs and the tmpfs's free space) the new ones let in too: the new memory
+        is at least the old one plus the RAM disk's room."""
+        g = self.G
+        total = 28476964 / g
+        for size, used, avail, rows, rd, rm in (
+                (10, 0.7, 25, "", 0, 0), (10, 0.7, 17, "999991 3 6 - reserve s", 3, 6),
+                (10, 4.0, 20, "999991 3 3 - reserve s\n999992 2 1 - reserve t", 5, 4),
+                (30, 12.0, 50, "999991 16 4 - reserve h\n999992 0 4 - reserve ssd=9 h", 16, 8),
+                (4, 0.1, 12, "", 0, 0), (10, 9.5, 18, "999991 8 2 - reserve x", 8, 2)):
+            d, m = self.budget(size, used, avail, rows)
+            free = size - used
+            old_d = min(size - 1 - rd, free - 1)
+            old_m = min(total - size - 4 - rm, avail - free - 2 - rm)
+            if old_d >= 0 and old_m >= 0:
+                self.assertGreaterEqual(m + 0.1, old_d + old_m, (size, used, avail, rows, d, m))
+            self.assertAlmostEqual(d, math.floor((old_d + 0.001) * 10) / 10, 6, "the RAM disk's room is as it was")
+
+    def after_line(self, maxd, maxm, ledger, waits):
+        sh = 'eval "$(sed -n "/^after_line()/,/^}/p" "$1")"; after_line 0 "$2" "$3" "$4" "$5"'
+        p = subprocess.run([BASH, "-c", sh, "-", CMP_RUN, str(maxd), str(maxm), ledger, waits],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual((p.returncode, p.stderr), (0, ""))
+        return p.stdout.split()
+
+    def test_after_line_takes_a_waiters_d_plus_m_off_the_memory(self):
+        import time
+        now = int(time.time())
+        ledger = "1 2 3 - x"
+        # a waiter of 2 1 fits 5 4 (2 + 1 within 4): it has its room first
+        self.assertEqual(self.after_line(5, 4, ledger, f"100 2.0 1.0 95 {now} reserve w"), ["3.0", "1.0", "1", "95"])
+        # one of 2 2.5 doesn't (4.5): young, it is passed
+        self.assertEqual(self.after_line(5, 4, ledger, f"100 2.0 2.5 95 {now} reserve w"), ["5.0", "4.0", "1", "95"])
+        # old, it is held back for: within the room plus the ledger's 2 and 2 + 3
+        self.assertEqual(self.after_line(5, 4, ledger, f"100 2.0 2.5 95 {now - 7200} reserve w"),
+                         ["3.0", "-0.5", "1", "95"])
+        # one that the room and the ledger's together can never meet (D + M 10 over 4 + 5) is not
+        self.assertEqual(self.after_line(5, 4, ledger, f"100 2.0 8.0 95 {now - 7200} reserve w"),
+                         ["5.0", "4.0", "1", "95"])
+
+    def test_fits_room_is_d_within_the_disk_and_d_plus_m_within_the_memory(self):
+        sh = 'eval "$(grep -E "^fits(_room)?\\(\\)" "$1")"; fits_room "$2" "$3" "$4" "$5"'
+        def fr(*a):
+            return subprocess.run([BASH, "-c", sh, "-", CMP_RUN] + [str(x) for x in a], capture_output=True,
+                                  text=True, timeout=60).returncode == 0
+        self.assertTrue(fr(3.0, 3, 9.0, 6))
+        self.assertFalse(fr(3.0, 3, 8.9, 6))
+        self.assertFalse(fr(2.9, 3, 20.0, 1))
+        self.assertTrue(fr(0.0, 0, 4.0, 4))     # a --reserve-ssd: no RAM disk
+        self.assertTrue(fr(2.7, 2.7, 6.7, 4))   # tenths that don't add up exactly in floats
 
 
 @unittest.skipUnless(BASH, "no bash")
@@ -332,10 +445,11 @@ class QueueLaunchPlace(unittest.TestCase):
     2026-11-23).  In mode overflow a line works in the RAM disk whenever its D fits there right
     now, whatever its size (--reserve D M, HT_RAM=1); on /bkoscratch (--reserve-ssd D M,
     HT_RAM=0) only when the RAM disk has no room for it now, or its D is over this host's
-    RAM-disk ceiling.  cmp-run.sh is a stand-in that answers --ssd-free and --free as told and
+    RAM-disk ceiling.  (--free's memory is for D + M since 2026-11-24: an empty big host's "after"
+    is 29.0 52.2.)  cmp-run.sh is a stand-in that answers --ssd-free and --free as told and
     writes down what a job was started with; setsid one that runs its command."""
 
-    def launch(self, line, mode="overflow", ceil="29.0 23.2", ssd="184.0", after="29.0 23.2", disk_over=None, back_rc=0,
+    def launch(self, line, mode="overflow", ceil="29.0 23.2", ssd="184.0", after="29.0 52.2", disk_over=None, back_rc=0,
                rs=1, ss=1):
         t = tempfile.mkdtemp(prefix="t2-place-")
         self.addCleanup(shutil.rmtree, t, True)
@@ -376,24 +490,24 @@ class QueueLaunchPlace(unittest.TestCase):
         self.assertEqual(last, "rc=0 d=27 jr=1 gv=truenas25", "a RAM job: JR 1, which slots_now counts as a RAM slot's")
         self.assertEqual(said, ["SAY slot 0: truenas25=27%4 on port 2600 (pid " + said[0].split("(pid ")[1].split(")")[0]
                                 + "), --reserve 27 4, a RAM slot, 40 C, 200 GB free"])
-        job, last, _ = self.launch("pop24+bigger=20%4", after="20.0 23.2")
+        job, last, _ = self.launch("pop24+bigger=20%4", after="20.0 43.2")
         self.assertEqual(job, f"HT_RAM=1 WEAR_TAG=ht1:r1:pop24-bigger HT_VARIANT=bigger --reserve 20 4 {self.JOB} pop24 r1")
-        job, _, _ = self.launch("mint22=13%4", after="13.0 4.0")
+        job, _, _ = self.launch("mint22=13%4", after="13.0 17.0")
         self.assertIn(" --reserve 13 4 ", job)
 
     def test_the_ram_disk_is_full_on_the_ssd(self):
-        job, last, said = self.launch("neon24=15%4", after="2.0 19.2")   # (truenas25 holds 27 of 29)
+        job, last, said = self.launch("neon24=15%4", after="2.0 21.2")   # (truenas25 holds 27 of 29)
         self.assertEqual(job, f"HT_RAM=0 WEAR_TAG=ht1:r1:neon24 HT_VARIANT= --reserve-ssd 15 4 {self.JOB} neon24 r1")
         self.assertEqual(last, "rc=0 d=0 jr=0 gv=neon24", "an SSD job: JR 0, an SSD slot's")
         self.assertIn("--reserve-ssd 15 4, on /bkoscratch (overflow: the RAM disk has room for 2.0 GiB now, not its 15), "
                       "an SSD slot, 40 C", said[0])
-        job, _, _ = self.launch("debian13=4%4", after="2.0 19.2")
+        job, _, _ = self.launch("debian13=4%4", after="2.0 21.2")
         self.assertIn("HT_RAM=0 ", job)
         self.assertIn(" --reserve-ssd 4 4 ", job)
-        job, _, _ = self.launch("alpine324=2%4", after="2.0 19.2")
+        job, _, _ = self.launch("alpine324=2%4", after="2.0 21.2")
         self.assertIn(" --reserve 2 4 ", job, "what still fits stays in RAM")
         # the SSD short of room too: it waits for the RAM disk, as in mode ram
-        job, _, _ = self.launch("neon24=15%4", after="2.0 19.2", ssd="14.0")
+        job, _, _ = self.launch("neon24=15%4", after="2.0 21.2", ssd="14.0")
         self.assertIn("HT_RAM=1 ", job)
         self.assertIn(" --reserve 15 4 ", job)
 
@@ -401,9 +515,9 @@ class QueueLaunchPlace(unittest.TestCase):
         job, last, said = self.launch("vanilla3=30%4")
         self.assertEqual(job, f"HT_RAM=0 WEAR_TAG=ht1:r1:vanilla3 HT_VARIANT= --reserve-ssd 30 4 {self.JOB} vanilla3 r1")
         self.assertIn("on /bkoscratch (DISK_OVER: over the RAM-disk ceiling 29.0 23.2)", said[0])
-        job, _, _ = self.launch("mint22=17%4", ceil="9.0 10.1", after="9.0 10.1", ssd="156.0")   # a small host
+        job, _, _ = self.launch("mint22=17%4", ceil="9.0 10.1", after="9.0 19.1", ssd="156.0")   # a small host
         self.assertIn(" --reserve-ssd 17 4 ", job)
-        job, _, _ = self.launch("debian13=9%4", ceil="9.0 10.1", after="9.0 10.1", ssd="156.0")
+        job, _, _ = self.launch("debian13=9%4", ceil="9.0 10.1", after="9.0 19.1", ssd="156.0")
         self.assertIn(" --reserve 9 4 ", job)
         # no room for it on the SSD now: back to the todo for the other hosts, nothing started
         job, last, said = self.launch("mint22=17%4", ceil="9.0 10.1", ssd="14.5")
@@ -446,7 +560,7 @@ class QueueLaunchPlace(unittest.TestCase):
     def test_the_rest_is_kept(self):
         """+img only in the RAM disk; mode ssd every line; mode ram none, but holt_disk_mode's
         line over the ceiling under --reserve 0 M as before 2026-11-23."""
-        job, _, _ = self.launch("debian13+img=15%4", after="2.0 19.2")
+        job, _, _ = self.launch("debian13+img=15%4", after="2.0 21.2")
         self.assertEqual(job, f"HT_RAM=1 WEAR_TAG=ht1:r1:debian13-img HT_VARIANT=img --reserve 15 4 {self.JOB} debian13 r1")
         job, last, said = self.launch("vanilla3+img=30%4")
         self.assertIsNone(job, "cant_why's: back to the others")
@@ -454,7 +568,7 @@ class QueueLaunchPlace(unittest.TestCase):
         job, _, _ = self.launch("alpine324=2%4", mode="ssd")
         self.assertIn("HT_RAM=0 ", job)
         self.assertIn(" --reserve-ssd 2 4 ", job)
-        job, _, _ = self.launch("neon24=15%4", mode="ram", after="2.0 19.2")
+        job, _, _ = self.launch("neon24=15%4", mode="ram", after="2.0 21.2")
         self.assertIn(" --reserve 15 4 ", job)
         job, _, _ = self.launch("vanilla3=30%4", mode="ram", disk_over=1)
         self.assertEqual(job, f"HT_RAM=0 WEAR_TAG=ht1:r1:vanilla3 HT_VARIANT= --reserve 0 4 {self.JOB} vanilla3 r1")

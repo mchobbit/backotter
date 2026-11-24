@@ -3,7 +3,7 @@
 # UFS; no ACLs, extended attributes or birth times; file flags, all 32 bits).
 # Never a whole-disk backup: throwaway copies of the guest (vm-run --ram,
 # overlay in /mnt/bko-ram/PREFIX), one per run, all inside one
-# guest-slot.sh slot and one cmp-run.sh --reserve 3 6:
+# guest-slot.sh slot and one cmp-run.sh --reserve 3 5:
 #   run-guest-rt.sh dragonfly6 (testvm/compare/dragonfly/roundtrip.sh) in all
 #     four directions (restic->restic, rustic->rustic, restic->rustic,
 #     rustic->restic): a fixture tree on HAMMER2 (/root) and one on UFS
@@ -55,7 +55,7 @@ mkdir -p "$LOGS"
 # shellcheck source=/dev/null
 source "$CMP/guest-slot.sh"
 slot_take 3 "$(slot_range_here)"
-HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 6 timeout 1500 "$self" --inner "$BIN" "$PORT" "$PREFIX" "$LOGS" >"$LOGS/run.log" 2>&1
+HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 5 timeout 1500 "$self" --inner "$BIN" "$PORT" "$PREFIX" "$LOGS" >"$LOGS/run.log" 2>&1
 rc=$?
 slot_give
 rm -rf "/mnt/bko-ram/$PREFIX"

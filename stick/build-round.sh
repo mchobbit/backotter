@@ -361,8 +361,10 @@ guest_size() {
     [[ $ca -le ${#cpu_units[@]} ]] || ca=${#cpu_units[@]}
     [[ $ga -ge 1 ]] || ga=1
     # The memory a guest may have: cmp-run.sh --free's room for one more job
-    # (live MemAvailable, the RAM disk's room to grow, the ARC, the tests'
-    # reservations), else MemAvailable less 4 GiB; shared by the guest lanes.
+    # (live MemAvailable, what the RAM disk's reservations may still write, the
+    # ARC, the tests' reservations; since 2026-11-24 it is for a job's D + M,
+    # all of it memory for a guest that takes no RAM disk), else MemAvailable
+    # less 4 GiB; shared by the guest lanes.
     room=$(bash "$here/../testvm/compare/cmp-run.sh" --free 2>/dev/null |
         awk 'NR == 1 && $2 ~ /^[0-9.]+$/ { printf "%d", $2 * 1024 }')
     why="cmp-run.sh --free"

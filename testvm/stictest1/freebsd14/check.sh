@@ -67,7 +67,7 @@ mkdir -p "$L" /mnt/bko-ram/$PREFIX
 START=$(date +%s)
 . $C/guest-slot.sh
 slot_take 3 "$(slot_range_here)"
-HOT_C=90 $WORK/cmp-run.sh --reserve 3 6 timeout 1000 bash "$here/check.sh" --inner "$BIN" "$PORT" "$PREFIX" "$L"
+HOT_C=90 $WORK/cmp-run.sh --reserve 3 5 timeout 1000 bash "$here/check.sh" --inner "$BIN" "$PORT" "$PREFIX" "$L"
 slot_give
 rm -rf /mnt/bko-ram/$PREFIX
 

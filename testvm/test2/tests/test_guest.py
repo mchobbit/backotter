@@ -55,7 +55,7 @@ class Spec(unittest.TestCase):
         self.sf = rows_guest.load_spec(REPO)
 
     def test_ninety_four_guests_and_the_exclusion(self):
-        self.assertEqual(len(self.sf.names()), 99)   # 94, and A6's five arm64 guests
+        self.assertEqual(len(self.sf.names()), 100)   # 95, and A6's five arm64 guests
         self.assertNotIn("freebsd15-builder", self.sf.names())
         self.assertEqual(self.sf.data["excluded"], {"freebsd15-builder": "a build helper"})
 
@@ -75,7 +75,7 @@ class Spec(unittest.TestCase):
 
     def test_new_guests(self):
         new = sorted(n for n in self.sf.names() if not self.sf.entry(n)["checks"]["established"])
-        self.assertEqual(new, sorted(["alpine324-uefi", "alpine324-lvm", "alpine324-luks", "guix15", "guix15-bios", "kali", "leap16",
+        self.assertEqual(new, sorted(["alpine324-uefi", "alpine324-lvm", "alpine324-luks", "guix15", "guix15-bios", "guix15-luks", "kali", "leap16",
                                       "openbsd8-crypt", "uc24",
                                       "endeavouros", "endeavouros-grub", "manjaro", "fedora44-raid", "ubuntu26-raid", "rocky10-raid5",
                                       "freebsd15-mirror", "hardenedbsd15-zfs", "solus49", "omnios58-mirror", "ubuntu26-luks", "chimera", "kinoite44",

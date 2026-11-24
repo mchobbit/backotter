@@ -550,15 +550,15 @@
     "wall_s": 100
    },
    "host": "mac",
-   "key": "251479410c49b57c3a722cf9795be9e7f9a3c31d1071e9c48f3b39ecdbce4f5a",
+   "key": "5670f79b4161fa89e17efa8b8b2d73ca031e62d659671f7376220a09b868e788",
    "keys": {
-    "mac": "251479410c49b57c3a722cf9795be9e7f9a3c31d1071e9c48f3b39ecdbce4f5a"
+    "mac": "5670f79b4161fa89e17efa8b8b2d73ca031e62d659671f7376220a09b868e788"
    },
    "klass": null,
    "last_pass": {
     "host": "mac",
     "id": "mac-20261107T000013Z-0000000d",
-    "key": "251479410c49b57c3a722cf9795be9e7f9a3c31d1071e9c48f3b39ecdbce4f5a",
+    "key": "5670f79b4161fa89e17efa8b8b2d73ca031e62d659671f7376220a09b868e788",
     "t": "2026-11-07T00:00:13Z"
    },
    "part": "fast",

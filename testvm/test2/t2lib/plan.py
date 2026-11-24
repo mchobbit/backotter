@@ -2224,7 +2224,7 @@ class Planner:
         pc.reasons += soft[:2]
 
     def holt_code_rule(self, v):
-        """bko-holt's code changed: version-only (carried), plan-visible (R15) or all 87 (holt:code)."""
+        """bko-holt's code changed: version-only (carried), plan-visible (R15) or all 88 (holt:code)."""
         P = v.P
         # R14: rows of a build that isn't CODE's (HoltTest1 runs, --holt-bin sets) count only
         # where equal, whatever the tree's diff says; so does any row when the set is a --holt-bin one.
@@ -2747,8 +2747,8 @@ def check_classes(ctx, holt_names=None, notes=None):
     src = set(fam) | set(h.get("no_family", []))
     if len(fam) != len(set(fam)):
         errs.append("holt: a guest in two families")
-    if len(src - arch_block_names(c)) != 87:
-        errs.append(f"holt: {len(src - arch_block_names(c))} sources, not 87 (and the arm64 block's)")
+    if len(src - arch_block_names(c)) != 88:
+        errs.append(f"holt: {len(src - arch_block_names(c))} sources, not 88 (and the arm64 block's)")
     known = set(holt_names or ())
     if not known:
         for f in ctx.facts.values():

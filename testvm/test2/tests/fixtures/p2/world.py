@@ -1,8 +1,8 @@
 """A synthetic world for P2's tests (U2.2-U2.6): a fixture checkout (git), BKO_GIT's three
 forks, both hosts' facts and a seeded ledger.  Nothing here touches a host or a default root.
 
-    w = World(tmpdir)            the checkout: 47 SticTest checks, 87 HoltTest sources and 9
-                                 variants, 13 gate cells, 92 guests, 7 images, with the real classes.json,
+    w = World(tmpdir)            the checkout: 47 SticTest checks, 88 HoltTest sources and 9
+                                 variants, 13 gate cells, 93 guests, 7 images, with the real classes.json,
                                  estimates.tsv, drive.py, affected.sh and ram-sizes.tsv
     w.facts()                    {host: facts}, as facts_host.py gives them
     w.ctx(rows, facts=..., **options)   a plan.Ctx
@@ -56,20 +56,22 @@ PM = {"apt": "debian12 debian13 debian13-stack debian13-zfs devuan6 mint22 mx25 
       "FreeBSD": "freebsd14 freebsd15 freebsd15-geli freebsd15-geli-bios freebsd15-geli-ufs freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs hardenedbsd15 hardenedbsd15-zfs",
       "NetBSD": "netbsd11 alpinebsd", "OpenBSD": "openbsd8", "DragonFly": "dragonfly6", "SunOS": "omnios58 omnios58-mirror oi2610 oi2610-bios",
       "Haiku": "haiku6", "Redox": "redox", "Sculpt": "sculpt2610"}
+# guix15-luks (2026-11-24, docs/design/guix.md guix15-luks): GuestTest2's and a HoltTest2 source.
+REG_GUESTS_GUIX_LUKS = ["guix15-luks"]
 # The guests registered on 2026-11-18 (the user's "add HoltTest2 and GuestTest2 to this loop"):
 # all eleven are GuestTest2's; guix15, guix15-bios, kali, leap16, truenas25 and uc24 are
 # HoltTest2 sources too, and GUEST_ONLY's aren't yet (no corpus dump: holt/tests/corpus/README.md).
 REG_GUESTS = ("alpine324-uefi alpine324-lvm alpine324-luks guix15 guix15-bios kali leap16 openbsd8-crypt "
               "truenas25 truenas25-mirror uc24").split()
 GUEST_ONLY = ("alpine324-uefi", "alpine324-lvm", "alpine324-luks", "openbsd8-crypt", "truenas25-mirror")
-GUESTS += REG_GUESTS
-UEFI |= set("alpine324-uefi alpine324-lvm alpine324-luks guix15 kali leap16 truenas25 uc24".split())
-NEW_GUESTS |= set("alpine324-uefi alpine324-lvm alpine324-luks guix15 guix15-bios kali leap16 openbsd8-crypt uc24".split())
+GUESTS += REG_GUESTS + REG_GUESTS_GUIX_LUKS
+UEFI |= set("alpine324-uefi alpine324-lvm alpine324-luks guix15 guix15-luks kali leap16 truenas25 uc24".split())
+NEW_GUESTS |= set("alpine324-uefi alpine324-lvm alpine324-luks guix15 guix15-bios guix15-luks kali leap16 openbsd8-crypt uc24".split())
 PM["apk"] += " alpine324-uefi alpine324-lvm alpine324-luks"
 PM["apt"] += " kali"
 PM["zypper"] += " leap16"
 PM["OpenBSD"] += " openbsd8-crypt"
-PM.update({"Guix": "guix15 guix15-bios", "truenas": "truenas25 truenas25-mirror", "snap": "uc24"})
+PM.update({"Guix": "guix15 guix15-bios guix15-luks", "truenas": "truenas25 truenas25-mirror", "snap": "uc24"})
 PM_OF = {g: pm for pm, gs in PM.items() for g in gs.split()}
 LINUX_PMS = ("apt", "dnf", "pacman", "zypper", "xbps", "apk", "moss", "rpm-ostree", "portage", "abroot", "tukit", "eopkg", "slackpkg")
 SECTION = {"rpm-ostree": "ostree"}          # in-guest.sh's Linux.NAME, where it isn't the pm's

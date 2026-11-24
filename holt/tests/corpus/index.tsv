@@ -42,6 +42,7 @@ ghostbsd26	chopin	r4all	PASS	2026-11-08T02:50:28Z	2026-11-08T02:46:48Z	0.2.4	3a5
 ghostbsd26-zfs	cinqcent	r4all	PASS	2026-11-08T02:50:57Z	2026-11-08T02:46:54Z	0.2.4	f9859fa36daa6ed35e006992ff6a95622338c90c93585ec7234a037bf1a710fb	changed	7	ok:7:70	0	2	178104	same	ok:7	storage.disks.0.partitions.0.boot_code.image_b64=177664/aaaca4d3 storage.disks.0.boot_code.code_b64=440/0d5e38c2
 guix15	chopin	gx3	dump	-	2026-11-14T06:32:55Z	0.2.6	-	same	14	ok:14:118	0	0	0	same	ok:14	-
 guix15-bios	chopin	gx3	dump	-	2026-11-14T06:32:58Z	0.2.6	-	same	13	ok:13:121	0	0	0	same	ok:13	-
+guix15-luks	chopin	glk6	PASS	2026-11-24T14:17:09Z	2026-11-24T14:10:47Z	0.2.6	663be3a5fd7a01dc6baabfb92eb0c6a2ef38f4c0b1fe280727bcf18a09ec679f	same	19	ok:19:141	0	0	0	same	ok:19	-
 haiku6	chopin	r4all	PASS	2026-11-08T02:40:14Z	2026-11-08T02:36:25Z	0.2.4	bc28f52db6818f232180e9f62384ce3a1b346eae229ad4497004add0d31c99a2	changed	1	ok:1:39	0	1	440	same	ok:1	storage.disks.0.boot_code.code_b64=440/14ed669c
 hardenedbsd15	cinqcent	r4all	PASS	2026-11-08T02:42:17Z	2026-11-08T02:37:19Z	0.2.4	abe8ce85847f09c92649c293290d38091568eb75b139c3325ac86f1e18071445	same	6	ok:6:37	0	2	62392	same	ok:6	storage.disks.0.partitions.1.boot_code.image_b64=61952/225ac46d storage.disks.0.boot_code.code_b64=440/0d5e38c2
 hardenedbsd15-zfs	chopin	hz1	dump	-	2026-11-15T02:42:48Z	0.2.6	-	same	7	ok:7:66	0	2	178104	same	ok:7	storage.disks.0.partitions.0.boot_code.image_b64=177664/91405ead storage.disks.0.boot_code.code_b64=440/0d5e38c2

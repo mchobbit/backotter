@@ -755,6 +755,23 @@
    ],
    "notes": "guix15/inner.sh, shared with guix15 (its check.sh is the same file)"
   },
+  "guix15-luks": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/guix15-luks/**",
+    "testvm/stictest1/guix15/inner.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#guix15-luks"
+   ],
+   "notes": "guix15/inner.sh, shared with guix15 and guix15-bios (its check.sh is guix15-bios's, but for the header); the guest boots with console-passphrase typed by vm-lib.sh's vm_boot (console-boot.py)"
+  },
   "haiku6": {
    "os": "haiku",
    "bins": [

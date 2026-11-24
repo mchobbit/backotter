@@ -194,7 +194,21 @@ core.img in /boot/grub/i386-pc; no GRUB in either store).  guix15's golden
 plan runs nothing in the chroot: its boot stage makes only the NVRAM entry
 for `\EFI\Guix\grubx64.efi`.  guix15-bios's makes the three subvolumes and
 the swap (fstab doesn't name it), and its boot stage writes the source's
-own boot.img and core.img with the rescue's `grub-bios-setup`.  oi2610
+own boot.img and core.img with the rescue's `grub-bios-setup`.  guix15-luks
+(`make-guix.sh guix15-luks`: the same Guix 1.5.0, UEFI, as Guix's
+installer encrypts: GPT with the ESP at /boot/efi, swap, and a LUKS1
+`cryptroot` holding one btrfs with `@`, `@home` and `@gnu`; GRUB opens the
+volume, then the initrd again; docs/design/guix.md "guix15-luks"), built on
+2026-11-24, was added the same day from its HoltTest1 run `glk6` on chopin,
+PASS (cinqcent's `glk5` passed too), dumped by the static bko-holt 0.2.6
+built for those runs (`0a0dce4f...`, c2e9302's load), the image the same
+as the run recorded.  Its golden plan makes LUKS1 again with the source's
+cipher, key size, hash, offset, UUID and keyslot iterations, gives
+luksFormat a volume key of load's, then `bko-holt luks1-digest` sets the
+volume key digest's iterations to the source's 394795; it makes the three
+subvolumes on /dev/mapper/cryptroot, and at boot only the `Guix` NVRAM
+entry (grubx64.efi's prefix names the volume, `(cryptouuid/...)`, not a
+partition number).  oi2610
 (`make-openindiana.sh oi2610`: OpenIndiana Hipster 2026.10 from its text
 ISO by its own text installer, driven over the console; UEFI, the whole
 disk from `zpool create -B`: a 256 MiB ESP nothing mounts, rpool with the
@@ -877,7 +891,13 @@ NIC MAC, machine-id, DMI UUID, partition UUIDs and host name: none; the same
 sha256 from both builds (src.json `ea6d6111...`).  The first two builds,
 before redact.rs's MAC() fix, had the NIC's MAC in two load options, which
 none of the scans flagged (no host string names it, and the raw dump's
-identifiers didn't either); they never left cinqcent.
+identifiers didn't either); they never left cinqcent.  So did guix15-luks
+(2026-11-24), built twice from a private directory on chopin
+(/bkoscratch/glk-corpus-raw, the holt build in /mnt/bko-ram): chopin with
+115 of its 120 strings (the guest's console-passphrase among them) and the
+raw dump's identifiers, cinqcent with 116 of its 121, the Mac with the git
+e-mail, 0 findings (its plan scanned too), the same sha256 from both builds
+(src.json `8353b2cf...`).
 
 ## The golden plans
 

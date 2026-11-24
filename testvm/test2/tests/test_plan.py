@@ -29,7 +29,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 STIC = [g for g in world.stic_guests() if not g.endswith("-arm64")]
 N_STIC = len(STIC)
 N_STIC_LINUX = sum(1 for g in STIC if g not in world.STIC_OS)
-N_HOLT = 102    # 87 sources, their 9 variant cells and the 6 +reformat-TYPE cells
+N_HOLT = 103    # 88 sources, their 9 variant cells and the 6 +reformat-TYPE cells
 
 
 def by(p):
@@ -658,7 +658,7 @@ class Estimates(unittest.TestCase):
                                                    "holt:cachyos-zfs", "holt:anduinos2", "holt:neon24", "holt:garuda", "holt:biglinux", "holt:proxmox9", "holt:proxmox9-mirror",
                                                    "holt:oi2610", "holt:oi2610-bios", "stic:oi2610", "holt:vanilla3",
                                                    "holt:pikaos4", "holt:pikaos4-luks", "holt:freebsd15-geli",
-                                                   "holt:guix15", "holt:guix15-bios", "holt:kali", "holt:leap16", "holt:truenas25", "holt:uc24",
+                                                   "holt:guix15", "holt:guix15-bios", "holt:guix15-luks", "holt:kali", "holt:leap16", "holt:truenas25", "holt:uc24",
                                                    "holt:ubuntu24-uefi", "holt:ubuntu24-luks", "stic:ubuntu24-uefi",
                                                    "holt:elementary8", "holt:elementary8-luks", "holt:void-zbm", "holt:void-zbm-enc",
                                                    "holt:freebsd15-geli-bios", "holt:freebsd15-geli-ufs",
@@ -669,10 +669,10 @@ class Estimates(unittest.TestCase):
         # test2.md: SticTest2All 282 gm, the checks of st1_marks.tsv (the later ones' rows are their own runs')
         self.assertAlmostEqual(sum(e["gm"] for c, e in tsv.items() if c.startswith("stic:") and c[5:] in marked), 281.9, delta=0.1)
         self.assertAlmostEqual(fam["holt"], 246.7, delta=0.5)     # test2.md: HoltTest2All ~247 gm
-        # 87 sources and 9 variants, and the five arm64 guests' (docs/design/arm64.md A6), and the 6
+        # 88 sources and 9 variants, and the five arm64 guests' (docs/design/arm64.md A6), and the 6
         # +reformat-TYPE cells' (rel11rf's HT_REFORMAT runs, 2026-11-21);
         # slackware15's and slackware15-uefi's are estimates until their first runs (slackware.md S4)
-        self.assertEqual(sum(1 for c in tsv if c.startswith("holt:") and not c.endswith("+img")), 107)
+        self.assertEqual(sum(1 for c in tsv if c.startswith("holt:") and not c.endswith("+img")), 108)
         self.assertEqual(sum(1 for c in tsv if c.startswith("gate:")), 13)
 
     def test_pack_and_gate_wall(self):
@@ -807,14 +807,14 @@ class Guests(GuestCase):
                                  needs={"identity": "PASS"})
 
     def test_new_guests_ninety_four_cells(self):
-        self.assertEqual(self.p_guest.totals["cells"], 94)
-        self.assertEqual(by(self.p_guest), {("due", "new"): 94})
+        self.assertEqual(self.p_guest.totals["cells"], 95)
+        self.assertEqual(by(self.p_guest), {("due", "new"): 95})
         self.assertNotIn("freebsd15-builder", {c.cell[6:] for c in self.p_guest.cells})
 
     def test_nothing_due_after_a_pass(self):
         p = self.plan()
         self.assertEqual(p.totals["due"], 0)
-        self.assertEqual(p.totals["counts"]["current"], 94)
+        self.assertEqual(p.totals["counts"]["current"], 95)
 
     def test_not_in_any_spec(self):
         f = self.w.facts()
@@ -872,7 +872,7 @@ class Guests(GuestCase):
         pc = p.cell("guest:debian13")
         self.assertEqual((pc.status, pc.rule), ("due", "changed:host"))
         self.assertEqual(pc.host, "chopin")
-        self.assertEqual(p.totals["due"], 94)
+        self.assertEqual(p.totals["due"], 95)
 
     def test_one_section_selects_only_its_guests(self):
         text = self.w.read("testvm/update/in-guest.sh").replace("update with moss", "update with moss, changed")
@@ -998,14 +998,14 @@ class Guests(GuestCase):
         self.assertEqual(st(p, "guest:arch"), ("due", "fresh:names"))
         self.assertEqual(len(p.cells), 1)
         p = self.plan(text="GuestTest2All plan")
-        self.assertEqual(by(p), {("due", "fresh:All"): 94})
+        self.assertEqual(by(p), {("due", "fresh:All"): 95})
 
     def test_sweep_child(self):
         ctx = self.w.ctx(self.r_guest)
         w = self.w.word("GuestTest2All plan", ctx)
         w.sweep = True
         p = plan.make(w, ctx)
-        self.assertEqual(by(p), {("due", "fresh:Sweep"): 94})
+        self.assertEqual(by(p), {("due", "fresh:Sweep"): 95})
 
     def test_a_disk_changed_behind_its_generation(self):
         f = self.w.facts()
@@ -1597,7 +1597,7 @@ class ClassTable(unittest.TestCase):
         self.assertEqual(plan.check_classes(ctx, holt_names=world.GUESTS), [])
         h = ctx.classes["holt"]
         src = {g for f in h["families"].values() for g in f} | set(h["no_family"])
-        self.assertEqual(len(src), 87)
+        self.assertEqual(len(src), 88)
         self.assertEqual(sum(len(v) for k, v in h["variants"].items() if not k.startswith("reformat-")), 9)
         self.assertEqual(sum(len(v) for k, v in h["variants"].items() if k.startswith("reformat-")), 6)
         self.assertEqual(sorted(set(world.GUESTS) - src), sorted(["aeon", "freebsd15-builder", "freebsd15-ufs"] + list(world.GUEST_ONLY)))

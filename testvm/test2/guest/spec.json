@@ -1314,6 +1314,33 @@
    },
    "notes": "docs/design/guix.md: Guix System 1.5.0, UEFI without Secure Boot (vm-run-options --uefi --no-secure-boot), GPT ESP /boot/efi + swap + ext4 /; in-guest.sh#Guix runs guix pull, reconfigure --allow-downgrades, keeps two generations, gc (~32 min).  K-none and B-none for now: GRUB boots the kernel from /gnu/store (no /boot/vmlinuz for K-deb's count) and Shepherd is an init boot-state.sh doesn't know (it would say init unknown); a K-guix rule and a shepherd arm are later work, and touch every ssh guest's harness.  established false until its first GuestTest2 run"
   },
+  "guix15-luks": {
+   "kind": "ssh",
+   "plat": "linux",
+   "timeout_s": 7200,
+   "harness": [
+    "testvm/make-guix.sh",
+    "testvm/guix/**",
+    "testvm/update/in-guest.sh#Guix",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#guix"
+   ],
+   "checks": {
+    "pm": "guix",
+    "rules": {
+     "source": "S-none",
+     "loader": "L-grub",
+     "kernel": "K-none",
+     "boot": "B-none",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false
+   },
+   "notes": "docs/design/guix.md guix15-luks: Guix System 1.5.0, UEFI without Secure Boot, GPT ESP /boot/efi + swap + LUKS1 cryptroot holding Btrfs guixroot with @, @home and @gnu, as Guix's installer encrypts (GRUB opens the volume, then the initrd: vm-update types console-passphrase at both prompts).  The same updater and rules as guix15 (K-none, B-none: its notes say why).  established false until its first GuestTest2 run"
+  },
   "guix15-bios": {
    "kind": "ssh",
    "plat": "linux",

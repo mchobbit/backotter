@@ -412,5 +412,46 @@ class Leftovers(unittest.TestCase):
         self.assertIn("no host for the leftovers set", str(e.exception))
 
 
+class Corpus(unittest.TestCase):
+    def test_the_name_is_the_rows(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        os.makedirs(f"{d}/cases")
+        case = {"source": "alpine324@gen:x", "edits": [], "target": {}}
+        for f, c in (("a.case", dict(case, name="fail-009-x")), ("b.case", case)):
+            with open(f"{d}/cases/{f}", "w") as fh:
+                json.dump(c, fh)
+        with mock.patch.object(B, "HERE", d):
+            got = B.corpus_cases()
+        self.assertEqual(got[0], ("a.case", "fail-009-x", "alpine324"))
+        self.assertRegex(got[1][1], r"^alpine324-[0-9a-f]{16}$", "case.name_of(), as bs2-host tier1 names it")
+        self.assertEqual(got[1][1], H.C.name_of(case))
+
+    def test_all_corpus_on_the_runs_hosts_as_run_corpus(self):
+        cs = B.corpus_cases()
+        m = {"run": "bs2all-20261124-150000", "hosts": ["chopin", "cage"], "corpus": [c[1] for c in cs],
+             "leftovers": {"host": "chopin"}}
+        have = {"chopin": {c[2] for c in cs}, "cage": {"alpine324"}}
+        got = {}
+        with mock.patch.object(B, "RUN_HOSTS", dict(RUN_HOSTS)), mock.patch.object(B, "CHOSEN", False), \
+                mock.patch.object(B, "par", lambda c: {h: (0, json.dumps(m), "") for h in c}), \
+                mock.patch.object(B, "held", lambda ss, hosts=None: {h: have.get(h, set()) & set(ss) for h in B.RUN_HOSTS}), \
+                mock.patch.object(B, "corpus", lambda plan, tier, stamp=None, have=None, only=None:
+                                  got.update(plan=plan, tier=tier, stamp=stamp, hosts=list(B.RUN_HOSTS), only=only)), \
+                contextlib.redirect_stdout(io.StringIO()):
+            B.all_corpus("bs2all-20261124-150000")
+        self.assertEqual(got, {"plan": False, "tier": 1, "stamp": "bs2all-20261124-150000-corpus",
+                               "hosts": ["chopin", "cage"], "only": {c[0] for c in cs}})
+        # (and corpus() sends each case to a host of those that holds its source, at port 2949)
+        sent = []
+        with mock.patch.object(B, "RUN_HOSTS", {"chopin": "m@chopin.local", "cage": "m@cage.local"}), \
+                mock.patch.object(B, "sync", lambda hs: None), \
+                mock.patch.object(B, "ssh", lambda h, c, check=True, capture=False, input=None: sent.append((h, c))):
+            B.corpus(False, 1, stamp="bs2all-x-corpus", have=have, only={cs[0][0]})
+        self.assertEqual(len(sent), 1)
+        self.assertIn(sent[0][0], [h for h in have if cs[0][2] in have[h]])
+        self.assertRegex(sent[0][1], r"tier1 \S+/cases/" + re.escape(cs[0][0]) + r" --tier 1 --run bs2all-x-corpus --port 2949")
+
+
 if __name__ == "__main__":
     unittest.main()

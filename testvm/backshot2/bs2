@@ -97,7 +97,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 if HERE not in sys.path:   # bs2lib, for a bs2 loaded as a module (Test2's tests), last: it shadows nothing
     sys.path.append(HERE)
 REPO = os.path.dirname(os.path.dirname(HERE))
-from bs2lib import allrun as AR, room as RM, sources as SRC  # noqa: E402
+from bs2lib import allrun as AR, case as C, room as RM, sources as SRC  # noqa: E402
 # BackShot2's sources (bs2lib/sources.py, A2): BackShot2Alpine's four, Guix System's
 # (bs2lib/families/guix.py), then every other built one of the corpus (one disk, Linux, no
 # ZFS or md: OTHER_SOURCES, sorted; sources.classify() says why the rest are skipped and
@@ -882,12 +882,13 @@ def bin_words(frm):
 
 
 def corpus_cases():
-    """[(file, case name, source)] of cases/, by file name."""
+    """[(file, case name, source)] of cases/, by file name: the name its tier 1 row will
+    have (case.name_of(), as bs2-host tier1 names it)."""
     out = []
     for f in sorted(f for f in os.listdir(f"{HERE}/cases") if f.endswith(".case")):
         with open(f"{HERE}/cases/{f}") as fh:
             c = json.load(fh)
-        out.append((f, c.get("name") or f[:-len(".case")], c["source"].split("@")[0]))
+        out.append((f, C.name_of(c), C.source_name(c)))
     return out
 
 

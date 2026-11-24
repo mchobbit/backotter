@@ -6,7 +6,7 @@
 #
 # Notes:
 #   - Guix System: each generation's kernel and initrd are store items, restored with /, where grub.cfg names them; nothing to rebuild
-#   - Guix System: UEFI GRUB's EFI image came back with the ESP, and grub.cfg (which names each generation's kernel and initrd in the store) with /; only the boot entry is made
+#   - Guix System: UEFI GRUB's EFI image came back with the ESP, and grub.cfg (which names each generation's kernel and initrd in the store) with /; only the boot entry is made, and the image's prefix set to /boot's partition number where it names one
 
 # ---- partition ----
 # vda -> /dev/sdq: clear the old table and signatures
@@ -78,6 +78,8 @@ mount --rbind --make-rslave /dev /mnt/bko-target/dev
 mount --rbind --make-rslave /proc /mnt/bko-target/proc
 mount --rbind --make-rslave /sys /mnt/bko-target/sys
 mount --rbind --make-rslave /run /mnt/bko-target/run
+# the restored GRUB image's prefix names /boot/grub's partition by number (it was made on the ESP's own disk): set to vda3's, (gpt3); left as it is where it names that already
+bko-holt grub-prefix gpt3 /mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI
 # NVRAM's entries for this partition and loader, from an earlier restore here, deleted
 bko-holt efi-dedupe /dev/sdq 1 '\EFI\Guix\grubx64.efi'
 efibootmgr --quiet --create --disk /dev/sdq --part 1 --label Guix --loader '\EFI\Guix\grubx64.efi'

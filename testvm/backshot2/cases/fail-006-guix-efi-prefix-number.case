@@ -1,0 +1,11 @@
+{
+ "name": "fail-006-guix-efi-prefix-number",
+ "source": "guix15@gen:9054dfe4717bd771377714adfbfcb43965a3eb1064f3ed14a87e5e3a813db9ad",
+ "seed": 0,
+ "generator": "5",
+ "edits": [
+   {"disk": "vda", "from": 3, "op": "renumber", "to": 5}],
+ "load_options": [],
+ "failed": {"check": "the restored disk boots by itself", "excerpt": ["FAIL the restored disk boots by itself (no SSH; logs/restored-serial.log)", "BdsDxe: starting Boot0001 \"UEFI Misc Device\" ... error: no such partition. Entering rescue mode... grub rescue>", "Guix's grub-install (grub-efi-bootloader, the ESP on /'s disk) embeds the prefix \"(,gpt3)/boot/grub\" in grubx64.efi and its EFI/BOOT copy; load keeps a store system's GRUB image as restored (no GRUB to install with), so with / at partition 5 the image looks for partition 3"], "tier": 1},
+ "from": "written by hand (one edit: no draw of bs2a-20261124-1028 renumbered /), after reading guix15's grubx64.efi; FAIL in replay-20261124-1048 (chopin, bko-holt bin of 2026-11-23, 982 s)",
+ "finding": "bko-holt"}

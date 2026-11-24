@@ -351,10 +351,16 @@ KEYS_DIR HOSTNAME`). CachyOS before it is in the library
   item, restored with `/`. This is the NixOS note
   (`load/commands.rs:2639-2640`) with Guix's wording.
 - **UEFI GRUB:** nothing runs in the chroot. The chroot has no
-  `/run/current-system`, and nothing needs to run: `grubx64.efi` (whose
-  core finds `/boot/grub` by the root's UUID, which `mkfs -U` keeps)
-  comes back with the ESP, and `grub.cfg` and the store's kernels come
-  back with `/`. Only the NVRAM entry is made (`efi_entries`), plus
+  `/run/current-system`, and nothing needs to run: `grubx64.efi` comes
+  back with the ESP, and `grub.cfg` and the store's kernels come back
+  with `/`. (Corrected 2026-11-24, BackShot2: the image's core doesn't
+  find `/boot/grub` by the root's UUID; its embedded prefix is
+  `(,gpt3)/boot/grub`, the partition by number, since grub-install ran
+  with the ESP on `/`'s disk. A layout that numbers `/` otherwise ended
+  in grub rescue, BackShot2's `fail-006`; load now sets the prefix's
+  partition to `/`'s in the image and its EFI/BOOT copy, `bko-holt
+  grub-prefix`, `load/grubprefix.rs`. On BIOS the same prefix is in
+  core.img, compressed, and isn't renumbered.) Only the NVRAM entry is made (`efi_entries`), plus
   `nixos_removable`'s copy to `EFI/BOOT/BOOTX64.EFI` under `--removable`.
   This is NixOS's arm (`:2716`).
 - **BIOS GRUB:** the boot code is installed from the store's own GRUB, as

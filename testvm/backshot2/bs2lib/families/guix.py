@@ -47,11 +47,14 @@ What isn't excluded, on purpose:
 - Renumbering /'s partition on UEFI.  Guix's grub-install (grub-efi-
   bootloader) embeds the prefix "(,gptN)/boot/grub" in grubx64.efi, the
   partition by number, since the ESP is on /boot's disk; grub.cfg's search
-  by UUID comes only after the prefix has loaded normal.mod.  load keeps
-  the image as restored, so a renumbered / would end in grub rescue.  That
-  is load's to rebuild, as it renews a fallback loader's (BackShot2's
-  fail-002): a bko-holt finding, not a drift Guix can't have.
-- On BIOS the same prefix is in core.img; renumbering /boot/grub's
+  by UUID comes only after the prefix has loaded normal.mod.  load kept
+  the image as restored, so a renumbered / ended in grub rescue
+  (cases/fail-006, a bko-holt finding, not a drift Guix can't have); since
+  the fix, load sets the prefix's partition to /'s in grubx64.efi and its
+  EFI/BOOT copy (`bko-holt grub-prefix`, holt/src/load/grubprefix.rs).
+- On BIOS the same prefix is in core.img ("(,gpt3)/@/boot/grub", inside
+  its LZMA-compressed part), which load writes back with grub-bios-setup
+  and can't renumber: a bko-holt limit, open.  Renumbering /boot/grub's
   partition is refused there by the generic rule 3 already (grub.cfg has
   no search UUIDs: guix15-bios searches by label), so it isn't drawn.
 

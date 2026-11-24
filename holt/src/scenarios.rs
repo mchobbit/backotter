@@ -4656,10 +4656,34 @@ fn guix_uefi_guest() {
     let b = guix_plan(&v, &[]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    let others: String = b.stage(Stage::Boot).iter().filter(|c| c.argv.get(1).map(String::as_str) != Some("grub-prefix")).map(Cmd::shell).collect();
     for no in ["grub-install", "grub-mkconfig", "update-grub", "update-initramfs", "dracut", "mkinitcpio", "setfiles", "BOOTX64.EFI"] {
-        assert!(!bt.contains(no), "{no}: {bt}");
+        assert!(!others.contains(no), "{no}: {bt}");
     }
+    assert!(!bt.contains("grub-install"), "{bt}");
     assert!(!b.stage(Stage::Boot).iter().any(|c| c.argv.first().map(String::as_str) == Some("chroot") && c.argv.get(2).is_some_and(|x| x.contains("grub"))), "{bt}");
+    // The image's prefix, "(,gpt3)/boot/grub" on guix15, set to /'s partition
+    // by its number in the layout (load/grubprefix.rs), the fallback's too: a
+    // no-op here, where / is partition 2 still.
+    let pfx: Vec<&Cmd> = b.stage(Stage::Boot).iter().filter(|c| c.argv.get(1).map(String::as_str) == Some("grub-prefix")).collect();
+    assert_eq!(pfx.len(), 1, "{bt}");
+    assert_eq!(pfx[0].argv[2..], ["gpt2", "/mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi", "/mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI"], "{bt}");
+    assert!(pfx[0].why.as_deref().unwrap_or("").contains("by number"), "{:?}", pfx[0].why);
+    // / renumbered (BackShot2's guix15 cases): the new number.
+    let ren = crate::json::parse(&v.compact().replace("\"vda2\"", "\"vda7\"").replace("/dev/vda2", "/dev/vda7")).unwrap();
+    let mut ren = ren;
+    let Some(Value::Arr(disks)) = ren.at(&["storage", "disks"]).cloned() else { panic!() };
+    let mut disks = disks;
+    for d in disks.iter_mut() {
+        let Some(Value::Arr(ps)) = d.get("partitions").cloned() else { continue };
+        let ps: Vec<Value> = ps.into_iter().map(|mut p| { if p.get("name").and_then(Value::as_str) == Some("vda7") { set_at(&mut p, &["number"], 7u64.into()); } p }).collect();
+        set_at(d, &["partitions"], Value::Arr(ps));
+    }
+    set_at(&mut ren, &["storage", "disks"], Value::Arr(disks));
+    let rb = guix_plan(&ren, &[]);
+    assert!(rb.problems.is_empty(), "{:?}", rb.problems);
+    let pfx: Vec<String> = rb.stage(Stage::Boot).iter().filter(|c| c.argv.get(1).map(String::as_str) == Some("grub-prefix")).map(|c| c.argv[2].clone()).collect();
+    assert_eq!(pfx, vec!["gpt7"]);
     assert!(bt.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label Guix --loader '\\EFI\\Guix\\grubx64.efi'\n"), "{bt}");
     assert!(b.notes.iter().any(|n| n == "Guix System: each generation's kernel and initrd are store items, restored with /, where grub.cfg names them; nothing to rebuild"), "{:?}", b.notes);
     assert!(b.notes.iter().any(|n| n.starts_with("Guix System: UEFI GRUB's EFI image came back with the ESP")), "{:?}", b.notes);
@@ -4667,6 +4691,7 @@ fn guix_uefi_guest() {
     // --removable: the ESP's GRUB at the fallback path too, outside the chroot.
     let bt: String = guix_plan(&v, &["--removable"]).stage(Stage::Boot).iter().map(Cmd::shell).collect();
     assert!(bt.contains("cp /mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI"), "{bt}");
+    assert!(bt.find(" grub-prefix gpt2 ").unwrap() < bt.find("cp /mnt/bko-target").unwrap(), "the prefix before the copy: {bt}");
     assert!(!bt.contains("grub-install"), "{bt}");
 
     // grub.cfg searching for a file system the layout doesn't make, and a

@@ -86,6 +86,7 @@ fn main() -> ExitCode {
         Some("md-lbs") => ExitCode::from(bko_holt::mdsb::main(&args[1..])),
         Some("umount-tree") => ExitCode::from(bko_holt::load::umounttree::main(&args[1..])),
         Some("efi-dedupe") => ExitCode::from(bko_holt::load::efidedupe::main(&args[1..])),
+        Some("grub-prefix") => ExitCode::from(bko_holt::load::grubprefix::main(&args[1..])),
         Some("raw-write") => ExitCode::from(bko_holt::load::rawvol::main(&args[1..])),
         Some("write-table") => ExitCode::from(bko_holt::load::writetable::main(&args[1..])),
         Some("rewrite") => ExitCode::from(bko_holt::load::rewrite::main(&args[1..])),

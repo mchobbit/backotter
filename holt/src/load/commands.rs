@@ -4080,6 +4080,9 @@ impl Builder<'_> {
                 self.notes.push(st.uefi_grub.into());
                 let g = self.boot_names().grub;
                 let img = self.esp_file(&format!("/{g}")).unwrap_or_else(|| format!("EFI/{}/{g}", self.bootloader_id()));
+                if st.efi_prefix_by_number {
+                    out.extend(self.store_grub_prefix(&img));
+                }
                 out.extend(self.store_removable(&img));
                 self.check_store_grub_cfg(st);
             }
@@ -4902,6 +4905,41 @@ impl Builder<'_> {
     /// path, EFI/BOOT/BOOTX64.EFI (BOOTAA64.EFI on ARM64), unless the
     /// restored ESP has one (bootctl install, which NixOS runs, writes it).
     /// Nothing runs in the chroot.
+    /// A store system's UEFI GRUB image, kept as restored, with its prefix
+    /// set to /boot's partition (/'s, without a /boot) by its number in the
+    /// layout (`bko-holt grub-prefix`, load/grubprefix.rs): the source's
+    /// grub-install, with the ESP on /boot's disk, named that partition by
+    /// number in the image ("(,gpt3)/boot/grub", Guix's), and a layout
+    /// that numbers it otherwise would leave GRUB in rescue mode
+    /// (BackShot2's guix15 cases).  Both IMG and the fallback loader (a copy
+    /// of it, or --removable's, made after this); each is left as it is when
+    /// it names the same number already, names no partition by number, or
+    /// isn't GRUB.  Nothing when /boot isn't a partition on the ESP's disk
+    /// (LUKS, LVM, RAID: grub-install searched for it instead).
+    fn store_grub_prefix(&mut self, img: &str) -> Vec<Cmd> {
+        let mounts = self.layout.arr(&["storage", "mounts"]).to_vec();
+        let dev = ["/boot", "/"].iter().find_map(|t| mounts.iter().find(|m| s(m, "target").as_deref() == Some(*t)).and_then(|m| s(m, "device")));
+        let Some(dev) = dev else { return Vec::new() };
+        let esp_dev = self.layout.str_at(&["boot", "esps", "0", "device"]).map(str::to_string);
+        let found = self.layout.disks.iter().find_map(|d| d.parts.iter().find(|p| p.name == dev).map(|p| (d, p)));
+        let Some((disk, part)) = found else { return Vec::new() };
+        if !esp_dev.is_some_and(|e| disk.parts.iter().any(|p| p.name == e)) {
+            return Vec::new();
+        }
+        let kind = match disk.table.as_ref().map(|t| &t.kind) {
+            Some(super::layout::TableKind::Gpt) => "gpt",
+            Some(super::layout::TableKind::Mbr) => "msdos",
+            None => return Vec::new(),
+        };
+        let esp = format!("{}{}", self.opts.target, self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).filter(|m| safe_target_subpath(m)).unwrap_or("/boot").trim_end_matches('/'));
+        let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
+        let f = self.boot_names().fallback_file;
+        let at = format!("{kind}{}", part.number);
+        vec![Cmd::new(&[exe.as_str(), "grub-prefix", at.as_str(), &format!("{esp}/{img}"), &format!("{esp}/EFI/BOOT/{f}")]).why(format!(
+            "the restored GRUB image's prefix names /boot/grub's partition by number (it was made on the ESP's own disk): set to {dev}'s, ({at}); left as it is where it names that already"
+        ))]
+    }
+
     fn store_removable(&self, img: &str) -> Vec<Cmd> {
         if !self.opts.removable {
             return Vec::new();

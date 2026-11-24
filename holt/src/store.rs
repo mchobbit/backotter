@@ -50,6 +50,13 @@ pub struct StoreSystem {
     pub bios_grub: Option<&'static str>,
     /// systemd-boot's note, for a system that can boot by it.
     pub systemd_boot: Option<&'static str>,
+    /// Whether load sets the restored UEFI GRUB image's prefix to /boot's
+    /// partition number (load/grubprefix.rs): the source's grub-install,
+    /// with the ESP on /boot's disk, named that partition by its number in
+    /// it ("(,gpt3)/boot/grub", Guix 1.5.0's), and load installs no GRUB
+    /// of its own here.  NixOS: not checked on a NixOS image; its plan stays
+    /// as its golden has it.
+    pub efi_prefix_by_number: bool,
 }
 
 pub const SYSTEMS: &[StoreSystem] = &[
@@ -66,6 +73,7 @@ pub const SYSTEMS: &[StoreSystem] = &[
         uefi_grub: "NixOS: UEFI GRUB's EFI image and grub.cfg came back with the ESP and /boot; only the boot entry is made",
         bios_grub: None,
         systemd_boot: Some("NixOS: systemd-boot, its loader entries and every generation's kernel and initrd came back with the ESP; only the boot entry is made"),
+        efi_prefix_by_number: false,
     },
     StoreSystem {
         id: "guix",
@@ -77,9 +85,10 @@ pub const SYSTEMS: &[StoreSystem] = &[
         grub_install: None,
         initramfs_uefi: GUIX_INITRAMFS,
         initramfs_bios: GUIX_INITRAMFS,
-        uefi_grub: "Guix System: UEFI GRUB's EFI image came back with the ESP, and grub.cfg (which names each generation's kernel and initrd in the store) with /; only the boot entry is made",
+        uefi_grub: "Guix System: UEFI GRUB's EFI image came back with the ESP, and grub.cfg (which names each generation's kernel and initrd in the store) with /; only the boot entry is made, and the image's prefix set to /boot's partition number where it names one",
         bios_grub: Some("Guix System: its store holds no GRUB to install with (guix system init ran the installer's); the source's own boot.img and core.img came back in /boot/grub/i386-pc, and the rescue system's grub-bios-setup writes them to each disk; grub.cfg, which names each generation's kernel and initrd in the store, stays as restored"),
         systemd_boot: None,
+        efi_prefix_by_number: true,
     },
 ];
 

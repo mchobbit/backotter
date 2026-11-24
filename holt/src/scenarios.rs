@@ -8010,6 +8010,9 @@ fn qubes_guest() {
     // The restore's commands as their words (the scripts unquoted).
     let rs: String = b.stage(Stage::Restore).iter().map(|c| format!("{}\n", c.argv.join(" "))).collect();
     assert!(b.stage(Stage::Restore).iter().any(|c| c.stdin.as_deref().is_some_and(|g| g.contains("!/.bko-holt/raw/**\n"))), "{rs}");
+    // Each raw write runs the archiver's dump: tagged (holt-json.md).
+    let writes: Vec<&Cmd> = b.stage(Stage::Restore).iter().filter(|c| c.argv.iter().any(|a| a.contains("raw-write --size"))).collect();
+    assert!(writes.len() == 25 && writes.iter().all(|c| c.archiver), "{rs}");
     assert_eq!(rs.matches("raw-write --size").count(), 25, "{rs}");
     assert_eq!(rs.matches(&format!("lvcreate --devicesfile '' --devices /dev/mapper/luks-{QUBES_LUKS} --snapshot qubes_dom0/")).count(), 13, "{rs}");
     // Each snapshot after its origin's image is written, and before its own.

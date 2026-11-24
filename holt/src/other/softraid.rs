@@ -273,10 +273,14 @@ fn safe_run_token(s: &str) -> String {
     if out.is_empty() || out.trim_matches('.').is_empty() { "vol".into() } else { out }
 }
 
-/// The longest softraid passphrase the restored system's boot prompt takes
-/// back: OpenBSD's boot loader reads it into a 1024-byte buffer with its
-/// NUL, as bioctl's readpassphrase does.
-const SOFTRAID_PASS_MAX: u64 = 1023;
+/// The longest softraid passphrase both bioctl -p and the restored system's
+/// boot prompt take: the boot loader's sr_crypto_passphrase_decrypt reads
+/// up to 1023 characters (PASSPHRASE_LENGTH 1024, with its NUL), but
+/// bioctl's derive_key reads the file's first line with fgets into 1024
+/// bytes and wants its newline among them, so 1022 and the newline
+/// (OpenBSD's sys/lib/libsa/softraid.c and sbin/bioctl/bioctl.c, checked
+/// 2026-11-24 for holt-json.md's RT10c Check).
+const SOFTRAID_PASS_MAX: u64 = 1022;
 
 /// The passphrase file bioctl -p reads: a copy of --key-file's, owned by
 /// root and mode 600, as bioctl wants it.
@@ -776,7 +780,7 @@ mod tests {
         assert_eq!((k.str_field("kind"), k.str_field("name")), (Some("softraid"), k.str_field("group")));
         assert_eq!(b.keys.len(), 1);
         let q = &b.keys[0];
-        assert_eq!((q.kind, q.unlock, q.given, q.names.len(), q.max_bytes), ("softraid", "passphrase", false, 2, 1023));
+        assert_eq!((q.kind, q.unlock, q.given, q.names.len(), q.max_bytes), ("softraid", "passphrase", false, 2, 1022));
         assert!(plan(dump(), &[]).problems.is_empty());
         let name = q.names[0].clone();
         let b = plan(dump(), &["--json", "--key-file", &format!("{name}=/k/0")]);

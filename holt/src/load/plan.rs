@@ -242,12 +242,26 @@ pub struct JsonFacts {
 
 /// Whether the argument ARG names the device /dev/NODE or one of its
 /// partitions or slices (/dev/sdb2, /dev/nvme0n1p3, /dev/vtbd0p3,
-/// /dev/dsk/c1t0d0s0), and not another disk (/dev/sdbb1).
+/// /dev/dsk/c1t0d0s0, OpenBSD's /dev/sd0a), and not another disk
+/// (/dev/sdbb1, /dev/sdaa, /dev/nvme0n10p1).  Under /dev/dsk and
+/// /dev/rdsk (illumos) a slice or partition is s or p and digits.  Else a
+/// node ending in a letter (sda) has digits after it; one ending in a
+/// digit (nvme0n1, ada0, sd0) a p or s and digits, or one partition
+/// letter, never more digits.
 fn names_node(arg: &str, node: &str) -> bool {
+    let digit = |r: &str| r.starts_with(|c: char| c.is_ascii_digit());
     ["/dev/", "/dev/dsk/", "/dev/rdsk/", "/dev/r"].iter().any(|pre| {
         let Some(rest) = arg.strip_prefix(pre).and_then(|r| r.strip_prefix(node)) else { return false };
-        let rest = rest.strip_prefix(['p', 's']).unwrap_or(rest);
-        rest.is_empty() || rest.starts_with(|c: char| c.is_ascii_digit()) || (rest.len() == 1 && rest.as_bytes()[0].is_ascii_lowercase())
+        if rest.is_empty() {
+            return true;
+        }
+        if pre.ends_with("dsk/") {
+            return rest.strip_prefix(['p', 's']).is_some_and(digit);
+        }
+        if !node.ends_with(|c: char| c.is_ascii_digit()) {
+            return digit(rest);
+        }
+        (rest.len() == 1 && rest.as_bytes()[0].is_ascii_lowercase()) || rest.strip_prefix(['p', 's']).is_some_and(digit)
     })
 }
 
@@ -304,6 +318,28 @@ pub fn repo_has_password(repo: &str) -> bool {
     let Some((_, rest)) = repo.split_once("://") else { return false };
     let authority = rest.split('/').next().unwrap_or(rest);
     authority.rsplit_once('@').is_some_and(|(userinfo, _)| userinfo.contains(':'))
+}
+
+/// REPO with the password in its URL (repo_has_password) as `REDACTED`,
+/// so it is still refused: what a --json run's document, its commands and
+/// its record carry in its place (holt-json.md, Principle 4).  Any other
+/// REPO as it is.
+pub fn repo_redacted(repo: &str) -> String {
+    if !repo_has_password(repo) {
+        return repo.to_string();
+    }
+    let Some((scheme, rest)) = repo.split_once("://") else { return repo.to_string() };
+    let end = rest.find('/').unwrap_or(rest.len());
+    let (authority, path) = rest.split_at(end);
+    let Some((userinfo, host)) = authority.rsplit_once('@') else { return repo.to_string() };
+    let user = userinfo.split_once(':').map_or(userinfo, |(u, _)| u);
+    format!("{scheme}://{user}:REDACTED@{host}{path}")
+}
+
+/// ARGS with each that holds a repository URL's password redacted
+/// (repo_redacted): a --json run's `args` and its last-load.json.
+pub fn args_redacted(args: &[String]) -> Vec<String> {
+    args.iter().map(|a| repo_redacted(a)).collect()
 }
 
 /// The first of the key-file checks PATH fails (holt-json.md, "Secrets"
@@ -441,17 +477,28 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, String) {
 /// `load LAYOUT --json` (holt-json.md, "bko-holt-plan"): the plan document,
 /// made of the --json run's checks, with in its `text` what text mode
 /// prints for the same arguments (J18), a private write's text left out.
-/// Standard error is text mode's line for problems, if any.
+/// Standard error is what text mode prints there for the same arguments.
+/// A password in --repo's URL is refused (repo_has_password) and never
+/// shown: the whole document is planned with it redacted (repo_redacted).
 pub fn json_run(layout: &Layout, opts: &Options, sys: &Sys, layout_text: &str) -> (u8, String, String) {
+    let redacted;
+    let opts = if opts.repo.as_deref().is_some_and(repo_has_password) {
+        let mut o = opts.clone();
+        o.repo = o.repo.as_deref().map(repo_redacted);
+        o.argv = args_redacted(&o.argv);
+        redacted = o;
+        &redacted
+    } else {
+        opts
+    };
     let p = check(layout, opts, sys);
     let mut text_opts = opts.clone();
     text_opts.json = false;
     text_opts.expect_plan = None;
     let tp = check(layout, &text_opts, sys);
-    let (_, text, _) = render(layout, &text_opts, &tp, true);
+    let (_, text, err) = render(layout, &text_opts, &tp, true);
     let code = if p.problems.is_empty() { EXIT_OK } else { EXIT_PLAN_PROBLEMS };
     let doc = super::jsonout::plan_doc(layout, opts, sys, layout_text, &p, code, &text);
-    let err = if p.problems.is_empty() { String::new() } else { format!("bko-holt load: plan found {} problem(s); the plan document lists them\n", p.problems.len()) };
     (code, doc, err)
 }
 
@@ -912,5 +959,63 @@ mod tests {
         let (_, out, _) = run(&layout(), &opts(&["--map", "vda=vdb"]), &s);
         assert!(out.contains("sfdisk isn't installed here (the partition stage runs it)"), "{out}");
         assert!(out.contains("no --repo"), "{out}");
+    }
+
+    /// The `writes` heuristic's names: a disk's own device and its
+    /// partitions or slices, never another disk's whose name starts alike.
+    #[test]
+    fn names_node_partitions_only() {
+        for (arg, node) in [
+            ("/dev/sda", "sda"),
+            ("/dev/sda1", "sda"),
+            ("/dev/nvme0n1", "nvme0n1"),
+            ("/dev/nvme0n1p3", "nvme0n1"),
+            ("/dev/vtbd0p3", "vtbd0"),
+            ("/dev/vtbd0p3.eli", "vtbd0"),
+            ("/dev/ada0s1a", "ada0"),
+            ("/dev/sd0a", "sd0"),
+            ("/dev/sd0p", "sd0"),
+            ("/dev/rsd0c", "sd0"),
+            ("/dev/dsk/c1t0d0s0", "c1t0d0"),
+            ("/dev/rdsk/c1t0d0p0", "c1t0d0"),
+            ("/dev/dsk/sdqs1", "sdq"),
+            ("/dev/md127p1", "md127"),
+        ] {
+            assert!(names_node(arg, node), "{arg} is {node}'s");
+        }
+        for (arg, node) in [
+            ("/dev/sdaa", "sda"),
+            ("/dev/sdaa1", "sda"),
+            ("/dev/sdbb1", "sdb"),
+            ("/dev/nvme0n10", "nvme0n1"),
+            ("/dev/nvme0n10p1", "nvme0n1"),
+            ("/dev/sd10a", "sd1"),
+            ("/dev/mmcblk0boot0", "mmcblk0"),
+            ("/dev/sdb1", "sda"),
+            ("/dev/dsk/c1t0d01s0", "c1t0d0"),
+            ("/dev/dsk/c1t0d0", "c1t0"),
+            ("sda1", "sda"),
+        ] {
+            assert!(!names_node(arg, node), "{arg} isn't {node}'s");
+        }
+    }
+
+    /// A password in --repo's URL: refused, and replaced wherever the
+    /// --json run would show or record it.
+    #[test]
+    fn repo_password_redacted() {
+        for (r, want) in [
+            ("rest:https://me:pw@nas:8000/r", "rest:https://me:REDACTED@nas:8000/r"),
+            ("sftp://u:p:q@h/x", "sftp://u:REDACTED@h/x"),
+            ("sftp://u:p@ss@h", "sftp://u:REDACTED@h"),
+            ("rest:https://u@h/", "rest:https://u@h/"),
+            ("/srv/r", "/srv/r"),
+            ("sftp:u@h:/x", "sftp:u@h:/x"),
+        ] {
+            assert_eq!(repo_redacted(r), want, "{r}");
+            assert_eq!(repo_has_password(&repo_redacted(r)), repo_has_password(r), "{r}: still refused");
+        }
+        let a: Vec<String> = ["l", "--repo", "rest:https://me:pw@nas/r", "--json"].iter().map(|x| x.to_string()).collect();
+        assert_eq!(args_redacted(&a), ["l", "--repo", "rest:https://me:REDACTED@nas/r", "--json"]);
     }
 }

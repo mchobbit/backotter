@@ -1081,7 +1081,7 @@
           "stdin_bytes": null,
           "stdin_sha256": null,
           "private": false,
-          "archiver": false
+          "archiver": true
         },
         {
           "kind": "write",

@@ -3762,7 +3762,9 @@ impl Builder<'_> {
                         need.join(" and ")
                     ),
                 ])
-                .why(format!("the archiver's restore {}, for the btrfs snapshots and aliases", need.join(" and "))),
+                .why(format!("the archiver's restore {}, for the btrfs snapshots and aliases", need.join(" and ")))
+                // It runs the archiver (holt-json.md: the plan's `archiver`).
+                .archiver(),
             );
         }
         if aliases {

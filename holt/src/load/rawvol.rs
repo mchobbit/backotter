@@ -140,7 +140,10 @@ impl Builder<'_> {
             let dump = dump_argv(prefix, &self.opts.archiver, &self.opts.snapshot, &image);
             let script = raw_write_script(&dump, &exe, dev, bytes, chunk, &image);
             let why = s(&r, "why").unwrap_or_default();
-            Cmd::new(&["sh", "-c", &script]).why(format!("{image} written to {dev}, only the chunks that differ from what it holds ({why})"))
+            // The archiver's dump runs inside it (holt-json.md: the plan's
+            // `archiver`, the stop's SIGINT); its stdout is the image, so
+            // it keeps --no-progress under --json too.
+            Cmd::new(&["sh", "-c", &script]).why(format!("{image} written to {dev}, only the chunks that differ from what it holds ({why})")).archiver()
         };
         // Raw volumes that aren't thin LVs (the general rule: a linear LV
         // holding a partition table or nothing bko-holt can mount).

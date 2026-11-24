@@ -552,10 +552,23 @@ fn tokens_json(layout: &Layout) -> Value {
 
 /// For each mount point --reformat could name, the types it could become
 /// and, per type, null or the refusal it would get: reformat::work_out as a
-/// trial.  Empty where --reformat isn't built for the source, and for a
-/// layout --reformat edited already (its trials are the dump's, planned
-/// without it).
-fn reformat_json(layout: &Layout) -> Value {
+/// trial.  With --reformat given, the trials are the dump's (LAYOUT_TEXT,
+/// as read), each with the run's other --reformat choices beside it, and
+/// `type` the dump's.  Empty where --reformat isn't built for the source,
+/// and for a layout that was edited by --reformat before it was given.
+fn reformat_json(layout: &Layout, layout_text: &str, opts: &Options) -> Value {
+    let dump;
+    let layout = if layout.v.get("load_reformat").is_some() && !opts.reformats.is_empty() {
+        match crate::json::parse(layout_text).ok().and_then(|j| Layout::from_json(j).ok()) {
+            Some(l) => {
+                dump = l;
+                &dump
+            }
+            None => return Value::Arr(Vec::new()),
+        }
+    } else {
+        layout
+    };
     let v = &layout.v;
     if v.get("load_reformat").is_some() || !reformat_possible(v) {
         return Value::Arr(Vec::new());
@@ -571,8 +584,16 @@ fn reformat_json(layout: &Layout) -> Value {
         seen.push(file.to_string());
         let mut to = Obj::new();
         for other in super::reformat::TYPES.iter().filter(|t| **t != ty) {
-            let trial = super::reformat::work_out(v, &[(file.to_string(), other.to_string())]);
-            let refusal = trial.problems.first().map(|p| Obj::new().set("code", p.code.as_str()).set("reason", p.str_field("reason").unwrap_or("other")).set("text", p.text.as_str()).build());
+            let mut choices: Vec<(String, String)> = opts.reformats.iter().filter(|(m, _)| m != file).cloned().collect();
+            choices.push((file.to_string(), other.to_string()));
+            let trial = super::reformat::work_out(v, &choices);
+            // This mount's refusal (or one of the whole layout's), not
+            // another choice's.
+            let refusal = trial
+                .problems
+                .iter()
+                .find(|p| p.str_field("mount").is_none_or(|m| m == file))
+                .map(|p| Obj::new().set("code", p.code.as_str()).set("reason", p.str_field("reason").unwrap_or("other")).set("text", p.text.as_str()).build());
             to.put(other, refusal);
         }
         out.push(Obj::new().set("mount", file).set("type", ty).set("to", to).build());
@@ -719,7 +740,7 @@ pub fn plan_doc(layout: &Layout, opts: &Options, sys: &Sys, layout_text: &str, p
         .set("erase", opts.erase.clone())
         .set("keys", keys_json(layout, opts, p))
         .set("tokens", tokens_json(layout))
-        .set("reformat", reformat_json(layout))
+        .set("reformat", reformat_json(layout, layout_text, opts))
         .set("fit", fit_json(opts, &p.fit))
         .set("problems", p.problems.to_json())
         .set("notes", p.notes.to_json())
@@ -908,10 +929,11 @@ mod tests {
         // Under --json nothing asks: no --password-file is a problem.
         assert_eq!((code, v.get_bool("ok"), v.get_u64("exit")), (4, Some(false), Some(4)));
         assert_eq!(codes(&v), ["password_needed"]);
-        assert_eq!(err, "bko-holt load: plan found 1 problem(s); the plan document lists them\n");
+        // Standard error is text mode's, which finds no problem here.
+        assert_eq!(err, "");
         // The text plan, byte for byte, as text mode prints it.
-        let (tcode, text, _) = crate::load::run(&opts(&a[..4]), &l, &s);
-        assert_eq!(tcode, 0);
+        let (tcode, text, terr) = crate::load::run(&opts(&a[..4]), &l, &s);
+        assert_eq!((tcode, terr.as_str()), (0, err.as_str()));
         assert_eq!(v.get_str("text"), Some(text.as_str()));
         assert!(text.contains("--no-progress restore"), "{text}");
         assert_eq!(v.arr_at(&["args"]).iter().filter_map(Value::as_str).collect::<Vec<_>>(), ["load", "l.json", "--map", "vda=vdb", "--repo", "/srv/r", "--json"]);
@@ -969,10 +991,23 @@ mod tests {
         let root = rf.iter().find(|r| r.get_str("mount") == Some("/")).unwrap();
         assert_eq!(root.get_str("type"), Some("btrfs"));
         assert!(root.at(&["to", "ext4"]).is_some() && root.at(&["to", "xfs"]).is_some(), "{root:?}");
-        // With the password file: no problem, exit 0, the same hash.
+        // With a --reformat given, the options are still the dump's: the
+        // second plan's for / as the first's, its type the dump's.
+        let (_, v3, _) = plan(&l, &["--map", "vda=vdb", "--repo", "/srv/r", "--reformat", "/=ext4", "--json"], &s);
+        let root3 = v3.arr_at(&["reformat"]).iter().find(|r| r.get_str("mount") == Some("/")).cloned().unwrap_or_else(|| panic!("{:?}", v3.get("reformat")));
+        assert_eq!(root3.compact(), root.compact());
+        assert_eq!(v3.arr_at(&["reformat"]).len(), rf.len());
+        // A password file that isn't there is unsafe; a private one is
+        // what was missing: no problem, exit 0.
         let (code, v2, _) = plan(&l, &["--map", "vda=vdb", "--repo", "/srv/r", "--password-file", "/srv/pw", "--json"], &s);
-        assert_eq!(codes(&v2), ["key_file_unsafe"], "a password file that isn't there");
-        assert_eq!(code, 4);
+        assert_eq!((code, codes(&v2)), (4, vec!["key_file_unsafe".to_string()]));
+        t.file("/k/pw", "pw");
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(t.p("/k/pw"), std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::set_permissions(t.p("/k"), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let (code, v2, _) = plan(&l, &["--map", "vda=vdb", "--repo", "/srv/r", "--password-file", "/k/pw", "--json"], &s);
+        assert_eq!((code, codes(&v2)), (0, Vec::<String>::new()));
+        assert_eq!(v2.get_bool("ok"), Some(true));
     }
 
     /// The plan's hash binds the run to what was reviewed (J20): the same
@@ -1160,11 +1195,18 @@ mod tests {
         let mut a = base.to_vec();
         a.extend(["--key-file", "cryptswap=/k/1", "--key-file", "cryptroot=k/0"]);
         assert_eq!(unsafe_check(&plan(&l, &a, &s).1), ["regular", "absolute"]);
-        // A password in the repository's URL.
+        // A password in the repository's URL: refused, and nowhere in the
+        // document (args, the commands, their reasons, text), nor on
+        // standard error.
         let mut a = base.to_vec();
-        a.extend(["--key-file", "cryptswap=/k/0", "--key-file", "cryptroot=/k/0", "--repo", "rest:https://me:pw@nas:8000/r", "--password-file", "/k/0"]);
-        let c = codes(&plan(&l, &a, &s).1);
-        assert!(c.contains(&"repo_has_password".to_string()), "{c:?}");
+        a.extend(["--key-file", "cryptswap=/k/0", "--key-file", "cryptroot=/k/0", "--repo", "rest:https://me:hunter2@nas:8000/r", "--password-file", "/k/0"]);
+        let (code, v, err) = plan(&l, &a, &s);
+        let c = codes(&v);
+        assert!(code == 4 && c.contains(&"repo_has_password".to_string()), "{code}: {c:?}");
+        assert!(!v.compact().contains("hunter2") && !err.contains("hunter2"), "{}", v.compact());
+        assert!(v.arr_at(&["args"]).iter().any(|x| x.as_str() == Some("rest:https://me:REDACTED@nas:8000/r")), "{:?}", v.get("args"));
+        assert!(v.get_str("text").unwrap().contains("rest:https://me:REDACTED@nas:8000/r"));
+        assert!(v.compact().contains(r#""--repository","rest:https://me:REDACTED@nas:8000/r""#), "{}", v.compact());
         for (r, has) in [("sftp://u:p@h/x", true), ("rest:https://u@h/", false), ("/srv/r", false), ("sftp:u@h:/x", false), ("s3:https://h/b", false)] {
             assert_eq!(crate::load::plan::repo_has_password(r), has, "{r}");
         }

@@ -486,7 +486,13 @@ pub fn main(args: &[String]) -> u8 {
     let (code, err) = main_inner(args);
     eprint!("{err}");
     if !matches!(parse_args(args), Ok(Parsed::Help)) {
-        crate::bugreport::record_load_run(args, code, &err);
+        // Under --json a password in --repo's URL is refused and never
+        // recorded (holt-json.md, "args"); text mode records ARGS as ever.
+        if jsonout::find_json_flag(args, VALUE_FLAGS).is_some() {
+            crate::bugreport::record_load_run(&plan::args_redacted(args), code, &err);
+        } else {
+            crate::bugreport::record_load_run(args, code, &err);
+        }
     }
     code
 }

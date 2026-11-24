@@ -403,8 +403,9 @@ fn corpus_plan_documents() {
 /// The size verdicts are fit's own, on every corpus dump's used disks onto
 /// disks 2, 10, 30 and 60 % smaller and 10 % bigger: a `smaller` at P fits
 /// with --fit-largest P and not P - 1, a `smaller_slack` at 1; a `bigger`
-/// at P takes the whole extra there; and data_fits is needed_bytes <=
-/// most_bytes wherever both are given.
+/// at P takes the whole extra there and not at P - 1; a `beyond_limit` is
+/// refused at --fit-largest's most, its data fitting; and data_fits is
+/// needed_bytes <= most_bytes wherever both are given.
 #[test]
 fn corpus_size_verdicts_are_fits() {
     use bko_holt::load::fit::{fit, verdict, Target};
@@ -437,6 +438,22 @@ fn corpus_size_verdicts_are_fits() {
                         let f = fit(&v, std::slice::from_ref(&t), p);
                         if !f.problems.is_empty() || f.disks.first().is_none_or(|d| d.unused_bytes != 0) {
                             errs.push(format!("{at}: bigger at {p}%, and fit's doesn't take the whole extra there"));
+                        }
+                        // The least such percentage.
+                        if p > 1 {
+                            let f = fit(&v, std::slice::from_ref(&t), p - 1);
+                            if f.problems.is_empty() && f.disks.first().is_some_and(|d| d.unused_bytes == 0) {
+                                errs.push(format!("{at}: bigger at {p}%, and fit's takes the whole extra at {}%", p - 1));
+                            }
+                        }
+                    }
+                    ("beyond_limit", p) => {
+                        // More than --fit-largest takes: fit refuses its most.
+                        if fit(&v, std::slice::from_ref(&t), bko_holt::load::FIT_MAX).problems.is_empty() {
+                            errs.push(format!("{at}: beyond_limit, and fit takes it at {}%", bko_holt::load::FIT_MAX));
+                        }
+                        if p.is_some_and(|p| p <= bko_holt::load::FIT_MAX) || z.data_fits != Some(true) {
+                            errs.push(format!("{at}: beyond_limit at {p:?}, data_fits {:?}", z.data_fits));
                         }
                     }
                     ("data_wont_fit" | "cant_resize", _) => {

@@ -389,7 +389,9 @@ fn prompt(src: &str, file: &str) -> Cmd {
 
 /// The longest GELI passphrase the restored system's boot prompt takes
 /// back: the loader's geliboot and the kernel's g_eli prompt read into a
-/// 256-byte buffer with its NUL (FreeBSD's GELI_PW_MAXLEN).
+/// 256-byte buffer with its NUL (FreeBSD's GELI_PW_MAXLEN in
+/// stand/libsa/geli/geliboot.h, g_eli_taste's passphrase[256]; geli -J
+/// itself takes 1023, checked 2026-11-24 for holt-json.md's RT10c Check).
 const GELI_PASS_MAX: u64 = 255;
 
 fn tmp_key(src: &str) -> String {
@@ -448,9 +450,11 @@ impl Builder<'_> {
             let keyed = p.keyed_by().to_string();
             let given = self.geli_key(&p, 0);
             // The questions it is (holt-json.md, the plan's keys): slot 0's,
-            // and slot 1's where the source used it.
+            // and slot 1's where the source used it.  A provider keyed by
+            // both is made with a temporary key, and boot sets the restored
+            // key file with a new passphrase: one to ask for.
             let unlock = match keyed.as_str() {
-                "passphrase" => "passphrase",
+                "passphrase" | "both" => "passphrase",
                 "keyfile" if p.keyfiles().is_empty() => "key_file_elsewhere",
                 _ => "temporary",
             };
@@ -481,7 +485,7 @@ impl Builder<'_> {
             }
             // Under --json nothing prompts (holt-json.md): no /dev/tty
             // question is built, and the passphrase nobody gave is a problem.
-            if self.opts.json && keyed == "passphrase" && given.is_none() {
+            if self.opts.json && (keyed == "passphrase" || keyed == "both") && given.is_none() {
                 let name = p.names.first().cloned().unwrap_or_else(|| p.src.clone());
                 self.coded(
                     crate::load::codes::Problem::new(crate::load::codes::ProblemCode::KeyNeeded, format!("{}: give its new GELI passphrase with --key-file {name}=FILE", p.src))
@@ -643,6 +647,9 @@ impl Builder<'_> {
                 if keyed == "both" {
                     let f = match self.geli_key(&p, 0) {
                         Some(f) => f,
+                        // Under --json no /dev/tty question is built: the
+                        // passphrase nobody gave is key_needed (assemble).
+                        None if self.opts.json => pass_file(&p.src),
                         None => {
                             let f = pass_file(&p.src);
                             out.push(prompt(&p.src, &f));
@@ -1132,6 +1139,21 @@ mod tests {
         assert_eq!(bt[i + 2], format!("rm -f {pass}"));
         let b = plan(ufs_on_geli(kf(true)), &["--key-file", "gpt/zfs0=/p"]);
         assert!(stage(&b, Stage::Boot).contains(&"geli setkey -n 0 -K /mnt/bko-target/boot/keys/root.key -i 3031038 -J /p /dev/vtbd1p3".to_string()));
+        assert_eq!((b.keys[0].unlock, b.keys[0].given), ("passphrase", true));
+        // Both under --json: the passphrase is a question (keys, and
+        // key_needed without --key-file), and no /dev/tty prompt is built.
+        let b = plan(ufs_on_geli(kf(true)), &["--json"]);
+        assert_eq!((b.keys[0].unlock, b.keys[0].given), ("passphrase", false));
+        let p = b.coded_problems();
+        assert_eq!(p.iter().map(|x| x.code).collect::<Vec<_>>(), [crate::load::codes::ProblemCode::KeyNeeded], "{p:?}");
+        let all: Vec<String> = [Stage::Assemble, Stage::Boot].iter().flat_map(|s| stage(&b, *s)).collect();
+        assert!(!all.iter().any(|x| x.contains("/dev/tty")), "{all:?}");
+        assert!(stage(&b, Stage::Boot).contains(&format!("geli setkey -n 0 -K /mnt/bko-target/boot/keys/root.key -i 3031038 -J {pass} /dev/vtbd1p3")));
+        let b = plan(ufs_on_geli(kf(true)), &["--json", "--key-file", "gpt/zfs0=/p"]);
+        assert!(b.coded_problems().is_empty(), "{:?}", b.problems);
+        assert!(stage(&b, Stage::Boot).contains(&"geli setkey -n 0 -K /mnt/bko-target/boot/keys/root.key -i 3031038 -J /p /dev/vtbd1p3".to_string()));
+        // A key file alone: nothing to ask, a temporary key.
+        assert_eq!(plan(ufs_on_geli(kf(false)), &["--json"]).keys[0].unlock, "temporary");
     }
 
     #[test]

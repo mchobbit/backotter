@@ -712,13 +712,8 @@ pub fn esp_inventory(sys: &Sys, mount: &str) -> Value {
     for (path, size) in &files {
         let mut o = Obj::new().set("path", path.as_str()).set("size", *size);
         if path.to_ascii_lowercase().ends_with(".efi") && *size <= 64 << 20 {
-            let twin = efi.iter().find(|(p, s)| p != path && s == size && {
-                let a = sys.read_bytes(&format!("{mount}/{path}"));
-                a.is_some() && a == sys.read_bytes(&format!("{mount}/{p}"))
-            });
-            if let Some((p, _)) = twin {
-                o.put("same_as", p.as_str());
-            }
+            let others = efi.iter().filter(|(p, _)| p != path).map(|(p, s)| (p.as_str(), *s));
+            o.put_some("same_as", byte_copy_of(sys, &format!("{mount}/{path}"), *size, others, mount));
         }
         list.push(o.build());
     }
@@ -731,6 +726,18 @@ pub fn esp_inventory(sys: &Sys, mount: &str) -> Value {
             stub.map(|g| Obj::new().set("search_uuids", g.search_uuids).set("prefix", g.prefix).set("configfile", g.configfile)),
         )
         .build()
+}
+
+/// The first of `candidates` (a path under `under`, or an absolute path when
+/// `under` is empty, and its size) that the file at `path`, of `size` bytes,
+/// is a byte copy of.  Only a candidate of the same size is compared, a MiB
+/// at a time (Sys::same_bytes), so none is read whole and `path` is never
+/// held in memory.
+fn byte_copy_of<'a>(sys: &Sys, path: &str, size: u64, candidates: impl IntoIterator<Item = (&'a str, u64)>, under: &str) -> Option<&'a str> {
+    candidates.into_iter().filter(|&(_, n)| n == size).map(|(p, _)| p).find(|p| {
+        let full = if under.is_empty() { (*p).to_string() } else { format!("{under}/{p}") };
+        sys.same_bytes(path, &full) == Some(true)
+    })
 }
 
 /// systemd-boot's loader.conf and its Boot Loader Specification entries,
@@ -1847,7 +1854,7 @@ fn boot_files(sys: &Sys, pick: &dyn Fn(&str) -> bool) -> Vec<(String, u64)> {
 /// The first of `candidates` that `path` is a byte copy of.
 fn same_file(sys: &Sys, path: &str, candidates: &[(String, u64)]) -> Option<String> {
     let size = sys.file_size(path)?;
-    candidates.iter().filter(|(_, n)| *n == size).find(|(p, _)| sys.same_bytes(path, p) == Some(true)).map(|(p, _)| p.clone())
+    byte_copy_of(sys, path, size, candidates.iter().map(|(p, n)| (p.as_str(), *n)), "").map(str::to_string)
 }
 
 /// An elilo.conf on a mounted ESP.
@@ -1914,6 +1921,9 @@ pub fn elilo_json(sys: &Sys, esps: &[(String, String)]) -> Option<Value> {
     for e in &confs {
         let full = format!("{}/{}", e.mount, e.dir);
         let efis: Vec<String> = sys.list(&full).into_iter().filter(|f| f.to_ascii_lowercase().ends_with(".efi")).collect();
+        // Not byte_copy_of: these reads say in the dump's warnings when an
+        // .efi here (or /boot's) is over READ_MAX, whatever its size, and a
+        // size-first compare would drop that warning.
         let copy = elilo.as_ref().and_then(|b| efis.iter().find(|f| sys.read_bytes(&format!("{full}/{f}")).as_ref() == Some(b)));
         let loader = copy.or_else(|| efis.iter().find(|f| f.eq_ignore_ascii_case("elilo.efi"))).map(|f| format!("{}/{f}", e.dir));
         let extra = |path: &str, items: &[LiloItem]| {
@@ -2602,6 +2612,22 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             refind_json(&s).unwrap().compact(),
             r#"{"linux_conf":{"path":"/boot/refind_linux.conf","lines":[{"title":"Boot with standard options","options":"rd.luks.name=1111aaaa-2222-4333-8444-555566667777=crypt_root rd.luks.options=discard nowatchdog root=UUID=a0a1 quiet splash ---"},{"title":"Boot with logging","options":"root=UUID=a0a1 ---"}]}}"#
         );
+    }
+
+    #[test]
+    fn byte_copies() {
+        let t = Tree::new("bytecopy");
+        t.file("/esp/a.efi", "same").file("/esp/b.efi", "diff").file("/esp/c.efi", "same").file("/esp/d.efi", "same").file("/esp/big.efi", "same!");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        // Same size first: d.efi's bytes match but its (claimed) size
+        // doesn't, so it is never compared; then the first match wins.
+        let c = [("d.efi", 5), ("gone.efi", 4), ("b.efi", 4), ("c.efi", 4), ("a.efi", 4)];
+        assert_eq!(byte_copy_of(&s, "/esp/a.efi", 4, c, "/esp"), Some("c.efi"));
+        assert_eq!(byte_copy_of(&s, "/esp/a.efi", 4, [("d.efi", 5), ("b.efi", 4)], "/esp"), None);
+        assert_eq!(byte_copy_of(&s, "/esp/big.efi", 5, [("/esp/a.efi", 5), ("/esp/big.efi", 5)], ""), Some("/esp/big.efi"));
+        assert_eq!(byte_copy_of(&s, "/esp/gone.efi", 4, [("a.efi", 4)], "/esp"), None);
+        assert_eq!(same_file(&s, "/esp/a.efi", &[("/esp/b.efi".into(), 4), ("/esp/d.efi".into(), 4)]), Some("/esp/d.efi".to_string()));
+        assert!(s.warnings().is_empty());
     }
 
     #[test]

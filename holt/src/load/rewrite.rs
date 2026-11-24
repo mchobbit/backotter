@@ -373,10 +373,6 @@ fn is_dir(p: &Path) -> bool {
 /// grub.cfg and modules.builtin are far smaller.
 const EDIT_MAX: u64 = 16 << 20;
 
-fn safe_subpath(p: &str) -> bool {
-    p.starts_with('/') && !p.contains('\0') && !p.split('/').any(|c| c == "..")
-}
-
 /// The most symlinks `resolve_in_target` follows for one path (Linux's
 /// own limit), so a loop ends.
 const MAX_LINKS: u32 = 40;
@@ -484,7 +480,7 @@ fn boot_dirs(layout: &Value) -> Vec<String> {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|e| e.get("mounted_at").and_then(Value::as_str).filter(|m| safe_subpath(m)).map(str::to_string))
+        .filter_map(|e| e.get("mounted_at").and_then(Value::as_str).filter(|m| crate::load::commands::safe_target_subpath(m)).map(str::to_string))
         .collect();
     for d in ["/boot", "/boot/efi", "/efi"] {
         if !v.iter().any(|x| x == d) {

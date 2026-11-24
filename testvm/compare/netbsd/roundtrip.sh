@@ -71,7 +71,13 @@ bko_restore() {
 # Not a check (the verdict is the same with or without it): a record of a
 # failing content comparison to look at later, after rel9's alpinebsd
 # restic->rustic run restored "sparse" with other bytes once in 61 runs and
-# nothing of it was kept.  Where compare_all's mtree check fails, before
+# nothing of it was kept.  The cause, found with this capture: that
+# restic-bko was built by go1.25.10, and NetBSD drops the upper YMM halves
+# across a signal's delivery, so Go's async preemption corrupted its AVX
+# memmove and it stored wrong bytes, a blob hashed over them that restic
+# check --read-data passes (golang/go#80285; fixed from rel13 by go1.26.10,
+# whose Go turns AVX off on NetBSD; testvm/go-netbsd-fix.sh).  The capture
+# stays, for any next one.  Where compare_all's mtree check fails, before
 # the restore over the tree changes it, fx_capture: for each regular file
 # whose bytes differ from the source's (cmp; up to FX_MAXFILES) its size,
 # blocks and du, both SHA-256s, the first differing bytes (cmp -l: offset

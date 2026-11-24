@@ -37,6 +37,14 @@
 # and what is extra.  BKO_WORK_REMOTE names the hosts' directory instead
 # (relative to the login's home; default backotter-work).
 #
+# bko-bin's netbsd/restic-bko must embed a Go with golang/go#80285's NetBSD
+# AVX fix (testvm/go-netbsd-fix.sh: go1.26.8 or newer on 1.26, go1.27.0 or
+# newer; go version FILE on the source, else its restic-commit's "go version"
+# line): one built by go1.25.10 (rel6 to rel11) stores wrong bytes on NetBSD
+# that restic check --read-data passes (t2s-20261115T1944-05fb).  Without it
+# the set is promoted nowhere; BKO_ALLOW_FIXLESS_GO=1 promotes it anyway, with
+# a WARNING.
+#
 # Exit 0; 1 when a host's set failed (the others still go); 2 bad usage.
 #
 # Needs: bash 3.2 or newer, ssh, rsync and python3 (testvm/hosts.sh) here;
@@ -53,6 +61,8 @@ log() { echo "$(date '+%H:%M:%S') $*"; }
 usage() { sed -n '8p' "$0" | sed 's/^# //' >&2; exit 2; }
 # shellcheck source=hosts.sh
 . "$here/hosts.sh"
+# shellcheck source=go-netbsd-fix.sh
+. "$here/go-netbsd-fix.sh"
 
 dry=no del=no from="" sets=$ALL_SETS
 while [[ $# -gt 0 ]]; do
@@ -197,6 +207,23 @@ for set in $sets; do
         log "$set: FAILED: a SHA256SUMS in $from:$W/$set doesn't check (or it has no $set): promoted nowhere"
         failed+=" $set@$from"
         continue
+    fi
+    if [[ $set == bko-bin ]]; then
+        # The Go netbsd's restic-bko embeds ("none" when the set has none).
+        # shellcheck disable=SC2016,SC2029  # $HOME and go expand there, W here
+        gv=$(ssh -o BatchMode=yes -o ConnectTimeout=20 "$src" 'b=$HOME/'"$W"'/bko-bin/netbsd
+            [ -f "$b/restic-bko" ] || { echo none; exit 0; }
+            go=$(command -v go 2>/dev/null) || go=$(ls -d "$HOME"/sdk/go*/bin/go 2>/dev/null | sort -V | tail -n 1)
+            if [ -n "$go" ] && [ -x "$go" ] && "$go" version "$b/restic-bko" 2>/dev/null; then :
+            else grep -m 1 "^go version " "$b/restic-commit" 2>/dev/null; fi') || gv=""
+        if [[ $gv != none ]] && ! go_netbsd_avx_fixed "$gv"; then
+            if [[ ${BKO_ALLOW_FIXLESS_GO:-} != 1 ]]; then
+                log "$set: FAILED: $from:$W/$set/netbsd/restic-bko embeds ${gv:-no Go version we can read}, without golang/go#80285's NetBSD AVX fix ($GO_NETBSD_FIX_RULE): it stores wrong bytes on NetBSD; promoted nowhere (BKO_ALLOW_FIXLESS_GO=1 promotes it anyway)"
+                failed+=" $set@$from"
+                continue
+            fi
+            log "$set: WARNING: $from:$W/$set/netbsd/restic-bko embeds ${gv:-no Go version we can read}, without golang/go#80285's NetBSD AVX fix: promoted anyway (BKO_ALLOW_FIXLESS_GO=1)"
+        fi
     fi
     man=$(remote "$src" sums "$set") && [[ -n $man ]] ||
         { log "$set: FAILED: no manifest of $from:$W/$set"; failed+=" $set@$from"; continue; }

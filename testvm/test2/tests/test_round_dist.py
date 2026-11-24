@@ -420,8 +420,8 @@ class PromoteBins(unittest.TestCase):
         os.makedirs(os.path.join(self.w.home("chopin"), w, "images"))
         os.makedirs(os.path.join(self.w.home("cage"), w))
 
-    def pb(self, *args):
-        return self.w.run([PROMOTE] + list(args))
+    def pb(self, *args, env=None):
+        return self.w.run([PROMOTE] + list(args), env=env)
 
     def test_dry_run_writes_nothing(self):
         r = self.pb("--dry-run", "cage")
@@ -498,6 +498,49 @@ class PromoteBins(unittest.TestCase):
             r = self.pb(*args)
             self.assertEqual(r.returncode, 2, (args, r.stdout, r.stderr))
             self.assertIn(msg, r.stderr, args)
+
+    def netbsd_restic(self, embeds, commit_go="go1.26.10"):
+        """bko-bin/netbsd/restic-bko on chopin, whose (fake) go version FILE says EMBEDS (None:
+        no go there, its restic-commit's line is read), and the set's SHA256SUMS again."""
+        w = "backotter-work"
+        self.w.put("chopin", f"{w}/bko-bin/netbsd/restic-bko", "restic netbsd\n", 0o755)
+        self.w.put("chopin", f"{w}/bko-bin/netbsd/restic-commit",
+                   f"{'f' * 40} (from src)\nsource digest 1\ngo version {commit_go} linux/amd64, built 2026-11-22\n")
+        self.w.put("chopin", f"{w}/bko-bin/SHA256SUMS", self.w.sums("chopin", f"{w}/bko-bin"))
+        if embeds:
+            self.w.put("chopin", "bin/go", f'#!/bin/sh\n[ "$1" = version ] && echo "$2: {embeds}"\n', 0o755)
+
+    def test_a_fixless_netbsd_restic_goes_nowhere(self):
+        """golang/go#80285: a netbsd restic-bko built by a Go without the NetBSD AVX fix
+        (go1.25.10) isn't promoted; the other sets still go."""
+        self.netbsd_restic("go1.25.10")
+        r = self.pb("--sets", "bko-bin,cmp-bin", "cage")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("bko-bin: FAILED: chopin:backotter-work/bko-bin/netbsd/restic-bko embeds", r.stdout)
+        self.assertIn("go1.25.10, without golang/go#80285's NetBSD AVX fix", r.stdout)
+        self.assertIsNone(self.w.read("cage", "backotter-work/bko-bin/netbsd/restic-bko"))
+        self.assertIsNotNone(self.w.read("cage", "backotter-work/cmp-bin/restic-bko"))
+        r = self.pb("--sets", "bko-bin", "cage", env={"BKO_ALLOW_FIXLESS_GO": "1"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("bko-bin: WARNING: chopin:backotter-work/bko-bin/netbsd/restic-bko embeds", r.stdout)
+        self.assertEqual(self.w.read("cage", "backotter-work/bko-bin/netbsd/restic-bko"), "restic netbsd\n")
+
+    def test_a_fixed_netbsd_restic_is_promoted(self):
+        for embeds, commit_go in (("go1.26.10", "go1.25.10"), (None, "go1.26.8")):
+            with self.subTest(embeds=embeds):
+                self.netbsd_restic(embeds, commit_go)
+                r = self.pb("--sets", "bko-bin", "cage")
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertNotIn("80285", r.stdout)
+                self.assertEqual(self.w.read("cage", "backotter-work/bko-bin/netbsd/restic-bko"), "restic netbsd\n")
+                p = os.path.join(self.w.home("chopin"), "bin", "go")
+                if os.path.exists(p):
+                    os.unlink(p)
+        # no go there and the restic-commit's is fixless
+        self.netbsd_restic(None, "go1.25.10")
+        r = self.pb("--sets", "bko-bin", "cage")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("embeds go version go1.25.10 linux/amd64, built 2026-11-22, without", r.stdout)
 
 
 # --- stic.py: round_step -------------------------------------------------------------------------

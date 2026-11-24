@@ -240,7 +240,11 @@
 # RUSTIC_CORE_COMMIT and RESTIC_DIGEST, RESTIC_TREE_DIGEST, RUSTIC_DIGEST,
 # RUSTIC_CORE_DIGEST as the Mac part gives them (BKO_UNVERIFIED=1 builds
 # without the digests, and the table says so); BKO_GO (go on PATH, else the
-# newest ~/sdk/go*/bin/go).
+# newest ~/sdk/go*/bin/go), which must have golang/go#80285's NetBSD AVX fix
+# (testvm/go-netbsd-fix.sh: go1.26.8 or newer on 1.26, go1.27.0 or newer) for
+# restic-bko netbsd, refused (its row FAILED) without, and netbsd's restic-bko,
+# built or reused, must embed such a Go (go version FILE); BKO_ALLOW_FIXLESS_GO=1
+# (passed to the hosts) builds and keeps it anyway, with a WARNING.
 #
 # Needs: on the Mac git, rsync, ssh, tar, python3 (testvm/hosts.sh and
 # deal-units.py); on the hosts what the build scripts need (Go for restic;
@@ -613,7 +617,7 @@ if [[ $mode == mac ]]; then
         out+=" BKO_ROUNDS=$rrounds SRC=$rsrc"
         for v in BKO_BUILD_CACHE BKO_PROFILE BKO_GUEST_PROFILE BKO_REUSE BKO_RUST_TOOLCHAIN BKO_DFLY_PORT BKO_GUEST_PORTS BKO_HAIKU_PORT BKO_GUEST_LANES \
             BKO_CPU_LANES BKO_GUEST_MAX BKO_GUEST_RANGE DFLY_CACHE BKO_WORK BKO_HAIKU_TIMEOUT BKO_HAIKU_BUILD_TIMEOUT \
-            BKO_HAIKU_POLL BKO_HAIKU_STALL BKO_HAIKU_STALL_PCT CPUS MEMORY; do
+            BKO_HAIKU_POLL BKO_HAIKU_STALL BKO_HAIKU_STALL_PCT BKO_ALLOW_FIXLESS_GO CPUS MEMORY; do
             [[ -n ${!v:-} ]] && out+=" $v='${!v}'"
         done
         echo "$out"
@@ -879,6 +883,9 @@ host=$(uname -n)
 # The host table beside this script (the arm64 host's part, hosts_rust_env).
 # shellcheck source=../testvm/hosts.sh
 . "$here/../testvm/hosts.sh" || die "no $here/../testvm/hosts.sh"
+# go_netbsd_avx_fixed, for restic-bko netbsd (build_restic).
+# shellcheck source=../testvm/go-netbsd-fix.sh
+. "$here/../testvm/go-netbsd-fix.sh" || die "no $here/../testvm/go-netbsd-fix.sh"
 # The arm64 host's part (--host NAME of the build-arm64 role) holds only the
 # arm64 directories: no top SHA256SUMS.
 armhost=no
@@ -1196,14 +1203,40 @@ prepare() {
 oses="linux freebsd openbsd netbsd dragonfly illumos"
 # A bin directory's Go target: OS is OS/amd64, linux-arm64 linux/arm64.
 go_target() { case $1 in *-arm64) echo "${1%-arm64}/arm64" ;; *) echo "$1/amd64" ;; esac; }
+# restic-bko netbsd and golang/go#80285: NetBSD amd64 drops the upper YMM
+# halves across a signal's delivery, Go's async preemption signals land in its
+# AVX memmove, and a restic-bko built by a Go without the fix (Go turns AVX off
+# on NetBSD: GO_NETBSD_FIX_RULE) silently stores wrong bytes there, which
+# restic check --read-data passes (alpinebsd, t2s-20261115T1944-05fb; rel6 to
+# rel11's go1.25.10 builds).  netbsd_go_bad GO-VERSION-TEXT WHAT: true (and
+# said) when the Go lacks the fix and BKO_ALLOW_FIXLESS_GO=1 doesn't take it.
+netbsd_go_bad() {
+    go_netbsd_avx_fixed "$1" && return 1
+    if [[ ${BKO_ALLOW_FIXLESS_GO:-} == 1 ]]; then
+        log "WARNING: restic-bko netbsd: $2 ${1:-no Go version}, without golang/go#80285's NetBSD AVX fix:" \
+            "kept (BKO_ALLOW_FIXLESS_GO=1), but it may store wrong bytes that restic check --read-data passes"
+        return 1
+    fi
+    log "restic-bko netbsd: refused: $2 ${1:-no Go version}, without golang/go#80285's NetBSD AVX fix" \
+        "($GO_NETBSD_FIX_RULE): on NetBSD it would store wrong bytes.  A fixed Go first on PATH, newest in" \
+        "~/sdk or as BKO_GO (BKO_ALLOW_FIXLESS_GO=1 keeps it anyway)"
+    return 0
+}
 # DIR...: restic-bko for each bin directory (oses, linux-arm64), into BIN
 # (a check's: CHK).
 build_restic() {
-    local go=${BKO_GO:-} os gov sd todo="" t0=$SECONDS d inputs t dirs="$*"
+    local go=${BKO_GO:-} os gov sd todo="" t0=$SECONDS d inputs t dirs="$*" ev
     [[ -n $go ]] || go=$(command -v go) || go=$(ls -d "$HOME"/sdk/go*/bin/go 2>/dev/null | sort -V | tail -n 1)
     [[ -x $go ]] || { log "no go"; for os in $dirs; do row restic-bko $os FAILED 0; done; return 1; }
     export PATH=$(dirname "$go"):$PATH
     gov=$(go version)
+    if [[ " $dirs " == *" netbsd "* ]] && netbsd_go_bad "$gov" "Go is"; then
+        # A netbsd restic-bko left in BIN by an earlier run would go in the
+        # FAILED row's .files (row lists any file there): out with it.
+        [[ $dry == yes ]] || { rm -f "$BIN/netbsd/restic-bko" "$BIN/netbsd/restic-commit"; row restic-bko netbsd FAILED 0; }
+        dirs=$(for os in $dirs; do [[ $os == netbsd ]] || printf '%s ' "$os"; done)
+        [[ -n ${dirs// /} ]] || return 1
+    fi
     sd=$("$SRC/restic/build-backotter.sh" --source-digest)
     for os in $dirs; do
         inputs=$LOGS/restic-$os.inputs
@@ -1218,7 +1251,7 @@ build_restic() {
             todo+=" $os"
         fi
     done
-    [[ -n $todo ]] || return 0
+    if [[ -z $todo ]]; then netbsd_embeds; return 0; fi
     if [[ $dry == yes ]]; then log "restic-bko:$todo: would build (build-backotter.sh)"; return 0; fi
     log "restic-bko: building$todo ($gov)"
     rm -rf "$SRC/restic/dist"
@@ -1244,6 +1277,17 @@ build_restic() {
         row restic-bko $os built $((SECONDS - t0)) "$d"
     done
     log "restic-bko built in $((SECONDS - t0)) s"
+    netbsd_embeds
+}
+# netbsd_embeds: BIN/netbsd/restic-bko, built or reused, embeds a Go with the
+# fix (go version FILE reads its build info), else it is taken out of the
+# round and its row is FAILED.  build_restic's go and dirs.
+netbsd_embeds() {
+    [[ $dry == no && " $dirs " == *" netbsd "* && -f $BIN/netbsd/restic-bko ]] || return 0
+    ev=$(go version "$BIN/netbsd/restic-bko" 2>/dev/null) || ev=""
+    netbsd_go_bad "${ev##*: }" "$BIN/netbsd/restic-bko embeds" || { log "restic-bko netbsd: embeds ${ev##*: }"; return 0; }
+    rm -f "$BIN/netbsd/restic-bko" "$BIN/netbsd/restic-commit" "$rows/restic-bko-netbsd.files"
+    row restic-bko netbsd FAILED $((SECONDS - t0))
 }
 omnios_copies() {  # NAME: bin/omnios/NAME (and commit, digest) = bin/illumos's
     local x

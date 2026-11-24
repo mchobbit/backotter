@@ -141,9 +141,13 @@
 # sensors' Tctl is over it, checked before each job there), RX_LINUX_BIN and
 # RX_BSD_BIN (the c517a69/ba93d6e binaries kept on the Mac: rx-linux/bin, flat,
 # and rx-bsd/bin/OS, in the scratchpad of the session that built them),
-# ALLOW_OTHER_GO=1 (restic-bko built by another Go than go1.25.10: each
-# build host's Go, the one build-round.sh would take, is checked before it
-# runs).  The script's own ssh reaches Chopin by its address, but
+# ALLOW_OTHER_GO=1 (restic-bko built by a Go without golang/go#80285's
+# NetBSD AVX fix, which go1.26.8 or newer on 1.26 and go1.27.0 or newer
+# have: each build host's Go, the one build-round.sh would take, is checked
+# before it runs, and netbsd's restic-bko after; with it, a loud WARNING and
+# build-round.sh's
+# BKO_ALLOW_FIXLESS_GO=1, and the round's netbsd restic-bko can't be
+# trusted).  The script's own ssh reaches Chopin by its address, but
 # testvm/pick-host and stick/build-round.sh, which it runs, reach it as
 # m@chopin.local over mDNS (testvm/hosts.json; CHOPIN= can't carry the
 # HostKeyAlias option): if mDNS fails, pick-host leaves Chopin out and
@@ -218,6 +222,8 @@ x() {
 # The host table's lines come after say and die, which their failures call.
 # shellcheck source=../hosts.sh
 . "$REPO/testvm/hosts.sh"
+# shellcheck source=../go-netbsd-fix.sh
+. "$REPO/testvm/go-netbsd-fix.sh"
 # The farm, from the host table (never a list of names here, as ht1-farm.sh
 # does it): ALL_HOSTS is pick-host's default amd64 hosts, BUILD_ALL the amd64
 # hosts with the build role, which is what build-round.sh will take.
@@ -1298,7 +1304,7 @@ step4() {
     else
         echo "    [dry-run] git clone --shared --no-checkout $GIT/{restic,rustic_core,rustic} $G/ and check out $eh, $ch, $rh"
     fi
-    local bh dist="" gv g125=0
+    local bh dist="" gv gok=0 fixless=""
     bh=$(echo "${BUILD_HOSTS:-$BUILD_ALL}" | tr ',' ' ')
     # The job hosts that build nothing get the round's bin from build-round.sh:
     # with or without --build-hosts, since a default host need not be a build
@@ -1306,30 +1312,53 @@ step4() {
     for h in $(echo "${POOL:-$ALL_HOSTS}" | tr ',' ' '); do [[ " $bh " == *" $h "* ]] || dist+=${dist:+,}$h; done
     # restic-bko goes to a build host with Go, which takes go on PATH, else the
     # newest ~/sdk/go*/bin/go (build-round.sh's choice, and BKO_GO doesn't reach
-    # it): each such host's must be go1.25.10, checked now, not after the round.
+    # it): each such host's must have golang/go#80285's fix (GO_NETBSD_FIX_RULE,
+    # testvm/go-netbsd-fix.sh), checked now, not after the round.  The round
+    # builds restic-bko for netbsd (--only below), and a fixless Go's netbsd
+    # restic-bko stores wrong bytes that restic check --read-data passes (NetBSD
+    # drops the upper YMM halves across signals, Go's async preemption lands in
+    # its AVX memmove: the alpinebsd failure of 2026-11-15, t2s-20261115T1944-05fb).
+    # This used to insist on go1.25.10, the toolchain line of RESTIC_HEAD's
+    # go.mod (restic 0.19.1's), the Go stock 0.19.1's baseline and the earlier
+    # rounds' restic-bko were built with (testvm/audit): no go1.25.x has the
+    # fix, so the fix comes first and a Go other than go.mod's is only said
+    # (go.mod's "go 1.25.8" line lets any newer Go build it).
     for h in $bh; do
         # shellcheck disable=SC2016  # expanded there
         gv=$(hssh "$h" 'go=$(command -v go 2>/dev/null) || go=$(ls -d "$HOME"/sdk/go*/bin/go 2>/dev/null | sort -V | tail -n 1)
             [ -n "$go" ] && [ -x "$go" ] && "$go" version' 2>/dev/null) || gv=""
         say "$h: ${gv:-no Go (gets no restic unit)}"
         [[ -n $gv ]] || continue
-        if [[ $gv == *" go1.25.10 "* ]]; then g125=1
-        elif [[ ${ALLOW_OTHER_GO:-} != 1 && $DRY == 0 ]]; then
-            die "step 4: $h would build restic-bko with $gv, not go1.25.10 (--build-hosts without $h, or ALLOW_OTHER_GO=1)"
+        gok=1
+        if go_netbsd_avx_fixed "$gv"; then
+            say "$h: has golang/go#80285's NetBSD AVX fix (go.mod's toolchain go1.25.10, stock 0.19.1's, hasn't)"
+        elif [[ ${ALLOW_OTHER_GO:-} == 1 ]]; then
+            fixless+=" $h"
+        elif [[ $DRY == 1 ]]; then
+            say "$h: [dry-run] $gv lacks golang/go#80285's NetBSD AVX fix ($GO_NETBSD_FIX_RULE): a real run stops here"
+        else
+            die "step 4: $h would build restic-bko (netbsd/amd64 among them) with $gv, which lacks golang/go#80285's NetBSD AVX fix ($GO_NETBSD_FIX_RULE): netbsd's restic-bko would store wrong bytes. Put a fixed Go first on PATH or newest in ~/sdk there, or --build-hosts without $h (ALLOW_OTHER_GO=1 builds it anyway, untrusted)"
         fi
     done
-    [[ $g125 == 1 || ${ALLOW_OTHER_GO:-} == 1 || $DRY == 1 ]] || die "step 4: no build host has go1.25.10 (ALLOW_OTHER_GO=1 takes another)"
+    [[ $gok == 1 || $DRY == 1 ]] || die "step 4: no build host has Go (restic-bko needs one)"
+    if [[ -n $fixless ]]; then
+        say "WARNING ****************************************************************"
+        say "WARNING: ALLOW_OTHER_GO=1: restic-bko is built with a Go lacking golang/go#80285's"
+        say "WARNING: NetBSD AVX fix on${fixless}: this round's netbsd restic-bko may store wrong"
+        say "WARNING: bytes that restic check --read-data passes; its netbsd results can't be trusted"
+        say "WARNING ****************************************************************"
+    fi
     for h in $bh; do prep_host "$h"; done
     [[ " $bh " == *" chopin "* ]] && chopin_cool
     say "build-round.sh $ROUND (log $S/build-round.log)${dist:+; --dist-hosts $dist}"
     local only=restic,linux,dragonfly,freebsd,netbsd,openbsd,illumos
     if [[ $DRY == 1 ]]; then
-        x env BKO_GIT="$G" BKO_REMOTE_DIR="$WT" "$REPO/stick/build-round.sh" ${BUILD_HOSTS:+--hosts "$BUILD_HOSTS"} \
+        x env BKO_GIT="$G" BKO_REMOTE_DIR="$WT" ${fixless:+BKO_ALLOW_FIXLESS_GO=1} "$REPO/stick/build-round.sh" ${BUILD_HOSTS:+--hosts "$BUILD_HOSTS"} \
             ${dist:+--dist-hosts "$dist"} --only "$only" "$ROUND"
         exp=(EXPECT_RESTIC_COMMIT="$RESTIC_HEAD" EXPECT_RESTIC_DIGEST="<from build-round.sh>" EXPECT_RUSTIC_COMMIT="$rh"
             EXPECT_RUSTIC_CORE_COMMIT="$ch")
     else
-        env BKO_GIT="$G" BKO_REMOTE_DIR="$WT" "$REPO/stick/build-round.sh" ${BUILD_HOSTS:+--hosts "$BUILD_HOSTS"} \
+        env BKO_GIT="$G" BKO_REMOTE_DIR="$WT" ${fixless:+BKO_ALLOW_FIXLESS_GO=1} "$REPO/stick/build-round.sh" ${BUILD_HOSTS:+--hosts "$BUILD_HOSTS"} \
             ${dist:+--dist-hosts "$dist"} --only "$only" "$ROUND" >"$S/build-round.log" 2>&1 &
         BR_PID=$!
         local brc=0
@@ -1345,9 +1374,19 @@ step4() {
         [[ ${#exp[@]} == 4 && " ${exp[*]} " == *" EXPECT_RUSTIC_CORE_COMMIT=$ch "* && " ${exp[*]} " == *" EXPECT_RUSTIC_COMMIT=$rh "* ]] ||
             die "step 4: build-round.sh's EXPECT line ($line) isn't rustic $rh, rustic_core $ch"
         h=${bh%% *}
-        if ! hssh "$h" "grep -q go1.25.10 backotter-work/round$ROUND/bin/linux/restic-commit"; then
-            [[ ${ALLOW_OTHER_GO:-} == 1 ]] || die "step 4: round$ROUND's restic-bko wasn't built by go1.25.10 (ALLOW_OTHER_GO=1 takes it)"
-            say "restic-bko built by another Go than go1.25.10 (ALLOW_OTHER_GO=1)"
+        # The Go netbsd's restic-bko embeds (go version FILE there, else its
+        # restic-commit's "go version" line), by the same rule.
+        # shellcheck disable=SC2016  # expanded there
+        gv=$(hssh "$h" 'b=backotter-work/round'"$ROUND"'/bin/netbsd
+            go=$(command -v go 2>/dev/null) || go=$(ls -d "$HOME"/sdk/go*/bin/go 2>/dev/null | sort -V | tail -n 1)
+            if [ -n "$go" ] && [ -x "$go" ] && "$go" version "$b/restic-bko" 2>/dev/null; then :
+            else grep -m 1 "^go version " "$b/restic-commit"; fi' 2>/dev/null) || gv=""
+        if go_netbsd_avx_fixed "$gv"; then
+            say "netbsd restic-bko: ${gv##*: } (golang/go#80285's NetBSD AVX fix in)"
+        else
+            [[ ${ALLOW_OTHER_GO:-} == 1 ]] ||
+                die "step 4: round$ROUND's netbsd restic-bko embeds ${gv:-no Go version we can read}, without golang/go#80285's NetBSD AVX fix ($GO_NETBSD_FIX_RULE): it may store wrong bytes (ALLOW_OTHER_GO=1 takes it, untrusted)"
+            say "WARNING: round$ROUND's netbsd restic-bko embeds ${gv:-no Go version we can read}, without golang/go#80285's NetBSD AVX fix (ALLOW_OTHER_GO=1): its netbsd results can't be trusted"
         fi
     fi
     exp+=(EXPECT_RESTIC_VERSION="$RESTIC_VER" EXPECT_RUSTIC_VERSION="$RUSTIC_VER")

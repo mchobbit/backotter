@@ -31,8 +31,8 @@ pub fn report(sys: &Sys, devs: &[String], generated: &str) -> Result<Value, Stri
         let mut parts = Vec::new();
         for f in &found {
             let mut extra = Obj::new();
-            let ty = f.json.0.iter().find(|(k, _)| k == "type").and_then(|(_, v)| v.as_str()).unwrap_or("").to_ascii_lowercase();
-            let label = f.json.0.iter().find(|(k, _)| k == "partlabel").and_then(|(_, v)| v.as_str()).unwrap_or("").to_string();
+            let ty = f.field("type").unwrap_or("").to_ascii_lowercase();
+            let label = f.field("partlabel").unwrap_or("").to_string();
             if ty == BIOS_BOOT {
                 extra.put("boot_code", Obj::new().set("kind", "bios-boot").set("image_b64", super::image_b64(&OffsetSource { inner: &src, start: f.start, len: f.size })));
             }
@@ -47,23 +47,13 @@ pub fn report(sys: &Sys, devs: &[String], generated: &str) -> Result<Value, Stri
             }
             parts.push(found_json(f, vec![], extra));
         }
-        let mut o = Obj::new()
-            .set("name", name.as_str())
-            .set("path", dev.as_str())
-            .set("kind", "disk")
-            .set("size_bytes", d.size)
-            .set("size", crate::report::human(d.size))
-            .set("logical_sector_size", 512u64)
-            .set("partition_table", table.as_ref().map(|t| t.header_json(512, d.size / 512)).unwrap_or(Value::Null))
+        let mut o = super::disk_obj(&d, "disk", Obj::new())
+            .set("partition_table", super::table_json(table.as_ref(), &d))
             .set("partitions", parts);
         if let Some(t) = &table {
-            let code = t.boot_code();
             o.put(
                 "boot_code",
-                Obj::new()
-                    .set("kind", crate::bootcode::identify(code).kind)
-                    .set("first_bytes", crate::bytes::hex(crate::bytes::sub(code, 0, 16)))
-                    .set("code_b64", (!crate::bytes::is_zero(code)).then(|| crate::bytes::base64(crate::bytes::sub(code, 0, 440))))
+                super::boot_code_json(t)
                     // GRUB's core.img in the gap after the MBR, when there is one.
                     .set("gap_b64", match t {
                         Table::Mbr(m) => m.parts.iter().map(|p| u64::from(p.start)).min().filter(|&s| s > 1).map(|s| super::image_b64(&OffsetSource { inner: &src, start: 512, len: (s - 1) * 512 })),

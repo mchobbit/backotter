@@ -64,6 +64,20 @@ pub fn parse_disklabel64(text: &str) -> (u64, Vec<L64Part>) {
     (base, parts)
 }
 
+/// Every whole disk, in kern.disks' order: but CD drives, vnode and memory
+/// disks, and any diskinfo can't size.  Shared by dump and load's scan.
+pub fn disks(sys: &Sys) -> Vec<RawDisk> {
+    sys.run("sysctl", &["-n", "kern.disks"])
+        .unwrap_or_default()
+        .split_whitespace()
+        .filter(|n| !["cd", "acd", "vn", "md"].iter().any(|p| n.starts_with(p) && n[p.len()..].chars().all(|c| c.is_ascii_digit())))
+        .filter_map(|n| {
+            let (sector, size) = parse_diskinfo(&sys.run("diskinfo", &[&format!("/dev/{n}")])?)?;
+            Some(RawDisk { name: n.to_string(), path: format!("/dev/{n}"), size, sector, model: None, serial: None })
+        })
+        .collect()
+}
+
 /// The partition a spec names: /dev/vbd0s1a, vbd0s1d@ROOT (a HAMMER2 PFS).
 fn resolve(spec: &str, names: &[String]) -> Option<String> {
     let s = spec.strip_prefix("/dev/").unwrap_or(spec);
@@ -73,9 +87,8 @@ fn resolve(spec: &str, names: &[String]) -> Option<String> {
 
 pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, generated: &str) -> Value {
     let hostname = sys.run("hostname", &[]).map(|s| s.trim().to_string());
-    let list = sys.run("sysctl", &["-n", "kern.disks"]).unwrap_or_default();
-    let mut names: Vec<&str> = list.split_whitespace().filter(|n| !["cd", "acd", "vn", "md"].iter().any(|p| n.starts_with(p) && n[p.len()..].chars().all(|c| c.is_ascii_digit()))).collect();
-    names.sort_by(|a, b| crate::sys::natural_cmp(a, b));
+    let mut raw = disks(sys);
+    raw.sort_by(|a, b| crate::sys::natural_cmp(&a.name, &b.name));
     let mount_list = sys.run("mount", &["-p"]).map(|t| mounts::parse_fstab(&t)).unwrap_or_default();
     struct Seen {
         d: RawDisk,
@@ -85,18 +98,17 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         table: Option<crate::parttable::Table>,
     }
     let mut seen: Vec<Seen> = Vec::new();
-    for n in names {
-        let Some((sector, size)) = sys.run("diskinfo", &[&format!("/dev/{n}")]).and_then(|t| parse_diskinfo(&t)) else { continue };
-        let d = RawDisk { name: n.to_string(), path: format!("/dev/{n}"), size, sector, model: None, serial: None };
+    for d in raw {
         let Some(src) = open(sys, &d) else {
             sys.warn(format!("{}: can't read the disk", d.path));
             continue;
         };
+        let n = d.name.as_str();
         let (table, found) = read_disk(&src, &d, &|k, _| format!("{n}s{k}"));
         let mut labels = Vec::new();
         let mut lcontents = Vec::new();
         for f in &found {
-            let is_dfly = f.json.0.iter().any(|(k, v)| k == "type" && v.as_str() == Some("0x6c"));
+            let is_dfly = f.field("type") == Some("0x6c");
             if !is_dfly {
                 continue;
             }
@@ -158,26 +170,13 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
                 o.build()
             })
             .collect();
-        let mut o = Obj::new()
-            .set("name", s.d.name.as_str())
-            .set("path", s.d.path.as_str())
-            .set("kind", "disk")
-            .set("size_bytes", s.d.size)
-            .set("size", crate::report::human(s.d.size))
-            .set("logical_sector_size", s.d.sector)
-            .set("partition_table", s.table.as_ref().map(|t| t.header_json(s.d.sector, s.d.size / s.d.sector.max(1))).unwrap_or(Value::Null))
+        let mut o = super::disk_obj(&s.d, "disk", Obj::new())
+            .set("partition_table", super::table_json(s.table.as_ref(), &s.d))
             .set("partitions", parts)
             .set("label_partitions", lparts)
             .set("disklabels64", s.labels.iter().map(|(n, t, _, _)| Obj::new().set("slice", *n).set("text", t.as_str()).build()).collect::<Vec<_>>());
         if let Some(t) = &s.table {
-            let code = t.boot_code();
-            o.put(
-                "boot_code",
-                Obj::new()
-                    .set("kind", crate::bootcode::identify(code).kind)
-                    .set("first_bytes", crate::bytes::hex(crate::bytes::sub(code, 0, 16)))
-                    .set("code_b64", (!crate::bytes::is_zero(code)).then(|| crate::bytes::base64(crate::bytes::sub(code, 0, 440)))),
-            );
+            o.put("boot_code", super::boot_code_json(t));
         }
         o.put("mounted_at", mounted_at(&s.d.name));
         disks_json.push(o.build());
@@ -190,16 +189,9 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         Some(t) => Value::Arr(mounts::parse_fstab(&t).iter().map(|e| e.to_json(resolve(&e.spec, &all_names).as_deref())).collect()),
         None => Value::Null,
     };
-    let swap_text = sys.run("swapctl", &["-l"]).unwrap_or_default();
-    let unit: u64 = swap_text.lines().next().and_then(|h| h.split_whitespace().nth(1)).and_then(|w| w.split('-').next()).and_then(|n| n.parse().ok()).unwrap_or(512);
-    let swaps: Vec<Value> = swap_text
-        .lines()
-        .skip(1)
-        .filter_map(|l| {
-            let f: Vec<&str> = l.split_whitespace().collect();
-            let n: u64 = f.get(1)?.parse().ok()?;
-            Some(Obj::new().set("file", f[0]).set("size_bytes", n * unit).set("device", resolve(f[0], &all_names)).build())
-        })
+    let swaps: Vec<Value> = super::swapctl_list(&sys.run("swapctl", &["-l"]).unwrap_or_default())
+        .into_iter()
+        .map(|(file, size)| Obj::new().set("file", file).set("size_bytes", size).set("device", resolve(file, &all_names)).build())
         .collect();
     let storage = Obj::new().set("disks", disks_json).set("mounts", mounts_json).set("swaps", swaps).set("fstab", fstab);
     let boot = Obj::new()

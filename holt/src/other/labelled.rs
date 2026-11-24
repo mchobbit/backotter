@@ -229,7 +229,7 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         // partition does: what's found there is that partition's.
         let mut found = found;
         if real_label {
-            for f in found.iter_mut().filter(|f| f.json.0.iter().any(|(k, v)| k == "type" && matches!(v.as_str(), Some("0xa6" | "0xa9" | "0xa5")))) {
+            for f in found.iter_mut().filter(|f| matches!(f.field("type"), Some("0xa6" | "0xa9" | "0xa5"))) {
                 f.contents.clear();
             }
         }
@@ -312,28 +312,14 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
             })
             .collect();
         let vol = volumes.iter().find(|v| v.device == s.d.name);
-        let mut o = Obj::new()
-            .set("name", s.d.name.as_str())
-            .set("path", s.d.path.as_str())
-            .set("kind", if vol.is_some() { "softraid" } else { "disk" })
-            .set_some("softraid", vol.map(|v| super::softraid::volume_json(v, hint(v))))
-            .set("size_bytes", s.d.size)
-            .set("size", crate::report::human(s.d.size))
-            .set("logical_sector_size", s.d.sector)
+        let mut o = super::disk_obj(&s.d, if vol.is_some() { "softraid" } else { "disk" }, Obj::new().set_some("softraid", vol.map(|v| super::softraid::volume_json(v, hint(v)))))
             .set("duid", s.duid.clone())
-            .set("partition_table", s.table.as_ref().map(|t| t.header_json(s.d.sector, s.d.size / s.d.sector.max(1))).unwrap_or(Value::Null))
+            .set("partition_table", super::table_json(s.table.as_ref(), &s.d))
             .set("partitions", parts)
             .set("label_partitions", lparts)
             .set("disklabel", s.label.as_ref().map(|(t, _)| t.clone()));
         if let Some(t) = &s.table {
-            let code = t.boot_code();
-            o.put(
-                "boot_code",
-                Obj::new()
-                    .set("kind", crate::bootcode::identify(code).kind)
-                    .set("first_bytes", crate::bytes::hex(crate::bytes::sub(code, 0, 16)))
-                    .set("code_b64", (!crate::bytes::is_zero(code)).then(|| crate::bytes::base64(crate::bytes::sub(code, 0, 440)))),
-            );
+            o.put("boot_code", super::boot_code_json(t));
         }
         o.put("content", probe::content_json(&s.whole));
         o.put("mounted_at", mounted_at(&s.d.name));
@@ -351,16 +337,9 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         Some(t) => Value::Arr(mounts::parse_fstab(&t).iter().map(|e| e.to_json(resolve(&e.spec, &seen).as_deref())).collect()),
         None => Value::Null,
     };
-    let swap_text = sys.run("swapctl", &["-l"]).unwrap_or_default();
-    let unit: u64 = swap_text.lines().next().and_then(|h| h.split_whitespace().nth(1)).and_then(|w| w.split('-').next()).and_then(|n| n.parse().ok()).unwrap_or(512);
-    let swaps: Vec<Value> = swap_text
-        .lines()
-        .skip(1)
-        .filter_map(|l| {
-            let f: Vec<&str> = l.split_whitespace().collect();
-            let n: u64 = f.get(1)?.parse().ok()?;
-            Some(Obj::new().set("file", f[0]).set("size_bytes", n * unit).set("device", resolve(f[0], &seen)).build())
-        })
+    let swaps: Vec<Value> = super::swapctl_list(&sys.run("swapctl", &["-l"]).unwrap_or_default())
+        .into_iter()
+        .map(|(file, size)| Obj::new().set("file", file).set("size_bytes", size).set("device", resolve(file, &seen)).build())
         .collect();
     let member_refs: Vec<(String, &Content)> = members.iter().map(|(n, c)| (n.clone(), c)).collect();
     let mut storage = Obj::new().set("disks", disks_json);

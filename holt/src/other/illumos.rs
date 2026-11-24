@@ -137,25 +137,12 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
             }
             parts.push(found_json(f, mounted_at(&f.name), extra));
         }
-        let mut o = Obj::new()
-            .set("name", d.name.as_str())
-            .set("path", d.path.as_str())
-            .set("kind", "disk")
-            .set("size_bytes", d.size)
-            .set("size", crate::report::human(d.size))
-            .set("logical_sector_size", d.sector)
+        let mut o = super::disk_obj(&d, "disk", Obj::new())
             .set("model", d.model.clone())
-            .set("partition_table", table.as_ref().map(|t| t.header_json(d.sector, d.size / d.sector)).unwrap_or(Value::Null))
+            .set("partition_table", super::table_json(table.as_ref(), &d))
             .set("partitions", parts);
         if let Some(t) = &table {
-            let code = t.boot_code();
-            o.put(
-                "boot_code",
-                Obj::new()
-                    .set("kind", crate::bootcode::identify(code).kind)
-                    .set("first_bytes", crate::bytes::hex(crate::bytes::sub(code, 0, 16)))
-                    .set("code_b64", (!crate::bytes::is_zero(code)).then(|| crate::bytes::base64(crate::bytes::sub(code, 0, 440)))),
-            );
+            o.put("boot_code", super::boot_code_json(t));
         }
         o.put("mounted_at", mounted_at(&d.name));
         disks_json.push(o.build());

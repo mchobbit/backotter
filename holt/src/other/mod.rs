@@ -113,6 +113,57 @@ pub struct Found {
     pub contents: Vec<Content>,
 }
 
+impl Found {
+    /// One of its table JSON's string fields ("type", "partlabel").
+    pub fn field(&self, key: &str) -> Option<&str> {
+        self.json.0.iter().find(|(k, _)| k == key).and_then(|(_, v)| v.as_str())
+    }
+}
+
+/// A disk's report object up to its size: name, path, `kind`, the keys of
+/// `after_kind` (OpenBSD's softraid), then size_bytes, size and
+/// logical_sector_size, for each family's report to go on from.
+pub fn disk_obj(d: &RawDisk, kind: &str, after_kind: Obj) -> Obj {
+    let mut o = Obj::new().set("name", d.name.as_str()).set("path", d.path.as_str()).set("kind", kind);
+    o.0.extend(after_kind.0);
+    o.set("size_bytes", d.size).set("size", crate::report::human(d.size)).set("logical_sector_size", d.sector)
+}
+
+/// A disk report's partition_table: the table's header JSON, or null.
+pub fn table_json(t: Option<&Table>, d: &RawDisk) -> Value {
+    t.map(|t| t.header_json(d.sector, d.size / d.sector.max(1))).unwrap_or(Value::Null)
+}
+
+/// A disk report's boot_code: the MBR's boot code, named by `kind`.
+pub fn boot_code_obj(code: &[u8], kind: &str) -> Obj {
+    Obj::new()
+        .set("kind", kind)
+        .set("first_bytes", crate::bytes::hex(crate::bytes::sub(code, 0, 16)))
+        .set("code_b64", (!crate::bytes::is_zero(code)).then(|| crate::bytes::base64(crate::bytes::sub(code, 0, 440))))
+}
+
+/// boot_code_obj, named as bootcode::identify names it.
+pub fn boot_code_json(t: &Table) -> Obj {
+    let code = t.boot_code();
+    boot_code_obj(code, crate::bootcode::identify(code).kind)
+}
+
+/// `swapctl -l`'s devices and their sizes in bytes (NetBSD, OpenBSD,
+/// DragonFly): the header's second column ("512-blocks", "1024-blocks")
+/// names the unit, 512 when it isn't a number of bytes ("1K-blocks", as
+/// BLOCKSIZE=1K prints it, isn't read).
+pub fn swapctl_list(text: &str) -> Vec<(&str, u64)> {
+    let unit: u64 = text.lines().next().and_then(|h| h.split_whitespace().nth(1)).and_then(|w| w.split('-').next()).and_then(|n| n.parse().ok()).unwrap_or(512);
+    text.lines()
+        .skip(1)
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            let n: u64 = f.get(1)?.parse().ok()?;
+            Some((f[0], n * unit))
+        })
+        .collect()
+}
+
 /// "VALUE # description" lines, as FreeBSD's diskinfo -v prints them.
 pub fn parse_diskinfo_v(text: &str) -> Vec<(String, String)> {
     text.lines()
@@ -282,7 +333,7 @@ const _: () = assert!(10 * (ESP_IMAGE_MAX as u64) * 3 / 2 < crate::LAYOUT_MAX);
 /// its non-zero 512-byte runs, as (offset, base64) chunks, for load to
 /// write back as they were.  At most ESP_IMAGE_MAX of them.
 pub fn esp_image(disk: &dyn ByteSource, f: &Found, mounted_at: &[String], extra: &mut Obj) {
-    let ty = f.json.0.iter().find(|(k, _)| k == "type").and_then(|(_, v)| v.as_str()).unwrap_or("").to_ascii_lowercase();
+    let ty = f.field("type").unwrap_or("").to_ascii_lowercase();
     if !mounted_at.is_empty() || !(ty == crate::parttable::ESP || ty == "0xef") || f.size > (4 << 30) {
         return;
     }
@@ -419,6 +470,24 @@ mod tests {
         assert_eq!(get(&found[1], "start_bytes"), Some(Value::from(u64::MAX)));
         assert_eq!(get(&found[2], "sectors"), Some(Value::from(u64::MAX)));
         assert_eq!(get(&found[2], "size_bytes"), Some(Value::from(u64::MAX)));
+    }
+
+    /// The shared report pieces (RustAudit1 H9-14) keep each family's key
+    /// order and units.
+    #[test]
+    fn shared_disk_pieces() {
+        let d = RawDisk { name: "sd0".into(), path: "/dev/rsd0c".into(), size: 1 << 30, sector: 512, model: None, serial: None };
+        let keys = |o: &Obj| o.0.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>();
+        assert_eq!(keys(&disk_obj(&d, "disk", Obj::new())), ["name", "path", "kind", "size_bytes", "size", "logical_sector_size"]);
+        assert_eq!(keys(&disk_obj(&d, "softraid", Obj::new().set("softraid", 1))), ["name", "path", "kind", "softraid", "size_bytes", "size", "logical_sector_size"]);
+        assert_eq!(table_json(None, &d), Value::Null);
+        let b = boot_code_obj(&[0u8; 512], "none");
+        assert_eq!(keys(&b), ["kind", "first_bytes", "code_b64"]);
+        assert_eq!(b.0[2].1, Value::Null);
+        let nb = "Device      512-blocks     Used    Avail Capacity  Priority\n/dev/wd0b       2097152        0  2097152     0%    0\n";
+        assert_eq!(swapctl_list(nb), vec![("/dev/wd0b", 2097152 * 512)]);
+        assert_eq!(swapctl_list("Device\n/dev/sd0b 1000 0 1000 0% 0\nbad line\n"), vec![("/dev/sd0b", 1000 * 512)]);
+        assert_eq!(swapctl_list("Device 1024-blocks\n/dev/vbd0s1b 8 0\n"), vec![("/dev/vbd0s1b", 8 * 1024)]);
     }
 
     #[test]

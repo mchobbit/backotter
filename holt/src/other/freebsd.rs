@@ -215,7 +215,7 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
             if let Some((_, l)) = labels.iter().find(|(n, _)| *n == f.name) {
                 extra.put("glabel", l.as_str());
             }
-            let ptype = f.json.0.iter().find(|(k, _)| k == "type").and_then(|(_, v)| v.as_str()).unwrap_or("").to_ascii_lowercase();
+            let ptype = f.field("type").unwrap_or("").to_ascii_lowercase();
             if ptype == FREEBSD_BOOT {
                 if let Some(s) = &src {
                     let part = OffsetSource { inner: s, start: f.start, len: f.size };
@@ -251,26 +251,13 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
             }
             parts.push(found_json(f, mounted_at(&f.name), extra));
         }
-        let mut o = Obj::new()
-            .set("name", d.name.as_str())
-            .set("path", d.path.as_str())
-            .set("kind", "disk")
-            .set("size_bytes", d.size)
-            .set("size", crate::report::human(d.size))
-            .set("logical_sector_size", d.sector)
+        let mut o = super::disk_obj(d, "disk", Obj::new())
             .set("model", d.model.clone())
             .set("serial", d.serial.clone())
-            .set("partition_table", tables[i].as_ref().map(|t| t.header_json(d.sector, d.size / d.sector)).unwrap_or(Value::Null))
+            .set("partition_table", super::table_json(tables[i].as_ref(), d))
             .set("partitions", parts);
         if let Some(t) = &tables[i] {
-            let code = t.boot_code();
-            o.put(
-                "boot_code",
-                Obj::new()
-                    .set("kind", mbr_code_kind(code))
-                    .set("first_bytes", crate::bytes::hex(crate::bytes::sub(code, 0, 16)))
-                    .set("code_b64", (!crate::bytes::is_zero(code)).then(|| crate::bytes::base64(crate::bytes::sub(code, 0, 440)))),
-            );
+            o.put("boot_code", super::boot_code_obj(t.boot_code(), mbr_code_kind(t.boot_code())));
         }
         for c in &whole[i] {
             members.push((d.name.clone(), c.clone()));

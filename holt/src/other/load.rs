@@ -131,23 +131,14 @@ fn label64_name(slice: &dyn crate::bytes::ByteSource) -> Option<String> {
 
 /// A partition's MBR type ("0xa5"), when it is an MBR's.
 fn mbr_type(f: &Found) -> Option<&str> {
-    f.json.0.iter().find(|(k, _)| k == "type").and_then(|(_, v)| v.as_str())
+    f.field("type")
 }
 
 /// The disks here, read as `dump` reads them, for load's checks.
 pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
     let raw: Vec<RawDisk> = match fam {
         Family::FreeBsd => freebsd::disks(sys),
-        Family::DragonFly => sys
-            .run("sysctl", &["-n", "kern.disks"])
-            .unwrap_or_default()
-            .split_whitespace()
-            .filter(|n| !["cd", "acd", "vn", "md"].iter().any(|p| n.starts_with(p) && n[p.len()..].chars().all(|c| c.is_ascii_digit())))
-            .filter_map(|n| {
-                let (sector, size) = super::dfly::parse_diskinfo(&sys.run("diskinfo", &[&format!("/dev/{n}")])?)?;
-                Some(RawDisk { name: n.to_string(), path: format!("/dev/{n}"), size, sector, model: None, serial: None })
-            })
-            .collect(),
+        Family::DragonFly => super::dfly::disks(sys),
         Family::Haiku => super::haiku::disks(sys),
         Family::Illumos => super::illumos::disks(sys),
         // Rebuilt from Linux: scan is Linux's (target.rs).
@@ -197,7 +188,7 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
                 let (t, f) = read_disk(&src, &d, &|n, t| match fam {
                     Family::FreeBsd => freebsd::part_name(&name, n, t),
                     Family::DragonFly => format!("{name}s{n}"),
-                    Family::Haiku => format!("{name}_{}", n.saturating_sub(1)),
+                    Family::Haiku => super::haiku::part_name(&name, n),
                     Family::Illumos => super::illumos::slice_name(&name, n),
                     _ => format!("{name}:{n}"),
                 });

@@ -106,6 +106,12 @@ pub fn dir_of(name: &str) -> String {
     format!("/dev/disk/{path}")
 }
 
+/// Partition `n` (from 1, the table's) of disk `disk` (name_of's name), as
+/// the report names it: Haiku numbers a disk's partitions from 0.
+pub fn part_name(disk: &str, n: u32) -> String {
+    format!("{disk}_{}", n.saturating_sub(1))
+}
+
 /// Partition `n` (1-based, as the table numbers it) of a disk: Haiku numbers
 /// them from 0.
 pub fn part_path(disk: &str, n: u32) -> String {
@@ -152,7 +158,7 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
     for d in disks(sys) {
         let Ok(src) = FileSource::open_sized(&sys.p(&d.path), d.size) else { continue };
         let name = d.name.clone();
-        let (t, f) = read_disk(&src, &d, &|n, _| format!("{name}_{}", n.saturating_sub(1)));
+        let (t, f) = read_disk(&src, &d, &|n, _| part_name(&name, n));
         all.push((d, t, f));
     }
     let dev_name = |dev: &str| -> Option<String> {
@@ -163,24 +169,11 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
     let mut disks_json = Vec::new();
     for (d, t, found) in &all {
         let parts: Vec<Value> = found.iter().map(|f| found_json(f, mounted_at(&f.name), Obj::new())).collect();
-        let mut o = Obj::new()
-            .set("name", d.name.as_str())
-            .set("path", d.path.as_str())
-            .set("kind", "disk")
-            .set("size_bytes", d.size)
-            .set("size", crate::report::human(d.size))
-            .set("logical_sector_size", d.sector)
-            .set("partition_table", t.as_ref().map(|t| t.header_json(d.sector, d.size / d.sector)).unwrap_or(Value::Null))
+        let mut o = super::disk_obj(d, "disk", Obj::new())
+            .set("partition_table", super::table_json(t.as_ref(), d))
             .set("partitions", parts);
         if let Some(t) = t {
-            let code = t.boot_code();
-            o.put(
-                "boot_code",
-                Obj::new()
-                    .set("kind", crate::bootcode::identify(code).kind)
-                    .set("first_bytes", crate::bytes::hex(crate::bytes::sub(code, 0, 16)))
-                    .set("code_b64", (!crate::bytes::is_zero(code)).then(|| crate::bytes::base64(crate::bytes::sub(code, 0, 440)))),
-            );
+            o.put("boot_code", super::boot_code_json(t));
         }
         o.put("mounted_at", mounted_at(&d.name));
         disks_json.push(o.build());

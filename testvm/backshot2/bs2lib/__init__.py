@@ -34,5 +34,9 @@ test hosts.  Stdlib only; Python 3.9 or newer.
 # 6b1e432, bko-holt e8986b2) and their steers lifted: Alpine's deep tree
 # goes past PATH_MAX (alpine-small-1), /boot's partition is renumbered on a
 # UEFI source that boots from the fallback loader, and --removable is drawn
-# for Alpine and upstream UEFI GRUB again.
-GENERATOR = "5"
+# for Alpine and upstream UEFI GRUB again.  6 (2026-11-24, A7): content
+# drift on every Linux source, a recipe per filesystem (content.RECIPES:
+# ext, xfs, btrfs, f2fs, jfs, nilfs2, bcachefs; families/linux.py choose()),
+# so generic Linux's and NixOS's cases change; Alpine's and Guix's draws
+# are GENERATOR 5's but for the "generator" field.
+GENERATOR = "6"

@@ -29,11 +29,16 @@ own boot parameters and their own /etc (holt/src/store.rs).
   /run/current-system, which a chroot of the copied root hasn't (its /run
   is empty), so tier 0's chrooted dry runs can't find mke2fs or sfdisk.
   /nix/var/nix/profiles/system/sw/bin would reach them: A2 can add that.
+- Content drift (A7, GENERATOR "6"): generic Linux's choice (linux.choose):
+  /srv is on the root filesystem, read-write (bcachefs on nixos2605:
+  bcachefs-1); only /nix/store is mounted read-only, and nothing is planted
+  there.
 """
 
 import re
 
 from .base import Family, Quirk, holds_something, layers_quirk, os_id, walk_moves
+from .linux import content as linux_content
 
 GEN_TITLE = re.compile(r"Configuration (\d+)")
 GEN_ENTRY = re.compile(r"nixos-generation-(\d+)")
@@ -93,5 +98,6 @@ FAMILY = Family(
         layers_quirk("NixOS's initrd", "each generation's initrd is a store item built from its configuration, not rebuilt by load"),
     ],
     config_texts=store_texts,
+    content=linux_content,
     tier0="plan",
 )

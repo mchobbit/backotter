@@ -1,4 +1,4 @@
-"""families/linux.py: generic Linux, the lowest priority, no content drift yet (A7)."""
+"""families/linux.py: generic Linux, the lowest priority; its content drift (A7) is test_family_content.py's."""
 
 import unittest
 
@@ -19,8 +19,11 @@ class TestLinux(unittest.TestCase):
             h = F.hooks(g, K.dump(g))
             self.assertEqual(h.family.name, "linux")
             self.assertEqual(h.tier0, "chroot")
-            self.assertIsNone(h.recipe(K.dump(g)))
-            self.assertFalse(any("content" in c for c in K.cases(g)), g)
+        # Content drift since GENERATOR "6": the recipe of /srv's filesystem.
+        self.assertEqual(F.hooks("debian13", K.dump("debian13")).recipe(K.dump("debian13")), "btrfs-1")
+        self.assertEqual(F.hooks("gentoo", K.dump("gentoo")).recipe(K.dump("gentoo")), "ext-1")
+        self.assertTrue(any("content" in c for c in K.cases("chimera")))
+        self.assertFalse(any("content" in c for c in K.cases("chimera-zfs")))
 
     def test_chimera_mbr_partuuid_is_generic_rule3(self):
         # chimera's command line names / as PARTUUID=SIG-03: renumbering it is refused by the generic rule 3.

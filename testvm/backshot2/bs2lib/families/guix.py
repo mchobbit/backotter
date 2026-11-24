@@ -8,8 +8,11 @@ system arms), and so what a drift may touch:
 - UEFI: nothing runs in the chroot.  grubx64.efi comes back with the ESP
   (and its EFI/BOOT/BOOTX64.EFI copy), grub.cfg and every generation's
   kernel and initrd with / (they live in /gnu/store); only the boot entry
-  is made.  The ESP itself stays put (edits.movable: the source's NVRAM
-  entry names it by start and number, guix15's Boot0001); --no-nvram and
+  is made.  The ESP stays put only while a source NVRAM entry names it by
+  start and number (edits.movable: the corpus dump's Boot0001 "Guix"); the
+  farm's guix15, updated since (tests/corpus_cases.py AS_RUN), boots its
+  fallback path and has no such entry, so its ESP moves (gap_before, align)
+  and is never renumbered (rule (b) below, two generations).  --no-nvram and
   --removable are drawn (store_removable copies the image to the fallback),
   so guix15's tier 2 cases are those.
 - BIOS: the rescue's grub-bios-setup writes the source's own boot.img and

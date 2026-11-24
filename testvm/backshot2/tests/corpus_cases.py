@@ -64,12 +64,79 @@ def dump_sum(guest):
         return hashlib.sha256(f.read()).hexdigest()
 
 
+# The shape a guest has on the farm where its corpus dump differs in what the draws read:
+# the guest was updated after its dump (images take OS updates; guix15 and guix15-bios
+# 2026-11-24, docs/design/guix.md).  Each is made from the corpus dump, so it carries the
+# corpus's pseudonyms and no identifier of the live guest.  The goldens hold their draws
+# too (as_run), and the family tests draw from them: the farm's runs draw from the live
+# dumps (/bkoscratch/backshot2/sources/SOURCE/src.json), not the corpus's.
+#
+# Guix, as the live sources were on chopin and cinqcent on 2026-11-24 (bs2a-20261124-1111):
+# a second generation (a guix pull and reconfigure: the same kernel, initrd and devices, a
+# new system), the current one; grub.cfg's "old configurations" entry for the first; and on
+# guix15 no "Guix" NVRAM entry (the updated guest boots its fallback path on fresh firmware
+# variables, through "UEFI Misc Device"), so nothing names the ESP by start and number.
+GUIX_SYSTEM_2 = {"guix15": "/gnu/store/8f9mxryhr5syazmgryfcvfhz5hmmamzs-system",
+                 "guix15-bios": "/gnu/store/zmh7bikrwhbb7a42vxzf3919vb0r117q-system"}
+
+
+def guix_as_run(guest, d):
+    x = dumpx.clone(d)
+    b = x["boot"]
+    st = b["store"]
+    one = st["generations"][0]
+    new = GUIX_SYSTEM_2[guest]
+    st["generations"] = [one, dict(one, number=2, system=new)]
+    st["current"] = 2
+    for k in ("system", "profile"):
+        if isinstance(st.get(k), str) and one["system"] in st[k]:
+            st[k] = st[k].replace(one["system"], new)
+    cl = b.get("cmdline") or {}
+    if cl.get("raw"):
+        cl["raw"] = cl["raw"].replace(one["system"], new)
+    cl["words"] = [w.replace(one["system"], new) for w in cl.get("words") or []]
+    cfg = ((b.get("grub") or {}).get("grub_cfg") or {})
+    if cfg.get("entries"):
+        cfg["entries"] = cfg["entries"][:1] + [f"GNU system, old configurations...>{one['title']} (#1)"] + cfg["entries"][1:]
+    efi = b.get("efi")
+    if efi:
+        gone = {e["number"] for e in efi["entries"] if e.get("file")}
+        efi["entries"] = [e for e in efi["entries"] if e["number"] not in gone]
+        efi["boot_order"] = [n for n in efi["boot_order"] if n not in gone]
+        efi["boot_current"] = next(e["number"] for e in efi["entries"] if e["description"] == "UEFI Misc Device")
+        for e in efi["entries"]:
+            if e["number"] in efi["boot_order"]:
+                e["in_boot_order"] = efi["boot_order"].index(e["number"])
+        b["loader"]["evidence"] = ["an ESP holds grubx64.efi"]
+    return x
+
+
+AS_RUN = {"guix15": guix_as_run, "guix15-bios": guix_as_run}
+
+
+@functools.lru_cache(maxsize=None)
+def dump_as_run(guest):
+    """GUEST's dump as the farm has it (AS_RUN), or its corpus dump."""
+    f = AS_RUN.get(guest)
+    return f(guest, dump(guest)) if f else dump(guest)
+
+
+@functools.lru_cache(maxsize=None)
+def cases_as_run(guest):
+    d = dump_as_run(guest)
+    return tuple(G.generate(guest, None, d, seed, caps={}) for seed in range(SEEDS))
+
+
 def write_golden(family):
     from bs2lib import GENERATOR
     g = golden_of(family)
     body = {"family": family, "generator": GENERATOR, "seeds": [0, 200], "caps": {},
             "hash": "sha256(json.dumps(case, sort_keys=True))[:16] of generate(GUEST, None, dump, SEED, caps={})",
             "guests": g, "dumps": {x: dump_sum(x) for x in sorted(g)}}
+    run = sorted(x for x in g if x in AS_RUN)
+    if run:
+        # The same seeds over the farm's shape of each (AS_RUN), for the same corpus dumps.
+        body["as_run"] = {x: [case_digest(c) for c in cases_as_run(x)[:200]] for x in run}
     with open(os.path.join(GOLDEN, f"{family}.json"), "w") as f:
         json.dump(body, f, indent=0, sort_keys=True)
         f.write("\n")

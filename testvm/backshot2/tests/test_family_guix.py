@@ -118,6 +118,63 @@ class TestGuix(unittest.TestCase):
                 self.assertEqual(rules.check(d, C.replay(c, d), c["edits"], hooks=h), [], (g, c["seed"]))
 
 
+class TestAsRun(unittest.TestCase):
+    """The draws from the shape the farm's runs draw from (corpus_cases.AS_RUN: two
+    generations, and on guix15 no "Guix" NVRAM entry), which the corpus dumps (one
+    generation, Boot0001 "Guix") never reach: rule (b) of unrecorded-names fires, and
+    guix15's ESP moves (bs2a-20261124-1111's guix15-7d9a4256fe9a2a3a, gap_before 1, with
+    no NVRAM option)."""
+    U, B = K.dump_as_run("guix15"), K.dump_as_run("guix15-bios")
+
+    def test_shape(self):
+        for d in (self.U, self.B):
+            self.assertEqual(guix.generations(d), {1, 2})
+            self.assertEqual(d["boot"]["store"]["current"], 2)
+        self.assertFalse([e for e in self.U["boot"]["efi"]["entries"] if e.get("file")])
+        self.assertEqual(guix.generations(K.dump("guix15")), {1}, "the corpus dump as it was")
+
+    def test_golden(self):
+        import json
+        with open(os.path.join(K.GOLDEN, "guix.json")) as f:
+            g = json.load(f)
+        for guest, want in sorted(g["as_run"].items()):
+            if g["dumps"].get(guest) != K.dump_sum(guest):
+                continue   # a refreshed corpus dump: test_families' note says rewrite
+            got = [K.case_digest(c) for c in K.cases_as_run(guest)[:len(want)]]
+            bad = [i for i, (a, b) in enumerate(zip(want, got)) if a != b]
+            self.assertEqual(bad, [], f"{guest}: seeds {bad[:10]} draw other cases than the golden's as_run")
+
+    def test_older_generations_rule_fires(self):
+        # guix15: the ESP (/boot/efi) is never renumbered; / (and the store) is.
+        why = [w for _, w in guix.check_names(self.U, self.U, [{"op": "renumber", "disk": "vda", "from": 1, "to": 5}])]
+        self.assertTrue(any("2 generations" in w and "/boot/efi" in w for w in why), why)
+        cs = K.cases_as_run("guix15")
+        self.assertFalse([c["seed"] for c in cs if any(x["op"] == "renumber" and x["from"] == 1 for x in c["edits"])])
+        self.assertGreater(sum(1 for c in cs if any(x["op"] == "renumber" and x["from"] == 3 for x in c["edits"])), 20)
+        # guix15-bios: / holds @home's /home too: refused by the quirk as well as by the generic rule.
+        why = [w for _, w in guix.check_names(self.B, self.B, [{"op": "renumber", "disk": "vda", "from": 3, "to": 5}])]
+        self.assertTrue(any("/home" in w for w in why), why)
+        self.assertFalse([c["seed"] for c in K.cases_as_run("guix15-bios") if any(x["op"] == "renumber" and x["from"] == 3 for x in c["edits"])])
+
+    def test_the_esp_moves_with_no_nvram_entry_naming_it(self):
+        from bs2lib import edits as E
+        dk = dumpx.disk(self.U)
+        self.assertIsNone(E.movable(self.U, dk, dumpx.part(dk, 1)))
+        self.assertIsNotNone(E.movable(K.dump("guix15"), dumpx.disk(K.dump("guix15")), dumpx.part(dumpx.disk(K.dump("guix15")), 1)))
+        moved = [c for c in K.cases_as_run("guix15") if any(x["op"] in ("gap_before", "align") and x.get("partition") == 1 for x in c["edits"])]
+        self.assertGreater(len(moved), 20)
+        self.assertTrue([c for c in moved if not {"--no-nvram", "--removable"} & set(c["load_options"])])
+        self.assertFalse([c for c in K.cases("guix15") if any(x["op"] in ("gap_before", "align") and x.get("partition") == 1 for x in c["edits"])])
+
+    def test_every_case_keeps_the_rules(self):
+        from bs2lib import case as C
+        for g in ("guix15", "guix15-bios"):
+            d = K.dump_as_run(g)
+            h = F.hooks(g, d)
+            for c in K.cases_as_run(g):
+                self.assertEqual(rules.check(d, C.replay(c, d), c["edits"], hooks=h), [], (g, c["seed"]))
+
+
 class TestFoundOnGuix(unittest.TestCase):
     """Harness bugs bs2a-20261124-1028 found on guix15-bios (cases/fail-007, fail-008)."""
     B = K.dump("guix15-bios")

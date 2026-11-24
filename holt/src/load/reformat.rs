@@ -288,19 +288,15 @@ fn loader_reads(v: &Value, src: &str) -> bool {
     }
 }
 
-/// What --reformat changes, worked out from the source's layout.
-pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
-    let mut r = Reformat::default();
-    if reformats.is_empty() {
-        return r;
-    }
+/// Why --reformat can't be done on layout V at all: one it edited already,
+/// a source that isn't Linux, or one whose own tools write its fstab and
+/// boot configuration.
+fn layout_refusal(v: &Value) -> Option<Problem> {
     if v.get("load_reformat").is_some() {
-        r.problems.push(refused("edited", None, None, "this layout was edited by --reformat already; give the dump itself".into()));
-        return r;
+        return Some(refused("edited", None, None, "this layout was edited by --reformat already; give the dump itself".into()));
     }
     if crate::other::Family::of_layout(v).is_some() {
-        r.problems.push(refused("not_linux", None, None, "--reformat is for Linux sources only".into()));
-        return r;
+        return Some(refused("not_linux", None, None, "--reformat is for Linux sources only".into()));
     }
     // Their boot stages aren't the one that runs `bko-holt rewrite`, and
     // each keeps what names its filesystems elsewhere: ostree's and ABRoot's
@@ -313,250 +309,330 @@ pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
     } else {
         crate::store::system(id).map(|st| st.name.to_string())
     };
-    if let Some(o) = other {
-        r.problems.push(refused("own_tools", None, None, format!("--reformat isn't built for {o}: its fstab and boot configuration come from its own tools, which load's boot stage doesn't rewrite")));
+    other.map(|o| refused("own_tools", None, None, format!("--reformat isn't built for {o}: its fstab and boot configuration come from its own tools, which load's boot stage doesn't rewrite")))
+}
+
+/// The filesystem a --reformat names, as the layout has it.
+#[derive(Debug)]
+struct Named<'a> {
+    /// Its fstab entry.
+    entry: &'a Value,
+    /// Its source device.
+    src: String,
+    /// The device's content (the filesystem's probe).
+    content: &'a Value,
+    from: String,
+    uuid: String,
+    /// Its storage.btrfs entry, null for another type.
+    fs: Value,
+}
+
+/// The filesystem `--reformat MOUNT=TO` (WHAT) names, or why it can't be
+/// reformatted: no fstab entry, no filesystem, a type it doesn't convert or
+/// the same one, no UUID, reformatted twice (CHANGES so far), a btrfs on
+/// more than one device.
+fn validate_entry<'a>(v: &'a Value, changes: &[Change], mount: &str, to: &str, what: &str) -> Result<Named<'a>, Problem> {
+    let fstab = arr(v, &["storage", "fstab"]);
+    let Some(entry) = fstab.iter().find(|e| s(e, "file").as_deref() == Some(mount) && s(e, "type").as_deref() != Some("swap")) else {
+        return Err(refused("other", Some(mount), Some(to), format!("{what}: no fstab entry mounts {mount}")));
+    };
+    let Some(src) = s(entry, "resolves_to") else {
+        return Err(refused("other", Some(mount), Some(to), format!("{what}: fstab's {mount} isn't on the layout's disks")));
+    };
+    let Some(content) = device(v, &src).and_then(|d| d.get("content")).filter(|c| !c.is_null()) else {
+        return Err(refused("other", Some(mount), Some(to), format!("{what}: {src} has no filesystem in the layout")));
+    };
+    let from = s(content, "type").unwrap_or_default();
+    if !TYPES.contains(&from.as_str()) {
+        return Err(refused("not_convertible", Some(mount), Some(to), format!("{what}: {mount} is {from} on {src}; --reformat converts ext4, XFS and btrfs")));
+    }
+    if from == to {
+        return Err(refused("same_type", Some(mount), Some(to), format!("{what}: {mount} is {from} already")));
+    }
+    let Some(uuid) = s(content, "uuid") else {
+        return Err(refused("no_uuid", Some(mount), Some(to), format!("{what}: {src}'s filesystem has no UUID in the layout")));
+    };
+    if changes.iter().any(|c| c.src == src) {
+        return Err(refused("twice", Some(mount), Some(to), format!("{what}: {src} is reformatted twice")));
+    }
+    let fs = arr(v, &["storage", "btrfs"]).iter().find(|f| s(f, "uuid").as_deref() == Some(uuid.as_str())).cloned().unwrap_or(Value::Null);
+    if from == "btrfs" && arr(&fs, &["devices"]).len() > 1 {
+        return Err(refused("multi_device", Some(mount), Some(to), format!("{what}: btrfs {uuid} is on {} devices; --reformat takes a btrfs on one", arr(&fs, &["devices"]).len())));
+    }
+    Ok(Named { entry, src, content, from, uuid, fs })
+}
+
+/// N's mounts, from one pass over fstab's entries of its device.
+#[derive(Debug)]
+struct Folds {
+    /// Its other mount points, each to be a directory of MOUNT.
+    folded: Vec<String>,
+    /// The subvolumes mounted: MOUNT's, then the folded ones'.
+    mounted_subs: Vec<String>,
+    /// Every mount of it, MOUNT's included, as shared.rs takes them.
+    mounts: Vec<Mount>,
+}
+
+/// N's mounts (Folds), or None, with a problem pushed for each, when one
+/// isn't under MOUNT: every other mount of the same filesystem becomes a
+/// directory of this one, so each must be under it.
+fn fold_mounts(v: &Value, n: &Named, mount: &str, to: &str, what: &str, problems: &mut Problems) -> Option<Folds> {
+    let mut f = Folds { folded: Vec::new(), mounted_subs: vec![mounted_subvolume(&s(n.entry, "options").unwrap_or_default(), &n.fs)], mounts: Vec::new() };
+    let mut bad = false;
+    for e in arr(v, &["storage", "fstab"]).iter().filter(|e| s(e, "resolves_to").as_deref() == Some(n.src.as_str()) && s(e, "type").as_deref() != Some("swap")) {
+        let file = s(e, "file").unwrap_or_default();
+        let subvol = mounted_subvolume(&s(e, "options").unwrap_or_default(), &n.fs);
+        f.mounts.push(Mount { target: file.clone(), subvol: subvol.clone() });
+        if file == mount {
+            continue;
+        }
+        if !under(&file, mount) {
+            problems.push(refused("mounted_elsewhere", Some(mount), Some(to), format!("{what}: the same filesystem is mounted at {file} too, which isn't under {mount}; name the mount point that holds the others")));
+            bad = true;
+            continue;
+        }
+        f.mounted_subs.push(subvol);
+        f.folded.push(file);
+    }
+    (!bad).then_some(f)
+}
+
+/// The subvolumes of btrfs FS that aren't mounted (MOUNTED_SUBS): (those
+/// the backup doesn't hold, those below a mount, which the backup holds
+/// there, and the snapshots below a mount, each with where the backup has
+/// it, which the restore leaves out).
+fn classify_subvolumes(fs: &Value, mounts: &[Mount], mounted_subs: &[String]) -> (Vec<String>, Vec<String>, Vec<(String, String)>) {
+    let all: Vec<(String, Option<String>, Option<String>)> = arr(fs, &["subvolumes"])
+        .iter()
+        .filter_map(|x| Some((s(x, "path")?.trim_start_matches("<FS_TREE>/").trim_matches('/').to_string(), s(x, "uuid"), s(x, "parent_uuid"))))
+        .collect();
+    let (mut unmounted, mut nested, mut snapshots) = (Vec::new(), Vec::new(), Vec::new());
+    for (p, _, parent) in &all {
+        if mounted_subs.contains(p) {
+            continue;
+        }
+        let Some(b) = shared::backup_path(mounts, p) else {
+            unmounted.push(p.clone());
+            continue;
+        };
+        let snapshot = shared::snapper_slot(p).is_some() || parent.as_ref().is_some_and(|pu| all.iter().any(|(_, u, _)| u.as_ref() == Some(pu)));
+        if snapshot {
+            snapshots.push((p.clone(), b));
+        } else {
+            nested.push(p.clone());
+        }
+    }
+    (unmounted, nested, snapshots)
+}
+
+/// The features a new TO filesystem gets, and where they came from, for
+/// the oldest installed kernel KV, the source's TOOL_VERSION of TO's tools,
+/// and whether GRUB READS it; Err, the refusal's text, for a kernel older
+/// than mkfs.xfs's oldest profile.
+fn features_for(to: &str, kv: (u32, u32), tool_version: Option<(u32, u32)>, reads: bool, what: &str) -> Result<(Vec<String>, String), String> {
+    Ok(match to {
+        "xfs" => match XFS_PROFILES.iter().rev().find(|(k, _)| *k <= kv) {
+            Some(((a, b), f)) => (f.iter().map(|x| x.to_string()).collect(), format!("mkfs.xfs's lts_{a}.{b} profile (the oldest installed kernel is {}.{})", kv.0, kv.1)),
+            None => return Err(format!("{what}: the oldest installed kernel, {}.{}, is older than mkfs.xfs's oldest profile (4.19)", kv.0, kv.1)),
+        },
+        "ext4" => {
+            let mut f: Vec<String> = EXT4_BASE.iter().map(|x| x.to_string()).collect();
+            let new = tool_version.is_some_and(|t| t >= (1, 47)) && kv >= (5, 15);
+            if new {
+                f.push("orphan_file".into());
+                // GRUB before 2.12 refuses metadata_csum_seed.
+                if !reads {
+                    f.push("metadata_csum_seed".into());
+                }
+            }
+            let by = match tool_version {
+                Some((a, b)) => format!("e2fsprogs {a}.{b}'s defaults, for a {}.{} kernel{}", kv.0, kv.1, if reads { ", that GRUB reads" } else { "" }),
+                None => format!("e2fsprogs 1.43's defaults (its version isn't in the layout), for a {}.{} kernel", kv.0, kv.1),
+            };
+            (f, by)
+        }
+        _ => (vec!["extended_iref".to_string(), "skinny_metadata".into(), "no_holes".into()], format!("mkfs.btrfs's defaults, for a {}.{} kernel", kv.0, kv.1)),
+    })
+}
+
+/// CONTENT's label cut to TO's limit, with a note when it's cut; None for
+/// no label.
+fn new_label(content: &Value, to: &str, what: &str, notes: &mut Notes) -> Option<String> {
+    s(content, "label").filter(|l| !l.is_empty()).map(|l| {
+        let max = match to {
+            "xfs" => 12,
+            "ext4" => 16,
+            _ => 255,
+        };
+        let cut = cut_label(&l, max);
+        if cut != l {
+            notes.push(format!("{what}: the label {l:?} is cut to {cut:?}, {to}'s limit"));
+        }
+        cut
+    })
+}
+
+/// Whether a swap file under MOUNT refuses it (hibernation into it: the
+/// file moves, and resume_offset= with it), with a note for one that
+/// doesn't.
+fn swap_refused(v: &Value, mount: &str, to: &str, what: &str, r: &mut Reformat) -> bool {
+    let resume_offset = v.at(&["boot", "cmdline", "storage", "resume_offset"]).is_some_and(|x| !x.is_null());
+    let mut bad = false;
+    for sw in arr(v, &["storage", "swaps"]) {
+        let Some(file) = s(sw, "file") else { continue };
+        if s(sw, "type").as_deref() == Some("file") && under(&file, mount) {
+            if resume_offset {
+                r.problems.push(refused("hibernation", Some(mount), Some(to), format!("{what}: the system hibernates into the swap file {file} on it, and resume_offset= would no longer match")));
+                bad = true;
+            } else {
+                r.notes.push(format!("{what}: the swap file {file} is on it"));
+            }
+        }
+    }
+    bad
+}
+
+/// The change `--reformat MOUNT=TO` makes, or None, with its problems in
+/// R, when it can't be made.  PACKAGES and KERNEL: the source's packages
+/// and its oldest kernel.
+fn one_change(v: &Value, r: &mut Reformat, packages: Option<&Value>, kernel: Option<(u32, u32)>, mount: &str, to: &str) -> Option<Change> {
+    let what = format!("--reformat {mount}={to}");
+    let n = validate_entry(v, &r.changes, mount, to, &what).map_err(|p| r.problems.push(p)).ok()?;
+    let Folds { folded, mounted_subs, mounts } = fold_mounts(v, &n, mount, to, &what, &mut r.problems)?;
+    // The subvolumes: those mounted (gone into directories), those below
+    // a mount (the backup holds them there), and those it doesn't hold.
+    // A snapshot below a mount is left out of the restore, as is a
+    // mounted subvolume seen again below another mount (shared.rs).
+    let (unmounted, nested, snapshots) = classify_subvolumes(&n.fs, &mounts, &mounted_subs);
+    let aliases = if n.from == "btrfs" { shared::aliases(&mounts) } else { Vec::new() };
+    let reads = loader_reads(v, &n.src);
+    if reads && to != "ext4" {
+        r.problems.push(refused("grub_reads", Some(mount), Some(to), format!("{what}: GRUB reads /boot from it; under GRUB, --reformat makes ext4 only")));
+        return None;
+    }
+    // The new type's tools on the restored system (its fsck, repair).
+    let tool = match to {
+        "xfs" => "xfsprogs",
+        "btrfs" => "btrfs-progs",
+        _ => "e2fsprogs",
+    };
+    let tool_version = packages.and_then(|p| p.get(tool)).and_then(Value::as_str).and_then(package_version);
+    match packages {
+        Some(p) if p.get(tool).is_none_or(Value::is_null) => {
+            r.problems.push(refused("no_fsck", Some(mount), Some(to), format!("{what}: the source doesn't have {tool} installed; install it there and back up again, or the restored system has no fsck or repair for {to}")));
+            return None;
+        }
+        None => r.notes.push(format!("{what}: the layout doesn't list the source's packages, so whether it has {tool} isn't known")),
+        _ => {}
+    }
+    let Some(kv) = kernel else {
+        r.problems.push(refused("old_kernel", Some(mount), Some(to), format!("{what}: the layout lists no installed kernel, so the {to} features it can mount aren't known")));
+        return None;
+    };
+    let (features, features_from) = features_for(to, kv, tool_version, reads, &what).map_err(|text| r.problems.push(refused("old_kernel", Some(mount), Some(to), text))).ok()?;
+    // free_space_tree is a compat_ro feature, as the dump records it.
+    let compat_ro: Vec<String> = if to == "btrfs" && kv >= (4, 5) { vec!["free_space_tree".into()] } else { vec![] };
+    let (options, dropped) = generic_options(&s(n.entry, "options").unwrap_or_default());
+    let passno = if to == "ext4" { if mount == "/" { 1 } else { 2 } } else { 0 };
+    let label = new_label(n.content, to, &what, &mut r.notes);
+    // Hibernation into a swap file on it: the file moves, resume_offset with it.
+    if swap_refused(v, mount, to, &what, r) {
+        return None;
+    }
+    Some(Change {
+        mount: mount.to_string(),
+        src: n.src,
+        uuid: n.uuid,
+        from: n.from,
+        to: to.to_string(),
+        label,
+        folded,
+        unmounted,
+        nested,
+        snapshots,
+        aliases,
+        features,
+        compat_ro,
+        features_from,
+        options,
+        dropped,
+        passno,
+    })
+}
+
+/// The plan's notes on change C: what it becomes, then each fstab entry,
+/// subvolume, snapshot and alias it touches, what doesn't come along, and
+/// what boot rewrites.
+fn change_notes(v: &Value, c: &Change, notes: &mut Notes) {
+    let first = format!(
+        "reformat {}: {} {} -> {} (same UUID{}); its features: {}",
+        c.src,
+        c.from,
+        c.uuid,
+        c.to,
+        c.label.as_ref().map(|l| format!(", label {l:?}")).unwrap_or_default(),
+        c.features_from
+    );
+    notes.push(Note::new(NoteCode::Reformat, first).with("mount", c.mount.as_str()).with("from", c.from.as_str()).with("to", c.to.as_str()));
+    let mut n = Vec::new();
+    n.push(format!(
+        "fstab's {}: {} with {} (pass {}){}",
+        c.mount,
+        c.to,
+        c.options,
+        c.passno,
+        if c.dropped.is_empty() { String::new() } else { format!("; {} dropped", c.dropped.join(",")) }
+    ));
+    for f in &c.folded {
+        n.push(format!("fstab's {f}: a directory of {} now (--reformat {}={})", c.mount, c.mount, c.to));
+    }
+    if !c.nested.is_empty() {
+        n.push(format!("reformat {}: subvolumes {} become plain directories", c.src, c.nested.join(", ")));
+    }
+    for u in &c.unmounted {
+        n.push(format!("reformat {}: subvolume {u} isn't mounted, nor below a mount, so it isn't in the backup; it isn't recreated", c.src));
+    }
+    for (sv, b) in &c.snapshots {
+        n.push(format!("reformat {}: snapshot {sv} isn't recreated: {} has no btrfs snapshots, so the restore leaves out {b}", c.src, c.to));
+    }
+    for a in &c.aliases {
+        n.push(format!("reformat {}: {a} is a mounted subvolume seen again; the restore leaves it out", c.src));
+    }
+    if c.from == "btrfs" {
+        n.push(format!("reformat {}: chattr C and c and btrfs.* xattrs don't come along ({} refuses them; rustic-bko warns in load.log)", c.src, c.to));
+    }
+    if let Some(b) = grub_env_block(v, c) {
+        let vars: Vec<String> = b.as_object().into_iter().flatten().map(|(k, x)| format!("{k}={}", x.as_str().unwrap_or_default())).collect();
+        let vars = if vars.is_empty() { "no variables".to_string() } else { vars.join(" ") };
+        n.push(format!("reformat {}: GRUB's environment block in btrfs's reserved area ({vars}) has no place on {}: boot moves its variables into grubenv and takes out grubenv's env_block=", c.src, c.to));
+    }
+    if c.mount == "/" {
+        n.push("reformat: boot rewrites fstab and the kernel command lines (rootflags=, rootfstype=), then checks the initramfs has the new type's module".into());
+    } else {
+        n.push(format!("reformat: boot rewrites fstab for {}", c.mount));
+    }
+    notes.extend(n);
+}
+
+/// What --reformat changes, worked out from the source's layout.
+pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
+    let mut r = Reformat::default();
+    if reformats.is_empty() {
         return r;
     }
-    let fstab = arr(v, &["storage", "fstab"]);
+    if let Some(p) = layout_refusal(v) {
+        r.problems.push(p);
+        return r;
+    }
     let packages = v.at(&["boot", "packages"]);
     let kernel = oldest_kernel(v);
     for (mount, to) in reformats {
-        let what = format!("--reformat {mount}={to}");
-        let Some(entry) = fstab.iter().find(|e| s(e, "file").as_deref() == Some(mount.as_str()) && s(e, "type").as_deref() != Some("swap")) else {
-            r.problems.push(refused("other", Some(mount), Some(to), format!("{what}: no fstab entry mounts {mount}")));
-            continue;
-        };
-        let Some(src) = s(entry, "resolves_to") else {
-            r.problems.push(refused("other", Some(mount), Some(to), format!("{what}: fstab's {mount} isn't on the layout's disks")));
-            continue;
-        };
-        let Some(content) = device(v, &src).and_then(|d| d.get("content")).filter(|c| !c.is_null()) else {
-            r.problems.push(refused("other", Some(mount), Some(to), format!("{what}: {src} has no filesystem in the layout")));
-            continue;
-        };
-        let from = s(content, "type").unwrap_or_default();
-        if !TYPES.contains(&from.as_str()) {
-            r.problems.push(refused("not_convertible", Some(mount), Some(to), format!("{what}: {mount} is {from} on {src}; --reformat converts ext4, XFS and btrfs")));
-            continue;
+        if let Some(c) = one_change(v, &mut r, packages, kernel, mount, to) {
+            r.changes.push(c);
         }
-        if from == *to {
-            r.problems.push(refused("same_type", Some(mount), Some(to), format!("{what}: {mount} is {from} already")));
-            continue;
-        }
-        let Some(uuid) = s(content, "uuid") else {
-            r.problems.push(refused("no_uuid", Some(mount), Some(to), format!("{what}: {src}'s filesystem has no UUID in the layout")));
-            continue;
-        };
-        if r.changes.iter().any(|c| c.src == src) {
-            r.problems.push(refused("twice", Some(mount), Some(to), format!("{what}: {src} is reformatted twice")));
-            continue;
-        }
-        let fs = arr(v, &["storage", "btrfs"]).iter().find(|f| s(f, "uuid").as_deref() == Some(uuid.as_str())).cloned().unwrap_or(Value::Null);
-        if from == "btrfs" && arr(&fs, &["devices"]).len() > 1 {
-            r.problems.push(refused("multi_device", Some(mount), Some(to), format!("{what}: btrfs {uuid} is on {} devices; --reformat takes a btrfs on one", arr(&fs, &["devices"]).len())));
-            continue;
-        }
-        // Every other mount of the same filesystem becomes a directory of
-        // this one, so each must be under it.
-        let mut folded = Vec::new();
-        let mut mounted_subs = vec![mounted_subvolume(&s(entry, "options").unwrap_or_default(), &fs)];
-        let mut bad = false;
-        for e in fstab.iter().filter(|e| s(e, "resolves_to").as_deref() == Some(src.as_str()) && s(e, "type").as_deref() != Some("swap")) {
-            let file = s(e, "file").unwrap_or_default();
-            if file == *mount {
-                continue;
-            }
-            if !under(&file, mount) {
-                r.problems.push(refused("mounted_elsewhere", Some(mount), Some(to), format!("{what}: the same filesystem is mounted at {file} too, which isn't under {mount}; name the mount point that holds the others")));
-                bad = true;
-                continue;
-            }
-            mounted_subs.push(mounted_subvolume(&s(e, "options").unwrap_or_default(), &fs));
-            folded.push(file);
-        }
-        if bad {
-            continue;
-        }
-        // The subvolumes: those mounted (gone into directories), those below
-        // a mount (the backup holds them there), and those it doesn't hold.
-        // A snapshot below a mount is left out of the restore, as is a
-        // mounted subvolume seen again below another mount (shared.rs).
-        let mut mounts: Vec<Mount> = Vec::new();
-        for e in fstab.iter().filter(|e| s(e, "resolves_to").as_deref() == Some(src.as_str()) && s(e, "type").as_deref() != Some("swap")) {
-            mounts.push(Mount { target: s(e, "file").unwrap_or_default(), subvol: mounted_subvolume(&s(e, "options").unwrap_or_default(), &fs) });
-        }
-        let all: Vec<(String, Option<String>, Option<String>)> = arr(&fs, &["subvolumes"])
-            .iter()
-            .filter_map(|x| Some((s(x, "path")?.trim_start_matches("<FS_TREE>/").trim_matches('/').to_string(), s(x, "uuid"), s(x, "parent_uuid"))))
-            .collect();
-        let (mut unmounted, mut nested, mut snapshots) = (Vec::new(), Vec::new(), Vec::new());
-        for (p, _, parent) in &all {
-            if mounted_subs.contains(p) {
-                continue;
-            }
-            let Some(b) = shared::backup_path(&mounts, p) else {
-                unmounted.push(p.clone());
-                continue;
-            };
-            let snapshot = shared::snapper_slot(p).is_some() || parent.as_ref().is_some_and(|pu| all.iter().any(|(_, u, _)| u.as_ref() == Some(pu)));
-            if snapshot {
-                snapshots.push((p.clone(), b));
-            } else {
-                nested.push(p.clone());
-            }
-        }
-        let aliases = if from == "btrfs" { shared::aliases(&mounts) } else { Vec::new() };
-        let reads = loader_reads(v, &src);
-        if reads && to != "ext4" {
-            r.problems.push(refused("grub_reads", Some(mount), Some(to), format!("{what}: GRUB reads /boot from it; under GRUB, --reformat makes ext4 only")));
-            continue;
-        }
-        // The new type's tools on the restored system (its fsck, repair).
-        let tool = match to.as_str() {
-            "xfs" => "xfsprogs",
-            "btrfs" => "btrfs-progs",
-            _ => "e2fsprogs",
-        };
-        let tool_version = packages.and_then(|p| p.get(tool)).and_then(Value::as_str).and_then(package_version);
-        match packages {
-            Some(p) if p.get(tool).is_none_or(Value::is_null) => {
-                r.problems.push(refused("no_fsck", Some(mount), Some(to), format!("{what}: the source doesn't have {tool} installed; install it there and back up again, or the restored system has no fsck or repair for {to}")));
-                continue;
-            }
-            None => r.notes.push(format!("{what}: the layout doesn't list the source's packages, so whether it has {tool} isn't known")),
-            _ => {}
-        }
-        let Some(kv) = kernel else {
-            r.problems.push(refused("old_kernel", Some(mount), Some(to), format!("{what}: the layout lists no installed kernel, so the {to} features it can mount aren't known")));
-            continue;
-        };
-        let (features, features_from) = match to.as_str() {
-            "xfs" => match XFS_PROFILES.iter().rev().find(|(k, _)| *k <= kv) {
-                Some(((a, b), f)) => (f.iter().map(|x| x.to_string()).collect(), format!("mkfs.xfs's lts_{a}.{b} profile (the oldest installed kernel is {}.{})", kv.0, kv.1)),
-                None => {
-                    r.problems.push(refused("old_kernel", Some(mount), Some(to), format!("{what}: the oldest installed kernel, {}.{}, is older than mkfs.xfs's oldest profile (4.19)", kv.0, kv.1)));
-                    continue;
-                }
-            },
-            "ext4" => {
-                let mut f: Vec<String> = EXT4_BASE.iter().map(|x| x.to_string()).collect();
-                let new = tool_version.is_some_and(|t| t >= (1, 47)) && kv >= (5, 15);
-                if new {
-                    f.push("orphan_file".into());
-                    // GRUB before 2.12 refuses metadata_csum_seed.
-                    if !reads {
-                        f.push("metadata_csum_seed".into());
-                    }
-                }
-                let by = match tool_version {
-                    Some((a, b)) => format!("e2fsprogs {a}.{b}'s defaults, for a {}.{} kernel{}", kv.0, kv.1, if reads { ", that GRUB reads" } else { "" }),
-                    None => format!("e2fsprogs 1.43's defaults (its version isn't in the layout), for a {}.{} kernel", kv.0, kv.1),
-                };
-                (f, by)
-            }
-            _ => (vec!["extended_iref".to_string(), "skinny_metadata".into(), "no_holes".into()], format!("mkfs.btrfs's defaults, for a {}.{} kernel", kv.0, kv.1)),
-        };
-        // free_space_tree is a compat_ro feature, as the dump records it.
-        let compat_ro: Vec<String> = if to == "btrfs" && kv >= (4, 5) { vec!["free_space_tree".into()] } else { vec![] };
-        let (options, dropped) = generic_options(&s(entry, "options").unwrap_or_default());
-        let passno = if to == "ext4" { if mount == "/" { 1 } else { 2 } } else { 0 };
-        let label = s(content, "label").filter(|l| !l.is_empty()).map(|l| {
-            let max = match to.as_str() {
-                "xfs" => 12,
-                "ext4" => 16,
-                _ => 255,
-            };
-            let cut = cut_label(&l, max);
-            if cut != l {
-                r.notes.push(format!("{what}: the label {l:?} is cut to {cut:?}, {to}'s limit"));
-            }
-            cut
-        });
-        // Hibernation into a swap file on it: the file moves, resume_offset with it.
-        let resume_offset = v.at(&["boot", "cmdline", "storage", "resume_offset"]).is_some_and(|x| !x.is_null());
-        for sw in arr(v, &["storage", "swaps"]) {
-            let Some(file) = s(sw, "file") else { continue };
-            if s(sw, "type").as_deref() == Some("file") && under(&file, mount) {
-                if resume_offset {
-                    r.problems.push(refused("hibernation", Some(mount), Some(to), format!("{what}: the system hibernates into the swap file {file} on it, and resume_offset= would no longer match")));
-                    bad = true;
-                } else {
-                    r.notes.push(format!("{what}: the swap file {file} is on it"));
-                }
-            }
-        }
-        if bad {
-            continue;
-        }
-        r.changes.push(Change {
-            mount: mount.clone(),
-            src,
-            uuid,
-            from,
-            to: to.clone(),
-            label,
-            folded,
-            unmounted,
-            nested,
-            snapshots,
-            aliases,
-            features,
-            compat_ro,
-            features_from,
-            options,
-            dropped,
-            passno,
-        });
     }
     for c in &r.changes {
-        let first = format!(
-            "reformat {}: {} {} -> {} (same UUID{}); its features: {}",
-            c.src,
-            c.from,
-            c.uuid,
-            c.to,
-            c.label.as_ref().map(|l| format!(", label {l:?}")).unwrap_or_default(),
-            c.features_from
-        );
-        r.notes.push(Note::new(NoteCode::Reformat, first).with("mount", c.mount.as_str()).with("from", c.from.as_str()).with("to", c.to.as_str()));
-        let mut n = Vec::new();
-        n.push(format!(
-            "fstab's {}: {} with {} (pass {}){}",
-            c.mount,
-            c.to,
-            c.options,
-            c.passno,
-            if c.dropped.is_empty() { String::new() } else { format!("; {} dropped", c.dropped.join(",")) }
-        ));
-        for f in &c.folded {
-            n.push(format!("fstab's {f}: a directory of {} now (--reformat {}={})", c.mount, c.mount, c.to));
-        }
-        if !c.nested.is_empty() {
-            n.push(format!("reformat {}: subvolumes {} become plain directories", c.src, c.nested.join(", ")));
-        }
-        for u in &c.unmounted {
-            n.push(format!("reformat {}: subvolume {u} isn't mounted, nor below a mount, so it isn't in the backup; it isn't recreated", c.src));
-        }
-        for (sv, b) in &c.snapshots {
-            n.push(format!("reformat {}: snapshot {sv} isn't recreated: {} has no btrfs snapshots, so the restore leaves out {b}", c.src, c.to));
-        }
-        for a in &c.aliases {
-            n.push(format!("reformat {}: {a} is a mounted subvolume seen again; the restore leaves it out", c.src));
-        }
-        if c.from == "btrfs" {
-            n.push(format!("reformat {}: chattr C and c and btrfs.* xattrs don't come along ({} refuses them; rustic-bko warns in load.log)", c.src, c.to));
-        }
-        if let Some(b) = grub_env_block(v, c) {
-            let vars: Vec<String> = b.as_object().into_iter().flatten().map(|(k, x)| format!("{k}={}", x.as_str().unwrap_or_default())).collect();
-            let vars = if vars.is_empty() { "no variables".to_string() } else { vars.join(" ") };
-            n.push(format!("reformat {}: GRUB's environment block in btrfs's reserved area ({vars}) has no place on {}: boot moves its variables into grubenv and takes out grubenv's env_block=", c.src, c.to));
-        }
-        if c.mount == "/" {
-            n.push("reformat: boot rewrites fstab and the kernel command lines (rootflags=, rootfstype=), then checks the initramfs has the new type's module".into());
-        } else {
-            n.push(format!("reformat: boot rewrites fstab for {}", c.mount));
-        }
-        r.notes.extend(n);
+        change_notes(v, c, &mut r.notes);
     }
     r
 }

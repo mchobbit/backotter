@@ -11,6 +11,9 @@ Haiku; Redox and Sculpt OS from Linux):
   (`docs/design/layload.md`).
 - `bko-holt report-bug` gathers what a bug report needs into one redacted
   file (see "Reporting a bug" below).
+- `bko-holt recovery-key-file OUT` turns Ubuntu Core's recovery key, read
+  from standard input, into the key file `cryptsetup open --key-file` and
+  `load --key-file NAME=OUT` take (`src/snapcore.rs`).
 
 ```
 sudo bko-holt dump > layout.json
@@ -32,7 +35,11 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
   EndeavourOS, Manjaro, Garuda Linux, BigLinux, Alpine Linux 3, AerynOS, Solus 4, Void Linux (also on a ZFS root with ZFSBootMenu, its boot environments), Chimera Linux,
   Gentoo Linux, PikaOS 4, Kali Linux, Fedora 44 and 45, Bazzite 44, Rocky Linux 10, openSUSE
   Tumbleweed, openSUSE Leap 16, openSUSE MicroOS and Aeon (transactional-update, any snapshot: their own boot arm,
-  docs/design/aeon.md), NixOS 26.05 and Guix System (no VERSION_ID; its store GRUB-less, docs/design/guix.md);
+  docs/design/aeon.md), NixOS 26.05 and Guix System (no VERSION_ID; its store GRUB-less, docs/design/guix.md),
+  Slackware 15 (and -current, by its VERSION_CODENAME, at VERSION_ID 15.0 or
+  16.0 and on x86_64 only; any other development tree refused,
+  docs/design/slackware.md), Qubes OS 4.3 (dom0, `src/qubes.rs`; 4.2 and
+  older refused) and Ubuntu Core 24 (`src/snapcore.rs`);
 - ostree (image-mode) systems among them: Bazzite 44, and Fedora's atomic
   desktops (Silverblue and Kinoite 44, which say `fedora 44`; not 45), told apart
   by ostree's own markers (`src/ostree.rs`).  `load` version 1 refuses

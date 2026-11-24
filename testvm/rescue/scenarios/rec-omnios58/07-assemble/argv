@@ -1,0 +1,12 @@
+load
+/root/layout.json
+--map
+c3t0d0=c3t0d0
+--erase
+c3t0d0
+--only
+assemble
+--commit
+--json
+--expect-plan
+af2ac61732713e78c18498f464b2c53de43354c09ca48e50c22cfa6de2a647d2

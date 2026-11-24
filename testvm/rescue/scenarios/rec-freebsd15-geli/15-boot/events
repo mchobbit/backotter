@@ -1,0 +1,16 @@
+# Recorded from HoltTest1 HT_VARIANT=json, guest freebsd15-geli (testvm/holttest1d/ht1-json.py record)
+delay 0.01
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T20:52:16Z","pid":2024,"commit":true,"dry_run":false,"stages":["boot"],"stage_commands":{"boot":5},"plan_sha256":"1ffde5688ea2620f6b0682c4593d3d7647793f05d3e879cf59baf4677482a29c","log":"/var/run/bko-holt/log/load.log","layout":{"hostname":"fbsd15-geli","generated":"2026-11-24T20:48:43Z"}}
+{"event":"stage","stage":"boot","commands":5}
+{"event":"cmd","stage":"boot","n":1,"of":5,"kind":"note","argv":[],"env":[],"why":"the boot code (MBR, freebsd-boot) was written with the partition table","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"boot","n":1,"status":null,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"boot","n":2,"of":5,"kind":"run","argv":["sh","-c","f=; for n in vtbd0p3; do [ ! -f /mnt/bko-target/var/backups/$n.eli ] || f=1; done; [ -z \"$f\" ] || { (umask 077; geli backup /dev/vtbd1p3 /mnt/bko-target/var/backups/vtbd1p3.eli) && for n in vtbd0p3; do [ $n = vtbd1p3 ] || rm -f /mnt/bko-target/var/backups/$n.eli; done; }"],"env":[["LC_ALL","C"]],"why":"vtbd0p3: /var/backups' GELI metadata backup, written again for the new provider (the restored one is the old provider's)","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"boot","n":2,"status":0,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"boot","n":3,"of":5,"kind":"run","argv":["sh","-c","for c in /etc/zfs/zpool.cache /boot/zfs/zpool.cache; do [ -f /mnt/bko-target$c ] && zpool set cachefile=/mnt/bko-target$c zroot; done; true"],"env":[["LC_ALL","C"]],"why":"the restored system's zpool.cache names the new pool","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"boot","n":3,"status":0,"signal":null,"secs":0.02}
+{"event":"cmd","stage":"boot","n":4,"of":5,"kind":"run","argv":["mkdir","-p","/mnt/bko-target/var/log/bko-holt"],"env":[["LC_ALL","C"]],"why":null,"path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"boot","n":4,"status":0,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"boot","n":5,"of":5,"kind":"run","argv":["cp","-Rp","/var/run/bko-holt/log/.","/mnt/bko-target/var/log/bko-holt/"],"env":[["LC_ALL","C"]],"why":"this restore's log, on the restored system","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"boot","n":5,"status":0,"signal":null,"secs":0.0}
+{"event":"stage_done","stage":"boot","secs":0.22,"checked":true}
+{"event":"end","exit":0,"stopped":false,"secs":0.42}

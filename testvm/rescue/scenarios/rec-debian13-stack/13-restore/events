@@ -1,0 +1,20 @@
+# Recorded from HoltTest1 HT_VARIANT=json, guest debian13-stack (testvm/holttest1d/ht1-json.py record)
+delay 0.01
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T20:54:57Z","pid":8799,"commit":true,"dry_run":false,"stages":["restore"],"stage_commands":{"restore":2},"plan_sha256":"a0d0f351ccbd676c50446d89a6cd6bf6442543d0c3a5fe68195fce3e05eb3a87","log":"/run/bko-holt/log/load.log","layout":{"hostname":"debian13-stack","generated":"2026-11-24T20:49:09Z"}}
+{"event":"stage","stage":"restore","commands":2}
+{"event":"cmd","stage":"restore","n":1,"of":2,"kind":"run","argv":["/mnt/share/rustic-bko","--repository","/mnt/share/repo","--password-file","/run/ht1-keys/repo-password","--json-progress","--progress-interval","1s","restore","--numeric-id","latest:/mnt/ht1-src-debian13-stack-json","/mnt/bko-target"],"env":[["LC_ALL","C"],["RUSTIC_STRICT_EXIT","true"]],"why":"snapshot latest:/mnt/ht1-src-debian13-stack-json of /mnt/share/repo, with BackOtter's restore flags","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":{"part":1,"parts":1},"would":false}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":0,"total_bytes":710088947,"secs":0,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":3467,"total_bytes":710088947,"secs":5,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":151219207,"total_bytes":710088947,"secs":13,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":349865420,"total_bytes":710088947,"secs":18,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":484301693,"total_bytes":710088947,"secs":21,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":549878399,"total_bytes":710088947,"secs":28,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":585216351,"total_bytes":710088947,"secs":30,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":710088947,"total_bytes":710088947,"secs":31,"errors":0}
+{"event":"warning","stage":"restore","n":1,"source":"archiver","text":"restore boot/efi/EFI/BOOT/BOOTX64.EFI: linux.inode_flags 0x40000000 not supported by the file system: Not a tty (os error 25)","item":"boot/efi/EFI/BOOT/BOOTX64.EFI"}
+{"event":"warning","stage":"restore","n":1,"source":"archiver","text":"linux.inode_flags 0x40000000 not supported by the file system: 28 files, the first boot/efi/EFI/BOOT/BOOTX64.EFI","item":null}
+{"event":"cmd_done","stage":"restore","n":1,"status":0,"signal":null,"secs":37.05}
+{"event":"cmd","stage":"restore","n":2,"of":2,"kind":"run","argv":["sh","-c","mkdir -p -m 700 /run/bko-holt && find /mnt/bko-target \\( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \\) -prune -o -printf '%A@\\t%p\\0' | LC_ALL=C sort -z > /run/bko-holt/atimes.before"],"env":[["LC_ALL","C"]],"why":"the atimes the restore set, for boot to put back after its reads","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"restore","n":2,"status":0,"signal":null,"secs":0.15}
+{"event":"stage_done","stage":"restore","secs":37.38,"checked":true}
+{"event":"end","exit":0,"stopped":false,"secs":39.31}

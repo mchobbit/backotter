@@ -22,6 +22,7 @@ contain one of the words.  Exit 0 when every check passes.
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import sys
@@ -230,7 +231,7 @@ def walk_full(tag, args, extra_env=None, goldens=True):
         d.wait("would run", 8)
         check("Now:" in d.screen.text(), name + ": the Now line under the stages")
         d.wait("The fake restore went through every stage", 10)
-        check(says(d, "It was a dry run: 13 commands would have run"), name + ": says it was a dry run")
+        check(says(d, "It was a dry run: 92 commands would have run"), name + ": says it was a dry run")
         check("[x]" not in d.screen.text(), name + ": the message replaced the gauge")
         g("7-done")
         d.keys("Enter")
@@ -484,7 +485,7 @@ def test_schema_checker():
     with open(ev) as f:
         good = [l for l in f.read().splitlines() if l.startswith("{")]
     bad_cases = {
-        "a missing field": [good[0].replace(',"pid":4711', "")] + good[1:],
+        "a missing field": [re.sub(r',"pid":\d+', "", good[0])] + good[1:],
         "a cmd_done for a command that would run": good[:4] + ['{"event":"cmd_done","stage":"partition","n":1,"status":0,"signal":null,"secs":0.1}'] + good[4:],
         "no end": good[:-1],
         "an event it doesn't know": good[:2] + ['{"event":"wobble"}'] + good[2:],

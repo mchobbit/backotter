@@ -1,0 +1,12 @@
+load
+/boot/home/layout.json
+--map
+scsi_2_0_0=scsi_2_1_0
+--erase
+scsi_2_1_0
+--only
+assemble
+--commit
+--json
+--expect-plan
+9168e72c4a43e4c7f65d8ee78ae82dc26e7253535d6b6f1044f055d2203d09bf

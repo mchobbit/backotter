@@ -1,0 +1,14 @@
+load
+/root/layout.json
+--map
+sd0=sd1
+--key-file
+sd1=*
+--erase
+/dev/sd1
+--only
+partition
+--commit
+--json
+--expect-plan
+19d4822e193bcc10c4aee5a15bd07e49b22e8b54544af3f9f4a604a739b8ccdf

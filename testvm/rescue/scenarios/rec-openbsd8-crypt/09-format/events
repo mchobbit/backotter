@@ -1,0 +1,8 @@
+# Recorded from HoltTest1 HT_VARIANT=json, guest openbsd8-crypt (testvm/holttest1d/ht1-json.py record)
+delay 0.01
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T20:52:07Z","pid":68188,"commit":true,"dry_run":false,"stages":["format"],"stage_commands":{"format":1},"plan_sha256":"46e8ed1c58cc8e1bed2320862985e4c45133acbed96ac4968b3e86625718d5ec","log":"/var/run/bko-holt/log/load.log","layout":{"hostname":"obsd8-crypt.my.domain","generated":"2026-11-24T20:49:04Z"}}
+{"event":"stage","stage":"format","commands":1}
+{"event":"cmd","stage":"format","n":1,"of":1,"kind":"run","argv":["newfs","-O","2","-b","16384","-f","2048","-i","8192","-m","5","-o","time","-s","29359456","217f006caef0ad87.a"],"env":[["LC_ALL","C"]],"why":"sd1a: UFS as the source's (dumpfs -m)","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":1,"status":0,"signal":null,"secs":0.03}
+{"event":"stage_done","stage":"format","secs":0.37,"checked":true}
+{"event":"end","exit":0,"stopped":false,"secs":0.6}

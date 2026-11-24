@@ -1,0 +1,17 @@
+load
+/root/layout.json
+--map
+c3t0d0=c3t0d0
+--erase
+c3t0d0
+--repo
+/root/repo
+--password-file
+*
+--archiver
+/root/rustic-bko
+--snapshot
+latest:/mnt/src
+--through
+close
+--json

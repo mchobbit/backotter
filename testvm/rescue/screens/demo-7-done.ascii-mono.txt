@@ -8,8 +8,8 @@
                                                                                 
   +---------------------------------- Done ----------------------------------+  
   |                                                                          |  
-  | The fake restore went through every stage, 29 events in all, and ended   |  
-  | with exit status 0.  It was a dry run: 13 commands would have run, and   |  
+  | The fake restore went through every stage, 108 events in all, and ended  |  
+  | with exit status 0.  It was a dry run: 92 commands would have run, and   |  
   | none did.  The key file and the password file it was given are removed.  |  
   |                                                                          |  
   |                                 <  OK  >                                 |  

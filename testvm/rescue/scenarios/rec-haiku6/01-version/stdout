@@ -1,0 +1,1 @@
+{"format":"bko-holt-api","schema":1,"version":"0.2.6","generated":"2026-11-24T20:50:38Z","dry_run":true,"documents":{"plan":[1],"status":[1],"events":[1],"error":[1]},"features":["no_commit_env","stop","progress","candidates","sizes"],"platform":{"os":"haiku","arch":"x86_64"},"run_dir":"/var/run/bko-holt","no_commit":true}

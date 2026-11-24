@@ -1,0 +1,16 @@
+# Recorded from HoltTest1 HT_VARIANT=json, guest openbsd8-crypt (testvm/holttest1d/ht1-json.py record)
+delay 0.01
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T20:52:01Z","pid":60210,"commit":true,"dry_run":false,"stages":["partition"],"stage_commands":{"partition":5},"plan_sha256":"19d4822e193bcc10c4aee5a15bd07e49b22e8b54544af3f9f4a604a739b8ccdf","log":"/var/run/bko-holt/log/load.log","layout":{"hostname":"obsd8-crypt.my.domain","generated":"2026-11-24T20:49:04Z"}}
+{"event":"stage","stage":"partition","commands":5}
+{"event":"cmd","stage":"partition","n":1,"of":5,"kind":"run","argv":["sh","-c","dd if=/dev/zero of=/dev/rsd1c bs=1m count=1 2>/dev/null; true"],"env":[["LC_ALL","C"]],"why":"--erase /dev/sd1: its old table and label","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"partition","n":1,"status":0,"signal":null,"secs":0.01}
+{"event":"cmd","stage":"partition","n":2,"of":5,"kind":"run","argv":["sh","-c","/root/bko-holt write-table /root/layout.json sd0 /dev/rsd1c $(disklabel sd1 | awk '/^bytes.sector:/ { b = $2 } /^total sectors:/ { t = $3 } END { print b * t }')"],"env":[["LC_ALL","C"]],"why":"sd0 -> /dev/sd1: the source's table, GUIDs and boot code exactly","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"partition","n":2,"status":0,"signal":null,"secs":0.01}
+{"event":"cmd","stage":"partition","n":3,"of":5,"kind":"write","argv":[],"env":[],"why":null,"path":"/var/run/bko-holt/sd0.disklabel","dev":null,"stdin_bytes":467,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"partition","n":3,"status":null,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"partition","n":4,"of":5,"kind":"run","argv":["disklabel","-R","sd1","/var/run/bko-holt/sd0.disklabel"],"env":[["LC_ALL","C"]],"why":"sd0's disklabel","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"partition","n":4,"status":0,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"partition","n":5,"of":5,"kind":"run","argv":["sh","-c","printf 'i\\n%s\\nw\\nq\\n' 52fcb0b7cd1d05e5 | disklabel -E sd1 >/dev/null"],"env":[["LC_ALL","C"]],"why":"sd0's disklabel UID, 52fcb0b7cd1d05e5","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"partition","n":5,"status":0,"signal":null,"secs":0.0}
+{"event":"stage_done","stage":"partition","secs":0.25,"checked":true}
+{"event":"end","exit":0,"stopped":false,"secs":0.44}

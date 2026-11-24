@@ -1,0 +1,22 @@
+# Recorded from HoltTest1 HT_VARIANT=json, guest omnios58 (testvm/holttest1d/ht1-json.py record)
+delay 0.01
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T20:57:57Z","pid":1068,"commit":true,"dry_run":false,"stages":["boot"],"stage_commands":{"boot":8},"plan_sha256":"af2ac61732713e78c18498f464b2c53de43354c09ca48e50c22cfa6de2a647d2","log":"/var/run/bko-holt/log/load.log","layout":{"hostname":"omnios58","generated":"2026-11-24T20:50:46Z"}}
+{"event":"stage","stage":"boot","commands":8}
+{"event":"cmd","stage":"boot","n":1,"of":8,"kind":"note","argv":[],"env":[],"why":"the boot code (MBR, freebsd-boot) was written with the partition table","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"boot","n":1,"status":null,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"boot","n":2,"of":8,"kind":"run","argv":["sh","-c","for c in /etc/zfs/zpool.cache /boot/zfs/zpool.cache; do [ -f /mnt/bko-target$c ] && zpool set cachefile=/mnt/bko-target$c rpool_bko; done; true"],"env":[["LC_ALL","C"]],"why":"the restored system's zpool.cache names the new pool","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"boot","n":2,"status":0,"signal":null,"secs":0.02}
+{"event":"cmd","stage":"boot","n":3,"of":8,"kind":"run","argv":["sh","-c","[ -f /mnt/bko-target/etc/versions/build ] && [ ! -h /mnt/bko-target/etc/versions/build ] || exit 0; for f in /mnt/bko-target/etc/versions/build.*; do if [ -e \"$f\" ] || [ -h \"$f\" ]; then exit 0; fi; done; touch -r /mnt/bko-target/etc/versions /var/run/bko-holt/versref && cp -p /mnt/bko-target/etc/versions/build /mnt/bko-target/etc/versions/build.bko-holt && s=$(/usr/gnu/bin/stat -c %.9Y /mnt/bko-target/etc/versions/build) && case $s in *.000000000) /usr/gnu/bin/touch -m -d @${s%.*}.000000001 /mnt/bko-target/etc/versions/build;; esac"],"env":[["LC_ALL","C"]],"why":"etc/versions/build as a fragment of itself, so OmniOS' bootadm remakes it rather than deleting it","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"boot","n":3,"status":0,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"boot","n":4,"of":8,"kind":"run","argv":["bootadm","update-archive","-R","/mnt/bko-target"],"env":[["LC_ALL","C"]],"why":"the boot archive, with the new pool's zpool.cache","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"boot","n":4,"status":0,"signal":null,"secs":0.02}
+{"event":"cmd","stage":"boot","n":5,"of":8,"kind":"run","argv":["sh","-c","[ ! -f /var/run/bko-holt/versref ] || { /usr/gnu/bin/touch -m -r /mnt/bko-target/etc/versions/build.bko-holt /mnt/bko-target/etc/versions/build && rm -f /mnt/bko-target/etc/versions/build.bko-holt && touch -r /var/run/bko-holt/versref /mnt/bko-target/etc/versions && rm -f /var/run/bko-holt/versref; }"],"env":[["LC_ALL","C"]],"why":"etc/versions/build's fragment gone again, and its mtime back","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"boot","n":5,"status":0,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"boot","n":6,"of":8,"kind":"run","argv":["installboot","-f","-b","/mnt/bko-target/boot","/dev/rdsk/c3t0d0s1"],"env":[["LC_ALL","C"]],"why":"illumos' gptzfsboot, in the pool's boot area","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"boot","n":6,"status":0,"signal":null,"secs":0.3}
+{"event":"cmd","stage":"boot","n":7,"of":8,"kind":"run","argv":["mkdir","-p","/mnt/bko-target/var/log/bko-holt"],"env":[["LC_ALL","C"]],"why":null,"path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"boot","n":7,"status":0,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"boot","n":8,"of":8,"kind":"run","argv":["cp","-Rp","/var/run/bko-holt/log/.","/mnt/bko-target/var/log/bko-holt/"],"env":[["LC_ALL","C"]],"why":"this restore's log, on the restored system","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"boot","n":8,"status":0,"signal":null,"secs":0.0}
+{"event":"stage_done","stage":"boot","secs":2.62,"checked":true}
+{"event":"end","exit":0,"stopped":false,"secs":4.87}

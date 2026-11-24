@@ -1,0 +1,9 @@
+load
+/root/layout.json
+--map
+c3t0d0=c3t0d0
+--erase
+c3t0d0
+--only
+status
+--json

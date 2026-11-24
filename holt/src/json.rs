@@ -5,7 +5,11 @@
 
 use std::fmt::Write as _;
 
-#[derive(Clone, Debug, PartialEq)]
+/// Equality is by value: `Int(n)` and `UInt(n)` are the same number for any
+/// `n >= 0` (the reader makes `UInt` of every non-negative integer, the probes
+/// often build `Int`), so a field read back from a dump compares equal to the
+/// same field probed again.  `Float` equals only `Float`.
+#[derive(Clone, Debug)]
 pub enum Value {
     Null,
     Bool(bool),
@@ -15,6 +19,23 @@ pub enum Value {
     Str(String),
     Arr(Vec<Value>),
     Obj(Vec<(String, Value)>),
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::Null, Value::Null) => true,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::UInt(a), Value::UInt(b)) => a == b,
+            (Value::Int(a), Value::UInt(b)) | (Value::UInt(b), Value::Int(a)) => u64::try_from(*a).is_ok_and(|a| a == *b),
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::Str(a), Value::Str(b)) => a == b,
+            (Value::Arr(a), Value::Arr(b)) => a == b,
+            (Value::Obj(a), Value::Obj(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 impl Value {
@@ -615,6 +636,21 @@ mod tests {
         assert_eq!(Value::Float(2.0).compact(), "2.0");
         assert_eq!(Value::Float(f64::NAN).compact(), "null");
         assert_eq!(Value::Float(f64::INFINITY).compact(), "null");
+    }
+
+    #[test]
+    fn numbers_compare_by_value() {
+        // RustAudit1 H1-03: the reader's UInt and a probe's Int are one number.
+        assert_eq!(parse("5").unwrap(), Value::from(5i32));
+        assert_eq!(Value::Int(0), Value::UInt(0));
+        assert_eq!(Value::UInt(7), Value::Int(7));
+        assert_eq!(parse("[1,{\"a\":2}]").unwrap(), Value::Arr(vec![Value::Int(1), Value::Obj(vec![("a".into(), Value::Int(2))])]));
+        assert_ne!(Value::Int(-1), Value::UInt(u64::MAX));
+        assert_ne!(Value::Int(5), Value::UInt(6));
+        assert_ne!(Value::Int(5), Value::Float(5.0));
+        assert_ne!(Value::Int(0), Value::Null);
+        assert_ne!(Value::Float(f64::NAN), Value::Float(f64::NAN));
+        assert_eq!(Value::Str("x".into()), Value::from("x"));
     }
 
     #[test]

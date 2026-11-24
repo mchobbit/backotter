@@ -90,13 +90,6 @@ pub fn line(dev: &str, content: &Value) -> String {
     format!("# check: {dev} is {ty} {what} (read back by bko-holt's own probe)\n")
 }
 
-fn same(a: &Value, b: &Value) -> bool {
-    match (a.as_u64(), b.as_u64()) {
-        (Some(x), Some(y)) => x == y,
-        _ => a == b,
-    }
-}
-
 fn shown(v: Option<&Value>) -> String {
     match v {
         None | Some(Value::Null) => "none".into(),
@@ -128,7 +121,7 @@ pub fn differences(dev: &str, want: &Value, got: &Value) -> Vec<String> {
     for k in geometry(ty) {
         let Some(w) = want.get(k).filter(|w| !w.is_null()) else { continue };
         match got.get(k) {
-            Some(g) if same(w, g) => {}
+            Some(g) if w == g => {}
             g => out.push(format!("{dev}: its {k} reads back as {}, not the source's {}", shown(g), shown(Some(w)))),
         }
     }

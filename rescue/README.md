@@ -54,6 +54,37 @@ same `BKO_RESCUE_GOLDEN`.
   `cargo test --release` for long runs, as
   `BKO_RESCUE_FUZZ=5000000 cargo test --release --locked --offline`).
 
+## Building for a platform, and the spike (RT3)
+
+`testvm/holttest1d/build-holt.sh` builds bko-rescue with `HOLT_CRATE=rescue`,
+in the platform's build guest (on the farm host for linux), and runs the
+header test there in the same boot.  From a repo-shaped tree on the host
+(rescue/, holt/src/json.rs and the testvm/ and stick/ of the same commit,
+never the synced testvm/):
+
+```sh
+cd ~/backotter-work && HOLT_CRATE=rescue HOLT_SRC=TREE \
+  TREE/testvm/holttest1d/build-holt.sh --reserved RUN PLATFORM
+```
+
+The binary lands in `/bkoscratch/rescue-build/bin/PLATFORM/bko-rescue`, the
+header test's output beside it (`bko-rescue.abi.txt`) and in
+`/bkoscratch/rescue-build/build-PLATFORM/abi.log`; exit 3 means built but the
+header test failed.  Then `testvm/rescue/spike.py` boots the platform's
+current rescue image (BIOS and UEFI) and runs `--spike` on the serial line,
+the screen (sendkey and screendumps) and ssh (LANG=C.UTF-8 and LANG=C), on a
+host with the images (chopin, cinqcent):
+
+```sh
+cd ~/backotter-work && WEAR_TAG=rescue:spike:PLATFORM ./cmp-run.sh --reserve 2 4 \
+  python3 -B TREE/testvm/rescue/spike.py PLATFORM /bkoscratch/rescue-build/bin/PLATFORM/bko-rescue \
+  --out ~/backotter-work/rescue-spike/PLATFORM-RUN
+```
+
+It writes `summary.json` (every check: ok, FAIL, SKIPPED with why, JUDGE for
+the PNGs) and per firmware the screens as PNGs and text, the serial log and
+each console's bytes.  See spike.py's docstring.
+
 ## Options
 
 ```

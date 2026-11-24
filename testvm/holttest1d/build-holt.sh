@@ -62,11 +62,36 @@
 # held for the build's life (linux needs none).  It waits in cmp-run.sh's line
 # for its room and never builds on disk.  Its exit status goes in
 # HOLT_LOGS/exit.  HOLT_SRC, HOLT_OUT, HOLT_LOGS and HOLT_INFO go through.
+#
+# HOLT_CRATE=rescue (docs/design/rescue-tui.md, "Builds"; default holt, whose
+# build nothing here changes) builds bko-rescue instead, the same way, in the
+# same guests: HOLT_SRC is then a repo-shaped tree holding rescue/ and
+# holt/src/json.rs (default ~/backotter-work/rescue-src; from a checkout,
+# `rsync -aR --delete rescue holt/src/json.rs HOST:backotter-work/rescue-src/`),
+# tarred from its root with those two paths (rescue/target left out), built
+# in rescue/ (a guest's /tmp/rescue, so a --keep guest keeps holt's and
+# rescue's target/ apart).  In the same guest boot (on the host for linux)
+# the header test, `sh rescue/abi/check.sh BINARY [HOLT_ABI_CC]`, runs on the
+# built binary; its output goes to HOLT_LOGS/abi.log and beside the binary
+# as bko-rescue.abi.txt.  The binary lands in HOLT_OUT/bko-rescue (default
+# /bkoscratch/rescue-build/bin/PLATFORM, linux's too), the logs in HOLT_LOGS
+# (default /bkoscratch/rescue-build/build-PLATFORM).  None of HOLT_OUT,
+# HOLT_LOGS or HOLT_INFO's directory may be in holt-bin, bko-bin,
+# /bkoscratch/holttest1d or ~/backotter-work/rescue-bin (the pinned set a
+# refresh script writes), by any path, test or not (exit 2).  Exit 3: built
+# and landed, but the header test failed.  HOLT_INFO's JSON adds "crate" and
+# "abi" (ok or FAIL).  --reserved's WEAR_TAG is rescue:RUN:build-PLATFORM.
 set -euo pipefail
 
 WORK=/home/m/backotter-work
 HERE=$(dirname "$(realpath "$0")")
 PLATFORMS="linux, linux-arm64, freebsd, netbsd, openbsd, dragonfly, illumos or haiku"
+CRATE=${HOLT_CRATE:-holt} BIN=bko-holt
+case $CRATE in
+    holt) ;;
+    rescue) BIN=bko-rescue ;;
+    *) echo "build-holt: HOLT_CRATE=$CRATE: holt or rescue" >&2; exit 2 ;;
+esac
 
 # A test's build (T2_HOST_ROOT set, and not HoltTest2's own /bkoscratch/test2)
 # never lands in the shipped sets, WORK/holt-bin and WORK/bko-bin (the images
@@ -109,6 +134,20 @@ refuse_shipped() {
         fi
     done
 }
+# HOLT_CRATE=rescue: bko-rescue never lands among bko-holt's sets or in
+# rescue-bin (its own pinned set, written only by a refresh script), test or not.
+refuse_pinned() {
+    [[ $CRATE == rescue ]] || return 0
+    local SHARED=("${SHARED[@]}" "$WORK/rescue-bin") v p d
+    for v in OUT LOGS HOLT_INFO; do
+        [[ -n ${!v:-} ]] || continue
+        p=${!v}; [[ $v == HOLT_INFO ]] && p=$(dirname -- "$p")
+        if d=$(in_shared "$p"); then
+            echo "build-holt: HOLT_CRATE=rescue: $v=${!v} is in $d (the same device and inode): bko-rescue builds go to a scratch directory (default /bkoscratch/rescue-build)" >&2
+            exit 2
+        fi
+    done
+}
 
 if [[ ${1:-} == --reserved ]]; then
     [[ $# -eq 3 ]] || { echo "build-holt: --reserved RUN PLATFORM" >&2; exit 2; }
@@ -118,6 +157,7 @@ if [[ ${1:-} == --reserved ]]; then
     case $PLATFORM in linux|linux-arm64|freebsd|netbsd|openbsd|dragonfly|illumos|haiku) ;;
         *) echo "build-holt: PLATFORM: $PLATFORMS" >&2; exit 2 ;; esac
     LOGS=${HOLT_LOGS:-/bkoscratch/holttest1d/build-holt-$PLATFORM}
+    [[ $CRATE != rescue ]] || { LOGS=${HOLT_LOGS:-/bkoscratch/rescue-build/build-$PLATFORM}; OUT=; refuse_pinned; }
     mkdir -p "$LOGS"; rm -f "$LOGS/exit" "$LOGS/peak-kib"
     tmp=/mnt/bko-ram/t2b-$RUN-$PLATFORM rc=0 port=() lk=""
     finish() { rm -rf --one-file-system "$tmp"; echo "$1" >"$LOGS/exit"; exit "$1"; }
@@ -147,8 +187,9 @@ if [[ ${1:-} == --reserved ]]; then
           ((k > m)) && { m=$k; echo "$m" >"$LOGS/peak-kib"; }
           sleep 5
       done ) </dev/null >/dev/null 2>&1 &
-    WEAR_TAG=ht1:$RUN:build-$PLATFORM "$WORK/cmp-run.sh" --reserve "${HOLT_RESERVE:-3}" 4 \
-        env TMPDIR="$tmp" "$HERE/build-holt.sh" "$PLATFORM" ${port[@]+"${port[@]}"} || rc=$?
+    tag=ht1; [[ $CRATE == holt ]] || tag=rescue
+    WEAR_TAG=$tag:$RUN:build-$PLATFORM "$WORK/cmp-run.sh" --reserve "${HOLT_RESERVE:-3}" 4 \
+        env TMPDIR="$tmp" ${HOLT_CRATE:+HOLT_CRATE="$HOLT_CRATE"} "$HERE/build-holt.sh" "$PLATFORM" ${port[@]+"${port[@]}"} || rc=$?
     finish "$rc"
 fi
 
@@ -160,7 +201,13 @@ SRC=${HOLT_SRC:-$WORK/holt-src}
 OUT=${HOLT_OUT:-/bkoscratch/holttest1d/bin/$PLATFORM}
 [[ $PLATFORM != linux ]] || OUT=${HOLT_OUT:-/bkoscratch/holttest1d/bin}
 LOGS=${HOLT_LOGS:-/bkoscratch/holttest1d/build-holt-$PLATFORM}
+if [[ $CRATE == rescue ]]; then
+    SRC=${HOLT_SRC:-$WORK/rescue-src}
+    OUT=${HOLT_OUT:-/bkoscratch/rescue-build/bin/$PLATFORM}
+    LOGS=${HOLT_LOGS:-/bkoscratch/rescue-build/build-$PLATFORM}
+fi
 refuse_shipped
+refuse_pinned
 GUEST_PATH=/sbin:/usr/sbin:/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/pkg/sbin:/usr/pkg/bin:/opt/ooce/bin:/usr/gnu/bin
 case $PLATFORM in
     linux|linux-arm64) ;;
@@ -178,18 +225,37 @@ case $PLATFORM in
         export VM_USER=user ;;   # Haiku's uid 0
     *) echo "build-holt: PLATFORM: $PLATFORMS" >&2; exit 2 ;;
 esac
+if [[ $CRATE == rescue ]]; then
+    [[ -f $SRC/rescue/Cargo.toml && -f $SRC/holt/src/json.rs ]] ||
+        { echo "build-holt: HOLT_CRATE=rescue: no $SRC/rescue/Cargo.toml or $SRC/holt/src/json.rs (HOLT_SRC: a repo-shaped tree)" >&2; exit 1; }
+else
 [[ -f $SRC/Cargo.toml ]] || { echo "build-holt: no $SRC/Cargo.toml" >&2; exit 1; }
+fi
 refuse_shipped   # (again, just before the first write)
+refuse_pinned
 mkdir -p "$OUT" "$LOGS"
 
-# HOLT_INFO's JSON: PLATFORM SHA256 RUSTC.
+# HOLT_INFO's JSON: PLATFORM SHA256 RUSTC [ABI] (ABI, ok or FAIL: HOLT_CRATE=rescue's).
 info() {
     [[ -n ${HOLT_INFO:-} ]] || return 0
     python3 -c 'import json, socket, sys, time
-p, sha, rustc, src, out = sys.argv[1:]
-print(json.dumps({"platform": p, "sha256": sha, "rustc": rustc, "host": socket.gethostname().split(".")[0],
-                  "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "src": src, "out": out}))' \
-        "$1" "$2" "$3" "$SRC" "$OUT/bko-holt" >"$HOLT_INFO.part" && mv -f "$HOLT_INFO.part" "$HOLT_INFO"
+p, sha, rustc, src, out = sys.argv[1:6]
+d = {"platform": p, "sha256": sha, "rustc": rustc, "host": socket.gethostname().split(".")[0],
+     "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "src": src, "out": out}
+if len(sys.argv) > 6:
+    d["crate"], d["abi"] = "rescue", sys.argv[6]
+print(json.dumps(d))' \
+        "$1" "$2" "$3" "$SRC" "$OUT/$BIN" ${4:+"$4"} >"$HOLT_INFO.part" && mv -f "$HOLT_INFO.part" "$HOLT_INFO"
+}
+# The header test's verdict, after the binary has landed: its output is in
+# LOGS/abi.log and OUT/bko-rescue.abi.txt; exit 3 when it failed.
+abi_verdict() {
+    cp "$LOGS/abi.log" "$OUT/$BIN.abi.txt"
+    cat "$LOGS/abi.log"
+    if [[ $1 != 0 ]]; then
+        echo "build-holt: $OUT/$BIN built, but its header test failed (exit $1; $LOGS/abi.log)" >&2
+        exit 3
+    fi
 }
 
 if [[ $PLATFORM == linux || $PLATFORM == linux-arm64 ]]; then
@@ -227,6 +293,32 @@ if [[ $PLATFORM == linux || $PLATFORM == linux-arm64 ]]; then
             { echo "build-holt: Rust $tc has no $t target: rustup target add --toolchain $tc $t" >&2; exit 1; }
     fi
     # From a copy of the tree, as the guests build: cargo may rewrite Cargo.lock.
+    if [[ $CRATE == rescue ]]; then
+        tree=$TMPDIR/rescue-src
+        rm -rf "$tree"; mkdir -p "$tree"
+        tar -C "$SRC" --exclude=rescue/target -cf - rescue holt/src/json.rs | tar -C "$tree" -xf -
+        rv=$("$(dirname "$cargo")/rustc" --version 2>/dev/null || echo unknown)
+        echo "$rv"
+        ((${#job[@]} == 0)) || job+=(env HOME="$HOME" PATH="$PATH"
+            ${RUSTUP_HOME:+RUSTUP_HOME="$RUSTUP_HOME"} ${CARGO_HOME:+CARGO_HOME="$CARGO_HOME"}
+            ${RUSTUP_TOOLCHAIN:+RUSTUP_TOOLCHAIN="$RUSTUP_TOOLCHAIN"} ${RUSTUP_AUTO_INSTALL:+RUSTUP_AUTO_INSTALL="$RUSTUP_AUTO_INSTALL"})
+        if ! (cd "$tree/rescue" && ${job[@]+"${job[@]}"} env RUSTFLAGS="-C target-feature=+crt-static" CARGO_TARGET_DIR="$TMPDIR/rescue-target" \
+                "$cargo" build --release --offline --target $t) >"$LOGS/build.log" 2>&1; then
+            grep -E "^(error|warning)" -A 6 "$LOGS/build.log" | head -80 >&2
+            exit 1
+        fi
+        b=$TMPDIR/rescue-target/$t/release/bko-rescue
+        "$b" --version
+        cp "$b" "$OUT/$BIN.part"
+        chmod 755 "$OUT/$BIN.part"
+        mv "$OUT/$BIN.part" "$OUT/$BIN"
+        arc=0; (cd "$tree/rescue" && sh abi/check.sh "$OUT/$BIN" ${HOLT_ABI_CC:+"$HOLT_ABI_CC"}) >"$LOGS/abi.log" 2>&1 || arc=$?
+        av=ok; [[ $arc == 0 ]] || av=FAIL
+        info "$PLATFORM" "$(sha256sum "$OUT/$BIN" | cut -d' ' -f1)" "$rv" "$av"
+        ls -l "$OUT/$BIN"
+        abi_verdict "$arc"
+        exit 0
+    fi
     tree=$TMPDIR/holt-src
     rm -rf "$tree"; mkdir -p "$tree"
     tar -C "$SRC" -cf - Cargo.toml Cargo.lock LICENSE src tests | tar -C "$tree" -xf -
@@ -303,6 +395,27 @@ if ! vm_ssh "$env; command -v cargo && command -v cc" >/dev/null 2>&1; then
 fi
 rv=$(vm_ssh "$env; rustc --version")
 echo "$rv"
+if [[ $CRATE == rescue ]]; then
+    # In /tmp/rescue, the repo-shaped tree; --keep keeps its rescue/target.
+    clean='rm -rf /tmp/rescue && mkdir /tmp/rescue'
+    [[ $keep == yes ]] && clean='mkdir -p /tmp/rescue && rm -rf /tmp/rescue/holt /tmp/rescue/rescue/src /tmp/rescue/rescue/tests /tmp/rescue/rescue/abi'
+    tar -C "$SRC" --exclude=rescue/target -czf - rescue holt/src/json.rs | T=600 vm_ssh "$clean && cd /tmp/rescue && gzip -dc | tar -xf -"
+    if ! T=3600 vm_ssh "$env; cd /tmp/rescue/rescue && cargo build --release --offline 2>&1" >"$LOGS/build.log"; then
+        grep -E "^(error|warning)" -A 6 "$LOGS/build.log" | head -80 >&2
+        exit 1
+    fi
+    vm_ssh "/tmp/rescue/rescue/target/release/bko-rescue --version"
+    vm_ssh 'cat /tmp/rescue/rescue/target/release/bko-rescue' >"$OUT/$BIN.part"
+    chmod 755 "$OUT/$BIN.part"
+    mv "$OUT/$BIN.part" "$OUT/$BIN"
+    # The header test, in this boot, with the guest's own cc and headers.
+    arc=0; T=600 vm_ssh "$env; cd /tmp/rescue/rescue && sh abi/check.sh target/release/bko-rescue ${HOLT_ABI_CC:-} 2>&1" >"$LOGS/abi.log" || arc=$?
+    av=ok; [[ $arc == 0 ]] || av=FAIL
+    info "$PLATFORM" "$(sha256sum "$OUT/$BIN" | cut -d' ' -f1)" "$rv" "$av"
+    ls -l "$OUT/$BIN"
+    abi_verdict "$arc"
+    exit 0
+fi
 # --keep: the tree replaced, target/ kept (tar keeps the files' mtimes, so
 # cargo rebuilds what changed).
 clean='rm -rf /tmp/holt && mkdir /tmp/holt'

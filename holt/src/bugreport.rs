@@ -786,24 +786,98 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
     Bundle { text, terminal, notes }
 }
 
+/// What kind of failure check_plan found, for a caller to act on without
+/// reading its message (tests/corpus_build.rs: a leak stops a dump).
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckPlanFailure {
+    /// The layout isn't JSON.
+    NotJson,
+    /// The redacted dump, its pseudonyms mapped back, isn't the original.
+    MapBack,
+    /// An identifier is left in the redacted dump.
+    LeftInDump,
+    /// load refused the arguments check_plan made for the layout.
+    LoadArgs,
+    /// load's plan of the redacted dump, mapped back, isn't the original's.
+    PlanDiffers,
+    /// An identifier is left in the plan of the redacted dump.
+    LeftInPlan,
+}
+
+impl CheckPlanFailure {
+    /// The words each message of this kind starts with.
+    pub fn class(self) -> &'static str {
+        match self {
+            CheckPlanFailure::NotJson => "not JSON",
+            CheckPlanFailure::MapBack => "the redacted dump doesn't map back to the original",
+            CheckPlanFailure::LeftInDump => "left in the redacted dump",
+            CheckPlanFailure::LoadArgs => "load's arguments",
+            CheckPlanFailure::PlanDiffers => "the plan of the redacted dump differs",
+            CheckPlanFailure::LeftInPlan => "left in the redacted dump's plan",
+        }
+    }
+
+    /// Whether an identifier got past the redaction.
+    pub fn is_leak(self) -> bool {
+        matches!(self, CheckPlanFailure::LeftInDump | CheckPlanFailure::LeftInPlan)
+    }
+}
+
+/// check_plan's failure: its kind, and the message, which starts with the
+/// kind's class and may quote the dump's identifiers.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckPlanError {
+    /// Which check failed.
+    pub kind: CheckPlanFailure,
+    /// What Display prints: the whole message.
+    pub message: String,
+}
+
+impl CheckPlanError {
+    fn new(kind: CheckPlanFailure, message: String) -> CheckPlanError {
+        debug_assert!(message.starts_with(kind.class()), "{message:?} doesn't start with {:?}", kind.class());
+        CheckPlanError { kind, message }
+    }
+}
+
+impl std::fmt::Display for CheckPlanError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CheckPlanError {}
+
 /// The proof the redaction keeps `load` working: on a fake rescue system
 /// with a blank disk of the same size for each of the dump's, `load`'s plan
 /// of the redacted dump, with the pseudonyms mapped back, is the plan of the
 /// original, byte for byte, Problems and exit status too; the redacted dump
 /// maps back to the original; and no identifier is left in the redacted
 /// dump or its plan.  Returns the number of identifiers and plan lines.
+///
+/// # Errors
+///
+/// The first check that fails, by its kind (CheckPlanFailure), with a
+/// message that may quote the dump's identifiers.
 #[doc(hidden)]
-pub fn check_plan(layout_text: &str) -> Result<(usize, usize), String> {
-    let v = crate::json::parse(layout_text).map_err(|e| format!("not JSON: {}", e.message))?;
+pub fn check_plan(layout_text: &str) -> Result<(usize, usize), CheckPlanError> {
+    use CheckPlanFailure as F;
+    let fail = |kind, message| Err(CheckPlanError::new(kind, message));
+    let v = match crate::json::parse(layout_text) {
+        Ok(v) => v,
+        Err(e) => return fail(F::NotJson, format!("not JSON: {}", e.message)),
+    };
     let (rv, r) = crate::redact::redact(&v);
     let back = r.unredact_value(&rv);
     if back.compact() != v.compact() {
-        return Err(format!("the redacted dump doesn't map back to the original: {}", value_diff(&back, &v, "").unwrap_or_default()));
+        return fail(F::MapBack, format!("the redacted dump doesn't map back to the original: {}", value_diff(&back, &v, "").unwrap_or_default()));
     }
     let rtext = rv.pretty();
     let leaks = r.leaks(&rtext);
     if !leaks.is_empty() {
-        return Err(format!("left in the redacted dump: {leaks:?}"));
+        return fail(F::LeftInDump, format!("left in the redacted dump: {leaks:?}"));
     }
     let t = crate::testutil::Tree::new("redact-plan");
     t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
@@ -824,7 +898,7 @@ pub fn check_plan(layout_text: &str) -> Result<(usize, usize), String> {
     args.extend(["--repo".to_string(), "/srv/bko-repo".to_string()]);
     let opts = match load::parse_args(&args) {
         Ok(Parsed::Run(o)) => o,
-        other => return Err(format!("load's arguments {args:?}: {other:?}")),
+        other => return fail(F::LoadArgs, format!("load's arguments {args:?}: {other:?}")),
     };
     let sys = || Sys::new(t.root(), Box::new(FakeRunner::default().with("/usr/sbin/rustic-bko --version", "rustic 0.11.4+backotter.4\n")), true);
     t.file("/usr/sbin/rustic-bko", "");
@@ -845,11 +919,11 @@ pub fn check_plan(layout_text: &str) -> Result<(usize, usize), String> {
     let back = (red.0, r.unredact(&red.1), r.unredact(&red.2));
     if back != orig {
         let what = if back.0 != orig.0 { format!("exit {} vs {}", back.0, orig.0) } else if back.1 != orig.1 { first_diff(&back.1, &orig.1) } else { first_diff(&back.2, &orig.2) };
-        return Err(format!("the plan of the redacted dump differs: {what}"));
+        return fail(F::PlanDiffers, format!("the plan of the redacted dump differs: {what}"));
     }
     let leaks = r.leaks(&(red.1.clone() + &red.2));
     if !leaks.is_empty() {
-        return Err(format!("left in the redacted dump's plan: {leaks:?}"));
+        return fail(F::LeftInPlan, format!("left in the redacted dump's plan: {leaks:?}"));
     }
     Ok((r.entries.len(), orig.1.lines().count()))
 }

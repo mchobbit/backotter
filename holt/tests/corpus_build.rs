@@ -34,6 +34,7 @@
 
 mod common;
 
+use bko_holt::bugreport::{CheckPlanError, CheckPlanFailure};
 use bko_holt::json::{self, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -281,13 +282,20 @@ struct Built {
 
 /// check_plan's message up to its first detail: what kind of failure,
 /// without the identifiers the rest may quote from the raw dump.
-fn failure_class(e: &str) -> &str {
-    for c in ["the redacted dump doesn't map back to the original", "the plan of the redacted dump differs", "left in the redacted dump's plan", "left in the redacted dump", "not JSON", "load's arguments"] {
-        if e.starts_with(c) {
-            return c;
-        }
+fn failure_class(e: &CheckPlanError) -> &'static str {
+    e.kind.class()
+}
+
+/// Whether check_plan's failure on a raw dump stops that dump (a leak, or
+/// no JSON to build from), or is reported while the dump is still made (a
+/// plan that differs, a redaction that doesn't map back), its own leak
+/// checks standing in for the ones check_plan didn't reach.  By kind, every
+/// kind named: a new one has to be placed here.
+fn stops_the_dump(kind: CheckPlanFailure) -> bool {
+    match kind {
+        CheckPlanFailure::LeftInDump | CheckPlanFailure::LeftInPlan | CheckPlanFailure::NotJson => true,
+        CheckPlanFailure::MapBack | CheckPlanFailure::PlanDiffers | CheckPlanFailure::LoadArgs => false,
     }
-    "another failure"
 }
 
 /// A built dump, or why it wasn't: (class, message).
@@ -304,10 +312,10 @@ fn build_one(guest: &str, raw_text: &str, prov: Option<&BTreeMap<String, String>
         Ok((ids, lines)) => (format!("ok:{ids}:{lines}"), None),
         Err(e) => {
             let class = failure_class(&e);
-            if class.starts_with("left in") || class == "not JSON" || class == "another failure" {
-                return Err(hard(&format!("check_plan on the raw dump: {class}"), e));
+            if stops_the_dump(e.kind) {
+                return Err(hard(&format!("check_plan on the raw dump: {class}"), e.message));
             }
-            (format!("FAIL:{}", class.replace(' ', "-")), Some((class.to_string(), e)))
+            (format!("FAIL:{}", class.replace(' ', "-")), Some((class.to_string(), e.message)))
         }
     };
     // 2. Redaction, twice.
@@ -343,7 +351,7 @@ fn build_one(guest: &str, raw_text: &str, prov: Option<&BTreeMap<String, String>
         let problem = (b.out.contains("# Problems (") && !a.out.contains("# Problems (")) || b.code != a.code;
         format!("differs:{}{}:{}", common::lines_changed(&ta, &tb), if problem { ":problem" } else { "" }, common::stages_changed(&ta, &tb).join("+"))
     };
-    let (n_after, _) = bko_holt::bugreport::check_plan(&text).map_err(|e| hard(&format!("check_plan on the corpus dump: {}", failure_class(&e)), e))?;
+    let (n_after, _) = bko_holt::bugreport::check_plan(&text).map_err(|e| hard(&format!("check_plan on the corpus dump: {}", failure_class(&e)), e.message))?;
     let after = format!("ok:{n_after}");
     let empty = BTreeMap::new();
     let p = prov.unwrap_or(&empty);
@@ -452,6 +460,30 @@ fn corpus_build() {
         soft.len()
     );
     assert!(hard.is_empty() && soft.is_empty(), "not made: {:?}; made, but check_plan failed on the raw dump: {:?}", hard, soft);
+}
+
+#[test]
+fn check_plan_failures_by_kind() {
+    use CheckPlanFailure as F;
+    // index.tsv's FAIL:CLASS and the log carry these words: as they were.
+    let classes = [
+        (F::MapBack, "the redacted dump doesn't map back to the original"),
+        (F::PlanDiffers, "the plan of the redacted dump differs"),
+        (F::LeftInPlan, "left in the redacted dump's plan"),
+        (F::LeftInDump, "left in the redacted dump"),
+        (F::NotJson, "not JSON"),
+        (F::LoadArgs, "load's arguments"),
+    ];
+    for (k, c) in classes {
+        assert_eq!(k.class(), c);
+        // A leak stops the dump, and so does no JSON; the rest are reported.
+        assert_eq!(stops_the_dump(k), matches!(k, F::LeftInPlan | F::LeftInDump | F::NotJson), "{k:?}");
+        assert_eq!(k.is_leak(), matches!(k, F::LeftInPlan | F::LeftInDump), "{k:?}");
+    }
+    let e = bko_holt::bugreport::check_plan("{").unwrap_err();
+    assert_eq!(e.kind, F::NotJson);
+    assert!(e.message.starts_with("not JSON: ") && e.to_string() == e.message, "{e}");
+    assert_eq!(failure_class(&e), "not JSON");
 }
 
 #[test]

@@ -36,7 +36,18 @@ pub trait Runner {
     fn installed(&self, _prog: &str) -> bool {
         true
     }
+
+    /// How long a command may run before it counts as failed; `Sys` gives
+    /// its in-process calls that can hang (statvfs on a dead NFS mount)
+    /// the same limit.
+    fn time_limit(&self) -> Duration {
+        TIME_LIMIT
+    }
 }
+
+/// The time limit of the running system's commands (`Sys::host`), and any
+/// runner's that doesn't say.
+pub const TIME_LIMIT: Duration = Duration::from_secs(30);
 
 /// Runs real commands, from the system directories only (NixOS's
 /// /run/current-system/sw and Guix's /run/current-system/profile among
@@ -80,6 +91,10 @@ impl Runner for RealRunner {
 
     fn installed(&self, prog: &str) -> bool {
         !prog.contains('/') && SYSTEM_PATH.split(':').any(|d| Path::new(d).join(prog).is_file())
+    }
+
+    fn time_limit(&self) -> Duration {
+        self.timeout
     }
 }
 
@@ -230,7 +245,7 @@ impl Sys {
 
     /// The running system, as whoever we are.
     pub fn host() -> Sys {
-        let mut s = Sys::new("/", Box::new(RealRunner { timeout: Duration::from_secs(30) }), euid() == 0);
+        let mut s = Sys::new("/", Box::new(RealRunner { timeout: TIME_LIMIT }), euid() == 0);
         s.sys_tz = kernel_sys_tz();
         s
     }
@@ -393,10 +408,39 @@ impl Sys {
         self.warnings.borrow().clone()
     }
 
-    /// Size, free and available bytes of the filesystem mounted at `abs`.
+    /// Size, free and available bytes of the filesystem mounted at `abs`,
+    /// from statvfs(2) within the runner's time limit: a hard NFS mount to
+    /// a dead server, or a hung FUSE daemon, can't hang the dump (it gets
+    /// None and a warning instead).
     #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     pub fn statvfs(&self, abs: &str) -> Option<(u64, u64, u64)> {
-        statvfs(&self.p(abs))
+        self.usage_within(abs, self.runner.time_limit(), statvfs)
+    }
+
+    /// `probe`'s answer for `abs` (under the root), asked on a thread of its
+    /// own and waited for at most `limit`.  Past it: None, a warning naming
+    /// the mount, and the thread left behind, asleep in the kernel, as
+    /// `RealRunner` leaves a stuck child; it dies with the process.
+    #[cfg_attr(not(all(target_os = "linux", target_pointer_width = "64")), allow(dead_code))]
+    fn usage_within(&self, abs: &str, limit: Duration, probe: fn(&Path) -> Option<(u64, u64, u64)>) -> Option<(u64, u64, u64)> {
+        let path = std::sync::Arc::new(self.p(abs));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let theirs = std::sync::Arc::clone(&path);
+        let spawned = std::thread::Builder::new().name("bko-holt-statvfs".into()).spawn(move || {
+            let _ = tx.send(probe(&theirs));
+        });
+        if spawned.is_err() {
+            // No thread to be had: asked here, with no time limit, as
+            // before there was one.
+            return probe(&path);
+        }
+        match rx.recv_timeout(limit) {
+            Ok(usage) => usage,
+            Err(_) => {
+                self.warn(format!("{abs}: no answer from statvfs in {} s (a hung NFS or FUSE mount?); its usage is left out", limit.as_secs()));
+                None
+            }
+        }
     }
 
     /// Size, free and available bytes of the filesystem mounted at `abs`:
@@ -869,6 +913,34 @@ mod tests {
         assert_eq!(s.same_bytes("/big", "/twin"), Some(true));
         t.file("/a", "abc").file("/b", "abd").file("/c", "abc");
         assert_eq!((s.same_bytes("/a", "/b"), s.same_bytes("/a", "/c"), s.same_bytes("/a", "/big"), s.same_bytes("/a", "/missing")), (Some(false), Some(true), Some(false), None));
+    }
+
+    #[test]
+    fn usage_within_times_out_on_a_hung_mount() {
+        // RustAudit1 HD4-02: a probe that sleeps past the limit (statvfs on
+        // a hard NFS mount to a dead server) gives None and a warning
+        // within the limit, not a hung dump.
+        fn hung(_: &Path) -> Option<(u64, u64, u64)> {
+            std::thread::sleep(Duration::from_secs(5));
+            Some((1, 1, 1))
+        }
+        fn quick(p: &Path) -> Option<(u64, u64, u64)> {
+            p.to_str().filter(|p| p.ends_with("/mnt/ok")).map(|_| (3, 2, 1))
+        }
+        let s = Sys::new("/fake-root", Box::new(FakeRunner::default()), false);
+        let start = Instant::now();
+        assert_eq!(s.usage_within("/mnt/nfs", Duration::from_millis(100), hung), None);
+        assert!(start.elapsed() < Duration::from_secs(2), "waited {:?}", start.elapsed());
+        assert_eq!(s.warnings().len(), 1);
+        assert!(s.warnings()[0].starts_with("/mnt/nfs: no answer from statvfs"), "{:?}", s.warnings());
+        // A probe that answers in time: its answer, under the root, and no
+        // warning.
+        let s = Sys::new("/fake-root", Box::new(FakeRunner::default()), false);
+        assert_eq!(s.usage_within("/mnt/ok", Duration::from_secs(5), quick), Some((3, 2, 1)));
+        assert_eq!(s.usage_within("/mnt/other", Duration::from_secs(5), quick), None);
+        assert!(s.warnings().is_empty());
+        assert_eq!(FakeRunner::default().time_limit(), TIME_LIMIT);
+        assert_eq!(RealRunner { timeout: Duration::from_millis(7) }.time_limit(), Duration::from_millis(7));
     }
 
     #[test]

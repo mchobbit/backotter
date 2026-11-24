@@ -1,6 +1,6 @@
 # bko-rescue: the terminal layer and its widgets
 
-Status: approved 2026-11-19, with every recommendation (D1-D13).  Not built.
+Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  Not built.
 
 An implementation plan for the stick's terminal UI that `ui.md` describes and
 the user decided on 2026-11-19: one Whiptail-style 80x24 program,
@@ -221,7 +221,7 @@ strip = true
 rescue/
   Cargo.toml  Cargo.lock  README.md
   abi/abi.c                 the header test's C side (RT1)
-  src/main.rs               options: --plain --lines --colour --holt --rustic,
+  src/main.rs               options: --plain --lines --colour --holt --rustic --dry-run,
                             and the hidden --abi --check-tty --profile --spike --demo
   src/lib.rs
   src/json.rs               holt's, by #[path]
@@ -779,6 +779,46 @@ as `gate:holt` does; a `gate:rescue` layer for GateTest2 is open question 5.
 The fixtures for RT8 are written by hand from ui.md's examples, and recorded
 again from real runs once RT10 lands.
 
+## Dry run
+
+Added 2026-11-24 at the user's request, so the program can be tried on a
+real machine without any risk to its disks.
+
+`bko-rescue --dry-run` goes through the real flow on the real machine: its
+real disks, the real repository and its snapshots, and the real `plan`
+with its matching, refusals, size offers and problems.  It never writes:
+
+- **`plan` and `load` run without `--commit`, and `--erase` is never
+  passed.**  `load` without `--commit` runs only what reads and prints what
+  each writing stage would run (`holt/README.md`, "What load does").  The
+  Restore screen ticks through those commands, shown as "would run", instead
+  of running them.
+- **It says so on every screen:** the title line reads `DRY RUN: nothing will
+  be written`, and Review's button reads < Show what would happen > rather
+  than < Restore >.  The serials are still asked for, so the real
+  confirmation can be practised.
+- **Two locks, independent of each other**, so a bug in the UI can't wipe a
+  disk:
+  1. Every bko-holt command line is built in one place
+     (`app/holt_args.rs`), and in dry-run mode that place can't add
+     `--commit` or `--erase`.  A unit test runs every screen's command
+     through it in dry-run mode and fails on either flag.
+  2. bko-rescue sets `BKO_HOLT_NO_COMMIT=1` in bko-holt's environment.
+     bko-holt itself then refuses `--commit` with an error (exit 2) before
+     doing anything, so the lock holds even if the first one has a bug.
+     This is a small change in holt/, part of RT10.
+- **The archiver isn't run to restore,** since there's nothing to restore
+  into.  `rustic-bko snapshots --json` and the repository checks are, since
+  they only read.
+- **Where it runs:** on the stick, from a "BackOtter rescue (dry run)" GRUB
+  entry on Linux (RT13), or `--dry-run` from the first screen's shell
+  elsewhere; or on an installed Linux system with `sudo bko-rescue
+  --dry-run`, which needs root to read the disks as bko-holt does.
+- **Not the same as `--demo`** (RT8): `--demo` replays recorded sessions
+  through the fake bko-holt and needs no real disks or repository.  It's the
+  way to see every failure and help screen; `--dry-run` is the way to see
+  one's own machine.
+
 ## The app on top (later)
 
 Scoped here so the order is clear; each gets its design when it starts.
@@ -799,12 +839,13 @@ Scoped here so the order is clear; each gets its design when it starts.
   screen.  Fixtures and scripted tests; no bko-holt protocol needed yet.
 - **RT12, the restore screens, on RT10:** Disks (`plan --json` without
   `--map`), Passphrases, Review (the typed serial confirmation, `c` for the
-  command plan), Restore (load started detached: `systemd-run` on Linux, a
+  command plan), `--dry-run` and its banner (see "Dry run"), Restore (load started detached: `systemd-run` on Linux, a
   new session through `setsid` elsewhere; stdout to a file in RAM, followed
   each tick; `l` for the log), Done or not.  Resuming with `status --json`
   after a crash or a reboot.  Restore logs on the stick, compressed by the
   system's `gzip` (*Check* on every image).
-- **RT13, the launchers and test hooks** (files above).
+- **RT13, the launchers and test hooks** (files above), and the dry-run
+  boot entry (see "Dry run").
 - **RT14, whole machines:** HoltTest1 `HT_VARIANT=rescue`, every platform.
   The source's `system.json` goes onto the image's config partition in its
   throwaway overlay (a small tool, *Check* whether add-ssh-key.sh's way of
@@ -823,10 +864,10 @@ Scoped here so the order is clear; each gets its design when it starts.
 | RT7 | Plain mode | `src/plain.rs` | unit tests on a fake terminal; a pty run | 0.5 d (250-350) | RT6 |
 | RT8 | pty harness, fake bko-holt, `--demo` (every widget in a row, for the harness and later spikes; its last page hands a typed passphrase to the fake as a key file and follows the fake's events with the gauge), the long fuzz runs | `testvm/rescue/{screen,drive}.py`, `testvm/rescue/fake-bko-holt`, `src/demo.rs` | `--demo` driven through every widget in both modes; key files checked by the fake | 1 d (~450 Python) | RT6, RT7 |
 | RT9 | All seven and linux-arm64 built and pinned; on the images as a tool; checks and manifests; one image round's boot-tests | the RT9 table | boot-test on every image (BIOS and UEFI); `gate:bin` | 1 d, plus the image round's own time | RT4 (RT6-RT8 for a useful `--demo`) |
-| RT10 | bko-holt's `--json` protocol (own spec, D12) | `holt/src/load/*` (json.rs's writer already does what it needs) | holt's unit tests on the fake rescue systems; events in order with `end` last; HoltTest2 unchanged | 3-4 d | its spec; nothing from RT1-RT9 |
+| RT10 | bko-holt's `--json` protocol (own spec, D12); `BKO_HOLT_NO_COMMIT` (D14) | `holt/src/load/*` (json.rs's writer already does what it needs) | holt's unit tests on the fake rescue systems; events in order with `end` last; HoltTest2 unchanged | 3-4 d | its spec; nothing from RT1-RT9 |
 | RT11 | The app's first screens: Keyboard, Machine, Network notice, Repository; strings; the config reader (D11) | `src/app/` (and holt/ if D11) | scripted-Ui tests; pty scenarios with fixtures | 2.5 d | RT6, RT7, D11 |
-| RT12 | Disks, Passphrases, Review, Restore, Done; detached load and following; resume; restore logs | `src/app/` | scripted tests; pty scenarios on fixtures recorded from RT10, failures included | 3.5 d | RT10, RT11 |
-| RT13 | Launchers on every image; test hooks; fonts | the RT13 table | boot-test reaching the shell through bko-rescue on every image; ImgTest2's `+img` cells unchanged | 1 d | RT12 (RT11 for a preview) |
+| RT12 | Disks, Passphrases, Review, Restore, Done; detached load and following; resume; restore logs; `--dry-run` and `holt_args.rs`'s test (D14) | `src/app/` | scripted tests; pty scenarios on fixtures recorded from RT10, failures included | 3.5 d | RT10, RT11 |
+| RT13 | Launchers on every image; test hooks; fonts; the dry-run GRUB entry (D14) | the RT13 table | boot-test reaching the shell through bko-rescue on every image; ImgTest2's `+img` cells unchanged | 1 d | RT12 (RT11 for a preview) |
 | RT14 | HoltTest1 `HT_VARIANT=rescue` | `testvm/holttest1d/ht1.sh`, `ht1-bsd.sh`, a config-partition writer | one guest per platform, plain and full screen | 2.5 d | RT13 |
 | | *≈ 21-22 d in all; RT1-RT9 ≈ 8.5 d* | | | | |
 
@@ -895,6 +936,10 @@ All approved by the user on 2026-11-19 as recommended.
   LC_*` to `stick/bsd/sshd_config.backotter` (and Haiku's sshd setup,
   *Check*) (*recommended*: one line, and without it every ssh session there
   is ASCII).  Or leave it, and let `--lines utf8` force it.
+- **D14. A dry run** (the user's request, 2026-11-24): `--dry-run`, with
+  the banner, the two locks and the boot entry in "Dry run".  Builds in
+  RT10 (holt's `BKO_HOLT_NO_COMMIT`), RT12 (the flag, the banner and
+  `holt_args.rs`'s test) and RT13 (the GRUB entry).
 
 ## Risks
 

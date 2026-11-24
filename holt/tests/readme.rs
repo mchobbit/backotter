@@ -1,7 +1,8 @@
 //! holt/README.md against the code it describes (RustAudit1 H3-06,
 //! H10-04): every system `osrel::SUPPORTED` accepts is in the README's list
-//! of supported systems, which says it is that list, so a new row can't
-//! leave the README behind.
+//! of supported systems, which says it is that list, and every command
+//! main.rs's USAGE lists is named, so a new row or command can't leave the
+//! README behind.
 
 const README: &str = include_str!("../README.md");
 
@@ -36,10 +37,29 @@ fn readme_lists_every_supported_system() {
     assert!(missing.is_empty(), "osrel::SUPPORTED's {missing:?} aren't in holt/README.md's list of supported systems");
 }
 
+/// The commands main.rs's USAGE lists ("dump", "load", ...): the word after
+/// `bko-holt` on each of its synopsis lines, options left out.
+fn usage_commands() -> Vec<String> {
+    let main = include_str!("../src/main.rs");
+    let from = main.find("const USAGE: &str = \"").expect("main.rs has USAGE") + "const USAGE: &str = \"".len();
+    let synopsis = &main[from..from + main[from..].find("\n\n").expect("USAGE's synopsis ends in a blank line")];
+    synopsis
+        .lines()
+        .filter_map(|l| l.trim().trim_start_matches("Usage:").trim().strip_prefix("bko-holt "))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .filter(|c| !c.starts_with('-'))
+        .map(str::to_string)
+        .collect()
+}
+
 #[test]
 fn readme_names_every_command() {
-    for c in ["bko-holt dump", "bko-holt load", "bko-holt report-bug", "bko-holt recovery-key-file"] {
-        assert!(README.contains(&format!("`{c}")), "holt/README.md doesn't name `{c}`");
+    let cmds = usage_commands();
+    for c in ["dump", "load", "report-bug", "recovery-key-file"] {
+        assert!(cmds.iter().any(|x| x == c), "main.rs's USAGE as read here lists {cmds:?}, not {c}");
+    }
+    for c in &cmds {
+        assert!(README.contains(&format!("`bko-holt {c}")), "holt/README.md doesn't name `bko-holt {c}`, which main.rs's USAGE lists");
     }
 }
 

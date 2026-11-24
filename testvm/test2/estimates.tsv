@@ -282,6 +282,7 @@ holt	holt:debian13-stack+img	3.40	204	0.00	-	test2.md ImgTest2 Cost: the panel's
 holt	holt:aerynos+img	6.00	360	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:guix15+img	5.08	305	0.00	-	guix.md: holt:guix15's figure (gx6-14), until measured (est.)
 holt	holt:guix15-bios+img	4.02	241	0.00	-	guix.md: holt:guix15-bios's figure (gx6-15), until measured (est.)
+holt	holt:guix15-luks+img	9.80	588	0.00	-	guix.md guix15-luks: holt:guix15-luks's figure (glk6), until measured (est.)
 holt	holt:freebsd14+img	4.75	285	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:freebsd15-geli+img	5.60	336	0.00	-	geli.md G7/D6: holt:freebsd15-geli's figure (no +img run yet)
 holt	holt:netbsd11+img	4.18	250	0.00	-	test2.md ImgTest2 Cost: the panel's figure

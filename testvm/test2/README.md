@@ -22,7 +22,7 @@ Check `t2 batch status` before starting heavy work: a running batch holds whole 
 | `HoltTest2 G+reformat-TYPE`, `HoltTest2 +reformat` | the `load --reformat /=TYPE` round trips (classes.json `holt.variants`: 6 cells, one per boot family), fresh; `+reformat` alone: all of them | runs them anyway |
 | `HoltTest2X [X...]`, X in D A M U Z F C V BSD H I G Obscure | that family's guests, fresh (HoltTest1's letters) | runs them anyway |
 | `HoltTest2All` | all 88 sources and their 9 variant cells, fresh (no `+img` cells) | runs them all anyway |
-| `HoltTest2 G+img`, `HoltTest2 +img` | those cells fresh, a real rescue image as rescuer; `+img` alone: all 16 | runs them anyway |
+| `HoltTest2 G+img`, `HoltTest2 +img` | those cells fresh, a real rescue image as rescuer; `+img` alone: all 17 | runs them anyway |
 | `GuestTest2 [GUEST...] [stale]` | the due guests, or those guests fresh: identity, image checks, a `--try` in RAM, the checks after it, the log sweep | the guests whose last `--try` is over 7 days old; else one line |
 | `GuestTest2All` | the graded audit: all 95 guests fresh, sha256 identity | runs them all anyway |
 | `GuestTest2 update [GUEST...]` | the real update round (merges; sculpt2610 by `testvm/sculpt-update`); never with `stale` or All | a bare round needs a `--try` PASS within 7 days (not sculpt2610, which has no `--try`) |

@@ -547,14 +547,6 @@ pub fn root_arg(a: &str) -> Option<&str> {
     (!r.is_empty()).then_some(r)
 }
 
-/// boot.store on Guix System (None elsewhere): the store, the system
-/// profile, the current generation's number, each generation's boot
-/// parameters, the current generation's GRUB (its manifest's `grub-pc`,
-/// `grub` or `grub-efi`, when that has an i386-pc platform; an installed
-/// system's profile may list none, nor its store hold one), whether
-/// /boot/grub/i386-pc holds the boot.img and core.img grub-install wrote
-/// there (what load's grub-bios-setup writes to the new disk), and
-/// /boot/grub/grub.cfg's searches and the roots its `linux` lines name.
 /// The partition grub-install's BIOS core.img (/boot/grub/i386-pc/core.img)
 /// names by number in its prefix ("gpt3" of "(,gpt3)/@/boot/grub",
 /// load/grubprefix.rs core_prefix): load writes that core.img back as it
@@ -575,6 +567,14 @@ fn core_img_part(sys: &Sys) -> Option<String> {
     }
 }
 
+/// boot.store on Guix System (None elsewhere): the store, the system
+/// profile, the current generation's number, each generation's boot
+/// parameters, the current generation's GRUB (its manifest's `grub-pc`,
+/// `grub` or `grub-efi`, when that has an i386-pc platform; an installed
+/// system's profile may list none, nor its store hold one), whether
+/// /boot/grub/i386-pc holds the boot.img and core.img grub-install wrote
+/// there (what load's grub-bios-setup writes to the new disk), and
+/// /boot/grub/grub.cfg's searches and the roots its `linux` lines name.
 pub fn guix_json(sys: &Sys) -> Option<Value> {
     if !is_guix(sys) {
         return None;

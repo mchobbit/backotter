@@ -15,6 +15,21 @@ names another, so two sessions' runs never share a copy).
                                     source (default 5 x N), --tier2 N: N tier 2 cases a UEFI source
                                     (default 5, Alpine's 30 in all)
   bs2 BackShot2 corpus [plan]       the corpus alone, at tier 0 (tier 1 with --tier 1)
+  bs2 BackShot2All [plan]           every built source (bs2lib/sources.py built()) a host of the run
+                                    holds, fresh (no ledger row excuses a case: the draws never read
+                                    it), as bs2all-YYYYMMDD-HHMM: 1,000 tier 0, 20 tier 1 and 5 tier 2
+                                    (UEFI) a source, Alpine's four as BackShot2Alpine (200 tier 1
+                                    each, its 30 tier 2); every unbuilt source and tier 3 SKIPPED,
+                                    naming the piece that builds it (bs2lib/allrun.py), and a built
+                                    source no host holds SKIPPED "not on any host in this run"; a
+                                    manifest (RUN/bs2all.json) on each host; then prints the rest:
+  bs2 BackShot2All corpus RUN       ... the corpus at tier 1 as RUN-corpus, once RUN's queues finish
+  bs2 BackShot2All leftovers RUN    ... then the leftovers set as RUN-lo on one host, detached
+  bs2 BackShot2All report RUN [--json]   RUN's verdict: PASS, FAIL, HARNESS, INVALID per source and
+                                    tier, the FAILs and their checks, the SKIPPED list, and FAIL,
+                                    INCOMPLETE (a planned case, the corpus or the leftovers set with
+                                    no verdict yet), PARTIAL PASS (anything SKIPPED) or PASS; --json:
+                                    the same as JSON.  Its cases' ledger rows say word BackShot2All
   bs2 replay CASE [--tier N]        one case again, exactly
   bs2 shrink CASE [--tier N]        a failing case down to its smallest; saved in the corpus
   bs2 soak CASE N                   CASE N times at tier 1 (reported as K of N)
@@ -82,7 +97,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 if HERE not in sys.path:   # bs2lib, for a bs2 loaded as a module (Test2's tests), last: it shadows nothing
     sys.path.append(HERE)
 REPO = os.path.dirname(os.path.dirname(HERE))
-from bs2lib import room as RM, sources as SRC  # noqa: E402
+from bs2lib import allrun as AR, room as RM, sources as SRC  # noqa: E402
 # BackShot2's sources (bs2lib/sources.py, A2): BackShot2Alpine's four, Guix System's
 # (bs2lib/families/guix.py), then every other built one of the corpus (one disk, Linux, no
 # ZFS or md: OTHER_SOURCES, sorted; sources.classify() says why the rest are skipped and
@@ -152,6 +167,7 @@ COUNTS = {}       # --sweep N (tier 0 cases a source), --tier2 N (tier 2 cases a
 # work there ({(host, source): "ram" or "ssd"}, bs2lib/room.py scratch()).
 CEILINGS = {}
 SCRATCH = {}
+LISTED = {}   # {host: the sources its ls found, None: it didn't answer} (held(); missing_why())
 
 
 def secs(source, tier):
@@ -200,10 +216,11 @@ def held(sources, hosts=None):
                 '; do [ -e "$g" ] && echo "$g"; done; true', check=False, capture=True)
         if r.returncode:
             print(f"bs2: {h} didn't answer: left out", file=sys.stderr)
-            seen[h] = None
+            seen[h] = LISTED[h] = None
             continue
         seen[h] = ({w for line in r.stdout.splitlines() if not line.startswith("@") for w in line.split()},
                    ceiling_of(r.stdout))
+        LISTED[h] = set(seen[h][0])
     run_disk = max((x[1][0] for x in seen.values() if x and x[1]), default=None)
     out = {}
     for h, x in seen.items():
@@ -264,6 +281,28 @@ def roomy(here, ceiling, run_disk=None, disk_ok=False):
     return keep, set(here) - keep
 
 
+def missing_why(source, hosts=None):
+    """Why no host of HOSTS (default RUN_HOSTS) holds SOURCE, in words, from what held()
+    found (LISTED, CEILINGS): which hosts lack vms/SOURCE, which have it but whose
+    cmp-run.sh --ceiling is under its cases' room (bs2lib/room.py need()), which didn't
+    answer."""
+    hosts = list(hosts or RUN_HOSTS)
+    no = [h for h in hosts if h in LISTED and LISTED[h] is None]
+    lack = [h for h in hosts if LISTED.get(h) is not None and source not in LISTED[h]]
+    room = [h for h in hosts if LISTED.get(h) and source in LISTED[h]]
+    out = []
+    if lack:
+        out.append(f"no vms/{source} on {', '.join(lack)}")
+    if room:
+        d, m = RM.need(source)
+        out.append(f"on {', '.join(room)}, under its cases' --reserve {d:g} {m:g}: " + ", ".join(
+            f"{h}'s cmp-run.sh --ceiling is {CEILINGS[h][0]:g} {CEILINGS[h][1]:g}" if CEILINGS.get(h) else
+            f"{h}'s cmp-run.sh --ceiling didn't answer" for h in room))
+    if no:
+        out.append(f"{', '.join(no)} didn't answer")
+    return "; ".join(out) or "no host of the run looked"
+
+
 def holders(sources, have, hosts=None):
     """{source: [host...]}: the hosts (HOSTS' order, default RUN_HOSTS) that HAVE it; a
     source no host has: sys.exit."""
@@ -293,16 +332,22 @@ def tier2_of(source, sources):
     return TIER2_EACH
 
 
-def sweep_n(n):
-    """Tier 0 cases a source's sweep draws: --sweep's, else N * SWEEP."""
-    return COUNTS["sweep"] if COUNTS.get("sweep") is not None else n * SWEEP
+def n_of(n, source):
+    """Tier 1 cases SOURCE draws: N, or N[SOURCE] when N is {source: count} (BackShot2All's,
+    bs2lib/allrun.py counts(): 200 an Alpine source, 20 the rest)."""
+    return n.get(source, 0) if isinstance(n, dict) else n
+
+
+def sweep_n(n, source=None):
+    """Tier 0 cases a source's sweep draws: --sweep's, else its tier 1 count (n_of()) * SWEEP."""
+    return COUNTS["sweep"] if COUNTS.get("sweep") is not None else n_of(n, source) * SWEEP
 
 
 def jobs_of(sources, n):
     """The run's cases as (source, tier, i), in the order the leads draw them."""
     out = []
     for s in sources:
-        out += [(s, 1, i) for i in range(n)]
+        out += [(s, 1, i) for i in range(n_of(n, s))]
         out += [(s, 2, i) for i in range(tier2_of(s, sources))]
     return out
 
@@ -311,7 +356,7 @@ def sweep_secs(sources, n, lead):
     """{host: seconds}: the tier 0 sweeps each lead runs before its queue."""
     out = {}
     for s in sources:
-        out[lead[s]] = out.get(lead[s], 0) + sweep_n(n) * secs(s, 0)
+        out[lead[s]] = out.get(lead[s], 0) + sweep_n(n, s) * secs(s, 0)
     return out
 
 
@@ -423,9 +468,10 @@ def root(cmd, reserve="2 2", tag="bs2:mac"):
     return f"cd ~/backotter-work && WEAR_TAG={tag} {reuse_env()}./cmp-run.sh --reserve {reserve} sudo -E {cmd}"
 
 
-def placement(sources, n):
-    """What a run of N cases a source does where: (can, lead, {host: jobs}, {host: sweep s})."""
-    have = held(sources)
+def placement(sources, n, have=None):
+    """What a run of N cases a source does where: (can, lead, {host: jobs}, {host: sweep s});
+    HAVE: held()'s, when the caller has it already."""
+    have = held(sources) if have is None else have
     can = holders(sources, have)
     lead = leads(can)
     use = [h for h in RUN_HOSTS if any(h in hs for hs in can.values())]
@@ -444,8 +490,10 @@ def scratch_words(s, hosts):
     return f"RAM, SSD on {', '.join(ssd)}"
 
 
-def plan_words(sources, n):
-    can, lead, parts, start = placement(sources, n)
+def plan_words(sources, n, have=None):
+    """The plan of a run of SOURCES, N cases a source (n_of()), as plan prints it; returns
+    its slowest host's seconds."""
+    can, lead, parts, start = placement(sources, n, have)
     w = max([16] + [len(s) + 1 for s in sources])
 
     def sec(s, t):
@@ -455,7 +503,7 @@ def plan_words(sources, n):
     print(f"{'source':{w}} {'lead':9} {'tier0':>6} {'tier1':>6} {'tier2':>6}  {'tier 1 s':13} {'tier 2 s':13} {'scratch':8} hosts")
     for s in sources:
         t2 = tier2_of(s, sources)
-        print(f"{s:{w}} {lead[s]:9} {sweep_n(n):6} {n:6} {t2:6}  {sec(s, 1):13} {sec(s, 2) if t2 else '-':13} "
+        print(f"{s:{w}} {lead[s]:9} {sweep_n(n, s):6} {n_of(n, s):6} {t2:6}  {sec(s, 1):13} {sec(s, 2) if t2 else '-':13} "
               f"{scratch_words(s, can[s]):8} {', '.join(can[s])}")
     longest = 0
     for h, js in parts.items():
@@ -475,6 +523,7 @@ def plan_words(sources, n):
     print(f"the run: ~{longest / 3600:.1f} h est. (its slowest host, by each source's seconds a case above), each host "
           f"after ~5-15 min of preparing what it lacks and the leads drawing its cases")
     print(wear_words(sources, parts))
+    return longest
 
 
 def wear_words(sources, parts):
@@ -590,7 +639,7 @@ def draw_cmd(lead_host, ss, sources, n, run):
     rd = f"{ROOT}/runs/{run}"
     c = []
     for s in ss:
-        c.append(light(lead_host, f"{HOST_BS2} enqueue {s} {n} --tier 1 --run {run} --to {rd}/pick-{s}-t1.txt",
+        c.append(light(lead_host, f"{HOST_BS2} enqueue {s} {n_of(n, s)} --tier 1 --run {run} --to {rd}/pick-{s}-t1.txt",
                        f"bs2:{run}:pick"))
         if tier2_of(s, sources):
             c.append(light(lead_host, f"{HOST_BS2} enqueue {s} {tier2_of(s, sources)} --tier 2 --run {run} --from 500000"
@@ -646,8 +695,8 @@ def launch(h, js, sweeps, n, run):
     reservations) of SWEEPS, the sources it leads, then its queue of JS.  (A sweep that
     fails is in the log; the host's cases run regardless.)  False: nothing to start."""
     rd = f"{ROOT}/runs/{run}"
-    c = [f"{{ {light(h, f'{HOST_BS2} tier0 {s} {sweep_n(n)} --run {run}-t0 --keep-passes 50', f'bs2:{run}:tier0')}; }}"
-         for s in sweeps if sweep_n(n)]
+    c = [f"{{ {light(h, f'{HOST_BS2} tier0 {s} {sweep_n(n, s)} --run {run}-t0 --keep-passes 50', f'bs2:{run}:tier0')}; }}"
+         for s in sweeps if sweep_n(n, s)]
     if sweeps:
         c.append(f"sudo chown -R m: {rd}-t0")
     if js:
@@ -762,11 +811,16 @@ def picks_of(text, sources):
     return sorted(jobs, key=lambda j: (order[j[0]], j[1]))
 
 
-def run_words(sources, n, run):
-    can, lead, parts, _ = placement(sources, n)
+def run_words(sources, n, run, have=None, manifest=None):
+    """Starts a run of SOURCES (N cases a source, n_of()) as RUN; HAVE: held()'s, when the
+    caller has it already; MANIFEST (BackShot2All's): written to each of the run's hosts as
+    ROOT/runs/RUN/bs2all.json, with its hosts, before any starts."""
+    can, lead, parts, _ = placement(sources, n, have)
     use = [h for h, js in parts.items() if js or h in lead.values()]
     preflight(use)
     sync(use)
+    if manifest is not None:
+        write_manifest(dict(manifest, hosts=use), use, run)
     can = {s: [h for h in hs if h in use] for s, hs in can.items()}
     print(f"preparing, drawing and starting each host as its cases are drawn: "
           f"{'; '.join(f'{h} {len(parts.get(h, []))} cases' for h in use)}")
@@ -826,28 +880,48 @@ def bin_words(frm):
         print(f"{h}: {ROOT}/bin as {frm}'s")
 
 
-def corpus(plan, tier):
-    cases = sorted(f for f in os.listdir(f"{HERE}/cases") if f.endswith(".case"))
+def corpus_cases():
+    """[(file, case name, source)] of cases/, by file name."""
+    out = []
+    for f in sorted(f for f in os.listdir(f"{HERE}/cases") if f.endswith(".case")):
+        with open(f"{HERE}/cases/{f}") as fh:
+            c = json.load(fh)
+        out.append((f, c.get("name") or f[:-len(".case")], c["source"].split("@")[0]))
+    return out
+
+
+def corpus(plan, tier, stamp=None, have=None, only=None):
+    """The corpus (cases/, or ONLY's files of it) at TIER, as run STAMP (default
+    corpus-YYYYMMDD-HHMM), each case on its source's host (assign(): with HAVE, held()'s,
+    over the run's hosts; else HOME's, or with --hosts held()'s), one after another."""
+    cases = [f for f, _, _ in corpus_cases() if only is None or f in only]
     if plan:
         print(f"{len(cases)} corpus cases at tier {tier}")
         return
-    srcs = {}
-    for f in cases:
-        with open(f"{HERE}/cases/{f}") as fh:
-            srcs[f] = json.load(fh)["source"].split("@")[0]
+    srcs = {f: src for f, _, src in corpus_cases() if f in cases}
     ss = sorted(set(srcs.values()))
-    where = assign(ss, have=held(ss) if CHOSEN else None)
+    where = (assign(ss, hosts=list(RUN_HOSTS), have=have) if have is not None else
+             assign(ss, have=held(ss) if CHOSEN else None))
     sync(sorted(set(where.values())))
     by = {}
     for f in cases:
         by.setdefault(where[srcs[f]], []).append(f"{HOST_WT}/testvm/backshot2/cases/{f}")
-    stamp = time.strftime("corpus-%Y%m%d-%H%M")
+    stamp = stamp or time.strftime("corpus-%Y%m%d-%H%M")
     for h, fs in by.items():
         if tier == 0:
             ssh(h, root(f"{HOST_BS2} tier0-cases {' '.join(fs)} --run {stamp}"))
         else:
             for f in fs:
                 ssh(h, f"cd ~/backotter-work && {reserve_tier1(f)} --tier {tier} --run {stamp} --port 2949", check=False)
+
+
+def leftovers_start(h, name, run):
+    """The leftovers set NAME on H as RUN, detached (bs2-host leftovers: its rows in
+    RUN/leftovers.jsonl, its log in logs/RUN.log)."""
+    log = f"/bkoscratch/backshot2/logs/{run}.log"
+    ssh(h, f"mkdir -p /bkoscratch/backshot2/logs && cd ~/backotter-work && PYTHONUNBUFFERED=1 setsid -f "
+           f"{HOST_BS2} leftovers {name} --run {run} --port 2949 > {log} 2>&1 < /dev/null")
+    print(f"{h}: started the {name} set as {run} (log {log}; rows /bkoscratch/backshot2/runs/{run}/leftovers.jsonl)")
 
 
 def assign(sources, hosts=None, have=None):
@@ -881,6 +955,215 @@ def assign(sources, hosts=None, have=None):
     return {s: out[s] for s in sources}
 
 
+# ---- BackShot2All (docs/design/bs2-all.md; bs2lib/allrun.py) ------------------------------
+
+RUN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+LEFTOVERS_SET = "leftovers"
+
+
+def held_briefly(sources):
+    """held(SOURCES), with its "left out for SOURCE" lines (one a host and source: ~100 for
+    All) put as one line a host: the sources its cmp-run.sh --ceiling can't hold."""
+    import contextlib
+    import io
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        have = held(sources)
+    left = {}
+    for line in err.getvalue().splitlines():
+        m = re.match(r"bs2: (\S+) has vms/(\S+), but ", line)
+        if m:
+            left.setdefault(m.group(1), []).append(m.group(2))
+        else:
+            print(line, file=sys.stderr)
+    for h, ss in left.items():
+        c = CEILINGS.get(h)
+        print(f"bs2: {h} left out for {len(ss)} sources over its cmp-run.sh --ceiling"
+              f"{f' ({c[0]:g} {c[1]:g})' if c else ''} (bs2lib/room.py need()): {', '.join(ss)}", file=sys.stderr)
+    return have
+
+
+def all_layout(have):
+    """(the sources an All run runs: every built one, SOURCES' order, that a host of the run
+    holds (HAVE: held()'s); {source: why} of the built ones none holds; the SKIPPED list:
+    sources.py's skipped ones by piece, those, and tier 3)."""
+    missing = {s: missing_why(s) for s in SOURCES if not any(s in have.get(h, ()) for h in RUN_HOSTS)}
+    run = [s for s in SOURCES if s not in missing]
+    return run, missing, AR.skipped(SRC.table(), missing)
+
+
+def all_counts(run):
+    """{source: tier 1 cases} of an All run of RUN (allrun.counts(): 200 an Alpine source,
+    20 the rest); its tier 0 is COUNTS["sweep"] (main(): 1,000 unless --sweep) and tier 2
+    tier2_of()'s."""
+    return {s: c[1] for s, c in AR.counts(run, tier2_of, ALPINE_SOURCES).items()}
+
+
+def all_later(have):
+    """What an All run runs once its queues finish: (the corpus cases [(file, name, source)]
+    whose source a host of the run holds; the ones left out, {name: why}; the leftovers
+    set's host, the first lead host (then the rest of the run's) that holds its sources, or
+    None; its steps)."""
+    from bs2lib import leftovers as LO
+    cs = corpus_cases()
+    ok = [c for c in cs if any(c[2] in have.get(h, ()) for h in RUN_HOSTS)]
+    out = {c[1]: f"its source {c[2]} is on no host of the run" for c in cs if c not in ok}
+    need = set(LO.sources(LEFTOVERS_SET))
+    order = [h for h in LEAD_HOSTS if h in RUN_HOSTS] + [h for h in RUN_HOSTS if h not in LEAD_HOSTS]
+    host = next((h for h in order if need <= set(have.get(h, ()))), None)
+    return ok, out, host, len(LO.steps(LEFTOVERS_SET))
+
+
+def all_then(run):
+    """The commands an All run leaves to run once its queues finish (bs2 runs the corpus in
+    series from the Mac and the leftovers set detached on one host, both at port 2949: one
+    after the other)."""
+    hs = f" --hosts {','.join(RUN_HOSTS)}" if CHOSEN else ""
+    return [f"then, once every queue is done (bs2 BackShot2All report {run} says when none is left), one after the other:",
+            f"  bs2 BackShot2All corpus {run}{hs}",
+            f"  bs2 BackShot2All leftovers {run}{hs}",
+            f"  bs2 BackShot2All report {run}"]
+
+
+def all_plan():
+    """BackShot2All's plan: every source's lead, counts, seconds, room and hosts and each
+    host's share (plan_words()), then the corpus and the leftovers set, the SKIPPED list by
+    piece, the wall clock in all, and the verdict the run gives at best.  Reads the hosts
+    (held()'s ls and cmp-run.sh --ceiling) and runs nothing."""
+    from bs2lib import leftovers as LO
+    have = held_briefly(SOURCES)
+    run, missing, sk = all_layout(have)
+    if not run:
+        sys.exit("bs2: BackShot2All: no host of the run holds any built source:\n  " +
+                 "\n  ".join(f"{s}: {w}" for s, w in missing.items()))
+    n = all_counts(run)
+    print(f"BackShot2All: {len(run)} sources, fresh (the ledger's rows excuse no case): tier 0 {sweep_n(n, run[0])} a "
+          f"source, tier 1 {AR.T1_ALPINE} an Alpine source and {AR.T1} the rest, tier 2 {TIER2} Alpine's in all and "
+          f"{TIER2_EACH} a UEFI source")
+    longest = plan_words(run, n, have)
+    cs, out, lo_host, steps = all_later(have)
+    c_s = sum(secs(src, 1) for _, _, src in cs)
+    lo_s = steps * AR.LEFTOVERS_STEP_S if lo_host else 0
+    print(f"then the corpus: {len(cs)} cases at tier 1, one after another on their sources' hosts, ~{c_s / 60:.0f} min est."
+          + (f" (left out: {'; '.join(f'{k}: {v}' for k, v in out.items())})" if out else ""))
+    print(f"then the leftovers set: {steps} steps on one disk on {lo_host}, one after another, ~{lo_s / 60:.0f} min est."
+          if lo_host else f"the leftovers set: SKIPPED (no host of the run holds all of "
+                          f"{', '.join(LO.sources(LEFTOVERS_SET))})")
+    for line in AR.skipped_words(sk):
+        print(line)
+    print(f"in all: ~{(longest + c_s + lo_s) / 3600:.1f} h est. (the queues ~{longest / 3600:.1f} h, then the corpus "
+          f"and the leftovers set one after the other: both take port 2949)")
+    for line in all_then("RUN")[1:]:
+        print(f"  (later) {line.strip()}")
+    print(f"verdict: {AR.best(sk)}")
+
+
+def all_start():
+    """Starts a BackShot2All run, bs2all-YYYYMMDD-HHMM: its manifest (bs2all.json: what it
+    planned and SKIPPED) on each of its hosts, then run_words(); prints what is left to run
+    once its queues finish (all_then())."""
+    have = held_briefly(SOURCES)
+    run, missing, sk = all_layout(have)
+    if not run:
+        sys.exit("bs2: BackShot2All: no host of the run holds any built source")
+    n = all_counts(run)
+    name = time.strftime("bs2all-%Y%m%d-%H%M")
+    cs, out, lo_host, steps = all_later(have)
+    if not lo_host:
+        sk = sk + [{"name": "leftovers", "piece": "missing", "why": "no host of the run holds the set's sources"}]
+    manifest = {"run": name, "word": AR.WORD, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "planned": {s: [sweep_n(n, s), n_of(n, s), tier2_of(s, run)] for s in run}, "skipped": sk,
+                "corpus": [nm for _, nm, _ in cs], "corpus_out": out,
+                "leftovers": {"set": LEFTOVERS_SET, "steps": steps if lo_host else 0, "host": lo_host}}
+    print(f"BackShot2All {name}: {len(run)} sources; {AR.best(sk)}")
+    try:
+        run_words(run, n, name, have, manifest)
+    finally:
+        print("\n".join(all_then(name)))
+
+
+def write_manifest(m, hosts, run):
+    """M as ROOT/runs/RUN/bs2all.json on each of HOSTS (one line of JSON)."""
+    rd = f"{ROOT}/runs/{run}"
+    for h in hosts:
+        ssh(h, f"mkdir -p {rd} && cat > {rd}/bs2all.json", input=json.dumps(m) + "\n")
+
+
+def read_manifest(run):
+    """RUN's bs2all.json from the first host of RUN_HOSTS that has it; with no --hosts,
+    RUN_HOSTS becomes the run's hosts (and the leftovers set's).  Not there: sys.exit."""
+    got = par({h: f"cat {ROOT}/runs/{run}/bs2all.json 2>/dev/null" for h in RUN_HOSTS})
+    for h, (rc, out, _) in got.items():
+        try:
+            m = json.loads(out)
+        except ValueError:
+            continue
+        if not CHOSEN:
+            hs = list(m.get("hosts") or []) + [x for x in [(m.get("leftovers") or {}).get("host")] if x]
+            use_hosts(",".join(dict.fromkeys(hs)) or "all")
+        return m
+    sys.exit(f"bs2: {run}: not a BackShot2All run (no {ROOT}/runs/{run}/bs2all.json on {', '.join(RUN_HOSTS)})")
+
+
+def all_corpus(run):
+    """The corpus of the All run RUN: its cases (the manifest's) at tier 1 as RUN-corpus,
+    each on a host of the run that holds its source, one after another."""
+    m = read_manifest(run)
+    want = set(m.get("corpus") or [])
+    cs = [c for c in corpus_cases() if c[1] in want]
+    have = held(sorted({c[2] for c in cs}))
+    ok = [c for c in cs if any(c[2] in have.get(h, ()) for h in RUN_HOSTS)]
+    for c in cs:
+        if c not in ok:
+            print(f"bs2: corpus: {c[1]}: no host of {', '.join(RUN_HOSTS)} holds {c[2]} now: no row (the report: INCOMPLETE)",
+                  file=sys.stderr)
+    if ok:
+        corpus(False, 1, stamp=f"{run}-corpus", have=have, only={c[0] for c in ok})
+    print(f"corpus: {len(ok)} cases as {run}-corpus: bs2 BackShot2All report {run}")
+
+
+def all_leftovers(run):
+    """The leftovers set of the All run RUN, as RUN-lo on the manifest's host, detached."""
+    m = read_manifest(run)
+    h = (m.get("leftovers") or {}).get("host")
+    if not h:
+        sys.exit(f"bs2: {run}: its plan has no host for the leftovers set (SKIPPED)")
+    if h not in RUN_HOSTS:
+        sys.exit(f"bs2: {run}: the leftovers set's host {h} isn't in --hosts")
+    sync([h])
+    leftovers_start(h, m["leftovers"].get("set") or LEFTOVERS_SET, f"{run}-lo")
+
+
+def gather_cmd(run):
+    """The one command that prints a host's files of RUN, each after an "@file NAME" line."""
+    return "; ".join(f'echo "@file {f}"; cat {ROOT}/runs/{run}{f} 2>/dev/null' for f in AR.FILES) + "; true"
+
+
+def all_report(run, as_json=False):
+    """The All run RUN's report (allrun.summary()): every host's rows of RUN, its sweeps
+    (RUN-t0), its corpus (RUN-corpus) and its leftovers set (RUN-lo), against what its
+    manifest planned; printed (with AS_JSON, as JSON).  Exit 0 for PASS or PARTIAL PASS, 1
+    for FAIL or INCOMPLETE."""
+    m = read_manifest(run)
+    got = par({h: gather_cmd(run) for h in RUN_HOSTS})
+    rows, queued, crows, lrows, unread = [], [], [], [], []
+    for h, (rc, out, err) in got.items():
+        if rc:
+            unread.append(f"{h} didn't answer ({err.strip()[-120:]}): its rows aren't counted")
+            continue
+        f = AR.parse_files(out)
+        rows += [dict(r, host=h) for k in AR.ROW_FILES for r in f.get(k, [])]
+        queued += f.get("/queue.txt", [])
+        crows += [dict(r, host=h) for r in f.get("-corpus/tier1.jsonl", [])]
+        lrows += [dict(r, host=h) for r in f.get("-lo/leftovers.jsonl", [])]
+    sm = AR.summary(m, rows, queued, crows, lrows, unread)
+    if as_json:
+        print(json.dumps(sm, indent=1))
+    else:
+        print("\n".join(AR.words(sm)))
+    return 0 if sm["verdict"] in ("PASS", "PARTIAL PASS") else 1
+
+
 def main():
     a = sys.argv[1:]
     if "--hosts" in a:
@@ -900,6 +1183,8 @@ def main():
                 sys.exit(f"bs2: {flag} N")
             COUNTS[key] = int(a[i + 1])
             del a[i:i + 2]
+    as_json = "--json" in a
+    a = [x for x in a if x != "--json"]
     tier = 0
     if "--tier" in a:
         i = a.index("--tier")
@@ -929,6 +1214,20 @@ def main():
             return plan_words(sources, n)
         run_words(sources, n, time.strftime("bs2a-%Y%m%d-%H%M"))
         print("then: bs2 BackShot2 corpus (once the queues finish; bs2 status RUN shows them)")
+    elif w == "BackShot2All":
+        os.environ["BS2_WORD"] = w   # (its cases' ledger rows' word: PASS_VARS)
+        if COUNTS.get("sweep") is None:
+            COUNTS["sweep"] = AR.T0
+        rest = a[1:]
+        if rest[:1] and rest[0] in ("corpus", "leftovers", "report"):
+            if len(rest) != 2 or not RUN_NAME.fullmatch(rest[1]):
+                sys.exit(f"bs2: BackShot2All {rest[0]} RUN (a run's name, bs2all-YYYYMMDD-HHMM)")
+            if rest[0] == "report":
+                sys.exit(all_report(rest[1], as_json))
+            return all_corpus(rest[1]) if rest[0] == "corpus" else all_leftovers(rest[1])
+        if rest:
+            sys.exit(__doc__)
+        return all_plan() if plan else all_start()
     elif w == "leftovers":
         name = a[1] if len(a) > 1 else "leftovers"
         h = next(iter(RUN_HOSTS)) if CHOSEN else LEAD_HOSTS[0]
@@ -937,9 +1236,7 @@ def main():
         if plan:
             ssh(h, f"cd ~/backotter-work && {HOST_BS2} leftovers {name} --plan --run {run}-plan")
             return
-        log = f"/bkoscratch/backshot2/logs/{run}.log"
-        ssh(h, f"mkdir -p /bkoscratch/backshot2/logs && cd ~/backotter-work && PYTHONUNBUFFERED=1 setsid -f {HOST_BS2} leftovers {name} --run {run} --port 2949 > {log} 2>&1 < /dev/null")
-        print(f"{h}: started the {name} set as {run} (log {log}; rows /bkoscratch/backshot2/runs/{run}/leftovers.jsonl)")
+        leftovers_start(h, name, run)
     elif w in ("replay", "shrink", "soak"):
         path = a[1]
         with open(path) as f:

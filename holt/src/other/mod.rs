@@ -145,7 +145,7 @@ pub fn boot_code_obj(code: &[u8], kind: &str) -> Obj {
 /// boot_code_obj, named as bootcode::identify names it.
 pub fn boot_code_json(t: &Table) -> Obj {
     let code = t.boot_code();
-    boot_code_obj(code, crate::bootcode::identify(code).kind)
+    boot_code_obj(code, crate::bootcode::identify(code).kind.as_str())
 }
 
 /// `swapctl -l`'s devices and their sizes in bytes (NetBSD, OpenBSD,

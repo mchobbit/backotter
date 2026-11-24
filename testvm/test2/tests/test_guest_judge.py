@@ -950,6 +950,34 @@ class RealLogLines(unittest.TestCase):
             for x in lines:
                 self.assertEqual(len(self.left(pm, x)), 1, (pm, x))
 
+    # guix15-bios's GRUB reads the store from the Btrfs @gnu subvolume, so its kernel lines name
+    # /@gnu/store, never /gnu/store (its serial.log, every run since 2026-11-19).
+    GUIX_BIOS_CMDLINE = ("Command line: BOOT_IMAGE=/@gnu/store/NrrmNsnhNkviNlqibhsrcaNlmdbNaN-linux-libre-N.N.N/bzImage "
+                         "root=guixroot gnu.system=/var/guix/profiles/system-N-link gnu.load=/var/guix/profiles/system-N-link/boot "
+                         "console=ttyN console=ttySN,NnN")
+
+    def guix_serial_left(self, raw):
+        return J.sweep_lines({"serial": raw + "\n"}, J.known_filter(self.known, "guix"), [])
+
+    def test_guix_bios_kernel_lines_under_at_gnu_store_go(self):
+        self.assertEqual(self.guix_serial_left(self.GUIX_BIOS_CMDLINE), [])
+        self.assertEqual(self.guix_serial_left("[    0.000000] Kernel " + self.GUIX_BIOS_CMDLINE[0].lower()
+                                               + self.GUIX_BIOS_CMDLINE[1:]), [])
+        # another kernel version and hash, raw as the console prints it
+        self.assertEqual(self.guix_serial_left(
+            "[    0.000000] Command line: BOOT_IMAGE=/@gnu/store/9rrm4snh1kvi2lqibhsrca7lmdb0a3-linux-libre-6.17.9/bzImage "
+            "root=guixroot gnu.system=/var/guix/profiles/system-12-link gnu.load=/var/guix/profiles/system-12-link/boot "
+            "console=tty0 console=ttyS0,115200n8"), [])
+
+    def test_guix_at_gnu_store_errors_stay(self):
+        for x in ("error: build of `/@gnu/store/abc-linux-libre-6.17.9.drv' failed",
+                  "guix system: error: cannot open /@gnu/store/abc-linux-libre-6.17.9/bzImage",
+                  "building /@gnu/store/abc-foo.drv failed"):
+            self.assertEqual(len(self.guix_serial_left(x)), 1, x)
+        # the rule is guix's alone
+        self.assertEqual(len(J.sweep_lines({"serial": self.GUIX_BIOS_CMDLINE + "\n"},
+                                           J.known_filter(self.known, "apt"), [])), 1)
+
     # in-guest.sh's retry loops (2026-11-20): a try tried again is one line, its retry line and
     # the line that made it one; the try's own lines never reach the log.
     RETRY_LINES = {

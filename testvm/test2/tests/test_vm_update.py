@@ -553,7 +553,101 @@ class TestInGuest(unittest.TestCase):
         guix = self.sections()["Guix"]
         self.assertIn("fetched guix pull || exit 1", guix)
         self.assertIn("fetched guix system reconfigure --allow-downgrades /etc/config.scm || exit 1", guix)
-        self.assertNotRegex(guix, r"(?m)^\s*guix (pull|system reconfigure)\b")
+        self.assertIn("fetched guix system reconfigure --dry-run --allow-downgrades /etc/config.scm >/run/bko-plan.log", guix)
+        # (the hold's roll-back is local: nothing to download, nothing to retry)
+        self.assertNotRegex(guix, r"(?m)^\s*guix (pull|system reconfigure)\b(?! --roll-back)")
+
+    GUIX_FIX = TESTS / "fixtures" / "guest"
+
+    def run_guix(self, plan, plan_rc=0):
+        """The Guix section after its PATH, over a stand-in guix whose reconfigure --dry-run prints
+        PLAN and exits PLAN_RC: (exit status, its output, each guix's arguments).  /run is a
+        scratch folder, which the section must leave empty."""
+        sec = self.sections()["Guix"]
+        m = re.search(r"^    fetched\(\) \{\n.*^    exit 0$", sec, re.M | re.S)
+        self.assertIsNotNone(m)
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "plan").write_text(plan)
+            os.mkdir(f"{d}/run")
+            script = textwrap.dedent(f"""\
+                say() {{ echo "in-guest: $*"; }}
+                sleep() {{ :; }}
+                ls() {{ :; }}
+                guix() {{
+                    echo "$*" >>{d}/calls
+                    case "$*" in
+                    "system reconfigure --dry-run "*) cat {d}/plan; return {plan_rc} ;;
+                    "pull --roll-back") echo "switched from generation 3 to 2" ;;
+                    describe) echo "Generation 3 Nov 24 2026 10:00:00 (current)" ;;
+                    esac
+                }}
+                """) + textwrap.dedent(m[0]).replace("/run/", f"{d}/run/") + "\n"
+            r = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+            self.assertEqual(os.listdir(f"{d}/run"), [], "the Guix section leaves its files behind")
+            calls = Path(d, "calls").read_text().splitlines()
+        return r.returncode, r.stdout, calls
+
+    UNBUILT = "dwarves-1.29 grub-pc-2.14 guix-1.5.0-7.5ceffb6 libcap-ng-0.9.6 linux-libre-7.3.5 qemu-minimal-10.2.1"
+
+    def test_guix_package_builds_of_a_plan(self):
+        """package_builds over the real lists (guix15-bios's reconfigures, t2v-20261121T1624-bd34
+        and t2v-20261120T0601-2cfb on Chopin): the packages head would build, never the system's
+        own derivations, sources, locales or a pull's guix-COMMIT, in a dry run's words or a real
+        run's, its header glued to a progress line or not."""
+        sec = self.sections()["Guix"]
+        fn = re.search(r"^    package_builds\(\) \{\n.*?^    \}\n", sec, re.M | re.S)[0]
+        unbuilt = (self.GUIX_FIX / "guix-reconfigure-unbuilt.out").read_text()
+        built = (self.GUIX_FIX / "guix-reconfigure-substituted.out").read_text()
+        pull = ("The following derivations would be built:\n"
+                "   /gnu/store/f52x4lax7hk1bydxiwc2b0r8wib8vhip-guix-5cea8de04-modules.drv\n"
+                "   /gnu/store/6f6p028i9wxkxf4xch2r55bx2qwscr87-guix-5cea8de04.drv\n"
+                "   /gnu/store/apq6mnzjjgvcajlpm7gbpi07ppw6ikj9-guix-daemon.drv\n\n")
+        glued = unbuilt.replace("100.0%\nThe following derivations will be built:",
+                                "100.0%\r\x1b[KThe following derivations will be built:")
+        self.assertNotEqual(glued, unbuilt)
+        for text, want in ((unbuilt, self.UNBUILT), (unbuilt.replace("will be", "would be"), self.UNBUILT),
+                           (glued, self.UNBUILT), (built, ""), (built.replace("will be", "would be"), ""),
+                           (pull, ""), (pull + unbuilt, self.UNBUILT), ("", "")):
+            r = subprocess.run(["sh", "-c", textwrap.dedent(fn) + "package_builds | sort -u | paste -sd ' ' -"],
+                               input=text, capture_output=True, text=True)
+            self.assertEqual(r.stdout.strip(), want, text[:200])
+        # a list ends at its first other line: the download list's store items aren't builds
+        r = subprocess.run(["sh", "-c", textwrap.dedent(fn) + "package_builds"], capture_output=True, text=True,
+                           input="The following derivation would be built:\n   /gnu/store/aaaa-system.drv\n"
+                                 "603.9 MB would be downloaded:\n   /gnu/store/bbbb-linux-libre-7.3.5.drv\n")
+        self.assertEqual(r.stdout, "")
+
+    def test_guix_holds_back_a_head_the_substitute_servers_havent_built(self):
+        """Head with packages the substitute servers have no build of yet (guix-1.5.0-7.5ceffb6
+        on 2026-11-21, a build that timed out after 3600 s of silence): the pull is rolled back,
+        no reconfigure runs, one line names them, and the update exits 0, as one with nothing
+        to take.  Its lines are known for the guix guests, and the hold line for them only."""
+        plan = (self.GUIX_FIX / "guix-reconfigure-unbuilt.out").read_text().replace("will be", "would be")
+        rc, out, calls = self.run_guix(plan)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("pull --roll-back", calls)
+        self.assertNotIn("system reconfigure --allow-downgrades /etc/config.scm", calls)
+        self.assertEqual(calls[:3], ["pull", "describe", "system reconfigure --dry-run --allow-downgrades /etc/config.scm"])
+        held = [x for x in out.splitlines() if x.startswith("in-guest: held back")]
+        self.assertEqual(held, [f"in-guest: held back: the substitute servers have no build yet of head's {self.UNBUILT}: "
+                                "kept the previous pull (guix pull --roll-back), no reconfigure"], out)
+        self.assertTrue(out.rstrip().endswith("in-guest: updated"), out)
+        # (guix describe's line is each guest's, in its baseline)
+        mine = [x for x in out.splitlines() if not x.startswith("in-guest: Generation ")]
+        self.assertEqual(self.unknown_lines("guix", mine), [], out)
+        self.assertEqual(self.unknown_lines("apt", held), held)
+        self.assertEqual(len(self.unknown_lines("guix", [held[0] + " (and more)"])), 1)
+        # what the servers have built: the reconfigure, no roll-back
+        rc, out, calls = self.run_guix((self.GUIX_FIX / "guix-reconfigure-substituted.out").read_text())
+        self.assertEqual(rc, 0, out)
+        self.assertIn("system reconfigure --allow-downgrades /etc/config.scm", calls)
+        self.assertNotIn("pull --roll-back", calls)
+        self.assertNotIn("held back", out)
+        # a dry run that fails (no download to retry) stops the update, its output shown
+        rc, out, calls = self.run_guix("guix system: error: failed to load '/etc/config.scm':\n", plan_rc=1)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("failed to load", out)
+        self.assertEqual(calls, ["pull", "describe", "system reconfigure --dry-run --allow-downgrades /etc/config.scm"])
 
     def test_dragonfly_pkg_fetches_the_catalogue_whole_and_is_tried_again(self):
         """pkg's update kept the image's old catalogue when its data.pkg was cut off (dragonfly6,

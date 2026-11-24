@@ -12,3 +12,8 @@ on Chopin, 2026-11-14, from a --snapshot boot (test_guest_judge.py's Solus class
 slackware15-before.out and slackware15-uefi-before.out are the before hook (RULES="S-slackpkg
 L-lilo K-slackware B-lin M-lin", and L-elilo for -uefi) run on each guest on Chopin, 2026-11-15,
 from a --snapshot boot (test_guest_judge.py's Slackware class); they hold no UUID, MAC or address.
+guix-reconfigure-unbuilt.out and guix-reconfigure-substituted.out are guix15-bios's `guix system
+reconfigure` build lists from its update.log on Chopin (t2v-20261121T1624-bd34, head's guix and
+linux-libre with no substitute yet; t2v-20261120T0601-2cfb, all substituted), read in place on
+2026-11-24, the swap's UUID in a shepherd service's name replaced by a made-up one
+(test_vm_update.py's Guix hold tests).

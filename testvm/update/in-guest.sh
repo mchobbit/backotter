@@ -95,13 +95,59 @@ if [ "$(uname)" = Linux ] && [ -d /gnu/store ] && [ -d /var/guix/profiles ] && [
         cat /run/bko-fetch.log; rm -f /run/bko-fetch.log
         return "$r"
     }
+    # package_builds <OUTPUT: the packages (NAME-VERSION) in a dry run's
+    # "would be built" lists ("will", as a real run says it).  Not the
+    # system's own derivations (shepherd services' .scm files, profile, etc,
+    # grub.cfg, system), which every reconfigure builds in seconds, nor
+    # sources (.tar.*, .patch, .zip, -checkout) and locale directories
+    # (locale-2.41), which come with a package or take a minute.  A version starts with digits and then a dot,
+    # a dash or the end, so a pull's guix-5cea8de04 (a commit) isn't one.
+    package_builds() {
+        awk '{ gsub(/\r|\033\[K/, "") }
+             /The following derivations? w(ill|ould) be built:$/ { on = 1; next }
+             on && /^ +\/gnu\/store\/[0-9a-z]+-[^ ]+\.drv$/ {
+                 sub(/^ +\/gnu\/store\/[0-9a-z]+-/, ""); sub(/\.drv$/, ""); print; next }
+             { on = 0 }' |
+            grep -E -- '-[0-9]+([.-][0-9A-Za-z]|$)' |
+            grep -vE -- '\.(scm|patch|zip)$|\.tar(\.[a-z0-9]+)?$|-checkout$|^locale-[0-9]'
+    }
     fetched guix pull || exit 1
     say "$(guix describe | head -5 | tr '\n' ' ')"
     # --allow-downgrades: 1.5.0's commit (d58da8a, the installed system's)
     # is on its release branch, not an ancestor of master's, so the first
     # reconfigure would abort as a "downgrade" (2026-11-14).  The pull above
     # just took the channel's head, so nothing older can come in this way.
-    fetched guix system reconfigure --allow-downgrades /etc/config.scm || exit 1
+    #
+    # Head a step ahead of the substitute servers: master can bump a package
+    # before ci.guix.gnu.org and bordeaux have built it, and the reconfigure
+    # then builds it here.  On 2026-11-21 that was guix-1.5.0-7.5ceffb6 with
+    # linux-libre 7.3.5, qemu-minimal and grub-pc beside it: "building of
+    # `/gnu/store/...-guix-1.5.0-7.5ceffb6.drv' timed out after 3600 seconds
+    # of silence" (guix15-bios, t2v-20261121T1624-bd34, both attempts), or
+    # t2 stopping the run at its 7200 s (t2v-20261121T1316-3466 on cinqcent
+    # and czerny).  Such a head isn't broken (docs/design/guix.md, decision
+    # 6): the servers build it within hours.  So a dry run first, and when it
+    # would build a package, the pull is rolled back and the system stays as
+    # it is: one say line names the packages, the old pull's generation is
+    # the current one again (the one below deletes the new one), and
+    # in-guest.sh exits 0, as an update that found nothing to take.
+    # vm-update reboots it, its listing is the same ("nothing changed; no
+    # merge") and GuestTest2's try is a PASS; exit 3 would be "nothing
+    # updates this guest", no reboot and a SKIP, which a hold isn't.  The
+    # next update pulls head again.  A build that fails is still the
+    # reconfigure's, which stops the update and names it.
+    fetched guix system reconfigure --dry-run --allow-downgrades /etc/config.scm >/run/bko-plan.log 2>&1 || {
+        cat /run/bko-plan.log; rm -f /run/bko-plan.log; exit 1
+    }
+    cat /run/bko-plan.log
+    unbuilt=$(package_builds </run/bko-plan.log | sort -u | paste -sd ' ' -)
+    rm -f /run/bko-plan.log
+    if [ -n "$unbuilt" ]; then
+        say "held back: the substitute servers have no build yet of head's $unbuilt: kept the previous pull (guix pull --roll-back), no reconfigure"
+        guix pull --roll-back || exit 1
+    else
+        fetched guix system reconfigure --allow-downgrades /etc/config.scm || exit 1
+    fi
     # Every generation is a GC root: keep this one and the one before
     # (delete-generations rewrites grub.cfg's menu), drop the older Guix
     # builds of root's pulls, then what only those held.

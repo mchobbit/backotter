@@ -488,6 +488,27 @@ does for nixos2605. Other updates:
 - **Pin or not:** Decision 6. Recommended: no pin, the channel's head, as
   every rolling guest. A broken head stops the update and names it, as
   Gentoo's source builds do.
+  - *Head ahead of the substitute servers (2026-11-24).* A head whose
+    packages ci.guix.gnu.org and bordeaux haven't built yet isn't broken:
+    on 2026-11-21 master's guix-1.5.0-7.5ceffb6 (with linux-libre 7.3.5,
+    qemu-minimal, grub-pc, dwarves and libcap-ng) had no substitute, so
+    the reconfigure built guix here until the daemon gave up after 3600 s
+    of silence (guix15-bios, t2v-20261121T1624-bd34) or t2 stopped the
+    run at 7200 s (t2v-20261121T1316-3466). `in-guest.sh#Guix` now runs
+    `guix system reconfigure --dry-run` after the pull; when its "would be
+    built" list has a package (NAME-VERSION: not the system's own
+    derivations, sources or locale directories), it runs `guix pull
+    --roll-back`, says `held back: the substitute servers have no build yet
+    of head's ...: kept the previous pull (guix pull --roll-back), no
+    reconfigure`, skips the reconfigure and exits 0. Still head, no pin:
+    the next update pulls head again and takes it once the servers have
+    built it. Exit 0, not 3: vm-update reboots it, its package listing is
+    unchanged ("nothing changed; no merge") and GuestTest2's try is a
+    PASS, as any update that found nothing to take; 3 means "nothing
+    updates this guest" (no reboot, the try a SKIP). The hold's lines are
+    in `known-lines.json#guix`. Left open: a package the servers never
+    build (CI failing on it) holds the guest for as long, named by that
+    line in every run's update.log, with no FAIL.
 - `pkgset.sh`: `guix-pkg NAME VERSION` lines from the system profile's
   manifest, and `guix-system PATH`.
 - `fingerprint.py`'s `LINUX_KINDS`: `guix`.
@@ -693,7 +714,9 @@ guests moved to disk, since Chopin's RAM disk is contended.
    - Or `"*"`, as Chimera and AerynOS.
 6. **vm-update's channel:**
    - **The channel's head, unpinned**, as every rolling guest
-     (recommended, [[images-take-os-updates]]).
+     (recommended, [[images-take-os-updates]]). Since 2026-11-24 a head
+     the substitute servers haven't built yet is held back for that run,
+     not built here (Other updates, "Pin or not").
    - Or a pinned commit, moved by hand (steadier, but stale).
 7. **A static musl bko-holt:**
    - **Only if GX1 shows the static glibc build fails on Guix**

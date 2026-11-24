@@ -1,0 +1,11 @@
+{
+ "name": "fail-007-bios-core-follows-partition",
+ "source": "guix15-bios@gen:84f8ead874a59ecac3829bbf00c8060d49339bf2c681382e2730e76a097109a0",
+ "seed": 100002,
+ "generator": "5",
+ "edits": [
+   {"disk": "vda", "op": "gap_before", "partition": 1, "sectors": 8}],
+ "load_options": [],
+ "failed": {"check": "the dumps differ", "excerpt": ["DIFF storage.disks.16.boot_code.grub_core_in: \"post-mbr-gap\" -> \"partition\"", "DIFF storage.disks.16.boot_code.grub_core_lba: 2048 -> 2056", "the restore was right: grub-bios-setup wrote core.img at the moved BIOS boot partition's start; bs2's model of the drifted dump (edits.set_part, gap_follows) left GRUB's core at the old sector and called it the post-MBR gap's"], "tier": 1},
+ "from": "guix15-bios-7d91521de594aa5f (tier 1, chopin, bs2a-20261124-1028; also guix15-bios-9f08b78875925106 on cinqcent: the BIOS boot partition aligned and moved, 2048 -> 3536); shrunk by hand to the one edit that moves the BIOS boot partition (the renumber, target size and content left out)",
+ "finding": "harness"}

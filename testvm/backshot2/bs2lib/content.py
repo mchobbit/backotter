@@ -86,9 +86,14 @@ def _caps():
 
 # The longest symlink target each filesystem stores, in bytes: XFS's
 # XFS_SYMLINK_MAXLEN; ext2/3/4 keep a target and its NUL in one block, so a
-# block less one (fs_symlink_max(); symlink_max() works it out from a
-# layout).
+# block less one; btrfs keeps it inline in one leaf item, so its node size
+# less the leaf header (101), the item (25) and the inline extent's header
+# (21): BTRFS_MAX_INLINE_DATA_SIZE, 3,949 bytes at a 4 KiB node and past
+# PATH_MAX from 8 KiB on (fs_symlink_max(); symlink_max() works it out from
+# a layout).
 SYMLINK_MAX = {"xfs": 1024}
+BTRFS_INLINE_OVERHEAD = 101 + 25 + 21
+PATH_MAX = 4096
 LONG_DEFAULT = {"xfs": 500}   # a/long's "x/" pairs: 1,003 bytes on XFS, 4,083 elsewhere
 LONG_PAIRS = 2040
 
@@ -104,15 +109,19 @@ def symlink_max(layout, path=DIR):
         return None
     dev = dumpx.devices(layout).get(ms[-1].get("device"))
     c = (dev or {}).get("content") or {}
-    return fs_symlink_max(c.get("type") or ms[-1].get("fstype"), c.get("block_size"))
+    return fs_symlink_max(c.get("type") or ms[-1].get("fstype"), c.get("block_size"), c.get("node_size"))
 
 
-def fs_symlink_max(fs_type, block_size=None):
+def fs_symlink_max(fs_type, block_size=None, node_size=None):
     """The longest symlink target a filesystem of FS_TYPE with BLOCK_SIZE
-    (bytes; statvfs's f_bsize will do) stores, or None where nothing tighter
-    than PATH_MAX holds."""
+    (bytes; statvfs's f_bsize will do) and, for btrfs, NODE_SIZE (a dump's
+    node_size: statvfs has none, so a mounted btrfs says nothing) stores, or
+    None where nothing tighter than PATH_MAX holds."""
     if fs_type in ("ext2", "ext3", "ext4") and block_size:
         return int(block_size) - 1
+    if fs_type == "btrfs" and node_size:
+        n = int(node_size) - BTRFS_INLINE_OVERHEAD
+        return n if n < PATH_MAX - 1 else None
     return SYMLINK_MAX.get(fs_type)
 
 

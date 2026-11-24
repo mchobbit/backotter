@@ -118,6 +118,56 @@ class TestGuix(unittest.TestCase):
                 self.assertEqual(rules.check(d, C.replay(c, d), c["edits"], hooks=h), [], (g, c["seed"]))
 
 
+class TestFoundOnGuix(unittest.TestCase):
+    """Harness bugs bs2a-20261124-1028 found on guix15-bios (cases/fail-007, fail-008)."""
+    B = K.dump("guix15-bios")
+
+    def test_core_follows_its_bios_boot_partition(self):
+        # fail-007: GRUB's core sits in the BIOS boot partition (vda1, from 2048);
+        # moved, load writes core.img at its new start.  Before, the model left the
+        # core at 2048 and called it the post-MBR gap's.
+        from bs2lib import edits as E
+        d = self.B
+        self.assertEqual(dumpx.disk(d)["boot_code"]["grub_core_in"], "partition")
+        e1 = E.build(d, "renumber", {"disk": "vda", "from": 1, "to": 12})
+        e2 = E.build(E.apply(d, [e1]), "gap_before", {"disk": "vda", "partition": 12, "sectors": 8})
+        bc = dumpx.disk(E.apply(d, [e1, e2]))["boot_code"]
+        self.assertEqual((bc["grub_core_in"], bc["grub_core_lba"], bc["post_mbr_gap"]["sectors"]), ("partition", 2056, 2055))
+        e = E.build(d, "align", {"disk": "vda", "partition": 1, "sectors": 403})
+        self.assertEqual(dumpx.disk(E.apply(d, [e]))["boot_code"]["grub_core_lba"], 2048 + 403)
+        # Moving another partition leaves the core where it is.
+        e = E.build(d, "gap_before", {"disk": "vda", "partition": 3, "sectors": 1000})
+        self.assertEqual(dumpx.disk(E.apply(d, [e]))["boot_code"]["grub_core_lba"], 2048)
+
+    def test_core_in_the_mbr_gap_stays(self):
+        from bs2lib import edits as E
+        a = K.dump("alpine324")
+        bc0 = dumpx.disk(a).get("boot_code") or {}
+        self.assertEqual(bc0.get("grub_core_in"), "post-mbr-gap")
+        p = dumpx.part(dumpx.disk(a), 1)
+        e = E.build(a, "align", {"disk": dumpx.disk(a)["name"], "partition": p["number"], "sectors": 7})
+        self.assertEqual(dumpx.disk(E.apply(a, [e]))["boot_code"]["grub_core_lba"], bc0["grub_core_lba"])
+
+    def test_long_symlink_fits_a_4k_node(self):
+        # fail-008: btrfs keeps a symlink's target inline in one leaf item:
+        # 3,949 bytes at a 4 KiB node (checked on a 4 KiB-node btrfs, kernel 7.2:
+        # 3,949 made, 3,950 ENAMETOOLONG), so a/long, planted at the source's
+        # 16 KiB-node limit, couldn't be restored onto the drifted one.
+        from bs2lib import content as CT, edits as E
+        d = self.B
+        self.assertIsNone(CT.symlink_max(d))   # 16 KiB nodes: PATH_MAX's
+        e = E.build(d, "btrfs_geometry", {"fs": "vda3", "node_size": 4096})
+        lim = CT.symlink_max(E.apply(d, [e]))
+        self.assertEqual(lim, 3949)
+        self.assertIsNone(CT.fs_symlink_max("btrfs", 4096, 8192))
+        self.assertIsNone(CT.fs_symlink_max("btrfs", 4096))   # a mounted one: statvfs has no node size
+        c = {"recipe": "guix-small-1", "seed": 100003}
+        long = [e for e in CT.plan(c, "btrfs", symlink_max=lim) if e["path"] == b"a/long".hex()][0]
+        self.assertLessEqual(len(bytes.fromhex(long["to"])), 3949)
+        full = [e for e in CT.plan(c, "btrfs") if e["path"] == b"a/long".hex()][0]
+        self.assertGreater(len(bytes.fromhex(full["to"])), 3949)
+
+
 class TestToolsPath(unittest.TestCase):
     """tier0.Tools finds a store system's tools through its profile's
     absolute links, resolved inside the copied root; the usual dirs as before."""

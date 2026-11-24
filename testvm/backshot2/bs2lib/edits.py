@@ -84,7 +84,17 @@ def apply_sets(d, sets):
 
 
 def set_part(dk, p, start, sectors):
-    """Moves P (on disk DK) to START, SECTORS long, with its derived fields."""
+    """Moves P (on disk DK) to START, SECTORS long, with its derived fields.
+    GRUB's core in P (a BIOS boot partition: boot_code's grub_core_in
+    "partition", its sector inside P) moves with it: load's grub-install
+    (or a store system's grub-bios-setup) writes core.img at the start of
+    the restored BIOS boot partition, wherever that is."""
+    bc = dk.get("boot_code")
+    lba = bc.get("grub_core_lba") if isinstance(bc, dict) else None
+    old = p.get("start_lba")
+    if (isinstance(lba, int) and isinstance(old, int) and bc.get("grub_core_in") == "partition"
+            and old <= lba < old + (p.get("sectors") or 0) and start != old):
+        bc["grub_core_lba"] = lba + start - old
     ss = dumpx.sector(dk)
     p["start_lba"] = start
     p["sectors"] = sectors

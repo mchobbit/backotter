@@ -492,10 +492,16 @@ tested on 2026-11-24.  What the runs found, in order:
   on it (t2h-20261124T1616-385b, Cinqcent, from a copy with guix15-luks
   added to `holt.img_panel.linux`; both attempts) failed on that alone:
   `mk_iterations` 394795 -> 432580 and 425558, the image's cryptsetup
-  benchmark.  So guix15-luks is not in ImgTest2's panel yet: it joins
-  (classes.json, estimates, test2.md, README, test_plan's count, as
-  cbd6ec6 did for guix15 and guix15-bios) once an image built from
-  c2e9302 or later passes it.
+  benchmark.  So guix15-luks wasn't put in ImgTest2's panel on that
+  image.  The image of that evening, `20261124.ca71b73` (holt-bin
+  promoted from ca71b73 after HoltTest2 t2h-20261124T1720-8aa2, 100 of
+  100 cells, and haiku6 in t2h-20261124T1839-f86e), carries both:
+  ImgTest2 linux t2i-20261124T1901-90ae PASS (four boot modes), and the
+  whole Linux panel t2h-20261124T1905-f91b PASS, 9 of 9, guix15+img,
+  guix15-bios+img and guix15-luks+img (cinqcent-20261124T191725Z-bb50e85a,
+  both counts kept by the image's own cryptsetup) among them.  guix15-luks
+  joined the panel in 1f2e990 (classes.json, estimates, test2.md,
+  README, test_plan's count, as cbd6ec6 did for guix15 and guix15-bios).
 - **Runs that passed** (2026-11-24): HoltTest1 `glk5` Cinqcent, `glk6`
   Chopin; HoltTest2 t2h-20261124T1548-1919 Chopin (with guix15 and
   guix15-bios, re-keyed by 332e612, 4b66165 and 752fa85: both PASS) and

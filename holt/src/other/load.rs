@@ -623,9 +623,9 @@ impl Builder<'_> {
                 out.push(Cmd::new(&["sh", "-c", &format!("[ ! -d {snap} ] || {{ touch -r {top} {r} && rmdir {snap} && touch -r {r} {top}; }}")]).why(format!("{file} had no .snap on the source (its directory's times kept)")));
             }
         }
-        let cache = if self.layout.v.at(&["storage", "zfs", "zpool_cache"]).is_some_and(|c| !c.is_null()) { Some(()) } else { None };
+        let cache = self.layout.v.at(&["storage", "zfs", "zpool_cache"]).is_some_and(|c| !c.is_null());
         for p in self.pools.clone() {
-            if cache.is_some() {
+            if cache {
                 out.push(
                     Cmd::new(&["sh", "-c", &format!("for c in /etc/zfs/zpool.cache /boot/zfs/zpool.cache; do [ -f {qt}$c ] && zpool set cachefile={qt}$c {}; done; true", q(&p))])
                         .why("the restored system's zpool.cache names the new pool"),

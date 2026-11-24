@@ -90,6 +90,7 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
     let mut raw = disks(sys);
     raw.sort_by(|a, b| crate::sys::natural_cmp(&a.name, &b.name));
     let mount_list = sys.run("mount", &["-p"]).map(|t| mounts::parse_fstab(&t)).unwrap_or_default();
+    #[derive(Debug)]
     struct Seen {
         d: RawDisk,
         found: Vec<Found>,

@@ -205,6 +205,7 @@ pub fn is_volume_node(node: &str) -> bool {
 // ---- load -------------------------------------------------------------
 
 /// A softraid volume of a layout.
+#[derive(Debug)]
 struct Vol {
     name: String,
     rec: Value,

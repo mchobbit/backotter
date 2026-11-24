@@ -148,6 +148,7 @@ pub fn keyfiles(names: &[String], loader: &[(String, String)], rc: &[(String, St
 
 /// What `dump` knows of GELI on this system beyond the metadata: what's
 /// attached, and the loader's and rc.d/geli's configuration.
+#[derive(Debug)]
 pub struct Source {
     pub attached: Vec<Attached>,
     pub loader: Vec<(String, String)>,
@@ -238,9 +239,9 @@ pub fn dump_partition(sys: &Sys, f: &Found, glabel: Option<&str>, seen: &Seen, m
     let (files, no_pass) = keyfiles(&names, &src.loader, &src.rc);
     let no_passphrase = no_pass || m.as_ref().is_some_and(|m| m.iterations == -1);
     let keyed_by = match (files.is_empty(), no_passphrase) {
-        (true, false) => "passphrase",
-        (_, true) => "keyfile",
-        (false, false) => "both",
+        (true, false) => KeyedBy::Passphrase,
+        (_, true) => KeyedBy::Keyfile,
+        (false, false) => KeyedBy::Both,
     };
     let mut rec = Obj::new().set("version", m.as_ref().map(|m| m.version));
     for (k, v) in &c.details.0 {
@@ -250,7 +251,7 @@ pub fn dump_partition(sys: &Sys, f: &Found, glabel: Option<&str>, seen: &Seen, m
     rec.put("attached", att.is_some());
     rec.put("onetime", att.is_some_and(|a| a.onetime));
     rec.put("content", probe::content_json(&inner));
-    rec.put("keyed_by", keyed_by);
+    rec.put("keyed_by", keyed_by.as_str());
     rec.put("keyfiles", files);
     for (k, v) in ufs.0 {
         rec.put(&k, v);
@@ -289,6 +290,48 @@ pub fn mark_swap(v: Value, file: &str, seen: &Seen) -> Value {
     }
 }
 
+/// What unlocks a GELI provider: the dump's keyed_by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyedBy {
+    /// A passphrase only.
+    Passphrase,
+    /// Key files only (loader.conf's, rc.conf's; geli init -P).
+    Keyfile,
+    /// Key files and a passphrase.
+    Both,
+    /// A keyed_by this holt doesn't know (a newer dump's): none of the
+    /// three, so load takes it as it took any other word, a temporary key.
+    Unknown,
+}
+
+impl KeyedBy {
+    /// Its word in the dump's JSON.
+    fn as_str(self) -> &'static str {
+        match self {
+            KeyedBy::Passphrase => "passphrase",
+            KeyedBy::Keyfile => "keyfile",
+            KeyedBy::Both => "both",
+            KeyedBy::Unknown => "unknown",
+        }
+    }
+
+    /// The dump's word; a layout without one (or not a string) is keyed by
+    /// a passphrase, as a dump before keyed_by was.
+    fn of_json(v: Option<&Value>) -> KeyedBy {
+        match v.and_then(Value::as_str).unwrap_or("passphrase") {
+            "passphrase" => KeyedBy::Passphrase,
+            "keyfile" => KeyedBy::Keyfile,
+            "both" => KeyedBy::Both,
+            _ => KeyedBy::Unknown,
+        }
+    }
+
+    /// Whether a passphrase unlocks it (alone or with key files).
+    fn has_passphrase(self) -> bool {
+        matches!(self, KeyedBy::Passphrase | KeyedBy::Both)
+    }
+}
+
 // ---- load -------------------------------------------------------------
 
 /// A GELI provider of a layout, as load makes it again.
@@ -307,8 +350,8 @@ struct Prov {
 }
 
 impl Prov {
-    fn keyed_by(&self) -> &str {
-        self.rec.get("keyed_by").and_then(Value::as_str).unwrap_or("passphrase")
+    fn keyed_by(&self) -> KeyedBy {
+        KeyedBy::of_json(self.rec.get("keyed_by"))
     }
 
     fn keyfiles(&self) -> Vec<String> {
@@ -447,16 +490,16 @@ impl Builder<'_> {
             // asked for once), or for a provider a key file unlocks, the
             // key file named or a temporary random one, replaced by the
             // restored key file in boot.
-            let keyed = p.keyed_by().to_string();
+            let keyed = p.keyed_by();
             let given = self.geli_key(&p, 0);
             // The questions it is (holt-json.md, the plan's keys): slot 0's,
             // and slot 1's where the source used it.  A provider keyed by
             // both is made with a temporary key, and boot sets the restored
             // key file with a new passphrase: one to ask for.
-            let unlock = match keyed.as_str() {
-                "passphrase" | "both" => "passphrase",
-                "keyfile" if p.keyfiles().is_empty() => "key_file_elsewhere",
-                _ => "temporary",
+            let unlock = match keyed {
+                KeyedBy::Passphrase | KeyedBy::Both => "passphrase",
+                KeyedBy::Keyfile if p.keyfiles().is_empty() => "key_file_elsewhere",
+                KeyedBy::Keyfile | KeyedBy::Unknown => "temporary",
             };
             self.key_asks.push(crate::load::commands::KeyAsk {
                 kind: "geli",
@@ -485,7 +528,7 @@ impl Builder<'_> {
             }
             // Under --json nothing prompts (holt-json.md): no /dev/tty
             // question is built, and the passphrase nobody gave is a problem.
-            if self.opts.json && (keyed == "passphrase" || keyed == "both") && given.is_none() {
+            if self.opts.json && keyed.has_passphrase() && given.is_none() {
                 let name = p.names.first().cloned().unwrap_or_else(|| p.src.clone());
                 self.coded(
                     crate::load::codes::Problem::new(crate::load::codes::ProblemCode::KeyNeeded, format!("{}: give its new GELI passphrase with --key-file {name}=FILE", p.src))
@@ -494,19 +537,19 @@ impl Builder<'_> {
                         .with("kind", "geli"),
                 );
             }
-            let (init_key, attach_key, pass_made): (Vec<String>, Vec<String>, Option<String>) = match (keyed.as_str(), &given) {
-                ("passphrase", Some(f)) => (vec!["-J".into(), f.clone()], vec!["-j".into(), f.clone()], None),
-                ("passphrase", None) if self.opts.json => {
+            let (init_key, attach_key, pass_made): (Vec<String>, Vec<String>, Option<String>) = match (keyed, &given) {
+                (KeyedBy::Passphrase, Some(f)) => (vec!["-J".into(), f.clone()], vec!["-j".into(), f.clone()], None),
+                (KeyedBy::Passphrase, None) if self.opts.json => {
                     let f = pass_file(&p.src);
                     (vec!["-J".into(), f.clone()], vec!["-j".into(), f], None)
                 }
-                ("passphrase", None) => {
+                (KeyedBy::Passphrase, None) => {
                     let f = pass_file(&p.src);
                     out.push(prompt(&p.src, &f));
                     self.closers.push(Cmd::new(&["rm", "-f", &f]));
                     (vec!["-J".into(), f.clone()], vec!["-j".into(), f.clone()], Some(f))
                 }
-                ("keyfile", Some(f)) => (vec!["-P".into(), "-K".into(), f.clone()], vec!["-p".into(), "-k".into(), f.clone()], None),
+                (KeyedBy::Keyfile, Some(f)) => (vec!["-P".into(), "-K".into(), f.clone()], vec!["-p".into(), "-k".into(), f.clone()], None),
                 _ => {
                     let k = tmp_key(&p.src);
                     out.push(Cmd::new(&["mkdir", "-p", "-m", "700", &format!("{RUN_DIR}/keys")]));
@@ -564,7 +607,7 @@ impl Builder<'_> {
             }
             // Slot 1 (D4), when the source used it: with the passphrase
             // given for it.  A provider with both, after boot's slot 0.
-            if keyed != "both" {
+            if keyed != KeyedBy::Both {
                 out.extend(self.geli_slot1(&p, &m, &dev));
             }
             if let Some(f) = pass_made {
@@ -612,10 +655,10 @@ impl Builder<'_> {
         if m.slots().contains(&1) && self.geli_key(p, 1).is_none() {
             self.problems.push(format!("{src}: the source's GELI key slot 1 is in use; give its passphrase with --key-file {src}:1=FILE, or the restored system loses that way in"));
         }
-        if p.keyed_by() == "keyfile" && p.keyfiles().is_empty() && self.geli_key(p, 0).is_none() {
+        if p.keyed_by() == KeyedBy::Keyfile && p.keyfiles().is_empty() && self.geli_key(p, 0).is_none() {
             self.problems.push(format!("{src}: a GELI key file unlocks it, and the dump doesn't say which (loader.conf, rc.conf); give it with --key-file {src}=FILE"));
         }
-        let uses_restored_keys = p.keyed_by() == "both" || (p.keyed_by() == "keyfile" && self.geli_key(p, 0).is_none());
+        let uses_restored_keys = p.keyed_by() == KeyedBy::Both || (p.keyed_by() == KeyedBy::Keyfile && self.geli_key(p, 0).is_none());
         if uses_restored_keys {
             for k in p.keyfiles() {
                 if !safe_keyfile_subpath(&k) {
@@ -637,14 +680,14 @@ impl Builder<'_> {
             if !self.names.made.contains_key(&p.provider) {
                 continue;
             }
-            let keyed = p.keyed_by().to_string();
-            if (keyed == "both" || (keyed == "keyfile" && self.geli_key(&p, 0).is_none())) && p.keyfiles().iter().all(|k| safe_keyfile_subpath(k)) {
+            let keyed = p.keyed_by();
+            if (keyed == KeyedBy::Both || (keyed == KeyedBy::Keyfile && self.geli_key(&p, 0).is_none())) && p.keyfiles().iter().all(|k| safe_keyfile_subpath(k)) {
                 let mut a: Vec<String> = vec!["geli".into(), "setkey".into(), "-n".into(), "0".into()];
                 for k in p.keyfiles() {
                     a.extend(["-K".into(), format!("{t}{k}")]);
                 }
                 let mut pass = None;
-                if keyed == "both" {
+                if keyed == KeyedBy::Both {
                     let f = match self.geli_key(&p, 0) {
                         Some(f) => f,
                         // Under --json no /dev/tty question is built: the
@@ -668,7 +711,7 @@ impl Builder<'_> {
                 a.push(dev.clone());
                 out.push(Cmd { argv: a, why: Some(format!("{}: the restored key file{} {}", p.src, if p.keyfiles().len() == 1 { "" } else { "s" }, p.keyfiles().join(", "))), ..Cmd::default() });
                 out.push(Cmd::new(&["rm", "-f", &tmp_key(&p.src)]));
-                if keyed == "both" {
+                if keyed == KeyedBy::Both {
                     out.extend(self.geli_slot1(&p, &m, &dev));
                 }
                 if let Some(f) = pass {
@@ -703,6 +746,21 @@ impl Builder<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// keyed_by's words, typed (RustAudit1 H9-15): each the dump writes
+    /// reads back as itself, a missing or non-string one as a passphrase,
+    /// and any other word as none of the three.
+    #[test]
+    fn keyed_by_words() {
+        for k in [KeyedBy::Passphrase, KeyedBy::Keyfile, KeyedBy::Both] {
+            assert_eq!(KeyedBy::of_json(Some(&Value::from(k.as_str()))), k);
+        }
+        assert_eq!(KeyedBy::of_json(None), KeyedBy::Passphrase);
+        assert_eq!(KeyedBy::of_json(Some(&Value::Bool(true))), KeyedBy::Passphrase);
+        assert_eq!(KeyedBy::of_json(Some(&Value::from("Both"))), KeyedBy::Unknown);
+        assert!(KeyedBy::Both.has_passphrase() && KeyedBy::Passphrase.has_passphrase());
+        assert!(!KeyedBy::Keyfile.has_passphrase() && !KeyedBy::Unknown.has_passphrase());
+    }
 
     /// What `geli list` printed on the freebsd15-geli guest (geli.md, G1).
     pub const GUEST_LIST: &str = "Geom name: vtbd0p3.eli\nState: ACTIVE\nEncryptionAlgorithm: AES-XTS\nKeyLength: 256\nCrypto: accelerated software\nVersion: 7\nUsedKey: 0\nFlags: BOOT, GELIBOOT, AUTORESIZE\nKeysAllocated: 4\nKeysTotal: 4\nProviders:\n1. Name: vtbd0p3.eli\n   Mediasize: 14757654528 (14G)\n   Sectorsize: 4096\n   Mode: r1w1e1\nConsumers:\n1. Name: vtbd0p3\n   Mediasize: 14757658624 (14G)\n   Sectorsize: 512\n   Mode: r1w1e1\n";

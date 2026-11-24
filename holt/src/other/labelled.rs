@@ -140,6 +140,8 @@ pub fn newfs_from_probe(fam: Family, d: &Value) -> Option<String> {
     Some(a.join(" "))
 }
 
+/// A disk as report reads it: its table, partitions and disklabel.
+#[derive(Debug)]
 struct DiskSeen {
     d: RawDisk,
     duid: Option<String>,

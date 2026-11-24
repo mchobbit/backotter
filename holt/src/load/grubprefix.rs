@@ -68,7 +68,9 @@ pub fn efi_prefix(b: &[u8]) -> Result<Option<(usize, usize, String)>, String> {
         (name.split(|c| *c == 0).next() == Some(b"mods".as_slice())).then(|| (u32_at(b, at + 16), u32_at(b, at + 20)))
     });
     let Some((Some(raw_size), Some(raw))) = mods else { return Ok(None) };
-    let (raw, raw_end) = (raw as usize, raw as usize + raw_size as usize);
+    let raw = raw as usize;
+    // A section past the end of the address space is past the file's too.
+    let Some(raw_end) = raw.checked_add(raw_size as usize) else { return Ok(None) };
     if raw_end > b.len() || u32_at(b, raw) != Some(MAGIC) {
         return Ok(None);
     }
@@ -84,12 +86,15 @@ pub fn efi_prefix(b: &[u8]) -> Result<Option<(usize, usize, String)>, String> {
 
 /// The prefix module among the modules of B from P to END (module headers:
 /// type, size, both u32s, the size counting the header): (the offset of
-/// its string, its room with the NUL padding, the string), or None.
+/// its string, its room with the NUL padding, the string), or None.  A P
+/// at or past END (the module info's offset past the mods section, up to
+/// usize::MAX) has no modules: None, as a release build has always given
+/// it, the sums checked so a debug one doesn't panic.
 fn module_prefix(b: &[u8], mut p: usize, end: usize) -> Result<Option<(usize, usize, String)>, String> {
-    while p + 8 <= end {
+    while p.checked_add(8).is_some_and(|q| q <= end) {
         let (Some(t), Some(sz)) = (u32_at(b, p), u32_at(b, p + 4)) else { break };
         let sz = sz as usize;
-        if sz < 8 || p + sz > end {
+        if sz < 8 || p.checked_add(sz).is_none_or(|e| e > end) {
             return Err(format!("a module header at {p:#x} has size {sz}, past the modules' end"));
         }
         if t == OBJ_TYPE_PREFIX {
@@ -327,6 +332,28 @@ mod tests {
         let (at, _, _) = efi_prefix(&b).unwrap().unwrap();
         b[at - 4..at].copy_from_slice(&4000u32.to_le_bytes());
         assert!(efi_prefix(&b).unwrap_err().contains("past the modules' end"));
+    }
+
+    /// RustAudit1 HD1-04: a module-info offset that takes the modules'
+    /// start to the top of the address space (or a 32-bit one's to
+    /// u32::MAX) is no prefix, without an add overflow; one past usize is
+    /// the overflow error it was.
+    #[test]
+    fn a_huge_module_offset_doesnt_overflow() {
+        let raw = 0x400usize;
+        let mut b = image(Some("(,gpt3)/boot/grub"), 24, true);
+        assert_eq!(u32_at(&b, raw), Some(MAGIC));
+        for p in [usize::MAX - 15, usize::MAX - 7, usize::MAX] {
+            b[raw + 8..raw + 16].copy_from_slice(&((p - raw) as u64).to_le_bytes());
+            assert_eq!(efi_prefix(&b).unwrap(), None, "{p:#x}");
+        }
+        b[raw + 8..raw + 16].copy_from_slice(&(u64::MAX - 8).to_le_bytes());
+        assert!(efi_prefix(&b).unwrap_err().contains("offset overflows"));
+        let mut b = image(Some("(,gpt3)/boot/grub"), 24, false);
+        b[raw + 4..raw + 8].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(efi_prefix(&b).unwrap(), None);
+        assert_eq!(module_prefix(&b, usize::MAX - 3, usize::MAX), Ok(None));
+        assert_eq!(module_prefix(&b, usize::MAX - 15, usize::MAX - 8), Ok(None));
     }
 
     const CORE_GPT3: &[u8] = include_bytes!("../../tests/fixtures/lzma/core-gpt3.img");

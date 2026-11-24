@@ -454,7 +454,7 @@ fn gpt_matches_sfdisk() {
     let t = parttable::read_table(&FileSource::open(&img).unwrap(), 512).unwrap();
     let Table::Gpt { gpt, .. } = &t else { panic!("not gpt") };
     assert!(gpt.primary_ok);
-    assert_eq!(gpt.backup, "ok");
+    assert_eq!(gpt.backup, parttable::GptBackup::Ok);
     assert_eq!(gpt.disk_guid, pt.get("id").unwrap().as_str().unwrap().to_lowercase());
     assert_eq!(gpt.first_usable_lba, pt.get("firstlba").unwrap().as_u64().unwrap());
     assert_eq!(gpt.last_usable_lba, pt.get("lastlba").unwrap().as_u64().unwrap());
@@ -490,7 +490,7 @@ fn gpt_4k_sectors_match_sfdisk() {
     for (ours, p) in gpt.parts.iter().zip(parts) {
         assert_eq!(ours.first_lba, p.get("start").unwrap().as_u64().unwrap());
     }
-    assert_eq!(gpt.backup, "ok");
+    assert_eq!(gpt.backup, parttable::GptBackup::Ok);
     assert_eq!(gpt.backup_lba, (64 << 20) / 4096 - 1);
 }
 

@@ -65,7 +65,7 @@ pub fn mbr_code_kind(code: &[u8]) -> &'static str {
     } else if contains(code, b"F1") && contains(code, b"Default:") {
         "freebsd-boot0"
     } else {
-        crate::bootcode::identify(code).kind
+        crate::bootcode::identify(code).kind.as_str()
     }
 }
 

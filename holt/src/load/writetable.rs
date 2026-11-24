@@ -354,7 +354,7 @@ mod tests {
             let img = apply(&plan(&d, size as u64).unwrap(), size);
             let Some(Table::Gpt { pmbr, gpt }) = read_table(&MemSource(img.clone()), 512) else { panic!("no GPT") };
             assert!(gpt.primary_ok);
-            assert_eq!(gpt.backup, "ok");
+            assert_eq!(gpt.backup, crate::parttable::GptBackup::Ok);
             assert_eq!(gpt.disk_guid, "d837c5f1-d686-11f1-83e1-03e680c1a8f0");
             assert_eq!(gpt.first_usable_lba, 40);
             assert_eq!(gpt.last_usable_lba, if size == 16777216 { 32727 } else { (size as u64 / 512) - 34 });

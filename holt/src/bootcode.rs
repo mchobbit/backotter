@@ -4,11 +4,52 @@
 use crate::bytes::{contains, hex, is_zero, le64, sub, u8_at, ByteSource};
 use crate::json::{Obj, Value};
 
+/// Which boot code a sector holds; the report writes it by [`BootKind::as_str`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootKind {
+    /// No code: the 440 bytes are all zero.
+    None,
+    Grub2,
+    GrubLegacy,
+    Syslinux,
+    Lilo,
+    Isohybrid,
+    Windows,
+    /// Code, but none of the above.
+    Unknown,
+}
+
+impl BootKind {
+    /// The name the report writes.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BootKind::None => "none",
+            BootKind::Grub2 => "grub2",
+            BootKind::GrubLegacy => "grub-legacy",
+            BootKind::Syslinux => "syslinux",
+            BootKind::Lilo => "lilo",
+            BootKind::Isohybrid => "isohybrid",
+            BootKind::Windows => "windows",
+            BootKind::Unknown => "unknown",
+        }
+    }
+}
+
+impl std::fmt::Display for BootKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<BootKind> for Value {
+    fn from(k: BootKind) -> Value {
+        Value::from(k.as_str())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BootCode {
-    /// "none", "grub2", "grub-legacy", "syslinux", "lilo", "isohybrid",
-    /// "windows", "unknown".
-    pub kind: &'static str,
+    pub kind: BootKind,
     /// GRUB 2: the LBA boot.img loads core.img's first sector from.
     pub grub_core_lba: Option<u64>,
     /// GRUB 2: the BIOS drive number it boots from (0xff: whatever the BIOS
@@ -23,38 +64,38 @@ pub fn identify(sector: &[u8]) -> BootCode {
     let first_bytes = hex(sub(code, 0, 16));
     let none = |kind| BootCode { kind, grub_core_lba: None, grub_boot_drive: None, first_bytes: first_bytes.clone() };
     if code.is_empty() || is_zero(code) {
-        return none("none");
+        return none(BootKind::None);
     }
     // LILO's first stage (first.S): cli, a short jump over its header, the
     // header's size word, then "LILO" at offset 6 and its version (24.2 is
     // 0x18 0x02).  Read from the two first stages Slackware 15.0's
     // /sbin/lilo (24.2) carries; it has no strings to go by.
     if sub(code, 6, 4) == b"LILO" {
-        return none("lilo");
+        return none(BootKind::Lilo);
     }
     if contains(code, b"GRUB ") && contains(code, b"Geom") {
         // GRUB Legacy's stage1 keeps its version (3.2) right after the BPB;
         // GRUB 2's boot.img jumps further, past its own data at 0x5a.
         if u8_at(code, 0) == 0xeb && u8_at(code, 1) == 0x48 && u8_at(code, 0x3e) == 3 && u8_at(code, 0x3f) == 2 {
-            return none("grub-legacy");
+            return none(BootKind::GrubLegacy);
         }
         return BootCode {
-            kind: "grub2",
+            kind: BootKind::Grub2,
             grub_core_lba: Some(le64(code, 0x5c)),
             grub_boot_drive: Some(u8_at(code, 0x64)),
             first_bytes,
         };
     }
     if contains(code, b"isolinux.bin missing or corrupt") {
-        return none("isohybrid");
+        return none(BootKind::Isohybrid);
     }
     if contains(code, b"Missing operating system.") || contains(code, b"Operating system load error") {
-        return none("syslinux");
+        return none(BootKind::Syslinux);
     }
     if contains(code, b"Invalid partition table") && contains(code, b"Missing operating system") {
-        return none("windows");
+        return none(BootKind::Windows);
     }
-    none("unknown")
+    none(BootKind::Unknown)
 }
 
 /// Whether the sector at `lba` looks like GRUB 2's diskboot.img, the first
@@ -101,7 +142,7 @@ impl BootCode {
 pub fn partition_boot_code(src: &dyn ByteSource) -> Option<&'static str> {
     let s = src.read_at(0, 512);
     match identify(&s).kind {
-        k @ ("grub2" | "grub-legacy" | "syslinux") => Some(k),
+        k @ (BootKind::Grub2 | BootKind::GrubLegacy | BootKind::Syslinux) => Some(k.as_str()),
         _ => None,
     }
 }
@@ -152,25 +193,37 @@ mod tests {
     use crate::bytes::MemSource;
 
     #[test]
+    fn kind_names() {
+        // RustAudit1 H2-07: the names the report writes, unchanged.
+        let all = [BootKind::None, BootKind::Grub2, BootKind::GrubLegacy, BootKind::Syslinux, BootKind::Lilo, BootKind::Isohybrid, BootKind::Windows, BootKind::Unknown];
+        let names: Vec<&str> = all.iter().map(|k| k.as_str()).collect();
+        assert_eq!(names, ["none", "grub2", "grub-legacy", "syslinux", "lilo", "isohybrid", "windows", "unknown"]);
+        assert_eq!(Value::from(BootKind::GrubLegacy), Value::from("grub-legacy"));
+        assert_eq!(BootKind::Lilo.to_string(), "lilo");
+        assert_eq!(partition_boot_code(&MemSource(grub2_boot_img(1))), Some("grub2"));
+        assert_eq!(partition_boot_code(&MemSource(vec![0u8; 512])), None);
+    }
+
+    #[test]
     fn empty_and_unknown() {
-        assert_eq!(identify(&[0u8; 512]).kind, "none");
-        assert_eq!(identify(&[]).kind, "none");
+        assert_eq!(identify(&[0u8; 512]).kind, BootKind::None);
+        assert_eq!(identify(&[]).kind, BootKind::None);
         let mut s = vec![0u8; 512];
         s[0] = 0x33;
         s[1] = 0xc0;
         let b = identify(&s);
-        assert_eq!(b.kind, "unknown");
+        assert_eq!(b.kind, BootKind::Unknown);
         assert_eq!(b.first_bytes, "33c00000000000000000000000000000");
         // The partition table and signature don't count as code.
         let mut t = vec![0u8; 512];
         t[446..].fill(0x11);
-        assert_eq!(identify(&t).kind, "none");
+        assert_eq!(identify(&t).kind, BootKind::None);
     }
 
     #[test]
     fn grub2() {
         let b = identify(&grub2_boot_img(1));
-        assert_eq!(b.kind, "grub2");
+        assert_eq!(b.kind, BootKind::Grub2);
         assert_eq!(b.grub_core_lba, Some(1));
         assert_eq!(b.grub_boot_drive, Some(0xff));
         assert!(b.first_bytes.starts_with("eb6390"));
@@ -186,7 +239,7 @@ mod tests {
         s[0x3f] = 2;
         let msg = b"GRUB \0Geom\0Hard Disk\0Read\0 Error\0";
         s[0x17e..0x17e + msg.len()].copy_from_slice(msg);
-        assert_eq!(identify(&s).kind, "grub-legacy");
+        assert_eq!(identify(&s).kind, BootKind::GrubLegacy);
     }
 
     #[test]
@@ -197,26 +250,26 @@ mod tests {
             s[0x100..0x100 + m.len()].copy_from_slice(m);
             identify(&s).kind
         };
-        assert_eq!(with(b"Missing operating system.\r\n\0Operating system load error.\r\n"), "syslinux");
-        assert_eq!(with(b"isolinux.bin missing or corrupt.\r\n"), "isohybrid");
-        assert_eq!(with(b"Invalid partition table\0Error loading operating system\0Missing operating system"), "windows");
+        assert_eq!(with(b"Missing operating system.\r\n\0Operating system load error.\r\n"), BootKind::Syslinux);
+        assert_eq!(with(b"isolinux.bin missing or corrupt.\r\n"), BootKind::Isohybrid);
+        assert_eq!(with(b"Invalid partition table\0Error loading operating system\0Missing operating system"), BootKind::Windows);
         // Strings past the 440 bytes of code are not code.
         let mut s = vec![0u8; 512];
         s[0] = 1;
         s[446..446 + 5].copy_from_slice(b"GRUB ");
-        assert_eq!(identify(&s).kind, "unknown");
+        assert_eq!(identify(&s).kind, BootKind::Unknown);
     }
 
     #[test]
     fn lilo() {
         let b = identify(&lilo_first_stage());
-        assert_eq!(b.kind, "lilo");
+        assert_eq!(b.kind, BootKind::Lilo);
         assert!(b.first_bytes.starts_with("faeb3113"), "{}", b.first_bytes);
         // Not "LILO" elsewhere in the code.
         let mut s = vec![0u8; 512];
         s[0] = 0xfa;
         s[0x100..0x104].copy_from_slice(b"LILO");
-        assert_eq!(identify(&s).kind, "unknown");
+        assert_eq!(identify(&s).kind, BootKind::Unknown);
     }
 
     #[test]

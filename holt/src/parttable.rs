@@ -55,11 +55,38 @@ pub struct Gpt {
     pub entry_count: u32,
     pub entry_size: u32,
     pub primary_ok: bool,
-    /// "ok", "bad-crc", "absent", "unreadable" or "mismatch".
-    pub backup: &'static str,
+    pub backup: GptBackup,
     pub backup_lba: u64,
     pub parts: Vec<GptPart>,
     pub problems: Vec<String>,
+}
+
+/// The backup GPT header's state, as the report's `backup_header` names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GptBackup {
+    /// There and valid, and it agrees with a valid primary.
+    Ok,
+    /// A header is there, but it or its entries fail their CRC.
+    BadCrc,
+    /// No GPT header where the backup should be.
+    Absent,
+    /// Where the backup should be lies past the end of the disk.
+    Unreadable,
+    /// Valid, but its disk GUID or entries differ from the valid primary's.
+    Mismatch,
+}
+
+impl GptBackup {
+    /// The name the report writes.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GptBackup::Ok => "ok",
+            GptBackup::BadCrc => "bad-crc",
+            GptBackup::Absent => "absent",
+            GptBackup::Unreadable => "unreadable",
+            GptBackup::Mismatch => "mismatch",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -249,15 +276,15 @@ pub fn read_gpt(src: &dyn ByteSource, ss: u64) -> Option<Gpt> {
         None
     };
     let backup_entries = backup.as_ref().and_then(|h| header_valid(src, ss, h));
-    let backup_status: &'static str = if backup_lba >= total {
-        "unreadable"
+    let backup_status = if backup_lba >= total {
+        GptBackup::Unreadable
     } else {
         match (&backup, &backup_entries) {
-            (None, _) => "absent",
-            (Some(_), None) => "bad-crc",
+            (None, _) => GptBackup::Absent,
+            (Some(_), None) => GptBackup::BadCrc,
             (Some(b), Some(_)) => match (&primary, &primary_entries) {
-                (Some(p), Some(_)) if p.disk_guid != b.disk_guid || p.entries_crc != b.entries_crc => "mismatch",
-                _ => "ok",
+                (Some(p), Some(_)) if p.disk_guid != b.disk_guid || p.entries_crc != b.entries_crc => GptBackup::Mismatch,
+                _ => GptBackup::Ok,
             },
         }
     };
@@ -364,7 +391,7 @@ impl Table {
                     .set("entry_count", gpt.entry_count)
                     .set("entry_size", gpt.entry_size)
                     .set("primary_header_ok", gpt.primary_ok)
-                    .set("backup_header", gpt.backup)
+                    .set("backup_header", gpt.backup.as_str())
                     .set("backup_lba", gpt.backup_lba)
                     // false when the disk is bigger than the table thinks: an
                     // image written to a bigger disk, or a grown VM disk.
@@ -696,7 +723,7 @@ mod tests {
         let t = read_table(&MemSource(img), 512).unwrap();
         let Table::Gpt { pmbr, gpt } = &t else { panic!("not gpt") };
         assert!(gpt.primary_ok);
-        assert_eq!(gpt.backup, "ok");
+        assert_eq!(gpt.backup, GptBackup::Ok);
         assert_eq!(gpt.backup_lba, 8191);
         assert_eq!(gpt.disk_guid, DG);
         assert_eq!(gpt.parts.len(), 3);
@@ -728,7 +755,7 @@ mod tests {
         let img = gpt_disk(4096, 2048);
         let Some(Table::Gpt { gpt, .. }) = read_table(&MemSource(img.clone()), 4096) else { panic!() };
         assert_eq!(gpt.parts.len(), 3);
-        assert_eq!(gpt.backup, "ok");
+        assert_eq!(gpt.backup, GptBackup::Ok);
         // Read with the wrong sector size, the header isn't where we look.
         assert!(matches!(read_table(&MemSource(img), 512), Some(Table::Mbr(_)) | None));
     }
@@ -739,7 +766,7 @@ mod tests {
         img[512 + 60] ^= 0xff; // corrupt the primary header's disk GUID
         let Some(Table::Gpt { gpt, .. }) = read_table(&MemSource(img.clone()), 512) else { panic!() };
         assert!(!gpt.primary_ok);
-        assert_eq!(gpt.backup, "ok");
+        assert_eq!(gpt.backup, GptBackup::Ok);
         assert_eq!(gpt.disk_guid, DG);
         assert_eq!(gpt.parts.len(), 3);
         assert!(gpt.problems[0].contains("backup"));
@@ -752,30 +779,38 @@ mod tests {
     }
 
     #[test]
+    fn gpt_backup_names() {
+        // RustAudit1 H2-07: the names backup_header writes, unchanged.
+        let all = [GptBackup::Ok, GptBackup::BadCrc, GptBackup::Absent, GptBackup::Unreadable, GptBackup::Mismatch];
+        let names: Vec<&str> = all.iter().map(|b| b.as_str()).collect();
+        assert_eq!(names, ["ok", "bad-crc", "absent", "unreadable", "mismatch"]);
+    }
+
+    #[test]
     fn gpt_backup_states() {
         // Bad backup header.
         let mut img = gpt_disk(512, 8192);
         img[8191 * 512 + 40] ^= 1;
         let Some(Table::Gpt { gpt, .. }) = read_table(&MemSource(img), 512) else { panic!() };
         assert!(gpt.primary_ok);
-        assert_eq!(gpt.backup, "bad-crc");
+        assert_eq!(gpt.backup, GptBackup::BadCrc);
         // Backup header missing altogether.
         let mut img = gpt_disk(512, 8192);
         img[8191 * 512..].fill(0);
         let Some(Table::Gpt { gpt, .. }) = read_table(&MemSource(img), 512) else { panic!() };
-        assert_eq!(gpt.backup, "absent");
+        assert_eq!(gpt.backup, GptBackup::Absent);
         // The image written onto a bigger disk: the backup sits mid-disk.
         let mut img = gpt_disk(512, 8192);
         img.extend(vec![0u8; 512 * 4096]);
         let t = read_table(&MemSource(img), 512).unwrap();
         let Table::Gpt { gpt, .. } = &t else { panic!() };
-        assert_eq!(gpt.backup, "ok");
+        assert_eq!(gpt.backup, GptBackup::Ok);
         assert_eq!(gpt.backup_lba, 8191);
         assert_eq!(t.header_json(512, 8192 + 4096).get("backup_at_end"), Some(&Value::Bool(false)));
         // A disk truncated below where the backup should be.
         let img = gpt_disk(512, 8192);
         let t = read_gpt(&MemSource(img[..512 * 6000].to_vec()), 512).unwrap();
-        assert_eq!(t.backup, "unreadable");
+        assert_eq!(t.backup, GptBackup::Unreadable);
     }
 
     #[test]
@@ -786,7 +821,7 @@ mod tests {
         let n = a.len();
         a[n - 512 * 33..].copy_from_slice(&other[n - 512 * 33..]);
         let g = read_gpt(&MemSource(a), 512).unwrap();
-        assert_eq!(g.backup, "mismatch");
+        assert_eq!(g.backup, GptBackup::Mismatch);
     }
 
     #[test]

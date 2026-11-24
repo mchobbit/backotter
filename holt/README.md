@@ -321,9 +321,13 @@ cargo test
 
 - Unit tests (`src/`): every parser on synthetic bytes, on real data from
   BackOtter's hosts (Chopin's EFI variables, the debian13-zfs guest's
-  `zpool.cache` and vdev label in `tests/fixtures/`), and whole fake Debian 13
-  systems (`src/scenarios.rs`: BIOS/MBR/btrfs, UEFI/GPT/shim, LUKS+LVM, md
-  RAID1, ZFS, unprivileged).  `src/load/`: argument parsing, the layout
+  `zpool.cache` and vdev label in `tests/fixtures/`), and whole fake
+  systems (`src/scenarios.rs`: a directory tree for each machine's /sys,
+  /proc, /dev, /etc and /boot and image files for its disks, laid out as
+  the supported systems' installers and BackOtter's test guests lay real
+  ones out, through the full dump, redaction and plan: boot setups, stacks
+  of LUKS, LVM, md, ZFS and btrfs, and the systems with a boot arm of their
+  own, as the list of supported systems above has them).  `src/load/`: argument parsing, the layout
   contract, disk mapping and its refusals, `--fit-largest`'s arithmetic and
   refusals (`src/load/fit.rs`, over every scenario's layout as well), and the
   commands each stage would run, on fake rescue systems; ostree's
@@ -340,7 +344,28 @@ cargo test
 - `tests/cli.rs`: `dump`'s arguments, exit codes, the Debian 13 gate, and a
   dump of the machine running the tests checked against `lsblk` (run it as
   root too: then our own superblock reading is what's checked).
-- `tests/load_cli.rs`: `load`'s arguments and exit codes.
+- `tests/load_cli.rs`: `load`'s arguments and exit codes;
+  `tests/json_cli.rs`: the `--json` protocol as a program (docs/design/holt-json.md).
+- `tests/golden_plans.rs`: `load`'s plan of every dump in the corpus
+  (`tests/corpus/GUEST/src.json`, redacted dumps of BackOtter's test guests)
+  against the plan kept beside it (`plan.txt`), and five invariants each
+  plan must keep (`tests/common/invariants.rs`).  A change to load that
+  changes a plan fails it: `BKO_HOLT_GOLDEN=report
+  BKO_HOLT_PLANS_OUT=DIR` writes the new plans and what differs to DIR,
+  `BKO_HOLT_GOLDEN=bless` rewrites the plans that differ (on Linux, in the
+  same commit as the change), and `tests/corpus/README.md` says how the
+  corpus was made and how to read a difference.  Its tests are named
+  `golden_*`: GateTest2 runs the rest with `cargo test -- --skip golden_`
+  and these on their own, in report mode.  `tests/plan_json.rs` holds each plan's `--json`
+  document (`plan.json`) the same way (`BKO_HOLT_JSON_GOLDEN=bless`).
+- `tests/bs2_plan.rs`: BackShot2's tier 0 (docs/design/backshot2.md), each
+  drifted layout planned and held to the same invariants; a no-op unless
+  `BS2_PLAN_JOBS` names a file of jobs (results to `BS2_PLAN_OUT`).
+- `tests/corpus_build.rs` (ignored by default): builds the corpus from raw
+  dumps, `BKO_HOLT_CORPUS_RAW` to `BKO_HOLT_CORPUS_OUT`, on the host that
+  holds them (`tests/corpus/README.md`, "Rebuilding it").
+- `tests/readme.rs`: this README's list of supported systems against
+  `src/osrel.rs`, and that it names each command.
 - `src/recovery.rs`: BIP39's published test vectors (128-bit entropy), round
   trips, abbreviations, every problem by position, and what a one-word
   mistake can get past; `tests/recovery_cli.rs`: `bko-recovery-words`.

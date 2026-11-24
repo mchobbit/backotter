@@ -15,11 +15,10 @@ fn s(v: &Value, k: &str) -> Option<String> {
     v.get(k).and_then(Value::as_str).map(str::to_string)
 }
 
+/// A partition table's number: a number, decimal text or 0x-hex text
+/// (Value::get_u64_or_hex_text).
 fn u(v: &Value, k: &str) -> Option<u64> {
-    match v.get(k)? {
-        Value::Str(t) => t.strip_prefix("0x").map_or_else(|| t.parse().ok(), |h| u64::from_str_radix(h, 16).ok()),
-        x => x.as_u64(),
-    }
+    v.get_u64_or_hex_text(k)
 }
 
 /// "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" to GPT's on-disk bytes (the first

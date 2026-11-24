@@ -82,10 +82,6 @@ fn s(v: &Value, k: &str) -> Option<String> {
     v.get(k).and_then(Value::as_str).map(str::to_string)
 }
 
-fn u(v: &Value, k: &str) -> Option<u64> {
-    v.get(k).and_then(Value::as_u64)
-}
-
 fn b(v: &Value, k: &str) -> bool {
     v.get(k).and_then(Value::as_bool).unwrap_or(false)
 }
@@ -115,19 +111,19 @@ fn table(v: &Value) -> Option<Table> {
             None => None,
         },
     };
-    Some(Table { kind, id, first_usable_lba: u(v, "first_usable_lba"), last_usable_lba: u(v, "last_usable_lba"), entry_count: u(v, "entry_count") })
+    Some(Table { kind, id, first_usable_lba: v.get_u64("first_usable_lba"), last_usable_lba: v.get_u64("last_usable_lba"), entry_count: v.get_u64("entry_count") })
 }
 
 fn part(v: &Value, sector: u64) -> Option<Part> {
-    let start_lba = u(v, "start_lba").or_else(|| u(v, "start_bytes").map(|b| b / sector))?;
-    let sectors = u(v, "sectors").or_else(|| u(v, "size_bytes").map(|b| b / sector))?;
+    let start_lba = v.get_u64("start_lba").or_else(|| v.get_u64("start_bytes").map(|b| b / sector))?;
+    let sectors = v.get_u64("sectors").or_else(|| v.get_u64("size_bytes").map(|b| b / sector))?;
     let ptype = match v.get("type") {
         Some(Value::Str(t)) => t.clone(),
         Some(x) => format!("0x{:02x}", x.as_u64().unwrap_or(0)),
         None => return None,
     };
     Some(Part {
-        number: u(v, "number")? as u32,
+        number: v.get_u64("number")? as u32,
         name: s(v, "name").unwrap_or_default(),
         start_lba,
         sectors,
@@ -209,7 +205,7 @@ impl Layout {
             if d.get("links").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).any(|l| l.starts_with("/dev/zvol/")) {
                 continue;
             }
-            let sector = u(d, "logical_sector_size").unwrap_or(512).max(512);
+            let sector = d.get_u64("logical_sector_size").unwrap_or(512).max(512);
             let tv = d.get("partition_table").cloned().unwrap_or(Value::Null);
             let table = table(&tv);
             if !tv.is_null() && table.is_none() {
@@ -220,7 +216,7 @@ impl Layout {
             let content = d.get("content").cloned().unwrap_or(Value::Null);
             disks.push(Disk {
                 name: s(d, "name").unwrap_or_default(),
-                size_bytes: u(d, "size_bytes").unwrap_or(0),
+                size_bytes: d.get_u64("size_bytes").unwrap_or(0),
                 sector_size: sector,
                 model: s(d, "model"),
                 serial: s(d, "serial"),

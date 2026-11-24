@@ -21,12 +21,9 @@ use crate::json::Value;
 use crate::report::human;
 
 /// A number given as a number or as a decimal string (LUKS2 keeps its
-/// offsets and sizes as strings).
+/// offsets and sizes as strings): Value::get_u64_or_text.
 fn u(v: &Value, k: &str) -> Option<u64> {
-    match v.get(k)? {
-        Value::Str(t) => t.parse().ok(),
-        x => x.as_u64(),
-    }
+    v.get_u64_or_text(k)
 }
 
 /// What CONTENT needs of the device it's on, in bytes, and what that is:

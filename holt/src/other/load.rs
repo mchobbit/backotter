@@ -317,16 +317,6 @@ pub(super) fn newfs_sector(layout: &Layout, src: &str, rec: &Value) -> u64 {
     layout.disks.iter().find(|d| d.name == src || d.parts.iter().any(|p| p.name == src)).map_or(512, |d| d.sector_size.max(512))
 }
 
-/// `dumpfs -m`'s `-s`, which is in DEV_BSIZE (512-byte) units, made the
-/// count of `sector`-byte sectors FreeBSD's `newfs` reads it as (newfs asks
-/// the device for its sector size and counts in those).  On a device with
-/// larger sectors -- a GELI provider made with `geli init -s 4096`, a 4Kn
-/// disk -- the source's number names the same bytes but `sector`/512 times
-/// too many sectors, and newfs refuses it ("maximum file system size is
-/// ...").  A size that isn't a whole number of sectors is rounded down:
-/// newfs must not be given more than the device holds.  `words` is the
-/// command, changed in place; the answer is what to say in the Cmd's `why`,
-/// and None where there was nothing to change.
 /// Validates a `dumpfs -m` / `labelled` `newfs` command from a layout JSON:
 /// must invoke `newfs` with known UFS/FFS option flags and end with a single
 /// `DEVICE` placeholder, never an empty command, another binary, `-N`, or an
@@ -381,6 +371,16 @@ fn valid_newfs_words(raw: &[&str]) -> bool {
     true
 }
 
+/// `dumpfs -m`'s `-s`, which is in DEV_BSIZE (512-byte) units, made the
+/// count of `sector`-byte sectors FreeBSD's `newfs` reads it as (newfs asks
+/// the device for its sector size and counts in those).  On a device with
+/// larger sectors -- a GELI provider made with `geli init -s 4096`, a 4Kn
+/// disk -- the source's number names the same bytes but `sector`/512 times
+/// too many sectors, and newfs refuses it ("maximum file system size is
+/// ...").  A size that isn't a whole number of sectors is rounded down:
+/// newfs must not be given more than the device holds.  `words` is the
+/// command, changed in place; the answer is what to say in the Cmd's `why`,
+/// and None where there was nothing to change.
 fn newfs_size_in_sectors(words: &mut [String], sector: u64) -> Option<String> {
     if sector <= 512 {
         return None;

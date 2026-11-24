@@ -733,7 +733,15 @@ pub fn esp_inventory(sys: &Sys, mount: &str) -> Value {
         .build()
 }
 
-/// systemd-boot's loader.conf and its Boot Loader Specification entries.
+/// systemd-boot's loader.conf and its Boot Loader Specification entries,
+/// each as an object of its `key value` lines in file order.
+///
+/// A key the file repeats keeps its first line's place and its last line's
+/// value: an entry with `initrd /intel-ucode.img` then `initrd
+/// /initramfs-linux.img` dumps initrd "/initramfs-linux.img" only, and of
+/// several `options` lines only the last one is kept (the Boot Loader
+/// Specification lets both repeat).  load's ESP check knows this
+/// (load/transactional.rs, bls_problems).
 pub fn systemd_boot_json(sys: &Sys, mount: &str) -> Option<Value> {
     let conf = sys.read(&format!("{mount}/loader/loader.conf"));
     let entries_dir = format!("{mount}/loader/entries");
@@ -2628,6 +2636,17 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(sd.at(&["entries", "0", "options"]).and_then(Value::as_str), Some("root=UUID=x ro"));
         assert_eq!(sd.get("entries").and_then(Value::as_array).map(Vec::len), Some(1));
         assert!(systemd_boot_json(&s, "/nowhere").is_none());
+        // A repeated key keeps its first place and its last value (the
+        // documented limit: Arch's microcode initrd is not in the dump).
+        t.file("/boot/efi/loader/entries/arch.conf", "title Arch\nlinux /vmlinuz-linux\ninitrd /intel-ucode.img\ninitrd /initramfs-linux.img\noptions root=x\noptions rw\n");
+        let sd = systemd_boot_json(&s, "/boot/efi").unwrap();
+        let arch = sd.at(&["entries", "0"]).unwrap();
+        assert_eq!(arch.get("file").and_then(Value::as_str), Some("arch.conf"));
+        assert_eq!(arch.get("initrd").and_then(Value::as_str), Some("/initramfs-linux.img"));
+        assert_eq!(arch.get("options").and_then(Value::as_str), Some("rw"));
+        let Value::Obj(keys) = arch else { panic!("entry not an object") };
+        assert_eq!(keys.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), vec!["file", "title", "linux", "initrd", "options"]);
+        std::fs::remove_file(t.p("/boot/efi/loader/entries/arch.conf")).unwrap();
         // The kernel and initrd an entry names in another directory
         // (sdbootutil's, on Aeon), once each, after the rest; nothing for
         // a name that isn't there, one outside the ESP or at its top

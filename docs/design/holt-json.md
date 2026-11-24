@@ -808,13 +808,13 @@ Every event has `event`.  The rest:
 | `problems` | `problems` (as the plan's), `exit` 4 | Only when the checks found problems: nothing ran.  Then `end`. |
 | `stage` | `stage`, `commands` | A stage begins. |
 | `skip` | `stage`, `state` (`done`, `nothing`), `why` | `--through` skipped it as text mode does ("done already"), by status's rows as `--json` reads them (restore needs its mark, J10). |
-| `cmd` | `stage`, `n`, `of` (within the stage), `kind`, `argv`, `env` (pairs, `LC_ALL=C` first), `why`, `path` (write), `dev` (check), `stdin_bytes`, `private`, `archiver` (`part`, `parts`, on a command tagged as running the archiver) | Without `--commit`, the same with `would: true`, and no `cmd_done`.  Long argv elements as in "Common rules". |
+| `cmd` | `stage`, `n`, `of` (within the stage), `kind`, `argv`, `env` (pairs, `LC_ALL=C` first), `why`, `path` (write), `dev` (check), `stdin_bytes`, `private`, `archiver` (`part`, `parts`, on a command tagged as running the archiver) | Without `--commit`, the same with `would: true` (false with it), and no `cmd_done`.  Long argv elements as in "Common rules". |
 | `progress` | `stage`, `n`, `part`, `parts`, `bytes`, `total_bytes` (null until known), `secs`, `errors` | From the archiver's `status` lines on its stdout (through an `sh -c` too), at most once a second (the last one always).  `errors` counts the `warning` events of this command so far (rustic's own `error_count` is 0 in a restore). |
 | `warning` | `stage`, `n`, `source` (`archiver`, `cmd`), `text`, `item` (archiver only) | The archiver's `[WARN] restore PATH: ...` lines on its stderr (colour codes stripped, `item` the PATH); a `warns` command's `warning:` lines, which text mode prints on stderr. |
 | `cmd_done` | `stage`, `n`, `status` (exit code, or null), `signal` (or null), `secs` | |
 | `stage_done` | `stage`, `secs`, `checked` | `checked`: after the read-back showed it done; false in a dry run, which reads nothing back. |
 | `stopping` | `signal` | SIGTERM was taken; the run ends after the command now running (J7). |
-| `failed` | `stage`, `n` (or null), `code`, `program`, `argv`, `status`, `signal`, `text` (as text mode's stderr line), `tail` (the last 5 lines of the command's stderr, as now), `log` | Then `end`.  Codes below. |
+| `failed` | `stage`, `n` (or null), `code`, `program`, `argv` (both null when no step failed: the lock, a mark), `status`, `signal`, `text` (as text mode's stderr line), `tail` (the last 5 lines of the command's stderr, as now), `log` | Then `end`.  Codes below. |
 | `end` | `exit`, `stopped`, `secs` | Always last, also after a failure, a stop, problems or a panic (a panic hook writes `failed` with `internal`, then `end` with 101). |
 
 - Only SIGKILL, power loss or a write error on stdout can leave a stream
@@ -1058,8 +1058,8 @@ wiped), `release` (what holds a target is stopped first), `source_empty`
 |---|---|---|
 | `cmd_failed` | a command exited non-zero | its program's help text, else the general one |
 | `wrong_passphrase` | `cryptsetup open` exits 2 in `assemble` or `open` (*Check* GELI's `attach` and bioctl's codes at RT10f) | ask again |
-| `archiver_failed` | the archiver exited non-zero; `tail` has its stderr | Try again (the copy runs again) |
-| `efi_vars` | `efibootmgr` or `grub-install` failed and `here.efivars` is false | Install without an entry |
+| `archiver_failed` | the archiver exited non-zero; `tail` has its stderr (its `restore --help` check, which only a newer archiver passes, is `cmd_failed`) | Try again (the copy runs again) |
+| `efi_vars` | a step that writes UEFI variables (`efibootmgr`, or a `grub-install` for an `*-efi` target without `--no-nvram`) failed and `here.efivars` is false | Install without an entry |
 | `readback_failed` | a read-back found the device not as the source's | report |
 | `not_done_after` | a stage ran but the disks don't show it done | report |
 | `no_restored_tree` | `boot` with no restored system in the tree (`--commit`) | Try again from Restore |
@@ -1682,9 +1682,16 @@ which HoltTest1's verify passes (fsmeta, boot, dumps).
 - **Decided:** the lock is taken by `--commit` runs only (a run without it
   writes nothing, and a dry run is bko-rescue's direct child); it is a
   line of JSON, `{"pid": N, "start": "S"}` (`start` Linux's
-  /proc/PID/stat starttime, elsewhere `ps`'s start time, null on Haiku),
-  taken before the checks, so a second run's `failed` is `lock_held`
-  whatever its plan would say.  A stop asked for while a step that isn't
+  /proc/PID/stat starttime, illumos's /proc/PID/psinfo `pr_start` (`ps`'s
+  stime turns into a date after a day), the BSDs' `ps -o lstart` under
+  `LC_ALL=C TZ=UTC` and no other environment, null on Haiku, where a lock
+  older than the boot (`system_time()`) is stale), taken before the checks,
+  so a second run's `failed` is `lock_held` whatever its plan would say,
+  and let go just before `end`.  A takeover of a stale lock holds
+  `load.lock.takeover` (`O_EXCL`; one older than 10 s is a dead run's)
+  from its second look until its own lock is written, so two runs can't
+  both take it over; a panic kills the running command's group before
+  letting the lock go (review of 5aa58b0).  A stop asked for while a step that isn't
   the archiver's runs lets it end; if that step then fails, the run still
   ends `stopped` (the failure is in the log), never `failed`.  A stop
   asked for during the last step of the last stage comes too late: the
@@ -1692,9 +1699,11 @@ which HoltTest1's verify passes (fsmeta, boot, dumps).
   `write`, `check` or `note`; on a failure, `cmd_done` comes before
   `failed`.  `failed.text` is the error as text mode words it after
   `bko-holt load: STAGE: `; `failed.program` is the step's program past
-  a leading `chroot DIR` or `env A=B`, and `efi_vars` is any step naming
-  efibootmgr, grub-install or grub2-install on a machine whose
-  `here.efivars` is false.  `wrong_passphrase` is cryptsetup open's exit
+  a leading `chroot DIR` or `env A=B`, and `efi_vars` is a step that
+  writes UEFI variables (efibootmgr, or grub-install or grub2-install for
+  an `*-efi` target without `--no-nvram`; load's own all pass it) on a
+  machine whose `here.efivars` is false: a BIOS grub-install's failure is
+  `cmd_failed` (review of 5aa58b0).  `wrong_passphrase` is cryptsetup open's exit
   2 in assemble only: GELI's attach and bioctl's open there always use
   the key just made.  Every child under `--json` also gets SIGINT at its
   default (pre_exec), so a load started where SIGINT is ignored still

@@ -105,17 +105,20 @@ pub struct Events<'a> {
     sink: Option<&'a mut dyn FnMut(&str)>,
     stop: &'a dyn Fn() -> bool,
     stopping: bool,
+    /// The run's lock, let go just before `end`, so a reader acting on
+    /// `end` finds it gone.
+    lock: Option<Lock>,
 }
 
 impl<'a> Events<'a> {
     /// No events: STOP alone says when to stop.
     pub fn none(stop: &'a dyn Fn() -> bool) -> Events<'a> {
-        Events { sink: None, stop, stopping: false }
+        Events { sink: None, stop, stopping: false, lock: None }
     }
 
     /// Events to SINK, a line each; STOP says when to stop.
     pub fn to(sink: &'a mut dyn FnMut(&str), stop: &'a dyn Fn() -> bool) -> Events<'a> {
-        Events { sink: Some(sink), stop, stopping: false }
+        Events { sink: Some(sink), stop, stopping: false, lock: None }
     }
 
     fn emit(&mut self, v: Value) {
@@ -134,8 +137,10 @@ impl<'a> Events<'a> {
         self.stopping
     }
 
-    /// The `end` event, and the panic hook told the stream is complete.
+    /// The `end` event, the lock let go first, and the panic hook told the
+    /// stream is complete.
     fn end(&mut self, exit: u8, stopped: bool, t0: Instant) {
+        self.lock = None;
         self.emit(jsonout::end_event(exit, stopped, jsonout::secs(t0.elapsed())));
         hook::note(|h| h.ended = true);
     }
@@ -227,6 +232,7 @@ fn run_cmd_json(c: &Cmd, log: &mut Option<std::fs::File>, sys: &Sys, ev: &mut Ev
     }
     let mut child = cmd.spawn().map_err(|e| StepFail::of_text(format!("{prog}: {e}")))?;
     let pgid = i32::try_from(child.id()).unwrap_or(0);
+    hook::note(|h| h.child = (pgid > 0).then_some(pgid));
     // Its input written beside the reading, so a child that writes much
     // before it reads can't stall the two.
     let feeder = match (&c.stdin, child.stdin.take()) {
@@ -322,7 +328,9 @@ fn run_cmd_json(c: &Cmd, log: &mut Option<std::fs::File>, sys: &Sys, ev: &mut Ev
     for r in readers {
         let _ = r.join();
     }
-    let status = child.wait().map_err(|e| StepFail::of_text(format!("{prog}: {e}")))?;
+    let waited = child.wait();
+    hook::note(|h| h.child = None);
+    let status = waited.map_err(|e| StepFail::of_text(format!("{prog}: {e}")))?;
     let fed = feeder.map(|f| f.join().unwrap_or_else(|_| Err(std::io::Error::other("its writer panicked"))));
     // The last status always.
     if let Some(p) = pending {
@@ -362,7 +370,10 @@ fn failure_code(c: &Cmd, s: Stage, f: &StepFail, sys: &Sys) -> FailureCode {
     if c.write.is_some() {
         return FailureCode::WriteFailed;
     }
-    if c.archiver {
+    // The archiver's own failure, which running it again may cure; but not
+    // the check that it has the restore options a layout needs (its
+    // `restore --help`), which only a newer archiver passes.
+    if c.archiver && !asks_restore_help(c) {
         return FailureCode::ArchiverFailed;
     }
     let prog = jsonout::program_of(c).unwrap_or_default();
@@ -372,13 +383,40 @@ fn failure_code(c: &Cmd, s: Stage, f: &StepFail, sys: &Sys) -> FailureCode {
     if prog == "cryptsetup" && s == Stage::Assemble && c.argv.iter().any(|a| a == "open" || a == "luksOpen") && f.facts.status == Some(2) {
         return FailureCode::WrongPassphrase;
     }
-    // A step that writes UEFI variables (grub-install's own, efibootmgr's;
-    // inside a chroot or a script too) on a machine that can't.
-    let efi = c.argv.iter().any(|a| matches!(a.rsplit('/').next().unwrap_or(a), "efibootmgr" | "grub-install" | "grub2-install"));
-    if efi && jsonout::efivars_here(sys) == Some(false) {
+    // A step that writes UEFI variables on a machine that can't.
+    if writes_efi_vars(c) && jsonout::efivars_here(sys) == Some(false) {
         return FailureCode::EfiVars;
     }
     FailureCode::CmdFailed
+}
+
+/// Whether step C writes UEFI variables: efibootmgr, or a grub-install
+/// (grub2-install) for an EFI target (`--target=*-efi`) without
+/// --no-nvram.  A BIOS grub-install, and an EFI one with --no-nvram (as
+/// every one load builds), write none: their failure is cmd_failed's.  The
+/// program may stand anywhere in argv (after `chroot DIR`, or as the
+/// arguments of GRUB_BIOS_NILFS2's wrapper); a program named only inside
+/// an `sh -c` script isn't looked for (no step load builds has one).
+fn writes_efi_vars(c: &Cmd) -> bool {
+    let named = |progs: &[&str]| c.argv.iter().any(|a| progs.contains(&a.rsplit('/').next().unwrap_or(a)));
+    if named(&["efibootmgr"]) {
+        return true;
+    }
+    let efi_target = c.argv.iter().enumerate().any(|(i, a)| {
+        let t = match a.strip_prefix("--target=") {
+            Some(t) => Some(t),
+            None if a == "--target" => c.argv.get(i + 1).map(String::as_str),
+            None => None,
+        };
+        t.is_some_and(|t| t.ends_with("-efi"))
+    });
+    named(&["grub-install", "grub2-install"]) && efi_target && !c.argv.iter().any(|a| a == "--no-nvram")
+}
+
+/// Whether step C is the check of the archiver's restore options (its
+/// `restore --help`, commands.rs's for btrfs's snapshots and aliases).
+fn asks_restore_help(c: &Cmd) -> bool {
+    c.argv.iter().any(|a| a.contains(" restore --help > "))
 }
 
 fn state_of(layout: &Layout, opts: &Options, sys: &Sys, s: Stage) -> (State, String) {
@@ -427,6 +465,11 @@ fn run_core(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage], step: 
     let mut out = String::new();
     let mut err = String::new();
     let commit_ok = opts.sysroot.is_none() && sys.privileged;
+    // For the panic hook's own `start`, should a panic come before ours.
+    hook::note(|h| {
+        h.commit = opts.commit;
+        h.layout = Some((layout.str_at(&["host", "hostname"]).map(str::to_string), layout.str_at(&["generated"]).map(str::to_string)));
+    });
     // Text mode takes no lock, but a --commit refuses while a --json load
     // holds one (J8): the shell is one key away from a detached load.
     if !opts.json && opts.commit {
@@ -440,14 +483,11 @@ fn run_core(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage], step: 
     let p = plan::check(layout, opts, sys);
     let counts: Vec<(&str, usize)> = stages.iter().map(|s| (s.name(), p.built.stage(*s).len())).collect();
     ev.emit(jsonout::start_event(layout, opts, &counts, p.json.as_ref().map(|f| f.plan_sha256.as_str())));
-    hook::note(|h| {
-        h.started = true;
-        h.commit = opts.commit;
-    });
+    hook::note(|h| h.started = true);
     let log_path = opts.commit.then(|| format!("{RUN_DIR}/log/load.log"));
     let log_at = log_path.as_deref();
-    let _lock = match lock {
-        Some(Ok(l)) => Some(l),
+    match lock {
+        Some(Ok(l)) => ev.lock = Some(l),
         Some(Err(LockErr::Held(holder))) => {
             let text = lock_held_text(holder);
             ev.fail(jsonout::failed_event(None, None, FailureCode::LockHeld, None, &FailFacts::default(), &text, None).set("pid", holder), t0);
@@ -457,8 +497,8 @@ fn run_core(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage], step: 
             ev.fail(jsonout::failed_event(None, None, FailureCode::WriteFailed, None, &FailFacts::default(), &text, None), t0);
             return (EXIT_FAILED, out, format!("bko-holt load: {text}\n"));
         }
-        None => None,
-    };
+        None => {}
+    }
     if !p.problems.is_empty() {
         for x in &p.problems {
             err += &format!("bko-holt load: {x}\n");
@@ -597,11 +637,13 @@ fn run_core(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage], step: 
             };
             match ran {
                 Ok(warnings) => {
-                    ev.emit(done((jsonout::kind(c) == "run").then_some(0), None));
+                    // A `warns` command's warnings come with its end, but
+                    // before its cmd_done: they are the command's.
                     for w in warnings {
                         ev.emit(jsonout::event("warning").set("stage", s.name()).set("n", at.n).set("source", "cmd").set("text", jsonout::clipped(&w, 4096)).set("item", Value::Null).build());
                         err += &format!("bko-holt load: {}: {w}\n", s.name());
                     }
+                    ev.emit(done((jsonout::kind(c) == "run").then_some(0), None));
                 }
                 Err(f) => {
                     ev.emit(done(f.facts.status, f.facts.signal));
@@ -689,12 +731,25 @@ enum Holder {
 
 /// Who holds the lock at PATH.
 fn holder(path: &std::path::Path) -> Holder {
+    holder_since(path, crate::sys::boot_time())
+}
+
+/// holder, the system booted at BOOT where that is known (Haiku's: there
+/// no start time tells a reused pid, and RUN_DIR outlives a reboot), when
+/// a lock written before it is stale whatever its pid.
+fn holder_since(path: &std::path::Path, boot: Option<std::time::SystemTime>) -> Holder {
     let Ok(text) = std::fs::read_to_string(path) else { return Holder::Stale };
+    let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    if let (Some(m), Some(b)) = (modified, boot) {
+        if m < b {
+            return Holder::Stale;
+        }
+    }
     let v = crate::json::parse(text.trim()).ok();
     let Some(pid) = v.as_ref().and_then(|v| v.get_u64("pid")).and_then(|p| u32::try_from(p).ok()) else {
         // Not a lock's line: one being written now, or one left torn long
         // ago.
-        let young = std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|m| m.elapsed().ok()).is_some_and(|age| age < Duration::from_secs(10));
+        let young = modified.and_then(|m| m.elapsed().ok()).is_some_and(|age| age < Duration::from_secs(10));
         return if young { Holder::Live(None) } else { Holder::Stale };
     };
     if !crate::sys::process_alive(pid) {
@@ -742,30 +797,72 @@ struct Lock {
 
 impl Lock {
     /// Takes SYS's lock: made anew (O_EXCL), or taken over from a holder
-    /// that is gone.
+    /// that is gone.  A takeover holds RUN_DIR/load.lock.takeover (O_EXCL
+    /// too) from its second look at the old lock until its own is written,
+    /// so two runs that both found the old one stale can't both hold the
+    /// lock (the second removing the first's new one).
     fn take(sys: &Sys) -> Result<Lock, LockErr> {
         use std::os::unix::fs::OpenOptionsExt;
         let path = sys.p(&lock_path());
+        let guard = sys.p(&format!("{}.takeover", lock_path()));
         let _ = mkdir_private(&sys.p(RUN_DIR));
         let me = std::process::id();
         let line = Obj::new().set("pid", me).set("start", crate::sys::process_start(me)).build().compact() + "\n";
-        for _ in 0..3 {
-            match std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path) {
-                Ok(mut f) => {
-                    f.write_all(line.as_bytes()).map_err(|e| LockErr::Io(format!("{}: {e}", lock_path())))?;
-                    hook::note(|h| h.lock = Some(path.clone()));
-                    return Ok(Lock { path });
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => match holder(&path) {
-                    Holder::Live(pid) => return Err(LockErr::Held(pid)),
-                    Holder::Stale => {
+        for _ in 0..50 {
+            if let Some(l) = Lock::make(&path, &line)? {
+                return Ok(l);
+            }
+            if let Holder::Live(pid) = holder(&path) {
+                return Err(LockErr::Held(pid));
+            }
+            match std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&guard) {
+                Ok(_) => {
+                    // Looked at again under the guard: a lock made since
+                    // the first look is another's, and stays.
+                    let gone = path.exists() && holder(&path) == Holder::Stale;
+                    if gone {
                         let _ = std::fs::remove_file(&path);
                     }
-                },
-                Err(e) => return Err(LockErr::Io(format!("{}: {e}", lock_path()))),
+                    let made = Lock::make(&path, &line);
+                    let _ = std::fs::remove_file(&guard);
+                    match made? {
+                        Some(l) => return Ok(l),
+                        None => continue,
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // Another run is taking it over; a guard left by one
+                    // that died doing so goes after 10 s.
+                    let old = std::fs::metadata(&guard).and_then(|m| m.modified()).ok().and_then(|m| m.elapsed().ok()).is_some_and(|age| age >= Duration::from_secs(10));
+                    if old {
+                        let _ = std::fs::remove_file(&guard);
+                    } else {
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                }
+                Err(e) => return Err(LockErr::Io(format!("{}.takeover: {e}", lock_path()))),
             }
         }
         Err(LockErr::Held(None))
+    }
+
+    /// The lock at PATH made anew with LINE (O_EXCL), or None when there is
+    /// one.  A lock whose line can't be written is removed, not left to
+    /// read as one being written.
+    fn make(path: &std::path::Path, line: &str) -> Result<Option<Lock>, LockErr> {
+        use std::os::unix::fs::OpenOptionsExt;
+        match std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path) {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(line.as_bytes()) {
+                    let _ = std::fs::remove_file(path);
+                    return Err(LockErr::Io(format!("{}: {e}", lock_path())));
+                }
+                hook::note(|h| h.lock = Some(path.to_path_buf()));
+                Ok(Some(Lock { path: path.to_path_buf() }))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+            Err(e) => Err(LockErr::Io(format!("{}: {e}", lock_path()))),
+        }
     }
 }
 
@@ -805,18 +902,22 @@ mod hook {
     static ARMED: AtomicBool = AtomicBool::new(false);
 
     /// What the hook needs of the run: whether `start` and `end` have been
-    /// written, where it is, and the lock it holds.
+    /// written, the run's --commit and layout (host name, dump time) for a
+    /// `start` of its own, where it is, the process group of the command
+    /// running now, and the lock it holds.
     pub(super) struct State {
         pub started: bool,
         pub ended: bool,
         pub commit: bool,
+        pub layout: Option<(Option<String>, Option<String>)>,
         pub stage: Option<&'static str>,
         pub n: Option<usize>,
+        pub child: Option<i32>,
         pub lock: Option<std::path::PathBuf>,
         pub t0: Option<std::time::Instant>,
     }
 
-    static STATE: Mutex<State> = Mutex::new(State { started: false, ended: false, commit: false, stage: None, n: None, lock: None, t0: None });
+    static STATE: Mutex<State> = Mutex::new(State { started: false, ended: false, commit: false, layout: None, stage: None, n: None, child: None, lock: None, t0: None });
 
     /// Tells the hook of the run, when it is armed (the program's own run;
     /// never a test's).
@@ -848,7 +949,21 @@ mod hook {
             let msg = info.payload().downcast_ref::<&str>().map(|m| m.to_string()).or_else(|| info.payload().downcast_ref::<String>().cloned()).unwrap_or_else(|| "a panic".to_string());
             let at = info.location().map(|l| format!(" at {}:{}", l.file(), l.line())).unwrap_or_default();
             let text = format!("bko-holt panicked{at}: {msg}");
+            // The command running now (in a group of its own, which only
+            // load signals) dies with the run, and the lock goes, before
+            // `end`: a Try again mustn't meet a second archiver on the
+            // tree, nor the lock.
+            if let Some(g) = s.child.take() {
+                crate::sys::send_signal(-g, crate::sys::SIGKILL);
+            }
+            if let Some(p) = s.lock.take() {
+                super::release(&p);
+            }
             if !s.started {
+                let layout = match &s.layout {
+                    Some((host, generated)) => crate::json::Obj::new().set("hostname", host.clone()).set("generated", generated.clone()).build(),
+                    None => crate::json::Value::Null,
+                };
                 let start = jsonout::event("start")
                     .set("format", "bko-holt-events")
                     .set("schema", jsonout::SCHEMA)
@@ -860,8 +975,8 @@ mod hook {
                     .set("stages", Vec::<String>::new())
                     .set("stage_commands", crate::json::Obj::new())
                     .set("plan_sha256", crate::json::Value::Null)
-                    .set("log", crate::json::Value::Null)
-                    .set("layout", crate::json::Value::Null)
+                    .set("log", s.commit.then(|| format!("{}/log/load.log", crate::load::RUN_DIR)))
+                    .set("layout", layout)
                     .build();
                 jsonout::write_stdout(&jsonout::event_line(start));
             }
@@ -871,9 +986,6 @@ mod hook {
             let secs = s.t0.map(|t| jsonout::secs(t.elapsed())).unwrap_or(0.0);
             jsonout::write_stdout(&jsonout::event_line(jsonout::end_event(101, false, secs)));
             s.ended = true;
-            if let Some(p) = s.lock.take() {
-                super::release(&p);
-            }
         }));
     }
 }
@@ -1393,7 +1505,9 @@ mod tests {
                     assert!(!in_cmd, "{n:?}");
                     in_cmd = e.get_bool("would") != Some(true);
                 }
-                "progress" | "warning" | "stopping" => {}
+                // Each the running command's.
+                "progress" | "warning" => assert!(in_cmd, "{n:?}"),
+                "stopping" => {}
                 "cmd_done" => {
                     assert!(in_cmd, "{n:?}");
                     in_cmd = false;
@@ -1502,6 +1616,37 @@ mod tests {
         let arch = cmds.iter().find(|c| c.at(&["archiver", "part"]).is_some()).unwrap();
         let argv: Vec<&str> = arch.get_arr("argv").unwrap().iter().filter_map(Value::as_str).collect();
         assert!(argv.windows(3).any(|w| w == ["--json-progress", "--progress-interval", "1s"]), "{argv:?}");
+    }
+
+    /// A `warns` command's warnings: inside it, before its cmd_done, and
+    /// on standard error as text mode prints them.  The lock is gone by the
+    /// time `end` is written.
+    #[test]
+    fn warnings_come_before_cmd_done() {
+        let (t, s, l) = restored("load-exec-ev-warns", "/usr/sbin/rustic-bko");
+        t.file("/usr/sbin/rustic-bko", "");
+        let lay = layout_of(&l);
+        let a = ["--map", "vda=vdb", "--repo", "/srv/r", "--password-file", "/k/pw", "--only", "restore", "--commit", "--json"];
+        let never = || false;
+        let first = Cell::new(true);
+        let step: Step<'_> = &|_, _, _, _, _| Ok(if first.replace(false) { vec!["x: warning: one".to_string()] } else { Vec::new() });
+        let (code, evs, err) = events_with(&lay, &a, &s, &[Stage::Restore], step, &never);
+        assert_eq!(code, EXIT_OK, "{err}{evs:?}");
+        assert_order(&evs);
+        let n = names(&evs);
+        let w = n.iter().position(|e| *e == "warning").unwrap();
+        assert_eq!(&n[w - 1..=w + 1], ["cmd", "warning", "cmd_done"], "{n:?}");
+        assert_eq!((evs[w].get_str("source"), evs[w].get_u64("n"), evs[w].get_str("text")), (Some("cmd"), Some(1), Some("x: warning: one")));
+        assert!(err.contains("bko-holt load: restore: x: warning: one\n"), "{err}");
+        // The lock, as each line is written.
+        let lines = RefCell::new(Vec::new());
+        let mut sink = |l: &str| lines.borrow_mut().push((l.to_string(), t.p(&lock_path()).exists()));
+        first.set(true);
+        let (code, _, err) = run_core(&lay, &opts_of(&a), &s, &[Stage::Restore], step, &mut Events::to(&mut sink, &never));
+        assert_eq!(code, EXIT_OK, "{err}");
+        let lines = lines.into_inner();
+        assert!(lines[..lines.len() - 1].iter().all(|(_, held)| *held));
+        assert!(lines.last().is_some_and(|(l, held)| l.contains("\"event\":\"end\"") && !held), "{lines:?}");
     }
 
     /// A step that fails: its cmd_done, then failed with its code, then end
@@ -1754,19 +1899,49 @@ mod tests {
         assert_eq!(failure_code(&open, Stage::Format, &exit(2), &s), FailureCode::CmdFailed);
         assert_eq!(failure_code(&Cmd::new(&["cryptsetup", "luksFormat", "/dev/vdb3"]), Stage::Assemble, &exit(2), &s), FailureCode::CmdFailed);
         // No efivarfs in this tree, and no /sys/firmware/efi: BIOS, no
-        // variables to write.
-        assert_eq!(failure_code(&Cmd::new(&["chroot", "/mnt/bko-target", "grub-install"]), Stage::Boot, &exit(1), &s), FailureCode::EfiVars);
-        assert_eq!(failure_code(&Cmd::new(&["chroot", "/mnt/bko-target", "update-grub"]), Stage::Boot, &exit(1), &s), FailureCode::CmdFailed);
-        assert_eq!(failure_code(&Cmd::new(&["/usr/sbin/efibootmgr", "-c"]), Stage::Boot, &exit(1), &s), FailureCode::EfiVars);
+        // variables to write.  Only a step that writes them fails for
+        // want of them: efibootmgr, an EFI grub-install without
+        // --no-nvram.
+        let code = |argv: &[&str]| failure_code(&Cmd::new(argv), Stage::Boot, &exit(1), &s);
+        assert_eq!(code(&["/usr/sbin/efibootmgr", "-c"]), FailureCode::EfiVars);
+        assert_eq!(code(&["chroot", "/mnt/bko-target", "grub-install", "--target=x86_64-efi", "--efi-directory=/boot/efi"]), FailureCode::EfiVars);
+        assert_eq!(code(&["chroot", "/mnt/bko-target", "grub2-install", "--target", "arm64-efi"]), FailureCode::EfiVars);
+        // A BIOS install (the embedding area too small, say), named or
+        // GRUB's default here; an EFI one that writes no entry; BIOS
+        // through GRUB_BIOS_NILFS2's wrapper: none touches NVRAM.
+        assert_eq!(code(&["chroot", "/mnt/bko-target", "grub-install", "--target=i386-pc", "/dev/vdb"]), FailureCode::CmdFailed);
+        assert_eq!(code(&["chroot", "/mnt/bko-target", "grub-install"]), FailureCode::CmdFailed);
+        assert_eq!(code(&["chroot", "/mnt/bko-target", "grub-install", "--target=x86_64-efi", "--efi-directory=/boot/efi", "--bootloader-id=debian", "--no-nvram"]), FailureCode::CmdFailed);
+        assert_eq!(code(&["sh", "-c", "x", "sh", "/dev/vdb", "chroot", "/mnt/bko-target", "grub-install", "--target=i386-pc", "/dev/vdb"]), FailureCode::CmdFailed);
+        assert_eq!(code(&["chroot", "/mnt/bko-target", "update-grub"]), FailureCode::CmdFailed);
         // The program a failed step names.
         assert_eq!(jsonout::program_of(&Cmd::new(&["chroot", "/mnt/bko-target", "/usr/sbin/grub-install", "x"])).as_deref(), Some("grub-install"));
         assert_eq!(jsonout::program_of(&Cmd::new(&["env", "A=1", "B=2", "mkfs.xfs", "/dev/vdb1"])).as_deref(), Some("mkfs.xfs"));
         assert_eq!(jsonout::program_of(&Cmd::new(&["sh", "-c", "x"])).as_deref(), Some("sh"));
         assert_eq!(jsonout::program_of(&Cmd::note("n")), None);
-        assert_eq!(failure_code(&Cmd::new(&["grub-install", "/dev/vdb"]), Stage::Boot, &exit(1), &s), FailureCode::EfiVars);
+        // With the variables there, the same steps fail as any other.
         t.file("/proc/self/mountinfo", "30 20 0:30 / /sys/firmware/efi/efivars rw,nosuid - efivarfs efivarfs rw\n");
-        assert_eq!(failure_code(&Cmd::new(&["grub-install", "/dev/vdb"]), Stage::Boot, &exit(1), &s), FailureCode::CmdFailed);
+        assert_eq!(failure_code(&Cmd::new(&["efibootmgr", "-c"]), Stage::Boot, &exit(1), &s), FailureCode::CmdFailed);
+        assert_eq!(failure_code(&Cmd::new(&["grub-install", "--target=x86_64-efi"]), Stage::Boot, &exit(1), &s), FailureCode::CmdFailed);
         assert_eq!(failure_code(&Cmd::new(&["sh", "-c", "x"]).archiver(), Stage::Restore, &exit(1), &s), FailureCode::ArchiverFailed);
+        // The archiver's restore options checked (an old rustic-bko): no
+        // second try passes that.
+        let help = "rustic-bko restore --help > /run/bko-holt/restore.help 2>&1; grep -q -- '--exact' /run/bko-holt/restore.help || { echo no >&2; exit 1; }";
+        assert_eq!(failure_code(&Cmd::new(&["sh", "-c", help]).archiver(), Stage::Restore, &exit(1), &s), FailureCode::CmdFailed);
+        // As the builder makes it (garuda's plan: the check, the copy and
+        // the shared snapshots' scripts).
+        let plan = crate::json::parse(&std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/garuda/plan.json")).unwrap()).unwrap();
+        let mut checks = 0;
+        for st in plan.get_arr("stages").unwrap() {
+            for c in st.arr_at(&["commands"]).iter().filter(|c| c.get_bool("archiver") == Some(true)) {
+                let argv: Vec<&str> = c.arr_at(&["argv"]).iter().filter_map(Value::as_str).collect();
+                let help = argv.iter().any(|a| a.contains("restore --help"));
+                checks += usize::from(help);
+                let want = if help { FailureCode::CmdFailed } else { FailureCode::ArchiverFailed };
+                assert_eq!(failure_code(&Cmd::new(&argv).archiver(), Stage::Restore, &exit(1), &s), want, "{argv:?}");
+            }
+        }
+        assert_eq!(checks, 1);
         assert_eq!(failure_code(&Cmd::write_file("/x", String::new()), Stage::Boot, &exit(1), &s), FailureCode::WriteFailed);
         assert_eq!(failure_code(&Cmd::read_back("/dev/vdb1", &Value::Null), Stage::Format, &exit(1), &s), FailureCode::ReadbackFailed);
     }
@@ -1835,56 +2010,104 @@ mod tests {
         assert_eq!(code, EXIT_FAILED);
         assert_eq!(names(&evs), ["start", "failed", "end"]);
         assert_eq!((evs[1].get_str("code"), evs[1].get_u64("pid")), (Some("lock_held"), Some(u64::from(me))));
+        // No step failed: no program, no argv.
+        assert_eq!((evs[1].get("program"), evs[1].get("argv")), (Some(&Value::Null), Some(&Value::Null)));
         assert!(err.contains("another bko-holt load is running"), "{err}");
         // Not ours to remove.
         assert_eq!(std::fs::read_to_string(t.p(&lock_path())).unwrap(), held);
+        // Where the boot time is known (Haiku's), a lock older than the
+        // boot is stale, even with a live pid.
+        let at = t.p(&lock_path());
+        let hour_ago = std::time::SystemTime::now() - Duration::from_secs(3600);
+        assert_eq!(holder_since(&at, Some(hour_ago)), Holder::Live(Some(me)));
+        std::fs::File::options().write(true).open(&at).unwrap().set_modified(hour_ago - Duration::from_secs(60)).unwrap();
+        assert_eq!(holder_since(&at, Some(hour_ago)), Holder::Stale);
+        assert_eq!(holder_since(&at, None), Holder::Live(Some(me)));
+        // A takeover under way (its guard young): a stale lock waits for
+        // it, and stays as it is.
+        let stale = format!("{{\"pid\":{gone},\"start\":null}}\n");
+        t.file(&lock_path(), stale.as_str());
+        let guard = t.p(&format!("{}.takeover", lock_path()));
+        t.file(&format!("{}.takeover", lock_path()), "");
+        assert!(matches!(Lock::take(&s), Err(LockErr::Held(None))));
+        assert_eq!(std::fs::read_to_string(&at).unwrap(), stale);
+        // One left by a run that died taking over: gone after 10 s, and
+        // the lock taken over, the guard let go.
+        std::fs::File::options().write(true).open(&guard).unwrap().set_modified(std::time::SystemTime::now() - Duration::from_secs(60)).unwrap();
+        let l3 = Lock::take(&s).unwrap();
+        assert!(!guard.exists());
+        assert_eq!(crate::json::parse(std::fs::read_to_string(&at).unwrap().trim()).unwrap().get_u64("pid"), Some(u64::from(me)));
+        drop(l3);
+        assert!(!at.exists());
     }
 
     /// The environment variable panic_child runs under.
     const PANIC_CHILD: &str = "BKO_HOLT_TEST_PANIC_CHILD";
 
     /// In a child of its own (a_panic_ends_the_stream's): armed, a run
-    /// begun, then a panic of the main thread's.
+    /// begun, then a panic of the main thread's while a command runs in a
+    /// group of its own; or ("early") a panic before the run's `start`.
     #[test]
     fn panic_child() {
-        if std::env::var_os(PANIC_CHILD).is_none() {
-            return;
-        }
+        let Some(mode) = std::env::var_os(PANIC_CHILD) else { return };
+        use std::os::unix::process::{CommandExt, ExitStatusExt};
         arm();
         let t = Tree::new("load-exec-ev-panic");
         let lock = t.p("/load.lock");
         t.file("/load.lock", format!("{{\"pid\":{}}}\n", std::process::id()));
+        let early = mode == "early";
+        let mut child = Command::new("sleep").arg("60").process_group(0).stdin(Stdio::null()).spawn().unwrap();
+        let pgid = i32::try_from(child.id()).unwrap();
         hook::note(|h| {
-            h.started = true;
+            h.started = !early;
             h.commit = true;
+            h.layout = Some((Some("lovelace".to_string()), Some("2026-11-22T01:00:11Z".to_string())));
             h.stage = Some("restore");
             h.n = Some(3);
+            h.child = (!early).then_some(pgid);
             h.lock = Some(lock.clone());
         });
         let r = std::thread::Builder::new().name("main".into()).spawn(|| panic!("the test's panic")).unwrap().join();
         assert!(r.is_err());
         assert!(!lock.exists());
+        if early {
+            child.kill().unwrap();
+            child.wait().unwrap();
+        } else {
+            // The running command died with the run.
+            assert_eq!(child.wait().unwrap().signal(), Some(crate::sys::SIGKILL));
+        }
         println!("PANIC-CHILD-OK");
     }
 
     /// A panic under --json: `failed` with `internal` and the panic's
-    /// text, then `end` 101, and the lock let go.
+    /// text, then `end` 101, the running command killed and the lock let
+    /// go; before the run's `start`, a `start` of the hook's own, with the
+    /// run's --commit and layout.
     #[test]
     fn a_panic_ends_the_stream() {
-        let out = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "load::exec::tests::panic_child", "--nocapture", "--test-threads", "1"])
-            .env(PANIC_CHILD, "1")
-            .stdin(Stdio::null())
-            .output()
-            .unwrap();
-        let text = String::from_utf8_lossy(&out.stdout).into_owned();
-        assert!(out.status.success() && text.contains("PANIC-CHILD-OK"), "{text}{}", String::from_utf8_lossy(&out.stderr));
-        // libtest's own lines are on the same output: an event may follow
-        // its "test ... " on the line.
-        let evs: Vec<Value> = text.lines().filter_map(|l| l.find("{\"event\"").map(|i| crate::json::parse(&l[i..]).unwrap())).collect();
-        assert_eq!(names(&evs), ["failed", "end"], "{text}");
-        assert_eq!((evs[0].get_str("code"), evs[0].get_str("stage"), evs[0].get_u64("n")), (Some("internal"), Some("restore"), Some(3)));
-        assert!(evs[0].get_str("text").unwrap().contains("the test's panic"), "{text}");
-        assert_eq!((evs[1].get_u64("exit"), evs[1].get_bool("stopped")), (Some(101), Some(false)));
+        for mode in ["started", "early"] {
+            let out = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "load::exec::tests::panic_child", "--nocapture", "--test-threads", "1"])
+                .env(PANIC_CHILD, mode)
+                .stdin(Stdio::null())
+                .output()
+                .unwrap();
+            let text = String::from_utf8_lossy(&out.stdout).into_owned();
+            assert!(out.status.success() && text.contains("PANIC-CHILD-OK"), "{mode}: {text}{}", String::from_utf8_lossy(&out.stderr));
+            // libtest's own lines are on the same output: an event may
+            // follow its "test ... " on the line.
+            let mut evs: Vec<Value> = text.lines().filter_map(|l| l.find("{\"event\"").map(|i| crate::json::parse(&l[i..]).unwrap())).collect();
+            if mode == "early" {
+                assert_eq!(names(&evs).first(), Some(&"start"), "{text}");
+                let start = evs.remove(0);
+                assert_eq!((start.get_bool("commit"), start.get_str("log")), (Some(true), Some(format!("{RUN_DIR}/log/load.log").as_str())));
+                assert_eq!((start.str_at(&["layout", "hostname"]), start.str_at(&["layout", "generated"])), (Some("lovelace"), Some("2026-11-22T01:00:11Z")));
+            }
+            assert_eq!(names(&evs), ["failed", "end"], "{text}");
+            assert_eq!((evs[0].get_str("code"), evs[0].get_str("stage"), evs[0].get_u64("n")), (Some("internal"), Some("restore"), Some(3)));
+            assert!(evs[0].get_str("text").unwrap().contains("the test's panic"), "{text}");
+            assert_eq!((evs[1].get_u64("exit"), evs[1].get_bool("stopped")), (Some(101), Some(false)));
+        }
     }
 }

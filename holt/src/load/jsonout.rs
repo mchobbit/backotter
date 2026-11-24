@@ -925,7 +925,8 @@ pub struct FailFacts {
 }
 
 /// The `failed` event: CODE in STAGE at step N (none for a failure of the
-/// run's own, a lock or a write after the steps), C the step, TEXT the
+/// run's own, a lock or a write after the steps: then `program` and
+/// `argv` are null), C the step, TEXT the
 /// failure as text mode's standard error words it, LOG the log's path.
 pub fn failed_event(stage: Option<&str>, n: Option<usize>, code: super::codes::FailureCode, c: Option<&Cmd>, facts: &FailFacts, text: &str, log: Option<&str>) -> Obj {
     let program = c.and_then(program_of);
@@ -934,7 +935,7 @@ pub fn failed_event(stage: Option<&str>, n: Option<usize>, code: super::codes::F
         .set("n", n)
         .set("code", code.as_str())
         .set("program", program)
-        .set("argv", c.map_or(Value::Arr(Vec::new()), argv_json))
+        .set("argv", c.map_or(Value::Null, argv_json))
         .set("status", facts.status)
         .set("signal", facts.signal)
         .set("text", clipped(text, EVENT_TEXT_MAX))

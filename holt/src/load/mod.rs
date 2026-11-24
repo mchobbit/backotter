@@ -764,7 +764,6 @@ mod tests {
     fn json_refusals() {
         let t = crate::testutil::Tree::new("load-json");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
-        let layout = r#"{"format": "bko-holt", "schema": 1, "os": {"id": "debian", "version_id": "13"}, "storage": {"disks": []}}"#;
         let doc = |out: &str| crate::json::parse(out).unwrap();
         // Text mode: nothing on standard output, as ever.
         let (code, out, err) = run(&opts(&["l.json"]), "{not json", &s);
@@ -779,7 +778,6 @@ mod tests {
         // The writing stages write their events on standard output as they
         // happen (RT10f): json_cli.rs runs them as a program, and exec.rs's
         // tests read them from a sink.
-        let _ = layout;
     }
 
     #[test]

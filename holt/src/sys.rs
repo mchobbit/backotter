@@ -588,10 +588,12 @@ fn parse_df_pk(text: &str) -> Option<(u64, u64, u64)> {
 
 // ---- signals and limits, for --json's stop (holt-json.md, J7) -------------
 
-/// SIGINT's and SIGTERM's numbers: the same on every target holt builds for
-/// (Linux, the BSDs, illumos; Haiku's are 2 and 15 too, as rescue-tui.md's
-/// RT1 read them from its headers).
+/// SIGINT's, SIGKILL's and SIGTERM's numbers: the same on every target
+/// holt builds for (Linux, the BSDs, illumos; Haiku's are 2 and 15 too, as
+/// rescue-tui.md's RT1 read them from its headers, and its signal.h's
+/// SIGKILL is 9).
 pub const SIGINT: i32 = 2;
+pub const SIGKILL: i32 = 9;
 pub const SIGTERM: i32 = 15;
 
 /// RLIMIT_CORE's number: 4 on Linux, the BSDs and illumos, 0 on Haiku.
@@ -671,8 +673,12 @@ pub fn process_alive(pid: u32) -> bool {
 
 /// When process PID started, as a string that is the same for as long as
 /// that process lives and differs for a later one given the same PID: on
-/// Linux /proc/PID/stat's starttime (clock ticks since boot), elsewhere
-/// ps's start time.  None where neither says (Haiku's ps has no -o).
+/// Linux /proc/PID/stat's starttime (clock ticks since boot), on illumos
+/// /proc/PID/psinfo's pr_start (seconds and nanoseconds since the epoch:
+/// ps's stime turns from a time into a date after a day), on the BSDs
+/// ps's lstart, read in the C locale and UTC whatever load's environment
+/// (FreeBSD's is strftime's %c, in the caller's locale and zone).  None
+/// where none of them says (Haiku's ps has no -o).
 pub fn process_start(pid: u32) -> Option<String> {
     if cfg!(target_os = "linux") {
         let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
@@ -680,10 +686,50 @@ pub fn process_start(pid: u32) -> Option<String> {
         // spaces: state is the first field, starttime the 20th.
         return stat.rsplit_once(')')?.1.split_whitespace().nth(19).map(str::to_string);
     }
-    let field = if cfg!(any(target_os = "illumos", target_os = "solaris")) { "stime=" } else { "lstart=" };
-    let out = Command::new("ps").args(["-o", field, "-p", &pid.to_string()]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    if cfg!(any(target_os = "illumos", target_os = "solaris")) {
+        return psinfo_start(&std::fs::read(format!("/proc/{pid}/psinfo")).ok()?, pid);
+    }
+    if cfg!(target_os = "haiku") {
+        return None;
+    }
+    let mut ps = Command::new("ps");
+    ps.args(["-o", "lstart=", "-p", &pid.to_string()]).env_clear().env("LC_ALL", "C").env("TZ", "UTC");
+    if let Some(path) = std::env::var_os("PATH") {
+        ps.env("PATH", path);
+    }
+    let out = ps.stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (out.status.success() && !s.is_empty()).then_some(s)
+}
+
+/// pr_start of an illumos psinfo_t BUF (LP64, the only illumos holt is
+/// built for: pr_pid at byte 8, pr_start's tv_sec and tv_nsec at 88 and
+/// 96), as "SECS.NANOS"; None unless pr_pid is PID and the time is one.
+fn psinfo_start(buf: &[u8], pid: u32) -> Option<String> {
+    let at = |o: usize, n: usize| buf.get(o..o + n);
+    let i64_at = |o: usize| at(o, 8).and_then(|b| b.try_into().ok()).map(i64::from_ne_bytes);
+    let pr_pid = at(8, 4).and_then(|b| b.try_into().ok()).map(i32::from_ne_bytes)?;
+    let (secs, nanos) = (i64_at(88)?, i64_at(96)?);
+    (i64::from(pid) == i64::from(pr_pid) && secs > 0 && (0..1_000_000_000).contains(&nanos)).then(|| format!("{secs}.{nanos:09}"))
+}
+
+/// When this system booted, where process_start can't tell (Haiku: its
+/// system_time(), microseconds since boot): a lock written before it is
+/// one whose pid has come round again.  None elsewhere.
+#[cfg(target_os = "haiku")]
+pub fn boot_time() -> Option<std::time::SystemTime> {
+    // SAFETY: system_time() is libroot's (OS.h), takes nothing, has no
+    // preconditions and returns a bigtime_t (int64) for every caller.
+    unsafe extern "C" {
+        safe fn system_time() -> i64;
+    }
+    std::time::SystemTime::now().checked_sub(Duration::from_micros(u64::try_from(system_time()).ok()?))
+}
+
+/// When this system booted, where process_start can't tell: only Haiku's.
+#[cfg(not(target_os = "haiku"))]
+pub fn boot_time() -> Option<std::time::SystemTime> {
+    None
 }
 
 /// No core dumps for this process or its children (cryptsetup and the
@@ -952,5 +998,29 @@ mod tests {
             assert!(s.bytes().all(|b| b.is_ascii_digit()), "{s}");
             assert_eq!(process_start(me), Some(s));
         }
+        // Elsewhere ps's (the BSDs, and macOS where the tests run): the
+        // same whatever load's own locale and zone.
+        if !cfg!(any(target_os = "linux", target_os = "illumos", target_os = "solaris", target_os = "haiku")) {
+            let s = process_start(me).unwrap();
+            assert_eq!(process_start(me), Some(s));
+        }
+    }
+
+    /// illumos's psinfo_t, LP64: pr_pid at 8, pr_start at 88.
+    #[test]
+    fn psinfo_starts() {
+        let mut b = vec![0u8; 416];
+        b[8..12].copy_from_slice(&4711i32.to_ne_bytes());
+        b[88..96].copy_from_slice(&1_795_000_000i64.to_ne_bytes());
+        b[96..104].copy_from_slice(&12_345i64.to_ne_bytes());
+        assert_eq!(psinfo_start(&b, 4711).as_deref(), Some("1795000000.000012345"));
+        // Another process's, a short read, no time.
+        assert_eq!(psinfo_start(&b, 4712), None);
+        assert_eq!(psinfo_start(&b[..100], 4711), None);
+        b[96..104].copy_from_slice(&1_000_000_000i64.to_ne_bytes());
+        assert_eq!(psinfo_start(&b, 4711), None);
+        b[88..104].fill(0);
+        assert_eq!(psinfo_start(&b, 4711), None);
+        assert_eq!(boot_time().is_some(), cfg!(target_os = "haiku"));
     }
 }

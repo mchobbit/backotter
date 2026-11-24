@@ -787,7 +787,6 @@ pub fn contents(sys: &Sys, t: &TargetDisk) -> Vec<crate::json::Value> {
     use crate::json::{Obj, Value};
     let mut out = Vec::new();
     let devs: Vec<&BlockDev> = if t.table.is_none() { std::iter::once(&t.b).chain(t.parts.iter()).collect() } else { t.parts.iter().collect() };
-    let u = |c: &Value, k: &str| c.get(k).and_then(Value::as_u64);
     for d in devs {
         let Some(src) = sys.open_dev(&d.dev_path()) else {
             // scan's own words for it: "vdb1: ext4 UUID=... LABEL=...".
@@ -803,19 +802,24 @@ pub fn contents(sys: &Sys, t: &TargetDisk) -> Vec<crate::json::Value> {
             continue;
         };
         for c in crate::probe::probe_all(&src) {
-            let j = c.to_json();
-            let used = match c.kind.as_str() {
-                "ext2" | "ext3" | "ext4" | "xfs" => match (u(&j, "blocks"), u(&j, "free_blocks"), u(&j, "block_size")) {
-                    (Some(b), Some(f), Some(bs)) => Some(b.saturating_sub(f) * bs),
-                    _ => None,
-                },
-                "btrfs" => u(&j, "bytes_used"),
-                _ => None,
-            };
+            let used = used_bytes(&c.kind, &c.to_json());
             out.push(Obj::new().set("dev", d.name.as_str()).set("type", c.kind.as_str()).set("label", c.label.clone()).set("size_bytes", d.size_bytes).set("used_bytes", used).build());
         }
     }
     out
+}
+
+/// The bytes a filesystem of KIND uses, from its probe's JSON J: ext's
+/// and XFS's blocks less free blocks, times the block size; btrfs's
+/// bytes_used.  None for another type, or a superblock whose figures
+/// overflow a u64 (a damaged one: no real filesystem holds 2^64 bytes).
+fn used_bytes(kind: &str, j: &crate::json::Value) -> Option<u64> {
+    let u = |k: &str| j.get(k).and_then(crate::json::Value::as_u64);
+    match kind {
+        "ext2" | "ext3" | "ext4" | "xfs" => u("blocks")?.saturating_sub(u("free_blocks")?).checked_mul(u("block_size")?),
+        "btrfs" => u("bytes_used"),
+        _ => None,
+    }
 }
 
 /// Whether the mount at MOUNT_POINT is of something on T: one of its
@@ -1204,6 +1208,21 @@ mod tests {
         let m = map(&layout(), &o, &system, &s);
         assert_eq!(m.pairs, vec![("vda".to_string(), "vdb".to_string())]);
         assert!(m.problems.is_empty(), "{:?}", m.problems);
+    }
+
+    /// RustAudit1 HD2-07: a damaged superblock's figures (blocks about
+    /// 2^60, 64 KiB blocks) give no used bytes, not a panic or a wrapped
+    /// number.
+    #[test]
+    fn used_bytes_overflow_is_null() {
+        let j = |b: u64, f: u64, bs: u64| crate::json::parse(&format!(r#"{{"blocks": {b}, "free_blocks": {f}, "block_size": {bs}}}"#)).unwrap();
+        assert_eq!(used_bytes("ext4", &j(1 << 20, 1 << 18, 4096)), Some(((1 << 20) - (1 << 18)) * 4096));
+        assert_eq!(used_bytes("xfs", &j(10, 20, 4096)), Some(0));
+        assert_eq!(used_bytes("ext4", &j(1 << 60, 0, 65536)), None);
+        assert_eq!(used_bytes("xfs", &j(u64::MAX, 1, 4096)), None);
+        assert_eq!(used_bytes("btrfs", &crate::json::parse(r#"{"bytes_used": 12345}"#).unwrap()), Some(12345));
+        assert_eq!(used_bytes("vfat", &j(1, 0, 512)), None);
+        assert_eq!(used_bytes("ext4", &crate::json::parse(r#"{"blocks": 10, "block_size": 4096}"#).unwrap()), None);
     }
 
     /// RustAudit1 HD2-04: off Linux the partition record names the target

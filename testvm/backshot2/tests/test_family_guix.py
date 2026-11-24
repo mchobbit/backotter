@@ -148,6 +148,22 @@ class TestFoundOnGuix(unittest.TestCase):
         e = E.build(a, "align", {"disk": dumpx.disk(a)["name"], "partition": p["number"], "sectors": 7})
         self.assertEqual(dumpx.disk(E.apply(a, [e]))["boot_code"]["grub_core_lba"], bc0["grub_core_lba"])
 
+    def test_big_metadata_follows_the_node_size(self):
+        # fail-008's second difference: no big_metadata at a 4 KiB node.
+        from bs2lib import edits as E
+        d = self.B
+        src = dumpx.part(dumpx.disk(d), 3)["content"]["features"]
+        self.assertEqual(src, ["mixed_backref", "big_metadata", "extended_iref", "skinny_metadata", "no_holes"])
+        e = E.build(d, "btrfs_geometry", {"fs": "vda3", "node_size": 4096})
+        self.assertNotIn("features", e["sets"]["vda3"]["content"])   # the cases drawn before are the same
+        four = E.apply(d, [e])
+        self.assertEqual(dumpx.part(dumpx.disk(four), 3)["content"]["features"], ["mixed_backref", "extended_iref", "skinny_metadata", "no_holes"])
+        e2 = E.build(four, "btrfs_geometry", {"fs": "vda3", "node_size": 8192})
+        back = E.apply(d, [e, e2])
+        self.assertEqual(dumpx.part(dumpx.disk(back), 3)["content"]["features"], src)
+        e3 = E.build(d, "btrfs_geometry", {"fs": "vda3", "node_size": 65536})
+        self.assertEqual(dumpx.part(dumpx.disk(E.apply(d, [e3])), 3)["content"]["features"], src)
+
     def test_long_symlink_fits_a_4k_node(self):
         # fail-008: btrfs keeps a symlink's target inline in one leaf item:
         # 3,949 bytes at a 4 KiB node (checked on a 4 KiB-node btrfs, kernel 7.2:

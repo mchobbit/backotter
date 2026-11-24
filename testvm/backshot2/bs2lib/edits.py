@@ -774,10 +774,30 @@ class XfsGeometry(Op):
 
 
 class BtrfsGeometry(Op):
+    """btrfs_geometry FS: the node size.  The superblock's big_metadata flag
+    follows it: the kernel sets it on a filesystem whose nodes are bigger
+    than the page (4 KiB here), and mkfs.btrfs at a 4 KiB node makes none
+    (fail-008's second difference, on guix15-bios: a 16 KiB-node source's
+    flag isn't the drifted one's).  Kept out of the edit's sets, so the
+    cases drawn before are the same cases; apply works it out from the
+    edit's node_size."""
     name = "btrfs_geometry"
+    PAGE = 4096
 
     def apply(self, d, e):
-        pass
+        dev = dumpx.resolve(d, e.get("fs"))
+        c = (dev or {}).get("content") or {}
+        feats = c.get("features")
+        if not isinstance(feats, list) or not isinstance(e.get("node_size"), int):
+            return
+        big = e["node_size"] > self.PAGE
+        if big and "big_metadata" not in feats:
+            # In bit order, as bko-holt's dump lists them (probe/btrfs.rs INCOMPAT).
+            below = ("mixed_backref", "default_subvol", "mixed_groups", "compress_lzo", "compress_zstd")
+            i = max([k + 1 for k, f in enumerate(feats) if f in below], default=0)
+            c["features"] = feats[:i] + ["big_metadata"] + feats[i:]
+        elif not big and "big_metadata" in feats:
+            c["features"] = [f for f in feats if f != "big_metadata"]
 
     def build(self, d, params):
         dev, c = _fs(d, params["fs"], ("btrfs",))

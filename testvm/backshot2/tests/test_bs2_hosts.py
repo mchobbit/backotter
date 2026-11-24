@@ -140,6 +140,14 @@ class GuixSources(unittest.TestCase):
         self.assertEqual(B.prep_room("guix15"), "2 4")
         self.assertIn("reserve /x.case --mem 3) &&", B.reserve_tier1("/x.case"))
 
+    def test_holt_passed_on(self):
+        with mock.patch.dict(os.environ, {"BS2_HOLT": "/bkoscratch/x/bko-holt", "BS2_FAST_DOWN": "0"}):
+            self.assertEqual(B.reuse_env(), "BS2_FAST_DOWN=0 BS2_HOLT=/bkoscratch/x/bko-holt ")
+            self.assertIn("BS2_HOLT=/bkoscratch/x/bko-holt ./cmp-run.sh", B.reserve_tier1("/x.case"))
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("BS2_HOLT", None)
+            self.assertNotIn("BS2_HOLT", B.reuse_env())
+
     def test_tree_name(self):
         self.assertEqual(B.WT, os.environ.get("BS2_WT") or "bs2-wt")
         self.assertTrue(B.HOST_BS2.startswith(f"~/backotter-work/{B.WT}/"))

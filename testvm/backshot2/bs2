@@ -286,11 +286,14 @@ def sync(hosts=None):
 # What a case reuses (ht1-bs2.sh), each on unless set to 0: set here, passed on to the
 # hosts' cases (the queue, replay, soak, the corpus) so a run can compare.
 REUSE_VARS = ("BS2_REUSE_SOURCE", "BS2_REUSE_BACKUP", "BS2_RESCUER_STATE", "BS2_FAST_DOWN")
+# Passed on the same way: BS2_HOLT, the bko-holt a case runs (a path on the hosts; bs2-host's
+# default is /bkoscratch/backshot2/bin/bko-holt), so a fix can be run before it is in bin/.
+PASS_VARS = REUSE_VARS + ("BS2_HOLT",)
 
 
 def reuse_env():
-    """REUSE_VARS set in this environment, as "NAME=VALUE " words for a host's command."""
-    return "".join(f"{v}={shlex.quote(os.environ[v])} " for v in REUSE_VARS if v in os.environ)
+    """PASS_VARS set in this environment, as "NAME=VALUE " words for a host's command."""
+    return "".join(f"{v}={shlex.quote(os.environ[v])} " for v in PASS_VARS if v in os.environ)
 
 
 def reserve_tier1(case):

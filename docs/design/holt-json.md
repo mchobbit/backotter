@@ -1,8 +1,8 @@
 # bko-holt's JSON protocol: what bko-rescue reads and how it drives load
 
-Status: draft, 2026-11-24, revised the same day after two reviews (one
-against holt/src and the rustic fork, one against the screens and the
-dry run's safety); not approved.  The spec `rescue-tui.md`'s D12 asks for
+Status: approved 2026-11-24 by the user, with every recommendation
+(J1-J21), after two reviews (one against holt/src and the rustic fork, one
+against the screens and the dry run's safety).  The spec `rescue-tui.md`'s D12 asks for
 before RT10's code.  Nothing in it is built.
 
 bko-rescue (the stick's restore program, `rescue/`) runs bko-holt as an

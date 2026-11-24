@@ -1158,13 +1158,15 @@ guix_source() {
     read -r n p ps < <(sshk "$gkey" "$GUIX_GENS" 2>"$L/source-guix-gens.err") ||
         { bad "guix: the source's generations: $(tail -1 "$L/source-guix-gens.err")"; return 1; }
     vm_down "$gkey"
-    GRUB_PICK=$GUIX_PICK_RE GRUB_KEYS=$GUIX_PICK_KEYS vm_up "${src[0]}" "$L/source-serial-prev.log" "${fw[@]}" "${svfw[@]}" "${extra_src[@]}"
+    # (CONSOLE_KEY: guix15-luks's passphrase, typed at GRUB's prompt and the
+    # initrd's, before and after the menu.)
+    GRUB_PICK=$GUIX_PICK_RE GRUB_KEYS=$GUIX_PICK_KEYS CONSOLE_KEY=$ckey vm_up "${src[0]}" "$L/source-serial-prev.log" "${fw[@]}" "${svfw[@]}" "${extra_src[@]}"
     vm_wait "$gkey" || { bad "guix: the source's generation $p boots (no SSH; logs/source-serial-prev.log)"; return 1; }
     grep -q 'console-keys.py: typed' "$L/source-serial-prev.log" || { bad "guix: GRUB's menu never showed \"$GUIX_PICK_RE\" on the source's serial console"; return 1; }
     sshk "$gkey" "$GUIX_STATE" > "$L/source-guix-prev.txt" 2>&1
     bootstate "$gkey" > "$L/source-prev-bootstate.txt"
     vm_down "$gkey"
-    vm_up "${src[0]}" "$L/source-serial-3.log" "${fw[@]}" "${svfw[@]}" "${extra_src[@]}"
+    CONSOLE_KEY=$ckey vm_up "${src[0]}" "$L/source-serial-3.log" "${fw[@]}" "${svfw[@]}" "${extra_src[@]}"
     vm_wait "$gkey" || { bad "guix: the source boots its generation $n again (no SSH; logs/source-serial-3.log)"; return 1; }
     sshk "$gkey" "$GUIX_STATE" > "$L/source-guix.txt" 2>&1
     if ! cmp -s "$L/source-guix-first.txt" "$L/source-guix.txt"; then
@@ -1190,7 +1192,7 @@ guix_verify() {
         bad "guix: the restored generation $n boot isn't the source's: $(diff "$L/source-guix.txt" "$L/restored-guix.txt" | grep '^[<>]' | head -4 | tr '\n' ' ')"
     fi
     vm_down "$gkey"
-    GRUB_PICK=$GUIX_PICK_RE GRUB_KEYS=$GUIX_PICK_KEYS vm_up "${dst[0]}" "$L/restored-serial-prev.log" --snapshot "${fw[@]}" "${dvfw[@]}" "${BS2_VFW[@]}" "${extra_dst[@]}"
+    GRUB_PICK=$GUIX_PICK_RE GRUB_KEYS=$GUIX_PICK_KEYS CONSOLE_KEY=$ckey vm_up "${dst[0]}" "$L/restored-serial-prev.log" --snapshot "${fw[@]}" "${dvfw[@]}" "${BS2_VFW[@]}" "${extra_dst[@]}"
     vm_wait "$gkey" || { bad "guix: the restored generation $p boots (no SSH; logs/restored-serial-prev.log)"; return; }
     grep -q 'console-keys.py: typed' "$L/restored-serial-prev.log" || bad "guix: GRUB's menu never showed \"$GUIX_PICK_RE\" on the restored disk's serial console"
     sshk "$gkey" "$GUIX_STATE" > "$L/restored-guix-prev.txt" 2>&1

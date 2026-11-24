@@ -1002,6 +1002,78 @@ label).  On images rebuilt with those fixes, `freebsd14`, `netbsd11`,
 killed out of swap during the restore (the image's VM has 3 GiB and no
 swap).
 
+## The --json rebuild: HT_VARIANT=json
+
+`HT_VARIANT=json` (docs/design/holt-json.md, "Testing"; RT10j, built
+2026-11-24) is a plain run, in `RUN/GUEST-json`, whose rebuild and verify
+run a second time with bko-holt's `--json`, the way bko-rescue will run
+it; both drivers take it (ht1.sh, ht1-bsd.sh), and it needs a bko-holt
+with `--json` (`HT_HOLT`, until holt-bin's has one).  HoltTest1's only:
+no Test2 cell is a json one, its lines in the drivers are `# t2-only:
+json` blocks (which key no cell), and its own files, `ht1-json.sh` (the
+second pass) and `ht1-json.py` (its checks; `ht1-json-test.py` tests
+them), are the json variant's harness in holt/spec.json alone.
+
+- **The text run** is a plain run's but for its key files: in both runs
+  the passphrase file and the repository's password file are copies in a
+  private directory of the rescuer (`/run/ht1-keys`, `ROOT/ht1-keys` on the
+  others; 0700, each file 0600), as `--json`'s key-file checks want (J3),
+  so the two runs' commands are the same, paths and all.  GELI's and
+  softraid's key files (`/tmp/ht1-geli`) pass the checks as they are.
+- **The json pass** is the driver's own rebuild run again on new targets
+  (`dst-json-I.qcow2`) in a second throwaway rescuer, the refusals and
+  the text dry run left out (`HT_QUICK`'s), its logs in `logs/json/`, its
+  report lines `PASS json: ...`.  Before its stages, under
+  `BKO_HOLT_NO_COMMIT=1`: `--version --json` says `no_commit`, `load
+  --commit --json` is refused (exit 2, a `no_commit` `bko-holt-error`),
+  `plan --json` of the whole argument list is `ok`, and a dry run (`load
+  ... --through close --json` without `--commit`) ends 0 with every
+  command `would`, boot and close among them, and leaves every target's and
+  the decoy's image as it was (md5 on the host after a sync).  Then each
+  stage: its `plan --json`, and the stage with `--json --expect-plan` of
+  that plan's hash, its events passing testvm/rescue/holt_schema.py and
+  ending 0, each command's `cmd_done` 0; `status --json` after it, the
+  stage done.  After the stages: the commands the events ran are in the
+  text run's load.log, in order (but the archiver's `--json-progress
+  --progress-interval 1s`, text mode's `--no-progress`), the dry run's are
+  the ones that ran, and the json pass's load.log is the text run's.
+- **The verify** runs again on the json pass's disks (`logs/json/`,
+  `dumps/json/`): judge.py's verdict must be the text run's (the same
+  DIFF lines and count of differences; what it ignored, a boot's own
+  fields, may differ), and so must judge.py fs's on Linux; the restored
+  `/var/log/bko-holt` (read from the booted restored system) is the text
+  run's.
+- **"The text run's"** for a load.log (ht1-json.py logcmp) means but for
+  what `--json` changes there: the argv lines (`==== bko-holt load ...`),
+  the archiver's flag and the one status line the log keeps, and a
+  private write's text, which the json log gives as its size and SHA-256
+  (checked against the text log's); and but for output lines that differ
+  between any two runs, text and text too: dd's time and rate, and the
+  rescuer's own pids and mount namespaces in umount-tree's lines.
+- **A note, not a FAIL:** the whole run's plan, made before the partition
+  stage, against the restore stage's plan of the same arguments made
+  after it.  On OpenBSD they differ: the target's kernel serial there is
+  its disklabel's DUID, which the partition stage writes (holt-json.md,
+  "What RT10j found").
+- **Recordings:** each `--json` call's argv is beside its output
+  (`logs/json/json-NAME.argv`, `.json` or `.events`, `.err`, `.exit`);
+  `ht1-json.py record OUT logs/json GUEST` makes the fake's scenario of
+  them (testvm/rescue/scenarios/rec-GUEST).
+
+By hand, with a bko-holt built from the tree under test (build-holt.sh,
+`HOLT_OUT` of your own) and a reservation about twice a plain run's (two
+sets of restored disks):
+
+    cd ~/backotter-work && WEAR_TAG=ht1:RUN:GUEST-json HT_PORT=2691 HT_VARIANT=json \
+      HT_HOLT=DIR/PLATFORM/bko-holt setsid -f ./cmp-run.sh --reserve D M \
+        sudo -E testvm/holttest1d/ht1.sh GUEST RUN >/bkoscratch/holttest1d/RUN-GUEST.log 2>&1 </dev/null
+
+RT10j's five, one a family, all PASS (run rt10j2, 2026-11-24, 10-17 min
+each): `debian13-stack` (LUKS on md, LVM, UEFI; the Debian 13 guest with
+both), `freebsd15-geli`, `openbsd8-crypt` (softraid CRYPTO), `omnios58`
+(ZFS) and `haiku6`, reserved 9, 6, 8, 7 and 7 GiB of RAM disk (peaks 5.6,
+1.6, 5.6, 3.9 and 5.8) and 4-5 GiB of memory (peaks 2.5-3.1 anon).
+
 ## Where a run works, and what it keeps
 
 All three drivers write the same way, through `ht1-lib.sh`:

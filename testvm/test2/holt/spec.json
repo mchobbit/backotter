@@ -3,6 +3,7 @@
   "family": "holt",
   "about": "What a HoltTest cell's key covers (contract 1.3, rulings R5, R14, R17). keys.py reads it: an entry (holt:GUEST[+VARIANT] is entries[GUEST]) merges over kinds[its kind], lists adding up; PLAT in a path is the entry's plat. A kind is the driver ht1.sh hands the guest to (ht1.sh:70-76); 'driver' names it and 'variants_run' the HT_VARIANT values it takes as Test2 cells (ht1.sh's fitting variants, smaller, fitbigger, nearfull and refuse, are HoltTest1's only). Variants have no inputs of their own: the cell name is in the key. Pins and family lists are classes.json's (holt.pins, holt.families). The floor is ht_manifest's list (ht1-lib.sh's manifest.txt): the driver, ht1-lib.sh, judge.py, fsmeta.py, vm-run, vm-mount, the rescuer image, bin/'s debs and bcachefs, bko-holt, rustic-bko and the guest's disks.",
   "notes": [
+    "json: ht1.sh's and ht1-bsd.sh's HT_VARIANT=json (docs/design/holt-json.md, Testing; RT10j), a plain run whose rebuild and verify run again with --json (ht1-json.sh), in GUEST-json. HoltTest1's only, no Test2 cell (not in variants_run or classes.json holt.variants): its lines are '# t2-only: json' blocks, which key no cell, and its files are this variant's harness only, so they key nothing either.",
     "reformat-TYPE: ht1.sh's HT_VARIANT=reformat-TYPE, a plain run with HT_REFORMAT=/=TYPE (load --reformat /=TYPE, judge.py --reformat) in GUEST-reformat-TYPE; it has no inputs of its own but ht1.sh's '# t2-only: reformat-*' blocks, which only these cells key (keys.py only_text), so adding or changing them re-keys no other cell. classes.json holt.variants names the cells.",
     "harness: what runs the round trip or makes its records. ht1.sh is in every kind's: the queue runs ht1.sh GUEST RUN, which hands BSD, illumos, Haiku, Redox and Sculpt guests to ht1-bsd.sh or ht1-offline.sh (ht1.sh:70-76). compare/fsmeta.py records the files, so it is harness, not judge (R5 (d)).",
     "judge: holttest1d/judge.py alone (it reads the dumps and fsmeta's records).",
@@ -34,7 +35,8 @@
       "variants": {
         "img": {"replace": ["rescuer", "bins"], "bins_from_image": true, "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
                 "rescuer": ["@image"],
-                "harness": ["testvm/holttest1d/img-boot.py", "testvm/holttest1d/img-boot.d/{plat}.json", "stick/boot-test.py"]}
+                "harness": ["testvm/holttest1d/img-boot.py", "testvm/holttest1d/img-boot.d/{plat}.json", "stick/boot-test.py"]},
+        "json": {"harness": ["testvm/holttest1d/ht1-json.sh", "testvm/holttest1d/ht1-json.py", "testvm/rescue/holt_schema.py"]}
       },
       "per_guest": {
         "testvm/console-boot.py": "guests whose first passphrase file is console-passphrase or zfs-passphrase",
@@ -58,7 +60,8 @@
       "variants": {
         "img": {"replace": ["bins"], "bins_from_image": true, "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
                 "rescuer": ["@image"],
-                "harness": ["testvm/holttest1d/img-boot.py", "testvm/holttest1d/img-boot.d/{plat}.json", "stick/boot-test.py"]}
+                "harness": ["testvm/holttest1d/img-boot.py", "testvm/holttest1d/img-boot.d/{plat}.json", "stick/boot-test.py"]},
+        "json": {"harness": ["testvm/holttest1d/ht1-json.sh", "testvm/holttest1d/ht1-json.py", "testvm/rescue/holt_schema.py"]}
       }
     },
     "offline": {

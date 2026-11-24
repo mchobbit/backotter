@@ -45,8 +45,18 @@ T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, vm-lib, compare/), as ht1.
 # shellcheck source=ht1-lib.sh
 . "$HERE/ht1-lib.sh"
 VARIANT=${HT_VARIANT:-}
+# t2-only: json
+# "json" (docs/design/holt-json.md, "Testing"; RT10j): ht1.sh's, a plain run
+# whose rebuild and verify run again with --json (ht1-json.sh), in
+# GUEST-json.  (No Test2 cell's: these blocks do nothing in any other run.)
+JSON_RUN=""
+[[ $VARIANT != json ]] || JSON_RUN=1 VARIANT=""
+# t2-only-end
 case $VARIANT in ""|bigger|oneshot|img) ;; *) echo "HT_VARIANT: bigger, oneshot or img" >&2; exit 2 ;; esac
 GV=$G${VARIANT:+-$VARIANT}
+# t2-only: json
+[[ -z $JSON_RUN ]] || GV=$G-json
+# t2-only-end
 PORT=${HT_PORT:-2690}
 export SSH_PORT=$PORT
 fails=0
@@ -170,6 +180,13 @@ IMG_HARNESS=""   # the pin's change, a harness failure's why for the RESULT line
 # being that volume's /home).
 RHOLT=$RH/bko-holt RARCH=$RH/rustic-bko RREPO=$RH
 ((IMG)) && RHOLT=$IMG_BIN/bko-holt RARCH=$IMG_BIN/rustic-bko RREPO=$IMG_RR${RH#/boot}
+# t2-only: json
+if [[ -n $JSON_RUN ]]; then
+    JDRV=bsd JLAYOUT=$RH/layout.json JKEYS=$RH/ht1-keys JREPO_PW=$RREPO/repo-password JROOT=(dst.listing)
+    # shellcheck source=ht1-json.sh
+    . "$HERE/ht1-json.sh"
+fi
+# t2-only-end
 # The rescuer's disks' names, its own first (RN, set by rescuer_ready once
 # it's up: Haiku numbers them by the controller's ports); rdev N is the Nth's
 # device, rraw N the node that reads it whole.
@@ -286,6 +303,9 @@ rfw=(); [[ -f $rdir/vm-run-options ]] && read -ra rfw < "$rdir/vm-run-options"
 # rebuild or verify needs it.
 HT_BULK=('src-*.qcow2' 'dst-*.qcow2' rescuer.qcow2 rescuer-try.qcow2 decoy.qcow2 prep-boot.qcow2 rustic-bko repo-password tmp img.qcow2 img-key img-key.pub)
 HT_ZIP=(src.listing dst.listing)
+# t2-only: json
+[[ -z $JSON_RUN ]] || HT_ZIP+=(dst-json.listing)
+# t2-only-end
 ht_require
 case ${PHASES[0]} in   # what the first phase remakes is not copied back from K
     backup)  ht_seed rescuer.qcow2 rescuer-try.qcow2 'dst-*.qcow2' decoy.qcow2 img.qcow2 tmp/ ;;
@@ -1217,6 +1237,9 @@ img_setup() {
 }
 
 load_step() { local want=$1 name=$2; shift 2
+    # t2-only: json
+    if [[ -n ${JPASS:-} ]] && json_is_stage "$name"; then json_load_step "$want" "$name" "$@"; return; fi
+    # t2-only-end
     ht_load_try "$R/logs/rebuild-$name.out" "$R/logs/rebuild-$name.err" sshk "$rkey" "echo $HT_STARTED; $RHOLT load $RH/layout.json $*"
     local got=$?
     if [[ $got == "$want" ]]; then ok "load $name (exit $got)"; return 0; fi
@@ -1313,6 +1336,9 @@ phase_rebuild() {
         how+="; ${geli:+GELI}${sr:+softraid}: ${kf[*]}"
     fi
     ok "rescuer up$how"
+    # t2-only: json
+    [[ -z $JSON_RUN ]] || json_keys_put "$rkey" || { bad "rescuer setup (the password file into $JKEYS)"; vm_down "$rkey"; return; }
+    # t2-only-end
     # The source's disks, by the layout's names, in the order they were
     # attached (the dump lists them so).
     local srcn; mapfile -t srcn < <(python3 -c 'import json,sys; [print(x["name"]) for x in json.load(open(sys.argv[1]))["storage"]["disks"]]' "$R/dumps/src.json")
@@ -1382,12 +1408,18 @@ phase_rebuild() {
     }
     map+=("${erase[@]}")
     local repo=(--repo $RREPO/repo --password-file $RREPO/repo-password --archiver $RARCH --snapshot "latest:/mnt/src")
+    # t2-only: json
+    [[ -z $JSON_RUN ]] || json_private_args
+    # t2-only-end
     local stages=(partition assemble format mount restore boot close)
     [[ $VARIANT == oneshot ]] && stages=(oneshot)
     if [[ -n ${HT_THROUGH:-} ]]; then
         [[ " ${stages[*]} " == *" $HT_THROUGH "* ]] || { bad "HT_THROUGH=$HT_THROUGH: not one of ${stages[*]}"; vm_down "$rkey"; return; }
         local upto=() st; for st in "${stages[@]}"; do upto+=("$st"); [[ $st == "$HT_THROUGH" ]] && break; done; stages=("${upto[@]}")
     fi
+    # t2-only: json
+    [[ -z ${JPASS:-} ]] || json_before_stages || { kept_or_down; return; }
+    # t2-only-end
     for s in "${stages[@]}"; do
         local how=(--only "$s") extra=()
         [[ $s == restore || $s == oneshot ]] && extra=("${repo[@]}")
@@ -1426,6 +1458,9 @@ phase_rebuild() {
         else
             grep -q "^$s  *done" "$R/logs/rebuild-status-after-$s.txt" || [[ $s == assemble ]] || bad "status after $s: $(grep "^$s " "$R/logs/rebuild-status-after-$s.txt")"
         fi
+        # t2-only: json
+        [[ -z ${JPASS:-} ]] || json_status_after "$s"
+        # t2-only-end
     done
     # The decoy was never a target: its first and last MiB are as they were.
     # (Without the before capture there is nothing to compare, and the harness
@@ -1447,6 +1482,9 @@ phase_rebuild() {
     [[ -z $geli$sr ]] || geli_key_rm "$rkey"
     vm_down "$rkey"
     rm -f "$try" "$R/img.qcow2" "$R/img-key" "$R/img-key.pub"
+    # t2-only: json
+    [[ -z $JSON_RUN || -n ${JPASS:-} ]] || json_rebuild
+    # t2-only-end
 }
 # HT_KEEP=1: the rescuer stays up, as the stage left it; else it goes down.
 kept_or_down() {
@@ -1612,6 +1650,9 @@ phase_verify() {
     # MISSING-TOOL: a check that never ran, a FAIL whatever the source said.
     local newfails; newfails=$({ grep '^FAIL' "$R/logs/restored-health.txt" | grep -vxFf <(grep '^FAIL' "$R/logs/source-health.txt" 2>/dev/null); grep '^MISSING-TOOL' "$R/logs/restored-health.txt"; } || true)
     if [[ -z $newfails ]]; then ok "health: $(grep -v '^FAIL' "$R/logs/restored-health.txt" | tr '\n' ',' | sed 's/,$//; s/,/, /g')"; else bad "health: $(tr '\n' ' ' <<<"$newfails")"; fi
+    # t2-only: json
+    [[ -z $JSON_RUN ]] || json_restored_log "$gkey"
+    # t2-only-end
     put "$gkey" "$HOLT" /tmp/bko-holt
     sshk "$gkey" /tmp/bko-holt dump > "$R/dumps/restored.json" 2> "$R/logs/restored-dump.err" || bad "dump of the restored system: $(tail -1 "$R/logs/restored-dump.err")"
     vm_down "$gkey"
@@ -1621,6 +1662,9 @@ phase_verify() {
     else
         bad "the dumps differ: $(grep -c '^DIFF' "$R/logs/judge.txt") fields (logs/judge.txt)"
     fi
+    # t2-only: json
+    [[ -z $JSON_RUN || -n ${JPASS:-} ]] || json_verify
+    # t2-only-end
 }
 
 say "HoltTest1 $G ($PLAT), run $RUN, $(date -u +%FT%TZ), phases: ${PHASES[*]}"

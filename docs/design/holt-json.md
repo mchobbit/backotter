@@ -1595,8 +1595,8 @@ RT10h:
   run's but its argv lines.  The `--json` run adds `--erase` for any
   target that isn't blank (J19); its key files are the text run's, and
   a guest whose text run types a passphrase gets a key file in both runs.  One guest per family: debian13 (LUKS, UEFI),
-  freebsd15-geli, an OpenBSD softraid guest (*Check* its name at RT10j),
-  omnios58 (ZFS), haiku.  A
+  freebsd15-geli, an OpenBSD softraid guest (openbsd8-crypt, settled at
+  RT10j; debian13 was debian13-stack, below), omnios58 (ZFS), haiku.  A
   `BKO_HOLT_NO_COMMIT=1` dry run of each too: it must write nothing (the
   overlay's disk images compared before and after) and end 0.
 - **HoltTest2 and OtterGrind1:** unchanged; RT10 lands in small commits,
@@ -1766,6 +1766,90 @@ too), bko-rescue's cargo test, pty-test.py and demo-test.py.
 - Clippy runs only on Chopin (1.94; the farm's 1.85.1 has none): `-D
   warnings` fails on lints already there (29 in holt, 11 in bko-rescue,
   mostly `collapsible_if`), none in RT10h's or RT10i's lines.
+
+### What RT10j found
+
+Built 2026-11-24: `HT_VARIANT=json` in ht1.sh and ht1-bsd.sh (their
+`# t2-only: json` blocks, `testvm/holttest1d/ht1-json.sh` the second pass,
+`ht1-json.py` its checks, README "The --json rebuild"), and the fake's
+scenarios recorded from it.  No holt change: bko-holt at 3289bc3 (built
+for linux, freebsd, openbsd, illumos and haiku) passed every guest.
+Tested by ht1-json-test.py, ht1-bsd-test.sh (78 cases), `t2 self-test`
+(but test_gate's gate:holt row budget, which fails at 3289bc3 too), the
+inputs of all 99 holt cells compared before and after (none moved), and
+one whole run of each of the five, both runs, every check PASS: debian13-stack, freebsd15-geli,
+openbsd8-crypt, omnios58, haiku6 (run rt10j2, on chopin, cinqcent,
+copland, cage and czerny); a plain debian13 and freebsd15 with the new
+drivers PASS as before (no json line).  bko-rescue's cargo test, demo-test.py
+and pty-test.py on czerny, and holt_schema.py over the corpus, the
+fixtures and every scenario (199 files), pass.
+
+- **The Check settled.**  The OpenBSD softraid guest is
+  `openbsd8-crypt`.  `debian13` is BIOS with no LUKS: the Debian 13 guest
+  with LUKS and UEFI is `debian13-stack` (LUKS on md RAID, LVM, two
+  disks, UEFI), which stood in.
+- **Decided:**
+  - The `--json` run is staged as the text run is, with its arguments
+    and `--json`: before each stage its own `plan --json` (`ok`), then the
+    stage with `--expect-plan` of that plan's hash, then `status --json`
+    (the stage done, as the text run's check).  Before the stages,
+    under `BKO_HOLT_NO_COMMIT=1`: `--version --json` (`no_commit`),
+    `--commit --json` refused (exit 2, `no_commit`), the whole run's
+    `plan --json`, and the dry run (`--through close --json`): ends 0,
+    every command `would`, boot and close among them (J11), the same
+    commands as the writing runs then ran, and the targets' and the
+    decoy's qcow2 images (md5 on the host after a sync) unchanged.
+  - "Its key files are the text run's": in both runs the passphrase file
+    and the repository's password are copies in a 0700 directory of the
+    rescuer (`/run/ht1-keys`, `ROOT/ht1-keys`), each 0600: the share's
+    are 0644 on 9p, which J3's checks refuse, and the same path in both
+    keeps the commands alike.  GELI's and softraid's (`/tmp/ht1-geli`,
+    a 0700 tmpfs or mfs) passed as they were.  The targets are blank and
+    the text run already gives `--erase` for each, so J19 asked for
+    nothing more.
+  - "The commands in the events must be the text run's": each command
+    the events ran, rendered as `Cmd::shell` logs it (the archiver's
+    `--json-progress --progress-interval 1s` as `--no-progress`), is in
+    the text run's load.log in order (notes and read-backs not looked
+    for), and the `--json` run's load.log is the text run's.
+  - "The restored `/var/log/bko-holt` must be the text run's but its
+    argv lines": read from the booted restored system; but also for the
+    archiver's flag and the one status line the log keeps (What differs
+    1 and 7), a private write by its size and SHA-256 (checked against
+    the text log's text), and output that differs between any two runs,
+    text against text too: dd's time and rate, and umount-tree's lines
+    naming the rescuer's own processes by pid and mount namespace.
+  - "The judge's verdict must be the same": judge.py's DIFF lines and
+    its count of differences (and judge.py fs's on Linux).  What it
+    ignored, a boot's own fields, may differ: omnios58's text run ignored
+    45 fields, its `--json` run 43, with 0 differences each.
+  - No Test2 cell is a json one: the drivers' json lines are `# t2-only:
+    json` blocks, the json files are `kinds.linux/bsd.variants.json`'s
+    harness in holt/spec.json (not in `variants_run`) and in
+    policy.unmapped_ignore, so no cell is re-keyed or made due.
+- **Found, not fixed (for RT10o and RT12):** on OpenBSD the plan's hash
+  changes after the partition stage.  The target's "kernel serial" there
+  is its disklabel's DUID (`other/labelled.rs`: `RawDisk.serial` from
+  `hw.disknames`), and the partition stage writes the disklabel, the
+  source's DUID with it: openbsd8-crypt's whole-run plan before partition
+  (a47ed4b4...) isn't the restore stage's plan of the same arguments
+  after it (4af3f45e...), sd1's serial null then `52fcb0b7cd1d05e5`.
+  RT12's flow (one plan, then one `--through close --commit
+  --expect-plan` run) isn't touched: the run checks the hash before its
+  first command.  A Resume that passed the first plan's hash to a later
+  run would meet `plan_changed`, so it must re-plan there (or the hash
+  leave a DUID out off Linux: "as the partition record reads them from
+  sysfs" has no answer there; the user's call).  NetBSD reads its disks
+  through the same code (untested); Linux, FreeBSD (geom's ident),
+  illumos and Haiku kept one hash from partition to close.
+- **The scenarios:** `demo` is debian13-stack's recorded dry run (108
+  events, 92 commands; delay 0.05 as before, so demo-test sees the
+  stages run), the demo's argv kept; demo-test's count and its broken-copy
+  cases follow it, and its three `7-done` screens are re-blessed.  Each
+  guest's whole run is `rec-GUEST` (18 calls: version, the refusal, the
+  plan, the dry run, seven stages and their status documents; 1 MB in
+  all), for RT12's tests; the checker reads them all.  `demo-fail` and
+  `demo-slow` stay hand-written (the demo refuses `commit: true`).
 
 ## Decisions
 

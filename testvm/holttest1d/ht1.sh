@@ -180,6 +180,14 @@ if [[ $VARIANT == reformat-* ]]; then
     RF_VARIANT=$VARIANT VARIANT=""
 fi
 # t2-only-end
+# t2-only: json
+# "json" (docs/design/holt-json.md, "Testing"; RT10j) is a plain run whose
+# rebuild and verify run again with --json (ht1-json.sh), in a directory of
+# its own, GUEST-json.  (No Test2 cell is a json one: these blocks key no
+# cell, and do nothing in any other run.)
+JSON_RUN=""
+[[ $VARIANT != json ]] || JSON_RUN=1 VARIANT=""
+# t2-only-end
 case $VARIANT in ""|bigger|oneshot|degraded|img|smaller|fitbigger|nearfull|refuse|bs2) ;;
     *) echo "HT_VARIANT: bigger, oneshot, degraded, img, smaller, fitbigger, nearfull, refuse or bs2" >&2; exit 2 ;;
 esac
@@ -212,6 +220,9 @@ fi
 GV=$G${VARIANT:+-$VARIANT}
 # t2-only: reformat-*
 [[ -z $RF_VARIANT ]] || GV=$G-$RF_VARIANT
+# t2-only-end
+# t2-only: json
+[[ -z $JSON_RUN ]] || GV=$G-json
 # t2-only-end
 # bs2: a BackShot2 case (testvm/backshot2/ht1-bs2.sh: its hooks, and GV the case's name).
 BS2_FLAGS=() BS2_VFW=() BS2_FSJUDGE=() BS2_FSMETA=()
@@ -282,6 +293,13 @@ bad() { say "FAIL $*"; fails=$((fails + 1)); }
 # and is rerun.
 hfails=0 HARNESS_WHY=""
 harness() { bad "$*"; hfails=$((hfails + 1)); HARNESS_WHY=${HARNESS_WHY:-$*}; }
+# t2-only: json
+if [[ -n $JSON_RUN ]]; then
+    JDRV=linux JLAYOUT=/mnt/share/layout.json JKEYS=/run/ht1-keys JREPO_PW=/mnt/share/repo-password JROOT=(dst-meta.json)
+    # shellcheck source=ht1-json.sh
+    . "$HERE/ht1-json.sh"
+fi
+# t2-only-end
 
 gkey=$W/vms/$G/id_ed25519
 rkey=$W/vms/$RESCUER/id_ed25519
@@ -420,6 +438,9 @@ HT_BULK+=(source.tpm restored.tpm)   # (a --guest-tpm guest's: gvars)
 HT_BULK+=('source-zbm-*-vars.fd' 'restored-zbm-*-vars.fd')   # (ZFSBootMenu's menu boots: zbm_menu_boot)
 [[ $VARIANT != bs2 ]] || HT_BULK+=(rescuer-vars.fd)   # (a resumed UEFI rescuer's NVRAM)
 HT_ZIP=(src-meta.json dst-meta.json)
+# t2-only: json
+[[ -z $JSON_RUN ]] || HT_ZIP+=(dst-meta-json.json)
+# t2-only-end
 # Settings that change what a run checks, or its rescuer: its report names them.
 dbg=""; for v in HT_QUICK HT_THROUGH HT_KEEP HT_FAIL_AT HT_RESCUER HT_RESCUER_IMG HT_SOURCE_PREP HT_BOOT_EACH_DISK HT_NVRAM HT_REFORMAT HT_POOLS; do [[ -z ${!v:-} ]] || dbg+=" $v=${!v}"; done
 [[ -z $dbg ]] || ht_note "set for debugging or tests:$dbg"
@@ -1918,6 +1939,9 @@ fit_checks() {
 
 # One bko-holt load call in the rescuer: WANT exit, NAME, then load's args.
 load_step() { local want=$1 name=$2; shift 2
+    # t2-only: json
+    if [[ -n ${JPASS:-} ]] && json_is_stage "$name"; then json_load_step "$want" "$name" "$@"; return; fi
+    # t2-only-end
     ht_load_try "$R/logs/rebuild-$name.out" "$R/logs/rebuild-$name.err" sshk "$rkey" "echo $HT_STARTED; $RHOLT load /mnt/share/layout.json $*"
     local got=$?
     if [[ $got == "$want" ]]; then ok "load $name (exit $got)"; return 0; fi
@@ -2024,6 +2048,9 @@ phase_rebuild() {
     fi
     sshk "$rkey" "mkfs.ext4 -q -F -L ht1decoy $decoy" >> "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup (the decoy's filesystem)"; vm_down "$rkey"; return; }
     ok "rescuer up, share mounted"
+    # t2-only: json
+    [[ -z $JSON_RUN ]] || json_keys_put "$rkey" || { bad "rescuer setup (the key files into $JKEYS)"; vm_down "$rkey"; return; }
+    # t2-only-end
     # (bs2's leftovers set: a seed, and what the rescuer found on the disk.)
     [[ $VARIANT != bs2 ]] || bs2_before_load || { vm_down "$rkey"; return; }
     # The first and last MiB of every target and the decoy, before and after
@@ -2120,6 +2147,9 @@ PY
     local map=("${map[@]}" "${erase[@]}" "${flags[@]}")
     local repo=(--repo /mnt/share/repo --password-file /mnt/share/repo-password --archiver "$RARCH" --snapshot "latest:$SRC_MP")
     [[ $VARIANT != bs2 ]] || repo=(--repo /mnt/share/repo --password-file /mnt/share/repo-password --archiver "$RARCH" --snapshot "$(bs2_snapshot)")
+    # t2-only: json
+    [[ -z $JSON_RUN ]] || json_private_args
+    # t2-only-end
     local stages=(partition assemble format mount restore boot close)
     # oneshot: the whole rebuild as one command; `status` after it must show
     # every stage it can see done.
@@ -2128,6 +2158,9 @@ PY
         [[ " ${stages[*]} " == *" $HT_THROUGH "* ]] || { bad "HT_THROUGH=$HT_THROUGH: not one of ${stages[*]}"; vm_down "$rkey"; return; }
         local upto=() st; for st in "${stages[@]}"; do upto+=("$st"); [[ $st == "$HT_THROUGH" ]] && break; done; stages=("${upto[@]}")
     fi
+    # t2-only: json
+    [[ -z ${JPASS:-} ]] || json_before_stages || { kept_or_down; return; }
+    # t2-only-end
     for s in "${stages[@]}"; do
         local how=(--only "$s") extra=()
         [[ $s == restore || $s == oneshot ]] && extra=("${repo[@]}")
@@ -2150,6 +2183,9 @@ PY
         else
             grep -q "^$s  *done" "$R/logs/rebuild-status-after-$s.txt" || [[ $s == assemble ]] || bad "status after $s: $(grep "^$s " "$R/logs/rebuild-status-after-$s.txt")"
         fi
+        # t2-only: json
+        [[ -z ${JPASS:-} ]] || json_status_after "$s"
+        # t2-only-end
     done
     # The decoy was never a target: it still holds its filesystem.
     [[ $(sshk "$rkey" "blkid -o value -s LABEL $decoy") == ht1decoy ]] || bad "the decoy lost its filesystem"
@@ -2161,6 +2197,9 @@ PY
     if [[ $VARIANT == bs2 ]]; then bs2_rescuer_down; else vm_down "$rkey"; fi
     [[ $VARIANT != bs2 ]] || bs2_chain_save
     rm -f "$R/rescuer.qcow2" "$R/img-key" "$R/img-key.pub"
+    # t2-only: json
+    [[ -z $JSON_RUN || -n ${JPASS:-} ]] || json_rebuild
+    # t2-only-end
 }
 # HT_KEEP=1: the rescuer stays up, as the stage left it; else it goes down.
 kept_or_down() {
@@ -2262,6 +2301,9 @@ phase_verify() {
     else
         bad "health: $(echo "$worse" | tr '\n' ' ')"
     fi
+    # t2-only: json
+    [[ -z $JSON_RUN ]] || json_restored_log "$gkey"
+    # t2-only-end
     scpk "$gkey" "$S/bko-holt" root@127.0.0.1:/root/bko-holt
     solus_mount_boot restored "$gkey"
     sshk "$gkey" '/root/bko-holt dump; rm -f /root/bko-holt' > "$R/dumps/dst.json" 2> "$R/logs/restored-dump.err" || bad "dump of the restored system"
@@ -2316,6 +2358,9 @@ phase_verify() {
             bad "TrueNAS: boot-pool: $(grep '^DIFF' "$R/logs/bejudge.txt" | head -4 | tr '\n' ' ')(logs/bejudge.txt)"
         fi
     fi
+    # t2-only: json
+    [[ -z $JSON_RUN || -n ${JPASS:-} ]] || json_verify
+    # t2-only-end
 }
 
 : > "$R/report.txt"

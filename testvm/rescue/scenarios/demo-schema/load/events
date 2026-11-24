@@ -1,4 +1,4 @@
 # A schema this bko-rescue doesn't know: it must stop the run at once.
-{"event":"start","format":"bko-holt-events","schema":2,"version":"9.0.0","stages":["partition"],"commit":false}
+{"event":"start","format":"bko-holt-events","schema":2,"version":"9.0.0","stages":["partition"],"commit":false,"dry_run":true}
 sleep 60
-{"event":"end","exit":0}
+{"event":"end","exit":0,"stopped":false,"secs":0.6}

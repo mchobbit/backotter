@@ -16,9 +16,10 @@ whose `argv` matches answers:
     stderr   written after the events
     exit     the exit status (default 0)
 
-The events are ui.md's "`--json` for load" form.  PROVISIONAL: bko-holt's
---json protocol is RT10's and isn't built; these fixtures are written by
-hand from ui.md and are to be recorded again from real runs once it is.
+The events are holt-json.md's `bko-holt-events`, the documents its
+`bko-holt-plan`, `-status` and `-error`; holt_schema.py checks every
+scenario against the same schema bko-holt's goldens pass (scenarios/README.md
+says which are hand-written and which recorded).
 
 Before it answers, it checks each `--key-file NAME=PATH` and
 `--password-file PATH`: an absolute path to a regular file (not a
@@ -26,9 +27,13 @@ symlink), mode 0600, ours, in a directory that is ours with mode 0700, not
 empty, at most 1 KiB, with no newline, and with its text nowhere in argv
 or the environment: not a whole argument, the PATH of a NAME=PATH or a
 whole environment value, nor, for a key of 8 bytes or more, inside one
-(a short key is in many words by chance: "e" in "--key-file").  With BKO_HOLT_NO_COMMIT=1, `--commit` is refused
-(exit 2), as bko-holt will (D14).  A failed check is exit 97 and a line on
-stderr; no call matching is exit 98.
+(a short key is in many words by chance: "e" in "--key-file").
+
+With BKO_HOLT_NO_COMMIT set to anything but empty or 0 (holt-json.md, J12),
+`--commit` is refused as bko-holt refuses it: exit 2, bko-holt's line on
+stderr and, under --json, a `bko-holt-error` document (code `no_commit`) on
+stdout.  A failed check is exit 97 and a line on stderr; no call matching is
+exit 98.
 
 It then leaves a watcher behind that waits for this process to be gone
 and checks each key file is removed within $FAKE_BKO_HOLT_REMOVE_SECS
@@ -50,6 +55,8 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KEY_MAX = 1024
+# The bko-holt whose protocol the fake speaks (its error documents' version).
+VERSION = "0.2.6"
 # A key at least this long is looked for inside values too.
 INSIDE_MIN = 8
 
@@ -170,6 +177,27 @@ def watch(paths, pid):
     os._exit(0)
 
 
+def no_commit():
+    """BKO_HOLT_NO_COMMIT's value when it is in force, as bko-holt reads
+    it: set, not empty and not 0 (a typo can't turn the lock off)."""
+    v = os.environ.get("BKO_HOLT_NO_COMMIT")
+    return v if v not in (None, "", "0") else None
+
+
+def refuse_commit(value, argv):
+    """bko-holt's refusal of --commit under the dry-run lock."""
+    line = ("bko-holt load: BKO_HOLT_NO_COMMIT=%s is set (a dry run), so --commit is refused; "
+            "nothing was written to any disk" % value)
+    if any(a == "--json" or a.startswith("--json=") for a in argv):
+        doc = {"format": "bko-holt-error", "schema": 1, "version": VERSION,
+               "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "dry_run": True,
+               "exit": 2, "code": "no_commit", "text": line}
+        sys.stdout.write(json.dumps(doc, separators=(",", ":")) + "\n")
+        sys.stdout.flush()
+    print(line, file=sys.stderr)
+    return 2
+
+
 def match(call_dir, argv):
     try:
         with open(os.path.join(call_dir, "argv")) as f:
@@ -223,11 +251,10 @@ def main():
         checks.extend(bad)
         keys.append({"path": path, "bytes": n, "sha256": digest})
         watched.append(path)
-    if os.environ.get("BKO_HOLT_NO_COMMIT") == "1" and "--commit" in argv:
+    if no_commit() is not None and "--commit" in argv:
         entry.update(call=None, checks=checks, keys=keys, ok=False, refused="--commit")
         log(entry)
-        print("bko-holt: BKO_HOLT_NO_COMMIT is set, so --commit is refused", file=sys.stderr)
-        return 2
+        return refuse_commit(no_commit(), argv)
     entry.update(checks=checks, keys=keys)
     if checks:
         entry.update(call=None, ok=False)

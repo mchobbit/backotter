@@ -109,7 +109,7 @@ which a launcher sets.  Hidden, for tests and checks:
 | `--check-tty` | raw mode set, read back, put back and read back; exit 0 when every field is as expected (for checks.sh) |
 | `--profile` | which console this is and what it gets, and why: `os`, `tty`, `term`, `locale`, `size`, `mode`, `rule`, `lines`, `draws` (the styles `L` cycles through), `colour`, `caps`, `esc`, `refresh` |
 | `--spike` | the four spike cards (box, list, gauge, password); `--spike panic` panics after the first frame; `--spike linger` waits 5 s after `q`, for the signal test |
-| `--demo` | every widget in a row, in full screen or plain mode as the profile says (`--plain` forces it); with `--holt testvm/rescue/fake-bko-holt`, its restore page hands a typed passphrase to the fake as a key file and follows its events with the gauge (without `--holt` it runs nothing) |
+| `--demo` | every widget in a row, in full screen or plain mode as the profile says (`--plain` forces it); with `--holt testvm/rescue/fake-bko-holt`, its restore page hands a typed passphrase to the fake as a key file and the backup password as a password file, and follows its dry-run events (holt-json.md's `bko-holt-events`) with the gauge, stopping it unless they say a dry run (without `--holt` it runs nothing) |
 
 In the spike, `1`-`4` and `n` change card, `l` the line style (all
 three, whatever the console draws: the spike is for trying them), `c`
@@ -160,5 +160,6 @@ are checked too; Linux's static ones can't be.
 | `../testvm/rescue/pty-test.py` | the layer on a real pty |
 | `../testvm/rescue/screen.py` | a terminal that takes exactly what bko-rescue sends, and dumps the screen in the golden form |
 | `../testvm/rescue/drive.py` | bko-rescue on a pty of a set size: keys in, waits on screen text; a script runner |
-| `../testvm/rescue/fake-bko-holt`, `scenarios/` | replays a scenario (argv to stdout, events, stderr, exit) and checks the key files it is given |
+| `../testvm/rescue/fake-bko-holt`, `scenarios/` | replays a scenario (argv to stdout, events, stderr, exit), checks the key and password files it is given, and refuses `--commit` under `BKO_HOLT_NO_COMMIT` as bko-holt does |
+| `../testvm/rescue/holt_schema.py` | bko-holt's documents and events checked against holt-json.md's schema: its goldens, the fake's scenarios, recorded runs |
 | `../testvm/rescue/demo-test.py`, `screens/` | `--demo` through every widget, both modes, with the fake |

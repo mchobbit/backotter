@@ -1,0 +1,3 @@
+bko-holt load: not running as root: the target disks' tables and signatures can't be read, so blank disks can't be told from used ones
+bko-holt load: sda3_crypt: give its new passphrase with --key-file sda3_crypt=FILE
+bko-holt load: nothing was written; `bko-holt load LAYOUT ...` without a stage shows the whole plan

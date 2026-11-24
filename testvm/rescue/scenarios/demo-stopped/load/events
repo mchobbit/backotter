@@ -1,0 +1,25 @@
+# bko-holt is stopped (SIGTERM to its pid) in the restore stage: stopping, then
+# end with stopped true and exit 5.
+delay 0.05
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T11:21:00Z","pid":4711,"commit":false,"dry_run":true,"stages":["partition","assemble","format","mount","restore","boot","close"],"stage_commands":{"partition":2,"assemble":2,"format":2,"mount":2,"restore":1,"boot":2,"close":2},"plan_sha256":"4dbbc5c2731fe2163e1653bba7390e092796d4810a3b7344202e5e0c13e3d54c","log":null,"layout":{"hostname":"lovelace","generated":"2026-11-22T01:00:11Z"}}
+{"event":"stage","stage":"partition","commands":2}
+{"event":"cmd","stage":"partition","n":1,"of":2,"kind":"run","argv":["wipefs","--all","/dev/sdb"],"env":[["LC_ALL","C"]],"why":"sda -> /dev/sdb: clear the old table and signatures","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":true}
+{"event":"cmd","stage":"partition","n":2,"of":2,"kind":"run","argv":["sfdisk","--wipe","always","--wipe-partitions","always","/dev/sdb"],"env":[["LC_ALL","C"]],"why":"sda's GPT, 3 partitions, onto /dev/sdb","path":null,"dev":null,"stdin_bytes":412,"private":false,"archiver":null,"would":true}
+{"event":"stage_done","stage":"partition","secs":0.01,"checked":false}
+{"event":"stage","stage":"assemble","commands":2}
+{"event":"cmd","stage":"assemble","n":1,"of":2,"kind":"run","argv":["cryptsetup","luksFormat","--batch-mode","--type","luks2","--key-file","/run/bko-rescue/k/sda3_crypt","/dev/sdb3"],"env":[["LC_ALL","C"]],"why":"sda3_crypt: a new LUKS2 container, as sda3's","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":true}
+{"event":"cmd","stage":"assemble","n":2,"of":2,"kind":"run","argv":["cryptsetup","open","--key-file","/run/bko-rescue/k/sda3_crypt","/dev/sdb3","sda3_crypt"],"env":[["LC_ALL","C"]],"why":"sda3_crypt: opened","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":true}
+{"event":"stage_done","stage":"assemble","secs":0.01,"checked":false}
+{"event":"stage","stage":"format","commands":2}
+{"event":"cmd","stage":"format","n":1,"of":2,"kind":"run","argv":["mkfs.ext4","-F","-U","0b0e2c6e-5d1a-4f3b-9c2e-7a8d1f4e6b20","/dev/mapper/sda3_crypt"],"env":[["LC_ALL","C"]],"why":"/: ext4, as on sda3","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":true}
+{"event":"cmd","stage":"format","n":2,"of":2,"kind":"run","argv":["mkfs.vfat","-F","32","-i","3051B739","/dev/sdb1"],"env":[["LC_ALL","C"]],"why":"/boot/efi: vfat, as on sda1","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":true}
+{"event":"stage_done","stage":"format","secs":0.01,"checked":false}
+{"event":"stage","stage":"mount","commands":2}
+{"event":"cmd","stage":"mount","n":1,"of":2,"kind":"run","argv":["mount","/dev/mapper/sda3_crypt","/mnt/bko-target"],"env":[["LC_ALL","C"]],"why":"/","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":true}
+{"event":"cmd","stage":"mount","n":2,"of":2,"kind":"run","argv":["mount","/dev/sdb1","/mnt/bko-target/boot/efi"],"env":[["LC_ALL","C"]],"why":"/boot/efi","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":true}
+{"event":"stage_done","stage":"mount","secs":0.01,"checked":false}
+{"event":"stage","stage":"restore","commands":1}
+{"event":"cmd","stage":"restore","n":1,"of":1,"kind":"run","argv":["rustic-bko","--repository","sftp://nas.local/backotter/lovelace","--password-file","/run/bko-rescue/k/password","--json-progress","--progress-interval","1s","restore","--numeric-id","latest","/mnt/bko-target"],"env":[["LC_ALL","C"],["RUSTIC_STRICT_EXIT","true"]],"why":"snapshot latest of sftp://nas.local/backotter/lovelace","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":{"part":1,"parts":1},"would":true}
+delay 0.3
+{"event":"stopping","signal":"SIGTERM"}
+{"event":"end","exit":5,"stopped":true,"secs":1.2}

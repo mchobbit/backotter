@@ -1715,6 +1715,55 @@ which HoltTest1's verify passes (fsmeta, boot, dumps).
   `.`): rustic-bko restoring into a part-restored tree.  Resume and Try
   again inherit it; the boot, the dumps and every other file agree.
 
+### What RT10h and RT10i found
+
+Built 2026-11-24: `testvm/rescue/holt_schema.py`, the fake's rule and
+scenarios, demo.rs's `Follow` (all eight changes) and its argv; report-bug's
+`--attach` and `--strip-file`, the Collector on bko-holt documents,
+`last-load.json` only for writing runs under `--json`, `ISSUES`, the
+`--no-redact` line.  Tested by holt's cargo test and golden plans (text
+goldens unchanged), redact_dumps over the corpus (its 98 plan documents
+too), bko-rescue's cargo test, pty-test.py and demo-test.py.
+
+- **The Check settled.**  report-bug's own `bko-holt dump` of the rescue
+  system already lists every disk there (serials, WWIDs, partition labels
+  and UUIDs), and the Collector learns it, so a plan document adds little
+  when that dump works; it covers a dump that failed and the serials only
+  a `by_id` link names.  An attached bko-holt document, and each event of
+  an attached events file but `progress`, is learned with the dump's own
+  key rules (`serial`, `wwid`, `label`, `hostname`); models are kept, as
+  the summary says.
+- **Decided:** `--strip-file` strings are replaced anywhere, inside words
+  too, as other identifiers (`stripped1`...), never shown on the terminal;
+  a line under 3 characters is left (a note says so); the flag is
+  repeatable, and ignored under `--no-redact`, whose report replaces
+  nothing.  `--no-redact`'s line takes each `Kind::plural` up to its
+  parenthesis ("other identifiers").  A `--json` run whose arguments don't
+  parse still records itself (no plan or status ran).  report-bug's re-run
+  walks load's value flags, so `--snapshot --json` keeps its value.
+  `ISSUES` changes the report hint text mode prints after a fatal error
+  too, as this spec says ("together"): no test or rig reads it.
+- **The demo** passes `--repo DEMO_REPO` (fixed: a typed address may hold
+  a password) and `--password-file`, the password typed on its page or a
+  fixed one when none was; it stops a run whose `start` doesn't say
+  `commit` false and `dry_run` true (either left out included), or once a
+  `cmd` comes without `would: true`.
+- **The scenarios** are hand-written dry runs that pass the checker, three
+  new (`demo-blocked`, `demo-refused`, `demo-stopped`).  Two parts no real
+  dry run writes are kept so the screens can be seen: `demo-slow`'s
+  progress and `demo-fail`'s failure.  Found: RT10j's plan to record
+  `demo-fail` and `demo-slow` from `--commit` runs meets the demo's refusal
+  of `commit: true`; those recordings can only be RT12's.
+- **The checker** takes 0.2.6 as the first version that writes schema 1
+  (bko-holt's version didn't change with RT10, so only `--version --json`
+  tells a pre-RT10 one); a golden's `VERSION`, `GENERATED` and
+  `PLAN_SHA256` stand-ins; `removable` null (no sysfs file).  Run on the
+  built binary's own api, error, plan and status documents and a problems
+  stream; a dry run's `would` stream needs root (as a user, `not_root`).
+- Clippy runs only on Chopin (1.94; the farm's 1.85.1 has none): `-D
+  warnings` fails on lints already there (29 in holt, 11 in bko-rescue,
+  mostly `collapsible_if`), none in RT10h's or RT10i's lines.
+
 ## Decisions
 
 - **J1. How bko-rescue finds bko-holt's protocol.**  `bko-holt --version

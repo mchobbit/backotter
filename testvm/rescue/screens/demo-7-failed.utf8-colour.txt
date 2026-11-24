@@ -4,11 +4,12 @@
                                                                                 
                                                                                 
                                                                                 
-                                                                                
   ┌────────────────────── Problem: the restore failed ───────────────────────┐  
   │                                                                          │  
-  │ Stage boot failed: grub-install failed (exit status: 1): ?[31mEFI        │  
-  │ variables are not supported on this system.                              │  
+  │ Stage boot failed: grub-install failed (exit status: 1):                 │  
+  │     ?[31mEFI variables are not supported on this system.                 │  
+  │                                                                          │  
+  │ A command (grub-install) failed.                                         │  
   │                                                                          │  
   │ bko-holt ended with exit status 1.  Nothing in the backup has been       │  
   │ changed.                                                                 │  
@@ -20,10 +21,8 @@
                                                                                 
                                                                                 
                                                                                 
-                                                                                
  Tab: next | Left/Right: button | Enter: OK | o: raw output                     
 
-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -38,10 +37,11 @@ bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbdddddddddddddddddddddddddDDDDDDDDdddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

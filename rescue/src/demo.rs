@@ -8,11 +8,12 @@
 //! The last page before the summary runs a fake bko-holt, and only when
 //! one is named with `--holt PATH` (`testvm/rescue/fake-bko-holt`).  It
 //! asks a passphrase, hands it on as a key file (0600, in a new 0700
-//! directory, no newline), runs `PATH load ... --json --key-file
-//! NAME=FILE` without `--commit` and with `BKO_HOLT_NO_COMMIT=1`, and
-//! follows its events with the gauge.  The key file goes as soon as the
-//! fake has exited.  Without `--holt` nothing is run: the demo never
-//! starts the real bko-holt by itself.
+//! directory, no newline) and the backup password typed before as a
+//! password file beside it, runs `PATH load ... --json --repo URL
+//! --password-file FILE --key-file NAME=FILE` without `--commit` and with
+//! `BKO_HOLT_NO_COMMIT=1`, and follows its events with the gauge.  Both
+//! files go as soon as the fake has exited.  Without `--holt` nothing is
+//! run: the demo never starts the real bko-holt by itself.
 //!
 //! While the fake runs, SIGINT is caught, and in plain mode SIGHUP and
 //! SIGTERM too (the full screen's `Term` catches those already).  The
@@ -20,9 +21,10 @@
 //! ends the program.  The fake runs in a process group of its own, so a
 //! Ctrl-C on the terminal reaches only bko-rescue.
 //!
-//! The events are ui.md's "`--json` for load".  That protocol isn't
-//! built yet (RT10), so `Follow` reads a provisional form of it; RT12
-//! writes the real follower in `app/`.
+//! The events are holt-json.md's `bko-holt-events` (RT10h): `Follow`
+//! reads them as a dry run's are read, and stops the fake unless `start`
+//! says it is a dry run that doesn't commit; RT12 writes the real
+//! follower in `app/`.
 
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -48,6 +50,9 @@ pub struct Seen {
     pub machine: Option<usize>,
     pub address: String,
     pub password_chars: usize,
+    /// The backup password, for the restore page's password file; wiped
+    /// when the tour ends.
+    pub password: Option<Secret>,
     pub action: Option<usize>,
     pub restore: Option<bool>,
     /// How the fake's restore ended, in words.
@@ -117,7 +122,9 @@ pub fn page(ui: &mut dyn Ui, n: usize, seen: &mut Seen) -> Answer<()> {
             match ui.password(&p) {
                 Answer::Ok(s) => {
                     seen.password_chars = s.chars();
-                    // Dropped here: wiped.
+                    // Kept for the restore page's --password-file; the
+                    // one it replaces is wiped as it goes.
+                    seen.password = Some(s);
                     Answer::Ok(())
                 }
                 a => a.map(|_| ()),
@@ -296,8 +303,20 @@ pub fn run(p: &Profile, holt: Option<&str>) -> i32 {
 /// The demo's one encrypted container, the NAME of `--key-file NAME=FILE`.
 pub const KEY_NAME: &str = "sda3_crypt";
 
-/// The command line after the program's path.  No `--commit`, ever.
-pub const ARGS: &[&str] = &["load", "demo-system.json", "--json", "--through", "close"];
+/// The password file's name in the run's directory.
+pub const PASSWORD_NAME: &str = "password";
+
+/// The command line after the program's path, as RT12's are: the
+/// repository and, after these, `--password-file FILE --key-file
+/// NAME=FILE`.  No `--commit`, ever.
+pub const ARGS: &[&str] = &["load", "demo-system.json", "--json", "--through", "close", "--repo", DEMO_REPO];
+
+/// The demo's repository: never reached, only named.
+pub const DEMO_REPO: &str = "sftp://nas.local/backotter/lovelace";
+
+/// The password file's text when none was typed on the password page (a
+/// password file is never empty).
+pub const DEMO_PASSWORD: &[u8] = b"demo-repository-password";
 
 /// One event line at most (rescue-tui.md, "Hard limits in parsing").
 pub const EVENT_LINE_MAX: usize = 64 * 1024;
@@ -390,9 +409,12 @@ fn restore(ui: &mut dyn Ui, holt: &str, seen: &mut Seen) -> Answer<()> {
 /// too-small notice): the Run is dropped by then, so the fake is stopped
 /// and the key file gone.
 fn follow(ui: &mut dyn Ui, holt: &str, secret: Secret, seen: &mut Seen) -> Result<Outcome, Answer<()>> {
-    let started = Run::start(holt, &secret, std::env::temp_dir().as_path());
+    let typed = seen.password.as_ref().filter(|p| !p.is_empty());
+    let fallback = Secret::from_bytes(DEMO_PASSWORD);
+    let started = Run::start(holt, &secret, typed.unwrap_or(&fallback), std::env::temp_dir().as_path());
     // The key file has it now: wiped.
     drop(secret);
+    drop(fallback);
     let mut run = match started {
         Ok(r) => r,
         Err(e) => {
@@ -468,6 +490,7 @@ pub struct Outcome {
 pub struct Run {
     dir: PathBuf,
     key: Option<PathBuf>,
+    password: Option<PathBuf>,
     events: Option<File>,
     stderr: Option<PathBuf>,
     child: Option<Child>,
@@ -507,14 +530,15 @@ fn new_file(path: &Path) -> io::Result<File> {
 }
 
 impl Run {
-    /// Write the key file and start `holt`.
-    pub fn start(holt: &str, secret: &Secret, base: &Path) -> io::Result<Run> {
+    /// Write the key file and the password file and start `holt`.
+    pub fn start(holt: &str, secret: &Secret, password: &Secret, base: &Path) -> io::Result<Run> {
         let dir = private_dir(base)?;
         // From here the Run owns the directory: an error drops it, and
         // Drop removes what was made.
         let mut run = Run {
             dir,
             key: None,
+            password: None,
             events: None,
             stderr: None,
             child: None,
@@ -525,6 +549,7 @@ impl Run {
             follow: Follow::new(),
         };
         run.key = Some(secret.write_file(&run.dir, KEY_NAME)?);
+        run.password = Some(password.write_file(&run.dir, PASSWORD_NAME)?);
         let ev = run.dir.join("events");
         let out = new_file(&ev)?;
         run.events = Some(File::open(&ev)?);
@@ -537,6 +562,8 @@ impl Run {
         }
         let child = Command::new(holt)
             .args(ARGS)
+            .arg("--password-file")
+            .arg(run.password.as_deref().unwrap_or(Path::new("")))
             .arg("--key-file")
             .arg(kf)
             .env("BKO_HOLT_NO_COMMIT", "1")
@@ -582,8 +609,8 @@ impl Run {
         self.follow.error.is_some()
     }
 
-    /// The fake exited: take its status, then remove the key file at
-    /// once, as load's would be once load exits.
+    /// The fake exited: take its status, then remove the key file and
+    /// the password file at once, as load's would be once load exits.
     fn exited(&mut self, st: ExitStatus) {
         self.status = Some(st);
         self.child = None;
@@ -591,7 +618,7 @@ impl Run {
     }
 
     fn remove_key(&mut self) {
-        if let Some(k) = self.key.take() {
+        for k in [self.key.take(), self.password.take()].into_iter().flatten() {
             let _ = fs::remove_file(k);
         }
     }
@@ -609,7 +636,7 @@ impl Run {
         // Read after the exit is seen, so a read to the end after it
         // has every event.
         let at_end = self.read_events();
-        if self.follow.error.is_some() || self.follow.commit == Some(true) {
+        if self.follow.error.is_some() || self.follow.not_dry().is_some() {
             return self.stop();
         }
         if self.child.is_none() && at_end {
@@ -671,72 +698,143 @@ impl Run {
 
     /// How it ended, once it has.
     pub fn outcome(&self, stopped: bool) -> Outcome {
-        let raw = self.stderr_lines();
-        let safe = "Nothing in the backup has been changed.";
-        let code = self.status.and_then(|s| s.code());
-        let mk = |title: &str, text: String, short: String| Outcome {
-            title: Clean::line(title, cap::LINE),
-            text: Clean::text(&text, cap::PROBLEM),
-            short,
-            raw: raw.clone(),
+        judge(&self.follow, self.status, self.stderr_lines(), stopped)
+    }
+}
+
+/// How a run ended, from what its events said (`f`), its exit status, its
+/// stderr's lines and whether Cancel stopped it.  Whatever doesn't make it
+/// plainly done (a refusal, problems, a stop, an internal error, a skip
+/// for a reason this bko-rescue doesn't know) isn't Done (Principle 6).
+pub fn judge(f: &Follow, status: Option<ExitStatus>, raw: Vec<Clean>, stopped: bool) -> Outcome {
+    let safe = "Nothing in the backup has been changed.";
+    let code = status.and_then(|s| s.code());
+    let mk = |title: &str, text: String, short: String| Outcome {
+        title: Clean::line(title, cap::LINE),
+        text: Clean::text(&text, cap::PROBLEM),
+        short,
+        raw: raw.clone(),
+    };
+    let not_dry = f.not_dry();
+    if stopped && f.error.is_none() && not_dry.is_none() {
+        return mk(
+            "Stopped",
+            format!("The fake bko-holt was stopped, so its restore stopped half way.  {safe}"),
+            "stopped".to_string(),
+        );
+    }
+    if let Some(e) = &f.error {
+        return mk(
+            "Problem: the restore was stopped",
+            format!("bko-holt's events didn't make sense, so it was stopped: {}.  {safe}", e.as_str()),
+            "stopped: bad events".to_string(),
+        );
+    }
+    if let Some(why) = not_dry {
+        let said = match why {
+            NotDry::Commits => "bko-holt said it would write to the disks, which the demo never asks for",
+            NotDry::NotDryRun => "bko-holt didn't say this is a dry run (BKO_HOLT_NO_COMMIT), which the demo always asks for",
+            NotDry::Ran => "bko-holt ran a command instead of only showing it, which the demo never asks for",
         };
-        let f = &self.follow;
-        if stopped && f.error.is_none() && f.commit != Some(true) {
-            return mk(
-                "Stopped",
-                format!("The fake bko-holt was stopped, so its restore stopped half way.  {safe}"),
-                "stopped".to_string(),
-            );
+        return mk("Problem: the restore was stopped", format!("{said}, so it was stopped.  {safe}"), format!("stopped: {}", why.short()));
+    }
+    let status_words = match (code, status) {
+        (Some(c), _) => format!("exit status {c}"),
+        (None, Some(_)) => "killed by a signal".to_string(),
+        (None, None) => "no exit status".to_string(),
+    };
+    if let Some(r) = &f.refusal {
+        let exit = r.exit.map_or("no exit status in it".to_string(), |e| format!("exit status {e}"));
+        return mk(
+            "Problem: bko-holt refused the run",
+            format!("bko-holt refused it before doing anything: {}\n\n(code {}, {exit}; bko-holt ended with {status_words}.)  {safe}", r.text.as_str(), r.code.as_str()),
+            format!("refused: {}", r.code.as_str()),
+        );
+    }
+    if f.ended == Some(101) {
+        let what = f.failed.as_ref().map(|x| format!("  It said: {}", x.text.as_str())).unwrap_or_default();
+        return mk(
+            "Problem: bko-holt failed",
+            format!("bko-holt stopped on an internal error: report it.{what}\n\n{safe}"),
+            format!("internal error ({status_words})"),
+        );
+    }
+    if f.ended == Some(5) || f.stopped == Some(true) {
+        return mk(
+            "Stopped",
+            format!("bko-holt stopped on request, between commands, and said so (exit 5).  {safe}"),
+            format!("stopped by bko-holt ({status_words})"),
+        );
+    }
+    if let Some(ps) = &f.problems {
+        let mut t = "bko-holt's checks found problems, so it ran nothing:\n".to_string();
+        for (c, text) in ps {
+            t.push_str(&format!("\n  {}: {}", c.as_str(), text.as_str()));
         }
-        if let Some(e) = &f.error {
-            return mk(
-                "Problem: the restore was stopped",
-                format!("bko-holt's events didn't make sense, so it was stopped: {}.  {safe}", e.as_str()),
-                "stopped: bad events".to_string(),
-            );
+        if ps.is_empty() {
+            t.push_str("\n  (it named none)");
         }
-        if f.commit == Some(true) {
-            return mk(
-                "Problem: the restore was stopped",
-                format!("bko-holt said it would write to the disks, which the demo never asks for, so it was stopped.  {safe}"),
-                "stopped: it would commit".to_string(),
-            );
-        }
-        let status = match (code, self.status) {
-            (Some(c), _) => format!("exit status {c}"),
-            (None, Some(_)) => "killed by a signal".to_string(),
-            (None, None) => "no exit status".to_string(),
-        };
-        match (&f.failed, f.ended) {
-            (None, Some(0)) if code == Some(0) => mk(
+        let first = ps.first().map_or("none named", |(c, _)| c.as_str());
+        return mk("Problem: nothing ran", format!("{t}\n\n{safe}"), format!("blocked: {first} ({status_words})"));
+    }
+    match (&f.failed, f.ended) {
+        (None, Some(0)) if code == Some(0) && f.odd_skip => mk(
+            "Problem: the restore can't be called done",
+            format!("bko-holt ended with exit status 0, but it skipped a stage for a reason this bko-rescue doesn't know, so the disks' status would have to be read first.  {safe}"),
+            "unclear: a stage skipped for an unknown reason".to_string(),
+        ),
+        (None, Some(0)) if code == Some(0) => {
+            let dry = if f.would > 0 {
+                format!("  It was a dry run: {} commands would have run, and none did.", f.would)
+            } else {
+                String::new()
+            };
+            mk(
                 "Done",
                 format!(
-                    "The fake restore went through every stage, {} events in all, and ended with exit status 0.  \
-                     The key file it was given is removed.",
+                    "The fake restore went through every stage, {} events in all, and ended with exit status 0.{dry}  \
+                     The key file and the password file it was given are removed.",
                     f.events
                 ),
                 "done".to_string(),
-            ),
-            (Some((stage, text)), _) => mk(
-                "Problem: the restore failed",
-                format!(
-                    "Stage {} failed: {}\n\nbko-holt ended with {status}.  {safe}",
-                    stage.as_str(),
-                    text.as_str()
-                ),
-                format!("failed in {} ({status})", stage.as_str()),
-            ),
-            (None, Some(e)) => mk(
-                "Problem: the restore failed",
-                format!("bko-holt's end event says exit {e}, and it ended with {status}.  {safe}"),
-                format!("failed ({status})"),
-            ),
-            (None, None) => mk(
-                "Problem: the restore failed",
-                format!("bko-holt ended with {status} and without its end event.  {safe}"),
-                format!("failed ({status}, no end event)"),
-            ),
+            )
         }
+        (Some(x), _) => {
+            let mut t = format!("Stage {} failed: {}\n\n{}", x.stage.as_str(), x.text.as_str(), failure_help(x));
+            // The tail, unless the text has it already (bko-holt's does).
+            if x.tail.iter().any(|l| !x.text.as_str().contains(l.as_str())) {
+                t.push_str("\n\nIts last lines:");
+                for l in &x.tail {
+                    t.push_str(&format!("\n    {}", l.as_str()));
+                }
+            }
+            t.push_str(&format!("\n\nbko-holt ended with {status_words}.  {safe}"));
+            mk("Problem: the restore failed", t, format!("failed in {}: {} ({status_words})", x.stage.as_str(), x.code.as_str()))
+        }
+        (None, Some(e)) => mk(
+            "Problem: the restore failed",
+            format!("bko-holt's end event says exit {e}, and it ended with {status_words}.  {safe}"),
+            format!("failed ({status_words})"),
+        ),
+        (None, None) => mk(
+            "Problem: the restore failed",
+            format!("bko-holt ended with {status_words} and without its end event.  {safe}"),
+            format!("failed ({status_words}, no end event)"),
+        ),
+    }
+}
+
+/// A failure's words of help, by its code (holt-json.md, "Failures"); a
+/// code this bko-rescue doesn't know gets the general ones.
+fn failure_help(x: &Failure) -> String {
+    let program = x.program.as_ref().map(|p| format!(" ({})", p.as_str())).unwrap_or_default();
+    match x.code.as_str() {
+        "cmd_failed" => format!("A command{program} failed."),
+        "wrong_passphrase" => "The passphrase didn't open the disk: it would be asked again.".to_string(),
+        "archiver_failed" => "The copy failed: trying again copies again.".to_string(),
+        "efi_vars" => format!("This computer's firmware took no boot entry{program}: the system can be installed without one."),
+        "lock_held" => "Another bko-holt load is running here.".to_string(),
+        _ => "Something in this stage went wrong: the log has the whole story.".to_string(),
     }
 }
 
@@ -756,7 +854,13 @@ pub enum State {
     Waiting,
     Running,
     Done,
+    /// A dry run's: its commands would run (`stage_done` with `checked:
+    /// false`, after `cmd` events with `would: true`).
+    Would,
     Skipped,
+    /// Skipped for a reason this bko-rescue doesn't know (a `skip` state
+    /// other than done and nothing).
+    SkippedWhy,
     Failed,
 }
 
@@ -767,27 +871,100 @@ pub struct Stage {
     /// When it started and how long it took, in ms.
     pub from_ms: u64,
     pub took_ms: Option<u64>,
+    /// Its commands that would run.
+    pub would: usize,
 }
 
-/// bko-holt's events as they come (ui.md, "`--json` for load"), as a
-/// gauge shows them.  PROVISIONAL: the protocol is RT10's, not built
-/// yet; this reads the form ui.md gives, one JSON object a line:
-/// `start` (format `bko-holt-events`, schema 1, `stages`, `commit`)
-/// first, then `stage`, `skip`, `cmd`, `cmd_done`, `progress`,
-/// `stage_done`, `failed`, and `end` (`exit`) last.  An event it doesn't
-/// know is skipped; anything else wrong is an `error`, after which
-/// nothing more is read.
+impl Stage {
+    fn new(name: &str) -> Stage {
+        Stage { name: Clean::line(name, 32), state: State::Waiting, from_ms: 0, took_ms: None, would: 0 }
+    }
+}
+
+/// A `failed` event.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Failure {
+    pub stage: Clean,
+    pub text: Clean,
+    pub code: Clean,
+    pub program: Option<Clean>,
+    pub tail: Vec<Clean>,
+}
+
+/// A `bko-holt-error` document as the stream's first line: bko-holt
+/// refused before it began.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Refusal {
+    pub code: Clean,
+    pub text: Clean,
+    pub exit: Option<i64>,
+}
+
+/// Why a run isn't the dry run the demo asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotDry {
+    /// `start.commit` isn't false.
+    Commits,
+    /// `start.dry_run` isn't true.
+    NotDryRun,
+    /// A `cmd` without `would: true`: it ran.
+    Ran,
+}
+
+impl NotDry {
+    fn short(self) -> &'static str {
+        match self {
+            NotDry::Commits => "it would commit",
+            NotDry::NotDryRun => "not a dry run",
+            NotDry::Ran => "a command ran",
+        }
+    }
+}
+
+/// The most problems a `problems` event's list is read for, and the most
+/// lines of a failure's tail.
+const PROBLEMS_MAX: usize = 64;
+const TAIL_MAX: usize = 20;
+
+/// bko-holt's events as they come (holt-json.md, `bko-holt-events`), as a
+/// gauge shows them: one JSON object a line, `start` (format
+/// `bko-holt-events`, schema 1, `stages`, `commit`, `dry_run`) first, then
+/// `problems`, `stage`, `skip`, `cmd`, `cmd_done`, `progress`, `warning`,
+/// `stopping`, `stage_done`, `failed`, and `end` (`exit`, `stopped`) last;
+/// or, instead of all of them, one `bko-holt-error` document.  An event
+/// or field it doesn't know is skipped; a value it acts on and doesn't
+/// know fails closed (a skip's unknown reason, a failure's unknown code);
+/// anything else wrong is an `error`, after which nothing more is read.
 #[derive(Clone, Debug, Default)]
 pub struct Follow {
     pub stages: Vec<Stage>,
     pub started: bool,
     pub commit: Option<bool>,
+    pub dry_run: Option<bool>,
+    /// bko-holt load's own pid, from `start` (for RT12's Cancel).
+    pub pid: Option<u64>,
     /// The "Now:" line: what the running command does.
     pub now: Option<Clean>,
-    pub bytes: Option<(u64, u64)>,
-    pub files: Option<u64>,
-    pub failed: Option<(Clean, Clean)>,
+    /// The archiver's figures: bytes so far and the total, when known.
+    pub bytes: Option<u64>,
+    pub total: Option<u64>,
+    /// The archiver run the figures are of, part of parts.
+    pub part: Option<(u64, u64)>,
+    pub warnings: usize,
+    /// Commands that would run (a dry run's), and those that ran.
+    pub would: usize,
+    pub ran: usize,
+    /// A `stopping` event came.
+    pub stopping: bool,
+    pub failed: Option<Failure>,
+    /// A `problems` event's codes and texts: nothing ran.
+    pub problems: Option<Vec<(Clean, Clean)>>,
+    pub refusal: Option<Refusal>,
+    /// A stage skipped for a reason this bko-rescue doesn't know.
+    pub odd_skip: bool,
     pub ended: Option<i64>,
+    /// `end.stopped`.
+    pub stopped: Option<bool>,
     pub error: Option<Clean>,
     /// Events read, and those skipped as unknown.
     pub events: usize,
@@ -813,7 +990,7 @@ pub fn stage_label(name: &str) -> Option<&'static str> {
 fn doing(prog: &str) -> String {
     let base = prog.rsplit('/').next().unwrap_or(prog);
     let w = match base {
-        "sfdisk" | "sgdisk" | "parted" | "gpart" | "fdisk" | "disklabel" => "making partitions",
+        "sfdisk" | "sgdisk" | "parted" | "gpart" | "fdisk" | "disklabel" | "wipefs" => "making partitions",
         "cryptsetup" | "geli" => "setting up encryption",
         "mdadm" | "lvcreate" | "vgcreate" | "pvcreate" | "zpool" => "setting up RAID and volumes",
         "zfs" => "making datasets",
@@ -864,9 +1041,9 @@ fn secs(ms: u64) -> String {
 impl Follow {
     pub fn new() -> Follow {
         let mut f = Follow::default();
-        // Until start names them, the stages ui.md lists.
+        // Until start names them, the stages holt-json.md lists.
         for n in ["partition", "assemble", "format", "mount", "restore", "boot", "close"] {
-            f.stages.push(Stage { name: Clean::line(n, 32), state: State::Waiting, from_ms: 0, took_ms: None });
+            f.stages.push(Stage::new(n));
         }
         f
     }
@@ -874,6 +1051,23 @@ impl Follow {
     fn fail(&mut self, why: String) {
         if self.error.is_none() {
             self.error = Some(Clean::line(&why, cap::LINE));
+        }
+    }
+
+    /// Why this run isn't the dry run the demo asked for, once `start` is
+    /// read (holt-json.md, "The flow" 6: stop at once unless `dry_run` is
+    /// true and `commit` false), or a command really ran.
+    pub fn not_dry(&self) -> Option<NotDry> {
+        if !self.started {
+            None
+        } else if self.commit != Some(false) {
+            Some(NotDry::Commits)
+        } else if self.dry_run != Some(true) {
+            Some(NotDry::NotDryRun)
+        } else if self.ran > 0 {
+            Some(NotDry::Ran)
+        } else {
+            None
         }
     }
 
@@ -904,8 +1098,24 @@ impl Follow {
         if self.stages.len() >= STAGES_MAX {
             return None;
         }
-        self.stages.push(Stage { name: Clean::line(name, 32), state: State::Waiting, from_ms: 0, took_ms: None });
+        self.stages.push(Stage::new(name));
         self.stages.last_mut()
+    }
+
+    /// The first line, a `bko-holt-error` document: the whole stream.
+    fn refused(&mut self, v: &Value) {
+        if v.get_u64("schema") != Some(1) {
+            return self.fail(format!(
+                "format bko-holt-error schema {}, not one this bko-rescue knows",
+                v.get_u64("schema").map_or("(none)".to_string(), |n| n.to_string())
+            ));
+        }
+        self.events += 1;
+        self.refusal = Some(Refusal {
+            code: Clean::line(v.get_str("code").unwrap_or("(no code)"), 64),
+            text: Clean::text(v.get_str("text").unwrap_or("(no text)"), cap::PROBLEM),
+            exit: v.get("exit").and_then(Value::as_i64),
+        });
     }
 
     fn line(&mut self, raw: &[u8], ms: u64) {
@@ -920,7 +1130,13 @@ impl Follow {
             Ok(v) => v,
             Err(e) => return self.fail(format!("an event line that isn't JSON ({})", e.message)),
         };
+        if self.refusal.is_some() {
+            return self.fail("a line after bko-holt's error document, which is the whole stream".to_string());
+        }
         let Some(ev) = v.get_str("event").map(str::to_string) else {
+            if self.events == 0 && v.get_str("format") == Some("bko-holt-error") {
+                return self.refused(&v);
+            }
             return self.fail("an event with no \"event\"".to_string());
         };
         if self.ended.is_some() {
@@ -945,16 +1161,32 @@ impl Follow {
                 }
                 self.started = true;
                 self.commit = v.get_bool("commit");
+                self.dry_run = v.get_bool("dry_run");
+                self.pid = v.get_u64("pid");
                 if let Some(a) = v.get_arr("stages") {
                     if a.len() > STAGES_MAX || a.iter().any(|x| x.as_str().is_none()) {
                         return self.fail("start's stages aren't a short list of names".to_string());
                     }
-                    self.stages = a
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(|n| Stage { name: Clean::line(n, 32), state: State::Waiting, from_ms: 0, took_ms: None })
-                        .collect();
+                    // A panic before the stages were known names none.
+                    if !a.is_empty() {
+                        self.stages = a.iter().filter_map(Value::as_str).map(Stage::new).collect();
+                    }
                 }
+            }
+            "problems" => {
+                let list = v.get_arr("problems").map(|a| a.as_slice()).unwrap_or_default();
+                let ps = list
+                    .iter()
+                    .take(PROBLEMS_MAX)
+                    .map(|p| match p.as_str() {
+                        Some(t) => (Clean::line("other", 64), Clean::text(t, cap::PROBLEM)),
+                        None => (
+                            Clean::line(p.get_str("code").unwrap_or("other"), 64),
+                            Clean::text(p.get_str("text").unwrap_or("(no text)"), cap::PROBLEM),
+                        ),
+                    })
+                    .collect();
+                self.problems = Some(ps);
             }
             "stage" => {
                 let now = self.stages.iter_mut().filter(|s| s.state == State::Running);
@@ -965,37 +1197,78 @@ impl Follow {
                 }
                 self.now = None;
                 self.bytes = None;
-                self.files = None;
+                self.total = None;
+                self.part = None;
             }
             "skip" => {
+                // A state it doesn't know fails closed: the run isn't then
+                // plainly done.
+                let known = matches!(v.get_str("state"), Some("done" | "nothing"));
+                self.odd_skip |= !known;
                 if let Some(s) = self.stage_mut(&v) {
-                    s.state = State::Skipped;
+                    s.state = if known { State::Skipped } else { State::SkippedWhy };
                 }
             }
             "cmd" => {
-                let prog = v.get_arr("argv").and_then(|a| a.first()).and_then(Value::as_str).unwrap_or("?");
-                let mut t = doing(prog);
+                let would = v.get_bool("would") == Some(true);
+                if would {
+                    self.would += 1;
+                    if let Some(s) = self.stage_mut(&v) {
+                        s.would += 1;
+                    }
+                } else {
+                    self.ran += 1;
+                }
+                let first = v.get_arr("argv").and_then(|a| a.first()).and_then(Value::as_str).unwrap_or("?");
+                let field = |k: &str| Clean::line(v.get_str(k).unwrap_or("?"), 128).as_str().to_string();
+                // A kind it doesn't know is shown as its text.
+                let what = match v.get_str("kind") {
+                    None | Some("run") => doing(first),
+                    Some("write") => format!("writing {}", field("path")),
+                    Some("check") => format!("checking {}", field("dev")),
+                    Some("note") => field("why"),
+                    Some(k) => format!("a {} step: {}", Clean::line(k, 32).as_str(), Clean::line(first, 64).as_str()),
+                };
+                let mut t = if would { format!("would run: {what}") } else { what };
                 if let (Some(n), Some(of)) = (v.get_u64("n"), v.get_u64("of")) {
-                    t.push_str(&format!(" ({n} of {of})"));
+                    t.push_str(&format!(" (command {n} of {of} in this stage)"));
                 }
                 self.now = Some(Clean::line(&t, cap::LINE));
+                // Each archiver run's bar starts again.
+                if let Some(a) = v.get("archiver").filter(|a| a.get_u64("part").is_some()) {
+                    self.part = a.get_u64("part").zip(a.get_u64("parts"));
+                    self.bytes = None;
+                    self.total = None;
+                }
             }
             "cmd_done" => {}
             "progress" => {
-                if let (Some(b), Some(t)) = (v.get_u64("bytes"), v.get_u64("total_bytes")) {
-                    self.bytes = Some((b.min(t), t));
+                if let Some(b) = v.get_u64("bytes") {
+                    self.bytes = Some(b);
                 }
-                self.files = v.get_u64("files").or(self.files);
+                // Null until it is known.
+                if let Some(t) = v.get_u64("total_bytes") {
+                    self.total = Some(t);
+                }
+                if let (Some(p), Some(ps)) = (v.get_u64("part"), v.get_u64("parts")) {
+                    self.part = Some((p, ps));
+                }
+            }
+            "warning" => self.warnings += 1,
+            "stopping" => {
+                self.stopping = true;
+                self.now = Some(Clean::ours("stopping after the command now running"));
             }
             "stage_done" => {
+                let checked = v.get_bool("checked");
                 if let Some(s) = self.stage_mut(&v) {
-                    s.state = State::Done;
+                    s.state = if checked == Some(false) { State::Would } else { State::Done };
                     s.took_ms = Some(ms.saturating_sub(s.from_ms));
                 }
                 self.now = None;
             }
             "failed" => {
-                let text = Clean::line(v.get_str("text").unwrap_or("(no text)"), cap::PROBLEM);
+                let text = Clean::text(v.get_str("text").unwrap_or("(no text)"), cap::PROBLEM);
                 let stage = match self.stage_mut(&v) {
                     Some(s) => {
                         s.state = State::Failed;
@@ -1003,10 +1276,20 @@ impl Follow {
                     }
                     None => Clean::line(v.get_str("stage").unwrap_or("?"), 32),
                 };
-                self.failed = Some((stage, text));
+                let tail = v.get_arr("tail").map(|a| a.as_slice()).unwrap_or_default();
+                self.failed = Some(Failure {
+                    stage,
+                    text,
+                    code: Clean::line(v.get_str("code").unwrap_or("(no code)"), 64),
+                    program: v.get_str("program").map(|p| Clean::line(p, 64)),
+                    tail: tail.iter().filter_map(Value::as_str).take(TAIL_MAX).map(|l| Clean::line(l, cap::LOG_LINE)).collect(),
+                });
             }
             "end" => match v.get("exit").and_then(Value::as_i64) {
-                Some(e) => self.ended = Some(e),
+                Some(e) => {
+                    self.ended = Some(e);
+                    self.stopped = v.get_bool("stopped");
+                }
                 None => self.fail("an end with no exit".to_string()),
             },
             _ => self.unknown += 1,
@@ -1022,7 +1305,9 @@ impl Follow {
                 State::Waiting => ("[ ]", String::new()),
                 State::Running => ("[>]", format!("running for {}", secs(ms.saturating_sub(st.from_ms)))),
                 State::Done => ("[x]", st.took_ms.map(secs).unwrap_or_default()),
+                State::Would => ("[~]", format!("would run {} command{}", st.would, if st.would == 1 { "" } else { "s" })),
                 State::Skipped => ("[-]", "nothing to do".to_string()),
+                State::SkippedWhy => ("[-]", "skipped, why unknown".to_string()),
                 State::Failed => ("[!]", "FAILED".to_string()),
             };
             let row = format!("  {mark} {label:<26}{after}");
@@ -1042,24 +1327,30 @@ impl Follow {
         Clean::text(&s, cap::PROBLEM)
     }
 
-    /// The bar, from `progress` events; None before any.
+    /// The bar, from `progress` events; None before any, or while the
+    /// total isn't known.
     pub fn pct(&self) -> Option<u8> {
-        self.bytes.map(|(b, t)| if t == 0 { 100 } else { (u128::from(b) * 100 / u128::from(t)).min(100) as u8 })
+        let (b, t) = (self.bytes?, self.total?);
+        Some(if t == 0 { 100 } else { (u128::from(b.min(t)) * 100 / u128::from(t)).min(100) as u8 })
     }
 
-    /// The line under the bar: the figures, from `progress` events.
+    /// The line under the bar: the figures, from `progress` events (no
+    /// file count: J17), which archiver run, and the warnings so far.
     pub fn figures(&self) -> Clean {
-        let mut s = String::new();
-        if let Some((b, t)) = self.bytes {
-            s.push_str(&format!("{} of {}", size(b), size(t)));
+        let mut parts: Vec<String> = Vec::new();
+        match (self.bytes, self.total) {
+            (Some(b), Some(t)) => parts.push(format!("{} of {}", size(b.min(t)), size(t))),
+            (Some(b), None) => parts.push(format!("{} so far", size(b))),
+            _ => {}
         }
-        if let Some(f) = self.files {
-            if !s.is_empty() {
-                s.push_str("   ");
-            }
-            s.push_str(&format!("{} files", thousands(f)));
+        if let Some((p, ps)) = self.part.filter(|&(_, ps)| ps > 1) {
+            parts.push(format!("part {p} of {ps}"));
         }
-        Clean::line(&s, cap::LINE)
+        if self.warnings > 0 {
+            let n = u64::try_from(self.warnings).unwrap_or(u64::MAX);
+            parts.push(format!("{} warning{}", thousands(n), if n == 1 { "" } else { "s" }));
+        }
+        Clean::line(&parts.join("   "), cap::LINE)
     }
 }
 
@@ -1104,17 +1395,21 @@ mod tests {
         assert_eq!(tour(&mut ui, 3, &mut Seen::default()), (3, Answer::Quit));
     }
 
-    const GOOD: &str = r#"{"event":"start","format":"bko-holt-events","schema":1,"version":"0.3.0","stages":["partition","assemble","format","mount","restore","boot","close"],"commit":false,"log":"/run/bko-holt/log/load.log"}
-{"event":"stage","stage":"partition"}
-{"event":"cmd","stage":"partition","n":1,"of":2,"argv":["sfdisk","/dev/sdb"],"why":"x"}
-{"event":"cmd_done","stage":"partition","n":1,"status":0,"secs":0.4}
-{"event":"stage_done","stage":"partition"}
-{"event":"skip","stage":"assemble","state":"nothing"}
-{"event":"stage","stage":"format"}
-{"event":"cmd","stage":"format","n":3,"of":9,"argv":["/sbin/mke2fs","-t","ext4"],"why":"x"}
-{"event":"stage_done","stage":"format"}
-{"event":"stage","stage":"restore"}
-{"event":"progress","stage":"restore","files":184233,"bytes":38200000000,"total_bytes":61200000000}
+    /// A dry run's events (holt-json.md, `bko-holt-events`), cut short in
+    /// the restore stage.
+    const GOOD: &str = r#"{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T11:21:00Z","pid":4711,"commit":false,"dry_run":true,"stages":["partition","assemble","format","mount","restore","boot","close"],"stage_commands":{"partition":2},"plan_sha256":null,"log":null,"layout":null}
+{"event":"stage","stage":"partition","commands":2}
+{"event":"cmd","stage":"partition","n":1,"of":2,"kind":"run","argv":["wipefs","--all","/dev/sdb"],"why":"x","would":true}
+{"event":"cmd","stage":"partition","n":2,"of":2,"kind":"run","argv":["sfdisk","/dev/sdb"],"why":"x","would":true}
+{"event":"stage_done","stage":"partition","secs":0.01,"checked":false}
+{"event":"skip","stage":"assemble","state":"nothing","why":""}
+{"event":"stage","stage":"format","commands":9}
+{"event":"cmd","stage":"format","n":3,"of":9,"kind":"run","argv":["/sbin/mke2fs","-t","ext4"],"why":"x","would":true}
+{"event":"stage_done","stage":"format","secs":0.01,"checked":false}
+{"event":"stage","stage":"restore","commands":1}
+{"event":"cmd","stage":"restore","n":1,"of":1,"kind":"run","argv":["rustic-bko","restore"],"would":true,"archiver":{"part":2,"parts":21}}
+{"event":"progress","stage":"restore","n":1,"part":2,"parts":21,"bytes":38200000000,"total_bytes":61200000000,"secs":82,"errors":0,"files":184233}
+{"event":"warning","stage":"restore","n":1,"source":"archiver","text":"restore /x: no xattrs","item":"/x"}
 {"event":"wobble","stage":"restore"}
 "#;
 
@@ -1124,37 +1419,152 @@ mod tests {
         f
     }
 
+    fn exit(code: i32) -> Option<ExitStatus> {
+        use std::os::unix::process::ExitStatusExt as _;
+        Some(ExitStatus::from_raw(code << 8))
+    }
+
     #[test]
     fn events_become_the_stages_the_bar_and_its_line() {
         let f = fed(GOOD);
         assert_eq!(f.error, None);
-        assert_eq!((f.events, f.unknown, f.commit), (12, 1, Some(false)));
+        assert_eq!((f.events, f.unknown, f.commit, f.dry_run, f.pid), (14, 1, Some(false), Some(true), Some(4711)));
+        assert_eq!((f.would, f.ran, f.not_dry()), (4, 0, None));
         let t = f.text(9000);
         let t = t.as_str();
-        assert!(t.contains("[x] Make partitions           0 s\n"), "{t}");
+        assert!(t.contains("[~] Make partitions           would run 2 commands\n"), "{t}");
         assert!(t.contains("[-] Set up encryption         nothing to do\n"), "{t}");
+        assert!(t.contains("[~] Make filesystems          would run 1 command\n"), "{t}");
         assert!(t.contains("[>] Copy your files back      running for 4 s\n"), "{t}");
         assert!(t.contains("[ ] Make it bootable"), "{t}");
-        assert!(t.ends_with("Now: Copy your files back."), "{t}");
+        assert!(t.ends_with("Now: would run: copying your files back (command 1 of 1 in this stage)."), "{t}");
         assert!(t.contains("[ ] Ready the filesystems\n"), "{t}");
         assert_eq!(f.pct(), Some(62));
-        assert_eq!(f.figures().as_str(), "38.2 GB of 61.2 GB   184,233 files");
+        // No file count (J17): the part and the warnings instead.
+        assert_eq!(f.figures().as_str(), "38.2 GB of 61.2 GB   part 2 of 21   1 warning");
+        // The next archiver run's bar starts again; its total not known yet.
         let mut f = fed(GOOD);
-        f.feed(b"{\"event\":\"cmd\",\"stage\":\"restore\",\"n\":7,\"of\":9,\"argv\":[\"rustic-bko\",\"restore\"]}\n", 6000);
-        assert!(f.text(6000).as_str().ends_with("Now: copying your files back (7 of 9)."));
+        f.feed(b"{\"event\":\"cmd\",\"stage\":\"restore\",\"n\":2,\"of\":3,\"kind\":\"run\",\"argv\":[\"sh\",\"-c\",\"x\"],\"would\":true,\"archiver\":{\"part\":3,\"parts\":21}}\n", 6000);
+        assert_eq!((f.pct(), f.figures().as_str()), (None, "part 3 of 21   1 warning"));
+        f.feed(b"{\"event\":\"progress\",\"stage\":\"restore\",\"n\":2,\"part\":3,\"parts\":21,\"bytes\":4113000448,\"total_bytes\":null}\n", 6000);
+        assert_eq!((f.pct(), f.figures().as_str()), (None, "4.11 GB so far   part 3 of 21   1 warning"));
+        assert!(f.text(6000).as_str().ends_with("Now: would run: running sh (command 2 of 3 in this stage)."));
+        // The other kinds, one it doesn't know shown as its text.
+        for (line, now) in [
+            (r#"{"event":"cmd","stage":"boot","n":1,"of":4,"kind":"write","path":"/mnt/bko-target/etc/fstab","would":true}"#, "would run: writing /mnt/bko-target/etc/fstab (command 1 of 4 in this stage)"),
+            (r#"{"event":"cmd","stage":"boot","n":2,"of":4,"kind":"check","dev":"/dev/sdb1","would":true}"#, "would run: checking /dev/sdb1 (command 2 of 4 in this stage)"),
+            (r#"{"event":"cmd","stage":"boot","n":3,"of":4,"kind":"note","why":"the ESP is copied","would":true}"#, "would run: the ESP is copied (command 3 of 4 in this stage)"),
+            (r#"{"event":"cmd","stage":"boot","n":4,"of":4,"kind":"teleport","argv":["beam"],"would":true}"#, "would run: a teleport step: beam (command 4 of 4 in this stage)"),
+        ] {
+            let mut f = fed(GOOD);
+            f.feed(format!("{line}\n").as_bytes(), 6000);
+            assert_eq!(f.now.as_ref().map(Clean::as_str), Some(now));
+        }
     }
 
     #[test]
     fn a_failure_and_the_end() {
         let mut f = fed(GOOD);
-        f.feed(b"{\"event\":\"stage\",\"stage\":\"boot\"}\n{\"event\":\"failed\",\"stage\":\"boot\",\"text\":\"grub-install failed \\u001b[2J(exit status: 1)\"}\n{\"event\":\"end\",\"exit\":1}\n", 7000);
+        f.feed(b"{\"event\":\"stage\",\"stage\":\"boot\"}\n{\"event\":\"failed\",\"stage\":\"boot\",\"n\":1,\"code\":\"cmd_failed\",\"program\":\"grub-install\",\"text\":\"grub-install failed \\u001b[2J(exit status: 1):\\n    EFI\",\"tail\":[\"EFI\",\"more \\u001b[31m\"]}\n{\"event\":\"end\",\"exit\":1,\"stopped\":false}\n", 7000);
         assert_eq!(f.error, None);
-        assert_eq!(f.ended, Some(1));
-        let (stage, text) = f.failed.clone().unwrap();
-        assert_eq!((stage.as_str(), text.as_str()), ("boot", "grub-install failed ?[2J(exit status: 1)"));
+        assert_eq!((f.ended, f.stopped), (Some(1), Some(false)));
+        let x = f.failed.clone().unwrap();
+        assert_eq!((x.stage.as_str(), x.text.as_str(), x.code.as_str()), ("boot", "grub-install failed ?[2J(exit status: 1):\n    EFI", "cmd_failed"));
+        assert_eq!((x.program.as_ref().map(Clean::as_str), x.tail.iter().map(Clean::as_str).collect::<Vec<_>>()), (Some("grub-install"), vec!["EFI", "more ?[31m"]));
         assert!(f.text(7000).as_str().contains("[!] Make it bootable          FAILED"));
+        let o = judge(&f, exit(1), Vec::new(), false);
+        assert_eq!((o.title.as_str(), o.short.as_str()), ("Problem: the restore failed", "failed in boot: cmd_failed (exit status 1)"));
+        let t = o.text.as_str();
+        assert!(t.starts_with("Stage boot failed: grub-install failed ?[2J(exit status: 1):\n    EFI\n\nA command (grub-install) failed."), "{t}");
+        assert!(t.contains("Its last lines:\n    EFI\n    more ?[31m\n\nbko-holt ended with exit status 1."), "{t}");
+        // A code it doesn't know: the general help.
+        let mut g = f.clone();
+        g.failed.as_mut().unwrap().code = Clean::line("frobbed", 64);
+        assert!(judge(&g, exit(1), Vec::new(), false).text.as_str().contains("Something in this stage went wrong"));
         f.feed(b"{\"event\":\"stage\",\"stage\":\"close\"}\n", 7000);
         assert_eq!(f.error.as_ref().map(Clean::as_str), Some("an event after end"));
+    }
+
+    /// How each kind of ending reads (holt-json.md, demo.rs's changes 4-8).
+    #[test]
+    fn every_ending() {
+        let start = r#"{"event":"start","format":"bko-holt-events","schema":1,"commit":false,"dry_run":true,"stages":["partition","boot"]}"#;
+        let run = |body: &str, code: i32| {
+            let f = fed(&format!("{start}\n{body}\n"));
+            assert_eq!(f.error, None, "{body}");
+            judge(&f, exit(code), Vec::new(), false)
+        };
+        // Every stage would run: Done, as a dry run.
+        let o = run(r#"{"event":"stage","stage":"partition","commands":1}
+{"event":"cmd","stage":"partition","n":1,"of":1,"argv":["sfdisk"],"would":true}
+{"event":"stage_done","stage":"partition","checked":false}
+{"event":"skip","stage":"boot","state":"done","why":""}
+{"event":"end","exit":0,"stopped":false}"#, 0);
+        assert_eq!((o.title.as_str(), o.short.as_str()), ("Done", "done"));
+        assert!(o.text.as_str().contains("It was a dry run: 1 commands would have run, and none did."), "{}", o.text.as_str());
+        // A skip for a reason it doesn't know: not Done.
+        let o = run(r#"{"event":"skip","stage":"partition","state":"would_need_restore","why":""}
+{"event":"end","exit":0,"stopped":false}"#, 0);
+        assert_eq!(o.short, "unclear: a stage skipped for an unknown reason");
+        let f = fed(&format!("{start}\n{{\"event\":\"skip\",\"stage\":\"boot\",\"state\":\"frob\"}}\n"));
+        assert!(f.text(0).as_str().contains("[-] Make it bootable          skipped, why unknown"), "{}", f.text(0).as_str());
+        // Problems: the run blocked, nothing ran.
+        let o = run(r#"{"event":"problems","problems":[{"code":"not_root","text":"load writes disks: run it as root"},"an old string"],"exit":4}
+{"event":"end","exit":4,"stopped":false}"#, 4);
+        assert_eq!((o.title.as_str(), o.short.as_str()), ("Problem: nothing ran", "blocked: not_root (exit status 4)"));
+        assert!(o.text.as_str().contains("\n  not_root: load writes disks: run it as root\n  other: an old string\n"), "{}", o.text.as_str());
+        // Stopped by bko-holt (exit 5), with its stopping event first.
+        let f = fed(&format!("{start}\n{{\"event\":\"stage\",\"stage\":\"partition\"}}\n{{\"event\":\"stopping\",\"signal\":\"SIGTERM\"}}\n"));
+        assert!(f.stopping && f.text(0).as_str().ends_with("Now: stopping after the command now running."));
+        let o = run(r#"{"event":"stopping","signal":"SIGTERM"}
+{"event":"end","exit":5,"stopped":true}"#, 5);
+        assert_eq!((o.title.as_str(), o.short.as_str()), ("Stopped", "stopped by bko-holt (exit status 5)"));
+        // 101: bko-holt's own failure, not a stage's.
+        let o = run(r#"{"event":"failed","stage":null,"n":null,"code":"internal","text":"bko-holt panicked: index out of bounds"}
+{"event":"end","exit":101,"stopped":false}"#, 101);
+        assert_eq!((o.title.as_str(), o.short.as_str()), ("Problem: bko-holt failed", "internal error (exit status 101)"));
+        assert!(o.text.as_str().starts_with("bko-holt stopped on an internal error: report it.  It said: bko-holt panicked"), "{}", o.text.as_str());
+    }
+
+    /// A first line that is a bko-holt-error document is the whole stream
+    /// (change 6): the refusal, not "an event with no event".
+    #[test]
+    fn a_refusal_document() {
+        let doc = r#"{"format":"bko-holt-error","schema":1,"version":"0.2.6","generated":"2026-11-24T10:00:00Z","dry_run":true,"exit":2,"code":"no_commit","text":"bko-holt load: BKO_HOLT_NO_COMMIT=1 is set (a dry run), so --commit is refused; nothing was written to any disk"}"#;
+        let f = fed(&format!("{doc}\n"));
+        assert_eq!((f.error.clone(), f.started, f.events), (None, false, 1));
+        let r = f.refusal.clone().unwrap();
+        assert_eq!((r.code.as_str(), r.exit), ("no_commit", Some(2)));
+        let o = judge(&f, exit(2), Vec::new(), false);
+        assert_eq!((o.title.as_str(), o.short.as_str()), ("Problem: bko-holt refused the run", "refused: no_commit"));
+        assert!(o.text.as_str().contains("refused it before doing anything: bko-holt load: BKO_HOLT_NO_COMMIT=1 is set"), "{}", o.text.as_str());
+        assert!(o.text.as_str().contains("(code no_commit, exit status 2; bko-holt ended with exit status 2.)"), "{}", o.text.as_str());
+        // Nothing may follow it, and it must be the first line.
+        let f = fed(&format!("{doc}\n{{\"event\":\"start\"}}\n"));
+        assert_eq!(f.error.as_ref().map(Clean::as_str), Some("a line after bko-holt's error document, which is the whole stream"));
+        let f = fed(&format!("{}\n{doc}\n", GOOD.lines().next().unwrap()));
+        assert_eq!(f.error.as_ref().map(Clean::as_str), Some("an event with no \"event\""));
+        let f = fed(&format!("{}\n", doc.replace("\"schema\":1", "\"schema\":2")));
+        assert_eq!(f.error.as_ref().map(Clean::as_str), Some("format bko-holt-error schema 2, not one this bko-rescue knows"));
+        assert_eq!(f.refusal, None);
+    }
+
+    /// The demo stops unless start says a dry run that doesn't commit
+    /// (change 7), or once a command really runs.
+    #[test]
+    fn only_a_dry_run_is_followed() {
+        let st = |more: &str| format!("{{\"event\":\"start\",\"format\":\"bko-holt-events\",\"schema\":1{more}}}\n");
+        assert_eq!(fed(&st(",\"commit\":false,\"dry_run\":true")).not_dry(), None);
+        assert_eq!(fed(&st(",\"commit\":true,\"dry_run\":true")).not_dry(), Some(NotDry::Commits));
+        assert_eq!(fed(&st(",\"dry_run\":true")).not_dry(), Some(NotDry::Commits), "commit unsaid fails closed");
+        assert_eq!(fed(&st(",\"commit\":false,\"dry_run\":false")).not_dry(), Some(NotDry::NotDryRun));
+        assert_eq!(fed(&st(",\"commit\":false")).not_dry(), Some(NotDry::NotDryRun), "dry_run unsaid fails closed");
+        let mut f = fed(&st(",\"commit\":false,\"dry_run\":true"));
+        f.feed(b"{\"event\":\"stage\",\"stage\":\"partition\"}\n{\"event\":\"cmd\",\"stage\":\"partition\",\"n\":1,\"of\":1,\"argv\":[\"wipefs\"],\"would\":false}\n", 0);
+        assert_eq!((f.ran, f.not_dry()), (1, Some(NotDry::Ran)));
+        let o = judge(&f, None, Vec::new(), true);
+        assert_eq!(o.short, "stopped: a command ran", "Cancel or not, the reason is the run's");
+        assert_eq!(Follow::new().not_dry(), None, "nothing to say before start");
     }
 
     #[test]
@@ -1165,6 +1575,7 @@ mod tests {
             ("{\"event\":\"start\",\"format\":\"other\",\"schema\":1}\n", "format other schema 1, not one this bko-rescue knows"),
             ("not json\n", "an event line that isn't JSON"),
             ("{\"no\":1}\n", "an event with no \"event\""),
+            ("{\"format\":\"bko-holt-plan\",\"schema\":1}\n", "an event with no \"event\""),
             ("\u{1b}\n", "an event line that isn't JSON"),
         ];
         for (input, want) in cases {
@@ -1206,10 +1617,17 @@ mod tests {
         assert_eq!(doing("/usr/sbin/mkfs.vfat"), "making a filesystem");
         assert_eq!(doing("frob\u{1b}[2J"), "running frob?[2J");
         let mut f = Follow::new();
-        f.bytes = Some((u64::MAX, u64::MAX));
+        (f.bytes, f.total) = (Some(u64::MAX), Some(u64::MAX));
         assert_eq!(f.pct(), Some(100), "no overflow near u64::MAX");
-        f.bytes = Some((u64::MAX / 2, u64::MAX));
+        f.bytes = Some(u64::MAX / 2);
         assert_eq!(f.pct(), Some(49));
+        (f.bytes, f.total) = (Some(9), Some(3));
+        assert_eq!((f.pct(), f.figures().as_str()), (Some(100), "0.00 GB of 0.00 GB"));
+        f.total = Some(0);
+        assert_eq!(f.pct(), Some(100));
+        f.part = Some((1, 1));
+        f.warnings = 1234;
+        assert_eq!(f.figures().as_str(), "0.00 GB of 0.00 GB   1,234 warnings", "one part isn't shown");
     }
 
     /// Random bytes, and good lines cut and changed, never panic, and
@@ -1265,9 +1683,10 @@ mod tests {
         d
     }
 
-    /// A fake in sh: checks the key file it is given, then writes events.
-    /// Once the key is checked it leaves its pid in `pid`, then the key
-    /// file's path in `key-was` (whole, by a rename), so a test can wait
+    /// A fake in sh: checks the key file and the password file it is
+    /// given, then writes events.  Once they are checked it leaves its pid
+    /// in `pid`, then the key file's path in `key-was` and the password
+    /// file's in `password-was` (whole, by a rename), so a test can wait
     /// for `key-was` and know the fake runs.
     ///
     /// A child sh writes the file, not this process: a test in another
@@ -1279,10 +1698,12 @@ mod tests {
         let p = dir.join("fake");
         let d = dir.display();
         let script = format!(
-            "#!/bin/sh\nfor a; do case $a in {KEY_NAME}=*) k=${{a#{KEY_NAME}=}};; --commit) exit 7;; esac; done\n\
+            "#!/bin/sh\nfor a; do case $prev in --password-file) p=$a;; esac; case $a in {KEY_NAME}=*) k=${{a#{KEY_NAME}=}};; --commit) exit 7;; esac; prev=$a; done\n\
              [ \"$BKO_HOLT_NO_COMMIT\" = 1 ] || exit 8\n\
              [ \"$(cat \"$k\")\" = pw ] || exit 9\n\
+             [ -s \"$p\" ] || exit 10\n\
              echo $$ >\"{d}/pid\"\n\
+             echo \"$p\" >\"{d}/password-was.new\" && mv \"{d}/password-was.new\" \"{d}/password-was\"\n\
              echo \"$k\" >\"{d}/key-was.new\" && mv \"{d}/key-was.new\" \"{d}/key-was\"\n{body}\n"
         );
         let st = Command::new("/bin/sh")
@@ -1327,8 +1748,9 @@ mod tests {
     #[test]
     fn the_restore_page_runs_the_fake_and_removes_the_key() {
         let d = scratch("run");
-        let ev = "{\"event\":\"start\",\"format\":\"bko-holt-events\",\"schema\":1,\"stages\":[\"partition\"],\"commit\":false}\n{\"event\":\"stage\",\"stage\":\"partition\"}\n{\"event\":\"stage_done\",\"stage\":\"partition\"}\n{\"event\":\"end\",\"exit\":0}";
-        let fake = sh_fake(&d, &format!("printf '%s\\n' '{}'\nsleep 0.2", ev.replace('\n', "' '")));
+        let ev = "{\"event\":\"start\",\"format\":\"bko-holt-events\",\"schema\":1,\"stages\":[\"partition\"],\"commit\":false,\"dry_run\":true}\n{\"event\":\"stage\",\"stage\":\"partition\"}\n{\"event\":\"cmd\",\"stage\":\"partition\",\"n\":1,\"of\":1,\"argv\":[\"sfdisk\"],\"would\":true}\n{\"event\":\"stage_done\",\"stage\":\"partition\",\"checked\":false}\n{\"event\":\"end\",\"exit\":0,\"stopped\":false}";
+        // Nothing typed on the password page: the demo's own password.
+        let fake = sh_fake(&d, &format!("[ \"$(cat \"$p\")\" = demo-repository-password ] || exit 12\nprintf '%s\\n' '{}'\nsleep 0.2", ev.replace('\n', "' '")));
         let mut ui = Scripted::new([Reply::Secret(b"pw".to_vec()), Reply::Ok, Reply::Ok]);
         let mut seen = Seen::default();
         assert_eq!(restore(&mut ui, &fake, &mut seen), Answer::Ok(()));
@@ -1337,7 +1759,15 @@ mod tests {
         let key = fs::read_to_string(d.join("key-was")).unwrap();
         let key = Path::new(key.trim());
         assert!(!key.exists(), "the key file is gone");
+        let pw = fs::read_to_string(d.join("password-was")).unwrap();
+        assert!(pw.trim().ends_with("/password") && !Path::new(pw.trim()).exists(), "the password file too: {pw}");
         assert!(!key.parent().unwrap().exists(), "its directory too");
+        // The password typed on its page is the one handed on.
+        let fake2 = sh_fake(&d, &format!("[ \"$(cat \"$p\")\" = typed-pw ] || exit 11\nprintf '%s\\n' '{}'", ev.replace('\n', "' '")));
+        let mut ui = Scripted::new([Reply::Secret(b"pw".to_vec()), Reply::Ok, Reply::Ok]);
+        let mut seen = Seen { password: Some(Secret::from_bytes(b"typed-pw")), ..Seen::default() };
+        assert_eq!(restore(&mut ui, &fake2, &mut seen), Answer::Ok(()));
+        assert_eq!(seen.run.as_deref(), Some("done"), "{:?}", ui.asked);
         // A failing one keeps its stderr for Raw output.
         let fake = sh_fake(&d, "echo 'grub-install: \x1b[31merror' >&2\nexit 3");
         let mut ui = Scripted::new([Reply::Secret(b"pw".to_vec()), Reply::Ok, Reply::Button(RAW), Reply::Back, Reply::Ok]);
@@ -1354,8 +1784,13 @@ mod tests {
         for (start, want) in [
             ("{\"event\":\"start\",\"format\":\"bko-holt-events\",\"schema\":9}", "stopped: bad events"),
             ("{\"event\":\"start\",\"format\":\"bko-holt-events\",\"schema\":1,\"commit\":true}", "stopped: it would commit"),
+            ("{\"event\":\"start\",\"format\":\"bko-holt-events\",\"schema\":1,\"commit\":false}", "stopped: not a dry run"),
+            (
+                "{\"event\":\"start\",\"format\":\"bko-holt-events\",\"schema\":1,\"commit\":false,\"dry_run\":true}' '{\"event\":\"stage\",\"stage\":\"partition\"}' '{\"event\":\"cmd\",\"stage\":\"partition\",\"n\":1,\"of\":1,\"argv\":[\"wipefs\"],\"would\":false}",
+                "stopped: a command ran",
+            ),
         ] {
-            let fake = sh_fake(&d, &format!("echo '{start}'\nexec sleep 30"));
+            let fake = sh_fake(&d, &format!("printf '%s\\n' '{start}'\nexec sleep 30"));
             let mut ui = Scripted::new([Reply::Secret(b"pw".to_vec()), Reply::Ok, Reply::Ok]);
             let mut seen = Seen::default();
             let t = Instant::now();
@@ -1448,7 +1883,7 @@ mod tests {
     #[test]
     fn stop_after_it_ended_says_how_it_ended() {
         let d = scratch("ended");
-        let ev = "{\"event\":\"start\",\"format\":\"bko-holt-events\",\"schema\":1,\"commit\":false}\n{\"event\":\"end\",\"exit\":0}";
+        let ev = "{\"event\":\"start\",\"format\":\"bko-holt-events\",\"schema\":1,\"commit\":false,\"dry_run\":true}\n{\"event\":\"end\",\"exit\":0,\"stopped\":false}";
         let gated = format!("{}\nprintf '%s\\n' '{}'", wait_for_gate(&d), ev.replace('\n', "' '"));
         let fake = sh_fake(&d, &gated);
         // Cancel at the first tick, the fake waiting for its gate; it
@@ -1483,14 +1918,14 @@ mod tests {
     #[test]
     fn a_big_events_file_is_read_in_pieces() {
         let d = scratch("big");
-        let line = "{\"event\":\"progress\",\"stage\":\"restore\",\"files\":1,\"bytes\":1,\"total_bytes\":2}\n";
+        let line = "{\"event\":\"progress\",\"stage\":\"restore\",\"n\":1,\"bytes\":1,\"total_bytes\":2}\n";
         let n = 3 * EVENTS_PER_POLL / line.len();
-        let mut body = String::from("{\"event\":\"start\",\"format\":\"bko-holt-events\",\"schema\":1,\"commit\":false}\n");
+        let mut body = String::from("{\"event\":\"start\",\"format\":\"bko-holt-events\",\"schema\":1,\"commit\":false,\"dry_run\":true}\n");
         body.push_str(&line.repeat(n));
         body.push_str("{\"event\":\"end\",\"exit\":0}\n");
         fs::write(d.join("events.txt"), &body).unwrap();
         let fake = sh_fake(&d, &format!("cat '{}'", d.join("events.txt").display()));
-        let mut run = Run::start(&fake, &Secret::from_bytes(b"pw"), &d).unwrap();
+        let mut run = Run::start(&fake, &Secret::from_bytes(b"pw"), &Secret::from_bytes(DEMO_PASSWORD), &d).unwrap();
         let mut looks = 0;
         while !run.finished() {
             run.poll();
@@ -1507,9 +1942,9 @@ mod tests {
     fn a_run_dropped_early_stops_the_fake_and_cleans_up() {
         let d = scratch("drop");
         let fake = sh_fake(&d, "exec sleep 30");
-        let run = Run::start(&fake, &Secret::from_bytes(b"pw"), &d).unwrap();
+        let run = Run::start(&fake, &Secret::from_bytes(b"pw"), &Secret::from_bytes(DEMO_PASSWORD), &d).unwrap();
         let dir = run.dir.clone();
-        assert!(dir.join(KEY_NAME).exists());
+        assert!(dir.join(KEY_NAME).exists() && dir.join(PASSWORD_NAME).exists());
         let t = Instant::now();
         drop(run);
         assert!(t.elapsed().as_secs() < 10);

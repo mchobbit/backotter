@@ -3,5 +3,9 @@ demo-system.json
 --json
 --through
 close
+--repo
+sftp://nas.local/backotter/lovelace
+--password-file
+*
 --key-file
 sda3_crypt=*

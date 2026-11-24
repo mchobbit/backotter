@@ -159,12 +159,22 @@ fn load_refusals_are_error_documents() {
     assert_error(&run(&["load", "--frob", "--json=2", "--sysroot", &root], &[], None), 2, "schema_unknown");
     // Beside a good --json, after it too.
     assert_error(&run(&["load", &layout, "--json", "--json=2", "--sysroot", &root], &[], None), 2, "schema_unknown");
-    // The event stream RT10f builds: refused, nothing run.
+    // The writing stages (RT10f): an event stream, start to end; this
+    // tree has none of the tools, so plan problems: nothing runs, exit 4,
+    // as text mode's.
     for extra in [&["--through", "mount"][..], &["--only", "boot"]] {
-        let mut a = vec!["load", layout.as_str(), "--sysroot", &root, "--map", "vda=vdb", "--json"];
+        let mut a = vec!["load", layout.as_str(), "--sysroot", &root, "--map", "vda=vdb"];
         a.extend_from_slice(extra);
-        let v = assert_error(&run(&a, &[], None), 2, "json_not_here");
-        assert!(v.get_str("text").unwrap().contains("the writing stages"), "{}", out(&run(&a, &[], None)));
+        let text = run(&a, &[], None);
+        a.push("--json");
+        let o = run(&a, &[], None);
+        assert_eq!((o.status.code(), err(&o)), (text.status.code(), err(&text)), "{a:?}");
+        assert_eq!(o.status.code(), Some(4));
+        let evs: Vec<Value> = out(&o).lines().map(|l| json::parse(l).unwrap_or_else(|e| panic!("{}: {l}", e.message))).collect();
+        let names: Vec<&str> = evs.iter().filter_map(|e| e.get_str("event")).collect();
+        assert_eq!(names, ["start", "problems", "end"], "{}", out(&o));
+        assert_eq!((evs[0].get_str("format"), evs[0].get_u64("schema"), evs[0].get_bool("commit")), (Some("bko-holt-events"), Some(1), Some(false)));
+        assert_eq!(evs[2].get_u64("exit"), Some(4));
     }
     // --help is for people, --json or not.
     for args in [&["load", "--json", "--help"][..], &["load", "--json=2", "--help"], &["load", "-h", "--json=2"]] {

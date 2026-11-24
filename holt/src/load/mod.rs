@@ -65,6 +65,8 @@ pub const EXIT_FAILED: u8 = 1;
 pub const EXIT_BAD_ARGS: u8 = 2;
 pub const EXIT_UNSUPPORTED: u8 = 3;
 pub const EXIT_PLAN_PROBLEMS: u8 = 4;
+/// Under --json only: a writing run stopped on request (SIGTERM, J7).
+pub const EXIT_STOPPED: u8 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stage {
@@ -540,6 +542,14 @@ fn main_inner(args: &[String]) -> (u8, String) {
         Some(d) => Sys::new(d, Box::new(FakeRunner::default()), crate::sys::euid() == 0),
         None => Sys::host(),
     };
+    if opts.json {
+        // No core dumps (cryptsetup and the archiver hold keys), and for a
+        // writing run, SIGTERM's stop and the panic hook (exec::arm).
+        crate::sys::no_core_dumps();
+        if !matches!(opts.stages().as_slice(), [Stage::Plan] | [Stage::Status]) {
+            exec::arm();
+        }
+    }
     let (code, out, err) = run(&opts, &text, &sys);
     if opts.json {
         jsonout::write_stdout(&out);
@@ -575,13 +585,12 @@ pub fn run(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
     }
     let stages = opts.stages();
     if opts.json {
-        // The event stream (RT10f) isn't built yet: the writing stages are
-        // refused, before anything is read or run, so a reader never gets
-        // text where it wants JSON.
+        // The writing stages' events go out as they happen; the documents
+        // are written whole.
         match stages.as_slice() {
             [Stage::Plan] => return plan::json_run(&layout, opts, sys, layout_text),
             [Stage::Status] => return status::json_run(&layout, opts, sys),
-            _ => return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::JsonNotHere, "bko-holt load: --json isn't built for the writing stages in this bko-holt; run it without --json".into()),
+            _ => return exec::json_run(&layout, opts, sys, &stages, &mut |l| jsonout::write_stdout(l)),
         }
     }
     match stages.as_slice() {
@@ -767,13 +776,10 @@ mod tests {
         let (code, out, _) = run(&opts(&["l.json", "--json"]), r#"{"format": "x"}"#, &s);
         assert_eq!(code, EXIT_UNSUPPORTED);
         assert_eq!(doc(&out).get_str("code"), Some("layout_refused"));
-        // The writing stages: not built yet, refused before any check runs.
-        for a in [&["l.json", "--json", "--through", "mount", "--commit"][..], &["l.json", "--json", "--only", "boot"]] {
-            let (code, out, err) = run(&opts(a), layout, &s);
-            assert_eq!(code, EXIT_BAD_ARGS, "{a:?}");
-            assert_eq!(doc(&out).get_str("code"), Some("json_not_here"), "{a:?}");
-            assert!(!err.contains("nothing in fstab"), "{err}");
-        }
+        // The writing stages write their events on standard output as they
+        // happen (RT10f): json_cli.rs runs them as a program, and exec.rs's
+        // tests read them from a sink.
+        let _ = layout;
     }
 
     #[test]

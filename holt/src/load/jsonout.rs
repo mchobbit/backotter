@@ -7,8 +7,10 @@
 //! and writing a document on standard output without ever panicking
 //! (RT10a); the plan document and its hash (RT10c), with the size verdicts
 //! of each candidate (RT10d).  The status document is status.rs's
-//! (RT10e), made with header and line here.  Text mode never comes here:
-//! everything is behind `--json` or the variable.
+//! (RT10e), made with header and line here.  The writing stages' events
+//! (RT10f, RT10g) are made here and written by exec.rs as they happen.
+//! Text mode never comes here: everything is behind `--json` or the
+//! variable.
 
 use super::commands::{Cmd, KeyAsk};
 use super::layout::{Disk, Layout};
@@ -28,11 +30,11 @@ pub const NO_COMMIT_VAR: &str = "BKO_HOLT_NO_COMMIT";
 /// What `features` in the api document names: the parts of the protocol
 /// this bko-holt has, so a screen needing a later one can say "not on this
 /// stick".  Grows with RT10's steps.
-pub const FEATURES: &[&str] = &["no_commit_env", "candidates", "sizes"];
+pub const FEATURES: &[&str] = &["no_commit_env", "stop", "progress", "candidates", "sizes"];
 
 /// The documents this bko-holt writes, each with the schemas it writes.
 /// Grows with RT10's steps (plan: RT10c, status: RT10e, events: RT10f).
-pub const DOCUMENTS: &[(&str, &[u64])] = &[("plan", &[SCHEMA]), ("status", &[SCHEMA]), ("error", &[SCHEMA])];
+pub const DOCUMENTS: &[(&str, &[u64])] = &[("plan", &[SCHEMA]), ("status", &[SCHEMA]), ("events", &[SCHEMA]), ("error", &[SCHEMA])];
 
 /// `bko-holt-error`'s codes (holt-json.md, "bko-holt-error").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,7 +215,7 @@ pub fn api_doc() -> String {
 
 /// A step's kind in the documents: run, write (a file load writes), check
 /// (a read-back load makes in-process), note.
-fn kind(c: &Cmd) -> &'static str {
+pub(crate) fn kind(c: &Cmd) -> &'static str {
     if c.check.is_some() {
         "check"
     } else if c.write.is_some() {
@@ -228,7 +230,7 @@ fn kind(c: &Cmd) -> &'static str {
 /// A command's environment as it runs: LC_ALL=C first, which run_cmd adds
 /// to every command, then the step's own.  Nothing for a step load makes
 /// itself.
-fn env_of(c: &Cmd) -> Value {
+pub(crate) fn env_of(c: &Cmd) -> Value {
     if kind(c) != "run" {
         return Value::Arr(Vec::new());
     }
@@ -322,23 +324,29 @@ fn disk_json(t: &TargetDisk) -> Obj {
 
 /// This machine (`here`): its DMI UUID as the dump reads it, how it booted,
 /// whether UEFI variables can be written here.
-fn here_json(layout: &Layout, sys: &Sys) -> Value {
+/// How this machine booted: uefi, bios, or None where it can't be told.
+fn boot_mode_here(sys: &Sys) -> Option<&'static str> {
     use crate::other::Family;
-    let fam = Family::current();
-    let dmi = if fam.is_none() { sys.read_trim("/sys/class/dmi/id/product_uuid") } else { None };
     let bootmethod = |out: Option<String>| match out.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
         Some("uefi") => Some("uefi"),
         Some("bios") => Some("bios"),
         _ => None,
     };
-    let boot_mode: Option<&str> = match fam {
+    match Family::current() {
         None => Some(if sys.exists("/sys/firmware/efi") { "uefi" } else { "bios" }),
         Some(Family::FreeBsd | Family::NetBsd) => bootmethod(sys.run("sysctl", &["-n", "machdep.bootmethod"])),
         Some(Family::OpenBsd) => sys.run("dmesg", &[]).map(|t| if t.contains("efi0 at ") { "uefi" } else { "bios" }),
         Some(Family::Illumos) => sys.run("prtconf", &["-v"]).map(|t| if t.contains("efi-systab") { "uefi" } else { "bios" }),
         _ => None,
-    };
-    let efivars: Option<bool> = match fam {
+    }
+}
+
+/// Whether UEFI variables can be written here (the plan's `here.efivars`,
+/// and a failed efibootmgr's or grub-install's `efi_vars`).
+pub(crate) fn efivars_here(sys: &Sys) -> Option<bool> {
+    use crate::other::Family;
+    let boot_mode = boot_mode_here(sys);
+    match Family::current() {
         None => {
             let mounts = sys.read("/proc/self/mountinfo").map(|t| crate::mounts::parse_mountinfo(&t)).unwrap_or_default();
             match mounts.iter().find(|m| m.fstype == "efivarfs") {
@@ -350,7 +358,14 @@ fn here_json(layout: &Layout, sys: &Sys) -> Value {
         Some(Family::FreeBsd) => boot_mode.map(|m| m == "uefi"),
         // load writes none elsewhere.
         Some(_) => Some(false),
-    };
+    }
+}
+
+fn here_json(layout: &Layout, sys: &Sys) -> Value {
+    let fam = crate::other::Family::current();
+    let dmi = if fam.is_none() { sys.read_trim("/sys/class/dmi/id/product_uuid") } else { None };
+    let boot_mode = boot_mode_here(sys);
+    let efivars = efivars_here(sys);
     let src = layout.str_at(&["host", "dmi", "product_uuid"]);
     let same = matches!((src, dmi.as_deref()), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b));
     Obj::new()
@@ -771,13 +786,239 @@ pub fn plan_doc(layout: &Layout, opts: &Options, sys: &Sys, layout_text: &str, p
     line(&doc)
 }
 
-/// Writes TEXT on standard output, ignoring errors: a reader gone or a/// Writes TEXT on standard output, ignoring errors: a reader gone or a
+/// Writes TEXT on standard output, ignoring errors: a reader gone or a
 /// full RAM disk must not panic the run (`print!` would), as the log's
 /// writes ignore theirs.
 pub fn write_stdout(text: &str) {
     let mut out = std::io::stdout().lock();
     let _ = out.write_all(text.as_bytes());
     let _ = out.flush();
+}
+
+// ---- the events (RT10f, RT10g) -------------------------------------------
+
+/// The longest event line a reader takes (rescue-tui.md, "Security"; the
+/// demo's EVENT_LINE_MAX).
+pub const EVENT_LINE_MAX: usize = 64 << 10;
+
+/// An argv element (or other long text) over this is given in an event as
+/// `{"bytes": N, "sha256": "..."}`: the full text is in the plan and the
+/// log (holt-json.md, "Common rules").
+pub const EVENT_TEXT_MAX: usize = 16 << 10;
+
+/// An event: an object with `event` first.
+pub fn event(name: &str) -> Obj {
+    Obj::new().set("event", name)
+}
+
+/// TEXT as an event carries it: itself, or over MAX bytes its size and
+/// SHA-256.
+fn bounded(text: &str, max: usize) -> Value {
+    if text.len() <= max {
+        Value::from(text)
+    } else {
+        Obj::new().set("bytes", text.len()).set("sha256", crate::bytes::sha256_hex(text.as_bytes())).build()
+    }
+}
+
+/// TEXT cut to at most MAX bytes, on a character's boundary.
+pub(crate) fn clipped(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_string();
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
+}
+
+/// Every string in V longer than MAX as bounded() gives it, for an event
+/// line that would be too long for a reader.
+fn shrink(v: Value, max: usize) -> Value {
+    match v {
+        Value::Str(s) if s.len() > max => bounded(&s, max),
+        Value::Arr(a) => Value::Arr(a.into_iter().map(|x| shrink(x, max)).collect()),
+        Value::Obj(kv) => Value::Obj(kv.into_iter().map(|(k, x)| (k, shrink(x, max))).collect()),
+        x => x,
+    }
+}
+
+/// One event as the stream carries it: one line, scrubbed of recovery keys
+/// as every document is, and within EVENT_LINE_MAX (its long strings given
+/// by size and hash, smaller and smaller, until it fits).
+pub fn event_line(v: Value) -> String {
+    let l = line(&v);
+    if l.len() <= EVENT_LINE_MAX {
+        return l;
+    }
+    let mut max = 1024;
+    let mut v = v;
+    loop {
+        v = shrink(v, max);
+        let l = line(&v);
+        if l.len() <= EVENT_LINE_MAX || max <= 64 {
+            return l;
+        }
+        max /= 4;
+    }
+}
+
+/// A step's argv in an event: each element over EVENT_TEXT_MAX by size
+/// and hash.
+fn argv_json(c: &Cmd) -> Value {
+    Value::Arr(c.argv.iter().map(|a| bounded(a, EVENT_TEXT_MAX)).collect())
+}
+
+/// The `start` event.  STAGES: the stages the run asks for, with the
+/// number of steps each would run.
+pub fn start_event(layout: &Layout, opts: &Options, stages: &[(&str, usize)], plan_sha256: Option<&str>) -> Value {
+    let mut counts = Obj::new();
+    for (s, n) in stages {
+        counts.put(s, *n);
+    }
+    let log = opts.commit.then(|| format!("{}/log/load.log", super::RUN_DIR));
+    event("start")
+        .set("format", "bko-holt-events")
+        .set("schema", SCHEMA)
+        .set("version", env!("CARGO_PKG_VERSION"))
+        .set("generated", crate::timestamp())
+        .set("pid", std::process::id())
+        .set("commit", opts.commit)
+        .set("dry_run", dry_run())
+        .set("stages", stages.iter().map(|(s, _)| s.to_string()).collect::<Vec<_>>())
+        .set("stage_commands", counts)
+        .set("plan_sha256", plan_sha256)
+        .set("log", log)
+        .set("layout", Obj::new().set("hostname", layout.str_at(&["host", "hostname"])).set("generated", layout.str_at(&["generated"])))
+        .build()
+}
+
+/// The `cmd` event for step N of OF in STAGE; WOULD in a dry run (no
+/// `cmd_done` follows); PART, for a step that runs the archiver, which of
+/// the stage's archiver steps it is.
+pub fn cmd_event(stage: &str, n: usize, of: usize, c: &Cmd, would: bool, part: Option<(usize, usize)>) -> Value {
+    event("cmd")
+        .set("stage", stage)
+        .set("n", n)
+        .set("of", of)
+        .set("kind", kind(c))
+        .set("argv", argv_json(c))
+        .set("env", env_of(c))
+        .set("why", c.why.clone())
+        .set("path", c.write.clone())
+        .set("dev", c.check.as_ref().map(|(d, _)| d.clone()))
+        .set("stdin_bytes", c.stdin.as_deref().map(str::len))
+        .set("private", c.private)
+        .set("archiver", part.map(|(p, ps)| Obj::new().set("part", p).set("parts", ps).build()))
+        .set("would", would)
+        .build()
+}
+
+/// What a failed step tells the `failed` event: its exit status or signal,
+/// and its standard error's last lines.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct FailFacts {
+    pub status: Option<i32>,
+    pub signal: Option<i32>,
+    pub tail: Vec<String>,
+}
+
+/// The `failed` event: CODE in STAGE at step N (none for a failure of the
+/// run's own, a lock or a write after the steps), C the step, TEXT the
+/// failure as text mode's standard error words it, LOG the log's path.
+pub fn failed_event(stage: Option<&str>, n: Option<usize>, code: super::codes::FailureCode, c: Option<&Cmd>, facts: &FailFacts, text: &str, log: Option<&str>) -> Obj {
+    let program = c.and_then(program_of);
+    event("failed")
+        .set("stage", stage)
+        .set("n", n)
+        .set("code", code.as_str())
+        .set("program", program)
+        .set("argv", c.map_or(Value::Arr(Vec::new()), argv_json))
+        .set("status", facts.status)
+        .set("signal", facts.signal)
+        .set("text", clipped(text, EVENT_TEXT_MAX))
+        .set("tail", facts.tail.iter().map(|l| clipped(l, 4096)).collect::<Vec<_>>())
+        .set("log", log)
+}
+
+/// The program step C runs, by its file name: past a leading `chroot DIR`
+/// and `env NAME=VALUE...` (`chroot /mnt/bko-target grub-install ...` is
+/// grub-install's).  None for a step that runs nothing.
+pub fn program_of(c: &Cmd) -> Option<String> {
+    let base = |a: &str| a.rsplit('/').next().unwrap_or(a).to_string();
+    let mut i = 0;
+    while i < c.argv.len() {
+        match base(&c.argv[i]).as_str() {
+            "chroot" => i += 2,
+            "env" => {
+                i += 1;
+                while c.argv.get(i).is_some_and(|a| a.contains('=') && !a.starts_with('-')) {
+                    i += 1;
+                }
+            }
+            p => return Some(p.to_string()),
+        }
+    }
+    c.argv.first().map(|a| base(a))
+}
+
+/// The `end` event.
+pub fn end_event(exit: u8, stopped: bool, secs: f64) -> Value {
+    event("end").set("exit", exit).set("stopped", stopped).set("secs", secs).build()
+}
+
+/// Seconds as the events give them: to the hundredth.
+pub fn secs(d: std::time::Duration) -> f64 {
+    (d.as_secs_f64() * 100.0).round() / 100.0
+}
+
+/// LINE without its terminal colour codes (ESC [ ... final byte).
+pub fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut it = line.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\u{1b}' {
+            if it.peek() == Some(&'[') {
+                it.next();
+                for d in it.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&d) {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// What one of rustic-bko's `--json-progress` lines on its standard output
+/// says: (bytes done, total bytes, seconds elapsed), each null where it
+/// doesn't say; None for any other line (its text output, a line that
+/// isn't JSON or isn't a status).
+pub fn archiver_status(line: &str) -> Option<(Option<u64>, Option<u64>, Option<u64>)> {
+    let l = line.trim();
+    if !l.starts_with('{') {
+        return None;
+    }
+    let v = crate::json::parse(l).ok()?;
+    if v.get_str("message_type") != Some("status") {
+        return None;
+    }
+    Some((v.get_u64("bytes_done"), v.get_u64("total_bytes"), v.get_u64("seconds_elapsed")))
+}
+
+/// One of the archiver's warning lines on its standard error, colour codes
+/// stripped: (its text, after `[WARN] `, and the item a restore's names,
+/// `[WARN] restore PATH: ...`'s PATH).  None for any other line.
+pub fn archiver_warning(line: &str) -> Option<(String, Option<String>)> {
+    let l = strip_ansi(line);
+    let (_, rest) = l.split_once("[WARN] ")?;
+    let text = rest.trim_end().to_string();
+    let item = text.strip_prefix("restore ").and_then(|r| r.split_once(": ")).map(|(p, _)| p.to_string());
+    Some((text, item))
 }
 
 #[cfg(test)]

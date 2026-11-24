@@ -10,7 +10,7 @@
 //! like any problem.
 //!
 //! `bko-holt-error`'s codes are jsonout.rs's; the candidates' refusals
-//! (RT10c) and the run's failures (RT10f) come with their steps.
+//! (RT10c) and a writing run's failures (RT10f) are here, as plain enums.
 
 use crate::json::{Obj, Value};
 use std::fmt;
@@ -149,6 +149,56 @@ impl RefusalCode {
             RefusalCode::BackupDrive => "backup_drive",
             RefusalCode::ReadOnly => "read_only",
             RefusalCode::SectorSize => "sector_size",
+        }
+    }
+}
+
+/// Why a writing run failed (holt-json.md, "Failures": the `failed`
+/// event's `code`, exit 1; `internal` a panic, exit 101).  A reader gives
+/// a code it doesn't know the general help text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureCode {
+    CmdFailed,
+    WrongPassphrase,
+    ArchiverFailed,
+    EfiVars,
+    ReadbackFailed,
+    NotDoneAfter,
+    NoRestoredTree,
+    CommitRefused,
+    WriteFailed,
+    LockHeld,
+    Internal,
+}
+
+impl FailureCode {
+    pub const ALL: [FailureCode; 11] = [
+        FailureCode::CmdFailed,
+        FailureCode::WrongPassphrase,
+        FailureCode::ArchiverFailed,
+        FailureCode::EfiVars,
+        FailureCode::ReadbackFailed,
+        FailureCode::NotDoneAfter,
+        FailureCode::NoRestoredTree,
+        FailureCode::CommitRefused,
+        FailureCode::WriteFailed,
+        FailureCode::LockHeld,
+        FailureCode::Internal,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FailureCode::CmdFailed => "cmd_failed",
+            FailureCode::WrongPassphrase => "wrong_passphrase",
+            FailureCode::ArchiverFailed => "archiver_failed",
+            FailureCode::EfiVars => "efi_vars",
+            FailureCode::ReadbackFailed => "readback_failed",
+            FailureCode::NotDoneAfter => "not_done_after",
+            FailureCode::NoRestoredTree => "no_restored_tree",
+            FailureCode::CommitRefused => "commit_refused",
+            FailureCode::WriteFailed => "write_failed",
+            FailureCode::LockHeld => "lock_held",
+            FailureCode::Internal => "internal",
         }
     }
 }
@@ -472,6 +522,11 @@ mod tests {
         for c in RefusalCode::ALL {
             assert!(refused.contains(&format!("`{}`", c.as_str())), "{c:?} isn't in holt-json.md's candidates' refusals");
         }
+        // The failures table: the first column of each row, in order.
+        let rows = section("### Failures (`failed.code`, exit 1)", "The program's help texts");
+        let table: Vec<&str> = rows.lines().filter_map(|l| l.strip_prefix("| `")).filter_map(|l| l.split_once('`')).map(|(c, _)| c).collect();
+        let ours: Vec<&str> = FailureCode::ALL.iter().map(|c| c.as_str()).collect();
+        assert_eq!(table, ours);
     }
 
     /// Every reason fit.rs and reformat.rs give by name is in their list

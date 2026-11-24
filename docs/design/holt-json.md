@@ -1651,6 +1651,61 @@ main when its tests pass, nothing pushed until the user says.  holt is
 edited by other sessions every day: each brief names the functions it may
 change.
 
+### What RT10f and RT10g found
+
+Built 2026-11-24 (exec.rs's run_cmd_json, the event sink, the lock and the
+stop; sys.rs's signal, kill and setrlimit).  Tested by holt's unit tests
+(a fake archiver writing rustic-bko's status and `[WARN] restore` lines,
+direct and under `sh -c`, stopped by SIGINT to its group) and in a
+debian13 rescuer (ht1-debug.sh): a `BKO_HOLT_NO_COMMIT=1` dry run with
+`--erase` (26 `would` commands, boot and close included, vdb's first and
+last MiB unchanged, end 0); a `--through close --commit --json
+--expect-plan` run under `systemd-run -p KillMode=mixed -p
+TimeoutStopSec=300 -p LimitCORE=0`, stopped by SIGTERM to the lock's pid
+mid-copy; the same resumed to its end; and an uninterrupted `--json` run,
+which HoltTest1's verify passes (fsmeta, boot, dumps).
+
+- **The Checks settled.**  rustic-bko's sftp: opendal's sftp service runs
+  ssh through openssh 0.11.6, whose master is started with `-o
+  BatchMode=yes`, and its default known-hosts strategy is Strict
+  (`StrictHostKeyChecking=yes`): an unknown host key fails, never waits.
+  SIGINT to the archiver's group: rustic-bko (strict exit) exits 130 in
+  0.45 s mid-restore; `end` 5, `ExecMainStatus=5`, no `restore.done`, the
+  lock gone; TimeoutStopSec=300 is far above it.  SIGTERM is 15 and SIGINT
+  2 on every platform (Haiku's per RT1); RLIMIT_CORE is 4, Haiku's 0.
+  `--json-progress` beside `RUSTIC_STRICT_EXIT`: one status line a second
+  from the first, `total_bytes` known at once; the log keeps one per
+  archiver run.  `--glob-file` wasn't on debian13's restore (no btrfs
+  snapshots): RT10j's guests have it.  A 20-hour copy's ~14 MiB of
+  events fits the stick's RAM (rescue-tui's follower reads 4 MiB a
+  tick); bko-holt keeps only the last status line's text in memory.
+- **Decided:** the lock is taken by `--commit` runs only (a run without it
+  writes nothing, and a dry run is bko-rescue's direct child); it is a
+  line of JSON, `{"pid": N, "start": "S"}` (`start` Linux's
+  /proc/PID/stat starttime, elsewhere `ps`'s start time, null on Haiku),
+  taken before the checks, so a second run's `failed` is `lock_held`
+  whatever its plan would say.  A stop asked for while a step that isn't
+  the archiver's runs lets it end; if that step then fails, the run still
+  ends `stopped` (the failure is in the log), never `failed`.  A stop
+  asked for during the last step of the last stage comes too late: the
+  run ends 0.  `cmd_done.status` is 0 for a `run` step, null for a
+  `write`, `check` or `note`; on a failure, `cmd_done` comes before
+  `failed`.  `failed.text` is the error as text mode words it after
+  `bko-holt load: STAGE: `; `failed.program` is the step's program past
+  a leading `chroot DIR` or `env A=B`, and `efi_vars` is any step naming
+  efibootmgr, grub-install or grub2-install on a machine whose
+  `here.efivars` is false.  `wrong_passphrase` is cryptsetup open's exit
+  2 in assemble only: GELI's attach and bioctl's open there always use
+  the key just made.  Every child under `--json` also gets SIGINT at its
+  default (pre_exec), so a load started where SIGINT is ignored still
+  stops its archiver.  The panic hook writes `start` itself when the
+  panic came before it, and only for the main thread.
+- **Found, not RT10's:** a copy that runs again after a stop or a failed
+  archiver (J10's "always runs again"), text mode the same, leaves the
+  restore root's own atime and mtime unlike the source's (fsmeta's
+  `.`): rustic-bko restoring into a part-restored tree.  Resume and Try
+  again inherit it; the boot, the dumps and every other file agree.
+
 ## Decisions
 
 - **J1. How bko-rescue finds bko-holt's protocol.**  `bko-holt --version

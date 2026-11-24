@@ -586,6 +586,117 @@ fn parse_df_pk(text: &str) -> Option<(u64, u64, u64)> {
     (avail <= free && free <= total).then_some((total, free, avail))
 }
 
+// ---- signals and limits, for --json's stop (holt-json.md, J7) -------------
+
+/// SIGINT's and SIGTERM's numbers: the same on every target holt builds for
+/// (Linux, the BSDs, illumos; Haiku's are 2 and 15 too, as rescue-tui.md's
+/// RT1 read them from its headers).
+pub const SIGINT: i32 = 2;
+pub const SIGTERM: i32 = 15;
+
+/// RLIMIT_CORE's number: 4 on Linux, the BSDs and illumos, 0 on Haiku.
+const RLIMIT_CORE: std::os::raw::c_int = if cfg!(target_os = "haiku") { 0 } else { 4 };
+
+/// Set by the SIGTERM handler catch_sigterm installs.
+static SIGTERM_TAKEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+// SAFETY: signal(2), kill(2) and setrlimit(2) have these signatures on
+// every target holt builds for: a handler is pointer-sized (SIG_DFL is 0,
+// SIG_ERR all ones), pid_t is a C int, and setrlimit reads one struct
+// rlimit of two rlim_t through its pointer.
+unsafe extern "C" {
+    fn signal(sig: std::os::raw::c_int, handler: usize) -> usize;
+    fn kill(pid: std::os::raw::c_int, sig: std::os::raw::c_int) -> std::os::raw::c_int;
+    fn setrlimit(resource: std::os::raw::c_int, rlim: *const [u64; 2]) -> std::os::raw::c_int;
+}
+
+/// The SIGTERM handler: it only sets the flag, and puts itself back for a
+/// platform whose signal(2) resets the handler on delivery (illumos's), so
+/// a second SIGTERM is taken the same way.
+extern "C" fn on_sigterm(_sig: std::os::raw::c_int) {
+    SIGTERM_TAKEN.store(true, std::sync::atomic::Ordering::SeqCst);
+    // SAFETY: signal(2) is async-signal-safe, and on_sigterm is a valid
+    // handler for as long as the program runs.
+    unsafe {
+        signal(SIGTERM, on_sigterm as extern "C" fn(std::os::raw::c_int) as usize);
+    }
+}
+
+/// Under --json: SIGTERM sets a flag (sigterm_taken) instead of ending the
+/// process, so a writing run stops between commands.  Whether the handler
+/// went in.
+pub fn catch_sigterm() -> bool {
+    // SAFETY: on_sigterm only stores to an atomic and calls signal(2), both
+    // async-signal-safe; it lives for the whole program.
+    let old = unsafe { signal(SIGTERM, on_sigterm as extern "C" fn(std::os::raw::c_int) as usize) };
+    old != usize::MAX
+}
+
+/// Whether SIGTERM has come since catch_sigterm.
+pub fn sigterm_taken() -> bool {
+    SIGTERM_TAKEN.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// SIGINT back to its default action, for a child about to exec (load's
+/// pre_exec under --json): a load started where SIGINT is ignored (a
+/// background job of a script) would otherwise pass that on, and the
+/// stop's SIGINT would never reach the archiver.  Async-signal-safe.
+pub fn sigint_to_default() {
+    // SAFETY: signal(2) with SIG_DFL (0) is async-signal-safe and has no
+    // other precondition.
+    unsafe {
+        signal(SIGINT, 0);
+    }
+}
+
+/// Sends SIG to PID (a negative PID: that process group).  Whether it was
+/// sent.
+pub fn send_signal(pid: i32, sig: i32) -> bool {
+    // SAFETY: kill(2) takes any pid and signal number and reports what it
+    // can't do by its return value.
+    unsafe { kill(pid, sig) == 0 }
+}
+
+/// Whether process PID is alive: kill(PID, 0) succeeds, or fails only for
+/// want of permission.
+pub fn process_alive(pid: u32) -> bool {
+    let Ok(p) = i32::try_from(pid) else { return false };
+    if p <= 0 {
+        return false;
+    }
+    // SAFETY: as send_signal: signal 0 only checks the process is there.
+    let rc = unsafe { kill(p, 0) };
+    rc == 0 || std::io::Error::last_os_error().kind() == std::io::ErrorKind::PermissionDenied
+}
+
+/// When process PID started, as a string that is the same for as long as
+/// that process lives and differs for a later one given the same PID: on
+/// Linux /proc/PID/stat's starttime (clock ticks since boot), elsewhere
+/// ps's start time.  None where neither says (Haiku's ps has no -o).
+pub fn process_start(pid: u32) -> Option<String> {
+    if cfg!(target_os = "linux") {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // After the command's name, which is in parentheses and may hold
+        // spaces: state is the first field, starttime the 20th.
+        return stat.rsplit_once(')')?.1.split_whitespace().nth(19).map(str::to_string);
+    }
+    let field = if cfg!(any(target_os = "illumos", target_os = "solaris")) { "stime=" } else { "lstart=" };
+    let out = Command::new("ps").args(["-o", field, "-p", &pid.to_string()]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !s.is_empty()).then_some(s)
+}
+
+/// No core dumps for this process or its children (cryptsetup and the
+/// archiver hold keys): RLIMIT_CORE's soft and hard limits 0.  Whether it
+/// took.  Zeros whatever rlim_t's width: two of them fit in the 16 bytes
+/// passed.
+pub fn no_core_dumps() -> bool {
+    let zero = [0u64; 2];
+    // SAFETY: zero is 16 bytes, at least one struct rlimit on every target,
+    // and outlives the call, which only reads it.
+    unsafe { setrlimit(RLIMIT_CORE, &zero) == 0 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -782,5 +893,64 @@ mod tests {
         // A size past u64 in bytes.
         assert_eq!(usage_bytes(1 << 60, 1, 1, 4096), None);
         assert_eq!(usage_bytes(u64::MAX / 4096, 0, 0, 4096), Some(((u64::MAX / 4096) * 4096, 0, 0)));
+    }
+
+    /// The environment variable sigterm_child runs under: only then does it
+    /// install the handler and signal itself (in a process of its own, so
+    /// the flag never reaches the other tests).
+    const SIGTERM_CHILD: &str = "BKO_HOLT_TEST_SIGTERM_CHILD";
+
+    /// In a child of its own (catch_sigterm_in_a_child's): the handler is
+    /// installed, a SIGTERM to this process only sets the flag, twice, and
+    /// the core limit goes to 0.
+    #[test]
+    fn sigterm_child() {
+        if std::env::var_os(SIGTERM_CHILD).is_none() {
+            return;
+        }
+        assert!(!sigterm_taken());
+        assert!(catch_sigterm());
+        let me = std::process::id() as i32;
+        for _ in 0..2 {
+            assert!(send_signal(me, SIGTERM));
+            let t0 = Instant::now();
+            while !sigterm_taken() && t0.elapsed() < Duration::from_secs(5) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(sigterm_taken());
+        }
+        assert!(no_core_dumps());
+        println!("SIGTERM-CHILD-OK");
+    }
+
+    /// sigterm_child, run in a new process of this test binary.
+    #[test]
+    fn catch_sigterm_in_a_child() {
+        let exe = std::env::current_exe().unwrap();
+        let out = Command::new(exe)
+            .args(["--exact", "sys::tests::sigterm_child", "--nocapture", "--test-threads", "1"])
+            .env(SIGTERM_CHILD, "1")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success() && text.contains("SIGTERM-CHILD-OK"), "{:?}: {text}", out.status);
+    }
+
+    #[test]
+    fn processes_alive_and_started() {
+        let me = std::process::id();
+        assert!(process_alive(me));
+        assert!(!process_alive(0));
+        // A child that has exited and been waited for is gone.
+        let mut c = Command::new("true").spawn().unwrap();
+        let gone = c.id();
+        c.wait().unwrap();
+        assert!(!process_alive(gone) || process_start(gone).is_none());
+        if cfg!(target_os = "linux") {
+            let s = process_start(me).unwrap();
+            assert!(s.bytes().all(|b| b.is_ascii_digit()), "{s}");
+            assert_eq!(process_start(me), Some(s));
+        }
     }
 }

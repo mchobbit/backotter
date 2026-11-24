@@ -231,8 +231,14 @@ tools (`tier0.PATH`).  It runs from the Mac as
 (`BS2_WT` names the hosts' copy, so two sessions' runs never share one;
 `--sweep` and `--tier2` set a source's tier 0 and tier 2 counts; tier 2 is
 for the UEFI sources, bs2's `UEFI`; each case reserves its source's room,
-`bs2lib/room.py`: HoltTest1's D 7 and 6, MEM 4, so only the big hosts take
-them; `BS2_HOLT=PATH` runs another bko-holt on the hosts).  Its first run,
+`bs2lib/room.py`: HoltTest1's D 7 and 6, MEM 4, so only a host whose
+`cmp-run.sh --ceiling` holds that takes them: on 2026-11-24 chopin and
+cinqcent (29.0 23.2), copland, cage and czerny (9.0 10.1), not choubox
+(3.0 6.0), which bs2's `held()` leaves out for these sources, saying so,
+though its cache has both guests; `BS2_HOLT=PATH` runs another bko-holt on
+the hosts).  A queued case whose `cmp-run.sh` fails before the case writes
+its row (a reservation refused) gets a HARNESS row in `tierN-queue.jsonl`
+from the queue, so `bs2 status` counts it rather than losing it.  Its first run,
 bs2a-20261124-1028, found fail-006 (load kept grubx64.efi's "(,gpt3)"
 prefix after / was renumbered: bko-holt), fail-007 and fail-008 (the
 harness's model of a moved BIOS boot partition, and of btrfs's symlink

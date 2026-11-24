@@ -236,6 +236,91 @@ class Plan(unittest.TestCase):
         self.assertIn("the run: ~", text)
 
 
+def load_host():
+    loader = importlib.machinery.SourceFileLoader("bs2_host_mod", os.path.join(BS2_DIR, "bs2-host"))
+    spec = importlib.util.spec_from_loader("bs2_host_mod", loader)
+    m = importlib.util.module_from_spec(spec)
+    loader.exec_module(m)
+    return m
+
+
+class Room(unittest.TestCase):
+    """A host's cmp-run.sh --ceiling against a source's room (the review of 96b13ec: choubox,
+    3.0 6.0, has both Guix guests cached; their cases reserve 7 4 and 6 4, which cmp-run.sh
+    refuses there at once, and the queue left no row)."""
+
+    def test_need(self):
+        from bs2lib import room as RM
+        self.assertEqual(RM.need("guix15"), (7, 4))
+        self.assertEqual(RM.need("guix15-bios"), (6, 4))
+        self.assertEqual(RM.need("alpine324"), (2, 3))
+
+    def test_ceiling_of(self):
+        self.assertEqual(B.ceiling_of("guix15\n@ceiling 9.0 10.1\n"), (9.0, 10.1))
+        self.assertIsNone(B.ceiling_of("@ceiling \nguix15\n"))
+        self.assertIsNone(B.ceiling_of("guix15\n"))
+
+    def test_roomy(self):
+        both = {"guix15", "guix15-bios", "alpine324"}
+        self.assertEqual(B.roomy(both, (3.0, 6.0)), ({"alpine324"}, {"guix15", "guix15-bios"}))   # choubox
+        self.assertEqual(B.roomy(both, (9.0, 10.1))[0], both)   # copland, cage, czerny
+        self.assertEqual(B.roomy(both, (29.0, 23.2))[0], both)  # chopin, cinqcent
+        self.assertEqual(B.roomy({"guix15"}, (6.9, 23.0))[0], set())
+        self.assertEqual(B.roomy({"guix15"}, (7.0, 3.9))[0], set())
+        self.assertEqual(B.roomy(both, None), (set(), both))
+
+    def test_held_leaves_out_what_a_host_cant_hold(self):
+        out = {"chopin": "@ceiling 29.0 23.2\nguix15\nguix15-bios\n", "choubox": "@ceiling 3.0 6.0\nguix15\nguix15-bios\nalpine324\n",
+               "copland": "@ceiling 9.0 10.1\nguix15-bios\n", "cage": "@ceiling \nguix15\n"}
+
+        def ssh(h, cmd, check=True, capture=False, input=None):
+            self.assertIn("cmp-run.sh --ceiling", cmd)
+            return subprocess.CompletedProcess([], 0, out[h], "")
+
+        err = io.StringIO()
+        with mock.patch.object(B, "ssh", ssh), contextlib.redirect_stderr(err):
+            got = B.held(["guix15", "guix15-bios", "alpine324"], list(out))
+        self.assertEqual(got, {"chopin": {"guix15", "guix15-bios"}, "choubox": {"alpine324"}, "copland": {"guix15-bios"}, "cage": set()})
+        self.assertIn("choubox has vms/guix15, but its cmp-run.sh --ceiling is 3 6, under guix15's cases' --reserve 7 4", err.getvalue())
+        self.assertIn("cage has vms/guix15, but its cmp-run.sh --ceiling didn't answer", err.getvalue())
+        # The plan of a run then deals no Guix case to choubox.
+        with mock.patch.object(B, "ssh", ssh), mock.patch.object(B, "RUN_HOSTS", {h: f"m@{h}.local" for h in out}), \
+                mock.patch.object(B, "slots", lambda h: 2), contextlib.redirect_stderr(io.StringIO()):
+            can, lead, parts, _ = B.placement(["guix15", "guix15-bios"], 10)
+        self.assertEqual(can, {"guix15": ["chopin"], "guix15-bios": ["chopin", "copland"]})
+        self.assertFalse(parts.get("choubox"), parts)
+
+
+class QueueRows(unittest.TestCase):
+    """bs2-host queue's row for a case that wrote none (cmp-run.sh refused its --reserve)."""
+    H = load_host()
+
+    def case(self, d):
+        from bs2lib import case as C
+        p = os.path.join(d, "cases", "guix15-abc.case")
+        os.makedirs(os.path.dirname(p))
+        C.write(p, {"name": "guix15-abc", "source": "guix15@g1", "seed": 1, "edits": [], "load_options": []})
+        return p
+
+    def test_a_refused_case_gets_a_harness_row(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self.case(d)
+            row = self.H.unrowed(d, "1", p, 1, "--reserve 7 4 can never fit here (at most 3.0 6.0)\n")
+            self.assertEqual((row["case"], row["verdict"], row["tier"], row["source"]), ("guix15-abc", "HARNESS", 1, "guix15"))
+            self.assertIn("can never fit here", row["why"][0])
+            with open(os.path.join(d, "tier1-queue.jsonl")) as f:
+                self.assertEqual(json.loads(f.read()), row)
+
+    def test_a_case_with_its_own_row_or_a_pass_gets_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self.case(d)
+            self.assertIsNone(self.H.unrowed(d, "1", p, 0, ""))
+            with open(os.path.join(d, "tier1.jsonl"), "w") as f:
+                f.write(json.dumps({"case": "guix15-abc", "verdict": "FAIL"}) + "\n")
+            self.assertIsNone(self.H.unrowed(d, "1", p, 1, "boom"))
+            self.assertFalse(os.path.exists(os.path.join(d, "tier1-queue.jsonl")))
+
+
 class QueueSlots(unittest.TestCase):
     def test_queue_refuses_more_slots_than_ports(self):
         with tempfile.TemporaryDirectory() as d:

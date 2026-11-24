@@ -549,11 +549,13 @@ class Bs2Hosts(unittest.TestCase):
 
         def fake(host, cmd, check=True, capture=False):
             calls.append((host, cmd))
-            return types.SimpleNamespace(returncode=0, stdout="alpine324\n" if host == "copland" else "", stderr="")
+            return types.SimpleNamespace(returncode=0, stdout="@ceiling 9.0 10.1\n" + ("alpine324\n" if host == "copland" else ""), stderr="")
         with mock.patch.object(b, "ssh", fake):
             self.assertEqual(b.held(["alpine324", "alpine324-lvm"]), {"copland": {"alpine324"}, "cage": set()})
         self.assertEqual([h for h, _ in calls], ["copland", "cage"])
         self.assertIn("cd ~/backotter-work/vms", calls[0][1])
+        # And its cmp-run.sh --ceiling: a source whose room it can't hold is left out (bs2 roomy()).
+        self.assertIn("cmp-run.sh --ceiling", calls[0][1])
 
     def test_bad_hosts(self):
         with self.assertRaises(SystemExit):

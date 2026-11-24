@@ -44,3 +44,15 @@ def of(source, path=SIZES):
     if source in KEEP:
         return C.DISK_GIB, MEM
     return table(path).get(source, (C.DISK_GIB, MEM))
+
+
+def need(source, path=SIZES):
+    """The least (disk GiB, memory GiB) any of SOURCE's reservations asks: a
+    queue case's (bs2-host case_disk and case_mem: bs2's own 2 and 3, or the
+    source's room if more; a case's disk grows from there for the inode tables
+    it writes, but never past the host's ceiling), which covers its
+    preparation's too (2, and the same memory).  A host whose cmp-run.sh
+    --ceiling is under either can never hold the source's cases: cmp-run.sh
+    refuses each at once (bs2's held() leaves such a host's copy out)."""
+    d, m = of(source, path)
+    return max(C.DISK_GIB, d), max(MEM, m)

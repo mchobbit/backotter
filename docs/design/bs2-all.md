@@ -101,8 +101,9 @@ generations, of a partition mounted outside / and the store (older
 generations' fstab isn't either); rule 3 over every generation's boot
 parameters; content recipe `guix-small-1`; tier 0 with dry runs in the
 system profile's tools. `bs2` runs them (`GUIX_SOURCES`, tier 2 for
-`guix15` only), each case at HoltTest1's room (D 7/6, MEM 4: the big hosts
-only). First run bs2a-20261124-1028: tier 0 229 + 220 PASS, tier 1 and 2
+`guix15` only), each case at HoltTest1's room (D 7/6, MEM 4: a host whose
+`cmp-run.sh --ceiling` holds it, so not choubox's 3.0 6.0; `held()` leaves
+such a host out of a source's holders). First run bs2a-20261124-1028: tier 0 229 + 220 PASS, tier 1 and 2
 guix15 10 + 3 PASS, guix15-bios 7 PASS and 3 harness FAILs (fail-007,
 fail-008); fail-006 (bko-holt: renumbering / left grubx64.efi's prefix
 naming the old partition) was written by hand from guix15's image; all

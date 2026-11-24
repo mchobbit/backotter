@@ -27,7 +27,9 @@ names another, so two sessions' runs never share a copy).
   --hosts H,H|all (any word)        the hosts to use, of testvm/hosts.json's enabled ones
                                     (all: every one, the default).  Only a host whose
                                     vms/SOURCE is there takes SOURCE's cases (one read-only
-                                    ls each: cage's cache has only alpine324)
+                                    ls each: cage's cache has only alpine324), and only
+                                    when its cmp-run.sh --ceiling holds the source's room
+                                    (bs2lib/room.py need(): choubox's can't hold Guix's)
 
 How a BackShot2 run spreads (split()): each source has a lead, its HOME host when that's
 in the run, else the first that holds it.  The lead runs the source's tier 0 sweep and
@@ -69,6 +71,8 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+if HERE not in sys.path:   # bs2lib, for a bs2 loaded as a module (Test2's tests), last: it shadows nothing
+    sys.path.append(HERE)
 REPO = os.path.dirname(os.path.dirname(HERE))
 # BackShot2's Linux sources (A2 will add the rest): BackShot2Alpine's four, and Guix
 # System's (bs2lib/families/guix.py).  Each one's lead draws its cases, runs its tier 0,
@@ -164,16 +168,56 @@ def slots(h):
 
 
 def held(sources, hosts=None):
-    """{host: set of SOURCES whose vms/SOURCE is there} over HOSTS (default RUN_HOSTS), an ls
-    each; a host that doesn't answer holds none."""
+    """{host: set of SOURCES whose vms/SOURCE is there and whose cases the host's room can
+    hold} over HOSTS (default RUN_HOSTS), an ls and a cmp-run.sh --ceiling each (roomy()); a
+    host that doesn't answer holds none."""
     out = {}
     for h in hosts or RUN_HOSTS:
-        r = ssh(h, "cd ~/backotter-work/vms 2>/dev/null && for g in " + " ".join(sources) +
+        r = ssh(h, 'echo "@ceiling $(cd ~/backotter-work && ./cmp-run.sh --ceiling 2>/dev/null)"; '
+                   "cd ~/backotter-work/vms 2>/dev/null && for g in " + " ".join(sources) +
                 '; do [ -e "$g" ] && echo "$g"; done; true', check=False, capture=True)
         if r.returncode:
             print(f"bs2: {h} didn't answer: left out", file=sys.stderr)
-        out[h] = set(r.stdout.split()) if r.returncode == 0 else set()
+            out[h] = set()
+            continue
+        here = {w for line in r.stdout.splitlines() if not line.startswith("@") for w in line.split()}
+        ceil = ceiling_of(r.stdout)
+        out[h], dropped = roomy(here, ceil)
+        for s in sorted(dropped):
+            from bs2lib import room as RM
+            d, m = RM.need(s)
+            room = f"its cmp-run.sh --ceiling is {ceil[0]:g} {ceil[1]:g}" if ceil else "its cmp-run.sh --ceiling didn't answer"
+            print(f"bs2: {h} has vms/{s}, but {room}, under {s}'s cases' --reserve {d} {m}: left out for {s}",
+                  file=sys.stderr)
     return out
+
+
+def ceiling_of(text):
+    """(disk, memory) GiB of held()'s "@ceiling D M" line in TEXT; None when it has none or
+    no figures (the host's cmp-run.sh --ceiling failed)."""
+    for line in text.splitlines():
+        if line.startswith("@ceiling"):
+            w = line.split()[1:3]
+            try:
+                return float(w[0]), float(w[1])
+            except (ValueError, IndexError):
+                return None
+    return None
+
+
+def roomy(here, ceiling):
+    """(the sources of HERE a host whose cmp-run.sh --ceiling is CEILING can hold, the ones it
+    can't): a source's cases reserve at least bs2lib/room.py need()'s (guix15's 7 GiB of RAM
+    disk and 4 of memory), and cmp-run.sh refuses at once a --reserve over the ceiling ("can
+    never fit here"), so such a case would leave no row on that host.  A host whose ceiling is
+    unknown (None) holds none: its --reserve would be refused too (pick-host says the same)."""
+    from bs2lib import room as RM
+    keep = set()
+    for s in here:
+        d, m = RM.need(s)
+        if ceiling and d <= ceiling[0] + 1e-9 and m <= ceiling[1] + 1e-9:
+            keep.add(s)
+    return keep, set(here) - keep
 
 
 def holders(sources, have, hosts=None):

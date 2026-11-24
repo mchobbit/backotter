@@ -33,7 +33,8 @@ Paths (ROOT=/bkoscratch/backshot2, BS2_ROOT overrides):
                         bs2lib/reuse.py, with its prep.json; the 3 newest kept)
   ROOT/rescuer-state/HASH/  the rescuer's saved state (ht1-bs2.sh makes it in a
                         case's rebuild, once per rescuer, firmware, QEMU and host)
-  ROOT/runs/RUN/        tier0.jsonl and tier1.jsonl (a line per case), cases/
+  ROOT/runs/RUN/        tier0.jsonl and tier1.jsonl (a line per case; tierN-queue.jsonl:
+                        the queue's HARNESS rows for cases that wrote none), cases/
                         (each case run, as a .case file), logs/
   ROOT/bin/             the bko-holt and planner under test (BS2_HOLT, BS2_PLANNER override)
 Work goes in /mnt/bko-ram/backshot2/ (RAM), deleted on a pass.
@@ -767,6 +768,42 @@ def cmd_enqueue(a):
     print(json.dumps({"enqueued": len(picked), "tier": a.tier, "source": a.source, "next_seed": seed}))
 
 
+def unrowed(rd, tier, path, rc, err):
+    """After a queue's case: when it exited RC (not 0) and wrote no row of its own to
+    RD/tierTIER.jsonl (cmp-run.sh refused its --reserve, "can never fit here", or the case
+    died before its verdict), a HARNESS row naming that to RD/tierTIER-queue.jsonl, as m
+    (tierTIER.jsonl is root's), so bs2 status and t2 batch count it instead of it vanishing.
+    Returns the row, or None."""
+    if not rc:
+        return None
+    try:
+        c = C.read(path)
+        name, src = c.get("name") or C.name_of(c), C.source_name(c)
+    except Exception:
+        name, src = os.path.basename(path)[:-len(".case")] if path.endswith(".case") else os.path.basename(path), "?"
+    try:
+        with open(f"{rd}/tier{tier}.jsonl") as f:
+            for line in f:
+                try:
+                    if json.loads(line).get("case") == name:
+                        return None
+                except ValueError:
+                    continue
+    except OSError:
+        pass
+    tail = [x for x in (err or "").strip().splitlines() if x.strip()][-3:]
+    row = {"case": name, "source": src, "tier": int(tier), "verdict": "HARNESS",
+           "check": f"the queue's cmp-run.sh exited {rc} with no row from the case",
+           "why": tail or [f"exit {rc}"], "attempt": 0, "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    try:
+        with open(f"{rd}/tier{tier}-queue.jsonl", "a") as f:
+            f.write(json.dumps(row) + "\n")
+    except OSError as e:
+        print(f"bs2-host queue: {name}: exit {rc}, no row, and {rd}/tier{tier}-queue.jsonl: {e}", file=sys.stderr)
+    print(f"bs2-host queue: {name}: exit {rc} with no row: {'; '.join(tail)}", file=sys.stderr)
+    return row
+
+
 def cmd_queue(a):
     """SLOTS workers taking the run's queue.txt in order (a flock'd counter), each case
     under its own cmp-run.sh reservation, as m; RUN/stop stops new starts.  A worker
@@ -802,10 +839,12 @@ def cmd_queue(a):
             if not job:
                 return
             tier, path = job
-            subprocess.run([f"{WORK}/cmp-run.sh", "--reserve", str(case_disk(path, a.disk)), case_mem(path, a.mem), "sudo", "-E", os.path.join(HERE, "bs2-host"), "tier1", path,
-                            "--tier", tier, "--run", a.run, "--port", str(port)],
-                           env=dict(os.environ, WEAR_TAG=f"bs2:{a.run}:{os.path.basename(path)}"), cwd=WORK,
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            r = subprocess.run([f"{WORK}/cmp-run.sh", "--reserve", str(case_disk(path, a.disk)), case_mem(path, a.mem), "sudo", "-E", os.path.join(HERE, "bs2-host"), "tier1", path,
+                                "--tier", tier, "--run", a.run, "--port", str(port)],
+                               env=dict(os.environ, WEAR_TAG=f"bs2:{a.run}:{os.path.basename(path)}"), cwd=WORK,
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                               errors="replace")
+            unrowed(rd, tier, path, r.returncode, r.stderr)
 
     import threading
     ts = [threading.Thread(target=worker, args=(p,)) for p in ports]

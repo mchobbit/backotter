@@ -2,6 +2,7 @@
 //! and which of them each source disk goes to (layload.md, "Safety" and
 //! "Mapping disks").
 
+use super::codes::{Note, NoteCode, Notes, Problem, ProblemCode, Problems};
 use super::fit::{self, Fit};
 use super::layout::{Disk, Layout};
 use super::{Options, Stage, RUN_DIR};
@@ -328,8 +329,8 @@ pub struct Mapping {
     /// source's did, so a GPT's backup header and last usable LBA go there:
     /// a bigger target, or one --fit-largest sized the table to.
     pub bigger: Vec<String>,
-    pub problems: Vec<String>,
-    pub notes: Vec<String>,
+    pub problems: Problems,
+    pub notes: Notes,
     /// (the layout's pool name, its in-core name here) where a pool of the
     /// system load runs on has the layout's name.
     pub pool_names: Vec<(String, String)>,
@@ -387,13 +388,13 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
     let mut m = Mapping::default();
     for (src, _) in &opts.maps {
         if layout.disk(src).is_none() {
-            m.problems.push(format!("--map {src}=...: the layout has no disk {src} (it has {})", names(layout)));
+            m.problems.push(Problem::new(ProblemCode::MapUnknownSource, format!("--map {src}=...: the layout has no disk {src} (it has {})", names(layout))).with("disk", src));
         }
     }
     let ours = layout_uuids(layout);
     for d in layout.disks.iter() {
         if !d.used {
-            m.notes.push(format!("source disk {} holds nothing; it needs no target", d.describe()));
+            m.notes.push(Note::new(NoteCode::SourceEmpty, format!("source disk {} holds nothing; it needs no target", d.describe())).with("disk", &d.name));
             continue;
         }
         let target = match opts.maps.iter().find(|(s, _)| *s == d.name) {
@@ -402,7 +403,7 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
                 match system.disk(&name) {
                     Some(t) => Some(t),
                     None => {
-                        m.problems.push(format!("--map {}={spec}: no whole disk {name} here", d.name));
+                        m.problems.push(Problem::new(ProblemCode::NoSuchDisk, format!("--map {}={spec}: no whole disk {name} here", d.name)).with("disk", &d.name).with("target", &name));
                         continue;
                     }
                 }
@@ -410,16 +411,22 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
             None => system.disks.iter().find(|t| same_identity(d, &t.b)),
         };
         let Some(t) = target else {
-            m.problems.push(format!(
-                "source disk {} has no target: give --map {}=DISK (disks here: {})",
-                d.describe(),
-                d.name,
-                system.disks.iter().map(TargetDisk::describe).collect::<Vec<_>>().join("; ")
-            ));
+            m.problems.push(
+                Problem::new(
+                    ProblemCode::NotMapped,
+                    format!(
+                        "source disk {} has no target: give --map {}=DISK (disks here: {})",
+                        d.describe(),
+                        d.name,
+                        system.disks.iter().map(TargetDisk::describe).collect::<Vec<_>>().join("; ")
+                    ),
+                )
+                .with("disk", &d.name),
+            );
             continue;
         };
         if let Some((other, _)) = m.pairs.iter().find(|(_, tn)| *tn == t.b.name) {
-            m.problems.push(format!("{} is the target of both {other} and {}", t.path(), d.name));
+            m.problems.push(Problem::new(ProblemCode::TargetTwice, format!("{} is the target of both {other} and {}", t.path(), d.name)).with("disk", &d.name).with("target", &t.b.name));
             continue;
         }
         check_target(d, t, opts, &ours, &mut m);
@@ -449,11 +456,19 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
             } else {
                 continue;
             };
-            m.problems.push(format!(
-                "{why} is on {} ({}), which isn't a target: the restored system's boot tools and its first boot would find it twice; disconnect that disk, or give its group a new name and UUIDs (vgimportclone) first",
-                pv.dev,
-                pv.disks.join(", ")
-            ));
+            m.problems.push(
+                Problem::new(
+                    ProblemCode::DuplicateVg,
+                    format!(
+                        "{why} is on {} ({}), which isn't a target: the restored system's boot tools and its first boot would find it twice; disconnect that disk, or give its group a new name and UUIDs (vgimportclone) first",
+                        pv.dev,
+                        pv.disks.join(", ")
+                    ),
+                )
+                .with("vg", &n)
+                .with("dev", &pv.dev)
+                .with("disks", pv.disks.clone()),
+            );
         }
     }
     // A pool with no vdev devices read (zpool status unparsed) can't be
@@ -464,14 +479,18 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
         if let Some(ip) = system.pools.iter().find(|ip| ip.name == n) {
             if ip.devices.is_empty() || !ip.devices.iter().all(|d| vdev_on_targets(system, &target_refs, d)) {
                 m.pool_names.push((n.to_string(), temp_pool_name(n)));
-                m.notes.push(format!("ZFS pool {n}: a pool of that name is imported here, so it's {} here until close exports it", temp_pool_name(n)));
+                m.notes.push(
+                    Note::new(NoteCode::PoolRenamed, format!("ZFS pool {n}: a pool of that name is imported here, so it's {} here until close exports it", temp_pool_name(n)))
+                        .with("pool", n)
+                        .with("as", temp_pool_name(n)),
+                );
             }
         }
     }
     for e in &opts.erase {
         let name = resolve_name(sys, e);
         if !m.pairs.iter().any(|(_, t)| *t == name) {
-            m.problems.push(format!("--erase {e}: that isn't a target of this layout, so it isn't erased"));
+            m.problems.push(Problem::new(ProblemCode::EraseNotTarget, format!("--erase {e}: that isn't a target of this layout, so it isn't erased")).with("target", e));
         }
     }
     m
@@ -646,7 +665,11 @@ fn release_holders(layout: &Layout, opts: &Options, system: &System, sys: &Sys, 
             let (Some(d), Some(t)) = (layout.disk(src), system.disk(tgt)) else { continue };
             if unrecorded(layout, d, t, opts, sys) {
                 let what = if d.table.is_some() { "wrote this table (the source's table, as on the source's own disk as found" } else { "wiped this disk (its source has no table, its content goes on the disk itself" };
-                m.notes.push(format!("{src} -> {}: the partition stage runs: --erase and no record that load {what}; {}), so what's on it is let go of and wiped", t.path(), table_record(tgt)));
+                m.notes.push(
+                    Note::new(NoteCode::PartitionRuns, format!("{src} -> {}: the partition stage runs: --erase and no record that load {what}; {}), so what's on it is let go of and wiped", t.path(), table_record(tgt)))
+                        .with("disk", src)
+                        .with("target", tgt),
+                );
             }
         }
     }
@@ -656,13 +679,25 @@ fn release_holders(layout: &Layout, opts: &Options, system: &System, sys: &Sys, 
             let Some(t) = system.disk(&name) else { continue };
             let src = m.pairs.iter().find(|(_, x)| *x == name).map(|(s, _)| s.clone()).unwrap_or_default();
             if loads_own(sys, system, opts, &pools, &name) {
-                m.problems.push(format!(
-                    "{src} -> {}: the partition stage would wipe it, but load's own is on it, from an earlier stage (mounted under {}, or a pool of the layout's imported there); `--only close` first lets go of it",
-                    t.path(),
-                    opts.target
-                ));
+                m.problems.push(
+                    Problem::new(
+                        ProblemCode::OursBusy,
+                        format!(
+                            "{src} -> {}: the partition stage would wipe it, but load's own is on it, from an earlier stage (mounted under {}, or a pool of the layout's imported there); `--only close` first lets go of it",
+                            t.path(),
+                            opts.target
+                        ),
+                    )
+                    .with("disk", &src)
+                    .with("target", &name),
+                );
             } else if !t.hard_use.is_empty() {
-                m.problems.push(format!("{src} -> {}: the target is in use ({}); refused even with --erase", t.path(), t.in_use.join("; ")));
+                m.problems.push(
+                    Problem::new(ProblemCode::InUse, format!("{src} -> {}: the target is in use ({}); refused even with --erase", t.path(), t.in_use.join("; ")))
+                        .with("disk", &src)
+                        .with("target", &name)
+                        .with("uses", t.in_use.clone()),
+                );
             } else if !m.held.contains(&name) {
                 m.held.push(name);
             }
@@ -681,10 +716,18 @@ fn release_holders(layout: &Layout, opts: &Options, system: &System, sys: &Sys, 
         let r = super::release::plan(sys, system, &m.held, &erased);
         for (disk, why) in r.problems {
             let src = m.pairs.iter().find(|(_, t)| *t == disk).map(|(s, _)| s.clone()).unwrap_or_default();
-            m.problems.push(format!("{src} -> /dev/{disk}: the target is held, and what holds it can't be let go: {why}; refused even with --erase"));
+            m.problems.push(
+                Problem::new(ProblemCode::HeldUnreleasable, format!("{src} -> /dev/{disk}: the target is held, and what holds it can't be let go: {why}; refused even with --erase"))
+                    .with("disk", &src)
+                    .with("target", &disk)
+                    .with("why", &why),
+            );
         }
         for st in &r.steps {
-            m.notes.push(format!("--erase {}: {} ({}) before it's wiped", st.disks.iter().map(|d| format!("/dev/{d}")).collect::<Vec<_>>().join(", "), st.what(), st.stops.join(", ")));
+            m.notes.push(
+                Note::new(NoteCode::Release, format!("--erase {}: {} ({}) before it's wiped", st.disks.iter().map(|d| format!("/dev/{d}")).collect::<Vec<_>>().join(", "), st.what(), st.stops.join(", ")))
+                    .with("targets", st.disks.clone()),
+            );
         }
         m.release = r.steps;
     }
@@ -717,28 +760,41 @@ pub fn layout_uuids(layout: &Layout) -> Vec<String> {
 
 fn check_target(src: &Disk, t: &TargetDisk, opts: &Options, ours: &[String], m: &mut Mapping) {
     let who = format!("{} -> {}", src.name, t.path());
+    // A problem about this pair: its source disk and target node.
+    let about = |code: ProblemCode, text: String| Problem::new(code, text).with("disk", &src.name).with("target", &t.b.name);
     if t.boot_medium {
-        m.problems.push(format!("{who}: {} is the disk this system booted from; never a target", t.path()));
+        m.problems.push(about(ProblemCode::BootDisk, format!("{who}: {} is the disk this system booted from; never a target", t.path())));
         return;
     }
     if t.holds_root {
-        m.problems.push(format!("{who}: {} holds the running system's /; never a target", t.path()));
+        m.problems.push(about(ProblemCode::RunningRoot, format!("{who}: {} holds the running system's /; never a target", t.path())));
         return;
     }
     // With --fit-largest the sizes are the fit's business (fit.rs), which
     // says what it changes and refuses what it can't fit.
     if t.b.size_bytes < src.size_bytes && opts.fit_largest.is_none() {
-        m.problems.push(format!(
-            "{who}: the target is smaller ({} < {}); version 1 needs the same size or bigger, or --fit-largest PCT to fit the layout to it",
-            crate::report::human(t.b.size_bytes),
-            crate::report::human(src.size_bytes)
-        ));
+        m.problems.push(
+            about(
+                ProblemCode::TargetTooSmall,
+                format!(
+                    "{who}: the target is smaller ({} < {}); version 1 needs the same size or bigger, or --fit-largest PCT to fit the layout to it",
+                    crate::report::human(t.b.size_bytes),
+                    crate::report::human(src.size_bytes)
+                ),
+            )
+            .with("target_bytes", t.b.size_bytes)
+            .with("source_bytes", src.size_bytes),
+        );
     }
     if t.b.logical_block_size.max(512) != src.sector_size {
-        m.problems.push(format!("{who}: logical sector size {} here, {} on the source; version 1 needs them equal", t.b.logical_block_size, src.sector_size));
+        m.problems.push(
+            about(ProblemCode::SectorSize, format!("{who}: logical sector size {} here, {} on the source; version 1 needs them equal", t.b.logical_block_size, src.sector_size))
+                .with("here", t.b.logical_block_size)
+                .with("source", src.sector_size),
+        );
     }
     if t.b.read_only == Some(true) {
-        m.problems.push(format!("{who}: the target is read-only"));
+        m.problems.push(about(ProblemCode::ReadOnly, format!("{who}: the target is read-only")));
     }
     // Busy or written on by an earlier stage of this same layout is fine:
     // that's what status and the later stages expect to find.
@@ -751,11 +807,13 @@ fn check_target(src: &Disk, t: &TargetDisk, opts: &Options, ours: &[String], m: 
     }
     if !t.in_use.is_empty() && !is_ours {
         if !t.hard_use.is_empty() {
-            m.problems.push(format!("{who}: the target is in use ({}); refused even with --erase", t.in_use.join("; ")));
+            m.problems.push(about(ProblemCode::InUse, format!("{who}: the target is in use ({}); refused even with --erase", t.in_use.join("; "))).with("uses", t.in_use.clone()));
             return;
         }
         if !erase {
-            m.problems.push(format!("{who}: the target is held ({}); give --erase {} to let go of what holds it and wipe it", t.in_use.join("; "), t.path()));
+            m.problems.push(
+                about(ProblemCode::Held, format!("{who}: the target is held ({}); give --erase {} to let go of what holds it and wipe it", t.in_use.join("; "), t.path())).with("uses", t.in_use.clone()),
+            );
             return;
         }
         // Held only: release.rs says whether it can be let go of, once every
@@ -764,10 +822,15 @@ fn check_target(src: &Disk, t: &TargetDisk, opts: &Options, ours: &[String], m: 
     }
     if !t.blank() && !is_ours && !erase {
         let what = if t.signatures.is_empty() { "a partition table".to_string() } else { t.signatures.join("; ") };
-        m.problems.push(format!("{who}: the target isn't blank ({what}); give --erase {} to wipe it", t.path()));
+        m.problems.push(about(ProblemCode::NotBlank, format!("{who}: the target isn't blank ({what}); give --erase {} to wipe it", t.path())).with("contents", t.signatures.clone()));
     }
     if t.b.size_bytes > src.size_bytes && opts.fit_largest.is_none() {
-        m.notes.push(format!("{who}: the target is bigger; the extra {} stays unused", crate::report::human(t.b.size_bytes - src.size_bytes)));
+        m.notes.push(
+            Note::new(NoteCode::TargetBigger, format!("{who}: the target is bigger; the extra {} stays unused", crate::report::human(t.b.size_bytes - src.size_bytes)))
+                .with("disk", &src.name)
+                .with("target", &t.b.name)
+                .with("bytes", t.b.size_bytes - src.size_bytes),
+        );
         m.bigger.push(src.name.clone());
     }
 }
@@ -845,18 +908,23 @@ pub fn prepare<'a>(layout: &'a Layout, opts: &Options, sys: &Sys) -> Prepared<'a
 /// --pools' refusals: a --map of a disk of a pool it leaves untouched, and
 /// a target disk here that holds one of those pools (its vdev's label has
 /// the pool's GUID): load would write over a pool it was told to leave.
-pub fn left_out_pool_problems(opts: &Options, only: &crate::load::layout::OnlyPools, m: &Mapping, system: &System) -> Vec<String> {
+pub fn left_out_pool_problems(opts: &Options, only: &crate::load::layout::OnlyPools, m: &Mapping, system: &System) -> Vec<Problem> {
     let mut out = Vec::new();
     for (src, dst) in &opts.maps {
         if only.disks.contains(src) {
-            out.push(format!("--map {src}={dst}: {src} holds a pool --pools leaves untouched, so it has no target"));
+            out.push(Problem::new(ProblemCode::PoolLeftOut, format!("--map {src}={dst}: {src} holds a pool --pools leaves untouched, so it has no target")).with("disk", src));
         }
     }
     for (src, tgt) in &m.pairs {
         let Some(t) = system.disk(tgt) else { continue };
         for (pool, guid) in &only.guids {
             if t.uuids.iter().any(|u| u == guid) {
-                out.push(format!("{src} -> {}: the target holds pool {pool}, which --pools leaves untouched; refused", t.path()));
+                out.push(
+                    Problem::new(ProblemCode::PoolLeftOut, format!("{src} -> {}: the target holds pool {pool}, which --pools leaves untouched; refused", t.path()))
+                        .with("disk", src)
+                        .with("target", tgt)
+                        .with("pool", pool),
+                );
             }
         }
     }
@@ -867,7 +935,7 @@ pub fn left_out_pool_problems(opts: &Options, only: &crate::load::layout::OnlyPo
 /// same one again, every later stage would read the disk as the source's and
 /// write over what's on it.  `planned` is the layout this run would write,
 /// fitted or not; a target that already holds it has nothing wrong with it.
-fn fitted_already(src: &Layout, planned: &Layout, system: &System, opts: &Options, m: &Mapping) -> Vec<String> {
+fn fitted_already(src: &Layout, planned: &Layout, system: &System, opts: &Options, m: &Mapping) -> Vec<Problem> {
     let mut out = Vec::new();
     for (name, tgt) in &m.pairs {
         let (Some(d), Some(plan), Some(t)) = (src.disk(name), planned.disk(name), system.disk(tgt)) else { continue };
@@ -888,13 +956,15 @@ fn fitted_already(src: &Layout, planned: &Layout, system: &System, opts: &Option
         let target = fit::Target { disk: name.clone(), path: t.path(), size_bytes: t.b.size_bytes };
         let Some((n, by)) = fit::wrote(&src.v, &target, &ext) else { continue };
         let part = d.parts.iter().find(|q| q.number == n).map(|q| q.name.clone()).unwrap_or_else(|| format!("partition {n}"));
-        out.push(format!(
+        let text = format!(
             "{name} -> {}: the table there is this layout's, fitted to the disk ({part} is {} {} there); run the stages with the --fit-largest PCT that wrote it, or --erase {} to start again",
             t.path(),
             crate::report::human(by.unsigned_abs() * d.sector_size),
             if by < 0 { "smaller" } else { "bigger" },
             t.path()
-        ));
+        );
+        // bytes: how much the partition differs, below 0 smaller.
+        out.push(Problem::new(ProblemCode::FittedOtherPct, text).with("disk", name).with("target", tgt).with("partition", &part).with("bytes", by * d.sector_size as i64));
     }
     out
 }
@@ -1068,6 +1138,134 @@ mod tests {
         assert!(p(&["--map", "vda=vdb", "--erase", "vdc"]).contains("isn't a target"));
     }
 
+    /// Every problem and note map_disks, check_target, release_holders and
+    /// prepare code: the code, the subject fields, and the text as before.
+    #[test]
+    fn problems_carry_their_codes() {
+        use crate::load::codes::{NoteCode, ProblemCode as C};
+        let t = tree();
+        let s = sys(&t);
+        let m = |a: &[&str]| {
+            let o = opts(a);
+            map(&layout(), &o, &scan(&s, &o, &[]), &s)
+        };
+        let one = |m: &Mapping, code: C| -> Problem {
+            let p: Vec<&Problem> = m.problems.iter().filter(|p| p.code == code).collect();
+            assert_eq!(p.len(), 1, "{code:?} in {:?}", m.problems.iter().map(|p| (p.code, p.text.clone())).collect::<Vec<_>>());
+            p[0].clone()
+        };
+        let f = |p: &Problem, k: &str| p.field(k).map(crate::json::Value::compact).unwrap_or_default();
+        let p = one(&m(&[]), C::NotMapped);
+        assert!(p.starts_with("source disk vda (16 GiB) has no target: give --map vda=DISK"), "{p}");
+        assert_eq!(p.str_field("disk"), Some("vda"));
+        let p = one(&m(&["--map", "vda=vdc"]), C::TargetTooSmall);
+        assert_eq!(p.text, "vda -> /dev/vdc: the target is smaller (8 GiB < 16 GiB); version 1 needs the same size or bigger, or --fit-largest PCT to fit the layout to it");
+        assert_eq!((p.str_field("disk"), p.str_field("target")), (Some("vda"), Some("vdc")));
+        assert_eq!((f(&p, "target_bytes"), f(&p, "source_bytes")), ((8u64 << 30).to_string(), (16u64 << 30).to_string()));
+        let p = one(&m(&["--map", "vda=sda", "--erase", "sda"]), C::BootDisk);
+        assert_eq!(p.text, "vda -> /dev/sda: /dev/sda is the disk this system booted from; never a target");
+        let p = one(&m(&["--map", "vdz=vdb"]), C::MapUnknownSource);
+        assert_eq!((p.text.as_str(), p.str_field("disk")), ("--map vdz=...: the layout has no disk vdz (it has vda)", Some("vdz")));
+        let p = one(&m(&["--map", "vda=vdq"]), C::NoSuchDisk);
+        assert_eq!((p.text.as_str(), p.str_field("disk"), p.str_field("target")), ("--map vda=vdq: no whole disk vdq here", Some("vda"), Some("vdq")));
+        let p = one(&m(&["--map", "vda=vdb", "--erase", "vdc"]), C::EraseNotTarget);
+        assert_eq!((p.text.as_str(), p.str_field("target")), ("--erase vdc: that isn't a target of this layout, so it isn't erased", Some("vdc")));
+        // The rescue system's /, a 4 KiB-sector disk, a read-only one, a
+        // bigger one and one with someone else's table.
+        t.disk("vde", "253:64", &[], 4096).file("/sys/block/vde/size", format!("{}
+", 33554432));
+        t.disk("vdf", "253:80", &[], 512).file("/sys/block/vdf/size", format!("{}
+", 33554432)).file("/sys/block/vdf/ro", "1
+");
+        t.disk("vdg", "253:96", &[], 512).file("/sys/block/vdg/size", format!("{}
+", 2 * 33554432));
+        let mut other = vec![0u8; 1 << 20];
+        other[440..444].copy_from_slice(&0xdeadbeefu32.to_le_bytes());
+        other[446 + 4] = 0x83;
+        other[446 + 8..446 + 12].copy_from_slice(&2048u32.to_le_bytes());
+        other[446 + 12..446 + 16].copy_from_slice(&1024u32.to_le_bytes());
+        other[510] = 0x55;
+        other[511] = 0xaa;
+        t.disk("vdh", "253:112", &other, 512).file("/sys/block/vdh/size", format!("{}
+", 33554432));
+        t.disk("vdi", "253:128", &[], 512).file("/sys/block/vdi/size", format!("{}
+", 33554432));
+        t.file("/proc/self/mountinfo", "30 1 253:128 / / rw - ext4 /dev/vdi rw
+");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let m = |a: &[&str]| {
+            let o = opts(a);
+            map(&layout(), &o, &scan(&s, &o, &[]), &s)
+        };
+        let p = one(&m(&["--map", "vda=vde"]), C::SectorSize);
+        assert_eq!(p.text, "vda -> /dev/vde: logical sector size 4096 here, 512 on the source; version 1 needs them equal");
+        assert_eq!((f(&p, "here"), f(&p, "source")), ("4096".to_string(), "512".to_string()));
+        assert_eq!(one(&m(&["--map", "vda=vdf"]), C::ReadOnly).text, "vda -> /dev/vdf: the target is read-only");
+        let p = one(&m(&["--map", "vda=vdh"]), C::NotBlank);
+        assert!(p.text.starts_with("vda -> /dev/vdh: the target isn't blank ("), "{p}");
+        assert!(p.text.ends_with("); give --erase /dev/vdh to wipe it"), "{p}");
+        assert_eq!(p.str_field("target"), Some("vdh"));
+        assert!(p.field("contents").and_then(crate::json::Value::as_array).is_some());
+        assert!(m(&["--map", "vda=vdh", "--erase", "vdh"]).problems.iter().all(|p| p.code != C::NotBlank));
+        assert_eq!(one(&m(&["--map", "vda=vdi", "--erase", "vdi"]), C::RunningRoot).text, "vda -> /dev/vdi: /dev/vdi holds the running system's /; never a target");
+        let big = m(&["--map", "vda=vdg"]);
+        assert!(big.problems.is_empty(), "{:?}", big.problems);
+        let n = big.notes.iter().find(|n| n.code == NoteCode::TargetBigger).unwrap();
+        assert_eq!(n.text, "vda -> /dev/vdg: the target is bigger; the extra 16 GiB stays unused");
+        assert_eq!((n.str_field("disk"), n.str_field("target"), n.field("bytes").and_then(crate::json::Value::as_u64)), (Some("vda"), Some("vdg"), Some(16 << 30)));
+        // The source empty, a note of its own.
+        let empty = sample::bios_mbr().replacen(r#""disks": ["#, r#""disks": [{"name": "vdy", "kind": "disk", "size_bytes": 1048576, "logical_sector_size": 512, "partition_table": null, "partitions": [], "content": null},"#, 1);
+        let el = Layout::from_json(crate::json::parse(&empty).unwrap()).unwrap();
+        let o = opts(&["--map", "vda=vdb"]);
+        let em = map(&el, &o, &scan(&s, &o, &[]), &s);
+        let n = em.notes.iter().find(|n| n.contains("holds nothing")).unwrap_or_else(|| panic!("{:?}", em.notes));
+        assert_eq!((n.code, n.str_field("disk")), (NoteCode::SourceEmpty, Some("vdy")));
+        // --fit-largest past its percentage: fit's own code, through prepare.
+        let o = opts(&["--map", "vda=vdc", "--fit-largest", "50"]);
+        let l = layout();
+        let pr = prepare(&l, &o, &s);
+        let p = pr.mapping.problems.iter().find(|p| p.code == C::FitOverPct).unwrap_or_else(|| panic!("{:?}", pr.mapping.problems));
+        assert!(p.text.contains("more than 50%") && p.text.starts_with("vda -> /dev/vdc: --fit-largest 50%: "), "{p}");
+        assert_eq!((p.str_field("disk"), p.str_field("target"), p.field("given_pct").and_then(crate::json::Value::as_u64)), (Some("vda"), Some("vdc"), Some(50)));
+        assert!(p.field("needed_pct").and_then(crate::json::Value::as_u64).is_some_and(|n| n > 50));
+    }
+
+    /// The held, unreleasable, in-use and release codes, on the old vg0.
+    #[test]
+    fn held_targets_carry_their_codes() {
+        use crate::load::codes::{NoteCode, ProblemCode as C};
+        let t = tree();
+        old_vg0(&t);
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let m = |a: &[&str]| {
+            let o = opts(a);
+            map(&layout(), &o, &scan(&s, &o, &[]), &s)
+        };
+        let held = m(&["--map", "vda=vdb"]);
+        let p = held.problems.iter().find(|p| p.code == C::Held).unwrap();
+        assert_eq!(p.text, "vda -> /dev/vdb: the target is held (vdb2 is held by dm-0, dm-1); give --erase /dev/vdb to let go of what holds it and wipe it");
+        assert_eq!(p.field("uses").map(crate::json::Value::compact).as_deref(), Some(r#"["vdb2 is held by dm-0, dm-1"]"#));
+        let m2 = m(&["--map", "vda=vdb", "--erase", "/dev/vdb"]);
+        let n = m2.notes.iter().find(|n| n.code == NoteCode::Release).unwrap();
+        assert_eq!(n.text, "--erase /dev/vdb: volume group vg0 deactivated (dm-0 (vg0-root), dm-1 (vg0-swap)) before it's wiped");
+        assert_eq!(n.field("targets").map(crate::json::Value::compact).as_deref(), Some(r#"["vdb"]"#));
+        t.file("/proc/swaps", "Filename	Type	Size	Used	Priority
+/dev/dm-1                               partition	1048572	0	-2
+");
+        let m3 = m(&["--map", "vda=vdb", "--erase", "/dev/vdb"]);
+        let p = m3.problems.iter().find(|p| p.code == C::HeldUnreleasable).unwrap_or_else(|| panic!("{:?}", m3.problems));
+        assert_eq!(p.text, "vda -> /dev/vdb: the target is held, and what holds it can't be let go: dm-1 (vg0-swap) is in use as swap; refused even with --erase");
+        assert_eq!((p.str_field("disk"), p.str_field("target"), p.str_field("why")), (Some("vda"), Some("vdb"), Some("dm-1 (vg0-swap) is in use as swap")));
+        t.file("/proc/swaps", "Filename	Type	Size	Used	Priority
+");
+        t.file("/proc/self/mountinfo", "30 1 253:18 / /mnt/old rw - ext4 /dev/vdb2 rw
+");
+        let m4 = m(&["--map", "vda=vdb", "--erase", "/dev/vdb"]);
+        let p = m4.problems.iter().find(|p| p.code == C::InUse).unwrap_or_else(|| panic!("{:?}", m4.problems));
+        assert!(p.text.ends_with("refused even with --erase"), "{p}");
+        assert!(p.field("uses").is_some());
+    }
+
     #[test]
     fn a_same_named_volume_group_elsewhere_is_refused() {
         let t = tree();
@@ -1094,7 +1292,10 @@ mod tests {
             "vdd: {:?}",
             system.disk("vdd").map(|d| &d.signatures)
         );
-        let p = map(&with("vg0"), &o, &system, &s).problems.join("\n");
+        let vm = map(&with("vg0"), &o, &system, &s);
+        let dup = vm.problems.iter().find(|p| p.code == crate::load::codes::ProblemCode::DuplicateVg).unwrap();
+        assert_eq!((dup.str_field("vg"), dup.str_field("dev")), (Some("vg0"), Some("vdd")));
+        let p = vm.problems.join("\n");
         assert!(p.contains("a volume group named vg0 is on vdd (vdd), which isn't a target"), "{p}");
         assert!(map(&with("ubuntu-vg"), &o, &system, &s).problems.is_empty());
         // Renamed, but with the same UUIDs (vgrename keeps them).

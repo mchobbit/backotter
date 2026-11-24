@@ -1,6 +1,7 @@
 //! `bko-holt load` with no stage: every check, and every command the writing
 //! stages would run, without writing anything.
 
+use super::codes::{Notes, Problem, ProblemCode, Problems};
 use super::commands::{self, Built};
 use super::layout::Layout;
 use super::target::{self, Mapping};
@@ -31,13 +32,13 @@ pub fn on_path(sys: &Sys, prog: &str) -> bool {
 
 /// The programs each stage runs here (not inside the restored system's
 /// chroot, whose own tools are restored with it).
-fn missing_tools(sys: &Sys, built: &Built) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+fn missing_tools(sys: &Sys, built: &Built) -> Vec<Problem> {
+    let mut out: Vec<Problem> = Vec::new();
     for (stage, cmds) in &built.stages {
         for c in cmds.iter().filter(|c| !c.argv.is_empty()) {
             let prog = &c.argv[0];
             if !on_path(sys, prog) && !out.iter().any(|m| m.starts_with(&format!("{prog} "))) {
-                out.push(format!("{prog} isn't installed here (the {} stage runs it)", stage.name()));
+                out.push(Problem::new(ProblemCode::ToolMissing, format!("{prog} isn't installed here (the {} stage runs it)", stage.name())).with("program", prog).with("stage", stage.name()));
             }
         }
     }
@@ -47,13 +48,14 @@ fn missing_tools(sys: &Sys, built: &Built) -> Vec<String> {
 /// load's LVM commands take --devices and --devicesfile, which lvm2 has had
 /// since 2.03.12: an older one is a problem for a layout with volume groups.
 /// (An lvm that won't say its version is left to missing_tools.)
-fn lvm_problem(sys: &Sys, layout: &Layout) -> Option<String> {
+fn lvm_problem(sys: &Sys, layout: &Layout) -> Option<Problem> {
     if layout.v.at(&["storage", "lvm", "volume_groups"]).and_then(crate::json::Value::as_array).is_none_or(|a| a.is_empty()) {
         return None;
     }
     let out = sys.run("lvm", &["version"])?;
     let v = lvm_version(&out)?;
-    (v < (2, 3, 12)).then(|| format!("lvm2 {}.{:02}.{:02} is older than 2.03.12, which load's LVM commands need (--devices)", v.0, v.1, v.2))
+    let version = format!("{}.{:02}.{:02}", v.0, v.1, v.2);
+    (v < (2, 3, 12)).then(|| Problem::new(ProblemCode::LvmTooOld, format!("lvm2 {version} is older than 2.03.12, which load's LVM commands need (--devices)")).with("version", version.as_str()))
 }
 
 /// A layout with a thin pool (commands.rs makes it with lvcreate) needs an
@@ -61,7 +63,7 @@ fn lvm_problem(sys: &Sys, layout: &Layout) -> Option<String> {
 /// (thin-provisioning-tools: lvm2 runs it on a pool's metadata when it
 /// activates the pool) and the kernel's dm-thin-pool.  What can't be asked
 /// (no lvm, no kernel release) is left to missing_tools.
-fn thin_problems(sys: &Sys, layout: &Layout) -> Vec<String> {
+fn thin_problems(sys: &Sys, layout: &Layout) -> Vec<Problem> {
     use crate::json::Value;
     let thin = layout.arr(&["storage", "lvm", "volume_groups"]).iter().any(|vg| {
         vg.get("logical_volumes").and_then(Value::as_array).into_iter().flatten().any(|lv| {
@@ -74,11 +76,11 @@ fn thin_problems(sys: &Sys, layout: &Layout) -> Vec<String> {
     }
     if let Some(t) = sys.run("lvm", &["segtypes"]) {
         if !t.lines().any(|l| l.trim() == "thin-pool") {
-            out.push("this system's lvm2 has no thin-pool segment type (lvm segtypes), which the layout's thin pools need".into());
+            out.push(Problem::new(ProblemCode::ThinUnsupported, "this system's lvm2 has no thin-pool segment type (lvm segtypes), which the layout's thin pools need").with("why", "lvm_segtype"));
         }
     }
     if !on_path(sys, "thin_check") {
-        out.push("thin_check isn't installed here (thin-provisioning-tools): lvm2 checks a thin pool's metadata with it when it activates the pool".into());
+        out.push(Problem::new(ProblemCode::ThinUnsupported, "thin_check isn't installed here (thin-provisioning-tools): lvm2 checks a thin pool's metadata with it when it activates the pool").with("why", "thin_check"));
     }
     if let Some(k) = sys.read_trim("/proc/sys/kernel/osrelease") {
         let builtin = ["/lib", "/usr/lib"].iter().any(|d| sys.read(&format!("{d}/modules/{k}/modules.builtin")).is_some_and(|b| b.contains("/dm-thin-pool.ko")));
@@ -86,7 +88,7 @@ fn thin_problems(sys: &Sys, layout: &Layout) -> Vec<String> {
             .iter()
             .any(|d| ["", ".zst", ".xz", ".gz"].iter().any(|z| sys.is_file(&format!("{d}/modules/{k}/kernel/drivers/md/dm-thin-pool.ko{z}"))));
         if !builtin && !module && !sys.exists("/sys/module/dm_thin_pool") {
-            out.push(format!("the kernel here ({k}) has no dm-thin-pool module, which the layout's thin pools need"));
+            out.push(Problem::new(ProblemCode::ThinUnsupported, format!("the kernel here ({k}) has no dm-thin-pool module, which the layout's thin pools need")).with("why", "dm_thin_pool"));
         }
     }
     out
@@ -110,8 +112,8 @@ const COMPAT_DIRS: [&str; 3] = ["/etc/zfs/compatibility.d", "/usr/share/zfs/comp
 /// ZFS doesn't know one of those features, or which hasn't the file a
 /// `compatibility=` names, fails the create partway through the run: said here
 /// instead, before anything is written.
-fn zfs_problems(sys: &Sys, layout: &Layout) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+fn zfs_problems(sys: &Sys, layout: &Layout) -> Vec<Problem> {
+    let mut out: Vec<Problem> = Vec::new();
     // Every imported pool: commands.rs makes one `zpool create` for each
     // (its items(), Item::Pool).
     let pools = layout.arr(&["storage", "zfs", "tools", "imported_pools"]);
@@ -135,10 +137,11 @@ fn zfs_problems(sys: &Sys, layout: &Layout) -> Vec<String> {
                 .filter(|f| !known.iter().any(|k| k == f))
                 .collect();
             if !unknown.is_empty() {
-                out.push(format!(
+                let text = format!(
                     "ZFS pool {name}: this system's ZFS doesn't know the source's feature(s) {}, which zpool create would be asked to enable; the rescue image's ZFS is older than the source's, so a newer image is needed",
                     unknown.join(", ")
-                ));
+                );
+                out.push(Problem::new(ProblemCode::ZfsFeatureUnknown, text).with("pool", name).with("features", unknown.clone()));
             }
         }
         // off and legacy name no file; anything else is a comma-separated
@@ -150,10 +153,14 @@ fn zfs_problems(sys: &Sys, layout: &Layout) -> Vec<String> {
         for f in value.split(',').map(str::trim).filter(|f| !f.is_empty()) {
             if f.starts_with('/') {
                 if !sys.is_file(f) {
-                    out.push(format!("ZFS pool {name}: its compatibility={value} names {f}, which isn't on this system; a rescue image that has it is needed"));
+                    out.push(Problem::new(ProblemCode::ZfsCompatMissing, format!("ZFS pool {name}: its compatibility={value} names {f}, which isn't on this system; a rescue image that has it is needed")).with("pool", name).with("file", f));
                 }
             } else if !COMPAT_DIRS.iter().any(|d| sys.is_file(&format!("{d}/{f}"))) {
-                out.push(format!("ZFS pool {name}: its compatibility={value} names {f}, which is in none of {}; a rescue image that has it is needed", COMPAT_DIRS.join(", ")));
+                out.push(
+                    Problem::new(ProblemCode::ZfsCompatMissing, format!("ZFS pool {name}: its compatibility={value} names {f}, which is in none of {}; a rescue image that has it is needed", COMPAT_DIRS.join(", ")))
+                        .with("pool", name)
+                        .with("file", f),
+                );
             }
         }
     }
@@ -184,23 +191,28 @@ fn zpool_features(out: &str) -> Vec<String> {
 }
 
 /// The archiver must be BackOtter's, as the rescue stick's build checks.
-fn archiver_problem(sys: &Sys, opts: &Options) -> Option<String> {
+fn archiver_problem(sys: &Sys, opts: &Options) -> Option<Problem> {
     opts.repo.as_ref()?;
     let Some(exe) = find(sys, &opts.archiver) else {
-        return Some(format!("{} isn't installed here; restore can't run it", opts.archiver));
+        return Some(Problem::new(ProblemCode::ArchiverMissing, format!("{} isn't installed here; restore can't run it", opts.archiver)).with("program", &opts.archiver));
     };
     match sys.run_file(&exe, &["--version"]) {
         Some(v) if v.contains("backotter") => None,
-        Some(v) => Some(format!("{} isn't BackOtter's rustic ({}); restore needs rustic-bko", opts.archiver, v.trim())),
-        None => Some(format!("{exe} --version failed; restore can't run it")),
+        Some(v) => Some(
+            Problem::new(ProblemCode::ArchiverNotBko, format!("{} isn't BackOtter's rustic ({}); restore needs rustic-bko", opts.archiver, v.trim()))
+                .with("program", &opts.archiver)
+                .with("version", v.trim()),
+        ),
+        // It answers nothing: no version to show.
+        None => Some(Problem::new(ProblemCode::ArchiverNotBko, format!("{exe} --version failed; restore can't run it")).with("program", &opts.archiver).with("version", crate::json::Value::Null)),
     }
 }
 
 pub struct Planned {
     pub mapping: Mapping,
     pub built: Built,
-    pub problems: Vec<String>,
-    pub notes: Vec<String>,
+    pub problems: Problems,
+    pub notes: Notes,
     /// What --fit-largest changed, if anything (fit.rs).
     pub fit: super::fit::Fit,
 }
@@ -214,20 +226,23 @@ pub fn check(layout: &Layout, opts: &Options, sys: &Sys) -> Planned {
     let layout = &*layout;
     let built = commands::build(layout, opts, &mapping);
     let mut problems = mapping.problems.clone();
-    problems.extend(built.problems.iter().cloned());
+    problems.extend(built.coded_problems());
     problems.extend(archiver_problem(sys, opts));
     problems.extend(missing_tools(sys, &built));
     problems.extend(lvm_problem(sys, layout));
     problems.extend(thin_problems(sys, layout));
     problems.extend(zfs_problems(sys, layout));
     if super::has_omitted(&layout.v) {
-        problems.push("this layout comes from a bug report (`bko-holt report-bug`), which leaves boot-area and ESP images out: restore from the dump itself".into());
+        problems.push(Problem::new(
+            ProblemCode::FromBugReport,
+            "this layout comes from a bug report (`bko-holt report-bug`), which leaves boot-area and ESP images out: restore from the dump itself",
+        ));
     }
     if !sys.privileged {
-        problems.push("not running as root: the target disks' tables and signatures can't be read, so blank disks can't be told from used ones".into());
+        problems.push(Problem::new(ProblemCode::NotRoot, "not running as root: the target disks' tables and signatures can't be read, so blank disks can't be told from used ones"));
     }
     let mut notes = mapping.notes.clone();
-    notes.extend(built.notes.iter().cloned());
+    notes.extend(built.coded_notes());
     Planned { mapping, built, problems, notes, fit }
 }
 
@@ -603,6 +618,75 @@ mod tests {
         // The same filesystem exactly its partition's size is planned.
         let (code, out, err) = run(&layout(), &opts(&["--map", "vda=vdb", "--repo", "/srv/r"]), &s);
         assert_eq!(code, EXIT_OK, "{out}{err}");
+    }
+
+    /// The codes check() gives its own problems, with their fields, and the
+    /// mapping's and the builders' carried through in order.
+    #[test]
+    fn problems_carry_their_codes() {
+        use crate::load::codes::ProblemCode as C;
+        let t = tree();
+        let field = |p: &Problem, k: &str| p.field(k).map(crate::json::Value::compact).unwrap_or_default();
+        // Not root; the archiver answers nothing; no target.
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        let p = check(&layout(), &opts(&["--repo", "/srv/r"]), &s);
+        let find = |c: C| p.problems.iter().position(|x| x.code == c).unwrap_or_else(|| panic!("no {c:?} in {:?}", p.problems));
+        // In check()'s order: the mapping's, the archiver's, then not root.
+        assert!(find(C::NotMapped) < find(C::ArchiverNotBko) && find(C::ArchiverNotBko) < find(C::NotRoot));
+        assert_eq!(find(C::NotRoot), p.problems.len() - 1);
+        let a = &p.problems[find(C::ArchiverNotBko)];
+        assert_eq!(a.text, "/usr/sbin/rustic-bko --version failed; restore can't run it");
+        assert_eq!((field(a, "program"), field(a, "version")), ("\"rustic-bko\"".to_string(), "null".to_string()));
+        assert!(p.problems[find(C::NotRoot)].starts_with("not running as root:"));
+        // Another archiver's, or none at all.
+        let runner = FakeRunner::default().with("/usr/sbin/rustic-bko --version", "rustic 0.11.4\n");
+        let s = Sys::new(t.root(), Box::new(runner), true);
+        let p = check(&layout(), &opts(&["--map", "vda=vdb", "--repo", "/srv/r"]), &s);
+        let a = p.problems.iter().find(|x| x.code == C::ArchiverNotBko).unwrap();
+        assert_eq!(a.text, "rustic-bko isn't BackOtter's rustic (rustic 0.11.4); restore needs rustic-bko");
+        assert_eq!(field(a, "version"), "\"rustic 0.11.4\"");
+        let p = check(&layout(), &opts(&["--map", "vda=vdb", "--repo", "/srv/r", "--archiver", "restic-x"]), &s);
+        let a = p.problems.iter().find(|x| x.code == C::ArchiverMissing).unwrap();
+        assert_eq!((a.text.as_str(), a.str_field("program")), ("restic-x isn't installed here; restore can't run it", Some("restic-x")));
+        // A tool missing.
+        std::fs::remove_file(t.p("/usr/sbin/sfdisk")).unwrap();
+        let p = check(&layout(), &opts(&["--map", "vda=vdb"]), &s);
+        let m = p.problems.iter().find(|x| x.code == C::ToolMissing).unwrap();
+        assert_eq!((m.text.as_str(), m.str_field("program"), m.str_field("stage")), ("sfdisk isn't installed here (the partition stage runs it)", Some("sfdisk"), Some("partition")));
+        t.file("/usr/sbin/sfdisk", "");
+        // A bug report's layout.
+        let omitted = Layout::from_json(crate::json::parse(&sample::bios_mbr().replacen("\"storage\": {", "\"storage\": {\"esp_image_omitted\": 1, ", 1)).unwrap()).unwrap();
+        let p = check(&omitted, &opts(&["--map", "vda=vdb"]), &s);
+        assert!(p.problems.iter().any(|x| x.code == C::FromBugReport && x.starts_with("this layout comes from a bug report")), "{:?}", p.problems);
+        // Fields as the documents carry them.
+        let j = p.problems.iter().find(|x| x.code == C::FromBugReport).unwrap().to_json();
+        assert_eq!(j.get_str("code"), Some("from_bug_report"));
+    }
+
+    #[test]
+    fn lvm_thin_and_zfs_codes() {
+        use crate::load::codes::ProblemCode as C;
+        let t = tree();
+        // lvm2 older than 2.03.12, for a layout with a volume group.
+        let vg = Layout::from_json(crate::json::parse(&sample::bios_mbr().replace(r#""lvm": {"volume_groups": []}"#, r#""lvm": {"volume_groups": [{"name": "vg0"}]}"#)).unwrap()).unwrap();
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default().with("lvm version", "  LVM version:     2.03.11(2) (2021-01-08)\n")), true);
+        let p = lvm_problem(&s, &vg).unwrap();
+        assert_eq!((p.code, p.text.as_str(), p.str_field("version")), (C::LvmTooOld, "lvm2 2.03.11 is older than 2.03.12, which load's LVM commands need (--devices)", Some("2.03.11")));
+        // Thin pools: the three reasons.
+        let vgs = format!(r#""lvm": {{"volume_groups": [{}]}}"#, crate::probe::lvm::sample::thin_vg().compact());
+        let thin = Layout::from_json(crate::json::parse(&sample::bios_mbr().replace(r#""lvm": {"volume_groups": []}"#, &vgs)).unwrap()).unwrap();
+        t.file("/proc/sys/kernel/osrelease", "7.0.0-43-generic\n");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default().with("lvm segtypes", "striped\n")), true);
+        let p = thin_problems(&s, &thin);
+        assert_eq!(p.iter().map(|x| (x.code, x.str_field("why").unwrap_or(""))).collect::<Vec<_>>(), [(C::ThinUnsupported, "lvm_segtype"), (C::ThinUnsupported, "thin_check"), (C::ThinUnsupported, "dm_thin_pool")]);
+        // ZFS: a feature unknown here, a compatibility file missing.
+        let s = zfs_sys(&t);
+        let p = zfs_problems(&s, &zfs_dump("{\"blake3\": \"active\"}", "{\"compatibility\": \"mycustom\"}"));
+        assert_eq!(p.iter().map(|x| x.code).collect::<Vec<_>>(), [C::ZfsFeatureUnknown, C::ZfsCompatMissing], "{p:?}");
+        assert_eq!((p[0].str_field("pool"), p[0].field("features").map(crate::json::Value::compact).as_deref()), (Some("rpool"), Some(r#"["blake3"]"#)));
+        assert_eq!((p[1].str_field("pool"), p[1].str_field("file")), (Some("rpool"), Some("mycustom")));
+        let p = zfs_problems(&s, &zfs_dump("{}", "{\"compatibility\": \"/etc/zfs/theirs\"}"));
+        assert_eq!((p[0].code, p[0].str_field("file")), (C::ZfsCompatMissing, Some("/etc/zfs/theirs")));
     }
 
     #[test]

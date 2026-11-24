@@ -1614,6 +1614,7 @@ fn chimera_uefi_zfs_thinkpad() {
     // layout_keys passes keys/disk-passphrase as --key-file rpool=...).
     let no_key = plan(&[]);
     assert!(no_key.problems.iter().any(|p| p.contains("ZFS encryption root rpool: give its new key with --key-file rpool=FILE")), "{:?}", no_key.problems);
+    assert!(no_key.coded_problems().iter().any(|p| p.code == crate::load::codes::ProblemCode::KeyNeeded && p.str_field("name") == Some("rpool")), "{:?}", no_key.problems);
     let b = plan(&["--key-file", "rpool=/run/bs1/disk-passphrase"]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let text = |st: Stage| -> String { b.stage(st).iter().map(commands::Cmd::shell).collect() };
@@ -4071,11 +4072,12 @@ fn luks_key_not_restored_needs_key_file() {
         let args: Vec<String> = ["l.json"].iter().chain(extra).map(|a| a.to_string()).collect();
         let Ok(Parsed::Run(o)) = crate::load::parse_args(&args) else { unreachable!() };
         let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
-        (b.problems.clone(), plan_text_of(b.stage(Stage::Assemble)), plan_text_of(b.stage(Stage::Boot)))
+        (b.coded_problems(), plan_text_of(b.stage(Stage::Assemble)), plan_text_of(b.stage(Stage::Boot)))
     };
     for key in ["/backshot1/keys/disk-passphrase:LABEL=BKOBACKUP", "/dev/disk/by-id/usb-Stick_0001-0:0", "/dev/disk/by-label/KEYSTICK", "cryptroot"] {
         let (problems, asm, bt) = plan(key, "luks", &[]);
         assert_eq!(problems, vec![format!("cryptdata: crypttab's key {key:?} isn't a file the restore brings back (it's on another device, or not a path in the restored tree): give --key-file cryptdata=FILE")], "{key}");
+        assert_eq!((problems[0].code, problems[0].str_field("name"), problems[0].str_field("key_file")), (crate::load::codes::ProblemCode::KeyFileUnrestorable, Some("cryptdata"), Some(key)));
         assert!(!asm.contains("/dev/urandom") && !asm.contains(&format!("{RUN_DIR}/keys/")), "{key}: no temporary key: {asm}");
         assert!(!bt.contains("luksAddKey") && !bt.contains("luksRemoveKey"), "{bt}");
     }
@@ -7578,6 +7580,8 @@ fn snapcore_fde_guest() {
     // Without the key, or the header file: refused, naming what to do.
     let p = snapcore_plan(&v, &["--luks-header-dir", &hdir]).problems;
     assert!(p.iter().any(|x| x.contains("vda5: its LUKS2 header is kept, so it opens only with a key it already has: give --key-file ubuntu-data-enc=FILE") && x.contains("bko-holt recovery-key-file FILE")), "{p:?}");
+    let pc = snapcore_plan(&v, &["--luks-header-dir", &hdir]).coded_problems();
+    assert!(pc.iter().any(|x| x.code == crate::load::codes::ProblemCode::KeptHeaderKeyNeeded && x.str_field("name") == Some("ubuntu-data-enc")), "{pc:?}");
     let p = snapcore_plan(&v, &kf[2..]).problems;
     assert!(p.iter().any(|x| x.starts_with("vda5: the LUKS2 header the dump kept: /run/x/luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img")), "{p:?}");
     std::fs::write(format!("{hdir}/luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img"), b"LUKS").unwrap();

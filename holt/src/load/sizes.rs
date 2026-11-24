@@ -16,6 +16,7 @@
 //! Smaller than its device is normal and never said.  What the dump gives
 //! no size for (UFS, ZFS, bcachefs, an LVM PV) isn't checked.
 
+use super::codes::{Problem, ProblemCode};
 use crate::json::Value;
 use crate::report::human;
 
@@ -78,21 +79,22 @@ fn named(d: &Value) -> String {
     }
 }
 
-fn check(out: &mut Vec<String>, dev: &str, size: Option<u64>, c: Option<&Value>) {
+fn check(out: &mut Vec<Problem>, dev: &str, size: Option<u64>, c: Option<&Value>) {
     let (Some(size), Some(c)) = (size.filter(|&s| s > 0), c.filter(|c| !c.is_null())) else { return };
     let Some((need, what)) = needs(c) else { return };
     if need > size {
-        out.push(format!(
+        let text = format!(
             "{dev}: the dump's {what} is {} ({need} bytes), bigger than {dev} itself, {} ({size} bytes): the dump is inconsistent (a device truncated since, a superblock misread, or a filesystem grown past its partition), and load won't make what can't fit; check the source and dump it again",
             human(need),
             human(size)
-        ));
+        );
+        out.push(Problem::new(ProblemCode::LayoutInconsistent, text).with("dev", dev));
     }
 }
 
 /// Every device of the dump holding a filesystem (or swap, a LUKS container
 /// or an md member) bigger than itself.
-pub fn problems(v: &Value) -> Vec<String> {
+pub fn problems(v: &Value) -> Vec<Problem> {
     let mut out = Vec::new();
     for sect in ["disks", "md_arrays", "dm_devices", "softraid_volumes"] {
         for d in v.at(&["storage", sect]).and_then(Value::as_array).into_iter().flatten() {
@@ -103,7 +105,7 @@ pub fn problems(v: &Value) -> Vec<String> {
             let name = named(d);
             check(&mut out, &name, u(d, "size_bytes"), d.get("content"));
             // A GELI provider (FreeBSD's): its content against its provsize.
-            let geli = |out: &mut Vec<String>, p: &Value| {
+            let geli = |out: &mut Vec<Problem>, p: &Value| {
                 if let Some(g) = p.get("geli").filter(|g| !g.is_null()) {
                     let prov = g.get("provider").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("{}.eli", p.get("name").and_then(Value::as_str).unwrap_or("?")));
                     check(out, &prov, u(g, "provsize"), g.get("content"));
@@ -151,6 +153,7 @@ mod tests {
     fn an_ext4_bigger_than_its_partition() {
         let p = problems(&dump(28 * M, &ext4(16384), ""));
         assert_eq!(p.len(), 1, "{p:?}");
+        assert_eq!((p[0].code, p[0].str_field("dev")), (crate::load::codes::ProblemCode::LayoutInconsistent, Some("vda1")));
         assert!(p[0].starts_with("vda1: the dump's ext4 is 64 MiB (67108864 bytes), bigger than vda1 itself, 28 MiB (29360128 bytes): the dump is inconsistent"), "{}", p[0]);
         // Exactly the partition, and a little smaller: nothing to say.
         assert!(problems(&dump(28 * M, &ext4(7168), "")).is_empty());

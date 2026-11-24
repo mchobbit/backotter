@@ -7,6 +7,7 @@
 //! ZFS pool GUID (vdev GUIDs can't be set).  Features are set on and off as
 //! the source had them, never left to the defaults of the tools here.
 
+use super::codes::{Note, NoteCode, Notes, Problem, ProblemCode, Problems};
 use super::layout::{Disk, Layout, Part, TableKind};
 use super::target::Mapping;
 use super::{shell_quote, Options, Stage, RUN_DIR};
@@ -174,8 +175,9 @@ fn restorable_key_file(k: &str) -> bool {
 
 /// The plan problem for a LUKS container whose key file the restore can't
 /// bring back and no --key-file covers.
-fn needs_key_file(open_as: &str, k: &str) -> String {
-    format!("{open_as}: crypttab's key {k:?} isn't a file the restore brings back (it's on another device, or not a path in the restored tree): give --key-file {open_as}=FILE")
+fn needs_key_file(open_as: &str, k: &str) -> Problem {
+    let text = format!("{open_as}: crypttab's key {k:?} isn't a file the restore brings back (it's on another device, or not a path in the restored tree): give --key-file {open_as}=FILE");
+    Problem::new(ProblemCode::KeyFileUnrestorable, text).with("name", open_as).with("key_file", k)
 }
 
 /// The file name of a container's temporary key under RUN_DIR/keys, the
@@ -205,6 +207,11 @@ pub struct Built {
     pub stages: Vec<(Stage, Vec<Cmd>)>,
     pub problems: Vec<String>,
     pub notes: Vec<String>,
+    /// The coded ones among them (codes.rs), each with its text as it is
+    /// in `problems` or `notes`: coded_problems and coded_notes put them
+    /// in their places.
+    pub codes: Vec<Problem>,
+    pub note_codes: Vec<Note>,
     /// What the stages make, for `status` to look for: assemble's device
     /// nodes and pools, format's filesystems (node, type, UUID) and ZFS
     /// datasets, and mount's mount points.
@@ -218,6 +225,17 @@ pub struct Built {
 impl Built {
     pub fn stage(&self, s: Stage) -> &[Cmd] {
         self.stages.iter().find(|(st, _)| *st == s).map(|(_, c)| c.as_slice()).unwrap_or(&[])
+    }
+
+    /// The problems in their order, each with its code (`other` where its
+    /// site has none yet).
+    pub fn coded_problems(&self) -> Problems {
+        self.problems.iter().map(|t| self.codes.iter().find(|p| p.text == *t).cloned().unwrap_or_else(|| t.into())).collect()
+    }
+
+    /// The notes, as coded_problems.
+    pub fn coded_notes(&self) -> Notes {
+        self.notes.iter().map(|t| self.note_codes.iter().find(|n| n.text == *t).cloned().unwrap_or_else(|| t.into())).collect()
     }
 }
 
@@ -337,6 +355,8 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
         names: Names { layout, mapping, made: BTreeMap::new() },
         problems: vec![],
         notes: vec![],
+        codes: vec![],
+        note_codes: vec![],
         closers: vec![],
         pools: vec![],
         filesystems: vec![],
@@ -365,15 +385,19 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
     b.qubes_note();
     b.qubes_problems();
     b.thin_problems();
-    // --reformat's findings (reformat.rs), carried in the edited layout.
-    for (k, list) in [("problems", &mut b.problems), ("notes", &mut b.notes)] {
-        list.extend(layout.arr(&["load_reformat", k]).iter().filter_map(Value::as_str).map(str::to_string));
+    // --reformat's findings (reformat.rs), carried in the edited layout
+    // with their codes.
+    for p in layout.arr(&["load_reformat", "problems"]).iter().filter_map(Problem::from_json) {
+        b.coded(p);
+    }
+    for n in layout.arr(&["load_reformat", "notes"]).iter().filter_map(Note::from_json) {
+        b.coded_note(n);
     }
     if !opts.reformats.is_empty() && opts.fit_largest.is_some() {
         b.problems.push("--reformat and --fit-largest don't go together: a reformatted filesystem fills its partition as it is, and --fit-largest would resize it from figures the new type doesn't have".into());
     }
     if opts.new_uuids {
-        b.problems.push("--new-uuids isn't built yet: it also has to rewrite the restored fstab, crypttab and boot configuration".into());
+        b.coded(Problem::new(ProblemCode::Unsupported, "--new-uuids isn't built yet: it also has to rewrite the restored fstab, crypttab and boot configuration").with("what", "--new-uuids"));
     }
     if opts.new_machine && super::snapcore::of(&layout.v).is_none() {
         b.problems.push("--new-machine is for an encrypted Ubuntu Core; this layout isn't one".into());
@@ -397,6 +421,8 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
         ],
         problems: b.problems,
         notes: b.notes,
+        codes: b.codes,
+        note_codes: b.note_codes,
         made: b.names.made.into_iter().collect(),
         pools: b.pools,
         filesystems: b.filesystems,
@@ -411,6 +437,9 @@ pub(crate) struct Builder<'a> {
     pub(crate) names: Names<'a>,
     pub(crate) problems: Vec<String>,
     pub(crate) notes: Vec<String>,
+    /// Built's codes and note_codes.
+    pub(crate) codes: Vec<Problem>,
+    pub(crate) note_codes: Vec<Note>,
     /// What close undoes, in the order assemble made it.
     pub(crate) closers: Vec<Cmd>,
     pub(crate) pools: Vec<String>,
@@ -1339,6 +1368,26 @@ impl Builder<'_> {
         }
     }
 
+    /// A coded plan problem (codes.rs): its text among the others, its
+    /// code beside them.
+    pub(crate) fn coded(&mut self, p: Problem) {
+        self.problems.push(p.text.clone());
+        self.codes.push(p);
+    }
+
+    /// problem_once, coded.
+    pub(crate) fn problem_once_coded(&mut self, p: Problem) {
+        if !self.problems.contains(&p.text) {
+            self.coded(p);
+        }
+    }
+
+    /// A coded note.
+    pub(crate) fn coded_note(&mut self, n: Note) {
+        self.notes.push(n.text.clone());
+        self.note_codes.push(n);
+    }
+
     fn items(&mut self) -> Vec<Planned> {
         let mut items = Vec::new();
         for md in self.layout.arr(&["storage", "md_arrays"]) {
@@ -1538,7 +1587,7 @@ impl Builder<'_> {
             // other, cryptsetup's own (benchmarked) instead.
             let ks = luks_passphrase_keyslot(&c);
             if ks.is_null() && c.get("keyslots").and_then(Value::as_array).is_some_and(|k| !k.is_empty()) {
-                self.notes.push(format!("LUKS2 on {dev}: every keyslot of the source is a token's (systemd-tpm2, systemd-recovery and the like: high-entropy keys with systemd-cryptenroll's minimal PBKDF), so the new passphrase's keyslot gets cryptsetup's default PBKDF, benchmarked here, not their cost"));
+                self.coded_note(Note::new(NoteCode::LuksPbkdf, format!("LUKS2 on {dev}: every keyslot of the source is a token's (systemd-tpm2, systemd-recovery and the like: high-entropy keys with systemd-cryptenroll's minimal PBKDF), so the new passphrase's keyslot gets cryptsetup's default PBKDF, benchmarked here, not their cost")).with("dev", dev.as_str()));
             }
             if let Some(e) = s(&seg, "encryption") {
                 a.push(format!("--cipher={e}"));
@@ -1600,11 +1649,11 @@ impl Builder<'_> {
             // not a path in the restored tree): the temporary key would be
             // the container's only one, lost when the rescue system stops.
             (None, Some(k)) if !restorable_key_file(k) => {
-                self.problem_once(needs_key_file(&open_as, k));
+                self.problem_once_coded(needs_key_file(&open_as, k));
                 None
             }
             (None, Some(_)) if temp_key_name(&open_as).is_none() => {
-                self.problem_once(format!("{open_as}: a LUKS name bko-holt can't keep a temporary key under: give --key-file {open_as}=FILE"));
+                self.problem_once_coded(Problem::new(ProblemCode::KeyNameUnusable, format!("{open_as}: a LUKS name bko-holt can't keep a temporary key under: give --key-file {open_as}=FILE")).with("name", &open_as));
                 None
             }
             (None, Some(k)) => {
@@ -1671,9 +1720,10 @@ impl Builder<'_> {
         let key = self.opts.key_file(open_as).or_else(|| label.as_deref().and_then(|l| self.opts.key_file(l))).or_else(|| self.opts.key_file(under)).map(str::to_string);
         let Some(key) = key else {
             let name = label.clone().unwrap_or_else(|| open_as.to_string());
-            self.problems.push(format!(
+            let text = format!(
                 "{under}: its LUKS2 header is kept, so it opens only with a key it already has: give --key-file {name}=FILE (Ubuntu Core: its recovery key, made into FILE by `bko-holt recovery-key-file FILE`)"
-            ));
+            );
+            self.coded(Problem::new(ProblemCode::KeptHeaderKeyNeeded, text).with("name", &name));
             return;
         };
         out.push(Cmd::new(&["cryptsetup", "luksHeaderRestore", "--batch-mode", dev, "--header-backup-file", &file]).why(format!(
@@ -2067,7 +2117,7 @@ impl Builder<'_> {
                         // datasets (ZFSBootMenu's /etc/zfs/zroot.key) can't
                         // be read before they exist.
                         let kept = self.key_file_in_tree(ds).map(|p| format!(" (the source keeps its passphrase in {p}, inside the encrypted datasets: give that passphrase)")).unwrap_or_default();
-                        self.problems.push(format!("ZFS encryption root {name}: give its new key with --key-file {name}=FILE{kept}"));
+                        self.coded(Problem::new(ProblemCode::KeyNeeded, format!("ZFS encryption root {name}: give its new key with --key-file {name}=FILE{kept}")).with("name", &name).with("group", &name).with("kind", "zfs"));
                     }
                     format!("{RUN_DIR}/keys/{}", name.replace('/', "_"))
                 }
@@ -2658,11 +2708,11 @@ impl Builder<'_> {
                 }
                 "bcachefs" => {
                     if c.get("encrypted").and_then(Value::as_bool) == Some(true) {
-                        self.problems.push(format!("{src}: encrypted bcachefs isn't one bko-holt load can make"));
+                        self.coded(Problem::new(ProblemCode::Unsupported, format!("{src}: encrypted bcachefs isn't one bko-holt load can make")).with("what", "bcachefs_encrypted"));
                         continue;
                     }
                     if num(&c, "nr_devices").unwrap_or(1) > 1 {
-                        self.problems.push(format!("{src}: bcachefs on more than one device isn't one bko-holt load can make"));
+                        self.coded(Problem::new(ProblemCode::Unsupported, format!("{src}: bcachefs on more than one device isn't one bko-holt load can make")).with("what", "bcachefs_multi_device"));
                         continue;
                     }
                     out.push(Cmd { argv: mkfs_bcachefs(&dev, &c), why: Some(why), ..Cmd::default() });
@@ -2677,7 +2727,7 @@ impl Builder<'_> {
                 }
                 "jfs" => {
                     if c.get("external_log").and_then(Value::as_bool) == Some(true) {
-                        self.problems.push(format!("{src}: JFS with an external log isn't one bko-holt load can make"));
+                        self.coded(Problem::new(ProblemCode::Unsupported, format!("{src}: JFS with an external log isn't one bko-holt load can make")).with("what", "jfs_external_log"));
                         continue;
                     }
                     out.push(Cmd { argv: mkfs_jfs(&dev, &c), why: Some(why), ..Cmd::default() });
@@ -2721,7 +2771,7 @@ impl Builder<'_> {
                     let c = self.other_newfs(&src, &dev);
                     out.extend(c);
                 }
-                other => self.problems.push(format!("{src}: {other} isn't a filesystem bko-holt load can make")),
+                other => self.coded(Problem::new(ProblemCode::Unsupported, format!("{src}: {other} isn't a filesystem bko-holt load can make")).with("what", other)),
             }
         }
         self.datasets(&mut out);
@@ -2775,7 +2825,7 @@ impl Builder<'_> {
             let refuse = |this: &mut Self| {
                 if need_random {
                     let kept = this.key_file_in_tree(&ds).map(|p| format!(" (the source keeps its {fmt} key in {p}, inside the encrypted datasets: give that key)")).unwrap_or_default();
-                    this.problem_once(format!("ZFS encryption root {name}: give its new key with --key-file {name}=FILE{kept}"));
+                    this.problem_once_coded(Problem::new(ProblemCode::KeyNeeded, format!("ZFS encryption root {name}: give its new key with --key-file {name}=FILE{kept}")).with("name", &name).with("group", &name).with("kind", "zfs"));
                 }
             };
             let Some(path) = s(&ds, "keylocation").and_then(|l| l.strip_prefix("file://").map(str::to_string)).filter(|p| safe_target_subpath(p)) else {
@@ -4196,7 +4246,7 @@ impl Builder<'_> {
                 let cmds = self.elilo_cmds(&t);
                 out.extend(cmds);
             }
-            (other, _) => self.problems.push(format!("boot loader {other} ({}) isn't one bko-holt load can install", if uefi { "UEFI" } else { "BIOS" })),
+            (other, _) => self.coded(Problem::new(ProblemCode::Unsupported, format!("boot loader {other} ({}) isn't one bko-holt load can install", if uefi { "UEFI" } else { "BIOS" })).with("what", other)),
         }
         // BigLinux's installer ends with btrfs-fix: /boot and GRUB's files
         // rewritten uncompressed, which the restore and this stage wrote
@@ -4369,11 +4419,11 @@ impl Builder<'_> {
             // refused these already (luks): said again in case its crypttab
             // lookup differs, never skipped with the temporary key the only one.
             if !restorable_key_file(&k) {
-                self.problem_once(needs_key_file(&open_as, &k));
+                self.problem_once_coded(needs_key_file(&open_as, &k));
                 continue;
             }
             let Some(safe_open) = temp_key_name(&open_as) else {
-                self.problem_once(format!("{open_as}: a LUKS name bko-holt can't keep a temporary key under: give --key-file {open_as}=FILE"));
+                self.problem_once_coded(Problem::new(ProblemCode::KeyNameUnusable, format!("{open_as}: a LUKS name bko-holt can't keep a temporary key under: give --key-file {open_as}=FILE")).with("name", &open_as));
                 continue;
             };
             let tmp = format!("{RUN_DIR}/keys/{safe_open}");
@@ -6325,6 +6375,21 @@ mod tests {
         built_from(&sample::bios_mbr(), extra)
     }
 
+    /// The builders' coded problems come back in their places among the
+    /// rest, which are `other`; their texts are the problems' own.
+    #[test]
+    fn coded_problems_keep_their_places() {
+        let b = built_from(&sample::bios_mbr().replacen(r#""content": {"type": "ext4""#, r#""content": {"type": "minix""#, 1), &["--new-uuids"]);
+        let p = b.coded_problems();
+        assert_eq!(p.texts(), b.problems);
+        let what: Vec<&str> = p.iter().filter(|x| x.code == ProblemCode::Unsupported).filter_map(|x| x.str_field("what")).collect();
+        assert_eq!(what, ["--new-uuids", "minix"], "{p:?}");
+        assert!(p.iter().any(|x| x.text == "vda1: minix isn't a filesystem bko-holt load can make"), "{p:?}");
+        assert!(p.iter().all(|x| x.code == ProblemCode::Unsupported || x.code == ProblemCode::Other), "{p:?}");
+        let n = b.coded_notes();
+        assert_eq!(n.texts(), b.notes);
+    }
+
     fn built_from(json: &str, extra: &[&str]) -> Built {
         let l = Layout::from_json(crate::json::parse(json).unwrap()).unwrap();
         let mut a = vec!["l.json".to_string()];
@@ -7367,6 +7432,8 @@ mod tests {
             names: Names { layout: &l, mapping: &m, made: BTreeMap::new() },
             problems: vec![],
             notes: vec![],
+            codes: vec![],
+            note_codes: vec![],
             closers: vec![],
             pools: vec![],
             filesystems: vec![],
@@ -7817,6 +7884,8 @@ mod tests {
             names: Names { layout: &l, mapping: &m, made: BTreeMap::new() },
             problems: vec![],
             notes: vec![],
+            codes: vec![],
+            note_codes: vec![],
             closers: vec![],
             pools: vec![],
             filesystems: vec![],
@@ -7870,6 +7939,9 @@ mod tests {
         let keys = j.replace("/run/keystore/rpool", "/keys");
         let k = plan(&keys, &[]);
         assert!(k.problems.contains(&need), "{:?}", k.problems);
+        let kc = k.coded_problems();
+        let p = kc.iter().find(|p| p.text == need).unwrap();
+        assert_eq!((p.code, p.str_field("name"), p.str_field("group"), p.str_field("kind")), (ProblemCode::KeyNeeded, Some("rpool"), Some("rpool"), Some("zfs")));
         assert!(!text(k.stage(Stage::Format)).contains("/run/bko-holt/keystore"));
         let k = plan(&keys, &["--key-file", "rpool=/root/rpool.key"]);
         assert!(!text(k.stage(Stage::Format)).contains("/run/bko-holt/keystore"));
@@ -7987,6 +8059,8 @@ mod tests {
                 names: Names { layout: &l, mapping: &m, made: BTreeMap::new() },
                 problems: vec![],
                 notes: vec![],
+                codes: vec![],
+                note_codes: vec![],
                 closers: vec![],
                 pools: vec![],
                 filesystems: vec![],

@@ -13,6 +13,7 @@
 //! administrator: `--through mount`, restore by hand, then `--only boot`.
 
 pub mod abroot;
+pub mod codes;
 pub mod commands;
 pub mod efidedupe;
 pub mod exec;

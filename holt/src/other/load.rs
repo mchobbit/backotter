@@ -52,7 +52,8 @@ fn wedge_name(p: &crate::load::layout::Part) -> Option<String> {
 /// and readback (node_path) read it.  One problem per such wedge; nothing
 /// for a layout that isn't NetBSD's.  `pairs` are the mapping's (source
 /// disk, target disk).
-pub fn wedge_clashes(layout: &Layout, pairs: &[(String, String)], sys: &Sys) -> Vec<String> {
+pub fn wedge_clashes(layout: &Layout, pairs: &[(String, String)], sys: &Sys) -> Vec<crate::load::codes::Problem> {
+    use crate::load::codes::{Problem, ProblemCode};
     if Family::of_layout(&layout.v) != Some(Family::NetBsd) {
         return Vec::new();
     }
@@ -81,9 +82,10 @@ pub fn wedge_clashes(layout: &Layout, pairs: &[(String, String)], sys: &Sys) -> 
     for disk in others {
         for (dk, name, _) in super::labelled::parse_wedges(&sys.run("dkctl", &[disk, "listwedges"]).unwrap_or_default()) {
             for (src, tgt, part, _) in wanted.iter().filter(|w| w.3 == name) {
-                out.push(format!(
+                let text = format!(
                     "{src} -> /dev/{tgt}: {part}'s wedge is to be named {name}, and {disk}, which isn't a target, has a wedge of that name ({dk}): NetBSD's wedge names are the whole system's, so newfs and mount of NAME={name} would write to {disk}; disconnect {disk}, or give its partition another GPT name (gpt label), first"
-                ));
+                );
+                out.push(Problem::new(ProblemCode::WedgeClash, text).with("disk", src).with("target", tgt));
             }
         }
     }
@@ -1064,6 +1066,7 @@ mod tests {
         let p = wedge_clashes(&l, &pairs, &sys(wedges, ""));
         assert_eq!(p.len(), 3, "{p:?}");
         assert!(p[2].starts_with("ld0 -> /dev/wd1: dk2's wedge is to be named AlpineBSD, and wd0, which isn't a target, has a wedge of that name (dk2): "), "{p:?}");
+        assert!(p.iter().all(|x| x.code == crate::load::codes::ProblemCode::WedgeClash && x.str_field("disk") == Some("ld0") && x.str_field("target") == Some("wd1")), "{p:?}");
         // On the target itself: an earlier run's, or what --erase deletes.
         assert!(wedge_clashes(&l, &pairs, &sys("", wedges)).is_empty());
         assert!(wedge_clashes(&l, &pairs, &sys("dk0: other, 2048 blocks at 2048, type: ffs\n", "")).is_empty());

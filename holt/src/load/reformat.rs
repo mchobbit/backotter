@@ -17,6 +17,7 @@
 //! out (`load_reformat.restore_globs`, which the restore stage adds to its
 //! --glob-file), as it leaves out the aliases of a btrfs it remakes.
 
+use super::codes::{Note, NoteCode, Notes, Problem, ProblemCode, Problems};
 use crate::json::{Obj, Value};
 use crate::load::shared::{self, Mount};
 
@@ -87,8 +88,21 @@ pub struct Change {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Reformat {
     pub changes: Vec<Change>,
-    pub problems: Vec<String>,
-    pub notes: Vec<String>,
+    pub problems: Problems,
+    pub notes: Notes,
+}
+
+/// reformat_refused for REASON (codes::REFORMAT_REASONS; `other` where
+/// the table has none), about MOUNT made as TYPE when they're known.
+fn refused(reason: &str, mount: Option<&str>, to: Option<&str>, text: String) -> Problem {
+    let mut p = Problem::new(ProblemCode::ReformatRefused, text);
+    if let Some(m) = mount {
+        p = p.with("mount", m);
+    }
+    if let Some(t) = to {
+        p = p.with("type", t);
+    }
+    p.with("reason", reason)
 }
 
 fn s(v: &Value, k: &str) -> Option<String> {
@@ -286,11 +300,11 @@ pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
         return r;
     }
     if v.get("load_reformat").is_some() {
-        r.problems.push("this layout was edited by --reformat already; give the dump itself".into());
+        r.problems.push(refused("edited", None, None, "this layout was edited by --reformat already; give the dump itself".into()));
         return r;
     }
     if crate::other::Family::of_layout(v).is_some() {
-        r.problems.push("--reformat is for Linux sources only".into());
+        r.problems.push(refused("not_linux", None, None, "--reformat is for Linux sources only".into()));
         return r;
     }
     // Their boot stages aren't the one that runs `bko-holt rewrite`, and
@@ -305,7 +319,7 @@ pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
         crate::store::system(id).map(|st| st.name.to_string())
     };
     if let Some(o) = other {
-        r.problems.push(format!("--reformat isn't built for {o}: its fstab and boot configuration come from its own tools, which load's boot stage doesn't rewrite"));
+        r.problems.push(refused("own_tools", None, None, format!("--reformat isn't built for {o}: its fstab and boot configuration come from its own tools, which load's boot stage doesn't rewrite")));
         return r;
     }
     let fstab = arr(v, &["storage", "fstab"]);
@@ -314,37 +328,37 @@ pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
     for (mount, to) in reformats {
         let what = format!("--reformat {mount}={to}");
         let Some(entry) = fstab.iter().find(|e| s(e, "file").as_deref() == Some(mount.as_str()) && s(e, "type").as_deref() != Some("swap")) else {
-            r.problems.push(format!("{what}: no fstab entry mounts {mount}"));
+            r.problems.push(refused("other", Some(mount), Some(to), format!("{what}: no fstab entry mounts {mount}")));
             continue;
         };
         let Some(src) = s(entry, "resolves_to") else {
-            r.problems.push(format!("{what}: fstab's {mount} isn't on the layout's disks"));
+            r.problems.push(refused("other", Some(mount), Some(to), format!("{what}: fstab's {mount} isn't on the layout's disks")));
             continue;
         };
         let Some(content) = device(v, &src).and_then(|d| d.get("content")).filter(|c| !c.is_null()) else {
-            r.problems.push(format!("{what}: {src} has no filesystem in the layout"));
+            r.problems.push(refused("other", Some(mount), Some(to), format!("{what}: {src} has no filesystem in the layout")));
             continue;
         };
         let from = s(content, "type").unwrap_or_default();
         if !TYPES.contains(&from.as_str()) {
-            r.problems.push(format!("{what}: {mount} is {from} on {src}; --reformat converts ext4, XFS and btrfs"));
+            r.problems.push(refused("not_convertible", Some(mount), Some(to), format!("{what}: {mount} is {from} on {src}; --reformat converts ext4, XFS and btrfs")));
             continue;
         }
         if from == *to {
-            r.problems.push(format!("{what}: {mount} is {from} already"));
+            r.problems.push(refused("same_type", Some(mount), Some(to), format!("{what}: {mount} is {from} already")));
             continue;
         }
         let Some(uuid) = s(content, "uuid") else {
-            r.problems.push(format!("{what}: {src}'s filesystem has no UUID in the layout"));
+            r.problems.push(refused("no_uuid", Some(mount), Some(to), format!("{what}: {src}'s filesystem has no UUID in the layout")));
             continue;
         };
         if r.changes.iter().any(|c| c.src == src) {
-            r.problems.push(format!("{what}: {src} is reformatted twice"));
+            r.problems.push(refused("twice", Some(mount), Some(to), format!("{what}: {src} is reformatted twice")));
             continue;
         }
         let fs = arr(v, &["storage", "btrfs"]).iter().find(|f| s(f, "uuid").as_deref() == Some(uuid.as_str())).cloned().unwrap_or(Value::Null);
         if from == "btrfs" && arr(&fs, &["devices"]).len() > 1 {
-            r.problems.push(format!("{what}: btrfs {uuid} is on {} devices; --reformat takes a btrfs on one", arr(&fs, &["devices"]).len()));
+            r.problems.push(refused("multi_device", Some(mount), Some(to), format!("{what}: btrfs {uuid} is on {} devices; --reformat takes a btrfs on one", arr(&fs, &["devices"]).len())));
             continue;
         }
         // Every other mount of the same filesystem becomes a directory of
@@ -358,7 +372,7 @@ pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
                 continue;
             }
             if !under(&file, mount) {
-                r.problems.push(format!("{what}: the same filesystem is mounted at {file} too, which isn't under {mount}; name the mount point that holds the others"));
+                r.problems.push(refused("mounted_elsewhere", Some(mount), Some(to), format!("{what}: the same filesystem is mounted at {file} too, which isn't under {mount}; name the mount point that holds the others")));
                 bad = true;
                 continue;
             }
@@ -399,7 +413,7 @@ pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
         let aliases = if from == "btrfs" { shared::aliases(&mounts) } else { Vec::new() };
         let reads = loader_reads(v, &src);
         if reads && to != "ext4" {
-            r.problems.push(format!("{what}: GRUB reads /boot from it; under GRUB, --reformat makes ext4 only"));
+            r.problems.push(refused("grub_reads", Some(mount), Some(to), format!("{what}: GRUB reads /boot from it; under GRUB, --reformat makes ext4 only")));
             continue;
         }
         // The new type's tools on the restored system (its fsck, repair).
@@ -411,21 +425,21 @@ pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
         let tool_version = packages.and_then(|p| p.get(tool)).and_then(Value::as_str).and_then(package_version);
         match packages {
             Some(p) if p.get(tool).is_none_or(Value::is_null) => {
-                r.problems.push(format!("{what}: the source doesn't have {tool} installed; install it there and back up again, or the restored system has no fsck or repair for {to}"));
+                r.problems.push(refused("no_fsck", Some(mount), Some(to), format!("{what}: the source doesn't have {tool} installed; install it there and back up again, or the restored system has no fsck or repair for {to}")));
                 continue;
             }
             None => r.notes.push(format!("{what}: the layout doesn't list the source's packages, so whether it has {tool} isn't known")),
             _ => {}
         }
         let Some(kv) = kernel else {
-            r.problems.push(format!("{what}: the layout lists no installed kernel, so the {to} features it can mount aren't known"));
+            r.problems.push(refused("old_kernel", Some(mount), Some(to), format!("{what}: the layout lists no installed kernel, so the {to} features it can mount aren't known")));
             continue;
         };
         let (features, features_from) = match to.as_str() {
             "xfs" => match XFS_PROFILES.iter().rev().find(|(k, _)| *k <= kv) {
                 Some(((a, b), f)) => (f.iter().map(|x| x.to_string()).collect(), format!("mkfs.xfs's lts_{a}.{b} profile (the oldest installed kernel is {}.{})", kv.0, kv.1)),
                 None => {
-                    r.problems.push(format!("{what}: the oldest installed kernel, {}.{}, is older than mkfs.xfs's oldest profile (4.19)", kv.0, kv.1));
+                    r.problems.push(refused("old_kernel", Some(mount), Some(to), format!("{what}: the oldest installed kernel, {}.{}, is older than mkfs.xfs's oldest profile (4.19)", kv.0, kv.1)));
                     continue;
                 }
             },
@@ -469,7 +483,7 @@ pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
             let Some(file) = s(sw, "file") else { continue };
             if s(sw, "type").as_deref() == Some("file") && under(&file, mount) {
                 if resume_offset {
-                    r.problems.push(format!("{what}: the system hibernates into the swap file {file} on it, and resume_offset= would no longer match"));
+                    r.problems.push(refused("hibernation", Some(mount), Some(to), format!("{what}: the system hibernates into the swap file {file} on it, and resume_offset= would no longer match")));
                     bad = true;
                 } else {
                     r.notes.push(format!("{what}: the swap file {file} is on it"));
@@ -500,7 +514,7 @@ pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
         });
     }
     for c in &r.changes {
-        let mut n = vec![format!(
+        let first = format!(
             "reformat {}: {} {} -> {} (same UUID{}); its features: {}",
             c.src,
             c.from,
@@ -508,7 +522,9 @@ pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
             c.to,
             c.label.as_ref().map(|l| format!(", label {l:?}")).unwrap_or_default(),
             c.features_from
-        )];
+        );
+        r.notes.push(Note::new(NoteCode::Reformat, first).with("mount", c.mount.as_str()).with("from", c.from.as_str()).with("to", c.to.as_str()));
+        let mut n = Vec::new();
         n.push(format!(
             "fstab's {}: {} with {} (pass {}){}",
             c.mount,
@@ -641,7 +657,11 @@ pub fn apply(mut v: Value, r: &Reformat) -> Value {
             }
         }
     }
-    put(&mut v, "load_reformat", Obj::new().set("problems", r.problems.clone()).set("notes", r.notes.clone()).set("restore_globs", r.restore_globs()).build());
+    // Problems and notes with their codes (codes::Coded::to_json), for the
+    // plan to take back (commands.rs, build).
+    let problems: Vec<Value> = r.problems.iter().map(Problem::to_json).collect();
+    let notes: Vec<Value> = r.notes.iter().map(Note::to_json).collect();
+    put(&mut v, "load_reformat", Obj::new().set("problems", problems).set("notes", notes).set("restore_globs", r.restore_globs()).build());
     v
 }
 
@@ -756,6 +776,47 @@ mod tests {
         assert!(work_out(&deb, &re(&[("/boot", "xfs")])).problems[0].contains("GRUB reads /boot"));
         let r = work_out(&deb, &re(&[("/boot", "btrfs")]));
         assert!(r.problems[0].contains("GRUB reads /boot"), "{:?}", r.problems);
+    }
+
+    /// Every refusal is reformat_refused, its reason the table's, about
+    /// the mount and type asked for; the change's own note is `reformat`;
+    /// and both travel through the edited layout with their codes.
+    #[test]
+    fn refusals_carry_their_codes() {
+        use crate::load::codes::ProblemCode;
+        let v = eos();
+        let one = |v: &Value, a: &[(&str, &str)]| {
+            let r = work_out(v, &re(a));
+            assert!(!r.problems.is_empty() && r.problems.iter().all(|p| p.code == ProblemCode::ReformatRefused), "{a:?}: {:?}", r.problems);
+            let p = r.problems[0].clone();
+            (p.str_field("reason").unwrap_or("").to_string(), p.str_field("mount").map(str::to_string), p.str_field("type").map(str::to_string), p.text.clone())
+        };
+        let (r, m, t, text) = one(&v, &[("/efi", "xfs")]);
+        assert_eq!((r.as_str(), m.as_deref(), t.as_deref()), ("not_convertible", Some("/efi"), Some("xfs")));
+        assert!(text.starts_with("--reformat /efi=xfs: /efi is vfat"), "{text}");
+        assert_eq!(one(&v, &[("/", "btrfs")]).0, "same_type");
+        assert_eq!(one(&v, &[("/home", "xfs")]).0, "mounted_elsewhere");
+        assert_eq!(one(&v, &[("/srv", "xfs")]).0, "other");
+        let no_tools = crate::json::parse(&v.compact().replace("\"xfsprogs\":\"7.2.1-1\",", "")).unwrap();
+        assert_eq!(one(&no_tools, &[("/", "xfs")]).0, "no_fsck");
+        let deb = crate::json::parse(&sample::bios_mbr()).unwrap();
+        assert_eq!(one(&deb, &[("/boot", "xfs")]).0, "grub_reads");
+        let nixos = crate::json::parse(&eos().compact().replace(r#""id":"endeavouros""#, r#""id":"nixos""#)).unwrap();
+        let (r, m, ..) = one(&nixos, &[("/", "xfs")]);
+        assert_eq!((r.as_str(), m), ("own_tools", None));
+        let bsd = crate::json::parse(&eos().compact().replace(r#""os":{"#, r#""os":{"family":"freebsd","#)).unwrap();
+        assert_eq!(one(&bsd, &[("/", "xfs")]).0, "not_linux");
+        // The change's note, and the trip through the edited layout.
+        let ok = work_out(&v, &re(&[("/", "xfs")]));
+        assert!(ok.problems.is_empty(), "{:?}", ok.problems);
+        let n = &ok.notes[0];
+        assert_eq!((n.code, n.str_field("mount"), n.str_field("from"), n.str_field("to")), (crate::load::codes::NoteCode::Reformat, Some("/"), Some("btrfs"), Some("xfs")));
+        let edited = apply(v.clone(), &work_out(&v, &re(&[("/", "btrfs"), ("/srv", "xfs")])));
+        let back: Vec<Problem> = edited.arr_at(&["load_reformat", "problems"]).iter().filter_map(Problem::from_json).collect();
+        assert_eq!(back.iter().map(|p| (p.code, p.str_field("reason"))).collect::<Vec<_>>(), [(ProblemCode::ReformatRefused, Some("same_type")), (ProblemCode::ReformatRefused, Some("other"))]);
+        assert_eq!(apply(v.clone(), &work_out(&v, &re(&[("/", "btrfs")]))).arr_at(&["load_reformat", "problems"])[0].get_str("text"), Some("--reformat /=btrfs: / is btrfs already"));
+        let edited_twice = apply(edited.clone(), &Reformat::default());
+        assert_eq!(one(&edited_twice, &[("/", "xfs")]).0, "edited");
     }
 
     /// openSUSE's layout: the root is snapper's snapshot 1, seen again

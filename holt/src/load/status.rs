@@ -257,7 +257,7 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
 
     let mut problems = mapping.problems;
     problems.retain(|p| !p.contains("isn't blank"));
-    (out, problems)
+    (out, problems.texts())
 }
 
 pub fn run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, String) {

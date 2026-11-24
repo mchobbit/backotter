@@ -1001,6 +1001,24 @@ class RealLogLines(unittest.TestCase):
             self.assertEqual(len(self.left("guix", x)), 1, x)
             self.assertEqual(len(self.guix_serial_left(x)), 1, x)
 
+    # nix's rules have the same guard: nixos2605 copies /nix/store/<hash>-libgpg-error-1.55.
+    def test_nix_error_words_in_store_names_go(self):
+        for x in ("copying path '/nix/store/0g1lfp4hr5p6h7lyhd8vrx9v0zzcgfqc-libgpg-error-1.55' from 'https://cache.nixos.org'...",
+                  "building '/nix/store/0g1lfp4hr5p6h7lyhd8vrx9v0zzcgfqc-rust-quick-error-2.0.1.drv'...",
+                  "copying path '/nix/store/0g1lfp4hr5p6h7lyhd8vrx9v0zzcgfqc-rust-error-chain-0.12.4' from 'https://cache.nixos.org'...",
+                  "building '/nix/store/0g1lfp4hr5p6h7lyhd8vrx9v0zzcgfqc-python3.13-failed_thing-cannot.Error-1.0.drv'..."):
+            self.assertEqual(self.left("nix", x), [], x)
+
+    def test_nix_real_errors_stay_next_to_store_names(self):
+        for x in ("error: builder for '/nix/store/abc-rust-quick-error-2.0.1.drv' failed with exit code 1",
+                  "error: Cannot build '/nix/store/abc-foo.drv'.",
+                  "building '/nix/store/abc.drv' failed",
+                  "error: 1 dependencies of derivation '/nix/store/abc-quick-error.drv' failed to build",
+                  "copying path '/nix/store/abc-libgpg-error-1.55' from 'https://cache.nixos.org' failed",
+                  "building '/nix/store/abc-error-chain.drv' failed.",
+                  "Error: /nix/store/abc-foo is missing"):
+            self.assertEqual(len(self.left("nix", x)), 1, x)
+
     # in-guest.sh's retry loops (2026-11-20): a try tried again is one line, its retry line and
     # the line that made it one; the try's own lines never reach the log.
     RETRY_LINES = {

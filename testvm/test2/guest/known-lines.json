@@ -265,8 +265,8 @@
   "^Created symlink '/etc/systemd/\\S+' → '\\S+'\\.$"
  ],
  "nix": [
-  "^(?!.*\\b([Ee]rror|[Ff]ailed|[Cc]annot)\\b).*/nix/store/",
-  "^(?!.*\\b([Ee]rror|[Ff]ailed|[Cc]annot)\\b)(building|copying|unpacking|evaluating|activating|restarting|these N )"
+  "^(?!.*(?<![\\w.-])([Ee]rror|[Ff]ailed|[Cc]annot)(?![\\w-]|\\.\\w)).*/nix/store/",
+  "^(?!.*(?<![\\w.-])([Ee]rror|[Ff]ailed|[Cc]annot)(?![\\w-]|\\.\\w))(building|copying|unpacking|evaluating|activating|restarting|these N )"
  ],
  "guix": [
   "^(?!.*(?<![\\w.-])([Ee]rror|[Ff]ailed|[Cc]annot)(?![\\w-]|\\.\\w)).*/@?gnu/store/",

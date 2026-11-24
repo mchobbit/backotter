@@ -32,7 +32,9 @@ class TestGuix(unittest.TestCase):
             self.assertEqual(h.tier0, "chroot")
             self.assertEqual(h.recipe(d), "guix-small-1")
             self.assertIsNone(F.skipped(g, d))
-        self.assertEqual(K.of_family("guix"), ["guix15", "guix15-bios"])
+        # guix15-luks is Guix's too (its corpus dump since e4491e9); bs2lib/sources.py keeps it
+        # out of bs2's sources (LUKS1), not the family.
+        self.assertEqual(K.of_family("guix"), ["guix15", "guix15-bios", "guix15-luks"])
         # The manifest's versions: e2fsprogs 1.47.2's rows; util-linux unrecorded.
         h = F.hooks("guix15", self.U)
         self.assertEqual(tables.version(self.U, "e2fsprogs", h), "1.47.2")

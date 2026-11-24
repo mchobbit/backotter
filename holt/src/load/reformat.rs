@@ -19,6 +19,7 @@
 
 use super::codes::{Note, NoteCode, Notes, Problem, ProblemCode, Problems};
 use crate::json::{Obj, Value};
+use super::layout::{find_device, for_each_device_mut};
 use crate::load::shared::{self, Mount};
 
 /// The types --reformat converts between.
@@ -108,23 +109,6 @@ fn arr<'a>(v: &'a Value, path: &[&str]) -> &'a [Value] {
     v.at(path).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
 }
 
-/// A device's entry (disk, partition, md array, dm device) by its source name.
-fn device<'a>(v: &'a Value, name: &str) -> Option<&'a Value> {
-    for sect in ["disks", "md_arrays", "dm_devices"] {
-        for d in arr(v, &["storage", sect]) {
-            if s(d, "name").as_deref() == Some(name) {
-                return Some(d);
-            }
-            for p in d.get("partitions").and_then(Value::as_array).into_iter().flatten() {
-                if s(p, "name").as_deref() == Some(name) {
-                    return Some(p);
-                }
-            }
-        }
-    }
-    None
-}
-
 /// "6.18.60-1-lts" -> (6, 18).
 pub fn kernel_version(v: &str) -> Option<(u32, u32)> {
     let mut it = v.split(|c: char| !c.is_ascii_digit());
@@ -159,7 +143,7 @@ pub fn grub_env_block(v: &Value, c: &Change) -> Option<Value> {
     if c.from != "btrfs" {
         return None;
     }
-    device(v, &c.src)?.get("content")?.get("grub_env_block").filter(|b| b.as_object().is_some()).cloned()
+    find_device(v, &c.src)?.get("content")?.get("grub_env_block").filter(|b| b.as_object().is_some()).cloned()
 }
 
 /// Whether PATH (in the restored system) is on C's filesystem: the source's
@@ -339,7 +323,7 @@ fn validate_entry<'a>(v: &'a Value, changes: &[Change], mount: &str, to: &str, w
     let Some(src) = s(entry, "resolves_to") else {
         return Err(refused("other", Some(mount), Some(to), format!("{what}: fstab's {mount} isn't on the layout's disks")));
     };
-    let Some(content) = device(v, &src).and_then(|d| d.get("content")).filter(|c| !c.is_null()) else {
+    let Some(content) = find_device(v, &src).and_then(|d| d.get("content")).filter(|c| !c.is_null()) else {
         return Err(refused("other", Some(mount), Some(to), format!("{what}: {src} has no filesystem in the layout")));
     };
     let from = s(content, "type").unwrap_or_default();
@@ -673,20 +657,11 @@ fn content(c: &Change) -> Value {
 /// load_reformat.{problems,notes}, for the plan.
 pub fn apply(mut v: Value, r: &Reformat) -> Value {
     for c in &r.changes {
-        for sect in ["disks", "md_arrays", "dm_devices"] {
-            for d in v.at_mut(&["storage", sect]).and_then(Value::as_array_mut).into_iter().flatten() {
-                if d.get("name").and_then(Value::as_str) == Some(c.src.as_str()) {
-                    d.put("content", content(c));
-                }
-                if let Some(Value::Arr(parts)) = d.get_mut("partitions") {
-                    for p in parts {
-                        if p.get("name").and_then(Value::as_str) == Some(c.src.as_str()) {
-                            p.put("content", content(c));
-                        }
-                    }
-                }
+        for_each_device_mut(&mut v, |d| {
+            if d.get("name").and_then(Value::as_str) == Some(c.src.as_str()) {
+                d.put("content", content(c));
             }
-        }
+        });
         if let Some(list) = v.at_mut(&["storage", "btrfs"]).and_then(Value::as_array_mut) {
             list.retain(|f| f.get("uuid").and_then(Value::as_str) != Some(c.uuid.as_str()));
         }

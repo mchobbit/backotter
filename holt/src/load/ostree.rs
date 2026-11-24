@@ -12,7 +12,7 @@
 //! UEFI entries, writes its log, and ends as every Linux boot stage does.
 
 use super::commands::{atimes_cmd, Builder, Cmd};
-use super::layout::Layout;
+use super::layout::{all_devices, Layout};
 use super::RUN_DIR;
 use crate::json::Value;
 
@@ -100,16 +100,7 @@ for d, _, files in os.walk(top):
 
 /// Whether any device of the layout holds a CONTENT_TYPE signature.
 fn any_content(layout: &Layout, ty: &str) -> bool {
-    for sect in ["disks", "md_arrays", "dm_devices"] {
-        for d in layout.arr(&["storage", sect]) {
-            let mut all = vec![d];
-            all.extend(d.get("partitions").and_then(Value::as_array).into_iter().flatten());
-            if all.iter().any(|x| x.at(&["content", "type"]).and_then(Value::as_str) == Some(ty)) {
-                return true;
-            }
-        }
-    }
-    false
+    all_devices(&layout.v).any(|x| x.at(&["content", "type"]).and_then(Value::as_str) == Some(ty))
 }
 
 impl Builder<'_> {

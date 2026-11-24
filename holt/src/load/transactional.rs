@@ -20,6 +20,7 @@
 //! flags last.
 
 use super::commands::{atimes_cmd, Builder, Cmd};
+use super::layout::all_devices;
 use super::{shell_quote, RUN_DIR};
 use crate::json::Value;
 
@@ -324,14 +325,7 @@ impl Builder<'_> {
     /// The UUIDs load makes filesystems and LUKS containers with: every
     /// content's, and each btrfs's.
     fn kept_uuids(&self) -> Vec<String> {
-        let mut have: Vec<String> = Vec::new();
-        for sect in ["disks", "md_arrays", "dm_devices"] {
-            for d in self.layout.arr(&["storage", sect]) {
-                let mut all = vec![d];
-                all.extend(d.get("partitions").and_then(Value::as_array).into_iter().flatten());
-                have.extend(all.iter().filter_map(|x| x.at(&["content", "uuid"]).and_then(Value::as_str)).map(str::to_ascii_lowercase));
-            }
-        }
+        let mut have: Vec<String> = all_devices(&self.layout.v).filter_map(|x| x.at(&["content", "uuid"]).and_then(Value::as_str)).map(str::to_ascii_lowercase).collect();
         have.extend(self.layout.arr(&["storage", "btrfs"]).iter().filter_map(|f| s(f, "uuid")).map(|u| u.to_ascii_lowercase()));
         have.sort();
         have.dedup();
@@ -539,57 +533,52 @@ impl Builder<'_> {
             None => format!("the PCRs {} names", crate::transactional::FDE_TOOLS),
         };
         let mut any = false;
-        for sect in ["disks", "md_arrays", "dm_devices"] {
-            for d in self.layout.arr(&["storage", sect]).to_vec() {
-                let mut all = vec![d.clone()];
-                all.extend(d.get("partitions").and_then(Value::as_array).cloned().unwrap_or_default());
-                for p in all.iter().filter(|p| p.at(&["content", "type"]).and_then(Value::as_str) == Some("crypto_LUKS")) {
-                    let types: Vec<String> = p.at(&["content", "tokens"]).and_then(Value::as_array).into_iter().flatten().filter_map(|t| s(t, "type")).collect();
-                    let (tpm, rec) = (types.iter().any(|t| t == "systemd-tpm2"), types.iter().any(|t| t == "systemd-recovery"));
-                    if !tpm && !rec {
-                        continue;
-                    }
-                    any = true;
-                    let dev = s(p, "name").unwrap_or_default();
-                    let label = p.at(&["content", "label"]).and_then(Value::as_str).map(|l| format!(" ({l})")).unwrap_or_default();
-                    let has = match (tpm, rec) {
-                        (true, true) => "a systemd-tpm2 token and a systemd-recovery one",
-                        (true, false) => "a systemd-tpm2 token",
-                        _ => "a systemd-recovery token",
-                    };
-                    let open_as = self
-                        .layout
-                        .arr(&["storage", "dm_devices"])
-                        .iter()
-                        .find(|m| m.get("slaves").and_then(Value::as_array).is_some_and(|sl| sl.iter().any(|x| x.as_str() == Some(dev.as_str()))))
-                        .and_then(|m| m.at(&["dm", "dm_name"]).and_then(Value::as_str))
-                        .map(str::to_string)
-                        .unwrap_or_else(|| dev.clone());
-                    if crate::luksheader::kept(&self.layout.v, &dev).is_some() {
-                        let tpm_part = if tpm {
-                            format!(" The TPM2 token is sealed to the source machine's TPM (systemd-pcrlock; {pcrs}): on a new machine, or after a change in the measured boot chain (PCR 5 measures the partition table), it doesn't unseal, and the restored system asks for the recovery key (or a passphrase slot's) until it is enrolled again: `sdbootutil unenroll --method=tpm2`, then `sdbootutil enroll --method=tpm2`.")
-                        } else {
-                            String::new()
-                        };
-                        self.notes.push(format!(
-                            "LUKS2 on {dev}{label} has {has}, and the dump kept its header: the restored disk has the source's LUKS2 header, its volume key, recovery keyslot and tokens.{tpm_part} load's --key-file {open_as}=FILE opens it with a key it already has: the recovery key as typed (its dashes too), without a newline"
-                        ));
-                    } else {
-                        let lost = match (tpm, rec) {
-                            (true, true) => "TPM2 unlocking and the recovery key are",
-                            (true, false) => "TPM2 unlocking is",
-                            _ => "the recovery key is",
-                        };
-                        let enroll = match (tpm, rec) {
-                            (true, true) => "`sdbootutil enroll --method=tpm2` (and `--method=recovery-key`) is",
-                            (true, false) => "`sdbootutil enroll --method=tpm2` is",
-                            _ => "`sdbootutil enroll --method=recovery-key` is",
-                        };
-                        self.notes.push(format!(
-                            "LUKS2 on {dev}{label} has {has}, and the dump didn't keep its header (dump's default): load makes a new one (the same UUID, label and cipher), so {lost} not restored, and the passphrase load gives it (--key-file {open_as}=FILE, or typed) is its only key until {enroll} run on the restored system; to keep them, dump with --keep-luks-header {dev}"
-                        ));
-                    }
-                }
+        let layout = self.layout;
+        for p in all_devices(&layout.v).filter(|p| p.at(&["content", "type"]).and_then(Value::as_str) == Some("crypto_LUKS")) {
+            let types: Vec<String> = p.at(&["content", "tokens"]).and_then(Value::as_array).into_iter().flatten().filter_map(|t| s(t, "type")).collect();
+            let (tpm, rec) = (types.iter().any(|t| t == "systemd-tpm2"), types.iter().any(|t| t == "systemd-recovery"));
+            if !tpm && !rec {
+                continue;
+            }
+            any = true;
+            let dev = s(p, "name").unwrap_or_default();
+            let label = p.at(&["content", "label"]).and_then(Value::as_str).map(|l| format!(" ({l})")).unwrap_or_default();
+            let has = match (tpm, rec) {
+                (true, true) => "a systemd-tpm2 token and a systemd-recovery one",
+                (true, false) => "a systemd-tpm2 token",
+                _ => "a systemd-recovery token",
+            };
+            let open_as = self
+                .layout
+                .arr(&["storage", "dm_devices"])
+                .iter()
+                .find(|m| m.get("slaves").and_then(Value::as_array).is_some_and(|sl| sl.iter().any(|x| x.as_str() == Some(dev.as_str()))))
+                .and_then(|m| m.at(&["dm", "dm_name"]).and_then(Value::as_str))
+                .map(str::to_string)
+                .unwrap_or_else(|| dev.clone());
+            if crate::luksheader::kept(&self.layout.v, &dev).is_some() {
+                let tpm_part = if tpm {
+                    format!(" The TPM2 token is sealed to the source machine's TPM (systemd-pcrlock; {pcrs}): on a new machine, or after a change in the measured boot chain (PCR 5 measures the partition table), it doesn't unseal, and the restored system asks for the recovery key (or a passphrase slot's) until it is enrolled again: `sdbootutil unenroll --method=tpm2`, then `sdbootutil enroll --method=tpm2`.")
+                } else {
+                    String::new()
+                };
+                self.notes.push(format!(
+                    "LUKS2 on {dev}{label} has {has}, and the dump kept its header: the restored disk has the source's LUKS2 header, its volume key, recovery keyslot and tokens.{tpm_part} load's --key-file {open_as}=FILE opens it with a key it already has: the recovery key as typed (its dashes too), without a newline"
+                ));
+            } else {
+                let lost = match (tpm, rec) {
+                    (true, true) => "TPM2 unlocking and the recovery key are",
+                    (true, false) => "TPM2 unlocking is",
+                    _ => "the recovery key is",
+                };
+                let enroll = match (tpm, rec) {
+                    (true, true) => "`sdbootutil enroll --method=tpm2` (and `--method=recovery-key`) is",
+                    (true, false) => "`sdbootutil enroll --method=tpm2` is",
+                    _ => "`sdbootutil enroll --method=recovery-key` is",
+                };
+                self.notes.push(format!(
+                    "LUKS2 on {dev}{label} has {has}, and the dump didn't keep its header (dump's default): load makes a new one (the same UUID, label and cipher), so {lost} not restored, and the passphrase load gives it (--key-file {open_as}=FILE, or typed) is its only key until {enroll} run on the restored system; to keep them, dump with --keep-luks-header {dev}"
+                ));
             }
         }
         if any {

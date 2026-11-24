@@ -142,6 +142,37 @@ fn part(v: &Value, sector: u64) -> Option<Part> {
     })
 }
 
+/// The storage sections whose entries are block devices with partitions,
+/// in the order load walks them.
+const DEVICE_SECTIONS: [&str; 3] = ["disks", "md_arrays", "dm_devices"];
+
+/// Every device of layout V: storage's disks, md arrays and dm devices,
+/// each followed by its partitions.
+pub fn all_devices(v: &Value) -> impl Iterator<Item = &Value> {
+    DEVICE_SECTIONS
+        .iter()
+        .flat_map(move |sect| v.at(&["storage", sect]).and_then(Value::as_array).into_iter().flatten())
+        .flat_map(|d| std::iter::once(d).chain(d.get("partitions").and_then(Value::as_array).into_iter().flatten()))
+}
+
+/// The first of all_devices(V) named NAME.
+pub fn find_device<'a>(v: &'a Value, name: &str) -> Option<&'a Value> {
+    all_devices(v).find(|d| d.get("name").and_then(Value::as_str) == Some(name))
+}
+
+/// F on each of all_devices(V), in the same order, for writing: a device
+/// before its partitions (which F may have changed).
+pub fn for_each_device_mut(v: &mut Value, mut f: impl FnMut(&mut Value)) {
+    for sect in DEVICE_SECTIONS {
+        for d in v.at_mut(&["storage", sect]).and_then(Value::as_array_mut).into_iter().flatten() {
+            f(d);
+            for p in d.get_mut("partitions").and_then(Value::as_array_mut).into_iter().flatten() {
+                f(p);
+            }
+        }
+    }
+}
+
 impl Layout {
     /// Checks the document is a dump `load` can read, and reads its disks.
     pub fn from_json(v: Value) -> Result<Layout, String> {
@@ -559,6 +590,27 @@ pub mod sample {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_walk_order() {
+        let mut v = crate::json::parse(
+            r#"{"storage": {"dm_devices": [{"name": "dm-0"}], "disks": [{"name": "sda", "partitions": [{"name": "sda1"}, {"name": "sda2"}]}, {"name": "sdb"}],
+                "md_arrays": [{"name": "md0", "partitions": [{"name": "md0p1"}]}], "softraid_volumes": [{"name": "sd9"}]}}"#,
+        )
+        .unwrap();
+        let names = |v: &Value| all_devices(v).filter_map(|d| d.get("name").and_then(Value::as_str)).map(str::to_string).collect::<Vec<_>>();
+        assert_eq!(names(&v), ["sda", "sda1", "sda2", "sdb", "md0", "md0p1", "dm-0"]);
+        assert_eq!(find_device(&v, "md0p1").and_then(|d| d.get("name")).and_then(Value::as_str), Some("md0p1"));
+        assert!(find_device(&v, "sd9").is_none());
+        let mut seen = Vec::new();
+        for_each_device_mut(&mut v, |d| {
+            seen.push(d.get("name").and_then(Value::as_str).unwrap_or("").to_string());
+            d.put("seen", seen.len() as u64);
+        });
+        assert_eq!(seen, names(&v));
+        assert_eq!(v.at(&["storage", "disks", "0", "partitions", "1", "seen"]).and_then(Value::as_u64), Some(3));
+        assert_eq!(names(&crate::json::parse("{}").unwrap()), Vec::<String>::new());
+    }
 
     fn parse(t: &str) -> Result<Layout, String> {
         Layout::from_json(crate::json::parse(t).unwrap())

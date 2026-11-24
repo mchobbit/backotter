@@ -254,9 +254,10 @@ MEASURED = {
 }
 TIER0_S = 0.3        # a tier 0 case (measured 2026-11-10; A0: ~0.28 s)
 # The estimate for the rest: a cold HoltTest1's seconds for the guest (estimates.tsv's
-# holt:GUEST wall_s) times REUSE (A0: what a case reuses saved ~45%), at least FLOOR_S; tier 2
+# holt:GUEST wall_s) times REUSE, at least FLOOR_S (A0: what a case reuses saved ~45% on a free
+# host, but Guix's contended cases took 0.63-0.77 of HoltTest1's: 0.7 since 2026-11-24); tier 2
 # as tier 1 (measured alike: guix15's 230 to 235, Alpine's tier 2 no longer than its tier 1).
-REUSE = 0.55
+REUSE = 0.7
 FLOOR_S = 120
 NO_ROW_S = 360       # a guest with no holt row: estimates.tsv's default for a big guest (6 gm)
 

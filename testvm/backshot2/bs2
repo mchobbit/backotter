@@ -35,7 +35,8 @@ names another, so two sessions' runs never share a copy).
                                     (bs2lib/room.py need(): choubox's can't hold Guix's).  A
                                     source whose room is over every RAM-disk ceiling of the
                                     run (vanilla3, D 30) works on /bkoscratch (--reserve-ssd,
-                                    HT_RAM=0) on the hosts hosts.json lets do so whose memory
+                                    HT_RAM=0), one case at a time, on the hosts whose
+                                    holt_disk_mode is true (chopin, cinqcent) and whose memory
                                     ceiling holds it (room.py scratch()); plan says which
 
 How a BackShot2 run spreads (split()): each source has a lead, its HOME host when that's
@@ -190,7 +191,7 @@ def held(sources, hosts=None):
     """{host: set of SOURCES whose vms/SOURCE is there and whose cases the host's room can
     hold} over HOSTS (default RUN_HOSTS), an ls and a cmp-run.sh --ceiling each (roomy(),
     with the largest RAM-disk ceiling of those hosts: a source over every one of them works
-    on /bkoscratch where the host table lets it, room.py scratch()); a host that doesn't
+    on /bkoscratch on a holt_disk_mode host, room.py scratch()); a host that doesn't
     answer holds none.  CEILINGS and SCRATCH keep what it found."""
     seen = {}
     for h in hosts or RUN_HOSTS:
@@ -220,18 +221,19 @@ def held(sources, hosts=None):
             room = f"its cmp-run.sh --ceiling is {ceil[0]:g} {ceil[1]:g}" if ceil else "its cmp-run.sh --ceiling didn't answer"
             ssd = ""
             if ceil and d > ceil[0] and m <= ceil[1]:
-                ssd = (" (a host of the run holds it in its RAM disk)" if ok else
-                       " (and testvm/hosts.json lets it no scratch on its SSD: holt_disk_mode, scratch_mode)")
+                ssd = (" (a host of the run holds it in its RAM disk)" if run_disk is not None and d <= run_disk + RM.EPS else
+                       " (and its holt_disk_mode isn't true in testvm/hosts.json: no SSD cases there)" if not ok else "")
             print(f"bs2: {h} has vms/{s}, but {room}, under {s}'s cases' --reserve {d} {m}: left out for {s}{ssd}",
                   file=sys.stderr)
     return out
 
 
 def disk_ok(host):
-    """Whether HOST may put a job's scratch on its SSD (testvm/hosts.json: holt_disk_mode, or a
-    scratch_mode other than ram; hosts.py disk_scratch)."""
+    """Whether HOST takes cases on its SSD: its holt_disk_mode is true in testvm/hosts.json
+    (Chopin and Cinqcent: bs2-all.md, one disk slot per big host; the small hosts' scratch_mode
+    overflow alone doesn't)."""
     try:
-        return bool(HOSTS_TABLE.disk_scratch(host))
+        return HOSTS_TABLE.limit(host, "holt_disk_mode") is True
     except Exception:   # (a host the table doesn't know: no)
         return False
 
@@ -255,7 +257,7 @@ def roomy(here, ceiling, run_disk=None, disk_ok=False):
     disk and 4 of memory), and cmp-run.sh refuses at once a --reserve over the ceiling ("can
     never fit here"), so such a case would leave no row on that host.  A host whose ceiling is
     unknown (None) holds none: its --reserve would be refused too (pick-host says the same).
-    With DISK_OK (the host may put scratch on its SSD) a source whose disk is over RUN_DISK
+    With DISK_OK (the host takes SSD cases: disk_ok()) a source whose disk is over RUN_DISK
     (the largest RAM-disk ceiling of the run's hosts) too is held when its memory fits: its
     cases work on /bkoscratch there (room.py scratch(): vanilla3's D 30)."""
     keep = {s for s in here if RM.scratch(s, ceiling, disk_ok, run_disk)}
@@ -316,14 +318,17 @@ def sweep_secs(sources, n, lead):
 def split(jobs, can, nslots, start=None):
     """{host: [job...]}: JOBS ((source, tier, x), in the run's order) spread over the hosts
     that hold each one's source (CAN: {source: [host...]}).  Each goes to the host that would
-    finish it soonest: (its START seconds, its slots busy, plus what it has so far, plus the
-    job) over its NSLOTS, NSLOTS' order on a tie; the sources on the fewest hosts first, and
-    the longer case first (secs(): each source's own seconds at each tier), so the hosts
-    finish about together and in proportion to their slots where they hold the same
-    sources.  Every job goes to exactly one host; each host's keep JOBS' order.  A job whose
-    source no host of NSLOTS holds: ValueError."""
+    finish it soonest (finish()): its START seconds, its slots busy, plus what it has so far,
+    plus the job, over its NSLOTS, and its SSD lane's cases (scratch_on(): one at a time,
+    bs2-host's ssd_token) one after another; NSLOTS' order on a tie; the sources on the fewest
+    hosts first, and the longer case first (secs(): each source's own seconds at each tier),
+    so the hosts finish about together and in proportion to their slots where they hold the
+    same sources.  Every job goes to exactly one host; each host's keep JOBS' order.  A job
+    whose source no host of NSLOTS holds: ValueError."""
     hosts = list(nslots)
-    busy = {h: float((start or {}).get(h, 0)) * nslots[h] for h in hosts}   # slot-seconds
+    st = {h: float((start or {}).get(h, 0)) for h in hosts}
+    busy = {h: st[h] * nslots[h] for h in hosts}   # slot-seconds
+    lane = dict(st)                                # the SSD lane's end
     got = {h: [] for h in hosts}
     order = sorted(range(len(jobs)), key=lambda i: (len(can[jobs[i][0]]), -secs(jobs[i][0], jobs[i][1]), i))
     for i in order:
@@ -332,17 +337,25 @@ def split(jobs, can, nslots, start=None):
         if not hs:
             raise ValueError(f"no host of {', '.join(hosts)} holds {s}")
         x = secs(s, t)
-        h = min(hs, key=lambda y: ((busy[y] + x) / nslots[y], hosts.index(y)))
+
+        def finish(y):
+            ssd = scratch_on(y, s) == RM.SSD
+            return max((busy[y] + x) / nslots[y], lane[y] + x if ssd else lane[y])
+        h = min(hs, key=lambda y: (finish(y), hosts.index(y)))
         busy[h] += x
+        if scratch_on(h, s) == RM.SSD:
+            lane[h] += x
         got[h].append(i)
     return {h: [jobs[i] for i in sorted(got[h])] for h in hosts}
 
 
-def wall(jobs, nslots, start=0):
+def wall(jobs, nslots, start=0, host=None):
     """Seconds a host takes for JOBS on NSLOTS slots, after START (its sweeps): their seconds
-    over the slots, and never less than its longest case (a case is one slot's)."""
+    over the slots, never less than its longest case (a case is one slot's), nor than its SSD
+    cases one after another (HOST's, scratch_on(): bs2-host runs one at a time)."""
     xs = [secs(s, t) for s, t, _ in jobs]
-    return start + max(sum(xs) / nslots, max(xs, default=0))
+    lane = sum(secs(s, t) for s, t, _ in jobs if host and scratch_on(host, s) == RM.SSD)
+    return start + max(sum(xs) / nslots, max(xs, default=0), lane)
 
 
 def ssh(host, cmd, check=True, capture=False, input=None):
@@ -452,7 +465,7 @@ def plan_words(sources, n):
             c2 = sum(1 for x in js if x[0] == s and x[1] == 2)
             if c1 or c2:
                 by.append(f"{s} {c1}" + (f"+{c2}" if c2 else "") + (" SSD" if scratch_on(h, s) == RM.SSD else ""))
-        sec_ = wall(js, slots(h), start.get(h, 0))
+        sec_ = wall(js, slots(h), start.get(h, 0), h)
         longest = max(longest, sec_)
         sw = f", after its tier 0 sweeps (~{start[h] / 60:.0f} min)" if start.get(h) else ""
         print(f"{h}: {slots(h)} slots, {len(js)} cases ({'; '.join(by)}), ~{sec_ / 3600:.1f} h est.{sw}")

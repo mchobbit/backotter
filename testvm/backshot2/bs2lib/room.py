@@ -70,8 +70,8 @@ def scratch(source, ceiling, disk_ok, run_disk=None, path=SIZES):
     - "ssd": on /bkoscratch (HT_RAM=0, under --reserve-ssd D M), only for a source whose
       D is over every RAM ceiling of the run (RUN_DISK: the largest of the run's hosts'
       disk ceilings; None: this host's alone, as bs2-host on the host decides) on a host
-      that may put a job's scratch on its SSD (DISK_OK: hosts.py disk_scratch, its
-      holt_disk_mode or a scratch_mode other than ram) whose memory ceiling holds its M:
+      that takes SSD cases (DISK_OK: its holt_disk_mode is true in hosts.json, Chopin and
+      Cinqcent; bs2-host runs one at a time there) whose memory ceiling holds its M:
       vanilla3, D 30 GiB over the big hosts' 29, today.
     A source one host of the run can hold in RAM never goes to the SSD on another: it
     stays in the RAM disks that hold it, as before."""

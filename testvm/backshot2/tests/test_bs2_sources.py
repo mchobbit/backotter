@@ -84,8 +84,8 @@ class Seconds(unittest.TestCase):
         self.assertEqual(S.secs("guix15", 1), (235, "measured"))
         self.assertEqual(S.secs("guix15-bios", 1), (153, "measured"))
         self.assertEqual(S.secs("guix15-bios", 2), (153, "est."))
-        self.assertEqual(S.secs("mint22", 1), (round(0.55 * S.holt_rows()["mint22"][0]), "est."))
-        self.assertEqual(S.secs("debian13", 1), (S.FLOOR_S, "est."))   # 0.55 x 163 under the floor
+        self.assertEqual(S.secs("mint22", 1), (round(0.7 * S.holt_rows()["mint22"][0]), "est."))
+        self.assertEqual(S.secs("debian13", 1), (S.FLOOR_S, "est."))   # 0.7 x 163 under the floor
         self.assertEqual(S.secs("vanilla3", 2), S.secs("vanilla3", 1))
         self.assertEqual(S.secs("debian13", 0), (0.3, "measured"))
         for s in S.built():

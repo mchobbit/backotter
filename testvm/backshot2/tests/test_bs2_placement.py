@@ -149,7 +149,7 @@ class DiskMode(unittest.TestCase):
                       "left out for guix15 (a host of the run holds it in its RAM disk)", err)
         line = next(l for l in text.splitlines() if l.startswith("vanilla3 "))
         self.assertIn("SSD", line)
-        self.assertIn("895 est.", line)
+        self.assertIn(f"{B.secs('vanilla3', 1)} est.", line)
         self.assertRegex(text, r"on the SSD \(/bkoscratch, cmp-run.sh --reserve-ssd\): 25 cases \(vanilla3 on chopin, cinqcent\), "
                                r"~\d+ GB written est\.")
         self.assertRegex(text, r"chopin: 5 slots, \d+ cases \(vanilla3 \d+\+\d SSD")
@@ -158,7 +158,7 @@ class DiskMode(unittest.TestCase):
         out = {"chopin": "@ceiling 29.0 23.2\nvanilla3\ndebian13\n", "cinqcent": "@ceiling 29.0 23.2\nvanilla3\ndebian13\n"}
         got, scratch, err, text = self.held(out, ok=lambda h: h == "chopin")
         self.assertEqual(got, {"chopin": {"vanilla3", "debian13"}, "cinqcent": {"debian13"}})
-        self.assertIn("left out for vanilla3 (and testvm/hosts.json lets it no scratch on its SSD", err)
+        self.assertIn("left out for vanilla3 (and its holt_disk_mode isn't true in testvm/hosts.json", err)
 
     def test_all_in_ram_says_so(self):
         out = {"chopin": "@ceiling 29.0 23.2\ndebian13\n"}
@@ -173,8 +173,32 @@ class DiskMode(unittest.TestCase):
         self.assertNotIn("on the SSD", text.getvalue())
 
     def test_the_table_says_which_hosts(self):
-        self.assertTrue(B.disk_ok("chopin"))     # holt_disk_mode true
-        self.assertEqual(B.disk_ok("nosuch"), False)
+        # holt_disk_mode true: the big hosts only; a scratch_mode overflow alone (the small ones') isn't enough.
+        self.assertEqual({h: B.disk_ok(h) for h in ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox", "nosuch")},
+                         {"chopin": True, "cinqcent": True, "copland": False, "cage": False, "czerny": False, "choubox": False,
+                          "nosuch": False})
+
+    def test_the_ssd_lane_is_one_case_at_a_time(self):
+        """split() and wall() run a host's SSD cases one after another (bs2-host's ssd_token),
+        beside its RAM cases on the other slots."""
+        jobs = [("vanilla3", 1, i) for i in range(10)] + [("debian13", 1, i) for i in range(100)]
+        can = {"vanilla3": ["chopin", "cinqcent"], "debian13": ["chopin", "cinqcent"]}
+        ssd = {("chopin", "vanilla3"): "ssd", ("cinqcent", "vanilla3"): "ssd"}
+        v = B.secs("vanilla3", 1)
+        with mock.patch.dict(B.SCRATCH, ssd, clear=True):
+            parts = B.split(jobs, can, {"chopin": 5, "cinqcent": 5})
+            self.assertEqual({h: sum(1 for s, _, _ in js if s == "vanilla3") for h, js in parts.items()}, {"chopin": 5, "cinqcent": 5})
+            for h, js in parts.items():
+                self.assertGreaterEqual(B.wall(js, 5, 0, h), 5 * v)          # the lane: 5 cases end to end
+                self.assertLess(B.wall(js, 5, 0, h) - 5 * v, v)              # the RAM cases beside it, not after it
+                self.assertLess(B.wall(js, 5), 5 * v)                        # (without the host: no lane)
+            # A host with a long lane already takes the next SSD case less readily than an idle one.
+            p2 = B.split([("vanilla3", 1, i) for i in range(4)], {"vanilla3": ["chopin", "cinqcent"]},
+                         {"chopin": 5, "cinqcent": 5})
+            self.assertEqual({h: len(js) for h, js in p2.items()}, {"chopin": 2, "cinqcent": 2})
+            self.assertEqual(B.wall(p2["chopin"], 5, 0, "chopin"), 2 * v)
+        with mock.patch.dict(B.SCRATCH, {}, clear=True):   # in RAM: as before
+            self.assertEqual(B.wall([("vanilla3", 1, 0), ("vanilla3", 1, 1)], 5, 0, "chopin"), v)
 
 
 class HostReservation(unittest.TestCase):
@@ -227,10 +251,60 @@ class HostReservation(unittest.TestCase):
         (c1, e1), (c2, e2) = calls
         self.assertEqual(c1[1:4], ["--reserve-ssd", "30", "4"])
         self.assertEqual(c1[-2:], ["--scratch", "ssd"])
-        self.assertEqual(e1.get("WEAR_SCRATCH"), "ssd")
+        self.assertEqual((e1.get("WEAR_SCRATCH"), e1.get("BS2_SSD_HELD")), ("ssd", "1"))
         self.assertEqual(c2[1:4], ["--reserve", "2", "3"])
         self.assertEqual(c2[-2:], ["--scratch", "ram"])
         self.assertNotIn("WEAR_SCRATCH", {k: v for k, v in e2.items() if k not in os.environ})
+
+    def test_pick(self):
+        lines = [["1", "a.ssd"], ["1", "b.ssd"], ["1", "c"], ["2", "d"]]
+        ssd = lambda p: p.endswith(".ssd")   # noqa: E731
+        self.assertEqual(H.pick(lines, set(), ssd, lambda: "T"), (0, "T"))
+        self.assertEqual(H.pick(lines, {0}, ssd, lambda: None), (2, None))    # the lane busy: the next RAM case
+        self.assertEqual(H.pick(lines, {0, 2, 3}, ssd, lambda: None), (None, None))   # only SSD left, lane busy: wait
+        self.assertEqual(H.pick(lines, {0, 2, 3}, ssd, lambda: "T"), (1, "T"))
+        self.assertEqual(H.pick(lines, {0, 1, 2, 3}, ssd, lambda: "T"), (None, None))
+
+    def test_one_ssd_case_at_a_time_ram_cases_beside_it(self):
+        """Two vanilla3 cases and an alpine324 one on 2 slots: the second vanilla3 case waits for
+        the lane while the alpine324 case runs beside the first."""
+        import threading
+        rd = f"{self.d}/runs/r"
+        os.makedirs(rd)
+        v2 = f"{self.d}/vanilla3-2.case"
+        C.write(v2, {"name": "vanilla3-y", "source": "vanilla3@g", "seed": 2, "edits": [], "load_options": []})
+        with open(f"{rd}/queue.txt", "w") as f:
+            f.write(f"1 {self.cases['vanilla3']}\n1 {v2}\n1 {self.cases['alpine324']}\n")
+        order, ram_ran, lock = [], threading.Event(), threading.Lock()
+        live = []
+
+        def run(cmd, **kw):
+            path = cmd[cmd.index("tier1") + 1]
+            with lock:
+                order.append(os.path.basename(path))
+                live.append(path)
+                self.assertLessEqual(sum(1 for p in live if "vanilla3" in p), 1, live)
+            if path == self.cases["vanilla3"]:
+                self.assertTrue(ram_ran.wait(10), "the RAM case didn't run beside the SSD one")
+            if path == self.cases["alpine324"]:
+                ram_ran.set()
+            with lock:
+                live.remove(path)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        args = type("A", (), {"run": "r", "ports": "2943-2948", "slots": 2, "disk": "2", "mem": "3"})()
+        with mock.patch.object(H, "ROOT", self.d), mock.patch.object(H, "ceiling", lambda: (29.0, 23.2)), \
+                mock.patch.object(H, "disk_ok", lambda: True), mock.patch.object(H, "ssd_reserve", lambda: "--reserve-ssd"), \
+                mock.patch.object(H.subprocess, "run", run), mock.patch.object(H.time, "sleep", lambda s: None), \
+                mock.patch.object(H, "SSD_POLL_S", 0), contextlib.redirect_stdout(io.StringIO()):
+            H.cmd_queue(args)
+        self.assertEqual(order, ["vanilla3.case", "alpine324.case", "vanilla3-2.case"])
+        with open(f"{rd}/queue.next") as f:
+            self.assertEqual(f.read(), "3")
+        with mock.patch.object(H, "ROOT", self.d):
+            t = H.ssd_token(wait=False)
+            self.assertIsNotNone(t, "the lane given back")
+            self.assertIsNone(H.ssd_token(wait=False), "and one holder at a time")
+            t.close()
 
 
 class Tier1Scratch(unittest.TestCase):

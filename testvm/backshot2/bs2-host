@@ -42,8 +42,9 @@ Paths (ROOT=/bkoscratch/backshot2, BS2_ROOT overrides):
                         (each case run, as a .case file), logs/
   ROOT/bin/             the bko-holt and planner under test (BS2_HOLT, BS2_PLANNER override)
 Work goes in /mnt/bko-ram/backshot2/ (RAM), deleted on a pass; a case whose source's
-room is over this host's RAM-disk ceiling, where the host table lets it (bs2lib/room.py
-scratch(): vanilla3), works on /bkoscratch instead (HT_RAM=0, cmp-run.sh --reserve-ssd).
+room is over this host's RAM-disk ceiling, on a host whose holt_disk_mode is true
+(bs2lib/room.py scratch(): vanilla3), works on /bkoscratch instead (HT_RAM=0, cmp-run.sh
+--reserve-ssd), one such case at a time (ssd_token()).
 """
 
 import argparse
@@ -552,6 +553,8 @@ def cmd_tier1(a):
     src = C.source_name(c)
     gen, dump = load_source(src)
     scratch = case_scratch(a.case) if a.scratch == "auto" else a.scratch
+    # (A tier1 by hand takes the SSD lane itself, held until it exits; a queue's worker holds it for its case.)
+    _lane = ssd_token() if scratch == "ssd" and not os.environ.get("BS2_SSD_HELD") else None  # noqa: F841
     rc = T1.run(c, name, src, gen, dump, a.tier, a.run, a.port, HERE, TESTVM, ROOT, holt_bin(), bins(), scratch=scratch)
     sys.exit(rc)
 
@@ -590,18 +593,61 @@ def host_name():
 
 
 def disk_ok():
-    """Whether this host may put a job's scratch on its SSD (hosts.json: holt_disk_mode, or a
-    scratch_mode other than ram; hosts.py disk_scratch).  No, when the table can't say."""
+    """Whether this host takes cases on its SSD: its holt_disk_mode is true in hosts.json
+    (Chopin and Cinqcent: bs2-all.md, one disk slot per big host; a scratch_mode overflow
+    alone, the small hosts', doesn't).  No, when the table can't say."""
     try:
-        return bool(hosts_table().disk_scratch(host_name()))
+        return hosts_table().limit(host_name(), "holt_disk_mode") is True
     except Exception:
         return False
 
 
+# One case on the SSD at a time on this host (bs2-all.md: one disk slot per big host),
+# across runs: a flock on ROOT/ssd.lock, held for the case's whole cmp-run.sh.  A queue's
+# worker holds it and says so to its case (BS2_SSD_HELD=1); shrink and a tier1 by hand take
+# it themselves, waiting.
+def ssd_token(wait=True):
+    """The SSD lane's token: an open file holding the flock (close it to give it back), or
+    None when WAIT is false and another case has it."""
+    import fcntl
+    os.makedirs(ROOT, exist_ok=True)
+    try:   # (m's queue and root's tier1 both take it: made a+rw, else opened read-only)
+        f = os.fdopen(os.open(f"{ROOT}/ssd.lock", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o666), "a")
+        try:
+            os.fchmod(f.fileno(), 0o666)
+        except OSError:
+            pass
+    except PermissionError:
+        f = open(f"{ROOT}/ssd.lock")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+    except BlockingIOError:
+        f.close()
+        return None
+    return f
+
+
+def pick(lines, taken, ssd_of, token):
+    """The index of the next line of LINES (queue.txt's, split) to take, not in TAKEN, in
+    order: a RAM case at once; an SSD case (SSD_OF(path)) only when TOKEN() hands the lane's
+    token (else it is passed over for now, and the next RAM case is taken).  (index,
+    token or None), or (None, None) when none can start now."""
+    for i, w in enumerate(lines):
+        if i in taken:
+            continue
+        if ssd_of(w[1]):
+            t = token()
+            if t is None:
+                continue
+            return i, t
+        return i, None
+    return None, None
+
+
 def case_scratch(path):
     """Where the case at PATH works here: "ssd" (/bkoscratch, HT_RAM=0, under --reserve-ssd)
-    when its source's room is over this host's RAM-disk ceiling and the host table lets this
-    host put scratch on its SSD (bs2lib/room.py scratch(), as bs2 placed it: bs2 deals such a
+    when its source's room is over this host's RAM-disk ceiling and this host takes SSD
+    cases (disk_ok(): holt_disk_mode) (bs2lib/room.py scratch(), as bs2 placed it: bs2 deals such a
     source here only when no host of the run could hold it in RAM); else "ram", as before."""
     from bs2lib import room as RM
     try:
@@ -793,9 +839,13 @@ def cmd_shrink(a):
         p = f"{run_dir(work_run)}/cases/{nm}.case"
         C.write(p, dict(case, name=nm))
         res, where = reserve_words(p)
+        tok = ssd_token() if where == "ssd" else None
         r = subprocess.run([f"{WORK}/cmp-run.sh"] + res + ["sudo", "-E", "BS2_NO_LEDGER=1", os.path.join(HERE, "bs2-host"), "tier1", p,
                             "--tier", str(a.tier), "--run", work_run, "--port", str(a.port), "--scratch", where], cwd=WORK,
-                           capture_output=True, text=True, env=dict(os.environ, **({"WEAR_SCRATCH": "ssd"} if where == "ssd" else {})))
+                           capture_output=True, text=True,
+                           env=dict(os.environ, **({"WEAR_SCRATCH": "ssd", "BS2_SSD_HELD": "1"} if where == "ssd" else {})))
+        if tok:
+            tok.close()
         try:
             line = json.loads([l for l in r.stdout.splitlines() if l.startswith("{")][-1])
         except (IndexError, ValueError):
@@ -894,10 +944,15 @@ def unrowed(rd, tier, path, rc, err):
     return row
 
 
+SSD_POLL_S = 30   # a queue worker's wait while only SSD cases are left and the lane is busy
+
+
 def cmd_queue(a):
-    """SLOTS workers taking the run's queue.txt in order (a flock'd counter), each case
-    under its own cmp-run.sh reservation, as m; RUN/stop stops new starts.  A worker
-    a port: SLOTS of PORTS at most (2943-2948: 2949 is a by-hand tier 1's)."""
+    """SLOTS workers taking the run's queue.txt in order (a flock'd list of the lines
+    taken), each case under its own cmp-run.sh reservation, as m; RUN/stop stops new
+    starts.  An SSD case (case_scratch) waits for this host's SSD lane (ssd_token: one at a
+    time) without holding a slot: the workers take the RAM cases after it meanwhile.  A
+    worker a port: SLOTS of PORTS at most (2943-2948: 2949 is a by-hand tier 1's)."""
     import fcntl
     rd = run_dir(a.run)
     lo, hi = (int(x) for x in a.ports.split("-"))
@@ -907,39 +962,59 @@ def cmd_queue(a):
     ports = ports[: a.slots]
 
     def take():
-        with open(f"{rd}/queue.next", "a+") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            f.seek(0)
-            n = int(f.read().strip() or 0)
-            try:
-                with open(f"{rd}/queue.txt") as q:
-                    lines = [l.split() for l in q if l.strip()]
-            except OSError:
-                lines = []
-            if n >= len(lines) or os.path.exists(f"{rd}/stop"):
-                return None
-            f.seek(0)
-            f.truncate()
-            f.write(str(n + 1))
-            return lines[n]
+        """(the next job, the SSD token it holds or None); (None, None) when the queue is
+        done or stopped.  Taken lines are in queue.taken (an index each), queue.next their
+        count (bs2 status reads it; an older queue's first queue.next lines count as taken).
+        While only SSD cases are left and the lane is busy, it waits for it."""
+        while True:
+            with open(f"{rd}/queue.next", "a+") as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                f.seek(0)
+                n = int(f.read().strip() or 0)
+                try:
+                    with open(f"{rd}/queue.txt") as q:
+                        lines = [l.split() for l in q if l.strip()]
+                except OSError:
+                    lines = []
+                try:
+                    with open(f"{rd}/queue.taken") as t:
+                        taken = {int(x) for x in t.read().split()}
+                except (OSError, ValueError):
+                    taken = set(range(n))
+                if len(taken) >= len(lines) or os.path.exists(f"{rd}/stop"):
+                    return None, None
+                i, tok = pick(lines, taken, lambda p: case_scratch(p) == "ssd", lambda: ssd_token(wait=False))
+                if i is not None:
+                    taken.add(i)
+                    with open(f"{rd}/queue.taken", "w") as t:
+                        t.write(" ".join(str(x) for x in sorted(taken)) + "\n")
+                    f.seek(0)
+                    f.truncate()
+                    f.write(str(len(taken)))
+                    return lines[i], tok
+            time.sleep(SSD_POLL_S)
 
     def worker(port):
         while True:
-            job = take()
+            job, tok = take()
             if not job:
                 return
-            tier, path = job[:2]
-            # (In the RAM disk, or on /bkoscratch for a source over this host's RAM disk: reserve_words.)
-            res, where = reserve_words(path, a.disk, a.mem)
-            env = dict(os.environ, WEAR_TAG=f"bs2:{a.run}:{os.path.basename(path)}")
-            if where == "ssd":
-                env["WEAR_SCRATCH"] = "ssd"
-            r = subprocess.run([f"{WORK}/cmp-run.sh"] + res + ["sudo", "-E", os.path.join(HERE, "bs2-host"), "tier1", path,
-                                "--tier", tier, "--run", a.run, "--port", str(port), "--scratch", where],
-                               env=env, cwd=WORK,
-                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
-                               errors="replace")
-            unrowed(rd, tier, path, r.returncode, r.stderr)
+            try:
+                tier, path = job[:2]
+                # (In the RAM disk, or on /bkoscratch for a source over this host's RAM disk: reserve_words.)
+                res, where = reserve_words(path, a.disk, a.mem)
+                env = dict(os.environ, WEAR_TAG=f"bs2:{a.run}:{os.path.basename(path)}")
+                if where == "ssd":
+                    env.update(WEAR_SCRATCH="ssd", BS2_SSD_HELD="1" if tok else "")
+                r = subprocess.run([f"{WORK}/cmp-run.sh"] + res + ["sudo", "-E", os.path.join(HERE, "bs2-host"), "tier1", path,
+                                    "--tier", tier, "--run", a.run, "--port", str(port), "--scratch", where],
+                                   env=env, cwd=WORK,
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                   errors="replace")
+                unrowed(rd, tier, path, r.returncode, r.stderr)
+            finally:
+                if tok:
+                    tok.close()
 
     import threading
     ts = [threading.Thread(target=worker, args=(p,)) for p in ports]

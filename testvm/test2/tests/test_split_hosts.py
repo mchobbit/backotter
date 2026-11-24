@@ -515,7 +515,9 @@ class Bs2Hosts(unittest.TestCase):
         self.assertEqual(b.RUN_HOSTS,
                          {h: f"m@{h}.local"
                           for h in ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox")})
-        self.assertEqual(b.assign(b.ALPINE), b.HOME)
+        self.assertEqual(b.assign(b.SOURCES), b.HOME)   # every source (Alpine's and Guix's)
+        self.assertEqual(b.assign(b.ALPINE), {s: b.HOME[s] for s in b.ALPINE_SOURCES})
+        self.assertEqual(b.assign(list(b.GUIX_SOURCES)), {"guix15": "chopin", "guix15-bios": "cinqcent"})
         self.assertEqual(b.assign(["alpine324", "alpine324-uefi"]), {"alpine324": "chopin", "alpine324-uefi": "chopin"})
         self.assertEqual(b.assign(["nosuch"]), {"nosuch": "chopin"})
         self.assertEqual((b.slots("chopin"), b.slots("cinqcent")), (5, 5))   # hosts.json's bs2_slots

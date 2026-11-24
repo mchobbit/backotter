@@ -235,10 +235,15 @@ pub fn read_disk(src: &dyn ByteSource, d: &RawDisk, name_of: &dyn Fn(u32, &Table
     let mut out = Vec::new();
     for (n, start, sectors) in table.extents() {
         let Some(json) = table.partition_json(n, d.sector) else { continue };
-        let start_b = start * d.sector;
-        let size_b = sectors * d.sector;
+        // A GPT entry's LBAs come off the disk as they are: one past
+        // u64::MAX / sector (a crafted table's) has no byte offset, so its
+        // extent saturates, as its JSON's start_bytes does, and nothing is
+        // probed there rather than at a wrapped offset.
+        let (start_b, size_b) = (start.checked_mul(d.sector), sectors.checked_mul(d.sector));
+        let in_range = start_b.is_some() && size_b.is_some();
+        let (start_b, size_b) = (start_b.unwrap_or(u64::MAX), size_b.unwrap_or(u64::MAX));
         let is_ext = json.0.iter().any(|(k, v)| k == "extended" && *v == Value::Bool(true));
-        let contents = if is_ext { Vec::new() } else { probe::probe_all(&OffsetSource { inner: src, start: start_b, len: size_b }) };
+        let contents = if is_ext || !in_range { Vec::new() } else { probe::probe_all(&OffsetSource { inner: src, start: start_b, len: size_b }) };
         out.push(Found { name: name_of(n, &table), number: n, start: start_b, size: size_b, json, contents });
     }
     (Some(table), out)
@@ -382,6 +387,39 @@ pub fn frame(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gener
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A CRC-valid GPT whose entry starts past u64::MAX / 512 sectors
+    /// (RustAudit1 H9-06): read without overflow, its extent saturated and
+    /// not probed; the entry before it read as ever.
+    #[test]
+    fn read_disk_gpt_lba_past_u64_bytes() {
+        use crate::parttable::build::{write_gpt, GptSpec};
+        let mut img = vec![0u8; 512 * 2048];
+        let huge = u64::MAX / 512 + 1;
+        let spec = GptSpec {
+            disk_guid: "11111111-2222-3333-4444-555555555555",
+            parts: vec![
+                (crate::parttable::ESP, "aaaaaaaa-0000-0000-0000-000000000001", 40, 1000, 0, "esp"),
+                (crate::parttable::ESP, "aaaaaaaa-0000-0000-0000-000000000002", huge, huge + 10, 0, "far"),
+                (crate::parttable::ESP, "aaaaaaaa-0000-0000-0000-000000000003", 0, u64::MAX, 0, "all"),
+            ],
+        };
+        write_gpt(&mut img, 512, &spec);
+        let src = crate::bytes::MemSource(img);
+        let d = RawDisk { name: "vtbd0".into(), path: "/dev/vtbd0".into(), size: 512 * 2048, sector: 512, model: None, serial: None };
+        let (table, found) = read_disk(&src, &d, &|n, _| format!("vtbd0p{n}"));
+        assert!(table.is_some());
+        assert_eq!(found.len(), 3);
+        assert_eq!((found[0].start, found[0].size), (40 * 512, 961 * 512));
+        assert_eq!((found[1].start, found[1].size), (u64::MAX, 11 * 512));
+        assert!(found[1].contents.is_empty());
+        assert_eq!((found[2].start, found[2].size), (0, u64::MAX));
+        assert!(found[2].contents.is_empty());
+        let get = |f: &Found, k: &str| f.json.0.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        assert_eq!(get(&found[1], "start_bytes"), Some(Value::from(u64::MAX)));
+        assert_eq!(get(&found[2], "sectors"), Some(Value::from(u64::MAX)));
+        assert_eq!(get(&found[2], "size_bytes"), Some(Value::from(u64::MAX)));
+    }
 
     #[test]
     fn families() {

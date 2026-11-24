@@ -366,7 +366,7 @@ impl Table {
     /// (number, start LBA, sectors) of each partition, in order.
     pub fn extents(&self) -> Vec<(u32, u64, u64)> {
         match self {
-            Table::Gpt { gpt, .. } => gpt.parts.iter().map(|p| (p.number, p.first_lba, p.last_lba.saturating_sub(p.first_lba) + 1)).collect(),
+            Table::Gpt { gpt, .. } => gpt.parts.iter().map(|p| (p.number, p.first_lba, gpt_sectors(p))).collect(),
             Table::Mbr(m) => m.parts.iter().map(|p| (p.number, p.start, p.sectors)).collect(),
         }
     }
@@ -444,15 +444,24 @@ fn mbr_part_json(p: &MbrPart, ss: u64, sig: u32) -> Value {
     mbr_part_obj(p, ss, sig).build()
 }
 
+/// A GPT entry's length in sectors.  Its LBAs are the disk's, unchecked
+/// (an entry outside the disk only adds a problem), so a crafted 0..=u64::MAX
+/// saturates rather than overflows.
+fn gpt_sectors(p: &GptPart) -> u64 {
+    p.last_lba.saturating_sub(p.first_lba).saturating_add(1)
+}
+
 fn gpt_part_json(p: &GptPart, ss: u64) -> Obj {
-    let sectors = p.last_lba.saturating_sub(p.first_lba) + 1;
+    let sectors = gpt_sectors(p);
+    // Saturating for the same reason: a first_lba past u64::MAX / ss
+    // (RustAudit1 H9-06).
     Obj::new()
         .set("number", p.number)
         .set("start_lba", p.first_lba)
         .set("end_lba", p.last_lba)
         .set("sectors", sectors)
-        .set("start_bytes", p.first_lba * ss)
-        .set("size_bytes", sectors * ss)
+        .set("start_bytes", p.first_lba.saturating_mul(ss))
+        .set("size_bytes", sectors.saturating_mul(ss))
         .set("type", &p.type_guid)
         .set("type_name", gpt_type_name(&p.type_guid))
         .set("uuid", &p.uuid)

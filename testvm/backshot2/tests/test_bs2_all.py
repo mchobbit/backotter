@@ -199,7 +199,9 @@ class Summary(unittest.TestCase):
     def test_a_queued_case_with_no_row_is_incomplete(self):
         sm = self.sm(rows=self.rows[:-1])
         self.assertEqual(sm["verdict"], "INCOMPLETE")
-        self.assertTrue(any("1 queued cases have no row yet (ubuntu26-uefi-000000000000001f t2)" in x for x in sm["incomplete"]))
+        self.assertTrue(any("1 queued cases have no row yet (ubuntu26-uefi-000000000000001f t2)" in x for x in sm["pending"]))
+        self.assertEqual(sm["no_verdict"], [])
+        self.assertIn("still to run: ubuntu26-uefi tier 2: 0 of 1", "\n".join(AR.words(sm)))
         self.assertTrue(any(x.startswith("ubuntu26-uefi tier 2: 0 of 1") for x in sm["incomplete"]))
 
     def test_a_short_tier_0_is_incomplete(self):
@@ -213,13 +215,21 @@ class Summary(unittest.TestCase):
             sm = self.sm(rows=rows)
             self.assertEqual(sm["verdict"], "INCOMPLETE", v)
             self.assertEqual(sm["sources"]["ubuntu26-uefi"][2][v], 1)
-            self.assertIn(f"ubuntu26-uefi tier 2: 1 {v}", sm["incomplete"])
+            self.assertIn(f"ubuntu26-uefi tier 2: 1 {v}", sm["no_verdict"])
+            self.assertEqual(sm["pending"], [], "a final non-verdict is not a pending case")
+            self.assertIn(f"no verdict (needs a fix or rerun): ubuntu26-uefi tier 2: 1 {v}", "\n".join(AR.words(sm)))
 
     def test_the_corpus_and_the_leftovers(self):
         sm = self.sm(corpus_rows=[], leftovers_rows=[])
         self.assertEqual(sm["verdict"], "INCOMPLETE")
-        self.assertIn("the corpus not run (1 cases: bs2 BackShot2All corpus bs2all-20261124-1500)", sm["incomplete"])
-        self.assertIn("the leftovers set not run (2 steps: bs2 BackShot2All leftovers bs2all-20261124-1500)", sm["incomplete"])
+        self.assertIn("the corpus not run (1 cases: bs2 BackShot2All corpus bs2all-20261124-1500)", sm["pending"])
+        self.assertIn("the leftovers set not run (2 steps: bs2 BackShot2All leftovers bs2all-20261124-1500)", sm["pending"])
+        # A step without a verdict stops the set: no verdict, and the steps after it aren't pending.
+        sm = self.sm(leftovers_rows=[{"id": "L1-plain", "verdict": "HARNESS"}])
+        self.assertEqual((sm["verdict"], sm["pending"]), ("INCOMPLETE", []))
+        self.assertEqual(sm["no_verdict"], ["the leftovers set: L1-plain without a verdict; the set stopped there"])
+        sm = self.sm(leftovers_rows=self.lo[:1])
+        self.assertEqual(sm["pending"], ["the leftovers set: 1 of 2 steps have a row"])
         sm = self.sm(leftovers_rows=[{"id": "L1-plain", "verdict": "FAIL", "check": "load restore", "case": "L1"}])
         self.assertEqual(sm["verdict"], "FAIL")
         self.assertEqual(sm["fails"][-1]["where"], "leftovers L1-plain")

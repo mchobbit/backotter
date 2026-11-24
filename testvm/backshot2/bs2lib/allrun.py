@@ -219,12 +219,16 @@ def summary(manifest, rows, queued, corpus_rows, leftovers_rows, unread=(), left
     host}); ROWS: every host's tier 0, 1 and 2 rows (and the queue's) of the run, each with
     "host"; QUEUED: [(tier, case name)] of every host's queue.txt; CORPUS_ROWS: the corpus
     run's tier 1 rows; LEFTOVERS_ROWS: leftovers.jsonl's rows; LEFTOVERS_T0: its steps' tier
-    0 rows (RUN-lo-t0: a FAIL there is the set's FAIL, and the set stops); UNREAD: the hosts that didn't
-    answer, in words (each makes the run INCOMPLETE)."""
+    0 rows (RUN-lo-t0: a FAIL there is the set's FAIL, and the set stops); UNREAD: the hosts
+    that didn't answer, in words.
+    What keeps a run INCOMPLETE comes in two lists: "pending", still to run (a planned or
+    queued case, the corpus or a leftovers step with no row yet, a host not read), and
+    "no_verdict", final rows that are no verdict and need a fix or a rerun (INVALID,
+    UNSUPPORTED, a HARNESS after its rerun); "incomplete" is both."""
     planned = {s: tuple(v) for s, v in (manifest.get("planned") or {}).items()}
     sk = manifest.get("skipped") or []
     tl = tally(rows)
-    incomplete, per = list(unread), {}
+    pending, no_verdict, per = list(unread), [], {}
     for s, (t0, t1, t2) in planned.items():
         per[s] = {}
         for tier, want in ((0, t0 + t1 + t2 if t0 else 0), (1, t1), (2, t2)):
@@ -233,16 +237,16 @@ def summary(manifest, rows, queued, corpus_rows, leftovers_rows, unread=(), left
             per[s][tier] = {"planned": want, **{v: got.get(v, 0) for v in VERDICTS},
                             **{v: k for v, k in got.items() if v not in VERDICTS}}
             if n < want:
-                incomplete.append(f"{s} tier {tier}: {n} of {want} cases have a row"
+                pending.append(f"{s} tier {tier}: {n} of {want} cases have a row"
                                   + (" (tier 0: the sweep's and every drawn case's)" if tier == 0 else ""))
             bad = {v: k for v, k in got.items() if v not in ("PASS", "FAIL")}
             if bad:
-                incomplete.append(f"{s} tier {tier}: " + ", ".join(f"{k} {v}" for v, k in sorted(bad.items())))
+                no_verdict.append(f"{s} tier {tier}: " + ", ".join(f"{k} {v}" for v, k in sorted(bad.items())))
     for s in sorted({k[0] for k in tl} - set(planned)):
-        incomplete.append(f"{s}: rows, but not in the run's plan")
+        no_verdict.append(f"{s}: rows, but not in the run's plan")
     un = queued_unrowed(queued, rows)
     if un:
-        incomplete.append(f"{len(un)} queued cases have no row yet (" +
+        pending.append(f"{len(un)} queued cases have no row yet (" +
                           ", ".join(f"{c} t{t}" for t, c in un[:3]) + (", ..." if len(un) > 3 else "") + ")")
     fails = fails_of(rows)
     # The corpus: every case in cases/ (of a source the run held) at tier 1, in RUN-corpus.
@@ -251,14 +255,14 @@ def summary(manifest, rows, queued, corpus_rows, leftovers_rows, unread=(), left
     corpus = {"planned": len(want_c), **{v: sum(1 for c in want_c if (crows.get(c) or {}).get("verdict") == v)
                                          for v in VERDICTS}}
     if want_c and not crows:
-        incomplete.append(f"the corpus not run ({len(want_c)} cases: bs2 {WORD} corpus {manifest.get('run')})")
+        pending.append(f"the corpus not run ({len(want_c)} cases: bs2 {WORD} corpus {manifest.get('run')})")
     else:
         no = [c for c in want_c if c not in crows]
         if no:
-            incomplete.append(f"the corpus: {len(no)} of {len(want_c)} cases have no row ({', '.join(no[:3])})")
+            pending.append(f"the corpus: {len(no)} of {len(want_c)} cases have no row ({', '.join(no[:3])})")
         bad = [c for c in want_c if (crows.get(c) or {}).get("verdict") not in (None, "PASS", "FAIL")]
         if bad:
-            incomplete.append(f"the corpus: {len(bad)} cases without a verdict ({', '.join(bad[:3])})")
+            no_verdict.append(f"the corpus: {len(bad)} cases without a verdict ({', '.join(bad[:3])})")
     fails += [dict(f, where="corpus") for f in fails_of([crows[c] for c in want_c if c in crows])]
     # The leftovers set: its steps in order on one disk, RUN-lo/leftovers.jsonl.
     lo = manifest.get("leftovers") or {}
@@ -272,23 +276,25 @@ def summary(manifest, rows, queued, corpus_rows, leftovers_rows, unread=(), left
     t0 = [r for r in last_rows(leftovers_t0) if r.get("verdict") != "PASS"]
     t0_bad = [r["case"] for r in t0 if r.get("verdict") != "FAIL"]
     if t0_bad:
-        incomplete.append(f"the leftovers set: tier 0 gave no verdict for {', '.join(t0_bad)}; the set stopped there")
+        no_verdict.append(f"the leftovers set: tier 0 gave no verdict for {', '.join(t0_bad)}; the set stopped there")
     fails += [dict(f, where="leftovers tier 0") for f in fails_of(t0)]
     if steps and not lrows and not t0:
-        incomplete.append(f"the leftovers set not run ({steps} steps: bs2 {WORD} leftovers {manifest.get('run')})")
+        pending.append(f"the leftovers set not run ({steps} steps: bs2 {WORD} leftovers {manifest.get('run')})")
     elif steps:
-        if len(lrows) < steps:
-            incomplete.append(f"the leftovers set: {len(lrows)} of {steps} steps have a row (it stops at the first "
-                              "step that doesn't pass)")
         bad = sorted(i for i, r in lrows.items() if r.get("verdict") not in ("PASS", "FAIL"))
+        stopped = t0 or any(r.get("verdict") != "PASS" for r in lrows.values())
+        if len(lrows) < steps and not stopped:   # (a step that didn't pass stops the set: the rest never run)
+            pending.append(f"the leftovers set: {len(lrows)} of {steps} steps have a row")
         if bad:
-            incomplete.append(f"the leftovers set: {', '.join(bad)} without a verdict")
+            no_verdict.append(f"the leftovers set: {', '.join(bad)} without a verdict; the set stopped there")
     fails += [{"case": r.get("case"), "source": "leftovers", "tier": 1, "check": r.get("check") or "",
                "dir": r.get("dir"), "where": f"leftovers {i}"} for i, r in sorted(lrows.items()) if r.get("verdict") == "FAIL"]
     n_sk = len(sk)
+    incomplete = no_verdict + pending
     v = verdict(len(fails), incomplete, n_sk)
     return {"run": manifest.get("run"), "word": WORD, "hosts": manifest.get("hosts") or [], "verdict": v,
-            "best": best(sk), "fails": fails, "incomplete": incomplete, "sources": per,
+            "best": best(sk), "fails": fails, "incomplete": incomplete, "pending": pending, "no_verdict": no_verdict,
+            "sources": per,
             "corpus": corpus, "leftovers": left, "skipped": sk}
 
 
@@ -315,10 +321,11 @@ def words(sm):
     out += skipped_words(sm["skipped"])
     for f in sm["fails"]:
         out.append(f"FAIL {f['case']} tier {f['tier']} ({f['where']}): {f['check']}" + (f" ({f['dir']})" if f.get("dir") else ""))
-    for x in sm["incomplete"][:30]:
-        out.append(f"incomplete: {x}")
-    if len(sm["incomplete"]) > 30:
-        out.append(f"incomplete: ... and {len(sm['incomplete']) - 30} more (--json has them all)")
+    for key, say in (("no_verdict", "no verdict (needs a fix or rerun)"), ("pending", "still to run")):
+        xs = sm[key]
+        out += [f"{say}: {x}" for x in xs[:30]]
+        if len(xs) > 30:
+            out.append(f"{say}: ... and {len(xs) - 30} more (--json has them all)")
     tail = f" ({sm['best']})" if sm["verdict"] in ("PARTIAL PASS", "INCOMPLETE") and sm["skipped"] else ""
     out.append(f"verdict: {sm['verdict']}{tail}")
     return out

@@ -49,7 +49,8 @@ class Split(unittest.TestCase):
 
     def test_jobs_of(self):
         self.assertEqual(len(self.jobs), 4 * 200 + 30)
-        self.assertEqual(B.tier2_each(B.ALPINE), 10)
+        self.assertEqual({s: B.tier2_of(s, B.ALPINE) for s in B.ALPINE},
+                         {"alpine324": 0, "alpine324-uefi": 10, "alpine324-lvm": 10, "alpine324-luks": 10})
         self.assertFalse([j for j in self.jobs if j[0] == "alpine324" and j[1] == 2], "alpine324 has no tier 2")
 
     def test_disjoint_and_complete(self):
@@ -70,7 +71,8 @@ class Split(unittest.TestCase):
 
     def test_hosts_finish_about_together(self):
         walls = [B.wall(js, SLOTS[h]) for h, js in self.parts.items()]
-        self.assertLessEqual(max(walls) - min(walls), max(B.SECS.values()) / min(SLOTS.values()) + 1, walls)
+        longest = max(B.secs(s, t) for s, t, _ in self.jobs)
+        self.assertLessEqual(max(walls) - min(walls), longest / min(SLOTS.values()) + 1, walls)
 
     def test_in_proportion_to_the_slots(self):
         """Where every host holds the source, the cases go as the slots: 5:5:2:2."""
@@ -115,10 +117,11 @@ class GuixSources(unittest.TestCase):
 
     def test_counts(self):
         g = list(B.GUIX_SOURCES)
-        self.assertEqual(B.tier2_each(g), B.TIER2)   # one UEFI source of the two
+        self.assertEqual(B.tier2_of("guix15", g), B.TIER2_EACH)   # a UEFI source not Alpine's: 5
+        self.assertEqual(B.tier2_of("guix15-bios", g), 0)
         jobs = B.jobs_of(g, 10)
         self.assertEqual(sum(1 for s, t, _ in jobs if s == "guix15-bios" and t == 2), 0)
-        self.assertEqual(sum(1 for s, t, _ in jobs if s == "guix15" and t == 2), B.TIER2)
+        self.assertEqual(sum(1 for s, t, _ in jobs if s == "guix15" and t == 2), B.TIER2_EACH)
         self.assertEqual(B.sweep_n(10), 50)
         B.COUNTS.update(sweep=200, tier2=3)
         jobs = B.jobs_of(g, 10)
@@ -126,7 +129,7 @@ class GuixSources(unittest.TestCase):
         self.assertEqual([(s, t) for s, t, _ in jobs].count(("guix15-bios", 1)), 10)
         self.assertEqual(B.sweep_n(10), 200)
         self.assertEqual(B.sweep_secs(g, 10, {"guix15": "chopin", "guix15-bios": "cinqcent"}),
-                         {"chopin": 200 * B.SECS[0], "cinqcent": 200 * B.SECS[0]})
+                         {"chopin": 200 * B.secs("guix15", 0), "cinqcent": 200 * B.secs("guix15-bios", 0)})
         B.COUNTS.update(tier2=0)
         self.assertFalse(any(t == 2 for _, t, _ in B.jobs_of(g, 10)))
 
@@ -138,7 +141,7 @@ class GuixSources(unittest.TestCase):
         self.assertEqual(RM.of("guix15-bios"), (6, 4))
         self.assertEqual(RM.of("no-such-guest"), (2, 3))
         self.assertEqual(B.prep_room("guix15"), "2 4")
-        self.assertIn("reserve /x.case --mem 3) &&", B.reserve_tier1("/x.case"))
+        self.assertIn("reserve /x.case --mem 3 --words) && ./cmp-run.sh $R sudo -E", B.reserve_tier1("/x.case"))
 
     def test_holt_passed_on(self):
         with mock.patch.dict(os.environ, {"BS2_HOLT": "/bkoscratch/x/bko-holt", "BS2_FAST_DOWN": "0"}):

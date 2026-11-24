@@ -8,9 +8,12 @@ names another, so two sessions' runs never share a copy).
                                     through tier 0, then tier 1, then tier 2 for the UEFI
                                     sources' cases that touch an ESP or the NVRAM (30 in all),
                                     then the corpus
-  bs2 BackShot2 [SOURCE...] [N] [plan]   the same over the named sources (Alpine's four, guix15,
-                                    guix15-bios); --sweep N: N tier 0 cases a source (default
-                                    5 x N), --tier2 N: N tier 2 cases a UEFI source
+  bs2 BackShot2 [SOURCE...] [N] [plan]   the same over the named sources (Alpine's four, Guix's
+                                    two, and every built source of bs2lib/sources.py: the one-disk
+                                    Linux corpus guests without ZFS or md; a skipped one is refused,
+                                    naming the piece that builds it); --sweep N: N tier 0 cases a
+                                    source (default 5 x N), --tier2 N: N tier 2 cases a UEFI source
+                                    (default 5, Alpine's 30 in all)
   bs2 BackShot2 corpus [plan]       the corpus alone, at tier 0 (tier 1 with --tier 1)
   bs2 replay CASE [--tier N]        one case again, exactly
   bs2 shrink CASE [--tier N]        a failing case down to its smallest; saved in the corpus
@@ -29,7 +32,11 @@ names another, so two sessions' runs never share a copy).
                                     vms/SOURCE is there takes SOURCE's cases (one read-only
                                     ls each: cage's cache has only alpine324), and only
                                     when its cmp-run.sh --ceiling holds the source's room
-                                    (bs2lib/room.py need(): choubox's can't hold Guix's)
+                                    (bs2lib/room.py need(): choubox's can't hold Guix's).  A
+                                    source whose room is over every RAM-disk ceiling of the
+                                    run (vanilla3, D 30) works on /bkoscratch (--reserve-ssd,
+                                    HT_RAM=0) on the hosts hosts.json lets do so whose memory
+                                    ceiling holds it (room.py scratch()); plan says which
 
 How a BackShot2 run spreads (split()): each source has a lead, its HOME host when that's
 in the run, else the first that holds it.  The lead runs the source's tier 0 sweep and
@@ -74,15 +81,20 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 if HERE not in sys.path:   # bs2lib, for a bs2 loaded as a module (Test2's tests), last: it shadows nothing
     sys.path.append(HERE)
 REPO = os.path.dirname(os.path.dirname(HERE))
-# BackShot2's Linux sources (A2 will add the rest): BackShot2Alpine's four, and Guix
-# System's (bs2lib/families/guix.py).  Each one's lead draws its cases, runs its tier 0,
-# and is where replay, shrink and the corpus run; HOME deals each group in even turns
-# over the lead hosts (Alpine's as before Guix's: two each), group by group.
-ALPINE_SOURCES = ("alpine324", "alpine324-uefi", "alpine324-lvm", "alpine324-luks")
-GUIX_SOURCES = ("guix15", "guix15-bios")
-SOURCES = ALPINE_SOURCES + GUIX_SOURCES
-# The UEFI sources, whose cases that touch an ESP or the NVRAM go to tier 2 too.
-UEFI = {"alpine324-uefi", "alpine324-lvm", "alpine324-luks", "guix15"}
+from bs2lib import room as RM, sources as SRC  # noqa: E402
+# BackShot2's sources (bs2lib/sources.py, A2): BackShot2Alpine's four, Guix System's
+# (bs2lib/families/guix.py), then every other built one of the corpus (one disk, Linux, no
+# ZFS or md: OTHER_SOURCES, sorted; sources.classify() says why the rest are skipped and
+# which piece takes each).  Each one's lead draws its cases, runs its tier 0, and is where
+# replay, shrink and the corpus run; HOME deals each group in even turns over the lead
+# hosts (Alpine's as before Guix's: two each; then the others'), group by group.
+ALPINE_SOURCES = SRC.ALPINE_SOURCES
+GUIX_SOURCES = SRC.GUIX_SOURCES
+OTHER_SOURCES = SRC.others()
+SOURCES = ALPINE_SOURCES + GUIX_SOURCES + OTHER_SOURCES
+# The UEFI sources (their corpus dumps' firmware), whose cases that touch an ESP or the
+# NVRAM go to tier 2 too.
+UEFI = {s for s in SOURCES if SRC.uefi(s)}
 # The tree on the hosts that bs2 copies testvm/ and holt/ to and runs bs2-host from:
 # ~/backotter-work/BS2_WT (default bs2-wt), so two sessions' runs never share one.
 WT = os.environ.get("BS2_WT") or "bs2-wt"
@@ -122,7 +134,7 @@ def deal(sources, hosts):
     return {s: hosts[min(i // share, len(hosts) - 1)] for i, s in enumerate(sources)}
 
 
-HOME = dict(deal(ALPINE_SOURCES, LEAD_HOSTS), **deal(GUIX_SOURCES, LEAD_HOSTS))
+HOME = dict(deal(ALPINE_SOURCES, LEAD_HOSTS), **deal(GUIX_SOURCES, LEAD_HOSTS), **deal(OTHER_SOURCES, LEAD_HOSTS))
 CHOSEN = False   # --hosts given: replay and the corpus go only where vms/SOURCE is
 ALPINE = list(ALPINE_SOURCES)
 ROOT = "/bkoscratch/backshot2"
@@ -130,20 +142,27 @@ HOST_WT = f"~/backotter-work/{WT}"
 HOST_BS2 = f"{HOST_WT}/testvm/backshot2/bs2-host"
 HOST_IOLOG = f"{HOST_WT}/testvm/compare/iolog.sh"   # (light()'s wear-log line)
 ROOT_SBIN = "/usr/local/sbin:/usr/sbin:/sbin"   # (light()'s PATH: root's, before m's)
-# Seconds a case, per tier.  Tier 1 measured 2026-11-11 on cinqcent (400 cases, 3 slots,
-# phases.tsv): ~155 s (source 21, backup 4-14, rebuild ~95, verify ~26), ~50 s of it the
-# rescuer's apt of the bcachefs debs and 5 s polls; ~110 s est. after ht1.sh's fix
-# (bcachefs only for a bcachefs layout, 1 s polls).  65 is est. with what a case reuses
-# (ht1-bs2.sh, README "What a case reuses"), not yet measured: the prepared source
-# (-19 s), the prepared backup (-3.5 s on the ~27% of cases with no content and one
-# snapshot: -1 s), the rescuer resumed (-13 s of its ~17 s boot), quit not powered off
-# (-8 s), the restored boot quit (-2.5 s).  Tier 2 est. likewise (140 before: its UEFI
-# boots are longer); tier 0 measured 2026-11-10.
-SECS = {0: 0.3, 1: 65, 2: 95}
 MAX_SLOTS = 6     # bs2-host queue's ports, 2943-2948 (2949: by hand)
 SWEEP = 5         # tier 0's sweep: N * SWEEP new cases a source, on its lead
-TIER2 = 30        # tier 2 cases in all, shared by the UEFI sources
+TIER2 = 30        # Alpine's tier 2 cases in all, shared by its UEFI sources (BackShot2Alpine's 30)
+TIER2_EACH = 5    # every other UEFI source's (docs/design/bs2-all.md "What it runs")
 COUNTS = {}       # --sweep N (tier 0 cases a source), --tier2 N (tier 2 cases a UEFI source): main()
+# What held() learnt of each host: its cmp-run.sh --ceiling, and where each source's cases
+# work there ({(host, source): "ram" or "ssd"}, bs2lib/room.py scratch()).
+CEILINGS = {}
+SCRATCH = {}
+
+
+def secs(source, tier):
+    """Seconds a case of SOURCE takes at TIER (bs2lib/sources.py secs(): measured where bs2
+    has run the source, else HoltTest1's seconds for its guest less what a case reuses)."""
+    return SRC.secs(source, tier)[0]
+
+
+def scratch_on(host, source):
+    """Where SOURCE's cases work on HOST: "ram" (the RAM disk) or "ssd" (/bkoscratch), as
+    held() found it; "ram" when held() didn't look (the tests' stand-ins)."""
+    return SCRATCH.get((host, source), RM.RAM)
 
 
 def use_hosts(arg):
@@ -169,27 +188,52 @@ def slots(h):
 
 def held(sources, hosts=None):
     """{host: set of SOURCES whose vms/SOURCE is there and whose cases the host's room can
-    hold} over HOSTS (default RUN_HOSTS), an ls and a cmp-run.sh --ceiling each (roomy()); a
-    host that doesn't answer holds none."""
-    out = {}
+    hold} over HOSTS (default RUN_HOSTS), an ls and a cmp-run.sh --ceiling each (roomy(),
+    with the largest RAM-disk ceiling of those hosts: a source over every one of them works
+    on /bkoscratch where the host table lets it, room.py scratch()); a host that doesn't
+    answer holds none.  CEILINGS and SCRATCH keep what it found."""
+    seen = {}
     for h in hosts or RUN_HOSTS:
         r = ssh(h, 'echo "@ceiling $(cd ~/backotter-work && ./cmp-run.sh --ceiling 2>/dev/null)"; '
                    "cd ~/backotter-work/vms 2>/dev/null && for g in " + " ".join(sources) +
                 '; do [ -e "$g" ] && echo "$g"; done; true', check=False, capture=True)
         if r.returncode:
             print(f"bs2: {h} didn't answer: left out", file=sys.stderr)
+            seen[h] = None
+            continue
+        seen[h] = ({w for line in r.stdout.splitlines() if not line.startswith("@") for w in line.split()},
+                   ceiling_of(r.stdout))
+    run_disk = max((x[1][0] for x in seen.values() if x and x[1]), default=None)
+    out = {}
+    for h, x in seen.items():
+        if x is None:
             out[h] = set()
             continue
-        here = {w for line in r.stdout.splitlines() if not line.startswith("@") for w in line.split()}
-        ceil = ceiling_of(r.stdout)
-        out[h], dropped = roomy(here, ceil)
+        here, ceil = x
+        CEILINGS[h] = ceil
+        ok = disk_ok(h)
+        out[h], dropped = roomy(here, ceil, run_disk, ok)
+        for s in out[h]:
+            SCRATCH[(h, s)] = RM.scratch(s, ceil, ok, run_disk)
         for s in sorted(dropped):
-            from bs2lib import room as RM
             d, m = RM.need(s)
             room = f"its cmp-run.sh --ceiling is {ceil[0]:g} {ceil[1]:g}" if ceil else "its cmp-run.sh --ceiling didn't answer"
-            print(f"bs2: {h} has vms/{s}, but {room}, under {s}'s cases' --reserve {d} {m}: left out for {s}",
+            ssd = ""
+            if ceil and d > ceil[0] and m <= ceil[1]:
+                ssd = (" (a host of the run holds it in its RAM disk)" if ok else
+                       " (and testvm/hosts.json lets it no scratch on its SSD: holt_disk_mode, scratch_mode)")
+            print(f"bs2: {h} has vms/{s}, but {room}, under {s}'s cases' --reserve {d} {m}: left out for {s}{ssd}",
                   file=sys.stderr)
     return out
+
+
+def disk_ok(host):
+    """Whether HOST may put a job's scratch on its SSD (testvm/hosts.json: holt_disk_mode, or a
+    scratch_mode other than ram; hosts.py disk_scratch)."""
+    try:
+        return bool(HOSTS_TABLE.disk_scratch(host))
+    except Exception:   # (a host the table doesn't know: no)
+        return False
 
 
 def ceiling_of(text):
@@ -205,18 +249,16 @@ def ceiling_of(text):
     return None
 
 
-def roomy(here, ceiling):
+def roomy(here, ceiling, run_disk=None, disk_ok=False):
     """(the sources of HERE a host whose cmp-run.sh --ceiling is CEILING can hold, the ones it
     can't): a source's cases reserve at least bs2lib/room.py need()'s (guix15's 7 GiB of RAM
     disk and 4 of memory), and cmp-run.sh refuses at once a --reserve over the ceiling ("can
     never fit here"), so such a case would leave no row on that host.  A host whose ceiling is
-    unknown (None) holds none: its --reserve would be refused too (pick-host says the same)."""
-    from bs2lib import room as RM
-    keep = set()
-    for s in here:
-        d, m = RM.need(s)
-        if ceiling and d <= ceiling[0] + 1e-9 and m <= ceiling[1] + 1e-9:
-            keep.add(s)
+    unknown (None) holds none: its --reserve would be refused too (pick-host says the same).
+    With DISK_OK (the host may put scratch on its SSD) a source whose disk is over RUN_DISK
+    (the largest RAM-disk ceiling of the run's hosts) too is held when its memory fits: its
+    cases work on /bkoscratch there (room.py scratch(): vanilla3's D 30)."""
+    keep = {s for s in here if RM.scratch(s, ceiling, disk_ok, run_disk)}
     return keep, set(here) - keep
 
 
@@ -236,11 +278,17 @@ def leads(can):
     return {s: HOME[s] if HOME.get(s) in hs else hs[0] for s, hs in can.items()}
 
 
-def tier2_each(sources):
-    """Tier 2 cases a UEFI source: --tier2's, else TIER2 shared by the UEFI sources (UEFI)."""
+def tier2_of(source, sources):
+    """Tier 2 cases SOURCE draws in a run of SOURCES: none for a BIOS one (UEFI); --tier2's;
+    else for Alpine's, TIER2 shared by the run's Alpine UEFI sources (BackShot2Alpine's 10
+    each), and TIER2_EACH for every other."""
+    if source not in UEFI:
+        return 0
     if COUNTS.get("tier2") is not None:
         return COUNTS["tier2"]
-    return max(1, TIER2 // max(1, len([s for s in sources if s in UEFI])))
+    if source in ALPINE_SOURCES:
+        return max(1, TIER2 // max(1, len([s for s in sources if s in UEFI and s in ALPINE_SOURCES])))
+    return TIER2_EACH
 
 
 def sweep_n(n):
@@ -253,8 +301,7 @@ def jobs_of(sources, n):
     out = []
     for s in sources:
         out += [(s, 1, i) for i in range(n)]
-        if s in UEFI and tier2_each(sources):
-            out += [(s, 2, i) for i in range(tier2_each(sources))]
+        out += [(s, 2, i) for i in range(tier2_of(s, sources))]
     return out
 
 
@@ -262,7 +309,7 @@ def sweep_secs(sources, n, lead):
     """{host: seconds}: the tier 0 sweeps each lead runs before its queue."""
     out = {}
     for s in sources:
-        out[lead[s]] = out.get(lead[s], 0) + sweep_n(n) * SECS[0]
+        out[lead[s]] = out.get(lead[s], 0) + sweep_n(n) * secs(s, 0)
     return out
 
 
@@ -271,27 +318,31 @@ def split(jobs, can, nslots, start=None):
     that hold each one's source (CAN: {source: [host...]}).  Each goes to the host that would
     finish it soonest: (its START seconds, its slots busy, plus what it has so far, plus the
     job) over its NSLOTS, NSLOTS' order on a tie; the sources on the fewest hosts first, and
-    the longer tier first, so the hosts finish about together and in proportion to their
-    slots where they hold the same sources.  Every job goes to exactly one host; each host's
-    keep JOBS' order.  A job whose source no host of NSLOTS holds: ValueError."""
+    the longer case first (secs(): each source's own seconds at each tier), so the hosts
+    finish about together and in proportion to their slots where they hold the same
+    sources.  Every job goes to exactly one host; each host's keep JOBS' order.  A job whose
+    source no host of NSLOTS holds: ValueError."""
     hosts = list(nslots)
     busy = {h: float((start or {}).get(h, 0)) * nslots[h] for h in hosts}   # slot-seconds
     got = {h: [] for h in hosts}
-    order = sorted(range(len(jobs)), key=lambda i: (len(can[jobs[i][0]]), -SECS[jobs[i][1]], i))
+    order = sorted(range(len(jobs)), key=lambda i: (len(can[jobs[i][0]]), -secs(jobs[i][0], jobs[i][1]), i))
     for i in order:
         s, t = jobs[i][0], jobs[i][1]
         hs = [h for h in can.get(s, ()) if h in busy]
         if not hs:
             raise ValueError(f"no host of {', '.join(hosts)} holds {s}")
-        h = min(hs, key=lambda x: ((busy[x] + SECS[t]) / nslots[x], hosts.index(x)))
-        busy[h] += SECS[t]
+        x = secs(s, t)
+        h = min(hs, key=lambda y: ((busy[y] + x) / nslots[y], hosts.index(y)))
+        busy[h] += x
         got[h].append(i)
     return {h: [jobs[i] for i in sorted(got[h])] for h in hosts}
 
 
 def wall(jobs, nslots, start=0):
-    """Seconds a host takes for JOBS on NSLOTS slots, after START (its sweeps)."""
-    return start + sum(SECS[t] for _, t, _ in jobs) / nslots
+    """Seconds a host takes for JOBS on NSLOTS slots, after START (its sweeps): their seconds
+    over the slots, and never less than its longest case (a case is one slot's)."""
+    xs = [secs(s, t) for s, t, _ in jobs]
+    return start + max(sum(xs) / nslots, max(xs, default=0))
 
 
 def ssh(host, cmd, check=True, capture=False, input=None):
@@ -342,10 +393,12 @@ def reuse_env():
 
 def reserve_tier1(case):
     """The start of CASE's tier 1 by hand (replay, soak, the corpus), in ~/backotter-work: as
-    root under a cmp-run.sh --reserve of the RAM disk and memory bs2-host reserve gives it
-    (its inode tables on LUKS: bs2lib/case.py disk_gib; its source's room, bs2lib/room.py,
-    at least 3 GiB of memory); the --tier and the rest follow."""
-    return (f"R=$({HOST_BS2} reserve {case} --mem 3) && {reuse_env()}./cmp-run.sh --reserve $R "
+    root under the cmp-run.sh reservation bs2-host reserve --words gives it (--reserve of the
+    RAM disk and memory: its inode tables on LUKS, bs2lib/case.py disk_gib; its source's
+    room, bs2lib/room.py, at least 3 GiB of memory; or --reserve-ssd for a source whose room
+    is over the host's RAM disk, which bs2-host tier1 then runs on /bkoscratch, room.py
+    scratch()); the --tier and the rest follow."""
+    return (f"R=$({HOST_BS2} reserve {case} --mem 3 --words) && {reuse_env()}./cmp-run.sh $R "
             f"sudo -E {HOST_BS2} tier1 {case}")
 
 
@@ -365,12 +418,29 @@ def placement(sources, n):
     return can, lead, parts, start
 
 
+def scratch_words(s, hosts):
+    """SOURCE's place on HOSTS in a plan's words: RAM, SSD, or RAM but SSD on some."""
+    ssd = [h for h in hosts if scratch_on(h, s) == RM.SSD]
+    if not ssd:
+        return "RAM"
+    if len(ssd) == len(hosts):
+        return "SSD"
+    return f"RAM, SSD on {', '.join(ssd)}"
+
+
 def plan_words(sources, n):
     can, lead, parts, start = placement(sources, n)
-    t2 = {s: (tier2_each(sources) if s in UEFI else 0) for s in sources}
-    print(f"{'source':16} {'lead':9} {'tier0':>6} {'tier1':>6} {'tier2':>6}  hosts")
+    w = max([16] + [len(s) + 1 for s in sources])
+
+    def sec(s, t):
+        x, kind = SRC.secs(s, t)
+        return f"{x:g} {kind}"
+
+    print(f"{'source':{w}} {'lead':9} {'tier0':>6} {'tier1':>6} {'tier2':>6}  {'tier 1 s':13} {'tier 2 s':13} {'scratch':8} hosts")
     for s in sources:
-        print(f"{s:16} {lead[s]:9} {sweep_n(n):6} {n:6} {t2[s]:6}  {', '.join(can[s])}")
+        t2 = tier2_of(s, sources)
+        print(f"{s:{w}} {lead[s]:9} {sweep_n(n):6} {n:6} {t2:6}  {sec(s, 1):13} {sec(s, 2) if t2 else '-':13} "
+              f"{scratch_words(s, can[s]):8} {', '.join(can[s])}")
     longest = 0
     for h, js in parts.items():
         if not js:
@@ -381,14 +451,38 @@ def plan_words(sources, n):
             c1 = sum(1 for x in js if x[0] == s and x[1] == 1)
             c2 = sum(1 for x in js if x[0] == s and x[1] == 2)
             if c1 or c2:
-                by.append(f"{s} {c1}" + (f"+{c2}" if c2 else ""))
-        sec = wall(js, slots(h), start.get(h, 0))
-        longest = max(longest, sec)
+                by.append(f"{s} {c1}" + (f"+{c2}" if c2 else "") + (" SSD" if scratch_on(h, s) == RM.SSD else ""))
+        sec_ = wall(js, slots(h), start.get(h, 0))
+        longest = max(longest, sec_)
         sw = f", after its tier 0 sweeps (~{start[h] / 60:.0f} min)" if start.get(h) else ""
-        print(f"{h}: {slots(h)} slots, {len(js)} cases ({'; '.join(by)}), ~{sec / 3600:.1f} h est.{sw}")
-    print(f"the run: ~{longest / 3600:.1f} h est. (its slowest host; a case ~{SECS[1]} s at tier 1, ~{SECS[2]} s at tier 2,"
-          f" est.), each host after ~5-15 min of preparing what it lacks and the leads drawing its cases")
-    print("in RAM: ~0 GB written to the SSDs (records only, ~5 MB a case)")
+        print(f"{h}: {slots(h)} slots, {len(js)} cases ({'; '.join(by)}), ~{sec_ / 3600:.1f} h est.{sw}")
+    print(f"the run: ~{longest / 3600:.1f} h est. (its slowest host, by each source's seconds a case above), each host "
+          f"after ~5-15 min of preparing what it lacks and the leads drawing its cases")
+    print(wear_words(sources, parts))
+
+
+def wear_words(sources, parts):
+    """The plan's wear line: how many cases work on the SSD, and about what they write there
+    (HoltTest1's gb_disk for the guest a case, testvm/test2/estimates.tsv, else its D; at most
+    its D a case, room.py need(): what the case reserves of the SSD)."""
+    on, n, est, top = {}, 0, 0.0, 0.0
+    for h, js in parts.items():
+        for s, _, _ in js:
+            if scratch_on(h, s) != RM.SSD:
+                continue
+            if h not in on.setdefault(s, []):
+                on[s].append(h)
+            n += 1
+            d = RM.need(s)[0] * 1.074   # (GiB to GB)
+            g = SRC.disk_gb(s)
+            est += min(g, d) if g is not None else d
+            top += d
+    if not n:
+        return "in RAM: ~0 GB written to the SSDs (records only, ~5 MB a case)"
+    what = "; ".join(f"{s} on {', '.join(on[s])}" for s in sources if s in on)
+    return (f"on the SSD (/bkoscratch, cmp-run.sh --reserve-ssd): {n} cases ({what}), ~{est:.0f} GB written est. "
+            f"(HoltTest1's gb_disk a case, testvm/test2/estimates.tsv), at most ~{top:.0f} GB (its D a case); "
+            f"the rest in RAM: ~0 GB written to the SSDs (records only, ~5 MB a case)")
 
 
 def preflight(hosts):
@@ -456,8 +550,9 @@ def prep_cmd(h, ss, run):
 
 def prep_room(source):
     """A preparation's --reserve: 2 GiB of the RAM disk (it works on /bkoscratch), and the
-    source's memory (bs2lib/room.py: 3 GiB, or HoltTest1's for its guest if more)."""
-    from bs2lib import room as RM
+    source's memory (bs2lib/room.py: 3 GiB, or HoltTest1's for its guest if more).  A
+    source whose cases work on /bkoscratch (room.py scratch(): vanilla3) prepares the same
+    way: every preparation is HT_RAM=0, its 2 GiB only copy_tools' scratch mounts."""
     return f"2 {max(3, RM.of(source)[1])}"
 
 
@@ -481,8 +576,8 @@ def draw_cmd(lead_host, ss, sources, n, run):
     for s in ss:
         c.append(light(lead_host, f"{HOST_BS2} enqueue {s} {n} --tier 1 --run {run} --to {rd}/pick-{s}-t1.txt",
                        f"bs2:{run}:pick"))
-        if s in UEFI and tier2_each(sources):
-            c.append(light(lead_host, f"{HOST_BS2} enqueue {s} {tier2_each(sources)} --tier 2 --run {run} --from 500000"
+        if tier2_of(s, sources):
+            c.append(light(lead_host, f"{HOST_BS2} enqueue {s} {tier2_of(s, sources)} --tier 2 --run {run} --from 500000"
                                       f" --to {rd}/pick-{s}-t2.txt", f"bs2:{run}:pick"))
     c += [f"sudo mkdir -p {rd}-t0", f"sudo chown -R m: {rd} {rd}-t0",
           f"cd {rd} && {{ {' '.join(f'grep -H . pick-{s}-t[12].txt;' for s in ss)} true; }}"]
@@ -811,7 +906,8 @@ def main():
         sources = [x for x in rest if not x.isdigit()] or ALPINE
         bad = [s for s in sources if s not in HOME]
         if bad:
-            sys.exit(f"bs2: no source {bad} (BackShot2's sources are {', '.join(SOURCES)}; the other Linux ones are A2's, not built)")
+            sys.exit("bs2: not a BackShot2 source now:\n  " + "\n  ".join(SRC.classify(s).phrase() for s in bad) +
+                     f"\n(its {len(SOURCES)} sources: {', '.join(SOURCES)})")
         if plan:
             return plan_words(sources, n)
         run_words(sources, n, time.strftime("bs2a-%Y%m%d-%H%M"))
@@ -837,7 +933,7 @@ def main():
         stamp = time.strftime(f"{w}-%Y%m%d-%H%M")
         if plan:
             n = int(a[2]) if w == "soak" else 1
-            print(f"{w} {path} on {h}: tier {tier or 1 if w == 'soak' else tier}, ~{n * SECS[tier or 1] / 60:.0f} min est.")
+            print(f"{w} {path} on {h}: tier {tier or 1 if w == 'soak' else tier}, ~{n * secs(src, tier or 1) / 60:.0f} min est.")
             return
         sync([h])
         if w == "replay" and tier == 0:

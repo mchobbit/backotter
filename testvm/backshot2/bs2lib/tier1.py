@@ -4,7 +4,11 @@ root under a cmp-run.sh --reserve (bs2-host tier1 does it from the queue).
 
 ht1.sh's work goes in /mnt/bko-ram/backshot2/RUN/CASE and ends in
 /bkoscratch/backshot2/RUN/CASE (HT_WORK and HT_RECORDS, a pair): a pass
-keeps its records only, a failure everything.  The verdict comes from its
+keeps its records only, a failure everything.  A case whose source's room is
+over the host's RAM disk (scratch "ssd": bs2lib/room.py scratch(), under
+cmp-run.sh --reserve-ssd) runs with HT_RAM=0 and HT_WORK under
+/bkoscratch/backshot2/work instead: ht1.sh then works in its records'
+directory on /bkoscratch itself, and its row says scratch "ssd".  The verdict comes from its
 report: PASS; HARNESS when what failed is the rig's (no SSH, the rescuer,
 the host), rerun once; FAIL otherwise, with the first FAIL line as the
 failing check (the shrinker keeps a case failing at that check).
@@ -95,14 +99,21 @@ def read_or(path, default=None):
         return default
 
 
-def run_once(case, name, source, tier, run, port, here, testvm, root, holt):
+def env_of(scratch, root):
+    """ht1.sh's HT_WORK (and HT_RAM) for a case whose scratch is SCRATCH ("ram" or "ssd")."""
+    if scratch == "ssd":
+        return {"HT_RAM": "0", "HT_WORK": f"{root}/work"}
+    return {"HT_WORK": "/mnt/bko-ram/backshot2"}
+
+
+def run_once(case, name, source, tier, run, port, here, testvm, root, holt, scratch="ram"):
     cdir = f"{root}/runs/{run}/cases"
     os.makedirs(cdir, exist_ok=True)
     cpath = f"{cdir}/{name}.case"
     C.write(cpath, dict(case, name=name))
     env = dict(os.environ, HT_VARIANT="bs2", BS2_CASE=cpath, BS2_NAME=name, BS2_TIER=str(tier),
-               BS2_HOST=os.path.join(here, "bs2-host"), HT_WORK="/mnt/bko-ram/backshot2", HT_RECORDS=root,
-               HT_HOLT=holt, HT_PORT=str(port), HT_QUICK="1")
+               BS2_HOST=os.path.join(here, "bs2-host"), HT_RECORDS=root,
+               HT_HOLT=holt, HT_PORT=str(port), HT_QUICK="1", **env_of(scratch, root))
     log = f"{root}/runs/{run}/logs/{name}.t{tier}.log"
     os.makedirs(os.path.dirname(log), exist_ok=True)
     t0 = time.time()
@@ -122,17 +133,19 @@ def run_once(case, name, source, tier, run, port, here, testvm, root, holt):
     return v, check, fails, time.time() - t0, k
 
 
-def run(case, name, source, gen, dump, tier, run_name, port, here, testvm, root, holt, bins):
-    v, check, fails, wall, k = run_once(case, name, source, tier, run_name, port, here, testvm, root, holt)
+def run(case, name, source, gen, dump, tier, run_name, port, here, testvm, root, holt, bins, scratch="ram"):
+    v, check, fails, wall, k = run_once(case, name, source, tier, run_name, port, here, testvm, root, holt, scratch)
     attempt = 1
     if v == "HARNESS":
         # Test2's flake rule: a harness failure reruns once (its K goes to K.1).
         attempt = 2
-        v, check, fails, wall2, k = run_once(case, name, source, tier, run_name, port, here, testvm, root, holt)
+        v, check, fails, wall2, k = run_once(case, name, source, tier, run_name, port, here, testvm, root, holt, scratch)
         wall += wall2
     line = {"case": name, "hash": C.case_hash(case), "source": source, "gen": gen, "tier": tier, "verdict": v,
             "check": check, "why": fails[:5], "dir": k, "attempt": attempt, "wall_s": round(wall),
             "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    if scratch == "ssd":
+        line["scratch"] = "ssd"   # (in RAM, as every case before A2: no field)
     with open(f"{root}/runs/{run_name}/tier{tier}.jsonl", "a") as f:
         f.write(json.dumps(line) + "\n")
     L.write_rows(run_name, source, gen, [(name, case, v, fails or [check or ""])], tier=tier, wall=wall, bins=bins)

@@ -12,16 +12,20 @@ never the shared ~/backotter-work/testvm.
   bs2-host tier0 SOURCE N [--from SEED] [--run RUN] [--keep-passes K]
                                          N new cases from SOURCE, through tier 0
   bs2-host tier0-cases CASE... [--run RUN]   given cases, through tier 0
-  bs2-host tier1 CASE --tier 1|2 [--run RUN] [--port P]
-                                         (root, under cmp-run.sh --reserve) one case through ht1.sh
+  bs2-host tier1 CASE --tier 1|2 [--run RUN] [--port P] [--scratch auto|ram|ssd]
+                                         (root, under cmp-run.sh --reserve, or --reserve-ssd for
+                                         scratch ssd) one case through ht1.sh
   bs2-host enqueue SOURCE N --tier 1|2 --run RUN [--from SEED] [--to FILE]
                                          (root) N cases that pass tier 0, for the queue (RUN/queue.txt,
                                          or FILE: bs2 splits them over its hosts)
   bs2-host queue RUN [--slots N]         (as m) N workers (1-6, ports 2943-2948) taking RUN/queue.txt
   bs2-host leftovers [SET] [--run RUN] [--port P] [--from N] [--release] [--plan]
                                          (as m) the leftovers set: its steps in order on one disk
-  bs2-host reserve CASE [--disk D]       the RAM disk (GiB) CASE's tier 1 reserves: D (2) and its
-                                         inode tables on LUKS past the source's (case.disk_gib)
+  bs2-host reserve CASE [--disk D] [--mem M] [--words]
+                                         the RAM disk (GiB) CASE's tier 1 reserves: D (2) and its
+                                         inode tables on LUKS past the source's (case.disk_gib);
+                                         --words: the whole reservation, --reserve D M or, for a
+                                         source over this host's RAM disk, --reserve-ssd D M
   bs2-host gen SOURCE SEED              print the case SEED gives (no run)
   bs2-host caps                          what the bko-holt under test supports (--new-uuids)
 
@@ -37,7 +41,9 @@ Paths (ROOT=/bkoscratch/backshot2, BS2_ROOT overrides):
                         the queue's HARNESS rows for cases that wrote none), cases/
                         (each case run, as a .case file), logs/
   ROOT/bin/             the bko-holt and planner under test (BS2_HOLT, BS2_PLANNER override)
-Work goes in /mnt/bko-ram/backshot2/ (RAM), deleted on a pass.
+Work goes in /mnt/bko-ram/backshot2/ (RAM), deleted on a pass; a case whose source's
+room is over this host's RAM-disk ceiling, where the host table lets it (bs2lib/room.py
+scratch(): vanilla3), works on /bkoscratch instead (HT_RAM=0, cmp-run.sh --reserve-ssd).
 """
 
 import argparse
@@ -545,21 +551,71 @@ def cmd_tier1(a):
     name = c.get("name") or C.name_of(c)
     src = C.source_name(c)
     gen, dump = load_source(src)
-    rc = T1.run(c, name, src, gen, dump, a.tier, a.run, a.port, HERE, TESTVM, ROOT, holt_bin(), bins())
+    scratch = case_scratch(a.case) if a.scratch == "auto" else a.scratch
+    rc = T1.run(c, name, src, gen, dump, a.tier, a.run, a.port, HERE, TESTVM, ROOT, holt_bin(), bins(), scratch=scratch)
     sys.exit(rc)
 
 
 # ---- a case's reservation ------------------------------------------------------------
 
-_DUMPS, _CEILING = {}, []
+_DUMPS, _CEILING, _HOSTS = {}, [], []
 
 
-def case_disk(path, base=C.DISK_GIB):
+def ceiling():
+    """This host's cmp-run.sh --ceiling, (disk, memory) GiB, read once; None when it can't be read."""
+    if not _CEILING:
+        try:
+            r = subprocess.run([f"{WORK}/cmp-run.sh", "--ceiling"], capture_output=True, text=True, cwd=WORK)
+            w = r.stdout.split()
+            _CEILING.append((float(w[0]), float(w[1])) if r.returncode == 0 and len(w) >= 2 else None)
+        except (OSError, ValueError):
+            _CEILING.append(None)
+    return _CEILING[0]
+
+
+def hosts_table():
+    """testvm/test2/t2lib/hosts.py of this copy (the host table's reader), loaded by its path."""
+    if not _HOSTS:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("bs2_host_hosts", os.path.join(TESTVM, "test2", "t2lib", "hosts.py"))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        _HOSTS.append(m)
+    return _HOSTS[0]
+
+
+def host_name():
+    import socket
+    return os.environ.get("BS2_HOSTNAME") or socket.gethostname().split(".")[0]
+
+
+def disk_ok():
+    """Whether this host may put a job's scratch on its SSD (hosts.json: holt_disk_mode, or a
+    scratch_mode other than ram; hosts.py disk_scratch).  No, when the table can't say."""
+    try:
+        return bool(hosts_table().disk_scratch(host_name()))
+    except Exception:
+        return False
+
+
+def case_scratch(path):
+    """Where the case at PATH works here: "ssd" (/bkoscratch, HT_RAM=0, under --reserve-ssd)
+    when its source's room is over this host's RAM-disk ceiling and the host table lets this
+    host put scratch on its SSD (bs2lib/room.py scratch(), as bs2 placed it: bs2 deals such a
+    source here only when no host of the run could hold it in RAM); else "ram", as before."""
+    from bs2lib import room as RM
+    try:
+        return RM.scratch(C.source_name(C.read(path)), ceiling(), disk_ok()) or RM.RAM
+    except Exception:   # (an estimate: never what stops a case)
+        return RM.RAM
+
+
+def case_disk(path, base=C.DISK_GIB, ssd=False):
     """The RAM disk (GiB) the case at PATH reserves: C.disk_gib on its source's
     dump, from BASE or the source's own room if more (bs2lib/room.py: Alpine's
     bs2's own, the others HoltTest1's), within this host's cmp-run.sh --ceiling.
     BASE when either can't be read (a warning on stderr): the case still runs,
-    and its row says if it went over."""
+    and its row says if it went over.  SSD: the same of the SSD, with no ceiling."""
     from bs2lib import room as RM
     base = int(float(base))
     try:
@@ -568,10 +624,7 @@ def case_disk(path, base=C.DISK_GIB):
         base = max(base, RM.of(src)[0])
         if src not in _DUMPS:
             _DUMPS[src] = dumpx.load(f"{source_dir(src)}/src.json")
-        if not _CEILING:
-            r = subprocess.run([f"{WORK}/cmp-run.sh", "--ceiling"], capture_output=True, text=True, cwd=WORK)
-            _CEILING.append(float(r.stdout.split()[0]) if r.returncode == 0 and r.stdout.split() else None)
-        return C.disk_gib(c, _DUMPS[src], base, _CEILING[0])
+        return C.disk_gib(c, _DUMPS[src], base, None if ssd else (ceiling() or (None,))[0])
     except Exception as e:   # (an estimate: never what stops a case)
         print(f"bs2-host: {path}: its reservation as {base} GiB, the estimate failed: {e}", file=sys.stderr)
         return base
@@ -587,9 +640,44 @@ def case_mem(path, base="3"):
         return str(base)
 
 
+def ssd_reserve():
+    """How cmp-run.sh holds a job whose scratch is on /bkoscratch here, as ht1-queue.sh does:
+    "--reserve-ssd" (its D against the SSD's room) when this host's scratch_mode isn't ram
+    and its cmp-run.sh has --reserve-ssd; else "--reserve 0" (holt_disk_mode's older way:
+    no RAM disk, the memory only)."""
+    try:
+        mode = hosts_table().holt_scratch(host_name())
+    except Exception:
+        mode = "ram"
+    try:
+        with open(os.path.realpath(f"{WORK}/cmp-run.sh"), errors="replace") as f:
+            has = "--reserve-ssd" in f.read()
+    except OSError:
+        has = False
+    return "--reserve-ssd" if mode != "ram" and has else "--reserve 0"
+
+
+def reserve_words(path, disk=str(C.DISK_GIB), mem="3"):
+    """(cmp-run.sh's reservation words for the case at PATH, where it works: "ram" or
+    "ssd"): --reserve D M in the RAM disk (case_disk, case_mem), or on /bkoscratch
+    --reserve-ssd D M (or --reserve 0 M: ssd_reserve()), D then uncapped by the RAM disk."""
+    m = case_mem(path, mem)
+    if case_scratch(path) == "ssd":
+        how = ssd_reserve()
+        if how == "--reserve-ssd":
+            return ["--reserve-ssd", str(case_disk(path, disk, ssd=True)), m], "ssd"
+        return ["--reserve", "0", m], "ssd"
+    return ["--reserve", str(case_disk(path, disk)), m], "ram"
+
+
 def cmd_reserve(a):
     """The --reserve DISK for CASE (bs2's replay, soak and corpus put it on their cmp-run.sh);
-    with --mem M, "DISK MEM", the memory its source's room asks if more than M."""
+    with --mem M, "DISK MEM", the memory its source's room asks if more than M; with --words,
+    the whole reservation ("--reserve D M", or "--reserve-ssd D M" for a case that works on
+    /bkoscratch here: reserve_words())."""
+    if a.words:
+        print(" ".join(reserve_words(a.case, a.disk, a.mem or "3")[0]))
+        return
     print(case_disk(a.case, a.disk) if a.mem is None else f"{case_disk(a.case, a.disk)} {case_mem(a.case, a.mem)}")
 
 
@@ -704,8 +792,10 @@ def cmd_shrink(a):
             return v, (t0_check(why) if v == "FAIL" else None), why
         p = f"{run_dir(work_run)}/cases/{nm}.case"
         C.write(p, dict(case, name=nm))
-        r = subprocess.run([f"{WORK}/cmp-run.sh", "--reserve", str(case_disk(p)), case_mem(p), "sudo", "-E", "BS2_NO_LEDGER=1", os.path.join(HERE, "bs2-host"), "tier1", p,
-                            "--tier", str(a.tier), "--run", work_run, "--port", str(a.port)], cwd=WORK, capture_output=True, text=True)
+        res, where = reserve_words(p)
+        r = subprocess.run([f"{WORK}/cmp-run.sh"] + res + ["sudo", "-E", "BS2_NO_LEDGER=1", os.path.join(HERE, "bs2-host"), "tier1", p,
+                            "--tier", str(a.tier), "--run", work_run, "--port", str(a.port), "--scratch", where], cwd=WORK,
+                           capture_output=True, text=True, env=dict(os.environ, **({"WEAR_SCRATCH": "ssd"} if where == "ssd" else {})))
         try:
             line = json.loads([l for l in r.stdout.splitlines() if l.startswith("{")][-1])
         except (IndexError, ValueError):
@@ -838,10 +928,15 @@ def cmd_queue(a):
             job = take()
             if not job:
                 return
-            tier, path = job
-            r = subprocess.run([f"{WORK}/cmp-run.sh", "--reserve", str(case_disk(path, a.disk)), case_mem(path, a.mem), "sudo", "-E", os.path.join(HERE, "bs2-host"), "tier1", path,
-                                "--tier", tier, "--run", a.run, "--port", str(port)],
-                               env=dict(os.environ, WEAR_TAG=f"bs2:{a.run}:{os.path.basename(path)}"), cwd=WORK,
+            tier, path = job[:2]
+            # (In the RAM disk, or on /bkoscratch for a source over this host's RAM disk: reserve_words.)
+            res, where = reserve_words(path, a.disk, a.mem)
+            env = dict(os.environ, WEAR_TAG=f"bs2:{a.run}:{os.path.basename(path)}")
+            if where == "ssd":
+                env["WEAR_SCRATCH"] = "ssd"
+            r = subprocess.run([f"{WORK}/cmp-run.sh"] + res + ["sudo", "-E", os.path.join(HERE, "bs2-host"), "tier1", path,
+                                "--tier", tier, "--run", a.run, "--port", str(port), "--scratch", where],
+                               env=env, cwd=WORK,
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
                                errors="replace")
             unrowed(rd, tier, path, r.returncode, r.stderr)
@@ -887,6 +982,8 @@ def main():
     x.add_argument("--tier", type=int, default=1, choices=(1, 2))
     x.add_argument("--run", default=time.strftime("t1-%Y%m%d"))
     x.add_argument("--port", type=int, default=2680)
+    x.add_argument("--scratch", default="auto", choices=("auto", "ram", "ssd"),
+                   help="where ht1.sh works: the RAM disk, or /bkoscratch (HT_RAM=0); auto: case_scratch()")
     x = s.add_parser("apply")
     x.add_argument("case")
     x.add_argument("src")
@@ -940,6 +1037,7 @@ def main():
     x.add_argument("case")
     x.add_argument("--disk", default=str(C.DISK_GIB), help="the source's own cases' room, GiB")
     x.add_argument("--mem", default=None, help="print the memory too: this, or the source's room if more, GiB")
+    x.add_argument("--words", action="store_true", help="print the whole cmp-run.sh reservation (reserve_words)")
     x = s.add_parser("gen")
     x.add_argument("source")
     x.add_argument("seed", type=int)

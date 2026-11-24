@@ -43,7 +43,7 @@ def lists(n=N, short=None):
     for s in B.ALPINE:
         out[(s, 1)] = [f"/r/cases/{s}-t1-{i:03d}.case" for i in range(n)]
         if s != "alpine324":
-            out[(s, 2)] = [f"/r/cases/{s}-t2-{i:03d}.case" for i in range(B.tier2_each(B.ALPINE))]
+            out[(s, 2)] = [f"/r/cases/{s}-t2-{i:03d}.case" for i in range(B.tier2_of(s, B.ALPINE))]
     for k, m in (short or {}).items():
         out[k] = out[k][:m]
     return out
@@ -97,7 +97,7 @@ class Commands(unittest.TestCase):
         self.assertIn("--slice=bko.slice", c, "hosts.json's job_slice")
         self.assertIn(B.HOST_IOLOG, c)
         order = [c.index(f"enqueue {s} {k} --tier {t} ") for s in ("alpine324-lvm", "alpine324-luks")
-                 for t, k in ((1, N), (2, B.tier2_each(B.ALPINE)))]
+                 for t, k in ((1, N), (2, B.tier2_of(s, B.ALPINE)))]
         self.assertEqual(order, sorted(order), "each source's tier 1, then its tier 2, in order")
         self.assertIn("grep -H . pick-alpine324-lvm-t[12].txt;", c)
 

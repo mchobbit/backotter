@@ -407,8 +407,11 @@ class TestBs2Switches(unittest.TestCase):
             self.assertNotIn("BS2_", B.root("x"))
 
     def test_estimates_are_labelled(self):
-        self.assertLess(B.SECS[1], 110)
-        self.assertLess(B.SECS[1], B.SECS[2])
+        from bs2lib import sources as SRC
+        self.assertEqual(SRC.secs("alpine324", 1), (65, "measured"))
+        self.assertEqual(SRC.secs("guix15", 2), (230, "measured"))
+        self.assertEqual(SRC.secs("debian13", 1)[1], "est.")
+        self.assertEqual(B.secs("alpine324-luks", 1), 141)
 
 
 if __name__ == "__main__":

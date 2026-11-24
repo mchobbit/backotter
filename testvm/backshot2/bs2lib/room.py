@@ -56,3 +56,33 @@ def need(source, path=SIZES):
     refuses each at once (bs2's held() leaves such a host's copy out)."""
     d, m = of(source, path)
     return max(C.DISK_GIB, d), max(MEM, m)
+
+
+EPS = 1e-9
+RAM, SSD = "ram", "ssd"
+
+
+def scratch(source, ceiling, disk_ok, run_disk=None, path=SIZES):
+    """Where SOURCE's cases work on a host, or None when the host can't hold them:
+    - "ram": in the RAM disk, under cmp-run.sh --reserve D M, as every case did before
+      A2: whenever need()'s D and M are within the host's CEILING ((disk, memory) GiB,
+      its cmp-run.sh --ceiling; None: unknown, holds nothing);
+    - "ssd": on /bkoscratch (HT_RAM=0, under --reserve-ssd D M), only for a source whose
+      D is over every RAM ceiling of the run (RUN_DISK: the largest of the run's hosts'
+      disk ceilings; None: this host's alone, as bs2-host on the host decides) on a host
+      that may put a job's scratch on its SSD (DISK_OK: hosts.py disk_scratch, its
+      holt_disk_mode or a scratch_mode other than ram) whose memory ceiling holds its M:
+      vanilla3, D 30 GiB over the big hosts' 29, today.
+    A source one host of the run can hold in RAM never goes to the SSD on another: it
+    stays in the RAM disks that hold it, as before."""
+    if not ceiling:
+        return None
+    d, m = need(source, path)
+    if m > ceiling[1] + EPS:
+        return None
+    if d <= ceiling[0] + EPS:
+        return RAM
+    top = max(ceiling[0], run_disk if run_disk is not None else ceiling[0])
+    if disk_ok and d > top + EPS:
+        return SSD
+    return None

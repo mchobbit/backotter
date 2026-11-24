@@ -1266,19 +1266,62 @@ mod tests {
     }
 
     /// A fake in sh: checks the key file it is given, then writes events.
+    /// Once the key is checked it leaves its pid in `pid`, then the key
+    /// file's path in `key-was` (whole, by a rename), so a test can wait
+    /// for `key-was` and know the fake runs.
+    ///
+    /// A child sh writes the file, not this process: a test in another
+    /// thread that forks to start its own fake while this one writes would
+    /// carry the open file into its child until that execs, and starting
+    /// this fake then fails with ETXTBSY ("Text file busy").  The child
+    /// has exited before the fake is started, its copy with it.
     fn sh_fake(dir: &Path, body: &str) -> String {
-        use std::os::unix::fs::PermissionsExt as _;
         let p = dir.join("fake");
+        let d = dir.display();
         let script = format!(
             "#!/bin/sh\nfor a; do case $a in {KEY_NAME}=*) k=${{a#{KEY_NAME}=}};; --commit) exit 7;; esac; done\n\
              [ \"$BKO_HOLT_NO_COMMIT\" = 1 ] || exit 8\n\
              [ \"$(cat \"$k\")\" = pw ] || exit 9\n\
-             echo \"$k\" >\"{}/key-was\"\n{body}\n",
-            dir.display()
+             echo $$ >\"{d}/pid\"\n\
+             echo \"$k\" >\"{d}/key-was.new\" && mv \"{d}/key-was.new\" \"{d}/key-was\"\n{body}\n"
         );
-        fs::write(&p, script).unwrap();
-        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        let st = Command::new("/bin/sh")
+            .args(["-c", "printf '%s' \"$1\" >\"$2.new\" && chmod 755 \"$2.new\" && mv \"$2.new\" \"$2\"", "sh"])
+            .arg(script)
+            .arg(&p)
+            .status()
+            .unwrap();
+        assert!(st.success(), "writing the fake: {st}");
         p.to_string_lossy().to_string()
+    }
+
+    /// A line for a fake's body: wait until the test opens `dir`'s gate.
+    fn wait_for_gate(dir: &Path) -> String {
+        format!("while [ ! -e '{}' ]; do sleep 0.01; done", dir.join("gate").display())
+    }
+
+    /// Wait until `f` holds, a millisecond at a time.  A minute means the
+    /// test is stuck: it is never what a test relies on.
+    fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
+        let t = Instant::now();
+        while !f() {
+            assert!(t.elapsed().as_secs() < 60, "waited a minute for {what}");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    /// Whether process `pid`, a child of ours, has exited and not been
+    /// reaped yet (a zombie, as try_wait would then see it).
+    fn is_zombie(pid: &str) -> bool {
+        if cfg!(target_os = "linux") {
+            // The state is the field after the name, which ends at the
+            // last ')'.
+            let s = fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+            s.rsplit_once(')').unwrap().1.trim_start().starts_with('Z')
+        } else {
+            let o = Command::new("ps").args(["-o", "stat=", "-p", pid]).output().unwrap();
+            o.stdout.trim_ascii_start().starts_with(b"Z")
+        }
     }
 
     #[test]
@@ -1328,35 +1371,77 @@ mod tests {
         fs::remove_dir_all(&d).unwrap();
     }
 
-    /// Scripted, but each question waits a while first, as a person
-    /// would.
-    struct Slow(Scripted, u64);
+    /// When a Gated Ui lets its fake end.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Ends {
+        /// While Stop is asked: the answer waits until the fake has
+        /// exited.
+        AtQuestion,
+        /// When the gauge is shown again, which is followed to its end.
+        AtGauge,
+        /// Not at all: the fake runs on (one that doesn't wait for the
+        /// gate).
+        Never,
+    }
 
-    impl Ui for Slow {
+    /// Scripted, with the gate of a fake that waits for it
+    /// (`wait_for_gate`) in its hands, so the fake ends at a known point
+    /// of the page and not after some sleep.  Each question first waits
+    /// for the fake to have checked its key.
+    struct Gated {
+        ui: Scripted,
+        dir: PathBuf,
+        ends: Ends,
+    }
+
+    impl Gated {
+        fn new(dir: &Path, ends: Ends, replies: impl IntoIterator<Item = Reply>) -> Gated {
+            // What the last fake left.
+            for f in ["gate", "pid", "key-was"] {
+                let _ = fs::remove_file(dir.join(f));
+            }
+            Gated { ui: Scripted::new(replies), dir: dir.to_path_buf(), ends }
+        }
+
+        fn open_gate(&self) {
+            fs::write(self.dir.join("gate"), "").unwrap();
+        }
+    }
+
+    impl Ui for Gated {
         fn menu(&mut self, d: &Menu) -> Answer<usize> {
-            self.0.menu(d)
+            self.ui.menu(d)
         }
         fn radio(&mut self, d: &Radio) -> Answer<usize> {
-            self.0.radio(d)
+            self.ui.radio(d)
         }
         fn input(&mut self, d: &Input) -> Answer<String> {
-            self.0.input(d)
+            self.ui.input(d)
         }
         fn password(&mut self, d: &Password) -> Answer<Secret> {
-            self.0.password(d)
+            self.ui.password(d)
         }
         fn yes_no(&mut self, d: &Question) -> Answer<bool> {
-            std::thread::sleep(std::time::Duration::from_millis(self.1));
-            self.0.yes_no(d)
+            wait_until("the fake to check its key", || self.dir.join("key-was").exists());
+            if self.ends == Ends::AtQuestion {
+                self.open_gate();
+                let pid = fs::read_to_string(self.dir.join("pid")).unwrap();
+                wait_until("the fake to exit", || is_zombie(pid.trim()));
+            }
+            self.ui.yes_no(d)
         }
         fn message(&mut self, d: &Message) -> Answer<()> {
-            self.0.message(d)
+            self.ui.message(d)
         }
         fn view(&mut self, d: &TextView) -> Answer<()> {
-            self.0.view(d)
+            self.ui.view(d)
         }
         fn progress(&mut self, d: &Progress, tick: &mut dyn FnMut() -> Tick) -> Answer<()> {
-            self.0.progress(d, tick)
+            if self.ends == Ends::AtGauge && self.ui.replies.front() == Some(&Reply::Ok) {
+                self.open_gate();
+                wait_until("the gauge to see the end", || tick() == Tick::Done);
+            }
+            self.ui.progress(d, tick)
         }
     }
 
@@ -1364,24 +1449,27 @@ mod tests {
     fn stop_after_it_ended_says_how_it_ended() {
         let d = scratch("ended");
         let ev = "{\"event\":\"start\",\"format\":\"bko-holt-events\",\"schema\":1,\"commit\":false}\n{\"event\":\"end\",\"exit\":0}";
-        let fake = sh_fake(&d, &format!("printf '%s\\n' '{}'", ev.replace('\n', "' '")));
-        // Cancel at the first tick; the fake ends while Stop is asked.
+        let gated = format!("{}\nprintf '%s\\n' '{}'", wait_for_gate(&d), ev.replace('\n', "' '"));
+        let fake = sh_fake(&d, &gated);
+        // Cancel at the first tick, the fake waiting for its gate; it
+        // ends while Stop is asked.
         let r = [Reply::Secret(b"pw".to_vec()), Reply::Button(CANCEL), Reply::Yes, Reply::Ok];
-        let mut ui = Slow(Scripted::new(r), 1500);
+        let mut ui = Gated::new(&d, Ends::AtQuestion, r);
         let mut seen = Seen::default();
-        assert_eq!(restore(&mut ui, &fake, &mut seen), Answer::Ok(()));
-        assert_eq!(seen.run.as_deref(), Some("done"), "{:?}", ui.0.asked);
-        // Keep going (Back, as Esc gives) goes on following it.
-        let fake = sh_fake(&d, &format!("sleep 0.3\nprintf '%s\\n' '{}'", ev.replace('\n', "' '")));
+        assert_eq!(restore(&mut ui, &fake, &mut seen), Answer::Ok(()), "{:?}", ui.ui.asked);
+        assert_eq!(seen.run.as_deref(), Some("done"), "{:?}", ui.ui.asked);
+        // Keep going (Back, as Esc gives) goes on following it: the end is
+        // seen by the gauge, shown again.
         let r = [Reply::Secret(b"pw".to_vec()), Reply::Button(CANCEL), Reply::Back, Reply::Ok, Reply::Ok];
-        let mut ui = Scripted::new(r);
+        let mut ui = Gated::new(&d, Ends::AtGauge, r);
         let mut seen = Seen::default();
-        assert_eq!(restore(&mut ui, &fake, &mut seen), Answer::Ok(()));
-        assert_eq!(seen.run.as_deref(), Some("done"), "{:?}", ui.asked);
+        assert_eq!(restore(&mut ui, &fake, &mut seen), Answer::Ok(()), "{:?}", ui.ui.asked);
+        assert_eq!(seen.run.as_deref(), Some("done"), "{:?}", ui.ui.asked);
+        let kinds: Vec<_> = ui.ui.asked.iter().map(|a| a.0).collect();
+        assert_eq!(kinds, ["password", "progress", "yes_no", "progress", "message"]);
         // Plain from the question leaves the page, the fake stopped.
         let fake = sh_fake(&d, "exec sleep 30");
-        let _ = fs::remove_file(d.join("key-was"));
-        let mut ui = Slow(Scripted::new([Reply::Secret(b"pw".to_vec()), Reply::Button(CANCEL), Reply::Plain]), 700);
+        let mut ui = Gated::new(&d, Ends::Never, [Reply::Secret(b"pw".to_vec()), Reply::Button(CANCEL), Reply::Plain]);
         let t = Instant::now();
         assert_eq!(restore(&mut ui, &fake, &mut seen), Answer::Plain);
         assert!(t.elapsed().as_secs() < 20);

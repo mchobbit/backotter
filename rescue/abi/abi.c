@@ -17,6 +17,10 @@
 #if defined(__sun)
 #include <stropts.h>
 #endif
+#if defined(__OpenBSD__)
+#include <sys/types.h>
+#include <dev/wscons/wsconsio.h>
+#endif
 
 #ifndef BKO_IOCTL_REQ
 #error "build with -DBKO_IOCTL_REQ=<type>, as abi/check.sh does"
@@ -73,9 +77,17 @@ int main(int argc, char **argv)
 	CONST(ECHONL);
 	CONST(ISIG);
 	CONST(IEXTEN);
+#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
+	CONST(PENDIN);
+#endif
 	CONST(VMIN);
 	CONST(VTIME);
 	CONST(TIOCGWINSZ);
+#if defined(__OpenBSD__)
+	CONST(WSDISPLAYIO_GTYPE);
+	CONST(WSDISPLAY_TYPE_ISAVGA);
+	CONST(WSDISPLAY_TYPE_PCIVGA);
+#endif
 	printf("type ioctl.request %s\n", XSTR(BKO_IOCTL_REQ));
 	SIZE("winsize", struct winsize);
 	OFF("winsize", struct winsize, ws_row);

@@ -11,7 +11,21 @@ set -eu
 
 [ $# -ge 1 ] || { echo "usage: $0 BKO_RESCUE [CC]" >&2; exit 2; }
 bin=$1
-cc=${2:-${CC:-cc}}
+cc=${2:-${CC:-}}
+if [ -z "$cc" ]; then
+    # cc, else what the build guests have: omnios58's gcc14 is only
+    # /opt/gcc-14/bin/gcc, with no cc on PATH (RT3).
+    for c in cc gcc clang /opt/gcc-*/bin/gcc; do
+        if command -v "$c" >/dev/null 2>&1; then
+            cc=$c
+            break
+        fi
+    done
+fi
+if [ -z "$cc" ] || ! command -v "$cc" >/dev/null 2>&1; then
+    echo "abi: FAIL: no C compiler (${cc:-cc, gcc, clang or /opt/gcc-*/bin/gcc}): name one as the second argument or in CC" >&2
+    exit 1
+fi
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/bko-abi.XXXXXX")
 trap 'rm -rf "$work"' EXIT INT TERM

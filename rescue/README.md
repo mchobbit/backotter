@@ -6,15 +6,16 @@ DragonFly, illumos, Haiku), in Rust, with its own small terminal layer.
 The plan is `docs/design/rescue-tui.md`; the screens are
 `docs/design/rescue-screens.md`.
 
-Status: RT1, RT2 and RT4-RT8.  The crate, the FFI and its header test,
+Status: RT1-RT8.  The crate, the FFI and its header test,
 the terminal layer (profiles, keys, events, restore), the sanitiser, the
 screen buffer with diffed redraw, the golden-screen and byte-stream
 harnesses, the console spike, the widgets with the `Ui` trait and the
 full-screen runner, `Secret`, and plain mode; `--demo` shows every widget
 and, with `--holt` naming the fake bko-holt, follows its events; the pty
 harness (`testvm/rescue/`: `screen.py`, `drive.py`, `fake-bko-holt`).
-RT3 (the spike on every console) hasn't run, so the profile table is
-provisional.  No restore screens yet: `bko-rescue` with no hidden option
+RT3 ran the spike on every console of the seven images under QEMU and
+the header test in every build guest; the profile table is what it
+found ("What RT3 found" in the plan).  No restore screens yet: `bko-rescue` with no hidden option
 says so and exits 2.
 
 ## Rules
@@ -70,7 +71,9 @@ cd ~/backotter-work && HOLT_CRATE=rescue HOLT_SRC=TREE \
 The binary lands in `/bkoscratch/rescue-build/bin/PLATFORM/bko-rescue`, the
 header test's output beside it (`bko-rescue.abi.txt`) and in
 `/bkoscratch/rescue-build/build-PLATFORM/abi.log`; exit 3 means built but the
-header test failed.  Then `testvm/rescue/spike.py` boots the platform's
+header test failed.  With no `cc` on PATH (omnios58), check.sh takes `gcc`,
+`clang` or `/opt/gcc-*/bin/gcc`; `HOLT_ABI_CC` names one.  Then
+`testvm/rescue/spike.py` boots the platform's
 current rescue image (BIOS and UEFI) and runs `--spike` on the serial line,
 the screen (sendkey and screendumps) and ssh (LANG=C.UTF-8 and LANG=C), on a
 host with the images (chopin, cinqcent):
@@ -83,7 +86,12 @@ cd ~/backotter-work && WEAR_TAG=rescue:spike:PLATFORM ./cmp-run.sh --reserve 2 4
 
 It writes `summary.json` (every check: ok, FAIL, SKIPPED with why, JUDGE for
 the PNGs) and per firmware the screens as PNGs and text, the serial log and
-each console's bytes.  See spike.py's docstring.
+each console's bytes.  On the screen it also tries the other line styles,
+mono and each capability by the spike's keys (`screen-NN-x-*.png`) and
+shows SGR 30-37 on 40-47 at the shell (`x-colours`).  `--loader 'framebuffer
+off; set os_console=text'` (illumos) and `--nomodeset` (Linux) reach VGA
+text on a BIOS boot, which QEMU otherwise never gives them.  See spike.py's
+docstring.
 
 ## Options
 
@@ -99,11 +107,12 @@ which a launcher sets.  Hidden, for tests and checks:
 |---|---|
 | `--abi` | our view of the C ABI, one fact a line, for the header test |
 | `--check-tty` | raw mode set, read back, put back and read back; exit 0 when every field is as expected (for checks.sh) |
-| `--profile` | which console this is and what it gets, and why: `os`, `tty`, `term`, `locale`, `size`, `mode`, `rule`, `lines`, `colour`, `caps`, `esc`, `refresh` |
+| `--profile` | which console this is and what it gets, and why: `os`, `tty`, `term`, `locale`, `size`, `mode`, `rule`, `lines`, `draws` (the styles `L` cycles through), `colour`, `caps`, `esc`, `refresh` |
 | `--spike` | the four spike cards (box, list, gauge, password); `--spike panic` panics after the first frame; `--spike linger` waits 5 s after `q`, for the signal test |
 | `--demo` | every widget in a row, in full screen or plain mode as the profile says (`--plain` forces it); with `--holt testvm/rescue/fake-bko-holt`, its restore page hands a typed passphrase to the fake as a key file and follows its events with the gauge (without `--holt` it runs nothing) |
 
-In the spike, `1`-`4` and `n` change card, `l` the line style, `c`
+In the spike, `1`-`4` and `n` change card, `l` the line style (all
+three, whatever the console draws: the spike is for trying them), `c`
 colour, `j` joined SGR parameters, `h` cursor hiding, `e` clearing with
 `ESC [ 2 J`, and `q` quits.  In the password field every key is typed;
 Esc or Tab leaves it.  Keys that came in the same read as that Esc or Tab
@@ -119,9 +128,10 @@ sh abi/check.sh PATH/TO/bko-rescue [CC]
 It builds `abi.c` with the system's `cc` and headers, diffs its lines with
 `bko-rescue --abi`'s, and checks that each function links to the name the
 C program imports (`nm -P`).  A wrong ioctl request type fails the C build
-itself.  POSIX sh, so it runs in every build guest.  RT3 runs it in each
-platform's build guest; so far it has run on Linux (czerny, Debian 13,
-glibc).
+itself.  POSIX sh, so it runs in every build guest.  RT3 ran it in each
+platform's build guest (and on Bigfoot for linux-arm64): it passes on all
+seven.  The binaries other than Linux's are dynamic, so their imports
+are checked too; Linux's static ones can't be.
 
 ## Layout
 
@@ -133,7 +143,7 @@ glibc).
 | `src/term/keys.rs` | bytes to keys, a pure state machine |
 | `src/term/event.rs` | the poll loop: keys with the Esc timeout, resizes, ticks, signals, hang-up; `Term` |
 | `src/term/out.rs` | the sequences each profile may send, line glyphs, attributes |
-| `src/term/profile.rs` | which console this is: the table as data, provisional until RT3 |
+| `src/term/profile.rs` | which console this is: the table as data, from RT3's spike |
 | `src/text.rs` | the sanitiser: `Clean`, caps, width, wrap, truncate |
 | `src/screen.rs` | cells, the canvas, diffed redraw, the golden dump |
 | `src/testkit.rs` | for the tests: a generator, golden files, the byte checker |

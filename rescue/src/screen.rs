@@ -25,7 +25,9 @@ pub const COLS: u16 = 80;
 
 /// Whiptail's palette: white on blue behind, black on grey dialogs, a
 /// black shadow.  Focus is reverse and bold (`Attr::focus`), in colour
-/// and in mono.  RT3 confirms each console shows it.
+/// and in mono.  RT3 saw it on every console; in mono, and on NetBSD's
+/// genfb in colour, the bold can make the focus low contrast (open
+/// question 6 in the plan).
 pub const BACKGROUND: Attr = Attr::colours(Colour::White, Colour::Blue);
 pub const DIALOG: Attr = Attr::colours(Colour::Black, Colour::White);
 pub const SHADOW: Attr = Attr { fg: None, bg: Some(Colour::Black), bold: false, reverse: false };

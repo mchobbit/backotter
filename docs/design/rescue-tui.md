@@ -1,6 +1,6 @@
 # bko-rescue: the terminal layer and its widgets
 
-Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"), RT8 after those (see "What RT8 found"); RT3 and RT9 on are not.
+Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"), RT8 after those (see "What RT8 found"), RT3 the same day on every console of the seven images, its findings folded into the table (see "What RT3 found"); RT9 on are not.
 
 An implementation plan for the stick's terminal UI that `ui.md` describes and
 the user decided on 2026-11-19: one Whiptail-style 80x24 program,
@@ -484,6 +484,10 @@ Decided in this order, first match wins:
 | haiku | any other `TERM` (`on-serial.py` sets `vt100`) | ASCII | D3 |
 
 5. **Anything else:** ASCII, no colour.
+
+RT3 changed this table (OpenBSD's screen split by its display type, DragonFly's
+and illumos's rows, `L` skipping what a console can't draw, Haiku's Terminal
+row by locale): "What RT3 found" and `profile.rs` have the rows as built.
 
 - **illumos's two tem modes** need a sign the spike has to find (*Check*):
   a UEFI boot is always a framebuffer; on a BIOS boot, candidates are the
@@ -1079,6 +1083,254 @@ fuzz runs: every fuzz-style test at `BKO_RESCUE_FUZZ=5000000` and at
   shown as "Esc: keep going"), and a run that ended while it was asked
   says how it ended rather than "Stopped".
 - Still no clippy on czerny, so none ran.
+
+## What RT3 found
+
+Run 2026-11-24 from main at ea360c4, through pick-host and `cmp-run.sh
+--reserve` on chopin, cinqcent and choubox (Bigfoot for linux-arm64): the
+build and the header test in each platform's build guest, then spike.py on
+each platform's `--test` rescue image (images of 2026-11-21, 5d639bf) in
+BIOS and UEFI, on the serial line, the screen and ssh.  Every PNG was read.
+The findings were folded in the same day: the table, PENDIN, OpenBSD's
+display type, the styles `L` cycles through, and the spike's gaps.
+
+**Builds and the header test.**  Every family's ffi.rs compiled the first
+time, with no warning and no change, and every header test passed.  No
+shim trigger came up anywhere.
+
+| Platform | Built on | Rust | Header test |
+|---|---|---|---|
+| linux amd64 | chopin | rustup 1.94.1, +crt-static | 47 facts, 7 symbols; static, so the imports can't be checked, but a dynamic build of the same tree checked them |
+| linux-arm64 | Bigfoot | rustup 1.94.1 | the same, static and dynamic |
+| linux, the floor | choubox | Debian's cargo 1.85.1 | 47 and 7 |
+| freebsd | freebsd14 (14.5-p2) | packaged 1.98.1 | 46 and 7, imports checked (dynamic, as on all but Linux); the binary runs on the 15.1 image |
+| netbsd | netbsd11 (11.1) | pkgsrc 1.96.1 | 46 and 7 |
+| openbsd | openbsd8 (8.0) | packaged 1.98.1 | 46 and 7 |
+| dragonfly | dragonfly6 (6.4) | packaged 1.98.1 | 46 and 7 |
+| illumos | omnios58 (r151058) | packaged 1.100.0 | 44 and 7, once given gcc: omnios58 has no `cc` |
+| haiku | haiku6 (beta6) | rust_bin 1.94.1 | 49 and 7, `__ioctl` among them |
+
+- Debian's cargo is on choubox only (the plan's *Check*), so the 1.85
+  floor build runs there.
+- The builds reproduce: chopin's and cinqcent's Linux binaries, and two
+  illumos builds in fresh guests, were byte-identical.
+
+**What held on every console.**
+
+- **Keys:** every key was decoded once and right on every console, the
+  SS3 Down too, with no key split at 250 ms (serial) or 100 ms (screens and
+  ssh).  The timeouts stay.  Haiku's Terminal sends SS3 arrows in both
+  cursor modes (and Home and End as `ESC O H`/`F`).
+- **Putting the terminal back:** `stty -a` the same after the quit and the
+  panic (once PENDIN is left out, below), exits 0 and 101, the cursor shown
+  again, and echo working, everywhere.
+- **Bytes:** first frames of 3,570 bytes (ASCII mono), 3,769 (ASCII colour)
+  and 4,045 (UTF-8 colour); gauge updates at most 29 bytes in mono, 35 with
+  joined SGR in colour, 39 with one parameter each, so under 40 always.
+  Every byte stream was one the profile allows (screen.py's strict replay).
+- **Size:** only Linux's agetty sets its serial line to 80x24.  FreeBSD's,
+  NetBSD's, DragonFly's and illumos's serial lines start at 0x0, Haiku's
+  serial pty and Terminal at 80x25.  0x0 taken as 80x24 worked on all of
+  them; RT13's launchers still set 80x24 where it is 0x0.
+- **Locale over ssh (D13):** a LANG sent by SendEnv never arrived on
+  Linux, FreeBSD, NetBSD, OpenBSD, DragonFly or Haiku; it did on illumos,
+  whose sshd_config is ours followed by OmniOS's stock one.  Linux's and
+  FreeBSD's sessions have `C.UTF-8` of their own, so ssh is UTF-8 there
+  whatever the client's locale; the other BSDs' and Haiku's have none, so
+  ASCII.  With LANG set in the remote command, the pty rule chose right
+  everywhere.  Contrary to the plan, the Linux image accepts no LANG either
+  (no AcceptEnv on the slim image, or pam_env over it: not determined).
+- **PENDIN (a bko-rescue bug, fixed):** on NetBSD, OpenBSD and DragonFly
+  ptys, `--check-tty` failed with "c_lflag is 0x200005cf, not 0x5cf", and
+  spike.py's `stty -a` comparison saw `-pendin` become `pendin`.  4.4BSD's
+  tty code sets PENDIN itself whenever a tcsetattr turns ICANON back on;
+  the next read clears it.  The restore was exact (plain `stty raw; stty
+  -raw` does the same); serial lines and screens passed only because their
+  shells had left PENDIN set already.  FreeBSD's newer tty layer didn't show
+  it.
+- **Mono focus:** reverse and bold is readable everywhere but low in
+  contrast on several consoles, because the console brightens the
+  foreground before it swaps: the Linux VT (#555 on #AAA, about 3.2:1),
+  wscons on both BSDs, syscons; and NetBSD's genfb in colour too (light
+  grey on dark grey, 2.4:1).  tem, vgacon and Haiku's Terminal show no bold
+  at all, so reverse alone carries the focus there.  Plain reverse was
+  crisp on every one.  Left as it is: see open question 6.
+
+**Per platform.**
+
+- **OpenBSD.**  Serial (`tty00`, 115200, BIOS and UEFI): PASS, 36 of 36.
+  The screen on VGA text (BIOS, `vga1`, 80x25): PASS, DEC lines
+  continuous, colour right, SGR 30-37 on 40-47 with no blink, underline or
+  stray reverse (OpenBSD's "Also").  **The screen on efifb (UEFI, 128x64):
+  FAIL: every DEC line is a `?`.**  rasops's font has no glyphs for the DEC
+  set (VGA text's CP437 font has them); UTF-8 is `â` garbage, ASCII clean.
+  Real machines on UEFI, or on inteldrm, radeondrm or amdgpu, are rasops
+  too, so ASCII will be the common case on real hardware.  The two are told
+  apart by `WSDISPLAYIO_GTYPE` on the tty (`wsconsctl display.type`:
+  vga-pci against efifb).  ssh (`ttyp0`): PASS once PENDIN was masked.
+- **DragonFly.**  Serial (`ttyd0`, 9600): every check passed, but QEMU
+  doesn't pace its UART, so the plan's "a full frame's time at 9600 baud"
+  could only be computed: 3,570 bytes is 3.7 s a full frame on a real line,
+  and card 1 with six keys about 12 s.  Usable but slow; open question 2
+  stays.  Typing at 960 bytes a second can't show sio dropping input.
+  syscons (BIOS VGA text, and UEFI's framebuffer, which works with
+  `--no-secure-boot`: the plan's *Check*): PASS in ASCII.  It takes joined
+  SGR and `ESC [ 2 J`, but **prints `?25l` and `?25h` as text** (`25l`);
+  cons25's own civis (`ESC [ = 1 S`) doesn't hide the cursor in QEMU
+  either.  So the cursor is parked.  UTF-8 is mojibake and DEC prints
+  letters; the VGA font's `|` is a broken bar.  ssh: FAIL from PENDIN
+  alone.  Root's login shell is csh, which spike.py's commands didn't parse
+  (fixed).
+- **NetBSD.**  As the image starts them, the serial line and the screen's
+  `ttyE0` have **no TERM**: getty with `lo=` (gettytab `bko.Pc`,
+  `bko.serial`) gives its program an empty environment, so bko-rescue there
+  would be in plain mode.  An image defect for RT13 (`:tt=wsvt25:` and
+  `:tt=vt100:` in gettytab, or the launcher sets TERM).  With TERM from
+  `/etc/ttys`: serial PASS; the screen on VGA text PASS (DEC, colour); on
+  genfb (UEFI, 128x48) PARTIAL: `?25l` **leaves a frozen image of the
+  cursor** where it was when hidden, redrawn whenever that cell is written
+  (inside a dialog, on a real stick).  Parking works on both, so the row
+  parks.  The genfb colour focus is the low-contrast one above.  ssh:
+  PENDIN.  The `--test` image shows screen 1 (rc.d/wscons's root shell) at
+  boot, not `ttyE0`'s menu, which rc.local adds without switching to it.
+- **FreeBSD.**  Serial (`ttyu0`) PASS; the screen on efifb (UEFI, 160x50)
+  PASS; ssh PASS.  The BIOS screen is vt(4) in true VGA text (80x25):
+  PARTIAL, as UTF-8's horizontal lines show a 1-pixel gap at each cell's
+  9th column, so they look finely dashed (corners and verticals are right).
+  DEC draws the same glyphs with the same gaps and ASCII is worse, so the
+  row stays UTF-8.  FreeBSD's stock spike.py run passed every check first
+  time.
+- **illumos.**  Serial (`term/a`) PASS; ssh PASS (the locale arrives).
+  QEMU's BIOS boot is never VGA text by default: the loader sets a VBE
+  framebuffer, so BIOS and UEFI both give tem on a 1280x800 framebuffer
+  (127x43).  VGA text was reached by typing `framebuffer off; set
+  os_console=text` at the loader's prompt.  **tem takes everything** (joined
+  SGR, `?25l`, `ESC [ 2 J`) **and draws UTF-8 boxes in both modes**, CP437
+  on VGA text, so the plan's sign telling the two modes apart isn't needed
+  (one exists: `TIOCGWINSZ`'s pixel size is 0 on VGA text).  The provisional
+  row (ASCII, every fallback) passed but parked a visible block cursor
+  inside the focused button; a private build with UTF-8 and every cap passed
+  every check in both modes.  DEC isn't supported: `(0` and `(B` print.
+  Bold is invisible on the framebuffer; tem's 37 is light grey.  omnios58
+  has no `cc` (check.sh now finds `/opt/gcc-14/bin/gcc`).
+- **Linux.**  Serial (`ttyS0`) PASS; ssh PARTIAL only for D13 above.  The
+  `--test` image's BIOS boot is bochs-drm fbcon (160x50), not the plan's VGA
+  text; vgacon (80x25) was reached with `nomodeset` by a GRUB edit.  fbcon
+  (BIOS and UEFI) and vgacon draw UTF-8 boxes continuously (CP437 on
+  vgacon), colour, joined SGR, cursor hiding and `ESC [ 2 J`, and /dev/vcsu1
+  read the key log back right at every step.  PARTIAL for two things:
+  **DEC prints letters** (`lqqqk`; the Linux console ignores `ESC ( 0` in
+  UTF-8 mode), so `L` gave broken boxes; and the mono focus above.  No
+  spike on arm64: `ttyAMA0` stays *Check*.
+- **Haiku.**  Serial (on-serial.py's pty) PASS; the Terminal (BIOS and
+  UEFI) PARTIAL: UTF-8 and DEC draw the same glyphs, but vertical lines
+  have 1-2 px gaps between rows (the font's line height), and bold doesn't
+  show.  The "Also": a resize redraws promptly once the pty's size changes,
+  but the Terminal itself takes 0.06-0.49 s to change it, so end to end it
+  was 0.5-0.8 s, within 0.5 s in 3 of 9 tries.  Shrinking below 80x24 shows
+  the too-small notice.  ssh (not in the plan's row): **FAIL: with LANG=C,
+  UTF-8 lines**, because rule 3 skips Haiku's ptys and the Terminal's row
+  matched any xterm TERM.  In one boot of five a notification (the
+  bootstrap's `ssh-keygen -A`) took the focus from the Terminal, and the
+  test's keys went to Tracker.
+
+**What changed.**
+
+- **The table** (profile.rs; `--profile` says each row's words):
+
+| Console | Before | Now |
+|---|---|---|
+| Linux VT | UTF-8, every cap | the same; `L` skips DEC |
+| NetBSD `ttyE*` | DEC, every cap | DEC, the cursor parked; `L` skips UTF-8 |
+| OpenBSD `ttyC*` | DEC, every cap | VGA text (`WSDISPLAYIO_GTYPE` says vga-pci or ISA VGA): DEC, `L` skipping UTF-8; anything else, or the type unreadable: ASCII, `L` ASCII only |
+| DragonFly `ttyv*` | ASCII, every fallback | ASCII, joined SGR, `ESC [ 2 J`, the cursor parked; `L` ASCII only |
+| illumos's tem | ASCII, every fallback, with a VGA-text row planned | UTF-8, every cap, one row for both modes; `L` skips DEC |
+| Haiku's Terminal row | UTF-8 | UTF-8 when the locale says so, else ASCII (the Terminal sets `LC_CTYPE=en.UTF-8`; ssh with no locale gets ASCII, as on the others) |
+| FreeBSD, the serial lines, ssh | | unchanged |
+
+  No row gets every fallback now; the fallbacks stay, tested, for the
+  overrides and the spike.
+- **`L` cycles only the styles the console draws** (each row's `draws`,
+  printed by `--profile` as `draws utf8 dec ascii`).  Serial lines, ssh
+  and unknown consoles keep all three, since the far end is unknown.
+  `--lines` and `BKO_RESCUE_LINES` still force any style: a real console
+  may do better than QEMU's.  The spike's own `l` still tries all three.
+- **PENDIN:** ffi.rs names it (0x20000000) for the four BSDs as
+  `KERNEL_LFLAG`, and `--check-tty`'s comparisons leave it out; abi.c
+  checks the value.  Nothing else reads it.
+- **OpenBSD's display type:** `WSDISPLAYIO_GTYPE` (`_IOR('W', 64, u_int)`)
+  and `WSDISPLAY_TYPE_ISAVGA` and `_PCIVGA` in ffi.rs, checked by abi.c
+  from `<dev/wscons/wsconsio.h>`; `Facts::vga_text`; rows can ask for VGA
+  text (`ModeIs`).
+- **check.sh** finds a compiler when `cc` is missing (gcc, clang,
+  `/opt/gcc-*/bin/gcc`), and says so when there is none, rather than
+  blaming the ioctl type.
+- **spike.py:** every command over ssh runs under `sh -c` (csh); PENDIN is
+  left out of the `stty -a` comparisons; a console with no TERM gets the
+  type from `/etc/ttys`, said as SKIPPED with the reason; a spike that gave
+  up before its first frame (plain mode) says so; on NetBSD Ctrl-Alt-F1
+  before the screen's menu, on Haiku the Terminal made active first; on the
+  screen, the other line styles, mono, the list in mono and each cap toggled
+  (`x-*` PNGs), the panic's own frame, and SGR 30-37 on 40-47 at the shell
+  (`x-colours`); DragonFly's first frame also in real-line seconds;
+  `--loader` (illumos's VGA text) and `--nomodeset` (Linux's vgacon) for
+  BIOS boots; the guest's files fetched without tar's `--exclude`, which
+  illumos's tar lacks.
+
+**Checked after the fold** (the same day, on czerny and the farm):
+
+- czerny: `cargo test` 185 tests, the pty test 117 checks, `demo-test.py`
+  and the header test (47 facts and 7 symbols) all pass, with no warning.
+  No golden changed: czerny's pty is the ssh rule, which still cycles all
+  three styles.
+- Rebuilt through build-holt.sh with the header test, in each build guest:
+  FreeBSD, NetBSD and DragonFly 47 facts (PENDIN added), OpenBSD 50
+  (PENDIN, `WSDISPLAYIO_GTYPE` 0x40045740, ISAVGA 7 and PCIVGA 8, as
+  ffi.rs has them), illumos 44 with no `HOLT_ABI_CC` (check.sh found gcc
+  itself), Haiku 49.  All 7 symbols agree everywhere.
+- spike.py, all consoles, BIOS and UEFI, on OpenBSD, NetBSD and DragonFly
+  with the new binaries: no FAIL in any (346 checks ok on each).
+  `--check-tty` and the `stty -a` comparisons pass on their ptys now.
+  OpenBSD's screen says `OpenBSD's wscons on VGA text`, DEC, on BIOS and
+  `on a framebuffer`, ASCII with clean `+-|` boxes, on UEFI: the display
+  type is read right on both.  NetBSD's genfb, parked, shows no frozen
+  cursor; DragonFly's syscons, parked with joined SGR and `2J`, prints
+  nothing stray.  NetBSD's missing TERM is reported as SKIPPED with its
+  reason, and the screen run is on `ttyE0` now.  DragonFly's runs needed no
+  wrapper for csh.  Not re-run: FreeBSD, illumos, Linux and Haiku, whose
+  spike behaviour the fold doesn't change beyond the rows checked by the
+  unit tests (illumos's UTF-8 row was run in RT3 itself, as a private
+  build; Haiku's locale rule only on ssh).
+
+**What stays open.**
+
+- **Open question 1, CP437:** only DragonFly's syscons would gain (illumos's
+  tem and Linux's vgacon already map UTF-8 box glyphs to CP437 on VGA text,
+  and FreeBSD's VGA text shows the same 9th-column gaps whatever is sent).
+  Not tried.  Your call.
+- **Open question 2, DragonFly's 9600 baud:** QEMU can't show it; computed,
+  3.7 s a full frame and about 1.25 s a list scroll.  Raise the line to
+  115200 (why the image chose 9600 is still *Check*), or plain mode by
+  default there?  Your call.
+- **D13:** the locale arrives over ssh on illumos only.  `AcceptEnv LANG
+  LC_*` for the BSD and Haiku images, as decided; Linux needs it too, and
+  FreeBSD's login class may still set `C.UTF-8` over it (not tried).
+- **Open question 6, the palette:** mono focus as reverse without bold
+  would be crisp on every console seen (and on NetBSD's genfb in colour
+  too).  Changing it moves every mono golden.  Your call.
+- **NetBSD's image:** no TERM on the screen and the serial line (RT13's
+  launcher or gettytab), and the `--test` image showing screen 1.
+- **Haiku:** the resize criterion (0.5 s) is the Terminal's own delay, not
+  bko-rescue's: accept 0.8 s, or keep it as a known limit.  A desktop
+  notification taking the focus at boot would hit a real user too.
+- **Not seen yet:** the OpenBSD rows on real hardware (rasops on inteldrm
+  and the like is assumed to be efifb's), `ttyAMA0` on arm64, any real
+  9600-baud line, and real VGA, which fills the 9th column that QEMU's
+  screendump leaves blank.
+- Small: the spike parks its cursor in a button's third cell and on the
+  list's first row, not the selection (spike only; RT6's widgets park at
+  the insertion point); escaping to illumos's loader prompt from COM1 once
+  left the kernel console on ttya (seen once, not followed up).
 
 ## The app on top (later)
 

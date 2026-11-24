@@ -42,6 +42,53 @@ impl Lines {
             Lines::Ascii => Lines::Utf8,
         }
     }
+
+    /// The next style after this one that `set` draws: what `L` gives.
+    /// ASCII is in every set, so it always ends.
+    pub fn next_in(self, set: LineSet) -> Lines {
+        let mut l = self.next();
+        while !set.has(l) {
+            l = l.next();
+        }
+        l
+    }
+}
+
+/// The line styles a console draws right (RT3's spike), for `L` to cycle
+/// through.  ASCII is always one of them.  `--lines` and BKO_RESCUE_LINES
+/// still force any style: a real console may do better than QEMU's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LineSet {
+    utf8: bool,
+    dec: bool,
+}
+
+impl LineSet {
+    pub const ALL: LineSet = LineSet { utf8: true, dec: true };
+    /// The Linux VT and illumos's tem: no DEC (ESC ( 0 is ignored or printed).
+    pub const NO_DEC: LineSet = LineSet { utf8: true, dec: false };
+    /// wscons: no UTF-8 (each byte is a glyph).
+    pub const NO_UTF8: LineSet = LineSet { utf8: false, dec: true };
+    /// syscons, and wscons on a framebuffer: ASCII only.
+    pub const ASCII: LineSet = LineSet { utf8: false, dec: false };
+
+    pub fn has(self, l: Lines) -> bool {
+        match l {
+            Lines::Utf8 => self.utf8,
+            Lines::Dec => self.dec,
+            Lines::Ascii => true,
+        }
+    }
+
+    /// `utf8 dec ascii`, for `--profile`.
+    pub fn names(self) -> String {
+        [Lines::Utf8, Lines::Dec, Lines::Ascii]
+            .into_iter()
+            .filter(|&l| self.has(l))
+            .map(Lines::name)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 /// The capability flags: the sequences a console was seen to take (RT3
@@ -387,6 +434,19 @@ mod tests {
 
     fn out(lines: Lines, colour: bool, caps: Caps) -> Out {
         Out::new(lines, colour, caps)
+    }
+
+    #[test]
+    fn l_cycles_only_what_the_console_draws() {
+        use Lines::*;
+        assert_eq!([Utf8.next_in(LineSet::ALL), Dec.next_in(LineSet::ALL), Ascii.next_in(LineSet::ALL)], [Dec, Ascii, Utf8]);
+        assert_eq!([Utf8.next_in(LineSet::NO_DEC), Ascii.next_in(LineSet::NO_DEC)], [Ascii, Utf8]);
+        assert_eq!([Dec.next_in(LineSet::NO_UTF8), Ascii.next_in(LineSet::NO_UTF8)], [Ascii, Dec]);
+        // A forced style the console doesn't draw still leaves to one it does.
+        assert_eq!([Utf8.next_in(LineSet::ASCII), Dec.next_in(LineSet::ASCII), Ascii.next_in(LineSet::ASCII)], [Ascii; 3]);
+        assert_eq!(Dec.next_in(LineSet::NO_DEC), Ascii);
+        assert_eq!(LineSet::NO_DEC.names(), "utf8 ascii");
+        assert_eq!(LineSet::ASCII.names(), "ascii");
     }
 
     #[test]

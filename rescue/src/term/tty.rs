@@ -296,7 +296,14 @@ pub fn check_tty() -> (Vec<String>, bool) {
     (v, ok)
 }
 
+/// The fields that differ, by name.  The lflag bits the kernel sets by
+/// itself (`ffi::KERNEL_LFLAG`: PENDIN on the BSDs, set whenever ICANON
+/// goes back on) are left out: they are status, not settings, and
+/// putting the settings back exactly as read still sets them (RT3).
 fn differences(want: &TermiosBuf, got: &TermiosBuf) -> Vec<String> {
+    let (mut want, mut got) = (*want, *got);
+    want.t.c_lflag &= !ffi::KERNEL_LFLAG;
+    got.t.c_lflag &= !ffi::KERNEL_LFLAG;
     want.fields()
         .into_iter()
         .zip(got.fields())
@@ -337,5 +344,15 @@ mod tests {
         let mut b = a;
         b.t.c_oflag = 3;
         assert_eq!(differences(&a, &b), ["c_oflag is 0x3, not 0x0"]);
+    }
+
+    #[test]
+    fn differences_leave_out_the_kernels_status_bits() {
+        let a = TermiosBuf::new(0);
+        let mut b = a;
+        b.t.c_lflag |= ffi::KERNEL_LFLAG;
+        assert!(differences(&a, &b).is_empty());
+        b.t.c_lflag |= ffi::ECHO;
+        assert_eq!(differences(&a, &b).len(), 1);
     }
 }

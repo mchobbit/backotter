@@ -150,7 +150,8 @@ impl<I: Io> FullScreen<I> {
 
     fn change_profile(&mut self, lines: bool) {
         if lines {
-            self.profile.lines = self.profile.lines.next();
+            // Only the styles this console draws (profile.rs's table).
+            self.profile.lines = self.profile.lines.next_in(self.profile.draws);
         } else {
             self.profile.colour = !self.profile.colour;
         }
@@ -330,7 +331,7 @@ impl<I: Io> Ui for FullScreen<I> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::term::out::{Caps, Lines};
+    use crate::term::out::{Caps, LineSet, Lines};
     use crate::testkit::{Checker, Rules};
     use crate::text::Clean;
     use crate::ui::{Button, Chrome, Menu, Message, Password, Progress, Question, Radio};
@@ -400,6 +401,7 @@ pub(crate) mod tests {
             lines,
             colour,
             caps,
+            draws: LineSet::ALL,
             esc_ms: 100,
             refresh_s: 60,
             serial: false,
@@ -542,6 +544,17 @@ pub(crate) mod tests {
         let mut f = ui(&keys(&[Key::Char('l'), Key::Char('p'), Key::Enter]));
         assert_eq!(f.menu(&menu()), Answer::Ok(0));
         assert_eq!(f.profile.lines, Lines::Utf8);
+    }
+
+    /// On a console that can't draw DEC (the Linux VT), L skips it.
+    #[test]
+    fn l_skips_what_the_console_cant_draw() {
+        let mut m = menu();
+        m.chrome = m.chrome.first();
+        let mut f = ui(&keys(&[Key::Char('L'), Key::Char('P')]));
+        f.profile.draws = LineSet::NO_DEC;
+        assert_eq!(f.menu(&m), Answer::Plain);
+        assert_eq!(f.profile.lines, Lines::Ascii);
     }
 
     #[test]

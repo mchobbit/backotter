@@ -161,6 +161,7 @@ def test_profile():
     check(d.get("lines", "").startswith("utf8") and d.get("colour", "").startswith("on"),
           "ssh-style pty, C.UTF-8: utf8, colour")
     check(d.get("size") == "80x24", "size 80x24: %r" % d.get("size"))
+    check(d.get("draws") == "utf8 dec ascii", "a pty may cycle every style: %r" % d.get("draws"))
     _, d = profile({"LANG": "C", "TERM": "vt220"})
     check(d.get("lines", "").startswith("ascii") and d.get("colour", "").startswith("off"),
           "LANG=C, TERM=vt220: ascii, no colour")
@@ -210,8 +211,9 @@ def spike_run(name, args, env, utf8, dec=False):
 
 
 def test_spike_fallbacks():
-    """The fallback profile DragonFly's syscons and illumos's tem get: one
-    SGR parameter each, the cursor parked, clearing with spaces, ASCII.
+    """Every fallback at once: one SGR parameter each, the cursor parked
+    (DragonFly's syscons and NetBSD's wscons park it since RT3), clearing
+    with spaces, ASCII.
     The keys turn each on, then only the bytes after are checked, the
     exit's blanking included."""
     name = "fallbacks"

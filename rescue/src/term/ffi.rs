@@ -114,11 +114,22 @@ mod sys {
     pub const ISIG: Tcflag = 0x80;
     pub const ICANON: Tcflag = 0x100;
     pub const IEXTEN: Tcflag = 0x400;
+    /// A status bit, not a setting: 4.4BSD's tty code sets it whenever a
+    /// tcsetattr turns ICANON back on, and the next read clears it (RT3).
+    pub const PENDIN: Tcflag = 0x2000_0000;
     pub const VMIN: usize = 16;
     pub const VTIME: usize = 17;
     pub type Req = c_ulong;
     pub const REQ_C: &str = "unsigned long";
     pub const TIOCGWINSZ: Req = 0x40087468;
+    /// wscons's display type, `_IOR('W', 64, u_int)` (dev/wscons/wsconsio.h),
+    /// and the two types that are VGA text.
+    #[cfg(target_os = "openbsd")]
+    pub const WSDISPLAYIO_GTYPE: Req = 0x4004_5740;
+    #[cfg(target_os = "openbsd")]
+    pub const WSDISPLAY_TYPE_ISAVGA: u32 = 7;
+    #[cfg(target_os = "openbsd")]
+    pub const WSDISPLAY_TYPE_PCIVGA: u32 = 8;
     pub type Nfds = c_uint;
 }
 
@@ -364,6 +375,32 @@ fn winsize_ioctl(fd: c_int, ws: &mut WinSize) -> c_int {
     unsafe { __ioctl(fd, TIOCGWINSZ, (ws as *mut WinSize).cast(), 0) }
 }
 
+/// The lflag bits the kernel sets by itself, which a check of settings
+/// put back has to leave out: PENDIN on the BSDs, nothing elsewhere.
+#[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
+pub const KERNEL_LFLAG: Tcflag = PENDIN;
+#[cfg(not(any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
+pub const KERNEL_LFLAG: Tcflag = 0;
+
+/// Whether `fd` is a screen in VGA text mode (true) or on a framebuffer
+/// (false), where the platform can tell; None where it can't, or `fd`
+/// isn't a screen.  Only OpenBSD's wscons needs it (RT3: its framebuffer
+/// font has no DEC line glyphs).
+#[cfg(target_os = "openbsd")]
+pub fn vga_text(fd: c_int) -> Option<bool> {
+    let mut t: u32 = 0;
+    // SAFETY: WSDISPLAYIO_GTYPE writes one u_int through the pointer,
+    // which points at a u32; on a tty that isn't a wsdisplay it fails
+    // with ENOTTY and writes nothing.
+    let rc = unsafe { ioctl(fd, WSDISPLAYIO_GTYPE, &mut t as *mut u32) };
+    (rc == 0).then_some(t == WSDISPLAY_TYPE_PCIVGA || t == WSDISPLAY_TYPE_ISAVGA)
+}
+
+#[cfg(not(target_os = "openbsd"))]
+pub fn vga_text(_fd: c_int) -> Option<bool> {
+    None
+}
+
 /// Wait up to `timeout_ms` for `fd` to be readable (or hung up).  An
 /// interrupting signal is an `Interrupted` error.
 pub fn poll_in(fd: c_int, timeout_ms: c_int) -> io::Result<bool> {
@@ -527,9 +564,17 @@ pub fn abi_lines() -> Vec<String> {
     ] {
         konst(n, u64::from(f));
     }
+    #[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
+    konst("PENDIN", u64::from(PENDIN));
     konst("VMIN", VMIN as u64);
     konst("VTIME", VTIME as u64);
     konst("TIOCGWINSZ", TIOCGWINSZ as u64);
+    #[cfg(target_os = "openbsd")]
+    {
+        konst("WSDISPLAYIO_GTYPE", WSDISPLAYIO_GTYPE as u64);
+        konst("WSDISPLAY_TYPE_ISAVGA", u64::from(WSDISPLAY_TYPE_ISAVGA));
+        konst("WSDISPLAY_TYPE_PCIVGA", u64::from(WSDISPLAY_TYPE_PCIVGA));
+    }
     v.push(format!("type ioctl.request {REQ_C}"));
     v.push(format!("size winsize {}", size_of::<WinSize>()));
     v.push(format!("offset winsize.ws_row {}", offset_of!(WinSize, ws_row)));

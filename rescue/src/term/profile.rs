@@ -11,20 +11,21 @@
 //! 4. the platform and the tty's name;
 //! 5. anything else: ASCII, no colour.
 //!
-//! The table is data (`TABLE`), one row a console, so each of RT3's
-//! findings is a one-row change.  It is provisional until RT3's spike has
-//! run on every console: DragonFly's syscons and illumos's tem get every
-//! fallback until then, and the Esc timeouts are estimates.
+//! The table is data (`TABLE`), one row a console.  RT3's spike ran on
+//! every console of the seven images under QEMU (docs/design/rescue-tui.md,
+//! "What RT3 found"), and the rows are what it saw each console draw and
+//! take; the Esc timeouts held there with no key split.
 
 use super::ffi;
-use super::out::{Caps, Lines};
+use super::out::{Caps, LineSet, Lines};
 use super::tty::Size;
 use crate::text;
 
 /// How long a lone ESC waits for more before it is Esc, on a screen's
-/// console and over ssh (est.; RT3 measures it).
+/// console and over ssh (RT3: no key split on any screen or ssh).
 pub const ESC_MS: u64 = 100;
-/// The same on a serial line, where an `ESC [ A` can arrive split (est.).
+/// The same on a serial line, where an `ESC [ A` can arrive split (RT3:
+/// none did on QEMU's lines, DragonFly's typed at 960 bytes a second).
 pub const ESC_MS_SERIAL: u64 = 250;
 /// A full redraw while a dialog waits, to heal kernel messages.
 pub const REFRESH_S: u64 = 60;
@@ -85,6 +86,9 @@ pub struct Facts {
     pub colour: Option<(bool, String)>,
     /// Overrides that weren't understood, said by `--profile`.
     pub ignored: Vec<String>,
+    /// fd 0 is a screen in VGA text mode (true) or on a framebuffer
+    /// (false), where the platform says (`ffi::vga_text`: OpenBSD).
+    pub vga_text: Option<bool>,
 }
 
 /// Parse `on`/`off` for `--colour` and BKO_RESCUE_COLOUR.
@@ -137,6 +141,7 @@ impl Facts {
             lines,
             colour,
             ignored,
+            vga_text: ffi::vga_text(0),
         }
     }
 }
@@ -148,6 +153,8 @@ pub struct Profile {
     pub lines: Lines,
     pub colour: bool,
     pub caps: Caps,
+    /// The line styles this console draws, which `L` cycles through.
+    pub draws: LineSet,
     /// How long a lone ESC waits for more.
     pub esc_ms: u64,
     /// How often a waiting dialog is redrawn in full.
@@ -205,14 +212,26 @@ pub enum TermIs {
     Prefix(&'static str),
 }
 
+/// What the screen's mode has to be for a row (`Facts::vga_text`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModeIs {
+    Any,
+    VgaText,
+}
+
 /// One console: where it is, what it gets.
 #[derive(Clone, Copy, Debug)]
 pub struct Row {
     pub os: Os,
     pub tty: TtyIs,
     pub term: TermIs,
+    pub mode: ModeIs,
     pub serial: bool,
+    /// The line style; with `by_locale`, the style when the locale says
+    /// UTF-8, ASCII when it doesn't.
     pub lines: Lines,
+    pub by_locale: bool,
+    pub draws: LineSet,
     pub colour: bool,
     pub caps: Caps,
     pub esc_ms: u64,
@@ -220,9 +239,39 @@ pub struct Row {
     pub what: &'static str,
 }
 
-const fn screen(os: Os, tty: TtyIs, term: TermIs, lines: Lines, caps: Caps, what: &'static str) -> Row {
-    Row { os, tty, term, serial: false, lines, colour: true, caps, esc_ms: ESC_MS, refresh_s: REFRESH_S, what }
+const fn screen(os: Os, tty: TtyIs, term: TermIs, lines: Lines, draws: LineSet, caps: Caps, what: &'static str) -> Row {
+    Row {
+        os,
+        tty,
+        term,
+        mode: ModeIs::Any,
+        serial: false,
+        lines,
+        by_locale: false,
+        draws,
+        colour: true,
+        caps,
+        esc_ms: ESC_MS,
+        refresh_s: REFRESH_S,
+        what,
+    }
 }
+
+/// A screen row only for VGA text mode, above the same screen's row for
+/// any mode.
+const fn vga_text(r: Row) -> Row {
+    Row { mode: ModeIs::VgaText, ..r }
+}
+
+/// A screen row whose lines follow the locale, as ssh's do.
+const fn by_locale(r: Row) -> Row {
+    Row { by_locale: true, ..r }
+}
+
+/// syscons and NetBSD's wscons: joined SGR and ESC [ 2 J are taken, but
+/// the cursor can't be hidden (syscons prints `?25l`; genfb leaves the
+/// hidden cursor's image behind), so it is parked at the focus.
+const PARK: Caps = Caps { joined_sgr: true, hide_cursor: false, clear: true };
 
 /// A serial console: ASCII, no colour (D3), the longer Esc timeout.
 const fn serial(os: Os, tty: TtyIs, term: TermIs, refresh_s: u64, what: &'static str) -> Row {
@@ -230,8 +279,12 @@ const fn serial(os: Os, tty: TtyIs, term: TermIs, refresh_s: u64, what: &'static
         os,
         tty,
         term,
+        mode: ModeIs::Any,
         serial: true,
         lines: Lines::Ascii,
+        by_locale: false,
+        // The far end is unknown: L may try every style.
+        draws: LineSet::ALL,
         colour: false,
         caps: Caps::ALL,
         esc_ms: ESC_MS_SERIAL,
@@ -244,32 +297,42 @@ use Lines::{Ascii, Dec, Utf8};
 use Os::*;
 
 /// Rule 4, first match wins (docs/design/rescue-tui.md, "Console
-/// profiles").  Provisional until RT3.
+/// profiles"), as RT3's spike found each console ("What RT3 found").
 pub const TABLE: &[Row] = &[
-    screen(Linux, TtyIs::LinuxVt, TermIs::Any, Utf8, Caps::ALL, "the Linux VT"),
+    // fbcon and vgacon alike: UTF-8 boxes (CP437 on VGA text); ESC ( 0 is
+    // ignored in UTF-8 mode, so DEC prints letters.
+    screen(Linux, TtyIs::LinuxVt, TermIs::Any, Utf8, LineSet::NO_DEC, Caps::ALL, "the Linux VT"),
     serial(Linux, TtyIs::Prefix(&["ttyS", "ttyAMA", "ttyUSB", "hvc"]), TermIs::Any, REFRESH_S, "a Linux serial console"),
-    screen(FreeBsd, TtyIs::Prefix(&["ttyv"]), TermIs::Any, Utf8, Caps::ALL, "FreeBSD's vt(4)"),
+    // vt(4) on VGA text and efifb: UTF-8 and DEC draw the same glyphs.
+    screen(FreeBsd, TtyIs::Prefix(&["ttyv"]), TermIs::Any, Utf8, LineSet::ALL, Caps::ALL, "FreeBSD's vt(4)"),
     serial(FreeBsd, TtyIs::Prefix(&["ttyu"]), TermIs::Any, REFRESH_S, "a FreeBSD serial console"),
-    screen(NetBsd, TtyIs::Prefix(&["ttyE"]), TermIs::Any, Dec, Caps::ALL, "NetBSD's wscons"),
+    // VGA text and genfb draw DEC; UTF-8 is a glyph a byte.
+    screen(NetBsd, TtyIs::Prefix(&["ttyE"]), TermIs::Any, Dec, LineSet::NO_UTF8, PARK, "NetBSD's wscons (the cursor parked)"),
     serial(NetBsd, TtyIs::Prefix(&["tty0"]), TermIs::Any, REFRESH_S, "a NetBSD serial console"),
-    screen(OpenBsd, TtyIs::Prefix(&["ttyC"]), TermIs::Any, Dec, Caps::ALL, "OpenBSD's wscons"),
+    // VGA text draws DEC; on a framebuffer (efifb, and inteldrm, radeondrm
+    // or amdgpu on real machines: rasops) every DEC line is a '?'.
+    vga_text(screen(OpenBsd, TtyIs::Prefix(&["ttyC"]), TermIs::Any, Dec, LineSet::NO_UTF8, Caps::ALL, "OpenBSD's wscons on VGA text")),
+    screen(OpenBsd, TtyIs::Prefix(&["ttyC"]), TermIs::Any, Ascii, LineSet::ASCII, Caps::ALL, "OpenBSD's wscons on a framebuffer"),
     serial(OpenBsd, TtyIs::Prefix(&["tty0"]), TermIs::Any, REFRESH_S, "an OpenBSD serial console"),
-    // syscons: joined SGR, cursor hiding and clear are RT3's to check.
-    screen(DragonFly, TtyIs::Prefix(&["ttyv"]), TermIs::Any, Ascii, Caps::NONE, "DragonFly's syscons (sequences unchecked, RT3)"),
+    // VGA text and the EFI framebuffer alike: UTF-8 is mojibake and DEC
+    // prints letters.
+    screen(DragonFly, TtyIs::Prefix(&["ttyv"]), TermIs::Any, Ascii, LineSet::ASCII, PARK, "DragonFly's syscons (the cursor parked)"),
     // 9600 baud (gettytab bko.9600): a full frame is 3-4 s.
     serial(DragonFly, TtyIs::Prefix(&["ttyd"]), TermIs::Any, REFRESH_S_SLOW, "DragonFly's serial console, 9600 baud"),
     // The screen's console has TERM sun-color; on-tty gives a serial one
-    // vt100.  Which tem mode (VGA text or framebuffer) is RT3's to find a
-    // sign for: until then ASCII, with --lines utf8 to force.
-    screen(Illumos, TtyIs::OneOr("console", "vt/"), TermIs::Prefix("sun"), Ascii, Caps::NONE, "illumos's tem (mode unknown until RT3: ASCII)"),
+    // vt100.  tem draws UTF-8 boxes on the framebuffer and on VGA text
+    // (CP437 there), so one row; it has no DEC (prints "(0").
+    screen(Illumos, TtyIs::OneOr("console", "vt/"), TermIs::Prefix("sun"), Utf8, LineSet::NO_DEC, Caps::ALL, "illumos's tem"),
     serial(Illumos, TtyIs::OneOr("console", "term/"), TermIs::Any, REFRESH_S, "an illumos serial console"),
-    // Both of Haiku's consoles are ptys; only TERM tells them apart.
-    screen(Haiku, TtyIs::Any, TermIs::Prefix("xterm"), Utf8, Caps::ALL, "Haiku's Terminal"),
+    // Both of Haiku's consoles are ptys; only TERM tells them apart.  The
+    // Terminal sets LC_CTYPE=en.UTF-8; an ssh session with an xterm TERM
+    // matches this row too, so the locale decides, as rule 3 does.
+    by_locale(screen(Haiku, TtyIs::Any, TermIs::Prefix("xterm"), Utf8, LineSet::ALL, Caps::ALL, "Haiku's Terminal")),
     serial(Haiku, TtyIs::Any, TermIs::Any, REFRESH_S, "Haiku's serial console (TERM not xterm)"),
 ];
 
 impl Row {
-    fn matches(&self, os: Os, tty: &str, term: &str) -> bool {
+    fn matches(&self, os: Os, tty: &str, term: &str, vga_text: Option<bool>) -> bool {
         let tty_ok = match self.tty {
             TtyIs::LinuxVt => linux_vt(tty),
             TtyIs::Prefix(ps) => ps.iter().any(|p| tty.starts_with(p)),
@@ -280,7 +343,8 @@ impl Row {
             TermIs::Any => true,
             TermIs::Prefix(p) => term.starts_with(p),
         };
-        self.os == os && tty_ok && term_ok
+        let mode_ok = self.mode == ModeIs::Any || vga_text == Some(true);
+        self.os == os && tty_ok && term_ok && mode_ok
     }
 }
 
@@ -301,8 +365,11 @@ fn table(f: &Facts) -> (Row, String) {
             os: f.os,
             tty: TtyIs::Any,
             term: TermIs::Any,
+            mode: ModeIs::Any,
             serial: false,
             lines: if utf { Utf8 } else { Ascii },
+            by_locale: false,
+            draws: LineSet::ALL,
             colour,
             caps: Caps::ALL,
             esc_ms: ESC_MS,
@@ -311,20 +378,30 @@ fn table(f: &Facts) -> (Row, String) {
         };
         return (row, what);
     }
-    if let Some(row) = TABLE.iter().find(|r| r.matches(f.os, tty, term)) {
+    if let Some(row) = TABLE.iter().find(|r| r.matches(f.os, tty, term, f.vga_text)) {
+        let mut row = *row;
         let what = if row.serial {
             format!("{}: {tty}, ASCII, no colour (D3)", row.what)
+        } else if row.by_locale {
+            let utf = locale_utf8(f);
+            if !utf {
+                row.lines = Ascii;
+            }
+            format!("{}: the locale says {}", row.what, if utf { "UTF-8" } else { "not UTF-8" })
         } else {
             row.what.to_string()
         };
-        return (*row, what);
+        return (row, what);
     }
     let row = Row {
         os: f.os,
         tty: TtyIs::Any,
         term: TermIs::Any,
+        mode: ModeIs::Any,
         serial: false,
         lines: Ascii,
+        by_locale: false,
+        draws: LineSet::ALL,
         colour: false,
         caps: Caps::ALL,
         esc_ms: ESC_MS_SERIAL,
@@ -367,6 +444,7 @@ pub fn decide(f: &Facts) -> Profile {
         lines,
         colour,
         caps,
+        draws: row.draws,
         esc_ms: row.esc_ms,
         refresh_s: row.refresh_s,
         serial: row.serial,
@@ -401,6 +479,7 @@ pub fn describe(f: &Facts, p: &Profile, size: Size) -> Vec<String> {
         },
         format!("rule {}", p.rule),
         format!("lines {} ({})", p.lines.name(), p.lines_why),
+        format!("draws {}", p.draws.names()),
         format!("colour {} ({})", if p.colour { "on" } else { "off" }, p.colour_why),
         format!(
             "caps sgr={} cursor={} clear={}",
@@ -435,11 +514,18 @@ mod tests {
             lines: None,
             colour: None,
             ignored: vec![],
+            vga_text: None,
         }
     }
 
+    fn vga(mut f: Facts, text: bool) -> Facts {
+        f.vga_text = Some(text);
+        f
+    }
+
+    /// The table as RT3 left it.
     #[test]
-    fn the_first_table() {
+    fn the_table() {
         use Lines::*;
         let cases: &[(Os, &str, &str, &str, Lines, bool)] = &[
             (Os::Linux, "tty1", "linux", "", Utf8, true),
@@ -458,24 +544,63 @@ mod tests {
             (Os::NetBsd, "ttyE0", "wsvt25", "", Dec, true),
             (Os::NetBsd, "tty00", "vt100", "", Ascii, false),
             (Os::NetBsd, "ttyp0", "xterm", "C.UTF-8", Utf8, true),
-            (Os::OpenBsd, "ttyC0", "vt220", "", Dec, true),
+            (Os::OpenBsd, "ttyC0", "vt220", "", Ascii, true),
             (Os::OpenBsd, "tty00", "vt220", "", Ascii, false),
             (Os::OpenBsd, "ttyp3", "vt220", "", Ascii, false),
             (Os::DragonFly, "ttyv0", "cons25", "", Ascii, true),
             (Os::DragonFly, "ttyd0", "dialup", "", Ascii, false),
-            (Os::Illumos, "console", "sun-color", "", Ascii, true),
-            (Os::Illumos, "vt/2", "sun-color", "", Ascii, true),
+            (Os::Illumos, "console", "sun-color", "", Utf8, true),
+            (Os::Illumos, "vt/2", "sun-color", "", Utf8, true),
             (Os::Illumos, "console", "vt100", "", Ascii, false),
             (Os::Illumos, "term/a", "vt100", "", Ascii, false),
             (Os::Illumos, "pts/2", "xterm", "en_US.UTF-8", Utf8, true),
-            (Os::Haiku, "tt/p0", "xterm-256color", "", Utf8, true),
-            (Os::Haiku, "tt/p1", "vt100", "", Ascii, false),
+            (Os::Haiku, "tt/p1", "xterm-256color", "en.UTF-8", Utf8, true),
+            (Os::Haiku, "tt/p2", "xterm", "", Ascii, true),
+            (Os::Haiku, "tt/p2", "xterm", "C", Ascii, true),
+            (Os::Haiku, "tt/p2", "xterm", "C.UTF-8", Utf8, true),
+            (Os::Haiku, "tt/p0", "vt100", "en.UTF-8", Ascii, false),
             (Os::Haiku, "pts/0", "vt100", "C.UTF-8", Ascii, false),
         ];
         for &(os, tty, term, lang, lines, colour) in cases {
             let p = decide(&facts(os, tty, term, lang));
             assert_eq!((p.lines, p.colour), (lines, colour), "{os:?} {tty} {term} {lang}: {}", p.rule);
             assert_eq!(p.plain, None);
+        }
+    }
+
+    /// OpenBSD's wscons by the display type: DEC on VGA text, ASCII on a
+    /// framebuffer or when the type can't be read.
+    #[test]
+    fn openbsd_wscons_by_its_display() {
+        let f = facts(Os::OpenBsd, "ttyC0", "vt220", "");
+        let p = decide(&vga(f.clone(), true));
+        assert_eq!((p.lines, p.draws), (Lines::Dec, LineSet::NO_UTF8), "{}", p.rule);
+        for f in [vga(f.clone(), false), f] {
+            let p = decide(&f);
+            assert_eq!((p.lines, p.draws, p.colour), (Lines::Ascii, LineSet::ASCII, true), "{}", p.rule);
+        }
+        // The serial line and ssh don't care.
+        let p = decide(&vga(facts(Os::OpenBsd, "tty00", "vt220", ""), true));
+        assert_eq!((p.lines, p.draws), (Lines::Ascii, LineSet::ALL));
+    }
+
+    /// What `L` may cycle through on each console.
+    #[test]
+    fn the_styles_each_console_draws() {
+        let cases: &[(Facts, LineSet)] = &[
+            (facts(Os::Linux, "tty1", "linux", ""), LineSet::NO_DEC),
+            (facts(Os::Linux, "ttyS0", "vt220", ""), LineSet::ALL),
+            (facts(Os::Linux, "pts/0", "xterm", "C.UTF-8"), LineSet::ALL),
+            (facts(Os::FreeBsd, "ttyv0", "xterm", ""), LineSet::ALL),
+            (facts(Os::NetBsd, "ttyE0", "wsvt25", ""), LineSet::NO_UTF8),
+            (facts(Os::DragonFly, "ttyv0", "cons25", ""), LineSet::ASCII),
+            (facts(Os::Illumos, "console", "sun-color", ""), LineSet::NO_DEC),
+            (facts(Os::Haiku, "tt/p1", "xterm-256color", "en.UTF-8"), LineSet::ALL),
+            (facts(Os::Haiku, "tt/p0", "vt100", ""), LineSet::ALL),
+            (facts(Os::Linux, "console", "linux", ""), LineSet::ALL),
+        ];
+        for (f, want) in cases {
+            assert_eq!(decide(f).draws, *want, "{:?} {:?}", f.os, f.tty);
         }
     }
 
@@ -509,16 +634,25 @@ mod tests {
         };
         for (i, row) in TABLE.iter().enumerate() {
             let (tty, term) = sample(row);
-            let first = TABLE.iter().position(|r| r.matches(row.os, &tty, &term));
+            let mode = (row.mode == ModeIs::VgaText).then_some(true);
+            let first = TABLE.iter().position(|r| r.matches(row.os, &tty, &term, mode));
             assert_eq!(first, Some(i), "{}: {tty} {term}", row.what);
         }
     }
 
+    /// RT3: syscons prints `?25l`, genfb leaves the hidden cursor's image
+    /// behind, so both park it; both take joined SGR and ESC [ 2 J.  tem
+    /// takes everything.
     #[test]
-    fn syscons_and_tem_get_the_fallbacks() {
-        assert_eq!(decide(&facts(Os::DragonFly, "ttyv0", "cons25", "")).caps, Caps::NONE);
-        assert_eq!(decide(&facts(Os::Illumos, "console", "sun-color", "")).caps, Caps::NONE);
+    fn syscons_and_wscons_park_the_cursor() {
+        let park = Caps { joined_sgr: true, hide_cursor: false, clear: true };
+        assert_eq!(decide(&facts(Os::DragonFly, "ttyv0", "cons25", "")).caps, park);
+        assert_eq!(decide(&facts(Os::NetBsd, "ttyE0", "wsvt25", "")).caps, park);
+        assert_eq!(decide(&facts(Os::Illumos, "console", "sun-color", "")).caps, Caps::ALL);
+        assert_eq!(decide(&vga(facts(Os::OpenBsd, "ttyC0", "vt220", ""), true)).caps, Caps::ALL);
         assert_eq!(decide(&facts(Os::Linux, "tty1", "linux", "")).caps, Caps::ALL);
+        // No row of the table gets every fallback any more.
+        assert!(TABLE.iter().all(|r| r.caps != Caps::NONE));
     }
 
     #[test]
@@ -554,6 +688,7 @@ mod tests {
         assert!(lines.iter().any(|l| l.starts_with("size 80x24 (0x0")));
         assert!(lines.iter().any(|l| l == "lines ascii (the rule)"));
         assert!(lines.iter().any(|l| l == "colour off (the rule)"));
+        assert!(lines.iter().any(|l| l == "draws utf8 dec ascii"));
         assert!(lines.iter().any(|l| l == "esc 250ms"));
         assert!(lines.iter().any(|l| l == "refresh 60s"));
     }

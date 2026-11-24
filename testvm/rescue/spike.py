@@ -23,6 +23,12 @@ private repo-shaped tree (never the synced testvm/ of sync-hosts.sh):
                  the monitor socket
     --port N     the forwarded ssh port (default the first free one of 2600-2689
                  under ht1-queue.sh's /tmp/bko-ht1-ports locks, held for the run)
+    --loader CMDS  BIOS boots only: at the loader's menu, 3 for its prompt, then
+                 these ';'-separated commands and boot (illumos: 'framebuffer off;
+                 set os_console=text' gives tem on VGA text, which QEMU's BIOS
+                 boot never reaches otherwise)
+    --nomodeset  BIOS boots only (linux): GRUB's serial entry edited to add
+                 nomodeset, so tty1 is vgacon's VGA text, not bochs-drm's fbcon
 
 Each boot: the image as a 16 GiB qcow2 overlay in --work, through vm-run (the
 platform's rescuer guest's vm-run-options less its disks and firmware, and
@@ -43,8 +49,13 @@ the spike, the spike's panic) are copied to /tmp/bko-spike over ssh.  Then:
           at each step (serial-NN-STEP.txt).
   screen  sendkey picks Shell at the screen's menu and types `sh run.sh
           screen` and the same keys; a screendump of each step
-          (screen-NN-STEP.png), and on Linux /dev/vcsu1's text too.  The PNGs
-          are judged by eye against the pass criteria.
+          (screen-NN-STEP.png), and on Linux /dev/vcsu1's text too.  Then the
+          spike's own keys for what the steps don't reach (screen-NN-x-*.png):
+          the other two line styles, mono (its focus too), the list in mono,
+          and each capability toggled (j joined SGR, h cursor hiding, e ESC [
+          2 J); the panic's frame; after the echo, SGR 30-37 on 40-47, plain
+          and bold, with 7, 1, 4 and 5 (x-colours).  The PNGs are judged by
+          eye against the pass criteria.
   ssh     ssh -tt from this host on an 80x24 pty, LANG=C.UTF-8 and LANG=C
           sent with SendEnv; where the locale doesn't arrive (no AcceptEnv),
           again with it set in the remote command (ssh-*-set).  Replayed as
@@ -56,7 +67,12 @@ at the end of each stream; echo working afterwards (serial); the key log
 after every key (Up Down Left Right Tab Enter Esc Space BS and letters, each
 once and right, Esc alone within the timeout); the focus and the notes each
 key should give; the gauge reaching 100% with every update under 40 bytes;
-the size line; the first frame's bytes and time.  What it can't do on a
+the size line; the first frame's bytes and time (and, on DragonFly's 9600-baud
+line, the time a real line would take: QEMU's UART isn't paced).  The kernel's
+PENDIN status bit (4.4BSD sets it whenever ICANON goes back on) is left out of
+the stty comparisons, as --check-tty leaves it out.  Every command over ssh
+runs under sh -c, whatever root's login shell (DragonFly's is csh).  What it
+can't do on a
 console is SKIPPED with the reason.  Results: DIR/summary.json (every check,
 every file), DIR/FW/ (PNGs, text screens, the serial log, each console's
 byte stream and the guest's files).  Exit 0 when no check FAILed (SKIPPED
@@ -70,6 +86,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -89,9 +106,12 @@ PLATFORMS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "h
 # The rescuer guest whose vm-run-options the image boots with (ht1-bsd.sh's RG).
 OPTIONS_GUEST = {"freebsd": "freebsd15-ufs", "netbsd": "netbsd11", "openbsd": "openbsd8",
                  "dragonfly": "dragonfly6", "illumos": "omnios58", "haiku": "haiku6"}
-# What the plan's table expects of each console's line style (provisional until RT3).
-EXPECT_SCREEN = {"linux": "utf8", "freebsd": "utf8", "netbsd": "dec", "openbsd": "dec",
-                 "dragonfly": "ascii", "illumos": "ascii or utf8", "haiku": "utf8"}
+# What profile.rs's table gives each screen (RT3).  OpenBSD's is DEC on VGA text
+# (BIOS), ASCII on a framebuffer (UEFI).
+EXPECT_SCREEN = {"linux": "utf8", "freebsd": "utf8", "netbsd": "dec", "openbsd": "dec or ascii",
+                 "dragonfly": "ascii", "illumos": "utf8", "haiku": "utf8"}
+# Serial lines slower than QEMU makes them (it doesn't pace its UART).
+SERIAL_BAUD = {"dragonfly": 9600}
 GUEST_DIR = "/tmp/bko-spike"
 MARK = re.compile(rb"BKO-SPIKE-42-([A-Z-]+)\r?\n")
 DONE_TEXT = b"bko-rescue --spike: done"
@@ -124,6 +144,14 @@ mark() { printf 'BKO-SPIKE-%%s-%%s\n' $((6 * 7)) "$1"; }
 stage start
 stty -a >"$d/$n-stty-before.txt" 2>&1
 for v in TERM LANG LC_ALL LC_CTYPE; do eval "echo $v=\${$v-}"; done >"$d/$n-env.txt"
+# A console started with no TERM (NetBSD's getty with lo= gives its program an
+# empty environment, RT3): the type /etc/ttys gives this tty, as login(1) would.
+# Noted in NAME-env.txt, and spike.py says so; bko-rescue alone would go plain.
+if [ -z "${TERM:-}" ] && [ -r /etc/ttys ]; then
+    TERM=$(awk -v t="$(tty | sed 's,^/dev/,,')" '$1 == t { print $(NF - 2); exit }' /etc/ttys)
+    export TERM
+    echo "TERM-set-by-run.sh=$TERM" >>"$d/$n-env.txt"
+fi
 "$b" --profile >"$d/$n-profile.txt" 2>&1
 "$b" --check-tty >"$d/$n-check-tty.txt" 2>&1; echo "exit $?" >>"$d/$n-check-tty.txt"
 stage spike; mark SPIKE
@@ -143,6 +171,22 @@ if [ "${2:-}" = size ]; then
 fi
 stage done; mark DONE
 """ % {"dir": GUEST_DIR}
+
+# At the screen's shell after the spike: SGR 30-37 on 40-47, plain and bold, then
+# 7, 1, 4 and 5 alone (OpenBSD's "Also": no blink, underline or stray reverse).
+COLOURS_SH = r"""e=$(printf '\033')
+printf '%s[0m%s[2J%s[H' "$e" "$e" "$e"
+for bold in 0 1; do
+  for b in 0 1 2 3 4 5 6 7; do
+    for f in 0 1 2 3 4 5 6 7; do
+      if [ $bold = 1 ]; then printf '%s[0;1;3%s;4%sm %s%s ' "$e" $f $b $f $b; else printf '%s[0;3%s;4%sm %s%s ' "$e" $f $b $f $b; fi
+    done
+    printf '%s[0m b%s\n' "$e" $bold
+  done
+done
+printf '%s[7m reverse %s[0m %s[1m bold %s[0m %s[4m underline %s[0m %s[5m blink %s[0m plain\n' "$e" "$e" "$e" "$e" "$e" "$e" "$e" "$e"
+printf '%s[37;44m white on blue %s[30;47m black on grey %s[0m\n' "$e" "$e" "$e"
+"""
 
 # The keys, in order: (label, key, what the screen shows after it).  A
 # label marks a step whose screen is kept.  Each check is (kind, value):
@@ -168,6 +212,27 @@ STEPS = [
     ("typed", "a b c Space BS", [("text", "Password: ***")]),
     ("count", "Enter", [("text", "count typed: 3")]),
     ("leave", "Esc", []),
+]
+# On the screen only, after STEPS (PNGs; on Linux the key log too): what the steps
+# don't reach.  The serial line and ssh are held to --profile's style, which these
+# would change.  Each style's label is its place in the cycle from the profile's.
+EXTRA = [
+    ("x-card1", "1", [("text", "spike: card 1 of 4, a dialog")]),
+    ("x-lines2", "l", []),
+    ("x-lines3", "l", []),
+    ("x-lines1", "l", []),
+    ("x-mono", "c", []),
+    ("x-mono-tab", "Tab", []),
+    ("x-mono-lines2", "l", []),
+    ("x-mono-lines3", "l", []),
+    ("x-mono-lines1", "l", []),
+    ("x-mono-list", "2", [("text", "spike: card 2 of 4, a list")]),
+    ("x-mono-down", "Down", []),
+    ("x-colour-list", "c", []),
+    ("x-sgr-toggled", "1 j", []),
+    ("x-cursor-toggled", "h", []),
+    ("x-clear-toggled", "e", []),
+    ("x-caps-back", "j h e", []),
 ]
 # How each key is logged by the spike (Key::name; typed in the field: *).
 LOGGED = {"Tab": "Tab", "Left": "Left", "Right": "Right", "Enter": "Enter", "Esc": "Esc",
@@ -390,7 +455,9 @@ class Run:
                 "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=10"]
 
     def ssh(self, cmd, inp=None, timeout=60, env=None):
-        r = subprocess.run(self.ssh_base() + [f"{self.user}@127.0.0.1", cmd], input=inp,
+        # Under sh, whatever root's login shell is (DragonFly's is csh, where
+        # `2>/dev/null` and `for ... do` don't parse).
+        r = subprocess.run(self.ssh_base() + [f"{self.user}@127.0.0.1", "sh -c " + shlex.quote(cmd)], input=inp,
                            capture_output=True, timeout=timeout, env=env)
         return r.returncode, r.stdout, r.stderr
 
@@ -437,6 +504,53 @@ class Run:
                                      stderr=open(os.path.join(outdir, "vm-run.err"), "wb"), env=env)
         rate = self.cfg["rate"] or bt.TYPING_RATE.get(self.p)
         self.con = SerialLine(self.proc, os.path.join(outdir, "serial.log"), rate)
+        if fw == "bios" and self.a.loader:
+            self.loader_commands()
+        if fw == "bios" and self.a.nomodeset:
+            self.grub_nomodeset(outdir)
+
+    def loader_commands(self):
+        """--loader: the BSD loader's menu, 3 for its prompt, the commands typed a
+        character at a time (fast typing lost a CR), then boot."""
+        self.con.expect(re.compile(rb"Autoboot in"), timeout=self.a.boot_timeout)
+        self.con.send(b"3")
+        for c in [x.strip() for x in self.a.loader.split(";") if x.strip()] + ["boot"]:
+            self.con.expect(re.compile(rb"(?i)\bok $", re.M), timeout=60)
+            time.sleep(0.5)
+            for ch in c.encode() + b"\r":
+                self.con.send(bytes([ch]))
+                time.sleep(0.06)
+        note(f"loader: {self.a.loader}; boot")
+
+    def grub_nomodeset(self, outdir):
+        """--nomodeset: stop GRUB's countdown, edit the serial entry (the default,
+        the third) to add nomodeset before its '---', and boot it."""
+        mon = qd.Monitor(self.mon_path, shots=outdir, prefix="grub")
+        try:
+            for _ in range(40):                      # Up stops the countdown; the top is entry 0
+                mon.cmd("sendkey up")
+                time.sleep(0.25)
+            for _ in range(2):
+                mon.cmd("sendkey down")
+                time.sleep(0.3)
+            mon.dump("menu-serial")
+            mon.cmd("sendkey e")
+            time.sleep(2.0)                          # the editor has to be open first
+            for _ in range(3):                       # setparams, a blank line, set gfxpayload, linux
+                mon.cmd("sendkey down")
+                time.sleep(0.4)
+            mon.cmd("sendkey end")
+            time.sleep(0.3)
+            for _ in range(3):                       # before '---'
+                mon.cmd("sendkey left")
+                time.sleep(0.1)
+            for c in "nomodeset ":
+                mon.cmd(f"sendkey {ct.key_name(c)}")
+                time.sleep(0.08)
+            mon.dump("edited")
+            mon.cmd("sendkey ctrl-x")
+        finally:
+            mon.s.close()
 
     def halt(self):
         if not self.proc:
@@ -486,6 +600,8 @@ class Run:
         if rc != 0:
             raise RuntimeError("copying the binary: " + err.decode(errors="replace"))
         rc, _, err = self.ssh(f"cat >{GUEST_DIR}/run.sh", inp=RUN_SH.encode())
+        rc3, _, _ = self.ssh(f"cat >{GUEST_DIR}/colours.sh", inp=COLOURS_SH.encode())
+        rc = rc or rc3
         rc2, ver, _ = self.ssh(f"{GUEST_DIR}/bko-rescue --version")
         ck.add("ssh up, binary copied", rc == 0 and rc2 == 0, ver.decode(errors="replace").strip())
         rc, uname, _ = self.ssh("uname -a")
@@ -498,7 +614,15 @@ class Run:
         start = line.pos
         t_start = time.monotonic()
         # The first frame: its title, then quiet.
-        line.expect(re.compile(rb"spike: card 1 of 4"), timeout=60)
+        try:
+            line.expect(re.compile(rb"spike: card 1 of 4"), timeout=60)
+        except TimeoutError:
+            # Say why when the spike itself gave up (plain mode: exit 2).
+            rc = (self.guest_file(f"{name}-spike.rc") or "").strip()
+            err = (self.guest_file(f"{name}-spike.err") or "").strip()
+            if rc:
+                raise RuntimeError(f"the spike exited {rc} before its first frame: {err[:300]}")
+            raise
         line.quiet(0.8, 30)
         first_end = line.size()
         marks = [("card1", first_end)]
@@ -527,7 +651,9 @@ class Run:
         end = data.find(DONE_TEXT, start)
         first_bytes = first_end - start
         first_s = line.time_at(first_end - 1) - line.time_at(start)
-        ck.add(f"{name}: first frame", True, f"{first_bytes} bytes in {first_s:.2f} s")
+        baud = SERIAL_BAUD.get(self.p) if name == "serial" else None
+        line_s = f"; {first_bytes / (baud / 10):.1f} s on a real {baud}-baud line (QEMU's isn't paced)" if baud else ""
+        ck.add(f"{name}: first frame", True, f"{first_bytes} bytes in {first_s:.2f} s{line_s}")
         return data, start, end, marks, logged, t_start
 
     def judge_stream(self, name, data, start, end, marks, logged, prof, ck, outdir, assumed_size, sized=False):
@@ -629,8 +755,18 @@ class Run:
                 with open(os.path.join(outdir, f"{name}-{f}{ext}"), "w") as fh:
                     fh.write(t)
         prof = dict(l.split(" ", 1) for l in files.get("profile", "").splitlines() if " " in l)
+        set_term = re.search(r"^TERM-set-by-run\.sh=(.*)$", files.get("env", ""), re.M)
+        if set_term:
+            ck.add(f"{name}: TERM from the console", None,
+                   f"unset (the image's getty gives none, so bko-rescue alone would go plain);"
+                   f" run.sh set TERM={set_term[1]} from /etc/ttys, as login(1) would")
         ct_ = files.get("check-tty", "")
         ck.add(f"{name}: --check-tty", ct_.strip().endswith("exit 0"), ct_.strip().replace("\n", " | "))
+        # PENDIN is a status bit, not a setting: 4.4BSD's kernel sets it whenever
+        # ICANON goes back on, so stty -a says pendin after any round trip (RT3).
+        for f in ("stty-before", "stty-after-quit", "stty-before-panic", "stty-after-panic"):
+            if f in files:
+                files[f] = re.sub(r"(?<![\w-])-?pendin\b", "pendin(left out)", files[f])
         b, a = files.get("stty-before"), files.get("stty-after-quit")
         ck.add(f"{name}: stty -a the same after the quit", b is not None and b == a, diff(b, a))
         b, a = files.get("stty-before-panic"), files.get("stty-after-panic")
@@ -715,6 +851,15 @@ class Run:
         def typ(s):
             for c in s:
                 key(ct.key_name(c), 0.05)
+        if self.p == "netbsd":
+            # The --test image shows screen 1 (rc.d/wscons's root shell); the
+            # BackOtter menu is on ttyE0, which rc.local adds without switching.
+            key("ctrl-alt-f1", 1.5)
+        if self.p == "haiku":
+            # A notification (the bootstrap's ssh-keygen -A) can take the focus
+            # from the Terminal, and the keys then go to Tracker.
+            self.ssh("hey Terminal set Active of Window 0 to true")
+            time.sleep(1.0)
         mon.dump("menu")
         key("1")
         key("ret", 2.0)
@@ -732,17 +877,21 @@ class Run:
         vcs, hist = {}, []
         mon.dump("card1")
         vcs["card1"] = self.vcs_text(prof)
-        for label, k, _ in STEPS[1:]:
+        for label, k, _ in STEPS[1:] + EXTRA:
             in_field = label == "typed"
             if k == "wait-gauge":
                 time.sleep(11)
             for kk, lg in expand(k, in_field):
-                key(SENDKEY.get(kk, kk), esc_s + 0.4 if kk == "Esc" else 0.15)
+                key(SENDKEY.get(kk, kk), esc_s + 0.4 if kk == "Esc" else 0.3 if label.startswith("x-") else 0.15)
                 hist.append(lg)
             time.sleep(0.8)
             mon.dump(label)
             vcs[label] = self.vcs_text(prof)
         key("q")
+        # The panic's own frame (it waits 1 s before it panics).
+        if self.wait_stage("screen", ("panic", "panic-end", "done"), 40) == "panic":
+            time.sleep(0.5)
+            mon.dump("panic-frame")
         st = self.wait_stage("screen", ("panic-end", "done"), 40)
         time.sleep(0.5)
         mon.dump("after-panic")
@@ -752,10 +901,17 @@ class Run:
         key("ret", 1.0)
         mon.dump("echo")
         vcs["echo"] = self.vcs_text(prof)
+        typ(f"sh {GUEST_DIR}/colours.sh")
+        key("ret", 2.0)
+        mon.dump("x-colours")
+        typ("clear")
+        key("ret", 1.0)
         typ("exit")
         key("ret")
         prof = self.guest_checks("screen", ck, outdir, False)
         ex = EXPECT_SCREEN[self.p]
+        if self.p == "openbsd":
+            ex = "dec" if self.fw == "bios" else "ascii"   # VGA text, or efifb
         ck.add(f"screen: line style (the plan expects {ex})", any(prof.get("lines", "").startswith(x) for x in ex.split(" or ")),
                prof.get("lines"))
         pngs = sorted(os.path.basename(p) for p in glob.glob(os.path.join(outdir, "screen-*.png")))
@@ -766,7 +922,7 @@ class Run:
             ck.add("screen: the key log read back", None, "no text of the screen to read on this platform (PNGs only)")
             return
         h = []
-        for label, k, checks in STEPS:
+        for label, k, checks in STEPS + EXTRA:
             h += [lg for _, lg in expand(k, label == "typed")]
             rows = vcs.get(label)
             if not rows:
@@ -860,7 +1016,8 @@ class Run:
             except (RuntimeError, TimeoutError, EOFError, OSError, subprocess.SubprocessError) as e:
                 ck.add(f"{c}: ran to the end", False, f"{type(e).__name__}: {e}")
             consoles[c] = {"status": ck.status(), "checks": ck.items}
-        rc, out, _ = self.ssh(f"cd {GUEST_DIR} && tar -cf - --exclude=bko-rescue . 2>/dev/null || tar -cf - *.txt *.rc *.err *.stage")
+        # Every file but the binary (illumos's tar has no --exclude).
+        rc, out, _ = self.ssh(f"cd {GUEST_DIR} && tar -cf - $(for f in *; do [ \"$f\" = bko-rescue ] || echo \"$f\"; done)")
         if rc == 0 and out:
             gd = os.path.join(outdir, "guest")
             os.makedirs(gd, exist_ok=True)
@@ -932,11 +1089,15 @@ def main():
     ap.add_argument("--port", type=int)
     ap.add_argument("--memory", type=int, default=3072)
     ap.add_argument("--boot-timeout", type=float, default=900)
+    ap.add_argument("--loader")
+    ap.add_argument("--nomodeset", action="store_true")
     a = ap.parse_args()
     a.firmware = [x for x in a.firmware.split(",") if x]
     a.consoles = [x for x in a.consoles.split(",") if x]
     if not set(a.firmware) <= {"bios", "uefi"} or not set(a.consoles) <= {"serial", "screen", "ssh"}:
         ap.error("--firmware: bios,uefi; --consoles: serial,screen,ssh")
+    if a.nomodeset and a.platform != "linux":
+        ap.error("--nomodeset: linux only (GRUB's serial entry)")
     if not os.access(a.binary, os.R_OK):
         ap.error(f"no binary {a.binary}")
     a.image = a.image or find_image(a.platform)

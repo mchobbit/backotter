@@ -214,6 +214,7 @@ impl Spike {
                 'q' => return Next::Quit,
                 c @ '1'..='4' => self.show(c as usize - '1' as usize),
                 'n' => self.show((self.card + 1) % 4),
+                // Every style, whatever the console draws: the spike tries them.
                 'l' => self.reprofile(lines.next(), colour, caps, raw),
                 'c' => self.reprofile(lines, !colour, caps, raw),
                 'j' => self.reprofile(lines, colour, Caps { joined_sgr: !caps.joined_sgr, ..caps }, raw),

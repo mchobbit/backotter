@@ -10,6 +10,11 @@ use std::os::unix::fs::FileExt;
 use std::path::Path;
 
 /// Reads at most `max` bytes from `path`, failing if the file is larger.
+///
+/// # Errors
+///
+/// When `path` can't be opened or read, and `InvalidData` when it holds
+/// more than `max` bytes.
 pub fn read_bounded(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     let f = File::open(path)?;
     let mut buf = Vec::new();
@@ -25,6 +30,11 @@ pub fn read_bounded(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
 
 /// The last `max` bytes of the file at `path` (all of it when it's no
 /// bigger): for a log, whose end is what's wanted.
+///
+/// # Errors
+///
+/// When `path` can't be opened, its size read, or it can't be sought or
+/// read.
 pub fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     let mut f = File::open(path)?;
     let len = f.metadata()?.len();
@@ -37,6 +47,10 @@ pub fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
 }
 
 /// Reads at most `max` bytes of UTF-8 text from `path`, failing if larger or invalid UTF-8.
+///
+/// # Errors
+///
+/// As [`read_bounded`], and `InvalidData` when the bytes aren't UTF-8.
 pub fn read_to_string_bounded(path: &Path, max: u64) -> std::io::Result<String> {
     let b = read_bounded(path, max)?;
     String::from_utf8(b).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))

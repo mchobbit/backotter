@@ -136,7 +136,16 @@ impl Len {
 
 /// SIZE bytes decoded from the raw LZMA stream B with properties LC, LP and
 /// PB (GRUB's i386-pc core: 3, 0, 2).  An end marker before SIZE bytes, or
-/// past them, ends the output there (Err when short).
+/// past them, ends the output there (Err when short).  SIZE bytes are
+/// reserved up front, so the caller bounds it (core_prefix caps it at
+/// MAX_CORE, 16 MiB).
+///
+/// # Errors
+///
+/// When LC, LP or PB is out of LZMA's range, when B is under 5 bytes or
+/// doesn't start as a range coder's stream does, when the stream is
+/// corrupt (a match reaching back before the output's start, bad direct
+/// bits), and when it ends before SIZE bytes.
 pub fn decode(b: &[u8], lc: u32, lp: u32, pb: u32, size: usize) -> Result<Vec<u8>, String> {
     if lc > 8 || lp > 4 || pb > 4 {
         return Err(format!("LZMA properties lc={lc} lp={lp} pb={pb} out of range"));

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SticTest1 guix15 and guix15-bios, the part that runs in the guest as root
+# SticTest1 guix15, guix15-bios and guix15-luks, the part that runs in the guest as root
 # (/root).  Guix System 1.5.0 has no python3, perl, getfattr/setfattr or
 # setfacl: the fixture and the comparison use bash, gawk and the guest's own
 # tools (find -printf, lsattr, sha256sum, stat; btrfs on guix15-bios).
@@ -385,7 +385,9 @@ res LIMIT "SELinux labels" "Guix System 1.5.0 here has no SELinux or AppArmor la
 res LIMIT "Birth times" "$FS keeps them, Linux can't set them (BACKOTTER.md)"
 [ $PROJID = 0 ] && res LIMIT "Linux project IDs" "the guest's $FS root has none: chattr -p refused ($(head -1 $L/projid.err))"
 [ $FS = ext4 ] && res LIMIT "Whole-system restore (UEFI GRUB, vfat ESP, ext4 /, swap)" "out of scope: whole-disk"
-[ $FS = btrfs ] && res LIMIT "Whole-system restore (BIOS GRUB on GPT, Btrfs / with @, @home, @gnu, swap)" "out of scope: whole-disk"
+# guix15-bios boots by BIOS; guix15-luks, the other Btrfs one, by UEFI with / on LUKS1.
+[ $FS = btrfs ] && [ ! -d /sys/firmware/efi ] && res LIMIT "Whole-system restore (BIOS GRUB on GPT, Btrfs / with @, @home, @gnu, swap)" "out of scope: whole-disk"
+[ $FS = btrfs ] && [ -d /sys/firmware/efi ] && res LIMIT "Whole-system restore (UEFI GRUB opening LUKS1, Btrfs / with @, @home, @gnu, swap)" "out of scope: whole-disk"
 sed 's/^/torture: /' $L/torture.err >>$L/info
 
 # --- clean up -----------------------------------------------------------------

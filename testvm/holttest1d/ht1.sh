@@ -606,8 +606,11 @@ elif command -v s6-rc >/dev/null; then
 elif command -v herd >/dev/null; then
     # Guix System: herd status lists its services under Started:, Stopped:
     # and Failed: (then Running timers: and One-shot:), one " X NAME" each.
+    # sshd-N is one SSH connection of the inetd-style sshd: stopped once
+    # that connection ends, and listed until Shepherd forgets it, so it says
+    # nothing of the boot (t2h-20261124T1449-d9fd: "down sshd-4").
     echo shepherd
-    herd status | awk "/^[A-Z][^:]*:\$/ {sec=\$0; next} sec == \"Stopped:\" {print \"down \" \$2} sec == \"Failed:\" {print \"failed \" \$2}" | sort
+    herd status | awk "/^[A-Z][^:]*:\$/ {sec=\$0; next} sec == \"Stopped:\" && \$2 !~ /^sshd-[0-9]+\$/ {print \"down \" \$2} sec == \"Failed:\" {print \"failed \" \$2}" | sort
 elif [ -f /etc/rc.d/rc.M ] && [ -f /etc/slackware-version ]; then
     echo "slackware-rc runlevel $(runlevel | cut -d " " -f 2)"
     for p in rc.sshd:sshd rc.syslog:syslogd rc.crond:crond rc.atd:atd rc.acpid:acpid rc.udev:udevd rc.elogind:elogind-daemon rc.messagebus:dbus-daemon rc.inet1:dhcpcd rc.ntpd:ntpd rc.cups:cupsd; do

@@ -63,6 +63,9 @@ class Module:
     fs_can      {FSTYPE: {what it holds}} added to content.FS_CAN
     content     content(dump, fstype) -> the recipe this source draws, or None (no
                 content drift); the family's only
+    srv         srv(dump) -> where /srv really is when it is a link inside the
+                source the dump doesn't record (ABRoot: "/var/srv"), or None
+                (/srv itself): what content drift is charged to and judged on
     known       {"fail-NNN": why}: known findings its steer avoids
     steer       steer(dump, drifted, edits, opts) -> opts
     sweep       sweep(dump, opts) -> opts: load's options this source can take
@@ -86,6 +89,7 @@ class Module:
     recipes: dict = field(default_factory=dict)
     fs_can: dict = field(default_factory=dict)
     content: Optional[Callable] = None
+    srv: Optional[Callable] = None
     known: dict = field(default_factory=dict)
     steer: Optional[Callable] = None
     sweep: Optional[Callable] = None

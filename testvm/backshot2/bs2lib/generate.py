@@ -349,11 +349,9 @@ def planted_of(source, content):
     """Rule 1's share of a content drift: {mount point: (bytes, files)} on the filesystem holding DIR."""
     if not content:
         return {}
-    ms = sorted((m for m in dumpx.storage(source).get("mounts") or [] if (C.DIR + "/").startswith(m["target"].rstrip("/") + "/")),
-                key=lambda m: len(m["target"]))
-    if not ms:
+    m = C.srv_mount(source)
+    if m is None:
         return {}
-    m = ms[-1]
     entries = C.plan(content, m.get("fstype") or "ext4")
     return {m["target"]: C.sizes(entries)}
 

@@ -37,7 +37,8 @@ CHUNK = 1 << 20
 CHUNK_MIN = 512 << 10
 
 # The generic recipes, one per filesystem (since GENERATOR "6"), each
-# alpine-small-1's shape: ~165 inodes, ~75 MiB of data (95 at most), the deep
+# alpine-small-1's shape: ~165 inodes, ~75 MiB of data (~95 over seeds 0-299;
+# bound(), at any seed, ~190), the deep
 # tree past PATH_MAX (rustic-bko keeps it since fail-001's fix).  "fs" says
 # which filesystems a recipe is for (families/linux.py picks by it; plan()
 # reads only the knobs and "drop").  Each family adds its own
@@ -88,7 +89,8 @@ def fs_can_of(fs_type):
 #   jfs       times are unsigned 32-bit seconds (s_time_min 0, s_time_max
 #             U32_MAX): after 2038 (to 2106) yes, before 1970 no.  Names
 #             are kept as UTF-16 through the NLS table, so a name that
-#             isn't UTF-8 is refused (EINVAL): no rawnames.  Holes are
+#             isn't UTF-8 is refused (EINVAL): no rawnames (unverified,
+#             and coverage lost: no corpus JFS mount sets iocharset).  Holes are
 #             judged by st_blocks (it has the generic SEEK_HOLE:
 #             compare/fsmeta.py NO_SEEK_HOLE).
 #   nilfs2    no xattrs at all (so no ACLs, no capabilities); 64-bit times;
@@ -145,27 +147,32 @@ LONG_DEFAULT = {"xfs": 500}   # a/long's "x/" pairs: 1,003 bytes on XFS, 4,083 e
 LONG_PAIRS = 2040
 
 
-def srv_mount(dump, path=DIR):
+def srv_mount(dump, path=None):
     """The mount in DUMP that holds PATH (the longest target above it), or
-    None: what Hooks.recipe() and generate.planted_of() read its fstype from."""
+    None: what Hooks.recipe() and generate.planted_of() read its fstype from.
+    PATH: DIR where it really is (families' srv(): ABRoot's /srv is a link
+    to var/srv, so /var's mount)."""
     from . import dumpx
+    if path is None:
+        from . import families
+        path = families.hooks(None, dump).srv_dir(dump)
     ms = sorted((m for m in dumpx.storage(dump).get("mounts") or []
                  if (path + "/").startswith(str(m.get("target") or "").rstrip("/") + "/")), key=lambda m: len(m["target"]))
     return ms[-1] if ms else None
 
 
-def symlink_max(layout, path=DIR):
-    """The longest symlink target the filesystem holding PATH stores, in
-    LAYOUT (a dump, or a drifted layout: what the restore makes it), or None
-    where nothing tighter than PATH_MAX holds."""
+def symlink_max(layout, path=None):
+    """The longest symlink target the filesystem holding PATH (DIR, where it
+    really is: srv_mount()) stores, in LAYOUT (a dump, or a drifted layout:
+    what the restore makes it), or None where nothing tighter than PATH_MAX
+    holds."""
     from . import dumpx
-    ms = sorted((m for m in dumpx.storage(layout).get("mounts") or []
-                 if (path + "/").startswith(str(m.get("target") or "").rstrip("/") + "/")), key=lambda m: len(m["target"]))
-    if not ms:
+    m = srv_mount(layout, path)
+    if m is None:
         return None
-    dev = dumpx.devices(layout).get(ms[-1].get("device"))
+    dev = dumpx.devices(layout).get(m.get("device"))
     c = (dev or {}).get("content") or {}
-    return fs_symlink_max(c.get("type") or ms[-1].get("fstype"), c.get("block_size"), c.get("node_size"))
+    return fs_symlink_max(c.get("type") or m.get("fstype"), c.get("block_size"), c.get("node_size"))
 
 
 def fs_symlink_max(fs_type, block_size=None, node_size=None):
@@ -173,7 +180,8 @@ def fs_symlink_max(fs_type, block_size=None, node_size=None):
     (bytes; statvfs's f_bsize will do) and, for btrfs, NODE_SIZE (a dump's
     node_size: statvfs has none, so a mounted btrfs says nothing) stores, or
     None where nothing tighter than PATH_MAX holds."""
-    if fs_type in ("ext2", "ext3", "ext4") and block_size:
+    if fs_type in ("ext2", "ext3", "ext4", "f2fs", "nilfs2") and block_size:
+        # (f2fs and nilfs2 refuse a target and its NUL longer than a block.)
         return int(block_size) - 1
     if fs_type == "btrfs" and node_size:
         n = int(node_size) - BTRFS_INLINE_OVERHEAD
@@ -381,25 +389,64 @@ class _Dirs:
             os.close(fd)
 
 
-def _open_nofollow(root, rel):
-    """A directory fd of ROOT + REL, its components made where missing and
-    each opened without following a symlink: a source whose /srv is a link
-    (to /var/srv, say: an absolute target resolves on the host, not in the
-    source) is refused, not planted outside the source."""
-    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+def _open_nofollow(root, rel, make=True):
+    """A directory fd of ROOT + REL, its components made where missing (MAKE)
+    and each opened by fd without the kernel following a symlink.  A
+    relative link is followed here, inside the source (ABRoot's srv ->
+    var/srv), its target's ".." by the directories really walked; an
+    absolute target (it would resolve on the host) or a ".." past ROOT is
+    refused (EXDEV), so nothing is ever planted outside the source."""
+    stack = [os.open(root, os.O_RDONLY | os.O_DIRECTORY)]
+    todo = [n for n in rel.split("/") if n]
+    hops = 0
     try:
-        for name in [n for n in rel.split("/") if n]:
+        while todo:
+            name = todo.pop(0)
+            if name == ".":
+                continue
+            if name == "..":
+                if len(stack) == 1:
+                    raise OSError(errno.EXDEV, "a link's .. leads out of the source")
+                os.close(stack.pop())
+                continue
+            fd = stack[-1]
             try:
+                stack.append(os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd))
+                continue
+            except FileNotFoundError:
+                if not make:
+                    raise
                 os.mkdir(name, 0o755, dir_fd=fd)
-            except FileExistsError:
-                pass
-            nfd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-            os.close(fd)
-            fd = nfd
-    except OSError:
+                stack.append(os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd))
+                continue
+            except OSError as x:
+                if x.errno not in (errno.ELOOP, errno.ENOTDIR):
+                    raise
+                try:
+                    target = os.readlink(name, dir_fd=fd)
+                except OSError:
+                    raise x from None
+            hops += 1
+            if hops > 40:
+                raise OSError(errno.ELOOP, f"{name}: too many links")
+            if target.startswith("/"):
+                raise OSError(errno.EXDEV, f"{name} links to {target}, which would resolve outside the source")
+            todo = [n for n in target.split("/") if n] + todo
+        return stack.pop()
+    finally:
+        for f in stack:
+            os.close(f)
+
+
+def real_dir(root):
+    """The host's path of ROOT + DIR as plant() reaches it (made, links inside
+    the source followed): what findmnt and statvfs should be asked about.
+    Linux (/proc)."""
+    fd = _open_nofollow(root, DIR)
+    try:
+        return os.readlink(f"/proc/self/fd/{fd}")
+    finally:
         os.close(fd)
-        raise
-    return fd
 
 
 def plant(root, entries):
@@ -412,7 +459,7 @@ def plant(root, entries):
         dirs = _Dirs(_open_nofollow(root, DIR))
     except OSError as x:
         return [(-1, f"{DIR} under {root}: {errno.errorcode.get(x.errno, x.errno)} {x.strerror} "
-                     f"(a symlink on the way is never followed: nothing planted)")]
+                     f"(absolute links and links out of the source are never followed: nothing planted)")]
     fails, flags = [], []
     made = []
     for e in entries:
@@ -491,15 +538,31 @@ def change(root, content, round_no):
     """Between two snapshots of a --snapshot case: ROUND_NO's seeded changes
     under DIR (a file rewritten, one added, one removed)."""
     rng = random.Random(f"bs2-change:{content['seed']}:{round_no}")
-    base = root.rstrip("/") + DIR
-    os.makedirs(f"{base}/rounds", exist_ok=True)
-    with open(f"{base}/rounds/r{round_no}", "wb") as f:
-        f.write(_data(rng.randrange(1 << 30), rng.randrange(1, 300000)))
-    with open(f"{base}/rounds/changing", "wb") as f:
-        f.write(_data(round_no, 1000 + round_no))
-    old = f"{base}/rounds/r{round_no - 2}"
-    if os.path.exists(old):
-        os.unlink(old)
+    base = _open_nofollow(root, DIR)
+    try:
+        try:
+            os.mkdir("rounds", 0o755, dir_fd=base)
+        except FileExistsError:
+            pass
+        fd = os.open("rounds", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=base)
+    finally:
+        os.close(base)
+    try:
+        for name, data in ((f"r{round_no}", lambda: _data(rng.randrange(1 << 30), rng.randrange(1, 300000))),
+                           ("changing", lambda: _data(round_no, 1000 + round_no))):
+            f = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o666, dir_fd=fd)
+            try:
+                b = data()
+                while b:
+                    b = b[os.write(f, b):]
+            finally:
+                os.close(f)
+        try:
+            os.unlink(f"r{round_no - 2}", dir_fd=fd)
+        except FileNotFoundError:
+            pass
+    finally:
+        os.close(fd)
 
 
 def deep_record(root):
@@ -508,9 +571,8 @@ def deep_record(root):
     import hashlib as H
     import stat as S
     out = {}
-    base = (root.rstrip("/") + DIR).encode()
     try:
-        top = os.open(base, os.O_RDONLY | os.O_DIRECTORY)
+        top = _open_nofollow(root, DIR, make=False)
     except FileNotFoundError:
         return out
 

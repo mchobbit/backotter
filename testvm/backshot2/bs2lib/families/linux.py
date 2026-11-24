@@ -63,17 +63,19 @@ and None where it can't be planted or judged:
   (available_bytes, x rules.MARGIN) and by rule 1, or no case could plant
   it.  Of the corpus, only the synthetic 27 MiB arm64 boot fixtures.
 Where content can be planted, on purpose:
-- ABRoot (vanilla3): the present root (the dump's / and backup_sources' /:
-  the root grub.cfg's default boots, root-b here), which vm-mount mounts at
-  MOUNTPOINT, read raw, and load restores verbatim with the other.  btrfs-1.
+- ABRoot (vanilla3): each root's /srv is a relative link to var/srv (the
+  abroot trait's srv()), so the content lands on /var's btrfs (btrfs-1),
+  which rule 1 charges and plant() reaches through the link, inside the
+  source.
 - snapper and btrfs subvolumes: /srv has its own subvolume on garuda
   (@srv), leap16, microos and tumbleweed (@/srv): the mount holding /srv is
   it, and vm-mount mounts it from fstab.  On microos / is a read-only
   snapshot; /srv's subvolume is read-write.
 - Chimera, Gentoo, Solus: plain roots (xfs or ext4, chimera-zfs ZFS):
   nothing of theirs touches /srv.
-content.plant() never follows a symlink on the way to /srv/bs2: a source
-whose /srv is a link is refused at planting, never planted on the host.
+content.plant() follows a relative link on the way to /srv/bs2 only inside
+the source, by fd: an absolute one, or one leading out, is refused at
+planting, never planted on the host.
 """
 
 from .. import content as C, dumpx

@@ -136,6 +136,7 @@ class Hooks:
     patterns: tuple = ()
     finders: tuple = ()
     content: object = None
+    srvs: tuple = ()
     known: dict = field(default_factory=dict)
     steers: tuple = ()
     sweeps: tuple = ()
@@ -177,14 +178,23 @@ class Hooks:
             out += f(dump, dk, p)
         return out
 
+    def srv_dir(self, dump):
+        """Where content.DIR really is in DUMP's tree: under the first srv()
+        that says /srv is a link (ABRoot's /var/srv), else content.DIR."""
+        from .. import content as C
+        for f in self.srvs:
+            at = f(dump)
+            if at:
+                return at.rstrip("/") + C.DIR[len("/srv"):]
+        return C.DIR
+
     def recipe(self, dump):
         """The content recipe this source draws (the family's), or None."""
         if self.content is None:
             return None
-        from .. import content as C, dumpx
-        ms = sorted((m for m in dumpx.storage(dump).get("mounts") or [] if (C.DIR + "/").startswith(str(m.get("target") or "").rstrip("/") + "/")),
-                    key=lambda m: len(m["target"]))
-        return self.content(dump, ms[-1].get("fstype") if ms else None)
+        from .. import content as C
+        m = C.srv_mount(dump, self.srv_dir(dump))
+        return self.content(dump, m.get("fstype") if m else None)
 
     def steer(self, dump, drifted, edits, opts):
         for f in self.steers:
@@ -247,6 +257,7 @@ def merge(fam, traits):
         patterns=tuple(m.number_patterns for m in mods if m.number_patterns),
         finders=tuple(m.names_by_number for m in mods if m.names_by_number),
         content=fam.content if fam else None,
+        srvs=tuple(m.srv for m in mods if m.srv),
         known=known,
         steers=tuple(m.steer for m in mods if m.steer),
         sweeps=tuple(m.sweep for m in mods if m.sweep),

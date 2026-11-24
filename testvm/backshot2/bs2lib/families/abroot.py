@@ -33,6 +33,11 @@ abroot.cfg to its own kernel, initramfs and filesystem.
     the source's bytes; --no-nvram skips the efibootmgr entry as elsewhere.
   BIOS, an operation.lock, a non-thin or ABRoot v1 layout and --new-uuids
   are load's plan problems, and no drift adds a layer or a VG.
+- srv: each root's /srv is a relative link into var/ (as home, mnt, opt and
+  root are: docs/design/vanillaos.md, "Each root"), which the dump doesn't
+  record: content drift lands in /var/srv, on /var's filesystem, and is
+  charged and judged there (content.plant() follows the link inside the
+  source).
 """
 
 from .base import Trait, strings
@@ -53,4 +58,5 @@ TRAITS = [Trait(
     piece="V11",
     matches=lambda source, dump: bool((dump.get("boot") or {}).get("abroot")),
     config_texts=texts,
+    srv=lambda dump: "/var/srv",
 )]

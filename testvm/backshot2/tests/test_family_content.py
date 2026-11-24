@@ -164,10 +164,54 @@ class TestRecipes(unittest.TestCase):
             self.assertEqual(len(fails), 1)
             self.assertEqual(fails[0][0], -1)
             self.assertIn("never followed", fails[0][1])
+            self.assertIn("EXDEV", fails[0][1])
             self.assertEqual(os.listdir(elsewhere), [])
             os.unlink(os.path.join(root, "srv"))
             self.assertEqual(CT.plant(root, es), [])
             self.assertTrue(os.path.isdir(os.path.join(root, "srv", "bs2", "a")))
+
+    def test_plant_follows_a_relative_link_inside_the_source(self):
+        # ABRoot's layout: /srv -> var/srv, /var a filesystem of its own.
+        with tempfile.TemporaryDirectory() as t:
+            root = os.path.join(t, "root")
+            os.makedirs(os.path.join(root, "var"))
+            os.symlink("var/srv", os.path.join(root, "srv"))
+            es = [dict(e, xattrs={}) for e in CT.plan({"recipe": "btrfs-1", "seed": 2}, "btrfs") if e["kind"] == "dir"][:3]
+            self.assertEqual(CT.plant(root, es), [])
+            self.assertTrue(os.path.isdir(os.path.join(root, "var", "srv", "bs2", "a")))
+            self.assertTrue(os.path.islink(os.path.join(root, "srv")))
+            CT.change(root, {"seed": 5}, 1)
+            CT.change(root, {"seed": 5}, 2)
+            self.assertEqual(sorted(os.listdir(os.path.join(root, "var", "srv", "bs2", "rounds"))), ["changing", "r1", "r2"])
+            CT.change(root, {"seed": 5}, 3)   # r1 goes
+            self.assertEqual(sorted(os.listdir(os.path.join(root, "var", "srv", "bs2", "rounds"))), ["changing", "r2", "r3"])
+            self.assertEqual(CT.deep_record(root), {})   # no deep tree planted here, and none outside
+            # A link whose .. leaves the source, or a chain of them, is refused.
+            os.unlink(os.path.join(root, "srv"))
+            os.symlink("../../elsewhere", os.path.join(root, "srv"))
+            os.makedirs(os.path.join(t, "elsewhere"))
+            fails = CT.plant(root, es)
+            self.assertEqual([i for i, _ in fails], [-1])
+            self.assertIn("EXDEV", fails[0][1])
+            self.assertEqual(os.listdir(os.path.join(t, "elsewhere")), [])
+            os.unlink(os.path.join(root, "srv"))
+            os.symlink("var/../srv2", os.path.join(root, "srv"))
+            os.symlink("srv", os.path.join(root, "srv2"))
+            self.assertEqual([i for i, _ in CT.plant(root, es)], [-1])
+
+    def test_abroot_srv_is_on_var(self):
+        d = K.dump("vanilla3")
+        h = F.hooks("vanilla3", d)
+        self.assertEqual(h.srv_dir(d), "/var/srv/bs2")
+        self.assertEqual(CT.srv_mount(d)["target"], "/var")
+        self.assertEqual(CT.srv_mount(K.dump("debian13"))["target"], "/")
+        c = next(c for c in K.cases("vanilla3") if c.get("content"))
+        self.assertEqual(list(G.planted_of(d, c["content"])), ["/var"])
+
+    def test_symlink_limits(self):
+        self.assertEqual(CT.fs_symlink_max("f2fs", 4096), 4095)
+        self.assertEqual(CT.fs_symlink_max("nilfs2", 1024), 1023)
+        self.assertIsNone(CT.fs_symlink_max("jfs", 4096))
 
 
 class TestSmoke(unittest.TestCase):

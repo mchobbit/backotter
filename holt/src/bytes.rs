@@ -569,7 +569,7 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
 /// without a copy on the heap: for secrets (the recovery key's checksum).
 /// The padded block is built in BLOCK and the message schedule in W, which
 /// then still hold DATA's bytes: the caller wipes both.
-pub fn sha256_short<const N: usize>(data: &[u8; N], block: &mut [u8; 64], w: &mut [u32; 64]) -> [u8; 32] {
+pub(crate) fn sha256_short<const N: usize>(data: &[u8; N], block: &mut [u8; 64], w: &mut [u32; 64]) -> [u8; 32] {
     const { assert!(N <= 55, "sha256_short: more than one block") };
     block.fill(0);
     block[..N].copy_from_slice(data);

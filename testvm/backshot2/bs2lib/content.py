@@ -16,6 +16,13 @@ times, xattrs, ACLs and capabilities as xattrs, file flags, holes):
   absolute; names of 255 bytes, not UTF-8, with newlines; a tree deeper than
   4,096 bytes of path; ACLs, capabilities, user.* xattrs; chattr +i and +a;
   mtimes before 1970 and after 2038.
+
+The generic recipes (RECIPES), one per Linux filesystem, are what generic
+Linux and NixOS draw (families/linux.py choose() picks one from the
+dump); a family may add its own (Alpine's, Guix's).  A recipe may "drop"
+features its filesystem holds but the source's (or what a drift makes of
+it) doesn't: "-32bit" ones drop post2038, for an XFS without bigtime and an
+ext without extra_isize (whose drift may draw 128-byte inodes).
 """
 
 import errno
@@ -29,9 +36,25 @@ DIR = "/srv/bs2"
 CHUNK = 1 << 20
 CHUNK_MIN = 512 << 10
 
-# The generic recipes; each family adds its own (families/*.py `recipes`:
-# Alpine's alpine-small-1 and alpine-small-2), found by recipe_of().
-RECIPES = {}
+# The generic recipes, one per filesystem (since GENERATOR "6"), each
+# alpine-small-1's shape: ~165 inodes, ~75 MiB of data (95 at most), the deep
+# tree past PATH_MAX (rustic-bko keeps it since fail-001's fix).  "fs" says
+# which filesystems a recipe is for (families/linux.py picks by it; plan()
+# reads only the knobs and "drop").  Each family adds its own
+# (families/*.py `recipes`: Alpine's alpine-small-1 and alpine-small-2),
+# found by recipe_of().
+SHAPE = {"files": 60, "large": 24 << 20, "deep": 1, "deep_bytes": 4300, "links": 8, "symlinks": 12, "names": 10, "nodes": 4}
+RECIPES = {
+    "ext-1": dict(SHAPE, fs=["ext2", "ext3", "ext4"]),
+    "ext-1-32bit": dict(SHAPE, fs=["ext2", "ext3", "ext4"], drop=["post2038"]),
+    "xfs-1": dict(SHAPE, fs=["xfs"]),
+    "xfs-1-32bit": dict(SHAPE, fs=["xfs"], drop=["post2038"]),
+    "btrfs-1": dict(SHAPE, fs=["btrfs"]),
+    "f2fs-1": dict(SHAPE, fs=["f2fs"]),
+    "jfs-1": dict(SHAPE, fs=["jfs"]),
+    "nilfs2-1": dict(SHAPE, fs=["nilfs2"]),
+    "bcachefs-1": dict(SHAPE, fs=["bcachefs"]),
+}
 
 
 def recipe_of(name):
@@ -52,13 +75,37 @@ def fs_can_of(fs_type):
 
 
 # What each filesystem holds: xattrs (user.* and security.capability), POSIX
-# ACLs, chattr +i/+a, times before 1970, after 2038, device nodes, FIFOs.
+# ACLs, chattr +i/+a, times before 1970, after 2038, device nodes, and
+# "rawnames": names of any bytes (not UTF-8 ones too).  FIFOs, hard links,
+# holes and 255-byte names everywhere.  What matters is the kernel that
+# plants and judges (the farm host's, Debian's) and the one that restores
+# (the rescue's, Ubuntu's): both build every one of these filesystems with
+# xattrs, POSIX ACLs and security labels, and NLS's default is utf8.
+#   f2fs      times are 64-bit seconds and 32-bit nanoseconds on disk
+#             (struct f2fs_inode), so both ends hold; FS_IOC_SETFLAGS takes
+#             +i and +a; xattrs, ACLs and security.* (F2FS_FS_SECURITY).
+#             Names are bytes unless casefolded (no corpus f2fs is).
+#   jfs       times are unsigned 32-bit seconds (s_time_min 0, s_time_max
+#             U32_MAX): after 2038 (to 2106) yes, before 1970 no.  Names
+#             are kept as UTF-16 through the NLS table, so a name that
+#             isn't UTF-8 is refused (EINVAL): no rawnames.  Holes are
+#             judged by st_blocks (it has the generic SEEK_HOLE:
+#             compare/fsmeta.py NO_SEEK_HOLE).
+#   nilfs2    no xattrs at all (so no ACLs, no capabilities); 64-bit times;
+#             +i and +a; holes judged by st_blocks as for jfs.
+#   bcachefs  xattrs, ACLs, security.*; times signed 64-bit at the
+#             filesystem's time precision (1 ns unless set at format);
+#             +i and +a.
 FS_CAN = {
-    "ext4": {"xattr", "acl", "caps", "chattr", "pre1970", "post2038", "nodes"},
-    "ext3": {"xattr", "acl", "caps", "chattr", "pre1970", "nodes"},
-    "ext2": {"xattr", "acl", "caps", "chattr", "pre1970", "nodes"},
-    "xfs": {"xattr", "acl", "caps", "chattr", "pre1970", "post2038", "nodes"},
-    "btrfs": {"xattr", "acl", "caps", "chattr", "pre1970", "post2038", "nodes"},
+    "ext4": {"xattr", "acl", "caps", "chattr", "pre1970", "post2038", "nodes", "rawnames"},
+    "ext3": {"xattr", "acl", "caps", "chattr", "pre1970", "nodes", "rawnames"},
+    "ext2": {"xattr", "acl", "caps", "chattr", "pre1970", "nodes", "rawnames"},
+    "xfs": {"xattr", "acl", "caps", "chattr", "pre1970", "post2038", "nodes", "rawnames"},
+    "btrfs": {"xattr", "acl", "caps", "chattr", "pre1970", "post2038", "nodes", "rawnames"},
+    "f2fs": {"xattr", "acl", "caps", "chattr", "pre1970", "post2038", "nodes", "rawnames"},
+    "jfs": {"xattr", "acl", "caps", "chattr", "post2038", "nodes"},
+    "nilfs2": {"chattr", "pre1970", "post2038", "nodes", "rawnames"},
+    "bcachefs": {"xattr", "acl", "caps", "chattr", "pre1970", "post2038", "nodes", "rawnames"},
     "vfat": set(),
 }
 
@@ -96,6 +143,15 @@ BTRFS_INLINE_OVERHEAD = 101 + 25 + 21
 PATH_MAX = 4096
 LONG_DEFAULT = {"xfs": 500}   # a/long's "x/" pairs: 1,003 bytes on XFS, 4,083 elsewhere
 LONG_PAIRS = 2040
+
+
+def srv_mount(dump, path=DIR):
+    """The mount in DUMP that holds PATH (the longest target above it), or
+    None: what Hooks.recipe() and generate.planted_of() read its fstype from."""
+    from . import dumpx
+    ms = sorted((m for m in dumpx.storage(dump).get("mounts") or []
+                 if (path + "/").startswith(str(m.get("target") or "").rstrip("/") + "/")), key=lambda m: len(m["target"]))
+    return ms[-1] if ms else None
 
 
 def symlink_max(layout, path=DIR):
@@ -151,6 +207,12 @@ def plan(content, fs_type, ext4_big_inodes=True, xfs_bigtime=True, symlink_max=N
         can.discard("post2038")
     if fs_type == "xfs" and not xfs_bigtime:
         can.discard("post2038")
+    can -= set(recipe.get("drop") or ())
+
+    def nm(b):
+        """A name as the filesystem takes it: its bytes, or (no rawnames) each byte as a Unicode character, in UTF-8."""
+        return b if "rawnames" in can else b.decode("latin-1").encode()
+
     out = []
 
     def add(kind, path, **kw):
@@ -195,10 +257,10 @@ def plan(content, fs_type, ext4_big_inodes=True, xfs_bigtime=True, symlink_max=N
         add("symlink", b"b/s" + str(k).encode(), to=rng.choice([b"../a", b"/tmp", b"f0", b"\xff\xfe"]).hex())
     # Names: 255 bytes, not UTF-8, with a newline.
     add("file", b"c/" + b"n" * 255, size=3, holes=[], fill=1, mode=0o644)
-    add("file", b"c/\xff\xfe\xfdnot-utf8", size=5, holes=[], fill=2, mode=0o644)
+    add("file", nm(b"c/\xff\xfe\xfdnot-utf8"), size=5, holes=[], fill=2, mode=0o644)
     add("file", b"c/new\nline", size=7, holes=[], fill=3, mode=0o644)
     for k in range(recipe["names"] - 3):
-        add("file", b"c/" + bytes(rng.choice([0x20, 0x2a, 0x3f, 0x5c, 0xe2, 0x80, 0x99, 0x41]) for _ in range(rng.randrange(1, 40))) + str(k).encode(),
+        add("file", nm(b"c/" + bytes(rng.choice([0x20, 0x2a, 0x3f, 0x5c, 0xe2, 0x80, 0x99, 0x41]) for _ in range(rng.randrange(1, 40))) + str(k).encode()),
             size=rng.randrange(0, 100), holes=[], fill=k, mode=0o644)
     # A tree past 4,096 bytes of path.
     for t in range(recipe["deep"]):
@@ -246,6 +308,21 @@ def plan(content, fs_type, ext4_big_inodes=True, xfs_bigtime=True, symlink_max=N
     return out
 
 
+def bound(recipe):
+    """(bytes, inodes): at least sizes() of RECIPE's (a name, or a recipe)
+    plan for any seed, on any filesystem: each random file at its largest."""
+    r = recipe_of(recipe) if isinstance(recipe, str) else recipe
+    fixed = [0, 1, CHUNK - 1, CHUNK, CHUNK + 1, CHUNK_MIN - 1, CHUNK_MIN, CHUNK_MIN + 1]
+    n = r["files"]
+    data = sum(fixed[:n]) + max(0, n - len(fixed)) * (3 * CHUNK - 1)
+    data += 3 * CHUNK + (CHUNK + 17) + CHUNK          # the sparse files' data
+    data += r["large"] + 3 + 5 + 7 + max(0, r["names"] - 3) * 99
+    deep = r["deep"] * (r["deep_bytes"] // 61 + 3)    # each tree's dirs and leaf
+    entries = 4 + n + 3 + 1 + r["symlinks"] + r["names"] + deep + 1 + 2
+    data += deep * 11
+    return data + entries * 4096, entries
+
+
 def sizes(entries):
     """(bytes the entries take on a disk, roughly, and how many inodes)."""
     data = 0
@@ -277,7 +354,7 @@ class _Dirs:
     past PATH_MAX (the deep tree) are made and touched with the *at calls."""
 
     def __init__(self, base):
-        self.base = os.open(base, os.O_RDONLY | os.O_DIRECTORY)
+        self.base = base if isinstance(base, int) else os.open(base, os.O_RDONLY | os.O_DIRECTORY)
         self.fds = {b"": self.base}
 
     def dir(self, rel, make=False):
@@ -304,16 +381,39 @@ class _Dirs:
             os.close(fd)
 
 
+def _open_nofollow(root, rel):
+    """A directory fd of ROOT + REL, its components made where missing and
+    each opened without following a symlink: a source whose /srv is a link
+    (to /var/srv, say: an absolute target resolves on the host, not in the
+    source) is refused, not planted outside the source."""
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for name in [n for n in rel.split("/") if n]:
+            try:
+                os.mkdir(name, 0o755, dir_fd=fd)
+            except FileExistsError:
+                pass
+            nfd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nfd
+    except OSError:
+        os.close(fd)
+        raise
+    return fd
+
+
 def plant(root, entries):
     """Makes ENTRIES under ROOT + DIR (ROOT: the source's root, mounted).
     Returns what it couldn't make, as [(index, why)]: those are the
     harness's own problem, and the case says so."""
     import fcntl
     import stat
-    base = (root.rstrip("/") + DIR).encode()
-    os.makedirs(base, exist_ok=True)
+    try:
+        dirs = _Dirs(_open_nofollow(root, DIR))
+    except OSError as x:
+        return [(-1, f"{DIR} under {root}: {errno.errorcode.get(x.errno, x.errno)} {x.strerror} "
+                     f"(a symlink on the way is never followed: nothing planted)")]
     fails, flags = [], []
-    dirs = _Dirs(base)
     made = []
     for e in entries:
         rel = bytes.fromhex(e["path"])

@@ -19,7 +19,6 @@
 #   - reformat vda3: /.snapshots/1/snapshot is a mounted subvolume seen again; the restore leaves it out
 #   - reformat vda3: chattr C and c and btrfs.* xattrs don't come along (ext4 refuses them; rustic-bko warns in load.log)
 #   - reformat: boot rewrites fstab and the kernel command lines (rootflags=, rootfstype=), then checks the initramfs has the new type's module
-#   - debconf's grub-pc/install_devices still names the source's disks; `dpkg-reconfigure grub-pc` on the restored system fixes it
 
 # ---- partition ----
 # vda -> /dev/sdq: clear the old table and signatures

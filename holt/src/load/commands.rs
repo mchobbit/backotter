@@ -4040,7 +4040,12 @@ impl Builder<'_> {
                 for d in devs {
                     out.push(self.grub_bios_install(&t, &d));
                 }
-                self.notes.push("debconf's grub-pc/install_devices still names the source's disks; `dpkg-reconfigure grub-pc` on the restored system fixes it".into());
+                // Only where debconf holds the answer (Debian and its
+                // derivatives: dpkg's grub-pc asked it).  Arch, Fedora,
+                // Chimera, Void and the rest have no debconf to go stale.
+                if self.layout.str_at(&["boot", "grub", "debconf", "grub-pc/install_devices"]).is_some() {
+                    self.notes.push("debconf's grub-pc/install_devices still names the source's disks; `dpkg-reconfigure grub-pc` on the restored system fixes it".into());
+                }
                 self.remake_grub_cfg(&t, &mut out);
             }
             // AnduinOS's own GRUB, signed on the machine with its MOK, behind
@@ -7735,6 +7740,8 @@ mod tests {
         assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
         assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{bt}");
         assert!(!bt.contains("update-grub") && !bt.contains("dpkg"), "{bt}");
+        // No debconf, so no note sends the user to dpkg-reconfigure.
+        assert!(!b.notes.iter().any(|n| n.contains("debconf") || n.contains("dpkg")), "{:?}", b.notes);
         let uefi = bios
             .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
             .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, r#""loader": {"name": "grub", "firmware": "uefi", "via_shim": false, "package": "grub-x86_64-efi"}"#)

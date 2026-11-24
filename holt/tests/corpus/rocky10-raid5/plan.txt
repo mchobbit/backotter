@@ -5,9 +5,6 @@
 #   vda (16 GiB) -> /dev/sdq
 #   vdb (16 GiB) -> /dev/sdr
 #   vdc (16 GiB) -> /dev/sds
-#
-# Notes:
-#   - debconf's grub-pc/install_devices still names the source's disks; `dpkg-reconfigure grub-pc` on the restored system fixes it
 
 # ---- partition ----
 # vda -> /dev/sdq: clear the old table and signatures

@@ -391,18 +391,20 @@ fn dm_json(d: &Dev) -> Value {
             o.put("vg", vg);
             o.put("lv", lv);
         }
-        if rest.len() >= 64 {
-            o.put("vg_uuid", crate::probe::lvm::format_uuid(&rest[..32]));
-            o.put("lv_uuid", crate::probe::lvm::format_uuid(&rest[32..64]));
+        // `get`, not indexing: the uuid comes from sysfs through a lossy
+        // UTF-8 read, so a cut can land inside a multi-byte char.  A uuid
+        // that doesn't split cleanly leaves the fields out.
+        if let (true, Some(vg_uuid), Some(lv_uuid)) = (rest.len() >= 64, rest.get(..32), rest.get(32..64)) {
+            o.put("vg_uuid", crate::probe::lvm::format_uuid(vg_uuid));
+            o.put("lv_uuid", crate::probe::lvm::format_uuid(lv_uuid));
             o.put_some("lv_layer", rest.get(64..).filter(|s| !s.is_empty()).map(|s| s.trim_start_matches('-').to_string()));
         }
     } else if let Some(rest) = uuid.strip_prefix("CRYPT-") {
         o.put("target", "crypt");
         let (kind, tail) = rest.split_once('-').unwrap_or((rest, ""));
         o.put("crypt_type", kind);
-        if kind.starts_with("LUKS") && tail.len() >= 32 {
-            let h = &tail[..32];
-            o.put("luks_uuid", format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32]));
+        if kind.starts_with("LUKS") {
+            o.put_some("luks_uuid", luks_uuid_from_dm(tail));
         }
     } else if uuid.starts_with("mpath-") {
         o.put("target", "multipath");
@@ -414,6 +416,14 @@ fn dm_json(d: &Dev) -> Value {
         o.put("target", if uuid.is_empty() { "unknown" } else { "other" });
     }
     o.build()
+}
+
+/// The LUKS uuid, dashed, from the hex that follows `CRYPT-LUKSn-` in a dm
+/// uuid; `None` when there are fewer than 32 bytes or a cut would land
+/// inside a multi-byte char (sysfs is input, read lossily).
+fn luks_uuid_from_dm(tail: &str) -> Option<String> {
+    let h = tail.get(..32)?;
+    Some(format!("{}-{}-{}-{}-{}", h.get(0..8)?, h.get(8..12)?, h.get(12..16)?, h.get(16..20)?, h.get(20..32)?))
 }
 
 fn md_json(sys: &Sys, d: &Dev) -> Value {
@@ -2094,5 +2104,38 @@ mod tests {
         assert_eq!(mk("mpatha1", "part1-mpath-3600").get("target").and_then(Value::as_str), Some("partition"));
         assert_eq!(mk("x", "").get("target").and_then(Value::as_str), Some("unknown"));
         assert_eq!(mk("x", "SOMETHING").get("target").and_then(Value::as_str), Some("other"));
+    }
+
+    /// RustAudit1 H3-09: a dm uuid with a multi-byte char across one of the
+    /// fixed cuts must not panic the dump; the fields that don't split are
+    /// left out, the rest of the device is still described.
+    #[test]
+    fn dm_classification_non_ascii_uuid() {
+        let mk = |name: &str, uuid: &str| {
+            let t = crate::testutil::Tree::new("dmcls8");
+            t.disk("dm-0", "253:0", &[0u8; 1024], 512).file("/sys/block/dm-0/dm/name", name).file("/sys/block/dm-0/dm/uuid", uuid);
+            let s = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), false);
+            let mut b = crate::blockdev::scan(&s);
+            dm_json(&Dev { b: b.remove(0), table: None, contents: vec![], boot_code: None, partition_boot_code: None, first_partition_lba: None, read_ok: false })
+        };
+        // 'é' is 2 bytes; 31 ASCII bytes put it across byte 32.
+        let v = mk("vg0-root", &format!("LVM-{}é{}", "a".repeat(31), "b".repeat(32)));
+        assert_eq!(v.get("target").and_then(Value::as_str), Some("lvm"));
+        assert_eq!(v.get("vg").and_then(Value::as_str), Some("vg0"));
+        assert!(v.get("vg_uuid").is_none() && v.get("lv_uuid").is_none() && v.get("lv_layer").is_none());
+        // Across byte 64.
+        let v = mk("vg0-root", &format!("LVM-{}é-tdata", "a".repeat(63)));
+        assert!(v.get("vg_uuid").is_none() && v.get("lv_layer").is_none());
+        // Across byte 32 of the LUKS hex, and across an inner cut (byte 8).
+        let v = mk("c", &format!("CRYPT-LUKS2-{}é{}-c", "0".repeat(31), "1".repeat(8)));
+        assert_eq!(v.get("crypt_type").and_then(Value::as_str), Some("LUKS2"));
+        assert!(v.get("luks_uuid").is_none());
+        let v = mk("c", &format!("CRYPT-LUKS2-{}é{}-c", "0".repeat(7), "1".repeat(30)));
+        assert!(v.get("luks_uuid").is_none());
+        // A lossy read's U+FFFD (3 bytes) across a cut.
+        let v = mk("c", &format!("CRYPT-LUKS1-{}\u{fffd}{}", "0".repeat(30), "1".repeat(8)));
+        assert!(v.get("luks_uuid").is_none());
+        assert_eq!(luks_uuid_from_dm("0b5f04ede7314ac6933e83ff25657722-x").as_deref(), Some("0b5f04ed-e731-4ac6-933e-83ff25657722"));
+        assert_eq!(luks_uuid_from_dm("0b5f04ed"), None);
     }
 }

@@ -8,8 +8,9 @@
 # Usage: ./make-guix.sh [--iso-dir DIR] FLAVOR WORK_DIR
 #   e.g. ./make-guix.sh guix15 vms/guix15
 #
-# FLAVOR is guix15 (UEFI, ext4) or guix15-bios (BIOS, Btrfs subvolumes);
-# guix/install.sh describes each layout.  DIR (default
+# FLAVOR is guix15 (UEFI, ext4), guix15-bios (BIOS, Btrfs subvolumes) or
+# guix15-luks (UEFI, Btrfs subvolumes on LUKS1, the passphrase typed at
+# GRUB and again in the initrd); guix/install.sh describes each layout.  DIR (default
 # /bkoscratch/rebuild-inputs/guix15) holds guix-system-install-1.5.0.x86_64-linux.iso,
 # checked against the SHA-256 pinned below.  Its .sig was checked once, on
 # download (2026-11-14): a good signature by Efraim Flashner's key
@@ -37,6 +38,9 @@
 #                         (vm-run --uefi --no-secure-boot --uefi-vars COPY)
 #   vm-run-options        how vm-run must boot it
 #   root-password         the password of root and of "tester" (mode 600)
+#   console-passphrase    guix15-luks: the LUKS passphrase (mode 600, no
+#                         final newline), which console-boot.py types at
+#                         GRUB's and the initrd's prompts on the serial console
 #   id_ed25519, .pub      SSH key that logs in as root
 #   install-serial.log    the installation image's serial console
 #   facts/                what install.sh recorded (config.scm, grub.cfg,
@@ -66,7 +70,13 @@ iso_dir=/bkoscratch/rebuild-inputs/guix15
 [[ ${1:-} == --iso-dir ]] && { iso_dir=$2; shift 2; }
 [[ $# -eq 2 ]] || die "usage: $0 [--iso-dir DIR] guix15|guix15-bios WORK_DIR"
 name=$1
-case $name in guix15) uefi=yes ;; guix15-bios) uefi=no ;; *) die "FLAVOR is guix15 or guix15-bios, not '$name'" ;; esac
+luks=no
+case $name in
+    guix15) uefi=yes ;;
+    guix15-bios) uefi=no ;;
+    guix15-luks) uefi=yes luks=yes ;;
+    *) die "FLAVOR is guix15, guix15-bios or guix15-luks, not '$name'" ;;
+esac
 iso=$(realpath "$iso_dir/$ISO_NAME")
 [[ -f $iso ]] || die "no $ISO_NAME in $iso_dir"
 DISK=$name.qcow2
@@ -104,6 +114,13 @@ password=$(openssl rand -base64 18)
 printf '%s\n' "$password" >root-password
 hash=$(printf '%s' "$password" | openssl passwd -6 -stdin)
 [[ -e id_ed25519 ]] || ssh-keygen -q -t ed25519 -N '' -C "root@$name test guest" -f id_ed25519
+# Letters and digits only: it is typed, at GRUB's prompt among others.
+luks_pass=""
+if [[ $luks == yes ]]; then
+    openssl rand -base64 24 | tr -dc 'A-Za-z0-9' >console-passphrase
+    luks_pass=$(cat console-passphrase)
+    [[ ${#luks_pass} -ge 20 ]] || die "a short passphrase came out of openssl; run again"
+fi
 umask 022
 
 # Served to the guest only, on 127.0.0.1 (10.0.2.2 in the guest).
@@ -111,7 +128,7 @@ port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0));
 url=http://10.0.2.2:$port
 mkdir "$work/www"
 sed -e "s|@FLAVOR@|$name|" -e "s|@HOSTNAME@|$name|" -e "s|@USERNAME@|$USERNAME|" -e "s|@PASSWORD_HASH@|$hash|" \
-    -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" "$here/guix/install.sh" >"$work/www/install.sh"
+    -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" -e "s|@LUKS_PASSPHRASE@|$luks_pass|" "$here/guix/install.sh" >"$work/www/install.sh"
 if grep -n '@[A-Z_]\+@' "$work/www/install.sh"; then die "install.sh placeholders left unfilled"; fi
 python3 -m http.server --bind 127.0.0.1 --directory "$work/www" "$port" >"$work/http.log" 2>&1 &
 server=$!
@@ -157,7 +174,15 @@ if [[ $uefi == yes ]]; then opts=(--uefi --no-secure-boot); else opts=(); fi
 sport=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 ssh_root=(ssh -q -i id_ed25519 -p "$sport" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
     -o ConnectTimeout=5 -o ServerAliveInterval=30 root@127.0.0.1)
-SSH_PORT=$sport setsid "$here/vm-run" "${opts[@]}" --serial-log first-boot-serial.log "$DISK" </dev/null >"$work/vm-run.log" 2>&1 &
+if [[ $luks == yes ]]; then
+    # GRUB asks for the passphrase on the console (OVMF's, which QEMU's
+    # serial carries), then the initrd's cryptsetup on ttyS0: console-boot.py
+    # types it at each prompt.
+    SSH_PORT=$sport setsid python3 "$here/console-boot.py" first-boot-serial.log console-passphrase -- \
+        "$here/vm-run" "${opts[@]}" "$DISK" </dev/null >"$work/vm-run.log" 2>&1 &
+else
+    SSH_PORT=$sport setsid "$here/vm-run" "${opts[@]}" --serial-log first-boot-serial.log "$DISK" </dev/null >"$work/vm-run.log" 2>&1 &
+fi
 qemu_pid=$!
 up=no
 for _ in $(seq 120); do
@@ -171,7 +196,8 @@ done
     for m in / /boot/efi /home /gnu /gnu/store; do findmnt -no TARGET,SOURCE,FSTYPE,OPTIONS $m; done
     swapon --show; cat /etc/fstab; ls -l /run/current-system /var/guix/profiles
     efibootmgr -v; command -v btrfs && btrfs subvolume list -a /
-    df -h / ; find /gnu/store -xdev -type f -links +1 | wc -l' </dev/null >first-boot.txt 2>&1 || true
+    df -h / ; find /gnu/store -xdev -type f -links +1 | wc -l
+    lsblk -o NAME,TYPE,FSTYPE,UUID,MOUNTPOINTS; cat /proc/cmdline' </dev/null >first-boot.txt 2>&1 || true
 "${ssh_root[@]}" 'sync; halt' </dev/null 2>/dev/null || true
 for _ in $(seq 60); do kill -0 "$qemu_pid" 2>/dev/null || break; sleep 2; done
 kill "$qemu_pid" 2>/dev/null && die "the guest did not power off"
@@ -179,6 +205,11 @@ wait "$qemu_pid" 2>/dev/null || true
 qemu_pid=""
 grep -q '^ID=guix$' first-boot.txt || { cat first-boot.txt >&2; die "the first boot isn't Guix System; see first-boot.txt"; }
 grep -q 'ssh-daemon' first-boot.txt || die "no ssh-daemon in herd status; see first-boot.txt"
+if [[ $luks == yes ]]; then
+    # (No cryptsetup or dmsetup on the installed system: lsblk's tree.)
+    grep -Eq 'cryptroot +crypt ' first-boot.txt || die "cryptroot isn't open on the first boot; see first-boot.txt"
+    sed -i "s/$luks_pass/<console-passphrase>/g" install-serial.log first-boot-serial.log first-boot.txt 2>/dev/null || true
+fi
 
 qemu-img snapshot -c fresh-install "$DISK"
 echo "${opts[*]}" >vm-run-options

@@ -13,6 +13,14 @@
 #   guix15-bios  BIOS, GPT: 1 MiB BIOS boot partition, 2 GiB swap, / Btrfs
 #                (label guixroot) with subvolumes @ (/), @home, @gnu (/gnu,
 #                compress=zstd), by label; grub-bootloader on /dev/vda
+#   guix15-luks  UEFI, GPT: 512 MiB ESP at /boot/efi, 2 GiB swap, LUKS
+#                (the installer's own `cryptsetup -q luksFormat`: Guix's
+#                cryptsetup makes LUKS1, PBKDF2) opened as cryptroot, holding
+#                Btrfs guixroot with @ (/), @home, @gnu (/gnu,
+#                compress=zstd), by /dev/mapper/cryptroot as the installer
+#                writes them; grub-efi-bootloader, whose GRUB opens the LUKS
+#                volume itself (the store and /boot are in it), then the
+#                initrd again: the passphrase is asked twice at each boot
 #
 # The facts (os-release, layout, grub.cfg, the generation's parameters, the
 # ESP's files) go out as a tar on the second disk, /dev/vdb.  Prints
@@ -23,6 +31,7 @@ HOST='@HOSTNAME@'
 USERNAME='@USERNAME@'
 PASSWORD_HASH='@PASSWORD_HASH@'
 AUTHORIZED_KEY='@AUTHORIZED_KEY@'
+LUKS_PASSPHRASE='@LUKS_PASSPHRASE@'
 DISK=/dev/vda
 FACTS=/dev/vdb
 
@@ -69,6 +78,36 @@ EOF
     mount -o subvol=@home "$(part 3)" /mnt/home
     mount -o subvol=@gnu,compress=zstd "$(part 3)" /mnt/gnu
     ;;
+guix15-luks)
+    [ -n "$LUKS_PASSPHRASE" ] || fail "guix15-luks without a passphrase"
+    sfdisk --quiet "$DISK" <<EOF
+label: gpt
+size=512MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name=esp
+size=2GiB, type=0657FD6D-A4AB-43C4-84E5-0933C84B4F4F, name=swap
+type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, name=root
+EOF
+    udevadm settle
+    mkfs.fat -F 32 -n ESP "$(part 1)"
+    mkswap -L swap "$(part 2)"
+    # The installer's luks-format-and-open (gnu/installer/parted.scm):
+    # `cryptsetup -q luksFormat FILE KEY-FILE`, then open with the key file.
+    # Guix's cryptsetup is built --with-default-luks-format=LUKS1, so this
+    # is LUKS1 with PBKDF2 (GRUB 2.12, Guix's, has no Argon2).
+    key=/tmp/bko-luks-key
+    (umask 077; printf '%s' "$LUKS_PASSPHRASE" >$key)
+    cryptsetup -q luksFormat "$(part 3)" $key
+    cryptsetup open --type luks --key-file $key "$(part 3)" cryptroot
+    rm -f $key
+    mkfs.btrfs -q -f -L guixroot /dev/mapper/cryptroot
+    mount /dev/mapper/cryptroot /mnt
+    for s in @ @home @gnu; do btrfs subvolume create "/mnt/$s" >/dev/null; done
+    umount /mnt
+    mount -o subvol=@ /dev/mapper/cryptroot /mnt
+    mkdir -p /mnt/home /mnt/gnu /mnt/boot/efi
+    mount -o subvol=@home /dev/mapper/cryptroot /mnt/home
+    mount -o subvol=@gnu,compress=zstd /dev/mapper/cryptroot /mnt/gnu
+    mount "$(part 1)" /mnt/boot/efi
+    ;;
 *) fail "unknown flavor $FLAVOR" ;;
 esac
 swapon "$(part 2)"
@@ -79,6 +118,7 @@ herd start cow-store /mnt
 root_uuid=$(blkid -s UUID -o value "$(part 3)")
 swap_uuid=$(blkid -s UUID -o value "$(part 2)")
 mkdir -p /mnt/etc
+MAPPED_DEVICES=""
 case $FLAVOR in
 guix15)
     esp_uuid=$(blkid -s UUID -o value "$(part 1)")
@@ -111,6 +151,40 @@ guix15-bios)
                    (type \"btrfs\")
                    (options \"subvol=@gnu,compress=zstd\")
                    (needed-for-boot? #t))" ;;
+guix15-luks)
+    # As the installer writes them (user-partition->mapped-device and
+    # ->file-system): the LUKS volume by its UUID, the file systems on it by
+    # /dev/mapper/cryptroot, with (dependencies mapped-devices).
+    esp_uuid=$(blkid -s UUID -o value "$(part 1)")
+    MAPPED_DEVICES="(mapped-devices (list (mapped-device
+                                (source (uuid \"$root_uuid\"))
+                                (target \"cryptroot\")
+                                (type luks-device-mapping))))"
+    BOOTLOADER="(bootloader grub-efi-bootloader)
+                (targets (list \"/boot/efi\"))"
+    FILE_SYSTEMS="(file-system
+                   (mount-point \"/\")
+                   (device \"/dev/mapper/cryptroot\")
+                   (type \"btrfs\")
+                   (options \"subvol=@\")
+                   (dependencies mapped-devices))
+                 (file-system
+                   (mount-point \"/home\")
+                   (device \"/dev/mapper/cryptroot\")
+                   (type \"btrfs\")
+                   (options \"subvol=@home\")
+                   (dependencies mapped-devices))
+                 (file-system
+                   (mount-point \"/gnu\")
+                   (device \"/dev/mapper/cryptroot\")
+                   (type \"btrfs\")
+                   (options \"subvol=@gnu,compress=zstd\")
+                   (needed-for-boot? #t)
+                   (dependencies mapped-devices))
+                 (file-system
+                   (mount-point \"/boot/efi\")
+                   (device (uuid \"$esp_uuid\" 'fat32))
+                   (type \"vfat\"))" ;;
 esac
 
 step "writing /mnt/etc/config.scm"
@@ -132,6 +206,7 @@ cat >/mnt/etc/config.scm <<EOF
                 (terminal-outputs '(console serial))
                 (serial-unit 0)
                 (serial-speed 115200)))
+  $MAPPED_DEVICES
   (swap-devices (list (swap-space (target (uuid "$swap_uuid")))))
   (file-systems (cons* $FILE_SYSTEMS
                        %base-file-systems))
@@ -163,7 +238,7 @@ echo "== bko-install: guix system init took $(( $(date +%s) - t0 )) s"
 printf 'root:%s:20000:0:99999:7:::\n' "$PASSWORD_HASH" >/mnt/etc/shadow
 chmod 600 /mnt/etc/shadow
 
-if [ "$FLAVOR" = guix15 ]; then
+if [ "$FLAVOR" != guix15-bios ]; then
     # vm-run gives each boot a fresh variable store, with no NVRAM entries:
     # the fallback path too (the guest keeps the install's store in
     # uefi-vars.fd, with Guix's entry, for boots through it).
@@ -185,7 +260,10 @@ cp -L "/mnt$sys/etc/fstab" $f/ 2>/dev/null || true
 sfdisk -d "$DISK" >$f/sfdisk.txt 2>&1 || true
 lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,UUID,PARTLABEL,MOUNTPOINTS "$DISK" >$f/lsblk.txt 2>&1 || true
 findmnt -R /mnt >$f/findmnt.txt 2>&1 || true
-[ "$FLAVOR" != guix15-bios ] || btrfs subvolume list -a /mnt >$f/subvolumes.txt 2>&1 || true
+[ "$FLAVOR" = guix15 ] || btrfs subvolume list -a /mnt >$f/subvolumes.txt 2>&1 || true
+[ "$FLAVOR" != guix15-luks ] || cryptsetup luksDump "$(part 3)" >$f/luksdump.txt 2>&1 || true
+[ "$FLAVOR" != guix15-luks ] || ls -la /mnt/boot/grub /mnt/boot/grub/x86_64-efi/load.cfg >$f/boot-grub.txt 2>&1 || true
+[ "$FLAVOR" != guix15-luks ] || cat /mnt/boot/grub/x86_64-efi/load.cfg >$f/load.cfg 2>&1 || true
 [ ! -d /mnt/boot/efi/EFI ] || (cd /mnt/boot/efi && find . -type f -exec sha256sum {} +) >$f/esp.txt 2>&1 || true
 efibootmgr -v >$f/efibootmgr.txt 2>&1 || true
 du -sh /mnt/gnu/store >$f/store-size.txt 2>&1 || true
@@ -197,4 +275,5 @@ sync
 trap - EXIT
 echo BACKOTTER-INSTALL-OK
 umount -R /mnt || true
+[ "$FLAVOR" != guix15-luks ] || cryptsetup close cryptroot || true
 halt

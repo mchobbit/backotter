@@ -318,6 +318,101 @@ KEYS_DIR HOSTNAME`). CachyOS before it is in the library
   refusals, plan, restore, boot from NVRAM, avahi, and verify with 261,547
   files and 0 unexpected. The real run went first.
 
+## guix15-luks (2026-11-24)
+
+Asked for by the user on 2026-11-24 (Decision 3's "add `guix15-luks`"):
+an encrypted Guix guest, tested hands-free, and a BackShot1 drive unlock
+for Guix.
+
+**What Guix's own installer makes** (read in 1.5.0's sources on the ISO,
+`gnu/installer/parted.scm`, `gnu/packages/cryptsetup.scm`,
+`gnu/bootloader/grub.scm`, `gnu/system/mapped-devices.scm`):
+
+- The guided "encrypted" schemes run `cryptsetup -q luksFormat FILE
+  KEY-FILE` and nothing more. Guix's cryptsetup is configured
+  `--with-default-luks-format=LUKS1`, so that is **LUKS1** (PBKDF2,
+  aes-xts-plain64, the iteration count cryptsetup benchmarks). Guix's GRUB
+  2.12 has no Argon2 (its `luks2.mod` says "Argon2 not supported"): LUKS2
+  with Argon2id, cryptsetup's usual default, wouldn't boot.
+- The volume is a `mapped-device` by its LUKS UUID, target `cryptroot`,
+  type `luks-device-mapping`; the file systems on it are named
+  `/dev/mapper/cryptroot` with `(dependencies mapped-devices)`.
+- `/boot` and the store are inside the volume, so GRUB opens it:
+  `grub-install` runs with `GRUB_ENABLE_CRYPTODISK=y`, which puts a
+  `cryptomount -u UUID` in the core image, and `grub.cfg` starts with
+  `insmod luks`, `insmod luks2` and `cryptomount -u UUID` for each store
+  device. Then the initrd opens it again with `cryptsetup open` (a key
+  file first when `#:key-file` is given, the prompt when that fails or
+  there is none). **So the passphrase is typed twice per boot** unless the
+  configuration adds a key file to the initrd (`bootloader-configuration`'s
+  `extra-initrd`, a cpio GRUB reads from the opened volume).
+- GRUB 2.12's `cryptomount` takes a key file (`-k FILE`), which is what the
+  BackShot1 drive unlock below uses.
+
+**The guest** (`make-guix.sh guix15-luks`, the installer's layout with what
+our other guests have):
+
+| | `guix15-luks` |
+|---|---|
+| Firmware | UEFI (`--uefi --no-secure-boot`), `grub-efi-bootloader`, NVRAM entry "Guix" in `uefi-vars.fd`, and the `EFI/BOOT/BOOTX64.EFI` copy as `guix15`'s |
+| Layout | GPT: 512 MiB ESP (vfat) at `/boot/efi`, 2 GiB swap (plain, by UUID: the installer's encrypted scheme makes none, ours has one so that the swap checks have something), the rest **LUKS1** opened as `cryptroot` |
+| In the volume | Btrfs `guixroot` with `@` (/), `@home`, `@gnu` (`/gnu`, `compress=zstd`, `needed-for-boot?`), each by `/dev/mapper/cryptroot`: the Thinkpad's Guix layout (UEFI with `@gnu`), which no guest had |
+| Unlock | typed twice, on the serial console: GRUB's "Enter passphrase for hd0,gpt3 (UUID):" (OVMF's console, which QEMU's serial carries) and the initrd's cryptsetup. `console-passphrase` (letters and digits); `console-boot.py` types it at both |
+
+**What load must do:**
+
+- **The volume:** load makes LUKS1 again with the dump's cipher, key size,
+  hash, payload offset and UUID (commands.rs `luks()`), and opens it as
+  `cryptroot` (the dump's dm name), so every `/dev/mapper/cryptroot` in
+  the configuration, the generations' `root=` and grub.cfg's
+  `cryptomount -u` stay valid. The passphrase is `--key-file
+  cryptroot=FILE` (ht1's `console-passphrase`), or typed. It must stay
+  something GRUB opens: LUKS1, PBKDF2. The keyslot's PBKDF2 iterations
+  are the source's (the dump's `keyslot_iterations`, `luksFormat
+  --pbkdf-force-iterations`, as LUKS2's keyslot cost already was), not a
+  count benchmarked in the rescuer: GRUB's cryptomount spends on it what it
+  did on the source (since 2026-11-24; before, load gave LUKS1 no count).
+- **GRUB:** nothing to remake. `grubx64.efi`'s prefix names the volume
+  (`(cryptouuid/HEX)/@/boot/grub`, HEX the LUKS UUID without dashes, read
+  in the built guest's image), not a partition number, so
+  `store_grub_prefix` (which does nothing when `/boot` is on LUKS) is
+  right to leave it. The NVRAM entry is made as `guix15`'s.
+- **No crypttab:** Guix has none, so load knows no key file of the
+  system's own (a configuration with `#:key-file` would lose that keyslot:
+  see the BackShot1 design, which avoids needing one).
+
+**Tests:** HoltTest1 (1Obscure), then Test2 as `guix15`'s: `classes.json`
+(uefi, Obscure), `holt/spec.json`, `guest/spec.json`, SticTest's manifests
+and limits, the corpus golden plan, `ram-sizes.tsv`, estimates. ht1's
+previous-generation check picks GRUB's menu with `console-keys.py
+--passphrase`, which types the passphrase before and after the menu.
+
+**BackShot1's drive unlock, family G** (bs1-luks; [[bs1-luks-unattended]]):
+both of Guix's unlocks must take the key with nobody typing, and the
+restored system must too.
+
+- **GRUB, from the drive:** a `bootloader` of our own in
+  `/etc/backshot1/system.scm` (adopt's Guix file, which loads
+  `/etc/config.scm`), inheriting `grub-efi-bootloader` with an installer
+  that runs Guix's own first and then writes `EFI/Guix/grubx64.efi` again
+  with `grub-mkimage` from the same GRUB, its embedded configuration
+  `search --label` for the backup drive, `cryptomount -k
+  (DRIVE)/backshot1/keys/disk-passphrase -u UUID`, and, when there is no
+  drive or the key fails, Guix's own `cryptomount -u UUID` (the prompt).
+  Every `guix system reconfigure` writes it again, and the restore brings
+  it back with the ESP (load runs nothing in the chroot on Guix UEFI).
+- **The initrd, from the opened volume:** `extra-initrd`, a cpio holding
+  the same bytes as `disk-passphrase`, kept on the root (mode 600), and the
+  mapped device's `#:key-file` naming it. GRUB reads it only after the
+  volume is open (by the drive or typed), so without the drive the
+  passphrase is typed once, at GRUB. The key is the passphrase's bytes, so
+  the restore's new header (formatted with `--key-file
+  cryptroot=disk-passphrase`, bs1-common's `layout_keys`) opens with it:
+  no keyslot of its own to keep.
+- **Evidence:** GRUB's configuration records how it opened the volume
+  (`save_env` to a 1 KiB environment block on the ESP), which
+  `bs1-verify --unlock` reads.
+
 ## What already works, and what doesn't
 
 **bko-holt `dump`:**
@@ -693,10 +788,8 @@ guests moved to disk, since Chopin's RAM disk is contended.
 
 ## Out of scope
 
-- LUKS. On Guix, GRUB itself unlocks the root, because `/boot` is on it:
-  two typed passphrases, LUKS2 limited to PBKDF2. It's a later
-  `guix15-luks` if wanted (Decision 3), with
-  [[front-load-manual-tests]].
+- LUKS: since 2026-11-24 in scope, as `guix15-luks` ("guix15-luks"
+  above; Decision 3's "add it", the user's 2026-11-24).
 - Secure Boot (unsupported by Guix), nonguix's kernel and firmware, and
   the Hurd.
 - Boot loaders other than GRUB (extlinux, U-Boot, depthcharge), and arm64

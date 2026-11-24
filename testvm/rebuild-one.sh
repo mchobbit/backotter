@@ -148,10 +148,11 @@ anduinos2)  cmd=(asm $T/make-anduinos.sh "$SRC/AnduinOS-2.0.5-amd64.iso" "$W" an
 # the guest's own dir), its SHA-256 pinned in the builder (.sha256sum.sign
 # checked on download); eopkg up from the Polaris repository at the rebuild.
 solus49)    cmd=(asm $T/make-solus.sh "$SRC/Solus-Xfce-Release-2026-04-18.iso" "$W" solus49) ;;
-# guix15, guix15-bios: from Guix's 1.5.0 installation ISO in
+# guix15, guix15-bios, guix15-luks: from Guix's 1.5.0 installation ISO in
 # /bkoscratch/rebuild-inputs/guix15 (its SHA-256 pinned in the builder, its
-# .sig checked on download), with 1.5.0's substitutes at the rebuild.
-guix15|guix15-bios) cmd=(asm $T/make-guix.sh --iso-dir /bkoscratch/rebuild-inputs/guix15 $G "$W") ;;
+# .sig checked on download), with 1.5.0's substitutes at the rebuild
+# (guix15-luks: a new LUKS passphrase, console-passphrase, each build).
+guix15|guix15-bios|guix15-luks) cmd=(asm $T/make-guix.sh --iso-dir /bkoscratch/rebuild-inputs/guix15 $G "$W") ;;
 # uc24, uc24-fde: Ubuntu Core 24's stock signed image in
 # /bkoscratch/rebuild-inputs/ubuntu-core24 (its SHA-256 pinned in the builder,
 # SHA256SUMS beside it), every snap refreshed from the store at the rebuild.

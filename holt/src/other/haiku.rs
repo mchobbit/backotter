@@ -15,20 +15,34 @@ use std::os::unix::fs::FileExt;
 /// empty): the end of what reads, found by halving.
 pub fn probe_size(path: &std::path::Path) -> Option<u64> {
     let f = std::fs::File::open(path).ok()?;
-    let reads = |sector: u64| {
+    probe_size_by(|sector| {
         let mut b = [0u8; 512];
-        f.read_at(&mut b, sector * 512).map(|n| n == 512).unwrap_or(false)
-    };
-    if !reads(0) {
+        let at = sector.checked_mul(512).ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+        f.read_at(&mut b, at).map(|n| n == 512)
+    })
+}
+
+/// probe_size's halving over `reads(sector)`: Ok(true) a whole sector read,
+/// Ok(false) a short one (the end), Err an error.  An error is past the end
+/// too (a raw device may fail there rather than read short), unless a
+/// sector further on reads: then it was a bad sector below the end, and the
+/// halving goes on from the one that read (RustAudit1 H9-10).
+fn probe_size_by(reads: impl Fn(u64) -> std::io::Result<bool>) -> Option<u64> {
+    if !reads(0).unwrap_or(false) {
         return None;
     }
     let (mut lo, mut hi) = (0u64, 1u64 << 40);
     while lo + 1 < hi {
         let mid = lo + (hi - lo) / 2;
-        if reads(mid) {
-            lo = mid;
-        } else {
-            hi = mid;
+        let next = match reads(mid) {
+            Ok(true) => Some(mid),
+            Ok(false) => None,
+            // Bad sectors come in runs: look 1, 2, 4, ... sectors on.
+            Err(_) => (0..32).map(|k| mid + (1u64 << k)).take_while(|s| *s < hi).find(|s| reads(*s).unwrap_or(false)),
+        };
+        match next {
+            Some(s) => lo = s,
+            None => hi = mid,
         }
     }
     Some((lo + 1) * 512)
@@ -186,6 +200,41 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A disk of `n` sectors whose `bad` ones fail to read.
+    fn disk(n: u64, bad: &[u64]) -> impl Fn(u64) -> std::io::Result<bool> + '_ {
+        move |s| if bad.contains(&s) { Err(std::io::Error::from_raw_os_error(5)) } else { Ok(s < n) }
+    }
+
+    #[test]
+    fn probe_size_past_bad_sectors() {
+        let n = 1_000_003;
+        assert_eq!(probe_size_by(disk(n, &[])), Some(n * 512));
+        // The sectors the halving reads on a sound disk, below its end.
+        let seen = std::cell::RefCell::new(Vec::new());
+        probe_size_by(|s| {
+            seen.borrow_mut().push(s);
+            disk(n, &[])(s)
+        });
+        let probed: Vec<u64> = seen.into_inner().into_iter().filter(|s| *s > 0 && *s < n).collect();
+        assert!(probed.len() > 5);
+        for s in probed {
+            // One bad sector, or a run of five, at a sector it reads, with
+            // sound ones after it (a bad last sector reads as the end).
+            if s + 1 < n {
+                assert_eq!(probe_size_by(disk(n, &[s])), Some(n * 512), "bad sector {s}");
+            }
+            if s + 16 < n {
+                let run: Vec<u64> = (s..s + 5).collect();
+                assert_eq!(probe_size_by(disk(n, &run)), Some(n * 512), "bad run at {s}");
+            }
+        }
+        // A device that fails past its end, rather than reading short.
+        let fails_past = |s: u64| if s < n { Ok(true) } else { Err(std::io::Error::from_raw_os_error(6)) };
+        assert_eq!(probe_size_by(fails_past), Some(n * 512));
+        assert_eq!(probe_size_by(disk(n, &[0])), None);
+        assert_eq!(probe_size_by(disk(0, &[])), None);
+    }
 
     #[test]
     fn names_and_df() {

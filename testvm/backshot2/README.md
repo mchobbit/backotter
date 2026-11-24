@@ -199,7 +199,7 @@ Unit tests: `python3 -m unittest discover -s testvm/backshot2/tests`
 What is a source's own, not generic, comes from its family and traits in
 `bs2lib/families/` (`docs/design/bs2-all.md`, "The family interface (A1)",
 is the contract every lane builds to).  A **family** is the OS and distro,
-one per source, the most specific match winning (`alpine`, `nixos`, and
+one per source, the most specific match winning (`alpine`, `nixos`, `guix`, and
 `linux` for the rest of Linux); a **trait** is something the dump records
 that sources share (`dracut`, `mkinitcpio`, `booster`, `initramfs-tools`,
 `systemd-boot` with BLS entries, `limine`, `refind`, `ostree`, `snapper`,
@@ -218,6 +218,31 @@ only with a new `GENERATOR` (3, 2026-11-17: fail-004 and fail-005 back in
 the draws; 4, 2026-11-18: geometry edits and resizes keep the free inodes
 and blocks, and rule 1 checks a fitted ext's inodes as load does; 5,
 2026-11-21: fail-001, fail-002 and fail-003 fixed and back in the draws).
+
+Guix System (`guix15`, `guix15-bios`) has a family of its own since
+2026-11-24 (`guix.py`; it was generic Linux before): its swap and its older
+generations' file systems aren't in the dump, so neither is renumbered;
+rule 3 reads every generation's boot parameters; content recipe
+`guix-small-1` (on Btrfs too); tier 0's dry runs use the system profile's
+tools (`tier0.PATH`).  It runs from the Mac as
+
+    BS2_WT=bs2guix-wt testvm/backshot2/bs2 --hosts chopin,cinqcent BackShot2 guix15 guix15-bios 10 --sweep 200 --tier2 3
+
+(`BS2_WT` names the hosts' copy, so two sessions' runs never share one;
+`--sweep` and `--tier2` set a source's tier 0 and tier 2 counts; tier 2 is
+for the UEFI sources, bs2's `UEFI`; each case reserves its source's room,
+`bs2lib/room.py`: HoltTest1's D 7 and 6, MEM 4, so only the big hosts take
+them; `BS2_HOLT=PATH` runs another bko-holt on the hosts).  Its first run,
+bs2a-20261124-1028, found fail-006 (load kept grubx64.efi's "(,gpt3)"
+prefix after / was renumbered: bko-holt), fail-007 and fail-008 (the
+harness's model of a moved BIOS boot partition, and of btrfs's symlink
+limit and big_metadata at a 4 KiB node), all fixed; the second,
+bs2a-20261124-1111 (`BS2_HOLT` the fix's build, 20 tier 1 a source, 5 tier
+2): tier 0 229 + 220 PASS, tier 1 guix15 20/20 (three renumbering /),
+guix15-bios 20/20, tier 2 guix15 5/5.  Measured, on contended big hosts: a
+guix15 case ~235 s at tier 1 and ~230 s at tier 2, a guix15-bios case
+~153 s; peaks 5.3-5.8 GiB of RAM disk (guix15) and 4.6-4.8 (guix15-bios),
+within room.py's 7 and 6.
 
 Two more traits came with Vanilla OS (`vanilla3`): `abroot` (the master
 grub.cfg's entries and each root's abroot.cfg as rule 3 texts; load

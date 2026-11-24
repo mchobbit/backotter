@@ -92,6 +92,28 @@ whose `SOLUS_BOOT` runs `clr-boot-manager mount-boot` before each dump, and
 judge.py's `SOLUS_KEPT` holds the whole ESP to the source's bytes. It isn't
 in `tests/golden/linux.json` yet, as Kali and the other late joiners aren't.
 
+**Guix System 1.5.0** (2026-11-24, docs/design/guix.md): `guix15` (UEFI,
+ext4) and `guix15-bios` (BIOS, Btrfs `@`, `@home`, `@gnu`) join the
+one-disk row with a family of their own, `bs2lib/families/guix.py` (golden
+`tests/golden/guix.json`; they leave `linux.json`): no renumbering of the
+swap (config.scm's swap-devices isn't in the dump) or, with two or more
+generations, of a partition mounted outside / and the store (older
+generations' fstab isn't either); rule 3 over every generation's boot
+parameters; content recipe `guix-small-1`; tier 0 with dry runs in the
+system profile's tools. `bs2` runs them (`GUIX_SOURCES`, tier 2 for
+`guix15` only), each case at HoltTest1's room (D 7/6, MEM 4: the big hosts
+only). First run bs2a-20261124-1028: tier 0 229 + 220 PASS, tier 1 and 2
+guix15 10 + 3 PASS, guix15-bios 7 PASS and 3 harness FAILs (fail-007,
+fail-008); fail-006 (bko-holt: renumbering / left grubx64.efi's prefix
+naming the old partition) was written by hand from guix15's image; all
+three fixed (e8cbfd4 for bko-holt). Second run bs2a-20261124-1111 with the
+fix: tier 0 229 + 220, tier 1 20 + 20, tier 2 5, all PASS (~235 s a guix15
+case, ~153 s a guix15-bios one, contended). On
+BIOS the same prefix is in core.img (LZMA-compressed, written back by
+grub-bios-setup), which load can't renumber: the generic rule 3 already
+draws no renumbering of guix15-bios's / (grub.cfg searches by label), and
+that stays a bko-holt limit, not drawn.
+
 **Vanilla OS 3** (2026-11-15, docs/design/vanillaos.md): `vanilla3` (ABRoot
 v2: two btrfs roots on thin LVs of `vos-root`, the init LV, an ext4 /boot
 and a btrfs /var on `vos-var`, one disk, UEFI with Secure Boot) joins the

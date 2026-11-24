@@ -1342,6 +1342,34 @@ depends-ms = udevd-early
 after      = udev-settle
 EOF
         fi
+        # A group /etc/group has and /etc/gshadow hasn't gets its gshadow
+        # entry: locked ("!*", as systemd-sysusers writes one), no
+        # administrators, the group's members.  EndeavourOS's ISO has six
+        # (adm, wheel, uucp, nopasswdlogin, rfkill, sys: its own /etc/group
+        # names them for liveuser, its /etc/gshadow only root and liveuser).
+        # Calamares's removeuser and users modules (userdel, useradd, usermod
+        # -aG) write no entry a group lacks, nor did arch/install-live.sh, so
+        # an installed system keeps them: `grpck -r` exits 2 ("no matching
+        # group file entry in /etc/gshadow"), and Arch's shadow.service (pwck
+        # -qr and grpck -r; shadow.timer, daily and persistent) fails
+        # whenever the system is up at midnight UTC, and at every boot a day
+        # or more after the timer's stamp reached the image (endeavouros and
+        # endeavouros-grub, GuestTest2 t2v-20261123T2354-df7f: "shadow.service:
+        # Failed with result 'exit-code'." at 00:00:16Z, five minutes into the
+        # update; the other pacman guests' files agree).  Before pacman's long
+        # run, so that a timer that elapses during it finds the files right;
+        # install-live.sh does the same at the install.  gshadow- is the file
+        # as it was, as the shadow tools leave it.
+        if [ -f /etc/group ] && [ -f /etc/gshadow ]; then
+            miss=$(awk -F: -v s=/etc/gshadow 'BEGIN { while ((r = (getline l < s)) > 0) { split(l, a, ":"); have[a[1]] = 1 }
+                if (r < 0) exit 2 } $1 ~ /^[A-Za-z0-9_]/ && !($1 in have) { have[$1] = 1; print $1 ":!*::" $4 }' /etc/group) || exit 1
+            if [ -n "$miss" ]; then
+                step "gshadow: entries for $(printf '%s\n' "$miss" | cut -d: -f1 | paste -sd' ' -), which /etc/group has and /etc/gshadow had not"
+                cp -p /etc/gshadow /etc/gshadow- && cp -p /etc/gshadow /etc/gshadow.bko &&
+                    { [ -z "$(tail -c1 /etc/gshadow.bko)" ] || echo >>/etc/gshadow.bko; } &&
+                    printf '%s\n' "$miss" >>/etc/gshadow.bko && mv /etc/gshadow.bko /etc/gshadow || exit 1
+            fi
+        fi
         # The keyrings first: packages signed by keys newer than the guest's
         # keyring would fail to verify.  Omarchy's pacman hook stops a plain
         # pacman upgrade (for "omarchy update", which is interactive) unless

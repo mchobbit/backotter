@@ -1788,6 +1788,128 @@ esac
         a = sec.index("if pacman -Qq plasma-x11-session")
         self.assertNotIn("os-release", sec[sec.rindex("\n        fi\n", 0, a):sec.index("\n        fi\n", a)])
 
+    # endeavouros-grub's /etc/group and /etc/gshadow (2026-11-24, both cut short): the ISO's own
+    # seven lines first, liveuser's removed, then systemd-sysusers's and the test user's.
+    EOS_GROUP = "root:x:0:root\nadm:x:4:daemon\nwheel:x:10:tester\nuucp:x:14:\nnopasswdlogin:x:966:\nrfkill:x:983:\nsys:x:3:bin\n" \
+                "mem:x:8:\nbin:x:1:daemon\n_talkd:x:967:\ntester:x:1000:\n"
+    EOS_GSHADOW = "root:!*::root\nmem:!*::\nbin:!*::daemon\n_talkd:!*::\ntester:!::\n"
+    EOS_ADDED = "adm:!*::daemon\nwheel:!*::tester\nuucp:!*::\nnopasswdlogin:!*::\nrfkill:!*::\nsys:!*::bin\n"
+
+    def run_gshadow(self, group=EOS_GROUP, gshadow=EOS_GSHADOW, backup=None, readonly=False, times=1):
+        """Linux.pacman's gshadow block, TIMES times, on a scratch /etc holding GROUP and GSHADOW
+        (None: no such file) and gshadow- holding BACKUP; READONLY: /etc can't be written.  The
+        tools are the host's.  (exit status, output, gshadow after, gshadow- after, what else is
+        in /etc)"""
+        d = Path(tempfile.mkdtemp(prefix="t2-gshadow-"))
+        self.addCleanup(lambda: (os.chmod(d / "etc", 0o755), shutil.rmtree(d, True)))
+        (d / "bin").mkdir()
+        (d / "etc").mkdir()
+        for name, text in (("group", group), ("gshadow", gshadow), ("gshadow-", backup)):
+            if text is not None:
+                (d / "etc" / name).write_text(text)
+                os.chmod(d / "etc" / name, 0o600 if name.startswith("gshadow") else 0o644)
+        for name in ("awk", "cut", "paste", "cp", "mv", "tail"):
+            os.symlink(shutil.which(name), d / "bin" / name)
+        sec = self.sections()["Linux.pacman"]
+        m = re.search(r"^( *)if \[ -f /etc/group \] && \[ -f /etc/gshadow \]; then\n.*?^\1fi\n", sec + "\n", re.M | re.S)
+        self.assertIsNotNone(m)
+        # Before pacman runs at all: a timer that elapses during the upgrade finds the files right.
+        self.assertLess(m.start(), sec.index("fetched pacman -Sy --noconfirm"))
+        self.assertLess(m.start(), sec.index("keyrings=$(pacman -Qq"))
+        block = textwrap.dedent(m[0]).replace("/etc/", f"{d}/etc/")
+        code = 'step() { echo "in-guest: step: $*"; }\n' + block * times + "echo fell-through\n"
+        if readonly:
+            os.chmod(d / "etc", 0o555)
+        r = subprocess.run(["/bin/sh", "-c", code], capture_output=True, text=True, env={"PATH": str(d / "bin")})
+        os.chmod(d / "etc", 0o755)
+        read = lambda n: (d / "etc" / n).read_text() if (d / "etc" / n).exists() else None
+        self.gshadow_modes = {n: stat.S_IMODE(os.stat(d / "etc" / n).st_mode) for n in ("gshadow", "gshadow-") if (d / "etc" / n).exists()}
+        return (r.returncode, (r.stdout + r.stderr).replace(str(d), "D"), read("gshadow"), read("gshadow-"),
+                sorted(set(os.listdir(d / "etc")) - {"group", "gshadow", "gshadow-"}))
+
+    GSHADOW_STEP = ("in-guest: step: gshadow: entries for adm wheel uucp nopasswdlogin rfkill sys, "
+                    "which D/etc/group has and D/etc/gshadow had not")
+
+    def test_groups_gshadow_lacks_get_their_entries(self):
+        """EndeavourOS's ISO names six groups in /etc/group that its /etc/gshadow hasn't, and an
+        installed system keeps them: `grpck -r` exits 2, so Arch's daily shadow.service fails
+        (endeavouros and endeavouros-grub, GuestTest2 t2v-20261123T2354-df7f: "shadow.service:
+        Failed with result 'exit-code'." at midnight UTC, during the update).  Each gets a locked
+        entry with the group's members, after the file's own lines; gshadow- is the file as it
+        was, and its mode stays."""
+        rc, out, gshadow, backup, left = self.run_gshadow(backup="older\n")
+        self.assertEqual((rc, out.splitlines()), (0, [self.GSHADOW_STEP, "fell-through"]))
+        self.assertEqual((gshadow, backup, left), (self.EOS_GSHADOW + self.EOS_ADDED, self.EOS_GSHADOW, []))
+        # A second run finds nothing to do: a step on every run would merge every run.
+        rc, out, gshadow, backup, left = self.run_gshadow(times=2)
+        self.assertEqual((rc, out.splitlines()), (0, [self.GSHADOW_STEP, "fell-through"]))
+        self.assertEqual((gshadow, backup, left), (self.EOS_GSHADOW + self.EOS_ADDED, self.EOS_GSHADOW, []))
+        # A last line with no newline gets one first; a name twice in group gets one entry;
+        # NIS's + and - lines and an empty one get none.
+        rc, out, gshadow, backup, left = self.run_gshadow(group="root:x:0:\n+nis\n-wheel\n\nlp:x:7:a,b\nlp:x:7:c\n+\n",
+                                                          gshadow="root:!*::")
+        self.assertEqual((rc, gshadow, backup, left), (0, "root:!*::\nlp:!*::a,b\n", "root:!*::", []), out)
+        self.assertIn("step: gshadow: entries for lp, which", out)
+
+    def test_gshadow_mode_is_kept(self):
+        self.assertEqual(self.run_gshadow()[0], 0)
+        self.assertEqual(self.gshadow_modes, {"gshadow": 0o600, "gshadow-": 0o600})
+
+    def test_gshadow_that_agrees_is_left_alone(self):
+        whole = self.EOS_GSHADOW + self.EOS_ADDED
+        for what, kw, after in (("every group has its entry", {"gshadow": whole}, whole),
+                                ("an entry no group has", {"gshadow": whole + "gone:!::\n"}, whole + "gone:!::\n"),
+                                ("no gshadow: no shadowed groups", {"gshadow": None}, None),
+                                ("no group", {"group": None}, self.EOS_GSHADOW)):
+            with self.subTest(what=what):
+                self.assertEqual(self.run_gshadow(backup="older\n", **kw), (0, "fell-through\n", after, "older\n", []))
+
+    def test_gshadow_that_cant_be_written_fails_the_update(self):
+        rc, out, gshadow, backup, left = self.run_gshadow(readonly=True)
+        self.assertEqual((rc, gshadow, backup), (1, self.EOS_GSHADOW, None), out)
+        self.assertNotIn("fell-through", out)
+
+    def test_install_live_gives_the_same_entries(self):
+        """arch/install-live.sh, for a guest built from now on: the same awk program on the
+        target's files, run here under bash with a stub arch-chroot (its grpck -r)."""
+        text = (TESTVM / "arch" / "install-live.sh").read_text()
+        prog = re.search(r"awk -F: -v s=/etc/gshadow ('.*?') /etc/group", self.sections()["Linux.pacman"], re.S)
+        live = re.search(r"awk -F: -v s=/mnt/etc/gshadow ('.*?') /mnt/etc/group", text, re.S)
+        self.assertEqual(" ".join(live[1].split()), " ".join(prog[1].split()))
+        m = re.search(r"^miss=\$\(awk .*?^fi\n", text, re.M | re.S)
+        self.assertIsNotNone(m)
+        # After the test user is made (useradd -G wheel writes no entry wheel lacks) and before the target is unmounted.
+        self.assertLess(text.index("useradd -m -s /bin/bash -c \"Test user\" -G wheel tester"), m.start())
+        self.assertLess(m.end(), text.index("umount -R /mnt"))
+        for grpck_rc, rc in ((0, 0), (2, 1)):
+            with self.subTest(grpck_rc=grpck_rc):
+                d = Path(tempfile.mkdtemp(prefix="t2-gshadow-live-"))
+                self.addCleanup(shutil.rmtree, d, True)
+                (d / "etc").mkdir()
+                (d / "bin").mkdir()
+                (d / "etc" / "group").write_text(self.EOS_GROUP)
+                (d / "etc" / "gshadow").write_text(self.EOS_GSHADOW)
+                (d / "bin" / "arch-chroot").write_text(f"#!/bin/sh\necho \"arch-chroot $*\"\nexit {grpck_rc}\n")
+                (d / "bin" / "arch-chroot").chmod(0o755)
+                code = "set -euo pipefail\n" + m[0].replace("/mnt/etc/", f"{d}/etc/") + "echo fell-through\n"
+                r = subprocess.run(["bash", "-c", code], capture_output=True, text=True,
+                                   env={"PATH": f"{d / 'bin'}:{os.environ['PATH']}"})
+                self.assertEqual((r.returncode, r.stderr), (rc, ""), r.stdout)
+                lines = ["BACKOTTER-INFO: gshadow entries for adm wheel uucp nopasswdlogin rfkill sys, "
+                         "which /etc/group has and /etc/gshadow hadn't", "arch-chroot /mnt grpck -r"]
+                self.assertEqual(r.stdout.splitlines(), lines + (["fell-through"] if rc == 0 else ["grpck -r still fails with those entries"]))
+                self.assertEqual(((d / "etc" / "gshadow").read_text(), (d / "etc" / "gshadow-").read_text()),
+                                 (self.EOS_GSHADOW + self.EOS_ADDED, self.EOS_GSHADOW))
+        # Files that agree (the other distributions' images): nothing is written or run.
+        d = Path(tempfile.mkdtemp(prefix="t2-gshadow-live-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        (d / "etc").mkdir()
+        (d / "etc" / "group").write_text("root:x:0:root\n")
+        (d / "etc" / "gshadow").write_text("root:!*::root\n")
+        r = subprocess.run(["bash", "-c", "set -euo pipefail\n" + m[0].replace("/mnt/etc/", f"{d}/etc/") + "echo fell-through\n"],
+                           capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout, r.stderr, sorted(os.listdir(d / "etc"))), (0, "fell-through\n", "", ["group", "gshadow"]))
+
     def run_grub(self, was="grub 2:2.12-3", now="grub 2:2.14-1", efi=True, esps=None, mounted=None,
                  i386=False, disks=None, hook=False, install_rc=0):
         """Linux.pacman's GRUB blocks (read before the upgrade, act after it) around a stand-in

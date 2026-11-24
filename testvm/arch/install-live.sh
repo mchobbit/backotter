@@ -8,7 +8,8 @@
 #
 #   endeavouros  GPT; 2 GiB ESP at /efi; / ext4 (noatime); no swap; the
 #                airootfs copied and cleaned as chrooted_cleaner_script.sh
-#                does; systemd-boot, and dracut through kernel-install.
+#                does; systemd-boot, and dracut through kernel-install.  The
+#                six groups its ISO's /etc/gshadow lacks get their entries.
 #   endeavouros-grub  the same with the installer's other choice of loader:
 #                GRUB, with eos-dracut's initramfs in /boot.
 #   manjaro      GPT; 300 MiB ESP at /boot/efi; / btrfs with @, @home, @cache
@@ -469,6 +470,20 @@ grep -Eq '^ID="?'"$DISTRO"'"?$' /mnt/usr/lib/os-release || { echo "os-release do
 printf 'root:%s\n' "$ROOT_PASSWORD_HASH" | arch-chroot /mnt chpasswd -e
 arch-chroot /mnt sh -c 'id tester >/dev/null 2>&1 || useradd -m -s /bin/bash -c "Test user" -G wheel tester'
 printf 'tester:%s\n' "$ROOT_PASSWORD_HASH" | arch-chroot /mnt chpasswd -e
+# A group /etc/group has and /etc/gshadow hasn't gets its gshadow entry, as
+# update/in-guest.sh's Linux.pacman gives a guest built before this did, and
+# says why: EndeavourOS's ISO has six, Calamares leaves them, and the
+# installed system's daily shadow.service (grpck -r) fails.  Not something
+# the installer does.
+miss=$(awk -F: -v s=/mnt/etc/gshadow 'BEGIN { while ((r = (getline l < s)) > 0) { split(l, a, ":"); have[a[1]] = 1 }
+    if (r < 0) exit 2 } $1 ~ /^[A-Za-z0-9_]/ && !($1 in have) { have[$1] = 1; print $1 ":!*::" $4 }' /mnt/etc/group)
+if [[ -n $miss ]]; then
+    echo "BACKOTTER-INFO: gshadow entries for $(cut -d: -f1 <<<"$miss" | paste -sd' ' -), which /etc/group has and /etc/gshadow hadn't"
+    cp -p /mnt/etc/gshadow /mnt/etc/gshadow-
+    [[ -z $(tail -c1 /mnt/etc/gshadow) ]] || echo >>/mnt/etc/gshadow
+    printf '%s\n' "$miss" >>/mnt/etc/gshadow
+    arch-chroot /mnt grpck -r || { echo "grpck -r still fails with those entries"; false; }
+fi
 install -d -m 700 /mnt/root/.ssh
 echo "$AUTHORIZED_KEY" >/mnt/root/.ssh/authorized_keys
 chmod 600 /mnt/root/.ssh/authorized_keys

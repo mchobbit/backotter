@@ -43,7 +43,9 @@ pub fn disk_names(fam: Family, text: &str) -> Vec<(String, Option<String>)> {
 }
 
 /// NetBSD's wedges of a disk: "dk0: EFI, 2097152 blocks at 34, type: msdos"
-/// as (dk0, name, start sector).
+/// as (dk0, name, start sector).  The name is a GPT partition's, which may
+/// itself hold ", " (RustAudit1 H9-13), so the fields after it are taken
+/// from the right.
 pub fn parse_wedges(text: &str) -> Vec<(String, String, u64)> {
     text.lines()
         .filter_map(|l| {
@@ -51,8 +53,9 @@ pub fn parse_wedges(text: &str) -> Vec<(String, String, u64)> {
             if !dk.starts_with("dk") {
                 return None;
             }
-            let (name, rest) = rest.split_once(", ")?;
-            let at = rest.split(" at ").nth(1)?.split(',').next()?.trim().parse().ok()?;
+            let (head, at) = rest.rsplit_once(" blocks at ")?;
+            let at = at.split(',').next()?.trim().parse().ok()?;
+            let (name, _blocks) = head.rsplit_once(", ")?;
             Some((dk.to_string(), name.to_string(), at))
         })
         .collect()
@@ -387,6 +390,10 @@ mod tests {
         assert_eq!(disk_names(Family::OpenBsd, "cd0:,sd0:1a4a1728e6a303a2,fd0:"), vec![("sd0".into(), Some("1a4a1728e6a303a2".into()))]);
         let w = parse_wedges("/dev/rld0: 3 wedges:\ndk0: EFI, 2097152 blocks at 34, type: msdos\ndk2: AlpineBSD, 27262909 blocks at 6291490, type: ffs\n");
         assert_eq!(w, vec![("dk0".into(), "EFI".into(), 34), ("dk2".into(), "AlpineBSD".into(), 6291490)]);
+        // A GPT name with ", " (and " at ") in it is read whole.
+        let w = parse_wedges("dk1: Data, backup, 2048 blocks at 34, type: ffs\ndk3: a, 1 blocks at x, 9 blocks at 4096, type: ffs\ndk4: , 8 blocks at 64, type: msdos\n");
+        assert_eq!(w, vec![("dk1".into(), "Data, backup".into(), 34), ("dk3".into(), "a, 1 blocks at x".into(), 4096), ("dk4".into(), "".into(), 64)]);
+        assert!(parse_wedges("dk5: no fields\ndk6: x, 8 blocks at y, type: ffs\n").is_empty());
     }
 
     #[test]

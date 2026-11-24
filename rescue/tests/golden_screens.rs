@@ -34,8 +34,8 @@ fn too_small() {
     let mut c = Canvas::new(14, 60, BACKGROUND);
     let o = Clean::ours;
     c.text(0, 0, &o(" BackOtter rescue"), BACKGROUND);
-    c.frame(2, 2, 10, 56, DIALOG);
-    c.shadow(2, 2, 10, 56);
+    c.frame(2, 2, 9, 56, DIALOG);
+    c.shadow(2, 2, 9, 56);
     let title = o(" This window is too small ");
     c.text(2, 2 + (56 - title.width() as u16) / 2, &title, DIALOG);
     for (i, l) in [

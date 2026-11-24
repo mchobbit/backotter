@@ -119,6 +119,33 @@ fn the_sample_frames_show_their_canvas() {
     }
 }
 
+/// A terminal something else wrote to first, and left with DEC on in the
+/// DEC profile (a bko-rescue killed mid-frame): the first frame alone
+/// shows the canvas, DEC switched off before any letter, and the last
+/// cell emptied where the console clears.
+#[test]
+fn the_first_frame_over_foreign_output() {
+    for (lines, colour, caps) in common::profiles() {
+        let name = common::profile_name(lines, colour, caps);
+        let mut scr = Screen::new(lines, colour, caps, S80);
+        let mut ck = Checker::new(rules(lines, colour, caps, S80));
+        let dec = lines == Lines::Dec;
+        ck.foreign('#', dec);
+        let c = common::sample(0, 0, 3);
+        let f = scr.frame(&c);
+        if dec {
+            let off = f.windows(3).position(|w| w == b"\x1b(B");
+            let letter = f.iter().position(|b| b.is_ascii_alphabetic());
+            assert!(off.is_some() && off < letter, "{name}: ESC ( B before the first letter");
+        }
+        ck.feed(&f);
+        assert_eq!(ck.result(), Ok(()), "{name}");
+        assert_eq!(shows(&ck, &c, 0, 0, lines, colour), Ok(()), "{name}");
+        let last = ck.shown(24, 80).map(|(ch, _)| ch);
+        assert_eq!(last, Some(if caps.clear { ' ' } else { '#' }), "{name}: the last cell");
+    }
+}
+
 /// A bigger terminal: the canvas centred, the margin in the background,
 /// every byte allowed, the canvas shown.
 #[test]

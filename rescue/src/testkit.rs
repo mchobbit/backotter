@@ -208,6 +208,14 @@ impl Checker {
         }
     }
 
+    /// Something else wrote to the terminal before the stream: every cell
+    /// shows `ch` in plain attributes, and DEC line drawing is left on or
+    /// off.  The stream must then make the screen right by itself.
+    pub fn foreign(&mut self, ch: char, dec: bool) {
+        self.grid.iter_mut().for_each(|g| *g = (ch, Attr::PLAIN));
+        self.dec = dec;
+    }
+
     /// What the screen shows at (`row`, `col`), from 1: the character
     /// (DEC's line letters as UTF-8's box glyphs) and its attributes.
     pub fn shown(&self, row: u16, col: u16) -> Option<(char, Attr)> {

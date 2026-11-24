@@ -8,8 +8,8 @@
   | Make the window bigger, or press p for plain mode:   |  
   | the same questions, one line at a time.              |  
   |                                                      |  
-  |                                                      |  
   +------------------------------------------------------+  
+                                                            
                                                             
  p: plain mode | s: shell | Enter: check again              
 
@@ -24,8 +24,8 @@ bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
-bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 b 0;37;44

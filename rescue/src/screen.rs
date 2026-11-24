@@ -271,6 +271,12 @@ pub struct Screen {
     /// The canvas on the terminal now, and where (top, left, from 0).
     shown: Option<(Canvas, u16, u16)>,
     full: bool,
+    /// The next full frame clears the screen first, where the console
+    /// clears: the first frame, after a resize, and after something else
+    /// wrote to the terminal.  The terminal's last cell is never written,
+    /// so only a clear empties it.  Where the console doesn't clear, that
+    /// one cell may keep what was there.
+    wipe: bool,
     /// The cursor's place, from 1; None when unknown (after the last
     /// column, or before the first frame).
     at: Option<(u16, u16)>,
@@ -279,7 +285,15 @@ pub struct Screen {
 
 impl Screen {
     pub fn new(lines: Lines, colour: bool, caps: Caps, term: Size) -> Screen {
-        Screen { out: Out::new(lines, colour, caps), term, shown: None, full: true, at: None, margin: BACKGROUND }
+        Screen {
+            out: Out::new(lines, colour, caps),
+            term,
+            shown: None,
+            full: true,
+            wipe: true,
+            at: None,
+            margin: BACKGROUND,
+        }
     }
 
     pub fn lines(&self) -> Lines {
@@ -298,8 +312,13 @@ impl Screen {
         self.term
     }
 
-    /// A new profile: the next frame is a full one.
+    /// A new profile: the next frame is a full one.  A cursor the old
+    /// caps hid is shown first when the new ones don't hide it, or it
+    /// would stay hidden after exit too.
     pub fn set_profile(&mut self, lines: Lines, colour: bool, caps: Caps) {
+        if self.out.caps.hide_cursor && !caps.hide_cursor {
+            self.out.show_cursor();
+        }
         self.out.end();
         let pending = self.out.take();
         self.out = Out::new(lines, colour, caps);
@@ -312,13 +331,22 @@ impl Screen {
         if s != self.term {
             self.term = s;
             self.full = true;
+            self.wipe = true;
         }
     }
 
-    /// The next frame is a full one: a new dialog, the periodic redraw,
-    /// or something else wrote to the terminal.
+    /// The next frame is a full one: a new dialog, or the periodic
+    /// redraw.
     pub fn invalidate(&mut self) {
         self.full = true;
+    }
+
+    /// Something else wrote to the terminal (a child's output, a kernel
+    /// message): the next frame is a full one, and clears the screen
+    /// first where the console clears.
+    pub fn written_over(&mut self) {
+        self.full = true;
+        self.wipe = true;
     }
 
     /// Whether a canvas of `rows` x `cols` fits the terminal.
@@ -386,6 +414,7 @@ impl Screen {
         self.out.end();
         self.shown = Some((want.clone(), top, left));
         self.full = false;
+        self.wipe = false;
         self.out.take()
     }
 
@@ -396,13 +425,17 @@ impl Screen {
         self.out.hide_cursor();
         let (rows, cols) = (self.term.rows, self.term.cols);
         let margins = rows > want.rows || cols > want.cols;
-        // ESC [ 2 J clears in whatever background a console uses, so it's
-        // used only when the margin is plain; else the margin is spaces.
-        let plain_margin = self.out.effective(self.margin) == Attr::PLAIN;
-        let cleared = margins && plain_margin && self.out.clear();
-        if cleared {
+        // ESC [ 2 J clears in whatever background a console uses, so the
+        // margin is left to it only when the margin is plain; else the
+        // margin is spaces.  A wipe clears too, whatever the margin, and
+        // every cell is written again but the last, which keeps the
+        // console's clear colour.
+        let plain_margin = margins && self.out.effective(self.margin) == Attr::PLAIN;
+        let sent_clear = (self.wipe || plain_margin) && self.out.clear();
+        if sent_clear {
             self.at = None;
         }
+        let cleared = sent_clear && plain_margin;
         let margin = Cell::blank(self.margin);
         for r in 0..rows {
             let in_rows = r >= top && r - top < want.rows;
@@ -552,17 +585,82 @@ mod tests {
         assert_eq!(s.frame(&c), b"\x1b[1;1Ha  b\x1b[1;41Hc");
     }
 
+    fn has_clear(f: &[u8]) -> bool {
+        f.windows(4).any(|w| w == b"\x1b[2J")
+    }
+
     #[test]
     fn a_full_frame_at_80x24_writes_every_cell_but_the_last() {
         for caps in [Caps::ALL, Caps::NONE] {
             let mut s = Screen::new(Lines::Utf8, true, caps, S80);
-            let f = s.frame(&Canvas::standard());
+            let c = Canvas::standard();
+            let f = s.frame(&c);
             let mut ck = Checker::new(Rules { lines: Lines::Utf8, colour: true, caps, rows: 24, cols: 80 });
             ck.feed(&f);
             assert_eq!(ck.result(), Ok(()));
             assert_eq!(ck.cells, 24 * 80 - 1);
-            assert!(!f.windows(4).any(|w| w == b"\x1b[2J"), "no clear at 80x24");
+            // The first frame clears where the console clears; a full
+            // redraw after it doesn't.
+            assert_eq!(has_clear(&f), caps.clear);
+            s.invalidate();
+            assert!(!has_clear(&s.frame(&c)), "no clear on a redraw at 80x24");
+            s.written_over();
+            assert_eq!(has_clear(&s.frame(&c)), caps.clear);
         }
+    }
+
+    /// Whatever was on the terminal before (a shell prompt, a kernel
+    /// message) is gone from the last cell too, which is never written,
+    /// where the console clears.  Where it doesn't, that cell keeps it.
+    #[test]
+    fn the_first_frame_empties_the_last_cell() {
+        for caps in [Caps::ALL, Caps::NONE] {
+            let mut s = Screen::new(Lines::Utf8, true, caps, S80);
+            let mut ck = Checker::new(Rules { lines: Lines::Utf8, colour: true, caps, rows: 24, cols: 80 });
+            ck.foreign('#', false);
+            ck.feed(&s.frame(&Canvas::standard()));
+            assert_eq!(ck.result(), Ok(()));
+            let last = ck.shown(24, 80).map(|(ch, _)| ch);
+            assert_eq!(last, Some(if caps.clear { ' ' } else { '#' }), "{caps:?}");
+            assert_eq!(ck.shown(24, 79).map(|(ch, a)| (ch, a.bg)), Some((' ', BACKGROUND.bg)));
+        }
+    }
+
+    /// A DEC terminal left with DEC on (a bko-rescue killed mid-frame, or
+    /// another program): the first frame switches it off before any text.
+    #[test]
+    fn a_dec_first_frame_switches_dec_off_first() {
+        let mut s = Screen::new(Lines::Dec, true, Caps::ALL, S80);
+        let mut c = Canvas::standard();
+        c.text(0, 0, &ours("abc"), BACKGROUND);
+        c.frame(2, 2, 4, 10, DIALOG);
+        let f = s.frame(&c);
+        let off = f.windows(3).position(|w| w == b"\x1b(B");
+        let text = f.iter().position(|&b| b == b'a');
+        assert!(off.is_some() && off < text, "ESC ( B before the first letter");
+        let mut ck = Checker::new(Rules { lines: Lines::Dec, colour: true, caps: Caps::ALL, rows: 24, cols: 80 });
+        ck.foreign('q', true);
+        ck.feed(&f);
+        assert_eq!(ck.result(), Ok(()));
+        assert_eq!(ck.shown(1, 1), Some(('a', BACKGROUND)));
+        assert_eq!(ck.shown(3, 3).map(|(ch, _)| ch), Some(Glyph::TopLeft.utf8()));
+        // A full redraw sends it again.
+        s.invalidate();
+        assert!(s.frame(&c).starts_with(b"\x1b(B"));
+    }
+
+    #[test]
+    fn a_profile_change_shows_a_cursor_the_new_caps_cant_hide() {
+        let mut s = Screen::new(Lines::Utf8, true, Caps::ALL, S80);
+        let c = Canvas::standard();
+        assert!(s.frame(&c).starts_with(b"\x1b[?25l"));
+        s.set_profile(Lines::Utf8, true, Caps::NONE);
+        assert!(s.frame(&c).starts_with(b"\x1b[?25h"));
+        let mut s = Screen::new(Lines::Utf8, true, Caps::ALL, S80);
+        s.frame(&c);
+        s.set_profile(Lines::Ascii, true, Caps::ALL);
+        let f = s.frame(&c);
+        assert!(!f.windows(6).any(|w| w == b"\x1b[?25h"), "still hidden: not shown");
     }
 
     #[test]

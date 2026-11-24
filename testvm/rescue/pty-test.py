@@ -279,6 +279,18 @@ def test_spike_panic_and_signals():
     check(code == 128 + signal.SIGTERM, "SIGTERM twice: exit %d (%d)" % (128 + signal.SIGTERM, code))
     check(t.attrs() == t.before, "SIGTERM twice: settings put back")
     t.close()
+    # After the full-screen part the signals have their default action
+    # again: `--spike linger` waits 5 s after q, and a signal ends it.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        t = Pty(["--spike", "linger"])
+        t.read(0.5)
+        t.send(b"q", 0.5)
+        done = b"--spike: done" in t.out
+        t.p.send_signal(sig)
+        code, err = t.wait(3)
+        check(done and code == -sig, "%s after the full-screen part: killed by it (%s %d)" % (sig.name, done, code))
+        check(t.attrs() == t.before, "%s after the full-screen part: settings put back" % sig.name)
+        t.close()
 
 
 def test_resize_and_small():

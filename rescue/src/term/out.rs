@@ -173,10 +173,12 @@ impl Out {
 
     /// Forget what the terminal's attributes and charset are (something
     /// else may have written to it), so the next `attr` sends them in full
-    /// and the next glyph switches DEC on again.
+    /// and the next glyph switches DEC on again.  In DEC, `ESC ( B` is sent
+    /// whatever this Out thought: a terminal left with DEC on (a killed
+    /// bko-rescue, another program) would show letters as line glyphs.
     pub fn forget(&mut self) {
         self.cur = None;
-        if self.lines == Lines::Dec && self.dec_on {
+        if self.lines == Lines::Dec {
             self.buf.extend_from_slice(b"\x1b(B");
         }
         self.dec_on = false;
@@ -480,6 +482,14 @@ mod tests {
         o.end();
         assert_eq!(o.take(), b"\x1b[0;37;44m\x1b(0q\x1b(B\x1b[0;37;44m\x1b(0q\x1b(B");
         assert_eq!(o.current(), Some(BG));
+        // DEC off is sent even when this Out thinks it is off already.
+        let mut o = out(Lines::Dec, true, Caps::ALL);
+        o.forget();
+        o.text("a");
+        assert_eq!(o.take(), b"\x1b(Ba");
+        let mut o = out(Lines::Utf8, true, Caps::ALL);
+        o.forget();
+        assert!(o.take().is_empty(), "no ESC ( B outside DEC");
         assert_eq!(out(Lines::Utf8, false, Caps::ALL).effective(BG.focus()), Attr::PLAIN.focus());
     }
 

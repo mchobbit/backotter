@@ -1,8 +1,8 @@
 # bko-rescue's bytes for the sample screen at 80x24: lines dec, colour on, caps all
 # (no focus for the gauge steps, as on the Restore screen; then the focus on the list)
-# full frame: 2674 bytes
-\e[?25l
-\e[1;1H\e[0;37;44m BackOtter rescue                                                        Machine
+# full frame: 2683 bytes
+\e(B\e[?25l\e[0m\e[2J
+\e[1;1H\e[37;44m BackOtter rescue                                                        Machine
 \e[2;1H                                                                                
 \e[3;1H  \e[30;47m\e(0lqqqqqqqqqqqqqqqqqqqqqqqqq \e(BWhich machine is this? \e(0qqqqqqqqqqqqqqqqqqqqqqqqqk\e[37;44m  
 \e[4;1H  \e[30;47mx                                                                          x\e[0;40m \e[37;44m 

@@ -229,6 +229,8 @@ struct PollFd {
 const POLLIN: c_short = 1;
 pub const SIGHUP: c_int = 1;
 pub const SIGTERM: c_int = 15;
+/// `SIG_DFL`, a null handler in every family.
+const SIG_DFL: usize = 0;
 
 // SAFETY: each declaration matches the family's C prototype, as the header
 // test checks in each build guest (sizes, offsets, constants, and the
@@ -244,6 +246,7 @@ unsafe extern "C" {
     fn __ioctl(fd: c_int, req: Req, arg: *mut std::ffi::c_void, size: usize) -> c_int;
     fn poll(fds: *mut PollFd, n: Nfds, timeout: c_int) -> c_int;
     fn signal(sig: c_int, handler: usize) -> usize;
+    fn raise(sig: c_int) -> c_int;
     fn ttyname(fd: c_int) -> *mut c_char;
 }
 
@@ -259,6 +262,7 @@ const SYMS: &[(&str, &str)] = &[
     ("ioctl", IOCTL_LINK),
     ("poll", "poll"),
     ("signal", "signal"),
+    ("raise", "raise"),
     ("ttyname", "ttyname"),
 ];
 
@@ -420,6 +424,22 @@ pub fn catch_hup_term() -> bool {
     ok
 }
 
+/// SIGHUP and SIGTERM back to their default action, once the terminal is
+/// back: nothing reads the flag after the full-screen part, and a caught
+/// signal would be lost.  A signal that came and wasn't taken yet is
+/// raised again, so it ends the program as it would have.  One the
+/// caller took (`Event::Signal`) is the caller's: it exits with 128 + it.
+pub fn default_hup_term() {
+    for sig in [SIGHUP, SIGTERM] {
+        // SAFETY: SIG_DFL is a valid handler for any catchable signal.
+        unsafe { signal(sig, SIG_DFL) };
+    }
+    if let Some(sig) = take_signal() {
+        // SAFETY: raise() takes any signal number; this is one we caught.
+        unsafe { raise(sig) };
+    }
+}
+
 /// The last signal caught, once.
 pub fn take_signal() -> Option<c_int> {
     match SIGNALLED.swap(0, Ordering::SeqCst) {
@@ -502,6 +522,7 @@ pub fn abi_lines() -> Vec<String> {
     v.push(format!("const POLLIN {:#x}", POLLIN));
     v.push(format!("const SIGHUP {:#x}", SIGHUP));
     v.push(format!("const SIGTERM {:#x}", SIGTERM));
+    v.push(format!("const SIG_DFL {:#x}", SIG_DFL));
     for (f, link) in SYMS {
         v.push(format!("sym {f} {link}"));
     }
@@ -521,7 +542,7 @@ mod tests {
         keys.dedup();
         assert_eq!(keys.len(), v.len());
         assert!(v.iter().skip_while(|l| !l.starts_with("sym ")).all(|l| l.starts_with("sym ")));
-        assert_eq!(v.iter().filter(|l| l.starts_with("sym ")).count(), 6);
+        assert_eq!(v.iter().filter(|l| l.starts_with("sym ")).count(), 7);
     }
 
     #[cfg(target_os = "linux")]

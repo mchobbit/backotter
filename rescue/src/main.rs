@@ -28,7 +28,7 @@ enum Mode {
     Abi,
     CheckTty,
     Profile,
-    Spike { panic: bool },
+    Spike(spike::End),
     Demo,
     Version,
     Help,
@@ -99,12 +99,16 @@ fn parse(args: &[String]) -> Result<Opts, String> {
             "--version" => mode(Mode::Version, &mut o),
             "--help" | "-h" => mode(Mode::Help, &mut o),
             "--spike" => {
-                let panic = match inline.as_deref() {
-                    Some("panic") => true,
-                    Some(v) => return Err(format!("--spike={v}: only 'panic'")),
-                    None => it.next_if(|n| *n == "panic").is_some(),
+                let word = |w: &str| match w {
+                    "panic" => Some(spike::End::Panic),
+                    "linger" => Some(spike::End::Linger),
+                    _ => None,
                 };
-                mode(Mode::Spike { panic }, &mut o);
+                let end = match inline.as_deref() {
+                    Some(v) => word(v).ok_or_else(|| format!("--spike={v}: only 'panic' or 'linger'"))?,
+                    None => it.next_if(|n| word(n).is_some()).and_then(|n| word(n)).unwrap_or(spike::End::Quit),
+                };
+                mode(Mode::Spike(end), &mut o);
             }
             _ => return Err(format!("unknown option {a}")),
         }
@@ -159,7 +163,7 @@ fn main() {
             }
             0
         }
-        Mode::Spike { panic } => {
+        Mode::Spike(end) => {
             let f = Facts::gather(o.plain, o.lines, o.colour);
             let p = profile::decide(&f);
             match &p.plain {
@@ -167,7 +171,7 @@ fn main() {
                     eprintln!("bko-rescue --spike needs a full-screen terminal, and this is plain mode: {why}");
                     2
                 }
-                None => spike::run(&p, panic),
+                None => spike::run(&p, end),
             }
         }
         Mode::Demo => {
@@ -201,9 +205,10 @@ mod tests {
         assert!(o.plain && o.dry_run);
         assert_eq!((o.lines, o.colour, o.holt.as_str()), (Some(Lines::Dec), Some(false), "/x/bko-holt"));
         assert_eq!(o.mode, Mode::App);
-        assert_eq!(p(&["--spike", "panic"]).unwrap().mode, Mode::Spike { panic: true });
-        assert_eq!(p(&["--spike=panic"]).unwrap().mode, Mode::Spike { panic: true });
-        assert_eq!(p(&["--spike", "--lines=ascii"]).unwrap().mode, Mode::Spike { panic: false });
+        assert_eq!(p(&["--spike", "panic"]).unwrap().mode, Mode::Spike(spike::End::Panic));
+        assert_eq!(p(&["--spike=panic"]).unwrap().mode, Mode::Spike(spike::End::Panic));
+        assert_eq!(p(&["--spike", "linger"]).unwrap().mode, Mode::Spike(spike::End::Linger));
+        assert_eq!(p(&["--spike", "--lines=ascii"]).unwrap().mode, Mode::Spike(spike::End::Quit));
         assert_eq!(p(&["--check-tty"]).unwrap().mode, Mode::CheckTty);
         assert_eq!(p(&["--rustic=/r"]).unwrap().rustic, "/r");
     }

@@ -59,7 +59,7 @@ which a launcher sets.  Hidden, for tests and checks:
 | `--abi` | our view of the C ABI, one fact a line, for the header test |
 | `--check-tty` | raw mode set, read back, put back and read back; exit 0 when every field is as expected (for checks.sh) |
 | `--profile` | which console this is and what it gets, and why: `os`, `tty`, `term`, `locale`, `size`, `mode`, `rule`, `lines`, `colour`, `caps`, `esc`, `refresh` |
-| `--spike` | the four spike cards (box, list, gauge, password); `--spike panic` panics after the first frame |
+| `--spike` | the four spike cards (box, list, gauge, password); `--spike panic` panics after the first frame; `--spike linger` waits 5 s after `q`, for the signal test |
 | `--demo` | RT8; not built |
 
 In the spike, `1`-`4` and `n` change card, `l` the line style, `c`

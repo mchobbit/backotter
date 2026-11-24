@@ -513,9 +513,19 @@ impl Spike {
     }
 }
 
+/// How the spike ends, besides `q`: a panic on purpose a second after the
+/// first frame, or, after `q`, five seconds more in the normal terminal
+/// (for pty-test.py: a SIGTERM or SIGHUP then must end it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum End {
+    Quit,
+    Panic,
+    Linger,
+}
+
 /// Run the spike on fd 0 and 1.  Returns the exit status.
-pub fn run(p: &Profile, panic_on_purpose: bool) -> i32 {
-    match run_inner(p, panic_on_purpose) {
+pub fn run(p: &Profile, end: End) -> i32 {
+    match run_inner(p, end) {
         Ok(code) => code,
         Err(e) => {
             tty::restore();
@@ -525,13 +535,13 @@ pub fn run(p: &Profile, panic_on_purpose: bool) -> i32 {
     }
 }
 
-fn run_inner(p: &Profile, panic_on_purpose: bool) -> io::Result<i32> {
+fn run_inner(p: &Profile, end: End) -> io::Result<i32> {
     let mut term = Term::open(p)?;
     let mut s = Spike::new(p);
     s.size = term.events.size();
     s.frame();
     s.flush()?;
-    if panic_on_purpose {
+    if end == End::Panic {
         std::thread::sleep(Duration::from_secs(1));
         panic!("bko-rescue --spike panic: a panic on purpose, to see the terminal come back");
     }
@@ -580,6 +590,10 @@ fn run_inner(p: &Profile, panic_on_purpose: bool) -> io::Result<i32> {
     s.flush()?;
     drop(term);
     println!("bko-rescue --spike: done");
+    if end == End::Linger && code == 0 {
+        io::stdout().flush()?;
+        std::thread::sleep(Duration::from_secs(5));
+    }
     Ok(code)
 }
 

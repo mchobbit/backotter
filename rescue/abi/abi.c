@@ -90,6 +90,7 @@ int main(int argc, char **argv)
 	CONST(POLLIN);
 	CONST(SIGHUP);
 	CONST(SIGTERM);
+	CONST(SIG_DFL);
 
 	/* Never run: these calls make the program import each function under
 	 * the name the headers give it, for check.sh's nm. */
@@ -102,6 +103,7 @@ int main(int argc, char **argv)
 		ioctl(0, TIOCGWINSZ, &ws);
 		poll(&p, 1, 0);
 		signal(SIGTERM, SIG_DFL);
+		raise(SIGTERM);
 		(void)ttyname(0);
 	}
 	return 0;

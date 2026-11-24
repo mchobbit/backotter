@@ -8,7 +8,8 @@
 //!   out, so a resize is noticed without a SIGWINCH handler.
 //! - SIGHUP and SIGTERM only set a flag (`ffi::catch_hup_term`); poll then
 //!   returns early, and the next call says `Signal`.  The caller returns,
-//!   and `Term`'s raw mode guard puts the terminal back.
+//!   and dropping `Term` puts the terminal back, then gives both signals
+//!   their default action again (`ffi::default_hup_term`).
 //!
 //! The source of bytes, time and size is a trait, so all of it is tested
 //! without a terminal.
@@ -210,7 +211,11 @@ impl<S: Source> Events<S> {
 
 /// The terminal in full-screen mode: SIGHUP and SIGTERM caught, raw mode
 /// on (put back on drop, on a panic and by `tty::restore`), the events,
-/// and stdout.  Dropping it puts everything back.
+/// and stdout.  Dropping it puts everything back: the terminal first,
+/// then the signals' default action, so a SIGTERM or SIGHUP after the
+/// full-screen part ends the program again.  A signal the caller took
+/// (`Event::Signal`) is its own to exit with, as 128 + it; one that came
+/// and wasn't taken is raised again then.
 pub struct Term {
     raw: RawMode,
     pub events: Events<TtySource>,
@@ -223,7 +228,13 @@ impl Term {
         if !ffi::catch_hup_term() {
             return Err(io::Error::other("can't catch SIGHUP and SIGTERM"));
         }
-        let raw = RawMode::enter(p.lines, p.caps)?;
+        let raw = match RawMode::enter(p.lines, p.caps) {
+            Ok(r) => r,
+            Err(e) => {
+                ffi::default_hup_term();
+                return Err(e);
+            }
+        };
         Ok(Term { raw, events: Events::new(TtySource::new(), p.esc_ms) })
     }
 
@@ -245,6 +256,15 @@ impl Term {
 
     pub fn raw(&self) -> &RawMode {
         &self.raw
+    }
+}
+
+impl Drop for Term {
+    fn drop(&mut self) {
+        // The fields drop after this, so put the terminal back here
+        // first (the guard's own drop then does nothing).
+        tty::restore();
+        ffi::default_hup_term();
     }
 }
 

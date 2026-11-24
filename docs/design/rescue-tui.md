@@ -390,6 +390,7 @@ table is *Check* until RT1's header test passes in that family's guest.**
 | `poll`, `nfds_t` | `unsigned long` | `unsigned int` | `unsigned long` | `unsigned long` |
 | `struct pollfd`, `POLLIN` | int, two shorts; 1 | same | same | same *Check* |
 | `signal`, `SIGHUP`, `SIGTERM` | 1, 15 | 1, 15 | 1, 15 | 1, 15 *Check* |
+| `raise`, `SIG_DFL` | function, 0 | function, 0 | function, 0 | function, 0 *Check* |
 | `ttyname` | function | function | function | function |
 | later (RT12): `setsid`, `kill` | functions | functions | functions | functions |
 
@@ -888,10 +889,22 @@ pty test and the header test.
 - **Diffs compare looks, not cells:** a space in another foreground or
   in bold looks the same, so it isn't sent, and a space never switches
   attributes for that alone.  Spaces leave DEC's charset on.
-- **Clearing:** at exactly 80x24 every cell is written anyway, so
-  `ESC [ 2 J` isn't sent.  On a bigger terminal it clears the margin
-  only when the margin is plain (mono); in colour the margin is written
-  as background spaces, since consoles clear in different colours.
+- **Clearing:** a full redraw at exactly 80x24 writes every cell anyway,
+  so `ESC [ 2 J` isn't sent then.  The first frame, a resize and
+  foreign output (`Screen::written_over`) do clear first where the
+  console clears: the last cell is never written, so only a clear
+  empties it of a prompt or a kernel message.  Where the console
+  doesn't clear, that one cell may keep it.  On a bigger terminal the
+  margin is left to the clear only when it is plain (mono); in colour
+  it is written as background spaces, since consoles clear in
+  different colours.
+- **DEC off at every full frame:** in the DEC profile a full frame
+  starts with `ESC ( B` whatever bko-rescue thinks the charset is, so a
+  terminal left with DEC on (a killed bko-rescue) shows letters again.
+- **Signals after the full screen:** dropping `Term` gives SIGHUP and
+  SIGTERM their default action again (`signal(sig, SIG_DFL)`), and
+  raises one that came and wasn't taken, so they still end the program
+  after the full-screen part.
 - **Budgets, the sample screen (title, box with shadow, wrapped text, a
   framed list, a gauge, buttons, key line), all 12 profiles:** full
   frames 2.1-3.4 KB (UTF-8 colour 3,368 bytes, 3.5 s at 9600 baud); a

@@ -75,11 +75,18 @@ pub struct Args {
     pub sysroot: Option<String>,
 }
 
+/// The flags parse_args takes a value after, for `--json`'s first pass
+/// (crate::load::jsonout::find_json_flag); parse_args asserts it.
+pub const VALUE_FLAGS: &[&str] = &["--output", "-o", "--stderr", "--sysroot"];
+
 pub fn parse_args(args: &[String]) -> Result<Option<Args>, String> {
     let mut a = Args::default();
     let mut it = args.iter();
     while let Some(x) = it.next() {
-        let mut value = |flag: &str| it.next().cloned().ok_or_else(|| format!("{flag} needs a value"));
+        let mut value = |flag: &str| {
+            debug_assert!(VALUE_FLAGS.contains(&flag), "{flag} takes a value: add it to VALUE_FLAGS");
+            it.next().cloned().ok_or_else(|| format!("{flag} needs a value"))
+        };
         match x.as_str() {
             "-h" | "--help" => return Ok(None),
             "--output" | "-o" => a.output = Some(value(x)?),
@@ -97,6 +104,14 @@ pub fn parse_args(args: &[String]) -> Result<Option<Args>, String> {
 }
 
 pub fn main(args: &[String]) -> ExitCode {
+    // The report is text for people: --json is refused, as a document
+    // (holt-json.md, "Commands and flags").
+    if let Some(flag) = load::jsonout::find_json_flag(args, VALUE_FLAGS) {
+        let line = format!("bko-holt report-bug: {flag}: the report is text for people; run it without --json");
+        load::jsonout::write_stdout(&load::jsonout::error_doc(2, load::jsonout::ErrorCode::JsonNotHere, &line));
+        eprintln!("{line}");
+        return ExitCode::from(2);
+    }
     let a = match parse_args(args) {
         Ok(Some(a)) => a,
         Ok(None) => {
@@ -117,11 +132,18 @@ pub fn main(args: &[String]) -> ExitCode {
         None => Sys::host(),
     };
     let now = crate::timestamp();
-    let b = build(&sys, &a, &now);
     let path = a.output.clone().unwrap_or_else(|| format!("bko-report-{}.txt", now.replace(['-', ':'], "").replace('T', "-").trim_end_matches('Z')));
+    // A dry run writes only a new file, so a device (or anything else that
+    // is there) can't be written over.
+    let new_only = load::jsonout::no_commit().is_some();
+    if new_only && std::fs::symlink_metadata(&path).is_ok() {
+        eprintln!("{}", load::jsonout::exists_refusal("report-bug", &path));
+        return ExitCode::from(2);
+    }
+    let b = build(&sys, &a, &now);
     // 0600, and under sudo the invoking user's: they can attach it, no one
     // else can read it (a --no-redact one holds what redaction would hide).
-    if let Err(e) = write_report(&path, &b.text) {
+    if let Err(e) = write_report(&path, &b.text, new_only) {
         eprintln!("bko-holt report-bug: {path}: {e}");
         return ExitCode::from(1);
     }
@@ -253,14 +275,16 @@ fn write_private_file(path: &str, text: &str) -> std::io::Result<()> {
 /// root's existing files to the sudo user (--output /etc/passwd) would be
 /// a way past sudo's rules.  A PATH that isn't a regular file (a device,
 /// a FIFO) is written to as it is.
-fn write_report(path: &str, text: &str) -> std::io::Result<()> {
+/// NEW_ONLY (a dry run): only a file this run makes is written, never one
+/// that was there.
+fn write_report(path: &str, text: &str, new_only: bool) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     // O_EXCL first, which also refuses a symlink in PATH's last place:
     // whether this run made the file decides whether it may be chowned.
     let (mut f, created) = match std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path) {
         Ok(f) => (f, true),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (std::fs::OpenOptions::new().write(true).truncate(true).open(path)?, false),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && !new_only => (std::fs::OpenOptions::new().write(true).truncate(true).open(path)?, false),
         Err(e) => return Err(e),
     };
     if f.metadata()?.is_file() {
@@ -424,6 +448,9 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
             parts.push(Part { title: "last bko-holt load run".into(), body: Body::Text(t) });
             match load::parse_args(&plan_args(&r.args)) {
                 Ok(Parsed::Run(mut o)) => {
+                    // The report's plan and status read as text mode's,
+                    // whatever the run was.
+                    o.json = false;
                     if !o.layout.starts_with('/') {
                         if let Some(cwd) = &r.cwd {
                             o.layout = format!("{}/{}", cwd.trim_end_matches('/'), o.layout);
@@ -742,20 +769,37 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let t = Tree::new("bugreport-write");
         let new = t.root().join("new.txt");
-        write_report(new.to_str().unwrap(), "one").unwrap();
+        write_report(new.to_str().unwrap(), "one", false).unwrap();
         assert_eq!(std::fs::read_to_string(&new).unwrap(), "one");
         assert_eq!(std::fs::metadata(&new).unwrap().permissions().mode() & 0o777, 0o600);
         // A regular file already there: rewritten and made 0600.
         let old = t.root().join("old.txt");
         std::fs::write(&old, "a much longer old text").unwrap();
         std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o644)).unwrap();
-        write_report(old.to_str().unwrap(), "two").unwrap();
+        write_report(old.to_str().unwrap(), "two", false).unwrap();
         assert_eq!(std::fs::read_to_string(&old).unwrap(), "two");
         assert_eq!(std::fs::metadata(&old).unwrap().permissions().mode() & 0o777, 0o600);
         // Not a regular file: written to, its mode left alone.
         let before = std::fs::metadata("/dev/null").unwrap().permissions().mode();
-        write_report("/dev/null", "three").unwrap();
+        write_report("/dev/null", "three", false).unwrap();
         assert_eq!(std::fs::metadata("/dev/null").unwrap().permissions().mode(), before);
+        // A dry run's (BKO_HOLT_NO_COMMIT): a new file only.
+        let dry = t.root().join("dry.txt");
+        write_report(dry.to_str().unwrap(), "four", true).unwrap();
+        assert_eq!(std::fs::read_to_string(&dry).unwrap(), "four");
+        let e = write_report(dry.to_str().unwrap(), "five", true).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&dry).unwrap(), "four");
+        assert_eq!(write_report("/dev/null", "six", true).unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn value_flags_table() {
+        // Every flag in the table takes a value, and parse_args's own
+        // debug_assert holds the other way.
+        for f in VALUE_FLAGS {
+            assert!(parse_args(&[f.to_string()]).unwrap_err().contains("needs a value"), "{f}");
+        }
     }
 
     #[test]

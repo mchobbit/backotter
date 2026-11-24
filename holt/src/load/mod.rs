@@ -18,6 +18,7 @@ pub mod efidedupe;
 pub mod exec;
 pub mod fit;
 pub mod grubprefix;
+pub mod jsonout;
 pub mod layout;
 pub mod ostree;
 pub mod plan;
@@ -151,6 +152,9 @@ pub struct Options {
     /// For tests: read the system load runs on from this tree, running no
     /// commands.
     pub sysroot: Option<String>,
+    /// --json: the run writes bko-rescue's documents on standard output
+    /// instead of text (docs/design/holt-json.md; jsonout.rs).
+    pub json: bool,
 }
 
 impl Options {
@@ -178,6 +182,7 @@ impl Options {
             new_machine: false,
             luks_header_dir: None,
             sysroot: None,
+            json: false,
         }
     }
 
@@ -287,6 +292,29 @@ Exit status: 0 done, 1 a stage failed, 2 bad arguments, 3 the layout isn't
 one bko-holt can load, 4 plan found problems.
 ";
 
+/// The flags parse_args takes a value after: the table `--json`'s first pass
+/// walks (jsonout::find_json_flag), so that `--snapshot --json` names a
+/// snapshot and isn't the flag.  parse_args asserts every flag it takes a
+/// value for is here, and a test that every one here takes one.
+pub const VALUE_FLAGS: &[&str] = &[
+    "--through",
+    "--only",
+    "--map",
+    "--erase",
+    "--target",
+    "--fit-largest",
+    "--reformat",
+    "--key-file",
+    "--repo",
+    "--password-file",
+    "--snapshot",
+    "--archiver",
+    "--btrfs-snapshots",
+    "--pools",
+    "--luks-header-dir",
+    "--sysroot",
+];
+
 // Parsed once per run, so Options' size doesn't matter.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, PartialEq)]
@@ -306,7 +334,10 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
     let mut layout: Option<String> = None;
     let mut o = Options::new("");
     let mut it = args.iter();
-    let value = |it: &mut std::slice::Iter<String>, flag: &str| it.next().cloned().ok_or_else(|| format!("{flag} needs a value"));
+    let value = |it: &mut std::slice::Iter<String>, flag: &str| {
+        debug_assert!(VALUE_FLAGS.contains(&flag), "{flag} takes a value: add it to VALUE_FLAGS");
+        it.next().cloned().ok_or_else(|| format!("{flag} needs a value"))
+    };
     while let Some(a) = it.next() {
         match a.as_str() {
             "-h" | "--help" => return Ok(Parsed::Help),
@@ -391,6 +422,10 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
             "--new-machine" => o.new_machine = true,
             "--luks-header-dir" => o.luks_header_dir = Some(value(&mut it, a)?),
             "--sysroot" => o.sysroot = Some(value(&mut it, a)?),
+            s if jsonout::is_json_flag(s) => {
+                jsonout::check_schema(s)?;
+                o.json = true;
+            }
             s if s.starts_with('-') => return Err(format!("unknown argument {s:?}")),
             s => {
                 if layout.is_some() {
@@ -429,48 +464,92 @@ pub fn main(args: &[String]) -> u8 {
 
 /// The exit status and standard error; standard output is printed.
 fn main_inner(args: &[String]) -> (u8, String) {
-    let opts = match parse_args(args) {
-        Ok(Parsed::Help) => {
-            print!("{USAGE}");
-            return (EXIT_OK, String::new());
+    // --json in a flag's place, found before parsing, so that a bad
+    // argument is reported as a bko-holt-error document too.
+    let json = jsonout::find_json_flag(args, VALUE_FLAGS);
+    // Under --json, a refusal's document on standard output and its text
+    // line on standard error (with TAIL after it, the usage for a bad
+    // argument); in text mode the line and TAIL alone, as ever.
+    let refuse = |exit: u8, code: jsonout::ErrorCode, line: String, tail: &str| -> (u8, String) {
+        if json.is_some() {
+            jsonout::write_stdout(&jsonout::error_doc(exit, code, &line));
         }
-        Ok(Parsed::Run(o)) => o,
-        Err(e) => return (EXIT_BAD_ARGS, format!("bko-holt load: {e}\n\n{USAGE}")),
+        (exit, format!("{line}\n{tail}"))
     };
+    let parsed = parse_args(args);
+    if let Ok(Parsed::Help) = parsed {
+        // For people, --json or not.
+        print!("{USAGE}");
+        return (EXIT_OK, String::new());
+    }
+    if let Some(Err(e)) = json.map(jsonout::check_schema) {
+        return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::SchemaUnknown, format!("bko-holt load: {e}"), &format!("\n{USAGE}"));
+    }
+    let opts = match parsed {
+        Ok(Parsed::Run(o)) => o,
+        Ok(Parsed::Help) => return (EXIT_OK, String::new()),
+        Err(e) => return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::BadArgs, format!("bko-holt load: {e}"), &format!("\n{USAGE}")),
+    };
+    // The dry-run lock: after --help, before the layout is read.
+    if opts.commit {
+        if let Some(v) = jsonout::no_commit() {
+            return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::NoCommit, jsonout::no_commit_refusal(&v), "");
+        }
+    }
     let text = match crate::bytes::read_to_string_bounded(std::path::Path::new(&opts.layout), crate::LAYOUT_MAX) {
         Ok(t) => t,
-        Err(e) => return (EXIT_BAD_ARGS, format!("bko-holt load: {}: {e}\n", opts.layout)),
+        Err(e) => return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::LayoutUnreadable, format!("bko-holt load: {}: {e}", opts.layout), ""),
     };
     let sys = match &opts.sysroot {
-        Some(d) if !std::path::Path::new(d).is_dir() => return (EXIT_BAD_ARGS, format!("bko-holt load: --sysroot {d}: not a directory\n")),
+        Some(d) if !std::path::Path::new(d).is_dir() => return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::BadArgs, format!("bko-holt load: --sysroot {d}: not a directory"), ""),
         Some(d) => Sys::new(d, Box::new(FakeRunner::default()), crate::sys::euid() == 0),
         None => Sys::host(),
     };
     let (code, out, err) = run(&opts, &text, &sys);
-    print!("{out}");
+    if opts.json {
+        jsonout::write_stdout(&out);
+    } else {
+        print!("{out}");
+    }
     (code, err)
 }
 
 /// Runs what `opts` asks for on `sys` (the system load runs on, whose disks
 /// are the targets): the exit status, standard output and standard error.
 pub fn run(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String) {
+    // A refusal: under --json its document is the whole of standard output.
+    let refuse = |exit: u8, code: jsonout::ErrorCode, line: String| -> (u8, String, String) {
+        let out = if opts.json { jsonout::error_doc(exit, code, &line) } else { String::new() };
+        (exit, out, line + "\n")
+    };
     let json = match crate::json::parse(layout_text) {
         Ok(v) => v,
-        Err(e) => return (EXIT_UNSUPPORTED, String::new(), format!("bko-holt load: {}: not JSON ({} at byte {})\n", opts.layout, e.message, e.offset)),
+        Err(e) => return refuse(EXIT_UNSUPPORTED, jsonout::ErrorCode::LayoutNotJson, format!("bko-holt load: {}: not JSON ({} at byte {})", opts.layout, e.message, e.offset)),
     };
     // --reformat: every stage works from the edited layout (reformat.rs).
     let json = if opts.reformats.is_empty() { json } else { reformat::apply(json.clone(), &reformat::work_out(&json, &opts.reformats)) };
     let layout = match layout::Layout::from_json(json) {
         Ok(l) => l,
-        Err(e) => return (EXIT_UNSUPPORTED, String::new(), format!("bko-holt load: {}: {e}\n", opts.layout)),
+        Err(e) => return refuse(EXIT_UNSUPPORTED, jsonout::ErrorCode::LayoutRefused, format!("bko-holt load: {}: {e}", opts.layout)),
     };
     // A dump of another architecture than this rescue system's is refused
     // here, before any stage (plan and status too) reads or writes a disk
     // (crate::arch).
     if let Err(e) = crate::arch::check_load(&layout.v, sys) {
-        return (EXIT_UNSUPPORTED, String::new(), format!("bko-holt load: {}: {e}\n", opts.layout));
+        return refuse(EXIT_UNSUPPORTED, jsonout::ErrorCode::ArchMismatch, format!("bko-holt load: {}: {e}", opts.layout));
     }
     let stages = opts.stages();
+    if opts.json {
+        // The plan (RT10c), status (RT10e) and event (RT10f) documents
+        // aren't built yet: refused, before anything is read or run, so a
+        // reader never gets text where it wants JSON.
+        let what = match stages.as_slice() {
+            [Stage::Plan] => "plan",
+            [Stage::Status] => "status",
+            _ => "the writing stages",
+        };
+        return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::JsonNotHere, format!("bko-holt load: --json isn't built for {what} in this bko-holt; run it without --json"));
+    }
     match stages.as_slice() {
         [Stage::Plan] => plan::run(&layout, opts, sys),
         [Stage::Status] => status::run(&layout, opts, sys),
@@ -604,6 +683,61 @@ mod tests {
             assert!(err(&["a", "--fit-largest", v]).contains("whole percentage, 1 to 50"), "{v:?}");
         }
         assert_eq!(parse_args(&args(&["--help"])).unwrap(), Parsed::Help);
+    }
+
+    #[test]
+    fn json_argument() {
+        assert!(!opts(&["l"]).json);
+        assert!(opts(&["l", "--json"]).json);
+        assert!(opts(&["--json=1", "l"]).json);
+        let err = |a: &[&str]| parse_args(&args(a)).unwrap_err();
+        assert!(err(&["l", "--json=2"]).contains("writes schema 1"));
+        // A flag's value is its value.
+        let o = opts(&["l", "--repo", "/r", "--snapshot", "--json"]);
+        assert!(!o.json);
+        assert_eq!(o.snapshot, "--json");
+        assert_eq!(jsonout::find_json_flag(&args(&["l", "--repo", "/r", "--snapshot", "--json"]), VALUE_FLAGS), None);
+        assert_eq!(parse_args(&args(&["l", "--json", "--help"])).unwrap(), Parsed::Help);
+    }
+
+    #[test]
+    fn value_flags_table() {
+        // Every flag in the table takes a value (parse_args's debug_assert
+        // holds the other way: every flag it takes a value for is listed).
+        for f in VALUE_FLAGS {
+            let e = parse_args(&args(&["l", f])).unwrap_err();
+            assert!(e.contains("needs a value"), "{f}: {e}");
+        }
+        // And none of the switches does.
+        for f in ["--commit", "--new-uuids", "--no-nvram", "--removable", "--new-machine", "--json"] {
+            assert_eq!(opts(&[f, "l"]).layout, "l", "{f}");
+        }
+    }
+
+    #[test]
+    fn json_refusals() {
+        let t = crate::testutil::Tree::new("load-json");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let layout = r#"{"format": "bko-holt", "schema": 1, "os": {"id": "debian", "version_id": "13"}, "storage": {"disks": []}}"#;
+        let doc = |out: &str| crate::json::parse(out).unwrap();
+        // Text mode: nothing on standard output, as ever.
+        let (code, out, err) = run(&opts(&["l.json"]), "{not json", &s);
+        assert_eq!((code, out.as_str()), (EXIT_UNSUPPORTED, ""));
+        let (jcode, jout, jerr) = run(&opts(&["l.json", "--json"]), "{not json", &s);
+        assert_eq!((jcode, &jerr), (code, &err));
+        assert_eq!(doc(&jout).get_str("code"), Some("layout_not_json"));
+        assert_eq!(doc(&jout).get_str("text"), Some(err.trim_end()));
+        let (code, out, _) = run(&opts(&["l.json", "--json"]), r#"{"format": "x"}"#, &s);
+        assert_eq!(code, EXIT_UNSUPPORTED);
+        assert_eq!(doc(&out).get_str("code"), Some("layout_refused"));
+        // Plan, status and the writing stages: not built yet, refused
+        // before any check runs.
+        for a in [&["l.json", "--json"][..], &["l.json", "--json", "--only", "status"], &["l.json", "--json", "--through", "mount", "--commit"]] {
+            let (code, out, err) = run(&opts(a), layout, &s);
+            assert_eq!(code, EXIT_BAD_ARGS, "{a:?}");
+            assert_eq!(doc(&out).get_str("code"), Some("json_not_here"), "{a:?}");
+            assert!(!err.contains("nothing in fstab"), "{err}");
+        }
     }
 
     #[test]

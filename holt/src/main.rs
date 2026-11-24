@@ -1,3 +1,4 @@
+use bko_holt::load::jsonout;
 use bko_holt::sys::{FakeRunner, Sys};
 use std::io::Write;
 use std::process::ExitCode;
@@ -68,8 +69,23 @@ one bko-holt supports (the message then lists those it does).
 SOURCE_DATE_EPOCH, when set, fixes the report's timestamp.
 ";
 
+/// The hidden helpers load's stages run that write to a disk or a tree:
+/// under BKO_HOLT_NO_COMMIT they refuse to run at all (load never runs them
+/// without --commit, which the variable refuses, so only a bug or a hand
+/// would).
+const WRITING_HELPERS: [&str; 8] = ["snapcore-boot-areas", "md-lbs", "umount-tree", "efi-dedupe", "grub-prefix", "raw-write", "write-table", "rewrite"];
+
+/// The flags dump takes a value after, for `--json`'s first pass.
+const DUMP_VALUE_FLAGS: &[&str] = &["--disk", "--only-disk", "--keep-luks-header", "--luks-header-dir", "--sysroot"];
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(h) = args.first().filter(|a| WRITING_HELPERS.contains(&a.as_str())) {
+        if jsonout::no_commit().is_some() {
+            eprintln!("{}", jsonout::helper_refusal(h));
+            return ExitCode::from(2);
+        }
+    }
     match args.first().map(String::as_str) {
         Some("dump") => dump(&args[1..]),
         Some("load") => {
@@ -93,6 +109,24 @@ fn main() -> ExitCode {
         Some("-h" | "--help") => {
             print!("{USAGE}");
             ExitCode::SUCCESS
+        }
+        // `--version --json` (or -V --json): which documents and schemas
+        // this bko-holt speaks (J1).  An older one prints its text line to
+        // this too, which bko-rescue reads as "too old".
+        Some("-V" | "--version") if args.get(1).is_some_and(|a| jsonout::is_json_flag(a)) => {
+            let flag = &args[1];
+            match jsonout::check_schema(flag) {
+                Ok(()) => {
+                    jsonout::write_stdout(&jsonout::api_doc());
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    let line = format!("bko-holt: {e}");
+                    jsonout::write_stdout(&jsonout::error_doc(2, jsonout::ErrorCode::SchemaUnknown, &line));
+                    eprintln!("{line}");
+                    ExitCode::from(2)
+                }
+            }
         }
         Some("-V" | "--version") => {
             println!("bko-holt {}", env!("CARGO_PKG_VERSION"));
@@ -122,6 +156,13 @@ fn report_hint() -> String {
 }
 
 fn dump(args: &[String]) -> ExitCode {
+    // dump writes JSON already: --json is refused, as a document.
+    if let Some(flag) = jsonout::find_json_flag(args, DUMP_VALUE_FLAGS) {
+        let line = format!("bko-holt dump: {flag}: dump writes JSON already; run it without --json");
+        jsonout::write_stdout(&jsonout::error_doc(2, jsonout::ErrorCode::JsonNotHere, &line));
+        eprintln!("{line}");
+        return ExitCode::from(2);
+    }
     let mut compact = false;
     let mut sysroot: Option<String> = None;
     let mut disks: Vec<String> = Vec::new();

@@ -701,6 +701,13 @@ pub fn recovery_key_main(args: &[String]) -> u8 {
         eprintln!("bko-holt recovery-key-file: OUT looks like a recovery key: give the file to write, and the key on standard input");
         return 2;
     }
+    // A dry run (BKO_HOLT_NO_COMMIT) writes only a new file, so OUT can't
+    // be a device or anything else already there; asked before the key is.
+    let new_only = crate::load::jsonout::no_commit().is_some();
+    if new_only && std::fs::symlink_metadata(&out).is_ok() {
+        eprintln!("{}", crate::load::jsonout::exists_refusal("recovery-key-file", &out));
+        return 2;
+    }
     let tty = std::io::stdin().is_terminal();
     let mut text = String::new();
     if tty {
@@ -746,7 +753,14 @@ pub fn recovery_key_main(args: &[String]) -> u8 {
     crate::recovery::zeroize_string(&mut text);
     let write = || -> std::io::Result<()> {
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&out)?;
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).mode(0o600);
+        if new_only {
+            o.create_new(true);
+        } else {
+            o.create(true).truncate(true);
+        }
+        let mut f = o.open(&out)?;
         f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         f.write_all(&key)?;
         f.sync_all()

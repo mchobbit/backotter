@@ -2727,6 +2727,11 @@ def main():
         m = re.match(r"^(storage\.other_devices\.\d+)\.", k)
         if not why and m and a.get(m.group(1) + ".kind") == "zram":
             why = "zram is made anew at each boot"
+        # Both QEMU machine types of the same chipset, versions alone moved.
+        qm = [re.fullmatch(r"pc-(q35|i440fx)-\d+\.\d+", v) if isinstance(v, str) else None for v in (va, vb)]
+        if not why and k == "host.dmi.product_version" and all(qm) and qm[0].group(1) == qm[1].group(1):
+            why = ("QEMU's machine version: -machine q35 (or pc) is the newest the host's QEMU has, so an upgrade between "
+                   "the source's boot and the restored one moves it (2026-11-14: 10.0 to 11.1); bko-holt restores nothing from DMI")
         # A zvol (Proxmox's VM disk) load makes empty: its bytes aren't in the backup.
         m = re.match(r"^(storage\.disks\.\d+)\.boot_code\.(kind|first_bytes)$", k)
         if not why and m and b.get(m.group(1) + ".boot_code.kind") == "none" \

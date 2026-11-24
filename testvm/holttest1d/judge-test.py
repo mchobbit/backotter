@@ -1332,6 +1332,40 @@ class SwapOnZram(unittest.TestCase):
         self.assertIn("DIFF storage.swaps.0.size_bytes", out)
 
 
+class QemuMachineVersion(unittest.TestCase):
+    """HoltTest2 ubuntu24-luks, ubuntu24-uefi, truenas25 on cinqcent
+    (2026-11-14): the farm's QEMU went 10.0 to 11.1 between the source's dump
+    and the restored boot, and -machine q35 (or pc) moved with it; any other
+    product_version change still counts."""
+
+    judge = Geli.judge
+
+    def machine(self, version):
+        d = dump([disk("vda", 16 * GIB, [part("vda1", 1, 2048, 2097152, ext4(1 * GIB), gpt=True)], gpt=True)])
+        d["host"] = {"dmi": {"sys_vendor": "QEMU", "product_name": "Standard PC (Q35 + ICH9, 2009)", "product_version": version}}
+        return d
+
+    def test_q35_version_may_move(self):
+        rc, out = self.judge(self.machine("pc-q35-10.0"), self.machine("pc-q35-11.1"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("QEMU's machine version", out)
+        self.assertIn("host.dmi.product_version", out)
+
+    def test_i440fx_version_may_move(self):
+        rc, out = self.judge(self.machine("pc-i440fx-10.0"), self.machine("pc-i440fx-11.1"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("QEMU's machine version", out)
+
+    def test_other_product_versions_still_count(self):
+        for va, vb in (("ThinkPad X13 Gen 1", "ThinkPad A100"), ("pc-q35-11.1", "1.0"), ("1.0", "pc-q35-11.1"),
+                       ("pc-q35-10.0", "pc-i440fx-11.1"), ("pc-q35-10.0", "pc-q35-11.1-extra"), ("pc-q35-10.0", None)):
+            with self.subTest(va=va, vb=vb):
+                rc, out = self.judge(self.machine(va), self.machine(vb))
+                self.assertEqual(rc, 1, out)
+                self.assertIn("DIFF host.dmi.product_version", out)
+                self.assertNotIn("QEMU's machine version", out)
+
+
 class FsRefind(unittest.TestCase):
     """judge.py fs over what load's boot stage does on PikaOS (P6): booster
     rebuilds /boot/booster.img-K, and rEFInd is kept, not reinstalled: its

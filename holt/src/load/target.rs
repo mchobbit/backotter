@@ -571,10 +571,20 @@ pub fn kernel_identity(sys: &Sys, t: &TargetDisk) -> (String, String) {
     identity_on(crate::other::Family::current(), sys, t)
 }
 
-/// kernel_identity as it is on FAM (None: Linux).
+/// kernel_identity as it is on FAM (None: Linux).  On OpenBSD and NetBSD
+/// the scan's serial is the disklabel's DUID (other/labelled.rs, from
+/// hw.disknames), which the partition stage itself writes: the record
+/// written for the target as it was would never be the one read back after
+/// it (RT10j review: openbsd8-crypt's partition stage "not done"), so there
+/// the record leaves it out, as before RustAudit1 HD2-04.
 fn identity_on(fam: Option<crate::other::Family>, sys: &Sys, t: &TargetDisk) -> (String, String) {
-    if fam.is_some() {
-        return (t.b.serial.clone().unwrap_or_default(), t.b.wwid.clone().unwrap_or_default());
+    use crate::other::Family;
+    if let Some(f) = fam {
+        let serial = match f {
+            Family::OpenBsd | Family::NetBsd => String::new(),
+            _ => t.b.serial.clone().unwrap_or_default(),
+        };
+        return (serial, t.b.wwid.clone().unwrap_or_default());
     }
     let attr = |a: &str| sys.read_trim(&format!("/sys/block/{}/device/{a}", t.b.name)).unwrap_or_default();
     (attr("serial"), attr("wwid"))
@@ -1261,6 +1271,18 @@ mod tests {
         assert_eq!(table_record_text(&l, d, &old, &s), record_text(&l, d, &old, &kernel_identity(&s, &old)));
         if crate::other::Family::current().is_none() {
             assert_eq!(table_record_text(&l, d, &old, &s), table_record_text(&l, d, &new, &s));
+        }
+        // OpenBSD and NetBSD: the scan's serial is the disklabel's DUID,
+        // which partition writes; the record leaves it out (RT10j review),
+        // so the target read back after partition has the record written
+        // for it before.
+        for fam in [crate::other::Family::OpenBsd, crate::other::Family::NetBsd] {
+            let duid = |x: &str| with(x, None);
+            assert_eq!(identity_on(Some(fam), &s, &duid("52fcb0b7cd1d05e5")), (String::new(), String::new()), "{fam:?}");
+            assert_eq!(identity_on(Some(fam), &s, &new), (String::new(), "naa.5000c500a1b2c3d4".to_string()), "{fam:?}");
+            let rec = |x: &TargetDisk| record_text(&l, d, x, &identity_on(Some(fam), &s, x));
+            assert_eq!(rec(&duid("0000000000000000")), rec(&duid("52fcb0b7cd1d05e5")), "{fam:?}");
+            assert!(rec(&old).contains(&format!("\ntarget vdb size={} serial= wwid=\n", base.b.size_bytes)), "{}", rec(&old));
         }
     }
 

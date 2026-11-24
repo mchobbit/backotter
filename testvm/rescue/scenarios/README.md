@@ -14,16 +14,26 @@ that file.
 
 The `rec-GUEST` scenarios are whole runs recorded by HoltTest1's
 `HT_VARIANT=json` (testvm/holttest1d/README.md, "The --json rebuild") on
-one guest a family, 2026-11-24, by `ht1-json.py record` (each's
-`recorded.txt` says from what): `--version --json` and `load ...
---commit --json` refused under `BKO_HOLT_NO_COMMIT=1`, the whole run's
-`plan --json`, the dry run, then each stage's `--commit --json
---expect-plan` run with `status --json` after it, in that order; key and
-password files' paths as `*`.  They are for RT12's tests (the `--commit`
-runs the demo refuses) and for the checker, which reads every one of
-them: `rec-debian13-stack` (LUKS on md, UEFI, LVM), `rec-freebsd15-geli`,
-`rec-openbsd8-crypt` (softraid CRYPTO), `rec-omnios58` (ZFS),
-`rec-haiku6`.
+one guest a family by `ht1-json.py record` (each's `recorded.txt` says
+from what and when), in the run's order: `--version --json` and `load
+... --commit --json` refused under `BKO_HOLT_NO_COMMIT=1`, the decoy
+mapped without `--erase` refused by the checks (`problems`, `end` 4), the
+whole run's `plan --json`, the dry run, then for each stage its own `plan
+--json`, the stage's `--commit --json --expect-plan` run with that plan's
+hash, and `status --json` after it; key and password files' paths as
+`*`.  The same argv is asked more than once there, the answer moving on
+(each stage's plan, each status), so they replay only with
+`FAKE_BKO_HOLT_STATE` set (fake-bko-holt's header): call by call in order,
+as a client staging the run would, each `--expect-plan` the hash of the
+plan document it got just before; `ht1-json.py replay` does that, and
+ht1-json-test.py replays every one.  `rec-debian13-stack` (LUKS on md,
+UEFI, LVM), `rec-freebsd15-geli`, `rec-openbsd8-crypt` (softraid CRYPTO),
+`rec-omnios58` (ZFS), `rec-haiku6`; the checker reads them all.
+
+They are a staged run's, not RT12's flow (one `plan --json`, then one
+`--through close --commit --expect-plan` run), which no guest has recorded
+yet, nor a real `failed` or `stopping` stream: RT12's tests stage the run
+as these do, or record those in a guest of their own.
 
 The argv is a real one's (holt-json.md, "demo.rs and the fake"): `--repo`
 and `--password-file`, since a real bko-holt refuses `--through close`
@@ -43,4 +53,5 @@ Two parts of these a real dry run never writes, kept so the demo's screens
 can be seen: `demo-slow`'s progress (a dry run runs no archiver) and
 `demo-fail`'s failure (a dry run runs no command, so it fails only on an
 internal error).  RT12's tests get the `--commit` runs recorded in a guest
-(`rec-*`).
+(`rec-*`, staged), and a real refusal by the checks (each `rec-*`'s
+`refuse-decoy`).

@@ -1,0 +1,9 @@
+load
+/boot/home/layout.json
+--map
+scsi_2_0_0=scsi_2_1_0
+--erase
+scsi_2_1_0
+--only
+plan
+--json

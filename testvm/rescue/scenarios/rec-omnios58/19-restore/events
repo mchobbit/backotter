@@ -1,0 +1,15 @@
+# Recorded from HoltTest1 HT_VARIANT=json, guest omnios58 (testvm/holttest1d/ht1-json.py record)
+delay 0.01
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T22:07:12Z","pid":1017,"commit":true,"dry_run":false,"stages":["restore"],"stage_commands":{"restore":1},"plan_sha256":"932939a1f3941d94a6a7efabe5c8589a9abd2c370b4c9fa1eaa9bb71e70fc671","log":"/var/run/bko-holt/log/load.log","layout":{"hostname":"omnios58","generated":"2026-11-24T22:00:52Z"}}
+{"event":"stage","stage":"restore","commands":1}
+{"event":"cmd","stage":"restore","n":1,"of":1,"kind":"run","argv":["/root/rustic-bko","--repository","/root/repo","--password-file","/root/ht1-keys/repo-password","--json-progress","--progress-interval","1s","restore","--numeric-id","latest:/mnt/src","/mnt/bko-target"],"env":[["LC_ALL","C"],["RUSTIC_STRICT_EXIT","true"]],"why":"snapshot latest:/mnt/src of /root/repo, with BackOtter's restore flags","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":{"part":1,"parts":1},"would":false}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":0,"total_bytes":1409447490,"secs":0,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":312383995,"total_bytes":1409447490,"secs":1,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":586492383,"total_bytes":1409447490,"secs":2,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":844467120,"total_bytes":1409447490,"secs":3,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":1121812750,"total_bytes":1409447490,"secs":4,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":1388942856,"total_bytes":1409447490,"secs":5,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":1409447490,"total_bytes":1409447490,"secs":5,"errors":0}
+{"event":"cmd_done","stage":"restore","n":1,"status":0,"signal":null,"secs":11.61}
+{"event":"stage_done","stage":"restore","secs":14.16,"checked":true}
+{"event":"end","exit":0,"stopped":false,"secs":16.4}

@@ -1,0 +1,17 @@
+load
+/root/layout.json
+--map
+sd0=sd2
+--key-file
+sd1=*
+--repo
+/root/repo
+--password-file
+*
+--archiver
+/root/rustic-bko
+--snapshot
+latest:/mnt/src
+--through
+close
+--json

@@ -1,0 +1,2 @@
+bko-holt load: c3t0d0 -> /dev/c4t0d0: the target isn't blank (c4t0d0s0: zfs_member UUID=11326097022856598660 LABEL=ht1decoy); give --erase /dev/c4t0d0 to wipe it
+bko-holt load: nothing was written; `bko-holt load LAYOUT ...` without a stage shows the whole plan

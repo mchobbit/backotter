@@ -1,0 +1,12 @@
+# Recorded from HoltTest1 HT_VARIANT=json, guest openbsd8-crypt (testvm/holttest1d/ht1-json.py record)
+delay 0.01
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T22:25:02Z","pid":57464,"commit":true,"dry_run":false,"stages":["close"],"stage_commands":{"close":3},"plan_sha256":"46e8ed1c58cc8e1bed2320862985e4c45133acbed96ac4968b3e86625718d5ec","log":"/var/run/bko-holt/log/load.log","layout":{"hostname":"obsd8-crypt.my.domain","generated":"2026-11-24T22:21:29Z"}}
+{"event":"stage","stage":"close","commands":3}
+{"event":"cmd","stage":"close","n":1,"of":3,"kind":"run","argv":["sh","-c","mount | sed -n 's/^.* on \\(.*\\) type .*/\\1/p' | awk '$0 == \"/mnt/bko-target\" || index($0, \"/mnt/bko-target/\") == 1' | sort -r | while read -r m; do umount \"$m\" || { o=$(fstat) && ! printf '%s\\n' \"$o\" | awk -v m=\"$m\" '{ for (i = 5; i <= NF; i++) if ($i == m) f = 1 } END { exit !f }' && echo \"bko-holt: $m is busy with no file open on it: umount -f\" >&2 && umount -f \"$m\"; } || exit; done"],"env":[["LC_ALL","C"]],"why":"everything under the target, deepest first","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"close","n":1,"status":0,"signal":null,"secs":0.24}
+{"event":"cmd","stage":"close","n":2,"of":3,"kind":"note","argv":[],"env":[],"why":"<volume of sd1a>, the softraid volume, stays attached: bioctl -d would clear the bootable flag installboot set; shut the rescue system down (or reboot) to detach it","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"close","n":2,"status":null,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"close","n":3,"of":3,"kind":"run","argv":["rm","-f","/var/run/bko-holt/keys/sd1.pass"],"env":[["LC_ALL","C"]],"why":null,"path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"close","n":3,"status":0,"signal":null,"secs":0.0}
+{"event":"stage_done","stage":"close","secs":0.58,"checked":true}
+{"event":"end","exit":0,"stopped":false,"secs":0.81}

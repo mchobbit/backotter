@@ -1,0 +1,2 @@
+bko-holt load: vtbd0 -> /dev/vtbd2: the target isn't blank (vtbd2: ufs UUID=6b060958f609f637 LABEL=ht1decoy); give --erase /dev/vtbd2 to wipe it
+bko-holt load: nothing was written; `bko-holt load LAYOUT ...` without a stage shows the whole plan

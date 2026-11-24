@@ -15,15 +15,19 @@ with --json beside the text run of the same arguments.
         each command the events ran is in LOG (the text run's load.log), in
         order, as text mode logs it: its shell line, the archiver's
         --json-progress --progress-interval 1s as text mode's --no-progress
-    ht1-json.py logcmp TEXT JSON
+    ht1-json.py logcmp TEXT JSON [COMMIT...]
         two load.logs (or the restored /var/log/bko-holt of each run) alike
         but for what --json changes there (holt-json.md, "What differs under
         --json" 1 and 7): the argv lines (==== bko-holt load ...), the
-        archiver's flag, its last status line (the only one the log keeps),
-        and a private write's text, which the JSON log gives as its size and
-        SHA-256 (checked against the text log's); and the output lines that
-        differ between any two runs (VARIES: dd's time and rate, the
-        rescuer's own pids and mount namespaces in umount-tree's lines)
+        archiver's flag, its last status line (the only one the log keeps:
+        no more status lines in JSON than archiver runs, its lines with the
+        flag), and a private write's text, which the JSON log gives as its
+        size and SHA-256 (checked against the text log's); and the output
+        lines that differ between any two runs (VARIES: dd's time and rate,
+        the rescuer's own pids and mount namespaces in umount-tree's lines).
+        With the writing runs' events (COMMIT), every write they mark
+        `private` must be one of those size-and-SHA-256 lines: a private
+        text logged as it is fails
     ht1-json.py verdict TEXT JSON
         two judge.py outputs with the same verdict: the same DIFF lines and
         the same count of differences on the last line (what it ignored may
@@ -35,11 +39,23 @@ with --json beside the text run of the same arguments.
     ht1-json.py status FILE STAGE
         a status document's STAGE row: its state on stdout, exit 0 when it
         is done (assemble: any state, as the text run's check)
+    ht1-json.py refused EVENTS CODE TARGET
+        a writing run's events refused by the checks (start, `problems`,
+        `end` 4, no command): among the problems one of CODE whose target
+        is TARGET (its /dev/ or /dev/dsk/ left out), each problem's code on
+        stdout
     ht1-json.py record OUT LOGDIR GUEST
         the --json calls a run saved in LOGDIR (json-NAME.argv beside their
         output) as the fake's scenario OUT (testvm/rescue/scenarios/...),
-        one call a directory, key and password files' paths as `*`, and
-        recorded.txt saying where from (each stage's plan --json left out)
+        one call a directory in the run's order (each stage's plan --json
+        before it, status --json after it), key and password files' paths as
+        `*`, and recorded.txt saying where from; then replays it (below)
+    ht1-json.py replay SCENARIO
+        a recorded scenario through testvm/rescue/fake-bko-holt with
+        FAKE_BKO_HOLT_STATE, call by call in its order, as a client staging
+        the run would: key and password files made for the `*`s, each
+        --expect-plan the hash of the plan document the call before it got;
+        each call must be answered by its own recording, as recorded
 
 Exit 0 when it holds, 1 when it doesn't (the reasons on stdout), 2 for bad
 usage.  Python's stdlib only.
@@ -337,11 +353,17 @@ def private_ok(text_lines, json_lines):
     return False
 
 
-def logcmp(tpath, jpath):
+def logcmp(tpath, jpath, commit=()):
     with open(tpath, encoding="utf-8", errors="surrogateescape") as f:
         t = norm(f.read(), False)
     with open(jpath, encoding="utf-8", errors="surrogateescape") as f:
-        j = norm(f.read(), True)
+        raw = f.read()
+    j = norm(raw, True)
+    # The log keeps each archiver run's last status line, no more: an
+    # archiver run is a line of the log's with the flag.
+    lines = raw.split("\n")
+    nstatus = sum(1 for l in lines if status_line(l))
+    nruns = sum(1 for l in lines if " " + " ".join(JSON_FLAG) in l)
     sm = difflib.SequenceMatcher(None, t, j, autojunk=False)
     errs, privates = [], 0
     for op, a0, a1, b0, b1 in sm.get_opcodes():
@@ -353,6 +375,14 @@ def logcmp(tpath, jpath):
         errs.append("text %d-%d, json %d-%d:" % (a0 + 1, a1, b0 + 1, b1))
         errs.extend("  - " + l[:200] for l in t[a0:a1][:8])
         errs.extend("  + " + l[:200] for l in j[b0:b1][:8])
+    if nstatus > nruns:
+        errs.insert(0, "%s: %d archiver status lines for %d archiver run%s: the log keeps each run's last only" % (
+            jpath, nstatus, nruns, "" if nruns == 1 else "s"))
+    if commit:
+        want = sum(1 for e in cmds_of(commit) if e.get("private") is True)
+        if privates != want:
+            errs.insert(0, "%s: %d private write%s by size and SHA-256, the events mark %d private: a private text is logged as it is" % (
+                jpath, privates, "" if privates == 1 else "s", want))
     if errs:
         return fail(["%s and %s differ but for their argv lines and the archiver's flag:" % (tpath, jpath)] + errs)
     print("%d lines alike but for the argv lines and the archiver's flag and status%s" % (
@@ -380,6 +410,36 @@ def verdict(tpath, jpath):
         return fail(errs)
     print("%d DIFF line%s, %s%s" % (len(td), "" if len(td) == 1 else "s", jfull[:200],
                                     "" if tfull == jfull else " (the text run's: %s)" % tfull[:200]))
+    return 0
+
+
+def bare(dev):
+    for p in ("/dev/dsk/", "/dev/rdsk/", "/dev/"):
+        if dev.startswith(p):
+            return dev[len(p):]
+    return dev
+
+
+def refused(path, code, target):
+    evs = events(path)
+    errs = []
+    if not evs or evs[0].get("event") != "start":
+        return fail(["%s: no start first: %s" % (path, json.dumps(evs[0])[:300] if evs else "no events")])
+    probs = [e for e in evs if e.get("event") == "problems"]
+    ran = [e for e in evs if e.get("event") in ("stage", "cmd", "cmd_done")]
+    end = evs[-1]
+    if len(probs) != 1:
+        errs.append("%d problems events, not 1" % len(probs))
+    if ran:
+        errs.append("a %s event: the checks refused nothing" % ran[0].get("event"))
+    if end.get("event") != "end" or end.get("exit") != 4 or end.get("stopped") is not False:
+        errs.append("the last event is %s, not end 4" % json.dumps(end)[:200])
+    ps = [p for e in probs for p in e.get("problems") or [] if isinstance(p, dict)]
+    if not any(p.get("code") == code and bare(str(p.get("target") or "")) == bare(target) for p in ps):
+        errs.append("no %s problem for %s among: %s" % (code, target, "; ".join("%s (%s): %s" % (p.get("code"), p.get("target"), p.get("text")) for p in ps)[:600]))
+    if errs:
+        return fail(["%s: %s" % (path, e) for e in errs])
+    print("refused, %s" % ", ".join("%s%s" % (p.get("code"), " " + str(p["target"]) if p.get("target") else "") for p in ps))
     return 0
 
 
@@ -462,16 +522,13 @@ def masked(argv):
 
 
 def record(out, logdir, guest):
-    # (Each stage's own plan --json is left out: the whole run's is there,
-    # and a stage's differs from it by its --only and the restore's --repo.)
-    calls = sorted(f[:-len(".argv")] for f in os.listdir(logdir)
-                   if f.startswith("json-") and f.endswith(".argv") and not f.startswith("json-plan-"))
+    calls = sorted(f[:-len(".argv")] for f in os.listdir(logdir) if f.startswith("json-") and f.endswith(".argv"))
     if not calls:
         return fail(["%s: no json-*.argv" % logdir])
     if os.path.exists(out):
         shutil.rmtree(out)
     os.makedirs(out)
-    order = {"version": 0, "refuse-commit": 1, "plan": 2, "dry": 3}
+    order = {"version": 0, "refuse-commit": 1, "refuse-decoy": 2, "plan": 3, "dry": 4}
     stages = ["partition", "assemble", "format", "mount", "restore", "boot", "close"]
 
     def rank(c):
@@ -479,10 +536,9 @@ def record(out, logdir, guest):
         if n in order:
             return (order[n], 0, n)
         for i, s in enumerate(stages):
-            if n == s:
-                return (10 + 2 * i, 0, n)
-            if n == "status-after-" + s:
-                return (11 + 2 * i, 0, n)
+            for k, pre in enumerate(("plan-", "", "status-after-")):
+                if n == pre + s:
+                    return (10 + 3 * i + k, 0, n)
         return (99, 0, n)
     made = []
     for k, c in enumerate(sorted(calls, key=rank), 1):
@@ -530,6 +586,91 @@ def record(out, logdir, guest):
                 "bko-holt %s, the dry run's start at %s.  One call a directory, in the run's order.\n" % (
                     guest, (first or {}).get("version", "?"), (first or {}).get("generated", "?")))
     print("%d calls: %s" % (len(made), " ".join(made)))
+    return replay(out)
+
+
+FAKE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "rescue", "fake-bko-holt")
+
+
+def replay(scen):
+    import subprocess
+    import tempfile
+    calls = sorted(d for d in os.listdir(scen) if os.path.isdir(os.path.join(scen, d)))
+    if not calls:
+        return fail(["%s: no calls" % scen])
+    errs, hashed = [], 0
+    with tempfile.TemporaryDirectory(prefix="ht1-replay-") as tmp:
+        os.chmod(tmp, 0o700)
+        keys = os.path.join(tmp, "keys")
+        os.mkdir(keys, 0o700)
+        state, logf = os.path.join(tmp, "state"), os.path.join(tmp, "fake.log")
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("FAKE_BKO_HOLT_", "BKO_HOLT_"))}
+        env.update(FAKE_BKO_HOLT_SCENARIO=os.path.abspath(scen), FAKE_BKO_HOLT_STATE=state,
+                   FAKE_BKO_HOLT_LOG=logf, FAKE_BKO_HOLT_REMOVE_SECS="0")
+
+        def key(name):
+            p = os.path.join(keys, "k%d" % len(os.listdir(keys)))
+            fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.write(fd, hashlib.sha256(("replay %s %s" % (name, p)).encode()).hexdigest().encode())
+            os.close(fd)
+            return p
+        plan = None
+        for c in calls:
+            d = os.path.join(scen, c)
+            with open(os.path.join(d, "argv")) as f:
+                pats = [l.rstrip("\n") for l in f if l.rstrip("\n")]
+            argv, i = [], 0
+            while i < len(pats):
+                a = pats[i]
+                argv.append(a)
+                if a == "--key-file" and i + 1 < len(pats) and pats[i + 1].endswith("=*"):
+                    argv.append(pats[i + 1][:-1] + key(pats[i + 1][:-2]))
+                    i += 2
+                    continue
+                if a == "--password-file" and i + 1 < len(pats) and pats[i + 1] == "*":
+                    argv.append(key("repo"))
+                    i += 2
+                    continue
+                if a == "--expect-plan" and i + 1 < len(pats):
+                    if plan is None:
+                        errs.append("%s: --expect-plan, and no plan document before it" % c)
+                        argv.append(pats[i + 1])
+                    else:
+                        argv.append(plan)
+                        hashed += 1
+                    i += 2
+                    continue
+                i += 1
+            p = subprocess.run([sys.executable, "-I", FAKE] + argv, env=env, capture_output=True, timeout=600)
+            want_exit = 0
+            if os.path.isfile(os.path.join(d, "exit")):
+                with open(os.path.join(d, "exit")) as f:
+                    want_exit = int(f.read().strip())
+            with open(logf) as f:
+                got = [json.loads(l) for l in f if '"call"' in l][-1].get("call")
+            if got != c:
+                errs.append("%s: answered by %s (exit %d): %s" % (c, got, p.returncode, p.stderr.decode(errors="replace").strip()[:300]))
+                continue
+            if p.returncode != want_exit:
+                errs.append("%s: exit %d, recorded %d" % (c, p.returncode, want_exit))
+            out = p.stdout.decode("utf-8", "surrogateescape")
+            if os.path.isfile(os.path.join(d, "stdout")):
+                with open(os.path.join(d, "stdout"), encoding="utf-8", errors="surrogateescape") as f:
+                    rec = f.read()
+                try:
+                    doc_ = json.loads(rec)
+                except ValueError:
+                    doc_ = None
+                if isinstance(doc_, dict) and doc_.get("format") == "bko-holt-plan":
+                    plan = doc_.get("plan_sha256")
+            else:
+                with open(os.path.join(d, "events"), encoding="utf-8", errors="surrogateescape") as f:
+                    rec = "".join(l.strip() + "\n" for l in f if l.strip().startswith("{"))
+            if out != rec:
+                errs.append("%s: its output isn't the recording's" % c)
+    if errs:
+        return fail(["%s: %s" % (scen, e) for e in errs])
+    print("%d calls replayed in order, each by its own recording, %d --expect-plan from the plan before it" % (len(calls), hashed))
     return 0
 
 
@@ -541,16 +682,20 @@ def main(a):
             return same(a[1], a[2:])
         if len(a) >= 3 and a[0] == "inlog":
             return inlog(a[1], a[2:])
-        if len(a) == 3 and a[0] == "logcmp":
-            return logcmp(a[1], a[2])
+        if len(a) >= 3 and a[0] == "logcmp":
+            return logcmp(a[1], a[2], a[3:])
         if len(a) == 3 and a[0] == "verdict":
             return verdict(a[1], a[2])
         if len(a) >= 3 and a[0] == "doc":
             return doc(a[1], a[2], a[3:])
         if len(a) == 3 and a[0] == "status":
             return status(a[1], a[2])
+        if len(a) == 4 and a[0] == "refused":
+            return refused(a[1], a[2], a[3])
         if len(a) == 4 and a[0] == "record":
             return record(a[1], a[2], a[3])
+        if len(a) == 2 and a[0] == "replay":
+            return replay(a[1])
     except OSError as e:
         return fail([str(e)])
     print(__doc__.strip().split("\n\n")[1], file=sys.stderr)

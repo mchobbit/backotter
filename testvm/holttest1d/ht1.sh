@@ -2371,6 +2371,9 @@ for p in "${PHASES[@]}"; do
     ht_phase_start "$p"; "phase_$p"; ht_phase_end "$p"
     [[ $fails == 0 ]] || { say "stopped after $p"; break; }
 done
+# t2-only: json
+[[ -z $JSON_RUN ]] || json_done
+# t2-only-end
 ht_summary
 # (The pin's why stands: the run stopped there.  harness()'s only when every
 # FAIL was one.)

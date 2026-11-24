@@ -1,0 +1,5 @@
+# Recorded from HoltTest1 HT_VARIANT=json, guest debian13-stack (testvm/holttest1d/ht1-json.py record)
+delay 0.01
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T22:01:02Z","pid":6101,"commit":false,"dry_run":true,"stages":["partition","assemble","format","mount","restore","boot","close"],"stage_commands":{"partition":25,"assemble":9,"format":14,"mount":10,"restore":2,"boot":22,"close":10},"plan_sha256":"1fc3443033a6b33ea1eaa4d3abca1d97e88115fc96fdb0ad10ffa7ac5ade0d88","log":null,"layout":{"hostname":"debian13-stack","generated":"2026-11-24T21:58:37Z"}}
+{"event":"problems","problems":[{"code":"not_blank","text":"vda -> /dev/vdd: the target isn't blank (vdd: ext4 UUID=33afdffc-1992-484e-883d-75f51485a18c LABEL=ht1decoy); give --erase /dev/vdd to wipe it","disk":"vda","target":"vdd","contents":["vdd: ext4 UUID=33afdffc-1992-484e-883d-75f51485a18c LABEL=ht1decoy"]}],"exit":4}
+{"event":"end","exit":4,"stopped":false,"secs":0.26}

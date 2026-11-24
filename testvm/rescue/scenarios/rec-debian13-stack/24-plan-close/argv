@@ -1,0 +1,16 @@
+load
+/mnt/share/layout.json
+--map
+vda=vdb
+--map
+vdb=vdc
+--erase
+/dev/vdb
+--erase
+/dev/vdc
+--no-nvram
+--key-file
+md1_crypt=*
+--only
+plan
+--json

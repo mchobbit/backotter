@@ -16,6 +16,14 @@ whose `argv` matches answers:
     stderr   written after the events
     exit     the exit status (default 0)
 
+With $FAKE_BKO_HOLT_STATE naming a file, the calls of a whole run are
+answered in order, as a recorded run (scenarios/rec-*) needs, where one
+argv is asked again and the answer moved on (status after each stage, the
+plan before each): the first matching call not answered yet in this run
+answers, and is added to the file (one name a line); once every matching
+call has, the last of them answers again.  Without it each call is
+answered alone, the first match always.
+
 The events are holt-json.md's `bko-holt-events`, the documents its
 `bko-holt-plan`, `-status` and `-error`; holt_schema.py checks every
 scenario against the same schema bko-holt's goldens pass (scenarios/README.md
@@ -263,7 +271,20 @@ def main():
             print("fake-bko-holt: CHECK FAILED: %s" % c, file=sys.stderr)
         return 97
     calls = sorted(d for d in os.listdir(scen) if os.path.isdir(os.path.join(scen, d))) if os.path.isdir(scen) else []
-    call = next((c for c in calls if match(os.path.join(scen, c), argv)), None)
+    hits = [c for c in calls if match(os.path.join(scen, c), argv)]
+    state = os.environ.get("FAKE_BKO_HOLT_STATE")
+    if state and hits:
+        try:
+            with open(state) as f:
+                done = {l.strip() for l in f}
+        except FileNotFoundError:
+            done = set()
+        call = next((c for c in hits if c not in done), hits[-1])
+        if call not in done:
+            with open(state, "a") as f:
+                f.write(call + "\n")
+    else:
+        call = hits[0] if hits else None
     entry.update(call=call, ok=call is not None)
     log(entry)
     if call is None:

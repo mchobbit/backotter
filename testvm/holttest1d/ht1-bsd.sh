@@ -1672,6 +1672,9 @@ say "HoltTest1 $G ($PLAT), run $RUN, $(date -u +%FT%TZ), phases: ${PHASES[*]}"
 if ((IMG)); then ht_manifest "$rimg" "$IMG_PIN/rescuer.img" "$HERE/img-boot.py" "$HERE/img-boot.d/$PLAT.json" "$T/../stick/boot-test.py"
 else ht_manifest "$rimg"; fi
 for p in "${PHASES[@]}"; do ht_phase_start "$p"; "phase_$p"; ht_phase_end "$p"; done
+# t2-only: json
+[[ -z $JSON_RUN ]] || json_done
+# t2-only-end
 ht_summary
 if ((fails == 0)); then say "RESULT: PASS"; exit 0; fi
 # (The pin's why stands whatever else failed: the phases after it ran on a

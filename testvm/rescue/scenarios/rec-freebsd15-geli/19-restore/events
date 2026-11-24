@@ -1,0 +1,22 @@
+# Recorded from HoltTest1 HT_VARIANT=json, guest freebsd15-geli (testvm/holttest1d/ht1-json.py record)
+delay 0.01
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T22:02:26Z","pid":1953,"commit":true,"dry_run":false,"stages":["restore"],"stage_commands":{"restore":3},"plan_sha256":"94ccc5a29a1eaa4cceccc9a0516d0e21ddb253031d53bdf76417556529ddd890","log":"/var/run/bko-holt/log/load.log","layout":{"hostname":"fbsd15-geli","generated":"2026-11-24T21:58:42Z"}}
+{"event":"stage","stage":"restore","commands":3}
+{"event":"cmd","stage":"restore","n":1,"of":3,"kind":"run","argv":["mkdir","-p","-m","700","/var/run/bko-holt"],"env":[["LC_ALL","C"]],"why":null,"path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"restore","n":1,"status":0,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"restore","n":2,"of":3,"kind":"write","argv":[],"env":[],"why":"the restore errors msdosfs's mount roots give, and only those, let pass","path":"/var/run/bko-holt/restore.fatroots","dev":null,"stdin_bytes":192,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"restore","n":2,"status":null,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"restore","n":3,"of":3,"kind":"run","argv":["sh","-c","\"$@\" 2>/var/run/bko-holt/restore.err; s=$?; cat /var/run/bko-holt/restore.err >&2; [ $s -eq 1 ] || exit $s; e=$(printf '\\033'); sed -e \"s/$e\\[[0-9;]*m//g\" -e 's/[[:space:]]*$//' /var/run/bko-holt/restore.err > /var/run/bko-holt/restore.err.plain; n=$(sed -n 's/^error: There were \\([0-9][0-9]*\\) errors.*/\\1/p' /var/run/bko-holt/restore.err.plain); k=$(grep -cxF -f /var/run/bko-holt/restore.fatroots /var/run/bko-holt/restore.err.plain); [ -n \"$n\" ] && [ \"$n\" = \"$k\" ] || exit 1; echo 'bko-holt: the restore set no owner, mode or times on the root of /boot/efi: msdosfs keeps none there' >&2","sh","/root/rustic-bko","--repository","/root/repo","--password-file","/root/ht1-keys/repo-password","--json-progress","--progress-interval","1s","restore","--numeric-id","latest:/mnt/src","/mnt/bko-target"],"env":[["LC_ALL","C"],["RUSTIC_STRICT_EXIT","true"]],"why":"snapshot latest:/mnt/src of /root/repo, with BackOtter's restore flags","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":{"part":1,"parts":1},"would":false}
+{"event":"progress","stage":"restore","n":3,"part":1,"parts":1,"bytes":0,"total_bytes":1011212162,"secs":0,"errors":0}
+{"event":"progress","stage":"restore","n":3,"part":1,"parts":1,"bytes":448249097,"total_bytes":1011212162,"secs":1,"errors":0}
+{"event":"progress","stage":"restore","n":3,"part":1,"parts":1,"bytes":922495131,"total_bytes":1011212162,"secs":2,"errors":0}
+{"event":"warning","stage":"restore","n":3,"source":"archiver","text":"restore boot/efi: setting UID/GID failed.","item":"boot/efi"}
+{"event":"warning","stage":"restore","n":3,"source":"archiver","text":"restore boot/efi: setting UID/GID: `EINVAL: Invalid argument`","item":"boot/efi"}
+{"event":"warning","stage":"restore","n":3,"source":"archiver","text":"restore boot/efi: chmod failed.","item":"boot/efi"}
+{"event":"warning","stage":"restore","n":3,"source":"archiver","text":"restore boot/efi: chmod: setting file permissions failed: `Os { code: 22, kind: InvalidInput, message: \"Invalid argument\" }`","item":"boot/efi"}
+{"event":"warning","stage":"restore","n":3,"source":"archiver","text":"restore boot/efi: setting file times failed.","item":"boot/efi"}
+{"event":"warning","stage":"restore","n":3,"source":"archiver","text":"restore boot/efi: setting file times: setting time metadata failed: `Os { code: 22, kind: InvalidInput, message: \"Invalid argument\" }`","item":"boot/efi"}
+{"event":"progress","stage":"restore","n":3,"part":1,"parts":1,"bytes":1011212162,"total_bytes":1011212162,"secs":2,"errors":6}
+{"event":"cmd_done","stage":"restore","n":3,"status":0,"signal":null,"secs":3.55}
+{"event":"stage_done","stage":"restore","secs":3.76,"checked":true}
+{"event":"end","exit":0,"stopped":false,"secs":3.98}

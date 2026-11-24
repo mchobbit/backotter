@@ -1,2 +1,2 @@
 Recorded by HoltTest1 HT_VARIANT=json (testvm/holttest1d/ht1-json.py record) from guest debian13-stack:
-bko-holt 0.2.6, the dry run's start at 2026-11-24T20:54:06Z.  One call a directory, in the run's order.
+bko-holt 0.2.6, the dry run's start at 2026-11-24T22:01:02Z.  One call a directory, in the run's order.

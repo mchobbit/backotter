@@ -1,0 +1,6 @@
+# Recorded from HoltTest1 HT_VARIANT=json, guest haiku6 (testvm/holttest1d/ht1-json.py record)
+delay 0.01
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T22:01:03Z","pid":415,"commit":true,"dry_run":false,"stages":["assemble"],"stage_commands":{"assemble":0},"plan_sha256":"9168e72c4a43e4c7f65d8ee78ae82dc26e7253535d6b6f1044f055d2203d09bf","log":"/var/run/bko-holt/log/load.log","layout":{"hostname":"haiku6","generated":"2026-11-24T21:58:47Z"}}
+{"event":"stage","stage":"assemble","commands":0}
+{"event":"stage_done","stage":"assemble","secs":0.18,"checked":true}
+{"event":"end","exit":0,"stopped":false,"secs":0.35}

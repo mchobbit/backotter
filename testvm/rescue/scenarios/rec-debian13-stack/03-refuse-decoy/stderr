@@ -1,0 +1,2 @@
+bko-holt load: vda -> /dev/vdd: the target isn't blank (vdd: ext4 UUID=33afdffc-1992-484e-883d-75f51485a18c LABEL=ht1decoy); give --erase /dev/vdd to wipe it
+bko-holt load: nothing was written; `bko-holt load LAYOUT ...` without a stage shows the whole plan

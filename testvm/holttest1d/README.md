@@ -1026,10 +1026,13 @@ them), are the json variant's harness in holt/spec.json alone.
   report lines `PASS json: ...`.  Before its stages, under
   `BKO_HOLT_NO_COMMIT=1`: `--version --json` says `no_commit`, `load
   --commit --json` is refused (exit 2, a `no_commit` `bko-holt-error`),
-  `plan --json` of the whole argument list is `ok`, and a dry run (`load
-  ... --through close --json` without `--commit`) ends 0 with every
-  command `would`, boot and close among them, and leaves every target's and
-  the decoy's image as it was (md5 on the host after a sync).  Then each
+  `plan --json` of the whole argument list is `ok`, the decoy mapped in
+  the first target's place without `--erase` is refused by the checks (the
+  text run's refuse-decoy: `problems` with the decoy's `not_blank`, `end`
+  4, no command run), and a dry run (`load ... --through close --json`
+  without `--commit`) ends 0 with every command `would`, boot and close
+  among them; the two leave every target's and the decoy's image as it was
+  (md5 on the host after a sync).  Then each
   stage: its `plan --json`, and the stage with `--json --expect-plan` of
   that plan's hash, its events passing testvm/rescue/holt_schema.py and
   ending 0, each command's `cmd_done` 0; `status --json` after it, the
@@ -1037,6 +1040,11 @@ them), are the json variant's harness in holt/spec.json alone.
   text run's load.log, in order (but the archiver's `--json-progress
   --progress-interval 1s`, text mode's `--no-progress`), the dry run's are
   the ones that ran, and the json pass's load.log is the text run's.
+- **No PASS without the --json checks:** a json run that passes has had
+  its json pass when its phases had a rebuild (`logs/json/rebuilt`) and its
+  json verify when they had a verify (`logs/json/verified`), else a FAIL
+  (`HT_KEEP=1`, which keeps the text run's rescuer up, or a verify alone
+  after a json pass that failed).
 - **The verify** runs again on the json pass's disks (`logs/json/`,
   `dumps/json/`): judge.py's verdict must be the text run's (the same
   DIFF lines and count of differences; what it ignored, a boot's own
@@ -1047,7 +1055,10 @@ them), are the json variant's harness in holt/spec.json alone.
   what `--json` changes there: the argv lines (`==== bko-holt load ...`),
   the archiver's flag and the one status line the log keeps, and a
   private write's text, which the json log gives as its size and SHA-256
-  (checked against the text log's); and but for output lines that differ
+  (checked against the text log's, and with the writing runs' events each
+  write they mark `private` must be one: its text logged as it is fails);
+  no more status lines than archiver runs (the log keeps each one's last);
+  and but for output lines that differ
   between any two runs, text and text too: dd's time and rate, and the
   rescuer's own pids and mount namespaces in umount-tree's lines.
 - **A note, not a FAIL:** the whole run's plan, made before the partition
@@ -1058,7 +1069,10 @@ them), are the json variant's harness in holt/spec.json alone.
 - **Recordings:** each `--json` call's argv is beside its output
   (`logs/json/json-NAME.argv`, `.json` or `.events`, `.err`, `.exit`);
   `ht1-json.py record OUT logs/json GUEST` makes the fake's scenario of
-  them (testvm/rescue/scenarios/rec-GUEST).
+  them (testvm/rescue/scenarios/rec-GUEST), each stage's plan before it,
+  and replays it through the fake (`ht1-json.py replay`, with
+  `FAKE_BKO_HOLT_STATE`: one argv answered in turn by each recording of it,
+  each `--expect-plan` the hash of the plan before it).
 
 By hand, with a bko-holt built from the tree under test (build-holt.sh,
 `HOLT_OUT` of your own) and a reservation about twice a plain run's (two

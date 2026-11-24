@@ -1,2 +1,2 @@
 Recorded by HoltTest1 HT_VARIANT=json (testvm/holttest1d/ht1-json.py record) from guest openbsd8-crypt:
-bko-holt 0.2.6, the dry run's start at 2026-11-24T20:51:57Z.  One call a directory, in the run's order.
+bko-holt 0.2.6, the dry run's start at 2026-11-24T22:24:25Z.  One call a directory, in the run's order.

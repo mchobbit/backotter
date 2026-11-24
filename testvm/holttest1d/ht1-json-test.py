@@ -200,6 +200,41 @@ def test_logcmp():
     j3 = put("j3.log", json_log(TEXT_LOG).replace("7 bytes, sha256", "8 bytes, sha256"))
     rc, out = run("logcmp", t, j3)
     check(rc == 1, "logcmp: a private write whose size isn't the text's fails")
+    # Every progress line kept, not the last alone: more status lines than archiver runs.
+    j5 = put("j5.log", json_log(TEXT_LOG).replace('{"message_type":"status","bytes_done":10}\n', '{"message_type":"status","bytes_done":5}\n{"message_type":"status","bytes_done":10}\n'))
+    rc, out = run("logcmp", t, j5)
+    check(rc == 1 and "2 archiver status lines for 1 archiver run" in out, "logcmp: the archiver's progress lines kept, more than its last, fails (%s)" % out.strip().splitlines()[:2])
+    # With the events: a private write the events mark must be elided.
+    c1 = put("l-partition.events", stream_text(make_stream(["partition"], True)))
+    c2 = put("l-restore.events", stream_text(make_stream(["restore"], True)))
+    rc, out = run("logcmp", t, j, c1, c2)
+    check(rc == 0 and "1 private write" in out, "logcmp: with the events, the one private write elided (%s)" % out.strip())
+    jv = put("jv.log", json_log(TEXT_LOG).replace("# (7 bytes, sha256 %s, private: not shown)\nEOF" % hashlib.sha256(b"secret\n").hexdigest(), "secret\nEOF"))
+    rc, out = run("logcmp", t, jv)
+    check(rc == 0, "logcmp: without the events, a private text logged as it is can't be told (%s)" % out.strip())
+    rc, out = run("logcmp", t, jv, c1, c2)
+    check(rc == 1 and "the events mark 1 private" in out, "logcmp: with the events, a private text logged as it is fails (%s)" % out.strip().splitlines()[:2])
+
+
+def test_refused():
+    st = dict(START, commit=False, dry_run=True, stages=["partition"], stage_commands={"partition": 2})
+    probs = {"event": "problems", "exit": 4, "problems": [
+        {"code": "not_blank", "text": "vda -> /dev/vdd: the target isn't blank (ext4); give --erase /dev/vdd to wipe it", "disk": "vda", "target": "vdd"},
+        {"code": "target_too_small", "text": "small", "disk": "vda", "target": "vdd"}]}
+    end4 = {"event": "end", "exit": 4, "stopped": False, "secs": 0.1}
+    p = put("ref.events", stream_text([st, probs, end4]))
+    rc, out = run("refused", p, "not_blank", "vdd")
+    check(rc == 0 and "not_blank vdd" in out, "refused: the decoy's not_blank among the problems (%s)" % out.strip())
+    if os.path.isfile(SCHEMA):
+        q = subprocess.run([sys.executable, "-I", SCHEMA, "--quiet", p], capture_output=True, text=True)
+        check(q.returncode == 0, "refused: the made-up refusal passes holt_schema.py (%s)" % q.stdout.strip()[-300:])
+    check(run("refused", p, "not_blank", "/dev/vdd")[0] == 0, "refused: a target by its /dev/ path too")
+    check(run("refused", p, "not_blank", "vdc")[0] == 1, "refused: another target's not_blank isn't the decoy's")
+    check(run("refused", p, "erase_required", "vdd")[0] == 1, "refused: another code fails")
+    q = put("ref2.events", stream_text([st, probs, {"event": "end", "exit": 0, "stopped": False, "secs": 0.1}]))
+    check(run("refused", q, "not_blank", "vdd")[0] == 1, "refused: end 0 fails")
+    r = put("ref3.events", stream_text([st, probs, {"event": "stage", "stage": "partition", "commands": 2}, end4]))
+    check(run("refused", r, "not_blank", "vdd")[0] == 1, "refused: a stage that ran fails")
 
 
 def test_verdict_doc_status():
@@ -255,7 +290,65 @@ def test_record():
           "record: a nonzero exit kept, 0 left out")
 
 
-for t in (test_stream, test_same, test_inlog, test_logcmp, test_verdict_doc_status, test_record):
+def put_call(d, name, argv, out=None, events=None, exit=0):
+    for ext, text in ((".argv", "\n".join(argv) + "\n"), (".json", out), (".events", events), (".exit", "%d\n" % exit)):
+        if text is not None:
+            with open(os.path.join(d, "json-" + name + ext), "w") as f:
+                f.write(text)
+
+
+def test_record_replay():
+    d = os.path.join(TMP, "logs2")
+    os.makedirs(d)
+    base = ["load", "/mnt/share/layout.json", "--map", "vda=vdb", "--key-file", "crypt=/run/ht1-keys/passphrase"]
+    plan = lambda h: json.dumps({"format": "bko-holt-plan", "ok": True, "problems": [], "plan_sha256": h}) + "\n"
+    status = lambda st: json.dumps({"format": "bko-holt-status", "stages": [{"name": "partition", "state": st}]}) + "\n"
+    put_call(d, "plan", base + ["--only", "plan", "--json"], out=plan("a" * 64))
+    # One argv asked three times, three answers: the stage plans and the status after each.
+    for s, h in (("partition", "b" * 64), ("format", "c" * 64)):
+        put_call(d, "plan-" + s, base + ["--only", "plan", "--json"], out=plan(h))
+        put_call(d, s, base + ["--only", s, "--commit", "--json", "--expect-plan", h], events=stream_text(make_stream(["partition"], True)))
+        put_call(d, "status-after-" + s, base + ["--only", "status", "--json"], out=status("done" if s == "format" else "todo"))
+    out = os.path.join(TMP, "scen2")
+    rc, o = run("record", out, d, "g")
+    calls = sorted(c for c in os.listdir(out) if c != "recorded.txt") if os.path.isdir(out) else []
+    want = ["01-plan", "02-plan-partition", "03-partition", "04-status-after-partition", "05-plan-format", "06-format", "07-status-after-format"]
+    check(rc == 0 and calls == want, "record: each stage's plan before it, its status after it (%s)" % calls)
+    check("7 calls replayed in order" in o and "2 --expect-plan from the plan before it" in o,
+          "record: then replayed through the fake, each call by its own recording, each --expect-plan from the plan before it (%s)" % o.strip().splitlines()[-1:])
+    # Without the stage plans (the first recordings'), the stages can't be replayed.
+    import shutil
+    shutil.rmtree(os.path.join(out, "02-plan-partition"))
+    rc, o = run("replay", out)
+    check(rc == 1 and "03-partition: answered by None" in o, "replay: a stage whose plan isn't recorded fails (%s)" % o.strip().splitlines()[:1])
+    # The fake without FAKE_BKO_HOLT_STATE: the first match, always (each call alone, as before).
+    env = dict(os.environ, FAKE_BKO_HOLT_SCENARIO=out)
+    env.pop("FAKE_BKO_HOLT_STATE", None)
+    fake = os.path.join(HERE, "..", "rescue", "fake-bko-holt")
+    keys = tempfile.mkdtemp(prefix="ht1-json-test-keys-")
+    k = os.path.join(keys, "k")
+    with open(k, "w") as f:
+        f.write("0123456789abcdef")
+    os.chmod(k, 0o600)
+    a = base[:-1] + ["crypt=" + k, "--only", "status", "--json"]
+    outs = [subprocess.run([sys.executable, "-I", fake] + a, env=dict(env, FAKE_BKO_HOLT_REMOVE_SECS="0"), capture_output=True, text=True).stdout for _ in range(2)]
+    check(outs[0] == outs[1] == status("todo"), "fake: without FAKE_BKO_HOLT_STATE a call is answered by the first match, each time")
+    st = os.path.join(keys, "state")
+    outs = [subprocess.run([sys.executable, "-I", fake] + a, env=dict(env, FAKE_BKO_HOLT_STATE=st, FAKE_BKO_HOLT_REMOVE_SECS="0"), capture_output=True, text=True).stdout for _ in range(3)]
+    check(outs == [status("todo"), status("done"), status("done")], "fake: with FAKE_BKO_HOLT_STATE the next match each time, then the last again")
+
+
+def test_recorded_scenarios():
+    scen = os.path.join(HERE, "..", "rescue", "scenarios")
+    recs = sorted(d for d in os.listdir(scen) if d.startswith("rec-")) if os.path.isdir(scen) else []
+    check(bool(recs), "replay: recorded scenarios to replay (%d)" % len(recs))
+    for r in recs:
+        rc, o = run("replay", os.path.join(scen, r))
+        check(rc == 0, "replay %s: %s" % (r, o.strip().splitlines()[-1] if o.strip() else "?"))
+
+
+for t in (test_stream, test_same, test_inlog, test_logcmp, test_refused, test_verdict_doc_status, test_record, test_record_replay,
+          test_recorded_scenarios):
     t()
 print("%d failed" % fails)
 sys.exit(1 if fails else 0)

@@ -1,0 +1,21 @@
+# Recorded from HoltTest1 HT_VARIANT=json, guest openbsd8-crypt (testvm/holttest1d/ht1-json.py record)
+delay 0.01
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T22:24:40Z","pid":25227,"commit":true,"dry_run":false,"stages":["restore"],"stage_commands":{"restore":1},"plan_sha256":"4af3f45e1fcafb62dd4865abe819103d8e946510c6ddcbc51939db85c86d663a","log":"/var/run/bko-holt/log/load.log","layout":{"hostname":"obsd8-crypt.my.domain","generated":"2026-11-24T22:21:29Z"}}
+{"event":"stage","stage":"restore","commands":1}
+{"event":"cmd","stage":"restore","n":1,"of":1,"kind":"run","argv":["/root/rustic-bko","--repository","/root/repo","--password-file","/root/ht1-keys/repo-password","--json-progress","--progress-interval","1s","restore","--numeric-id","latest:/mnt/src","/mnt/bko-target"],"env":[["LC_ALL","C"],["RUSTIC_STRICT_EXIT","true"]],"why":"snapshot latest:/mnt/src of /root/repo, with BackOtter's restore flags","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":{"part":1,"parts":1},"would":false}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":0,"total_bytes":2042136371,"secs":0,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":174690102,"total_bytes":2042136371,"secs":1,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":264348227,"total_bytes":2042136371,"secs":2,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":371933066,"total_bytes":2042136371,"secs":3,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":460505198,"total_bytes":2042136371,"secs":4,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":561944035,"total_bytes":2042136371,"secs":5,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":726064962,"total_bytes":2042136371,"secs":6,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":936199297,"total_bytes":2042136371,"secs":7,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":1152778568,"total_bytes":2042136371,"secs":8,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":1405405877,"total_bytes":2042136371,"secs":9,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":1576150484,"total_bytes":2042136371,"secs":10,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":1752179687,"total_bytes":2042136371,"secs":11,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":2042136371,"total_bytes":2042136371,"secs":12,"errors":0}
+{"event":"cmd_done","stage":"restore","n":1,"status":0,"signal":null,"secs":14.54}
+{"event":"stage_done","stage":"restore","secs":14.89,"checked":true}
+{"event":"end","exit":0,"stopped":false,"secs":15.14}

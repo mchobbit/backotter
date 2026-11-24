@@ -13,9 +13,12 @@
 #   - before the stages, under BKO_HOLT_NO_COMMIT=1: `--version --json` says
 #     no_commit; `load ... --commit --json` is refused (exit 2, a
 #     bko-holt-error no_commit); `plan --json` of the whole argument list is
-#     ok; and a dry run, `load ... --through close --json` without
-#     --commit, ends 0, every command `would`, boot and close among them,
-#     and leaves every target's and the decoy's image as it was;
+#     ok; the decoy mapped in the first target's place, without --erase,
+#     `load ... --through close --json` is refused by the checks (start,
+#     `problems` with the decoy's not_blank, `end` 4, no command); and a dry
+#     run, `load ... --through close --json` without --commit, ends 0,
+#     every command `would`, boot and close among them; the refusal and the
+#     dry run leave every target's and the decoy's image as it was;
 #   - each stage, its `plan --json` first and then the stage with --json
 #     --expect-plan of that plan's hash: its events pass holt_schema.py
 #     (testvm/rescue's, the checker the fake's scenarios pass) and end 0,
@@ -24,10 +27,16 @@
 #   - after the rebuild: the commands the events ran are the text run's (in
 #     its load.log, in order), the dry run's are the writing runs', and the
 #     json pass's load.log is the text run's but for its argv lines, the
-#     archiver's flag and status line, and a private write's text;
+#     archiver's flag and status line, and a private write's text (each
+#     write the events mark private given by its size and SHA-256);
 #   - after the verify: judge.py's verdict is the text run's (its dumps and
 #     its files), and the restored /var/log/bko-holt is the text run's but
-#     for the same.
+#     for the same;
+#   - at the run's end (json_done): a run that passed has had its json pass
+#     (logs/json/rebuilt) when it had a rebuild phase, and its json verify
+#     (logs/json/verified) when it had a verify phase: HT_KEEP=1, or a
+#     verify alone after a json pass that failed, is a FAIL, never a PASS
+#     with no --json check run.
 # In both runs the key files and the repository's password are copies in a
 # private directory of the rescuer (JKEYS, 0700, each file 0600), as
 # --json's key-file checks want (J3): the text run's commands are then the
@@ -38,7 +47,8 @@
 # path in the rescuer), JKEYS, JREPO_PW (the password file's path the
 # driver gives load) and JROOT (files in R the verify writes: fsmeta's
 # record, mtree's listing).  It reads the driver's n, rkey, dst and (BSD)
-# all_dst, dst_more and DST, and sets them for the json pass.
+# all_dst, dst_more and DST, and sets them for the json pass; and the
+# decoy's name in the rescuer, decoy (Linux, /dev/vdX) or RN[D] (BSD).
 # shellcheck disable=SC2154,SC2034
 
 JPY=$HERE/ht1-json.py
@@ -125,7 +135,7 @@ json_disks() {
 # when its exit is WANT.  JCALL_RC is its exit.
 json_call() {
     local name=$1 want=$2 cmd=$3 ext=json
-    [[ $name == dry || " $JSTAGES " == *" $name "* ]] && ext=events
+    [[ $name == dry || $name == refuse-decoy || " $JSTAGES " == *" $name "* ]] && ext=events
     ht_load_try "$R/logs/json-$name.$ext" "$R/logs/json-$name.err" sshk "$rkey" "echo $HT_STARTED; $cmd"
     JCALL_RC=$?
     echo "$JCALL_RC" > "$R/logs/json-$name.exit"
@@ -170,6 +180,28 @@ json_before_stages() {
     fi
     local before after
     before=$(json_images)
+    # The text run's refuse-decoy under --json: the decoy, which holds a
+    # filesystem, in the first target's place and no --erase at all (the
+    # other targets are blank), the run's other arguments as they are.
+    local dname dargs=() i first=1
+    case $JDRV in linux) dname=${decoy#/dev/} ;; *) dname=${RN[D]} ;; esac
+    for ((i = 0; i < ${#full[@]}; i++)); do
+        case ${full[i]} in
+            --erase) ((i++)); continue ;;
+            --map) if ((first)); then dargs+=(--map "${full[i + 1]%%=*}=$dname"); ((i++)); first=0; continue; fi ;;
+        esac
+        dargs+=("${full[i]}")
+    done
+    json_argv refuse-decoy load "$JLAYOUT" "${dargs[@]}" --through close --json
+    json_call refuse-decoy 4 "$nc $RHOLT load $JLAYOUT ${dargs[*]} --through close --json"
+    if [[ $JCALL_RC != 4 ]]; then
+        bad "load --json with the decoy mapped: exit $JCALL_RC, want 4: $(jtail "$L/json-refuse-decoy.err")"; return 1
+    elif ! s=$(jschema "$L/json-refuse-decoy.events"); then
+        bad "load --json with the decoy mapped: its events fail the schema: $s"; return 1
+    elif ! s=$(jpy refused "$L/json-refuse-decoy.events" not_blank "$dname" 2>&1); then
+        bad "load --json with the decoy mapped: $(tr '\n' ' ' <<<"$s" | cut -c1-600)"; return 1
+    fi
+    ok "load --json with the decoy mapped refused (exit 4; $s)"
     json_argv dry load "$JLAYOUT" "${full[@]}" --through close --json
     if json_call dry 0 "$nc $RHOLT load $JLAYOUT ${full[*]} --through close --json"; then
         ok "the dry run under $nc (exit 0)"
@@ -179,9 +211,9 @@ json_before_stages() {
     json_stream_ok "$L/json-dry.events" dry "the dry run" || return 1
     after=$(json_images)
     if [[ -n $before && $before == "$after" ]]; then
-        ok "the dry run left every target's and the decoy's image as it was"
+        ok "the decoy's refusal and the dry run left every target's and the decoy's image as it was"
     else
-        bad "the dry run changed a disk image (before: $(tr '\n' ' ' <<<"$before"); after: $(tr '\n' ' ' <<<"$after"))"; return 1
+        bad "the decoy's refusal or the dry run changed a disk image (before: $(tr '\n' ' ' <<<"$before"); after: $(tr '\n' ' ' <<<"$after"))"; return 1
     fi
 }
 
@@ -248,7 +280,7 @@ json_rebuild() {
     else bad "the commands the events ran aren't the text run's: $(tr '\n' ' ' <<<"$s" | cut -c1-600)"; fi
     if s=$(jpy same "$J/json-dry.events" "${ev[@]}" 2>&1); then ok "the dry run's commands are the ones that ran: $s"
     else bad "the dry run's commands aren't the ones that ran: $(tr '\n' ' ' <<<"$s" | cut -c1-600)"; fi
-    if s=$(jpy logcmp "$L/rebuild-load.log" "$J/rebuild-load.log" 2>&1); then ok "load.log as the text run's: $s"
+    if s=$(jpy logcmp "$L/rebuild-load.log" "$J/rebuild-load.log" "${ev[@]}" 2>&1); then ok "load.log as the text run's: $s"
     else bad "load.log: $(tr '\n' ' ' <<<"$s" | cut -c1-900) (logs/rebuild-load.log, logs/json/rebuild-load.log)"; fi
     # J20 over the run: the whole run's plan, made before anything was
     # written, against the restore stage's of the same arguments, made after
@@ -281,8 +313,9 @@ json_restored_log() {
 
 # After the text run's verify (phase_verify's end).
 json_verify() {
-    [[ -f $R/logs/json/rebuilt ]] || { say "note: json: no verify of the --json rebuild: it didn't pass"; return; }
     if ((fails)); then say "note: json: no verify of the --json rebuild: the text run's verify failed"; return; fi
+    rm -f "$R/logs/json/verified"
+    [[ -f $R/logs/json/rebuilt ]] || { bad "json: no verify of the --json rebuild: no json pass passed (logs/json/rebuilt), HT_VARIANT=json asked for one"; return; }
     say "== verify again, of the --json rebuild's disks"
     json_swap_in || { harness "json: logs/ and dumps/ couldn't be set aside for the --json verify"; return; }
     json_disks json
@@ -304,4 +337,15 @@ json_verify() {
     elif s=$(jpy logcmp "$L/restored-bko-holt.txt" "$J/restored-bko-holt.txt" 2>&1); then ok "the restored /var/log/bko-holt is the text run's: $s"
     else bad "the restored /var/log/bko-holt: $(tr '\n' ' ' <<<"$s" | cut -c1-900)"; fi
     JTAG=""
+    ((fails == f0)) && : > "$J/verified"
+}
+
+# At the run's end: a run that passed had its --json checks, each phase's.
+json_done() {
+    ((fails == 0)) || return
+    if [[ " ${PHASES[*]} " == *" rebuild "* && ! -f $R/logs/json/rebuilt ]]; then
+        bad "json: no --json rebuild ran$([[ ${HT_KEEP:-} == 1 ]] && echo " (HT_KEEP=1 kept the text run's rescuer up)"): HT_VARIANT=json asked for one"
+    elif [[ " ${PHASES[*]} " == *" verify "* && ! -f $R/logs/json/verified ]]; then
+        bad "json: no verify of the --json rebuild ran: HT_VARIANT=json asked for one"
+    fi
 }

@@ -1,1 +1,1 @@
-{"format":"bko-holt-error","schema":1,"version":"0.2.6","generated":"2026-11-24T20:51:52Z","dry_run":true,"exit":2,"code":"no_commit","text":"bko-holt load: BKO_HOLT_NO_COMMIT=1 is set (a dry run), so --commit is refused; nothing was written to any disk"}
+{"format":"bko-holt-error","schema":1,"version":"0.2.6","generated":"2026-11-24T22:02:01Z","dry_run":true,"exit":2,"code":"no_commit","text":"bko-holt load: BKO_HOLT_NO_COMMIT=1 is set (a dry run), so --commit is refused; nothing was written to any disk"}

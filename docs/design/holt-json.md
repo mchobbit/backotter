@@ -1851,6 +1851,39 @@ fixtures and every scenario (199 files), pass.
   all), for RT12's tests; the checker reads them all.  `demo-fail` and
   `demo-slow` stay hand-written (the demo refuses `commit: true`).
 
+**RT10j's review (2026-11-24).**  Re-run on the five (run rt10jr2,
+openbsd8-crypt rt10jr3) with bko-holt built from main after RustAudit1's
+commits, and slackware15 for a private write:
+
+- **The `rec-*` scenarios replay now.**  As first recorded, the fake (first
+  match wins) answered every `status --json` with the first stage's, and
+  each stage's `--expect-plan` was a plan the recording left out, so a
+  staged replay met exit 98 from the partition stage on.  `ht1-json.py
+  record` keeps each stage's `plan --json` before it; the fake's
+  `FAKE_BKO_HOLT_STATE` answers one argv in turn by each recording of it;
+  `ht1-json.py replay` walks a scenario as a staging client would, each
+  `--expect-plan` the hash of the plan just before, and record and
+  ht1-json-test.py replay every one (26 calls each).  RT12's own flow (one
+  plan, one `--through close --commit` run) and a real `failed` or
+  `stopping` stream are still unrecorded: RT12's.
+- **The decoy under `--json`:** the json pass maps it, without `--erase`,
+  in the first target's place (`load ... --through close --json` under
+  `BKO_HOLT_NO_COMMIT=1`): start, `problems` with its `not_blank`, `end` 4,
+  no command, the images unchanged.  Each `rec-*` has it (`refuse-decoy`).
+- **No PASS without the `--json` checks:** `HT_KEEP=1`, or a verify alone
+  after a json pass that didn't pass, was a PASS with none of them run; a
+  json run now FAILs unless `logs/json/rebuilt` (a rebuild phase) and
+  `logs/json/verified` (a verify phase) are there.
+- **logcmp** holds the json log to the archiver's last status line (no
+  more status lines than archiver runs) and, given the writing runs'
+  events, to a size-and-SHA-256 line for each write they mark `private`.
+- **A holt bug, fixed** (`target::identity_on`): RustAudit1 HD2-04
+  (a4e9714) named an off-Linux target in its partition record by the
+  scan's serial, which on OpenBSD and NetBSD is the disklabel's DUID, the
+  one the partition stage writes, so openbsd8-crypt's text run stopped at
+  partition ("no record that load wrote it").  The record leaves the DUID
+  out there, as before; the plan hash keeps it (the question above).
+
 ## Decisions
 
 - **J1. How bko-rescue finds bko-holt's protocol.**  `bko-holt --version

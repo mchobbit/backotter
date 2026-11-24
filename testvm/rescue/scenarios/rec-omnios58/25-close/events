@@ -1,0 +1,12 @@
+# Recorded from HoltTest1 HT_VARIANT=json, guest omnios58 (testvm/holttest1d/ht1-json.py record)
+delay 0.01
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T22:07:58Z","pid":1170,"commit":true,"dry_run":false,"stages":["close"],"stage_commands":{"close":3},"plan_sha256":"af2ac61732713e78c18498f464b2c53de43354c09ca48e50c22cfa6de2a647d2","log":"/var/run/bko-holt/log/load.log","layout":{"hostname":"omnios58","generated":"2026-11-24T22:00:52Z"}}
+{"event":"stage","stage":"close","commands":3}
+{"event":"cmd","stage":"close","n":1,"of":3,"kind":"run","argv":["sh","-c","awk '{ print $2 }' /etc/mnttab | awk '$0 == \"/mnt/bko-target\" || index($0, \"/mnt/bko-target/\") == 1' | sort -r | while read -r m; do umount \"$m\" || exit; done"],"env":[["LC_ALL","C"]],"why":"everything under the target, deepest first","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"close","n":1,"status":0,"signal":null,"secs":0.2}
+{"event":"cmd","stage":"close","n":2,"of":3,"kind":"run","argv":["zfs","inherit","mountpoint","rpool_bko"],"env":[["LC_ALL","C"]],"why":null,"path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"close","n":2,"status":0,"signal":null,"secs":0.03}
+{"event":"cmd","stage":"close","n":3,"of":3,"kind":"run","argv":["zpool","export","rpool_bko"],"env":[["LC_ALL","C"]],"why":null,"path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"close","n":3,"status":0,"signal":null,"secs":0.07}
+{"event":"stage_done","stage":"close","secs":2.53,"checked":true}
+{"event":"end","exit":0,"stopped":false,"secs":4.77}

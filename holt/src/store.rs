@@ -171,9 +171,11 @@ impl Sx {
 
 /// Every datum in `text`, until the first that doesn't read (what came
 /// before it is kept).  `;` and `#|...|#` comments and `#;DATUM` are
-/// skipped; `'X` reads as (quote X); `#(...)` as a list.
+/// skipped; `'X` reads as (quote X); `#(...)` as a list.  A datum nested
+/// deeper than 256 (`MAX_DEPTH`) doesn't read either, so a crafted or damaged
+/// file can't overflow the stack.
 pub fn parse_sexps(text: &str) -> Vec<Sx> {
-    let mut r = Reader { b: text.as_bytes(), i: 0 };
+    let mut r = Reader { b: text.as_bytes(), i: 0, depth: 0 };
     let mut out = Vec::new();
     while let Some(d) = r.datum() {
         out.push(d);
@@ -181,9 +183,15 @@ pub fn parse_sexps(text: &str) -> Vec<Sx> {
     out
 }
 
+/// How deeply data may nest (lists, vectors, quotes, `#;`), as in the JSON
+/// reader: Guix's manifests and boot parameters stay far below it.
+const MAX_DEPTH: usize = 256;
+
 struct Reader<'a> {
     b: &'a [u8],
     i: usize,
+    /// The `datum` calls open now.
+    depth: usize,
 }
 
 impl Reader<'_> {
@@ -243,7 +251,20 @@ impl Reader<'_> {
         }
     }
 
+    /// The next datum, or None at the end, at a closing bracket, at what
+    /// doesn't read, or past [`MAX_DEPTH`].  Every recursion in the reader
+    /// (lists, quotes, `#;`) comes back through here, so the count holds.
     fn datum(&mut self) -> Option<Sx> {
+        if self.depth >= MAX_DEPTH {
+            return None;
+        }
+        self.depth += 1;
+        let d = self.datum_at_depth();
+        self.depth -= 1;
+        d
+    }
+
+    fn datum_at_depth(&mut self) -> Option<Sx> {
         self.skip_space();
         let c = self.peek()?;
         match c {
@@ -637,6 +658,20 @@ mod tests {
         assert_eq!(parse_sexps("(a) )"), vec![Sx::List(vec![Sx::Sym("a".into())])]);
         assert_eq!(parse_sexps("#vu8(1 300)"), vec![]);
         assert!(parse_sexps("").is_empty());
+    }
+
+    #[test]
+    fn sexps_nesting_is_bounded() {
+        // RustAudit1 H1-05: deep nesting ends the read instead of the stack.
+        assert!(parse_sexps(&"(".repeat(1 << 20)).is_empty());
+        assert!(parse_sexps(&"[".repeat(1 << 20)).is_empty());
+        assert!(parse_sexps(&"#(".repeat(1 << 19)).is_empty());
+        assert!(parse_sexps(&"'".repeat(1 << 20)).is_empty());
+        assert_eq!(parse_sexps(&format!("{}x", "#;".repeat(1 << 19))), vec![]);
+        let deep = |n: usize| format!("{}x{}", "(".repeat(n), ")".repeat(n));
+        assert_eq!(parse_sexps(&deep(MAX_DEPTH - 1)).len(), 1);
+        assert!(parse_sexps(&deep(MAX_DEPTH)).is_empty());
+        assert_eq!(parse_sexps(&format!("(a) {}", deep(1 << 16))), vec![Sx::List(vec![Sx::Sym("a".into())])]);
     }
 
     pub(crate) const MANIFEST: &str = r#";; This file was automatically generated.

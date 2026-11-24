@@ -212,8 +212,12 @@ pub fn parse_config(text: &str) -> Result<Value, String> {
     Ok(v)
 }
 
+/// How deeply sections and arrays may nest, together: LVM writes sections a
+/// few deep and arrays one deep, so only crafted text comes near it.
+const MAX_DEPTH: usize = 64;
+
 fn section_body(t: &[Tok], i: &mut usize, depth: usize) -> Result<Value, String> {
-    if depth > 64 {
+    if depth > MAX_DEPTH {
         return Err("nested too deeply".into());
     }
     let mut o = Obj::new();
@@ -236,7 +240,7 @@ fn section_body(t: &[Tok], i: &mut usize, depth: usize) -> Result<Value, String>
             }
             Some(Tok::Punct('=')) => {
                 *i += 1;
-                let v = value(t, i)?;
+                let v = value(t, i, depth)?;
                 o.put(&key, v);
             }
             _ => return Err(format!("expected '=' or '{{' after {key}")),
@@ -245,7 +249,12 @@ fn section_body(t: &[Tok], i: &mut usize, depth: usize) -> Result<Value, String>
     Ok(o.build())
 }
 
-fn value(t: &[Tok], i: &mut usize) -> Result<Value, String> {
+/// The value at `t[*i]`, an array's items read to the same depth limit as
+/// sections (its `depth` counts both).
+fn value(t: &[Tok], i: &mut usize, depth: usize) -> Result<Value, String> {
+    if depth > MAX_DEPTH {
+        return Err("nested too deeply".into());
+    }
     let v = match t.get(*i) {
         Some(Tok::Str(s)) => Value::Str(s.clone()),
         Some(Tok::Num(n)) => n.clone(),
@@ -259,7 +268,7 @@ fn value(t: &[Tok], i: &mut usize) -> Result<Value, String> {
                     None => return Err("array not closed".into()),
                     _ => {}
                 }
-                a.push(value(t, i)?);
+                a.push(value(t, i, depth + 1)?);
                 match t.get(*i) {
                     Some(Tok::Punct(',')) => *i += 1,
                     Some(Tok::Punct(']')) => {}
@@ -808,5 +817,12 @@ mod tests {
         }
         let deep = "a { ".repeat(100) + &"} ".repeat(100);
         assert!(parse_config(&deep).is_err());
+        // RustAudit1 H2-02: arrays count toward the depth too, so deep '['
+        // is an error and not a stack overflow.
+        assert_eq!(parse_config(&("a = ".to_string() + &"[".repeat(100_000))), Err("nested too deeply".to_string()));
+        assert_eq!(parse_config(&("vg { a = ".to_string() + &"[".repeat(1_000_000))), Err("nested too deeply".to_string()));
+        let arrays = |n: usize| format!("a = {}1{}", "[".repeat(n), "]".repeat(n));
+        assert!(parse_config(&arrays(MAX_DEPTH)).is_ok());
+        assert!(parse_config(&arrays(MAX_DEPTH + 1)).is_err());
     }
 }

@@ -161,11 +161,13 @@ impl Value {
     /// write-table: RustAudit1 H7-09), in every spelling dump writes one:
     /// a JSON number (not negative, not a fraction), decimal text as u64's
     /// FromStr reads it (an optional '+'; LUKS2's JSON keeps its offsets
-    /// and sizes as strings), or "0x"-prefixed hex text.  Nothing else (no
-    /// "0X", no spaces).  get_u64 is the strict one: numbers only.
+    /// and sizes as strings), or "0x" and hex digits only.  Nothing else
+    /// (no "0X", no sign after "0x", no spaces).  get_u64 is the strict
+    /// one: numbers only.
     pub fn get_u64_lenient(&self, key: &str) -> Option<u64> {
         match self.get(key)? {
-            Value::Str(t) => t.strip_prefix("0x").map_or_else(|| t.parse().ok(), |h| u64::from_str_radix(h, 16).ok()),
+            // from_str_radix takes a '+' too: "0x+1f" isn't a spelling.
+            Value::Str(t) => t.strip_prefix("0x").map_or_else(|| t.parse().ok(), |h| if h.bytes().all(|c| c.is_ascii_hexdigit()) { u64::from_str_radix(h, 16).ok() } else { None }),
             x => x.as_u64(),
         }
     }
@@ -741,10 +743,11 @@ mod tests {
 
     #[test]
     fn u64_readers() {
-        let v = parse(r#"{"n": 7, "neg": -1, "dec": "2048", "plus": "+5", "hex": "0x1f", "HEX": "0X1f", "bad": "12a", "sp": " 1", "f": 1.5, "b": true}"#).unwrap();
-        let all = |f: fn(&Value, &str) -> Option<u64>| ["n", "neg", "dec", "plus", "hex", "HEX", "bad", "sp", "f", "b", "none"].map(|k| f(&v, k));
-        assert_eq!(all(Value::get_u64), [Some(7), None, None, None, None, None, None, None, None, None, None]);
-        assert_eq!(all(Value::get_u64_lenient), [Some(7), None, Some(2048), Some(5), Some(31), None, None, None, None, None, None]);
+        let v = parse(r#"{"n": 7, "neg": -1, "dec": "2048", "plus": "+5", "hex": "0x1f", "HEX": "0X1f", "bad": "12a", "sp": " 1", "f": 1.5, "b": true, "tneg": "-1", "junk": "12abc", "hplus": "0x+1f", "hneg": "0x-1", "h0": "0x", "e": "", "big": "18446744073709551616"}"#).unwrap();
+        let all = |f: fn(&Value, &str) -> Option<u64>| ["n", "neg", "dec", "plus", "hex", "HEX", "bad", "sp", "f", "b", "none", "tneg", "junk", "hplus", "hneg", "h0", "e", "big"].map(|k| f(&v, k));
+        let no = [None; 7];
+        assert_eq!(all(Value::get_u64).to_vec(), [[Some(7), None, None, None, None, None, None, None, None, None, None].as_slice(), &no].concat());
+        assert_eq!(all(Value::get_u64_lenient).to_vec(), [[Some(7), None, Some(2048), Some(5), Some(31), None, None, None, None, None, None].as_slice(), &no].concat());
     }
 
     #[test]

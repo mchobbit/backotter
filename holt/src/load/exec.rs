@@ -63,13 +63,15 @@ fn run_cmd(c: &Cmd, log: &mut Option<std::fs::File>, sys: &Sys) -> Result<Vec<St
     // No stdin given: the terminal's, so cryptsetup can ask for a passphrase.
     cmd.stdin(if c.stdin.is_some() { Stdio::piped() } else { Stdio::inherit() });
     let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", c.argv[0]))?;
-    if let (Some(input), Some(mut pipe)) = (&c.stdin, child.stdin.take()) {
-        pipe.write_all(input.as_bytes()).map_err(|e| format!("{}: writing its input: {e}", c.argv[0]))?;
-    }
+    let feeder = feed(c, &mut child);
     let out = child.wait_with_output().map_err(|e| format!("{}: {e}", c.argv[0]))?;
+    let unfed = fed_error(feeder);
     log_line(log, &String::from_utf8_lossy(&out.stdout));
     log_line(log, &String::from_utf8_lossy(&out.stderr));
     if out.status.success() {
+        if let Some(e) = unfed {
+            return Err(format!("{}: writing its input: {e}", c.argv[0]));
+        }
         let err = String::from_utf8_lossy(&out.stderr);
         Ok(if c.warns { err.lines().filter(|l| l.contains("warning:")).map(str::to_string).collect() } else { Vec::new() })
     } else {
@@ -196,6 +198,19 @@ fn reader<R: std::io::Read + Send + 'static>(r: R, is_err: bool, tx: std::sync::
     })
 }
 
+/// C's input written to CHILD on a thread of its own, beside the reading:
+/// a child that writes much before it reads can't stall the two, and one
+/// that exits before reading it all still has its exit and output seen.
+fn feed(c: &Cmd, child: &mut std::process::Child) -> Option<std::thread::JoinHandle<std::io::Result<()>>> {
+    let (Some(input), Some(mut pipe)) = (c.stdin.clone(), child.stdin.take()) else { return None };
+    Some(std::thread::spawn(move || pipe.write_all(input.as_bytes())))
+}
+
+/// How FEEDER's writing failed, if it did.
+fn fed_error(feeder: Option<std::thread::JoinHandle<std::io::Result<()>>>) -> Option<std::io::Error> {
+    feeder.and_then(|f| f.join().unwrap_or_else(|_| Err(std::io::Error::other("its writer panicked"))).err())
+}
+
 /// run_cmd under --json: the same command, the same log (but the
 /// archiver's progress lines, of which the last is kept, and a private
 /// write's text), the same result; its standard input /dev/null when the
@@ -238,15 +253,7 @@ fn run_cmd_json(c: &Cmd, log: &mut Option<std::fs::File>, sys: &Sys, ev: &mut Ev
     let mut child = cmd.spawn().map_err(|e| StepFail::of_text(format!("{prog}: {e}")))?;
     let pgid = i32::try_from(child.id()).unwrap_or(0);
     hook::note(|h| h.child = (pgid > 0).then_some(pgid));
-    // Its input written beside the reading, so a child that writes much
-    // before it reads can't stall the two.
-    let feeder = match (&c.stdin, child.stdin.take()) {
-        (Some(input), Some(mut pipe)) => {
-            let input = input.clone();
-            Some(std::thread::spawn(move || pipe.write_all(input.as_bytes())))
-        }
-        _ => None,
-    };
+    let feeder = feed(c, &mut child);
     let (tx, rx) = std::sync::mpsc::channel::<Piece>();
     let mut readers = Vec::new();
     if let Some(o) = child.stdout.take() {
@@ -336,7 +343,7 @@ fn run_cmd_json(c: &Cmd, log: &mut Option<std::fs::File>, sys: &Sys, ev: &mut Ev
     let waited = child.wait();
     hook::note(|h| h.child = None);
     let status = waited.map_err(|e| StepFail::of_text(format!("{prog}: {e}")))?;
-    let fed = feeder.map(|f| f.join().unwrap_or_else(|_| Err(std::io::Error::other("its writer panicked"))));
+    let unfed = fed_error(feeder);
     // The last status always.
     if let Some(p) = pending {
         progress(ev, p, warnings);
@@ -356,10 +363,11 @@ fn run_cmd_json(c: &Cmd, log: &mut Option<std::fs::File>, sys: &Sys, ev: &mut Ev
     if signalled {
         return Err(StepFail { text: format!("{prog} stopped on request ({status})"), facts, stopped: true });
     }
-    if let Some(Err(e)) = fed {
-        return Err(StepFail { text: format!("{prog}: writing its input: {e}"), facts, stopped: false });
-    }
     if status.success() {
+        // A failed write matters only when the exit doesn't say more.
+        if let Some(e) = unfed {
+            return Err(StepFail { text: format!("{prog}: writing its input: {e}"), facts, stopped: false });
+        }
         Ok(if c.warns { err.lines().filter(|l| l.contains("warning:")).map(str::to_string).collect() } else { Vec::new() })
     } else {
         let text = format!("{prog} failed ({status}){}", if tail.is_empty() { String::new() } else { format!(":\n    {}", tail.join("\n    ")) });
@@ -1868,18 +1876,40 @@ mod tests {
 
     /// Under --json a step's output is read as it comes: a child that
     /// fills both pipes, and reads its input only after, runs to its end,
-    /// all of it logged; with no input given, standard input is /dev/null;
-    /// a failure is worded as run_cmd words it.
+    /// all of it logged (in text mode too, its input written beside the
+    /// reading); with no input given, standard input is /dev/null; a
+    /// failure is worded as run_cmd words it, given input or not.
     #[test]
     fn streamed_children() {
         let t = Tree::new("load-exec-ev-pipes");
         let both = "i=0; while [ $i -lt 3000 ]; do echo oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo; echo eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee >&2; i=$((i+1)); done; wc -c";
         let input = "x".repeat(300_000);
-        let (r, _, log) = stream(&t, &Cmd::new(&["sh", "-c", both]).input(input), &|_| false);
+        let (r, _, log) = stream(&t, &Cmd::new(&["sh", "-c", both]).input(input.clone()), &|_| false);
         assert_eq!(r, Ok(Vec::new()));
         assert_eq!(log.matches("oooo\n").count(), 3000);
         assert_eq!(log.matches("eeee\n").count(), 3000);
         assert!(log.lines().any(|l| l.trim() == "300000"), "{}", &log[log.len().saturating_sub(300)..]);
+        // Text mode the same.
+        let path = t.p("/text.log");
+        let mut text_log = Some(std::fs::File::create(&path).unwrap());
+        assert_eq!(run_cmd(&Cmd::new(&["sh", "-c", both]).input(input.clone()), &mut text_log, &Sys::host()), Ok(Vec::new()));
+        drop(text_log);
+        let log = std::fs::read_to_string(&path).unwrap();
+        assert_eq!((log.matches("oooo\n").count(), log.matches("eeee\n").count()), (3000, 3000));
+        assert!(log.lines().any(|l| l.trim() == "300000"), "{}", &log[log.len().saturating_sub(300)..]);
+        // One that fails without reading its input: its exit and its
+        // stderr, in both modes, not the write's broken pipe; one that
+        // succeeds without reading it all: the write.
+        let c = Cmd::new(&["sh", "-c", "echo 'bad partition line' >&2; exit 4"]).input(input.clone());
+        let e = run_cmd(&c, &mut None, &Sys::host()).unwrap_err();
+        assert_eq!(e, "sh failed (exit status: 4):\n    bad partition line");
+        let (r, _, _) = stream(&t, &c, &|_| false);
+        let f = r.unwrap_err();
+        assert_eq!((f.text, f.facts.status), (e, Some(4)));
+        let c = Cmd::new(&["sh", "-c", "exit 0"]).input(input);
+        let e = run_cmd(&c, &mut None, &Sys::host()).unwrap_err();
+        assert!(e.starts_with("sh: writing its input: "), "{e}");
+        assert_eq!(stream(&t, &c, &|_| false).0.unwrap_err().text, e);
         let (r, _, log) = stream(&t, &Cmd::new(&["sh", "-c", "if read x; then echo got; else echo eof; fi"]), &|_| false);
         assert_eq!(r, Ok(Vec::new()));
         assert!(log.contains("\neof\n"), "{log}");

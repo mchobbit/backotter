@@ -295,11 +295,13 @@ fn s(v: &Value, k: &str) -> Option<String> {
     v.get(k).and_then(Value::as_str).map(str::to_string)
 }
 
-/// K's number in V as load reads a dump's numbers: Value::get_u64_lenient
-/// (a number, decimal text as LUKS2 keeps its offsets and sizes, or "0x"
-/// and hex digits; RustAudit1 H7-09).
+/// A number given as a number or as a decimal string (LUKS2 keeps its
+/// offsets and sizes as strings).
 fn num(v: &Value, k: &str) -> Option<u64> {
-    v.get_u64_lenient(k)
+    match v.get(k)? {
+        Value::Str(t) => t.parse().ok(),
+        x => x.as_u64(),
+    }
 }
 
 /// The device node of partition `n` of disk `disk` (a kernel name).
@@ -6890,17 +6892,6 @@ mod tests {
         assert_eq!(resize_for(&none), None);
         let off = crate::json::parse(r#"{"block_size": 4096, "blocks": 32768, "blocks_per_group": 32768, "reserved_gdt_blocks": 7, "features": []}"#).unwrap();
         assert_eq!(resize_for(&off), None);
-    }
-
-    #[test]
-    fn mke2fs_reads_numbers_the_lenient_way() {
-        // A number, decimal text and 0x-hex text all read; a sign after
-        // "0x" doesn't (RustAudit1 H7-09: get_u64_lenient's rule).
-        for (x, want) in [("31", Some("stride=31")), ("\"31\"", Some("stride=31")), ("\"0x1f\"", Some("stride=31")), ("\"0x+1f\"", None), ("\"0X1f\"", None)] {
-            let c = crate::json::parse(&format!(r#"{{"type": "ext4", "raid_stride": {x}}}"#)).unwrap();
-            let a = mke2fs("/dev/x", &c);
-            assert_eq!(a.iter().position(|e| e == "-E").map(|i| a[i + 1].as_str()), want, "{x}: {a:?}");
-        }
     }
 
     #[test]

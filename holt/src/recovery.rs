@@ -389,13 +389,23 @@ fn lookup(t: &str) -> Option<u16> {
 /// By letters, not bytes: "ébandon" (é is a key of its own on some
 /// keyboards) is a letter from abandon.
 fn near(t: &str) -> Vec<&'static str> {
+    // T's letters are part of the key: wiped once looked at.
+    let mut tc: Vec<char> = t.chars().collect();
+    let out = near_letters(t, &tc);
+    tc.fill('\0');
+    std::hint::black_box(&mut tc);
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+    out
+}
+
+/// `near`'s work, T's letters TC given.
+fn near_letters(t: &str, tc: &[char]) -> Vec<&'static str> {
     fn add(out: &mut Vec<&'static str>, w: &'static str) {
         if !out.contains(&w) {
             out.push(w);
         }
     }
     let l = list();
-    let tc: Vec<char> = t.chars().collect();
     // Too short to tell (aba): the words it begins, when there are few.
     if tc.len() < 4 {
         let v: Vec<&'static str> = l.iter().copied().filter(|w| w.starts_with(t)).collect();
@@ -407,22 +417,23 @@ fn near(t: &str) -> Vec<&'static str> {
     // A word typed too far (abandoned) or wrong after its 4th letter
     // (abanxon): the one word with the same first 4 letters.
     if tc.len() >= 4 {
-        let p4: String = tc[..4].iter().collect();
+        let mut p4: String = tc[..4].iter().collect();
         if let Some(w) = l.iter().find(|w| w.starts_with(p4.as_str())) {
             add(&mut out, w);
         }
+        zeroize_string(&mut p4);
     }
     let words: Vec<Vec<char>> = l.iter().map(|w| w.chars().collect()).collect();
     // A letter wrong in a word typed in full (abndon, cst)...
     for (w, wc) in l.iter().zip(&words) {
-        if ed1(&tc, wc) {
+        if ed1(tc, wc) {
             add(&mut out, w);
         }
     }
     // ... or in its first letters (abam for aban).
     if tc.len() >= 4 {
         for (w, wc) in l.iter().zip(&words) {
-            if (tc.len() - 1..=tc.len() + 1).any(|k| k >= 4 && k <= wc.len() && ed1(&tc, &wc[..k])) {
+            if (tc.len() - 1..=tc.len() + 1).any(|k| k >= 4 && k <= wc.len() && ed1(tc, &wc[..k])) {
                 add(&mut out, w);
             }
         }

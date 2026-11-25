@@ -66,6 +66,16 @@ pub const SECTION_MAX: usize = 16 << 10;
 /// question 2, a new field the backup tool isn't writing yet): top level.
 pub const HINT_KEY: &str = "password_hint";
 
+/// DMI system UUIDs firmware gives every machine of a kind, so naming no
+/// one computer (as dmidecode and fwupd treat them): never "this computer".
+/// All zeros and all Fs are told by `dmi_uuid_names_one`; these are the
+/// rest, lower case.
+pub const DMI_UUID_PLACEHOLDERS: &[&str] = &[
+    // AMI's and many boards' "To be filled by O.E.M." UUID.
+    "03000200-0400-0500-0006-000700080009",
+    "12345678-1234-5678-90ab-cddeefaabbcc",
+];
+
 /// The config partition's directory, and the machines' under it.
 const DIR: &str = "backotter";
 const MACHINES: &str = "backotter/machines";
@@ -199,9 +209,14 @@ pub fn document(sys: &Sys, fam: Option<Family>) -> (Value, u8) {
         d.machines.clear();
     }
     let here_uuid = dmi_uuid_here(sys, fam);
-    for m in &mut d.machines {
-        let same = matches!((m.get_str("dmi_uuid"), here_uuid.as_deref()), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b));
-        m.put("this_computer", same);
+    let mine = this_computer(&d.machines, here_uuid.as_deref());
+    if mine.len() > 1 {
+        // Cloned machines, or one reinstalled under a new install ID: the
+        // UUID can't tell which, and the wrong one would be preselected.
+        d.notes.push(note("this_computer_ambiguous", format!("{} machines on the stick were backed up from a computer with this one's DMI UUID: none is taken for this computer, choose by name", mine.len())));
+    }
+    for (k, m) in d.machines.iter_mut().enumerate() {
+        m.put("this_computer", mine.len() == 1 && mine[0] == k);
     }
     let config = Obj::new().set("state", state).set("partition", d.partition).set("label", d.label).set("why", why).set("dev", d.dev);
     let doc = jsonout::header("bko-holt-stick")
@@ -214,6 +229,28 @@ pub fn document(sys: &Sys, fam: Option<Family>) -> (Value, u8) {
         .set("notes", d.notes)
         .build();
     (doc, if state == "ok" { 0 } else { 1 })
+}
+
+/// The rows of MACHINES backed up from this computer, whose DMI UUID is
+/// HERE: by the UUID (case aside), when it names one computer.
+fn this_computer(machines: &[Value], here: Option<&str>) -> Vec<usize> {
+    let Some(here) = here.filter(|h| dmi_uuid_names_one(h)) else { return Vec::new() };
+    machines.iter().enumerate().filter(|(_, m)| m.get_str("dmi_uuid").is_some_and(|u| u.eq_ignore_ascii_case(here))).map(|(k, _)| k).collect()
+}
+
+/// Whether U is a DMI system UUID that tells one computer from another: a
+/// UUID's shape, not all one digit (zeros, Fs), nor one of
+/// `DMI_UUID_PLACEHOLDERS`.
+pub fn dmi_uuid_names_one(u: &str) -> bool {
+    let l = u.to_ascii_lowercase();
+    let hex: Vec<u8> = l.bytes().filter(|&b| b != b'-').collect();
+    is_uuid(&l) && !hex.iter().all(|&b| b == hex[0]) && !DMI_UUID_PLACEHOLDERS.contains(&l.as_str())
+}
+
+/// Whether S has a UUID's shape: 8-4-4-4-12 hex digits (either case).
+pub fn is_uuid(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 36 && b.iter().enumerate().all(|(i, &c)| if matches!(i, 8 | 13 | 18 | 23) { c == b'-' } else { c.is_ascii_hexdigit() })
 }
 
 /// What `read` fills in as it goes.
@@ -306,7 +343,13 @@ fn read_config(vol: &Volume, m: &Marker, d: &mut Doc) -> Result<(), NotOk> {
     };
     let mut ids: Vec<&Entry> = Vec::new();
     let list = vol.read_dir(Some(mdir)).map_err(|e| damaged(format!("{MACHINES}/ can't be read: {e}")))?;
-    let mut kids: Vec<&Entry> = list.iter().filter(|e| e.dir).collect();
+    // A machine's directory is its install ID, a UUID (stick-config.md's
+    // system.json): any other name is no machine, and never goes into a
+    // path or an install_id (`../../etc`).
+    let (mut kids, others): (Vec<&Entry>, Vec<&Entry>) = list.iter().filter(|e| e.dir).partition(|e| is_uuid(&e.name));
+    if !others.is_empty() {
+        d.notes.push(note("machines_not_install_ids", format!("{} directories in {MACHINES}/ aren't named by an install ID (a UUID) and are left out", others.len())));
+    }
     kids.sort_by(|a, b| a.name.cmp(&b.name));
     if kids.len() > MACHINES_MAX {
         d.notes.push(note("machines_over_limit", format!("{MACHINES}/ has {} machines: the first {MACHINES_MAX} by name are listed", kids.len())));
@@ -351,8 +394,12 @@ fn machine(vol: &Volume, e: &Entry, m: &Marker) -> Value {
     if v.get_str("format") != Some("backotter-system") {
         return fields(o, if state == "ok" { "unreadable" } else { state }, why.or(Some(format!("{path} isn't a backotter-system document"))), None, m);
     }
-    if let Some(other) = v.str_at(&["machine", "install_id"]).filter(|x| *x != id) {
-        return fields(o, "unreadable", Some(format!("{path} names install ID {other}, not its directory's")), None, m);
+    match v.str_at(&["machine", "install_id"]) {
+        Some(x) if x == id => {}
+        // Named only when it is one: a long or odd string stays out.
+        Some(x) if is_uuid(x) => return fields(o, "unreadable", Some(format!("{path} names install ID {x}, not its directory's")), None, m),
+        Some(_) => return fields(o, "unreadable", Some(format!("{path} names an install ID that isn't a UUID, not its directory's")), None, m),
+        None => return fields(o, "unreadable", Some(format!("{path} names no install ID (machine.install_id)")), None, m),
     }
     fields(o, state, why, Some(&v), m)
 }
@@ -514,9 +561,10 @@ fn locate_by_marker(sys: &Sys, m: &Marker) -> Result<Located, NotOk> {
             continue;
         }
         let Some(b) = src.read_exact_at(start, 512) else { continue };
-        let serial = crate::bytes::le32(&b, 39);
-        let label = crate::bytes::label(crate::bytes::sub(&b, 43, 11));
-        if format!("{:04X}-{:04X}", serial >> 16, serial & 0xffff).eq_ignore_ascii_case(&m.fat_serial) && label.as_deref() == Some(m.label.as_str()) {
+        // As check_identity: FAT12/16's or FAT32's record, case aside.
+        let (serial, label) = crate::fatfs::boot_ids(&b);
+        let serial = serial.map(|s| format!("{:04X}-{:04X}", s >> 16, s & 0xffff));
+        if serial.is_some_and(|s| s.eq_ignore_ascii_case(&m.fat_serial)) && label.is_some_and(|l| l.eq_ignore_ascii_case(&m.label)) {
             let dev = format!("/dev/dsk/{}", crate::other::illumos::slice_name(&d.name, m.number));
             hits.push(Located { node: d.name.clone(), found_by: "marker_scan", disk: d, start, size, dev: Some(dev) });
         }
@@ -814,6 +862,69 @@ mod tests {
     }
 
     #[test]
+    fn a_directory_or_install_id_that_is_no_uuid() {
+        let good = system(LOVELACE, "lovelace", "", "");
+        let none = system(BABBAGE, "babbage", "", "").replace(&format!("\"install_id\": \"{BABBAGE}\", "), "");
+        let odd_id = "x".repeat(200_000);
+        let odd = system(&odd_id, "hopper", "", "");
+        let hopper = "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6";
+        let ms = vec![
+            machine_dir("../../etc", &good, Some(&sum(&good))),
+            machine_dir("notes", &good, Some(&sum(&good))),
+            machine_dir(LOVELACE, &good, Some(&sum(&good))),
+            machine_dir(BABBAGE, &none, Some(&sum(&none))),
+            machine_dir(hopper, &odd, Some(&sum(&odd))),
+        ];
+        let t = linux_tree(&config(ms), None);
+        let (v, code) = doc(&t);
+        assert_eq!(code, 0, "{}", v.pretty());
+        let ms = v.arr_at(&["machines"]);
+        let st: Vec<(&str, &str)> = ms.iter().map(|m| (m.get_str("install_id").unwrap(), m.get_str("state").unwrap())).collect();
+        assert_eq!(st, [(LOVELACE, "ok"), (BABBAGE, "unreadable"), (hopper, "unreadable")]);
+        assert!(ms.iter().all(|m| !m.get_str("path").unwrap().contains("..")));
+        assert!(ms[1].get_str("why").unwrap().contains("names no install ID"));
+        let why = ms[2].get_str("why").unwrap();
+        assert!(why.contains("isn't a UUID") && !why.contains("xxx"), "{why}");
+        assert!(jsonout::line(&v).len() < 8192);
+        let notes: Vec<&str> = v.arr_at(&["notes"]).iter().filter_map(|n| n.get_str("code")).collect();
+        assert_eq!(notes, ["settings_ignored", "machines_not_install_ids"]);
+        assert!(!jsonout::line(&v).contains("etc"));
+        crate::testutil::golden_json("stick-json", "not-install-ids", &v);
+    }
+
+    #[test]
+    fn this_computer_only_by_a_uuid_that_names_one() {
+        let lv = "4c4c4544-0000-1111-2222-333344445555";
+        let mk = |dmis: [&str; 3]| {
+            let ids = [LOVELACE, BABBAGE, "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6"];
+            let names = ["lovelace", "babbage", "hopper"];
+            config((0..3).map(|k| {
+                let b = system(ids[k], names[k], dmis[k], "");
+                machine_dir(ids[k], &b, Some(&sum(&b)))
+            }).collect())
+        };
+        let mine = |v: &Value| v.arr_at(&["machines"]).iter().map(|m| m.get_bool("this_computer").unwrap()).collect::<Vec<_>>();
+        let codes = |v: &Value| v.arr_at(&["notes"]).iter().filter_map(|n| n.get_str("code").map(str::to_string)).collect::<Vec<_>>();
+        // One match: that row.
+        let (v, _) = doc(&linux_tree(&mk([lv, "11111111-2222-3333-4444-555555555555", ""]), Some(&lv.to_uppercase())));
+        assert_eq!(mine(&v), [true, false, false]);
+        // Two: cloned, or reinstalled under a new install ID: neither, said so.
+        let (v, _) = doc(&linux_tree(&mk([lv, lv, ""]), Some(lv)));
+        assert_eq!(mine(&v), [false, false, false]);
+        assert_eq!(codes(&v), ["settings_ignored", "this_computer_ambiguous"]);
+        assert!(v.arr_at(&["notes"])[1].get_str("text").unwrap().contains("2 machines"));
+        // Firmware's placeholders name no computer, here or on the stick.
+        for p in ["00000000-0000-0000-0000-000000000000", "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF", "03000200-0400-0500-0006-000700080009", "Not Settable"] {
+            let (v, _) = doc(&linux_tree(&mk([p, lv, ""]), Some(p)));
+            assert_eq!(mine(&v), [false, false, false], "{p}");
+            assert_eq!(codes(&v), ["settings_ignored"], "{p}");
+            assert_eq!(v.str_at(&["here", "dmi_uuid"]), Some(p));
+        }
+        assert!(dmi_uuid_names_one(lv) && !dmi_uuid_names_one("") && !dmi_uuid_names_one("12345678-1234-5678-90AB-CDDEEFAABBCC"));
+        assert!(is_uuid(LOVELACE) && is_uuid(&LOVELACE.to_uppercase()) && !is_uuid("../../etc") && !is_uuid(&LOVELACE.replace('-', "_")));
+    }
+
+    #[test]
     fn missing_reformatted_and_repartitioned() {
         // Not a stick at all: no marker.
         let t = Tree::new("stick");
@@ -961,6 +1072,9 @@ mod tests {
         );
         let c = config(three());
         gpt[4096 * 512..4096 * 512 + c.len()].copy_from_slice(&c);
+        // Its boot sector's label in lower case: still the marker's, as
+        // check_identity has it.
+        gpt[4096 * 512 + 43..4096 * 512 + 52].copy_from_slice(b"backotter");
         let t = Tree::new("stick");
         t.file("/dev/rdsk/c1t0d0p0", vec![0u8; 1 << 20]).file("/dev/rdsk/c2t0d0p0", &gpt).file("/.disk/backotter.json", marker(4));
         let list = |n: &[&str]| n.iter().map(|d| format!("USB\t{d}\tKingston\tDT\t{}\tyes\tno\n", gpt.len())).collect::<String>();

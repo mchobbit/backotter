@@ -65,7 +65,8 @@ MiB FAT16, partition 3, as the Linux image's) with machines put on by
 mtools; each `recorded.txt` says from what and when.  `stick-three` and
 `stick-this-computer` also hold `recovery-words * --json` calls, answered
 by the words on standard input (the call's `stdin`: BIP39's test vector,
-as bko-rescue sends it, each word completed) and, for the good words,
+as bko-rescue sends it, each word completed; the fake takes a word's first
+4 letters or more for it, as bko-holt does) and, for the good words,
 writing the password to OUT (its `out`); the fake watches that OUT is
 removed as it watches key files.
 
@@ -74,11 +75,12 @@ removed as it watches key files.
 | `stick-three` | lovelace (Debian 13, a password hint), babbage (Fedora 45, rest:), hopper (FreeBSD 15.0); none from this computer |
 | `stick-this-computer` | the same, lovelace backed up from this computer |
 | `stick-one` | lovelace alone, on a new computer |
+| `stick-two-here` | lovelace twice (reinstalled under a new install ID), both with this computer's DMI UUID: neither is "this computer", note `this_computer_ambiguous` |
 | `stick-failing` | lovelace ok; babbage `checksum_bad`, hopper `schema_unknown`, turing `checksum_missing` |
 | `stick-empty` | the config partition, no machines yet |
 | `stick-missing` | no partition 3 (a file-copying writer): `missing`, exit 1 |
 | `stick-reformatted` | another FAT serial: `damaged`, exit 1 |
-| `stick-invalid` | hand-written, wrong on purpose (`invalid`): a missing config with machines, a recovery verdict `ok` with a problem |
+| `stick-invalid` | hand-written, wrong on purpose (`invalid`): a missing config with machines, a recovery verdict `ok` with a problem, two rows `this_computer`, a machine named `../../etc` |
 
 The recovery calls (`stick-three`, `stick-this-computer`): `good` (exit 0,
 OUT written), `unknown` (word 9 `ribbx`, suggest ribbon), `checksum` (two

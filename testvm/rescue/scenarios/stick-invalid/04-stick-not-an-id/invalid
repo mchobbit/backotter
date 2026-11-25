@@ -1,0 +1,2 @@
+install_id "../../etc"
+A machine directory that is no install ID: its name must never reach a path.

@@ -102,8 +102,7 @@ impl<'a> Volume<'a> {
         if clusters == 0 || clusters > 0x0fff_fff5 {
             return Err("no data clusters, or more than FAT32 has".into());
         }
-        let ebr = if kind == Kind::Fat32 { 64 } else { 36 };
-        let has_ebr = u8_at(&b, ebr + 2) == 0x29;
+        let (serial, boot_label) = boot_ids(&b);
         let entry_bits = match kind {
             Kind::Fat12 => 12,
             Kind::Fat16 => 16,
@@ -116,8 +115,8 @@ impl<'a> Volume<'a> {
         Ok(Volume {
             src,
             kind,
-            serial: has_ebr.then(|| le32(&b, ebr + 3)),
-            boot_label: if has_ebr { crate::bytes::label(sub(&b, ebr + 7, 11)) } else { None },
+            serial,
+            boot_label,
             cluster_bytes: bps * spc,
             fat_start: reserved * bps,
             fat_bytes: fatsz * bps,
@@ -333,6 +332,18 @@ impl<'a> Volume<'a> {
     }
 }
 
+/// A FAT boot sector B's volume serial and label, from its extended boot
+/// record: at FAT32's offsets when it gives no 16-bit FAT size (as
+/// `Volume::open` tells FAT32), else FAT12/16's.  None for each without
+/// the record's signature.  For a reader of the first sector only.
+pub fn boot_ids(b: &[u8]) -> (Option<u32>, Option<String>) {
+    let ebr = if le16(b, 22) == 0 { 64 } else { 36 };
+    if u8_at(b, ebr + 2) != 0x29 {
+        return (None, None);
+    }
+    (Some(le32(b, ebr + 3)), crate::bytes::label(sub(b, ebr + 7, 11)))
+}
+
 /// The long name the pieces before SHORT spell, when they are whole: in
 /// order from the last, numbered down to 1, each with SHORT's checksum.
 fn long_name(pieces: &[(u8, [u16; 13], u8)], short: &[u8]) -> Option<String> {
@@ -370,12 +381,15 @@ fn short_name(s: &[u8], flags: u8) -> String {
     if ext.is_empty() { base } else { format!("{base}.{ext}") }
 }
 
-/// FAT16 images for tests, laid out as `mkfs.fat -F 16` does (512-byte
-/// sectors, 4 sectors a cluster, 512 root entries), with directories and
-/// files under long names as mtools' `mcopy` writes them.  Not cfg(test):
-/// the integration tests (tests/json_cli.rs) make sticks too.
+/// FAT images for tests: FAT16 laid out as `mkfs.fat -F 16` does
+/// (512-byte sectors, 4 sectors a cluster, 512 root entries), FAT12 and
+/// FAT32 by `fat`'s geometry, with directories and files under long names
+/// as mtools' `mcopy` writes them.  Not cfg(test): the integration tests
+/// (tests/json_cli.rs) make sticks too.
 #[doc(hidden)]
 pub mod testimg {
+    use super::Kind;
+
     /// A file or directory to put in an image.
     pub enum Node {
         File(String, Vec<u8>),
@@ -390,21 +404,42 @@ pub mod testimg {
         Node::Dir(name.to_string(), nodes)
     }
 
-    const SPC: usize = 4;
-    const CB: usize = SPC * 512;
-    const RESERVED: usize = 4;
-    const ROOT_ENTRIES: usize = 512;
+    /// A volume's layout, in 512-byte sectors: two FATs of FATSZ sectors
+    /// each after RESERVED, then (FAT12/16) ROOT_ENTRIES root entries, then
+    /// clusters of SPC sectors; FIRST the first cluster stored (2, or past
+    /// 65535 to try FAT32's high cluster bits).
+    #[derive(Clone, Copy)]
+    pub struct Geometry {
+        pub kind: Kind,
+        pub total: u32,
+        pub spc: usize,
+        pub reserved: usize,
+        pub fatsz: usize,
+        pub root_entries: usize,
+        pub first: u32,
+    }
 
     /// The image: TOTAL sectors, the boot sector's SERIAL and LABEL, the
     /// root's NODES.
     pub fn fat16(total: u16, serial: u32, label: &str, nodes: &[Node]) -> Vec<u8> {
-        let mut img = boot16(total, serial, label);
-        let fatsz = 64usize;
-        let root_off = (RESERVED + 2 * fatsz) * 512;
-        let data_off = root_off + ROOT_ENTRIES * 32;
-        let mut b = Builder { img: &mut img, fatsz, data_off, next: 2, serial: 0 };
-        b.set_fat(0, 0xfff8);
-        b.set_fat(1, 0xffff);
+        let g = Geometry { kind: Kind::Fat16, total: u32::from(total), spc: 4, reserved: 4, fatsz: 64, root_entries: 512, first: 2 };
+        fat(g, serial, label, nodes)
+    }
+
+    /// An image of geometry G, its boot sector's SERIAL and LABEL, the
+    /// root's NODES.
+    pub fn fat(g: Geometry, serial: u32, label: &str, nodes: &[Node]) -> Vec<u8> {
+        let mut img = boot(g, serial, label);
+        let root_off = (g.reserved + 2 * g.fatsz) * 512;
+        let data_off = root_off + g.root_entries * 32;
+        let mut b = Builder { img: &mut img, g, data_off, next: g.first, serial: 0 };
+        let (media, end) = match g.kind {
+            Kind::Fat12 => (0xff8, 0xfff),
+            Kind::Fat16 => (0xfff8, 0xffff),
+            Kind::Fat32 => (0x0fff_fff8, 0x0fff_ffff),
+        };
+        b.set_fat(0, media);
+        b.set_fat(1, end);
         let mut root = Vec::new();
         if !label.is_empty() {
             let mut l = [b' '; 11];
@@ -417,34 +452,54 @@ pub mod testimg {
         for n in nodes {
             root.extend(b.node(n));
         }
-        assert!(root.len() <= ROOT_ENTRIES * 32);
-        b.img[root_off..root_off + root.len()].copy_from_slice(&root);
+        if g.kind == Kind::Fat32 {
+            let cb = g.spc * 512;
+            root.resize(root.len().div_ceil(cb).max(1) * cb, 0);
+            let c = b.store(&root);
+            b.img[44..48].copy_from_slice(&c.to_le_bytes());
+        } else {
+            assert!(root.len() <= g.root_entries * 32);
+            b.img[root_off..root_off + root.len()].copy_from_slice(&root);
+        }
         img
     }
 
     /// The boot sector of such a volume, the rest zeros.
-    fn boot16(total: u16, serial: u32, label: &str) -> Vec<u8> {
-        let mut img = vec![0u8; usize::from(total) * 512];
+    fn boot(g: Geometry, serial: u32, label: &str) -> Vec<u8> {
+        let mut img = vec![0u8; g.total as usize * 512];
         let b = &mut img[..512];
         b[0..3].copy_from_slice(&[0xeb, 0x3c, 0x90]);
         b[3..11].copy_from_slice(b"mkfs.fat");
         b[11..13].copy_from_slice(&512u16.to_le_bytes());
-        b[13] = SPC as u8;
-        b[14..16].copy_from_slice(&(RESERVED as u16).to_le_bytes());
+        b[13] = g.spc as u8;
+        b[14..16].copy_from_slice(&(g.reserved as u16).to_le_bytes());
         b[16] = 2;
-        b[17..19].copy_from_slice(&(ROOT_ENTRIES as u16).to_le_bytes());
-        b[19..21].copy_from_slice(&total.to_le_bytes());
+        b[17..19].copy_from_slice(&(g.root_entries as u16).to_le_bytes());
+        match u16::try_from(g.total) {
+            Ok(t) if g.kind != Kind::Fat32 => b[19..21].copy_from_slice(&t.to_le_bytes()),
+            _ => b[32..36].copy_from_slice(&g.total.to_le_bytes()),
+        }
         b[21] = 0xf8;
-        b[22..24].copy_from_slice(&64u16.to_le_bytes());
-        b[38] = 0x29;
-        b[39..43].copy_from_slice(&serial.to_le_bytes());
+        let ebr = if g.kind == Kind::Fat32 {
+            b[36..40].copy_from_slice(&(g.fatsz as u32).to_le_bytes());
+            64
+        } else {
+            b[22..24].copy_from_slice(&(g.fatsz as u16).to_le_bytes());
+            36
+        };
+        b[ebr + 2] = 0x29;
+        b[ebr + 3..ebr + 7].copy_from_slice(&serial.to_le_bytes());
         let mut l = *b"NO NAME    ";
         if !label.is_empty() {
             l = [b' '; 11];
             l[..label.len()].copy_from_slice(label.as_bytes());
         }
-        b[43..54].copy_from_slice(&l);
-        b[54..62].copy_from_slice(b"FAT16   ");
+        b[ebr + 7..ebr + 18].copy_from_slice(&l);
+        b[ebr + 18..ebr + 26].copy_from_slice(match g.kind {
+            Kind::Fat12 => b"FAT12   ",
+            Kind::Fat16 => b"FAT16   ",
+            Kind::Fat32 => b"FAT32   ",
+        });
         b[510] = 0x55;
         b[511] = 0xaa;
         img
@@ -452,40 +507,58 @@ pub mod testimg {
 
     struct Builder<'a> {
         img: &'a mut Vec<u8>,
-        fatsz: usize,
+        g: Geometry,
         data_off: usize,
-        next: u16,
+        next: u32,
         serial: u16,
     }
 
     impl Builder<'_> {
-        fn set_fat(&mut self, c: u16, v: u16) {
+        fn set_fat(&mut self, c: u32, v: u32) {
+            let c = c as usize;
             for f in 0..2 {
-                let o = (RESERVED + f * self.fatsz) * 512 + 2 * usize::from(c);
-                self.img[o..o + 2].copy_from_slice(&v.to_le_bytes());
+                let base = (self.g.reserved + f * self.g.fatsz) * 512;
+                match self.g.kind {
+                    Kind::Fat12 => {
+                        let o = base + c + c / 2;
+                        let (lo, hi) = (self.img[o], self.img[o + 1]);
+                        let (lo, hi) = if c % 2 == 0 { (v as u8, (hi & 0xf0) | ((v >> 8) as u8 & 0x0f)) } else { ((lo & 0x0f) | ((v << 4) as u8), (v >> 4) as u8) };
+                        self.img[o] = lo;
+                        self.img[o + 1] = hi;
+                    }
+                    Kind::Fat16 => self.img[base + 2 * c..base + 2 * c + 2].copy_from_slice(&(v as u16).to_le_bytes()),
+                    Kind::Fat32 => self.img[base + 4 * c..base + 4 * c + 4].copy_from_slice(&v.to_le_bytes()),
+                }
             }
         }
 
         /// DATA in a new chain of clusters: its first (0 when empty).
-        fn store(&mut self, data: &[u8]) -> u16 {
+        fn store(&mut self, data: &[u8]) -> u32 {
             if data.is_empty() {
                 return 0;
             }
-            let n = data.len().div_ceil(CB);
+            let cb = self.g.spc * 512;
+            let end = match self.g.kind {
+                Kind::Fat12 => 0xfff,
+                Kind::Fat16 => 0xffff,
+                Kind::Fat32 => 0x0fff_ffff,
+            };
+            let n = data.len().div_ceil(cb);
             let first = self.next;
             for k in 0..n {
-                let c = first + k as u16;
-                let o = self.data_off + (usize::from(c) - 2) * CB;
-                let piece = &data[k * CB..((k + 1) * CB).min(data.len())];
+                let c = first + k as u32;
+                let o = self.data_off + (c as usize - 2) * cb;
+                let piece = &data[k * cb..((k + 1) * cb).min(data.len())];
                 self.img[o..o + piece.len()].copy_from_slice(piece);
-                self.set_fat(c, if k + 1 == n { 0xffff } else { c + 1 });
+                self.set_fat(c, if k + 1 == n { end } else { c + 1 });
             }
-            self.next += n as u16;
+            self.next += n as u32;
             first
         }
 
         /// The directory entries for N, long-name pieces first.
         fn node(&mut self, n: &Node) -> Vec<u8> {
+            let cb = self.g.spc * 512;
             let (name, cluster, size, attr) = match n {
                 Node::File(name, data) => (name.clone(), self.store(data), data.len() as u32, 0x20u8),
                 Node::Dir(name, kids) => {
@@ -497,7 +570,7 @@ pub mod testimg {
                     for k in kids {
                         d.extend(self.node(k));
                     }
-                    d.resize(d.len().div_ceil(CB) * CB, 0);
+                    d.resize(d.len().div_ceil(cb) * cb, 0);
                     (name.clone(), self.store(&d), 0, 0x10u8)
                 }
             };
@@ -527,7 +600,10 @@ pub mod testimg {
             let mut e = [0u8; 32];
             e[..11].copy_from_slice(short);
             e[11] = attr;
-            e[26..28].copy_from_slice(&cluster.to_le_bytes());
+            if self.g.kind == Kind::Fat32 {
+                e[20..22].copy_from_slice(&((cluster >> 16) as u16).to_le_bytes());
+            }
+            e[26..28].copy_from_slice(&(cluster as u16).to_le_bytes());
             e[28..32].copy_from_slice(&size.to_le_bytes());
             out.extend_from_slice(&e);
             out
@@ -537,7 +613,7 @@ pub mod testimg {
 
 #[cfg(test)]
 mod tests {
-    use super::testimg::{dir, fat16, file};
+    use super::testimg::{self, dir, fat16, file};
     use super::*;
     use crate::bytes::MemSource;
 
@@ -632,6 +708,78 @@ mod tests {
         // A first cluster the volume hasn't.
         e.cluster = 60_000;
         assert!(v.read_file(&e, 1 << 20).unwrap_err().contains("hasn't"));
+    }
+
+    /// The tree `img` holds, plus N more files in the root.
+    fn tree(n: usize) -> Vec<testimg::Node> {
+        let big: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
+        let mut v = vec![
+            dir("backotter", vec![file("stick.json", b"{}"), dir("machines", vec![dir("0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90", vec![file("system.json", &big), file("system.json.sha256", b"x")])])]),
+            file("README.txt", b"hello"),
+        ];
+        v.extend((0..n).map(|k| file(&format!("file number {k:02}.txt"), format!("{k}"))));
+        v
+    }
+
+    /// What `reads_directories_and_files_under_long_names` reads, on V.
+    fn reads_the_tree(v: &Volume, n: usize) {
+        assert_eq!(v.serial_text().as_deref(), Some("3F2A-9C71"));
+        assert_eq!((v.boot_label.as_deref(), v.dir_label().as_deref()), (Some("BACKOTTER"), Some("BACKOTTER")));
+        let root: Vec<String> = v.read_dir(None).unwrap().into_iter().map(|e| e.name).collect();
+        assert_eq!(root.len(), 2 + n);
+        assert_eq!(root[..2], ["backotter", "README.txt"]);
+        let f = v.find("backotter/machines/0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90/system.json").unwrap().unwrap();
+        let b = v.read_file(&f, 1 << 20).unwrap();
+        assert_eq!(b.len(), 10_000);
+        assert!(b.iter().enumerate().all(|(i, &x)| x == (i % 251) as u8));
+        assert_eq!(v.read_file(&v.find("README.txt").unwrap().unwrap(), 100).unwrap(), b"hello");
+        for k in 0..n {
+            assert_eq!(v.read_file(&v.find(&format!("FILE NUMBER {k:02}.TXT")).unwrap().unwrap(), 10).unwrap(), format!("{k}").as_bytes());
+        }
+    }
+
+    #[test]
+    fn fat12_volumes() {
+        // 1011 clusters of 2 KiB: FAT12, whose 12-bit entries share bytes;
+        // the 10 000-byte file's chain crosses odd and even entries.
+        let g = testimg::Geometry { kind: Kind::Fat12, total: 4096, spc: 4, reserved: 4, fatsz: 8, root_entries: 512, first: 2 };
+        let src = MemSource(testimg::fat(g, 0x3f2a_9c71, "BACKOTTER", &tree(3)));
+        let v = Volume::open(&src).unwrap();
+        assert_eq!(v.kind, Kind::Fat12);
+        reads_the_tree(&v, 3);
+        assert_eq!(boot_ids(&src.0[..512]), (Some(0x3f2a_9c71), Some("BACKOTTER".to_string())));
+    }
+
+    #[test]
+    fn fat32_volumes_with_a_root_chain_and_high_clusters() {
+        // 512-byte clusters from just below 65536, so chains cross into the
+        // clusters whose number needs the entry's high 16 bits; a root of
+        // 40 files is a chain of several clusters.
+        let first = 0x1_0000 - 8;
+        let clusters = first as usize + 200;
+        let fatsz = ((clusters + 2) * 4).div_ceil(512);
+        let total = (32 + 2 * fatsz + clusters) as u32;
+        let g = testimg::Geometry { kind: Kind::Fat32, total, spc: 1, reserved: 32, fatsz, root_entries: 0, first };
+        let src = MemSource(testimg::fat(g, 0x3f2a_9c71, "BACKOTTER", &tree(40)));
+        let v = Volume::open(&src).unwrap();
+        assert_eq!(v.kind, Kind::Fat32);
+        assert!(v.root_cluster > 0xffff, "{}", v.root_cluster);
+        reads_the_tree(&v, 40);
+        let f = v.find("backotter/machines/0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90/system.json").unwrap().unwrap();
+        assert!(f.cluster < 0x1_0000 && f.cluster + 20 > 0x1_0000, "the chain crosses 65536: {}", f.cluster);
+        assert!(v.find("README.txt").unwrap().unwrap().cluster > 0xffff);
+        // Its serial and label at FAT32's offsets, for a first-sector reader.
+        assert_eq!(boot_ids(&src.0[..512]), (Some(0x3f2a_9c71), Some("BACKOTTER".to_string())));
+        assert_eq!((crate::bytes::le32(&src.0, 67), crate::bytes::u8_at(&src.0, 66)), (0x3f2a_9c71, 0x29));
+    }
+
+    #[test]
+    fn boot_ids_need_the_records_signature() {
+        let mut b = img()[..512].to_vec();
+        assert_eq!(boot_ids(&b), (Some(0x3f2a_9c71), Some("BACKOTTER".to_string())));
+        b[38] = 0;
+        assert_eq!(boot_ids(&b), (None, None));
+        assert_eq!(boot_ids(&[]), (None, None));
     }
 
     #[test]

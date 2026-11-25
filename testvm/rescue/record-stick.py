@@ -41,10 +41,13 @@ LOVELACE = "0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90"
 BABBAGE = "1c2d3e4f-5a6b-4c7d-8e9f-a0b1c2d3e4f5"
 HOPPER = "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6"
 LOVELACE_DMI = "4c4c4544-0042-4b10-8031-b3c04f4e3332"
+# lovelace reinstalled: a new install ID, the same hardware.
+LOVELACE_NEW = "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c"
 
 WORDS = "legal winner thank year wave sausage worth useful legal winner thank yellow"
 # What bko-rescue sends: the 12 fields' words, each completed as the
-# screen completes it (a word not on the list as typed).
+# screen completes it (a word not on the list as typed).  The fake also
+# takes a word's first 4 letters or more for it, as bko-holt does.
 TYPED = {
     "01-good": WORDS + "\n",
     "02-unknown": "legal winner thank year wave sausage worth useful ribbx winner thank yellow\n",
@@ -99,6 +102,10 @@ STICKS = [
                        ("3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7", system("3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7", "turing", "debian", "12", "", "2026-11-01T00:00:00Z", 3, "sftp://nas.local/backotter/turing"), "none")],
      "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", None, False,
      "lovelace ok; babbage's checksum wrong, hopper's schema 2, turing without its .sha256: listed, not choosable"),
+    ("stick-two-here", three()[:1] + [(LOVELACE_NEW, system(LOVELACE_NEW, "lovelace", "debian", "13", LOVELACE_DMI.upper(),
+                                                            "2026-11-24T01:00:00Z", 3, "sftp://nas.local/backotter/lovelace-new"), "ok")],
+     LOVELACE_DMI, None, False,
+     "lovelace twice (reinstalled under a new install ID), both backed up from this computer: neither is taken for it"),
     ("stick-empty", [], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", None, False,
      "a stick no backup has written to yet: no machines"),
     ("stick-missing", three(), "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "no-partition", False,

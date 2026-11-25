@@ -17,9 +17,12 @@ whose `argv` matches answers:
     exit     the exit status (default 0)
     stdin    the call matches only when standard input holds these words:
              both read as recovery words are (split at white space and
-             commas, lower case, numbers before them left out; no word
-             completed), so `recovery-words` (RT10p) answers by the words
-             bko-rescue sends; standard input is read once, at most 1 KiB
+             commas, lower case, numbers before them left out), and a word
+             of 4 letters or more typed matches the file's word it begins
+             (BIP39's words differ in their first 4 letters, so bko-holt
+             completes it the same way; the file holds the words in full),
+             so `recovery-words` (RT10p) answers by the words bko-rescue
+             sends; standard input is read once, at most 1 KiB
     out      written, when the call answers, to the OUT its argv names
              (argv[1], as `recovery-words OUT` and `recovery-key-file
              OUT` take it): a new file (O_EXCL, 0600) in a directory of
@@ -248,7 +251,13 @@ def match(call_dir, argv):
     if not (len(pats) == len(argv) and all(fnmatch.fnmatchcase(a, p) for a, p in zip(argv, pats))):
         return False
     want = read(call_dir, "stdin")
-    return want is None or words(want) == stdin_words()
+    return want is None or same_words(words(want), stdin_words())
+
+
+def same_words(want, typed):
+    """Whether TYPED are the words WANT, each in full or its first 4 letters
+    or more, as bko-holt's recovery.rs `lookup` takes them."""
+    return len(want) == len(typed) and all(t == w or (len(t) >= 4 and w.startswith(t)) for w, t in zip(want, typed))
 
 
 def check_out(path):

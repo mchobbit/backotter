@@ -898,19 +898,27 @@ reads boot sectors only, the *Check* settled at RT10k).
   (`/dev/sdc3`, `/dev/da0s3`, `/dev/dk2`, `/dev/sd0i`,
   `/dev/dsk/c2t0d0s3`, `/dev/disk/usb/0/0/2`), for bko-rescue's restore
   logs; null when it can't tell.
-- `machines[]`, one per directory of `backotter/machines/`, sorted by
+- `machines[]`, one per directory of `backotter/machines/` named by an
+  install ID (a UUID: any other directory is left out, by count in the
+  note `machines_not_install_ids`, its name never in a path), sorted by
   name, at most 64 (more: note `machines_over_limit`).  `state`: `ok`,
   `checksum_bad` (the file doesn't match its `.sha256`, or that isn't
   `sha256sum`'s line), `checksum_missing`, `schema_unknown` (a schema
   this bko-holt or the image's `system_schemas` doesn't read),
   `unreadable` (missing, over 64 MiB, not JSON, not `backotter-system`,
-  its `machine.install_id` not its directory's, a string field over 4 KiB
+  its `machine.install_id` missing or not its directory's (named in `why`
+only when it is a UUID), a string field over 4 KiB
   or a `keyboard`/`time` section over 16 KiB); any but `ok` can't be
   chosen, and `why` says why.  A damaged copy that still parses gives its
   fields (the hostname it names), so the screen can name it.
-  `this_computer` compares `dmi_uuid` with `here.dmi_uuid` (case aside);
-  `here.dmi_uuid` is Linux's (sysfs), null elsewhere, as the plan's
-  `here`, so off Linux no row is "this computer" yet.
+  `this_computer` compares `dmi_uuid` with `here.dmi_uuid` (case aside),
+  when that names one computer: not a firmware placeholder (all zeros,
+  all Fs, not a UUID, or `stick.rs`'s `DMI_UUID_PLACEHOLDERS`), and only
+  when one row matches; two or more (cloned machines, or one reinstalled
+  under a new install ID) are none, with the note
+  `this_computer_ambiguous`, so nothing wrong is preselected.
+  `here.dmi_uuid` is Linux's (sysfs, as read), null elsewhere, as the
+  plan's `here`, so off Linux no row is "this computer" yet.
 - `keyboard` and `time` are system.json's top-level sections of those
   names passed on as they are, null until the backup tool writes them
   (RT10l's dump sections): the screens then say US English and UTC.
@@ -963,14 +971,20 @@ from bko-rescue, at most 1 KiB): the recovery key screen's check, by
   the document.  `suggest` is at most three list words, by edit distance,
   only for a word not on the list.  A write that fails after `ok` is exit
   1 with `written` false and `error` saying why (the file removed).
-- OUT is checked before a word is read: an OUT that isn't absolute, is
+- OUT is checked before a word is read (an OUT that isn't absolute isn't
+  echoed: it may be a word typed in its place): an OUT that isn't absolute, is
   there already, or is in a directory that isn't a real one of ours with
   no group or other bits is exit 2, `bko-holt-error` code `out_unsafe`.
   A terminal on stdin, or more than 1 KiB, is exit 2, `bad_args`.
 - Exit 0: `ok` and written; 1: not a recovery key (or the write failed);
   2: bad arguments.  Without `--json` it refuses (exit 2): the hand tool is
   `bko-recovery-words`, which isn't shipped.
-- Allowed under `BKO_HOLT_NO_COMMIT` (it writes no disk).
+- Allowed under `BKO_HOLT_NO_COMMIT` (it writes no disk).  It sets
+  RLIMIT_CORE to 0 before it reads a word (Secrets, item 10), and reads
+  them unbuffered into one buffer it wipes.
+- `suggest` names list words near a mistyped one, so it gives most of a
+  word of the key away: bko-rescue keeps the recovery document out of its
+  logs and bug reports, as it does the words.
 - Ubuntu Core's `old_passphrase` path is `recovery-key-file OUT` as it is:
   the key on its stdin, a pipe from bko-rescue, and OUT a new file in the
   same `k/` directory; under `BKO_HOLT_NO_COMMIT` it refuses an OUT that
@@ -2023,6 +2037,37 @@ Linux image's) with machines put on by mtools, for RT11.
     stick --json` in `stick/*/config-checks.sh` beside its checks).
     marker.py's partition with mtools' long names stood in.
 
+### What the RT10k and RT10p review found
+
+Reviewed 2026-11-25 (8003d22, 05e1a65); fixed in "review fixes for
+RT10k+p":
+
+- **Fixed:** `recovery-words --json` sets RLIMIT_CORE to 0 itself (it
+  relied on bko-rescue's unit's LimitCORE), reads standard input through
+  a copy of descriptor 0 into a buffer sized once (Stdin's own buffer and
+  a growing Vec left copies of the words), and `near`'s copies of a typed
+  word are wiped; a single word given as OUT is refused without being
+  echoed.  `stick`: a machine directory not named by a UUID is left out
+  (note `machines_not_install_ids`; a crafted `../../etc` reached
+  `path`), a system.json without `machine.install_id` is `unreadable`,
+  and a mismatched one is named only when it's a UUID (a 200 KB one made
+  a 202 KB document); "this computer" ignores firmware placeholder UUIDs
+  and is none when several rows match (`this_computer_ambiguous`);
+  illumos' marker scan reads the serial and label at FAT32's offsets too
+  (`fatfs::boot_ids`) and compares the label case aside, as
+  `check_identity` does.  Tests: FAT12 and FAT32 images (a root chain,
+  clusters past 65535), the directory and install-ID cases (golden
+  `not-install-ids`), placeholders and two matches; holt_schema.py checks
+  a machine's install_id is a UUID, its path under it, and at most one
+  `this_computer`; the fake takes a word's first 4 letters or more as
+  bko-holt does; a recorded `stick-two-here`.
+- **Left:** the plan's `here.same_machine` has the same placeholder
+  weakness (text mode's plan isn't touched by it; for RT12); the test
+  image builders and samples stay compiled into the library, as
+  json_cli.rs needs them (`#[doc(hidden)]`); open questions 8 and 9 (the
+  layout's copy, the word list) block RT12 and RT11's Recovery key
+  screen.
+
 ## Decisions
 
 - **J1. How bko-rescue finds bko-holt's protocol.**  `bko-holt --version
@@ -2214,3 +2259,19 @@ Linux image's) with machines put on by mtools, for RT11.
    has no terminal to lose) and SIGINT left at their defaults?
 7. **The events file's size** on a 20-hour copy (~14 MiB): rotate, or
    keep progress to one event every 5 s past an hour?
+8. **The layout's copy for load** (blocks RT12; "What RT10k and RT10p
+   found"): `bko-holt stick --copy INSTALL_ID OUT --json`, the system.json
+   `stick` just checked written to a new 0600 file in bko-rescue's `k/`-like
+   private directory, the bytes whose checksum it checked (*recommended*:
+   no check-then-use gap, and bko-rescue still reads no FAT).  Or
+   bko-rescue mounts `config.dev` read-only, copies the file and checks its
+   `.sha256` itself (a SHA-256 in bko-rescue, D2).  Either way load can't
+   take a `backotter-system` document until the backup tool's spec says
+   how system.json carries the dump.
+9. **The Recovery key screen's word list** (blocks RT11's completion: a
+   word filled in after 4 letters, an unknown one named as it is typed):
+   `bip39-english.txt` taken by `include_str!` from `holt/src` (D2 amended
+   for a data file: one file, fixed by the compatibility contract, no
+   call to fail) (*recommended*).  Or `bko-holt recovery-words --list`,
+   the 2048 words on stdout, read once at start.  The check itself stays
+   in holt either way.

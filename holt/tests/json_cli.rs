@@ -473,5 +473,10 @@ fn recovery_words_is_a_document() {
     let o = run(&["recovery-words", "legal", "winner", "--json"], &[], None);
     let v = assert_error(&o, 2, "bad_args");
     assert!(!v.get_str("text").unwrap().contains("legal") && !err(&o).contains("legal"));
+    // One word in OUT's place: refused as OUT, the word not echoed.
+    let o = run(&["recovery-words", "legal", "--json"], &[], Some(words));
+    let v = assert_error(&o, 2, "out_unsafe");
+    assert!(v.get_str("text").unwrap().contains("absolute"));
+    assert!(!out(&o).contains("legal") && !err(&o).contains("legal"), "{}", err(&o));
     assert!(!std::path::Path::new(&pw1).exists());
 }

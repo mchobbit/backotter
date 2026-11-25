@@ -274,6 +274,7 @@ STATUS = header(
     problems=List(CODED))
 
 # bko-holt stick --json (RT10k): the config partition and its machines.
+UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 CONFIG_STATES = ("ok", "missing", "damaged", "two_sticks", "unreadable")
 MACHINE_STATES = ("ok", "checksum_bad", "checksum_missing", "schema_unknown", "unreadable")
 MACHINE = Obj({"install_id": STR, "path": STR, "state": Enum(*MACHINE_STATES), "why": S_, "schema": I_,
@@ -355,6 +356,11 @@ def check_document(v, where):
         for i, m in enumerate(v["machines"]):
             if (m["state"] == "ok") != (m["why"] is None) or (m["state"] == "ok" and not m["known_schema"]):
                 errs.append("%s: machines[%d]: state %s, why %s, known_schema %s" % (where, i, m["state"], json.dumps(m["why"]), m["known_schema"]))
+            # A machine's directory is its install ID, a UUID (never ../..).
+            if not UUID.fullmatch(m["install_id"]) or m["path"] != "backotter/machines/%s/system.json" % m["install_id"]:
+                errs.append("%s: machines[%d]: install_id %s, path %s" % (where, i, json.dumps(m["install_id"]), json.dumps(m["path"])))
+        if sum(1 for m in v["machines"] if m["this_computer"]) > 1:
+            errs.append("%s: more than one machine is this computer" % where)
     if fmt == "bko-holt-recovery" and not errs:
         if v["ok"] != (v["problem"] is None) or (v["ok"] and v["checksum_ok"] is not True):
             errs.append("%s: ok %s with problem %s, checksum_ok %s" % (where, v["ok"], json.dumps(v["problem"]), v["checksum_ok"]))

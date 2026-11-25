@@ -65,14 +65,28 @@ pub fn main(args: &[String]) -> u8 {
         eprint!("bko-holt recovery-words: say --json: it writes its verdict as JSON, for bko-rescue\n\n{USAGE}");
         return 2;
     }
+    // OUT is echoed only once it's absolute: a word typed in its place
+    // (`recovery-words legal --json`) would be in what this prints.
+    if !std::path::Path::new(out).is_absolute() {
+        return refuse(jsonout::ErrorCode::OutUnsafe, "bko-holt recovery-words: OUT isn't an absolute path (the words go on standard input, never as an argument)".into(), true);
+    }
     if let Some(why) = out_unsafe(out) {
         return refuse(jsonout::ErrorCode::OutUnsafe, format!("bko-holt recovery-words: {out}: {why}"), true);
     }
+    // No core dumps: this process holds the words and the password they
+    // stand for (Secrets, item 10), whatever limit its parent set.
+    crate::sys::no_core_dumps();
     if std::io::stdin().is_terminal() {
         return refuse(jsonout::ErrorCode::BadArgs, "bko-holt recovery-words: the words go on standard input, a pipe: it asks nothing".into(), true);
     }
-    let mut raw = Vec::new();
-    let read = std::io::stdin().take(STDIN_MAX as u64 + 1).read_to_end(&mut raw);
+    // Room for all of it at once: a buffer that grows would leave unwiped
+    // copies of the words behind in the memory it freed.  Read through a
+    // copy of descriptor 0, not Stdin, whose buffer would keep them.
+    let mut raw = Vec::with_capacity(STDIN_MAX + 1);
+    let read = {
+        use std::os::fd::AsFd;
+        std::io::stdin().as_fd().try_clone_to_owned().map(std::fs::File::from).and_then(|f| f.take(STDIN_MAX as u64 + 1).read_to_end(&mut raw))
+    };
     if read.is_err() || raw.len() > STDIN_MAX {
         recovery::zeroize_bytes(&mut raw);
         let why = if read.is_err() { "standard input can't be read".to_string() } else { format!("more than {STDIN_MAX} bytes on standard input") };

@@ -33,7 +33,9 @@
 #   BS2_REPO_BIND      (with BS2_REUSE_BACKUP) the preparation's repository
 #                      as a read-only bind mount at share/repo, not a copy;
 #                      0, or a case on /bkoscratch (HT_RAM=0), or a bind that
-#                      fails: copied as before, with a note: line
+#                      fails: copied as before, with a note: line; but a case
+#                      whose reservation left the repository out copies only
+#                      what provably fits, else refuses (HARNESS: bs2_repo_copy)
 #   BS2_RESCUER_STATE  the rescuer resumes from a state saved once per
 #                      rescuer, firmware, QEMU and host (ROOT/rescuer-state/),
 #                      the case's targets and decoy hot-plugged after, as
@@ -167,7 +169,10 @@ bs2_umount() { (trap '' TERM INT HUP; exec "$T/vm-umount" "$SRC_MP") >> "$R/logs
 
 phase_backup_bs2() {
     say "== backup ($BS2_NAME: $BS2_SNAPS snapshot(s), content $BS2_CONTENT)"
-    bs2_backup_reuse || bs2_backup_own || return
+    local rc=0
+    bs2_backup_reuse || rc=$?
+    # (2: the copy fallback refused, a HARNESS FAIL: no backup of its own either.)
+    case $rc in 0) ;; 2) return 1 ;; *) bs2_backup_own || return ;; esac
     cp "$RUSTIC" "$S/rustic-bko"; cp "$BIN"/*.deb "$S/"
     [[ ! -f $BIN/bcachefs ]] || cp "$BIN/bcachefs" "$S/"
     [[ -n $gpass ]] && printf '%s' "$(cat "$gpass")" > "$S/passphrase"
@@ -179,9 +184,11 @@ phase_backup_bs2() {
 # content and takes one snapshot (BS2_SHARE_BACKUP), and its rustic-bko made
 # that backup.  Its repository where it is, bound read-only at share/repo
 # (bs2_repo_bind: none of it in the RAM disk), else a copy there, as before
-# (with a note: line saying why); its password, fsmeta record and snapshot
-# list copied.  The rescuer mounts the share read-only either way; load
-# restores latest:PATH of the preparation's mount point (bs2-snap-path).
+# (with a note: line saying why; bs2_repo_copy, which refuses a copy that
+# can't be shown to fit a reservation that left the repository out: exit 2);
+# its password, fsmeta record and snapshot list copied.  The rescuer mounts
+# the share read-only either way; load restores latest:PATH of the
+# preparation's mount point (bs2-snap-path).
 bs2_backup_reuse() {
     rm -f "$R/bs2-snap-path" "$R/bs2-repo-from"
     [[ -z ${BS2_PREPARE:-} && ${BS2_REUSE_BACKUP:-1} == 1 && $BS2_SHARE_BACKUP == 1 ]] || return 1
@@ -197,10 +204,12 @@ bs2_backup_reuse() {
     if bs2_repo_bind "$from"; then
         how="bound read-only where it is, $(du -sh "$from" 2>/dev/null | cut -f1), none of it in the RAM disk: $from"
     else
-        say "note: backup: the preparation's repository copied into the share, not bound ($BS2_REPO_WHY)$(
-            [[ ${BS2_REPO_ROOM:-} != 0 ]] || echo "; this case's reservation left the repository out (bs2-host case_disk): the copy may outgrow it")"
-        if ! cp -a --reflink=auto "$from" "$S/repo"; then
-            bs2_repo_clear; rm -f "$R/src-meta.json"
+        local rc=0
+        bs2_repo_copy "$from" "not bound" || rc=$?
+        if ((rc == 2)); then
+            rm -f "$R/src-meta.json" "$R/bs2-snapshots.json" "$S/repo-password"; return 2
+        elif ((rc != 0)); then
+            rm -f "$R/src-meta.json"
             say "note: backup: one of its own (copying the preparation's failed)"; return 1
         fi
         how="copied, $(du -sh "$S/repo" | cut -f1)"
@@ -232,7 +241,7 @@ bs2_backup_reuse() {
 #   - the share's chmod skips it (bs2_share_readable): never a write there.
 # R/bs2-repo-from names the bound repository, so a run from rebuild on (its
 # state from K, which keeps share/repo empty) binds it again (bs2_repo_again).
-BS2_REPO_MNT="" BS2_REPO_WHY=""
+BS2_REPO_MNT="" BS2_REPO_WHY="" BS2_REPO_FIT=""
 bs2_repo_log() { echo "$(date -u +%FT%TZ) $*" >> "$R/logs/bs2-repo.log"; }
 
 # FROM bound read-only at share/repo; exit 1, BS2_REPO_WHY saying why and
@@ -305,10 +314,76 @@ bs2_repo_again() {
         ok "the prepared backup bound again, read-only ($from)"
         return 0
     fi
-    say "note: backup: the preparation's repository copied into the share, not bound again ($BS2_REPO_WHY)"
-    bs2_repo_clear && cp -a --reflink=auto "$from" "$S/repo" || { bad "the preparation's repository: neither bound nor copied ($from)"; return 1; }
+    local rc=0
+    bs2_repo_copy "$from" "not bound again" || rc=$?
+    ((rc != 2)) || return 1
+    ((rc == 0)) || { bad "the preparation's repository: neither bound nor copied ($from)"; return 1; }
     rm -f "$R/bs2-repo-from"
 }
+
+# ---- the copy fallback ----
+# FROM copied into share/repo (a bind that failed, or none: BS2_REPO_WHY), with
+# a note: line ("copied into the share, WHAT (BS2_REPO_WHY)").  A case whose
+# reservation left the repository out (BS2_REPO_ROOM=0: bs2-host case_disk
+# reserved d_shared, or d less the repository) copies it into the RAM disk only
+# when bs2_repo_fits shows the copy fits; else it refuses before copying: exit 2,
+# a harness FAIL line ("backup refused": tier1.py's HARNESS, never bko-holt's
+# FAIL) naming the bind's failure, the sizes and the remedy, nothing copied.
+# A case that reserved the full room (BS2_REPO_ROOM 1 or unset), or works on
+# /bkoscratch (HT_MODE disk: none of it in the RAM disk), copies as before.
+# Exit 1: the copy failed (ENOSPC, say), and nothing of it is left.
+bs2_repo_copy() {  # FROM WHAT
+    local from=$1 what=$2
+    if [[ ${BS2_REPO_ROOM:-} == 0 && ${HT_MODE:-} == ram ]]; then
+        if ! bs2_repo_fits "$from"; then
+            bs2_repo_log "copy of $from refused: $BS2_REPO_FIT"
+            harness "backup refused: the preparation's repository wasn't bound ($BS2_REPO_WHY: logs/bs2-repo.log), and a copy" \
+                "into the RAM disk can't be shown to fit this case's reservation, which left the repository out (bs2-host" \
+                "case_disk: d_shared, or d less the repository): $BS2_REPO_FIT; nothing copied.  Remedy: make the bind work" \
+                "(root, mount --bind -o ro), or run the case with BS2_REPO_BIND=0, which reserves its source's full room"
+            return 2
+        fi
+        say "note: backup: the preparation's repository copied into the share, $what ($BS2_REPO_WHY); this case's reservation left the repository out (bs2-host case_disk), and the copy fits it: $BS2_REPO_FIT"
+    else
+        say "note: backup: the preparation's repository copied into the share, $what ($BS2_REPO_WHY)"
+    fi
+    bs2_repo_clear || return 1
+    cp -a --reflink=auto "$from" "$S/repo" && return 0
+    bs2_repo_clear
+    return 1
+}
+
+# Whether FROM's copy fits this case's reservation (RESERVED GiB) in the RAM
+# disk: the reservation, less what R holds now (ht_measure), leaves room for
+# the copy (FROM's files as the RAM disk would take them, each to whole 4 KiB
+# pages, a page each directory) and the rest of the case's measured peak
+# without its repository (BS2_REPO_PEAK_KIB, from bs2-host: room.py
+# shared_peak(), less what R holds now).  BS2_REPO_FIT says the sizes either
+# way; anything unknown (no peak, no reservation, a size unread): it doesn't.
+bs2_repo_fits() {  # FROM
+    local from=$1 peak=${BS2_REPO_PEAK_KIB:-} res held repo rest room need
+    BS2_REPO_FIT=""
+    [[ $peak =~ ^[0-9]+$ ]] || { BS2_REPO_FIT="its measured peak without the repository is unknown (no BS2_REPO_PEAK_KIB)"; return 1; }
+    res=$(awk -v r="${RESERVED:-0}" 'BEGIN { if (r + 0 > 0) printf "%d", r * 1048576 }')
+    [[ $res =~ ^[0-9]+$ ]] || { BS2_REPO_FIT="its reservation is unknown (RESERVED=${RESERVED:-})"; return 1; }
+    read -r held _ < <(ht_measure)
+    [[ $held =~ ^[0-9]+$ ]] || { BS2_REPO_FIT="what the RAM disk holds of it couldn't be measured"; return 1; }
+    repo=$(python3 -c '
+import os, sys
+k = 0
+for d, dirs, files in os.walk(sys.argv[1], onerror=lambda e: sys.exit(1)):
+    k += 4
+    for f in files:
+        k += -(-os.lstat(os.path.join(d, f)).st_size // 4096) * 4
+print(k)' "$from" 2>/dev/null)
+    [[ $repo =~ ^[0-9]+$ ]] && ((repo > 0)) || { BS2_REPO_FIT="the repository's size at $from couldn't be read"; return 1; }
+    rest=$((peak > held ? peak - held : 0))
+    room=$((res - held))
+    need=$((repo + rest))
+    BS2_REPO_FIT="$(bs2_gib "$res") GiB reserved, $(bs2_gib "$held") GiB held, $(bs2_gib "$room") GiB left; the copy $(bs2_gib "$repo") GiB and $(bs2_gib "$rest") GiB more to its measured peak ($(bs2_gib "$peak") GiB without the repository) need $(bs2_gib "$need") GiB"
+    ((room >= need))
+}
+bs2_gib() { awk -v k="$1" 'BEGIN { printf "%.2f", k / 1048576 }'; }   # KiB -> GiB, 2 places
 
 # The share readable by all (ht1.sh's chmod -R a+rX), but never into the bound
 # repository: read-only (each chmod there an EROFS) and the preparation's.

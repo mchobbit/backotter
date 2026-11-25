@@ -31,7 +31,10 @@ from . import case as C, ledger as L
 
 HARNESS = [r"^FAIL source boots", r"^FAIL rescuer boots", r"^FAIL rescuer setup", r"rescue image:", r"over its reservation",
            r"^FAIL mount the source", r"^FAIL rustic-bko init", r"the pin changed", r"^FAIL fsmeta record", r"bs2-host apply",
-           r"^FAIL the rescuer's QEMU didn't quit"]
+           r"^FAIL the rescuer's QEMU didn't quit",
+           # (ht1-bs2.sh's bs2_repo_copy: the preparation's repository neither bound nor, in a reservation
+           # that left it out, a copy that provably fits: refused before copying, the rig's.)
+           r"^FAIL backup refused: "]
 
 
 def check_of(line):

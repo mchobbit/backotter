@@ -1058,14 +1058,32 @@ def cmd_tier1(a):
             die(f"{name}: an SSD case, and this host's SSD lane is busy ({ROOT}/ssd.lock): run it as "
                 f"bs2-host lane {a.case} -- cmp-run.sh ... tier1 (bs2's replay, soak and corpus do)", 2)
     slim_own_boot(src, a.tier, a.run)
-    # (Whether a case like this reserves without its repository: ht1-bs2.sh's note when it
-    # has to copy it after all says the copy may outgrow the reservation.)
-    try:
-        os.environ["BS2_REPO_ROOM"] = "0" if scratch == "ram" and repo_shared(a.case, a.tier) else "1"
-    except Exception:
-        os.environ["BS2_REPO_ROOM"] = "1"
+    repo_room_env(a.case, c, src, dump, a.tier, scratch)
     rc = T1.run(c, name, src, gen, dump, a.tier, a.run, a.port, HERE, TESTVM, ROOT, holt_bin(), bins(), scratch=scratch)
     sys.exit(rc)
+
+
+def repo_room_env(path, c, src, dump, tier, scratch):
+    """Whether the case at PATH (C, of SRC, its dump DUMP) reserves without its repository, for
+    ht1-bs2.sh's copy fallback (bs2_repo_copy) should its bind fail: BS2_REPO_ROOM 0 (a case in
+    the RAM disk whose backup is its preparation's: repo_shared()), with BS2_REPO_PEAK_KIB, the
+    most it holds there without its repository (room.py shared_peak(), and a GiB more for each
+    GiB of inode table it writes, as case_disk() adds); else 1, and no peak.  A copy into the
+    reduced reservation happens only when it provably fits; with no peak it never does."""
+    from bs2lib import room as RM
+    os.environ.pop("BS2_REPO_PEAK_KIB", None)
+    try:
+        sh = repo_shared(path, tier) if scratch == "ram" else None
+    except Exception:
+        sh = None
+    os.environ["BS2_REPO_ROOM"] = "0" if sh else "1"
+    if sh:
+        try:
+            g = C.itable_growth(c, dump)
+            peak = RM.shared_peak(src, sh[1]) + -(-g // (1 << 30)) * (1 << 30)
+            os.environ["BS2_REPO_PEAK_KIB"] = str(-(-peak // 1024))
+        except Exception as e:   # (then the copy fallback refuses: it can't be shown to fit)
+            print(f"bs2-host: {path}: its peak without its repository couldn't be worked out ({e})", file=sys.stderr)
 
 
 def slim_own_boot(src, tier, run):

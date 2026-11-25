@@ -19,7 +19,9 @@ drift, or N snapshots) into the share in its RAM disk.  A case whose backup is
 the preparation's (reuse.backup_shareable()) reads that repository where it is
 on /bkoscratch (ht1-bs2.sh's bs2_repo_bind), so it reserves less: shared_of(),
 the slimmed source's measured d_shared, else the room less the repository's
-whole GiB (bs2-host case_disk(), repo_shared()).
+whole GiB (bs2-host case_disk(), repo_shared()).  Should its bind fail, it copies
+the repository into its RAM disk only when that provably fits (shared_peak();
+ht1-bs2.sh's bs2_repo_fits), else refuses, a HARNESS row.
 
 Placement is per case (bs2's held() and split()): a case may go to any host whose
 ceiling holds its own reservation.  need() is the source's room (its own-backup
@@ -132,6 +134,25 @@ def shared_of(source, repo_bytes, path=SIZES, slim_path=None):
     if row and row.get("d_shared"):
         return max(C.DISK_GIB, row["d_shared"])
     return max(C.DISK_GIB, of(source, path, slim_path)[0] - int(max(0, repo_bytes) // (1 << 30)))
+
+
+def shared_peak(source, repo_bytes, path=SIZES, slim_path=None):
+    """The most (bytes) a case of SOURCE whose backup is its preparation's holds in its RAM
+    disk with that repository (REPO_BYTES) not there, as far as its measured room tells:
+    the largest peak its room's rule allows, D = ceil(1.10 x peak + 0.25) GiB, so a
+    measured d_shared's (d_shared - 0.25) / 1.10 GiB; a slimmed source with no d_shared,
+    its d's the same way less the repository; any other, its room itself (ram-sizes.tsv's
+    D, another rule) less the repository; never under 0.  ht1-bs2.sh's copy fallback
+    (bs2_repo_fits, BS2_REPO_PEAK_KIB) copies the repository into such a case's RAM disk
+    only when its reservation holds this and the copy."""
+    G = 1 << 30
+    repo = max(0, repo_bytes)
+    row = slim_row(source, slim_path)
+    if row and row.get("d_shared"):
+        return max(0, int((row["d_shared"] - 0.25) / 1.10 * G))
+    if row:
+        return max(0, int((row["d"] - 0.25) / 1.10 * G) - repo)
+    return max(0, full_of(source, path)[0] * G - repo)
 
 
 def need(source, path=SIZES):

@@ -138,7 +138,24 @@ and a case that can't take it does its own, with a `note:` line saying why:
   (`bs2-host case_disk()`: room.py `shared_of()`, "Slimming" below) when
   `repo_shared()` finds it will take it (shareable, the preparation serving
   at its tier with bko-bin's rustic-bko, no switch at 0); its own-backup
-  cases, and placement, keep the source's room.
+  cases, and placement, keep the source's room.  So a bind that fails in
+  such a case (in the RAM disk, `BS2_REPO_ROOM=0` from `bs2-host tier1`)
+  copies only what provably fits (since 2026-11-25; before, the copy went
+  ahead with a note that it "may outgrow" the reservation, and on a small
+  host would have hit ENOSPC partway): its reservation less what R holds
+  now must leave room for the copy (the repository's files in whole 4 KiB
+  pages) and the rest of the case's measured peak without it
+  (`BS2_REPO_PEAK_KIB`: room.py `shared_peak()`, the largest peak
+  `d_shared`'s rule allows, else the room less the repository, plus
+  `case_disk()`'s inode-table GiB).  Else, or with any of those unknown,
+  the case refuses before copying: `FAIL backup refused: ...` naming the
+  bind's failure, the sizes and the remedy (make the bind work, or run the
+  case with `BS2_REPO_BIND=0`, which reserves the full room), a `harness`
+  FAIL that tier1.py classes HARNESS (never bko-holt's FAIL; rerun once),
+  with no backup of its own, nothing copied and the preparation's records
+  taken back out of R (`ht1-bs2.sh` bs2_repo_copy, bs2_repo_fits; a run
+  from rebuild on, bs2_repo_again, the same).  A case that reserved the
+  full room copies as before, with its note.
 - **The rescuer's state**: the first case on a host that finds none for its
   key (`bs2-host rescuer-key`: rescuer image and its .sha256, firmware
   options, memory, QEMU, OVMF, host kernel and CPU microcode, vm-run,

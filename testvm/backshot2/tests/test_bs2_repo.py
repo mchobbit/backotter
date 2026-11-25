@@ -142,7 +142,8 @@ class RepoBind(TR.PrepFixture):
                          ({"HT_MODE": "disk"}, "the case works on /bkoscratch (HT_RAM=0)"),
                          ({"FAKE_MOUNT_FAIL": "1"}, "mount --bind: mount: only root can use --bind"),
                          ({"FAKE_OPTS": "rw,nosuid"}, "wasn't read-only"),
-                         ({"FAKE_MOUNT_FAIL": "1", "BS2_REPO_ROOM": "0"}, "the copy may outgrow it")):
+                         # (A reservation that left the repository out, on /bkoscratch: none of it in the RAM disk.)
+                         ({"HT_MODE": "disk", "BS2_REPO_ROOM": "0"}, "the case works on /bkoscratch (HT_RAM=0)")):
             with self.subTest(env=env):
                 r, R = self.hooks("bs2_source_reuse >/dev/null; BS2_SHARE_BACKUP=1; bs2_backup_reuse && echo BACKUP", **env)
                 self.assertEqual(r.returncode, 0, r.stderr)
@@ -220,6 +221,135 @@ class RepoBind(TR.PrepFixture):
         r, R = self.hooks(f'mkdir -p $S; bs2_repo_bind {self.t}/elsewhere || echo "NO $BS2_REPO_WHY"')
         self.assertEqual(r.stdout.splitlines(), [f"NO {os.path.realpath(self.t)}/elsewhere isn't a preparation's repository"])
         self.assertEqual(self.mnttab(), "")
+
+
+class CopyRoom(RepoBind):
+    """The copy fallback in a reservation that left the repository out (BS2_REPO_ROOM=0): a copy
+    only when it provably fits, else refused before copying, a HARNESS FAIL; a full reservation
+    copies as before.  ht_measure stood in for (HELD KiB of R), RESERVED as ht_paths sets it."""
+
+    PRE = ('harness() { bad "$*"; echo "HARNESS_WHY"; }; ht_measure() { echo "${HELD-0} -"; }; '
+           "bs2_source_reuse >/dev/null; BS2_SHARE_BACKUP=1; ")
+
+    def reuse(self, **env):
+        e = dict(FAKE_MOUNT_FAIL="1", BS2_REPO_ROOM="0", RESERVED="7", HELD=str(5 * 1048576))
+        e.update(env)
+        e = {k: v for k, v in e.items() if v is not None}
+        script = (self.PRE + 'RESERVED=${RESERVED:-}; bs2_backup_reuse; echo "RC $?"; '
+                  "[[ -e $S/repo ]] && echo REPO; mountpoint -q $S/repo && echo MOUNTED; true")
+        r, R = self.hooks(script, **e)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.splitlines(), R
+
+    def note(self, out):
+        return [l for l in out if l.startswith("note: backup: the preparation's repository copied into the share")]
+
+    def assert_copied(self, out, R):
+        self.assertIn("RC 0", out)
+        self.assertTrue(any(l.startswith("PASS the prepared backup, this case's tree as it stands (copied, ") for l in out), out)
+        self.assertFalse([l for l in out if l.startswith("FAIL")], out)
+        self.assertFalse(os.path.islink(f"{R}/share/repo"))
+        self.assertTrue(os.path.isfile(f"{R}/share/repo/config"))
+        self.assertFalse(os.path.samefile(f"{R}/share/repo/config", f"{self.k}/backup/repo/config"))
+        self.assertEqual(self.mnttab(), "")
+        self.assert_prep_intact()
+
+    def test_fits_and_copies(self):
+        # 7 GiB reserved, 5 held, 0.5 more to the peak: 2 GiB left for the copy (8 KiB) and 0.5 GiB.
+        out, R = self.reuse(BS2_REPO_PEAK_KIB=str(int(5.5 * 1048576)))
+        self.assert_copied(out, R)
+        note = self.note(out)
+        self.assertEqual(len(note), 1, out)
+        self.assertIn("not bound (mount --bind: mount: only root can use --bind); this case's reservation left the repository out "
+                      "(bs2-host case_disk), and the copy fits it: 7.00 GiB reserved, 5.00 GiB held, 2.00 GiB left; the copy "
+                      "0.00 GiB and 0.50 GiB more to its measured peak (5.50 GiB without the repository) need 0.50 GiB", note[0])
+        # Already past its peak: only the copy itself counts.
+        out, R = self.reuse(BS2_REPO_PEAK_KIB=str(4 * 1048576))
+        self.assert_copied(out, R)
+        self.assertIn("0.00 GiB more to its measured peak", self.note(out)[0])
+
+    def test_doesnt_fit_refuses_as_harness(self):
+        # 7 GiB reserved, 5 held: 2 GiB left, and the peak 2 GiB more: the copy's 8 KiB over.
+        for env, why in (({"BS2_REPO_PEAK_KIB": str(7 * 1048576)}, "2.00 GiB left; the copy 0.00 GiB and 2.00 GiB more"),
+                         ({"BS2_REPO_PEAK_KIB": None}, "its measured peak without the repository is unknown"),
+                         ({"BS2_REPO_PEAK_KIB": "1", "RESERVED": "0"}, "its reservation is unknown"),
+                         ({"BS2_REPO_PEAK_KIB": "1", "HELD": ""}, "couldn't be measured"),
+                         ({"BS2_REPO_PEAK_KIB": str(7 * 1048576), "FAKE_OPTS": "rw"}, "wasn't read-only")):
+            with self.subTest(env=env):
+                env.setdefault("FAKE_MOUNT_FAIL", None if "FAKE_OPTS" in env else "1")
+                out, R = self.reuse(**env)
+                self.assertIn("RC 2", out)
+                fails = [l for l in out if l.startswith("FAIL")]
+                self.assertEqual(len(fails), 1, out)
+                self.assertIn("HARNESS_WHY", out)
+                f = fails[0]
+                self.assertTrue(f.startswith("FAIL backup refused: the preparation's repository wasn't bound ("), f)
+                self.assertIn(why, f)
+                self.assertIn("nothing copied", f)
+                self.assertIn("BS2_REPO_BIND=0, which reserves its source's full room", f)
+                if "FAKE_OPTS" not in env:
+                    self.assertIn("mount --bind: mount: only root can use --bind", f)
+                # Nothing copied, nothing of the preparation's left in the case, nothing mounted.
+                self.assertNotIn("REPO", out)
+                self.assertNotIn("MOUNTED", out)
+                self.assertFalse(self.note(out), out)
+                for p in ("share/repo", "share/repo-password", "src-meta.json", "bs2-snapshots.json", "bs2-snap-path",
+                          "bs2-repo-from"):
+                    self.assertFalse(os.path.lexists(f"{R}/{p}"), p)
+                self.assertEqual(self.mnttab(), "")
+                self.assert_prep_intact()
+                with open(f"{R}/logs/bs2-repo.log") as lf:
+                    self.assertIn(f"copy of {self.repo()} refused: ", lf.read())
+                # tier1.py: the rig's, never bko-holt's FAIL.
+                from bs2lib import tier1 as T1
+                v, check, _ = T1.verdict_of(f"HoltTest1 c1, phases: source backup rebuild verify\n{f}\nstopped after backup\n"
+                                            "RESULT: FAIL (1; harness: backup refused)\n")
+                self.assertEqual((v, check), ("HARNESS", "backup refused"))
+
+    def test_a_refusal_takes_no_backup_of_its_own(self):
+        r, R = self.hooks(self.PRE + 'bs2_backup_own() { echo OWN; }; RESERVED=7; phase_backup_bs2; echo "RC $?"',
+                          FAKE_MOUNT_FAIL="1", BS2_REPO_ROOM="0", HELD=str(6 * 1048576), BS2_REPO_PEAK_KIB=str(8 * 1048576),
+                          BS2_SNAPS="1", BS2_CONTENT="none")
+        out = r.stdout.splitlines()
+        self.assertIn("RC 1", out)
+        self.assertNotIn("OWN", out)
+        self.assertFalse(os.path.lexists(f"{R}/share/repo"))
+        self.assertFalse(os.path.lexists(f"{R}/share/rustic-bko"))   # (the phase stopped there)
+
+    def test_a_full_reservation_copies_as_before(self):
+        for room in ("1", None):
+            with self.subTest(room=room):
+                # Its peak and what it holds don't matter: today's copy, today's note.
+                out, R = self.reuse(BS2_REPO_ROOM=room, BS2_REPO_PEAK_KIB=str(40 * 1048576), RESERVED="2")
+                self.assert_copied(out, R)
+                self.assertEqual(self.note(out), ["note: backup: the preparation's repository copied into the share, not bound "
+                                                  "(mount --bind: mount: only root can use --bind)"])
+
+    def test_a_run_from_rebuild_refuses_the_same_way(self):
+        r, R = self.hooks("mkdir -p $R/share; echo " + self.repo() + " > $R/bs2-repo-from; " + self.PRE +
+                          'RESERVED=7; bs2_repo_again; echo "RC $?"', FAKE_MOUNT_FAIL="1", BS2_REPO_ROOM="0",
+                          HELD=str(5 * 1048576), BS2_REPO_PEAK_KIB=str(7 * 1048576))
+        out = r.stdout.splitlines()
+        self.assertIn("RC 1", out)
+        self.assertTrue([l for l in out if l.startswith("FAIL backup refused: ")], out)
+        self.assertFalse([l for l in out if "neither bound nor copied" in l], out)
+        self.assertFalse(os.path.lexists(f"{R}/share/repo"))
+        self.assertTrue(os.path.isfile(f"{R}/bs2-repo-from"))   # (a rerun may bind it yet)
+        # It fits: copied, as before.
+        r, R = self.hooks("echo " + self.repo() + " > $R/bs2-repo-from; " + self.PRE +
+                          'RESERVED=7; bs2_repo_again; echo "RC $?"', FAKE_MOUNT_FAIL="1", BS2_REPO_ROOM="0",
+                          HELD=str(5 * 1048576), BS2_REPO_PEAK_KIB=str(5 * 1048576))
+        self.assertIn("RC 0", r.stdout.splitlines())
+        self.assertTrue(os.path.isfile(f"{R}/share/repo/config"))
+
+    def test_a_failed_copy_leaves_nothing(self):
+        r, R = self.hooks(self.PRE + 'cp() { [[ $1 == -a ]] || command cp "$@"; [[ $1 != -a ]] || { mkdir -p "${@: -1}"; '
+                          ': > "${@: -1}/half"; return 1; }; }; RESERVED=7; bs2_backup_reuse; echo "RC $?"',
+                          FAKE_MOUNT_FAIL="1", BS2_REPO_ROOM="0", HELD="0", BS2_REPO_PEAK_KIB="1")
+        out = r.stdout.splitlines()
+        self.assertIn("RC 1", out, out)
+        self.assertIn("note: backup: one of its own (copying the preparation's failed)", out)
+        self.assertFalse(os.path.lexists(f"{R}/share/repo"))
 
 
 class Ht1Glue(unittest.TestCase):
@@ -323,6 +453,18 @@ class SharedRoom(unittest.TestCase):
         # Placement stays the source's room: its own-backup cases go anywhere it goes.
         self.assertEqual(RM.need("pop24"), (14, 4))
 
+    def test_shared_peak(self):
+        # The largest peak the room's rule (ceil(1.10 x peak + 0.25)) allows: a measured d_shared's,
+        # a slimmed d's less the repository, else the room itself less the repository.
+        self.assertEqual(RM.shared_peak("pop24", 3 * GiB), int((11 - 0.25) / 1.10 * GiB))
+        self.assertEqual(RM.shared_peak("mint22", 3 * GiB), int((11 - 0.25) / 1.10 * GiB) - 3 * GiB)
+        with mock.patch.object(RM, "full_of", lambda s, *a: (12, 4)), mock.patch.object(RM, "slim_row", lambda *a: None):
+            self.assertEqual(RM.shared_peak("fedora45", 3 * GiB), 9 * GiB)
+            self.assertEqual(RM.shared_peak("fedora45", 13 * GiB), 0)
+        # Never more than the measured reservation allows, so a copy into it never fits by its margin alone.
+        for s in ("pop24", "mint22"):
+            self.assertLess(RM.shared_peak(s, 3 * GiB) + 3 * GiB, RM.of(s)[0] * GiB)
+
     def test_the_repository_table(self):
         with mock.patch.object(RM, "SLIM_SIZES", os.path.join(BS2, "slim-sizes.tsv")):
             for s, row in RM.slim_table().items():
@@ -385,6 +527,26 @@ class SharedReservation(TR.PrepFixture):
         self.assertEqual(H.case_disk(self.case, tier=1), 12)
         with mock.patch.object(H, "repo_shared", mock.Mock(side_effect=OSError("boom"))):
             self.assertEqual(H.case_disk(self.case, tier=1), 12)
+
+    def test_the_copy_fallbacks_room(self):
+        # bs2-host tier1's word to ht1-bs2.sh: a reduced reservation, and the peak a copy must fit beside.
+        c = C.read(self.case)
+        with mock.patch.object(RM, "shared_peak", lambda s, b: 5 * GiB + 1), mock.patch.object(C, "itable_growth", lambda *a: 1):
+            H.repo_room_env(self.case, c, "alpine324", {}, 1, "ram")
+            self.assertEqual(os.environ["BS2_REPO_ROOM"], "0")
+            self.assertEqual(os.environ["BS2_REPO_PEAK_KIB"], str(6 * 1048576 + 1))   # (and a GiB for the inode table)
+            H.repo_room_env(self.case, c, "alpine324", {}, 1, "ssd")
+            self.assertEqual(os.environ["BS2_REPO_ROOM"], "1")
+            self.assertNotIn("BS2_REPO_PEAK_KIB", os.environ)
+        with mock.patch.object(C, "itable_growth", mock.Mock(side_effect=KeyError("disks"))):
+            H.repo_room_env(self.case, c, "alpine324", {}, 1, "ram")   # (no peak: the copy fallback refuses)
+            self.assertEqual(os.environ["BS2_REPO_ROOM"], "0")
+            self.assertNotIn("BS2_REPO_PEAK_KIB", os.environ)
+        with mock.patch.object(H, "repo_shared", mock.Mock(side_effect=OSError("boom"))):
+            H.repo_room_env(self.case, c, "alpine324", {}, 1, "ram")
+            self.assertEqual(os.environ["BS2_REPO_ROOM"], "1")
+        os.environ.pop("BS2_REPO_ROOM", None)
+        os.environ.pop("BS2_REPO_PEAK_KIB", None)
 
     def test_a_stale_preparation_reserves_the_repository_too(self):
         os.remove(f"{self.k}/logs/source-health.txt")

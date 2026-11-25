@@ -346,6 +346,14 @@ PROXMOX_ESPS=/etc/kernel/proxmox-boot-uuids
 # holds the dump to that).
 TRUENAS_VERSION=/etc/version
 is_truenas() { [[ -s $TRUENAS_VERSION ]] && command -v midclt >/dev/null; }
+# bs1-adopt puts the hostname, the fixed host key, sshd and mDNS in the
+# middleware's database, and writes here the boot_id of the boot it last
+# changed them in; bs1-backup's truenas_adopted wants a later boot.
+TRUENAS_STAMP=/etc/backshot1/truenas-adopt
+BOOT_ID=/proc/sys/kernel/random/boot_id
+# The middleware's configuration database: bs1-backup records its rows,
+# bs1-verify compares them (bs1-manifest --db-dump, --db-compare).
+TRUENAS_DB=/data/freenas-v1.db
 # truenas_esp PART: on TrueNAS, a partition of the ESP type.
 truenas_esp() {
     is_truenas || return 1

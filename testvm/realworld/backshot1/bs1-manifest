@@ -5,6 +5,9 @@ bs1-manifest ROOT OUT.tsv            every file under ROOT, with a checksum
 bs1-manifest --compare OLD NEW [--reformatted]
                                      differences; exit 1 if any isn't expected
                                      (--reformatted: after bs1-restore --reformat)
+bs1-manifest --db-dump DB OUT        an SQLite database's schema and rows, sorted
+bs1-manifest --db-compare OLD NEW    two of those; exit 1 if they differ
+                                     (TrueNAS's freenas-v1.db, TRUENAS_DB_VOLATILE)
 
 The comparison is between the system before its backup and after its restore and
 first boot, so booting's own changes are expected, as are the files bko-holt
@@ -48,10 +51,13 @@ import base64
 import fcntl
 import fnmatch
 import hashlib
+import json
 import os
 import re
+import sqlite3
 import stat
 import sys
+import urllib.parse
 
 _here = os.path.dirname(os.path.realpath(__file__))
 sys.path[:0] = [_here, os.path.join(_here, "..", "..")]
@@ -284,6 +290,43 @@ SLACKWARE_REMADE = ["usr/share/mime/*", "usr/share/glib-2.0/schemas/gschemas.com
 SLACKWARE_EXPECTED = ["etc/adjtime", "etc/resolv.conf.bak", "boot/initrd.gz"]
 SLACKWARE_BY_WRITER = {"lib/dhcpcd/dhcpcd-hooks/50-ntp.conf": ["etc/ntp.conf"]}
 
+# TrueNAS Community Edition 25.10 (docs/design/truenas.md; a baseline with
+# the middleware's client and its configuration database).  Its middleware
+# writes part of /etc from that database at every boot, whether it changed
+# or not (etc.generate_checkpoint; the mako files only when they would
+# change), so with new mtimes but the same bytes: TRUENAS_REMADE, each seen
+# so across the restore of debian-12-20261125-170305 and two plain reboots
+# of the Thinkpad after it (2026-11-25).  The default certificate is
+# written from the database's system_certificate row, which came back the
+# same, so its bytes are held; the fixed ed25519 host key's too (bs1-adopt
+# saves it in services_ssh, and the middleware writes it back from there).
+# With other bytes, TRUENAS_CHANGED: the database itself, whose pages (the
+# change counter in its header at least) a boot writes again with the same
+# rows, which bs1-verify compares instead (truenas_db_same, db_compare
+# below); cron.d/middlewared, written from the database's tasks with
+# update.download at a random minute and hour each time ("8 3" before, "32
+# 4" after); and netdata.conf, its disk space sized by the metrics netdata
+# counts at that boot (399 MB before, 357 after).  And the running system's
+# own, TRUENAS_EXPECTED: the audit databases' WAL and shared memory and
+# syslog-ng's queues in /audit, and netdata's metrics in the system dataset.
+# The audit databases themselves, the rest of /etc and of var/db/system are
+# held.
+TRUENAS_SOURCE = ["usr/bin/midclt", "data/freenas-v1.db"]
+TRUENAS_REMADE = ["data/user-services.json", "etc/certificates/truenas_default.crt", "etc/certificates/truenas_default.key",
+                  "etc/default/grub.d/truenas.cfg", "etc/hostname", "etc/localtime", "etc/vconsole.conf", "etc/nut/*",
+                  "etc/resolv.conf.bak", "etc/ssl/certs/ca-certificates.crt", "etc/ssh/ssh_host_ed25519_key",
+                  "etc/ssh/ssh_host_ed25519_key.pub", "var/db/system/nfs/rmtab",
+                  "var/db/system/samba4/private/netlogon_creds_cli.tdb"]
+# Changed only: each must still be there, a regular file of the same mode and
+# owner.
+TRUENAS_CHANGED = ["data/freenas-v1.db", "etc/cron.d/middlewared", "etc/netdata/netdata.conf"]
+# Changed, made or gone.
+TRUENAS_EXPECTED = ["audit/*.db-wal", "audit/*.db-shm", "audit/syslog-ng-*.rqf", "var/db/system/netdata/*"]
+# Tables of the database that db_compare leaves out, as a boot or the
+# running middleware rewrites them.  None: neither the restore's first boot
+# nor two plain reboots changed a row (2026-11-25).
+TRUENAS_DB_VOLATILE = []
+
 
 def present_same(a, b):
     """A SOLUS_PRESENT path's rows, before and after: both regular files."""
@@ -304,6 +347,13 @@ def solus_lacks(rows):
     as regular files."""
     files = {rel for rel, r in rows.items() if stat.S_ISREG(int(r[0], 8))}
     return [p for p in SOLUS_REQUIRED if p not in files] + [g for g in SOLUS_GLOBS if not fnmatch.filter(files, g)]
+
+
+def tn_changed_ok(rel, a, b, pats):
+    """Whether a TRUENAS_CHANGED path's rows, before and after, are both a
+    regular file with the same mode and owner: only its bytes may move."""
+    return (any(fnmatch.fnmatch(rel, pat) for pat in pats) and stat.S_ISREG(int(a[0], 8)) and stat.S_ISREG(int(b[0], 8))
+            and a[:3] == b[:3])
 
 
 def kept(rel, extra=()):
@@ -792,7 +842,13 @@ def compare(old_path, new_path, reformatted=False):
         slk_expected = slk_expected + [pat for src, pats in SLACKWARE_BY_WRITER.items() if src in old for pat in pats]
         print(f"Slackware: written again at every boot, so with new mtimes, but the same otherwise: {' '.join(slk_remade)}; "
               f"other bytes expected: {' '.join(slk_expected)}")
-    changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], store, odef, apre, pve + mx + slk_remade))
+    tn = all(p in old for p in TRUENAS_SOURCE)
+    tn_remade, tn_changed, tn_expected = (TRUENAS_REMADE, TRUENAS_CHANGED, TRUENAS_EXPECTED) if tn else ([], [], [])
+    if tn:
+        print(f"TrueNAS: written again from the middleware's database at every boot, so with new mtimes, but the same otherwise: "
+              f"{' '.join(tn_remade)}; other bytes expected: {' '.join(tn_changed)} (the database compared by its rows, "
+              f"bs1-verify), and the running system's {' '.join(tn_expected)}")
+    changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], store, odef, apre, pve + mx + slk_remade + tn_remade))
     both = [p for p in set(old) & set(new) if len(old[p]) > 6 and len(new[p]) > 6]
     relabeled = sorted(p for p in both if old[p][6] != new[p][6])
     if not both:
@@ -806,7 +862,8 @@ def compare(old_path, new_path, reformatted=False):
         unexpected = [p for p in paths if kept(p, held) and not held_ok(label, p, old, new, present)]
         unexpected += [p for p in paths if not kept(p, held) and not expected(p, store, mapping[label], label == "added", amapping[label]) and p not in snapper
                        and p not in qol
-                       and not any(fnmatch.fnmatch(p, pat) for pat in slk_expected)
+                       and not any(fnmatch.fnmatch(p, pat) for pat in slk_expected + tn_expected)
+                       and not (label == "changed" and tn_changed_ok(p, old[p], new[p], tn_changed))
                        and not (reformatted and any(fnmatch.fnmatch(p, pat) for pat in REFORMAT_EXPECTED))
                        and not (label == "xattrs" and (relabeled_boot(p, old[p], new[p]) or p in compressed))]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")
@@ -820,10 +877,74 @@ def compare(old_path, new_path, reformatted=False):
     return 1 if bad else 0
 
 
+def db_value(v):
+    """A column's value as JSON holds it: a blob as {"blob": BASE64}."""
+    return {"blob": base64.b64encode(v).decode()} if isinstance(v, bytes) else v
+
+
+def db_dump(db, out):
+    """The rows of DB, an SQLite database (TrueNAS's freenas-v1.db), opened
+    read-only: a line per schema entry ("schema", its name, its SQL) and a
+    line per row ("row", its table, the row as JSON by column name), sorted,
+    so two dumps of the same rows are the same bytes however the pages lie."""
+    con = sqlite3.connect(f"file:{urllib.parse.quote(os.path.abspath(db))}?mode=ro", uri=True, timeout=60)
+    try:
+        lines = [f"schema\t{name}\t{json.dumps(sql)}"
+                 for name, sql in con.execute("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL")]
+        for (table,) in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall():
+            q = table.replace('"', '""')
+            cols = [c[1] for c in con.execute(f'PRAGMA table_info("{q}")')]
+            lines += [f"row\t{table}\t{json.dumps(dict(zip(cols, map(db_value, r))), sort_keys=True)}"
+                      for r in con.execute(f'SELECT * FROM "{q}"')]
+    finally:
+        con.close()
+    with open(out, "w", encoding="utf-8") as f:
+        f.writelines(line + "\n" for line in sorted(lines))
+
+
+def db_compare(old_path, new_path, volatile=TRUENAS_DB_VOLATILE):
+    """Whether two db_dump outputs hold the same schema and rows, but for the
+    tables in VOLATILE; says what differs, table by table.  0 if the same."""
+    def rd(path):
+        by = {}
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                kind, name, rest = line.rstrip("\n").split("\t", 2)
+                if kind == "row" and name in volatile:
+                    continue
+                by.setdefault((kind, name), []).append(rest)
+        return by
+    old, new = rd(old_path), rd(new_path)
+    bad = 0
+    for key in sorted(set(old) | set(new)):
+        a, b = sorted(old.get(key, [])), sorted(new.get(key, []))
+        if a == b:
+            continue
+        bad += 1
+        gone = [r for r in a if r not in b]
+        came = [r for r in b if r not in a]
+        print(f"{key[0]} {key[1]}: {len(gone)} only before, {len(came)} only after")
+        for label, rows in (("before", gone), ("after", came)):
+            for r in rows[:5]:
+                print(f"  {label}: {r[:400]}")
+            if len(rows) > 5:
+                print(f"  {label}: ... {len(rows) - 5} more")
+    rows = sum(len(v) for k, v in old.items() if k[0] == "row")
+    tables = len({k[1] for k in old if k[0] == "row"})
+    print(f"rows compared: {rows} in {tables} tables" + (f", leaving out {' '.join(volatile)}" if volatile else "")
+          + f"; differing: {bad}")
+    return 1 if bad else 0
+
+
 def main():
     a = sys.argv[1:]
     if len(a) in (3, 4) and a[0] == "--compare" and a[3:] in ([], ["--reformatted"]):
         return compare(a[1], a[2], reformatted=a[3:] == ["--reformatted"])
+    if len(a) == 3 and a[0] == "--db-dump":
+        db_dump(a[1], a[2])
+        return 0
+    if len(a) == 3 and a[0] == "--db-compare":
+        return db_compare(a[1], a[2])
     if len(a) == 2:
         write(a[0], a[1])
         return 0

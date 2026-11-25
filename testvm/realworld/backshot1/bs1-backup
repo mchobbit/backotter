@@ -47,7 +47,10 @@
 # tree once, as in the dump.  On every system but ABRoot and ostree, a
 # source the dump lists that nothing mounts (an inactive boot environment)
 # stops it: the tree wouldn't hold it.  It fails if the middleware wrote
-# its config database, /data/freenas-v1.db, while rustic read it.
+# its config database, /data/freenas-v1.db, while rustic read it, whose rows
+# it records in baseline/truenas-db.txt for bs1-verify.  And on TrueNAS
+# bs1-adopt's settings must be in that database, and this a later boot than
+# adopt's last change to it (truenas_adopted).
 #
 # Encrypted volumes: both the preflight and phase 1 check that the drive's
 # keys/disk-passphrase opens each one, and say how they unlock at boot,
@@ -216,6 +219,53 @@ if ok:
     print(f"TrueNAS {release}'s ESPs, not in the backup, which the restore formats with their volume IDs and its grub-install makes again: {' '.join(ok)}")
 PY
 }
+# truenas_adopted: on TrueNAS, bs1-adopt's settings must be in the
+# middleware's database, which writes /etc from it at every boot (bs1-adopt,
+# truenas_hostname and the rest): the hostname, the fixed ed25519 host key
+# (services_ssh, base64), ssh.service started at boot and mDNS announced.  And
+# this boot must be a later one than the one adopt last changed them in
+# (TRUENAS_STAMP), so that the baseline is what a boot makes of the
+# database, as the restored system's first boot is, and the settings are
+# seen to stay.  Says why not, and false; nothing elsewhere.
+truenas_adopted() {
+    local boot stamp t rc
+    is_truenas || return 0
+    [[ -s $TRUENAS_STAMP ]] || { echo "this is TrueNAS, and bs1-adopt hasn't put BackShot1's settings in its middleware's database ($TRUENAS_STAMP): run bs1-adopt, then reboot"; return 1; }
+    boot=$(cat "$BOOT_ID")
+    stamp=$(sed -n 's/^boot_id=//p' "$TRUENAS_STAMP")
+    [[ $stamp != "$boot" ]] || { echo "bs1-adopt changed TrueNAS's configuration in this boot: reboot first (systemctl reboot), so that /etc is what the middleware makes of it at a boot"; return 1; }
+    t=$(mktemp -d) || return 1
+    if ! midclt call network.configuration.config >"$t/net" || ! midclt call datastore.config services.ssh >"$t/ssh" ||
+        ! midclt call service.query '[["service", "=", "ssh"]]' '{"get": true}' >"$t/svc"; then
+        rm -rf "$t"
+        echo "midclt couldn't read the middleware's configuration"
+        return 1
+    fi
+    python3 - "$t" "$SOURCE_HOST" "$HERE/keys/ssh_host_ed25519_key.pub" <<'PY'
+import base64, binascii, json, sys
+t, host, pub = sys.argv[1:]
+net, ssh, svc = (json.load(open(f"{t}/{x}")) for x in ("net", "ssh", "svc"))
+bad = []
+if net.get("hostname") != host:
+    bad.append(f"its hostname is {net.get('hostname')!r}, not {host!r}")
+if (net.get("service_announcement") or {}).get("mdns") is not True:
+    bad.append("it doesn't announce mDNS")
+try:
+    have = base64.b64decode(ssh.get("ssh_host_ed25519_key_pub") or "", validate=True)
+except (binascii.Error, ValueError):
+    have = b""
+if have != open(pub, "rb").read():
+    bad.append(f"its ed25519 host key isn't {pub}'s")
+if svc.get("enable") is not True:
+    bad.append("it doesn't start ssh at boot")
+if bad:
+    print("TrueNAS's middleware would undo bs1-adopt at the next boot: " + "; ".join(bad) + ": run bs1-adopt, then reboot")
+    sys.exit(1)
+PY
+    rc=$?
+    rm -rf "$t"
+    return "$rc"
+}
 # unhinted_check LAYOUT: the dump's backup_sources that nothing mounts
 # ("from": null: inactive ZFS boot environments, TrueNAS's or ZFSBootMenu's)
 # have to be in the tree, but only ABRoot's are mounted for it (mount_hints):
@@ -243,8 +293,7 @@ pve_db_moved() { stat -c '%i %y %s' "$PVE_DB"; }
 # database, which rustic reads live.  If it was written while rustic read
 # it, the copy may be torn, and a restored middleware that can't open it
 # comes back unconfigured: phase 1 fails then.  Its -wal and -journal too,
-# if it has them.
-TRUENAS_DB=/data/freenas-v1.db
+# if it has them (TRUENAS_DB is bs1-common's).
 truenas_db_moved() { local f; for f in "$TRUENAS_DB" "$TRUENAS_DB-wal" "$TRUENAS_DB-journal"; do [[ ! -e $f ]] || stat -c '%n %i %y %s' "$f"; done; }
 
 if [[ ${1:-} == --preflight ]]; then
@@ -256,6 +305,12 @@ if [[ ${1:-} == --preflight ]]; then
     [[ -z $why ]] || say "$why"
     why=$(truenas_check "$tmp") || { rm -f "$tmp"; die "$why"; }
     [[ -z $why ]] || say "$why"
+    why=$(truenas_adopted) || { rm -f "$tmp"; die "$why"; }
+    if is_truenas; then
+        python3 "$HERE/bs1-manifest" --db-dump "$TRUENAS_DB" "$tmp.db" || { rm -f "$tmp" "$tmp.db"; die "can't read the rows of $TRUENAS_DB"; }
+        say "TrueNAS: bs1-adopt's settings are in the middleware's database, and this is a later boot; phase 1 records its $(grep -c '^row' "$tmp.db") rows for bs1-verify"
+        rm -f "$tmp.db"
+    fi
     why=$(unhinted_check "$tmp") || { rm -f "$tmp"; die "$why"; }
     if is_ostree; then
         why=$(ostree_preflight "$tmp") || { rm -f "$tmp"; die "$why"; }
@@ -315,6 +370,7 @@ why=$(proxmox_check "$RUN/layout.json") || die "$why"
 [[ -z $why ]] || say "$why"
 why=$(truenas_check "$RUN/layout.json") || die "$why"
 [[ -z $why ]] || say "$why"
+why=$(truenas_adopted) || die "$why"
 why=$(unhinted_check "$RUN/layout.json") || die "$why"
 keys=$(layout_keys "$RUN/layout.json" "$HERE/keys/disk-passphrase") || die "can't read the layout"
 if [[ -n $keys ]]; then
@@ -389,6 +445,12 @@ rustic_in "$RUN"
 must "${RUSTIC[@]}" init
 [[ -f $PVE_DB ]] && pve_db_moved >"$RUN/baseline/pve-db-before.txt" 2>&1
 is_truenas && [[ -f $TRUENAS_DB ]] && truenas_db_moved >"$RUN/baseline/truenas-db-before.txt" 2>&1
+# Its rows, for bs1-verify's truenas_db_same: what the backup holds, if the
+# file doesn't move until the backup is done (below).
+if [[ -s $RUN/baseline/truenas-db-before.txt ]]; then
+    python3 "$HERE/bs1-manifest" --db-dump "$TRUENAS_DB" "$RUN/baseline/truenas-db.txt" || die "can't read the rows of $TRUENAS_DB"
+    say "the middleware's database: $(grep -c '^row' "$RUN/baseline/truenas-db.txt") rows in baseline/truenas-db.txt"
+fi
 must "${RUSTIC[@]}" backup --set-atime yes --as-path "$SNAP" "$TREE"
 must "${RUSTIC[@]}" snapshots
 if [[ -f $PVE_DB ]]; then

@@ -67,7 +67,9 @@ caught at different moments; `bs1-manifest` tells those from real differences.
   (the first time ~17 min: Guix clones its own repository); reconfigure from
   that file afterwards, not `/etc/config.scm`, or they're gone
   (docs/design/guix.md, "What GX8 found").  BackShot1's bko-holt must be
-  static there, as on NixOS.  On an
+  static there, as on NixOS.  On TrueNAS the hostname, the host key,
+  sshd at boot and mDNS go into its middleware's database, and the
+  preflight wants a reboot after it ("TrueNAS", below).  On an
   install with LUKS it then sets up unlocking from the drive (below), and
   stops if the drive's key doesn't open every volume.  Reboot once after
   it, with the drive plugged in: the preflight wants a boot the drive
@@ -823,9 +825,70 @@ nothing: the dump lists it as a source with a read-only mount hint, which
 only ABRoot's tree mounts, so the preflight and phase 1 stop at one
 (`unhinted_check`) rather than let it come back empty.  Phase 1
 fails (run it again) if the middleware wrote `/data/freenas-v1.db`, the
-whole configuration, while rustic read it.  The Thinkpad (2026-11-25:
-TrueNAS SCALE 25.10.8, one boot environment, no data pool, no LUKS, UEFI)
-passed the preflight; phase 1 hasn't been run.
+whole configuration, while rustic read it.
+
+The middleware writes much of `/etc` from that database at every boot
+(`etc.generate_checkpoint`: `/etc/hostname`, `/etc/ssh`'s host keys and
+`sshd_config`, which services systemd starts), so whatever is written
+there by hand is gone at the next one.  The first round trip
+(debian-12-20261125-170305) came back healthy but as `truenas`, with the
+install's own host key and `ssh.service` disabled, since adopt had written
+`/etc` itself, and the source would have lost them at its next reboot too.
+So on TrueNAS bs1-adopt puts them in the database, by the middleware's own
+calls: the hostname by `network.configuration.update`; the fixed host key
+by `ssh.save_keys`, which reads `/etc/ssh`'s keys into `services_ssh`'s
+columns (base64; the private key encrypted with `/data/pwenc_secret`), then
+`etc.generate ssh`, which writes them and `sshd_config` back from there (the
+RSA and ECDSA keys the database has come back with them); `ssh.service` at
+boot by `service.update ssh '{"enable": true}'`; mDNS by
+`service_announcement`'s `mdns`.  It adds nothing to `sshd_config`: the
+middleware's lets root in by key (`PermitRootLogin without-password`).
+root's `authorized_keys` and the sleep drop-in are files the middleware
+doesn't write, as elsewhere.  adopt is idempotent: a second run says
+`unchanged` for each.  It writes the boot it last changed the database in
+to `/etc/backshot1/truenas-adopt`, and the preflight and phase 1 stop
+(`truenas_adopted`) until a later boot, and while the database lacks any of
+those settings: so reboot after adopt (`systemctl reboot`).  That reboot
+shows they stay, makes the baseline what a boot makes of the database (as
+the restored system's first boot is), and finishes a fresh install's
+`/etc`: its first boot couldn't generate the nfsd group (no
+`system.globalid` yet), so `/etc/nfs.conf`, `exports`, `idmapd.conf` and
+`default/rpcbind` came only at the second.
+
+What a boot does to the files, from the first round trip and two plain
+reboots after adopt (`TRUENAS_*` in bs1-manifest, on a baseline with
+`midclt` and `/data/freenas-v1.db`): written again with the same bytes, new
+mtimes (`TRUENAS_REMADE`), `user-services.json`, the default certificate and
+key (from the database's `system_certificate` row, which came back the
+same), `grub.d/truenas.cfg`, the hostname, the `localtime` and
+`vconsole.conf` links, `/etc/nut`, `resolv.conf.bak`, `ca-certificates.crt`,
+the fixed ed25519 host key, the system dataset's `nfs/rmtab` and samba's
+`netlogon_creds_cli.tdb`.  With other bytes (`TRUENAS_CHANGED`, each still a
+regular file of the same mode and owner): `cron.d/middlewared`, whose
+`update.download` gets a random minute and hour each time, `netdata.conf`,
+whose disk space netdata sizes by the metrics it counts at that boot, and
+`freenas-v1.db` itself, whose pages a boot writes again with the same rows.
+The running system's own, made, changed or gone (`TRUENAS_EXPECTED`): the
+audit databases' WAL and shared memory and syslog-ng's queues in `/audit`,
+and netdata's metrics under `var/db/system/netdata`.  The audit databases
+themselves and the rest of `/etc` and the system dataset are held.
+
+So `freenas-v1.db` is compared by its rows instead: phase 1 records them in
+`baseline/truenas-db.txt` (`bs1-manifest --db-dump`: each table's rows as
+JSON and the schema, sorted, so the same rows read the same however the
+pages lie), between the stats that show the middleware didn't write it
+during the backup; `verify` dumps the restored one and compares
+(`--db-compare`, `truenas-db-compare.txt`), failing on any row or schema
+entry only one side has, and on a baseline without the record.  No table is
+left out (`TRUENAS_DB_VOLATILE`): neither the restore's first boot nor two
+plain reboots changed a row.
+
+The Thinkpad (2026-11-25: TrueNAS SCALE 25.10.8, one boot environment, no
+data pool, no LUKS, UEFI): debian-12-20261125-170305 restored and booted
+(phase 2 PASS) but failed `wait-host` and a verify by address, on the
+hostname and the paths above that adopt had written.  The restored system,
+adopted again and rebooted, answers as `thinkpad.local` with the fixed key,
+and passes the preflight.
 
 ## Keeping a library of backups
 

@@ -36,6 +36,11 @@
 # alone, for the preflight and the rehearsal, with no run: exit 0 if the
 # mode is drive, own or none.
 #
+# On TrueNAS (docs/design/truenas.md) it compares the middleware's
+# configuration database by its rows, with those phase 1 recorded
+# (truenas_db_same): the manifest leaves its bytes, which a boot writes
+# again, to that.
+#
 # The check and --boot hold a sleep, idle and lid-switch inhibitor while
 # they run (hold_awake in bs1-common).
 
@@ -299,6 +304,22 @@ make_tree "$disk" "$tree_layout"
 must python3 "$HERE/bs1-manifest" "$TREE" "$ATTEMPT/manifest-after.tsv"
 python3 "$HERE/bs1-manifest" --compare "$RUN/baseline/manifest.tsv" "$ATTEMPT/manifest-after.tsv" ${reformatted:+"$reformatted"} 2>&1 | tee "$ATTEMPT/compare.txt" | tee -a "$LOG" | tail -n 40
 [[ ${PIPESTATUS[0]} -eq 0 ]] || { say "  FAIL  files differ outside what a boot changes (compare.txt)"; fails=$((fails + 1)); }
+
+# TrueNAS: the manifest leaves the middleware's database's bytes alone (a
+# boot writes its pages again), so its rows are compared with those phase 1
+# recorded (bs1-backup), every table but bs1-manifest's TRUENAS_DB_VOLATILE.
+# A baseline without them fails: nothing else would see a lost setting.
+truenas_db_same() {
+    [[ -s $RUN/baseline/truenas-db.txt ]] ||
+        { echo "the baseline has no truenas-db.txt (its phase 1 recorded no rows), and the manifest doesn't compare $TRUENAS_DB's bytes"; return 1; }
+    python3 "$HERE/bs1-manifest" --db-dump "$TRUENAS_DB" "$ATTEMPT/truenas-db-after.txt" || return 1
+    python3 "$HERE/bs1-manifest" --db-compare "$RUN/baseline/truenas-db.txt" "$ATTEMPT/truenas-db-after.txt" | tee "$ATTEMPT/truenas-db-compare.txt"
+    return "${PIPESTATUS[0]}"
+}
+if is_truenas; then
+    step "TrueNAS's configuration database, against the baseline's rows"
+    check "the middleware's database holds the baseline's rows (truenas-db-compare.txt)" truenas_db_same
+fi
 
 if is_ostree; then
     step "the deployments, against the baseline's"

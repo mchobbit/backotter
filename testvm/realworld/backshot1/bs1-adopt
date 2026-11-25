@@ -7,7 +7,9 @@
 # Sets the hostname, lets the controller's key log in as root, and installs the
 # fixed host key, so the controller sees one identity on every install and on the
 # stick.  Installs sshd, an mDNS responder and what the BackShot1 scripts use, if
-# the system lacks them, under whichever init system it has.
+# the system lacks them, under whichever init system it has.  On TrueNAS the
+# hostname, the host key, sshd and mDNS go into its middleware's database, and
+# the preflight wants a reboot after it (truenas_hostname and the rest, below).
 #
 # Then, on an install with LUKS, sets its initramfs to unlock with the
 # passphrase in keys/disk-passphrase on this drive, falling back to the prompt
@@ -123,6 +125,12 @@ for f in authorized_keys ssh_host_ed25519_key ssh_host_ed25519_key.pub; do
 done
 
 distro=$(. /etc/os-release; echo "${ID:-}")
+# TrueNAS (bs1-common's is_truenas; os-release says Debian): its middleware
+# owns /etc (truenas_hostname and the rest, below).  In a subshell, so that
+# nothing bs1-common sets reaches the rest of adopt.
+truenas=no
+# shellcheck disable=SC1091
+if (. "$here/bs1-common" && is_truenas); then truenas=yes; fi
 
 # init_system COMM: the init system, by PID 1's name and the distro.
 # Slackware's PID 1 is sysvinit's, but its services aren't in /etc/init.d
@@ -484,6 +492,10 @@ start_service() {   # start_service NAME...: the first name this system knows
 running() { grep -Eqx "$1" /proc/[0-9]*/comm 2>/dev/null; }
 
 set_hostname() {
+    if [[ $truenas == yes ]]; then
+        truenas_hostname
+        return
+    fi
     if [[ $init == systemd ]] && command -v hostnamectl >/dev/null; then
         hostnamectl set-hostname "$SOURCE_HOST"
         return
@@ -517,6 +529,118 @@ slk_hostname() {
         printf '127.0.0.1\t\t%s %s\n' "$fqdn" "$SOURCE_HOST" >>/etc/hosts
     fi
     echo "/etc/HOSTNAME: $fqdn"
+}
+
+# TrueNAS Community Edition (docs/design/truenas.md): its middleware writes
+# much of /etc again from its configuration database, /data/freenas-v1.db,
+# at every boot (etc.generate_checkpoint), so what adopt wrote there itself
+# was gone at the next boot: the restored Thinkpad came up as "truenas",
+# with the install's own host key and ssh.service disabled
+# (debian-12-20261125-170305), and so would the source have.  On TrueNAS
+# these go into the database instead, by the middleware's own calls:
+# - the hostname: network.configuration.update, whose etc.generate hostname
+#   writes /etc/hostname and sets the kernel's (etc_files/hostname.py);
+# - the fixed host key: ssh.save_keys reads /etc/ssh's keys into
+#   services_ssh's columns, base64 (plugins/ssh.py; the ssh service's start
+#   runs it too), and etc.generate ssh writes them and sshd_config back from
+#   there.  It writes the RSA and ECDSA keys the database has back too.  Its
+#   sshd_config lets root in by key (PermitRootLogin without-password unless
+#   root may log in by password), so adopt adds nothing to it;
+# - ssh.service at boot: service.update ssh enable, or the middleware's
+#   systemd group disables it again at the next boot;
+# - mDNS: the middleware runs avahi while network.configuration's
+#   service_announcement has mdns.
+# root's authorized_keys is the file itself (user.query reads sshpubkey from
+# it), and the sleep drop-in is BackShot1's own: the middleware writes
+# neither.  Then a reboot: the preflight stops while this boot is the one
+# adopt last changed the database in (TRUENAS_STAMP, truenas_adopted in
+# bs1-backup), so that the baseline is what a boot makes of the database, as
+# the restored system's first boot is, and the reboot shows the settings
+# stay (TRUENAS_STAMP is bs1-common's: truenas_stamp runs once it's
+# sourced).  It also finishes a fresh install's /etc: the first boot
+# couldn't generate the nfsd group (no system.globalid yet: /etc/nfs.conf,
+# exports, idmapd.conf), which every later boot does.
+truenas_changed=no
+TRUENAS_SSHD_CONFIG=/etc/ssh/sshd_config
+# tn_get EXPR METHOD [ARG...]: EXPR, of d, the JSON midclt call METHOD ARG...
+# returns, as Python prints it.
+tn_get() {
+    local expr=$1
+    shift
+    midclt call "$@" | python3 -c 'import json, sys; d = json.load(sys.stdin); print(eval(sys.argv[1]))' "$expr"
+}
+truenas_hostname() {
+    local now
+    now=$(tn_get 'd["hostname"]' network.configuration.config)
+    if [[ $now == "$SOURCE_HOST" ]]; then
+        echo "unchanged: the middleware's hostname is $SOURCE_HOST"
+    else
+        midclt call network.configuration.update "{\"hostname\": \"$SOURCE_HOST\"}" >/dev/null
+        now=$(tn_get 'd["hostname"]' network.configuration.config)
+        [[ $now == "$SOURCE_HOST" ]] || { echo "bs1-adopt: the middleware's hostname is still $now" >&2; exit 1; }
+        truenas_changed=yes
+        echo "the middleware's hostname (network.configuration): $SOURCE_HOST"
+    fi
+    [[ $(cat /proc/sys/kernel/hostname 2>/dev/null) == "$SOURCE_HOST" ]] || midclt call etc.generate hostname >/dev/null
+}
+# After the fixed key's files are in /etc/ssh.
+truenas_ssh() {
+    local want have pairs
+    pairs='(d["ssh_host_ed25519_key"] or "") + " " + (d["ssh_host_ed25519_key_pub"] or "")'
+    want="$(base64 -w0 <"$keys/ssh_host_ed25519_key") $(base64 -w0 <"$keys/ssh_host_ed25519_key.pub")"
+    have=$(tn_get "$pairs" datastore.config services.ssh)
+    if [[ $have == "$want" ]]; then
+        echo "unchanged: the middleware's ed25519 host key is the fixed one"
+    else
+        midclt call ssh.save_keys >/dev/null
+        have=$(tn_get "$pairs" datastore.config services.ssh)
+        [[ $have == "$want" ]] || { echo "bs1-adopt: ssh.save_keys didn't put the fixed host key in the middleware's database" >&2; exit 1; }
+        truenas_changed=yes
+        echo "the middleware's ed25519 host key (services_ssh): the fixed one"
+    fi
+    midclt call etc.generate ssh >/dev/null
+    grep -qE '^PermitRootLogin[[:space:]]+(without-password|prohibit-password|yes)([[:space:]]|$)' "$TRUENAS_SSHD_CONFIG" ||
+        { echo "bs1-adopt: the middleware's sshd_config doesn't let root in by key" >&2; exit 1; }
+    if [[ $(tn_get 'd["enable"]' service.query '[["service", "=", "ssh"]]' '{"get": true}') == True ]]; then
+        echo "unchanged: the middleware starts ssh at boot"
+    else
+        midclt call service.update ssh '{"enable": true}' >/dev/null
+        [[ $(tn_get 'd["enable"]' service.query '[["service", "=", "ssh"]]' '{"get": true}') == True ]] ||
+            { echo "bs1-adopt: the middleware still doesn't start ssh at boot" >&2; exit 1; }
+        truenas_changed=yes
+        echo "the middleware starts ssh at boot (service.update ssh enable)"
+    fi
+}
+truenas_mdns() {
+    local sa
+    sa=$(tn_get 'json.dumps(dict(d["service_announcement"], mdns=True))' network.configuration.config)
+    if [[ $(tn_get 'd["service_announcement"]["mdns"]' network.configuration.config) == True ]]; then
+        echo "unchanged: the middleware announces mDNS"
+    else
+        midclt call network.configuration.update "{\"service_announcement\": $sa}" >/dev/null
+        [[ $(tn_get 'd["service_announcement"]["mdns"]' network.configuration.config) == True ]] ||
+            { echo "bs1-adopt: the middleware still doesn't announce mDNS" >&2; exit 1; }
+        truenas_changed=yes
+        echo "the middleware announces mDNS (network.configuration's service_announcement)"
+    fi
+}
+# The boot adopt last changed the database in, or one already there when it
+# changed nothing.  Says whether a reboot is due.
+truenas_stamp() {
+    local boot
+    boot=$(cat "$BOOT_ID")
+    if [[ $truenas_changed == no && -s $TRUENAS_STAMP ]]; then
+        echo "unchanged: $TRUENAS_STAMP"
+    else
+        install -d -m 755 "${TRUENAS_STAMP%/*}"
+        printf '# BackShot1 (bs1-adopt): the boot it last changed the middleware'"'"'s configuration in\nboot_id=%s\n' "$boot" >"$TRUENAS_STAMP"
+        echo "wrote $TRUENAS_STAMP"
+    fi
+    if [[ $(sed -n 's/^boot_id=//p' "$TRUENAS_STAMP") == "$boot" ]]; then
+        echo "TrueNAS: reboot now (systemctl reboot); the preflight stops until this boot is over"
+    else
+        echo "TrueNAS: this boot is a later one than adopt's last change"
+    fi
 }
 
 install_tools() {
@@ -784,13 +908,19 @@ elif [[ $distro == guix ]]; then
     herd restart ssh-daemon
     herd start avahi-daemon
 else
-    allow_root_key_login
+    if [[ $truenas == yes ]]; then
+        echo "== TrueNAS: the host key and ssh.service in the middleware's database"
+        truenas_ssh
+    else
+        allow_root_key_login
+    fi
     # sshd -t, and sshd itself, stop without its privilege separation
     # directory, which only the service's own start makes on Debian and Ubuntu.
     mkdir -p /run/sshd
     "$(command -v sshd || echo /usr/sbin/sshd)" -t
     start_service ssh sshd
     echo "== mDNS, for $SOURCE_HOST.local"
+    [[ $truenas == no ]] || truenas_mdns
     start_mdns
     echo "== the firewall, if one is on"
     open_firewall
@@ -810,5 +940,9 @@ echo "== LUKS: unlocking from the backup drive"
 . "$here/bs1-luks"
 luks_adopt || exit 1
 
+if [[ $truenas == yes ]]; then
+    echo "== TrueNAS: a reboot, for the baseline"
+    truenas_stamp
+fi
 ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub
 echo "bs1-adopt: done.  Tell Claude: \"Let's run BackShot1.\""

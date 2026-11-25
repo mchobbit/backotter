@@ -92,7 +92,8 @@ and a case that can't take it does its own, with a `note:` line saying why:
   before a run): ht1.sh's own source and backup phases on the source, with
   `BS2_PREPARE=1` (no case: no edits, no content, one snapshot), on
   /bkoscratch in `sources/SOURCE/preps/NAME` (`prep` points at the current
-  one; the 3 newest stay).  Its `prep.json` keys it: the generation, the
+  one; an older one stays only while live work uses it: "Sources and tools
+  on /bkoscratch" below).  Its `prep.json` keys it: the generation, the
   bko-holt (the dump is bko-holt's), ht1.sh, ht1-lib.sh, ht1-bs2.sh, vm-run,
   vm-mount and fsmeta.py, vm-run-options, the image files' size, mtime and
   inode, and the backup's rustic-bko.  `bs2-host source` makes a new one
@@ -345,6 +346,65 @@ judge.py `--disk-ports` (d1c0974), PASS on replay; bs2a-20261124-1754,
 vanilla3 on chopin's SSD: tier 1 PASS, 810 s.  Measured tier 1 ran 1.06
 times `secs()`'s estimates.
 
+## Sources and tools on /bkoscratch
+
+Each host keeps, for every source it holds in a run,
+`/bkoscratch/backshot2/sources/SOURCE/` on its SSD (the host's root
+filesystem): `gen`, `src.json`, the preparation (`preps/NAME`, ~0.4-5 GiB:
+overlays, backup, dumps, logs) and, only where the source's tier 0 runs,
+its tools.  On 2026-11-25 a BackShot2All start filled cinqcent's: every host
+had copied the tools of every source it held (~300 GB for the 54, vanilla3
+alone 19.5 GiB), older preparations lingered, and nothing sized it.  Since
+then:
+
+- **Tools only where tier 0 runs.**  Their users are tier 0's dry runs
+  alone (`bs2lib/tier0.py`, through `bs2-host tier0_cases()`): a lead's
+  draws (`enqueue`) and sweep, and a replay, shrink or corpus at tier 0
+  (on `assign()`'s host: the lead, or another with `--hosts`).  Tier 1 and
+  2, the queue, `caps` and the leftovers set don't use them (the leftovers
+  set's own tier 0 runs as m: the plan and invariants only, and it says so
+  on stderr).  bs2 passes `bs2-host source SOURCE --tools` to a source's
+  lead and `--drop-tools` to every other host that holds it; a family
+  whose tier 0 is `plan` (NixOS) gets none.  A tier 0 as root on a host
+  without current tools copies them there first, from the source's
+  preparation, under its `.prep.lock` (`ensure_tools()`), and dies rather
+  than run without them; a tier 0 holds `.tools.lock` shared while it runs
+  in them, and a drop waits for none (it keeps them, saying so).
+- **Leaner tools** (`TOOLS_VERSION` 2, `tools.json`: generation, version,
+  bytes; a copy of another version is copied anew): `rsync -aH`, leaving out
+  what no mkfs or partitioner reads (`bs2-host TOOLS_EXCLUDE`: the kernel's
+  modules and firmware, /boot, /usr/src, /opt, /tmp, logs, caches, package
+  and container stores such as /var/lib/flatpak, snapd and abroot, swap
+  files, `/.snapshots`, ABRoot's other root `/part-future`, and /usr/share
+  but for `TOOLS_SHARE_KEEP`); /gnu and /nix stores stay.  An ostree source
+  (kinoite44) is copied from its default deployment (vm-mount names it):
+  its physical root has no /usr, so every dry run of it was refused
+  before.  Tier 0 gave identical verdicts, case for case, with the old and
+  the lean copy (2026-11-25: 300 cases each of 16 sources on chopin, 200
+  each of 9 on copland and cage, 6,600 in all, every dry run agreeing
+  bar elementary8's 4 planning FAILs, the same with both); the 25 copies
+  went from 141 to 34 GiB (vanilla3 19.0 to 2.8, leap16 23.6 to 0.9,
+  anduinos2 13.5 to 2.5).  kinoite44: 300 of 300 INVALID with the old
+  copy (chroot: no /usr/bin/env), 300 PASS with dry runs agreeing with the
+  new, 20.9 GiB to 3.6.
+- **Older preparations pruned**: each `bs2-host source` removes every
+  preparation but the current that no live work refers to
+  (`prune_preps()`: no process has a file or cwd in it, and no qcow2 in
+  the RAM disk or on /bkoscratch, a case's overlay, is backed by it), so a
+  case that began on an older one keeps it until it ends.
+- **The space preflight** (`bs2lib/space.py`): `plan` prints, and a run
+  checks after syncing and before writing anything, each host's peak on
+  /bkoscratch: its preparing source by source (a new preparation before
+  the old ones go, tools copied or dropped), then its SSD lane's largest
+  case (room.py's D: vanilla3's 30 GiB) and ~5 MB of records a case.  What
+  is there now comes from `bs2-host room` (free bytes; each source's
+  preparation current or not, tools current or not, and their bytes); what
+  will be made from `space-sizes.tsv` (measured on the hosts 2026-11-25),
+  else the corpus dump's used bytes times the 90th percentile of the
+  measured ratios (tools/used, prep/used).  The
+  run refuses to start, naming each host, its need and its free space,
+  unless `BS2_SPACE_MARGIN_GIB` (30) is left at the peak.
+
 ## A case's life
 
 1. **Drawn** on a host, from the source's real dump (it holds identifiers, so
@@ -354,7 +414,8 @@ times `secs()`'s estimates.
 2. **Tier 0**: `load plan` of the drifted layout onto the case's targets with
    its options, golden_plans.rs's five invariants, then the plan's sfdisk,
    mke2fs and mkfs.xfs run in the source's own tools (a chroot of a copy of
-   its root) on sparse files in RAM, read back, and compared with the layout.
+   its root, on the host that runs its tier 0: "Sources and tools on
+   /bkoscratch") on sparse files in RAM, read back, and compared with the layout.
    A mismatch is classified by running the generator's own command for the
    same values: if that matches, load's command is wrong (FAIL); if not, the
    model is (INVALID).

@@ -559,6 +559,29 @@ BackShot2All plan`'s space preflight went from chopin +87 GiB and cinqcent
 +106 (refused: 86 free) to +38 and +30, both OK.  Tools barely change (the
 lean copy already leaves out what the step removes).
 
+**A shared backup read where it is** (2026-11-25, 7007cfe, run repo-ssd-20261125:
+one tier 1 case a source whose backup is the preparation's, its repository bound
+read-only into the share; `d_shared` in `slim-sizes.tsv`; the same case as `d`'s
+where that one shared its backup, else `d`'s case less its content drift and
+snapshots):
+
+| Source | d (peak) | d_shared (peak) | on |
+|---|---|---|---|
+| anduinos2 | 10 (8.1, the same case) | 7 (5.5) | copland |
+| zorin18, biglinux | 10 (8.4), 12 (10.4) | 8 (6.2), 8 (6.9) | copland |
+| mint22, mx25, neon24 | 11 (9.6, 9.7, 9.7) | 9 (7.4, 7.3, 7.4); mx25's and neon24's the same cases | cage |
+| endeavouros, -grub, solus49 | 12, 12, 13 (9.8, 10.0, 10.7) | 9 (7.2, 7.4, 7.9); solus49's the same case | czerny |
+| slackware15, -uefi | 10 (8.0, 8.5) | 8 (6.3, 6.7), FAIL fsmeta (load's, known) | cinqcent (the small hosts' cache has an older image) |
+| pop24 | 14 (11.8) | 11 (9.1); the same case copying it: 11.9, the same 16 checks | chopin |
+
+Every PASS passed the checks the copy path's did.  Such a case of the eleven
+above now fits the small hosts' 9.0 GiB RAM disk (pop24's doesn't), but a
+source's other cases, about three in four, back up their own tree into the RAM
+disk (content drift, snapshots), and `d` is theirs: placement is per source, so
+all twelve stay on the lead hosts, their shared-backup cases reserving 2-5 GiB
+less there.
+
+
 ## A case's life
 
 1. **Drawn** on a host, from the source's real dump (it holds identifiers, so

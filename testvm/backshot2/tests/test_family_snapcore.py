@@ -46,6 +46,32 @@ class TestSnapcore(unittest.TestCase):
         w = gadget_reasons(rules.check(d, dr, [e1, e2]))
         self.assertTrue(w and "ubuntu-save (vda9)" in w[0], w)
 
+    def test_snapcore_record_follows(self):
+        # uc24-2e292af657cf51f9 (seed 14): tier 1's judge found the drifted dump's
+        # boot.snapcore still the source's ("partitions.1.number: 3 -> 127").
+        d = K.dump("uc24")
+        es = []
+        dr = d
+        for op, params in (("renumber", {"disk": "vda", "from": 3, "to": 127}),
+                           ("resize", {"disk": "vda", "partition": 5, "by_sectors": -28, "grow_fs": True}),
+                           ("gap_before", {"disk": "vda", "partition": 127, "sectors": 28})):
+            e = E.build(dr, op, params)
+            dr = E.apply(dr, [e])
+            es.append(e)
+        dr = E.apply(d, es)
+        dk = dumpx.disk(dr)
+        for r in dr["boot"]["snapcore"]["partitions"]:
+            p = next(q for q in dk["partitions"] if q["uuid"] == r["partuuid"])
+            self.assertEqual((r["number"], r["device"], r["start_bytes"], r["size_bytes"]),
+                             (p["number"], p["name"], p["start_bytes"], p["size_bytes"]), r["role"])
+        boot = next(r for r in dr["boot"]["snapcore"]["partitions"] if r["role"] == "boot")
+        self.assertEqual((boot["number"], boot["device"], boot["start_bytes"]), (127, "vda127", 1260388352 + 28 * 512))
+        self.assertEqual(d["boot"]["snapcore"]["partitions"][1]["number"], 3, "the source is untouched")
+        # uc24-50af002204b5525a: BIOS Boot renumbered ("boot_areas.bios_boot.number: 1 -> 8").
+        e = E.build(d, "renumber", {"disk": "vda", "from": 1, "to": 8})
+        bb = E.apply(d, [e])["boot"]["snapcore"]["boot_areas"]["bios_boot"]
+        self.assertEqual((bb["partition"], bb["number"], bb["start_bytes"]), ("vda8", 8, 1048576))
+
     def test_no_draw_resizes_the_gadgets(self):
         for g in ("uc24", "uc24-fde"):
             d = K.dump(g)

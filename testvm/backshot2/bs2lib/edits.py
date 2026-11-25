@@ -53,6 +53,38 @@ def apply_one(d, e):
         raise ValueError(f"no edit {e.get('op')!r}")
     op.apply(d, e)
     apply_sets(d, e.get("sets") or {})
+    follow_snapcore(d)
+
+
+def follow_snapcore(d):
+    """Ubuntu Core's boot.snapcore.partitions (holt/src/snapcore.rs) record each
+    gadget partition's number, device, start and size as the dump found them:
+    kept in step with the storage partition of the same PARTUUID, so that the
+    drifted dump is the one bko-holt would make of the drifted disk (tier 1's
+    judge compares them; load checks the gadget's sizes against them).  Its
+    boot_areas.bios_boot (named by partition, which a renumber renames) too."""
+    sc = (d.get("boot") or {}).get("snapcore")
+    if not isinstance(sc, dict):
+        return
+    by, named = {}, {}
+    for dk in dumpx.disks(d):
+        for p in dk.get("partitions") or []:
+            named[p.get("name")] = p
+            if p.get("uuid"):
+                by[str(p["uuid"]).lower()] = p
+
+    def follow(r, p, dev):
+        for k, v in (("number", p.get("number")), (dev, p.get("name")),
+                     ("start_bytes", p.get("start_bytes")), ("size_bytes", p.get("size_bytes"))):
+            if k in r and v is not None:
+                r[k] = v
+    for r in sc.get("partitions") or []:
+        p = by.get(str(r.get("partuuid") or "").lower())
+        if p is not None:
+            follow(r, p, "device")
+    bb = (sc.get("boot_areas") or {}).get("bios_boot")
+    if isinstance(bb, dict) and bb.get("partition") in named:
+        follow(bb, named[bb["partition"]], "partition")
 
 
 def _words(rec):

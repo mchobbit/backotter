@@ -5674,6 +5674,87 @@ fn md_name(p: &str) -> String {
     }
 }
 
+/// A whole disk's kernel name as its driver class, its place among that
+/// class's disks (0 for the first) and the rest of the name: vda is
+/// ("vd", 0, ""), sdab ("sd", 27, ""), nvme1n1 ("nvme", 1, "n1"; the
+/// place is the controller's), mmcblk0 ("mmcblk", 0, "").  None for a
+/// name the kernel doesn't hand out by place (md0, dm-0, loop0).
+fn disk_class(name: &str) -> Option<(&'static str, u32, String)> {
+    if let Some(rest) = name.strip_prefix("nvme") {
+        let (c, ns) = rest.split_once('n')?;
+        let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
+        if !digits(c) || !digits(ns) {
+            return None;
+        }
+        return Some(("nvme", c.parse().ok()?, format!("n{ns}")));
+    }
+    if let Some(n) = name.strip_prefix("mmcblk") {
+        if n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        return Some(("mmcblk", n.parse().ok()?, String::new()));
+    }
+    for class in ["xvd", "vd", "sd", "hd"] {
+        if let Some(l) = name.strip_prefix(class).filter(|l| !l.is_empty() && l.len() <= 4 && l.bytes().all(|b| b.is_ascii_lowercase())) {
+            // The kernel's letters count a, ..., z, aa, ...: base 26 with
+            // no zero digit.
+            let place = l.bytes().fold(0u32, |n, b| n * 26 + u32::from(b - b'a') + 1) - 1;
+            return Some((class, place, String::new()));
+        }
+    }
+    None
+}
+
+/// disk_class's inverse: the kernel's name for the disk of CLASS at PLACE.
+fn class_disk(class: &str, place: u32, rest: &str) -> String {
+    match class {
+        "nvme" | "mmcblk" => format!("{class}{place}{rest}"),
+        _ => {
+            let (mut n, mut l) = (place + 1, Vec::new());
+            while n > 0 {
+                l.push(b'a' + ((n - 1) % 26) as u8);
+                n = (n - 1) / 26;
+            }
+            l.reverse();
+            format!("{class}{}{rest}", String::from_utf8_lossy(&l))
+        }
+    }
+}
+
+/// "first", "second", ... for a place among a class's disks (0 the first).
+fn place_word(place: u32) -> String {
+    const W: [&str; 8] = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"];
+    W.get(place as usize).map_or_else(|| format!("{}th", place + 1), |w| w.to_string())
+}
+
+/// Whether the kernel names a class's disks by where they are attached
+/// rather than by the order it finds them: mmcblk by its host
+/// controller's index (mmc_block takes host->index, set by the device
+/// tree's or ACPI's aliases), xvd by the vdev the Xen domain's config
+/// gives it, hd by its IDE channel and position.  Taking another disk out
+/// renames none of them.  vd, sd and nvme are numbered as found, the
+/// first free number first.
+fn fixed_class(class: &str) -> bool {
+    matches!(class, "mmcblk" | "xvd" | "hd")
+}
+
+/// The name target disk TARGET will have when the restored machine boots,
+/// of TARGETS (every target disk of the plan, the machine's disks then):
+/// its own driver class, at its place among the targets of that class, in
+/// the kernel's order.  The rescue's own disk and any other disk that
+/// isn't a target are left out, as gone by then.  A fixed_class disk keeps
+/// the name it has here.  None when the name isn't one disk_class knows.
+fn boot_name_of(target: &str, targets: &[&str]) -> Option<String> {
+    let (class, place, rest) = disk_class(target)?;
+    if fixed_class(class) {
+        return Some(target.to_string());
+    }
+    let mut before: Vec<u32> = targets.iter().filter_map(|t| disk_class(t)).filter(|(c, p, _)| *c == class && *p < place).map(|(_, p, _)| p).collect();
+    before.sort_unstable();
+    before.dedup();
+    Some(class_disk(class, before.len() as u32, &rest))
+}
+
 /// The name of the lilo.conf copy lilo_cmds runs lilo on: the config's
 /// own name with this added, beside it.
 const LILO_COPY_SUFFIX: &str = ".bko-holt";
@@ -5716,19 +5797,31 @@ fn lilo_dump_items(v: &Value) -> Option<Vec<crate::boot::LiloItem>> {
 /// one it has, else the global one it inherits (an image's append= replaces
 /// the global one in lilo), so other images, which may have other roots,
 /// keep theirs.  Images with literal=, or a root= already in append= or
-/// addappend=, are left as they are.  Ok(None) when no image needs it, else
-/// the copy's text and each `LABEL: root=DEV` added; Err when the copy
-/// couldn't say what the user's file says, or lilo would refuse it.
-fn lilo_root_copy(lilo: &Value) -> Result<Option<(String, Vec<String>)>, String> {
+/// addappend=, are left as they are.
+///
+/// lilo also opens the devices boot=, disk=, root=, table=,
+/// raid-extra-boot= and other= name when it runs, in the rescue, where the
+/// source's names may be other disks (the rescue's own /dev/vda while the
+/// target is /dev/vdb): RESCUE gives the name the rescue has for a source
+/// device when it differs, and the copy names that one in each of them,
+/// global or a section's, and in each other= section's device.  The
+/// kernel's root= by name stays the source's, the name it has at boot
+/// (Decision 5); an image with literal= and no root= in it, whose kernel
+/// would take the number lilo writes, is refused when its root= is renamed.
+/// Ok(None) when the copy would change nothing, else the copy; Err when
+/// the copy couldn't say what the user's file says, or lilo would refuse
+/// it.
+fn lilo_root_copy(lilo: &Value, rescue: &dyn Fn(&str) -> Option<String>) -> Result<Option<LiloCopy>, String> {
     use crate::boot::lilo_get;
     let conf = s(lilo, "conf").unwrap_or_else(|| crate::boot::LILO_CONF.into());
-    let Some(global) = lilo_dump_items(lilo) else {
+    let Some(mut global) = lilo_dump_items(lilo) else {
         return Err(format!("the dump's boot.lilo doesn't keep {conf}'s items (options), so bko-holt can't write the copy of it lilo runs on"));
     };
     let g = |k: &str| lilo_get(&global, k).map(str::to_string);
     let flag = |its: &[crate::boot::LiloItem], k: &str| its.iter().chain(global.iter()).any(|(x, _)| x == k);
     let mut sections: Vec<(String, String, Vec<crate::boot::LiloItem>)> = Vec::new();
     let mut added: Vec<String> = Vec::new();
+    let mut renamed: Vec<String> = Vec::new();
     for img in lilo.get("images").and_then(Value::as_array).into_iter().flatten() {
         let kind = s(img, "kind").unwrap_or_else(|| "image".into());
         let path = s(img, "path").unwrap_or_default();
@@ -5737,7 +5830,7 @@ fn lilo_root_copy(lilo: &Value) -> Result<Option<(String, Vec<String>)>, String>
         };
         let root = lilo_get(&its, "root").map(str::to_string).or_else(|| g("root"));
         let has_root = |t: Option<&str>| t.unwrap_or("").split_whitespace().any(|w| w.starts_with("root="));
-        if let Some(root) = root.filter(|r| kind == "image" && lilo_numbers_root(r) && lilo_get(&its, "literal").is_none()) {
+        if let Some(root) = root.clone().filter(|r| kind == "image" && lilo_numbers_root(r) && lilo_get(&its, "literal").is_none()) {
             let own = its.iter().rposition(|(k, _)| k == "append");
             let append = match own {
                 Some(i) => its[i].1.clone(),
@@ -5780,9 +5873,61 @@ fn lilo_root_copy(lilo: &Value) -> Result<Option<(String, Vec<String>)>, String>
                 added.push(format!("{label}: root={dev}"));
             }
         }
+        // literal= replaces the whole command line: with no root= in it the
+        // kernel takes the device number lilo writes for root=, which lilo
+        // would take from the rescue's device of the target's name here, a
+        // number the restored kernel needn't give it.
+        if let (Some(lit), Some(root)) = (lilo_get(&its, "literal").filter(|_| kind == "image"), root.as_deref()) {
+            if !has_root(Some(lit)) && lilo_numbers_root(root) && kernel_dev_path(root) && rescue(root).is_some() {
+                let label = lilo_get(&its, "label").unwrap_or(&path);
+                return Err(format!(
+                    "{conf}'s image {label} has literal= with no root= in it, so its kernel finds / by the device number lilo writes for root={root}, which lilo would take here from the rescue's name for the target's disk (a number the restored kernel needn't give it); bko-holt can't give that image root= by name"
+                ));
+            }
+        }
         sections.push((kind, path, its));
     }
-    if added.is_empty() {
+    // Every device lilo opens when it runs, here in the rescue, as the
+    // rescue names the target's: boot= (the disk whose MBR it writes),
+    // disk= (one it describes), root= (whose number it writes; the kernel
+    // finds / by root= by name in append=, the source's, when it has one),
+    // table= (an other= section's partition table), raid-extra-boot='s
+    // disks, and each other= section's device (whose boot sector it
+    // chain-loads).  PREFIX names a section's item.
+    let mut rename = |prefix: &str, its: &mut Vec<crate::boot::LiloItem>, other: Option<&mut String>| {
+        if let Some(path) = other.filter(|p| kernel_dev_path(p)) {
+            if let Some(r) = rescue(path) {
+                let line = format!("{prefix}other={path} as {r}");
+                if !renamed.contains(&line) {
+                    renamed.push(line);
+                }
+                *path = r;
+            }
+        }
+        for (k, v) in its.iter_mut().filter(|(k, _)| matches!(k.as_str(), "root" | "boot" | "disk" | "table" | "raid-extra-boot")) {
+            let Some(old) = v.clone() else { continue };
+            let key: &str = k;
+            let one = |d: &str| {
+                let t = d.trim();
+                (kernel_dev_path(t) && (key != "root" || lilo_numbers_root(t))).then(|| rescue(t)).flatten().unwrap_or_else(|| d.to_string())
+            };
+            let new = if key == "raid-extra-boot" { old.split(',').map(one).collect::<Vec<_>>().join(",") } else { one(&old) };
+            if new == old {
+                continue;
+            }
+            let line = format!("{prefix}{k}={old} as {new}");
+            if !renamed.contains(&line) {
+                renamed.push(line);
+            }
+            *v = Some(new);
+        }
+    };
+    for (kind, path, its) in sections.iter_mut() {
+        let label = lilo_get(its, "label").unwrap_or(path.as_str()).to_string();
+        rename(&format!("{label}'s "), its, (kind == "other").then_some(path));
+    }
+    rename("", &mut global, None);
+    if added.is_empty() && renamed.is_empty() {
         return Ok(None);
     }
     // lilo_items reads no escapes or variables, so an item with a quote, a
@@ -5799,7 +5944,7 @@ fn lilo_root_copy(lilo: &Value) -> Result<Option<(String, Vec<String>)>, String>
     let mut bad = global.iter().chain(sections.iter().flat_map(|(_, _, its)| its.iter())).map(|(k, v)| (k.as_str(), v.as_deref())).chain(sections.iter().map(|(k, p, _)| (k.as_str(), Some(p.as_str()))));
     if let Some((k, v)) = bad.find(|(k, v)| odd(k) || v.is_some_and(odd)) {
         return Err(format!(
-            "{conf}'s {k}{} has a quote, backslash or $, which bko-holt can't write into the copy of {conf} it runs lilo on (to give the kernel root= by name) as lilo reads it",
+            "{conf}'s {k}{} has a quote, backslash or $, which bko-holt can't write into the copy of {conf} it runs lilo on (to give the kernel root= by name, and lilo the target's disks by the rescue's names) as lilo reads it",
             v.map(|v| format!("={v}")).unwrap_or_default()
         ));
     }
@@ -5807,13 +5952,38 @@ fn lilo_root_copy(lilo: &Value) -> Result<Option<(String, Vec<String>)>, String>
         Some(v) => format!("{k}=\"{v}\"\n"),
         None => format!("{k}\n"),
     };
-    let mut text = format!("# bko-holt load: {conf} with root= by name added to append= ({}); lilo is run on this copy, then it is removed\n", added.join(", "));
+    let copy = LiloCopy { text: String::new(), added, renamed };
+    let mut text = format!("# bko-holt load: {conf} {}; lilo is run on this copy, then it is removed\n", copy.what());
     text.extend(global.iter().map(item));
     for (kind, path, its) in &sections {
         text += &format!("{kind}=\"{path}\"\n");
         text.extend(its.iter().map(|i| format!("  {}", item(i))));
     }
-    Ok(Some((text, added)))
+    Ok(Some(LiloCopy { text, ..copy }))
+}
+
+/// lilo_root_copy's copy of lilo.conf: its text, each `LABEL: root=DEV`
+/// added to an append=, and each device named as the rescue names it
+/// (`boot=/dev/vda as /dev/vdb`).
+#[derive(Debug, PartialEq)]
+struct LiloCopy {
+    text: String,
+    added: Vec<String>,
+    renamed: Vec<String>,
+}
+
+impl LiloCopy {
+    /// What the copy changes, as its first line and the plan say it.
+    fn what(&self) -> String {
+        let mut w = Vec::new();
+        if !self.added.is_empty() {
+            w.push(format!("with root= by name added to append= ({})", self.added.join(", ")));
+        }
+        if !self.renamed.is_empty() {
+            w.push(format!("with the devices lilo opens named as the rescue names the target's ({})", self.renamed.join(", ")));
+        }
+        w.join(" and ")
+    }
 }
 
 /// geninitrd_steps' result: (image, the commands remaking it) for each
@@ -5821,6 +5991,15 @@ fn lilo_root_copy(lilo: &Value) -> Result<Option<(String, Vec<String>)>, String>
 type GeninitrdSteps = (Vec<(String, Vec<Cmd>)>, Vec<String>);
 
 impl Builder<'_> {
+    /// The name the rescue has for the target of source device P (a kernel
+    /// name, /dev/md/N as /dev/mdN) when it isn't P: what a tool run here in
+    /// the rescue (lilo, mkinitrd_command_generator.sh) must open for the
+    /// device the restored system calls P at boot.
+    fn rescue_name(&self, p: &str) -> Option<String> {
+        let src = self.names.src_of_path(&md_name(p)).or_else(|| self.names.src_of_path(p))?;
+        self.names.dev(&src).filter(|t| md_name(t) != md_name(p))
+    }
+
     /// Slackware's mkinitrd step, as the dump read it
     /// (boot.initramfs.mkinitrd): the source's own command
     /// (/boot/initrd-tree/command_line) with -k for its kernels, else
@@ -5878,6 +6057,19 @@ impl Builder<'_> {
         // A dump before these were read: setup.01.mkinitrd's default, and
         // no tree on the source (geninitrd's default leaves none).
         let remove_tree = g.get("auto_remove_initrd_tree").and_then(Value::as_bool) != Some(false) && g.get("initrd_tree").and_then(Value::as_bool) != Some(true);
+        // The command generator takes / from fstab (the source's name, the
+        // one it has at boot) and probes that device here in the rescue
+        // (blkid for -f, lvdisplay and cryptsetup for -L and -C), where it
+        // may be another disk's (the rescue's own): when the rescue names
+        // the target's root otherwise, the generator is given it
+        // (--rootdev), and its command mkinitrd's -r given back as fstab's,
+        // or it fails.
+        let fstab_root = self.layout.arr(&["storage", "fstab"]).iter().find(|e| s(e, "file").as_deref() == Some("/")).and_then(|e| s(e, "spec"));
+        let probe = fstab_root.filter(|r| runs != "mkinitrd" && kernel_dev_path(r)).and_then(|r| self.rescue_name(&r).map(|h| (r, h)));
+        let plain = |d: &str| d.bytes().all(|b| b.is_ascii_alphanumeric() || b"/_-".contains(&b));
+        if let Some((r, h)) = probe.as_ref().filter(|(r, h)| !plain(r) || !plain(h)) {
+            return Err(format!("fstab's / is {r}, which the rescue names {h}, a name bko-holt doesn't pass to {} and back (letters, digits, /, _ and - only), so the restored initrd images stay", crate::boot::MKINITRD_GENERATOR));
+        }
         let mut steps = Vec::new();
         let mut notes = Vec::new();
         for img in g.get("images").and_then(Value::as_array).into_iter().flatten() {
@@ -5901,9 +6093,17 @@ impl Builder<'_> {
                 let generator = crate::boot::MKINITRD_GENERATOR;
                 // `file` is /boot/initrd-V.img with V a kernel_version_word: no
                 // quote or $ to escape.
-                let line = format!("set -o pipefail; {generator} -k {v} -a \"-L -R -o {file}\" | bash");
+                let (line, probed) = match &probe {
+                    None => (format!("set -o pipefail; {generator} -k {v} -a \"-L -R -o {file}\" | bash"), String::new()),
+                    Some((r, h)) => (
+                        format!(
+                            "set -o pipefail; c=$({generator} -k {v} --rootdev {h} -a \"-L -R -o {file}\") || exit; grep -Eq -- ' -r {h}( |$)' <<<\"$c\" || {{ echo '{generator} printed no mkinitrd -r {h}' >&2; exit 1; }}; sed -E 's# -r {h}( |$)# -r {r}\\1#' <<<\"$c\" | bash"
+                        ),
+                        format!("; given --rootdev {h}, the target's / as the rescue names it, so it probes that device and not what {r} is here, and mkinitrd's -r given back as {r}, the name fstab and the restored kernel have"),
+                    ),
+                };
                 Cmd::new(&["chroot", t, "/bin/bash", "-c", &line]).why(format!(
-                    "the initrd for kernel {v}, as geninitrd makes it ({setup}: the mkinitrd command {generator} prints for this machine's root and storage drivers, with -L -R -o {file}, run)"
+                    "the initrd for kernel {v}, as geninitrd makes it ({setup}: the mkinitrd command {generator} prints for this machine's root and storage drivers, with -L -R -o {file}, run{probed})"
                 ))
             };
             let mut cmds = vec![cmd];
@@ -6003,13 +6203,21 @@ impl Builder<'_> {
         Vec::new()
     }
 
-    /// Decision 5: Slackware's kernel finds / by the root= its loader gives
-    /// it (no initrd to resolve a UUID), and fstab names its filesystems by
-    /// device name.  Every /dev/NAME in lilo.conf (boot=, disk=, root=,
-    /// root= in append=), in each elilo.conf, in mkinitrd's -r and in fstab
-    /// (those on the layout's disks) must be the same name here: a note when it is, a
-    /// problem when the target's disk is named otherwise, since load
-    /// doesn't rewrite them.
+    /// Decision 5, option (d): Slackware's kernel finds / by the root= its
+    /// loader gives it (no initrd to resolve a UUID), and fstab names its
+    /// filesystems by device name.  Every /dev/NAME in lilo.conf (boot=,
+    /// disk=, root=, root= in append=, other=, table=, raid-extra-boot=),
+    /// in each elilo.conf, in mkinitrd's
+    /// -r and in fstab (those on the layout's disks) is restored as it is,
+    /// so it must be the name its target has when the restored machine
+    /// boots, not in the rescue: the same driver class (vd, sd, nvme,
+    /// mmcblk; a partition by its disk) and the same place among that
+    /// class's disks, of the plan's target disks only (boot_name_of: the
+    /// rescue's own disk, never a target, is gone by then; an mmcblk, xvd
+    /// or hd disk keeps its name here).  A note when
+    /// every name holds; a problem saying why when the class or the order
+    /// changes, since load doesn't rewrite them.  A device that isn't on a
+    /// disk (an md array) must have its name here.
     fn slackware_device_names(&mut self) {
         let mut refs: Vec<(String, String)> = Vec::new();
         let mut push = |what: String, p: &str| {
@@ -6026,6 +6234,11 @@ impl Builder<'_> {
         }
         for (conf, c) in &confs {
             let mut words = |v: &Value| {
+                // An other= section's device, the boot sector lilo
+                // chain-loads.
+                if let Some(p) = s(v, "path").filter(|_| s(v, "kind").as_deref() == Some("other")) {
+                    push(format!("{conf}'s other="), &p);
+                }
                 for k in ["boot", "root"] {
                     if let Some(p) = s(v, k) {
                         push(format!("{conf}'s {k}="), &p);
@@ -6043,9 +6256,16 @@ impl Builder<'_> {
             for img in c.get("images").and_then(Value::as_array).into_iter().flatten() {
                 words(img);
             }
-            for o in c.get("options").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+            let sections = c.get("images").and_then(Value::as_array).into_iter().flatten();
+            for o in c.get("options").and_then(Value::as_array).into_iter().chain(sections.filter_map(|i| i.get("options").and_then(Value::as_array))).flatten().filter_map(Value::as_str) {
                 if let Some(p) = o.strip_prefix("disk=") {
                     push(format!("{conf}'s disk="), p);
+                }
+                if let Some(p) = o.strip_prefix("table=") {
+                    push(format!("{conf}'s table="), p);
+                }
+                for p in o.strip_prefix("raid-extra-boot=").into_iter().flat_map(|l| l.split(',')) {
+                    push(format!("{conf}'s raid-extra-boot="), p.trim());
                 }
             }
         }
@@ -6082,27 +6302,60 @@ impl Builder<'_> {
         // root= alone; mkinitrd's initrd (15.0's or geninitrd's) mounts the
         // root it was made with (-r, ROOTDEV) unless root= says another.
         let finds = match self.layout.str_at(&["boot", "initramfs", "generator"]) {
-            Some("mkinitrd" | "geninitrd") => "the restored initrd mounts / by that name (mkinitrd's -r, or the kernel's root=)",
-            _ => "the restored kernel finds / by that name (it has no initrd to find a UUID)",
+            Some("mkinitrd" | "geninitrd") => "the restored initrd mounts / by the name it was made with (mkinitrd's -r, or the kernel's root=)",
+            _ => "the restored kernel finds / by the name root= gives it (it has no initrd to find a UUID)",
         };
+        let tail = format!("{finds} and fstab mounts by device names, which bko-holt load restores as the source had them");
+        let targets: Vec<&str> = self.names.mapping.pairs.iter().map(|(_, t)| t.as_str()).collect();
         let mut same: Vec<String> = Vec::new();
         for (what, p) in refs {
             let src = self.names.src_of_path(&md_name(&p)).or_else(|| self.names.src_of_path(&p));
-            match src.as_deref().and_then(|x| self.names.dev(x)) {
-                Some(t) if md_name(&t) == md_name(&p) => {
+            let Some(here) = src.as_deref().and_then(|x| self.names.dev(x)) else {
+                self.problems.push(format!("Slackware: {what} names {p}, which isn't on the layout's disks, so the restored system couldn't find it at boot"));
+                continue;
+            };
+            // The source disk it is on (and its partition's number), and
+            // the target disk that disk goes to.
+            let on_disk = src.as_deref().and_then(|x| {
+                self.layout.disks.iter().find_map(|d| if d.name == x { Some((d.name.as_str(), None)) } else { d.parts.iter().find(|q| q.name == x).map(|q| (d.name.as_str(), Some(q.number))) })
+            });
+            let by_place = on_disk.and_then(|(d, n)| {
+                let t = self.names.mapping.target_of(d)?;
+                Some((disk_class(d)?, disk_class(t)?, boot_name_of(t, &targets)?, n, d))
+            });
+            let Some(((sc, sp, _), (tc, _, _), boot, n, disk)) = by_place else {
+                // Not on a disk the kernel names by place: its name here.
+                if md_name(&here) == md_name(&p) {
                     if !same.contains(&p) {
                         same.push(p);
                     }
+                } else {
+                    self.problems.push(format!("Slackware: {what} names {p}, which is {here} here; {tail}: restore onto disks that keep the source's names (a future opt-in to rewrite them, --rename-devices, isn't built)"));
                 }
-                Some(t) => self.problems.push(format!(
-                    "Slackware: {what} names {p}, which is {t} here; {finds} and fstab mounts by device names, and bko-holt load doesn't rewrite them: restore onto disks that keep the source's names"
-                )),
-                None => self.problems.push(format!("Slackware: {what} names {p}, which isn't on the layout's disks, so the restored system couldn't find it at boot")),
+                continue;
+            };
+            let at_boot = n.map_or_else(|| format!("/dev/{boot}"), |n| part_path(&boot, n));
+            if boot == disk {
+                if !same.contains(&p) {
+                    same.push(p);
+                }
+                continue;
             }
+            let why = if sc != tc {
+                format!("on a disk of the {tc} class, where the source's was of the {sc} class")
+            } else if fixed_class(tc) {
+                format!("and the kernel names {tc} disks by where they are attached (the controller's number, the slot), not by the order it finds them")
+            } else {
+                let tp = disk_class(&boot).map_or(0, |(_, p, _)| p);
+                format!("on the {} of the target's {tc} disks (the rescue's own disk and any that isn't a target left out), where the source's was the {}", place_word(tp), place_word(sp))
+            };
+            self.problems.push(format!(
+                "Slackware: {what} names {p}, which is {here} here, {why}, so the restored kernel will call it {at_boot}, not {p}; {tail}: restore onto {sc} disks in the source's order (a future opt-in to rewrite them, --rename-devices, isn't built)"
+            ));
         }
         if !same.is_empty() {
             self.notes.push(format!(
-                "Slackware: lilo.conf, elilo.conf and fstab name devices by their kernel names ({}), which the target's disks keep; on disks named otherwise they would need rewriting",
+                "Slackware: lilo.conf, elilo.conf and fstab name devices by their kernel names ({}), which the target's disks have at boot (the same kind of disk in the same place among the target's, the rescue's own disk left out); they are restored as they are",
                 same.join(", ")
             ));
         }
@@ -6112,9 +6365,11 @@ impl Builder<'_> {
     /// `lilo -v`, which writes the MBR of boot= and /boot/map.  Only boot=
     /// a whole disk: LILO in a partition's boot sector is refused by name.
     /// When an image's root= is a /dev/ name lilo would write as a device
-    /// number (lilo_root_copy), both run with -C on a copy of lilo.conf
-    /// that gives the kernel root= by name too, removed after; the user's
-    /// lilo.conf stays as restored.
+    /// number, or a device lilo opens (boot=, disk=, root=, other=, ...) is
+    /// one the rescue names otherwise (lilo_root_copy), both run with -C on
+    /// a copy of lilo.conf
+    /// that gives the kernel root= by name too and lilo the rescue's names,
+    /// removed after; the user's lilo.conf stays as restored.
     fn lilo_cmds(&mut self, t: &str) -> Vec<Cmd> {
         let Some(lilo) = self.layout.v.at(&["boot", "lilo"]).filter(|v| !v.is_null()).cloned() else {
             self.problems.push(format!("LILO: the dump has no {} (boot.lilo), so lilo has nothing to install from", crate::boot::LILO_CONF));
@@ -6143,7 +6398,9 @@ impl Builder<'_> {
                 self.problems.push(format!("LILO: {conf} has {n}, not a kernel device name: lilo would resolve it on this machine, where it may name another disk than the target (the source's, still attached); bko-holt load supports only names like /dev/vda there"));
             }
         }
-        match lilo_root_copy(&lilo) {
+        // lilo opens boot=, disk=, root= and other= here, not at boot.
+        let rescue = |p: &str| self.rescue_name(p);
+        match lilo_root_copy(&lilo, &rescue) {
             Err(p) => {
                 self.problems.push(format!("LILO: {p}"));
                 Vec::new()
@@ -6152,14 +6409,24 @@ impl Builder<'_> {
                 Cmd::new(&["chroot", t, "lilo", "-t", "-v"]).why(format!("LILO: {conf} checked against the restored kernels; nothing is written (-t)")),
                 Cmd::new(&["chroot", t, "lilo", "-v"]).why("LILO: the MBR and /boot/map (the restored kernels' sectors), as lilo writes them"),
             ],
-            Ok(Some((text, added))) => {
+            Ok(Some(c)) => {
                 let copy = format!("{conf}{LILO_COPY_SUFFIX}");
+                let mut why = Vec::new();
+                if !c.added.is_empty() {
+                    why.push(format!(
+                        "with root= by name at the end of append= ({}): lilo writes root=/dev/... as the major:minor the rescue kernel gives it, and virtio_blk's major is dynamic, so the restored kernel would look for another device",
+                        c.added.join(", ")
+                    ));
+                }
+                if !c.renamed.is_empty() {
+                    why.push(format!(
+                        "with the target's disks by the names the rescue gives them ({}): lilo opens those devices here, where the source's names may be other disks (the rescue's own), and the restored kernel still finds / by the source's",
+                        c.renamed.join(", ")
+                    ));
+                }
                 vec![
                     // 0600: lilo.conf can hold password=.
-                    Cmd::write_file(&format!("{t}{copy}"), text).private().why(format!(
-                        "LILO: {conf} copied with root= by name at the end of append= ({}): lilo writes root=/dev/... as the major:minor the rescue kernel gives it, and virtio_blk's major is dynamic, so the restored kernel would look for another device; {conf} stays as restored",
-                        added.join(", ")
-                    )),
+                    Cmd::write_file(&format!("{t}{copy}"), c.text).private().why(format!("LILO: {conf} copied {}; {conf} stays as restored", why.join(", and "))),
                     Cmd::new(&["chroot", t, "lilo", "-C", &copy, "-t", "-v"]).why(format!("LILO: {copy} checked against the restored kernels; nothing is written (-t)")),
                     Cmd::new(&["chroot", t, "lilo", "-C", &copy, "-v"]).why(format!("LILO: the MBR and /boot/map (the restored kernels' sectors), as lilo writes them from {copy}")),
                     Cmd::new(&["rm", "-f", &format!("{t}{copy}")]).why(format!("LILO: {copy} removed; the map is written")),
@@ -8451,9 +8718,14 @@ mod tests {
         Obj::new().set("conf", "/etc/lilo.conf").set("options", list(&c.global)).set("images", images).build()
     }
 
+    /// lilo_root_copy where the rescue names every device as the source did.
+    fn copy_of(lilo: &Value) -> Result<Option<LiloCopy>, String> {
+        lilo_root_copy(lilo, &|_| None)
+    }
+
     /// The copy's sections, parsed as the dump parses lilo.conf.
     fn lilo_copy(text: &str) -> (String, crate::boot::LiloConf) {
-        let (copy, _) = lilo_root_copy(&lilo_dump(text)).unwrap().expect(text);
+        let copy = copy_of(&lilo_dump(text)).unwrap().expect(text).text;
         let c = crate::boot::LiloConf::parse(&copy);
         (copy, c)
     }
@@ -8507,7 +8779,7 @@ mod tests {
             "boot=/dev/vda\nappend=\"root=/dev/vda2 ro\"\nimage=/boot/vmlinuz\n  root=/dev/vda2\n",
             "boot=/dev/vda\nappend=\"ro\"\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  addappend=\"root=/dev/vda3\"\n",
         ] {
-            assert_eq!(lilo_root_copy(&lilo_dump(conf)), Ok(None), "{conf}");
+            assert_eq!(copy_of(&lilo_dump(conf)), Ok(None), "{conf}");
         }
     }
 
@@ -8516,17 +8788,131 @@ mod tests {
     #[test]
     fn lilo_root_copy_refusals() {
         let long = "x".repeat(490);
-        let e = lilo_root_copy(&lilo_dump(&format!("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  label=Linux\n  read-only\n  append=\"{long}\"\n"))).unwrap_err();
+        let e = copy_of(&lilo_dump(&format!("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  label=Linux\n  read-only\n  append=\"{long}\"\n"))).unwrap_err();
         assert!(e.starts_with("/etc/lilo.conf's image Linux would have a kernel command line of up to 522 characters with root=/dev/vda2 added to its append=, over lilo's 511"), "{e}");
         // Just under: ro (3) root=ffffffff (14) the append, less its space.
         let fits = "x".repeat(511 - 3 - 14 - " root=/dev/vda2".len());
-        assert!(lilo_root_copy(&lilo_dump(&format!("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  read-only\n  append=\"{fits}\"\n"))).unwrap().is_some());
-        let e = lilo_root_copy(&lilo_dump("boot=/dev/vda\npassword=\"\"\nimage=/boot/vmlinuz\n  root=/dev/vda2\n")).unwrap_err();
+        assert!(copy_of(&lilo_dump(&format!("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  read-only\n  append=\"{fits}\"\n"))).unwrap().is_some());
+        let e = copy_of(&lilo_dump("boot=/dev/vda\npassword=\"\"\nimage=/boot/vmlinuz\n  root=/dev/vda2\n")).unwrap_err();
         assert!(e.starts_with("/etc/lilo.conf has password=\"\""), "{e}");
-        let e = lilo_root_copy(&lilo_dump("boot=/dev/vda\nmessage=$HOME/m\nimage=/boot/vmlinuz\n  root=/dev/vda2\n")).unwrap_err();
+        let e = copy_of(&lilo_dump("boot=/dev/vda\nmessage=$HOME/m\nimage=/boot/vmlinuz\n  root=/dev/vda2\n")).unwrap_err();
         assert!(e.starts_with("/etc/lilo.conf's message=$HOME/m has a quote, backslash or $"), "{e}");
-        let e = lilo_root_copy(&crate::json::Obj::new().set("conf", "/etc/lilo.conf").build()).unwrap_err();
+        let e = copy_of(&crate::json::Obj::new().set("conf", "/etc/lilo.conf").build()).unwrap_err();
         assert!(e.starts_with("the dump's boot.lilo doesn't keep /etc/lilo.conf's items"), "{e}");
+    }
+
+    /// The names disks have at boot (decision 5, option (d)): each class by
+    /// itself, the targets' places in the kernel's order, the letters past z.
+    #[test]
+    fn boot_names() {
+        assert_eq!(disk_class("vda"), Some(("vd", 0, String::new())));
+        assert_eq!(disk_class("sdab"), Some(("sd", 27, String::new())));
+        assert_eq!(disk_class("xvdb"), Some(("xvd", 1, String::new())));
+        assert_eq!(disk_class("nvme1n2"), Some(("nvme", 1, "n2".into())));
+        assert_eq!(disk_class("mmcblk0"), Some(("mmcblk", 0, String::new())));
+        for n in ["md0", "dm-0", "loop0", "nvme0n1p2", "mmcblk0boot0", "sda1", "vd"] {
+            assert_eq!(disk_class(n), None, "{n}");
+        }
+        for n in ["vda", "vdz", "vdaa", "sdab", "nvme3n1", "mmcblk2"] {
+            let (c, p, r) = disk_class(n).unwrap();
+            assert_eq!(class_disk(c, p, &r), n);
+        }
+        // The rescue's vda is no target: vdb is the first.
+        assert_eq!(boot_name_of("vdb", &["vdb"]).as_deref(), Some("vda"));
+        assert_eq!(boot_name_of("vdc", &["vdb", "vdc"]).as_deref(), Some("vdb"));
+        assert_eq!(boot_name_of("vdaa", &["vdz", "vdaa"]).as_deref(), Some("vdb"));
+        // Another class doesn't count.
+        assert_eq!(boot_name_of("sdq", &["vdb", "sdq"]).as_deref(), Some("sda"));
+        assert_eq!(boot_name_of("nvme1n1", &["nvme1n1", "sda"]).as_deref(), Some("nvme0n1"));
+        assert_eq!(boot_name_of("md0", &["md0"]), None);
+        // Named by where they are attached, not as found: kept.
+        assert_eq!(boot_name_of("mmcblk1", &["mmcblk1"]).as_deref(), Some("mmcblk1"));
+        assert_eq!(boot_name_of("xvdb", &["xvdb"]).as_deref(), Some("xvdb"));
+        assert_eq!(boot_name_of("hdc", &["hdc"]).as_deref(), Some("hdc"));
+    }
+
+    /// bs1-slackware-current (nvme0n1) as if it were on sda, the target an
+    /// NVMe disk: a class change, refused for every name with why; onto
+    /// another NVMe controller's disk, the target's only one, no problem.
+    #[test]
+    fn slackware_class_change_refused() {
+        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/bs1-slackware-current/src.json")).unwrap();
+        let plan = |json: &str, from: &str, to: &str| {
+            let l = Layout::from_json(crate::json::parse(json).unwrap()).unwrap();
+            let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".into()]) else { unreachable!() };
+            build(&l, &o, &Mapping { pairs: vec![(from.into(), to.into())], ..Mapping::default() })
+        };
+        let names = |b: &Built| b.problems.iter().filter(|p| p.starts_with("Slackware: ") && p.contains(" names /dev/")).cloned().collect::<Vec<_>>();
+        let b = plan(&j, "nvme0n1", "nvme1n1");
+        assert!(names(&b).is_empty(), "{:?}", b.problems);
+        let sd = j.replace("nvme0n1p", "sda").replace("nvme0n1", "sda");
+        let b = plan(&sd, "sda", "nvme0n1");
+        let p = names(&b);
+        assert!(p.iter().any(|p| p.starts_with("Slackware: fstab's / names /dev/sda2, which is /dev/nvme0n1p2 here, on a disk of the nvme class, where the source's was of the sd class, so the restored kernel will call it /dev/nvme0n1p2, not /dev/sda2; the restored initrd mounts / by the name it was made with")), "{p:?}");
+        assert!(!p.is_empty() && p.iter().all(|p| p.ends_with(": restore onto sd disks in the source's order (a future opt-in to rewrite them, --rename-devices, isn't built)")), "{p:?}");
+    }
+
+    /// lilo_root_copy with the rescue naming the target otherwise: boot=
+    /// and disk= (global and a section's) and the root= of an image given
+    /// root= by name are the rescue's names; the root= by name stays the
+    /// source's.  A copy is made for the names alone, too.
+    #[test]
+    fn lilo_copy_renames_for_the_rescue() {
+        use crate::boot::lilo_get;
+        let rescue = |p: &str| p.strip_prefix("/dev/vda").map(|n| format!("/dev/vdb{n}"));
+        let conf = "boot=/dev/vda\ndisk=/dev/vda\n  bios=0x80\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  label=Linux\n  read-only\n";
+        let c = lilo_root_copy(&lilo_dump(conf), &rescue).unwrap().unwrap();
+        let p = crate::boot::LiloConf::parse(&c.text);
+        assert_eq!(lilo_get(&p.global, "boot"), Some("/dev/vdb"), "{}", c.text);
+        assert_eq!(lilo_get(&p.global, "disk"), Some("/dev/vdb"), "{}", c.text);
+        assert_eq!(lilo_get(&p.sections[0].2, "root"), Some("/dev/vdb2"), "{}", c.text);
+        assert_eq!(lilo_get(&p.sections[0].2, "append"), Some("root=/dev/vda2"), "{}", c.text);
+        assert_eq!(c.added, ["Linux: root=/dev/vda2"]);
+        assert_eq!(c.renamed, ["Linux's root=/dev/vda2 as /dev/vdb2", "boot=/dev/vda as /dev/vdb", "disk=/dev/vda as /dev/vdb"]);
+        assert!(c.text.starts_with("# bko-holt load: /etc/lilo.conf with root= by name added to append= (Linux: root=/dev/vda2) and with the devices lilo opens named as the rescue names the target's (Linux's root=/dev/vda2 as /dev/vdb2, boot=/dev/vda as /dev/vdb, disk=/dev/vda as /dev/vdb);"), "{}", c.text);
+        // root=UUID= needs no root= by name, but boot= is still the rescue's.
+        let c = lilo_root_copy(&lilo_dump("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=\"UUID=1234\"\n  label=Linux\n"), &rescue).unwrap().unwrap();
+        assert!(c.added.is_empty() && c.renamed == ["boot=/dev/vda as /dev/vdb"], "{c:?}");
+        assert_eq!(lilo_get(&crate::boot::LiloConf::parse(&c.text).sections[0].2, "root"), Some("UUID=1234"));
+        // The refusals hold for a copy made for the names alone.
+        let e = lilo_root_copy(&lilo_dump("boot=/dev/vda\nmessage=$HOME/m\nimage=/boot/vmlinuz\n  root=UUID=1234\n"), &rescue).unwrap_err();
+        assert!(e.starts_with("/etc/lilo.conf's message=$HOME/m has a quote, backslash or $"), "{e}");
+        // The same names in the rescue: nothing to change.
+        assert_eq!(lilo_root_copy(&lilo_dump("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=UUID=1234\n"), &|_| None), Ok(None));
+
+        // Every device lilo opens: the root= of an image whose append= has
+        // root= already, the global root= an image inherits, an other=
+        // section's device and its table=, raid-extra-boot='s disks.
+        let conf = "boot=/dev/vda\nroot=/dev/vda2\nraid-extra-boot=/dev/vda,/dev/sdc\nimage=/boot/vmlinuz\n  label=Linux\n  append=\"root=/dev/vda5 ro\"\n  root=/dev/vda5\nimage=/boot/vmlinuz-old\n  label=Old\n  addappend=\"root=/dev/vda2\"\nother=/dev/vda1\n  label=Windows\n  table=/dev/vda\n";
+        let c = lilo_root_copy(&lilo_dump(conf), &rescue).unwrap().unwrap();
+        assert!(c.added.is_empty(), "{c:?}");
+        assert_eq!(
+            c.renamed,
+            [
+                "Linux's root=/dev/vda5 as /dev/vdb5",
+                "Windows's other=/dev/vda1 as /dev/vdb1",
+                "Windows's table=/dev/vda as /dev/vdb",
+                "boot=/dev/vda as /dev/vdb",
+                "root=/dev/vda2 as /dev/vdb2",
+                "raid-extra-boot=/dev/vda,/dev/sdc as /dev/vdb,/dev/sdc"
+            ]
+        );
+        let p = crate::boot::LiloConf::parse(&c.text);
+        assert_eq!(lilo_get(&p.global, "root"), Some("/dev/vdb2"), "{}", c.text);
+        assert_eq!(lilo_get(&p.sections[0].2, "root"), Some("/dev/vdb5"), "{}", c.text);
+        assert_eq!(lilo_get(&p.sections[0].2, "append"), Some("root=/dev/vda5 ro"), "{}", c.text);
+        assert_eq!(lilo_get(&p.sections[1].2, "addappend"), Some("root=/dev/vda2"), "{}", c.text);
+        assert_eq!((p.sections[2].0.as_str(), p.sections[2].1.as_str()), ("other", "/dev/vdb1"), "{}", c.text);
+        assert_eq!(lilo_get(&p.sections[2].2, "table"), Some("/dev/vdb"), "{}", c.text);
+        // literal= with no root= in it: its kernel takes lilo's number for
+        // root=, which a renamed root= would make the rescue's; refused.
+        // With root= in it, the number doesn't matter: renamed.
+        let lit = |l: &str| lilo_dump(&format!("boot=/dev/vda\nimage=/boot/vmlinuz\n  label=Linux\n  root=/dev/vda2\n  literal=\"{l}\"\n"));
+        let e = lilo_root_copy(&lit("ro quiet"), &rescue).unwrap_err();
+        assert!(e.starts_with("/etc/lilo.conf's image Linux has literal= with no root= in it, so its kernel finds / by the device number lilo writes for root=/dev/vda2"), "{e}");
+        assert_eq!(copy_of(&lit("ro quiet")), Ok(None));
+        let c = lilo_root_copy(&lit("root=/dev/vda2 ro"), &rescue).unwrap().unwrap();
+        assert_eq!(c.renamed, ["Linux's root=/dev/vda2 as /dev/vdb2", "boot=/dev/vda as /dev/vdb"]);
     }
 
     #[test]

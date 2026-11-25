@@ -39,12 +39,15 @@
 # and its packages are the binhost's.  Gentoo prunes autobuilds after about
 # two months: /bkoscratch/rebuild-inputs/gentoo and gentoo-systemd keep the
 # stage3s and their .ascs on both hosts, for rebuild-one.sh.
-# Slackware's tree (slackware64-15.0: CHECKSUMS.md5 and its .asc, and the
-# five series' packages with their .ascs) is read from SLACKWARE_TREE if set
-# (rebuild-one.sh: /bkoscratch/rebuild-inputs/slackware15), else downloaded
-# into WORK_DIR/slackware64-15.0; either way CHECKSUMS.md5 is checked with
-# gpgv against Slackware's key, each package against its MD5 there and its
-# own .asc.  Its 15.0 tree is frozen; the patches come later, by vm-update.
+# Slackware's tree (slackware64-15.0: CHECKSUMS.md5 and its .asc, the five
+# series' packages and SLACKWARE_PATCHED's patches/packages/ ones, each with
+# its .asc) is read from SLACKWARE_TREE if set (rebuild-one.sh:
+# /bkoscratch/rebuild-inputs/slackware15), else downloaded into
+# WORK_DIR/slackware64-15.0; a package missing from it is downloaded into
+# it.  Either way CHECKSUMS.md5 is checked with gpgv against Slackware's key,
+# each package against its MD5 there and its own .asc.  Its 15.0 tree is
+# frozen; the patches come later, by vm-update, but for SLACKWARE_PATCHED's,
+# whose version is the one the tree's CHECKSUMS.md5 lists.
 # bcachefs needs an Arch ISO whose kernel still has it (6.12), so NixOS's
 # install uses an older one.
 #
@@ -141,6 +144,13 @@ SLACKWARE_MIRROR=https://slackware.osuosl.org/slackware64-15.0
 # GPG-KEY (https://www.slackware.com/gpg-key)
 SLACKWARE_KEY=EC5649DA401E22ABFA6736EF6A4463C040102233
 SLACKWARE_SERIES="a ap d l n"
+# Installed from patches/packages/ instead of their series: the newest
+# version CHECKSUMS.md5 lists, in the series package's place in setup's
+# order; with no patch listed, the series package.  ca-certificates: 15.0's
+# (20211216) bundle can't verify https://slackware.osuosl.org/ (wget: the
+# issuer CN=SSL.com TLS Issuing RSA CA R1 can't be verified), so slackpkg
+# and vm-update (its wget of the mirror's GPG-KEY) can't fetch from it.
+SLACKWARE_PATCHED="ca-certificates"
 
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-bootstrap: $*" >&2; exit 1; }
@@ -302,17 +312,47 @@ case $script in
             die "$tree/CHECKSUMS.md5 is not signed by Slackware's key"
         series_re=$(tr ' ' '|' <<<"$SLACKWARE_SERIES")
         other=generic; [[ ${extra[0]} == KERNEL=generic ]] && other=huge
+        # The series' packages and patches/packages/' (not its
+        # subdirectories), for SLACKWARE_PATCHED.
+        grep -E "  \./(slackware64/($series_re)|patches/packages)/[^/]+\.txz\$" "$tree/CHECKSUMS.md5" | sed 's|  \./|  |' >"$work/sums"
+        grep -q '^[0-9a-f]*  slackware64/' "$work/sums" || die "CHECKSUMS.md5 lists no packages in series $SLACKWARE_SERIES"
         # setup's order: by series as listed, by name within one.
-        grep -E "  \./slackware64/($series_re)/[^/]+\.txz\$" "$tree/CHECKSUMS.md5" | sed 's|  \./|  |' >"$work/sums"
-        [[ -s $work/sums ]] || die "CHECKSUMS.md5 lists no packages in series $SLACKWARE_SERIES"
         for sr in $SLACKWARE_SERIES; do
             awk -v s="slackware64/$sr/" 'index($2, s) == 1 { print $2 }' "$work/sums" | sort
         done | grep -v "/kernel-$other-[^/]*\.txz\$" >"$work/www/pkglist.txt"
+        # pkg_named NAME: the paths on stdin of package NAME, its file name
+        # less -VERSION-ARCH-BUILD.txz (compared as a string, not a regex).
+        pkg_named() {
+            awk -v want="$1" '{ b = $NF; sub(/.*\//, "", b); n = split(b, f, "-"); name = f[1]
+                for (i = 2; i <= n - 3; i++) name = name "-" f[i]
+                if (n >= 4 && name == want) print $NF }'
+        }
+        for pp in $SLACKWARE_PATCHED; do
+            series_p=$(pkg_named "$pp" <"$work/www/pkglist.txt")
+            [[ -n $series_p && $(wc -l <<<"$series_p") -eq 1 ]] ||
+                die "SLACKWARE_PATCHED's $pp isn't one package of series $SLACKWARE_SERIES"
+            patch_p=$(awk 'index($2, "patches/packages/") == 1 { print $2 }' "$work/sums" | pkg_named "$pp" | sort -V | tail -n 1)
+            if [[ -z $patch_p ]]; then
+                echo "Slackware: CHECKSUMS.md5 lists no patch for $pp; $series_p stays"
+                continue
+            fi
+            awk -v old="$series_p" -v new="$patch_p" '$0 == old { $0 = new } { print }' "$work/www/pkglist.txt" >"$work/pkglist.new"
+            mv "$work/pkglist.new" "$work/www/pkglist.txt"
+            echo "Slackware: $patch_p in place of $series_p"
+        done
         missing=$(cd "$tree" && while read -r p; do [[ -f $p && -f $p.asc ]] || echo "$p"; done <"$work/www/pkglist.txt")
         if [[ -n $missing ]]; then
             echo "Downloading $(wc -l <<<"$missing") Slackware packages into $tree"
+            # The mirror keeps only the newest patch of a package: one that
+            # CHECKSUMS.md5 lists may be gone (ca-certificates 20261118
+            # replaced the 20261107 that rebuild-inputs' CHECKSUMS.md5 of
+            # 2026-11-12 lists).  15.0's series lines in it don't change.
             (cd "$tree" && sed "s|^|$SLACKWARE_MIRROR/|; p; s|\$|.asc|" <<<"$missing" |
-                wget -q -nc -x -nH --cut-dirs=1 -i -) || die "could not download Slackware's packages"
+                wget -q -nc -x -nH --cut-dirs=1 -i -) || {
+                ! grep -q '^patches/' <<<"$missing" ||
+                    echo "make-bootstrap: if the mirror has a newer patch than $tree/CHECKSUMS.md5 lists, put the mirror's CHECKSUMS.md5 and CHECKSUMS.md5.asc in $tree" >&2
+                die "could not download Slackware's packages"
+            }
         fi
         (cd "$tree" && grep -F -f "$work/www/pkglist.txt" "$work/sums" | md5sum -c --quiet -) ||
             die "Slackware's packages don't match CHECKSUMS.md5"

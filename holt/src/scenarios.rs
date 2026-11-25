@@ -5044,13 +5044,18 @@ fn slackware15_uefi() -> Tree {
 
 /// A Slackware plan: the source disk vda going to `to`, with load's `args`.
 fn slackware_plan(t: &Tree, to: &str, args: &[&str]) -> (Value, crate::load::commands::Built) {
+    slackware_plan_map(t, &[("vda", to)], args)
+}
+
+/// A Slackware plan with each (source disk, target disk) of `pairs`.
+fn slackware_plan_map(t: &Tree, pairs: &[(&str, &str)], args: &[&str]) -> (Value, crate::load::commands::Built) {
     use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
     let v = run(t, true, FakeRunner::default());
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["l.json".to_string()];
     a.extend(args.iter().map(|x| x.to_string()));
     let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
-    (v, commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), to.into())], ..Mapping::default() }))
+    (v, commands::build(&l, &o, &Mapping { pairs: pairs.iter().map(|(s, t)| (s.to_string(), t.to_string())).collect(), ..Mapping::default() }))
 }
 
 /// slackware15 read back and planned (docs/design/slackware.md, S2):
@@ -5121,11 +5126,31 @@ fn slackware15_guest() {
     assert!(b.notes.iter().any(|n| n.starts_with("Slackware: no initrd")), "{:?}", b.notes);
     assert!(b.notes.iter().any(|n| n.starts_with("Slackware: lilo.conf, elilo.conf and fstab name devices by their kernel names (/dev/vda, /dev/vda2, /dev/vda1)")), "{:?}", b.notes);
 
-    // Onto vdb: every name changes, and load stops (decision 5).
+    // Onto vdb, the rescue's own disk being vda (HoltTest2's rig): vdb is
+    // the target's first vd disk, so it boots as vda, and the names hold
+    // (decision 5, option (d)).  lilo, run in the rescue, is given vdb.
     let (_, b) = slackware_plan(&slackware15(), "vdb", &[]);
-    for want in ["/etc/lilo.conf's boot= names /dev/vda, which is /dev/vdb here", "/etc/lilo.conf's root= names /dev/vda2, which is /dev/vdb2 here", "fstab's / names /dev/vda2", "fstab's swap names /dev/vda1, which is /dev/vdb1 here"] {
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    assert!(b.notes.iter().any(|n| n.starts_with("Slackware: lilo.conf, elilo.conf and fstab name devices by their kernel names (/dev/vda, /dev/vda2, /dev/vda1), which the target's disks have at boot")), "{:?}", b.notes);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("\nboot=\"/dev/vdb\"\n") && !bt.contains("boot=\"/dev/vda\""), "{bt}");
+    assert!(bt.contains("\nimage=\"/boot/vmlinuz\"\n  root=\"/dev/vdb2\"\n  label=\"Linux\"\n  read-only\n  append=\" vt.default_utf8=0 root=/dev/vda2\"\nEOF\n"), "{bt}");
+    assert!(bt.contains("# LILO: /etc/lilo.conf copied with root= by name at the end of append= (Linux: root=/dev/vda2): "), "{bt}");
+    assert!(bt.contains("and with the target's disks by the names the rescue gives them (Linux's root=/dev/vda2 as /dev/vdb2, boot=/dev/vda as /dev/vdb)"), "{bt}");
+    assert!(!b.stage(Stage::Boot).iter().any(|c| c.write.as_deref() == Some("/mnt/bko-target/etc/lilo.conf")), "{bt}");
+    assert!(!b.stage(Stage::Boot).iter().any(|c| c.write.as_deref() == Some("/mnt/bko-target/etc/fstab")), "{bt}");
+
+    // Onto an NVMe disk: another driver class, so every name is refused.
+    let (_, b) = slackware_plan(&slackware15(), "nvme0n1", &[]);
+    for want in [
+        "/etc/lilo.conf's boot= names /dev/vda, which is /dev/nvme0n1 here, on a disk of the nvme class, where the source's was of the vd class, so the restored kernel will call it /dev/nvme0n1, not /dev/vda",
+        "/etc/lilo.conf's root= names /dev/vda2, which is /dev/nvme0n1p2 here",
+        "fstab's / names /dev/vda2",
+        "fstab's swap names /dev/vda1, which is /dev/nvme0n1p1 here",
+    ] {
         assert!(b.problems.iter().any(|p| p.contains(want)), "{want}: {:?}", b.problems);
     }
+    assert!(b.problems.iter().all(|p| p.ends_with("restore onto vd disks in the source's order (a future opt-in to rewrite them, --rename-devices, isn't built)")), "{:?}", b.problems);
     assert_eq!(b.problems.len(), 4, "{:?}", b.problems);
 
     // LILO in a partition's boot sector: refused by name.
@@ -5134,6 +5159,103 @@ fn slackware15_guest() {
     t.file("/etc/lilo.conf", conf.replace("boot = /dev/vda\n", "boot = /dev/vda2\n"));
     let (_, b) = slackware_plan(&t, "vda", &[]);
     assert!(b.problems.iter().any(|p| p.starts_with("LILO: /etc/lilo.conf has boot=/dev/vda2, partition vda2: LILO in a partition's boot sector")), "{:?}", b.problems);
+}
+
+/// slackware15 with a second disk, vdb1 ext4 at /data by name, and LILO's
+/// disk= for vda (decision 5, option (d)).
+fn slackware15_two_disks() -> Tree {
+    let t = slackware15();
+    let mut img = vec![0u8; 16 * MIB];
+    img[440..444].copy_from_slice(&0x51ac_0016u32.to_le_bytes());
+    mbr_entry(&mut img[..512], 0, 0, 0x83, 2048, 30720);
+    put(&mut img, 2048, &ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, ""));
+    t.disk("vdb", "254:16", &img, 512).partition("vdb", "vdb1", "254:17", 1, 2048, 30720, &img).file("/sys/block/vdb/device/model", "");
+    let mi = std::fs::read_to_string(t.p("/proc/self/mountinfo")).unwrap();
+    t.file("/proc/self/mountinfo", format!("{mi}27 26 254:17 / /data rw,relatime shared:2 - ext4 /dev/vdb1 rw\n"));
+    let fstab = std::fs::read_to_string(t.p("/etc/fstab")).unwrap();
+    t.file("/etc/fstab", format!("{fstab}/dev/vdb1        /data            ext4        defaults         1   2\n"));
+    let conf = std::fs::read_to_string(t.p("/etc/lilo.conf")).unwrap();
+    t.file("/etc/lilo.conf", conf.replace("boot = /dev/vda\n", "boot = /dev/vda\ndisk = /dev/vda\n  bios = 0x80\n"));
+    t
+}
+
+/// Decision 5, option (d), on two disks: a name holds when its target is
+/// the same kind of disk in the same place among the target's, the
+/// rescue's own disk (vda here, never a target) left out.  vda, vdb onto
+/// vdb, vdc: they boot as vda, vdb, so no problem, and lilo in the rescue
+/// is given vdb for boot= and disk=.  Swapped (vda onto vdc, vdb onto vdb):
+/// they boot as each other's names, refused.
+#[test]
+fn slackware15_device_names_at_boot() {
+    use crate::load::{commands::Cmd, Stage};
+    let t = slackware15_two_disks();
+    let (v, b) = slackware_plan_map(&t, &[("vda", "vdb"), ("vdb", "vdc")], &[]);
+    assert_eq!(arr(&v, &["storage", "disks"]).len(), 2);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    assert!(b.notes.iter().any(|n| n.contains("kernel names (/dev/vda, /dev/vda2, /dev/vda1, /dev/vdb1), which the target's disks have at boot")), "{:?}", b.notes);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("\nboot=\"/dev/vdb\"\ndisk=\"/dev/vdb\"\nbios=\"0x80\"\n"), "{bt}");
+    assert!(bt.contains("boot=/dev/vda as /dev/vdb, disk=/dev/vda as /dev/vdb"), "{bt}");
+    assert!(bt.contains("  root=\"/dev/vdb2\"\n") && bt.contains("append=\" vt.default_utf8=0 root=/dev/vda2\""), "{bt}");
+    let m: String = b.stage(Stage::Mount).iter().map(Cmd::shell).collect();
+    assert!(m.contains("/dev/vdc1 /mnt/bko-target/data\n"), "{m}");
+
+    // Swapped: vdb boots as vda and vdc as vdb.
+    let (_, b) = slackware_plan_map(&t, &[("vda", "vdc"), ("vdb", "vdb")], &[]);
+    for want in [
+        "Slackware: fstab's / names /dev/vda2, which is /dev/vdc2 here, on the second of the target's vd disks (the rescue's own disk and any that isn't a target left out), where the source's was the first, so the restored kernel will call it /dev/vdb2, not /dev/vda2",
+        "Slackware: fstab's /data names /dev/vdb1, which is /dev/vdb1 here, on the first of the target's vd disks (the rescue's own disk and any that isn't a target left out), where the source's was the second, so the restored kernel will call it /dev/vda1, not /dev/vdb1",
+        "Slackware: /etc/lilo.conf's disk= names /dev/vda, which is /dev/vdc here",
+        "Slackware: /etc/lilo.conf's root= names /dev/vda2, which is /dev/vdc2 here",
+    ] {
+        assert!(b.problems.iter().any(|p| p.starts_with(want)), "{want}: {:?}", b.problems);
+    }
+    assert_eq!(b.problems.len(), 6, "{:?}", b.problems);
+
+    // The source's names exactly (vda, vdb onto vda, vdb): the plain lilo.
+    let (_, b) = slackware_plan_map(&t, &[("vda", "vda"), ("vdb", "vdb")], &[]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("\nboot=\"/dev/vda\"\ndisk=\"/dev/vda\"\nbios=\"0x80\"\n") && !bt.contains("the names the rescue gives them"), "{bt}");
+}
+
+/// ELILO under option (d): onto vdb (the rescue's vda left out), nothing
+/// is refused and elilo.conf's append= root= is never rewritten: nothing
+/// is written to the ESP's elilo.conf.
+#[test]
+fn slackware15_uefi_device_names_at_boot() {
+    use crate::load::{commands::Cmd, Stage};
+    let (_, b) = slackware_plan(&slackware15_uefi(), "vdb", &[]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    assert!(b.notes.iter().any(|n| n.contains("kernel names (/dev/vda3, /dev/vda2, /dev/vda1), which the target's disks have at boot")), "{:?}", b.notes);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(!bt.contains("elilo.conf") && !bt.contains("/dev/vdb3") && !b.stage(Stage::Boot).iter().any(|c| c.write.as_deref().is_some_and(|w| w.ends_with("elilo.conf"))), "{bt}");
+    assert!(bt.contains("mkinitrd -c -f xfs -r /dev/vda3 "), "{bt}");
+}
+
+/// An other= section (a boot sector lilo chain-loads) with its table=:
+/// lilo opens both in the rescue, so onto vdb the copy names them as the
+/// rescue does, and they are judged by their names at boot like boot=:
+/// onto an NVMe disk, refused.
+#[test]
+fn slackware15_lilo_other() {
+    use crate::load::{commands::Cmd, Stage};
+    let t = slackware15();
+    let conf = std::fs::read_to_string(t.p("/etc/lilo.conf")).unwrap();
+    t.file("/etc/lilo.conf", format!("{conf}other = /dev/vda1\n  label = Other\n  table = /dev/vda\n"));
+    let (_, b) = slackware_plan(&t, "vdb", &[]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("\nother=\"/dev/vdb1\"\n  label=\"Other\"\n  table=\"/dev/vdb\"\nEOF\n"), "{bt}");
+    assert!(bt.contains("(Linux's root=/dev/vda2 as /dev/vdb2, Other's other=/dev/vda1 as /dev/vdb1, Other's table=/dev/vda as /dev/vdb, boot=/dev/vda as /dev/vdb)"), "{bt}");
+    let (_, b) = slackware_plan(&t, "nvme0n1", &[]);
+    for want in [
+        "Slackware: /etc/lilo.conf's other= names /dev/vda1, which is /dev/nvme0n1p1 here, on a disk of the nvme class",
+        "Slackware: /etc/lilo.conf's table= names /dev/vda, which is /dev/nvme0n1 here, on a disk of the nvme class",
+    ] {
+        assert!(b.problems.iter().any(|p| p.starts_with(want)), "{want}: {:?}", b.problems);
+    }
+    assert_eq!(b.problems.len(), 6, "{:?}", b.problems);
 }
 
 /// LILO's boot= and disk= by a link (/dev/disk/by-id/...): lilo would
@@ -5532,6 +5654,38 @@ fn slackware_current_thinkpad() {
     assert!(b.notes.iter().any(|n| n.starts_with("ELILO: elilo.efi, elilo.conf, the kernel and the initrd came back with the ESP")), "{:?}", b.notes);
     assert!(b.notes.iter().any(|n| n.contains("kernel names (/dev/nvme0n1p2, /dev/nvme0n1p1)")), "{:?}", b.notes);
 
+    // Onto another NVMe controller's disk, the target's only one (it boots
+    // as nvme0n1): no problem.  The command generator, run here, probes
+    // fstab's / by its name here, so it is given the target's root as the
+    // rescue names it (--rootdev), and its mkinitrd's -r is given back as
+    // fstab's; a command with no such -r fails the step.
+    let (_, b) = slackware_plan_from(&slackware_current(), "nvme0n1", "nvme1n1", &[]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let gc = b.stage(Stage::Boot).iter().find(|c| c.argv.get(2).map(String::as_str) == Some("/bin/bash")).expect("the generator's step").clone();
+    let line = gc.argv[4].clone();
+    assert_eq!(
+        line,
+        "set -o pipefail; c=$(/usr/share/mkinitrd/mkinitrd_command_generator.sh -k 7.3.5 --rootdev /dev/nvme1n1p2 -a \"-L -R -o /boot/initrd-7.3.5.img\") || exit; grep -Eq -- ' -r /dev/nvme1n1p2( |$)' <<<\"$c\" || { echo '/usr/share/mkinitrd/mkinitrd_command_generator.sh printed no mkinitrd -r /dev/nvme1n1p2' >&2; exit 1; }; sed -E 's# -r /dev/nvme1n1p2( |$)# -r /dev/nvme0n1p2\\1#' <<<\"$c\" | bash"
+    );
+    let why = gc.shell();
+    assert!(why.contains("given --rootdev /dev/nvme1n1p2, the target's / as the rescue names it"), "{why}");
+    // The line with a stand-in generator, and cat for bash.
+    let dir = std::env::temp_dir().join(format!("bko-gen-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let fake = dir.join("gen");
+    let try_with = |printed: &str| {
+        std::fs::write(&fake, format!("#!/bin/sh\ncat <<'X'\n{printed}X\n")).unwrap();
+        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        let l = line.replace("/usr/share/mkinitrd/mkinitrd_command_generator.sh", &fake.to_string_lossy()).replace("| bash", "| cat");
+        std::process::Command::new("bash").args(["-c", &l]).output().unwrap()
+    };
+    let o = try_with("#\n# A suitable 'mkinitrd' command will be:\n\nmkinitrd -c -k 7.3.5 -f ext4 -r /dev/nvme1n1p2 -m nvme:ext4 -L -R -o /boot/initrd-7.3.5.img\n");
+    assert!(o.status.success(), "{o:?}");
+    assert!(String::from_utf8_lossy(&o.stdout).contains("\nmkinitrd -c -k 7.3.5 -f ext4 -r /dev/nvme0n1p2 -m nvme:ext4 -L -R -o /boot/initrd-7.3.5.img\n"), "{o:?}");
+    let o = try_with("mkinitrd -c -k 7.3.5 -f ext4 -r /dev/nvme1n1p22 -o /boot/initrd-7.3.5.img\n");
+    assert!(!o.status.success() && o.stdout.is_empty(), "{o:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+
     // With an /etc/mkinitrd.conf, setup.01.mkinitrd runs mkinitrd -F.
     let t = slackware_current();
     t.file("/etc/mkinitrd.conf", "MODULE_LIST=\"ext4:nvme\"\nROOTDEV=\"/dev/nvme0n1p2\"\n");
@@ -5549,7 +5703,7 @@ fn slackware_current_thinkpad() {
     let (v, b) = slackware_plan_from(&t, "nvme0n1", "sda", &[]);
     assert_eq!(s(&v, &["boot", "initramfs", "geninitrd", "resumedev"]), "/dev/nvme0n1p1");
     for want in [
-        "Slackware: /etc/mkinitrd.conf's ROOTDEV (the initrd's root) names /dev/nvme0n1p2, which is /dev/sda2 here; the restored initrd mounts / by that name (mkinitrd's -r, or the kernel's root=)",
+        "Slackware: /etc/mkinitrd.conf's ROOTDEV (the initrd's root) names /dev/nvme0n1p2, which is /dev/sda2 here, on a disk of the sd class, where the source's was of the nvme class, so the restored kernel will call it /dev/sda2, not /dev/nvme0n1p2; the restored initrd mounts / by the name it was made with (mkinitrd's -r, or the kernel's root=)",
         "Slackware: /etc/mkinitrd.conf's RESUMEDEV (the initrd's resume device) names /dev/nvme0n1p1, which is /dev/sda1 here",
     ] {
         assert!(b.problems.iter().any(|p| p.starts_with(want)), "{want}: {:?}", b.problems);
@@ -5656,7 +5810,7 @@ fn slackware_current_thinkpad() {
     }
     // -current boots with geninitrd's initrd, which mounts / by the name
     // it was made with: the problem says so, not "no initrd".
-    assert!(b.problems.iter().all(|p| !p.contains("it has no initrd")) && b.problems.iter().any(|p| p.contains("the restored initrd mounts / by that name")), "{:?}", b.problems);
+    assert!(b.problems.iter().all(|p| !p.contains("it has no initrd")) && b.problems.iter().any(|p| p.contains("the restored initrd mounts / by the name it was made with")), "{:?}", b.problems);
 }
 
 /// Every scenario's dump, by name, for tests that must hold over all of

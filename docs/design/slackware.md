@@ -8,7 +8,9 @@ S1, S2, S4 and S7 done and the S5/S6 rigs registered; the user's runs of
 SticTest1, HoltTest1 1Obscure and vm-update (S3), and S8, are left (the
 user runs the tests later). 2026-11-22: Decision 7 changed by the user:
 -current is supported too, for the Thinkpad's pinned -current snapshot
-("Slackware -current", below).**
+("Slackware -current", below). 2026-11-24: Decision 5 changed by the user
+to option (d): the source's device names are kept and judged by the name
+each target disk has at boot (Decision 5).**
 
 **Conventions.** est. marks an estimate. *Check* marks a fact the sources
 don't settle. It is settled on the first guest (S1), before the code that
@@ -134,9 +136,18 @@ yet. Code references are to local `main` at 1edb4b5.
 - **No initrd (`none`):** nothing is made, as Gentoo's `none` (the note
   wording shared). New: because the kernel finds / by name, the plan
   checks `root=` in `lilo.conf` or `elilo.conf` and each fstab `/dev/` name
-  against the target's devices. When the target disk keeps the source's
-  name (vda to vda, as in HoltTest1), it is a note. When it doesn't (sda to
-  nvme0n1), it is a problem: Decision 5 says whether load rewrites them.
+  against the name its target disk will have when the restored machine
+  boots, not its name in the rescue (Decision 5, option (d)): the same
+  driver class (vd, sd, nvme, mmcblk; a partition by its disk) and the same
+  place among that class's disks, counting only the plan's target disks
+  (the rescue's own disk, never a target, is gone by then). mmcblk, xvd
+  and hd disks are named by where they are attached (the host
+  controller's index, the Xen vdev, the IDE slot), not as found, so they
+  keep the name they have in the rescue (2026-11-24 review). vda restored to
+  vdb under a rescue on vda boots as vda: a note. A class change (vda to
+  sdq, sda to nvme0n1) or an order change (two disks swapped) is a
+  problem that says which, and suggests a future opt-in (`--rename-devices`,
+  not built). The names are never rewritten.
   A `noauto` fstab line on a device that isn't one of the source's disks
   or partitions (the stock `/dev/fd0 /mnt/floppy`, a CD drive) isn't
   checked: it isn't mounted at boot, the line is kept as it is and the
@@ -154,7 +165,17 @@ yet. Code references are to local `main` at 1edb4b5.
   MBR is written. LILO writes the MBR itself, so the partition stage's
   zeroed first 4 MiB doesn't matter. A `lilo.conf` with `boot=` a
   partition (LILO in a partition's boot sector with another MBR) is
-  refused by name in this release.
+  refused by name in this release. lilo opens `boot=`, `disk=`, `root=`
+  (every one, global or an image's), `table=`, `raid-extra-boot=`'s disks
+  and each `other=` section's device when it runs, in the rescue, where
+  the source's names may be other disks (`/dev/vda` is the rescue's own
+  in HoltTest2's rig): the copy of lilo.conf it runs on
+  (`/etc/lilo.conf.bko-holt`, "What S1 found") names them as the rescue
+  names the target's disks whenever they differ, while the kernel's
+  `root=` by name in `append=` stays the source's. An image with
+  `literal=` and no `root=` in it (its kernel takes the number lilo
+  writes) is refused when its `root=` would be renamed. `other=` and
+  `table=` are judged by their names at boot like `boot=`.
 - **ELILO (UEFI), a new arm:** `elilo.efi`, `elilo.conf`, the kernel and
   the initrd come back with the ESP. Nothing is installed. After a mkinitrd
   step the new `initrd.gz` is copied over the ESP's, and the boot entry is
@@ -269,7 +290,11 @@ Settled on the guests, 2026-11-14 to 2026-11-18:
   with `-C` on a copy of lilo.conf whose append= ends in `root=/dev/vda2`
   (the kernel takes the last root=, by name); lilo.conf itself is
   liloconfig's.  A user's later `lilo` writes the stock numeric form again,
-  right for that kernel.
+  right for that kernel.  Since 2026-11-24 (Decision 5, option (d))
+  load's copy also names `boot=`, `disk=` and that image's `root=` as the
+  rescue names the target's disks when they differ (`/dev/sdq` for the
+  source's `/dev/vda`), since lilo opens them in the rescue; the
+  `root=/dev/vda2` in append= stays the source's.
 - **The live system's mkfs is too new.** e2fsprogs 1.47's ext4 has
   orphan_file, which Slackware's e2fsck 1.46.5 refuses at boot; xfsprogs
   6's XFS has nrext64 and exchange, which 5.15 won't mount.  The installer
@@ -288,6 +313,20 @@ Settled on the guests, 2026-11-14 to 2026-11-18:
   checked by fingerprint, and in-guest.sh fetches the mirror's GPG-KEY
   when it is missing, held to EC5649DA401E22ABFA6736EF6A4463C040102233.
   Slackware's `gpg` is GnuPG 1.4 (`gpg2` is 2.2).
+- **15.0's CA bundle is too old** (2026-11-25). ca-certificates 20211216
+  lacks SSL.com TLS RSA Root CA 2022, where slackware.osuosl.org's chain
+  now ends, so `slackpkg update` ("Error downloading") and vm-update's wget
+  of GPG-KEY failed. make-bootstrap.sh installs `SLACKWARE_PATCHED`'s
+  packages (ca-certificates only) from `patches/packages/`, the version
+  CHECKSUMS.md5 lists, checked like the others, and the installer fetches
+  the mirror's GPG-KEY with the new system's wget. The mirror keeps only
+  a package's newest patch: a tree whose CHECKSUMS.md5 is older needs the
+  mirror's (15.0's series lines in it are the same).
+- **mkinitrd copies the live system's /dev nodes** (2026-11-25).
+  slackware15-uefi's `/boot/initrd-tree/dev` block nodes had Arch's group
+  numbers, unknown to Slackware. The installer gives them the groups
+  Slackware's eudev rules give (cdrom for sr*, disk for the rest), then
+  runs `mkinitrd` with no arguments to pack initrd.gz again.
 - The stock fstab's noauto `/dev/fd0` resolves to a real floppy on the
   i440fx guest; load no longer checks a noauto line off the source's disks.
 - vm-mount maps fstab's `/dev/vdXN` to partition N of the image's disk X
@@ -369,7 +408,12 @@ derivatives are still refused.
   -a "-L -R -o /boot/initrd-V.img" | bash'`, or `chroot T /sbin/mkinitrd -F
   /etc/mkinitrd.conf -k V -o /boot/initrd-V.img` with a mkinitrd.conf. On
   the restore the generator sees the target's own root and drivers, as
-  geninitrd would after a kernel upgrade. geninitrd itself isn't run: its
+  geninitrd would after a kernel upgrade. It reads / from fstab (the
+  source's name) and probes it in the rescue (`blkid` for `-f`,
+  `lvdisplay` and `cryptsetup` for `-L` and `-C`), so when the rescue names
+  the target's root otherwise (option (d), 2026-11-24) it is given that
+  name (`--rootdev`), and its command's `-r` is given back as fstab's
+  before it runs; a command with no such `-r` fails the step. geninitrd itself isn't run: its
   DKMS and lilo scripts, orphan removal and update-grub aren't the
   restore's. The links came back with /boot and still name the image.
   After each, `rm -rf T/boot/initrd-tree`, as setup.01.mkinitrd removes
@@ -387,8 +431,8 @@ derivatives are still refused.
 - ELILO as on 15.0: the remade image is copied over each ESP `initrd.gz`
   that was its copy (EFI/Slackware and EFI/BOOT), nothing is installed, and
   the NVRAM entries are made again (the source's `Slackware` among them).
-- Device names: as Decision 5 (the problems when the target's disk is named
-  otherwise), with mkinitrd.conf's ROOTDEV and RESUMEDEV among them when
+- Device names: as Decision 5 (the problems when the target's disk will
+  have another name at boot), with mkinitrd.conf's ROOTDEV and RESUMEDEV among them when
   geninitrd runs `mkinitrd -F`. The kernel has an initrd on -current, but
   mkinitrd's command takes fstab's `/dev/nvme0n1p2` as its root, so the
   names still have to hold; with an initrd (15.0's mkinitrd or geninitrd)
@@ -508,10 +552,15 @@ user's time but the OKs, until S8.
 ## Risks
 
 - **Device names everywhere.** `setup` writes `/dev/sdX` names in fstab
-  and `root=`, and the no-initrd kernel can't use UUIDs. A restore to a
-  machine whose disk has another name (SATA to NVMe) doesn't boot unless
-  they are rewritten (Decision 5). HoltTest1 restores vda to vda, so it
-  can't catch this. A scenario test covers it.
+  and `root=`, and the no-initrd kernel can't use UUIDs (mkinitrd 1.4.11's
+  init ignores `root=PARTUUID=`). The names are restored as they are and
+  judged by the name each disk has at boot (Decision 5, option (d)), so a
+  restore to another kind of disk (SATA to NVMe) or in another order is
+  refused, not repaired. The rule assumes the restored machine boots with
+  only the target disks of that class, in the kernel's order: a disk of the
+  same class that load doesn't know of (one left in the machine, not a
+  target) would shift the names. Scenario tests cover the match, a class
+  change and swapped disks.
 - **The bootstrap isn't `setup`.** The package installs are `setup`'s own
   (`installpkg`, the same tag order), but the config files are written by
   bko's script. S1 compares them with a real `liloconfig` and
@@ -577,6 +626,20 @@ user's time but the OKs, until S8.
    config files then differ from the backup's). Or rewrite them to
    `PARTUUID=`, which the huge kernel can resolve and bko-holt keeps (est.
    +0.3 d; that changes the system more than the user did).
+   **Changed 2026-11-24 by the user: option (d).** The source's names stay
+   in the restored fstab, lilo.conf and elilo.conf, byte for byte, and are
+   judged by the name each disk will have at boot, not in the rescue: a
+   source disk and its target match when they are of the same driver class
+   (vd, sd, nvme, mmcblk; partitions follow their disk) and in the same
+   place among that class's disks, counting only the target machine's
+   disks (the plan's targets: the rescue's own disk and any other disk that
+   isn't a target are left out). A match is a note; a class or order change
+   is a problem that says why and suggests a future opt-in
+   (`--rename-devices`, not built). lilo's copy names `boot=`, `disk=` and
+   the numbered `root=` as the rescue names the target's disks
+   (`/etc/lilo.conf.bko-holt`); the user's lilo.conf stays as restored.
+   `PARTUUID=` was ruled out: mkinitrd 1.4.11's init ignores
+   `root=PARTUUID=`, and its busybox findfs lacks PARTUUID.
 6. **HoltTest1's group:** **1Obscure** (recommended: Slackware shares a
    boot stack with nothing else, and 1Obscure is the long tail). Or a new
    word **1S** for Slackware alone.

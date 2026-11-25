@@ -5,11 +5,11 @@
 #   vda (20 GiB) -> /dev/sdq
 #
 # Problems (5): nothing can be written until they're fixed
-#   - Slackware: /etc/lilo.conf's boot= names /dev/vda, which is /dev/sdq here; the restored kernel finds / by that name (it has no initrd to find a UUID) and fstab mounts by device names, and bko-holt load doesn't rewrite them: restore onto disks that keep the source's names
-#   - Slackware: /etc/lilo.conf's root= names /dev/vda2, which is /dev/sdq2 here; the restored kernel finds / by that name (it has no initrd to find a UUID) and fstab mounts by device names, and bko-holt load doesn't rewrite them: restore onto disks that keep the source's names
-#   - Slackware: /etc/lilo.conf's disk= names /dev/vda, which is /dev/sdq here; the restored kernel finds / by that name (it has no initrd to find a UUID) and fstab mounts by device names, and bko-holt load doesn't rewrite them: restore onto disks that keep the source's names
-#   - Slackware: fstab's swap names /dev/vda1, which is /dev/sdq1 here; the restored kernel finds / by that name (it has no initrd to find a UUID) and fstab mounts by device names, and bko-holt load doesn't rewrite them: restore onto disks that keep the source's names
-#   - Slackware: fstab's / names /dev/vda2, which is /dev/sdq2 here; the restored kernel finds / by that name (it has no initrd to find a UUID) and fstab mounts by device names, and bko-holt load doesn't rewrite them: restore onto disks that keep the source's names
+#   - Slackware: /etc/lilo.conf's boot= names /dev/vda, which is /dev/sdq here, on a disk of the sd class, where the source's was of the vd class, so the restored kernel will call it /dev/sda, not /dev/vda; the restored kernel finds / by the name root= gives it (it has no initrd to find a UUID) and fstab mounts by device names, which bko-holt load restores as the source had them: restore onto vd disks in the source's order (a future opt-in to rewrite them, --rename-devices, isn't built)
+#   - Slackware: /etc/lilo.conf's root= names /dev/vda2, which is /dev/sdq2 here, on a disk of the sd class, where the source's was of the vd class, so the restored kernel will call it /dev/sda2, not /dev/vda2; the restored kernel finds / by the name root= gives it (it has no initrd to find a UUID) and fstab mounts by device names, which bko-holt load restores as the source had them: restore onto vd disks in the source's order (a future opt-in to rewrite them, --rename-devices, isn't built)
+#   - Slackware: /etc/lilo.conf's disk= names /dev/vda, which is /dev/sdq here, on a disk of the sd class, where the source's was of the vd class, so the restored kernel will call it /dev/sda, not /dev/vda; the restored kernel finds / by the name root= gives it (it has no initrd to find a UUID) and fstab mounts by device names, which bko-holt load restores as the source had them: restore onto vd disks in the source's order (a future opt-in to rewrite them, --rename-devices, isn't built)
+#   - Slackware: fstab's swap names /dev/vda1, which is /dev/sdq1 here, on a disk of the sd class, where the source's was of the vd class, so the restored kernel will call it /dev/sda1, not /dev/vda1; the restored kernel finds / by the name root= gives it (it has no initrd to find a UUID) and fstab mounts by device names, which bko-holt load restores as the source had them: restore onto vd disks in the source's order (a future opt-in to rewrite them, --rename-devices, isn't built)
+#   - Slackware: fstab's / names /dev/vda2, which is /dev/sdq2 here, on a disk of the sd class, where the source's was of the vd class, so the restored kernel will call it /dev/sda2, not /dev/vda2; the restored kernel finds / by the name root= gives it (it has no initrd to find a UUID) and fstab mounts by device names, which bko-holt load restores as the source had them: restore onto vd disks in the source's order (a future opt-in to rewrite them, --rename-devices, isn't built)
 #
 # Notes:
 #   - fstab's /mnt/floppy is on fd0, which isn't restored
@@ -76,14 +76,14 @@ mount --rbind --make-rslave /dev /mnt/bko-target/dev
 mount --rbind --make-rslave /proc /mnt/bko-target/proc
 mount --rbind --make-rslave /sys /mnt/bko-target/sys
 mount --rbind --make-rslave /run /mnt/bko-target/run
-# LILO: /etc/lilo.conf copied with root= by name at the end of append= (Linux: root=/dev/vda2): lilo writes root=/dev/... as the major:minor the rescue kernel gives it, and virtio_blk's major is dynamic, so the restored kernel would look for another device; /etc/lilo.conf stays as restored
+# LILO: /etc/lilo.conf copied with root= by name at the end of append= (Linux: root=/dev/vda2): lilo writes root=/dev/... as the major:minor the rescue kernel gives it, and virtio_blk's major is dynamic, so the restored kernel would look for another device, and with the target's disks by the names the rescue gives them (Linux's root=/dev/vda2 as /dev/sdq2, disk=/dev/vda as /dev/sdq, boot=/dev/vda as /dev/sdq): lilo opens those devices here, where the source's names may be other disks (the rescue's own), and the restored kernel still finds / by the source's; /etc/lilo.conf stays as restored
 cat > /mnt/bko-target/etc/lilo.conf.bko-holt <<'EOF'
-# bko-holt load: /etc/lilo.conf with root= by name added to append= (Linux: root=/dev/vda2); lilo is run on this copy, then it is removed
+# bko-holt load: /etc/lilo.conf with root= by name added to append= (Linux: root=/dev/vda2) and with the devices lilo opens named as the rescue names the target's (Linux's root=/dev/vda2 as /dev/sdq2, disk=/dev/vda as /dev/sdq, boot=/dev/vda as /dev/sdq); lilo is run on this copy, then it is removed
 append=" console=tty0 console=ttyS0,115200n8"
-disk="/dev/vda"
+disk="/dev/sdq"
 bios="0x80"
 max-partitions="7"
-boot="/dev/vda"
+boot="/dev/sdq"
 compact
 bitmap="/boot/slack.bmp"
 bmp-colors="255,0,255,0,255,0"
@@ -95,7 +95,7 @@ change-rules
 reset
 vga="normal"
 image="/boot/vmlinuz"
-  root="/dev/vda2"
+  root="/dev/sdq2"
   label="Linux"
   read-only
   append=" console=tty0 console=ttyS0,115200n8 root=/dev/vda2"

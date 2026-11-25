@@ -10,9 +10,10 @@
 # make-bootstrap.sh checked the tree (CHECKSUMS.md5 against Slackware's key,
 # each package's MD5 from it, and each package's own .asc) and serves it at
 # $SERVER/tree/, with pkglist.txt, the packages to install, one path a line
-# (slackware64/a/aaa_base-15.0-x86_64-3.txz ...).  installpkg is Slackware's
-# own, from the tree's a/pkgtools package, run from the Arch live system as
-# setup runs it from its install ramdisk.
+# (slackware64/a/aaa_base-15.0-x86_64-3.txz ...; patches/packages/ for
+# make-bootstrap.sh's SLACKWARE_PATCHED, ca-certificates).  installpkg is
+# Slackware's own, from the tree's a/pkgtools package, run from the Arch
+# live system as setup runs it from its install ramdisk.
 #
 # KERNEL: huge (slackware15: no initrd, LILO in the MBR) or generic
 # (slackware15-uefi: mkinitrd's initrd, ELILO on the ESP).
@@ -49,12 +50,25 @@ esac
 mount -t "$ROOT_FS" "$ROOT_PART" /mnt
 mount_boot
 
-# Slackware's pkgtools, unpacked beside the live system's own tools.
+# Slackware's pkgtools, unpacked beside the live system's own tools, with
+# Slackware's own tar for it (realworld/slackware-bootstrap.sh found the
+# rescue's tar loses files through var/log/setup's link, unseen: installpkg
+# drops tar's errors).  --numeric-owner: as root, tar gives each file the
+# owner its archive names by the live system's passwd and group (Arch's
+# daemon and lp aren't Slackware's 2 and 4); the archives' numbers are
+# Slackware's own.  Last, after installpkg's own arguments ("tar tf -" needs
+# tf first).
 pkgtools=$(curl -fsS "$SERVER/pkglist.txt" | grep '/pkgtools-[^/]*\.txz$')
-mkdir -p /tmp/pkgtools
+slktar=$(curl -fsS "$SERVER/pkglist.txt" | grep '/tar-[^/]*\.txz$')
+mkdir -p /tmp/pkgtools /tmp/slk-bin
 curl -fsS "$SERVER/tree/$pkgtools" | tar -xJf - -C /tmp/pkgtools
+curl -fsS "$SERVER/tree/$slktar" | tar -xJf - -C /tmp/pkgtools
 installpkg=/tmp/pkgtools/sbin/installpkg
 [[ -x $installpkg ]] || { echo "no sbin/installpkg in $pkgtools"; false; }
+printf '#!/bin/sh\nexec /tmp/pkgtools/bin/tar "$@" --numeric-owner\n' >/tmp/slk-bin/tar
+chmod 755 /tmp/slk-bin/tar
+tarver=${slktar##*/tar-} tarver=${tarver%%-*}
+PATH=/tmp/slk-bin:$PATH tar --version | head -n 1 | grep -qF " $tarver" || { echo "Slackware's tar ($slktar) doesn't run here"; false; }
 
 mkdir -p /mnt/tmp/bko-pkgs
 n=0
@@ -63,12 +77,20 @@ while read -r p; do
     f=/mnt/tmp/bko-pkgs/${p##*/}
     curl -fsS -o "$f" "$SERVER/tree/$p"
     # --terse: one line a package, as setup's "terse" mode.
-    "$installpkg" --root /mnt --terse "$f" </dev/null
+    TERM=dumb PATH=/tmp/slk-bin:$PATH "$installpkg" --root /mnt --terse "$f" </dev/null
     rm -f "$f"
     n=$((n + 1))
 done < <(curl -fsS "$SERVER/pkglist.txt")
 rmdir /mnt/tmp/bko-pkgs
 echo "installed $n packages"
+# The files the packages list (installpkg doesn't say when tar fails).  A
+# few go in their own doinst.sh (glibc's lib64/incoming/): listed, not
+# fatal; setup's scripts must be there.
+lost=$(cd /mnt && awk 'FNR == 1 { on = 0 } /^FILE LIST:/ { on = 1; next } on && !/^(\.\/|install\/|install$)/ && !/\.new$/' var/lib/pkgtools/packages/* |
+    while read -r f; do [[ -e $f || -L $f ]] || echo "$f"; done)
+lost=$(sort -u <<<"$lost" | grep -v '^lib64/incoming/' || true)
+[[ -z $lost ]] || echo "listed by the packages but not here: $(paste -sd ' ' - <<<"$lost")"
+! grep -q '^var/log/setup/' <<<"$lost" || { echo "setup's scripts in var/log/setup weren't installed"; false; }
 kver=$(ls /mnt/lib/modules)
 [[ $(wc -w <<<"$kver") -eq 1 ]] || { echo "expected one kernel in /lib/modules, found: $kver"; false; }
 [[ -e /mnt/boot/vmlinuz-$KERNEL-$kver ]] || { echo "no /boot/vmlinuz-$KERNEL-$kver"; ls -l /mnt/boot; false; }
@@ -87,6 +109,28 @@ for s in setup.07.update-desktop-database setup.07.update-mime-database setup.08
     (cd /mnt && sh "var/log/setup/$s" /mnt "$ROOT_PART")
 done
 [[ -s /mnt/etc/ssl/certs/ca-certificates.crt ]] || { echo "setup.11.cacerts made no /etc/ssl/certs/ca-certificates.crt"; false; }
+# The patches/packages/ ones in pkglist.txt (make-bootstrap.sh's
+# SLACKWARE_PATCHED) are the ones installed: 15.0's own ca-certificates
+# can't verify the mirror's https.
+for p in $(curl -fsS "$SERVER/pkglist.txt" | grep '^patches/packages/' || true); do
+    b=${p##*/} b=${b%.txz}
+    [[ -e /mnt/var/lib/pkgtools/packages/$b ]] || { echo "$b, from patches/packages, isn't installed"; false; }
+    echo "patched: $b"
+done
+# A doinst.sh run from /mnt without a chroot resolved the owners in its
+# chown lines by the live system's passwd and group, not Slackware's (etc's
+# "chown root.utmp" and "root.shadow", at's daemon, mlocate's slocate, which
+# Arch lacks): those packages' doinst.sh again, in the chroot, as upgradepkg
+# would run them (realworld/slackware-bootstrap.sh does the same).
+touch /tmp/doinst-again
+for f in $(grep -lE '^[[:space:]]*(chown|chgrp)[[:space:]]' /mnt/var/lib/pkgtools/scripts/* || true); do
+    echo "again in the chroot: ${f##*/}'s doinst.sh"
+    in_slk sh -c "cd / && sh /var/lib/pkgtools/scripts/${f##*/}" </dev/null 2>/dev/null || true
+done
+# at's preserve_perms leaves an empty rc.atd.new the second time.
+find /mnt/etc /mnt/var -xdev -name '*.new' -size 0 -newer /tmp/doinst-again -print -delete | sed 's|^/mnt|removed the empty |'
+in_slk ls -ln /etc/shadow /var/run/utmp /usr/bin/mlocate | awk '{ print "owner:", $1, $3, $4, $NF }'
+[[ $(in_slk stat -c %G /etc/shadow) == shadow ]] || { echo "/etc/shadow isn't group shadow after the doinst.sh rerun"; false; }
 
 # fstab, as setup's SeTpartitions and SeTswap write it: device names.
 {
@@ -128,6 +172,11 @@ echo 's0:12345:respawn:/sbin/agetty -L ttyS0 115200 vt100' >>/mnt/etc/inittab
 # and hides every failure (in the chroot its import failed unseen).
 cp /etc/resolv.conf /mnt/etc/resolv.conf
 echo "$MIRROR" >>/mnt/etc/slackpkg/mirrors
+# https to the mirror works from the new system, with its own wget and CA
+# bundle, as slackpkg and vm-update fetch from it (15.0's ca-certificates
+# failed here: the issuer SSL.com TLS Issuing RSA CA R1 couldn't be verified).
+in_slk wget -q -O /dev/null "${MIRROR}GPG-KEY" </dev/null ||
+    { echo "the new system's wget can't fetch ${MIRROR}GPG-KEY (its CA bundle, or the network)"; false; }
 # (Not in /tmp: arch-chroot mounts a tmpfs of its own there.)
 curl -fsS -o /mnt/root/slackware-key.gpg "$SERVER/slackware-key.gpg"
 in_slk env HOME=/root gpg --batch --import /root/slackware-key.gpg
@@ -220,6 +269,27 @@ else
     done
     in_slk sh -c "$cmd"
     [[ -s /mnt/boot/initrd.gz ]] || { echo "mkinitrd made no /boot/initrd.gz"; false; }
+    # mkinitrd copies the block devices in /proc/partitions from /dev (cp
+    # -a), here the live system's, which arch-chroot binds in: their groups
+    # are Arch's numbers (its disk and optical), not in Slackware's
+    # /etc/group.  They get the groups Slackware's own udev (eudev 3.2.11's
+    # 50-udev-default.rules and 65-permissions.rules) gives them on a native
+    # install: cdrom for sr*, disk for the rest (fd0 too: no rule there puts
+    # it in floppy).  By name, in the chroot: Slackware's disk (6) and cdrom
+    # (19).  Then mkinitrd with no arguments packs /boot/initrd-tree into
+    # initrd.gz again (its build_initrd_image; nodes already in the tree are
+    # left as they are).
+    in_slk sh -c 'cd /boot/initrd-tree/dev &&
+        find . -type b ! -name "sr[0-9]*" -exec chown root:disk {} + &&
+        find . -type b -name "sr[0-9]*" -exec chown root:cdrom {} +'
+    in_slk mkinitrd </dev/null
+    in_slk sh -c 'cd /boot/initrd-tree/dev && find . -type b | sort | xargs -r stat -c "initrd-tree/dev: %n %U:%G"' | sed 's|: \./|: |'
+    unknown=$(in_slk find /boot/initrd-tree \( -nouser -o -nogroup \) -print)
+    [[ -z $unknown ]] || { echo "unknown owner or group in /boot/initrd-tree: $(paste -sd ' ' - <<<"$unknown")"; false; }
+    # And in initrd.gz itself, unpacked in the chroot.
+    unknown=$(in_slk sh -c 'd=$(mktemp -d) && cd "$d" && zcat /boot/initrd.gz | cpio -id --quiet &&
+        find . \( -nouser -o -nogroup \) -print; rc=$?; cd / && rm -rf "$d"; exit $rc')
+    [[ -z $unknown ]] || { echo "unknown owner or group in /boot/initrd.gz: $(paste -sd ' ' - <<<"$unknown")"; false; }
     # eliloconfig's files (elilo 3.16's usr/sbin/eliloconfig), in
     # EFI/Slackware: elilo.conf as it writes it for a generic kernel with
     # an initrd, the serial console added to append=.  The test guests boot with an

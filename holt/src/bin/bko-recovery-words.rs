@@ -133,9 +133,12 @@ fn check(args: &[String]) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(p) => {
-            for line in p.to_string().lines() {
+            // It shows what was typed: wiped once printed.
+            let mut m = p.to_string();
+            for line in m.lines() {
                 eprintln!("bko-recovery-words: {line}");
             }
+            recovery::zeroize_string(&mut m);
             ExitCode::from(1)
         }
     }

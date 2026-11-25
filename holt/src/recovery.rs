@@ -26,7 +26,8 @@
 //! The words are a secret.  Nothing here logs or prints them; `Words`' and
 //! `Problem`'s Debug don't show them; a `Problem`'s Display shows what was
 //! typed, and its suggestions, so that the person typing can find the
-//! mistake: it is for them, not for a log.
+//! mistake: it is for them, not for a log.  `Words`' Drop wipes the word
+//! numbers and `Unknown`'s what was typed, with volatile writes.
 
 use std::fmt;
 use std::sync::OnceLock;
@@ -50,12 +51,22 @@ fn list() -> &'static [&'static str] {
     })
 }
 
+/// Zeroes BUF with volatile writes and a compiler fence, so the compiler
+/// can't leave the writes out (std's optimisation hint promises nothing of
+/// the kind: its documentation says so).
+fn wipe<T: Copy + Default>(buf: &mut [T]) {
+    for x in buf.iter_mut() {
+        // SAFETY: `x` is a unique reference to one initialised element of
+        // `buf`, so the pointer is valid, aligned and writable.
+        unsafe { std::ptr::write_volatile(x, T::default()) };
+    }
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+}
+
 /// Overwrites sensitive byte buffers in place without allowing dead-store
 /// elimination to elide the wipe.
 pub fn zeroize_bytes(buf: &mut [u8]) {
-    buf.fill(0);
-    std::hint::black_box(&mut *buf);
-    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+    wipe(buf);
 }
 
 /// Overwrites a `String`'s UTF-8 buffer with NUL bytes and clears it.
@@ -65,18 +76,6 @@ pub fn zeroize_string(s: &mut String) {
     s.clear();
 }
 
-fn zeroize_u16(buf: &mut [u16]) {
-    buf.fill(0);
-    std::hint::black_box(&mut *buf);
-    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
-}
-
-fn zeroize_u32(buf: &mut [u32]) {
-    buf.fill(0);
-    std::hint::black_box(&mut *buf);
-    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
-}
-
 /// A recovery key: twelve words of the list whose checksum is right.  Its
 /// Debug doesn't show them, and its Drop wipes the word indices.
 #[derive(Clone, PartialEq, Eq)]
@@ -84,7 +83,7 @@ pub struct Words([u16; COUNT]);
 
 impl Drop for Words {
     fn drop(&mut self) {
-        zeroize_u16(&mut self.0);
+        wipe(&mut self.0);
     }
 }
 
@@ -122,7 +121,8 @@ pub enum Problem {
     Checksum,
 }
 
-/// One word `check` couldn't read.
+/// One word `check` couldn't read.  Its Debug doesn't show what was typed,
+/// and its Drop wipes it.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Unknown {
     /// Its position among the words typed, from 1.
@@ -185,6 +185,22 @@ impl fmt::Debug for Problem {
             Problem::Count(n) => f.debug_tuple("Count").field(n).finish(),
             Problem::Checksum => f.write_str("Checksum"),
         }
+    }
+}
+
+impl Drop for Unknown {
+    fn drop(&mut self) {
+        let n = self.typed.len();
+        zeroize_string(&mut self.typed);
+        #[cfg(test)]
+        {
+            // SAFETY: the first N bytes of the buffer were initialised
+            // (they were the string's) and are still allocated: clear()
+            // keeps the capacity.
+            let zero = unsafe { std::slice::from_raw_parts(self.typed.as_ptr(), n) }.iter().all(|&b| b == 0);
+            tests::LAST_UNKNOWN_DROP.with(|d| d.set(Some((n, zero))));
+        }
+        let _ = n;
     }
 }
 
@@ -255,7 +271,7 @@ pub fn from_entropy(entropy: &[u8; 16]) -> Words {
     }
     zeroize_bytes(&mut bits);
     let out = Words(w);
-    zeroize_u16(&mut w);
+    wipe(&mut w);
     out
 }
 
@@ -287,7 +303,7 @@ fn checksum(entropy: &[u8; 16]) -> u8 {
     let mut digest = crate::bytes::sha256_short(entropy, &mut block, &mut w);
     let c = digest[0] >> 4;
     zeroize_bytes(&mut block);
-    zeroize_u32(&mut w);
+    wipe(&mut w);
     zeroize_bytes(&mut digest);
     c
 }
@@ -316,24 +332,24 @@ pub fn check(text: &str) -> Result<Words, Problem> {
     }
     let count = found.len() + unknown.len();
     if !unknown.is_empty() {
-        zeroize_u16(&mut found);
+        wipe(&mut found);
         return Err(Problem::Unknown { words: unknown, count });
     }
     if found.len() != COUNT {
-        zeroize_u16(&mut found);
+        wipe(&mut found);
         return Err(Problem::Count(count));
     }
     let mut w = [0u16; COUNT];
     w.copy_from_slice(&found);
-    zeroize_u16(&mut found);
+    wipe(&mut found);
     let (mut ent, ok) = decode(&w);
     zeroize_bytes(&mut ent);
     if !ok {
-        zeroize_u16(&mut w);
+        wipe(&mut w);
         return Err(Problem::Checksum);
     }
     let out = Words(w);
-    zeroize_u16(&mut w);
+    wipe(&mut w);
     Ok(out)
 }
 
@@ -392,9 +408,7 @@ fn near(t: &str) -> Vec<&'static str> {
     // T's letters are part of the key: wiped once looked at.
     let mut tc: Vec<char> = t.chars().collect();
     let out = near_letters(t, &tc);
-    tc.fill('\0');
-    std::hint::black_box(&mut tc);
-    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+    wipe(&mut tc);
     out
 }
 
@@ -461,6 +475,12 @@ fn ed1<T: PartialEq>(a: &[T], b: &[T]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// How many bytes the last `Unknown` dropped on this thread had
+        /// typed, and whether they were all zero after its Drop.
+        pub(super) static LAST_UNKNOWN_DROP: std::cell::Cell<Option<(usize, bool)>> = const { std::cell::Cell::new(None) };
+    }
 
     /// BIP39's test vectors with 128 bits of entropy: every "english" entry
     /// of trezor/python-mnemonic's vectors.json whose entropy is 32 hex
@@ -876,5 +896,33 @@ mod tests {
         // An empty /dev (a directory read as a file) fails too.
         assert!(random_bytes(t.root().to_str().unwrap()).is_err());
         assert_eq!(random_bytes(RANDOM_DEVICE).unwrap().len(), 16);
+    }
+
+    #[test]
+    fn wipe_zeroes_every_width() {
+        let mut b = [0x5au8; 17];
+        let mut h = [0xffffu16; 12];
+        let mut w = [u32::MAX; 64];
+        let mut c = vec!['é'; 9];
+        wipe(&mut b);
+        wipe(&mut h);
+        wipe(&mut w);
+        wipe(&mut c);
+        assert!(b.iter().all(|&x| x == 0) && h.iter().all(|&x| x == 0) && w.iter().all(|&x| x == 0));
+        assert_eq!(c, vec!['\0'; 9]);
+        let mut s = String::from("abandon");
+        zeroize_string(&mut s);
+        assert!(s.is_empty());
+    }
+
+    /// What was typed is wiped when its `Unknown` goes, so a caller that
+    /// only prints or drops the `Problem` (bko-recovery-words) leaves none.
+    #[test]
+    fn dropping_an_unknown_wipes_what_was_typed() {
+        LAST_UNKNOWN_DROP.with(|d| d.set(None));
+        let (u, _) = unknown(check("abandon abandon grabbé"));
+        assert_eq!(u[0].typed, "grabbé");
+        drop(u);
+        assert_eq!(LAST_UNKNOWN_DROP.with(|d| d.take()), Some(("grabbé".len(), true)));
     }
 }

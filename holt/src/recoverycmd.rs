@@ -149,15 +149,13 @@ pub fn verdict(text: &str, out: &std::path::Path) -> (Value, u8) {
                 Err(e) => (doc(true, None, Vec::new(), Some(true), false, Some(format!("{}: {e}", out.display()))), 1),
             }
         }
-        Err(Problem::Unknown { mut words, .. }) => {
+        Err(Problem::Unknown { words, .. }) => {
             let unknown = words
                 .iter()
                 .map(|u| Obj::new().set("position", u.position).set("short", u.short).set("suggest", u.suggestions.iter().take(SUGGEST_MAX).map(|s| s.to_string()).collect::<Vec<_>>()).build())
                 .collect();
-            // What was typed is part of the key: wiped, never shown.
-            for u in &mut words {
-                recovery::zeroize_string(&mut u.typed);
-            }
+            // What was typed is part of the key: never shown, and wiped by
+            // Unknown's Drop.
             (doc(false, Some("unknown_words"), unknown, None, false, None), 1)
         }
         Err(Problem::Count(_)) => (doc(false, Some("count"), Vec::new(), None, false, None), 1),

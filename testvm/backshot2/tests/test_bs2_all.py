@@ -344,6 +344,30 @@ class Word(unittest.TestCase):
                 B.launch("chopin", [("debian13", 1, "/x.case")], [], 20, "bs2all-x")
             self.assertRegex(got[0], r"BS2_WORD=BackShot2All \S+/bs2-host queue bs2all-x")
 
+    def test_a_slimmed_sources_row_validates(self):
+        """A slimmed source's generation (img:HEX+slim1, bs2-host generation()) is the guest's
+        img:HEX and its recipe beside it: the row validates and names the slimmed source."""
+        from t2lib import keys, ledger
+        from bs2lib import slim as SL
+        case = {"source": "elementary8-luks@img:x", "edits": [], "target": {}}
+        img = "img:" + "e" * 64
+        r = L.rows("bs2all-x", "elementary8-luks", img + SL.SUFFIX, [("elementary8-luks-x", case, "PASS", [])], 1, 60,
+                   self.BINS)[0]
+        self.assertEqual(ledger.validate(r), [])
+        self.assertEqual(r["inputs"]["guest"], {"elementary8-luks": img, "elementary8-luks#recipe": f"ver:slim{SL.RECIPE}"})
+        full = L.rows("bs2all-x", "elementary8-luks", img, [("elementary8-luks-x", case, "PASS", [])], 1, 60, self.BINS)[0]
+        self.assertEqual(full["inputs"]["guest"], {"elementary8-luks": img})
+        self.assertNotEqual(r["key"], full["key"], "the slimmed source's key isn't the full guest's")
+        self.assertFalse(keys.valid_value(img + SL.SUFFIX), "Test2's values are as strict as before")
+        # A bad generation still fails validation, slimmed or not.
+        bad = L.rows("bs2all-x", "elementary8-luks", "img:xyz+slim1", [("elementary8-luks-x", case, "PASS", [])], 1, 60,
+                     self.BINS)[0]
+        self.assertTrue(ledger.validate(bad))
+        with mock.patch.dict(os.environ, {}):
+            os.environ.pop("BS2_WORD", None)
+            self.assertEqual(self.rows()[0]["word"], "BackShot2Alpine")
+            self.assertNotIn("BS2_WORD", B.reuse_env())
+
 
 class Fresh(unittest.TestCase):
     def test_the_draws_never_read_the_ledger(self):

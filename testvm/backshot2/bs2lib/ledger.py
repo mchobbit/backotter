@@ -51,8 +51,19 @@ def word_of(word=None):
 
 
 def inputs(source, gen, bins):
-    g = gen if gen and (gen.startswith("gen:") or gen.startswith("img:")) else f"ver:{gen or source}"
-    return {"bin": dict(bins), "guest": {source: g}, "harness": harness()}
+    """The row's inputs.  The guest group: SOURCE's generation GEN (gen:HEX or img:HEX, else
+    ver: of it); a slimmed source's (bs2lib/slim.py: GEN's "+slimN" after the guest's own) as
+    the guest's generation and, beside it, SOURCE#recipe: ver:slimN, so its rows name the
+    slimmed source (another key than the full guest's) in values Test2's ledger takes."""
+    base, plus, recipe = (gen or "").partition("+")
+    guest = {}
+    if base.startswith(("gen:", "img:")):
+        guest[source] = base
+        if plus:
+            guest[f"{source}#recipe"] = f"ver:{recipe}"
+    else:
+        guest[source] = f"ver:{gen or source}"
+    return {"bin": dict(bins), "guest": guest, "harness": harness()}
 
 
 def rows(run, source, gen, results, tier, wall, bins, word=None):

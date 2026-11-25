@@ -197,6 +197,34 @@ class Prune(unittest.TestCase):
         self.assertEqual([n for n, _ in H.prune_preps(self.d, set())], ["p-2"])
         self.assertEqual(sorted(os.listdir(f"{self.d}/preps")), ["p-4", "p-4.log"])
 
+    def test_room_says_which_preparations_are_in_use(self):
+        """bs2-host room: the preparations live work refers to (referenced), the current one's
+        among them (prep_referenced), and old_bytes only the unused older ones'."""
+        refs = {os.path.realpath(f"{self.d}/preps/p-2/src-0.qcow2"), os.path.realpath(f"{self.d}/preps/p-4") + "/backup/x"}
+        cur = os.path.realpath(f"{self.d}/preps/p-4")
+        out = io.StringIO()
+        with mock.patch.object(H, "ROOT", self.tmp), mock.patch.object(H, "source_dir", lambda s: self.d), \
+                mock.patch.object(H, "prep_refs", lambda: refs), mock.patch.object(H, "generation", lambda s: "g1"), \
+                mock.patch.object(H, "prep_reasons", lambda s, h: (cur, {}, ["stale"])), \
+                mock.patch.object(H, "source_ready", lambda s: "g1"), mock.patch.object(H, "tools_fresh", lambda s, g: True), \
+                mock.patch.object(H, "du_bytes", lambda p: 1 << 30), contextlib.redirect_stdout(out):
+            H.cmd_room(mock.Mock(sources=["guix15"]))
+        e = json.loads(out.getvalue())["sources"]["guix15"]
+        self.assertEqual(e["referenced"], ["p-2", "p-4"])
+        self.assertTrue(e["prep_referenced"])
+        self.assertFalse(e["prep_ok"])
+        self.assertEqual(e["old_bytes"], 2 << 30, "p-1 and p-3: p-2 is in use, p-4 the current")
+        refs.clear()
+        out = io.StringIO()
+        with mock.patch.object(H, "ROOT", self.tmp), mock.patch.object(H, "source_dir", lambda s: self.d), \
+                mock.patch.object(H, "prep_refs", lambda: refs), mock.patch.object(H, "generation", lambda s: "g1"), \
+                mock.patch.object(H, "prep_reasons", lambda s, h: (cur, {}, ["stale"])), \
+                mock.patch.object(H, "source_ready", lambda s: "g1"), mock.patch.object(H, "tools_fresh", lambda s, g: True), \
+                mock.patch.object(H, "du_bytes", lambda p: 1 << 30), contextlib.redirect_stdout(out):
+            H.cmd_room(mock.Mock(sources=["guix15"]))
+        e = json.loads(out.getvalue())["sources"]["guix15"]
+        self.assertEqual((e["referenced"], e["prep_referenced"], e["old_bytes"]), ([], False, 3 << 30))
+
     def test_prune_with_no_current(self):
         os.remove(f"{self.d}/prep")
         got = H.prune_preps(self.d, set())

@@ -114,6 +114,19 @@ class Need(unittest.TestCase):
         self.assertEqual(n.peak, 4 * GiB)
         self.assertEqual(n.end, GiB)
 
+    def test_a_stale_preparation_a_case_still_uses_is_kept(self):
+        # b's stale prep (3) is one a live case uses (bs2-host room's prep_referenced): prune_preps() keeps it,
+        # so the new one (4) adds to it, to the end; the older ones nothing uses (old_bytes, 2) still go.
+        f = {"b": {"prep_ok": False, "prep_bytes": 3 * GiB, "old_bytes": 2 * GiB, "prep_referenced": True,
+                   "referenced": ["p-2"], "tools_fresh": True, "tools_bytes": 20 * GiB}}
+        n = SP.need(["b"], {"b"}, f, 0, 0, self.tsv)
+        self.assertEqual((n.peak, n.end), (4 * GiB, 2 * GiB))
+        self.assertEqual(n.lines, ["b prep +4.0, old preps -2.0, stale prep kept (in use) 3.0"])
+        f["b"]["prep_referenced"] = False
+        self.assertEqual(SP.need(["b"], {"b"}, f, 0, 0, self.tsv).end, -GiB, "not in use: it goes")
+        f["b"].update(prep_ok=True, prep_referenced=True)
+        self.assertEqual(SP.need(["b"], {"b"}, f, 0, 0, self.tsv).end, -2 * GiB, "current: kept, nothing new")
+
     def test_old_tools_copied_anew(self):
         # a's tools are a version-1 copy of 15: removed, then the 10 copied: no growth.
         f = {"a": {"prep_ok": True, "prep_bytes": GiB, "tools_fresh": False, "tools_bytes": 15 * GiB}}

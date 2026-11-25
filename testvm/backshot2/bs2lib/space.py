@@ -130,16 +130,19 @@ class Need:
 def need(sources, tools, facts, ssd_peak=0, cases=0, path=SIZES_TSV):
     """The Need of a host preparing SOURCES (in bs2's order) with tools for TOOLS (the
     sources it leads whose family has dry runs), from FACTS (bs2-host room's "sources":
-    {source: {prep_ok, prep_bytes, old_bytes, tools_fresh, tools_bytes}}; a source it
-    lacks: nothing there yet), then its cases: SSD_PEAK bytes (its SSD lane's largest
-    case) and CASES' records."""
+    {source: {prep_ok, prep_bytes, old_bytes, prep_referenced, tools_fresh, tools_bytes}};
+    a source it lacks: nothing there yet), then its cases: SSD_PEAK bytes (its SSD lane's
+    largest case) and CASES' records.  A stale current preparation goes once the new one
+    is made, unless live work still refers to it (prep_referenced: prune_preps() keeps it
+    while a case uses it): then it's kept, and counted on to the end."""
     cur = peak = 0
     out = Need()
     for s in sources:
         f = facts.get(s) or {}
         tb, pb, kind = estimate(s, path)
         newp = 0 if f.get("prep_ok") else pb
-        freed = int(f.get("old_bytes") or 0) + (0 if f.get("prep_ok") else int(f.get("prep_bytes") or 0))
+        kept = 0 if f.get("prep_ok") or not f.get("prep_referenced") else int(f.get("prep_bytes") or 0)
+        freed = int(f.get("old_bytes") or 0) + (0 if f.get("prep_ok") or kept else int(f.get("prep_bytes") or 0))
         have_t = int(f.get("tools_bytes") or 0)
         if s in tools:
             dt = 0 if f.get("tools_fresh") else tb - have_t
@@ -161,6 +164,8 @@ def need(sources, tools, facts, ssd_peak=0, cases=0, path=SIZES_TSV):
                 what.append(f"tools {'+' if dt > 0 else ''}{dt / GiB:.1f}")
             if freed:
                 what.append(f"old preps -{freed / GiB:.1f}")
+            if kept:
+                what.append(f"stale prep kept (in use) {kept / GiB:.1f}")
             out.lines.append((newp + dt - freed, f"{s} {', '.join(what)}"))
             if kind != "measured" and (newp or dt > 0):
                 out.est.append(s)

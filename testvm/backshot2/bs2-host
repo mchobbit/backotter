@@ -555,6 +555,11 @@ def _listdir(p):
         return []
 
 
+def referenced(p, refs):
+    """Whether live work (REFS, prep_refs()'s) refers to the directory P or a path in it."""
+    return any(r == p or r.startswith(p + "/") for r in refs)
+
+
 def prune_preps(d, refs=None):
     """D's preparations (preps/p-*) that nothing uses any more, removed with their logs: every
     one but the current (D/prep) that no live work refers to (prep_refs(): a running
@@ -570,7 +575,7 @@ def prune_preps(d, refs=None):
     out = []
     for x in old:
         p = os.path.realpath(f"{d}/preps/{x}")
-        if any(r == p or r.startswith(p + "/") for r in refs):
+        if referenced(p, refs):
             continue
         n = du_bytes(p)
         shutil.rmtree(p, ignore_errors=True)
@@ -590,7 +595,10 @@ def cmd_room(a):
     bs2lib/space.py): its free bytes, and for each source whether its current preparation
     can serve its cases now (prep_ok: bs2-host source would keep it), that one's bytes,
     the bytes of the older ones nothing uses (old_bytes: the next bs2-host source removes
-    them), whether its tools are current (tools_fresh) and their bytes.  As root (it reads
+    them), the preparations live work refers to (referenced: their names, the current's
+    among them as prep_referenced; prune_preps() keeps them, so a stale current one a case
+    still uses outlives the next preparing), whether its tools are current (tools_fresh)
+    and their bytes.  As root (it reads
     root's files and /proc); changes nothing but the size it records for tools copied
     before TOOLS_VERSION 2 (tools.json, version 1)."""
     os.makedirs(ROOT, exist_ok=True)
@@ -602,7 +610,8 @@ def cmd_room(a):
         e = {}
         if not os.path.isdir(f"{d}/preps") and not os.path.isdir(f"{d}/tools"):
             # (Nothing here yet: no generation worked out, which may hash its whole image.)
-            out["sources"][s] = {"prep_ok": False, "prep_bytes": 0, "old_bytes": 0, "tools_fresh": False, "tools_bytes": 0}
+            out["sources"][s] = {"prep_ok": False, "prep_bytes": 0, "old_bytes": 0, "referenced": [],
+                                 "prep_referenced": False, "tools_fresh": False, "tools_bytes": 0}
             continue
         try:
             gen = generation(s)
@@ -613,11 +622,12 @@ def cmd_room(a):
         k, _, why = prep_reasons(s, holt_bin())
         e["prep_ok"] = bool(k) and source_ready(s) == gen and not why
         e["prep_bytes"] = du_bytes(k) if k else 0
-        old = [x for x in _listdir(f"{d}/preps") if x.startswith("p-") and os.path.isdir(f"{d}/preps/{x}")
-               and os.path.realpath(f"{d}/preps/{x}") != k]
-        e["old_bytes"] = sum(du_bytes(f"{d}/preps/{x}") for x in old
-                             if not any(r == os.path.realpath(f"{d}/preps/{x}") or
-                                        r.startswith(os.path.realpath(f"{d}/preps/{x}") + "/") for r in refs))
+        preps = sorted(x for x in _listdir(f"{d}/preps") if x.startswith("p-") and os.path.isdir(f"{d}/preps/{x}"))
+        used = [x for x in preps if referenced(os.path.realpath(f"{d}/preps/{x}"), refs)]
+        e["old_bytes"] = sum(du_bytes(f"{d}/preps/{x}") for x in preps
+                             if os.path.realpath(f"{d}/preps/{x}") != k and x not in used)
+        e["referenced"] = used
+        e["prep_referenced"] = bool(k) and any(os.path.realpath(f"{d}/preps/{x}") == k for x in used)
         e["tools_fresh"] = tools_fresh(s, gen)
         m = tools_meta(d)
         if os.path.isdir(f"{d}/tools"):

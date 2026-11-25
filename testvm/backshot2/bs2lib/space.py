@@ -4,7 +4,7 @@ A host keeps, for every source it holds in a run, /bkoscratch/backshot2/sources/
 its preparation (preps/NAME: the source's shut-down overlays, its backup, dumps and logs;
 bs2-host source makes one per generation, bko-holt and harness) and, only where the
 source's tier 0 runs (its lead) and only for a family whose tier 0 is "chroot", its tools
-(a copy of its root, bs2-host copy_tools).  An SSD case (room.py scratch(): vanilla3)
+(a copy of its root, bs2-host copy_tools).  An SSD case (room.py scratch(): the full vanilla3)
 works on /bkoscratch too, one at a time a host (the SSD lane), and each case leaves
 ~5 MB of records.  On 2026-11-25 a BackShot2All start filled cinqcent's: nothing sized
 any of it.

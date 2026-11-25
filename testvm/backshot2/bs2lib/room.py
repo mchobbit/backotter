@@ -131,7 +131,8 @@ def scratch(source, ceiling, disk_ok, run_disk=None, path=SIZES):
       disk ceilings; None: this host's alone, as bs2-host on the host decides) on a host
       that takes SSD cases (DISK_OK: its holt_disk_mode is true in hosts.json, Chopin and
       Cinqcent; bs2-host runs one at a time there) whose memory ceiling holds its M:
-      vanilla3, D 30 GiB over the big hosts' 29, today.
+      vanilla3's full room, D 30 GiB over the big hosts' 29 (its slimmed room, D 12, is
+      in RAM: slim-sizes.tsv).
     A source one host of the run can hold in RAM never goes to the SSD on another: it
     stays in the RAM disks that hold it, as before."""
     if not ceiling:

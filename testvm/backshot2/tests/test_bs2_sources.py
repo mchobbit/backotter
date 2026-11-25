@@ -9,7 +9,7 @@ import unittest
 
 import corpus_cases as K
 import test_families as TF
-from bs2lib import dumpx, sources as S
+from bs2lib import dumpx, room as RM, sources as S
 
 # The Linux sources with ZFS, md or more than one disk (docs/design/bs2-all.md "Sources").
 A3 = ["cachyos-zfs", "chimera-zfs", "debian13-zfs", "debian13-stack", "fedora44-raid", "proxmox9", "proxmox9-mirror",
@@ -84,9 +84,10 @@ class Seconds(unittest.TestCase):
         self.assertEqual(S.secs("guix15", 1), (235, "measured"))
         self.assertEqual(S.secs("guix15-bios", 1), (153, "measured"))
         self.assertEqual(S.secs("guix15-bios", 2), (153, "est."))
-        self.assertEqual(S.secs("mint22", 1), (round(0.7 * S.holt_rows()["mint22"][0]), "est."))
+        self.assertEqual(S.secs("kinoite44", 1), (round(0.7 * S.holt_rows()["kinoite44"][0]), "est."))   # full fat
+        self.assertEqual(S.secs("mint22", 1), (RM.slim_row("mint22")["t1_s"], "measured"))   # slimmed: slim-sizes.tsv
         self.assertEqual(S.secs("debian13", 1), (S.FLOOR_S, "est."))   # 0.7 x 163 under the floor
-        self.assertEqual(S.secs("vanilla3", 2), S.secs("vanilla3", 1))
+        self.assertEqual(S.secs("vanilla3", 2), (S.secs("vanilla3", 1)[0], "est."))
         self.assertEqual(S.secs("debian13", 0), (0.3, "measured"))
         for s in S.built():
             self.assertGreaterEqual(S.secs(s, 1)[0], 60, s)

@@ -164,7 +164,7 @@ solus49, biglinux) moved to `/bkoscratch/vms-sata` on sda2, each `vms/G` a
 symlink there, so the paths are unchanged. Since the 2026-11-25 cutover every
 `vms/G` there is a link into the cache (cachyos-zfs, slackware15 and
 slackware15-uefi still full folders); its cache is cap 420G, floor 30G (all
-the CN600 allows; was 400G, 100G) until its test disk arrives (2026-12-01).
+the CN600 allows; the cap was 400G) until its test disk arrives (2026-12-01).
 
 vm-update updates every guest it can reach over SSH. Sculpt OS
 (`sculpt2610`) has no sshd: its `no-ssh` makes vm-update refuse it, and

@@ -20,10 +20,10 @@ use super::codes::{Problem, ProblemCode};
 use crate::json::Value;
 use crate::report::human;
 
-/// A number given as a number or as a decimal string (LUKS2 keeps its
-/// offsets and sizes as strings): Value::get_u64_or_text.
+/// A dump's number in any spelling dump writes (a number, decimal text,
+/// 0x-hex text): Value::get_u64_lenient, load's one rule.
 fn u(v: &Value, k: &str) -> Option<u64> {
-    v.get_u64_or_text(k)
+    v.get_u64_lenient(k)
 }
 
 /// What CONTENT needs of the device it's on, in bytes, and what that is:

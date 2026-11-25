@@ -15,10 +15,10 @@ fn s(v: &Value, k: &str) -> Option<String> {
     v.get(k).and_then(Value::as_str).map(str::to_string)
 }
 
-/// A partition table's number: a number, decimal text or 0x-hex text
-/// (Value::get_u64_or_hex_text).
+/// A dump's number in any spelling dump writes (a number, decimal text,
+/// 0x-hex text): Value::get_u64_lenient, load's one rule.
 fn u(v: &Value, k: &str) -> Option<u64> {
-    v.get_u64_or_hex_text(k)
+    v.get_u64_lenient(k)
 }
 
 /// "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" to GPT's on-disk bytes (the first

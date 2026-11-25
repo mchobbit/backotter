@@ -296,10 +296,10 @@ fn s(v: &Value, k: &str) -> Option<String> {
     v.get(k).and_then(Value::as_str).map(str::to_string)
 }
 
-/// A number given as a number or as a decimal string (LUKS2 keeps its
-/// offsets and sizes as strings): Value::get_u64_or_text.
+/// A dump's number in any spelling dump writes (a number, decimal text,
+/// 0x-hex text): Value::get_u64_lenient, load's one rule.
 fn u(v: &Value, k: &str) -> Option<u64> {
-    v.get_u64_or_text(k)
+    v.get_u64_lenient(k)
 }
 
 fn path(keys: &[&str]) -> Vec<String> {

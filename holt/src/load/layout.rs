@@ -111,19 +111,19 @@ fn table(v: &Value) -> Option<Table> {
             None => None,
         },
     };
-    Some(Table { kind, id, first_usable_lba: v.get_u64("first_usable_lba"), last_usable_lba: v.get_u64("last_usable_lba"), entry_count: v.get_u64("entry_count") })
+    Some(Table { kind, id, first_usable_lba: v.get_u64_lenient("first_usable_lba"), last_usable_lba: v.get_u64_lenient("last_usable_lba"), entry_count: v.get_u64_lenient("entry_count") })
 }
 
 fn part(v: &Value, sector: u64) -> Option<Part> {
-    let start_lba = v.get_u64("start_lba").or_else(|| v.get_u64("start_bytes").map(|b| b / sector))?;
-    let sectors = v.get_u64("sectors").or_else(|| v.get_u64("size_bytes").map(|b| b / sector))?;
+    let start_lba = v.get_u64_lenient("start_lba").or_else(|| v.get_u64_lenient("start_bytes").map(|b| b / sector))?;
+    let sectors = v.get_u64_lenient("sectors").or_else(|| v.get_u64_lenient("size_bytes").map(|b| b / sector))?;
     let ptype = match v.get("type") {
         Some(Value::Str(t)) => t.clone(),
         Some(x) => format!("0x{:02x}", x.as_u64().unwrap_or(0)),
         None => return None,
     };
     Some(Part {
-        number: v.get_u64("number")? as u32,
+        number: v.get_u64_lenient("number")? as u32,
         name: s(v, "name").unwrap_or_default(),
         start_lba,
         sectors,
@@ -205,7 +205,7 @@ impl Layout {
             if d.get("links").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).any(|l| l.starts_with("/dev/zvol/")) {
                 continue;
             }
-            let sector = d.get_u64("logical_sector_size").unwrap_or(512).max(512);
+            let sector = d.get_u64_lenient("logical_sector_size").unwrap_or(512).max(512);
             let tv = d.get("partition_table").cloned().unwrap_or(Value::Null);
             let table = table(&tv);
             if !tv.is_null() && table.is_none() {
@@ -216,7 +216,7 @@ impl Layout {
             let content = d.get("content").cloned().unwrap_or(Value::Null);
             disks.push(Disk {
                 name: s(d, "name").unwrap_or_default(),
-                size_bytes: d.get_u64("size_bytes").unwrap_or(0),
+                size_bytes: d.get_u64_lenient("size_bytes").unwrap_or(0),
                 sector_size: sector,
                 model: s(d, "model"),
                 serial: s(d, "serial"),
@@ -627,6 +627,27 @@ mod tests {
         assert!(!l.uefi());
         assert_eq!(l.content("vda3").and_then(|c| c.get("type")).and_then(Value::as_str), Some("btrfs"));
         assert_eq!(l.hostname(), "deb13");
+    }
+
+    /// RustAudit1 H7-09: a partition's and a disk's numbers read the same
+    /// in each spelling dump writes (Value::get_u64_lenient), as fit's and
+    /// write-table's readers read them, so they agree on the partitions.
+    #[test]
+    fn numbers_in_every_spelling() {
+        let good = sample::bios_mbr();
+        for (start, sectors, number, size) in [("2048", "1953792", "1", "17179869184"), ("\"2048\"", "\"1953792\"", "\"1\"", "\"17179869184\""), ("\"0x800\"", "\"0x1dd000\"", "\"0x1\"", "\"0x400000000\"")] {
+            let t = good
+                .replace("\"number\": 1, \"start_lba\": 2048, \"sectors\": 1953792", &format!("\"number\": {number}, \"start_lba\": {start}, \"sectors\": {sectors}"))
+                .replace("\"size_bytes\": 17179869184, \"logical_sector_size\": 512", &format!("\"size_bytes\": {size}, \"logical_sector_size\": \"0x200\""));
+            assert_ne!(t, good, "{start}");
+            let l = parse(&t).unwrap();
+            let d = &l.disks[0];
+            assert_eq!((d.size_bytes, d.sector_size, d.parts.len()), (17179869184, 512, 3), "{start}");
+            assert_eq!((d.parts[0].number, d.parts[0].start_lba, d.parts[0].sectors), (1, 2048, 1953792), "{start}");
+        }
+        // Not a spelling dump writes: the partition isn't read.
+        let t = good.replace("\"start_lba\": 2048,", "\"start_lba\": \"0X800\",");
+        assert_eq!(parse(&t).unwrap().disks[0].parts.len(), 2);
     }
 
     #[test]

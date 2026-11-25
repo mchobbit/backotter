@@ -157,20 +157,13 @@ impl Value {
         self.get(key).and_then(Value::as_u64)
     }
 
-    /// KEY's number, or a string of decimal digits as u64's FromStr reads
-    /// it (an optional '+'): the rule of load's readers of a dump's sizes
-    /// and offsets (fit, sizes), where a field may be a string as LUKS2's
-    /// JSON writes its offsets and sizes.
-    pub fn get_u64_or_text(&self, key: &str) -> Option<u64> {
-        match self.get(key)? {
-            Value::Str(t) => t.parse().ok(),
-            x => x.as_u64(),
-        }
-    }
-
-    /// `get_u64_or_text`, and a "0x"-prefixed string read as hex: the rule
-    /// of write-table's reader of a partition table.
-    pub fn get_u64_or_hex_text(&self, key: &str) -> Option<u64> {
+    /// KEY's number as load reads a dump's numbers (layout, fit, sizes,
+    /// write-table: RustAudit1 H7-09), in every spelling dump writes one:
+    /// a JSON number (not negative, not a fraction), decimal text as u64's
+    /// FromStr reads it (an optional '+'; LUKS2's JSON keeps its offsets
+    /// and sizes as strings), or "0x"-prefixed hex text.  Nothing else (no
+    /// "0X", no spaces).  get_u64 is the strict one: numbers only.
+    pub fn get_u64_lenient(&self, key: &str) -> Option<u64> {
         match self.get(key)? {
             Value::Str(t) => t.strip_prefix("0x").map_or_else(|| t.parse().ok(), |h| u64::from_str_radix(h, 16).ok()),
             x => x.as_u64(),
@@ -751,8 +744,7 @@ mod tests {
         let v = parse(r#"{"n": 7, "neg": -1, "dec": "2048", "plus": "+5", "hex": "0x1f", "HEX": "0X1f", "bad": "12a", "sp": " 1", "f": 1.5, "b": true}"#).unwrap();
         let all = |f: fn(&Value, &str) -> Option<u64>| ["n", "neg", "dec", "plus", "hex", "HEX", "bad", "sp", "f", "b", "none"].map(|k| f(&v, k));
         assert_eq!(all(Value::get_u64), [Some(7), None, None, None, None, None, None, None, None, None, None]);
-        assert_eq!(all(Value::get_u64_or_text), [Some(7), None, Some(2048), Some(5), None, None, None, None, None, None, None]);
-        assert_eq!(all(Value::get_u64_or_hex_text), [Some(7), None, Some(2048), Some(5), Some(31), None, None, None, None, None, None]);
+        assert_eq!(all(Value::get_u64_lenient), [Some(7), None, Some(2048), Some(5), Some(31), None, None, None, None, None, None]);
     }
 
     #[test]

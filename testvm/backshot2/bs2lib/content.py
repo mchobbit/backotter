@@ -639,6 +639,22 @@ def deep_planned(content):
     return [e["path"] for e in plan(content, "ext4") if _is_deep(e["path"])]
 
 
+def fsmeta_skips(dump, content):
+    """fsmeta.py record's --skip paths, relative to the source's root, for
+    CONTENT's deep trees (deep_planned()'s tops), at DIR where it really is
+    in DUMP's tree (families' srv_dir(): vanilla3's /srv is a link to
+    var/srv, so var/srv/bs2/deep0, never srv/bs2/deep0, which os.walk
+    sees only as the link).  fsmeta.py walks by path and can't go past
+    PATH_MAX; bs2-host deep compares exactly these trees by directory fds.
+    Empty where the case plants no deep tree: fsmeta records everything."""
+    tops = sorted({bytes.fromhex(p).split(b"/", 1)[0] for p in deep_planned(content)})
+    if not tops:
+        return []
+    from . import families
+    at = families.hooks(None, dump).srv_dir(dump).strip("/")
+    return [f"{at}/{t.decode()}" for t in tops]
+
+
 def deep_verdict(planned, before, after):
     """(verdict, lines) for the deep tree restored, from deep_planned()'s
     PLANNED and the deep_record()s of the source (BEFORE) and the restore

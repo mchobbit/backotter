@@ -585,8 +585,10 @@ lean copy already leaves out what the step removes).
   fail-001), so a run needs bko-bin's rustic-bko at least that new.
   Through GENERATOR 4 it was planted just under PATH_MAX (`alpine-small-2`).
   fsmeta.py walks by path, so
-  it skips `srv/bs2/deep0` and `bs2-host deep` compares that subtree by
-  directory fds.
+  it skips the deep tree where the source really has it (`bs2-host apply`'s
+  `BS2_FSMETA`, `content.fsmeta_skips()`: `srv/bs2/deep0`, vanilla3's
+  `var/srv/bs2/deep0` through the abroot family's `srv` hook) and nothing
+  else, and `bs2-host deep` compares that subtree by directory fds.
 - **`--new-uuids`** is drawn only when the build plans it (`caps.json`):
   today's load refuses it ("isn't built yet").  judge.py's `--new-uuids` mode
   is built and tested for when it is.

@@ -208,6 +208,79 @@ class TestRecipes(unittest.TestCase):
         c = next(c for c in K.cases("vanilla3") if c.get("content"))
         self.assertEqual(list(G.planted_of(d, c["content"])), ["/var"])
 
+    # fsmeta.py leaves out the deep tree where the source really has it: on
+    # vanilla3 srv/bs2/deep0 is only the srv link's way there, which os.walk
+    # never takes, so that skip missed the tree and the record of the source
+    # died past PATH_MAX (run slim-after, vanilla3-3d8bc8ee41a0850c).
+    def test_fsmeta_skips_follow_the_family_srv(self):
+        c = next(c for c in K.cases("vanilla3") if c.get("content"))["content"]
+        self.assertEqual(CT.fsmeta_skips(K.dump("vanilla3"), c), ["var/srv/bs2/deep0"])
+        self.assertEqual(CT.fsmeta_skips(K.dump("debian13"), c), ["srv/bs2/deep0"])
+        self.assertEqual(CT.fsmeta_skips(K.dump("vanilla3"), None), [])
+        self.assertEqual(CT.fsmeta_skips(K.dump("vanilla3"), {"seed": 1}), [])   # no recipe, no deep tree
+
+    def test_apply_sets_bs2_fsmeta(self):
+        import subprocess
+        import sys
+        host = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bs2-host")
+        src = os.path.join(K.CORPUS, "vanilla3", "src.json")
+        content = next(c for c in K.cases("vanilla3") if c.get("content"))
+        bare = next(c for c in K.cases("vanilla3") if not c.get("content"))
+        with tempfile.TemporaryDirectory() as t:
+            def fsmeta(case):
+                C.write(f"{t}/c.case", case)
+                r = subprocess.run([sys.executable, host, "apply", f"{t}/c.case", src, f"{t}/out.json"], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                line = [l for l in r.stdout.splitlines() if l.startswith("BS2_FSMETA=")]
+                self.assertEqual(len(line), 1, r.stdout)
+                # As ht1-bs2.sh's bs2_after_source sources it.
+                b = subprocess.run(["bash", "-c", line[0] + '\nfor x in "${BS2_FSMETA[@]}"; do echo "$x"; done'], capture_output=True, text=True)
+                return b.stdout.split("\n")[:-1]
+            self.assertEqual(fsmeta(content), ["--skip", "var/srv/bs2/deep0"])
+            self.assertEqual(fsmeta(bare), [])
+
+    def abroot_deep(self, t):
+        """An ABRoot-shaped root (srv -> var/srv) with vanilla3's deep tree planted."""
+        root = os.path.join(t, "root")
+        os.makedirs(os.path.join(root, "var"))
+        os.symlink("var/srv", os.path.join(root, "srv"))
+        content = next(c for c in K.cases("vanilla3") if c.get("content"))["content"]
+        deep = set(CT.deep_planned(content))
+        es = [dict(e, xattrs={}) for e in CT.plan(content, "btrfs") if e["path"] in deep]
+        self.assertEqual(CT.plant(root, es), [])
+        return root, CT.fsmeta_skips(K.dump("vanilla3"), content)
+
+    def test_the_skip_is_where_fsmeta_walks(self):
+        # fsmeta.py's walk (os.walk, links not followed) meets the tree at the skip, never under srv/.
+        with tempfile.TemporaryDirectory() as t:
+            root, skips = self.abroot_deep(t)
+            walked, left = [], []
+            for d, ns, _ in os.walk(root, onerror=self.fail):
+                rel = [os.path.relpath(os.path.join(d, n), root) for n in ns]
+                left += [r for r in rel if r in skips]
+                ns[:] = [n for n, r in zip(ns, rel) if r not in skips]
+                walked += [r for r in rel if r not in skips]
+            self.assertEqual(left, ["var/srv/bs2/deep0"])
+            self.assertIn("var/srv/bs2", walked)
+            self.assertFalse([w for w in walked if w.startswith("srv/") or "deep0" in w])
+
+    @unittest.skipUnless(os.path.exists("/proc/self/mounts"), "fsmeta.py records on Linux")
+    def test_fsmeta_records_vanilla3_content(self):
+        import errno
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("fsmeta", os.path.join(K.BS2, "..", "compare", "fsmeta.py"))
+        fm = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fm)
+        with tempfile.TemporaryDirectory() as t:
+            root, skips = self.abroot_deep(t)
+            rec = fm.record(root, skips)
+            self.assertIn("var/srv/bs2", rec)
+            self.assertEqual(rec["srv"]["type"], "symlink")
+            self.assertFalse([k for k in rec if k.startswith("var/srv/bs2/deep0")])
+            with self.assertRaises(OSError) as x:
+                fm.record(root, ["srv/bs2/deep0"])   # the old, literal skip
+            self.assertEqual(x.exception.errno, errno.ENAMETOOLONG)
+
     def test_symlink_limits(self):
         self.assertEqual(CT.fs_symlink_max("f2fs", 4096), 4095)
         self.assertEqual(CT.fs_symlink_max("nilfs2", 1024), 1023)

@@ -54,8 +54,11 @@ BS2_TIER=${BS2_TIER:-1}
 [[ $BS2_TIER == [12] ]] || { echo "ht1: BS2_TIER is 1 or 2, not '$BS2_TIER'" >&2; exit 2; }
 GV=$BS2_NAME
 # fsmeta.py walks by path, and the content drift's deep tree is past PATH_MAX:
-# it leaves srv/bs2/deep* to bs2-host deep, which walks by directory fds.
-BS2_FSMETA=(--skip srv/bs2/deep0)
+# it leaves that tree to bs2-host deep, which walks by directory fds.  bs2-host
+# apply sets BS2_FSMETA to the --skip of each deep tree where the source really
+# has it (content.fsmeta_skips: srv/bs2/deep0, vanilla3's var/srv/bs2/deep0);
+# with no content (and the preparation) nothing is skipped.
+BS2_FSMETA=()
 BS2_SNAPS=1 BS2_RESTORE=0 BS2_CONTENT=0 BS2_FLAGS=() BS2_JUDGE=(--expect) BS2_FSJUDGE=() BS2_TARGETS=() BS2_VFW=()
 BS2_SHARE_BACKUP=0
 # The preparation this case's source phase took (bs2_source_reuse), its backup's

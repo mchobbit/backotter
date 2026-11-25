@@ -844,6 +844,10 @@ def cmd_apply(a):
     print("BS2_FLAGS=(" + " ".join(q(x) for x in flags) + ")")
     print(f"BS2_SNAPS={snaps.get('count', 1)} BS2_RESTORE={snaps.get('restore', 0) if snaps else 0}")
     print(f"BS2_CONTENT={1 if c.get('content') else 0}")
+    # What fsmeta.py leaves out of both records: the content's deep trees (past PATH_MAX), where
+    # this source really has them (content.fsmeta_skips: vanilla3's under var/srv), and nothing else.
+    from bs2lib import content as CT
+    print("BS2_FSMETA=(" + " ".join(f"--skip {q(p)}" for p in CT.fsmeta_skips(src, c.get("content"))) + ")")
     # Whether the case's backup is the prepared one's tree (bs2lib/reuse.py: no content, one snapshot).
     from bs2lib import reuse as RU
     print(f"BS2_SHARE_BACKUP={1 if RU.backup_shareable(c)[0] else 0}")

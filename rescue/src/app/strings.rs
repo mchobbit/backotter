@@ -295,6 +295,7 @@ pub fn old_disk(n: usize, name: &str, size: &str, role: &str) -> String {
     format!("Old disk {n}: {name}, {size}, {role}")
 }
 pub const ROLE_SYSTEM: &str = "the system";
+pub const ROLE_SYSTEM_SHORT: &str = "system";
 pub const ROLE_NOTHING: &str = "nothing mounted from it";
 pub fn goes_to(name: &str, size: &str, serial: Option<&str>) -> String {
     match serial {
@@ -484,12 +485,23 @@ pub const BTN_KEEP_SIZES: &str = "Keep the old sizes";
 pub const BTN_ANOTHER_DISK: &str = "Another disk";
 pub fn decide_sizes(m: &str, pct: &str, old: &str, new: &str, used: &str, fits: bool) -> String {
     let fit = if fits { "so it fits with room to spare" } else { "so it would fit" };
+    let m = &part_name(m);
     if new.is_empty() {
         format!("To fit, {m} would shrink by {pct} %:\n  Old size:    {old}\n  Space used:  {used} at the backup, {fit}\nThe other partitions stay as they were.")
     } else {
         format!("To fit, {m} would shrink by {pct} %:\n  Old size:    {old}\n  New size:    {new}\n  Space used:  {used} at the backup, {fit}\nThe other partitions stay as they were.")
     }
 }
+/// A partition as the size screens name it: `the system partition (/)`.
+pub fn part_name(m: &str) -> String {
+    if m == "/" {
+        "the system partition (/)".to_string()
+    } else {
+        m.to_string()
+    }
+}
+pub const DECIDE_KEYS: &str = "Arrows: choose | Tab: buttons | Enter: OK | o: raw output | Esc: back";
+pub const MUCH_BIGGER_KEYS: &str = "Arrows: choose | Tab: buttons | Enter: OK | o: raw output | Esc: back";
 pub const DECIDE_WHY: &str = "This stick offers a shrink of up to 10 % with a button.  This is more, so you decide, and nothing is chosen for you.";
 pub const BEYOND_LIMIT: &str = "This stick's bko-holt can't shrink a partition this far yet, though the data would fit: this disk can't be used for now.";
 pub fn shrink_row(m: &str, new: &str, disk: &str) -> String {
@@ -516,6 +528,19 @@ pub fn opens(names: &[String], holds: &[String]) -> String {
         _ => format!("This passphrase opens {what}, which hold {}.", holds.join(", ")),
     }
 }
+/// The disks a passphrase opens, as the mock names them: `the system disk
+/// (CT1000P3PSSD8)`.
+pub fn opens_disks(disks: &[String]) -> String {
+    match disks {
+        [one] => format!("This passphrase opens the encrypted disk: {one}."),
+        [a, b] => format!("This passphrase opens both encrypted disks: {a} and {b}."),
+        [rest @ .., last] => format!("This passphrase opens {} encrypted disks: {} and {last}.", disks.len(), rest.join(", ")),
+        [] => String::new(),
+    }
+}
+pub fn role_disk(role: &str, disk: &str) -> String {
+    format!("the {role} disk ({disk})")
+}
 pub const PASS_NEW: &str = "You will type it every time the computer starts.  It may be the old one or a new one.  If it is forgotten, nothing can open these disks: write it down.";
 pub const PASS_KEPT_HEADER: &str = "The backup kept this disk's own encryption header, so only the passphrase it had opens it: type the passphrase this disk had.";
 pub const PASS_RESUME: &str = "These disks hold a restore started before, and its containers are made: type the passphrase given the first time.";
@@ -537,9 +562,28 @@ pub fn kb_start_unknown(set: &str, host: &str) -> String {
     format!("Keyboard: {set}.  Which layout {host}'s start-up prompt uses isn't known; plain letters and digits are the safest.")
 }
 pub const BOOT_KB_TITLE: &str = "Keyboard for the disk passphrase";
-pub fn boot_kb(host: &str, now: &str, there: &str) -> String {
-    format!("When {host} starts, it asks for the disk passphrase with the keyboard acting as {there}.  This stick is set to {now}.\n\nSwitch to {there} now?  Then the passphrase you type here is typed the same way at each start.\n\nA passphrase of plain letters, digits and spaces types the same with most layouts.")
+/// OWN is the machine's own layout (`keyboard.canonical`), when the
+/// backup names it; MOVES what differs between the two, when known.
+pub fn boot_kb(host: &str, now: &str, there: &str, own: Option<&str>, moves: Option<&str>) -> String {
+    let first = match own {
+        Some(own) => format!("When {host} starts, it asks for the disk passphrase before its {own} layout is loaded, so the keyboard acts as {there} there."),
+        None => format!("When {host} starts, it asks for the disk passphrase with the keyboard acting as {there}.  This stick is set to {now}."),
+    };
+    let last = match moves {
+        Some(m) => format!("With {there} on a {now} keyboard, {m}.  A passphrase of the other letters, digits and spaces types the same with either layout."),
+        None => "A passphrase of plain letters, digits and spaces types the same with most layouts.".to_string(),
+    };
+    format!("{first}\n\nSwitch to {there} now?  Then the passphrase you type here is typed the same way at each start.\n\n{last}")
 }
+/// What moves between US and a layout, for the start-up keyboard's
+/// screen: the layouts this knows (the mock's German), else nothing said.
+pub fn layout_moves(layout: &str) -> Option<&'static str> {
+    match layout {
+        "de" | "at" | "ch" => Some(YZ_SWAPPED_BOOT),
+        _ => None,
+    }
+}
+pub const YZ_SWAPPED_BOOT: &str = "Y and Z are swapped and most symbols move";
 pub const KEY_BLOCKED_TITLE: &str = "a disk this stick can't unlock";
 pub fn key_blocked_what(group: &str) -> String {
     format!("The encrypted container {group} needs a key this bko-rescue can't ask for.")
@@ -562,10 +606,30 @@ pub fn resume_only_again(why: &str) -> String {
 }
 pub const BTN_GO_ON: &str = "Go on";
 pub const BTN_START_AGAIN: &str = "Start again";
+pub const RESUME_KEYS: &str = "Tab: buttons | Enter: press | Esc: back";
 
 // ---- 8. Review ----
 pub const REVIEW_TITLE: &str = "Ready to restore";
 pub const REVIEW_KEYS: &str = "Type the serials | Tab: next | Enter on Restore: start | c: commands | Esc";
+pub const REVIEW_KEYS_DRY: &str = "Type the serials | Tab: next | Enter on Show: walk through | c: commands | Esc";
+/// Review's words for a disk with no serial of its own (one place: the
+/// open question's answer, `review::confirm_by`).
+pub fn by_size_text(example: &str) -> String {
+    format!("A disk with no serial of its own is confirmed by its size and name here instead, as its row shows: {example}.")
+}
+pub fn by_size_tail(expect: &str, shared: bool) -> String {
+    if shared {
+        format!("serial shared: type {expect}")
+    } else {
+        format!("no serial: type {expect}")
+    }
+}
+pub fn review_unshown(nodes: &str) -> String {
+    format!("bko-holt's plan writes {nodes}, which isn't among the disks found here, so it can't be confirmed: go back to Disks, or make a report.")
+}
+pub const REVIEW_NO_ROWS: &str = "bko-holt's plan names no disk to write, so there is nothing to confirm: go back to Disks, or make a report.";
+pub const BTN_TO_PASSPHRASES: &str = "Go back to the passphrases";
+pub const BTN_TO_RESUME: &str = "Go back to the Resume choice";
 pub fn review_head(host: &str, os: Option<&str>, when: &str, size: Option<&str>, same: bool) -> String {
     let os = os.map(|x| format!(" ({x})")).unwrap_or_default();
     let size = size.map(|x| format!(", {x}")).unwrap_or_default();
@@ -590,13 +654,14 @@ pub fn ask_serial(n: usize) -> String {
     format!("Type the last six characters of disk {n}'s serial, or b to go back:")
 }
 pub fn ask_size(n: usize, expect: &str) -> String {
-    format!("Disk {n} has no serial of its own: type its size and model, {expect}, or b to go back:")
+    format!("Disk {n} has no serial of its own: type its size and name, {expect}, or b to go back:")
 }
 pub fn wrong_serial(n: usize, name: &str) -> String {
     format!("What is typed for disk {n} ({name}) isn't the end of its serial.  Check it against the disk's label.")
 }
-pub fn wrong_size(n: usize, name: &str, expect: &str) -> String {
-    format!("Disk {n} ({name}) has no serial of its own: type its size and model as shown, {expect}.")
+/// Short, so the notice line shows what to type whole.
+pub fn wrong_size(n: usize, expect: &str) -> String {
+    format!("Disk {n} has no serial of its own: type {expect}, its size and name.")
 }
 pub fn confirmed(n: usize) -> String {
     format!("Disk {n} confirmed.")
@@ -770,7 +835,7 @@ pub const ALL: &[&str] = &[
     REPORT_TITLE, REPORT_DRY_RUN, REPORT_GITHUB, REPORT_REDACTED, REPORT_PRIVATE, BTN_VIEW, BTN_ADVANCED,
     REPORT_FAILED_TITLE, REPORT_FAILED, REPORT_NO_STRIP, VIEW_TITLE, ADVANCED_TITLE, ADVANCED_TEXT, ADVANCED_WARN, ADVANCED_PLAIN, TYPE_YES,
     TYPE_YES_FIRST, BTN_MAKE_IT, YES, SESSION_FAILED,
-    SCR_PASSPHRASES, SCR_RESUME, SCR_REVIEW, SCR_RESTORE, DISKS_TITLE, DISKS_KEYS, PLANNING_TITLE, PLANNING, PLANNING_FIT, PLANNING_REVIEW, STATUS_TITLE, STATUS_TEXT, ROLE_SYSTEM, ROLE_NOTHING, BY_WWID, BY_IDENTITY, WILL_BE_ERASED, CHOSEN_BY_YOU, NO_TARGET, PLAIN_NO_TARGET, PLAIN_ERASED, NOT_USED, NOT_OFFERED, ALREADY_USED, BLANK, REFUSED_STICK, REFUSED_BACKUP, REFUSED_ROOT, REFUSED_IN_USE, REFUSED_READ_ONLY, REFUSED_SECTOR, BTN_OK, BTN_THESE_ARE_RIGHT, PLAN_FAILED_TITLE, PLAN_FAILED_WHY, PLAN_FAILED_TODO, NO_LAYOUT_TITLE, NO_LAYOUT_WHY, NO_LAYOUT_TODO, LAYOUT_NONE_TYPED, LAYOUT_NO_PATH, LAYOUT_NO_DEV, LAYOUT_UNREADABLE, ONE_DISK_KEYS, PUT_IT_ON, NO_SERIAL, NO_CANDIDATES, CANT_RESIZE_WHY, MUCH_SMALLER, A_LITTLE_SMALLER, TOO_SMALL, BIGGER, LITTLE_SMALLER_TITLE, LITTLE_BIGGER_TITLE, MUCH_SMALLER_TITLE, MUCH_BIGGER_TITLE, OFFER_KEYS, SLACK_TEXT, OR_ANOTHER, BTN_SHRINK, BTN_GROW, BTN_KEEP_SIZES, BTN_ANOTHER_DISK, DECIDE_WHY, BEYOND_LIMIT, CHOOSE_ANOTHER, CHOOSE_ONE_FIRST, PASS_NEW, PASS_KEPT_HEADER, PASS_RESUME, LABEL_PASSPHRASE, LABEL_AGAIN, PASSPHRASE_KEYS, PASS_EMPTY, PASS_MISMATCH, BOOT_KB_TITLE, KEY_BLOCKED_TITLE, KEY_FILE_ELSEWHERE, KEY_BLOCKED_TODO, RESUME_TITLE, STARTED_NOT_FINISHED, RESUME_CHOICES, BTN_GO_ON, BTN_START_AGAIN, REVIEW_TITLE, REVIEW_KEYS, REVIEW_ERASE, REVIEW_ERASE_PLAIN, WORD_ERASED, WORD_WRITTEN, WORD_GOES_ON, CHANGES, CHANGES_NONE, NO_PROBLEMS, THIS_STICK, NOTHING_ELSE, NOTHING_CHANGED, CHANGE_PASSPHRASE, NO_OTHER_FS, BTN_RESTORE, BTN_RESTORE_NOW, BTN_SHOW_WHAT, BTN_COMMANDS, BTN_EVERY_COMMAND, REVIEW_PROBLEM_TITLE, REVIEW_PROBLEM_WHY, ERASE_PROBLEM_WHY, REVIEW_PROBLEM_TODO, BTN_TO_DISKS, COMMANDS_TITLE, ADVANCED_FS_TITLE, ADVANCED_FS_TEXT, ADVANCED_FS_AFTER, AS_IT_WAS, CHANGED, CANT_CHANGE, BTN_UNDO_ALL,
+    SCR_PASSPHRASES, SCR_RESUME, SCR_REVIEW, SCR_RESTORE, DISKS_TITLE, DISKS_KEYS, PLANNING_TITLE, PLANNING, PLANNING_FIT, PLANNING_REVIEW, STATUS_TITLE, STATUS_TEXT, ROLE_SYSTEM, ROLE_SYSTEM_SHORT, ROLE_NOTHING, BY_WWID, BY_IDENTITY, WILL_BE_ERASED, CHOSEN_BY_YOU, NO_TARGET, PLAIN_NO_TARGET, PLAIN_ERASED, NOT_USED, NOT_OFFERED, ALREADY_USED, BLANK, REFUSED_STICK, REFUSED_BACKUP, REFUSED_ROOT, REFUSED_IN_USE, REFUSED_READ_ONLY, REFUSED_SECTOR, BTN_OK, BTN_THESE_ARE_RIGHT, PLAN_FAILED_TITLE, PLAN_FAILED_WHY, PLAN_FAILED_TODO, NO_LAYOUT_TITLE, NO_LAYOUT_WHY, NO_LAYOUT_TODO, LAYOUT_NONE_TYPED, LAYOUT_NO_PATH, LAYOUT_NO_DEV, LAYOUT_UNREADABLE, ONE_DISK_KEYS, PUT_IT_ON, NO_SERIAL, NO_CANDIDATES, CANT_RESIZE_WHY, MUCH_SMALLER, A_LITTLE_SMALLER, TOO_SMALL, BIGGER, LITTLE_SMALLER_TITLE, LITTLE_BIGGER_TITLE, MUCH_SMALLER_TITLE, MUCH_BIGGER_TITLE, OFFER_KEYS, SLACK_TEXT, OR_ANOTHER, BTN_SHRINK, BTN_GROW, BTN_KEEP_SIZES, BTN_ANOTHER_DISK, DECIDE_WHY, BEYOND_LIMIT, CHOOSE_ANOTHER, CHOOSE_ONE_FIRST, PASS_NEW, PASS_KEPT_HEADER, PASS_RESUME, LABEL_PASSPHRASE, LABEL_AGAIN, PASSPHRASE_KEYS, PASS_EMPTY, PASS_MISMATCH, BOOT_KB_TITLE, KEY_BLOCKED_TITLE, KEY_FILE_ELSEWHERE, KEY_BLOCKED_TODO, RESUME_TITLE, STARTED_NOT_FINISHED, RESUME_CHOICES, BTN_GO_ON, BTN_START_AGAIN, REVIEW_TITLE, REVIEW_KEYS, REVIEW_ERASE, REVIEW_ERASE_PLAIN, WORD_ERASED, WORD_WRITTEN, WORD_GOES_ON, CHANGES, CHANGES_NONE, NO_PROBLEMS, THIS_STICK, NOTHING_ELSE, NOTHING_CHANGED, CHANGE_PASSPHRASE, NO_OTHER_FS, BTN_RESTORE, BTN_RESTORE_NOW, BTN_SHOW_WHAT, BTN_COMMANDS, BTN_EVERY_COMMAND, REVIEW_PROBLEM_TITLE, REVIEW_PROBLEM_WHY, ERASE_PROBLEM_WHY, REVIEW_PROBLEM_TODO, BTN_TO_DISKS, BTN_TO_PASSPHRASES, BTN_TO_RESUME, RESUME_KEYS, REVIEW_KEYS_DRY, REVIEW_NO_ROWS, YZ_SWAPPED_BOOT, DECIDE_KEYS, MUCH_BIGGER_KEYS, COMMANDS_TITLE, ADVANCED_FS_TITLE, ADVANCED_FS_TEXT, ADVANCED_FS_AFTER, AS_IT_WAS, CHANGED, CANT_CHANGE, BTN_UNDO_ALL,
 ];
 
 #[cfg(test)]
@@ -793,7 +858,11 @@ mod tests {
             old_disk(1, "Samsung SSD 870 EVO 500GB", "500 GB", ROLE_SYSTEM),
             shrink_text(true, "/", "465 GB", "445 GB", "4.3", Some("41.7 GB")),
             review_head("lovelace", Some("Debian 13"), "22 Nov 2026 02:00 CET", Some("61.2 GB"), false),
-            boot_kb("lovelace", "German", "English (US)"),
+            boot_kb("lovelace", "German", "English (US)", Some("German"), Some(YZ_SWAPPED_BOOT)),
+            by_size_text("12.9 GB vdb"),
+            by_size_tail("12.9 GB vdb", true),
+            review_unshown("sdq"),
+            opens_disks(&["the system disk (CT1000P3PSSD8)".to_string(), "the /srv disk (WDC WD20EFRX-68EUZN0)".to_string()]),
         ] {
             assert_eq!(Clean::text(&s, usize::MAX).as_str(), s);
         }

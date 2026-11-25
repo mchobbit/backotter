@@ -1,32 +1,31 @@
  BackOtter rescue                                                         Review
-                                                                                
-                                                                                
   ┌──────────────────────────── Ready to restore ────────────────────────────┐  
   │                                                                          │  
   │ Restore lovelace (Debian 13) from the backup of 22 Nov 2026 02:00        │  
   │ UTC+01:00, 61.2 GB.  Backed up from a different computer.                │  
   │                                                                          │  
   │ Nothing is erased: the restore goes on from "Set up encryption".  Type   │  
-  │ the last six characters of each serial all the same.                     │  
-  │                                                                          │  
+  │ the last six characters of each serial all the same.  A disk with no     │  
+  │ serial of its own is confirmed by its size and name here instead, as its │  
+  │ row shows: 12.9 GB vdb.                                                  │  
   │  ┌────────────────────────────────────────────────────────────────────┐  │  
   │  │ goes on 12.9 GB  vdb                           [                ]  │  │  
+  │  │                  no serial: type 12.9 GB vdb                       │  │  
   │  │ goes on 12.9 GB  vdc                           [                ]  │  │  
+  │  │                  no serial: type 12.9 GB vdc                       │  │  
   │  └────────────────────────────────────────────────────────────────────┘  │  
   │ Changes: none.  No problems found.                                       │  
   │ Not touched: the vda, the vdd.                                           │  
   │ Nothing has been changed on any disk yet.  Back is safe.                 │  
   │                                                                          │  
-  │         < Restore >    < Commands >    < Advanced >    < Back >          │  
+  │                 < Restore >    < Commands >    < Back >                  │  
   └──────────────────────────────────────────────────────────────────────────┘  
-                                                                                
                                                                                 
  Type the serials | Tab: next | Enter on Restore: start | c: commands | Esc     
 
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
@@ -44,8 +43,9 @@ bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 D 0;1;7;30;47
@@ -53,26 +53,26 @@ b 0;37;44
 d 0;30;47
 s 0;40
  BackOtter rescue                                                         Review
-                                                                                
-                                                                                
   +---------------------------- Ready to restore ----------------------------+  
   |                                                                          |  
   | Restore lovelace (Debian 13) from the backup of 22 Nov 2026 02:00        |  
   | UTC+01:00, 61.2 GB.  Backed up from a different computer.                |  
   |                                                                          |  
   | Nothing is erased: the restore goes on from "Set up encryption".  Type   |  
-  | the last six characters of each serial all the same.                     |  
-  |                                                                          |  
+  | the last six characters of each serial all the same.  A disk with no     |  
+  | serial of its own is confirmed by its size and name here instead, as its |  
+  | row shows: 12.9 GB vdb.                                                  |  
   |  +--------------------------------------------------------------------+  |  
   |  | goes on 12.9 GB  vdb                           [                ]  |  |  
+  |  |                  no serial: type 12.9 GB vdb                       |  |  
   |  | goes on 12.9 GB  vdc                           [                ]  |  |  
+  |  |                  no serial: type 12.9 GB vdc                       |  |  
   |  +--------------------------------------------------------------------+  |  
   | Changes: none.  No problems found.                                       |  
   | Not touched: the vda, the vdd.                                           |  
   | Nothing has been changed on any disk yet.  Back is safe.                 |  
   |                                                                          |  
-  |         < Restore >    < Commands >    < Advanced >    < Back >          |  
+  |                 < Restore >    < Commands >    < Back >                  |  
   +--------------------------------------------------------------------------+  
-                                                                                
                                                                                 
  Type the serials | Tab: next | Enter on Restore: start | c: commands | Esc     

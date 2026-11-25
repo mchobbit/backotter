@@ -1,3 +1,4 @@
 Recorded documents (rec-debian13-stack's 04-plan and 08-status-after-partition)
-answering every plan and status call of bko-rescue's Disks to Review; see
-../../make-disk-fixtures.py.
+answering every plan and status call of bko-rescue's Disks to Review, and
+Start again's --only partition plan (09-plan-assemble as that run makes it);
+see ../../make-disk-fixtures.py.

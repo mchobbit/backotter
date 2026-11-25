@@ -1,0 +1,78 @@
+ BackOtter rescue                                                          Disks
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  ┌────────────────────── This disk is a little bigger ──────────────────────┐  
+  │                                                                          │  
+  │ Old disk 1 (Samsung SSD 870 EVO 500GB) was 500 GB.  The disk you chose,  │  
+  │ Samsung SSD 525GB, is 525 GB: 25.0 GB bigger.                            │  
+  │                                                                          │  
+  │ The partitions can stay as they were, with the extra 25.0 GB left free   │  
+  │ at the end of the disk.  Or the system partition (/) can grow:           │  
+  │   / will grow from 465 GB to 490 GB, by 5.4 %.                           │  
+  │   The other partitions stay as they were either way.                     │  
+  │                                                                          │  
+  │ < Grow the system partition >   < Keep the old sizes >   < Raw output >  │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: buttons | Enter: press | o: raw output | Esc: back to the disk list       
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddDDDDDDDDDDDDDDDDDDDDDDddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                          Disks
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  +---------------------- This disk is a little bigger ----------------------+  
+  |                                                                          |  
+  | Old disk 1 (Samsung SSD 870 EVO 500GB) was 500 GB.  The disk you chose,  |  
+  | Samsung SSD 525GB, is 525 GB: 25.0 GB bigger.                            |  
+  |                                                                          |  
+  | The partitions can stay as they were, with the extra 25.0 GB left free   |  
+  | at the end of the disk.  Or the system partition (/) can grow:           |  
+  |   / will grow from 465 GB to 490 GB, by 5.4 %.                           |  
+  |   The other partitions stay as they were either way.                     |  
+  |                                                                          |  
+  | < Grow the system partition >   < Keep the old sizes >   < Raw output >  |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: buttons | Enter: press | o: raw output | Esc: back to the disk list       

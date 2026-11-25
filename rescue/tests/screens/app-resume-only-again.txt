@@ -1,0 +1,78 @@
+ BackOtter rescue                                                         Resume
+                                                                                
+                                                                                
+  ┌─────────────────── A restore was started here before ────────────────────┐  
+  │                                                                          │  
+  │ These disks already hold part of a restore of lovelace:                  │  
+  │   vdb, 12.9 GB                                                           │  
+  │   vdc, 12.9 GB                                                           │  
+  │                                                                          │  
+  │   [x] Make partitions           [x] Set up encryption                    │  
+  │   [x] Make filesystems          [x] Ready the filesystems                │  
+  │   [ ] Copy your files back      started, not known to be finished        │  
+  │   [ ] Make it bootable          [ ] Finish                               │  
+  │                                                                          │  
+  │ It can't be gone on with: vdb: this session's restore began there, and   │  
+  │ the next stage would make it anew.                                       │  
+  │ Start again erases everything on these disks first.  Review comes next   │  
+  │ and asks for the serials.                                                │  
+  │                                                                          │  
+  │                       < Start again >    < Back >                        │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+ Tab: buttons | Enter: press | Esc: back                                        
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddDDDDDDDDDDDDDDDdddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                         Resume
+                                                                                
+                                                                                
+  +------------------- A restore was started here before --------------------+  
+  |                                                                          |  
+  | These disks already hold part of a restore of lovelace:                  |  
+  |   vdb, 12.9 GB                                                           |  
+  |   vdc, 12.9 GB                                                           |  
+  |                                                                          |  
+  |   [x] Make partitions           [x] Set up encryption                    |  
+  |   [x] Make filesystems          [x] Ready the filesystems                |  
+  |   [ ] Copy your files back      started, not known to be finished        |  
+  |   [ ] Make it bootable          [ ] Finish                               |  
+  |                                                                          |  
+  | It can't be gone on with: vdb: this session's restore began there, and   |  
+  | the next stage would make it anew.                                       |  
+  | Start again erases everything on these disks first.  Review comes next   |  
+  | and asks for the serials.                                                |  
+  |                                                                          |  
+  |                       < Start again >    < Back >                        |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+ Tab: buttons | Enter: press | Esc: back                                        

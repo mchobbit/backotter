@@ -29,6 +29,9 @@ pub(crate) const B_SHRINK: usize = 31;
 pub(crate) const B_KEEP: usize = 32;
 pub(crate) const B_ANOTHER: usize = 33;
 
+/// A radio row's cells after its `(*) `.
+const RADIO_ROW: usize = crate::widgets::list::ROW_W as usize - 4;
+
 fn o(s: &str) -> Clean {
     Clean::ours(s)
 }
@@ -171,7 +174,8 @@ impl App {
     /// document, read; else where to go, its problem screen shown.
     pub(crate) fn holt_doc(&mut self, ui: &mut dyn Ui, l: &Load, format: &str, title: &str, text: &str) -> Result<crate::json::Value, Go> {
         let Some(mut cmd) = self.holt_cmd(&HoltCmd::Load(l)) else { return Err(Go::Back) };
-        cmd.stdout_max = plan::PLAN_MAX;
+        // A status is small; a plan carries the stages and the text.
+        cmd.stdout_max = if l.stage == Stage::Status { plan::STATUS_MAX } else { plan::PLAN_MAX };
         cmd.timeout_ms = PLAN_MS;
         let out = self.run_job(ui, s::SCR_DISKS, title, o(text), cmd)?;
         let version = self.version.clone();
@@ -254,6 +258,10 @@ impl App {
         self.fit.retain(|(s, _, _)| s != src);
         if let Some((p, decided)) = fit {
             self.fit.push((src.to_string(), p, decided));
+            // bko-holt refuses --reformat with --fit-largest (a new type
+            // has no figures to resize from): Advanced's choice goes, and
+            // Review doesn't offer it again.
+            self.reformat.clear();
         }
         self.serials.clear();
     }
@@ -343,12 +351,16 @@ impl App {
             m.plain_text = Some(Clean::text(&plain, cap::PROBLEM * 4));
             m.plain_items = (0..p.disks.len()).map(|i| o(&s::change_where(i + 1))).collect();
         }
+        // Inside Disks (a disk's list, its size screens, OK's plans and
+        // what follows them), Back and a problem's Back come back to this
+        // overview; only its own Back goes to Snapshot.
+        let here = |g: Go| if g == Go::Back { Go::Stay } else { g };
         match ui.menu(&m) {
             Answer::Ok(i) if i < p.disks.len() => match self.one_disk(ui, &p, i) {
-                Some(g) => g,
+                Some(g) => here(g),
                 None => Go::Stay,
             },
-            Answer::Button(B_DONE) => self.disks_done(ui, &p),
+            Answer::Button(B_DONE) => here(self.disks_done(ui, &p)),
             a => Go::of(a),
         }
     }
@@ -425,9 +437,15 @@ impl App {
             let name = disk_name(c.model.as_deref(), &c.node);
             let serial = serial_of(c.serial.as_deref()).map(|x| format!("serial {x}")).unwrap_or_else(|| s::NO_SERIAL.to_string());
             let (line, why) = size_line(&pair, c);
-            let mut rows = vec![format!("{name:<24}{:>7}  {serial}", gb(c.size_bytes)), format!("  {}", contents(c))];
-            if let Some(l) = &line {
-                rows.push(format!("  {l}"));
+            // The serial on a row of its own when it doesn't fit beside
+            // the name: never cut.
+            let first = format!("{name:<24}{:>7}  {serial}", gb(c.size_bytes));
+            let mut rows = if first.chars().count() <= RADIO_ROW { vec![first] } else { vec![format!("{name:<24}{:>7}", gb(c.size_bytes)), format!("  {serial}")] };
+            // The rest indented, wrapped at the row's end, never cut.
+            for l in std::iter::once(contents(c)).chain(line.clone()) {
+                for w in crate::text::wrap(&Clean::text(&l, cap::PROBLEM), RADIO_ROW - 2) {
+                    rows.push(format!("  {}", w.as_str()));
+                }
             }
             items.push(Clean::text(&rows.join("\n"), cap::PROBLEM));
             let short = match fits(c.size_for(&src)) {
@@ -579,7 +597,11 @@ impl App {
                 msg.buttons.push(Button::other(s::BTN_KEEP_SIZES, None, B_KEEP));
             }
         }
-        msg.buttons.push(Button::other(s::BTN_ANOTHER_DISK, None, B_ANOTHER));
+        // A bigger disk's offer has Keep in its place (four buttons don't
+        // fit the box); Esc and Back are the disk list either way.
+        if smaller || refused.is_some() {
+            msg.buttons.push(Button::other(s::BTN_ANOTHER_DISK, None, B_ANOTHER));
+        }
         msg.buttons.push(Button::other(s::BTN_RAW, Some('o'), B_RAW));
         // A fix is never the default: another disk, or keeping the sizes.
         msg.focus = if refused.is_some() { 0 } else { 1 };
@@ -651,6 +673,7 @@ impl App {
         r.none = o(s::CHOOSE_ONE_FIRST);
         r.plain_items = rows;
         r.buttons = vec![Button::ok(), Button::other(s::BTN_RAW, Some('o'), B_RAW), Button::back()];
+        r.chrome.keys = Some(o(s::DECIDE_KEYS));
         loop {
             match ui.radio(&r) {
                 Answer::Ok(0) if shrink_row => {
@@ -683,13 +706,22 @@ impl App {
         let mut r = Radio::new(Chrome::ours(s::SCR_DISKS, s::MUCH_BIGGER_TITLE), Clean::text(&text, cap::PROBLEM), rows.clone(), Some(0));
         r.plain_items = rows;
         r.empty_takes = true;
-        match ui.radio(&r) {
-            Answer::Ok(_) => {
-                self.map_to(&src, c, None);
-                Ok(true)
+        r.buttons = vec![Button::ok(), Button::other(s::BTN_RAW, Some('o'), B_RAW), Button::back()];
+        r.chrome.keys = Some(o(s::MUCH_BIGGER_KEYS));
+        loop {
+            match ui.radio(&r) {
+                Answer::Ok(_) => {
+                    self.map_to(&src, c, None);
+                    return Ok(true);
+                }
+                Answer::Button(B_RAW) => {
+                    if let Some(g) = self.raw_view(ui) {
+                        return Err(g);
+                    }
+                }
+                Answer::Back | Answer::Button(_) => return Ok(false),
+                a => return Err(Go::of(a)),
             }
-            Answer::Back => Ok(false),
-            a => Err(Go::of(a)),
         }
     }
 }

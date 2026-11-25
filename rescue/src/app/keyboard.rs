@@ -222,4 +222,24 @@ mod tests {
         assert!(LAYOUTS.iter().all(|l| xkb_name(l.layout) && l.variant.is_none_or(xkb_name)));
         assert!(NATIVE.is_empty(), "open question 11 decides the table");
     }
+
+    #[test]
+    fn the_start_up_prompts_layout() {
+        let kb = |t: &str| crate::json::parse(t).unwrap();
+        let de = r#""canonical": {"layout": "de", "variant": null}"#;
+        // Debian's initramfs without KEYMAP=y: US whatever the console has.
+        assert_eq!(boot_prompt(Some(&kb(&format!(r#"{{{de}, "boot_prompt": {{"where": "initramfs", "us_fallback": true, "native": null}}}}"#)))), Some(Xkb::of(&US)));
+        // FreeBSD's loader and OpenBSD's boot are US by nature.
+        for w in ["loader", "boot"] {
+            assert_eq!(boot_prompt(Some(&kb(&format!(r#"{{{de}, "boot_prompt": {{"where": "{w}", "us_fallback": false, "native": null}}}}"#)))), Some(Xkb::of(&US)));
+        }
+        // A prompt that loads the console's map: the backup's layout.
+        let native = kb(&format!(r#"{{{de}, "boot_prompt": {{"where": "initramfs", "us_fallback": false, "native": "de-latin1"}}}}"#));
+        assert_eq!(boot_prompt(Some(&native)), Some(Xkb { layout: "de".into(), variant: None }));
+        // The dump doesn't say (every dump before RT10l): not known.
+        assert_eq!(boot_prompt(Some(&kb(&format!("{{{de}}}")))), None);
+        assert_eq!(boot_prompt(Some(&kb(&format!(r#"{{{de}, "boot_prompt": null}}"#)))), None);
+        assert_eq!(boot_prompt(Some(&kb(r#"{"boot_prompt": {"where": "initramfs", "us_fallback": false, "native": null}}"#))), None);
+        assert_eq!(boot_prompt(None), None);
+    }
 }

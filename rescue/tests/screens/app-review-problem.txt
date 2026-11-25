@@ -1,0 +1,78 @@
+ BackOtter rescue                                                         Review
+                                                                                
+                                                                                
+  ┌──────────────────── Problem: the plan has a problem ─────────────────────┐  
+  │                                                                          │  
+  │ What happened: bko-holt found a problem with the plan, so the restore    │  
+  │ can't start: --expect-plan                                               │  
+  │ 00000000000000000000000000000000000000000000000000000000000051d1: this   │  
+  │ run's plan is                                                            │  
+  │ 00000000000000000000000000000000000000000000000000000000000051d2: a      │  
+  │ command or a disk's identity changed since the plan was reviewed         │  
+  │                                                                          │  
+  │ Why: bko-holt checks everything before it writes anything, and stops at  │  
+  │ the first thing it can't do as the backup was.                           │  
+  │                                                                          │  
+  │ What can be done: Go back and change what it names, or make a report.    │  
+  │                                                                          │  
+  │ Your backup is safe: nothing in it has been changed.                     │  
+  │                                                                          │  
+  │  < Go back and change it > < Try again > < Shell > < Report > < Back >   │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+ Left/Right: button | Enter: Try again | s: shell | r: report | Esc: back       
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddddddddddddddddddddddddddDDDDDDDDDDDDDddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                         Review
+                                                                                
+                                                                                
+  +-------------------- Problem: the plan has a problem ---------------------+  
+  |                                                                          |  
+  | What happened: bko-holt found a problem with the plan, so the restore    |  
+  | can't start: --expect-plan                                               |  
+  | 00000000000000000000000000000000000000000000000000000000000051d1: this   |  
+  | run's plan is                                                            |  
+  | 00000000000000000000000000000000000000000000000000000000000051d2: a      |  
+  | command or a disk's identity changed since the plan was reviewed         |  
+  |                                                                          |  
+  | Why: bko-holt checks everything before it writes anything, and stops at  |  
+  | the first thing it can't do as the backup was.                           |  
+  |                                                                          |  
+  | What can be done: Go back and change what it names, or make a report.    |  
+  |                                                                          |  
+  | Your backup is safe: nothing in it has been changed.                     |  
+  |                                                                          |  
+  |  < Go back and change it > < Try again > < Shell > < Report > < Back >   |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+ Left/Right: button | Enter: Try again | s: shell | r: report | Esc: back       

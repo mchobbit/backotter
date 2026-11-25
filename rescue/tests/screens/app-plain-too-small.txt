@@ -82,7 +82,7 @@ This disk is much smaller: you decide
 Old disk 1 (Samsung SSD 870 EVO 500GB) was 500 GB.  The disk you chose,
 WDC WD3200AAKX, is 320 GB: 180 GB smaller.
 
-To fit, / would shrink by 38.7 %:
+To fit, the system partition (/) would shrink by 38.7 %:
   Old size:    465 GB
   New size:    285 GB
   Space used:  41.7 GB at the backup, so it fits with room to spare

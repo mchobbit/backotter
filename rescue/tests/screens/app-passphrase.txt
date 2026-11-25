@@ -3,8 +3,8 @@
                                                                                 
   ┌─────────────────────────── Passphrase 1 of 1 ────────────────────────────┐  
   │                                                                          │  
-  │ This passphrase opens 2 encrypted containers (cryptroot, cryptsrv),      │  
-  │ which hold /, /srv.                                                      │  
+  │ This passphrase opens both encrypted disks: the system disk              │  
+  │ (CT1000P3PSSD8) and the /srv disk (WDC WD20EFRX-68EUZN0).                │  
   │                                                                          │  
   │ You will type it every time the computer starts.  It may be the old one  │  
   │ or a new one.  If it is forgotten, nothing can open these disks: write   │  
@@ -57,8 +57,8 @@ s 0;40
                                                                                 
   +--------------------------- Passphrase 1 of 1 ----------------------------+  
   |                                                                          |  
-  | This passphrase opens 2 encrypted containers (cryptroot, cryptsrv),      |  
-  | which hold /, /srv.                                                      |  
+  | This passphrase opens both encrypted disks: the system disk              |  
+  | (CT1000P3PSSD8) and the /srv disk (WDC WD20EFRX-68EUZN0).                |  
   |                                                                          |  
   | You will type it every time the computer starts.  It may be the old one  |  
   | or a new one.  If it is forgotten, nothing can open these disks: write   |  

@@ -1,0 +1,78 @@
+ BackOtter rescue                                                          Disks
+  ┌─────────────────── Old disk 1 of 2: where does it go? ───────────────────┐  
+  │                                                                          │  
+  │ From the backup of lovelace:                                             │  
+  │   Old disk 1: Samsung SSD 870 EVO 500GB, 500 GB, the system              │  
+  │   serial S6PXNM0T412345A                                                 │  
+  │                                                                          │  
+  │ Put it on this disk of this computer.  The disk you pick is ERASED.      │  
+  │                                                                          │  
+  │  ┌────────────────────────────────────────────────────────────────────┐  │  
+  │  │ (*) Samsung SSD 525GB        525 GB  serial S7A2NX0W501234B        │  │  
+  │  │       blank: nothing on it                                         │  │  
+  │  │       25.0 GB bigger: / would grow from 465 GB to 490 GB (you      │  │  
+  │  │       choose)                                                      │  │  
+  │  │                                                                    │  │  
+  │  │ v more below                                                       │  │  
+  │  └────────────────────────────────────────────────────────────────────┘  │  
+  │                                                                          │  
+  │ Already used:  WDC WD20EFRX-68EUZN0, for old disk 2                      │  
+  │ Not offered:   SanDisk Ultra, 32.0 GB: this stick, never a target        │  
+  │                                                                          │  
+  │                           <  OK  >    < Back >                           │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+ Arrows: choose | Enter: OK | Tab: buttons | Esc: back                          
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdddddsb
+bbdddddDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdddddsb
+bbdddddDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdddddsb
+bbdddddDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbsssssssssssssssssssssssssb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                          Disks
+  +------------------- Old disk 1 of 2: where does it go? -------------------+  
+  |                                                                          |  
+  | From the backup of lovelace:                                             |  
+  |   Old disk 1: Samsung SSD 870 EVO 500GB, 500 GB, the system              |  
+  |   serial S6PXNM0T412345A                                                 |  
+  |                                                                          |  
+  | Put it on this disk of this computer.  The disk you pick is ERASED.      |  
+  |                                                                          |  
+  |  +--------------------------------------------------------------------+  |  
+  |  | (*) Samsung SSD 525GB        525 GB  serial S7A2NX0W501234B        |  |  
+  |  |       blank: nothing on it                                         |  |  
+  |  |       25.0 GB bigger: / would grow from 465 GB to 490 GB (you      |  |  
+  |  |       choose)                                                      |  |  
+  |  |                                                                    |  |  
+  |  | v more below                                                       |  |  
+  |  +--------------------------------------------------------------------+  |  
+  |                                                                          |  
+  | Already used:  WDC WD20EFRX-68EUZN0, for old disk 2                      |  
+  | Not offered:   SanDisk Ultra, 32.0 GB: this stick, never a target        |  
+  |                                                                          |  
+  |                           <  OK  >    < Back >                           |  
+  +--------------------------------------------------------------------------+  
+ Arrows: choose | Enter: OK | Tab: buttons | Esc: back                          

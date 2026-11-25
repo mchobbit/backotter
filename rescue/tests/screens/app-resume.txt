@@ -21,7 +21,7 @@
   └──────────────────────────────────────────────────────────────────────────┘  
                                                                                 
                                                                                 
- Tab: next | Left/Right: button | Enter: Go on | Esc: back                      
+ Tab: buttons | Enter: press | Esc: back                                        
 
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -75,4 +75,4 @@ s 0;40
   +--------------------------------------------------------------------------+  
                                                                                 
                                                                                 
- Tab: next | Left/Right: button | Enter: Go on | Esc: back                      
+ Tab: buttons | Enter: press | Esc: back                                        

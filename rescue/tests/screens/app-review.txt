@@ -1,4 +1,5 @@
  BackOtter rescue                                                         Review
+                                                                                
   ┌──────────────────────────── Ready to restore ────────────────────────────┐  
   │                                                                          │  
   │ Restore lovelace (Debian 13) from the backup of 22 Nov 2026 02:00        │  
@@ -7,7 +8,6 @@
   │ These disks will be ERASED, then filled from the backup.  Type the last  │  
   │ six characters of each serial.  Check it against the label on the disk   │  
   │ if you can: that's how you know it is the right disk.                    │  
-  │                                                                          │  
   │  ┌────────────────────────────────────────────────────────────────────┐  │  
   │  │ ERASED  1.00 TB  CT1000P3PSSD8          2318E6F3A9C1     [      ]  │  │  
   │  │ ERASED  2.00 TB  WDC WD20EFRX-68EUZN0   WD-WCC4M5XK7HPL  [      ]  │  │  
@@ -24,8 +24,8 @@
  Type the serials | Tab: next | Enter on Restore: start | c: commands | Esc     
 
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
-bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
@@ -53,6 +53,7 @@ b 0;37;44
 d 0;30;47
 s 0;40
  BackOtter rescue                                                         Review
+                                                                                
   +---------------------------- Ready to restore ----------------------------+  
   |                                                                          |  
   | Restore lovelace (Debian 13) from the backup of 22 Nov 2026 02:00        |  
@@ -61,7 +62,6 @@ s 0;40
   | These disks will be ERASED, then filled from the backup.  Type the last  |  
   | six characters of each serial.  Check it against the label on the disk   |  
   | if you can: that's how you know it is the right disk.                    |  
-  |                                                                          |  
   |  +--------------------------------------------------------------------+  |  
   |  | ERASED  1.00 TB  CT1000P3PSSD8          2318E6F3A9C1     [      ]  |  |  
   |  | ERASED  2.00 TB  WDC WD20EFRX-68EUZN0   WD-WCC4M5XK7HPL  [      ]  |  |  

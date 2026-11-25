@@ -15,13 +15,13 @@
   │  │ (*) Keep the old sizes, and leave 500 GB free                      │  │  
   │  └────────────────────────────────────────────────────────────────────┘  │  
   │                                                                          │  
-  │                           <  OK  >    < Back >                           │  
+  │                  <  OK  >    < Raw output >    < Back >                  │  
   └──────────────────────────────────────────────────────────────────────────┘  
                                                                                 
                                                                                 
                                                                                 
                                                                                 
- Arrows: choose | Tab: next | Enter: OK | Esc: back                             
+ Arrows: choose | Tab: buttons | Enter: OK | o: raw output | Esc: back          
 
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -69,10 +69,10 @@ s 0;40
   |  | (*) Keep the old sizes, and leave 500 GB free                      |  |  
   |  +--------------------------------------------------------------------+  |  
   |                                                                          |  
-  |                           <  OK  >    < Back >                           |  
+  |                  <  OK  >    < Raw output >    < Back >                  |  
   +--------------------------------------------------------------------------+  
                                                                                 
                                                                                 
                                                                                 
                                                                                 
- Arrows: choose | Tab: next | Enter: OK | Esc: back                             
+ Arrows: choose | Tab: buttons | Enter: OK | o: raw output | Esc: back          

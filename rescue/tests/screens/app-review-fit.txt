@@ -7,7 +7,6 @@
   │ These disks will be ERASED, then filled from the backup.  Type the last  │  
   │ six characters of each serial.  Check it against the label on the disk   │  
   │ if you can: that's how you know it is the right disk.                    │  
-  │                                                                          │  
   │  ┌────────────────────────────────────────────────────────────────────┐  │  
   │  │ ERASED   480 GB  KINGSTON SA400S37480G  50026B7782A1F3C4 [      ]  │  │  
   │  │ ERASED  2.00 TB  WDC WD20EFRX-68EUZN0   WD-WCC4M5XK7HPL  [      ]  │  │  
@@ -19,13 +18,13 @@
   │ Not touched: the CT1000P3PSSD8, this stick.  No problems found.          │  
   │ Nothing has been changed on any disk yet.  Back is safe.                 │  
   │                                                                          │  
-  │         < Restore >    < Commands >    < Advanced >    < Back >          │  
+  │                 < Restore >    < Commands >    < Back >                  │  
   └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
  Type the serials | Tab: next | Enter on Restore: start | c: commands | Esc     
 
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
-bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
@@ -46,7 +45,8 @@ bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
 bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbssssb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 D 0;1;7;30;47
 b 0;37;44
@@ -61,7 +61,6 @@ s 0;40
   | These disks will be ERASED, then filled from the backup.  Type the last  |  
   | six characters of each serial.  Check it against the label on the disk   |  
   | if you can: that's how you know it is the right disk.                    |  
-  |                                                                          |  
   |  +--------------------------------------------------------------------+  |  
   |  | ERASED   480 GB  KINGSTON SA400S37480G  50026B7782A1F3C4 [      ]  |  |  
   |  | ERASED  2.00 TB  WDC WD20EFRX-68EUZN0   WD-WCC4M5XK7HPL  [      ]  |  |  
@@ -73,6 +72,7 @@ s 0;40
   | Not touched: the CT1000P3PSSD8, this stick.  No problems found.          |  
   | Nothing has been changed on any disk yet.  Back is safe.                 |  
   |                                                                          |  
-  |         < Restore >    < Commands >    < Advanced >    < Back >          |  
+  |                 < Restore >    < Commands >    < Back >                  |  
   +--------------------------------------------------------------------------+  
+                                                                                
  Type the serials | Tab: next | Enter on Restore: start | c: commands | Esc     

@@ -1,0 +1,78 @@
+ BackOtter rescue                                                    Passphrases
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  ┌──────────────────── Keyboard for the disk passphrase ────────────────────┐  
+  │                                                                          │  
+  │ When lovelace starts, it asks for the disk passphrase before its German  │  
+  │ layout is loaded, so the keyboard acts as English (US) there.            │  
+  │                                                                          │  
+  │ Switch to English (US) now?  Then the passphrase you type here is typed  │  
+  │ the same way at each start.                                              │  
+  │                                                                          │  
+  │ With English (US) on a German keyboard, Y and Z are swapped and most     │  
+  │ symbols move.  A passphrase of the other letters, digits and spaces      │  
+  │ types the same with either layout.                                       │  
+  │                                                                          │  
+  │        < Switch to English (US) >    < Keep German >    < Back >         │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: buttons | Enter: press | Esc: back                                        
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddddddDDDDDDDDDDDDDDDDDDDDDDDDDDdddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                    Passphrases
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  +-------------------- Keyboard for the disk passphrase --------------------+  
+  |                                                                          |  
+  | When lovelace starts, it asks for the disk passphrase before its German  |  
+  | layout is loaded, so the keyboard acts as English (US) there.            |  
+  |                                                                          |  
+  | Switch to English (US) now?  Then the passphrase you type here is typed  |  
+  | the same way at each start.                                              |  
+  |                                                                          |  
+  | With English (US) on a German keyboard, Y and Z are swapped and most     |  
+  | symbols move.  A passphrase of the other letters, digits and spaces      |  
+  | types the same with either layout.                                       |  
+  |                                                                          |  
+  |        < Switch to English (US) >    < Keep German >    < Back >         |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: buttons | Enter: press | Esc: back                                        

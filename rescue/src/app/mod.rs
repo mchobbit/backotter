@@ -142,6 +142,10 @@ pub enum Go {
     /// A step from the start: the history is emptied.
     Reset(Step),
     Back,
+    /// Back to STEP, the steps after it gone from the history (Review's
+    /// "Go back and change it" goes to Disks, past Passphrases and
+    /// Resume); where it isn't on the history, this step again.
+    BackTo(Step),
     /// This step's screen again.
     Stay,
     Shell,
@@ -232,10 +236,17 @@ pub struct App {
     pub(crate) status: Option<plan::Status>,
     /// Resume's answer: Some(true) Go on, Some(false) Start again.
     pub(crate) resume: Option<bool>,
+    /// What the passphrases on file were last asked for: `resume` as it
+    /// was then (None: before Resume).  Start again's are new (typed
+    /// twice), Go on's the first time's (once), so a change of answer asks
+    /// them again.
+    pub(crate) pass_round: Option<bool>,
     /// Review's fields, as typed.
     pub(crate) serials: Vec<String>,
-    /// The run Review confirmed (holt_args.rs, `Load::run_of`).
-    pub(crate) reviewed: Option<holt_args::Load>,
+    /// The runs Review confirmed, in order (holt_args.rs, `Load::run_of`):
+    /// one, or Start again's (J14) `--only close` when anything is open,
+    /// `--only partition`, `--through close`.  Empty: none yet.
+    pub(crate) reviewed: Vec<holt_args::Load>,
     /// Why the Disks overview didn't go on, for its notice.
     pub(crate) disks_notice: Option<String>,
     /// The keyboard at start-up was offered.
@@ -285,8 +296,9 @@ impl App {
             reformat: Vec::new(),
             status: None,
             resume: None,
+            pass_round: None,
             serials: Vec::new(),
-            reviewed: None,
+            reviewed: Vec::new(),
             disks_notice: None,
             boot_offered: false,
         }
@@ -331,6 +343,12 @@ impl App {
                 }
                 Go::Back => {
                     if let Some(s) = self.history.pop() {
+                        self.step = s;
+                    }
+                }
+                Go::BackTo(s) => {
+                    if let Some(i) = self.history.iter().rposition(|h| *h == s) {
+                        self.history.truncate(i);
                         self.step = s;
                     }
                 }
@@ -577,9 +595,12 @@ impl App {
         self.reformat.clear();
         self.status = None;
         self.resume = None;
+        self.pass_round = None;
         self.serials.clear();
-        self.reviewed = None;
+        self.reviewed.clear();
         self.disks_notice = None;
+        // Another machine's start-up prompt, or the same one's again.
+        self.boot_offered = false;
     }
 
     /// The machine chosen, if one is.

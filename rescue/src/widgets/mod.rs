@@ -198,8 +198,14 @@ impl Dialog {
     /// Review: the disks with their fields; the focus in the first.
     pub fn review(r: &ui::Review, typed: &[String]) -> Dialog {
         let mut parts = Vec::new();
-        text_part(&mut parts, &r.text);
         let rows: Vec<(Clean, u16)> = r.rows.iter().map(|x| (x.text.clone(), x.width)).collect();
+        // The list right under the text, as drawn: the fullest case needs
+        // every row.
+        if rows.is_empty() {
+            text_part(&mut parts, &r.text);
+        } else if !r.text.is_empty() {
+            parts.push(Part::Text(r.text.clone()));
+        }
         if !rows.is_empty() {
             parts.push(Part::Serials(Serials::new(&rows, typed)));
         }
@@ -385,7 +391,7 @@ impl Dialog {
                 Part::Serials(x) => {
                     fixed = fixed.saturating_add(2);
                     flexible += 1;
-                    flex_least += least(len(x.len()));
+                    flex_least += least(len(x.lines_len()));
                 }
                 Part::Cycle(x) => {
                     fixed = fixed.saturating_add(3 + cycle::NOTE_ROWS);
@@ -431,7 +437,7 @@ impl Dialog {
                     rows + 2
                 }
                 Part::Serials(x) => {
-                    let rows = give(len(x.len()), &mut left);
+                    let rows = give(len(x.lines_len()), &mut left);
                     x.window = rows;
                     rows + 2
                 }

@@ -82,8 +82,8 @@ CT1000P3PSSD8, is 1.00 TB: 500 GB bigger.
 The partitions stay as they were, with the extra 500 GB left free at the
 end of the disk, to be used later.  Growing the system partition to fill
 the disk isn't in this stick's bko-holt yet.
-  1) Keep the old sizes, and leave 500 GB free   b) back
-Choose [1, b]: Planning
+  1) Keep the old sizes, and leave 500 GB free   o) raw output   b) back
+Choose [1, o, b]: Planning
 bko-holt is working out where each disk goes.  Nothing is written.
 Where each disk goes
 lovelace had 2 disks.
@@ -104,8 +104,8 @@ Looking at the disks
 bko-holt is looking for an earlier restore on these disks.  Nothing is
 written.
 Passphrase 1 of 1
-This passphrase opens 2 encrypted containers (cryptroot, cryptsrv),
-which hold /, /srv.
+This passphrase opens both encrypted disks: the system disk
+(CT1000P3PSSD8) and the /srv disk (WDC WD20EFRX-68EUZN0).
 
 You will type it every time the computer starts.  It may be the old one
 or a new one.  If it is forgotten, nothing can open these disks: write

@@ -454,8 +454,16 @@ pub struct Status {
     pub recorded: Vec<String>,
     pub go_on: bool,
     pub why_not: Vec<String>,
+    /// Something of the layout is open here (containers, pools, mounts
+    /// under the target), or status doesn't say: Start again closes
+    /// first (J14).
+    pub open: bool,
     pub problems: Vec<Problem>,
 }
+
+/// The stages load runs, in order: the only words status's `next` may
+/// be, as `--only` takes them.
+pub const STAGES: &[&str] = &["partition", "assemble", "format", "mount", "restore", "boot", "close"];
 
 impl Status {
     /// bko-holt's work is on these disks (rescue-screens.md, "7. Resume
@@ -478,7 +486,8 @@ pub fn read_status(v: &Value) -> Result<Status, String> {
     }
     Ok(Status {
         stages: v.arr_at(&["stages"]).iter().map(|r| StageRow { name: st(r, "name").unwrap_or_default(), state: st(r, "state").unwrap_or_default(), why: st(r, "why").unwrap_or_default() }).collect(),
-        next: st(v, "next"),
+        // A stage this doesn't know is no stage to run.
+        next: st(v, "next").filter(|n| STAGES.contains(&n.as_str())),
         all_done: v.get_bool("all_done") == Some(true),
         partitioned: v.at(&["marks", "partitioned"]).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default(),
         restore_started: v.at(&["marks", "restore_started"]).and_then(Value::as_bool) == Some(true),
@@ -486,6 +495,8 @@ pub fn read_status(v: &Value) -> Result<Status, String> {
         // Fail closed: Go on only when bko-holt says it is safe.
         go_on: v.at(&["resume", "go_on"]).and_then(Value::as_bool) == Some(true),
         why_not: v.at(&["resume", "why"]).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default(),
+        // Fail closed: what isn't said is taken as open.
+        open: v.get("open").is_none_or(|o| ["containers", "pools", "mounted"].iter().any(|k| o.get(k).and_then(Value::as_array).is_none_or(|a| !a.is_empty()))),
         problems: v.arr_at(&["problems"]).iter().map(|p| Problem { code: st(p, "code").unwrap_or_else(|| "other".into()), text: st(p, "text").unwrap_or_default(), disk: st(p, "disk") }).collect(),
     })
 }
@@ -512,6 +523,22 @@ mod tests {
 
     fn size(verdict: &str, fit: Option<u64>, change: Option<f64>, data: Option<bool>) -> Size {
         Size { verdict: verdict.into(), fit_pct: fit, change_pct: change, data_fits: data, ..Size::default() }
+    }
+
+    #[test]
+    fn status_says_what_is_open_and_which_stage_is_next() {
+        let doc = |open: &str, next: &str| json::parse(&format!(r#"{{"schema": 1, "next": {next}, {open} "stages": []}}"#)).unwrap();
+        let st = read_status(&doc(r#""open": {"containers": [], "pools": [], "mounted": []},"#, r#""assemble""#)).unwrap();
+        assert!(!st.open);
+        assert_eq!(st.next.as_deref(), Some("assemble"));
+        let st = read_status(&doc(r#""open": {"containers": [{"source": "md1", "node": "/dev/mapper/md1_crypt"}], "pools": [], "mounted": []},"#, "null")).unwrap();
+        assert!(st.open && st.next.is_none());
+        // Fail closed: not said, or said oddly, is open.
+        assert!(read_status(&doc("", r#""close""#)).unwrap().open);
+        assert!(read_status(&doc(r#""open": {"containers": []},"#, r#""close""#)).unwrap().open);
+        // A stage this doesn't know never reaches --only.
+        assert_eq!(read_status(&doc("", r#""--commit""#)).unwrap().next, None);
+        assert_eq!(read_status(&doc("", r#""open""#)).unwrap().next, None, "RT10o's open isn't a stage this runs yet");
     }
 
     #[test]

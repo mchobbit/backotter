@@ -1,0 +1,15 @@
+load
+*
+--json
+--through
+plan
+--repo
+*
+--password-file
+*
+--map
+sda=*Samsung_SSD_525GB*
+--erase
+*
+--snapshot
+*

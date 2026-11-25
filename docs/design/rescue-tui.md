@@ -1495,10 +1495,17 @@ read-only mount for the pty runs.
     so (open question 16: shown every time, as drawn).
   - A disk a little bigger: the offer has < Keep the old sizes > beside
     < Grow the system partition >, the focus on Keep (the mock's offer
-    worded for growing had no way to take the disk as it is).
-  - A disk with no serial, or one another disk shares
-    (`serial_shared`), is confirmed by typing its size and model as the
-    row shows them (`review::confirm_by`); case and spaces aside.
+    worded for growing had no way to take the disk as it is), and no <
+    Another disk > (four buttons don't fit the box; Esc and Back are the
+    disk list).
+  - A disk with no serial of its own (none, one another disk shares
+    (`serial_shared`), one of spaces, or one longer than the screens show
+    whole) is confirmed by typing its size and kernel name, `12.9 GB vdb`,
+    as its row shows them (`review::confirm_by`); case and spaces aside.
+    The model can't tell two alike apart (two of one size and model, a
+    USB bridge's one serial for every disk) and may be too long to type;
+    the name is this boot's and unique.  Review's text says so when any
+    row asks for it.
   - Review's rows are every target the run writes: `will_erase` says
     ERASED, a target with `writes` but no wipe says WRITTEN, a resume
     says "goes on".  A problem the plan still has opens its help screen
@@ -1526,6 +1533,37 @@ read-only mount for the pty runs.
   GB`, not `32 GB` and `20 GB`; the decision's plain transcript asks
   `[1, 2, o, b]` where every list asks `[1-2, ...]`; the overview's "has
   data" and Review's "Not touched" order follow the plan's candidates.
+- **Review fixes (2026-11-25, `rescue: review fixes for RT12a`):**
+  - A serial is never cut: a Review row (and a disk list's) whose serial
+    doesn't fit beside the field goes on a line of its own; Review's
+    fields take rows of several lines (`widgets::serials::room`).
+  - Start again is J14's: Review plans `--only partition` with every
+    target in `--erase` (with this session's record `--through` skips
+    partition, so the rows said WRITTEN and, once the copy began, the plan
+    had `remake_after_restore` with no way on), and Review's runs
+    (`App::reviewed`, a list now) are `--only close` when status's `open`
+    says anything is open (or doesn't say), `--only partition`, `--through
+    close`, each with `--erase`, `--commit` and the plan's hash.  Its
+    plan's `ours_busy` (what that close lets go of, in bko-holt's own
+    words) doesn't block it.  The containers are made anew, so their
+    passphrases are asked again, twice (`App::pass_round`); Go on after
+    that asks the first time's again.
+  - Back inside Disks (the start-up keyboard offer, a key it can't ask,
+    a failed plan or status) is the overview, not Snapshot; Review's "Go
+    back and change it" is Disks (`Go::BackTo`), a key's problem the
+    passphrases, `remake_after_restore` the Resume choice.
+  - Review blocks (and says why) a target the plan writes that isn't
+    among its candidates, and a plan with nothing to confirm.
+  - No Advanced once a shrink or grow is agreed (bko-holt refuses
+    `--reformat` with `--fit-largest`; a fit agreed later drops the
+    choice), nor on Go on.  So the mock's fullest Review (a shrink and
+    XFS) can't happen: its golden has the shrink without XFS.
+  - status's `next` must be a stage of `plan::STAGES`; status is read
+    with `STATUS_MAX` (64 KiB).
+  - The mocks' words: the decision's "the system partition (/)", the
+    passphrase's disks and roles, the start-up keyboard's own layout and
+    German's Y and Z (`strings::layout_moves`), Raw output on the much
+    bigger disk, the mocks' key lines, no blank line above Review's list.
 - **Not built here:** Restore, Done and Failure (RT12's second part), so
   the dry run's walk through the commands too; the layout from the
   backup itself (needs the backup tool); the Snapshot line "this

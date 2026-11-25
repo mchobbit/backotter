@@ -201,7 +201,9 @@ mod tests {
 
     fn loads() -> Vec<Load> {
         let mut v = Vec::new();
-        for stage in [Stage::Plan, Stage::Status, Stage::Through("close".into()), Stage::Only("boot".into()), Stage::Only("partition".into())] {
+        // Every stage a run is made with: Start again's close and
+        // partition too.
+        for stage in [Stage::Plan, Stage::Status, Stage::Through("close".into()), Stage::Only("boot".into()), Stage::Only("partition".into()), Stage::Only("close".into())] {
             let mut l = Load::new(Path::new("/run/bko-rescue/layout.json"), stage);
             l.repo = Some("sftp://nas.local/backotter/lovelace".into());
             l.password_file = Some("/run/bko-rescue/s-1-0/password".into());

@@ -19,6 +19,26 @@ Review screens (rescue-tui.md, RT12), written into scenarios/:
   app-lovelace-small hand-written: the "Too small for the data" variant, a WDC
                      320 GB (38.7 % smaller: the user decides) and a Transcend
                      64 GB (the data doesn't fit)
+  app-lovelace-sizes hand-written: the size screens' other rows, on a computer
+                     with a Samsung 525 GB (4.9 % bigger: the grow offer), a
+                     Kingston 200 GB (64.6 % smaller, the data fitting:
+                     beyond bko-holt's 50 %), a Toshiba 400 GB bko-holt
+                     can't resize onto (cant_resize) and the stick
+  app-lovelace-trouble hand-written: lovelace's key kept elsewhere once both
+                     disks are named (key_blocked), and no answer to the
+                     Kingston's second plan (plan_failed)
+  app-lovelace-changed  app-lovelace, its Review plan with a problem
+                     (plan_changed: the help screen and its fix)
+  app-lovelace-unshown  app-lovelace, its Review plan writing a disk that
+                     isn't among its candidates (Review blocks)
+  app-rec-debian13-again  app-rec-debian13 after a stopped copy: status says
+                     only Start again (go_on false, the restore started, a
+                     container still open), and Start again's `--only
+                     partition` plan: the recorded plan after partition
+                     (09-plan-assemble) as `--only partition` makes it,
+                     every target wiped (`will_erase`, `writes`
+                     ["partition"]), with the ours_busy problem that open
+                     container gives (`--only close` first)
 
 The hand-written documents are what bko-holt would write for those disks,
 by fit's own rules (a margin of max(1 GiB, 5 % of the space used), the most
@@ -54,7 +74,7 @@ def sha(n):
 
 def load(stage, keys=(), maps=(), erase=0, fit=None, reformat=()):
     a = ["load", "*", "--json"]
-    a += {"plan": ["--through", "plan"], "status": ["--only", "status"]}[stage]
+    a += {"plan": ["--through", "plan"], "status": ["--only", "status"], "partition": ["--only", "partition"]}[stage]
     a += ["--repo", "*", "--password-file", "*"]
     for k in keys:
         a += ["--key-file", "%s=*" % k]
@@ -130,10 +150,54 @@ def rec():
     ]:
         write(scen, "%02d-%s" % (n, stage), load(stage, keys, m, erase), raw=plan if stage == "plan" else status)
         n += 1
+    # Start again's plan: the recorded plan after partition, as `--only
+    # partition` makes it (target::partition_runs: that stage runs, so
+    # every target is wiped and partition is all it writes).
+    again = json.loads(open(os.path.join(SC, "rec-debian13-stack", "09-plan-assemble", "stdout")).read())
+    for d in again["disks"]:
+        d["target"]["will_erase"] = True
+        d["target"]["writes"] = ["partition"]
+    write(scen, "16-plan", load("partition", ("md1_crypt",), maps, 2), again)
     with open(os.path.join(SC, scen, "README"), "w") as f:
         f.write("Recorded documents (rec-debian13-stack's 04-plan and 08-status-after-partition)\n"
-                "answering every plan and status call of bko-rescue's Disks to Review; see\n"
-                "../../make-disk-fixtures.py.\n")
+                "answering every plan and status call of bko-rescue's Disks to Review, and\n"
+                "Start again's --only partition plan (09-plan-assemble as that run makes it);\n"
+                "see ../../make-disk-fixtures.py.\n")
+
+
+def rec_again():
+    """app-rec-debian13 after a stopped copy: only Start again."""
+    scen = "app-rec-debian13-again"
+    fresh(scen)
+    stick(scen)
+    plan = open(os.path.join(SC, "rec-debian13-stack", "04-plan", "stdout")).read()
+    status = json.loads(open(os.path.join(SC, "rec-debian13-stack", "20-status-after-restore", "stdout")).read())
+    status["resume"] = {"go_on": False, "why": ["vdb: this session's restore began there, and the next stage would make it anew"]}
+    status["marks"]["restore_complete"] = False
+    for r in status["stages"]:
+        if r["name"] == "restore":
+            r["state"] = "partly"
+            r["why"] = "the copy didn't finish in this session"
+    status["next"] = "restore"
+    status["all_done"] = False
+    status["open"] = {"containers": [{"source": "md1", "node": "/dev/mapper/md1_crypt"}], "pools": [], "mounted": ["/mnt/bko-target"]}
+    maps = [("vda", "*"), ("vdb", "*")]
+    write(scen, "10-plan", load("plan"), raw=plan)
+    write(scen, "11-plan", load("plan", (), maps, 2), raw=plan)
+    write(scen, "12-plan", load("plan", ("md1_crypt",), maps, 2), raw=plan)
+    write(scen, "14-status", load("status", (), maps, 0), status)
+    write(scen, "15-status", load("status", ("md1_crypt",), maps, 0), status)
+    again = json.loads(open(os.path.join(SC, "rec-debian13-stack", "09-plan-assemble", "stdout")).read())
+    for d in again["disks"]:
+        d["target"]["will_erase"] = True
+        d["target"]["writes"] = ["partition"]
+    again["problems"] = [{"code": "ours_busy", "text": "vda -> /dev/vdb: the partition stage would wipe it, but load's own is on it, from an earlier stage (mounted under /mnt/bko-target, or a pool of the layout's imported there); `--only close` first lets go of it", "disk": "vda", "target": "vdb"}]
+    again["ok"] = False
+    again["exit"] = 4
+    write(scen, "16-plan", load("partition", ("md1_crypt",), maps, 2), again, exit=4)
+    with open(os.path.join(SC, scen, "README"), "w") as f:
+        f.write("app-rec-debian13 after a stopped copy, hand-edited from rec-debian13-stack's\n"
+                "documents; see ../../make-disk-fixtures.py.\n")
 
 
 # ---- lovelace: hand-written by fit's rules ---------------------------------
@@ -339,7 +403,7 @@ KG = "*KINGSTON*"
 W3 = "*WD3200AAKX*"
 
 
-def lovelace(scen="app-lovelace", version="stick-three"):
+def lovelace(scen="app-lovelace", version="stick-three", review=None):
     fresh(scen)
     stick(scen, version)
     cands = [CT1000, WDRED_HERE, KINGSTON, STICK]
@@ -354,7 +418,10 @@ def lovelace(scen="app-lovelace", version="stick-three"):
     w(load("plan", maps=[("sda", CT), ("sdb", WD)], erase=2), plan(cands, {"sda": (CT1000, "map"), "sdb": (WDRED_HERE, "map")}, maps=[1, 2]))
     keys = ("cryptroot", "cryptsrv")
     both = {"sda": (CT1000, "map"), "sdb": (WDRED_HERE, "map")}
-    w(load("plan", keys, [("sda", CT), ("sdb", WD)], 2), plan(cands, both, maps=[1, 2], keys_given=True))
+    doc = plan(cands, both, maps=[1, 2], keys_given=True)
+    if review is not None:
+        review(doc)
+    w(load("plan", keys, [("sda", CT), ("sdb", WD)], 2), doc)
     w(load("plan", keys, [("sda", CT), ("sdb", WD)], 2, reformat=["/srv=xfs"]), plan(cands, both, maps=[1, 2], keys_given=True, reformat=["/srv=xfs"]))
     # The Kingston: the offer's second plan, then on.
     kg = {"sda": (KINGSTON, "map"), "sdb": (WDRED_HERE, "serial")}
@@ -391,8 +458,74 @@ def lovelace_small():
         f.write("Hand-written by ../../make-disk-fixtures.py: the \"Too small for the data\" variant.\n")
 
 
+SAMSUNG525 = cand("sda", "/dev/disk/by-id/ata-Samsung_SSD_525GB_S7A2NX0W501234B", 525_112_255_488, "Samsung SSD 525GB", "S7A2NX0W501234B", "sata")
+KG200 = cand("sdd", "/dev/disk/by-id/ata-KINGSTON_SA400S37200G_50026B7682B05D11", 200_049_647_616, "KINGSTON SA400S37200G", "50026B7682B05D11", "sata")
+TOSHIBA = cand("sde", "/dev/disk/by-id/ata-TOSHIBA_DT01ACA040_Z4K7PL0AS", 400_088_457_216, "TOSHIBA DT01ACA040", "Z4K7PL0AS", "sata")
+for z in TOSHIBA["sizes"]:
+    z.update(verdict="cant_resize", fit_pct=None, change_pct=None, new_bytes=None, data_fits=None, most_bytes=None,
+             needed_bytes=None, margin_bytes=None, reason="resize",
+             why="the partition after / can't be moved: bko-holt moves only what follows the largest one at the end of the disk")
+
+
+def lovelace_sizes():
+    scen = "app-lovelace-sizes"
+    fresh(scen)
+    stick(scen)
+    cands = [SAMSUNG525, KG200, TOSHIBA, WDRED_HERE, STICK]
+    n = [10]
+
+    def w(argv, doc):
+        write(scen, "%02d" % n[0], argv, doc)
+        n[0] += 1
+    w(load("plan"), plan(cands, {"sdb": (WDRED_HERE, "serial")}))
+    pct = size("sda", SAMSUNG525["size_bytes"])["fit_pct"]
+    w(load("plan", maps=[("sda", "*Samsung_SSD_525GB*")], erase=1, fit=pct), plan(cands, {"sda": (SAMSUNG525, "map"), "sdb": (WDRED_HERE, "serial")}, maps=[1], fit=pct))
+    w(load("plan", maps=[("sda", "*Samsung_SSD_525GB*")], erase=1), plan(cands, {"sda": (SAMSUNG525, "map"), "sdb": (WDRED_HERE, "serial")}, maps=[1]))
+    with open(os.path.join(SC, scen, "README"), "w") as f:
+        f.write("Hand-written by ../../make-disk-fixtures.py: the size screens' other rows.\n")
+
+
+def lovelace_trouble():
+    scen = "app-lovelace-trouble"
+    fresh(scen)
+    stick(scen)
+    cands = [CT1000, WDRED_HERE, KINGSTON, STICK]
+    n = [10]
+
+    def w(argv, doc):
+        write(scen, "%02d" % n[0], argv, doc)
+        n[0] += 1
+    w(load("plan"), plan(cands, {"sdb": (WDRED_HERE, "serial")}))
+    w(load("plan", maps=[("sda", CT)], erase=1), plan(cands, {"sda": (CT1000, "map"), "sdb": (WDRED_HERE, "serial")}, maps=[1]))
+    # Both named: the key is kept on another disk (key_blocked).
+    elsewhere = plan(cands, {"sda": (CT1000, "map"), "sdb": (WDRED_HERE, "map")}, maps=[1, 2])
+    elsewhere["keys"][0]["unlock"] = "key_file_elsewhere"
+    elsewhere["problems"] = [x for x in elsewhere["problems"] if x["code"] != "key_needed"]
+    elsewhere["ok"], elsewhere["exit"] = True, 0
+    w(load("plan", maps=[("sda", CT), ("sdb", WD)], erase=2), elsewhere)
+    w(load("status", (), [("sda", CT), ("sdb", WD)]), STATUS_FRESH)
+    # The Kingston's second plan has no answer: the fake's exit 98.
+    with open(os.path.join(SC, scen, "README"), "w") as f:
+        f.write("Hand-written by ../../make-disk-fixtures.py: lovelace's problems on the way to Review.\n")
+
+
+def plan_changed(doc):
+    doc["problems"].append({"code": "plan_changed", "text": "--expect-plan %s: this run's plan is %s: a command or a disk's identity changed since the plan was reviewed" % (sha(1), sha(2)),
+                            "expected": sha(1), "got": sha(2), "targets": None})
+    doc["ok"], doc["exit"] = False, 4
+
+
+def unshown(doc):
+    doc["candidates"] = [c for c in doc["candidates"] if c["node"] != "nvme0n1"]
+
+
 if __name__ == "__main__":
     rec()
     lovelace()
     lovelace("app-lovelace-dry", "app-dry")
     lovelace_small()
+    lovelace_sizes()
+    lovelace_trouble()
+    lovelace("app-lovelace-changed", review=plan_changed)
+    lovelace("app-lovelace-unshown", review=unshown)
+    rec_again()

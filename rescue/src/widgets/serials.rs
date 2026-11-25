@@ -9,18 +9,34 @@
 //!   one, and from the last the dialog takes the focus on (to the first
 //!   button for Enter, as Review's Restore).
 //! - More disks than rows scroll, with the list's markers.
+//! - A row may take several lines (a newline in it): the field is on its
+//!   first, the rest take the row's whole width, so a long serial goes on
+//!   a line of its own and is never cut (`room` says what fits beside the
+//!   field).  It scrolls whole, as a list's item.
 
 use crate::screen::{Canvas, DIALOG};
 use crate::term::keys::Key;
 use crate::text::{cap, Clean};
 
-use super::list::{list_window, FRAME_COL, FRAME_W, ROW_COL, ROW_W};
+use super::list::{items_window, FRAME_COL, FRAME_W, ROW_COL, ROW_W};
 
 /// The most characters a field takes.
 pub const VALUE_MAX: usize = 32;
 
+/// A field's cells, as drawn.
+fn cells(w: u16) -> u16 {
+    w.clamp(3, 24)
+}
+
+/// The cells a row's first line has beside a field of `w` cells: the
+/// rest goes on lines of its own.
+pub fn room(w: u16) -> usize {
+    usize::from(ROW_W - 4 - cells(w))
+}
+
 pub struct Serials {
-    rows: Vec<Clean>,
+    /// Each row's lines; the field is on the first.
+    rows: Vec<Vec<Clean>>,
     widths: Vec<u16>,
     pub values: Vec<String>,
     /// The field with the focus.
@@ -34,8 +50,8 @@ impl Serials {
     pub fn new(rows: &[(Clean, u16)], values: &[String]) -> Serials {
         let values = (0..rows.len()).map(|i| values.get(i).map(|v| v.chars().filter(|c| !c.is_control()).take(VALUE_MAX).collect()).unwrap_or_default()).collect();
         Serials {
-            rows: rows.iter().map(|(t, _)| t.clone()).collect(),
-            widths: rows.iter().map(|(_, w)| (*w).clamp(3, 24)).collect(),
+            rows: rows.iter().map(|(t, _)| t.lines()).collect(),
+            widths: rows.iter().map(|(_, w)| cells(*w)).collect(),
             values,
             cur: 0,
             top: 0,
@@ -51,11 +67,20 @@ impl Serials {
         self.rows.is_empty()
     }
 
+    /// Lines all the rows take.
+    pub fn lines_len(&self) -> usize {
+        self.rows.iter().map(Vec::len).sum()
+    }
+
+    fn heights(&self) -> Vec<usize> {
+        self.rows.iter().map(Vec::len).collect()
+    }
+
     /// Put the focus on field `i`.
     pub fn focus(&mut self, i: usize) {
         if i < self.rows.len() {
             self.cur = i;
-            self.top = list_window(self.rows.len(), usize::from(self.window), i, self.top).0;
+            self.top = items_window(&self.heights(), usize::from(self.window), i, self.top).0;
         }
     }
 
@@ -101,8 +126,9 @@ impl Serials {
     /// The frame at `row`, the rows inside it.
     pub fn draw(&self, c: &mut Canvas, row: u16, focused: bool) {
         c.frame(row, FRAME_COL, self.window + 2, FRAME_W, DIALOG);
-        let (first, count, above, below) = list_window(self.rows.len(), usize::from(self.window), self.cur, self.top);
+        let (first, count, above, below) = items_window(&self.heights(), usize::from(self.window), self.cur, self.top);
         let mut r = row + 1;
+        let end = row + 1 + self.window;
         if above {
             c.text_in(r, ROW_COL, ROW_W, &Clean::ours("^ more above"), DIALOG);
             r += 1;
@@ -112,30 +138,41 @@ impl Serials {
             // `[`, the field, `]`, one cell before the row's end.
             let right = ROW_COL + ROW_W - 2;
             let left = right - w - 1;
-            c.text_in(r, ROW_COL, left - ROW_COL - 1, &self.rows[i], DIALOG);
-            c.text(r, left, &Clean::ours("["), DIALOG);
-            c.text(r, right, &Clean::ours("]"), DIALOG);
-            let here = focused && self.cur == i;
-            let a = if here { DIALOG.focus() } else { DIALOG };
-            c.fill(r, left + 1, 1, w, a);
-            let shown = Clean::line(&self.values[i], cap::LINE);
-            // Its end shows when it is longer than the field.
-            let room = usize::from(w) - usize::from(here);
-            let shown = if shown.width() > room {
-                let tail: String = shown.chars().skip(shown.width() + 1 - room).collect();
-                Clean::ours("<").join("", &Clean::line(&tail, room))
-            } else {
-                shown
-            };
-            let at = c.text(r, left + 1, &shown, a);
-            if here {
-                c.fill(r, left + 1 + at, 1, 1, DIALOG);
-                c.cursor = Some((r, left + 1 + at));
+            for (k, line) in self.rows[i].iter().enumerate() {
+                if r >= end - u16::from(below) {
+                    break;
+                }
+                if k == 0 {
+                    c.text_in(r, ROW_COL, left - ROW_COL - 1, line, DIALOG);
+                } else {
+                    c.text_in(r, ROW_COL, ROW_W, line, DIALOG);
+                    r += 1;
+                    continue;
+                }
+                c.text(r, left, &Clean::ours("["), DIALOG);
+                c.text(r, right, &Clean::ours("]"), DIALOG);
+                let here = focused && self.cur == i;
+                let a = if here { DIALOG.focus() } else { DIALOG };
+                c.fill(r, left + 1, 1, w, a);
+                let shown = Clean::line(&self.values[i], cap::LINE);
+                // Its end shows when it is longer than the field.
+                let room = usize::from(w) - usize::from(here);
+                let shown = if shown.width() > room {
+                    let tail: String = shown.chars().skip(shown.width() + 1 - room).collect();
+                    Clean::ours("<").join("", &Clean::line(&tail, room))
+                } else {
+                    shown
+                };
+                let at = c.text(r, left + 1, &shown, a);
+                if here {
+                    c.fill(r, left + 1 + at, 1, 1, DIALOG);
+                    c.cursor = Some((r, left + 1 + at));
+                }
+                r += 1;
             }
-            r += 1;
         }
         if below {
-            c.text_in(r, ROW_COL, ROW_W, &Clean::ours("v more below"), DIALOG);
+            c.text_in(end - 1, ROW_COL, ROW_W, &Clean::ours("v more below"), DIALOG);
         }
     }
 }
@@ -172,5 +209,23 @@ mod tests {
         let line = d.lines().find(|l| l.contains("disk0") || l.contains("disk3")).unwrap_or("");
         assert!(line.contains("] |") || line.contains("]  |"), "the field at the row's end: {line:?}");
         assert_eq!(c.cursor.map(|(r, _)| r), Some(3));
+    }
+
+    #[test]
+    fn a_row_of_two_lines_scrolls_whole() {
+        let rows: Vec<(Clean, u16)> = (0..3).map(|i| (Clean::text(&format!("ERASED   500 GB  Samsung SSD 870 EVO 500GB\n{:40}S6PXNM0T41234{i}A", ""), 99), 6)).collect();
+        assert!(room(6) == 56 && room(16) == 46);
+        let mut s = Serials::new(&rows, &[]);
+        assert_eq!(s.lines_len(), 6);
+        s.window = 4;
+        s.focus(2);
+        let mut c = Canvas::new(6, 80, DIALOG);
+        s.draw(&mut c, 0, true);
+        let d = c.dump(Lines::Ascii, false);
+        // The focused row, both its lines; the field on its first.
+        assert!(d.contains("S6PXNM0T412342A") && d.contains("^ more above") && !d.contains("S6PXNM0T412340A"), "{d}");
+        let first = d.lines().find(|l| l.contains("Samsung")).unwrap_or("");
+        assert!(first.contains("[      ]"), "{first:?}");
+        assert_eq!(c.cursor.map(|(r, _)| r), d.lines().position(|l| l.contains("Samsung")).map(|r| r as u16));
     }
 }

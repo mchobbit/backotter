@@ -1,0 +1,77 @@
+ BackOtter rescue                                                          Disks
+                                                                                
+  ┌───────────────── This disk is much smaller: you decide ──────────────────┐  
+  │                                                                          │  
+  │ Old disk 1 (Samsung SSD 870 EVO 500GB) was 500 GB.  The disk you chose,  │  
+  │ KINGSTON SA400S37200G, is 200 GB: 300 GB smaller.                        │  
+  │                                                                          │  
+  │ To fit, the system partition (/) would shrink by 64.5 %:                 │  
+  │   Old size:    465 GB                                                    │  
+  │   New size:    165 GB                                                    │  
+  │   Space used:  41.7 GB at the backup, so it would fit                    │  
+  │ The other partitions stay as they were.                                  │  
+  │                                                                          │  
+  │ This stick's bko-holt can't shrink a partition this far yet, though the  │  
+  │ data would fit: this disk can't be used for now.                         │  
+  │                                                                          │  
+  │  ┌────────────────────────────────────────────────────────────────────┐  │  
+  │  │ ( ) Choose another disk                                            │  │  
+  │  └────────────────────────────────────────────────────────────────────┘  │  
+  │                                                                          │  
+  │                  <  OK  >    < Raw output >    < Back >                  │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+ Arrows: choose | Tab: buttons | Enter: OK | o: raw output | Esc: back          
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                          Disks
+                                                                                
+  +----------------- This disk is much smaller: you decide ------------------+  
+  |                                                                          |  
+  | Old disk 1 (Samsung SSD 870 EVO 500GB) was 500 GB.  The disk you chose,  |  
+  | KINGSTON SA400S37200G, is 200 GB: 300 GB smaller.                        |  
+  |                                                                          |  
+  | To fit, the system partition (/) would shrink by 64.5 %:                 |  
+  |   Old size:    465 GB                                                    |  
+  |   New size:    165 GB                                                    |  
+  |   Space used:  41.7 GB at the backup, so it would fit                    |  
+  | The other partitions stay as they were.                                  |  
+  |                                                                          |  
+  | This stick's bko-holt can't shrink a partition this far yet, though the  |  
+  | data would fit: this disk can't be used for now.                         |  
+  |                                                                          |  
+  |  +--------------------------------------------------------------------+  |  
+  |  | ( ) Choose another disk                                            |  |  
+  |  +--------------------------------------------------------------------+  |  
+  |                                                                          |  
+  |                  <  OK  >    < Raw output >    < Back >                  |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+ Arrows: choose | Tab: buttons | Enter: OK | o: raw output | Esc: back          

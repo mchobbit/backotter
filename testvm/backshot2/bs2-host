@@ -90,9 +90,17 @@ def sh(cmd, **kw):
 # ---- sources -----------------------------------------------------------------------
 
 def generation(source):
-    """gen:HEX from the guest's image-state, else img:HEX of its image (cached by size, mtime and inode)."""
+    """gen:HEX from the guest's image-state, else img:HEX of its image (cached by size, mtime and inode);
+    a slimmed source's (bs2lib/slim.py) with the slim recipe after it (+slimN), so a change to the
+    recipe prepares it anew and its cases' ledger rows name the slimmed source, not the guest."""
+    from bs2lib import slim as SL
     if source.startswith("run:"):
         return source
+    return base_generation(source) + SL.suffix(source)
+
+
+def base_generation(source):
+    """generation() of the guest itself, without the slim recipe."""
     d = f"{VMS}/{source}"
     try:
         with open(f"{d}/image-state") as f:
@@ -178,6 +186,15 @@ def prepare_with_ht1(src, port, d, gen):
     for v in ("BS2_CASE", "BS2_CHAIN_IN", "BS2_CHAIN_OUT", "HT_KEEP", "HT_QUICK", "HT_THROUGH", "HT_FAIL_AT", "HT_SOURCE_PREP",
               "HT_RESCUER", "HT_RESCUER_IMG", "HT_RESERVE_PID", "HT_HOLT_BIN"):
         env.pop(v, None)
+    # A slimmed source: the slim step runs in the booted source, in this preparation's own
+    # overlay, before its dump; the source is booted again from cold after it (bs2lib/slim.py).
+    from bs2lib import slim as SL
+    slim_sh = None
+    if SL.slimmed(src):
+        slim_sh = f"{d}/preps/{name}.slim.sh"
+        with open(slim_sh, "w") as f:
+            f.write(SL.script(src))
+        env["HT_SOURCE_PREP"] = slim_sh
     log = f"{d}/preps/{name}.log"
     with open(log, "w") as f:
         r = subprocess.run([f"{TESTVM}/holttest1d/ht1.sh", src, "preps", "source", "backup"], env=env,
@@ -195,6 +212,14 @@ def prepare_with_ht1(src, port, d, gen):
     gap = T1.phase_gaps(rep, T1.read_or(f"{k}/logs/phases.tsv"), T1.read_or(log))
     if gap:
         die(f"preparing {src}: ht1.sh said RESULT: PASS, but {gap} (see {k} and {log})", 1)
+    if slim_sh:
+        try:
+            rec = SL.record(T1.read_or(f"{k}/logs/source-prep.txt"), T1.read_or(f"{k}/logs/source-bootstate.txt"), src)
+        except ValueError as e:
+            die(f"preparing {src}: {e} (see {k}/logs/source-prep.txt)", 1)
+        with open(f"{k}/slim.json", "w") as f:
+            f.write(SL.dumps(rec))
+        os.replace(slim_sh, f"{k}/slim.sh")
     # What the cases take: the overlays, dumps/, logs/, the report, the backup and its records.
     rustic = ""
     with open(f"{k}/logs/manifest.txt") as f:
@@ -915,8 +940,29 @@ def cmd_tier1(a):
         if _lane is None:
             die(f"{name}: an SSD case, and this host's SSD lane is busy ({ROOT}/ssd.lock): run it as "
                 f"bs2-host lane {a.case} -- cmp-run.sh ... tier1 (bs2's replay, soak and corpus do)", 2)
+    slim_own_boot(src, a.tier, a.run)
     rc = T1.run(c, name, src, gen, dump, a.tier, a.run, a.port, HERE, TESTVM, ROOT, holt_bin(), bins(), scratch=scratch)
     sys.exit(rc)
+
+
+def slim_own_boot(src, tier, run):
+    """A case of a slimmed source that boots the source itself (its preparation can't stand
+    in, or BS2_REUSE_SOURCE=0) runs the same slim step in its own source phase
+    (HT_SOURCE_PREP), so it is judged on the slimmed source its case was drawn from."""
+    from bs2lib import slim as SL
+    if not SL.slimmed(src):
+        return
+    why = ["BS2_REUSE_SOURCE=0"] if os.environ.get("BS2_REUSE_SOURCE", "1") != "1" else prep_reasons(src, holt_bin(), tier)[2]
+    if not why:
+        return
+    p = f"{run_dir(run)}/logs/slim-{src}.sh"
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p + ".part", "w") as f:
+        f.write(SL.script(src))
+    os.replace(p + ".part", p)
+    os.environ["HT_SOURCE_PREP"] = p
+    print(f"bs2-host: {src}: the case boots the source itself ({'; '.join(why[:2])}): the slim step runs in it too",
+          file=sys.stderr)
 
 
 # ---- a case's reservation ------------------------------------------------------------

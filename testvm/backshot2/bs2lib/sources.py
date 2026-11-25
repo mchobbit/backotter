@@ -24,7 +24,8 @@ guest added to the corpus joins without an edit here.  Alpine's four
   built()          the built names, sorted (Alpine's and Guix's among them)
   others()         built() less Alpine's and Guix's: what bs2 deals after them
   uefi(name)       its dump's firmware is UEFI
-  secs(name, tier) -> (seconds a case, "measured" | "est.")
+  secs(name, tier) -> (seconds a case, "measured" | "est."; a slimmed source's
+                   tier 1 from its slim-sizes.tsv row when measured)
 """
 
 import functools
@@ -295,6 +296,11 @@ def secs(name, tier):
         return m[tier], "measured"
     if tier == 2 and 1 in m:
         return m[1], "est."
+    # A slimmed source's tier 1 case as measured on it (room.py's slim-sizes.tsv row).
+    from . import room as RM
+    row = RM.slim_row(name)
+    if row and row.get("t1_s"):
+        return int(row["t1_s"]), "measured" if tier == 1 else "est."
     wall = (holt_rows().get(name) or (NO_ROW_S, None))[0]
     return max(FLOOR_S, int(round(REUSE * wall))), "est."
 

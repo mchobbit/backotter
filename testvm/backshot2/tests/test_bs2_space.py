@@ -20,10 +20,23 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 from test_bs2_hosts import load_bs2  # noqa: E402
-from bs2lib import space as SP  # noqa: E402
+from bs2lib import room as RM, space as SP  # noqa: E402
 
 B = load_bs2()
 GiB = SP.GiB
+
+# vanilla3 stands for a source over every RAM disk here: the full guest's room (D 30), as an
+# unmeasured slimmed source takes (bs2lib/slim.py), not its slimmed row in slim-sizes.tsv
+# (test_bs2_slim.py tests that one).
+_NO_SLIM = mock.patch.object(RM, "SLIM_SIZES", os.devnull)
+
+
+def setUpModule():
+    _NO_SLIM.start()
+
+
+def tearDownModule():
+    _NO_SLIM.stop()
 
 
 class Estimates(unittest.TestCase):

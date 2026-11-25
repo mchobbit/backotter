@@ -12,8 +12,9 @@ any of it.
 need() works out a host's peak from what is there now (bs2-host room's facts: free bytes,
 and per source whether its preparation and tools are current, and their bytes) and what
 will be made: a preparation's or a tools copy's bytes from SIZES (space-sizes.tsv,
-measured on the hosts), else from the corpus dump's used bytes times the measured
-ratios' 90th percentile (est.).  The
+measured on the hosts; a slimmed source's row is its slimmed preparation's and tools',
+bs2lib/slim.py), else from the corpus dump's used bytes times the measured ratios' 90th
+percentile (est.: the full guest's, the slimmed sources' rows left out of the ratios).  The
 preparing goes source by source (bs2's prep_cmd), each new preparation made before the
 older ones go (bs2-host prune_preps()), so the peak is a running sum, then the cases.
 
@@ -84,8 +85,11 @@ def ratios(path=SIZES_TSV):
     """(tools, prep) bytes per used byte of the measured sources: the PCTL quantile of
     theirs, on the safe side of most (2026-11-25: 0.74 and 0.92; above them only the
     Guix store's and Ubuntu Core's snaps, whose used bytes say little of their copies)."""
+    from . import slim as SL
     t, p = [], []
     for s, (tb, pb) in table(path).items():
+        if SL.slimmed(s):   # (its row is the slimmed source's: the corpus dump's used bytes are the full guest's)
+            continue
         u = dump_used(s)
         if not u:
             continue

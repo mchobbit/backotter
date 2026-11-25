@@ -4,9 +4,15 @@ preparation reserve under cmp-run.sh --reserve.
 Alpine's four sources keep bs2's own figures (case.DISK_GIB, 3 GiB of
 memory: measured on BackShot2Alpine's runs, the wear log).  Every other
 source takes HoltTest1's room for its guest (testvm/holttest1d/ram-sizes.tsv,
-the "-" variant's D and MEM) until bs2 measures its own: a tier 1 case is
-HoltTest1's four phases, with the source's boot and backup reused, so its
-peak is at most HoltTest1's.  A source with no row: bs2's figures.
+the "-" variant's D and MEM: full_of()) until bs2 measures its own: a tier 1
+case is HoltTest1's four phases, with the source's boot and backup reused, so
+its peak is at most HoltTest1's.  A source with no row: bs2's figures.
+
+A slimmed source (bs2lib/slim.py: its full room is over the small hosts'
+ceiling) takes its own measured room, SLIM_SIZES (testvm/backshot2/
+slim-sizes.tsv: a real tier 1 case's peak on the slimmed source, measured on
+the hosts), when the row's recipe is slim.RECIPE; else the full guest's, as
+before.  So it lands on whichever hosts its slimmed room allows.
 """
 
 import os
@@ -15,6 +21,7 @@ from . import case as C
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SIZES = os.path.normpath(os.path.join(HERE, "..", "..", "holttest1d", "ram-sizes.tsv"))
+SLIM_SIZES = os.path.normpath(os.path.join(HERE, "..", "slim-sizes.tsv"))
 MEM = 3
 KEEP = ("alpine324", "alpine324-uefi", "alpine324-lvm", "alpine324-luks")
 
@@ -39,11 +46,63 @@ def table(path=SIZES):
     return out
 
 
-def of(source, path=SIZES):
-    """(disk GiB, memory GiB) for SOURCE's cases."""
+def slim_table(path=None):
+    """{source: row} of slim-sizes.tsv (bs2's own measured room of the slimmed sources):
+    each row a dict of recipe, d, mem (GiB), t1_s (a tier 1 case's seconds, or None),
+    used_before and used_after (MiB), prep_mib, tools_mib, measured (words)."""
+    out = {}
+    try:
+        with open(path or SLIM_SIZES) as f:
+            for line in f:
+                if not line.strip() or line.startswith("#"):
+                    continue
+                w = line.rstrip("\n").split("\t")
+                if len(w) < 4 or w[0] == "source":
+                    continue
+                w += [""] * (10 - len(w))
+                try:
+                    row = {"recipe": int(w[1]), "d": int(w[2]), "mem": int(w[3])}
+                except ValueError:
+                    continue
+
+                def num(x):
+                    try:
+                        return float(x)
+                    except ValueError:
+                        return None
+                row.update(t1_s=num(w[4]), used_before=num(w[5]), used_after=num(w[6]), prep_mib=num(w[7]),
+                           tools_mib=num(w[8]), measured=w[9])
+                out[w[0]] = row
+    except OSError:
+        pass
+    return out
+
+
+def full_of(source, path=SIZES):
+    """(disk GiB, memory GiB) of SOURCE's full guest: bs2's own figures for Alpine's four,
+    else ram-sizes.tsv's (HoltTest1's), else bs2's (no row)."""
     if source in KEEP:
         return C.DISK_GIB, MEM
     return table(path).get(source, (C.DISK_GIB, MEM))
+
+
+def slim_row(source, slim_path=None):
+    """SOURCE's slim-sizes.tsv row when bs2 slims it and the row was measured on this
+    recipe (slim.RECIPE), else None."""
+    from . import slim as SL
+    if not SL.slimmed(source):
+        return None
+    row = slim_table(slim_path).get(source)
+    return row if row and row["recipe"] == SL.RECIPE else None
+
+
+def of(source, path=SIZES, slim_path=None):
+    """(disk GiB, memory GiB) for SOURCE's cases: a slimmed source's own measured room
+    (slim_row()), else full_of()."""
+    row = slim_row(source, slim_path)
+    if row:
+        return row["d"], row["mem"]
+    return full_of(source, path)
 
 
 def need(source, path=SIZES):

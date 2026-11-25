@@ -39,6 +39,20 @@ B = load("bs2_src_cli", "bs2")
 H = load("bs2_src_host", "bs2-host")
 
 
+# vanilla3 stands for a source over every RAM disk here: the full guest's room (D 30), as an
+# unmeasured slimmed source takes (bs2lib/slim.py), not its slimmed row in slim-sizes.tsv
+# (test_bs2_slim.py tests that one).
+_NO_SLIM = mock.patch.object(RM, "SLIM_SIZES", os.devnull)
+
+
+def setUpModule():
+    _NO_SLIM.start()
+
+
+def tearDownModule():
+    _NO_SLIM.stop()
+
+
 class Bs2Sources(unittest.TestCase):
     def test_home_unchanged_for_alpine_and_guix(self):
         self.assertEqual(B.SOURCES[:6], B.ALPINE_SOURCES + B.GUIX_SOURCES)

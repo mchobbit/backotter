@@ -1,0 +1,7 @@
+# BackShot2's own room of the slimmed sources (bs2lib/slim.py, bs2lib/room.py slim_row()), measured on the hosts.
+# recipe: the slim recipe (slim.RECIPE) the row was measured on; a row of another recipe isn't taken (the full
+# guest's ram-sizes.tsv row is, until it is measured again).  d: the RAM disk (GiB) a case reserves,
+# ceil(1.10 x the tier 1 case's peak + 0.25), as ram-size.sh's peak rule; mem: ceil(1.10 x its peak anon), floor 4.
+# t1_s: that case's seconds (sources.secs()).  used_before, used_after: the guest's used MiB before and after the
+# slim step (slim.json); prep_mib, tools_mib: the slimmed preparation's and tools' MiB.  measured: where and how.
+source	recipe	d	mem	t1_s	used_before_mib	used_after_mib	prep_mib	tools_mib	measured

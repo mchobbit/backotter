@@ -37,7 +37,8 @@ Paths (ROOT=/bkoscratch/backshot2, BS2_ROOT overrides):
                         identifiers, never leaves the host), tools/ (a copy of
                         its root, for tier 0's dry runs), prep (a symlink to the
                         current preps/NAME: what tier 1 and 2's cases reuse,
-                        bs2lib/reuse.py, with its prep.json; the 3 newest kept)
+                        bs2lib/reuse.py, with its prep.json; an older one kept
+                        while live work uses it, prune_preps())
   ROOT/rescuer-state/HASH/  the rescuer's saved state (ht1-bs2.sh makes it in a
                         case's rebuild, once per rescuer, firmware, QEMU and host)
   ROOT/runs/RUN/        tier0.jsonl and tier1.jsonl (a line per case; tierN-queue.jsonl:
@@ -214,12 +215,7 @@ def prepare_with_ht1(src, port, d, gen):
         os.remove(tmp)
     os.symlink(f"preps/{name}", tmp)
     os.replace(tmp, f"{d}/prep")
-    # The 3 newest stay: a case that began on the one before still reads its files.
-    old = sorted(x for x in os.listdir(f"{d}/preps") if x.startswith("p-") and os.path.isdir(f"{d}/preps/{x}"))[:-3]
-    for x in old:
-        shutil.rmtree(f"{d}/preps/{x}", ignore_errors=True)
-        if os.path.exists(f"{d}/preps/{x}.log"):
-            os.remove(f"{d}/preps/{x}.log")
+    # (The older ones go once nothing uses them: cmd_source's prune_preps().)
     return k
 
 
@@ -242,7 +238,8 @@ def cmd_source(a):
         _, _, why = prep_reasons(src, holt_bin())
         tools_ok = os.path.isdir(f"{d}/tools/usr") and source_ready(src) == gen
         if not a.force and tools_ok and not why:
-            print(f"{src}: ready at {gen[:16]}")
+            pruned = prune_preps(d)
+            print(f"{src}: ready at {gen[:16]}{pruned_words(pruned)}")
             return
         k = prepare_with_ht1(src, a.port, d, gen) if why or a.force else prep_dir(src)
         with open(f"{k}/dumps/src.json") as f:
@@ -255,8 +252,10 @@ def cmd_source(a):
             copy_tools(src, k, d)
         with open(f"{d}/gen", "w") as f:
             f.write(gen + "\n")
+        pruned = prune_preps(d)
         print(f"{src}: {'prepared anew' if why or a.force else 'preparation kept'} ({os.path.basename(k)}"
-              f"{': ' + '; '.join(why[:2]) if why else ''}){', its tools copied' if not tools_ok or a.force else ''}, at {gen[:16]}")
+              f"{': ' + '; '.join(why[:2]) if why else ''}){', its tools copied' if not tools_ok or a.force else ''}, at {gen[:16]}"
+              f"{pruned_words(pruned)}")
 
 
 def copy_tools(src, k, d):
@@ -287,6 +286,112 @@ def copy_tools(src, k, d):
     finally:
         subprocess.run([f"{TESTVM}/vm-umount", mp], env=env, stdout=subprocess.DEVNULL)
         shutil.rmtree(w, ignore_errors=True)
+
+
+def du_bytes(path):
+    """The bytes PATH takes on disk (du -sx, hard links once), 0 when it isn't there."""
+    if not os.path.lexists(path):
+        return 0
+    r = subprocess.run(["du", "-sx", "--block-size=1", path], capture_output=True, text=True)
+    try:
+        return int(r.stdout.split()[0])
+    except (IndexError, ValueError):
+        return 0
+
+
+# ---- preparations nothing uses any more ---------------------------------------------------
+
+def qcow2_backing(path):
+    """The backing file named in the qcow2 header of PATH, or None (no backing, not a qcow2)."""
+    import struct
+    try:
+        with open(path, "rb") as f:
+            h = f.read(20)
+            if len(h) < 20 or h[:4] != b"QFI\xfb":
+                return None
+            off, n = struct.unpack(">QI", h[8:20])
+            if not off or not n or n > 4096:
+                return None
+            f.seek(off)
+            return f.read(n).decode("utf-8", "replace")
+    except OSError:
+        return None
+
+
+def prep_refs(scan_dirs=None, proc="/proc"):
+    """The paths live work holds now, real: every open file and cwd of every process
+    (PROC), and every qcow2's backing file under SCAN_DIRS (default: the RAM disk's work,
+    and /bkoscratch's: ROOT less sources/ and rescuer-state/), as a case's overlay on a
+    preparation names it between its VMs (ht1-bs2.sh's bs2_source_take)."""
+    out = set()
+    try:
+        pids = [p for p in os.listdir(proc) if p.isdigit()]
+    except OSError:
+        pids = []
+    for p in pids:
+        for link in [f"{proc}/{p}/cwd"] + [f"{proc}/{p}/fd/{x}" for x in _listdir(f"{proc}/{p}/fd")]:
+            try:
+                t = os.readlink(link)
+            except OSError:
+                continue
+            if t.startswith("/"):
+                out.add(t.split(" (deleted)")[0])
+    for top in scan_dirs if scan_dirs is not None else (RAM, ROOT):
+        for dp, dns, fns in os.walk(top):
+            if dp == top and top == ROOT:
+                dns[:] = [x for x in dns if x not in ("sources", "rescuer-state")]
+            try:
+                dev = os.stat(dp).st_dev
+            except OSError:
+                continue
+            if dp == top:
+                top_dev = dev
+            elif dev != top_dev:   # (never into a mount: a tier 0's chroot binds /proc, /dev and the tools)
+                dns[:] = []
+                continue
+            for fn in fns:
+                if fn.endswith(".qcow2"):
+                    b = qcow2_backing(f"{dp}/{fn}")
+                    if b:
+                        out.add(os.path.realpath(os.path.join(dp, b)))
+    return out
+
+
+def _listdir(p):
+    try:
+        return os.listdir(p)
+    except OSError:
+        return []
+
+
+def prune_preps(d, refs=None):
+    """D's preparations (preps/p-*) that nothing uses any more, removed with their logs: every
+    one but the current (D/prep) that no live work refers to (prep_refs(): a running
+    process's open file or cwd in it, or a case's overlay backed by its disk).  A case that
+    began on an older one (bs2-host prepared named it) keeps it while it runs; the next
+    preparation of the source removes it.  Returns [(name, bytes)] removed."""
+    cur = os.path.realpath(f"{d}/prep") if os.path.isdir(f"{d}/prep") else None
+    old = [x for x in sorted(_listdir(f"{d}/preps")) if x.startswith("p-") and os.path.isdir(f"{d}/preps/{x}")
+           and os.path.realpath(f"{d}/preps/{x}") != cur]
+    if not old:
+        return []
+    refs = prep_refs() if refs is None else refs
+    out = []
+    for x in old:
+        p = os.path.realpath(f"{d}/preps/{x}")
+        if any(r == p or r.startswith(p + "/") for r in refs):
+            continue
+        n = du_bytes(p)
+        shutil.rmtree(p, ignore_errors=True)
+        if os.path.exists(f"{d}/preps/{x}.log"):
+            os.remove(f"{d}/preps/{x}.log")
+        out.append((x, n))
+    return out
+
+
+def pruned_words(pruned):
+    """", N older preparations removed (G GiB)" for PRUNED (prune_preps()'s), or ""."""
+    return f", {len(pruned)} older preparations removed ({sum(b for _, b in pruned) / 2**30:.1f} GiB)" if pruned else ""
 
 
 def cmd_prepared(a):

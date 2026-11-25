@@ -52,7 +52,7 @@ sh -c '[ "$(zfs get -H -o value mounted boot-pool)" != yes ] || zfs unmount boot
 
 # ---- format ----
 # vda2: vfat "EFI"
-mkfs.fat -F 32 -i BC000001 -n EFI -S 512 -s 1 -f 2 -R 32 -h 6144 /dev/sdq2
+mkfs.fat -F 32 -i BC000001 -n EFI -S 512 -s 1 -f 2 -R 32 -h 6144 -M 0xf8 /dev/sdq2
 # check: /dev/sdq2 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 zfs create -u -o mountpoint=legacy -o readonly=off -o snapdir=hidden -o xattr=on -o normalization=formD -o utf8only=on boot-pool/.system
 zfs create -u -o mountpoint=legacy -o readonly=off -o snapdir=hidden -o xattr=on -o normalization=formD -o utf8only=on boot-pool/.system/configs-ae32c386e13840b2bf9c0083275e7941

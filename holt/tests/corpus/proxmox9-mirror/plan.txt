@@ -83,10 +83,10 @@ sh -c 'i=0; until udevadm settle; [ -b /dev/zvol/rpool/data/vm-100-disk-0 ]; do 
 
 # ---- format ----
 # vda2: vfat
-mkfs.fat -F 32 -i BC000001 -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdq2
+mkfs.fat -F 32 -i BC000001 -S 512 -s 8 -f 2 -R 32 -h 2048 -M 0xf8 /dev/sdq2
 # check: /dev/sdq2 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # vdb2: vfat
-mkfs.fat -F 32 -i BC000002 -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdr2
+mkfs.fat -F 32 -i BC000002 -S 512 -s 8 -f 2 -R 32 -h 2048 -M 0xf8 /dev/sdr2
 # check: /dev/sdr2 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 zfs create -u rpool/ROOT
 zfs create -u -o mountpoint=/ -o acltype=posix rpool/ROOT/pve-1

@@ -59,7 +59,7 @@ cryptsetup open --key-file=/srv/bko-keys/ubuntu-save-enc /dev/sdq4 ubuntu-save-b
 
 # ---- format ----
 # vda2: vfat "ubuntu-seed"
-mkfs.fat -F 32 -i BC000001 -n ubuntu-seed -S 512 -s 1 -f 2 -R 32 -h 0 /dev/sdq2
+mkfs.fat -F 32 -i BC000001 -n ubuntu-seed -S 512 -s 1 -f 2 -R 32 -h 0 -M 0xf8 /dev/sdq2
 # check: /dev/sdq2 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # vda3: ext4 "ubuntu-boot"
 mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,filetype,extent,64bit,flex_bg,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000007 -L ubuntu-boot -b 4096 -I 256 -N 48000 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000008,desc_size=64,resize=197132288 /dev/sdq3 768000k

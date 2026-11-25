@@ -51,7 +51,7 @@ udevadm settle
 
 # ---- format ----
 # nvme0n1p1: vfat "EFI"
-mkfs.fat -F 32 -i BC000002 -n EFI -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdq1
+mkfs.fat -F 32 -i BC000002 -n EFI -S 512 -s 8 -f 2 -R 32 -h 2048 -M 0xf8 /dev/sdq1
 # check: /dev/sdq1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # nvme0n1p2: ext4
 mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000005 -b 4096 -I 256 -N 31227904 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000006,resize=4294967296 /dev/sdq2 499581952k

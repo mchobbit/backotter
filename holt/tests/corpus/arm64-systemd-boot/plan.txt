@@ -38,7 +38,7 @@ udevadm settle
 
 # ---- format ----
 # vda1: vfat
-mkfs.fat -F 32 -i 1234ABCD -S 512 -s 1 -f 2 -R 32 -h 2048 /dev/sdq1
+mkfs.fat -F 32 -i 1234ABCD -S 512 -s 1 -f 2 -R 32 -h 2048 -M 0xf8 /dev/sdq1
 # check: /dev/sdq1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # vda2: ext4
 mke2fs -F -q -t ext4 -O none,has_journal,orphan_file,filetype,extent,64bit,flex_bg,sparse_super,metadata_csum -U 10111213-1415-1617-1819-1a1b1c1d1e1f -b 4096 -I 256 -N 8192 -g 32768 -G 1 -E hash_seed=00000000-0000-0000-0000-000000000000 /dev/sdq2 28652k

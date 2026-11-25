@@ -64,7 +64,7 @@ udevadm settle
 
 # ---- format ----
 # vda2: vfat "EFI"
-mkfs.fat -F 16 -i BC000002 -n EFI -S 512 -s 4 -f 2 -R 4 -r 512 -h 6144 /dev/sdq2
+mkfs.fat -F 16 -i BC000002 -n EFI -S 512 -s 4 -f 2 -R 4 -r 512 -h 6144 -M 0xf8 /dev/sdq2
 # check: /dev/sdq2 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # vda3: btrfs "ROOT"
 mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U bc000000-0000-4000-8000-000000000005 -L ROOT --csum crc32c -n 16384 -s 4096 -d single -m dup --device-uuid bc000000-0000-4000-8000-000000000006 /dev/sdq3

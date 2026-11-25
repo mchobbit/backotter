@@ -44,7 +44,7 @@ udevadm settle
 
 # ---- format ----
 # vda1: vfat "EFI"
-mkfs.fat -F 32 -i BC000001 -n EFI -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdq1
+mkfs.fat -F 32 -i BC000001 -n EFI -S 512 -s 8 -f 2 -R 32 -h 2048 -M 0xf8 /dev/sdq1
 # check: /dev/sdq1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # vda2: xfs
 mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=bc000000-0000-4000-8000-000000000004,metadir=0 -i sparse=1,nrext64=1,exchange=0 -n ftype=1,parent=0 -l lazy-count=1 /dev/sdq2

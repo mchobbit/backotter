@@ -57,7 +57,7 @@ sh -c '[ "$(zfs get -H -o value mounted rpool)" != yes ] || zfs unmount rpool'
 
 # ---- format ----
 # vda1: vfat
-mkfs.fat -F 32 -i BC000001 -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdq1
+mkfs.fat -F 32 -i BC000001 -S 512 -s 8 -f 2 -R 32 -h 2048 -M 0xf8 /dev/sdq1
 # check: /dev/sdq1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # vda3: swap
 mkswap -U bc000000-0000-4000-8000-000000000005 --pagesize 4096 /dev/sdq3

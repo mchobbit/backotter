@@ -188,7 +188,6 @@ pub fn plan(disk: &Value, size: u64) -> Result<Vec<(u64, Vec<u8>)>, String> {
             }
             // Whole sectors (illumos' EFI label has 9 entries, 1152 bytes, and
             // a raw disk device takes only whole sectors).
-            let mut entries = entries;
             entries.resize(entry_sectors as usize * ss as usize, 0);
             let primary_entries_off = 2u64.checked_mul(ss).ok_or("primary GPT offset overflows")?;
             let backup_entries_off = (total - 1 - entry_sectors).checked_mul(ss).ok_or("backup GPT entries offset overflows")?;

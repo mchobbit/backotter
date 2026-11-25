@@ -16,6 +16,7 @@ pub(crate) mod bootcode;
 pub mod bugreport;
 pub mod bytes;
 pub(crate) mod efi;
+pub mod fatfs;
 pub mod json;
 pub mod load;
 pub mod luksheader;
@@ -29,11 +30,13 @@ pub mod parttable;
 pub mod probe;
 pub(crate) mod qubes;
 pub mod recovery;
+pub mod recoverycmd;
 pub mod redact;
 pub mod report;
 #[cfg(test)]
 mod scenarios;
 pub mod snapcore;
+pub mod stick;
 pub(crate) mod store;
 pub mod sys;
 #[doc(hidden)]

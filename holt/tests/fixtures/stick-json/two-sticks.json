@@ -1,0 +1,28 @@
+{
+  "format": "bko-holt-stick",
+  "schema": 1,
+  "version": "VERSION",
+  "generated": "GENERATED",
+  "dry_run": false,
+  "boot_disk": null,
+  "config": {
+    "state": "two_sticks",
+    "partition": 4,
+    "label": "BACKOTTER",
+    "why": "2 disks are sticks written from this image (c2t0d0, c3t0d0): remove all but the one this system was started from",
+    "dev": null
+  },
+  "image": {
+    "image_id": "6f1c2c1e-5b0e-4a51-9d8e-2a3c8f4e7b10",
+    "platform": "linux",
+    "built": "2026-11-20T10:00:00Z",
+    "system_schemas": [1]
+  },
+  "stick": null,
+  "here": {
+    "dmi_uuid": null
+  },
+  "machines": [],
+  "notes": []
+}
+

@@ -14,6 +14,14 @@ Haiku; Redox and Sculpt OS from Linux):
 - `bko-holt recovery-key-file OUT` turns Ubuntu Core's recovery key, read
   from standard input, into the key file `cryptsetup open --key-file` and
   `load --key-file NAME=OUT` take (`src/snapcore.rs`).
+- `bko-holt stick --json` reads the rescue stick's config partition (its
+  machines' `system.json`) off the disk the system booted from, without
+  mounting it, for bko-rescue (`src/stick.rs`, `src/fatfs.rs`;
+  docs/design/holt-json.md, "bko-holt-stick").
+- `bko-holt recovery-words OUT --json` checks a BackOtter recovery key, its
+  words on standard input, and writes the repository password it stands
+  for to a new private file OUT, for bko-rescue (`src/recoverycmd.rs`;
+  holt-json.md, "bko-holt-recovery").
 
 ```
 sudo bko-holt dump > layout.json

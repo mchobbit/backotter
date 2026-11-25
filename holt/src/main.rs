@@ -7,6 +7,8 @@ const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
        bko-holt load LAYOUT.json [--through STAGE | --only STAGE] [--commit] ...
        bko-holt report-bug [--output FILE] [--stderr FILE]... [-- LOAD-ARGS...]
        bko-holt recovery-key-file OUT
+       bko-holt stick --json
+       bko-holt recovery-words OUT --json
        bko-holt -h | --help | -V | --version | --license
 
   dump        writes a JSON description of this system's disk layout
@@ -17,6 +19,12 @@ const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
   recovery-key-file
               turns Ubuntu Core's recovery key (on standard input) into the
               key file cryptsetup and `load --key-file` take
+  stick       reads the rescue stick's config partition (its machines),
+              as JSON, for bko-rescue
+  recovery-words
+              checks a BackOtter recovery key (its words on standard input)
+              and writes the repository password it stands for, for
+              bko-rescue
 
 `bko-holt dump --help`, `bko-holt load --help` and `bko-holt report-bug --help`
 say more.
@@ -97,6 +105,8 @@ fn main() -> ExitCode {
         }
         Some("report-bug") => bko_holt::bugreport::main(&args[1..]),
         Some("recovery-key-file") => ExitCode::from(bko_holt::snapcore::recovery_key_main(&args[1..])),
+        Some("stick") => ExitCode::from(bko_holt::stick::main(&args[1..])),
+        Some("recovery-words") => ExitCode::from(bko_holt::recoverycmd::main(&args[1..])),
         // Not in the usage: run by load's close, partition and boot stages.
         Some("snapcore-boot-areas") => ExitCode::from(bko_holt::load::snapcore::boot_areas_main(&args[1..])),
         Some("md-lbs") => ExitCode::from(bko_holt::mdsb::main(&args[1..])),

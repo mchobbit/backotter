@@ -102,7 +102,9 @@ fn version_json_is_the_api_document() {
         assert_eq!(v.get_str("version"), Some(env!("CARGO_PKG_VERSION")));
         assert_eq!(v.get_bool("no_commit"), Some(false));
         assert_eq!(v.get_bool("dry_run"), Some(false));
-        assert!(v.get("documents").and_then(|d| d.get("error")).is_some());
+        for d in ["plan", "status", "events", "stick", "recovery", "error"] {
+            assert!(v.get("documents").and_then(|x| x.get(d)).is_some(), "{d}");
+        }
         assert!(v.get_arr("features").unwrap().iter().any(|f| f.as_str() == Some("no_commit_env")));
         assert!(v.str_at(&["platform", "os"]).is_some() && v.str_at(&["platform", "arch"]).is_some());
         assert!(v.get_str("run_dir").unwrap().ends_with("/bko-holt"));
@@ -392,4 +394,84 @@ fn no_commit_writes_only_new_files() {
         assert!(out(&o).is_empty());
     }
     assert_eq!(std::fs::read_to_string(&rep).unwrap(), "an old report");
+}
+
+/// `bko-holt stick --json` (RT10k) on a Linux tree booted from a stick
+/// (bko_holt::stick::sample), as a program: one document, its exit.
+#[test]
+fn stick_is_a_document() {
+    use bko_holt::stick::sample;
+    let t = sample::linux_tree(&sample::config(sample::three()), Some("4c4c4544-0000-1111-2222-333344445555"));
+    let root = t.root().to_string_lossy().into_owned();
+    for env in [&[][..], &[("BKO_HOLT_NO_COMMIT", "1")][..]] {
+        let o = run(&["stick", "--json", "--sysroot", &root], env, None);
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        assert!(err(&o).is_empty(), "{}", err(&o));
+        let v = doc(&o);
+        assert_eq!(v.get_str("format"), Some("bko-holt-stick"));
+        assert_eq!(v.get_bool("dry_run"), Some(!env.is_empty()));
+        assert_eq!(v.str_at(&["config", "state"]), Some("ok"));
+        let hosts: Vec<&str> = v.arr_at(&["machines"]).iter().filter_map(|m| m.get_str("hostname")).collect();
+        assert_eq!(hosts, ["lovelace", "babbage", "hopper"]);
+        assert_eq!(v.arr_at(&["machines"])[0].get_bool("this_computer"), Some(true));
+    }
+    // Missing: exit 1, still the document.
+    std::fs::remove_file(t.p("/cdrom/.disk/backotter.json")).unwrap();
+    let o = run(&["stick", "--json", "--sysroot", &root], &[], None);
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(doc(&o).str_at(&["config", "state"]), Some("missing"));
+    // Bad arguments: an error document under --json, the help with --help.
+    let v = assert_error(&run(&["stick", "--json", "--frob"], &[], None), 2, "bad_args");
+    assert_eq!(v.get_str("text"), Some("bko-holt stick: unknown argument \"--frob\""));
+    assert_error(&run(&["stick", "--json=2"], &[], None), 2, "schema_unknown");
+    assert_error(&run(&["stick", "--json", "--sysroot", "/nonexistent-bko"], &[], None), 2, "bad_args");
+    let o = run(&["stick"], &[], None);
+    assert_eq!(o.status.code(), Some(2));
+    assert!(out(&o).is_empty() && err(&o).contains("say --json"));
+    let o = run(&["stick", "--json", "--help"], &[], None);
+    assert_eq!(o.status.code(), Some(0));
+    assert!(out(&o).starts_with("Usage: bko-holt stick --json"));
+}
+
+/// `bko-holt recovery-words OUT --json` (RT10p): the words on standard
+/// input, the password to a new private OUT, the dry-run lock allowing it.
+#[test]
+fn recovery_words_is_a_document() {
+    use std::os::unix::fs::PermissionsExt;
+    let words = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+    let t = Tree::new("json-cli-recovery");
+    let k = t.p("/k");
+    std::fs::create_dir(&k).unwrap();
+    std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let pw = k.join("0").to_string_lossy().into_owned();
+    let o = run(&["recovery-words", &pw, "--json"], &[("BKO_HOLT_NO_COMMIT", "1")], Some(&format!("{}\n", words.to_uppercase())));
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(err(&o).is_empty());
+    let v = doc(&o);
+    assert_eq!((v.get_str("format"), v.get_bool("ok"), v.get_bool("written"), v.get_bool("dry_run")), (Some("bko-holt-recovery"), Some(true), Some(true), Some(true)));
+    assert!(!out(&o).contains("legal") && !out(&o).contains("yellow"));
+    assert_eq!(std::fs::read_to_string(&pw).unwrap(), words);
+    assert_eq!(std::fs::metadata(&pw).unwrap().permissions().mode() & 0o777, 0o600);
+    // The same OUT again: refused before a word is read.
+    let v = assert_error(&run(&["recovery-words", &pw, "--json"], &[], Some(words)), 2, "out_unsafe");
+    assert!(v.get_str("text").unwrap().contains("there already"));
+    // Wrong words: exit 1, nothing written.
+    let pw1 = k.join("1").to_string_lossy().into_owned();
+    let o = run(&["recovery-words", &pw1, "--json"], &[], Some("legal winner thank year wave sausage worth useful legal winner thank"));
+    assert_eq!(o.status.code(), Some(1));
+    let v = doc(&o);
+    assert_eq!((v.get_bool("ok"), v.get_str("problem"), v.get_u64("words")), (Some(false), Some("count"), Some(11)));
+    assert!(!std::path::Path::new(&pw1).exists());
+    // A directory others may enter, more than 1 KiB, no --json, a word as OUT.
+    std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_error(&run(&["recovery-words", &pw1, "--json"], &[], Some(words)), 2, "out_unsafe");
+    std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_error(&run(&["recovery-words", &pw1, "--json"], &[], Some(&"a ".repeat(600))), 2, "bad_args");
+    let o = run(&["recovery-words", &pw1], &[], Some(words));
+    assert_eq!(o.status.code(), Some(2));
+    assert!(out(&o).is_empty() && err(&o).contains("say --json"));
+    let o = run(&["recovery-words", "legal", "winner", "--json"], &[], None);
+    let v = assert_error(&o, 2, "bad_args");
+    assert!(!v.get_str("text").unwrap().contains("legal") && !err(&o).contains("legal"));
+    assert!(!std::path::Path::new(&pw1).exists());
 }

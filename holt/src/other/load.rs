@@ -183,9 +183,10 @@ fn mbr_type(f: &Found) -> Option<&str> {
     f.field("type")
 }
 
-/// The disks here, read as `dump` reads them, for load's checks.
-pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
-    let raw: Vec<RawDisk> = match fam {
+/// The whole disks here, as the system lists them (no table read yet):
+/// scan's, and `bko-holt stick`'s (stick.rs).
+pub fn raw_disks(sys: &Sys, fam: Family) -> Vec<RawDisk> {
+    match fam {
         Family::FreeBsd => freebsd::disks(sys),
         Family::DragonFly => super::dfly::disks(sys),
         Family::Haiku => super::haiku::disks(sys),
@@ -199,7 +200,12 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
                 Some(RawDisk { path: format!("/dev/r{n}{}", super::labelled::raw_letter(fam)), name: n, size, sector, model: None, serial: duid })
             })
             .collect(),
-    };
+    }
+}
+
+/// The disks here, read as `dump` reads them, for load's checks.
+pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
+    let raw = raw_disks(sys, fam);
     let mount_list: Vec<mounts::FstabEntry> = match fam {
         Family::Illumos => super::illumos::parse_mnttab(&sys.read("/etc/mnttab").unwrap_or_default())
             .into_iter()

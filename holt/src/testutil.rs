@@ -143,3 +143,29 @@ impl Tree {
             .file(&format!("/dev/{name}"), slice)
     }
 }
+
+/// A document kept as holt/tests/fixtures/DIR/NAME.json: pretty, its
+/// `generated` and `version` replaced (GENERATED, VERSION), as holt_schema.py
+/// takes a golden; checked against the file, or written again with
+/// BKO_HOLT_JSON_GOLDEN=bless.
+pub fn golden_json(dir: &str, name: &str, v: &crate::json::Value) {
+    let mut v = v.clone();
+    if let crate::json::Value::Obj(kv) = &mut v {
+        for (k, x) in kv.iter_mut() {
+            match k.as_str() {
+                "generated" => *x = crate::json::Value::from("GENERATED"),
+                "version" => *x = crate::json::Value::from("VERSION"),
+                _ => {}
+            }
+        }
+    }
+    let text = v.pretty() + "\n";
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(dir).join(format!("{name}.json"));
+    if std::env::var("BKO_HOLT_JSON_GOLDEN").as_deref() == Ok("bless") {
+        std::fs::create_dir_all(path.parent().expect("a fixtures directory")).expect("make the fixtures directory");
+        std::fs::write(&path, &text).expect("write the golden");
+        return;
+    }
+    let want = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e} (BKO_HOLT_JSON_GOLDEN=bless writes it)", path.display()));
+    assert_eq!(text, want, "{}: the document changed (BKO_HOLT_JSON_GOLDEN=bless writes it again)", path.display());
+}

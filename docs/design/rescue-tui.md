@@ -1509,7 +1509,9 @@ All approved by the user on 2026-11-19 as recommended.
    `tomllib`, but bko-rescue is Rust with no crates, and Python is only on
    the Linux and Haiku images.  So whoever reads it (D11) needs a small
    TOML-subset reader of its own (~150 lines, with its own limits and
-   fuzz-style tests).  Or the stick's settings move to JSON.
+   fuzz-style tests).  Or the stick's settings move to JSON.  Until it's
+   decided, `bko-holt stick --json` (RT10k) ignores the file and says so
+   (holt-json.md, "bko-holt-stick").
 5. **A GateTest2 layer** (`gate:rescue`: the cargo tests and the pty runs),
    in Test2's plan, which other sessions are changing?
 6. **The palette:** Whiptail's (as above), or something of our own?  RT3

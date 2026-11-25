@@ -1,0 +1,22 @@
+{
+  "format": "bko-holt-recovery",
+  "schema": 1,
+  "version": "VERSION",
+  "generated": "GENERATED",
+  "dry_run": false,
+  "ok": false,
+  "words": 12,
+  "expected": 12,
+  "problem": "unknown_words",
+  "unknown": [
+    {
+      "position": 7,
+      "short": false,
+      "suggest": ["ribbon"]
+    }
+  ],
+  "checksum_ok": null,
+  "written": false,
+  "error": null
+}
+

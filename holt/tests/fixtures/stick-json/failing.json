@@ -1,0 +1,184 @@
+{
+  "format": "bko-holt-stick",
+  "schema": 1,
+  "version": "VERSION",
+  "generated": "GENERATED",
+  "dry_run": false,
+  "boot_disk": {
+    "node": "sdc",
+    "found_by": "cdrom_mount"
+  },
+  "config": {
+    "state": "ok",
+    "partition": 3,
+    "label": "BACKOTTER",
+    "why": null,
+    "dev": "/dev/sdc3"
+  },
+  "image": {
+    "image_id": "6f1c2c1e-5b0e-4a51-9d8e-2a3c8f4e7b10",
+    "platform": "linux",
+    "built": "2026-11-20T10:00:00Z",
+    "system_schemas": [1]
+  },
+  "stick": {
+    "stick_id": "9d8c7b6a-0000-4000-8000-000000000001",
+    "name": null
+  },
+  "here": {
+    "dmi_uuid": null
+  },
+  "machines": [
+    {
+      "install_id": "0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90",
+      "path": "backotter/machines/0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90/system.json",
+      "state": "checksum_bad",
+      "why": "backotter/machines/0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90/system.json doesn't match its .sha256: damaged, or edited by hand",
+      "schema": 1,
+      "known_schema": true,
+      "hostname": "lovelace2",
+      "os": {
+        "id": "debian",
+        "version_id": "13"
+      },
+      "written": "2026-11-22T01:00:11Z",
+      "sequence": 42,
+      "dmi_uuid": "",
+      "this_computer": false,
+      "repository": {
+        "kind": "sftp",
+        "url": "sftp://nas.local/backotter/lovelace2"
+      },
+      "repository_id": "a3f9",
+      "keyboard": null,
+      "time": null,
+      "password_hint": null
+    },
+    {
+      "install_id": "1c2d3e4f-5a6b-4c7d-8e9f-a0b1c2d3e4f5",
+      "path": "backotter/machines/1c2d3e4f-5a6b-4c7d-8e9f-a0b1c2d3e4f5/system.json",
+      "state": "schema_unknown",
+      "why": "its schema is 2; this stick reads 1",
+      "schema": 2,
+      "known_schema": false,
+      "hostname": "babbage",
+      "os": {
+        "id": "debian",
+        "version_id": "13"
+      },
+      "written": "2026-11-22T01:00:11Z",
+      "sequence": 42,
+      "dmi_uuid": "",
+      "this_computer": false,
+      "repository": {
+        "kind": "sftp",
+        "url": "sftp://nas.local/backotter/babbage"
+      },
+      "repository_id": "a3f9",
+      "keyboard": null,
+      "time": null,
+      "password_hint": null
+    },
+    {
+      "install_id": "c0000000-0000-0000-0000-000000000000",
+      "path": "backotter/machines/c0000000-0000-0000-0000-000000000000/system.json",
+      "state": "checksum_missing",
+      "why": "backotter/machines/c0000000-0000-0000-0000-000000000000/system.json.sha256 is missing",
+      "schema": 1,
+      "known_schema": true,
+      "hostname": "c",
+      "os": {
+        "id": "debian",
+        "version_id": "13"
+      },
+      "written": "2026-11-22T01:00:11Z",
+      "sequence": 42,
+      "dmi_uuid": "",
+      "this_computer": false,
+      "repository": {
+        "kind": "sftp",
+        "url": "sftp://nas.local/backotter/c"
+      },
+      "repository_id": "a3f9",
+      "keyboard": null,
+      "time": null,
+      "password_hint": null
+    },
+    {
+      "install_id": "d0000000-0000-0000-0000-000000000000",
+      "path": "backotter/machines/d0000000-0000-0000-0000-000000000000/system.json",
+      "state": "unreadable",
+      "why": "backotter/machines/d0000000-0000-0000-0000-000000000000/system.json isn't JSON",
+      "schema": null,
+      "known_schema": false,
+      "hostname": null,
+      "os": {
+        "id": null,
+        "version_id": null
+      },
+      "written": null,
+      "sequence": null,
+      "dmi_uuid": null,
+      "this_computer": false,
+      "repository": null,
+      "repository_id": null,
+      "keyboard": null,
+      "time": null,
+      "password_hint": null
+    },
+    {
+      "install_id": "e0000000-0000-0000-0000-000000000000",
+      "path": "backotter/machines/e0000000-0000-0000-0000-000000000000/system.json",
+      "state": "unreadable",
+      "why": "backotter/machines/e0000000-0000-0000-0000-000000000000/system.json names install ID ffffffff-0000-0000-0000-000000000000, not its directory's",
+      "schema": null,
+      "known_schema": false,
+      "hostname": null,
+      "os": {
+        "id": null,
+        "version_id": null
+      },
+      "written": null,
+      "sequence": null,
+      "dmi_uuid": null,
+      "this_computer": false,
+      "repository": null,
+      "repository_id": null,
+      "keyboard": null,
+      "time": null,
+      "password_hint": null
+    },
+    {
+      "install_id": "f0000000-0000-0000-0000-000000000000",
+      "path": "backotter/machines/f0000000-0000-0000-0000-000000000000/system.json",
+      "state": "checksum_bad",
+      "why": "backotter/machines/f0000000-0000-0000-0000-000000000000/system.json.sha256 isn't sha256sum's line (64 hex digits, then the file's name)",
+      "schema": 1,
+      "known_schema": true,
+      "hostname": "f",
+      "os": {
+        "id": "debian",
+        "version_id": "13"
+      },
+      "written": "2026-11-22T01:00:11Z",
+      "sequence": 42,
+      "dmi_uuid": "",
+      "this_computer": false,
+      "repository": {
+        "kind": "sftp",
+        "url": "sftp://nas.local/backotter/f"
+      },
+      "repository_id": "a3f9",
+      "keyboard": null,
+      "time": null,
+      "password_hint": null
+    }
+  ],
+  "notes": [
+    {
+      "code": "settings_ignored",
+      "text": "backotter/settings.toml isn't read yet (bko-holt has no TOML reader: holt-json.md, open question 4): its name and repository_url overrides are ignored"
+    }
+  ]
+}
+

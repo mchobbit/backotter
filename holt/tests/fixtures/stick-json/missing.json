@@ -1,0 +1,23 @@
+{
+  "format": "bko-holt-stick",
+  "schema": 1,
+  "version": "VERSION",
+  "generated": "GENERATED",
+  "dry_run": false,
+  "boot_disk": null,
+  "config": {
+    "state": "missing",
+    "partition": null,
+    "label": null,
+    "why": "this system wasn't started from a BackOtter rescue stick: it has no /cdrom/.disk/backotter.json",
+    "dev": null
+  },
+  "image": null,
+  "stick": null,
+  "here": {
+    "dmi_uuid": null
+  },
+  "machines": [],
+  "notes": []
+}
+

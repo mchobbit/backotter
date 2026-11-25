@@ -9,6 +9,8 @@
 //! of each candidate (RT10d).  The status document is status.rs's
 //! (RT10e), made with header and line here.  The writing stages' events
 //! (RT10f, RT10g) are made here and written by exec.rs as they happen.
+//! `bko-holt stick --json`'s document is stick.rs's (RT10k), and
+//! `recovery-words`' recoverycmd.rs's (RT10p).
 //! Text mode never comes here: everything is behind `--json` or the
 //! variable.
 
@@ -30,11 +32,12 @@ pub const NO_COMMIT_VAR: &str = "BKO_HOLT_NO_COMMIT";
 /// What `features` in the api document names: the parts of the protocol
 /// this bko-holt has, so a screen needing a later one can say "not on this
 /// stick".  Grows with RT10's steps.
-pub const FEATURES: &[&str] = &["no_commit_env", "stop", "progress", "candidates", "sizes"];
+pub const FEATURES: &[&str] = &["no_commit_env", "stop", "progress", "candidates", "sizes", "stick", "recovery_words"];
 
 /// The documents this bko-holt writes, each with the schemas it writes.
-/// Grows with RT10's steps (plan: RT10c, status: RT10e, events: RT10f).
-pub const DOCUMENTS: &[(&str, &[u64])] = &[("plan", &[SCHEMA]), ("status", &[SCHEMA]), ("events", &[SCHEMA]), ("error", &[SCHEMA])];
+/// Grows with RT10's steps (plan: RT10c, status: RT10e, events: RT10f,
+/// stick: RT10k, recovery: RT10p).
+pub const DOCUMENTS: &[(&str, &[u64])] = &[("plan", &[SCHEMA]), ("status", &[SCHEMA]), ("events", &[SCHEMA]), ("stick", &[SCHEMA]), ("recovery", &[SCHEMA]), ("error", &[SCHEMA])];
 
 /// `bko-holt-error`'s codes (holt-json.md, "bko-holt-error").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,10 +50,12 @@ pub enum ErrorCode {
     ArchMismatch,
     SchemaUnknown,
     JsonNotHere,
+    /// recovery-words' OUT isn't a new file in a private directory (RT10p).
+    OutUnsafe,
 }
 
 impl ErrorCode {
-    pub const ALL: [ErrorCode; 8] = [
+    pub const ALL: [ErrorCode; 9] = [
         ErrorCode::BadArgs,
         ErrorCode::NoCommit,
         ErrorCode::LayoutUnreadable,
@@ -59,6 +64,7 @@ impl ErrorCode {
         ErrorCode::ArchMismatch,
         ErrorCode::SchemaUnknown,
         ErrorCode::JsonNotHere,
+        ErrorCode::OutUnsafe,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -71,6 +77,7 @@ impl ErrorCode {
             ErrorCode::ArchMismatch => "arch_mismatch",
             ErrorCode::SchemaUnknown => "schema_unknown",
             ErrorCode::JsonNotHere => "json_not_here",
+            ErrorCode::OutUnsafe => "out_unsafe",
         }
     }
 }
@@ -1081,7 +1088,7 @@ mod tests {
     #[test]
     fn error_document() {
         let codes: Vec<&str> = ErrorCode::ALL.iter().map(|c| c.as_str()).collect();
-        assert_eq!(codes, ["bad_args", "no_commit", "layout_unreadable", "layout_not_json", "layout_refused", "arch_mismatch", "schema_unknown", "json_not_here"]);
+        assert_eq!(codes, ["bad_args", "no_commit", "layout_unreadable", "layout_not_json", "layout_refused", "arch_mismatch", "schema_unknown", "json_not_here", "out_unsafe"]);
         let d = error_doc(2, ErrorCode::BadArgs, "bko-holt load: unknown argument \"--frob\"\n");
         assert!(d.ends_with('\n') && d.matches('\n').count() == 1, "{d}");
         let v = crate::json::parse(&d).unwrap();

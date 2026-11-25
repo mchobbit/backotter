@@ -430,7 +430,7 @@ Unchanged, plus one under `--json` only:
 
 ```json
 {"format": "bko-holt-api", "schema": 1, "version": "0.3.0",
- "documents": {"plan": [1], "status": [1], "events": [1], "stick": [1], "error": [1]},
+ "documents": {"plan": [1], "status": [1], "events": [1], "stick": [1], "recovery": [1], "error": [1]},
  "features": ["no_commit_env", "stop", "progress", "candidates", "sizes",
               "open_stage", "fit_per_disk"],
  "platform": {"os": "linux", "arch": "x86_64"},
@@ -498,7 +498,8 @@ asked for.
 unsupported OS, a dump made without root), `arch_mismatch`,
 `schema_unknown` (a `--json=N` this bko-holt doesn't write),
 `json_not_here` (`--json` on a command that doesn't take it: `dump`,
-`report-bug`).  `text` is the line text mode prints on stderr, without the
+`report-bug`), `out_unsafe` (`recovery-words`' OUT isn't a new file in a
+private directory, RT10p).  `text` is the line text mode prints on stderr, without the
 usage that follows it.  A reader following an events file must take a
 first line with `format` `bko-holt-error` as the whole stream and show its
 `text` (the demo fails it today as "an event with no \"event\"").
@@ -850,14 +851,16 @@ Every event has `event`.  The rest:
 `bko-holt stick --json`: the config partition of the disk this system
 booted from, read the way `stick-config.md`'s "Finding the config at
 boot" says (the boot disk only, never a scan for the label), mounted
-nowhere (read through the FAT code bko-holt has, *Check* that it reads
-directories and files, not only boot sectors, at RT10k).
+nowhere: read through the whole disk's device at the partition's offset by
+a FAT reader of bko-holt's own (`src/fatfs.rs`: the dump's `probe/fat.rs`
+reads boot sectors only, the *Check* settled at RT10k).
 
 ```json
 {"format": "bko-holt-stick", "schema": 1, "version": "0.3.0", "generated": "…", "dry_run": false,
  "boot_disk": {"node": "sdc", "found_by": "cdrom_mount"},
- "config": {"state": "ok", "partition": 3, "label": "BACKOTTER", "why": null},
- "stick": {"stick_id": "…", "name": "drawer stick"},
+ "config": {"state": "ok", "partition": 3, "label": "BACKOTTER", "why": null, "dev": "/dev/sdc3"},
+ "image": {"image_id": "6f1c…", "platform": "linux", "built": "…", "system_schemas": [1]},
+ "stick": {"stick_id": "…", "name": null},
  "here": {"dmi_uuid": "5a6b…"},
  "machines": [
    {"install_id": "0b7e…", "path": "backotter/machines/0b7e…/system.json",
@@ -866,21 +869,67 @@ directories and files, not only boot sectors, at RT10k).
     "written": "2026-11-22T01:00:11Z", "sequence": 42, "dmi_uuid": "4c4c4544-…",
     "this_computer": false,
     "repository": {"kind": "sftp", "url": "sftp://nas.local/backotter/lovelace"},
-    "repository_id": "a3f9…", "keyboard": {"…": "the dump's section"}, "time": {"…": "the dump's section"},
+    "repository_id": "a3f9…", "keyboard": null, "time": null,
     "password_hint": null}
- ]}
+ ],
+ "notes": [{"code": "settings_ignored", "text": "backotter/settings.toml isn't read yet …"}]}
 ```
 
-- `config.state`: `ok`, `missing`, `damaged` (fsck-level), `two_sticks`
-  (illumos: two disks match the marker).  `machines[].state`: `ok`,
-  `checksum_bad`, `checksum_missing`, `schema_unknown`, `unreadable`; any
-  but `ok` can't be chosen.
-- `settings.toml` overrides need a TOML reader in bko-holt (rescue-tui's
-  open question 4).  Until that's decided, `stick --json` ignores
-  `settings.toml` and says so in a `notes` entry.
+- **The boot disk** (`found_by`): Linux, the disk casper mounted at
+  /cdrom (`cdrom_mount`, mountinfo, then sysfs for partition N's start and
+  size, as `stick/linux/config-checks.sh`); FreeBSD, NetBSD, OpenBSD and
+  DragonFly, the disk the root file system is on (`root_mount`: a GEOM
+  label through `glabel status`, a wedge through `dkctl`, a DUID through
+  `hw.disknames`, a devfs alias through its link or its device number);
+  Haiku, /boot's (`boot_mount`); illumos, whose root is in RAM, the disk
+  whose partition N has the marker's size and, in its first sector, its
+  label and serial (`marker_scan`), and two such disks are `two_sticks`.
+  Partition N is the table's entry N (MBR slot N-1).  The marker is
+  `/cdrom/.disk/backotter.json` on Linux, `/boot/.disk/…` on Haiku,
+  `/.disk/…` elsewhere.
+- `config.state`: `ok`; `missing` (no marker: not started from a stick;
+  no partition N: a file-copying writer, or a CD); `damaged` (partition N
+  of another size, not FAT, another FAT serial or label, stick.json
+  missing, not JSON or for another image: repartitioned, reformatted or
+  damaged); `two_sticks` (illumos: two disks match the marker);
+  `unreadable` (not root, or the disk can't be opened).  `why` says which,
+  in words, null with `ok`.  Not `ok`: `stick` is null and `machines`
+  empty.  `dev` is partition N's own device where the system names one
+  (`/dev/sdc3`, `/dev/da0s3`, `/dev/dk2`, `/dev/sd0i`,
+  `/dev/dsk/c2t0d0s3`, `/dev/disk/usb/0/0/2`), for bko-rescue's restore
+  logs; null when it can't tell.
+- `machines[]`, one per directory of `backotter/machines/`, sorted by
+  name, at most 64 (more: note `machines_over_limit`).  `state`: `ok`,
+  `checksum_bad` (the file doesn't match its `.sha256`, or that isn't
+  `sha256sum`'s line), `checksum_missing`, `schema_unknown` (a schema
+  this bko-holt or the image's `system_schemas` doesn't read),
+  `unreadable` (missing, over 64 MiB, not JSON, not `backotter-system`,
+  its `machine.install_id` not its directory's, a string field over 4 KiB
+  or a `keyboard`/`time` section over 16 KiB); any but `ok` can't be
+  chosen, and `why` says why.  A damaged copy that still parses gives its
+  fields (the hostname it names), so the screen can name it.
+  `this_computer` compares `dmi_uuid` with `here.dmi_uuid` (case aside);
+  `here.dmi_uuid` is Linux's (sysfs), null elsewhere, as the plan's
+  `here`, so off Linux no row is "this computer" yet.
+- `keyboard` and `time` are system.json's top-level sections of those
+  names passed on as they are, null until the backup tool writes them
+  (RT10l's dump sections): the screens then say US English and UTC.
+  `password_hint` is system.json's top-level `password_hint`
+  (rescue-screens' open question 2; the key is `stick.rs`'s `HINT_KEY`).
+- `settings.toml` overrides need a TOML reader in bko-holt (open
+  question 4).  Until that's decided, `stick --json` ignores
+  `settings.toml` and says so in a `notes` entry (`settings_ignored`):
+  `stick.name` is null (the name is settings.toml's) and no
+  `repository_url` override is applied (decided at RT10k, as written here).
+- Exit 0 when `config.state` is `ok`, 1 when not (the document says why),
+  2 for bad arguments (`bko-holt-error`).  Allowed under
+  `BKO_HOLT_NO_COMMIT` (it reads only).  `--sysroot DIR` reads a Linux
+  tree instead, for tests (as dump's).
 - The layout itself isn't in the document: bko-rescue copies
   `system.json` to `/run/bko-rescue/layout.json` for load (*Check* how
-  `system.json` embeds the dump: the backup tool isn't built).
+  `system.json` embeds the dump: the backup tool isn't built; and how
+  bko-rescue copies a file off a partition it can't read itself: "What
+  RT10k and RT10p found").
 - `password_hint` is text the user wrote and may name things a report
   shouldn't hold: bko-rescue gives it to report-bug as text to strip
   (`--strip-file`, RT10i: a file of strings the Redactor replaces as
@@ -896,16 +945,31 @@ from bko-rescue, at most 1 KiB): the recovery key screen's check, by
 
 ```json
 {"format": "bko-holt-recovery", "schema": 1, "version": "0.3.0", "generated": "…", "dry_run": false,
- "ok": false, "words": 12, "unknown": [{"position": 7, "suggest": ["absorb", "abstract"]}],
- "checksum_ok": null, "written": false}
+ "ok": false, "words": 12, "expected": 12, "problem": "unknown_words",
+ "unknown": [{"position": 7, "short": false, "suggest": ["ribbon"]}],
+ "checksum_ok": null, "written": false, "error": null}
 ```
 
+- `problem`: null with `ok`, else `unknown_words` (`unknown` lists them:
+  the position among the words typed, from 1; `short`, fewer than 4
+  letters and the start of several words; `suggest`), `count` (all on the
+  list, but `words` isn't `expected`), `checksum` (twelve list words that
+  don't add up: `checksum_ok` false).  `checksum_ok` is true with `ok`,
+  null when the words never got that far.
 - With `ok`, the password goes to OUT: a new file (`O_CREAT|O_EXCL`,
   0600) in a directory of bko-holt's effective user with no group or other
   bits (bko-rescue's `k/`), no trailing newline; `written` true.  Without
   `ok`, nothing is written.  The words and the password never appear in
   the document.  `suggest` is at most three list words, by edit distance,
-  only for a word not on the list.
+  only for a word not on the list.  A write that fails after `ok` is exit
+  1 with `written` false and `error` saying why (the file removed).
+- OUT is checked before a word is read: an OUT that isn't absolute, is
+  there already, or is in a directory that isn't a real one of ours with
+  no group or other bits is exit 2, `bko-holt-error` code `out_unsafe`.
+  A terminal on stdin, or more than 1 KiB, is exit 2, `bad_args`.
+- Exit 0: `ok` and written; 1: not a recovery key (or the write failed);
+  2: bad arguments.  Without `--json` it refuses (exit 2): the hand tool is
+  `bko-recovery-words`, which isn't shipped.
 - Allowed under `BKO_HOLT_NO_COMMIT` (it writes no disk).
 - Ubuntu Core's `old_passphrase` path is `recovery-key-file OUT` as it is:
   the key on its stdin, a pipe from bko-rescue, and OUT a new file in the
@@ -1899,6 +1963,66 @@ commits, and slackware15 for a private write:
   partition ("no record that load wrote it").  The record leaves the DUID
   out there, as before; the plan hash keeps it (the question above).
 
+### What RT10k and RT10p found
+
+Built 2026-11-25: `bko-holt stick --json` (`src/stick.rs`, a read-only FAT
+reader `src/fatfs.rs`, `other::load::raw_disks` taken out of `scan` for
+it) and `bko-holt recovery-words OUT --json` (`src/recoverycmd.rs`);
+`stick` and `recovery` in the api document's `documents`, `stick` and
+`recovery_words` in its `features`, the error code `out_unsafe`.  Tested
+by unit tests (FAT16 images with long names, chains that loop or leave
+the volume, every config and machine state, FreeBSD's root by its GEOM
+label, illumos' marker scan and two sticks, the device names off Linux;
+the recovery verdicts on BIP39's vector, OUT's checks), goldens in
+`holt/tests/fixtures/stick-json` and `recovery-json`, `tests/json_cli.rs`
+(both as programs, under `BKO_HOLT_NO_COMMIT` too), the gate's cargo test
+and golden plans (110 plans, 0 differ) on cinqcent, and holt_schema.py
+(the two documents added) over the corpus, the fixtures and every
+scenario.  The fake answers `recovery-words` by the words on its stdin and
+writes OUT as bko-holt does (its `stdin` and `out` files); the `stick-*`
+scenarios are recorded by `testvm/rescue/record-stick.py` from a real
+bko-holt on config partitions `stick/marker.py` made (256 MiB FAT16, as the
+Linux image's) with machines put on by mtools, for RT11.
+
+- **The Check settled:** `probe/fat.rs` reads boot sectors only; the
+  directories and files are fatfs.rs's (FAT12, 16 and 32, long names by
+  their checksum, every cluster and size checked, each read limited).
+- **Decided here** (each in one place, for the user to change): exit 1
+  when the config isn't `ok`; a fifth `config.state`, `unreadable` (not
+  root, a disk that won't open); `config.dev` and `image` added;
+  `password_hint`, `keyboard` and `time` read from system.json's top level
+  (`stick.rs`'s `HINT_KEY`; the sections null until the backup tool
+  writes them); at most 64 machines, 64 MiB a system.json, 4 KiB a field,
+  16 KiB a section (`stick.rs`'s consts); a damaged copy that parses still
+  names itself; recovery's `problem`, `expected`, `short` and `error`; at
+  most 3 suggestions (`recoverycmd.rs`'s `SUGGEST_MAX`); without `--json`
+  both commands refuse (no text form).
+- **Found, not fixed (for RT11, RT12 and the backup tool's spec):**
+  - *The layout's copy.*  "bko-rescue copies system.json to
+    /run/bko-rescue/layout.json", but D11 put the FAT reading in bko-holt
+    so bko-rescue needn't: it can mount `config.dev` read-only (it mounts
+    it read-write for restore logs anyway) and copy the file, which then
+    isn't the bytes bko-holt checksummed; or `stick` grows a `--copy
+    INSTALL_ID OUT` that writes the checked bytes to a new private file.
+    And `backotter-system` isn't a layout load takes (`format` `bko-holt`):
+    how system.json carries the dump is the backup tool's to say.  RT12
+    needs both answered.
+  - *The recovery key screen's completion.*  The screen fills in a word
+    after four letters and names a word that can't be on the list as it is
+    typed: that needs BIP39's list in bko-rescue, which J21 kept in holt.
+    The list isn't secret: `recovery-words --list` (the 2048 words on
+    stdout), or `bip39-english.txt` taken by `include_str!` (D2 amended for
+    a data file).  The check itself stays here.
+  - *This computer off Linux.*  `here.dmi_uuid` is Linux's only, as the
+    plan's: FreeBSD's and DragonFly's `kenv smbios.system.uuid`, NetBSD's
+    `machdep.dmi.system-uuid`, OpenBSD's `hw.uuid` and illumos' `smbios
+    -t 1` would give it; until then no row is "backed up from this
+    computer" off Linux.
+  - *The image boot-test* the Steps table names isn't run: no image has
+    this bko-holt yet (the next image round's boot-test can run `bko-holt
+    stick --json` in `stick/*/config-checks.sh` beside its checks).
+    marker.py's partition with mtools' long names stood in.
+
 ## Decisions
 
 - **J1. How bko-rescue finds bko-holt's protocol.**  `bko-holt --version
@@ -2079,7 +2203,9 @@ commits, and slackware15 for a private write:
 3. **Desktop layouts** in the dump: read `kxkbrc` and dconf under
    `/home` (rescue-screens' open question 12)?  Specified behind a flag.
 4. **`stick --json` and `settings.toml`:** a TOML-subset reader in
-   bko-holt (rescue-tui's open question 4), or settings in JSON?
+   bko-holt (rescue-tui's open question 4), or settings in JSON?  Until
+   then (RT10k, as specified): ignored, with the note `settings_ignored`;
+   the stick's name is null and no `repository_url` override applies.
 5. **A dry run's archiver:** run `rustic-bko restore --dry-run` in the dry
    run's `restore` stage, so the dry run shows the real file count and
    size (it reads the repository only)?  Not specified; it would make the

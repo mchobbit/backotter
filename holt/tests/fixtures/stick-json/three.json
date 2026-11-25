@@ -1,0 +1,115 @@
+{
+  "format": "bko-holt-stick",
+  "schema": 1,
+  "version": "VERSION",
+  "generated": "GENERATED",
+  "dry_run": false,
+  "boot_disk": {
+    "node": "sdc",
+    "found_by": "cdrom_mount"
+  },
+  "config": {
+    "state": "ok",
+    "partition": 3,
+    "label": "BACKOTTER",
+    "why": null,
+    "dev": "/dev/sdc3"
+  },
+  "image": {
+    "image_id": "6f1c2c1e-5b0e-4a51-9d8e-2a3c8f4e7b10",
+    "platform": "linux",
+    "built": "2026-11-20T10:00:00Z",
+    "system_schemas": [1]
+  },
+  "stick": {
+    "stick_id": "9d8c7b6a-0000-4000-8000-000000000001",
+    "name": null
+  },
+  "here": {
+    "dmi_uuid": "4c4c4544-0000-1111-2222-333344445555"
+  },
+  "machines": [
+    {
+      "install_id": "0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90",
+      "path": "backotter/machines/0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90/system.json",
+      "state": "ok",
+      "why": null,
+      "schema": 1,
+      "known_schema": true,
+      "hostname": "lovelace",
+      "os": {
+        "id": "debian",
+        "version_id": "13"
+      },
+      "written": "2026-11-22T01:00:11Z",
+      "sequence": 42,
+      "dmi_uuid": "4C4C4544-0000-1111-2222-333344445555",
+      "this_computer": true,
+      "repository": {
+        "kind": "sftp",
+        "url": "sftp://nas.local/backotter/lovelace"
+      },
+      "repository_id": "a3f9",
+      "keyboard": null,
+      "time": null,
+      "password_hint": "the boat's name"
+    },
+    {
+      "install_id": "1c2d3e4f-5a6b-4c7d-8e9f-a0b1c2d3e4f5",
+      "path": "backotter/machines/1c2d3e4f-5a6b-4c7d-8e9f-a0b1c2d3e4f5/system.json",
+      "state": "ok",
+      "why": null,
+      "schema": 1,
+      "known_schema": true,
+      "hostname": "babbage",
+      "os": {
+        "id": "debian",
+        "version_id": "13"
+      },
+      "written": "2026-11-22T01:00:11Z",
+      "sequence": 42,
+      "dmi_uuid": "11111111-2222-3333-4444-555555555555",
+      "this_computer": false,
+      "repository": {
+        "kind": "sftp",
+        "url": "sftp://nas.local/backotter/babbage"
+      },
+      "repository_id": "a3f9",
+      "keyboard": null,
+      "time": null,
+      "password_hint": null
+    },
+    {
+      "install_id": "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6",
+      "path": "backotter/machines/2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6/system.json",
+      "state": "ok",
+      "why": null,
+      "schema": 1,
+      "known_schema": true,
+      "hostname": "hopper",
+      "os": {
+        "id": "debian",
+        "version_id": "13"
+      },
+      "written": "2026-11-22T01:00:11Z",
+      "sequence": 42,
+      "dmi_uuid": "",
+      "this_computer": false,
+      "repository": {
+        "kind": "sftp",
+        "url": "sftp://nas.local/backotter/hopper"
+      },
+      "repository_id": "a3f9",
+      "keyboard": null,
+      "time": null,
+      "password_hint": null
+    }
+  ],
+  "notes": [
+    {
+      "code": "settings_ignored",
+      "text": "backotter/settings.toml isn't read yet (bko-holt has no TOML reader: holt-json.md, open question 4): its name and repository_url overrides are ignored"
+    }
+  ]
+}
+

@@ -23,8 +23,8 @@ stic1  testvm/stictest1/drive.py (its argv as given: --private-copy, --hosts, --
        then waits and tries again.  The verdicts: EDIR/stic1/results.tsv.
 bs2    testvm/backshot2/bs2 --hosts H,H WORD ARG... (it starts the queues detached and prints its
        run, RUN), then every POLL: each host's processes of RUN and its queue.  A resume restarts a
-       host's queue (bs2-host queue RUN --slots N, from its queue.next) when nothing of RUN runs
-       there and the queue isn't through.  EDIR/run: RUN; EDIR/bs2-status.json: the verdicts.
+       host's queue (bs2-host queue RUN --slots N, from its queue.next, with the entry's WORD as
+       BS2_WORD: its rows' word) when nothing of RUN runs there and the queue isn't through.  EDIR/run: RUN; EDIR/bs2-status.json: the verdicts.
 
 Environment: T2_BATCH_HT1_FARM, T2_BATCH_DRIVE, T2_BATCH_BS2 (the tools, split like a shell
 line; tests), T2_BATCH_KIND_POLL (s, default 30), T2_BATCH_PATIENCE_S (a host silent this long
@@ -400,6 +400,10 @@ def bs2_poll(host, run):
 
 
 RUN_LINE = re.compile(r"\brun (\S+): bs2 status\b")
+# bs2's words (testvm/backshot2/bs2lib/ledger.py WORDS): a resume restarts a queue with the entry's
+# as BS2_WORD, as bs2 started it, so its cases' ledger rows are still written (bs2 writes none
+# without a word).
+BS2_WORDS = ("BackShot2Alpine", "BackShot2", "BackShot2All")
 
 
 def bs2(edir, hosts, args, resume=False):
@@ -434,7 +438,9 @@ def bs2(edir, hosts, args, resume=False):
                     and (real_root() or os.environ.get("T2_BATCH_BS2_HOST")):
                 n = H.limit(h, "bs2_slots") or 2
                 log = f"{BS2_ROOT}/logs/{run}-resume-{h}.log"
-                r = host_cmd(h, f"mkdir -p {BS2_ROOT}/logs && cd ~/backotter-work && setsid -f bash -c {shlex.quote(f'{BS2_HOST} queue {run} --slots {n}')}"
+                word = next((x for x in args if x in BS2_WORDS), None)
+                wenv = f"BS2_WORD={word} " if word else ""
+                r = host_cmd(h, f"mkdir -p {BS2_ROOT}/logs && cd ~/backotter-work && setsid -f bash -c {shlex.quote(f'{wenv}{BS2_HOST} queue {run} --slots {n}')}"
                                 f" > {log} 2>&1 < /dev/null")
                 say(f"{h}: its queue had stopped at {got['next']} of {got['lines']}: restarted (exit {r.rc}, log {log})")
                 alive += 1

@@ -33,7 +33,8 @@ names another, so two sessions' runs never share a copy).
                                     the same as JSON.  Its cases' ledger rows say word BackShot2All
   bs2 replay CASE [--tier N]        one case again, exactly
   bs2 shrink CASE [--tier N]        a failing case down to its smallest; saved in the corpus
-  bs2 soak CASE N                   CASE N times at tier 1 (reported as K of N)
+  bs2 soak CASE N                   CASE N times at tier 1 (reported as K of N); replay and soak
+                                    run no word: no ledger rows unless BS2_LEDGER=1 (passed on)
   bs2 leftovers [SET] [plan]        the leftovers set (bs2lib/leftovers.py): its restores in order
                                     onto one disk, on one host (chopin; --hosts H names another
                                     that has all three UEFI sources), detached; log in
@@ -86,7 +87,8 @@ repository copied, as before), BS2_RESCUER_STATE and BS2_FAST_DOWN set to 0 here
 each off on the hosts.
 
 Results: each host's /bkoscratch/backshot2/runs/RUN/ and Test2's ledger
-(family bs2, word the run's: BS2_WORD).  "plan" prints the cases, tiers, each host's share and time, and runs nothing.
+(family bs2, word the run's: BS2_WORD; a case by hand on a host, with no word, writes
+none unless BS2_LEDGER=1: bs2lib/ledger.py).  "plan" prints the cases, tiers, each host's share and time, and runs nothing.
 bs2-host takes ports 2943-2949 on whichever host runs it (the queue's slots the
 first of 2943-2948, a source's preparing and a tier 1 by hand 2949): keep them free on
 every host.
@@ -547,8 +549,9 @@ REUSE_VARS = ("BS2_REUSE_SOURCE", "BS2_REUSE_BACKUP", "BS2_REPO_BIND", "BS2_RESC
 # default is /bkoscratch/backshot2/bin/bko-holt), so a fix can be run before it is in bin/;
 # and BS2_WORD, the word of the run (main() sets it), which each case's ledger rows name
 # (bs2lib/ledger.py word_of(): through light()'s draws and sweeps, the queue's cmp-run.sh and
-# sudo -E, to bs2-host tier1 and tier0's write_rows).
-PASS_VARS = REUSE_VARS + ("BS2_HOLT", "BS2_WORD")
+# sudo -E, to bs2-host tier1 and tier0's write_rows); and BS2_LEDGER, =1 to write the rows of
+# cases no word runs (replay, soak: ledger.py recording()).
+PASS_VARS = REUSE_VARS + ("BS2_HOLT", "BS2_WORD", "BS2_LEDGER")
 
 
 def reuse_env():

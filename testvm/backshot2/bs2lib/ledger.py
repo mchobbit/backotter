@@ -12,7 +12,19 @@ HARNESS rows with extra.bs2 saying which, never a FAIL.
 A row's word is the bs2 word whose run made it: the writer's WORD, else
 BS2_WORD in the environment (bs2 sets it to the word it runs and passes it on
 to the hosts with the rest of PASS_VARS: BackShot2Alpine, BackShot2 or
-BackShot2All), else BackShot2Alpine (a case run by hand on a host).
+BackShot2All), else BackShot2Alpine (DEFAULT_WORD).
+
+Rows are written only for a word that runs (2026-11-25: a fixer's cases by
+hand once left 400 HARNESS rows under a word that wasn't running, and the
+ledger is append-only).  write_rows() writes when (recording()):
+  - BS2_NO_LEDGER is set: never (it always wins; leftovers and shrink set it);
+  - BS2_WORD (or WORD) is one of WORDS: yes;
+  - BS2_WORD is anything else: no (a row would name a word that doesn't exist);
+  - BS2_WORD unset and BS2_LEDGER=1: yes, as DEFAULT_WORD (a case by hand that
+    is meant to count);
+  - else (a case by hand: replay, soak, shrink, a fixer's tier1): no.
+Every no but BS2_NO_LEDGER's says so on stderr, once a process, and why.
+done() (the PASS skip) reads the ledger whatever these say.
 """
 
 import glob
@@ -43,6 +55,12 @@ def cell(source, case_hash, tier):
 
 WORD_ENV = "BS2_WORD"
 DEFAULT_WORD = "BackShot2Alpine"
+# The bs2 words whose runs write rows (bs2's main(): BackShot2Alpine and BackShot2; BackShot2All
+# is bs2lib/allrun.py's WORD; t2lib/batchkinds.py's BS2_WORDS repeats them for a batch's resume).
+WORDS = (DEFAULT_WORD, "BackShot2", "BackShot2All")
+LEDGER_ENV = "BS2_LEDGER"        # =1: write a case by hand's rows too (as DEFAULT_WORD without BS2_WORD)
+NO_LEDGER_ENV = "BS2_NO_LEDGER"  # set: never write (wins over both)
+_noted = []                      # (the note said already, in this process)
 
 
 def word_of(word=None):
@@ -88,9 +106,32 @@ def rows(run, source, gen, results, tier, wall, bins, word=None):
     return out
 
 
+def recording(word=None):
+    """(whether write_rows() writes, why not: None when it does or BS2_NO_LEDGER says no);
+    the rule is the module's docstring's."""
+    if os.environ.get(NO_LEDGER_ENV):
+        return False, None
+    w = word or os.environ.get(WORD_ENV)
+    if w:
+        if w in WORDS:
+            return True, None
+        return False, (f"{WORD_ENV}={w!r} isn't a BackShot2 word ({', '.join(WORDS)}): set it to the word that runs, "
+                       f"or unset it and set {LEDGER_ENV}=1 to record a case by hand as {DEFAULT_WORD}")
+    if os.environ.get(LEDGER_ENV) == "1":
+        return True, None
+    return False, (f"{WORD_ENV} isn't set, so no BackShot2 word is running (a case by hand); "
+                   f"set {LEDGER_ENV}=1 to record them (word {DEFAULT_WORD})")
+
+
 def write_rows(run, source, gen, results, tier, wall, bins, word=None):
-    """Appends the rows; best effort (a ledger problem is noted, never fatal)."""
-    if os.environ.get("BS2_NO_LEDGER"):
+    """Appends the rows when recording() says so (else a note on stderr, once a process);
+    best effort (a ledger problem is noted, never fatal)."""
+    ok, why = recording(word)
+    if not ok:
+        if why and not _noted:
+            _noted.append(why)
+            print(f"bs2: no ledger rows written (run {run}, {source}, tier {tier}; none in this process): {why}",
+                  file=sys.stderr)
         return
     try:
         from t2lib import ledger, host_ledger_file as ledger_path

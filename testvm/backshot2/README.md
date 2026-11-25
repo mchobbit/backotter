@@ -245,6 +245,18 @@ load itself.
 | A9 the BackShot2All word | `bs2` (`BackShot2All`), `bs2lib/allrun.py` (counts, SKIPPED, report, verdict), `tests/test_bs2_all.py` |
 | Slimming the big sources | `bs2lib/slim.py` (which, the step's script, slim.json), `slim-sizes.tsv` (their room), bs2-host's `prepare_with_ht1()` and `slim_own_boot()`, `tests/test_bs2_slim.py` |
 
+**Ledger rows** (`bs2lib/ledger.py`, 2026-11-25): a case writes Test2
+ledger rows only while a BackShot2 word runs, that is when `BS2_WORD` is
+`BackShot2Alpine`, `BackShot2` or `BackShot2All`.  `bs2` sets it for its
+word and passes it to the hosts, and a t2 batch's resume restarts a queue
+with it.  A case run by hand (replay, soak, a fixer's `bs2-host tier1` or
+`tier0`) writes none and says so once on stderr, unless `BS2_LEDGER=1` is
+set; then its rows say word `BackShot2Alpine` (the default) when `BS2_WORD`
+isn't set.  An unknown `BS2_WORD` writes none (with a note), even with
+`BS2_LEDGER=1`.  `BS2_NO_LEDGER` always wins: no rows, no note (the
+leftovers set and shrink set it).  The ledger is append-only, so stray rows
+can't be removed later.  The PASS skip (`done()`) reads the ledger as before.
+
 Unit tests: `python3 -m unittest discover -s testvm/backshot2/tests`
 (~80 s: the smoke test draws 300 cases from each Linux corpus dump).
 

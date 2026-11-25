@@ -214,6 +214,8 @@ class Kinds(unittest.TestCase):
                              PATH=os.path.join(FIX, "bin") + os.pathsep + os.environ["PATH"])   # (setsid -f)
         self.assertEqual(rc, 0, out)
         self.assertIn("its queue had stopped at 2 of 4: restarted", out)
+        # (with the word, as bs2 started it: without one its cases write no ledger rows)
+        self.assertRegex(rd(os.path.join(self.tmp, "ssh.log")), r"setsid -f bash -c 'BS2_WORD=BackShot2Alpine ")   # (the log cuts a command at 300)
         self.assertEqual(json.loads(rd(os.path.join(self.edir, "bs2-status.json")))["verdicts"], {"PASS": 4})
         self.assertEqual(len(self.calls("BS2")), 2)          # the word itself not run again
 

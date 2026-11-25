@@ -1502,7 +1502,7 @@ mod tests {
     }
 
     /// haiku6's dump with a 256 MiB ESP after its BFS volume, unimaged
-    /// (Haiku's dump images none): the format stage makes it with Haiku's
+    /// (as the dump leaves a mounted one): the format stage makes it with Haiku's
     /// mkfs -t fat, then fat-set gives it the source's volume ID, media
     /// byte and hidden sectors; no newfs_msdos, which Haiku has none of.
     #[test]

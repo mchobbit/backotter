@@ -1,0 +1,15 @@
+load
+*
+--json
+--only
+status
+--repo
+*
+--password-file
+*
+--map
+vda=*
+--map
+vdb=*
+--snapshot
+*

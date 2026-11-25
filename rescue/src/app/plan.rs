@@ -220,7 +220,14 @@ pub struct Plan {
     pub disks: Vec<Pair>,
     pub candidates: Vec<Disk>,
     pub keys: Vec<Key>,
-    pub tokens: usize,
+    /// The tokens a restore can't keep, to enrol again after the first
+    /// start: (container, kind: `systemd-tpm2`, `systemd-fido2`, ...).
+    pub tokens: Vec<(String, String)>,
+    /// This computer was started in UEFI mode and its variables can be
+    /// written (`here.efivars`); None when the plan doesn't say.
+    pub efivars: Option<bool>,
+    /// The programs the assemble stage runs (the Restore's label for it).
+    pub assemble: Vec<String>,
     pub reformat: Vec<Reformat>,
     pub fit: Vec<Fitted>,
     pub problems: Vec<Problem>,
@@ -386,7 +393,15 @@ pub fn read_plan(v: &Value) -> Result<Plan, String> {
         disks,
         candidates,
         keys,
-        tokens: v.arr_at(&["tokens"]).len(),
+        tokens: v.arr_at(&["tokens"]).iter().map(|t| (st(t, "container").unwrap_or_default(), st(t, "kind").unwrap_or_default())).collect(),
+        efivars: v.at(&["here", "efivars"]).and_then(Value::as_bool),
+        assemble: v
+            .arr_at(&["stages"])
+            .iter()
+            .filter(|x| x.get_str("name") == Some("assemble"))
+            .flat_map(|x| x.arr_at(&["commands"]).iter())
+            .filter_map(|c| c.arr_at(&["argv"]).first().and_then(Value::as_str).map(|p| p.rsplit('/').next().unwrap_or(p).to_string()))
+            .collect(),
         reformat,
         fit,
         problems: coded("problems"),

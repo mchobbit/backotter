@@ -61,6 +61,17 @@ stderr and, under --json, a `bko-holt-error` document (code `no_commit`) on
 stdout.  A failed check is exit 97 and a line on stderr; no call matching is
 exit 98.
 
+A `load` call's events are streamed with `start`'s pid made this process's
+own, so bko-rescue's stop reaches the fake.  SIGTERM while they stream ends
+them as bko-holt's stop does (holt-json.md, J7): a command running (a `cmd`
+without `would` and its `cmd_done`) gets its `cmd_done` with status 130, the
+archiver's under SIGINT, then `stopping` and `end` with `stopped` true, exit
+5.  With $FAKE_BKO_HOLT_RUN_DIR naming a directory, it stands for bko-holt's
+RUN_DIR: an api document's `run_dir` says it, and a `--commit` load holds
+RUN_DIR/load.lock while it streams, `{"pid": N, "start": S}` (S /proc's
+starttime, as bko-holt's on Linux), taken with O_EXCL and removed at its
+end.
+
 It then leaves a watcher behind that waits for this process to be gone
 and checks each key file is removed within $FAKE_BKO_HOLT_REMOVE_SECS
 (default 10).  Everything goes to $FAKE_BKO_HOLT_LOG, if set, a JSON
@@ -78,6 +89,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import stat
 import sys
 import time
@@ -310,23 +322,67 @@ def read(call_dir, name):
         return None
 
 
+class Stopped(Exception):
+    pass
+
+
+def on_term(sig, frame):
+    raise Stopped()
+
+
+def starttime():
+    """This process's start time as bko-holt's lock records it on Linux:
+    /proc/self/stat's field 22."""
+    try:
+        with open("/proc/self/stat") as f:
+            return f.read().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
+
+
+def emit(obj_or_line):
+    line = obj_or_line if isinstance(obj_or_line, str) else json.dumps(obj_or_line, separators=(",", ":"))
+    sys.stdout.write(line + "\n")
+    sys.stdout.flush()
+
+
 def stream(events):
+    """The events, a line at a time; a SIGTERM ends them as bko-holt's stop
+    does.  The exit status when stopped, else None."""
     delay = 0.05
-    for raw in events.decode().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        w = line.split()
-        if w[0] == "sleep":
-            time.sleep(float(w[1]))
-            continue
-        if w[0] == "delay":
-            delay = float(w[1])
-            continue
-        json.loads(line)          # a fixture's typo fails here, not in bko-rescue
-        sys.stdout.write(line + "\n")
-        sys.stdout.flush()
-        time.sleep(delay)
+    pending = None      # (stage, n) of a command running: no cmd_done yet
+    signal.signal(signal.SIGTERM, on_term)
+    t0 = time.time()
+    try:
+        for raw in events.decode().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            w = line.split()
+            if w[0] == "sleep":
+                time.sleep(float(w[1]))
+                continue
+            if w[0] == "delay":
+                delay = float(w[1])
+                continue
+            e = json.loads(line)          # a fixture's typo fails here, not in bko-rescue
+            if e.get("event") == "start":
+                e["pid"] = os.getpid()
+                line = json.dumps(e, separators=(",", ":"))
+            elif e.get("event") == "cmd":
+                pending = None if e.get("would") else (e.get("stage"), e.get("n"))
+            elif e.get("event") in ("cmd_done", "stage_done", "failed"):
+                pending = None
+            emit(line)
+            time.sleep(delay)
+    except Stopped:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        emit({"event": "stopping", "signal": "SIGTERM"})
+        if pending is not None:
+            emit({"event": "cmd_done", "stage": pending[0], "n": pending[1], "status": 130, "signal": None, "secs": 0.5})
+        emit({"event": "end", "exit": 5, "stopped": True, "secs": round(time.time() - t0, 2)})
+        return 5
+    return None
 
 
 def main():
@@ -402,17 +458,39 @@ def main():
     entry.update(keys=keys)
     log(entry)
     watch(watched, os.getpid())
+    run_dir = os.environ.get("FAKE_BKO_HOLT_RUN_DIR")
     out = read(d, "stdout")
     if out:
+        if run_dir:
+            try:
+                doc = json.loads(out)
+                if isinstance(doc, dict) and doc.get("format") == "bko-holt-api":
+                    doc["run_dir"] = run_dir
+                    out = (json.dumps(doc, separators=(",", ":")) + "\n").encode()
+            except ValueError:
+                pass
         sys.stdout.buffer.write(out)
         sys.stdout.flush()
     ev = read(d, "events")
+    stopped = None
     if ev:
-        stream(ev)
+        lock = None
+        if run_dir and "--commit" in argv:
+            lock = os.path.join(run_dir, "load.lock")
+            fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.write(fd, json.dumps({"pid": os.getpid(), "start": starttime()}).encode())
+            os.close(fd)
+        try:
+            stopped = stream(ev)
+        finally:
+            if lock:
+                os.remove(lock)
     err = read(d, "stderr")
     if err:
         sys.stderr.buffer.write(err)
         sys.stderr.flush()
+    if stopped is not None:
+        return stopped
     code = read(d, "exit")
     return int(code.decode().strip()) if code else 0
 

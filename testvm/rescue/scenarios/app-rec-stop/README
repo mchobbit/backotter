@@ -1,0 +1,4 @@
+Built by ../../make-disk-fixtures.py from rec-debian13-stack's recorded documents
+and streams (RT12's flow, one --through close --commit run, isn't recorded:
+its stream is the staged run's, stage by stage, under one start and end).
+Stopped in the copy; stopped.events is the stream as the fake ends it then.

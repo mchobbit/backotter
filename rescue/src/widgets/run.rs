@@ -235,6 +235,12 @@ impl<I: Io> FullScreen<I> {
                 Event::Key(k, _) => match d.key(k) {
                     Did::Press(i) => return Ok(Ran::Act(d.buttons[i].act)),
                     Did::Pick => return Ok(Ran::Act(Act::Ok)),
+                    Did::Back => return Ok(Ran::Act(Act::Back)),
+                    Did::Letter(c) if d.hidden.iter().any(|b| b.key == Some(c)) => {
+                        if let Some(b) = d.hidden.iter().find(|b| b.key == Some(c)) {
+                            return Ok(Ran::Act(b.act));
+                        }
+                    }
                     Did::Letter(c) if d.chrome.first => match c {
                         'l' => self.change_profile(true),
                         'c' => self.change_profile(false),

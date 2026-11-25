@@ -35,6 +35,10 @@ fn fixture(rel: &str) -> Vec<u8> {
     fs::read(&p).unwrap_or_else(|e| panic!("{p}: {e}"))
 }
 
+/// A Restore's load: its command line, its environment's additions, how
+/// it was started.
+type Started = (String, Vec<(String, String)>, sys::How);
+
 /// A command line, its environment's additions, its stdin.
 type Ran = (String, Vec<(String, String)>, Option<Vec<u8>>);
 
@@ -52,6 +56,18 @@ struct Seen {
     holt_hidden: usize,
     /// The scenario calls that answered `load`, in order.
     loads: Vec<String>,
+    /// The Restore's loads: (command line, its environment, how), in order.
+    started: Vec<Started>,
+    /// The pids SIGTERM went to.
+    terms: Vec<u32>,
+    /// The pid of the load started last, from its events' start.
+    load_pid: Option<u64>,
+    /// bko-holt's lock, when not the load's own (a lock naming another).
+    lock: Option<String>,
+    /// Paths that are there (the stick's partition).
+    exists: Vec<PathBuf>,
+    /// Restarts and power offs run.
+    offs: Vec<String>,
 }
 
 struct Fake {
@@ -69,6 +85,81 @@ struct Fake {
     /// their argv as fake-bko-holt answers them, and the system.json its
     /// read-only mount of the config partition finds.
     disks: String,
+    /// Calls answered in turn, as fake-bko-holt's FAKE_BKO_HOLT_STATE does:
+    /// the first matching one not answered yet, then the last again.
+    in_turn: bool,
+}
+
+/// A scenario's events file as fake-bko-holt streams it: its lines but
+/// comments, `sleep` and `delay`.
+fn event_lines(b: &[u8]) -> VecDeque<String> {
+    String::from_utf8_lossy(b)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("sleep ") && !l.starts_with("delay "))
+        .map(str::to_string)
+        .collect()
+}
+
+/// A Restore's load, from a scenario's call: its events a few lines a
+/// look, its exit once they are all read; a stop ends it as bko-holt's
+/// does (stopping, end 5).
+struct FakeLoad {
+    lines: VecDeque<String>,
+    exit: Option<i32>,
+    stderr: Vec<u8>,
+    seen: Rc<RefCell<Seen>>,
+    detached: bool,
+}
+
+impl sys::Running for FakeLoad {
+    fn read(&mut self, buf: &mut Vec<u8>, _max: usize) -> bool {
+        for _ in 0..25 {
+            match self.lines.pop_front() {
+                Some(l) => {
+                    buf.extend_from_slice(l.as_bytes());
+                    buf.push(b'\n');
+                }
+                None => break,
+            }
+        }
+        self.lines.is_empty()
+    }
+    fn ended(&mut self, _pid: Option<u32>) -> Option<Option<i32>> {
+        self.lines.is_empty().then_some(self.exit)
+    }
+    fn term(&mut self, pid: u32) -> bool {
+        self.seen.borrow_mut().terms.push(pid);
+        self.lines.clear();
+        self.lines.push_back(r#"{"event":"stopping","signal":"SIGTERM"}"#.into());
+        self.lines.push_back(r#"{"event":"end","exit":5,"stopped":true,"secs":1.0}"#.into());
+        self.exit = Some(5);
+        true
+    }
+    fn stderr(&self) -> Vec<u8> {
+        self.stderr.clone()
+    }
+    fn detached(&self) -> bool {
+        self.detached
+    }
+    fn kill(&mut self) {
+        self.lines.clear();
+        self.exit = None;
+    }
+}
+
+/// Copy a tree (the stick's partition, as a mount showed it).
+fn copy_tree(from: &Path, to: &Path) {
+    let Ok(rd) = fs::read_dir(from) else { return };
+    fs::create_dir_all(to).unwrap();
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            copy_tree(&p, &to.join(e.file_name()));
+        } else {
+            fs::copy(&p, to.join(e.file_name())).unwrap();
+        }
+    }
 }
 
 /// fnmatch's `*` and `?`, as fake-bko-holt matches a call's argv.
@@ -81,6 +172,9 @@ fn glob(p: &[u8], s: &[u8]) -> bool {
         _ => false,
     }
 }
+
+/// bko-holt's log, as the fake has it.
+const FAKE_LOG: &str = "==== bko-holt load /run/bko-rescue/layout.json --json --through close\n# ---- partition ----\nwipefs --all /dev/vdb\n";
 
 /// lovelace's settings on the stick (stick-three's path for it).
 const LOVELACE_PATH: &str = "backotter/machines/0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90/system.json";
@@ -131,20 +225,13 @@ impl Fake {
                     write_new(Path::new(&a[2]), text.as_bytes()).unwrap();
                     ok(b"Wrote it.\n".to_vec())
                 }
-                "load" => {
-                    let dir = format!("{FIX}/scenarios/{}", self.disks);
-                    let mut calls: Vec<PathBuf> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.join("argv").is_file()).collect();
-                    calls.sort();
-                    for c in calls {
-                        let want: Vec<String> = fs::read_to_string(c.join("argv")).unwrap().lines().map(str::to_string).collect();
-                        if want.len() == a.len() && want.iter().zip(&a).all(|(w, x)| glob(w.as_bytes(), x.as_bytes())) {
-                            self.seen.borrow_mut().loads.push(c.file_name().unwrap().to_string_lossy().to_string());
-                            let code = fs::read_to_string(c.join("exit")).ok().and_then(|x| x.trim().parse().ok()).unwrap_or(0);
-                            return Output { code: Some(code), stdout: fs::read(c.join("stdout")).unwrap(), ..Output::default() };
-                        }
+                "load" => match self.call(&a) {
+                    Some(c) => {
+                        let code = fs::read_to_string(c.join("exit")).ok().and_then(|x| x.trim().parse().ok()).unwrap_or(0);
+                        Output { code: Some(code), stdout: fs::read(c.join("stdout")).unwrap_or_default(), ..Output::default() }
                     }
-                    Output { code: Some(98), stderr: format!("fake: no call of {} matches {a:?}", self.disks).into_bytes(), ..Output::default() }
-                }
+                    None => Output { code: Some(98), stderr: format!("fake: no call of {} matches {a:?}", self.disks).into_bytes(), ..Output::default() },
+                },
                 _ => Output { code: Some(2), ..Output::default() },
             },
             "rustic-bko" => {
@@ -175,13 +262,49 @@ impl Fake {
                 ok(Vec::new())
             }
             "umount" => {
+                // What was written there (a restore log) is on the stick.
+                let m = PathBuf::from(a.last().unwrap());
+                if m.join("backotter").is_dir() && !m.join(LOVELACE_PATH).is_file() {
+                    copy_tree(&m.join("backotter"), &self.base.join("stick/backotter"));
+                }
                 let _ = fs::remove_dir_all(PathBuf::from(a.last().unwrap()).join("backotter/machines"));
                 let _ = fs::remove_dir(PathBuf::from(a.last().unwrap()).join("backotter"));
                 ok(Vec::new())
             }
             "loadkeys" | "mount" => ok(Vec::new()),
+            "gzip" => {
+                let f = PathBuf::from(a.last().unwrap());
+                let mut gz = b"gzip:".to_vec();
+                gz.extend(fs::read(&f).unwrap());
+                write_new(&PathBuf::from(format!("{}.gz", f.display())), &gz).unwrap();
+                fs::remove_file(&f).unwrap();
+                ok(Vec::new())
+            }
+            "reboot" | "poweroff" | "shutdown" => {
+                self.seen.borrow_mut().offs.push(format!("{prog} {}", a.join(" ")).trim().to_string());
+                ok(Vec::new())
+            }
             p => panic!("the fake runs no {p}"),
         }
+    }
+
+    /// The scenario's call that answers load's argv `a`.
+    fn call(&mut self, a: &[String]) -> Option<PathBuf> {
+        let dir = format!("{FIX}/scenarios/{}", self.disks);
+        let mut calls: Vec<PathBuf> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.join("argv").is_file()).collect();
+        calls.sort();
+        let hits: Vec<PathBuf> = calls
+            .into_iter()
+            .filter(|c| {
+                let want: Vec<String> = fs::read_to_string(c.join("argv")).unwrap().lines().map(str::to_string).collect();
+                want.len() == a.len() && want.iter().zip(a).all(|(w, x)| glob(w.as_bytes(), x.as_bytes()))
+            })
+            .collect();
+        let name = |c: &PathBuf| c.file_name().unwrap().to_string_lossy().to_string();
+        let mut seen = self.seen.borrow_mut();
+        let c = if self.in_turn { hits.iter().find(|c| !seen.loads.contains(&name(c))).or(hits.last()).cloned() } else { hits.first().cloned() }?;
+        seen.loads.push(name(&c));
+        Some(c)
     }
 }
 
@@ -192,6 +315,41 @@ impl Sys for Fake {
         let o = self.answer(&c, stdin.as_deref());
         Box::new(Ready(o))
     }
+    fn start_load(&mut self, c: Cmd, how: sys::How, _events: &Path, _stderr: &Path) -> Result<Box<dyn sys::Running>, String> {
+        self.seen.borrow_mut().started.push((c.line(), c.env.clone(), how));
+        let a: Vec<String> = c.args.iter().map(|x| x.to_string_lossy().to_string()).collect();
+        let call = self.call(&a);
+        let (lines, exit, stderr) = match &call {
+            Some(d) => {
+                let lines = event_lines(&fs::read(d.join("events")).unwrap_or_default());
+                let exit = fs::read_to_string(d.join("exit")).ok().and_then(|x| x.trim().parse().ok()).unwrap_or(0);
+                (lines, exit, fs::read(d.join("stderr")).unwrap_or_default())
+            }
+            None => (VecDeque::new(), 98, format!("fake: no call of {} matches {a:?}", self.disks).into_bytes()),
+        };
+        let pid = lines.front().and_then(|l| crate::json::parse(l).ok()).and_then(|v| v.get_u64("pid"));
+        self.seen.borrow_mut().load_pid = pid;
+        Ok(Box::new(FakeLoad { lines, exit: Some(exit), stderr, seen: self.seen.clone(), detached: how == sys::How::Detached }))
+    }
+    fn attach(&mut self, _events: &Path, _stderr: &Path) -> Result<Box<dyn sys::Running>, String> {
+        Err("the fake attaches to nothing".into())
+    }
+    fn alive(&self, _pid: u32) -> bool {
+        false
+    }
+    fn proc_start(&self, _pid: u32) -> Option<String> {
+        None
+    }
+    fn exists(&self, path: &Path) -> bool {
+        self.seen.borrow().exists.iter().any(|p| p == path)
+    }
+    fn read_tail(&self, path: &Path, max: usize) -> Option<Vec<u8>> {
+        if path == Path::new("/run/bko-holt/log/load.log") {
+            return Some(FAKE_LOG.as_bytes().to_vec());
+        }
+        let b = fs::read(path).ok()?;
+        Some(b[b.len().saturating_sub(max)..].to_vec())
+    }
     fn shell(&mut self) {
         self.seen.borrow_mut().shells += 1;
     }
@@ -201,6 +359,10 @@ impl Sys for Fake {
     fn read(&self, path: &Path, max: usize) -> Option<Vec<u8>> {
         if path.starts_with(time::zoneinfo_dir()) {
             return None;
+        }
+        if path == Path::new("/run/bko-holt/load.lock") {
+            let s = self.seen.borrow();
+            return s.lock.clone().or_else(|| s.load_pid.map(|p| format!(r#"{{"pid": {p}, "start": null}}"#))).map(String::into_bytes);
         }
         fs::read(path).ok().filter(|b| b.len() <= max)
     }
@@ -267,8 +429,9 @@ fn t_with(holt: &str, rustic: &str, wh: Where, dry_run: bool, f: impl FnOnce(&mu
         rustic: rustic.into(),
         config: None,
         seen: seen.clone(),
-        tools: vec!["bko-holt", "rustic-bko", "ckbcomp", "loadkeys", "mount", "umount"],
+        tools: vec!["bko-holt", "rustic-bko", "ckbcomp", "loadkeys", "mount", "umount", "gzip", "reboot", "poweroff"],
         disks: "app-lovelace".into(),
+        in_turn: false,
     };
     f(&mut fake);
     let session = Session::new(&base).unwrap();
@@ -585,9 +748,27 @@ fn rustics_failures_each_have_their_help() {
                 self.0.run_base()
             }
             fn sleep_ms(&mut self, _: u64) {}
+            fn start_load(&mut self, c: Cmd, how: sys::How, e: &Path, s: &Path) -> Result<Box<dyn sys::Running>, String> {
+                self.0.start_load(c, how, e, s)
+            }
+            fn attach(&mut self, e: &Path, s: &Path) -> Result<Box<dyn sys::Running>, String> {
+                self.0.attach(e, s)
+            }
+            fn alive(&self, p: u32) -> bool {
+                self.0.alive(p)
+            }
+            fn proc_start(&self, p: u32) -> Option<String> {
+                self.0.proc_start(p)
+            }
+            fn exists(&self, p: &Path) -> bool {
+                self.0.exists(p)
+            }
+            fn read_tail(&self, p: &Path, m: usize) -> Option<Vec<u8>> {
+                self.0.read_tail(p, m)
+            }
         }
         let base = t.base.0.clone();
-        let fake = Fake { base: base.clone(), holt: "stick-three".into(), version: None, stick: None, rustic: "lovelace".into(), disks: "app-lovelace".into(), config: None, seen: t.seen.clone(), tools: vec!["bko-holt", "rustic-bko"] };
+        let fake = Fake { base: base.clone(), holt: "stick-three".into(), version: None, stick: None, rustic: "lovelace".into(), disks: "app-lovelace".into(), config: None, seen: t.seen.clone(), tools: vec!["bko-holt", "rustic-bko"], in_turn: false };
         t.app = App::new(Box::new(Failing(fake, stderr)), Session::new(&base).unwrap(), Opts { holt: None, rustic: "rustic-bko".into(), dry_run: false }, LINUX);
         let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, B(B_RAW), Reply::Ok, Back, Reply::Quit]]));
         assert_eq!(t.app.run(&mut ui), Exit::Quit, "{title}");
@@ -925,7 +1106,7 @@ fn the_offer_is_once_per_machine_with_no_install_id_too() {
 // ---- RT12: Disks, Passphrases, Resume, Review ----
 
 use super::disks::{B_DONE, B_KEEP, B_SHRINK};
-use super::review::{B_ADVANCED, B_COMMANDS, B_GO_ON, B_LEAVE, B_START_AGAIN, B_UNDO};
+use super::review::{B_ADVANCED, B_COMMANDS, B_GO_ON, B_START_AGAIN, B_UNDO};
 use Reply::{Choices, Secrets, Serials};
 
 /// Machine, the password, the newest backup: up to Disks' first plan.
@@ -966,9 +1147,9 @@ fn lovelace_from_disks_to_review() {
         &[Secrets(vec![pass.clone(), b"two wordz".to_vec()]), Secrets(vec![pass.clone(), pass.clone()]), P],
         // Review: a wrong serial, then the right ones.
         &[P, Serials(vec!["000000".into(), "xk7hpl".into()]), Serials(vec!["F3A9C1".into(), "XK7HPL".into()])],
-        &[B(B_LEAVE)],
+        &[P, Reply::Quit],
     ]));
-    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
     ui.done();
     assert_eq!(
         ui.titles()[3..],
@@ -981,7 +1162,7 @@ fn lovelace_from_disks_to_review() {
             "Passphrase 1 of 1",
             "Ready to restore",
             "Ready to restore",
-            "Next: the restore"
+            "Problem: the restore stopped at \"Make partitions\""
         ]
     );
     let d = ui.text("Where each disk goes", 0);
@@ -1032,7 +1213,6 @@ fn lovelace_from_disks_to_review() {
     ui.golden("Where each disk goes", 1, "disks-chosen");
     ui.golden("Passphrase 1 of 1", 0, "passphrase");
     ui.golden("Ready to restore", 0, "review");
-    ui.golden("Next: the restore", 0, "restore-next");
     drop(t.app);
     assert!(!key.exists() && !dir.exists(), "the key file is wiped with the session");
 }
@@ -1046,9 +1226,9 @@ fn the_kingstons_offer_then_review_says_the_shrink() {
         // Old disk 1's list, the Kingston: the offer's second plan.
         &[Pick(0), Pick(1), P, B(B_SHRINK), P],
         &[B(B_DONE), P, P, Secrets(vec![pass.clone(), pass.clone()]), P, P],
-        &[B(B_COMMANDS), P, Serials(vec!["A1F3C4".into(), "XK7HPL".into()]), B(B_LEAVE)],
+        &[B(B_COMMANDS), P, Serials(vec!["A1F3C4".into(), "XK7HPL".into()]), P, Reply::Quit],
     ]));
-    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
     ui.done();
     let offer = ui.flat("This disk is a little smaller", 0);
     assert!(offer.contains("KINGSTON SA400S37480G, is 480 GB: 20.0 GB smaller"), "{offer}");
@@ -1109,9 +1289,9 @@ fn recorded_debian13_resumes_on_the_disks_it_made() {
         &[B(B_DONE), P, P, Secrets(vec![pass.clone()]), P],
         // Neither has a serial: each its size and kernel name, which tell
         // the two alike apart.
-        &[B(B_GO_ON), P, Serials(vec!["12.9 GB".into(), "12.9gb".into()]), Serials(vec!["12.9 GB vdb".into(), "12.9gb VDC".into()]), B(B_LEAVE)],
+        &[B(B_GO_ON), P, Serials(vec!["12.9 GB".into(), "12.9gb".into()]), Serials(vec!["12.9 GB vdb".into(), "12.9gb VDC".into()]), P, Reply::Quit],
     ]));
-    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
     ui.done();
     let d = ui.text("Where each disk goes", 0);
     assert!(d.contains("Old disk 1: vda, 12.9 GB, the system") && d.contains("-> vdb, 12.9 GB, no serial"), "{d}");
@@ -1128,9 +1308,11 @@ fn recorded_debian13_resumes_on_the_disks_it_made() {
     assert!(review.contains("A disk with no serial of its own is confirmed by its size and name here instead, as its row shows: 12.9 GB vdb."), "{review}");
     let wrong = ui.flat("Ready to restore", 1);
     assert!(wrong.contains("Disk 1 has no serial of its own: type 12.9 GB vdb, its size and name."), "the size alone isn't it: {wrong}");
-    let run = only_run(&t);
-    assert_eq!(run.stage, holt_args::Stage::Only("assemble".into()), "Go on: status's next stage alone");
-    assert!(run.erase.is_empty(), "Go on erases nothing");
+    let stages: Vec<holt_args::Stage> = t.app.reviewed.iter().map(|l| l.stage.clone()).collect();
+    let want: Vec<holt_args::Stage> = ["assemble", "format", "mount", "restore", "boot", "close"].iter().map(|x| holt_args::Stage::Only(x.to_string())).collect();
+    assert_eq!(stages, want, "Go on: each stage from status's next, alone");
+    let run = t.app.reviewed[0].clone();
+    assert!(t.app.reviewed.iter().all(|l| l.erase.is_empty()), "Go on erases nothing");
     assert_eq!(t.seen.borrow().loads, ["10-plan", "11-plan", "14-status", "15-status", "13-plan"]);
     assert!(run.commit && run.expect_plan.is_some());
     ui.golden("Where each disk goes", 0, "disks-recorded");
@@ -1173,9 +1355,9 @@ fn a_dry_run_from_disks_to_review_never_commits() {
     let mut ui = Shots::new(script(&[
         &to_disks(),
         &[Pick(0), Pick(0), Pick(0), P, B(B_DONE), P, P, Secrets(vec![pass.clone(), pass.clone()]), P, P],
-        &[Serials(vec!["F3A9C1".into(), "XK7HPL".into()]), B(B_LEAVE)],
+        &[Serials(vec!["F3A9C1".into(), "XK7HPL".into()]), P, Reply::Quit],
     ]));
-    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
     ui.done();
     // Every screen's bko-holt command went through holt_args: lock 1, no
     // --commit; lock 2, BKO_HOLT_NO_COMMIT=1.
@@ -1193,8 +1375,11 @@ fn a_dry_run_from_disks_to_review_never_commits() {
     assert!(!a.contains(&"--commit".to_string()) && a.contains(&"--expect-plan".to_string()), "{a:?}");
     let r = ui.text("Ready to restore", 0);
     assert!(r.contains("< Show what would happen >") && r.contains("DRY RUN: nothing will be written"), "{r}");
-    let n = ui.flat("Next: the restore", 0);
-    assert!(n.contains("The dry run's walk through every command isn't in this bko-rescue yet"), "{n}");
+    // The Restore's run: a direct child, under the lock, no --commit.
+    let started = &seen.started;
+    assert_eq!(started.len(), 1, "{started:#?}");
+    assert!(!started[0].0.contains("--commit") && started[0].0.contains("--through close"), "{}", started[0].0);
+    assert!(started[0].1.contains(&("BKO_HOLT_NO_COMMIT".to_string(), "1".to_string())) && started[0].2 == sys::How::Child);
 }
 
 #[test]
@@ -1279,9 +1464,9 @@ fn start_again_asks_the_passphrase_twice_and_wipes_first() {
         &[B(B_DONE), P, P, Secrets(vec![once.clone()]), P],
         // Start again: the containers are made anew, so twice.
         &[B(B_START_AGAIN), Secrets(vec![new.clone(), new.clone()])],
-        &[P, Serials(vec!["12.9 GB vdb".into(), "12.9 GB vdc".into()]), B(B_LEAVE)],
+        &[P, Serials(vec!["12.9 GB vdb".into(), "12.9 GB vdc".into()]), P, Reply::Quit],
     ]));
-    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
     ui.done();
     assert!(!ui.text("Passphrase 1 of 1", 0).contains("Type it again"), "the resume's: once");
     let pp = ui.text("Passphrase 1 of 1", 1);
@@ -1292,9 +1477,11 @@ fn start_again_asks_the_passphrase_twice_and_wipes_first() {
     let r = ui.text("Ready to restore", 0);
     assert!(r.contains("ERASED  12.9 GB  vdb") && r.contains("ERASED  12.9 GB  vdc") && !r.contains("WRITTEN"), "{r}");
     assert!(ui.flat("Ready to restore", 0).contains("These disks will be ERASED"), "{r}");
-    assert_eq!(t.seen.borrow().loads, ["10-plan", "11-plan", "14-status", "15-status", "16-plan"]);
+    assert_eq!(t.seen.borrow().loads, ["10-plan", "11-plan", "14-status", "15-status", "12-plan"]);
     let review_plan = holt_lines(&t).last().unwrap().0.clone();
-    assert!(review_plan.contains(" --only partition ") && review_plan.matches(" --erase ").count() == 2, "{review_plan}");
+    // A plan, --through plan (`--only partition` would be that stage's dry
+    // run under --json), every target to be erased.
+    assert!(review_plan.contains(" --through plan ") && review_plan.matches(" --erase ").count() == 2, "{review_plan}");
     // The runs: nothing open, so --only partition, then --through close,
     // each with --erase, --commit and the plan's hash.
     let sha = t.app.plan.as_ref().unwrap().plan_sha256.clone();
@@ -1321,9 +1508,9 @@ fn only_start_again_after_a_stopped_copy() {
         &[B(B_DONE), P, P, Secrets(vec![once.clone()]), P],
         // Go on isn't there: its button number does nothing.
         &[B(B_GO_ON), B(B_START_AGAIN), Secrets(vec![new.clone(), new.clone()])],
-        &[P, Serials(vec!["12.9 GB vdb".into(), "12.9 GB vdc".into()]), B(B_LEAVE)],
+        &[P, Serials(vec!["12.9 GB vdb".into(), "12.9 GB vdc".into()]), P, Reply::Quit],
     ]));
-    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
     ui.done();
     let r = ui.flat("A restore was started here before", 0);
     assert!(r.contains("It can't be gone on with: vdb: this session's restore began there"), "{r}");
@@ -1477,4 +1664,226 @@ fn review_at_its_fullest() {
         assert!(screen.contains(want), "{want}: {screen}");
     }
     ui.golden("fullest", 0, "review-fullest");
+}
+
+// ---- RT12 part 2: Restore, Done, Failure ----
+
+use super::restore::{B_CANCEL, B_COMMANDS as B_SHOW, B_FIX as R_FIX, B_HELP, B_LEAVE, B_RAW as B_RAW_OUT, B_RESTART, B_STOP, B_TRY as R_TRY};
+
+/// app-rec-*: to Review, its serials typed: up to the Restore's first
+/// tick.
+fn to_restore(pass: &[u8]) -> Vec<Reply> {
+    script(&[
+        &to_disks(),
+        &[B(B_DONE), P, P, Secrets(vec![pass.to_vec(), pass.to_vec()]), P, P],
+        &[Serials(vec!["12.9 GB vdb".into(), "12.9 GB vdc".into()])],
+    ])
+}
+
+fn restore_t(scenario: &str, dry_run: bool) -> T {
+    // Every call answered in turn, as fake-bko-holt's FAKE_BKO_HOLT_STATE.
+    let s = scenario.to_string();
+    let version = dry_run.then(|| String::from_utf8(fixture("scenarios/app-dry/01-version/stdout")).unwrap());
+    t_with("stick-three", "lovelace", LINUX, dry_run, move |f| {
+        f.disks = s;
+        f.version = version;
+        f.in_turn = true;
+    })
+}
+
+#[test]
+fn a_restore_runs_to_done_and_saves_its_log() {
+    let mut t = restore_t("app-rec-restore", false);
+    let mut ui = Shots::new(script(&[&to_restore(b"for md1"), &[P, B(B_RESTART)]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    ui.done();
+    let sha = "d96eb1cb050075fea9a149802f66715587293889b6fbaa05015e53c0edfd54b1";
+    let seen = t.seen.borrow();
+    // One run: Review's arguments, --through close, the plan's hash,
+    // --commit, detached; no BKO_HOLT_NO_COMMIT.
+    assert_eq!(seen.started.len(), 1, "{:#?}", seen.started);
+    let (line, env, how) = &seen.started[0];
+    assert!(line.contains(" --through close ") && line.contains(&format!("--expect-plan {sha}")) && line.ends_with(" --commit"), "{line}");
+    assert!(line.matches(" --erase ").count() == 2 && *how == sys::How::Detached && env.is_empty(), "{line} {env:?}");
+    let done = ui.text("lovelace is restored", 0);
+    assert!(done.contains("[x] Make partitions           [x] Set up RAID and encryption"), "{done}");
+    assert!(done.contains("[x] Finish") && done.contains("< Restart >") && done.contains("< Power off >"), "{done}");
+    let flat = ui.flat("lovelace is restored", 0);
+    assert!(flat.contains("At the next start, type the passphrase you chose for the disks."), "{flat}");
+    assert!(flat.contains("The log is on the stick, in lovelace's folder.") && flat.contains("Remove the stick, then press Enter to restart into lovelace."), "{flat}");
+    // The log: gzipped, on the stick's partition, mounted read-write for
+    // it, in the machine's folder.
+    let log = t.base.0.join("stick/backotter/machines/0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90/restore-logs/20261123T142630Z.log.gz");
+    assert_eq!(fs::read(&log).unwrap(), format!("gzip:{FAKE_LOG}").into_bytes());
+    assert!(seen.ran.iter().any(|(l, _, _)| l.starts_with("/fake/bin/mount -t vfat -o rw,nosuid,nodev,noexec /dev/sdc3 ")), "the partition mounted read-write for the log");
+    assert_eq!(seen.offs, ["reboot"]);
+    drop(seen);
+    ui.golden("lovelace is restored", 0, "done");
+    // Its files are its own again: run.json gone, the session wiped with it.
+    assert!(!t.base.0.join("run.json").exists());
+    let dir = t.app.session.dir.clone();
+    drop(t.app);
+    assert!(!dir.exists(), "the session's files wiped once the load is gone");
+}
+
+#[test]
+fn restart_with_the_stick_in_asks_first() {
+    let mut t = restore_t("app-rec-restore", false);
+    t.seen.borrow_mut().exists.push(PathBuf::from("/dev/sdc3"));
+    let mut ui = Shots::new(script(&[&to_restore(b"for md1"), &[P, B(B_RESTART), Back, B(B_RESTART), B(super::restore::B_ANYWAY)]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    ui.done();
+    assert!(ui.flat("The stick is still in", 0).contains("Remove the stick first, or the computer may start from it again."));
+    assert_eq!(t.seen.borrow().offs, ["reboot"], "once, after Restart anyway");
+}
+
+#[test]
+fn a_dry_run_runs_every_command_as_would_and_writes_nothing() {
+    let mut t = restore_t("app-rec-dry", true);
+    let mut ui = Shots::new(script(&[&to_restore(b"for md1"), &[P, B(B_SHOW), P, B(B_LEAVE)]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    ui.done();
+    let seen = t.seen.borrow();
+    let (line, env, how) = &seen.started[0];
+    assert!(!line.contains("--commit") && line.contains(" --through close ") && line.matches(" --erase ").count() == 2, "lock 1, and J6's --erase: {line}");
+    assert!(env.contains(&("BKO_HOLT_NO_COMMIT".to_string(), "1".to_string())) && *how == sys::How::Child, "lock 2, a direct child");
+    let done = ui.flat("The dry run of lovelace is done", 0);
+    assert!(done.contains("Nothing was written: 92 commands would have run, and none did."), "{done}");
+    let screen = ui.text("The dry run of lovelace is done", 0);
+    assert!(screen.contains("DRY RUN: nothing will be written") && screen.contains("[~] Make it bootable") && screen.contains("[~] Finish"), "boot and close too (J11): {screen}");
+    assert!(!screen.contains("Restart") && !screen.contains("Power off"), "{screen}");
+    let cmds = ui.text("The commands that would run", 0);
+    assert!(cmds.contains("partition 1/25: "), "{cmds}");
+    // Nothing went to the stick: no read-write mount, no log.
+    assert!(!seen.ran.iter().any(|(l, _, _)| l.contains(" -o rw,")), "{:#?}", seen.ran);
+    assert!(!t.base.0.join("stick").exists() && !t.base.0.join("restore-logs").exists());
+    drop(seen);
+    ui.golden("The dry run of lovelace is done", 0, "dry-done");
+}
+
+#[test]
+fn a_dry_run_that_commits_is_stopped_at_once() {
+    let mut t = restore_t("app-rec-notdry", true);
+    let mut ui = Shots::new(script(&[&to_restore(b"for md1"), &[P, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    let f = ui.flat("Problem: the restore stopped at \"Make partitions\"", 0);
+    assert!(f.contains("bko-holt didn't run what was asked for"), "{f}");
+    assert!(!ui.titles().iter().any(|x| x.contains("is done")), "never Done");
+}
+
+#[test]
+fn a_failed_boot_has_its_help_raw_output_and_try_again() {
+    let mut t = restore_t("app-rec-fail", false);
+    let mut ui = Shots::new(script(&[
+        &to_restore(b"for md1"),
+        // Failure, Help, Raw output, back twice, then Try again: status,
+        // a plan, boot and close alone, Done.
+        &[P, B(B_HELP), B(B_RAW_OUT), P, Back, B(R_TRY), P, P, P, P, Reply::Quit],
+    ]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    ui.done();
+    let title = "Problem: the restore stopped at \"Make it bootable\"";
+    let f = ui.text(title, 0);
+    assert!(f.contains("[x] Copy your files back      [!] Make it bootable"), "{f}");
+    let flat = ui.flat(title, 0);
+    assert!(flat.contains("grub-install failed (exit status 1): grub-install: error: efibootmgr failed to register the boot entry: No such file or directory."), "{flat}");
+    assert!(flat.contains("Your backup is safe") && flat.contains("restore-logs/20261123T142630Z.log.gz"), "{flat}");
+    assert!(f.contains("< Help >") && f.contains("< Try again >") && f.contains("< Power off >"), "{f}");
+    let help = ui.flat("Problem: the boot loader couldn't be installed", 0);
+    assert!(help.contains("this computer refused the new entry") && help.contains("< Install without an entry >"), "{help}");
+    let raw = ui.text("What the command said", 0);
+    assert!(raw.contains("Command: chroot /mnt/bko-target grub-install") && raw.contains("Ended with: exit status 1"), "{raw}");
+    assert!(ui.titles().iter().any(|x| x == "lovelace is restored"), "{:?}", ui.titles());
+    let seen = t.seen.borrow();
+    let runs: Vec<&str> = seen.started.iter().map(|(l, _, _)| l.as_str()).collect();
+    assert_eq!(runs.len(), 3, "{runs:#?}");
+    assert!(runs[1].contains(" --only boot ") && runs[2].contains(" --only close ") && !runs[1].contains("--erase"), "{runs:#?}");
+    assert!(seen.loads.ends_with(&["30-status".to_string(), "13-plan".into(), "31-boot".into(), "32-close".into()]), "{:?}", seen.loads);
+    drop(seen);
+    ui.golden(title, 0, "failure");
+    ui.golden("Problem: the boot loader couldn't be installed", 0, "help-boot");
+}
+
+#[test]
+fn install_without_an_entry_asks_then_runs_boot_and_close() {
+    let mut t = restore_t("app-rec-fail", false);
+    let mut ui = Shots::new(script(&[&to_restore(b"for md1"), &[P, B(B_HELP), B(R_FIX), Reply::No, B(R_FIX), Reply::Yes, P, P, P, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    ui.done();
+    let seen = t.seen.borrow();
+    let runs: Vec<&str> = seen.started.iter().map(|(l, _, _)| l.as_str()).collect();
+    assert!(runs[1].contains(" --only boot ") && runs[1].contains(" --removable --no-nvram ") && runs[1].ends_with(" --commit"), "{runs:#?}");
+    assert!(runs[2].contains(" --only close ") && runs[2].contains(" --removable --no-nvram "), "{runs:#?}");
+    assert!(ui.titles().iter().any(|x| x == "lovelace is restored"), "{:?}", ui.titles());
+}
+
+#[test]
+fn cancel_asks_first_and_stop_signals_the_locks_pid() {
+    let mut t = restore_t("app-rec-stop", false);
+    let mut ui = Shots::new(script(&[&to_restore(b"for md1"), &[B(B_CANCEL), Back, B(B_CANCEL), B(B_STOP), P, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    ui.done();
+    let q = ui.text("Stop the restore?", 0);
+    assert!(q.contains("< Keep going >    < Stop >") || q.contains("< Keep going >"), "{q}");
+    let pid = t.seen.borrow().load_pid.unwrap() as u32;
+    assert_eq!(t.seen.borrow().terms, [pid], "SIGTERM once, to load's own pid as its lock names it");
+    let title = ui.titles().last().unwrap().clone();
+    assert!(title.starts_with("Problem: the restore stopped at \""), "{title}");
+    let f = ui.flat(&title, 0);
+    assert!(f.contains("Stopped by you.") && f.contains("[!]"), "{f}");
+    ui.golden("Stop the restore?", 0, "stop");
+}
+
+#[test]
+fn a_lock_naming_another_process_isnt_signalled() {
+    let mut t = restore_t("app-rec-stop", false);
+    t.seen.borrow_mut().lock = Some(r#"{"pid": 1, "start": null}"#.into());
+    let mut ui = Shots::new(script(&[&to_restore(b"for md1"), &[B(B_CANCEL), B(B_STOP), P, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    assert!(t.seen.borrow().terms.is_empty(), "no signal");
+    assert!(ui.flat("The restore couldn't be asked to stop", 0).contains("names another process"), "{:?}", ui.titles());
+}
+
+#[test]
+fn a_signal_during_a_detached_restore_keeps_its_files() {
+    let mut t = restore_t("app-rec-stop", false);
+    let mut ui = Shots::new(script(&[&to_restore(b"for md1"), &[Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    let dir = t.app.session.dir.clone();
+    assert!(t.base.0.join("run.json").exists(), "run.json says where its files are");
+    let rj = fs::read_to_string(t.base.0.join("run.json")).unwrap();
+    assert!(rj.contains(&dir.display().to_string()) && rj.contains("events-1"), "{rj}");
+    let pid = t.seen.borrow().load_pid.map(|p| p as u32);
+    assert_eq!(t.app.session.keep, Some(pid), "kept for load's pid, from its start");
+    // A load still running (a pid that is alive: ours, here) keeps them.
+    t.app.session.keep = Some(Some(std::process::id()));
+    drop(t.app);
+    assert!(dir.join("k0").exists() && dir.join("password").exists(), "the key files outlive bko-rescue, as load does");
+    sys::wipe_dir(&dir);
+}
+
+#[test]
+fn plain_mode_restore_transcript() {
+    let mut t = restore_t("app-rec-restore", false);
+    let typed = "1\ncorrect horse\n1\no\nfor md1\nfor md1\n12.9 GB vdb\n12.9 GB vdc\nr\n";
+    // Nothing more typed for an hour: the run goes on to its end.
+    let line = FakeLine::new(vec![crate::plain::tests::In::Bytes(typed.as_bytes().to_vec()), crate::plain::tests::In::Pause(3_600_000)]);
+    let mut pl = Plain::new(line, Lines::Utf8);
+    let r = t.app.run(&mut pl);
+    let out = pl.into_line().out;
+    assert!(matches!(r, Exit::Quit | Exit::Done(_)), "{r:?}\n{out}");
+    assert!(!out.contains('\x1b') && !out.contains("for md1"), "{out}");
+    let at = out.find("Choose [r, c, a, b]: Restore").unwrap_or(0);
+    // A stage's time is the run's own clock's: the same in every run as N.
+    let mut shown = String::new();
+    for l in out[at..].lines() {
+        let l = match l.find(": done in ") {
+            Some(i) => format!("{}: done in N s", &l[..i]),
+            None => l.to_string(),
+        };
+        shown.push_str(&l);
+        shown.push('\n');
+    }
+    golden("tests/screens/app-plain-restore.txt", &shown);
+    assert!(out.contains("[x] Copy your files back: done in"), "{out}");
 }

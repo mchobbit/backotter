@@ -1,0 +1,11 @@
+load
+*
+--json
+--through
+plan
+--repo
+*
+--password-file
+*
+--snapshot
+*

@@ -17,14 +17,15 @@
 //!   each is confirmed by the last six characters of its serial, typed
 //!   (case aside), or, with no serial of its own, by its size and kernel
 //!   name.  Restore's run is then Review's arguments with `--through
-//!   close --commit --expect-plan` (`Load::run_of`): RT12's second part
-//!   runs it.
-//! - Start again (J14's interim): Review plans `--only partition` with
-//!   every target in `--erase`, the stage that wipes them (with this
-//!   session's record `--through` skips it, and then would make anew over
-//!   the restore), and the runs are `--only close` when anything is
-//!   open, `--only partition`, `--through close`.  The containers are made
-//!   anew, so their passphrases are asked again, twice.
+//!   close --commit --expect-plan` (`Load::run_of`): restore.rs runs
+//!   it.
+//! - Start again (J14's interim): Review plans `--through plan` with
+//!   every target in `--erase` and shows each ERASED (with this session's
+//!   record the plan skips partition, so it says no target is wiped), and
+//!   the runs are `--only close` when anything is open, `--only
+//!   partition` (the stage that wipes them), `--through close`.  The
+//!   containers are made anew, so their passphrases are asked again,
+//!   twice.
 
 use crate::secret::Secret;
 use crate::text::{cap, Clean};
@@ -45,7 +46,6 @@ pub(crate) const B_ADVANCED: usize = 41;
 pub(crate) const B_GO_ON: usize = 42;
 pub(crate) const B_START_AGAIN: usize = 43;
 pub(crate) const B_UNDO: usize = 44;
-pub(crate) const B_LEAVE: usize = 45;
 
 /// Lines of the plan's text Commands shows, at most.
 pub const COMMANDS_MAX: usize = 20_000;
@@ -454,10 +454,13 @@ impl App {
     pub(crate) fn review_screen(&mut self, ui: &mut dyn Ui) -> Go {
         let go_on = self.resume == Some(true);
         let again = self.resume == Some(false);
-        // Start again's plan is its wiping run's: with this session's
-        // record `--through` skips partition (J14).
-        let stage = if again { Stage::Only("partition".to_string()) } else { Stage::Plan };
-        let Some(l) = self.full_load(stage, !go_on) else { return Go::Back };
+        // A plan, `--through plan`, always: `--only partition` under
+        // --json is that stage's dry run, events, not a plan document.
+        // With this session's record the plan has partition skipped, so
+        // its targets aren't `will_erase`; Start again's runs wipe them
+        // all (`--only partition`, every target in --erase), so each is
+        // shown ERASED here (J14).
+        let Some(l) = self.full_load(Stage::Plan, !go_on) else { return Go::Back };
         let p = match self.plan_run(ui, &l, s::PLANNING_REVIEW) {
             Ok(p) => p,
             Err(g) => return g,
@@ -491,7 +494,7 @@ impl App {
         let mut by_size: Option<String> = None;
         for pair in &p.disks {
             let Some(t) = &pair.target else { continue };
-            if seen.contains(&t.node) || !(go_on || t.will_erase || !t.writes.is_empty()) {
+            if seen.contains(&t.node) || !(go_on || again || t.will_erase || !t.writes.is_empty()) {
                 continue;
             }
             seen.push(t.node.clone());
@@ -503,7 +506,7 @@ impl App {
             };
             let word = if go_on {
                 s::WORD_GOES_ON
-            } else if t.will_erase {
+            } else if again || t.will_erase {
                 s::WORD_ERASED
             } else {
                 s::WORD_WRITTEN
@@ -654,16 +657,18 @@ impl App {
 
     /// The runs Review's plan stands for, each its arguments with its
     /// stage, `--commit` and the plan's hash (`Load::run_of`): Go on's
-    /// status's next stage alone (RT12's second part runs the rest stage
-    /// by stage); Start again's `--only close` when anything is open, its
+    /// stages from status's next to close, each alone; Start again's `--only close` when anything is open, its
     /// `--only partition`, then `--through close` (J14), `--erase` kept;
     /// else `--through close`.
     pub(crate) fn runs_of(&self, l: &Load, sha: &str, open: bool) -> Vec<Load> {
         let only = |x: &str| Stage::Only(x.to_string());
         let through_close = Stage::Through("close".to_string());
         match self.resume {
-            Some(true) => match self.status.as_ref().and_then(|st| st.next.clone()) {
-                Some(n) => vec![l.run_of(Stage::Only(n), sha)],
+            // Go on: each stage from status's next to close, alone (a
+            // `--through` would skip by status's rows, which a resume's
+            // stages already show).
+            Some(true) => match self.status.as_ref().and_then(|st| st.next.clone()).and_then(|n| plan::STAGES.iter().position(|x| *x == n)) {
+                Some(i) => plan::STAGES[i..].iter().map(|x| l.run_of(only(x), sha)).collect(),
                 None => Vec::new(),
             },
             Some(false) => {
@@ -806,24 +811,6 @@ impl App {
                 Answer::Back => return Ok(false),
                 a => return Err(Go::of(a)),
             }
-        }
-    }
-
-    // ---- 9. Restore: RT12's second part ----
-
-    pub(crate) fn restore_next(&mut self, ui: &mut dyn Ui) -> Go {
-        let host = self.host_name();
-        let (when, _, _) = self.snap_when();
-        let mut m = Message::new(Chrome::ours(s::SCR_RESTORE, s::NEXT_TITLE), o(&s::next(&host, &when, self.opts.dry_run)));
-        m.buttons = vec![Button::back(), Button::shell(), Button::other(s::BTN_LEAVE, None, B_LEAVE)];
-        match ui.message(&m) {
-            Answer::Button(B_LEAVE) => Go::Exit(0),
-            Answer::Ok(()) => Go::Back,
-            Answer::Back => {
-                self.reviewed.clear();
-                Go::Back
-            }
-            a => Go::of(a),
         }
     }
 }

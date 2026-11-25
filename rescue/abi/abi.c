@@ -121,6 +121,7 @@ int main(int argc, char **argv)
 		raise(SIGTERM);
 		kill(0, 0);
 		(void)ttyname(0);
+		(void)setsid();
 	}
 	return 0;
 }

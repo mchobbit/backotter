@@ -111,6 +111,8 @@ pub enum Did {
     Letter(char),
     /// Enter on a menu's row: it is picked.
     Pick,
+    /// Esc, where it is Back with no Back button drawn.
+    Back,
 }
 
 pub struct Dialog {
@@ -125,6 +127,11 @@ pub struct Dialog {
     /// Enter on a menu's list picks its row (`Ran::Act(Act::Ok)`),
     /// whatever the buttons are.
     pub pick: bool,
+    /// Letters that act as a button does, with none drawn (a progress
+    /// dialog's `hidden`).
+    pub hidden: Vec<Button>,
+    /// Esc is Back with no Back button (`Message::esc_back`).
+    pub esc_back: bool,
     /// Rows each part takes, from the last layout.
     heights: Vec<u16>,
 }
@@ -146,7 +153,7 @@ fn text_part(parts: &mut Vec<Part>, t: &Clean) {
 
 impl Dialog {
     pub fn new(chrome: Chrome, parts: Vec<Part>, buttons: Vec<Button>) -> Dialog {
-        let mut d = Dialog { chrome, parts, buttons, focus: Focus::None, notice: None, esc: None, pick: false, heights: Vec::new() };
+        let mut d = Dialog { chrome, parts, buttons, focus: Focus::None, notice: None, esc: None, pick: false, hidden: Vec::new(), esc_back: false, heights: Vec::new() };
         // Trailing gaps would only push the buttons down.
         while matches!(d.parts.last(), Some(Part::Gap(_))) {
             d.parts.pop();
@@ -338,6 +345,7 @@ impl Dialog {
 
     pub fn message(m: &ui::Message) -> Dialog {
         let mut d = Dialog::new(m.chrome.clone(), vec![Part::Text(m.text.clone())], m.buttons.clone());
+        d.esc_back = m.esc_back;
         if m.focus < d.buttons.len() {
             d.focus = Focus::Button(m.focus);
         }
@@ -349,8 +357,14 @@ impl Dialog {
     }
 
     pub fn progress(p: &ui::Progress) -> Dialog {
-        let parts = vec![Part::Text(p.text.clone()), Part::Gap(1), Part::Gauge(Gauge::new())];
+        let mut parts = vec![Part::Text(p.text.clone()), Part::Gap(1), Part::Gauge(Gauge::new())];
+        if !p.after.is_empty() {
+            parts.push(Part::Gap(1));
+            parts.push(Part::Text(p.after.clone()));
+            parts.push(Part::Gap(1));
+        }
         let mut d = Dialog::new(p.chrome.clone(), parts, p.buttons.clone());
+        d.hidden = p.hidden.clone();
         // No focus while the gauge runs: Enter does nothing until Tab
         // reaches a button, and no cursor is parked away from the bar.
         d.focus = Focus::None;
@@ -737,6 +751,7 @@ impl Dialog {
             // question's No); in a text view with neither, it closes.
             Key::Esc => match self.back().or(self.esc) {
                 Some(i) => Did::Press(i),
+                None if self.esc_back => Did::Back,
                 None if self.is_view() => self.default_button().map_or(Did::Nothing, Did::Press),
                 None => Did::Nothing,
             },
@@ -782,9 +797,12 @@ impl Dialog {
 
     /// A ticker's news: new text above the gauge, the bar and its line.
     pub fn set_progress(&mut self, text: Option<Clean>, pct: Option<u8>, line: Clean) {
+        let mut first = true;
         for p in &mut self.parts {
             match p {
-                Part::Text(t) => {
+                // The text above the gauge; what is under it stays.
+                Part::Text(t) if first => {
+                    first = false;
                     if let Some(n) = &text {
                         *t = n.clone();
                     }

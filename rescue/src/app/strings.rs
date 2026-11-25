@@ -269,6 +269,9 @@ pub const SCR_PASSPHRASES: &str = "Passphrases";
 pub const SCR_RESUME: &str = "Resume";
 pub const SCR_REVIEW: &str = "Review";
 pub const SCR_RESTORE: &str = "Restore";
+pub const SCR_DONE: &str = "Done";
+pub const SCR_FAILURE: &str = "Failure";
+pub const BTN_BACK: &str = "Back";
 pub const DISKS_TITLE: &str = "Where each disk goes";
 pub const DISKS_KEYS: &str = "Arrows: old disk | Enter: change where it goes | Tab: buttons | Esc: back";
 pub const PLANNING_TITLE: &str = "Planning";
@@ -718,13 +721,233 @@ pub const CHANGED: &str = "changed";
 pub const CANT_CHANGE: &str = "can't change: see below";
 pub const BTN_UNDO_ALL: &str = "Undo all";
 
-// ---- 9. Restore: RT12's second part ----
-pub const NEXT_TITLE: &str = "Next: the restore";
-pub fn next(name: &str, when: &str, dry_run: bool) -> String {
-    let what = if dry_run { "The dry run's walk through every command" } else { "The restore itself" };
-    format!("{name}'s backup of {when} is chosen, the disks are planned and confirmed.\n\n{what} isn't in this bko-rescue yet.  Nothing has been changed on any disk.")
+// ---- 9. Restore ----
+pub fn restoring_title(name: &str) -> String {
+    format!("Restoring {name}")
 }
+pub fn dry_title(name: &str) -> String {
+    format!("What restoring {name} would do")
+}
+pub const RESTORE_AFTER: &str = "Leave the computer on, with the stick and the network cable in, until this says Done.  You can walk away.";
+pub const DRY_AFTER: &str = "Nothing is written: each command is shown, not run.";
+pub fn restoring_plain(name: &str) -> String {
+    format!("Restoring {name}.  Leave the computer on, with the stick and the network cable in, until this says Done.")
+}
+pub fn dry_plain(name: &str) -> String {
+    format!("Showing what restoring {name} would do.  Nothing is written: each command is shown, not run.")
+}
+pub const RESTORE_KEYS: &str = "l: log | Tab: to Cancel | Enter on Cancel: stop (asks first) | Esc: nothing";
+pub const BTN_CANCEL: &str = "Cancel";
+pub const BTN_STOP_PLAIN: &str = "stop (it asks first)";
+pub const BTN_LOG: &str = "see the log";
+pub const NOW_STARTING: &str = "Now: starting bko-holt.";
+pub const NOW_STOPPING: &str = "Now: stopping, once the command running ends.";
+pub const NOW_BETWEEN: &str = "Now: between stages.";
+pub fn now(what: &str) -> String {
+    format!("Now: {what}.")
+}
+pub fn now_unreadable(why: &str) -> String {
+    format!("Now: bko-holt's events can't be read ({why}), so nothing more is shown; waiting for it to end.")
+}
+pub const NOTHING_TO_DO: &str = "nothing to do";
+pub const FAILED_WORD: &str = "FAILED";
+pub const STOPPED_WORD: &str = "stopped";
+pub fn running_for(d: &str) -> String {
+    format!("running for {d}")
+}
+pub fn would_run(n: usize) -> String {
+    format!("would run {n} command{}", if n == 1 { "" } else { "s" })
+}
+pub fn done_in(label: &str, d: &str) -> String {
+    format!("{label}: done in {d}")
+}
+pub fn plain_started(label: &str) -> String {
+    format!("{label}: started")
+}
+pub fn plain_would(label: &str, n: usize) -> String {
+    format!("{label}: {}", would_run(n))
+}
+pub fn minutes_left(n: u64) -> String {
+    format!("about {n} min left")
+}
+pub const LESS_THAN_A_MINUTE: &str = "less than a minute left";
+pub const STOP_TITLE: &str = "Stop the restore?";
+pub fn stop_text(name: &str, copying: bool) -> String {
+    let first = if copying {
+        "Your files are being copied back.  Stop interrupts the copy now; at any other step, the command running is let finish first."
+    } else {
+        "Stop lets the command running now finish, then stops.  The copy of your files, if it is running, is interrupted at once."
+    };
+    format!("{first}\n\nThe disks are then half written: {name} won't start from them.  The next screen can go on from where it stopped while this computer stays on; after a restart, the restore starts again from the beginning.\n\n{BACKUP_SAFE}")
+}
+pub const DRY_STOP_TITLE: &str = "Stop the dry run?";
+pub const DRY_STOP_TEXT: &str = "Nothing has been written, and nothing will be: stopping only ends the list of commands early.";
+pub const BTN_KEEP_GOING: &str = "Keep going";
+pub const BTN_STOP: &str = "Stop";
+pub const STOP_KEYS: &str = "Tab: buttons | Enter: press | Esc: keep going";
+pub const STOP_FAILED_TITLE: &str = "The restore couldn't be asked to stop";
+pub fn stop_failed(why: &str) -> String {
+    format!("{why}\n\nIt goes on, and this screen follows it.  The shell can stop it by hand: SIGTERM to the pid in /run/bko-holt/load.lock.")
+}
+pub const STOP_NO_PID: &str = "bko-holt hasn't said its pid yet.";
+pub const STOP_NO_LOCK: &str = "bko-holt's lock (load.lock) can't be read, so which process is load can't be checked.";
+pub const STOP_LOCK_OTHER: &str = "bko-holt's lock names another process than the one this screen follows.";
+pub const STOP_NOT_SENT: &str = "The signal couldn't be sent: the process may have ended just now.";
+pub const LOG_TITLE: &str = "The log, its last lines";
+pub const DRY_LOG_TITLE: &str = "The commands that would run";
+pub const LOG_NONE: &str = "bko-holt hasn't written a log yet.";
+
+// ---- 10a. Done ----
+pub fn done_title(name: &str) -> String {
+    format!("{name} is restored")
+}
+pub fn dry_done_title(name: &str) -> String {
+    format!("The dry run of {name} is done")
+}
+pub fn in_time(d: &str) -> String {
+    format!("in {d}")
+}
+pub const DONE_PASSPHRASE: &str = "At the next start, type the passphrase you chose for the disks.";
+pub const AFTER_FIRST: &str = "After the first start:";
+pub fn token_tpm2(container: &str) -> String {
+    format!("  - To have {container} unlock by itself again (TPM2), run as root:\n      systemd-cryptenroll --tpm2-device=auto DEVICE\n    DEVICE is {container}'s, as cryptsetup status {container} names it.  Until you do, the computer asks for the passphrase at each start.")
+}
+pub fn token_fido2(container: &str) -> String {
+    format!("  - To unlock {container} with your security key again (FIDO2), run as root:\n      systemd-cryptenroll --fido2-device=auto DEVICE\n    DEVICE is {container}'s, as cryptsetup status {container} names it.")
+}
+pub fn token_other(container: &str, kind: &str) -> String {
+    format!("  - {container}'s {kind} token wasn't restored: enrol it again.")
+}
+pub fn reformat_after(mount: &str, to: &str, was: &str) -> String {
+    format!("  - {mount} is {to} now: check anything that relied on {was} there.")
+}
+pub fn log_on_stick(name: &str) -> String {
+    format!("The log is on the stick, in {name}'s folder.")
+}
+pub fn log_on_stick_at(name: &str, dir: &str, file: &str) -> String {
+    format!("The log is on the stick, in {name}'s folder:\n  {dir}/\n    {file}")
+}
+pub fn log_in_ram(path: &str, why: &str) -> String {
+    format!("The log couldn't be saved on the stick ({why}).  It is at\n  {path}\nin this computer's memory only: it's lost when the computer is turned off.")
+}
+pub fn log_none(why: &str) -> String {
+    format!("No log was saved: {why}.")
+}
+pub const LOG_NO_HOLT_LOG: &str = "bko-holt named no log of its own";
+pub const LOG_NO_FOLDER: &str = "this backup's machine has no folder on the stick";
+pub const LOG_NOT_READ: &str = "bko-holt's log couldn't be read";
+pub fn remove_stick(name: &str) -> String {
+    format!("Remove the stick, then press Enter to restart into {name}.")
+}
+pub fn dry_done(n: usize) -> String {
+    format!("Nothing was written: {n} command{} would have run, and none did.  Your disks are as they were.\n\nShow the commands lists them, in order.  This dry run's log stays in this computer's memory: nothing goes to the stick either.", if n == 1 { "" } else { "s" })
+}
+pub const BTN_RESTART: &str = "Restart";
+pub const BTN_POWER_OFF: &str = "Power off";
+pub const BTN_RESTART_ANYWAY: &str = "Restart anyway";
+pub const BTN_SHOW_COMMANDS: &str = "Show the commands";
 pub const BTN_LEAVE: &str = "Leave bko-rescue";
+pub const DONE_KEYS: &str = "Tab: buttons | Enter: press | s: shell";
+pub const DRY_DONE_KEYS: &str = "Tab: buttons | Enter: press | l: commands | s: shell";
+pub const STICK_IN_TITLE: &str = "The stick is still in";
+pub const STICK_IN: &str = "Remove the stick first, or the computer may start from it again.";
+pub const OFF_FAILED_TITLE: &str = "That didn't work";
+pub fn off_failed(what: &str, why: &str) -> String {
+    format!("{what} failed: {why}\n\nThe shell can do it by hand.")
+}
+
+// ---- 10b. Failure ----
+pub fn stopped_at(label: &str) -> String {
+    format!("the restore stopped at \"{label}\"")
+}
+pub const STOPPED_EARLY: &str = "the restore stopped";
+pub const STOPPED_BY_YOU: &str = "Stopped by you.";
+pub fn exit_status(prog: &str, status: &str) -> String {
+    format!("{prog} failed ({status}):")
+}
+pub fn status_words(code: Option<i64>, signal: Option<i64>) -> String {
+    match (code, signal) {
+        (Some(c), _) => format!("exit status {c}"),
+        (None, Some(s)) => format!("signal {s}"),
+        (None, None) => "no exit status".to_string(),
+    }
+}
+pub fn error_more(n: usize) -> String {
+    format!("({n} more lines: Help, then Raw output, shows them.)")
+}
+pub const BTN_HELP: &str = "Help";
+pub const FAILURE_KEYS: &str = "Tab: buttons | Enter: press | h: help | r: report | s: shell";
+pub const POWER_OFF_TITLE: &str = "Turn the computer off?";
+pub const POWER_OFF_TEXT: &str = "The disks stay as they are, half written.  After a restart the restore can only start again from the beginning: what this session knows of them goes with the power.";
+pub const NOT_STARTED: &str = "bko-holt couldn't be started";
+pub const BAD_EVENTS: &str = "bko-holt's events didn't make sense";
+pub const NO_END: &str = "bko-holt ended without its end event";
+pub const NOT_ASKED: &str = "bko-holt didn't run what was asked for";
+pub const UNCLEAR: &str = "bko-holt ended, but a stage isn't shown done";
+pub fn refused(text: &str) -> String {
+    format!("bko-holt refused the run before it did anything: {text}")
+}
+pub fn checks_stopped(text: &str) -> String {
+    format!("bko-holt's checks stopped the run before it wrote anything: {text}")
+}
+pub fn ended_with(what: &str, status: &str) -> String {
+    format!("{what} ({status}).")
+}
+pub const ATTACHED_NO_RETRY: &str = "This restore was started by an earlier bko-rescue, so it can't be tried again from here: start again from the first screen.";
+
+// ---- A stage's command failed: the help ----
+pub const BTN_NO_ENTRY: &str = "Install without an entry";
+pub const BTN_PASSPHRASE_AGAIN: &str = "Type the passphrase again";
+pub const HELP_KEYS: &str = "Tab: buttons | Enter: press | s: shell | r: report | o: raw output | Esc: back";
+pub const BOOT_TITLE: &str = "the boot loader couldn't be installed";
+pub fn boot_what(prog: &str, name: &str) -> String {
+    format!("your files are all back, but {prog} couldn't add {name} to this computer's list of things to start (its boot menu).")
+}
+pub const BOOT_WHY_UEFI: &str = "the stick was started in UEFI mode, so the list can be written, but this computer refused the new entry.  Some computers do.";
+pub const BOOT_TODO_UEFI: &str = "put the boot loader where every UEFI computer looks for it by itself, with no entry in the list.  It starts the same way.";
+pub const BOOT_WHY_BIOS: &str = "the stick was started in the older BIOS mode, where that list can't be written.";
+pub const BOOT_TODO_BIOS: &str = "put the boot loader where every UEFI computer looks for it by itself, with no entry in the list.  Or restart, and press F12, F11, F8 or Esc while the maker's logo shows; pick the stick's entry with UEFI in its name.  You will be asked again for the machine, the keyboard, the backup password, the backup, the disks and the passphrase, and the files are copied again.";
+pub const NO_ENTRY_TITLE: &str = "Install without an entry?";
+pub const NO_ENTRY_TEXT: &str = "bko-holt makes the boot loader again, with --removable and --no-nvram: in the place every UEFI computer looks by itself, and no entry in this computer's list.  Then it finishes the restore.  Nothing else on the disks changes.";
+pub const PASSPHRASE_TITLE_HELP: &str = "the passphrase didn't open a disk";
+pub const PASSPHRASE_WHAT: &str = "cryptsetup couldn't open an encrypted disk with the passphrase typed.";
+pub const PASSPHRASE_WHY: &str = "Its header was kept from the backup, so it opens only with the passphrase it had then.";
+pub const PASSPHRASE_TODO: &str = "Type the passphrase again: check Caps Lock and the keyboard.";
+pub const COPY_TITLE: &str = "the copy of your files failed";
+pub const COPY_WHAT: &str = "rustic-bko, which copies your files back, stopped with an error.";
+pub const COPY_WHY: &str = "The network or the backup server may have gone away, or a file in the backup couldn't be read.  Raw output shows what it said.";
+pub const COPY_TODO: &str = "Try again copies your files again, from the start.  If it fails the same way, make a report.";
+pub const LOCK_TITLE: &str = "another restore is running";
+pub const LOCK_WHAT: &str = "another bko-holt load is running on this computer, so this one didn't start.";
+pub const LOCK_WHY: &str = "Only one restore runs at a time: two would write the same disks.";
+pub const LOCK_TODO: &str = "Wait for it to end, or look in the shell: its pid is in /run/bko-holt/load.lock.";
+pub const STOPPED_TITLE: &str = "the restore was stopped";
+pub const STOPPED_WHAT: &str = "you stopped the restore.";
+pub const STOPPED_WHY: &str = "the command that was running was let finish (the copy of your files was interrupted), and nothing ran after it.";
+pub const STOPPED_TODO: &str = "Try again goes on from where it stopped, while this computer stays on.";
+pub const CHECKS_TITLE: &str = "bko-holt's checks stopped it";
+pub const CHECKS_WHY: &str = "bko-holt checks everything before it writes anything, and stops at the first thing it can't do as the backup was.";
+pub const CHECKS_TODO: &str = "Go back and change what it names, or make a report.";
+pub const GENERAL_TITLE: &str = "a command bko-holt runs failed";
+pub const GENERAL_WHY: &str = "Raw output shows the command, its exit status and what it said.";
+pub const GENERAL_TODO: &str = "Try again runs the stage again.  If it fails the same way, make a report: the shell has the disks as they are, mounted at /mnt/bko-target.";
+pub const REPORT_TODO: &str = "Make a report: this is bko-holt's to fix.  The shell has the disks as they are, mounted at /mnt/bko-target.";
+pub const RAW_FAILED_TITLE: &str = "What the command said";
+pub fn raw_command(line: &str) -> String {
+    format!("Command: {line}")
+}
+pub fn raw_status(s: &str) -> String {
+    format!("Ended with: {s}")
+}
+pub const RAW_TAIL: &str = "Its last lines:";
+pub const RAW_STDERR: &str = "bko-holt's own standard error:";
+
+// ---- An earlier bko-rescue's restore ----
+pub const EARLIER_TITLE: &str = "A restore is still running";
+pub fn earlier(name: &str, pid: u32) -> String {
+    format!("A restore of {name}, started by an earlier bko-rescue, is still running here (bko-holt, pid {pid}).  It goes on by itself: Follow it shows it, as it was shown.")
+}
+pub const BTN_FOLLOW: &str = "Follow it";
 
 // ---- Problems and their help ----
 pub const BACKUP_SAFE: &str = "Your backup is safe: nothing in it has been changed.";
@@ -828,14 +1051,18 @@ pub const ALL: &[&str] = &[
     OPENING_TITLE, FROM_DEFAULT, FROM_CHOSEN, K_CHANGES, KEYBOARD_SSH, KEYBOARD_SERIAL, KEYBOARD_FIXED, OFFER_TITLE,
     OFFER_DESKTOP, BTN_ANOTHER_LAYOUT, LAYOUT_TITLE, LAYOUT_TEXT, TRY_IT, LAYOUT_FAILED_TITLE, RECOVERY_TITLE, RECOVERY_TEXT,
     RECOVERY_PLAIN, RECOVERY_AFTER, RECOVERY_CHECKING, RECOVERY_SUM, RECOVERY_NOT_IT, RECOVERY_PROBLEM_TITLE, WHICH_TITLE,
-    WHICH_PICK_FIRST, SNAPSHOT_TITLE, NEWEST, NEWEST_USUAL, NO_SNAPSHOTS_TITLE, NEXT_TITLE, BTN_LEAVE, BACKUP_SAFE,
+    WHICH_PICK_FIRST, SNAPSHOT_TITLE, NEWEST, NEWEST_USUAL, NO_SNAPSHOTS_TITLE, BACKUP_SAFE,
     WHAT_HAPPENED, WHY, TODO, BTN_REPORT, BTN_RAW, BTN_NETWORK, BTN_MACHINE, RAW_TITLE, UNREACHABLE_WHY, UNREACHABLE_TODO,
     UNREACHABLE_TITLE, NOT_FOUND_WHY, NOT_FOUND_TODO, NOT_FOUND_TITLE, LOGIN_WHY, LOGIN_TODO, LOGIN_TITLE, MISMATCH_WHY,
     MISMATCH_TODO, MISMATCH_TITLE, ERROR_WHY, ERROR_TODO, ERROR_TITLE, UNREADABLE_LIST, MAKING_REPORT_TITLE, MAKING_REPORT,
     REPORT_TITLE, REPORT_DRY_RUN, REPORT_GITHUB, REPORT_REDACTED, REPORT_PRIVATE, BTN_VIEW, BTN_ADVANCED,
     REPORT_FAILED_TITLE, REPORT_FAILED, REPORT_NO_STRIP, VIEW_TITLE, ADVANCED_TITLE, ADVANCED_TEXT, ADVANCED_WARN, ADVANCED_PLAIN, TYPE_YES,
     TYPE_YES_FIRST, BTN_MAKE_IT, YES, SESSION_FAILED,
-    SCR_PASSPHRASES, SCR_RESUME, SCR_REVIEW, SCR_RESTORE, DISKS_TITLE, DISKS_KEYS, PLANNING_TITLE, PLANNING, PLANNING_FIT, PLANNING_REVIEW, STATUS_TITLE, STATUS_TEXT, ROLE_SYSTEM, ROLE_SYSTEM_SHORT, ROLE_NOTHING, BY_WWID, BY_IDENTITY, WILL_BE_ERASED, CHOSEN_BY_YOU, NO_TARGET, PLAIN_NO_TARGET, PLAIN_ERASED, NOT_USED, NOT_OFFERED, ALREADY_USED, BLANK, REFUSED_STICK, REFUSED_BACKUP, REFUSED_ROOT, REFUSED_IN_USE, REFUSED_READ_ONLY, REFUSED_SECTOR, BTN_OK, BTN_THESE_ARE_RIGHT, PLAN_FAILED_TITLE, PLAN_FAILED_WHY, PLAN_FAILED_TODO, NO_LAYOUT_TITLE, NO_LAYOUT_WHY, NO_LAYOUT_TODO, LAYOUT_NONE_TYPED, LAYOUT_NO_PATH, LAYOUT_NO_DEV, LAYOUT_UNREADABLE, ONE_DISK_KEYS, PUT_IT_ON, NO_SERIAL, NO_CANDIDATES, CANT_RESIZE_WHY, MUCH_SMALLER, A_LITTLE_SMALLER, TOO_SMALL, BIGGER, LITTLE_SMALLER_TITLE, LITTLE_BIGGER_TITLE, MUCH_SMALLER_TITLE, MUCH_BIGGER_TITLE, OFFER_KEYS, SLACK_TEXT, OR_ANOTHER, BTN_SHRINK, BTN_GROW, BTN_KEEP_SIZES, BTN_ANOTHER_DISK, DECIDE_WHY, BEYOND_LIMIT, CHOOSE_ANOTHER, CHOOSE_ONE_FIRST, PASS_NEW, PASS_KEPT_HEADER, PASS_RESUME, LABEL_PASSPHRASE, LABEL_AGAIN, PASSPHRASE_KEYS, PASS_EMPTY, PASS_MISMATCH, BOOT_KB_TITLE, KEY_BLOCKED_TITLE, KEY_FILE_ELSEWHERE, KEY_BLOCKED_TODO, RESUME_TITLE, STARTED_NOT_FINISHED, RESUME_CHOICES, BTN_GO_ON, BTN_START_AGAIN, REVIEW_TITLE, REVIEW_KEYS, REVIEW_ERASE, REVIEW_ERASE_PLAIN, WORD_ERASED, WORD_WRITTEN, WORD_GOES_ON, CHANGES, CHANGES_NONE, NO_PROBLEMS, THIS_STICK, NOTHING_ELSE, NOTHING_CHANGED, CHANGE_PASSPHRASE, NO_OTHER_FS, BTN_RESTORE, BTN_RESTORE_NOW, BTN_SHOW_WHAT, BTN_COMMANDS, BTN_EVERY_COMMAND, REVIEW_PROBLEM_TITLE, REVIEW_PROBLEM_WHY, ERASE_PROBLEM_WHY, REVIEW_PROBLEM_TODO, BTN_TO_DISKS, BTN_TO_PASSPHRASES, BTN_TO_RESUME, RESUME_KEYS, REVIEW_KEYS_DRY, REVIEW_NO_ROWS, YZ_SWAPPED_BOOT, DECIDE_KEYS, MUCH_BIGGER_KEYS, COMMANDS_TITLE, ADVANCED_FS_TITLE, ADVANCED_FS_TEXT, ADVANCED_FS_AFTER, AS_IT_WAS, CHANGED, CANT_CHANGE, BTN_UNDO_ALL,
+    SCR_PASSPHRASES, SCR_RESUME, SCR_REVIEW, SCR_RESTORE, SCR_DONE, SCR_FAILURE, BTN_BACK, DISKS_TITLE, DISKS_KEYS, PLANNING_TITLE, PLANNING, PLANNING_FIT, PLANNING_REVIEW, STATUS_TITLE, STATUS_TEXT, ROLE_SYSTEM, ROLE_SYSTEM_SHORT, ROLE_NOTHING, BY_WWID, BY_IDENTITY, WILL_BE_ERASED, CHOSEN_BY_YOU, NO_TARGET, PLAIN_NO_TARGET, PLAIN_ERASED, NOT_USED, NOT_OFFERED, ALREADY_USED, BLANK, REFUSED_STICK, REFUSED_BACKUP, REFUSED_ROOT, REFUSED_IN_USE, REFUSED_READ_ONLY, REFUSED_SECTOR, BTN_OK, BTN_THESE_ARE_RIGHT, PLAN_FAILED_TITLE, PLAN_FAILED_WHY, PLAN_FAILED_TODO, NO_LAYOUT_TITLE, NO_LAYOUT_WHY, NO_LAYOUT_TODO, LAYOUT_NONE_TYPED, LAYOUT_NO_PATH, LAYOUT_NO_DEV, LAYOUT_UNREADABLE, ONE_DISK_KEYS, PUT_IT_ON, NO_SERIAL, NO_CANDIDATES, CANT_RESIZE_WHY, MUCH_SMALLER, A_LITTLE_SMALLER, TOO_SMALL, BIGGER, LITTLE_SMALLER_TITLE, LITTLE_BIGGER_TITLE, MUCH_SMALLER_TITLE, MUCH_BIGGER_TITLE, OFFER_KEYS, SLACK_TEXT, OR_ANOTHER, BTN_SHRINK, BTN_GROW, BTN_KEEP_SIZES, BTN_ANOTHER_DISK, DECIDE_WHY, BEYOND_LIMIT, CHOOSE_ANOTHER, CHOOSE_ONE_FIRST, PASS_NEW, PASS_KEPT_HEADER, PASS_RESUME, LABEL_PASSPHRASE, LABEL_AGAIN, PASSPHRASE_KEYS, PASS_EMPTY, PASS_MISMATCH, BOOT_KB_TITLE, KEY_BLOCKED_TITLE, KEY_FILE_ELSEWHERE, KEY_BLOCKED_TODO, RESUME_TITLE, STARTED_NOT_FINISHED, RESUME_CHOICES, BTN_GO_ON, BTN_START_AGAIN, REVIEW_TITLE, REVIEW_KEYS, REVIEW_ERASE, REVIEW_ERASE_PLAIN, WORD_ERASED, WORD_WRITTEN, WORD_GOES_ON, CHANGES, CHANGES_NONE, NO_PROBLEMS, THIS_STICK, NOTHING_ELSE, NOTHING_CHANGED, CHANGE_PASSPHRASE, NO_OTHER_FS, BTN_RESTORE, BTN_RESTORE_NOW, BTN_SHOW_WHAT, BTN_COMMANDS, BTN_EVERY_COMMAND, REVIEW_PROBLEM_TITLE, REVIEW_PROBLEM_WHY, ERASE_PROBLEM_WHY, REVIEW_PROBLEM_TODO, BTN_TO_DISKS, BTN_TO_PASSPHRASES, BTN_TO_RESUME, RESUME_KEYS, REVIEW_KEYS_DRY, REVIEW_NO_ROWS, YZ_SWAPPED_BOOT, DECIDE_KEYS, MUCH_BIGGER_KEYS, COMMANDS_TITLE, ADVANCED_FS_TITLE, ADVANCED_FS_TEXT, ADVANCED_FS_AFTER, AS_IT_WAS, CHANGED, CANT_CHANGE, BTN_UNDO_ALL,
+    RESTORE_AFTER, DRY_AFTER, RESTORE_KEYS, BTN_CANCEL, BTN_STOP_PLAIN, BTN_LOG, NOW_STARTING, NOW_STOPPING, NOW_BETWEEN, NOTHING_TO_DO, FAILED_WORD, STOPPED_WORD, LESS_THAN_A_MINUTE, STOP_TITLE, DRY_STOP_TITLE, DRY_STOP_TEXT, BTN_KEEP_GOING, BTN_STOP, STOP_KEYS, STOP_FAILED_TITLE, STOP_NO_PID, STOP_NO_LOCK, STOP_LOCK_OTHER, STOP_NOT_SENT, LOG_TITLE, DRY_LOG_TITLE, LOG_NONE,
+    DONE_PASSPHRASE, AFTER_FIRST, LOG_NO_HOLT_LOG, LOG_NO_FOLDER, LOG_NOT_READ, BTN_RESTART, BTN_POWER_OFF, BTN_RESTART_ANYWAY, BTN_SHOW_COMMANDS, BTN_LEAVE, DONE_KEYS, DRY_DONE_KEYS, STICK_IN_TITLE, STICK_IN, OFF_FAILED_TITLE,
+    STOPPED_EARLY, STOPPED_BY_YOU, BTN_HELP, FAILURE_KEYS, POWER_OFF_TITLE, POWER_OFF_TEXT, NOT_STARTED, BAD_EVENTS, NO_END, NOT_ASKED, UNCLEAR, ATTACHED_NO_RETRY,
+    BTN_NO_ENTRY, BTN_PASSPHRASE_AGAIN, HELP_KEYS, BOOT_TITLE, BOOT_WHY_UEFI, BOOT_TODO_UEFI, BOOT_WHY_BIOS, BOOT_TODO_BIOS, NO_ENTRY_TITLE, NO_ENTRY_TEXT, PASSPHRASE_TITLE_HELP, PASSPHRASE_WHAT, PASSPHRASE_WHY, PASSPHRASE_TODO, COPY_TITLE, COPY_WHAT, COPY_WHY, COPY_TODO, LOCK_TITLE, LOCK_WHAT, LOCK_WHY, LOCK_TODO, STOPPED_TITLE, STOPPED_WHAT, STOPPED_WHY, STOPPED_TODO, CHECKS_TITLE, CHECKS_WHY, CHECKS_TODO, GENERAL_TITLE, GENERAL_WHY, GENERAL_TODO, REPORT_TODO, RAW_FAILED_TITLE, RAW_TAIL, RAW_STDERR, EARLIER_TITLE, BTN_FOLLOW,
 ];
 
 #[cfg(test)]
@@ -854,7 +1081,11 @@ mod tests {
             network_text("x", "y"),
             offer("lovelace", "German", "de, nodeadkeys", "English (US)"),
             report_in_ram("/run/bko-rescue/reports/x"),
-            next("x", "y", true),
+            stop_text("lovelace", true),
+            dry_done(92),
+            token_tpm2("cryptroot"),
+            log_on_stick_at("lovelace", "backotter/machines/x", "20261123T141812Z.log.gz"),
+            earlier("lovelace", 4711),
             old_disk(1, "Samsung SSD 870 EVO 500GB", "500 GB", ROLE_SYSTEM),
             shrink_text(true, "/", "465 GB", "445 GB", "4.3", Some("41.7 GB")),
             review_head("lovelace", Some("Debian 13"), "22 Nov 2026 02:00 CET", Some("61.2 GB"), false),

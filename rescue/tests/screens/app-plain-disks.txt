@@ -134,11 +134,16 @@ Not touched: the KINGSTON SA400S37480G, this stick.  No problems found.
 Type the last six characters of disk 1's serial, or b to go back: Disk 1 confirmed.
 Type the last six characters of disk 2's serial, or b to go back: Disk 2 confirmed.
   r) restore now   c) show every command   a) advanced   b) back
-Choose [r, c, a, b]: Next: the restore
-lovelace's backup of 22 Nov 2026 02:00 UTC+01:00 is chosen, the disks
-are planned and confirmed.
+Choose [r, c, a, b]: Restore
+Restoring lovelace.  Leave the computer on, with the stick and the
+network cable in, until this says Done.
+Type c and Enter to stop (it asks first), or l and Enter to see the log.
+Problem: the restore stopped at "Make partitions"
+bko-holt ended without its end event (exit status 98).
 
-The restore itself isn't in this bko-rescue yet.  Nothing has been
-changed on any disk.
-  b) back   s) shell   l) leave bko-rescue
-Choose [b, s, l]: 
+Your backup is safe: nothing in it has been changed.
+
+No log was saved: bko-holt named no log of its own.
+  h) help   t) try again   s) shell   r) report   p) power off
+Choose [h, t, s, r, p]: Type one of h, t, s, r, p.
+Choose [h, t, s, r, p]: 

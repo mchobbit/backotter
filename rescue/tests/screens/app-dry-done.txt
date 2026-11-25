@@ -1,0 +1,78 @@
+ BackOtter rescue   DRY RUN: nothing will be written                        Done
+                                                                                
+                                                                                
+                                                                                
+  ┌──────────────────── The dry run of lovelace is done ─────────────────────┐  
+  │                                                                          │  
+  │   [~] Make partitions           [~] Set up RAID and encryption           │  
+  │   [~] Make filesystems          [~] Ready the filesystems                │  
+  │   [~] Copy your files back      [~] Make it bootable                     │  
+  │   [~] Finish                                                             │  
+  │                                                                          │  
+  │ Nothing was written: 92 commands would have run, and none did.  Your     │  
+  │ disks are as they were.                                                  │  
+  │                                                                          │  
+  │ Show the commands lists them, in order.  This dry run's log stays in     │  
+  │ this computer's memory: nothing goes to the stick either.                │  
+  │                                                                          │  
+  │        < Show the commands >    < Leave bko-rescue >    < Shell >        │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: buttons | Enter: press | l: commands | s: shell                           
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddddddDDDDDDDDDDDDDDDDDDDDDddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue   DRY RUN: nothing will be written                        Done
+                                                                                
+                                                                                
+                                                                                
+  +-------------------- The dry run of lovelace is done ---------------------+  
+  |                                                                          |  
+  |   [~] Make partitions           [~] Set up RAID and encryption           |  
+  |   [~] Make filesystems          [~] Ready the filesystems                |  
+  |   [~] Copy your files back      [~] Make it bootable                     |  
+  |   [~] Finish                                                             |  
+  |                                                                          |  
+  | Nothing was written: 92 commands would have run, and none did.  Your     |  
+  | disks are as they were.                                                  |  
+  |                                                                          |  
+  | Show the commands lists them, in order.  This dry run's log stays in     |  
+  | this computer's memory: nothing goes to the stick either.                |  
+  |                                                                          |  
+  |        < Show the commands >    < Leave bko-rescue >    < Shell >        |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: buttons | Enter: press | l: commands | s: shell                           

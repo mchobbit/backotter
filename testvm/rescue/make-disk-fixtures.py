@@ -33,12 +33,25 @@ Review screens (rescue-tui.md, RT12), written into scenarios/:
                      isn't among its candidates (Review blocks)
   app-rec-debian13-again  app-rec-debian13 after a stopped copy: status says
                      only Start again (go_on false, the restore started, a
-                     container still open), and Start again's `--only
-                     partition` plan: the recorded plan after partition
-                     (09-plan-assemble) as `--only partition` makes it,
-                     every target wiped (`will_erase`, `writes`
-                     ["partition"]), with the ours_busy problem that open
-                     container gives (`--only close` first)
+                     container still open), and the plan with the keys the
+                     recorded plan after partition (09-plan-assemble), with
+                     the ours_busy problem that open container gives
+                     (`--only close` first)
+  app-rec-restore    built from rec-debian13-stack: a fresh status (hand-edited
+                     from 08-status-after-partition), and the Restore's one
+                     `--through close --commit` run, its stream the recorded
+                     stages' under one start and end (RT12's flow isn't
+                     recorded), the copy's progress a second apart
+  app-rec-dry        the same with app-dry's api (no_commit), its run the
+                     recorded dry run (05-dry) as it is
+  app-rec-fail       the same, the run failing in boot (the mock's grub-install,
+                     cmd_failed, end 1); Try again's status (boot next) and
+                     boot and close alone; Install without an entry's plan,
+                     boot with --removable --no-nvram, and close
+  app-rec-notdry     app-rec-dry, its dry run answered by a stream that commits
+                     (wrong on purpose: bko-rescue stops it at once)
+  app-rec-stop       the same, the copy waiting 30 s, for Cancel and Stop;
+                     stopped.events is the stream fake-bko-holt then ends
 
 The hand-written documents are what bko-holt would write for those disks,
 by fit's own rules (a margin of max(1 GiB, 5 % of the space used), the most
@@ -72,9 +85,16 @@ def sha(n):
     return ("%064x" % (0x51d0 + n))
 
 
-def load(stage, keys=(), maps=(), erase=0, fit=None, reformat=()):
+def load(stage, keys=(), maps=(), erase=0, fit=None, reformat=(), commit=False, removable=False):
+    """A load argv as holt_args.rs builds it.  STAGE: plan, status, or a
+    writing run's: close (--through close), only-STAGE (--only STAGE);
+    COMMIT adds --expect-plan and --commit, as Load::run_of does."""
     a = ["load", "*", "--json"]
-    a += {"plan": ["--through", "plan"], "status": ["--only", "status"], "partition": ["--only", "partition"]}[stage]
+    if stage.startswith("only-"):
+        a += ["--only", stage[5:]]
+    else:
+        a += {"plan": ["--through", "plan"], "status": ["--only", "status"], "partition": ["--only", "partition"],
+              "close": ["--through", "close"]}[stage]
     a += ["--repo", "*", "--password-file", "*"]
     for k in keys:
         a += ["--key-file", "%s=*" % k]
@@ -82,20 +102,33 @@ def load(stage, keys=(), maps=(), erase=0, fit=None, reformat=()):
         a += ["--map", "%s=%s" % (s, t)]
     a += ["--erase", "*"] * erase
     a += ["--snapshot", "*"]
+    if stage not in ("plan", "status"):
+        a += ["--expect-plan", "*"]
     if fit is not None:
         a += ["--fit-largest", str(fit)]
     for m in reformat:
         a += ["--reformat", m]
+    if removable:
+        a += ["--removable", "--no-nvram"]
+    if commit:
+        a += ["--commit"]
     return a
 
 
-def write(scen, name, argv, doc=None, exit=None, raw=None):
+def write(scen, name, argv, doc=None, exit=None, raw=None, events=None, stderr=None):
     d = os.path.join(SC, scen, name)
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "argv"), "w") as f:
         f.write("\n".join(argv) + "\n")
-    with open(os.path.join(d, "stdout"), "w") as f:
-        f.write(raw if raw is not None else json.dumps(doc) + "\n")
+    if events is None:
+        with open(os.path.join(d, "stdout"), "w") as f:
+            f.write(raw if raw is not None else json.dumps(doc) + "\n")
+    else:
+        with open(os.path.join(d, "events"), "w") as f:
+            f.write(events)
+    if stderr is not None:
+        with open(os.path.join(d, "stderr"), "w") as f:
+            f.write(stderr)
     if exit is not None:
         with open(os.path.join(d, "exit"), "w") as f:
             f.write("%d\n" % exit)
@@ -150,19 +183,10 @@ def rec():
     ]:
         write(scen, "%02d-%s" % (n, stage), load(stage, keys, m, erase), raw=plan if stage == "plan" else status)
         n += 1
-    # Start again's plan: the recorded plan after partition, as `--only
-    # partition` makes it (target::partition_runs: that stage runs, so
-    # every target is wiped and partition is all it writes).
-    again = json.loads(open(os.path.join(SC, "rec-debian13-stack", "09-plan-assemble", "stdout")).read())
-    for d in again["disks"]:
-        d["target"]["will_erase"] = True
-        d["target"]["writes"] = ["partition"]
-    write(scen, "16-plan", load("partition", ("md1_crypt",), maps, 2), again)
     with open(os.path.join(SC, scen, "README"), "w") as f:
         f.write("Recorded documents (rec-debian13-stack's 04-plan and 08-status-after-partition)\n"
-                "answering every plan and status call of bko-rescue's Disks to Review, and\n"
-                "Start again's --only partition plan (09-plan-assemble as that run makes it);\n"
-                "see ../../make-disk-fixtures.py.\n")
+                "answering every plan and status call of bko-rescue's Disks to Review (Start\n"
+                "again's Review plans --through plan too); see ../../make-disk-fixtures.py.\n")
 
 
 def rec_again():
@@ -184,20 +208,225 @@ def rec_again():
     maps = [("vda", "*"), ("vdb", "*")]
     write(scen, "10-plan", load("plan"), raw=plan)
     write(scen, "11-plan", load("plan", (), maps, 2), raw=plan)
-    write(scen, "12-plan", load("plan", ("md1_crypt",), maps, 2), raw=plan)
     write(scen, "14-status", load("status", (), maps, 0), status)
     write(scen, "15-status", load("status", ("md1_crypt",), maps, 0), status)
+    # Start again's Review plan (--through plan): the recorded plan after
+    # partition, with the ours_busy problem the open container gives
+    # (`--only close` first lets go of it), every target written.
     again = json.loads(open(os.path.join(SC, "rec-debian13-stack", "09-plan-assemble", "stdout")).read())
-    for d in again["disks"]:
-        d["target"]["will_erase"] = True
-        d["target"]["writes"] = ["partition"]
     again["problems"] = [{"code": "ours_busy", "text": "vda -> /dev/vdb: the partition stage would wipe it, but load's own is on it, from an earlier stage (mounted under /mnt/bko-target, or a pool of the layout's imported there); `--only close` first lets go of it", "disk": "vda", "target": "vdb"}]
     again["ok"] = False
     again["exit"] = 4
-    write(scen, "16-plan", load("partition", ("md1_crypt",), maps, 2), again, exit=4)
+    write(scen, "12-plan", load("plan", ("md1_crypt",), maps, 2), again, exit=4)
     with open(os.path.join(SC, scen, "README"), "w") as f:
         f.write("app-rec-debian13 after a stopped copy, hand-edited from rec-debian13-stack's\n"
                 "documents; see ../../make-disk-fixtures.py.\n")
+
+
+# ---- The Restore's runs: built from rec-debian13-stack's recorded ones -------
+
+REC = os.path.join(SC, "rec-debian13-stack")
+STAGES = ["partition", "assemble", "format", "mount", "restore", "boot", "close"]
+STAGE_CALLS = {"partition": "07-partition", "assemble": "10-assemble", "format": "13-format", "mount": "16-mount",
+               "restore": "19-restore", "boot": "22-boot", "close": "25-close"}
+
+
+def rec_events(call):
+    """A recorded call's events, as JSON objects (the fake's own lines left out)."""
+    out = []
+    for l in open(os.path.join(REC, call, "events")).read().splitlines():
+        l = l.strip()
+        if l and not l.startswith("#") and l.split()[0] not in ("sleep", "delay"):
+            out.append(json.loads(l))
+    return out
+
+
+def rec_plan():
+    return json.loads(open(os.path.join(REC, "04-plan", "stdout")).read())
+
+
+def start_of(stages, commit=True, dry=False):
+    """A start event for a run of STAGES, as bko-holt writes one: the first
+    recorded run's, its stages, their command counts and the whole run's
+    plan hash (what RT12's runs, all with --repo, are reviewed under)."""
+    p = rec_plan()
+    st = dict(rec_events(STAGE_CALLS["partition"])[0])
+    counts = {x["name"]: len(x["commands"]) for x in p["stages"]}
+    st.update(stages=list(stages), stage_commands={x: counts[x] for x in stages}, plan_sha256=p["plan_sha256"],
+              commit=commit, dry_run=dry)
+    if not commit:
+        st["log"] = None
+    return st
+
+
+def stage_body(stage, slow=False):
+    """A recorded stage's events but its start and end.  SLOW: the copy's
+    progress a second apart, for the pty runs to see it move (and stop)."""
+    out = []
+    for e in rec_events(STAGE_CALLS[stage])[1:-1]:
+        out.append(e)
+        if slow and e["event"] == "progress":
+            out.append("sleep 1")
+    return out
+
+
+def stream(events, comment, delay="0.01"):
+    lines = ["# " + c for c in comment.splitlines()] + ["delay " + delay]
+    for e in events:
+        lines.append(e if isinstance(e, str) else json.dumps(e, separators=(",", ":")))
+    return "\n".join(lines) + "\n"
+
+
+def end(exit=0, stopped=False, secs=60.0):
+    return {"event": "end", "exit": exit, "stopped": stopped, "secs": secs}
+
+
+def whole_run(slow=False):
+    ev = [start_of(STAGES)]
+    for st in STAGES:
+        ev += stage_body(st, slow)
+    return ev + [end(0, secs=97.4)]
+
+
+def failed_boot():
+    """Through the copy, then grub-install fails in boot as the mock's: its
+    cmd_done with status 1, `failed` (cmd_failed, grub-install past its
+    chroot), `end` 1."""
+    ev = [start_of(STAGES)]
+    for st in STAGES[:5]:
+        ev += stage_body(st)
+    body = rec_events(STAGE_CALLS["boot"])[1:-1]
+    for e in body:
+        if e["event"] == "cmd" and "grub-install" in e["argv"]:
+            e = dict(e, argv=[a for a in e["argv"] if a != "--no-nvram"])
+            ev.append(e)
+            ev.append({"event": "cmd_done", "stage": "boot", "n": e["n"], "status": 1, "signal": None, "secs": 0.4})
+            text = "grub-install failed (exit status: 1):\n    grub-install: error: efibootmgr failed to register the boot entry: No such file or directory."
+            ev.append({"event": "failed", "stage": "boot", "n": e["n"], "code": "cmd_failed", "program": "grub-install", "argv": e["argv"],
+                       "status": 1, "signal": None, "text": text,
+                       "tail": ["Installing for x86_64-efi platform.", "grub-install: error: efibootmgr failed to register the boot entry: No such file or directory."],
+                       "log": "/run/bko-holt/log/load.log"})
+            break
+        if e["event"] != "stage_done":
+            ev.append(e)
+    return ev + [end(1, secs=60.2)]
+
+
+def one_stage(stage, removable=False):
+    """A recorded stage run alone, as Try again's runs are: its start's hash
+    the whole run's (RT12's runs carry --repo, the recording's boot and close
+    didn't)."""
+    ev = [start_of([stage])]
+    for e in stage_body(stage):
+        if removable and e["event"] == "cmd" and "grub-install" in e["argv"]:
+            e = dict(e, argv=e["argv"] + ["--removable"])
+        ev.append(e)
+    return ev + [end(0, secs=20.1)]
+
+
+def stopped_copy():
+    """What fake-bko-holt writes when it is stopped in the copy: the
+    archiver's SIGINT exit (130), `stopping`, `end` 5 (holt-json.md, J7)."""
+    ev = [start_of(STAGES)]
+    for st in STAGES[:4]:
+        ev += stage_body(st)
+    body = rec_events(STAGE_CALLS["restore"])[1:-1]
+    ev.append(body[0])
+    ev.append(body[1])
+    ev.append(body[2])
+    ev.append({"event": "stopping", "signal": "SIGTERM"})
+    ev.append({"event": "cmd_done", "stage": "restore", "n": 1, "status": 130, "signal": None, "secs": 1.2})
+    return ev + [end(5, stopped=True, secs=31.0)]
+
+
+def fresh_status():
+    """The recorded status as it is before any stage ran: hand-edited from
+    08-status-after-partition (no guest recorded one before partition)."""
+    st = json.loads(open(os.path.join(REC, "08-status-after-partition", "stdout")).read())
+    for r in st["stages"]:
+        r["state"] = "not_done" if r["name"] in ("partition", "close") else "unknown"
+        r["why"] = ""
+    st.update(next="partition", all_done=False)
+    st["marks"] = {"partitioned": [], "restore_started": False, "restore_complete": False, "boot": False}
+    for t in st["targets"]:
+        t["recorded"] = False
+    st["resume"] = {"go_on": False, "why": ["nothing of this layout's is on these disks"]}
+    st["open"] = {"containers": [], "pools": [], "mounted": []}
+    return st
+
+
+def status_after_restore():
+    """Try again's status after the boot stage failed: the copy done, boot
+    next (hand-edited from 20-status-after-restore)."""
+    st = json.loads(open(os.path.join(REC, "20-status-after-restore", "stdout")).read())
+    st.update(next="boot", all_done=False)
+    st["resume"] = {"go_on": True, "why": []}
+    return st
+
+
+MAPS = [("vda", "*"), ("vdb", "*")]
+KEY = ("md1_crypt",)
+
+
+def restore_base(scen, version="stick-three"):
+    fresh(scen)
+    stick(scen, version)
+    plan = open(os.path.join(REC, "04-plan", "stdout")).read()
+    write(scen, "10-plan", load("plan"), raw=plan)
+    write(scen, "11-plan", load("plan", (), MAPS, 2), raw=plan)
+    write(scen, "12-plan", load("plan", KEY, MAPS, 2), raw=plan)
+    write(scen, "13-plan", load("plan", KEY, MAPS, 0), raw=plan)
+    write(scen, "14-status", load("status", (), MAPS, 0), fresh_status())
+    write(scen, "15-status", load("status", KEY, MAPS, 0), fresh_status())
+
+
+def restores():
+    readme = ("Built by ../../make-disk-fixtures.py from rec-debian13-stack's recorded documents\n"
+              "and streams (RT12's flow, one --through close --commit run, isn't recorded:\n"
+              "its stream is the staged run's, stage by stage, under one start and end).\n")
+    scen = "app-rec-restore"
+    restore_base(scen)
+    write(scen, "20-restore", load("close", KEY, MAPS, 2, commit=True),
+          events=stream(whole_run(slow=True), "The whole run, --through close --commit, built from the recorded stages."))
+    open(os.path.join(SC, scen, "README"), "w").write(readme + "Restore to Done.\n")
+    scen = "app-rec-dry"
+    restore_base(scen, "app-dry")
+    shutil.copy(os.path.join(REC, "05-dry", "events"), os.path.join(SC, scen, "_dry-events"))
+    write(scen, "20-dry", load("close", KEY, MAPS, 2), events=open(os.path.join(REC, "05-dry", "events")).read())
+    os.remove(os.path.join(SC, scen, "_dry-events"))
+    open(os.path.join(SC, scen, "README"), "w").write(readme + "A dry run: the recorded dry run's stream (05-dry), as it is.\n")
+    scen = "app-rec-notdry"
+    restore_base(scen, "app-dry")
+    write(scen, "20-dry", load("close", KEY, MAPS, 2),
+          events=stream(whole_run(), "Wrong on purpose: a dry run's call answered by a stream that commits (start's commit true),\nwhich bko-rescue must stop at once (holt-json.md, \"The flow\" 6)."))
+    open(os.path.join(SC, scen, "README"), "w").write(readme + "A dry run answered as if it committed: bko-rescue stops it.\n")
+    scen = "app-rec-fail"
+    restore_base(scen)
+    write(scen, "20-restore", load("close", KEY, MAPS, 2, commit=True), exit=1,
+          events=stream(failed_boot(), "Built: the recorded stages through the copy, then grub-install fails in boot (cmd_failed), end 1."),
+          stderr="bko-holt load: boot: grub-install failed (exit status: 1)\n")
+    # Try again: status (boot next), a plan, boot and close alone.
+    write(scen, "30-status", load("status", KEY, MAPS, 0), status_after_restore())
+    write(scen, "31-boot", load("only-boot", KEY, MAPS, 0, commit=True), events=stream(one_stage("boot"), "Built: the recorded boot stage alone."))
+    write(scen, "32-close", load("only-close", KEY, MAPS, 0, commit=True), events=stream(one_stage("close"), "Built: the recorded close stage alone."))
+    # Install without an entry: its plan, then boot with --removable --no-nvram, and close.
+    plan = open(os.path.join(REC, "04-plan", "stdout")).read()
+    write(scen, "33-plan", load("plan", KEY, MAPS, 0, removable=True), raw=plan)
+    write(scen, "34-boot", load("only-boot", KEY, MAPS, 0, commit=True, removable=True),
+          events=stream(one_stage("boot", removable=True), "Built: the recorded boot stage, grub-install with --removable."))
+    write(scen, "35-close", load("only-close", KEY, MAPS, 0, commit=True, removable=True), events=stream(one_stage("close"), "Built: the recorded close stage alone."))
+    open(os.path.join(SC, scen, "README"), "w").write(readme + "The boot stage fails (the mock's grub-install); Try again and Install without an entry.\n")
+    scen = "app-rec-stop"
+    restore_base(scen)
+    slow = whole_run(slow=True)
+    # The copy waits long enough to be stopped by the pty runs' Cancel.
+    i = next(i for i, e in enumerate(slow) if isinstance(e, dict) and e["event"] == "progress")
+    slow.insert(i + 1, "sleep 30")
+    write(scen, "20-restore", load("close", KEY, MAPS, 2, commit=True),
+          events=stream(slow, "The whole run, its copy slow: Cancel and Stop end it (fake-bko-holt's SIGTERM: stopping, end 5)."))
+    with open(os.path.join(SC, scen, "stopped.events"), "w") as f:
+        f.write("\n".join(json.dumps(e, separators=(",", ":")) for e in stopped_copy()) + "\n")
+    open(os.path.join(SC, scen, "README"), "w").write(readme + "Stopped in the copy; stopped.events is the stream as the fake ends it then.\n")
 
 
 # ---- lovelace: hand-written by fit's rules ---------------------------------
@@ -529,3 +758,4 @@ if __name__ == "__main__":
     lovelace("app-lovelace-changed", review=plan_changed)
     lovelace("app-lovelace-unshown", review=unshown)
     rec_again()
+    restores()

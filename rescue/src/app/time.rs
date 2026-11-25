@@ -144,6 +144,14 @@ pub fn stamp(t: i64) -> String {
     format!("{y:04}{m:02}{d:02}-{:02}{:02}{:02}", s / 3600, (s % 3600) / 60, s % 60)
 }
 
+/// `20261123T141812Z`, UTC, for restore logs (stick-config.md, "Restore
+/// logs": `restore-logs/<UTC timestamp>.log.gz`).
+pub fn stamp_z(t: i64) -> String {
+    let (y, m, d) = civil_from_days(t.div_euclid(86_400));
+    let s = t.rem_euclid(86_400);
+    format!("{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z", s / 3600, (s % 3600) / 60, s % 60)
+}
+
 /// When a POSIX rule's change happens in a year.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Date {

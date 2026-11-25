@@ -923,6 +923,11 @@ pub struct Failure {
     pub code: Clean,
     pub program: Option<Clean>,
     pub tail: Vec<Clean>,
+    /// The command that failed, a word each (null when no step failed).
+    pub argv: Vec<Clean>,
+    /// Its exit status, or the signal that ended it.
+    pub status: Option<i64>,
+    pub signal: Option<i64>,
 }
 
 /// A `bko-holt-error` document as the stream's first line: bko-holt
@@ -959,6 +964,8 @@ impl NotDry {
 /// lines of a failure's tail.
 const PROBLEMS_MAX: usize = 64;
 const TAIL_MAX: usize = 20;
+/// The most `cmd` lines kept.
+pub const CMDS_MAX: usize = 5000;
 
 /// bko-holt's events as they come (holt-json.md, `bko-holt-events`), as a
 /// gauge shows them: one JSON object a line, `start` (format
@@ -977,6 +984,14 @@ pub struct Follow {
     pub dry_run: Option<bool>,
     /// bko-holt load's own pid, from `start` (for RT12's Cancel).
     pub pid: Option<u64>,
+    /// `start`'s version, plan hash, log and the layout's hostname.
+    pub version: Option<String>,
+    pub plan_sha256: Option<String>,
+    pub log: Option<String>,
+    pub hostname: Option<Clean>,
+    /// Each `cmd` as a line (`partition 1/6: wipefs --all /dev/nvme0n1`),
+    /// the last CMDS_MAX: a dry run's log is these.
+    pub cmds: Vec<Clean>,
     /// The "Now:" line: what the running command does.
     pub now: Option<Clean>,
     /// The archiver's figures: bytes so far and the total, when known.
@@ -1223,6 +1238,11 @@ impl Follow {
                 self.commit = v.get_bool("commit");
                 self.dry_run = v.get_bool("dry_run");
                 self.pid = v.get_u64("pid");
+                let short = |k: &str| v.get_str(k).filter(|x| x.len() <= 4096).map(str::to_string);
+                self.version = short("version");
+                self.plan_sha256 = short("plan_sha256");
+                self.log = short("log");
+                self.hostname = v.at(&["layout", "hostname"]).and_then(Value::as_str).map(|h| Clean::line(h, cap::HOSTNAME));
                 if let Some(a) = v.get_arr("stages") {
                     if a.len() > STAGES_MAX || a.iter().any(|x| x.as_str().is_none()) {
                         return self.fail("start's stages aren't a short list of names".to_string());
@@ -1295,6 +1315,18 @@ impl Follow {
                     Some("note") => field("why"),
                     Some(k) => format!("a {} step: {}", Clean::line(k, 32).as_str(), Clean::line(first, 64).as_str()),
                 };
+                if let Some(a) = v.get_arr("argv") {
+                    let words: Vec<&str> = a.iter().take(64).map(|x| x.as_str().unwrap_or("?")).collect();
+                    let at = match (v.get_u64("n"), v.get_u64("of")) {
+                        (Some(n), Some(of)) => format!(" {n}/{of}"),
+                        _ => String::new(),
+                    };
+                    let st = v.get_str("stage").unwrap_or("?");
+                    if self.cmds.len() >= CMDS_MAX {
+                        self.cmds.remove(0);
+                    }
+                    self.cmds.push(Clean::line(&format!("{st}{at}: {}", words.join(" ")), cap::LOG_LINE));
+                }
                 let mut t = if would { format!("would run: {what}") } else { what };
                 if let (Some(n), Some(of)) = (v.get_u64("n"), v.get_u64("of")) {
                     t.push_str(&format!(" (command {n} of {of} in this stage)"));
@@ -1354,6 +1386,9 @@ impl Follow {
                     code: Clean::line(v.get_str("code").unwrap_or("(no code)"), 64),
                     program: v.get_str("program").map(|p| Clean::line(p, 64)),
                     tail: tail.iter().filter_map(Value::as_str).take(TAIL_MAX).map(|l| Clean::line(l, cap::LOG_LINE)).collect(),
+                    argv: v.get_arr("argv").map(|a| a.iter().take(64).map(|x| Clean::line(x.as_str().unwrap_or("?"), cap::LOG_LINE)).collect()).unwrap_or_default(),
+                    status: v.get("status").and_then(Value::as_i64),
+                    signal: v.get("signal").and_then(Value::as_i64),
                 });
             }
             "end" => match v.get("exit").and_then(Value::as_i64) {

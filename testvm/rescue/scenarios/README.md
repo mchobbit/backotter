@@ -121,3 +121,15 @@ mount of the config partition (the Rust tests' fake, `../fake-bin/mount`).
 | `app-lovelace` | hand-written: lovelace's Samsung and WD Red; here a Crucial 1 TB (much bigger), the WD Red (the same disk), a Kingston 480 GB with photos (4.3 % smaller: the offer), the stick |
 | `app-lovelace-dry` | the same, its api `no_commit` true |
 | `app-lovelace-small` | hand-written: a WDC 320 GB (38.7 % smaller: the user decides) and a Transcend 64 GB (the data doesn't fit) |
+| `app-rec-restore` | built from rec-debian13-stack: a fresh status, then the Restore's one `--through close --commit` run, its stream the recorded stages' under one start and end, the copy's progress a second apart: Done |
+| `app-rec-dry` | the same with app-dry's api, its run the recorded dry run (05-dry) as it is: the dry run's Done |
+| `app-rec-notdry` | a dry run answered by a stream that commits (wrong on purpose): stopped at once |
+| `app-rec-fail` | the run fails in boot (the mock's grub-install, `cmd_failed`, `end` 1); Try again's status, boot and close alone; Install without an entry's plan and runs |
+| `app-rec-stop` | the copy waits 30 s, for Cancel and Stop; `stopped.events` is the stream the fake writes then |
+
+The Restore's scenarios answer their calls in turn (`FAKE_BKO_HOLT_STATE`,
+or the Rust tests' `in_turn`): Try again's status is another document
+than the first one's.  RT12's flow isn't recorded by any guest, so its
+streams are built from the staged run's recordings (each start's plan
+hash the whole run's: every RT12 run carries `--repo`); the failure and
+the stop are built, as the demo's are.

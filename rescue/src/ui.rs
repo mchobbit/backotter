@@ -398,11 +398,14 @@ pub struct Message {
     /// The button the focus starts on: a fix is never the default
     /// (rescue-screens.md, "Problems and their help").
     pub focus: usize,
+    /// Esc answers Back with no < Back > drawn (a stage's help, whose
+    /// buttons fill the row).
+    pub esc_back: bool,
 }
 
 impl Message {
     pub fn new(chrome: Chrome, text: Clean) -> Message {
-        Message { chrome, text, buttons: vec![Button::ok()], focus: 0 }
+        Message { chrome, text, buttons: vec![Button::ok()], focus: 0, esc_back: false }
     }
 }
 
@@ -427,12 +430,19 @@ impl TextView {
 pub struct Progress {
     pub chrome: Chrome,
     pub text: Clean,
+    /// Text under the gauge, which the ticker never changes (Restore's
+    /// "Leave the computer on"); in plain mode, said once after `text`.
+    pub after: Clean,
+    /// Keys that answer as a button does, with no button drawn (Restore's
+    /// `l` for the log): full screen takes the letter when the focus isn't
+    /// in a field; plain mode offers them among the buttons.
+    pub hidden: Vec<Button>,
     pub buttons: Vec<Button>,
 }
 
 impl Progress {
     pub fn new(chrome: Chrome, text: Clean) -> Progress {
-        Progress { chrome, text, buttons: Vec::new() }
+        Progress { chrome, text, after: Clean::default(), hidden: Vec::new(), buttons: Vec::new() }
     }
 }
 

@@ -110,7 +110,8 @@ impl App {
                 }
             }
         };
-        let Some(mut cmd) = self.holt_cmd(&HoltCmd::ReportBug { out: path, no_redact, strip: strip.as_deref(), attach: &[] }) else {
+        let attach = self.attach.clone();
+        let Some(mut cmd) = self.holt_cmd(&HoltCmd::ReportBug { out: path, no_redact, strip: strip.as_deref(), attach: &attach }) else {
             return Err(Go::Stay);
         };
         cmd.timeout_ms = REPORT_MS;
@@ -140,6 +141,14 @@ impl App {
     /// Copy `file` onto the config partition: its path there, or why
     /// not.
     pub(crate) fn save_to_stick(&mut self, file: &Path) -> Result<String, String> {
+        self.save_to_stick_dir(file, REPORTS, None)
+    }
+
+    /// Copy `file` into `rel` on the config partition, mounted read-write
+    /// for this only; with `keep`, the restore logs there beyond the newest
+    /// `keep` removed (stick-config.md, "Restore logs").  Its path there,
+    /// or why not.
+    pub(crate) fn save_to_stick_dir(&mut self, file: &Path, rel: &str, keep: Option<usize>) -> Result<String, String> {
         if self.opts.dry_run && !DRY_RUN_TO_STICK {
             return Err(s::REPORT_DRY_RUN.to_string());
         }
@@ -160,12 +169,16 @@ impl App {
             }
         };
         run(self, &mount)?;
-        let copied = copy_in(file, &mnt.join(REPORTS), &name);
+        let dir = mnt.join(rel);
+        let copied = copy_in(file, &dir, &name);
+        if let (Ok(()), Some(k)) = (&copied, keep) {
+            super::restore::prune(&dir, k);
+        }
         let un = run(self, &umount);
         let _ = fs::remove_dir(&mnt);
         copied.map_err(|e| e.to_string())?;
         un?;
-        Ok(format!("{REPORTS}/{name}"))
+        Ok(format!("{rel}/{name}"))
     }
 
     /// `r` or < Report >: make it, save it, say where.  None to go back to

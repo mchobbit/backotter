@@ -6,7 +6,7 @@ DragonFly, illumos, Haiku), in Rust, with its own small terminal layer.
 The plan is `docs/design/rescue-tui.md`; the screens are
 `docs/design/rescue-screens.md`.
 
-Status: RT1-RT8, RT11 and RT12's first part.  The crate, the FFI and its header test,
+Status: RT1-RT8, RT11 and RT12.  The crate, the FFI and its header test,
 the terminal layer (profiles, keys, events, restore), the sanitiser, the
 screen buffer with diffed redraw, the golden-screen and byte-stream
 harnesses, the console spike, the widgets with the `Ui` trait and the
@@ -23,8 +23,14 @@ recovery-words --json`), the keyboard offer and the Keyboard screen,
 Which machine?, Snapshot, the problems' help screens and the bug report.
 RT12's first part: Disks (`bko-holt load ... --through plan --json`, the
 size offers and refusals), Passphrases, the Resume offer and Review (the
-typed serials, Commands, Advanced), then a screen saying the restore
-itself (RT12's second part) isn't built yet.
+typed serials, Commands, Advanced).  RT12's second part
+(`src/app/restore.rs`): the Restore (Review's runs started on their own:
+detached, `systemd-run` or a session of its own, in a restore, a direct
+child in a dry run; their events followed, `l` for the log, Cancel asking
+first, Stop by SIGTERM to the pid bko-holt's lock names), Done (the log
+gzipped onto the stick, Restart, Power off), Failure with each stage's
+help, Try again and Install without an entry, and a restore an earlier
+bko-rescue started, followed again (`run.json`).
 
 ## Rules
 
@@ -51,6 +57,11 @@ ssh HOST 'cd ~/backotter-work/rescue-build/rescue &&
   python3 ../testvm/rescue/demo-test.py target/debug/bko-rescue &&
   python3 ../testvm/rescue/app-test.py target/debug/bko-rescue'
 ```
+
+`testvm/rescue/real-dry-run.py` runs the whole flow as a dry run against a
+real bko-holt and rustic-bko inside a HoltTest rescuer kept up by
+`ht1-debug.sh GUEST again partition`, and checks nothing was written (its
+docstring says how).
 
 (`testvm/rescue` is for the pty tests and the app's fixtures;
 `holt/src/bip39-english.txt` lets the test that `src/bip39-english.txt`

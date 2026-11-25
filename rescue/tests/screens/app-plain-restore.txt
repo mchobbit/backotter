@@ -1,0 +1,32 @@
+Choose [r, c, a, b]: Restore
+Restoring lovelace.  Leave the computer on, with the stick and the
+network cable in, until this says Done.
+Type c and Enter to stop (it asks first), or l and Enter to see the log.
+[>] Make partitions: started
+[x] Make partitions: done in N s
+[x] Set up RAID and encryption: done in N s
+[>] Make filesystems: started
+[x] Make filesystems: done in N s
+[x] Ready the filesystems: done in N s
+[x] Copy your files back: done in N s
+[>] Make it bootable: started
+    2 warnings
+[x] Make it bootable: done in N s
+[>] Finish: started
+[x] Finish: done in N s
+lovelace is restored
+[x] Make partitions: done in N s
+[x] Set up RAID and encryption: done in N s
+[x] Make filesystems: done in N s
+[x] Ready the filesystems: done in N s
+[x] Copy your files back: done in N s
+[x] Make it bootable: done in N s
+[x] Finish: done in N s
+
+At the next start, type the passphrase you chose for the disks.
+
+The log is on the stick, in lovelace's folder.
+
+Remove the stick, then press Enter to restart into lovelace.
+  r) restart   s) shell   p) power off
+Choose [r, s, p]: 

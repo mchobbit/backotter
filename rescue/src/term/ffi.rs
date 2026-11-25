@@ -264,6 +264,7 @@ unsafe extern "C" {
     fn raise(sig: c_int) -> c_int;
     fn kill(pid: Pid, sig: c_int) -> c_int;
     fn ttyname(fd: c_int) -> *mut c_char;
+    fn setsid() -> Pid;
 }
 
 #[cfg(not(target_os = "haiku"))]
@@ -281,6 +282,7 @@ const SYMS: &[(&str, &str)] = &[
     ("raise", "raise"),
     ("kill", "kill"),
     ("ttyname", "ttyname"),
+    ("setsid", "setsid"),
 ];
 
 /// Spare bytes after our termios, so a system struct bigger than ours
@@ -513,8 +515,35 @@ pub fn kill_group(pgid: u32, sig: c_int) -> bool {
     unsafe { kill(-p, sig) == 0 }
 }
 
+/// `sig` to the one process `pid` (bko-holt load, as its lock names it:
+/// holt-json.md, J7), never a group: a `pid` of 0 or 1, our own, or one
+/// that isn't a pid does nothing.  Whether the signal went.
+pub fn signal_pid(pid: u32, sig: c_int) -> bool {
+    let Ok(p) = Pid::try_from(pid) else { return false };
+    if p <= 1 || pid == std::process::id() {
+        return false;
+    }
+    // SAFETY: kill() takes any pid and signal; p is above 1, so it names
+    // one process, neither a group nor every process.
+    unsafe { kill(p, sig) == 0 }
+}
+
+/// The child of a `Command` starts a session of its own (setsid), so it
+/// has no controlling terminal and no one signals it but by its pid: a
+/// detached `bko-holt load`, and a dry run's direct child (holt-json.md,
+/// "Standard input, output and error").  Not with `process_group`, whose
+/// setpgid would make it a group leader, which setsid refuses.
+pub fn new_session(cmd: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt as _;
+    // SAFETY: the closure runs in the child between fork and exec, and
+    // calls only setsid(), which is async-signal-safe (POSIX), and reads
+    // errno through last_os_error, which allocates nothing.
+    unsafe {
+        cmd.pre_exec(|| if setsid() == -1 { Err(io::Error::last_os_error()) } else { Ok(()) });
+    }
+}
+
 /// Whether a process (or a zombie) `pid` is there: kill(pid, 0).
-#[cfg(test)]
 pub fn exists(pid: u32) -> bool {
     match Pid::try_from(pid) {
         // SAFETY: signal 0 sends nothing; it only checks the pid.
@@ -641,7 +670,7 @@ mod tests {
         keys.dedup();
         assert_eq!(keys.len(), v.len());
         assert!(v.iter().skip_while(|l| !l.starts_with("sym ")).all(|l| l.starts_with("sym ")));
-        assert_eq!(v.iter().filter(|l| l.starts_with("sym ")).count(), 8);
+        assert_eq!(v.iter().filter(|l| l.starts_with("sym ")).count(), 9);
     }
 
     #[cfg(target_os = "linux")]

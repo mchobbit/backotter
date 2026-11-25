@@ -105,8 +105,54 @@ pub struct Port {
     pub has_address: Option<bool>,
 }
 
+/// How the Restore starts `bko-holt load` (rescue-tui.md, RT12;
+/// holt-json.md, "Stop" and "The flow").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum How {
+    /// A dry run's: a direct child in a session of its own (`setsid`),
+    /// with exactly the small environment (BKO_HOLT_NO_COMMIT among it),
+    /// stopped and reaped when bko-rescue is done with it.
+    Child,
+    /// A restore's: outlives bko-rescue.  A transient unit (`systemd-run`)
+    /// where systemd runs and we are root, else a session of its own.
+    Detached,
+}
+
+/// A `bko-holt load` started for the Restore, or found running: its
+/// events file followed, its end seen, its stop asked for.
+pub trait Running {
+    /// What's new in its events file since the last read, at most `max`
+    /// bytes, added to `buf`; true when it read to the file's end.
+    fn read(&mut self, buf: &mut Vec<u8>, max: usize) -> bool;
+    /// Whether load has ended: Some(its exit status, when it can be had).
+    /// `pid` is load's own, from its `start` event, when one came.
+    fn ended(&mut self, pid: Option<u32>) -> Option<Option<i32>>;
+    /// SIGTERM to load's pid, which the caller checked against its lock
+    /// (J7): never to a group.  Whether the signal went.
+    fn term(&mut self, pid: u32) -> bool;
+    /// The last 64 KiB of its standard error.
+    fn stderr(&self) -> Vec<u8>;
+    /// It outlives bko-rescue: its key files must too.
+    fn detached(&self) -> bool;
+    /// A dry run's child, still running, stopped and reaped (its whole
+    /// session's group, which setsid made it lead).
+    fn kill(&mut self);
+}
+
 pub trait Sys {
     fn start(&mut self, c: Cmd) -> Box<dyn Job>;
+    /// Start a load for the Restore, its standard output (the events) to
+    /// `events` and its standard error to `stderr`, both new 0600 files.
+    fn start_load(&mut self, c: Cmd, how: How, events: &Path, stderr: &Path) -> Result<Box<dyn Running>, String>;
+    /// Follow a load an earlier bko-rescue started (its `run.json`).
+    fn attach(&mut self, events: &Path, stderr: &Path) -> Result<Box<dyn Running>, String>;
+    /// Whether a process `pid` is there.
+    fn alive(&self, pid: u32) -> bool;
+    /// A process's start time as bko-holt's lock records it (Linux:
+    /// /proc/PID/stat's starttime); None where this can't read it.
+    fn proc_start(&self, pid: u32) -> Option<String>;
+    /// Whether a path is there (the stick's partition, before Restart).
+    fn exists(&self, path: &Path) -> bool;
     /// A shell on the terminal, until it exits.  The full screen has
     /// handed the terminal back first.
     fn shell(&mut self);
@@ -114,6 +160,8 @@ pub trait Sys {
     fn now(&self) -> i64;
     /// A file's bytes, at most `max` (zoneinfo, a report to view).
     fn read(&self, path: &Path, max: usize) -> Option<Vec<u8>>;
+    /// A file's last `max` bytes (a log that may be long).
+    fn read_tail(&self, path: &Path, max: usize) -> Option<Vec<u8>>;
     /// A program on PATH, as an absolute path.
     fn which(&self, name: &str) -> Option<PathBuf>;
     fn ports(&self) -> Option<Vec<Port>>;
@@ -248,6 +296,212 @@ impl Drop for RealJob {
     }
 }
 
+/// A unit's name for a detached load: ours, and new each time.
+fn unit_name(n: u32) -> String {
+    format!("bko-rescue-load-{}-{n}", std::process::id())
+}
+
+/// Whether a detached load goes in a systemd unit: Linux, systemd as its
+/// init, its tools there, and we are root (a system unit needs it).
+fn use_systemd(scratch: &Path) -> bool {
+    cfg!(target_os = "linux")
+        && Path::new("/run/systemd/system").is_dir()
+        && which("systemd-run").is_some()
+        && which("systemctl").is_some()
+        && fs::metadata(scratch).map(|m| m.uid() == 0).unwrap_or(false)
+}
+
+/// `systemd-run`'s arguments for a detached load (holt-json.md, "Stop"):
+/// SIGTERM to load alone on a stop or a shutdown (`KillMode=mixed`), five
+/// minutes for it to end, no core, its output to the files, and exactly
+/// the small environment.
+pub fn systemd_run_args(unit: &str, c: &Cmd, events: &Path, stderr: &Path) -> Vec<OsString> {
+    // Not `--collect`: a unit that failed stays loaded, so its exit
+    // status can be read when the events have no `end`.
+    let mut v: Vec<OsString> = ["--quiet", "--no-ask-password"].iter().map(OsString::from).collect();
+    v.push(format!("--unit={unit}").into());
+    for p in ["KillMode=mixed", "TimeoutStopSec=300", "LimitCORE=0", "StandardInput=null"] {
+        v.push("-p".into());
+        v.push(p.into());
+    }
+    let mut out = OsString::from("StandardOutput=file:");
+    out.push(events);
+    let mut err = OsString::from("StandardError=file:");
+    err.push(stderr);
+    v.extend(["-p".into(), out, "-p".into(), err]);
+    for (k, val) in small_env(&c.env) {
+        v.push(format!("--setenv={k}={val}").into());
+    }
+    v.push("--".into());
+    v.push(c.prog.as_os_str().to_owned());
+    v.extend(c.args.iter().cloned());
+    v
+}
+
+/// A load's events file, read as it grows.
+struct Events {
+    file: Option<File>,
+    stderr: PathBuf,
+}
+
+impl Events {
+    fn open(events: &Path, stderr: &Path) -> Result<Events, String> {
+        let file = File::open(events).map_err(|e| format!("{}: {e}", events.display()))?;
+        Ok(Events { file: Some(file), stderr: stderr.to_path_buf() })
+    }
+
+    fn read(&mut self, buf: &mut Vec<u8>, max: usize) -> bool {
+        let Some(f) = self.file.as_mut() else { return true };
+        let mut chunk = [0u8; 64 * 1024];
+        let mut got = 0;
+        while got < max {
+            // A regular file: this never blocks.
+            match f.read(&mut chunk[..(max - got).min(64 * 1024)]) {
+                Ok(0) => return true,
+                Ok(n) => {
+                    got += n;
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => return true,
+            }
+        }
+        false
+    }
+
+    fn stderr(&self) -> Vec<u8> {
+        read_capped(&self.stderr, 64 * 1024, true).0
+    }
+}
+
+/// A load that is our child: a dry run's (`How::Child`), or a detached one
+/// in a session of its own where there's no systemd.
+struct ChildLoad {
+    ev: Events,
+    child: Option<Child>,
+    pid: u32,
+    status: Option<Option<i32>>,
+    detached: bool,
+}
+
+impl Running for ChildLoad {
+    fn read(&mut self, buf: &mut Vec<u8>, max: usize) -> bool {
+        self.ev.read(buf, max)
+    }
+    fn ended(&mut self, _pid: Option<u32>) -> Option<Option<i32>> {
+        if self.status.is_none() {
+            if let Some(c) = self.child.as_mut() {
+                match c.try_wait() {
+                    Ok(Some(st)) => {
+                        self.status = Some(st.code());
+                        self.child = None;
+                    }
+                    Ok(None) => {}
+                    Err(_) => {
+                        self.status = Some(None);
+                        self.child = None;
+                    }
+                }
+            }
+        }
+        self.status
+    }
+    fn term(&mut self, pid: u32) -> bool {
+        // Only our own child, not yet reaped: its pid can't be another's.
+        pid == self.pid && self.child.is_some() && crate::term::ffi::signal_pid(pid, crate::term::ffi::SIGTERM)
+    }
+    fn stderr(&self) -> Vec<u8> {
+        self.ev.stderr()
+    }
+    fn detached(&self) -> bool {
+        self.detached
+    }
+    fn kill(&mut self) {
+        if let Some(mut c) = self.child.take() {
+            // setsid made it its group's leader: what it started goes too.
+            crate::term::ffi::kill_group(self.pid, crate::term::ffi::SIGKILL);
+            let _ = c.kill();
+            self.status = Some(c.wait().ok().and_then(|s| s.code()));
+        }
+    }
+}
+
+impl Drop for ChildLoad {
+    fn drop(&mut self) {
+        if !self.detached {
+            self.kill();
+        }
+    }
+}
+
+/// A load in a transient systemd unit, or one an earlier bko-rescue
+/// started: not our child, so its end is seen by its pid (and the unit's
+/// state, for a unit), its exit status from the unit when it can be had.
+struct OtherLoad {
+    ev: Events,
+    unit: Option<String>,
+    status: Option<Option<i32>>,
+    /// When systemctl was last asked.
+    asked: Option<Instant>,
+}
+
+impl OtherLoad {
+    /// The unit's state, at most every 2 s: Some(exit status) once it
+    /// is inactive or failed.
+    fn unit_ended(&mut self) -> Option<Option<i32>> {
+        let unit = self.unit.as_ref()?;
+        if self.asked.is_some_and(|t| t.elapsed() < Duration::from_secs(2)) {
+            return None;
+        }
+        self.asked = Some(Instant::now());
+        let out = Command::new(which("systemctl")?)
+            .args(["show", "--property=ActiveState,ExecMainCode,ExecMainStatus", unit])
+            .env_clear()
+            .envs(small_env(&[]))
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        let get = |k: &str| text.lines().find_map(|l| l.strip_prefix(k).and_then(|r| r.strip_prefix('='))).map(str::trim).map(str::to_string);
+        match get("ActiveState").as_deref() {
+            Some("inactive" | "failed") => {}
+            _ => return None,
+        }
+        // ExecMainCode 1 is CLD_EXITED: the status is an exit code.
+        let code = if get("ExecMainCode").as_deref() == Some("1") { get("ExecMainStatus").and_then(|x| x.parse().ok()) } else { None };
+        Some(code)
+    }
+}
+
+impl Running for OtherLoad {
+    fn read(&mut self, buf: &mut Vec<u8>, max: usize) -> bool {
+        self.ev.read(buf, max)
+    }
+    fn ended(&mut self, pid: Option<u32>) -> Option<Option<i32>> {
+        if self.status.is_none() {
+            if self.unit.is_some() {
+                self.status = self.unit_ended();
+            } else if let Some(p) = pid {
+                if !crate::term::ffi::exists(p) {
+                    self.status = Some(None);
+                }
+            }
+        }
+        self.status
+    }
+    fn term(&mut self, pid: u32) -> bool {
+        crate::term::ffi::exists(pid) && crate::term::ffi::signal_pid(pid, crate::term::ffi::SIGTERM)
+    }
+    fn stderr(&self) -> Vec<u8> {
+        self.ev.stderr()
+    }
+    fn detached(&self) -> bool {
+        true
+    }
+    fn kill(&mut self) {}
+}
+
 struct Done(Output);
 
 impl Job for Done {
@@ -304,6 +558,69 @@ impl Sys for RealSys {
         })
     }
 
+    fn start_load(&mut self, c: Cmd, how: How, events: &Path, stderr: &Path) -> Result<Box<dyn Running>, String> {
+        let made = |p: &Path| OpenOptions::new().write(true).create_new(true).mode(0o600).open(p).map_err(|e| format!("{}: {e}", p.display()));
+        let out = made(events)?;
+        let err = match made(stderr) {
+            Ok(f) => f,
+            Err(e) => {
+                wipe_file(events);
+                return Err(e);
+            }
+        };
+        let ev = Events::open(events, stderr)?;
+        if how == How::Detached && use_systemd(&self.scratch) {
+            drop((out, err));
+            self.n += 1;
+            let unit = unit_name(self.n);
+            let prog = which("systemd-run").ok_or("systemd-run isn't here")?;
+            let mut r = Cmd::new(&prog, systemd_run_args(&unit, &c, events, stderr));
+            r.timeout_ms = 60_000;
+            let mut j = self.start(r);
+            let o = loop {
+                if let Some(o) = j.poll() {
+                    break o;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            if o.code != Some(0) {
+                let why = o.not_started.clone().unwrap_or_else(|| o.stderr_text().lines().next().unwrap_or("it failed").to_string());
+                return Err(format!("systemd-run: {why}"));
+            }
+            return Ok(Box::new(OtherLoad { ev, unit: Some(unit), status: None, asked: None }));
+        }
+        let mut cmd = Command::new(&c.prog);
+        cmd.args(&c.args).env_clear().envs(small_env(&c.env)).stdin(Stdio::null()).stdout(out).stderr(err);
+        // No terminal, and no one signals it but by its pid.
+        crate::term::ffi::new_session(&mut cmd);
+        let child = cmd.spawn().map_err(|e| e.to_string())?;
+        let pid = child.id();
+        Ok(Box::new(ChildLoad { ev, child: Some(child), pid, status: None, detached: how == How::Detached }))
+    }
+
+    fn attach(&mut self, events: &Path, stderr: &Path) -> Result<Box<dyn Running>, String> {
+        Ok(Box::new(OtherLoad { ev: Events::open(events, stderr)?, unit: None, status: None, asked: None }))
+    }
+
+    fn alive(&self, pid: u32) -> bool {
+        crate::term::ffi::exists(pid)
+    }
+
+    fn proc_start(&self, pid: u32) -> Option<String> {
+        if !cfg!(target_os = "linux") {
+            return None;
+        }
+        let st = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // After the command's name, in parentheses: field 3 on; starttime
+        // is field 22.
+        let (_, rest) = st.rsplit_once(')')?;
+        rest.split_whitespace().nth(19).map(str::to_string)
+    }
+
+    fn exists(&self, path: &Path) -> bool {
+        fs::symlink_metadata(path).is_ok()
+    }
+
     fn shell(&mut self) {
         let sh = ["/bin/sh", "/system/bin/sh"].into_iter().find(|p| Path::new(p).exists()).unwrap_or("/bin/sh");
         {
@@ -322,6 +639,11 @@ impl Sys for RealSys {
     fn read(&self, path: &Path, max: usize) -> Option<Vec<u8>> {
         let (b, over) = read_capped(path, max, false);
         (!over && fs::metadata(path).is_ok()).then_some(b)
+    }
+
+    fn read_tail(&self, path: &Path, max: usize) -> Option<Vec<u8>> {
+        fs::metadata(path).ok().filter(|m| m.is_file())?;
+        Some(read_capped(path, max, true).0)
     }
 
     fn which(&self, name: &str) -> Option<PathBuf> {
@@ -462,6 +784,11 @@ pub fn own_dir(dir: &Path, uid: Option<u32>) -> io::Result<()> {
 /// exit, a caught signal or a panic's unwinding.
 pub struct Session {
     pub dir: PathBuf,
+    /// A detached load uses the files (its key files, the password, its
+    /// events): Some(its pid, once known) keeps them while it runs, for a
+    /// later bko-rescue to wipe once it is gone (rescue-tui.md, "Security":
+    /// "Load outlives the UI").
+    pub keep: Option<Option<u32>>,
 }
 
 impl Session {
@@ -476,7 +803,7 @@ impl Session {
                     let me = fs::symlink_metadata(&d)?.uid();
                     // The base is ours too: made by us, or root's /run
                     // made it for root, who we are.
-                    let s = Session { dir: d };
+                    let s = Session { dir: d, keep: None };
                     own_dir(base, Some(me))?;
                     return Ok(s);
                 }
@@ -518,22 +845,32 @@ impl Session {
     }
 }
 
-impl Drop for Session {
-    fn drop(&mut self) {
-        if let Ok(rd) = fs::read_dir(&self.dir) {
-            for e in rd.flatten() {
-                let p = e.path();
-                match fs::symlink_metadata(&p) {
-                    Ok(m) if m.is_dir() => {
-                        // A mount point left (a report's): only an empty
-                        // one goes.
-                        let _ = fs::remove_dir(&p);
-                    }
-                    _ => wipe_file(&p),
+/// Every file in a session's directory wiped, then the directory gone
+/// (an empty directory in it, a mount point left, goes too; a full one
+/// stays).
+pub fn wipe_dir(dir: &Path) {
+    if let Ok(rd) = fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            match fs::symlink_metadata(&p) {
+                Ok(m) if m.is_dir() => {
+                    let _ = fs::remove_dir(&p);
                 }
+                _ => wipe_file(&p),
             }
         }
-        let _ = fs::remove_dir(&self.dir);
+    }
+    let _ = fs::remove_dir(dir);
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Some(pid) = self.keep {
+            if pid.is_none_or(crate::term::ffi::exists) {
+                return;
+            }
+        }
+        wipe_dir(&self.dir);
     }
 }
 
@@ -567,6 +904,63 @@ mod tests {
         fs::set_permissions(&base, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(Session::new(&base).is_err());
         fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn systemd_runs_load_with_kill_mode_mixed_and_the_small_environment() {
+        let mut c = Cmd::new(Path::new("/usr/bin/bko-holt"), vec!["load".into(), "/run/bko-rescue/s-1-0/layout.json".into(), "--commit".into()]);
+        c.env.push(("X".into(), "1".into()));
+        let a: Vec<String> = systemd_run_args("bko-rescue-load-1-1", &c, Path::new("/run/bko-rescue/s-1-0/events-1"), Path::new("/run/bko-rescue/s-1-0/stderr-1"))
+            .iter()
+            .map(|x| x.to_string_lossy().to_string())
+            .collect();
+        let line = a.join(" ");
+        for want in [
+            "--unit=bko-rescue-load-1-1",
+            "-p KillMode=mixed",
+            "-p TimeoutStopSec=300",
+            "-p LimitCORE=0",
+            "-p StandardInput=null",
+            "-p StandardOutput=file:/run/bko-rescue/s-1-0/events-1",
+            "-p StandardError=file:/run/bko-rescue/s-1-0/stderr-1",
+            "--setenv=LC_ALL=C",
+            "--setenv=X=1",
+            "-- /usr/bin/bko-holt load /run/bko-rescue/s-1-0/layout.json --commit",
+        ] {
+            assert!(line.contains(want), "{want}: {line}");
+        }
+        assert!(!line.contains("--collect"), "a failed unit stays, for its exit status");
+        assert!(line.ends_with("--commit"), "load's own arguments last, as given");
+    }
+
+    #[test]
+    fn a_dry_runs_load_is_a_child_in_a_session_of_its_own() {
+        let base = scratch("load");
+        let mut sys = RealSys::new(base.clone(), base.clone());
+        // Its session id (/proc/self/stat's field 6) is its own pid.
+        let script = "read -r st < /proc/self/stat; set -- ${st##*) }; echo \"{\\\"sid\\\":$4,\\\"pid\\\":$$}\"; echo oops >&2; exit 3";
+        let c = Cmd::new(Path::new("/bin/sh"), vec!["-c".into(), script.into()]);
+        let (ev, er) = (base.join("events-1"), base.join("stderr-1"));
+        let mut j = sys.start_load(c, How::Child, &ev, &er).unwrap();
+        assert!(!j.detached());
+        let mut buf = Vec::new();
+        let code = loop {
+            j.read(&mut buf, 1 << 20);
+            if let Some(c) = j.ended(None) {
+                j.read(&mut buf, 1 << 20);
+                break c;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(code, Some(3));
+        let line = String::from_utf8_lossy(&buf).to_string();
+        let v = crate::json::parse(line.trim()).unwrap();
+        assert_eq!(v.get_u64("sid"), v.get_u64("pid"), "{line}");
+        assert_eq!(j.stderr(), b"oops\n");
+        assert_eq!(fs::metadata(&ev).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(sys.start_load(Cmd::new(Path::new("/bin/true"), Vec::new()), How::Child, &ev, &er).is_err(), "never a file that was there");
+        drop(j);
         let _ = fs::remove_dir_all(&base);
     }
 

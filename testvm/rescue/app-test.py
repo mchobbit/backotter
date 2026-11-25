@@ -81,12 +81,15 @@ def golden(name, text):
 class Run:
     """One bko-rescue with the fakes, its own RAM directory and log."""
 
-    def __init__(self, name, args=(), holt="app-three", rustic="lovelace", term="xterm", reach=True, rows=24, cols=80, fake_mount=False):
+    def __init__(self, name, args=(), holt="app-three", rustic="lovelace", term="xterm", reach=True, rows=24, cols=80, fake_mount=False, state=False):
         self.name = name
         self.dir = os.path.join(TMP, name)
         os.makedirs(self.dir, mode=0o700)
         self.run_dir = os.path.join(self.dir, "run")
         self.log = os.path.join(self.dir, "fake.log")
+        # bko-holt's RUN_DIR as the fake has it: its lock goes there.
+        self.holt_run = os.path.join(self.dir, "holt-run")
+        os.makedirs(self.holt_run, mode=0o700)
         env = {
             "TERM": term,
             "BKO_RESCUE_RUN_DIR": self.run_dir,
@@ -94,7 +97,11 @@ class Run:
             "FAKE_BKO_RUSTIC_SCENARIO": os.path.join(HERE, "rustic", rustic),
             "FAKE_BKO_HOLT_LOG": self.log,
             "FAKE_BKO_HOLT_REMOVE_SECS": "120",
+            "FAKE_BKO_HOLT_RUN_DIR": self.holt_run,
         }
+        if state:
+            # Calls answered in turn, as a recorded run's are.
+            env["FAKE_BKO_HOLT_STATE"] = os.path.join(self.dir, "state")
         if reach:
             env["BKO_RESCUE_ASSUME_REACHABLE"] = "1"
         if fake_mount:
@@ -131,7 +138,7 @@ class Run:
         left = [n for n in os.listdir(self.run_dir) if n != "reports"] if os.path.isdir(self.run_dir) else []
         check(left == [], "%s: the session's directory removed (%s)" % (self.name, left))
 
-    def secrets_checked(self, n_password_files):
+    def secrets_checked(self, n_password_files, commit_ok=False):
         """Every call passed the fake's checks, and each key file it was
         given was removed: those that went at once, and the session's,
         when bko-rescue ended."""
@@ -148,10 +155,12 @@ class Run:
         check(all(c["ok"] and c["checks"] == [] for c in calls), "%s: every call passed the fake's checks (%s)" % (
             self.name, [(c["argv"][:2], c["checks"]) for c in calls if not c["ok"] or c["checks"]]))
         pw = [c for c in calls if "--password-file" in c["argv"]]
-        check(len(pw) == n_password_files, "%s: rustic-bko given a password file %d times (%d)" % (self.name, n_password_files, len(pw)))
+        if n_password_files is not None:
+            check(len(pw) == n_password_files, "%s: rustic-bko given a password file %d times (%d)" % (self.name, n_password_files, len(pw)))
         check(keys <= gone, "%s: every key and password file removed (%s left)" % (self.name, sorted(keys - gone)))
-        for c in calls:
-            check("--commit" not in c["argv"], "%s: no --commit in %s" % (self.name, c["argv"][:2]))
+        if not commit_ok:
+            for c in calls:
+                check("--commit" not in c["argv"], "%s: no --commit in %s" % (self.name, c["argv"][:2]))
         return calls
 
 
@@ -410,8 +419,11 @@ def disks_to_review(r, dry=False):
     for _ in range(6):
         d.keys("BS")
     d.type("F3A9C1")
-    d.keys("Enter", "Enter", "Enter")
-    d.wait("Next: the restore")
+    # Confirmed: the focus on < Restore > (the Restore itself is
+    # test_restore_*'s, on scenarios that answer its run).
+    d.keys("Enter", "Enter")
+    d.pump(0.3)
+    check(r.says("Ready to restore") and not r.says("isn't the end of its serial"), "disks: both serials confirmed")
 
 
 def test_disks_to_review():
@@ -507,8 +519,178 @@ def test_shell_and_back():
     r.finish(-15)
 
 
+def rec_to_review(r, passphrase="for md1"):
+    """Machine to Review on an app-rec-* scenario (debian13-stack's recorded
+    disks, both matched): the passphrase twice, the two disks' size and
+    name typed (neither has a serial)."""
+    d = r.d
+    to_password(r)
+    password(r, PASSWORD, "Which backup?")
+    d.keys("Enter")
+    d.wait("Where each disk goes")
+    # Both matched: the focus is on OK.
+    d.keys("Enter")
+    d.wait("Passphrase 1 of 1")
+    d.type(passphrase)
+    d.keys("Enter")
+    d.type(passphrase)
+    d.keys("Enter")
+    d.wait("Ready to restore")
+    d.type("12.9GBvdb")
+    d.keys("Enter")
+    d.type("12.9GBvdc")
+    d.keys("Enter")
+
+
+def load_calls(r):
+    return [c for c in r.calls() if "argv" in c and c["argv"][:1] == ["load"]]
+
+
+def test_restore_to_done():
+    r = Run("restore", holt="app-rec-restore", fake_mount=True, state=True)
+    d = r.d
+    rec_to_review(r)
+    d.keys("Enter")
+    d.wait("Restoring lovelace")
+    check(r.says("Leave the computer on, with the stick and the network cable in"), "restore: the line under the gauge")
+    r.wait_says("Now: copying your files back", 30)
+    check(r.says("[x] Make partitions") and r.says("[>] Copy your files back"), "restore: the stages ticked as they end")
+    r.wait_says("of 0.71 GB", 10)
+    d.wait("lovelace is restored", 40)
+    check(r.says("[x] Make it bootable") and r.says("[x] Finish"), "done: every stage ticked")
+    check(r.says("At the next start, type the passphrase you chose for the disks."), "done: the passphrase line")
+    check(b"for md1" not in d.out, "restore: the passphrase never on the screen")
+    d.signal(signal.SIGTERM)
+    r.finish(143)
+    calls = r.secrets_checked(None, commit_ok=True)
+    runs = [c for c in calls if c["argv"][:1] == ["load"] and "--commit" in c["argv"]]
+    check(len(runs) == 1 and "--expect-plan" in runs[0]["argv"] and runs[0]["argv"][3:5] == ["--through", "close"], "restore: one run, --through close --commit --expect-plan (%s)" % [c["argv"][3:5] for c in runs])
+    check(runs and runs[0]["no_commit_env"] is None, "restore: no BKO_HOLT_NO_COMMIT in a restore")
+    check(runs and any(k["path"].endswith("/k0") for k in runs[0]["keys"]), "restore: the passphrase as a key file, checked by the fake")
+    check(not os.path.exists(os.path.join(r.holt_run, "load.lock")), "restore: the fake's lock gone at its end")
+
+
+def test_restore_dry_run():
+    r = Run("restore-dry", args=["--dry-run"], holt="app-rec-dry", fake_mount=True, state=True)
+    d = r.d
+    rec_to_review(r)
+    check(r.says("< Show what would happen >"), "dry run: Review's button")
+    d.keys("Enter")
+    d.wait("What restoring lovelace would do")
+    check(r.says("DRY RUN: nothing will be written") and r.says("Nothing is written: each command is shown, not run."), "dry run: the banner and the line under the gauge")
+    d.wait("The dry run of lovelace is done", 30)
+    check(r.says("Nothing was written: 92 commands would have run, and none did."), "dry run: every command would run")
+    check(r.says("[~] Make it bootable") and r.says("[~] Finish"), "dry run: boot and close too (J11)")
+    check(not r.says("< Restart >") and not r.says("< Power off >"), "dry run: no Restart, no Power off")
+    golden("app-dry-done.utf8-colour", d.dump())
+    d.keys("l")
+    d.wait("The commands that would run")
+    check(r.says("partition 1/25: wipefs"), "dry run: the commands, in order")
+    d.keys("Esc")
+    d.wait("The dry run of lovelace is done")
+    d.keys("Right", "Enter")
+    r.finish(0)
+    calls = r.secrets_checked(None)
+    check(all(c["no_commit_env"] == "1" for c in calls if c["argv"][:1] in (["load"], ["--version"], ["stick"])), "dry run: every bko-holt call under the lock")
+    dry = [c for c in load_calls(r) if c["argv"][3:5] == ["--through", "close"]]
+    check(len(dry) == 1 and dry[0]["argv"].count("--erase") == 2, "dry run: the run, --erase but no --commit (J6)")
+
+
+def test_restore_fail_help_try_again():
+    r = Run("restore-fail", holt="app-rec-fail", fake_mount=True, state=True)
+    d = r.d
+    rec_to_review(r)
+    d.keys("Enter")
+    d.wait('Problem: the restore stopped at "Make it bootable"', 40)
+    check(r.says("grub-install failed (exit status 1):"), "failure: the stage's error")
+    check(r.says("Your backup is safe: nothing in it has been changed."), "failure: the backup-is-safe line")
+    check(r.says("[!] Make it bootable") and r.says("[x] Copy your files back"), "failure: the stages")
+    golden("app-failure.utf8-colour", d.dump())
+    d.keys("h")
+    d.wait("Problem: the boot loader couldn't be installed")
+    check(r.says("< Install without an entry >") and r.says("Esc: back"), "help: the fix, and Esc back")
+    golden("app-help-boot.utf8-colour", d.dump())
+    d.keys("o")
+    d.wait("What the command said")
+    check(r.says("Ended with: exit status 1"), "help: raw output's exit status")
+    d.keys("Esc")
+    d.wait("Problem: the boot loader couldn't be installed")
+    d.keys("Esc")
+    d.wait('Problem: the restore stopped at "Make it bootable"')
+    # Try again: the button after Help.
+    d.keys("Right", "Enter")
+    d.wait("lovelace is restored", 40)
+    d.signal(signal.SIGTERM)
+    r.finish(143)
+    runs = [c["argv"][3:5] for c in load_calls(r) if "--commit" in c["argv"]]
+    check(runs == [["--through", "close"], ["--only", "boot"], ["--only", "close"]], "try again: boot and close, each alone (%s)" % runs)
+    r.secrets_checked(None, commit_ok=True)
+
+
+def test_restore_stop():
+    r = Run("restore-stop", holt="app-rec-stop", fake_mount=True, state=True)
+    d = r.d
+    rec_to_review(r)
+    d.keys("Enter")
+    r.wait_says("Now: copying your files back", 30)
+    check(os.path.exists(os.path.join(r.holt_run, "load.lock")), "stop: the fake holds its lock while it runs")
+    # Enter does nothing until Tab reaches Cancel; Esc does nothing.
+    d.keys("Enter", "Esc")
+    check(r.says("Now: copying your files back"), "stop: Enter and Esc do nothing")
+    d.keys("Tab", "Enter")
+    d.wait("Stop the restore?")
+    check(r.says("Your files are being copied back.  Stop interrupts the copy now"), "stop: the copy's words")
+    golden("app-stop.utf8-colour", d.dump())
+    d.keys("Esc")
+    r.wait_says("Now: copying your files back")
+    d.keys("Tab", "Enter")
+    d.wait("Stop the restore?")
+    d.keys("Tab", "Enter")
+    d.wait("Stopped by you.", 20)
+    check(r.says('Problem: the restore stopped at "Copy your files back"') and r.says("[!] Copy your files back"), "stop: Failure says where")
+    golden("app-stopped.utf8-colour", d.dump())
+    check(not os.path.exists(os.path.join(r.holt_run, "load.lock")), "stop: the lock gone at the stopped run's end")
+    d.signal(signal.SIGTERM)
+    r.finish(143)
+    r.secrets_checked(None, commit_ok=True)
+
+
+def test_restore_plain():
+    r = Run("restore-plain", args=["--plain"], holt="app-rec-restore", fake_mount=True, state=True)
+    d = r.d
+    d.wait("Choose [1-3, t, s]: ")
+    d.type("1", line=True)
+    d.wait("Type the backup password, or press Enter alone for other choices:")
+    d.type(PASSWORD, line=True)
+    d.wait("Choose [1-14, b]: ")
+    d.type("1", line=True)
+    d.wait("Choose [1-2, o, b, s]: ")
+    d.type("o", line=True)
+    d.wait("Passphrase: ")
+    d.type("for md1", line=True)
+    d.wait("Type it again: ")
+    d.type("for md1", line=True)
+    d.wait("or b to go back: ")
+    m = d.mark()
+    d.type("12.9 GB vdb", line=True)
+    d.wait("Disk 2 has no serial of its own", since=m)
+    d.type("12.9 GB vdc", line=True)
+    d.wait("Choose [r, c, a, b]: ")
+    d.type("r", line=True)
+    d.wait("Type c and Enter to stop (it asks first), or l and Enter to see the log.")
+    d.wait("lovelace is restored", 40)
+    d.wait("Choose [r, s, p]: ")
+    text = d.dump()
+    check("\x1b" not in text and "for md1" not in text, "plain restore: no escapes, no passphrase")
+    check("[x] Copy your files back: done in" in text, "plain restore: a line per stage")
+    d.signal(signal.SIGTERM)
+    r.finish(-15)
+    r.secrets_checked(None, commit_ok=True)
+
+
 TESTS = [test_shell_and_back, test_full_utf8_colour, test_full_ascii_vt220, test_recovery_key, test_plain, test_plain_signals,
-         test_mismatch_and_report, test_location_with_no_stick, test_dry_run, test_network, test_disks_to_review, test_disks_dry_run]
+         test_mismatch_and_report, test_location_with_no_stick, test_dry_run, test_network, test_disks_to_review, test_disks_dry_run,
+         test_restore_to_done, test_restore_dry_run, test_restore_fail_help_try_again, test_restore_stop, test_restore_plain]
 
 
 def main():

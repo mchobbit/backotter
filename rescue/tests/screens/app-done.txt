@@ -1,0 +1,78 @@
+ BackOtter rescue                                                           Done
+                                                                                
+                                                                                
+                                                                                
+  ┌────────────────────────── lovelace is restored ──────────────────────────┐  
+  │                                                                          │  
+  │   [x] Make partitions           [x] Set up RAID and encryption           │  
+  │   [x] Make filesystems          [x] Ready the filesystems                │  
+  │   [x] Copy your files back      [x] Make it bootable                     │  
+  │   [x] Finish                                       in 0 s                │  
+  │                                                                          │  
+  │ At the next start, type the passphrase you chose for the disks.          │  
+  │                                                                          │  
+  │ The log is on the stick, in lovelace's folder.                           │  
+  │                                                                          │  
+  │ Remove the stick, then press Enter to restart into lovelace.             │  
+  │                                                                          │  
+  │                < Restart >    < Shell >    < Power off >                 │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: buttons | Enter: press | s: shell                                         
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddddddddddddddDDDDDDDDDDDddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                           Done
+                                                                                
+                                                                                
+                                                                                
+  +-------------------------- lovelace is restored --------------------------+  
+  |                                                                          |  
+  |   [x] Make partitions           [x] Set up RAID and encryption           |  
+  |   [x] Make filesystems          [x] Ready the filesystems                |  
+  |   [x] Copy your files back      [x] Make it bootable                     |  
+  |   [x] Finish                                       in 0 s                |  
+  |                                                                          |  
+  | At the next start, type the passphrase you chose for the disks.          |  
+  |                                                                          |  
+  | The log is on the stick, in lovelace's folder.                           |  
+  |                                                                          |  
+  | Remove the stick, then press Enter to restart into lovelace.             |  
+  |                                                                          |  
+  |                < Restart >    < Shell >    < Power off >                 |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: buttons | Enter: press | s: shell                                         

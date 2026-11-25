@@ -1,0 +1,17 @@
+load
+*
+--json
+--only
+status
+--repo
+*
+--password-file
+*
+--key-file
+md1_crypt=*
+--map
+vda=*
+--map
+vdb=*
+--snapshot
+*

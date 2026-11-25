@@ -1,6 +1,6 @@
 # bko-rescue: the terminal layer and its widgets
 
-Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"), RT8 after those (see "What RT8 found"), RT3 the same day on every console of the seven images, its findings folded into the table (see "What RT3 found"); RT11 on 2026-11-25 (see "What RT11 found"); RT12's first part (Disks, Passphrases, Resume, Review) the same day (see "What RT12 part 1 found"); RT9, RT12's second part (Restore, Done, Failure) and RT13 on are not.  RT10's own spec (D12), `holt-json.md`, approved 2026-11-24 with every recommendation (J1-J21); D14's first lock amended by J6.
+Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"), RT8 after those (see "What RT8 found"), RT3 the same day on every console of the seven images, its findings folded into the table (see "What RT3 found"); RT11 on 2026-11-25 (see "What RT11 found"); RT12's first part (Disks, Passphrases, Resume, Review) the same day (see "What RT12 part 1 found"), its second part (Restore, Done, Failure) too (see "What RT12 part 2 found"); RT9 and RT13 on are not.  RT10's own spec (D12), `holt-json.md`, approved 2026-11-24 with every recommendation (J1-J21); D14's first lock amended by J6.
 
 An implementation plan for the stick's terminal UI that `ui.md` describes and
 the user decided on 2026-11-19: one Whiptail-style 80x24 program,
@@ -1537,7 +1537,9 @@ read-only mount for the pty runs.
   - A serial is never cut: a Review row (and a disk list's) whose serial
     doesn't fit beside the field goes on a line of its own; Review's
     fields take rows of several lines (`widgets::serials::room`).
-  - Start again is J14's: Review plans `--only partition` with every
+  - Start again is J14's: Review plans `--only partition` (RT12's second
+    part found that is a run's events under `--json`, not a plan, and
+    plans `--through plan`: "What RT12 part 2 found") with every
     target in `--erase` (with this session's record `--through` skips
     partition, so the rows said WRITTEN and, once the copy began, the plan
     had `remake_after_restore` with no way on), and Review's runs
@@ -1570,6 +1572,106 @@ read-only mount for the pty runs.
   backup's disk layout differs"; grow to fill (RT10n) and per-disk fit;
   Resume after a reboot (RT10o's `open`); Failure's install without an
   entry (`--removable --no-nvram` is in holt_args.rs, unused).
+
+## What RT12 part 2 found
+
+Built 2026-11-25 on czerny (Rust 1.85.1), `src/app/restore.rs`: the
+Restore (Review's runs started on their own, their events followed by
+demo.rs's `Follow`, Cancel? and Stop), Done, Failure with each stage's
+help, Try again and Install without an entry, the restore log on the
+stick, the dry run's walk through every command, and a restore an earlier
+bko-rescue started, followed again.  sys.rs gained `Running` (a load
+started: `How::Child` for a dry run, a direct child in a session of its
+own; `How::Detached` for a restore, `systemd-run` with holt-json.md's
+properties where systemd runs and we are root, else `setsid`), the FFI
+`setsid` (in the header test: 9 symbols) and `signal_pid` (one pid, never a
+group).  The Ui grew a progress dialog's text under the gauge and keys
+with no button (`l`), and a message whose Esc is Back with no Back drawn.
+No holt change.  Tested by `cargo test` (271 tests: the Restore to Done
+and its log on the stick, Restart with the stick in, the dry run's 92
+`would` commands, a dry run that commits stopped at once, a failed boot's
+help, raw output and Try again, Install without an entry, Cancel then
+Stop to the lock's pid, a lock naming another process never signalled,
+the files kept while a detached load runs, a dry run's child in a
+session of its own, systemd-run's arguments; 6 new goldens and a plain
+transcript), `app-test.py` (17 tests, 5 new on the fake: Done, the dry
+run, a failure with its help and Try again, a stop, plain mode; 5 new pty
+goldens), `pty-test.py`, `demo-test.py`, the header test and holt_schema.py
+over every scenario (403 files).  Then one real end-to-end check:
+`testvm/rescue/real-dry-run.py` in debian13-stack's HoltTest rescuer on
+chopin (`ht1-debug.sh` setup, bko-holt built from main, the rescuer kept
+up), the whole flow in plain mode against the real bko-holt and
+rustic-bko: 92 commands would have run (boot's 22 and close's 10 among
+them, J11), exit 0, and the targets, the decoy and the stick's image
+whole-disk md5 the same before and after, no partition record or lock.
+
+- **Fixtures:** `make-disk-fixtures.py` builds `app-rec-restore`,
+  `-dry`, `-notdry`, `-fail` and `-stop` from rec-debian13-stack's
+  recorded documents and streams: RT12's flow (one `--through close
+  --commit` run) isn't recorded, so its stream is the staged run's under
+  one `start` and `end`; the failure (grub-install in boot) and the stop
+  (stopping, the archiver's 130, `end` 5: `stopped.events`) are built.
+  fake-bko-holt makes `start`'s pid its own, ends a stream on SIGTERM as
+  bko-holt's stop does, and with `FAKE_BKO_HOLT_RUN_DIR` holds a lock there
+  and says so in the api's `run_dir`.
+- **Defaults taken** where rescue-screens.md is open, each in one place
+  (`restore.rs`'s consts, `strings.rs`):
+  - The restore log is bko-holt's own (`start.log`), gzipped (`gzip -n
+    -9`, a halved tail until it is under `LOG_GZ_MAX`, 2 MiB; kept as
+    `.log` where there is no gzip), in RAM (`/run/bko-rescue/restore-logs/`)
+    and in the machine's `restore-logs/` on the config partition, the
+    newest `LOGS_KEPT` (10) kept.  Not copied to the repository:
+    bko-rescue only ever reads it (stick-config.md says both).  A dry run
+    saves none; a typed location (no machine folder) keeps it in RAM.
+  - A dry run's Done offers Show the commands, Leave and Shell, never
+    Restart or Power off (`DRY_RUN_RESTARTS`): `sudo bko-rescue --dry-run`
+    runs on installed systems.  Its Failure's last button is Leave.
+  - Power off on Failure asks first (the RAM's state, temporary keys
+    among it, goes with the power); Done's doesn't.  Restart asks first
+    only when the stick's partition is still there.
+  - Cancel?'s words don't promise a resume after a restart: within the
+    session Try again goes on; after one, J14's interim offers only Start
+    again.
+  - The assemble stage's label is from what it runs: encryption, RAID and
+    volumes, or "Set up RAID and encryption" for both.  Time left is the
+    copy's rate over the last minute; no file count (J17).
+  - Try again (and Go on, which RT12a ran as one stage): `status --json`,
+    then each stage from `next` to `close`, `--only STAGE --commit`, under
+    a new plan's hash (OpenBSD's changes after partition), `--erase` only
+    when partition runs again.  Install without an entry plans with
+    `--removable --no-nvram` and runs boot and close alone.
+  - Stop: the lock's pid must be `start`'s, and on Linux its start time
+    /proc's; off Linux the start time isn't compared (holt-json.md's BSD
+    `ps -o lstart` and illumos `psinfo` aren't read here).  A dry run's
+    child (no lock) by its own pid.
+  - While a detached load runs the session's files are kept for it, and
+    `run.json` beside the sessions names them and its pid; a bko-rescue
+    started again follows it ("A restore is still running", Follow it),
+    with no Try again (its arguments were the other session's), and wipes
+    them once it ends, or at once when its pid is gone.
+- **Found, fixed:** Start again's Review planned `--only partition`,
+  which under `--json` is that stage's run (events), not a plan document:
+  against the real bko-holt Review would fail.  It plans `--through plan`
+  now and shows every target ERASED (its runs wipe them all); the
+  fixtures' `--only partition` plan, a call no bko-holt answers, is gone.
+- **Found in the mocks and specs:** Done's `systemd-cryptenroll ...
+  /dev/nvme0n1p3` needs the restored device, but `tokens` names only the
+  container and kind, so the line says DEVICE and how to find it; the
+  help screen's four buttons and "Esc: back" leave no room for < Back >
+  (Esc is Back there, with < Back > in plain mode only); Restore's figures
+  have a file count no event gives; plain mode's key line for Restore comes
+  once, before the stages, not after; and a HoltTest backup's hostname is
+  the farm host's (chopin), so the Machine screen named it so in the real
+  run.  The stick itself still can't be real end to end: its system.json
+  isn't a layout load takes (holt-json.md open question 8), so
+  real-dry-run.py answers `stick --json` alone with a document naming a
+  FAT image on a loop device that holds the dump.
+- **Not built here:** `rustic-bko` restores to the repository (the log's
+  copy there); the per-platform restart, power off and mount commands are
+  *Check* at RT13 (`restart_argv`, `power_off_argv`); a full-screen pass of
+  the real dry run (plain mode only); the systemd-run path is unit-tested
+  for its arguments only, never run (the pty tests aren't root, and a dry
+  run is a direct child).
 
 ## The app on top (later)
 

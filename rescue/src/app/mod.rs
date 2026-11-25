@@ -8,8 +8,10 @@
 //! RT12's first part builds what comes after: Disks (disks.rs), the
 //! Passphrases, the Resume offer and Review (review.rs), from bko-holt's
 //! plan and status documents (plan.rs), the layout copied off the stick
-//! (layout.rs); then a screen says the Restore itself (RT12's second
-//! part) isn't built.
+//! (layout.rs).  Its second part (restore.rs) runs what Review confirmed:
+//! the Restore (load detached, its events followed, Cancel and Stop),
+//! Done, Failure with each stage's help and Try again, the restore log on
+//! the stick, and the dry run's walk through every command.
 //!
 //! - The app never touches the terminal: it talks to a `Ui`, and to the
 //!   system through `Sys` (sys.rs), so the screens' tests run on the
@@ -32,6 +34,7 @@ pub mod layout;
 pub mod plan;
 pub mod repo;
 pub mod report;
+pub mod restore;
 pub mod review;
 pub mod stick;
 pub mod strings;
@@ -128,7 +131,7 @@ pub enum Step {
     Passphrase(usize),
     Resume,
     Review,
-    /// What Review confirmed: RT12's second part runs it.
+    /// What Review confirmed, run (restore.rs): then Done or Failure.
     Restore,
 }
 
@@ -251,6 +254,12 @@ pub struct App {
     pub(crate) disks_notice: Option<String>,
     /// The keyboard at start-up was offered.
     pub(crate) boot_offered: bool,
+    /// bko-holt's RUN_DIR, from its api document: where its lock is.
+    pub(crate) run_dir: Option<PathBuf>,
+    /// The Restore: its runs, the one running, how they ended.
+    pub(crate) restore: Option<restore::Restore>,
+    /// Files a bug report attaches (a failed run's events).
+    pub(crate) attach: Vec<PathBuf>,
 }
 
 impl App {
@@ -301,6 +310,9 @@ impl App {
             reviewed: Vec::new(),
             disks_notice: None,
             boot_offered: false,
+            run_dir: None,
+            restore: None,
+            attach: Vec::new(),
         }
     }
 
@@ -329,7 +341,7 @@ impl App {
                 Step::Passphrase(n) => self.passphrase(ui, n),
                 Step::Resume => self.resume_screen(ui),
                 Step::Review => self.review_screen(ui),
-                Step::Restore => self.restore_next(ui),
+                Step::Restore => self.restore_screen(ui),
             };
             match g {
                 Go::To(s) => {
@@ -417,8 +429,16 @@ impl App {
             Err(g) => return g,
         };
         match api(&out, self.opts.dry_run) {
-            Ok(v) => self.version = Some(v),
+            Ok((v, run_dir)) => {
+                self.version = Some(v);
+                self.run_dir = run_dir;
+            }
             Err(why) => return self.holt_problem(ui, why),
+        }
+        // A restore an earlier bko-rescue started, still running: follow
+        // it; one that ended: its files wiped.
+        if let Some(g) = self.earlier_run(ui) {
+            return g;
         }
         let cmd = self.holt_cmd(&HoltCmd::Stick).expect("bko-holt was found");
         let out = match self.run_job(ui, s::SCR_START, s::START_TITLE, o(s::STARTING), cmd) {
@@ -1592,9 +1612,9 @@ pub(crate) fn same_version(v: Value, schema: u64, version: Option<&str>) -> Resu
     }
 }
 
-/// `--version --json`: its version, once it says it speaks what this
-/// reads and, in a dry run, that its lock took.
-pub(crate) fn api(x: &Output, dry_run: bool) -> Result<String, String> {
+/// `--version --json`: its version and its RUN_DIR, once it says it
+/// speaks what this reads and, in a dry run, that its lock took.
+pub(crate) fn api(x: &Output, dry_run: bool) -> Result<(String, Option<PathBuf>), String> {
     let v = match document(x, "bko-holt-api") {
         Ok(v) => v,
         // Before RT10 it answered `bko-holt 0.2.6` in text.
@@ -1613,7 +1633,9 @@ pub(crate) fn api(x: &Output, dry_run: bool) -> Result<String, String> {
     if dry_run && v.get_bool("no_commit") != Some(true) {
         return Err(s::HOLT_NO_LOCK.to_string());
     }
-    v.get_str("version").map(str::to_string).ok_or_else(|| s::holt_says("no version"))
+    let run_dir = v.get_str("run_dir").filter(|d| d.starts_with('/') && !d.split('/').any(|c| c == "..")).map(PathBuf::from);
+    let version = v.get_str("version").map(str::to_string).ok_or_else(|| s::holt_says("no version"))?;
+    Ok((version, run_dir))
 }
 
 /// The recovery document's verdict, in words.

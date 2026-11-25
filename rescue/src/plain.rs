@@ -726,7 +726,9 @@ impl<L: Line> Plain<L> {
     fn progress_inner(&mut self, d: &ui::Progress, tick: &mut dyn FnMut() -> Tick) -> io::Result<Answer<()>> {
         self.header(&d.chrome)?;
         self.say(&d.text)?;
-        let opts = letters(&d.buttons, &[]);
+        self.say(&d.after)?;
+        let every: Vec<Button> = d.buttons.iter().chain(&d.hidden).cloned().collect();
+        let opts = letters(&every, &[]);
         if !opts.is_empty() {
             let keys: Vec<String> = opts.iter().map(|o| format!("{} and Enter to {}", o.key, self.shown(&o.label))).collect();
             self.say(&Clean::line(&format!("Type {}.", keys.join(", or ")), 1024))?;

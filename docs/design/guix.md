@@ -552,9 +552,12 @@ not open), install, then the disk alone under `console-boot.py`, which
 types at GRUB's prompt and the initrd's.  `BKO_GUIX_KERNEL_ARGUMENTS` puts
 `console=ttyS0` last there only, so the initrd's prompt reaches the serial
 console.  It checks both prompts, `cryptroot` open, `/` on it, the plain
-swap, and bs1-luks's own `lk_guix_eval` on `/etc/config.scm`.  First run on
-Cinqcent, 2026-11-25: prepare, the refusals, luksFormat and open passed.
-At this commit `guix system init` was still running.
+swap, and bs1-luks's own `lk_guix_eval` on `/etc/config.scm`.  **PASS** on
+Cinqcent 2026-11-25, first run: install 236 s; GRUB and the initrd each
+asked and were answered; SSH with the fixed host key; `/` the `@` of
+`/dev/mapper/cryptroot`; no Shepherd service stopped or failed; Boot0003
+`\EFI\Guix\grubx64.efi`; `lk_guix_eval` read `bootloader grub-efi`,
+`extra-initrd -` and `md 1 luks UUID cryptroot -`.
 
 ## What already works, and what doesn't
 

@@ -7,7 +7,10 @@ and A8 not.  `bs2 BackShot2All` runs 54 Linux sources and lists 40 sources
 and tier 3 as SKIPPED: PARTIAL PASS at best ("The Linux lane, built" below).
 Since 2026-11-25 a space preflight, leaner tools and slimmed big sources
 ("Room, slimming and placement" below): vanilla3 is off the SSD lane, and
-`plan` says ~7.8 h on six hosts.  Not run yet.
+`plan` says ~7.8 h on six hosts.  The first full run (bs2all-20261125-120413)
+was paused and then **aborted by the user** the same day ("The first run,
+aborted" below); the next run starts fresh from current main, when the user
+says so.
 It fills in the word that `docs/design/backshot2.md` ("Words") reserved:
 "`BackShot2All` | reserved for all of BackShot2, fresh, later". est. marks an
 estimate. `backshot2.md` is `docs/design/backshot2.md`; its words (case,
@@ -388,6 +391,42 @@ tools.  testvm/backshot2/README.md "Sources and tools on /bkoscratch" and
   case once; `--sweep` and `--tier2` are refused for BackShot2All (decision
   5's sizes are the word's; `BackShot2` takes them).
 
+- **The prepared repository is read from the SSD** (7007cfe, a0c40dd; user's
+  decision): a shared-backup case (no content drift, one snapshot, about one
+  case in four) binds its preparation's `backup/repo` read-only into its share
+  instead of copying it into the RAM disk, and reserves `d_shared`
+  (`slim-sizes.tsv`), 2-3.5 GiB less; reads only, so no SSD wear.  A case
+  that makes its own backup still writes its repository in RAM.  If the bind
+  fails, the case copies the repository only when the copy provably fits its
+  reservation, else refuses as HARNESS (04384ac).
+- **Per-case placement** (d5c70d0): a shared-backup case may go to a host that
+  holds its `d_shared` (anduinos2, biglinux, endeavouros(-grub), mint22, mx25,
+  neon24, solus49 and zorin18 on copland, cage and czerny).  `plan` uses it
+  only where the run finishes sooner; for BackShot2All it doesn't (7.24 h
+  against 7.16 h: the hosts are already balanced and the small hosts would
+  spend ~36 min preparing).  Smaller runs gain (mint22+mx25+neon24 x20: 0.37 h
+  against 0.42 h).
+- Rejected on the way (2026-11-25): fresh installs on 6-10 GB disks and
+  shrinking partitions.  Neither cuts the RAM peak, which is written bytes
+  (the restored disk and the repository), not disk size.
+
+### The first run, aborted (2026-11-25)
+
+bs2all-20261125-120413 started 12:04 with bko-holt and tools from fdd6d27.
+It was paused ~15:30 (stop files on every host) and aborted by the user;
+each host's run folder has `stop` and `ABORTED`.  Rows when it stopped:
+tier 0 30,162 PASS, 2,173 FAIL, 409 INVALID; tier 1 385 PASS; tier 2 16
+PASS; no tier 1 or 2 failure.  The tier 0 non-PASS rows are two harness
+bugs fixed during the run: Slackware's rescue disk names and XFS geometry
+(e4d008a, 8a7ee5f, 35e08b4; 1,708 rows) and uc24's snap-based tools and
+boot.snapcore records (b199bdc, a4da957, a98cd58, 3cd3dab; 409 INVALID,
+465 FAIL), plus the XFS log limit (9017804, GENERATOR 8).  Not reached:
+the rest of the queues, the corpus, leftovers and the report.
+
+The next run needs the bs2all-wt tree and planner rebuilt from current main
+and bko-holt rebuilt (a98cd58's message); every source re-prepares once and
+each host rebuilds its saved rescuer once (7007cfe's `multidevs=remap`).
+
 ## The family interface (A1)
 
 Fixed by A1, 2026-11-14. Each later lane is briefed from this section: a
@@ -469,6 +508,14 @@ the table: there is no list to edit.
 9. **Build in parallel lanes** after A0 and A1 (2026-11-14).
 
 ## Open
+
+- Found by the first run (2026-11-25), each in its own session: anduinos2's
+  snapshot-id finding (testvm/backshot2/README.md, not fixed); re-measuring
+  the Slackware rows of `slim-sizes.tsv` (measured on FAIL cases); the cargo
+  umask 002 test-environment issue (plan_json under cmp-run.sh); the ledger
+  noise from the XFS-log fixer (400 HARNESS rows, run fix-xfslog-chopin);
+  the bko-cache cap.  Also: zorin18's used space grew when slimmed (7998 ->
+  8102 MiB).
 
 - Whether ~15-16 h is acceptable for an every-second-CarpetBeater run, or
   whether non-Linux sources should draw fewer tier 1 cases (10) to keep it to

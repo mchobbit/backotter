@@ -1209,6 +1209,53 @@ mod tests {
         assert_eq!(plan(ufs_on_geli(kf(false)), &["--json"]).keys[0].unlock, "temporary");
     }
 
+    /// RustAudit1 HD3-01: a root pool on a provider keyed by both a
+    /// passphrase and a key file (geli init -K /boot/geli.key), loaded under
+    /// --json with no --key-file.  Its passphrase is a question (unlock
+    /// "passphrase", key_needed), so the plan is refused before anything is
+    /// written, and no stage builds a /dev/tty prompt: never a full restore
+    /// whose boot can't ask, with the temporary key the provider's only one.
+    #[test]
+    fn json_both_needs_its_passphrase_before_anything_is_written() {
+        use crate::load::codes::ProblemCode;
+        use crate::load::Stage;
+        let both = |r: &mut Value| {
+            put(r, "keyed_by", Value::from("both"));
+            put(r, "keyfiles", Value::from(vec!["/boot/geli.key"]));
+        };
+        let tty = |b: &crate::load::commands::Built| -> Vec<String> { Stage::ALL.iter().flat_map(|s| stage(b, *s)).filter(|x| x.contains("/dev/tty")).collect() };
+        let tmp = format!("{RUN_DIR}/keys/vtbd0p3.key");
+        let b = plan(zfs_on_geli(both), &["--json"]);
+        assert_eq!((b.keys[0].kind, b.keys[0].unlock, b.keys[0].given), ("geli", "passphrase", false), "{:?}", b.keys);
+        let p = b.coded_problems();
+        let k = p.iter().find(|x| x.code == ProblemCode::KeyNeeded).unwrap_or_else(|| panic!("{p:?}"));
+        assert_eq!(k.text, "vtbd0p3: give its new GELI passphrase with --key-file vtbd0p3=FILE");
+        assert_eq!((k.str_field("name"), k.str_field("kind")), (Some("vtbd0p3"), Some("geli")));
+        // A plan with problems runs no stage (exec): the temporary key is
+        // never made, so never removed.
+        assert!(!b.problems.is_empty());
+        assert_eq!(tty(&b), Vec::<String>::new());
+        // Given: no problem, and setkey takes it with the restored key file;
+        // the temporary key goes only after that setkey.
+        let b = plan(zfs_on_geli(both), &["--json", "--key-file", "vtbd0p3=/k/geli.pass"]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        assert_eq!((b.keys[0].unlock, b.keys[0].given), ("passphrase", true));
+        assert_eq!(tty(&b), Vec::<String>::new());
+        assert!(!stage(&b, Stage::Assemble).iter().any(|x| x.starts_with("rm") && x.contains(&tmp)), "{:?}", stage(&b, Stage::Assemble));
+        let bt = stage(&b, Stage::Boot);
+        let i = bt.iter().position(|x| x.starts_with("geli setkey")).unwrap_or_else(|| panic!("{bt:?}"));
+        assert_eq!(bt[i], "geli setkey -n 0 -K /mnt/bko-target/boot/geli.key -i 3031038 -J /k/geli.pass /dev/vtbd1p3");
+        assert_eq!(bt[i + 1], format!("rm -f {tmp}"));
+        // Text mode: attended, boot asks for it on the terminal, before setkey.
+        let b = plan(zfs_on_geli(both), &[]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        assert_eq!(b.keys[0].unlock, "passphrase");
+        let bt = stage(&b, Stage::Boot);
+        let i = bt.iter().position(|x| x.starts_with("geli setkey")).unwrap_or_else(|| panic!("{bt:?}"));
+        assert!(bt[i - 1].contains("stty -echo </dev/tty"), "{bt:?}");
+        assert_eq!(bt[i], format!("geli setkey -n 0 -K /mnt/bko-target/boot/geli.key -i 3031038 -J {RUN_DIR}/keys/vtbd0p3.pass /dev/vtbd1p3"));
+    }
+
     #[test]
     fn ufs_root_on_geli_and_onetime_swap() {
         use crate::load::Stage;

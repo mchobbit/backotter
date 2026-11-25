@@ -279,18 +279,18 @@ pub fn elilo_json(sys: &Sys, esps: &[(String, String)]) -> Option<Value> {
     let kernels = boot_files(sys, &|f| f.starts_with("vmlinuz"));
     // mkinitrd's initrd.gz, and geninitrd's initrd-VERSION.img (-current).
     let initrds = boot_files(sys, &|f| f.starts_with("initrd") && (f.ends_with(".gz") || f.ends_with(".img")));
-    let elilo = sys.read_bytes(ELILO_EFI);
+    let elilo = sys.file_size(ELILO_EFI);
     let mut list = Vec::new();
     for e in &confs {
         let full = format!("{}/{}", e.mount, e.dir);
         let efis: Vec<String> = sys.list(&full).into_iter().filter(|f| f.to_ascii_lowercase().ends_with(".efi")).collect();
-        // Not byte_copy_of: these whole-file reads put a warning in the dump
-        // for /boot's ELILO_EFI, or for each .efi here up to the copy, that is
-        // over READ_MAX, whether or not its size matches; a size-first
-        // compare would drop those warnings (an output change, RustAudit1
-        // rule 5).
-        let copy = elilo.as_ref().and_then(|b| efis.iter().find(|f| sys.read_bytes(&format!("{full}/{f}")).as_ref() == Some(b)));
-        let loader = copy.or_else(|| efis.iter().find(|f| f.eq_ignore_ascii_case("elilo.efi"))).map(|f| format!("{}/{f}", e.dir));
+        // The first .efi here (in name order) that is a byte copy of /boot's
+        // ELILO_EFI: only one of its size is read, and a piece at a time, so
+        // a file over READ_MAX is compared too, with no warning in the dump
+        // (RustAudit1 H4-06).
+        let sized = efis.iter().filter_map(|f| sys.file_size(&format!("{full}/{f}")).map(|n| (f.as_str(), n)));
+        let copy = elilo.and_then(|n| byte_copy_of(sys, ELILO_EFI, n, sized, &full));
+        let loader = copy.or_else(|| efis.iter().map(String::as_str).find(|f| f.eq_ignore_ascii_case("elilo.efi"))).map(|f| format!("{}/{f}", e.dir));
         let extra = |path: &str, items: &[LiloItem]| {
             let file = e.on_esp(path);
             let same = same_file(sys, &format!("{}/{file}", e.mount), &kernels);
@@ -646,6 +646,40 @@ mod tests {
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         assert_eq!(same_file(&s, "/esp/a.efi", &[("/esp/b.efi".into(), 4), ("/esp/d.efi".into(), 4)]), Some("/esp/d.efi".to_string()));
         assert_eq!(same_file(&s, "/esp/gone.efi", &[("/esp/d.efi".into(), 4)]), None);
+    }
+
+    /// RustAudit1 H4-06: elilo_json's loader is the first .efi beside
+    /// elilo.conf (in name order) that is a byte copy of /boot's
+    /// ELILO_EFI, by byte_copy_of: a same-size different file isn't it, a
+    /// copy larger than READ_MAX is found, and nothing is said in the
+    /// dump's warnings; with no copy, elilo.efi by its name.
+    #[test]
+    fn elilo_loader_copy() {
+        let t = Tree::new("elilo-loader");
+        let conf = "image=vmlinuz\n  label=vmlinuz\n";
+        t.file(ELILO_EFI, "elilo-binary")
+            .file("/boot/efi/EFI/Slackware/elilo.conf", conf)
+            .file("/boot/efi/EFI/Slackware/a.efi", "elilo-binarZ")
+            .file("/boot/efi/EFI/Slackware/b.efi", "short")
+            .file("/boot/efi/EFI/Slackware/c.efi", "elilo-binary")
+            .file("/boot/efi/EFI/Slackware/elilo.efi", "elilo-binary")
+            .file("/boot/efi/EFI/BOOT/elilo.conf", conf)
+            .file("/boot/efi/EFI/BOOT/elilo.efi", "not-the-copy");
+        let big = t.p("/boot/efi/EFI/BOOT/BOOTX64.EFI");
+        std::fs::File::create(&big).unwrap().set_len(crate::sys::READ_MAX + 1).unwrap();
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        let esps = [("vda1".to_string(), "/boot/efi".to_string())];
+        let j = elilo_json(&s, &esps).unwrap();
+        let at = |i: &str, k: &str| j.at(&["configs", i, k]).cloned().unwrap();
+        assert_eq!((at("0", "dir"), at("0", "loader"), at("0", "loader_is_boot_elilo")), (Value::from("EFI/BOOT"), Value::from("EFI/BOOT/elilo.efi"), Value::Bool(false)));
+        assert_eq!((at("1", "dir"), at("1", "loader"), at("1", "loader_is_boot_elilo")), (Value::from("EFI/Slackware"), Value::from("EFI/Slackware/c.efi"), Value::Bool(true)));
+        // /boot's ELILO_EFI as large as the fallback: compared, and found.
+        std::fs::File::create(t.p(ELILO_EFI)).unwrap().set_len(crate::sys::READ_MAX + 1).unwrap();
+        let j = elilo_json(&s, &esps).unwrap();
+        assert_eq!(j.at(&["configs", "0", "loader"]).cloned(), Some(Value::from("EFI/BOOT/BOOTX64.EFI")));
+        assert_eq!(j.at(&["configs", "0", "loader_is_boot_elilo"]).cloned(), Some(Value::Bool(true)));
+        assert_eq!(j.at(&["configs", "1", "loader"]).cloned(), Some(Value::from("EFI/Slackware/elilo.efi")));
+        assert!(s.warnings().is_empty(), "{:?}", s.warnings());
     }
 
     #[test]

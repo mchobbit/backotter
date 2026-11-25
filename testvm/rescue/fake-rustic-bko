@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+"""fake-bko-holt as rustic-bko, for the app's pty runs (RT11): the same
+replay and the same key-file checks (the --password-file), its scenario
+$FAKE_BKO_RUSTIC_SCENARIO (else rustic/lovelace beside this file), so one
+run can have a fake bko-holt and a fake rustic-bko, each with its own.
+The variable starts FAKE_BKO_ so bko-rescue's small environment passes it
+on (app/sys.rs, PASS_PREFIX).  Python's stdlib only."""
+
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+os.environ["FAKE_BKO_HOLT_SCENARIO"] = os.environ.get("FAKE_BKO_RUSTIC_SCENARIO") or os.path.join(HERE, "rustic", "lovelace")
+os.execv(sys.executable, [sys.executable, "-B", os.path.join(HERE, "fake-bko-holt")] + sys.argv[1:])

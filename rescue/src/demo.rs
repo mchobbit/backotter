@@ -2002,6 +2002,9 @@ mod tests {
             }
             self.ui.progress(d, tick)
         }
+        fn words(&mut self, d: &crate::ui::Words) -> Answer<Secret> {
+            self.ui.words(d)
+        }
     }
 
     #[test]

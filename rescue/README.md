@@ -6,7 +6,7 @@ DragonFly, illumos, Haiku), in Rust, with its own small terminal layer.
 The plan is `docs/design/rescue-tui.md`; the screens are
 `docs/design/rescue-screens.md`.
 
-Status: RT1-RT8.  The crate, the FFI and its header test,
+Status: RT1-RT8 and RT11.  The crate, the FFI and its header test,
 the terminal layer (profiles, keys, events, restore), the sanitiser, the
 screen buffer with diffed redraw, the golden-screen and byte-stream
 harnesses, the console spike, the widgets with the `Ui` trait and the
@@ -15,8 +15,13 @@ and, with `--holt` naming the fake bko-holt, follows its events; the pty
 harness (`testvm/rescue/`: `screen.py`, `drive.py`, `fake-bko-holt`).
 RT3 ran the spike on every console of the seven images under QEMU and
 the header test in every build guest; the profile table is what it
-found ("What RT3 found" in the plan).  No restore screens yet: `bko-rescue` with no hidden option
-says so and exits 2.
+found ("What RT3 found" in the plan).  RT11's first screens (`src/app/`):
+with no hidden option, `bko-rescue` runs Machine (`bko-holt stick
+--json`), Type a location, the Network notice, Repository (the password,
+the hint after two wrong ones, the recovery key through `bko-holt
+recovery-words --json`), the keyboard offer and the Keyboard screen,
+Which machine?, Snapshot, the problems' help screens and the bug report,
+then a screen saying the disks and the restore (RT12) aren't built yet.
 
 ## Rules
 
@@ -34,15 +39,25 @@ says so and exits 2.
 The Mac has no Rust.  On a farm host, from the repo root:
 
 ```sh
-rsync -aR --delete rescue holt/src/json.rs HOST:backotter-work/rescue-build/
+rsync -aR --delete --exclude target rescue holt/src/json.rs holt/src/bip39-english.txt \
+  testvm/rescue HOST:backotter-work/rescue-build/
 ssh HOST 'cd ~/backotter-work/rescue-build/rescue &&
   cargo build --locked --offline && cargo test --locked --offline &&
   sh abi/check.sh target/debug/bko-rescue &&
   python3 ../testvm/rescue/pty-test.py target/debug/bko-rescue &&
-  python3 ../testvm/rescue/demo-test.py target/debug/bko-rescue'
+  python3 ../testvm/rescue/demo-test.py target/debug/bko-rescue &&
+  python3 ../testvm/rescue/app-test.py target/debug/bko-rescue'
 ```
 
-(add `testvm/rescue` to the rsync for the pty tests).  `demo-test.py`
+(`testvm/rescue` is for the pty tests and the app's fixtures;
+`holt/src/bip39-english.txt` lets the test that `src/bip39-english.txt`
+is holt's copy compare them, and is skipped, with a line saying so,
+without it.)  `app-test.py` drives the app's screens with the fake
+bko-holt (`scenarios/app-three`, `app-dry`) and the fake rustic-bko
+(`fake-rustic-bko`, `rustic/NAME`, made by `make-app-fixtures.py`), in
+full screen and plain mode; its goldens are `testvm/rescue/screens/app-*`.
+The app's own goldens, one per screen, are `tests/screens/app-*.txt`
+(`src/app/tests.rs`).  `demo-test.py`
 drives `--demo` through every widget with `drive.py`, in full screen
 (UTF-8 colour, DEC mono, ASCII) and plain mode, against the fake
 bko-holt; its golden screens are `testvm/rescue/screens/`, under the
@@ -101,7 +116,24 @@ bko-rescue [--plain] [--lines utf8|dec|ascii] [--colour on|off]
 ```
 
 `--lines` and `--colour` beat `BKO_RESCUE_LINES` and `BKO_RESCUE_COLOUR`,
-which a launcher sets.  Hidden, for tests and checks:
+which a launcher sets.  `--holt` and `--rustic` name the programs (each
+resolved once to an absolute path); `--dry-run` sets
+`BKO_HOLT_NO_COMMIT=1` for bko-holt and stops unless its `--version
+--json` says the lock took, and `app/holt_args.rs`, where every bko-holt
+command line is built, never adds `--commit` then (D14, J6).
+
+The session's secrets (the password file, the recovery key's password)
+are 0600 files in a new 0700 directory under `/run/bko-rescue`
+(`/var/run/bko-rescue` off Linux), wiped with it when bko-rescue ends: on
+exit, after a signal (caught for the whole session, in plain mode a
+password read's too) and on a panic's unwinding.  Bug reports go to
+`backotter/reports/` on the stick's BACKOTTER partition, else stay in
+`/run/bko-rescue/reports/`.  For the tests, which don't run as root:
+`BKO_RESCUE_RUN_DIR` names that directory, and
+`BKO_RESCUE_ASSUME_REACHABLE=1` counts every server as reachable (the
+fakes have none); nothing on a stick sets either.
+
+Hidden, for tests and checks:
 
 | Option | What it does |
 |---|---|
@@ -153,6 +185,9 @@ are checked too; Linux's static ones can't be.
 | `src/secret.rs` | `Secret`, the password buffer: fixed, wiped, no Debug; 0600 key files in a 0700 directory |
 | `src/plain.rs` | plain mode: numbered questions, one line at a time |
 | `src/demo.rs` | `--demo` |
+| `src/app/` | RT11's screens: `mod.rs` (the steps, the help screens, the runner), `strings.rs` (every word), `holt_args.rs` (every bko-holt command line, the dry-run lock), `stick.rs` (`stick --json`), `repo.rs` (rustic-bko: addresses, codes, snapshots), `time.rs` (zones, POSIX rules), `keyboard.rs`, `report.rs`, `sys.rs` (programs, the session's directory), `tests.rs` |
+| `src/bip39.rs`, `src/bip39-english.txt` | the recovery key's word list, a copy of holt's, for completion |
+| `src/widgets/words.rs` | the recovery key's twelve word fields |
 | `tests/widget_screens.rs`, `tests/screens/w-*.txt` | every widget in every line style, colour and mono; their bytes in every profile; random keys |
 | `tests/golden_screens.rs`, `tests/screens/` | golden screens of a sample, every line style, colour and mono |
 | `tests/byte_streams.rs`, `tests/bytes/` | each profile's bytes, the sequence checker, the byte budgets, random walks |
@@ -163,3 +198,4 @@ are checked too; Linux's static ones can't be.
 | `../testvm/rescue/fake-bko-holt`, `scenarios/` | replays a scenario (argv to stdout, events, stderr, exit), checks the key and password files it is given, and refuses `--commit` under `BKO_HOLT_NO_COMMIT` as bko-holt does |
 | `../testvm/rescue/holt_schema.py` | bko-holt's documents and events checked against holt-json.md's schema: its goldens, the fake's scenarios, recorded runs |
 | `../testvm/rescue/demo-test.py`, `screens/` | `--demo` through every widget, both modes, with the fake |
+| `../testvm/rescue/app-test.py`, `fake-rustic-bko`, `rustic/`, `make-app-fixtures.py` | the app's screens on a pty with the fakes, both modes |

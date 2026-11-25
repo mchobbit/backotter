@@ -1,0 +1,78 @@
+ BackOtter rescue                                                         Report
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  ┌────────────────────────────── Report saved ──────────────────────────────┐  
+  │                                                                          │  
+  │ Both reports are saved, beside each other:                               │  
+  │   backotter/reports/bko-report-20261123-142630.txt                       │  
+  │   backotter/reports/bko-report-20261123-142630-UNREDACTED.txt            │  
+  │                                                                          │  
+  │ The UNREDACTED file is for sharing privately: don't attach it to an      │  
+  │ issue.                                                                   │  
+  │                                                                          │  
+  │                         <  OK  >    < View it >                          │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: next | Left/Right: button | Enter: OK | v: view it                        
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddDDDDDDDDddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                         Report
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  +------------------------------ Report saved ------------------------------+  
+  |                                                                          |  
+  | Both reports are saved, beside each other:                               |  
+  |   backotter/reports/bko-report-20261123-142630.txt                       |  
+  |   backotter/reports/bko-report-20261123-142630-UNREDACTED.txt            |  
+  |                                                                          |  
+  | The UNREDACTED file is for sharing privately: don't attach it to an      |  
+  | issue.                                                                   |  
+  |                                                                          |  
+  |                         <  OK  >    < View it >                          |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: next | Left/Right: button | Enter: OK | v: view it                        

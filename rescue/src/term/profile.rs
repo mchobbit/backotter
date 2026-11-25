@@ -176,7 +176,7 @@ fn locale_utf8(f: &Facts) -> bool {
 
 /// A pseudo-terminal: `pts/N` everywhere, and the old `ttyp0`-style names
 /// on NetBSD and OpenBSD (OpenBSD has only those).
-fn is_pty(os: Os, tty: &str) -> bool {
+pub fn is_pty(os: Os, tty: &str) -> bool {
     if tty.starts_with("pts/") {
         return true;
     }

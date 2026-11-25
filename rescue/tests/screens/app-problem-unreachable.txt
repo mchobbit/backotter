@@ -1,0 +1,78 @@
+ BackOtter rescue                                                     Repository
+                                                                                
+                                                                                
+                                                                                
+  ┌───────────────── Problem: the backups can't be reached ──────────────────┐  
+  │                                                                          │  
+  │ What happened: lovelace's backups are on nas.local, and this computer    │  
+  │ couldn't reach it.                                                       │  
+  │                                                                          │  
+  │ Why: There's no route to the server: no network, the server is off, or   │  
+  │ its name isn't known here.                                               │  
+  │                                                                          │  
+  │ What can be done: Check the network cable and that the server is on,     │  
+  │ then try again.                                                          │  
+  │                                                                          │  
+  │ Your backup is safe: nothing in it has been changed.                     │  
+  │                                                                          │  
+  │  < Network > < Try again > < Shell > < Report > < Raw output > < Back >  │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Enter: Try again | s: shell | r: report | o: raw output | Esc: back            
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddddddddddddDDDDDDDDDDDDDddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                     Repository
+                                                                                
+                                                                                
+                                                                                
+  +----------------- Problem: the backups can't be reached ------------------+  
+  |                                                                          |  
+  | What happened: lovelace's backups are on nas.local, and this computer    |  
+  | couldn't reach it.                                                       |  
+  |                                                                          |  
+  | Why: There's no route to the server: no network, the server is off, or   |  
+  | its name isn't known here.                                               |  
+  |                                                                          |  
+  | What can be done: Check the network cable and that the server is on,     |  
+  | then try again.                                                          |  
+  |                                                                          |  
+  | Your backup is safe: nothing in it has been changed.                     |  
+  |                                                                          |  
+  |  < Network > < Try again > < Shell > < Report > < Raw output > < Back >  |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Enter: Try again | s: shell | r: report | o: raw output | Esc: back            

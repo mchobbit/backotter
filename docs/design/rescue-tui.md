@@ -1,6 +1,6 @@
 # bko-rescue: the terminal layer and its widgets
 
-Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"), RT8 after those (see "What RT8 found"), RT3 the same day on every console of the seven images, its findings folded into the table (see "What RT3 found"); RT9 on are not.  RT10's own spec (D12), `holt-json.md`, approved 2026-11-24 with every recommendation (J1-J21); D14's first lock amended by J6.
+Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"), RT8 after those (see "What RT8 found"), RT3 the same day on every console of the seven images, its findings folded into the table (see "What RT3 found"); RT11 on 2026-11-25 (see "What RT11 found"); RT9 and RT12 on are not.  RT10's own spec (D12), `holt-json.md`, approved 2026-11-24 with every recommendation (J1-J21); D14's first lock amended by J6.
 
 An implementation plan for the stick's terminal UI that `ui.md` describes and
 the user decided on 2026-11-19: one Whiptail-style 80x24 program,
@@ -1339,6 +1339,94 @@ shim trigger came up anywhere.
   list's first row, not the selection (spike only; RT6's widgets park at
   the insertion point); escaping to illumos's loader prompt from COM1 once
   left the kernel console on ttya (seen once, not followed up).
+
+## What RT11 found
+
+Built 2026-11-25 on czerny (Rust 1.85.1), `src/app/`: Machine (`bko-holt
+stick --json`), Type a location, the Network notice, Repository (the
+password, the hint from the second wrong one, the recovery key through
+`bko-holt recovery-words OUT --json`), the keyboard offer and the
+Keyboard screen, Which machine?, Snapshot, the help screens these reach,
+the bug report and its Advanced form, then a screen saying RT12 isn't
+built.  Tested by `cargo test` (216 tests; the app's flows on the
+scripted Ui and a fake system, 24 golden screens and 2 plain-mode
+transcripts in `tests/screens/app-*`), `app-test.py` (the screens on a
+pty with the fake bko-holt and a fake rustic-bko, both modes, 12 pty
+goldens), `pty-test.py`, `demo-test.py`, the header test and
+holt_schema.py over the scenarios.  No holt change.
+
+- **The Ui grew** `words` (the recovery key's twelve fields: rows of
+  three, the completion on its own line, Backspace in an empty field a
+  word back, the words handed on as one `Secret`; in plain mode one line,
+  read back numbered), `radio_live` (the Keyboard screen applies a
+  layout as the focus moves; plain mode and the tests are `radio`), and
+  `full_screen`.  Radio lists take rows that can't be chosen, each with
+  why (`blocked`), a "Try it here" field (`try_it`); a text box can be a
+  labelled short field (`To make it, type YES:  [     ]`) with a notice;
+  a message can start its focus on any button (a fix is never the
+  default).  A button row too wide for the box narrows its gaps (a help
+  screen's six buttons drew over the border).
+- **The runner** (`app::run`) catches SIGINT, SIGHUP and SIGTERM for the
+  whole session, so the session's files are wiped before a signal ends
+  it, in both modes: plain mode's password read (`tty::Quiet`) gave
+  SIGHUP and SIGTERM back to their default when it ended, and a
+  SIGTERM after the password left the password file (fixed:
+  `tty::keep_signals_caught`).  Full screen exits 128 + the signal; plain
+  mode raises it again once the files are gone.  The shell (`s`) gets
+  the terminal back; a SIGINT that came while it ran is dropped (a
+  Ctrl-C typed in it was the shell's).
+- **Every program** runs with a small environment (PATH, `LC_ALL=C`,
+  `BKO_HOLT_NO_COMMIT=1` in a dry run, and only the pty tests' fakes'
+  `FAKE_BKO_*`), stdin from /dev/null or a pipe, a process group of its
+  own, its output to 0600 files in the session's directory, read capped
+  and wiped.  The session's directory is new, 0700, its base checked to
+  be ours with no group or other bits (RT8's finding on `ram_dir`).
+- **rustic-bko's answers** are read by `rustic-bko --repository URL
+  --password-file F --no-progress cat config` (the ID, checked against
+  the stick's `repository_id` by its first hex digits, at least 8) and
+  `snapshots --json` (a list, or rustic's groups).  Its wrong password is
+  rustic_core's error C002 ("No suitable key found"); the other codes are
+  told by ssh's and the OS's words (`repo::MARKERS`).
+- **Times:** no `system.json` has a `time` section before RT10l, so the
+  Machine screen says UTC (system.json's `written`), and Snapshot each
+  backup's own offset (`02:00 UTC+01:00`), saying so.  With a section,
+  the zone's TZif footer, else its `posix_rule`, is worked out here
+  (`time::Rule`, no libc); the order is `time::ORDER`.
+- **The keyboard:** no dump records one before RT10l, so there's no
+  offer, and the password screen says the backup doesn't say.  Linux
+  changes the layout with `ckbcomp | loadkeys` (by a file in the
+  session's directory); the other platforms' mapping table is open
+  question 11 (`keyboard::NATIVE`, empty), so there, as on Haiku, the
+  stick can't change it and says so.  Neither ckbcomp nor loadkeys is
+  checked on the images (*Check* at RT13).
+- **The bug report** is made in RAM (`/run/bko-rescue/reports/`, 0700)
+  with the hint and the typed address in a `--strip-file`, then copied
+  onto the BACKOTTER partition (`config.dev`), mounted read-write for that
+  only, synced and unmounted; it stays in RAM when that fails, and always
+  in a dry run (`report::DRY_RUN_TO_STICK`).  The mount commands per
+  platform are *Check* (`report::mount_argv`).  No QR code (open question
+  4): the text full width, as the mock does without half-blocks.
+- **Defaults taken** where rescue-screens.md is open, each in one place:
+  the BIP39 list is a copy of holt's (`src/bip39-english.txt`, a test
+  compares them; holt-json.md's open question 9); the hint is system.json's
+  `password_hint` as `stick --json` passes it (open question 2); reports
+  aren't counted or pruned (open question 9); no step count in plain mode
+  (open question 10); times as above (open question 6).
+- **Not built here:** the scan of this computer's disks for backups (Type
+  a location's list), the host-key and login screens for sftp (rustic-bko
+  refuses an unknown host key, so it is `repo_login_failed`), setting the
+  network by hand (the button says to use the shell), DHCP from Try again
+  (it waits 30 s for a route), the layout's "differs from the stick's
+  copy" line on Snapshot (needs the backup's system.json, RT12),
+  "this computer" off Linux (`here.dmi_uuid` is Linux's), and `--demo`
+  starting from these screens.
+- **Found in the mocks:** the Machine row "backed up from this computer"
+  doesn't fit 66 columns with the date, so that row drops the date (the
+  first line has it); XKB's UK layout is `gb`, not `uk`; `candle`, on the
+  recovery key mock, isn't a BIP39 word; plain mode's transcript gives
+  the recovery key `r`, which is Report everywhere else (it is `u`
+  here); the Network mock's "cable in, but no address after 30 s" can't
+  be said before Try again has waited.
 
 ## The app on top (later)
 

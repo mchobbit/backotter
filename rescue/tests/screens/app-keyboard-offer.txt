@@ -1,0 +1,78 @@
+ BackOtter rescue                                                     Repository
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  ┌─────────────────────── Keyboard for the password ────────────────────────┐  
+  │                                                                          │  
+  │ lovelace used a German keyboard (de, nodeadkeys) when it was backed up.  │  
+  │ This stick is set to English (US).                                       │  
+  │                                                                          │  
+  │ Switch to German for the password?  Its desktop also had English (US).   │  
+  │                                                                          │  
+  │ On a German keyboard set to English (US), keys move and most symbols     │  
+  │ too, so the password would come out wrong.                               │  
+  │                                                                          │  
+  │   < Switch to German >    < Keep English (US) >    < Another layout >    │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: buttons | Enter: press | Esc: keep English (US)                           
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddDDDDDDDDDDDDDDDDDDDDddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                     Repository
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  +----------------------- Keyboard for the password ------------------------+  
+  |                                                                          |  
+  | lovelace used a German keyboard (de, nodeadkeys) when it was backed up.  |  
+  | This stick is set to English (US).                                       |  
+  |                                                                          |  
+  | Switch to German for the password?  Its desktop also had English (US).   |  
+  |                                                                          |  
+  | On a German keyboard set to English (US), keys move and most symbols     |  
+  | too, so the password would come out wrong.                               |  
+  |                                                                          |  
+  |   < Switch to German >    < Keep English (US) >    < Another layout >    |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: buttons | Enter: press | Esc: keep English (US)                           

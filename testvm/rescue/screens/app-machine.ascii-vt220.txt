@@ -1,0 +1,51 @@
+ BackOtter rescue                                                        Machine
+                                                                                
+                                                                                
+                                                                                
+  ┌───────────────────────── Which machine is this? ─────────────────────────┐  
+  │                                                                          │  
+  │ The stick knows these machines.  None of them was backed up from this    │  
+  │ computer.  Pick the one you are restoring.                               │  
+  │                                                                          │  
+  │  ┌────────────────────────────────────────────────────────────────────┐  │  
+  │  │ ( ) lovelace   Debian 13      newest backup 22 Nov 2026 01:00 UTC  │  │  
+  │  │ ( ) babbage    Fedora 45      newest backup 21 Nov 2026 08:00 UTC  │  │  
+  │  │ ( ) hopper     FreeBSD 15.0   newest backup 18 Nov 2026 01:00 UTC  │  │  
+  │  └────────────────────────────────────────────────────────────────────┘  │  
+  │                                                                          │  
+  │ The one you pick is restored onto this computer, so check the name:      │  
+  │ it is the computer's name from when it was backed up.                    │  
+  │                                                                          │  
+  │               <  OK  >    < Type a location >    < Shell >               │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+ Arrows | Tab: next | Enter: OK | s: shell | L: lines | C: colour | P: plain    
+
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+
+p 0

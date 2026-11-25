@@ -1,6 +1,7 @@
-//! bko-rescue's command line.  The restore screens come in RT11 and RT12;
-//! until then the hidden options are what it does.
+//! bko-rescue's command line: the restore screens (`app/`, RT11; RT12's
+//! Disks onwards to come), and the hidden options for tests and checks.
 
+use bko_rescue::app;
 use bko_rescue::demo;
 use bko_rescue::spike;
 use bko_rescue::term::ffi;
@@ -181,13 +182,9 @@ fn main() {
             demo::run(&profile::decide(&f), o.holt.as_deref())
         }
         Mode::App => {
-            let _ = (&o.holt, &o.rustic, o.dry_run);
-            eprintln!(
-                "bko-rescue: the restore screens aren't built yet (RT11, RT12){}; \
-                 --demo shows the widgets, --spike the terminal layer",
-                if o.dry_run { ", nor --dry-run" } else { "" }
-            );
-            2
+            let f = Facts::gather(o.plain, o.lines, o.colour);
+            let p = profile::decide(&f);
+            app::run(&p, &f, app::Opts { holt: o.holt.clone(), rustic: o.rustic.clone(), dry_run: o.dry_run })
         }
     };
     std::process::exit(code);

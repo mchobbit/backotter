@@ -1,0 +1,52 @@
+ BackOtter rescue                                                        Machine
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  ┌────────────────────────── Where is the backup? ──────────────────────────┐  
+  │                                                                          │  
+  │ Type the address of your backup, as written on the sheet from when the   │  
+  │ backups were set up:                                                     │  
+  │                                                                          │  
+  │ [                                                                  ]     │  
+  │                                                                          │  
+  │ For example:  sftp://nas.local/backotter/lovelace                        │  
+  │               rest:http://10.0.0.5:8000/lovelace                         │  
+  │                                                                          │  
+  │                    <  OK  >    < Shell >    < Back >                     │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: next | Enter: OK | s: shell | Esc: back                                   
+
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+ppppppPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+
+P 0;1;7
+p 0

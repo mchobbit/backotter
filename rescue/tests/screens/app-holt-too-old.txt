@@ -1,0 +1,78 @@
+ BackOtter rescue                                                       Starting
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  ┌───────────────────── Problem: this stick's bko-holt ─────────────────────┐  
+  │                                                                          │  
+  │ This stick's bko-holt is too old for this bko-rescue: it doesn't speak   │  
+  │ the JSON protocol (bko-holt --version --json).  Use a stick whose        │  
+  │ bko-holt and bko-rescue were made together.                              │  
+  │                                                                          │  
+  │            < Try again >    < Type a location >    < Shell >             │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Enter: Try again | s: shell | L: lines | C: colour | P: plain                  
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddddddddddDDDDDDDDDDDDDddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                       Starting
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  +--------------------- Problem: this stick's bko-holt ---------------------+  
+  |                                                                          |  
+  | This stick's bko-holt is too old for this bko-rescue: it doesn't speak   |  
+  | the JSON protocol (bko-holt --version --json).  Use a stick whose        |  
+  | bko-holt and bko-rescue were made together.                              |  
+  |                                                                          |  
+  |            < Try again >    < Type a location >    < Shell >             |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Enter: Try again | s: shell | L: lines | C: colour | P: plain                  

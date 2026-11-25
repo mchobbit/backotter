@@ -1,0 +1,231 @@
+//! Every bko-holt command line bko-rescue runs is built here, and only
+//! here (rescue-tui.md, "Dry run", lock 1, as J6 amended it): in dry-run
+//! mode this can't add `--commit`, whatever the caller asks.  It may add
+//! `--erase` (J6: without `--commit` nothing is written, and J19 makes a
+//! used disk need it even in a dry run).  The second lock is bko-holt's
+//! own: `env` gives `BKO_HOLT_NO_COMMIT=1` in dry-run mode, and bko-holt
+//! then refuses `--commit` itself (exit 2).
+//!
+//! RT11 runs `--version --json`, `stick --json`, `recovery-words OUT
+//! --json` and `report-bug`; `load` is built here too, so the lock holds
+//! from the first screen that will run it (RT12).
+
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+
+/// The variable bko-holt refuses `--commit` under (holt-json.md, "The
+/// dry run, end to end").
+pub const NO_COMMIT: &str = "BKO_HOLT_NO_COMMIT";
+
+/// Which part of load to run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Stage {
+    /// The plan: no `--through` or `--only`.
+    Plan,
+    /// `--only status`.
+    Status,
+    Through(String),
+    Only(String),
+}
+
+/// A load run's arguments.  `commit` is what the caller asks for; in a
+/// dry run it is never passed.
+#[derive(Clone, Debug)]
+pub struct Load {
+    pub layout: PathBuf,
+    pub stage: Stage,
+    pub repo: Option<String>,
+    pub password_file: Option<PathBuf>,
+    pub key_files: Vec<(String, PathBuf)>,
+    pub map: Vec<(String, String)>,
+    pub erase: Vec<String>,
+    pub snapshot: Option<String>,
+    pub expect_plan: Option<String>,
+    pub commit: bool,
+}
+
+impl Load {
+    pub fn new(layout: &Path, stage: Stage) -> Load {
+        Load {
+            layout: layout.to_path_buf(),
+            stage,
+            repo: None,
+            password_file: None,
+            key_files: Vec::new(),
+            map: Vec::new(),
+            erase: Vec::new(),
+            snapshot: None,
+            expect_plan: None,
+            commit: false,
+        }
+    }
+}
+
+pub enum HoltCmd<'a> {
+    Version,
+    Stick,
+    /// The words go on standard input; the password to `out`.
+    RecoveryWords {
+        out: &'a Path,
+    },
+    ReportBug {
+        out: &'a Path,
+        no_redact: bool,
+        strip: Option<&'a Path>,
+        attach: &'a [PathBuf],
+    },
+    Load(&'a Load),
+}
+
+fn os(s: &str) -> OsString {
+    OsString::from(s)
+}
+
+/// The arguments after bko-holt's path.
+pub fn argv(cmd: &HoltCmd, dry_run: bool) -> Vec<OsString> {
+    match cmd {
+        HoltCmd::Version => vec![os("--version"), os("--json")],
+        HoltCmd::Stick => vec![os("stick"), os("--json")],
+        HoltCmd::RecoveryWords { out } => vec![os("recovery-words"), out.as_os_str().to_owned(), os("--json")],
+        HoltCmd::ReportBug { out, no_redact, strip, attach } => {
+            let mut v = vec![os("report-bug"), os("--output"), out.as_os_str().to_owned()];
+            if *no_redact {
+                v.push(os("--no-redact"));
+            } else if let Some(s) = strip {
+                v.push(os("--strip-file"));
+                v.push(s.as_os_str().to_owned());
+            }
+            for a in attach.iter() {
+                v.push(os("--attach"));
+                v.push(a.as_os_str().to_owned());
+            }
+            v
+        }
+        HoltCmd::Load(l) => {
+            let mut v = vec![os("load"), l.layout.as_os_str().to_owned(), os("--json")];
+            match &l.stage {
+                Stage::Plan => {}
+                Stage::Status => v.extend([os("--only"), os("status")]),
+                Stage::Through(s) => v.extend([os("--through"), os(s)]),
+                Stage::Only(s) => v.extend([os("--only"), os(s)]),
+            }
+            if let Some(r) = &l.repo {
+                v.extend([os("--repo"), os(r)]);
+            }
+            if let Some(p) = &l.password_file {
+                v.extend([os("--password-file"), p.as_os_str().to_owned()]);
+            }
+            for (name, p) in &l.key_files {
+                let mut kf = OsString::from(format!("{name}="));
+                kf.push(p);
+                v.extend([os("--key-file"), kf]);
+            }
+            for (from, to) in &l.map {
+                v.extend([os("--map"), os(&format!("{from}={to}"))]);
+            }
+            for e in &l.erase {
+                v.extend([os("--erase"), os(e)]);
+            }
+            if let Some(s) = &l.snapshot {
+                v.extend([os("--snapshot"), os(s)]);
+            }
+            if let Some(h) = &l.expect_plan {
+                v.extend([os("--expect-plan"), os(h)]);
+            }
+            // Lock 1: never in a dry run, whatever was asked.
+            if l.commit && !dry_run {
+                v.push(os("--commit"));
+            }
+            v
+        }
+    }
+}
+
+/// What bko-holt's small environment adds: lock 2 in a dry run.
+pub fn env(dry_run: bool) -> Vec<(String, String)> {
+    if dry_run {
+        vec![(NO_COMMIT.to_string(), "1".to_string())]
+    } else {
+        Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn every(load: &Load) -> Vec<HoltCmd<'_>> {
+        let p = Path::new("/run/bko-rescue/s-1-0/x");
+        vec![
+            HoltCmd::Version,
+            HoltCmd::Stick,
+            HoltCmd::RecoveryWords { out: p },
+            HoltCmd::ReportBug { out: p, no_redact: false, strip: Some(p), attach: &[] },
+            HoltCmd::ReportBug { out: p, no_redact: true, strip: None, attach: &[] },
+            HoltCmd::Load(load),
+        ]
+    }
+
+    fn loads() -> Vec<Load> {
+        let mut v = Vec::new();
+        for stage in [Stage::Plan, Stage::Status, Stage::Through("close".into()), Stage::Only("boot".into()), Stage::Only("partition".into())] {
+            let mut l = Load::new(Path::new("/run/bko-rescue/layout.json"), stage);
+            l.repo = Some("sftp://nas.local/backotter/lovelace".into());
+            l.password_file = Some("/run/bko-rescue/s-1-0/password".into());
+            l.key_files.push(("cryptroot".into(), "/run/bko-rescue/s-1-0/k0".into()));
+            l.map.push(("sda".into(), "nvme0n1".into()));
+            l.erase.push("nvme0n1".into());
+            l.expect_plan = Some("ab".repeat(32));
+            // Every screen asks for --commit: the dry run still never
+            // passes it.
+            l.commit = true;
+            v.push(l);
+        }
+        v
+    }
+
+    #[test]
+    fn a_dry_run_never_adds_commit() {
+        for l in loads() {
+            for c in every(&l) {
+                let a = argv(&c, true);
+                assert!(!a.iter().any(|x| x.to_string_lossy().contains("--commit")), "{a:?}");
+            }
+            // It may add --erase (J6).
+            assert!(argv(&HoltCmd::Load(&l), true).contains(&os("--erase")));
+        }
+        assert_eq!(env(true), vec![(NO_COMMIT.to_string(), "1".to_string())]);
+    }
+
+    #[test]
+    fn a_restore_passes_commit_only_when_asked() {
+        let mut l = loads().remove(2);
+        let a = argv(&HoltCmd::Load(&l), false);
+        assert_eq!(a.last(), Some(&os("--commit")));
+        assert_eq!(a.iter().filter(|x| *x == "--commit").count(), 1);
+        l.commit = false;
+        assert!(!argv(&HoltCmd::Load(&l), false).contains(&os("--commit")));
+        assert!(env(false).is_empty());
+        let words: Vec<String> = argv(&HoltCmd::Load(&l), false).iter().map(|x| x.to_string_lossy().to_string()).collect();
+        assert_eq!(
+            words.join(" "),
+            format!(
+                "load /run/bko-rescue/layout.json --json --through close --repo sftp://nas.local/backotter/lovelace \
+                 --password-file /run/bko-rescue/s-1-0/password --key-file cryptroot=/run/bko-rescue/s-1-0/k0 \
+                 --map sda=nvme0n1 --erase nvme0n1 --expect-plan {}",
+                "ab".repeat(32)
+            )
+        );
+    }
+
+    #[test]
+    fn the_other_commands() {
+        let p = Path::new("/r/o");
+        let s = |c: HoltCmd| argv(&c, false).iter().map(|x| x.to_string_lossy().to_string()).collect::<Vec<_>>().join(" ");
+        assert_eq!(s(HoltCmd::Version), "--version --json");
+        assert_eq!(s(HoltCmd::Stick), "stick --json");
+        assert_eq!(s(HoltCmd::RecoveryWords { out: p }), "recovery-words /r/o --json");
+        assert_eq!(s(HoltCmd::ReportBug { out: p, no_redact: false, strip: Some(Path::new("/r/s")), attach: &[] }), "report-bug --output /r/o --strip-file /r/s");
+        assert_eq!(s(HoltCmd::ReportBug { out: p, no_redact: true, strip: Some(Path::new("/r/s")), attach: &[] }), "report-bug --output /r/o --no-redact", "--strip-file means nothing there");
+    }
+}

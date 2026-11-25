@@ -1,0 +1,56 @@
+ BackOtter rescue                                                     Repository
+                                                                                
+                                                                                
+  ┌────────────────────────────── Recovery key ──────────────────────────────┐  
+  │                                                                          │  
+  │ Type the 12 words printed on the recovery sheet when the backups were    │  
+  │ set up, in the sheet's order.  After four letters, the rest of a word is │  
+  │ filled in for you.                                                       │  
+  │                                                                          │  
+  │    1 [legal    ]      2 [winner   ]      3 [thank    ]                   │  
+  │    4 [year     ]      5 [wave     ]      6 [sausage  ]                   │  
+  │    7 [worth    ]      8 [useful   ]      9 [legal    ]                   │  
+  │   10 [winner   ]     11 [thank    ]     12 [yell     ]                   │  
+  │                                                                          │  
+  │ Word 12: yell -> yellow.  Space takes it.                                │  
+  │                                                                          │  
+  │ The last word holds a check, so most typing mistakes are caught here.    │  
+  │                                                                          │  
+  │                           <  OK  >    < Back >                           │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+ Tab: next | Enter: OK | Esc: back                                              
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddDDDDdDDDDdddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddhhhhdhhhdhhhhdhhdhhhhhhhddhhhhhdhhhhhdhhhdddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbp
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+h 0;1;30;47
+p 0
+s 0;40

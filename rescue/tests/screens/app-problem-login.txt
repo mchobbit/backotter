@@ -1,0 +1,78 @@
+ BackOtter rescue                                                     Repository
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  ┌───────────────── Problem: the server refused the login ──────────────────┐  
+  │                                                                          │  
+  │ What happened: nas.local didn't let this stick log in.                   │  
+  │                                                                          │  
+  │ Why: The server refused the login, or its key isn't the one this stick   │  
+  │ knows (it may be another server pretending to be it).                    │  
+  │                                                                          │  
+  │ What can be done: Check the address, or log in from the shell to see     │  
+  │ what the server says.                                                    │  
+  │                                                                          │  
+  │ Your backup is safe: nothing in it has been changed.                     │  
+  │                                                                          │  
+  │ < Type a location >   < Shell >   < Report >   < Raw output >   < Back > │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Enter: Shell | s: shell | r: report | o: raw output | Esc: back                
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddDDDDDDDDDdddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                     Repository
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  +----------------- Problem: the server refused the login ------------------+  
+  |                                                                          |  
+  | What happened: nas.local didn't let this stick log in.                   |  
+  |                                                                          |  
+  | Why: The server refused the login, or its key isn't the one this stick   |  
+  | knows (it may be another server pretending to be it).                    |  
+  |                                                                          |  
+  | What can be done: Check the address, or log in from the shell to see     |  
+  | what the server says.                                                    |  
+  |                                                                          |  
+  | Your backup is safe: nothing in it has been changed.                     |  
+  |                                                                          |  
+  | < Type a location >   < Shell >   < Report >   < Raw output >   < Back > |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Enter: Shell | s: shell | r: report | o: raw output | Esc: back                

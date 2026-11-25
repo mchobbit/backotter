@@ -6,11 +6,15 @@
 //! console spike), RT4 (the terminal layer proper and the sanitiser),
 //! RT5 (the screen buffer with diffed redraw, and the golden-screen and
 //! byte-stream harnesses), RT6 (the widgets, the `Ui` trait and the
-//! full-screen runner, `Secret`) and RT7 (plain mode).
+//! full-screen runner, `Secret`), RT7 (plain mode), RT8 (`--demo` and the
+//! pty harness) and RT11 (`app/`: the first screens, Machine to Snapshot,
+//! their help screens and the bug report).
 
 /// holt's JSON reader and writer, shared as source (D2).
 #[path = "../../holt/src/json.rs"]
 pub mod json;
+pub mod app;
+pub mod bip39;
 pub mod demo;
 pub mod plain;
 pub mod screen;

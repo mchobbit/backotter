@@ -1,0 +1,78 @@
+ BackOtter rescue                                                       Keyboard
+  ┌──────────────────────────── Keyboard layout ─────────────────────────────┐  
+  │                                                                          │  
+  │ Which keyboard is this?  Pick the layout printed on its keys.            │  
+  │                                                                          │  
+  │  ┌────────────────────────────────────────────────────────────────────┐  │  
+  │  │ (*) de nodeadkeys   German, no dead keys            lovelace's     │  │  
+  │  │ ( ) us              English (US)                    lovelace's     │  │  
+  │  │ ( ) de              German                                         │  │  
+  │  │ ( ) gb              English (UK)                                   │  │  
+  │  │ ( ) fr              French (AZERTY)                                │  │  
+  │  │ ( ) be              Belgian                                        │  │  
+  │  │ ( ) es              Spanish                                        │  │  
+  │  │ ( ) it              Italian                                        │  │  
+  │  │ ( ) ch              Swiss German                                   │  │  
+  │  │ ( ) ch fr           Swiss French                                   │  │  
+  │  │ v more below                                                       │  │  
+  │  └────────────────────────────────────────────────────────────────────┘  │  
+  │                                                                          │  
+  │ Try it here:  [                                        ]                 │  
+  │                                                                          │  
+  │                           <  OK  >    < Back >                           │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+ Arrows: choose | Tab: next | Enter: OK | Esc: back                             
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbssssssssssssssssssssssssssssb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                       Keyboard
+  +---------------------------- Keyboard layout -----------------------------+  
+  |                                                                          |  
+  | Which keyboard is this?  Pick the layout printed on its keys.            |  
+  |                                                                          |  
+  |  +--------------------------------------------------------------------+  |  
+  |  | (*) de nodeadkeys   German, no dead keys            lovelace's     |  |  
+  |  | ( ) us              English (US)                    lovelace's     |  |  
+  |  | ( ) de              German                                         |  |  
+  |  | ( ) gb              English (UK)                                   |  |  
+  |  | ( ) fr              French (AZERTY)                                |  |  
+  |  | ( ) be              Belgian                                        |  |  
+  |  | ( ) es              Spanish                                        |  |  
+  |  | ( ) it              Italian                                        |  |  
+  |  | ( ) ch              Swiss German                                   |  |  
+  |  | ( ) ch fr           Swiss French                                   |  |  
+  |  | v more below                                                       |  |  
+  |  +--------------------------------------------------------------------+  |  
+  |                                                                          |  
+  | Try it here:  [                                        ]                 |  
+  |                                                                          |  
+  |                           <  OK  >    < Back >                           |  
+  +--------------------------------------------------------------------------+  
+ Arrows: choose | Tab: next | Enter: OK | Esc: back                             

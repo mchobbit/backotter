@@ -430,6 +430,9 @@ impl<L: Line> Plain<L> {
         self.header(&d.chrome)?;
         self.say(&d.text)?;
         self.say(&d.after)?;
+        if let Some(n) = &d.notice {
+            self.say(n)?;
+        }
         let max = d.max.min(ui::INPUT_MAX);
         let has_others = d.buttons.iter().any(|b| b.act != Act::Ok);
         loop {
@@ -615,6 +618,105 @@ impl<L: Line> Plain<L> {
             }
         }
     }
+
+    /// The recovery key on one line, read back numbered, then tried or
+    /// typed again (rescue-screens.md, "Plain mode").  The words echo:
+    /// they are read off paper, and shown in clear on the screen too.
+    fn words_inner(&mut self, d: &ui::Words) -> io::Result<Answer<Secret>> {
+        use crate::bip39::{self, Typed, COUNT};
+        self.header(&d.chrome)?;
+        self.say(if d.plain.is_empty() { &d.text } else { &d.plain })?;
+        self.say(&d.after)?;
+        let has_others = d.buttons.iter().any(|b| b.act != Act::Ok);
+        loop {
+            self.out("> ")?;
+            let got = match self.read_secret()? {
+                None => return Ok(Answer::Quit),
+                Some((_, true)) => {
+                    self.out(&format!("That's longer than {} bytes: type it again.\n", crate::secret::CAP))?;
+                    continue;
+                }
+                Some((s, false)) => s,
+            };
+            if got.is_empty() {
+                if has_others {
+                    if let Some(a) = self.other_choices(&d.buttons)? {
+                        return Ok(a);
+                    }
+                }
+                continue;
+            }
+            // Split at white space and commas, lower case, as bko-holt
+            // reads them; numbers before a word are left out.
+            let mut full: Vec<&'static str> = Vec::new();
+            let mut wrong: Option<String> = None;
+            let typed: Vec<String> = got
+                .expose()
+                .split(|b| b.is_ascii_whitespace() || *b == b',')
+                .filter(|w| !w.is_empty() && !w.iter().all(u8::is_ascii_digit))
+                .map(|w| String::from_utf8_lossy(w).to_lowercase())
+                .collect();
+            drop(got);
+            for (i, w) in typed.iter().enumerate() {
+                let shown = self.shown(&Clean::line(w, 16));
+                match bip39::typed(w) {
+                    Typed::Whole(x) | Typed::Completes(x) => full.push(x),
+                    Typed::Partial => {
+                        let some: Vec<&str> = bip39::starting(w).iter().take(3).copied().collect();
+                        wrong.get_or_insert(format!("Word {}, {shown}, is the start of more than one word: {}.", i + 1, some.join(", ")));
+                    }
+                    _ => {
+                        wrong.get_or_insert(format!("Word {}, {shown}, isn't the start of any recovery word.", i + 1));
+                    }
+                }
+            }
+            for t in typed {
+                let mut v = t.into_bytes();
+                crate::secret::wipe(&mut v);
+            }
+            if let Some(w) = wrong {
+                self.out(&format!("{w}\n"))?;
+                continue;
+            }
+            if full.len() != COUNT {
+                self.out(&format!("That's {} words; the key has {COUNT}.  Type them again.\n", full.len()))?;
+                continue;
+            }
+            let mut s = String::from("You typed:\n");
+            for row in full.chunks(4).enumerate() {
+                let mut l = String::new();
+                for (j, w) in row.1.iter().enumerate() {
+                    l.push_str(&format!("{:>3} {:<9}", row.0 * 4 + j + 1, w));
+                }
+                s.push_str(l.trim_end());
+                s.push('\n');
+            }
+            self.out(&s)?;
+            let mut opts = vec![
+                Opt { key: 'y', label: Clean::ours("these are right, try them"), act: Act::Ok },
+                Opt { key: 'n', label: Clean::ours("type them again"), act: Act::Other(usize::MAX) },
+            ];
+            let others: Vec<Button> = d.buttons.iter().filter(|b| b.act != Act::Ok).cloned().collect();
+            opts.extend(letters(&others, &['y', 'n']));
+            match self.choose(0, &opts)? {
+                Pick::Choice(0) => {
+                    let mut out = Secret::new();
+                    for (i, w) in full.iter().enumerate() {
+                        if i > 0 {
+                            out.push_byte(b' ');
+                        }
+                        for b in w.bytes() {
+                            out.push_byte(b);
+                        }
+                    }
+                    return Ok(Answer::Ok(out));
+                }
+                Pick::Choice(1) => continue,
+                Pick::Choice(i) => return Ok(Plain::<L>::act(opts[i].act)),
+                Pick::Num(_) | Pick::Quit => return Ok(Answer::Quit),
+            }
+        }
+    }
 }
 
 impl<L: Line> Ui for Plain<L> {
@@ -630,8 +732,19 @@ impl<L: Line> Ui for Plain<L> {
     }
 
     fn radio(&mut self, d: &ui::Radio) -> Answer<usize> {
-        let r = self.list(&d.chrome, &d.text, &d.items, &d.after, &d.buttons);
-        self.done(r)
+        loop {
+            let r = self.list(&d.chrome, &d.text, &d.items, &d.after, &d.buttons);
+            if let Ok(Answer::Ok(i)) = &r {
+                if let Some((_, why)) = d.blocked.iter().find(|(b, _)| b == i) {
+                    let line = format!("{}\n", self.shown(why));
+                    if let Err(e) = self.out(&line) {
+                        return self.done(Err(e));
+                    }
+                    continue;
+                }
+            }
+            return self.done(r);
+        }
     }
 
     fn input(&mut self, d: &ui::Input) -> Answer<String> {
@@ -691,6 +804,11 @@ impl<L: Line> Ui for Plain<L> {
 
     fn progress(&mut self, d: &ui::Progress, tick: &mut dyn FnMut() -> Tick) -> Answer<()> {
         let r = self.progress_inner(d, tick);
+        self.done(r)
+    }
+
+    fn words(&mut self, d: &ui::Words) -> Answer<Secret> {
+        let r = self.words_inner(d);
         self.done(r)
     }
 }

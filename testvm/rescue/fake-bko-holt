@@ -25,9 +25,14 @@ whose `argv` matches answers:
              sends; standard input is read once, at most 1 KiB
     out      written, when the call answers, to the OUT its argv names
              (argv[1], as `recovery-words OUT` and `recovery-key-file
-             OUT` take it): a new file (O_EXCL, 0600) in a directory of
-             ours with mode 0700, as bko-holt writes it, else a failed
-             check; then watched as a key file is (below)
+             OUT` take it, or `--output FILE`'s, as report-bug's): a new
+             file (O_EXCL, 0600) in a directory of ours with mode 0700,
+             as bko-holt writes it, else a failed check; then watched as
+             a key file is (below)
+    password the call matches only when the `--password-file` it is
+             given holds exactly these bytes, so one scenario answers a
+             right password and a wrong one (a later call without this
+             file); the fake as rustic-bko (`fake-rustic-bko`) uses it
 
 With $FAKE_BKO_HOLT_STATE naming a file, the calls of a whole run are
 answered in order, as a recorded run (scenarios/rec-*) needs, where one
@@ -250,8 +255,24 @@ def match(call_dir, argv):
         return False
     if not (len(pats) == len(argv) and all(fnmatch.fnmatchcase(a, p) for a, p in zip(argv, pats))):
         return False
+    pw = read(call_dir, "password")
+    if pw is not None and given_password(argv) != pw:
+        return False
     want = read(call_dir, "stdin")
     return want is None or same_words(words(want), stdin_words())
+
+
+def given_password(argv):
+    """The bytes of the --password-file argv names (at most 1 KiB), or
+    None."""
+    for flag, _, path in key_paths(argv):
+        if flag == "--password-file" and path:
+            try:
+                with open(path, "rb") as f:
+                    return f.read(KEY_MAX + 1)
+            except OSError:
+                return None
+    return None
 
 
 def same_words(want, typed):
@@ -360,6 +381,8 @@ def main():
     data = read(d, "out")
     if data is not None:
         target = argv[1] if len(argv) > 1 else ""
+        if "--output" in argv[:-1]:
+            target = argv[argv.index("--output") + 1]
         bad = check_out(target)
         if bad:
             entry.update(ok=False, checks=checks + bad)

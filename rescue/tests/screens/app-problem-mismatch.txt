@@ -1,0 +1,78 @@
+ BackOtter rescue                                                     Repository
+                                                                                
+                                                                                
+                                                                                
+  ┌────────────── Problem: these aren't this machine's backups ──────────────┐  
+  │                                                                          │  
+  │ What happened: These aren't the backups the stick knows for lovelace:    │  
+  │ the repository's ID isn't the one in its settings.                       │  
+  │                                                                          │  
+  │ Why: The address may point at another machine's backups, or the          │  
+  │ repository was made again since the stick was last updated.              │  
+  │                                                                          │  
+  │ What can be done: Pick another machine, or type the address of this      │  
+  │ one's backups.  bko-rescue never switches by itself.                     │  
+  │                                                                          │  
+  │ Your backup is safe: nothing in it has been changed.                     │  
+  │                                                                          │  
+  │  < Another machine > < Type a location > < Shell > < Report > < Back >   │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Left/Right: button | Enter: Shell | s: shell | r: report | Esc: back           
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddddddddddddddddddddddddddddddddddddddddDDDDDDDDDddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                     Repository
+                                                                                
+                                                                                
+                                                                                
+  +-------------- Problem: these aren't this machine's backups --------------+  
+  |                                                                          |  
+  | What happened: These aren't the backups the stick knows for lovelace:    |  
+  | the repository's ID isn't the one in its settings.                       |  
+  |                                                                          |  
+  | Why: The address may point at another machine's backups, or the          |  
+  | repository was made again since the stick was last updated.              |  
+  |                                                                          |  
+  | What can be done: Pick another machine, or type the address of this      |  
+  | one's backups.  bko-rescue never switches by itself.                     |  
+  |                                                                          |  
+  | Your backup is safe: nothing in it has been changed.                     |  
+  |                                                                          |  
+  |  < Another machine > < Type a location > < Shell > < Report > < Back >   |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Left/Right: button | Enter: Shell | s: shell | r: report | Esc: back           

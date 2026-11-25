@@ -1,0 +1,4 @@
+report-bug
+--output
+*
+--no-redact

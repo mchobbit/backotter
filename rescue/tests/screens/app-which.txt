@@ -1,0 +1,77 @@
+ BackOtter rescue                                                        Machine
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  ┌───────────────────────────── Which machine? ─────────────────────────────┐  
+  │                                                                          │  
+  │ These backups are of 2 machines.  Pick the one you are restoring.        │  
+  │                                                                          │  
+  │  ┌────────────────────────────────────────────────────────────────────┐  │  
+  │  │ ( ) lovelace   2 backups, newest 22 Nov 2026 02:00 UTC+01:00       │  │  
+  │  │ ( ) babbage    2 backups, newest 21 Nov 2026 03:00 UTC-05:00       │  │  
+  │  └────────────────────────────────────────────────────────────────────┘  │  
+  │                                                                          │  
+  │                           <  OK  >    < Back >                           │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Arrows: choose | Tab: next | Enter: OK | Esc: back                             
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                        Machine
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  +----------------------------- Which machine? -----------------------------+  
+  |                                                                          |  
+  | These backups are of 2 machines.  Pick the one you are restoring.        |  
+  |                                                                          |  
+  |  +--------------------------------------------------------------------+  |  
+  |  | ( ) lovelace   2 backups, newest 22 Nov 2026 02:00 UTC+01:00       |  |  
+  |  | ( ) babbage    2 backups, newest 21 Nov 2026 03:00 UTC-05:00       |  |  
+  |  +--------------------------------------------------------------------+  |  
+  |                                                                          |  
+  |                           <  OK  >    < Back >                           |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Arrows: choose | Tab: next | Enter: OK | Esc: back                             

@@ -27,6 +27,10 @@ pub struct Field {
     value: Value,
     /// The most characters it takes.
     max: usize,
+    /// Words before the brackets on the same row (`Try it here:`).
+    label: Option<Clean>,
+    /// Cells inside the brackets.
+    width: u16,
 }
 
 impl Field {
@@ -34,11 +38,22 @@ impl Field {
     /// control character dropped).
     pub fn text(value: &str, max: usize) -> Field {
         let v: String = value.chars().filter(|c| !c.is_control()).take(max).collect();
-        Field { value: Value::Text(v), max }
+        Field { value: Value::Text(v), max, label: None, width: FIELD_W }
     }
 
     pub fn password() -> Field {
-        Field { value: Value::Secret(Secret::new()), max: crate::secret::CAP }
+        Field { value: Value::Secret(Secret::new()), max: crate::secret::CAP, label: None, width: FIELD_W }
+    }
+
+    /// A shorter field after words of its own on the row, two spaces
+    /// between: `Try it here:  [          ]`.  At most FIELD_W cells, and
+    /// the label is cut to leave the field room.
+    pub fn labelled(mut self, label: Clean, width: u16) -> Field {
+        let width = width.clamp(3, FIELD_W);
+        let room = usize::from(FIELD_W - width);
+        self.label = Some(label.truncate(room));
+        self.width = width;
+        self
     }
 
     pub fn is_password(&self) -> bool {
@@ -103,9 +118,15 @@ impl Field {
     /// `[`, the field, `]` at `row`.
     pub fn draw(&self, c: &mut Canvas, row: u16, focused: bool) {
         let o = Clean::ours;
-        c.text(row, TEXT_COL, &o("["), DIALOG);
-        c.text(row, TEXT_COL + 1 + FIELD_W, &o("]"), DIALOG);
-        let w = usize::from(FIELD_W);
+        let mut left = TEXT_COL;
+        if let Some(l) = &self.label {
+            c.text(row, TEXT_COL, l, DIALOG);
+            left += l.width() as u16 + 2;
+        }
+        let fw = self.width;
+        c.text(row, left, &o("["), DIALOG);
+        c.text(row, left + 1 + fw, &o("]"), DIALOG);
+        let w = usize::from(fw);
         // Room for the characters: the field less the insertion cell.
         let room = w - 1;
         let shown: Clean = match &self.value {
@@ -120,10 +141,10 @@ impl Field {
             o("<").join("", &Clean::line(&tail, w))
         };
         let a = if focused { DIALOG.focus() } else { DIALOG };
-        c.fill(row, TEXT_COL + 1, 1, FIELD_W, a);
-        let at = c.text(row, TEXT_COL + 1, &visible, a);
+        c.fill(row, left + 1, 1, fw, a);
+        let at = c.text(row, left + 1, &visible, a);
         if focused {
-            let col = TEXT_COL + 1 + at;
+            let col = left + 1 + at;
             c.fill(row, col, 1, 1, DIALOG);
             c.cursor = Some((row, col));
         }

@@ -1,0 +1,76 @@
+[
+  {
+    "time": "2026-11-22T02:00:03+01:00",
+    "program_version": "rustic v0.12.0+backotter.4",
+    "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "paths": [
+      "/"
+    ],
+    "hostname": "lovelace",
+    "username": "root",
+    "uid": 0,
+    "gid": 0,
+    "tags": [],
+    "summary": {
+      "total_files_processed": 184233,
+      "total_bytes_processed": 61200000000
+    },
+    "id": "a7f3c9015f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+  },
+  {
+    "time": "2026-11-21T03:00:00-05:00",
+    "program_version": "rustic v0.12.0+backotter.4",
+    "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "paths": [
+      "/"
+    ],
+    "hostname": "babbage",
+    "username": "root",
+    "uid": 0,
+    "gid": 0,
+    "tags": [],
+    "summary": {
+      "total_files_processed": 184233,
+      "total_bytes_processed": 120400000000
+    },
+    "id": "b0bba9e15f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+  },
+  {
+    "time": "2026-11-21T02:00:02+01:00",
+    "program_version": "rustic v0.12.0+backotter.4",
+    "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "paths": [
+      "/"
+    ],
+    "hostname": "lovelace",
+    "username": "root",
+    "uid": 0,
+    "gid": 0,
+    "tags": [],
+    "summary": {
+      "total_files_processed": 184233,
+      "total_bytes_processed": 61000000000
+    },
+    "id": "3be04d2a5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+  },
+  {
+    "time": "2026-11-14T03:00:00-05:00",
+    "program_version": "rustic v0.12.0+backotter.4",
+    "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "paths": [
+      "/"
+    ],
+    "hostname": "babbage",
+    "username": "root",
+    "uid": 0,
+    "gid": 0,
+    "tags": [
+      "weekly"
+    ],
+    "summary": {
+      "total_files_processed": 184233,
+      "total_bytes_processed": 119800000000
+    },
+    "id": "b0bba9e25f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+  }
+]

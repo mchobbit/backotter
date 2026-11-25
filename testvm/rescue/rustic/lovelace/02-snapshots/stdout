@@ -1,0 +1,287 @@
+[
+  {
+    "group_key": {
+      "hostname": "lovelace",
+      "label": "",
+      "paths": [
+        "/"
+      ]
+    },
+    "snapshots": [
+      {
+        "time": "2026-11-22T02:00:03+01:00",
+        "program_version": "rustic v0.12.0+backotter.4",
+        "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "paths": [
+          "/"
+        ],
+        "hostname": "lovelace",
+        "username": "root",
+        "uid": 0,
+        "gid": 0,
+        "tags": [],
+        "summary": {
+          "total_files_processed": 184233,
+          "total_bytes_processed": 61200000000
+        },
+        "id": "a7f3c9015f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+      },
+      {
+        "time": "2026-11-21T02:00:02+01:00",
+        "program_version": "rustic v0.12.0+backotter.4",
+        "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "paths": [
+          "/"
+        ],
+        "hostname": "lovelace",
+        "username": "root",
+        "uid": 0,
+        "gid": 0,
+        "tags": [],
+        "summary": {
+          "total_files_processed": 184233,
+          "total_bytes_processed": 61000000000
+        },
+        "id": "3be04d2a5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+      },
+      {
+        "time": "2026-11-20T02:00:05+01:00",
+        "program_version": "rustic v0.12.0+backotter.4",
+        "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "paths": [
+          "/"
+        ],
+        "hostname": "lovelace",
+        "username": "root",
+        "uid": 0,
+        "gid": 0,
+        "tags": [],
+        "summary": {
+          "total_files_processed": 184233,
+          "total_bytes_processed": 60900000000
+        },
+        "id": "d1185e775f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+      },
+      {
+        "time": "2026-11-15T02:00:01+01:00",
+        "program_version": "rustic v0.12.0+backotter.4",
+        "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "paths": [
+          "/"
+        ],
+        "hostname": "lovelace",
+        "username": "root",
+        "uid": 0,
+        "gid": 0,
+        "tags": [
+          "weekly"
+        ],
+        "summary": {
+          "total_files_processed": 184233,
+          "total_bytes_processed": 60400000000
+        },
+        "id": "4e6f1d085f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+      },
+      {
+        "time": "2026-11-01T02:00:04+01:00",
+        "program_version": "rustic v0.12.0+backotter.4",
+        "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "paths": [
+          "/"
+        ],
+        "hostname": "lovelace",
+        "username": "root",
+        "uid": 0,
+        "gid": 0,
+        "tags": [
+          "monthly"
+        ],
+        "summary": {
+          "total_files_processed": 184233,
+          "total_bytes_processed": 59800000000
+        },
+        "id": "c03a77b25f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+      },
+      {
+        "time": "2026-10-01T02:00:02+02:00",
+        "program_version": "rustic v0.12.0+backotter.4",
+        "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "paths": [
+          "/"
+        ],
+        "hostname": "lovelace",
+        "username": "root",
+        "uid": 0,
+        "gid": 0,
+        "tags": [
+          "monthly"
+        ],
+        "summary": {
+          "total_files_processed": 184233,
+          "total_bytes_processed": 58900000000
+        },
+        "id": "5d2e90af5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+      },
+      {
+        "time": "2026-09-01T02:00:00+02:00",
+        "program_version": "rustic v0.12.0+backotter.4",
+        "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "paths": [
+          "/"
+        ],
+        "hostname": "lovelace",
+        "username": "root",
+        "uid": 0,
+        "gid": 0,
+        "tags": [
+          "monthly"
+        ],
+        "summary": {
+          "total_files_processed": 184233,
+          "total_bytes_processed": 58100000000
+        },
+        "id": "9a0b1c2d5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+      },
+      {
+        "time": "2026-08-01T02:00:00+02:00",
+        "program_version": "rustic v0.12.0+backotter.4",
+        "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "paths": [
+          "/"
+        ],
+        "hostname": "lovelace",
+        "username": "root",
+        "uid": 0,
+        "gid": 0,
+        "tags": [
+          "monthly"
+        ],
+        "summary": {
+          "total_files_processed": 184233,
+          "total_bytes_processed": 57300000000
+        },
+        "id": "8b1c2d3e5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+      },
+      {
+        "time": "2026-07-01T02:00:00+02:00",
+        "program_version": "rustic v0.12.0+backotter.4",
+        "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "paths": [
+          "/"
+        ],
+        "hostname": "lovelace",
+        "username": "root",
+        "uid": 0,
+        "gid": 0,
+        "tags": [
+          "monthly"
+        ],
+        "summary": {
+          "total_files_processed": 184233,
+          "total_bytes_processed": 56000000000
+        },
+        "id": "7c2d3e4f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+      },
+      {
+        "time": "2026-06-01T02:00:00+02:00",
+        "program_version": "rustic v0.12.0+backotter.4",
+        "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "paths": [
+          "/"
+        ],
+        "hostname": "lovelace",
+        "username": "root",
+        "uid": 0,
+        "gid": 0,
+        "tags": [
+          "monthly"
+        ],
+        "summary": {
+          "total_files_processed": 184233,
+          "total_bytes_processed": 55200000000
+        },
+        "id": "6d3e4f505f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+      },
+      {
+        "time": "2026-05-01T02:00:00+02:00",
+        "program_version": "rustic v0.12.0+backotter.4",
+        "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "paths": [
+          "/"
+        ],
+        "hostname": "lovelace",
+        "username": "root",
+        "uid": 0,
+        "gid": 0,
+        "tags": [
+          "monthly"
+        ],
+        "summary": {
+          "total_files_processed": 184233,
+          "total_bytes_processed": 54900000000
+        },
+        "id": "5e4f50615f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+      },
+      {
+        "time": "2026-04-01T02:00:00+02:00",
+        "program_version": "rustic v0.12.0+backotter.4",
+        "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "paths": [
+          "/"
+        ],
+        "hostname": "lovelace",
+        "username": "root",
+        "uid": 0,
+        "gid": 0,
+        "tags": [
+          "monthly"
+        ],
+        "summary": {
+          "total_files_processed": 184233,
+          "total_bytes_processed": 53700000000
+        },
+        "id": "4f5061725f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+      },
+      {
+        "time": "2026-03-01T02:00:00+01:00",
+        "program_version": "rustic v0.12.0+backotter.4",
+        "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "paths": [
+          "/"
+        ],
+        "hostname": "lovelace",
+        "username": "root",
+        "uid": 0,
+        "gid": 0,
+        "tags": [
+          "monthly"
+        ],
+        "summary": {
+          "total_files_processed": 184233,
+          "total_bytes_processed": 52000000000
+        },
+        "id": "306172835f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+      },
+      {
+        "time": "2026-02-01T02:00:00+01:00",
+        "program_version": "rustic v0.12.0+backotter.4",
+        "tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "paths": [
+          "/"
+        ],
+        "hostname": "lovelace",
+        "username": "root",
+        "uid": 0,
+        "gid": 0,
+        "tags": [
+          "monthly"
+        ],
+        "summary": {
+          "total_files_processed": 184233,
+          "total_bytes_processed": 51100000000
+        },
+        "id": "217283945f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+      }
+    ]
+  }
+]

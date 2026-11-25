@@ -161,8 +161,14 @@ impl<I: Io> FullScreen<I> {
 
     /// The loop of one dialog, until a button is pressed (`Ran::Act`),
     /// the ticker says Done, or it has to end.
-    fn run(&mut self, d: &mut Dialog, mut ticker: Option<&mut dyn FnMut() -> Tick>, fresh: bool) -> Ran {
-        match self.run_inner(d, &mut ticker, fresh) {
+    fn run(&mut self, d: &mut Dialog, ticker: Option<&mut dyn FnMut() -> Tick>, fresh: bool) -> Ran {
+        self.run_watched(d, ticker, fresh, None)
+    }
+
+    /// `run`, telling `watch` of the dialog after each key that changed
+    /// it.
+    fn run_watched(&mut self, d: &mut Dialog, mut ticker: Option<&mut dyn FnMut() -> Tick>, fresh: bool, mut watch: Option<&mut dyn FnMut(&Dialog)>) -> Ran {
+        match self.run_inner(d, &mut ticker, fresh, &mut watch) {
             Ok(r) => r,
             Err(e) => {
                 self.error = Some(e);
@@ -171,7 +177,13 @@ impl<I: Io> FullScreen<I> {
         }
     }
 
-    fn run_inner(&mut self, d: &mut Dialog, ticker: &mut Option<&mut dyn FnMut() -> Tick>, fresh: bool) -> io::Result<Ran> {
+    fn run_inner(
+        &mut self,
+        d: &mut Dialog,
+        ticker: &mut Option<&mut dyn FnMut() -> Tick>,
+        fresh: bool,
+        watch: &mut Option<&mut dyn FnMut(&Dialog)>,
+    ) -> io::Result<Ran> {
         let refresh_ms = self.profile.refresh_s.saturating_mul(1000).max(1000);
         let start = self.io.now_ms();
         if fresh {
@@ -228,6 +240,11 @@ impl<I: Io> FullScreen<I> {
                         'p' => return Ok(Ran::Plain),
                         _ => {}
                     },
+                    Did::Changed => {
+                        if let Some(w) = watch.as_mut() {
+                            w(d);
+                        }
+                    }
                     _ => {}
                 },
                 Event::Resize(s) => self.screen.resize(s),
@@ -266,7 +283,10 @@ impl<I: Io> Ui for FullScreen<I> {
         loop {
             match self.run(&mut d, None, fresh) {
                 Ran::Act(Act::Ok) => match d.list().and_then(|l| l.cur) {
-                    Some(i) => return Answer::Ok(i),
+                    Some(i) => match r.blocked.iter().find(|(b, _)| *b == i) {
+                        Some((_, why)) => d.notice = Some(why.clone()),
+                        None => return Answer::Ok(i),
+                    },
                     // Not greyed out: it says why, and again each time.
                     None => d.notice = Some(r.none.clone()),
                 },
@@ -325,6 +345,55 @@ impl<I: Io> Ui for FullScreen<I> {
             Ran::Done | Ran::Act(Act::Ok) => Answer::Ok(()),
             r => r.answer(),
         }
+    }
+
+    fn words(&mut self, w: &ui::Words) -> Answer<Secret> {
+        let mut d = Dialog::words(w);
+        let mut fresh = true;
+        loop {
+            match self.run(&mut d, None, fresh) {
+                Ran::Act(Act::Ok) => match d.words_part().map(|p| p.take()) {
+                    Some(Ok(s)) => return Answer::Ok(s),
+                    // Says why, each time it is pressed.
+                    Some(Err(why)) => d.notice = Some(why),
+                    None => return Answer::Back,
+                },
+                x => return x.answer(),
+            }
+            fresh = false;
+        }
+    }
+
+    fn radio_live(&mut self, r: &ui::Radio, moved: &mut dyn FnMut(usize)) -> Answer<usize> {
+        let mut d = Dialog::radio(r);
+        let mut fresh = true;
+        let mut at = d.list().and_then(|l| l.cur);
+        let mut watch = |d: &Dialog| {
+            let now = d.list().and_then(|l| l.cur);
+            if now != at {
+                at = now;
+                if let Some(i) = now {
+                    moved(i);
+                }
+            }
+        };
+        loop {
+            match self.run_watched(&mut d, None, fresh, Some(&mut watch)) {
+                Ran::Act(Act::Ok) => match d.list().and_then(|l| l.cur) {
+                    Some(i) => match r.blocked.iter().find(|(b, _)| *b == i) {
+                        Some((_, why)) => d.notice = Some(why.clone()),
+                        None => return Answer::Ok(i),
+                    },
+                    None => d.notice = Some(r.none.clone()),
+                },
+                x => return x.answer(),
+            }
+            fresh = false;
+        }
+    }
+
+    fn full_screen(&self) -> bool {
+        true
     }
 }
 

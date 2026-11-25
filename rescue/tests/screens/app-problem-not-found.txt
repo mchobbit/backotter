@@ -1,0 +1,78 @@
+ BackOtter rescue                                                     Repository
+                                                                                
+                                                                                
+                                                                                
+  ┌────────────────── Problem: no backups at that address ───────────────────┐  
+  │                                                                          │  
+  │ What happened: Nothing at sftp://nas.local/backotter/lovelace holds      │  
+  │ backups.                                                                 │  
+  │                                                                          │  
+  │ Why: The server answered, but there's no repository at that address: it  │  
+  │ may be typed wrong, or the backups were moved.                           │  
+  │                                                                          │  
+  │ What can be done: Type the address again, as written on the sheet from   │  
+  │ when the backups were set up.                                            │  
+  │                                                                          │  
+  │ Your backup is safe: nothing in it has been changed.                     │  
+  │                                                                          │  
+  │ < Type a location >   < Shell >   < Report >   < Raw output >   < Back > │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Enter: Shell | s: shell | r: report | o: raw output | Esc: back                
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddDDDDDDDDDdddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                     Repository
+                                                                                
+                                                                                
+                                                                                
+  +------------------ Problem: no backups at that address -------------------+  
+  |                                                                          |  
+  | What happened: Nothing at sftp://nas.local/backotter/lovelace holds      |  
+  | backups.                                                                 |  
+  |                                                                          |  
+  | Why: The server answered, but there's no repository at that address: it  |  
+  | may be typed wrong, or the backups were moved.                           |  
+  |                                                                          |  
+  | What can be done: Type the address again, as written on the sheet from   |  
+  | when the backups were set up.                                            |  
+  |                                                                          |  
+  | Your backup is safe: nothing in it has been changed.                     |  
+  |                                                                          |  
+  | < Type a location >   < Shell >   < Report >   < Raw output >   < Back > |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Enter: Shell | s: shell | r: report | o: raw output | Esc: back                

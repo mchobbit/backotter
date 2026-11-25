@@ -138,6 +138,22 @@ pub struct Quiet {
     saved: TermiosBuf,
 }
 
+/// A caller that catches SIGHUP and SIGTERM itself for longer than a
+/// password read (the app in plain mode, which wipes its session's files
+/// before a signal ends it) sets this: then dropping a `Quiet` leaves
+/// them caught and the signal pending, for the caller to act on.
+static KEEP_CAUGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn keep_signals_caught(on: bool) {
+    KEEP_CAUGHT.store(on, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn give_back_signals() {
+    if !KEEP_CAUGHT.load(std::sync::atomic::Ordering::SeqCst) {
+        ffi::default_hup_term();
+    }
+}
+
 impl Quiet {
     pub fn enter() -> io::Result<Quiet> {
         let mut saved = TermiosBuf::new(0);
@@ -150,7 +166,7 @@ impl Quiet {
         ffi::catch_hup_term();
         if let Err(e) = ffi::set_attr(0, ffi::TCSADRAIN, &q) {
             let _ = ffi::set_attr(0, ffi::TCSADRAIN, &saved);
-            ffi::default_hup_term();
+            give_back_signals();
             return Err(e);
         }
         Ok(Quiet { saved })
@@ -165,8 +181,9 @@ impl Quiet {
 impl Drop for Quiet {
     fn drop(&mut self) {
         let _ = ffi::set_attr(0, ffi::TCSADRAIN, &self.saved);
-        // Echo is back: a signal that came now ends the program.
-        ffi::default_hup_term();
+        // Echo is back: a signal that came now ends the program, unless
+        // the caller keeps them (`keep_signals_caught`).
+        give_back_signals();
     }
 }
 

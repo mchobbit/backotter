@@ -1,0 +1,77 @@
+ BackOtter rescue                                                        Machine
+                                                                                
+  ┌───────────────────────── Which machine is this? ─────────────────────────┐  
+  │                                                                          │  
+  │ The stick knows these machines.  None of them was backed up from this    │  
+  │ computer.  Pick the one you are restoring.                               │  
+  │                                                                          │  
+  │  ┌────────────────────────────────────────────────────────────────────┐  │  
+  │  │ ( ) lovelace   Debian 13      newest backup 22 Nov 2026 01:00 UTC  │  │  
+  │  │ ( ) babbage   can't be chosen: its settings on the stick fail the> │  │  
+  │  │ ( ) hopper   can't be chosen: its settings are newer than this st> │  │  
+  │  │ ( ) turing   can't be chosen: its settings on the stick have no c> │  │  
+  │  └────────────────────────────────────────────────────────────────────┘  │  
+  │                                                                          │  
+  │ The one you pick is restored onto this computer, so check the name:      │  
+  │ it is the computer's name from when it was backed up.                    │  
+  │                                                                          │  
+  │ Keyboard: English (US).  k changes it.                                   │  
+  │                                                                          │  
+  │       <  OK  >    < Type a location >    < Keyboard >    < Shell >       │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+ Arrows | Enter: OK | k: keyboard | s: shell | L: lines | C: colour | P: plain  
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                        Machine
+                                                                                
+  +------------------------- Which machine is this? -------------------------+  
+  |                                                                          |  
+  | The stick knows these machines.  None of them was backed up from this    |  
+  | computer.  Pick the one you are restoring.                               |  
+  |                                                                          |  
+  |  +--------------------------------------------------------------------+  |  
+  |  | ( ) lovelace   Debian 13      newest backup 22 Nov 2026 01:00 UTC  |  |  
+  |  | ( ) babbage   can't be chosen: its settings on the stick fail the> |  |  
+  |  | ( ) hopper   can't be chosen: its settings are newer than this st> |  |  
+  |  | ( ) turing   can't be chosen: its settings on the stick have no c> |  |  
+  |  +--------------------------------------------------------------------+  |  
+  |                                                                          |  
+  | The one you pick is restored onto this computer, so check the name:      |  
+  | it is the computer's name from when it was backed up.                    |  
+  |                                                                          |  
+  | Keyboard: English (US).  k changes it.                                   |  
+  |                                                                          |  
+  |       <  OK  >    < Type a location >    < Keyboard >    < Shell >       |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+ Arrows | Enter: OK | k: keyboard | s: shell | L: lines | C: colour | P: plain  

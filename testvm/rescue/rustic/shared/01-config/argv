@@ -1,0 +1,7 @@
+--repository
+sftp://nas.local/backotter/shared
+--password-file
+*
+--no-progress
+cat
+config

@@ -1,0 +1,78 @@
+ BackOtter rescue                                                        Network
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  ┌─────────────────────────────── No network ───────────────────────────────┐  
+  │                                                                          │  
+  │ lovelace's backups are on nas.local, which this computer can't reach.    │  
+  │ This stick uses wired networks only: plug a network cable from this      │  
+  │ computer into your router or network.                                    │  
+  │                                                                          │  
+  │ Network ports:                                                           │  
+  │   Port 1   no cable plugged in                        (enp3s0)           │  
+  │   Port 2   cable in, but no address yet               (enp4s0)           │  
+  │                                                                          │  
+  │ Wi-Fi can't be used from the rescue stick.                               │  
+  │                                                                          │  
+  │        < Try again >    < Set by hand >    < Shell >    < Back >         │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: next | Left/Right: button | Enter: Try again | s: shell | Esc: back       
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddddddDDDDDDDDDDDDDddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                        Network
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+  +------------------------------- No network -------------------------------+  
+  |                                                                          |  
+  | lovelace's backups are on nas.local, which this computer can't reach.    |  
+  | This stick uses wired networks only: plug a network cable from this      |  
+  | computer into your router or network.                                    |  
+  |                                                                          |  
+  | Network ports:                                                           |  
+  |   Port 1   no cable plugged in                        (enp3s0)           |  
+  |   Port 2   cable in, but no address yet               (enp4s0)           |  
+  |                                                                          |  
+  | Wi-Fi can't be used from the rescue stick.                               |  
+  |                                                                          |  
+  |        < Try again >    < Set by hand >    < Shell >    < Back >         |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Tab: next | Left/Right: button | Enter: Try again | s: shell | Esc: back       

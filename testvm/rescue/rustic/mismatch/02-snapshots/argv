@@ -1,0 +1,7 @@
+--repository
+sftp://nas.local/backotter/lovelace
+--password-file
+*
+--no-progress
+snapshots
+--json

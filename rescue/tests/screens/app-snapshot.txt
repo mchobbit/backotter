@@ -1,0 +1,78 @@
+ BackOtter rescue                                                       Snapshot
+  ┌───────────────────────────── Which backup? ──────────────────────────────┐  
+  │                                                                          │  
+  │ lovelace's backups, newest first:                                        │  
+  │                                                                          │  
+  │  ┌────────────────────────────────────────────────────────────────────┐  │  
+  │  │ (*) 22 Nov 2026 02:00 UTC+01:00    61.2 GB   newest       a7f3c901 │  │  
+  │  │ ( ) 21 Nov 2026 02:00 UTC+01:00    61.0 GB                3be04d2a │  │  
+  │  │ ( ) 20 Nov 2026 02:00 UTC+01:00    60.9 GB                d1185e77 │  │  
+  │  │ ( ) 15 Nov 2026 02:00 UTC+01:00    60.4 GB   weekly       4e6f1d08 │  │  
+  │  │ ( ) 01 Nov 2026 02:00 UTC+01:00    59.8 GB   monthly      c03a77b2 │  │  
+  │  │ ( ) 01 Oct 2026 02:00 UTC+02:00    58.9 GB   monthly      5d2e90af │  │  
+  │  │ ( ) 01 Sep 2026 02:00 UTC+02:00    58.1 GB   monthly      9a0b1c2d │  │  
+  │  │ ( ) 01 Aug 2026 02:00 UTC+02:00    57.3 GB   monthly      8b1c2d3e │  │  
+  │  │ ( ) 01 Jul 2026 02:00 UTC+02:00    56.0 GB   monthly      7c2d3e4f │  │  
+  │  │ v more below                                                       │  │  
+  │  └────────────────────────────────────────────────────────────────────┘  │  
+  │                                                                          │  
+  │ Times are lovelace's offset from UTC, as each backup recorded it.  The   │  
+  │ newest is usually the one you want.                                      │  
+  │                                                                          │  
+  │                           <  OK  >    < Back >                           │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+ Arrows: choose | Tab: next | Enter: OK | Esc: back                             
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbssssssssssssssssssssssssssssb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                       Snapshot
+  +----------------------------- Which backup? ------------------------------+  
+  |                                                                          |  
+  | lovelace's backups, newest first:                                        |  
+  |                                                                          |  
+  |  +--------------------------------------------------------------------+  |  
+  |  | (*) 22 Nov 2026 02:00 UTC+01:00    61.2 GB   newest       a7f3c901 |  |  
+  |  | ( ) 21 Nov 2026 02:00 UTC+01:00    61.0 GB                3be04d2a |  |  
+  |  | ( ) 20 Nov 2026 02:00 UTC+01:00    60.9 GB                d1185e77 |  |  
+  |  | ( ) 15 Nov 2026 02:00 UTC+01:00    60.4 GB   weekly       4e6f1d08 |  |  
+  |  | ( ) 01 Nov 2026 02:00 UTC+01:00    59.8 GB   monthly      c03a77b2 |  |  
+  |  | ( ) 01 Oct 2026 02:00 UTC+02:00    58.9 GB   monthly      5d2e90af |  |  
+  |  | ( ) 01 Sep 2026 02:00 UTC+02:00    58.1 GB   monthly      9a0b1c2d |  |  
+  |  | ( ) 01 Aug 2026 02:00 UTC+02:00    57.3 GB   monthly      8b1c2d3e |  |  
+  |  | ( ) 01 Jul 2026 02:00 UTC+02:00    56.0 GB   monthly      7c2d3e4f |  |  
+  |  | v more below                                                       |  |  
+  |  +--------------------------------------------------------------------+  |  
+  |                                                                          |  
+  | Times are lovelace's offset from UTC, as each backup recorded it.  The   |  
+  | newest is usually the one you want.                                      |  
+  |                                                                          |  
+  |                           <  OK  >    < Back >                           |  
+  +--------------------------------------------------------------------------+  
+ Arrows: choose | Tab: next | Enter: OK | Esc: back                             

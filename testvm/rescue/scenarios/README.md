@@ -87,3 +87,23 @@ OUT written), `unknown` (word 9 `ribbx`, suggest ribbon), `checksum` (two
 words swapped), `count` (11 words), `short` (word 11 `tha`: thank,
 that).  illumos' `two_sticks` can't be recorded through a Linux tree: its
 document is the unit test's golden, `holt/tests/fixtures/stick-json/two-sticks.json`.
+
+## The app's (RT11)
+
+Hand-written by `../make-app-fixtures.py` for `../app-test.py`:
+
+| Scenario | What it is |
+|---|---|
+| `app-three` | `stick-three`'s recorded calls (version, stick, recovery-words) and `report-bug`'s: its `out` is the report, written to `--output`'s file |
+| `app-dry` | the same, its api document saying the dry-run lock took (`no_commit`, `dry_run` true) |
+
+rustic-bko's answers are beside these, in `../rustic/NAME` (not here, so
+holt_schema.py doesn't read them: they are rustic-bko's JSON, not
+bko-holt's), for `../fake-rustic-bko`, which is fake-bko-holt with its own
+scenario variable (`FAKE_BKO_RUSTIC_SCENARIO`).  Each answers `cat
+config` and `snapshots --json` when the `--password-file` holds the right
+password (a call's `password` file: `correct horse`, or the recovery key's
+password, which `app-three`'s `recovery-words` writes), and rustic_core's
+wrong-password error (C002, exit 1) otherwise: `lovelace` (its ID the
+stick's, 14 backups), `mismatch` (another repository's ID), `shared`
+(lovelace's and babbage's backups, for "Which machine?").

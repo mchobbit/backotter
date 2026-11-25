@@ -144,6 +144,13 @@ pub struct Radio {
     pub chosen: Option<usize>,
     pub none: Clean,
     pub after: Clean,
+    /// A field under the list to try the choice in, with these words
+    /// before it (the Keyboard screen's `Try it here:`); what is typed
+    /// there is thrown away.
+    pub try_it: Option<Clean>,
+    /// Rows that can't be chosen, each with why (a machine whose settings
+    /// fail their checksum): OK on one says why, as `none` does.
+    pub blocked: Vec<(usize, Clean)>,
     pub buttons: Vec<Button>,
 }
 
@@ -156,6 +163,8 @@ impl Radio {
             chosen,
             none: Clean::ours("Pick one first: move to it with the arrows."),
             after: Clean::default(),
+            try_it: None,
+            blocked: Vec::new(),
             buttons: vec![Button::ok(), Button::back()],
         }
     }
@@ -173,7 +182,13 @@ pub struct Input {
     pub value: String,
     /// At most INPUT_MAX.
     pub max: usize,
+    /// Words before a shorter field on its row, and the field's width
+    /// (`To make it, type YES:  [     ]`); None is the whole row.
+    pub label: Option<(Clean, u16)>,
     pub after: Clean,
+    /// Said on the row above the buttons (in plain mode, after the
+    /// text): why OK didn't take what was typed.
+    pub notice: Option<Clean>,
     pub buttons: Vec<Button>,
 }
 
@@ -184,7 +199,9 @@ impl Input {
             text,
             value: String::new(),
             max: INPUT_MAX,
+            label: None,
             after: Clean::default(),
+            notice: None,
             buttons: vec![Button::ok(), Button::back()],
         }
     }
@@ -202,6 +219,26 @@ pub struct Password {
 impl Password {
     pub fn new(chrome: Chrome, text: Clean) -> Password {
         Password { chrome, text, after: Clean::default(), buttons: vec![Button::ok(), Button::back()] }
+    }
+}
+
+/// The recovery key's twelve words, shown in clear, each completed from
+/// BIP39's list after four letters (rescue-screens.md, "Recovery key").
+/// OK answers them completed, one space between, as a `Secret`.
+#[derive(Clone, Debug)]
+pub struct Words {
+    pub chrome: Chrome,
+    pub text: Clean,
+    /// Plain mode's text in `text`'s place: the words go on one line
+    /// there.
+    pub plain: Clean,
+    pub after: Clean,
+    pub buttons: Vec<Button>,
+}
+
+impl Words {
+    pub fn new(chrome: Chrome, text: Clean, plain: Clean) -> Words {
+        Words { chrome, text, plain, after: Clean::default(), buttons: vec![Button::ok(), Button::back()] }
     }
 }
 
@@ -231,11 +268,14 @@ pub struct Message {
     pub chrome: Chrome,
     pub text: Clean,
     pub buttons: Vec<Button>,
+    /// The button the focus starts on: a fix is never the default
+    /// (rescue-screens.md, "Problems and their help").
+    pub focus: usize,
 }
 
 impl Message {
     pub fn new(chrome: Chrome, text: Clean) -> Message {
-        Message { chrome, text, buttons: vec![Button::ok()] }
+        Message { chrome, text, buttons: vec![Button::ok()], focus: 0 }
     }
 }
 
@@ -294,6 +334,22 @@ pub trait Ui {
     fn message(&mut self, d: &Message) -> Answer<()>;
     fn view(&mut self, d: &TextView) -> Answer<()>;
     fn progress(&mut self, d: &Progress, tick: &mut dyn FnMut() -> Tick) -> Answer<()>;
+    fn words(&mut self, d: &Words) -> Answer<Secret>;
+
+    /// A radio list that tells `moved` each row the focus moves to, as
+    /// it moves (the Keyboard screen applies a layout so its "Try it
+    /// here" field tests it).  Where nothing can be tried as the focus
+    /// moves (plain mode, the tests), it is `radio`.
+    fn radio_live(&mut self, d: &Radio, moved: &mut dyn FnMut(usize)) -> Answer<usize> {
+        let _ = moved;
+        self.radio(d)
+    }
+
+    /// Whether the dialogs are full screen: the shell needs the terminal
+    /// handed back first, and the keyboard can be tried as it changes.
+    fn full_screen(&self) -> bool {
+        false
+    }
 }
 
 /// A reply the scripted Ui gives.  Its Debug never shows a secret's
@@ -433,6 +489,17 @@ impl Ui for Scripted {
             }
         }
         self.next("progress", &d.chrome, |r| (r == Reply::Ok).then_some(()))
+    }
+
+    fn words(&mut self, d: &Words) -> Answer<Secret> {
+        self.next("words", &d.chrome, |r| match r {
+            Reply::Secret(mut b) => {
+                let s = Secret::from_bytes(&b);
+                crate::secret::wipe(&mut b);
+                Some(s)
+            }
+            _ => None,
+        })
     }
 }
 

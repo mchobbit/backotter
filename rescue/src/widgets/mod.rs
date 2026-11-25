@@ -22,6 +22,7 @@ pub mod list;
 pub mod run;
 pub mod small;
 pub mod view;
+pub mod words;
 
 pub use run::{FullScreen, Io};
 
@@ -35,6 +36,7 @@ use field::Field;
 use gauge::Gauge;
 use list::List;
 use view::View;
+use words::Words;
 
 /// The box: columns 3 to 78, rows 2 to 23 at most.
 pub const BOX_LEFT: u16 = 2;
@@ -50,6 +52,8 @@ const AREA_H: u16 = ROWS - 2;
 pub const MAX_BODY: u16 = 17;
 /// The gap between buttons.
 const BUTTON_GAP: u16 = 4;
+/// Cells of a radio list's "Try it here" field (the Keyboard screen).
+pub const TRY_W: u16 = 40;
 /// A sentinel `Act` for Question's No.
 pub(crate) const NO: usize = usize::MAX;
 
@@ -66,11 +70,13 @@ pub enum Part {
     Field(Field),
     View(View),
     Gauge(Gauge),
+    /// The recovery key's twelve word fields.
+    Words(Words),
 }
 
 impl Part {
     fn takes_focus(&self) -> bool {
-        matches!(self, Part::List(_) | Part::Field(_) | Part::View(_))
+        matches!(self, Part::List(_) | Part::Field(_) | Part::View(_) | Part::Words(_))
     }
 }
 
@@ -155,16 +161,42 @@ impl Dialog {
         parts.push(Part::List(List::radio(&r.items, r.chosen)));
         parts.push(Part::Gap(1));
         text_part(&mut parts, &r.after);
+        if let Some(l) = &r.try_it {
+            parts.push(Part::Field(Field::text("", ui::INPUT_MAX).labelled(l.clone(), TRY_W)));
+            parts.push(Part::Gap(1));
+        }
         Dialog::new(r.chrome.clone(), parts, r.buttons.clone())
     }
 
     pub fn input(i: &ui::Input) -> Dialog {
         let mut parts = Vec::new();
         text_part(&mut parts, &i.text);
-        parts.push(Part::Field(Field::text(&i.value, i.max.min(ui::INPUT_MAX))));
+        let mut f = Field::text(&i.value, i.max.min(ui::INPUT_MAX));
+        if let Some((l, w)) = &i.label {
+            f = f.labelled(l.clone(), *w);
+        }
+        parts.push(Part::Field(f));
         parts.push(Part::Gap(1));
         text_part(&mut parts, &i.after);
-        Dialog::new(i.chrome.clone(), parts, i.buttons.clone())
+        let mut d = Dialog::new(i.chrome.clone(), parts, i.buttons.clone());
+        d.notice = i.notice.clone();
+        d
+    }
+
+    pub fn words(w: &ui::Words) -> Dialog {
+        let mut parts = Vec::new();
+        text_part(&mut parts, &w.text);
+        parts.push(Part::Words(Words::new()));
+        parts.push(Part::Gap(1));
+        text_part(&mut parts, &w.after);
+        Dialog::new(w.chrome.clone(), parts, w.buttons.clone())
+    }
+
+    pub fn words_part(&self) -> Option<&Words> {
+        self.parts.iter().find_map(|p| match p {
+            Part::Words(w) => Some(w),
+            _ => None,
+        })
     }
 
     pub fn password(p: &ui::Password) -> Dialog {
@@ -192,7 +224,11 @@ impl Dialog {
     }
 
     pub fn message(m: &ui::Message) -> Dialog {
-        Dialog::new(m.chrome.clone(), vec![Part::Text(m.text.clone())], m.buttons.clone())
+        let mut d = Dialog::new(m.chrome.clone(), vec![Part::Text(m.text.clone())], m.buttons.clone());
+        if m.focus < d.buttons.len() {
+            d.focus = Focus::Button(m.focus);
+        }
+        d
     }
 
     pub fn view(v: &ui::TextView) -> Dialog {
@@ -233,6 +269,7 @@ impl Dialog {
                 Part::Gap(n) => fixed = fixed.saturating_add(*n),
                 Part::Field(_) => fixed = fixed.saturating_add(1),
                 Part::Gauge(_) => fixed = fixed.saturating_add(2),
+                Part::Words(_) => fixed = fixed.saturating_add(words::HEIGHT),
                 Part::List(l) => {
                     fixed = fixed.saturating_add(2);
                     flexible += 1;
@@ -270,6 +307,7 @@ impl Dialog {
                 Part::Gap(n) => *n,
                 Part::Field(_) => 1,
                 Part::Gauge(_) => 2,
+                Part::Words(_) => words::HEIGHT,
                 Part::List(l) => {
                     let rows = give(len(l.len()), &mut left);
                     l.window = rows;
@@ -344,6 +382,7 @@ impl Dialog {
                 Part::Field(f) => f.draw(&mut c, row, focused),
                 Part::View(v) => v.draw(&mut c, row, focused),
                 Part::Gauge(g) => g.draw(&mut c, row),
+                Part::Words(w) => w.draw(&mut c, row, focused),
             }
             row += ph;
         }
@@ -375,7 +414,11 @@ impl Dialog {
     fn draw_buttons(&self, c: &mut Canvas, row: u16) {
         let alone = self.buttons.len() == 1;
         let texts: Vec<Clean> = self.buttons.iter().map(|b| button_text(&b.label.truncate(40), alone)).collect();
-        let total: u16 = texts.iter().map(|t| t.width() as u16).sum::<u16>() + BUTTON_GAP * (texts.len() as u16 - 1);
+        let widths: u16 = texts.iter().map(|t| t.width() as u16).sum::<u16>();
+        let between = texts.len() as u16 - 1;
+        // Many buttons: the gaps narrow until the row fits inside the box.
+        let gap = (1..=BUTTON_GAP).rev().find(|g| widths + g * between <= BOX_W - 4).unwrap_or(1);
+        let total = widths + gap * between;
         let mut col = BOX_LEFT + BOX_W.saturating_sub(total) / 2;
         for (i, t) in texts.iter().enumerate() {
             let a = if self.focus == Focus::Button(i) { DIALOG.focus() } else { DIALOG };
@@ -383,7 +426,7 @@ impl Dialog {
             if self.focus == Focus::Button(i) {
                 c.cursor = Some((row, col + 1));
             }
-            col += t.width() as u16 + BUTTON_GAP;
+            col += t.width() as u16 + gap;
         }
     }
 
@@ -473,7 +516,7 @@ impl Dialog {
 
     /// Whether the focus is in a text field, where letters are typed.
     pub fn typing(&self) -> bool {
-        matches!(self.focus, Focus::Part(i) if matches!(self.parts.get(i), Some(Part::Field(_))))
+        matches!(self.focus, Focus::Part(i) if matches!(self.parts.get(i), Some(Part::Field(_) | Part::Words(_))))
     }
 
     pub fn key(&mut self, k: Key) -> Did {
@@ -490,6 +533,7 @@ impl Dialog {
         if let Focus::Part(i) = self.focus {
             let typed = match (&mut self.parts[i], k) {
                 (Part::Field(f), Key::Char(_) | Key::Space | Key::Backspace) => Some(f.key(k)),
+                (Part::Words(w), Key::Char(_) | Key::Space | Key::Backspace) => Some(w.key(k)),
                 (Part::List(l), Key::Up | Key::Down) => Some(l.key(k)),
                 (Part::View(v), Key::Up | Key::Down | Key::Left | Key::Right | Key::Space | Key::Backspace) => {
                     Some(v.key(k))
@@ -631,6 +675,16 @@ mod tests {
         assert!(rows[9].starts_with("  │  │ ( ) a"), "{:?}", rows[9]);
         assert!(rows[19].contains("<  OK  >    < Back >    < Shell >"), "{:?}", rows[19]);
         assert!(rows[23].starts_with(" Arrows: choose | Tab: next | Enter: OK | s: shell | Esc: back"), "{:?}", rows[23]);
+    }
+
+    #[test]
+    fn many_buttons_narrow_their_gaps_to_fit_the_box() {
+        let mut m = Message::new(Chrome::ours("a", "Problem"), o("x"));
+        m.buttons = ["Network", "Try again", "Shell", "Report", "Raw output", "Back"].iter().map(|l| Button::other(l, None, 1)).collect();
+        let r = rows(&Dialog::message(&m).canvas());
+        let row = r.iter().find(|l| l.contains("< Network >")).unwrap();
+        assert!(row.starts_with("  │") && row.trim_end().ends_with('│'), "inside the box: {row:?}");
+        assert!(row.contains("< Network > < Try again > < Shell > < Report > < Raw output > < Back >") || row.contains("< Network >  < Try again >"), "{row:?}");
     }
 
     #[test]

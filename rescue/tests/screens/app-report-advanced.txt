@@ -1,0 +1,78 @@
+ BackOtter rescue                                                         Report
+  ┌───────────────── Advanced: a report that isn't redacted ─────────────────┐  
+  │                                                                          │  
+  │ The report you saved replaces these with stand-ins.  This one keeps them │  
+  │ as they are:                                                             │  
+  │   - the hostname and machine-id                                          │  
+  │   - disk serials and WWIDs                                               │  
+  │   - the UUIDs and GUIDs of disks, partitions and filesystems             │  
+  │   - partition and filesystem labels                                      │  
+  │   - user names, and the MAC addresses of network ports                   │  
+  │   - ZFS GUIDs, hostids, disk signatures and FAT serials                  │  
+  │   - the backup's address and key-file paths                              │  
+  │ Neither report holds a password, a passphrase or a key.                  │  
+  │                                                                          │  
+  │ GitHub issues are public: anyone can read them.  Don't attach this       │  
+  │ report to an issue.  Share it privately: with whoever set up your        │  
+  │ backups, or with the developer if they ask for it.                       │  
+  │                                                                          │  
+  │ To make it, type YES:  [     ]                                           │  
+  │                                                                          │  
+  │                         < Make it >    < Back >                          │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+ Tab: next | Enter: Make it | Esc: back                                         
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddddddddddddddddddddddddDDDDdddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                         Report
+  +----------------- Advanced: a report that isn't redacted -----------------+  
+  |                                                                          |  
+  | The report you saved replaces these with stand-ins.  This one keeps them |  
+  | as they are:                                                             |  
+  |   - the hostname and machine-id                                          |  
+  |   - disk serials and WWIDs                                               |  
+  |   - the UUIDs and GUIDs of disks, partitions and filesystems             |  
+  |   - partition and filesystem labels                                      |  
+  |   - user names, and the MAC addresses of network ports                   |  
+  |   - ZFS GUIDs, hostids, disk signatures and FAT serials                  |  
+  |   - the backup's address and key-file paths                              |  
+  | Neither report holds a password, a passphrase or a key.                  |  
+  |                                                                          |  
+  | GitHub issues are public: anyone can read them.  Don't attach this       |  
+  | report to an issue.  Share it privately: with whoever set up your        |  
+  | backups, or with the developer if they ask for it.                       |  
+  |                                                                          |  
+  | To make it, type YES:  [     ]                                           |  
+  |                                                                          |  
+  |                         < Make it >    < Back >                          |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+ Tab: next | Enter: Make it | Esc: back                                         

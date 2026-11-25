@@ -661,6 +661,22 @@ class TestTier0Targets(unittest.TestCase):
         refused = dict(old, maps=[["vda", "vdb", 1 << 34]])
         self.assertEqual(T0.judge_one("c1", {"edits": []}, slack, {"vda": 1 << 34}, refused, None, {})[0], "FAIL")
 
+    def test_an_older_mkfs_xfs_without_features_it_lacks(self):
+        # load's mkfs.xfs (for the rescue's xfsprogs) turns off features the
+        # source's xfsprogs 5.13 (slackware15-uefi) doesn't know: a dry run in
+        # it leaves those off by leaving them out.  Never one turned on.
+        from bs2lib import tier0 as T0
+        a = ["mkfs.xfs", "-f", "-m", "crc=1,uuid=u1,metadir=0", "-i", "sparse=1,nrext64=0,size=512,exchange=0", "-n", "parent=0", "/x"]
+        b = T0.without_unknown_off(a, "unknown option -m metadir=0\nUsage: ...")
+        self.assertEqual(b, ["mkfs.xfs", "-f", "-m", "crc=1,uuid=u1", "-i", "sparse=1,nrext64=0,size=512,exchange=0", "-n", "parent=0", "/x"])
+        b = T0.without_unknown_off(b, "unknown option -i nrext64=0")
+        b = T0.without_unknown_off(b, "unknown option -i exchange=0")
+        self.assertEqual(T0.without_unknown_off(b, "unknown option -n parent=0"), ["mkfs.xfs", "-f", "-m", "crc=1,uuid=u1", "-i", "sparse=1,size=512", "/x"])
+        self.assertIsNone(T0.without_unknown_off(a, "unknown option -m reflink=1"))
+        self.assertIsNone(T0.without_unknown_off(["mkfs.xfs", "-m", "reflink=1", "/x"], "unknown option -m reflink=1"))
+        self.assertIsNone(T0.without_unknown_off(a, "mkfs.xfs: cannot open /x"))
+        self.assertIsNone(T0.without_unknown_off(a, "unknown option -l metadir=0"))   # (not where it says)
+
 
 class TestSweep(unittest.TestCase):
     def test_expected(self):

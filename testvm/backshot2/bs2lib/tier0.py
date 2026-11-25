@@ -421,6 +421,12 @@ def dry_runs(tools, name, plan, drifted, targets, fitted, shifts=None, fit_block
                                      + (f"; the generator's own: {'; '.join(cdiffs)}" if cdiffs else "")))
         elif argv[0] == "mkfs.xfs":
             rc, txt = tools.run(["mkfs.xfs", "-N"] + mine[1:])
+            for _ in range(8):
+                older = without_unknown_off(mine, txt) if rc else None
+                if older is None:
+                    break
+                mine = older
+                rc, txt = tools.run(["mkfs.xfs", "-N"] + mine[1:])
             got = read_xfs(txt) if rc == 0 else None
             diffs = compare(want, got or {}, XFS_FIELDS, skip) if got else [f"refused: {txt.strip()[-200:]}"]
             if diffs:
@@ -432,6 +438,27 @@ def dry_runs(tools, name, plan, drifted, targets, fitted, shifts=None, fit_block
                                      + (f"; the generator's own: {'; '.join(cdiffs)}" if cdiffs else "")))
         tools.drop(real)
     return out
+
+
+def without_unknown_off(argv, out):
+    """ARGV without the sub-option an older mkfs.xfs refused as unknown in OUT
+    ("unknown option -i nrext64=0"), when load turns it off (=0): load writes
+    its mkfs.xfs for the rescue's xfsprogs, which knows newer features
+    (nrext64, exchange, parent, metadir) and is told to leave off those the
+    source's filesystem hasn't, while the source's own older xfsprogs (Slackware
+    15's 5.13) doesn't know them, so makes them without the feature: the same
+    filesystem.  None when OUT names no such option, or it turns a feature on
+    (=1, never dropped: the source's tools couldn't make that)."""
+    m = re.search(r"unknown option -(\w) ([\w-]+)=(\S+)", out)
+    if not m or m.group(3) != "0":
+        return None
+    flag, opt = "-" + m.group(1), f"{m.group(2)}=0"
+    a = list(argv)
+    for i in range(len(a) - 1):
+        if a[i] == flag and opt in a[i + 1].split(","):
+            rest = [x for x in a[i + 1].split(",") if x != opt]
+            return a[:i] + ([flag, ",".join(rest)] if rest else []) + a[i + 2:]
+    return None
 
 
 def cmd_bytes(argv):

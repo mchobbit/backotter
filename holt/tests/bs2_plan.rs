@@ -8,7 +8,15 @@
 //! It does nothing unless BS2_PLAN_JOBS names a file of jobs, one JSON
 //! object a line:
 //!
-//!   {"id": "CASE", "layout": "PATH.json", "targets": {"vda": BYTES}, "options": ["--fit-largest", "10"]}
+//!   {"id": "CASE", "layout": "PATH.json", "targets": {"vda": BYTES}, "options": ["--fit-largest", "10"], "names": {"vda": "vdb"}}
+//!
+//! "names" gives each dumped disk's target its kernel name, as tier 1's
+//! rescuer has it (virtio: vdb, vdc, ... after its own vda); a disk it
+//! doesn't name, or a job without it, gets golden_plans.rs's sdq, sdr, ...
+//! by its place (common::sd_target).  Load's Slackware check (Decision 5
+//! (d), docs/design/slackware.md) judges a target by its name's driver
+//! class and place, so a target named otherwise than tier 1's would be
+//! refused at tier 0 and not at tier 1.
 //!
 //! and writes one line per job to BS2_PLAN_OUT (default: JOBS.out):
 //!
@@ -55,7 +63,13 @@ fn one(line: &str) -> Value {
     }
     let options: Vec<String> = job.get("options").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
     let size_of = |name: &str, size: u64| targets.get(name).copied().unwrap_or(size);
-    let p = match common::plan_onto(&text, &size_of, &options) {
+    let mut names = BTreeMap::new();
+    for (k, v) in job.get("names").and_then(Value::as_object).into_iter().flatten() {
+        let Some(n) = v.as_str() else { return fail(format!("names: {k}'s target isn't a string")) };
+        names.insert(k.clone(), n.to_string());
+    }
+    let name_of = |i: usize, disk: &str| names.get(disk).cloned().map_or_else(|| common::sd_target(i, disk), Ok);
+    let p = match common::plan_onto_named(&text, &size_of, &options, &name_of) {
         Ok(p) => p,
         Err(e) => return fail(e),
     };
@@ -100,4 +114,34 @@ fn bs2_plan_a_corpus_dump_onto_a_smaller_target() {
     // And without the flag, load refuses the smaller disk.
     let p = common::plan_onto(&text, &small, &[]).unwrap();
     assert_eq!(p.code, 4, "{}{}", p.out, p.err);
+}
+
+#[test]
+fn bs2_plan_slackware_onto_the_rescuers_virtio_targets() {
+    // slackware15 names its disk /dev/vda in lilo.conf and fstab (Decision 5
+    // (d)): onto sdq, an sd disk, load refuses it (the golden plan); onto
+    // vdb, tier 1's target after the rescuer's own vda, it plans, since vdb
+    // is the first virtio target and boots as vda.
+    // slackware15-uefi likewise, by elilo.conf's root=.
+    let same = |_: &str, size: u64| size;
+    for guest in ["slackware15", "slackware15-uefi"] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/corpus/{guest}/src.json"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let dump = json::parse(&text).unwrap();
+        let sd = common::plan_onto(&text, &same, &[]).unwrap();
+        assert_eq!(sd.code, 4, "{guest}: {}{}", sd.out, sd.err);
+        assert!(sd.out.contains("on a disk of the sd class, where the source's was of the vd class"), "{guest}: {}", sd.out);
+        let vd = common::plan_onto_named(&text, &same, &[], &|_, _| Ok("vdb".to_string())).unwrap();
+        assert_eq!(vd.code, 0, "{guest}: {}{}", vd.out, vd.err);
+        assert_eq!(vd.maps, vec![("vda".to_string(), "vdb".to_string(), sd.maps[0].2)]);
+        assert!(!vd.out.contains("/dev/sdq"), "{guest}: {}", vd.out);
+        let c = common::invariants::invariants(&dump, &vd);
+        assert!(c.violations.is_empty(), "{guest}: {:?}", c.violations);
+    }
+    let text = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/slackware15/src.json")).unwrap();
+    // Only the targets count: a lone target vdc boots as vda too.
+    let vdc = common::plan_onto_named(&text, &same, &[], &|_, _| Ok("vdc".to_string())).unwrap();
+    assert_eq!(vdc.code, 0, "{}{}", vdc.out, vdc.err);
+    // A bad name is the harness's mistake, never a plan.
+    assert!(common::plan_onto_named(&text, &same, &[], &|_, _| Ok("../x".to_string())).is_err());
 }

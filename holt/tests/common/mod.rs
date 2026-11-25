@@ -75,8 +75,27 @@ pub fn plan(layout_text: &str, grow: u64) -> Result<Planned, String> {
 
 /// Plans LAYOUT_TEXT onto blank targets of SIZE_OF(disk, its size) bytes,
 /// with EXTRA arguments after load's own (BackShot2's tier 0: a drifted
-/// layout, its case's targets and load options).
+/// layout, its case's targets and load options).  The targets are
+/// sdq, sdr, ... (sd_target).
 pub fn plan_onto(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, extra: &[String]) -> Result<Planned, String> {
+    plan_onto_named(layout_text, size_of, extra, &sd_target)
+}
+
+/// The I-th dumped disk's target in golden plans: sdq, sdr, ..., sdz.
+pub fn sd_target(i: usize, _disk: &str) -> Result<String, String> {
+    if i >= 10 {
+        return Err(format!("{} disks: the targets sdq..sdz hold 10", i + 1));
+    }
+    Ok(format!("sd{}", (b'q' + i as u8) as char))
+}
+
+/// plan_onto, with the I-th dumped disk DISK's target named TARGET_NAME(I,
+/// DISK): BackShot2's tier 0 names them as its tier 1 rescuer has them
+/// (vdb, vdc, ...: virtio disks after the rescuer's own vda), since load's
+/// Slackware check judges a target by its name's driver class and place.
+/// A vd target's device number is virtio_blk's (major 253), any other's
+/// sd's (major 8); load reads neither's major.
+pub fn plan_onto_named(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, extra: &[String], target_name: &dyn Fn(usize, &str) -> Result<String, String>) -> Result<Planned, String> {
     let v = json::parse(layout_text).map_err(|e| format!("not JSON: {}", e.message))?;
     let t = Tree::new("golden-plan");
     t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
@@ -88,12 +107,13 @@ pub fn plan_onto(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, extra: &
     let mut args = vec![LAYOUT.to_string()];
     let mut maps = Vec::new();
     for (i, (name, size, ss)) in dumped_disks(&v).into_iter().enumerate() {
-        if i >= 10 {
-            return Err(format!("{} disks: the targets sdq..sdz hold 10", i + 1));
+        let tgt = target_name(i, &name)?;
+        if tgt.is_empty() || !tgt.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()) || maps.iter().any(|m: &(String, String, u64)| m.1 == tgt) {
+            return Err(format!("disk {name}'s target {tgt:?} isn't a kernel disk name of its own"));
         }
-        let tgt = format!("sd{}", (b'q' + i as u8) as char);
         let bytes = size_of(&name, size);
-        t.disk(&tgt, &format!("8:{}", 16 * i), &[], ss).file(&format!("/sys/block/{tgt}/size"), format!("{}\n", bytes / 512));
+        let major = if tgt.starts_with("vd") { 253 } else { 8 };
+        t.disk(&tgt, &format!("{major}:{}", 16 * i), &[], ss).file(&format!("/sys/block/{tgt}/size"), format!("{}\n", bytes / 512));
         args.push("--map".into());
         args.push(format!("{name}={tgt}"));
         maps.push((name, tgt, bytes));

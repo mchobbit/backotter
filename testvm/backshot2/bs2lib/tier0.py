@@ -1,7 +1,8 @@
 """Tier 0 (backshot2.md, "Tiers" and "Oracles"): on a host, no VM.
 
 For each case: its drifted layout (case.replay), load's plan of it onto its
-targets with its options (holt/tests/bs2_plan.rs, golden_plans.rs's planner
+targets, named as tier 1's rescuer has them (rescue_names: vdb, vdc, ...),
+with its options (holt/tests/bs2_plan.rs, golden_plans.rs's planner
 and invariants), then dry runs in the SOURCE's own tools, chrooted into a
 copy of the source guest's root (tools_root): the plan's sfdisk script and
 every mke2fs and mkfs.xfs it runs, on sparse scratch files of the right
@@ -39,6 +40,24 @@ FIT_CHANGES = {"blocks", "inodes", "inodes_per_group", "reserved_blocks", "reser
 
 # ---- the plan --------------------------------------------------------------------
 
+def rescue_names(drifted):
+    """{disk: target name}: each dumped disk's target as tier 1's rescuer has
+    it (ht1.sh: the rescuer's own disk is vda, and the source's I-th disk goes
+    to the next letter on, a virtio disk: vdb, vdc, ...).  load judges a
+    target by its name: Slackware's /dev names (Decision 5 (d),
+    docs/design/slackware.md) must keep their driver class and place among
+    the targets, so tier 0 plans onto the names tier 1 gives, and a class or
+    order change is refused at tier 0 only where tier 1 would see it too."""
+    out = {}
+    for i, dk in enumerate(dumpx.disks(drifted)):
+        n, letters = i + 2, ""   # (vdb is the second virtio disk: the kernel's base-26 letters)
+        while n:
+            n, r = divmod(n - 1, 26)
+            letters = chr(ord("a") + r) + letters
+        out[dk["name"]] = "vd" + letters
+    return out
+
+
 def plan_jobs(cases, work):
     """Writes each case's drifted layout and the planner's jobs file; returns its path."""
     os.makedirs(f"{work}/layouts", exist_ok=True)
@@ -57,7 +76,7 @@ def plan_jobs(cases, work):
                 continue
             opts.append(o[i])
             i += 1
-        jobs.append(json.dumps({"id": name, "layout": path, "targets": targets, "options": opts}))
+        jobs.append(json.dumps({"id": name, "layout": path, "targets": targets, "options": opts, "names": rescue_names(drifted)}))
     p = f"{work}/jobs.jsonl"
     with open(p, "w") as f:
         f.write("\n".join(jobs) + "\n")
@@ -476,6 +495,11 @@ def judge_one(name, case, drifted, targets, res, tools, caps):
     """A case's tier 0 verdict and its reasons."""
     if "error" in res:
         return "HARNESS", [res["error"]]
+    got = {m[0]: m[1] for m in res.get("maps") or []}
+    if got != rescue_names(drifted):
+        # (A planner older than "names" in its jobs plans onto sdq..: load
+        # would refuse a Slackware source that tier 1 restores.)
+        return "HARNESS", [f"the planner's targets {got} aren't tier 1's {rescue_names(drifted)} (an older bs2_plan? bs2-host build)"]
     if res["code"] != 0:
         why = [l[6:] for l in res["out"].splitlines() if l.startswith("#   - ")] or [res["err"].strip()[-300:]]
         if any("isn't built yet" in w for w in why) and "--new-uuids" in (case.get("load_options") or []):

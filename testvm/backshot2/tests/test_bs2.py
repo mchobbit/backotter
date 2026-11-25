@@ -619,6 +619,49 @@ class TestDeepTree(unittest.TestCase):
             self.assertEqual(deep("compare", src, rec).returncode, 2)   # --case is required
 
 
+class TestTier0Targets(unittest.TestCase):
+    """Tier 0 plans onto the targets tier 1's rescuer has (ht1.sh: vdb, vdc, ...
+    after its own vda), since load's Slackware check judges a target by its
+    name's driver class and place."""
+
+    def test_rescue_names(self):
+        from bs2lib import tier0 as T0
+        self.assertEqual(T0.rescue_names(corpus("slackware15")), {"vda": "vdb"})
+        two = copy.deepcopy(STACK)
+        names = [d["name"] for d in dumpx.disks(two)]
+        self.assertEqual(T0.rescue_names(two), {n: "vd" + "bcdefghijk"[i] for i, n in enumerate(names)})
+        # RAM disks and zvols get none (dumpx.disks, as bs2_plan.rs's dumped_disks).
+        self.assertTrue(len(ALPINE["storage"]["disks"]) > len(dumpx.disks(ALPINE)))
+        self.assertEqual(list(T0.rescue_names(ALPINE).values()), ["vdb"])
+        # The kernel's letters past vdz: base 26, no zero digit.
+        many = {"storage": {"disks": [{"name": f"d{i}", "kind": "disk"} for i in range(27)]}}
+        got = T0.rescue_names(many)
+        self.assertEqual((got["d0"], got["d24"], got["d25"], got["d26"]), ("vdb", "vdz", "vdaa", "vdab"))
+
+    def test_jobs_name_the_targets(self):
+        from bs2lib import tier0 as T0
+        slack = corpus("slackware15")
+        with tempfile.TemporaryDirectory() as w:
+            with open(T0.plan_jobs([("c1", {"edits": []}, slack, {"vda": 1 << 34})], w)) as f:
+                job = json.loads(f.readline())
+        self.assertEqual(job["names"], {"vda": "vdb"})
+
+    def test_an_older_planner_is_harness(self):
+        # A bs2_plan that ignores "names" plans onto sdq: never a FAIL of load's.
+        from bs2lib import tier0 as T0
+        slack = corpus("slackware15")
+        old = {"id": "c1", "code": 4, "out": "#   - Slackware: ... of the sd class ...\n", "err": "", "violations": [], "checked": [],
+               "maps": [["vda", "sdq", 1 << 34]]}
+        v, why = T0.judge_one("c1", {"edits": []}, slack, {"vda": 1 << 34}, old, None, {})
+        self.assertEqual(v, "HARNESS", why)
+        self.assertIn("older bs2_plan", why[0])
+        new = dict(old, code=0, out="# plan\n", maps=[["vda", "vdb", 1 << 34]])
+        self.assertEqual(T0.judge_one("c1", {"edits": []}, slack, {"vda": 1 << 34}, new, None, {})[0], "PASS")
+        # load's own refusal onto tier 1's targets is still a FAIL.
+        refused = dict(old, maps=[["vda", "vdb", 1 << 34]])
+        self.assertEqual(T0.judge_one("c1", {"edits": []}, slack, {"vda": 1 << 34}, refused, None, {})[0], "FAIL")
+
+
 class TestSweep(unittest.TestCase):
     def test_expected(self):
         c = {"load_options": ["--new-uuids", "--fit-largest", "10", "--snapshot", "@1", "--removable"]}

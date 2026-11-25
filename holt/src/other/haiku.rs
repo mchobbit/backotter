@@ -4,7 +4,7 @@
 //! restored system's root.  Haiku has no fstab: the report makes up one
 //! line, the boot volume's, for load to mount it.
 
-use super::{found_json, read_disk, Family, Found, RawDisk};
+use super::{found_json, read_disk, Family, RawDisk};
 use crate::bytes::FileSource;
 use crate::json::{Obj, Value};
 
@@ -154,25 +154,35 @@ pub fn parse_df(text: &str) -> Vec<(String, String, String)> {
 pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, generated: &str) -> Value {
     let hostname = sys.run("hostname", &[]).map(|s| s.trim().to_string());
     let df = parse_df(&sys.run("df", &[]).unwrap_or_default());
-    let mut all: Vec<(RawDisk, Option<crate::parttable::Table>, Vec<Found>)> = Vec::new();
-    for d in disks(sys) {
-        let Ok(src) = FileSource::open_sized(&sys.p(&d.path), d.size) else { continue };
-        let name = d.name.clone();
-        let (t, f) = read_disk(&src, &d, &|n, _| part_name(&name, n));
-        all.push((d, t, f));
-    }
     let dev_name = |dev: &str| -> Option<String> {
         let (dir, idx) = dev.rsplit_once('/')?;
         Some(format!("{}_{idx}", name_of(dir)))
     };
     let mounted_at = |name: &str| -> Vec<String> { df.iter().filter(|m| dev_name(&m.2).as_deref() == Some(name)).map(|m| m.0.clone()).collect() };
+    let mut all: Vec<(RawDisk, Option<crate::parttable::Table>, Vec<Value>)> = Vec::new();
+    for d in disks(sys) {
+        let Ok(src) = FileSource::open_sized(&sys.p(&d.path), d.size) else { continue };
+        let name = d.name.clone();
+        let (t, found) = read_disk(&src, &d, &|n, _| part_name(&name, n));
+        // An ESP not mounted (so not in the backup) is kept as its bytes,
+        // as the other systems' dumps keep theirs (super::esp_image): load
+        // writes it back with the table instead of formatting it empty.
+        let parts: Vec<Value> = found
+            .iter()
+            .map(|f| {
+                let mut extra = Obj::new();
+                super::esp_image(&src, f, &mounted_at(&f.name), &mut extra);
+                found_json(f, mounted_at(&f.name), extra)
+            })
+            .collect();
+        all.push((d, t, parts));
+    }
     let mut disks_json = Vec::new();
-    for (d, t, found) in &all {
-        let parts: Vec<Value> = found.iter().map(|f| found_json(f, mounted_at(&f.name), Obj::new())).collect();
-        let mut o = super::disk_obj(d, "disk", Obj::new())
-            .set("partition_table", super::table_json(t.as_ref(), d))
+    for (d, t, parts) in all {
+        let mut o = super::disk_obj(&d, "disk", Obj::new())
+            .set("partition_table", super::table_json(t.as_ref(), &d))
             .set("partitions", parts);
-        if let Some(t) = t {
+        if let Some(t) = &t {
             o.put("boot_code", super::boot_code_json(t));
         }
         o.put("mounted_at", mounted_at(&d.name));
@@ -257,5 +267,37 @@ mod tests {
         assert_eq!(dir_of(&name_of("/dev/disk/virtual/remote_disk/0")), "/dev/disk/virtual/remote_disk/0");
         assert_eq!(part_path("virtual_virtio_block_1", 2), "/dev/disk/virtual/virtio_block/1/1");
         assert_eq!(dir_of("ata_0_master"), "/dev/disk/ata/0/master");
+    }
+
+    /// An ESP that isn't mounted is kept as its bytes (esp_image), as the
+    /// other systems' dumps keep theirs, so load writes it back with the
+    /// table rather than formatting it empty; a mounted one isn't.
+    #[test]
+    fn an_unmounted_esp_is_imaged() {
+        use crate::parttable::build::mbr_entry;
+        let mut img = vec![0u8; 8192 * 512];
+        mbr_entry(&mut img[..512], 0, 0x80, 0xeb, 2048, 2048);
+        mbr_entry(&mut img[..512], 1, 0, 0xef, 4096, 4096);
+        img[510] = 0x55;
+        img[511] = 0xaa;
+        img[4096 * 512..8192 * 512].copy_from_slice(&crate::probe::fat::sample::fat16(4096, 0x1a2b_3c4d, "EFI"));
+        let df = |esp: bool| {
+            // df's layout: a volume's mount point, then its type ... device.
+            let mut t = "Volume\n Type Total Free Flags Used% Device\n/boot\n bfs 1.0 MiB 0.5 MiB QAM-P-W 50% /dev/disk/scsi/2/0/0/0\n".to_string();
+            if esp {
+                t += "/EFI\n fat 2.0 MiB 1.0 MiB QAM-P-W 50% /dev/disk/scsi/2/0/0/1\n";
+            }
+            t
+        };
+        for mounted in [false, true] {
+            let t = crate::testutil::Tree::new("haiku-esp");
+            t.file("/dev/disk/scsi/2/0/0/raw", img.clone());
+            let sys = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default().with("df", &df(mounted))), true);
+            let v = report(&sys, Family::Haiku, None, "x");
+            let p = |i: &str, k: &str| v.at(&["storage", "disks", "0", "partitions", i, k]).cloned();
+            assert_eq!(p("1", "content").and_then(|c| c.get("type").and_then(Value::as_str).map(str::to_string)).as_deref(), Some("vfat"));
+            assert_eq!(p("1", "esp_image").is_some(), !mounted, "mounted: {mounted}");
+            assert!(p("0", "esp_image").is_none());
+        }
     }
 }

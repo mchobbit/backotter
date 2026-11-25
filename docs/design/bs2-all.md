@@ -512,10 +512,24 @@ the table: there is no list to edit.
 - Found by the first run (2026-11-25), each in its own session: anduinos2's
   snapshot-id finding (testvm/backshot2/README.md, not fixed); re-measuring
   the Slackware rows of `slim-sizes.tsv` (measured on FAIL cases); the cargo
-  umask 002 test-environment issue (plan_json under cmp-run.sh); the ledger
-  noise from the XFS-log fixer (400 HARNESS rows, run fix-xfslog-chopin);
-  the bko-cache cap.  Also: zorin18's used space grew when slimmed (7998 ->
-  8102 MiB).
+  umask 002 test-environment issue (plan_json under cmp-run.sh); the bko-cache
+  cap.  Also: zorin18's used space grew when slimmed (7998 -> 8102 MiB).
+- **The XFS-log fixer's ledger rows: left as they are (2026-11-25).**  chopin's
+  ledger has 400 rows of run `fix-xfslog-chopin`.  All are tier 0 HARNESS for
+  slackware15-uefi, written 14:20:39Z, with word BackShot2Alpine (the
+  hand-run default; no `BS2_WORD`).  They are inert by design:
+  - HARNESS never decides a cell (`bko.DECISIVE`, `plan.DECISIVE_VERDICTS`).
+  - bs2's `done()` skips only on a PASS at the key.
+  - `verdict_flips()` takes only another run's decisive rows as earlier ones.
+  - Reports and the harness stop count only their own run's rows.
+  - Walls come only from PASS and FAIL rows.
+  - Their harness hashes predate later changes to bs2's files, so their keys
+    can't recur.
+
+  The ledger is append-only, with no way to retire a row.  Deleting the rows
+  from chopin's file wouldn't remove them: the Mac's next pull keeps a row a
+  host's file has lost in `chopin.lost.jsonl`, merges it into the view and
+  warns about the loss (`ledger.pull_one()`).  So nothing was rewritten.
 
 - Whether ~15-16 h is acceptable for an every-second-CarpetBeater run, or
   whether non-Linux sources should draw fewer tier 1 cases (10) to keep it to

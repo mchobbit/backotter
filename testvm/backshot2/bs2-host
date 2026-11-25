@@ -756,12 +756,20 @@ def bins():
 
 
 def cmd_tier0(a):
+    """SOURCE's sweep: N cases from seed START at tier 0, as RUN.  Before they run, their
+    names, one a seed in seed order, go in RUN/sweep-SOURCE.txt (written anew): the sweep's
+    plan, which BackShot2All's report counts in distinct cases (seeds often draw the same
+    one: bs2lib/allrun.py summary())."""
     gen, dump = load_source(a.source)
     stats = G.Stats()
     cases = []
     for seed in range(a.start, a.start + a.n):
         c = G.generate(a.source, gen, dump, seed, caps=caps_of(), stats=stats)
         cases.append((C.name_of(c), c))
+    plan = f"{run_dir(a.run)}/sweep-{a.source}.txt"
+    with open(plan + ".new", "w") as f:
+        f.write("".join(f"{n}\n" for n, _ in cases))
+    os.replace(plan + ".new", plan)
     tier0_cases(a.source, gen, dump, cases, a.run, a.keep_passes)
     print(json.dumps({"generator": {"tried": stats.tried, "kept": stats.kept,
                                     "discarded": dict(sorted(stats.discarded.items(), key=lambda x: -x[1])[:12])}}))
@@ -1298,17 +1306,24 @@ def cmd_enqueue(a):
     """Cases for tier T: drawn from SEED on, kept when they pass tier 0 here
     (a tier 0 FAIL is a finding already), and for tier 2 only those that touch
     an ESP or ask for --no-nvram or --removable.  Their lines go on RUN/queue.txt,
-    or with --to in FILE (written anew), for bs2 to split over its hosts."""
+    or with --to in FILE (written anew), for bs2 to split over its hosts.  Each case
+    once: seeds often draw the same case (its name is its hash: case.name_of), and one
+    case queued twice would run in two slots at once under one name, so a case drawn
+    again is passed over (the first seed's kept) and never tier 0'd twice."""
     gen, dump = load_source(a.source)
     rd = run_dir(a.run)
-    picked, seed, tried = [], a.start, 0
+    picked, seed, tried, seen = [], a.start, 0, set()
     while len(picked) < a.n and tried < a.n * 40:
         batch = []
         for s_ in range(seed, seed + max(20, a.n)):
             c = G.generate(a.source, gen, dump, s_, caps=caps_of())
             if a.tier == 2 and not C.touches_esp(c, dump):
                 continue
-            batch.append((C.name_of(c), c))
+            name = C.name_of(c)
+            if name in seen:
+                continue
+            seen.add(name)
+            batch.append((name, c))
         seed += max(20, a.n)
         tried += max(20, a.n)
         if not batch:

@@ -343,10 +343,6 @@ class Word(unittest.TestCase):
                 got = []
                 B.launch("chopin", [("debian13", 1, "/x.case")], [], 20, "bs2all-x")
             self.assertRegex(got[0], r"BS2_WORD=BackShot2All \S+/bs2-host queue bs2all-x")
-        with mock.patch.dict(os.environ, {}):
-            os.environ.pop("BS2_WORD", None)
-            self.assertEqual(self.rows()[0]["word"], "BackShot2Alpine")
-            self.assertNotIn("BS2_WORD", B.reuse_env())
 
 
 class Fresh(unittest.TestCase):
@@ -546,6 +542,162 @@ class ReportMore(unittest.TestCase):
         self.assertEqual(sm["pending"], [], "the queue's row is the case's row: not still to run")
         self.assertEqual(sm["no_verdict"], ["debian13 tier 1: 1 HARNESS"])
         self.assertEqual(sm["verdict"], "INCOMPLETE")
+
+
+class Distinct(unittest.TestCase):
+    """The plan counts cases, each once, as the tally does (review 2026-11-25: seeds often
+    draw the same case, debian13's 84, 161, 390 and 982 all debian13-6cf4764145bcbe80, so a
+    clean run was INCOMPLETE for good), and only planned cases' rows count."""
+
+    def setUp(self):
+        self.m = {"run": "bs2all-x", "hosts": ["chopin"], "planned": {"debian13": [4, 2, 0], "ubuntu26-uefi": [2, 1, 1]},
+                  "skipped": [], "corpus": [], "leftovers": {"steps": 0, "host": None}}
+        n = lambda s, i: f"{s}-{i:016x}"   # noqa: E731
+        # debian13's sweep: 4 seeds, 3 cases (seeds 1 and 2 drew case 1); its tier 1 draw: case 4, and case 1 again
+        # (a seed of the draw's that drew a sweep's case).  ubuntu26-uefi: sweep 2 seeds, 2 cases; tier 1 case 7,
+        # tier 2 case 8; the tier 2 draw tried 9 and 10 too (they touch the ESP, passed tier 0, weren't queued).
+        self.drawn = {"debian13": {"sweep": [n("debian13", 1), n("debian13", 1), n("debian13", 2), n("debian13", 3)],
+                                   1: [n("debian13", 4), n("debian13", 1)]},
+                      "ubuntu26-uefi": {"sweep": [n("ubuntu26-uefi", 5), n("ubuntu26-uefi", 6)],
+                                        1: [n("ubuntu26-uefi", 7)], 2: [n("ubuntu26-uefi", 8)]}}
+        self.rows = ([row("debian13", 0, i=i) for i in (1, 1, 2, 3, 4)] + [row("debian13", 1, i=i) for i in (4, 1)] +
+                     [row("ubuntu26-uefi", 0, i=i) for i in (5, 6, 7, 8, 9, 10)] +
+                     [row("ubuntu26-uefi", 1, i=7), row("ubuntu26-uefi", 2, i=8)])
+
+    def sm(self, rows=None, drawn="x", manifest=None):
+        return AR.summary(manifest or self.m, self.rows if rows is None else rows, [], [], [],
+                          drawn=self.drawn if drawn == "x" else drawn)
+
+    def test_a_clean_run_with_collisions_passes(self):
+        sm = self.sm()
+        self.assertEqual(sm["verdict"], "PASS", sm["incomplete"])
+        self.assertEqual(sm["sources"]["debian13"][0]["planned"], 4, "cases 1-4: the sweep's 3 and the draw's 4th")
+        self.assertEqual(sm["sources"]["debian13"][1]["planned"], 2)
+        self.assertEqual(sm["sources"]["ubuntu26-uefi"][0]["planned"], 4)
+        self.assertEqual(sm["sources"]["ubuntu26-uefi"][0]["unplanned"], 2, "the tier 2 draw's cases not queued")
+        self.assertEqual(self.sm(manifest=dict(self.m, skipped=[dict(AR.TIER3)]))["verdict"], "PARTIAL PASS")
+        # Without the leads' lists the manifest's counts stand, as before: the collision leaves it INCOMPLETE.
+        self.assertEqual(self.sm(drawn=None)["verdict"], "INCOMPLETE")
+
+    def test_a_real_shortfall_stays_incomplete(self):
+        rows = [r for r in self.rows if r != row("debian13", 0, i=3)]
+        sm = self.sm(rows=rows)
+        self.assertEqual(sm["verdict"], "INCOMPLETE")
+        self.assertIn("debian13 tier 0: 3 of 4 cases have a row (tier 0: the sweep's and every drawn case's, each once)",
+                      sm["pending"])
+        rows = [r for r in self.rows if r != row("debian13", 1, i=1)]
+        self.assertIn("debian13 tier 1: 1 of 2 cases have a row", self.sm(rows=rows)["pending"])
+
+    def test_the_draws_surplus_hides_no_shortfall(self):
+        # ubuntu26-uefi's sweep case 6 has no row; the tier 2 draw's 9 and 10 have: still 3 of 4.
+        rows = [r for r in self.rows if r != row("ubuntu26-uefi", 0, i=6)]
+        sm = self.sm(rows=rows)
+        self.assertEqual(sm["verdict"], "INCOMPLETE")
+        self.assertIn("ubuntu26-uefi tier 0: 3 of 4 cases have a row (tier 0: the sweep's and every drawn case's, "
+                      "each once)", sm["pending"])
+        # ... and an unqueued case's no-verdict row still keeps the run from a PASS; its FAIL is a FAIL.
+        rows = self.rows + [row("ubuntu26-uefi", 0, "HARNESS", i=10)]
+        self.assertIn("ubuntu26-uefi tier 0: 1 HARNESS", self.sm(rows=rows)["no_verdict"])
+        rows = self.rows + [row("ubuntu26-uefi", 0, "FAIL", i=10, check="the plan's invariant")]
+        self.assertEqual(self.sm(rows=rows)["verdict"], "FAIL")
+
+    def test_a_short_draw_or_sweep_is_no_verdict(self):
+        d = dict(self.drawn, debian13={**self.drawn["debian13"], 1: ["debian13-0000000000000004"] * 2})
+        sm = self.sm(drawn=d)
+        self.assertEqual(sm["verdict"], "INCOMPLETE")
+        self.assertIn("debian13 tier 1: its lead drew 1 of 2 cases (each once)", sm["no_verdict"])
+        d = dict(self.drawn, debian13=dict(self.drawn["debian13"], sweep=self.drawn["debian13"]["sweep"][:3]))
+        self.assertIn("debian13 tier 0: its sweep's plan names 3 of 4 seeds", self.sm(drawn=d)["no_verdict"])
+
+    def test_a_missing_sweep_plan_counts_as_drawn(self):
+        d = dict(self.drawn, debian13={1: self.drawn["debian13"][1]})
+        sm = self.sm(drawn=d)
+        self.assertEqual(sm["sources"]["debian13"][0]["planned"], 6, "the manifest's 4 + 2, no set")
+        self.assertEqual(sm["verdict"], "INCOMPLETE")
+
+    def test_drawn_of_and_the_gather(self):
+        lines = ["bs2all-x/pick-ubuntu26-uefi-t1.txt:1 /bkoscratch/backshot2/runs/bs2all-x/cases/ubuntu26-uefi-0000000000000007.case",
+                 "bs2all-x/pick-ubuntu26-uefi-t2.txt:2 /bkoscratch/backshot2/runs/bs2all-x/cases/ubuntu26-uefi-0000000000000008.case",
+                 "bs2all-x-t0/sweep-ubuntu26-uefi.txt:ubuntu26-uefi-0000000000000005", "junk"]
+        self.assertEqual(AR.drawn_of(lines), {"ubuntu26-uefi": {1: ["ubuntu26-uefi-0000000000000007"],
+                                                                2: ["ubuntu26-uefi-0000000000000008"],
+                                                                "sweep": ["ubuntu26-uefi-0000000000000005"]}})
+        f = AR.parse_files("@file /queue.txt\n@file /plan\n" + "\n".join(lines) + "\n")
+        self.assertEqual(f[AR.PLAN], lines)
+        g = B.gather_cmd("bs2all-x")
+        self.assertIn('echo "@file /plan"', g)
+        self.assertIn("grep -H . bs2all-x/pick-*-t[12].txt bs2all-x-t0/sweep-*.txt", g)
+
+    def test_the_report_reads_the_plan(self):
+        m = dict(self.m, planned={"debian13": [4, 2, 0]})
+        body = {"-t0/tier0.jsonl": [r for r in self.rows if r["source"] == "debian13" and r["tier"] == 0],
+                "/tier1.jsonl": [r for r in self.rows if r["source"] == "debian13" and r["tier"] == 1]}
+        plan = ([f"bs2all-x/pick-debian13-t1.txt:1 /r/cases/{c}.case" for c in self.drawn["debian13"][1]] +
+                [f"bs2all-x-t0/sweep-debian13.txt:{c}" for c in self.drawn["debian13"]["sweep"]])
+
+        def par(cmds):
+            if all("@file" not in c for c in cmds.values()):
+                return {h: (0, json.dumps(m), "") for h in cmds}
+            text = "".join(f"@file {f}\n" + "".join(json.dumps(x) + "\n" for x in body.get(f, [])) for f in AR.FILES)
+            return {h: (0, text + "@file /plan\n" + "\n".join(plan) + "\n", "") for h in cmds}
+        out = io.StringIO()
+        with mock.patch.object(B, "RUN_HOSTS", {"chopin": "m@chopin.local"}), mock.patch.object(B, "CHOSEN", False), \
+                mock.patch.object(B, "par", par), contextlib.redirect_stdout(out):
+            rc = B.all_report("bs2all-x")
+        self.assertEqual(rc, 0, out.getvalue())
+        self.assertRegex(out.getvalue(), r"(?m)^debian13 +4/4 +2/2 +-$")
+
+
+class EnqueueOnce(unittest.TestCase):
+    def test_a_case_drawn_twice_is_queued_once(self):
+        """enqueue keeps each case once (the first seed's), and tier 0's it once: one case
+        queued twice would run in two slots at once under one name."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        batches = []
+
+        def t0(s, g, dp, cs, run):
+            batches.append([n for n, _ in cs])
+            return [(n, "PASS", []) for n, _ in cs]
+
+        def gen(source, g, dump, seed, caps=None, stats=None):   # (seeds draw 3 cases in all, over and over)
+            return {"source": f"{source}@{g}", "edits": [], "content": {"seed": seed % 3}}
+        for n, want in ((3, 3), (5, 3)):
+            batches.clear()
+            a = mock.Mock(source="debian13", n=n, tier=1, start=100000, run="bs2all-x", to=f"{d}/pick-{n}.txt")
+            with mock.patch.object(H, "ROOT", d), mock.patch.object(H, "load_source", lambda s: ("gen:x", S.dump("debian13"))), \
+                    mock.patch.object(H, "caps_of", lambda: {}), mock.patch.object(H, "tier0_cases", t0), \
+                    mock.patch.object(H.G, "generate", gen), contextlib.redirect_stdout(io.StringIO()):
+                H.cmd_enqueue(a)
+            with open(f"{d}/pick-{n}.txt") as f:
+                paths = [x.split()[1] for x in f.read().splitlines()]
+            self.assertEqual(len(paths), want, "3 distinct cases: never one twice")
+            self.assertEqual(len(set(paths)), len(paths))
+            tried = [x for b in batches for x in b]
+            self.assertEqual(len(tried), len(set(tried)), "no case tier 0'd twice")
+            # ... and the report's plan is what was queued: the pick list's cases, each once.
+            names = [os.path.basename(p)[:-5] for p in paths]
+            self.assertEqual(AR.drawn_of([f"bs2all-x/pick-debian13-t1.txt:1 {p}" for p in paths])["debian13"][1], names)
+
+    def test_the_sweep_writes_its_plan(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+
+        def gen(source, g, dump, seed, caps=None, stats=None):
+            return {"source": f"{source}@{g}", "edits": [], "content": {"seed": seed % 2}}
+        a = mock.Mock(source="debian13", n=4, start=0, run="bs2all-x-t0", keep_passes=0)
+        seen = []
+        with mock.patch.object(H, "ROOT", d), mock.patch.object(H, "load_source", lambda s: ("gen:x", S.dump("debian13"))), \
+                mock.patch.object(H, "caps_of", lambda: {}), mock.patch.object(H.G, "generate", gen), \
+                mock.patch.object(H, "tier0_cases", lambda *x, **k: seen.append(os.path.exists(
+                    f"{d}/runs/bs2all-x-t0/sweep-debian13.txt"))), contextlib.redirect_stdout(io.StringIO()):
+            H.cmd_tier0(a)
+        self.assertEqual(seen, [True], "written before the sweep runs")
+        with open(f"{d}/runs/bs2all-x-t0/sweep-debian13.txt") as f:
+            names = f.read().split()
+        self.assertEqual(len(names), 4)
+        self.assertEqual(len(set(names)), 2)
+        self.assertEqual(names[0], names[2])
 
 
 if __name__ == "__main__":

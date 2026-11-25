@@ -1260,8 +1260,12 @@ def all_leftovers(run):
 
 
 def gather_cmd(run):
-    """The one command that prints a host's files of RUN, each after an "@file NAME" line."""
-    return "; ".join(f'echo "@file {f}"; cat {ROOT}/runs/{run}{f} 2>/dev/null' for f in AR.FILES) + "; true"
+    """The one command that prints a host's files of RUN, each after an "@file NAME" line,
+    then (after "@file /plan", allrun.PLAN) the lead's pick lists and sweeps' plans, grep -H's
+    lines (allrun.drawn_of())."""
+    return ("; ".join(f'echo "@file {f}"; cat {ROOT}/runs/{run}{f} 2>/dev/null' for f in AR.FILES) +
+            f'; echo "@file {AR.PLAN}"; ( cd {ROOT}/runs && grep -H . {run}/pick-*-t[12].txt {run}-t0/sweep-*.txt )'
+            " 2>/dev/null; true")
 
 
 def all_report(run, as_json=False):
@@ -1271,7 +1275,7 @@ def all_report(run, as_json=False):
     for FAIL or INCOMPLETE."""
     m = read_manifest(run)
     got = par({h: gather_cmd(run) for h in RUN_HOSTS})
-    rows, queued, crows, lrows, lt0, unread = [], [], [], [], [], []
+    rows, queued, crows, lrows, lt0, unread, plan = [], [], [], [], [], [], []
     for h, (rc, out, err) in got.items():
         if rc:
             unread.append(f"{h} didn't answer ({err.strip()[-120:]}): its rows aren't counted")
@@ -1282,7 +1286,8 @@ def all_report(run, as_json=False):
         crows += [dict(r, host=h) for r in f.get("-corpus/tier1.jsonl", [])]
         lrows += [dict(r, host=h) for r in f.get("-lo/leftovers.jsonl", [])]
         lt0 += [dict(r, host=h) for r in f.get("-lo-t0/tier0.jsonl", [])]
-    sm = AR.summary(m, rows, queued, crows, lrows, unread, lt0)
+        plan += f.get(AR.PLAN, [])
+    sm = AR.summary(m, rows, queued, crows, lrows, unread, lt0, AR.drawn_of(plan))
     if as_json:
         print(json.dumps(sm, indent=1))
     else:

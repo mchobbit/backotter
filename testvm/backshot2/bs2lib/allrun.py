@@ -12,6 +12,8 @@ passes them in; nothing here reaches a host.
   groups(skipped)            that list by piece, in PIECES' order
   best(skipped)              the verdict a run can give at best
   tally(rows)                {(source, tier): {verdict: n}}, one row a case
+  drawn_of(lines)            the leads' pick lists and sweeps' plans (gather's PLAN
+                             section): {source: {"sweep": [names], 1: [names], 2: [names]}}
   verdict(...)               FAIL, INCOMPLETE, PARTIAL PASS or PASS, and why
   summary(...)               the report as a dict (bs2's --json), and words()
                              its lines
@@ -22,6 +24,16 @@ bs2all.json, the run's manifest: what it planned and SKIPPED), RUN-t0 (the
 sweeps' and the draws' tier 0 rows), RUN-corpus (the corpus at tier 1) and
 RUN-lo (the leftovers set: leftovers.jsonl) and RUN-lo-t0 (its steps' tier 0, run
 first: a step that doesn't pass there stops the set before a VM starts).
+
+A run's plan counts cases, each once.  Seeds often draw the same case (a case's name
+is its hash, case.name_of, and leaves the seed out: debian13's seeds 84, 161, 390 and
+982 all draw debian13-6cf4764145bcbe80), and a case has one row a tier (last_rows()).
+So where the lead's lists are there (the PLAN section: RUN/pick-SOURCE-tT.txt, the
+cases queued, each once, bs2-host enqueue; RUN-t0/sweep-SOURCE.txt, the sweep's case a
+seed, bs2-host tier0), a tier plans its distinct cases (tier 0: the sweep's and every
+drawn case's, each once), and only their rows count towards it: a tier 0 row of a case
+the draws tried but didn't queue is no stand-in for a planned one.  Without them (the
+lead not read, its draw not done), a tier plans the manifest's counts, as drawn.
 """
 
 import json
@@ -51,7 +63,11 @@ VERDICTS = ("PASS", "FAIL", "HARNESS", "INVALID", "UNSUPPORTED")
 # A run's files on a host, after ROOT/runs/RUN (bs2's gather_cmd()); ROW_FILES are its cases' rows.
 ROW_FILES = ("/tier1.jsonl", "/tier2.jsonl", "/tier1-queue.jsonl", "/tier2-queue.jsonl", "-t0/tier0.jsonl")
 FILES = ROW_FILES + ("/queue.txt", "-corpus/tier1.jsonl", "-lo/leftovers.jsonl", "-lo-t0/tier0.jsonl")
+# The gather's section after FILES: grep -H's lines of RUN/pick-SOURCE-tT.txt ("T PATH") and
+# RUN-t0/sweep-SOURCE.txt (a case's name a line), drawn_of()'s.
+PLAN = "/plan"
 CASE_RE = re.compile(r"^(.+)-([0-9a-f]{16})$")
+PLAN_RE = re.compile(r"(?:^|/)(?:pick-(.+)-t([12])\.txt:[12] (\S+)|sweep-(.+)\.txt:(\S+))$")
 
 
 def counts(sources, tier2_of, alpine=()):
@@ -139,14 +155,43 @@ def last_rows(rows):
     return list(out.values())
 
 
-def tally(rows):
-    """{(source, tier): {verdict: n}} of ROWS (last_rows()'s)."""
+def by_tier(rows):
+    """{(source, tier): [row]} of ROWS, one a case (last_rows()'s)."""
     out = {}
     for r in last_rows(rows):
-        k = (r.get("source") or source_of_case(r["case"]) or "?", r.get("tier"))
+        out.setdefault((r.get("source") or source_of_case(r["case"]) or "?", r.get("tier")), []).append(r)
+    return out
+
+
+def verdicts(rows):
+    """{verdict: n} of ROWS (no verdict: HARNESS)."""
+    out = {}
+    for r in rows:
         v = r.get("verdict") or "HARNESS"
-        out.setdefault(k, {})
-        out[k][v] = out[k].get(v, 0) + 1
+        out[v] = out.get(v, 0) + 1
+    return out
+
+
+def tally(rows):
+    """{(source, tier): {verdict: n}} of ROWS (last_rows()'s)."""
+    return {k: verdicts(rs) for k, rs in by_tier(rows).items()}
+
+
+def drawn_of(lines):
+    """{source: {"sweep": [case name a seed], 1: [case names], 2: [case names]}} of the
+    gather's PLAN lines (grep -H's: "RUN/pick-SOURCE-tT.txt:T PATH", the lead's pick lists,
+    "RUN-t0/sweep-SOURCE.txt:NAME", its sweep's plan), each list in its file's order."""
+    out = {}
+    for line in lines:
+        m = PLAN_RE.search(line.strip())
+        if not m:
+            continue
+        if m.group(1):
+            name = os.path.basename(m.group(3))
+            out.setdefault(m.group(1), {}).setdefault(int(m.group(2)), []).append(
+                name[:-len(".case")] if name.endswith(".case") else name)
+        else:
+            out.setdefault(m.group(4), {}).setdefault("sweep", []).append(m.group(5))
     return out
 
 
@@ -182,6 +227,8 @@ def parse_files(text):
                 continue
             if isinstance(r, dict):
                 out[cur].append(r)
+        elif cur == PLAN:
+            out[cur].append(line)
         elif cur.endswith("queue.txt"):
             w = line.split()
             if len(w) >= 2 and w[0].isdigit():
@@ -213,33 +260,71 @@ def verdict(n_fail, incomplete, n_skipped):
     return "PASS"
 
 
-def summary(manifest, rows, queued, corpus_rows, leftovers_rows, unread=(), leftovers_t0=()):
+def planned_cases(counts, drawn):
+    """({tier: [case names]}, [shortfalls in words]) of a source whose manifest planned
+    COUNTS (tier 0's sweep, tier 1, tier 2) and whose lead's lists are DRAWN (drawn_of()'s
+    for it).  A tier is in the dict only when its lists are there: tier 1 and 2 their pick
+    lists' cases, each once (the cases queued; a tier planning none, none); tier 0 the
+    sweep's and both tiers' drawn ones, each once, when the sweep's plan and every planned
+    tier's pick list are there.  A lead that drew fewer cases than planned, or a sweep that
+    planned fewer seeds, is a shortfall: no rerun of the queue makes it up."""
+    if not drawn:
+        return {}, []
+    t0, t1, t2 = counts
+    sets, short = {}, []
+    for tier, want in ((1, t1), (2, t2)):
+        if tier in drawn:
+            sets[tier] = list(dict.fromkeys(drawn[tier]))
+            if len(sets[tier]) < want:
+                short.append(f"tier {tier}: its lead drew {len(sets[tier])} of {want} cases (each once)")
+        elif not want:
+            sets[tier] = []
+    if t0 and "sweep" in drawn and 1 in sets and 2 in sets:
+        sw = drawn["sweep"]
+        if len(sw) < t0:
+            short.append(f"tier 0: its sweep's plan names {len(sw)} of {t0} seeds")
+        sets[0] = list(dict.fromkeys(list(sw) + sets[1] + sets[2]))
+    return sets, short
+
+
+def summary(manifest, rows, queued, corpus_rows, leftovers_rows, unread=(), leftovers_t0=(), drawn=None):
     """The report of an All run, as a dict.  MANIFEST: the run's bs2all.json (run, hosts,
     planned {source: [t0, t1, t2]}, skipped [entry], corpus [case names], leftovers {steps,
     host}); ROWS: every host's tier 0, 1 and 2 rows (and the queue's) of the run, each with
     "host"; QUEUED: [(tier, case name)] of every host's queue.txt; CORPUS_ROWS: the corpus
     run's tier 1 rows; LEFTOVERS_ROWS: leftovers.jsonl's rows; LEFTOVERS_T0: its steps' tier
     0 rows (RUN-lo-t0: a FAIL there is the set's FAIL, and the set stops); UNREAD: the hosts
-    that didn't answer, in words.
+    that didn't answer, in words; DRAWN: drawn_of()'s, the leads' lists: where a source's
+    are there, its tiers plan its distinct cases and count their rows alone (planned_cases()).
     What keeps a run INCOMPLETE comes in two lists: "pending", still to run (a planned or
     queued case, the corpus or a leftovers step with no row yet, a host not read), and
     "no_verdict", final rows that are no verdict and need a fix or a rerun (INVALID,
     UNSUPPORTED, a HARNESS after its rerun); "incomplete" is both."""
     planned = {s: tuple(v) for s, v in (manifest.get("planned") or {}).items()}
     sk = manifest.get("skipped") or []
-    tl = tally(rows)
+    tl = by_tier(rows)
     pending, no_verdict, per = list(unread), [], {}
     for s, (t0, t1, t2) in planned.items():
         per[s] = {}
+        sets, short = planned_cases((t0, t1, t2), (drawn or {}).get(s) or {})
+        no_verdict += [f"{s} {x}" for x in short]
         for tier, want in ((0, t0 + t1 + t2 if t0 else 0), (1, t1), (2, t2)):
-            got = tl.get((s, tier), {})
-            n = sum(got.values())
+            allr = tl.get((s, tier), [])
+            if tier in sets:
+                want, mine = len(sets[tier]), [r for r in allr if r["case"] in set(sets[tier])]
+            else:
+                mine = allr
+            got, n = verdicts(mine), len(mine)
             per[s][tier] = {"planned": want, **{v: got.get(v, 0) for v in VERDICTS},
                             **{v: k for v, k in got.items() if v not in VERDICTS}}
+            if len(allr) > n:
+                per[s][tier]["unplanned"] = len(allr) - n
             if n < want:
                 pending.append(f"{s} tier {tier}: {n} of {want} cases have a row"
-                                  + (" (tier 0: the sweep's and every drawn case's)" if tier == 0 else ""))
-            bad = {v: k for v, k in got.items() if v not in ("PASS", "FAIL")}
+                               + ((" (tier 0: the sweep's and every drawn case's, each once)" if tier in sets else
+                                   " (tier 0: the sweep's and every drawn case's)") if tier == 0 else ""))
+            # (Every row's: a draw's tier 0 case that wasn't queued gave no verdict all the same.)
+            bad = {v: k for v, k in verdicts(allr).items() if v not in ("PASS", "FAIL")}
             if bad:
                 no_verdict.append(f"{s} tier {tier}: " + ", ".join(f"{k} {v}" for v, k in sorted(bad.items())))
     for s in sorted({k[0] for k in tl} - set(planned)):
@@ -309,8 +394,8 @@ def cell(c):
 def words(sm):
     """The report's lines of SM (summary()'s)."""
     out = [f"{WORD} {sm['run']}: hosts {', '.join(sm['hosts'])}",
-           "per source, each tier PASS/planned, then F FAIL, H HARNESS, I INVALID, U UNSUPPORTED "
-           "(tier 0 planned: the sweep's and every drawn case's)"]
+           "per source, each tier PASS/planned (planned: its distinct cases), then F FAIL, H HARNESS, I INVALID, "
+           "U UNSUPPORTED (tier 0 planned: the sweep's and every drawn case's, each once)"]
     w = max([16] + [len(s) + 1 for s in sm["sources"]])
     out.append(f"{'source':{w}} {'tier 0':18} {'tier 1':14} tier 2")
     for s, t in sm["sources"].items():

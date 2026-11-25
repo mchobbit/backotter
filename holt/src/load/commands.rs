@@ -4460,16 +4460,16 @@ impl Builder<'_> {
                 let esp = self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).filter(|m| safe_target_subpath(m)).unwrap_or("/boot/efi").to_string();
                 let id = self.bootloader_id();
                 let n = self.boot_names();
-                let mut a = vec!["chroot".to_string(), t.clone(), "grub-install".into(), format!("--target={}", n.grub_efi_target), format!("--efi-directory={esp}"), format!("--bootloader-id={id}"), "--no-nvram".into()];
+                let a = vec!["chroot".to_string(), t.clone(), "grub-install".into(), format!("--target={}", n.grub_efi_target), format!("--efi-directory={esp}"), format!("--bootloader-id={id}"), "--no-nvram".into()];
                 // --removable: Debian's grub-install writes the fallback
-                // path itself (--force-extra-removable, a Debian patch);
-                // upstream GRUB's refuses that option (Alpine's, Arch's,
+                // path itself (--force-extra-removable, a Debian patch), and
+                // Ubuntu's 2.12 by default (its option is the opposite,
+                // --no-extra-removable), which the restored grub-install's
+                // --help says at load time (debian_grub_removable());
+                // upstream GRUB's refuses Debian's option (Alpine's, Arch's,
                 // Gentoo's), so its image is copied there after it
                 // (BackShot2's fail-003).
                 let debian = self.grub_install_is_debians();
-                if self.opts.removable && debian {
-                    a.push("--force-extra-removable".into());
-                }
                 // A fallback loader that's a copy of this GRUB (Alpine's
                 // setup-disk, Calamares's installEFIFallback) is GRUB as the
                 // source's grub-install made it: its embedded prefix names
@@ -4487,7 +4487,11 @@ impl Builder<'_> {
                 if renew {
                     out.push(Cmd::new(&["sh", "-c", &format!("rm -f {RUN_DIR}/fallback-is-grub; [ ! -f {qfb} ] || ! cmp -s {qfb} {qld} || touch {RUN_DIR}/fallback-is-grub")]).why("--reformat: is the fallback loader a copy of GRUB?"));
                 }
-                out.push(Cmd { argv: a, ..Cmd::default() });
+                if self.opts.removable && debian {
+                    out.push(self.debian_grub_removable(&a, &t, &esp, &id, via_shim));
+                } else {
+                    out.push(Cmd { argv: a, ..Cmd::default() });
+                }
                 if renew {
                     out.push(Cmd::new(&["sh", "-c", &format!("[ ! -e {RUN_DIR}/fallback-is-grub ] || cp {qld} {qfb}")]).why("--reformat: the fallback loader, a copy of GRUB, renewed with it"));
                 }
@@ -5267,14 +5271,52 @@ impl Builder<'_> {
     /// the fallback path; through shim, shim there with GRUB beside it, as
     /// Debian's option does (shim loads GRUB from its own directory).
     fn grub_removable_copy(&self, t: &str, esp: &str, id: &str, via_shim: bool) -> Cmd {
+        let what = if via_shim { "shim and GRUB" } else { "GRUB" };
+        Cmd::new(&["sh", "-c", &self.grub_removable_copy_script(t, esp, id, via_shim)]).why(format!("--removable: {what} at the fallback path too ({}'s grub-install has no --force-extra-removable, Debian's option)", self.layout.str_at(&["os", "id"]).unwrap_or("this system")))
+    }
+
+    /// grub_removable_copy()'s shell command.
+    fn grub_removable_copy_script(&self, t: &str, esp: &str, id: &str, via_shim: bool) -> String {
         let n = self.boot_names();
         let (from, dir) = (shell_quote(&format!("{t}{esp}/EFI/{id}")), shell_quote(&format!("{t}{esp}/EFI/BOOT")));
         let (f, g) = (n.fallback_file, n.grub);
         if via_shim {
             let sh = n.shim;
-            return Cmd::new(&["sh", "-c", &format!("mkdir -p {dir} && cp {from}/{sh} {dir}/{f} && cp {from}/{g} {dir}/{g}")]).why(format!("--removable: shim and GRUB at the fallback path too ({}'s grub-install has no --force-extra-removable, Debian's option)", self.layout.str_at(&["os", "id"]).unwrap_or("this system")));
+            return format!("mkdir -p {dir} && cp {from}/{sh} {dir}/{f} && cp {from}/{g} {dir}/{g}");
         }
-        Cmd::new(&["sh", "-c", &format!("mkdir -p {dir} && cp {from}/{g} {dir}/{f}")]).why(format!("--removable: GRUB at the fallback path too ({}'s grub-install has no --force-extra-removable, Debian's option)", self.layout.str_at(&["os", "id"]).unwrap_or("this system")))
+        format!("mkdir -p {dir} && cp {from}/{g} {dir}/{f}")
+    }
+
+    /// --removable for the grub-install of Debian's family (`a`, its argv:
+    /// chroot T grub-install ... --no-nvram), by what the restored system's
+    /// own grub-install lists in its --help, at load time:
+    /// --force-extra-removable (Debian's patch):
+    /// given; --no-extra-removable (Ubuntu's 2.12, noble's, which elementary
+    /// 8 has, 2.12-1ubuntu7.3; Debian's option refused): nothing, since it
+    /// writes the fallback path by default
+    /// (shim, fbx64.efi and mmx64.efi there, or GRUB without shim: chopin,
+    /// 2026-11-25, elementary8-luks's grub-install with EFI/BOOT removed);
+    /// neither: upstream's way, GRUB's image (or shim with it) copied there
+    /// after it (grub_removable_copy).  Then, whichever it was, the fallback
+    /// loader must be a byte copy of EFI/ID's shim or GRUB, or load fails
+    /// there: the request is never dropped unseen.
+    fn debian_grub_removable(&self, a: &[String], t: &str, esp: &str, id: &str, via_shim: bool) -> Cmd {
+        let n = self.boot_names();
+        let install = a.iter().map(|x| shell_quote(x)).collect::<Vec<_>>().join(" ");
+        let copy = self.grub_removable_copy_script(t, esp, id, via_shim);
+        let dir = format!("{t}{esp}/EFI/{id}");
+        let (fb, sh, g) = (shell_quote(&format!("{t}{esp}/{}", n.fallback)), shell_quote(&format!("{dir}/{}", n.shim)), shell_quote(&format!("{dir}/{}", n.grub)));
+        let script = format!(
+            "h=$(chroot {} grub-install --help 2>&1); case \"$h\" in *--force-extra-removable*) {install} --force-extra-removable ;; *--no-extra-removable*) {install} ;; *) {install} && {copy} ;; esac && {{ cmp -s {fb} {sh} || cmp -s {fb} {g} || {{ echo \"--removable: {} is not a copy of EFI/{id}/{} or {} after grub-install\" >&2; exit 1; }}; }}",
+            shell_quote(t),
+            n.fallback,
+            n.shim,
+            n.grub
+        );
+        Cmd::new(&["sh", "-c", &script]).why(format!(
+            "--removable: GRUB at the fallback path too, {}, as this grub-install does it (its --help: --force-extra-removable, Debian's; --no-extra-removable, Ubuntu's 2.12, which writes it by default; else its image copied there), then checked",
+            n.fallback
+        ))
     }
 
     /// A store system (NixOS, Guix System) with --removable: the ESP's
@@ -8091,6 +8133,81 @@ mod tests {
         assert!(bt.contains("chroot /mnt/bko-target env LANG=C update-grub\n") && !bt.contains("grub-mkconfig"), "{bt}");
     }
 
+    /// --removable on elementary 8 (elementary8-luks's dump, the corpus's):
+    /// its grub-install is Ubuntu's 2.12, which has no
+    /// --force-extra-removable (BackShot2, the slim builder's seed 2: load
+    /// boot failed on "unrecognized option") but --no-extra-removable, and
+    /// writes the fallback path by default.  The option is chosen by the
+    /// restored grub-install's --help: Debian's when it lists it, nothing
+    /// when it lists Ubuntu's, upstream's copy when neither; then the
+    /// fallback must be EFI/ubuntu's shim or GRUB, or load fails.
+    #[test]
+    fn elementary_removable_by_its_grub_installs_help() {
+        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/elementary8-luks/src.json")).unwrap();
+        let install = "chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=ubuntu --no-nvram";
+        let b = built_from(&j, &["--removable"]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let bt = text(b.stage(Stage::Boot));
+        assert_eq!(bt.matches("sh -c 'h=$(chroot /mnt/bko-target grub-install --help 2>&1); case \"$h\" in ").count(), 1, "{bt}");
+        assert!(bt.contains(&format!("*--force-extra-removable*) {install} --force-extra-removable ;; ")), "{bt}");
+        assert!(bt.contains(&format!("*--no-extra-removable*) {install} ;; ")), "{bt}");
+        let copy = "mkdir -p /mnt/bko-target/boot/efi/EFI/BOOT && cp /mnt/bko-target/boot/efi/EFI/ubuntu/shimx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI && cp /mnt/bko-target/boot/efi/EFI/ubuntu/grubx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/grubx64.efi";
+        assert!(bt.contains(&format!("*) {install} && {copy} ;; esac && ")), "{bt}");
+        assert!(bt.contains("{ cmp -s /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI /mnt/bko-target/boot/efi/EFI/ubuntu/shimx64.efi || cmp -s /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI /mnt/bko-target/boot/efi/EFI/ubuntu/grubx64.efi || { echo \"--removable: EFI/BOOT/BOOTX64.EFI is not a copy of EFI/ubuntu/shimx64.efi or grubx64.efi after grub-install\" >&2; exit 1; }; }'\n"), "{bt}");
+        // grub-install runs once, in the script: no other step of its own.
+        assert!(!bt.contains(&format!("\n{install}")), "{bt}");
+        // Without --removable: grub-install as ever, no probe.
+        let bt = text(built_from(&j, &[]).stage(Stage::Boot));
+        assert!(bt.contains(&format!("\n{install}\n")) && !bt.contains("grub-install --help") && !bt.contains("extra-removable"), "{bt}");
+    }
+
+    /// debian_grub_removable()'s script, run by sh on fake grub-installs: each
+    /// --help picks its arm, and a fallback that isn't the loader fails.
+    #[test]
+    fn debian_grub_removable_script_runs() {
+        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/elementary8-luks/src.json")).unwrap();
+        let b = built_from(&j, &["--removable"]);
+        let cmd = b.stage(Stage::Boot).iter().find(|c| c.argv.len() == 3 && c.argv[2].starts_with("h=$(chroot")).expect("the script").argv[2].clone();
+        let dir = crate::testutil::TempDir::new("debrm");
+        let root = dir.path().to_str().unwrap().to_string();
+        // chroot T grub-install ARGS: a fake chroot that runs T's fake
+        // grub-install, which logs its arguments and writes what HELP says.
+        let bin = format!("{root}/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let fake_chroot = format!("#!/bin/sh\nshift\nexec \"{root}/$@\"\n");
+        std::fs::write(format!("{bin}/chroot"), fake_chroot).unwrap();
+        let run = |help: &str, writes_fallback: bool| -> (bool, String) {
+            let t = format!("{root}/t");
+            let _ = std::fs::remove_dir_all(&t);
+            std::fs::create_dir_all(format!("{t}/boot/efi/EFI/ubuntu")).unwrap();
+            let fb = if writes_fallback { "mkdir -p \"$T/boot/efi/EFI/BOOT\"; cp \"$T/boot/efi/EFI/ubuntu/shimx64.efi\" \"$T/boot/efi/EFI/BOOT/BOOTX64.EFI\"" } else { ":" };
+            let gi = format!("#!/bin/sh\nT={t}\nif [ \"$1\" = --help ]; then echo '{help}'; exit 0; fi\necho \"$@\" > {root}/args\necho shim > $T/boot/efi/EFI/ubuntu/shimx64.efi\necho grub > $T/boot/efi/EFI/ubuntu/grubx64.efi\ncase \"$*\" in *--force-extra-removable*) mkdir -p $T/boot/efi/EFI/BOOT; cp $T/boot/efi/EFI/ubuntu/shimx64.efi $T/boot/efi/EFI/BOOT/BOOTX64.EFI;; *) {fb};; esac\n");
+            let p = format!("{root}/grub-install");
+            std::fs::write(&p, gi).unwrap();
+            for f in [&p, &format!("{bin}/chroot")] {
+                std::process::Command::new("chmod").args(["+x", f]).status().unwrap();
+            }
+            let script = cmd.replace("/mnt/bko-target", &t);
+            let ok = std::process::Command::new("sh").arg("-c").arg(&script).env("PATH", format!("{bin}:/usr/bin:/bin")).status().unwrap().success();
+            (ok, std::fs::read_to_string(format!("{root}/args")).unwrap_or_default())
+        };
+        // Debian's: its option given, it writes the fallback.
+        let (ok, args) = run("      --force-extra-removable  force installation to the removable media path also", false);
+        assert!(ok && args.trim_end().ends_with("--no-nvram --force-extra-removable"), "{args}");
+        // Ubuntu's 2.12: no option, its default writes it.
+        let (ok, args) = run("      --no-extra-removable   Do not install bootloader code to the removable", true);
+        assert!(ok && args.trim_end().ends_with("--no-nvram"), "{args}");
+        // Ubuntu's, had its default not written it: load fails, not silently.
+        let (ok, _) = run("      --no-extra-removable   Do not install bootloader code to the removable", false);
+        assert!(!ok);
+        // Neither option: upstream's copy (shim and GRUB), then checked.
+        let (ok, args) = run("      --removable            the installation device is removable.", false);
+        assert!(ok && args.trim_end().ends_with("--no-nvram"), "{args}");
+        let t = format!("{root}/t/boot/efi/EFI/BOOT");
+        assert_eq!(std::fs::read_to_string(format!("{t}/BOOTX64.EFI")).unwrap(), "shim\n");
+        assert_eq!(std::fs::read_to_string(format!("{t}/grubx64.efi")).unwrap(), "grub\n");
+    }
+
     /// Kali (docs/design/kali.md): Debian's arms as they are, named EFI/kali.
     /// UEFI without shim (Kali has no shim-signed): grub-install into
     /// EFI/kali with no NVRAM write, update-grub with os-prober off, the
@@ -8139,7 +8256,7 @@ mod tests {
         assert!(bt.find(install).expect(&bt) < bt.find(cfg).unwrap() && bt.find(cfg).unwrap() < nvram, "{bt}");
         // --removable: the fallback copy too; --no-nvram: no entry.
         let bt = text(built_from(&uefi(plain, &efi), &["--removable"]).stage(Stage::Boot));
-        assert!(bt.contains("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=kali --no-nvram --force-extra-removable\n"), "{bt}");
+        assert!(bt.contains("*--force-extra-removable*) chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=kali --no-nvram --force-extra-removable ;; "), "{bt}");
         let bt = text(built_from(&uefi(plain, &efi), &["--no-nvram"]).stage(Stage::Boot));
         assert!(bt.contains(install) && !bt.contains("efibootmgr"), "{bt}");
 
@@ -8214,7 +8331,8 @@ mod tests {
         // Debian's GRUB (grub-common, or its family's ids) keeps its option.
         let deb = uefi(plain, &esp("")).replace(r#""id": "alpine", "version_id": "3.24.3""#, r#""id": "devuan", "version_id": "6""#).replace(r#""kernels":"#, r#""packages": {"grub-common": "2.12-9"}, "kernels":"#);
         let bt = text(built_from(&deb, &["--removable"]).stage(Stage::Boot));
-        assert!(bt.contains("--bootloader-id=alpine --no-nvram --force-extra-removable\n") && !bt.contains("EFI/BOOT && cp"), "{bt}");
+        // (Chosen by its --help at load time: elementary_removable_by_its_grub_installs_help.)
+        assert!(bt.contains("--bootloader-id=alpine --no-nvram --force-extra-removable ;; ") && !bt.contains("\nsh -c 'mkdir -p"), "{bt}");
     }
 
     /// AnduinOS (docs/design/anduinos.md): Ubuntu's update-grub and the

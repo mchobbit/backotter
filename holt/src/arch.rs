@@ -501,7 +501,7 @@ mod tests {
         }
         // --removable: grub-install's own copy at BOOTAA64.EFI.
         let (bt, _) = boot_stage(&v, &["--removable"]);
-        assert!(bt.contains("grub-install --target=arm64-efi --efi-directory=/boot/efi --bootloader-id=debian --no-nvram --force-extra-removable\n"), "{bt}");
+        assert!(bt.contains("grub-install --target=arm64-efi --efi-directory=/boot/efi --bootloader-id=debian --no-nvram --force-extra-removable ;; ") && bt.contains("cmp -s /mnt/bko-target/boot/efi/EFI/BOOT/BOOTAA64.EFI /mnt/bko-target/boot/efi/EFI/debian/shimaa64.efi"), "{bt}");
         // --reformat: the fallback, a copy of GRUB, renewed with it.
         let (bt, _) = boot_stage(&v, &["--reformat", "/=xfs"]);
         assert!(bt.contains("[ ! -f /mnt/bko-target/boot/efi/EFI/BOOT/BOOTAA64.EFI ] || ! cmp -s /mnt/bko-target/boot/efi/EFI/BOOT/BOOTAA64.EFI /mnt/bko-target/boot/efi/EFI/debian/grubaa64.efi"), "{bt}");

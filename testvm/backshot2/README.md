@@ -197,6 +197,7 @@ load itself.
 | A2 every built Linux source at tiers 1 and 2 | `bs2lib/sources.py` (the source table), `bs2lib/room.py` (`scratch()`: RAM or SSD), bs2-host's queue (the SSD lane), `tests/test_bs2_sources.py`, `tests/test_bs2_placement.py` |
 | A7 content recipes per filesystem | `bs2lib/content.py`, `bs2lib/families/linux.py` `choose()`, `tests/test_family_content.py` |
 | A9 the BackShot2All word | `bs2` (`BackShot2All`), `bs2lib/allrun.py` (counts, SKIPPED, report, verdict), `tests/test_bs2_all.py` |
+| Slimming the big sources | `bs2lib/slim.py` (which, the step's script, slim.json), `slim-sizes.tsv` (their room), bs2-host's `prepare_with_ht1()` and `slim_own_boot()`, `tests/test_bs2_slim.py` |
 
 Unit tests: `python3 -m unittest discover -s testvm/backshot2/tests`
 (~80 s: the smoke test draws 300 cases from each Linux corpus dump).
@@ -311,14 +312,16 @@ lead hosts after them.
 
 **RAM or SSD** (`room.scratch()`): a source's cases work in the RAM disk on
 the hosts whose `cmp-run.sh --ceiling` holds its room (HoltTest1's D and
-MEM, `holttest1d/ram-sizes.tsv`), as ever.  Only a source over every RAM
-ceiling of the run (vanilla3, D 30 GiB) goes to `/bkoscratch`: on hosts
+MEM, `holttest1d/ram-sizes.tsv`; a slimmed source's own measured room,
+`slim-sizes.tsv`: "Slimming" below), as ever.  Only a source over every RAM
+ceiling of the run goes to `/bkoscratch` (none since slimming: vanilla3's
+D was 30 GiB, its slimmed D is 12, in the big hosts' RAM disks): on hosts
 with `holt_disk_mode` true (chopin and cinqcent), `cmp-run.sh --reserve-ssd
 D M`, `HT_RAM=0`, its rows `"scratch": "ssd"`, and one such case at a time
 per host (the SSD lane, a flock on `/bkoscratch/backshot2/ssd.lock`: the
 queue takes the earliest SSD case whenever the lane is free and RAM cases
 on its other slots; replay, soak and the corpus take the lane before their
-reservation, `bs2-host lane`).  A vanilla3 case writes up to ~29 GB.
+reservation, `bs2-host lane`).  A full vanilla3 case wrote up to ~29 GB.
 
 **The word**: `bs2 BackShot2All [plan]` runs, fresh (the ledger excuses no
 case), as `bs2all-YYYYMMDD-HHMMSS`, every built source a host holds: 1,000
@@ -396,7 +399,8 @@ then:
   checks after syncing and before writing anything, each host's peak on
   /bkoscratch: its preparing source by source (a new preparation before
   the old ones go, tools copied or dropped), then its SSD lane's largest
-  case (room.py's D: vanilla3's 30 GiB) and ~5 MB of records a case.  What
+  case (room.py's D: none since slimming; vanilla3's 30 GiB before) and
+  ~5 MB of records a case.  What
   is there now comes from `bs2-host room` (free bytes; each source's
   preparation current or not, tools current or not, and their bytes); what
   will be made from `space-sizes.tsv` (measured on the hosts 2026-11-25),
@@ -404,6 +408,115 @@ then:
   measured ratios (tools/used, prep/used).  The
   run refuses to start, naming each host, its need and its free space,
   unless `BS2_SPACE_MARGIN_GIB` (30) is left at the peak.
+
+## Slimming
+
+BackShot2All's big desktop sources didn't fit the farm: their room (HoltTest1's
+D) kept 23 of them off the small hosts, vanilla3 needed the SSD lane (~724 GB
+written a run), and their preparations and cases filled the big hosts'
+/bkoscratch.  So since 2026-11-25 (`bs2lib/slim.py`) a source whose full room
+is over the small hosts' `cmp-run.sh --ceiling` (copland, cage and czerny: 9.0
+GiB of RAM disk, 10.1 of memory), i.e. every source room.py's ceiling rule
+kept off them, is **slimmed** in its preparation: 20 today (anduinos2,
+biglinux, elementary8, elementary8-luks, endeavouros, endeavouros-grub,
+manjaro, mint22, mx25, neon24, omarchy, pikaos4, pikaos4-luks, pop24,
+slackware15, slackware15-uefi, solus49, ubuntu26-uefi, vanilla3, zorin18).
+Sources that already fit everywhere are left alone.
+
+**Full fat**: `ubuntu26-luks`, `kinoite44` and `garuda` stay exactly as they
+are (`slim.FULL_FAT`), by the user's choice: three full desktop guests (LUKS,
+ostree, snapper) still go through every tier, and HoltTest1 and BackShot1
+still cover every guest whole.
+
+**The step** runs as ht1.sh's `HT_SOURCE_PREP` (`slim.script()`, written to
+`preps/NAME/slim.sh`): as root in the booted source, in the preparation's own
+overlay (the shared guests in `~/backotter-work/vms/` are never written),
+before its dump.  Its last line is `REBOOT`, so ht1.sh boots the slimmed
+source again from cold, and everything after it is the slimmed source's: boot
+state, health, ostree's and ABRoot's boots of the other root, the dump
+(`src.json`, which cases are drawn from and judged against, as ever), the
+backup, the tools (copied from the overlay), every case.  It prefers the
+distro's own tools, and deletes paths only where none fits:
+
+| Step | What goes |
+|---|---|
+| pkgcache | `apt-get clean` and `/var/lib/apt/lists`, `pacman -Scc`, `eopkg delete-cache`, `dnf`/`zypper`/`xbps` clean (each only where its package database is), PackageKit's, snapd's and Slackware's download caches |
+| logs | `journalctl --rotate --vacuum-time=1s`, rotated logs, logs over 1 MiB truncated, coredumps, crash reports |
+| flatpak | `flatpak uninstall --system --all`, then `--unused` |
+| snap | `snap remove --purge` of every snap, snapd last |
+| abroot | vanilla3's cached OCI image, `/var/lib/abroot/storage` (7.6 GiB; only the next upgrade reads it; no ABRoot tool prunes it) |
+| locale | `/usr/share/locale`, `locale-langpack`, Qt's `.qm` and `/usr/lib/locale/NAME/` but C, en and the configured `LANG`'s |
+| docs | `/usr/share/{doc,man,info,help,help-langpack,gtk-doc}` (Slackware's `/usr/{doc,man,info}`) |
+| themes | icon, wallpaper, background and sound themes but the ones the system's settings name (gsettings overrides, dconf, GTK, KDE, SDDM, LightDM, Xfce, the default cursor) and what they inherit, plus hicolor, Adwaita, breeze |
+| fonts | CJK and Noto's script and display families; the basic Latin set and `fc-match`'s picks stay; `fc-cache -f` |
+| firmware | `/usr/lib/firmware` (or `/lib/firmware`) but CPU microcode and `regulatory.db`: QEMU's virtual hardware loads none |
+
+The per-root steps (locale to firmware) run on every root the source boots:
+ABRoot's two (vanilla3: the other root is mounted beside for the step, and
+the source phase boots both after it, as ever).  A btrfs snapshot is never
+slimmed (`slim.SNAPSHOTS`), so anduinos2's read-only deployment of its root
+keeps what the live root lost: slimming it (made writable, the steps, made
+read-only again) left it last written after the snapshot made after it, and
+load then restored it after that one, with another subvolume id (a DIFF on
+`storage.btrfs.0.subvolumes.6.id`, 262 -> 264, where the unslimmed source's
+same case passes; a bko-holt finding of its own, for a snapshot written
+after it was taken).
+
+**Never touched** (`slim.NEVER`; the script's guard refuses any path under
+them, by its real path): the partition layout, filesystem types, mount
+options, labels and UUIDs; the boot chain (`/boot`, `/efi`, the ESP,
+`/usr/lib/grub`, `/usr/share/grub` and plymouth's themes, systemd-boot's
+files); every kernel, its modules and its initramfs, and
+`/var/lib/initramfs-tools`; `/etc`; `/home`, `/root`, `/srv` (where the A7
+content recipes plant), ABRoot's `/var/srv`, `/var/home` and
+`/var/lib/abroot/etc`; bko-holt's logs.  **Old kernels are not removed**:
+each is in grub.cfg's menu, which the dump records, and load's `update-initramfs
+-u -k all` and `update-grub` run over every installed kernel, so taking one
+away means rewriting the boot chain or leaving a menu and initramfs state
+for a kernel that isn't there.  One `/etc` change is snapd's own: `snap
+remove` deletes the removed snaps' mount and service units in
+`/etc/systemd/system`.  No Nix or Guix source is over the ceiling, so no
+generation is collected.
+
+**Its record**: `preps/NAME/slim.json` (each step's root, bytes freed and how,
+used bytes before and after, the boot state before it and after the cold
+boot; a source that ran clean and boots degraded after it fails its
+preparation, as does any step's error) and `slim.sh`.  `slim.RECIPE` is the
+step's version and part of a slimmed source's generation (`gen:HEX+slim1`),
+so a change to it prepares the source anew, and its cases' ledger rows name
+the slimmed source.  A case of a slimmed source that boots the source itself
+(its preparation can't stand in, or `BS2_REUSE_SOURCE=0`) runs the same step
+in its own source phase (bs2-host `slim_own_boot()`).
+
+**Room and space follow**: `slim-sizes.tsv` holds each slimmed source's own
+room, measured on the hosts (a real tier 1 case's RAM-disk peak, D =
+ceil(1.10 x peak + 0.25), MEM ceil(1.10 x its anon peak), floor 4), its case's
+seconds (`sources.secs()`) and its used, preparation and tools MiB; room.py
+takes a row of the current recipe, else the full guest's ram-sizes.tsv row.
+`space-sizes.tsv`'s rows of slimmed sources are their slimmed preparations
+and tools (`space.ratios()` leaves them out).
+
+**Measured** (2026-11-25, recipe 1; one tier 1 case a source, seed 1 unless
+`slim-sizes.tsv` says, on its preparation's host; D before is HoltTest1's,
+the bs2 peak where one was run on the same case):
+
+| Source | used GiB | prep GiB | D (peak GiB) | small hosts |
+|---|---|---|---|---|
+| vanilla3 | 13.8 -> 3.9 | 3.5 -> 2.3 | 30 (25.2) -> 12 (10.6) | no; RAM, not SSD |
+| biglinux | 9.3 -> 8.5 | 4.8 -> 3.9 | 17 (12.9) -> 12 (10.4) | no |
+| anduinos2 | 4.0 -> 3.9 | 3.0 -> 3.0 | 10 (8.5) -> 10 (8.1) | no (its snapshot keeps the bulk) |
+| elementary8, -luks | 7.7 -> 3.1 | 3.3 -> 1.3 | 14, 16 -> 7 | yes |
+| manjaro | 3.5 -> 2.3 | est. -> 1.5 | 10 -> 6 | yes |
+| pikaos4, -luks | 8.7, 8.1 -> 5.4, 4.8 | est. -> 2.0 | 17, 16 -> 9 | yes |
+| ubuntu26-uefi | 5.5 -> 4.5 | est. -> 1.3 | 11 -> 9 | yes |
+| mint22, zorin18, mx25, neon24, slackware15(-uefi) | | | 14-17 -> 10-11 | no |
+| endeavouros(-grub), solus49, pop24, omarchy | | | 16-20 -> 12-16 | no |
+
+So 6 of the 20 now also run on copland, cage and czerny; vanilla3 leaves the
+SSD lane (~724 GB written a BackShot2All before, records only now); `bs2
+BackShot2All plan`'s space preflight went from chopin +87 GiB and cinqcent
++106 (refused: 86 free) to +38 and +30, both OK.  Tools barely change (the
+lean copy already leaves out what the step removes).
 
 ## A case's life
 

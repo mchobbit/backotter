@@ -5,3 +5,23 @@
 # t1_s: that case's seconds (sources.secs()).  used_before, used_after: the guest's used MiB before and after the
 # slim step (slim.json); prep_mib, tools_mib: the slimmed preparation's and tools' MiB.  measured: where and how.
 source	recipe	d	mem	t1_s	used_before_mib	used_after_mib	prep_mib	tools_mib	measured
+anduinos2	1	10	4	277	4056	3969	3049	2559	czerny anduinos2-b6082ebacc9aac0c tier 1 PASS, peak 8.1 GiB, anon 2.6 GiB, 2026-11-25; the case without its content drift (with it, every btrfs-1 case FAILs load restore on the snapshot deployment's chattr +i files, unslimmed too)
+biglinux	1	12	4	359	9523	8716	4042	6557	chopin biglinux-52cffc2dfee3c62b tier 1 PASS, peak 10.4 GiB, anon 2.6 GiB, 2026-11-25
+elementary8	1	7	4	248	7933	3195	1353	1661	chopin elementary8-fe9106ddebe3ca17 tier 1 PASS, peak 5.4 GiB, anon 2.6 GiB, 2026-11-25
+elementary8-luks	1	7	4	330	7934	3195	1365	1662	cinqcent elementary8-luks-b54e32faefd475c3 tier 1 PASS, peak 5.9 GiB, anon 2.6 GiB, 2026-11-25; seed 6 (seeds 1 and 2, --removable, FAIL load boot: grub-install has no --force-extra-removable), preparation stale after cinqcent's image-store cutover: the case booted and slimmed the source itself; tools: chopin's copy of its slimmed preparation there
+endeavouros	1	12	4	263	8671	6318	2557	4821	chopin endeavouros-7aca87b051c4539c tier 1 PASS, peak 9.8 GiB, anon 2.6 GiB, 2026-11-25
+endeavouros-grub	1	12	4	228	8731	6372	2571	4550	cinqcent endeavouros-grub-5d2d1aeafbe9c451 tier 1 PASS, peak 10.0 GiB, anon 2.6 GiB, 2026-11-25
+manjaro	1	6	4	261	3609	2320	1523	2694	cinqcent manjaro-b67eb2f8f8782f63 tier 1 PASS, peak 4.9 GiB, anon 2.6 GiB, 2026-11-25
+mint22	1	11	4	246	9212	6385	2207	3248	chopin mint22-3f86a31f2663f015 tier 1 PASS, peak 9.6 GiB, anon 3.1 GiB, 2026-11-25
+mx25	1	11	4	167	7880	6084	2561	3423	cinqcent mx25-6697b832d6cabb38 tier 1 PASS, peak 9.7 GiB, anon 3.1 GiB, 2026-11-25
+neon24	1	11	4	247	8366	6335	2534	3756	chopin neon24-959d88a18d219355 tier 1 PASS, peak 9.7 GiB, anon 2.6 GiB, 2026-11-25
+omarchy	1	16	4	465	10500	9213	3701	6005	chopin omarchy-fee303b8d6e7448f tier 1 PASS, peak 13.6 GiB, anon 2.6 GiB, 2026-11-25
+pikaos4	1	9	4	170	8873	5542	2066	3654	cinqcent pikaos4-c93a524dcc6824a9 tier 1 PASS, peak 7.5 GiB, anon 2.6 GiB, 2026-11-25; tools: chopin's copy of its slimmed preparation there
+pikaos4-luks	1	9	4	184	8265	4907	2102	3654	cinqcent pikaos4-luks-6c8c876a18f9e614 tier 1 PASS, peak 7.7 GiB, anon 2.6 GiB, 2026-11-25; tools: chopin's copy of its slimmed preparation there
+pop24	1	14	4	358	10623	7298	3253	4345	chopin pop24-19f2b9c1360a6d1a tier 1 PASS, peak 11.8 GiB, anon 2.6 GiB, 2026-11-25
+slackware15	1	10	4	195	8058	5731	1849	4637	chopin slackware15-476ea4e8788558d2 tier 1 FAIL (fsmeta, dumps: LILO's root=fe02 -> fe12 and boot.FE10 for the renumbered root, load's own; verify ran, so the peak is the whole case's), peak 8.0 GiB, anon 3.1 GiB, 2026-11-25
+slackware15-uefi	1	10	4	324	8363	5997	1898	4636	cinqcent slackware15-uefi-216e00e15abef53a tier 1 FAIL (fsmeta, dumps: load's mkinitrd replay puts -k last and rebuilds initrd-tree; verify ran, so the peak is the whole case's), peak 8.5 GiB, anon 2.6 GiB, 2026-11-25
+solus49	1	13	4	176	8998	6985	2980	5621	cinqcent solus49-cdb9b9f02c6b3b19 tier 1 PASS, peak 10.7 GiB, anon 2.6 GiB, 2026-11-25
+ubuntu26-uefi	1	9	4	392	5593	4620	1305	1303	chopin ubuntu26-uefi-663aba7cbe08cb52 tier 1 PASS, peak 7.5 GiB, anon 2.6 GiB, 2026-11-25
+vanilla3	1	12	4	617	14138	3965	2327	2599	chopin vanilla3-9466cb7449cbcb07 tier 1 PASS, peak 10.6 GiB (HT_RAM=0: on /bkoscratch, its full room still sending it there), anon 2.7 GiB, 2026-11-25; the case without its content drift (with it, fsmeta can't record /var/srv/bs2/deep0: ht1-bs2.sh skips srv/bs2/deep0 only)
+zorin18	1	10	4	191	7998	8102	2262	2559	chopin zorin18-e4d464155dbbf545 tier 1 PASS, peak 8.4 GiB, anon 3.1 GiB, 2026-11-25

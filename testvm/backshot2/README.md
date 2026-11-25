@@ -735,9 +735,19 @@ otherwise finish early (`bs2 BackShot2 mint22 mx25 neon24 ...`) takes them.
   PASS at 09:10Z, the case file in its `cases/`).  Not made again: since
   4780572 the slim step leaves every btrfs snapshot alone
   (`slim.SNAPSHOTS`), so no step of the harness writes into a snapshot,
-  and the slimmed run's own records weren't kept.  It wants a bko-holt test
-  of its own: a btrfs source whose older snapshot is written after a newer
-  one.
+  and the slimmed run's own records weren't kept.  **Fixed in 798d7a3**
+  (bko-holt): load made shared snapshots in last-written order across all
+  families, so the Home snapshot (263) was made before the System
+  deployment snapshot (262) and took its ID; families now interleave by
+  source ID, each keeping its own order (holt/src/load/shared.rs
+  `interleave()`, tests `two_families_keep_their_ids` and two more).
+  Proved 2026-11-25 on chopin: HoltTest1 anduinos2 with
+  `testvm/holttest1d/prep/anduinos-older-snapshot.sh` (the deployment
+  snapshot written after the Home one, gen 150 against 30) PASS, both IDs
+  kept (run andsnap-1); BackShot2 tier 1 anduinos2-fa03e0d2e290fbd9 (btrfs-1
+  content, two snapshots, renumber and align) and -bd7ce5a7e5d9e8b0
+  (renumber, align, resizes) PASS.  The btrfs-1 content cases' chattr +i
+  failure was 01da129's, and is fixed.
 
 ## Decisions made inside the spec
 

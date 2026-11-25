@@ -159,6 +159,7 @@ const B_BY_HAND: usize = 5;
 const B_LEAVE: usize = 6;
 const B_REPORT: usize = 7;
 const B_RAW: usize = 8;
+const B_KEPT: usize = 9;
 const B_FIX: usize = 20;
 
 /// The repository a machine (or a typed address) names.
@@ -242,8 +243,16 @@ impl App {
     }
 
     /// The steps from where it is, until one needs the terminal itself or
-    /// the program ends.
+    /// the program ends.  A dry run says so on every screen (`Banner`).
     pub fn run(&mut self, ui: &mut dyn Ui) -> Exit {
+        if self.opts.dry_run {
+            let mut b = Banner { ui, text: o(s::DRY_RUN_BANNER) };
+            return self.steps(&mut b);
+        }
+        self.steps(ui)
+    }
+
+    fn steps(&mut self, ui: &mut dyn Ui) -> Exit {
         loop {
             let g = match self.step {
                 Step::Start => self.start(ui),
@@ -324,10 +333,14 @@ impl App {
 
     fn start(&mut self, ui: &mut dyn Ui) -> Go {
         let name = self.opts.holt.clone().unwrap_or_else(|| "bko-holt".to_string());
+        // Looked for again on each try: the shell may have fixed PATH or
+        // mounted what was missing.
+        self.holt = self.sys.which(&name);
+        self.rustic = self.sys.which(&self.opts.rustic);
         let Some(cmd) = self.holt_cmd(&HoltCmd::Version) else {
             return self.holt_problem(ui, s::holt_missing(&name));
         };
-        let out = match self.run_job(ui, s::SCR_START, s::START_TITLE, o(s::STARTING), cmd) {
+        let out = match self.run_job(ui, s::SCR_START, s::CHECK_HOLT_TITLE, o(s::CHECKING_HOLT), cmd) {
             Ok(x) => x,
             Err(g) => return g,
         };
@@ -683,27 +696,44 @@ impl App {
     /// isn't the one set now.
     fn offer(&mut self, ui: &mut dyn Ui) -> Option<Go> {
         let m = self.chosen()?.clone();
-        if !self.keyboard.can_change || self.keyboard.offered.contains(&m.install_id) {
+        // Once per machine: by its install ID, or its row when it has none.
+        let key = if m.install_id.is_empty() { format!("#{}", self.machine.unwrap_or(0)) } else { m.install_id.clone() };
+        if !self.keyboard.can_change || self.keyboard.offered.contains(&key) {
             return None;
         }
-        let want = keyboard::canonical(m.keyboard.as_ref())?;
-        if want == self.keyboard.set || want.row().is_none() {
+        let named = keyboard::canonical(m.keyboard.as_ref())?;
+        // A variant this stick hasn't: its base layout, saying so.
+        let (want, missing) = match (named.row(), &named.variant) {
+            (Some(_), _) => (named.clone(), None),
+            (None, Some(v)) => {
+                let base = keyboard::Xkb { layout: named.layout.clone(), variant: None };
+                base.row()?;
+                (base, Some(v.clone()))
+            }
+            (None, None) => return None,
+        };
+        if want == self.keyboard.set {
             return None;
         }
-        self.keyboard.offered.push(m.install_id.clone());
+        self.keyboard.offered.push(key);
         let now = self.keyboard.set.name();
-        let xkb = match &want.variant {
-            Some(v) => format!("{}, {v}", want.layout),
-            None => want.layout.clone(),
+        // The layout the backup names, as it names it.
+        let xkb = match &named.variant {
+            Some(v) => format!("{}, {v}", named.layout),
+            None => named.layout.clone(),
         };
         let short = want.short();
         let mut text = s::offer(m.name().as_str(), &short, &xkb, &now);
-        let others: Vec<String> = keyboard::desktop(m.keyboard.as_ref()).iter().filter(|x| **x != want).map(Xkb::name).collect();
+        let others: Vec<String> = keyboard::desktop(m.keyboard.as_ref()).iter().filter(|x| **x != want && **x != named).map(Xkb::name).collect();
         if !others.is_empty() {
             text.push_str("  ");
             text.push_str(s::OFFER_DESKTOP);
             text.push_str(&others.join(", "));
             text.push('.');
+        }
+        if let Some(v) = &missing {
+            text.push_str("\n\n");
+            text.push_str(&s::offer_base(&short, Clean::line(v, 32).as_str()));
         }
         text.push_str("\n\n");
         text.push_str(&s::offer_why(&short, &now));
@@ -767,7 +797,10 @@ impl App {
                 text.push_str("\n\n");
             }
         }
-        text.push_str(s::TYPE_PASSWORD);
+        // Plain mode: an empty line shows the other choices (the recovery
+        // key, Back), so the prompt says so, as its transcript does.
+        let full = ui.full_screen();
+        text.push_str(if full { s::TYPE_PASSWORD } else { s::TYPE_PASSWORD_PLAIN });
         let mut d = Password::new(Chrome::ours(s::SCR_REPOSITORY, s::PASSWORD_TITLE), Clean::text(&text, cap::PROBLEM));
         d.after = if self.tries > 0 {
             o(&s::tries(self.tries))
@@ -775,13 +808,18 @@ impl App {
             let mut a = s::PASSWORD_NOT_THIS.to_string();
             if self.password.is_some() {
                 a.push_str("  ");
-                a.push_str(s::PASSWORD_KEPT);
+                a.push_str(if full { s::PASSWORD_KEPT } else { s::PASSWORD_KEPT_PLAIN });
             }
             a.push_str("\n\n");
             a.push_str(&kb);
             Clean::text(&a, cap::PROBLEM)
         };
         d.buttons = vec![Button::ok()];
+        if !full && self.password.is_some() && self.tries == 0 {
+            // Plain mode's empty line is the menu: the kept password is a
+            // choice there.  Full screen: Enter in the empty field.
+            d.buttons.push(Button::other(s::BTN_KEPT, Some('p'), B_KEPT));
+        }
         if self.keyboard.can_change {
             // No letter: `k` is typed in the field.
             d.buttons.push(Button::other(s::BTN_KEYBOARD, None, B_KEYBOARD));
@@ -804,6 +842,7 @@ impl App {
             }
             Answer::Button(B_KEYBOARD) => self.keyboard_screen(ui),
             Answer::Button(B_RECOVERY) => Go::To(Step::Recovery),
+            Answer::Button(B_KEPT) if self.password.is_some() => self.open(ui, &t),
             Answer::Back => {
                 self.tries = 0;
                 Go::Back
@@ -815,6 +854,9 @@ impl App {
     /// Open the repository with the password file: its ID, then its
     /// backups.  A wrong password counts a try and asks again.
     fn open(&mut self, ui: &mut dyn Ui, t: &Target) -> Go {
+        if self.rustic.is_none() {
+            self.rustic = self.sys.which(&self.opts.rustic);
+        }
         let Some(rustic) = self.rustic.clone() else {
             let why = s::rustic_missing(&self.opts.rustic);
             return self.problem(ui, Problem::repo(Code::Error, t, Some(why)));
@@ -830,11 +872,13 @@ impl App {
         if let Some(code) = repo::classify(&out) {
             return self.repo_failed(ui, code, t);
         }
+        // Never a silent switch: an ID the stick has that can't be
+        // checked stops here as a mismatch does.
         let id = repo::config_id(&out.stdout);
-        if let Some(id) = &id {
-            if repo::id_matches(t.repository_id.as_deref(), id) == Some(false) {
-                return self.problem(ui, Problem::repo(Code::IdMismatch, t, None));
-            }
+        match repo::id_check(t.repository_id.as_deref(), id.as_deref()) {
+            repo::IdCheck::NoneKept | repo::IdCheck::Matches => {}
+            repo::IdCheck::Differs => return self.problem(ui, Problem::repo(Code::IdMismatch, t, None)),
+            repo::IdCheck::CantCheck => return self.problem(ui, Problem::repo(Code::IdMismatch, t, Some(s::id_unchecked(t.name.as_str())))),
         }
         let c = repo::cmd(&rustic, &t.place.url, &pw, &["snapshots", "--json"], repo::SNAPSHOTS_MAX);
         let out = match self.run_job(ui, s::SCR_REPOSITORY, s::OPENING_TITLE, o(&s::listing(t.name.as_str())), c) {
@@ -1177,6 +1221,68 @@ impl App {
     }
 }
 
+/// A `Ui` that puts a banner on every dialog it passes on: the dry run's
+/// (rescue-tui.md, "Dry run": "It says so on every screen"), so no
+/// screen can be built without it.
+struct Banner<'a> {
+    ui: &'a mut dyn Ui,
+    text: Clean,
+}
+
+impl Banner<'_> {
+    fn on<D: Clone>(&self, d: &D, chrome: impl FnOnce(&mut D) -> &mut Chrome) -> D {
+        let mut d = d.clone();
+        chrome(&mut d).banner = self.text.clone();
+        d
+    }
+}
+
+impl Ui for Banner<'_> {
+    fn menu(&mut self, d: &crate::ui::Menu) -> Answer<usize> {
+        let d = self.on(d, |d| &mut d.chrome);
+        self.ui.menu(&d)
+    }
+    fn radio(&mut self, d: &Radio) -> Answer<usize> {
+        let d = self.on(d, |d| &mut d.chrome);
+        self.ui.radio(&d)
+    }
+    fn input(&mut self, d: &Input) -> Answer<String> {
+        let d = self.on(d, |d| &mut d.chrome);
+        self.ui.input(&d)
+    }
+    fn password(&mut self, d: &Password) -> Answer<crate::secret::Secret> {
+        let d = self.on(d, |d| &mut d.chrome);
+        self.ui.password(&d)
+    }
+    fn yes_no(&mut self, d: &Question) -> Answer<bool> {
+        let d = self.on(d, |d| &mut d.chrome);
+        self.ui.yes_no(&d)
+    }
+    fn message(&mut self, d: &Message) -> Answer<()> {
+        let d = self.on(d, |d| &mut d.chrome);
+        self.ui.message(&d)
+    }
+    fn view(&mut self, d: &TextView) -> Answer<()> {
+        let d = self.on(d, |d| &mut d.chrome);
+        self.ui.view(&d)
+    }
+    fn progress(&mut self, d: &Progress, tick: &mut dyn FnMut() -> Tick) -> Answer<()> {
+        let d = self.on(d, |d| &mut d.chrome);
+        self.ui.progress(&d, tick)
+    }
+    fn words(&mut self, d: &Words) -> Answer<crate::secret::Secret> {
+        let d = self.on(d, |d| &mut d.chrome);
+        self.ui.words(&d)
+    }
+    fn radio_live(&mut self, d: &Radio, moved: &mut dyn FnMut(usize)) -> Answer<usize> {
+        let d = self.on(d, |d| &mut d.chrome);
+        self.ui.radio_live(&d, moved)
+    }
+    fn full_screen(&self) -> bool {
+        self.ui.full_screen()
+    }
+}
+
 /// A problem's help screen (rescue-screens.md, "Problems and their
 /// help"): what happened, why, what to do, the backup-is-safe line.
 pub struct Problem {
@@ -1292,7 +1398,9 @@ impl App {
 /// A machine's state, in words.
 fn state_words(m: &stick::Machine) -> &'static str {
     match m.state.as_str() {
-        "ok" => s::STATE_NO_REPO,
+        "ok" if m.repo_url.is_none() => s::STATE_NO_REPO,
+        "ok" if m.hostname.is_some() => s::STATE_BAD_REPO,
+        "ok" => s::STATE_OTHER,
         "checksum_bad" => s::STATE_CHECKSUM_BAD,
         "checksum_missing" => s::STATE_CHECKSUM_MISSING,
         "schema_unknown" => s::STATE_SCHEMA_UNKNOWN,

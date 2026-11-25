@@ -245,7 +245,7 @@ def test_plain():
     d.wait("Which machine is this?")
     d.wait("Choose [1-3, t, s]: ")
     d.type("1", line=True)
-    d.wait("Type the backup password:")
+    d.wait("Type the backup password, or press Enter alone for other choices:")
     m = d.mark()
     d.type("nope", line=True)
     d.wait("That password didn't open the backups.", since=m)
@@ -273,7 +273,7 @@ def test_plain_signals():
         d = r.d
         d.wait("Choose [1-3, t, s]: ")
         d.type("1", line=True)
-        d.wait("Type the backup password:")
+        d.wait("Type the backup password, or press Enter alone for other choices:")
         d.type(PASSWORD, line=True)
         d.wait("Choose [1-14, b]: ")
         d.signal(sig)
@@ -355,7 +355,9 @@ def test_dry_run():
     # app-dry's api confirms it: on to the screens.
     r = Run("dry", args=["--dry-run"], holt="app-dry")
     to_password(r)
+    check(r.says("DRY RUN: nothing will be written"), "dry run: the banner on the password screen")
     password(r, PASSWORD, "Which backup?")
+    check(r.says("DRY RUN: nothing will be written"), "dry run: the banner on Snapshot")
     r.d.signal(signal.SIGTERM)
     r.finish(143)
     calls = r.secrets_checked(2)

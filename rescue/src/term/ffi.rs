@@ -241,6 +241,9 @@ const POLLIN: c_short = 1;
 pub const SIGHUP: c_int = 1;
 pub const SIGINT: c_int = 2;
 pub const SIGTERM: c_int = 15;
+pub const SIGKILL: c_int = 9;
+/// `pid_t`: an int in every family (the header test checks its size).
+type Pid = c_int;
 /// `SIG_DFL`, a null handler in every family.
 const SIG_DFL: usize = 0;
 
@@ -259,6 +262,7 @@ unsafe extern "C" {
     fn poll(fds: *mut PollFd, n: Nfds, timeout: c_int) -> c_int;
     fn signal(sig: c_int, handler: usize) -> usize;
     fn raise(sig: c_int) -> c_int;
+    fn kill(pid: Pid, sig: c_int) -> c_int;
     fn ttyname(fd: c_int) -> *mut c_char;
 }
 
@@ -275,6 +279,7 @@ const SYMS: &[(&str, &str)] = &[
     ("poll", "poll"),
     ("signal", "signal"),
     ("raise", "raise"),
+    ("kill", "kill"),
     ("ttyname", "ttyname"),
 ];
 
@@ -494,6 +499,30 @@ pub fn default_hup_term() {
     raise_pending();
 }
 
+/// `sig` to every process in the group `pgid` (a child started as a
+/// group of its own: what it started goes too).  Never our own group or
+/// every process: a `pgid` of 0 or 1, or one that isn't a pid, does
+/// nothing.  Whether the signal went.
+pub fn kill_group(pgid: u32, sig: c_int) -> bool {
+    let Ok(p) = Pid::try_from(pgid) else { return false };
+    if p <= 1 {
+        return false;
+    }
+    // SAFETY: kill() takes any pid and signal; -p names only the group p,
+    // which is above 1, so neither ours (0) nor every process (-1).
+    unsafe { kill(-p, sig) == 0 }
+}
+
+/// Whether a process (or a zombie) `pid` is there: kill(pid, 0).
+#[cfg(test)]
+pub fn exists(pid: u32) -> bool {
+    match Pid::try_from(pid) {
+        // SAFETY: signal 0 sends nothing; it only checks the pid.
+        Ok(p) if p > 0 => unsafe { kill(p, 0) == 0 },
+        _ => false,
+    }
+}
+
 /// Whether a caught signal is waiting, without taking it.
 pub fn signal_pending() -> bool {
     SIGNALLED.load(Ordering::SeqCst) != 0
@@ -590,6 +619,8 @@ pub fn abi_lines() -> Vec<String> {
     v.push(format!("const SIGHUP {:#x}", SIGHUP));
     v.push(format!("const SIGINT {:#x}", SIGINT));
     v.push(format!("const SIGTERM {:#x}", SIGTERM));
+    v.push(format!("const SIGKILL {:#x}", SIGKILL));
+    v.push(format!("size pid_t {}", size_of::<Pid>()));
     v.push(format!("const SIG_DFL {:#x}", SIG_DFL));
     for (f, link) in SYMS {
         v.push(format!("sym {f} {link}"));
@@ -610,7 +641,7 @@ mod tests {
         keys.dedup();
         assert_eq!(keys.len(), v.len());
         assert!(v.iter().skip_while(|l| !l.starts_with("sym ")).all(|l| l.starts_with("sym ")));
-        assert_eq!(v.iter().filter(|l| l.starts_with("sym ")).count(), 7);
+        assert_eq!(v.iter().filter(|l| l.starts_with("sym ")).count(), 8);
     }
 
     #[cfg(target_os = "linux")]

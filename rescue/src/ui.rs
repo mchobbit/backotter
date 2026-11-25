@@ -96,11 +96,15 @@ pub struct Chrome {
     /// The first screen: `L`, `C` and `P` work (D4), and the key line
     /// says so.
     pub first: bool,
+    /// A line on every screen, in the title line (in plain mode, before
+    /// the title): a dry run's `DRY RUN: nothing will be written`
+    /// (rescue-tui.md, "Dry run").  Empty for none.
+    pub banner: Clean,
 }
 
 impl Chrome {
     pub fn new(screen: Clean, title: Clean) -> Chrome {
-        Chrome { screen, title, keys: None, first: false }
+        Chrome { screen, title, keys: None, first: false, banner: Clean::default() }
     }
 
     /// From our own strings.

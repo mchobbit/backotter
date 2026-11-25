@@ -93,7 +93,23 @@ impl App {
         if !self.typed.is_empty() {
             strip_lines.push(self.typed.clone());
         }
-        let strip = if strip_lines.is_empty() || no_redact { None } else { self.session.strip_file(&strip_lines).ok() };
+        // Without its strip file a redacted report would keep the hint and
+        // the typed address: none is made then.
+        let strip = if strip_lines.is_empty() || no_redact {
+            None
+        } else {
+            match self.session.strip_file(&strip_lines) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    let text = format!("{}  {}", s::REPORT_NO_STRIP, Clean::line(&e.to_string(), cap::LOG_LINE).as_str());
+                    let m = Message::new(Chrome::ours(s::SCR_REPORT, s::REPORT_FAILED_TITLE), Clean::text(&text, cap::PROBLEM));
+                    return Err(match ui.message(&m) {
+                        Answer::Ok(()) | Answer::Back => Go::Stay,
+                        a => Go::of(a),
+                    });
+                }
+            }
+        };
         let Some(mut cmd) = self.holt_cmd(&HoltCmd::ReportBug { out: path, no_redact, strip: strip.as_deref(), attach: &[] }) else {
             return Err(Go::Stay);
         };

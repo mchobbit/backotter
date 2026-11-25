@@ -14,6 +14,8 @@ pub const SCR_REPORT: &str = "Report";
 pub const SCR_DISKS: &str = "Disks";
 pub const SCR_START: &str = "Starting";
 pub const START_TITLE: &str = "Reading the stick";
+pub const CHECK_HOLT_TITLE: &str = "Starting";
+pub const CHECKING_HOLT: &str = "Checking this stick's bko-holt.";
 
 // ---- Machine ----
 pub const MACHINE_TITLE: &str = "Which machine is this?";
@@ -44,6 +46,7 @@ pub const STATE_SCHEMA_UNKNOWN: &str = "its settings are newer than this stick r
 pub const STATE_UNREADABLE: &str = "its settings on the stick can't be read";
 pub const STATE_OTHER: &str = "its settings on the stick aren't usable";
 pub const STATE_NO_REPO: &str = "its settings don't say where its backups are";
+pub const STATE_BAD_REPO: &str = "its backups' address isn't usable";
 
 // ---- Type a location ----
 pub const LOCATION_TITLE: &str = "Where is the backup?";
@@ -74,6 +77,8 @@ pub fn holt_says(what: &str) -> String {
 }
 pub const HOLT_NO_LOCK: &str = "This is a dry run, but bko-holt didn't confirm its lock (BKO_HOLT_NO_COMMIT), so bko-rescue stops here: nothing has been run that writes.";
 pub const STARTING: &str = "Reading this stick's settings.";
+/// Every screen's, in a dry run (rescue-tui.md, "Dry run").
+pub const DRY_RUN_BANNER: &str = "DRY RUN: nothing will be written";
 
 // ---- Network ----
 pub const NETWORK_TITLE: &str = "No network";
@@ -108,6 +113,9 @@ pub fn kept_in(name: &str, url: &str) -> String {
 pub const TYPE_PASSWORD: &str = "Type the backup password:";
 pub const PASSWORD_NOT_THIS: &str = "It's the password chosen when the backups were set up, not the password for this computer.";
 pub const PASSWORD_KEPT: &str = "The password typed before is kept: press Enter in the empty field to use it again.";
+pub const TYPE_PASSWORD_PLAIN: &str = "Type the backup password, or press Enter alone for other choices:";
+pub const PASSWORD_KEPT_PLAIN: &str = "The password typed before is kept: press Enter alone, then p, to use it again.";
+pub const BTN_KEPT: &str = "Use the password typed before";
 pub fn wrong_once(keyboard: &str) -> String {
     format!("That password didn't open the backups.  Check Caps Lock, and the keyboard: {keyboard}.")
 }
@@ -164,6 +172,12 @@ pub fn offer(machine: &str, short: &str, xkb: &str, now: &str) -> String {
 }
 pub fn offer_why(short: &str, now: &str) -> String {
     format!("On a {short} keyboard set to {now}, keys move and most symbols too, so the password would come out wrong.")
+}
+/// A variant this stick hasn't (rescue-screens.md, "The keyboard offer"):
+/// its base layout is offered.  The mock's line names the dead keys; a
+/// variant in general may move other keys, so this says only that.
+pub fn offer_base(short: &str, variant: &str) -> String {
+    format!("This stick has {short}, but not its \"{variant}\" variant: a few keys may differ from the old keyboard's.")
 }
 pub const OFFER_DESKTOP: &str = "Its desktop also had ";
 pub fn btn_switch(short: &str) -> String {
@@ -291,6 +305,9 @@ pub const LOGIN_TITLE: &str = "the server refused the login";
 pub fn mismatch_what(name: &str) -> String {
     format!("These aren't the backups the stick knows for {name}: the repository's ID isn't the one in its settings.")
 }
+pub fn id_unchecked(name: &str) -> String {
+    format!("The stick couldn't check these are {name}'s backups: the repository's ID, or the one in its settings, can't be read to compare.")
+}
 pub const MISMATCH_WHY: &str = "The address may point at another machine's backups, or the repository was made again since the stick was last updated.";
 pub const MISMATCH_TODO: &str = "Pick another machine, or type the address of this one's backups.  bko-rescue never switches by itself.";
 pub const MISMATCH_TITLE: &str = "these aren't this machine's backups";
@@ -329,11 +346,12 @@ pub const BTN_VIEW: &str = "View it";
 pub const BTN_ADVANCED: &str = "Advanced";
 pub const REPORT_FAILED_TITLE: &str = "The report couldn't be made";
 pub const REPORT_FAILED: &str = "bko-holt report-bug didn't write the report.  Raw output shows what it said.";
+pub const REPORT_NO_STRIP: &str = "The list of what to take out of it (the password hint, the typed address) couldn't be written, so no report was made:";
 pub const VIEW_TITLE: &str = "The report";
 pub const ADVANCED_TITLE: &str = "Advanced: a report that isn't redacted";
 pub const ADVANCED_TEXT: &str = "The report you saved replaces these with stand-ins.  This one keeps them as they are:\n  - the hostname and machine-id\n  - disk serials and WWIDs\n  - the UUIDs and GUIDs of disks, partitions and filesystems\n  - partition and filesystem labels\n  - user names, and the MAC addresses of network ports\n  - ZFS GUIDs, hostids, disk signatures and FAT serials\n  - the backup's address and key-file paths\nNeither report holds a password, a passphrase or a key.";
 pub const ADVANCED_WARN: &str = "GitHub issues are public: anyone can read them.  Don't attach this report to an issue.  Share it privately: with whoever set up your backups, or with the developer if they ask for it.";
-pub const ADVANCED_PLAIN: &str = "To make it, type YES, or press Enter alone to go back.";
+pub const ADVANCED_PLAIN: &str = "To make it, type YES.  Enter alone shows the other choices, Back among them.";
 pub const TYPE_YES: &str = "To make it, type YES:";
 pub const TYPE_YES_FIRST: &str = "Type YES to make it, or Esc to go back.";
 pub const BTN_MAKE_IT: &str = "Make it";
@@ -344,14 +362,14 @@ pub const SESSION_FAILED: &str = "bko-rescue can't make its directory in memory"
 
 /// Every constant above, for the test that they're clean.
 pub const ALL: &[&str] = &[
-    SCR_MACHINE, SCR_NETWORK, SCR_REPOSITORY, SCR_KEYBOARD, SCR_SNAPSHOT, SCR_REPORT, SCR_DISKS, SCR_START, START_TITLE, MACHINE_TITLE,
+    SCR_MACHINE, SCR_NETWORK, SCR_REPOSITORY, SCR_KEYBOARD, SCR_SNAPSHOT, SCR_REPORT, SCR_DISKS, SCR_START, START_TITLE, CHECK_HOLT_TITLE, CHECKING_HOLT, MACHINE_TITLE,
     MACHINE_NONE_HERE, MACHINE_AFTER, MACHINE_PICK_FIRST, NO_NAME, BTN_TYPE_LOCATION, BTN_KEYBOARD, STATE_CHECKSUM_BAD,
-    STATE_CHECKSUM_MISSING, STATE_SCHEMA_UNKNOWN, STATE_UNREADABLE, STATE_OTHER, STATE_NO_REPO, LOCATION_TITLE, LOCATION_ASK,
+    STATE_CHECKSUM_MISSING, STATE_SCHEMA_UNKNOWN, STATE_UNREADABLE, STATE_OTHER, STATE_NO_REPO, STATE_BAD_REPO, LOCATION_TITLE, LOCATION_ASK,
     LOCATION_EXAMPLES, LOCATION_MISSING, LOCATION_DAMAGED, LOCATION_UNREADABLE, LOCATION_EMPTY, LOCATION_NO_HOLT,
     LOCATION_EMPTY_FIELD, LOCATION_BAD, KEYBOARD_BEFORE_TYPING, TWO_STICKS_TITLE, TWO_STICKS, BTN_RETRY, HOLT_TITLE,
-    HOLT_TOO_OLD, HOLT_NO_LOCK, STARTING, NETWORK_TITLE, NETWORK_PORTS, NETWORK_NO_PORTS, NETWORK_CANT_LIST, PORT_NO_CABLE,
+    HOLT_TOO_OLD, HOLT_NO_LOCK, STARTING, DRY_RUN_BANNER, NETWORK_TITLE, NETWORK_PORTS, NETWORK_NO_PORTS, NETWORK_CANT_LIST, PORT_NO_CABLE,
     PORT_NO_ADDRESS, PORT_UP, PORT_UNKNOWN, NO_WIFI, BTN_TRY_AGAIN, BTN_SET_BY_HAND, NETWORK_WAITING, SET_BY_HAND_TITLE,
-    SET_BY_HAND, KB_SSH_SHORT, KB_SERIAL_SHORT, PASSWORD_TITLE, TYPE_PASSWORD, PASSWORD_NOT_THIS, PASSWORD_KEPT, YZ_SWAPPED, HINT_HEAD, BTN_RECOVERY,
+    SET_BY_HAND, KB_SSH_SHORT, KB_SERIAL_SHORT, PASSWORD_TITLE, TYPE_PASSWORD, PASSWORD_NOT_THIS, PASSWORD_KEPT, TYPE_PASSWORD_PLAIN, PASSWORD_KEPT_PLAIN, BTN_KEPT, YZ_SWAPPED, HINT_HEAD, BTN_RECOVERY,
     OPENING_TITLE, FROM_DEFAULT, FROM_CHOSEN, K_CHANGES, KEYBOARD_SSH, KEYBOARD_SERIAL, KEYBOARD_FIXED, OFFER_TITLE,
     OFFER_DESKTOP, BTN_ANOTHER_LAYOUT, LAYOUT_TITLE, LAYOUT_TEXT, TRY_IT, LAYOUT_FAILED_TITLE, RECOVERY_TITLE, RECOVERY_TEXT,
     RECOVERY_PLAIN, RECOVERY_AFTER, RECOVERY_CHECKING, RECOVERY_SUM, RECOVERY_NOT_IT, RECOVERY_PROBLEM_TITLE, WHICH_TITLE,
@@ -360,7 +378,7 @@ pub const ALL: &[&str] = &[
     UNREACHABLE_TITLE, NOT_FOUND_WHY, NOT_FOUND_TODO, NOT_FOUND_TITLE, LOGIN_WHY, LOGIN_TODO, LOGIN_TITLE, MISMATCH_WHY,
     MISMATCH_TODO, MISMATCH_TITLE, ERROR_WHY, ERROR_TODO, ERROR_TITLE, UNREADABLE_LIST, MAKING_REPORT_TITLE, MAKING_REPORT,
     REPORT_TITLE, REPORT_DRY_RUN, REPORT_GITHUB, REPORT_REDACTED, REPORT_PRIVATE, BTN_VIEW, BTN_ADVANCED,
-    REPORT_FAILED_TITLE, REPORT_FAILED, VIEW_TITLE, ADVANCED_TITLE, ADVANCED_TEXT, ADVANCED_WARN, ADVANCED_PLAIN, TYPE_YES,
+    REPORT_FAILED_TITLE, REPORT_FAILED, REPORT_NO_STRIP, VIEW_TITLE, ADVANCED_TITLE, ADVANCED_TEXT, ADVANCED_WARN, ADVANCED_PLAIN, TYPE_YES,
     TYPE_YES_FIRST, BTN_MAKE_IT, YES, SESSION_FAILED,
 ];
 

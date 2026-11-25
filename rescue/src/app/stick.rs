@@ -81,8 +81,10 @@ pub struct Machine {
 }
 
 impl Machine {
+    /// It can be chosen: its settings are good, and its backups' address
+    /// is one this stick can open (`repo::place`).
     pub fn ok(&self) -> bool {
-        self.state == "ok" && self.hostname.is_some() && self.repo_url.is_some()
+        self.state == "ok" && self.hostname.is_some() && self.repo_url.as_deref().and_then(super::repo::place).is_some()
     }
 
     /// The hostname, cleaned, or `(no name)`.

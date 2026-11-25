@@ -171,16 +171,34 @@ pub fn config_id(stdout: &[u8]) -> Option<String> {
     (id.len() >= ID_MIN && id.len() <= 128 && id.bytes().all(|b| b.is_ascii_hexdigit())).then(|| id.to_ascii_lowercase())
 }
 
+/// What the ID check found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdCheck {
+    /// The stick names no ID (a typed address): nothing to check.
+    NoneKept,
+    Matches,
+    /// The repository's ID isn't the stick's.
+    Differs,
+    /// The stick names one, but it or the repository's can't be compared
+    /// (too short, not hex, or no readable `id` in `cat config`): this
+    /// fails closed, as a mismatch does.
+    CantCheck,
+}
+
 /// The stick's ID against the repository's (stick-config.md, "Which copy
-/// wins"): the stick may keep its first hex digits only.  None when the
-/// stick has none to compare (then nothing is checked, and the screen
-/// doesn't say it was).
-pub fn id_matches(stick: Option<&str>, repo: &str) -> Option<bool> {
-    let s = stick?.trim().to_ascii_lowercase();
+/// wins"): the stick may keep its first hex digits only, at least
+/// `ID_MIN`.  An ID the stick has but that can't be checked is never
+/// passed over.
+pub fn id_check(stick: Option<&str>, repo: Option<&str>) -> IdCheck {
+    let Some(s) = stick.map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty()) else { return IdCheck::NoneKept };
     if s.len() < ID_MIN || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
+        return IdCheck::CantCheck;
     }
-    Some(repo.starts_with(&s))
+    match repo {
+        None => IdCheck::CantCheck,
+        Some(r) if r.starts_with(&s) => IdCheck::Matches,
+        Some(_) => IdCheck::Differs,
+    }
 }
 
 /// One backup.
@@ -287,10 +305,16 @@ mod tests {
     fn ids() {
         assert_eq!(config_id(br#"{"version":2,"id":"FB1E7EC987523D2C0000","chunker_polynomial":"1"}"#).as_deref(), Some("fb1e7ec987523d2c0000"));
         assert_eq!(config_id(b"{}"), None);
-        assert_eq!(id_matches(Some("fb1e7ec987523d2c"), "fb1e7ec987523d2c0000"), Some(true));
-        assert_eq!(id_matches(Some("a3f9"), "a3f9000"), None, "too short to say");
-        assert_eq!(id_matches(Some("deadbeef"), "fb1e7ec9"), Some(false));
-        assert_eq!(id_matches(None, "fb1e7ec9"), None);
+        assert_eq!(config_id(br#"{"id":"a3f9"}"#), None, "too short to be one");
+        let r = Some("fb1e7ec987523d2c0000");
+        assert_eq!(id_check(Some("fb1e7ec987523d2c"), r), IdCheck::Matches);
+        assert_eq!(id_check(Some(" FB1E7EC9 "), r), IdCheck::Matches);
+        assert_eq!(id_check(Some("deadbeef"), r), IdCheck::Differs);
+        assert_eq!(id_check(Some("a3f9"), r), IdCheck::CantCheck, "too short to say: fails closed");
+        assert_eq!(id_check(Some("not-hex-at-all"), r), IdCheck::CantCheck);
+        assert_eq!(id_check(Some("fb1e7ec987523d2c"), None), IdCheck::CantCheck, "no readable id in the repository's config");
+        assert_eq!(id_check(None, r), IdCheck::NoneKept);
+        assert_eq!(id_check(Some(""), None), IdCheck::NoneKept);
     }
 
     #[test]

@@ -1,0 +1,77 @@
+ BackOtter rescue   DRY RUN: nothing will be written                     Machine
+                                                                                
+                                                                                
+  ┌───────────────────────── Which machine is this? ─────────────────────────┐  
+  │                                                                          │  
+  │ The stick knows these machines.  None of them was backed up from this    │  
+  │ computer.  Pick the one you are restoring.                               │  
+  │                                                                          │  
+  │  ┌────────────────────────────────────────────────────────────────────┐  │  
+  │  │ ( ) lovelace   Debian 13      newest backup 22 Nov 2026 01:00 UTC  │  │  
+  │  │ ( ) babbage    Fedora 45      newest backup 21 Nov 2026 08:00 UTC  │  │  
+  │  │ ( ) hopper     FreeBSD 15.0   newest backup 18 Nov 2026 01:00 UTC  │  │  
+  │  └────────────────────────────────────────────────────────────────────┘  │  
+  │                                                                          │  
+  │ The one you pick is restored onto this computer, so check the name:      │  
+  │ it is the computer's name from when it was backed up.                    │  
+  │                                                                          │  
+  │ Keyboard: English (US).  k changes it.                                   │  
+  │                                                                          │  
+  │       <  OK  >    < Type a location >    < Keyboard >    < Shell >       │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+ Arrows | Enter: OK | k: keyboard | s: shell | L: lines | C: colour | P: plain  
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue   DRY RUN: nothing will be written                     Machine
+                                                                                
+                                                                                
+  +------------------------- Which machine is this? -------------------------+  
+  |                                                                          |  
+  | The stick knows these machines.  None of them was backed up from this    |  
+  | computer.  Pick the one you are restoring.                               |  
+  |                                                                          |  
+  |  +--------------------------------------------------------------------+  |  
+  |  | ( ) lovelace   Debian 13      newest backup 22 Nov 2026 01:00 UTC  |  |  
+  |  | ( ) babbage    Fedora 45      newest backup 21 Nov 2026 08:00 UTC  |  |  
+  |  | ( ) hopper     FreeBSD 15.0   newest backup 18 Nov 2026 01:00 UTC  |  |  
+  |  +--------------------------------------------------------------------+  |  
+  |                                                                          |  
+  | The one you pick is restored onto this computer, so check the name:      |  
+  | it is the computer's name from when it was backed up.                    |  
+  |                                                                          |  
+  | Keyboard: English (US).  k changes it.                                   |  
+  |                                                                          |  
+  |       <  OK  >    < Type a location >    < Keyboard >    < Shell >       |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+ Arrows | Enter: OK | k: keyboard | s: shell | L: lines | C: colour | P: plain  

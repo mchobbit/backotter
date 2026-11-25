@@ -52,6 +52,9 @@ const AREA_H: u16 = ROWS - 2;
 pub const MAX_BODY: u16 = 17;
 /// The gap between buttons.
 const BUTTON_GAP: u16 = 4;
+/// Where a banner (`Chrome::banner`) starts in the title line, after
+/// " BackOtter rescue" and three spaces.
+const BANNER_COL: u16 = 20;
 /// Cells of a radio list's "Try it here" field (the Keyboard screen).
 pub const TRY_W: u16 = 40;
 /// A sentinel `Act` for Question's No.
@@ -339,7 +342,13 @@ impl Dialog {
         let mut c = Canvas::standard();
         let o = Clean::ours;
         c.text(0, 0, &o(" BackOtter rescue"), BACKGROUND);
-        let name = self.chrome.screen.truncate(56);
+        let mut room = 56;
+        if !self.chrome.banner.is_empty() {
+            let b = self.chrome.banner.truncate(usize::from(COLS) - BANNER_COL as usize - 12);
+            c.text(0, BANNER_COL, &b, BACKGROUND);
+            room = usize::from(COLS) - BANNER_COL as usize - b.width() - 2;
+        }
+        let name = self.chrome.screen.truncate(room);
         c.text(0, COLS - name.width() as u16, &name, BACKGROUND);
         let h = self.box_h().min(AREA_H);
         let top = AREA_TOP + (AREA_H - h) / 2;

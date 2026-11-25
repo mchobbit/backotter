@@ -226,6 +226,10 @@ impl Job for RealJob {
 
     fn kill(&mut self) {
         if let Some(mut c) = self.child.take() {
+            // The whole group it leads (`process_group(0)` below), so what
+            // it started (rustic-bko's ssh, report-bug's dump) goes too;
+            // before the wait, so the group's id can't have been reused.
+            crate::term::ffi::kill_group(c.id(), crate::term::ffi::SIGKILL);
             let _ = c.kill();
             let st = c.wait().ok();
             let code = st.and_then(|s| if s.signal().is_some() { None } else { s.code() });
@@ -501,10 +505,14 @@ impl Session {
         let p = self.path("strip");
         wipe_file(&p);
         let mut f = OpenOptions::new().write(true).create_new(true).mode(0o600).open(&p)?;
-        for l in lines {
+        let written = lines.iter().try_for_each(|l| {
             let one: String = l.chars().filter(|c| !c.is_control()).collect();
             f.write_all(one.as_bytes())?;
-            f.write_all(b"\n")?;
+            f.write_all(b"\n")
+        });
+        if let Err(e) = written {
+            wipe_file(&p);
+            return Err(e);
         }
         Ok(p)
     }
@@ -611,6 +619,28 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         };
         assert!(o.timed_out && o.code.is_none());
+        // What it started goes with it: its whole process group.
+        let pidfile = base.join("bg.pid");
+        let script = format!("sleep 30 & echo $! > {}; wait", pidfile.display());
+        let mut c = Cmd::new(Path::new("/bin/sh"), vec!["-c".into(), script.into()]);
+        c.timeout_ms = 1000;
+        let mut j = sys.start(c);
+        let o = loop {
+            if let Some(o) = j.poll() {
+                break o;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(o.timed_out);
+        let pid: u32 = fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+        fs::remove_file(&pidfile).unwrap();
+        // Killed: gone once reaped, a zombie (`Z`) until then.
+        let zombie = || fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|st| st.rsplit_once(')').is_some_and(|(_, r)| r.trim_start().starts_with('Z')));
+        let gone = (0..500).any(|_| {
+            std::thread::sleep(Duration::from_millis(10));
+            !crate::term::ffi::exists(pid) || zombie()
+        });
+        assert!(gone, "the background sleep {pid} outlived its job");
         assert_eq!(fs::read_dir(&base).unwrap().count(), 0, "every output file gone");
         let _ = fs::remove_dir_all(&base);
     }

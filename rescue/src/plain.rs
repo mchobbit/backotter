@@ -282,6 +282,7 @@ impl<L: Line> Plain<L> {
             self.started = true;
             self.out("BackOtter rescue (plain mode)\n")?;
         }
+        self.say(&c.banner)?;
         self.say(&c.title)
     }
 
@@ -691,7 +692,11 @@ impl<L: Line> Plain<L> {
                 s.push_str(l.trim_end());
                 s.push('\n');
             }
-            self.out(&s)?;
+            // Shown in clear by design, but not left in memory after.
+            let shown = self.out(&s);
+            let mut b = s.into_bytes();
+            crate::secret::wipe(&mut b);
+            shown?;
             let mut opts = vec![
                 Opt { key: 'y', label: Clean::ours("these are right, try them"), act: Act::Ok },
                 Opt { key: 'n', label: Clean::ours("type them again"), act: Act::Other(usize::MAX) },

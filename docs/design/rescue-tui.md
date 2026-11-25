@@ -1427,6 +1427,23 @@ holt_schema.py over the scenarios.  No holt change.
   the recovery key `r`, which is Report everywhere else (it is `u`
   here); the Network mock's "cable in, but no address after 30 s" can't
   be said before Try again has waited.
+- **The review's fixes** (2026-11-25): the ID check fails closed (a
+  stick ID that is too short or not hex, or a `cat config` with no
+  readable `id`, is the `repo_id_mismatch` screen saying it couldn't
+  check: `repo::id_check`); the dry run's `DRY RUN: nothing will be
+  written` is on every screen now, not only from RT12 (the app's
+  `Banner` puts it in each dialog's title line, and before each title in
+  plain mode); a machine whose address `repo::place` can't take is a
+  blocked row with its reason; a job's kill is its whole process group
+  (`ffi::kill_group`, `kill` in the header test); Try again looks for
+  bko-holt and rustic-bko again; a report whose strip file can't be
+  written isn't made; plain mode's password prompt offers the other
+  choices as its transcript does, and the kept password is `p` there; a
+  variant the stick hasn't offers its base layout (the line's wording is
+  `strings::offer_base`, a default: the mock's names dead keys only).
+  Snapshot still filters by hostname alone: no backup carries an install
+  ID tag to filter by (rescue-screens.md's "and its install ID tag" needs
+  the backup tool to write one first).
 
 ## The app on top (later)
 

@@ -103,6 +103,8 @@ int main(int argc, char **argv)
 	CONST(SIGHUP);
 	CONST(SIGINT);
 	CONST(SIGTERM);
+	CONST(SIGKILL);
+	SIZE("pid_t", pid_t);
 	CONST(SIG_DFL);
 
 	/* Never run: these calls make the program import each function under
@@ -117,6 +119,7 @@ int main(int argc, char **argv)
 		poll(&p, 1, 0);
 		signal(SIGTERM, SIG_DFL);
 		raise(SIGTERM);
+		kill(0, 0);
 		(void)ttyname(0);
 	}
 	return 0;

@@ -1,6 +1,6 @@
 BackOtter rescue (plain mode)
-Reading the stick
-Reading this stick's settings.
+Starting
+Checking this stick's bko-holt.
 Reading the stick
 Reading this stick's settings.
 Which machine is this?
@@ -18,7 +18,7 @@ Choose [1-3, t, k, s]: The backup password
 lovelace's backups are kept on nas.local, at
   sftp://nas.local/backotter/lovelace
 
-Type the backup password:
+Type the backup password, or press Enter alone for other choices:
 It's the password chosen when the backups were set up, not the password
 for this computer.
 

@@ -47,6 +47,9 @@ struct Seen {
     password_files: Vec<(PathBuf, u32)>,
     reachable: VecDeque<bool>,
     layouts: Vec<String>,
+    /// bko-holt isn't found for this many lookups (then it is: the
+    /// shell fixed PATH).
+    holt_hidden: usize,
 }
 
 struct Fake {
@@ -56,6 +59,8 @@ struct Fake {
     version: Option<String>,
     stick: Option<String>,
     rustic: String,
+    /// rustic-bko's `cat config`, when not the fixture's.
+    config: Option<Vec<u8>>,
     seen: Rc<RefCell<Seen>>,
     tools: Vec<&'static str>,
 }
@@ -117,6 +122,9 @@ impl Fake {
                     return Output { code: Some(1), stderr: fixture(&format!("rustic/{}/09-wrong-config/stderr", self.rustic)), ..Output::default() };
                 }
                 let call = if a.contains(&"cat".to_string()) { "01-config" } else { "02-snapshots" };
+                if let (Some(c), "01-config") = (&self.config, call) {
+                    return ok(c.clone());
+                }
                 ok(fixture(&format!("rustic/{}/{call}/stdout", self.rustic)))
             }
             "ckbcomp" => {
@@ -149,6 +157,13 @@ impl Sys for Fake {
         fs::read(path).ok().filter(|b| b.len() <= max)
     }
     fn which(&self, name: &str) -> Option<PathBuf> {
+        if name == "bko-holt" {
+            let mut s = self.seen.borrow_mut();
+            if s.holt_hidden > 0 {
+                s.holt_hidden -= 1;
+                return None;
+            }
+        }
         self.tools.contains(&name).then(|| PathBuf::from("/fake/bin").join(name))
     }
     fn ports(&self) -> Option<Vec<sys::Port>> {
@@ -202,6 +217,7 @@ fn t_with(holt: &str, rustic: &str, wh: Where, dry_run: bool, f: impl FnOnce(&mu
         version: None,
         stick: None,
         rustic: rustic.into(),
+        config: None,
         seen: seen.clone(),
         tools: vec!["bko-holt", "rustic-bko", "ckbcomp", "loadkeys", "mount", "umount"],
     };
@@ -511,7 +527,7 @@ fn rustics_failures_each_have_their_help() {
             fn sleep_ms(&mut self, _: u64) {}
         }
         let base = t.base.0.clone();
-        let fake = Fake { base: base.clone(), holt: "stick-three".into(), version: None, stick: None, rustic: "lovelace".into(), seen: t.seen.clone(), tools: vec!["bko-holt", "rustic-bko"] };
+        let fake = Fake { base: base.clone(), holt: "stick-three".into(), version: None, stick: None, rustic: "lovelace".into(), config: None, seen: t.seen.clone(), tools: vec!["bko-holt", "rustic-bko"] };
         t.app = App::new(Box::new(Failing(fake, stderr)), Session::new(&base).unwrap(), Opts { holt: None, rustic: "rustic-bko".into(), dry_run: false }, LINUX);
         let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, B(B_RAW), Reply::Ok, Back, Reply::Quit]]));
         assert_eq!(t.app.run(&mut ui), Exit::Quit, "{title}");
@@ -707,4 +723,141 @@ fn back_and_the_history() {
     assert_eq!(ui.titles(), ["Which machine is this?", "The backup password", "Which machine is this?", "Which machine is this?", "The backup password", "Which machine is this?"]);
     let pw = ui.text("The backup password", 0);
     assert!(pw.contains("babbage's backups are kept on 10.0.0.5, at") && pw.contains("rest:http://10.0.0.5:8000/babbage"), "{pw}");
+}
+
+/// stick-three's document with `from` replaced by `to` once.
+fn stick_with(from: &str, to: &str) -> String {
+    let doc = String::from_utf8(fixture("scenarios/stick-three/02-stick/stdout")).unwrap();
+    assert!(doc.contains(from), "{from}");
+    doc.replacen(from, to, 1)
+}
+
+#[test]
+fn an_id_that_cant_be_checked_stops_as_a_mismatch_does() {
+    // The repository's config has no readable id; then the stick's own is
+    // too short to compare.  Neither lists a backup.
+    for (config, stick) in [(Some(b"{\"version\":2}".to_vec()), None), (None, Some(stick_with(r#""repository_id":"fb1e7ec987523d2c""#, r#""repository_id":"fb1e""#)))] {
+        let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| {
+            f.config = config;
+            f.stick = stick;
+        });
+        let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, Reply::Quit]]));
+        assert_eq!(t.app.run(&mut ui), Exit::Quit);
+        ui.done();
+        let p = ui.flat("Problem: these aren't this machine's backups", 0);
+        assert!(p.contains("The stick couldn't check these are lovelace's backups"), "{p}");
+        assert!(!ran(&t).iter().any(|l| l.contains("snapshots")), "no backups read from a repository not checked");
+    }
+    // A typed address names no ID: nothing to check, on to the list.
+    assert_eq!(repo::id_check(None, None), repo::IdCheck::NoneKept);
+}
+
+#[test]
+fn a_machine_whose_address_cant_be_opened_is_blocked() {
+    for bad in ["s3:bucket/lovelace", "sftp://bko:secret@nas.local/backotter/lovelace", "sftp:nas.local:/backotter/lovelace"] {
+        let stick = stick_with(r#""url":"sftp://nas.local/backotter/lovelace""#, &format!(r#""url":"{bad}""#));
+        let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| f.stick = Some(stick));
+        let mut ui = Shots::new(script(&[&start(), &[Pick(0), Reply::Quit]]));
+        assert_eq!(t.app.run(&mut ui), Exit::Quit);
+        let m = ui.flat("Which machine is this?", 0);
+        assert!(m.contains("lovelace   can't be chosen: its backups' address isn't usable"), "{bad}: {m}");
+        // OK on it stays on Machine: no repository is opened.
+        assert_eq!(ui.titles(), ["Which machine is this?", "Which machine is this?"], "{bad}");
+        assert!(!ran(&t).iter().any(|l| l.contains("rustic-bko")), "{bad}");
+    }
+}
+
+#[test]
+fn try_again_looks_for_bko_holt_again() {
+    let mut t = tt("stick-three", "lovelace");
+    // The first start's look: not there; Try again's: it is.
+    t.seen.borrow_mut().holt_hidden = 1;
+    let mut ui = Shots::new(script(&[&[B(B_TRY)], &start(), &[Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    ui.done();
+    assert_eq!(ui.titles(), ["Problem: this stick's bko-holt", "Which machine is this?"]);
+}
+
+#[test]
+fn a_report_isnt_made_without_its_strip_file() {
+    let mut t = tt("stick-three", "mismatch");
+    // Something in the strip file's place that can't be replaced.
+    let strip = t.app.session.path("strip");
+    fs::create_dir(&strip).unwrap();
+    fs::write(strip.join("x"), b"x").unwrap();
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, B(B_REPORT), Reply::Ok, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    ui.done();
+    let m = ui.flat("The report couldn't be made", 0);
+    assert!(m.contains("couldn't be written, so no report was made"), "{m}");
+    assert!(!ran(&t).iter().any(|l| l.contains("report-bug")), "never a report with the hint left in");
+    fs::remove_dir_all(&strip).unwrap();
+}
+
+#[test]
+fn a_dry_run_says_so_on_every_screen() {
+    let version = String::from_utf8(fixture("scenarios/stick-three/01-version/stdout")).unwrap().replace(r#""no_commit":false"#, r#""no_commit":true"#);
+    let mut t = t_with("stick-three", "mismatch", LINUX, true, |f| f.version = Some(version.clone()));
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, B(B_REPORT), P, Reply::Ok, Back, Back, B(B_LOCATION), Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    ui.done();
+    assert!(ui.shots.len() >= 5, "{:?}", ui.titles());
+    for (title, c) in &ui.shots {
+        let top = c.dump(Lines::Utf8, false).lines().next().unwrap_or("").to_string();
+        assert!(top.starts_with(" BackOtter rescue   DRY RUN: nothing will be written"), "{title}: {top}");
+    }
+    ui.golden("Which machine is this?", 0, "machine-dry-run");
+    // Plain mode: a line before each title.
+    let mut t = t_with("stick-three", "lovelace", LINUX, true, |f| f.version = Some(version));
+    let mut pl = Plain::new(FakeLine::typed("t\n"), Lines::Utf8);
+    t.app.run(&mut pl);
+    let out = pl.into_line().out;
+    assert!(out.contains("DRY RUN: nothing will be written\nWhich machine is this?\n"), "{out}");
+    assert!(out.contains("DRY RUN: nothing will be written\nWhere is the backup?\n"), "{out}");
+}
+
+#[test]
+fn plain_mode_uses_the_kept_password_from_its_menu() {
+    let mut t = tt("stick-three", "lovelace");
+    // The password, Back from Snapshot, Enter alone, p: the kept one.
+    let mut pl = Plain::new(FakeLine::typed("1\ncorrect horse\nb\n\np\n1\nl\n"), Lines::Utf8);
+    assert_eq!(t.app.run(&mut pl), Exit::Done(0));
+    let out = pl.into_line().out;
+    let flat = out.replace('\n', " ");
+    assert!(out.contains("Type the backup password, or press Enter alone for other choices:"), "{out}");
+    assert!(flat.contains("The password typed before is kept: press Enter alone, then p, to use it again."), "{out}");
+    assert!(out.contains("p) use the password typed before"), "{out}");
+    assert!(!out.contains("empty field"), "{out}");
+    let opened = ran(&t).iter().filter(|l| l.ends_with("cat config")).count();
+    assert_eq!(opened, 2, "opened twice, with one password typed");
+    assert_eq!(t.app.snap.as_deref().map(|s| &s[..8]), Some("a7f3c901"));
+}
+
+#[test]
+fn a_variant_the_stick_hasnt_offers_its_base_layout() {
+    let stick = stick_with(r#""keyboard":null"#, r#""keyboard":{"canonical":{"layout":"de","variant":"neo","from":"xkb"}}"#);
+    let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| f.stick = Some(stick));
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), Reply::Yes, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    ui.done();
+    let offer = ui.flat("Keyboard for the password", 0);
+    assert!(offer.contains("lovelace used a German keyboard (de, neo) when it was backed up."), "{offer}");
+    assert!(offer.contains("This stick has German, but not its \"neo\" variant"), "{offer}");
+    assert_eq!(t.seen.borrow().layouts, ["-layout de"], "the base layout, no variant");
+    assert_eq!(t.app.keyboard.set, Xkb { layout: "de".into(), variant: None });
+    // A layout the stick hasn't at all: no offer.
+    let stick = stick_with(r#""keyboard":null"#, r#""keyboard":{"canonical":{"layout":"zz","variant":"neo","from":"xkb"}}"#);
+    let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| f.stick = Some(stick));
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), Reply::Quit]]));
+    t.app.run(&mut ui);
+    assert_eq!(ui.titles(), ["Which machine is this?", "The backup password"]);
+}
+
+#[test]
+fn the_offer_is_once_per_machine_with_no_install_id_too() {
+    let stick = german_stick().replacen(r#""install_id":"0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90""#, r#""install_id":"""#, 1);
+    let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| f.stick = Some(stick));
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), Reply::No, Back, Pick(0), Reply::Quit]]));
+    t.app.run(&mut ui);
+    assert_eq!(ui.titles().iter().filter(|x| *x == "Keyboard for the password").count(), 1);
 }

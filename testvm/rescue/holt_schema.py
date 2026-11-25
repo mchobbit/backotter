@@ -8,7 +8,8 @@ can't drift from bko-holt.
 
 Each PATH is a file or a directory:
 
-  - a document (`bko-holt-plan`, `-status`, `-error`, `-api`): one JSON
+  - a document (`bko-holt-plan`, `-status`, `-stick`, `-recovery`,
+    `-error`, `-api`): one JSON
     value, on one line or pretty-printed (a golden's `version` VERSION lets
     GENERATED and PLAN_SHA256 stand in for the run's own);
   - an events stream (a file named `events` or `*.events`/`*.ndjson`): one
@@ -42,7 +43,7 @@ MIN_VERSION = (0, 2, 6)
 SCHEMA = 1
 STAGES = ("partition", "assemble", "format", "mount", "restore", "boot", "close", "open")
 ERROR_CODES = ("bad_args", "no_commit", "layout_unreadable", "layout_not_json", "layout_refused",
-               "arch_mismatch", "schema_unknown", "json_not_here")
+               "arch_mismatch", "schema_unknown", "json_not_here", "out_unsafe")
 FAILURE_CODES = ("cmd_failed", "wrong_passphrase", "archiver_failed", "efi_vars", "readback_failed",
                  "not_done_after", "no_restored_tree", "commit_refused", "write_failed", "lock_held", "internal")
 STATES = ("done", "partly", "not_done", "nothing", "unknown")
@@ -272,7 +273,32 @@ STATUS = header(
     open=Obj({"containers": List(Obj({"source": STR, "node": STR})), "pools": List(STR), "mounted": List(STR)}),
     problems=List(CODED))
 
-DOCUMENTS = {"bko-holt-plan": PLAN, "bko-holt-status": STATUS, "bko-holt-error": ERROR, "bko-holt-api": API}
+# bko-holt stick --json (RT10k): the config partition and its machines.
+CONFIG_STATES = ("ok", "missing", "damaged", "two_sticks", "unreadable")
+MACHINE_STATES = ("ok", "checksum_bad", "checksum_missing", "schema_unknown", "unreadable")
+MACHINE = Obj({"install_id": STR, "path": STR, "state": Enum(*MACHINE_STATES), "why": S_, "schema": I_,
+               "known_schema": BOOL, "hostname": S_, "os": Obj({"id": S_, "version_id": S_}), "written": S_,
+               "sequence": I_, "dmi_uuid": S_, "this_computer": BOOL,
+               "repository": Or(NULL, Obj({"kind": S_, "url": S_})), "repository_id": S_,
+               "keyboard": Or(NULL, Obj()), "time": Or(NULL, Obj()), "password_hint": S_})
+STICK = header(
+    "bko-holt-stick",
+    boot_disk=Or(NULL, Obj({"node": STR, "found_by": Enum("cdrom_mount", "root_mount", "boot_mount", "marker_scan")})),
+    config=Obj({"state": Enum(*CONFIG_STATES), "partition": I_, "label": S_, "why": S_, "dev": S_}),
+    image=Or(NULL, Obj({"image_id": STR, "platform": S_, "built": S_, "system_schemas": List(INT)})),
+    stick=Or(NULL, Obj({"stick_id": S_, "name": S_})),
+    here=Obj({"dmi_uuid": S_}),
+    machines=List(MACHINE), notes=List(CODED))
+
+# bko-holt recovery-words OUT --json (RT10p): the words' verdict, never the words.
+RECOVERY = header(
+    "bko-holt-recovery",
+    ok=BOOL, words=INT, expected=INT, problem=Or(NULL, Enum("unknown_words", "count", "checksum")),
+    unknown=List(Obj({"position": INT, "short": BOOL, "suggest": List(STR)})),
+    checksum_ok=B_, written=BOOL, error=S_)
+
+DOCUMENTS = {"bko-holt-plan": PLAN, "bko-holt-status": STATUS, "bko-holt-stick": STICK, "bko-holt-recovery": RECOVERY,
+             "bko-holt-error": ERROR, "bko-holt-api": API}
 
 # ---- the events -------------------------------------------------------------
 
@@ -320,6 +346,24 @@ def check_document(v, where):
             errs.append("%s: ok is %s with %d problems" % (where, v["ok"], len(v["problems"])))
         if v.get("exit") != (0 if v["ok"] else 4):
             errs.append("%s: exit %s with ok %s" % (where, v.get("exit"), v["ok"]))
+    if fmt == "bko-holt-stick" and not errs:
+        state = v["config"]["state"]
+        if state != "ok" and (v["machines"] or v["stick"] is not None):
+            errs.append("%s: config %s, yet machines or stick given" % (where, state))
+        if (state == "ok") != (v["config"]["why"] is None):
+            errs.append("%s: config %s with why %s" % (where, state, json.dumps(v["config"]["why"])))
+        for i, m in enumerate(v["machines"]):
+            if (m["state"] == "ok") != (m["why"] is None) or (m["state"] == "ok" and not m["known_schema"]):
+                errs.append("%s: machines[%d]: state %s, why %s, known_schema %s" % (where, i, m["state"], json.dumps(m["why"]), m["known_schema"]))
+    if fmt == "bko-holt-recovery" and not errs:
+        if v["ok"] != (v["problem"] is None) or (v["ok"] and v["checksum_ok"] is not True):
+            errs.append("%s: ok %s with problem %s, checksum_ok %s" % (where, v["ok"], json.dumps(v["problem"]), v["checksum_ok"]))
+        if v["written"] and not v["ok"]:
+            errs.append("%s: written without ok" % where)
+        if (v["problem"] == "unknown_words") != bool(v["unknown"]):
+            errs.append("%s: problem %s with %d unknown words" % (where, json.dumps(v["problem"]), len(v["unknown"])))
+        if any(len(u["suggest"]) > 3 for u in v["unknown"]):
+            errs.append("%s: more than 3 suggestions for a word" % where)
     return errs
 
 

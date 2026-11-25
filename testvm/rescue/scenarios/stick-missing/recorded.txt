@@ -1,0 +1,3 @@
+Recorded by testvm/rescue/record-stick.py from bko-holt 0.2.6 at 2026-11-25T14:54:58Z: no partition 3 on the boot disk (written by a file-copying tool): config missing.
+The config partition made by stick/marker.py (image 12f5a3af-59b6-4802-b66e-022e8d5ce7a1, serial FD0C-21E9, 256 MiB, partition 3),
+machines put on it by mtools, read by `bko-holt stick --json --sysroot TREE` (argv kept as bko-rescue's).

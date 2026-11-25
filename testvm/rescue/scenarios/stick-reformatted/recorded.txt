@@ -1,0 +1,3 @@
+Recorded by testvm/rescue/record-stick.py from bko-holt 0.2.6 at 2026-11-25T14:54:58Z: the config partition reformatted (another FAT serial): config damaged.
+The config partition made by stick/marker.py (image d86f8df5-9980-4786-b751-9a73d55c9468, serial 2AB0-D856, 256 MiB, partition 3),
+machines put on it by mtools, read by `bko-holt stick --json --sysroot TREE` (argv kept as bko-rescue's).

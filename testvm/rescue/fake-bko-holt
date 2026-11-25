@@ -15,6 +15,16 @@ whose `argv` matches answers:
              0.05), and `#` lines are comments
     stderr   written after the events
     exit     the exit status (default 0)
+    stdin    the call matches only when standard input holds these words:
+             both read as recovery words are (split at white space and
+             commas, lower case, numbers before them left out; no word
+             completed), so `recovery-words` (RT10p) answers by the words
+             bko-rescue sends; standard input is read once, at most 1 KiB
+    out      written, when the call answers, to the OUT its argv names
+             (argv[1], as `recovery-words OUT` and `recovery-key-file
+             OUT` take it): a new file (O_EXCL, 0600) in a directory of
+             ours with mode 0700, as bko-holt writes it, else a failed
+             check; then watched as a key file is (below)
 
 With $FAKE_BKO_HOLT_STATE naming a file, the calls of a whole run are
 answered in order, as a recorded run (scenarios/rec-*) needs, where one
@@ -47,8 +57,10 @@ It then leaves a watcher behind that waits for this process to be gone
 and checks each key file is removed within $FAKE_BKO_HOLT_REMOVE_SECS
 (default 10).  Everything goes to $FAKE_BKO_HOLT_LOG, if set, a JSON
 object a line: {"call", "argv", "keys": [{"path", "bytes", "sha256"}],
-"checks": [...], "ok"}, then {"removed": PATH, "secs"} or {"left": PATH}
-for each key.  A key's text is never written there, only its hash.
+"checks": [...], "ok"} (and "stdin_sha256" when standard input was read;
+an OUT written is among the keys, with "out": true), then {"removed":
+PATH, "secs"} or {"left": PATH} for each key.  A key's text, the words
+and an OUT's text are never written there, only their hashes.
 
 Python's stdlib only.
 """
@@ -57,6 +69,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import stat
 import sys
 import time
@@ -206,13 +219,57 @@ def refuse_commit(value, argv):
     return 2
 
 
+def words(b):
+    """Text as recovery words are read: split at white space and commas,
+    lower case, numbers typed before the words ("1.", "2)") left out."""
+    return [w for w in b.decode(errors="replace").replace(",", " ").lower().split()
+            if not re.fullmatch(r"[0-9]+[.):]?", w)]
+
+
+STDIN = []
+
+
+def stdin_words():
+    """Standard input's words, read once (at most 1 KiB, as bko-holt reads it)."""
+    if not STDIN:
+        try:
+            STDIN.append(sys.stdin.buffer.read(1025) if not sys.stdin.isatty() else b"")
+        except (OSError, ValueError):
+            STDIN.append(b"")
+    return words(STDIN[0])
+
+
 def match(call_dir, argv):
     try:
         with open(os.path.join(call_dir, "argv")) as f:
             pats = [l.rstrip("\n") for l in f if l.rstrip("\n") != ""]
     except FileNotFoundError:
         return False
-    return len(pats) == len(argv) and all(fnmatch.fnmatchcase(a, p) for a, p in zip(argv, pats))
+    if not (len(pats) == len(argv) and all(fnmatch.fnmatchcase(a, p) for a, p in zip(argv, pats))):
+        return False
+    want = read(call_dir, "stdin")
+    return want is None or words(want) == stdin_words()
+
+
+def check_out(path):
+    """What's wrong with OUT, a new file of ours to write; [] when nothing."""
+    if not os.path.isabs(path):
+        return ["OUT %s: not an absolute path" % path]
+    if os.path.lexists(path):
+        return ["OUT %s: there already" % path]
+    d = os.path.dirname(path)
+    try:
+        st = os.lstat(d)
+    except OSError as e:
+        return ["OUT %s: %s" % (d, e.strerror)]
+    bad = []
+    if not stat.S_ISDIR(st.st_mode):
+        bad.append("OUT %s: not a directory" % d)
+    elif stat.S_IMODE(st.st_mode) != 0o700:
+        bad.append("OUT %s: mode %o, not 0700" % (d, stat.S_IMODE(st.st_mode)))
+    if st.st_uid != os.geteuid():
+        bad.append("OUT %s: owned by uid %d, not us" % (d, st.st_uid))
+    return bad
 
 
 def read(call_dir, name):
@@ -286,12 +343,33 @@ def main():
     else:
         call = hits[0] if hits else None
     entry.update(call=call, ok=call is not None)
-    log(entry)
     if call is None:
+        log(entry)
         print("fake-bko-holt: no call in %s matches %r" % (scen, argv), file=sys.stderr)
         return 98
-    watch(watched, os.getpid())
     d = os.path.join(scen, call)
+    data = read(d, "out")
+    if data is not None:
+        target = argv[1] if len(argv) > 1 else ""
+        bad = check_out(target)
+        if bad:
+            entry.update(ok=False, checks=checks + bad)
+            log(entry)
+            for c in bad:
+                print("fake-bko-holt: CHECK FAILED: %s" % c, file=sys.stderr)
+            return 97
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
+        keys.append({"path": target, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(), "out": True})
+        watched.append(target)
+    if STDIN:
+        entry["stdin_sha256"] = hashlib.sha256(STDIN[0]).hexdigest()
+    entry.update(keys=keys)
+    log(entry)
+    watch(watched, os.getpid())
     out = read(d, "stdout")
     if out:
         sys.stdout.buffer.write(out)

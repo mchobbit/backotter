@@ -55,3 +55,33 @@ can be seen: `demo-slow`'s progress (a dry run runs no archiver) and
 internal error).  RT12's tests get the `--commit` runs recorded in a guest
 (`rec-*`, staged), and a real refusal by the checks (each `rec-*`'s
 `refuse-decoy`).
+
+## The stick scenarios (RT11)
+
+`stick-*` are recorded by `../record-stick.py` from a real bko-holt
+(RT10k, RT10p): `--version --json`, then `stick --json` on a Linux tree
+booted from a stick whose config partition `stick/marker.py` made (256
+MiB FAT16, partition 3, as the Linux image's) with machines put on by
+mtools; each `recorded.txt` says from what and when.  `stick-three` and
+`stick-this-computer` also hold `recovery-words * --json` calls, answered
+by the words on standard input (the call's `stdin`: BIP39's test vector,
+as bko-rescue sends it, each word completed) and, for the good words,
+writing the password to OUT (its `out`); the fake watches that OUT is
+removed as it watches key files.
+
+| Scenario | What the Machine screen sees |
+|---|---|
+| `stick-three` | lovelace (Debian 13, a password hint), babbage (Fedora 45, rest:), hopper (FreeBSD 15.0); none from this computer |
+| `stick-this-computer` | the same, lovelace backed up from this computer |
+| `stick-one` | lovelace alone, on a new computer |
+| `stick-failing` | lovelace ok; babbage `checksum_bad`, hopper `schema_unknown`, turing `checksum_missing` |
+| `stick-empty` | the config partition, no machines yet |
+| `stick-missing` | no partition 3 (a file-copying writer): `missing`, exit 1 |
+| `stick-reformatted` | another FAT serial: `damaged`, exit 1 |
+| `stick-invalid` | hand-written, wrong on purpose (`invalid`): a missing config with machines, a recovery verdict `ok` with a problem |
+
+The recovery calls (`stick-three`, `stick-this-computer`): `good` (exit 0,
+OUT written), `unknown` (word 9 `ribbx`, suggest ribbon), `checksum` (two
+words swapped), `count` (11 words), `short` (word 11 `tha`: thank,
+that).  illumos' `two_sticks` can't be recorded through a Linux tree: its
+document is the unit test's golden, `holt/tests/fixtures/stick-json/two-sticks.json`.

@@ -1,0 +1,3 @@
+Recorded by testvm/rescue/record-stick.py from bko-holt 0.2.6 at 2026-11-25T14:54:58Z: lovelace ok; babbage's checksum wrong, hopper's schema 2, turing without its .sha256: listed, not choosable.
+The config partition made by stick/marker.py (image 57032d26-ccd9-4cea-8ad3-43942523f56f, serial 978A-8643, 256 MiB, partition 3),
+machines put on it by mtools, read by `bko-holt stick --json --sysroot TREE` (argv kept as bko-rescue's).

@@ -129,6 +129,7 @@ class Skipped(unittest.TestCase):
         with mock.patch.object(B, "RUN_HOSTS", RUN_HOSTS), mock.patch.object(B, "held", fake_held(have)), \
                 mock.patch.dict(B.LISTED, clear=True), mock.patch.dict(B.CEILINGS, clear=True), \
                 mock.patch.dict(B.SCRATCH, clear=True), mock.patch.dict(B.COUNTS, {"sweep": AR.T0}), \
+                mock.patch.object(B, "rooms_of", lambda so: {h: {"free": 500 << 30, "sources": {}} for h in so}), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             B.all_plan()
         t = out.getvalue()
@@ -138,6 +139,8 @@ class Skipped(unittest.TestCase):
         self.assertRegex(t, r"(?m)^alpine324-uefi +chopin +1000 +200 +10 ")
         self.assertRegex(t, r"(?m)^debian13 +\S+ +1000 +20 +0 ")
         self.assertIn("then the corpus: ", t)
+        self.assertIn("/bkoscratch (bs2lib/space.py", t)
+        self.assertRegex(t, r"(?m)^  chopin: peak \+\d+ GiB \(once prepared .*: (OK|REFUSED)")
         self.assertIn("then the leftovers set: 9 steps on one disk on chopin", t)
         self.assertRegex(t, r"in all: ~[\d.]+ h est\.")
         self.assertRegex(t, r"(?m)^verdict: PARTIAL PASS at best \(\d+ sources SKIPPED")
@@ -486,16 +489,19 @@ class Manifest(unittest.TestCase):
                                                                         {"debian13": "chopin"}, parts, {})), \
                 mock.patch.object(B, "preflight", lambda hs: ev.append(("preflight", tuple(hs)))), \
                 mock.patch.object(B, "sync", lambda hs: ev.append(("sync", tuple(hs)))), \
+                mock.patch.object(B, "space_check", lambda sources, n, can, lead, parts, plan=False:
+                                  ev.append(("space", tuple(parts), plan))), \
                 mock.patch.object(B, "write_manifest", lambda m, hs, run: ev.append(("manifest", tuple(hs), tuple(m["hosts"])))), \
                 mock.patch.object(B, "start_hosts", lambda *a: ev.append(("start",)) or {}), \
                 contextlib.redirect_stdout(io.StringIO()):
             B.run_words(["debian13"], {"debian13": 20}, "bs2all-x", have={}, manifest={"run": "bs2all-x"})
-        self.assertEqual(ev, [("preflight", ("chopin", "cage")), ("sync", ("chopin", "cage")),
+        self.assertEqual(ev, [("preflight", ("chopin", "cage")), ("sync", ("chopin", "cage")), ("space", ("chopin", "cage"), False),
                               ("manifest", ("chopin", "cage"), ("chopin", "cage")), ("start",)])
         ev.clear()
         with mock.patch.object(B, "placement", lambda s, n, have=None: ({"debian13": ["chopin"]}, {"debian13": "chopin"},
                                                                         {"chopin": [("debian13", 1, 0)]}, {})), \
                 mock.patch.object(B, "preflight", lambda hs: None), mock.patch.object(B, "sync", lambda hs: None), \
+                mock.patch.object(B, "space_check", lambda *a, **k: {}), \
                 mock.patch.object(B, "write_manifest", mock.Mock(side_effect=SystemExit("bs2: not written"))), \
                 mock.patch.object(B, "start_hosts", lambda *a: ev.append("start") or {}):
             with self.assertRaises(SystemExit):

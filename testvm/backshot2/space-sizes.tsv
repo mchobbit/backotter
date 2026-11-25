@@ -1,0 +1,43 @@
+# BackShot2's bytes on a host's /bkoscratch a source (bs2lib/space.py), measured on the hosts 2026-11-25.
+# tools_mib: a TOOLS_VERSION 2 copy (bs2-host copy_tools, v2 HOST), else a version-1 copy less version 2's
+# exclusions (v1-less, the largest of the hosts'); "-": its tier 0 has no dry runs (no tools).  prep_mib: its
+# current preparation (bs2-host room's prep_bytes, the largest of the hosts').  A source with no row, or an empty
+# column: space.py's estimate from its corpus dump.
+source	tools_mib	prep_mib	measured
+alpine324	39	197	tools v1-less choubox; prep choubox
+alpine324-uefi	41	188	tools v1-less czerny; prep cinqcent
+alpine324-lvm	45	200	tools v1-less czerny; prep cinqcent
+alpine324-luks	51	193	tools v2 chopin; prep cinqcent
+guix15	2294	1305	tools v2 chopin; prep copland
+guix15-bios	5559	1318	tools v1-less czerny; prep copland
+aerynos	1137	635	tools v2 chopin; prep copland
+anduinos2	2560	3080	tools v2 chopin; prep cinqcent
+arch	410	863	tools v2 chopin; prep copland
+artix-dinit	410	429	tools v1-less choubox; prep czerny
+artix-s6	413	426	tools v1-less choubox; prep choubox
+biglinux	6543	4866	tools v2 chopin; prep cinqcent
+cachyos	492	904	tools v2 chopin; prep cinqcent
+chimera	471	1816	tools v2 chopin; prep cinqcent
+chimera-uefi	470	1900	tools v1-less czerny; prep chopin
+debian12	328	511	tools v2 chopin; prep cinqcent
+debian13	300	520	tools v1-less choubox; prep czerny
+devuan6	287	504	tools v1-less czerny; prep copland
+elementary8	1659	3414	tools v2 chopin; prep chopin
+elementary8-luks	1664	3420	tools v1-less cinqcent; prep cinqcent
+fedora44	635	1767	tools v2 cage; prep czerny
+fedora44-uefi	645	1785	tools v2 chopin; prep cinqcent
+gentoo	1567	942	tools v2 copland; prep czerny
+gentoo-systemd	1597	968	tools v2 cage; prep copland
+kali	389	945	tools v2 copland; prep copland
+kinoite44	3656	4561	tools v2 chopin; prep chopin
+leap16	932	1988	tools v2 cage; prep czerny
+microos	451	897	tools v2 copland; prep cage
+mint22	3246	3311	tools v2 chopin; prep cinqcent
+nixos2605	-	683	no dry runs; prep copland
+rocky10	625	938	tools v2 chopin; prep cage
+rocky10-lvm	614	869	tools v2 copland; prep copland
+tumbleweed	635	884	tools v2 copland; prep copland
+ubuntu24-luks	1065	1808	tools v2 copland; prep copland
+uc24	2662	1109	tools v1-less choubox; prep choubox
+vanilla3	2836	3623	tools v2 chopin; prep chopin
+zorin18	2560	3375	tools v2 chopin; prep cinqcent

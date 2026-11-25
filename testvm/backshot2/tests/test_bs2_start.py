@@ -166,8 +166,10 @@ class Start(unittest.TestCase):
         self.events = []          # ("draw-end" | "start", host), in order
         self.lock = threading.Lock()
 
-    def prepare_one(self, h, ss, run):
+    def prepare_one(self, h, ss, run, tools=()):
         self.assertEqual(ss, [s for s in B.ALPINE if s in HELD[h]])
+        # (Tools for the sources it leads alone: their draws and sweeps run there.)
+        self.assertEqual(set(tools), {s for s in ss if self.lead[s] == h})
         if h in self.fail_prep:
             return {}, "preparing its sources: exit 1: no room"
         return {s: self.gens[h][s] for s in ss}, None
@@ -262,6 +264,7 @@ class RunWords(unittest.TestCase):
         with mock.patch.object(B, "held", lambda sources, hosts=None: {h: set(HELD[h]) & set(sources) for h in SLOTS}), \
                 mock.patch.object(B, "RUN_HOSTS", hosts), mock.patch.object(B, "preflight", lambda hs: None), \
                 mock.patch.object(B, "sync", lambda hs=None: None), \
+                mock.patch.object(B, "space_check", lambda *a, **k: {}), \
                 mock.patch.object(B, "start_hosts", lambda *a: {"copland": "its alpine324-luks is at g0"}), \
                 contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(SystemExit) as e:

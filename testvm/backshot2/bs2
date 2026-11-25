@@ -97,7 +97,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 if HERE not in sys.path:   # bs2lib, for a bs2 loaded as a module (Test2's tests), last: it shadows nothing
     sys.path.append(HERE)
 REPO = os.path.dirname(os.path.dirname(HERE))
-from bs2lib import allrun as AR, case as C, room as RM, sources as SRC  # noqa: E402
+from bs2lib import allrun as AR, case as C, room as RM, sources as SRC, space as SP  # noqa: E402
 # BackShot2's sources (bs2lib/sources.py, A2): BackShot2Alpine's four, Guix System's
 # (bs2lib/families/guix.py), then every other built one of the corpus (one disk, Linux, no
 # ZFS or md: OTHER_SOURCES, sorted; sources.classify() says why the rest are skipped and
@@ -551,6 +551,97 @@ def wear_words(sources, parts):
             f"the rest in RAM: ~0 GB written to the SSDs (records only, ~5 MB a case)")
 
 
+# ---- /bkoscratch: what a run puts there, host by host (bs2lib/space.py) -------------------
+
+def rooms_of(sources_of):
+    """{host: bs2-host room's facts (free bytes, each source's preparation and tools there),
+    or None when it didn't answer} for SOURCES_OF ({host: [source...]}), at once, as root
+    (it reads root's files: sudo -n, no reservation), with BS2_HOLT passed on (whether a
+    preparation is current depends on the bko-holt under test)."""
+    cmds = {h: f"cd ~/backotter-work && sudo -n -E env PATH=\"{ROOT_SBIN}:$PATH\" {reuse_env()}{HOST_BS2} room "
+               f"{' '.join(ss)}" for h, ss in sources_of.items()}
+    out = {}
+    for h, (rc, so, se) in par(cmds).items():
+        try:
+            out[h] = json.loads(so.strip().splitlines()[-1]) if rc == 0 else None
+        except (ValueError, IndexError):
+            out[h] = None
+    return out
+
+
+def ssd_peak(h, js):
+    """The bytes H's SSD lane holds at once: its largest SSD case's (room.py need()'s D:
+    one at a time, bs2-host ssd_token()), 0 with none there."""
+    return max((RM.need(s)[0] * SP.GiB for s in {x[0] for x in js} if scratch_on(h, s) == RM.SSD), default=0)
+
+
+def space_of(sources, can, lead, parts, rooms, margin=None):
+    """{host: (Need, its free bytes or None, why it doesn't fit or None)} for the hosts of
+    PARTS: each prepares every source of SOURCES it holds (CAN), copies the tools of the
+    ones it leads whose tier 0 has dry runs (tools_of()) and drops the rest, then runs its
+    cases (its SSD lane, records): bs2lib/space.py need(), from ROOMS (rooms_of())."""
+    margin = SP.MARGIN_GIB if margin is None else margin
+    out = {}
+    for h in parts:
+        mine = [s for s in sources if h in can.get(s, ())]
+        led = [s for s in mine if lead.get(s) == h]
+        r = rooms.get(h)
+        n = SP.need(mine, tools_of(led), (r or {}).get("sources") or {}, ssd_peak(h, parts[h]), len(parts[h]))
+        free = r.get("free") if r else None
+        out[h] = (n, free, SP.check(n, free, margin))
+    return out
+
+
+def margin_gib():
+    """BS2_SPACE_MARGIN_GIB, else space.py's MARGIN_GIB (30)."""
+    try:
+        return float(os.environ.get("BS2_SPACE_MARGIN_GIB", SP.MARGIN_GIB))
+    except ValueError:
+        sys.exit("bs2: BS2_SPACE_MARGIN_GIB: a number of GiB")
+
+
+def space_words(space, sources):
+    """The plan's lines for SPACE (space_of()), a host each."""
+    lines = [f"/bkoscratch (bs2lib/space.py: preparations and tools per space-sizes.tsv, measured, else the "
+             f"corpus dump's used bytes x the 90th percentile of the measured ratios; tools on a source's lead only; margin "
+             f"{margin_gib():g} GiB):"]
+    for h, (n, free, why) in space.items():
+        f = f"{free / SP.GiB:.0f} GiB free" if free is not None else "free unknown (bs2-host room didn't answer)"
+        if free is None:
+            why_w = "not checked (its tree may predate bs2-host room: a run syncs it, then checks, and refuses this)"
+        else:
+            why_w = "OK" if not why else "REFUSED: " + why
+        top = "; ".join(n.lines[:4]) + (f"; +{len(n.lines) - 4} more" if len(n.lines) > 4 else "")
+        est = f"; est. for {len(n.est)} not in space-sizes.tsv" if n.est else ""
+        lines.append(f"  {h}: peak +{n.peak / SP.GiB:.0f} GiB (once prepared {n.end / SP.GiB:+.0f}, SSD lane "
+                     f"{n.ssd / SP.GiB:.0f}, records {n.records / SP.GiB:.1f}), {f}: {why_w}"
+                     f"{' (' + top + est + ')' if top else ''}")
+    return lines
+
+
+def space_check(sources, n, can, lead, parts, plan=False):
+    """The space preflight: SPACE's lines printed; when not PLAN, sys.exit naming each host
+    that lacks room (its need and free), before anything is written or started there."""
+    rooms = rooms_of({h: [s for s in sources if h in can.get(s, ())] for h in parts})
+    space = space_of(sources, can, lead, parts, rooms, margin_gib())
+    for line in space_words(space, sources):
+        print(line)
+    bad = {h: why for h, (_, _, why) in space.items() if why}
+    if bad and not plan:
+        sys.exit("bs2: not started: /bkoscratch lacks room (bs2lib/space.py; BS2_SPACE_MARGIN_GIB sets the margin):\n  " +
+                 "\n  ".join(f"{h}: {w}" for h, w in bad.items()))
+    return space
+
+
+def space_plan(sources, n, have):
+    """The plan's space lines (space_check(), PLAN: never an exit) for a run of SOURCES,
+    N cases a source, on the hosts HAVE (held()'s) says hold them, placed as the run would."""
+    can, lead, parts, _ = placement(sources, n, have)
+    use = [h for h, js in parts.items() if js or h in lead.values()]
+    can = {s: [h for h in hs if h in use] for s, hs in can.items()}
+    return space_check(sources, n, can, lead, {h: parts.get(h, []) for h in use}, plan=True)
+
+
 def preflight(hosts):
     """Each host has what a case needs, and the same bin/ as the others: else sys.exit, naming what."""
     need = ["~/backotter-work/cmp-run.sh", "~/backotter-work/bko-bin/linux/rustic-bko",
@@ -601,15 +692,18 @@ def light(host, cmd, tag):
             f" {shlex.quote('light ' + cmd)} -- {cmd}")
 
 
-def prep_cmd(h, ss, run):
+def prep_cmd(h, ss, run, tools=()):
     """The one command that has H make the run's directories and prepare SS, the sources
     it holds (bs2-host source: once per generation, and again when the bko-holt or the
     harness that made the preparation changed: what its cases reuse), printing a "gen
-    SOURCE GEN" line each.  A preparation may boot the source: under a reservation."""
+    SOURCE GEN" line each.  A preparation may boot the source: under a reservation.  TOOLS:
+    the sources whose tier 0 H runs (it leads them: tools_of()), whose tools it copies
+    (--tools); every other's it removes (--drop-tools: no tier 0 of it runs there)."""
     # (The RAM disk's dir as m: made first by a root job after a reboot, it was
     # root's, and tier 0, which runs as m, couldn't write there.)
     c = [f"mkdir -p {ROOT}/logs {ROOT}/runs /mnt/bko-ram/backshot2"]
-    c += [root(f"{HOST_BS2} source {s} --port 2949", prep_room(s), f"bs2:{run}:source-{s}") for s in ss]
+    c += [root(f"{HOST_BS2} source {s} --port 2949 {'--tools' if s in tools else '--drop-tools'}", prep_room(s),
+               f"bs2:{run}:source-{s}") for s in ss]
     c += [f'echo "gen {s} $(cat {ROOT}/sources/{s}/gen)"' for s in ss]
     return " && ".join(c)
 
@@ -622,9 +716,25 @@ def prep_room(source):
     return f"2 {max(3, RM.of(source)[1])}"
 
 
-def prepare_one(h, ss, run):
-    """H prepares SS (prep_cmd): ({source: generation}, None), or (what it printed, the error)."""
-    rc, out, err = par({h: prep_cmd(h, ss, run)})[h]
+def wants_tools(source):
+    """Whether SOURCE's tier 0 has dry runs, so its lead needs its tools: its family's tier0
+    is "chroot" (bs2-host tools_wanted(), from its corpus dump here; NixOS's is "plan").
+    Alpine's three variants have no dump: alpine324's family.  No dump at all: yes."""
+    from bs2lib import families
+    d = SRC.dump(source) or (SRC.dump("alpine324") if source in ALPINE_SOURCES else None)
+    return d is None or families.hooks(None, d).tier0 == "chroot"
+
+
+def tools_of(led):
+    """The sources of LED (a host's: the ones it leads, whose draws and tier 0 sweep it
+    runs) whose tools it copies: those whose tier 0 has dry runs (wants_tools())."""
+    return {s for s in led if wants_tools(s)}
+
+
+def prepare_one(h, ss, run, tools=()):
+    """H prepares SS (prep_cmd, TOOLS' tools copied): ({source: generation}, None), or (what
+    it printed, the error)."""
+    rc, out, err = par({h: prep_cmd(h, ss, run, tools)})[h]
     gens = {}
     for line in out.splitlines():
         if line.startswith("gen "):
@@ -740,7 +850,7 @@ def start_hosts(sources, n, run, can, lead, parts):
 
     def one(h):
         try:
-            g, err = prepare_one(h, mine[h], run)
+            g, err = prepare_one(h, mine[h], run, tools_of(led.get(h, [])))
             gens[h] = g
             if err:
                 why[h] = err
@@ -820,9 +930,10 @@ def run_words(sources, n, run, have=None, manifest=None):
     use = [h for h, js in parts.items() if js or h in lead.values()]
     preflight(use)
     sync(use)
+    can = {s: [h for h in hs if h in use] for s, hs in can.items()}
+    space_check(sources, n, can, lead, {h: parts.get(h, []) for h in use})
     if manifest is not None:
         write_manifest(dict(manifest, hosts=use), use, run)
-    can = {s: [h for h in hs if h in use] for s, hs in can.items()}
     print(f"preparing, drawing and starting each host as its cases are drawn: "
           f"{'; '.join(f'{h} {len(parts.get(h, []))} cases' for h in use)}")
     why = start_hosts(sources, n, run, can, lead, {h: parts.get(h, []) for h in use})
@@ -1044,6 +1155,7 @@ def all_plan():
           f"source, tier 1 {AR.T1_ALPINE} an Alpine source and {AR.T1} the rest, tier 2 {TIER2} Alpine's in all and "
           f"{TIER2_EACH} a UEFI source")
     longest = plan_words(run, n, have)
+    space_plan(run, n, have)
     cs, out, lo_host, steps = all_later(have)
     c_s = sum(secs(src, 1) for _, _, src in cs)
     lo_s = steps * AR.LEFTOVERS_STEP_S if lo_host else 0
@@ -1225,7 +1337,10 @@ def main():
             sys.exit("bs2: not a BackShot2 source now:\n  " + "\n  ".join(SRC.classify(s).phrase() for s in bad) +
                      f"\n(its {len(SOURCES)} sources: {', '.join(SOURCES)})")
         if plan:
-            return plan_words(sources, n)
+            have = held(sources)
+            longest = plan_words(sources, n, have)
+            space_plan(sources, n, have)
+            return longest
         run_words(sources, n, time.strftime("bs2a-%Y%m%d-%H%M"))
         print("then: bs2 BackShot2 corpus (once the queues finish; bs2 status RUN shows them)")
     elif w == "BackShot2All":

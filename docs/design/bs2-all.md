@@ -509,6 +509,7 @@ the table: there is no list to edit.
 
 ## Open
 
+- A resumed `t2 batch` bs2 entry (`testvm/test2/t2lib/batchkinds.py`) restarts host queues with `BS2_WORD` (e754e95) but without `BS2_HOLT` or the reuse variables (`BS2_REUSE_*`, `BS2_REPO_BIND`), which the first start passes (found 2026-11-25, not fixed).
 - Found by the first run (2026-11-25), each in its own session: anduinos2's
   snapshot-id finding (testvm/backshot2/README.md, not fixed); re-measuring
   the Slackware rows of `slim-sizes.tsv` (measured on FAIL cases); the bko-cache

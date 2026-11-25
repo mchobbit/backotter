@@ -177,10 +177,20 @@ fn scratch() -> PathBuf {
 
 const LINUX: Where = Where { os: Os::Linux, ssh: false, serial: false };
 
+/// A test's directory, removed when the test ends (after the app's
+/// session, declared before it, is wiped).
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 struct T {
     app: App,
     seen: Rc<RefCell<Seen>>,
-    base: PathBuf,
+    base: Scratch,
 }
 
 fn t_with(holt: &str, rustic: &str, wh: Where, dry_run: bool, f: impl FnOnce(&mut Fake)) -> T {
@@ -198,7 +208,7 @@ fn t_with(holt: &str, rustic: &str, wh: Where, dry_run: bool, f: impl FnOnce(&mu
     f(&mut fake);
     let session = Session::new(&base).unwrap();
     let app = App::new(Box::new(fake), session, Opts { holt: None, rustic: "rustic-bko".into(), dry_run }, wh);
-    T { app, seen, base }
+    T { app, seen, base: Scratch(base) }
 }
 
 fn tt(holt: &str, rustic: &str) -> T {
@@ -343,7 +353,6 @@ fn machine_password_snapshot_and_on() {
     ui.golden("Next: the disks", 0, "next");
     drop(t.app);
     assert!(!dir.exists(), "the session's files are wiped and its directory gone");
-    let _ = fs::remove_dir_all(&t.base);
 }
 
 #[test]
@@ -501,7 +510,7 @@ fn rustics_failures_each_have_their_help() {
             }
             fn sleep_ms(&mut self, _: u64) {}
         }
-        let base = t.base.clone();
+        let base = t.base.0.clone();
         let fake = Fake { base: base.clone(), holt: "stick-three".into(), version: None, stick: None, rustic: "lovelace".into(), seen: t.seen.clone(), tools: vec!["bko-holt", "rustic-bko"] };
         t.app = App::new(Box::new(Failing(fake, stderr)), Session::new(&base).unwrap(), Opts { holt: None, rustic: "rustic-bko".into(), dry_run: false }, LINUX);
         let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, B(B_RAW), Reply::Ok, Back, Reply::Quit]]));
@@ -526,7 +535,7 @@ fn a_report_and_its_unredacted_twin() {
     assert_eq!(t.app.run(&mut ui), Exit::Quit);
     ui.done();
     let r = ran(&t);
-    let reports = t.base.join("reports");
+    let reports = t.base.0.join("reports");
     let first = reports.join("bko-report-20261123-142630.txt");
     let second = reports.join("bko-report-20261123-142630-UNREDACTED.txt");
     let strip = t.app.session.path("strip");

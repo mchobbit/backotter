@@ -183,21 +183,35 @@ fn walk(dir: &File, rel: &mut Vec<u8>, ops: &mut impl Flags, w: &mut Walked) {
 /// for an architecture with the generic ioctl numbers.
 pub struct Kernel;
 
+/// An 'f' ioctl's number in asm-generic's encoding (direction in bits
+/// 30-31: read 2, write 1; the argument's size in 16-29).
+#[cfg(any(test, all(target_os = "linux", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "arm", target_arch = "riscv64", target_arch = "loongarch64"))))]
+const fn ioc_f(dir: u32, nr: u32, size: usize) -> u32 {
+    (dir << 30) | ((size as u32) << 16) | ((b'f' as u32) << 8) | nr
+}
+
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "arm", target_arch = "riscv64", target_arch = "loongarch64")))]
 mod sys {
-    use std::os::raw::{c_int, c_long, c_ulong};
+    use std::os::raw::{c_int, c_long};
 
-    /// _IOR('f', 1, long) and _IOW('f', 2, long), asm-generic's encoding
-    /// (direction in bits 30-31: read 2, write 1; the size in 16-29).
-    const SIZE: c_ulong = std::mem::size_of::<c_long>() as c_ulong;
-    pub const GETFLAGS: c_ulong = (2 << 30) | (SIZE << 16) | ((b'f' as c_ulong) << 8) | 1;
-    pub const SETFLAGS: c_ulong = (1 << 30) | (SIZE << 16) | ((b'f' as c_ulong) << 8) | 2;
+    /// ioctl's request as the libc declares it: an int in musl's, an
+    /// unsigned long in glibc's.
+    #[cfg(target_env = "musl")]
+    pub type IoctlReq = c_int;
+    #[cfg(not(target_env = "musl"))]
+    pub type IoctlReq = std::os::raw::c_ulong;
 
-    // SAFETY: ioctl(2) is variadic and returns int in every Linux libc; its
-    // request is an unsigned long in glibc's and an int in musl's, passed
-    // in a register either way, and both numbers here fit in 32 bits.
+    /// _IOR('f', 1, long) and _IOW('f', 2, long); on musl the same 32 bits
+    /// as an int (GETFLAGS negative), which the ABI sign-extends as an int.
+    const SIZE: usize = std::mem::size_of::<c_long>();
+    pub const GETFLAGS: IoctlReq = super::ioc_f(2, 1, SIZE) as IoctlReq;
+    pub const SETFLAGS: IoctlReq = super::ioc_f(1, 2, SIZE) as IoctlReq;
+
+    // SAFETY: ioctl(2) is variadic and returns int in every Linux libc, and
+    // this prototype is each libc's exactly: the request an int on musl and
+    // an unsigned long on glibc (IoctlReq).
     unsafe extern "C" {
-        pub fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
+        pub fn ioctl(fd: c_int, request: IoctlReq, ...) -> c_int;
     }
 }
 
@@ -396,6 +410,18 @@ mod tests {
         assert_eq!(show(b"n\nl/\xff\\"), "n\\x0al/\\xff\\x5c");
         assert_eq!(letters(IMMUTABLE | APPEND | 0x80), "i a");
         assert_eq!(letters(0), "");
+    }
+
+    /// FS_IOC_GETFLAGS and FS_IOC_SETFLAGS as linux/fs.h gives them, for a
+    /// long of 8 bytes and of 4.
+    #[test]
+    fn ioctl_numbers_are_linux_fs_h() {
+        assert_eq!(ioc_f(2, 1, 8), 0x8008_6601);
+        assert_eq!(ioc_f(1, 2, 8), 0x4008_6602);
+        assert_eq!(ioc_f(2, 1, 4), 0x8004_6601);
+        assert_eq!(ioc_f(1, 2, 4), 0x4004_6602);
+        #[cfg(all(target_os = "linux", target_env = "musl", any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64", target_arch = "loongarch64")))]
+        assert_eq!((sys::GETFLAGS, sys::SETFLAGS), (0x8008_6601_u32 as i32, 0x4008_6602));
     }
 
     /// The kernel's own flags, as root on a file system that keeps them

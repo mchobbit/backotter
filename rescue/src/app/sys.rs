@@ -558,6 +558,7 @@ mod tests {
         // A base others can read is refused.
         fs::set_permissions(&base, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(Session::new(&base).is_err());
+        fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
         let _ = fs::remove_dir_all(&base);
     }
 

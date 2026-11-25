@@ -603,7 +603,7 @@ snapshots):
 | zorin18, biglinux | 10 (8.4), 12 (10.4) | 8 (6.2), 8 (6.9) | copland |
 | mint22, mx25, neon24 | 11 (9.6, 9.7, 9.7) | 9 (7.4, 7.3, 7.4); mx25's and neon24's the same cases | cage |
 | endeavouros, -grub, solus49 | 12, 12, 13 (9.8, 10.0, 10.7) | 9 (7.2, 7.4, 7.9); solus49's the same case | czerny |
-| slackware15, -uefi | 10 (8.0, 8.5) | 8 (6.3, 6.7), FAIL fsmeta (load's, known) | cinqcent (the small hosts' cache has an older image) |
+| slackware15, -uefi | 10 (8.0, 8.5) | 8 (6.3, 6.6), PASS (98b0759) | cinqcent (the small hosts' cache has an older image) |
 | pop24 | 14 (11.8) | 11 (9.1); the same case copying it: 11.9, the same 16 checks | chopin |
 
 Every PASS passed the checks the copy path's did.  Such a case of the eleven

@@ -513,7 +513,7 @@ the table: there is no list to edit.
 - Found by the first run (2026-11-25), each in its own session: anduinos2's
   snapshot-id finding (fixed in 798d7a3, proved 2026-11-25:
   testvm/backshot2/README.md); re-measuring
-  the Slackware rows of `slim-sizes.tsv` (measured on FAIL cases); the bko-cache
+  the bko-cache
   cap.  Resolved: zorin18's used space only seemed to grow when slimmed
   (7998 -> 8102 MiB): its root is nilfs2, whose df counts unreclaimed
   checkpoints; the slim step measures nilfs2 by du now (cec55d0), re-measured

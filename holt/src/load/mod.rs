@@ -673,10 +673,6 @@ mod tests {
         }
     }
 
-    /// RT10i: under --json, plan and status runs leave last-load.json to
-    /// the writing run before them; text mode records every run but
-    /// --help, as ever.
-
     /// slackware15's dump (holt/tests/corpus) with a password= in its
     /// lilo.conf's global items and another in its image's: neither is in
     /// what load prints, its plan, a dry run of the boot stage (which
@@ -718,6 +714,10 @@ mod tests {
         let (_, out, err) = run_of(&["--json"]);
         shown("the plan document", &out, &err);
     }
+
+    /// RT10i: under --json, plan and status runs leave last-load.json to
+    /// the writing run before them; text mode records every run but
+    /// --help, as ever.
     #[test]
     fn which_runs_record_themselves() {
         let rec = |a: &[&str]| records_itself(&args(a));

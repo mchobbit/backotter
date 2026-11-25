@@ -601,11 +601,13 @@ fn geninitrd_json(sys: &Sys, why: &mut Vec<String>) -> Option<Value> {
 
 /// The source's mkinitrd command line (/boot/initrd-tree/command_line, its
 /// `$0 $*`: the words as given, their quoting gone) made again for
-/// `kernels`: `mkinitrd`, then its options without any -k, then `-k
-/// K1:K2` (mkinitrd's own default, `uname -r`, would be the rescue
-/// system's kernel); an -o is given as `output`, absolute (a relative one
-/// would be against the chroot's cwd, /).  None when it isn't mkinitrd's
-/// or there's no kernel.
+/// `kernels`: `mkinitrd`, then its options in the source's order, its -k
+/// given as `-k K1:K2` where it was (a later -k dropped), and at the end
+/// when it had none (mkinitrd's own default, `uname -r`, would be the
+/// rescue system's kernel); an -o is given as `output`, absolute (a
+/// relative one would be against the chroot's cwd, /).  mkinitrd writes
+/// the words it ran with to command_line again, so only these two change.
+/// None when it isn't mkinitrd's or there's no kernel.
 pub fn mkinitrd_replay(command_line: &str, kernels: &[String], output: &str) -> Option<Vec<String>> {
     let mut w = command_line.split_whitespace();
     let prog = w.next()?;
@@ -614,9 +616,14 @@ pub fn mkinitrd_replay(command_line: &str, kernels: &[String], output: &str) -> 
     }
     let rest: Vec<&str> = w.collect();
     let mut out = vec!["mkinitrd".to_string()];
+    let mut k = false;
     let mut i = 0;
     while i < rest.len() {
         if rest[i] == "-k" {
+            if !k {
+                out.extend(["-k".to_string(), kernels.join(":")]);
+                k = true;
+            }
             i += 2;
             continue;
         }
@@ -628,7 +635,9 @@ pub fn mkinitrd_replay(command_line: &str, kernels: &[String], output: &str) -> 
         out.push(rest[i].to_string());
         i += 1;
     }
-    out.extend(["-k".to_string(), kernels.join(":")]);
+    if !k {
+        out.extend(["-k".to_string(), kernels.join(":")]);
+    }
     Some(out)
 }
 
@@ -717,8 +726,13 @@ mod tests {
         let k = vec!["5.15.161".to_string()];
         assert_eq!(
             mkinitrd_replay("/sbin/mkinitrd -c -k 5.15.19 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz", &k, "/boot/initrd.gz").unwrap(),
-            ["mkinitrd", "-c", "-f", "xfs", "-r", "/dev/vda3", "-m", "xfs", "-u", "-o", "/boot/initrd.gz", "-k", "5.15.161"]
+            ["mkinitrd", "-c", "-k", "5.15.161", "-f", "xfs", "-r", "/dev/vda3", "-m", "xfs", "-u", "-o", "/boot/initrd.gz"]
         );
+        // The source's order, word for word, when the kernel is the same
+        // (slackware15-uefi's command_line); a second -k dropped.
+        let line = "/sbin/mkinitrd -c -k 5.15.19 -f xfs -r /dev/vda3 -m virtio_blk:xfs -u -o /boot/initrd.gz";
+        assert_eq!(mkinitrd_replay(line, &["5.15.19".into()], "/boot/initrd.gz").unwrap().join(" "), line.replacen("/sbin/", "", 1));
+        assert_eq!(mkinitrd_replay("mkinitrd -k 1 -c -k 2", &k, "/boot/initrd.gz").unwrap(), ["mkinitrd", "-k", "5.15.161", "-c"]);
         assert_eq!(mkinitrd_replay("mkinitrd -F", &k, "/boot/initrd.gz").unwrap(), ["mkinitrd", "-F", "-k", "5.15.161"]);
         assert_eq!(mkinitrd_replay("mkinitrd -c", &["6.1".into(), "6.2".into()], "/boot/initrd.gz").unwrap(), ["mkinitrd", "-c", "-k", "6.1:6.2"]);
         assert!(mkinitrd_replay("dracut -f", &k, "/boot/initrd.gz").is_none());

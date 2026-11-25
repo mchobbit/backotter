@@ -157,7 +157,21 @@ yet. Code references are to local `main` at 1edb4b5.
   by `mkinitrd -F` when `/etc/mkinitrd.conf` exists. Then, on ELILO, it is
   copied to the ESP as eliloconfig copies it. If the command can't be found,
   the restored `initrd.gz` stays, with a note (Gentoo's "the restored one
-  stays").
+  stays"). Since 2026-11-25 the restored image also stays, byte for byte
+  with its tree and the ESP's copies, when nothing it was made from
+  changes: `command_line`'s `-k` is the kernels that came back with their
+  modules (its `-m` is replayed as it is anyway), its `-r` and `-h` name
+  the devices they name at boot (Decision 5), the root keeps its type (no
+  `--reformat`), and load keeps the LVM, RAID and filesystem UUIDs and
+  names (LUKS is refused). Remade, mkinitrd filled its tree's `/dev` from
+  the rescue's disks (vdb by the rescue's numbers) and its closing bare
+  `ldconfig` rewrote the system's `/etc/ld.so.cache` and
+  `/var/cache/ldconfig/aux-cache` (BackShot2 tier 1, slackware15-uefi).
+  When it is remade, the replay keeps the source's words in their order
+  (only `-k` and `-o` are given), those two files and their directories'
+  times are put back afterwards, and the tree's `/dev` is put back as the
+  source's tree had it and the image packed from the tree again, as
+  mkinitrd packs it (not with `-P`, a microcode image in front).
 - **LILO (BIOS), a new arm:** `chroot /mnt/bko-target lilo -v`, after the
   initrd step. It needs `/dev`, `/proc` and `/sys` in the chroot (the boot
   stage binds them already) and `boot=` naming the target disk. `lilo -t`
@@ -294,7 +308,18 @@ Settled on the guests, 2026-11-14 to 2026-11-18:
   load's copy also names `boot=`, `disk=` and that image's `root=` as the
   rescue names the target's disks when they differ (`/dev/sdq` for the
   source's `/dev/vda`), since lilo opens them in the rescue; the
-  `root=/dev/vda2` in append= stays the source's.
+  `root=/dev/vda2` in append= stays the source's.  Since 2026-11-25 the
+  copy's `root=` is the source's device number instead, as lilo.conf takes
+  one (`root="0xfe02"`: bsect.c's `dev_number` can't stat it and reads it
+  with `strtol(..., 0)`), so the map passes the kernel the source's
+  `root=fe02`, not the rescue's `root=fe12` for `/dev/vdb2`.  It is read
+  from the source's command line for the booted image's device, where LILO
+  put it (the installer ran lilo under the Arch live kernel, so it isn't
+  the huge kernel's 253), else the dump's devno.  lilo runs with
+  `-S /dev/null`: it keeps no `/boot/boot.NNNN` backup of the boot sector,
+  which it would name after boot='s number in the rescue (`boot.FE10`), a
+  file the source doesn't have (`force-backup=` is taken before `backup=`,
+  and `make_backup` writes nothing to a 1:3 device).
 - **The live system's mkfs is too new.** e2fsprogs 1.47's ext4 has
   orphan_file, which Slackware's e2fsck 1.46.5 refuses at boot; xfsprogs
   6's XFS has nrext64 and exchange, which 5.15 won't mount.  The installer

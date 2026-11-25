@@ -76,9 +76,9 @@ mount --rbind --make-rslave /dev /mnt/bko-target/dev
 mount --rbind --make-rslave /proc /mnt/bko-target/proc
 mount --rbind --make-rslave /sys /mnt/bko-target/sys
 mount --rbind --make-rslave /run /mnt/bko-target/run
-# LILO: /etc/lilo.conf copied with root= by name at the end of append= (Linux: root=/dev/vda2): lilo writes root=/dev/... as the major:minor the rescue kernel gives it, and virtio_blk's major is dynamic, so the restored kernel would look for another device, and with the target's disks by the names the rescue gives them (Linux's root=/dev/vda2 as /dev/sdq2, disk=/dev/vda as /dev/sdq, boot=/dev/vda as /dev/sdq): lilo opens those devices here, where the source's names may be other disks (the rescue's own), and the restored kernel still finds / by the source's; /etc/lilo.conf stays as restored
+# LILO: /etc/lilo.conf copied with root= by name at the end of append= (Linux: root=/dev/vda2): lilo writes root=/dev/... as the major:minor the rescue kernel gives it, and virtio_blk's major is dynamic, so the restored kernel would look for another device, and with the target's disks by the names the rescue gives them (disk=/dev/vda as /dev/sdq, boot=/dev/vda as /dev/sdq): lilo opens those devices here, where the source's names may be other disks (the rescue's own), and the restored kernel still finds / by the source's, and with root= as the device number the source's map has (Linux's root=/dev/vda2 as 0xfe02): lilo writes a root=/dev/... into the map as the number the rescue kernel gives that device, here the target's, and a number as it is; /etc/lilo.conf stays as restored
 cat > /mnt/bko-target/etc/lilo.conf.bko-holt <<'EOF'
-# bko-holt load: /etc/lilo.conf with root= by name added to append= (Linux: root=/dev/vda2) and with the devices lilo opens named as the rescue names the target's (Linux's root=/dev/vda2 as /dev/sdq2, disk=/dev/vda as /dev/sdq, boot=/dev/vda as /dev/sdq); lilo is run on this copy, then it is removed
+# bko-holt load: /etc/lilo.conf with root= by name added to append= (Linux: root=/dev/vda2) and with the devices lilo opens named as the rescue names the target's (disk=/dev/vda as /dev/sdq, boot=/dev/vda as /dev/sdq) and with root= as the device number the source's map has (Linux's root=/dev/vda2 as 0xfe02); lilo is run on this copy, then it is removed
 append=" console=tty0 console=ttyS0,115200n8"
 disk="/dev/sdq"
 bios="0x80"
@@ -95,15 +95,15 @@ change-rules
 reset
 vga="normal"
 image="/boot/vmlinuz"
-  root="/dev/sdq2"
+  root="0xfe02"
   label="Linux"
   read-only
   append=" console=tty0 console=ttyS0,115200n8 root=/dev/vda2"
 EOF
 # LILO: /etc/lilo.conf.bko-holt checked against the restored kernels; nothing is written (-t)
-chroot /mnt/bko-target lilo -C /etc/lilo.conf.bko-holt -t -v
-# LILO: the MBR and /boot/map (the restored kernels' sectors), as lilo writes them from /etc/lilo.conf.bko-holt
-chroot /mnt/bko-target lilo -C /etc/lilo.conf.bko-holt -v
+chroot /mnt/bko-target lilo -C /etc/lilo.conf.bko-holt -S /dev/null -t -v
+# LILO: the MBR and /boot/map (the restored kernels' sectors), as lilo writes them from /etc/lilo.conf.bko-holt; -S /dev/null: no backup of the boot sector it overwrites, which lilo would name /boot/boot.NNNN after boot='s device number in the rescue, a file the source never had (its own came back with /boot)
+chroot /mnt/bko-target lilo -C /etc/lilo.conf.bko-holt -S /dev/null -v
 # LILO: /etc/lilo.conf.bko-holt removed; the map is written
 rm -f /mnt/bko-target/etc/lilo.conf.bko-holt
 mkdir -p /mnt/bko-target/var/log/bko-holt

@@ -5121,16 +5121,19 @@ fn slackware15_guest() {
     assert!(f.contains("mke2fs ") && f.contains("mkswap "), "{f}");
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     // lilo runs on a copy of lilo.conf that gives the kernel root= by
-    // name (lilo writes /dev/vda2 as the rescue kernel's 254:2), then the
-    // copy goes; the restored lilo.conf isn't written.
+    // name (lilo writes /dev/vda2 as the rescue kernel's 254:2), and lilo
+    // root= as the source's number for it (the source's command line's
+    // root=fe02), then the copy goes; the restored lilo.conf isn't
+    // written.  -S /dev/null: no /boot/boot.NNNN backup.
     let c = bt.find("cat > /mnt/bko-target/etc/lilo.conf.bko-holt <<'EOF'\n").expect(&bt);
-    let t = bt.find("chroot /mnt/bko-target lilo -C /etc/lilo.conf.bko-holt -t -v\n").expect(&bt);
-    let w = bt.find("chroot /mnt/bko-target lilo -C /etc/lilo.conf.bko-holt -v\n").expect(&bt);
+    let t = bt.find("chroot /mnt/bko-target lilo -C /etc/lilo.conf.bko-holt -S /dev/null -t -v\n").expect(&bt);
+    let w = bt.find("chroot /mnt/bko-target lilo -C /etc/lilo.conf.bko-holt -S /dev/null -v\n").expect(&bt);
     let r = bt.find("rm -f /mnt/bko-target/etc/lilo.conf.bko-holt\n").expect(&bt);
     assert!(c < t && t < w && w < r, "{bt}");
     // The copy is 0600 when written: lilo.conf can hold password=.
     assert!(b.stage(Stage::Boot).iter().any(|c| c.write.as_deref() == Some("/mnt/bko-target/etc/lilo.conf.bko-holt") && c.private), "{bt}");
-    assert!(bt.contains("\nimage=\"/boot/vmlinuz\"\n  root=\"/dev/vda2\"\n  label=\"Linux\"\n  read-only\n  append=\" vt.default_utf8=0 root=/dev/vda2\"\nEOF\n"), "{bt}");
+    assert!(bt.contains("\nimage=\"/boot/vmlinuz\"\n  root=\"0xfe02\"\n  label=\"Linux\"\n  read-only\n  append=\" vt.default_utf8=0 root=/dev/vda2\"\nEOF\n"), "{bt}");
+    assert!(bt.contains("with root= as the device number the source's map has (Linux's root=/dev/vda2 as 0xfe02)"), "{bt}");
     assert!(bt.contains("\nappend=\" vt.default_utf8=0\"\nboot=\"/dev/vda\"\nmessage=\"/boot/boot_message.txt\"\nprompt\ntimeout=\"50\"\nchange-rules\nreset\nvga=\"normal\"\nimage="), "{bt}");
     assert!(!bt.contains("cat > /mnt/bko-target/etc/lilo.conf <<") && !bt.contains("lilo -t -v\n"), "{bt}");
     assert!(!bt.contains("grub-") && !bt.contains("mkinitrd") && !bt.contains("update-initramfs") && !bt.contains("dracut") && !bt.contains("efibootmgr"), "{bt}");
@@ -5145,9 +5148,20 @@ fn slackware15_guest() {
     assert!(b.notes.iter().any(|n| n.starts_with("Slackware: lilo.conf, elilo.conf and fstab name devices by their kernel names (/dev/vda, /dev/vda2, /dev/vda1), which the target's disks have at boot")), "{:?}", b.notes);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     assert!(bt.contains("\nboot=\"/dev/vdb\"\n") && !bt.contains("boot=\"/dev/vda\""), "{bt}");
-    assert!(bt.contains("\nimage=\"/boot/vmlinuz\"\n  root=\"/dev/vdb2\"\n  label=\"Linux\"\n  read-only\n  append=\" vt.default_utf8=0 root=/dev/vda2\"\nEOF\n"), "{bt}");
+    assert!(bt.contains("\nimage=\"/boot/vmlinuz\"\n  root=\"0xfe02\"\n  label=\"Linux\"\n  read-only\n  append=\" vt.default_utf8=0 root=/dev/vda2\"\nEOF\n"), "{bt}");
     assert!(bt.contains("# LILO: /etc/lilo.conf copied with root= by name at the end of append= (Linux: root=/dev/vda2): "), "{bt}");
-    assert!(bt.contains("and with the target's disks by the names the rescue gives them (Linux's root=/dev/vda2 as /dev/vdb2, boot=/dev/vda as /dev/vdb)"), "{bt}");
+    assert!(bt.contains("and with the target's disks by the names the rescue gives them (boot=/dev/vda as /dev/vdb)"), "{bt}");
+    assert!(bt.contains("and with root= as the device number the source's map has (Linux's root=/dev/vda2 as 0xfe02)"), "{bt}");
+    // The source's command line's number wins over the source kernel's
+    // (its devno, 254:2 here): lilo ran under another kernel there.  With
+    // no image of BOOT_IMAGE's label, the devno's.
+    let t = slackware15();
+    t.file("/proc/cmdline", "BOOT_IMAGE=Linux ro root=fd02 vt.default_utf8=0\n");
+    let bt: String = slackware_plan(&t, "vdb", &[]).1.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("\n  root=\"0xfd02\"\n"), "{bt}");
+    t.file("/proc/cmdline", "BOOT_IMAGE=Old ro root=fd02 vt.default_utf8=0\n");
+    let bt: String = slackware_plan(&t, "vdb", &[]).1.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("\n  root=\"0xfe02\"\n"), "{bt}");
     assert!(!b.stage(Stage::Boot).iter().any(|c| c.write.as_deref() == Some("/mnt/bko-target/etc/lilo.conf")), "{bt}");
     assert!(!b.stage(Stage::Boot).iter().any(|c| c.write.as_deref() == Some("/mnt/bko-target/etc/fstab")), "{bt}");
 
@@ -5207,7 +5221,7 @@ fn slackware15_device_names_at_boot() {
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     assert!(bt.contains("\nboot=\"/dev/vdb\"\ndisk=\"/dev/vdb\"\nbios=\"0x80\"\n"), "{bt}");
     assert!(bt.contains("boot=/dev/vda as /dev/vdb, disk=/dev/vda as /dev/vdb"), "{bt}");
-    assert!(bt.contains("  root=\"/dev/vdb2\"\n") && bt.contains("append=\" vt.default_utf8=0 root=/dev/vda2\""), "{bt}");
+    assert!(bt.contains("  root=\"0xfe02\"\n") && bt.contains("append=\" vt.default_utf8=0 root=/dev/vda2\""), "{bt}");
     let m: String = b.stage(Stage::Mount).iter().map(Cmd::shell).collect();
     assert!(m.contains("/dev/vdc1 /mnt/bko-target/data\n"), "{m}");
 
@@ -5241,7 +5255,8 @@ fn slackware15_uefi_device_names_at_boot() {
     assert!(b.notes.iter().any(|n| n.contains("kernel names (/dev/vda3, /dev/vda2, /dev/vda1), which the target's disks have at boot")), "{:?}", b.notes);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     assert!(!bt.contains("elilo.conf") && !bt.contains("/dev/vdb3") && !b.stage(Stage::Boot).iter().any(|c| c.write.as_deref().is_some_and(|w| w.ends_with("elilo.conf"))), "{bt}");
-    assert!(bt.contains("mkinitrd -c -f xfs -r /dev/vda3 "), "{bt}");
+    // vda3 boots as vda3: the restored initrd stays.
+    assert!(!bt.contains("mkinitrd") && b.notes.iter().any(|n| n.starts_with("Slackware: mkinitrd's /boot/initrd.gz came back as the source made it")), "{bt}");
 }
 
 /// An other= section (a boot sector lilo chain-loads) with its table=:
@@ -5258,7 +5273,7 @@ fn slackware15_lilo_other() {
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     assert!(bt.contains("\nother=\"/dev/vdb1\"\n  label=\"Other\"\n  table=\"/dev/vdb\"\nEOF\n"), "{bt}");
-    assert!(bt.contains("(Linux's root=/dev/vda2 as /dev/vdb2, Other's other=/dev/vda1 as /dev/vdb1, Other's table=/dev/vda as /dev/vdb, boot=/dev/vda as /dev/vdb)"), "{bt}");
+    assert!(bt.contains("(Other's other=/dev/vda1 as /dev/vdb1, Other's table=/dev/vda as /dev/vdb, boot=/dev/vda as /dev/vdb)"), "{bt}");
     let (_, b) = slackware_plan(&t, "nvme0n1", &[]);
     for want in [
         "Slackware: /etc/lilo.conf's other= names /dev/vda1, which is /dev/nvme0n1p1 here, on a disk of the nvme class",
@@ -5395,13 +5410,52 @@ fn slackware15_uefi_guest() {
     let m: String = b.stage(Stage::Mount).iter().map(Cmd::shell).collect();
     assert!(m.contains("/dev/vda3 /mnt/bko-target\n") && m.contains("/dev/vda1 /mnt/bko-target/boot/efi\n"), "{m}");
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    let mk = bt.find("chroot /mnt/bko-target mkinitrd -c -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz -k 5.15.161\n").expect(&bt);
-    let c1 = bt.find("cp /mnt/bko-target/boot/initrd.gz /mnt/bko-target/boot/efi/EFI/BOOT/initrd.gz\ntouch -r /mnt/bko-target/boot/initrd.gz /mnt/bko-target/boot/efi/EFI/BOOT/initrd.gz\n").expect(&bt);
-    let c2 = bt.find("cp /mnt/bko-target/boot/initrd.gz /mnt/bko-target/boot/efi/EFI/Slackware/initrd.gz\n").expect(&bt);
+    // Nothing the initrd was made from changes (the root's name at boot,
+    // its type, -k's kernel with its modules): the restored initrd.gz, its
+    // tree and the ESP's copies stay as the source had them, and
+    // mkinitrd's ldconfig doesn't touch the system's ld.so.cache.
+    assert!(!bt.contains("mkinitrd") && !bt.contains("cp /mnt/bko-target/boot/initrd.gz") && !bt.contains("ld.so.cache"), "{bt}");
+    assert!(
+        b.notes.iter().any(|n| n.starts_with("Slackware: mkinitrd's /boot/initrd.gz came back as the source made it (/sbin/mkinitrd -c -k 5.15.161 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz), and nothing it was made from changes")),
+        "{:?}",
+        b.notes
+    );
     let fw = bt.find("efibootmgr --quiet --create --disk /dev/vda --part 1 --label 'UEFI Misc Device' --loader '\\EFI\\BOOT\\BOOTX64.EFI'\n").expect(&bt);
     let sl = bt.find("efibootmgr --quiet --create --disk /dev/vda --part 1 --label Slackware --loader '\\EFI\\Slackware\\elilo.efi'\n").expect(&bt);
-    assert!(mk < c1 && c1 < c2 && c2 < fw && fw < sl, "{bt}");
+    assert!(fw < sl, "{bt}");
+
+    // Its command's -k names a kernel whose modules are gone too: made again,
+    // in the source's words and order (-k where it was), the system's
+    // ld.so.cache and the tree's /dev kept around it, the image packed
+    // again from the source's /dev, then copied to the ESP.
+    let r = crate::load::RUN_DIR;
+    let t = slackware15_uefi();
+    t.file("/boot/initrd-tree/command_line", "/sbin/mkinitrd -c -k 5.15.161:5.15.19 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz\n");
+    let (_, b) = slackware_plan(&t, "vda", &[]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    let keep = bt.find(&format!("# the restored /etc/ld.so.cache and /var/cache/ldconfig/aux-cache, and their directories' times, kept: mkinitrd's ldconfig rewrites them, and its tree's /dev (/boot/initrd-tree/dev), which mkinitrd fills from the rescue's disks\nsh -c 'rm -rf {r}/slackware-initrd && ")).expect(&bt);
+    assert!(bt.contains(&format!(" && touch -r /mnt/bko-target/etc {r}/slackware-initrd/etc.time && ")) && bt.contains(&format!("{{ [ ! -d /mnt/bko-target/boot/initrd-tree/dev ] || cp -a /mnt/bko-target/boot/initrd-tree/dev {r}/slackware-initrd/dev; }}'\n")), "{bt}");
+    let mk = bt.find("chroot /mnt/bko-target mkinitrd -c -k 5.15.161 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz\n").expect(&bt);
+    assert!(bt.contains("for kernel 5.15.161; made again because its command's -k (5.15.161:5.15.19) isn't the kernels the dump found with modules (5.15.161)\n"), "{bt}");
+    let dev = bt.find(&format!("rm -rf /mnt/bko-target/boot/initrd-tree/dev && cp -a {r}/slackware-initrd/dev /mnt/bko-target/boot/initrd-tree/dev && chroot /mnt/bko-target /bin/sh -c ")).expect(&bt);
+    assert!(bt.contains("cd /boot/initrd-tree && rm -f /boot/initrd.gz && find . | cpio -o -H newc | gzip -9c > /boot/initrd.gz"), "{bt}");
+    let back = bt.find(&format!("{{ if [ -e {r}/slackware-initrd/ld.so.cache ]; then cp -a {r}/slackware-initrd/ld.so.cache /mnt/bko-target/etc/ld.so.cache; else rm -f /mnt/bko-target/etc/ld.so.cache; fi; }}")).expect(&bt);
+    let c1 = bt.find("cp /mnt/bko-target/boot/initrd.gz /mnt/bko-target/boot/efi/EFI/BOOT/initrd.gz\ntouch -r /mnt/bko-target/boot/initrd.gz /mnt/bko-target/boot/efi/EFI/BOOT/initrd.gz\n").expect(&bt);
+    let c2 = bt.find("cp /mnt/bko-target/boot/initrd.gz /mnt/bko-target/boot/efi/EFI/Slackware/initrd.gz\n").expect(&bt);
+    let fw = bt.find("efibootmgr --quiet --create --disk /dev/vda --part 1 --label 'UEFI Misc Device'").expect(&bt);
+    assert!(keep < mk && mk < dev && dev < back && back < c1 && c1 < c2 && c2 < fw, "{bt}");
     assert_eq!(bt.matches("chroot /mnt/bko-target mkinitrd").count(), 1, "{bt}");
+    // With -P (a microcode image in front), the tree isn't packed again by
+    // load; the ld.so.cache still kept.
+    t.file("/boot/initrd-tree/command_line", "/sbin/mkinitrd -c -k 5.15.161:5.15.19 -f xfs -r /dev/vda3 -m xfs -u -P /boot/intel-ucode.cpio -o /boot/initrd.gz\n");
+    let bt: String = slackware_plan(&t, "vda", &[]).1.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("mkinitrd -c -k 5.15.161 ") && !bt.contains("cpio -o -H") && !bt.contains("initrd-tree/dev") && bt.contains(&format!("cp -a {r}/slackware-initrd/ld.so.cache ")), "{bt}");
+    // The restored initrd isn't on record, or --reformat: made again too.
+    let t = slackware15_uefi();
+    std::fs::remove_file(t.p("/boot/initrd.gz")).unwrap();
+    let bt: String = slackware_plan(&t, "vda", &[]).1.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("made again because the dump doesn't say /boot/initrd.gz was there on the source\n"), "{bt}");
     assert!(!bt.contains("grub-") && !bt.contains(" lilo") && !bt.contains("update-initramfs") && !bt.contains("dracut") && !bt.contains("BOOTX64.EFI; }"), "{bt}");
     assert!(b.notes.iter().any(|n| n.starts_with("ELILO: elilo.efi, elilo.conf, the kernel and the initrd came back with the ESP")), "{:?}", b.notes);
     assert!(b.notes.iter().any(|n| n.contains("kernel names (/dev/vda3, /dev/vda2, /dev/vda1)")), "{:?}", b.notes);
@@ -5419,9 +5473,11 @@ fn slackware15_uefi_guest() {
     assert!(bt.contains("[ -e /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI ] || { mkdir -p /mnt/bko-target/boot/efi/EFI/BOOT && cp -r /mnt/bko-target/boot/efi/EFI/Slackware/. /mnt/bko-target/boot/efi/EFI/BOOT/ && mv /mnt/bko-target/boot/efi/EFI/BOOT/elilo.efi /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI; }"), "{bt}");
 
     // The source upgraded its kernel without eliloconfig: EFI/Slackware's
-    // kernel is no /boot kernel's copy, so its initrd isn't replaced.
+    // kernel is no /boot kernel's copy, so its initrd isn't replaced when
+    // the initrd is made again (its -k also names a kernel now gone).
     let t = slackware15_uefi();
     t.file("/boot/efi/EFI/Slackware/vmlinuz", "the old kernel");
+    t.file("/boot/initrd-tree/command_line", "/sbin/mkinitrd -c -k 5.15.161:5.15.19 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz\n");
     let (v, b) = slackware_plan(&t, "vda", &[]);
     assert!(v.at(&["boot", "elilo", "configs", "1", "images", "0", "same_as"]).unwrap().is_null());
     assert!(b.problems.is_empty(), "{:?}", b.problems);

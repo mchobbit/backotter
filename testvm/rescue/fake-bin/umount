@@ -1,0 +1,4 @@
+#!/bin/sh
+# fake-bin/mount's other half: what it put there goes.  POSIX sh.
+dir=$1
+rm -rf "$dir/backotter"

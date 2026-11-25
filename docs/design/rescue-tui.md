@@ -1,6 +1,6 @@
 # bko-rescue: the terminal layer and its widgets
 
-Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"), RT8 after those (see "What RT8 found"), RT3 the same day on every console of the seven images, its findings folded into the table (see "What RT3 found"); RT11 on 2026-11-25 (see "What RT11 found"); RT9 and RT12 on are not.  RT10's own spec (D12), `holt-json.md`, approved 2026-11-24 with every recommendation (J1-J21); D14's first lock amended by J6.
+Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"), RT8 after those (see "What RT8 found"), RT3 the same day on every console of the seven images, its findings folded into the table (see "What RT3 found"); RT11 on 2026-11-25 (see "What RT11 found"); RT12's first part (Disks, Passphrases, Resume, Review) the same day (see "What RT12 part 1 found"); RT9, RT12's second part (Restore, Done, Failure) and RT13 on are not.  RT10's own spec (D12), `holt-json.md`, approved 2026-11-24 with every recommendation (J1-J21); D14's first lock amended by J6.
 
 An implementation plan for the stick's terminal UI that `ui.md` describes and
 the user decided on 2026-11-19: one Whiptail-style 80x24 program,
@@ -1444,6 +1444,94 @@ holt_schema.py over the scenarios.  No holt change.
   Snapshot still filters by hostname alone: no backup carries an install
   ID tag to filter by (rescue-screens.md's "and its install ID tag" needs
   the backup tool to write one first).
+
+## What RT12 part 1 found
+
+Built 2026-11-25 on czerny (Rust 1.85.1), `src/app/`: Disks (the
+overview, the list per old disk, the offer for a disk up to 10 % smaller
+or bigger, the decision for a bigger shrink whose data fits, the refusal
+with the figures, keep-or-grow for a much bigger disk), Passphrases (and
+the keyboard at start-up), the Resume offer, Review (the fullest case's
+Changes, the typed serial confirmation, Commands, Advanced: another
+filesystem), then a screen saying the Restore itself (RT12's second
+part) isn't built.  `plan.rs` reads the plan and status documents (fail
+closed), `disks.rs` and `review.rs` are the screens, `layout.rs` the
+layout's copy, `holt_args.rs` gained `--fit-largest`, `--reformat`,
+`--removable --no-nvram`, `--through plan` and `Load::run_of` (Restore's
+run is Review's argument list with `--through close --commit
+--expect-plan`).  The Ui grew `passphrase` (fields, Enter to the next),
+`review` (rows with a field each, Restore checked against them, the
+typed values kept across Commands and Back) and `cycle` (Space cycles a
+row's choices, the focused row's note under the list); lists take items
+of several rows; menus pick on Enter; plain mode flows numbered choices
+among the lettered ones, and an empty line can take the chosen row.  No
+holt change.  Tested by `cargo test` (243 tests: the flows on the
+scripted Ui, 16 new golden screens and 2 plain-mode transcripts, the dry run's
+every bko-holt command without `--commit` and under
+`BKO_HOLT_NO_COMMIT=1`), `app-test.py` (Disks to Review on a pty, full
+screen and dry run, the fake's key-file checks, 4 new pty goldens), `pty-test.py`,
+`demo-test.py`, the header test and holt_schema.py over every scenario.
+Fixtures: `testvm/rescue/make-disk-fixtures.py` writes
+`scenarios/app-rec-debian13` (debian13-stack's recorded plan and its
+status after partition, answering every call) and the hand-written
+`app-lovelace`, `-dry` and `-small` (the mocks' disks, by fit's rules;
+no guest has them); `fake-bin/mount` is the config partition's
+read-only mount for the pty runs.
+
+- **Defaults taken** where rescue-screens.md and holt-json.md are open,
+  each in one place:
+  - The layout's copy (holt-json.md open question 8, which blocks RT12):
+    the stick's system.json, copied off the config partition mounted
+    read-only (`layout::FROM`, `mount_ro_argv`), its checksum not checked
+    again (bko-holt checked it at `stick --json`; no SHA-256 here, D2).
+    A typed location has no layout: a screen says so.  A real stick's
+    system.json isn't a layout load takes until the backup tool's spec
+    says how it carries the dump: bko-holt then refuses it
+    (`layout_refused`), and Disks shows that as its problem.
+  - The size line (J5): `plan::OFFER_PCT`, 10.  `--fit-largest` is the
+    largest percentage agreed for any disk (it applies to every disk);
+    Review's "as you chose" marks a decided shrink.  Grow to fill isn't
+    offered (RT10n): the much bigger screen keeps the old sizes and says
+    so (open question 16: shown every time, as drawn).
+  - A disk a little bigger: the offer has < Keep the old sizes > beside
+    < Grow the system partition >, the focus on Keep (the mock's offer
+    worded for growing had no way to take the disk as it is).
+  - A disk with no serial, or one another disk shares
+    (`serial_shared`), is confirmed by typing its size and model as the
+    row shows them (`review::confirm_by`); case and spaces aside.
+  - Review's rows are every target the run writes: `will_erase` says
+    ERASED, a target with `writes` but no wipe says WRITTEN, a resume
+    says "goes on".  A problem the plan still has opens its help screen
+    when Restore is pressed (a text line can't take the focus).
+  - The keyboard at start-up: `keyboard::boot_prompt` reads RT10l's
+    `boot_prompt` (US for `us_fallback`, the loader and OpenBSD's boot;
+    the console's layout where `native` is named); no dump has it yet,
+    so the Passphrases line says it isn't known.  Its screen has a <
+    Back > so Esc is Back, as the mock's text says.
+  - Resume (J14 interim): `status --json` with the map after Disks (a
+    resume's passphrase is asked once) and again with the keys; shown
+    when this session's records show work (`recorded`, `partitioned`,
+    `restore_started`); Go on only with `resume.go_on`.  Go on's run is
+    `--only` status's `next`, no `--erase`; RT12's second part runs the
+    rest stage by stage.
+- **Found, not fixed (for holt):** `load --only plan --json` reports
+  every target's `will_erase` false and leaves `partition` out of
+  `writes` (`target::partition_runs` returns false for any `--only`
+  other than partition), so the recorded rec-* plans (made with `--only
+  plan`) show no target as erased.  bko-rescue plans with `--through
+  plan`, which computes them; the fix in holt (`opts.only.filter(writes)`)
+  would touch text mode's `--only plan` notes, so it is left for a
+  holt change of its own.
+- **Found in the mocks:** sizes of three figures are `32.0 GB` and `20.0
+  GB`, not `32 GB` and `20 GB`; the decision's plain transcript asks
+  `[1, 2, o, b]` where every list asks `[1-2, ...]`; the overview's "has
+  data" and Review's "Not touched" order follow the plan's candidates.
+- **Not built here:** Restore, Done and Failure (RT12's second part), so
+  the dry run's walk through the commands too; the layout from the
+  backup itself (needs the backup tool); the Snapshot line "this
+  backup's disk layout differs"; grow to fill (RT10n) and per-disk fit;
+  Resume after a reboot (RT10o's `open`); Failure's install without an
+  entry (`--removable --no-nvram` is in holt_args.rs, unused).
 
 ## The app on top (later)
 

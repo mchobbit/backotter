@@ -1,0 +1,15 @@
+load
+*
+--json
+--through
+plan
+--repo
+*
+--password-file
+*
+--map
+sda=*nvme-CT1000P3PSSD8*
+--erase
+*
+--snapshot
+*

@@ -68,10 +68,4 @@ Times are lovelace's offset from UTC, as each backup recorded it.  The
 newest is usually the one you want.
   b) back
 Choose [1-14, b]: 1
-Next: the disks
-lovelace's backup of 22 Nov 2026 02:00 UTC+01:00 is chosen.
-
-The next screens, the disks and the restore itself, aren't in this
-bko-rescue yet.  Nothing has been changed on any disk.
-  b) back   s) shell   l) leave bko-rescue
-Choose [b, s, l]: l
+Problem: the old disks' layout isn't here

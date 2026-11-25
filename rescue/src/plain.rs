@@ -323,10 +323,18 @@ impl<L: Line> Plain<L> {
     /// The lettered choices on lines of their own, then `Choose [...]: `,
     /// until a choice comes.  An empty or wrong line asks again.
     fn choose(&mut self, numbers: usize, opts: &[Opt]) -> io::Result<Pick> {
+        self.choose_flow(&[], numbers, opts, None)
+    }
+
+    /// `choose`, with NUMBERED choices before the lettered ones, in the
+    /// same flowing lines (a disk's list: `1) WDC ...   2) ...   b)
+    /// back`).  An empty line is EMPTY's number when there is one.
+    fn choose_flow(&mut self, numbered: &[Clean], numbers: usize, opts: &[Opt], empty: Option<usize>) -> io::Result<Pick> {
+        let mut items: Vec<String> = numbered.iter().enumerate().map(|(i, l)| format!(" {}) {}", i + 1, self.shown(l))).collect();
+        items.extend(opts.iter().map(|o| format!(" {}) {}", o.key, self.shown(&o.label))));
         let mut line = String::from(" ");
         let mut block = String::new();
-        for o in opts {
-            let item = format!(" {}) {}", o.key, self.shown(&o.label));
+        for item in items {
             if line.len() > 1 && line.chars().count() + 2 + item.chars().count() > WIDTH {
                 block.push_str(&line);
                 block.push('\n');
@@ -342,6 +350,11 @@ impl<L: Line> Plain<L> {
             block.push('\n');
         }
         self.out(&block)?;
+        self.ask(numbers.max(numbered.len()), opts, empty)
+    }
+
+    /// `Choose [...]: ` until a choice comes.
+    fn ask(&mut self, numbers: usize, opts: &[Opt], empty: Option<usize>) -> io::Result<Pick> {
         let mut keys: Vec<String> = Vec::new();
         match numbers {
             0 => {}
@@ -360,6 +373,9 @@ impl<L: Line> Plain<L> {
             };
             let a = got.trim().to_lowercase();
             if a.is_empty() {
+                if let Some(i) = empty {
+                    return Ok(Pick::Num(i));
+                }
                 continue;
             }
             if let Ok(n) = a.parse::<usize>() {
@@ -374,6 +390,159 @@ impl<L: Line> Plain<L> {
                 }
             }
             self.out(&format!("Type one of {}.\n", keys.join(", ")))?;
+        }
+    }
+
+    /// Text, then numbered rows among the buttons' letters in flowing
+    /// lines; a blocked row says why and asks again.
+    #[allow(clippy::too_many_arguments)]
+    fn flowing(&mut self, chrome: &Chrome, text: &Clean, rows: &[Clean], notice: Option<&Clean>, buttons: &[Button], empty: Option<usize>, blocked: &[(usize, Clean)]) -> io::Result<Answer<usize>> {
+        self.header(chrome)?;
+        self.say(text)?;
+        if let Some(n) = notice {
+            self.say(n)?;
+        }
+        let others: Vec<Button> = buttons.iter().filter(|b| b.act != Act::Ok).cloned().collect();
+        let opts = letters(&others, &[]);
+        let mut pick = self.choose_flow(rows, rows.len(), &opts, empty)?;
+        loop {
+            return Ok(match pick {
+                Pick::Num(i) => match blocked.iter().find(|(b, _)| *b == i) {
+                    Some((_, why)) => {
+                        self.say(why)?;
+                        pick = self.ask(rows.len(), &opts, empty)?;
+                        continue;
+                    }
+                    None => Answer::Ok(i),
+                },
+                Pick::Choice(i) => Plain::<L>::act(opts[i].act),
+                Pick::Quit => Answer::Quit,
+            });
+        }
+    }
+
+    fn passphrase_inner(&mut self, d: &ui::Passphrase) -> io::Result<Answer<Vec<Secret>>> {
+        self.header(&d.chrome)?;
+        self.say(&d.text)?;
+        self.say(&d.after)?;
+        if let Some(n) = &d.notice {
+            self.say(n)?;
+        }
+        let has_others = d.buttons.iter().any(|b| b.act != Act::Ok);
+        'again: loop {
+            let mut got = Vec::new();
+            for l in &d.labels {
+                self.line.quiet(true)?;
+                let prompt = format!("{} ", self.shown(l));
+                if let Err(e) = self.out(&prompt) {
+                    let _ = self.line.quiet(false);
+                    return Err(e);
+                }
+                let s = self.read_secret();
+                let back = self.line.quiet(false);
+                let s = s?;
+                back?;
+                self.out("\n")?;
+                match s {
+                    None => return Ok(Answer::Quit),
+                    Some((_, true)) => {
+                        self.out(&format!("That's longer than {} bytes: type it again.\n", crate::secret::CAP))?;
+                        continue 'again;
+                    }
+                    Some((s, false)) if s.is_empty() && got.is_empty() && has_others => {
+                        if let Some(a) = self.other_choices(&d.buttons)? {
+                            return Ok(a);
+                        }
+                        continue 'again;
+                    }
+                    Some((s, false)) => got.push(s),
+                }
+            }
+            return Ok(Answer::Ok(got));
+        }
+    }
+
+    fn review_inner(&mut self, d: &ui::Review, typed: &mut Vec<String>) -> io::Result<Answer<()>> {
+        self.header(&d.chrome)?;
+        self.say(&d.plain)?;
+        if let Some(n) = &d.notice {
+            self.say(n)?;
+        }
+        typed.resize(d.rows.len(), String::new());
+        for (i, row) in d.rows.iter().enumerate() {
+            if ui::matches(&typed[i], &row.expect) {
+                continue;
+            }
+            loop {
+                let q = format!("{} ", self.shown(&row.ask));
+                self.out(&q)?;
+                let got = match self.read_line(None)? {
+                    Read::Eof => return Ok(Answer::Quit),
+                    Read::Timeout | Read::TooLong => continue,
+                    Read::Line(s) => s,
+                };
+                if got.trim().eq_ignore_ascii_case("b") {
+                    return Ok(Answer::Back);
+                }
+                if ui::matches(&got, &row.expect) {
+                    typed[i] = got.trim().to_string();
+                    self.say(&row.confirmed)?;
+                    break;
+                }
+                self.say(&row.wrong)?;
+            }
+        }
+        let opts = letters(&d.buttons, &[]);
+        loop {
+            return Ok(match self.choose(0, &opts)? {
+                Pick::Choice(i) if opts[i].act == Act::Ok => match &d.blocked {
+                    Some(why) => {
+                        self.say(why)?;
+                        continue;
+                    }
+                    None => Answer::Ok(()),
+                },
+                Pick::Choice(i) => Plain::<L>::act(opts[i].act),
+                Pick::Num(_) | Pick::Quit => Answer::Quit,
+            });
+        }
+    }
+
+    fn cycle_inner(&mut self, d: &ui::Cycle) -> io::Result<Answer<Vec<usize>>> {
+        self.header(&d.chrome)?;
+        self.say(&d.text)?;
+        let mut choice: Vec<usize> = d.rows.iter().map(|r| if r.start < r.choices.len() { r.start } else { 0 }).collect();
+        let opts = letters(&d.buttons, &[]);
+        loop {
+            let mut s = String::new();
+            for (i, r) in d.rows.iter().enumerate() {
+                let state = match (r.choices.len(), choice[i]) {
+                    (0 | 1, _) => &d.cant,
+                    (_, 0) => &d.as_was,
+                    _ => &d.changed,
+                };
+                let c = r.choices.get(choice[i]).cloned().unwrap_or_default();
+                s.push_str(&format!("  {}) {}{}  {}\n", i + 1, self.shown(&r.label), self.shown(&c), self.shown(state)));
+            }
+            self.out(&s)?;
+            self.say(&d.after)?;
+            match self.choose(d.rows.len(), &opts)? {
+                Pick::Num(i) => {
+                    let r = &d.rows[i];
+                    if r.choices.len() < 2 {
+                        self.say(&r.note)?;
+                        continue;
+                    }
+                    self.say(&r.note)?;
+                    let back = [Opt { key: 'b', label: Clean::ours("back"), act: Act::Back }];
+                    if let Pick::Num(j) = self.choose_flow(&r.choices, r.choices.len(), &back, None)? {
+                        choice[i] = j;
+                    }
+                }
+                Pick::Choice(i) if opts[i].act == Act::Ok => return Ok(Answer::Ok(choice)),
+                Pick::Choice(i) => return Ok(Plain::<L>::act(opts[i].act)),
+                Pick::Quit => return Ok(Answer::Quit),
+            }
         }
     }
 
@@ -732,11 +901,21 @@ impl<L: Line> Ui for Plain<L> {
             .iter()
             .map(|(t, s)| if s.is_empty() { t.clone() } else { t.join(&" ".repeat(w - t.width() + 2), s) })
             .collect();
+        if let Some(t) = &d.plain_text {
+            let r = self.flowing(&d.chrome, t, &d.plain_items, d.notice.as_ref(), &d.buttons, None, &[]);
+            return self.done(r);
+        }
         let r = self.list(&d.chrome, &d.text, &rows, &d.after, &d.buttons);
         self.done(r)
     }
 
     fn radio(&mut self, d: &ui::Radio) -> Answer<usize> {
+        if !d.plain_items.is_empty() {
+            let text = if d.after.is_empty() { d.text.clone() } else { d.text.join("\n", &d.after) };
+            let empty = d.chosen.filter(|_| d.empty_takes);
+            let r = self.flowing(&d.chrome, &text, &d.plain_items, None, &d.buttons, empty, &d.blocked);
+            return self.done(r);
+        }
         loop {
             let r = self.list(&d.chrome, &d.text, &d.items, &d.after, &d.buttons);
             if let Ok(Answer::Ok(i)) = &r {
@@ -809,6 +988,21 @@ impl<L: Line> Ui for Plain<L> {
 
     fn progress(&mut self, d: &ui::Progress, tick: &mut dyn FnMut() -> Tick) -> Answer<()> {
         let r = self.progress_inner(d, tick);
+        self.done(r)
+    }
+
+    fn passphrase(&mut self, d: &ui::Passphrase) -> Answer<Vec<Secret>> {
+        let r = self.passphrase_inner(d);
+        self.done(r)
+    }
+
+    fn review(&mut self, d: &ui::Review, typed: &mut Vec<String>) -> Answer<()> {
+        let r = self.review_inner(d, typed);
+        self.done(r)
+    }
+
+    fn cycle(&mut self, d: &ui::Cycle) -> Answer<Vec<usize>> {
+        let r = self.cycle_inner(d);
         self.done(r)
     }
 

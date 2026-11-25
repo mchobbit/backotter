@@ -149,6 +149,23 @@ pub fn desktop(kb: Option<&Value>) -> Vec<Xkb> {
     v
 }
 
+/// The layout the machine's start-up prompt takes the disk passphrase in
+/// (`keyboard.boot_prompt`, RT10l; rescue-screens.md, "The keyboard at
+/// start-up"): US where no map is loaded there (`us_fallback`, and
+/// FreeBSD's loader and OpenBSD's boot, which are US by nature), the
+/// console's own layout where the prompt loads one (`native` named);
+/// None where the dump doesn't say, as every dump before RT10l.
+pub fn boot_prompt(kb: Option<&Value>) -> Option<Xkb> {
+    let b = kb?.get("boot_prompt").filter(|b| !b.is_null())?;
+    if b.get_bool("us_fallback") == Some(true) || matches!(b.get_str("where"), Some("loader" | "boot")) {
+        return Some(Xkb::of(&US));
+    }
+    if b.get("native").is_some_and(|n| !n.is_null()) {
+        return canonical(kb);
+    }
+    None
+}
+
 /// The keyboard as it is now.
 #[derive(Clone, Debug)]
 pub struct Keyboard {

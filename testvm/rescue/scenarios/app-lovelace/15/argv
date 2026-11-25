@@ -1,0 +1,17 @@
+load
+*
+--json
+--through
+plan
+--repo
+*
+--password-file
+*
+--map
+sda=*KINGSTON*
+--erase
+*
+--snapshot
+*
+--fit-largest
+5

@@ -107,3 +107,17 @@ password, which `app-three`'s `recovery-words` writes), and rustic_core's
 wrong-password error (C002, exit 1) otherwise: `lovelace` (its ID the
 stick's, 14 backups), `mismatch` (another repository's ID), `shared`
 (lovelace's and babbage's backups, for "Which machine?").
+
+## The disks scenarios (RT12)
+
+Written by `../make-disk-fixtures.py`: each answers bko-rescue's plan and
+status calls, by the argv shape `src/app/holt_args.rs` builds, from Disks
+to Review, and holds `system.json` (and `system.path`) for the read-only
+mount of the config partition (the Rust tests' fake, `../fake-bin/mount`).
+
+| Scenario | What Disks to Review see |
+|---|---|
+| `app-rec-debian13` | recorded: rec-debian13-stack's whole-run plan for every plan, its status after partition for every status (a resume: Go on) |
+| `app-lovelace` | hand-written: lovelace's Samsung and WD Red; here a Crucial 1 TB (much bigger), the WD Red (the same disk), a Kingston 480 GB with photos (4.3 % smaller: the offer), the stick |
+| `app-lovelace-dry` | the same, its api `no_commit` true |
+| `app-lovelace-small` | hand-written: a WDC 320 GB (38.7 % smaller: the user decides) and a Transcend 64 GB (the data doesn't fit) |

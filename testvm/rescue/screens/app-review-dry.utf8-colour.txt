@@ -1,0 +1,55 @@
+ BackOtter rescue   DRY RUN: nothing will be written                      Review
+  ┌──────────────────────────── Ready to restore ────────────────────────────┐  
+  │                                                                          │  
+  │ Restore lovelace (Debian 13) from the backup of 22 Nov 2026 02:00        │  
+  │ UTC+01:00, 61.2 GB.  Backed up from a different computer.                │  
+  │                                                                          │  
+  │ These disks will be ERASED, then filled from the backup.  Type the last  │  
+  │ six characters of each serial.  Check it against the label on the disk   │  
+  │ if you can: that's how you know it is the right disk.                    │  
+  │                                                                          │  
+  │  ┌────────────────────────────────────────────────────────────────────┐  │  
+  │  │ ERASED  1.00 TB  CT1000P3PSSD8          2318E6F3A9C1     [      ]  │  │  
+  │  │ ERASED  2.00 TB  WDC WD20EFRX-68EUZN0   WD-WCC4M5XK7HPL  [      ]  │  │  
+  │  └────────────────────────────────────────────────────────────────────┘  │  
+  │ The WDC WD20EFRX-68EUZN0 is lovelace's own /srv disk: anything saved on  │  
+  │ it after 22 Nov 2026 is lost.                                            │  
+  │ Changes:  The encrypted disks open with the passphrase you typed.        │  
+  │ Not touched: the KINGSTON SA400S37480G, this stick.  No problems found.  │  
+  │ Nothing has been changed on any disk yet.  Back is safe.                 │  
+  │                                                                          │  
+  │  < Show what would happen >    < Commands >    < Advanced >    < Back >  │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+ Type the serials | Tab: next | Enter on Restore: start | c: commands | Esc     
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddDDDDDdddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbp
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+p 0
+s 0;40

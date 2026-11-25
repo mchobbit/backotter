@@ -1,0 +1,78 @@
+ BackOtter rescue                                                    Passphrases
+                                                                                
+                                                                                
+  ┌─────────────────────────── Passphrase 1 of 1 ────────────────────────────┐  
+  │                                                                          │  
+  │ This passphrase opens 2 encrypted containers (cryptroot, cryptsrv),      │  
+  │ which hold /, /srv.                                                      │  
+  │                                                                          │  
+  │ You will type it every time the computer starts.  It may be the old one  │  
+  │ or a new one.  If it is forgotten, nothing can open these disks: write   │  
+  │ it down.                                                                 │  
+  │                                                                          │  
+  │ Passphrase:     [                                                ]       │  
+  │ Type it again:  [                                                ]       │  
+  │                                                                          │  
+  │ Keyboard: English (US).  Which layout lovelace's start-up prompt uses    │  
+  │ isn't known; plain letters and digits are the safest.                    │  
+  │                                                                          │  
+  │                   <  OK  >    < Keyboard >    < Back >                   │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+ Type | Tab: next field and buttons | Enter: next field, then OK | Esc: back    
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                    Passphrases
+                                                                                
+                                                                                
+  +--------------------------- Passphrase 1 of 1 ----------------------------+  
+  |                                                                          |  
+  | This passphrase opens 2 encrypted containers (cryptroot, cryptsrv),      |  
+  | which hold /, /srv.                                                      |  
+  |                                                                          |  
+  | You will type it every time the computer starts.  It may be the old one  |  
+  | or a new one.  If it is forgotten, nothing can open these disks: write   |  
+  | it down.                                                                 |  
+  |                                                                          |  
+  | Passphrase:     [                                                ]       |  
+  | Type it again:  [                                                ]       |  
+  |                                                                          |  
+  | Keyboard: English (US).  Which layout lovelace's start-up prompt uses    |  
+  | isn't known; plain letters and digits are the safest.                    |  
+  |                                                                          |  
+  |                   <  OK  >    < Keyboard >    < Back >                   |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+ Type | Tab: next field and buttons | Enter: next field, then OK | Esc: back    

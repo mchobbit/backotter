@@ -81,7 +81,7 @@ def golden(name, text):
 class Run:
     """One bko-rescue with the fakes, its own RAM directory and log."""
 
-    def __init__(self, name, args=(), holt="app-three", rustic="lovelace", term="xterm", reach=True, rows=24, cols=80):
+    def __init__(self, name, args=(), holt="app-three", rustic="lovelace", term="xterm", reach=True, rows=24, cols=80, fake_mount=False):
         self.name = name
         self.dir = os.path.join(TMP, name)
         os.makedirs(self.dir, mode=0o700)
@@ -97,6 +97,9 @@ class Run:
         }
         if reach:
             env["BKO_RESCUE_ASSUME_REACHABLE"] = "1"
+        if fake_mount:
+            # The config partition's read-only mount (fake-bin/mount).
+            env["PATH"] = os.path.join(HERE, "fake-bin") + ":/usr/bin:/bin"
         self.d = drive.Drive(BIN, ["--holt", HOLT, "--rustic", RUSTIC] + list(args), rows, cols, env, timeout=10)
 
     def says(self, phrase):
@@ -184,10 +187,11 @@ def test_full_utf8_colour():
     check(r.says("(*) 22 Nov 2026 02:00 UTC+01:00 61.2 GB newest a7f3c901"), "full: the newest backup chosen, its own offset")
     golden("app-snapshot.utf8-colour", d.dump())
     d.keys("Down", "Enter")
-    d.wait("Next: the disks")
-    check(r.says("lovelace's backup of 21 Nov 2026 02:00 UTC+01:00 is chosen."), "full: the backup picked")
-    d.keys("Right", "Right", "Enter")
-    r.finish(0)
+    # Disks: the stick's settings can't be mounted here (not root).
+    d.wait("Problem: the old disks' layout isn't here")
+    check(r.says("The BACKOTTER partition couldn't be read"), "full: the layout's copy needs the partition")
+    d.signal(signal.SIGTERM)
+    r.finish(143)
     calls = r.secrets_checked(4)
     pw_calls = [c["call"] for c in calls if "--password-file" in c["argv"]]
     check(pw_calls == ["09-wrong-config", "09-wrong-config", "01-config", "02-snapshots"], "full: two wrong passwords, then the right one (%s)" % pw_calls)
@@ -227,7 +231,7 @@ def test_recovery_key():
     r.d.keys("Enter")
     r.d.wait("Which backup?")
     r.d.keys("Enter")
-    r.d.wait("Next: the disks")
+    r.d.wait("Problem: the old disks' layout isn't here")
     r.d.signal(signal.SIGTERM)
     r.finish(143)
     calls = r.secrets_checked(2)
@@ -256,13 +260,19 @@ def test_plain():
     d.type(PASSWORD, line=True)
     d.wait("Choose [1-14, b]: ", since=m)
     d.type("1", line=True)
-    d.wait("Choose [b, s, l]: ")
-    d.type("l", line=True)
-    r.finish(0)
+    # Disks: the stick's settings can't be mounted here (not root).
+    d.wait("Problem: the old disks' layout isn't here")
+    d.wait("Choose [")
+    # Plain mode raises the signal again once its files are gone.
+    d.signal(signal.SIGTERM)
+    r.finish(-15)
     text = d.dump()
     check("\x1b" not in text, "plain: no escape sequences")
     check("nope" not in text and PASSWORD not in text, "plain: nothing typed for a password shows")
-    golden("app-plain", text)
+    # Up to Disks' problem: its text quotes mount's, which names the run's
+    # own temporary directory.
+    cut = text.find("Problem: the old disks' layout isn't here")
+    golden("app-plain", text[:text.index("\n", cut) + 1] if cut >= 0 else text)
     r.secrets_checked(4)
 
 
@@ -365,6 +375,70 @@ def test_dry_run():
     check(len(holt) == 2 and all(c["no_commit_env"] == "1" for c in holt), "dry run: every bko-holt call under the lock")
 
 
+def disks_to_review(r, dry=False):
+    """Machine to Review on app-lovelace: old disk 1 on the Crucial (much
+    bigger: the old sizes kept), the passphrase twice, the serials."""
+    d = r.d
+    to_password(r)
+    password(r, PASSWORD, "Which backup?")
+    d.keys("Enter")
+    d.wait("Where each disk goes")
+    check(r.says("-> no disk chosen yet"), "disks: old disk 1 has no disk yet")
+    golden("app-disks.utf8-colour" if not dry else "app-disks-dry.utf8-colour", d.dump())
+    d.keys("Enter")
+    d.wait("Old disk 1 of 2: where does it go?")
+    check(r.says("500 GB bigger: left free") and r.says("20.0 GB smaller: / would shrink from 465 GB to 445 GB"), "disks: each candidate's size in words")
+    d.keys("Enter")
+    d.wait("This disk is much bigger")
+    d.keys("Enter")
+    r.wait_says("chosen by you")
+    d.keys("Enter")
+    d.wait("Passphrase 1 of 1")
+    d.type("two words")
+    d.keys("Enter")
+    d.type("two words")
+    d.keys("Enter")
+    d.wait("Ready to restore")
+    golden("app-review.utf8-colour" if not dry else "app-review-dry.utf8-colour", d.dump())
+    check(b"two words" not in d.out, "disks: the passphrase never sent to the screen")
+    # A wrong serial is named; c is typed into the field, not Commands.
+    d.type("c00000")
+    d.keys("Enter")
+    d.type("xk7hpl")
+    d.keys("Enter", "Enter")
+    r.wait_says("isn't the end of its serial")
+    for _ in range(6):
+        d.keys("BS")
+    d.type("F3A9C1")
+    d.keys("Enter", "Enter", "Enter")
+    d.wait("Next: the restore")
+
+
+def test_disks_to_review():
+    r = Run("disks", holt="app-lovelace", fake_mount=True)
+    disks_to_review(r)
+    r.d.signal(signal.SIGTERM)
+    r.finish(143)
+    # rustic-bko's two, and the six loads'.
+    calls = r.secrets_checked(8)
+    loads = [c for c in calls if c["argv"][:1] == ["load"]]
+    check(len(loads) == 6, "disks: six plans and statuses (%d)" % len(loads))
+    keyed = [c for c in loads if any(a.startswith("cryptroot=") for a in c["argv"])]
+    check(len(keyed) == 2 and all(any(k["path"].endswith("/k0") for k in c["keys"]) for c in keyed), "disks: the passphrase as a key file, checked by the fake (%s)" % [c["keys"] for c in keyed])
+
+
+def test_disks_dry_run():
+    r = Run("disks-dry", args=["--dry-run"], holt="app-lovelace-dry", fake_mount=True)
+    disks_to_review(r, dry=True)
+    check(r.says("DRY RUN: nothing will be written"), "dry run: the banner on the last screen")
+    r.d.signal(signal.SIGTERM)
+    r.finish(143)
+    calls = r.secrets_checked(8)
+    check(all(c["no_commit_env"] == "1" for c in calls if "argv" in c and c["argv"][:1] != ["--repository"]), "dry run: every bko-holt call under the lock")
+    review = [c for c in calls if c["argv"][:1] == ["load"] and "--erase" in c["argv"] and any(a.startswith("cryptroot=") for a in c["argv"])]
+    check(review != [], "dry run: Review's plan passes --erase (J6)")
+
+
 def test_network():
     r = Run("network", reach=False)
     d = r.d
@@ -434,7 +508,7 @@ def test_shell_and_back():
 
 
 TESTS = [test_shell_and_back, test_full_utf8_colour, test_full_ascii_vt220, test_recovery_key, test_plain, test_plain_signals,
-         test_mismatch_and_report, test_location_with_no_stick, test_dry_run, test_network]
+         test_mismatch_and_report, test_location_with_no_stick, test_dry_run, test_network, test_disks_to_review, test_disks_dry_run]
 
 
 def main():

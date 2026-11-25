@@ -1,0 +1,77 @@
+ BackOtter rescue                                                          Disks
+  ┌───────────────── This disk is much smaller: you decide ──────────────────┐  
+  │                                                                          │  
+  │ Old disk 1 (Samsung SSD 870 EVO 500GB) was 500 GB.  The disk you chose,  │  
+  │ WDC WD3200AAKX, is 320 GB: 180 GB smaller.                               │  
+  │                                                                          │  
+  │ To fit, / would shrink by 38.7 %:                                        │  
+  │   Old size:    465 GB                                                    │  
+  │   New size:    285 GB                                                    │  
+  │   Space used:  41.7 GB at the backup, so it fits with room to spare      │  
+  │ The other partitions stay as they were.                                  │  
+  │                                                                          │  
+  │ This stick offers a shrink of up to 10 % with a button.  This is more,   │  
+  │ so you decide, and nothing is chosen for you.                            │  
+  │                                                                          │  
+  │  ┌────────────────────────────────────────────────────────────────────┐  │  
+  │  │ ( ) Shrink / to 285 GB and restore onto WDC WD3200AAKX             │  │  
+  │  │ ( ) Choose another disk                                            │  │  
+  │  └────────────────────────────────────────────────────────────────────┘  │  
+  │                                                                          │  
+  │                  <  OK  >    < Raw output >    < Back >                  │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+ Arrows: choose | Tab: next | Enter: OK | o: raw output | Esc: back             
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                          Disks
+  +----------------- This disk is much smaller: you decide ------------------+  
+  |                                                                          |  
+  | Old disk 1 (Samsung SSD 870 EVO 500GB) was 500 GB.  The disk you chose,  |  
+  | WDC WD3200AAKX, is 320 GB: 180 GB smaller.                               |  
+  |                                                                          |  
+  | To fit, / would shrink by 38.7 %:                                        |  
+  |   Old size:    465 GB                                                    |  
+  |   New size:    285 GB                                                    |  
+  |   Space used:  41.7 GB at the backup, so it fits with room to spare      |  
+  | The other partitions stay as they were.                                  |  
+  |                                                                          |  
+  | This stick offers a shrink of up to 10 % with a button.  This is more,   |  
+  | so you decide, and nothing is chosen for you.                            |  
+  |                                                                          |  
+  |  +--------------------------------------------------------------------+  |  
+  |  | ( ) Shrink / to 285 GB and restore onto WDC WD3200AAKX             |  |  
+  |  | ( ) Choose another disk                                            |  |  
+  |  +--------------------------------------------------------------------+  |  
+  |                                                                          |  
+  |                  <  OK  >    < Raw output >    < Back >                  |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+ Arrows: choose | Tab: next | Enter: OK | o: raw output | Esc: back             

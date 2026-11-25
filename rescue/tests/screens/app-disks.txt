@@ -1,0 +1,78 @@
+ BackOtter rescue                                                          Disks
+  ┌────────────────────────── Where each disk goes ──────────────────────────┐  
+  │                                                                          │  
+  │ lovelace had 2 disks.  Choose a disk of this computer for each one.      │  
+  │                                                                          │  
+  │  ┌────────────────────────────────────────────────────────────────────┐  │  
+  │  │ Old disk 1: Samsung SSD 870 EVO 500GB, 500 GB, the system          │  │  
+  │  │   -> no disk chosen yet: Enter on it chooses one                   │  │  
+  │  │ Old disk 2: WDC WD20EFRX-68EUZN0, 2.00 TB, /srv                    │  │  
+  │  │   -> the same disk, found by its serial WD-WCC4M5XK7HPL            │  │  
+  │  │      will be ERASED, then filled from the backup                   │  │  
+  │  └────────────────────────────────────────────────────────────────────┘  │  
+  │                                                                          │  
+  │ Old disk 2 is lovelace's own /srv disk.  It will be erased and refilled  │  
+  │ from the 22 Nov 2026 backup: anything saved on it after that is lost.    │  
+  │ Not used:     CT1000P3PSSD8, 1.00 TB, serial 2318E6F3A9C1                │  
+  │               blank: nothing on it                                       │  
+  │ Not used:     KINGSTON SA400S37480G, 480 GB, serial 50026B7782A1F3C4     │  
+  │               has data: 1 partition, ext4 "photos", 312 GB used          │  
+  │ Not offered:  SanDisk Ultra, 32.0 GB: this stick, never a target         │  
+  │                                                                          │  
+  │                           <  OK  >    < Back >                           │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+ Arrows: old disk | Enter: change where it goes | Tab: buttons | Esc: back      
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdddddsb
+bbdddddDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbsssssb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                          Disks
+  +-------------------------- Where each disk goes --------------------------+  
+  |                                                                          |  
+  | lovelace had 2 disks.  Choose a disk of this computer for each one.      |  
+  |                                                                          |  
+  |  +--------------------------------------------------------------------+  |  
+  |  | Old disk 1: Samsung SSD 870 EVO 500GB, 500 GB, the system          |  |  
+  |  |   -> no disk chosen yet: Enter on it chooses one                   |  |  
+  |  | Old disk 2: WDC WD20EFRX-68EUZN0, 2.00 TB, /srv                    |  |  
+  |  |   -> the same disk, found by its serial WD-WCC4M5XK7HPL            |  |  
+  |  |      will be ERASED, then filled from the backup                   |  |  
+  |  +--------------------------------------------------------------------+  |  
+  |                                                                          |  
+  | Old disk 2 is lovelace's own /srv disk.  It will be erased and refilled  |  
+  | from the 22 Nov 2026 backup: anything saved on it after that is lost.    |  
+  | Not used:     CT1000P3PSSD8, 1.00 TB, serial 2318E6F3A9C1                |  
+  |               blank: nothing on it                                       |  
+  | Not used:     KINGSTON SA400S37480G, 480 GB, serial 50026B7782A1F3C4     |  
+  |               has data: 1 partition, ext4 "photos", 312 GB used          |  
+  | Not offered:  SanDisk Ultra, 32.0 GB: this stick, never a target         |  
+  |                                                                          |  
+  |                           <  OK  >    < Back >                           |  
+  +--------------------------------------------------------------------------+  
+ Arrows: old disk | Enter: change where it goes | Tab: buttons | Esc: back      

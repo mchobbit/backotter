@@ -7,6 +7,10 @@
 //! (rescue-screens.md, "Conventions").  Space does nothing.  A menu's
 //! row with the focus is the one Enter picks; when the focus is on the
 //! buttons it stays in bold.
+//!
+//! An item may take several rows (a newline in it): the Disks screens'
+//! old disks and candidates.  It scrolls whole, and the focus marks all
+//! its rows; a radio list's `(*)` is on its first, the rest indented.
 
 use crate::screen::{Canvas, DIALOG};
 use crate::term::keys::Key;
@@ -44,8 +48,47 @@ pub fn list_window(n: usize, h: usize, sel: usize, top: usize) -> (usize, usize,
     }
 }
 
+/// `list_window` for items of HS rows each: which items show in `h` rows
+/// with `sel` selected, `top` the first shown before.  An item never shows
+/// in part, unless it alone is taller than the window.
+pub fn items_window(hs: &[usize], h: usize, sel: usize, top: usize) -> (usize, usize, bool, bool) {
+    let n = hs.len();
+    if hs.iter().sum::<usize>() <= h {
+        return (0, n, false, false);
+    }
+    let h = h.max(3);
+    let mut top = top.min(sel);
+    loop {
+        let above = top > 0;
+        let room = h - usize::from(above);
+        let (mut count, mut used) = (0, 0);
+        while top + count < n && used + hs[top + count] <= room {
+            used += hs[top + count];
+            count += 1;
+        }
+        let below = top + count < n;
+        if below {
+            // A row for the marker.
+            while count > 0 && used + 1 > room {
+                count -= 1;
+                used -= hs[top + count];
+            }
+        }
+        if count == 0 {
+            // Taller than the window: shown cut.
+            return (top, 1, above, top + 1 < n);
+        }
+        if sel >= top + count {
+            top += 1;
+            continue;
+        }
+        return (top, count, above, below);
+    }
+}
+
 pub struct List {
-    rows: Vec<Clean>,
+    /// Each item's rows.
+    rows: Vec<Vec<Clean>>,
     pub radio: bool,
     /// The row with the focus; None in a radio list with nothing chosen.
     pub cur: Option<usize>,
@@ -62,9 +105,9 @@ impl List {
             .iter()
             .map(|(t, d)| {
                 if d.is_empty() {
-                    t.clone()
+                    t.lines()
                 } else {
-                    t.join(&" ".repeat(w - t.width() + 2), d)
+                    vec![t.join(&" ".repeat(w - t.width() + 2), d)]
                 }
             })
             .collect();
@@ -74,11 +117,20 @@ impl List {
 
     pub fn radio(items: &[Clean], chosen: Option<usize>) -> List {
         let cur = chosen.filter(|&c| c < items.len());
-        List { rows: items.to_vec(), radio: true, cur, top: 0, window: 1 }
+        List { rows: items.iter().map(Clean::lines).collect(), radio: true, cur, top: 0, window: 1 }
     }
 
     pub fn len(&self) -> usize {
         self.rows.len()
+    }
+
+    /// Rows all the items take.
+    pub fn lines_len(&self) -> usize {
+        self.rows.iter().map(Vec::len).sum()
+    }
+
+    fn heights(&self) -> Vec<usize> {
+        self.rows.iter().map(Vec::len).collect()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -105,7 +157,7 @@ impl List {
         };
         let moved = self.cur != Some(next);
         self.cur = Some(next);
-        self.top = list_window(n, usize::from(self.window), next, self.top).0;
+        self.top = items_window(&self.heights(), usize::from(self.window), next, self.top).0;
         moved
     }
 
@@ -113,27 +165,40 @@ impl List {
     pub fn draw(&self, c: &mut Canvas, row: u16, focused: bool) {
         c.frame(row, FRAME_COL, self.window + 2, FRAME_W, DIALOG);
         let sel = self.cur.unwrap_or(self.top);
-        let (first, count, above, below) = list_window(self.rows.len(), usize::from(self.window), sel, self.top);
+        let (first, count, above, below) = items_window(&self.heights(), usize::from(self.window), sel, self.top);
         let mut r = row + 1;
+        let end = row + 1 + self.window;
         if above {
             c.text_in(r, ROW_COL, ROW_W, &Clean::ours("^ more above"), DIALOG);
             r += 1;
         }
         for (i, item) in self.rows.iter().enumerate().skip(first).take(count) {
             let here = self.cur == Some(i);
-            let t = if self.radio { Clean::ours(if here { "(*) " } else { "( ) " }).join("", item) } else { item.clone() };
             let a = match (here, focused) {
                 (true, true) => DIALOG.focus(),
                 (true, false) if !self.radio => NOTE,
                 _ => DIALOG,
             };
-            c.text_in(r, ROW_COL, ROW_W, &t, a);
-            if here && focused {
-                c.cursor = Some((r, ROW_COL));
+            for (k, line) in item.iter().enumerate() {
+                if r >= end - u16::from(below) {
+                    break;
+                }
+                let mark = match (self.radio, k, here) {
+                    (false, _, _) => "",
+                    (true, 0, true) => "(*) ",
+                    (true, 0, false) => "( ) ",
+                    (true, _, _) => "    ",
+                };
+                let t = Clean::ours(mark).join("", line);
+                c.text_in(r, ROW_COL, ROW_W, &t, a);
+                if here && focused && k == 0 {
+                    c.cursor = Some((r, ROW_COL));
+                }
+                r += 1;
             }
-            r += 1;
         }
         if below {
+            r = end - 1;
             c.text_in(r, ROW_COL, ROW_W, &Clean::ours("v more below"), DIALOG);
         }
     }
@@ -157,11 +222,42 @@ mod tests {
     }
 
     #[test]
+    fn items_window_is_list_window_for_rows_of_one() {
+        for n in 0..12 {
+            for h in 1..8 {
+                for sel in 0..n {
+                    for top in 0..n {
+                        // list_window may count rows past the last item.
+                        let (f, c, a, b) = list_window(n, h, sel, top);
+                        assert_eq!(items_window(&vec![1; n], h, sel, top), (f, c.min(n - f), a, b), "n {n} h {h} sel {sel} top {top}");
+                    }
+                }
+            }
+        }
+        // Items of three rows: whole ones only, the marker's row kept.
+        assert_eq!(items_window(&[3, 3, 3], 7, 0, 0), (0, 2, false, true));
+        assert_eq!(items_window(&[3, 3, 3], 7, 2, 0), (1, 2, true, false));
+        assert_eq!(items_window(&[3, 3, 3], 9, 2, 0), (0, 3, false, false));
+    }
+
+    #[test]
+    fn an_item_of_several_rows_is_drawn_whole() {
+        let mut l = List::radio(&[o("disk a\n  blank"), o("disk b\n  has data")], Some(1));
+        l.window = 4;
+        let mut c = Canvas::new(8, 80, DIALOG);
+        l.draw(&mut c, 0, true);
+        let d = c.dump(Lines::Ascii, true);
+        assert!(d.contains("( ) disk a") && d.contains("      blank") && d.contains("(*) disk b") && d.contains("      has data"), "{d}");
+        assert_eq!(c.cursor, Some((3, ROW_COL)), "on the chosen item's first row");
+        assert_eq!(l.lines_len(), 4);
+    }
+
+    #[test]
     fn menu_tags_line_up() {
         let l = List::menu(&[(o("a"), o("first")), (o("longer"), o("second")), (o("x"), o(""))], 9);
-        assert_eq!(l.rows[0].as_str(), "a       first");
-        assert_eq!(l.rows[1].as_str(), "longer  second");
-        assert_eq!(l.rows[2].as_str(), "x");
+        assert_eq!(l.rows[0][0].as_str(), "a       first");
+        assert_eq!(l.rows[1][0].as_str(), "longer  second");
+        assert_eq!(l.rows[2][0].as_str(), "x");
         assert_eq!(l.cur, Some(2), "start is kept inside the list");
     }
 

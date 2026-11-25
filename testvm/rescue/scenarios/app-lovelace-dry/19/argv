@@ -1,0 +1,17 @@
+load
+*
+--json
+--only
+status
+--repo
+*
+--password-file
+*
+--map
+sda=*KINGSTON*
+--map
+sdb=*WDC_WD20EFRX*
+--snapshot
+*
+--fit-largest
+5

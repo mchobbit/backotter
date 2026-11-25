@@ -264,10 +264,400 @@ pub fn some_unread(n: usize) -> String {
     format!("{n} backups in the list couldn't be read, and aren't shown.")
 }
 
-// ---- After Snapshot (RT12) ----
-pub const NEXT_TITLE: &str = "Next: the disks";
-pub fn next(name: &str, when: &str) -> String {
-    format!("{name}'s backup of {when} is chosen.\n\nThe next screens, the disks and the restore itself, aren't in this bko-rescue yet.  Nothing has been changed on any disk.")
+// ---- 5. Disks (RT12) ----
+pub const SCR_PASSPHRASES: &str = "Passphrases";
+pub const SCR_RESUME: &str = "Resume";
+pub const SCR_REVIEW: &str = "Review";
+pub const SCR_RESTORE: &str = "Restore";
+pub const DISKS_TITLE: &str = "Where each disk goes";
+pub const DISKS_KEYS: &str = "Arrows: old disk | Enter: change where it goes | Tab: buttons | Esc: back";
+pub const PLANNING_TITLE: &str = "Planning";
+pub const PLANNING: &str = "bko-holt is working out where each disk goes.  Nothing is written.";
+pub const PLANNING_FIT: &str = "bko-holt is working out the new sizes.  Nothing is written.";
+pub const PLANNING_REVIEW: &str = "bko-holt is checking the whole plan.  Nothing is written.";
+pub const STATUS_TITLE: &str = "Looking at the disks";
+pub const STATUS_TEXT: &str = "bko-holt is looking for an earlier restore on these disks.  Nothing is written.";
+pub fn had_disks(host: &str, n: usize) -> String {
+    if n == 1 {
+        format!("{host} had 1 disk.")
+    } else {
+        format!("{host} had {n} disks.")
+    }
+}
+pub fn had_disks_choose(host: &str, n: usize) -> String {
+    if n == 1 {
+        format!("{host} had 1 disk.  Choose a disk of this computer for it.")
+    } else {
+        format!("{host} had {n} disks.  Choose a disk of this computer for each one.")
+    }
+}
+pub fn old_disk(n: usize, name: &str, size: &str, role: &str) -> String {
+    format!("Old disk {n}: {name}, {size}, {role}")
+}
+pub const ROLE_SYSTEM: &str = "the system";
+pub const ROLE_NOTHING: &str = "nothing mounted from it";
+pub fn goes_to(name: &str, size: &str, serial: Option<&str>) -> String {
+    match serial {
+        Some(x) => format!("{name}, {size}, serial {x}"),
+        None => format!("{name}, {size}, no serial"),
+    }
+}
+pub fn by_serial(serial: &str) -> String {
+    format!("its serial {serial}")
+}
+pub const BY_WWID: &str = "its WWID";
+pub const BY_IDENTITY: &str = "its identity";
+pub fn same_disk(by: &str) -> String {
+    format!("the same disk, found by {by}")
+}
+pub const WILL_BE_ERASED: &str = "will be ERASED, then filled from the backup";
+pub const CHOSEN_BY_YOU: &str = "chosen by you";
+pub const NO_TARGET: &str = "no disk chosen yet: Enter on it chooses one";
+pub const PLAIN_NO_TARGET: &str = "No disk is chosen for it yet.";
+pub fn plain_goes(goes: &str, chosen: bool) -> String {
+    if chosen {
+        format!("Goes to: {goes}.  Chosen by you.")
+    } else {
+        format!("Goes to: {goes}.")
+    }
+}
+pub const PLAIN_ERASED: &str = "It will be ERASED, then filled from the backup.";
+pub fn plain_own(date: &str) -> String {
+    format!("It will be ERASED.  Anything saved on it after {date} is lost.")
+}
+pub fn own_disk(n: usize, host: &str, role: &str, date: &str) -> String {
+    format!("Old disk {n} is {host}'s own {role} disk.  It will be erased and refilled from the {date} backup: anything saved on it after that is lost.")
+}
+pub const NOT_USED: &str = "Not used:";
+pub const NOT_OFFERED: &str = "Not offered:";
+pub const ALREADY_USED: &str = "Already used:";
+pub fn for_old_disk(n: usize) -> String {
+    format!("for old disk {n}")
+}
+pub const BLANK: &str = "blank: nothing on it";
+pub fn has_data(partitions: usize, what: &str) -> String {
+    match partitions {
+        0 => format!("has data: {what}"),
+        1 => format!("has data: 1 partition, {what}"),
+        n => format!("has data: {n} partitions, {what}"),
+    }
+}
+/// "has data: ..." or "blank: ..." as plain mode's sentence: "It has
+/// data: ...", "It is blank: ...".
+pub fn it(what: &str) -> String {
+    if what.starts_with("has ") {
+        format!("It {what}")
+    } else {
+        format!("It is {what}")
+    }
+}
+pub const REFUSED_STICK: &str = "this stick, never a target";
+pub const REFUSED_BACKUP: &str = "holds the backup being restored, never a target";
+pub const REFUSED_ROOT: &str = "holds the system running now, never a target";
+pub const REFUSED_IN_USE: &str = "in use now (mounted, or swap)";
+pub const REFUSED_READ_ONLY: &str = "read-only";
+pub const REFUSED_SECTOR: &str = "its sector size isn't the old disks'";
+pub const BTN_OK: &str = "OK";
+pub const BTN_THESE_ARE_RIGHT: &str = "These are right";
+pub fn change_where(n: usize) -> String {
+    format!("change where old disk {n} goes")
+}
+pub fn missing_target(n: usize) -> String {
+    format!("Old disk {n} has no disk to go to yet: Enter on it chooses one.")
+}
+pub fn disk_problem(text: &str) -> String {
+    format!("bko-holt can't take these choices: {text}")
+}
+pub const PLAN_FAILED_TITLE: &str = "bko-holt couldn't plan the restore";
+pub fn plan_failed_what(why: &str) -> String {
+    format!("bko-holt was asked for the plan, and said: {why}")
+}
+pub const PLAN_FAILED_WHY: &str = "It reads the backup's layout of the disks and this computer's disks; one of them isn't as it can use.  Raw output shows what it said.";
+pub const PLAN_FAILED_TODO: &str = "Try again; if it fails the same way, make a report.";
+pub const NO_LAYOUT_TITLE: &str = "the old disks' layout isn't here";
+pub const NO_LAYOUT_WHY: &str = "bko-holt needs the layout the backup recorded (its system.json) to know the old disks.";
+pub const NO_LAYOUT_TODO: &str = "Choose the machine on the first screen, with the stick it was set up on.  The shell can look at the BACKOTTER partition.";
+pub const LAYOUT_NONE_TYPED: &str = "A typed address has no layout on this stick: the old disks' layout is on the stick a machine was set up with, and this bko-rescue can't take it from the backup yet.";
+pub const LAYOUT_NO_PATH: &str = "bko-holt didn't name the machine's settings file in a form this stick takes.";
+pub const LAYOUT_NO_DEV: &str = "This stick's BACKOTTER partition isn't named, so the machine's settings can't be read from it.";
+pub const LAYOUT_UNREADABLE: &str = "The machine's settings file on the BACKOTTER partition couldn't be read.";
+pub fn layout_mount_failed(why: &str) -> String {
+    format!("The BACKOTTER partition couldn't be read: {why}.")
+}
+
+// ---- One old disk ----
+pub fn one_disk_title(n: usize, of: usize) -> String {
+    format!("Old disk {n} of {of}: where does it go?")
+}
+pub const ONE_DISK_KEYS: &str = "Arrows: choose | Enter: OK | Tab: buttons | Esc: back";
+pub fn from_backup_of(host: &str) -> String {
+    format!("From the backup of {host}:")
+}
+pub const PUT_IT_ON: &str = "Put it on this disk of this computer.  The disk you pick is ERASED.";
+pub const NO_SERIAL: &str = "no serial";
+pub const NO_CANDIDATES: &str = "No disk of this computer can take it.";
+pub fn row_slack(diff: &str) -> String {
+    format!("{diff} smaller: only free space at the end is lost")
+}
+pub fn row_smaller(diff: &str, m: &str, old: &str, new: &str) -> String {
+    format!("{diff} smaller: {m} would shrink from {old} to {new}")
+}
+pub fn row_much_smaller(m: &str, old: &str, new: &str, pct: &str) -> String {
+    if new.is_empty() {
+        format!("much smaller: {m} would shrink from {old}, {pct} %")
+    } else {
+        format!("much smaller: {m} would shrink from {old} to {new}, {pct} %")
+    }
+}
+pub fn row_bigger(diff: &str, m: &str, old: &str, new: &str) -> String {
+    format!("{diff} bigger: {m} would grow from {old} to {new} (you choose)")
+}
+/// Until RT10n's grow to fill, "left free" only (rescue-screens.md).
+pub fn row_much_bigger(diff: &str) -> String {
+    format!("{diff} bigger: left free")
+}
+pub fn row_wont_fit(m: &str, used: &str, most: &str) -> String {
+    format!("too small: {m} uses {used}; the most it could get is {most}")
+}
+pub fn row_cant_resize(m: &str) -> String {
+    format!("too small: {m} can't be made smaller here")
+}
+pub fn row_unknown(verdict: &str) -> String {
+    format!("can't be used: bko-holt says {verdict}")
+}
+pub fn wont_fit(m: &str, used: &str, most: &str, need: &str) -> String {
+    format!("{m} holds {used}; the most it could get on this disk is {most}.  It needs {need}, with room to spare.  Choose another disk.")
+}
+pub fn cant_resize(why: &str) -> String {
+    format!("{why}  Choose another disk.")
+}
+pub const CANT_RESIZE_WHY: &str = "bko-holt can't make this layout smaller.";
+pub fn unknown_verdict(verdict: &str) -> String {
+    format!("bko-holt's verdict on this disk is \"{verdict}\", which this bko-rescue doesn't know, so it isn't taken.  Choose another disk.")
+}
+pub const MUCH_SMALLER: &str = "much smaller";
+pub const A_LITTLE_SMALLER: &str = "a little smaller";
+pub const TOO_SMALL: &str = "too small";
+pub const BIGGER: &str = "bigger";
+
+// ---- The size screens ----
+pub const LITTLE_SMALLER_TITLE: &str = "This disk is a little smaller";
+pub const LITTLE_BIGGER_TITLE: &str = "This disk is a little bigger";
+pub const MUCH_SMALLER_TITLE: &str = "This disk is much smaller: you decide";
+pub const MUCH_BIGGER_TITLE: &str = "This disk is much bigger";
+pub const OFFER_KEYS: &str = "Tab: buttons | Enter: press | o: raw output | Esc: back to the disk list";
+#[allow(clippy::too_many_arguments)]
+pub fn was_is(n: usize, old: &str, old_size: &str, new: &str, new_size: &str, diff: &str, smaller: bool) -> String {
+    if smaller {
+        format!("Old disk {n} ({old}) was {old_size}.  The disk you chose, {new}, is {new_size}: {diff} smaller.")
+    } else {
+        format!("Old disk {n} ({old}) was {old_size}.  The disk you chose, {new}, is {new_size}: {diff} bigger.")
+    }
+}
+pub fn shrink_text(system: bool, m: &str, old: &str, new: &str, pct: &str, used: Option<&str>) -> String {
+    let what = if system {
+        format!("So the partitions as they were don't fit.  The system partition can be made smaller to fit.  It is shown as {m}, and holds the operating system and the home folders.")
+    } else {
+        format!("So the partitions as they were don't fit.  The largest partition, {m}, can be made smaller to fit.")
+    };
+    let used = match used {
+        Some(u) => format!("  Space used on {m}: {u}, so it fits with room to spare."),
+        None => format!("  bko-holt says the data on {m} fits."),
+    };
+    format!("{what}\n  {m} will shrink from {old} to {new}, by {pct} %.\n{used}\n  The other partitions stay as they were.")
+}
+pub const SLACK_TEXT: &str = "Only free space at the end of the old disk is lost: no partition changes size.  The table is fitted to the smaller disk.";
+pub fn grow_text(system: bool, m: &str, old: &str, new: &str, pct: &str, diff: &str) -> String {
+    let what = if system { format!("Or the system partition ({m}) can grow:") } else { format!("Or the largest partition ({m}) can grow:") };
+    format!("The partitions can stay as they were, with the extra {diff} left free at the end of the disk.  {what}\n  {m} will grow from {old} to {new}, by {pct} %.\n  The other partitions stay as they were either way.")
+}
+pub fn grows_elsewhere(disk: &str, m: &str, old: &str, new: &str) -> String {
+    format!("  On {disk}, {m} grows from {old} to {new} too: the same change applies to every disk.")
+}
+pub const OR_ANOTHER: &str = "Or choose another disk.";
+pub fn fit_refused(text: &str) -> String {
+    format!("bko-holt can't fit it there: {text}")
+}
+pub const BTN_SHRINK: &str = "Shrink the system partition";
+pub const BTN_GROW: &str = "Grow the system partition";
+pub const BTN_KEEP_SIZES: &str = "Keep the old sizes";
+pub const BTN_ANOTHER_DISK: &str = "Another disk";
+pub fn decide_sizes(m: &str, pct: &str, old: &str, new: &str, used: &str, fits: bool) -> String {
+    let fit = if fits { "so it fits with room to spare" } else { "so it would fit" };
+    if new.is_empty() {
+        format!("To fit, {m} would shrink by {pct} %:\n  Old size:    {old}\n  Space used:  {used} at the backup, {fit}\nThe other partitions stay as they were.")
+    } else {
+        format!("To fit, {m} would shrink by {pct} %:\n  Old size:    {old}\n  New size:    {new}\n  Space used:  {used} at the backup, {fit}\nThe other partitions stay as they were.")
+    }
+}
+pub const DECIDE_WHY: &str = "This stick offers a shrink of up to 10 % with a button.  This is more, so you decide, and nothing is chosen for you.";
+pub const BEYOND_LIMIT: &str = "This stick's bko-holt can't shrink a partition this far yet, though the data would fit: this disk can't be used for now.";
+pub fn shrink_row(m: &str, new: &str, disk: &str) -> String {
+    format!("Shrink {m} to {new} and restore onto {disk}")
+}
+pub const CHOOSE_ANOTHER: &str = "Choose another disk";
+pub const CHOOSE_ONE_FIRST: &str = "Choose one first: move to it with the arrows.";
+pub fn much_bigger_text(diff: &str) -> String {
+    format!("The partitions stay as they were, with the extra {diff} left free at the end of the disk, to be used later.  Growing the system partition to fill the disk isn't in this stick's bko-holt yet.")
+}
+pub fn keep_row(diff: &str) -> String {
+    format!("Keep the old sizes, and leave {diff} free")
+}
+
+// ---- 6. Passphrases ----
+pub fn passphrase_title(n: usize, of: usize) -> String {
+    format!("Passphrase {n} of {of}")
+}
+pub fn opens(names: &[String], holds: &[String]) -> String {
+    let what = if names.len() > 1 { format!("{} encrypted containers ({})", names.len(), names.join(", ")) } else { format!("the encrypted container {}", names.first().map(String::as_str).unwrap_or("")) };
+    match holds.len() {
+        0 => format!("This passphrase opens {what}."),
+        1 => format!("This passphrase opens {what}, which holds {}.", holds[0]),
+        _ => format!("This passphrase opens {what}, which hold {}.", holds.join(", ")),
+    }
+}
+pub const PASS_NEW: &str = "You will type it every time the computer starts.  It may be the old one or a new one.  If it is forgotten, nothing can open these disks: write it down.";
+pub const PASS_KEPT_HEADER: &str = "The backup kept this disk's own encryption header, so only the passphrase it had opens it: type the passphrase this disk had.";
+pub const PASS_RESUME: &str = "These disks hold a restore started before, and its containers are made: type the passphrase given the first time.";
+pub const LABEL_PASSPHRASE: &str = "Passphrase:";
+pub const LABEL_AGAIN: &str = "Type it again:";
+pub const PASSPHRASE_KEYS: &str = "Type | Tab: next field and buttons | Enter: next field, then OK | Esc: back";
+pub const PASS_EMPTY: &str = "Type a passphrase first: an empty one isn't taken.";
+pub const PASS_MISMATCH: &str = "The two didn't match, so both are cleared: type them again.";
+pub fn pass_length(min: u64, max: u64) -> String {
+    format!("It must be {min} to {max} characters long: type it again.")
+}
+pub fn kb_as_at_start(set: &str, host: &str) -> String {
+    format!("Keyboard: {set}, as at {host}'s start-up prompt.")
+}
+pub fn kb_not_at_start(set: &str, host: &str, there: &str) -> String {
+    format!("Keyboard: {set}.  {host}'s start-up prompt uses {there}: a passphrase of plain letters and digits is the safest.")
+}
+pub fn kb_start_unknown(set: &str, host: &str) -> String {
+    format!("Keyboard: {set}.  Which layout {host}'s start-up prompt uses isn't known; plain letters and digits are the safest.")
+}
+pub const BOOT_KB_TITLE: &str = "Keyboard for the disk passphrase";
+pub fn boot_kb(host: &str, now: &str, there: &str) -> String {
+    format!("When {host} starts, it asks for the disk passphrase with the keyboard acting as {there}.  This stick is set to {now}.\n\nSwitch to {there} now?  Then the passphrase you type here is typed the same way at each start.\n\nA passphrase of plain letters, digits and spaces types the same with most layouts.")
+}
+pub const KEY_BLOCKED_TITLE: &str = "a disk this stick can't unlock";
+pub fn key_blocked_what(group: &str) -> String {
+    format!("The encrypted container {group} needs a key this bko-rescue can't ask for.")
+}
+pub const KEY_FILE_ELSEWHERE: &str = "The backed-up system opened it with a key file kept on another disk or outside the backup, which the restore can't bring back.";
+pub fn unlock_unknown(kind: &str) -> String {
+    format!("bko-holt says it is unlocked by \"{kind}\", which this bko-rescue doesn't know, so it never skips the question.")
+}
+pub const KEY_BLOCKED_TODO: &str = "Restore it from the shell with bko-holt load and --key-file, or make a report.";
+
+// ---- 7. Resume offer ----
+pub const RESUME_TITLE: &str = "A restore was started here before";
+pub fn resume_head(host: &str) -> String {
+    format!("These disks already hold part of a restore of {host}:")
+}
+pub const STARTED_NOT_FINISHED: &str = "started, not known to be finished";
+pub const RESUME_CHOICES: &str = "Go on: nothing is erased.  What isn't done is done again, your files copied back over what is there, then the rest.\nStart again: everything on these disks is erased first.\nEither way, Review comes next and asks for the serials.";
+pub fn resume_only_again(why: &str) -> String {
+    format!("It can't be gone on with: {why}.\nStart again erases everything on these disks first.  Review comes next and asks for the serials.")
+}
+pub const BTN_GO_ON: &str = "Go on";
+pub const BTN_START_AGAIN: &str = "Start again";
+
+// ---- 8. Review ----
+pub const REVIEW_TITLE: &str = "Ready to restore";
+pub const REVIEW_KEYS: &str = "Type the serials | Tab: next | Enter on Restore: start | c: commands | Esc";
+pub fn review_head(host: &str, os: Option<&str>, when: &str, size: Option<&str>, same: bool) -> String {
+    let os = os.map(|x| format!(" ({x})")).unwrap_or_default();
+    let size = size.map(|x| format!(", {x}")).unwrap_or_default();
+    let from = if same { "Backed up from this computer." } else { "Backed up from a different computer." };
+    format!("Restore {host}{os} from the backup of {when}{size}.  {from}")
+}
+pub const REVIEW_ERASE: &str = "These disks will be ERASED, then filled from the backup.  Type the last six characters of each serial.  Check it against the label on the disk if you can: that's how you know it is the right disk.";
+pub const REVIEW_ERASE_PLAIN: &str = "These disks will be ERASED, then filled from the backup:";
+pub fn review_go_on(stage: &str) -> String {
+    format!("Nothing is erased: the restore goes on from \"{stage}\".  Type the last six characters of each serial all the same.")
+}
+pub fn review_go_on_plain(stage: &str) -> String {
+    format!("Nothing is erased: the restore goes on from \"{stage}\" on these disks:")
+}
+pub const WORD_ERASED: &str = "ERASED";
+pub const WORD_WRITTEN: &str = "WRITTEN";
+pub const WORD_GOES_ON: &str = "goes on";
+pub fn plain_disk(n: usize, name: &str, size: &str) -> String {
+    format!("Disk {n}: {name}, {size},")
+}
+pub fn ask_serial(n: usize) -> String {
+    format!("Type the last six characters of disk {n}'s serial, or b to go back:")
+}
+pub fn ask_size(n: usize, expect: &str) -> String {
+    format!("Disk {n} has no serial of its own: type its size and model, {expect}, or b to go back:")
+}
+pub fn wrong_serial(n: usize, name: &str) -> String {
+    format!("What is typed for disk {n} ({name}) isn't the end of its serial.  Check it against the disk's label.")
+}
+pub fn wrong_size(n: usize, name: &str, expect: &str) -> String {
+    format!("Disk {n} ({name}) has no serial of its own: type its size and model as shown, {expect}.")
+}
+pub fn confirmed(n: usize) -> String {
+    format!("Disk {n} confirmed.")
+}
+pub fn own_disk_review(name: &str, host: &str, role: &str, date: &str) -> String {
+    format!("The {name} is {host}'s own {role} disk: anything saved on it after {date} is lost.")
+}
+pub const CHANGES: &str = "Changes:";
+pub const CHANGES_NONE: &str = "Changes: none.";
+pub const NO_PROBLEMS: &str = "No problems found.";
+pub fn review_problem(text: &str) -> String {
+    format!("Problem: {text}")
+}
+pub fn not_touched(what: &str) -> String {
+    format!("Not touched: {what}.")
+}
+pub const THIS_STICK: &str = "this stick";
+pub const NOTHING_ELSE: &str = "no other disk";
+pub const NOTHING_CHANGED: &str = "Nothing has been changed on any disk yet.  Back is safe.";
+pub fn shrinks(m: &str, pct: &str, old: &str, new: &str, decided: bool) -> String {
+    match (m, decided) {
+        (_, true) => format!("{m} shrinks by {pct} %, from {old} to {new}, as you chose."),
+        ("/", false) => format!("/ (the system partition) shrinks by {pct} %, {old} to {new}."),
+        _ => format!("{m} shrinks by {pct} %, {old} to {new}."),
+    }
+}
+pub fn grows(m: &str, pct: &str, old: &str, new: &str) -> String {
+    format!("{m} grows by {pct} %, from {old} to {new}.")
+}
+pub fn made_as(m: &str, to: &str, was: &str) -> String {
+    format!("{m} is made as {to}, not {was}.")
+}
+pub const CHANGE_PASSPHRASE: &str = "The encrypted disks open with the passphrase you typed.";
+pub const NO_OTHER_FS: &str = "Another filesystem: not for this system.";
+pub const BTN_RESTORE: &str = "Restore";
+pub const BTN_RESTORE_NOW: &str = "Restore now";
+pub const BTN_SHOW_WHAT: &str = "Show what would happen";
+pub const BTN_COMMANDS: &str = "Commands";
+pub const BTN_EVERY_COMMAND: &str = "Show every command";
+pub const REVIEW_PROBLEM_TITLE: &str = "the plan has a problem";
+pub fn review_problem_what(text: &str) -> String {
+    format!("bko-holt found a problem with the plan, so the restore can't start: {text}")
+}
+pub const REVIEW_PROBLEM_WHY: &str = "bko-holt checks everything before it writes anything, and stops at the first thing it can't do as the backup was.";
+pub const ERASE_PROBLEM_WHY: &str = "A disk that holds something is written only when it is named to be erased, as the typed serials do.";
+pub const REVIEW_PROBLEM_TODO: &str = "Go back and change what it names, or make a report.";
+pub const BTN_TO_DISKS: &str = "Go back and change it";
+pub const COMMANDS_TITLE: &str = "Every command, in order";
+pub const ADVANCED_FS_TITLE: &str = "Advanced: restore onto another filesystem";
+pub const ADVANCED_FS_TEXT: &str = "A filesystem can be made as ext4, XFS or btrfs instead.  Files, owners and permissions stay the same; fstab and the boot setup follow.";
+pub const ADVANCED_FS_AFTER: &str = "Changing a filesystem clears the serials typed on Review, since what will be written has changed.";
+pub const AS_IT_WAS: &str = "as it was";
+pub const CHANGED: &str = "changed";
+pub const CANT_CHANGE: &str = "can't change: see below";
+pub const BTN_UNDO_ALL: &str = "Undo all";
+
+// ---- 9. Restore: RT12's second part ----
+pub const NEXT_TITLE: &str = "Next: the restore";
+pub fn next(name: &str, when: &str, dry_run: bool) -> String {
+    let what = if dry_run { "The dry run's walk through every command" } else { "The restore itself" };
+    format!("{name}'s backup of {when} is chosen, the disks are planned and confirmed.\n\n{what} isn't in this bko-rescue yet.  Nothing has been changed on any disk.")
 }
 pub const BTN_LEAVE: &str = "Leave bko-rescue";
 
@@ -380,6 +770,7 @@ pub const ALL: &[&str] = &[
     REPORT_TITLE, REPORT_DRY_RUN, REPORT_GITHUB, REPORT_REDACTED, REPORT_PRIVATE, BTN_VIEW, BTN_ADVANCED,
     REPORT_FAILED_TITLE, REPORT_FAILED, REPORT_NO_STRIP, VIEW_TITLE, ADVANCED_TITLE, ADVANCED_TEXT, ADVANCED_WARN, ADVANCED_PLAIN, TYPE_YES,
     TYPE_YES_FIRST, BTN_MAKE_IT, YES, SESSION_FAILED,
+    SCR_PASSPHRASES, SCR_RESUME, SCR_REVIEW, SCR_RESTORE, DISKS_TITLE, DISKS_KEYS, PLANNING_TITLE, PLANNING, PLANNING_FIT, PLANNING_REVIEW, STATUS_TITLE, STATUS_TEXT, ROLE_SYSTEM, ROLE_NOTHING, BY_WWID, BY_IDENTITY, WILL_BE_ERASED, CHOSEN_BY_YOU, NO_TARGET, PLAIN_NO_TARGET, PLAIN_ERASED, NOT_USED, NOT_OFFERED, ALREADY_USED, BLANK, REFUSED_STICK, REFUSED_BACKUP, REFUSED_ROOT, REFUSED_IN_USE, REFUSED_READ_ONLY, REFUSED_SECTOR, BTN_OK, BTN_THESE_ARE_RIGHT, PLAN_FAILED_TITLE, PLAN_FAILED_WHY, PLAN_FAILED_TODO, NO_LAYOUT_TITLE, NO_LAYOUT_WHY, NO_LAYOUT_TODO, LAYOUT_NONE_TYPED, LAYOUT_NO_PATH, LAYOUT_NO_DEV, LAYOUT_UNREADABLE, ONE_DISK_KEYS, PUT_IT_ON, NO_SERIAL, NO_CANDIDATES, CANT_RESIZE_WHY, MUCH_SMALLER, A_LITTLE_SMALLER, TOO_SMALL, BIGGER, LITTLE_SMALLER_TITLE, LITTLE_BIGGER_TITLE, MUCH_SMALLER_TITLE, MUCH_BIGGER_TITLE, OFFER_KEYS, SLACK_TEXT, OR_ANOTHER, BTN_SHRINK, BTN_GROW, BTN_KEEP_SIZES, BTN_ANOTHER_DISK, DECIDE_WHY, BEYOND_LIMIT, CHOOSE_ANOTHER, CHOOSE_ONE_FIRST, PASS_NEW, PASS_KEPT_HEADER, PASS_RESUME, LABEL_PASSPHRASE, LABEL_AGAIN, PASSPHRASE_KEYS, PASS_EMPTY, PASS_MISMATCH, BOOT_KB_TITLE, KEY_BLOCKED_TITLE, KEY_FILE_ELSEWHERE, KEY_BLOCKED_TODO, RESUME_TITLE, STARTED_NOT_FINISHED, RESUME_CHOICES, BTN_GO_ON, BTN_START_AGAIN, REVIEW_TITLE, REVIEW_KEYS, REVIEW_ERASE, REVIEW_ERASE_PLAIN, WORD_ERASED, WORD_WRITTEN, WORD_GOES_ON, CHANGES, CHANGES_NONE, NO_PROBLEMS, THIS_STICK, NOTHING_ELSE, NOTHING_CHANGED, CHANGE_PASSPHRASE, NO_OTHER_FS, BTN_RESTORE, BTN_RESTORE_NOW, BTN_SHOW_WHAT, BTN_COMMANDS, BTN_EVERY_COMMAND, REVIEW_PROBLEM_TITLE, REVIEW_PROBLEM_WHY, ERASE_PROBLEM_WHY, REVIEW_PROBLEM_TODO, BTN_TO_DISKS, COMMANDS_TITLE, ADVANCED_FS_TITLE, ADVANCED_FS_TEXT, ADVANCED_FS_AFTER, AS_IT_WAS, CHANGED, CANT_CHANGE, BTN_UNDO_ALL,
 ];
 
 #[cfg(test)]
@@ -398,7 +789,11 @@ mod tests {
             network_text("x", "y"),
             offer("lovelace", "German", "de, nodeadkeys", "English (US)"),
             report_in_ram("/run/bko-rescue/reports/x"),
-            next("x", "y"),
+            next("x", "y", true),
+            old_disk(1, "Samsung SSD 870 EVO 500GB", "500 GB", ROLE_SYSTEM),
+            shrink_text(true, "/", "465 GB", "445 GB", "4.3", Some("41.7 GB")),
+            review_head("lovelace", Some("Debian 13"), "22 Nov 2026 02:00 CET", Some("61.2 GB"), false),
+            boot_kb("lovelace", "German", "English (US)"),
         ] {
             assert_eq!(Clean::text(&s, usize::MAX).as_str(), s);
         }

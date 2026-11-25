@@ -16,10 +16,12 @@
 //!   periodic redraw, the too-small notice (D10), and `L`, `C` and `P` on
 //!   the first screen.
 
+pub mod cycle;
 pub mod field;
 pub mod gauge;
 pub mod list;
 pub mod run;
+pub mod serials;
 pub mod small;
 pub mod view;
 pub mod words;
@@ -32,9 +34,11 @@ use crate::term::out::Attr;
 use crate::text::{self, Clean, CUT};
 use crate::ui::{self, Act, Button, Chrome};
 
+use cycle::Cycle;
 use field::Field;
 use gauge::Gauge;
 use list::List;
+use serials::Serials;
 use view::View;
 use words::Words;
 
@@ -57,6 +61,8 @@ const BUTTON_GAP: u16 = 4;
 const BANNER_COL: u16 = 20;
 /// Cells of a radio list's "Try it here" field (the Keyboard screen).
 pub const TRY_W: u16 = 40;
+/// Cells of a passphrase's field (rescue-screens.md, "6. Passphrases").
+pub const PASS_W: u16 = 48;
 /// A sentinel `Act` for Question's No.
 pub(crate) const NO: usize = usize::MAX;
 
@@ -75,11 +81,15 @@ pub enum Part {
     Gauge(Gauge),
     /// The recovery key's twelve word fields.
     Words(Words),
+    /// Review's disks and their confirmation fields.
+    Serials(Serials),
+    /// Advanced's filesystems, each cycled by Space.
+    Cycle(Cycle),
 }
 
 impl Part {
     fn takes_focus(&self) -> bool {
-        matches!(self, Part::List(_) | Part::Field(_) | Part::View(_) | Part::Words(_))
+        matches!(self, Part::List(_) | Part::Field(_) | Part::View(_) | Part::Words(_) | Part::Serials(_) | Part::Cycle(_))
     }
 }
 
@@ -99,6 +109,8 @@ pub enum Did {
     Press(usize),
     /// A letter no button has, for the runner (`L`, `C`, `P`), lower case.
     Letter(char),
+    /// Enter on a menu's row: it is picked.
+    Pick,
 }
 
 pub struct Dialog {
@@ -110,6 +122,9 @@ pub struct Dialog {
     pub notice: Option<Clean>,
     /// The button Esc presses when there is no Back (a question's No).
     pub esc: Option<usize>,
+    /// Enter on a menu's list picks its row (`Ran::Act(Act::Ok)`),
+    /// whatever the buttons are.
+    pub pick: bool,
     /// Rows each part takes, from the last layout.
     heights: Vec<u16>,
 }
@@ -131,7 +146,7 @@ fn text_part(parts: &mut Vec<Part>, t: &Clean) {
 
 impl Dialog {
     pub fn new(chrome: Chrome, parts: Vec<Part>, buttons: Vec<Button>) -> Dialog {
-        let mut d = Dialog { chrome, parts, buttons, focus: Focus::None, notice: None, esc: None, heights: Vec::new() };
+        let mut d = Dialog { chrome, parts, buttons, focus: Focus::None, notice: None, esc: None, pick: false, heights: Vec::new() };
         // Trailing gaps would only push the buttons down.
         while matches!(d.parts.last(), Some(Part::Gap(_))) {
             d.parts.pop();
@@ -155,7 +170,96 @@ impl Dialog {
         parts.push(Part::List(List::menu(&m.items, m.start)));
         parts.push(Part::Gap(1));
         text_part(&mut parts, &m.after);
-        Dialog::new(m.chrome.clone(), parts, m.buttons.clone())
+        let mut d = Dialog::new(m.chrome.clone(), parts, m.buttons.clone());
+        d.pick = true;
+        d.notice = m.notice.clone();
+        if let Some(b) = m.focus_button.filter(|&b| b < d.buttons.len()) {
+            d.focus = Focus::Button(b);
+        }
+        d
+    }
+
+    /// Fields of a passphrase, their labels padded to one width.
+    pub fn passphrase(p: &ui::Passphrase) -> Dialog {
+        let mut parts = Vec::new();
+        text_part(&mut parts, &p.text);
+        let w = p.labels.iter().map(Clean::width).max().unwrap_or(0);
+        for l in &p.labels {
+            let label = l.join(&" ".repeat(w - l.width()), &Clean::default());
+            parts.push(Part::Field(Field::password().labelled(label, PASS_W)));
+        }
+        parts.push(Part::Gap(1));
+        text_part(&mut parts, &p.after);
+        let mut d = Dialog::new(p.chrome.clone(), parts, p.buttons.clone());
+        d.notice = p.notice.clone();
+        d
+    }
+
+    /// Review: the disks with their fields; the focus in the first.
+    pub fn review(r: &ui::Review, typed: &[String]) -> Dialog {
+        let mut parts = Vec::new();
+        text_part(&mut parts, &r.text);
+        let rows: Vec<(Clean, u16)> = r.rows.iter().map(|x| (x.text.clone(), x.width)).collect();
+        if !rows.is_empty() {
+            parts.push(Part::Serials(Serials::new(&rows, typed)));
+        }
+        if !r.after.is_empty() {
+            parts.push(Part::Text(r.after.clone()));
+            parts.push(Part::Gap(1));
+        }
+        let mut d = Dialog::new(r.chrome.clone(), parts, r.buttons.clone());
+        d.notice = r.notice.clone();
+        d
+    }
+
+    pub fn cycle(c: &ui::Cycle) -> Dialog {
+        let mut parts = Vec::new();
+        text_part(&mut parts, &c.text);
+        parts.push(Part::Cycle(Cycle::new(&c.rows, [c.as_was.clone(), c.changed.clone(), c.cant.clone()])));
+        text_part(&mut parts, &c.after);
+        Dialog::new(c.chrome.clone(), parts, c.buttons.clone())
+    }
+
+    pub fn serials(&self) -> Option<&Serials> {
+        self.parts.iter().find_map(|p| match p {
+            Part::Serials(x) => Some(x),
+            _ => None,
+        })
+    }
+
+    pub fn serials_mut(&mut self) -> Option<&mut Serials> {
+        self.parts.iter_mut().find_map(|p| match p {
+            Part::Serials(x) => Some(x),
+            _ => None,
+        })
+    }
+
+    pub fn cycle_part(&self) -> Option<&Cycle> {
+        self.parts.iter().find_map(|p| match p {
+            Part::Cycle(x) => Some(x),
+            _ => None,
+        })
+    }
+
+    /// Every password field's secret, in order, each left empty.
+    pub fn take_secrets(&mut self) -> Vec<crate::secret::Secret> {
+        self.parts
+            .iter_mut()
+            .filter_map(|p| match p {
+                Part::Field(f) if f.is_password() => Some(f.take_secret()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Put the focus on part `i`'s field `row` (Review's mismatch).
+    pub fn focus_serial(&mut self, row: usize) {
+        if let Some(i) = self.parts.iter().position(|p| matches!(p, Part::Serials(_))) {
+            if let Part::Serials(s) = &mut self.parts[i] {
+                s.focus(row);
+            }
+            self.focus = Focus::Part(i);
+        }
     }
 
     pub fn radio(r: &ui::Radio) -> Dialog {
@@ -276,7 +380,17 @@ impl Dialog {
                 Part::List(l) => {
                     fixed = fixed.saturating_add(2);
                     flexible += 1;
-                    flex_least += least(len(l.len()));
+                    flex_least += least(len(l.lines_len()));
+                }
+                Part::Serials(x) => {
+                    fixed = fixed.saturating_add(2);
+                    flexible += 1;
+                    flex_least += least(len(x.len()));
+                }
+                Part::Cycle(x) => {
+                    fixed = fixed.saturating_add(3 + cycle::NOTE_ROWS);
+                    flexible += 1;
+                    flex_least += least(len(x.len()));
                 }
                 Part::View(v) => {
                     flexible += 1;
@@ -312,9 +426,19 @@ impl Dialog {
                 Part::Gauge(_) => 2,
                 Part::Words(_) => words::HEIGHT,
                 Part::List(l) => {
-                    let rows = give(len(l.len()), &mut left);
+                    let rows = give(len(l.lines_len()), &mut left);
                     l.window = rows;
                     rows + 2
+                }
+                Part::Serials(x) => {
+                    let rows = give(len(x.len()), &mut left);
+                    x.window = rows;
+                    rows + 2
+                }
+                Part::Cycle(x) => {
+                    let rows = give(len(x.len()), &mut left);
+                    x.window = rows;
+                    rows + 3 + cycle::NOTE_ROWS
                 }
                 Part::View(v) => {
                     let rows = give(len(v.len()), &mut left);
@@ -392,6 +516,8 @@ impl Dialog {
                 Part::View(v) => v.draw(&mut c, row, focused),
                 Part::Gauge(g) => g.draw(&mut c, row),
                 Part::Words(w) => w.draw(&mut c, row, focused),
+                Part::Serials(x) => x.draw(&mut c, row, focused),
+                Part::Cycle(x) => x.draw(&mut c, row, focused),
             }
             row += ph;
         }
@@ -455,6 +581,7 @@ impl Dialog {
                     lists = true;
                 }
                 Part::View(_) => k.push("Arrows: line | Left/Right: sideways | Space: page".into()),
+                Part::Cycle(_) => k.push("Arrows: row | Space: next type".into()),
                 _ => {}
             }
         }
@@ -525,7 +652,7 @@ impl Dialog {
 
     /// Whether the focus is in a text field, where letters are typed.
     pub fn typing(&self) -> bool {
-        matches!(self.focus, Focus::Part(i) if matches!(self.parts.get(i), Some(Part::Field(_) | Part::Words(_))))
+        matches!(self.focus, Focus::Part(i) if matches!(self.parts.get(i), Some(Part::Field(_) | Part::Words(_) | Part::Serials(_))))
     }
 
     pub fn key(&mut self, k: Key) -> Did {
@@ -544,6 +671,8 @@ impl Dialog {
                 (Part::Field(f), Key::Char(_) | Key::Space | Key::Backspace) => Some(f.key(k)),
                 (Part::Words(w), Key::Char(_) | Key::Space | Key::Backspace) => Some(w.key(k)),
                 (Part::List(l), Key::Up | Key::Down) => Some(l.key(k)),
+                (Part::Serials(x), Key::Char(_) | Key::Space | Key::Backspace | Key::Up | Key::Down) => Some(x.key(k)),
+                (Part::Cycle(x), Key::Up | Key::Down | Key::Space) => Some(x.key(k)),
                 (Part::View(v), Key::Up | Key::Down | Key::Left | Key::Right | Key::Space | Key::Backspace) => {
                     Some(v.key(k))
                 }
@@ -555,6 +684,13 @@ impl Dialog {
         }
         match k {
             Key::Tab => {
+                if let Focus::Part(i) = self.focus {
+                    if let Part::Serials(x) = &mut self.parts[i] {
+                        if x.advance() {
+                            return Did::Changed;
+                        }
+                    }
+                }
                 let t = self.targets();
                 if t.is_empty() {
                     return Did::Nothing;
@@ -568,7 +704,27 @@ impl Dialog {
             }
             Key::Enter => match self.focus {
                 Focus::Button(i) => Did::Press(i),
-                Focus::Part(_) => self.default_button().map_or(Did::Nothing, Did::Press),
+                Focus::Part(i) => {
+                    // A menu's row is picked; a field, or Review's
+                    // fields, go to the next one, then on.
+                    match &mut self.parts[i] {
+                        Part::List(l) if self.pick && !l.radio => return Did::Pick,
+                        Part::Serials(x) => {
+                            if !x.advance() && !self.buttons.is_empty() {
+                                self.focus = Focus::Button(0);
+                            }
+                            return Did::Changed;
+                        }
+                        Part::Field(_) => {
+                            if let Some(j) = self.parts.iter().enumerate().skip(i + 1).find(|(_, p)| matches!(p, Part::Field(_))).map(|(j, _)| j) {
+                                self.focus = Focus::Part(j);
+                                return Did::Changed;
+                            }
+                        }
+                        _ => {}
+                    }
+                    self.default_button().map_or(Did::Nothing, Did::Press)
+                }
                 Focus::None => Did::Nothing,
             },
             // Esc is Back; with no Back, the button the dialog names (a
@@ -719,7 +875,7 @@ mod tests {
         let mut m = Menu::new(Chrome::ours("a", "b"), o("x"), items(3));
         m.buttons = vec![Button::shell(), Button::ok(), Button::back()];
         let mut d = Dialog::menu(&m);
-        assert_eq!(d.key(Key::Enter), Did::Press(1));
+        assert_eq!(d.key(Key::Enter), Did::Pick, "a menu's row is picked, as its OK would");
         assert_eq!(d.key(Key::Esc), Did::Press(2));
         assert_eq!(d.key(Key::Char('S')), Did::Press(0), "either case");
         assert_eq!(d.key(Key::Char('L')), Did::Letter('l'));

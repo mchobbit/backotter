@@ -1,0 +1,78 @@
+ BackOtter rescue                                                         Review
+                                                                                
+  ┌─────────────── Advanced: restore onto another filesystem ────────────────┐  
+  │                                                                          │  
+  │ A filesystem can be made as ext4, XFS or btrfs instead.  Files, owners   │  
+  │ and permissions stay the same; fstab and the boot setup follow.          │  
+  │                                                                          │  
+  │  ┌────────────────────────────────────────────────────────────────────┐  │  
+  │  │ /          ext4    ->  ext4     as it was                          │  │  
+  │  │ /boot      ext4    ->  ext4     can't change: see below            │  │  
+  │  │ /srv       ext4    ->  ext4     as it was                          │  │  
+  │  └────────────────────────────────────────────────────────────────────┘  │  
+  │                                                                          │  
+  │ --reformat /=btrfs: the source doesn't have btrfs-progs installed;       │  
+  │ install it there and back up again, or the restored system has no fsck   │  
+  │ or repair for btrfs                                                      │  
+  │ Changing a filesystem clears the serials typed on Review, since what     │  
+  │ will be written has changed.                                             │  
+  │                                                                          │  
+  │                   <  OK  >    < Undo all >    < Back >                   │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+ Arrows: row | Space: next type | Tab: next | Enter: OK | Esc: back             
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                         Review
+                                                                                
+  +--------------- Advanced: restore onto another filesystem ----------------+  
+  |                                                                          |  
+  | A filesystem can be made as ext4, XFS or btrfs instead.  Files, owners   |  
+  | and permissions stay the same; fstab and the boot setup follow.          |  
+  |                                                                          |  
+  |  +--------------------------------------------------------------------+  |  
+  |  | /          ext4    ->  ext4     as it was                          |  |  
+  |  | /boot      ext4    ->  ext4     can't change: see below            |  |  
+  |  | /srv       ext4    ->  ext4     as it was                          |  |  
+  |  +--------------------------------------------------------------------+  |  
+  |                                                                          |  
+  | --reformat /=btrfs: the source doesn't have btrfs-progs installed;       |  
+  | install it there and back up again, or the restored system has no fsck   |  
+  | or repair for btrfs                                                      |  
+  | Changing a filesystem clears the serials typed on Review, since what     |  
+  | will be written has changed.                                             |  
+  |                                                                          |  
+  |                   <  OK  >    < Undo all >    < Back >                   |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+ Arrows: row | Space: next type | Tab: next | Enter: OK | Esc: back             

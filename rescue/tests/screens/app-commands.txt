@@ -1,0 +1,77 @@
+ BackOtter rescue                                                         Review
+  ┌──────────────────────── Every command, in order ─────────────────────────┐  
+  │ # bko-holt load plan for /run/bko-rescue/layout.json                     │  
+  │ # Source: lovelace, Debian GNU/Linux 13 (trixie), UEFI boot with grub, > │  
+  │ #                                                                        │  
+  │ # Disks:                                                                 │  
+  │ #   sda (466 GiB) -> /dev/sda                                            │  
+  │ #   sdb (1.8 TiB) -> /dev/sdb                                            │  
+  │                                                                          │  
+  │ # ---- partition ----                                                    │  
+  │ # sda -> /dev/sda: clear the old table and signatures                    │  
+  │ wipefs --all /dev/sda                                                    │  
+  │ sfdisk --wipe always --wipe-partitions always /dev/sda <<'EOF'           │  
+  │ label: gpt                                                               │  
+  │ label-id: 7D2B4E10-3C9A-4F6B-9E21-5A8C0D4F3B77                           │  
+  │ first-lba: 2048                                                          │  
+  │ /dev/sdap1 : start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A> │  
+  │ EOF                                                                      │  
+  │ v more below                                                             │  
+  │                                                                          │  
+  │                               <  Close  >                                │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+ Arrows: line | Left/Right: sideways | Space: page | Tab: next | Enter: Close   
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                         Review
+  +------------------------ Every command, in order -------------------------+  
+  | # bko-holt load plan for /run/bko-rescue/layout.json                     |  
+  | # Source: lovelace, Debian GNU/Linux 13 (trixie), UEFI boot with grub, > |  
+  | #                                                                        |  
+  | # Disks:                                                                 |  
+  | #   sda (466 GiB) -> /dev/sda                                            |  
+  | #   sdb (1.8 TiB) -> /dev/sdb                                            |  
+  |                                                                          |  
+  | # ---- partition ----                                                    |  
+  | # sda -> /dev/sda: clear the old table and signatures                    |  
+  | wipefs --all /dev/sda                                                    |  
+  | sfdisk --wipe always --wipe-partitions always /dev/sda <<'EOF'           |  
+  | label: gpt                                                               |  
+  | label-id: 7D2B4E10-3C9A-4F6B-9E21-5A8C0D4F3B77                           |  
+  | first-lba: 2048                                                          |  
+  | /dev/sdap1 : start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A> |  
+  | EOF                                                                      |  
+  | v more below                                                             |  
+  |                                                                          |  
+  |                               <  Close  >                                |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+ Arrows: line | Left/Right: sideways | Space: page | Tab: next | Enter: Close   

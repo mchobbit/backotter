@@ -1,0 +1,130 @@
+BackOtter rescue (plain mode)
+Starting
+Checking this stick's bko-holt.
+Reading the stick
+Reading this stick's settings.
+Which machine is this?
+The stick knows these machines.  None of them was backed up from this
+computer.  Pick the one you are restoring.
+  1) lovelace   Debian 13      newest backup 22 Nov 2026 01:00 UTC
+  2) babbage    Fedora 45      newest backup 21 Nov 2026 08:00 UTC
+  3) hopper     FreeBSD 15.0   newest backup 18 Nov 2026 01:00 UTC
+The one you pick is restored onto this computer, so check the name:
+it is the computer's name from when it was backed up.
+
+Keyboard: English (US).  k changes it.
+  t) type a location   k) keyboard   s) shell
+Choose [1-3, t, k, s]: The backup password
+lovelace's backups are kept on nas.local, at
+  sftp://nas.local/backotter/lovelace
+
+Type the backup password, or press Enter alone for other choices:
+It's the password chosen when the backups were set up, not the password
+for this computer.
+
+Keyboard: English (US).  lovelace's backup doesn't say which layout it
+used.
+> 
+Opening the backups
+Opening lovelace's backups on nas.local.
+Opening the backups
+Reading the list of lovelace's backups.
+Which backup?
+lovelace's backups, newest first:
+  1) 22 Nov 2026 02:00 UTC+01:00    61.2 GB   newest       a7f3c901
+  2) 21 Nov 2026 02:00 UTC+01:00    61.0 GB                3be04d2a
+  3) 20 Nov 2026 02:00 UTC+01:00    60.9 GB                d1185e77
+  4) 15 Nov 2026 02:00 UTC+01:00    60.4 GB   weekly       4e6f1d08
+  5) 01 Nov 2026 02:00 UTC+01:00    59.8 GB   monthly      c03a77b2
+  6) 01 Oct 2026 02:00 UTC+02:00    58.9 GB   monthly      5d2e90af
+  7) 01 Sep 2026 02:00 UTC+02:00    58.1 GB   monthly      9a0b1c2d
+  8) 01 Aug 2026 02:00 UTC+02:00    57.3 GB   monthly      8b1c2d3e
+  9) 01 Jul 2026 02:00 UTC+02:00    56.0 GB   monthly      7c2d3e4f
+  10) 01 Jun 2026 02:00 UTC+02:00    55.2 GB   monthly      6d3e4f50
+  11) 01 May 2026 02:00 UTC+02:00    54.9 GB   monthly      5e4f5061
+  12) 01 Apr 2026 02:00 UTC+02:00    53.7 GB   monthly      4f506172
+  13) 01 Mar 2026 02:00 UTC+01:00    52.0 GB   monthly      30617283
+  14) 01 Feb 2026 02:00 UTC+01:00    51.1 GB   monthly      21728394
+Times are lovelace's offset from UTC, as each backup recorded it.  The
+newest is usually the one you want.
+  b) back
+Choose [1-14, b]: Planning
+bko-holt is working out where each disk goes.  Nothing is written.
+Where each disk goes
+lovelace had 2 disks.
+Old disk 1: Samsung SSD 870 EVO 500GB, 500 GB, the system.
+  No disk is chosen for it yet.
+Old disk 2: WDC WD20EFRX-68EUZN0, 2.00 TB, /srv.
+  Goes to: the same disk, found by its serial WD-WCC4M5XK7HPL.
+  It will be ERASED.  Anything saved on it after 22 Nov 2026 is lost.
+Not used: WDC WD3200AAKX, 320 GB, serial WD-WCAV2K318842.
+  It is blank: nothing on it.
+Not used: TS64GSSD370S, 64.0 GB, serial F431270087.
+  It is blank: nothing on it.
+Not offered: SanDisk Ultra, 32.0 GB: this stick, never a target.
+  1) change where old disk 1 goes   2) change where old disk 2 goes
+  o) these are right   b) back   s) shell
+Choose [1-2, o, b, s]: Old disk 1 of 2: where does it go?
+From the backup of lovelace:
+  Old disk 1: Samsung SSD 870 EVO 500GB, 500 GB, the system
+  serial S6PXNM0T412345A
+
+Put it on this disk of this computer.  The disk you pick is ERASED.
+Already used:  WDC WD20EFRX-68EUZN0, for old disk 2
+Not offered:   SanDisk Ultra, 32.0 GB: this stick, never a target
+  1) WDC WD3200AAKX, 320 GB, serial WD-WCAV2K318842: much smaller
+  2) TS64GSSD370S, 64.0 GB, serial F431270087: too small   b) back
+Choose [1-2, b]: / holds 41.7 GB; the most it could get on this disk is 28.9 GB.  It
+needs 43.9 GB, with room to spare.  Choose another disk.
+Choose [1-2, b]: Planning
+bko-holt is working out the new sizes.  Nothing is written.
+This disk is much smaller: you decide
+Old disk 1 (Samsung SSD 870 EVO 500GB) was 500 GB.  The disk you chose,
+WDC WD3200AAKX, is 320 GB: 180 GB smaller.
+
+To fit, / would shrink by 38.7 %:
+  Old size:    465 GB
+  New size:    285 GB
+  Space used:  41.7 GB at the backup, so it fits with room to spare
+The other partitions stay as they were.
+
+This stick offers a shrink of up to 10 % with a button.  This is more,
+so you decide, and nothing is chosen for you.
+  1) Shrink / to 285 GB and restore onto WDC WD3200AAKX
+  2) Choose another disk   o) raw output   b) back
+Choose [1-2, o, b]: Choose [1-2, o, b]: Planning
+bko-holt is working out where each disk goes.  Nothing is written.
+Where each disk goes
+lovelace had 2 disks.
+Old disk 1: Samsung SSD 870 EVO 500GB, 500 GB, the system.
+  Goes to: WDC WD3200AAKX, 320 GB, serial WD-WCAV2K318842.  Chosen by
+you.
+  It will be ERASED, then filled from the backup.
+Old disk 2: WDC WD20EFRX-68EUZN0, 2.00 TB, /srv.
+  Goes to: the same disk, found by its serial WD-WCC4M5XK7HPL.
+  It will be ERASED.  Anything saved on it after 22 Nov 2026 is lost.
+Not used: TS64GSSD370S, 64.0 GB, serial F431270087.
+  It is blank: nothing on it.
+Not offered: SanDisk Ultra, 32.0 GB: this stick, never a target.
+  1) change where old disk 1 goes   2) change where old disk 2 goes
+  o) these are right   b) back   s) shell
+Choose [1-2, o, b, s]: Which backup?
+lovelace's backups, newest first:
+  1) 22 Nov 2026 02:00 UTC+01:00    61.2 GB   newest       a7f3c901
+  2) 21 Nov 2026 02:00 UTC+01:00    61.0 GB                3be04d2a
+  3) 20 Nov 2026 02:00 UTC+01:00    60.9 GB                d1185e77
+  4) 15 Nov 2026 02:00 UTC+01:00    60.4 GB   weekly       4e6f1d08
+  5) 01 Nov 2026 02:00 UTC+01:00    59.8 GB   monthly      c03a77b2
+  6) 01 Oct 2026 02:00 UTC+02:00    58.9 GB   monthly      5d2e90af
+  7) 01 Sep 2026 02:00 UTC+02:00    58.1 GB   monthly      9a0b1c2d
+  8) 01 Aug 2026 02:00 UTC+02:00    57.3 GB   monthly      8b1c2d3e
+  9) 01 Jul 2026 02:00 UTC+02:00    56.0 GB   monthly      7c2d3e4f
+  10) 01 Jun 2026 02:00 UTC+02:00    55.2 GB   monthly      6d3e4f50
+  11) 01 May 2026 02:00 UTC+02:00    54.9 GB   monthly      5e4f5061
+  12) 01 Apr 2026 02:00 UTC+02:00    53.7 GB   monthly      4f506172
+  13) 01 Mar 2026 02:00 UTC+01:00    52.0 GB   monthly      30617283
+  14) 01 Feb 2026 02:00 UTC+01:00    51.1 GB   monthly      21728394
+Times are lovelace's offset from UTC, as each backup recorded it.  The
+newest is usually the one you want.
+  b) back
+Choose [1-14, b]: 

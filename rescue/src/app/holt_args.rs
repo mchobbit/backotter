@@ -7,8 +7,11 @@
 //! then refuses `--commit` itself (exit 2).
 //!
 //! RT11 runs `--version --json`, `stick --json`, `recovery-words OUT
-//! --json` and `report-bug`; `load` is built here too, so the lock holds
-//! from the first screen that will run it (RT12).
+//! --json` and `report-bug`; RT12 the plans and status of Disks,
+//! Passphrases, Resume and Review, and builds Restore's run from Review's
+//! (rescue-screens.md, "The full argument list": the plan reviewed is the
+//! run made, with `--through close --commit --expect-plan` in its stage's
+//! place).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -20,7 +23,7 @@ pub const NO_COMMIT: &str = "BKO_HOLT_NO_COMMIT";
 /// Which part of load to run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage {
-    /// The plan: no `--through` or `--only`.
+    /// The plan: `--through plan`.
     Plan,
     /// `--only status`.
     Status,
@@ -41,6 +44,12 @@ pub struct Load {
     pub erase: Vec<String>,
     pub snapshot: Option<String>,
     pub expect_plan: Option<String>,
+    /// `--fit-largest PCT`: a shrink or grow the user agreed to on Disks.
+    pub fit_largest: Option<u64>,
+    /// `--reformat MOUNT=TYPE`, from Advanced.
+    pub reformat: Vec<(String, String)>,
+    /// `--removable --no-nvram` (Failure's "install without an entry").
+    pub removable: bool,
     pub commit: bool,
 }
 
@@ -56,8 +65,23 @@ impl Load {
             erase: Vec::new(),
             snapshot: None,
             expect_plan: None,
+            fit_largest: None,
+            reformat: Vec::new(),
+            removable: false,
             commit: false,
         }
+    }
+
+    /// The run Review's plan stands for: the same arguments, its stage
+    /// `--through close` (or STAGE alone, for a resume), `--commit`, and
+    /// the reviewed plan's hash, so bko-holt refuses it if anything moved
+    /// since (J20).  In a dry run `argv` still never passes `--commit`.
+    pub fn run_of(&self, stage: Stage, plan_sha256: &str) -> Load {
+        let mut l = self.clone();
+        l.stage = stage;
+        l.expect_plan = Some(plan_sha256.to_string());
+        l.commit = true;
+        l
     }
 }
 
@@ -104,7 +128,7 @@ pub fn argv(cmd: &HoltCmd, dry_run: bool) -> Vec<OsString> {
         HoltCmd::Load(l) => {
             let mut v = vec![os("load"), l.layout.as_os_str().to_owned(), os("--json")];
             match &l.stage {
-                Stage::Plan => {}
+                Stage::Plan => v.extend([os("--through"), os("plan")]),
                 Stage::Status => v.extend([os("--only"), os("status")]),
                 Stage::Through(s) => v.extend([os("--through"), os(s)]),
                 Stage::Only(s) => v.extend([os("--only"), os(s)]),
@@ -131,6 +155,15 @@ pub fn argv(cmd: &HoltCmd, dry_run: bool) -> Vec<OsString> {
             }
             if let Some(h) = &l.expect_plan {
                 v.extend([os("--expect-plan"), os(h)]);
+            }
+            if let Some(p) = l.fit_largest {
+                v.extend([os("--fit-largest"), os(&p.to_string())]);
+            }
+            for (m, t) in &l.reformat {
+                v.extend([os("--reformat"), os(&format!("{m}={t}"))]);
+            }
+            if l.removable {
+                v.extend([os("--removable"), os("--no-nvram")]);
             }
             // Lock 1: never in a dry run, whatever was asked.
             if l.commit && !dry_run {
@@ -176,6 +209,9 @@ mod tests {
             l.map.push(("sda".into(), "nvme0n1".into()));
             l.erase.push("nvme0n1".into());
             l.expect_plan = Some("ab".repeat(32));
+            l.fit_largest = Some(5);
+            l.reformat.push(("/srv".into(), "xfs".into()));
+            l.removable = true;
             // Every screen asks for --commit: the dry run still never
             // passes it.
             l.commit = true;
@@ -198,6 +234,29 @@ mod tests {
     }
 
     #[test]
+    fn restores_run_is_reviews_with_its_stage_commit_and_hash() {
+        let mut review = Load::new(Path::new("/run/bko-rescue/s-1-0/layout.json"), Stage::Plan);
+        review.map.push(("sda".into(), "/dev/disk/by-id/nvme-X".into()));
+        review.erase.push("/dev/disk/by-id/nvme-X".into());
+        review.fit_largest = Some(39);
+        let words = |l: &Load, dry: bool| argv(&HoltCmd::Load(l), dry).iter().map(|x| x.to_string_lossy().to_string()).collect::<Vec<_>>();
+        let r = words(&review, false);
+        assert_eq!(&r[3..5], &["--through".to_string(), "plan".to_string()]);
+        let run = review.run_of(Stage::Through("close".into()), &"cd".repeat(32));
+        let w = words(&run, false);
+        // The same list, its stage swapped, the hash and --commit added.
+        let mut want = r.clone();
+        want[4] = "close".into();
+        let at = want.iter().position(|x| x == "--fit-largest").unwrap();
+        want.splice(at..at, ["--expect-plan".to_string(), "cd".repeat(32)]);
+        want.push("--commit".into());
+        assert_eq!(w, want);
+        // A dry run: the same, without --commit.
+        let d = words(&run, true);
+        assert_eq!(d, want[..want.len() - 1].to_vec());
+    }
+
+    #[test]
     fn a_restore_passes_commit_only_when_asked() {
         let mut l = loads().remove(2);
         let a = argv(&HoltCmd::Load(&l), false);
@@ -212,7 +271,7 @@ mod tests {
             format!(
                 "load /run/bko-rescue/layout.json --json --through close --repo sftp://nas.local/backotter/lovelace \
                  --password-file /run/bko-rescue/s-1-0/password --key-file cryptroot=/run/bko-rescue/s-1-0/k0 \
-                 --map sda=nvme0n1 --erase nvme0n1 --expect-plan {}",
+                 --map sda=nvme0n1 --erase nvme0n1 --expect-plan {} --fit-largest 5 --reformat /srv=xfs --removable --no-nvram",
                 "ab".repeat(32)
             )
         );

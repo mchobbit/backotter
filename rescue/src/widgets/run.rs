@@ -234,6 +234,7 @@ impl<I: Io> FullScreen<I> {
                 },
                 Event::Key(k, _) => match d.key(k) {
                     Did::Press(i) => return Ok(Ran::Act(d.buttons[i].act)),
+                    Did::Pick => return Ok(Ran::Act(Act::Ok)),
                     Did::Letter(c) if d.chrome.first => match c {
                         'l' => self.change_profile(true),
                         'c' => self.change_profile(false),
@@ -394,6 +395,50 @@ impl<I: Io> Ui for FullScreen<I> {
 
     fn full_screen(&self) -> bool {
         true
+    }
+
+    fn passphrase(&mut self, p: &ui::Passphrase) -> Answer<Vec<Secret>> {
+        let mut d = Dialog::passphrase(p);
+        // The fields' Secrets are wiped when `d` drops, whatever the
+        // answer.
+        match self.run(&mut d, None, true) {
+            Ran::Act(Act::Ok) => Answer::Ok(d.take_secrets()),
+            r => r.answer(),
+        }
+    }
+
+    fn review(&mut self, r: &ui::Review, typed: &mut Vec<String>) -> Answer<()> {
+        let mut d = Dialog::review(r, typed);
+        let mut fresh = true;
+        loop {
+            let ran = self.run(&mut d, None, fresh);
+            if let Some(x) = d.serials() {
+                *typed = x.values.clone();
+            }
+            match ran {
+                Ran::Act(Act::Ok) => {
+                    // Not greyed out: it says why, each time.
+                    if let Some(why) = &r.blocked {
+                        d.notice = Some(why.clone());
+                    } else if let Some(i) = r.rows.iter().enumerate().position(|(i, x)| !ui::matches(typed.get(i).map_or("", String::as_str), &x.expect)) {
+                        d.notice = Some(r.rows[i].wrong.clone());
+                        d.focus_serial(i);
+                    } else {
+                        return Answer::Ok(());
+                    }
+                }
+                x => return x.answer(),
+            }
+            fresh = false;
+        }
+    }
+
+    fn cycle(&mut self, c: &ui::Cycle) -> Answer<Vec<usize>> {
+        let mut d = Dialog::cycle(c);
+        match self.run(&mut d, None, true) {
+            Ran::Act(Act::Ok) => Answer::Ok(d.cycle_part().map(|x| x.choice.clone()).unwrap_or_default()),
+            r => r.answer(),
+        }
     }
 }
 

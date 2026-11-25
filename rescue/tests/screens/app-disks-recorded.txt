@@ -1,0 +1,79 @@
+ BackOtter rescue                                                          Disks
+                                                                                
+  ┌────────────────────────── Where each disk goes ──────────────────────────┐  
+  │                                                                          │  
+  │ lovelace had 2 disks.  Choose a disk of this computer for each one.      │  
+  │                                                                          │  
+  │  ┌────────────────────────────────────────────────────────────────────┐  │  
+  │  │ Old disk 1: vda, 12.9 GB, the system                               │  │  
+  │  │   -> vdb, 12.9 GB, no serial                                       │  │  
+  │  │      will be ERASED, then filled from the backup     chosen by you │  │  
+  │  │ Old disk 2: vdb, 12.9 GB, the system                               │  │  
+  │  │   -> vdc, 12.9 GB, no serial                                       │  │  
+  │  │      will be ERASED, then filled from the backup     chosen by you │  │  
+  │  └────────────────────────────────────────────────────────────────────┘  │  
+  │                                                                          │  
+  │ Not offered:  vda, 23.6 GB: holds the system running now, never a target │  
+  │ Not used:     vdd, 12.9 GB                                               │  
+  │               has data: ext4 "ht1decoy", 313 MB used                     │  
+  │                                                                          │  
+  │                           <  OK  >    < Back >                           │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+ Arrows: old disk | Enter: change where it goes | Tab: buttons | Esc: back      
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddddhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhdddddsb
+bbdddddhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhdddddsb
+bbdddddhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhdddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddDDDDDDDDddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+h 0;1;30;47
+s 0;40
+ BackOtter rescue                                                          Disks
+                                                                                
+  +-------------------------- Where each disk goes --------------------------+  
+  |                                                                          |  
+  | lovelace had 2 disks.  Choose a disk of this computer for each one.      |  
+  |                                                                          |  
+  |  +--------------------------------------------------------------------+  |  
+  |  | Old disk 1: vda, 12.9 GB, the system                               |  |  
+  |  |   -> vdb, 12.9 GB, no serial                                       |  |  
+  |  |      will be ERASED, then filled from the backup     chosen by you |  |  
+  |  | Old disk 2: vdb, 12.9 GB, the system                               |  |  
+  |  |   -> vdc, 12.9 GB, no serial                                       |  |  
+  |  |      will be ERASED, then filled from the backup     chosen by you |  |  
+  |  +--------------------------------------------------------------------+  |  
+  |                                                                          |  
+  | Not offered:  vda, 23.6 GB: holds the system running now, never a target |  
+  | Not used:     vdd, 12.9 GB                                               |  
+  |               has data: ext4 "ht1decoy", 313 MB used                     |  
+  |                                                                          |  
+  |                           <  OK  >    < Back >                           |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+ Arrows: old disk | Enter: change where it goes | Tab: buttons | Esc: back      

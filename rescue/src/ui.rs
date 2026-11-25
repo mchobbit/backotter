@@ -120,19 +120,42 @@ impl Chrome {
 
 /// A list of things to do: Enter picks the row with the focus.  Each
 /// item is a tag and a description, the tags lined up.
+/// An item's tag may hold newlines: it then takes a row a line (the Disks
+/// overview's old disks).  Enter on the list picks the row with the focus
+/// (`Answer::Ok`), whatever the buttons.
 #[derive(Clone, Debug)]
 pub struct Menu {
     pub chrome: Chrome,
     pub text: Clean,
     pub items: Vec<(Clean, Clean)>,
     pub start: usize,
+    /// The focus starts on this button instead of the list.
+    pub focus_button: Option<usize>,
     pub after: Clean,
+    /// Said on the row above the buttons: why a button didn't go on.
+    pub notice: Option<Clean>,
+    /// Plain mode's text in the place of `text`, the items and `after`,
+    /// with `plain_items` as numbered choices among the buttons' letters
+    /// (rescue-screens.md, "Plain mode", Disks).  None: as full screen.
+    pub plain_text: Option<Clean>,
+    pub plain_items: Vec<Clean>,
     pub buttons: Vec<Button>,
 }
 
 impl Menu {
     pub fn new(chrome: Chrome, text: Clean, items: Vec<(Clean, Clean)>) -> Menu {
-        Menu { chrome, text, items, start: 0, after: Clean::default(), buttons: vec![Button::ok(), Button::back()] }
+        Menu {
+            chrome,
+            text,
+            items,
+            start: 0,
+            focus_button: None,
+            after: Clean::default(),
+            notice: None,
+            plain_text: None,
+            plain_items: Vec::new(),
+            buttons: vec![Button::ok(), Button::back()],
+        }
     }
 }
 
@@ -155,6 +178,12 @@ pub struct Radio {
     /// Rows that can't be chosen, each with why (a machine whose settings
     /// fail their checksum): OK on one says why, as `none` does.
     pub blocked: Vec<(usize, Clean)>,
+    /// Plain mode's rows, one line each, numbered among the buttons'
+    /// letters (a disk's list); empty: `items`, a numbered line each.
+    pub plain_items: Vec<Clean>,
+    /// Plain mode: an empty line takes `chosen` (a much bigger disk's
+    /// "keep the old sizes"); else an empty line asks again.
+    pub empty_takes: bool,
     pub buttons: Vec<Button>,
 }
 
@@ -169,6 +198,8 @@ impl Radio {
             after: Clean::default(),
             try_it: None,
             blocked: Vec::new(),
+            plain_items: Vec::new(),
+            empty_takes: false,
             buttons: vec![Button::ok(), Button::back()],
         }
     }
@@ -244,6 +275,98 @@ impl Words {
     pub fn new(chrome: Chrome, text: Clean, plain: Clean) -> Words {
         Words { chrome, text, plain, after: Clean::default(), buttons: vec![Button::ok(), Button::back()] }
     }
+}
+
+/// A passphrase, or a new one typed twice (rescue-screens.md, "6.
+/// Passphrases"): a password field per label, `*` per character.  Enter
+/// in a field moves to the next; OK answers every field's `Secret`, in
+/// order, and the app checks they match.
+#[derive(Clone, Debug)]
+pub struct Passphrase {
+    pub chrome: Chrome,
+    pub text: Clean,
+    /// Each field's words before it (`Passphrase:`, `Type it again:`).
+    pub labels: Vec<Clean>,
+    pub after: Clean,
+    /// Why the last answer wasn't taken (they didn't match).
+    pub notice: Option<Clean>,
+    pub buttons: Vec<Button>,
+}
+
+impl Passphrase {
+    pub fn new(chrome: Chrome, text: Clean, labels: Vec<Clean>) -> Passphrase {
+        Passphrase { chrome, text, labels, after: Clean::default(), notice: None, buttons: vec![Button::ok(), Button::back()] }
+    }
+}
+
+/// One disk on Review: its row, and what must be typed to confirm it.
+#[derive(Clone, Debug)]
+pub struct SerialRow {
+    /// The row: `ERASED  1.00 TB  CT1000P3PSSD8  2318E6F3A9C1`.
+    pub text: Clean,
+    /// What confirms it, as `matches` compares (the serial's last six).
+    pub expect: String,
+    /// The field's cells.
+    pub width: u16,
+    /// Plain mode's question for it.
+    pub ask: Clean,
+    /// Said when what was typed isn't it.
+    pub wrong: Clean,
+    /// Plain mode's line once it is.
+    pub confirmed: Clean,
+}
+
+/// Review (rescue-screens.md, "8. Review"): text, the disks to be written
+/// each with a field for its confirmation, more text, the buttons.  OK
+/// (Restore) answers only when every field matches its row, and nothing
+/// blocks it; else it says why.  What was typed comes back in `typed` with
+/// every answer, so Commands and Back keep it.
+#[derive(Clone, Debug)]
+pub struct Review {
+    pub chrome: Chrome,
+    pub text: Clean,
+    pub rows: Vec<SerialRow>,
+    pub after: Clean,
+    /// Why OK can't be pressed (a problem the plan has), else None.
+    pub blocked: Option<Clean>,
+    pub notice: Option<Clean>,
+    /// Plain mode's text in `text`'s, the rows' and `after`'s place (each
+    /// serial spelled a character at a time, for a screen reader).
+    pub plain: Clean,
+    pub buttons: Vec<Button>,
+}
+
+/// Whether `typed` confirms `expect`: case and spaces aside.
+pub fn matches(typed: &str, expect: &str) -> bool {
+    let norm = |s: &str| -> String { s.chars().filter(|c| !c.is_whitespace()).flat_map(char::to_lowercase).collect() };
+    let e = norm(expect);
+    !e.is_empty() && norm(typed) == e
+}
+
+/// A row of a list whose Space cycles its choices (Advanced's
+/// filesystems): the first choice is what it was.
+#[derive(Clone, Debug)]
+pub struct CycleRow {
+    /// Before the choice: `/          ext4    ->  `.
+    pub label: Clean,
+    pub choices: Vec<Clean>,
+    pub start: usize,
+    /// Shown under the list while the row has the focus (why a type
+    /// can't be had), wrapped.
+    pub note: Clean,
+}
+
+#[derive(Clone, Debug)]
+pub struct Cycle {
+    pub chrome: Chrome,
+    pub text: Clean,
+    pub rows: Vec<CycleRow>,
+    pub after: Clean,
+    /// Each row's state in words: its first choice, another, none to have.
+    pub as_was: Clean,
+    pub changed: Clean,
+    pub cant: Clean,
+    pub buttons: Vec<Button>,
 }
 
 /// Yes or no.  `buttons` are any more after the two (a Back, a Shell).
@@ -354,6 +477,25 @@ pub trait Ui {
     fn full_screen(&self) -> bool {
         false
     }
+
+    /// The fields' secrets, in order.  A Ui that never shows it (the
+    /// demo's) quits.
+    fn passphrase(&mut self, d: &Passphrase) -> Answer<Vec<Secret>> {
+        let _ = d;
+        Answer::Quit
+    }
+
+    /// Review's typed confirmation: `typed` in and out, a value a row.
+    fn review(&mut self, d: &Review, typed: &mut Vec<String>) -> Answer<()> {
+        let _ = (d, typed);
+        Answer::Quit
+    }
+
+    /// Each row's choice, on OK.
+    fn cycle(&mut self, d: &Cycle) -> Answer<Vec<usize>> {
+        let _ = d;
+        Answer::Quit
+    }
 }
 
 /// A reply the scripted Ui gives.  Its Debug never shows a secret's
@@ -364,6 +506,12 @@ pub enum Reply {
     Pick(usize),
     Text(String),
     Secret(Vec<u8>),
+    /// A passphrase dialog's fields.
+    Secrets(Vec<Vec<u8>>),
+    /// Review's fields, then Restore (the app checks them).
+    Serials(Vec<String>),
+    /// A cycle list's choices, then OK.
+    Choices(Vec<usize>),
     Yes,
     No,
     /// A message, a view, or a progress run to its end.
@@ -381,6 +529,9 @@ impl std::fmt::Debug for Reply {
             Reply::Pick(i) => write!(f, "Pick({i})"),
             Reply::Text(s) => write!(f, "Text({s:?})"),
             Reply::Secret(b) => write!(f, "Secret(<{} bytes>)", b.len()),
+            Reply::Secrets(v) => write!(f, "Secrets({:?})", v.iter().map(|b| format!("<{} bytes>", b.len())).collect::<Vec<_>>()),
+            Reply::Serials(v) => write!(f, "Serials({v:?})"),
+            Reply::Choices(v) => write!(f, "Choices({v:?})"),
             Reply::Yes => f.write_str("Yes"),
             Reply::No => f.write_str("No"),
             Reply::Ok => f.write_str("Ok"),
@@ -502,6 +653,44 @@ impl Ui for Scripted {
                 crate::secret::wipe(&mut b);
                 Some(s)
             }
+            _ => None,
+        })
+    }
+
+    fn passphrase(&mut self, d: &Passphrase) -> Answer<Vec<Secret>> {
+        let n = d.labels.len();
+        self.next("passphrase", &d.chrome, |r| match r {
+            Reply::Secrets(mut v) if v.len() == n => {
+                let s = v.iter().map(|b| Secret::from_bytes(b)).collect();
+                for b in &mut v {
+                    crate::secret::wipe(b);
+                }
+                Some(s)
+            }
+            _ => None,
+        })
+    }
+
+    fn review(&mut self, d: &Review, typed: &mut Vec<String>) -> Answer<()> {
+        let n = d.rows.len();
+        let mut got: Option<Vec<String>> = None;
+        let a = self.next("review", &d.chrome, |r| match r {
+            Reply::Serials(v) if v.len() == n => {
+                got = Some(v);
+                Some(())
+            }
+            _ => None,
+        });
+        if let Some(v) = got {
+            *typed = v;
+        }
+        a
+    }
+
+    fn cycle(&mut self, d: &Cycle) -> Answer<Vec<usize>> {
+        let n = d.rows.len();
+        self.next("cycle", &d.chrome, |r| match r {
+            Reply::Choices(v) if v.len() == n => Some(v),
             _ => None,
         })
     }

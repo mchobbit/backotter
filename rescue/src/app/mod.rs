@@ -5,8 +5,11 @@
 //! wrong tries, the recovery key through `bko-holt recovery-words
 //! --json`), the keyboard offer and the Keyboard screen, Which machine?,
 //! Snapshot, the problems' help screens these reach, and the bug report.
-//! After Snapshot comes RT12 (Disks onwards); until it is built a screen
-//! says so.
+//! RT12's first part builds what comes after: Disks (disks.rs), the
+//! Passphrases, the Resume offer and Review (review.rs), from bko-holt's
+//! plan and status documents (plan.rs), the layout copied off the stick
+//! (layout.rs); then a screen says the Restore itself (RT12's second
+//! part) isn't built.
 //!
 //! - The app never touches the terminal: it talks to a `Ui`, and to the
 //!   system through `Sys` (sys.rs), so the screens' tests run on the
@@ -22,10 +25,14 @@
 //!   (sys.rs's `Session`); the words reach bko-holt on a pipe.
 //! - Everything from outside is cleaned before it is shown (`Clean`).
 
+pub mod disks;
 pub mod holt_args;
 pub mod keyboard;
+pub mod layout;
+pub mod plan;
 pub mod repo;
 pub mod report;
+pub mod review;
 pub mod stick;
 pub mod strings;
 pub mod sys;
@@ -55,7 +62,7 @@ use time::Zone;
 
 /// The api document's schema this reads, and the documents it needs.
 pub const API_SCHEMA: u64 = 1;
-pub const NEEDS: &[(&str, u64)] = &[("stick", 1), ("recovery", 1)];
+pub const NEEDS: &[(&str, u64)] = &[("stick", 1), ("recovery", 1), ("plan", plan::PLAN_SCHEMA), ("status", plan::STATUS_SCHEMA)];
 /// How long `--version --json` and `stick --json` may take.
 pub const HOLT_MS: u64 = 60_000;
 /// A connection to the repository's server, to tell if the network is
@@ -116,7 +123,13 @@ pub enum Step {
     Recovery,
     Which,
     Snapshot,
-    Next,
+    Disks,
+    /// The n-th key asked for.
+    Passphrase(usize),
+    Resume,
+    Review,
+    /// What Review confirmed: RT12's second part runs it.
+    Restore,
 }
 
 /// What a step leads to.
@@ -156,7 +169,6 @@ const B_KEYBOARD: usize = 2;
 const B_RECOVERY: usize = 3;
 const B_TRY: usize = 4;
 const B_BY_HAND: usize = 5;
-const B_LEAVE: usize = 6;
 const B_REPORT: usize = 7;
 const B_RAW: usize = 8;
 const B_KEPT: usize = 9;
@@ -202,6 +214,32 @@ pub struct App {
     pub snap: Option<String>,
     /// What the last program said, for Raw output.
     pub(crate) raw: Vec<Clean>,
+    /// The layout file load reads (layout.rs).
+    pub(crate) layout: Option<PathBuf>,
+    /// The last plan bko-holt made.
+    pub(crate) plan: Option<plan::Plan>,
+    /// Each old disk put on a disk here: (old disk, node, what `--map`
+    /// names it by).
+    pub(crate) map: Vec<(String, String, String)>,
+    /// The shrinks and grows agreed: (old disk, `--fit-largest` PCT,
+    /// decided on the "you decide" screen).
+    pub(crate) fit: Vec<(String, u64, bool)>,
+    /// The passphrases typed: (group, its names, the 0600 file).
+    pub(crate) keys: Vec<(String, Vec<String>, PathBuf)>,
+    /// Advanced's filesystems: (mount point, type).
+    pub(crate) reformat: Vec<(String, String)>,
+    /// What `status --json` found on the disks mapped.
+    pub(crate) status: Option<plan::Status>,
+    /// Resume's answer: Some(true) Go on, Some(false) Start again.
+    pub(crate) resume: Option<bool>,
+    /// Review's fields, as typed.
+    pub(crate) serials: Vec<String>,
+    /// The run Review confirmed (holt_args.rs, `Load::run_of`).
+    pub(crate) reviewed: Option<holt_args::Load>,
+    /// Why the Disks overview didn't go on, for its notice.
+    pub(crate) disks_notice: Option<String>,
+    /// The keyboard at start-up was offered.
+    pub(crate) boot_offered: bool,
 }
 
 impl App {
@@ -239,6 +277,18 @@ impl App {
             unread: 0,
             snap: None,
             raw: Vec::new(),
+            layout: None,
+            plan: None,
+            map: Vec::new(),
+            fit: Vec::new(),
+            keys: Vec::new(),
+            reformat: Vec::new(),
+            status: None,
+            resume: None,
+            serials: Vec::new(),
+            reviewed: None,
+            disks_notice: None,
+            boot_offered: false,
         }
     }
 
@@ -263,7 +313,11 @@ impl App {
                 Step::Recovery => self.recovery(ui),
                 Step::Which => self.which(ui),
                 Step::Snapshot => self.snapshot(ui),
-                Step::Next => self.next(ui),
+                Step::Disks => self.disks(ui),
+                Step::Passphrase(n) => self.passphrase(ui, n),
+                Step::Resume => self.resume_screen(ui),
+                Step::Review => self.review_screen(ui),
+                Step::Restore => self.restore_next(ui),
             };
             match g {
                 Go::To(s) => {
@@ -506,6 +560,26 @@ impl App {
         self.snaps.clear();
         self.snap = None;
         self.recovery_note = None;
+        self.forget_disks();
+        if let Some(p) = self.layout.take() {
+            sys::wipe_file(&p);
+        }
+    }
+
+    /// Another snapshot or machine: the disks' choices and the keys go.
+    pub(crate) fn forget_disks(&mut self) {
+        for (_, _, p) in self.keys.drain(..) {
+            sys::wipe_file(&p);
+        }
+        self.plan = None;
+        self.map.clear();
+        self.fit.clear();
+        self.reformat.clear();
+        self.status = None;
+        self.resume = None;
+        self.serials.clear();
+        self.reviewed = None;
+        self.disks_notice = None;
     }
 
     /// The machine chosen, if one is.
@@ -1065,28 +1139,14 @@ impl App {
         match ui.radio(&r) {
             Answer::Ok(i) => match list.get(i) {
                 Some(x) => {
+                    if self.snap.as_ref() != Some(&x.id) {
+                        self.forget_disks();
+                    }
                     self.snap = Some(x.id.clone());
-                    Go::To(Step::Next)
+                    Go::To(Step::Disks)
                 }
                 None => Go::Stay,
             },
-            a => Go::of(a),
-        }
-    }
-
-    // ---- RT12 comes next ----
-
-    fn next(&mut self, ui: &mut dyn Ui) -> Go {
-        let (name, zone) = match self.chosen() {
-            Some(m) => (m.name(), self.zone_of(m)),
-            None => (self.host.as_deref().map_or_else(|| o("this machine"), |h| Clean::line(h, cap::HOSTNAME)), Zone::Offset),
-        };
-        let when = self.snaps.iter().find(|x| Some(&x.id) == self.snap.as_ref()).map(|x| zone.show(x.time, x.offset)).unwrap_or_default();
-        let mut m = Message::new(Chrome::ours(s::SCR_DISKS, s::NEXT_TITLE), o(&s::next(name.as_str(), &when)));
-        m.buttons = vec![Button::back(), Button::shell(), Button::other(s::BTN_LEAVE, None, B_LEAVE)];
-        match ui.message(&m) {
-            Answer::Button(B_LEAVE) => Go::Exit(0),
-            Answer::Ok(()) => Go::Back,
             a => Go::of(a),
         }
     }
@@ -1281,6 +1341,18 @@ impl Ui for Banner<'_> {
     fn full_screen(&self) -> bool {
         self.ui.full_screen()
     }
+    fn passphrase(&mut self, d: &crate::ui::Passphrase) -> Answer<Vec<crate::secret::Secret>> {
+        let d = self.on(d, |d| &mut d.chrome);
+        self.ui.passphrase(&d)
+    }
+    fn review(&mut self, d: &crate::ui::Review, typed: &mut Vec<String>) -> Answer<()> {
+        let d = self.on(d, |d| &mut d.chrome);
+        self.ui.review(&d, typed)
+    }
+    fn cycle(&mut self, d: &crate::ui::Cycle) -> Answer<Vec<usize>> {
+        let d = self.on(d, |d| &mut d.chrome);
+        self.ui.cycle(&d)
+    }
 }
 
 /// A problem's help screen (rescue-screens.md, "Problems and their
@@ -1296,6 +1368,8 @@ pub struct Problem {
     pub fixes: Vec<(String, Go)>,
     /// Try again is offered (it reruns the step).
     pub again: bool,
+    /// Where Back goes: None, the screen that was showing, again.
+    pub back: Option<Go>,
 }
 
 impl Problem {
@@ -1333,6 +1407,7 @@ impl Problem {
             todo: todo.to_string(),
             fixes,
             again,
+            back: None,
         }
     }
 
@@ -1387,8 +1462,10 @@ impl App {
                     }
                     return g;
                 }
-                // Back: the screen that was showing, again.
-                Answer::Back | Answer::Ok(()) | Answer::Button(_) => return Go::Stay,
+                // Back: the screen that was showing, again, unless the
+                // problem says where.
+                Answer::Back => return p.back.take().unwrap_or(Go::Stay),
+                Answer::Ok(()) | Answer::Button(_) => return Go::Stay,
                 a => return Go::of(a),
             }
         }
@@ -1423,7 +1500,7 @@ pub fn hostnames(snaps: &[Snap]) -> Vec<(String, usize)> {
 }
 
 /// A run's standard error, a line each, cleaned, for Raw output.
-fn raw_lines(x: &Output) -> Vec<Clean> {
+pub(crate) fn raw_lines(x: &Output) -> Vec<Clean> {
     let mut v: Vec<Clean> = x.stderr_text().lines().rev().take(3000).map(|l| Clean::line(l, cap::LOG_LINE)).collect();
     v.reverse();
     if let Some(n) = &x.not_started {

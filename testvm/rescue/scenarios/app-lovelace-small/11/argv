@@ -1,0 +1,17 @@
+load
+*
+--json
+--through
+plan
+--repo
+*
+--password-file
+*
+--map
+sda=*WD3200AAKX*
+--erase
+*
+--snapshot
+*
+--fit-largest
+39

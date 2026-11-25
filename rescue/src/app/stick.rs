@@ -62,6 +62,9 @@ pub const OS_NAMES: &[(&str, &str)] = &[
 #[derive(Clone, Debug)]
 pub struct Machine {
     pub install_id: String,
+    /// Its system.json on the config partition, as bko-holt names it
+    /// (`backotter/machines/ID/system.json`).
+    pub path: Option<String>,
     /// `ok`, or why it can't be chosen (`checksum_bad`, ...).
     pub state: String,
     pub why: Option<String>,
@@ -149,6 +152,7 @@ pub fn read(v: &Value, version: Option<&str>) -> Result<Stick, String> {
             let repo = m.get("repository");
             machines.push(Machine {
                 install_id: opt_str(m, "install_id").unwrap_or_default(),
+                path: opt_str(m, "path"),
                 state: m.get_str("state").unwrap_or("unknown").to_string(),
                 why: opt_str(m, "why"),
                 hostname: opt_str(m, "hostname"),

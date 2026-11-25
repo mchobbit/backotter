@@ -50,6 +50,8 @@ struct Seen {
     /// bko-holt isn't found for this many lookups (then it is: the
     /// shell fixed PATH).
     holt_hidden: usize,
+    /// The scenario calls that answered `load`, in order.
+    loads: Vec<String>,
 }
 
 struct Fake {
@@ -63,7 +65,25 @@ struct Fake {
     config: Option<Vec<u8>>,
     seen: Rc<RefCell<Seen>>,
     tools: Vec<&'static str>,
+    /// The scenario bko-holt's `load` calls are answered from (RT12), by
+    /// their argv as fake-bko-holt answers them, and the system.json its
+    /// read-only mount of the config partition finds.
+    disks: String,
 }
+
+/// fnmatch's `*` and `?`, as fake-bko-holt matches a call's argv.
+fn glob(p: &[u8], s: &[u8]) -> bool {
+    match (p.first(), s.first()) {
+        (None, None) => true,
+        (Some(b'*'), _) => glob(&p[1..], s) || (!s.is_empty() && glob(p, &s[1..])),
+        (Some(b'?'), Some(_)) => glob(&p[1..], &s[1..]),
+        (Some(a), Some(b)) if a == b => glob(&p[1..], &s[1..]),
+        _ => false,
+    }
+}
+
+/// lovelace's settings on the stick (stick-three's path for it).
+const LOVELACE_PATH: &str = "backotter/machines/0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90/system.json";
 
 struct Ready(Output);
 
@@ -111,6 +131,20 @@ impl Fake {
                     write_new(Path::new(&a[2]), text.as_bytes()).unwrap();
                     ok(b"Wrote it.\n".to_vec())
                 }
+                "load" => {
+                    let dir = format!("{FIX}/scenarios/{}", self.disks);
+                    let mut calls: Vec<PathBuf> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.join("argv").is_file()).collect();
+                    calls.sort();
+                    for c in calls {
+                        let want: Vec<String> = fs::read_to_string(c.join("argv")).unwrap().lines().map(str::to_string).collect();
+                        if want.len() == a.len() && want.iter().zip(&a).all(|(w, x)| glob(w.as_bytes(), x.as_bytes())) {
+                            self.seen.borrow_mut().loads.push(c.file_name().unwrap().to_string_lossy().to_string());
+                            let code = fs::read_to_string(c.join("exit")).ok().and_then(|x| x.trim().parse().ok()).unwrap_or(0);
+                            return Output { code: Some(code), stdout: fs::read(c.join("stdout")).unwrap(), ..Output::default() };
+                        }
+                    }
+                    Output { code: Some(98), stderr: format!("fake: no call of {} matches {a:?}", self.disks).into_bytes(), ..Output::default() }
+                }
                 _ => Output { code: Some(2), ..Output::default() },
             },
             "rustic-bko" => {
@@ -131,7 +165,21 @@ impl Fake {
                 self.seen.borrow_mut().layouts.push(a.join(" "));
                 ok(b"keymaps 0-127\n".to_vec())
             }
-            "loadkeys" | "mount" | "umount" => ok(Vec::new()),
+            "mount" if a.iter().any(|x| x.starts_with("ro")) => {
+                // The read-only mount of the config partition: its
+                // system.json is there.
+                let dir = PathBuf::from(a.last().unwrap());
+                let f = dir.join(LOVELACE_PATH);
+                fs::create_dir_all(f.parent().unwrap()).unwrap();
+                fs::write(&f, fixture(&format!("scenarios/{}/system.json", self.disks))).unwrap();
+                ok(Vec::new())
+            }
+            "umount" => {
+                let _ = fs::remove_dir_all(PathBuf::from(a.last().unwrap()).join("backotter/machines"));
+                let _ = fs::remove_dir(PathBuf::from(a.last().unwrap()).join("backotter"));
+                ok(Vec::new())
+            }
+            "loadkeys" | "mount" => ok(Vec::new()),
             p => panic!("the fake runs no {p}"),
         }
     }
@@ -220,6 +268,7 @@ fn t_with(holt: &str, rustic: &str, wh: Where, dry_run: bool, f: impl FnOnce(&mu
         config: None,
         seen: seen.clone(),
         tools: vec!["bko-holt", "rustic-bko", "ckbcomp", "loadkeys", "mount", "umount"],
+        disks: "app-lovelace".into(),
     };
     f(&mut fake);
     let session = Session::new(&base).unwrap();
@@ -321,6 +370,18 @@ impl Ui for Shots {
     fn full_screen(&self) -> bool {
         true
     }
+    fn passphrase(&mut self, d: &crate::ui::Passphrase) -> Answer<Vec<crate::secret::Secret>> {
+        self.shot(d.chrome.title.as_str(), Dialog::passphrase(d));
+        self.inner.passphrase(d)
+    }
+    fn review(&mut self, d: &crate::ui::Review, typed: &mut Vec<String>) -> Answer<()> {
+        self.shot(d.chrome.title.as_str(), Dialog::review(d, typed));
+        self.inner.review(d, typed)
+    }
+    fn cycle(&mut self, d: &crate::ui::Cycle) -> Answer<Vec<usize>> {
+        self.shot(d.chrome.title.as_str(), Dialog::cycle(d));
+        self.inner.cycle(d)
+    }
 }
 
 use Reply::{Back, Button as B, Ok as P, Pick, Secret as Sec};
@@ -341,10 +402,10 @@ fn ran(t: &T) -> Vec<String> {
 #[test]
 fn machine_password_snapshot_and_on() {
     let mut t = tt("stick-three", "lovelace");
-    let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, P, Pick(0), B(B_LEAVE)]]));
-    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, P, Pick(0), P, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
     ui.done();
-    assert_eq!(ui.titles(), ["Which machine is this?", "The backup password", "Which backup?", "Next: the disks"]);
+    assert_eq!(ui.titles(), ["Which machine is this?", "The backup password", "Which backup?", "Where each disk goes"]);
     let r = ran(&t);
     assert_eq!(r[0], "/fake/bin/bko-holt --version --json");
     assert_eq!(r[1], "/fake/bin/bko-holt stick --json");
@@ -366,7 +427,6 @@ fn machine_password_snapshot_and_on() {
     ui.golden("Which machine is this?", 0, "machine");
     ui.golden("The backup password", 0, "password");
     ui.golden("Which backup?", 0, "snapshot");
-    ui.golden("Next: the disks", 0, "next");
     drop(t.app);
     assert!(!dir.exists(), "the session's files are wiped and its directory gone");
 }
@@ -375,8 +435,8 @@ fn machine_password_snapshot_and_on() {
 fn two_wrong_passwords_then_the_hint() {
     let mut t = tt("stick-three", "lovelace");
     let wrong = || Sec(b"wrong one".to_vec());
-    let mut ui = Shots::new(script(&[&start(), &[Pick(0), wrong(), P, wrong(), P, wrong(), P, Sec(PASSWORD.to_vec()), P, P, Back, Sec(Vec::new()), P, P, Pick(1), B(B_LEAVE)]]));
-    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), wrong(), P, wrong(), P, wrong(), P, Sec(PASSWORD.to_vec()), P, P, Back, Sec(Vec::new()), P, P, Pick(1), P, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
     ui.done();
     let first = ui.flat("The backup password", 1);
     assert!(first.contains("That password didn't open the backups.  Check Caps Lock") && !first.contains("hint"), "{first}");
@@ -401,8 +461,8 @@ fn two_wrong_passwords_then_the_hint() {
 fn the_recovery_key() {
     let mut t = tt("stick-three", "lovelace");
     let swapped = b"winner legal thank year wave sausage worth useful legal winner thank yellow".to_vec();
-    let mut ui = Shots::new(script(&[&start(), &[Pick(0), B(B_RECOVERY), Sec(swapped), P, Sec(WORDS.to_vec()), P, P, P, Back, Back, Back, Pick(0), Sec(PASSWORD.to_vec()), P, P, Pick(0), B(B_LEAVE)]]));
-    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), B(B_RECOVERY), Sec(swapped), P, Sec(WORDS.to_vec()), P, P, P, Back, Back, Back, Pick(0), Sec(PASSWORD.to_vec()), P, P, Pick(0), P, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
     ui.done();
     let seen = t.seen.borrow();
     let rec: Vec<_> = seen.ran.iter().filter(|(l, _, _)| l.contains("recovery-words")).collect();
@@ -527,7 +587,7 @@ fn rustics_failures_each_have_their_help() {
             fn sleep_ms(&mut self, _: u64) {}
         }
         let base = t.base.0.clone();
-        let fake = Fake { base: base.clone(), holt: "stick-three".into(), version: None, stick: None, rustic: "lovelace".into(), config: None, seen: t.seen.clone(), tools: vec!["bko-holt", "rustic-bko"] };
+        let fake = Fake { base: base.clone(), holt: "stick-three".into(), version: None, stick: None, rustic: "lovelace".into(), disks: "app-lovelace".into(), config: None, seen: t.seen.clone(), tools: vec!["bko-holt", "rustic-bko"] };
         t.app = App::new(Box::new(Failing(fake, stderr)), Session::new(&base).unwrap(), Opts { holt: None, rustic: "rustic-bko".into(), dry_run: false }, LINUX);
         let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, B(B_RAW), Reply::Ok, Back, Reply::Quit]]));
         assert_eq!(t.app.run(&mut ui), Exit::Quit, "{title}");
@@ -820,8 +880,8 @@ fn a_dry_run_says_so_on_every_screen() {
 fn plain_mode_uses_the_kept_password_from_its_menu() {
     let mut t = tt("stick-three", "lovelace");
     // The password, Back from Snapshot, Enter alone, p: the kept one.
-    let mut pl = Plain::new(FakeLine::typed("1\ncorrect horse\nb\n\np\n1\nl\n"), Lines::Utf8);
-    assert_eq!(t.app.run(&mut pl), Exit::Done(0));
+    let mut pl = Plain::new(FakeLine::typed("1\ncorrect horse\nb\n\np\n1\n"), Lines::Utf8);
+    assert_eq!(t.app.run(&mut pl), Exit::Quit);
     let out = pl.into_line().out;
     let flat = out.replace('\n', " ");
     assert!(out.contains("Type the backup password, or press Enter alone for other choices:"), "{out}");
@@ -860,4 +920,287 @@ fn the_offer_is_once_per_machine_with_no_install_id_too() {
     let mut ui = Shots::new(script(&[&start(), &[Pick(0), Reply::No, Back, Pick(0), Reply::Quit]]));
     t.app.run(&mut ui);
     assert_eq!(ui.titles().iter().filter(|x| *x == "Keyboard for the password").count(), 1);
+}
+
+// ---- RT12: Disks, Passphrases, Resume, Review ----
+
+use super::disks::{B_DONE, B_SHRINK};
+use super::review::{B_ADVANCED, B_COMMANDS, B_GO_ON, B_LEAVE};
+use Reply::{Choices, Secrets, Serials};
+
+/// Machine, the password, the newest backup: up to Disks' first plan.
+fn to_disks() -> Vec<Reply> {
+    script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, P, Pick(0), P]])
+}
+
+fn disks_t(scenario: &str, dry_run: bool) -> T {
+    let s = scenario.to_string();
+    let version = dry_run.then(|| String::from_utf8(fixture("scenarios/app-dry/01-version/stdout")).unwrap());
+    t_with("stick-three", "lovelace", LINUX, dry_run, move |f| {
+        f.disks = s;
+        f.version = version;
+    })
+}
+
+fn holt_lines(t: &T) -> Vec<(String, Vec<(String, String)>)> {
+    t.seen.borrow().ran.iter().filter(|(l, _, _)| l.starts_with("/fake/bin/bko-holt load")).map(|(l, e, _)| (l.clone(), e.clone())).collect()
+}
+
+#[test]
+fn lovelace_from_disks_to_review() {
+    let mut t = disks_t("app-lovelace", false);
+    let pass = b"two words".to_vec();
+    let mut ui = Shots::new(script(&[
+        &to_disks(),
+        // Old disk 1's list, the Crucial, much bigger: keep the sizes.
+        &[Pick(0), Pick(0), Pick(0), P],
+        // OK: the plan with both named, the status.
+        &[B(B_DONE), P, P],
+        // The passphrase: two that differ, then two the same.
+        &[Secrets(vec![pass.clone(), b"two wordz".to_vec()]), Secrets(vec![pass.clone(), pass.clone()]), P],
+        // Review: a wrong serial, then the right ones.
+        &[P, Serials(vec!["000000".into(), "xk7hpl".into()]), Serials(vec!["F3A9C1".into(), "XK7HPL".into()])],
+        &[B(B_LEAVE)],
+    ]));
+    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    ui.done();
+    assert_eq!(
+        ui.titles()[3..],
+        [
+            "Where each disk goes",
+            "Old disk 1 of 2: where does it go?",
+            "This disk is much bigger",
+            "Where each disk goes",
+            "Passphrase 1 of 1",
+            "Passphrase 1 of 1",
+            "Ready to restore",
+            "Ready to restore",
+            "Next: the restore"
+        ]
+    );
+    let d = ui.text("Where each disk goes", 0);
+    assert!(d.contains("Old disk 1: Samsung SSD 870 EVO 500GB, 500 GB, the system"), "{d}");
+    assert!(d.contains("-> no disk chosen yet"), "{d}");
+    assert!(ui.flat("Where each disk goes", 0).contains("-> the same disk, found by its serial WD-WCC4M5XK7HPL"), "{d}");
+    assert!(d.contains("Not offered:  SanDisk Ultra, 32.0 GB: this stick, never a target"), "{d}");
+    let one = ui.text("Old disk 1 of 2: where does it go?", 0);
+    assert!(one.contains("(*) CT1000P3PSSD8           1.00 TB  serial 2318E6F3A9C1"), "{one}");
+    assert!(one.contains("500 GB bigger: left free"), "{one}");
+    assert!(one.contains("( ) KINGSTON SA400S37480G    480 GB  serial 50026B7782A1F3C4"), "{one}");
+    assert!(one.contains("has data: 1 partition, ext4 \"photos\", 312 GB used"), "{one}");
+    assert!(one.contains("20.0 GB smaller: / would shrink from 465 GB to 445 GB"), "{one}");
+    assert!(one.contains("Already used:  WDC WD20EFRX-68EUZN0, for old disk 2"), "{one}");
+    let chosen = ui.text("Where each disk goes", 1);
+    assert!(chosen.contains("-> CT1000P3PSSD8, 1.00 TB, serial 2318E6F3A9C1") && chosen.contains("chosen by you"), "{chosen}");
+    assert!(ui.flat("Passphrase 1 of 1", 1).contains("The two didn't match"), "the mismatch is said");
+    let review = ui.text("Ready to restore", 0);
+    assert!(review.contains("ERASED  1.00 TB  CT1000P3PSSD8          2318E6F3A9C1"), "{review}");
+    assert!(review.contains("ERASED  2.00 TB  WDC WD20EFRX-68EUZN0   WD-WCC4M5XK7HPL"), "{review}");
+    assert!(ui.flat("Ready to restore", 0).contains("Restore lovelace (Debian 13) from the backup of 22 Nov 2026 02:00 UTC+01:00, 61.2 GB."), "{review}");
+    assert!(ui.flat("Ready to restore", 1).contains("isn't the end of its serial"), "the wrong serial is named");
+    // Every run's arguments: the key file is the session's, 0600, never
+    // in argv; Review's plan names both disks to erase; nothing commits.
+    let dir = t.app.session.dir.clone();
+    let key = dir.join("k0");
+    assert_eq!(fs::metadata(&key).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(fs::read(&key).unwrap(), pass);
+    let lines = holt_lines(&t);
+    assert!(lines.iter().all(|(l, e)| !l.contains("--commit") && !l.contains("two words") && e.is_empty()), "{lines:#?}");
+    let review_plan = &lines.last().unwrap().0;
+    assert!(review_plan.contains(&format!("--key-file cryptroot={} --key-file cryptsrv={}", key.display(), key.display())), "{review_plan}");
+    assert!(review_plan.contains("--map sda=/dev/disk/by-id/nvme-CT1000P3PSSD8_2318E6F3A9C1 --map sdb=/dev/disk/by-id/ata-WDC_WD20EFRX-68EUZN0_WD-WCC4M5XK7HPL"), "{review_plan}");
+    assert!(review_plan.contains("--erase /dev/disk/by-id/nvme-CT1000P3PSSD8_2318E6F3A9C1 --erase /dev/disk/by-id/ata-WDC_WD20EFRX-68EUZN0_WD-WCC4M5XK7HPL"), "{review_plan}");
+    assert!(review_plan.contains(" --through plan "), "{review_plan}");
+    // The run Review confirmed: its arguments, --through close, the
+    // plan's hash, --commit.
+    let run = t.app.reviewed.clone().expect("Review confirmed a run");
+    let words: Vec<String> = holt_args::argv(&HoltCmd::Load(&run), false).iter().map(|x| x.to_string_lossy().to_string()).collect();
+    let w = words.join(" ");
+    let sha = t.app.plan.as_ref().unwrap().plan_sha256.clone();
+    assert!(w.contains("--through close") && w.ends_with("--commit") && w.contains(&format!("--expect-plan {sha}")), "{w}");
+    let dry: Vec<String> = holt_args::argv(&HoltCmd::Load(&run), true).iter().map(|x| x.to_string_lossy().to_string()).collect();
+    assert!(!dry.iter().any(|x| x == "--commit") && dry.iter().any(|x| x == "--erase"), "a dry run: --erase, never --commit");
+    ui.golden("Where each disk goes", 0, "disks");
+    ui.golden("Old disk 1 of 2: where does it go?", 0, "one-disk");
+    ui.golden("This disk is much bigger", 0, "much-bigger");
+    ui.golden("Where each disk goes", 1, "disks-chosen");
+    ui.golden("Passphrase 1 of 1", 0, "passphrase");
+    ui.golden("Ready to restore", 0, "review");
+    ui.golden("Next: the restore", 0, "restore-next");
+    drop(t.app);
+    assert!(!key.exists() && !dir.exists(), "the key file is wiped with the session");
+}
+
+#[test]
+fn the_kingstons_offer_then_review_says_the_shrink() {
+    let mut t = disks_t("app-lovelace", false);
+    let pass = b"two words".to_vec();
+    let mut ui = Shots::new(script(&[
+        &to_disks(),
+        // Old disk 1's list, the Kingston: the offer's second plan.
+        &[Pick(0), Pick(1), P, B(B_SHRINK), P],
+        &[B(B_DONE), P, P, Secrets(vec![pass.clone(), pass.clone()]), P, P],
+        &[B(B_COMMANDS), P, Serials(vec!["A1F3C4".into(), "XK7HPL".into()]), B(B_LEAVE)],
+    ]));
+    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    ui.done();
+    let offer = ui.flat("This disk is a little smaller", 0);
+    assert!(offer.contains("KINGSTON SA400S37480G, is 480 GB: 20.0 GB smaller"), "{offer}");
+    assert!(offer.contains("/ will shrink from 465 GB to 445 GB, by 4.3 %"), "{offer}");
+    assert!(offer.contains("Space used on /: 41.7 GB, so it fits with room to spare."), "{offer}");
+    let screen = ui.text("This disk is a little smaller", 0);
+    assert!(screen.contains("< Shrink the system partition >") && screen.contains("< Another disk >"), "{screen}");
+    assert_eq!(t.app.fit, vec![("sda".to_string(), 5, false)]);
+    let review = ui.flat("Ready to restore", 0);
+    assert!(review.contains("/ (the system partition) shrinks by 4.3 %, 465 GB to 445 GB."), "{review}");
+    assert!(review.contains("The encrypted disks open with the passphrase you typed."), "{review}");
+    let cmds = ui.text("Every command, in order", 0);
+    assert!(cmds.contains("# ---- partition ----") && cmds.contains("wipefs --all /dev/sda"), "{cmds}");
+    let lines = holt_lines(&t);
+    assert!(lines.iter().filter(|(l, _)| !l.contains("--only status")).skip(1).all(|(l, _)| l.contains("--fit-largest 5")), "{lines:#?}");
+    let run = t.app.reviewed.clone().unwrap();
+    assert_eq!(run.fit_largest, Some(5));
+    ui.golden("This disk is a little smaller", 0, "offer-smaller");
+    ui.golden("Ready to restore", 0, "review-fit");
+    ui.golden("Every command, in order", 0, "commands");
+}
+
+#[test]
+fn too_small_for_the_data_and_the_users_decision() {
+    let mut t = disks_t("app-lovelace-small", false);
+    let mut ui = Shots::new(script(&[
+        &to_disks(),
+        // The Transcend can't be taken (the app checks too); the WDC 320
+        // GB opens the decision, OK with nothing chosen says so.
+        &[Pick(0), Pick(1), Pick(0), P, Pick(0), P, Reply::Quit],
+    ]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    ui.done();
+    let one = ui.text("Old disk 1 of 2: where does it go?", 0);
+    assert!(one.contains("much smaller: / would shrink from 465 GB to 285 GB, 38.7 %"), "{one}");
+    assert!(one.contains("too small: / uses 41.7 GB; the most it could get is 28.9 GB"), "{one}");
+    let decide = ui.flat("This disk is much smaller: you decide", 0);
+    assert!(decide.contains("To fit, / would shrink by 38.7 %:") && decide.contains("New size:    285 GB") && decide.contains("Space used:  41.7 GB at the backup"), "{decide}");
+    let rows = ui.text("This disk is much smaller: you decide", 0);
+    assert!(rows.contains("( ) Shrink / to 285 GB and restore onto WDC WD3200AAKX") && rows.contains("( ) Choose another disk"), "nothing chosen at first: {rows}");
+    assert_eq!(t.app.fit, vec![("sda".to_string(), 39, true)], "the user's decision");
+    assert_eq!(t.app.map.len(), 1);
+    ui.golden("Old disk 1 of 2: where does it go?", 0, "too-small");
+    ui.golden("This disk is much smaller: you decide", 0, "decide");
+}
+
+#[test]
+fn recorded_debian13_resumes_on_the_disks_it_made() {
+    // The recorded plan and the status after its partition stage: this
+    // session's records show the disks were made, and status says Go on.
+    let mut t = disks_t("app-rec-debian13", false);
+    let pass = b"for md1".to_vec();
+    let mut ui = Shots::new(script(&[
+        &to_disks(),
+        &[B(B_DONE), P, P, Secrets(vec![pass.clone()]), P],
+        &[B(B_GO_ON), P, Serials(vec!["12.9 GB".into(), "12.9gb".into()]), B(B_LEAVE)],
+    ]));
+    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    ui.done();
+    let d = ui.text("Where each disk goes", 0);
+    assert!(d.contains("Old disk 1: vda, 12.9 GB, the system") && d.contains("-> vdb, 12.9 GB, no serial"), "{d}");
+    assert!(ui.flat("Where each disk goes", 0).contains("vda, 23.6 GB: holds the system running now, never a target"), "{d}");
+    let pp = ui.flat("Passphrase 1 of 1", 0);
+    assert!(pp.contains("type the passphrase given the first time"), "a resume asks once: {pp}");
+    assert!(!ui.text("Passphrase 1 of 1", 0).contains("Type it again"), "one field");
+    let r = ui.text("A restore was started here before", 0);
+    assert!(r.contains("[x] Make partitions") && r.contains("[ ] Set up encryption"), "{r}");
+    let review = ui.flat("Ready to restore", 0);
+    assert!(review.contains("Nothing is erased: the restore goes on from \"Set up encryption\""), "{review}");
+    assert!(ui.text("Ready to restore", 0).contains("goes on 12.9 GB  vdb "), "{}", ui.text("Ready to restore", 0));
+    let run = t.app.reviewed.clone().unwrap();
+    assert_eq!(run.stage, holt_args::Stage::Only("assemble".into()), "Go on: status's next stage alone");
+    assert!(run.erase.is_empty(), "Go on erases nothing");
+    assert_eq!(t.seen.borrow().loads, ["10-plan", "11-plan", "14-status", "15-status", "13-plan"]);
+    ui.golden("Where each disk goes", 0, "disks-recorded");
+    ui.golden("A restore was started here before", 0, "resume");
+    ui.golden("Ready to restore", 0, "review-go-on");
+}
+
+#[test]
+fn advanced_changes_a_filesystem_and_clears_the_serials() {
+    let mut t = disks_t("app-lovelace", false);
+    let pass = b"two words".to_vec();
+    let mut ui = Shots::new(script(&[
+        &to_disks(),
+        &[Pick(0), Pick(0), Pick(0), P, B(B_DONE), P, P, Secrets(vec![pass.clone(), pass.clone()]), P, P],
+        &[B(B_ADVANCED), Choices(vec![0, 0, 1]), P, Reply::Quit],
+    ]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    ui.done();
+    let adv = ui.text("Advanced: restore onto another filesystem", 0);
+    assert!(adv.contains("/          ext4    ->  ext4     as it was"), "{adv}");
+    assert!(adv.contains("/boot      ext4    ->  ext4     can't change: see below"), "{adv}");
+    assert!(adv.contains("/srv       ext4    ->  ext4     as it was"), "{adv}");
+    assert_eq!(t.app.reformat, vec![("/srv".to_string(), "xfs".to_string())]);
+    let after = ui.flat("Ready to restore", 1);
+    assert!(after.contains("/srv is made as XFS, not ext4."), "{after}");
+    assert!(holt_lines(&t).last().unwrap().0.contains("--reformat /srv=xfs"));
+    ui.golden("Advanced: restore onto another filesystem", 0, "advanced-fs");
+}
+
+#[test]
+fn a_dry_run_from_disks_to_review_never_commits() {
+    let mut t = disks_t("app-lovelace", true);
+    let pass = b"two words".to_vec();
+    let mut ui = Shots::new(script(&[
+        &to_disks(),
+        &[Pick(0), Pick(0), Pick(0), P, B(B_DONE), P, P, Secrets(vec![pass.clone(), pass.clone()]), P, P],
+        &[Serials(vec!["F3A9C1".into(), "XK7HPL".into()]), B(B_LEAVE)],
+    ]));
+    assert_eq!(t.app.run(&mut ui), Exit::Done(0));
+    ui.done();
+    // Every screen's bko-holt command went through holt_args: lock 1, no
+    // --commit; lock 2, BKO_HOLT_NO_COMMIT=1.
+    let seen = t.seen.borrow();
+    let holt: Vec<_> = seen.ran.iter().filter(|(l, _, _)| l.starts_with("/fake/bin/bko-holt")).collect();
+    assert!(holt.len() >= 8, "{holt:#?}");
+    for (l, env, _) in &holt {
+        assert!(!l.contains("--commit"), "{l}: lock 1");
+        assert!(env.contains(&("BKO_HOLT_NO_COMMIT".to_string(), "1".to_string())), "{l}: lock 2");
+    }
+    assert!(holt.last().unwrap().0.contains("--erase"), "a dry run's Review passes --erase (J6)");
+    let run = t.app.reviewed.clone().unwrap();
+    assert!(run.commit, "Restore asks for --commit");
+    let a: Vec<String> = holt_args::argv(&HoltCmd::Load(&run), true).iter().map(|x| x.to_string_lossy().to_string()).collect();
+    assert!(!a.contains(&"--commit".to_string()) && a.contains(&"--expect-plan".to_string()), "{a:?}");
+    let r = ui.text("Ready to restore", 0);
+    assert!(r.contains("< Show what would happen >") && r.contains("DRY RUN: nothing will be written"), "{r}");
+    let n = ui.flat("Next: the restore", 0);
+    assert!(n.contains("The dry run's walk through every command isn't in this bko-rescue yet"), "{n}");
+}
+
+#[test]
+fn plain_mode_disks_transcripts() {
+    for (name, scen, typed) in [
+        (
+            "disks",
+            "app-lovelace",
+            // Disks: old disk 1, the Crucial, keep (Enter alone), these
+            // are right; the passphrase twice; the serials; restore.
+            "1\ncorrect horse\n1\n1\n1\n\no\ntwo words\ntwo words\nf3a9c1\nxk7hpl\nr\nl\n",
+        ),
+        ("too-small", "app-lovelace-small", "1\ncorrect horse\n1\n1\n2\n1\n\n1\nb\n"),
+    ] {
+        let mut t = disks_t(scen, false);
+        let mut pl = Plain::new(FakeLine::typed(typed), Lines::Utf8);
+        let r = t.app.run(&mut pl);
+        let out = pl.into_line().out;
+        assert!(matches!(r, Exit::Done(0) | Exit::Quit), "{name}: {r:?}\n{out}");
+        assert!(!out.contains('\x1b'), "no escape sequences at all");
+        assert!(!out.contains("two words") && !out.contains("correct horse"), "nothing typed for a secret shows");
+        golden(&format!("tests/screens/app-plain-{name}.txt"), &out);
+        if name == "disks" {
+            assert!(out.contains("  1) change where old disk 1 goes   2) change where old disk 2 goes"), "{out}");
+            assert!(out.contains("serial 2 3 1 8 E 6 F 3 A 9 C 1"), "{out}");
+            assert!(out.contains("Disk 1 confirmed.") && out.contains("Disk 2 confirmed."), "{out}");
+        } else {
+            assert!(out.contains("/ holds 41.7 GB; the most it could get on this disk is 28.9 GB."), "{out}");
+        }
+    }
 }

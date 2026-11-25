@@ -1,0 +1,78 @@
+ BackOtter rescue                                                          Disks
+                                                                                
+                                                                                
+                                                                                
+  ┌───────────────────── This disk is a little smaller ──────────────────────┐  
+  │                                                                          │  
+  │ Old disk 1 (Samsung SSD 870 EVO 500GB) was 500 GB.  The disk you chose,  │  
+  │ KINGSTON SA400S37480G, is 480 GB: 20.0 GB smaller.                       │  
+  │                                                                          │  
+  │ So the partitions as they were don't fit.  The system partition can be   │  
+  │ made smaller to fit.  It is shown as /, and holds the operating system   │  
+  │ and the home folders.                                                    │  
+  │   / will shrink from 465 GB to 445 GB, by 4.3 %.                         │  
+  │   Space used on /: 41.7 GB, so it fits with room to spare.               │  
+  │   The other partitions stay as they were.                                │  
+  │                                                                          │  
+  │ Or choose another disk.                                                  │  
+  │                                                                          │  
+  │  < Shrink the system partition >    < Another disk >    < Raw output >   │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+                                                                                
+ Tab: buttons | Enter: press | o: raw output | Esc: back to the disk list       
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddDDDDDDDDDDDDDDDDddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                          Disks
+                                                                                
+                                                                                
+                                                                                
+  +--------------------- This disk is a little smaller ----------------------+  
+  |                                                                          |  
+  | Old disk 1 (Samsung SSD 870 EVO 500GB) was 500 GB.  The disk you chose,  |  
+  | KINGSTON SA400S37480G, is 480 GB: 20.0 GB smaller.                       |  
+  |                                                                          |  
+  | So the partitions as they were don't fit.  The system partition can be   |  
+  | made smaller to fit.  It is shown as /, and holds the operating system   |  
+  | and the home folders.                                                    |  
+  |   / will shrink from 465 GB to 445 GB, by 4.3 %.                         |  
+  |   Space used on /: 41.7 GB, so it fits with room to spare.               |  
+  |   The other partitions stay as they were.                                |  
+  |                                                                          |  
+  | Or choose another disk.                                                  |  
+  |                                                                          |  
+  |  < Shrink the system partition >    < Another disk >    < Raw output >   |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+                                                                                
+ Tab: buttons | Enter: press | o: raw output | Esc: back to the disk list       

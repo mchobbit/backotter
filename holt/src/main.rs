@@ -1,3 +1,7 @@
+// As in lib.rs: each binary is a crate of its own, which lib.rs's attribute
+// does not reach.
+#![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
+
 use bko_holt::load::jsonout;
 use bko_holt::sys::{FakeRunner, Sys};
 use std::io::Write;

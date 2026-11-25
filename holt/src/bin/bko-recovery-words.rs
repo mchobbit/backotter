@@ -3,6 +3,9 @@
 //! bko-holt but not shipped: build-holt.sh and the images take bko-holt
 //! alone.
 
+// As in lib.rs, which a binary's crate does not inherit.
+#![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
+
 use bko_holt::recovery::{self, Words};
 use std::io::{IsTerminal, Read, Write};
 use std::process::ExitCode;

@@ -1222,6 +1222,7 @@ pub const RECOVERY_KEY_MARK: &str = "<recovery-key>";
 /// S with every recovery-key-shaped string (Ubuntu Core's: eight groups of
 /// five digits joined by '-', crate::snapcore) replaced by
 /// RECOVERY_KEY_MARK: it never reaches a plan, a dump or a bug report.
+#[must_use = "the scrubbed copy is the one to show; the original still holds the secret"]
 pub fn scrub_recovery_keys(s: &str) -> std::borrow::Cow<'_, str> {
     const LEN: usize = 8 * 5 + 7;
     let b = s.as_bytes();
@@ -1258,6 +1259,7 @@ pub const PASSWORD_MARK: &str = "<password>";
 /// `"VALUE"`, `\"VALUE\"` (inside a JSON string), the rest of a JSON
 /// string that starts with the item, or a word (to a space, a quote or a
 /// backslash).  An empty value (lilo's `password=""`) is no password.
+#[must_use = "the scrubbed copy is the one to show; the original still holds the secret"]
 pub fn scrub_passwords(s: &str) -> std::borrow::Cow<'_, str> {
     scrub_passwords_as(s, false)
 }
@@ -1265,6 +1267,7 @@ pub fn scrub_passwords(s: &str) -> std::borrow::Cow<'_, str> {
 /// scrub_passwords, with WHOLE: S is one item (a JSON string of boot.lilo's
 /// options, `password=my pass phrase`), whose value at its start runs to
 /// its end.
+#[must_use = "the scrubbed copy is the one to show; the original still holds the secret"]
 fn scrub_passwords_as(s: &str, whole: bool) -> std::borrow::Cow<'_, str> {
     const KEY: &[u8] = b"password";
     let b = s.as_bytes();
@@ -1410,6 +1413,7 @@ impl Redactor {
     }
 
     /// `s` with every identifier replaced.
+    #[must_use = "the redacted copy is the one to show; the original still holds the identifiers"]
     pub fn text(&self, s: &str) -> String {
         self.text_with(s, true, false)
     }
@@ -1472,6 +1476,7 @@ impl Redactor {
     /// A redacted copy of a dump (or any JSON).  A dump's `os` section
     /// (os-release) stays as it is: it identifies no one, and `load` checks
     /// it.
+    #[must_use = "the redacted copy is the one to show; the original still holds the identifiers"]
     pub fn value(&self, v: &Value) -> Value {
         match v {
             Value::Obj(kv) => Value::Obj(kv.iter().map(|(k, x)| (self.key(k), if k == "os" { x.clone() } else { self.val(x, k) })).collect()),
@@ -1678,6 +1683,7 @@ fn kind_key(kind: Kind, key: &str) -> bool {
 }
 
 /// Redacts one dump on its own.
+#[must_use = "the redacted copy is the one to show; the original still holds the identifiers"]
 pub fn redact(v: &Value) -> (Value, Redactor) {
     let mut c = Collector::new();
     c.learn(v);

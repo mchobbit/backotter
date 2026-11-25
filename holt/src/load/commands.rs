@@ -47,6 +47,7 @@ pub(crate) fn lvm_argv<'a>(cmd: &'a str, devices: &'a str, rest: &[&'a str]) -> 
 /// One step: a command, or a file to write (`write` set), or a read-back
 /// (`check` set), or only a note.
 #[derive(Debug, Clone, PartialEq, Default)]
+#[must_use = "a step does nothing until it is pushed onto the plan"]
 pub struct Cmd {
     pub argv: Vec<String>,
     pub stdin: Option<String>,

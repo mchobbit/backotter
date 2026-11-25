@@ -93,7 +93,7 @@ Read from the code, so the protocol is built on what's there.
 - `main.rs`: `dump`, `load`, `report-bug`, `recovery-key-file`, `-V`,
   `--license`, and hidden helpers the stages run (`snapcore-boot-areas`,
   `md-lbs`, `umount-tree`, `efi-dedupe`, `grub-prefix`, `luks1-digest`,
-  `raw-write`, `write-table`, `rewrite`).  It dispatches on the first argument alone
+  `raw-write`, `write-table`, `rewrite`, `fat-set`).  It dispatches on the first argument alone
   (`-V|--version` included).  `dump` already writes JSON (`format`
   `bko-holt`, `schema` 1, `report.rs`); its exit 3 means unsupported.
 - `load/mod.rs`: `Options`, `parse_args`, `Stage` (plan, status, partition,

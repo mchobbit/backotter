@@ -541,6 +541,82 @@ fn differ_line(n: &str, d: &Differ) -> String {
     }
 }
 
+/// What stick/PLAT/checks.sh holds PLAT's rescue image to having: the
+/// words of its `for c in ...` (programs), `for p in ...` (paths) and `for
+/// fs in ...` (file system add-ons) lists.  None without a checks.sh (holt
+/// on its own, as T6.4 archives it).
+fn rescue_ships(stick: &Path, plat: &str) -> Option<BTreeMap<String, Vec<String>>> {
+    let text = std::fs::read_to_string(stick.join(plat).join("checks.sh")).ok()?.replace("\\\n", " ");
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut rest = text.as_str();
+    while let Some(i) = rest.find("for ") {
+        rest = &rest[i + 4..];
+        let Some((var, after)) = rest.split_once(" in ") else { break };
+        if !matches!(var, "c" | "p" | "fs") {
+            continue;
+        }
+        let Some((list, _)) = after.split_once("; do") else { break };
+        out.entry(var.to_string()).or_default().extend(list.split_whitespace().map(str::to_string));
+    }
+    Some(out)
+}
+
+/// The shell's own words a format stage's scripts use, which every rescue
+/// image's /bin/sh has.
+const SHELL_WORDS: [&str; 6] = ["[", "test", "true", "false", "exit", "echo"];
+
+/// Each illumos and Haiku plan's format stage (variants too) runs only what
+/// that platform's rescue image ships, as stick/PLAT/checks.sh checks it:
+/// a program of its tools list (or the shell's own, or bko-holt itself,
+/// which its bko-holt check runs), and a `mkfs` of a file system type that
+/// image has: illumos' mkfs -F TYPE runs /usr/lib/fs/TYPE/mkfs (its paths
+/// list), Haiku's mkfs -t TYPE the TYPE add-on (its file systems list).
+/// Neither image has newfs_msdos, the BSDs' FAT formatter.
+#[test]
+fn golden_format_runs_the_rescues_own_tools() {
+    let stick = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("stick");
+    let mut bad = Vec::new();
+    let mut checked = 0;
+    for e in entries(&corpus_dir()).unwrap_or_else(|x| panic!("{x}")) {
+        let text = std::fs::read_to_string(&e.dump).unwrap();
+        let plat = match bko_holt::other::Family::of_layout(&json::parse(&text).unwrap()) {
+            Some(bko_holt::other::Family::Illumos) => "illumos",
+            Some(bko_holt::other::Family::Haiku) => "haiku",
+            _ => continue,
+        };
+        let Some(ships) = rescue_ships(&stick, plat) else {
+            println!("SKIP  {}: no {}", e.name, stick.join(plat).join("checks.sh").display());
+            continue;
+        };
+        let has = |k: &str, w: &str| ships.get(k).is_some_and(|l| l.iter().any(|x| x == w));
+        let (plan, _) = plan_entry(&e).unwrap_or_else(|x| panic!("{}: {x}", e.name));
+        for step in Sections::of(&plan).steps("format") {
+            for c in commands(&step.cmd) {
+                let p = prog(&c[0]);
+                checked += 1;
+                if !(has("c", p) || SHELL_WORDS.contains(&p) || p == "bko-holt") {
+                    bad.push(format!("{}: {p} isn't in {plat}'s rescue image (stick/{plat}/checks.sh): {}", e.name, step.cmd));
+                    continue;
+                }
+                let flag = if plat == "illumos" { "-F" } else { "-t" };
+                if p == "mkfs" {
+                    let ty = c.iter().position(|w| w == flag).and_then(|i| c.get(i + 1));
+                    let ok = match ty {
+                        Some(t) if plat == "illumos" => has("p", &format!("/usr/lib/fs/{t}/mkfs")),
+                        Some(t) => has("fs", t),
+                        None => false,
+                    };
+                    if !ok {
+                        bad.push(format!("{}: mkfs {flag} {} isn't one {plat}'s rescue image checks it has: {}", e.name, ty.map_or("(none)", |t| t.as_str()), step.cmd));
+                    }
+                }
+            }
+        }
+    }
+    println!("{checked} format-stage commands of illumos and Haiku plans checked");
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
 #[test]
 fn golden_plans() {
     let mode = mode_from_env();

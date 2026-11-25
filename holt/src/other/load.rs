@@ -611,9 +611,43 @@ impl Builder<'_> {
         vec![Cmd { argv: a, why: Some(format!("{src}: BFS, as the source's")), ..Cmd::default() }]
     }
 
-    /// A FAT filesystem (an ESP) with the source's volume ID and label.
+    /// A FAT filesystem (an ESP the dump didn't image) as the source's, by
+    /// this system's own formatter: newfs_msdos on the BSDs, mkfs -F pcfs
+    /// on illumos, mkfs -t fat on Haiku (neither of whose rescue images has
+    /// newfs_msdos).  What illumos' or Haiku's can't be told and the boot
+    /// sector holds (volume ID, media byte, OEM name, hidden sectors) is set
+    /// after it by `bko-holt fat-set` (load/fatset.rs); what neither can
+    /// make as the source's is said in a note.
     pub(crate) fn other_newfs_msdos(&mut self, src: &str, dev: &str, c: &Value) -> Vec<Cmd> {
-        vec![Cmd { argv: newfs_msdos(dev, c), why: Some(format!("{src}: FAT, as the source's")), ..Cmd::default() }]
+        let why = format!("{src}: FAT, as the source's");
+        let part = self.layout.device(src).cloned().unwrap_or(Value::Null);
+        let fat = match self.fam {
+            Some(Family::Illumos) => mkfs_pcfs(dev, c, &part),
+            Some(Family::Haiku) => mkfs_haiku_fat(dev, c, &part),
+            _ => return vec![Cmd { argv: newfs_msdos(dev, c), why: Some(why), ..Cmd::default() }],
+        };
+        let fat = match fat {
+            Ok(f) => f,
+            Err(e) => {
+                self.problems.push(format!("{src}: {e}"));
+                return vec![];
+            }
+        };
+        let mut out = vec![fat.mkfs.why(why)];
+        if let Some(args) = fat_set_args(&fat.set) {
+            let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
+            let mut a = vec![exe, "fat-set".to_string(), fat.node.clone()];
+            a.extend(args);
+            out.push(Cmd { argv: a, why: Some(format!("{src}: the source's {}, which {} can't be told", fat_set_words(&fat.set), fat.tool)), ..Cmd::default() });
+        }
+        if !fat.lost.is_empty() {
+            self.notes.push(format!("{src}: {} makes its own {}, not the source's", fat.tool, fat.lost.join(", ")));
+        }
+        self.notes.push(match self.fam {
+            Some(Family::Illumos) => format!("{src}: the new FAT holds nothing of the backup (an illumos restore mounts ZFS only); an ESP gets illumos' loader from installboot"),
+            _ => format!("{src}: the new FAT holds nothing of the backup (a Haiku restore puts back the boot volume only)"),
+        });
+        out
     }
 
     /// GEOM labels (glabel) on the partitions the source had them on,
@@ -693,7 +727,8 @@ impl Builder<'_> {
     /// illumos: the boot archive remade (it holds zpool.cache, now the new
     /// pool's) and the BIOS boot blocks, pmbr and gptzfsboot, from the
     /// restored system's /boot (installboot -m); a UEFI ESP came back with
-    /// the partition table.
+    /// the partition table, or, one format made, gets illumos' loader from
+    /// installboot.
     fn illumos_boot(&mut self) -> Vec<Cmd> {
         let t = self.opts.target.clone();
         // OmniOS' bootadm (the rescue system's; not upstream illumos-gate's)
@@ -714,14 +749,26 @@ impl Builder<'_> {
             Cmd::new(&["bootadm", "update-archive", "-R", &t]).why("the boot archive, with the new pool's zpool.cache"),
             Cmd::new(&["sh", "-c", &format!("[ ! -f {r} ] || {{ /usr/gnu/bin/touch -m -r {v}/build.bko-holt {v}/build && rm -f {v}/build.bko-holt && touch -r {r} {v} && rm -f {r}; }}")]).why("etc/versions/build's fragment gone again, and its mtime back"),
         ];
-        if !self.layout.uefi() {
-            for (src, tgt) in self.names.mapping.pairs.clone() {
-                let Some(d) = self.layout.disk(&src).cloned() else { continue };
-                for p in d.parts.iter().filter(|p| p.content.get("type").and_then(Value::as_str) == Some("zfs_member")) {
-                    let raw = format!("/dev/rdsk/{}", super::illumos::slice_name(&tgt, p.number));
-                    // (No -m: the partition stage wrote the source's MBR code.)
-                    out.push(Cmd::new(&["installboot", "-f", "-b", &format!("{t}/boot"), &raw]).why("illumos' gptzfsboot, in the pool's boot area"));
-                }
+        let uefi = self.layout.uefi();
+        for (src, tgt) in self.names.mapping.pairs.clone() {
+            let Some(d) = self.layout.disk(&src).cloned() else { continue };
+            // On UEFI, a disk whose ESP format made (not imaged: other_newfs_msdos)
+            // gets its loader from installboot too, as illumos' installer put
+            // it there: EFI/Boot/bootx64.efi (and bootia32.efi), from the
+            // restored /boot, with pmbr and gptzfsboot, which it always writes.
+            let formatted_esp = d.parts.iter().any(|p| {
+                (p.ptype.eq_ignore_ascii_case(crate::parttable::ESP) || p.ptype.eq_ignore_ascii_case("0xef"))
+                    && matches!(p.content.get("type").and_then(Value::as_str), Some("vfat" | "msdos"))
+                    && self.layout.device(&p.name).is_none_or(|v| v.get("esp_image").is_none())
+            });
+            if uefi && !formatted_esp {
+                continue;
+            }
+            let why = if uefi { "illumos' UEFI loader on the new ESP (EFI/Boot), and gptzfsboot in the pool's boot area" } else { "illumos' gptzfsboot, in the pool's boot area" };
+            for p in d.parts.iter().filter(|p| p.content.get("type").and_then(Value::as_str) == Some("zfs_member")) {
+                let raw = format!("/dev/rdsk/{}", super::illumos::slice_name(&tgt, p.number));
+                // (No -m: the partition stage wrote the source's MBR code.)
+                out.push(Cmd::new(&["installboot", "-f", "-b", &format!("{t}/boot"), &raw]).why(why));
             }
         }
         out
@@ -835,6 +882,218 @@ fn newfs_msdos(dev: &str, c: &Value) -> Vec<String> {
     }
     a.push(dev.to_string());
     a
+}
+
+/// A FAT as illumos' or Haiku's formatter makes it: the command, the node
+/// `bko-holt fat-set` then writes, what that sets, and the source's fields
+/// neither keeps (the note's words).
+#[derive(Debug)]
+struct FatMake {
+    tool: &'static str,
+    mkfs: Cmd,
+    node: String,
+    set: crate::load::fatset::Set,
+    lost: Vec<String>,
+}
+
+fn num(c: &Value, k: &str) -> Option<u64> {
+    c.get(k).and_then(Value::as_u64)
+}
+
+/// The source FAT's bytes per sector: 512, the only size either formatter
+/// is given here (both take the device's own).
+fn fat_512(c: &Value, tool: &str) -> Result<(), String> {
+    match num(c, "bytes_per_sector") {
+        Some(b) if b != 512 => Err(format!("its FAT has {b}-byte sectors; {tool} makes the device's own, and bko-holt load gives it 512-byte ones only")),
+        _ => Ok(()),
+    }
+}
+
+/// The source's volume ID, media byte and OEM name where they differ from
+/// what the formatter writes (ID, MEDIA, OEM; None: one it can't foretell),
+/// for fat-set; LOST gets an OEM name fat-set can't write.
+fn fat_fields(c: &Value, id: Option<u32>, media: Option<u8>, oem: Option<&str>, lost: &mut Vec<String>) -> crate::load::fatset::Set {
+    use crate::load::fatset::{parse_id, parse_oem, Set};
+    let mut set = Set::default();
+    match s(c, "uuid").map(|u| (parse_id(&u), u)) {
+        Some((Some(v), _)) if Some(v) != id => set.id = Some(v),
+        Some((None, u)) => lost.push(format!("volume ID (the source's {u:?} isn't a FAT volume ID)")),
+        _ => {}
+    }
+    if let Some(m) = c.get_u64_lenient("media").and_then(|m| u8::try_from(m).ok()).filter(|&m| Some(m) != media) {
+        set.media = Some(m);
+    }
+    if let Some(o) = s(c, "oem_name").filter(|o| Some(o.as_str()) != oem) {
+        match parse_oem(&o) {
+            Some(b) => set.oem = Some(b),
+            None => lost.push(format!("OEM name (the source's {o:?})")),
+        }
+    }
+    set
+}
+
+/// The FAT's size in 512-byte sectors: the source's filesystem's, within
+/// its partition (fit can only have made that bigger).
+fn fat_sectors(c: &Value, part: &Value) -> Option<u64> {
+    let p = num(part, "sectors").or_else(|| num(part, "size_bytes").map(|b| b / 512));
+    match (num(c, "total_sectors"), p) {
+        (Some(t), Some(p)) => Some(t.min(p)),
+        (t, p) => t.or(p),
+    }
+}
+
+/// illumos' mkfs -F pcfs (mkfs_pcfs(8), illumos-gate's
+/// usr/src/cmd/fs.d/pcfs/mkfs) on DEV's raw node: on the slice itself
+/// (nofdisk, so its size= the source FAT's sectors, and hidden= its hidden
+/// sectors), with the source's FAT type (fat=), sectors per cluster (spc=),
+/// reserved sectors (reserve=) and label (b=).  It writes volume ID 0, media
+/// 0xF8, OEM name "MSWIN4.1", 2 FATs and, for FAT12/16, 512 root entries,
+/// and asks nothing when its standard input isn't a terminal (an empty
+/// one here).
+fn mkfs_pcfs(dev: &str, c: &Value, part: &Value) -> Result<FatMake, String> {
+    const TOOL: &str = "mkfs -F pcfs";
+    fat_512(c, TOOL)?;
+    let node = dev.replacen("/dev/dsk/", "/dev/rdsk/", 1);
+    let size = fat_sectors(c, part).ok_or("its FAT's size isn't in the dump")?;
+    let mut o = vec!["nofdisk".to_string(), format!("size={size}")];
+    let mut lost = Vec::new();
+    let bits = num(c, "fat_bits");
+    if let Some(b) = bits {
+        o.push(format!("fat={b}"));
+    }
+    match num(c, "sectors_per_cluster") {
+        Some(n) if n.is_power_of_two() && n <= 128 => o.push(format!("spc={n}")),
+        Some(n) => lost.push(format!("cluster size ({n} sectors)")),
+        None => {}
+    }
+    match num(c, "reserved_sectors") {
+        Some(r) if (if bits == Some(32) { 32 } else { 1 }..=0xffff).contains(&r) => o.push(format!("reserve={r}")),
+        Some(r) => lost.push(format!("reserved sectors ({r})")),
+        None => {}
+    }
+    if let Some(h) = num(c, "hidden_sectors").filter(|&h| h > 0) {
+        o.push(format!("hidden={h}"));
+    }
+    match s(c, "label") {
+        // getsubopt(3C) ends a value at a comma; mkfs_pcfs upper-cases it.
+        Some(l) if l.len() <= 11 && !l.contains(',') && l == l.to_ascii_uppercase() && l.bytes().all(|b| (0x20..0x7f).contains(&b)) => o.push(format!("b={l}")),
+        Some(l) => lost.push(format!("label ({l:?}: it writes labels of up to 11 upper-case characters, without a comma)")),
+        None => lost.push("label (the source's FAT has none; it writes NONAME)".into()),
+    }
+    if let Some(n) = num(c, "fats").filter(|&n| n != 2) {
+        lost.push(format!("FAT count ({n}; it makes 2)"));
+    }
+    if let Some(n) = num(c, "root_entries").filter(|&n| n != 512 && bits != Some(32)) {
+        lost.push(format!("root directory size ({n} entries; it makes 512)"));
+    }
+    let set = fat_fields(c, Some(0), Some(0xf8), Some("MSWIN4.1"), &mut lost);
+    let mkfs = Cmd { argv: vec!["mkfs".into(), "-F".into(), "pcfs".into(), "-o".into(), o.join(","), node.clone()], stdin: Some(String::new()), ..Cmd::default() };
+    Ok(FatMake { tool: TOOL, mkfs, node, set, lost })
+}
+
+/// Haiku's fat add-on's sectors per cluster for a FAT of BITS bits on a
+/// partition of BYTES (mkdos.cpp's _dosfs_initialize, Microsoft's size
+/// cutoffs), 512-byte sectors: 0 for a size it refuses.
+fn haiku_fat_spc(bits: u64, bytes: u64) -> u64 {
+    const GIB: u64 = 1 << 30;
+    const MIB: u64 = 1 << 20;
+    const FLOPPY_MAX: u64 = 2 * 80 * 36 * 512;
+    // Each table ascends: the first cutoff the size is within.
+    let cut = |table: &[(u64, u64)], default: u64| table.iter().find(|(max, _)| bytes <= *max).map_or(default, |x| x.1);
+    match bits {
+        12 if bytes >= 16 * MIB => 0,
+        12 => cut(&[(737_280, 2), (1_474_560, 1), (2_949_120, 2)], 8),
+        16 => cut(&[(FLOPPY_MAX, 0), (16 * MIB, 2), (128 * MIB, 4), (256 * MIB, 8), (512 * MIB, 16), (GIB, 32), (2 * GIB, 64)], 0),
+        _ => cut(&[(66_600 * 512, 0), (532_480 * 512, 1), (8 * GIB, 8), (16 * GIB, 16), (32 * GIB, 32)], 64),
+    }
+}
+
+/// Haiku's mkfs -t fat (its fat add-on's initialize: mkdos.cpp) on DEV,
+/// the whole partition: the source's FAT type (`-o 'fat N'`) and label
+/// (its volume name, which it needs).  It writes a volume ID from the
+/// clock, media 0xF8 (0xF0 on a removable disk), OEM name "Haiku", the
+/// partition's size as its hidden sectors, 2 FATs, 32 (FAT32) or 1
+/// reserved sectors, 512 root entries (FAT12/16) and its own cluster size
+/// for the partition's size.  -q: it asks nothing.
+fn mkfs_haiku_fat(dev: &str, c: &Value, part: &Value) -> Result<FatMake, String> {
+    const TOOL: &str = "Haiku's mkfs -t fat";
+    fat_512(c, TOOL)?;
+    let bytes = num(part, "size_bytes").or_else(|| num(part, "sectors").map(|s| s * 512)).ok_or("its partition's size isn't in the dump")?;
+    let bits = num(c, "fat_bits").unwrap_or(32);
+    let spc = haiku_fat_spc(bits, bytes);
+    if spc == 0 {
+        return Err(format!("{TOOL} can't make FAT{bits} on a partition of {bytes} bytes"));
+    }
+    let mut lost = Vec::new();
+    if let Some(n) = num(c, "sectors_per_cluster").filter(|&n| n != spc) {
+        lost.push(format!("cluster size ({n} sectors; it makes {spc})"));
+    }
+    if let Some(r) = num(c, "reserved_sectors").filter(|&r| r != if bits == 32 { 32 } else { 1 }) {
+        lost.push(format!("reserved sectors ({r})"));
+    }
+    if let Some(n) = num(c, "fats").filter(|&n| n != 2) {
+        lost.push(format!("FAT count ({n}; it makes 2)"));
+    }
+    if let Some(n) = num(c, "root_entries").filter(|&n| n != 512 && bits != 32) {
+        lost.push(format!("root directory size ({n} entries; it makes 512)"));
+    }
+    if num(c, "total_sectors").is_some_and(|t| t * 512 < bytes) {
+        lost.push("size (it fills the partition)".into());
+    }
+    let label = match s(c, "label").or_else(|| s(c, "boot_sector_label")) {
+        // Its name may not be empty or start with a space; it is made a
+        // FAT label (upper-cased).
+        Some(l) if !l.starts_with(' ') && l.len() <= 11 && l == l.to_ascii_uppercase() && l.bytes().all(|b| (0x20..0x7f).contains(&b)) => l,
+        Some(l) => {
+            lost.push(format!("label ({l:?})"));
+            "NO NAME".into()
+        }
+        None => {
+            lost.push("label (the source's FAT has none; it needs one: NO NAME)".into());
+            "NO NAME".into()
+        }
+    };
+    if s(c, "uuid").is_none() {
+        lost.push("volume ID (the source's FAT has none)".into());
+    }
+    // Its volume ID and (on a removable disk) media byte can't be foretold:
+    // the source's are always set.
+    let mut set = fat_fields(c, None, None, Some("Haiku"), &mut lost);
+    set.hidden = num(c, "hidden_sectors").and_then(|h| u32::try_from(h).ok());
+    let mut argv: Vec<String> = vec!["mkfs".into(), "-t".into(), "fat".into(), "-q".into()];
+    if let Some(b) = num(c, "fat_bits") {
+        argv.extend(["-o".into(), format!("fat {b}")]);
+    }
+    argv.extend([dev.to_string(), label]);
+    Ok(FatMake { tool: TOOL, mkfs: Cmd { argv, ..Cmd::default() }, node: dev.to_string(), set, lost })
+}
+
+/// fat-set's arguments for S, or None when there's nothing to set.
+fn fat_set_args(s: &crate::load::fatset::Set) -> Option<Vec<String>> {
+    let mut a = Vec::new();
+    if let Some(id) = s.id {
+        a.extend(["--id".into(), format!("{:04X}-{:04X}", id >> 16, id & 0xffff)]);
+    }
+    if let Some(m) = s.media {
+        a.extend(["--media".into(), format!("0x{m:02x}")]);
+    }
+    if let Some(o) = &s.oem {
+        a.extend(["--oem".into(), String::from_utf8_lossy(o).trim_end().to_string()]);
+    }
+    if let Some(h) = s.hidden {
+        a.extend(["--hidden".into(), h.to_string()]);
+    }
+    (!a.is_empty()).then_some(a)
+}
+
+/// What S sets, as words for the step's comment.
+fn fat_set_words(s: &crate::load::fatset::Set) -> String {
+    let w: Vec<&str> = [(s.id.is_some(), "volume ID"), (s.media.is_some(), "media byte"), (s.oem.is_some(), "OEM name"), (s.hidden.is_some(), "hidden sectors")].iter().filter(|x| x.0).map(|x| x.1).collect();
+    match w.as_slice() {
+        [] => String::new(),
+        [one] => one.to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
 }
 
 /// The `sh -c` script that puts the rescue system's BOOTX64.EFI on the ESP
@@ -1196,6 +1455,77 @@ mod tests {
         assert_eq!(newfs_msdos("/dev/dk0", &c).join(" "), "newfs_msdos -F 16 -m 0xf8 /dev/dk0");
         let c = crate::json::parse(r#"{"type": "vfat", "fat_bits": 32, "uuid": "BC00-0001"}"#).unwrap();
         assert_eq!(newfs_msdos("/dev/vtbd0p1", &c).join(" "), "newfs_msdos -F 32 -I 0xBC000001 /dev/vtbd0p1");
+    }
+
+    /// OmniOS' and OpenIndiana's ESP (the corpus dumps' content): mkfs -F
+    /// pcfs makes it as the source's, nothing to set after and nothing lost;
+    /// FreeBSD's (newfs_msdos's: volume ID, media 0xF0, OEM name BSD4.4, no
+    /// label) gets those three set by fat-set, the label said.
+    #[test]
+    fn mkfs_pcfs_makes_illumos_own_esp_and_sets_the_rest() {
+        let omnios = crate::json::parse(r#"{"type": "vfat", "uuid": "0000-0000", "label": "NONAME", "version": "FAT32", "fat_bits": 32, "bytes_per_sector": 512, "sectors_per_cluster": 1, "cluster_size": 512, "reserved_sectors": 32, "fats": 2, "fat_sectors": 4064, "total_sectors": 524288, "size_bytes": 268435456, "hidden_sectors": 0, "media": "0xf8", "oem_name": "MSWIN4.1", "backup_boot_sector": 6, "boot_sector_label": "NONAME"}"#).unwrap();
+        let part = crate::json::parse(r#"{"sectors": 524288, "size_bytes": 268435456}"#).unwrap();
+        let f = mkfs_pcfs("/dev/dsk/c3t0d0s0", &omnios, &part).unwrap();
+        assert_eq!(f.mkfs.argv.join(" "), "mkfs -F pcfs -o nofdisk,size=524288,fat=32,spc=1,reserve=32,b=NONAME /dev/rdsk/c3t0d0s0");
+        assert_eq!(f.mkfs.stdin.as_deref(), Some(""), "not a terminal: mkfs_pcfs asks nothing");
+        assert_eq!((fat_set_args(&f.set), f.lost.len()), (None, 0), "{:?}", f.lost);
+        let freebsd = crate::json::parse(r#"{"type": "vfat", "fat_bits": 32, "uuid": "BC00-0001", "label": null, "bytes_per_sector": 512, "sectors_per_cluster": 1, "reserved_sectors": 32, "fats": 2, "total_sectors": 532480, "hidden_sectors": 40, "media": "0xf0", "oem_name": "BSD4.4"}"#).unwrap();
+        let f = mkfs_pcfs("/dev/dsk/c3t0d0s0", &freebsd, &crate::json::parse(r#"{"sectors": 532480}"#).unwrap()).unwrap();
+        assert_eq!(f.mkfs.argv[4], "nofdisk,size=532480,fat=32,spc=1,reserve=32,hidden=40");
+        assert_eq!(fat_set_args(&f.set).unwrap().join(" "), "--id BC00-0001 --media 0xf0 --oem BSD4.4");
+        assert_eq!((f.node.as_str(), fat_set_words(&f.set).as_str()), ("/dev/rdsk/c3t0d0s0", "volume ID, media byte and OEM name"));
+        assert_eq!(f.lost, ["label (the source's FAT has none; it writes NONAME)"]);
+        // What it can't be told: a comma or lower case in the label, 1 FAT.
+        let odd = crate::json::parse(r#"{"type": "vfat", "fat_bits": 16, "label": "a,b", "fats": 1, "root_entries": 256, "total_sectors": 9000, "bytes_per_sector": 512}"#).unwrap();
+        let f = mkfs_pcfs("/dev/dsk/c1t0d0s1", &odd, &crate::json::parse(r#"{"sectors": 8192}"#).unwrap()).unwrap();
+        assert_eq!(f.mkfs.argv[4], "nofdisk,size=8192,fat=16");
+        assert_eq!(f.lost.len(), 3, "{:?}", f.lost);
+        let big = crate::json::parse(r#"{"type": "vfat", "fat_bits": 32, "bytes_per_sector": 4096, "total_sectors": 9000}"#).unwrap();
+        assert!(mkfs_pcfs("/dev/dsk/c1t0d0s1", &big, &Value::Null).unwrap_err().contains("4096-byte sectors"));
+    }
+
+    /// Haiku's fat add-on picks the cluster size by the partition's size,
+    /// as mkdos.cpp does, and refuses a FAT32 under 32.5 MB.
+    #[test]
+    fn haiku_fat_cluster_sizes() {
+        const M: u64 = 1 << 20;
+        assert_eq!(haiku_fat_spc(32, 260 * M), 1);
+        assert_eq!(haiku_fat_spc(32, 532_480 * 512 + 512), 8);
+        assert_eq!(haiku_fat_spc(32, 9 << 30), 16);
+        assert_eq!(haiku_fat_spc(32, 64 << 30), 64);
+        assert_eq!(haiku_fat_spc(32, 32 * M), 0);
+        assert_eq!(haiku_fat_spc(16, 100 * M), 4);
+        assert_eq!(haiku_fat_spc(16, 3 << 30), 0);
+        assert_eq!(haiku_fat_spc(12, 1_000_000), 1);
+        assert_eq!(haiku_fat_spc(12, 700_000), 2);
+        assert_eq!(haiku_fat_spc(12, 20 * M), 0);
+    }
+
+    /// haiku6's dump with a 256 MiB ESP after its BFS volume, unimaged
+    /// (Haiku's dump images none): the format stage makes it with Haiku's
+    /// mkfs -t fat, then fat-set gives it the source's volume ID, media
+    /// byte and hidden sectors; no newfs_msdos, which Haiku has none of.
+    #[test]
+    fn haiku_formats_fat_with_its_own_mkfs() {
+        use crate::load::layout::Layout;
+        use crate::load::target::Mapping;
+        let mut v = crate::json::parse(include_str!("../../tests/corpus/haiku6/src.json")).unwrap();
+        let parts = v.at_mut(&["storage", "disks", "0", "partitions"]).and_then(Value::as_array_mut).unwrap();
+        let esp_start = 2048 + 33_552_384 - 524_288;
+        parts[0].put("sectors", 33_552_384u64 - 524_288);
+        parts.push(crate::json::parse(&format!(
+            r#"{{"name": "scsi_2_0_0_1", "number": 2, "start_lba": {esp_start}, "sectors": 524288, "size_bytes": 268435456, "type": "0xef", "bootable": false, "logical": false, "extended": false, "uuid": "00000000-02", "mounted_at": [],
+                "content": {{"type": "vfat", "usage": "filesystem", "uuid": "1A2B-3C4D", "label": "EFI", "fat_bits": 32, "bytes_per_sector": 512, "sectors_per_cluster": 1, "cluster_size": 512, "reserved_sectors": 32, "fats": 2, "total_sectors": 524288, "hidden_sectors": {esp_start}, "media": "0xf8", "oem_name": "mkfs.fat"}}}}"#
+        )).unwrap());
+        let l = Layout::from_json(v).unwrap();
+        let b = crate::load::commands::build(&l, &opts(), &Mapping { pairs: vec![("scsi_2_0_0".into(), "scsi_3_0_0".into())], ..Mapping::default() });
+        let format: Vec<String> = b.stages.iter().filter(|(s, _)| *s == crate::load::Stage::Format).flat_map(|(_, c)| c.iter().map(|c| c.argv.join(" "))).collect();
+        let exe = std::env::current_exe().unwrap().to_string_lossy().into_owned();
+        assert!(format.contains(&"mkfs -t fat -q -o fat 32 /dev/disk/scsi/3/0/0/1 EFI".to_string()), "{format:?}");
+        assert!(format.contains(&format!("{exe} fat-set /dev/disk/scsi/3/0/0/1 --id 1A2B-3C4D --media 0xf8 --oem mkfs.fat --hidden {esp_start}")), "{format:?}");
+        assert!(!format.iter().any(|c| c.contains("newfs_msdos")), "{format:?}");
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        assert!(b.notes.iter().any(|n| n == "scsi_2_0_0_1: the new FAT holds nothing of the backup (a Haiku restore puts back the boot volume only)"), "{:?}", b.notes);
     }
 
     #[test]

@@ -175,6 +175,9 @@ impl Cmd {
                 .join(" "),
         };
         match &self.stdin {
+            // An empty standard input (not the terminal's: mkfs -F pcfs
+            // then asks nothing) for a command, not a file to write.
+            Some(s) if s.is_empty() && self.write.is_none() => out += &format!("{line} </dev/null\n"),
             Some(s) => {
                 let mut eof = String::from("EOF");
                 let mut n = 1u32;

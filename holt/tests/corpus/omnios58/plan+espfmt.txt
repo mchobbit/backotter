@@ -6,6 +6,7 @@
 #
 # Notes:
 #   - ZFS pool rpool: illumos can't set a pool's GUID; it gets a new one
+#   - c3t0d0s0: the new FAT holds nothing of the backup (an illumos restore mounts ZFS only); an ESP gets illumos' loader from installboot
 #   - ZFS volume rpool/swap: made empty; archivers back up files, not zvols
 #   - boot environment omnios-r151058 (rpool/ROOT/omnios-r151058) isn't the booted one: it comes back as an empty plain dataset (only the booted BE is restored)
 
@@ -21,7 +22,7 @@ sh -c '[ "$(zfs get -H -o value mounted rpool)" != yes ] || zfs unmount rpool'
 
 # ---- format ----
 # c3t0d0s0: FAT, as the source's
-newfs_msdos -F 32 -I 0x00000000 -L NONAME -c 1 -m 0xf8 /dev/dsk/sdqs0
+mkfs -F pcfs -o nofdisk,size=524288,fat=32,spc=1,reserve=32,b=NONAME /dev/rdsk/sdqs0 </dev/null
 zfs create -o mountpoint=legacy -o canmount=off rpool/ROOT
 sh -c '[ "$(zfs get -H -o value mounted rpool/ROOT)" != yes ] || zfs unmount rpool/ROOT'
 zfs create -o mountpoint=legacy -o canmount=noauto -o org.opensolaris.libbe:uuid=bc000000-0000-4000-8000-000000000005 -o org.opensolaris.libbe:policy=static rpool/ROOT/omnios-r151058

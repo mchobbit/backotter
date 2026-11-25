@@ -17,6 +17,7 @@ pub mod codes;
 pub mod commands;
 pub mod efidedupe;
 pub mod exec;
+pub mod fatset;
 pub mod fit;
 pub mod grubprefix;
 pub mod jsonout;

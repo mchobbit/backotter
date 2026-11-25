@@ -944,12 +944,15 @@ fn fat_sectors(c: &Value, part: &Value) -> Option<u64> {
 
 /// illumos' mkfs -F pcfs (mkfs_pcfs(8), illumos-gate's
 /// usr/src/cmd/fs.d/pcfs/mkfs) on DEV's raw node: on the slice itself
-/// (nofdisk, so its size= the source FAT's sectors, and hidden= its hidden
-/// sectors), with the source's FAT type (fat=), sectors per cluster (spc=),
-/// reserved sectors (reserve=) and label (b=).  It writes volume ID 0, media
-/// 0xF8, OEM name "MSWIN4.1", 2 FATs and, for FAT12/16, 512 root entries,
-/// and asks nothing when its standard input isn't a terminal (an empty
-/// one here).
+/// (nofdisk, so its size= the source FAT's sectors), with the source's FAT
+/// type (fat=), sectors per cluster (spc=), reserved sectors (reserve=) and
+/// label (b=).  It writes volume ID 0, media 0xF8, OEM name "MSWIN4.1", no
+/// hidden sectors, 2 FATs and, for FAT12/16, 512 root entries, and asks
+/// nothing when its standard input isn't a terminal (an empty one here).
+/// Never hidden=: mkfs_pcfs's seek_nofdisk() also seeks that many sectors
+/// into DEV and makes the FAT there (hidden=40 on the OmniOS rescue: the
+/// boot sector at sector 40, sector 0 left as it was), so the source's
+/// hidden sectors are fat-set's, like its volume ID.
 fn mkfs_pcfs(dev: &str, c: &Value, part: &Value) -> Result<FatMake, String> {
     const TOOL: &str = "mkfs -F pcfs";
     fat_512(c, TOOL)?;
@@ -971,13 +974,18 @@ fn mkfs_pcfs(dev: &str, c: &Value, part: &Value) -> Result<FatMake, String> {
         Some(r) => lost.push(format!("reserved sectors ({r})")),
         None => {}
     }
-    if let Some(h) = num(c, "hidden_sectors").filter(|&h| h > 0) {
-        o.push(format!("hidden={h}"));
-    }
     match s(c, "label") {
-        // getsubopt(3C) ends a value at a comma; mkfs_pcfs upper-cases it.
-        Some(l) if l.len() <= 11 && !l.contains(',') && l == l.to_ascii_uppercase() && l.bytes().all(|b| (0x20..0x7f).contains(&b)) => o.push(format!("b={l}")),
-        Some(l) => lost.push(format!("label ({l:?}: it writes labels of up to 11 upper-case characters, without a comma)")),
+        // getsubopt(3C) ends a value at a comma; mkfs_pcfs upper-cases it
+        // (b=esp writes "ESP" on the OmniOS rescue), so a lower-case one
+        // keeps its letters, not its case.
+        Some(l) if l.len() <= 11 && !l.contains(',') && l.bytes().all(|b| (0x20..0x7f).contains(&b)) => {
+            let up = l.to_ascii_uppercase();
+            if up != l {
+                lost.push(format!("label's case ({l:?}: it writes {up:?})"));
+            }
+            o.push(format!("b={up}"));
+        }
+        Some(l) => lost.push(format!("label ({l:?}: it writes labels of up to 11 characters, without a comma)")),
         None => lost.push("label (the source's FAT has none; it writes NONAME)".into()),
     }
     if let Some(n) = num(c, "fats").filter(|&n| n != 2) {
@@ -986,7 +994,8 @@ fn mkfs_pcfs(dev: &str, c: &Value, part: &Value) -> Result<FatMake, String> {
     if let Some(n) = num(c, "root_entries").filter(|&n| n != 512 && bits != Some(32)) {
         lost.push(format!("root directory size ({n} entries; it makes 512)"));
     }
-    let set = fat_fields(c, Some(0), Some(0xf8), Some("MSWIN4.1"), &mut lost);
+    let mut set = fat_fields(c, Some(0), Some(0xf8), Some("MSWIN4.1"), &mut lost);
+    set.hidden = num(c, "hidden_sectors").filter(|&h| h > 0).and_then(|h| u32::try_from(h).ok());
     let mkfs = Cmd { argv: vec!["mkfs".into(), "-F".into(), "pcfs".into(), "-o".into(), o.join(","), node.clone()], stdin: Some(String::new()), ..Cmd::default() };
     Ok(FatMake { tool: TOOL, mkfs, node, set, lost })
 }
@@ -1042,8 +1051,15 @@ fn mkfs_haiku_fat(dev: &str, c: &Value, part: &Value) -> Result<FatMake, String>
     }
     let label = match s(c, "label").or_else(|| s(c, "boot_sector_label")) {
         // Its name may not be empty or start with a space; it is made a
-        // FAT label (upper-cased).
-        Some(l) if !l.starts_with(' ') && l.len() <= 11 && l == l.to_ascii_uppercase() && l.bytes().all(|b| (0x20..0x7f).contains(&b)) => l,
+        // FAT label, upper-cased ('efi' writes "EFI" on the Haiku rescue),
+        // so a lower-case one keeps its letters, not its case.
+        Some(l) if !l.starts_with(' ') && l.len() <= 11 && l.bytes().all(|b| (0x20..0x7f).contains(&b)) => {
+            let up = l.to_ascii_uppercase();
+            if up != l {
+                lost.push(format!("label's case ({l:?}: it writes {up:?})"));
+            }
+            up
+        }
         Some(l) => {
             lost.push(format!("label ({l:?})"));
             "NO NAME".into()
@@ -1460,7 +1476,8 @@ mod tests {
     /// OmniOS' and OpenIndiana's ESP (the corpus dumps' content): mkfs -F
     /// pcfs makes it as the source's, nothing to set after and nothing lost;
     /// FreeBSD's (newfs_msdos's: volume ID, media 0xF0, OEM name BSD4.4, no
-    /// label) gets those three set by fat-set, the label said.
+    /// label, 40 hidden sectors) gets those four set by fat-set, the label
+    /// said.
     #[test]
     fn mkfs_pcfs_makes_illumos_own_esp_and_sets_the_rest() {
         let omnios = crate::json::parse(r#"{"type": "vfat", "uuid": "0000-0000", "label": "NONAME", "version": "FAT32", "fat_bits": 32, "bytes_per_sector": 512, "sectors_per_cluster": 1, "cluster_size": 512, "reserved_sectors": 32, "fats": 2, "fat_sectors": 4064, "total_sectors": 524288, "size_bytes": 268435456, "hidden_sectors": 0, "media": "0xf8", "oem_name": "MSWIN4.1", "backup_boot_sector": 6, "boot_sector_label": "NONAME"}"#).unwrap();
@@ -1471,15 +1488,20 @@ mod tests {
         assert_eq!((fat_set_args(&f.set), f.lost.len()), (None, 0), "{:?}", f.lost);
         let freebsd = crate::json::parse(r#"{"type": "vfat", "fat_bits": 32, "uuid": "BC00-0001", "label": null, "bytes_per_sector": 512, "sectors_per_cluster": 1, "reserved_sectors": 32, "fats": 2, "total_sectors": 532480, "hidden_sectors": 40, "media": "0xf0", "oem_name": "BSD4.4"}"#).unwrap();
         let f = mkfs_pcfs("/dev/dsk/c3t0d0s0", &freebsd, &crate::json::parse(r#"{"sectors": 532480}"#).unwrap()).unwrap();
-        assert_eq!(f.mkfs.argv[4], "nofdisk,size=532480,fat=32,spc=1,reserve=32,hidden=40");
-        assert_eq!(fat_set_args(&f.set).unwrap().join(" "), "--id BC00-0001 --media 0xf0 --oem BSD4.4");
-        assert_eq!((f.node.as_str(), fat_set_words(&f.set).as_str()), ("/dev/rdsk/c3t0d0s0", "volume ID, media byte and OEM name"));
+        // Its hidden sectors by fat-set, not hidden=, which moves the FAT.
+        assert_eq!(f.mkfs.argv[4], "nofdisk,size=532480,fat=32,spc=1,reserve=32");
+        assert_eq!(fat_set_args(&f.set).unwrap().join(" "), "--id BC00-0001 --media 0xf0 --oem BSD4.4 --hidden 40");
+        assert_eq!((f.node.as_str(), fat_set_words(&f.set).as_str()), ("/dev/rdsk/c3t0d0s0", "volume ID, media byte, OEM name and hidden sectors"));
         assert_eq!(f.lost, ["label (the source's FAT has none; it writes NONAME)"]);
         // What it can't be told: a comma or lower case in the label, 1 FAT.
         let odd = crate::json::parse(r#"{"type": "vfat", "fat_bits": 16, "label": "a,b", "fats": 1, "root_entries": 256, "total_sectors": 9000, "bytes_per_sector": 512}"#).unwrap();
         let f = mkfs_pcfs("/dev/dsk/c1t0d0s1", &odd, &crate::json::parse(r#"{"sectors": 8192}"#).unwrap()).unwrap();
         assert_eq!(f.mkfs.argv[4], "nofdisk,size=8192,fat=16");
         assert_eq!(f.lost.len(), 3, "{:?}", f.lost);
+        // A lower-case label: its letters, upper-cased as mkfs_pcfs would.
+        let lower = crate::json::parse(r#"{"type": "vfat", "fat_bits": 16, "label": "esp", "total_sectors": 8192, "bytes_per_sector": 512}"#).unwrap();
+        let f = mkfs_pcfs("/dev/dsk/c1t0d0s1", &lower, &Value::Null).unwrap();
+        assert_eq!((f.mkfs.argv[4].as_str(), f.lost.as_slice()), ("nofdisk,size=8192,fat=16,b=ESP", &["label's case (\"esp\": it writes \"ESP\")".to_string()][..]));
         let big = crate::json::parse(r#"{"type": "vfat", "fat_bits": 32, "bytes_per_sector": 4096, "total_sectors": 9000}"#).unwrap();
         assert!(mkfs_pcfs("/dev/dsk/c1t0d0s1", &big, &Value::Null).unwrap_err().contains("4096-byte sectors"));
     }
@@ -1499,6 +1521,19 @@ mod tests {
         assert_eq!(haiku_fat_spc(12, 1_000_000), 1);
         assert_eq!(haiku_fat_spc(12, 700_000), 2);
         assert_eq!(haiku_fat_spc(12, 20 * M), 0);
+    }
+
+    /// Haiku's mkfs -t fat upper-cases a volume name: a lower-case label
+    /// keeps its letters (the note says its case), one with a leading space
+    /// or none at all is NO NAME.
+    #[test]
+    fn haiku_fat_label_is_upper_cased() {
+        let part = crate::json::parse(r#"{"sectors": 524288, "size_bytes": 268435456}"#).unwrap();
+        let fat = |label: &str| crate::json::parse(&format!(r#"{{"type": "vfat", "fat_bits": 32, "uuid": "1A2B-3C4D", "label": {label}, "bytes_per_sector": 512, "sectors_per_cluster": 1, "reserved_sectors": 32, "fats": 2, "total_sectors": 524288}}"#)).unwrap();
+        for (label, word, lost) in [(r#""EFI""#, "EFI", 0), (r#""efi""#, "EFI", 1), (r#"" efi""#, "NO NAME", 1), ("null", "NO NAME", 1)] {
+            let f = mkfs_haiku_fat("/dev/disk/scsi/0/0/0/1", &fat(label), &part).unwrap();
+            assert_eq!((f.mkfs.argv.last().map(String::as_str), f.lost.len()), (Some(word), lost), "{label}: {:?}", f.lost);
+        }
     }
 
     /// haiku6's dump with a 256 MiB ESP after its BFS volume, unimaged

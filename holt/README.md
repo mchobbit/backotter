@@ -182,7 +182,11 @@ hand, then `--only boot`.
   raw (`load_option_hex`), the ESPs' files, GRUB's config, grubenv,
   /etc/default/grub and debconf answers, systemd-boot's entries, kernels and
   initramfs, the kernel command line, and the versions of the packages
-  behind all of it.
+  behind all of it.  A systemd-boot entry (`boot.systemd_boot.entries`) is
+  an object of its `key value` lines; its `options` lines are joined with
+  spaces, as systemd-boot joins them, and when it has more than one
+  `initrd` line `initrds` lists them all in order (`initrd` is the last
+  one's, as before, often the initramfs after a microcode image).
 - `boot.ostree`, on an ostree system (Fedora's atomic desktops, Bazzite):
   the booted deployment, every deployment, the loader entries and the
   deployment each leads to, composefs's and the repository's settings,

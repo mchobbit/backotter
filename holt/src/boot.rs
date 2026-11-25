@@ -349,11 +349,17 @@ fn byte_copy_of<'a>(sys: &Sys, path: &str, size: u64, candidates: impl IntoItera
 /// systemd-boot's loader.conf and its Boot Loader Specification entries,
 /// each as an object of its `key value` lines in file order.
 ///
-/// A key the file repeats keeps its first line's place and its last line's
-/// value: an entry with `initrd /intel-ucode.img` then `initrd
-/// /initramfs-linux.img` dumps initrd "/initramfs-linux.img" only, and of
-/// several `options` lines only the last one is kept (the Boot Loader
-/// Specification lets both repeat).  load's ESP check knows this
+/// A key the file repeats keeps its first line's place and, mostly, its
+/// last line's value; the Boot Loader Specification lets an entry repeat
+/// two keys, and those say all their lines.  Several `options` lines are
+/// one command line, their values joined with spaces in file order, as
+/// systemd-boot joins them.  Several `initrd` lines are all loaded, in
+/// order: `initrd` stays the last line's (what an older dump said, the
+/// main initramfs after a microcode image), and `initrds`, after it, has
+/// every one: an entry with `initrd /intel-ucode.img` then `initrd
+/// /initramfs-linux.img` dumps initrd "/initramfs-linux.img" and initrds
+/// ["/intel-ucode.img", "/initramfs-linux.img"].  An entry with one initrd
+/// line has no `initrds`.  load's ESP check reads both
 /// (load/transactional.rs, bls_problems).
 pub fn systemd_boot_json(sys: &Sys, mount: &str) -> Option<Value> {
     let conf = sys.read(&format!("{mount}/loader/loader.conf"));
@@ -362,15 +368,32 @@ pub fn systemd_boot_json(sys: &Sys, mount: &str) -> Option<Value> {
     if conf.is_none() && entry_files.is_empty() {
         return None;
     }
-    let kv = |t: &str| {
+    // BLS: an entry (not loader.conf) whose options and initrd lines repeat.
+    let kv = |t: &str, bls: bool| {
         let mut o = Obj::new();
+        let (mut options, mut initrds): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
         for l in t.lines() {
             let l = l.trim();
             if l.is_empty() || l.starts_with('#') {
                 continue;
             }
             let (k, v) = l.split_once(char::is_whitespace).unwrap_or((l, ""));
-            o.put(k, v.trim());
+            let v = v.trim();
+            match k {
+                "options" if bls => {
+                    options.extend((!v.is_empty()).then_some(v));
+                    o.put(k, options.join(" "));
+                }
+                "initrd" if bls => {
+                    initrds.extend((!v.is_empty()).then_some(v));
+                    o.put(k, v);
+                }
+                _ => o.put(k, v),
+            }
+        }
+        if initrds.len() > 1 {
+            let at = o.0.iter().position(|(k, _)| k == "initrd").map_or(o.0.len(), |i| i + 1);
+            o.0.insert(at, ("initrds".into(), Value::from(initrds)));
         }
         o.build()
     };
@@ -378,14 +401,14 @@ pub fn systemd_boot_json(sys: &Sys, mount: &str) -> Option<Value> {
         .iter()
         .filter_map(|f| sys.read(&format!("{entries_dir}/{f}")).map(|t| (f, t)))
         .map(|(f, t)| {
-            let mut v = kv(&t);
+            let mut v = kv(&t, true);
             if let Value::Obj(o) = &mut v {
                 o.insert(0, ("file".into(), Value::from(f.as_str())));
             }
             v
         })
         .collect();
-    Some(Obj::new().set("loader_conf", conf.map(|t| kv(&t))).set("entries", entries).build())
+    Some(Obj::new().set("loader_conf", conf.map(|t| kv(&t, false))).set("entries", entries).build())
 }
 
 // --- Proxmox VE's proxmox-boot-tool ------------------------------------------------
@@ -1599,16 +1622,31 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(sd.at(&["entries", "0", "options"]).and_then(Value::as_str), Some("root=UUID=x ro"));
         assert_eq!(sd.get("entries").and_then(Value::as_array).map(Vec::len), Some(1));
         assert!(systemd_boot_json(&s, "/nowhere").is_none());
-        // A repeated key keeps its first place and its last value (the
-        // documented limit: Arch's microcode initrd is not in the dump).
-        t.file("/boot/efi/loader/entries/arch.conf", "title Arch\nlinux /vmlinuz-linux\ninitrd /intel-ucode.img\ninitrd /initramfs-linux.img\noptions root=x\noptions rw\n");
+        // RustAudit1 H4-03: an entry's repeated initrd lines are all in
+        // initrds (initrd stays the last one's), its repeated options lines
+        // one line joined with spaces; any other repeated key keeps its
+        // first place and its last value.
+        t.file("/boot/efi/loader/entries/arch.conf", "title Arch\nlinux /vmlinuz-linux\ninitrd /intel-ucode.img\ninitrd  /initramfs-linux.img \noptions root=x\noptions\noptions  rw quiet\ntitle Arch Linux\n");
         let sd = systemd_boot_json(&s, "/boot/efi").unwrap();
         let arch = sd.at(&["entries", "0"]).unwrap();
         assert_eq!(arch.get("file").and_then(Value::as_str), Some("arch.conf"));
+        assert_eq!(arch.get("title").and_then(Value::as_str), Some("Arch Linux"));
         assert_eq!(arch.get("initrd").and_then(Value::as_str), Some("/initramfs-linux.img"));
-        assert_eq!(arch.get("options").and_then(Value::as_str), Some("rw"));
+        assert_eq!(arch.get("initrds"), Some(&Value::from(vec!["/intel-ucode.img", "/initramfs-linux.img"])));
+        assert_eq!(arch.get("options").and_then(Value::as_str), Some("root=x rw quiet"));
         let Value::Obj(keys) = arch else { panic!("entry not an object") };
-        assert_eq!(keys.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), vec!["file", "title", "linux", "initrd", "options"]);
+        assert_eq!(keys.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), vec!["file", "title", "linux", "initrd", "initrds", "options"]);
+        // One initrd line: no initrds; debian's entry is as it was.
+        let debian = sd.at(&["entries", "1"]).unwrap();
+        assert_eq!(debian.get("initrd").and_then(Value::as_str), Some("/initrd"));
+        assert!(debian.get("initrds").is_none());
+        assert_eq!(debian.get("options").and_then(Value::as_str), Some("root=UUID=x ro"));
+        // loader.conf isn't an entry: its keys are only ever the last line's.
+        t.file("/boot/efi/loader/loader.conf", "options a\noptions b\ninitrd c\ninitrd d\n");
+        let sd = systemd_boot_json(&s, "/boot/efi").unwrap();
+        let lc = sd.get("loader_conf").unwrap();
+        assert_eq!((lc.get_str("options"), lc.get_str("initrd"), lc.get("initrds")), (Some("b"), Some("d"), None));
+        t.file("/boot/efi/loader/loader.conf", "#timeout 3\ntimeout 5\ndefault debian-*\n");
         std::fs::remove_file(t.p("/boot/efi/loader/entries/arch.conf")).unwrap();
         // The kernel and initrd an entry names in another directory
         // (sdbootutil's, on Aeon), once each, after the rest; nothing for

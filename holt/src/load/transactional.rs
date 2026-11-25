@@ -459,9 +459,14 @@ impl Builder<'_> {
             if s(e, "linux").is_none() {
                 self.problems.push(format!("transactional-update (BLS): {file} has no linux line, which the boot stage's check refuses"));
             }
-            for k in ["linux", "initrd"] {
-                // (The dump keeps one initrd an entry: its last line's.)
-                if let Some(p) = s(e, k).filter(|p| !esp.contains(&p.trim_start_matches('/').to_ascii_lowercase())) {
+            // Every initrd line (initrds, when the entry has several; an
+            // older dump has only the last one's, initrd).
+            let initrds: Vec<String> = match e.get("initrds").and_then(Value::as_array) {
+                Some(a) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+                None => s(e, "initrd").into_iter().collect(),
+            };
+            for (k, p) in s(e, "linux").map(|p| ("linux", p)).into_iter().chain(initrds.into_iter().map(|p| ("initrd", p))) {
+                if !esp.contains(&p.trim_start_matches('/').to_ascii_lowercase()) {
                     self.problems.push(format!("transactional-update (BLS): {file}'s {k} {p} isn't on the source's ESP (boot.esps' files): nothing is regenerated, so the restored entry would boot nothing"));
                 }
             }
@@ -1363,6 +1368,17 @@ mod tests {
         set_at(&mut v, &["boot", "systemd_boot", "entries", "0", "linux"], Value::from("/aeon/7.3.3-1-default/linux-gone"));
         let p = plan(&v, &key).problems;
         assert!(p.iter().any(|x| x == "transactional-update (BLS): aeon-7.3.3-1-default-1.conf's linux /aeon/7.3.3-1-default/linux-gone isn't on the source's ESP (boot.esps' files): nothing is regenerated, so the restored entry would boot nothing"), "{p:?}");
+        // RustAudit1 H4-03: every initrd line (initrds) is checked, not
+        // only the last (initrd); without initrds, initrd alone.
+        let mut v = aeon();
+        let last = v.at(&["boot", "systemd_boot", "entries", "0", "initrd"]).and_then(Value::as_str).unwrap().to_string();
+        set_at(&mut v, &["boot", "systemd_boot", "entries", "0", "initrds"], Value::from(vec!["/aeon/ucode-gone.img", last.as_str()]));
+        let p: Vec<String> = plan(&v, &key).problems.into_iter().filter(|x| x.contains("'s initrd ")).collect();
+        assert_eq!(p, vec!["transactional-update (BLS): aeon-7.3.3-1-default-1.conf's initrd /aeon/ucode-gone.img isn't on the source's ESP (boot.esps' files): nothing is regenerated, so the restored entry would boot nothing".to_string()]);
+        let mut v = aeon();
+        set_at(&mut v, &["boot", "systemd_boot", "entries", "0", "initrd"], Value::from("/aeon/initrd-gone"));
+        let p = plan(&v, &key).problems;
+        assert!(p.iter().any(|x| x.starts_with("transactional-update (BLS): aeon-7.3.3-1-default-1.conf's initrd /aeon/initrd-gone isn't on")), "{p:?}");
         let mut v = aeon();
         let o = v.at(&["boot", "systemd_boot", "entries", "0", "options"]).and_then(Value::as_str).unwrap().replace("rootflags=subvol=@/.snapshots/1/snapshot", "rootflags=subvol=@/.snapshots/9/snapshot");
         set_at(&mut v, &["boot", "systemd_boot", "entries", "0", "options"], Value::from(o));

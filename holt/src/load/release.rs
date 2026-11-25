@@ -115,8 +115,9 @@ fn describe(b: &BlockDev) -> String {
 
 /// The VG UUID (no dashes) of an LVM dm device's uuid, "LVM-" + 32 + 32.
 fn lvm_vg_uuid(dm_uuid: &str) -> Option<String> {
-    let rest = dm_uuid.strip_prefix("LVM-")?;
-    (rest.len() >= 32).then(|| rest[..32].to_string())
+    // `get`, not indexing: the uuid comes from sysfs through a lossy UTF-8
+    // read, so a cut can land inside a multi-byte char (as in report::dm_json).
+    dm_uuid.strip_prefix("LVM-")?.get(..32).map(str::to_string)
 }
 
 /// `dmsetup info -c --noheadings --separator : -o name,open`: each mapping's
@@ -511,5 +512,18 @@ mod tests {
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         assert_eq!(names(&r), vec!["volume group vg0 deactivated", "md array md127 stopped"]);
         assert_eq!(r.steps[0].action, Action::Lvm { vg: "vg0".into(), pvs: vec!["/dev/md127".into()] });
+    }
+
+    #[test]
+    fn lvm_vg_uuid_cuts_only_on_a_char_boundary() {
+        let lv = "a".repeat(32);
+        assert_eq!(lvm_vg_uuid(&format!("LVM-{VG}{lv}")).as_deref(), Some(VG));
+        // lvm2's id alphabet has '!' and '#' too (pvcreate --uuid).
+        let odd = "Yb3kFa0Pz1Ab!dEfGhIjKlMn#pQrStUv";
+        assert_eq!(lvm_vg_uuid(&format!("LVM-{odd}{lv}")).as_deref(), Some(odd));
+        assert_eq!(lvm_vg_uuid(&format!("LVM-{}é{lv}", "a".repeat(31))), None);
+        assert_eq!(lvm_vg_uuid(&format!("LVM-{}\u{FFFD}{lv}", "a".repeat(30))), None);
+        assert_eq!(lvm_vg_uuid(&format!("LVM-{}", "a".repeat(31))), None);
+        assert_eq!(lvm_vg_uuid(&format!("CRYPT-LUKS2-{VG}")), None);
     }
 }

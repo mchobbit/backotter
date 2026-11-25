@@ -952,7 +952,9 @@ fn value_diff(a: &Value, b: &Value, path: &str) -> Option<String> {
                     return Some(format!("{path}: byte {i} of {}: {} vs {}", p.len(), w(&p), w(&q)));
                 }
             }
-            Some(format!("{path}: {:?} vs {:?}", &x[..x.len().min(200)], &y[..y.len().min(200)]))
+            // By chars, not bytes: a byte cut can land inside a multi-byte char.
+            let clip = |s: &str| s.chars().take(200).collect::<String>();
+            Some(format!("{path}: {:?} vs {:?}", clip(x), clip(y)))
         }
         _ if a != b => Some(format!("{path}: {} vs {}", a.compact().chars().take(200).collect::<String>(), b.compact().chars().take(200).collect::<String>())),
         _ => None,
@@ -1388,5 +1390,16 @@ mod tests {
         assert!(s.at(&["p", "esp_image", "0", "b64"]).is_none());
         assert_eq!(s.at(&["p", "boot_code", "code_b64"]).and_then(Value::as_str), Some("QlRY"));
         assert!(load::has_omitted(&s) && !load::has_omitted(&v));
+    }
+
+    #[test]
+    fn value_diff_clips_a_long_string_by_chars() {
+        // Byte 200 falls inside the é and inside the crab.
+        let a = Value::from("a".repeat(199) + "é-alpha");
+        let b = Value::from("b".repeat(198) + "🦀-beta");
+        let want = format!("/label: {:?} vs {:?}", "a".repeat(199) + "é", "b".repeat(198) + "🦀-");
+        assert_eq!(value_diff(&a, &b, "/label").as_deref(), Some(want.as_str()));
+        assert_eq!(value_diff(&Value::from("é1"), &Value::from("é2"), "/x").as_deref(), Some(r#"/x: "é1" vs "é2""#));
+        assert_eq!(value_diff(&a, &a, "/label"), None);
     }
 }

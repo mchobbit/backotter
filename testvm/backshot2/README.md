@@ -574,6 +574,26 @@ lean copy already leaves out what the step removes).
    check must name one cause: a case that plants no deep tree gets a
    note, not "the deep tree differs".
 
+**Findings not in `cases/`** (a FAIL the harness can't make again, so no
+`bs2-host shrink` and no corpus case: one would pass and say nothing):
+
+- **anduinos2-b6082ebacc9aac0c, a btrfs snapshot written after a later
+  one** (bko-holt's finding; 2026-11-25, the slim builder's run on chopin).
+  The case is two edits and no content: `renumber` vda 3 -> 97, then
+  `align` vda partition 1 by 1534 sectors (seed 1, generator 6).  On the
+  first slimmed anduinos2, whose slim step wrote into the read-only
+  deployment snapshot of its root (made writable, slimmed, made read-only
+  again), so that snapshot was last written after the snapshot taken
+  after it, load restored it after that one, with another subvolume id:
+  DIFF `storage.btrfs.0.subvolumes.6.id` 262 -> 264.  The unslimmed
+  source's same case passes (chopin's /bkoscratch/backshot2/runs/slim-before:
+  PASS at 09:10Z, the case file in its `cases/`).  Not made again: since
+  4780572 the slim step leaves every btrfs snapshot alone
+  (`slim.SNAPSHOTS`), so no step of the harness writes into a snapshot,
+  and the slimmed run's own records weren't kept.  It wants a bko-holt test
+  of its own: a btrfs source whose older snapshot is written after a newer
+  one.
+
 ## Decisions made inside the spec
 
 - **Known findings are steered around** (`generate.KNOWN`), so the draws can

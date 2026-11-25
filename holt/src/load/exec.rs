@@ -27,8 +27,13 @@ use std::io::{BufRead, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// TEXT into the log, a password= item's value as <password>
+/// (crate::redact::scrub_passwords: LILO's copy of lilo.conf), whatever the
+/// mode: the log goes to the restored /var/log/bko-holt and into
+/// report-bug's bundle (RustAudit1 HD1-01).
 fn log_line(log: &mut Option<std::fs::File>, text: &str) {
     if let Some(f) = log {
+        let text = crate::redact::scrub_passwords(text);
         let _ = f.write_all(text.as_bytes());
         if !text.ends_with('\n') {
             let _ = f.write_all(b"\n");
@@ -1175,6 +1180,28 @@ mod tests {
         t
     }
 
+    /// A text run's log has a password= item's value as <password> (the
+    /// copy of lilo.conf lilo runs on: its copy in the restored
+    /// /var/log/bko-holt and report-bug's bundle come from the log), the
+    /// file itself as it is (RustAudit1 HD1-01).
+    #[test]
+    fn a_password_is_not_logged() {
+        use crate::sys::FakeRunner;
+        let t = crate::testutil::Tree::new("load-exec-log-password");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let path = t.p("/mnt/bko-target/etc/lilo.conf.bko-holt").to_string_lossy().into_owned();
+        let text = "boot=\"/dev/vda\"\npassword=\"s3cret\"\nimage=\"/boot/vmlinuz\"\n  password=\"my img pass\"\n";
+        let log_path = t.p("/load.log");
+        let mut log = Some(std::fs::File::create(&log_path).unwrap());
+        run_cmd(&Cmd::write_file(&path, text.to_string()).private(), &mut log, &s).unwrap();
+        run_cmd(&Cmd::note("password=s3cret"), &mut log, &s).unwrap();
+        drop(log);
+        let logged = std::fs::read_to_string(&log_path).unwrap();
+        assert!(!logged.contains("s3cret") && !logged.contains("img pass"), "{logged}");
+        assert!(logged.contains("password=\"<password>\"\nimage=\"/boot/vmlinuz\"\n  password=\"<password>\"\n"), "{logged}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
     fn opts_of(a: &[&str]) -> Options {
         let mut v = vec!["l.json".to_string()];
         v.extend(a.iter().map(|s| s.to_string()));
@@ -1884,7 +1911,9 @@ mod tests {
         let mut text_log = Some(std::fs::File::create(&path).unwrap());
         assert_eq!(run_cmd(&c, &mut text_log, &Sys::host()), Ok(Vec::new()));
         drop(text_log);
-        assert!(std::fs::read_to_string(&path).unwrap().contains("password=secret"));
+        // Text mode logs the text, but never a password (RustAudit1 HD1-01).
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("password=<password>\n") && !text.contains("secret"), "{text}");
     }
 
     /// The codes of a failed step.

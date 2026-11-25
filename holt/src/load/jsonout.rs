@@ -181,9 +181,9 @@ pub fn header(format: &str) -> Obj {
 }
 
 /// One document as standard output carries it: one line, scrubbed of
-/// recovery keys as text plans are.
+/// recovery keys and password= items' values as text plans are.
 pub fn line(v: &Value) -> String {
-    crate::redact::scrub_recovery_keys(&v.compact()).into_owned() + "\n"
+    crate::redact::scrub_passwords(&crate::redact::scrub_recovery_keys(&v.compact())).into_owned() + "\n"
 }
 
 /// The `bko-holt-error` document: the whole of standard output when a run

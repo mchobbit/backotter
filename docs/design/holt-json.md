@@ -471,6 +471,14 @@ Common rules:
   `--json`, the log: `stdin` is null and `stdin_bytes` and `stdin_sha256`
   stand for it; the plan's `text` shows `# (N bytes, private: not
   shown)` in its heredoc's place.
+- A `password=` item's value (lilo.conf's, global or an image's, which
+  the dump keeps in `boot.lilo`'s options for the copy) is `<password>`
+  in everything load prints, in either mode (the text plan, a dry run's
+  copy of lilo.conf, a Problem that quotes an item, standard error, every
+  document and event) and in the log, text mode's included
+  (`redact::scrub_passwords`, RustAudit1 HD1-01).  The dump and the file
+  load writes keep it as it is.  A text plan with no password in it is
+  unchanged.
 
 ### `bko-holt-error`
 
@@ -1411,7 +1419,10 @@ once.
 - Key files' contents never enter a report: report-bug reads none of the
   paths it redacts.  A `private` write's text is in the plan document and
   the log only as its size and SHA-256 (Common rules), so neither carries
-  it into a report.
+  it into a report.  A `password=` item's value is `<password>` wherever
+  it is in a report (the layout's and the dump's `boot.lilo` options, the
+  plan, a log an older bko-holt wrote), `--no-redact` or not (RustAudit1
+  HD1-01).
 
 ## What each screen needs, and where it comes from
 

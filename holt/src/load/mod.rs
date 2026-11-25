@@ -574,8 +574,17 @@ fn main_inner(args: &[String]) -> (u8, String) {
 }
 
 /// Runs what `opts` asks for on `sys` (the system load runs on, whose disks
-/// are the targets): the exit status, standard output and standard error.
+/// are the targets): the exit status, standard output and standard error,
+/// neither of them with a password= item's value in it (a dry run's copy
+/// of lilo.conf, a Problem that quotes an item; crate::redact::
+/// scrub_passwords, RustAudit1 HD1-01).
 pub fn run(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String) {
+    let (code, out, err) = run_raw(opts, layout_text, sys);
+    let shown = |t: &str| crate::redact::scrub_passwords(t).into_owned();
+    (code, shown(&out), shown(&err))
+}
+
+fn run_raw(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String) {
     // A refusal: under --json its document is the whole of standard output.
     let refuse = |exit: u8, code: jsonout::ErrorCode, line: String| -> (u8, String, String) {
         let out = if opts.json { jsonout::error_doc(exit, code, &line) } else { String::new() };
@@ -667,6 +676,48 @@ mod tests {
     /// RT10i: under --json, plan and status runs leave last-load.json to
     /// the writing run before them; text mode records every run but
     /// --help, as ever.
+
+    /// slackware15's dump (holt/tests/corpus) with a password= in its
+    /// lilo.conf's global items and another in its image's: neither is in
+    /// what load prints, its plan, a dry run of the boot stage (which
+    /// writes the copy of lilo.conf lilo runs on) or the plan document
+    /// (RustAudit1 HD1-01).
+    #[test]
+    fn lilo_passwords_are_never_shown() {
+        use crate::sys::FakeRunner;
+        let l = include_str!("../../tests/corpus/slackware15/src.json");
+        let l = l.replacen("\"disk=/dev/vda\",", "\"password=s3cret\", \"disk=/dev/vda\",", 1).replacen("\"label=Linux\",", "\"label=Linux\", \"password=my img pass\",", 1);
+        assert!(l.contains("s3cret") && l.contains("my img pass"));
+        let t = crate::testutil::Tree::new("load-lilo-password");
+        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "41943040\n");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let run_of = |a: &[&str]| {
+            let mut v = vec!["layout.json".to_string(), "--map".into(), "vda=vdb".into()];
+            v.extend(a.iter().map(|x| x.to_string()));
+            let Ok(Parsed::Run(o)) = parse_args(&v) else { panic!("{v:?}") };
+            run(&o, &l, &s)
+        };
+        let shown = |what: &str, out: &str, err: &str| {
+            for gone in ["s3cret", "img pass"] {
+                assert!(!out.contains(gone) && !err.contains(gone), "{what}: {gone} in:\n{out}{err}");
+            }
+        };
+        let (_, out, err) = run_of(&[]);
+        shown("the plan", &out, &err);
+        assert!(out.contains("lilo.conf.bko-holt <<'EOF'\n") && out.contains("password=\"<password>\"\n") && out.contains("  password=\"<password>\"\n"), "{out}{err}");
+        // The dry run of the boot stage, the restored tree there and the
+        // rescue's tools.
+        t.file("/mnt/bko-target/etc/fstab", "");
+        for p in ["wipefs", "dd", "sh", "udevadm", "sfdisk", "mkswap", "mke2fs", "tune2fs", "mkdir", "mount", "chroot", "rm", "cp", "umount", "bash"] {
+            t.file(&format!("/usr/sbin/{p}"), "");
+        }
+        let (_, out, err) = run_of(&["--only", "boot"]);
+        shown("the dry run", &out, &err);
+        assert!(out.contains("lilo.conf.bko-holt <<'EOF'\n") && out.contains("password=\"<password>\"\n"), "{out}{err}");
+        let (_, out, err) = run_of(&["--json"]);
+        shown("the plan document", &out, &err);
+    }
     #[test]
     fn which_runs_record_themselves() {
         let rec = |a: &[&str]| records_itself(&args(a));

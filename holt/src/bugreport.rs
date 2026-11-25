@@ -54,7 +54,9 @@ references still resolve.  Sizes, offsets, feature flags, types and the
 device topology stay as they are.  It prints what it redacted, what it
 kept, and the file's path.  Read the file before you attach it: it is
 plain text, and a user name that is in no home directory's path (the
-\"by USER\" of restic's lock message) stays as it is.
+\"by USER\" of restic's lock message) stays as it is.  A password= item's
+value (LILO's lilo.conf can hold one) is <password> everywhere in the
+file, --no-redact or not.
 
   --output FILE   write the report here (default: bko-report-DATE.txt in
                   the current directory)
@@ -871,6 +873,9 @@ pub fn check_plan(layout_text: &str) -> Result<(usize, usize), CheckPlanError> {
     };
     let (rv, r) = crate::redact::redact(&v);
     let back = r.unredact_value(&rv);
+    // Passwords (a LILO password=) never map back: the original as a
+    // Redactor with nothing to redact gives it.
+    let v = Collector::new().seal().value(&v);
     if back.compact() != v.compact() {
         return fail(F::MapBack, format!("the redacted dump doesn't map back to the original: {}", value_diff(&back, &v, "").unwrap_or_default()));
     }
@@ -1327,6 +1332,50 @@ mod tests {
         }
         assert!(txt.contains("error: lstat /var/home/user") && txt.contains("/.cache/x: permission denied"), "{txt}");
         assert!(txt.contains("in: /usr/home/user"), "{txt}");
+    }
+
+    /// slackware15's dump (holt/tests/corpus) with a password= in its
+    /// lilo.conf's global items and another in its image's.
+    fn lilo_password_layout() -> String {
+        let l = include_str!("../tests/corpus/slackware15/src.json");
+        let l = l.replacen("\"disk=/dev/vda\",", "\"password=s3cret\", \"disk=/dev/vda\",", 1).replacen("\"label=Linux\",", "\"label=Linux\", \"password=my img pass\",", 1);
+        assert!(l.contains("s3cret") && l.contains("my img pass"));
+        l
+    }
+
+    /// A LILO password reaches no report: not by the layout's boot.lilo
+    /// options, the plan's copy of lilo.conf, nor a log that holds the
+    /// copy (one an older bko-holt wrote), --no-redact or not
+    /// (RustAudit1 HD1-01).
+    #[test]
+    fn lilo_passwords_reach_no_report() {
+        let t = Tree::new("report-bug-lilo-password");
+        t.debian13();
+        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "41943040\n");
+        t.file("/root/layout.json", lilo_password_layout());
+        let last = Obj::new()
+            .set("cwd", "/root")
+            .set("args", Value::Arr(s(&["layout.json", "--map", "vda=vdb"]).into_iter().map(Value::Str).collect()))
+            .set("exit", 1u64)
+            .build();
+        t.file(&format!("{RUN_DIR}/{LAST_RUN}"), last.pretty());
+        let copy = "cat > /mnt/bko-target/etc/lilo.conf.bko-holt <<'EOF'\npassword=\"s3cret\"\nimage=\"/boot/vmlinuz\"\n  password=\"my img pass\"\nEOF\n";
+        t.file(&format!("{RUN_DIR}/log/load.log"), copy);
+        t.file("/var/log/bko-holt/load.log", copy);
+        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-30-generic #30 SMP x86_64\n")), true);
+        for no_redact in [false, true] {
+            let b = build(&sys, &Args { no_redact, ..Args::default() }, "2026-11-07T03:42:00Z");
+            for gone in ["s3cret", "img pass"] {
+                assert!(!b.text.contains(gone), "--no-redact {no_redact}: {gone} in:\n{}", b.text);
+                assert!(!b.terminal.contains(gone), "{}", b.terminal);
+            }
+            let plan = b.text.split("==== plan for that run").nth(1).unwrap().split("\n==== ").next().unwrap();
+            assert!(plan.contains("lilo.conf.bko-holt <<'EOF'\n") && plan.contains("password=\"<password>\"\n"), "{plan}");
+            assert!(b.text.contains("\"password=<password>\""), "{}", b.text);
+            let log = b.text.split("==== log: /var/log/bko-holt/load.log").nth(1).unwrap();
+            assert!(log.starts_with("\ncat > /mnt/bko-target/etc/lilo.conf.bko-holt <<'EOF'\npassword=\"<password>\"\n"), "{log}");
+        }
     }
 
     #[test]

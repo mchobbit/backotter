@@ -9,7 +9,8 @@
 //! header, still resolves.  Sizes, offsets, feature flags, partition and
 //! filesystem types, kernel device names and the topology stay as they are,
 //! and so do names that identify no one (an installer's default hostname,
-//! labels such as EFI or swap0).
+//! labels such as EFI or swap0).  A recovery key and a `password=` item's
+//! value (LILO's) are never in a report, `--no-redact` or not.
 //!
 //! A `Collector` learns the identifiers from one or more dumps (and any
 //! extra values, such as a repository URL), then `seal` gives the
@@ -1243,6 +1244,107 @@ pub fn scrub_recovery_keys(s: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
+/// What a `password=` item's value is replaced by.
+pub const PASSWORD_MARK: &str = "<password>";
+
+/// S with the value of every `password=VALUE` item replaced by
+/// PASSWORD_MARK: lilo.conf's (global, or an image's), which the dump keeps
+/// in boot.lilo's options for load to write the copy of lilo.conf lilo runs
+/// on, and any other text's (`--password=`, `RESTIC_PASSWORD=`, a CIFS
+/// mount's options).  It never reaches load's output, its log, a plan
+/// document or a bug report (RustAudit1 HD1-01); the dump keeps it, and
+/// load writes it, as they are.  `password` in any case, as a word of its
+/// own (or after `_` or `--`), spaces or tabs around the `=`; the value is
+/// `"VALUE"`, `\"VALUE\"` (inside a JSON string), the rest of a JSON
+/// string that starts with the item, or a word (to a space, a quote or a
+/// backslash).  An empty value (lilo's `password=""`) is no password.
+pub fn scrub_passwords(s: &str) -> std::borrow::Cow<'_, str> {
+    scrub_passwords_as(s, false)
+}
+
+/// scrub_passwords, with WHOLE: S is one item (a JSON string of boot.lilo's
+/// options, `password=my pass phrase`), whose value at its start runs to
+/// its end.
+fn scrub_passwords_as(s: &str, whole: bool) -> std::borrow::Cow<'_, str> {
+    const KEY: &[u8] = b"password";
+    let b = s.as_bytes();
+    if b.len() <= KEY.len() || !b.windows(KEY.len()).any(|w| w.eq_ignore_ascii_case(KEY)) {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    // Where a key may start: not inside a word or a path; `\n` and `\t`
+    // are a JSON string's escapes.
+    let starts = |i: usize| {
+        let Some(&p) = i.checked_sub(1).and_then(|j| b.get(j)) else { return true };
+        let at = |j: usize| i.checked_sub(j).and_then(|k| b.get(k)).copied();
+        match p {
+            b'_' => true,
+            b'-' => at(2) == Some(b'-'),
+            b'n' | b't' | b'r' => at(2) == Some(b'\\'),
+            c => !(c.is_ascii_alphanumeric() || c == b'.' || c == b'/'),
+        }
+    };
+    let blank = |c: u8| c == b' ' || c == b'\t';
+    let mut out = String::new();
+    let mut copied = 0;
+    let mut i = 0;
+    while i + KEY.len() < b.len() {
+        if !(b[i..i + KEY.len()].eq_ignore_ascii_case(KEY) && starts(i)) {
+            i += 1;
+            continue;
+        }
+        let mut j = i + KEY.len();
+        while b.get(j).copied().is_some_and(blank) {
+            j += 1;
+        }
+        if b.get(j) != Some(&b'=') {
+            i += 1;
+            continue;
+        }
+        j += 1;
+        while b.get(j).copied().is_some_and(blank) {
+            j += 1;
+        }
+        let rest = &b[j..];
+        let find = |from: usize, end: &dyn Fn(&[u8]) -> bool| (from..=rest.len()).find(|&k| k == rest.len() || end(&rest[k..])).unwrap_or(rest.len());
+        let span = if whole && i == 0 {
+            Some((0, rest.len()))
+        } else if i > 0 && b[i - 1] == b'"' {
+            // A JSON string that starts with the item: to its end.
+            let mut k = 0;
+            while k < rest.len() && rest[k] != b'"' {
+                k += if rest[k] == b'\\' { 2 } else { 1 };
+            }
+            Some((0, k.min(rest.len())))
+        } else if rest.starts_with(b"\\\"") {
+            let e = find(2, &|r| r.starts_with(b"\\\""));
+            Some((2, e))
+        } else if rest.first() == Some(&b'"') {
+            // Not a JSON string's end ("password=" then `,` `}` `]` `:`).
+            if rest.get(1).is_none_or(|c| b",}]:".contains(c)) {
+                None
+            } else {
+                Some((1, find(1, &|r| r[0] == b'"' || r[0] == b'\n')))
+            }
+        } else {
+            Some((0, find(0, &|r| r[0].is_ascii_whitespace() || b"\"'\\".contains(&r[0]))))
+        };
+        match span.map(|(a, e)| (j + a, j + e)) {
+            Some((a, e)) if e > a && &s[a..e] != PASSWORD_MARK => {
+                out.push_str(&s[copied..a]);
+                out.push_str(PASSWORD_MARK);
+                copied = e;
+                i = e;
+            }
+            _ => i = j.max(i + 1),
+        }
+    }
+    if copied == 0 {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    out.push_str(&s[copied..]);
+    std::borrow::Cow::Owned(out)
+}
+
 fn contains_word(hay: &str, w: &str) -> bool {
     let (h, n) = (hay.as_bytes(), w.as_bytes());
     if n.is_empty() || n.len() > h.len() {
@@ -1322,6 +1424,8 @@ impl Redactor {
 
     fn text_with(&self, s: &str, words: bool, key: bool) -> String {
         let s = &scrub_recovery_keys(s);
+        // Nor a password, --no-redact or not (RustAudit1 HD1-01).
+        let s = &scrub_passwords(s);
         let b = s.as_bytes();
         let mut out: Vec<u8> = Vec::with_capacity(b.len());
         let mut i = 0;
@@ -1433,9 +1537,11 @@ impl Redactor {
                 Some(b) if crate::bytes::base64(&b) == *s => Value::Str(crate::bytes::base64(&self.bytes(&b, false))),
                 _ => Value::Str(s.clone()),
             },
+            // A string that is a password= item (boot.lilo's options): its
+            // value is the rest of it, spaces and all.
             Value::Str(s) => match self.whole.get(s).and_then(|ts| ts.iter().find(|(k, _)| kind_key(*k, key))) {
                 Some((_, t)) => Value::Str(t.clone()),
-                None => Value::Str(self.text(s)),
+                None => Value::Str(self.text(&scrub_passwords_as(s, true))),
             },
             Value::UInt(n) => Value::UInt(self.num(*n)),
             Value::Int(n) if *n > 0 => Value::Int(self.num(*n as u64) as i64),
@@ -2220,6 +2326,53 @@ mod tests {
         let (r, _) = redact(&d);
         assert_eq!(r.get("b").and_then(Value::as_str), Some("rpool/home/bobby"));
         assert_eq!(r.get("c").and_then(Value::as_str), Some("rpool/home/bob2"));
+    }
+
+    /// password= items' values, in the forms they take: lilo.conf's (and
+    /// load's copy of it), a JSON string of boot.lilo's options, one inside
+    /// a JSON string, a command line's; what isn't one stays (RustAudit1
+    /// HD1-01).
+    #[test]
+    fn passwords_are_scrubbed() {
+        let m = PASSWORD_MARK;
+        for (from, to) in [
+            ("password=s3cret\n", format!("password={m}\n")),
+            ("  password = s3cret # x\n", format!("  password = {m} # x\n")),
+            ("password=\"my pass phrase\"\nimage=/v\n", format!("password=\"{m}\"\nimage=/v\n")),
+            ("PASSWORD=x1", format!("PASSWORD={m}")),
+            (r#"{"options":["password=my pass phrase","boot=/dev/vda"]}"#, format!(r#"{{"options":["password={m}","boot=/dev/vda"]}}"#)),
+            (r#"{"options":["password=a\"b c","x"]}"#, format!(r#"{{"options":["password={m}","x"]}}"#)),
+            (r#"{"text":"EOF'\npassword=\"my pass\"\nimage=\"/v\"\n"}"#, format!(r#"{{"text":"EOF'\npassword=\"{m}\"\nimage=\"/v\"\n"}}"#)),
+            (r#"{"problems":["/etc/lilo.conf's password=pa$$ has a quote"]}"#, format!(r#"{{"problems":["/etc/lilo.conf's password={m} has a quote"]}}"#)),
+            ("sh -c 'x --password=hunter2'", format!("sh -c 'x --password={m}'")),
+            ("RESTIC_PASSWORD=hunter2 restic", format!("RESTIC_PASSWORD={m} restic")),
+            ("//nas/s /mnt cifs username=u,password=pw,uid=1 0 0", format!("//nas/s /mnt cifs username=u,password={m} 0 0")),
+        ] {
+            assert_eq!(scrub_passwords(from), to, "{from}");
+            assert_eq!(scrub_passwords(&to), to, "{to}: again");
+        }
+        for same in [
+            "password=\"\"\n",
+            "/etc/lilo.conf has password=\"\", whose passwords",
+            r#"{"a":"password=","b":"c"}"#,
+            "--password-file /k/pw",
+            "--password-file=/k/pw",
+            "\"password_needed\": true",
+            "mypassword=x",
+            "/srv/password=x",
+            "password",
+            "password=",
+        ] {
+            assert!(matches!(scrub_passwords(same), std::borrow::Cow::Borrowed(_)), "{same}");
+        }
+        // A JSON string that is an item: its value is all the rest of it.
+        let d = parse(r#"{"os": {"id": "slackware"}, "boot": {"lilo": {"options": ["password=my pass phrase", "boot=/dev/vda"], "images": [{"options": ["label=Linux", "password = x y"]}]}}}"#).unwrap();
+        for r in [redact(&d).1, Collector::new().seal()] {
+            let c = r.value(&d).compact();
+            assert!(!c.contains("pass phrase") && !c.contains("x y"), "{c}");
+            assert!(c.contains(&format!(r#"["password={m}","boot=/dev/vda"]"#)) && c.contains(&format!(r#""password = {m}""#)), "{c}");
+            assert_eq!(r.text("password=\"my pass phrase\"\n"), format!("password=\"{m}\"\n"));
+        }
     }
 
     /// A user's home on a system whose /home is a link: ostree's

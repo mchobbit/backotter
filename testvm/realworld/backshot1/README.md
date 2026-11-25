@@ -786,6 +786,47 @@ come back empty (vzdump's to back up).  `bs1-manifest` expects
 (2026-11-19: Proxmox VE 9.2.2, ZFS RAID0 on the NVMe, static address in
 `/etc/network/interfaces` on `vmbr0`, no LUKS, no swap) hasn't been run yet.
 
+## TrueNAS: its ESP, the boot environments and the config database
+
+TrueNAS Community Edition 25.10 (docs/design/truenas.md) is Debian 12 to
+os-release; BackShot1 knows it by `/etc/version` (the release, `25.10.8`)
+and `midclt` (`is_truenas` in bs1-common).  Its installer makes three
+partitions on the boot disk, a BIOS boot partition, an ESP and `boot-pool`,
+and the ESP is in no fstab: only the installer's `grub-install` mounts it.
+So on TrueNAS the coverage check takes a vfat partition of the ESP type as
+accounted for, and says so; any other unmounted filesystem still stops it,
+and so does that ESP anywhere but on TrueNAS.  It isn't backed up:
+`bko-holt dump` records it in `boot.truenas.esps`, and the preflight and
+phase 1 stop (`truenas_check` in bs1-backup) unless the dump is of TrueNAS
+25.10 (`os.product`, the one release load restores), lists each of the
+disk's ESPs with the same volume ID, and read each one, holding nothing but
+what the restore writes again: load formats it with that volume ID and
+label, and its `truenas` boot arm runs `grub-install` for i386-pc and
+x86_64-efi (`--bootloader-id=debian --no-nvram`: shim, MokManager, the
+fallback, GRUB and its `grub.cfg` stub in `EFI/debian`), copies GRUB to
+`EFI/boot/bootx64.efi` and runs `update-grub`.  A file on it besides those
+(another loader's, say) stops the preflight, since the restore would lose
+it.  NVRAM: load remakes the source's "debian" entry for the ESP, which
+keeps its GPT GUID, so BootNext picks it.
+
+The tree is the mounts, as elsewhere: the booted boot environment
+`boot-pool/ROOT/V` (`readonly=on`, mounted read-only at `/`), its 15
+children (canmount=noauto, mounted by TrueNAS's initramfs), the legacy
+`boot-pool/grub` at `/boot/grub` and `boot-pool/.system` with its children
+at `/var/db/system`.  `.system/cores` is mounted twice, at
+`/var/db/system/cores` and `/var/lib/systemd/coredump`; it is in the tree
+once, at the first, as the dump lists it and load mounts it
+(`internal_mounts`), and the other path is `var/lib`'s own directory.
+Load holds `readonly=on` back until its boot stage is done.  An inactive
+boot environment (one per update, `boot-pool/ROOT/OLD`) is mounted by
+nothing: the dump lists it as a source with a read-only mount hint, which
+only ABRoot's tree mounts, so the preflight and phase 1 stop at one
+(`unhinted_check`) rather than let it come back empty.  Phase 1
+fails (run it again) if the middleware wrote `/data/freenas-v1.db`, the
+whole configuration, while rustic read it.  The Thinkpad (2026-11-25:
+TrueNAS SCALE 25.10.8, one boot environment, no data pool, no LUKS, UEFI)
+passed the preflight; phase 1 hasn't been run.
+
 ## Keeping a library of backups
 
 Each backup is a run of its own, named after the distro and the time:

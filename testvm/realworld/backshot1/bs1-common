@@ -283,14 +283,22 @@ PY
         done | LC_ALL=C sort
         return
     fi
+    # A ZFS dataset mounted whole at more than one path (TrueNAS's
+    # boot-pool/.system/cores, at /var/db/system/cores and again at
+    # /var/lib/systemd/coredump) is in the tree once, at its first path in
+    # this order, as bko-holt dump's backup_sources have it (sorted by path,
+    # zfs_mounted_twice): load mounts it there only, so a second copy of its
+    # files would be restored into the dataset under the other path.  The
+    # other path shows that dataset's own directory, as the restored system
+    # has it under the mount.
     findmnt -rno TARGET,SOURCE,FSTYPE,FSROOT | while read -r target src fs root; do
         [[ $fs =~ ^($REAL_FS)$ ]] || continue
         # A bind mount shows a subdirectory; a btrfs subvolume does too, and counts.
         [[ $fs == btrfs || $fs == zfs || $root == / ]] || continue
         on_disk "$src" "$disk" || continue
         target=$(printf '%b' "$target")
-        printf '%s\t%s\t%s\n' "$target" "$target" "$fs"
-    done | LC_ALL=C sort
+        printf '%s\t%s\t%s\t%s\n' "$target" "$target" "$fs" "$([[ $fs == zfs && $root == / ]] && printf '%s' "$src")"
+    done | LC_ALL=C sort | awk -F'\t' '$4 != "" && seen[$4]++ { next } { print $1 "\t" $2 "\t" $3 }'
 }
 
 # What the tree's filesystems hold, in bytes, each filesystem counted once:
@@ -328,14 +336,45 @@ mount_cbm_esp() {
 # /boot, as a kernel update does.
 PROXMOX_ESPS=/etc/kernel/proxmox-boot-uuids
 
+# TrueNAS Community Edition (docs/design/truenas.md): to os-release it is
+# Debian 12; TRUENAS_VERSION names the release (25.10.8), and midclt is its
+# middleware's client.  The ESP on each boot-pool disk (partition 2, of the
+# ESP type) is in no fstab and mounted by nothing but the installer's
+# grub-install.  It isn't backed up: bko-holt dump lists it in boot.truenas,
+# and load formats it with its volume ID, and its boot stage's grub-install
+# and the removable-media copy make it again (truenas_check in bs1-backup
+# holds the dump to that).
+TRUENAS_VERSION=/etc/version
+is_truenas() { [[ -s $TRUENAS_VERSION ]] && command -v midclt >/dev/null; }
+# truenas_esp PART: on TrueNAS, a partition of the ESP type.
+truenas_esp() {
+    is_truenas || return 1
+    [[ $(lsblk -dno PARTTYPE "$1" 2>/dev/null | tr -d ' ' | tr 'A-F' 'a-f') == "$ESP_TYPE" ]]
+}
+# truenas_esps DISK: "DEVICE VOLUME-ID" for each vfat ESP of DISK's, on
+# TrueNAS, mounted or not (so every one check_coverage could pass over);
+# VOLUME-ID "-" when blkid finds none.
+truenas_esps() {
+    local name fs uuid
+    is_truenas || return 0
+    while read -r name fs; do
+        [[ ${fs:-} == vfat ]] || continue
+        truenas_esp "$name" || continue
+        uuid=$(blkid -p -o value -s UUID "$name" 2>/dev/null)
+        printf '%s %s\n' "$name" "${uuid:--}"
+    done < <(lsblk -lnpo NAME,FSTYPE "/dev/$1")
+}
+
 # Stops if DISK holds a filesystem the running system hasn't mounted: it would be
 # erased without being in the backup.  LAYOUT: one whose backup_sources' mount
 # hints (ABRoot's init LV and other root) count as mounted, since mount_hints
 # mounts them for the tree.  A vfat partition PROXMOX_ESPS lists counts too,
-# and is named.  Mounted is by device number as well as by name: Alpine's
-# mdev makes /dev/mapper/root a node of its own, not a link to /dev/dm-0,
-# and the mount table names / /dev/dm-0 (lsblk's KNAME); a btrfs mount's
-# number is an anonymous 0:N, so its source's name still counts.
+# and is named; so does a vfat ESP on TrueNAS (truenas_esp), which
+# truenas_check in bs1-backup then needs the dump to list.  Mounted is by
+# device number as well as by name: Alpine's mdev makes /dev/mapper/root a
+# node of its own, not a link to /dev/dm-0, and the mount table names /
+# /dev/dm-0 (lsblk's KNAME); a btrfs mount's number is an anonymous 0:N, so
+# its source's name still counts.
 check_coverage() {
     local mounted devnos name kname devno fs uuid
     mounted=$(findmnt -rno SOURCE | sed 's/\[.*//')
@@ -356,6 +395,11 @@ for s in json.load(open(sys.argv[1]))["storage"].get("backup_sources") or []:
         [[ $fs == vfat && -r ${PROXMOX_ESPS:-} ]] && uuid=$(blkid -p -o value -s UUID "$name" 2>/dev/null)
         if [[ -n $uuid ]] && grep -qxiF "$uuid" "$PROXMOX_ESPS"; then
             say "$name (vfat $uuid) isn't mounted: it is one of proxmox-boot-tool's ESPs ($PROXMOX_ESPS), not backed up; the restore formats it with that volume ID and proxmox-boot-tool makes it again from /boot"
+            continue
+        fi
+        if [[ $fs == vfat ]] && truenas_esp "$name"; then
+            uuid=$(blkid -p -o value -s UUID "$name" 2>/dev/null)
+            say "$name (vfat ${uuid:-with no volume ID}) isn't mounted: it is TrueNAS's ESP, which only its grub-install mounts; not backed up, so bko-holt dump must list it in boot.truenas (checked with the dump): the restore formats it with that volume ID and its grub-install makes it again"
             continue
         fi
         die "$name ($fs) isn't mounted, so it wouldn't be backed up"

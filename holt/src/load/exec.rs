@@ -1025,10 +1025,19 @@ fn write_private(path: &str, text: &str) -> std::io::Result<()> {
 /// written as before, an existing file keeping its mode and owner, a new
 /// one and its directories made under the umask; but one the step says is
 /// PRIVATE (LILO's copy of lilo.conf, which can hold password=) is 0600,
-/// in directories made under the umask.
+/// in directories made under the umask.  There the file, or its
+/// directory, being a symbolic link is refused: bko-holt writes from
+/// outside the chroot, where the link would name a rescue system's file.
 fn write_file(path: &str, text: &str, private: bool) -> Result<(), String> {
     let p = std::path::Path::new(path);
     let ours = p.starts_with(RUN_DIR);
+    if !ours {
+        for q in [p, p.parent().unwrap_or(p)] {
+            if std::fs::symlink_metadata(q).is_ok_and(|m| m.file_type().is_symlink()) {
+                return Err(format!("{}: a symbolic link in the restored system, which bko-holt doesn't write through: from the rescue system it names another file", q.display()));
+            }
+        }
+    }
     if let Some(dir) = p.parent() {
         let made = if ours { mkdir_private(dir) } else { std::fs::create_dir_all(dir) };
         made.map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -1093,6 +1102,32 @@ mod tests {
         assert_eq!(run_cmd(&Cmd::write_file(&l.to_string_lossy(), "password=y\n".to_string()).private(), &mut None, &Sys::host()), Ok(Vec::new()));
         assert_eq!(std::fs::read_to_string(&l).unwrap(), "password=y\n");
         assert_eq!(std::fs::metadata(&l).unwrap().permissions().mode() & 0o7777, 0o600);
+    }
+
+    /// A target file that is a symbolic link, or in a directory that is
+    /// one, is refused, plain or private, and nothing is written where it
+    /// points: from the rescue system an absolute link names the rescue
+    /// system's own file.
+    #[test]
+    fn write_file_refuses_a_target_symlink() {
+        let t = crate::testutil::Tree::new("load-exec-write-symlink");
+        let host = t.root().join("host");
+        t.file("/host/file", "HOST\n");
+        std::fs::create_dir_all(t.root().join("etc")).unwrap();
+        let f = t.root().join("etc/lilo.conf.bko-holt");
+        std::os::unix::fs::symlink(host.join("file"), &f).unwrap();
+        for c in [Cmd::write_file(&f.to_string_lossy(), "password=x\n".to_string()), Cmd::write_file(&f.to_string_lossy(), "password=x\n".to_string()).private()] {
+            let e = run_cmd(&c, &mut None, &Sys::host()).unwrap_err();
+            assert!(e.starts_with(&format!("{}: a symbolic link in the restored system", f.display())), "{e}");
+        }
+        // The directory a link: /etc/kernel -> the host's directory.
+        let k = t.root().join("etc/kernel");
+        std::os::unix::fs::symlink(&host, &k).unwrap();
+        let u = k.join("proxmox-boot-uuids");
+        let e = run_cmd(&Cmd::write_file(&u.to_string_lossy(), "1234-ABCD\n".to_string()), &mut None, &Sys::host()).unwrap_err();
+        assert!(e.starts_with(&format!("{}: a symbolic link in the restored system", k.display())), "{e}");
+        assert_eq!(std::fs::read_to_string(host.join("file")).unwrap(), "HOST\n");
+        assert!(!host.join("proxmox-boot-uuids").exists());
     }
 
     /// A command that `warns` gives back its stderr's warning lines when it

@@ -512,7 +512,10 @@ the table: there is no list to edit.
 - Found by the first run (2026-11-25), each in its own session: anduinos2's
   snapshot-id finding (testvm/backshot2/README.md, not fixed); re-measuring
   the Slackware rows of `slim-sizes.tsv` (measured on FAIL cases); the bko-cache
-  cap.  Also: zorin18's used space grew when slimmed (7998 -> 8102 MiB).
+  cap.  Resolved: zorin18's used space only seemed to grow when slimmed
+  (7998 -> 8102 MiB): its root is nilfs2, whose df counts unreclaimed
+  checkpoints; the slim step measures nilfs2 by du now (cec55d0), re-measured
+  7568 -> 5247 MiB (6c5a11c).
 - **The cargo umask 002 failure: resolved (907120c).**  plan_json's fake key
   files took the umask's mode, so under cmp-run.sh's umask 002 the blessed
   plans' key refusal read "mode 664"; the fixture pins them to 0644.

@@ -81,7 +81,9 @@ class HostTools(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, mock.patch.object(H, "ROOT", root), \
                 mock.patch.object(H, "generation", lambda s: "gen:aa"):
             d = H.source_dir("debian12")
-            os.makedirs(f"{d}/tools/usr")
+            os.makedirs(f"{d}/tools/usr/bin")
+            with open(f"{d}/tools/usr/bin/env", "w"):
+                pass
             self.assertFalse(H.tools_fresh("debian12"), "a copy with no tools.json (version 1)")
             for meta, fresh in (({"gen": "gen:aa", "version": H.TOOLS_VERSION}, True),
                                 ({"gen": "gen:bb", "version": H.TOOLS_VERSION}, False),
@@ -93,6 +95,60 @@ class HostTools(unittest.TestCase):
             self.assertIn("its tools removed", note)
             self.assertFalse(os.path.exists(f"{d}/tools") or os.path.exists(f"{d}/tools.json"))
             self.assertEqual(H.drop_tools(d, "test"), "")
+
+    def test_no_env_is_never_fresh(self):
+        # (uc24's copy before snapcore_base(): its four partitions, no /usr; every dry run refused.)
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(H, "ROOT", root), \
+                mock.patch.object(H, "generation", lambda s: "gen:aa"):
+            d = H.source_dir("uc24")
+            os.makedirs(f"{d}/tools/run/mnt/data")
+            with open(f"{d}/tools.json", "w") as f:
+                json.dump({"gen": "gen:aa", "version": H.TOOLS_VERSION}, f)
+            self.assertFalse(H.tools_fresh("uc24"))
+            os.makedirs(f"{d}/tools/usr/bin")
+            os.symlink("/gnu/store/x-coreutils/bin/env", f"{d}/tools/usr/bin/env")   # (Guix's: absolute, inside)
+            self.assertFalse(H.tools_fresh("uc24"), "a link to nothing in the copy")
+            os.makedirs(f"{d}/tools/gnu/store/x-coreutils/bin")
+            with open(f"{d}/tools/gnu/store/x-coreutils/bin/env", "w"):
+                pass
+            self.assertTrue(H.tools_fresh("uc24"))
+
+    def snapcore_tree(self, t, base="core24_2307.snap", where=("data",)):
+        mp = f"{t}/mnt"
+        os.makedirs(f"{mp}/{H.SNAPCORE_DATA}/snaps")
+        os.makedirs(f"{mp}/{H.SNAPCORE_SEED}/snaps")
+        with open(f"{mp}/{H.SNAPCORE_DATA}/modeenv", "w") as f:
+            f.write(f"mode=run\ncurrent_recovery_systems=20240603\n{'base=' + base if base is not None else ''}\ngadget=pc_196.snap\n")
+        at = {"data": f"{mp}/{H.SNAPCORE_DATA}/snaps", "seed": f"{mp}/{H.SNAPCORE_SEED}/snaps"}
+        for w in where:
+            with open(f"{at[w]}/{base or 'core24_1.snap'}", "w") as f:
+                f.write("hsqs")
+        return mp
+
+    def test_snapcore_base(self):
+        with tempfile.TemporaryDirectory() as t:
+            mp = self.snapcore_tree(t)
+            self.assertEqual(H.snapcore_base(mp), (f"{mp}/{H.SNAPCORE_DATA}/snaps/core24_2307.snap", None))
+        with tempfile.TemporaryDirectory() as t:   # not refreshed since the install: the seed's
+            mp = self.snapcore_tree(t, where=("seed",))
+            self.assertEqual(H.snapcore_base(mp), (f"{mp}/{H.SNAPCORE_SEED}/snaps/core24_2307.snap", None))
+        with tempfile.TemporaryDirectory() as t:
+            mp = self.snapcore_tree(t, where=())
+            snap, why = H.snapcore_base(mp)
+            self.assertIsNone(snap)
+            self.assertIn("core24_2307.snap", why)
+        for bad in ("../../../etc/passwd", "core24", ""):
+            with tempfile.TemporaryDirectory() as t:
+                mp = self.snapcore_tree(t, base=bad, where=())
+                snap, why = H.snapcore_base(mp)
+                self.assertIsNone(snap)
+                self.assertTrue(why, bad)
+        with tempfile.TemporaryDirectory() as t:   # another source: a root of its own, or no modeenv
+            os.makedirs(f"{t}/usr/bin")
+            self.assertEqual(H.snapcore_base(t), (None, None))
+            mp = self.snapcore_tree(t)
+            os.makedirs(f"{mp}/usr")
+            self.assertEqual(H.snapcore_base(mp), (None, None))
 
     def test_drop_waits_for_no_tier0(self):
         with tempfile.TemporaryDirectory() as d:

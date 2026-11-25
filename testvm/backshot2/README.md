@@ -389,7 +389,13 @@ then:
   went from 141 to 34 GiB (vanilla3 19.0 to 2.8, leap16 23.6 to 0.9,
   anduinos2 13.5 to 2.5).  kinoite44: 300 of 300 INVALID with the old
   copy (chroot: no /usr/bin/env), 300 PASS with dry runs agreeing with the
-  new, 20.9 GiB to 3.6.
+  new, 20.9 GiB to 3.6.  An Ubuntu Core source (uc24) has no root
+  filesystem either (its / is the base snap's squashfs; vm-mount gives the
+  four partitions on a tmpfs): its tools come from the base snap modeenv's
+  `base=` names (`snapcore_base()`: ubuntu-data's snaps, else the seed's),
+  loop-mounted read-only (2.0 GiB to 0.2).  A copy without `/usr/bin/env`,
+  which every dry run runs, is never fresh, so the partitions' copy made
+  before that is copied anew.
 - **Older preparations pruned**: each `bs2-host source` removes every
   preparation but the current that no live work refers to
   (`prune_preps()`: no process has a file or cwd in it, and no qcow2 in

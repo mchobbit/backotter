@@ -310,7 +310,13 @@ def cmd_source(a):
 # more than 1 did, kept hard links as links (-H: an ostree or ABRoot tree's are many), and
 # copies an ostree source's default deployment, not its physical root (which has no /usr:
 # every dry run of kinoite44 was refused); tier 0's verdicts were the same with either
-# (README "Sources and tools").  A copy of another version is copied anew.
+# (README "Sources and tools").  A copy of another version is copied anew.  An Ubuntu Core
+# source (uc24) has no root filesystem either: its / is the base snap's squashfs, mounted
+# at boot, and vm-mount gives its four partitions on a tmpfs.  Its tools are copied from
+# that base snap (snapcore_base(): modeenv's base=, in ubuntu-data's snaps or the seed's),
+# loop-mounted read-only (2026-11-25: every dry run of uc24 was refused, "chroot: failed to
+# run command /usr/bin/env").  A copy without /usr/bin/env, which every dry run runs (the
+# partitions' copy made before that), is never fresh: it is copied anew.
 TOOLS_VERSION = 2
 TOOLS_EXCLUDE = (
     # Never read by a mkfs or a partitioner: the kernel's, the boot's, the users', the logs,
@@ -363,6 +369,8 @@ def tools_fresh(source, gen=None):
         gen = gen or generation(source)
     except OSError:
         return False
+    if not T0.in_root(f"{d}/tools", "/usr/bin/env"):
+        return False   # (no dry run could run in them: Ubuntu Core's partitions, copied before snapcore_base())
     return m.get("gen") == gen and m.get("version") == TOOLS_VERSION
 
 
@@ -442,13 +450,27 @@ def copy_tools(src, k, d, gen, dest=None):
                        stdout=subprocess.PIPE, text=True)
     if r.returncode:
         raise subprocess.CalledProcessError(r.returncode, "vm-mount")
+    base = None
     try:
         tools = dest or f"{d}/tools"
         if not dest and os.path.exists(f"{d}/tools.json"):
             os.remove(f"{d}/tools.json")
         shutil.rmtree(tools, ignore_errors=True)
-        sh(tools_rsync_args(f"{mp}/{ostree_deployment(r.stdout)}", tools))
+        top = f"{mp}/{ostree_deployment(r.stdout)}"
+        snap, why = snapcore_base(mp)
+        if why:
+            die(f"{src}: Ubuntu Core: no tools for tier 0: {why}")
+        if snap:
+            # (Ubuntu Core: its / is the base snap; the partitions hold no /usr.)
+            base = f"{w}/base"
+            os.makedirs(base)
+            sh(["mount", "-t", "squashfs", "-o", "ro,loop,nodev,nosuid", snap, base])
+            print(f"bs2-host: {src}: its tools from its base snap {os.path.relpath(snap, mp)}", file=sys.stderr)
+            top = base
+        sh(tools_rsync_args(top, tools))
     finally:
+        if base and os.path.ismount(base):
+            subprocess.run(["umount", base], check=False)
         subprocess.run([f"{TESTVM}/vm-umount", mp], env=env, stdout=subprocess.DEVNULL)
         shutil.rmtree(w, ignore_errors=True)
     n = du_bytes(tools)
@@ -458,6 +480,36 @@ def copy_tools(src, k, d, gen, dest=None):
                        "made": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, f)
         os.replace(f"{d}/tools.json.part", f"{d}/tools.json")
     return n
+
+
+# Where vm-mount puts an Ubuntu Core source's partitions (snap-bootstrap's run-mode mount points).
+SNAPCORE_DATA = "run/mnt/data/system-data/var/lib/snapd"
+SNAPCORE_SEED = "run/mnt/ubuntu-seed"
+
+
+def snapcore_base(mp):
+    """(the base snap file, None) of the Ubuntu Core source vm-mount mounted at MP, its /
+    at run time: modeenv's base= (core24_N.snap) in ubuntu-data's snaps, else the seed's
+    snaps/ (the install's, before a refresh); (None, None) for any other source (MP has
+    no modeenv, or a /usr of its own); (None, why) when it is Ubuntu Core and no base
+    snap is found."""
+    env = f"{mp}/{SNAPCORE_DATA}/modeenv"
+    if not os.path.isfile(env) or os.path.isdir(f"{mp}/usr"):
+        return None, None
+    base = None
+    with open(env, errors="replace") as f:
+        for line in f:
+            k, _, v = line.strip().partition("=")
+            if k == "base":
+                base = v.strip()
+    if not base:
+        return None, "its modeenv names no base snap (base=)"
+    if "/" in base or base in (".", "..") or not base.endswith(".snap"):
+        return None, f"its modeenv's base={base!r} isn't a snap file's name"
+    for at in (f"{mp}/{SNAPCORE_DATA}/snaps/{base}", f"{mp}/{SNAPCORE_SEED}/snaps/{base}"):
+        if os.path.isfile(at) and not os.path.islink(at):
+            return at, None
+    return None, f"its base snap {base} (modeenv's base=) is in neither ubuntu-data's snaps nor the seed's"
 
 
 def ostree_deployment(text):

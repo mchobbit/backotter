@@ -16,10 +16,8 @@ use crate::sys::Sys;
 /// The node of partition `n` of target disk `t` (a source partition of `d`).
 /// NetBSD names a GPT's partitions as wedges, dkN in the order it finds
 /// them: they're named by their wedge name (NAME=), which mount and newfs
-/// take.  That is the GPT name, or, for an entry with none, the entry's
-/// unique GUID as uuid_snprintf prints it (lower case; NetBSD's
-/// sys/dev/dkwedge/dkwedge_gpt.c).  An MBR partition that holds a
-/// disklabel has no node of its own.
+/// take: wedge_names.  An MBR partition that holds a disklabel has no node
+/// of its own.
 pub fn part_node(fam: Family, d: &Disk, t: &str, n: u32) -> String {
     match fam {
         Family::FreeBsd | Family::DragonFly => match d.table.as_ref().map(|t| t.kind) {
@@ -29,7 +27,7 @@ pub fn part_node(fam: Family, d: &Disk, t: &str, n: u32) -> String {
         Family::Haiku => super::haiku::part_path(t, n),
         Family::Redox | Family::Genode => crate::load::commands::part_path(t, n),
         Family::Illumos => format!("/dev/dsk/{}", super::illumos::slice_name(t, n)),
-        Family::NetBsd => match (d.table.as_ref().map(|t| t.kind), d.parts.iter().find(|p| p.number == n).and_then(wedge_name)) {
+        Family::NetBsd => match (d.table.as_ref().map(|t| t.kind), wedge_names(d).into_iter().find(|w| w.part.number == n).and_then(|w| w.name)) {
             (Some(TableKind::Gpt), Some(w)) => format!("NAME={w}"),
             _ => format!("/dev/{t}mbr{n}"),
         },
@@ -37,10 +35,38 @@ pub fn part_node(fam: Family, d: &Disk, t: &str, n: u32) -> String {
     }
 }
 
-/// The name NetBSD gives the wedge of a GPT entry (dkwedge_gpt.c): its GPT
-/// name, or its unique GUID when it has none.
-fn wedge_name(p: &crate::load::layout::Part) -> Option<String> {
-    p.label.clone().or_else(|| p.uuid.as_ref().filter(|u| !u.is_empty()).map(|u| u.to_ascii_lowercase()))
+/// A GPT entry and the name NetBSD gives its wedge.
+struct Wedge<'a> {
+    part: &'a crate::load::layout::Part,
+    /// Its GPT name, or its GUID when it has none.
+    first: Option<String>,
+    /// The name it gets; none when it gets no wedge.
+    name: Option<String>,
+}
+
+/// The names NetBSD gives a GPT disk's wedges (sys/dev/dkwedge/
+/// dkwedge_gpt.c), in table order: an entry's GPT name, or, for an entry
+/// with none, its unique GUID as uuid_snprintf prints it (lower case).
+/// GPT names needn't be unique, and wedge names must: when an earlier
+/// entry of the disk has the name, dk.c's dkwedge_add refuses it (EEXIST)
+/// and dkwedge_gpt.c names the wedge by its GUID instead, or makes none
+/// when that is taken too (or the dump has no GUID for it).  Another
+/// disk's wedges are wedge_clashes'.
+fn wedge_names(d: &Disk) -> Vec<Wedge<'_>> {
+    let mut parts: Vec<&crate::load::layout::Part> = d.parts.iter().collect();
+    parts.sort_by_key(|p| p.number);
+    let mut out: Vec<Wedge> = Vec::new();
+    for part in parts {
+        let guid = part.uuid.as_ref().filter(|u| !u.is_empty()).map(|u| u.to_ascii_lowercase());
+        let first = part.label.clone().or_else(|| guid.clone());
+        let taken = |n: &str| out.iter().any(|w| w.name.as_deref() == Some(n));
+        let name = match &first {
+            Some(n) if taken(n) => guid.filter(|g| g != n && !taken(g)),
+            n => n.clone(),
+        };
+        out.push(Wedge { part, first, name });
+    }
+    out
 }
 
 /// NetBSD's wedge names are the whole system's, not a disk's: dk.c's
@@ -49,9 +75,13 @@ fn wedge_name(p: &crate::load::layout::Part) -> Option<String> {
 /// disk that isn't a target (the source's own disk, still attached) with
 /// the name a target's partition is to have would take its place: load's
 /// newfs and mount of NAME=that would write to that other disk, and status
-/// and readback (node_path) read it.  One problem per such wedge; nothing
-/// for a layout that isn't NetBSD's.  `pairs` are the mapping's (source
-/// disk, target disk).
+/// and readback (node_path) read it.  One problem per such wedge.  So is
+/// a GPT name two targets' partitions both have: which gets it, and which
+/// its GUID, is the order the disks' wedges are made in (and the old
+/// wedges a target still has then), which load can't know when it names
+/// the nodes; and so is a partition that gets no wedge at all (a
+/// duplicate GPT name and no GUID).  Nothing for a layout that isn't
+/// NetBSD's.  `pairs` are the mapping's (source disk, target disk).
 pub fn wedge_clashes(layout: &Layout, pairs: &[(String, String)], sys: &Sys) -> Vec<crate::load::codes::Problem> {
     use crate::load::codes::{Problem, ProblemCode};
     if Family::of_layout(&layout.v) != Some(Family::NetBsd) {
@@ -59,16 +89,36 @@ pub fn wedge_clashes(layout: &Layout, pairs: &[(String, String)], sys: &Sys) -> 
     }
     // Each target's partitions by the wedge names they're to have.
     let mut wanted: Vec<(String, String, String, String)> = Vec::new();
+    let mut out = Vec::new();
     for (src, tgt) in pairs {
         let Some(d) = layout.disk(src).filter(|d| d.table.as_ref().map(|t| t.kind) == Some(TableKind::Gpt)) else { continue };
-        for p in &d.parts {
-            if let Some(w) = wedge_name(p) {
-                wanted.push((src.clone(), tgt.clone(), p.name.clone(), w));
+        let wedges = wedge_names(d);
+        for w in &wedges {
+            let part = &w.part.name;
+            match (&w.name, &w.first) {
+                (Some(name), _) => {
+                    if let Some((_, otgt, opart, _)) = wanted.iter().find(|o| o.3 == *name && o.1 != *tgt) {
+                        let text = format!(
+                            "{src} -> /dev/{tgt}: {part}'s wedge is to be named {name}, as {opart}'s on /dev/{otgt} is: NetBSD's wedge names are the whole system's, and which of the two gets the name (and which its GUID) is the order their wedges are made in, so newfs and mount of NAME={name} could write to the other one; give one of them another GPT name (gpt label) on the source, and dump it again, first"
+                        );
+                        out.push(Problem::new(ProblemCode::WedgeClash, text).with("disk", src).with("target", tgt));
+                    }
+                    wanted.push((src.clone(), tgt.clone(), part.clone(), name.clone()));
+                }
+                (None, Some(first)) => {
+                    let other = wedges.iter().find(|o| o.name.as_deref() == Some(first.as_str())).map_or("another entry", |o| o.part.name.as_str());
+                    let why = if w.part.uuid.as_ref().is_some_and(|u| !u.is_empty()) { "its GUID is another's wedge name too" } else { "it has no GUID" };
+                    let text = format!(
+                        "{src} -> /dev/{tgt}: {part}'s GPT name is {first}, as {other}'s is, and {why}: NetBSD would make no wedge for it, so there'd be nothing for newfs and mount to write it to; give it another GPT name (gpt label) on the source, and dump it again, first"
+                    );
+                    out.push(Problem::new(ProblemCode::WedgeClash, text).with("disk", src).with("target", tgt));
+                }
+                (None, None) => {}
             }
         }
     }
     if wanted.is_empty() {
-        return Vec::new();
+        return out;
     }
     // Every disk but the wedges themselves (cgd, raid and vnd disks have
     // wedges too), and but the targets.
@@ -78,7 +128,6 @@ pub fn wedge_clashes(layout: &Layout, pairs: &[(String, String)], sys: &Sys) -> 
         .map(|w| w.split(':').next().unwrap_or(w))
         .filter(|n| !n.is_empty() && !(n.starts_with("dk") && n[2..].chars().all(|c| c.is_ascii_digit())))
         .filter(|n| !pairs.iter().any(|(_, t)| t == n));
-    let mut out = Vec::new();
     for disk in others {
         for (dk, name, _) in super::labelled::parse_wedges(&sys.run("dkctl", &[disk, "listwedges"]).unwrap_or_default()) {
             for (src, tgt, part, _) in wanted.iter().filter(|w| w.3 == name) {
@@ -1060,6 +1109,57 @@ mod tests {
         let mut fb = l.clone();
         fb.v = crate::json::parse(r#"{"os": {"family": "freebsd"}}"#).unwrap();
         assert!(wedge_clashes(&fb, &pairs, &sys(wedges, "")).is_empty());
+    }
+
+    /// RustAudit1 HD3-02: GPT names needn't be unique.  On one disk the
+    /// kernel names the first entry by its name and a later one of the same
+    /// name by its GUID (dk.c refuses, EEXIST; dkwedge_gpt.c retries), so
+    /// that later one's node is its GUID-named wedge, and format and mount go
+    /// there, not to the first entry's.  Across two targets which wedge gets
+    /// the name depends on the order the disks' wedges are made: refused, one
+    /// problem per clash; so is a later entry with no GUID to fall back on.
+    #[test]
+    fn duplicate_gpt_names_are_told_apart_or_refused() {
+        use crate::load::{commands, target::Mapping, Stage};
+        let sys = || {
+            let r = FakeRunner::default().with("sysctl -n hw.disknames", "wd0 wd1 wd2 cd0").with("dkctl wd0 listwedges", "");
+            Sys::new("/nonexistent", Box::new(r), true)
+        };
+        // One disk: the ESP's name on the FFS root too.
+        let mut l = alpinebsd();
+        l.disks[0].parts[2].label = l.disks[0].parts[0].label.clone();
+        let d = &l.disks[0];
+        assert_eq!(part_node(Family::NetBsd, d, "wd1", 1), "NAME=EFI");
+        assert_eq!(part_node(Family::NetBsd, d, "wd1", 3), "NAME=bc000000-0000-4000-8000-000000000004");
+        let pairs = vec![("ld0".to_string(), "wd1".to_string())];
+        assert!(wedge_clashes(&l, &pairs, &sys()).is_empty());
+        let b = commands::build(&l, &opts(), &Mapping { pairs: pairs.clone(), ..Mapping::default() });
+        let words: Vec<String> = [Stage::Format, Stage::Mount].iter().flat_map(|s| b.stage(*s).iter().map(|c| c.argv.join(" "))).collect();
+        assert!(words.iter().any(|w| w.starts_with("newfs ") && w.ends_with(" NAME=bc000000-0000-4000-8000-000000000004")), "{words:?}");
+        assert!(words.iter().all(|w| !(w.starts_with("newfs ") && w.ends_with(" NAME=EFI"))), "{words:?}");
+        // A later entry of that name with no GUID: no wedge at all.
+        l.disks[0].parts[2].uuid = None;
+        let p = wedge_clashes(&l, &pairs, &sys());
+        assert_eq!(p.len(), 1, "{p:?}");
+        assert!(p[0].starts_with("ld0 -> /dev/wd1: dk2's GPT name is EFI, as dk0's is, and it has no GUID"), "{p:?}");
+        // Two targets sharing a name: one problem, for the second.
+        let mut l = alpinebsd();
+        let mut d1 = l.disks[0].clone();
+        d1.name = "ld1".into();
+        for (p, (name, label)) in d1.parts.iter_mut().zip([("dk3", "EFI1"), ("dk4", "swap1"), ("dk5", "AlpineBSD")]) {
+            p.name = name.into();
+            p.label = Some(label.into());
+            p.uuid = p.uuid.as_ref().map(|u| u.replacen("bc", "bd", 1));
+        }
+        l.disks.push(d1);
+        let pairs = vec![("ld0".to_string(), "wd1".to_string()), ("ld1".to_string(), "wd2".to_string())];
+        let p = wedge_clashes(&l, &pairs, &sys());
+        assert_eq!(p.len(), 1, "{p:?}");
+        assert!(p[0].starts_with("ld1 -> /dev/wd2: dk5's wedge is to be named AlpineBSD, as dk2's on /dev/wd1 is"), "{p:?}");
+        assert!(p[0].code == crate::load::codes::ProblemCode::WedgeClash && p[0].str_field("disk") == Some("ld1") && p[0].str_field("target") == Some("wd2"), "{p:?}");
+        // Distinct names on the two: none.
+        l.disks[1].parts[2].label = Some("AlpineBSD1".into());
+        assert!(wedge_clashes(&l, &pairs, &sys()).is_empty());
     }
 
     #[test]

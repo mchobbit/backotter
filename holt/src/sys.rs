@@ -183,6 +183,24 @@ pub struct RoMountWords {
     pub still_mounted: String,
 }
 
+/// A Sys::with_ro_mount's mount, unmounted (and AT removed) when dropped:
+/// when F returns, or when it panics.
+struct RoMounted<'a> {
+    sys: &'a Sys,
+    at: &'a str,
+    still_mounted: &'a str,
+}
+
+impl Drop for RoMounted<'_> {
+    fn drop(&mut self) {
+        if self.sys.run("umount", &[self.at]).is_some() {
+            let _ = std::fs::remove_dir(self.sys.p(self.at));
+        } else {
+            self.sys.warn(self.still_mounted);
+        }
+    }
+}
+
 /// Whether NAME is safe as one path component under RUN_DIR: not empty,
 /// and only ASCII letters, digits and the bytes in EXTRA.
 pub fn safe_name(name: &str, extra: &[u8]) -> bool {
@@ -432,10 +450,10 @@ impl Sys {
     /// directory dump makes under its run directory (RUN_DIR) and removes
     /// after: the one way dump reads a filesystem the running system
     /// doesn't mount (an unmounted ESP, an inactive boot environment, an
-    /// ABRoot root), unmounted at once.  TY and OPTS are `mount`'s -t and
-    /// -o.  None when AT can't be made or the mount fails, each said in
-    /// the caller's WORDS; an umount that fails is said too, and AT is
-    /// then left in place.
+    /// ABRoot root), unmounted when F returns, or panics.  TY and OPTS
+    /// are `mount`'s -t and -o.  None when AT can't be made or the mount
+    /// fails, each said in the caller's WORDS; an umount that fails is
+    /// said too, and AT is then left in place.
     pub fn with_ro_mount<R>(&self, ty: &str, opts: &str, dev: &str, at: &str, words: &RoMountWords, f: impl FnOnce(&str) -> R) -> Option<R> {
         if let Err(e) = std::fs::create_dir_all(self.p(at)) {
             self.warn(format!("{}: {e}", words.cant_make));
@@ -446,13 +464,8 @@ impl Sys {
             let _ = std::fs::remove_dir(self.p(at));
             return None;
         }
-        let r = f(at);
-        if self.run("umount", &[at]).is_some() {
-            let _ = std::fs::remove_dir(self.p(at));
-        } else {
-            self.warn(words.still_mounted.as_str());
-        }
-        Some(r)
+        let _mounted = RoMounted { sys: self, at, still_mounted: &words.still_mounted };
+        Some(f(at))
     }
 
     /// Size, free and available bytes of the filesystem mounted at `abs`,
@@ -883,6 +896,25 @@ mod tests {
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         assert_eq!(s.with_ro_mount("zfs", "ro", "p/d", "/run/f/d", &words("/run/f/d"), |_| ()), None);
         assert!(s.warnings()[0].starts_with("X: can't make /run/f/d: "), "{:?}", s.warnings());
+    }
+
+    #[test]
+    fn ro_mount_unmounts_on_panic() {
+        let words = RoMountWords { cant_make: "X: can't make".into(), mount_failed: "X: mount failed".into(), still_mounted: "X: still mounted".into() };
+        let t = Tree::new("romount-panic");
+        // F panics: the mount is still let go, and AT removed.
+        let r = FakeRunner::default().with("mount -t vfat -o ro /dev/sda1 /run/bko-holt/p", "").with("umount /run/bko-holt/p", "");
+        let s = Sys::new(t.root(), Box::new(r), true);
+        let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.with_ro_mount::<()>("vfat", "ro", "/dev/sda1", "/run/bko-holt/p", &words, |_| panic!("in F"))));
+        assert!(got.is_err());
+        assert!(!s.exists("/run/bko-holt/p"));
+        assert!(s.warnings().is_empty(), "{:?}", s.warnings());
+        // The umount after the panic fails: said, AT kept.
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default().with("mount -t vfat -o ro /dev/sda1 /run/bko-holt/q", "")), true);
+        let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.with_ro_mount::<()>("vfat", "ro", "/dev/sda1", "/run/bko-holt/q", &words, |_| panic!("in F"))));
+        assert!(got.is_err());
+        assert!(s.is_dir("/run/bko-holt/q"));
+        assert_eq!(s.warnings(), vec!["X: still mounted"]);
     }
 
     #[test]

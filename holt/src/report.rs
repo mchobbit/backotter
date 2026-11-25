@@ -1078,7 +1078,7 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         .set("firmware", crate::efi::firmware_json(sys))
         .set("storage", storage)
         .set("boot", boot);
-    crate::qubes::deactivate(sys, &activated);
+    drop(activated); // deactivated before the warnings are taken
     out.put("warnings", sys.warnings());
     out.build()
 }

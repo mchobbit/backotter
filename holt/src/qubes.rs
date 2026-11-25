@@ -337,13 +337,13 @@ pub fn thin_usage(sys: &Sys, lvm: &mut Value, dm: &[Value]) {
 
 /// The LVs `vgchange -ay` skipped (activation skip, `k` in lv_attr) that
 /// aren't active, activated read-only (activation/read_only_volume_list, so
-/// nothing about them changes) so the dump can read them; deactivate lets
-/// them go again.  Only as root, and only where lvs runs.
-pub fn activate_skipped(sys: &Sys) -> Vec<String> {
+/// nothing about them changes) so the dump can read them; dropping the
+/// Activated lets them go again.  Only as root, and only where lvs runs.
+pub fn activate_skipped(sys: &Sys) -> Activated<'_> {
     if !sys.privileged {
-        return Vec::new();
+        return Activated { sys, lvs: Vec::new() };
     }
-    let Some(out) = sys.run("lvs", &["--noheadings", "--separator", "|", "-o", "vg_name,lv_name,lv_attr"]) else { return Vec::new() };
+    let Some(out) = sys.run("lvs", &["--noheadings", "--separator", "|", "-o", "vg_name,lv_name,lv_attr"]) else { return Activated { sys, lvs: Vec::new() } };
     let mut done = Vec::new();
     for l in out.lines() {
         let f: Vec<&str> = l.trim().split('|').collect();
@@ -360,10 +360,25 @@ pub fn activate_skipped(sys: &Sys) -> Vec<String> {
             sys.warn(format!("{full} has activation skip and couldn't be activated read-only for the dump (lvchange -ay -K failed): its content wasn't read"));
         }
     }
-    done
+    Activated { sys, lvs: done }
 }
 
-pub fn deactivate(sys: &Sys, lvs: &[String]) {
+/// The LVs activate_skipped activated, deactivated when dropped, by a
+/// panic's unwind too.  Drop it before taking sys.warnings(), so the
+/// warnings of a deactivation that fails are kept.
+#[must_use]
+pub struct Activated<'a> {
+    sys: &'a Sys,
+    lvs: Vec<String>,
+}
+
+impl Drop for Activated<'_> {
+    fn drop(&mut self) {
+        deactivate(self.sys, &self.lvs);
+    }
+}
+
+fn deactivate(sys: &Sys, lvs: &[String]) {
     for full in lvs {
         if sys.run("lvchange", &["--activate", "n", full]).is_none() {
             sys.warn(format!("{full}: activated read-only for the dump, and `lvchange -an` failed after it"));
@@ -586,6 +601,40 @@ mod tests {
         assert_eq!(default_grub_var("", "X"), None);
         assert_eq!(product(Some("qubes"), Some("4.3")).as_deref(), Some("Qubes OS 4.3"));
         assert_eq!(product(Some("fedora"), Some("44")), None);
+    }
+
+    #[test]
+    fn activated_until_dropped() {
+        use crate::sys::FakeRunner;
+        let lvs = "lvs --noheadings --separator | -o vg_name,lv_name,lv_attr";
+        let on = "lvchange --activate y --ignoreactivationskip --config activation { read_only_volume_list = [ \"vg/lv\" ] } vg/lv";
+        let failed = vec!["vg/lv: activated read-only for the dump, and `lvchange -an` failed after it"];
+        let t = crate::testutil::Tree::new("qubes-activated");
+        // Skipped and inactive (k at 9, no a at 4): activated, and
+        // deactivated when the Activated goes.
+        let r = || FakeRunner::default().with(lvs, "  vg|lv|Vwi---tz-k\n  vg|on|Vwi-a-tz-k\n  vg|plain|Vwi---tz--\n").with(on, "");
+        let s = Sys::new(t.root(), Box::new(r().with("lvchange --activate n vg/lv", "")), true);
+        drop(activate_skipped(&s));
+        assert!(s.warnings().is_empty(), "{:?}", s.warnings());
+        // The -an fails: said at the drop, not before.
+        let s = Sys::new(t.root(), Box::new(r()), true);
+        let a = activate_skipped(&s);
+        assert_eq!(a.lvs, vec!["vg/lv"]);
+        assert!(s.warnings().is_empty(), "{:?}", s.warnings());
+        drop(a);
+        assert_eq!(s.warnings(), failed);
+        // A panic while it is held: the unwind deactivates too.
+        let s = Sys::new(t.root(), Box::new(r()), true);
+        let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _a = activate_skipped(&s);
+            panic!("in the dump");
+        }));
+        assert!(got.is_err());
+        assert_eq!(s.warnings(), failed);
+        // Not root: nothing activated, nothing to let go.
+        let s = Sys::new(t.root(), Box::new(r()), false);
+        drop(activate_skipped(&s));
+        assert!(s.warnings().is_empty(), "{:?}", s.warnings());
     }
 
     #[test]

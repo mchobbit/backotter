@@ -418,7 +418,10 @@ impl Running for ChildLoad {
     }
     fn kill(&mut self) {
         if let Some(mut c) = self.child.take() {
-            // setsid made it its group's leader: what it started goes too.
+            // setsid made it its group's leader: the group goes.  Under
+            // --json bko-holt puts each command in a group of its own (J7),
+            // so what it started is left to end by itself: a dry run's are
+            // read-only probes.
             crate::term::ffi::kill_group(self.pid, crate::term::ffi::SIGKILL);
             let _ = c.kill();
             self.status = Some(c.wait().ok().and_then(|s| s.code()));

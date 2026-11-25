@@ -1887,3 +1887,58 @@ fn plain_mode_restore_transcript() {
     golden("tests/screens/app-plain-restore.txt", &shown);
     assert!(out.contains("[x] Copy your files back: done in"), "{out}");
 }
+
+#[test]
+fn try_again_writes_only_the_disks_confirmed() {
+    // Try again's new plan has another disk at vdb (16.1 GB, not the
+    // 12.9 GB confirmed): never a run, its help, Back to Failure.
+    let mut t = restore_t("app-rec-moved", false);
+    let mut ui = Shots::new(script(&[&to_restore(b"for md1"), &[P, B(R_TRY), P, P, Back, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    ui.done();
+    let help = ui.flat("Problem: the disks changed", 0);
+    assert!(help.contains("bko-holt's new plan writes vdb, but its size isn't that of the disk you confirmed on Review."), "{help}");
+    assert!(help.contains("< Go back and change it >") && !help.contains("< Try again >"), "{help}");
+    let failure = "Problem: the restore stopped at \"Make it bootable\"";
+    assert_eq!(ui.titles().iter().filter(|x| *x == failure).count(), 2, "Back: Failure again: {:?}", ui.titles());
+    let seen = t.seen.borrow();
+    assert_eq!(seen.started.len(), 1, "nothing more started: {:#?}", seen.started);
+    assert!(seen.loads.ends_with(&["30-status".to_string(), "13-plan".into()]), "{:?}", seen.loads);
+}
+
+#[test]
+fn install_without_an_entry_writes_only_the_disks_confirmed() {
+    let mut t = restore_t("app-rec-moved", false);
+    let mut ui = Shots::new(script(&[&to_restore(b"for md1"), &[P, B(B_HELP), B(R_FIX), Reply::Yes, P, B(B_FIX), P, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    ui.done();
+    assert!(ui.flat("Problem: the disks changed", 0).contains("writes vdb, but its size isn't"), "{:?}", ui.titles());
+    assert_eq!(t.seen.borrow().started.len(), 1, "no boot run");
+    // Back to Disks (its plan first): Review's runs and confirmations are gone.
+    assert_eq!(ui.titles().last().map(String::as_str), Some("Where each disk goes"), "{:?}", ui.titles());
+    assert!(t.app.reviewed.is_empty() && t.app.confirmed.is_empty() && t.app.serials.is_empty() && t.app.restore.is_none());
+}
+
+#[test]
+fn go_on_runs_each_stage_and_ticks_what_status_says_is_done() {
+    // The recorded status after partition: Go on, each stage from
+    // assemble to close alone, to Done with every stage ticked.
+    let mut t = restore_t("app-rec-goon", false);
+    let pass = b"for md1".to_vec();
+    let mut ui = Shots::new(script(&[
+        &to_disks(),
+        &[B(B_DONE), P, P, Secrets(vec![pass.clone()]), P],
+        &[B(B_GO_ON), P, Serials(vec!["12.9 GB vdb".into(), "12.9 GB vdc".into()]), P, P, P, P, P, P, Reply::Quit],
+    ]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    ui.done();
+    let seen = t.seen.borrow();
+    let runs: Vec<&str> = seen.started.iter().map(|(l, _, _)| l.as_str()).collect();
+    assert_eq!(runs.len(), 6, "{runs:#?}");
+    for (r, st) in runs.iter().zip(["assemble", "format", "mount", "restore", "boot", "close"]) {
+        assert!(r.contains(&format!(" --only {st} ")) && r.ends_with(" --commit") && !r.contains("--erase"), "{r}");
+    }
+    let done = ui.text("lovelace is restored", 0);
+    assert!(done.contains("[x] Make partitions           [x] Set up RAID and encryption"), "partition as status says: {done}");
+    assert!(done.contains("[x] Make it bootable") && done.contains("[x] Finish") && !done.contains("[ ]"), "{done}");
+}

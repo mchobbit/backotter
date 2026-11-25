@@ -39,7 +39,7 @@ use crate::text::{cap, Clean};
 use crate::ui::{Act, Answer, Button, Chrome, Message, Progress, Question, TextView, Tick, Ui};
 
 use super::holt_args::{HoltCmd, Load, Stage};
-use super::plan::STAGES;
+use super::plan::{self, Plan, STAGES};
 use super::strings as s;
 use super::sys::{self, Cmd, How, Running};
 use super::{time, wait, write_new, App, Go, Step};
@@ -253,10 +253,12 @@ pub struct Restore {
 }
 
 impl Restore {
-    pub fn new(runs: Vec<Load>, done_before: &[String]) -> Restore {
+    /// Its runs, and the stages as they were before them (`before`: a
+    /// resume's, Try again's): the rest wait.
+    pub fn new(runs: Vec<Load>, before: &[(String, Mark)]) -> Restore {
         let rows = STAGES
             .iter()
-            .map(|n| Row { name: n.to_string(), mark: if done_before.iter().any(|d| d == n) { Mark::Done } else { Mark::Waiting }, took_ms: None, would: 0 })
+            .map(|n| Row { name: n.to_string(), mark: before.iter().find(|(d, _)| d == n).map_or(Mark::Waiting, |x| x.1), took_ms: None, would: 0 })
             .collect();
         Restore {
             runs,
@@ -323,6 +325,10 @@ fn merge(rows: &mut [Row], f: &Follow, ms: u64) {
         let Some(r) = rows.iter_mut().find(|r| r.name == st.name.as_str()) else { continue };
         let mark = match st.state {
             State::Waiting => continue,
+            // Done by an earlier run of this restore (Start again's
+            // partition, then `--through close`): a skip of it as done
+            // doesn't untick it.
+            State::Skipped if r.mark == Mark::Done => continue,
             State::Running if f.stopped == Some(true) || f.ended.is_some() => Mark::Stopped,
             State::Running => Mark::Running,
             State::Done => Mark::Done,
@@ -339,6 +345,100 @@ fn merge(rows: &mut [Row], f: &Follow, ms: u64) {
             _ => st.took_ms,
         };
     }
+}
+
+/// The stages before status's `next`, as a resume's runs leave them:
+/// done where status says `done`, else not ticked (Principle 6).
+pub fn before_next(st: &plan::Status, next: &str) -> Vec<(String, Mark)> {
+    STAGES.iter().take_while(|x| **x != next).map(|x| (x.to_string(), if st.done(x) { Mark::Done } else { Mark::Skipped })).collect()
+}
+
+/// Whether a new plan writes only the disks confirmed on Review, each the
+/// same disk (its size, model, link and serial): Err says which isn't.  On
+/// OpenBSD and NetBSD a disk's serial is its disklabel's DUID, which the
+/// partition stage writes (holt-json.md, "What RT10j found"): once
+/// partition is done (`duid_written`) it may differ, nothing else.
+pub fn same_disks(confirmed: &[plan::Disk], p: &Plan, duid_written: bool) -> Result<(), String> {
+    for pair in &p.disks {
+        let Some(t) = &pair.target else { continue };
+        let node = Clean::line(&t.node, 64).as_str().to_string();
+        let Some(c) = p.candidate(&t.node) else { return Err(s::moved_unknown(&node)) };
+        let Some(k) = confirmed.iter().find(|k| k.node == c.node) else {
+            if t.will_erase || !t.writes.is_empty() {
+                return Err(s::moved_new(&node));
+            }
+            continue;
+        };
+        let what = if k.size_bytes != c.size_bytes {
+            Some(s::WORD_SIZE)
+        } else if k.model != c.model {
+            Some(s::WORD_MODEL)
+        } else if k.by_id != c.by_id || k.path != c.path {
+            Some(s::WORD_LINK)
+        } else if k.serial != c.serial && !duid_written {
+            Some(s::WORD_SERIAL)
+        } else {
+            None
+        };
+        if let Some(w) = what {
+            return Err(s::moved_what(&node, w));
+        }
+    }
+    Ok(())
+}
+
+/// What the tail of an events file says: load's pid (from its `start`,
+/// when the tail has it) and whether its `end` came.  A tail that isn't
+/// the whole file begins mid-line: that line is left out.
+fn scan_tail(b: &[u8], whole: bool) -> (Option<u64>, bool) {
+    let (mut pid, mut ended) = (None, false);
+    let mut lines = b.split(|&c| c == b'\n');
+    if !whole {
+        lines.next();
+    }
+    for l in lines {
+        let Some(v) = std::str::from_utf8(l).ok().and_then(|x| json::parse(x.trim()).ok()) else { continue };
+        match v.get_str("event") {
+            Some("start") => pid = v.get_u64("pid"),
+            Some("end") => ended = true,
+            _ => {}
+        }
+    }
+    (pid, ended)
+}
+
+/// The boot loader's help's why and what to do, by the mode this computer
+/// was started in as the plan says (`here.boot_mode`): on a UEFI start
+/// the variables may still be read-only (`efi_vars`, `here.efivars`
+/// false).
+pub fn boot_why(mode: Option<&str>, efivars: Option<bool>, code: &str) -> (&'static str, &'static str) {
+    let unwritable = code == "efi_vars" || efivars == Some(false);
+    match mode {
+        Some("bios") => (s::BOOT_WHY_BIOS, s::BOOT_TODO_BIOS),
+        Some("uefi") if unwritable => (s::BOOT_WHY_READ_ONLY, s::BOOT_TODO_UEFI),
+        Some("uefi") => (s::BOOT_WHY_UEFI, s::BOOT_TODO_UEFI),
+        // The plan doesn't say: as its variables are.
+        _ if unwritable => (s::BOOT_WHY_BIOS, s::BOOT_TODO_BIOS),
+        _ => (s::BOOT_WHY_UEFI, s::BOOT_TODO_UEFI),
+    }
+}
+
+/// The progress screen as the Restore shows it, its text and gauge
+/// aside.
+fn progress_of(full: bool, dry: bool, host: &str) -> Progress {
+    // Plain mode's first line is the screen's name, as its transcript.
+    let title = if !full { s::SCR_RESTORE.to_string() } else if dry { s::dry_title(host) } else { s::restoring_title(host) };
+    let mut p = Progress::new(Chrome::new(o(s::SCR_RESTORE), Clean::line(&title, cap::LINE)), Clean::default());
+    if full {
+        p.after = o(if dry { s::DRY_AFTER } else { s::RESTORE_AFTER });
+        p.buttons = vec![Button::other(s::BTN_CANCEL, None, B_CANCEL)];
+        p.hidden = vec![Button::other(s::BTN_LOG, Some('l'), B_LOG)];
+        p.chrome.keys = Some(o(s::RESTORE_KEYS));
+    } else {
+        p.buttons = vec![Button::other(s::BTN_STOP_PLAIN, Some('c'), B_CANCEL)];
+        p.hidden = vec![Button::other(s::BTN_LOG, Some('l'), B_LOG)];
+    }
+    p
 }
 
 /// `2 s`, `21 min`, `1 h 5 min`.
@@ -470,7 +570,13 @@ impl App {
             if self.reviewed.is_empty() {
                 return Go::Back;
             }
-            let mut r = Restore::new(self.reviewed.clone(), &[]);
+            // Go on's runs begin at status's next: the stages before it
+            // are as status says.
+            let before = match (self.resume, self.status.as_ref()) {
+                (Some(true), Some(st)) => st.next.as_deref().map(|n| before_next(st, n)).unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            let mut r = Restore::new(self.reviewed.clone(), &before);
             r.began = self.sys.now();
             self.restore = Some(r);
         }
@@ -560,18 +666,7 @@ impl App {
         let dry = self.opts.dry_run;
         let host = self.restore_host();
         let assemble = self.assemble();
-        // Plain mode's first line is the screen's name, as its transcript.
-        let title = if !full { s::SCR_RESTORE.to_string() } else if dry { s::dry_title(&host) } else { s::restoring_title(&host) };
-        let mut p = Progress::new(Chrome::new(o(s::SCR_RESTORE), Clean::line(&title, cap::LINE)), Clean::default());
-        if full {
-            p.after = o(if dry { s::DRY_AFTER } else { s::RESTORE_AFTER });
-            p.buttons = vec![Button::other(s::BTN_CANCEL, None, B_CANCEL)];
-            p.hidden = vec![Button::other(s::BTN_LOG, Some('l'), B_LOG)];
-            p.chrome.keys = Some(o(s::RESTORE_KEYS));
-        } else {
-            p.buttons = vec![Button::other(s::BTN_STOP_PLAIN, Some('c'), B_CANCEL)];
-            p.hidden = vec![Button::other(s::BTN_LOG, Some('l'), B_LOG)];
-        }
+        let mut p = progress_of(full, dry, &host);
         loop {
             {
                 let r = self.restore.as_mut()?;
@@ -779,11 +874,17 @@ impl App {
         let version = self.version.clone();
         let Some(r) = self.restore.as_mut() else { return };
         let Some(run) = r.run.take() else { return };
-        merge(&mut r.rows, &run.follow, run.ms());
+        let verdict = judge(&run, version.as_deref());
+        // Start again's `--only close` first only lets go of what is open:
+        // Finish is ticked by the run that ends the restore, not by it.
+        let close = Stage::Only("close".to_string());
+        let prelim = verdict.is_none() && r.next < r.runs.len() && r.next.checked_sub(1).and_then(|i| r.runs.get(i)).is_some_and(|l| l.stage == close);
+        if !prelim {
+            merge(&mut r.rows, &run.follow, run.ms());
+        }
         r.would += run.follow.would;
         r.cmds.extend(run.follow.cmds.iter().cloned());
         r.stderr = String::from_utf8_lossy(&run.job.stderr()).lines().map(|l| Clean::line(l, cap::LOG_LINE)).collect();
-        let verdict = judge(&run, version.as_deref(), r.stop_asked);
         r.last = Some(run.follow);
         match verdict {
             None => {}
@@ -1132,6 +1233,10 @@ impl App {
     /// from its `next` to `close`, `--only STAGE --commit`, under a new
     /// plan's hash (the plan may change after partition: holt-json.md,
     /// "What RT10j found").  `--erase` only when partition runs again.
+    ///
+    /// The new plan must write only the disks confirmed on Review, each
+    /// the same disk (`same_disks`): else Disks, never a run.  `--erase`
+    /// only when that Review erased them (not Go on's).
     fn try_again(&mut self, ui: &mut dyn Ui) -> Go {
         let Some(l) = self.full_load(Stage::Status, false) else { return Go::Stay };
         let st = match self.status_run(ui, &l) {
@@ -1140,13 +1245,29 @@ impl App {
         };
         let Some(next) = st.next.clone().filter(|n| STAGES.contains(&n.as_str())) else {
             if st.all_done {
-                let mut r = Restore::new(Vec::new(), &STAGES.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+                let before: Vec<(String, Mark)> = STAGES.iter().map(|x| (x.to_string(), if st.done(x) { Mark::Done } else { Mark::Skipped })).collect();
+                let mut r = Restore::new(Vec::new(), &before);
+                let now = self.sys.now();
+                r.began = now;
+                // The restore's own time and log, as Failure had them.
+                if let Some(old) = self.restore.take() {
+                    r.began = old.began;
+                    r.log = old.log;
+                    r.last = old.last;
+                    r.events = old.events;
+                }
+                r.took_ms = Some(u64::try_from(now.saturating_sub(r.began)).unwrap_or(0).saturating_mul(1000));
                 r.end = Some(End::Done);
                 self.restore = Some(r);
+                return Go::Stay;
             }
-            return Go::Stay;
+            let m = Message::new(Chrome::ours(s::SCR_FAILURE, s::NO_NEXT_TITLE), o(s::NO_NEXT));
+            return match ui.message(&m) {
+                Answer::Ok(()) | Answer::Back | Answer::Button(_) => Go::Stay,
+                a => Go::of(a),
+            };
         };
-        let erase = next == "partition";
+        let erase = next == "partition" && self.confirmed_erase;
         let Some(mut pl) = self.full_load(Stage::Plan, erase) else { return Go::Stay };
         if let Some(rm) = self.restore.as_ref().and_then(|r| r.runs.last()) {
             pl.removable = rm.removable;
@@ -1155,14 +1276,48 @@ impl App {
             Ok(p) => p,
             Err(g) => return if g == Go::Back { Go::Stay } else { g },
         };
+        let duid = matches!(self.wh.os, Os::OpenBsd | Os::NetBsd) && st.done("partition");
+        if let Err(what) = same_disks(&self.confirmed, &p, duid) {
+            return self.disks_moved(ui, what);
+        }
         let from = STAGES.iter().position(|x| *x == next).unwrap_or(0);
         let runs: Vec<Load> = STAGES[from..].iter().map(|x| pl.run_of(Stage::Only(x.to_string()), &p.plan_sha256)).collect();
-        let done: Vec<String> = STAGES[..from].iter().map(|x| x.to_string()).collect();
+        let before = before_next(&st, &next);
         self.plan = Some(p);
-        let mut r = Restore::new(runs, &done);
+        let mut r = Restore::new(runs, &before);
         r.began = self.sys.now();
         self.restore = Some(r);
         Go::Stay
+    }
+
+    /// The new plan writes a disk that isn't one confirmed on Review: its
+    /// help, with Disks (the confirmations asked for again) and Back.
+    fn disks_moved(&mut self, ui: &mut dyn Ui, what: String) -> Go {
+        let p = super::Problem {
+            code: "disks_moved",
+            screen: s::SCR_FAILURE,
+            title: s::MOVED_TITLE.to_string(),
+            what,
+            why: s::MOVED_WHY.to_string(),
+            todo: s::MOVED_TODO.to_string(),
+            fixes: vec![(s::BTN_TO_DISKS.to_string(), Go::BackTo(Step::Disks))],
+            again: false,
+            back: Some(Go::Stay),
+        };
+        let g = self.problem(ui, p);
+        if matches!(g, Go::BackTo(_)) {
+            self.forget_review();
+        }
+        g
+    }
+
+    /// Review's runs and confirmations, gone: Disks or the passphrases
+    /// again lead to a Review of its own.
+    fn forget_review(&mut self) {
+        self.restore = None;
+        self.reviewed.clear();
+        self.serials.clear();
+        self.confirmed.clear();
     }
 
     /// A stage's help (rescue-screens.md, "A stage's command failed"):
@@ -1180,7 +1335,7 @@ impl App {
         };
         let program = failure.as_ref().and_then(|f| f.program.as_ref()).map(|p| p.as_str().to_string()).unwrap_or_default();
         let stage = failure.as_ref().map(|f| f.stage.as_str().to_string()).unwrap_or_default();
-        let uefi = self.plan.as_ref().and_then(|p| p.efivars);
+        let plan_here = self.plan.as_ref().map(|p| (p.boot_mode.clone(), p.efivars));
         let attached = self.restore.as_ref().is_some_and(|r| r.attached.is_some()) || self.reviewed.is_empty();
         enum Fix {
             NoEntry,
@@ -1188,10 +1343,11 @@ impl App {
             Disks,
         }
         let (title, what, why, todo, fix, again): (String, String, String, String, Option<Fix>, bool) = if stopped {
-            (s::STOPPED_TITLE.into(), s::STOPPED_WHAT.into(), s::STOPPED_WHY.into(), s::STOPPED_TODO.into(), None, true)
+            let copying = matches!(end, End::Stopped { stage: Some(x) } if x == "restore");
+            (s::STOPPED_TITLE.into(), s::STOPPED_WHAT.into(), s::stopped_why(copying), s::STOPPED_TODO.into(), None, true)
         } else if code == "efi_vars" || (code == "cmd_failed" && stage == "boot" && BOOT_PROGRAMS.contains(&program.as_str())) {
-            let bios = code == "efi_vars" || uefi == Some(false);
-            let (why, todo) = if bios { (s::BOOT_WHY_BIOS, s::BOOT_TODO_BIOS) } else { (s::BOOT_WHY_UEFI, s::BOOT_TODO_UEFI) };
+            let (mode, efivars) = plan_here.unwrap_or_default();
+            let (why, todo) = boot_why(mode.as_deref(), efivars, &code);
             let prog = if program.is_empty() { "the boot loader".to_string() } else { program.clone() };
             (s::BOOT_TITLE.into(), s::boot_what(&prog, &host), why.into(), todo.into(), Some(Fix::NoEntry), false)
         } else {
@@ -1267,16 +1423,12 @@ impl App {
                         }
                     }
                     Some(Fix::Passphrase) => {
-                        self.restore = None;
-                        self.reviewed.clear();
-                        self.serials.clear();
+                        self.forget_review();
                         self.resume = None;
                         return Some(Go::BackTo(Step::Passphrase(0)));
                     }
                     Some(Fix::Disks) => {
-                        self.restore = None;
-                        self.reviewed.clear();
-                        self.serials.clear();
+                        self.forget_review();
                         return Some(Go::BackTo(Step::Disks));
                     }
                     None => {}
@@ -1301,6 +1453,8 @@ impl App {
 
     /// Install without an entry: the boot stage again with `--removable
     /// --no-nvram`, then close, under that plan's hash.
+    /// The new plan must write only the disks confirmed on Review, as Try
+    /// again's.
     fn no_entry(&mut self, ui: &mut dyn Ui) -> Go {
         let Some(mut pl) = self.full_load(Stage::Plan, false) else { return Go::Stay };
         pl.removable = true;
@@ -1308,10 +1462,17 @@ impl App {
             Ok(p) => p,
             Err(g) => return if g == Go::Back { Go::Stay } else { g },
         };
+        // The stages before boot as this restore left them.
+        let before: Vec<(String, Mark)> =
+            self.restore.as_ref().map(|r| r.rows.iter().take_while(|x| x.name != "boot").map(|x| (x.name.clone(), x.mark)).collect()).unwrap_or_default();
+        let partitioned = before.iter().any(|(n, m)| n == "partition" && *m == Mark::Done);
+        let duid = matches!(self.wh.os, Os::OpenBsd | Os::NetBsd) && partitioned;
+        if let Err(what) = same_disks(&self.confirmed, &p, duid) {
+            return self.disks_moved(ui, what);
+        }
         let runs = vec![pl.run_of(Stage::Only("boot".into()), &p.plan_sha256), pl.run_of(Stage::Only("close".into()), &p.plan_sha256)];
-        let done: Vec<String> = STAGES.iter().take_while(|x| **x != "boot").map(|x| x.to_string()).collect();
         self.plan = Some(p);
-        let mut r = Restore::new(runs, &done);
+        let mut r = Restore::new(runs, &before);
         r.began = self.sys.now();
         self.restore = Some(r);
         Go::Stay
@@ -1365,13 +1526,13 @@ impl App {
             let _ = std::fs::remove_file(base.join(RUN_JSON));
             return None;
         }
-        // Its pid: run.json's, else its events' start.
-        let mut f = Follow::new();
-        if let Some(e) = self.sys.read_tail(&events, EVENTS_PER_TICK) {
-            f.feed(&e, 0);
-        }
-        let pid = v.as_ref().and_then(|v| v.get_u64("pid")).or(f.pid).and_then(|p| u32::try_from(p).ok());
-        let alive = pid.is_some_and(|p| self.sys.alive(p)) && f.ended.is_none();
+        // Its pid: run.json's, else its events' start; and whether its
+        // end came, from the file's last EVENTS_PER_TICK (a long run's
+        // begins mid-line there).
+        let tail = self.sys.read_tail(&events, EVENTS_PER_TICK).unwrap_or_default();
+        let (start_pid, ended) = scan_tail(&tail, tail.len() < EVENTS_PER_TICK);
+        let pid = v.as_ref().and_then(|v| v.get_u64("pid")).or(start_pid).and_then(|p| u32::try_from(p).ok());
+        let alive = pid.is_some_and(|p| self.sys.alive(p)) && !ended;
         if !alive {
             sys::wipe_dir(&dir);
             let _ = std::fs::remove_file(base.join(RUN_JSON));
@@ -1427,7 +1588,7 @@ fn screen_text(r: &Restore, assemble: &[String], full: bool, host: &str, dry: bo
     let now = match f {
         _ if r.stop_asked && f.is_some_and(|f| !f.stopping) => s::NOW_STOPPING.to_string(),
         Some(f) if f.error.is_some() => s::now_unreadable(f.error.as_ref().map_or("", Clean::as_str)),
-        Some(f) if f.now.is_some() => s::now(f.now.as_ref().map_or("", Clean::as_str)),
+        Some(f) if f.doing.is_some() => s::now(f.doing.as_ref().map_or("", Clean::as_str)),
         Some(f) if f.started => match rows.iter().find(|x| x.mark == Mark::Running) {
             Some(x) => s::now(&label(&x.name, assemble).to_lowercase()),
             None => s::NOW_BETWEEN.to_string(),
@@ -1450,7 +1611,9 @@ fn failure_text(what: &str, f: Option<&Failure>) -> String {
     // bko-holt's first line says what failed; Failure's own line says it
     // when the program is named.
     let skip = usize::from(f.program.as_ref().is_some_and(|p| body.first().is_some_and(|l| l.starts_with(&format!("{} failed", p.as_str())))));
-    let rest: Vec<String> = body[skip..].iter().map(|l| format!("  {}", l.trim())).collect();
+    // Indented, its wrapped lines too (the mock's).
+    let inner = usize::from(crate::widgets::TEXT_W).saturating_sub(2);
+    let rest: Vec<String> = body[skip..].iter().flat_map(|l| crate::text::wrap(&Clean::line(l.trim(), cap::PROBLEM), inner)).map(|l| format!("  {}", l.as_str())).collect();
     let more = rest.len().saturating_sub(ERROR_LINES);
     lines.extend(rest.into_iter().take(ERROR_LINES));
     if more > 0 {
@@ -1462,7 +1625,7 @@ fn failure_text(what: &str, f: Option<&Failure>) -> String {
 /// How a run ended, from its events and exit (holt-json.md, "Exit
 /// statuses"): None when it is through and the next may start.  Whatever
 /// isn't plainly done isn't (Principle 6).
-fn judge(run: &Run, version: Option<&str>, stop_asked: bool) -> Option<End> {
+fn judge(run: &Run, version: Option<&str>) -> Option<End> {
     let f = &run.follow;
     let failed = |code: &str, what: String, failure: Option<Box<Failure>>| Some(End::Failed { stage: None, code: code.to_string(), what, failure });
     if let Some(why) = &run.killed {
@@ -1498,8 +1661,8 @@ fn judge(run: &Run, version: Option<&str>, stop_asked: bool) -> Option<End> {
     match f.ended {
         Some(0) if exit_ok && !f.odd_skip && f.unfinished().is_none() => None,
         Some(0) if exit_ok => failed("unclear", format!("{}.", s::UNCLEAR), None),
-        // Stopped by us but ended otherwise: a stop that came too late.
-        Some(e) if stop_asked && e == 0 => None,
+        // A stop that came too late is the first arm's (end 0, exit 0, all
+        // through); end 0 with another exit says two things: not Done.
         Some(e) => failed("exit", s::ended_with(&format!("bko-holt's end event says exit {e}"), &status), None),
         None => failed("no_end", s::ended_with(s::NO_END, &status), None),
     }
@@ -1557,6 +1720,160 @@ mod tests {
         let l: Vec<&str> = t.lines().collect();
         assert_eq!(l[0], "  [x] Make partitions           [x] Set up encryption");
         assert_eq!(l[3], format!("  [x] Finish{}in 36 min", " ".repeat(51 - 12)));
+    }
+
+    /// A run whose job is over: only its events matter.
+    struct Over;
+    impl sys::Running for Over {
+        fn read(&mut self, _: &mut Vec<u8>, _: usize) -> bool {
+            true
+        }
+        fn ended(&mut self, _: Option<u32>) -> Option<Option<i32>> {
+            Some(Some(0))
+        }
+        fn term(&mut self, _: u32) -> bool {
+            false
+        }
+        fn stderr(&self) -> Vec<u8> {
+            Vec::new()
+        }
+        fn detached(&self) -> bool {
+            true
+        }
+        fn kill(&mut self) {}
+    }
+
+    const START: &str = r#"{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","pid":4711,"commit":true,"dry_run":false,"stages":["partition","assemble","format","mount","restore","boot","close"],"plan_sha256":"d96eb1cb050075fea9a149802f66715587293889b6fbaa05015e53c0edfd54b1","log":"/run/bko-holt/log/load.log","layout":{"hostname":"lovelace"}}"#;
+
+    /// A Run fed `lines`, each at its ms, begun `ago_ms` ago.
+    fn run_of(lines: &[(&str, u64)], exit: Option<i32>, ago_ms: u64) -> Run {
+        let mut follow = Follow::new();
+        for (l, ms) in lines {
+            follow.feed(format!("{l}\n").as_bytes(), *ms);
+        }
+        let t0 = Instant::now().checked_sub(std::time::Duration::from_millis(ago_ms)).expect("up long enough");
+        Run { job: Box::new(Over), follow, buf: Vec::new(), t0, drained: true, exit: Some(exit), events: PathBuf::new(), expect: None, commit: true, dry_run: false, killed: None }
+    }
+
+    fn stage(st: &str, from: u64, secs: u64) -> Vec<(String, u64)> {
+        vec![(format!(r#"{{"event":"stage","stage":"{st}","commands":1}}"#), from), (format!(r#"{{"event":"stage_done","stage":"{st}","secs":{secs},"checked":true}}"#), from + secs * 1000)]
+    }
+
+    #[test]
+    fn an_end_zero_with_another_exit_is_never_done() {
+        let mut lines: Vec<(String, u64)> = vec![(START.to_string(), 0)];
+        for st in STAGES {
+            lines.extend(stage(st, 0, 1));
+        }
+        lines.push((r#"{"event":"end","exit":0,"stopped":false,"secs":7.0}"#.to_string(), 9000));
+        let l: Vec<(&str, u64)> = lines.iter().map(|(a, b)| (a.as_str(), *b)).collect();
+        assert!(judge(&run_of(&l, Some(0), 0), None).is_none(), "end 0, exit 0, every stage through: Done");
+        // The same events, its exit 1 (a stop asked or not): Failure.
+        match judge(&run_of(&l, Some(1), 0), None) {
+            Some(End::Failed { code, .. }) => assert_eq!(code, "exit"),
+            e => panic!("{e:?}"),
+        }
+        // A stage start named that never came: not Done, end 0 or not.
+        let short: Vec<(&str, u64)> = l.iter().filter(|(x, _)| !x.contains("\"close\"")).copied().collect();
+        assert!(matches!(judge(&run_of(&short, Some(0), 0), None), Some(End::Failed { .. })));
+    }
+
+    #[test]
+    fn a_skip_doesnt_untick_an_earlier_runs_stage() {
+        let mut rows: Vec<Row> = STAGES.iter().map(|n| Row { name: n.to_string(), mark: if *n == "partition" { Mark::Done } else { Mark::Waiting }, took_ms: Some(2000), would: 0 }).collect();
+        let skip = r#"{"event":"skip","stage":"partition","state":"done","why":""}"#;
+        let r = run_of(&[(START, 0), (skip, 0)], None, 0);
+        merge(&mut rows, &r.follow, 0);
+        assert_eq!(rows[0].mark, Mark::Done, "Start again's partition, then --through close skipping it");
+        let mut fresh: Vec<Row> = STAGES.iter().map(|n| Row { name: n.to_string(), mark: Mark::Waiting, took_ms: None, would: 0 }).collect();
+        merge(&mut fresh, &r.follow, 0);
+        assert_eq!(fresh[0].mark, Mark::Skipped, "a skip alone is never a tick");
+    }
+
+    #[test]
+    fn a_long_runs_tail_still_shows_its_end() {
+        let mut b = b"ress\",\"bytes\":5}\n".to_vec();
+        b.extend_from_slice(b"{\"event\":\"progress\",\"bytes\":9}\n{\"event\":\"end\",\"exit\":0}\n");
+        assert_eq!(scan_tail(&b, false), (None, true), "the line it began in is left out, the end found");
+        let mut whole = START.as_bytes().to_vec();
+        whole.extend_from_slice(b"\n{\"event\":\"stage\",\"stage\":\"partition\"}\n{\"event\":\"cmd\",\"st");
+        assert_eq!(scan_tail(&whole, true), (Some(4711), false), "its pid from start; a line being written isn't an end");
+    }
+
+    #[test]
+    fn the_boot_help_follows_the_plans_boot_mode() {
+        // holt's efi_vars on a UEFI start whose variables are read-only.
+        assert_eq!(boot_why(Some("uefi"), Some(false), "efi_vars"), (s::BOOT_WHY_READ_ONLY, s::BOOT_TODO_UEFI));
+        assert_eq!(boot_why(Some("uefi"), Some(true), "cmd_failed"), (s::BOOT_WHY_UEFI, s::BOOT_TODO_UEFI));
+        assert_eq!(boot_why(Some("bios"), Some(false), "efi_vars"), (s::BOOT_WHY_BIOS, s::BOOT_TODO_BIOS));
+        assert_eq!(boot_why(None, Some(false), "cmd_failed"), (s::BOOT_WHY_BIOS, s::BOOT_TODO_BIOS));
+    }
+
+    #[test]
+    fn only_the_disks_confirmed_are_written() {
+        let disk = |node: &str, size: u64, serial: Option<&str>| plan::Disk { node: node.into(), path: format!("/dev/{node}"), size_bytes: size, serial: serial.map(str::to_string), ..plan::Disk::default() };
+        let plan_of = |c: Vec<plan::Disk>| Plan {
+            disks: c.iter().map(|d| plan::Pair { source: plan::Source::default(), target: Some(plan::Target { node: d.node.clone(), writes: vec!["format".into()], ..plan::Target::default() }) }).collect(),
+            candidates: c,
+            ..Plan::default()
+        };
+        let confirmed = vec![disk("sd1", 12_884_901_888, Some("52fcb0b7cd1d05e5"))];
+        assert_eq!(same_disks(&confirmed, &plan_of(confirmed.clone()), false), Ok(()));
+        // Another disk at sd1: its size, then its serial.
+        let bigger = plan_of(vec![disk("sd1", 16_106_127_360, Some("52fcb0b7cd1d05e5"))]);
+        assert_eq!(same_disks(&confirmed, &bigger, false), Err(s::moved_what("sd1", s::WORD_SIZE)));
+        let other = plan_of(vec![disk("sd1", 12_884_901_888, Some("a0b1c2d3e4f50617"))]);
+        assert_eq!(same_disks(&confirmed, &other, false), Err(s::moved_what("sd1", s::WORD_SERIAL)));
+        // OpenBSD's DUID, written by the partition stage: once it is done.
+        assert_eq!(same_disks(&confirmed, &other, true), Ok(()));
+        assert!(same_disks(&confirmed, &bigger, true).is_err(), "the DUID only");
+        // A disk not confirmed, written: never.
+        let more = plan_of(vec![confirmed[0].clone(), disk("sd2", 12_884_901_888, None)]);
+        assert_eq!(same_disks(&confirmed, &more, false), Err(s::moved_new("sd2")));
+        assert_eq!(same_disks(&[], &plan_of(confirmed.clone()), false), Err(s::moved_new("sd1")), "nothing confirmed: nothing written");
+    }
+
+    #[test]
+    fn the_restore_screen_as_the_mock_draws_it() {
+        // rescue-screens.md, "9. Restore": four stages done, the copy
+        // running for 21 min, 62 %; no files count (progress has none).
+        let mut lines: Vec<(String, u64)> = vec![(START.to_string(), 0)];
+        let mut at = 0;
+        for (st, secs) in [("partition", 2), ("assemble", 9), ("format", 4), ("mount", 1)] {
+            lines.extend(stage(st, at, secs));
+            at += secs * 1000;
+        }
+        lines.push((r#"{"event":"stage","stage":"restore","commands":2}"#.to_string(), at));
+        lines.push((r#"{"event":"cmd","stage":"restore","n":1,"of":2,"kind":"run","argv":["/usr/bin/rustic-bko","restore","latest","/mnt/bko-target"],"why":"","archiver":{"part":1,"parts":1},"would":false}"#.to_string(), at));
+        lines.push((r#"{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":38200000000,"total_bytes":61200000000,"secs":1260,"errors":0}"#.to_string(), at + 1_260_000));
+        let l: Vec<(&str, u64)> = lines.iter().map(|(a, b)| (a.as_str(), *b)).collect();
+        let mut r = Restore::new(Vec::new(), &[]);
+        r.run = Some(run_of(&l, None, at + 21 * 60_000 + 30_000));
+        let mut p = progress_of(true, false, "lovelace");
+        p.text = screen_text(&r, &["cryptsetup".to_string()], true, "lovelace", false);
+        let f = &r.run.as_ref().unwrap().follow;
+        let fig = format!("{}   {}", f.figures().as_str(), s::minutes_left(14));
+        let mut d = crate::widgets::Dialog::progress(&p);
+        d.set_progress(None, f.pct(), Clean::line(&fig, cap::LINE));
+        let c = d.canvas();
+        let mut text = c.dump(crate::term::out::Lines::Utf8, true);
+        let screen: Vec<&str> = text.lines().take(24).collect();
+        for want in [
+            "  │   [x] Make partitions           2 s                                      │",
+            "  │   [>] Copy your files back      running for 21 min                       │",
+            "  │   [ ] Finish                                                             │",
+            "  │ Now: copying your files back.                                            │",
+            " l: log | Tab: to Cancel | Enter on Cancel: stop (asks first) | Esc: nothing",
+        ] {
+            assert!(screen.iter().any(|x| x.trim_end() == want.trim_end()), "{want}\n{}", screen.join("\n"));
+        }
+        // The gauge, its figures and Cancel are the widgets' own (their
+        // bar, `38.2 GB of 61.2 GB` and a padded button: w-progress.txt).
+        assert!(screen.iter().any(|x| x.contains("62 %")) && screen.iter().any(|x| x.contains("38.2 GB of 61.2 GB   about 14 min left")), "{}", screen.join("\n"));
+        assert!(screen[20].contains("Cancel") && screen[19].trim_matches(|c| c == ' ' || c == '│').is_empty(), "Cancel at the box's foot: {}", screen.join("\n"));
+        text.push_str(&c.dump(crate::term::out::Lines::Ascii, false).lines().take(24).collect::<Vec<_>>().join("\n"));
+        text.push('\n');
+        crate::testkit::golden("tests/screens/app-restore.txt", &text);
     }
 
     #[test]

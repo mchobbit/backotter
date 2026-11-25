@@ -994,6 +994,9 @@ pub struct Follow {
     pub cmds: Vec<Clean>,
     /// The "Now:" line: what the running command does.
     pub now: Option<Clean>,
+    /// The same without the command's place in its stage, as the
+    /// Restore's mock draws it ("Now: copying your files back.").
+    pub doing: Option<Clean>,
     /// The archiver's figures: bytes so far and the total, when known.
     pub bytes: Option<u64>,
     pub total: Option<u64>,
@@ -1281,6 +1284,7 @@ impl Follow {
                     s.from_ms = ms;
                 }
                 self.now = None;
+                self.doing = None;
                 self.bytes = None;
                 self.total = None;
                 self.part = None;
@@ -1328,6 +1332,7 @@ impl Follow {
                     self.cmds.push(Clean::line(&format!("{st}{at}: {}", words.join(" ")), cap::LOG_LINE));
                 }
                 let mut t = if would { format!("would run: {what}") } else { what };
+                self.doing = Some(Clean::line(&t, cap::LINE));
                 if let (Some(n), Some(of)) = (v.get_u64("n"), v.get_u64("of")) {
                     t.push_str(&format!(" (command {n} of {of} in this stage)"));
                 }
@@ -1361,6 +1366,7 @@ impl Follow {
             "stopping" => {
                 self.stopping = true;
                 self.now = Some(Clean::ours("stopping after the command now running"));
+                self.doing = self.now.clone();
             }
             "stage_done" => {
                 let checked = v.get_bool("checked");
@@ -1369,6 +1375,7 @@ impl Follow {
                     s.took_ms = Some(ms.saturating_sub(s.from_ms));
                 }
                 self.now = None;
+                self.doing = None;
             }
             "failed" => {
                 let text = Clean::text(v.get_str("text").unwrap_or("(no text)"), cap::PROBLEM);

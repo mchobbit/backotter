@@ -1673,6 +1673,56 @@ whole-disk md5 the same before and after, no partition record or lock.
   for its arguments only, never run (the pty tests aren't root, and a dry
   run is a direct child).
 
+**RT12 part 2's review (2026-11-25).**  Re-run on czerny and, end to end,
+on cinqcent (`real-dry-run.py` in debian13-stack's rescuer, bko-holt
+54fa2fbf from main: 92 commands would have run, boot's 22 and close's 10
+among them, exit 0, vdb, vdc, the decoy vdd and the stick image whole-disk
+md5 the same before and after, no partition record, no lock, no session
+left in `/run/bko-rescue`).  Fixed:
+
+- **Try again and Install without an entry wrote what wasn't confirmed.**
+  Each re-plans and runs under the new plan's hash, which never compared
+  the new plan's targets with the disks whose serials were typed: a disk
+  put in at a confirmed one's name (likely off Linux, where `--map` names
+  a node) would have been erased unconfirmed.  Review now keeps the disks
+  it confirmed (`App::confirmed`) and whether it erased them; the new plan
+  must write only those, each the same size, model, link and serial
+  (`restore.rs`, `same_disks`), else "the disks changed", whose fix is
+  Disks (the confirmations asked again), never a run.  On OpenBSD and
+  NetBSD the serial is the disklabel's DUID, which partition writes
+  (holt-json.md, "What RT10j found"): once partition is done there, it may
+  differ.  Try again's `--erase` is only for a Review that erased (never
+  Go on's).  Tests: the unit rules, and `app-rec-moved` (a 16.1 GB disk at
+  vdb after the boot stage failed) for both.
+- **The stage rows of a resume.**  Go on's Restore had the stages before
+  status's `next` unticked to Done; they are now as status says (done, or
+  `[-]`, never ticked otherwise), as Try again's are.  Start again's `--only
+  close` first no longer ticks Finish (its rows aren't merged when more
+  runs follow), and a later run's skip of a stage done earlier in the same
+  restore doesn't untick it.  Test: `app-rec-goon`, Go on's six runs to
+  Done.
+- **Principle 6:** `end` 0 with another exit status after a stop was asked
+  counted as through; it is Failure now (the first arm covers a stop that
+  came too late).
+- **A long run's tail:** an earlier bko-rescue's run is found running or
+  ended from its events' last 4 MiB, the line it begins in left out, by
+  its `start` and `end` alone (Follow's order checks failed there).
+- **Smaller:** the boot loader's help goes by the plan's `here.boot_mode`
+  (a UEFI start with read-only variables has words of its own,
+  `BOOT_WHY_READ_ONLY`); "stopped" says the copy was interrupted only when
+  it was; Try again with no `next` says so; its all-done Done keeps the
+  restore's time and log; dry Done no longer promises a log; Failure's
+  error lines keep their indent when wrapped; the Restore's "Now:" line is
+  the mock's, without the command's place (`Follow::doing`); the harness's
+  race (an earlier prompt taken for Done's) is anchored; a comment on a dry
+  run's child's group corrected.  The Restore screen has a golden
+  (`app-restore.txt`).
+- **Left as they are:** the gauge's bar width, its timer, `38.2 GB of 61.2
+  GB` and the padded `<  Cancel  >` are the widgets' own (w-progress.txt),
+  not the Restore's; an attached run's Done asks nothing about the stick
+  (its device isn't known without reading it, and asking on every
+  stick-less restore would be wrong).
+
 ## The app on top (later)
 
 Scoped here so the order is clear; each gets its design when it starts.

@@ -492,6 +492,7 @@ impl App {
         let mut seen: Vec<String> = Vec::new();
         let mut unshown: Vec<String> = Vec::new();
         let mut by_size: Option<String> = None;
+        let mut shown: Vec<plan::Disk> = Vec::new();
         for pair in &p.disks {
             let Some(t) = &pair.target else { continue };
             if seen.contains(&t.node) || !(go_on || again || t.will_erase || !t.writes.is_empty()) {
@@ -518,6 +519,7 @@ impl App {
             plain.push('\n');
             plain.push_str(&line);
             rows.push(row);
+            shown.push(c.clone());
         }
         if let Some(e) = &by_size {
             text.push_str("  ");
@@ -624,6 +626,8 @@ impl App {
                     }
                     self.serials = typed;
                     self.reviewed = self.runs_of(&l, &p.plan_sha256, open);
+                    self.confirmed = shown;
+                    self.confirmed_erase = !go_on;
                     return Go::To(Step::Restore);
                 }
                 Answer::Button(B_COMMANDS) => {

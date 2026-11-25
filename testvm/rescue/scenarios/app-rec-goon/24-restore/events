@@ -1,0 +1,17 @@
+# Built: the recorded restore stage alone.
+delay 0.01
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T22:01:04Z","pid":6393,"commit":true,"dry_run":false,"stages":["restore"],"stage_commands":{"restore":2},"plan_sha256":"d96eb1cb050075fea9a149802f66715587293889b6fbaa05015e53c0edfd54b1","log":"/run/bko-holt/log/load.log","layout":{"hostname":"debian13-stack","generated":"2026-11-24T21:58:37Z"}}
+{"event":"stage","stage":"restore","commands":2}
+{"event":"cmd","stage":"restore","n":1,"of":2,"kind":"run","argv":["/mnt/share/rustic-bko","--repository","/mnt/share/repo","--password-file","/run/ht1-keys/repo-password","--json-progress","--progress-interval","1s","restore","--numeric-id","latest:/mnt/ht1-src-debian13-stack-json","/mnt/bko-target"],"env":[["LC_ALL","C"],["RUSTIC_STRICT_EXIT","true"]],"why":"snapshot latest:/mnt/ht1-src-debian13-stack-json of /mnt/share/repo, with BackOtter's restore flags","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":{"part":1,"parts":1},"would":false}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":0,"total_bytes":710088947,"secs":0,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":161456393,"total_bytes":710088947,"secs":1,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":383191055,"total_bytes":710088947,"secs":2,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":542363456,"total_bytes":710088947,"secs":3,"errors":0}
+{"event":"progress","stage":"restore","n":1,"part":1,"parts":1,"bytes":710088947,"total_bytes":710088947,"secs":3,"errors":0}
+{"event":"warning","stage":"restore","n":1,"source":"archiver","text":"restore boot/efi/EFI/BOOT/BOOTX64.EFI: linux.inode_flags 0x40000000 not supported by the file system: Not a tty (os error 25)","item":"boot/efi/EFI/BOOT/BOOTX64.EFI"}
+{"event":"warning","stage":"restore","n":1,"source":"archiver","text":"linux.inode_flags 0x40000000 not supported by the file system: 28 files, the first boot/efi/EFI/BOOT/BOOTX64.EFI","item":null}
+{"event":"cmd_done","stage":"restore","n":1,"status":0,"signal":null,"secs":5.75}
+{"event":"cmd","stage":"restore","n":2,"of":2,"kind":"run","argv":["sh","-c","mkdir -p -m 700 /run/bko-holt && find /mnt/bko-target \\( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \\) -prune -o -printf '%A@\\t%p\\0' | LC_ALL=C sort -z > /run/bko-holt/atimes.before"],"env":[["LC_ALL","C"]],"why":"the atimes the restore set, for boot to put back after its reads","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"restore","n":2,"status":0,"signal":null,"secs":0.13}
+{"event":"stage_done","stage":"restore","secs":5.97,"checked":true}
+{"event":"end","exit":0,"stopped":false,"secs":20.1}

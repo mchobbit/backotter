@@ -1,0 +1,34 @@
+# Built: the recorded format stage alone.
+delay 0.01
+{"event":"start","format":"bko-holt-events","schema":1,"version":"0.2.6","generated":"2026-11-24T22:01:04Z","pid":6393,"commit":true,"dry_run":false,"stages":["format"],"stage_commands":{"format":14},"plan_sha256":"d96eb1cb050075fea9a149802f66715587293889b6fbaa05015e53c0edfd54b1","log":"/run/bko-holt/log/load.log","layout":{"hostname":"debian13-stack","generated":"2026-11-24T21:58:37Z"}}
+{"event":"stage","stage":"format","commands":14}
+{"event":"cmd","stage":"format","n":1,"of":14,"kind":"run","argv":["mkfs.fat","-F","32","-i","CB63556B","-S","512","-s","8","-f","2","-R","32","-h","2048","/dev/vdb1"],"env":[["LC_ALL","C"]],"why":"vda1: vfat","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":1,"status":0,"signal":null,"secs":0.02}
+{"event":"cmd","stage":"format","n":2,"of":14,"kind":"check","argv":[],"env":[],"why":null,"path":null,"dev":"/dev/vdb1","stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":2,"status":null,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"format","n":3,"of":14,"kind":"run","argv":["mkfs.fat","-F","32","-i","CB6387C8","-S","512","-s","8","-f","2","-R","32","-h","2048","/dev/vdc1"],"env":[["LC_ALL","C"]],"why":"vdb1: vfat","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":3,"status":0,"signal":null,"secs":0.02}
+{"event":"cmd","stage":"format","n":4,"of":14,"kind":"check","argv":[],"env":[],"why":null,"path":null,"dev":"/dev/vdc1","stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":4,"status":null,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"format","n":5,"of":14,"kind":"run","argv":["mke2fs","-F","-q","-t","ext4","-O","none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum","-U","79c8c44d-ecf8-4820-99ed-e89d3dc87864","-b","4096","-I","256","-N","65408","-g","32768","-G","16","-E","hash_seed=2b20e28e-9330-4925-8cad-750865ad0c23,desc_size=64,resize=268435456","/dev/md/0","1046528k"],"env":[["LC_ALL","C"]],"why":"md0: ext4","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":5,"status":0,"signal":null,"secs":0.02}
+{"event":"cmd","stage":"format","n":6,"of":14,"kind":"run","argv":["tune2fs","-r","13081","/dev/md/0"],"env":[["LC_ALL","C"]],"why":null,"path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":6,"status":0,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"format","n":7,"of":14,"kind":"check","argv":[],"env":[],"why":null,"path":null,"dev":"/dev/md/0","stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":7,"status":null,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"format","n":8,"of":14,"kind":"run","argv":["mke2fs","-F","-q","-t","ext4","-O","none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum","-U","3815065f-8ce6-4dda-bf14-89eae1c94f40","-b","4096","-I","256","-N","458752","-g","32768","-G","16","-E","hash_seed=0182be40-7330-41b9-acc1-6c28153e3b54,desc_size=64,resize=1879048192","/dev/mapper/debian13--stack--vg-root","7340032k"],"env":[["LC_ALL","C"]],"why":"dm-1: ext4","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":8,"status":0,"signal":null,"secs":0.1}
+{"event":"cmd","stage":"format","n":9,"of":14,"kind":"run","argv":["tune2fs","-r","91750","/dev/mapper/debian13--stack--vg-root"],"env":[["LC_ALL","C"]],"why":null,"path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":9,"status":0,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"format","n":10,"of":14,"kind":"check","argv":[],"env":[],"why":null,"path":null,"dev":"/dev/mapper/debian13--stack--vg-root","stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":10,"status":null,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"format","n":11,"of":14,"kind":"run","argv":["mkfs.xfs","-f","-m","crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=7e0fce24-67dc-4662-849b-0ba5ce532f78,metadir=0","-i","sparse=1,nrext64=1,size=512,exchange=0,maxpct=25","-n","ftype=1,size=4096,parent=0","-b","size=4096","-s","size=512","-d","size=2147483648,agsize=536870912","-l","lazy-count=1,size=78794752","/dev/mapper/debian13--stack--vg-srv"],"env":[["LC_ALL","C"]],"why":"dm-2: xfs","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":11,"status":0,"signal":null,"secs":0.09}
+{"event":"cmd","stage":"format","n":12,"of":14,"kind":"check","argv":[],"env":[],"why":null,"path":null,"dev":"/dev/mapper/debian13--stack--vg-srv","stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":12,"status":null,"signal":null,"secs":0.0}
+{"event":"cmd","stage":"format","n":13,"of":14,"kind":"run","argv":["mkswap","-U","4b70cc66-af44-40ba-b6ce-ac0483b44744","--pagesize","4096","/dev/mapper/debian13--stack--vg-swap_1"],"env":[["LC_ALL","C"]],"why":"dm-3: swap","path":null,"dev":null,"stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":13,"status":0,"signal":null,"secs":0.01}
+{"event":"cmd","stage":"format","n":14,"of":14,"kind":"check","argv":[],"env":[],"why":null,"path":null,"dev":"/dev/mapper/debian13--stack--vg-swap_1","stdin_bytes":null,"private":false,"archiver":null,"would":false}
+{"event":"cmd_done","stage":"format","n":14,"status":null,"signal":null,"secs":0.0}
+{"event":"stage_done","stage":"format","secs":0.42,"checked":true}
+{"event":"end","exit":0,"stopped":false,"secs":20.1}

@@ -840,7 +840,7 @@ pub fn remove_stick(name: &str) -> String {
     format!("Remove the stick, then press Enter to restart into {name}.")
 }
 pub fn dry_done(n: usize) -> String {
-    format!("Nothing was written: {n} command{} would have run, and none did.  Your disks are as they were.\n\nShow the commands lists them, in order.  This dry run's log stays in this computer's memory: nothing goes to the stick either.", if n == 1 { "" } else { "s" })
+    format!("Nothing was written: {n} command{} would have run, and none did.  Your disks are as they were.\n\nShow the commands lists them, in order.  They are in this computer's memory only, until you leave: nothing goes to the stick either.", if n == 1 { "" } else { "s" })
 }
 pub const BTN_RESTART: &str = "Restart";
 pub const BTN_POWER_OFF: &str = "Power off";
@@ -893,6 +893,26 @@ pub fn checks_stopped(text: &str) -> String {
 pub fn ended_with(what: &str, status: &str) -> String {
     format!("{what} ({status}).")
 }
+pub const NO_NEXT_TITLE: &str = "Nothing to try again";
+pub const NO_NEXT: &str = "bko-holt's status names no stage to run next, and doesn't say the restore is done.  The shell has the disks as they are; a report says what bko-holt found.";
+// Try again's and Install without an entry's new plan, against the disks
+// confirmed on Review.
+pub const MOVED_TITLE: &str = "the disks changed";
+pub const WORD_SIZE: &str = "size";
+pub const WORD_MODEL: &str = "model";
+pub const WORD_LINK: &str = "link in /dev";
+pub const WORD_SERIAL: &str = "serial";
+pub fn moved_what(node: &str, what: &str) -> String {
+    format!("bko-holt's new plan writes {node}, but its {what} isn't that of the disk you confirmed on Review.")
+}
+pub fn moved_new(node: &str) -> String {
+    format!("bko-holt's new plan writes {node}, which you didn't confirm on Review.")
+}
+pub fn moved_unknown(node: &str) -> String {
+    format!("bko-holt's new plan writes {node}, which isn't among the disks found here.")
+}
+pub const MOVED_WHY: &str = "Try again writes only the disks whose confirmation you typed, as they were then.  Another disk may have taken one's name, or a disk was added or taken out.";
+pub const MOVED_TODO: &str = "Go back to Disks, choose the disks again, and confirm them on Review.  Nothing more was written.";
 pub const ATTACHED_NO_RETRY: &str = "This restore was started by an earlier bko-rescue, so it can't be tried again from here: start again from the first screen.";
 
 // ---- A stage's command failed: the help ----
@@ -905,6 +925,7 @@ pub fn boot_what(prog: &str, name: &str) -> String {
 }
 pub const BOOT_WHY_UEFI: &str = "the stick was started in UEFI mode, so the list can be written, but this computer refused the new entry.  Some computers do.";
 pub const BOOT_TODO_UEFI: &str = "put the boot loader where every UEFI computer looks for it by itself, with no entry in the list.  It starts the same way.";
+pub const BOOT_WHY_READ_ONLY: &str = "the stick was started in UEFI mode, but this computer's list can't be written from here: its UEFI variables are read-only.";
 pub const BOOT_WHY_BIOS: &str = "the stick was started in the older BIOS mode, where that list can't be written.";
 pub const BOOT_TODO_BIOS: &str = "put the boot loader where every UEFI computer looks for it by itself, with no entry in the list.  Or restart, and press F12, F11, F8 or Esc while the maker's logo shows; pick the stick's entry with UEFI in its name.  You will be asked again for the machine, the keyboard, the backup password, the backup, the disks and the passphrase, and the files are copied again.";
 pub const NO_ENTRY_TITLE: &str = "Install without an entry?";
@@ -923,7 +944,9 @@ pub const LOCK_WHY: &str = "Only one restore runs at a time: two would write the
 pub const LOCK_TODO: &str = "Wait for it to end, or look in the shell: its pid is in /run/bko-holt/load.lock.";
 pub const STOPPED_TITLE: &str = "the restore was stopped";
 pub const STOPPED_WHAT: &str = "you stopped the restore.";
-pub const STOPPED_WHY: &str = "the command that was running was let finish (the copy of your files was interrupted), and nothing ran after it.";
+pub fn stopped_why(copying: bool) -> String {
+    format!("the command that was running was let finish{}, and nothing ran after it.", if copying { " (the copy of your files was interrupted)" } else { "" })
+}
 pub const STOPPED_TODO: &str = "Try again goes on from where it stopped, while this computer stays on.";
 pub const CHECKS_TITLE: &str = "bko-holt's checks stopped it";
 pub const CHECKS_WHY: &str = "bko-holt checks everything before it writes anything, and stops at the first thing it can't do as the backup was.";
@@ -1062,7 +1085,7 @@ pub const ALL: &[&str] = &[
     RESTORE_AFTER, DRY_AFTER, RESTORE_KEYS, BTN_CANCEL, BTN_STOP_PLAIN, BTN_LOG, NOW_STARTING, NOW_STOPPING, NOW_BETWEEN, NOTHING_TO_DO, FAILED_WORD, STOPPED_WORD, LESS_THAN_A_MINUTE, STOP_TITLE, DRY_STOP_TITLE, DRY_STOP_TEXT, BTN_KEEP_GOING, BTN_STOP, STOP_KEYS, STOP_FAILED_TITLE, STOP_NO_PID, STOP_NO_LOCK, STOP_LOCK_OTHER, STOP_NOT_SENT, LOG_TITLE, DRY_LOG_TITLE, LOG_NONE,
     DONE_PASSPHRASE, AFTER_FIRST, LOG_NO_HOLT_LOG, LOG_NO_FOLDER, LOG_NOT_READ, BTN_RESTART, BTN_POWER_OFF, BTN_RESTART_ANYWAY, BTN_SHOW_COMMANDS, BTN_LEAVE, DONE_KEYS, DRY_DONE_KEYS, STICK_IN_TITLE, STICK_IN, OFF_FAILED_TITLE,
     STOPPED_EARLY, STOPPED_BY_YOU, BTN_HELP, FAILURE_KEYS, POWER_OFF_TITLE, POWER_OFF_TEXT, NOT_STARTED, BAD_EVENTS, NO_END, NOT_ASKED, UNCLEAR, ATTACHED_NO_RETRY,
-    BTN_NO_ENTRY, BTN_PASSPHRASE_AGAIN, HELP_KEYS, BOOT_TITLE, BOOT_WHY_UEFI, BOOT_TODO_UEFI, BOOT_WHY_BIOS, BOOT_TODO_BIOS, NO_ENTRY_TITLE, NO_ENTRY_TEXT, PASSPHRASE_TITLE_HELP, PASSPHRASE_WHAT, PASSPHRASE_WHY, PASSPHRASE_TODO, COPY_TITLE, COPY_WHAT, COPY_WHY, COPY_TODO, LOCK_TITLE, LOCK_WHAT, LOCK_WHY, LOCK_TODO, STOPPED_TITLE, STOPPED_WHAT, STOPPED_WHY, STOPPED_TODO, CHECKS_TITLE, CHECKS_WHY, CHECKS_TODO, GENERAL_TITLE, GENERAL_WHY, GENERAL_TODO, REPORT_TODO, RAW_FAILED_TITLE, RAW_TAIL, RAW_STDERR, EARLIER_TITLE, BTN_FOLLOW,
+    BTN_NO_ENTRY, BTN_PASSPHRASE_AGAIN, HELP_KEYS, BOOT_TITLE, BOOT_WHY_UEFI, BOOT_TODO_UEFI, BOOT_WHY_BIOS, BOOT_TODO_BIOS, NO_ENTRY_TITLE, NO_ENTRY_TEXT, PASSPHRASE_TITLE_HELP, PASSPHRASE_WHAT, PASSPHRASE_WHY, PASSPHRASE_TODO, COPY_TITLE, COPY_WHAT, COPY_WHY, COPY_TODO, LOCK_TITLE, LOCK_WHAT, LOCK_WHY, LOCK_TODO, STOPPED_TITLE, STOPPED_WHAT, BOOT_WHY_READ_ONLY, NO_NEXT_TITLE, NO_NEXT, MOVED_TITLE, WORD_SIZE, WORD_MODEL, WORD_LINK, WORD_SERIAL, MOVED_WHY, MOVED_TODO, STOPPED_TODO, CHECKS_TITLE, CHECKS_WHY, CHECKS_TODO, GENERAL_TITLE, GENERAL_WHY, GENERAL_TODO, REPORT_TODO, RAW_FAILED_TITLE, RAW_TAIL, RAW_STDERR, EARLIER_TITLE, BTN_FOLLOW,
 ];
 
 #[cfg(test)]

@@ -250,6 +250,11 @@ pub struct App {
     /// one, or Start again's (J14) `--only close` when anything is open,
     /// `--only partition`, `--through close`.  Empty: none yet.
     pub(crate) reviewed: Vec<holt_args::Load>,
+    /// The disks whose confirmation was typed on Review, as its plan
+    /// named them, and whether that Review erased them (not Go on's):
+    /// Try again and Install without an entry write only these.
+    pub(crate) confirmed: Vec<plan::Disk>,
+    pub(crate) confirmed_erase: bool,
     /// Why the Disks overview didn't go on, for its notice.
     pub(crate) disks_notice: Option<String>,
     /// The keyboard at start-up was offered.
@@ -308,6 +313,8 @@ impl App {
             pass_round: None,
             serials: Vec::new(),
             reviewed: Vec::new(),
+            confirmed: Vec::new(),
+            confirmed_erase: false,
             disks_notice: None,
             boot_offered: false,
             run_dir: None,
@@ -618,6 +625,7 @@ impl App {
         self.pass_round = None;
         self.serials.clear();
         self.reviewed.clear();
+        self.confirmed.clear();
         self.disks_notice = None;
         // Another machine's start-up prompt, or the same one's again.
         self.boot_offered = false;

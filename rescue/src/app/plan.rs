@@ -226,6 +226,9 @@ pub struct Plan {
     /// This computer was started in UEFI mode and its variables can be
     /// written (`here.efivars`); None when the plan doesn't say.
     pub efivars: Option<bool>,
+    /// The mode this computer was started in (`here.boot_mode`: `uefi`,
+    /// `bios`), when the plan says.
+    pub boot_mode: Option<String>,
     /// The programs the assemble stage runs (the Restore's label for it).
     pub assemble: Vec<String>,
     pub reformat: Vec<Reformat>,
@@ -395,6 +398,7 @@ pub fn read_plan(v: &Value) -> Result<Plan, String> {
         keys,
         tokens: v.arr_at(&["tokens"]).iter().map(|t| (st(t, "container").unwrap_or_default(), st(t, "kind").unwrap_or_default())).collect(),
         efivars: v.at(&["here", "efivars"]).and_then(Value::as_bool),
+        boot_mode: v.at(&["here", "boot_mode"]).and_then(Value::as_str).map(str::to_string),
         assemble: v
             .arr_at(&["stages"])
             .iter()

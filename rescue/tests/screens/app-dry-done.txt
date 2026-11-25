@@ -12,8 +12,8 @@
   │ Nothing was written: 92 commands would have run, and none did.  Your     │  
   │ disks are as they were.                                                  │  
   │                                                                          │  
-  │ Show the commands lists them, in order.  This dry run's log stays in     │  
-  │ this computer's memory: nothing goes to the stick either.                │  
+  │ Show the commands lists them, in order.  They are in this computer's     │  
+  │ memory only, until you leave: nothing goes to the stick either.          │  
   │                                                                          │  
   │        < Show the commands >    < Leave bko-rescue >    < Shell >        │  
   └──────────────────────────────────────────────────────────────────────────┘  
@@ -66,8 +66,8 @@ s 0;40
   | Nothing was written: 92 commands would have run, and none did.  Your     |  
   | disks are as they were.                                                  |  
   |                                                                          |  
-  | Show the commands lists them, in order.  This dry run's log stays in     |  
-  | this computer's memory: nothing goes to the stick either.                |  
+  | Show the commands lists them, in order.  They are in this computer's     |  
+  | memory only, until you leave: nothing goes to the stick either.          |  
   |                                                                          |  
   |        < Show the commands >    < Leave bko-rescue >    < Shell >        |  
   +--------------------------------------------------------------------------+  

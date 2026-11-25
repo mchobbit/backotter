@@ -52,6 +52,11 @@ Review screens (rescue-tui.md, RT12), written into scenarios/:
                      (wrong on purpose: bko-rescue stops it at once)
   app-rec-stop       the same, the copy waiting 30 s, for Cancel and Stop;
                      stopped.events is the stream fake-bko-holt then ends
+  app-rec-moved      app-rec-fail, its Try again's and Install without an
+                     entry's plans with vdb another disk (16.1 GB, not the
+                     12.9 GB confirmed): bko-rescue writes nothing more
+  app-rec-goon       app-rec-debian13 gone on with: each stage from status's
+                     next (assemble) to close alone, to Done
 
 The hand-written documents are what bko-holt would write for those disks,
 by fit's own rules (a margin of max(1 GiB, 5 % of the space used), the most
@@ -429,6 +434,57 @@ def restores():
     open(os.path.join(SC, scen, "README"), "w").write(readme + "Stopped in the copy; stopped.events is the stream as the fake ends it then.\n")
 
 
+def moved_plan():
+    """The recorded plan with another disk at vdb: 16.1 GB, where the one
+    confirmed on Review was 12.9 GB (a disk taken out and another put in, the
+    kernel giving it the same name)."""
+    p = rec_plan()
+    new = 16_106_127_360
+    for c in p["candidates"]:
+        if c["node"] == "vdb":
+            c["size_bytes"] = new
+    for d in p["disks"]:
+        if d["target"] and d["target"]["node"] == "vdb":
+            d["target"]["size_bytes"] = new
+    p["plan_sha256"] = sha(7)
+    return p
+
+
+def moved():
+    readme = ("Built by ../../make-disk-fixtures.py from rec-debian13-stack's recorded documents:\n"
+              "app-rec-fail, its Try again's and Install without an entry's plans with vdb\n"
+              "another disk (16.1 GB, not the 12.9 GB confirmed on Review).  bko-rescue runs\n"
+              "nothing more: 31-boot and the rest are never answered.\n")
+    scen = "app-rec-moved"
+    restore_base(scen)
+    write(scen, "20-restore", load("close", KEY, MAPS, 2, commit=True), exit=1,
+          events=stream(failed_boot(), "Built: the recorded stages through the copy, then grub-install fails in boot (cmd_failed), end 1."),
+          stderr="bko-holt load: boot: grub-install failed (exit status: 1)\n")
+    write(scen, "13-plan", load("plan", KEY, MAPS, 0), moved_plan())
+    write(scen, "30-status", load("status", KEY, MAPS, 0), status_after_restore())
+    write(scen, "33-plan", load("plan", KEY, MAPS, 0, removable=True), moved_plan())
+    open(os.path.join(SC, scen, "README"), "w").write(readme)
+
+
+def goon():
+    """app-rec-debian13 gone on with: status's next is assemble, so each
+    stage from it to close alone (--only STAGE --commit), to Done."""
+    scen = "app-rec-goon"
+    fresh(scen)
+    src = os.path.join(SC, "app-rec-debian13")
+    for c in sorted(os.listdir(src)):
+        if os.path.isdir(os.path.join(src, c)):
+            copy_call("app-rec-debian13", c, scen, c)
+        elif c != "README":
+            shutil.copy(os.path.join(src, c), os.path.join(SC, scen, c))
+    for n, st in enumerate(STAGES[1:], 21):
+        write(scen, "%02d-%s" % (n, st), load("only-" + st, KEY, MAPS, 0, commit=True),
+              events=stream(one_stage(st), "Built: the recorded %s stage alone." % st))
+    open(os.path.join(SC, scen, "README"), "w").write(
+        "Built by ../../make-disk-fixtures.py: app-rec-debian13's recorded documents, and Go on's\n"
+        "runs, each recorded stage from assemble to close alone, to Done.\n")
+
+
 # ---- lovelace: hand-written by fit's rules ---------------------------------
 
 SAMSUNG = 500_107_862_016
@@ -759,3 +815,5 @@ if __name__ == "__main__":
     lovelace("app-lovelace-unshown", review=unshown)
     rec_again()
     restores()
+    moved()
+    goon()

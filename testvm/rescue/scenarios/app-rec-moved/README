@@ -1,0 +1,4 @@
+Built by ../../make-disk-fixtures.py from rec-debian13-stack's recorded documents:
+app-rec-fail, its Try again's and Install without an entry's plans with vdb
+another disk (16.1 GB, not the 12.9 GB confirmed on Review).  bko-rescue runs
+nothing more: 31-boot and the rest are never answered.

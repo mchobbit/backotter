@@ -1,0 +1,78 @@
+ BackOtter rescue                                                        Restore
+                                                                                
+  ┌─────────────────────────── Restoring lovelace ───────────────────────────┐  
+  │                                                                          │  
+  │   [x] Make partitions           2 s                                      │  
+  │   [x] Set up encryption         9 s                                      │  
+  │   [x] Make filesystems          4 s                                      │  
+  │   [x] Ready the filesystems     1 s                                      │  
+  │   [>] Copy your files back      running for 21 min                       │  
+  │   [ ] Make it bootable                                                   │  
+  │   [ ] Finish                                                             │  
+  │                                                                          │  
+  │ Now: copying your files back.                                            │  
+  │                                                                          │  
+  │ [                                        ]  62 %                         │  
+  │ 38.2 GB of 61.2 GB   about 14 min left                              0:00 │  
+  │                                                                          │  
+  │ Leave the computer on, with the stick and the network cable in, until    │  
+  │ this says Done.  You can walk away.                                      │  
+  │                                                                          │  
+  │                               <  Cancel  >                               │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+ l: log | Tab: to Cancel | Enter on Cancel: stop (asks first) | Esc: nothing    
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbdddrrrrrrrrrrrrrrrrrrrrrrrrdddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+b 0;37;44
+d 0;30;47
+r 0;7;30;47
+s 0;40
+ BackOtter rescue                                                        Restore
+                                                                                
+  +--------------------------- Restoring lovelace ---------------------------+  
+  |                                                                          |  
+  |   [x] Make partitions           2 s                                      |  
+  |   [x] Set up encryption         9 s                                      |  
+  |   [x] Make filesystems          4 s                                      |  
+  |   [x] Ready the filesystems     1 s                                      |  
+  |   [>] Copy your files back      running for 21 min                       |  
+  |   [ ] Make it bootable                                                   |  
+  |   [ ] Finish                                                             |  
+  |                                                                          |  
+  | Now: copying your files back.                                            |  
+  |                                                                          |  
+  | [                                        ]  62 %                         |  
+  | 38.2 GB of 61.2 GB   about 14 min left                              0:00 |  
+  |                                                                          |  
+  | Leave the computer on, with the stick and the network cable in, until    |  
+  | this says Done.  You can walk away.                                      |  
+  |                                                                          |  
+  |                               <  Cancel  >                               |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+ l: log | Tab: to Cancel | Enter on Cancel: stop (asks first) | Esc: nothing    

@@ -7856,7 +7856,12 @@ fn snapcore_refusals() {
     let from = c[..at].rfind("\"size_bytes\":37748736").unwrap();
     let v = crate::json::parse(&format!("{}\"size_bytes\":{}{}", &c[..from], 40u64 << 20, &c[from + "\"size_bytes\":37748736".len()..])).unwrap();
     let p = snapcore_plan(&v, &[]).problems;
-    assert!(p.iter().any(|x| x.starts_with("Ubuntu Core: ubuntu-seed (vda2) would be 40 MiB instead of the gadget's 36 MiB")), "{p:?}");
+    assert!(p.iter().any(|x| x.starts_with("Ubuntu Core: ubuntu-seed (vda2) would be 41943040 bytes (40 MiB, 4 MiB bigger) instead of the gadget's 37748736 bytes: only ubuntu-data")), "{p:?}");
+    // A few sectors less (BackShot2's uc24 cases of 2026-11-25 read "750 MiB
+    // instead of the gadget's 750 MiB"): the exact bytes.
+    let v = crate::json::parse(&format!("{}\"size_bytes\":{}{}", &c[..from], (36u64 << 20) - 17 * 512, &c[from + "\"size_bytes\":37748736".len()..])).unwrap();
+    let p = snapcore_plan(&v, &[]).problems;
+    assert!(p.iter().any(|x| x.starts_with("Ubuntu Core: ubuntu-seed (vda2) would be 37740032 bytes (36 MiB, 8.5 KiB smaller) instead of the gadget's 37748736 bytes")), "{p:?}");
 }
 
 // ---- Qubes OS 4.3 -----------------------------------------------------------

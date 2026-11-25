@@ -43,6 +43,15 @@ pub fn part<'a>(sc: &'a Value, r: &str) -> Option<&'a Value> {
     sc.get("partitions").and_then(Value::as_array)?.iter().find(|p| p.get("role").and_then(Value::as_str) == Some(r))
 }
 
+/// "would be NOW bytes (HOW MUCH smaller or bigger)": exact, so that a change
+/// of a few sectors never reads "750 MiB instead of the gadget's 750 MiB".
+fn size_change(now: Option<u64>, was: u64) -> String {
+    match now {
+        None => "would have no size the layout says".into(),
+        Some(n) => format!("would be {n} bytes ({}, {} {})", crate::report::human(n), crate::report::human(n.abs_diff(was)), if n < was { "smaller" } else { "bigger" }),
+    }
+}
+
 /// The recovery system --new-machine boots recover mode of, and why.
 ///
 /// U1 found that recover mode of the image's system (`20240603`, its kernel
@@ -182,8 +191,10 @@ impl Builder<'_> {
             let dev = s(p, "device").unwrap_or_default();
             let was = p.get("size_bytes").and_then(Value::as_u64);
             let now = self.layout.device(&dev).and_then(|v| v.get("size_bytes")).and_then(Value::as_u64);
-            if r.name != "data" && was.is_some() && now != was {
-                self.problems.push(format!("Ubuntu Core: {} ({dev}) would be {} instead of the gadget's {}: only ubuntu-data may change size (--fit-largest)", r.partlabel, now.map(crate::report::human).unwrap_or("?".into()), was.map(crate::report::human).unwrap_or_default()));
+            if let (true, Some(was)) = (r.name != "data", was) {
+                if now != Some(was) {
+                    self.problems.push(format!("Ubuntu Core: {} ({dev}) {} instead of the gadget's {was} bytes: only ubuntu-data may change size (--fit-largest)", r.partlabel, size_change(now, was)));
+                }
             }
             if p.get("encrypted") == Some(&Value::Bool(true)) && crate::luksheader::kept(&self.layout.v, &dev).is_none() {
                 self.problems.push(format!(

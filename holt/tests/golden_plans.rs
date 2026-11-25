@@ -156,6 +156,8 @@ struct Entry {
     grow: u64,
     /// The variant's own arguments to load (+reformat-TYPE's --reformat /=TYPE).
     extra: Vec<String>,
+    /// +espfmt: the dump with its ESPs unimaged (espfmt()).
+    unimaged: bool,
 }
 
 impl Entry {
@@ -206,7 +208,7 @@ fn entries(corpus: &Path) -> Result<Vec<Entry>, String> {
         guests.push(name);
     }
     guests.sort();
-    let mut out: Vec<Entry> = guests.iter().map(|g| Entry { name: g.clone(), dump: corpus.join(g).join("src.json"), plan: corpus.join(g).join("plan.txt"), grow: 0, extra: vec![] }).collect();
+    let mut out: Vec<Entry> = guests.iter().map(|g| Entry { name: g.clone(), dump: corpus.join(g).join("src.json"), plan: corpus.join(g).join("plan.txt"), grow: 0, extra: vec![], unimaged: false }).collect();
     let listed = match std::fs::read_to_string(corpus.join("variants.txt")) {
         Ok(text) => text.lines().map(|l| l.split('#').next().unwrap_or("").trim().to_string()).filter(|l| !l.is_empty()).collect(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -223,7 +225,7 @@ fn entries(corpus: &Path) -> Result<Vec<Entry>, String> {
             continue;
         };
         let (grow, extra) = match v {
-            "bigger" => (BIGGER, vec![]),
+            "bigger" | "espfmt" => (if v == "bigger" { BIGGER } else { 0 }, vec![]),
             // A tree whose load has no --reformat (the #16 replay's older
             // ones) can't plan these: they're skipped, not failed.
             "reformat-xfs" | "reformat-ext4" | "reformat-btrfs" if !bko_holt::load::USAGE.contains("--reformat") => {
@@ -232,7 +234,7 @@ fn entries(corpus: &Path) -> Result<Vec<Entry>, String> {
             }
             "reformat-xfs" | "reformat-ext4" | "reformat-btrfs" => (0, vec!["--reformat".to_string(), format!("/={}", &v["reformat-".len()..])]),
             _ => {
-                bad.push(format!("variants.txt: {l}: only +bigger and +reformat-TYPE have golden plans (+oneshot plans as its guest does)"));
+                bad.push(format!("variants.txt: {l}: only +bigger, +espfmt and +reformat-TYPE have golden plans (+oneshot plans as its guest does)"));
                 continue;
             }
         };
@@ -241,7 +243,7 @@ fn entries(corpus: &Path) -> Result<Vec<Entry>, String> {
             continue;
         }
         let d = corpus.join(g);
-        out.push(Entry { name: l.clone(), dump: d.join("src.json"), plan: d.join(format!("plan+{v}.txt")), grow, extra });
+        out.push(Entry { name: l.clone(), dump: d.join("src.json"), plan: d.join(format!("plan+{v}.txt")), grow, extra, unimaged: v == "espfmt" });
     }
     for k in kept.iter().filter(|k| !listed.contains(k)) {
         let (g, v) = k.split_once('+').unwrap_or((k, ""));
@@ -256,10 +258,50 @@ fn entries(corpus: &Path) -> Result<Vec<Entry>, String> {
 
 /// The plan of one entry, as plan.txt holds it, and its invariants.
 fn plan_entry(e: &Entry) -> Result<(String, Check), String> {
-    let text = std::fs::read_to_string(&e.dump).map_err(|x| format!("{}: {x}", e.dump.display()))?;
+    let mut text = std::fs::read_to_string(&e.dump).map_err(|x| format!("{}: {x}", e.dump.display()))?;
+    if e.unimaged {
+        text = espfmt(&text).map_err(|x| format!("{}: {x}", e.name))?;
+    }
     let dump = json::parse(&text).map_err(|x| format!("{}: not JSON: {}", e.dump.display(), x.message))?;
     let p = if e.extra.is_empty() { common::plan(&text, e.grow)? } else { common::plan_onto(&text, &|_, size| size + e.grow, &e.extra)? };
     Ok((common::golden_text(&p), invariants(&dump, &p)))
+}
+
+/// +espfmt's dump: GUEST's, with each ESP the dump imaged (esp_image)
+/// as `bko-holt dump` records one it doesn't (other/mod.rs esp_image: over
+/// 64 MiB of data, esp_image_too_big; also over 4 GiB, or mounted), so
+/// load formats it instead of writing it with the partition table.  A dump
+/// with no imaged ESP is an error: the variant would plan nothing new.
+fn espfmt(text: &str) -> Result<String, String> {
+    let mut v = json::parse(text).map_err(|x| format!("not JSON: {}", x.message))?;
+    let mut n = 0;
+    if let Value::Obj(top) = &mut v {
+        for (_, storage) in top.iter_mut().filter(|(k, _)| k == "storage") {
+            let Value::Obj(st) = storage else { continue };
+            for (_, disks) in st.iter_mut().filter(|(k, _)| k == "disks") {
+                let Value::Arr(disks) = disks else { continue };
+                for d in disks.iter_mut() {
+                    let Value::Obj(d) = d else { continue };
+                    for (_, parts) in d.iter_mut().filter(|(k, _)| k == "partitions") {
+                        let Value::Arr(parts) = parts else { continue };
+                        for p in parts.iter_mut() {
+                            let Value::Obj(p) = p else { continue };
+                            let before = p.len();
+                            p.retain(|(k, _)| k != "esp_image");
+                            if p.len() < before {
+                                p.push(("esp_image_too_big".to_string(), Value::Bool(true)));
+                                n += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if n == 0 {
+        return Err("+espfmt: the dump has no ESP image (esp_image) to leave out".into());
+    }
+    Ok(v.compact())
 }
 
 /// How a plan differs from the one kept.

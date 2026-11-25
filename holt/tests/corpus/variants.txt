@@ -18,3 +18,9 @@ omarchy+reformat-ext4
 omarchy+reformat-xfs
 tumbleweed+reformat-ext4
 void-musl+reformat-xfs
+# +espfmt plans GUEST's dump with its ESPs as the dump records one it
+# doesn't image (esp_image_too_big: over 64 MiB of data; or over 4 GiB, or
+# mounted), so load formats each instead of writing it with the table:
+# golden-only, not HoltTest2 cells.  omnios58 is BIOS, oi2610 UEFI.
+omnios58+espfmt
+oi2610+espfmt

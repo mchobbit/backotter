@@ -14,6 +14,7 @@ some are not sources yet, and golden_plans.rs logs each source with no dump
 | `GUEST/src.json` | The source dump, redacted (below) |
 | `GUEST/plan.txt` | Its golden plan: load's standard output, golden_plans.rs's `status` lines (what `status` looks for after each stage: what load builds but never prints), then its line with the exit status and standard error |
 | `GUEST/plan+bigger.txt` | The plan onto targets 1 GiB bigger, for the guests in `variants.txt` |
+| `GUEST/plan+espfmt.txt` | The plan of the dump with each ESP unimaged (`esp_image_too_big` for its `esp_image`), so load formats it: `omnios58`, `oi2610` (`variants.txt`; golden-only) |
 | `GUEST/plan.json` | The same plan as `bko-holt load --json`'s plan document (docs/design/holt-json.md), pretty-printed, its `generated`, `version` and `plan_sha256` replaced; `holt/tests/plan_json.rs` holds it, its `text` to `plan.txt`'s, and its schema (`BKO_HOLT_JSON_GOLDEN=bless` writes it, on Linux) |
 | `variants.txt` | The variant plans: `aerynos+bigger`, `debian13-stack+bigger`, `mint22+bigger` (classes.json's `holt.variants.bigger`) |
 | `index.tsv` | A row per dump: where it came from, and what the build did to it |

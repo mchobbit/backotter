@@ -1273,6 +1273,110 @@ mod tests {
         assert_eq!(v2.get_bool("ok"), Some(true));
     }
 
+    /// A BIOS dump of two 4 GiB disks, vda and vdb, each with one
+    /// partition (vda1, vdb1) holding VDA1 and VDB1, and STORAGE's other
+    /// fields (md_arrays, dm_devices, fstab, crypttab).
+    fn two_disks(vda1: &str, vdb1: &str, storage: &str) -> String {
+        let disk = |n: &str, sig: &str, content: &str| {
+            format!(
+                r#"{{"name": "{n}", "kind": "disk", "size_bytes": 4294967296, "logical_sector_size": 512, "model": null, "serial": null, "wwid": null,
+                  "partition_table": {{"type": "dos", "sector_size": 512, "disk_signature": "{sig}"}},
+                  "partitions": [{{"name": "{n}1", "number": 1, "start_lba": 2048, "sectors": 8386560, "type": "0x83", "bootable": true, "content": {content}}}],
+                  "content": null, "boot_code": {{"kind": "grub2"}}}}"#
+            )
+        };
+        format!(
+            r#"{{"format": "bko-holt", "schema": 1, "privileged": true, "host": {{"hostname": "two"}}, "os": {{"id": "debian", "version_id": "13"}}, "firmware": {{"mode": "bios"}},
+              "storage": {{"disks": [{}, {}], "lvm": {{"volume_groups": []}}, "zfs": {{"pools_from_labels": [], "tools": null}}, "btrfs": [], "xfs_external_logs": [], "mounts": [], "swaps": [], {storage}}},
+              "boot": {{"loader": {{"name": "grub", "firmware": "bios", "via_shim": false}}, "efi": null, "grub": {{"debconf": {{"grub-pc/install_devices": "/dev/disk/by-id/virtio-x"}}}},
+                       "kernels": {{"installed": [{{"version": "6.12.48+deb13-amd64", "running": true}}]}}}}}}"#,
+            disk("vda", "1f2e3d4c", vda1),
+            disk("vdb", "1f2e3d4d", vdb1)
+        )
+    }
+
+    /// An ext4 of UUID U, as the sample's.
+    fn ext4(u: &str) -> String {
+        format!(
+            r#"{{"type": "ext4", "usage": "filesystem", "uuid": "{u}", "label": null, "block_size": 4096, "inode_size": 256, "inodes": 61056, "blocks_per_group": 32768,
+               "features": ["has_journal", "ext_attr", "resize_inode", "dir_index", "filetype", "extent", "64bit", "flex_bg", "sparse_super", "large_file", "huge_file", "dir_nlink", "extra_isize", "metadata_csum"],
+               "hash_seed": "9a6c1c0e-aaaa-4bbb-8ccc-dddddddddddd", "flex_bg_size": 16, "reserved_blocks": 12211, "blocks": 244224}}"#
+        )
+    }
+
+    /// Each target's `writes` in the plan of LAYOUT with vda on vdb and
+    /// vdb on vdc.
+    fn writes_of(name: &str, layout: &str) -> Vec<(String, Vec<String>)> {
+        let t = rescue(name);
+        let s = sys_of(&t);
+        let (_, v, _) = plan(layout, &["--map", "vda=vdb", "--map", "vdb=vdc", "--json"], &s);
+        v.arr_at(&["disks"])
+            .iter()
+            .map(|d| (d.str_at(&["target", "node"]).unwrap_or_default().to_string(), d.arr_at(&["target", "writes"]).iter().filter_map(Value::as_str).map(str::to_string).collect()))
+            .collect()
+    }
+
+    /// RustAudit1 HD2-01: an md RAID1 over both disks, its ext4 made on
+    /// /dev/md/0, which names neither target: both targets are written by
+    /// assemble (mdadm --create) and by format (mke2fs on the array).
+    #[test]
+    fn writes_md_raid1_on_two_targets() {
+        let member = |n: u32| {
+            format!(
+                r#"{{"type": "linux_raid_member", "usage": "raid", "uuid": "bc000000-0000-4000-8000-000000000003", "label": "two:0", "version": "1.2", "metadata": "1.2", "level": "raid1", "raid_disks": 2, "device_number": {n}}}"#
+            )
+        };
+        let md = format!(
+            r#""md_arrays": [{{"name": "md0", "kind": "md", "size_bytes": 4291821568, "slaves": ["vda1", "vdb1"], "partitions": [], "content": {},
+                "md": {{"level": "raid1", "raid_disks": 2, "metadata_version": "1.2", "chunk_size": 0, "layout": "0", "uuid": "bc000000:00004000:80000000:00000003", "name": "two:0", "devname": "0",
+                        "members": [{{"device": "vda1", "slot": "0", "state": "in_sync"}}, {{"device": "vdb1", "slot": "1", "state": "in_sync"}}]}}}}],
+              "dm_devices": [], "crypttab": null,
+              "fstab": [{{"spec": "UUID=0b0e2c6e-1111-4222-8333-444455556666", "file": "/", "type": "ext4", "options": "defaults", "freq": 0, "passno": 1, "resolves_to": "md0"}}]"#,
+            ext4("0b0e2c6e-1111-4222-8333-444455556666")
+        );
+        let w = writes_of("json-writes-md", &two_disks(&member(0), &member(1), &md));
+        assert_eq!(w.len(), 2, "{w:?}");
+        for (t, w) in &w {
+            assert!(w.iter().any(|s| s == "assemble") && w.iter().any(|s| s == "format"), "{t}: {w:?}");
+        }
+    }
+
+    /// RustAudit1 HD2-01: LUKS on vda1 (its ext4 made on /dev/mapper/NAME)
+    /// beside a plain ext4 on vdb1: vda's target is written by assemble and
+    /// format, vdb's by format alone.
+    #[test]
+    fn writes_luks_beside_plain() {
+        let luks = r#"{"type": "crypto_LUKS", "usage": "crypto", "uuid": "bc000000-0000-4000-8000-000000000011", "label": null, "version": "2"}"#;
+        let rest = format!(
+            r#""md_arrays": [],
+              "dm_devices": [{{"name": "dm-0", "kind": "dm", "size_bytes": 4275044352, "slaves": ["vda1"], "partitions": [], "content": {},
+                              "dm": {{"dm_name": "cryptroot", "mapper_path": "/dev/mapper/cryptroot", "target": "crypt", "crypt_type": "LUKS2", "luks_uuid": "bc000000-0000-4000-8000-000000000011"}}}}],
+              "crypttab": [{{"name": "cryptroot", "device": "UUID=bc000000-0000-4000-8000-000000000011", "key_file": null, "options": ["luks"], "resolves_to": "vda1"}}],
+              "fstab": [{{"spec": "UUID=0b0e2c6e-1111-4222-8333-444455556666", "file": "/", "type": "ext4", "options": "defaults", "freq": 0, "passno": 1, "resolves_to": "dm-0"}},
+                        {{"spec": "UUID=0b0e2c6e-1111-4222-8333-444455556667", "file": "/srv", "type": "ext4", "options": "defaults", "freq": 0, "passno": 2, "resolves_to": "vdb1"}}]"#,
+            ext4("0b0e2c6e-1111-4222-8333-444455556666")
+        );
+        let w = writes_of("json-writes-luks", &two_disks(luks, &ext4("0b0e2c6e-1111-4222-8333-444455556667"), &rest));
+        let of = |t: &str| w.iter().find(|(n, _)| n == t).map(|(_, w)| w.clone()).unwrap_or_else(|| panic!("no {t}: {w:?}"));
+        let (vdb, vdc) = (of("vdb"), of("vdc"));
+        assert!(vdb.iter().any(|s| s == "assemble") && vdb.iter().any(|s| s == "format"), "vdb: {vdb:?}");
+        assert!(vdc.iter().any(|s| s == "format") && !vdc.iter().any(|s| s == "assemble"), "vdc: {vdc:?}");
+    }
+
+    /// RustAudit1 HD2-01: a stage is a target's only where it makes
+    /// something on that target's source disk: vdb1 holds nothing to
+    /// format, so vdb's target gets no format.
+    #[test]
+    fn writes_only_where_made() {
+        let empty = r#"null"#;
+        let rest = r#""md_arrays": [], "dm_devices": [], "crypttab": null,
+              "fstab": [{"spec": "UUID=0b0e2c6e-1111-4222-8333-444455556666", "file": "/", "type": "ext4", "options": "defaults", "freq": 0, "passno": 1, "resolves_to": "vda1"}]"#;
+        let w = writes_of("json-writes-only", &two_disks(&ext4("0b0e2c6e-1111-4222-8333-444455556666"), empty, rest));
+        let of = |t: &str| w.iter().find(|(n, _)| n == t).map(|(_, w)| w.clone()).unwrap_or_else(|| panic!("no {t}: {w:?}"));
+        assert!(of("vdb").iter().any(|s| s == "format"), "{w:?}");
+        assert!(!of("vdc").iter().any(|s| s == "format" || s == "assemble"), "{w:?}");
+    }
+
     /// The plan's hash binds the run to what was reviewed (J20): the same
     /// for the same plan; another for another target size or serial, and
     /// then --expect-plan with the old one is plan_changed.

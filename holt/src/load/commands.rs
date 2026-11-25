@@ -68,6 +68,11 @@ pub struct Cmd {
     /// restore, the msdosfs roots' wrapper, each shared snapshot's script
     /// (holt-json.md: the plan's `archiver`, the stop's SIGINT).
     pub archiver: bool,
+    /// For an assemble or format step: the source disks what it makes sits
+    /// on, from the builder's own device graph (Builder::disks_under), for
+    /// the plan's per-target `writes` (plan::would_run).  Empty for a step
+    /// no loop marked.
+    pub on: Vec<String>,
 }
 
 impl Cmd {
@@ -97,6 +102,12 @@ impl Cmd {
 
     pub fn why(mut self, w: impl Into<String>) -> Cmd {
         self.why = Some(w.into());
+        self
+    }
+
+    /// It makes something on the source disks DISKS (Cmd::on).
+    pub fn made_on(mut self, disks: Vec<String>) -> Cmd {
+        self.on = disks;
         self
     }
 
@@ -419,6 +430,7 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
         be_mounts: vec![],
         be_restored: vec![],
         key_asks: vec![],
+        under: BTreeMap::new(),
     };
     b.be_mounts = b.find_be_mounts();
     b.be_restored = b.find_restored_bes();
@@ -514,6 +526,99 @@ pub(crate) struct Builder<'a> {
     pub(crate) be_restored: Vec<crate::zfs_be::BootEnv>,
     /// Built's keys.
     pub(crate) key_asks: Vec<KeyAsk>,
+    /// Each device assemble makes (a source name), and the source disks it
+    /// sits on: its item's inputs', walked down (disks_under).
+    pub(crate) under: BTreeMap<String, Vec<String>>,
+}
+
+/// Marks the steps OUT[FROM..] that nothing marked yet as made on DISKS
+/// (Cmd::on).
+pub(crate) fn mark_on(out: &mut [Cmd], from: usize, disks: &[String]) {
+    for c in out.iter_mut().skip(from).filter(|c| c.on.is_empty()) {
+        c.on = disks.to_vec();
+    }
+}
+
+/// Cmd::on for the steps a loop pushes, a pass at a time, whatever pass
+/// ends early: `next` marks the pass before's and begins one on DISKS,
+/// `add` widens it, and `done` marks the last's.
+pub(crate) struct OnMark {
+    from: usize,
+    disks: Vec<String>,
+}
+
+impl OnMark {
+    /// For the steps pushed after the FROM already there.
+    pub(crate) fn at(from: usize) -> OnMark {
+        OnMark { from, disks: Vec::new() }
+    }
+
+    pub(crate) fn next(&mut self, out: &mut [Cmd], disks: Vec<String>) {
+        self.done(out);
+        self.disks = disks;
+    }
+
+    pub(crate) fn add(&mut self, disks: Vec<String>) {
+        for d in disks {
+            if !self.disks.contains(&d) {
+                self.disks.push(d);
+            }
+        }
+    }
+
+    pub(crate) fn done(&mut self, out: &mut [Cmd]) {
+        mark_on(out, self.from, &self.disks);
+        self.from = out.len();
+    }
+}
+
+impl Builder<'_> {
+    /// The source disks source device SRC sits on: the disk itself, the
+    /// disk of one of its partitions (a BSD label's too), what assemble
+    /// made it on (under), else its slaves' (md members, device-mapper).
+    /// Exact names, never a prefix.
+    pub(crate) fn disks_under(&self, src: &str) -> Vec<String> {
+        fn walk(b: &Builder, src: &str, depth: usize, out: &mut Vec<String>) {
+            let mut add = |d: &str| {
+                if !out.iter().any(|x| x == d) {
+                    out.push(d.to_string());
+                }
+            };
+            if let Some(ds) = b.under.get(src) {
+                ds.iter().for_each(|d| add(d));
+                return;
+            }
+            if let Some(d) = b.layout.disks.iter().find(|d| d.name == src || d.parts.iter().any(|p| p.name == src) || crate::other::load::label_node(b.layout, d, "", src).is_some()) {
+                add(&d.name);
+                return;
+            }
+            if depth < 8 {
+                for s in b.layout.slaves(src) {
+                    walk(b, &s, depth + 1, out);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(self, src, 0, &mut out);
+        out
+    }
+
+    /// The source disks the vdevs of the layout's pool POOL sit on.
+    pub(crate) fn pool_disks(&self, pool: &str) -> Vec<String> {
+        let pools = self.layout.arr(&["storage", "zfs", "tools", "imported_pools"]);
+        let Some(p) = pools.iter().find(|p| s(p, "name").as_deref() == Some(pool)) else { return Vec::new() };
+        let (mut words, mut leaves, mut probs) = (vec![], vec![], vec![]);
+        vdev_words(&self.names, p.at(&["vdevs", "vdevs"]).and_then(|v| v.as_object()).and_then(|o| o.first()).and_then(|(_, root)| root.get("vdevs")).unwrap_or(&Value::Null), "", &mut words, &mut leaves, &mut probs);
+        let mut out: Vec<String> = Vec::new();
+        for l in leaves {
+            for d in self.disks_under(&l) {
+                if !out.contains(&d) {
+                    out.push(d);
+                }
+            }
+        }
+        out
+    }
 }
 
 // ---- partition ----------------------------------------------------------
@@ -1542,9 +1647,12 @@ impl Builder<'_> {
         // So too OpenBSD's softraid volumes, on their DUIDs.
         out.extend(self.softraid_assemble());
         while let Some(i) = left.iter().position(|(_, ins, _)| ins.iter().all(|x| have.contains(x))) {
-            let (item, _, outs) = left.remove(i);
+            let (item, ins, outs) = left.remove(i);
+            let mut on = OnMark::at(out.len());
+            ins.iter().for_each(|x| on.add(self.disks_under(x)));
             for (src, node) in &outs {
                 self.names.made.insert(src.clone(), node.clone());
+                self.under.insert(src.clone(), on.disks.clone());
                 have.push(src.clone());
             }
             match item {
@@ -1553,6 +1661,7 @@ impl Builder<'_> {
                 Item::Vg(v) => self.vg(&v, &mut out),
                 Item::Pool(v) => self.pool(&v, &mut out),
             }
+            on.done(&mut out);
         }
         for (item, ins, _) in left {
             let what = match item {
@@ -2778,7 +2887,9 @@ impl Builder<'_> {
     fn format(&mut self) -> Vec<Cmd> {
         let mut out = Vec::new();
         let mut btrfs_done: Vec<String> = Vec::new();
+        let mut on = OnMark::at(out.len());
         for (src, c) in self.leaves() {
+            on.next(&mut out, self.disks_under(&src));
             let ty = s(&c, "type").unwrap_or_default();
             if MADE_BY_ASSEMBLE.contains(&ty.as_str()) {
                 continue;
@@ -2830,13 +2941,11 @@ impl Builder<'_> {
                 }
                 "xfs" => {
                     let uuid = s(&c, "uuid").unwrap_or_default();
-                    let logdev = self
-                        .layout
-                        .arr(&["storage", "xfs_external_logs"])
-                        .iter()
-                        .find(|l| s(l, "filesystem_uuid").as_deref() == Some(uuid.as_str()))
-                        .and_then(|l| s(l, "log_device"))
-                        .and_then(|ld| self.names.dev(&ld));
+                    let logsrc = self.layout.arr(&["storage", "xfs_external_logs"]).iter().find(|l| s(l, "filesystem_uuid").as_deref() == Some(uuid.as_str())).and_then(|l| s(l, "log_device"));
+                    if let Some(ld) = &logsrc {
+                        on.add(self.disks_under(ld));
+                    }
+                    let logdev = logsrc.and_then(|ld| self.names.dev(&ld));
                     out.push(Cmd { argv: mkfs_xfs(&dev, &c, logdev.as_deref()), why: Some(why), ..Cmd::default() });
                     out.push(Cmd::read_back(&dev, &c));
                 }
@@ -2849,6 +2958,7 @@ impl Builder<'_> {
                     let fs = self.layout.arr(&["storage", "btrfs"]).iter().find(|f| s(f, "uuid").as_deref() == Some(uuid.as_str())).cloned().unwrap_or(Value::Null);
                     let mut members: Vec<(u64, String, Option<Value>)> = vec![];
                     for m in fs.get("devices").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str()) {
+                        on.add(self.disks_under(m));
                         let mc = self.layout.content(m);
                         let devid = mc.and_then(|c| num(c, "devid")).unwrap_or(0);
                         members.push((devid, self.names.dev(m).unwrap_or_else(|| format!("<{m}>")), mc.and_then(|c| c.get("grub_env_block")).cloned()));
@@ -2945,6 +3055,7 @@ impl Builder<'_> {
                 other => self.coded(Problem::new(ProblemCode::Unsupported, format!("{src}: {other} isn't a filesystem bko-holt load can make")).with("what", other)),
             }
         }
+        on.done(&mut out);
         self.datasets(&mut out);
         self.keystores(&mut out);
         if self.fam == Some(crate::other::Family::FreeBsd) {
@@ -3040,7 +3151,7 @@ impl Builder<'_> {
                             })
                         })
                 });
-            let Some(dev) = src_dev.and_then(|n| self.names.dev(&n)).filter(|d| self.filesystems.iter().any(|(f, _, _)| f == d)) else {
+            let Some(dev) = src_dev.as_deref().and_then(|n| self.names.dev(n)).filter(|d| self.filesystems.iter().any(|(f, _, _)| f == d)) else {
                 if m.1.starts_with("/dev/") || m.2.is_some() {
                     self.problem_once(format!("ZFS encryption root {name}: its key file {path} lives on {}, which this layout doesn't format", m.1));
                 } else {
@@ -3063,11 +3174,13 @@ impl Builder<'_> {
             let rel = &path[base.len()..];
             let dest = format!("{mnt}{rel}");
             let dir = dest.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or(mnt.clone());
+            let from = out.len();
             out.push(Cmd::new(&["mkdir", "-p", &mnt]));
             out.push(Cmd::new(&["mount", &dev, &mnt]).why(format!("{name}'s key file {path} lives on {}", m.1)));
             out.push(Cmd::new(&["mkdir", "-p", &dir]));
             out.push(Cmd::new(&["install", "-m", "400", &key, &dest]));
             out.push(Cmd::new(&["umount", &mnt]));
+            mark_on(out, from, &src_dev.as_deref().map(|n| self.disks_under(n)).unwrap_or_default());
         }
     }
 
@@ -3381,16 +3494,19 @@ impl Builder<'_> {
         let pools: Vec<String> = self.layout.v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(Value::as_array).into_iter().flatten().filter_map(|p| s(p, "name")).collect();
         let mut list: Vec<Value> = self.layout.v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).cloned().unwrap_or_default();
         list.sort_by_key(|d| s(d, "name").unwrap_or_default());
+        let mut on = OnMark::at(out.len());
         for ds in list {
             let name = s(&ds, "name").unwrap_or_default();
+            on.next(out, self.pool_disks(name.split('/').next().unwrap_or_default()));
             if pools.contains(&name) || self.datasets.contains(&self.zname(&name)) {
                 continue; // the root dataset came with zpool create; zvols with assemble
             }
             self.make_dataset(&ds, out);
         }
+        on.done(out);
         for p in self.layout.v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(Value::as_array).into_iter().flatten() {
             if let (Some(n), Some(b)) = (s(p, "name"), p.at(&["properties", "bootfs"]).and_then(Value::as_str).filter(|b| *b != "-")) {
-                out.push(Cmd::new(&["zpool", "set", &format!("bootfs={}", self.zname(b)), &self.zname(&n)]));
+                out.push(Cmd::new(&["zpool", "set", &format!("bootfs={}", self.zname(b)), &self.zname(&n)]).made_on(self.pool_disks(&n)));
             }
         }
         self.clone_notes();
@@ -7938,6 +8054,7 @@ mod tests {
             be_mounts: vec![],
             be_restored: vec![],
             key_asks: vec![],
+            under: BTreeMap::new(),
         };
         assert_eq!(b.bootloader_id(), "opensuse");
         assert_eq!((b.grub_tool("install"), b.grub_tool("mkconfig")), ("grub2-install", "grub2-mkconfig"));
@@ -8391,6 +8508,7 @@ mod tests {
             be_mounts: vec![],
             be_restored: vec![],
             key_asks: vec![],
+            under: BTreeMap::new(),
         };
         let props = b.ds_props(&ds, false);
         assert!(props.contains(&("normalization".into(), "formD".into())), "{props:?}");
@@ -8567,6 +8685,7 @@ mod tests {
                 be_mounts: vec![],
                 be_restored: vec![],
                 key_asks: vec![],
+                under: BTreeMap::new(),
             };
             let mut out = vec![];
             b.vg(vg, &mut out);

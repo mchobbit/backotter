@@ -590,7 +590,7 @@ impl Builder<'_> {
             for p in &d.parts {
                 if let Some(l) = self.layout.device(&p.name).and_then(|v| s(v, "glabel")) {
                     let node = part_node(Family::FreeBsd, &d, &tgt, p.number);
-                    out.push(Cmd::new(&["glabel", "label", &l, &node]).why(format!("{}: GEOM label {l}, as the source's", p.name)));
+                    out.push(Cmd::new(&["glabel", "label", &l, &node]).why(format!("{}: GEOM label {l}, as the source's", p.name)).made_on(vec![src.clone()]));
                 }
             }
         }

@@ -629,7 +629,11 @@ Field by field:
 - `will_erase`, `writes` (J19): whether this run's `partition` stage wipes
   the target, and which stages would make something anew on it
   (`partition`, `assemble`'s creates, `format`), as exec would run them
-  with `--through close`.  Review's ERASED list is the targets with
+  with `--through close`.  A stage is a target's where one of its steps
+  makes something on a device that sits on the target's source disk, as
+  the plan's own device graph says (an md array, LUKS, LVM or a pool on
+  several disks is each one's), never by matching names in its argv.
+  Review's ERASED list is the targets with
   `will_erase`, taken from here, never worked out by bko-rescue.
 - `candidates`: every whole disk here, the plan's targets included (on
   the same machine, map_disks matches the old disks by WWID or serial

@@ -85,7 +85,7 @@
         "recorded": false,
         "erase": false,
         "will_erase": true,
-        "writes": ["partition", "assemble"],
+        "writes": ["partition", "assemble", "format"],
         "size": null
       }
     },
@@ -126,7 +126,7 @@
         "recorded": false,
         "erase": false,
         "will_erase": true,
-        "writes": ["partition", "assemble"],
+        "writes": ["partition", "assemble", "format"],
         "size": null
       }
     },
@@ -167,7 +167,7 @@
         "recorded": false,
         "erase": false,
         "will_erase": true,
-        "writes": ["partition", "assemble"],
+        "writes": ["partition", "assemble", "format"],
         "size": null
       }
     }

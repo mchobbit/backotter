@@ -18,7 +18,7 @@
 use super::labelled::disk_names;
 use super::Family;
 use crate::json::{Obj, Value};
-use crate::load::commands::{Builder, Cmd};
+use crate::load::commands::{Builder, Cmd, OnMark};
 use crate::load::layout::Layout;
 use crate::load::RUN_DIR;
 use crate::sys::Sys;
@@ -313,9 +313,17 @@ impl Builder<'_> {
     /// DUID from here on.  Its closer detaches it.
     pub(crate) fn softraid_assemble(&mut self) -> Vec<Cmd> {
         let mut out = Vec::new();
+        let mut on = OnMark::at(0);
         for v in volumes(self.layout) {
             let level = v.str("level");
             let chunks = v.chunks();
+            let disks: Vec<String> = chunks.iter().flat_map(|c| self.disks_under(c)).fold(Vec::new(), |mut a, d| {
+                if !a.contains(&d) {
+                    a.push(d);
+                }
+                a
+            });
+            on.next(&mut out, disks.clone());
             let nodes: Vec<Option<String>> = chunks.iter().map(|c| self.names.dev(c)).collect();
             if chunks.is_empty() || nodes.iter().any(Option::is_none) {
                 let missing: Vec<&str> = chunks.iter().zip(&nodes).filter(|(_, n)| n.is_none()).map(|(c, _)| c.as_str()).collect();
@@ -335,6 +343,7 @@ impl Builder<'_> {
             // own problem.
             for (n, letter) in &v.parts {
                 self.names.made.insert(n.clone(), format!("{duid}.{letter}"));
+                self.under.insert(n.clone(), disks.clone());
             }
             let on = chunks.join(", ");
             if level != "CRYPTO" {
@@ -434,6 +443,7 @@ impl Builder<'_> {
             out.push(Cmd::new(&["sh", "-c", &format!("{find}disklabel -R \"$v\" {}", crate::load::shell_quote(&proto))]).why(format!("{}'s disklabel, on {shown}", v.name)));
             out.push(Cmd::new(&["sh", "-c", &format!("{find}printf 'i\\n%s\\nw\\nq\\n' {} | disklabel -E \"$v\" >/dev/null", crate::load::shell_quote(&duid))]).why(format!("{}'s disklabel UID, {duid}: its partitions are {duid}.a and so on from here", v.name)));
         }
+        on.done(&mut out);
         out
     }
 

@@ -10,7 +10,7 @@ use super::freebsd;
 use super::{Found, RawDisk};
 use crate::bytes::FileSource;
 use crate::json::{Obj, Value};
-use crate::load::commands::{Builder, Cmd};
+use crate::load::commands::{Builder, Cmd, OnMark};
 use crate::load::layout::Layout;
 use crate::load::RUN_DIR;
 use crate::mounts::FstabEntry;
@@ -444,7 +444,9 @@ impl Builder<'_> {
     /// its .eli node for what goes on it.
     pub(crate) fn geli_assemble(&mut self, have: &mut Vec<String>) -> Vec<Cmd> {
         let mut out = Vec::new();
+        let mut on = OnMark::at(0);
         for p in providers(self.layout) {
+            on.next(&mut out, self.disks_under(&p.src));
             let Some(dev) = self.names.dev(&p.src) else { continue };
             if !have.contains(&p.src) {
                 continue;
@@ -457,6 +459,7 @@ impl Builder<'_> {
             // provider's own problem.
             let eli = format!("{dev}.eli");
             self.names.made.insert(p.provider.clone(), eli.clone());
+            self.under.insert(p.provider.clone(), self.disks_under(&p.src));
             have.push(p.provider.clone());
             let Some(m) = p.meta.clone() else {
                 self.problems.push(format!("{}: GELI, but the dump's metadata for it can't be read", p.src));
@@ -605,6 +608,7 @@ impl Builder<'_> {
                 out.push(Cmd::new(&["rm", "-f", &f]).why(format!("{}'s passphrase is in GELI's metadata now", p.src)));
             }
         }
+        on.done(&mut out);
         out
     }
 

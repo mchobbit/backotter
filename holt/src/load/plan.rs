@@ -240,41 +240,6 @@ pub struct JsonFacts {
     pub writes: Vec<(String, Vec<&'static str>)>,
 }
 
-/// Whether the argument ARG names the device /dev/NODE or one of its
-/// partitions or slices (/dev/sdb2, /dev/nvme0n1p3, /dev/vtbd0p3,
-/// /dev/dsk/c1t0d0s0, OpenBSD's /dev/sd0a), and not another disk
-/// (/dev/sdbb1, /dev/sdaa, /dev/nvme0n10p1).  Under /dev/dsk and
-/// /dev/rdsk (illumos) a slice or partition is s or p and digits.  Else a
-/// node ending in a letter (sda) has digits after it; one ending in a
-/// digit (nvme0n1, ada0, sd0) a p or s and digits, or one partition
-/// letter, never more digits.
-fn names_node(arg: &str, node: &str) -> bool {
-    let digit = |r: &str| r.starts_with(|c: char| c.is_ascii_digit());
-    ["/dev/", "/dev/dsk/", "/dev/rdsk/", "/dev/r"].iter().any(|pre| {
-        let Some(rest) = arg.strip_prefix(pre).and_then(|r| r.strip_prefix(node)) else { return false };
-        if rest.is_empty() {
-            return true;
-        }
-        if pre.ends_with("dsk/") {
-            return rest.strip_prefix(['p', 's']).is_some_and(digit);
-        }
-        if !node.ends_with(|c: char| c.is_ascii_digit()) {
-            return digit(rest);
-        }
-        (rest.len() == 1 && rest.as_bytes()[0].is_ascii_lowercase()) || rest.strip_prefix(['p', 's']).is_some_and(digit)
-    })
-}
-
-/// Whether the commands CMDS make something on target NODE: one names it
-/// (names_node), or this layout has that one target only.
-fn touches(cmds: &[commands::Cmd], node: &str, only_target: bool) -> bool {
-    let run = |c: &&commands::Cmd| !c.is_note() && c.check.is_none();
-    if only_target {
-        return cmds.iter().any(|c| run(&c));
-    }
-    cmds.iter().filter(run).any(|c| c.argv.iter().chain(c.write.iter()).any(|a| a.split(['=', ',']).any(|w| names_node(w, node))))
-}
-
 /// The --json run's checks of its own arguments (holt-json.md, "Secrets"):
 /// no prompt, so a repository without --password-file is a problem; a
 /// password in the repository's URL never reaches argv or the log; and
@@ -480,17 +445,20 @@ pub(crate) fn would_run(
     };
     let makes = |c: &commands::Cmd| !c.is_note() && c.check.is_none();
     let remaking = [Stage::Assemble, Stage::Format].into_iter().filter(|&s| runs_stage(s) && !skipped(s) && built.stage(s).iter().any(makes)).collect::<Vec<_>>();
-    let one = mapping.pairs.len() == 1;
+    // A stage is a target's where one of its steps makes something on a
+    // device that sits on the target's source disk (Cmd::on, from the
+    // builder's device graph); a step nothing marked counts for every
+    // target.
     let writes = mapping
         .pairs
         .iter()
-        .map(|(_, t)| {
+        .map(|(src, t)| {
             let mut w = Vec::new();
             if partition {
                 w.push("partition");
             }
             for &s in &remaking {
-                if touches(built.stage(s), t, one) {
+                if built.stage(s).iter().any(|c| makes(c) && (c.on.is_empty() || c.on.contains(src))) {
                     w.push(s.name());
                 }
             }
@@ -993,43 +961,34 @@ mod tests {
         assert!(out.contains("no --repo"), "{out}");
     }
 
-    /// The `writes` heuristic's names: a disk's own device and its
-    /// partitions or slices, never another disk's whose name starts alike.
+    /// RustAudit1 HD2-01: every step of assemble and format that makes
+    /// something says which source disks it is on (Cmd::on), each one a
+    /// disk of the layout, for every dump in the corpus with each of its
+    /// disks mapped: what the plan's per-target `writes` is worked out from.
     #[test]
-    fn names_node_partitions_only() {
-        for (arg, node) in [
-            ("/dev/sda", "sda"),
-            ("/dev/sda1", "sda"),
-            ("/dev/nvme0n1", "nvme0n1"),
-            ("/dev/nvme0n1p3", "nvme0n1"),
-            ("/dev/vtbd0p3", "vtbd0"),
-            ("/dev/vtbd0p3.eli", "vtbd0"),
-            ("/dev/ada0s1a", "ada0"),
-            ("/dev/sd0a", "sd0"),
-            ("/dev/sd0p", "sd0"),
-            ("/dev/rsd0c", "sd0"),
-            ("/dev/dsk/c1t0d0s0", "c1t0d0"),
-            ("/dev/rdsk/c1t0d0p0", "c1t0d0"),
-            ("/dev/dsk/sdqs1", "sdq"),
-            ("/dev/md127p1", "md127"),
-        ] {
-            assert!(names_node(arg, node), "{arg} is {node}'s");
+    fn every_making_step_says_its_disks() {
+        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("corpus");
+        let mut seen = 0;
+        let mut dirs: Vec<_> = std::fs::read_dir(&corpus).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.join("src.json").is_file()).collect();
+        dirs.sort();
+        for dir in dirs {
+            let l = Layout::from_json(crate::json::parse(&std::fs::read_to_string(dir.join("src.json")).unwrap()).unwrap()).unwrap();
+            let pairs: Vec<(String, String)> = l.disks.iter().filter(|d| d.used).enumerate().map(|(i, d)| (d.name.clone(), format!("sd{}", (b'q' + i as u8) as char))).collect();
+            let m = Mapping { pairs, ..Mapping::default() };
+            let o = match parse_args(&["l.json".to_string(), "--repo".into(), "/srv/r".into()]).unwrap() {
+                Parsed::Run(o) => o,
+                Parsed::Help => unreachable!(),
+            };
+            let b = commands::build(&l, &o, &m);
+            for s in [Stage::Assemble, Stage::Format] {
+                for c in b.stage(s).iter().filter(|c| !c.is_note() && c.check.is_none()) {
+                    assert!(!c.on.is_empty(), "{}: {} step on no disk: {}", dir.display(), s.name(), c.shell());
+                    assert!(c.on.iter().all(|d| l.disk(d).is_some()), "{}: {:?} isn't a disk: {}", dir.display(), c.on, c.shell());
+                    seen += 1;
+                }
+            }
         }
-        for (arg, node) in [
-            ("/dev/sdaa", "sda"),
-            ("/dev/sdaa1", "sda"),
-            ("/dev/sdbb1", "sdb"),
-            ("/dev/nvme0n10", "nvme0n1"),
-            ("/dev/nvme0n10p1", "nvme0n1"),
-            ("/dev/sd10a", "sd1"),
-            ("/dev/mmcblk0boot0", "mmcblk0"),
-            ("/dev/sdb1", "sda"),
-            ("/dev/dsk/c1t0d01s0", "c1t0d0"),
-            ("/dev/dsk/c1t0d0", "c1t0"),
-            ("sda1", "sda"),
-        ] {
-            assert!(!names_node(arg, node), "{arg} isn't {node}'s");
-        }
+        assert!(seen > 100, "{seen}");
     }
 
     /// A password in --repo's URL: refused, and replaced wherever the

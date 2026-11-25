@@ -20,7 +20,10 @@ source's.  It prefers the distro's own tools (apt-get clean, pacman -Scc, eopkg
 delete-cache, journalctl --vacuum-time, flatpak uninstall, snap remove), and deletes
 paths only where no tool fits.  Each step prints "SLIM step NAME ROOT FREED_KIB HOW",
 measured with du before and after over the paths it touches; parse() reads them back
-into the preparation's slim.json.
+into the preparation's slim.json.  "SLIM used before|after KIB" is the real filesystems'
+df used, each device once, but the du of the mount on one in DU_FS (nilfs2), whose df
+isn't its live data ("SLIM usedby du DEVICE FSTYPE MOUNT": slim.json's used_du, and a
+note saying why).
 
 Never touched (NEVER, and the script's guard refuses any path under them): the
 partition layout, filesystem types, mount options, labels and UUIDs (nothing here
@@ -62,6 +65,16 @@ SNAPSHOTS = ("a btrfs snapshot (anduinos2's read-only deployment of its root) is
              "the snapshots made after it, and load then restores it after them, with another subvolume id "
              "(judge: storage.btrfs.0.subvolumes.6.id 262 -> 264, case anduinos2-b6082ebacc9aac0c, 2026-11-25), "
              "where the unslimmed source's same case passes")
+# Filesystems whose df used isn't their live data, so the script's used() counts the du
+# -sxk of their mount instead (each device once), with why: slim.json's used_du and notes.
+# (Of the slimmed sources' filesystems on 2026-11-25, only zorin18's nilfs2 root.  btrfs keeps
+# df: what a snapshot holds is still its data (SNAPSHOTS), and a deletion's extents are freed
+# at the commit sync makes; f2fs counts valid blocks only, so a deletion is out of df at once;
+# no slimmed source has bcachefs or ZFS, whose datasets df's /dev/ filter doesn't count.)
+DU_FS = {"nilfs2": "log-structured: its df counts the blocks its checkpoints still hold until nilfs_cleanerd "
+                   "reclaims them (protection period 1 h by default), and every deletion appends log, so the "
+                   "slim step's df grew (zorin18, 2026-11-25: 7998 -> 8102 MiB with 2.43 GB freed by du); "
+                   "its checkpoints are left as they are"}
 SNAP_ETC_UNITS = ("snap remove deletes the removed snaps' mount and service units in /etc/systemd/system "
                   "(snapd's own state for the snaps it removes)")
 
@@ -100,8 +113,19 @@ say() { echo "SLIM $*"; }
 err() { say "error $*"; ERR=1; }
 # KiB on disk of the paths given (du -sxk, each once), 0 for none.
 kib() { du -sxkc "$@" 2>/dev/null | tail -n 1 | cut -f1 | grep -E '^[0-9]+$' || echo 0; }
-# The KiB the real filesystems use, each device once.
-used() { df -kP 2>/dev/null | awk 'NR > 1 && $1 ~ /^\/dev\// && !seen[$1]++ { s += $3 } END { print s + 0 }'; }
+# The real filesystems whose df used isn't their live data (DU_FS): "DEVICE FSTYPE MOUNT",
+# each device once, at its first mount (not a bind's DEVICE[/SUBDIR]; findmnt's \x20 a space).
+dufs() {
+    findmnt -rn -t @DU_FS@ -o SOURCE,FSTYPE,TARGET 2>/dev/null |
+        awk '$1 ~ /^\/dev\// && index($1, "[") == 0 && !seen[$1]++' | sed 's/\\x20/ /g'
+}
+# The KiB the real filesystems use, each device once: df's used, but for dufs()' the du
+# of its mount.
+used() {
+    { dufs | while read -r ud uf ut; do echo "$ud $(kib "$ut")"; done
+      df -kP 2>/dev/null | awk 'NR > 1 && $1 ~ /^\/dev\// { print $1, $3 }'
+    } | awk '!seen[$1]++ { s += $2 } END { print s + 0 }'
+}
 # Whether PATH (its real path, under root R) is one the step may never touch.
 never() {
     local np
@@ -348,6 +372,7 @@ say "recipe @RECIPE@ @SOURCE@"
 command -v systemctl >/dev/null && timeout 300 systemctl is-system-running --wait >/dev/null 2>&1
 say "state before $(systemctl is-system-running 2>/dev/null || true)"
 say "failed before $(systemctl --failed --plain --no-legend 2>/dev/null | awk '{ print $1 }' | tr '\n' ' ')"
+dufs | while read -r ud uf ut; do say "usedby du $ud $uf $ut"; done
 say "used before $(used)"
 RO="" ACT=""
 if [ -f /usr/share/abroot/abroot.json ] && command -v abroot >/dev/null; then
@@ -409,7 +434,8 @@ def _never_case():
 def script(source):
     """The slim step's sh script for SOURCE (ht1.sh's HT_SOURCE_PREP)."""
     return (SCRIPT.replace("@RECIPE@", str(RECIPE)).replace("@SOURCE@", source)
-            .replace("@NEVER_CASE@", _never_case()).replace("@SNAP_ETC_UNITS@", SNAP_ETC_UNITS))
+            .replace("@NEVER_CASE@", _never_case()).replace("@SNAP_ETC_UNITS@", SNAP_ETC_UNITS)
+            .replace("@DU_FS@", ",".join(DU_FS)))
 
 
 def full_over_small(source, path=None):
@@ -439,7 +465,7 @@ _LINE = re.compile(r"^SLIM (\S+) (.*)$")
 def parse(text):
     """slim.json's body from the script's output (ht1.sh's logs/source-prep.txt)."""
     out = {"recipe": None, "source": None, "state_before": None, "failed_before": [], "used_before": None,
-           "used_after": None, "steps": [], "notes": [], "errors": [], "refused": []}
+           "used_after": None, "used_du": [], "steps": [], "notes": [], "errors": [], "refused": []}
     for line in text.splitlines():
         m = _LINE.match(line.rstrip())
         if not m:
@@ -455,6 +481,11 @@ def parse(text):
             out["failed_before"] = w[1:]
         elif kind == "used" and len(w) >= 2 and w[1].isdigit():
             out["used_" + w[0]] = int(w[1]) * 1024
+        elif kind == "usedby" and w[:1] == ["du"] and len(w) >= 4:
+            dev, fs, mnt = w[1], w[2], rest.split(None, 3)[3]
+            out["used_du"].append({"device": dev, "fstype": fs, "mount": mnt})
+            out["notes"].append(f"used: {fs} {dev} ({mnt}) measured by du -sxk of its mount, not df: "
+                                + DU_FS.get(fs, "df's used isn't its live data"))
         elif kind == "step" and len(w) >= 3:
             try:
                 freed = int(w[2]) * 1024

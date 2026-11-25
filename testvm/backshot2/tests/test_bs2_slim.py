@@ -82,7 +82,7 @@ class Script(unittest.TestCase):
         self.assertIn(f"recipe {SL.RECIPE} vanilla3", self.text)
         lines = [l for l in self.text.splitlines() if l.strip()]
         self.assertEqual(lines[-1], "echo REBOOT")    # ht1.sh boots it again, from cold
-        for k in ("@RECIPE@", "@SOURCE@", "@NEVER_CASE@", "@SNAP_ETC_UNITS@"):
+        for k in ("@RECIPE@", "@SOURCE@", "@NEVER_CASE@", "@SNAP_ETC_UNITS@", "@DU_FS@"):
             self.assertNotIn(k, self.text)
 
     def test_no_step_names_a_path_it_must_never_touch(self):
@@ -149,6 +149,47 @@ echo "ERR=$ERR"
             self.assertTrue(os.path.isdir(f"{r}/etc/x"))
             self.assertIn("ERR=0", o)
 
+    @unittest.skipUnless(shutil.which("sh"), "no sh")
+    def test_used_counts_nilfs2_by_du(self):
+        """used() sums df's used per /dev device once, but a DU_FS filesystem's (nilfs2's)
+        is du -sxk of its first mount: its df counts what its checkpoints still hold."""
+        self.assertEqual(list(SL.DU_FS), ["nilfs2"])
+        self.assertIn("-t nilfs2 ", function(self.text, "dufs"))
+        with tempfile.TemporaryDirectory() as t:
+            stubs = {
+                "findmnt": 'case "$*" in *nilfs2*) [ -n "${NILFS:-}" ] && printf \'%s\\n\' '
+                           '"/dev/vda3 nilfs2 /" "/dev/vda3[/var/x] nilfs2 /var/y" "/dev/vda3 nilfs2 /snap\\x20cp" '
+                           '"/dev/vdb1 nilfs2 /data\\x20two" ;; esac; exit 0',
+                "df": "echo 'Filesystem 1024-blocks Used Available Capacity Mounted on'; "
+                      "echo '/dev/vda3 9000000 8296000 700000 93% /'; echo '/dev/vda2 1000000 100000 900000 10% /boot'; "
+                      "echo '/dev/vda3 9000000 8296000 700000 93% /var/y'; echo 'tmpfs 100 50 50 50% /run'; "
+                      "echo '/dev/vdb1 5000 4000 1000 80% /data two'",
+                "du": 'eval "last=\\${$#}"; echo "$last" >> "$DULOG"; case $last in /) n=4700000 ;; "/data two") n=7 ;; '
+                      '*) n=999999 ;; esac; printf \'%s\\t%s\\n%s\\ttotal\\n\' $n "$last" $n',
+            }
+            for n, body in stubs.items():
+                with open(f"{t}/{n}", "w") as f:
+                    f.write(f"#!/bin/sh\n{body}\n")
+                os.chmod(f"{t}/{n}", 0o755)
+            funcs = "\n".join(l for l in self.text.splitlines() if l.startswith("kib()"))
+            funcs += "\n" + "\n".join(function(self.text, n) for n in ("dufs", "used"))
+            prog = f"""set -u
+{funcs}
+echo "used $(used)"
+dufs | while read -r ud uf ut; do printf 'usedby du %s %s %s\\n' "$ud" "$uf" "$ut"; done
+"""
+            env = dict(os.environ, PATH=f"{t}:{os.environ['PATH']}", DULOG=f"{t}/du.log", NILFS="1")
+            out = subprocess.run(["sh", "-c", prog], text=True, capture_output=True, env=env)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertEqual(out.stdout.splitlines(), ["used 4800007", "usedby du /dev/vda3 nilfs2 /",
+                                                       "usedby du /dev/vdb1 nilfs2 /data two"])
+            with open(f"{t}/du.log") as f:
+                self.assertEqual(f.read().splitlines(), ["/", "/data two"])   # each device once, its first mount
+            # No nilfs2: df's used, each /dev device once, as before.
+            out = subprocess.run(["sh", "-c", prog], text=True, capture_output=True, env=dict(env, NILFS=""))
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertEqual(out.stdout.splitlines(), ["used 8400000"])
+
 
 OUT = """PASS source boots
 SLIM note configured LANG en_US.UTF-8: its locales kept
@@ -180,6 +221,21 @@ class Output(unittest.TestCase):
         self.assertEqual(r["refused"], ["/usr/share/doc/x"])
         self.assertEqual(r["never"], list(SL.NEVER))
         self.assertIn("grub.cfg", r["old_kernels"])
+
+    def test_used_by_du_is_recorded(self):
+        r = SL.record(OUT.format(r=SL.RECIPE), "running\n", "anduinos2")
+        self.assertEqual(r["used_du"], [])
+        self.assertFalse([n for n in r["notes"] if n.startswith("used:")])
+        text = OUT.format(r=SL.RECIPE).replace("SLIM used before", "SLIM usedby du /dev/vda3 nilfs2 /\n"
+                                               "SLIM usedby du /dev/vdb1 nilfs2 /data two\nSLIM used before")
+        r = SL.record(text, "running\n", "anduinos2")
+        self.assertEqual(r["used_du"], [{"device": "/dev/vda3", "fstype": "nilfs2", "mount": "/"},
+                                        {"device": "/dev/vdb1", "fstype": "nilfs2", "mount": "/data two"}])
+        self.assertEqual(r["used_before"], 4153788 * 1024)
+        notes = [n for n in r["notes"] if n.startswith("used:")]
+        self.assertEqual(len(notes), 2)
+        self.assertTrue(notes[0].startswith("used: nilfs2 /dev/vda3 (/) measured by du -sxk"), notes[0])
+        self.assertIn("checkpoints", notes[0])
 
     def test_refusals(self):
         with self.assertRaisesRegex(ValueError, "not running"):

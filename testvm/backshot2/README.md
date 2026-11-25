@@ -532,7 +532,10 @@ remove` deletes the removed snaps' mount and service units in
 generation is collected.
 
 **Its record**: `preps/NAME/slim.json` (each step's root, bytes freed and how,
-used bytes before and after, the boot state before it and after the cold
+used bytes before and after: df's used of each real filesystem, but on
+nilfs2 the du of its mount, `used_du` and a note saying so, since nilfs2's df
+counts what its checkpoints hold until nilfs_cleanerd reclaims it and so grew
+on zorin18 as the step deleted; the boot state before it and after the cold
 boot; a source that ran clean and boots degraded after it fails its
 preparation, as does any step's error) and `slim.sh`.  `slim.RECIPE` is the
 step's version and part of a slimmed source's generation (`gen:HEX+slim1`),

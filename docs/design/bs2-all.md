@@ -536,6 +536,8 @@ the table: there is no list to edit.
   from chopin's file wouldn't remove them: the Mac's next pull keeps a row a
   host's file has lost in `chopin.lost.jsonl`, merges it into the view and
   warns about the loss (`ledger.pull_one()`).  So nothing was rewritten.
+  Prevention landed in e754e95: bs2 writes rows only while a BackShot2 word
+  runs (`BS2_WORD`) or with `BS2_LEDGER=1`, and says so on stderr otherwise.
 
 - Whether ~15-16 h is acceptable for an every-second-CarpetBeater run, or
   whether non-Linux sources should draw fewer tier 1 cases (10) to keep it to

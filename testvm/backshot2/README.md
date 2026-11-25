@@ -577,9 +577,58 @@ snapshots):
 Every PASS passed the checks the copy path's did.  Such a case of the eleven
 above now fits the small hosts' 9.0 GiB RAM disk (pop24's doesn't), but a
 source's other cases, about three in four, back up their own tree into the RAM
-disk (content drift, snapshots), and `d` is theirs: placement is per source, so
-all twelve stay on the lead hosts, their shared-backup cases reserving 2-5 GiB
-less there.
+disk (content drift, snapshots), and `d` is theirs.
+
+**Per-case placement** (2026-11-25).  A case may go to any host whose
+`cmp-run.sh --ceiling` holds its own reservation: `d` for a case that backs up
+its own tree, `d_shared` for one whose backup is the preparation's (room.py
+`shared_need()`: the measured `d_shared` only; unmeasured, `d`, since the
+host-side rule needs the repository's bytes there).  bs2's `held()` keeps, per
+host, the sources whose own cases it can't hold but whose shared-backup cases
+it can (`SHARED_ONLY`: copland, cage and czerny for the nine above with
+`d_shared` 9 or less, not pop24, slackware15 or -uefi, which they lack).  The
+own-backup cases, the source's lead (its draws, tier 0 sweep and tools) and
+every tier 2 case stay on the hosts that hold `d` (a tier 2 case's backup is
+shared only where the preparation's boot serves tier 2, Secure Boot off, which
+the Mac can't tell).
+
+- **Slots.**  Which drawn case is which isn't known until its lead draws it, so
+  the plan sets aside K of a source's tier 1 cases as shared-backup slots
+  (`wide_of()`), K a low estimate (room.py `shared_slots()`: the mean less a
+  standard deviation) of how many back up the preparation's tree, from the
+  generator on 200 seeds of the corpus dump (`shared_share()`: 0.21-0.31 for
+  these sources, so K is 2-4 of 20).  Each source's slots may go to one small
+  host (dealt in turns, so it prepares the source once) besides its own hosts;
+  `split()` charges that host the source's preparing (`prep_secs()`, a tier 1
+  case's seconds, more than the 100-340 s these took on chopin) before its
+  queue, and `wall()` counts it.
+- **Only when it pays.**  `placement()` splits both ways and keeps the per-case
+  split only when its slowest host ends sooner by the estimate (`PER_CASE`;
+  `plan` says which, and both hours).
+- **Dealing the drawn cases** (`deal_source()`, at start).  The lead says which
+  of its drawn tier 1 cases back up the preparation's tree (`bs2-host shared
+  --list`: `case_shared()`), and the small host, once it has prepared the
+  source, whether its preparation serves such a case (`bs2-host shared
+  --source`: `prep_shared()`); these are the two halves of `repo_shared()`,
+  which the case's reservation there takes.  Such cases fill that host's slots
+  first; the rest fill the other slots as before (the i-th case to slot i); a
+  case left over (fewer drawn than planned) goes to the source's lead, and a
+  slot left over stays empty.  A small host that didn't prepare the source, at
+  another generation than its lead's, or whose preparation doesn't serve, gets
+  none of that source's cases, and runs the rest of its share.  If a case's
+  reservation there still found it not shared (the state changed after), its
+  `d` is over the ceiling and `cmp-run.sh` refuses it: a HARNESS row, never a
+  case run in too small a RAM disk.
+- **Preparations.**  A small host prepares such a source (`bs2-host source
+  --drop-tools`: never its tools, tier 0 runs on the lead) only when it is given
+  some of its cases (`with_wide()`), and the space preflight counts that
+  preparation there.  No own-backup case's repository moves onto the SSD.
+
+BackShot2All's plan on 2026-11-25: per-case placement would put 25 cases on the
+small hosts (copland 8, cage 9, czerny 8) and 2,154 s of preparing first, and the
+farm, already even, would end at ~7.24 h est. instead of ~7.16 h: placed per
+source (`plan`: "per-case placement: not used").  A run whose small hosts would
+otherwise finish early (`bs2 BackShot2 mint22 mx25 neon24 ...`) takes them.
 
 
 ## A case's life

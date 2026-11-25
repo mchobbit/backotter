@@ -173,9 +173,9 @@ class ToolsWhere(unittest.TestCase):
     def test_start_hosts_passes_the_led_ones(self):
         got = {}
 
-        def prepare_one(h, ss, run, tools=()):
+        def prepare_one(h, ss, run, tools=(), serve=()):
             got[h] = set(tools)
-            return {}, "stop here"
+            return {}, "stop here", {}
         can = {"debian12": ["chopin", "cinqcent"], "nixos2605": ["chopin", "cinqcent"], "arch": ["chopin", "cinqcent"]}
         lead = {"debian12": "chopin", "nixos2605": "chopin", "arch": "cinqcent"}
         with mock.patch.object(B, "prepare_one", prepare_one), contextlib.redirect_stdout(io.StringIO()):

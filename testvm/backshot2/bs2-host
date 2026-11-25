@@ -33,6 +33,11 @@ never the shared ~/backotter-work/testvm.
                                          read where it is (repo_shared());
                                          --words: the whole reservation, --reserve D M or, for a
                                          source over this host's RAM disk, --reserve-ssd D M
+  bs2-host shared [CASE...] [--tier T] [--list FILE] [--source S]
+                                         repo_shared()'s halves for bs2's per-case placement:
+                                         "@shared T PATH 1|0" a case (its backup the prepared
+                                         tree), "@serves S T 1|0" a source (its preparation here
+                                         serves such a case at T)
   bs2-host lane CASE -- CMD...           CMD (cmp-run.sh ... tier1 CASE) holding this host's SSD lane when
                                          CASE is an SSD case here (one at a time, taken before CMD's
                                          reservation); else CMD as it is
@@ -1198,24 +1203,73 @@ def repo_shared(path, tier=None):
     both tiers when None: a reservation that doesn't know its tier), its backup was made
     by the rustic-bko the case takes (bko-bin's: backup_stale()), none of BS2_REUSE_SOURCE,
     BS2_REUSE_BACKUP and BS2_REPO_BIND is 0, and none of OTHER_INPUTS is set.  Else None:
-    its repository is in its share (its own backup, or a copy)."""
+    its repository is in its share (its own backup, or a copy).
+    The decision in two halves, so bs2's per-case placement takes the same one:
+    case_shared() (the case's own part) and prep_shared() (this host's)."""
+    c = C.read(path)
+    if not case_shared(c):
+        return None
+    repo = prep_shared(C.source_name(c), tier)
+    return (repo, du_bytes(repo)) if repo else None
+
+
+def case_shared(c):
+    """repo_shared()'s half that is the case's own: its backup is the prepared tree
+    (reuse.backup_shareable(): no content drift, one snapshot).  The same on every host."""
+    from bs2lib import reuse as RU
+    return bool(RU.backup_shareable(c)[0])
+
+
+def prep_shared(src, tier=None):
+    """repo_shared()'s half that is this host's: SRC's preparation's repository when its
+    cases' backup may be that one here, read where it is: none of BS2_REUSE_SOURCE,
+    BS2_REUSE_BACKUP and BS2_REPO_BIND is 0, none of OTHER_INPUTS is set, the preparation
+    stands in for its source at TIER (both when None), and its backup was made by this
+    host's rustic-bko (bko-bin's: backup_stale()).  Else None."""
     from bs2lib import reuse as RU
     if any(os.environ.get(v, "1") != "1" for v in ("BS2_REUSE_SOURCE", "BS2_REUSE_BACKUP", "BS2_REPO_BIND")):
         return None
     if any(os.environ.get(v) for v in OTHER_INPUTS):
         return None
-    c = C.read(path)
-    if not RU.backup_shareable(c)[0]:
-        return None
-    src = C.source_name(c)
     for t in ((tier,) if tier else (1, 2)):
         d, saved, why = prep_reasons(src, holt_bin(), t)
         if why or not d:
             return None
     if RU.backup_stale(saved, RU.sha256_file(f"{WORK}/bko-bin/linux/rustic-bko"), d):
         return None
-    repo = f"{d}/backup/repo"
-    return repo, du_bytes(repo)
+    return f"{d}/backup/repo"
+
+
+def cmd_shared(a):
+    """repo_shared()'s halves for bs2's per-case placement, a line each: for each case of
+    --list FILE (a pick list's "T PATH" lines) and each CASE (at --tier), "@shared T PATH
+    1|0", case_shared(): whether its backup is the preparation's tree (a lead says it of
+    the cases it drew); for each --source S, "@serves S T 1|0" at tiers 1 and 2,
+    prep_shared(): whether this host's preparation of S serves such a case at T (a host
+    that holds S's shared-backup cases only says it once it has prepared S).  A case or
+    source that can't be read is 0: placed as one that backs up its own tree."""
+    jobs = [(str(a.tier), p) for p in a.cases]
+    for f in a.list or ():
+        try:
+            with open(f) as fh:
+                jobs += [tuple(line.split()[:2]) for line in fh if len(line.split()) >= 2]
+        except OSError as e:
+            print(f"bs2-host shared: {f}: {e}", file=sys.stderr)
+    for t, p in jobs:
+        try:
+            ok = case_shared(C.read(p))
+        except Exception as e:   # (then as a case with its own backup)
+            print(f"bs2-host shared: {p}: {e}", file=sys.stderr)
+            ok = False
+        print(f"@shared {t} {p} {int(ok)}")
+    for s in a.source or ():
+        for t in (1, 2):
+            try:
+                ok = bool(prep_shared(s, t))
+            except Exception as e:
+                print(f"bs2-host shared: {s} at tier {t}: {e}", file=sys.stderr)
+                ok = False
+            print(f"@serves {s} {t} {int(ok)}")
 
 
 def case_disk(path, base=C.DISK_GIB, ssd=False, tier=None, shared=True):
@@ -1725,6 +1779,11 @@ def main():
     x.add_argument("--words", action="store_true", help="print the whole cmp-run.sh reservation (reserve_words)")
     x.add_argument("--tier", type=int, default=None, choices=(1, 2),
                    help="the case's tier (without: a shared backup is counted only when it serves at both)")
+    x = s.add_parser("shared")
+    x.add_argument("cases", nargs="*")
+    x.add_argument("--tier", type=int, default=1, choices=(1, 2), help="the tier of the CASEs")
+    x.add_argument("--list", action="append", help="a pick list's cases (its \"T PATH\" lines)")
+    x.add_argument("--source", action="append", help="whether this host's preparation of SOURCE serves a shared backup")
     x = s.add_parser("lane")
     x.add_argument("case")
     x.add_argument("command", nargs=argparse.REMAINDER)
@@ -1735,7 +1794,7 @@ def main():
     x.add_argument("source", nargs="?", default="alpine324")
     a = p.parse_args()
     {"source": cmd_source, "room": cmd_room, "prepared": cmd_prepared, "rescuer-key": cmd_rescuer_key, "tier0": cmd_tier0, "tier0-cases": cmd_tier0_cases, "gen": cmd_gen, "caps": cmd_caps,
-     "tier1": cmd_tier1, "leftovers": cmd_leftovers, "apply": cmd_apply, "plant": cmd_plant, "change": cmd_change, "deep": cmd_deep, "enqueue": cmd_enqueue, "queue": cmd_queue, "shrink": cmd_shrink, "reserve": cmd_reserve, "lane": cmd_lane}[a.cmd](a)
+     "tier1": cmd_tier1, "leftovers": cmd_leftovers, "apply": cmd_apply, "plant": cmd_plant, "change": cmd_change, "deep": cmd_deep, "enqueue": cmd_enqueue, "queue": cmd_queue, "shrink": cmd_shrink, "reserve": cmd_reserve, "shared": cmd_shared, "lane": cmd_lane}[a.cmd](a)
 
 
 if __name__ == "__main__":

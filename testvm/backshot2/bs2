@@ -53,7 +53,12 @@ names another, so two sessions' runs never share a copy).
                                     run (vanilla3, D 30) works on /bkoscratch (--reserve-ssd,
                                     HT_RAM=0), one case at a time, on the hosts whose
                                     holt_disk_mode is true (chopin, cinqcent) and whose memory
-                                    ceiling holds it (room.py scratch()); plan says which
+                                    ceiling holds it (room.py scratch()); plan says which.
+                                    Placement is per case: a host whose ceiling is under
+                                    the source's room but holds its shared-backup case's
+                                    (room.py shared_need(): slim-sizes.tsv's d_shared) takes
+                                    some of its tier 1 cases whose backup is the
+                                    preparation's (SHARED_ONLY, wide_of(), deal_source())
 
 How a BackShot2 run spreads (split()): each source has a lead, its HOME host when that's
 in the run, else the first that holds it.  The lead runs the source's tier 0 sweep and
@@ -170,6 +175,12 @@ COUNTS = {}       # --sweep N (tier 0 cases a source), --tier2 N (tier 2 cases a
 # work there ({(host, source): "ram" or "ssd"}, bs2lib/room.py scratch()).
 CEILINGS = {}
 SCRATCH = {}
+# {host: the sources whose own cases its ceiling can't hold, but whose shared-backup cases'
+# (bs2lib/room.py shared_need()) it can}: held()'s, such a case's per-case placement.
+SHARED_ONLY = {}
+# What placement() chose: {"wide": wide_of()'s, or {} when it placed per source; "per_source",
+# "per_case": the slowest host's seconds either way}; empty: no host held such cases only.
+PER_CASE = {}
 LISTED = {}   # {host: the sources its ls found, None: it didn't answer} (held(); missing_why())
 
 
@@ -183,6 +194,18 @@ def scratch_on(host, source):
     """Where SOURCE's cases work on HOST: "ram" (the RAM disk) or "ssd" (/bkoscratch), as
     held() found it; "ram" when held() didn't look (the tests' stand-ins)."""
     return SCRATCH.get((host, source), RM.RAM)
+
+
+def shared_only(host, source):
+    """Whether HOST holds SOURCE's shared-backup cases only (SHARED_ONLY: held()'s)."""
+    return source in SHARED_ONLY.get(host, ())
+
+
+def shared_placement():
+    """Whether a case may be placed by its shared-backup room: none of BS2_REUSE_SOURCE,
+    BS2_REUSE_BACKUP and BS2_REPO_BIND is 0 here (they pass to the hosts, reuse_env(), where
+    any 0 makes bs2-host repo_shared() None for every case: in doubt, the full room)."""
+    return all(os.environ.get(v, "1") == "1" for v in ("BS2_REUSE_SOURCE", "BS2_REUSE_BACKUP", "BS2_REPO_BIND"))
 
 
 def use_hosts(arg):
@@ -211,7 +234,9 @@ def held(sources, hosts=None):
     hold} over HOSTS (default RUN_HOSTS), an ls and a cmp-run.sh --ceiling each (roomy(),
     with the largest RAM-disk ceiling of those hosts: a source over every one of them works
     on /bkoscratch on a holt_disk_mode host, room.py scratch()); a host that doesn't
-    answer holds none.  CEILINGS and SCRATCH keep what it found."""
+    answer holds none.  CEILINGS and SCRATCH keep what it found, and SHARED_ONLY the
+    sources it left out whose shared-backup cases the host's ceiling does hold
+    (room.py scratch(shared=True); shared_placement()): per-case placement's."""
     seen = {}
     for h in hosts or RUN_HOSTS:
         r = ssh(h, 'echo "@ceiling $(cd ~/backotter-work && ./cmp-run.sh --ceiling 2>/dev/null)"; '
@@ -236,7 +261,14 @@ def held(sources, hosts=None):
         out[h], dropped = roomy(here, ceil, run_disk, ok)
         for s in out[h]:
             SCRATCH[(h, s)] = RM.scratch(s, ceil, ok, run_disk)
-        for s in sorted(dropped):
+        SHARED_ONLY[h] = {s for s in dropped if shared_placement() and RM.scratch(s, ceil, ok, run_disk, shared=True)}
+        for s in sorted(SHARED_ONLY[h]):
+            SCRATCH[(h, s)] = RM.RAM
+            d, m = RM.need(s)
+            ds, _ = RM.shared_need(s)
+            print(f"bs2: {h} holds vms/{s}'s shared-backup cases only: its cmp-run.sh --ceiling is {ceil[0]:g} {ceil[1]:g}, "
+                  f"under {s}'s own cases' --reserve {d} {m}, over a shared-backup case's {ds} {m}", file=sys.stderr)
+        for s in sorted(dropped - SHARED_ONLY[h]):
             d, m = RM.need(s)
             room = f"its cmp-run.sh --ceiling is {ceil[0]:g} {ceil[1]:g}" if ceil else "its cmp-run.sh --ceiling didn't answer"
             ssd = ""
@@ -363,7 +395,7 @@ def sweep_secs(sources, n, lead):
     return out
 
 
-def split(jobs, can, nslots, start=None):
+def split(jobs, can, nslots, start=None, wide=None):
     """{host: [job...]}: JOBS ((source, tier, x), in the run's order) spread over the hosts
     that hold each one's source (CAN: {source: [host...]}).  Each goes to the host that would
     finish it soonest (finish()): its START seconds, its slots busy, plus what it has so far,
@@ -372,24 +404,38 @@ def split(jobs, can, nslots, start=None):
     hosts first, and the longer case first (secs(): each source's own seconds at each tier),
     so the hosts finish about together and in proportion to their slots where they hold the
     same sources.  Every job goes to exactly one host; each host's keep JOBS' order.  A job
-    whose source no host of NSLOTS holds: ValueError."""
+    whose source no host of NSLOTS holds: ValueError.  WIDE ({(source, tier): (k, [host...])},
+    wide_of()): the first K jobs of that source and tier (x < K) are shared-backup slots,
+    which those hosts may take too (hosts_of()); such a host's first case of a source costs
+    it the source's preparing first (prep_secs(): its queue starts after it, so it counts on
+    every slot), once: such a slot goes there only where it still finishes soonest with it."""
     hosts = list(nslots)
     st = {h: float((start or {}).get(h, 0)) for h in hosts}
     busy = {h: st[h] * nslots[h] for h in hosts}   # slot-seconds
     lane = dict(st)                                # the SSD lane's end
     got = {h: [] for h in hosts}
-    order = sorted(range(len(jobs)), key=lambda i: (len(can[jobs[i][0]]), -secs(jobs[i][0], jobs[i][1]), i))
+    prepped = {h: set() for h in hosts}            # (a shared-only host's sources it prepares)
+    order = sorted(range(len(jobs)), key=lambda i: (len(hosts_of(jobs[i], can, wide)), -secs(jobs[i][0], jobs[i][1]), i))
     for i in order:
         s, t = jobs[i][0], jobs[i][1]
-        hs = [h for h in can.get(s, ()) if h in busy]
+        hs = [h for h in hosts_of(jobs[i], can, wide) if h in busy]
         if not hs:
             raise ValueError(f"no host of {', '.join(hosts)} holds {s}")
         x = secs(s, t)
 
+        def first(y):
+            return prep_secs(s) if shared_only(y, s) and s not in prepped[y] else 0
+
         def finish(y):
             ssd = scratch_on(y, s) == RM.SSD
-            return max((busy[y] + x) / nslots[y], lane[y] + x if ssd else lane[y])
+            p = first(y)
+            return max((busy[y] + p * nslots[y] + x) / nslots[y], lane[y] + p + x if ssd else lane[y] + p)
         h = min(hs, key=lambda y: (finish(y), hosts.index(y)))
+        p = first(h)
+        if p:
+            busy[h] += p * nslots[h]
+            lane[h] += p
+            prepped[h].add(s)
         busy[h] += x
         if scratch_on(h, s) == RM.SSD:
             lane[h] += x
@@ -397,13 +443,68 @@ def split(jobs, can, nslots, start=None):
     return {h: [jobs[i] for i in sorted(got[h])] for h in hosts}
 
 
+def prep_secs(source):
+    """Seconds a host takes to prepare SOURCE (bs2-host source, before its queue starts):
+    a tier 1 case's (secs()), which is at least what the slimmed sources' preparations took
+    on chopin on 2026-11-25 (100-340 s; their cases 176-359 s)."""
+    return secs(source, 1)
+
+
+def hosts_of(job, can, wide=None):
+    """The hosts JOB ((source, tier, x)) may go to: its source's (CAN), and for a
+    shared-backup slot (x < WIDE[(source, tier)]'s k) the hosts that hold such cases only."""
+    s, t, x = job[0], job[1], job[2]
+    hs = list(can.get(s, ()))
+    k, more = (wide or {}).get((s, t), (0, ()))
+    if isinstance(x, int) and x < k:
+        hs += [h for h in more if h not in hs]
+    return hs
+
+
+def wide_of(sources, n, hosts=None):
+    """{(source, 1): (k, [host...])} of SOURCES (N cases a source, n_of()) that hosts of HOSTS
+    (default RUN_HOSTS) hold for their shared-backup cases only (SHARED_ONLY): K of its tier 1
+    cases are shared-backup slots (room.py shared_slots(): a low estimate of how many of them
+    back up the preparation's tree, from the generator on the corpus dump), on one of those
+    hosts, dealt in turns (each prepares the source once for all of them).  Tier 1 only: a
+    tier 2 case's backup is shared only where the preparation's boot serves tier 2 (Secure
+    Boot off), which the Mac can't tell, so tier 2 is placed by the full room."""
+    out, load = {}, {}
+    for s in sources:
+        hs = [h for h in (hosts or RUN_HOSTS) if shared_only(h, s)]
+        if not hs:
+            continue
+        k = RM.shared_slots(n_of(n, s), RM.shared_share(s))
+        if k:
+            # (One host a source, the one with the fewest such sources so far: it prepares the
+            # source once, for all of them; a preparation is a case's seconds, prep_secs().)
+            h = min(hs, key=lambda y: (load.get(y, 0), hs.index(y)))
+            load[h] = load.get(h, 0) + 1
+            out[(s, 1)] = (k, [h])
+    return out
+
+
+def with_wide(can, parts):
+    """CAN with each host that holds a source's shared-backup cases only added where PARTS
+    gives it some of them: it prepares that source (bs2-host source --drop-tools) and the
+    space preflight counts that preparation; one with none of its cases prepares nothing."""
+    out = {s: list(hs) for s, hs in can.items()}
+    for h, js in parts.items():
+        for s in dict.fromkeys(j[0] for j in js):
+            if h not in out.setdefault(s, []):
+                out[s].append(h)
+    return out
+
+
 def wall(jobs, nslots, start=0, host=None):
-    """Seconds a host takes for JOBS on NSLOTS slots, after START (its sweeps): their seconds
-    over the slots, never less than its longest case (a case is one slot's), nor than its SSD
+    """Seconds a host takes for JOBS on NSLOTS slots, after START (its sweeps) and the preparing
+    of the sources it holds the shared-backup cases of only (prep_secs()): their seconds over
+    the slots, never less than its longest case (a case is one slot's), nor than its SSD
     cases one after another (HOST's, scratch_on(): bs2-host runs one at a time)."""
     xs = [secs(s, t) for s, t, _ in jobs]
     lane = sum(secs(s, t) for s, t, _ in jobs if host and scratch_on(host, s) == RM.SSD)
-    return start + max(sum(xs) / nslots, max(xs, default=0), lane)
+    prep = sum(prep_secs(s) for s in {j[0] for j in jobs} if host and shared_only(host, s))
+    return start + prep + max(sum(xs) / nslots, max(xs, default=0), lane)
 
 
 def ssh(host, cmd, check=True, capture=False, input=None):
@@ -474,14 +575,34 @@ def root(cmd, reserve="2 2", tag="bs2:mac"):
 
 def placement(sources, n, have=None):
     """What a run of N cases a source does where: (can, lead, {host: jobs}, {host: sweep s});
-    HAVE: held()'s, when the caller has it already."""
+    HAVE: held()'s, when the caller has it already.  CAN adds to a source's hosts each that
+    holds its shared-backup cases only and was given some (with_wide()); the lead is always a
+    host that holds the source's own cases.  Such slots (wide_of()) are dealt only when that
+    split's slowest host ends sooner than the split without them (PER_CASE says which)."""
     have = held(sources) if have is None else have
     can = holders(sources, have)
     lead = leads(can)
-    use = [h for h in RUN_HOSTS if any(h in hs for hs in can.values())]
+    wide = wide_of(sources, n)
+    use = [h for h in RUN_HOSTS if any(h in hs for hs in can.values()) or any(h in w[1] for w in wide.values())]
     start = sweep_secs(sources, n, lead)
-    parts = split(jobs_of(sources, n), can, {h: slots(h) for h in use}, start)
-    return can, lead, parts, start
+    nsl = {h: slots(h) for h in use}
+    parts = split(jobs_of(sources, n), can, nsl, start)
+    PER_CASE.clear()
+    if wide:
+        # (Per case only when it ends the run sooner by the estimate: the hosts that take
+        # shared-backup cases only prepare those sources first, prep_secs(), which a farm
+        # already even by seconds may not win back.  Else per source, as before.)
+        wider = split(jobs_of(sources, n), can, nsl, start, wide)
+        a, b = slowest(parts, start), slowest(wider, start)
+        PER_CASE.update(wide=wide if b < a - 1 else {}, per_source=a, per_case=b)
+        if b < a - 1:
+            parts = wider
+    return with_wide(can, parts), lead, parts, start
+
+
+def slowest(parts, start):
+    """The seconds the slowest host of PARTS takes (wall(), after its START)."""
+    return max((wall(js, slots(h), (start or {}).get(h, 0), h) for h, js in parts.items()), default=0)
 
 
 def scratch_words(s, hosts):
@@ -498,6 +619,7 @@ def plan_words(sources, n, have=None):
     """The plan of a run of SOURCES, N cases a source (n_of()), as plan prints it; returns
     its slowest host's seconds."""
     can, lead, parts, start = placement(sources, n, have)
+    wide = PER_CASE.get("wide") or {}
     w = max([16] + [len(s) + 1 for s in sources])
 
     def sec(s, t):
@@ -507,8 +629,14 @@ def plan_words(sources, n, have=None):
     print(f"{'source':{w}} {'lead':9} {'tier0':>6} {'tier1':>6} {'tier2':>6}  {'tier 1 s':13} {'tier 2 s':13} {'scratch':8} hosts")
     for s in sources:
         t2 = tier2_of(s, sources)
+        own = [h for h in can[s] if not shared_only(h, s)]
+        sh = [h for h in can[s] if shared_only(h, s)]
+        k = wide.get((s, 1), (0, ()))[0]
+        there = sum(1 for h in sh for j in parts.get(h, ()) if j[0] == s)
+        more = (f"; shared-backup cases also on {', '.join(sh)} ({there} there: {k} of its {n_of(n, s)} tier 1 cases are "
+                f"shared-backup slots, room.py shared_slots())") if sh else ""
         print(f"{s:{w}} {lead[s]:9} {sweep_n(n, s):6} {n_of(n, s):6} {t2:6}  {sec(s, 1):13} {sec(s, 2) if t2 else '-':13} "
-              f"{scratch_words(s, can[s]):8} {', '.join(can[s])}")
+              f"{scratch_words(s, own):8} {', '.join(own)}{more}")
     longest = 0
     for h, js in parts.items():
         if not js:
@@ -519,13 +647,19 @@ def plan_words(sources, n, have=None):
             c1 = sum(1 for x in js if x[0] == s and x[1] == 1)
             c2 = sum(1 for x in js if x[0] == s and x[1] == 2)
             if c1 or c2:
-                by.append(f"{s} {c1}" + (f"+{c2}" if c2 else "") + (" SSD" if scratch_on(h, s) == RM.SSD else ""))
+                by.append(f"{s} {c1}" + (f"+{c2}" if c2 else "") + (" SSD" if scratch_on(h, s) == RM.SSD else "") +
+                          (" shared-backup" if shared_only(h, s) else ""))
         sec_ = wall(js, slots(h), start.get(h, 0), h)
         longest = max(longest, sec_)
         sw = f", after its tier 0 sweeps (~{start[h] / 60:.0f} min)" if start.get(h) else ""
         print(f"{h}: {slots(h)} slots, {len(js)} cases ({'; '.join(by)}), ~{sec_ / 3600:.1f} h est.{sw}")
     print(f"the run: ~{longest / 3600:.1f} h est. (its slowest host, by each source's seconds a case above), each host "
           f"after ~5-15 min of preparing what it lacks and the leads drawing its cases")
+    if PER_CASE:
+        ws = sorted({h for _, hs in (PER_CASE.get("wide") or wide_of(sources, n)).values() for h in hs})
+        print(f"per-case placement: {'used' if PER_CASE.get('wide') else 'not used'}: shared-backup cases on "
+              f"{', '.join(ws)} (their preparing first) end the run at ~{PER_CASE['per_case'] / 3600:.2f} h est., "
+              f"per source ~{PER_CASE['per_source'] / 3600:.2f} h")
     print(wear_words(sources, parts))
     return longest
 
@@ -695,19 +829,28 @@ def light(host, cmd, tag):
             f" {shlex.quote('light ' + cmd)} -- {cmd}")
 
 
-def prep_cmd(h, ss, run, tools=()):
+def prep_cmd(h, ss, run, tools=(), serve=()):
     """The one command that has H make the run's directories and prepare SS, the sources
     it holds (bs2-host source: once per generation, and again when the bko-holt or the
     harness that made the preparation changed: what its cases reuse), printing a "gen
     SOURCE GEN" line each.  A preparation may boot the source: under a reservation.  TOOLS:
     the sources whose tier 0 H runs (it leads them: tools_of()), whose tools it copies
-    (--tools); every other's it removes (--drop-tools: no tier 0 of it runs there)."""
+    (--tools); every other's it removes (--drop-tools: no tier 0 of it runs there).  SERVE:
+    the sources H holds the shared-backup cases of only (SHARED_ONLY), for which it then
+    says whether its preparation serves such a case ("@serves SOURCE TIER 1|0", bs2-host
+    shared --source: repo_shared()'s half that is the host's), as m, outside the
+    reservations, as the queue's worker works out a case's reservation (bs2-host
+    reserve_words(): it reads the preparation and hashes rustic-bko, no VM); a check that
+    fails says no."""
     # (The RAM disk's dir as m: made first by a root job after a reboot, it was
     # root's, and tier 0, which runs as m, couldn't write there.)
     c = [f"mkdir -p {ROOT}/logs {ROOT}/runs /mnt/bko-ram/backshot2"]
     c += [root(f"{HOST_BS2} source {s} --port 2949 {'--tools' if s in tools else '--drop-tools'}", prep_room(s),
                f"bs2:{run}:source-{s}") for s in ss]
     c += [f'echo "gen {s} $(cat {ROOT}/sources/{s}/gen)"' for s in ss]
+    if serve:
+        # (Never what stops the host: a check that fails says no, and its slots take none.)
+        c.append(f"{{ {reuse_env()}{HOST_BS2} shared " + " ".join(f"--source {s}" for s in serve) + " || true; }")
     return " && ".join(c)
 
 
@@ -734,22 +877,29 @@ def tools_of(led):
     return {s for s in led if wants_tools(s)}
 
 
-def prepare_one(h, ss, run, tools=()):
-    """H prepares SS (prep_cmd, TOOLS' tools copied): ({source: generation}, None), or (what
-    it printed, the error)."""
-    rc, out, err = par({h: prep_cmd(h, ss, run, tools)})[h]
-    gens = {}
+def prepare_one(h, ss, run, tools=(), serve=()):
+    """H prepares SS (prep_cmd, TOOLS' tools copied): ({source: generation}, None, SERVES),
+    or (what it printed, the error, SERVES); SERVES {(source, tier): bool} of SERVE's
+    "@serves" lines (a source or tier it didn't say: False)."""
+    rc, out, err = par({h: prep_cmd(h, ss, run, tools, serve)})[h]
+    gens, serves = {}, {}
     for line in out.splitlines():
         if line.startswith("gen "):
             _, s, *g = line.split()
             gens[s] = g[0] if g else None
-    return gens, (f"preparing its sources: exit {rc}: {(out + err).strip()[-300:]}" if rc else None)
+        m = re.match(r"@serves (\S+) ([12]) ([01])$", line.strip())
+        if m:
+            serves[(m.group(1), int(m.group(2)))] = m.group(3) == "1"
+    return gens, (f"preparing its sources: exit {rc}: {(out + err).strip()[-300:]}" if rc else None), serves
 
 
-def draw_cmd(lead_host, ss, sources, n, run):
+def draw_cmd(lead_host, ss, sources, n, run, classify=()):
     """The one command that has a lead draw its sources SS' cases, as one host alone would
     (enqueue --to: tier 1, then tier 2 for a UEFI source), outside the reservations
-    (light()), one list after another, and print them (grep -H)."""
+    (light()), one list after another, and print them (grep -H); for CLASSIFY's (the sources
+    some host holds the shared-backup cases of only), which of their tier 1 cases back up
+    the preparation's tree ("@shared 1 PATH 1|0", bs2-host shared: repo_shared()'s half that
+    is the case's own)."""
     rd = f"{ROOT}/runs/{run}"
     c = []
     for s in ss:
@@ -758,20 +908,27 @@ def draw_cmd(lead_host, ss, sources, n, run):
         if tier2_of(s, sources):
             c.append(light(lead_host, f"{HOST_BS2} enqueue {s} {tier2_of(s, sources)} --tier 2 --run {run} --from 500000"
                                       f" --to {rd}/pick-{s}-t2.txt", f"bs2:{run}:pick"))
-    c += [f"sudo mkdir -p {rd}-t0", f"sudo chown -R m: {rd} {rd}-t0",
-          f"cd {rd} && {{ {' '.join(f'grep -H . pick-{s}-t[12].txt;' for s in ss)} true; }}"]
+    c += [f"sudo mkdir -p {rd}-t0", f"sudo chown -R m: {rd} {rd}-t0"]
+    # (Never what stops the draw: a check that fails says none, and their slots take none.)
+    c += [f"{{ {HOST_BS2} shared --list {rd}/pick-{s}-t1.txt || true; }}" for s in ss if s in classify]
+    c += [f"cd {rd} && {{ {' '.join(f'grep -H . pick-{s}-t[12].txt;' for s in ss)} true; }}"]
     return " && ".join(c)
 
 
-def draw(lead_host, ss, sources, n, run):
-    """The lead draws SS' cases (draw_cmd): ({(source, tier): [path...]}, None), or ({}, the error)."""
-    rc, out, err = par({lead_host: draw_cmd(lead_host, ss, sources, n, run)})[lead_host]
+def draw(lead_host, ss, sources, n, run, classify=()):
+    """The lead draws SS' cases (draw_cmd, CLASSIFY's classified): ({(source, tier): [path...]},
+    None, {path: whether its backup is the preparation's tree}), or ({}, the error, {})."""
+    rc, out, err = par({lead_host: draw_cmd(lead_host, ss, sources, n, run, classify)})[lead_host]
     if rc:
-        return {}, f"drawing the cases: exit {rc}: {(out + err).strip()[-400:]}"
-    picks = {}
+        return {}, f"drawing the cases: exit {rc}: {(out + err).strip()[-400:]}", {}
+    picks, shared = {}, {}
     for s, t, p in picks_of(out, ss):
         picks.setdefault((s, t), []).append(p)
-    return picks, None
+    for line in out.splitlines():
+        m = re.match(r"@shared [12] (\S+) ([01])$", line.strip())
+        if m:
+            shared[m.group(1)] = m.group(2) == "1"
+    return picks, None, shared
 
 
 def fill(js, picks):
@@ -786,6 +943,43 @@ def fill(js, picks):
         else:
             short += 1
     return out, short
+
+
+def deal_source(s, parts, picks, shared, serves, lead):
+    """Source S's drawn cases on the hosts' planned slots (PARTS: {host: [(source, tier, x)...]}),
+    a tier at a time: ({host: [(s, tier, path)...]}, {host: slots left empty}, cases over).
+    A slot on a host that holds S's own cases takes any case; one on a host that holds S's
+    shared-backup cases only (shared_only()) takes only a case whose backup is the
+    preparation's tree (SHARED: {path: bool}, the lead's bs2-host shared), and only when that
+    host's preparation serves one at that tier (SERVES: {host: {(source, tier): bool}}, its
+    own bs2-host shared --source): the two halves of repo_shared(), as the case's
+    reservation there takes them.  Such cases fill those slots first, in their list's order,
+    the slots by x; the rest fill the other slots, by x, as fill() did; a case left over
+    (fewer shared-backup cases drawn than planned) goes to S's LEAD, which holds S's own
+    cases; a slot left over stays empty.  Without such hosts: fill()'s, the i-th case to
+    slot x = i."""
+    out, short, over = {}, {}, 0
+    for t in (1, 2):
+        drawn = picks.get((s, t), [])
+        slots = sorted((x, h) for h, js in parts.items() for (s2, t2, x) in js if s2 == s and t2 == t)
+        tight = [(x, h) for x, h in slots if shared_only(h, s)]
+        flex = [(x, h) for x, h in slots if not shared_only(h, s)]
+        free = [(x, h) for x, h in tight if (serves.get(h) or {}).get((s, t))]
+        rest = []
+        for p in drawn:
+            if free and shared.get(p):
+                _, h = free.pop(0)
+                out.setdefault(h, []).append((s, t, p))
+            else:
+                rest.append(p)
+        for (_, h), p in zip(flex, rest):
+            out.setdefault(h, []).append((s, t, p))
+        for x, h in [y for y in tight if y in free or not (serves.get(y[1]) or {}).get((s, t))] + flex[len(rest):]:
+            short[h] = short.get(h, 0) + 1
+        for p in rest[len(flex):]:
+            over += 1
+            out.setdefault(lead[s], []).append((s, t, p))
+    return out, short, over
 
 
 def ship(h, js, lead, run):
@@ -831,40 +1025,70 @@ def start_hosts(sources, n, run, can, lead, parts):
     (LEAD: {source: host}) then draws its sources' cases, outside the reservations; a
     host then waits for the leads of the sources it holds to have prepared them, checks
     it has each at its lead's generation (the cases are drawn on that), waits for the
-    sources its cases are of to be drawn, takes its cases from the pick lists (fill()),
-    has their files copied from their leads, and starts (a lead's tier 0 sweeps first).
+    sources its cases are of to be drawn, takes its cases from the pick lists
+    (deal_source(): fill()'s, with per-case placement's shared-backup slots), has their
+    files copied from their leads, and starts (a lead's tier 0 sweeps first).
     A host something fails for (its preparing, a lead's preparing or drawing, a
     generation that differs from its lead's, the copy) isn't started; the others are.
+    For a source a host holds the shared-backup cases of only (shared_only()), it also
+    says whether its preparation serves them (prepare_one()'s SERVES), the source's lead
+    says which of its drawn cases are such (draw()'s), and a generation that differs, or
+    a lead that didn't prepare or draw it, only leaves that source's slots there empty.
     Prints as each host draws and starts; returns {host: why} of those not started."""
     import threading
     hosts = list(parts)
     mine = {h: [s for s in sources if h in can.get(s, ())] for h in hosts}
+    tight = {h: [s for s in mine[h] if shared_only(h, s)] for h in hosts}
+    wide = {s for h in hosts for s in tight[h]}
     led = {}
     for s in sources:
         led.setdefault(lead[s], []).append(s)
     prepped = {h: threading.Event() for h in hosts}
     drawn = {s: threading.Event() for s in sources}
-    gens, ready, picks, drew, why = {}, set(), {}, set(), {}
-    lock = threading.Lock()
+    gens, ready, picks, drew, why, shared, serves, dealt = {}, set(), {}, set(), {}, {}, {}, {}
+    lock, deal_lock = threading.Lock(), threading.Lock()
 
     def say(msg):
         with lock:
             print(msg, flush=True)
 
+    def dealt_of(s):
+        """deal_source() of S, once: after its draw and the preparing of the hosts that
+        hold its shared-backup cases only (their SERVES)."""
+        for y in hosts:
+            if s in tight[y]:
+                prepped[y].wait()
+        with deal_lock:
+            if s not in dealt:
+                # (Only a host that prepared S at its lead's generation: one that didn't isn't started.)
+                ok = {y: serves.get(y) or {} for y in hosts if s in tight[y] and y in ready and
+                      gens.get(y, {}).get(s) == gens.get(lead[s], {}).get(s)}
+                dealt[s] = deal_source(s, parts, picks, shared, ok, lead)
+                o, sh, ov = dealt[s]
+                if s in wide:
+                    k = sum(1 for p in picks.get((s, 1), []) if shared.get(p))
+                    say(f"{s}: {k} of its {len(picks.get((s, 1), []))} tier 1 cases back up the preparation's tree; "
+                        f"on the hosts that hold those only: " + (", ".join(
+                            f"{y} {sum(1 for j in o.get(y, []) if j[0] == s)}" for y in hosts if s in tight[y]) or "none") +
+                        (f"; {ov} more than its other slots, on its lead {lead[s]}" if ov else ""))
+            return dealt[s]
+
     def one(h):
         try:
-            g, err = prepare_one(h, mine[h], run, tools_of(led.get(h, [])))
+            g, err, sv = prepare_one(h, mine[h], run, tools_of(led.get(h, [])), tight[h])
             gens[h] = g
+            serves[h] = sv
             if err:
                 why[h] = err
                 return
             ready.add(h)
             prepped[h].set()
             if led.get(h):
-                p, err = draw(h, led[h], sources, n, run)
+                p, err, c = draw(h, led[h], sources, n, run, [s for s in led[h] if s in wide])
                 if not err:
                     with lock:
                         picks.update(p)
+                        shared.update(c)
                         drew.update(led[h])
                 for s in led[h]:   # (now: the hosts waiting for them needn't wait for this one)
                     drawn[s].set()
@@ -874,23 +1098,36 @@ def start_hosts(sources, n, run, can, lead, parts):
                 say(f"{h}: drew the cases of {', '.join(led[h])}")
             for s in mine[h]:
                 prepped[lead[s]].wait()
+                # (A source it holds the shared-backup cases of only: its slots stay empty, deal_source().)
                 if lead[s] not in ready:
+                    if s in tight[h]:
+                        say(f"{h}: its lead {lead[s]} didn't prepare {s}: none of {s}'s shared-backup cases here")
+                        continue
                     why[h] = f"its lead {lead[s]} didn't prepare {s}"
                     return
                 if gens.get(lead[s], {}).get(s) != gens[h].get(s):
-                    why[h] = (f"its {s} is at {gens[h].get(s)}, its lead {lead[s]}'s at {gens.get(lead[s], {}).get(s)}: "
-                              f"a source's cases are drawn on its lead's generation (refresh vms/{s}, or leave {h} out "
-                              f"with --hosts)")
+                    w = (f"its {s} is at {gens[h].get(s)}, its lead {lead[s]}'s at {gens.get(lead[s], {}).get(s)}: "
+                         f"a source's cases are drawn on its lead's generation (refresh vms/{s}, or leave {h} out "
+                         f"with --hosts)")
+                    if s in tight[h]:
+                        say(f"{h}: {w}; none of {s}'s shared-backup cases here")
+                        continue
+                    why[h] = w
                     return
             need = sorted({s for s, _, _ in parts[h]}, key=sources.index)
             for s in need:
                 drawn[s].wait()
-            undrawn = [s for s in need if s not in drew]
+            undrawn = [s for s in need if s not in drew and s not in tight[h]]
             if undrawn:
                 why[h] = (f"no cases of {', '.join(undrawn)}: not drawn (see its lead "
                           f"{', '.join(sorted({lead[s] for s in undrawn}))})")
                 return
-            js, short = fill(parts[h], picks)
+            js, short = [], 0
+            for s in sorted({s for s in need if s in drew} | set(led.get(h, [])), key=sources.index):
+                o, sh, _ = dealt_of(s)
+                js += o.get(h, [])
+                short += sh.get(h, 0)
+            js.sort(key=lambda j: (sources.index(j[0]), j[1], picks[(j[0], j[1])].index(j[2])))
             ship(h, js, lead, run)
             if launch(h, js, led.get(h, []), n, run):
                 what = ", ".join(f"{s} {sum(1 for x in js if x[0] == s)}" for s in sources if any(x[0] == s for x in js))
@@ -1086,17 +1323,23 @@ def held_briefly(sources):
     err = io.StringIO()
     with contextlib.redirect_stderr(err):
         have = held(sources)
-    left = {}
+    left, wide = {}, {}
     for line in err.getvalue().splitlines():
         m = re.match(r"bs2: (\S+) has vms/(\S+), but ", line)
+        w = re.match(r"bs2: (\S+) holds vms/(\S+)'s shared-backup cases only: ", line)
         if m:
             left.setdefault(m.group(1), []).append(m.group(2))
+        elif w:
+            wide.setdefault(w.group(1), []).append(w.group(2))
         else:
             print(line, file=sys.stderr)
-    for h, ss in left.items():
+    for h in dict.fromkeys(list(left) + list(wide)):
         c = CEILINGS.get(h)
-        print(f"bs2: {h} left out for {len(ss)} sources over its cmp-run.sh --ceiling"
-              f"{f' ({c[0]:g} {c[1]:g})' if c else ''} (bs2lib/room.py need()): {', '.join(ss)}", file=sys.stderr)
+        ss, ws = left.get(h, []), wide.get(h, [])
+        print(f"bs2: {h} left out for {len(ss) + len(ws)} sources over its cmp-run.sh --ceiling"
+              f"{f' ({c[0]:g} {c[1]:g})' if c else ''} (bs2lib/room.py need()): {', '.join(ss + ws)}"
+              + (f"; of them it holds the shared-backup cases of {', '.join(ws)} (room.py shared_need())" if ws else ""),
+              file=sys.stderr)
     return have
 
 

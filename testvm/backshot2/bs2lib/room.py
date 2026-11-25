@@ -19,8 +19,15 @@ drift, or N snapshots) into the share in its RAM disk.  A case whose backup is
 the preparation's (reuse.backup_shareable()) reads that repository where it is
 on /bkoscratch (ht1-bs2.sh's bs2_repo_bind), so it reserves less: shared_of(),
 the slimmed source's measured d_shared, else the room less the repository's
-whole GiB (bs2-host case_disk(), repo_shared()).  Placement (need(),
-scratch()) stays the source's room: any of its cases may go to any of its hosts.
+whole GiB (bs2-host case_disk(), repo_shared()).
+
+Placement is per case (bs2's held() and split()): a case may go to any host whose
+ceiling holds its own reservation.  need() is the source's room (its own-backup
+cases'); shared_need() is a shared-backup case's, the measured d_shared only (in
+doubt, need()'s: an unmeasured d_shared depends on the repository's bytes on the
+host, which the Mac can't know).  scratch(..., shared=True) is where such a case
+works: wherever the source's own cases do, else in a RAM disk that holds
+shared_need() (never the SSD lane).
 """
 
 import os
@@ -139,11 +146,23 @@ def need(source, path=SIZES):
     return max(C.DISK_GIB, d), max(MEM, m)
 
 
+def shared_need(source, path=SIZES, slim_path=None):
+    """The least (disk GiB, memory GiB) a shared-backup case of SOURCE reserves, for
+    placement: its measured d_shared (shared_of()'s first rule, at least case.DISK_GIB)
+    with need()'s memory; need() itself when d_shared isn't measured (shared_of()'s other
+    rule takes the repository's bytes on the host: in doubt, the full room)."""
+    d, m = need(source, path)
+    row = slim_row(source, slim_path)
+    if row and row.get("d_shared"):
+        return min(d, max(C.DISK_GIB, row["d_shared"])), m
+    return d, m
+
+
 EPS = 1e-9
 RAM, SSD = "ram", "ssd"
 
 
-def scratch(source, ceiling, disk_ok, run_disk=None, path=SIZES):
+def scratch(source, ceiling, disk_ok, run_disk=None, path=SIZES, shared=False):
     """Where SOURCE's cases work on a host, or None when the host can't hold them:
     - "ram": in the RAM disk, under cmp-run.sh --reserve D M, as every case did before
       A2: whenever need()'s D and M are within the host's CEILING ((disk, memory) GiB,
@@ -156,7 +175,10 @@ def scratch(source, ceiling, disk_ok, run_disk=None, path=SIZES):
       vanilla3's full room, D 30 GiB over the big hosts' 29 (its slimmed room, D 12, is
       in RAM: slim-sizes.tsv).
     A source one host of the run can hold in RAM never goes to the SSD on another: it
-    stays in the RAM disks that hold it, as before."""
+    stays in the RAM disks that hold it, as before.
+    SHARED: where a shared-backup case of SOURCE works (bs2-host repo_shared()): where its
+    own cases do, else "ram" when shared_need() is within CEILING (a host that holds such
+    cases only: bs2's SHARED_ONLY), else None."""
     if not ceiling:
         return None
     d, m = need(source, path)
@@ -167,4 +189,48 @@ def scratch(source, ceiling, disk_ok, run_disk=None, path=SIZES):
     top = max(ceiling[0], run_disk if run_disk is not None else ceiling[0])
     if disk_ok and d > top + EPS:
         return SSD
+    if shared and shared_need(source, path)[0] <= ceiling[0] + EPS:
+        return RAM
     return None
+
+
+# ---- how many of a source's cases are shared-backup ones (bs2's per-case placement) ----
+
+SHARE_SAMPLE = 200       # shared_share(): the seeds it generates
+SHARE_FROM = 100000      # their first: bs2-host enqueue's tier 1 draws start there
+_SHARES = {}
+
+
+def shared_share(source, sample=SHARE_SAMPLE, start=SHARE_FROM):
+    """The share of SOURCE's tier 1 cases whose backup is the preparation's tree
+    (reuse.backup_shareable(), bs2-host case_shared(): repo_shared()'s own half), from the
+    generator (generate.generate()) on SAMPLE seeds from START over its corpus dump (the
+    drawn ones are the host's dump's, a slimmed source's slimmed: the same draws of content
+    drift and snapshots, other edits).  0 when it can't be worked out (no dump, an error):
+    then every case is placed by the source's full room.  Cached a source."""
+    key = (source, sample, start)
+    if key in _SHARES:
+        return _SHARES[key]
+    p = 0.0
+    try:
+        from . import generate as G, reuse as RU, sources as SRC
+        d = SRC.dump(source)
+        if d:
+            k = sum(1 for seed in range(start, start + sample)
+                    if RU.backup_shareable(G.generate(source, None, d, seed, caps={}))[0])
+            p = k / sample
+    except Exception:   # (an estimate: in doubt, the full room)
+        p = 0.0
+    _SHARES[key] = p
+    return p
+
+
+def shared_slots(n, p):
+    """Of N cases, each a shared-backup one with chance P, how many to plan as such: a low
+    estimate, the mean less a standard deviation (rounded down, at least 0), so the drawn
+    ones fill those slots most often (bs2 deal_source(): a slot no such case fills is left
+    empty, a case no own-backup slot takes goes to its source's lead)."""
+    import math
+    if n <= 0 or p <= 0:
+        return 0
+    return max(0, int(math.floor(n * p - math.sqrt(n * p * (1 - p)))))

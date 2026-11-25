@@ -129,12 +129,13 @@ class Commands(unittest.TestCase):
         out = ("pick-alpine324-uefi-t2.txt:2 /r/cases/u2.case\npick-alpine324-uefi-t1.txt:1 /r/cases/u1.case\n"
                "pick-alpine324-t1.txt:1 /r/cases/a1.case\npick-alpine324-t1.txt:1 /r/cases/a2.case\n")
         with mock.patch.object(B, "par", lambda cmds: {h: (0, out, "") for h in cmds}):
-            picks, err = B.draw("chopin", ["alpine324", "alpine324-uefi"], B.ALPINE, N, RUN)
+            picks, err, shared = B.draw("chopin", ["alpine324", "alpine324-uefi"], B.ALPINE, N, RUN)
         self.assertIsNone(err)
+        self.assertEqual(shared, {})
         self.assertEqual(picks, {("alpine324", 1): ["/r/cases/a1.case", "/r/cases/a2.case"],
                                  ("alpine324-uefi", 1): ["/r/cases/u1.case"], ("alpine324-uefi", 2): ["/r/cases/u2.case"]})
         with mock.patch.object(B, "par", lambda cmds: {h: (3, "", "boom") for h in cmds}):
-            picks, err = B.draw("chopin", ["alpine324"], B.ALPINE, N, RUN)
+            picks, err, _ = B.draw("chopin", ["alpine324"], B.ALPINE, N, RUN)
         self.assertEqual(picks, {})
         self.assertIn("exit 3", err)
 
@@ -166,22 +167,24 @@ class Start(unittest.TestCase):
         self.events = []          # ("draw-end" | "start", host), in order
         self.lock = threading.Lock()
 
-    def prepare_one(self, h, ss, run, tools=()):
+    def prepare_one(self, h, ss, run, tools=(), serve=()):
         self.assertEqual(ss, [s for s in B.ALPINE if s in HELD[h]])
         # (Tools for the sources it leads alone: their draws and sweeps run there.)
         self.assertEqual(set(tools), {s for s in ss if self.lead[s] == h})
+        self.assertEqual(list(serve), [], "no host holds an Alpine source's shared-backup cases only")
         if h in self.fail_prep:
-            return {}, "preparing its sources: exit 1: no room"
-        return {s: self.gens[h][s] for s in ss}, None
+            return {}, "preparing its sources: exit 1: no room", {}
+        return {s: self.gens[h][s] for s in ss}, None, {}
 
-    def draw(self, h, ss, sources, n, run):
+    def draw(self, h, ss, sources, n, run, classify=()):
+        self.assertEqual(list(classify), [])
         if h in self.gate:
             self.assertTrue(self.gate[h].wait(WAIT), f"{h}'s draw was never let go")
         with self.lock:
             self.events.append(("draw-end", h))
         if h in self.fail_draw:
-            return {}, "drawing the cases: exit 1: boom"
-        return {k: v for k, v in self.picks.items() if k[0] in ss}, None
+            return {}, "drawing the cases: exit 1: boom", {}
+        return {k: v for k, v in self.picks.items() if k[0] in ss}, None, {}
 
     def ship(self, h, js, lead, run):
         if h in self.fail_ship:

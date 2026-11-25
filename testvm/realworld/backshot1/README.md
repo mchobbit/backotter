@@ -521,6 +521,58 @@ same day, about 11 minutes: it booted kernel 7.3.5 by the NVRAM entry, and
 `ssh root@thinkpad.local` answered 72 s after the reboot (by address too,
 192.168.68.65); mybig512 mounts there (`mount -L mybig512 /mnt/bs1-backup`).
 
+## Guix System from the stick, plain or on LUKS (family G)
+
+Guix System 1.5.0 goes onto the Thinkpad from the stick the way Guix's
+manual installs from another distro (docs/design/guix.md, "What GX8 found"):
+`testvm/realworld/guix-bootstrap.sh`, which reads Guix's binary tarball and
+the drive's `keys/`.  The drive's `backshot1/guix/` holds the script,
+`guix-binary-1.5.0.x86_64-linux.tar.xz` (SHA-256 `aa410254...f47817`), its
+`.sig` and GNU's `gnu-keyring.gpg`.  This checks it there, and must say "Good
+signature" (Efraim Flashner's key `A28BF40C...8351`):
+
+    cd /mnt/bs1-backup/backshot1/guix && gpgv --keyring ./gnu-keyring.gpg \
+        guix-binary-1.5.0.x86_64-linux.tar.xz.sig guix-binary-1.5.0.x86_64-linux.tar.xz
+
+Then `backshot1 to-stick`, and on the stick (`ssh -t` as `backotter`, at
+the address `find-rescue` saved, with the drive mounted at `/mnt/bs1-backup`).
+Without encryption (the layout in the script's header):
+
+    sudo bash /mnt/bs1-backup/backshot1/guix/guix-bootstrap.sh SERIAL \
+        /mnt/bs1-backup/backshot1/guix/guix-binary-1.5.0.x86_64-linux.tar.xz /mnt/bs1-backup/backshot1/keys thinkpad
+
+With the root on LUKS1 (`--luks`: `guix15-luks`'s layout, the ESP and swap
+plain), in three steps.  The passphrase is typed by the person, never read
+from a file, so the middle step is theirs:
+
+    sudo bash /mnt/bs1-backup/backshot1/guix/guix-bootstrap.sh --luks prepare SERIAL
+    sudo cryptsetup luksFormat --type luks1 ... /dev/nvme0n1p3 && sudo cryptsetup open /dev/nvme0n1p3 cryptroot
+    sudo bash /mnt/bs1-backup/backshot1/guix/guix-bootstrap.sh --luks install SERIAL \
+        /mnt/bs1-backup/backshot1/guix/guix-binary-1.5.0.x86_64-linux.tar.xz /mnt/bs1-backup/backshot1/keys thinkpad
+
+`prepare` wipes and partitions the disk and prints the exact `cryptsetup`
+line.  Type the passphrase in `keys/disk-passphrase`, or adopt's LUKS step
+stops: the drive's key must open the volume.  LUKS1, since Guix's GRUB 2.12
+has no Argon2.  `install` refuses unless `cryptroot` is open on that disk's
+third partition, LUKS1.  It writes a `config.scm` with the volume as a
+`luks-device-mapping` mapped device by its LUKS UUID and the file systems on
+`/dev/mapper/cryptroot`, as Guix's installer does.  It checks that GRUB's
+image reads `/boot/grub` from the volume, and closes `cryptroot` at the end.
+A failed `install` unmounts everything but leaves `cryptroot` open: run it
+again.  `guix system init` takes ~13 min either way.  Each run prints
+`BKO-GUIX-INSTALL-OK` last.  `grub-install` leaves "Guix" first in BootOrder.
+
+On the LUKS install, each boot asks twice at the laptop's console until
+adopt: first GRUB's `Enter passphrase for hd0,gpt3 (...)`, then the
+initrd's.  Both read the US layout, so on the A100's French keyboard type
+where the US keys would be.  Then `backshot1 wait-host` and `adopt`.
+Adopt's Guix arm does its first reconfigure (~17 min); on LUKS its family G
+then makes GRUB and the initrd unlock from the drive ("Unlocking from the
+drive").  Reboot with the drive plugged in and nothing typed, then
+`unlock` (it must say `drive`), `preflight`, `phase1` and `cycle NAME 1
+--erase-serial SERIAL`.  `testvm/realworld/guix-bootstrap-qemu.sh [--luks]
+TEST_IMG TARBALL WORK_DIR` rehearses either mode in QEMU.
+
 ## Void musl on encrypted ZFS, ZFSBootMenu (family Z)
 
 Void Linux (musl) with its root on a natively encrypted ZFS pool, booted by

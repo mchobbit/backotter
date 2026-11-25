@@ -523,6 +523,39 @@ tested on 2026-11-24.  What the runs found, in order:
   a later lane (testvm/backshot2/README.md).  HoltTest1 and HoltTest2
   cover its restore meanwhile.
 
+## The Thinkpad on LUKS: guix-bootstrap.sh --luks (2026-11-25)
+
+The user asked for Guix System 1.5.0 on the A100 with its root encrypted,
+installed from the stick, and then BackShot1 on it (family G).
+`guix-bootstrap.sh --luks` gives it `guix15-luks`'s layout: the ESP and the
+8 GiB swap stay plain, and the third partition (`guixcrypt`) is LUKS1 opened
+as `cryptroot`, holding Btrfs `guixroot` with `@`, `@home` and `@gnu`.  The
+configuration has one `mapped-device` (by its LUKS UUID,
+`luks-device-mapping`), and the file systems are on `/dev/mapper/cryptroot`
+with `(dependencies mapped-devices)`.  `grub-efi-bootloader`, no
+`extra-initrd`, and everything else as the plain install (root by key, the
+fixed host key, avahi, dhcpcd), which is what bs1-luks's `lk_guix` takes for
+family G.  The passphrase is never in a file: `prepare` partitions and
+prints the `cryptsetup luksFormat --type luks1 --cipher aes-xts-plain64
+--key-size 512 --hash sha256` and `open` line (the guest's cipher and key
+size), the person runs it (typing `keys/disk-passphrase`'s bytes), and
+`install` wants `cryptroot` open on that partition.  It checks that GRUB's
+image has the prefix `(cryptouuid/HEX)/@/boot/grub`, and closes the volume
+at the end.  The plain mode's `config.scm` is byte for byte what it was.
+The tarball (checked again with gpgv on 2026-11-25) is on mybig512 in
+`backshot1/guix/`, beside the script, the `.sig` and `gnu-keyring.gpg`: the
+drive's re-staging of 2026-11-16 had dropped that directory.
+
+`guix-bootstrap-qemu.sh --luks` rehearses it: prepare, then the printed lines
+with a throwaway passphrase from a file, install's two refusals (not LUKS1,
+not open), install, then the disk alone under `console-boot.py`, which
+types at GRUB's prompt and the initrd's.  `BKO_GUIX_KERNEL_ARGUMENTS` puts
+`console=ttyS0` last there only, so the initrd's prompt reaches the serial
+console.  It checks both prompts, `cryptroot` open, `/` on it, the plain
+swap, and bs1-luks's own `lk_guix_eval` on `/etc/config.scm`.  First run on
+Cinqcent, 2026-11-25: prepare, the refusals, luksFormat and open passed.
+At this commit `guix system init` was still running.
+
 ## What already works, and what doesn't
 
 **bko-holt `dump`:**

@@ -26,7 +26,13 @@ of D 3 or less; nothing else is placed there. Since 2026-11-18 its row also sets
 twice their family's median cell elsewhere, and those it ran over twice as long as elsewhere
 lately (testvm/test2/README.md, How a plan decides). Its role is `cache` only (cap
 300G since 2026-11-19, was 260G; floor 60G on the /home partition, `/bkoscratch` a bind of
-`/home/bkoscratch`), and it links only the published guests that fit. Its
+`/home/bkoscratch`; keep the floor: the user's projects share that disk). Since
+2026-11-25 (the user's choice) it doesn't link the eight large desktops it could
+only run on its SATA SSD by HoltTest's overflow: mint22, oi2610,
+elementary8-luks, pikaos4, pikaos4-luks, slackware15, slackware15-uefi and
+zorin18; t2 places their cells on the other hosts, as for any guest a cache
+lacks. A publish of one of them links it again (publish relinks every cache
+host), so unlink it there after (`rm ~/backotter-work/vms/G`, then `vm-store gc`). Its
 Debian also holds the user's own projects, and it is the user's fallback
 bare-metal machine for real-world runs when a distro rejects the Thinkpad: such
 a run wipes it and takes it out of the farm until it is provisioned again.
@@ -155,7 +161,10 @@ folder, so those lag Chopin's after an update until they are made links.
 Cinqcent's `vms/` and cache share the CN600 (`/bkoscratch/fast`); with it 98%
 full on 2026-11-16, four unpublished full folders (truenas25, truenas25-mirror,
 solus49, biglinux) moved to `/bkoscratch/vms-sata` on sda2, each `vms/G` a
-symlink there, so the paths are unchanged.
+symlink there, so the paths are unchanged. Since the 2026-11-25 cutover every
+`vms/G` there is a link into the cache (cachyos-zfs, slackware15 and
+slackware15-uefi still full folders); its cache is cap 420G, floor 30G (all
+the CN600 allows; was 400G, 100G) until its test disk arrives (2026-12-01).
 
 vm-update updates every guest it can reach over SSH. Sculpt OS
 (`sculpt2610`) has no sshd: its `no-ssh` makes vm-update refuse it, and

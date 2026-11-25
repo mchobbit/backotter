@@ -172,8 +172,13 @@ pub fn plan_onto_named(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, ex
         Err(e) => return Err(format!("load's arguments {args:?}: {e}")),
     };
     t.file("/usr/sbin/rustic-bko", "");
+    // Each key's mode pinned to 0644, not the umask's: a --json plan
+    // refuses a key group or others may read and its text names the mode
+    // (key_file_unsafe), so under umask 002 the blessed plans would read
+    // 664.  The file check fails first, so KEYS's own mode never shows.
     for f in &keys {
         t.file(f, "golden-plan test key\n");
+        std::fs::set_permissions(t.p(f), std::os::unix::fs::PermissionsExt::from_mode(0o644)).unwrap();
     }
     // The rescue image carries OpenZFS's feature sets (zpool create -o
     // compatibility=grub2, e.g. TrueNAS's boot-pool).

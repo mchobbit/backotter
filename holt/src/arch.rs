@@ -472,6 +472,15 @@ mod tests {
         (b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect(), b)
     }
 
+    /// SCRIPT with bko-holt's own path (this test binary's, quoted as a plan
+    /// quotes it, or bare inside a quoted command) put as BKO-HOLT: under
+    /// `cargo test --target x86_64-unknown-linux-gnu` it lies in
+    /// target/x86_64-unknown-linux-gnu/, an x86 name that isn't the plan's.
+    fn without_exe(script: &str) -> String {
+        let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
+        script.replace(&crate::load::shell_quote(&exe), "BKO-HOLT").replace(&exe, "BKO-HOLT")
+    }
+
     #[test]
     fn arm64_grub_shim_dump_and_plan() {
         let v = dump(&arm64_grub_shim());
@@ -496,8 +505,9 @@ mod tests {
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         assert!(bt.contains("chroot /mnt/bko-target grub-install --target=arm64-efi --efi-directory=/boot/efi --bootloader-id=debian --no-nvram\n"), "{bt}");
         assert!(bt.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label debian --loader '\\EFI\\debian\\shimaa64.efi'\n"), "{bt}");
+        let plan = without_exe(&bt);
         for x86 in ["x86_64", "x64", "i386-pc", "BOOTX64"] {
-            assert!(!bt.contains(x86), "{x86}: {bt}");
+            assert!(!plan.contains(x86), "{x86}: {plan}");
         }
         // --removable: grub-install's own copy at BOOTAA64.EFI.
         let (bt, _) = boot_stage(&v, &["--removable"]);
@@ -575,7 +585,8 @@ mod tests {
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         assert!(bt.contains("chroot /mnt/bko-target bootctl install --no-variables\n"), "{bt}");
         assert!(bt.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'Linux Boot Manager' --loader '\\EFI\\systemd\\systemd-bootaa64.efi'\n"), "{bt}");
-        assert!(!bt.contains("grub") && !bt.contains("x64"), "{bt}");
+        let plan = without_exe(&bt);
+        assert!(!plan.contains("grub") && !plan.contains("x64"), "{plan}");
     }
 
     /// The runner a refused load must never call.

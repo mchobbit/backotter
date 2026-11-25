@@ -45,6 +45,11 @@ fn run_tz(t: &Tree, privileged: bool, runner: FakeRunner, sys_tz: Option<i32>) -
     v
 }
 
+/// This test binary, as a plan names bko-holt (its own helpers), quoted.
+fn unflag_exe() -> String {
+    crate::load::shell_quote(&std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into()))
+}
+
 fn s<'a>(v: &'a Value, path: &[&str]) -> &'a str {
     v.at(path).and_then(Value::as_str).unwrap_or_else(|| panic!("no string at {path:?}"))
 }
@@ -3003,7 +3008,10 @@ fn garuda_guest() {
         let from = if n == 1 { "@".to_string() } else { format!("@/.snapshots/{}/snapshot", n - 1) };
         assert!(r.contains(&format!("!/.snapshots/{n}/snapshot/**\n")), "{n}: {r}");
         assert!(r.contains(&format!("# {path}: a snapshot of {from}, then made exact from the backup's /.snapshots/{n}/snapshot (ID {id}, as on the source)\n")), "{n}: {r}");
-        assert!(r.contains(&format!("btrfs subvolume snapshot {top}/{from} \"$d\"")), "{n}: {r}");
+        // Its immutable and append-only entries (of @'s, the one before's)
+        // lose those flags first: what the snapshot hasn't got goes in the
+        // restore, which gives the rest back theirs (load/unflag.rs).
+        assert!(r.contains(&format!("btrfs subvolume snapshot {top}/{from} \"$d\" && {} clear-restricting-flags \"$d\" && RUSTIC_STRICT_EXIT=true ", unflag_exe())), "{n}: {r}");
         assert!(r.contains(&format!("--exact --clone-from /={top}/@ latest:/.snapshots/{n}/snapshot {top}/{path}")), "{n}: {r}");
         assert!(r.contains(&format!("btrfs property set -ts {top}/{path} ro true\n")), "{n}: {r}");
     }
@@ -3262,7 +3270,10 @@ fn anduinos_guest() {
     for (path, parent, _) in ANDUINOS_BASELINES {
         let at = &path["@snapshots".len()..];
         let from = if parent == "@root" { "/" } else { "/home" };
-        assert!(r.contains(&format!("btrfs subvolume snapshot {top}/{parent} \"$d\"")), "{parent}: {r}");
+        // BackShot2's btrfs-1 content, chattr +i and +a in @root's /srv
+        // and not in the deployment's snapshot of it: off in the snapshot
+        // before its exact restore removes them.
+        assert!(r.contains(&format!("btrfs subvolume snapshot {top}/{parent} \"$d\" && {} clear-restricting-flags \"$d\" && RUSTIC_STRICT_EXIT=true ", unflag_exe())), "{parent}: {r}");
         assert!(r.contains(&format!("--exact --clone-from {from}={top}/{parent} latest:/.snapshots{at} {top}/{path}")), "{path}: {r}");
         assert!(r.contains(&format!("btrfs property set -ts {top}/{path} ro true\n")), "{path}: {r}");
     }

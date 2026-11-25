@@ -308,7 +308,7 @@ fn no_commit_refuses_commit() {
 
 #[test]
 fn no_commit_stops_the_writing_helpers() {
-    for h in ["snapcore-boot-areas", "md-lbs", "umount-tree", "efi-dedupe", "grub-prefix", "luks1-digest", "raw-write", "write-table", "rewrite", "fat-set"] {
+    for h in ["snapcore-boot-areas", "md-lbs", "umount-tree", "efi-dedupe", "grub-prefix", "luks1-digest", "raw-write", "write-table", "rewrite", "fat-set", "clear-restricting-flags"] {
         for args in [vec![h], vec![h, "--help"], vec![h, "/dev/null", "x"]] {
             let o = run(&args, &[("BKO_HOLT_NO_COMMIT", "1")], None);
             assert_eq!(o.status.code(), Some(2), "{args:?}");

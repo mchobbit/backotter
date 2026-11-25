@@ -865,8 +865,17 @@ mod tests {
         assert!(r.contains("!/.snapshots/2/snapshot/**\n!/.snapshots/1/snapshot/**\n"), "{r}");
         let main = pos(&r, &format!("--glob-file {RUN_DIR}/restore.globs latest /mnt/bko-target\n"));
         let slot = pos(&r, &format!("btrfs subvolume snapshot {t}/@/.snapshots/2/snapshot \"$d\" && "));
+        // The slot's immutable and append-only entries lose those flags
+        // before rm -rf and the restore, the child's once it's made
+        // (load/unflag.rs); the restore gives back the backup's.
+        let exe = crate::load::shell_quote(&std::env::current_exe().unwrap().to_string_lossy());
+        assert!(r.contains(&format!("btrfs subvolume snapshot {t}/@/.snapshots/2/snapshot \"$d\" && {exe} clear-restricting-flags \"$d\" && rm -rf")), "{r}");
+        let unflag = pos(&r, &format!("{exe} clear-restricting-flags \"$d\" && rm -rf"));
         let gone = pos(&r, "rm -rf -- \"$d\"/etc && mkdir -p \"$(dirname \"$d\"/etc)\" && ");
-        let child = pos(&r, &format!("btrfs subvolume snapshot {t}/@/.snapshots/2/snapshot/etc \"$d\"/etc && "));
+        let child = pos(&r, &format!("btrfs subvolume snapshot {t}/@/.snapshots/2/snapshot/etc \"$d\"/etc && {exe} clear-restricting-flags \"$d\"/etc && RUSTIC_STRICT_EXIT=true "));
+        assert!(slot < unflag && unflag < gone, "{r}");
+        // Made empty, nothing to clear.
+        assert!(r.contains("else btrfs subvolume create \"$d\" && mkdir -p"), "{r}");
         let exact = pos(&r, &format!("restore --numeric-id --exact --clone-from /={t}/@/.snapshots/2/snapshot latest:/.snapshots/1/snapshot {t}/@/.snapshots/1/snapshot"));
         let ro = pos(&r, &format!("btrfs property set -ts {t}/@/.snapshots/1/snapshot ro true\n"));
         assert!(main < slot && slot < gone && gone < child && child < exact && exact < ro, "{r}");
@@ -928,7 +937,8 @@ mod tests {
         assert!(!f.contains("set-default") && !f.contains("@/.snapshots/3/snapshot"), "{f}");
         let r = text(b.stage(Stage::Restore));
         assert!(r.contains("!/.snapshots/2/snapshot/**\n!/.snapshots/1/snapshot/**\n!/.snapshots/3/snapshot/**\n"), "{r}");
-        let three = pos(&r, &format!("btrfs subvolume snapshot {t}/@/.snapshots/1/snapshot \"$d\" && rm -rf -- \"$d\"/etc && mkdir -p \"$(dirname \"$d\"/etc)\" && btrfs subvolume snapshot {t}/@/.snapshots/1/snapshot/etc \"$d\"/etc"));
+        let exe = crate::load::shell_quote(&std::env::current_exe().unwrap().to_string_lossy());
+        let three = pos(&r, &format!("btrfs subvolume snapshot {t}/@/.snapshots/1/snapshot \"$d\" && {exe} clear-restricting-flags \"$d\" && rm -rf -- \"$d\"/etc && mkdir -p \"$(dirname \"$d\"/etc)\" && btrfs subvolume snapshot {t}/@/.snapshots/1/snapshot/etc \"$d\"/etc && {exe} clear-restricting-flags \"$d\"/etc"));
         let ro3 = pos(&r, &format!("btrfs property set -ts {t}/@/.snapshots/3/snapshot ro true\n"));
         let default = pos(&r, &format!("btrfs subvolume set-default {t}/@/.snapshots/3/snapshot\n"));
         assert!(three < ro3 && ro3 < default, "{r}");

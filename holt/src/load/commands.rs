@@ -4015,6 +4015,7 @@ impl Builder<'_> {
             let top = format!("{RUN_DIR}/btrfs/{uuid}");
             out.push(Cmd::new(&["mkdir", "-p", &top]));
             out.push(Cmd::new(&["mount", "-t", "btrfs", "-o", "subvolid=5,noatime", &dev, &top]).why(format!("btrfs {uuid}: its shared snapshots (noatime: reading them changes nothing)")));
+            let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
             let mut placeholders = Vec::new();
             for x in &plan.shared {
                 for n in &x.placeholders {
@@ -4038,6 +4039,13 @@ impl Builder<'_> {
                 // made in it once it's made, where its snapshot has an empty
                 // directory (or the base's plain one), before its restore,
                 // which fills them too; their placeholders just before each.
+                // What's immutable or append-only in a snapshot of a base
+                // loses those flags before anything is removed from it or
+                // rewritten (rm -rf of a child's place, the restore): what
+                // the backup's snapshot hasn't got would refuse it.  The
+                // exact restore gives back each entry's flags as the
+                // backup has them (load/unflag.rs).
+                let unflag = format!("{} clear-restricting-flags", shell_quote(&exe));
                 let (mut kids_snap, mut kids_empty, mut kids_ids) = (String::new(), String::new(), String::new());
                 for c in &x.children {
                     let mut ph = String::new();
@@ -4051,7 +4059,8 @@ impl Builder<'_> {
                         Some(b) => format!("btrfs subvolume snapshot {} {qc}", shell_quote(&format!("{top}/{b}"))),
                         None => format!("btrfs subvolume create {qc}"),
                     };
-                    kids_snap += &format!("{ph}rm -rf -- {qc} && mkdir -p \"$(dirname {qc})\" && {make} && ");
+                    let clear = if c.base.is_some() { format!("{unflag} {qc} && ") } else { String::new() };
+                    kids_snap += &format!("{ph}rm -rf -- {qc} && mkdir -p \"$(dirname {qc})\" && {make} && {clear}");
                     kids_empty += &format!("{ph}mkdir -p \"$(dirname {qc})\" && btrfs subvolume create {qc} && ");
                     let (cp, cid) = (dq_escape(&c.path), c.new_id);
                     kids_ids += &format!("; cid=$(btrfs inspect-internal rootid {qc}) && [ \"$cid\" = {cid} ] || echo \"{cp}: ID $cid here, {cid} in the plan\"");
@@ -4060,7 +4069,7 @@ impl Builder<'_> {
                 // info.xml), which rmdir and the snapshot would change.
                 let script = format!(
                     "d={qd}; p={qp}; mkdir -p \"$p\" && touch -r \"$p\" {RUN_DIR}/times.ref || exit; \
-                     if [ -d \"$d\" ] && [ \"$(stat -c %i \"$d\")\" != 256 ] && [ -z \"$(ls -A \"$d\")\" ]; then rmdir \"$d\" && btrfs subvolume snapshot {qb} \"$d\" && {kids_snap}RUSTIC_STRICT_EXIT=true {r}; \
+                     if [ -d \"$d\" ] && [ \"$(stat -c %i \"$d\")\" != 256 ] && [ -z \"$(ls -A \"$d\")\" ]; then rmdir \"$d\" && btrfs subvolume snapshot {qb} \"$d\" && {unflag} \"$d\" && {kids_snap}RUSTIC_STRICT_EXIT=true {r}; \
                      else btrfs subvolume create \"$d\" && {kids_empty}echo \"{qpath}: not in the backup; made empty\"; fi || exit; \
                      touch -r {RUN_DIR}/times.ref \"$p\" || exit; \
                      id=$(btrfs inspect-internal rootid \"$d\") && [ \"$id\" = {id} ] || echo \"{qpath}: ID $id here, {id} in the plan\"{kids_ids}"

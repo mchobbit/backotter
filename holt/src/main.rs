@@ -73,7 +73,7 @@ SOURCE_DATE_EPOCH, when set, fixes the report's timestamp.
 /// under BKO_HOLT_NO_COMMIT they refuse to run at all (load never runs them
 /// without --commit, which the variable refuses, so only a bug or a hand
 /// would).
-const WRITING_HELPERS: [&str; 10] = ["snapcore-boot-areas", "md-lbs", "umount-tree", "efi-dedupe", "grub-prefix", "luks1-digest", "raw-write", "write-table", "rewrite", "fat-set"];
+const WRITING_HELPERS: [&str; 11] = ["snapcore-boot-areas", "md-lbs", "umount-tree", "efi-dedupe", "grub-prefix", "luks1-digest", "raw-write", "write-table", "rewrite", "fat-set", "clear-restricting-flags"];
 
 /// The flags dump takes a value after, for `--json`'s first pass.
 const DUMP_VALUE_FLAGS: &[&str] = &["--disk", "--only-disk", "--keep-luks-header", "--luks-header-dir", "--sysroot"];
@@ -108,6 +108,7 @@ fn main() -> ExitCode {
         Some("write-table") => ExitCode::from(bko_holt::load::writetable::main(&args[1..])),
         Some("rewrite") => ExitCode::from(bko_holt::load::rewrite::main(&args[1..])),
         Some("fat-set") => ExitCode::from(bko_holt::load::fatset::main(&args[1..])),
+        Some("clear-restricting-flags") => ExitCode::from(bko_holt::load::unflag::main(&args[1..])),
         Some("-h" | "--help") => {
             print!("{USAGE}");
             ExitCode::SUCCESS

@@ -511,9 +511,12 @@ the table: there is no list to edit.
 
 - Found by the first run (2026-11-25), each in its own session: anduinos2's
   snapshot-id finding (testvm/backshot2/README.md, not fixed); re-measuring
-  the Slackware rows of `slim-sizes.tsv` (measured on FAIL cases); the cargo
-  umask 002 test-environment issue (plan_json under cmp-run.sh); the bko-cache
+  the Slackware rows of `slim-sizes.tsv` (measured on FAIL cases); the bko-cache
   cap.  Also: zorin18's used space grew when slimmed (7998 -> 8102 MiB).
+- **The cargo umask 002 failure: resolved (907120c).**  plan_json's fake key
+  files took the umask's mode, so under cmp-run.sh's umask 002 the blessed
+  plans' key refusal read "mode 664"; the fixture pins them to 0644.
+  bko-holt's check is unchanged.
 - **The XFS-log fixer's ledger rows: left as they are (2026-11-25).**  chopin's
   ledger has 400 rows of run `fix-xfslog-chopin`.  All are tier 0 HARNESS for
   slackware15-uefi, written 14:20:39Z, with word BackShot2Alpine (the

@@ -3,8 +3,13 @@
 runs over SSH.  Run from a private copy (~/backotter-work/bs2-wt/testvm/backshot2),
 never the shared ~/backotter-work/testvm.
 
-  bs2-host source SOURCE [--force]       (root) the source prepared for its cases, once per generation
-                                         (ht1.sh's source and backup phases, BS2_PREPARE) and its tools
+  bs2-host source SOURCE [--force] [--tools|--drop-tools]
+                                         (root) the source prepared for its cases, once per generation
+                                         (ht1.sh's source and backup phases, BS2_PREPARE); --tools: and its
+                                         tools for tier 0 (a lead's), --drop-tools: none here; older
+                                         preparations nothing uses removed
+  bs2-host room [SOURCE...]              (root) /bkoscratch's free bytes and each source's preparation and
+                                         tools here, as JSON (bs2's space preflight)
   bs2-host prepared SOURCE --holt FILE --tier T [--rustic-sha SHA]
                                          (ht1-bs2.sh) what a case may take from the preparation, as shell
   bs2-host rescuer-key --image IMG --memory M --rfw=... --extra=...
@@ -35,10 +40,11 @@ never the shared ~/backotter-work/testvm.
 Paths (ROOT=/bkoscratch/backshot2, BS2_ROOT overrides):
   ROOT/sources/SOURCE/  gen (the generation), src.json (its live dump: holds
                         identifiers, never leaves the host), tools/ (a copy of
-                        its root, for tier 0's dry runs), prep (a symlink to the
-                        current preps/NAME: what tier 1 and 2's cases reuse,
-                        bs2lib/reuse.py, with its prep.json; an older one kept
-                        while live work uses it, prune_preps())
+                        its root, for tier 0's dry runs, on the hosts that run its
+                        tier 0 only; tools.json: its generation, version, bytes),
+                        prep (a symlink to the current preps/NAME: what tier 1 and
+                        2's cases reuse, bs2lib/reuse.py, with its prep.json; an
+                        older one kept while live work uses it, prune_preps())
   ROOT/rescuer-state/HASH/  the rescuer's saved state (ht1-bs2.sh makes it in a
                         case's rebuild, once per rescuer, firmware, QEMU and host)
   ROOT/runs/RUN/        tier0.jsonl and tier1.jsonl (a line per case; tierN-queue.jsonl:
@@ -220,14 +226,20 @@ def prepare_with_ht1(src, port, d, gen):
 
 
 def cmd_source(a):
-    """The source prepared for its cases, and its dump and tools for tier 0, once per
-    generation (and again when bko-holt or what made the preparation changed)."""
+    """The source prepared for its cases, and its dump, once per generation (and again
+    when bko-holt or what made the preparation changed); with --tools, its tools for tier
+    0's dry runs too (tools_wanted(): a family whose tier 0 is "chroot"), on the hosts that
+    run its tier 0 (bs2 passes it to a source's lead); with --drop-tools, its tools gone
+    (bs2 passes it to every other host of a run).  Preparations nothing uses any more go
+    (prune_preps())."""
     import fcntl
     src = a.source
     if os.geteuid() != 0:
         die("source: run as root (sudo -E)")
     if src.startswith("run:"):
         die("a BackShot1 run's source is copied in by bs2 on the Mac (layout.json and the run's tools)")
+    if a.tools and a.drop_tools:
+        die("source: --tools or --drop-tools, not both")
     d = source_dir(src)
     # (Readable by m, who runs the queue and the shrinker: a test guest's
     # dump stays on the host, never the Mac or the repository.)
@@ -236,30 +248,155 @@ def cmd_source(a):
         fcntl.flock(lk, fcntl.LOCK_EX)   # (one preparation of a source at a time; the second finds it ready)
         gen = generation(src)
         _, _, why = prep_reasons(src, holt_bin())
-        tools_ok = os.path.isdir(f"{d}/tools/usr") and source_ready(src) == gen
-        if not a.force and tools_ok and not why:
-            pruned = prune_preps(d)
-            print(f"{src}: ready at {gen[:16]}{pruned_words(pruned)}")
-            return
-        k = prepare_with_ht1(src, a.port, d, gen) if why or a.force else prep_dir(src)
-        with open(f"{k}/dumps/src.json") as f:
-            dump = f.read()
-        json.loads(dump)
-        with open(f"{d}/src.json.part", "w") as f:
-            f.write(dump)
-        os.replace(f"{d}/src.json.part", f"{d}/src.json")
-        if not tools_ok or a.force:
-            copy_tools(src, k, d)
-        with open(f"{d}/gen", "w") as f:
-            f.write(gen + "\n")
+        ready = source_ready(src) == gen
+        if not a.force and ready and not why:
+            k, note = prep_dir(src), "ready"
+        else:
+            k = prepare_with_ht1(src, a.port, d, gen) if why or a.force else prep_dir(src)
+            with open(f"{k}/dumps/src.json") as f:
+                dump = f.read()
+            json.loads(dump)
+            with open(f"{d}/src.json.part", "w") as f:
+                f.write(dump)
+            os.replace(f"{d}/src.json.part", f"{d}/src.json")
+            with open(f"{d}/gen", "w") as f:
+                f.write(gen + "\n")
+            note = (f"{'prepared anew' if why or a.force else 'preparation kept'} ({os.path.basename(k)}"
+                    f"{': ' + '; '.join(why[:2]) if why else ''})")
+        tnote = ""
+        if a.tools:
+            if not tools_wanted(dumpx.load(f"{d}/src.json")):
+                tnote = drop_tools(d, "its family's tier 0 runs no dry runs")
+            elif a.force or not tools_fresh(src):
+                tnote = copy_tools_locked(src, k, d, gen)
+        elif a.drop_tools:
+            tnote = drop_tools(d, "this host runs none of its tier 0")
         pruned = prune_preps(d)
-        print(f"{src}: {'prepared anew' if why or a.force else 'preparation kept'} ({os.path.basename(k)}"
-              f"{': ' + '; '.join(why[:2]) if why else ''}){', its tools copied' if not tools_ok or a.force else ''}, at {gen[:16]}"
-              f"{pruned_words(pruned)}")
+        print(f"{src}: {note}{', ' + tnote if tnote else ''}, at {gen[:16]}{pruned_words(pruned)}")
 
 
-def copy_tools(src, k, d):
-    """The tools: the guest's root, copied out of a read-only mount of the preparation's overlay."""
+# ---- the tools: a copy of the source's root for tier 0's dry runs (bs2lib/tier0.py) -----
+#
+# Only a host that runs a source's tier 0 needs them (its lead: the draws and the sweep;
+# a replay, shrink or corpus at tier 0 copies them where it runs, tier0_cases()), and only
+# for a family whose tier 0 is "chroot" (NixOS's is "plan": none).  They hold what the dry
+# runs (sfdisk, mke2fs, tune2fs, mkfs.xfs, /usr/bin/env, through chroot with LC_ALL=C) can
+# reach: the root less what none of them reads.  TOOLS_VERSION 2 (2026-11-25) left out
+# more than 1 did, kept hard links as links (-H: an ostree or ABRoot tree's are many), and
+# copies an ostree source's default deployment, not its physical root (which has no /usr:
+# every dry run of kinoite44 was refused); tier 0's verdicts were the same with either
+# (README "Sources and tools").  A copy of another version is copied anew.
+TOOLS_VERSION = 2
+TOOLS_EXCLUDE = (
+    # Never read by a mkfs or a partitioner: the kernel's, the boot's, the users', the logs,
+    # package managers' and containers' stores, a swap file, snapshots of the root, and
+    # ABRoot's other root (vanilla3's /part-future; its /etc uppers in /var/lib/abroot:
+    # the dry runs, as before, see the lower /etc).
+    "/boot", "/lib/modules", "/lib/firmware", "/usr/lib/modules", "/usr/lib/firmware", "/usr/src",
+    "/home", "/root", "/srv", "/opt", "/tmp", "/var/tmp", "/var/cache", "/var/log", "/var/opt",
+    "/var/lib/flatpak", "/var/lib/snapd", "/var/lib/abroot", "/var/lib/docker", "/var/lib/containers",
+    "/var/lib/libvirt", "/var/lib/machines", "/var/lib/apt/lists", "/var/lib/systemd/coredump",
+    "/.snapshots", "/part-future", "/swapfile", "/swap.img", "/swap",
+)
+# /usr/share is left out but for what a mkfs or sfdisk could read there: xfsprogs' mkfs
+# configs, a stateless distro's default /etc (Solus, AerynOS: /usr/share/defaults), systemd's
+# factory /etc, e2fsprogs' and util-linux's own, misc and zoneinfo.  (Messages: LC_ALL=C.)
+TOOLS_SHARE_KEEP = ("xfsprogs", "e2fsprogs", "util-linux", "defaults", "factory", "misc", "zoneinfo")
+
+
+def tools_rsync_args(src_dir, dest):
+    """rsync's command for the tools from SRC_DIR (the mounted root, or an ostree source's
+    deployment in it) to DEST."""
+    f = [f"--include=/usr/share/{x}/***" for x in TOOLS_SHARE_KEEP] + ["--exclude=/usr/share/*"]
+    f += [f"--exclude={x}" for x in TOOLS_EXCLUDE]
+    return ["rsync", "-aH"] + f + [f"{src_dir.rstrip('/')}/", f"{dest.rstrip('/')}/"]
+
+
+def tools_wanted(dump):
+    """Whether the source of DUMP has dry runs at tier 0 (its family's tier0 is "chroot")."""
+    from bs2lib import families
+    return families.hooks(None, dump).tier0 == "chroot"
+
+
+def tools_meta(d):
+    """The tools' record (D/tools.json: gen, version, bytes), or None (none, or a copy
+    before TOOLS_VERSION 2 made one: version 1, its size unknown)."""
+    try:
+        with open(f"{d}/tools.json") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def tools_fresh(source, gen=None):
+    """Whether SOURCE's tools here are its generation GEN's (default: now) at TOOLS_VERSION."""
+    d = source_dir(source)
+    m = tools_meta(d)
+    if not os.path.isdir(f"{d}/tools") or not m:
+        return False
+    try:
+        gen = gen or generation(source)
+    except OSError:
+        return False
+    return m.get("gen") == gen and m.get("version") == TOOLS_VERSION
+
+
+def tools_lock(d, exclusive, wait=True):
+    """The tools' flock (D/.tools.lock): shared while a tier 0 runs in them, exclusive to
+    copy or drop them.  The open file (close it to let go), or None when WAIT is false
+    and another holds it."""
+    import fcntl
+    f = open(f"{d}/.tools.lock", "a")
+    try:
+        fcntl.flock(f, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | (0 if wait else fcntl.LOCK_NB))
+    except OSError:
+        f.close()
+        return None
+    return f
+
+
+def du_bytes(path):
+    """The bytes PATH takes on disk (du -sx, hard links once), 0 when it isn't there."""
+    if not os.path.lexists(path):
+        return 0
+    r = subprocess.run(["du", "-sx", "--block-size=1", path], capture_output=True, text=True)
+    try:
+        return int(r.stdout.split()[0])
+    except (IndexError, ValueError):
+        return 0
+
+
+def copy_tools_locked(src, k, d, gen):
+    """copy_tools() under the tools' exclusive lock (it waits for a tier 0 using them)."""
+    lk = tools_lock(d, True)
+    try:
+        n = copy_tools(src, k, d, gen)
+    finally:
+        lk.close()
+    return f"its tools copied ({n / 2**30:.1f} GiB)"
+
+
+def drop_tools(d, why):
+    """D's tools gone, unless a tier 0 holds them now (then kept, said).  Returns a note."""
+    if not os.path.lexists(f"{d}/tools") and not os.path.exists(f"{d}/tools.json"):
+        return ""
+    lk = tools_lock(d, True, wait=False)
+    if lk is None:
+        return "its tools kept (a tier 0 runs in them now)"
+    try:
+        n = (tools_meta(d) or {}).get("bytes") or du_bytes(f"{d}/tools")
+        shutil.rmtree(f"{d}/tools", ignore_errors=True)
+        if os.path.exists(f"{d}/tools.json"):
+            os.remove(f"{d}/tools.json")
+    finally:
+        lk.close()
+    return f"its tools removed ({n / 2**30:.1f} GiB: {why})"
+
+
+def copy_tools(src, k, d, gen, dest=None):
+    """The tools: the guest's root (an ostree source's default deployment: vm-mount says
+    which), copied out of a read-only mount of the preparation K's overlay, to DEST
+    (default D/tools, its record D/tools.json).  Returns their bytes."""
     w = f"{RAM}/source-{src}"
     shutil.rmtree(w, ignore_errors=True)
     os.makedirs(w)
@@ -276,27 +413,56 @@ def copy_tools(src, k, d):
         if os.path.exists(f"{VMS}/{src}/{kf}"):
             key_args = ["--key", f"{VMS}/{src}/{kf}"]
             break
-    sh([f"{TESTVM}/vm-mount", "--ro"] + extra + key_args + [f"{k}/src-0.qcow2", mp], env=env, stdout=subprocess.DEVNULL)
+    r = subprocess.run([f"{TESTVM}/vm-mount", "--ro"] + extra + key_args + [f"{k}/src-0.qcow2", mp], env=env,
+                       stdout=subprocess.PIPE, text=True)
+    if r.returncode:
+        raise subprocess.CalledProcessError(r.returncode, "vm-mount")
     try:
-        tools = f"{d}/tools"
+        tools = dest or f"{d}/tools"
+        if not dest and os.path.exists(f"{d}/tools.json"):
+            os.remove(f"{d}/tools.json")
         shutil.rmtree(tools, ignore_errors=True)
-        sh(["rsync", "-a", "--exclude=/boot", "--exclude=/lib/modules", "--exclude=/lib/firmware", "--exclude=/usr/share/doc",
-            "--exclude=/usr/share/man", "--exclude=/var/cache", "--exclude=/home", "--exclude=/root", "--exclude=/srv",
-            f"{mp}/", f"{tools}/"])
+        sh(tools_rsync_args(f"{mp}/{ostree_deployment(r.stdout)}", tools))
     finally:
         subprocess.run([f"{TESTVM}/vm-umount", mp], env=env, stdout=subprocess.DEVNULL)
         shutil.rmtree(w, ignore_errors=True)
+    n = du_bytes(tools)
+    if not dest:
+        with open(f"{d}/tools.json.part", "w") as f:
+            json.dump({"gen": gen, "version": TOOLS_VERSION, "bytes": n,
+                       "made": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, f)
+        os.replace(f"{d}/tools.json.part", f"{d}/tools.json")
+    return n
 
 
-def du_bytes(path):
-    """The bytes PATH takes on disk (du -sx, hard links once), 0 when it isn't there."""
-    if not os.path.lexists(path):
-        return 0
-    r = subprocess.run(["du", "-sx", "--block-size=1", path], capture_output=True, text=True)
-    try:
-        return int(r.stdout.split()[0])
-    except (IndexError, ValueError):
-        return 0
+def ostree_deployment(text):
+    """The default deployment vm-mount names in TEXT ("ostree: the default deployment is
+    ostree/deploy/..."), relative to its mount point; "" for any other source."""
+    for line in text.splitlines():
+        if line.startswith("ostree: the default deployment is "):
+            p = line[len("ostree: the default deployment is "):].split(" (")[0].strip()
+            if p and not p.startswith("/") and ".." not in p.split("/"):
+                return p
+    return ""
+
+
+def ensure_tools(source):
+    """SOURCE's tools here at its generation and TOOLS_VERSION, copied from its current
+    preparation when they aren't (as root, under the source's .prep.lock): for a tier 0
+    on a host that isn't the source's lead (a replay, shrink or corpus at tier 0).  Dies
+    when there is no preparation to copy them from."""
+    import fcntl
+    d = source_dir(source)
+    with open(f"{d}/.prep.lock", "a") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        if tools_fresh(source):
+            return
+        k = prep_dir(source)
+        if not k or not os.path.exists(f"{k}/src-0.qcow2"):
+            die(f"{source}: tier 0's dry runs need its tools, and there is no preparation here to copy them from: "
+                f"sudo -E bs2-host source {source} --tools")
+        print(f"bs2-host: {source}: {copy_tools_locked(source, k, d, generation(source))} for tier 0's dry runs",
+              file=sys.stderr)
 
 
 # ---- preparations nothing uses any more ---------------------------------------------------
@@ -394,6 +560,56 @@ def pruned_words(pruned):
     return f", {len(pruned)} older preparations removed ({sum(b for _, b in pruned) / 2**30:.1f} GiB)" if pruned else ""
 
 
+def cmd_room(a):
+    """What /bkoscratch has for SOURCES here, as one line of JSON (bs2's space preflight,
+    bs2lib/space.py): its free bytes, and for each source whether its current preparation
+    can serve its cases now (prep_ok: bs2-host source would keep it), that one's bytes,
+    the bytes of the older ones nothing uses (old_bytes: the next bs2-host source removes
+    them), whether its tools are current (tools_fresh) and their bytes.  As root (it reads
+    root's files and /proc); changes nothing but the size it records for tools copied
+    before TOOLS_VERSION 2 (tools.json, version 1)."""
+    os.makedirs(ROOT, exist_ok=True)
+    st = os.statvfs(ROOT)
+    refs = prep_refs()
+    out = {"free": st.f_bavail * st.f_frsize, "size": st.f_blocks * st.f_frsize, "sources": {}}
+    for s in a.sources:
+        d = source_dir(s)
+        e = {}
+        if not os.path.isdir(f"{d}/preps") and not os.path.isdir(f"{d}/tools"):
+            # (Nothing here yet: no generation worked out, which may hash its whole image.)
+            out["sources"][s] = {"prep_ok": False, "prep_bytes": 0, "old_bytes": 0, "tools_fresh": False, "tools_bytes": 0}
+            continue
+        try:
+            gen = generation(s)
+        except OSError as x:
+            e["error"] = f"no generation: {x}"
+            out["sources"][s] = e
+            continue
+        k, _, why = prep_reasons(s, holt_bin())
+        e["prep_ok"] = bool(k) and source_ready(s) == gen and not why
+        e["prep_bytes"] = du_bytes(k) if k else 0
+        old = [x for x in _listdir(f"{d}/preps") if x.startswith("p-") and os.path.isdir(f"{d}/preps/{x}")
+               and os.path.realpath(f"{d}/preps/{x}") != k]
+        e["old_bytes"] = sum(du_bytes(f"{d}/preps/{x}") for x in old
+                             if not any(r == os.path.realpath(f"{d}/preps/{x}") or
+                                        r.startswith(os.path.realpath(f"{d}/preps/{x}") + "/") for r in refs))
+        e["tools_fresh"] = tools_fresh(s, gen)
+        m = tools_meta(d)
+        if os.path.isdir(f"{d}/tools"):
+            if not m or m.get("bytes") is None:
+                m = {"gen": None, "version": 1, "bytes": du_bytes(f"{d}/tools")}
+                try:
+                    with open(f"{d}/tools.json", "w") as f:
+                        json.dump(m, f)
+                except OSError:
+                    pass
+            e["tools_bytes"] = m["bytes"]
+        else:
+            e["tools_bytes"] = 0
+        out["sources"][s] = e
+    print(json.dumps(out))
+
+
 def cmd_prepared(a):
     """What ht1-bs2.sh's case may take from its source's preparation, as shell
     assignments (BS2_PREP_DIR, BS2_PREP_NAME, BS2_PREP_SNAP; BS2_PREP_BACKUP_WHY when its
@@ -454,10 +670,34 @@ def tier0_cases(source, gen, dump, cases, run, keep_passes=0):
     rd = run_dir(run)
     w = f"{RAM}/t0-{run}-{source}-{os.getpid()}"
     os.makedirs(w, exist_ok=True)
-    tools = f"{source_dir(source)}/tools"
-    tools = tools if os.path.isdir(f"{tools}/usr") and os.geteuid() == 0 else None
+    d = source_dir(source)
+    tools, lk = None, None
+    if not tools_wanted(dump):
+        pass   # (its family's tier 0 is the plan alone: T0.run)
+    elif source.startswith("run:"):   # (a BackShot1 run's tools: copied in by bs2 with its layout)
+        tools = f"{d}/tools" if os.path.isdir(f"{d}/tools/usr") and os.geteuid() == 0 else None
+    elif os.geteuid() != 0:
+        # (As m, chroot can't run: the plan and invariants alone, each row saying "no dry runs";
+        # the leftovers set's own tier 0, before its VMs, is m's.)
+        print(f"bs2-host: {source}: tier 0 as {os.geteuid()}, not root: no dry runs (the plan and its invariants only)",
+              file=sys.stderr)
+    else:
+        for _ in range(3):   # (copied here when they aren't: ensure_tools(); held shared while they run)
+            ensure_tools(source)
+            lk = tools_lock(d, False)
+            if tools_fresh(source, gen):
+                tools = f"{d}/tools"
+                break
+            lk.close()
+            lk = None
+        else:
+            die(f"{source}: its tools here aren't its generation {gen[:16]}'s after copying them (did vms/{source} change?)", 1)
     t0 = time.time()
-    results, plans = T0.run(dump, cases, w, planner(), tools, caps_of())
+    try:
+        results, plans = T0.run(dump, cases, w, planner(), tools, caps_of())
+    finally:
+        if lk:
+            lk.close()
     wall = time.time() - t0
     counts = {}
     kept = 0
@@ -1185,6 +1425,10 @@ def main():
     x.add_argument("source")
     x.add_argument("--port", type=int, default=2680)
     x.add_argument("--force", action="store_true")
+    x.add_argument("--tools", action="store_true", help="copy its tools for tier 0's dry runs (a host that runs its tier 0)")
+    x.add_argument("--drop-tools", action="store_true", help="remove its tools here (a host that runs none of its tier 0)")
+    x = s.add_parser("room")
+    x.add_argument("sources", nargs="*")
     x = s.add_parser("prepared")
     x.add_argument("source")
     x.add_argument("--holt", required=True, help="the bko-holt the case dumps with (its copy in the share)")
@@ -1274,7 +1518,7 @@ def main():
     x = s.add_parser("caps")
     x.add_argument("source", nargs="?", default="alpine324")
     a = p.parse_args()
-    {"source": cmd_source, "prepared": cmd_prepared, "rescuer-key": cmd_rescuer_key, "tier0": cmd_tier0, "tier0-cases": cmd_tier0_cases, "gen": cmd_gen, "caps": cmd_caps,
+    {"source": cmd_source, "room": cmd_room, "prepared": cmd_prepared, "rescuer-key": cmd_rescuer_key, "tier0": cmd_tier0, "tier0-cases": cmd_tier0_cases, "gen": cmd_gen, "caps": cmd_caps,
      "tier1": cmd_tier1, "leftovers": cmd_leftovers, "apply": cmd_apply, "plant": cmd_plant, "change": cmd_change, "deep": cmd_deep, "enqueue": cmd_enqueue, "queue": cmd_queue, "shrink": cmd_shrink, "reserve": cmd_reserve, "lane": cmd_lane}[a.cmd](a)
 
 

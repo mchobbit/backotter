@@ -1,16 +1,24 @@
-"""Unit tests for bs2-host's preparations on /bkoscratch (2026-11-25: a BackShot2All
-start filled cinqcent's): older preparations pruned once nothing uses them (prune_preps(),
-prep_refs(), qcow2_backing()).  Nothing here reaches a host:
+"""Unit tests for bs2-host's tools and preparations on /bkoscratch (2026-11-25: a
+BackShot2All start filled cinqcent's): tools only where a source's tier 0 runs (--tools,
+--drop-tools, tier0_cases() copying them where it runs, never running without them), the
+leaner copy (tools_rsync_args(), ostree_deployment()), and older preparations pruned once
+nothing uses them (prune_preps(), prep_refs(), qcow2_backing()).  Nothing here reaches a
+host; the rsync test runs where rsync is GNU rsync 3:
 
     python3 -m unittest discover -s testvm/backshot2/tests
 """
 
+import contextlib
+import io
+import json
 import os
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -26,6 +34,122 @@ def qcow2(path, backing=None):
     hdr = b"QFI\xfb" + struct.pack(">I", 3) + struct.pack(">QI", off, len(b))
     with open(path, "wb") as f:
         f.write(hdr.ljust(104, b"\0") + b)
+
+
+class HostTools(unittest.TestCase):
+    def test_rsync_args(self):
+        a = H.tools_rsync_args("/w/mnt/ostree/deploy/x.0", "/s/tools")
+        self.assertEqual(a[:2], ["rsync", "-aH"])
+        self.assertEqual(a[-2:], ["/w/mnt/ostree/deploy/x.0/", "/s/tools/"])
+        inc = [i for i, x in enumerate(a) if x.startswith("--include=/usr/share/")]
+        exc = a.index("--exclude=/usr/share/*")
+        self.assertTrue(inc and max(inc) < exc, "the kept /usr/share dirs before the rest of it is left out")
+        for x in ("/boot", "/usr/lib/modules", "/usr/lib/firmware", "/var/lib/flatpak", "/.snapshots", "/part-future",
+                  "/swapfile", "/home", "/root", "/srv"):
+            self.assertIn(f"--exclude={x}", a)
+        for x in ("/gnu", "/nix", "/usr/lib", "/usr/bin", "/etc", "/var/guix"):
+            self.assertFalse([w for w in a if w in (f"--exclude={x}", f"--exclude={x}/")], x)
+        self.assertIn("--include=/usr/share/xfsprogs/***", a)
+
+    @unittest.skipUnless(shutil.which("rsync") and "rsync  version 3" in
+                         subprocess.run(["rsync", "--version"], capture_output=True, text=True).stdout, "GNU rsync 3")
+    def test_rsync_keeps_what_the_dry_runs_need(self):
+        with tempfile.TemporaryDirectory() as t:
+            src, dst = f"{t}/src", f"{t}/dst"
+            for p in ("usr/sbin/mke2fs", "etc/mke2fs.conf", "usr/share/xfsprogs/mkfs/lts.conf", "usr/share/icons/x.png",
+                      "usr/lib/modules/7/k.ko", "usr/lib/x86_64-linux-gnu/libext2fs.so", "gnu/store/abc/bin/sfdisk",
+                      "var/lib/flatpak/x", "var/lib/dpkg/status", ".snapshots/1/snapshot/x", "swapfile"):
+                os.makedirs(os.path.dirname(f"{src}/{p}"), exist_ok=True)
+                with open(f"{src}/{p}", "w") as f:
+                    f.write(p)
+            os.link(f"{src}/usr/sbin/mke2fs", f"{src}/usr/sbin/mkfs.ext4")
+            subprocess.run(H.tools_rsync_args(src, dst), check=True)
+            got = {os.path.relpath(os.path.join(dp, f), dst) for dp, _, fs in os.walk(dst) for f in fs}
+            self.assertEqual(got, {"usr/sbin/mke2fs", "usr/sbin/mkfs.ext4", "etc/mke2fs.conf", "usr/share/xfsprogs/mkfs/lts.conf",
+                                   "usr/lib/x86_64-linux-gnu/libext2fs.so", "gnu/store/abc/bin/sfdisk", "var/lib/dpkg/status"})
+            self.assertEqual(os.stat(f"{dst}/usr/sbin/mke2fs").st_ino, os.stat(f"{dst}/usr/sbin/mkfs.ext4").st_ino)
+
+    def test_ostree_deployment(self):
+        out = ("Mounted kinoite44.qcow2 (/dev/nbd1, read-only) at /w/mnt:\n"
+               "ostree: the default deployment is ostree/deploy/default/deploy/10e6a3.1 (its etc/fstab mounted the rest)\n")
+        self.assertEqual(H.ostree_deployment(out), "ostree/deploy/default/deploy/10e6a3.1")
+        self.assertEqual(H.ostree_deployment("Mounted x at /w/mnt:\n"), "")
+        self.assertEqual(H.ostree_deployment("ostree: the default deployment is ../../etc (x)\n"), "")
+        self.assertEqual(H.ostree_deployment("ostree: the default deployment is /etc (x)\n"), "")
+
+    def test_tools_fresh(self):
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(H, "ROOT", root), \
+                mock.patch.object(H, "generation", lambda s: "gen:aa"):
+            d = H.source_dir("debian12")
+            os.makedirs(f"{d}/tools/usr")
+            self.assertFalse(H.tools_fresh("debian12"), "a copy with no tools.json (version 1)")
+            for meta, fresh in (({"gen": "gen:aa", "version": H.TOOLS_VERSION}, True),
+                                ({"gen": "gen:bb", "version": H.TOOLS_VERSION}, False),
+                                ({"gen": "gen:aa", "version": 1}, False)):
+                with open(f"{d}/tools.json", "w") as f:
+                    json.dump(meta, f)
+                self.assertEqual(H.tools_fresh("debian12"), fresh, meta)
+            note = H.drop_tools(d, "test")
+            self.assertIn("its tools removed", note)
+            self.assertFalse(os.path.exists(f"{d}/tools") or os.path.exists(f"{d}/tools.json"))
+            self.assertEqual(H.drop_tools(d, "test"), "")
+
+    def test_drop_waits_for_no_tier0(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(f"{d}/tools/usr")
+            held = H.tools_lock(d, False)   # a tier 0 in them
+            try:
+                self.assertIn("kept", H.drop_tools(d, "test"))
+                self.assertTrue(os.path.isdir(f"{d}/tools/usr"))
+            finally:
+                held.close()
+
+
+class Tier0Tools(unittest.TestCase):
+    """tier0_cases(): dry runs as root in tools copied where it runs; never silently none."""
+
+    def run_t0(self, euid, src="debian12", fresh=True):
+        seen = {}
+
+        def t0run(dump, cases, w, planner, tools, caps):
+            seen["tools"] = tools
+            return [], {}
+        dump = H.dumpx.load(os.path.join(H.TESTVM, "..", "holt", "tests", "corpus", src, "src.json"))
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(H, "ROOT", root), mock.patch.object(H, "RAM", root), \
+                mock.patch.object(H.os, "geteuid", lambda: euid), mock.patch.object(H.T0, "run", t0run), \
+                mock.patch.object(H, "planner", lambda: "/bin/true"), mock.patch.object(H.L, "write_rows", lambda *a, **k: None), \
+                mock.patch.object(H, "ensure_tools", lambda s: seen.setdefault("ensured", s)), \
+                mock.patch.object(H, "tools_fresh", lambda s, g=None: fresh), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
+            os.makedirs(H.source_dir(src), exist_ok=True)
+            if fresh:
+                H.tier0_cases(src, "gen:aa", dump, [], "r1")
+            else:
+                with self.assertRaises(SystemExit):
+                    H.tier0_cases(src, "gen:aa", dump, [], "r1")
+            seen["err"] = err.getvalue()
+            seen["d"] = H.source_dir(src)
+        return seen
+
+    def test_root_gets_its_tools_here(self):
+        s = self.run_t0(0)
+        self.assertEqual(s["ensured"], "debian12")
+        self.assertEqual(s["tools"], f"{s['d']}/tools")
+
+    def test_root_dies_when_they_cant_be_had(self):
+        s = self.run_t0(0, fresh=False)
+        self.assertIn("aren't its generation", s["err"])
+
+    def test_as_m_says_so(self):
+        s = self.run_t0(1000)
+        self.assertIsNone(s["tools"])
+        self.assertNotIn("ensured", s)
+        self.assertIn("no dry runs", s["err"])
+
+    def test_a_plan_family_needs_none(self):
+        s = self.run_t0(0, "nixos2605")
+        self.assertIsNone(s["tools"])
+        self.assertNotIn("ensured", s)
 
 
 class Prune(unittest.TestCase):

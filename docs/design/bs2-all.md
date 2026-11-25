@@ -2,10 +2,12 @@
 
 2026-11-14. Plan agreed with the user in conversation.
 Revised the same day: parallel lanes, and the word runs early.
-**Status (2026-11-24):** A0, A1 and the Linux lane (A2, A7, A9) built; A3-A6
+**Status (2026-11-25):** A0, A1 and the Linux lane (A2, A7, A9) built; A3-A6
 and A8 not.  `bs2 BackShot2All` runs 54 Linux sources and lists 40 sources
 and tier 3 as SKIPPED: PARTIAL PASS at best ("The Linux lane, built" below).
-Not run yet.
+Since 2026-11-25 a space preflight, leaner tools and slimmed big sources
+("Room, slimming and placement" below): vanilla3 is off the SSD lane, and
+`plan` says ~7.8 h on six hosts.  Not run yet.
 It fills in the word that `docs/design/backshot2.md` ("Words") reserved:
 "`BackShot2All` | reserved for all of BackShot2, fresh, later". est. marks an
 estimate. `backshot2.md` is `docs/design/backshot2.md`; its words (case,
@@ -339,6 +341,52 @@ says how it works; in short:
   times), est.  Each further lane adds its sources (A3's big guests the
   most).  Its SSD share: vanilla3's 25 cases, ~0.7 TB written on chopin and
   cinqcent a run (est.).
+
+### Room, slimming and placement (2026-11-25)
+
+The first BackShot2All start (bs2all-20261125-065134) filled cinqcent's
+/bkoscratch before a case ran: nothing sized the sources' preparations and
+tools.  testvm/backshot2/README.md "Sources and tools on /bkoscratch" and
+"Slimming" say how each piece works; in short:
+
+- **Space preflight and lean tools** (ddb8011, dd3ee16, 4ea50fb, 8ca9e01): a
+  source's older preparations go once nothing uses them (`prune_preps()`;
+  one a live case still uses stays, and `bs2-host room` reports it, so the
+  preflight counts it as kept); tools (the root copy tier 0's dry runs
+  chroot into) only on a source's lead and only for a family with dry runs,
+  a leaner copy (kinoite44's from its deployment); and `bs2lib/space.py`
+  works out each host's peak on /bkoscratch from `bs2-host room` and
+  `space-sizes.tsv`, printed by `plan`, and a run refuses to start on a host
+  that lacks it (30 GiB margin).
+- **Slimming** (3be0b8f, 4780572, 8759aaf): a source whose full room is over
+  the small hosts' `cmp-run.sh --ceiling` is slimmed in its preparation
+  (`bs2lib/slim.py`: caches, logs, flatpaks, snaps, locales, docs, themes,
+  fonts, firmware; never the layout, the boot chain, `/etc` or the content
+  recipes' paths; btrfs snapshots left alone), 20 sources today.
+  **ubuntu26-luks, kinoite44 and garuda stay full fat, the user's choice**
+  (`slim.FULL_FAT`): three whole desktop guests (LUKS, ostree, snapper) at
+  every tier.  A slimmed source's generation carries the recipe (`+slim1`),
+  so its ledger rows name the slimmed source.
+- **vanilla3 leaves the SSD lane**: slimmed, its room is D 12 (was 30, over
+  every RAM ceiling), so its cases run in chopin's and cinqcent's RAM disks
+  like the rest; no source needs `--reserve-ssd` now (~0 GB written to the
+  SSDs a run, records only, against ~0.7 TB before).
+- **Placement** (`BS2_WT=bs2all-wt bs2 BackShot2All plan`, 2026-11-25): the
+  small hosts' ceilings (9 GiB RAM disk, 10.1 memory) still leave out 15
+  sources each (the slimmed desktops whose room is still over them, and the
+  three full-fat ones), choubox's (3, 6) all but five.  chopin and cinqcent
+  take ~445 cases each on 5 slots, copland, cage and czerny ~270 each on 2,
+  choubox 285 on 1 (alpine324's 200, artix-dinit, artix-s6, debian13, uc24);
+  each host ~7.1 h (chopin and cinqcent after their ~135 min tier 0 sweeps),
+  then the corpus (8 cases, ~16 min) and the leftovers set (9 steps on
+  chopin, ~27 min): **~7.8 h est.**  The space preflight is OK on every host
+  (peaks chopin +37 GiB of 306 free, cinqcent +41 of 145; the small hosts
+  free room as their tools go).
+- **The report counts cases, each once** (2026-11-25 review): seeds often
+  draw the same case, so a tier plans its distinct cases (the leads' pick
+  lists and sweeps' plans) and counts only their rows; `enqueue` queues a
+  case once; `--sweep` and `--tier2` are refused for BackShot2All (decision
+  5's sizes are the word's; `BackShot2` takes them).
 
 ## The family interface (A1)
 

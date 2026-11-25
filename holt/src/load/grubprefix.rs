@@ -18,7 +18,10 @@
 //! already names PART, or names no partition by number (`($root)` after a
 //! search), a FILE that is no GRUB image, or isn't there, is left as it
 //! is: a restore onto the source's own numbers changes nothing.  A prefix
-//! the new number doesn't fit in fails, naming the file.
+//! the new number doesn't fit in fails, naming the file, as a GRUB image
+//! whose module info is broken does (cut short, its modules past the mods
+//! section, its modules' offset past their end, a module header past it):
+//! `bko-holt grub-prefix: FILE: WHY` and exit status 1, the file unchanged.
 //!
 //! The image: a PE file whose "mods" section begins with GRUB's module
 //! info (magic "mimg"; 64-bit: magic, padding, offset and size as u64s;
@@ -81,15 +84,20 @@ pub fn efi_prefix(b: &[u8]) -> Result<Option<(usize, usize, String)>, String> {
         return Err(format!("the modules ({size} bytes) run past the mods section ({raw_size} bytes)"));
     }
     let p = raw.checked_add(usize::try_from(off).map_err(|_| "the modules' offset is past this machine's")?).ok_or("the modules' offset overflows")?;
+    // At END: no modules.  Past it: the module info is broken, as a module
+    // header past the modules' end is (RustAudit1 HD1-04).
+    if p > end {
+        return Err(format!("the modules' offset ({off:#x}) is past their end ({size} bytes from the module info)"));
+    }
     module_prefix(b, p, end)
 }
 
 /// The prefix module among the modules of B from P to END (module headers:
 /// type, size, both u32s, the size counting the header): (the offset of
 /// its string, its room with the NUL padding, the string), or None.  A P
-/// at or past END (the module info's offset past the mods section, up to
-/// usize::MAX) has no modules: None, as a release build has always given
-/// it, the sums checked so a debug one doesn't panic.
+/// at END has no modules: None.  efi_prefix never gives a P past END (that
+/// is its error), but this checks its sums anyway, so a P near usize::MAX
+/// is None too and never an add overflow.
 fn module_prefix(b: &[u8], mut p: usize, end: usize) -> Result<Option<(usize, usize, String)>, String> {
     while p.checked_add(8).is_some_and(|q| q <= end) {
         let (Some(t), Some(sz)) = (u32_at(b, p), u32_at(b, p + 4)) else { break };
@@ -334,24 +342,30 @@ mod tests {
         assert!(efi_prefix(&b).unwrap_err().contains("past the modules' end"));
     }
 
-    /// RustAudit1 HD1-04: a module-info offset that takes the modules'
-    /// start to the top of the address space (or a 32-bit one's to
-    /// u32::MAX) is no prefix, without an add overflow; one past usize is
-    /// the overflow error it was.
+    /// RustAudit1 HD1-04: a module-info offset past the modules' end (up to
+    /// the top of the address space, or a 32-bit image's u32::MAX) is an
+    /// error, not "no prefix", and never an add overflow; one past usize is
+    /// the overflow error it was; one at the end is no modules, no prefix.
     #[test]
-    fn a_huge_module_offset_doesnt_overflow() {
+    fn a_huge_module_offset_is_an_error() {
         let raw = 0x400usize;
         let mut b = image(Some("(,gpt3)/boot/grub"), 24, true);
         assert_eq!(u32_at(&b, raw), Some(MAGIC));
-        for p in [usize::MAX - 15, usize::MAX - 7, usize::MAX] {
-            b[raw + 8..raw + 16].copy_from_slice(&((p - raw) as u64).to_le_bytes());
-            assert_eq!(efi_prefix(&b).unwrap(), None, "{p:#x}");
+        let size = u64_at(&b, raw + 16).unwrap();
+        for p in [raw + size as usize + 1, usize::MAX - 15, usize::MAX - 7, usize::MAX] {
+            let off = (p - raw) as u64;
+            b[raw + 8..raw + 16].copy_from_slice(&off.to_le_bytes());
+            assert_eq!(efi_prefix(&b), Err(format!("the modules' offset ({off:#x}) is past their end ({size} bytes from the module info)")), "{p:#x}");
+            assert!(matches!(plan(&b, "gpt5"), Err(e) if e.contains("is past their end")));
         }
+        b[raw + 8..raw + 16].copy_from_slice(&size.to_le_bytes());
+        assert_eq!(efi_prefix(&b), Ok(None));
         b[raw + 8..raw + 16].copy_from_slice(&(u64::MAX - 8).to_le_bytes());
         assert!(efi_prefix(&b).unwrap_err().contains("offset overflows"));
         let mut b = image(Some("(,gpt3)/boot/grub"), 24, false);
+        let size = u32_at(&b, raw + 8).unwrap();
         b[raw + 4..raw + 8].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert_eq!(efi_prefix(&b).unwrap(), None);
+        assert_eq!(efi_prefix(&b), Err(format!("the modules' offset (0xffffffff) is past their end ({size} bytes from the module info)")));
         assert_eq!(module_prefix(&b, usize::MAX - 3, usize::MAX), Ok(None));
         assert_eq!(module_prefix(&b, usize::MAX - 15, usize::MAX - 8), Ok(None));
     }

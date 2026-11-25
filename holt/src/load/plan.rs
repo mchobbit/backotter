@@ -963,7 +963,7 @@ mod tests {
 
     /// RustAudit1 HD2-01: every step of assemble and format that makes
     /// something says which source disks it is on (Cmd::on), each one a
-    /// disk of the layout, for every dump in the corpus with each of its
+    /// mapped disk of the layout, for every dump in the corpus with each of its
     /// disks mapped: what the plan's per-target `writes` is worked out from.
     #[test]
     fn every_making_step_says_its_disks() {
@@ -983,7 +983,8 @@ mod tests {
             for s in [Stage::Assemble, Stage::Format] {
                 for c in b.stage(s).iter().filter(|c| !c.is_note() && c.check.is_none()) {
                     assert!(!c.on.is_empty(), "{}: {} step on no disk: {}", dir.display(), s.name(), c.shell());
-                    assert!(c.on.iter().all(|d| l.disk(d).is_some()), "{}: {:?} isn't a disk: {}", dir.display(), c.on, c.shell());
+                    // A mapped one: a step on an unmapped disk alone would be on no target.
+                    assert!(c.on.iter().all(|d| m.pairs.iter().any(|(src, _)| src == d)), "{}: {:?} isn't a mapped disk: {}", dir.display(), c.on, c.shell());
                     seen += 1;
                 }
             }

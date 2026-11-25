@@ -1277,11 +1277,16 @@ mod tests {
     /// partition (vda1, vdb1) holding VDA1 and VDB1, and STORAGE's other
     /// fields (md_arrays, dm_devices, fstab, crypttab).
     fn two_disks(vda1: &str, vdb1: &str, storage: &str) -> String {
-        let disk = |n: &str, sig: &str, content: &str| {
+        two_named([("vda", "vda1"), ("vdb", "vdb1")], vda1, vdb1, storage)
+    }
+
+    /// two_disks with the disks and their partitions named NAMES.
+    fn two_named(names: [(&str, &str); 2], vda1: &str, vdb1: &str, storage: &str) -> String {
+        let disk = |(n, p): (&str, &str), sig: &str, content: &str| {
             format!(
                 r#"{{"name": "{n}", "kind": "disk", "size_bytes": 4294967296, "logical_sector_size": 512, "model": null, "serial": null, "wwid": null,
                   "partition_table": {{"type": "dos", "sector_size": 512, "disk_signature": "{sig}"}},
-                  "partitions": [{{"name": "{n}1", "number": 1, "start_lba": 2048, "sectors": 8386560, "type": "0x83", "bootable": true, "content": {content}}}],
+                  "partitions": [{{"name": "{p}", "number": 1, "start_lba": 2048, "sectors": 8386560, "type": "0x83", "bootable": true, "content": {content}}}],
                   "content": null, "boot_code": {{"kind": "grub2"}}}}"#
             )
         };
@@ -1290,8 +1295,8 @@ mod tests {
               "storage": {{"disks": [{}, {}], "lvm": {{"volume_groups": []}}, "zfs": {{"pools_from_labels": [], "tools": null}}, "btrfs": [], "xfs_external_logs": [], "mounts": [], "swaps": [], {storage}}},
               "boot": {{"loader": {{"name": "grub", "firmware": "bios", "via_shim": false}}, "efi": null, "grub": {{"debconf": {{"grub-pc/install_devices": "/dev/disk/by-id/virtio-x"}}}},
                        "kernels": {{"installed": [{{"version": "6.12.48+deb13-amd64", "running": true}}]}}}}}}"#,
-            disk("vda", "1f2e3d4c", vda1),
-            disk("vdb", "1f2e3d4d", vdb1)
+            disk(names[0], "1f2e3d4c", vda1),
+            disk(names[1], "1f2e3d4d", vdb1)
         )
     }
 
@@ -1307,9 +1312,15 @@ mod tests {
     /// Each target's `writes` in the plan of LAYOUT with vda on vdb and
     /// vdb on vdc.
     fn writes_of(name: &str, layout: &str) -> Vec<(String, Vec<String>)> {
+        writes_mapped(name, layout, ["vda", "vdb"])
+    }
+
+    /// writes_of with source disks SRC on vdb and vdc.
+    fn writes_mapped(name: &str, layout: &str, src: [&str; 2]) -> Vec<(String, Vec<String>)> {
         let t = rescue(name);
         let s = sys_of(&t);
-        let (_, v, _) = plan(layout, &["--map", "vda=vdb", "--map", "vdb=vdc", "--json"], &s);
+        let (m0, m1) = (format!("{}=vdb", src[0]), format!("{}=vdc", src[1]));
+        let (_, v, _) = plan(layout, &["--map", &m0, "--map", &m1, "--json"], &s);
         v.arr_at(&["disks"])
             .iter()
             .map(|d| (d.str_at(&["target", "node"]).unwrap_or_default().to_string(), d.arr_at(&["target", "writes"]).iter().filter_map(Value::as_str).map(str::to_string).collect()))
@@ -1375,6 +1386,30 @@ mod tests {
         let of = |t: &str| w.iter().find(|(n, _)| n == t).map(|(_, w)| w.clone()).unwrap_or_else(|| panic!("no {t}: {w:?}"));
         assert!(of("vdb").iter().any(|s| s == "format"), "{w:?}");
         assert!(!of("vdc").iter().any(|s| s == "format" || s == "assemble"), "{w:?}");
+    }
+
+    /// RustAudit1 HD2-01's over-report half: source disks whose names
+    /// start alike (sda and sdab, nvme0n1 and nvme0n10) are each their own,
+    /// whichever of the two holds the filesystem: the other's target gets
+    /// no format.
+    #[test]
+    fn writes_prefix_alike_disks() {
+        let fs = ext4("0b0e2c6e-1111-4222-8333-444455556666");
+        for (i, (a, b)) in [(("sda", "sda1"), ("sdab", "sdab1")), (("nvme0n1", "nvme0n1p1"), ("nvme0n10", "nvme0n10p1"))].into_iter().enumerate() {
+            for (made, on) in [(a, "vdb"), (b, "vdc")] {
+                let (one, two) = if made == a { (fs.as_str(), "null") } else { ("null", fs.as_str()) };
+                let rest = format!(
+                    r#""md_arrays": [], "dm_devices": [], "crypttab": null,
+                      "fstab": [{{"spec": "UUID=0b0e2c6e-1111-4222-8333-444455556666", "file": "/", "type": "ext4", "options": "defaults", "freq": 0, "passno": 1, "resolves_to": "{}"}}]"#,
+                    made.1
+                );
+                let w = writes_mapped(&format!("json-writes-prefix-{i}-{on}"), &two_named([a, b], one, two, &rest), [a.0, b.0]);
+                assert_eq!(w.len(), 2, "{made:?}: {w:?}");
+                for (t, w) in &w {
+                    assert_eq!(w.iter().any(|s| s == "format"), t == on, "{} made, {t}: {w:?}", made.1);
+                }
+            }
+        }
     }
 
     /// The plan's hash binds the run to what was reviewed (J20): the same

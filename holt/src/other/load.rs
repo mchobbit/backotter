@@ -1137,6 +1137,9 @@ mod tests {
         let words: Vec<String> = [Stage::Format, Stage::Mount].iter().flat_map(|s| b.stage(*s).iter().map(|c| c.argv.join(" "))).collect();
         assert!(words.iter().any(|w| w.starts_with("newfs ") && w.ends_with(" NAME=bc000000-0000-4000-8000-000000000004")), "{words:?}");
         assert!(words.iter().all(|w| !(w.starts_with("newfs ") && w.ends_with(" NAME=EFI"))), "{words:?}");
+        // And the root is mounted from that wedge, not from the ESP's.
+        assert!(words.iter().any(|w| w.starts_with("mount -t ffs ") && w.contains(" NAME=bc000000-0000-4000-8000-000000000004 /mnt/bko-target")), "{words:?}");
+        assert!(words.iter().all(|w| !(w.starts_with("mount -t ffs ") && w.contains(" NAME=EFI "))), "{words:?}");
         // A later entry of that name with no GUID: no wedge at all.
         l.disks[0].parts[2].uuid = None;
         let p = wedge_clashes(&l, &pairs, &sys());

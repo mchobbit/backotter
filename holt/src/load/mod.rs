@@ -594,7 +594,7 @@ fn run_raw(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
     };
     let json = match crate::json::parse(layout_text) {
         Ok(v) => v,
-        Err(e) => return refuse(EXIT_UNSUPPORTED, jsonout::ErrorCode::LayoutNotJson, format!("bko-holt load: {}: not JSON ({} at byte {})", opts.layout, e.message, e.offset)),
+        Err(e) => return refuse(EXIT_UNSUPPORTED, jsonout::ErrorCode::LayoutNotJson, format!("bko-holt load: {}: not JSON ({e})", opts.layout)),
     };
     // --reformat: every stage works from the edited layout (reformat.rs).
     let json = if opts.reformats.is_empty() { json } else { reformat::apply(json.clone(), &reformat::work_out(&json, &opts.reformats)) };
@@ -859,6 +859,8 @@ mod tests {
         assert_eq!((jcode, &jerr), (code, &err));
         assert_eq!(doc(&jout).get_str("code"), Some("layout_not_json"));
         assert_eq!(doc(&jout).get_str("text"), Some(err.trim_end()));
+        let e = crate::json::parse("{not json").unwrap_err();
+        assert_eq!(err, format!("bko-holt load: l.json: not JSON ({} at byte {})\n", e.message, e.offset));
         let (code, out, _) = run(&opts(&["l.json", "--json"]), r#"{"format": "x"}"#, &s);
         assert_eq!(code, EXIT_UNSUPPORTED);
         assert_eq!(doc(&out).get_str("code"), Some("layout_refused"));

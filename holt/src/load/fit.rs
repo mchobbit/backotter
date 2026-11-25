@@ -1820,7 +1820,7 @@ mod tests {
                 self.vgs.join(", "),
                 self.mounts.join(", ")
             );
-            crate::json::parse(&text).unwrap_or_else(|e| panic!("{} at byte {} in {text}", e.message, e.offset))
+            crate::json::parse(&text).unwrap_or_else(|e| panic!("{e} in {text}"))
         }
     }
 

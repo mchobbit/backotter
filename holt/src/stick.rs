@@ -151,7 +151,7 @@ pub fn marker_path(fam: Option<Family>) -> &'static str {
 
 /// The marker's fields, from its JSON TEXT.
 pub fn parse_marker(text: &str) -> Result<Marker, String> {
-    let v = crate::json::parse(text).map_err(|e| format!("not JSON ({} at byte {})", e.message, e.offset))?;
+    let v = crate::json::parse(text).map_err(|e| format!("not JSON ({e})"))?;
     if v.get_str("format") != Some("backotter-image") {
         return Err("its format isn't backotter-image".into());
     }
@@ -1006,6 +1006,8 @@ mod tests {
         assert_eq!((m.number, m.sectors, m.label.as_str(), m.fat_serial.as_str()), (4, 32768, "BACKOTTER", "3F2A-9C71"));
         assert_eq!(m.system_schemas, [1]);
         assert!(parse_marker("{}").unwrap_err().contains("backotter-image"));
+        let e = crate::json::parse("{").unwrap_err();
+        assert_eq!(parse_marker("{").unwrap_err(), format!("not JSON ({} at byte {})", e.message, e.offset));
         assert!(parse_marker(&marker(0)).unwrap_err().contains("number"));
         assert_eq!(marker_path(None), "/cdrom/.disk/backotter.json");
         assert_eq!(marker_path(Some(Family::Haiku)), "/boot/.disk/backotter.json");

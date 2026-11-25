@@ -452,11 +452,20 @@ fn pad(n: usize, out: &mut String) {
 
 // --- Parsing ------------------------------------------------------------------
 
-#[derive(Debug, PartialEq)]
+/// Why TEXT isn't JSON, and where.  Its Display is "MESSAGE at byte OFFSET".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParseError {
     pub offset: usize,
     pub message: &'static str,
 }
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} at byte {}", self.message, self.offset)
+    }
+}
+
+impl std::error::Error for ParseError {}
 
 const MAX_DEPTH: usize = 256;
 
@@ -681,6 +690,14 @@ impl Parser<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_error_display() {
+        let e = parse("[1,").unwrap_err();
+        assert_eq!(e.to_string(), format!("{} at byte 3", e.message));
+        let d: &dyn std::error::Error = &e;
+        assert_eq!(d.to_string(), e.to_string());
+    }
 
     #[test]
     fn scalars_print() {

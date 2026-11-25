@@ -23,7 +23,7 @@ and the steer around its known findings.  Everything here is generic.
 import random
 
 from . import GENERATOR, content as C, dumpx, edits as E, families as F, fitcalc, rules, sweep, tables
-from .geometry import Invalid, cdiv, lcm
+from .geometry import Invalid, cdiv, lcm, xfs_log_max_blocks
 
 MIB = 1 << 20
 SECT_MIB = 2048
@@ -271,9 +271,16 @@ def draw_xfs_geometry(rng, d, h=None):
             p["ag_count"] = rng.choice(opts)
     agb = cdiv(c["blocks"], p.get("ag_count", c["ag_count"]))
     if "log_blocks" in which:
+        # Drawn over the old range and redrawn while over mkfs.xfs's limit
+        # (xfs_log_max_blocks; GENERATOR 8): log-uniform up to the limit,
+        # and a case whose log was in range draws the same numbers as before.
+        top = xfs_log_max_blocks(bs)
         lo, hi = 64 * MIB // bs, min((1 << 31) // bs - 256, agb // 2)
-        if lo <= hi:
-            p["log_blocks"] = logu(rng, lo, hi)
+        if lo <= min(hi, top):
+            lb = logu(rng, lo, hi)
+            while lb > top:
+                lb = logu(rng, lo, hi)
+            p["log_blocks"] = lb
     if "inode_size" in which:
         p["inode_size"] = rng.choice(tables.allowed(d, "xfsprogs", "inode_size", h) or [512])
     if "sector_size" in which:

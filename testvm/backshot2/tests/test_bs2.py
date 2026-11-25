@@ -9,6 +9,7 @@ only, on the Mac or a host, from the corpus's redacted dumps:
 import copy
 import json
 import os
+import random
 import subprocess
 import sys
 import tempfile
@@ -264,6 +265,47 @@ class TestModels(unittest.TestCase):
             GE.xfs(c["blocks"], 4096, c["blocks"] - 100, c["log_blocks"], 512, 512, c["features"])   # last AG under 16 MiB
         with self.assertRaises(Invalid):
             GE.xfs(60000, 4096, 30000, 16384, 512, 512, c["features"])   # under 300 MiB
+
+    def test_xfs_log_within_mkfs_limit(self):
+        # xfsprogs' XFS_MAX_LOG_BYTES (2 GiB - 10 MiB) and XFS_MAX_LOG_BLOCKS
+        # (2^20), the same in 5.13 and 6.x: slackware15-uefi-5125fd5f9417d3ee
+        # drew 522322 4 KiB blocks (2139430912 bytes), "Value is too large".
+        def mkfs_takes(lb, bs):
+            return lb <= 1048576 and lb * bs <= 2147483648 - 10485760
+        self.assertFalse(mkfs_takes(522322, 4096))
+        c = dumpx.part(dumpx.disk(ALPINE), 3)["content"]
+        for bs in (1024, 2048, 4096, 8192, 65536):
+            top = GE.xfs_log_max_blocks(bs)
+            self.assertTrue(mkfs_takes(top, bs) and not mkfs_takes(top + 1, bs), bs)
+            blocks = (1 << 42) // bs
+            GE.xfs(blocks, bs, blocks // 4, top, 512, 512, c["features"])
+            with self.assertRaises(Invalid):
+                GE.xfs(blocks, bs, blocks // 4, top + 1, 512, 512, c["features"])
+
+    def test_xfs_largest_drawn_log_is_taken(self):
+        # The draw's top end, on a filesystem whose AGs don't bound the log:
+        # uniform walks down from its upper end, so the first log the draw
+        # keeps is the largest it can draw.
+        class Top(random.Random):
+            k = 0
+
+            def sample(self, xs, n):
+                return ["log_blocks"]
+
+            def uniform(self, a, b):
+                self.k += 1
+                return b - (b - a) * self.k / 4000
+
+        for bs in (1024, 2048, 4096):
+            d = copy.deepcopy(ALPINE)
+            c = dumpx.part(dumpx.disk(d), 3)["content"]
+            c.update(block_size=bs, blocks=(1 << 42) // bs, ag_count=4, ag_blocks=(1 << 40) // bs)
+            lb = G.draw_xfs_geometry(Top(1), d)[0][1]["log_blocks"]
+            top = GE.xfs_log_max_blocks(bs)
+            self.assertLessEqual(lb, top, bs)
+            self.assertGreater(lb, top * 0.99, bs)
+            self.assertLessEqual(lb * bs, 2147483648 - 10485760)
+            self.assertLessEqual(lb, 1048576)
 
     def test_luks2(self):
         self.assertEqual(GE.luks2(1 << 30, 16384, 16744448, 16777216, 512, 1)["payload_bytes"], (1 << 30) - 16777216)

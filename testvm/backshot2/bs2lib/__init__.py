@@ -42,4 +42,9 @@ test hosts.  Stdlib only; Python 3.9 or newer.
 # Core's gadget-fixed partitions keep their size (families/snapcore.py's
 # quirk: only ubuntu-data may change size), so uc24's and uc24-fde's cases
 # change; every other source's are GENERATOR 6's but for the field.
-GENERATOR = "7"
+# 8 (2026-11-25): an xfs_geometry log is kept within mkfs.xfs's limit
+# (geometry.xfs_log_max_blocks: 2 GiB - 10 MiB, 2^20 blocks) and redrawn
+# over it, so a case on an XFS source that drew a longer log changes
+# (slackware15-uefi-5125fd5f9417d3ee's 2139430912 bytes: "Value is too
+# large"); every other case is GENERATOR 7's but for the field.
+GENERATOR = "8"

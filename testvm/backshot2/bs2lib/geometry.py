@@ -192,7 +192,17 @@ XFS_MIN_BYTES = 300 * MIB      # mkfs.xfs refuses smaller filesystems (xfsprogs 
 XFS_AG_MIN_BYTES = 16 * MIB
 XFS_AG_MAX_BYTES = 1 << 40
 XFS_LOG_MIN_BYTES = 64 * MIB   # the smallest log the generator draws (mkfs.xfs's realistic minimum)
-XFS_LOG_MAX_BYTES = (1 << 31) - (1 << 20)
+# xfsprogs' XFS_MAX_LOG_BYTES and XFS_MAX_LOG_BLOCKS (libxfs/xfs_fs.h, 5.x
+# and 6.x alike): mkfs.xfs refuses -l size= over 2 GiB - 10 MiB ("Value is
+# too large", the option's maxval) and a log of more than 2^20 blocks
+# (validate_log_size), so 1 GiB at 1 KiB blocks.
+XFS_LOG_MAX_BYTES = (2 << 30) - 10 * MIB
+XFS_LOG_MAX_BLOCKS = 1 << 20
+
+
+def xfs_log_max_blocks(block_size):
+    """The most log blocks mkfs.xfs takes at BLOCK_SIZE."""
+    return min(XFS_LOG_MAX_BLOCKS, XFS_LOG_MAX_BYTES // block_size)
 
 
 # The superblock's version bits, in bko-holt's order (holt/src/probe/xfs.rs
@@ -240,7 +250,7 @@ def xfs(blocks, block_size, ag_blocks, log_blocks, inode_size, sector_size, feat
     agcount = cdiv(blocks, ag_blocks)
     if agcount < 2 and blocks * bs >= (1 << 30):
         raise Invalid("one AG")
-    if log_blocks * bs < XFS_LOG_MIN_BYTES or log_blocks * bs > XFS_LOG_MAX_BYTES:
+    if log_blocks * bs < XFS_LOG_MIN_BYTES or log_blocks > xfs_log_max_blocks(bs):
         raise Invalid(f"log of {log_blocks} blocks")
     if log_blocks > ag_blocks // 2:
         raise Invalid("log over half an AG")

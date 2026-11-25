@@ -29,7 +29,7 @@ sh -c '[ "$(zfs get -H -o value mounted zroot)" != yes ] || zfs unmount zroot'
 
 # ---- format ----
 # vtbd0p1: FAT, as the source's
-newfs_msdos -F 32 -I 0xBC000001 -c 1 /dev/sdqp1
+newfs_msdos -F 32 -I 0xBC000001 -c 1 -m 0xf0 /dev/sdqp1
 zfs create -u -o mountpoint=none zroot/ROOT
 zfs create -u -o mountpoint=/ -o canmount=noauto zroot/ROOT/default
 zfs create -u -o mountpoint=/home zroot/home

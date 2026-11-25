@@ -27,7 +27,7 @@ sh -c 'n=$(diskinfo /dev/sdqp4.eli | cut -f3); m=$((n / 1048576)); dd if=/dev/ze
 
 # ---- format ----
 # vtbd0p1: FAT, as the source's
-newfs_msdos -F 32 -I 0xBC000001 -c 1 /dev/sdqp1
+newfs_msdos -F 32 -I 0xBC000001 -c 1 -m 0xf0 /dev/sdqp1
 # vtbd0p3.eli: UFS as the source's (dumpfs -m); dumpfs's -s 28819448 is in 512-byte units, and newfs counts this device's 4096-byte sectors: -s 3602431
 newfs -O 2 -U -a 32 -b 32768 -d 32768 -e 4096 -f 4096 -g 16384 -h 64 -i 8192 -j -k 6400 -m 8 -o time -s 3602431 /dev/sdqp3.eli
 # vtbd0p4.eli: UFS as the source's (dumpfs -m)

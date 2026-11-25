@@ -613,21 +613,7 @@ impl Builder<'_> {
 
     /// A FAT filesystem (an ESP) with the source's volume ID and label.
     pub(crate) fn other_newfs_msdos(&mut self, src: &str, dev: &str, c: &Value) -> Vec<Cmd> {
-        let mut a = vec!["newfs_msdos".to_string()];
-        if let Some(b) = c.get("fat_bits").and_then(Value::as_u64) {
-            a.extend(["-F".into(), b.to_string()]);
-        }
-        if let Some(id) = s(c, "uuid").map(|u| u.replace('-', "")) {
-            a.extend(["-I".into(), format!("0x{id}")]);
-        }
-        if let Some(l) = s(c, "label") {
-            a.extend(["-L".into(), l]);
-        }
-        if let Some(n) = c.get("cluster_size").and_then(Value::as_u64) {
-            a.extend(["-c".into(), (n / c.get("bytes_per_sector").and_then(Value::as_u64).unwrap_or(512).max(1)).to_string()]);
-        }
-        a.push(dev.to_string());
-        vec![Cmd { argv: a, why: Some(format!("{src}: FAT, as the source's")), ..Cmd::default() }]
+        vec![Cmd { argv: newfs_msdos(dev, c), why: Some(format!("{src}: FAT, as the source's")), ..Cmd::default() }]
     }
 
     /// GEOM labels (glabel) on the partitions the source had them on,
@@ -823,6 +809,32 @@ impl Builder<'_> {
         out.extend(self.closers.iter().rev().cloned());
         out
     }
+}
+
+/// newfs_msdos's words for FAT content C on DEV (FreeBSD, NetBSD,
+/// OpenBSD and DragonFly read them alike): the source's FAT size, volume
+/// ID, label, cluster size and media byte (the dump's hex text, read as
+/// Linux's mkfs.fat -M reads it: RustAudit1 H7-09; newfs_msdos -m takes
+/// 0x hex).
+fn newfs_msdos(dev: &str, c: &Value) -> Vec<String> {
+    let mut a = vec!["newfs_msdos".to_string()];
+    if let Some(b) = c.get("fat_bits").and_then(Value::as_u64) {
+        a.extend(["-F".into(), b.to_string()]);
+    }
+    if let Some(id) = s(c, "uuid").map(|u| u.replace('-', "")) {
+        a.extend(["-I".into(), format!("0x{id}")]);
+    }
+    if let Some(l) = s(c, "label") {
+        a.extend(["-L".into(), l]);
+    }
+    if let Some(n) = c.get("cluster_size").and_then(Value::as_u64) {
+        a.extend(["-c".into(), (n / c.get("bytes_per_sector").and_then(Value::as_u64).unwrap_or(512).max(1)).to_string()]);
+    }
+    if let Some(m) = c.get_u64_lenient("media") {
+        a.extend(["-m".into(), format!("0x{m:02x}")]);
+    }
+    a.push(dev.to_string());
+    a
 }
 
 /// The `sh -c` script that puts the rescue system's BOOTX64.EFI on the ESP
@@ -1171,6 +1183,19 @@ mod tests {
         let img = dragonfly_stick();
         assert_eq!(label64_name(&MemSource(img[64 * 512..1088 * 512].to_vec())).as_deref(), Some(L64_NAME));
         assert_eq!(label64_name(&MemSource(vec![0u8; 8192])), None);
+    }
+
+    /// The source's FAT media byte (dump's hex text, "0xf0" on FreeBSD's
+    /// ESPs) is kept, as Linux's mkfs.fat -M keeps it (RustAudit1 H7-09);
+    /// a dump without one adds nothing.
+    #[test]
+    fn newfs_msdos_keeps_the_sources_media_byte() {
+        let c = crate::json::parse(r#"{"type": "vfat", "fat_bits": 32, "uuid": "BC00-0001", "cluster_size": 512, "bytes_per_sector": 512, "media": "0xf0"}"#).unwrap();
+        assert_eq!(newfs_msdos("/dev/vtbd0p1", &c).join(" "), "newfs_msdos -F 32 -I 0xBC000001 -c 1 -m 0xf0 /dev/vtbd0p1");
+        let c = crate::json::parse(r#"{"type": "vfat", "fat_bits": 16, "media": 248}"#).unwrap();
+        assert_eq!(newfs_msdos("/dev/dk0", &c).join(" "), "newfs_msdos -F 16 -m 0xf8 /dev/dk0");
+        let c = crate::json::parse(r#"{"type": "vfat", "fat_bits": 32, "uuid": "BC00-0001"}"#).unwrap();
+        assert_eq!(newfs_msdos("/dev/vtbd0p1", &c).join(" "), "newfs_msdos -F 32 -I 0xBC000001 /dev/vtbd0p1");
     }
 
     #[test]

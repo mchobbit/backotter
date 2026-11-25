@@ -23,6 +23,7 @@ names another, so two sessions' runs never share a copy).
                                     naming the piece that builds it (bs2lib/allrun.py), and a built
                                     source no host holds SKIPPED "not on any host in this run"; a
                                     manifest (RUN/bs2all.json) on each host; then prints the rest:
+                                    (--sweep and --tier2 refused: decision 5's sizes are the word's)
   bs2 BackShot2All corpus RUN       ... the corpus at tier 1 as RUN-corpus, once RUN's queues finish
   bs2 BackShot2All leftovers RUN    ... then the leftovers set as RUN-lo on one host, detached
   bs2 BackShot2All report RUN [--json]   RUN's verdict: PASS, FAIL, HARNESS, INVALID per source and
@@ -1349,9 +1350,16 @@ def main():
         run_words(sources, n, time.strftime("bs2a-%Y%m%d-%H%M"))
         print("then: bs2 BackShot2 corpus (once the queues finish; bs2 status RUN shows them)")
     elif w == "BackShot2All":
+        # Decision 5's sizes are BackShot2All's (docs/design/bs2-all.md): its verdict says
+        # every built source ran them, so --sweep and --tier2 are refused, never a smaller
+        # run's PASS; BackShot2 SOURCE... takes them.
+        given = [f for f in ("--sweep", "--tier2") if COUNTS.get(f[2:]) is not None]
+        if given:
+            sys.exit(f"bs2: BackShot2All runs decision 5's sizes ({AR.T0} tier 0, {AR.T1} tier 1 and {TIER2_EACH} tier 2 "
+                     f"a source; docs/design/bs2-all.md): {' and '.join(given)} refused (smaller runs: bs2 BackShot2 "
+                     f"SOURCE... N --sweep N --tier2 N)")
         os.environ["BS2_WORD"] = w   # (its cases' ledger rows' word: PASS_VARS)
-        if COUNTS.get("sweep") is None:
-            COUNTS["sweep"] = AR.T0
+        COUNTS["sweep"] = AR.T0
         rest = a[1:]
         if rest[:1] and rest[0] in ("corpus", "leftovers", "report"):
             if len(rest) != 2 or not RUN_NAME.fullmatch(rest[1]):

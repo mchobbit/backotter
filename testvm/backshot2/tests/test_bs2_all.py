@@ -700,5 +700,26 @@ class EnqueueOnce(unittest.TestCase):
         self.assertEqual(names[0], names[2])
 
 
+class Sizes(unittest.TestCase):
+    def test_sweep_and_tier2_are_refused(self):
+        """Decision 5's sizes are BackShot2All's: --sweep and --tier2 are refused before
+        anything reads a host, so no smaller run gives its PASS."""
+        for args in (["--sweep", "10"], ["--tier2", "1"], ["--sweep", "10", "--tier2", "1"]):
+            for rest in (["plan"], [], ["report", "bs2all-20261124-150000"]):
+                with mock.patch.object(sys, "argv", ["bs2", "BackShot2All"] + rest + args), \
+                        mock.patch.dict(B.COUNTS, clear=True), mock.patch.dict(os.environ), mock.patch.object(B, "par", None), \
+                        mock.patch.object(B, "held_briefly", None):
+                    with self.assertRaises(SystemExit) as e:
+                        B.main()
+                self.assertIn("refused", str(e.exception), (args, rest))
+                self.assertIn(" and ".join(a for a in args if a.startswith("--")), str(e.exception))
+        # BackShot2 SOURCE... keeps them.
+        with mock.patch.object(sys, "argv", ["bs2", "BackShot2", "debian13", "2", "plan", "--sweep", "10"]), \
+                mock.patch.dict(B.COUNTS, clear=True), mock.patch.dict(os.environ), mock.patch.object(B, "held", lambda s: {}), \
+                mock.patch.object(B, "plan_words", lambda *a: 0), mock.patch.object(B, "space_plan", lambda *a: None):
+            B.main()
+            self.assertEqual(B.COUNTS["sweep"], 10)
+
+
 if __name__ == "__main__":
     unittest.main()

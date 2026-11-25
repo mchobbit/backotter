@@ -200,14 +200,18 @@ rescuer_ready() {
     RR_WHY=""
     # NetBSD's heartbeat(9) panics a CPU whose clock didn't move in 15 s of
     # its own ticks, as a vCPU's beside a starved one on a loaded host
-    # (resc_up): off in the rescuer for the rest of its run.  (Nothing the
+    # (resc_up): off in the rescuer for the rest of its run.  Since
+    # 2026-11-25 a NetBSD rescuer boots with one vCPU (resc_up's --cpus 1),
+    # with no other CPU to fall behind, so this is a second guard that costs
+    # nothing, for a rescuer someone boots with more.  (Nothing the
     # rig passes turns it off sooner: kern.heartbeat.max_period is a sysctl
     # only, its 15 s default a kernel option, and boot.cfg sets neither.
     # The one place earlier is the rescuer guest's own /etc/sysctl.conf,
     # which rc.d/sysctl reads before the network: netbsd11 2026-11-18
     # panicked after it, at "Building databases", the "[ 2.36]" stamps
     # being that stalled clock's, not 2 s of boot.  That is an image change,
-    # so a panic before SSH answers is resc_up's one boot again.)
+    # hence the one vCPU, and resc_up's one boot again for any other panic
+    # before SSH answers.)
     [[ $PLAT == netbsd ]] && sshk "$rkey" 'sysctl -w kern.heartbeat.max_period=0' >/dev/null 2>&1
     if [[ $PLAT == illumos ]]; then
         # (A disk attached at boot can be late into /dev and into iostat's
@@ -601,10 +605,18 @@ wait_why() {
 # and a loaded host panics a guest whose vCPU it starved: netbsd11's backup
 # rescuer, 2026-11-18 on Chopin at 91 C, "cpu1: time has not advanced in 1501
 # heartbeats" in /etc/rc, then a hang in its crash dump until vm_wait gave
-# up 25 minutes later.  The source's and the restored disk's boots are what
-# the run tests, so they don't come here.  (CONSOLE_KEY and IMG_BOOT, set
-# on this call, reach vm_up as they would on its own.)
+# up 25 minutes later.  So a NetBSD rescuer (the backup's, the decoy's or
+# +img's, the verify's) boots with one vCPU since 2026-11-25: heartbeat(9)
+# panics a CPU whose clock fell 15 s behind, and with one there is no other
+# CPU to fall behind.  It fires in /etc/rc, before rescuer_ready's sysctl
+# could turn it off.  The cost is a slower rescuer; the second boot stays,
+# for the panics one vCPU doesn't prevent.  --cpus 1 goes last, after the
+# rescuer guest's vm-run-options (rfw), as vm-run's last --cpus wins.  The
+# source's and the restored disk's boots are what the run tests, so they
+# don't come here and keep their CPUs.  (CONSOLE_KEY and IMG_BOOT, set on
+# this call, reach vm_up as they would on its own.)
 resc_up() { local key=$1 image=$2 log=$3 rc; shift 3
+    [[ $PLAT == netbsd ]] && set -- "$@" --cpus 1
     vm_up "$image" "$log" "$@"
     vm_wait "$key" "$log"; rc=$?
     ((rc == 2)) || return $rc

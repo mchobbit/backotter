@@ -310,6 +310,50 @@ CONSOLE_KEY= resc_up key "$R/img" "$R/c.log" > "$T/resc3.out" 2>&1; rc=$?
 chk "resc_up: a panic on the second boot too is a failure (2), with no third" eval '((rc == 2 && BOOTS == 2))'
 chk "resc_up: and says so" has "$T/resc3.out" "panicked at boot again"
 
+# A NetBSD rescuer boots with one vCPU (heartbeat(9), resc_up): --cpus 1
+# last, after the rescuer guest's own options, so vm-run's last --cpus is 1;
+# no other platform's rescuer gets it, and the source's and the restored
+# disk's boots, which aren't resc_up's, keep their CPUs.
+# shellcheck disable=SC2034
+PLAT=netbsd
+rm -f "$R/ups" "$R/c.log.panic-1"; BOOTS=0 UP_AT=1 PANICS=0 HT_NOTE=""
+CONSOLE_KEY=k1 resc_up key "$R/img" "$R/c.log" --memory 3072 --disk-serials bkoresc,a > "$T/resc4.out" 2>&1; rc=$?
+chk "resc_up: a NetBSD rescuer boots with --cpus 1, last" eval '((rc == 0)) && hasx "$R/ups" "1 k1 $R/img $R/c.log --memory 3072 --disk-serials bkoresc,a --cpus 1"'
+rm -f "$R/ups"; BOOTS=0 UP_AT=1 PANICS=0 HT_NOTE=""
+CONSOLE_KEY= resc_up key "$R/img" "$R/c.log" --cpus 4 --memory 3072 > /dev/null 2>&1
+chk "resc_up: a NetBSD rescuer guest's own --cpus is overridden by the last --cpus 1" eval '[[ $(tr " " "\n" < "$R/ups" | grep -A1 -x -- --cpus | tail -n 1) == 1 ]]'
+rm -f "$R/ups"; BOOTS=0 UP_AT=2 PANICS=1 HT_NOTE=""
+CONSOLE_KEY=k2 resc_up key "$R/img" "$R/c.log" --memory 3072 > /dev/null 2>&1; rc=$?
+chk "resc_up: a NetBSD rescuer's second boot after a panic: --cpus 1 again, once" eval '((rc == 0 && BOOTS == 2)) && [[ $(grep -c -- " --memory 3072 --cpus 1$" "$R/ups") == 2 && $(grep -o -- --cpus "$R/ups" | grep -c .) == 2 ]]'
+rm -f "$R/ups" "$R/c.log.panic-1"; BOOTS=0 UP_AT=1 PANICS=0 HT_NOTE=""
+# shellcheck disable=SC2034
+PLAT=freebsd
+CONSOLE_KEY=k1 resc_up key "$R/img" "$R/c.log" --memory 3072 > /dev/null 2>&1
+chk "resc_up: a FreeBSD rescuer gets no --cpus" eval 'hasx "$R/ups" "1 k1 $R/img $R/c.log --memory 3072" && no "$R/ups" "[-]-cpus"'
+rm -f "$R/ups"; BOOTS=0
+# The script's boots as it makes them: the source's and the restored disk's
+# by vm_up itself, with no --cpus (so a NetBSD source keeps its own), and
+# resc_up's line the one --cpus in the script's code.
+grep -vE '^\s*#' "$BSD" > "$T/bsd-code"
+grep -E 'logs/(source|restored)-serial\.log' "$T/bsd-code" | grep -E 'vm_up|resc_up' > "$T/guest-boots"
+chk "the source's and the restored disk's boots: vm_up, not resc_up" eval '[[ $(grep -c . "$T/guest-boots") == 2 ]] && ! grep -q resc_up "$T/guest-boots"'
+chk "the source's and the restored disk's boots: no --cpus" no "$T/guest-boots" "[-]-cpus"
+# (Fixed strings, as the lines are written.)
+one_cpus() { [[ $(grep -c -- --cpus "$T/bsd-code") == 1 ]] && grep -qxF '    [[ $PLAT == netbsd ]] && set -- "$@" --cpus 1' "$T/bsd-code"; }
+chk "ht1-bsd.sh: resc_up's NetBSD line is its one --cpus" one_cpus
+# vm_up hands vm-run its options just before the image (each of its three
+# ways), and vm-run's last --cpus is QEMU's -smp.
+sed -n '/^vm_up() {/,/^}$/p' "$BSD" | grep -F '"$T/vm-run" ' > "$T/vm-up-runs"
+vm_up_last() { [[ $(grep -c . "$T/vm-up-runs") == 3 && $(grep -cF '"$@" "$image" <' "$T/vm-up-runs") == 3 ]]; }
+chk "vm_up: vm-run gets resc_up's options last, before the image" vm_up_last
+VMRUN=$HERE/../vm-run
+smp_last() {
+    grep -qxF '        --cpus) cpus=$2; shift 2 ;;' "$VMRUN" &&
+        grep -qF -- '-enable-kvm -cpu host -smp "$cpus" ' "$VMRUN" &&
+        [[ $(grep -cE '(^|[^[:alnum:]_])cpus=' "$VMRUN") == 2 ]]
+}
+chk "vm-run: --cpus sets cpus (the last one wins), the one other is its 2, and -smp is cpus" smp_last
+
 # vm_wait with the console (the source's, the restored disk's, Haiku's
 # restart): a panic on it ends the wait at once (2), and without one, or
 # without LOG, it waits its whole 120 tries (1).

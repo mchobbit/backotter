@@ -2253,11 +2253,27 @@ def published(store: Store) -> dict[str, str]:
     return out
 
 
-def cache_hosts(cfg: Config) -> list[tuple[str, str]]:
+class CacheHost(tuple):
+    """A cache host: the pair (NAME, SSH), as callers unpack it, and .skip: the guests it
+    never links (its hosts.json row's cache_skip; none for a VM_STORE_CACHE_HOSTS token)."""
+
+    def __new__(cls, name: str, ssh: str, skip=()):
+        h = super().__new__(cls, (name, ssh))
+        h.skip = frozenset(skip)
+        return h
+
+
+def cache_skip_of(h) -> frozenset:
+    """A host's cache_skip (a plain (NAME, SSH) pair has none)."""
+    return getattr(h, "skip", frozenset())
+
+
+def cache_hosts(cfg: Config) -> list[CacheHost]:
     """The cache hosts relink-caches and status --farm reach, as (NAME, SSH): VM_STORE_CACHE_HOSTS
     (NAME=SSH tokens; "" is none), else hosts.json's enabled amd64 hosts with the cache role.
     store.json still says what a root is: link refuses on any other root.  Never Bigfoot, by
-    name or by its ssh target, whatever the table says: only push talks to it (D2)."""
+    name or by its ssh target, whatever the table says: only push talks to it (D2).  Each
+    carries its row's cache_skip (CacheHost.skip): guests relink never links there."""
     spec = cfg.env.get("VM_STORE_CACHE_HOSTS")
     rows = []
     if spec is not None:
@@ -2265,7 +2281,7 @@ def cache_hosts(cfg: Config) -> list[tuple[str, str]]:
             name, eq, ssh = tok.partition("=")
             if not eq or not ssh or not GUEST_RE.fullmatch(name):
                 raise Usage(f"VM_STORE_CACHE_HOSTS takes NAME=SSH tokens (cage=m@cage.local), not {tok!r}")
-            rows.append((name, ssh))
+            rows.append(CacheHost(name, ssh))
     else:
         try:
             table = json.loads(HOSTS_JSON.read_text())
@@ -2284,18 +2300,23 @@ def cache_hosts(cfg: Config) -> list[tuple[str, str]]:
             name, ssh = h.get("name"), h.get("ssh")
             if not isinstance(name, str) or not GUEST_RE.fullmatch(name) or not isinstance(ssh, str) or not ssh:
                 raise StoreError(f"{HOSTS_JSON}: a cache host's row lacks a name or ssh target: {h}")
-            rows.append((name, ssh))
+            skip = h.get("cache_skip")
+            skip = [] if skip is None else skip    # absent or null: none
+            if not isinstance(skip, list) or not all(isinstance(g, str) and GUEST_RE.fullmatch(g) for g in skip):
+                raise StoreError(f"{HOSTS_JSON}: {name}'s cache_skip is not a list of guest names: {skip!r}")
+            rows.append(CacheHost(name, ssh, skip))
     bf = {t.rpartition("@")[2] for t in (cfg.bf_host, DEFAULT_BF_HOST) if t}
-    out: list[tuple[str, str]] = []
-    for name, ssh in rows:
+    out: list[CacheHost] = []
+    for h in rows:
+        name, ssh = h
         if name.lower() == "bigfoot" or ssh in (cfg.bf_host, DEFAULT_BF_HOST) or ssh.rpartition("@")[2] in bf:
             say(f"warning: {name}={ssh} is Bigfoot, which only push talks to; left out")
         elif name not in dict(out):
-            out.append((name, ssh))
+            out.append(h)
     return out
 
 
-def pick_hosts(cfg: Config, want: list[str]) -> list[tuple[str, str]]:
+def pick_hosts(cfg: Config, want: list[str]) -> list[CacheHost]:
     """cache_hosts, only those --hosts names (repeatable, or comma-separated)."""
     hosts = cache_hosts(cfg)
     names = [n for v in want for n in v.replace(",", " ").split()]
@@ -2304,7 +2325,7 @@ def pick_hosts(cfg: Config, want: list[str]) -> list[tuple[str, str]]:
     unknown = [n for n in names if n not in dict(hosts)]
     if unknown:
         raise Usage(f"not a cache host: {' '.join(unknown)} (the cache hosts: {' '.join(dict(hosts)) or 'none'})")
-    return [(n, s) for n, s in hosts if n in names]
+    return [h for h in hosts if h[0] in names]
 
 
 class Remotes:
@@ -2507,28 +2528,44 @@ def parse_relink(guests: list[str], rc: int | None, lines: list[str], latest: di
     return {"state": state, "reason": None if state == "ok" and not down else reason, "guests": res}
 
 
+CACHE_SKIP_REASON = "cache_skip in hosts.json"
+CACHE_SKIP_NAMED = CACHE_SKIP_REASON + " (named, still skipped: take it out of cache_skip to link it there)"
+
+
 def relink(cfg: Config, store: Store, guests: list[str], hosts: list[tuple[str, str]], existing: bool = False,
-           offline: bool = False, dry: bool = False, remotes: Remotes | None = None) -> list[dict]:
+           offline: bool = False, dry: bool = False, remotes: Remotes | None = None,
+           named: bool = False) -> list[dict]:
     """Each cache host's own `vm-store link` of GUESTS (EXISTING: only its store links), one
     ssh per host, the hosts at once.  A host's result: {"host", "ssh", "state", "reason",
-    "guests": {G: {"status", "rc", "vid", "reason"}}} (parse_relink)."""
+    "guests": {G: {"status", "rc", "vid", "reason"}}} (parse_relink).  A guest in a host's
+    cache_skip (CacheHost.skip) is never sent there: it is "skipped", rc 0, even when NAMED
+    (relink-caches G...); a host left with no guest gets no ssh."""
     latest = {g: latest_vid(store, g) for g in guests}
     flags = (["--offline"] if offline else []) + (["--dry-run"] if dry else [])
-    args = {"guests": guests, "existing": existing, "flags": flags, "vm_store": REMOTE_VM_STORE,
-            "latest": {g: v for g, v in latest.items() if v}}
     results: list[dict] = [{} for _ in hosts]
     remotes = remotes or Remotes()
+    why_skip = CACHE_SKIP_NAMED if named else CACHE_SKIP_REASON
 
-    def one(i: int, name: str, ssh: str) -> None:
-        try:
-            rc, lines = run_lines(ssh, RELINK_PY, args, cfg.relink_timeout, name, remotes)
-            got = parse_relink(guests, rc, lines, latest, offline, dry, cfg.relink_timeout)
-        except Exception as e:                 # this host's: the others go on
-            got = {"state": "failed", "reason": str(e),
-                   "guests": {g: {"status": "failed", "rc": 1, "vid": None, "reason": str(e)} for g in guests}}
+    def one(i: int, host: tuple[str, str]) -> None:
+        name, ssh = host
+        skip = cache_skip_of(host)
+        todo = [g for g in guests if g not in skip]
+        skipped = {g: {"status": "skipped", "rc": 0, "vid": None, "reason": why_skip} for g in guests if g in skip}
+        args = {"guests": todo, "existing": existing, "flags": flags, "vm_store": REMOTE_VM_STORE,
+                "latest": {g: latest[g] for g in todo if latest[g]}}
+        if not todo:
+            got = {"state": "ok", "reason": None, "guests": {}}
+        else:
+            try:
+                rc, lines = run_lines(ssh, RELINK_PY, args, cfg.relink_timeout, name, remotes)
+                got = parse_relink(todo, rc, lines, {g: latest[g] for g in todo}, offline, dry, cfg.relink_timeout)
+            except Exception as e:             # this host's: the others go on
+                got = {"state": "failed", "reason": str(e),
+                       "guests": {g: {"status": "failed", "rc": 1, "vid": None, "reason": str(e)} for g in todo}}
+        got["guests"].update(skipped)
         results[i] = {"host": name, "ssh": ssh, **got}
 
-    threads = [threading.Thread(target=one, args=(i, n, s), daemon=True) for i, (n, s) in enumerate(hosts)]
+    threads = [threading.Thread(target=one, args=(i, h), daemon=True) for i, h in enumerate(hosts)]
     try:
         for t in threads:
             t.start()
@@ -2546,21 +2583,25 @@ def relink_rc(results: list[dict]) -> int:
 
 def relink_report(results: list[dict]) -> list[str]:
     """A line per host (its guests counted by how they ended), then a line per guest of it
-    that isn't on the latest; a host down for all its guests is one line."""
+    that isn't on the latest, or that was named but is in the host's cache_skip; a host down
+    for all its guests (but those of its cache_skip) is one line."""
     if not results:
         return ["no cache hosts"]
     out = []
     for h in results:
         rs = h["guests"]
         n = {s: sum(1 for r in rs.values() if r["status"] == s) for s in RELINK_ORDER}
-        if h["state"] == "down" and n["down"] == len(rs):
-            out.append(f"{h['host']}: down, {len(rs)} guest(s) not linked ({h['reason']})")
+        cskip = sum(1 for r in rs.values() if r["status"] == "skipped"
+                    and r.get("reason") in (CACHE_SKIP_REASON, CACHE_SKIP_NAMED))
+        if h["state"] == "down" and n["down"] and n["down"] + cskip == len(rs):
+            out.append(f"{h['host']}: down, {n['down']} guest(s) not linked"
+                       + (f", {cskip} skipped (cache_skip)" if cskip else "") + f" ({h['reason']})")
             continue
         out.append(f"{h['host']}: " + (", ".join(f"{n[s]} {s}" for s in RELINK_ORDER if n[s]) or "no guests")
                    + (f" ({h['state']}: {h['reason']})" if h["state"] != "ok" else ""))
         for g in sorted(rs):
             r = rs[g]
-            if r["rc"]:
+            if r["rc"] or r.get("reason") == CACHE_SKIP_NAMED:
                 out.append(f"  {g}: {r['status']}: {r['reason']}")
     return out
 
@@ -2585,7 +2626,7 @@ def cmd_relink_caches(cfg: Config, a) -> int:
         return 0
     say(f"relinking {len(guests)} guest(s) on {' '.join(n for n, _ in hosts)}"
         + (" (only their store links)" if a.existing else ""))
-    results = relink(cfg, store, guests, hosts, a.existing, a.offline, a.dry_run)
+    results = relink(cfg, store, guests, hosts, a.existing, a.offline, a.dry_run, named=bool(a.guests))
     rc = relink_rc(results)
     if a.json:
         print(json.dumps({"hosts": results, "rc": rc}, indent=1))
@@ -2632,7 +2673,7 @@ for g in ARGS["guests"]:
 _j.dump(out, sys.stdout)
 """
 
-FARM_OK = ("current", "unknown")               # not skew: on the latest, or a folder that can't say
+FARM_OK = ("current", "unknown", "skipped")    # not skew: on the latest, a folder that can't say, or cache_skip
 
 
 def farm_cell(guest: str, e: dict, latest: str) -> tuple[str, str, str | None]:
@@ -2702,12 +2743,15 @@ def farm(cfg: Config, store: Store, hosts: list[tuple[str, str]]) -> dict:
     for g in guests:
         e = (me.get("entries") or {}).get(g) or {"kind": "unreadable"}
         out["mirror"]["guests"][g] = mirror_cell(e, pub[g]) if me["state"] == "ok" else me["state"]
-    for name, _ssh in hosts:
+    for host in hosts:
+        name, skip = host[0], cache_skip_of(host)
         lk = looks[name]
         h = {"state": lk["state"], "reason": lk.get("reason"), "vms": lk.get("vms"), "guests": {}}
         if lk["state"] == "ok":
             for g in guests:
                 state, label, vid = farm_cell(g, lk["entries"].get(g) or {"kind": "unreadable"}, pub[g])
+                if state == "missing" and g in skip:
+                    state, label = "skipped", "cache_skip"     # not linked there by design: no skew
                 h["guests"][g] = {"state": state, "label": label, "vid": vid}
                 if state not in FARM_OK:
                     out["skewed"].setdefault(name, []).append(g)
@@ -3069,19 +3113,33 @@ def in_use(cfg: Config, store: Store, protect: set[str] = frozenset(),
         t = store.stamp_time(n)
         if now - t < age:
             why.setdefault(n, f"used {(now - t) / 3600:.0f}h ago" + (" (7-day age: unreadable scan dirs)" if blind else ""))
-    for n in protect:
+    for n in protect:                          # ensure's set(objs): its whole version
         why.setdefault(n, "this ensure's version")
+    # Rule e: a version in use is kept whole, chains and all.  It is in use through an object
+    # of its own: one in no other manifest (its top disk, as a rule).  An object several
+    # versions share (a sidecar .file such as the OVMF vars, alike across many guests) that
+    # is in use keeps itself only: were it to keep each version that lists it, one overlay
+    # would keep every version linked to it through a shared object, and the next version
+    # theirs (the cascade of 2026-11-25: nothing evictable).  Safe: an overlay keeps its
+    # whole backing chain already (rule b), shared base disks too.  Only an object of one
+    # version can keep a version, and rule e's own marks keep no other version (a shared
+    # one keeps none; one of its own is in no other version), so one pass is the fixpoint.
+    # A version with no complete manifest has no part in rule e (nor in the count).
     versions = [(g, v, manifest_objects(m)) for g, v, m, _ in store.manifests()]
-    changed = True
-    while changed:                             # rule e: a version is kept whole, chains and all
-        changed = False
-        for g, v, objs in versions:
-            hit = next((o for o in objs if o in why), None)
-            if hit:
-                for o in objs:
-                    if o not in why:
-                        why[o] = f"version {g}@{v} ({hit[:19]}…: {why[hit]})"
-                        changed = True
+    owners: dict[str, int] = {}
+    for _, _, objs in versions:
+        for o in objs:
+            owners[o] = owners.get(o, 0) + 1
+    hits = {}
+    for g, v, objs in versions:
+        hit = next((o for o in objs if o in why and owners[o] == 1), None)
+        if hit:
+            hits[(g, v)] = (hit, why[hit])
+    for g, v, objs in versions:
+        if (g, v) in hits:
+            hit, reason = hits[(g, v)]
+            for o in objs:
+                why.setdefault(o, f"version {g}@{v} ({hit[:19]}…: {reason})")
     # Rule f, a vms/G link (vm-store link): its whole version, chains and all, after rule e,
     # so that a sidecar object it shares with older versions keeps none of them for good.
     for (g, v), p in linked.items():

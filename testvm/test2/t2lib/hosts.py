@@ -120,7 +120,7 @@ ENV = "BKO_HOSTS_JSON"
 TESTVM = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TABLE = os.path.join(TESTVM, "hosts.json")
 FIELDS = ("name", "ssh", "ip", "host_key_alias", "slot_range", "stic_ports", "class", "roles", "default",
-          "enabled", "arch", "job_slice", "rustup_home", "cargo_home")
+          "enabled", "arch", "job_slice", "rustup_home", "cargo_home", "cache_skip")
 REQUIRED = ("name", "ssh", "slot_range", "stic_ports", "class", "roles", "default", "enabled")
 # A host's limits and their defaults (the docstring): optional row fields, and the fields of
 # the table's class_limits {CLASS: {FIELD: VALUE}}.
@@ -247,6 +247,9 @@ def check_table(t):
         for k in ("ip", "host_key_alias"):
             if r.get(k) is not None and not (isinstance(r[k], str) and r[k]):
                 errs.append(f"{at}: {k}: a string or null")
+        cs = r.get("cache_skip")              # vm-store relink's: guests this cache host doesn't link
+        if cs is not None and not (isinstance(cs, list) and all(isinstance(g, str) and g for g in cs)):
+            errs.append(f"{at}: cache_skip: a list of guest names, or null")
         sr = parse_range(r.get("slot_range"))
         if "slot_range" in r and sr is None:
             errs.append(f"{at}: slot_range {r['slot_range']!r}: \"LO-HI\", LO <= HI")

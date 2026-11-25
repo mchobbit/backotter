@@ -31,8 +31,10 @@ lately (testvm/test2/README.md, How a plan decides). Its role is `cache` only (c
 only run on its SATA SSD by HoltTest's overflow: mint22, oi2610,
 elementary8-luks, pikaos4, pikaos4-luks, slackware15, slackware15-uefi and
 zorin18; t2 places their cells on the other hosts, as for any guest a cache
-lacks. A publish of one of them links it again (publish relinks every cache
-host), so unlink it there after (`rm ~/backotter-work/vms/G`, then `vm-store gc`). Its
+lacks. They are choubox's `cache_skip` in hosts.json, so neither a publish's
+relink nor `vm-store relink-caches` links them there again (reported "skipped");
+to bring one back, take it out of `cache_skip`, then `vm-store relink-caches G
+--hosts choubox`. Its
 Debian also holds the user's own projects, and it is the user's fallback
 bare-metal machine for real-world runs when a distro rejects the Thinkpad: such
 a run wipes it and takes it out of the farm until it is provisioned again.

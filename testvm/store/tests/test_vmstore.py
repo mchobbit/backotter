@@ -1100,11 +1100,15 @@ class TestGc(StoreTest):
         self.store = vs.Store(self.cache, vs.Config())
         self.n = 0
 
-    def obj(self, age_h=48, size=MiB, kind="qcow2"):
-        """An object of SIZE bytes, last ensured AGE_H hours ago."""
+    def obj(self, age_h=48, size=MiB, kind="qcow2", backing=None):
+        """An object of SIZE bytes, last ensured AGE_H hours ago (a qcow2 on BACKING, an
+        object's name, as a published chain's)."""
         self.n += 1
         data = bytearray(os.urandom(size))
-        if kind == "qcow2":
+        if backing:
+            make_qcow2(self.tmp / "h", backing=backing, payload=bytes(data))
+            data = bytearray((self.tmp / "h").read_bytes())
+        elif kind == "qcow2":
             make_qcow2(self.tmp / "h", payload=b"")
             data[:104] = (self.tmp / "h").read_bytes()[:104]
         data = bytes(data)
@@ -1119,8 +1123,10 @@ class TestGc(StoreTest):
         return name
 
     def version(self, guest, vid, disks, files=()):
+        """GUEST@VID's manifest: each of DISKS an object (a one-object chain) or a chain list."""
         m = {"schema": 1, "guest": guest, "version": vid, "generation": None, "updates": None, "parent": None,
-             "disks": [{"name": f"d{i}.qcow2", "chain": [d], "file_size": MiB} for i, d in enumerate(disks)],
+             "disks": [{"name": f"d{i}.qcow2", "chain": list(d) if isinstance(d, (list, tuple)) else [d],
+                        "file_size": MiB} for i, d in enumerate(disks)],
              "files": {f"f{i}": {"object": f, "mode": "0644", "size": MiB} for i, f in enumerate(files)}}
         vd = self.cache / "guests" / guest / "versions"
         vd.mkdir(parents=True, exist_ok=True)
@@ -1351,6 +1357,77 @@ class TestGc(StoreTest):
         why, _ = vs.in_use(vs.Config(), self.store)
         self.assertIn("version v@g1111111111111111", why[b])
         self.assertNotIn(other, self.left())
+
+    VA, VB, VC = "g" + "a" * 16, "g" + "b" * 16, "g" + "c" * 16
+
+    def test_shared_sidecar_keeps_no_other_version(self):
+        # A and B share the sidecar s (OVMF vars alike), B and C share t: an overlay on A's
+        # disk keeps A whole, s with it, and no more (no cascade A -> s -> B -> t -> C).
+        a1, b1, c1 = self.obj(100), self.obj(100), self.obj(100)
+        s, t = self.obj(100, kind="file"), self.obj(100, kind="file")
+        self.version("va", self.VA, [a1], [s])
+        self.version("vb", self.VB, [b1], [s, t])
+        self.version("vc", self.VC, [c1], [t])
+        ov = self.scan / "ov.qcow2"
+        make_qcow2(ov, backing=str(self.cache / "objects" / a1))
+        why, _ = vs.in_use(vs.Config(), self.store)
+        self.assertEqual(set(why), {a1, s})
+        self.assertEqual(why[a1], f"overlay {ov}")
+        self.assertEqual(why[s], f"version va@{self.VA} ({a1[:19]}…: overlay {ov})")
+        # A shared object in use keeps itself only: s used just now, no overlay.
+        ov.unlink()
+        os.utime(self.cache / "used" / s)
+        why, _ = vs.in_use(vs.Config(), self.store)
+        self.assertEqual(set(why), {s})
+        self.assertTrue(why[s].startswith("used "))
+        # So is a disk linked by hand, and a QEMU lock: a shared one keeps itself, its own its version.
+        (self.vms / "full").mkdir()
+        (self.vms / "full" / "t.file").symlink_to(self.cache / "objects" / t)
+        release = self.hold(self.cache / "objects" / c1, 100)
+        why, _ = vs.in_use(vs.Config(), self.store)
+        self.assertEqual(set(why), {s, t, c1})
+        self.assertEqual((why[t], why[c1]), (f"linked from {self.vms / 'full' / 't.file'}", "qemu lock"))
+        (self.vms / "full" / "t.file").unlink()
+        release()
+        # The overlay back: gc evicts B's and C's own objects (and t), not A's.
+        make_qcow2(ov, backing=str(self.cache / "objects" / a1))
+        rc, plan, err = self.gc(0)
+        self.assertEqual(rc, 4, err)                         # cap 0: A and s stay
+        self.assertEqual(self.left(), {a1, s})
+
+    def test_overlay_on_a_shared_base_keeps_its_chain(self):
+        # A and B share a base disk and a sidecar; each has its own top.
+        base = self.obj(100)
+        top_a, top_b = self.obj(100, backing=base), self.obj(100, backing=base)
+        s = self.obj(100, kind="file")
+        self.version("va", self.VA, [[base, top_a]], [s])
+        self.version("vb", self.VB, [[base, top_b]], [s])
+        ov = self.scan / "ov.qcow2"
+        make_qcow2(ov, backing=str(self.cache / "objects" / top_a))
+        why, _ = vs.in_use(vs.Config(), self.store)
+        self.assertEqual(set(why), {base, top_a, s})                # the chain (rule b) and A whole (rule e)
+        self.assertEqual((why[base], why[top_a]), (f"overlay {ov}", f"overlay {ov}"))
+        self.assertTrue(why[s].startswith(f"version va@{self.VA} ({top_a[:19]}…"), why[s])
+        # An overlay on the shared base alone keeps the base, neither version.
+        ov.unlink()
+        make_qcow2(ov, backing=str(self.cache / "objects" / base))
+        why, _ = vs.in_use(vs.Config(), self.store)
+        self.assertEqual(set(why), {base})
+        rc, plan, err = self.gc(0)
+        self.assertEqual(rc, 4, err)
+        self.assertEqual(self.left(), {base})
+
+    def test_protect_keeps_ensures_version_whole(self):
+        a1, b1, s = self.obj(100), self.obj(100), self.obj(100, kind="file")
+        self.version("va", self.VA, [a1], [s])
+        self.version("vb", self.VB, [b1], [s])
+        why, _ = vs.in_use(vs.Config(), self.store, protect={a1, s})       # ensure's set(objs)
+        self.assertEqual(why, {a1: "this ensure's version", s: "this ensure's version"})
+        why, _ = vs.in_use(vs.Config(), self.store, protect={a1})
+        self.assertEqual(set(why), {a1, s})
+        self.assertEqual(why[s], f"version va@{self.VA} ({a1[:19]}…: this ensure's version)")
+        why, _ = vs.in_use(vs.Config(), self.store, protect={s})          # a shared one alone: itself
+        self.assertEqual(set(why), {s})
 
     def test_floor_counts(self):
         a, b, c = self.obj(72), self.obj(48), self.obj(30)
@@ -1686,6 +1763,27 @@ class TestCacheHosts(StoreTest):
             self.assertIn(f"warning: {n}=", self.last_err)
         self.assertNotIn("czerny", self.last_err)
 
+    def test_cache_skip_rows(self):
+        rows = [HOSTS_ROWS[0], dict(HOSTS_ROWS[1], cache_skip=["mint22", "oi2610"]), HOSTS_ROWS[2]]
+        got = self.hosts(rows)
+        self.assertEqual(got, [("cinqcent", "m@cinqcent.local"), ("copland", "m@copland.local")])
+        self.assertEqual(dict(got), {"cinqcent": "m@cinqcent.local", "copland": "m@copland.local"})
+        self.assertEqual([h.skip for h in got], [{"mint22", "oi2610"}, set()])
+        self.assertEqual([vs.cache_skip_of(h) for h in got] + [vs.cache_skip_of(("x", "m@x"))],
+                         [{"mint22", "oi2610"}, set(), set()])
+        with mock.patch.object(vs, "HOSTS_JSON", self.tmp / "hosts.json"), mock.patch.dict(os.environ, {}), \
+                contextlib.redirect_stderr(io.StringIO()):
+            os.environ.pop("VM_STORE_CACHE_HOSTS", None)
+            self.assertEqual(vs.pick_hosts(vs.Config(), ["cinqcent"])[0].skip, {"mint22", "oi2610"})
+        self.assertEqual(self.hosts(env={"VM_STORE_CACHE_HOSTS": "cage=m@cage.local"})[0].skip, set())  # none
+        for bad in ("mint22", ["mint22", "no such/guest"], [7], {"mint22": True}):
+            with self.assertRaises(vs.StoreError) as cm:
+                self.hosts([dict(HOSTS_ROWS[1], cache_skip=bad)])
+            self.assertIn("cinqcent's cache_skip is not a list of guest names", str(cm.exception))
+        self.assertEqual(self.hosts([dict(HOSTS_ROWS[1], cache_skip=None)])[0].skip, set())   # null: none
+        # A row the cache hosts leave out isn't checked here (hosts.py check's job).
+        self.assertEqual(self.hosts([dict(HOSTS_ROWS[3], cache_skip=7)]), [])
+
     def test_bigfoot_guard_takes_the_configured_host_too(self):
         rows = [{"name": "odd", "ssh": "m@nas.local", "roles": ["cache"], "enabled": True}]
         with mock.patch.dict(os.environ, {"VM_STORE_BIGFOOT_HOST": "m@nas.local"}):
@@ -1875,6 +1973,73 @@ class TestRelink(StoreTest):
         rc, _, err = self.run_vs("status", "--farm", root=self.cache)
         self.assertEqual(rc, 1)
         self.assertIn("runs on the mirror", err)
+
+    def relink_table(self, *argv, answers, rows, cmd="relink-caches"):
+        """relink, the cache hosts from a hosts.json of ROWS (with their cache_skip)."""
+        path = self.tmp / "hosts.json"
+        path.write_text(json.dumps({"v": 1, "hosts": rows}))
+        fake = FakeFarm(answers)
+        with mock.patch.object(vs, "run_lines", fake), mock.patch.object(vs, "HOSTS_JSON", path), \
+                mock.patch.dict(os.environ, {}):
+            os.environ.pop("VM_STORE_CACHE_HOSTS", None)
+            rc, out, err = self.run_vs(cmd, *argv)
+        return rc, out, err, fake.calls
+
+    SKIP_ROWS = [{"name": "cage", "ssh": "m@cage.local", "roles": ["cache"], "enabled": True, "cache_skip": ["g2"]},
+                 {"name": "copland", "ssh": "m@copland.local", "roles": ["cache"], "enabled": True,
+                  "cache_skip": ["g1", "g2", "g3", "elsewhere"]},
+                 {"name": "cinq", "ssh": "m@cinq.local", "roles": ["cache"], "enabled": True}]
+
+    def test_cache_skip(self):
+        answers = {"m@cage.local": all_ok, "m@cinq.local": all_ok}
+        rc, out, err, calls = self.relink_table(answers=answers, rows=self.SKIP_ROWS)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(sorted(c["host"] for c in calls), ["m@cage.local", "m@cinq.local"])   # copland: no ssh
+        args = {c["host"]: c["args"] for c in calls}
+        self.assertEqual(args["m@cage.local"]["guests"], ["g1", "g3"])          # g2 never sent there
+        self.assertEqual(set(args["m@cage.local"]["latest"]), {"g1", "g3"})
+        self.assertEqual(args["m@cinq.local"]["guests"], ["g1", "g2", "g3"])
+        self.assertEqual(out.splitlines(), ["cage: 2 linked, 1 skipped", "copland: 3 skipped", "cinq: 3 linked"])
+        rc, out, _, _ = self.relink_table("--json", answers=answers, rows=self.SKIP_ROWS)
+        got = {h["host"]: h for h in json.loads(out)["hosts"]}
+        self.assertEqual(got["cage"]["guests"]["g2"], {"status": "skipped", "rc": 0, "vid": None,
+                                                       "reason": "cache_skip in hosts.json"})
+        self.assertEqual(got["copland"]["state"], "ok")
+        self.assertEqual(sorted(got["copland"]["guests"]), ["g1", "g2", "g3"])
+        # Named, it is still skipped, and says so.
+        rc, out, err, calls = self.relink_table("g2", answers=answers, rows=self.SKIP_ROWS)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([c["host"] for c in calls], ["m@cinq.local"])
+        self.assertIn("cage: 1 skipped", out.splitlines())
+        self.assertIn("  g2: skipped: cache_skip in hosts.json (named, still skipped: take it out of cache_skip "
+                      "to link it there)", out.splitlines())
+        # A down host: its skipped guests aside, one line.
+        down = dict(answers, **{"m@cage.local": (255, ["ssh: connect to host cage.local port 22: No route to host"])})
+        rc, out, err, _ = self.relink_table(answers=down, rows=self.SKIP_ROWS)
+        self.assertEqual(rc, 3, err)
+        self.assertIn("cage: down, 2 guest(s) not linked, 1 skipped (cache_skip) (ssh: connect to host cage.local "
+                      "port 22: No route to host)", out.splitlines())
+        # --existing's own skip ("not a store link there") is no cache_skip.
+        rc, out, err, _ = self.relink_table("--existing", answers={"m@cage.local": lambda a: (
+            0, [f"@@skip {g}" for g in a["guests"]] + ["@@end"]), "m@cinq.local": all_ok}, rows=self.SKIP_ROWS)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("cage: 3 skipped", out.splitlines())
+
+    def test_publish_relink_honours_cache_skip(self):
+        for i, name in enumerate(("g1", "g2")):
+            g = self.vms / name
+            (g / f"{name}.qcow2").unlink()
+            make_disk(g / f"{name}.qcow2", 950 + i)
+            write_state(g, [f"{name}.qcow2"], updates=5)
+            FakeFarm.vids[name] = "g" + json.loads((g / "image-state").read_text())["generation"][:16]
+        rc, out, err, calls = self.relink_table("g1", "g2", answers={"m@cage.local": all_ok, "m@cinq.local": all_ok},
+                                                rows=self.SKIP_ROWS, cmd="publish")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual({c["host"]: c["args"]["guests"] for c in calls},
+                         {"m@cage.local": ["g1"], "m@cinq.local": ["g1", "g2"]})
+        self.assertIn("relink: cage: 1 linked, 1 skipped", err)
+        self.assertIn("relink: copland: 2 skipped", err)
+        self.assertNotIn("named", err)
 
     def test_publish_relinks_what_moved(self):
         hosts = "cage=m@cage.local"
@@ -2100,6 +2265,23 @@ class TestStatusFarm(StoreTest):
         self.assertEqual(f["hosts"]["cage"]["guests"]["g4"], {"state": "current", "label": "ok folder",
                                                              "vid": L["g4"]})
         self.assertEqual(f["mirror"]["guests"]["g2"], f"unpublished g{'3' * 16}")
+
+    def test_cache_skip_is_no_skew(self):
+        for g, vid in self.latest_of.items():
+            self.link("cinq", g, vid)
+            if g not in ("g3", "g4"):
+                self.link("cage", g, vid)
+        path = self.tmp / "hosts.json"
+        path.write_text(json.dumps({"v": 1, "hosts": [
+            {"name": "cage", "ssh": "m@cage.local", "roles": ["cache"], "enabled": True, "cache_skip": ["g3"]},
+            {"name": "cinq", "ssh": "m@cinq.local", "roles": ["cache"], "enabled": True, "cache_skip": ["g1"]}]}))
+        with mock.patch.object(vs, "HOSTS_JSON", path), mock.patch.dict(os.environ, {}):
+            os.environ.pop("VM_STORE_CACHE_HOSTS", None)
+            rc, out, err = self.run_vs("status", "--farm", "--json")
+        f = json.loads(out)
+        self.assertEqual((rc, f["skewed"]), (1, {"cage": ["g4"]}), err)     # g4 missing, not skipped
+        self.assertEqual(f["hosts"]["cage"]["guests"]["g3"], {"state": "skipped", "label": "cache_skip", "vid": None})
+        self.assertEqual(f["hosts"]["cinq"]["guests"]["g1"]["state"], "current")   # a skipped guest linked: as ever
 
     def test_no_skew_and_down_hosts(self):
         for g, vid in self.latest_of.items():

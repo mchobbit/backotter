@@ -206,6 +206,11 @@ and `--dry-run` never does it.  The same is `vm-store relink-caches` by hand:
   doesn't have yet gets a new link there; with `--existing`, only a guest
   whose `vms/G` is already a link into a store is relinked (what `link
   --all` takes), and the others are "skipped".
+- A guest in a host's `cache_skip` (a list of guest names in its hosts.json
+  row; choubox's eight large desktops) is never linked there, by publish or
+  by hand, even when named: it is "skipped" ("cache_skip in hosts.json"), and
+  a host with nothing else to link gets no ssh.  `status --farm` shows such a
+  guest missing there as "skipped", not as skew.
 - On each host it runs that host's own `~/backotter-work/testvm/vm-store
   link [--offline] [--dry-run] G`, one guest at a time, so the host's own
   rules hold: a running QEMU or compare of G leaves it alone (busy), and a

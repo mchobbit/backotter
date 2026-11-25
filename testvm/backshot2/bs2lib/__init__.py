@@ -38,5 +38,8 @@ test hosts.  Stdlib only; Python 3.9 or newer.
 # drift on every Linux source, a recipe per filesystem (content.RECIPES:
 # ext, xfs, btrfs, f2fs, jfs, nilfs2, bcachefs; families/linux.py choose()),
 # so generic Linux's and NixOS's cases change; Alpine's and Guix's draws
-# are GENERATOR 5's but for the "generator" field.
-GENERATOR = "6"
+# are GENERATOR 5's but for the "generator" field.  7 (2026-11-25): Ubuntu
+# Core's gadget-fixed partitions keep their size (families/snapcore.py's
+# quirk: only ubuntu-data may change size), so uc24's and uc24-fde's cases
+# change; every other source's are GENERATOR 6's but for the field.
+GENERATOR = "7"

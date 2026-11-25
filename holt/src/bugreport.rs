@@ -1300,6 +1300,35 @@ mod tests {
         assert!(!b.text.contains("ALICE-SER-77"), "{}", b.text);
     }
 
+    /// Home directories under /var/home (ostree) and /usr/home (FreeBSD
+    /// 13): the names in them are learned from the error output and the
+    /// run's cwd, though the dump has them nowhere (RustAudit1 HD4-01).
+    #[test]
+    fn homes_under_var_and_usr_in_free_text() {
+        let t = Tree::new("report-bug-var-home");
+        t.debian13();
+        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "33554432\n");
+        t.file("/usr/home/carol/layout.json", crate::load::layout::sample::bios_mbr());
+        let last = Obj::new()
+            .set("cwd", "/usr/home/carol")
+            .set("args", Value::Arr(s(&["layout.json", "--map", "vda=vdb"]).into_iter().map(Value::Str).collect()))
+            .set("exit", 1u64)
+            .build();
+        t.file(&format!("{RUN_DIR}/{LAST_RUN}"), last.pretty());
+        let errs = t.root().join("backup-errors.txt");
+        std::fs::write(&errs, "error: lstat /var/home/bob/.cache/x: permission denied\n").unwrap();
+        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-30-generic #30 SMP x86_64\n")), true);
+        let a = Args { stderr: vec![errs.display().to_string()], ..Args::default() };
+        let b = build(&sys, &a, "2026-11-07T03:42:00Z");
+        let txt = &b.text;
+        for gone in ["/var/home/bob", "/usr/home/carol", "bob/", "carol/"] {
+            assert!(!txt.contains(gone), "{gone} in:\n{txt}");
+        }
+        assert!(txt.contains("error: lstat /var/home/user") && txt.contains("/.cache/x: permission denied"), "{txt}");
+        assert!(txt.contains("in: /usr/home/user"), "{txt}");
+    }
+
     #[test]
     fn big_images_are_left_out() {
         let big = crate::bytes::base64(&vec![7u8; 6000]);

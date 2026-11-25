@@ -663,9 +663,15 @@ impl Collector {
             while let Some(i) = s[from..].find(pre) {
                 let st = from + i + pre.len();
                 // A path that starts there, not one inside another
-                // (DragonFly's kernel names its build's /usr/obj/home/USER/).
-                let before = s[..from + i].chars().next_back();
-                if pre == "/home/" && before.is_some_and(|c| c.is_alphanumeric() || "/_-.".contains(c)) {
+                // (DragonFly's kernel names its build's /usr/obj/home/USER/),
+                // but for the homes of systems whose /home is a link:
+                // ostree's /var/home (Silverblue, Kinoite, Bazzite) and
+                // FreeBSD 13's /usr/home, themselves where a path starts
+                // (RustAudit1 HD4-01).
+                let head = &s[..from + i];
+                let path_char = |c: char| c.is_alphanumeric() || "/_-.".contains(c);
+                let linked_home = ["/var", "/usr"].iter().any(|p| head.strip_suffix(p).is_some_and(|h| !h.chars().next_back().is_some_and(path_char)));
+                if pre == "/home/" && head.chars().next_back().is_some_and(path_char) && !linked_home {
                     from = st;
                     continue;
                 }
@@ -2214,5 +2220,31 @@ mod tests {
         let (r, _) = redact(&d);
         assert_eq!(r.get("b").and_then(Value::as_str), Some("rpool/home/bobby"));
         assert_eq!(r.get("c").and_then(Value::as_str), Some("rpool/home/bob2"));
+    }
+
+    /// A user's home on a system whose /home is a link: ostree's
+    /// /var/home/USER (Silverblue, Kinoite, Bazzite) and FreeBSD 13's
+    /// /usr/home/USER, learned from free text where the name is nowhere
+    /// else; DragonFly's build path /usr/obj/home/USER is still no home
+    /// (RustAudit1 HD4-01).
+    #[test]
+    fn homes_under_var_and_usr_are_learned() {
+        let users = |text: &str| {
+            let mut c = Collector::new();
+            c.learn_text(text);
+            let r = c.seal();
+            r.entries.iter().filter(|e| e.kind == Kind::User).map(|e| e.original.clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(users("error: lstat /var/home/bob/.cache/x: permission denied\n"), ["bob"]);
+        assert_eq!(users("cwd \"/usr/home/carol/y\""), ["carol"]);
+        assert_eq!(users("/var/home/dave"), ["dave"]);
+        for not in ["root@h:/usr/obj/home/builder/sys/X86_64_GENERIC", "/sysroot/var/home/erin/x", "/srv/usr/home/fred", "/opt/myvar/home/gina"] {
+            assert_eq!(users(not), Vec::<String>::new(), "{not}");
+        }
+        let mut c = Collector::new();
+        let text = "lstat /var/home/bob/.cache/x\n/usr/home/carol/y\n";
+        c.learn_text(text);
+        let r = c.seal();
+        assert_eq!(r.text(text), "lstat /var/home/user1/.cache/x\n/usr/home/user2/y\n");
     }
 }

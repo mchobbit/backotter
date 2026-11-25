@@ -13,6 +13,14 @@ ceiling) takes its own measured room, SLIM_SIZES (testvm/backshot2/
 slim-sizes.tsv: a real tier 1 case's peak on the slimmed source, measured on
 the hosts), when the row's recipe is slim.RECIPE; else the full guest's, as
 before.  So it lands on whichever hosts its slimmed room allows.
+
+A source's room is its largest case's: one that backs up its own tree (content
+drift, or N snapshots) into the share in its RAM disk.  A case whose backup is
+the preparation's (reuse.backup_shareable()) reads that repository where it is
+on /bkoscratch (ht1-bs2.sh's bs2_repo_bind), so it reserves less: shared_of(),
+the slimmed source's measured d_shared, else the room less the repository's
+whole GiB (bs2-host case_disk(), repo_shared()).  Placement (need(),
+scratch()) stays the source's room: any of its cases may go to any of its hosts.
 """
 
 import os
@@ -49,7 +57,8 @@ def table(path=SIZES):
 def slim_table(path=None):
     """{source: row} of slim-sizes.tsv (bs2's own measured room of the slimmed sources):
     each row a dict of recipe, d, mem (GiB), t1_s (a tier 1 case's seconds, or None),
-    used_before and used_after (MiB), prep_mib, tools_mib, measured (words)."""
+    used_before and used_after (MiB), prep_mib, tools_mib, measured (words), and d_shared
+    (GiB: a case whose backup is the preparation's, read where it is; None: not measured)."""
     out = {}
     try:
         with open(path or SLIM_SIZES) as f:
@@ -59,7 +68,7 @@ def slim_table(path=None):
                 w = line.rstrip("\n").split("\t")
                 if len(w) < 4 or w[0] == "source":
                     continue
-                w += [""] * (10 - len(w))
+                w += [""] * (11 - len(w))
                 try:
                     row = {"recipe": int(w[1]), "d": int(w[2]), "mem": int(w[3])}
                 except ValueError:
@@ -71,7 +80,7 @@ def slim_table(path=None):
                     except ValueError:
                         return None
                 row.update(t1_s=num(w[4]), used_before=num(w[5]), used_after=num(w[6]), prep_mib=num(w[7]),
-                           tools_mib=num(w[8]), measured=w[9])
+                           tools_mib=num(w[8]), measured=w[9], d_shared=int(w[10]) if w[10].strip().isdigit() else None)
                 out[w[0]] = row
     except OSError:
         pass
@@ -103,6 +112,19 @@ def of(source, path=SIZES, slim_path=None):
     if row:
         return row["d"], row["mem"]
     return full_of(source, path)
+
+
+def shared_of(source, repo_bytes, path=SIZES, slim_path=None):
+    """The RAM disk (GiB) a case of SOURCE reserves whose backup is its preparation's,
+    read where it is (its repository, REPO_BYTES, not in the RAM disk): a slimmed
+    source's measured d_shared (slim_row()), else of()'s D less the repository's whole
+    GiB, never under case.DISK_GIB.  (Every D is a case's with its repository in its
+    share, ceil(1.10 x peak + 0.25): less the repository's whole GiB it is still at least
+    1.10 x the peak without them + 0.25.)"""
+    row = slim_row(source, slim_path)
+    if row and row.get("d_shared"):
+        return max(C.DISK_GIB, row["d_shared"])
+    return max(C.DISK_GIB, of(source, path, slim_path)[0] - int(max(0, repo_bytes) // (1 << 30)))
 
 
 def need(source, path=SIZES):

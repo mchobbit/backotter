@@ -4,7 +4,12 @@
 # ceil(1.10 x the tier 1 case's peak + 0.25), as ram-size.sh's peak rule; mem: ceil(1.10 x its peak anon), floor 4.
 # t1_s: that case's seconds (sources.secs()).  used_before, used_after: the guest's used MiB before and after the
 # slim step (slim.json); prep_mib, tools_mib: the slimmed preparation's and tools' MiB.  measured: where and how.
-source	recipe	d	mem	t1_s	used_before_mib	used_after_mib	prep_mib	tools_mib	measured
+# d, mem and t1_s are a case's with its repository in its share's RAM disk (its own backup, as most cases' is, or
+# the preparation's copied there, as before 2026-11-25): the source's room, which placement takes.  d_shared: the
+# RAM disk (GiB, the same rule) of a case whose backup is the preparation's, read where it is on /bkoscratch
+# (ht1-bs2.sh's bs2_repo_bind), which bs2-host case_disk() reserves for such a case (empty: not measured, D less
+# the repository's whole GiB); its run is in measured, after "repo bound:".
+source	recipe	d	mem	t1_s	used_before_mib	used_after_mib	prep_mib	tools_mib	measured	d_shared
 anduinos2	1	10	4	277	4056	3969	3049	2559	czerny anduinos2-b6082ebacc9aac0c tier 1 PASS, peak 8.1 GiB, anon 2.6 GiB, 2026-11-25; the case without its content drift (with it, every btrfs-1 case FAILs load restore on the snapshot deployment's chattr +i files, unslimmed too)
 biglinux	1	12	4	359	9523	8716	4042	6557	chopin biglinux-52cffc2dfee3c62b tier 1 PASS, peak 10.4 GiB, anon 2.6 GiB, 2026-11-25
 elementary8	1	7	4	248	7933	3195	1353	1661	chopin elementary8-fe9106ddebe3ca17 tier 1 PASS, peak 5.4 GiB, anon 2.6 GiB, 2026-11-25

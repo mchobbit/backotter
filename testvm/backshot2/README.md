@@ -84,7 +84,8 @@ and a case that can't take it does its own, with a `note:` line saying why:
 | Variable | What | Saves (est.) |
 |---|---|---|
 | `BS2_REUSE_SOURCE` | the source phase takes the preparation: an overlay on its shut-down overlays, its dump, boot state, lvmid, health and serial log | ~19 s |
-| `BS2_REUSE_BACKUP` | a case with no content drift and one snapshot copies the preparation's backup (and fsmeta record) into its share | ~3.5 s on ~27% of cases |
+| `BS2_REUSE_BACKUP` | a case with no content drift and one snapshot takes the preparation's backup (and fsmeta record): its repository bound read-only into its share where it is on /bkoscratch | ~3.5 s and 1.6-3.4 GiB of RAM disk on ~27% of cases |
+| `BS2_REPO_BIND` | (with `BS2_REUSE_BACKUP`) that repository bound, not copied; 0: copied into the RAM disk, as before | the copy |
 | `BS2_RESCUER_STATE` | the rescuer resumes from a saved state; targets and decoy hot-plugged | ~13 s |
 | `BS2_FAST_DOWN` | QEMU quits once synced, not a guest poweroff waited for (the rescuer, and the restored boot) | ~8 s + ~2.5 s |
 
@@ -107,9 +108,37 @@ and a case that can't take it does its own, with a `note:` line saying why:
   before the backup, `bs2-host plant`, from the case's seed and drifted
   layout) and `snapshots` (N backups with `bs2-host change` between) do;
   the edits, targets, load options, tier and leftovers chain reach load,
-  not the backup (`bs2-host apply` prints `BS2_SHARE_BACKUP`).  The copy is
-  the case's: the rescuer mounts the share read-only, and load restores
-  `latest:` the preparation's mount point (`bs2-snap-path`).
+  not the backup (`bs2-host apply` prints `BS2_SHARE_BACKUP`).  Load
+  restores `latest:` the preparation's mount point (`bs2-snap-path`).
+- **Its repository, where it is** (since 2026-11-25; before, `cp -a` into
+  the share, 1.6-3.4 GiB of each such case's RAM disk): `share/repo` is a
+  read-only bind mount (`mount --bind -o ro,nosuid,nodev,noexec`) of
+  `preps/NAME/backup/repo` on /bkoscratch, checked read-only and the
+  preparation's own files (its `config`'s inode) before the case goes on
+  (`ht1-bs2.sh` bs2_repo_bind; `logs/bs2-repo.log`, a `repo-bind` line in
+  `logs/manifest.txt`).  The 9p export crosses into it like any directory
+  of the share, `multidevs=remap` keeping its inode numbers apart from the
+  RAM disk's, so the rescuer sees the same files at `/mnt/share/repo`,
+  read-only three times over (the bind, the export's `readonly=on`, the
+  guest's `ro` mount): rustic-bko's restore never could write there, and
+  every PASS of the copy says it needs not (it takes no lock to restore).
+  The bind is undone at the run's end, PASS, FAIL or signal (`ht_release`,
+  lazily when the rescuer still holds a file), before anything in R is
+  deleted or moved to K; `ht_free` unmounts whatever is left under R in
+  the RAM disk, the sweep a dead run's; every `rm` of R or the share is
+  `--one-file-system`, and `share/repo` itself is removed only after its
+  bind is released, never while anything is mounted there; the share's
+  `chmod` skips it.  A FAIL's K so keeps no repository: `R/bs2-repo-from`
+  names it, and a run from rebuild on binds it again.  While bound, the
+  preparation counts as in use (`bs2-host prep_refs()` reads the mount
+  table): `prune_preps()` keeps it and the space preflight counts it.  A
+  case on /bkoscratch (`HT_RAM=0`), `BS2_REPO_BIND=0`, or a bind that fails
+  (not root, not read-only) copies it as before, with a `note:` line saying
+  why.  Such a case reserves its source's room less the repository
+  (`bs2-host case_disk()`: room.py `shared_of()`, "Slimming" below) when
+  `repo_shared()` finds it will take it (shareable, the preparation serving
+  at its tier with bko-bin's rustic-bko, no switch at 0); its own-backup
+  cases, and placement, keep the source's room.
 - **The rescuer's state**: the first case on a host that finds none for its
   key (`bs2-host rescuer-key`: rescuer image and its .sha256, firmware
   options, memory, QEMU, OVMF, host kernel and CPU microcode, vm-run,
@@ -398,7 +427,8 @@ then:
   before that is copied anew.
 - **Older preparations pruned**: each `bs2-host source` removes every
   preparation but the current that no live work refers to
-  (`prune_preps()`: no process has a file or cwd in it, and no qcow2 in
+  (`prune_preps()`: no process has a file or cwd in it, no mount shows a
+  path in it, a case's read-only bind of its repository, and no qcow2 in
   the RAM disk or on /bkoscratch, a case's overlay, is backed by it), so a
   case that began on an older one keeps it until it ends.
 - **The space preflight** (`bs2lib/space.py`): `plan` prints, and a run
@@ -499,6 +529,11 @@ room, measured on the hosts (a real tier 1 case's RAM-disk peak, D =
 ceil(1.10 x peak + 0.25), MEM ceil(1.10 x its anon peak), floor 4), its case's
 seconds (`sources.secs()`) and its used, preparation and tools MiB; room.py
 takes a row of the current recipe, else the full guest's ram-sizes.tsv row.
+That D is a case's with its repository in its RAM disk (its own backup, or the
+copy before 2026-11-25), so it stays the source's room and placement's; its
+`d_shared` (the same rule, measured on a case that reads the preparation's
+repository where it is: "What a case reuses") is what such a case reserves
+(`bs2-host case_disk()`; unmeasured, D less the repository's whole GiB).
 `space-sizes.tsv`'s rows of slimmed sources are their slimmed preparations
 and tools (`space.ratios()` leaves them out).
 

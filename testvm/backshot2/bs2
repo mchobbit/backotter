@@ -74,9 +74,11 @@ lead's, or that something else fails for, isn't started; the others run, and bs2
 naming it.
 
 What a case reuses (ht1-bs2.sh; README "What a case reuses"): the source's preparation
-(its boot, dump and backup, made by bs2-host source), a rescuer resumed from a saved
-state, and quits in place of poweroffs.  BS2_REUSE_SOURCE, BS2_REUSE_BACKUP,
-BS2_RESCUER_STATE and BS2_FAST_DOWN set to 0 here turn each off on the hosts.
+(its boot, dump and backup, made by bs2-host source; the backup's repository bound
+read-only into the case's share, not copied), a rescuer resumed from a saved state, and
+quits in place of poweroffs.  BS2_REUSE_SOURCE, BS2_REUSE_BACKUP, BS2_REPO_BIND (0: the
+repository copied, as before), BS2_RESCUER_STATE and BS2_FAST_DOWN set to 0 here turn
+each off on the hosts.
 
 Results: each host's /bkoscratch/backshot2/runs/RUN/ and Test2's ledger
 (family bs2, word the run's: BS2_WORD).  "plan" prints the cases, tiers, each host's share and time, and runs nothing.
@@ -439,7 +441,7 @@ def sync(hosts=None):
 
 # What a case reuses (ht1-bs2.sh), each on unless set to 0: set here, passed on to the
 # hosts' cases (the queue, replay, soak, the corpus) so a run can compare.
-REUSE_VARS = ("BS2_REUSE_SOURCE", "BS2_REUSE_BACKUP", "BS2_RESCUER_STATE", "BS2_FAST_DOWN")
+REUSE_VARS = ("BS2_REUSE_SOURCE", "BS2_REUSE_BACKUP", "BS2_REPO_BIND", "BS2_RESCUER_STATE", "BS2_FAST_DOWN")
 # Passed on the same way: BS2_HOLT, the bko-holt a case runs (a path on the hosts; bs2-host's
 # default is /bkoscratch/backshot2/bin/bko-holt), so a fix can be run before it is in bin/;
 # and BS2_WORD, the word of the run (main() sets it), which each case's ledger rows name

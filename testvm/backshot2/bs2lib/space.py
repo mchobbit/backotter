@@ -134,7 +134,8 @@ def need(sources, tools, facts, ssd_peak=0, cases=0, path=SIZES_TSV):
     a source it lacks: nothing there yet), then its cases: SSD_PEAK bytes (its SSD lane's
     largest case) and CASES' records.  A stale current preparation goes once the new one
     is made, unless live work still refers to it (prep_referenced: prune_preps() keeps it
-    while a case uses it): then it's kept, and counted on to the end."""
+    while a case uses it, by an overlay backed by its disks or a read-only bind of its
+    repository in the case's share): then it's kept, and counted on to the end."""
     cur = peak = 0
     out = Need()
     for s in sources:

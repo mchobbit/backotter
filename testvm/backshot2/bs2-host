@@ -26,9 +26,11 @@ never the shared ~/backotter-work/testvm.
   bs2-host queue RUN [--slots N]         (as m) N workers (1-6, ports 2943-2948) taking RUN/queue.txt
   bs2-host leftovers [SET] [--run RUN] [--port P] [--from N] [--release] [--plan]
                                          (as m) the leftovers set: its steps in order on one disk
-  bs2-host reserve CASE [--disk D] [--mem M] [--words]
+  bs2-host reserve CASE [--disk D] [--mem M] [--words] [--tier T]
                                          the RAM disk (GiB) CASE's tier 1 reserves: D (2) and its
-                                         inode tables on LUKS past the source's (case.disk_gib);
+                                         inode tables on LUKS past the source's (case.disk_gib),
+                                         less its repository when its backup is the preparation's,
+                                         read where it is (repo_shared());
                                          --words: the whole reservation, --reserve D M or, for a
                                          source over this host's RAM disk, --reserve-ssd D M
   bs2-host lane CASE -- CMD...           CMD (cmp-run.sh ... tier1 CASE) holding this host's SSD lane when
@@ -563,10 +565,12 @@ def qcow2_backing(path):
 
 def prep_refs(scan_dirs=None, proc="/proc"):
     """The paths live work holds now, real: every open file and cwd of every process
-    (PROC), and every qcow2's backing file under SCAN_DIRS (default: the RAM disk's work,
-    and /bkoscratch's: ROOT less sources/ and rescuer-state/), as a case's overlay on a
-    preparation names it between its VMs (ht1-bs2.sh's bs2_source_take)."""
-    out = set()
+    (PROC), every mount of a part of a filesystem (mount_refs(): a case's read-only bind
+    of a preparation's repository, ht1-bs2.sh's bs2_repo_bind), and every qcow2's backing
+    file under SCAN_DIRS (default: the RAM disk's work, and /bkoscratch's: ROOT less
+    sources/ and rescuer-state/), as a case's overlay on a preparation names it between
+    its VMs (ht1-bs2.sh's bs2_source_take)."""
+    out = mount_refs(f"{proc}/self/mountinfo")
     try:
         pids = [p for p in os.listdir(proc) if p.isdigit()]
     except OSError:
@@ -597,6 +601,40 @@ def prep_refs(scan_dirs=None, proc="/proc"):
                     b = qcow2_backing(f"{dp}/{fn}")
                     if b:
                         out.add(os.path.realpath(os.path.join(dp, b)))
+    return out
+
+
+def _unoctal(x):
+    """A mountinfo field's path: its \\NNN escapes (space, tab, newline, backslash) decoded."""
+    import re
+    return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), x)
+
+
+def mount_refs(mountinfo="/proc/self/mountinfo"):
+    """The host paths that mounts of a part of a filesystem show, real: for each mount
+    whose root (mountinfo's 4th field) isn't the whole filesystem's, that root as seen
+    through each other mount of the same filesystem whose root holds it (a bind mount's
+    source: /bkoscratch/backshot2/sources/S/preps/P/backup/repo for a case's read-only
+    repository in its share).  Empty when MOUNTINFO can't be read."""
+    rows = []
+    try:
+        with open(mountinfo) as f:
+            for line in f:
+                w = line.split()
+                if len(w) >= 5:
+                    rows.append((w[0], w[2], _unoctal(w[3]), _unoctal(w[4])))
+    except OSError:
+        return set()
+    out = set()
+    for mid, dev, root, _ in rows:
+        if root == "/":
+            continue
+        for mid2, dev2, root2, mp2 in rows:
+            if mid2 == mid or dev2 != dev:
+                continue
+            if root2 == "/" or root == root2 or root.startswith(root2.rstrip("/") + "/"):
+                rest = root[len(root2.rstrip("/")):] if root2 != "/" else root
+                out.add(os.path.realpath(os.path.join(mp2, rest.lstrip("/"))))
     return out
 
 
@@ -1015,6 +1053,12 @@ def cmd_tier1(a):
             die(f"{name}: an SSD case, and this host's SSD lane is busy ({ROOT}/ssd.lock): run it as "
                 f"bs2-host lane {a.case} -- cmp-run.sh ... tier1 (bs2's replay, soak and corpus do)", 2)
     slim_own_boot(src, a.tier, a.run)
+    # (Whether a case like this reserves without its repository: ht1-bs2.sh's note when it
+    # has to copy it after all says the copy may outgrow the reservation.)
+    try:
+        os.environ["BS2_REPO_ROOM"] = "0" if scratch == "ram" and repo_shared(a.case, a.tier) else "1"
+    except Exception:
+        os.environ["BS2_REPO_ROOM"] = "1"
     rc = T1.run(c, name, src, gen, dump, a.tier, a.run, a.port, HERE, TESTVM, ROOT, holt_bin(), bins(), scratch=scratch)
     sys.exit(rc)
 
@@ -1141,18 +1185,60 @@ def case_scratch(path):
         return RM.RAM
 
 
-def case_disk(path, base=C.DISK_GIB, ssd=False):
+# What steers a case to a preparation or a rustic-bko other than bs2-host's own: with any
+# set, a case's backup is never counted as shared (repo_shared()).
+OTHER_INPUTS = ("HT_RUSTIC", "HT_BKO_BIN", "HT_ROUND", "HT_SOURCE_PREP")
+
+
+def repo_shared(path, tier=None):
+    """(the preparation's repository, its bytes) when the case at PATH will take that
+    backup read-only where it is, none of it in its RAM disk (ht1-bs2.sh's bs2_backup_reuse
+    and bs2_repo_bind), as ht1-bs2.sh will decide it: its backup is the prepared tree
+    (reuse.backup_shareable()), the preparation stands in for its source at TIER (at
+    both tiers when None: a reservation that doesn't know its tier), its backup was made
+    by the rustic-bko the case takes (bko-bin's: backup_stale()), none of BS2_REUSE_SOURCE,
+    BS2_REUSE_BACKUP and BS2_REPO_BIND is 0, and none of OTHER_INPUTS is set.  Else None:
+    its repository is in its share (its own backup, or a copy)."""
+    from bs2lib import reuse as RU
+    if any(os.environ.get(v, "1") != "1" for v in ("BS2_REUSE_SOURCE", "BS2_REUSE_BACKUP", "BS2_REPO_BIND")):
+        return None
+    if any(os.environ.get(v) for v in OTHER_INPUTS):
+        return None
+    c = C.read(path)
+    if not RU.backup_shareable(c)[0]:
+        return None
+    src = C.source_name(c)
+    for t in ((tier,) if tier else (1, 2)):
+        d, saved, why = prep_reasons(src, holt_bin(), t)
+        if why or not d:
+            return None
+    if RU.backup_stale(saved, RU.sha256_file(f"{WORK}/bko-bin/linux/rustic-bko"), d):
+        return None
+    repo = f"{d}/backup/repo"
+    return repo, du_bytes(repo)
+
+
+def case_disk(path, base=C.DISK_GIB, ssd=False, tier=None, shared=True):
     """The RAM disk (GiB) the case at PATH reserves: C.disk_gib on its source's
     dump, from BASE or the source's own room if more (bs2lib/room.py: Alpine's
-    bs2's own, the others HoltTest1's), within this host's cmp-run.sh --ceiling.
-    BASE when either can't be read (a warning on stderr): the case still runs,
-    and its row says if it went over.  SSD: the same of the SSD, with no ceiling."""
+    bs2's own, the others HoltTest1's), within this host's cmp-run.sh --ceiling;
+    for a case in the RAM disk whose backup is its preparation's, read where it is
+    (SHARED and repo_shared(PATH, TIER)), the source's room without its repository
+    (room.py shared_of()).  BASE when either can't be read (a warning on stderr):
+    the case still runs, and its row says if it went over.  SSD: the same of the
+    SSD, with no ceiling."""
     from bs2lib import room as RM
     base = int(float(base))
     try:
         c = C.read(path)
         src = C.source_name(c)
-        base = max(base, RM.of(src)[0])
+        try:
+            sh = repo_shared(path, tier) if shared and not ssd else None
+        except Exception as e:   # (then as a case with its repository in its share)
+            print(f"bs2-host: {path}: whether its backup is shared couldn't be worked out ({e}): reserved with its repository",
+                  file=sys.stderr)
+            sh = None
+        base = max(base, RM.shared_of(src, sh[1]) if sh else RM.of(src)[0])
         if src not in _DUMPS:
             _DUMPS[src] = dumpx.load(f"{source_dir(src)}/src.json")
         return C.disk_gib(c, _DUMPS[src], base, None if ssd else (ceiling() or (None,))[0])
@@ -1188,9 +1274,9 @@ def ssd_reserve():
     return "--reserve-ssd" if mode != "ram" and has else "--reserve 0"
 
 
-def reserve_words(path, disk=str(C.DISK_GIB), mem="3"):
+def reserve_words(path, disk=str(C.DISK_GIB), mem="3", tier=None):
     """(cmp-run.sh's reservation words for the case at PATH, where it works: "ram" or
-    "ssd"): --reserve D M in the RAM disk (case_disk, case_mem), or on /bkoscratch
+    "ssd"): --reserve D M in the RAM disk (case_disk at TIER, case_mem), or on /bkoscratch
     --reserve-ssd D M (or --reserve 0 M: ssd_reserve()), D then uncapped by the RAM disk."""
     m = case_mem(path, mem)
     if case_scratch(path) == "ssd":
@@ -1198,7 +1284,7 @@ def reserve_words(path, disk=str(C.DISK_GIB), mem="3"):
         if how == "--reserve-ssd":
             return ["--reserve-ssd", str(case_disk(path, disk, ssd=True)), m], "ssd"
         return ["--reserve", "0", m], "ssd"
-    return ["--reserve", str(case_disk(path, disk)), m], "ram"
+    return ["--reserve", str(case_disk(path, disk, tier=tier)), m], "ram"
 
 
 def cmd_reserve(a):
@@ -1207,9 +1293,10 @@ def cmd_reserve(a):
     the whole reservation ("--reserve D M", or "--reserve-ssd D M" for a case that works on
     /bkoscratch here: reserve_words())."""
     if a.words:
-        print(" ".join(reserve_words(a.case, a.disk, a.mem or "3")[0]))
+        print(" ".join(reserve_words(a.case, a.disk, a.mem or "3", a.tier)[0]))
         return
-    print(case_disk(a.case, a.disk) if a.mem is None else f"{case_disk(a.case, a.disk)} {case_mem(a.case, a.mem)}")
+    d = case_disk(a.case, a.disk, tier=a.tier)
+    print(d if a.mem is None else f"{d} {case_mem(a.case, a.mem)}")
 
 
 # ---- the leftovers set (bs2lib/leftovers.py) ----------------------------------------
@@ -1256,7 +1343,7 @@ def cmd_leftovers(a):
         p = f"{rd}/cases/{c['name']}.case"
         env = dict(os.environ, BS2_CHAIN_IN=prev, BS2_CHAIN_OUT=out, BS2_RELEASE="1" if a.release else "0",
                    WEAR_TAG=f"bs2:{a.run}:{c['chain']['id']}")
-        r = subprocess.run([f"{WORK}/cmp-run.sh", "--reserve", str(case_disk(p, a.disk)), a.mem, "sudo", "-E", os.path.join(HERE, "bs2-host"), "tier1", p,
+        r = subprocess.run([f"{WORK}/cmp-run.sh", "--reserve", str(case_disk(p, a.disk, shared=False)), a.mem, "sudo", "-E", os.path.join(HERE, "bs2-host"), "tier1", p,
                             "--tier", "1", "--run", a.run, "--port", str(a.port)], cwd=WORK, env=env, capture_output=True, text=True)
         try:
             line = json.loads([l for l in r.stdout.splitlines() if l.startswith("{")][-1])
@@ -1521,7 +1608,7 @@ def cmd_queue(a):
             try:
                 tier, path = job[:2]
                 # (In the RAM disk, or on /bkoscratch for a source over this host's RAM disk: reserve_words.)
-                res, where = reserve_words(path, a.disk, a.mem)
+                res, where = reserve_words(path, a.disk, a.mem, int(tier) if tier in ("1", "2") else None)
                 env = dict(os.environ, WEAR_TAG=f"bs2:{a.run}:{os.path.basename(path)}")
                 if where == "ssd":
                     env.update(WEAR_SCRATCH="ssd", BS2_SSD_HELD="1" if tok else "")
@@ -1636,6 +1723,8 @@ def main():
     x.add_argument("--disk", default=str(C.DISK_GIB), help="the source's own cases' room, GiB")
     x.add_argument("--mem", default=None, help="print the memory too: this, or the source's room if more, GiB")
     x.add_argument("--words", action="store_true", help="print the whole cmp-run.sh reservation (reserve_words)")
+    x.add_argument("--tier", type=int, default=None, choices=(1, 2),
+                   help="the case's tier (without: a shared backup is counted only when it serves at both)")
     x = s.add_parser("lane")
     x.add_argument("case")
     x.add_argument("command", nargs=argparse.REMAINDER)

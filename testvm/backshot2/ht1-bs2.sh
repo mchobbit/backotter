@@ -27,7 +27,13 @@
 #                      its dump, boot state, lvmid, health and serial log
 #   BS2_REUSE_BACKUP   a case whose backup is that tree (no content drift,
 #                      one snapshot: bs2-host apply's BS2_SHARE_BACKUP) takes
-#                      the preparation's backup, copied into its share
+#                      the preparation's backup, where it is on /bkoscratch:
+#                      bound read-only into its share in the RAM disk
+#                      (BS2_REPO_BIND, below), else copied there
+#   BS2_REPO_BIND      (with BS2_REUSE_BACKUP) the preparation's repository
+#                      as a read-only bind mount at share/repo, not a copy;
+#                      0, or a case on /bkoscratch (HT_RAM=0), or a bind that
+#                      fails: copied as before, with a note: line
 #   BS2_RESCUER_STATE  the rescuer resumes from a state saved once per
 #                      rescuer, firmware, QEMU and host (ROOT/rescuer-state/),
 #                      the case's targets and decoy hot-plugged after, as
@@ -65,6 +71,11 @@ BS2_SHARE_BACKUP=0
 # snapshot path when that serves too, and why not.
 BS2_PREP_DIR="" BS2_PREP_NAME="" BS2_PREP_SNAP="" BS2_PREP_WHY="" BS2_PREP_BACKUP_WHY=""
 BS2_QMP_PY=$(dirname "$BS2_HOST")/bs2-qmp.py
+# The share's 9p export (ht1.sh's cold boot and bs2_rs_extra's resume alike): a
+# bound repository (bs2_repo_bind) is another filesystem in it, so QEMU remaps
+# its inode numbers (multidevs=remap) and the guest never meets two files of
+# one qid; with no bind it changes nothing the guest reads.
+BS2_VIRTFS_MORE=,multidevs=remap
 
 # Tier 2's machine: one NVRAM, and each disk where the rescuer had it.  OVMF
 # makes a boot option of its own for every disk it sees (EDK II's
@@ -160,33 +171,159 @@ phase_backup_bs2() {
     cp "$RUSTIC" "$S/rustic-bko"; cp "$BIN"/*.deb "$S/"
     [[ ! -f $BIN/bcachefs ]] || cp "$BIN/bcachefs" "$S/"
     [[ -n $gpass ]] && printf '%s' "$(cat "$gpass")" > "$S/passphrase"
-    chmod -R a+rX "$S"
+    bs2_share_readable
 }
 
 # The preparation's backup, for a case that would back up that very tree:
 # its source is the prepared one (bs2_source_reuse took it), it plants no
 # content and takes one snapshot (BS2_SHARE_BACKUP), and its rustic-bko made
-# that backup.  A copy in the case's share (the rescuer mounts it read-only);
-# load restores latest:PATH of the preparation's mount point (bs2-snap-path).
+# that backup.  Its repository where it is, bound read-only at share/repo
+# (bs2_repo_bind: none of it in the RAM disk), else a copy there, as before
+# (with a note: line saying why); its password, fsmeta record and snapshot
+# list copied.  The rescuer mounts the share read-only either way; load
+# restores latest:PATH of the preparation's mount point (bs2-snap-path).
 bs2_backup_reuse() {
-    rm -f "$R/bs2-snap-path"
+    rm -f "$R/bs2-snap-path" "$R/bs2-repo-from"
     [[ -z ${BS2_PREPARE:-} && ${BS2_REUSE_BACKUP:-1} == 1 && $BS2_SHARE_BACKUP == 1 ]] || return 1
     [[ -n $BS2_PREP_DIR ]] || { say "note: backup: one of its own (its source isn't the prepared one)"; return 1; }
     [[ -n $BS2_PREP_SNAP ]] || { say "note: backup: one of its own (${BS2_PREP_BACKUP_WHY:-the preparation's backup doesn't serve})"; return 1; }
-    rm -rf "$S/repo"
-    if ! { cp -a --reflink=auto "$BS2_PREP_DIR/backup/repo" "$S/repo" && cp "$BS2_PREP_DIR/backup/repo-password" "$S/repo-password" &&
+    bs2_repo_clear || { say "note: backup: one of its own (share/repo is a mount it can't release: logs/bs2-repo.log)"; return 1; }
+    local from=$BS2_PREP_DIR/backup/repo how
+    if ! { cp "$BS2_PREP_DIR/backup/repo-password" "$S/repo-password" &&
            cp "$BS2_PREP_DIR/src-meta.json" "$R/src-meta.json" && cp "$BS2_PREP_DIR/bs2-snapshots.json" "$R/bs2-snapshots.json"; }; then
-        rm -rf "$S/repo" "$R/src-meta.json"
-        say "note: backup: one of its own (copying the preparation's failed)"; return 1
+        rm -f "$R/src-meta.json"
+        say "note: backup: one of its own (copying the preparation's records failed)"; return 1
+    fi
+    if bs2_repo_bind "$from"; then
+        how="bound read-only where it is, $(du -sh "$from" 2>/dev/null | cut -f1), none of it in the RAM disk: $from"
+    else
+        say "note: backup: the preparation's repository copied into the share, not bound ($BS2_REPO_WHY)$(
+            [[ ${BS2_REPO_ROOM:-} != 0 ]] || echo "; this case's reservation left the repository out (bs2-host case_disk): the copy may outgrow it")"
+        if ! cp -a --reflink=auto "$from" "$S/repo"; then
+            bs2_repo_clear; rm -f "$R/src-meta.json"
+            say "note: backup: one of its own (copying the preparation's failed)"; return 1
+        fi
+        how="copied, $(du -sh "$S/repo" | cut -f1)"
     fi
     [[ ! -f $BS2_PREP_DIR/logs/backup.log ]] || cp "$BS2_PREP_DIR/logs/backup.log" "$R/logs/backup.log"
     echo "$BS2_PREP_SNAP" > "$R/bs2-snap-path"
-    ok "the prepared backup, this case's tree as it stands ($(du -sh "$S/repo" | cut -f1); load restores latest:$BS2_PREP_SNAP)"
+    ok "the prepared backup, this case's tree as it stands ($how; load restores latest:$BS2_PREP_SNAP)"
+}
+
+# ---- the preparation's repository, bound read-only into the share ----
+# share/repo is a read-only bind mount of preps/NAME/backup/repo on /bkoscratch
+# (in the RAM disk only: HT_MODE ram; a case on /bkoscratch copies it as
+# before).  The 9p export takes it as it takes the rest of the share (QEMU
+# crosses the mount; BS2_VIRTFS_MORE remaps its inode numbers), so the rescuer
+# sees the same files at /mnt/share/repo, read-only three times over (the
+# bind, the export's readonly=on, the guest's ro mount): rustic-bko's restore
+# has never been able to write there, the copy's PASSes say it needs not.
+# What keeps it safe:
+#   - the preparation is in use while bound: bs2-host prep_refs() counts a
+#     mount of a path in it (mountinfo), so prune_preps() keeps it and the
+#     space preflight counts it (prep_referenced), as it does the overlays;
+#   - the bind is undone by ht_release (ht_end's, on PASS, FAIL and every
+#     signal), lazily when the rescuer still holds a file; ht_free unmounts
+#     whatever is left under R in the RAM disk (a dead run's, by the sweep)
+#     before anything in R is deleted, and every rm of R or the share is
+#     --one-file-system; share/repo itself is removed only by bs2_repo_clear,
+#     which releases first and refuses while anything is mounted there;
+#   - a read-only bind: an rm that reached it anyway could unlink nothing;
+#   - the share's chmod skips it (bs2_share_readable): never a write there.
+# R/bs2-repo-from names the bound repository, so a run from rebuild on (its
+# state from K, which keeps share/repo empty) binds it again (bs2_repo_again).
+BS2_REPO_MNT="" BS2_REPO_WHY=""
+bs2_repo_log() { echo "$(date -u +%FT%TZ) $*" >> "$R/logs/bs2-repo.log"; }
+
+# FROM bound read-only at share/repo; exit 1, BS2_REPO_WHY saying why and
+# nothing left mounted, when it can't be (the caller copies instead).
+bs2_repo_bind() {  # FROM
+    local d=$S/repo from out
+    BS2_REPO_WHY=""
+    [[ ${BS2_REPO_BIND:-1} == 1 ]] || { BS2_REPO_WHY="BS2_REPO_BIND=${BS2_REPO_BIND}"; return 1; }
+    [[ ${HT_MODE:-} == ram ]] || { BS2_REPO_WHY="the case works on /bkoscratch (HT_RAM=0): only the RAM disk's share binds it"; return 1; }
+    from=$(realpath "$1" 2>/dev/null) && [[ -d $from && -f $from/config ]] || { BS2_REPO_WHY="no repository at $1"; return 1; }
+    [[ $from == */preps/p-*/backup/repo ]] || { BS2_REPO_WHY="$from isn't a preparation's repository"; return 1; }
+    bs2_repo_clear || { BS2_REPO_WHY="share/repo is a mount it can't release"; return 1; }
+    mkdir "$d" || { BS2_REPO_WHY="can't make $d"; return 1; }
+    BS2_REPO_MNT=$d   # (before the mount: bs2_repo_release undoes a half-made one)
+    if ! out=$(mount --bind -o ro,nosuid,nodev,noexec "$from" "$d" 2>&1); then
+        bs2_repo_log "mount --bind -o ro $from $d: $out"
+        bs2_repo_release; BS2_REPO_WHY="mount --bind: ${out:-it failed}"; return 1
+    fi
+    # Read-only, and the preparation's own files (its config, the same inode).
+    if ! { findmnt -n -o OPTIONS -M "$d" 2>/dev/null | tr , '\n' | grep -qx ro && [[ $d/config -ef $from/config ]]; }; then
+        bs2_repo_log "bound $from at $d, but $(findmnt -n -o OPTIONS -M "$d" 2>&1 | head -n 1): not read-only, or not its files"
+        bs2_repo_release; BS2_REPO_WHY="the bind at $d wasn't read-only, or wasn't $from's files"; return 1
+    fi
+    bs2_repo_log "bound $from read-only at $d"
+    echo "$from" > "$R/bs2-repo-from"
+    echo "repo-bind $from config $(sha256sum <"$from/config" | cut -c1-64)" >> "$R/logs/manifest.txt"
+}
+
+# The bind undone (umount; after 3 tries a lazy one: the rescuer may still
+# hold a file, and nothing is written there) and its mount point removed.
+# Exit 1 when it is still mounted.
+bs2_repo_release() {
+    local d=$BS2_REPO_MNT i
+    [[ -n $d ]] || return 0
+    for i in 1 2 3 4; do
+        mountpoint -q "$d" 2>/dev/null || break
+        if ((i < 4)); then umount "$d" 2>/dev/null || sleep 1; else umount -l "$d" 2>/dev/null; fi
+    done
+    if mountpoint -q "$d" 2>/dev/null; then
+        bs2_repo_log "$d is still mounted: left as it is (read-only); ht_free unmounts what is left under R"
+        echo "ht1-bs2: $d is still mounted (the preparation's repository, read-only)" >&2
+        return 1
+    fi
+    bs2_repo_log "released $d"
+    BS2_REPO_MNT=""
+    rmdir "$d" 2>/dev/null
+    return 0
+}
+
+# share/repo gone, never through a mount: a bound repository released first,
+# and refused (exit 1) while anything is still mounted there.
+bs2_repo_clear() {
+    bs2_repo_release || return 1
+    [[ -e $S/repo || -L $S/repo ]] || return 0
+    if mountpoint -q "$S/repo" 2>/dev/null; then
+        bs2_repo_log "$S/repo is a mount this run didn't make: not removed"
+        return 1
+    fi
+    rm -rf --one-file-system "$S/repo"
+}
+
+# Start of phase_rebuild: the bound repository again, for a run from rebuild
+# on (its state from K: share/repo empty), or one whose bind went; a copy
+# when it can't be bound.  Nothing to do when it's bound now, or the case's
+# repository is its own or a copy.
+bs2_repo_again() {
+    [[ -s $R/bs2-repo-from && -z $BS2_REPO_MNT && ! -f $S/repo/config ]] || return 0
+    local from; from=$(<"$R/bs2-repo-from")
+    if bs2_repo_bind "$from"; then
+        ok "the prepared backup bound again, read-only ($from)"
+        return 0
+    fi
+    say "note: backup: the preparation's repository copied into the share, not bound again ($BS2_REPO_WHY)"
+    bs2_repo_clear && cp -a --reflink=auto "$from" "$S/repo" || { bad "the preparation's repository: neither bound nor copied ($from)"; return 1; }
+    rm -f "$R/bs2-repo-from"
+}
+
+# The share readable by all (ht1.sh's chmod -R a+rX), but never into the bound
+# repository: read-only (each chmod there an EROFS) and the preparation's.
+bs2_share_readable() {
+    if [[ -n $BS2_REPO_MNT ]]; then
+        find "$S" -xdev \( -path "$S/repo" -prune \) -o -exec chmod a+rX {} +
+    else
+        chmod -R a+rX "$S"
+    fi
 }
 
 # The case's own: content planted, N snapshots with changes between.  Exit 1: failed.
 bs2_backup_own() {
-    rm -rf "$S/repo"; head -c 24 /dev/urandom | base64 > "$S/repo-password"
+    bs2_repo_clear || { bad "share/repo is a mount it can't release (logs/bs2-repo.log)"; return 1; }
+    head -c 24 /dev/urandom | base64 > "$S/repo-password"
     mkdir -p "$SRC_MP"
     local rustic=("$RUSTIC" -r "$S/repo" --password-file "$S/repo-password" --no-progress --no-cache) r
     "${rustic[@]}" init > "$R/logs/backup.log" 2>&1 || { bad "rustic-bko init (logs/backup.log)"; return 1; }
@@ -399,7 +536,7 @@ bs2_rs_extra() {  # SHARE QMP
             a+=(-device "pcie-root-port,id=bs2rp$i,bus=pcie.0,chassis=$((40 + i)),addr=$(printf '0x%x' $((BS2_SLOT0 + i))),io-reserve=0")
         done
     fi
-    a+=(-virtfs "local,path=$1,mount_tag=bkoshare,security_model=none,readonly=on" -device vmgenid,guid=auto)
+    a+=(-virtfs "local,path=$1,mount_tag=bkoshare,security_model=none,readonly=on$BS2_VIRTFS_MORE" -device vmgenid,guid=auto)
     a+=(-qmp "unix:$2,server=on,wait=off")
     printf '%s\n' "${a[@]}"
 }

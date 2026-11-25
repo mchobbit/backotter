@@ -285,7 +285,7 @@ class TestHt1Bs2(unittest.TestCase):
         self.assertEqual(u[1:12:2], ports)
         self.assertIn("id=bs2rp0,bus=pcie.0,chassis=40,addr=0x3,", ports[0])
         self.assertIn("id=bs2rp5,bus=pcie.0,chassis=45,addr=0x8,", ports[5])
-        self.assertEqual(u[12:16], ["-virtfs", "local,path=SHARE,mount_tag=bkoshare,security_model=none,readonly=on",
+        self.assertEqual(u[12:16], ["-virtfs", "local,path=SHARE,mount_tag=bkoshare,security_model=none,readonly=on,multidevs=remap",
                                     "-device", "vmgenid,guid=auto"])
         self.assertEqual(u[-3:], ["-qmp", "unix:QMP,server=on,wait=off", ""])
         self.assertNotIn("pcie-root-port", bios)

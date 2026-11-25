@@ -466,7 +466,7 @@ ht_rustic_take "$PLAT"
 # dumps and the load are one build's.
 cp --remove-destination "$HOLT" "$S/bko-holt"
 HT_MOUNTED=""
-ht_release() { rm -f "$R/img-key" "$R/img-key.pub"; [[ -n $HT_MOUNTED ]] && mountpoint -q "$HT_MOUNTED" && "$T/vm-umount" "$HT_MOUNTED" >/dev/null 2>&1; rmdir "$SRC_MP" "$DST_MP" 2>/dev/null; }
+ht_release() { [[ $VARIANT != bs2 ]] || bs2_repo_release; rm -f "$R/img-key" "$R/img-key.pub"; [[ -n $HT_MOUNTED ]] && mountpoint -q "$HT_MOUNTED" && "$T/vm-umount" "$HT_MOUNTED" >/dev/null 2>&1; rmdir "$SRC_MP" "$DST_MP" 2>/dev/null; }
 
 # ConnectTimeout is SSH_CTO (ht1-lib.sh, 30 s: a rescuer's sshd busy after a
 # big write can take longer than 5 s to answer); vm_wait's polls keep their
@@ -1976,7 +1976,9 @@ phase_rebuild() {
     # load's --key-file needs it here too, in a run with no backup phase to
     # have written it (the refusal variants) as typed, without the newline.
     [[ -z $gpass ]] || printf '%s' "$(cat "$gpass")" > "$S/passphrase"
-    chmod -R a+rX "$S"
+    # (bs2: the preparation's repository bound again for a run from here on, and
+    # the chmod kept out of it: read-only, the preparation's; ht1-bs2.sh.)
+    if [[ $VARIANT == bs2 ]]; then bs2_repo_again || return; bs2_share_readable; else chmod -R a+rX "$S"; fi
     rm -f "$R/rescuer.qcow2" "${dst[@]}"
     if [[ $VARIANT == img ]]; then
         qemu-img create -q -f qcow2 -b "$RESCUER_IMG" -F raw "$R/rescuer.qcow2" 16G
@@ -2016,7 +2018,7 @@ phase_rebuild() {
     # (bs2: resumed from a saved state, its disks hot-plugged, when it can: ht1-bs2.sh.)
     if [[ $VARIANT == bs2 ]] && bs2_rescuer_resume; then :; else
     IMG_BOOT=${IMG_PLAT:-} vm_up "$R/rescuer.qcow2" "$R/logs/rescuer-serial.log" "${rfw[@]}" --memory 3072 "${disks[@]}" -- \
-        -virtfs "local,path=$S,mount_tag=bkoshare,security_model=none,readonly=on"
+        -virtfs "local,path=$S,mount_tag=bkoshare,security_model=none,readonly=on${BS2_VIRTFS_MORE:-}"
     vm_wait "$rkey" || { bad "rescuer boots"; vm_down "$rkey"; return; }
     fi
     if [[ $VARIANT == img ]]; then
